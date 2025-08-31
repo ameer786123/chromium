@@ -282,6 +282,8 @@ bool HasPriceDropOnTab(TabResumptionItem* item) {
   }
 
   // Resize the salient image.
+  // TODO(crbug.com/411039614): Replace UIGraphicsBeginImageContextWithOptions
+  // with UIGraphicsImageRenderer.
   UIGraphicsBeginImageContextWithOptions(CGSize(width, height), NO, 0.0);
   [_item.contentImage drawInRect:CGRectMake(0, 0, width, height)];
   UIImage* scaledImage = UIGraphicsGetImageFromCurrentImageContext();
@@ -336,8 +338,7 @@ bool HasPriceDropOnTab(TabResumptionItem* item) {
     [containerView addSubview:salientView];
     AddSameConstraints(salientView, containerView);
   } else {
-    containerView.backgroundColor =
-        [UIColor colorNamed:kTertiaryBackgroundColor];
+    containerView.backgroundColor = [UIColor colorNamed:kGrey100Color];
     containerSize = kImageEmptyContainerSize;
   }
 

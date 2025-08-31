@@ -17,6 +17,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "build/build_config.h"
@@ -28,7 +29,6 @@
 #include "content/public/renderer/render_frame.h"
 #include "content/public/test/mock_render_thread.h"
 #include "content/public/test/render_view_test.h"
-#include "ipc/ipc_listener.h"
 #include "printing/buildflags/buildflags.h"
 #include "printing/image.h"
 #include "printing/mojom/print.mojom.h"
@@ -1900,7 +1900,9 @@ class PrintRenderFrameHelperPreviewTest
                  static_cast<int>(mojom::MarginType::kDefaultMargins))
             .Set(kSettingPagesPerSheet, 1)
             .Set(kSettingPreviewModifiable, true)
+#if BUILDFLAG(IS_CHROMEOS)
             .Set(kSettingPreviewIsFromArc, false)
+#endif
             .Set(kSettingHeaderFooterEnabled, false)
             .Set(kSettingShouldPrintBackgrounds, false)
             .Set(kSettingShouldPrintSelectionOnly, false);

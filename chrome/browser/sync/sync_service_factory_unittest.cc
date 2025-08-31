@@ -39,6 +39,7 @@
 #include "ash/constants/ash_features.h"
 #include "chrome/browser/ash/app_list/app_list_syncable_service_factory.h"
 #include "chrome/browser/ash/arc/arc_util.h"
+#include "chrome/browser/ash/floating_sso/floating_sso_service_factory.h"
 #include "chrome/browser/sync/wifi_configuration_sync_service_factory.h"
 #include "chromeos/ash/components/dbus/shill/shill_clients.h"
 #include "chromeos/ash/components/dbus/shill/shill_manager_client.h"
@@ -52,6 +53,10 @@ class SyncServiceFactoryTest : public testing::Test {
   void SetUp() override {
 #if BUILDFLAG(IS_CHROMEOS)
     app_list::AppListSyncableServiceFactory::SetUseInTesting(true);
+    // Cookie sync is only enabled for the primary profile, but for these tests
+    // there is no real benefit in setting up a fully logged in ChromeOS user.
+    ash::floating_sso::FloatingSsoServiceFactory::GetInstance()
+        ->AllowNonPrimaryProfileForTests();
 #endif  // BUILDFLAG(IS_CHROMEOS)
     TestingProfile::Builder builder;
     builder.AddTestingFactory(FaviconServiceFactory::GetInstance(),
@@ -98,7 +103,7 @@ class SyncServiceFactoryTest : public testing::Test {
 
   // Returns the collection of default datatypes.
   syncer::DataTypeSet DefaultDatatypes() {
-    static_assert(55 == syncer::GetNumDataTypes(),
+    static_assert(56 == syncer::GetNumDataTypes(),
                   "When adding a new type, you probably want to add it here as "
                   "well (assuming it is already enabled). Check similar "
                   "function in "
@@ -114,10 +119,13 @@ class SyncServiceFactoryTest : public testing::Test {
     datatypes.Put(syncer::SECURITY_EVENTS);
     datatypes.Put(syncer::SUPERVISED_USER_SETTINGS);
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-    datatypes.Put(syncer::APPS);
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
     datatypes.Put(syncer::EXTENSIONS);
     datatypes.Put(syncer::EXTENSION_SETTINGS);
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+    datatypes.Put(syncer::APPS);
     datatypes.Put(syncer::APP_SETTINGS);
     datatypes.Put(syncer::WEB_APPS);
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
@@ -127,15 +135,7 @@ class SyncServiceFactoryTest : public testing::Test {
     datatypes.Put(syncer::SEARCH_ENGINES);
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
-    BUILDFLAG(IS_WIN)
     datatypes.Put(syncer::SAVED_TAB_GROUP);
-#elif BUILDFLAG(IS_ANDROID)
-    if (base::FeatureList::IsEnabled(tab_groups::kTabGroupSyncAndroid)) {
-      datatypes.Put(syncer::SAVED_TAB_GROUP);
-    }
-#endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) ||
-        // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
     datatypes.Put(syncer::DICTIONARY);
@@ -175,9 +175,6 @@ class SyncServiceFactoryTest : public testing::Test {
     datatypes.Put(syncer::AUTOFILL_WALLET_OFFER);
     datatypes.Put(syncer::AUTOFILL_WALLET_USAGE);
     datatypes.Put(syncer::BOOKMARKS);
-    if (base::FeatureList::IsEnabled(commerce::kProductSpecifications)) {
-      datatypes.Put(syncer::PRODUCT_COMPARISON);
-    }
     datatypes.Put(syncer::CONTACT_INFO);
     datatypes.Put(syncer::DEVICE_INFO);
     datatypes.Put(syncer::HISTORY);
@@ -196,6 +193,13 @@ class SyncServiceFactoryTest : public testing::Test {
             data_sharing::features::kDataSharingFeature)) {
       datatypes.Put(syncer::COLLABORATION_GROUP);
       datatypes.Put(syncer::SHARED_TAB_GROUP_DATA);
+      if (base::FeatureList::IsEnabled(
+              syncer::kSyncSharedTabGroupAccountData)) {
+        datatypes.Put(syncer::SHARED_TAB_GROUP_ACCOUNT_DATA);
+      }
+      if (base::FeatureList::IsEnabled(syncer::kSyncSharedComment)) {
+        datatypes.Put(syncer::SHARED_COMMENT);
+      }
     }
 #if BUILDFLAG(IS_ANDROID)
     if (base::FeatureList::IsEnabled(syncer::kWebApkBackupAndRestoreBackend)) {
@@ -209,10 +213,6 @@ class SyncServiceFactoryTest : public testing::Test {
 
     if (base::FeatureList::IsEnabled(syncer::kSyncAutofillLoyaltyCard)) {
       datatypes.Put(syncer::AUTOFILL_VALUABLE);
-    }
-
-    if (base::FeatureList::IsEnabled(syncer::kSyncSharedTabGroupAccountData)) {
-      datatypes.Put(syncer::SHARED_TAB_GROUP_ACCOUNT_DATA);
     }
 
     return datatypes;

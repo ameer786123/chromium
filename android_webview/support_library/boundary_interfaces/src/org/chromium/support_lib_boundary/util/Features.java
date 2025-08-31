@@ -112,7 +112,7 @@ public class Features {
     /**
      * @deprecated Feature was renamed to WEB_MESSAGE_ARRAY_BUFFER. Do not reuse feature name.
      */
-    @Deprecated()
+    @Deprecated
     public static final String WEB_MESSAGE_GET_MESSAGE_PAYLOAD = "WEB_MESSAGE_GET_MESSAGE_PAYLOAD";
 
     // JsReplyProxy.postMessageWithPayload
@@ -215,7 +215,7 @@ public class Features {
     /**
      * @deprecated Feature was never launched. Do not reuse feature name.
      */
-    @Deprecated()
+    @Deprecated
     public static final String REQUESTED_WITH_HEADER_CONTROL = "REQUESTED_WITH_HEADER_CONTROL";
 
     // WebSettingsCompat.setRequestedWithHeaderAllowList
@@ -260,7 +260,7 @@ public class Features {
     public static final String MULTI_PROFILE = "MULTI_PROFILE";
 
     // WebSettingsCompat.enableRestrictSensitiveWebContent
-    @Deprecated()
+    @Deprecated
     public static final String RESTRICT_SENSITIVE_WEB_CONTENT = "RESTRICT_SENSITIVE_WEB_CONTENT";
 
     // WebSettingsCompat.setUserAgentMetadataFromMap
@@ -290,7 +290,7 @@ public class Features {
 
     // Profile.prefetchUrl
     // Profile.clearPrefetch
-    public static final String PREFETCH_WITH_URL = "PREFETCH_URL_V4";
+    public static final String PREFETCH_WITH_URL = "PREFETCH_URL_V5";
 
     // WebviewCompat.setDefaultTrafficStatsTag
     // WebviewCompat.setDefaultTrafficStatsUid
@@ -298,10 +298,13 @@ public class Features {
 
     // WebViewCompat.startUpWebView
     public static final String ASYNC_WEBVIEW_STARTUP = "ASYNC_WEBVIEW_STARTUP";
+    // WebViewStartUpResult.getAsyncStartUpLocations
+    public static final String ASYNC_WEBVIEW_STARTUP_ASYNC_STARTUP_LOCATIONS =
+            "ASYNC_WEBVIEW_STARTUP_ASYNC_STARTUP_LOCATIONS";
 
     // WebViewCompat.prerenderUrl
     // WebViewCompat.clearPrerender
-    public static final String PRERENDER_WITH_URL = "PRERENDER_URL_V2";
+    public static final String PRERENDER_WITH_URL = "PRERENDER_URL_V3";
 
     // WebStorageCompat.deleteBrowsingData
     // WebStorageCompat.deleteBrowsingDataForSite
@@ -342,20 +345,6 @@ public class Features {
     public static final String WEB_VIEW_NAVIGATION_CLIENT_BASIC_USAGE =
             "WEB_VIEW_NAVIGATION_CLIENT_BASIC_USAGE";
 
-    // WebViewCompat.setAsyncShouldInterceptRequestCallback
-    // WebViewCompat.clearAsyncShouldInterceptRequestCallback
-    // ServiceWorkerControllerCompat.setAsyncShouldInterceptRequestCallback
-    // ServiceWorkerControllerCompat.clearAsyncShouldInterceptRequestCallback
-    // AsyncShouldInterceptRequestCallback.shouldInterceptRequestAsync
-    // WebResponseCallback.intercept
-    // WebResponseCallback.doNotIntercept
-    // WebResourceRequest#getRequestHeadersMultiMap
-    // WebResourceResponse#setResponseHeaders
-    // WebResourceResponse#getResponseHeaders
-    // WebResourceResponse#setResponseHeadersMultiMap
-    // WebResourceResponse#getResponseHeadersMultiMap
-    public static final String ASYNC_SHOULD_INTERCEPT_REQUEST = "ASYNC_SHOULD_INTERCEPT_REQUEST";
-
     // SupportLibWebViewChromium weakly reference WebView
     public static final String PROVIDER_WEAKLY_REF_WEBVIEW = "PROVIDER_WEAKLY_REF_WEBVIEW";
 
@@ -364,4 +353,33 @@ public class Features {
     // WebSettingsCompat#setHasEnrolledInstrumentEnabled
     // WebSettingsCompat#getHasEnrolledInstrumentEnabled
     public static final String PAYMENT_REQUEST = "PAYMENT_REQUEST";
+
+    // WebViewBuilder
+    public static final String WEBVIEW_BUILDER = "WEBVIEW_BUILDER";
+
+    // WebSettingsCompat.setIncludeCookiesOnIntercept
+    // WebSettingsCompat.getIncludeCookiesOnIntercept
+    // ServiceWorkerWebSettingsCompat.setIncludeCookiesOnIntercept
+    // ServiceWorkerWebSettingsCompat.getIncludeCookiesOnIntercept
+    // WebResourceResponseCompat.setCookieHeaderValues
+    public static final String COOKIE_INTERCEPT = "COOKIE_INTERCEPT";
+
+    // Profile.warmUpRendererProcess
+    public static final String WARM_UP_RENDERER_PROCESS = "WARM_UP_RENDERER_PROCESS";
+
+    // Profile.setExtraHeaderForOrigins
+    // Profile.hasExtraHeaderForOrigins
+    // Profile.clearExtraHeaderForOrigins
+    // Profile.clearAllExtraHeadersForOrigins
+    public static final String EXTRA_HEADER_FOR_ORIGINS = "EXTRA_HEADER_FOR_ORIGINS";
+
+    // WebSettingsCompat.setBackForwardCacheSettings
+    // WebSettingsCompat.getBackForwardCacheSettings
+    public static final String BACK_FORWARD_CACHE_SETTINGS = "BACK_FORWARD_CACHE_SETTINGS";
+
+    // Profile.preconnect
+    public static final String PRECONNECT = "PRECONNECT";
+
+    // WebSettingsCompat#setHyperlinkContextMenuItems
+    public static final String HYPERLINK_CONTEXT_MENU_ITEMS = "HYPERLINK_CONTEXT_MENU_ITEMS";
 }

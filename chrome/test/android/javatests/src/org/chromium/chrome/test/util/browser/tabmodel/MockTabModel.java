@@ -26,6 +26,7 @@ import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.tabmodel.TabRemover;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 /** Almost empty implementation to mock a TabModel. It only handles tab creation and queries. */
@@ -37,11 +38,12 @@ public class MockTabModel extends EmptyTabModel {
     public interface MockTabModelDelegate {
         /**
          * Creates a Tab.
+         *
          * @param id ID of the Tab.
          * @param incognito Whether the Tab is incognito.
          * @return Tab that is created.
          */
-        public MockTab createTab(int id, boolean incognito);
+        MockTab createTab(int id, boolean incognito);
     }
 
     /**
@@ -50,7 +52,7 @@ public class MockTabModel extends EmptyTabModel {
      * this is either irrelevant to the test or requires customization for different states.
      */
     public static class ComprehensiveTabList extends EmptyTabModel {
-        private List<Tab> mAllTabs = new ArrayList<>();
+        private final List<Tab> mAllTabs = new ArrayList<>();
 
         /** Returns the list of tabs backing the comprehensive model. */
         public List<Tab> getTabList() {
@@ -66,6 +68,11 @@ public class MockTabModel extends EmptyTabModel {
         public Tab getTabAt(int index) {
             return mAllTabs.get(index);
         }
+
+        @Override
+        public Iterator<Tab> iterator() {
+            return mAllTabs.iterator();
+        }
     }
 
     private int mIndex = TabModel.INVALID_TAB_INDEX;
@@ -74,7 +81,7 @@ public class MockTabModel extends EmptyTabModel {
     private final ObservableSupplierImpl<Integer> mTabCountSupplier =
             new ObservableSupplierImpl<>();
     private final ObserverList<TabModelObserver> mObservers = new ObserverList<>();
-    private final ArrayList<Tab> mTabs = new ArrayList<Tab>();
+    private final ArrayList<Tab> mTabs = new ArrayList<>();
     private final ComprehensiveTabList mComprehensiveModel = new ComprehensiveTabList();
     private final Profile mProfile;
     private final MockTabModelDelegate mDelegate;
@@ -184,6 +191,11 @@ public class MockTabModel extends EmptyTabModel {
         if (position < 0 || position > mTabs.size()) return null;
 
         return mTabs.get(position);
+    }
+
+    @Override
+    public Iterator<Tab> iterator() {
+        return mTabs.iterator();
     }
 
     @Override

@@ -20,7 +20,7 @@
 #include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/table/table_view.h"
 #include "ui/views/views_export.h"
@@ -60,7 +60,6 @@ class VIEWS_EXPORT ViewAXPlatformNodeDelegate
   void EndPopupFocusOverride() override;
   void FireFocusAfterMenuClose() override;
   gfx::NativeViewAccessible GetNativeObject() const override;
-  void OnWidgetUpdated(Widget* widget, Widget* old_widget) override;
   void FireNativeEvent(ax::mojom::Event event_type) override;
 #if BUILDFLAG(IS_MAC)
   void AnnounceTextAs(const std::u16string& text,
@@ -76,7 +75,6 @@ class VIEWS_EXPORT ViewAXPlatformNodeDelegate
   // Also in |ViewAccessibility|.
   bool IsChildOfLeaf() const override;
   const ui::AXSelection GetUnignoredSelection() const override;
-  const ui::AXSelection GetHypertextSelection() const override;
   ui::AXNodePosition::AXPositionInstance CreatePositionAt(
       int offset,
       ax::mojom::TextAffinity affinity) const override;

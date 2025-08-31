@@ -7,11 +7,12 @@
 #import <map>
 
 #import "base/apple/foundation_util.h"
+#import "base/feature_list.h"
 #import "base/metrics/user_metrics.h"
+#import "ios/chrome/browser/badges/model/features.h"
 #import "ios/chrome/browser/badges/ui_bundled/badge_button.h"
 #import "ios/chrome/browser/badges/ui_bundled/badge_consumer.h"
 #import "ios/chrome/browser/badges/ui_bundled/badge_item.h"
-#import "ios/chrome/browser/badges/ui_bundled/badge_static_item.h"
 #import "ios/chrome/browser/badges/ui_bundled/badge_tappable_item.h"
 #import "ios/chrome/browser/badges/ui_bundled/badge_type_util.h"
 #import "ios/chrome/browser/infobars/model/badge_state.h"
@@ -67,9 +68,6 @@ const char kInfobarOverflowBadgeShownUserAction[] =
 // The infobar banner OverlayPresenter.
 @property(nonatomic, readonly) OverlayPresenter* overlayPresenter;
 
-// The incognito badge, or nil if the Browser is not off-the-record.
-@property(nonatomic, readonly) id<BadgeItem> offTheRecordBadge;
-
 // Array of all available badges.
 @property(nonatomic, strong, readonly) NSArray<id<BadgeItem>>* badges;
 
@@ -81,15 +79,9 @@ const char kInfobarOverflowBadgeShownUserAction[] =
 @implementation BadgeMediator
 
 - (instancetype)initWithWebStateList:(WebStateList*)webStateList
-                    overlayPresenter:(OverlayPresenter*)overlayPresenter
-                         isIncognito:(BOOL)isIncognito {
+                    overlayPresenter:(OverlayPresenter*)overlayPresenter {
   self = [super init];
   if (self) {
-    // Create the incognito badge if `browser` is off-the-record.
-    if (isIncognito) {
-      _offTheRecordBadge =
-          [[BadgeStaticItem alloc] initWithBadgeType:kBadgeTypeIncognito];
-    }
     // Set up the OverlayPresenterObserver for the infobar banner presentation.
     _overlayPresenterObserver =
         std::make_unique<OverlayPresenterObserverBridge>(self);
@@ -234,8 +226,7 @@ const char kInfobarOverflowBadgeShownUserAction[] =
     displayedBadge = [badges firstObject];
   }
   // Update the consumer with the new badge items.
-  [self.consumer setupWithDisplayedBadge:displayedBadge
-                         fullScreenBadge:self.offTheRecordBadge];
+  [self.consumer setupWithDisplayedBadge:displayedBadge];
 }
 
 #pragma mark - BadgeDelegate
@@ -249,6 +240,7 @@ const char kInfobarOverflowBadgeShownUserAction[] =
 }
 
 - (void)passwordsBadgeButtonTapped:(id)sender {
+  CHECK(!base::FeatureList::IsEnabled(kAutofillBadgeRemoval));
   BadgeButton* badgeButton = base::apple::ObjCCastStrict<BadgeButton>(sender);
   DCHECK(badgeButton.badgeType == kBadgeTypePasswordSave ||
          badgeButton.badgeType == kBadgeTypePasswordUpdate);
@@ -257,6 +249,7 @@ const char kInfobarOverflowBadgeShownUserAction[] =
 }
 
 - (void)saveAddressProfileBadgeButtonTapped:(id)sender {
+  CHECK(!base::FeatureList::IsEnabled(kAutofillBadgeRemoval));
   BadgeButton* badgeButton = base::apple::ObjCCastStrict<BadgeButton>(sender);
   DCHECK_EQ(badgeButton.badgeType, kBadgeTypeSaveAddressProfile);
 
@@ -264,6 +257,7 @@ const char kInfobarOverflowBadgeShownUserAction[] =
 }
 
 - (void)saveCardBadgeButtonTapped:(id)sender {
+  CHECK(!base::FeatureList::IsEnabled(kAutofillBadgeRemoval));
   BadgeButton* badgeButton = base::apple::ObjCCastStrict<BadgeButton>(sender);
   DCHECK_EQ(badgeButton.badgeType, kBadgeTypeSaveCard);
 
@@ -299,7 +293,35 @@ const char kInfobarOverflowBadgeShownUserAction[] =
 #pragma mark - InfobarBadgeTabHelperDelegate
 
 - (BOOL)badgeSupportedForInfobarType:(InfobarType)infobarType {
-  return BadgeTypeForInfobarType(infobarType) != kBadgeTypeNone;
+  if (base::FeatureList::IsEnabled(kAutofillBadgeRemoval)) {
+    // TODO(crbug.com/440366193): Remove this ad hoc logic once we can fully
+    // cleanup the autofill and password badges code once we are done
+    // experimenting.
+    switch (infobarType) {
+      case InfobarType::kInfobarTypePasswordSave:
+      case InfobarType::kInfobarTypePasswordUpdate:
+      case InfobarType::kInfobarTypeSaveCard:
+      case InfobarType::kInfobarTypeSaveAutofillAddressProfile:
+        // Special case where we dynamically want to exclude the badge for
+        // certain infobars while still keeping a badge type for the infobar
+        // in BadgeTypeForInfobarType(). This ad hoc logic is temporary the
+        // time we sunset these badges.
+        return false;
+      case InfobarType::kInfobarTypeConfirm:
+      case InfobarType::kInfobarTypeTranslate:
+      case InfobarType::kInfobarTypePermissions:
+      case InfobarType::kInfobarTypeTailoredSecurityService:
+      case InfobarType::kInfobarTypeSyncError:
+      case InfobarType::kInfobarTypeEnhancedSafeBrowsing:
+      case InfobarType::kInfobarTypeSignin:
+      case InfobarType::kInfobarTypeCollaborationGroup:
+      case InfobarType::kInfobarTypeCollaborationOutOfDate:
+      case InfobarType::kInfobarTypeSaveCvc:
+        return BadgeTypeForInfobarType(infobarType) != kBadgeTypeNone;
+    }
+  } else {
+    return BadgeTypeForInfobarType(infobarType) != kBadgeTypeNone;
+  }
 }
 
 - (void)updateBadgesShownForWebState:(web::WebState*)webState {
@@ -356,7 +378,6 @@ const char kInfobarOverflowBadgeShownUserAction[] =
   }
 
   [self.consumer updateDisplayedBadge:displayedBadge
-                      fullScreenBadge:self.offTheRecordBadge
                               infoBar:infoBar];
   [self updateConsumerReadStatus];
 }

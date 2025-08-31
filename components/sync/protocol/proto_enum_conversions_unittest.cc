@@ -127,8 +127,7 @@ TEST(ProtoEnumConversionsTest,
 }
 
 TEST(ProtoEnumConversionsTest, GetBrowserColorVariantString) {
-  TestEnumStringsNonEmpty(
-      sync_pb::ThemeSpecifics::UserColorTheme::BrowserColorVariant);
+  TestEnumStringsNonEmpty(sync_pb::UserColorTheme::BrowserColorVariant);
 }
 
 TEST(ProtoEnumConversionsTest, GetBrowserColorSchemeString) {
@@ -142,6 +141,18 @@ TEST(ProtoEnumConversionsTest, GetContactInfoAddressType) {
 TEST(ProtoEnumConversionsTest, GetCardInfoRetrievalEnrollmentStateString) {
   TestEnumStringsNonEmpty(
       sync_pb::WalletMaskedCreditCard::CardInfoRetrievalEnrollmentState);
+}
+
+TEST(ProtoEnumConversionsTest, GetCardBenefitSourceString) {
+  TestEnumStringsNonEmpty(sync_pb::WalletMaskedCreditCard::CardBenefitSource);
+}
+
+TEST(ProtoEnumConversionsTest, GetCardCreationSourceString) {
+  TestEnumStringsNonEmpty(sync_pb::WalletMaskedCreditCard::CardCreationSource);
+}
+
+TEST(ProtoEnumConversionsTest, GetActionRequiredString) {
+  TestEnumStringsNonEmpty(sync_pb::PaymentInstrument::ActionRequired);
 }
 
 }  // namespace

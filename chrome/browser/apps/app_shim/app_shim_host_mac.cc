@@ -179,6 +179,10 @@ base::ProcessId AppShimHost::GetAppShimPid() const {
   return base::kNullProcessId;
 }
 
+base::WeakPtr<AppShimHost> AppShimHost::GetLaunchWeakPtr() {
+  return launch_weak_factory_.GetWeakPtr();
+}
+
 bool AppShimHost::HasBootstrapConnected() const {
   return bootstrap_ != nullptr;
 }
@@ -266,12 +270,14 @@ void AppShimHost::EnableAccessibilitySupport(
   switch (mode) {
     case chrome::mojom::AppShimScreenReaderSupportMode::kComplete: {
       process_accessibility_mode_ =
-          accessibility_state->CreateScopedModeForProcess(ui::kAXModeComplete);
+          accessibility_state->CreateScopedModeForProcess(
+              ui::kAXModeComplete | ui::AXMode::kFromPlatform);
       break;
     }
     case chrome::mojom::AppShimScreenReaderSupportMode::kPartial: {
       process_accessibility_mode_ =
-          accessibility_state->CreateScopedModeForProcess(ui::kAXModeBasic);
+          accessibility_state->CreateScopedModeForProcess(
+              ui::kAXModeBasic | ui::AXMode::kFromPlatform);
       break;
     }
   }

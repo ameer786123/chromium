@@ -9,7 +9,7 @@ use crate::inherit::{
     find_inherited_privilege_group, find_inherited_security_critical_flag,
     find_inherited_shipped_flag,
 };
-use crate::paths::{self, get_vendor_dir_for_package};
+use crate::paths::{self, get_build_dir_for_package, get_vendor_dir_for_package};
 use crate::readme;
 use crate::util::{
     create_dirs_if_needed, get_guppy_package_graph, init_handlebars,
@@ -24,6 +24,8 @@ use guppy::graph::PackageMetadata;
 use itertools::Itertools;
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
 pub fn vendor(args: VendorCommandArgs, paths: &paths::ChromiumPaths) -> Result<()> {
@@ -65,31 +67,16 @@ fn download_crates(args: &VendorCommandArgs, paths: &paths::ChromiumPaths) -> Re
     // lock file.
     remove_checksums_from_lock(paths.third_party_cargo_root)?;
 
-    {
-        let package_names = graph.packages().map(|p| p.name().to_string()).collect::<HashSet<_>>();
-        for name in config.per_crate_config.keys() {
-            if !package_names.contains(name) {
-                return Err(format_err!(
-                    "Config found for crate {name}, but it is not a dependency, in {file}",
-                    name = name,
-                    file = config_file_path.display()
-                ));
-            }
-        }
-    }
-
     // Download missing dirs, remove the rest.
     let vendor_dir = paths.third_party_cargo_root.join("vendor");
     create_dirs_if_needed(&vendor_dir).context("creating vendor dir")?;
-    let mut dirs_to_remove: HashSet<String> = std::fs::read_dir(&vendor_dir)
+    let mut dirs_to_remove: HashSet<OsString> = std::fs::read_dir(&vendor_dir)
         .context("reading vendor dir")?
-        .filter_map(|dir| {
-            if let Ok(entry) = dir {
-                if entry.metadata().map(|m| m.is_dir()).unwrap_or(false) {
-                    return Some(entry.file_name().to_string_lossy().to_string());
-                }
-            }
-            None
+        .filter_map(|entry| {
+            entry
+                .ok()
+                .filter(|entry| entry.metadata().map(|m| m.is_dir()).unwrap_or(false))
+                .map(|entry| vendor_dir.join(entry.file_name()).as_os_str().to_os_string())
         })
         .collect();
     for p in graph.packages() {
@@ -103,14 +90,11 @@ fn download_crates(args: &VendorCommandArgs, paths: &paths::ChromiumPaths) -> Re
         // `some-crate-v1-placeholder` rather than `some-crate-v1`), but always using
         // the same name simplifies other tooling (e.g. how
         // `create_update_cl.py` calculates the vendored directory).
-        let crate_dirname = get_vendor_dir_for_package(p.name(), p.version());
-        let crate_path = {
-            let vendor_dir = paths.third_party_cargo_root.join("vendor");
-            vendor_dir.join(&crate_dirname)
-        };
+        let crate_path = get_vendor_dir_for_package(paths, p.name(), p.version());
+        let crate_dirname = crate_path.file_name().unwrap();
 
         // Keep directories corresponding to packages from the dependency tree.
-        dirs_to_remove.remove(&crate_dirname);
+        dirs_to_remove.remove(crate_path.as_os_str());
 
         let is_already_right_version =
             get_package_id_from_vendored_dir(&crate_path).is_some_and(|vendored| {
@@ -128,26 +112,34 @@ fn download_crates(args: &VendorCommandArgs, paths: &paths::ChromiumPaths) -> Re
         }
 
         if is_removed(p.id()) {
-            println!("Generating placeholder for removed crate {}", &crate_dirname);
-            generate_placeholder_crate(p, &crate_path)?;
+            let msg =
+                format!("Generating placeholder for removed crate {}", crate_dirname.display());
+            println!("{msg}");
+            generate_placeholder_crate(p, &crate_path).context(msg)?;
         } else {
-            println!("Downloading {}", &crate_dirname);
-            download_crate(p.name(), p.version(), paths)?;
+            let msg = format!("Downloading {}", crate_dirname.display());
+            println!("{msg}");
+            download_crate(p.name(), p.version(), paths).context(msg)?;
             let skip_patches = match &args.no_patches {
                 Some(v) => v.is_empty() || v.iter().any(|x| *x == p.name()),
                 None => false,
             };
             if skip_patches {
-                log::warn!("Skipped applying patches for {}", &crate_dirname);
+                log::warn!("Skipped applying patches for {}", crate_dirname.display());
             } else {
-                apply_patches(p.name(), p.version(), paths)?
+                apply_patches(p.name(), p.version(), paths).context(
+                    "Applying patches failed - hopefully \
+                     `third_party/rust/chromium_crates_io/patches/README.md` \
+                     provides some useful guidance for the next steps...",
+                )?;
             }
+            forward_to_owners_file_in_build_dir(paths, p)?;
         }
     }
     for d in &dirs_to_remove {
-        println!("Deleting {}", d);
-        std::fs::remove_dir_all(paths.third_party_cargo_root.join("vendor").join(d))
-            .with_context(|| format!("removing {}", d))?
+        let msg = format!("Deleting {}", d.display());
+        println!("{msg}");
+        std::fs::remove_dir_all(d).context(msg)?;
     }
     Ok(())
 }
@@ -211,7 +203,7 @@ fn update_vendored_metadata(args: &VendorCommandArgs, paths: &paths::ChromiumPat
             find_shipped,
         )?;
 
-    // Find any epoch dirs which don't correspond to vendored sources anymore,
+    // Find any build dirs which don't correspond to vendored sources anymore,
     // i.e. that are not present in `all_readme_files`.
     for crate_dir in std::fs::read_dir(paths.third_party)? {
         let crate_dir = crate_dir.context("crate_dir")?;
@@ -286,9 +278,14 @@ fn download_crate(
     version: &semver::Version,
     paths: &paths::ChromiumPaths,
 ) -> Result<()> {
-    let mut response = reqwest::blocking::get(format!(
-        "https://crates.io/api/v1/crates/{name}/{version}/download",
-    ))?;
+    let mut response = {
+        // https://crates.io/data-access#api asks to provide a user agent as a courtesy:
+        static USER_AGENT: &str = "gnrt by rust-dev@chromium.org";
+        let client = reqwest::blocking::Client::builder().user_agent(USER_AGENT).build()?;
+
+        let download_url = format!("https://crates.io/api/v1/crates/{name}/{version}/download");
+        client.get(download_url).send()?
+    };
     if response.status() != 200 {
         return Err(format_err!("Failed to download crate {}: {}", name, response.status()));
     }
@@ -305,36 +302,46 @@ fn download_crate(
         use std::io::Read;
         response
             .read_to_end(&mut bytes)
-            .with_context(|| format!("reading http response for crate {}", name))?;
+            .with_context(|| format!("reading http response for crate {name}"))?;
     }
     let unzipped = flate2::read::GzDecoder::new(bytes.as_slice());
     let mut archive = tar::Archive::new(unzipped);
 
     // Using `TempDir::with_prefix_in` to ensure that `std::fs::rename` below
     // doesn't need to work across mount points / across filesystems.
-    let vendor_dir = paths.third_party_cargo_root.join("vendor");
-    let tempdir = tempfile::TempDir::with_prefix_in("tmp-gnrt-vendor", &vendor_dir)?;
-    archive.unpack(tempdir.path())?;
+    let tempdir =
+        tempfile::TempDir::with_prefix_in("tmp-gnrt-vendor", paths.third_party_cargo_root)?;
+    archive
+        .unpack(tempdir.path())
+        .with_context(|| format!("unpacking http response for crate {name}"))?;
 
     // Remove old vendored dir (most likely an old version of the crate).
-    let crate_dir = vendor_dir.join(get_vendor_dir_for_package(name, version));
-    std::fs::remove_dir_all(&crate_dir).or_else(|err| {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            // Ignore errors if the directory already didn't exist.
-            Ok(())
-        } else {
-            Err(err)
-        }
-    })?;
+    let crate_dir = get_vendor_dir_for_package(paths, name, version);
+    std::fs::remove_dir_all(&crate_dir)
+        .or_else(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                // Ignore errors if the directory already didn't exist.
+                Ok(())
+            } else {
+                Err(err)
+            }
+        })
+        .with_context(|| format!("Removing old vendored sources at {}", crate_dir.display()))?;
 
     // Expecting that the archive will contain a directory with a predictable
     // path based on crate name and version.  Move this directory to the final
     // destination (to `crate_dir`).
-    let archived_dir = tempdir.path().join(format!("{}-{}", name, version));
-    std::fs::rename(archived_dir, &crate_dir)?;
+    let archived_dir = tempdir.path().join(format!("{name}-{version}"));
+    std::fs::rename(&archived_dir, &crate_dir).with_context(|| {
+        format!(
+            "Moving unpacked crate contents from {} to {}",
+            archived_dir.display(),
+            crate_dir.display(),
+        )
+    })?;
 
     std::fs::write(crate_dir.join(".cargo-checksum.json"), "{\"files\":{}}\n")
-        .with_context(|| format!("writing .cargo-checksum.json for crate {}", name))?;
+        .with_context(|| format!("writing .cargo-checksum.json for crate {name}"))?;
 
     Ok(())
 }
@@ -344,8 +351,7 @@ fn apply_patches(
     version: &semver::Version,
     paths: &paths::ChromiumPaths,
 ) -> Result<()> {
-    let vendor_dir = paths.third_party_cargo_root.join("vendor");
-    let crate_dir = vendor_dir.join(get_vendor_dir_for_package(name, version));
+    let crate_dir = get_vendor_dir_for_package(paths, name, version);
 
     let mut patches = Vec::new();
     let Ok(patch_dir) = std::fs::read_dir(paths.third_party_cargo_root.join("patches").join(name))
@@ -396,6 +402,32 @@ fn apply_patches(
         }
     }
 
+    Ok(())
+}
+
+/// Checks if `//third_party/rust/crate_name/OWNERS` exists and if it does,
+/// then creates
+/// `//third_party/rust/chromium_crates_io/vendor/crate_name-v123/OWNERS`
+/// which forward to the former `OWNERS` file.
+fn forward_to_owners_file_in_build_dir(
+    paths: &paths::ChromiumPaths,
+    package: guppy::graph::PackageMetadata,
+) -> Result<()> {
+    let build_dir = get_build_dir_for_package(paths, package.name(), package.version());
+
+    // We could in theory check first `//t/r/crate_name/v1/OWNERS` (in addition to
+    // checking `//t/r/crate_name/OWNERS` as we already do below).  We don't do
+    // this because the epoch-specific dirs are auto-deleted by `gnrt` when the
+    // epoch goes away.  (i.e. we expect non-generated files to be outside of
+    // the epoch-specific dirs).
+    let build_dir_owners_file = build_dir.parent().unwrap().join("OWNERS");
+    if std::fs::exists(&build_dir_owners_file).unwrap_or(false) {
+        use std::io::Write;
+        let vendor_dir = get_vendor_dir_for_package(paths, package.name(), package.version());
+        let mut f = File::create(vendor_dir.join("OWNERS"))?;
+        writeln!(f, "# This file has been auto-generated by the `gnrt` tool.")?;
+        writeln!(f, "file://{}", build_dir_owners_file.display())?;
+    }
     Ok(())
 }
 

@@ -342,6 +342,10 @@ std::string JobConfigurationBase::GetContentType() {
   return kPostContentType;
 }
 
+bool JobConfigurationBase::AreCookiesUsed() {
+  return use_cookies_;
+}
+
 scoped_refptr<network::SharedURLLoaderFactory>
 JobConfigurationBase::GetUrlLoaderFactory() {
   return factory_;
@@ -600,9 +604,10 @@ DeviceManagementService::JobImpl::OnURLLoaderCompleteInternal(
   LOG_POLICY(WARNING, CBCM_ENROLLMENT)
       << "Request of type "
       << JobConfiguration::GetJobTypeAsString(config_->GetType())
-      << " failed (net_error = " << net_error
-      << ", response_code = " << response_code << "), retrying in "
-      << retry_delay << "ms.";
+      << " failed (net_error = " << net::ErrorToString(net_error) << " ("
+      << net_error
+      << "), response_code = " << ResponseCodeToString(response_code) << "( "
+      << response_code << ")), retrying in " << retry_delay << "ms.";
   if (!is_test) {
     task_runner_->PostDelayedTask(
         FROM_HERE,
@@ -762,6 +767,10 @@ DeviceManagementService::CreateJobForTesting(
   auto job = std::make_unique<JobImpl>(task_runner_, std::move(config));
   JobForTesting job_for_testing(job.get());  // IN-TEST
   return std::make_pair(std::move(job), std::move(job_for_testing));
+}
+
+const scoped_refptr<base::SequencedTaskRunner> DeviceManagementService::GetTaskRunnerForTesting() {
+  return task_runner_;
 }
 
 std::unique_ptr<DeviceManagementService::Job>

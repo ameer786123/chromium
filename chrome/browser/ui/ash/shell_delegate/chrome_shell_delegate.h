@@ -35,6 +35,8 @@ class ChromeShellDelegate : public ash::ShellDelegate {
       PrefService* local_state) const override;
   std::unique_ptr<ash::ClipboardHistoryControllerDelegate>
   CreateClipboardHistoryControllerDelegate() const override;
+  std::unique_ptr<ash::ClipboardImageModelFactory>
+  CreateClipboardImageModelFactory() const override;
   std::unique_ptr<ash::CoralDelegate> CreateCoralDelegate() const override;
   std::unique_ptr<ash::GameDashboardDelegate> CreateGameDashboardDelegate()
       const override;
@@ -102,8 +104,6 @@ class ChromeShellDelegate : public ash::ShellDelegate {
       const std::vector<raw_ptr<aura::Window, VectorExperimental>>& windows)
       override;
   std::string GetVersionString() override;
-  void ShouldExitFullscreenBeforeLock(
-      ShouldExitFullscreenCallback callback) override;
   void OpenMultitaskingSettings() override;
   bool IsNoFirstRunSwitchOn() const override;
 };

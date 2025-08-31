@@ -54,8 +54,8 @@ class BASE_EXPORT SequenceManager {
 
     static PrioritySettings CreateDefault();
 
-    template <typename T,
-              typename = typename std::enable_if_t<std::is_enum_v<T>>>
+    template <typename T>
+      requires(std::is_enum_v<T>)
     PrioritySettings(T priority_count, T default_priority)
         : PrioritySettings(
               static_cast<TaskQueue::QueuePriority>(priority_count),
@@ -80,7 +80,6 @@ class BASE_EXPORT SequenceManager {
       return default_priority_;
     }
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
     void SetProtoPriorityConverter(
         perfetto::protos::pbzero::SequenceManagerTask::Priority (
             *proto_priority_converter)(TaskQueue::QueuePriority)) {
@@ -89,16 +88,13 @@ class BASE_EXPORT SequenceManager {
 
     perfetto::protos::pbzero::SequenceManagerTask::Priority TaskPriorityToProto(
         TaskQueue::QueuePriority priority) const;
-#endif
 
    private:
     TaskQueue::QueuePriority priority_count_;
     TaskQueue::QueuePriority default_priority_;
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
     perfetto::protos::pbzero::SequenceManagerTask::Priority (
         *proto_priority_converter_)(TaskQueue::QueuePriority) = nullptr;
-#endif
 
 #if DCHECK_IS_ON()
    public:
@@ -142,6 +138,11 @@ class BASE_EXPORT SequenceManager {
     ~Settings();
 
     MessagePumpType message_loop_type = MessagePumpType::DEFAULT;
+
+    // Whether or not CPU time should be sampled for a fixed percentage of
+    // tasks.
+    bool sample_cpu_time = false;
+
     raw_ptr<const TickClock, DanglingUntriaged> clock =
         DefaultTickClock::GetInstance();
 
@@ -152,6 +153,13 @@ class BASE_EXPORT SequenceManager {
     bool can_run_tasks_by_batches = false;
 
     PrioritySettings priority_settings = PrioritySettings::CreateDefault();
+
+    // Whether this sequence manager represents the main thread of the process.
+    // This is only used to set
+    // base::SingleThreadTaskRunner::GetMainThreadDefault().
+    bool is_main_thread = false;
+
+    bool should_report_lock_metrics = false;
 
 #if DCHECK_IS_ON()
     // TODO(alexclarke): Consider adding command line flags to control these.
@@ -196,6 +204,10 @@ class BASE_EXPORT SequenceManager {
   // CreateUnboundSequenceManager(). Must not be called in any other
   // circumstances. The ownership of the pump is transferred to SequenceManager.
   virtual void BindToMessagePump(std::unique_ptr<MessagePump> message_pump) = 0;
+
+  // Gets a pointer to the message pump that this sequence manager is bound to,
+  // if any.
+  virtual MessagePump* GetMessagePump() const = 0;
 
   // Must be called on the main thread.
   // Can be called only once, before creating TaskQueues.
@@ -288,6 +300,10 @@ class BASE_EXPORT SequenceManager::Settings::Builder {
   // Sets the MessagePumpType which is used to create a MessagePump.
   Builder& SetMessagePumpType(MessagePumpType message_loop_type);
 
+  // Whether or not CPU time will be sampled for tasks at a fixed sampling
+  // ratio.
+  Builder& SetShouldSampleCPUTime(bool enable);
+
   // Sets the TickClock the SequenceManager uses to obtain Now.
   Builder& SetTickClock(const TickClock* clock);
 
@@ -298,6 +314,11 @@ class BASE_EXPORT SequenceManager::Settings::Builder {
   Builder& SetCanRunTasksByBatches(bool can_run_tasks_by_batches);
 
   Builder& SetPrioritySettings(PrioritySettings settings);
+
+  Builder& SetIsMainThread(bool is_main_thread);
+
+  // Whether lock contention metrics should be reported to UMA.
+  Builder& SetShouldReportLockMetrics(bool enable);
 
 #if DCHECK_IS_ON()
   // Controls task execution logging.
@@ -342,6 +363,20 @@ CreateSequenceManagerOnCurrentThreadWithPump(
 // on the target thread by calling one of the Bind*() methods.
 BASE_EXPORT std::unique_ptr<SequenceManager> CreateUnboundSequenceManager(
     SequenceManager::Settings settings = SequenceManager::Settings());
+
+// Wrapper around SequenceManager::Settings.
+//
+// If you need `SequenceManager::Settings` in a header file, forward declare
+// this `SequenceManagerSettings` instead of including the full
+// `sequence_manager.h` header file. This helps avoid increasing compile size.
+// For an example of its usage, see base/thread.h.
+struct BASE_EXPORT SequenceManagerSettings {
+  explicit SequenceManagerSettings(SequenceManager::Settings settings);
+  SequenceManagerSettings(const SequenceManagerSettings&) = delete;
+  SequenceManagerSettings& operator=(const SequenceManagerSettings&) = delete;
+
+  SequenceManager::Settings settings;
+};
 
 }  // namespace sequence_manager
 }  // namespace base

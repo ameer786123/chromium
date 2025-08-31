@@ -15,6 +15,7 @@
 #include "base/containers/span.h"
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/signin/bound_session_credentials/bound_session_cookie_controller.h"
@@ -60,7 +61,8 @@ class BoundSessionCookieRefreshServiceImpl
     kCookiesCleared = 1,
     kSessionTerminationHeader = 2,
     kSessionOverride = 3,
-    kMaxValue = kSessionOverride,
+    kRotationStoppedTimeout = 4,
+    kMaxValue = kRotationStoppedTimeout,
   };
 
   BoundSessionCookieRefreshServiceImpl(
@@ -86,6 +88,7 @@ class BoundSessionCookieRefreshServiceImpl
           receiver) override;
   void CreateRegistrationRequest(
       BoundSessionRegistrationFetcherParam registration_params) override;
+  void StopCookieRotation(const BoundSessionKey& key) override;
   base::WeakPtr<BoundSessionCookieRefreshService> GetWeakPtr() override;
   void AddObserver(
       BoundSessionCookieRefreshService::Observer* observer) override;
@@ -159,6 +162,8 @@ class BoundSessionCookieRefreshServiceImpl
   void OnPersistentErrorEncountered(
       BoundSessionCookieController* controller,
       BoundSessionRefreshCookieFetcher::Result refresh_error) override;
+  void OnCookieRotationStoppedTimeout(
+      BoundSessionCookieController* controller) override;
 
   // StoragePartition::DataRemovalObserver:
   void OnStorageKeyDataCleared(
@@ -172,8 +177,8 @@ class BoundSessionCookieRefreshServiceImpl
       const bound_session_credentials::BoundSessionParams& bound_session_params,
       bool is_off_the_record_profile);
   void InitializeBoundSession(
-      const bound_session_credentials::BoundSessionParams&
-          bound_session_params);
+      const bound_session_credentials::BoundSessionParams& bound_session_params,
+      bool is_new_session);
 
   void UpdateAllRenderers();
 

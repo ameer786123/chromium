@@ -10,20 +10,17 @@ import android.view.View;
 import android.view.View.OnClickListener;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.ui.modelutil.PropertyKey;
-import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModel.ReadableObjectPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 
 /** List of properties used by TabGridDialog. */
+@NullMarked
 class TabGridDialogProperties {
-    /** The hashCode() of the {@link TabGridDialogMediator} currently updating the view. */
-    public static final PropertyModel.WritableObjectPropertyKey<Integer> BINDING_TOKEN =
-            new PropertyModel.WritableObjectPropertyKey<>();
-
     public static final ReadableObjectPropertyKey<BrowserControlsStateProvider>
             BROWSER_CONTROLS_STATE_PROVIDER = new ReadableObjectPropertyKey<>();
     public static final WritableObjectPropertyKey<OnClickListener> COLLAPSE_CLICK_LISTENER =
@@ -68,8 +65,6 @@ class TabGridDialogProperties {
             new WritableIntPropertyKey();
     public static final WritableObjectPropertyKey<String> DIALOG_UNGROUP_BAR_TEXT =
             new WritableObjectPropertyKey<>();
-    public static final WritableObjectPropertyKey<Integer> ANIMATION_BACKGROUND_COLOR =
-            new WritableObjectPropertyKey<>();
 
     /**
      * Integer, but not {@link WritableIntPropertyKey} so that we can force update on the same
@@ -111,10 +106,11 @@ class TabGridDialogProperties {
             new WritableObjectPropertyKey<>();
     public static final WritableObjectPropertyKey<Callback<TabKeyEventData>> PAGE_KEY_LISTENER =
             new WritableObjectPropertyKey<>();
+    public static final WritableBooleanPropertyKey SUPPRESS_ACCESSIBILITY =
+            new WritableBooleanPropertyKey();
 
     public static final PropertyKey[] ALL_KEYS =
             new PropertyKey[] {
-                BINDING_TOKEN,
                 BROWSER_CONTROLS_STATE_PROVIDER,
                 COLLAPSE_CLICK_LISTENER,
                 ADD_CLICK_LISTENER,
@@ -151,7 +147,6 @@ class TabGridDialogProperties {
                 TAB_GROUP_COLOR_ID,
                 IS_INCOGNITO,
                 COLOR_ICON_CLICK_LISTENER,
-                ANIMATION_BACKGROUND_COLOR,
                 HAIRLINE_COLOR,
                 HAIRLINE_VISIBILITY,
                 FORCE_ANIMATION_TO_FINISH,
@@ -159,5 +154,6 @@ class TabGridDialogProperties {
                 SHOW_SEND_FEEDBACK,
                 SEND_FEEDBACK_RUNNABLE,
                 PAGE_KEY_LISTENER,
+                SUPPRESS_ACCESSIBILITY,
             };
 }

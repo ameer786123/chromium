@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_ACTIONS_CHROME_ACTION_ID_H_
 #define CHROME_BROWSER_UI_ACTIONS_CHROME_ACTION_ID_H_
 
+#include "build/branding_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "ui/actions/action_id.h"
 
@@ -89,6 +90,7 @@
   E(kActionProfileMenuInAppMenu, IDC_PROFILE_MENU_IN_APP_MENU) \
   E(kActionPasswordsAndAutofillMenu, IDC_PASSWORDS_AND_AUTOFILL_MENU) \
   E(kActionShowMemorySaverChip) \
+  E(kActionShowCookieControls) \
   /* Page-manipulation commands that target a specified tab, which may not */ \
   /* be the active one. */ \
   E(kActionMuteTargetSite, IDC_MUTE_TARGET_SITE) \
@@ -117,6 +119,7 @@
   E(kActionOpenGuestProfile, IDC_OPEN_GUEST_PROFILE) \
   E(kActionAddNewProfile, IDC_ADD_NEW_PROFILE) \
   E(kActionManageChromeProfiles, IDC_MANAGE_CHROME_PROFILES) \
+  E(kActionShowSignin, IDC_SHOW_SIGNIN) \
   /* Zoom */ \
   E(kActionZoomMenu, IDC_ZOOM_MENU) \
   E(kActionZoomPlus, IDC_ZOOM_PLUS) \
@@ -178,6 +181,7 @@
   E(kActionShowBetaForum, IDC_SHOW_BETA_FORUM) \
   E(kActionToggleJavascriptAppleEvents, IDC_TOGGLE_JAVASCRIPT_APPLE_EVENTS) \
   E(kActionInstallPwa, IDC_INSTALL_PWA) \
+  E(kActionShowCollaborationRecentActivity) \
   E(kActionShowManagementPage, IDC_SHOW_MANAGEMENT_PAGE) \
   E(kActionPasteAndGo, IDC_PASTE_AND_GO) \
   E(kActionShowSaveLocalCardSignInPromoIfApplicable, \
@@ -185,6 +189,7 @@
   E(kActionCloseSignInPromo, IDC_CLOSE_SIGN_IN_PROMO) \
   E(kActionShowFullUrls, IDC_SHOW_FULL_URLS) \
   E(kActionShowGoogleLensShortcut, IDC_SHOW_GOOGLE_LENS_SHORTCUT) \
+  E(kActionShowSearchTools, IDC_SHOW_SEARCH_TOOLS) \
   E(kActionCaretBrowsingToggle, IDC_CARET_BROWSING_TOGGLE) \
   E(kActionChromeTips, IDC_CHROME_TIPS) \
   E(kActionChromeWhatsNew, IDC_CHROME_WHATS_NEW) \
@@ -329,6 +334,7 @@
     IDC_CONTENT_CONTEXT_RESTART_PACKAGED_APP) \
   E(kActionContentContextLensRegionSearch, \
     IDC_CONTENT_CONTEXT_LENS_REGION_SEARCH) \
+  E(kActionAiMode) \
   E(kActionContentContextWebRegionSearch, \
     IDC_CONTENT_CONTEXT_WEB_REGION_SEARCH) \
   E(kActionContentContextGeneratePassword, \
@@ -494,7 +500,10 @@
   E(kActionShowFileSystemAccess) \
   /*Toolbar pinning*/ \
   E(kActionPinActionToToolbar) \
-  E(kActionUnpinActionFromToolbar)
+  E(kActionUnpinActionFromToolbar) \
+  /*Commerce*/ \
+  E(kActionCommercePriceInsights) \
+  E(kActionCommerceDiscounts) \
 
 #if BUILDFLAG(IS_CHROMEOS)
 #define CHROME_PLATFORM_SPECIFIC_ACTION_IDS \
@@ -524,9 +533,12 @@
   E(kActionSidePanelShowAboutThisSite) \
   E(kActionSidePanelShowAssistant) \
   E(kActionSidePanelShowBookmarks, IDC_SHOW_BOOKMARK_SIDE_PANEL) \
+  E(kActionSidePanelShowComments, IDC_SHOW_COMMENTS_SIDE_PANEL) \
   E(kActionSidePanelShowCustomizeChrome) \
+  E(kActionSidePanelShowCustomizeChromeFooter) \
   E(kActionSidePanelShowCustomizeChromeToolbar) \
   E(kActionSidePanelShowFeed) \
+  E(kActionSidePanelShowGlic) \
   E(kActionSidePanelShowHistoryCluster) \
   E(kActionSidePanelShowHistory) \
   E(kActionSidePanelShowLens) \

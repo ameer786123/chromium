@@ -13,7 +13,6 @@
               "project": "chromium"
             },
             "builder_spec": {
-              "build_gs_bucket": "chromium-mac-archive",
               "builder_group": "chromium.mac",
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_chromium_config": {
@@ -34,11 +33,10 @@
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "mac14-tests-dbg",
+              "builder": "mac15-tests-dbg",
               "project": "chromium"
             },
             "builder_spec": {
-              "build_gs_bucket": "chromium-mac-archive",
               "builder_group": "chromium.mac",
               "execution_mode": "TEST",
               "legacy_chromium_config": {
@@ -73,7 +71,7 @@
       "builder_ids_in_scope_for_testing": [
         {
           "bucket": "ci",
-          "builder": "mac14-tests-dbg",
+          "builder": "mac15-tests-dbg",
           "project": "chromium"
         }
       ],

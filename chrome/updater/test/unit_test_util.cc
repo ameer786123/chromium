@@ -175,8 +175,6 @@ void SetupFakeUpdater(UpdaterScope scope,
 
 }  // namespace
 
-const char kChromeAppId[] = "{8A69D345-D564-463C-AFF1-A69D9E530F96}";
-
 bool IsProcessRunning(const base::FilePath::StringType& executable_name,
                       const base::ProcessFilter* filter) {
   return base::GetProcessCount(executable_name, filter) != 0;
@@ -220,8 +218,7 @@ bool KillProcesses(const base::FilePath::StringType& executable_name,
 scoped_refptr<PolicyService> CreateTestPolicyService() {
   return base::MakeRefCounted<PolicyService>(
       /*external_constants=*/nullptr,
-      /*persisted_data=*/nullptr,
-      /*is_ceca_experiment_enabled=*/false);
+      /*persisted_data=*/nullptr);
 }
 
 std::string GetTestName() {
@@ -418,7 +415,7 @@ std::string PrintProcesses(const base::FilePath::StringType& executable_name,
 
 bool WaitFor(base::FunctionRef<bool()> predicate,
              base::FunctionRef<void()> still_waiting) {
-  constexpr base::TimeDelta kOutputInterval = base::Seconds(10);
+  static constexpr base::TimeDelta kOutputInterval = base::Seconds(10);
   auto notify_next = base::TimeTicks::Now() + kOutputInterval;
   const auto deadline = base::TimeTicks::Now() + TestTimeouts::action_timeout();
   while (base::TimeTicks::Now() < deadline) {

@@ -140,7 +140,8 @@ bool GraphicsDelegateAndroid::EnsureMemoryBuffer() {
   // they all have subtly different uses.
   // TODO(https://crbug.com/40909689): Consolidate this usage.
   gfx::Size buffer_size = GetTextureSize();
-  if (shared_buffer_ && shared_buffer_->size == buffer_size) {
+  if (shared_buffer_ && shared_buffer_->shared_image &&
+      shared_buffer_->shared_image->size() == buffer_size) {
     return true;
   }
 
@@ -158,7 +159,8 @@ bool GraphicsDelegateAndroid::EnsureMemoryBuffer() {
   // Remove reference to previous image (if any).
   shared_buffer_->local_eglimage.reset();
 
-  static constexpr gfx::BufferFormat format = gfx::BufferFormat::RGBA_8888;
+  static constexpr viz::SharedImageFormat format =
+      viz::SinglePlaneFormat::kRGBA_8888;
   static constexpr gfx::BufferUsage usage = gfx::BufferUsage::SCANOUT;
   gpu::SharedImageUsageSet shared_image_usage =
       gpu::SHARED_IMAGE_USAGE_SCANOUT | gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
@@ -170,9 +172,6 @@ bool GraphicsDelegateAndroid::EnsureMemoryBuffer() {
   // Create a GMB Handle from AHardwareBuffer handle.
   gfx::GpuMemoryBufferHandle gmb_handle;
   gmb_handle.type = gfx::ANDROID_HARDWARE_BUFFER;
-  // GpuMemoryBufferId is not used in this case and hence hardcoding it to 1
-  // here.
-  gmb_handle.id = gfx::GpuMemoryBufferId(1);
   gmb_handle.android_hardware_buffer =
       shared_buffer_->scoped_ahb_handle.Clone();
 
@@ -197,10 +196,6 @@ bool GraphicsDelegateAndroid::EnsureMemoryBuffer() {
                                egl_image.get());
   shared_buffer_->local_eglimage = std::move(egl_image);
 
-  // Save size to avoid resize next time.
-  DVLOG(1) << __func__ << ": resized to " << buffer_size.width() << "x"
-           << buffer_size.height();
-  shared_buffer_->size = buffer_size;
   return true;
 }
 
@@ -212,7 +207,6 @@ void GraphicsDelegateAndroid::ResetMemoryBuffer() {
              << shared_buffer_->shared_image->mailbox().ToDebugString();
     mailbox_bridge_->DestroySharedImage(
         shared_buffer_->sync_token, std::move(shared_buffer_->shared_image));
-    shared_buffer_->size = {0, 0};
   }
 }
 

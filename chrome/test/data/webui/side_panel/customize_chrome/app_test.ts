@@ -6,8 +6,8 @@ import 'chrome://customize-chrome-side-panel.top-chrome/app.js';
 
 import type {AppElement} from 'chrome://customize-chrome-side-panel.top-chrome/app.js';
 import {CustomizeChromeImpression} from 'chrome://customize-chrome-side-panel.top-chrome/common.js';
-import type {BackgroundCollection, CustomizeChromePageRemote} from 'chrome://customize-chrome-side-panel.top-chrome/customize_chrome.mojom-webui.js';
-import {CustomizeChromePageCallbackRouter, CustomizeChromePageHandlerRemote, CustomizeChromeSection} from 'chrome://customize-chrome-side-panel.top-chrome/customize_chrome.mojom-webui.js';
+import type {BackgroundCollection, CustomizeChromePageRemote, ManagementNoticeState} from 'chrome://customize-chrome-side-panel.top-chrome/customize_chrome.mojom-webui.js';
+import {CustomizeChromePageCallbackRouter, CustomizeChromePageHandlerRemote, CustomizeChromeSection, NewTabPageType} from 'chrome://customize-chrome-side-panel.top-chrome/customize_chrome.mojom-webui.js';
 import {CustomizeChromeApiProxy} from 'chrome://customize-chrome-side-panel.top-chrome/customize_chrome_api_proxy.js';
 import {CustomizeToolbarClientCallbackRouter, CustomizeToolbarHandlerRemote} from 'chrome://customize-chrome-side-panel.top-chrome/customize_toolbar.mojom-webui.js';
 import type {CustomizeToolbarHandlerInterface} from 'chrome://customize-chrome-side-panel.top-chrome/customize_toolbar.mojom-webui.js';
@@ -230,7 +230,7 @@ suite('AppTest', () => {
     });
   });
 
-  test('isSourceTabFirstPartyNtp should update the cards', async () => {
+  test('source tab type should update the cards', async () => {
     const idsControlledByIsSourceTabFirstPartyNtp = [
       '#shortcuts',
       '#modules',
@@ -249,19 +249,29 @@ suite('AppTest', () => {
       '#buttonContainer',
     ];
 
-    const checkIdsVisibility = (isSourceTabFirstPartyNtp: boolean) => {
+    const newTabPageTypes = [
+      NewTabPageType.kFirstPartyWebUI,
+      NewTabPageType.kThirdPartyWebUI,
+      NewTabPageType.kThirdPartyRemote,
+      NewTabPageType.kExtension,
+      NewTabPageType.kIncognito,
+      NewTabPageType.kGuestMode,
+      NewTabPageType.kNone,
+    ];
+
+    const checkIdsVisibility = (sourceTabType: NewTabPageType) => {
       idsControlledByIsSourceTabFirstPartyNtp.forEach(
           id => assertEquals(
-              isSourceTabFirstPartyNtp,
+              sourceTabType === NewTabPageType.kFirstPartyWebUI,
               !!customizeChromeApp.shadowRoot.querySelector(id)));
       idsNotControlledByIsSourceTabFirstPartyNtp.forEach(
           id => assertTrue(!!customizeChromeApp.shadowRoot.querySelector(id)));
     };
 
-    await[true, false].forEach(async b => {
-      callbackRouter.attachedTabStateUpdated(b);
+    await newTabPageTypes.forEach(async t => {
+      callbackRouter.attachedTabStateUpdated(t);
       await microtasksFinished();
-      checkIdsVisibility(b);
+      checkIdsVisibility(t);
     });
   });
 
@@ -301,7 +311,7 @@ suite('AppTest', () => {
               'selected'));
           assertEquals(customizeChromeApp, document.activeElement);
 
-          callbackRouter.attachedTabStateUpdated(false);
+          callbackRouter.attachedTabStateUpdated(NewTabPageType.kExtension);
           callbackRouter.setThemeEditable(false);
           await microtasksFinished();
 
@@ -326,13 +336,97 @@ suite('AppTest', () => {
               customizeChromeApp.shadowRoot.querySelector('#toolbarPage')!
                   .classList.contains('selected'));
 
-          callbackRouter.attachedTabStateUpdated(false);
+          callbackRouter.attachedTabStateUpdated(NewTabPageType.kExtension);
           await microtasksFinished();
 
           // Current page should now be toolbar.
           assertTrue(
               customizeChromeApp.shadowRoot.querySelector('#toolbarPage')!
                   .classList.contains('selected'));
+        });
+  });
+
+  suite('Footer', () => {
+    suiteSetup(() => {
+      loadTimeData.overrideValues({
+        'footerEnabled': true,
+      });
+    });
+
+    ([
+      [
+        NewTabPageType.kFirstPartyWebUI,
+        {canBeShown: false, enabledByPolicy: false},
+        false,
+        'hidden when no notice can be shown (unmanaged browser)',
+      ],
+      [
+        NewTabPageType.kFirstPartyWebUI,
+        {canBeShown: true, enabledByPolicy: false},
+        true,
+        'visible when the management notice can be shown',
+      ],
+      [
+        NewTabPageType.kFirstPartyWebUI,
+        {canBeShown: true, enabledByPolicy: true},
+        true,
+        'visible when enterprise badge is showing and enforced by policy',
+      ],
+      [
+        NewTabPageType.kExtension,
+        {canBeShown: false, enabledByPolicy: false},
+        true,
+        'visible when extension notice is showing',
+      ],
+      [
+        NewTabPageType.kExtension,
+        {canBeShown: true, enabledByPolicy: false},
+        true,
+        'visible when both notices are showing',
+      ],
+    ] as Array<[NewTabPageType, ManagementNoticeState, boolean, string]>)
+        .forEach(([tabType, managementState, expected, description]) => {
+          test(`toggle should be ${description}`, async () => {
+            await Promise.all([
+              handler.whenCalled('updateFooterSettings'),
+              handler.whenCalled('updateAttachedTabState'),
+            ]);
+            callbackRouter.setFooterSettings(true, true, managementState);
+            callbackRouter.attachedTabStateUpdated(tabType);
+            await callbackRouter.$.flushForTesting();
+            assertEquals(
+                expected,
+                !!customizeChromeApp.shadowRoot.querySelector('#footer'));
+          });
+        });
+
+    ([
+      [
+        false,
+        true,
+        'visible with extension notice shown but extension policy disabled',
+      ],
+      [
+        true,
+        true,
+        'visible with extension notice shown but extension policy disabled',
+      ],
+    ] as Array<[boolean, boolean, string]>)
+        .forEach(([extensionPolicyEnabled, expected, description]) => {
+          test(`toogle should be ${description}`, async () => {
+            await Promise.all([
+              handler.whenCalled('updateFooterSettings'),
+              handler.whenCalled('updateAttachedTabState'),
+            ]);
+            callbackRouter.setFooterSettings(
+                true, extensionPolicyEnabled,
+                {canBeShown: true, enabledByPolicy: false});
+            callbackRouter.attachedTabStateUpdated(NewTabPageType.kExtension);
+            await callbackRouter.$.flushForTesting();
+            assertEquals(
+                expected,
+                !!customizeChromeApp.shadowRoot.querySelector('#footer'));
+          });
         });
   });
 });

@@ -163,7 +163,7 @@ chromium-metrics-reviews@google.com.
   <int value="7" label="Timeout"/>
 </enum>
 
-<!-- LINT.ThenChange(//components/signin/public/identity_manager/account_managed_status_finder.h:AccountManagedStatusFinderOutcome) -->
+<!-- LINT.ThenChange(//components/signin/public/identity_manager/account_managed_status_finder_outcome.h:AccountManagedStatusFinderOutcome) -->
 
 <!-- LINT.IfChange(AccountManagementTypesSummary) -->
 
@@ -181,6 +181,27 @@ chromium-metrics-reviews@google.com.
 </enum>
 
 <!-- LINT.ThenChange(//components/signin/core/browser/account_management_type_metrics_recorder.h:AccountManagementTypesSummary) -->
+
+<!-- LINT.IfChange(AccountMoveDecision) -->
+
+<enum name="AccountMoveDecision">
+  <int value="0" label="Can move with refresh token"/>
+  <int value="1" label="Cannot move, account already exists"/>
+  <int value="2" label="Cannot move, insert without refresh token"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/signin/internal/identity_manager/mutable_profile_oauth2_token_service_delegate.h:AccountMoveDecision) -->
+
+<!-- LINT.IfChange(AccountProfileStartupState) -->
+
+<enum name="AccountProfileStartupState">
+  <int value="0" label="Managed account in personal profile"/>
+  <int value="1" label="Managed account in managed profile"/>
+  <int value="2" label="Personal account in managed profile"/>
+  <int value="3" label="Personal account in personal profile"/>
+</enum>
+
+<!-- LINT.ThenChange(//ios/chrome/browser/signin/model/account_profile_mapper.mm:AccountProfileStartupState) -->
 
 <enum name="AccountReauthenticationEvent">
   <int value="0" label="STARTED"/>
@@ -260,6 +281,19 @@ chromium-metrics-reviews@google.com.
   <int value="8" label="Challenge session ID mismatch"/>
 </enum>
 
+<!-- LINT.IfChange(BoundSessionCredentialsRegistrationTokenResult) -->
+
+<enum name="BoundSessionCredentialsRegistrationTokenResult">
+  <int value="0" label="Success"/>
+  <int value="1" label="Failed to load a reused key"/>
+  <int value="2" label="Failed to generate a new key"/>
+  <int value="3" label="Failed to create an unsigned assertion token"/>
+  <int value="4" label="Failed to sign an assertion token"/>
+  <int value="5" label="Failed to attach the signature to an assertion token"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/signin/binding_key_registration_token_helper.h:Error) -->
+
 <enum name="BoundSessionCredentialsSessionRegistrationResult">
   <int value="0" label="Success"/>
   <int value="1" label="Failed to generate a registration token"/>
@@ -306,6 +340,17 @@ chromium-metrics-reviews@google.com.
       label="Signed in to 1P app and Chrome with different accounts"/>
 </enum>
 
+<!-- LINT.IfChange(ChromeBrowserType) -->
+
+<enum name="ChromeBrowserType">
+  <int value="0" label="Regular"/>
+  <int value="1" label="Incognito"/>
+  <int value="2" label="Inactive"/>
+  <int value="3" label="Temporary"/>
+</enum>
+
+<!-- LINT.ThenChange(//ios/chrome/browser/shared/model/browser/browser.h:ChromeBrowserType) -->
+
 <enum name="ChromeSigninSettingModification">
   <int value="0" label="No modifications"/>
   <int value="1" label="Modified to always ask"/>
@@ -334,6 +379,41 @@ chromium-metrics-reviews@google.com.
 
 <!-- LINT.ThenChange(//chrome/browser/ui/signin/chrome_signout_confirmation_prompt.h:ChromeSignoutConfirmationChoice) -->
 
+<!-- LINT.IfChange(DiceMigrationDialogCloseReason) -->
+
+<enum name="DiceMigrationDialogCloseReason">
+  <int value="0" label="Unspecified (likely browser shutdown)"/>
+  <int value="1" label="Accepted"/>
+  <int value="2" label="Cancelled"/>
+  <int value="3" label="Closed"/>
+  <int value="4" label="Esc key pressed"/>
+  <int value="5" label="Primary account cleared"/>
+  <int value="6" label="Primary account changed"/>
+  <int value="7" label="Sync turned on"/>
+  <int value="8" label="Avatar button clicked"/>
+  <int value="9" label="Service destroyed"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/ui/signin/dice_migration_service.h:DialogCloseReason) -->
+
+<!-- LINT.IfChange(DiceMigrationDialogNotShownReason) -->
+
+<enum name="DiceMigrationDialogNotShownReason">
+  <int value="0" label="Not eligible"/>
+  <int value="1" label="Max shown count reached"/>
+  <int value="2" label="Min time between dialogs not passed"/>
+  <int value="3" label="Managed account"/>
+  <int value="4" label="Error fetching account managed status"/>
+  <int value="5" label="Primary account changed"/>
+  <int value="6" label="Primary account cleared"/>
+  <int value="7" label="Sync turned on"/>
+  <int value="8" label="Browser instance unavailable"/>
+  <int value="9" label="Avatar button unavailable"/>
+  <int value="10" label="Service destroyed"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/ui/signin/dice_migration_service.h:DialogNotShownReason) -->
+
 <!-- LINT.IfChange(DiceTokenBindingOutcome) -->
 
 <enum name="DiceTokenBindingOutcome">
@@ -347,6 +427,9 @@ chromium-metrics-reviews@google.com.
       label="Not bound because failed to generate binding key registration"/>
   <int value="5"
       label="Not bound because the server rejected binding key registration"/>
+  <int value="6"
+      label="Not bound because refresh tokens were not loaded, preventing
+             selection of a binding key to reuse"/>
 </enum>
 
 <!-- LINT.ThenChange(//chrome/browser/signin/dice_response_handler.h:TokenBindingOutcome) -->
@@ -381,6 +464,23 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="Gaia cookie is restored, Infobar shown"/>
 </enum>
 
+<!-- LINT.IfChange(GaiaIntegrationState) -->
+
+<enum name="GaiaIntegrationState">
+  <int value="0" label="OnTokenExchangeSuccess">
+    The user is signed-in the browser upon successful LST Token exchange (legacy
+    Gaia integration). If the new Gaia integration applies, then this value is
+    still recorded to mark the point where the user would be signed in to the
+    browser on the legacy flow.
+  </int>
+  <int value="1" label="OnSyncHeaderReceived">
+    The user is signed-in the browser upon receiving the Sync header (new Gaia
+    integration). This recorded only then the new Gaia integration applies.
+  </int>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/signin/dice_response_handler.h:PrimaryAccountSettingGaiaIntegrationState) -->
+
 <!-- LINT.IfChange(GaiaPage) -->
 
 <enum name="GaiaPage">
@@ -390,22 +490,6 @@ chromium-metrics-reviews@google.com.
 </enum>
 
 <!-- LINT.ThenChange(//components/signin/ios/browser/account_consistency_service.mm:GaiaPage) -->
-
-<!-- LINT.IfChange(GaiaRemoteConsentFlowResult) -->
-
-<enum name="GaiaRemoteConsentFlowResult">
-  <int value="0" label="Success"/>
-  <int value="1" label="Window was closed"/>
-  <int value="2" label="Failed to load the consent page"/>
-  <int value="3" label="Failed to set accounts in cookies (deprecated 07/23)"/>
-  <int value="4" label="Failed to parse the consent result"/>
-  <int value="5" label="Consent wasn't granted"/>
-  <int value="6" label="User navigated away (deprecated 07/23)"/>
-  <int value="7" label="Cannot create a window"/>
-  <int value="8" label="Failed to set resolution cookies"/>
-</enum>
-
-<!-- LINT.ThenChange(//chrome/browser/extensions/api/identity/gaia_remote_consent_flow.h:GaiaRemoteConsentFlowResult) -->
 
 <!-- LINT.IfChange(GetAuthTokenResult) -->
 
@@ -467,6 +551,36 @@ chromium-metrics-reviews@google.com.
 
 <!-- LINT.ThenChange(//ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow.mm:IOSAccountSwitchType) -->
 
+<!-- LINT.IfChange(IOSChangeProfileReason) -->
+
+<enum name="IOSChangeProfileReason">
+  <int value="0"
+      label="User switched accounts (i.e. both old and new profile are signed
+             in, though the new one may only be newly signed in via this
+             action)"/>
+  <int value="1"
+      label="Managed account sign-in (i.e. signing in to a managed account
+             while being signed-out in the personal profile)"/>
+  <int value="2"
+      label="Managed account sign-out (i.e. signing out from a managed
+             account, which switches to the personal profile and signs out
+             there if necessary)"/>
+  <int value="3"
+      label="Authentication error while signing in or switching, and
+             therefore switching back"/>
+  <int value="4"
+      label="Profile deleted (usually because the associated managed account
+             was removed, either from another Google app or remotely)"/>
+  <int value="5"
+      label="User tapped a push notification that's associated with a
+             different profile"/>
+  <int value="6"
+      label="User tapped on a widget and the account used on the widget is
+             different from the account used in the app"/>
+</enum>
+
+<!-- LINT.ThenChange(//ios/chrome/app/change_profile_commands.h:IOSChangeProfileReason) -->
+
 <enum name="IOSDeviceRestoreSignedinState">
   <int value="0" label="User not signed in before iOS device restore"/>
   <int value="1"
@@ -499,6 +613,42 @@ chromium-metrics-reviews@google.com.
       label="The identity is available in AccountProfileMapper and
              IdentityManager"/>
 </enum>
+
+<!-- LINT.IfChange(IOSProfileInitializationOutcome) -->
+
+<enum name="IOSProfileInitializationOutcome">
+  <int value="0"
+      label="Test-only code path, should never be recorded in production"/>
+  <int value="1"
+      label="Okay: Multi-profile feature disabled; profile was already
+             initialized"/>
+  <int value="2"
+      label="Okay: Multi-profile feature disabled; profile newly initialized"/>
+  <int value="3" label="Okay: Personal profile was already initialized"/>
+  <int value="4" label="Okay: Personal profile newly initialized"/>
+  <int value="5" label="Okay: Managed profile was already initialized"/>
+  <int value="6" label="Okay: Managed profile newly initialized"/>
+  <int value="7"
+      label="Bad: Managed profile newly initialized, but was already signed
+             in"/>
+  <int value="8"
+      label="Bad: Managed profile was already initialized, but newly signed
+             in"/>
+  <int value="9"
+      label="Bad: Managed profile was already initialized, but had no
+             assigned accounts"/>
+  <int value="10"
+      label="Bad: Managed profile newly initialized, but had no assigned
+             accounts"/>
+  <int value="11"
+      label="Bad: Managed profile was already initialized, but had multiple
+             assigned accounts, and was newly signed in"/>
+  <int value="12"
+      label="Bad: Managed profile newly initialized, but had multiple
+             assigned accounts"/>
+</enum>
+
+<!-- LINT.ThenChange(//ios/chrome/browser/signin/model/authentication_service.h:IOSProfileInitializationOutcome) -->
 
 <enum name="LaunchWebAuthFlowResult">
   <int value="0" label="Success"/>
@@ -534,6 +684,71 @@ chromium-metrics-reviews@google.com.
       label="Mint token success with fallback scopes (deprecated 02/2021)"/>
   <int value="11" label="Token binding challenge success"/>
 </enum>
+
+<!-- LINT.IfChange(OAuthConsumerId) -->
+
+<enum name="OAuthConsumerId">
+  <int value="0" label="Sync"/>
+  <int value="1" label="Wallpaper Google Photos fetcher"/>
+  <int value="2" label="Wallpaper fetcher delegate"/>
+  <int value="3" label="Ip Protection Service"/>
+  <int value="4" label="Sanitized image source"/>
+  <int value="5" label="Optimization Guide (get hints)"/>
+  <int value="6" label="Optimization Guide (model execution)"/>
+  <int value="7" label="Nearby Sharing"/>
+  <int value="8" label="Projector token fetcher"/>
+  <int value="9" label="Add Supervision"/>
+  <int value="10" label="Parent Access"/>
+  <int value="11" label="Data Sharing"/>
+  <int value="12" label="Launcher item suggest"/>
+  <int value="13" label="Marketing backend connector"/>
+  <int value="14" label="Password Sync token fetcher"/>
+  <int value="15" label="Locale Switch Screen"/>
+  <int value="16" label="Token Handle Service"/>
+  <int value="17" label="Supervised User (list family members)"/>
+  <int value="18" label="Supervised User (classify url)"/>
+  <int value="19" label="Supervised User (create permission request)"/>
+  <int value="20" label="Extension Downloader"/>
+  <int value="21" label="Enclave Manager"/>
+  <int value="22" label="Ntp Drive Service"/>
+  <int value="23" label="Force Signin Verifier"/>
+  <int value="24" label="Capture Mode Delegate"/>
+  <int value="25" label="Fcm Invalidation"/>
+  <int value="26" label="Nearby Share"/>
+  <int value="27" label="Advanced Protection Status Manager"/>
+  <int value="28" label="Push Notification"/>
+  <int value="29" label="K-Anonymity Service"/>
+  <int value="30" label="Feedback Uploader"/>
+  <int value="31" label="Password Sharing Recipients Downloader"/>
+  <int value="32" label="Web History Service"/>
+  <int value="33" label="Composebox Query Controller"/>
+  <int value="34" label="Document Suggestions Service"/>
+  <int value="35" label="Enterprise Search Aggregator"/>
+  <int value="36" label="Parent Permission Dialog"/>
+  <int value="37" label="User Cloud Signin Restriction Policy Fetcher"/>
+  <int value="38" label="Cloud Policy Client Registration"/>
+  <int value="39" label="Safe Browsing"/>
+  <int value="40" label="Tailored Security Service"/>
+  <int value="41" label="Lens Overlay Query controller"/>
+  <int value="42" label="Trusted Vault Frontend"/>
+  <int value="43" label="Feed Network"/>
+  <int value="44" label="Autofill Payments"/>
+  <int value="45" label="Payments Access Token Fetcher"/>
+  <int value="46" label="Save to Drive"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/signin/public/identity_manager/oauth_consumer_ids.h:OAuthConsumerId) -->
+
+<!-- LINT.IfChange(OAuthMultiloginDeviceBoundSessionParsingError) -->
+
+<enum name="OAuthMultiloginDeviceBoundSessionParsingError">
+  <int value="0" label="No error, successfully parsed"/>
+  <int value="1" label="Invalid domain"/>
+  <int value="2" label="Register payload required field missing"/>
+  <int value="3" label="Register payload required credential field missing"/>
+</enum>
+
+<!-- LINT.ThenChange(//google_apis/gaia/oauth_multilogin_result.h:OAuthMultiloginDeviceBoundSessionParsingError) -->
 
 <!-- LINT.IfChange(OAuthMultiloginResponseStatus) -->
 
@@ -574,6 +789,14 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Sign out"/>
 </enum>
 
+<!-- LINT.IfChange(ReauthAccessPoint) -->
+
+<enum name="ReauthAccessPoint">
+  <int value="0" label="Account menu"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/signin/public/base/signin_metrics.h:ReauthAccessPoint) -->
+
 <enum name="ResumeBlockedRequestsTrigger">
   <int value="0" label="Cookie fresh notification"/>
   <int value="1"
@@ -596,6 +819,7 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Cookies cleared"/>
   <int value="2" label="Session termination header"/>
   <int value="3" label="Session override"/>
+  <int value="4" label="Rotation stopped timeout"/>
 </enum>
 
 <enum name="ShouldShowChromeSigninBubbleWithReason">
@@ -665,7 +889,7 @@ chromium-metrics-reviews@google.com.
   <int value="49" label="Account consistency service"/>
   <int value="50" label="(Obsolete) Search companion"/>
   <int value="51" label="Set Up List (iOS only)"/>
-  <int value="52" label="Password migration warning (Android only)"/>
+  <int value="52" label="(obsolete) Password migration warning (Android only)"/>
   <int value="53" label="Save to photos (iOS only)"/>
   <int value="54" label="Chrome Sign-in intercept bubble."/>
   <int value="55" label="Restore primary account on profile load"/>
@@ -695,6 +919,17 @@ chromium-metrics-reviews@google.com.
   <int value="79" label="Leave or delete collaboration tab group"/>
   <int value="80" label="History Sync Opt-in Expanded Pill on inactivity"/>
   <int value="81" label="History sync educational tip module (Android only)"/>
+  <int value="82"
+      label="Managed profile was automatically signed in (iOS only)"/>
+  <int value="83"
+      label="Contextual non modal sign-in password promo (iOS only)"/>
+  <int value="84"
+      label="Contextual non modal sign-in bookmark promo (iOS only)"/>
+  <int value="85" label="Profile picker with prefilled email"/>
+  <int value="86" label="Enterprise management disclaimer at startup"/>
+  <int value="87" label="Enterprise management disclaimer after browser focus"/>
+  <int value="88" label="Enterprise management disclaimer after signin"/>
+  <int value="89" label="New Tab Page sign-in feature promo"/>
 </enum>
 
 <enum name="SigninAccountReconcilorState">
@@ -806,6 +1041,7 @@ chromium-metrics-reviews@google.com.
 <enum name="SigninInterceptionDismissReason">
   <int value="0" label="Pressing the Escape key"/>
   <int value="1" label="Pressing the identity pill"/>
+  <int value="2" label="User is no longer eligible (ex: signed out)"/>
 </enum>
 
 <enum name="SigninInterceptResult">
@@ -935,8 +1171,8 @@ chromium-metrics-reviews@google.com.
   <int value="17" label="User clicked signout From profile menu">
     User Clicked Signout in the profile menu.
   </int>
-  <int value="18" label="Retriggered from web signin">
-    User retriggered signin from the Android web sign-in bottomsheet.
+  <int value="18" label="Retriggered from signin bottomsheet">
+    User retriggered signin from the Android sign-in bottomsheet.
   </int>
   <int value="19" label="User clicked signout from user policy notification">
     User clicked on sign-out from the notification dialog for User Policy. The
@@ -1034,6 +1270,14 @@ chromium-metrics-reviews@google.com.
     The user has a widget with no account on it, opens the app from the widget
     and if there is a signed-in account in the app, sign-out is performed. iOS
     only.
+  </int>
+  <int value="40"
+      label="Sign out when declining the enterprise management disclaimer">
+    The user tried to sign in but declined the enterprise management disclaimer.
+  </int>
+  <int value="41" label="Forced DICe migration">
+    The user was signed out because they were a DICe user and they didn't accept
+    or see the migration dialog.
   </int>
 </enum>
 

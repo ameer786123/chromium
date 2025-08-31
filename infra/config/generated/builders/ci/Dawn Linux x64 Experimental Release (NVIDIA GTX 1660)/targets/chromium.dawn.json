@@ -14,6 +14,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//third_party/dawn/src/dawn/tests:dawn_end2end_tests/",
+        "module_scheme": "gtest",
         "name": "dawn_end2end_implicit_device_sync_tests",
         "swarming": {
           "dimensions": {
@@ -42,6 +44,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//third_party/dawn/src/dawn/tests:dawn_end2end_tests/",
+        "module_scheme": "gtest",
         "name": "dawn_end2end_skip_validation_tests",
         "swarming": {
           "dimensions": {
@@ -69,6 +73,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//third_party/dawn/src/dawn/tests:dawn_end2end_tests/",
+        "module_scheme": "gtest",
         "name": "dawn_end2end_tests",
         "swarming": {
           "dimensions": {
@@ -97,6 +103,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//third_party/dawn/src/dawn/tests:dawn_end2end_tests/",
+        "module_scheme": "gtest",
         "name": "dawn_end2end_validation_layers_tests",
         "swarming": {
           "dimensions": {
@@ -125,6 +133,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//third_party/dawn/src/dawn/tests:dawn_end2end_tests/",
+        "module_scheme": "gtest",
         "name": "dawn_end2end_wire_tests",
         "swarming": {
           "dimensions": {
@@ -151,6 +161,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//gpu:gl_tests/",
+        "module_scheme": "gtest",
         "name": "gl_tests_passthrough",
         "swarming": {
           "dimensions": {
@@ -176,6 +188,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//ui/gl:gl_unittests/",
+        "module_scheme": "gtest",
         "name": "gl_unittests",
         "precommit_args": [
           "--gerrit-issue=${patch_issue}",
@@ -210,6 +224,7 @@
           ],
           "script": "//tools/perf/process_perf_results.py"
         },
+        "module_name": "//third_party/dawn/src/dawn/tests:dawn_perf_tests/",
         "name": "dawn_perf_tests",
         "swarming": {
           "dimensions": {
@@ -229,6 +244,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//chrome/test:telemetry_gpu_unittests/",
         "name": "telemetry_gpu_unittests",
         "resultdb": {
           "enable": true
@@ -261,6 +277,8 @@
           ],
           "script": "//third_party/blink/tools/merge_web_test_results.py"
         },
+        "module_name": "//:webgpu_blink_web_tests/",
+        "module_scheme": "webtest",
         "name": "webgpu_blink_web_tests",
         "resultdb": {
           "enable": true
@@ -293,6 +311,8 @@
           ],
           "script": "//third_party/blink/tools/merge_web_test_results.py"
         },
+        "module_name": "//:webgpu_blink_web_tests/",
+        "module_scheme": "webtest",
         "name": "webgpu_blink_web_tests_with_backend_validation",
         "resultdb": {
           "enable": true
@@ -327,6 +347,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//chrome/test:telemetry_gpu_integration_test/",
         "name": "webgpu_cts_compat_min_es31_tests",
         "resultdb": {
           "enable": true,
@@ -364,6 +385,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//chrome/test:telemetry_gpu_integration_test/",
         "name": "webgpu_cts_compat_tests",
         "resultdb": {
           "enable": true,
@@ -402,6 +424,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//chrome/test:telemetry_gpu_integration_test/",
         "name": "webgpu_cts_dedicated_worker_tests",
         "resultdb": {
           "enable": true,
@@ -439,6 +462,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//chrome/test:telemetry_gpu_integration_test/",
         "name": "webgpu_cts_service_worker_tests",
         "resultdb": {
           "enable": true,
@@ -476,6 +500,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//chrome/test:telemetry_gpu_integration_test/",
         "name": "webgpu_cts_shared_worker_tests",
         "resultdb": {
           "enable": true,
@@ -512,6 +537,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//chrome/test:telemetry_gpu_integration_test/",
         "name": "webgpu_cts_tests",
         "resultdb": {
           "enable": true,
@@ -550,6 +576,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//chrome/test:telemetry_gpu_integration_test/",
         "name": "webgpu_cts_with_validation_tests",
         "resultdb": {
           "enable": true,
@@ -584,6 +611,8 @@
           ],
           "script": "//third_party/blink/tools/merge_web_test_results.py"
         },
+        "module_name": "//:webgpu_blink_web_tests/",
+        "module_scheme": "webtest",
         "name": "webgpu_swiftshader_blink_web_tests",
         "resultdb": {
           "enable": true
@@ -616,6 +645,8 @@
           ],
           "script": "//third_party/blink/tools/merge_web_test_results.py"
         },
+        "module_name": "//:webgpu_blink_web_tests/",
+        "module_scheme": "webtest",
         "name": "webgpu_swiftshader_blink_web_tests_with_backend_validation",
         "resultdb": {
           "enable": true
@@ -652,6 +683,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//chrome/test:telemetry_gpu_integration_test/",
         "name": "webgpu_swiftshader_web_platform_cts_tests",
         "resultdb": {
           "enable": true,
@@ -692,6 +724,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//chrome/test:telemetry_gpu_integration_test/",
         "name": "webgpu_swiftshader_web_platform_cts_with_validation_tests",
         "resultdb": {
           "enable": true,

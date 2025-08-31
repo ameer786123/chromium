@@ -7,6 +7,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/profiles/profile.h"
@@ -180,11 +181,15 @@ class ChromeTailoredSecurityServiceTest : public testing::Test {
       prefs()->RemoveManagedPref(prefs::kSafeBrowsingEnhanced);
     }
 
-    browser_window_ = std::make_unique<TestBrowserWindow>();
+    // This may be called multiple times, we must reset the original test
+    // browser and its associated window.
+    browser_.reset();
+
+    auto browser_window = std::make_unique<TestBrowserWindow>();
     Browser::CreateParams params(profile(), true);
     params.type = Browser::TYPE_NORMAL;
-    params.window = browser_window_.get();
-    browser_ = std::unique_ptr<Browser>(Browser::Create(params));
+    params.window = browser_window.release();
+    browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
     chrome_tailored_security_service_ =
         std::make_unique<TestChromeTailoredSecurityService>(profile_);
   }
@@ -215,7 +220,6 @@ class ChromeTailoredSecurityServiceTest : public testing::Test {
     }
 
     browser_.reset();
-    browser_window_.reset();
     chrome_tailored_security_service_->Shutdown();
     chrome_tailored_security_service_.reset();
 
@@ -299,7 +303,6 @@ class ChromeTailoredSecurityServiceTest : public testing::Test {
       identity_test_env_adaptor_;
   TestingProfileManager profile_manager_;
   raw_ptr<TestingProfile> profile_;
-  std::unique_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
   std::unique_ptr<TestChromeTailoredSecurityService>
       chrome_tailored_security_service_;

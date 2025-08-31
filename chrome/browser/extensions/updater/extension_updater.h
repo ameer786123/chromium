@@ -9,7 +9,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <queue>
 #include <set>
 #include <string>
 
@@ -31,8 +30,11 @@
 #include "extensions/browser/updater/extension_downloader_types.h"
 #include "extensions/browser/updater/extension_update_data.h"
 #include "extensions/browser/updater/update_service.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
 #include "url/gurl.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 class PrefService;
 class Profile;
@@ -192,10 +194,6 @@ class ExtensionUpdater : public KeyedService,
   // Overrides the extension downloader with |downloader| for testing.
   void SetExtensionDownloaderForTesting(
       std::unique_ptr<ExtensionDownloader> downloader);
-
-  // After this is called, the next ExtensionUpdater instance to be started will
-  // call CheckNow() instead of CheckSoon() for its initial update.
-  static void UpdateImmediatelyForFirstRun();
 
   // For testing, changes the backoff policy for ExtensionDownloader's manifest
   // queue to get less initial delay and the tests don't time out.

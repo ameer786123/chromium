@@ -13,9 +13,9 @@
 #include "base/scoped_observation.h"
 #include "chrome/browser/command_observer.h"
 #include "chrome/browser/ui/page_action/page_action_icon_type.h"
+#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/browser/ui/toolbar/app_menu_icon_controller.h"
 #include "chrome/browser/ui/toolbar/back_forward_menu_model.h"
-#include "chrome/browser/ui/toolbar/chrome_labs/chrome_labs_model.h"
 #include "chrome/browser/ui/views/frame/browser_root_view.h"
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
 #include "chrome/browser/ui/views/intent_picker_bubble_view.h"
@@ -48,7 +48,6 @@ class BrowserAppMenuButton;
 class Browser;
 class ExtensionsToolbarButton;
 class ExtensionsToolbarContainer;
-class ChromeLabsButton;
 class HomeButton;
 class IntentChipButton;
 class ExtensionsToolbarCoordinator;
@@ -60,14 +59,6 @@ class AvatarToolbarButtonBrowserTest;
 class ToolbarController;
 class OverflowButton;
 class PerformanceInterventionButton;
-
-namespace media_router {
-class CastToolbarButton;
-}
-
-namespace page_actions {
-class PageActionView;
-}  // namespace page_actions
 
 namespace views {
 class FlexLayout;
@@ -81,7 +72,8 @@ class ToolbarView : public views::AccessiblePaneView,
                     public CommandObserver,
                     public AppMenuIconController::Delegate,
                     public ToolbarButtonProvider,
-                    public BrowserRootView::DropTarget {
+                    public BrowserRootView::DropTarget,
+                    public TabStripModelObserver {
   METADATA_HEADER(ToolbarView, views::AccessiblePaneView)
 
  public:
@@ -148,14 +140,6 @@ class ToolbarView : public views::AccessiblePaneView,
   // Accessors.
   Browser* browser() const { return browser_; }
   views::Button* GetChromeLabsButton() const;
-
-  // NOTE: Use of the above method `GetChromeLabsButton` is preferred while the
-  // Chrome Labs button is migrated to PinnedActionToolbarButton.
-  // TODO(b/353385180): Remove once Chrome Labs button migration is complete.
-  ChromeLabsButton* chrome_labs_button() const { return chrome_labs_button_; }
-  ChromeLabsModel* chrome_labs_model() const {
-    return chrome_labs_model_.get();
-  }
   ExtensionsToolbarContainer* extensions_container() const {
     return extensions_container_;
   }
@@ -212,7 +196,13 @@ class ToolbarView : public views::AccessiblePaneView,
   bool AcceleratorPressed(const ui::Accelerator& acc) override;
   void ChildPreferredSizeChanged(views::View* child) override;
 
-  friend class AvatarToolbarButtonBrowserTest;
+  // TabStripModelObserver:
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
+
+  friend class AvatarToolbarButtonBaseBrowserTest;
 
  protected:
   // This controls Toolbar, LocationBar and CustomTabBar visibility.
@@ -247,8 +237,7 @@ class ToolbarView : public views::AccessiblePaneView,
   gfx::Size GetToolbarButtonSize() const override;
   views::View* GetDefaultExtensionDialogAnchorView() override;
   PageActionIconView* GetPageActionIconView(PageActionIconType type) override;
-  page_actions::PageActionView* GetPageActionView(
-      actions::ActionId action_id) override;
+  IconLabelBubbleView* GetPageActionView(actions::ActionId action_id) override;
   AppMenuButton* GetAppMenuButton() override;
   gfx::Rect GetFindBarBoundingBox(int contents_bottom) override;
   void FocusToolbar() override;
@@ -288,6 +277,8 @@ class ToolbarView : public views::AccessiblePaneView,
 
   void NewTabButtonPressed(const ui::Event& event);
 
+  void UpdateRecedingCornerRadius();
+
   gfx::SlideAnimation size_animation_{this};
 
   // Controls. Most of these can be null, e.g. in popup windows. Only
@@ -302,11 +293,9 @@ class ToolbarView : public views::AccessiblePaneView,
   raw_ptr<LocationBarView> location_bar_ = nullptr;
   raw_ptr<ExtensionsToolbarContainer> extensions_container_ = nullptr;
   raw_ptr<views::View> toolbar_divider_ = nullptr;
-  raw_ptr<ChromeLabsButton> chrome_labs_button_ = nullptr;
   raw_ptr<BatterySaverButton> battery_saver_button_ = nullptr;
   raw_ptr<PerformanceInterventionButton> performance_intervention_button_ =
       nullptr;
-  raw_ptr<media_router::CastToolbarButton> cast_ = nullptr;
   raw_ptr<PinnedToolbarActionsContainer> pinned_toolbar_actions_container_ =
       nullptr;
   raw_ptr<AvatarToolbarButton> avatar_ = nullptr;
@@ -322,7 +311,6 @@ class ToolbarView : public views::AccessiblePaneView,
 
   AppMenuIconController app_menu_icon_controller_;
 
-  std::unique_ptr<ChromeLabsModel> chrome_labs_model_;
   std::unique_ptr<ExtensionsToolbarCoordinator> extensions_toolbar_coordinator_;
 
   BooleanPrefMember show_forward_button_;
@@ -359,15 +347,19 @@ class ToolbarView : public views::AccessiblePaneView,
   // `toolbar_controller_`.
   raw_ptr<OverflowButton> overflow_button_ = nullptr;
 
-  // There are two situations where background_view_left_ and
-  // background_view_right_ need be repainted: window active state change and
-  // theme change. active_state_subscription_ handles the former, and the latter
-  // causes the whole toolbar to be repainted so not special logic is necessary.
+  // The toolbar's top corners recede lower into the toolbar bounds, and need to
+  // have the frame's color painted into it. The receding_corner_radius_ is the
+  // size of the corner radius that's clipped out, and the background_view_left_
+  //  background_view_right_ are the area painted behind the toolbar which give
+  // the effect of the toolbar raising up into the tabstrip region.
+  // The receding_corner_radius_ can change based on whether if WebUiTabStrip is
+  // being used and if the first tab is active or not.
+  int receding_corner_radius_ = 0;
   raw_ptr<View> background_view_left_ = nullptr;
   raw_ptr<View> background_view_right_ = nullptr;
 
-  // Listens to changes to active state to update background_view_right_ and
-  // background_view_left_, as their background depends on active state.
+  // Listens to changes to window active state to update background_view_right_
+  // and background_view_left_, as their background depends on active state.
   base::CallbackListSubscription active_state_subscription_;
 };
 

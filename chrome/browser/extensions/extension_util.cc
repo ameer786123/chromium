@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/extension_util.h"
 
+#include <string_view>
 #include <vector>
 
 #include "base/check_is_test.h"
@@ -14,7 +15,9 @@
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/extensions/permissions/permissions_updater.h"
 #include "chrome/browser/extensions/shared_module_service.h"
+#include "chrome/browser/extensions/sync/extension_sync_service.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/common/extensions/api/url_handlers/url_handlers_parser.h"
 #include "chrome/common/extensions/sync_helper.h"
 #include "chrome/common/pref_names.h"
@@ -30,13 +33,14 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/browser/renderer_startup_helper.h"
+#include "extensions/browser/updater/scoped_extension_updater_keep_alive.h"
 #include "extensions/browser/user_script_manager.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/extension_urls.h"
 #include "extensions/common/features/feature_developer_mode_only.h"
 #include "extensions/common/icons/extension_icon_set.h"
 #include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/permissions/permissions_data.h"
+#include "extensions/common/switches.h"
 #include "ui/gfx/text_constants.h"
 #include "ui/gfx/text_elider.h"
 #include "url/gurl.h"
@@ -48,15 +52,17 @@
 
 #if !BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_sync_service.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #endif
 
-namespace extensions {
-namespace util {
+namespace extensions::util {
 
 namespace {
+
+bool ExtensionsDisabledViaCommandLine(const base::CommandLine& command_line) {
+  return command_line.HasSwitch(switches::kDisableExtensions) ||
+         command_line.HasSwitch(switches::kDisableExtensionsExcept);
+}
 
 // Returns |extension_id|. See note below.
 std::string ReloadExtension(const std::string& extension_id,
@@ -64,8 +70,7 @@ std::string ReloadExtension(const std::string& extension_id,
   // When we reload the extension the ID may be invalidated if we've passed it
   // by const ref everywhere. Make a copy to be safe. http://crbug.com/103762
   std::string id = extension_id;
-  ExtensionRegistrar::Get(context)->ReloadExtension(
-      extension_id, ExtensionRegistrar::LoadErrorBehavior::kNoisy);
+  ExtensionRegistrar::Get(context)->ReloadExtension(extension_id);
   return id;
 }
 
@@ -224,13 +229,10 @@ void SetIsIncognitoEnabled(const std::string& extension_id,
 
   // Reloading the extension invalidates the |extension| pointer.
   extension = registry->GetExtensionById(id, ExtensionRegistry::EVERYTHING);
-  // TODO(crbug.com/356905053): Enable extensions sync on desktop android.
-#if !BUILDFLAG(IS_ANDROID)
   if (extension) {
     Profile* profile = Profile::FromBrowserContext(context);
     ExtensionSyncService::Get(profile)->SyncExtensionChangeIfNeeded(*extension);
   }
-#endif
 }
 
 void SetAllowFileAccess(const std::string& extension_id,
@@ -257,9 +259,6 @@ void SetAllowFileAccess(const std::string& extension_id,
   ReloadExtension(extension_id, context);
 }
 
-// TODO(crbug.com/356905053): Enable more extension util functions on
-// desktop android.
-#if !BUILDFLAG(IS_ANDROID)
 base::Value::Dict GetExtensionInfo(const Extension* extension) {
   DCHECK(extension);
   base::Value::Dict dict;
@@ -270,12 +269,11 @@ base::Value::Dict GetExtensionInfo(const Extension* extension) {
   GURL icon = extensions::ExtensionIconSource::GetIconURL(
       extension, extension_misc::EXTENSION_ICON_SMALLISH,
       ExtensionIconSet::Match::kBigger,
-      false);  // Not grayscale.
+      /*grayscale=*/false);
   dict.Set("icon", icon.spec());
 
   return dict;
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 std::unique_ptr<const PermissionSet> GetInstallPromptPermissionSetForExtension(
     const Extension* extension,
@@ -288,7 +286,6 @@ std::unique_ptr<const PermissionSet> GetInstallPromptPermissionSetForExtension(
   return extension->permissions_data()->active_permissions().Clone();
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 std::vector<content::BrowserContext*> GetAllRelatedProfiles(
     Profile* profile,
     const Extension& extension) {
@@ -311,7 +308,6 @@ std::vector<content::BrowserContext*> GetAllRelatedProfiles(
 
   return related_contexts;
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 void SetDeveloperModeForProfile(Profile* profile, bool in_developer_mode) {
   profile->GetPrefs()->SetBoolean(prefs::kExtensionsUIDeveloperMode,
@@ -355,5 +351,11 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
                                 false);
 }
 
-}  // namespace util
-}  // namespace extensions
+bool AreExtensionsDisabled(const base::CommandLine& command_line,
+                           content::BrowserContext* context) {
+  Profile* profile = Profile::FromBrowserContext(context);
+  return ExtensionsDisabledViaCommandLine(command_line) ||
+         profile->GetPrefs()->GetBoolean(prefs::kDisableExtensions);
+}
+
+} // namespace extensions::util

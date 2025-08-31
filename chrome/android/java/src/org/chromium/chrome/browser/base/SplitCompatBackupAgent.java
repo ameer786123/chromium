@@ -21,7 +21,7 @@ import java.io.IOException;
  */
 @NullMarked
 public class SplitCompatBackupAgent extends BackupAgent {
-    private String mBackupAgentClassName;
+    private final String mBackupAgentClassName;
     private Impl mImpl;
 
     public SplitCompatBackupAgent(String backupAgentClassName) {
@@ -67,7 +67,9 @@ public class SplitCompatBackupAgent extends BackupAgent {
         }
 
         public abstract void onBackup(
-                ParcelFileDescriptor oldState, BackupDataOutput data, ParcelFileDescriptor newState)
+                @Nullable ParcelFileDescriptor oldState,
+                BackupDataOutput data,
+                ParcelFileDescriptor newState)
                 throws IOException;
 
         public abstract void onRestore(

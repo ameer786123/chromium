@@ -42,6 +42,7 @@
 
 class LocationBarView;
 class OmniboxClient;
+class PageActionIconView;
 
 namespace content {
 class WebContents;
@@ -133,6 +134,8 @@ class OmniboxViewViews
   void SelectAll(bool reversed) override;
   void RevertAll() override;
   void SetFocus(bool is_user_initiated) override;
+  void ApplyFocusRingToAimButton(bool focus_aim) override;
+  bool AimButtonVisible() const override;
   bool IsImeComposing() const override;
   gfx::NativeView GetRelativeWindowForPopup() const override;
   bool IsImeShowingPopup() const override;
@@ -324,6 +327,14 @@ class OmniboxViewViews
   // DSE placeholder.
   void UpdatePlaceholderTextColor();
 
+  // Returns true if the AIM placeholder text should be visible instead of the
+  // DSE placeholder text.
+  bool ShouldShowAimPlaceholderText() const;
+
+  // Returns the AI Mode page action icon view, if present, or nullptr if the
+  // view doesn't exist.
+  PageActionIconView* GetAiModePageActionIconView() const;
+
   // When true, the location bar view is read only and also is has a slightly
   // different presentation (smaller font size). This is used for popups.
   bool popup_window_mode_;
@@ -365,6 +376,10 @@ class OmniboxViewViews
   // We select in response to a click that focuses the omnibox, but we defer
   // until release, setting this variable back to false if we saw a drag, to
   // allow the user to select just a portion of the text.
+  //
+  // This also controls whether we trigger zero-prefix suggestions on mouse
+  // release, potentially presenting the popup, which we don't want to do if the
+  // user made a selection via a click-drag gesture.
   bool select_all_on_mouse_release_ = false;
 
   // Indicates if we want to select all text in the omnibox when we get a
@@ -409,6 +424,11 @@ class OmniboxViewViews
   // For example,  "Google https://google.com location from history",
   // this is set to 7 (the length of "Google ").
   int friendly_suggestion_text_prefix_length_;
+
+  // Used to track whether focus indicators have been changed to show the AI
+  // mode page action icon as focused. Only used when keyboard accessibility is
+  // disabled (which currently only happens on Mac).
+  bool aim_page_action_icon_has_fake_focus_ = false;
 
   base::ScopedObservation<ui::Compositor, ui::CompositorObserver>
       scoped_compositor_observation_{this};

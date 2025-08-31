@@ -70,8 +70,9 @@ metrics::MetricsService* GetMetricsService() {
 + (BOOL)setMetricsAndCrashReportingForTesting:(BOOL)enabled {
   BOOL previousValue = g_metrics_enabled;
   g_metrics_enabled = enabled;
-  GetApplicationContext()->GetMetricsServicesManager()->UpdateUploadPermissions(
-      true);
+  GetApplicationContext()
+      ->GetMetricsServicesManager()
+      ->UpdateUploadPermissions();
   return previousValue;
 }
 
@@ -197,14 +198,6 @@ metrics::MetricsService* GetMetricsService() {
       syncher::kSyncDWAOperationsTimeout, condition);
 }
 
-+ (BOOL)DWARecorderHasPageLoadEvents:(BOOL)state {
-  ConditionBlock condition = ^{
-    return metrics::dwa::DwaRecorder::Get()->HasPageLoadEvents() == state;
-  };
-  return base::test::ios::WaitUntilConditionOrTimeout(
-      syncher::kSyncDWAOperationsTimeout, condition);
-}
-
 + (BOOL)hasUnsentDWALogs:(BOOL)state {
   ConditionBlock condition = ^{
     return GetDwaService()->unsent_log_store()->has_unsent_logs() == state;
@@ -218,10 +211,6 @@ metrics::MetricsService* GetMetricsService() {
   builder.SetContent("https://adtech.com");
   builder.SetMetric("Length", 5);
   builder.Record(metrics::dwa::DwaRecorder::Get());
-}
-
-+ (void)DWARecorderOnPageLoadCall {
-  metrics::dwa::DwaRecorder::Get()->OnPageLoad();
 }
 
 + (void)DWAServiceFlushCall {

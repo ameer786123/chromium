@@ -12,7 +12,7 @@
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
-#include "chrome/browser/apps/app_service/publishers/chrome_app_deprecation.h"
+#include "chrome/browser/apps/app_service/chrome_app_deprecation/chrome_app_deprecation.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/policy/system_features_disable_list_policy_handler.h"
 #include "chrome/browser/profiles/profile.h"
@@ -76,27 +76,29 @@ std::optional<std::string> FindThrottlingApp(Profile* profile,
 }  // namespace
 
 // static
-std::unique_ptr<content::NavigationThrottle>
-ChromeOsDisabledAppsThrottle::MaybeCreate(content::NavigationHandle* handle) {
+void ChromeOsDisabledAppsThrottle::MaybeCreateAndAdd(
+    content::NavigationThrottleRegistry& registry) {
   // Don't handle navigations in subframes or main frames that are in a nested
   // frame tree (e.g. portals, fenced-frame).
-  if (!handle->IsInPrimaryMainFrame() && !handle->IsInPrerenderedMainFrame()) {
-    return nullptr;
+  auto& handle = registry.GetNavigationHandle();
+  if (!handle.IsInPrimaryMainFrame() && !handle.IsInPrerenderedMainFrame()) {
+    return;
   }
 
-  content::WebContents* web_contents = handle->GetWebContents();
+  content::WebContents* web_contents = handle.GetWebContents();
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   if (!AppServiceProxyFactory::IsAppServiceAvailableForProfile(profile)) {
-    return nullptr;
+    return;
   }
 
-  return base::WrapUnique(new ChromeOsDisabledAppsThrottle(handle));
+  registry.AddThrottle(
+      base::WrapUnique(new ChromeOsDisabledAppsThrottle(registry)));
 }
 
 ChromeOsDisabledAppsThrottle::ChromeOsDisabledAppsThrottle(
-    content::NavigationHandle* navigation_handle)
-    : content::NavigationThrottle(navigation_handle) {}
+    content::NavigationThrottleRegistry& registry)
+    : content::NavigationThrottle(registry) {}
 ChromeOsDisabledAppsThrottle::~ChromeOsDisabledAppsThrottle() = default;
 
 const char* ChromeOsDisabledAppsThrottle::GetNameForLogging() {

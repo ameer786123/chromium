@@ -2,14 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/wm/window_cycle/window_cycle_controller.h"
 
 #include <algorithm>
+#include <array>
 #include <memory>
 
 #include "ash/accelerators/accelerator_controller_impl.h"
@@ -25,7 +21,6 @@
 #include "ash/multi_user/multi_user_window_manager_impl.h"
 #include "ash/public/cpp/ash_prefs.h"
 #include "ash/public/cpp/multi_user_window_manager.h"
-#include "ash/public/cpp/multi_user_window_manager_delegate.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/session/session_controller_impl.h"
@@ -696,7 +691,7 @@ TEST_F(WindowCycleControllerTest, SelectingHidesAppList) {
 // mode.
 TEST_F(WindowCycleControllerTest, SelectingDoesNotHideAppListInTabletMode) {
   TabletModeControllerTestApi().EnterTabletMode();
-  EXPECT_TRUE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(display::Screen::Get()->InTabletMode());
   EXPECT_TRUE(Shell::Get()->app_list_controller()->IsHomeScreenVisible());
 
   std::unique_ptr<aura::Window> window0(CreateTestWindowInShellWithId(0));
@@ -918,10 +913,10 @@ TEST_F(WindowCycleControllerTest, CycleShowsAllDesksWindows) {
 TEST_F(WindowCycleControllerTest, FrameThrottling) {
   FrameThrottlingController* frame_throttling_controller =
       Shell::Get()->frame_throttling_controller();
-  const int window_count = 5;
+  constexpr int window_count = 5;
   std::vector<viz::FrameSinkId> ids{
       {1u, 1u}, {2u, 2u}, {3u, 3u}, {4u, 4u}, {5u, 5u}};
-  std::unique_ptr<aura::Window> windows[window_count];
+  std::array<std::unique_ptr<aura::Window>, window_count> windows;
   for (int i = 0; i < window_count; ++i) {
     windows[i] = CreateAppWindow(gfx::Rect(), chromeos::AppType::BROWSER);
     windows[i]->SetEmbedFrameSinkId(ids[i]);
@@ -1063,7 +1058,7 @@ TEST_F(WindowCycleControllerTest, AltTabMultiDisplay) {
   // TODO(crbug.com/40638870): Unit tests should be able to simulate mouse input
   // without having to call |CursorManager::SetDisplay|.
   Shell::Get()->cursor_manager()->SetDisplay(
-      display::Screen::GetScreen()->GetDisplayNearestWindow(w1.get()));
+      display::Screen::Get()->GetDisplayNearestWindow(w1.get()));
 
   // Test alt-tab activates on first display, the display for new windows, not
   // the second display where the cursor is at.
@@ -1075,10 +1070,10 @@ TEST_F(WindowCycleControllerTest, AltTabMultiDisplay) {
   ASSERT_EQ(2u, preview_items.size());
   // Ensure preview is generated in first display where the activated window
   // is at.
-  auto preview_display = display::Screen::GetScreen()->GetDisplayNearestWindow(
+  auto preview_display = display::Screen::Get()->GetDisplayNearestWindow(
       GetWindowCycleListWidget()->GetNativeWindow());
   auto activated_window =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(w0.get());
+      display::Screen::Get()->GetDisplayNearestWindow(w0.get());
   EXPECT_EQ(activated_window, preview_display);
   CompleteCycling(cycle_controller);
 }
@@ -3176,9 +3171,7 @@ constexpr char kUser2Email[] = "user2@alttab";
 
 }  // namespace
 
-class MultiUserWindowCycleControllerTest
-    : public NoSessionAshTestBase,
-      public MultiUserWindowManagerDelegate {
+class MultiUserWindowCycleControllerTest : public NoSessionAshTestBase {
  public:
   MultiUserWindowCycleControllerTest() = default;
   MultiUserWindowCycleControllerTest(
@@ -3206,13 +3199,6 @@ class MultiUserWindowCycleControllerTest
     multi_user_window_manager_.reset();
     NoSessionAshTestBase::TearDown();
   }
-
-  // MultiUserWindowManagerDelegate:
-  void OnWindowOwnerEntryChanged(aura::Window* window,
-                                 const AccountId& account_id,
-                                 bool was_minimized,
-                                 bool teleported) override {}
-  void OnTransitionUserShelfToNewAccount() override {}
 
   void SwitchPerDeskAltTabModeFromUIAndCheckPrefs(bool per_desk_mode) {
     auto* cycle_controller = Shell::Get()->window_cycle_controller();
@@ -3261,14 +3247,17 @@ class MultiUserWindowCycleControllerTest
   }
 
   void SimulateUserLogin(const AccountId& account_id) {
+    AshTestBase::SimulateUserLogin(account_id);
+    // TODO(crbug.com/425160398): Currently on the production,
+    // MultiUserWindowManager is created after primary user login.
+    // We should move the initialization.
     if (!multi_user_window_manager_) {
-      multi_user_window_manager_ =
-          MultiUserWindowManager::Create(this, account_id);
+      multi_user_window_manager_ = MultiUserWindowManager::Create();
+      multi_user_window_manager_->SetPrimaryUser(account_id);
       CHECK(MultiUserWindowManagerImpl::Get());
       MultiUserWindowManagerImpl::Get()->SetAnimationSpeedForTest(
           MultiUserWindowManagerImpl::ANIMATION_SPEED_DISABLED);
     }
-    AshTestBase::SimulateUserLogin(account_id);
   }
 
   const aura::Window::Windows GetWindows(WindowCycleController* controller) {

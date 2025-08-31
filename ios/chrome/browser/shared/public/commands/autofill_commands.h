@@ -5,7 +5,7 @@
 #ifndef IOS_CHROME_BROWSER_SHARED_PUBLIC_COMMANDS_AUTOFILL_COMMANDS_H_
 #define IOS_CHROME_BROWSER_SHARED_PUBLIC_COMMANDS_AUTOFILL_COMMANDS_H_
 
-#import "components/plus_addresses/plus_address_types.h"
+#import "components/plus_addresses/core/browser/plus_address_types.h"
 
 namespace autofill {
 struct AutofillErrorDialogContext;
@@ -38,7 +38,7 @@ class WebState;
 - (void)showPlusAddressesBottomSheet;
 
 // Commands to manage save card bottomsheet.
-- (void)showSaveCardBottomSheet;
+- (void)showSaveCardBottomSheetOnOriginWebState:(web::WebState*)originWebState;
 - (void)dismissSaveCardBottomSheet;
 
 // Sends a command to show the VCN enrollment Bottom Sheet.

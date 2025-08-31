@@ -20,6 +20,8 @@
           ],
           "script": "//third_party/blink/tools/merge_web_test_results.py"
         },
+        "module_name": "//:blink_web_tests/",
+        "module_scheme": "webtest",
         "name": "graphite_enabled_blink_web_tests",
         "resultdb": {
           "enable": true,
@@ -29,7 +31,7 @@
         "swarming": {
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14"
+            "os": "Mac-15"
           },
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com",
           "shards": 2
@@ -51,6 +53,8 @@
           ],
           "script": "//third_party/blink/tools/merge_web_test_results.py"
         },
+        "module_name": "//:blink_wpt_tests/",
+        "module_scheme": "webtest",
         "name": "graphite_enabled_blink_wpt_tests",
         "resultdb": {
           "enable": true,
@@ -60,7 +64,7 @@
         "swarming": {
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14"
+            "os": "Mac-15"
           },
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
         },
@@ -82,6 +86,8 @@
           ],
           "script": "//third_party/blink/tools/merge_web_test_results.py"
         },
+        "module_name": "//:headless_shell_wpt/",
+        "module_scheme": "webtest",
         "name": "graphite_enabled_headless_shell_wpt_tests",
         "resultdb": {
           "enable": true,
@@ -91,7 +97,7 @@
         "swarming": {
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14"
+            "os": "Mac-15"
           },
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com",
           "shards": 7

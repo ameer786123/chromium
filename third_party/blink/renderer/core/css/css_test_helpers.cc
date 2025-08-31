@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -59,7 +54,7 @@ CSSRuleList* TestStyleSheet::CssRules() {
 
 RuleSet& TestStyleSheet::GetRuleSet() {
   RuleSet& rule_set = style_sheet_->Contents()->EnsureRuleSet(
-      MediaQueryEvaluator(document_->GetFrame()));
+      MediaQueryEvaluator(document_->GetFrame()), /*mixins=*/{});
   rule_set.CompactRulesIfNeeded();
   return rule_set;
 }
@@ -76,7 +71,7 @@ void TestStyleSheet::AddCSSRules(const String& css_text, bool is_empty_sheet) {
 
 CSSStyleSheet* CreateStyleSheet(Document& document) {
   return CSSStyleSheet::CreateInline(
-      document, NullURL(), TextPosition::MinimumPosition(), UTF8Encoding());
+      document, NullURL(), TextPosition::MinimumPosition(), Utf8Encoding());
 }
 
 RuleSet* CreateRuleSet(Document& document, String text) {
@@ -86,7 +81,8 @@ RuleSet* CreateRuleSet(Document& document, String text) {
       MakeGarbageCollected<MediaQueryEvaluator>(document.GetFrame());
   auto* sheet = CSSStyleSheet::Create(document, init, exception_state);
   sheet->replaceSync(text, exception_state);
-  return &sheet->Contents()->EnsureRuleSet(*media_query_evaluator);
+  return &sheet->Contents()->EnsureRuleSet(*media_query_evaluator,
+                                           /*mixins=*/{});
 }
 
 PropertyRegistration* CreatePropertyRegistration(const String& name,
@@ -225,7 +221,7 @@ StyleRuleBase* ParseNestedRule(Document& document,
                                CSSNestingType nesting_type,
                                StyleRule* parent_rule_for_nesting) {
   auto* sheet = CSSStyleSheet::CreateInline(
-      document, NullURL(), TextPosition::MinimumPosition(), UTF8Encoding());
+      document, NullURL(), TextPosition::MinimumPosition(), Utf8Encoding());
   const auto* context = MakeGarbageCollected<CSSParserContext>(document);
   return CSSParser::ParseRule(context, sheet->Contents(), nesting_type,
                               parent_rule_for_nesting, text);

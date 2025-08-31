@@ -20,6 +20,7 @@
 #include "components/autofill/core/browser/data_model/usage_history_information.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
+#include "components/autofill/core/common/autofill_payments_features.h"
 #include "url/gurl.h"
 
 namespace autofill {
@@ -82,6 +83,16 @@ class CreditCard : public FormGroup {
     kExternalIssuer = 2,
   };
 
+  // The source of the card benefits. This must stay in sync with the proto
+  // enum in autofill_specifics.proto.
+  enum class BenefitSource {
+    kSourceUnknown = 0,
+    kSourceAmex = 1,
+    kSourceBmo = 2,
+    kSourceCurinos = 3,
+    kMaxValue = kSourceCurinos,
+  };
+
   // Whether the card has been enrolled in the virtual card feature. This must
   // stay in sync with the proto enum in autofill_specifics.proto. A java
   // IntDef@ is generated from this.
@@ -141,6 +152,19 @@ class CreditCard : public FormGroup {
     kRetrievalUnenrolledAndEligible = 3,
   };
 
+  // The source of the card creation, indicating whether the card was added
+  // through a Chrome-related service, or through an external service (which
+  // includes Android Autofill). This must stay in sync with the proto enum in
+  // autofill_specifics.proto.
+  enum class CardCreationSource {
+    // State unspecified. This is the default value of this enum.
+    kCreationSourceUnspecified = 0,
+    // The card was added through Chrome.
+    kCreationSourceChromePayments = 1,
+    // The card was added outside of Chrome.
+    kCreationSourceNonChromePayments = 2,
+  };
+
   // Creates a copy of the passed in credit card, and sets its `record_type` to
   // `CreditCard::RecordType::kVirtualCard`. This is used to differentiate
   // virtual cards from their real counterpart on the UI layer.
@@ -159,6 +183,15 @@ class CreditCard : public FormGroup {
   static std::u16string GetObfuscatedStringForCardDigits(
       int obfuscation_length,
       const std::u16string& digits);
+
+  // Conversion between benefit source enum and benefit source in string.
+  // Benefit source in string can be fully migrated to the enum after
+  // feature flag `AutofillEnableCardBenefitsSourceSync` is default-enabled
+  // and cleaned up.
+  static std::string_view GetBenefitSourceStringFromEnum(
+      BenefitSource benefit_source_enum);
+  static BenefitSource GetEnumFromBenefitSourceString(
+      std::string_view benefit_source);
 
   CreditCard(const std::string& guid, const std::string& origin);
 
@@ -219,6 +252,7 @@ class CreditCard : public FormGroup {
   void GetMatchingTypes(const std::u16string& text,
                         const std::string& app_locale,
                         FieldTypeSet* matching_types) const override;
+  using FormGroup::GetInfo;
   std::u16string GetInfo(const AutofillType& type,
                          const std::string& app_locale) const override;
   std::u16string GetRawInfo(FieldType type) const override;
@@ -518,6 +552,19 @@ class CreditCard : public FormGroup {
     product_terms_url_ = product_terms_url;
   }
 
+  // TODO(crbug.com/416338314): Remove kAutofillEnableCardBenefitsSourceSync
+  // once this flag is enabled by default and no drawbacks occur.
+  const std::string& benefit_source() const {
+    return base::FeatureList::IsEnabled(
+               features::kAutofillEnableCardBenefitsSourceSync)
+               ? benefit_source_
+               : issuer_id_;
+  }
+
+  void set_benefit_source(std::string_view benefit_source) {
+    benefit_source_ = std::string(benefit_source);
+  }
+
   const std::u16string& cvc() const { return cvc_; }
   void clear_cvc() { cvc_.clear(); }
   void set_cvc(const std::u16string& cvc) { cvc_ = cvc; }
@@ -535,6 +582,13 @@ class CreditCard : public FormGroup {
       CardInfoRetrievalEnrollmentState card_info_retrieval_enrollment_state) {
     card_info_retrieval_enrollment_state_ =
         card_info_retrieval_enrollment_state;
+  }
+
+  CardCreationSource card_creation_source() const {
+    return card_creation_source_;
+  }
+  void set_card_creation_source(CardCreationSource card_creation_source) {
+    card_creation_source_ = card_creation_source;
   }
 
   UsageHistoryInformation& usage_history();
@@ -631,6 +685,7 @@ class CreditCard : public FormGroup {
 
   // The issuer id of the card. This is set for server cards only (both actual
   // cards and virtual cards).
+  // TODO(crbug.com/412749171): Change issuer_id_ to use an enum.
   std::string issuer_id_;
 
   // For masked server cards, this is the ID assigned by the server to uniquely
@@ -662,6 +717,10 @@ class CreditCard : public FormGroup {
   // page.
   GURL product_terms_url_;
 
+  // The source of the card benefits. This is set for server cards with
+  // benefits available only (both actual cards and virtual cards).
+  std::string benefit_source_;
+
   // The card verification code of the card. May be empty.
   std::u16string cvc_;
 
@@ -674,6 +733,12 @@ class CreditCard : public FormGroup {
   // card issuer including card number, expiry and CVC.
   CardInfoRetrievalEnrollmentState card_info_retrieval_enrollment_state_ =
       CardInfoRetrievalEnrollmentState::kRetrievalUnspecified;
+
+  // The source of the card creation, indicating whether the card was added
+  // through a Chrome-related service, or through an external service (which
+  // includes Android Autofill).
+  CardCreationSource card_creation_source_ =
+      CardCreationSource::kCreationSourceUnspecified;
 
   UsageHistoryInformation usage_history_information_;
 

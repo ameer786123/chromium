@@ -43,12 +43,7 @@ GetTrustedWebBundleIdsForTesting() {
 // a kiosk. Kiosk mode is configured via DeviceLocalAccounts enterprise
 // policy.
 bool IsTrustedAsKiosk(const web_package::SignedWebBundleId& web_bundle_id) {
-  std::optional<ash::KioskIwaPolicyData> kiosk_iwa_policy_data =
-      ash::GetCurrentKioskIwaPolicyData();
-  if (!kiosk_iwa_policy_data) {
-    return false;
-  }
-  return kiosk_iwa_policy_data->web_bundle_id == web_bundle_id;
+  return ash::GetCurrentKioskIwaBundleId() == web_bundle_id;
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -67,41 +62,40 @@ bool IsTrustedViaPolicy(Profile& profile,
 }  // namespace
 
 // static
-IsolatedWebAppTrustChecker::Result IsolatedWebAppTrustChecker::IsTrusted(
+base::expected<void, std::string> IsolatedWebAppTrustChecker::IsTrusted(
     Profile& profile,
     const web_package::SignedWebBundleId& web_bundle_id,
     bool is_dev_mode_bundle) {
   if (web_bundle_id.is_for_proxy_mode()) {
-    return {.status = Result::Status::kErrorUnsupportedWebBundleIdType,
-            .message = "Web Bundle IDs of type ProxyMode are not supported."};
+    return base::unexpected(
+        "Web Bundle IDs of type ProxyMode are not supported.");
   }
 
   if (IsTrustedViaPolicy(profile, web_bundle_id)) {
-    return {.status = Result::Status::kTrusted};
+    return base::ok();
   }
 
 #if BUILDFLAG(IS_CHROMEOS)
   if (IsTrustedAsKiosk(web_bundle_id)) {
-    return {.status = Result::Status::kTrusted};
+    return base::ok();
   }
 
   if (ash::IsShimlessRmaAppBrowserContext(&profile) &&
       chromeos::Is3pDiagnosticsIwaId(web_bundle_id)) {
-    return {.status = Result::Status::kTrusted};
+    return base::ok();
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   if (is_dev_mode_bundle && IsIwaDevModeEnabled(&profile)) {
-    return {.status = Result::Status::kTrusted};
+    return base::ok();
   }
 
   if (GetTrustedWebBundleIdsForTesting().contains(web_bundle_id)) {
     CHECK_IS_TEST();
-    return {.status = Result::Status::kTrusted};
+    return base::ok();
   }
 
-  return {.status = Result::Status::kErrorPublicKeysNotTrusted,
-          .message = "The public key(s) are not trusted."};
+  return base::unexpected("The public key(s) are not trusted.");
 }
 
 void SetTrustedWebBundleIdsForTesting(  // IN-TEST

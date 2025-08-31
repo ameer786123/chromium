@@ -83,12 +83,9 @@ std::optional<WebFeature> FeatureCoop(CrossOriginOpenerPolicyValue value) {
       return WebFeature::kCrossOriginOpenerPolicySameOrigin;
     case CrossOriginOpenerPolicyValue::kSameOriginAllowPopups:
       return WebFeature::kCrossOriginOpenerPolicySameOriginAllowPopups;
-    case CrossOriginOpenerPolicyValue::kRestrictProperties:
-      return WebFeature::kCrossOriginOpenerPolicyRestrictProperties;
     case CrossOriginOpenerPolicyValue::kNoopenerAllowPopups:
       return WebFeature::kCrossOriginOpenerPolicyNoopenerAllowPopups;
     case CrossOriginOpenerPolicyValue::kSameOriginPlusCoep:
-    case CrossOriginOpenerPolicyValue::kRestrictPropertiesPlusCoep:
       return WebFeature::kCoopAndCoepIsolated;
   }
 }
@@ -104,12 +101,9 @@ std::optional<WebFeature> FeatureCoopRO(CrossOriginOpenerPolicyValue value) {
     case CrossOriginOpenerPolicyValue::kSameOriginAllowPopups:
       return WebFeature::
           kCrossOriginOpenerPolicySameOriginAllowPopupsReportOnly;
-    case CrossOriginOpenerPolicyValue::kRestrictProperties:
-      return WebFeature::kCrossOriginOpenerPolicyRestrictPropertiesReportOnly;
     case CrossOriginOpenerPolicyValue::kNoopenerAllowPopups:
       return WebFeature::kCrossOriginOpenerPolicyNoopenerAllowPopupsReportOnly;
     case CrossOriginOpenerPolicyValue::kSameOriginPlusCoep:
-    case CrossOriginOpenerPolicyValue::kRestrictPropertiesPlusCoep:
       return WebFeature::kCoopAndCoepIsolatedReportOnly;
   }
 }
@@ -409,8 +403,9 @@ bool Navigator::CheckWebUIRendererDoesNotDisplayNormalURL(
 
     // Check whether the process must be locked and if so that the process lock
     // is indeed in place.
-    if (should_lock_process && !process_lock.is_locked_to_site())
+    if (should_lock_process && !process_lock.IsLockedToSite()) {
       return false;
+    }
 
     // There must be a WebUI on the frame.
     if (!render_frame_host->web_ui())
@@ -478,10 +473,11 @@ bool Navigator::StartHistoryNavigationInNewSubframe(
     RenderFrameHostImpl* render_frame_host,
     mojo::PendingAssociatedRemote<mojom::NavigationClient>* navigation_client,
     blink::LocalFrameToken initiator_frame_token,
-    int initiator_process_id) {
+    int initiator_process_id,
+    base::TimeTicks actual_navigation_start) {
   return controller_.StartHistoryNavigationInNewSubframe(
       render_frame_host, navigation_client, initiator_frame_token,
-      initiator_process_id);
+      initiator_process_id, actual_navigation_start);
 }
 
 void Navigator::DidNavigate(
@@ -634,10 +630,13 @@ void Navigator::DidNavigate(
   // proxies, including the proxy created in DidNavigateFrame() to replace the
   // old frame in cross-process navigation cases. Note that the origin-related
   // bits are set separately, through `SetLastCommittedOrigin()`.
-  render_frame_host->browsing_context_state()->SetInsecureRequestPolicy(
-      params.insecure_request_policy);
-  render_frame_host->browsing_context_state()->SetInsecureNavigationsSet(
-      params.insecure_navigations_set);
+  if (!was_within_same_document ||
+      !::features::IsEnforceSameDocumentOriginInvariantsEnabled()) {
+    render_frame_host->browsing_context_state()->SetInsecureRequestPolicy(
+        params.insecure_request_policy);
+    render_frame_host->browsing_context_state()->SetInsecureNavigationsSet(
+        params.insecure_navigations_set);
+  }
 
   // If the committing URL requires the SiteInstance's site to be assigned,
   // that site assignment should've already happened at ReadyToCommit time. We
@@ -731,14 +730,13 @@ void Navigator::DidNavigate(
       navigation_request->browsing_context_group_swap().ShouldSwap()) {
     SiteInstanceImpl* final_site_instance =
         render_frame_host->GetSiteInstance();
-    blink::BrowsingContextGroupInfo browsing_context_group_info(
-        final_site_instance->browsing_instance_token(),
-        final_site_instance->coop_related_group_token());
+    base::UnguessableToken browsing_context_group_token =
+        final_site_instance->browsing_instance_token();
     frame_tree.root()->render_manager()->ExecutePageBroadcastMethod(
-        [&browsing_context_group_info](RenderViewHostImpl* rvh) {
+        [&browsing_context_group_token](RenderViewHostImpl* rvh) {
           if (auto& broadcast = rvh->GetAssociatedPageBroadcast()) {
             broadcast->UpdatePageBrowsingContextGroup(
-                browsing_context_group_info);
+                browsing_context_group_token);
           }
         },
         final_site_instance->group());
@@ -895,6 +893,10 @@ void Navigator::Navigate(std::unique_ptr<NavigationRequest> request,
         base::FeatureList::IsEnabled(features::kIgnoreDuplicateNavs)) {
       request->set_navigation_discard_reason(
           NavigationDiscardReason::kNeverStarted);
+      DVLOG(0) << "Ignoring duplicate navigation to "
+               << request->common_params().url
+               << " due to the short interval since the previous one.";
+
       return;
     } else {
       ongoing_navigation_request->set_navigation_discard_reason(
@@ -916,12 +918,26 @@ void Navigator::Navigate(std::unique_ptr<NavigationRequest> request,
   // We don't want to dispatch a beforeunload handler if
   // is_history_navigation_in_new_child is true. This indicates a newly created
   // child frame which does not have a beforeunload handler.
-  bool should_dispatch_beforeunload =
+  //
+  // We also don't want to dispatch a beforeunload handler if the browser is
+  // forcibly navigating a frame to an error page, because the renderer should
+  // have no chance to respond before that occurs.
+  // TODO(crbug.com/406729265): LoadPostCommitErrorPage() does not initiate a
+  // navigation via Navigator::Navigate(). We should fix that, so that
+  // post-commit error page navigations don't bypass other important checks in
+  // this function.
+  const bool should_dispatch_beforeunload =
       !NavigationTypeUtils::IsSameDocument(
           request->common_params().navigation_type) &&
       !request->common_params().is_history_navigation_in_new_child_frame &&
       frame_tree_node->current_frame_host()->ShouldDispatchBeforeUnload(
-          false /* check_subframes_only */);
+          false /* check_subframes_only */) &&
+      request->browser_initiated_error_navigation_type() ==
+          NavigationRequest::BrowserInitiatedErrorNavigationType::kNone;
+
+  base::UmaHistogramBoolean(
+      "Navigation.BrowserInitiated.ShouldDispatchBeforeUnload",
+      should_dispatch_beforeunload);
 
   int nav_entry_id = request->nav_entry_id();
   bool is_pending_entry =
@@ -1213,7 +1229,8 @@ void Navigator::OnBeginNavigation(
     if (begin_params->initiator_frame_token &&
         frame_tree_node->navigator().StartHistoryNavigationInNewSubframe(
             frame_tree_node->current_frame_host(), &navigation_client,
-            *begin_params->initiator_frame_token, initiator_process_id)) {
+            *begin_params->initiator_frame_token, initiator_process_id,
+            common_params->actual_navigation_start)) {
       return;
     }
   }
@@ -1274,9 +1291,12 @@ void Navigator::OnBeginNavigation(
   // those frames.
   DCHECK(!NavigationTypeUtils::IsSameDocument(
       navigation_request->common_params().navigation_type));
-  bool should_dispatch_beforeunload =
+  const bool should_dispatch_beforeunload =
       frame_tree_node->current_frame_host()->ShouldDispatchBeforeUnload(
           true /* check_subframes_only */);
+  base::UmaHistogramBoolean(
+      "Navigation.RendererInitiated.ShouldDispatchBeforeUnload",
+      should_dispatch_beforeunload);
   if (should_dispatch_beforeunload) {
     frame_tree_node->navigation_request()->WillStartBeforeUnload();
     frame_tree_node->current_frame_host()->DispatchBeforeUnload(

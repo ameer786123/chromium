@@ -23,17 +23,13 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "third_party/blink/renderer/modules/indexeddb/idb_request.h"
 
 #include <memory>
 #include <optional>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
@@ -90,8 +86,9 @@ v8::Local<v8::ArrayBuffer> CreateArrayBuffer(
     base::span<const uint8_t> array_buffer_bytes) {
   v8::Local<v8::ArrayBuffer> array_buffer =
       v8::ArrayBuffer::New(isolate, array_buffer_bytes.size());
-  std::memcpy(array_buffer->GetBackingStore()->Data(),
-              array_buffer_bytes.data(), array_buffer_bytes.size());
+  UNSAFE_TODO(std::memcpy(array_buffer->GetBackingStore()->Data(),
+                          array_buffer_bytes.data(),
+                          array_buffer_bytes.size()));
   return array_buffer;
 }
 
@@ -108,8 +105,8 @@ mojom::blink::IDBReturnValuePtr CreateIDBReturnValuePtrWithBlob(
 
   mojom::blink::IDBReturnValuePtr idb_return_value =
       mojom::blink::IDBReturnValue::New();
-  idb_return_value->value = std::make_unique<IDBValue>(wrapper.TakeWireBytes(),
-                                                       wrapper.TakeBlobInfo());
+  idb_return_value->value = std::move(wrapper).Build();
+
   idb_return_value->primary_key = IDBKey::CreateNone();
   return idb_return_value;
 }
@@ -123,8 +120,7 @@ std::unique_ptr<IDBValue> CreateIDBValueWithV8Value(
                           SerializedScriptValue::SerializeOptions::kSerialize,
                           non_throwable_exception_state);
   wrapper.DoneCloning();
-  return std::make_unique<IDBValue>(wrapper.TakeWireBytes(),
-                                    wrapper.TakeBlobInfo());
+  return std::move(wrapper).Build();
 }
 
 // Generates a batch of records to stream for a get all request.  Use the bool
@@ -153,8 +149,8 @@ Vector<mojom::blink::IDBRecordPtr> GenerateGetAllResults(
       String value_string = u"value_" + String::Number(next_id);
       Vector<char> value_bytes(value_string.Utf8());
       return_value = mojom::blink::IDBReturnValue::New();
-      return_value->value = std::make_unique<IDBValue>(std::move(value_bytes),
-                                                       Vector<WebBlobInfo>());
+      (return_value->value = std::make_unique<IDBValue>())
+          ->SetData(std::move(value_bytes));
       return_value->primary_key = IDBKey::CreateNone();
     }
 
@@ -185,8 +181,8 @@ IDBRecordArray ToIDBRecordArray(
         mojom::blink::IDBReturnValuePtr& idb_return_value =
             record->return_value;
         Vector<char> expected_value_bytes(idb_return_value->value->Data());
-        std::unique_ptr<IDBValue> expected_value = std::make_unique<IDBValue>(
-            std::move(expected_value_bytes), Vector<WebBlobInfo>());
+        std::unique_ptr<IDBValue> expected_value = std::make_unique<IDBValue>();
+        expected_value->SetData(std::move(expected_value_bytes));
 
         // Copy the injected primary key when it exists.
         if (idb_return_value->primary_key->IsValid()) {
@@ -195,7 +191,7 @@ IDBRecordArray ToIDBRecordArray(
               idb_return_value->key_path);
         }
 
-        record_array.values.emplace_back(std::move(expected_value));
+        record_array.values.push_back(std::move(expected_value));
       }
 
       if (record->index_key) {
@@ -300,8 +296,8 @@ class BackendDatabaseWithMockedClose
           pending_receiver)
       : receiver_(this, std::move(pending_receiver)) {
     receiver_.set_disconnect_handler(
-        WTF::BindOnce(&BackendDatabaseWithMockedClose::DatabaseDestroyed,
-                      base::Unretained(this)));
+        BindOnce(&BackendDatabaseWithMockedClose::DatabaseDestroyed,
+                 base::Unretained(this)));
   }
 
   void DatabaseDestroyed() { destroyed_ = true; }
@@ -359,7 +355,7 @@ class IDBRequestTest : public testing::Test {
 
     IDBKeyPath store_key_path("primaryKey");
     scoped_refptr<IDBObjectStoreMetadata> store_metadata = base::AdoptRef(
-        new IDBObjectStoreMetadata("store", kStoreId, store_key_path, true, 1));
+        new IDBObjectStoreMetadata("store", kStoreId, store_key_path, true));
     store_ = MakeGarbageCollected<IDBObjectStore>(store_metadata, transaction_);
   }
 

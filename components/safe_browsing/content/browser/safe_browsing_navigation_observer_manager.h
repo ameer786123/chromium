@@ -32,6 +32,10 @@ class NavigationHandle;
 struct GlobalRenderFrameHostId;
 }
 
+namespace enterprise_data_protection {
+class DataProtectionNavigationControllerTest;
+}
+
 namespace safe_browsing {
 
 class SafeBrowsingNavigationObserver;
@@ -49,7 +53,7 @@ class ReferrerChainData : public base::SupportsUserData::Data {
   ReferrerChainProvider::AttributionResult attribution_result() const {
     return attribution_result_;
   }
-  ReferrerChain* GetReferrerChain();
+  ReferrerChain* GetReferrerChain() const;
   size_t referrer_chain_length() { return referrer_chain_length_; }
   size_t recent_navigations_to_collect() {
     return recent_navigations_to_collect_;
@@ -371,6 +375,8 @@ class SafeBrowsingNavigationObserverManager
   friend class SBNavigationObserverBrowserTest;
   friend class SBNavigationObserverTest;
   friend class ChromeClientSideDetectionHostDelegateTest;
+  friend class enterprise_data_protection::
+      DataProtectionNavigationControllerTest;
 
   struct GurlHash {
     std::size_t operator()(const GURL& url) const {

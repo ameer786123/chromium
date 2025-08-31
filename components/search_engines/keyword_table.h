@@ -13,7 +13,6 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/feature_list.h"
 #include "base/gtest_prod_util.h"
 #include "components/country_codes/country_codes.h"
 #include "components/search_engines/template_url_id.h"
@@ -25,12 +24,6 @@ class WebDatabase;
 namespace sql {
 class Statement;
 }  // namespace sql
-
-namespace features {
-// An emergency 'off switch' to disable hash verification.
-// TODO(crbug.com/376303929): Remove in M134.
-BASE_DECLARE_FEATURE(kKeywordTableHashVerification);
-}  // namespace features
 
 // This class manages the |keywords| MetaTable within the SQLite database
 // passed to the constructor. It expects the following schema:
@@ -96,10 +89,6 @@ BASE_DECLARE_FEATURE(kKeywordTableHashVerification);
 // Starter Pack Keyword Version      The version of starter pack data.
 // Builtin Keyword Country           The country associated with the builtin
 //                                   keywords data, stored as a country ID.
-// Builtin Keyword Milestone         The version number of Chrome milestone when
-//                                   the keyword data has been last merged into
-//                                   the database. Written between Chrome M122
-//                                   and M129.
 //
 class KeywordTable : public WebDatabaseTable {
  public:
@@ -147,9 +136,6 @@ class KeywordTable : public WebDatabaseTable {
   // last updated.
   bool SetBuiltinKeywordDataVersion(int version);
   int GetBuiltinKeywordDataVersion();
-
-  // Chrome milestone when the built-in keywords were last updated.
-  bool ClearBuiltinKeywordMilestone();
 
   // Country associated with the built-in keywords, stored as a country ID,
   // see `country_codes::CountryId()`.

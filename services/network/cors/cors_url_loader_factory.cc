@@ -11,6 +11,7 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/trace_event/typed_macros.h"
@@ -212,7 +213,6 @@ CorsURLLoaderFactory::CorsURLLoaderFactory(
     NetworkContext* context,
     mojom::URLLoaderFactoryParamsPtr params,
     scoped_refptr<ResourceSchedulerClient> resource_scheduler_client,
-    mojo::PendingReceiver<mojom::URLLoaderFactory> receiver,
     const OriginAccessList* origin_access_list,
     PrefetchMatchingURLLoaderFactory* owner)
     : context_(context),
@@ -295,12 +295,6 @@ CorsURLLoaderFactory::CorsURLLoaderFactory(
   } else {
     network_loader_factory_ = std::move(network_loader_factory);
   }
-
-  if (receiver.is_valid()) {
-    receivers_.Add(this, std::move(receiver));
-  }
-  receivers_.set_disconnect_handler(base::BindRepeating(
-      &CorsURLLoaderFactory::DeleteIfNeeded, base::Unretained(this)));
 }
 
 CorsURLLoaderFactory::~CorsURLLoaderFactory() {
@@ -473,10 +467,9 @@ void CorsURLLoaderFactory::CreateLoaderAndStart(
           std::move(client), traffic_annotation, inner_url_loader_factory,
           factory_override_ ? nullptr : network_loader_factory_.get(),
           origin_access_list_, GetAllowAnyCorsExemptHeaderForBrowser(),
-          HasFactoryOverride(!!factory_override_), *isolation_info_ptr,
-          std::move(devtools_observer), client_security_state_.get(),
-          &url_loader_network_service_observer_, cross_origin_embedder_policy_,
-          shared_dictionary_storage,
+          *isolation_info_ptr, std::move(devtools_observer),
+          client_security_state_.get(), &url_loader_network_service_observer_,
+          cross_origin_embedder_policy_, shared_dictionary_storage,
           shared_dictionary_observer_ ? shared_dictionary_observer_.get()
                                       : nullptr,
           context_, factory_cookie_setting_overrides_,
@@ -492,10 +485,9 @@ void CorsURLLoaderFactory::CreateLoaderAndStart(
           std::move(client), traffic_annotation, inner_url_loader_factory,
           factory_override_ ? nullptr : network_loader_factory_.get(),
           origin_access_list_, GetAllowAnyCorsExemptHeaderForBrowser(),
-          HasFactoryOverride(!!factory_override_), *isolation_info_ptr,
-          std::move(devtools_observer), client_security_state_.get(),
-          &url_loader_network_service_observer_, cross_origin_embedder_policy_,
-          shared_dictionary_storage,
+          *isolation_info_ptr, std::move(devtools_observer),
+          client_security_state_.get(), &url_loader_network_service_observer_,
+          cross_origin_embedder_policy_, shared_dictionary_storage,
           shared_dictionary_observer_ ? shared_dictionary_observer_.get()
                                       : nullptr,
           context_, factory_cookie_setting_overrides_,
@@ -526,17 +518,11 @@ void CorsURLLoaderFactory::CreateLoaderAndStart(
 
 void CorsURLLoaderFactory::Clone(
     mojo::PendingReceiver<mojom::URLLoaderFactory> receiver) {
-  // The cloned factories stop working when this factory is destructed.
-  receivers_.Add(this, std::move(receiver));
-}
-
-void CorsURLLoaderFactory::ClearBindings() {
-  receivers_.Clear();
-  DeleteIfNeeded();
+  NOTREACHED() << "CorsURLLoaderFactory::Clone must not be called";
 }
 
 void CorsURLLoaderFactory::DeleteIfNeeded() {
-  if (receivers_.empty() && url_loaders_.empty() && cors_url_loaders_.empty() &&
+  if (url_loaders_.empty() && cors_url_loaders_.empty() &&
       !owner_->HasAdditionalReferences()) {
     owner_->DestroyURLLoaderFactory(this);
   }
@@ -616,12 +602,36 @@ bool CorsURLLoaderFactory::IsValidRequest(const ResourceRequest& request,
     return false;
   }
 
-  // Reject request with trusted params if factory is not for a trusted
-  // consumer.
-  if (request.trusted_params && !is_trusted_) {
-    mojo::ReportBadMessage(
-        "CorsURLLoaderFactory: Untrusted caller making trusted request");
+  // Reject requests with load flags that are only for use internally by the
+  // network service itself.
+  if (request.load_flags &
+      (net::LOAD_CAN_USE_SHARED_DICTIONARY |
+       net::LOAD_DISABLE_SHARED_DICTIONARY_AFTER_CROSS_ORIGIN_REDIRECT)) {
+    mojo::ReportBadMessage("CorsURLLoaderFactory: Internal load flag received");
     return false;
+  }
+
+  // Check if this is an untrusted factory being provided parameters that should
+  // only be passed if it's trusted.
+  if (!is_trusted_) {
+    if (request.trusted_params) {
+      mojo::ReportBadMessage(
+          "CorsURLLoaderFactory: Untrusted caller making trusted request");
+      return false;
+    }
+
+    // Apply allowlist for which flags untrusted factories are allowed to use.
+    if (request.load_flags &
+        ~(net::LOAD_VALIDATE_CACHE | net::LOAD_BYPASS_CACHE |
+          net::LOAD_SKIP_CACHE_VALIDATION | net::LOAD_ONLY_FROM_CACHE |
+          net::LOAD_DISABLE_CACHE | net::LOAD_PREFETCH |
+          net::LOAD_IGNORE_LIMITS | net::LOAD_DO_NOT_USE_EMBEDDED_IDENTITY |
+          net::LOAD_SUPPORT_ASYNC_REVALIDATION |
+          net::LOAD_RESTRICTED_PREFETCH_FOR_MAIN_FRAME)) {
+      mojo::ReportBadMessage(
+          "CorsURLLoaderFactory: Untrusted caller using restricted load flag");
+      return false;
+    }
   }
 
   // Reject request if the restricted prefetch load flag is set but the
@@ -853,18 +863,7 @@ bool CorsURLLoaderFactory::IsValidRequest(const ResourceRequest& request,
       return false;
     }
 
-    if (client_security_state_ &&
-        PrivateNetworkAccessChecker::NeedPermission(
-            request.url, client_security_state_->is_web_secure_context,
-            request.required_ip_address_space)) {
-      if (request.required_ip_address_space == mojom::IPAddressSpace::kPublic) {
-        mojo::ReportBadMessage(
-            "CorsURLLoaderFactory: required_ip_address_space "
-            "is set to public.");
-        return false;
-      }
-    } else if (request.target_ip_address_space !=
-               mojom::IPAddressSpace::kUnknown) {
+    if (request.target_ip_address_space != mojom::IPAddressSpace::kUnknown) {
       mojo::ReportBadMessage(
           "CorsURLLoaderFactory: target_ip_address_space is "
           "set.");

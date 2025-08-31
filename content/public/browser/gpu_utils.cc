@@ -19,7 +19,6 @@
 #include "content/browser/gpu/gpu_process_host.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
-#include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/command_buffer/service/service_utils.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "gpu/config/gpu_switches.h"
@@ -48,16 +47,6 @@ bool GetUintFromSwitch(const base::CommandLine* command_line,
 }  // namespace
 
 namespace content {
-
-bool ShouldEnableAndroidSurfaceControl(const base::CommandLine& cmd_line) {
-#if !BUILDFLAG(IS_ANDROID)
-  return false;
-#else
-  if (viz::PreferRGB565ResourcesForDisplay())
-    return false;
-  return features::IsAndroidSurfaceControlEnabled();
-#endif
-}
 
 const gpu::GpuPreferences GetGpuPreferencesFromCommandLine() {
   DCHECK(base::CommandLine::InitializedForCurrentProcess());
@@ -99,9 +88,6 @@ const gpu::GpuPreferences GetGpuPreferencesFromCommandLine() {
 
   gpu_preferences.enable_gpu_benchmarking_extension =
       command_line->HasSwitch(switches::kEnableGpuBenchmarking);
-
-  gpu_preferences.enable_android_surface_control =
-      ShouldEnableAndroidSurfaceControl(*command_line);
 
   gpu_preferences.enable_native_gpu_memory_buffers =
       command_line->HasSwitch(switches::kEnableNativeGpuMemoryBuffers);

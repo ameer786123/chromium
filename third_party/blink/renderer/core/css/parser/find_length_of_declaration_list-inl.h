@@ -66,7 +66,7 @@ static inline __m128i LoadAndCollapseHighBytes(const UChar* ptr) {
 }
 
 // For LChar, this is trivial; just load the bytes as-is.
-static inline __m128i LoadAndCollapseHighBytes(const LChar* ptr) {
+static inline __m128i LoadAndCollapseHighBytes(const blink::LChar* ptr) {
   return _mm_loadu_si128(reinterpret_cast<const __m128i*>(ptr));
 }
 
@@ -151,7 +151,11 @@ ALWAYS_INLINE static size_t FindLengthOfDeclarationList(
     // Unescaped newlines within quotes are not allowed; they terminate
     // the string. We don't want to complicate our handling beyond
     // detecting it, so we treat it as an error and abort.
-    const __m128i eq_newline = _mm_cmpeq_epi8(x, _mm_set1_epi8('\n'));
+    // \r, \n and \f all count as newlines in this regard
+    // (see IsCSSNewLine()).
+    const __m128i eq_newline = _mm_cmpeq_epi8(x, _mm_set1_epi8('\n')) |
+                               _mm_cmpeq_epi8(x, _mm_set1_epi8('\r')) |
+                               _mm_cmpeq_epi8(x, _mm_set1_epi8('\f'));
     const __m128i quoted_newline = is_quoted & eq_newline;
 
     // Now we have a mask of bytes that are inside quotes
@@ -290,7 +294,7 @@ LoadAndCollapseHighBytesAVX2(const UChar* ptr) {
 }
 
 __attribute__((target("avx2"))) static inline __m256i
-LoadAndCollapseHighBytesAVX2(const LChar* ptr) {
+LoadAndCollapseHighBytesAVX2(const blink::LChar* ptr) {
   return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(ptr));
 }
 
@@ -387,7 +391,18 @@ FindLengthOfDeclarationListAVX2(base::span<const CharType> chars) {
     // parens within quotes.
     __m256i quoted_mask = MaskToAVX2(prefix_single_quote | prefix_double_quote);
 
-    const __m256i eq_newline = _mm256_cmpeq_epi8(x, _mm256_set1_epi8('\n'));
+    // Since we have PSHUFB, and the values we're looking for (0x0a, 0x0c, 0x0d)
+    // all share a nibble (the upper nibble is always zero), we can use a
+    // shuffle plus compare instead of three compares and ORs. Basically this is
+    // the test `x == table[x & 0x0f]` (modulo some PSHUFB behavior with the top
+    // bit of x, that we don't need to worry about here), where we engineer
+    // table[] so that this only holds true for the three values of x we care
+    // about.
+    const __m256i eq_newline_table =
+        _mm256_setr_epi64x(0x0000000000000001, 0x00000d0c000a0000,
+                           0x0000000000000000, 0x0000000000000000);
+    const __m256i eq_newline =
+        _mm256_cmpeq_epi8(x, _mm256_shuffle_epi8(eq_newline_table, x));
     const __m256i quoted_newline = quoted_mask & eq_newline;
 
     const __m256i comment_start =
@@ -447,7 +462,7 @@ FindLengthOfDeclarationListAVX2(base::span<const CharType> chars) {
 }
 
 __attribute__((target("avx2,pclmul"))) inline size_t
-FindLengthOfDeclarationListAVX2(StringView str) {
+FindLengthOfDeclarationListAVX2(blink::StringView str) {
   if (str.Is8Bit()) {
     return FindLengthOfDeclarationListAVX2(str.Span8());
   } else {
@@ -468,7 +483,7 @@ static inline uint8x16_t LoadAndCollapseHighBytes(const UChar* ptr) {
       vcombine_u64(vreinterpret_u64_u8(vqmovn_u16(vreinterpretq_u16_u8(x1))),
                    vreinterpret_u64_u8(vqmovn_u16(vreinterpretq_u16_u8(x2)))));
 }
-static inline uint8x16_t LoadAndCollapseHighBytes(const LChar* ptr) {
+static inline uint8x16_t LoadAndCollapseHighBytes(const blink::LChar* ptr) {
   uint8x16_t ret;
   UNSAFE_TODO(memcpy(&ret, ptr, sizeof(ret)));
   return ret;
@@ -527,7 +542,18 @@ ALWAYS_INLINE static size_t FindLengthOfDeclarationList(
     const uint8x16_t mixed_quote = quoted == static_cast<char>('\'' ^ '"');
 
     const uint8x16_t is_quoted = quoted > vdupq_n_u8(0);
-    const uint8x16_t eq_newline = x == '\n';
+    // The VTBL instruction returns zero for indexes outside [0,16), so we
+    // don't need to be clever at all here, unlike with AVX2.
+#ifdef ARCH_CPU_ARM64
+    const uint8x16_t eq_newline = vqtbl1q_u8(
+        uint8x16_t{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0, 0xff, 0xff, 0, 0}, x);
+#else
+    const uint8x8x2_t eq_newline_table{0, 0, 0,    0, 0,    0,    0, 0,
+                                       0, 0, 0xff, 0, 0xff, 0xff, 0, 0};
+    const uint8x16_t eq_newline =
+        vcombine_s8(vtbl2_u8(eq_newline_table, vget_low_s8(x)),
+                    vtbl2_u8(eq_newline_table, vget_high_s8(x)));
+#endif
     const uint8x16_t quoted_newline = is_quoted & eq_newline;
 
     x &= ~is_quoted;
@@ -608,7 +634,7 @@ ALWAYS_INLINE static size_t FindLengthOfDeclarationList(
 
 #endif
 
-ALWAYS_INLINE static size_t FindLengthOfDeclarationList(StringView str) {
+ALWAYS_INLINE static size_t FindLengthOfDeclarationList(blink::StringView str) {
   if (str.Is8Bit()) {
     return FindLengthOfDeclarationList(str.Span8());
   } else {

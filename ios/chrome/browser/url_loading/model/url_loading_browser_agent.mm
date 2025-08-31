@@ -14,8 +14,7 @@
 #import "ios/chrome/browser/incognito_reauth/ui_bundled/incognito_reauth_scene_agent.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_util.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
-#import "ios/chrome/browser/prerender/model/prerender_service.h"
-#import "ios/chrome/browser/prerender/model/prerender_service_factory.h"
+#import "ios/chrome/browser/prerender/model/prerender_browser_agent.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
@@ -29,8 +28,6 @@
 #import "ios/chrome/browser/url_loading/model/url_loading_util.h"
 #import "ios/chrome/browser/web/model/load_timing_tab_helper.h"
 #import "net/base/url_util.h"
-
-BROWSER_USER_DATA_KEY_IMPL(UrlLoadingBrowserAgent)
 
 namespace {
 
@@ -73,7 +70,7 @@ NOINLINE void InduceBrowserCrash(const GURL& url) {
     return;
   }
 
-#if !TARGET_IPHONE_SIMULATOR  // Leaking memory does not cause UTE on simulator.
+#if !TARGET_OS_SIMULATOR  // Leaking memory does not cause UTE on simulator.
   std::string leak_string;
   if (net::GetValueForKeyInQuery(url, "leak", &leak_string) &&
       (leak_string == "" || leak_string == "true")) {
@@ -127,7 +124,7 @@ NOINLINE void InduceBrowserCrash(const GURL& url) {
 }  // namespace
 
 UrlLoadingBrowserAgent::UrlLoadingBrowserAgent(Browser* browser)
-    : browser_(browser),
+    : BrowserUserData(browser),
       notifier_(UrlLoadingNotifierBrowserAgent::FromBrowser(browser_)) {
   DCHECK(notifier_);
 }
@@ -206,8 +203,8 @@ void UrlLoadingBrowserAgent::LoadUrlInCurrentTab(const UrlLoadParams& params) {
     return;
   }
 
-  PrerenderService* prerender_service =
-      PrerenderServiceFactory::GetForProfile(profile);
+  PrerenderBrowserAgent* prerender_browser_agent =
+      PrerenderBrowserAgent::FromBrowser(browser_);
 
   // Some URLs are not allowed while in incognito.  If we are in incognito and
   // load a disallowed URL, instead create a new tab not in the incognito state.
@@ -215,8 +212,8 @@ void UrlLoadingBrowserAgent::LoadUrlInCurrentTab(const UrlLoadParams& params) {
   // to open in, so this also redirects to a new tab.
   if (!current_web_state ||
       (profile->IsOffTheRecord() && !IsURLAllowedInIncognito(web_params.url))) {
-    if (prerender_service) {
-      prerender_service->CancelPrerender();
+    if (prerender_browser_agent) {
+      prerender_browser_agent->CancelPrerender();
     }
     notifier_->TabFailedToLoadUrl(web_params.url, web_params.transition_type);
 
@@ -236,9 +233,9 @@ void UrlLoadingBrowserAgent::LoadUrlInCurrentTab(const UrlLoadParams& params) {
 
   // Ask the prerender service to load this URL if it can, and return if it does
   // so.
-  if (prerender_service &&
-      prerender_service->MaybeLoadPrerenderedURL(
-          web_params.url, web_params.transition_type, browser_)) {
+  if (prerender_browser_agent &&
+      prerender_browser_agent->ValidatePrerender(web_params.url,
+                                                 web_params.transition_type)) {
     notifier_->TabDidPrerenderUrl(web_params.url, web_params.transition_type);
     return;
   }
@@ -306,7 +303,7 @@ void UrlLoadingBrowserAgent::SwitchToTab(const UrlLoadParams& params) {
   // empty tabs.
   if (old_tab_is_ntp_without_history) {
     web_state_list->CloseWebStateAt(old_web_state_index,
-                                    WebStateList::CLOSE_USER_ACTION);
+                                    WebStateList::ClosingReason::kUserAction);
   }
 
   notifier_->DidSwitchToTabWithUrl(web_params.url, new_web_state_index);
@@ -373,12 +370,14 @@ void UrlLoadingBrowserAgent::LoadUrlInNewTab(const UrlLoadParams& params) {
   }
 
   if (!params.in_background()) {
-    LoadUrlInNewTabImpl(params, std::nullopt);
+    LoadUrlInNewTabImpl(params, web::WebStateID());
   } else {
-    void* hint = nullptr;
-
+    web::WebStateID active_tab_id;
     if (params.append_to == OpenPosition::kCurrentTab) {
-      hint = browser_->GetWebStateList()->GetActiveWebState();
+      if (web::WebState* active_web_state =
+              browser_->GetWebStateList()->GetActiveWebState()) {
+        active_tab_id = active_web_state->GetUniqueIdentifier();
+      }
     }
 
     // If the tab should open in background in a different mode, dispatch the
@@ -388,7 +387,7 @@ void UrlLoadingBrowserAgent::LoadUrlInNewTab(const UrlLoadParams& params) {
         params.in_incognito != active_profile->IsOffTheRecord();
     base::OnceClosure load_url_closure =
         base::BindOnce(&UrlLoadingBrowserAgent::LoadUrlInNewTabImpl,
-                       weak_ptr_factory_.GetWeakPtr(), params, hint);
+                       weak_ptr_factory_.GetWeakPtr(), params, active_tab_id);
     if (should_dispatch_load) {
       load_url_closure =
           base::BindPostTask(base::SequencedTaskRunner::GetCurrentDefault(),
@@ -401,24 +400,19 @@ void UrlLoadingBrowserAgent::LoadUrlInNewTab(const UrlLoadParams& params) {
   }
 }
 
-void UrlLoadingBrowserAgent::LoadUrlInNewTabImpl(const UrlLoadParams& params,
-                                                 std::optional<void*> hint) {
+void UrlLoadingBrowserAgent::LoadUrlInNewTabImpl(
+    const UrlLoadParams& params,
+    web::WebStateID active_tab_id) {
   web::WebState* parent_web_state = nullptr;
   if (params.append_to == OpenPosition::kCurrentTab) {
     parent_web_state = browser_->GetWebStateList()->GetActiveWebState();
 
-    // Detect whether the active tab changed during the animation of opening
-    // a tab in the background. This is only needed when opening in background
-    // (thus the use of optional).
-    //
-    // This compare the value read before vs after the animation (as `void*`
-    // to prevent trying to dereference a potentially dangling pointer). This
-    // is not 100% fool proof as the WebState could have been destroyed, then
-    // a new one allocated at the same address and inserted as the active tab.
-    // However, this is highly likely to happen. Even if it were to happen, it
-    // would be benign as the only drawback is that the wrong tab would be
-    // selected upon closing the newly opened tab.
-    if (hint && hint.value() != parent_web_state) {
+    // Detecting whether the active tab change is done by comparing the
+    // WebStateID. This is cheap, does not require passing a pointer that could
+    // become dangling, nor creating a WeakPtr which is expensive, when the only
+    // thing we are interested is detecting a change.
+    if (active_tab_id.valid() && parent_web_state &&
+        parent_web_state->GetUniqueIdentifier() != active_tab_id) {
       parent_web_state = nullptr;
     }
   }

@@ -6,23 +6,28 @@
 
 #import "base/auto_reset.h"
 #import "base/check_is_test.h"
+#import "base/containers/to_vector.h"
 #import "base/functional/bind.h"
 #import "base/functional/callback_helpers.h"
 #import "base/location.h"
+#import "base/logging.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/histogram_macros.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/task/single_thread_task_runner.h"
 #import "components/browser_sync/sync_to_signin_migration.h"
+#import "components/policy/core/common/management/platform_management_service.h"
 #import "components/pref_registry/pref_registry_syncable.h"
 #import "components/prefs/pref_service.h"
 #import "components/signin/ios/browser/features.h"
 #import "components/signin/public/base/gaia_id_hash.h"
 #import "components/signin/public/base/signin_pref_names.h"
+#import "components/signin/public/base/signin_switches.h"
 #import "components/signin/public/identity_manager/account_info.h"
 #import "components/signin/public/identity_manager/device_accounts_synchronizer.h"
 #import "components/signin/public/identity_manager/primary_account_mutator.h"
 #import "components/signin/public/identity_manager/signin_constants.h"
+#import "components/signin/public/identity_manager/tribool.h"
 #import "components/sync/base/account_pref_utils.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_user_settings.h"
@@ -46,12 +51,7 @@
 #import "ios/chrome/browser/signin/model/system_identity.h"
 #import "ios/chrome/browser/signin/model/system_identity_manager.h"
 #import "ios/chrome/browser/signin/model/system_identity_util.h"
-#import "ios/chrome/browser/widget_kit/model/features.h"
 #import "ios/chrome/common/app_group/app_group_constants.h"
-
-#if BUILDFLAG(ENABLE_WIDGETS_FOR_MIM)
-#import "ios/chrome/browser/widget_kit/model/model_swift.h"  // nogncheck
-#endif
 
 using signin::constants::kNoHostedDomainFound;
 
@@ -173,13 +173,13 @@ void AuthenticationService::Initialize(
       base::BindRepeating(&AuthenticationService::OnSigninAllowedChanged,
                           base::Unretained(this));
   pref_change_registrar_.Add(prefs::kSigninAllowed, signin_allowed_callback);
-// Migrate primary identity info to widgets if needed.
-#if BUILDFLAG(ENABLE_WIDGETS_FOR_MIM)
+
+  // Migrate primary identity info to widgets if needed.
   NSUserDefaults* shared_defaults = app_group::GetGroupUserDefaults();
   NSString* primary_account =
       [shared_defaults objectForKey:app_group::kPrimaryAccount];
 
-  if (!primary_account) {
+  if (!primary_account || primary_account.length == 0) {
     id<SystemIdentity> identity =
         GetPrimaryIdentity(signin::ConsentLevel::kSignin);
     if (identity.gaiaID) {
@@ -187,7 +187,6 @@ void AuthenticationService::Initialize(
                           forKey:app_group::kPrimaryAccount];
     }
   }
-#endif
 
   // Reload credentials to ensure the accounts from the token service are
   // up-to-date.
@@ -222,7 +221,10 @@ void AuthenticationService::Initialize(
                                   signed_in_state);
   }
 
-  PerformFirstTimeProfileInitializationIfNecessary();
+  ProfileInitializationOutcome outcome =
+      PerformProfileInitializationIfNecessary();
+  base::UmaHistogramEnumeration(
+      "Signin.IOSAuthenticationServiceInitializationOutcome", outcome);
 }
 
 void AuthenticationService::Shutdown() {
@@ -245,7 +247,8 @@ void AuthenticationService::RemoveObserver(
   observer_list_.RemoveObserver(observer);
 }
 
-AuthenticationService::ServiceStatus AuthenticationService::GetServiceStatus() {
+AuthenticationService::ServiceStatus AuthenticationService::GetServiceStatus()
+    const {
   if (!account_manager_service_->IsServiceSupported()) {
     return ServiceStatus::SigninDisabledByInternal;
   }
@@ -295,6 +298,18 @@ void AuthenticationService::OnApplicationWillEnterForeground() {
   }
 }
 
+bool AuthenticationService::SigninEnabled() const {
+  switch (GetServiceStatus()) {
+    case AuthenticationService::ServiceStatus::SigninForcedByPolicy:
+    case AuthenticationService::ServiceStatus::SigninAllowed:
+      return YES;
+    case AuthenticationService::ServiceStatus::SigninDisabledByUser:
+    case AuthenticationService::ServiceStatus::SigninDisabledByPolicy:
+    case AuthenticationService::ServiceStatus::SigninDisabledByInternal:
+      return NO;
+  }
+}
+
 void AuthenticationService::SetReauthPromptForSignInAndSync() {
   pref_service_->SetBoolean(prefs::kSigninShouldPromptForSigninAgain, true);
 }
@@ -315,9 +330,9 @@ bool AuthenticationService::HasPrimaryIdentity(
 bool AuthenticationService::HasPrimaryIdentityManaged(
     signin::ConsentLevel consent_level) const {
   return identity_manager_
-      ->FindExtendedAccountInfo(
-          identity_manager_->GetPrimaryAccountInfo(consent_level))
-      .IsManaged();
+             ->FindExtendedAccountInfo(
+                 identity_manager_->GetPrimaryAccountInfo(consent_level))
+             .IsManaged() == signin::Tribool::kTrue;
 }
 
 bool AuthenticationService::ShouldClearDataForSignedInPeriodOnSignOut() const {
@@ -327,7 +342,7 @@ bool AuthenticationService::ShouldClearDataForSignedInPeriodOnSignOut() const {
   // 2. The app management configuration key is present.
   // Note: data will be cleared from the time of sign-in in this case.
   return HasPrimaryIdentityManaged(signin::ConsentLevel::kSignin) &&
-         !IsApplicationManagedByMDM();
+         !policy::PlatformManagementService::GetInstance()->IsManaged();
 }
 
 id<SystemIdentity> AuthenticationService::GetPrimaryIdentity(
@@ -338,10 +353,8 @@ id<SystemIdentity> AuthenticationService::GetPrimaryIdentity(
 
 void AuthenticationService::SignIn(id<SystemIdentity> identity,
                                    signin_metrics::AccessPoint access_point) {
-  ServiceStatus status = GetServiceStatus();
-  CHECK(status == ServiceStatus::SigninAllowed ||
-        status == ServiceStatus::SigninForcedByPolicy)
-      << "Service status " << static_cast<int>(status);
+  CHECK(SigninEnabled()) << "Service status "
+                         << static_cast<int>(GetServiceStatus());
   DCHECK(account_manager_service_->IsValidIdentity(identity));
 
   primary_account_was_restricted_ = false;
@@ -454,26 +467,22 @@ void AuthenticationService::SignOut(
   }
 }
 
-void AuthenticationService::PerformFirstTimeProfileInitializationIfNecessary() {
+AuthenticationService::ProfileInitializationOutcome
+AuthenticationService::PerformProfileInitializationIfNecessary() {
   ProfileManagerIOS* profile_manager =
       GetApplicationContext()->GetProfileManager();
   if (!profile_manager) {
     // Skip if there is no profile manager, but this is possible only for test.
     CHECK_IS_TEST();
-    return;
+    return ProfileInitializationOutcome::kNoneForTesting;
   }
   ProfileAttributesStorageIOS* attributes_storage =
       profile_manager->GetProfileAttributesStorage();
 
   const std::string profile_name = account_manager_service_->GetProfileName();
 
-  // If the profile was already initialized before, nothing to do here.
-  if (attributes_storage->GetAttributesForProfileWithName(profile_name)
-          .IsFullyInitialized()) {
-    return;
-  }
-
-  // Once this method returns, the profile is considered fully initialized.
+  // Once this method returns, the profile is considered fully initialized. (If
+  // the profile was already initialized, this is a no-op.)
   base::ScopedClosureRunner mark_profile_initialized(base::BindOnce(
       [](ProfileAttributesStorageIOS* attributes_storage,
          std::string_view profile_name) {
@@ -484,29 +493,62 @@ void AuthenticationService::PerformFirstTimeProfileInitializationIfNecessary() {
       },
       attributes_storage, profile_name));
 
-  // When opening a managed profile for the first time, the user needs to be
-  // signed in automatically.
+  const bool was_already_initialized =
+      attributes_storage->GetAttributesForProfileWithName(profile_name)
+          .IsFullyInitialized();
+
   if (!AreSeparateProfilesForManagedAccountsEnabled()) {
-    return;
+    return was_already_initialized
+               ? ProfileInitializationOutcome::
+                     kFeatureDisabledAlreadyInitialized
+               : ProfileInitializationOutcome::kFeatureDisabledNewlyInitialized;
   }
 
-  if (profile_name == attributes_storage->GetPersonalProfileName()) {
+  // When opening a managed profile for the first time, the user needs to be
+  // signed in automatically.
+
+  const bool is_personal_profile =
+      profile_name == attributes_storage->GetPersonalProfileName();
+  if (is_personal_profile) {
     // Nothing to do if the current profile is the personal profile.
-    return;
+    return was_already_initialized
+               ? ProfileInitializationOutcome::
+                     kPersonalProfileAlreadyInitialized
+               : ProfileInitializationOutcome::kPersonalProfileNewlyInitialized;
   }
-  if (HasPrimaryIdentity(signin::ConsentLevel::kSignin)) {
-    // Nothing to do if the profile is already signed in.
-    return;
+
+  const bool is_signed_in = HasPrimaryIdentity(signin::ConsentLevel::kSignin);
+  if (is_signed_in) {
+    // Nothing to do if the managed profile is already signed in.
+    return was_already_initialized
+               ? ProfileInitializationOutcome::kManagedProfileAlreadyInitialized
+               : ProfileInitializationOutcome::
+                     kManagedProfileNewlyInitializedButAlreadySignedIn;
   }
+
   NSArray<id<SystemIdentity>>* identities_for_profile =
       account_manager_service_->GetAllIdentities();
-  // TODO(crbug.com/375605482): Evaluate if there is no race condition with
-  // this CHECK.
-  CHECK_EQ(identities_for_profile.count, 1ul, base::NotFatalUntil::M142);
-  if (identities_for_profile.count > 0) {
-    // TODO(crbug.com/375605482): Need to set the right access point.
-    SignIn(identities_for_profile[0], signin_metrics::AccessPoint::kUnknown);
+  if (identities_for_profile.count == 0) {
+    return was_already_initialized
+               ? ProfileInitializationOutcome::
+                     kManagedProfileAlreadyInitializedNoAccounts
+               : ProfileInitializationOutcome::
+                     kManagedProfileNewlyInitializedNoAccounts;
   }
+
+  SignIn(identities_for_profile[0],
+         signin_metrics::AccessPoint::kManagedProfileAutoSigninIos);
+  if (identities_for_profile.count > 1) {
+    return was_already_initialized
+               ? ProfileInitializationOutcome::
+                     kManagedProfileAlreadyInitializedMultipleAccountsAndNewlySignedIn
+               : ProfileInitializationOutcome::
+                     kManagedProfileNewlyInitializedMultipleAccounts;
+  }
+  return was_already_initialized
+             ? ProfileInitializationOutcome::
+                   kManagedProfileAlreadyInitializedButNewlySignedIn
+             : ProfileInitializationOutcome::kManagedProfileNewlyInitialized;
 }
 
 id<RefreshAccessTokenError> AuthenticationService::GetCachedMDMError(
@@ -572,6 +614,15 @@ bool AuthenticationService::HandleMDMError(id<SystemIdentity> identity,
 
   SystemIdentityManager* system_identity_manager =
       GetApplicationContext()->GetSystemIdentityManager();
+  if (base::FeatureList::IsEnabled(switches::kAllowlistScopesForMdmErrors)) {
+    bool scope_limited_error_suppressed =
+        system_identity_manager->IsScopeLimitedError(error);
+    base::UmaHistogramBoolean("Signin.ScopeLimitedErrorSuppressed",
+                              scope_limited_error_suppressed);
+    if (scope_limited_error_suppressed) {
+      return false;
+    }
+  }
 
   if (system_identity_manager->HandleMDMNotification(
           identity, ActiveIdentities(), error,
@@ -616,7 +667,8 @@ void AuthenticationService::OnRefreshTokenUpdated(id<SystemIdentity> identity) {
 
 void AuthenticationService::OnAccessTokenRefreshFailed(
     id<SystemIdentity> identity,
-    id<RefreshAccessTokenError> error) {
+    id<RefreshAccessTokenError> error,
+    const std::set<std::string>& scopes) {
   if (!identity) {
     DLOG(ERROR)
         << "Unexpected call of OnAccessTokenRefreshFailed with null identity";
@@ -653,16 +705,9 @@ void AuthenticationService::HandleForgottenIdentity(
     return;
   }
 
-  // YES if the primary identity should be ignored to simulate a backup/restore
-  // of the device.
-  bool simulate_identity_lost_for_restore =
-      device_restore && SimulatePostDeviceRestore();
-  // If the restore shorty needs to be simulated, the primary identity should
-  // not be found.
+  // Tests if the primary identity still exists.
   id<SystemIdentity> authenticated_identity =
-      simulate_identity_lost_for_restore
-          ? nil
-          : GetPrimaryIdentity(signin::ConsentLevel::kSignin);
+      GetPrimaryIdentity(signin::ConsentLevel::kSignin);
   if (authenticated_identity &&
       ![authenticated_identity isEqual:invalid_identity]) {
     // `authenticated_identity` exists and is a valid identity. Nothing to do
@@ -774,18 +819,16 @@ void AuthenticationService::FireServiceStatusNotification() {
 }
 
 void AuthenticationService::ClearAccountSettingsPrefsOfRemovedAccounts() {
-  std::vector<signin::GaiaIdHash> available_gaia_ids;
+  std::vector<GaiaId> available_gaia_ids;
   for (id<SystemIdentity> identity in account_manager_service_
            ->GetAllIdentities()) {
-    signin::GaiaIdHash gaia_id_hash =
-        signin::GaiaIdHash::FromGaiaId(GaiaId(identity.gaiaID));
-    available_gaia_ids.push_back(gaia_id_hash);
+    available_gaia_ids.emplace_back(identity.gaiaID);
   }
   sync_service_->GetUserSettings()->KeepAccountSettingsPrefsOnlyForUsers(
       available_gaia_ids);
   syncer::KeepAccountKeyedPrefValuesOnlyForUsers(
       pref_service_, prefs::kSigninHasAcceptedManagementDialog,
-      available_gaia_ids);
+      base::ToVector(available_gaia_ids, &signin::GaiaIdHash::FromGaiaId));
 }
 
 NSArray<id<SystemIdentity>>* AuthenticationService::ActiveIdentities() {

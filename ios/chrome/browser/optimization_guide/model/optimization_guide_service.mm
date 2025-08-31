@@ -5,7 +5,7 @@
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service.h"
 
 #import "base/apple/bundle_locations.h"
-#import "base/files/file_util.h"
+#import "base/functional/bind.h"
 #import "base/functional/callback.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/path_service.h"
@@ -13,24 +13,23 @@
 #import "base/task/thread_pool.h"
 #import "base/time/default_clock.h"
 #import "components/component_updater/pref_names.h"
-#import "components/optimization_guide/core/command_line_top_host_provider.h"
-#import "components/optimization_guide/core/hints_processing_util.h"
+#import "components/optimization_guide/core/delivery/prediction_manager.h"
+#import "components/optimization_guide/core/hints/command_line_top_host_provider.h"
+#import "components/optimization_guide/core/hints/hints_processing_util.h"
+#import "components/optimization_guide/core/hints/optimization_guide_navigation_data.h"
+#import "components/optimization_guide/core/hints/optimization_guide_store.h"
+#import "components/optimization_guide/core/hints/top_host_provider.h"
 #import "components/optimization_guide/core/model_execution/model_execution_manager.h"
 #import "components/optimization_guide/core/model_execution/on_device_model_service_controller.h"
-#import "components/optimization_guide/core/optimization_guide_constants.h"
 #import "components/optimization_guide/core/optimization_guide_features.h"
 #import "components/optimization_guide/core/optimization_guide_logger.h"
-#import "components/optimization_guide/core/optimization_guide_navigation_data.h"
-#import "components/optimization_guide/core/optimization_guide_store.h"
 #import "components/optimization_guide/core/optimization_guide_util.h"
-#import "components/optimization_guide/core/prediction_manager.h"
-#import "components/optimization_guide/core/top_host_provider.h"
 #import "components/prefs/pref_service.h"
+#import "components/services/unzip/in_process_unzipper.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
 #import "components/variations/synthetic_trials.h"
 #import "ios/chrome/browser/metrics/model/ios_chrome_metrics_service_accessor.h"
 #import "ios/chrome/browser/optimization_guide/model/ios_chrome_hints_manager.h"
-#import "ios/chrome/browser/optimization_guide/model/ios_chrome_prediction_model_store.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service_factory.h"
 #import "ios/chrome/browser/optimization_guide/model/tab_url_provider_impl.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
@@ -39,81 +38,10 @@
 #import "ios/web/public/thread/web_thread.h"
 #import "services/network/public/cpp/shared_url_loader_factory.h"
 
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-#import "components/optimization_guide/core/model_execution/on_device_asset_manager.h"
-#import "components/optimization_guide/core/model_execution/on_device_model_component.h"
-#import "ios/chrome/browser/optimization_guide/model/on_device_model_service_controller_ios.h"
-#endif  // BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-
 namespace {
 
 using ModelExecutionError = optimization_guide::
     OptimizationGuideModelExecutionError::ModelExecutionError;
-
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-using ::optimization_guide::OnDeviceModelComponentStateManager;
-#endif  // BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-
-// Deletes old store paths that were written in incorrect locations.
-void DeleteOldStorePaths(const base::FilePath& profile_path) {
-  // Added 11/2023
-  //
-  // Delete the old profile-wide model download store path, since
-  // the install-wide model store is enabled now.
-  base::ThreadPool::PostTask(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
-      base::GetDeletePathRecursivelyCallback(profile_path.Append(
-          optimization_guide::kOldOptimizationGuidePredictionModelDownloads)));
-}
-
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-class OnDeviceModelComponentStateManagerDelegate
-    : public OnDeviceModelComponentStateManager::Delegate {
- public:
-  ~OnDeviceModelComponentStateManagerDelegate() override = default;
-
-  base::FilePath GetInstallDirectory() override {
-    // The model is located in the app bundle.
-    return base::apple::OuterBundlePath();
-  }
-
-  void GetFreeDiskSpace(const base::FilePath& path,
-                        base::OnceCallback<void(int64_t)> callback) override {
-    base::TaskTraits traits = {base::MayBlock(),
-                               base::TaskPriority::BEST_EFFORT};
-    if (optimization_guide::switches::
-            ShouldGetFreeDiskSpaceWithUserVisiblePriorityTask()) {
-      traits.UpdatePriority(base::TaskPriority::USER_VISIBLE);
-    }
-
-    base::ThreadPool::PostTaskAndReplyWithResult(
-        FROM_HERE, traits,
-        base::BindOnce(&base::SysInfo::AmountOfFreeDiskSpace, path),
-        std::move(callback));
-  }
-
-  void RegisterInstaller(
-      scoped_refptr<OnDeviceModelComponentStateManager> state_manager,
-      bool is_already_installing) override {
-    // If a model is bundled with the app, call SetReady() and treat
-    // it as an override. Otherwise return and do nothing.
-    base::FilePath model_path =
-        base::apple::OuterBundlePath().Append("on_device_model");
-    LOG(ERROR) << "model_file_path: " << model_path;
-
-    state_manager->SetReady(
-        base::Version("override"), model_path,
-        base::Value::Dict().Set("BaseModelSpec", base::Value::Dict()
-                                                     .Set("version", "override")
-                                                     .Set("name", "override")));
-  }
-
-  void Uninstall(scoped_refptr<OnDeviceModelComponentStateManager>
-                     state_manager) override {
-    // Do nothing since the model is bundled with the app.
-  }
-};
-#endif  // BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
 
 }  // namespace
 
@@ -126,7 +54,6 @@ OptimizationGuideService::OptimizationGuideService(
     PrefService* pref_service,
     BrowserList* browser_list,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-    BackgroundDownloadServiceProvider background_download_service_provider,
     signin::IdentityManager* identity_manager)
     : pref_service_(pref_service), off_the_record_(off_the_record) {
   DCHECK(optimization_guide::features::IsOptimizationHintsEnabled());
@@ -134,7 +61,6 @@ OptimizationGuideService::OptimizationGuideService(
   // In off the record profile, the stores of normal profile should be
   // passed to the constructor. In normal profile, they will be created.
   DCHECK(!off_the_record_ || hint_store);
-  base::FilePath models_dir;
   if (!off_the_record_) {
     // Only create a top host provider from the command line if provided.
     top_host_provider_ =
@@ -148,8 +74,7 @@ OptimizationGuideService::OptimizationGuideService(
                   profile_path.Append(
                       optimization_guide::kOptimizationGuideHintStore),
                   base::ThreadPool::CreateSequencedTaskRunner(
-                      {base::MayBlock(), base::TaskPriority::BEST_EFFORT}),
-                  pref_service)
+                      {base::MayBlock(), base::TaskPriority::BEST_EFFORT}))
             : nullptr;
     hint_store = hint_store_ ? hint_store_->AsWeakPtr() : nullptr;
   }
@@ -163,61 +88,20 @@ OptimizationGuideService::OptimizationGuideService(
   if (optimization_guide::features::IsOptimizationTargetPredictionEnabled()) {
     prediction_manager_ =
         std::make_unique<optimization_guide::PredictionManager>(
-            optimization_guide::IOSChromePredictionModelStore::GetInstance(),
-            url_loader_factory, pref_service, off_the_record_,
-            application_locale, models_dir, optimization_guide_logger_.get(),
-            std::move(background_download_service_provider),
-            base::BindRepeating([]() {
-              return GetApplicationContext()->GetLocalState()->GetBoolean(
-                  ::prefs::kComponentUpdatesEnabled);
-            }));
+            &GetApplicationContext()
+                 ->GetOptimizationGuideGlobalState()
+                 ->prediction_model_store(),
+            url_loader_factory, GetApplicationContext()->GetLocalState(),
+            application_locale, optimization_guide_logger_.get(),
+            base::BindRepeating(&unzip::LaunchInProcessUnzipper));
   }
 
   if (!off_the_record_) {
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-    PrefService* local_state = GetApplicationContext()->GetLocalState();
-
-    // Create and startup the on-device model's state manager.
-    on_device_model_state_manager_ =
-        optimization_guide::OnDeviceModelComponentStateManager::CreateOrGet(
-            local_state,
-            std::make_unique<OnDeviceModelComponentStateManagerDelegate>());
-    on_device_model_state_manager_->OnStartup();
-
-    // TODO(crbug.com/387509291): Always set a high perfomance class for
-    // prototyping.
-    on_device_model_state_manager_->DevicePerformanceClassChanged(
-        optimization_guide::OnDeviceModelPerformanceClass::kHigh);
-
-    // Create the manager for on-device model execution.
-    scoped_refptr<optimization_guide::OnDeviceModelServiceController>
-        on_device_model_service_controller =
-            GetApplicationContext()->GetOnDeviceModelServiceController(
-                on_device_model_state_manager_->GetWeakPtr());
-    on_device_asset_manager_ =
-        std::make_unique<optimization_guide::OnDeviceAssetManager>(
-            local_state, on_device_model_service_controller->GetWeakPtr(),
-            on_device_model_state_manager_->GetWeakPtr(), this);
-    model_execution_manager_ =
-        std::make_unique<optimization_guide::ModelExecutionManager>(
-            url_loader_factory, identity_manager,
-            std::move(on_device_model_service_controller),
-            optimization_guide_logger_.get(), nullptr);
-#else   // BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
     model_execution_manager_ =
         std::make_unique<optimization_guide::ModelExecutionManager>(
             url_loader_factory, identity_manager, nullptr,
             optimization_guide_logger_.get(), nullptr);
-#endif  // BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
   }
-
-  // Some previous paths were written in incorrect locations. Delete the
-  // old paths.
-  //
-  // TODO(crbug.com/40842340): Remove this code in 05/2023 since it should be
-  // assumed that all clients that had the previous path have had their previous
-  // stores deleted.
-  DeleteOldStorePaths(profile_path);
 
   OPTIMIZATION_GUIDE_LOG(
       optimization_guide_common::mojom::LogSource::SERVICE_AND_SETTINGS,
@@ -234,20 +118,21 @@ OptimizationGuideService::~OptimizationGuideService() {
 
 void OptimizationGuideService::DoFinalInit(
     download::BackgroundDownloadService* background_download_service) {
-  if (!off_the_record_) {
-    bool optimization_guide_fetching_enabled =
-        optimization_guide::IsUserPermittedToFetchFromRemoteOptimizationGuide(
-            off_the_record_, pref_service_);
-    base::UmaHistogramBoolean("OptimizationGuide.RemoteFetchingEnabled",
-                              optimization_guide_fetching_enabled);
-    IOSChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-        "SyntheticOptimizationGuideRemoteFetching",
-        optimization_guide_fetching_enabled ? "Enabled" : "Disabled",
-        variations::SyntheticTrialAnnotationMode::kCurrentLog);
-    if (background_download_service) {
-      prediction_manager_->MaybeInitializeModelDownloads(
-          background_download_service);
-    }
+  if (off_the_record_) {
+    return;
+  }
+  bool optimization_guide_fetching_enabled =
+      optimization_guide::IsUserPermittedToFetchFromRemoteOptimizationGuide(
+          off_the_record_, pref_service_);
+  base::UmaHistogramBoolean("OptimizationGuide.RemoteFetchingEnabled",
+                            optimization_guide_fetching_enabled);
+  IOSChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+      "SyntheticOptimizationGuideRemoteFetching",
+      optimization_guide_fetching_enabled ? "Enabled" : "Disabled",
+      variations::SyntheticTrialAnnotationMode::kCurrentLog);
+  if (background_download_service) {
+    prediction_manager_->MaybeInitializeModelDownloads(
+        GetApplicationContext()->GetLocalState(), background_download_service);
   }
 }
 
@@ -442,69 +327,3 @@ void OptimizationGuideService::ExecuteModel(
       feature, request_metadata, execution_timeout,
       /*log_ai_data_request=*/nullptr, std::move(callback));
 }
-
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-
-void OptimizationGuideService::AddOnDeviceModelAvailabilityChangeObserver(
-    optimization_guide::ModelBasedCapabilityKey feature,
-    optimization_guide::OnDeviceModelAvailabilityObserver* observer) {
-  if (!on_device_model_state_manager_) {
-    return;
-  }
-  optimization_guide::OnDeviceModelServiceController* service_controller =
-      GetApplicationContext()->GetOnDeviceModelServiceController(
-          on_device_model_state_manager_->GetWeakPtr());
-  if (service_controller) {
-    service_controller->AddOnDeviceModelAvailabilityChangeObserver(feature,
-                                                                   observer);
-  }
-}
-
-void OptimizationGuideService::RemoveOnDeviceModelAvailabilityChangeObserver(
-    optimization_guide::ModelBasedCapabilityKey feature,
-    optimization_guide::OnDeviceModelAvailabilityObserver* observer) {
-  if (!on_device_model_state_manager_) {
-    return;
-  }
-  optimization_guide::OnDeviceModelServiceController* service_controller =
-      GetApplicationContext()->GetOnDeviceModelServiceController(
-          on_device_model_state_manager_->GetWeakPtr());
-  if (service_controller) {
-    service_controller->RemoveOnDeviceModelAvailabilityChangeObserver(feature,
-                                                                      observer);
-  }
-}
-
-#pragma mark - optimization_guide::OptimizationGuideOnDeviceCapabilityProvider implementation
-
-optimization_guide::OnDeviceModelEligibilityReason
-OptimizationGuideService::GetOnDeviceModelEligibility(
-    optimization_guide::ModelBasedCapabilityKey feature) {
-  if (!model_execution_manager_) {
-    return optimization_guide::OnDeviceModelEligibilityReason::
-        kFeatureNotEnabled;
-  }
-
-  return model_execution_manager_->GetOnDeviceModelEligibility(feature);
-}
-
-std::optional<optimization_guide::SamplingParamsConfig>
-OptimizationGuideService::GetSamplingParamsConfig(
-    optimization_guide::ModelBasedCapabilityKey feature) {
-  if (!model_execution_manager_) {
-    return std::nullopt;
-  }
-
-  return model_execution_manager_->GetSamplingParamsConfig(feature);
-}
-
-std::optional<const optimization_guide::proto::Any>
-OptimizationGuideService::GetFeatureMetadata(
-    optimization_guide::ModelBasedCapabilityKey feature) {
-  if (!model_execution_manager_) {
-    return std::nullopt;
-  }
-
-  return model_execution_manager_->GetFeatureMetadata(feature);
-}
-#endif  // BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)

@@ -4,6 +4,7 @@
 
 import './ai_policy_indicator.js';
 import '../controls/settings_toggle_button.js';
+import '../settings_page/settings_subpage.js';
 
 import {I18nMixin} from '//resources/cr_elements/i18n_mixin.js';
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
@@ -15,6 +16,7 @@ import type {SettingsToggleButtonElement} from '../controls/settings_toggle_butt
 import {loadTimeData} from '../i18n_setup.js';
 import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
 import {AiPageComposeInteractions, MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
+import {SettingsViewMixin} from '../settings_page/settings_view_mixin.js';
 
 import {getAiLearnMoreUrl} from './ai_learn_more_url_util.js';
 import {AiEnterpriseFeaturePrefName, AiPageActions} from './constants.js';
@@ -24,8 +26,8 @@ export const COMPOSE_PROACTIVE_NUDGE_PREF = 'compose.proactive_nudge_enabled';
 export const COMPOSE_PROACTIVE_NUDGE_DISABLED_SITES_PREF =
     'compose.proactive_nudge_disabled_sites_with_time';
 
-const SettingsOfferWritingHelpPageElementBase =
-    I18nMixin(ListPropertyUpdateMixin(PrefsMixin(PolymerElement)));
+const SettingsOfferWritingHelpPageElementBase = SettingsViewMixin(
+    I18nMixin(ListPropertyUpdateMixin(PrefsMixin(PolymerElement))));
 
 export class SettingsOfferWritingHelpPageElement extends
     SettingsOfferWritingHelpPageElementBase {
@@ -41,19 +43,11 @@ export class SettingsOfferWritingHelpPageElement extends
     return {
       siteList_: {
         type: Array,
-        value: [],
-      },
-      enableAiSettingsPageRefresh_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('enableAiSettingsPageRefresh'),
+        value: () => [],
       },
       enableComposeProactiveNudge_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('enableComposeProactiveNudge'),
-      },
-      disabledSitesLabel_: {
-        type: String,
-        computed: 'computeDisabledSitesLabel_(enableAiSettingsPageRefresh_)',
       },
       enterprisePref_: {
         type: Object,
@@ -68,9 +62,7 @@ export class SettingsOfferWritingHelpPageElement extends
   }
 
   declare private siteList_: string[];
-  declare private enableAiSettingsPageRefresh_: boolean;
   declare private enableComposeProactiveNudge_: boolean;
-  declare private disabledSitesLabel_: string;
   declare private enterprisePref_: chrome.settingsPrivate.PrefObject;
 
   private metricsBrowserProxy_: MetricsBrowserProxy =
@@ -119,21 +111,15 @@ export class SettingsOfferWritingHelpPageElement extends
     this.updateList('siteList_', (entry: string) => entry, newSites);
   }
 
-  private getProactiveNudgeToggleHrCssClass_(): string {
-    return this.enableAiSettingsPageRefresh_ ? 'hr' : '';
-  }
-
-  private computeDisabledSitesLabel_(): string {
-    return loadTimeData.getString(
-        this.enableAiSettingsPageRefresh_ ?
-            'offerWritingHelpDisabledSitesLabelV2' :
-            'offerWritingHelpDisabledSitesLabel');
-  }
-
   private getLearnMoreUrl_(): string {
     return getAiLearnMoreUrl(
         this.enterprisePref_, loadTimeData.getString('composeLearnMorePageURL'),
         loadTimeData.getString('composeLearnMorePageManagedURL'));
+  }
+
+  // SettingsViewMixin implementation.
+  override focusBackButton() {
+    this.shadowRoot!.querySelector('settings-subpage')!.focusBackButton();
   }
 }
 

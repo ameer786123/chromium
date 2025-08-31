@@ -10,12 +10,8 @@
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "chrome/browser/ui/android/layouts/scene_layer.h"
-#include "ui/gfx/geometry/point.h"
-#include "ui/gfx/geometry/point_f.h"
-#include "ui/gfx/geometry/size.h"
-#include "ui/gfx/geometry/size_f.h"
 
 namespace android {
 
@@ -37,7 +33,6 @@ class StaticTabSceneLayer : public SceneLayer {
 
   // Update StaticTabSceneLayer with the new parameters.
   void UpdateTabLayer(JNIEnv* env,
-                      const base::android::JavaParamRef<jobject>& jobj,
                       jint id,
                       jboolean can_use_live_layer,
                       jint default_background_color,
@@ -47,7 +42,6 @@ class StaticTabSceneLayer : public SceneLayer {
 
   void SetTabContentManager(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj,
       const base::android::JavaParamRef<jobject>& jtab_content_manager);
 
  private:

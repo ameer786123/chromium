@@ -28,7 +28,6 @@
 #include "media/base/media_util.h"
 #include "media/base/test_helpers.h"
 #include "media/base/video_frame.h"
-#include "media/video/fake_gpu_memory_buffer.h"
 #include "media/video/mock_gpu_memory_buffer_video_frame_pool.h"
 #include "media/video/mock_gpu_video_accelerator_factories.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
@@ -699,8 +698,8 @@ void WebMediaPlayerMSTest::InitializeWebMediaPlayerMS() {
       scheduler::GetSingleThreadTaskRunnerForTesting(),
       scheduler::GetSingleThreadTaskRunnerForTesting(), gpu_factories_.get(),
       WebString(),
-      WTF::BindOnce(&WebMediaPlayerMSTest::CreateMockSurfaceLayerBridge,
-                    WTF::Unretained(this)),
+      blink::BindOnce(&WebMediaPlayerMSTest::CreateMockSurfaceLayerBridge,
+                      Unretained(this)),
       std::move(submitter_), enable_surface_layer_for_video_);
   player_->SetMediaStreamRendererFactoryForTesting(
       std::unique_ptr<MediaStreamRendererFactory>(render_factory_));
@@ -782,8 +781,8 @@ void WebMediaPlayerMSTest::StartRendering() {
   if (!rendering_) {
     rendering_ = true;
     scheduler::GetSingleThreadTaskRunnerForTesting()->PostTask(
-        FROM_HERE, WTF::BindOnce(&WebMediaPlayerMSTest::RenderFrame,
-                                 weak_factory_.GetWeakPtr()));
+        FROM_HERE, blink::BindOnce(&WebMediaPlayerMSTest::RenderFrame,
+                                   weak_factory_.GetWeakPtr()));
   }
   DoStartRendering();
 }
@@ -819,8 +818,8 @@ void WebMediaPlayerMSTest::RenderFrame() {
   }
   scheduler::GetSingleThreadTaskRunnerForTesting()->PostDelayedTask(
       FROM_HERE,
-      WTF::BindOnce(&WebMediaPlayerMSTest::RenderFrame,
-                    weak_factory_.GetWeakPtr()),
+      blink::BindOnce(&WebMediaPlayerMSTest::RenderFrame,
+                      weak_factory_.GetWeakPtr()),
       base::Seconds(1.0 / 60.0));
 }
 
@@ -902,18 +901,16 @@ void WebMediaPlayerMSTest::TestRequestFrameCallbackWithVideoFrameMetadata(
   player_->RequestVideoFrameCallback();
   player_->RequestVideoFrameCallback();
 
-  EXPECT_CALL(*this, OnRequestVideoFrameCallback())
-      .Times(1)
-      .WillOnce(testing::Invoke([&]() {
-        if (!algorithm_enabled && !enable_surface_layer_for_video_) {
-          metadata = player_->GetVideoFramePresentationMetadata();
-          // We use EXPECT_GE to compare the deadline_max value with the
-          // expected display time. This is because the deadline_max_ member
-          // gets updated in the RenderFrame() function which may get called
-          // multiple times before the OnRequestVideoFrameCallback() is invoked.
-          EXPECT_GE(deadline_max_, metadata->expected_display_time);
-        }
-      }));
+  EXPECT_CALL(*this, OnRequestVideoFrameCallback()).Times(1).WillOnce([&]() {
+    if (!algorithm_enabled && !enable_surface_layer_for_video_) {
+      metadata = player_->GetVideoFramePresentationMetadata();
+      // We use EXPECT_GE to compare the deadline_max value with the
+      // expected display time. This is because the deadline_max_ member
+      // gets updated in the RenderFrame() function which may get called
+      // multiple times before the OnRequestVideoFrameCallback() is invoked.
+      EXPECT_GE(deadline_max_, metadata->expected_display_time);
+    }
+  });
   message_loop_controller_.RunAndWaitForStatus(media::PIPELINE_OK);
   testing::Mock::VerifyAndClearExpectations(this);
 }
@@ -1217,12 +1214,12 @@ TEST_P(WebMediaPlayerMSTest, RotationChange) {
     EXPECT_CALL(*this, DoSetCcLayer(true));
     EXPECT_CALL(*this, DoStopRendering()).WillOnce([&]() {
       scheduler::GetSingleThreadTaskRunnerForTesting()->PostTask(
-          FROM_HERE, WTF::BindOnce(
+          FROM_HERE, BindOnce(
                          [](WebMediaPlayerMSTest* test) {
                            // Turn off rendering here to avoid an infinite loop.
                            test->SetRendering(/*rendering=*/false);
                          },
-                         WTF::Unretained(this)));
+                         Unretained(this)));
     });
     EXPECT_CALL(*this, DoStartRendering());
   }
@@ -1250,12 +1247,12 @@ TEST_P(WebMediaPlayerMSTest, RotationChange) {
     EXPECT_CALL(*this, DoSetCcLayer(true));
     EXPECT_CALL(*this, DoStopRendering()).WillOnce([&]() {
       scheduler::GetSingleThreadTaskRunnerForTesting()->PostTask(
-          FROM_HERE, WTF::BindOnce(
+          FROM_HERE, BindOnce(
                          [](WebMediaPlayerMSTest* test) {
                            // Turn off rendering here to avoid an infinite loop.
                            test->SetRendering(/*rendering=*/false);
                          },
-                         WTF::Unretained(this)));
+                         Unretained(this)));
     });
     EXPECT_CALL(*this, DoStartRendering());
   }

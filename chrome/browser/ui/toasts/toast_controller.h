@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/callback_list.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/timer/timer.h"
@@ -27,6 +28,7 @@ enum class ToastId;
 
 namespace content {
 class Page;
+class WebContents;
 }
 
 namespace toasts {
@@ -57,6 +59,9 @@ struct ToastParams {
   std::unique_ptr<ui::MenuModel> menu_model;
 };
 
+// Manages the toast that is displayed for a particular browser. Only one toast
+// can be displayed at a time. Subsequent calls to MaybeShowToast() will dismiss
+// the current toast and automatically display the requested one.
 class ToastController : public views::WidgetObserver,
                         public FullscreenObserver,
                         public OmniboxTabHelper::Observer,
@@ -66,6 +71,11 @@ class ToastController : public views::WidgetObserver,
                            const ToastRegistry* toast_registry);
   ~ToastController() override;
 
+  // Returns the controller for the browser that owns `web_contents`, or nullptr
+  // if none.
+  static ToastController* MaybeGetForWebContents(
+      content::WebContents* web_contents);
+
   void Init();
   bool IsShowingToast() const;
   bool CanShowToast(ToastId id) const;
@@ -74,6 +84,10 @@ class ToastController : public views::WidgetObserver,
   // Attempts to show the toast and returns true if the toast was successfully
   // shown, otherwise return false.
   bool MaybeShowToast(ToastParams params);
+
+  using WidgetDestroyedCallback = base::RepeatingCallback<void(ToastId)>;
+  base::CallbackListSubscription RegisterOnWidgetDestroyed(
+      WidgetDestroyedCallback callback);
 
   // views::WidgetObserver:
 #if BUILDFLAG(IS_MAC)
@@ -95,10 +109,12 @@ class ToastController : public views::WidgetObserver,
   void WebContentsDestroyed() override;
 
   views::Widget* GetToastWidgetForTesting() { return toast_widget_; }
-
   toasts::ToastView* GetToastViewForTesting() { return toast_view_; }
 
   base::OneShotTimer* GetToastCloseTimerForTesting();
+
+  static constexpr base::TimeDelta kToastDefaultTimeout = base::Seconds(4);
+  static constexpr base::TimeDelta kToastWithActionTimeout = base::Seconds(8);
 
  private:
   void OnActiveTabChanged(BrowserWindowInterface* browser_interface);
@@ -118,6 +134,7 @@ class ToastController : public views::WidgetObserver,
 
   const raw_ptr<BrowserWindowInterface> browser_window_interface_;
   const raw_ptr<const ToastRegistry> toast_registry_;
+  // Used to transition between the current toast and the queued one.
   std::optional<ToastParams> next_toast_params_;
   std::optional<ToastId> currently_showing_toast_id_;
   base::OneShotTimer toast_close_timer_;
@@ -132,6 +149,11 @@ class ToastController : public views::WidgetObserver,
       this};
   base::ScopedObservation<OmniboxTabHelper, OmniboxTabHelper::Observer>
       omnibox_helper_observer_{this};
+
+  // Stores a list of callbacks to inform when a toast widget is destroyed.
+  using WidgetDestroyedCallbackList =
+      base::RepeatingCallbackList<void(ToastId)>;
+  WidgetDestroyedCallbackList on_widget_destroyed_callbacks_;
 
   raw_ptr<toasts::ToastView> toast_view_;
   raw_ptr<views::Widget> toast_widget_;

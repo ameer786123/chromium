@@ -60,7 +60,7 @@ TEST(SerializeRequestJSON, Serialize) {
                             "prod_id", "1.0", "channel", "OS", "cacheable",
                             std::nullopt, {{"extra", "params"}}, {},
                             std::move(apps)));
-    constexpr char regex[] =
+    static constexpr char regex[] =
         R"({"request":{"@os":"\w+","@updater":"prod_id",)"
         R"("acceptformat":"crx3,download,puff,run,xz,zucc",)"
         R"("apps":\[{"ap":"ap1","appid":"id1","attr1":"1","attr2":"2",)"
@@ -81,7 +81,7 @@ TEST(SerializeRequestJSON, Serialize) {
         R"("physmemory":\d+,"sse":(true|false),"sse2":(true|false),)"
         R"("sse3":(true|false),"sse41":(true|false),"sse42":(true|false),)"
         R"("ssse3":(true|false)},)"
-        R"("ismachine":false,"nacl_arch":"[-\w]+",)"
+        R"("ismachine":false,)"
         R"("os":{"arch":"[_,-.\w]+","platform":"OS",)"
         R"(("sp":"[\s\w]+",)?"version":"[+-.\w]+"},"prodchannel":"channel",)"
         R"("prodversion":"1.0","protocol":"4.0","requestid":"{[-\w]{36}}",)"
@@ -104,7 +104,7 @@ TEST(SerializeRequestJSON, Serialize) {
                             "", "", "", "", std::nullopt, {}, {},
                             std::move(apps)));
 
-    constexpr char regex[] =
+    static constexpr char regex[] =
         R"("apps":\[{"appid":"id1","enabled":true,)"
         R"("updatecheck":{"sameversionupdate":true},"version":"1.0"}])";
     EXPECT_TRUE(RE2::PartialMatch(request, regex)) << request << "\n VS \n"
@@ -145,7 +145,7 @@ TEST(SerializeRequestJSON, UpdaterStateAttributes) {
        {"autoupdatecheckenabled", "0"},
        {"updatepolicy", "-1"}},
       {}));
-  constexpr char regex[] =
+  static constexpr char regex[] =
       R"({"request":{"@os":"\w+","@updater":"prod_id",)"
       R"("acceptformat":"crx3,download,puff,run,xz,zucc",)"
       R"("arch":"\w+","dedup":"cr",)"
@@ -155,7 +155,6 @@ TEST(SerializeRequestJSON, UpdaterStateAttributes) {
       R"("sse3":(true|false),"sse41":(true|false),"sse42":(true|false),)"
       R"("ssse3":(true|false)},)"
       R"("ismachine":true,)"
-      R"("nacl_arch":"[-\w]+",)"
       R"("os":{"arch":"[,-.\w]+","platform":"OS",("sp":"[\s\w]+",)?)"
       R"("version":"[+-.\w]+"},"prodchannel":"channel","prodversion":"1.0",)"
       R"("protocol":"4.0","requestid":"{[-\w]{36}}","sessionid":"{[-\w]{36}}",)"

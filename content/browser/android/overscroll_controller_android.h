@@ -80,6 +80,9 @@ class CONTENT_EXPORT OverscrollControllerAndroid
   void Enable();
   void Disable();
 
+  // Returns true if the controller is actively handling the current input
+  // sequence. This state persists until reset by
+  // MotionEventAndroid::Action::DOWN from the next input sequence.
   bool IsHandlingInputSequence();
 
   // Returns true if |event| is consumed by an overscroll effect, in which
@@ -122,6 +125,11 @@ class CONTENT_EXPORT OverscrollControllerAndroid
   const float dpi_scale_;
 
   bool enabled_;
+
+  // True if the OverscrollController has claimed the current input sequence. It
+  // will continue handling all events in this sequence until a terminating
+  // action (ACTION_UP/ACTION_CANCEL) occurs.
+  bool is_handling_sequence_ = false;
 
   // Stores the last seen position of a touch input event (in pix) to correctly
   // calculate scroll deltas for `refresh_effect_`.

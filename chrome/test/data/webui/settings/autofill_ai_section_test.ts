@@ -7,9 +7,10 @@ import 'chrome://settings/settings.js';
 
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertGE, assertTrue} from 'chrome://webui-test/chai_assert.js';
-import type {SettingsToggleButtonElement} from 'chrome://settings/settings.js';
+import {CrSettingsPrefs, loadTimeData, ModelExecutionEnterprisePolicyValue} from 'chrome://settings/settings.js';
+import type {SettingsAiLoggingInfoBullet, SettingsPrefsElement, SettingsToggleButtonElement} from 'chrome://settings/settings.js';
 import type {CrButtonElement, SettingsAutofillAiAddOrEditDialogElement, SettingsSimpleConfirmationDialogElement, SettingsAutofillAiSectionElement} from 'chrome://settings/lazy_load.js';
-import {EntityDataManagerProxyImpl} from 'chrome://settings/lazy_load.js';
+import {AiEnterpriseFeaturePrefName, EntityDataManagerProxyImpl} from 'chrome://settings/lazy_load.js';
 import {isVisible} from 'chrome://webui-test/test_util.js';
 
 import {TestEntityDataManagerProxy} from './test_entity_data_manager_proxy.js';
@@ -20,6 +21,12 @@ const AttributeTypeDataType = chrome.autofillPrivate.AttributeTypeDataType;
 suite('AutofillAiSectionUiReflectsEligibilityStatus', function() {
   let section: SettingsAutofillAiSectionElement;
   let entityDataManager: TestEntityDataManagerProxy;
+  let settingsPrefs: SettingsPrefsElement;
+
+  suiteSetup(function() {
+    settingsPrefs = document.createElement('settings-prefs');
+    return CrSettingsPrefs.initialized;
+  });
 
   setup(function() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
@@ -49,8 +56,15 @@ suite('AutofillAiSectionUiReflectsEligibilityStatus', function() {
     entityDataManager.setGetOptInStatusResponse(false);
 
     section = document.createElement('settings-autofill-ai-section');
+    settingsPrefs.set(
+        `prefs.${AiEnterpriseFeaturePrefName.AUTOFILL_AI}.value`,
+        ModelExecutionEnterprisePolicyValue.ALLOW);
+    section.prefs = settingsPrefs.prefs;
   });
 
+  teardown(function() {
+    CrSettingsPrefs.resetForTesting();
+  });
   interface EligibilityParamsInterface {
     // Whether the user is opted into Autofill with Ai.
     optedIn: boolean;
@@ -61,10 +75,10 @@ suite('AutofillAiSectionUiReflectsEligibilityStatus', function() {
   }
 
   const eligibilityParams: EligibilityParamsInterface[] = [
-    {optedIn: true, ineligibleUser: true, title: 'testOptedInIneligibleUser'},
-    {optedIn: true, ineligibleUser: false, title: 'testOptedInEligibleUser'},
-    {optedIn: false, ineligibleUser: true, title: 'testOptedOutIneligibleUser'},
-    {optedIn: false, ineligibleUser: false, title: 'testOptedOutEligibleUser'},
+    {optedIn: true, ineligibleUser: true, title: 'OptedInIneligibleUser'},
+    {optedIn: true, ineligibleUser: false, title: 'OptedInEligibleUser'},
+    {optedIn: false, ineligibleUser: true, title: 'OptedOutIneligibleUser'},
+    {optedIn: false, ineligibleUser: false, title: 'OptedOutEligibleUser'},
   ];
 
   eligibilityParams.forEach(
@@ -93,7 +107,7 @@ suite('AutofillAiSectionUiReflectsEligibilityStatus', function() {
             'The entries should always be visible');
       }));
 
-  test('testSwitchingToggleUpdatesPref', async function() {
+  test('SwitchingToggleUpdatesPref', async function() {
     // The user is eligible so that the toggle is enabled.
     section.ineligibleUser = false;
     document.body.appendChild(section);
@@ -112,6 +126,24 @@ suite('AutofillAiSectionUiReflectsEligibilityStatus', function() {
     toggle.click();
     assertFalse(await entityDataManager.whenCalled('setOptInStatus'));
   });
+
+  test('DisablingClassicAutofillPrefDisabledTheFeature', async function() {
+    section.ineligibleUser = false;
+    entityDataManager.setGetOptInStatusResponse(true);
+    document.body.appendChild(section);
+    await flushTasks();
+
+    const addButton = section.shadowRoot!.querySelector<CrButtonElement>(
+        '#addEntityInstance');
+    assertTrue(!!addButton);
+    assertFalse(addButton.disabled);
+
+    // Check that when the autofill pref is off, the add button becomes
+    // disabled, which essentially means the feature is off.
+    section.set('prefs.autofill.profile_enabled.value', false);
+    await flushTasks();
+    assertTrue(addButton.disabled);
+  });
 });
 
 suite('AutofillAiSectionUiTest', function() {
@@ -120,8 +152,14 @@ suite('AutofillAiSectionUiTest', function() {
   let entityDataManager: TestEntityDataManagerProxy;
   let testEntityInstance: chrome.autofillPrivate.EntityInstance;
   let testEntityTypes: chrome.autofillPrivate.EntityType[];
+  let settingsPrefs: SettingsPrefsElement;
 
-  setup(async function() {
+  suiteSetup(function() {
+    settingsPrefs = document.createElement('settings-prefs');
+    return CrSettingsPrefs.initialized;
+  });
+
+  setup(function() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
 
     entityDataManager = new TestEntityDataManagerProxy();
@@ -204,8 +242,19 @@ suite('AutofillAiSectionUiTest', function() {
     // alphabetically.
     testEntityTypes.sort(
         (a, b) => a.typeNameAsString.localeCompare(b.typeNameAsString));
+    settingsPrefs.set(
+        `prefs.${AiEnterpriseFeaturePrefName.AUTOFILL_AI}.value`,
+        ModelExecutionEnterprisePolicyValue.ALLOW);
+  });
 
+  teardown(function() {
+    CrSettingsPrefs.resetForTesting();
+  });
+
+  async function createPage() {
+    loadTimeData.overrideValues({userEligibleForAutofillAi: true});
     section = document.createElement('settings-autofill-ai-section');
+    section.prefs = settingsPrefs.prefs;
     document.body.appendChild(section);
     await flushTasks();
 
@@ -215,9 +264,61 @@ suite('AutofillAiSectionUiTest', function() {
     entityInstancesListElement = entityInstancesQueried;
 
     assertTrue(!!section.shadowRoot!.querySelector('#entriesHeader'));
-  });
+  }
 
-  test('testEntityInstancesLoadedAndSortedAlphabetically', async function() {
+  test(
+      'AutofillAiEnterpriseUserLoggingAllowedAndNonEnterpriseUserHaveNoLoggingInfoBullet',
+      async function() {
+        // Both enterprise and non enterprise users have the pref set to 0
+        // (allow).
+        settingsPrefs.set(
+            `prefs.${AiEnterpriseFeaturePrefName.AUTOFILL_AI}.value`,
+            ModelExecutionEnterprisePolicyValue.ALLOW);
+        await createPage();
+
+        const enterpriseLogginInfoBullet =
+            section.shadowRoot!.querySelector<SettingsAiLoggingInfoBullet>(
+                '#enterpriseInfoBullet');
+        assertFalse(!!enterpriseLogginInfoBullet);
+      });
+
+  test(
+      'AutofillAiEnterpriseUserLoggingNotAllowedHaveLoggingInfoBullet',
+      async function() {
+        settingsPrefs.set(
+            `prefs.${AiEnterpriseFeaturePrefName.AUTOFILL_AI}.value`,
+            ModelExecutionEnterprisePolicyValue.ALLOW_WITHOUT_LOGGING);
+        await createPage();
+
+        const enterpriseLogginInfoBullet =
+            section.shadowRoot!.querySelector<SettingsAiLoggingInfoBullet>(
+                '#enterpriseInfoBullet');
+        assertTrue(!!enterpriseLogginInfoBullet);
+        assertEquals(
+            loadTimeData.getString(
+                'autofillAiSubpageSublabelLoggingManagedDisabled'),
+            enterpriseLogginInfoBullet.loggingManagedDisabledCustomLabel);
+      });
+
+  test(
+      'AutofillAiEnterpriseUserDisabledHasLoggingInfoBullet', async function() {
+        settingsPrefs.set(
+            `prefs.${AiEnterpriseFeaturePrefName.AUTOFILL_AI}.value`,
+            ModelExecutionEnterprisePolicyValue.DISABLE);
+        await createPage();
+
+        const enterpriseLogginInfoBullet =
+            section.shadowRoot!.querySelector<SettingsAiLoggingInfoBullet>(
+                '#enterpriseInfoBullet');
+        assertTrue(!!enterpriseLogginInfoBullet);
+        assertEquals(
+            loadTimeData.getString(
+                'autofillAiSubpageSublabelLoggingManagedDisabled'),
+            enterpriseLogginInfoBullet.loggingManagedDisabledCustomLabel);
+      });
+
+  test('EntityInstancesLoadedAndSortedAlphabetically', async function() {
+    await createPage();
     await entityDataManager.whenCalled('loadEntityInstances');
     const listItems =
         entityInstancesListElement.querySelectorAll<HTMLElement>('.list-item');
@@ -243,12 +344,13 @@ suite('AutofillAiSectionUiTest', function() {
   }
 
   const removeEntityInstanceParams: RemoveEntityInstanceParamsInterface[] = [
-    {confirmed: true, title: 'testRemoveEntityInstanceConfirmed'},
-    {confirmed: false, title: 'testRemoveEntityInstanceCancelled'},
+    {confirmed: true, title: 'RemoveEntityInstanceConfirmed'},
+    {confirmed: false, title: 'RemoveEntityInstanceCancelled'},
   ];
 
   removeEntityInstanceParams.forEach(
       (params) => test(params.title, async function() {
+        await createPage();
         entityDataManager.setGetEntityInstanceByGuidResponse(
             testEntityInstance);
 
@@ -302,12 +404,13 @@ suite('AutofillAiSectionUiTest', function() {
 
   const addOrEditEntityInstanceDialogParams: AddOrEditDialogParamsInterface[] =
       [
-        {add: true, title: 'testAddEntityInstanceDialogOpenAndConfirm'},
-        {add: false, title: 'testEditEntityInstanceDialogOpenAndConfirm'},
+        {add: true, title: 'AddEntityInstanceDialogOpenAndConfirm'},
+        {add: false, title: 'EditEntityInstanceDialogOpenAndConfirm'},
       ];
 
   addOrEditEntityInstanceDialogParams.forEach(
       (params) => test(params.title, async function() {
+        await createPage();
         if (params.add) {
           // Open the add entity instance dialog.
           const addButton = section.shadowRoot!.querySelector<HTMLElement>(
@@ -376,7 +479,8 @@ suite('AutofillAiSectionUiTest', function() {
         assertDeepEquals(testEntityInstance, addedOrEditedEntityInstance);
       }));
 
-  test('testAddButtonShowsEntityInstancesList', async function() {
+  test('AddButtonShowsEntityInstancesList', async function() {
+    await createPage();
     const addButton =
         section.shadowRoot!.querySelector<HTMLElement>('#addEntityInstance');
     assertTrue(!!addButton);
@@ -395,8 +499,9 @@ suite('AutofillAiSectionUiTest', function() {
   });
 
   test(
-      'testEntityInstancesChangedListenerUpdatesAndAlphabeticallySortsEntries',
+      'EntityInstancesChangedListenerUpdatesAndAlphabeticallySortsEntries',
       async function() {
+        await createPage();
         const newTestEntityInstancesWithLabels:
             chrome.autofillPrivate.EntityInstanceWithLabels[] = [
           {
@@ -436,7 +541,8 @@ suite('AutofillAiSectionUiTest', function() {
         assertFalse(isVisible(listItems[3]!));
       });
 
-  test('testEntriesDoNotDisappearAfterToggleDisabling', async function() {
+  test('EntriesDoNotDisappearAfterToggleDisabling', async function() {
+    await createPage();
     // The toggle is initially enabled (see the setup() method). Clicking it
     // sets the opt-in status to false.
     const toggle =
@@ -454,7 +560,8 @@ suite('AutofillAiSectionUiTest', function() {
         'With the toggle disabled, the entries should be visible');
   });
 
-  test('testToggleIsDisabledWhenUserIsNotEligible', async function() {
+  test('ToggleIsDisabledWhenUserIsNotEligible', async function() {
+    await createPage();
     // The toggle is initially enabled (see the setup() method). Clicking it
     // sets the opt-in status to false.
     const toggle =
@@ -479,6 +586,12 @@ suite('AutofillAiSectionUiTest', function() {
 
 suite('AutofillAiSectionLongLabelsUiTest', function() {
   let section: SettingsAutofillAiSectionElement;
+  let settingsPrefs: SettingsPrefsElement;
+
+  suiteSetup(function() {
+    settingsPrefs = document.createElement('settings-prefs');
+    return CrSettingsPrefs.initialized;
+  });
 
   setup(async function() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
@@ -506,12 +619,26 @@ suite('AutofillAiSectionLongLabelsUiTest', function() {
     entityDataManager.setLoadEntityInstancesResponse(
         testEntityInstancesWithLabels);
 
-    section = document.createElement('settings-autofill-ai-section');
-    document.body.appendChild(section);
     await flushTasks();
   });
 
-  test('testLongLabelsHaveHiddenOverflow', function() {
+  teardown(function() {
+    CrSettingsPrefs.resetForTesting();
+  });
+
+  async function createPage() {
+    settingsPrefs.set(
+        `prefs.${AiEnterpriseFeaturePrefName.AUTOFILL_AI}.value`,
+        ModelExecutionEnterprisePolicyValue.ALLOW);
+    section = document.createElement('settings-autofill-ai-section');
+    section.prefs = settingsPrefs.prefs;
+    document.body.appendChild(section);
+
+    await flushTasks();
+  }
+
+  test('LongLabelsHaveHiddenOverflow', async function() {
+    await createPage();
     // Contains all labels and sublabels, in order.
     const labels =
         section.shadowRoot!.querySelectorAll<HTMLElement>('.ellipses');

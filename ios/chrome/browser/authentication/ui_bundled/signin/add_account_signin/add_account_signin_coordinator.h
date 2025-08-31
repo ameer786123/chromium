@@ -6,14 +6,12 @@
 #define IOS_CHROME_BROWSER_AUTHENTICATION_UI_BUNDLED_SIGNIN_ADD_ACCOUNT_SIGNIN_ADD_ACCOUNT_SIGNIN_COORDINATOR_H_
 
 #import "ios/chrome/browser/authentication/ui_bundled/signin/add_account_signin/add_account_signin_enums.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin/interruptible_chrome_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 
 // Coordinates adding an account with different intents:
 //  + adding account from the settings
 //  + reauthentication
-@interface AddAccountSigninCoordinator
-    : SigninCoordinator <InterruptibleChromeCoordinator>
+@interface AddAccountSigninCoordinator : SigninCoordinator
 
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
                                    browser:(Browser*)browser
@@ -35,6 +33,7 @@
                    accessPoint:(signin_metrics::AccessPoint)accessPoint
                    promoAction:(signin_metrics::PromoAction)promoAction
                   signinIntent:(AddAccountSigninIntent)signinIntent
+                prefilledEmail:(NSString*)email
           continuationProvider:
               (const ChangeProfileContinuationProvider&)continuationProvider
     NS_DESIGNATED_INITIALIZER;

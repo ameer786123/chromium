@@ -8,6 +8,9 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
+#include "components/search/ntp_features.h"
+#include "components/variations/service/variations_service.h"
 #include "components/webui/flags/feature_entry.h"
 #include "ui/base/ui_base_features.h"
 
@@ -45,12 +48,6 @@ BASE_FEATURE(kFewerUpdateConfirmations,
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 
-// Controls whether we use a different UX for simple extensions overriding
-// settings.
-BASE_FEATURE(kLightweightExtensionOverrideConfirmations,
-             "LightweightExtensionOverrideConfirmations",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kExtensionsCollapseMainMenu,
              "ExtensionsCollapseMainMenu",
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -61,69 +58,64 @@ BASE_FEATURE(kExtensionsCollapseMainMenu,
 BASE_FEATURE(kOfferPinToTaskbarWhenSettingToDefault,
              "OfferPinToTaskbarWhenSettingDefault",
              base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kOfferPinToTaskbarInFirstRunExperience,
+             "OfferPinToTaskbarInFirstRunExperience",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(OfferPinToTaskbarInSettings, base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+// Shows an infobar at startup offering to pin Chrome to the taskbar (on
+// Windows) or the Dock (on MacOS).
+BASE_FEATURE(kOfferPinToTaskbarInfoBar,
+             "OfferPinToTaskbarInfoBar",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 // Shows an infobar on PDFs offering to become the default PDF viewer if Chrome
 // isn't the default already.
 BASE_FEATURE(kPdfInfoBar, "PdfInfoBar", base::FEATURE_DISABLED_BY_DEFAULT);
+
 constexpr base::FeatureParam<PdfInfoBarTrigger>::Option
     kPdfInfoBarTriggerOptions[] = {{PdfInfoBarTrigger::kPdfLoad, "pdf-load"},
                                    {PdfInfoBarTrigger::kStartup, "startup"}};
-constexpr base::FeatureParam<PdfInfoBarTrigger> kPdfInfoBarTrigger = {
-    &kPdfInfoBar, "trigger", PdfInfoBarTrigger::kPdfLoad,
-    &kPdfInfoBarTriggerOptions};
+
+BASE_FEATURE_ENUM_PARAM(PdfInfoBarTrigger,
+                        kPdfInfoBarTrigger,
+                        &kPdfInfoBar,
+                        "trigger",
+                        PdfInfoBarTrigger::kPdfLoad,
+                        &kPdfInfoBarTriggerOptions);
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 
 // Preloads a WebContents with a Top Chrome WebUI on BrowserView initialization,
 // so that it can be shown instantly at a later time when necessary.
 BASE_FEATURE(kPreloadTopChromeWebUI,
              "PreloadTopChromeWebUI",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// An experiment to reduce the number of navigations when preloading WebUIs.
+BASE_FEATURE(kPreloadTopChromeWebUILessNavigations,
+             "PreloadTopChromeWebUILessNavigations",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-const char kPreloadTopChromeWebUIModeName[] = "preload-mode";
-const char kPreloadTopChromeWebUIModePreloadOnWarmupName[] =
-    "preload-on-warmup";
-const char kPreloadTopChromeWebUIModePreloadOnMakeContentsName[] =
-    "preload-on-make-contents";
-constexpr base::FeatureParam<PreloadTopChromeWebUIMode>::Option
-    kPreloadTopChromeWebUIModeOptions[] = {
-        {PreloadTopChromeWebUIMode::kPreloadOnWarmup,
-         kPreloadTopChromeWebUIModePreloadOnWarmupName},
-        {PreloadTopChromeWebUIMode::kPreloadOnMakeContents,
-         kPreloadTopChromeWebUIModePreloadOnMakeContentsName},
-};
-const base::FeatureParam<PreloadTopChromeWebUIMode> kPreloadTopChromeWebUIMode{
-    &kPreloadTopChromeWebUI, kPreloadTopChromeWebUIModeName,
-    PreloadTopChromeWebUIMode::kPreloadOnMakeContents,
-    &kPreloadTopChromeWebUIModeOptions};
-
-const char kPreloadTopChromeWebUISmartPreloadName[] = "smart-preload";
-const base::FeatureParam<bool> kPreloadTopChromeWebUISmartPreload{
-    &kPreloadTopChromeWebUI, kPreloadTopChromeWebUISmartPreloadName, false};
-
-const char kPreloadTopChromeWebUIDelayPreloadName[] = "delay-preload";
-const base::FeatureParam<bool> kPreloadTopChromeWebUIDelayPreload{
-    &kPreloadTopChromeWebUI, kPreloadTopChromeWebUIDelayPreloadName, false};
-
-const char kPreloadTopChromeWebUIExcludeOriginsName[] = "exclude-origins";
-const base::FeatureParam<std::string> kPreloadTopChromeWebUIExcludeOrigins{
-    &kPreloadTopChromeWebUI, kPreloadTopChromeWebUIExcludeOriginsName, ""};
 
 // Enables exiting browser fullscreen (users putting the browser itself into the
 // fullscreen mode via the browser UI or shortcuts) with press-and-hold Esc.
-#if !BUILDFLAG(IS_ANDROID)
 BASE_FEATURE(kPressAndHoldEscToExitBrowserFullscreen,
              "PressAndHoldEscToExitBrowserFullscreen",
              base::FEATURE_ENABLED_BY_DEFAULT);
-#endif
+
+// When enabled, reloading using the toolbar button, hotkey, and web contents
+// context menu will only reload the active tab. The tab context menu will still
+// use the selection model to reload.
+BASE_FEATURE(kReloadSelectionModel,
+             "ReloadSelectionModel",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // When enabled, a scrim is shown behind window modal dialogs to cover the
 // entire browser window. This gives user a visual cue that the browser window
 // is not interactable.
 BASE_FEATURE(kScrimForBrowserWindowModal,
              "ScrimForBrowserWindowModal",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // When enabled, a scrim is shown behind tab modal dialogs to cover the content
 // area. This gives user a visual cue that the content area is not interactable.
@@ -131,11 +123,144 @@ BASE_FEATURE(KScrimForTabModal,
              "ScrimForTabModal",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+#if BUILDFLAG(IS_MAC)
+// Add tab group colours when viewing tab groups using the top mac OS menu bar.
+BASE_FEATURE(kShowTabGroupsMacSystemMenu,
+             "ShowTabGroupsMacSystemMenu",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(IS_MAC)
+
 BASE_FEATURE(kSideBySide, "SideBySide", base::FEATURE_DISABLED_BY_DEFAULT);
+
+// The delay before showing the drop target for the side-by-side drag-and-drop
+// entrypoint.
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kSideBySideShowDropTargetDelay,
+                   &kSideBySide,
+                   "drop_target_show_delay",
+                   base::Milliseconds(500));
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kSideBySideHideDropTargetDelay,
+                   &kSideBySide,
+                   "drop_target_hide_delay",
+                   base::Milliseconds(100));
+BASE_FEATURE_PARAM(int,
+                   kSideBySideDropTargetMinWidth,
+                   &kSideBySide,
+                   "drop_target_min_width",
+                   120);
+BASE_FEATURE_PARAM(int,
+                   kSideBySideDropTargetMaxWidth,
+                   &kSideBySide,
+                   "drop_target_max_width",
+                   360);
+BASE_FEATURE_PARAM(int,
+                   kSideBySideDropTargetTargetWidthPercentage,
+                   &kSideBySide,
+                   "drop_target_width_percentage",
+                   30);
+BASE_FEATURE_PARAM(int,
+                   kSideBySideDropTargetHideForOSWidth,
+                   &kSideBySide,
+                   "drop_target_hide_for_os_width",
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
+                   32
+#elif BUILDFLAG(IS_LINUX)
+                   50
+#else
+                   0
+#endif
+);
+
+BASE_FEATURE_PARAM(double,
+                   kSideBySideDropTargetHideForOSPercentage,
+                   &kSideBySide,
+                   "drop_target_hide_for_os_percentage",
+#if BUILDFLAG(IS_WIN)
+                   1.4
+#else
+                   0
+#endif
+);
+
+BASE_FEATURE(kSideBySideDropTargetNudge,
+             "SideBySideDropTargetNudge",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE_PARAM(int,
+                   kSideBySideDropTargetNudgeMinWidth,
+                   &kSideBySideDropTargetNudge,
+                   "drop_target_nudge_min_width",
+                   80);
+BASE_FEATURE_PARAM(int,
+                   kSideBySideDropTargetNudgeMaxWidth,
+                   &kSideBySideDropTargetNudge,
+                   "drop_target_nudge_max_width",
+                   200);
+BASE_FEATURE_PARAM(int,
+                   kSideBySideDropTargetNudgeTargetWidthPercentage,
+                   &kSideBySideDropTargetNudge,
+                   "drop_target_nudge_width_percentage",
+                   5);
+BASE_FEATURE_PARAM(int,
+                   kSideBySideDropTargetNudgeToFullMinWidth,
+                   &kSideBySideDropTargetNudge,
+                   "drop_target_nudge_to_full_min_width",
+                   80);
+BASE_FEATURE_PARAM(int,
+                   kSideBySideDropTargetNudgeToFullMaxWidth,
+                   &kSideBySideDropTargetNudge,
+                   "drop_target_nudge_to_full_max_width",
+                   600);
+BASE_FEATURE_PARAM(int,
+                   kSideBySideDropTargetNudgeToFullTargetWidthPercentage,
+                   &kSideBySideDropTargetNudge,
+                   "drop_target_nudge_to_full_width_percentage",
+                   20);
+BASE_FEATURE_PARAM(double,
+                   kSideBySideDropTargetNudgeShowRatio,
+                   &kSideBySideDropTargetNudge,
+                   "drop_target_nudge_show_ratio",
+                   0.4f);
+
+constexpr base::FeatureParam<MiniToolbarActiveConfiguration>::Option
+    kMiniToolbarActiveConfigurationOptions[] = {
+        {MiniToolbarActiveConfiguration::Hide, "hide"},
+        {MiniToolbarActiveConfiguration::ShowMenu, "showmenu"},
+        {MiniToolbarActiveConfiguration::ShowClose, "showclose"}};
+
+// The active configuration for the mini toolbar on active view of a split.
+BASE_FEATURE_ENUM_PARAM(MiniToolbarActiveConfiguration,
+                        kSideBySideMiniToolbarActiveConfiguration,
+                        &kSideBySide,
+                        "mini_toolbar_active_config",
+                        MiniToolbarActiveConfiguration::ShowMenu,
+                        &kMiniToolbarActiveConfigurationOptions);
+
+BASE_FEATURE_PARAM(int,
+                   kSideBySideSnapDistance,
+                   &kSideBySide,
+                   "snap_distance",
+                   15);
+
+// When enabled along with SideBySide flag, split tabs will be restored on
+// startup.
+BASE_FEATURE(kSideBySideSessionRestore,
+             "SideBySideSessionRestore",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsRestoringSplitViewEnabled() {
+  return base::FeatureList::IsEnabled(features::kSideBySide) &&
+         base::FeatureList::IsEnabled(features::kSideBySideSessionRestore);
+}
+
+BASE_FEATURE(kSideBySideLinkMenuNewBadge,
+             "SideBySideLinkMenuNewBadge",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kSidePanelResizing,
              "SidePanelResizing",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kTabDuplicateMetrics,
              "TabDuplicateMetrics",
@@ -145,13 +270,25 @@ BASE_FEATURE(kTabDuplicateMetrics,
 BASE_FEATURE(kTabScrollingButtonPosition,
              "TabScrollingButtonPosition",
              base::FEATURE_ENABLED_BY_DEFAULT);
-const char kTabScrollingButtonPositionParameterName[] = "buttonPosition";
 
 // Enables tabs to be frozen when collapsed.
 // https://crbug.com/1110108
 BASE_FEATURE(kTabGroupsCollapseFreezing,
              "TabGroupsCollapseFreezing",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+#if !BUILDFLAG(IS_ANDROID)
+// General improvements to tab group menus
+BASE_FEATURE(kTabGroupMenuImprovements,
+             "TabGroupMenuImprovements",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Update menus to use tab group menus in the action menu
+BASE_FEATURE(kTabGroupMenuMoreEntryPoints,
+             "TabGroupMenuMoreEntryPoints",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Enables preview images in tab-hover cards.
 // https://crbug.com/928954
@@ -164,15 +301,9 @@ BASE_FEATURE(kTabHoverCardImages,
 #endif
 );
 
-const char kTabHoverCardImagesNotReadyDelayParameterName[] =
-    "page_not_ready_delay";
-const char kTabHoverCardImagesLoadingDelayParameterName[] =
-    "page_loading_delay";
-const char kTabHoverCardImagesLoadedDelayParameterName[] = "page_loaded_delay";
-const char kTabHoverCardImagesCrossfadePreviewAtParameterName[] =
-    "crossfade_preview_at";
-const char kTabHoverCardAdditionalMaxWidthDelay[] =
-    "additional_max_width_delay";
+BASE_FEATURE(kTabModalUsesDesktopWidget,
+             "TabModalUsesDesktopWidget",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kTabOrganization,
              "TabOrganization",
@@ -182,23 +313,61 @@ bool IsTabOrganization() {
   return base::FeatureList::IsEnabled(features::kTabOrganization);
 }
 
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kTabOrganizationTriggerPeriod,
+                   &kTabOrganization,
+                   "trigger_period",
+                   base::Hours(6));
+
+BASE_FEATURE_PARAM(double,
+                   kTabOrganizationTriggerBackoffBase,
+                   &kTabOrganization,
+                   "backoff_base",
+                   2.0);
+
+BASE_FEATURE_PARAM(double,
+                   kTabOrganizationTriggerThreshold,
+                   &kTabOrganization,
+                   "trigger_threshold",
+                   7.0);
+
+BASE_FEATURE_PARAM(double,
+                   kTabOrganizationTriggerSensitivityThreshold,
+                   &kTabOrganization,
+                   "trigger_sensitivity_threshold",
+                   0.5);
+
+BASE_FEATURE_PARAM(bool,
+                   KTabOrganizationTriggerDemoMode,
+                   &kTabOrganization,
+                   "trigger_demo_mode",
+                   false);
+
 BASE_FEATURE(kTabstripDeclutter,
              "TabstripDeclutter",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-const base::FeatureParam<base::TimeDelta>
-    kTabstripDeclutterStaleThresholdDuration{
-        &kTabstripDeclutter, "stale_threshold_duration", base::Days(7)};
-
-const base::FeatureParam<base::TimeDelta> kTabstripDeclutterTimerInterval{
-    &kTabstripDeclutter, "declutter_timer_interval", base::Minutes(10)};
-
-const base::FeatureParam<base::TimeDelta> kTabstripDeclutterNudgeTimerInterval{
-    &kTabstripDeclutter, "nudge_timer_interval", base::Minutes(6 * 60)};
-
 bool IsTabstripDeclutterEnabled() {
   return base::FeatureList::IsEnabled(features::kTabstripDeclutter);
 }
+
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kTabstripDeclutterStaleThresholdDuration,
+                   &kTabstripDeclutter,
+                   "stale_threshold_duration",
+                   base::Days(7));
+
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kTabstripDeclutterTimerInterval,
+                   &kTabstripDeclutter,
+                   "declutter_timer_interval",
+                   base::Minutes(10));
+
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kTabstripDeclutterNudgeTimerInterval,
+                   &kTabstripDeclutter,
+                   "nudge_timer_interval",
+                   base::Minutes(6 * 60));
 
 BASE_FEATURE(kTabstripDedupe,
              "TabstripDedupe",
@@ -225,30 +394,15 @@ BASE_FEATURE(kTabOrganizationEnableNudgeForEnterprise,
              "TabOrganizationEnableNudgeForEnterprise",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-const base::FeatureParam<base::TimeDelta> kTabOrganizationTriggerPeriod{
-    &kTabOrganization, "trigger_period", base::Hours(6)};
-
-const base::FeatureParam<double> kTabOrganizationTriggerBackoffBase{
-    &kTabOrganization, "backoff_base", 2.0};
-
-const base::FeatureParam<double> kTabOrganizationTriggerThreshold{
-    &kTabOrganization, "trigger_threshold", 7.0};
-
-const base::FeatureParam<double> kTabOrganizationTriggerSensitivityThreshold{
-    &kTabOrganization, "trigger_sensitivity_threshold", 0.5};
-
-const base::FeatureParam<bool> KTabOrganizationTriggerDemoMode{
-    &kTabOrganization, "trigger_demo_mode", false};
-
 // Enables creating a web app window when tearing off a tab with a url
 // controlled by a web app.
 BASE_FEATURE(kTearOffWebAppTabOpensWebAppWindow,
              "TearOffWebAppTabOpensWebAppWindow",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-#if !defined(ANDROID)
-BASE_FEATURE(kPinnedCastButton,
-             "PinnedCastButton",
+#if !BUILDFLAG(IS_ANDROID)
+BASE_FEATURE(kThreeButtonPasswordSaveDialog,
+             "ThreeButtonPasswordSaveDialog",
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
@@ -257,14 +411,14 @@ BASE_FEATURE(kPinnedCastButton,
 // toolbar.
 BASE_FEATURE(kEnterpriseProfileBadgingForAvatar,
              "EnterpriseProfileBadgingForAvatar",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables enterprise profile badging for managed profiles on the toolbar avatar
 // and in the profile menu. On managed profiles, a building icon will be used as
 // a badge in the profile menu.
 BASE_FEATURE(kEnterpriseProfileBadgingForMenu,
              "EnterpriseProfileBadgingForMenu",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables enterprise profile badging for managed profiles on the toolbar avatar
 // and in the profile menu when the policies are set. This acts as a kill
@@ -277,8 +431,15 @@ BASE_FEATURE(kEnterpriseProfileBadgingPolicies,
 // On managed browsers, a building icon and "Managed by <domain>" string will be
 // shown in the footer, unless the icon and label are customized by the admin.
 BASE_FEATURE(kEnterpriseBadgingForNtpFooter,
-             "EnterpriseProfileBadgingForNtpFooter",
+             "EnterpriseBadgingForNtpFooter",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Enables the management notice in the NTP footer if the custom policies are
+// set. This acts as a kill switch for "EnterpriseCustomLabelForBrowser" and
+// "EnterpriseLogoUrlForBrowser".
+BASE_FEATURE(kNTPFooterBadgingPolicies,
+             "NTPFooterBadgingPolicies",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables showing the EnterpriseCustomLabel` instead of the cloud policy
 // manager in the managed disclaimer "Managed by..." in the profile and app
@@ -287,12 +448,12 @@ BASE_FEATURE(kEnterpriseManagementDisclaimerUsesCustomLabel,
              "EnterpriseManagementDisclaimerUsesCustomLabel",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kEnterpriseUpdatedProfileCreationScreen,
-             "EnterpriseUpdatedProfileCreationScreen",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 BASE_FEATURE(kManagedProfileRequiredInterstitial,
              "ManagedProfileRequiredInterstitial",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kEnableAppMenuButtonColorsForDefaultAvatarButtonStates,
+             "EnableAppMenuButtonColorsForDefaultAvatarButtonStates",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables a web-based tab strip. See https://crbug.com/989131. Note this
@@ -336,15 +497,21 @@ BASE_FEATURE(kUsePortalAccentColor,
 
 BASE_FEATURE(kPageSpecificDataDialogRelatedInstalledAppsSection,
              "PageSpecificDataDialogRelatedInstalledAppsSection",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kEnableManagementPromotionBanner,
              "EnableManagementPromotionBanner",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
+#if BUILDFLAG(IS_CHROMEOS)
 BASE_FEATURE(kEnablePolicyPromotionBanner,
              "EnablePolicyPromotionBanner",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#else
+BASE_FEATURE(kEnablePolicyPromotionBanner,
+             "EnablePolicyPromotionBanner",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif
 
 BASE_FEATURE(kInlineFullscreenPerfExperiment,
              "InlineFullscreenPerfExperiment",
@@ -353,24 +520,124 @@ BASE_FEATURE(kInlineFullscreenPerfExperiment,
 BASE_FEATURE(kPageActionsMigration,
              "PageActionsMigration",
              base::FEATURE_DISABLED_BY_DEFAULT);
-const base::FeatureParam<bool> kPageActionsMigrationEnableAll{
-    &kPageActionsMigration, "enable_all", false};
-const base::FeatureParam<bool> kPageActionsMigrationLensOverlay{
-    &kPageActionsMigration, "lens_overlay", false};
-const base::FeatureParam<bool> kPageActionsMigrationMemorySaver{
-    &kPageActionsMigration, "memory_saver", false};
-const base::FeatureParam<bool> kPageActionsMigrationTranslate{
-    &kPageActionsMigration, "translate", false};
-const base::FeatureParam<bool> kPageActionsMigrationIntentPicker{
-    &kPageActionsMigration, "intent_picker", false};
-const base::FeatureParam<bool> kPageActionsMigrationZoom{&kPageActionsMigration,
-                                                         "zoom", false};
-const base::FeatureParam<bool> kPageActionsMigrationOfferNotification{
-    &kPageActionsMigration, "offer_notification", false};
-const base::FeatureParam<bool> kPageActionsMigrationFileSystemAccess{
-    &kPageActionsMigration, "file_system_access", false};
-const base::FeatureParam<bool> kPageActionsMigrationPwaInstall{
-    &kPageActionsMigration, "pwa_install", false};
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationEnableAll,
+                   &kPageActionsMigration,
+                   "enable_all",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationLensOverlay,
+                   &kPageActionsMigration,
+                   "lens_overlay",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationMemorySaver,
+                   &kPageActionsMigration,
+                   "memory_saver",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationTranslate,
+                   &kPageActionsMigration,
+                   "translate",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationIntentPicker,
+                   &kPageActionsMigration,
+                   "intent_picker",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationZoom,
+                   &kPageActionsMigration,
+                   "zoom",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationOfferNotification,
+                   &kPageActionsMigration,
+                   "offer_notification",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationFileSystemAccess,
+                   &kPageActionsMigration,
+                   "file_system_access",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationPwaInstall,
+                   &kPageActionsMigration,
+                   "pwa_install",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationPriceInsights,
+                   &kPageActionsMigration,
+                   "price_insights",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationDiscounts,
+                   &kPageActionsMigration,
+                   "discounts",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationManagePasswords,
+                   &kPageActionsMigration,
+                   "manage_passwords",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationCookieControls,
+                   &kPageActionsMigration,
+                   "cookie_controls",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationAutofillAddress,
+                   &kPageActionsMigration,
+                   "autofill_address",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationFind,
+                   &kPageActionsMigration,
+                   "find",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationCollaborationMessaging,
+                   &kPageActionsMigration,
+                   "collaboration_messaging",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationPriceTracking,
+                   &kPageActionsMigration,
+                   "price_tracking",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationAutofillMandatoryReauth,
+                   &kPageActionsMigration,
+                   "mandatory_reauth",
+                   false);
+
+BASE_FEATURE_PARAM(bool,
+                   kPageActionsMigrationClickToCall,
+                   &kPageActionsMigration,
+                   "click_to_call",
+                   false);
+
+BASE_FEATURE(kSavePasswordsContextualUi,
+             "SavePasswordsContextualUi",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kCompositorLoadingAnimations,
              "CompositorLoadingAnimations",
@@ -379,5 +646,84 @@ BASE_FEATURE(kCompositorLoadingAnimations,
 BASE_FEATURE(kByDateHistoryInSidePanel,
              "ByDateHistoryInSidePanel",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kTabStripBrowserApi,
+             "TabStripBrowserApi",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kTabstripComboButton,
+             "TabstripComboButton",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// This serves as a "kill-switch" for migrating the Tab Search feature to be a
+// toolbar button for non-ChromeOS users in the US.
+BASE_FEATURE(kLaunchedTabSearchToolbarButton,
+             "LaunchedTabSearchToolbarButton",
+#if BUILDFLAG(IS_CHROMEOS)
+             base::FEATURE_DISABLED_BY_DEFAULT
+#else
+             base::FEATURE_ENABLED_BY_DEFAULT
+#endif
+);
+
+BASE_FEATURE_PARAM(bool,
+                   kTabSearchToolbarButton,
+                   &kTabstripComboButton,
+                   "tab_search_toolbar_button",
+                   true);
+
+static std::string GetCountryCode() {
+  if (!g_browser_process || !g_browser_process->variations_service()) {
+    return std::string();
+  }
+  std::string country_code =
+      g_browser_process->variations_service()->GetStoredPermanentCountry();
+  if (country_code.empty()) {
+    country_code = g_browser_process->variations_service()->GetLatestCountry();
+  }
+  return country_code;
+}
+
+bool HasTabSearchToolbarButton() {
+  static const bool is_tab_search_moving = [] {
+    if (GetCountryCode() == "us" &&
+        base::FeatureList::IsEnabled(
+            features::kLaunchedTabSearchToolbarButton)) {
+      return true;
+    }
+    return base::FeatureList::IsEnabled(features::kTabstripComboButton) &&
+           features::kTabSearchToolbarButton.Get();
+  }();
+
+  return is_tab_search_moving;
+}
+
+BASE_FEATURE(kNonMilestoneUpdateToast,
+             "NonMilestoneUpdateToast",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kBookmarkTabGroupConversion,
+             "BookmarkTabGroupConversion",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsBookmarkTabGroupConversionEnabled() {
+  return base::FeatureList::IsEnabled(kBookmarkTabGroupConversion);
+}
+
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
+BASE_FEATURE(kSessionRestoreInfobar,
+             "SessionRestoreInfobar",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+#if !BUILDFLAG(IS_ANDROID)
+BASE_FEATURE(kNewTabAddsToActiveGroup,
+             "NewTabAddsToActiveGroup",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsNewTabAddsToActiveGroupEnabled() {
+  return base::FeatureList::IsEnabled(kNewTabAddsToActiveGroup);
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace features

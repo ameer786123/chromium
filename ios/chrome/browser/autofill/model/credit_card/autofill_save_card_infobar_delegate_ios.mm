@@ -18,11 +18,17 @@ AutofillSaveCardInfoBarDelegateIOS::AutofillSaveCardInfoBarDelegateIOS(
     std::unique_ptr<AutofillSaveCardDelegate> common_delegate)
     : AutofillSaveCardInfoBarDelegateMobile(std::move(ui_info),
                                             std::move(common_delegate)) {
-  // `AutofillSaveCardInfoBarDelegateIOS` is created when the banner is to be
-  // shown, so record the metric from here.
-  LogSaveCreditCardInfoBarResultMetric(
-      autofill_metrics::SaveCreditCardPromptResultIOS::kShown,
-      autofill_metrics::SaveCreditCardPromptOverlayType::kBanner);
+  const auto& options = delegate()->GetSaveCreditCardOptions();
+  if (options.card_save_type ==
+      payments::PaymentsAutofillClient::CardSaveType::kCvcSaveOnly) {
+    autofill_metrics::LogSaveCvcPromptOfferedIOS(delegate()->is_for_upload());
+  } else {
+    // `AutofillSaveCardInfoBarDelegateIOS` is created when the banner is to be
+    // shown, so record the metric from here.
+    LogSaveCreditCardInfoBarResultMetric(
+        autofill_metrics::SaveCreditCardPromptResultIOS::kShown,
+        autofill_metrics::SaveCreditCardPromptOverlayType::kBanner);
+  }
 }
 
 AutofillSaveCardInfoBarDelegateIOS::~AutofillSaveCardInfoBarDelegateIOS() {
@@ -68,12 +74,15 @@ bool AutofillSaveCardInfoBarDelegateIOS::ShouldExpire(
 bool AutofillSaveCardInfoBarDelegateIOS::UpdateAndAccept(
     std::u16string cardholder_name,
     std::u16string expiration_date_month,
-    std::u16string expiration_date_year) {
+    std::u16string expiration_date_year,
+    std::u16string cvc) {
   payments::PaymentsAutofillClient::UserProvidedCardDetails
       user_provided_details;
-  user_provided_details.cardholder_name = cardholder_name;
-  user_provided_details.expiration_date_month = expiration_date_month;
-  user_provided_details.expiration_date_year = expiration_date_year;
+  user_provided_details.cardholder_name = std::move(cardholder_name);
+  user_provided_details.expiration_date_month =
+      std::move(expiration_date_month);
+  user_provided_details.expiration_date_year = std::move(expiration_date_year);
+  user_provided_details.cvc = std::move(cvc);
   delegate()->OnUiUpdatedAndAccepted(user_provided_details);
   return true;
 }
@@ -130,6 +139,13 @@ void AutofillSaveCardInfoBarDelegateIOS::LogSaveCreditCardInfoBarResultMetric(
   autofill_metrics::LogSaveCreditCardPromptResultIOS(
       metric, delegate()->is_for_upload(),
       delegate()->GetSaveCreditCardOptions(), overlay_type);
+}
+
+void AutofillSaveCardInfoBarDelegateIOS::LogSaveCvcInfoBarResultMetric(
+    autofill_metrics::SaveCvcPromptResultIOS metric) {
+  autofill_metrics::LogSaveCvcPromptResultIOS(
+      metric, delegate()->is_for_upload(),
+      delegate()->GetSaveCreditCardOptions());
 }
 
 }  // namespace autofill

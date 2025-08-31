@@ -22,6 +22,11 @@ import org.robolectric.RuntimeEnvironment;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.compositor.layouts.phone.stack.StackScroller;
+import org.chromium.chrome.browser.dragdrop.ChromeDropDataAndroid;
+import org.chromium.chrome.browser.dragdrop.ChromeTabDropDataAndroid;
+import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tasks.tab_management.TabDragHandlerBase;
+import org.chromium.ui.dragdrop.DragDropGlobalState;
 
 /** Tests for {@link ScrollDelegate}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -36,7 +41,12 @@ public class ScrollDelegateUnitTest {
     private static final float REORDER_START_MARGIN = 10.f;
     private static final float TRAILING_MARGIN_WIDTH = 10.f;
 
-    private static final float TEST_MIN_SCROLL_OFFSET = -200.f;
+    /**
+     * The scroll offset limit of the tab strip, which is a 1-D vector along the X axis under the
+     * dynamic coordinate system used by {@link ScrollDelegate}.
+     */
+    private static final float TEST_SCROLL_OFFSET_LIMIT = -200.f;
+
     private static final long TIMESTAMP = 0;
 
     private final Context mContext = RuntimeEnvironment.systemContext;
@@ -47,12 +57,14 @@ public class ScrollDelegateUnitTest {
     @Mock private StripLayoutTab mTab2;
     @Mock private StripLayoutTab mTab3;
     @Mock private StripLayoutTab mTab4;
+    @Mock private Tab mDraggedTab;
+
     private StripLayoutView[] mViews;
 
     @Before
     public void setup() {
         mScrollDelegate = new ScrollDelegate(mContext);
-        mScrollDelegate.setMinScrollOffsetForTesting(TEST_MIN_SCROLL_OFFSET);
+        mScrollDelegate.setScrollOffsetLimitForTesting(TEST_SCROLL_OFFSET_LIMIT);
     }
 
     @Test
@@ -62,7 +74,7 @@ public class ScrollDelegateUnitTest {
         mScrollDelegate.setScrollOffset(newScrollOffset);
         assertEquals(
                 /* message= */ "Offset should be clamped.",
-                TEST_MIN_SCROLL_OFFSET,
+                TEST_SCROLL_OFFSET_LIMIT,
                 mScrollDelegate.getScrollOffset(),
                 /* delta= */ 0);
     }
@@ -136,11 +148,12 @@ public class ScrollDelegateUnitTest {
         // Tabs 3 and 4 will be ignored.
         when(mTab3.isClosed()).thenReturn(true);
         when(mTab4.isDraggedOffStrip()).thenReturn(true);
+        setupDragDropState();
 
         // stripWidth = width(150) - leftMargin(5) - rightMargin(5) = 140
         // viewsWidth = 3*(viewWidth(110) - overlapWidth(10)) + overlapWidth(10) = 310
         // marginsWidth = trailingMarginWidth(10) + reorderStartMargin(10) = 20
-        // expectedMinScrollOffset = viewsWidth(310) + marginsWidth(20) - stripWidth(140) = -190
+        // expectedScrollOffsetLimit = viewsWidth(310) + marginsWidth(20) - stripWidth(140) = -190
         mScrollDelegate.setReorderStartMargin(REORDER_START_MARGIN);
         mScrollDelegate.updateScrollOffsetLimits(
                 mViews,
@@ -150,11 +163,11 @@ public class ScrollDelegateUnitTest {
                 VIEW_WIDTH,
                 VIEW_OVERLAP_WIDTH,
                 VIEW_OVERLAP_WIDTH);
-        float expectedMinScrollOffset = -190.f;
+        float expectedScrollOffsetLimit = -190.f;
         assertEquals(
-                /* message= */ "minScrollOffset was not as calculated.",
-                expectedMinScrollOffset,
-                mScrollDelegate.getMinScrollOffsetForTesting(),
+                /* message= */ "scrollOffsetLimit was not as calculated.",
+                expectedScrollOffsetLimit,
+                mScrollDelegate.getScrollOffsetLimitForTesting(),
                 /* delta= */ 0);
     }
 
@@ -195,5 +208,14 @@ public class ScrollDelegateUnitTest {
                 /* message= */ "Expected a different scroll duration for the given distance,",
                 expectedScrollDuration,
                 mScrollDelegate.getScrollDuration(scrollDelta));
+    }
+
+    private void setupDragDropState() {
+        ChromeDropDataAndroid dropData =
+                new ChromeTabDropDataAndroid.Builder().withTab(mDraggedTab).build();
+        DragDropGlobalState.TrackerToken dragTrackerToken =
+                DragDropGlobalState.store(
+                        /* dragSourceInstanceId= */ 1, dropData, /* dragShadowBuilder= */ null);
+        TabDragHandlerBase.setDragTrackerTokenForTesting(dragTrackerToken);
     }
 }

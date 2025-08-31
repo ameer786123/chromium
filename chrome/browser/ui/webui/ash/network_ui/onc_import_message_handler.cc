@@ -72,8 +72,8 @@ void OncImportMessageHandler::Respond(const std::string& callback_id,
 
 void OncImportMessageHandler::OnImportONC(const base::Value::List& list) {
   CHECK_EQ(2u, list.size());
-  std::string callback_id = list[0].GetString();
-  std::string onc_blob = list[1].GetString();
+  const std::string& callback_id = list[0].GetString();
+  const std::string& onc_blob = list[1].GetString();
   AllowJavascript();
 
   // TODO(crbug.com/40753707): Pass the `NssCertDatabaseGetter` to
@@ -147,16 +147,6 @@ void OncImportMessageHandler::ImportONCToNSSDB(const std::string& callback_id,
   auto cert_importer = std::make_unique<onc::CertificateImporterImpl>(
       content::GetIOThreadTaskRunner({}), nssdb);
   onc::CertificateImporterImpl* cert_importer_ptr = cert_importer.get();
-  if (!base::FeatureList::IsEnabled(
-          ::features::kEnableCertManagementUIV2Write)) {
-    cert_importer_ptr->ImportAllCertificatesUserInitiated(
-        certs->server_or_authority_certificates(), certs->client_certificates(),
-        base::BindOnce(
-            &OncImportMessageHandler::OnAllCertificatesImportedUserInitiated,
-            weak_factory_.GetWeakPtr(), std::move(cert_importer), callback_id,
-            result, has_error));
-    return;
-  }
 
   const std::vector<chromeos::onc::OncParsedCertificates::ClientCertificate>&
       client_certs = certs->client_certificates();

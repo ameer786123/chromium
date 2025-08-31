@@ -44,6 +44,17 @@ bool IsSidePanelEnabled(const api::side_panel::PanelOptions& options) {
          options.path.has_value();
 }
 
+GURL GetSidePanelURL(const Extension& extension,
+                     const api::side_panel::PanelOptions& options) {
+  // A side panel URL can be either an external HTTP/HTTPS URL or an extension
+  // URL.
+  GURL absolute_url = GURL(*options.path);
+  if (absolute_url.SchemeIsHTTPOrHTTPS()) {
+    return absolute_url;
+  }
+  return extension.ResolveExtensionURL(*options.path);
+}
+
 }  // namespace
 
 ExtensionSidePanelCoordinator::ExtensionSidePanelCoordinator(
@@ -82,7 +93,7 @@ ExtensionSidePanelCoordinator::ExtensionSidePanelCoordinator(
                   *extension,
                   ExtensionTabUtil::GetTabId(tab_interface_->GetContents()));
     if (IsSidePanelEnabled(options)) {
-      side_panel_url_ = extension->GetResourceURL(*options.path);
+      side_panel_url_ = GetSidePanelURL(*extension, options);
       CreateAndRegisterEntry();
     }
   }
@@ -115,6 +126,7 @@ bool ExtensionSidePanelCoordinator::IsGlobalCoordinator() const {
 }
 
 void ExtensionSidePanelCoordinator::DeregisterEntry() {
+  scoped_entry_observation_.Reset();
   registry_->Deregister(GetEntryKey());
 }
 
@@ -144,7 +156,7 @@ void ExtensionSidePanelCoordinator::OnPanelOptionsChanged(
   // Update the URL if the path was specified.
   GURL previous_url = side_panel_url_;
   if (updated_options.path.has_value()) {
-    side_panel_url_ = extension_->GetResourceURL(*updated_options.path);
+    side_panel_url_ = GetSidePanelURL(*extension_, updated_options);
   }
 
   // Deregister the SidePanelEntry if `enabled` is false.
@@ -191,20 +203,31 @@ void ExtensionSidePanelCoordinator::CreateAndRegisterEntry() {
   // not be null.
   DCHECK(extension_icon_);
 
-  // We use an unretained receiver here: the callback is called only when the
-  // SidePanelEntry exists for the extension, and the extension's SidePanelEntry
-  // is always deregistered when this class is destroyed, so CreateView can't be
-  // called after the destruction of `this`.
-  registry_->Register(std::make_unique<SidePanelEntry>(
+  // Use a `WeakPtr` for the creation callback to safely handle cases where
+  // this coordinator is destroyed before the view is created. Use a
+  // `ScopedObservation` to watch the entry, which lets us track when the panel
+  // is shown or hidden in order to manage state and dispatch events.
+  auto entry = std::make_unique<SidePanelEntry>(
       GetEntryKey(),
-      base::BindRepeating(&ExtensionSidePanelCoordinator::CreateView,
-                          base::Unretained(this))));
+      base::BindRepeating(
+          [](base::WeakPtr<ExtensionSidePanelCoordinator> coordinator,
+             SidePanelEntryScope& scope) -> std::unique_ptr<views::View> {
+            if (!coordinator) {
+              return nullptr;
+            }
+            return coordinator->CreateView(scope);
+          },
+          weak_factory_.GetWeakPtr()),
+      /*default_content_width_callback=*/base::NullCallback());
+
+  scoped_entry_observation_.Observe(entry.get());
+  registry_->Register(std::move(entry));
 }
 
 std::unique_ptr<views::View> ExtensionSidePanelCoordinator::CreateView(
     SidePanelEntryScope& scope) {
   host_ = ExtensionViewHostFactory::CreateSidePanelHost(
-      side_panel_url_, browser_, tab_interface_);
+      *extension_, side_panel_url_, browser_, tab_interface_);
 
   // `host_` could be null if `side_panel_url_` is invalid or if the extension
   // is not currently enabled. The latter can happen when the extension has
@@ -225,12 +248,54 @@ std::unique_ptr<views::View> ExtensionSidePanelCoordinator::CreateView(
       &ExtensionSidePanelCoordinator::HandleCloseExtensionSidePanel,
       base::Unretained(this)));
 
-  auto extension_view = std::make_unique<ExtensionViewViews>(host_.get());
+  auto extension_view =
+      std::make_unique<ExtensionViewViews>(profile_, host_.get());
   extension_view->SetVisible(true);
 
   scoped_view_observation_.Reset();
   scoped_view_observation_.Observe(extension_view.get());
   return extension_view;
+}
+
+void ExtensionSidePanelCoordinator::OnEntryShown(SidePanelEntry* entry) {
+  if (entry->key() != GetEntryKey()) {
+    return;
+  }
+
+  // Set `is_panel_active_` to true to track the panel’s current state for this
+  // context.
+  if (!is_panel_active_) {
+    OnOpened();
+    is_panel_active_ = true;
+  }
+}
+
+void ExtensionSidePanelCoordinator::OnEntryWillHide(
+    SidePanelEntry* entry,
+    SidePanelEntryHideReason reason) {
+  if (entry->key() != GetEntryKey()) {
+    return;
+  }
+
+  // Reset the panel state to inactive.
+  is_panel_active_ = false;
+}
+
+void ExtensionSidePanelCoordinator::OnOpened() {
+  auto* service = SidePanelService::Get(profile_);
+  const ExtensionId& extension_id = extension_->id();
+
+  // Retrieve the `tab_id` if this is a contextual panel. Global panels can
+  // ignore this field.
+  std::optional<int> tab_id;
+  if (for_tab_ && tab_interface_) {
+    tab_id = ExtensionTabUtil::GetTabId(tab_interface_->GetContents());
+  }
+
+  // Dispatch all arguments to reach the router listener.
+  service->DispatchOnOpenedEvent(extension_id,
+                                 ExtensionTabUtil::GetWindowId(GetBrowser()),
+                                 tab_id, side_panel_url_.path());
 }
 
 void ExtensionSidePanelCoordinator::HandleCloseExtensionSidePanel(
@@ -283,7 +348,7 @@ void ExtensionSidePanelCoordinator::LoadExtensionIcon() {
   // Triggers actual image loading with all supported scale factors.
   // TODO(crbug.com/40910886): This is a temporary fix since the combobox and
   // its drop down menu currently do not automatically get an image's
-  // representation when they are shown. Remove this when the aforementioend
+  // representation when they are shown. Remove this when the aforementioned
   // crbug has been fixed.
   extension_icon_->image_skia().EnsureRepsForSupportedScales();
 }

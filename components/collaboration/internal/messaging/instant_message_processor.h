@@ -5,14 +5,26 @@
 #ifndef COMPONENTS_COLLABORATION_INTERNAL_MESSAGING_INSTANT_MESSAGE_PROCESSOR_H_
 #define COMPONENTS_COLLABORATION_INTERNAL_MESSAGING_INSTANT_MESSAGE_PROCESSOR_H_
 
+#include <set>
+
+#include "base/uuid.h"
 #include "components/collaboration/public/messaging/message.h"
 #include "components/collaboration/public/messaging/messaging_backend_service.h"
 
 namespace collaboration::messaging {
 using InstantMessageDelegate = MessagingBackendService::InstantMessageDelegate;
 
-// Queues and processes instant messages. Performs aggregation whenever there
-// are similar types of messages available.
+// The `InstantMessageProcessor` is an interface for a class that manages the
+// queueing, aggregation, and display of instant messages.
+//
+// This class is responsible for:
+// - Holding and managing a queue of pending instant messages.
+// - Aggregating similar messages to create concise and informative
+//   notifications.
+// - Interacting with an `InstantMessageDelegate` to render the messages on the
+//   UI.
+// - Handling success callbacks from the delegate to clear messages from the
+//   queue once they have been successfully displayed.
 class InstantMessageProcessor {
  public:
   virtual ~InstantMessageProcessor() = default;
@@ -32,6 +44,10 @@ class InstantMessageProcessor {
   // Notifies the InstantMessageDelegate to display the message for all the
   // provided levels.
   virtual void DisplayInstantMessage(const InstantMessage& message) = 0;
+
+  // Notifies the InstantMessageDelegate to hide the messages with the provided
+  // IDs.
+  virtual void HideInstantMessage(const std::set<base::Uuid>& message_ids) = 0;
 };
 
 }  // namespace collaboration::messaging

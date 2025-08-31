@@ -10,9 +10,11 @@
 #include "base/containers/span.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/numerics/checked_math.h"
 #include "base/task/bind_post_task.h"
 #include "base/time/time.h"
+#include "cc/paint/skia_paint_canvas.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
 #include "media/base/limits.h"
 #include "media/base/timestamp_constants.h"
@@ -68,25 +70,15 @@
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "v8/include/v8.h"
 
-namespace WTF {
+namespace blink {
 
 template <>
-struct CrossThreadCopier<blink::VideoFrameLayout>
-    : public CrossThreadCopierPassThrough<blink::VideoFrameLayout> {
+struct CrossThreadCopier<VideoFrameLayout>
+    : public CrossThreadCopierPassThrough<VideoFrameLayout> {
   STATIC_ONLY(CrossThreadCopier);
 };
 
-}  // namespace WTF
-
-namespace blink {
-
 namespace {
-
-// Controls if VideoFrame.copyTo() reads GPU frames asynchronously when it's given a
-// SharedArrayBuffer.
-BASE_FEATURE(kVideoFrameAsyncCopyTo,
-             "VideoFrameAsyncCopyTo",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 media::VideoPixelFormat ToMediaPixelFormat(V8VideoPixelFormat::Enum fmt) {
   switch (fmt) {
@@ -119,7 +111,7 @@ media::VideoPixelFormat ToMediaPixelFormat(V8VideoPixelFormat::Enum fmt) {
     case V8VideoPixelFormat::Enum::kI444A:
       return media::PIXEL_FORMAT_I444A;
     case V8VideoPixelFormat::Enum::kI444AP10:
-      return media::PIXEL_FORMAT_YUV422AP10;
+      return media::PIXEL_FORMAT_YUV444AP10;
     case V8VideoPixelFormat::Enum::kNV12:
       return media::PIXEL_FORMAT_NV12;
     case V8VideoPixelFormat::Enum::kRGBA:
@@ -203,6 +195,8 @@ std::optional<V8VideoPixelFormat> ToV8VideoPixelFormat(
       return V8VideoPixelFormat(V8VideoPixelFormat::Enum::kBGRA);
     case media::PIXEL_FORMAT_XRGB:
       return V8VideoPixelFormat(V8VideoPixelFormat::Enum::kBGRX);
+    case media::PIXEL_FORMAT_RGBAF16:
+      return {};
     default:
       NOTREACHED();
   }
@@ -231,6 +225,7 @@ bool IsFormatEnabled(media::VideoPixelFormat fmt) {
     case media::PIXEL_FORMAT_YUV444P12:
     case media::PIXEL_FORMAT_I444A:
     case media::PIXEL_FORMAT_YUV444AP10:
+    case media::PIXEL_FORMAT_RGBAF16:
       return RuntimeEnabledFeatures::WebCodecsHBDFormatsEnabled();
     default:
       return false;
@@ -301,8 +296,8 @@ class CachedVideoFramePool : public GarbageCollected<CachedVideoFramePool>,
     task_handle_ = PostDelayedCancellableTask(
         *GetSupplementable()->GetTaskRunner(TaskType::kInternalMedia),
         FROM_HERE,
-        WTF::BindOnce(&CachedVideoFramePool::PurgeIdleFramePool,
-                      WrapWeakPersistent(this)),
+        BindOnce(&CachedVideoFramePool::PurgeIdleFramePool,
+                 WrapWeakPersistent(this)),
         kIdleTimeout);
   }
 
@@ -418,8 +413,8 @@ class CanvasResourceProviderCache
     task_handle_ = PostDelayedCancellableTask(
         *GetSupplementable()->GetTaskRunner(TaskType::kInternalMedia),
         FROM_HERE,
-        WTF::BindOnce(&CanvasResourceProviderCache::PurgeIdleFramePool,
-                      WrapWeakPersistent(this)),
+        BindOnce(&CanvasResourceProviderCache::PurgeIdleFramePool,
+                 WrapWeakPersistent(this)),
         kIdleTimeout);
   }
 
@@ -665,8 +660,6 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
     transformed = transformation != media::kNoTransformation;
   }
 
-  constexpr char kAlphaDiscard[] = "discard";
-
   // Special case <video> and VideoFrame to directly use the underlying frame.
   if (source->IsVideoFrame() || source->IsHTMLVideoElement()) {
     scoped_refptr<media::VideoFrame> source_frame;
@@ -688,7 +681,7 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
       return nullptr;
     }
 
-    const bool force_opaque = init->alpha() == kAlphaDiscard &&
+    const bool force_opaque = init->alpha() == V8AlphaOption::Enum::kDiscard &&
                               !media::IsOpaque(source_frame->format());
 
     const auto wrapped_format =
@@ -792,14 +785,25 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
     return nullptr;
   }
 
-  const auto orientation = image->CurrentFrameOrientation().Orientation();
+  if (sk_image_info.colorType() == kRGBA_F16_SkColorType &&
+      SkColorSpace::Equals(sk_color_space.get(),
+                           SkColorSpace::MakeSRGBLinear().get())) {
+    // TODO(crbug.com/438675262): |sk_color_type| converts to
+    // gfx::ColorSpace::TransferID::LINEAR while it should actually be
+    // gfx::ColorSpace::TransferID::LINEAR_HDR. Waiting for gfx::ColorSpace
+    // to be removed.
+    // Replace with SRGBLinear with LINEAR_HDR transfer ID.
+    gfx_color_space = gfx::ColorSpace::CreateSRGBLinear();
+  }
+
+  const auto orientation = image->Orientation().Orientation();
   const gfx::Size coded_size(sk_image_info.width(), sk_image_info.height());
   const gfx::Rect default_visible_rect(coded_size);
   const gfx::Size default_display_size(coded_size);
   const bool has_undiscarded_unpremultiplied_alpha =
       sk_image_info.alphaType() == kUnpremul_SkAlphaType &&
-      !image->CurrentFrameKnownToBeOpaque() &&
-      !(init && init->alpha() == kAlphaDiscard);
+      !image->IsOpaque() &&
+      !(init && init->alpha() == V8AlphaOption::Enum::kDiscard);
 
   sk_sp<SkImage> sk_image;
   scoped_refptr<media::VideoFrame> frame;
@@ -808,7 +812,7 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
     DCHECK(image->IsStaticBitmapImage());
     const auto format = media::VideoPixelFormatFromSkColorType(
         paint_image.GetColorType(),
-        image->CurrentFrameKnownToBeOpaque() || init->alpha() == kAlphaDiscard);
+        image->IsOpaque() || init->alpha() == V8AlphaOption::Enum::kDiscard);
 
     ParsedVideoFrameInit parsed_init(init, format, coded_size,
                                      default_visible_rect, default_display_size,
@@ -872,8 +876,9 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
       return nullptr;
     }
 
-    const bool force_opaque =
-        init && init->alpha() == kAlphaDiscard && !sk_image->isOpaque();
+    const bool force_opaque = init &&
+                              init->alpha() == V8AlphaOption::Enum::kDiscard &&
+                              !sk_image->isOpaque();
 
     const auto format = media::VideoPixelFormatFromSkColorType(
         sk_image->colorType(), sk_image->isOpaque() || force_opaque);
@@ -911,6 +916,11 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
   }
   frame->metadata().transformation =
       ImageOrientationToVideoTransformation(orientation).add(transformation);
+
+  if (gfx_color_space.IsHDR()) {
+    frame->set_hdr_metadata(paint_image.GetHDRMetadata());
+  }
+
   return MakeGarbageCollected<VideoFrame>(
       base::MakeRefCounted<VideoFrameHandle>(
           std::move(frame), std::move(sk_image),
@@ -1025,14 +1035,15 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
     // Set up the copy to be minimally-sized. Note: The parameters to the
     // CopyPlane() method below depend on coded_size == visible_size.
     gfx::Rect crop = src_visible_rect;
-    gfx::Size dest_coded_size = crop.size();
     gfx::Rect dest_visible_rect = gfx::Rect(crop.size());
 
     // The array buffer hasn't been transferred, we need to allocate and
     // copy pixel data.
     auto& frame_pool = CachedVideoFramePool::From(*execution_context);
-    frame = frame_pool.CreateFrame(media_fmt, dest_coded_size,
+    frame = frame_pool.CreateFrame(media_fmt, /*coded_size=*/crop.size(),
                                    dest_visible_rect, display_size, timestamp);
+
+    // Note: CreateFrame() may expand the coded size for odd sized frames.
 
     if (!frame) {
       exception_state.ThrowDOMException(
@@ -1040,7 +1051,7 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
           String::Format("Failed to create a VideoFrame with format: %s, "
                          "coded size: %s, visibleRect: %s, display size: %s.",
                          VideoPixelFormatToString(media_fmt).c_str(),
-                         dest_coded_size.ToString().c_str(),
+                         crop.size().ToString().c_str(),
                          dest_visible_rect.ToString().c_str(),
                          display_size.ToString().c_str()));
       return nullptr;
@@ -1049,7 +1060,8 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
     for (wtf_size_t i = 0; i < media::VideoFrame::NumPlanes(media_fmt); i++) {
       libyuv::CopyPlane(src_frame->visible_data(i), src_frame->stride(i),
                         frame->GetWritableVisibleData(i), frame->stride(i),
-                        frame->row_bytes(i), frame->rows(i));
+                        /*width=*/src_frame->GetVisibleRowBytes(i),
+                        /*height=*/src_frame->GetVisibleRows(i));
     }
   }
 
@@ -1226,13 +1238,23 @@ VideoFrameMetadata* VideoFrame::metadata(ExceptionState& exception_state) {
 
   auto* metadata = VideoFrameMetadata::Create();
 
-  if (!local_frame->metadata().background_blur) {
-    return metadata;
+  if (local_frame->metadata().background_blur) {
+    auto* background_blur = BackgroundBlur::Create();
+    background_blur->setEnabled(
+        local_frame->metadata().background_blur->enabled);
+    metadata->setBackgroundBlur(background_blur);
   }
 
-  auto* background_blur = BackgroundBlur::Create();
-  background_blur->setEnabled(local_frame->metadata().background_blur->enabled);
-  metadata->setBackgroundBlur(background_blur);
+  if (RuntimeEnabledFeatures::VideoFrameMetadataRtpTimestampEnabled()) {
+    if (local_frame->metadata().rtp_timestamp) {
+      double rtp_timestamp = *local_frame->metadata().rtp_timestamp;
+      // Ensure that the rtp timestamp fits in uint32_t before exposing it to
+      // JavaScript.
+      if (base::IsValueInRangeForNumericType<uint32_t>(rtp_timestamp)) {
+        metadata->setRtpTimestamp(static_cast<uint32_t>(rtp_timestamp));
+      }
+    }
+  }
 
   return metadata;
 }
@@ -1321,8 +1343,8 @@ bool VideoFrame::CopyToAsync(
           resolver->Reject();
         }
       };
-  auto done_cb = WTF::BindOnce(readback_done_handler, std::move(contents),
-                               WrapPersistent(resolver), dest_layout);
+  auto done_cb = BindOnce(readback_done_handler, std::move(contents),
+                          WrapPersistent(resolver), dest_layout);
 
   auto buffer = AsSpan<uint8_t>(destination);
   background_readback->ReadbackTextureBackedFrameToBuffer(
@@ -1394,12 +1416,10 @@ ScriptPromise<IDLSequence<PlaneLayout>> VideoFrame::copyTo(
   } else {
     DCHECK(local_frame->HasSharedImage());
 
-    if (base::FeatureList::IsEnabled(kVideoFrameAsyncCopyTo)) {
-      // Check if we can run copyTo() asynchronously.
-      if (CopyToAsync(resolver, local_frame, src_rect, destination,
-                      dest_layout)) {
-        return promise;
-      }
+    // Check if we can run copyTo() asynchronously.
+    if (CopyToAsync(resolver, local_frame, src_rect, destination,
+                    dest_layout)) {
+      return promise;
     }
 
     // Async version didn't work, let's copy planes synchronously.

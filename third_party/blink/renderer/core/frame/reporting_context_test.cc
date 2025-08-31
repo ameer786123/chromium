@@ -41,8 +41,8 @@ class MockReportingServiceProxy : public mojom::blink::ReportingServiceProxy {
       : broker_(broker), reached_callback_(std::move(reached_callback)) {
     broker_.SetBinderForTesting(
         ReportingServiceProxy::Name_,
-        WTF::BindRepeating(&MockReportingServiceProxy::BindReceiver,
-                           WTF::Unretained(this)));
+        BindRepeating(&MockReportingServiceProxy::BindReceiver,
+                      Unretained(this)));
   }
 
   ~MockReportingServiceProxy() override {
@@ -99,6 +99,17 @@ class MockReportingServiceProxy : public mojom::blink::ReportingServiceProxy {
                                int32_t column_number) override {
     if (reached_callback_)
       std::move(reached_callback_).Run();
+  }
+
+  void QueueIntegrityViolationReport(const KURL& url,
+                                     const String& endpoint,
+                                     const String& document_url,
+                                     const String& blocked_url,
+                                     const String& destionation,
+                                     bool report_only) override {
+    if (reached_callback_) {
+      std::move(reached_callback_).Run();
+    }
   }
 
   void QueuePermissionsPolicyViolationReport(const KURL& url,

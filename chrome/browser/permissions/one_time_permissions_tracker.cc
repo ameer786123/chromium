@@ -15,8 +15,8 @@
 #include "chrome/browser/permissions/one_time_permissions_tracker_observer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/permissions/content_setting_permission_context_base.h"
 #include "components/permissions/features.h"
-#include "components/permissions/permission_context_base.h"
 #include "content/public/browser/visibility.h"
 #include "url/gurl.h"
 
@@ -53,8 +53,7 @@ void OneTimePermissionsTracker::WebContentsBackgrounded(
       // When all undiscarded tabs which point to the origin are in the
       // background, the timers should be reset.
       origin_tracker_[origin].background_expiration_timer->Start(
-          FROM_HERE,
-          permissions::feature_params::kOneTimePermissionTimeout.Get(),
+          FROM_HERE, permissions::kOneTimePermissionTimeout,
           base::BindOnce(
               &OneTimePermissionsTracker::NotifyBackgroundTimerExpired,
               weak_factory_.GetWeakPtr(), origin,
@@ -62,8 +61,7 @@ void OneTimePermissionsTracker::WebContentsBackgrounded(
                   kTimeout));
 
       origin_tracker_[origin].background_expiration_long_timer->Start(
-          FROM_HERE,
-          permissions::feature_params::kOneTimePermissionLongTimeout.Get(),
+          FROM_HERE, permissions::kOneTimePermissionMaximumLifetime,
           base::BindOnce(
               &OneTimePermissionsTracker::NotifyBackgroundTimerExpired,
               weak_factory_.GetWeakPtr(), origin,
@@ -117,8 +115,7 @@ void OneTimePermissionsTracker::StartContentSpecificExpirationTimer(
   origin_tracker_[origin]
       .content_setting_specific_expiration_timer_map[content_setting]
       ->Start(
-          FROM_HERE,
-          permissions::feature_params::kOneTimePermissionTimeout.Get(),
+          FROM_HERE, permissions::kOneTimePermissionTimeout,
           base::BindOnce(notify_callback, weak_factory_.GetWeakPtr(), origin));
 }
 
@@ -211,7 +208,7 @@ void OneTimePermissionsTracker::CleanupStateForExpiredContentSetting(
   }
 
   for (const auto& origin : affected_origins) {
-    if (type == ContentSettingsType::GEOLOCATION) {
+    if (type == permissions::PermissionUtil::GetGeolocationType()) {
       origin_tracker_[origin].background_expiration_timer->Stop();
     } else {
       origin_tracker_[origin]

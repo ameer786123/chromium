@@ -148,21 +148,17 @@ enum class Error;
 struct CrxUpdateItem;
 
 enum class ComponentState {
-  kNew,          // The component has not yet been checked for updates.
-  kChecking,     // The component is being checked for updates now.
-  kCanUpdate,    // An update is available and will soon be processed.
-  kDownloading,  // An update is being downloaded.
-  kUpdating,     // An update is being installed.
-  kUpdated,      // An update was successfully applied.
-  kUpToDate,     // The component was already up to date.
-  kUpdateError,  // The service encountered an error.
-  kRun,          // The component is running a server-specified action.
-
-  // TODO(crbug.com/353249967): These states are unsent by the engine and can
-  // be removed, along with translations and mappings associated with them.
-  kDownloadingDiff,
-  kUpdatingDiff,
-  kLastStatus
+  kNew,            // The component has not yet been checked for updates.
+  kChecking,       // The component is being checked for updates now.
+  kCanUpdate,      // An update is available and will soon be processed.
+  kDownloading,    // An update is being downloaded.
+  kDecompressing,  // An update is being decompressed.
+  kPatching,       // A patch is being applied.
+  kUpdating,       // An update is being installed.
+  kUpdated,        // An update was successfully applied.
+  kUpToDate,       // The component was already up to date.
+  kUpdateError,    // The service encountered an error.
+  kRun             // The component is running a server-specified action.
 };
 
 // Defines an interface for a generic CRX installer.
@@ -172,20 +168,20 @@ class CrxInstaller : public base::RefCountedThreadSafe<CrxInstaller> {
   struct Result {
     Result() = default;
     explicit Result(int error, int extended_error = 0)
-        : result({.category_ = error == 0 ? ErrorCategory::kNone
-                                          : ErrorCategory::kInstall,
-                  .code_ = error,
-                  .extra_ = extended_error}) {}
+        : result({.category = error == 0 ? ErrorCategory::kNone
+                                         : ErrorCategory::kInstall,
+                  .code = error,
+                  .extra = extended_error}) {}
     explicit Result(InstallError error, int extended_error = 0)
-        : result({.category_ = error == InstallError::NONE
-                                   ? ErrorCategory::kNone
-                                   : ErrorCategory::kInstall,
-                  .code_ = static_cast<int>(error),
-                  .extra_ = extended_error}) {}
+        : result({.category = error == InstallError::NONE
+                                  ? ErrorCategory::kNone
+                                  : ErrorCategory::kInstall,
+                  .code = static_cast<int>(error),
+                  .extra = extended_error}) {}
     explicit Result(CategorizedError error) : result(error) {}
 
-    // The install is successful if and only if result.category_ is kNone.
-    // result.code_ may be non-zero for a successful install.
+    // The install is successful if and only if result.category is kNone.
+    // result.code may be non-zero for a successful install.
     CategorizedError result;
 
     // Localized text displayed to the user, if applicable.

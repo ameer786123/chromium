@@ -8,16 +8,20 @@ namespace cc {
 
 void TestLayerContext::SetVisible(bool visible) {}
 
-void TestLayerContext::UpdateDisplayTreeFrom(
+base::TimeTicks TestLayerContext::UpdateDisplayTreeFrom(
     LayerTreeImpl& tree,
     viz::ClientResourceProvider& resource_provider,
     viz::RasterContextProvider& context_provider,
-    const gfx::Rect& viewport_damage_rect) {}
+    const gfx::Rect& viewport_damage_rect,
+    const viz::LocalSurfaceId& target_local_surface_id) {
+  return base::TimeTicks::Now();
+}
 
 void TestLayerContext::UpdateDisplayTile(
     PictureLayerImpl& layer,
     const Tile& tile,
     viz::ClientResourceProvider& resource_provider,
-    viz::RasterContextProvider& context_provider) {}
+    viz::RasterContextProvider& context_provider,
+    bool update_damage) {}
 
 }  // namespace cc

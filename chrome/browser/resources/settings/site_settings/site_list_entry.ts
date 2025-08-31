@@ -30,13 +30,6 @@ import {getTemplate} from './site_list_entry.html.js';
 import {SiteSettingsMixin} from './site_settings_mixin.js';
 import type {SiteException} from './site_settings_prefs_browser_proxy.js';
 
-export interface SiteListEntryElement {
-  $: {
-    actionMenuButton: HTMLElement,
-    resetSite: HTMLElement,
-  };
-}
-
 const SiteListEntryElementBase =
     FocusRowMixin(BaseMixin(SiteSettingsMixin(I18nMixin(PolymerElement))));
 
@@ -60,12 +53,23 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
         value: false,
       },
 
-      /**
-       * Site to display in the widget.
-       */
+      /** Site to display in the widget.*/
       model: {
         type: Object,
         observer: 'onModelChanged_',
+      },
+
+      /** Whether this entry is the only entry in the Allowed/Blocked section.*/
+      singletonEntry: {
+        type: Boolean,
+      },
+
+      /**
+       * The header for the Allowed/Blocked section this entry is in. Used for
+       * aria-label to fix cases where the screenreader hasn't already read it.
+       */
+      sectionHeader: {
+        type: String,
       },
 
       /**
@@ -106,6 +110,8 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
 
   declare private readOnlyList: boolean;
   declare model: SiteException;
+  declare private singletonEntry: boolean;
+  declare private sectionHeader: string;
   declare private chooserType: ChooserType;
   declare private chooserObject: object;
   declare private showPolicyPrefIndicator_: boolean;
@@ -195,6 +201,46 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
   }
 
   /**
+   * Returns an appropriate aria-label for this entry. The reset (trash can)
+   * button has a different aria-label, see the HTML.
+   */
+  private computeAriaLabel_(): string {
+    if (this.singletonEntry) {
+      // Screen readers sometimes only read the grid's label (which is in
+      // site_list.html) if the grid has more than 1 row. That contains the
+      // important context of whether this site is allowed or blocked, so we
+      // explicitly add it to the aria-label here to make sure it's read.
+      return `${this.computeDisplayName_()} ${this.sectionHeader}`;
+    }
+    return this.computeDisplayName_();
+  }
+
+  /**
+   * Returns an appropriate aria-label for the remove button. This aria-label
+   * clearly indicates a site name and section header. It should help the
+   * screenreader user understand that this button will remove the site from the
+   * list. There are two lists, one for allowed sites and one for blocked sites.
+   */
+  private computeRemoveButtonAriaLabel_(): string {
+    return this.i18n(
+        'siteSettingsActionResetFromListA11y', this.computeDisplayName_(),
+        this.sectionHeader);
+  }
+
+  /**
+   * Returns an appropriate aria-label for the view button. This aria-label
+   * clearly indicates a site name and section header. It should help the
+   * screenreader user understand that this button will open a subpage for the
+   * site from the list. There are two lists, one for allowed sites and one for
+   * blocked sites.
+   */
+    private computeViewButtonAriaLabel_(): string {
+      return this.i18n(
+          'siteSettingsActionViewFromListA11y', this.computeDisplayName_(),
+          this.sectionHeader);
+   }
+
+  /**
    * Returns the appropriate origin that a favicon will be fetched for.
    */
   private computeFaviconOrigin_(): string {
@@ -279,9 +325,10 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
       return;
     }
 
-    this.fire(
-        'show-action-menu',
-        {anchor: this.$.actionMenuButton, model: this.model});
+    this.fire('show-action-menu', {
+      anchor: this.shadowRoot!.querySelector('#actionMenuButton'),
+      model: this.model,
+    });
   }
 
   private onModelChanged_() {
@@ -297,6 +344,10 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
   private getActionMenuButtonLabel_() {
     return this.i18n(
         'siteDataPageAddSiteContextMenuLabel', this.computeDisplayName_());
+  }
+
+  setSectionHeaderForTest(sectionHeader: string) {
+    this.sectionHeader = sectionHeader;
   }
 }
 

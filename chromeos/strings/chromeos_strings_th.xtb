@@ -20,6 +20,7 @@
 <translation id="1059913517121127803">เริ่มการสแกนไม่ได้</translation>
 <translation id="1061864016440983342">ใช้โดยไม่ใช้ตำแหน่ง</translation>
 <translation id="1062823486781306604"><ph name="INDEX" /> จาก <ph name="COUNT" />, <ph name="NAME" /></translation>
+<translation id="106558928761833284">กาแล็กซีเนบิวลาในจักรวาลที่สวยงามมียานอวกาศล้ำสมัยสีน้ำเงิน ชมพู และม่วง</translation>
 <translation id="1069150558259542054">ใช้ Quick Insert กับแป้นพิมพ์ลัดที่กำหนดเองไม่ได้</translation>
 <translation id="1070066693520972135">WEP</translation>
 <translation id="1071587090247825784">ตรวจพบไฟร์วอลล์</translation>
@@ -27,6 +28,7 @@
 <translation id="1082009148392559545">กำลังดาวน์โหลดโปรแกรมรักษาหน้าจอ</translation>
 <translation id="1094693127011229778">ที่อยู่ IP ไม่พร้อมใช้งาน</translation>
 <translation id="1100902271996134409">กำลังสร้างรูปภาพ...</translation>
+<translation id="1102946598597843031">ภาพถ่ายดวงจันทร์เหนือทะเลสาบที่มีใบซากุระร่วงหล่นลงมา ความละเอียด 4K</translation>
 <translation id="1107856713690040084">ไฟล์เสียง <ph name="DEVICE_TYPE" /></translation>
 <translation id="1116694919640316211">เกี่ยวกับ</translation>
 <translation id="1118572504348554005">เราอาจแชร์ความคิดเห็นที่ส่งมาทางแบบฟอร์มนี้กับพาร์ทเนอร์เพื่อแก้ไขข้อบกพร่องและปัญหาอื่นๆ ที่คุณรายงานให้ทราบ อย่าใส่ข้อมูลที่ละเอียดอ่อน เช่น รหัสผ่าน</translation>
@@ -67,6 +69,7 @@
 <translation id="1238163879850290856">รีเซ็ตเพื่อป้องกันไม่ให้ผู้อื่นเข้าถึงข้อมูล โปรดใช้เฉพาะวิธีการป้อนข้อมูลที่คุณเชื่อถือเท่านั้น</translation>
 <translation id="1238612778414822719">เวลาในการตอบสนองของ HTTPS</translation>
 <translation id="1252766349417594414">จอยสติ๊ก</translation>
+<translation id="1261045951892393759">แมวเล่นกีตาร์รุ่น Flying V ขณะขี่ยูนิคอร์น โดยมีสายฟ้าฟาดเป็นพื้นหลัง</translation>
 <translation id="1270369111467284986">สงสัยว่าเป็นแคพทีฟพอร์ทัล</translation>
 <translation id="1274654146705270731">ส้ม</translation>
 <translation id="1275718070701477396">เลือกแล้ว</translation>
@@ -123,7 +126,7 @@
 <translation id="1476467821656042872"><ph name="MANAGER" /> จัดการอุปกรณ์นี้และอาจตรวจสอบกิจกรรมของคุณได้</translation>
 <translation id="1478594628797167447">เครื่องสแกน</translation>
 <translation id="1483493594462132177">ส่ง</translation>
-<translation id="1488850966314959671">ไม่สามารถเชื่อมต่อกับเครือข่ายนี้โดยใช้ APN ที่กำหนดเองซึ่งเปิดใช้อยู่ โปรดติดต่อสอบถามข้อมูลเพิ่มเติมจากผู้ให้บริการเครือข่ายมือถือ</translation>
+<translation id="1488850966314959671">ไม่สามารถเชื่อมต่อกับเครือข่ายนี้โดยใช้ APN ที่กำหนดเองซึ่งเปิดใช้อยู่ โปรดติดต่อสอบถามข้อมูลเพิ่มเติมจากผู้ให้บริการมือถือ</translation>
 <translation id="1499041187027566160">เพิ่มระดับเสียง</translation>
 <translation id="1499900233129743732"><ph name="MANAGER" /> จัดการผู้ใช้รายนี้อยู่และอาจจัดการการตั้งค่าและตรวจสอบกิจกรรมของผู้ใช้จากระยะไกล</translation>
 <translation id="150962533380566081">PUK ไม่ถูกต้อง</translation>
@@ -154,7 +157,7 @@
 <translation id="1587031308639983732">การเปลี่ยนแปลงตามเวลาอาจไม่ถูกต้อง การตั้งค่านี้จัดการโดยผู้ดูแลระบบ</translation>
 <translation id="1588438908519853928">ปกติ</translation>
 <translation id="1591562245178063882">เดือนนี้</translation>
-<translation id="1593528591614229756">โปรดเลือก APN ที่มาจากผู้ให้บริการเครือข่ายมือถือหรือผู้ดูแลระบบ การเลือก APN จะปิดใช้ APN ที่กําหนดเอง APN ที่ไม่ถูกต้องอาจทำให้การเชื่อมต่อมือถือของคุณหยุดชะงัก <ph name="LINK_BEGIN" />ดูข้อมูลเพิ่มเติม<ph name="LINK_END" /></translation>
+<translation id="1593528591614229756">โปรดเลือก APN ที่มาจากผู้ให้บริการมือถือหรือผู้ดูแลระบบ การเลือก APN จะปิดใช้ APN ที่กําหนดเอง APN ที่ไม่ถูกต้องอาจทำให้การเชื่อมต่อมือถือของคุณหยุดชะงัก <ph name="LINK_BEGIN" />ดูข้อมูลเพิ่มเติม<ph name="LINK_END" /></translation>
 <translation id="1604959087182679653">ซ่อนข้อความถอดเสียง</translation>
 <translation id="160633243685262989">แสดงตัวอย่างรูปภาพ</translation>
 <translation id="1611649489706141841">ไปข้างหน้า</translation>
@@ -203,6 +206,7 @@
 <translation id="1758018619400202187">EAP-TLS</translation>
 <translation id="1758459542619182298"><ph name="CONTROL_TYPE" /> <ph name="KEY_LIST" /></translation>
 <translation id="1759842336958782510">Chrome</translation>
+<translation id="1762353673362288306">ตอนนี้คุณสามารถใช้เครื่องมือสำหรับชั้นเรียนได้เท่านั้น</translation>
 <translation id="1762483337755424125">ข้อความถอดเสียง</translation>
 <translation id="1765169783255151332">เปลี่ยนแป้นอย่างรวดเร็ว</translation>
 <translation id="1768959921651994223">ประเภทการตรวจสอบสิทธิ์</translation>
@@ -273,6 +277,7 @@
 <translation id="2045814230297767491">เครื่องใช้บนโต๊ะอาหาร</translation>
 <translation id="2047316797244836561">โปรดเชื่อมต่อเครือข่ายและโหลดหน้าเว็บซ้ำเพื่อดูโปรแกรมรักษาหน้าจอ</translation>
 <translation id="2056550196601855911">IPv4/IPv6</translation>
+<translation id="2068472557797646626">การแสดงผล 3 มิติของทรงกลมโครเมียมและทรงกลมบนพื้นหลังขององค์ประกอบสถาปัตยกรรมโครเมียม องค์ประกอบเป็นแนวคิดแบบมินิมอลทันสมัยสำหรับการโฆษณา การสร้างแบรนด์ หรืองานนำเสนอที่มีพื้นที่สำหรับข้อความ ประตูโค้งขนาดใหญ่ตั้งอยู่หน้าพื้นหลังแอบสแตรกสไตล์มินิมอล การปรับแสงระดับสตูดิโอ การถ่ายภาพระยะใกล้</translation>
 <translation id="2073232437457681324">มหาสมุทรกว้างใหญ่</translation>
 <translation id="2080070583977670716">การตั้งค่าเพิ่มเติม</translation>
 <translation id="2082932131694554252">แป้นบนแป้นพิมพ์ที่กำหนดแล้ว</translation>
@@ -322,6 +327,7 @@
 <translation id="2240366984605217732">สลับเลย์เอาต์</translation>
 <translation id="224421911978987610">เปิดรับแสงนาน</translation>
 <translation id="2244834438220057800">เขียว</translation>
+<translation id="2248689665683494517">ภาพนิ่งสไตล์มินิมอลของดอกป๊อปปี้ในแจกันแก้วบนพื้นหลังสีดำ</translation>
 <translation id="225692081236532131">สถานะการเปิดใช้งาน</translation>
 <translation id="2267285889943769271">เพิ่มภาพหน้าจอ</translation>
 <translation id="2268044343513325586">ปรับแต่ง</translation>
@@ -329,7 +335,7 @@
 <translation id="2276999893457278469">เนื้อหาช่วยเหลือยอดนิยม</translation>
 <translation id="2277631741861284101">บันทึกและแชร์เสียงได้ง่ายๆ</translation>
 <translation id="2279051792571591988">คืนค่าเริ่มต้น</translation>
-<translation id="2286454467119466181">ง่าย</translation>
+<translation id="2286454467119466181">เรียบง่าย</translation>
 <translation id="2287186687001756809">ไม่มีรูปภาพ ไปที่ <ph name="LINK" /> เพื่อเพิ่มรูปภาพ</translation>
 <translation id="2294577623958216786">กำหนดเวลาปัจจุบันคือ <ph name="SUNRISE" /> - <ph name="SUNSET" /> หากต้องการอัปเดตกำหนดเวลาพระอาทิตย์ตกและพระอาทิตย์ขึ้นโดยอัตโนมัติ ให้เปิดการเข้าถึงตำแหน่งของระบบ</translation>
 <translation id="2305172810646967500">ดำ</translation>
@@ -390,7 +396,6 @@
 <translation id="2584559707064218956">ไปที่การตั้งค่าเพื่อตั้งค่า</translation>
 <translation id="2586146417912237930">น้ำเงินและน้ำเงินอมม่วง</translation>
 <translation id="2589921777872778654">เมนูแก้ไขและลบ</translation>
-<translation id="2590424100019931043">ระบบได้นำคุณออกจากชั้นเรียนนี้แล้ว</translation>
 <translation id="2597774443162333062">ระบบจะส่งไฟล์ไปยัง Google เพื่อแก้ไขข้อบกพร่อง</translation>
 <translation id="2599691907981599502">{NUMBER_OF_PAGES,plural, =1{การสแกนเสร็จสมบูรณ์ สแกนแล้ว 1 หน้า}other{การสแกนเสร็จสมบูรณ์ สแกนแล้ว {NUMBER_OF_PAGES} หน้า}}</translation>
 <translation id="261322795497077164">การระบุผู้พูด</translation>
@@ -430,6 +435,7 @@
 <translation id="2805756323405976993">แอป</translation>
 <translation id="28232023175184696">เชื่อมต่ออินเทอร์เน็ตไม่ได้ คลิกเพื่อลองอีกครั้ง</translation>
 <translation id="2855718259207180827">ผ้าขนสัตว์</translation>
+<translation id="2856429654176718363">ยานอวกาศขนาดใหญ่ลอยอยู่เหนือเมืองที่สว่างไสวด้วยแสงไฟมากมาย ฉากทั้งหมดเป็นสไตล์ภาพวาดสีน้ำมันและมีโทนสีเข้ม สร้างบรรยากาศลึกลับด้วยองค์ประกอบไซไฟล้ำยุค ผลงานนี้สร้างขึ้นโดยใช้ซอฟต์แวร์ C4D และโปรแกรมแสดงผลอย่างสมจริงเพื่อเน้นความละเอียดสูงและรายละเอียดต่างๆ นอกจากนี้ยังมีอาคารในเมืองที่อยู่ใกล้ๆ เพิ่มเอฟเฟกต์ความชัดลึก ฉากนี้แสดงผลในสไตล์ภาพวาดสีน้ำมัน นำเสนอโทนสีเข้มและสร้างบรรยากาศลึกลับด้วยองค์ประกอบไซไฟล้ำยุค</translation>
 <translation id="2859243502336719778">การอัปเดตสำคัญ</translation>
 <translation id="2860473693272905224">วางอีกหน้าบนเครื่องสแกน</translation>
 <translation id="286265581261662583">คลิกขวาหรือกดค้างไว้เพื่อรับคำจำกัดความ คำแปล หรือการแปลงหน่วย</translation>
@@ -446,9 +452,11 @@
 <translation id="2895772081848316509">มืด</translation>
 <translation id="2915996080311180594">รีสตาร์ทภายหลัง</translation>
 <translation id="2926057806159140518">ป้อนชื่อผู้ใช้และรหัสผ่าน หรือสแกนคิวอาร์โค้ด</translation>
+<translation id="2927007463545347013">เส้นทางในอะนิเมะที่มองเห็นมหาสมุทรและมีใบซากุระร่วง</translation>
 <translation id="2940811910881150316">ทดสอบอุปกรณ์ไม่ได้ เปิดฝาหน้าจออีกครั้งเพื่อทดสอบ</translation>
 <translation id="2941112035454246133">ต่ำ</translation>
 <translation id="2956070106555335453">สรุป</translation>
+<translation id="2968959705684615497">เสือขาวเหนือจริงที่มีดวงตาสีทองและลายสีทองนั่งอยู่บนเนินทรายสีขาว</translation>
 <translation id="299385721391037602">ชมพูและเหลือง</translation>
 <translation id="3008341117444806826">รีเฟรช</translation>
 <translation id="3009958530611748826">เลือกโฟลเดอร์ที่จะใช้บันทึก</translation>
@@ -470,6 +478,7 @@
 <translation id="3091839911843451378">ไม่สำเร็จ - หยุดทำงาน</translation>
 <translation id="3102119246920354026">แคช</translation>
 <translation id="3103783611481501187">เหนือจริง</translation>
+<translation id="3119672627216736407">มีคำแปล</translation>
 <translation id="3122464029669770682">CPU</translation>
 <translation id="3122614491980756867">สระน้ำ</translation>
 <translation id="3122883569442693641">รายละเอียดเพิ่มเติม</translation>
@@ -518,6 +527,7 @@
 <translation id="3321030238473337787">ความเร็วในการเล่น</translation>
 <translation id="3327613592010997943"><ph name="DAY" />คุณจะใช้อุปกรณ์นี้ได้อีกครั้งในเวลา <ph name="TIME" /></translation>
 <translation id="3328783797891415197">กำลังทดสอบ</translation>
+<translation id="3332683265015995419">ยานอวกาศสไตล์สตีมพังค์กำลังบินผ่านพายุทราย</translation>
 <translation id="3340011300870565703">อุปกรณ์มีระดับแบตเตอรี่ของหูฟังข้างขวา <ph name="BATTERY_PERCENTAGE" />%</translation>
 <translation id="3340978935015468852">การตั้งค่า</translation>
 <translation id="3347558044552027859">ทันสมัย</translation>
@@ -529,6 +539,7 @@
 <translation id="3369632935976756339"><ph name="INTENT" />; <ph name="QUERY_TEXT" />; <ph name="SUBTEXT" />; <ph name="RESULT_TEXT" /></translation>
 <translation id="3373141842870501561">วอลเปเปอร์การเคลื่อนที่ของโลก</translation>
 <translation id="33736539805963175">พื้นหลัง <ph name="LETTERS_COLOR" /> พร้อมตัวอักษร <ph name="LETTERS_LETTER" /></translation>
+<translation id="3382806462014639823"><ph name="TEACHER_NAME" /> กำลังดูหน้าจอของคุณ</translation>
 <translation id="3383623117265110236">พิเศษ</translation>
 <translation id="3404249063913988450">เปิดใช้โปรแกรมรักษาหน้าจอ</translation>
 <translation id="3413935475507503304">คลิก "ถัดไป" เพื่อดำเนินการอัปเดตต่อ</translation>
@@ -561,6 +572,7 @@
 <translation id="3532980081107202182">เหลือเวลาอีกประมาณ <ph name="MIN_REMAINING" /> นาที</translation>
 <translation id="3533790840489634638">สระน้ำ</translation>
 <translation id="3547264467365135390">สูตร</translation>
+<translation id="3552832331940389362">ภาพเคลื่อนไหวสไตล์ญี่ปุ่นของแมวนั่งอยู่บนขอบหน้าต่างดูฝนตกในช่วงบ่าย</translation>
 <translation id="3557205324756024651">ข้อมูลประจำตัวในเครื่อง (ไม่บังคับ)</translation>
 <translation id="3565064564551103223">IP ที่อนุญาต</translation>
 <translation id="3569407787324516067">ภาพพักหน้าจอ</translation>
@@ -636,12 +648,14 @@
 <translation id="38811596981744338">ปัญหาทางกฎหมาย</translation>
 <translation id="3885327323343477505">เปลี่ยนโปรแกรมรักษาหน้าจอ</translation>
 <translation id="3889914174935857450">วันที่รีเซ็ต</translation>
+<translation id="3889954687526985291">จักรยานยนต์ล้ำยุคที่ทำจากกระดาษสีดำโดยมีไฟนีออนบนพื้นหลังสีเข้ม</translation>
 <translation id="3897092660631435901">เมนู</translation>
 <translation id="3902271751020176019">ภาษาของการถอดเสียงเป็นคำ</translation>
 <translation id="390890062090528082">ท้องฟ้าเต็มไปด้วยดวงดาว</translation>
 <translation id="391412459402535266">ทดสอบอุปกรณ์ไม่ได้ เปลี่ยนเป็นโหมดแล็ปท็อปเพื่อทดสอบ</translation>
 <translation id="3916998944874125962">จับภาพหน้าจอ</translation>
 <translation id="3923184630988645767">การใช้อินเทอร์เน็ต</translation>
+<translation id="392943705803418306">เซสชันเครื่องมือสำหรับชั้นเรียนของคุณสิ้นสุดลงแล้ว</translation>
 <translation id="3932043219784172185">ไม่มีอุปกรณ์ที่เชื่อมต่ออยู่</translation>
 <translation id="3934185438132762746">ยกเลิกการกำหนด <ph name="CONTROL_TYPE" /> แล้ว</translation>
 <translation id="3941014780699102620">แก้ไขโฮสต์ไม่สำเร็จ</translation>
@@ -744,6 +758,7 @@
 <translation id="430786093962686457">ชีฟอง</translation>
 <translation id="4310735698903592804">วอลเปเปอร์ล่าสุดที่ทำงานด้วยระบบ AI ของ Google</translation>
 <translation id="4320904097188876154">ชมพูนีออน</translation>
+<translation id="432961742358282111">คลิกขวาหรือกดค้างไว้เพื่อรับคำจำกัดความ คำแปล หรือการแปลงหน่วย ใช้แป้นลูกศรซ้ายหรือขวาเพื่อจัดการฟีเจอร์นี้</translation>
 <translation id="4333390807948134856">กดปุ่ม <ph name="KEY_NAME" /> อยู่</translation>
 <translation id="4334293042716981313">คุณยัง<ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />เขียนพรอมต์ของคุณเอง<ph name="END_LINK_FREEFORM_SUBPAGE" />ได้ด้วย</translation>
 <translation id="4354430579665871434">แป้น</translation>
@@ -808,6 +823,7 @@
 <translation id="4593212453765072419">จำเป็นต้องมีการตรวจสอบสิทธิ์พร็อกซี</translation>
 <translation id="4594021849294327751">สร้างข้อความถอดเสียง</translation>
 <translation id="4594541568452132351">เลือกภาษาในการถอดเสียงเป็นคำและดาวน์โหลดโมเดล</translation>
+<translation id="4600301862817165514">รถ Delorean ที่มีไฟนีออนขับผ่านกาแล็กซีที่มีดวงดาวแวบผ่าน</translation>
 <translation id="4609350030397390689">ลดความสว่างของแป้นพิมพ์</translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> จาก <ph name="TOTAL_PAGE_NUMBER" /> หน้า กด Enter เพื่อยกเลิกงานพิมพ์</translation>
 <translation id="463791356324567266">กำลังยกเลิกการสแกน...</translation>
@@ -830,6 +846,7 @@
 <translation id="4697260493945012995">เลือกประเภทตัวควบคุม</translation>
 <translation id="4712940987669302829">เอฟเฟกต์โบเก้</translation>
 <translation id="4731797938093519117">การเข้าถึงของผู้ปกครอง</translation>
+<translation id="4733200407105375152">ไม่อยู่ในเครื่องมือสำหรับชั้นเรียน</translation>
 <translation id="4734982181169850310">สีพาสเทล</translation>
 <translation id="473775607612524610">อัปเดต</translation>
 <translation id="4744944742468440486">ข้อมูลที่เกี่ยวข้องกับสิ่งที่คุณเลือก</translation>
@@ -1006,6 +1023,7 @@
 <translation id="5499762266711462226">สีของแป้นพิมพ์จะขึ้นอยู่กับวอลเปเปอร์</translation>
 <translation id="5502931783115429516">Android ไม่ทำงาน</translation>
 <translation id="550600468576850160">ทุ่งหญ้า</translation>
+<translation id="5507504956167780539">รูปภาพมืออาชีพแบบมินิมัลของเนินทรายสีดำแวววาวที่มีเงาโดดเด่น</translation>
 <translation id="551689408806449779">ยกเลิกการเชื่อมต่ออุปกรณ์แล้ว ลองเชื่อมต่ออีกครั้งเพื่อทดสอบ</translation>
 <translation id="5519195206574732858">LTE</translation>
 <translation id="552644173505433109">ดูข้อมูลเพิ่มเติมเกี่ยวกับการสร้างชื่อและสรุป</translation>
@@ -1077,6 +1095,7 @@
 <translation id="5876385649737594562">เปิดเพื่อเลือกตัวเลือก</translation>
 <translation id="5877503382465267833">หยุด <ph name="RECORDING_NAME" /> ชั่วคราว</translation>
 <translation id="588258955323874662">เต็มหน้าจอ</translation>
+<translation id="5889539348012432386">หน้าแรกของเครื่องมือสำหรับชั้นเรียน</translation>
 <translation id="5893975327266416093">แตะคีย์บนแป้นพิมพ์เพื่อกำหนดการดำเนินการ</translation>
 <translation id="5895138241574237353">ปิดแล้วเปิดอีกครั้ง</translation>
 <translation id="5896602941605730551">เล่น</translation>
@@ -1096,7 +1115,7 @@
 <translation id="5939518447894949180">รีเซ็ต</translation>
 <translation id="5942727615796467094">ผู้ดูแลระบบ <ph name="MANAGER" /> ได้กำหนดเวลาที่จะใช้ <ph name="DEVICE_TYPE" /> เครื่องนี้ได้</translation>
 <translation id="594552776027197022">สร้างคู่คีย์แบบสุ่ม</translation>
-<translation id="5946538341867151940">คุณยังไม่ได้เชื่อมต่อ หากผู้ให้บริการเครือข่ายมือถือของคุณแนะนำ APN ที่กําหนดเอง ให้ป้อนข้อมูล APN ดังกล่าวโดยเลือก "+ APN ใหม่"</translation>
+<translation id="5946538341867151940">คุณยังไม่ได้เชื่อมต่อ หากผู้ให้บริการมือถือของคุณแนะนำ APN ที่กําหนดเอง ให้ป้อนข้อมูล APN ดังกล่าวโดยเลือก "+ APN ใหม่"</translation>
 <translation id="5947266287934282605">หากวันสุดท้ายของเดือนอยู่ก่อนวันนี้ ระบบจะรีเซ็ตข้อมูลในวันสุดท้ายของเดือน</translation>
 <translation id="5948460390109837040">สุนัข</translation>
 <translation id="594989847980441553">เลือก "สร้าง" เพื่อสร้างรูปภาพด้วย AI
@@ -1121,10 +1140,12 @@
 <translation id="6058625436358447366">ป้อนรหัสผ่านเดิมและรหัสผ่านใหม่เพื่อเปลี่ยนรหัสผ่านให้เสร็จ</translation>
 <translation id="6061772781719867950">คำขอ HTTPS ที่ไม่สำเร็จ</translation>
 <translation id="6073292342939316679">ลดความสว่างของแป้นพิมพ์</translation>
+<translation id="6074608334942655098">หยุดแปล</translation>
 <translation id="6074752328838739425">ซ่อนข้อมูลสรุป</translation>
 <translation id="6075872808778243331">(Android) เวลาในการตอบสนองของ HTTP</translation>
 <translation id="6078323886959318429">เพิ่มทางลัด</translation>
 <translation id="6079693086494835199">รีเซ็ตเพื่อให้หน้าแรกเริ่มต้นไม่ใช่เว็บไซต์ฟิชชิง โปรดใช้เฉพาะเว็บไซต์ที่คุณเชื่อถือเท่านั้น</translation>
+<translation id="6090672065638047175">รูปภาพต้นไม้เรืองแสงที่ทำจากดวงดาวโดยมีท้องฟ้ายามค่ำคืนที่สวยงามและกาแล็กซีเป็นฉากหลัง</translation>
 <translation id="6091080061796993741">เหลือง</translation>
 <translation id="6104112872696127344">ยกเลิกการสแกนแล้ว</translation>
 <translation id="6106186594183574873">ป้อนรหัสผ่านเดิมเพื่อเปลี่ยนรหัสผ่านให้เสร็จ</translation>
@@ -1310,6 +1331,7 @@
 <translation id="6900701049656042631">อัลบั้มนี้ไม่มีรูปภาพเลย ไปที่ <ph name="LINK" /> เพื่อเพิ่มรูปภาพ</translation>
 <translation id="6902359863093437070">สร้างพื้นหลังด้วยระบบ AI</translation>
 <translation id="6905163627763043954">ลอง</translation>
+<translation id="6905275015682612674">ภาพถ่ายแบบเปิดรับแสงนานของชายหาดที่มีแสงเรืองแสงตามธรรมชาติยามพระอาทิตย์ตกพร้อมดวงดาวบนท้องฟ้า สีพาสเทลสวยงาม ความละเอียด 4K</translation>
 <translation id="6905724422583748843">กลับไปที่ <ph name="PAGE_NAME" /></translation>
 <translation id="6910312834584889076">ฝาเครื่องสแกนเปิดอยู่ ปิดฝาแล้วลองอีกครั้ง</translation>
 <translation id="6910845598686542904">ประมวลผลรูปแบบเสียงที่ตรวจพบในเสียงที่บันทึกไว้</translation>
@@ -1319,6 +1341,7 @@
 <translation id="6930597342185648547">เกี่ยวกับพื้นหลัง</translation>
 <translation id="6931666215260956151">กาแล็กซี</translation>
 <translation id="6939766318048400022">ร้านกาแฟ</translation>
+<translation id="6940212863873359282">ผ้าออแกนซ่าสีขาวลอยอยู่ตรงกลางเหนือซุ้มหินอ่อนสีขาวพร้อมพื้นหลังสีครีม</translation>
 <translation id="6942253772720771875">แชร์ความคิดเห็นหรืออธิบายปัญหาของคุณ</translation>
 <translation id="6943893908656559156">ข้อมูลประจำตัวระยะไกล (ไม่บังคับ)</translation>
 <translation id="694981048020558038">ค้นหาชื่อบันทึกเสียง</translation>
@@ -1363,7 +1386,7 @@
 <translation id="7107255225945990211">เลือกงานศิลปะพิเศษเฉพาะคุณจาก <ph name="PRODUCT_NAME" /></translation>
 <translation id="7108668606237948702">Enter</translation>
 <translation id="7117228822971127758">โปรดลองอีกครั้งในภายหลัง</translation>
-<translation id="7118522231018231199">โปรดเลือก APN ที่มาจากผู้ให้บริการเครือข่ายมือถือหรือผู้ดูแลระบบ การเลือก APN จะปิดใช้ APN ที่กําหนดเอง APN ที่ไม่ถูกต้องอาจทำให้การเชื่อมต่อมือถือของคุณหยุดชะงัก</translation>
+<translation id="7118522231018231199">โปรดเลือก APN ที่มาจากผู้ให้บริการมือถือหรือผู้ดูแลระบบ การเลือก APN จะปิดใช้ APN ที่กําหนดเอง APN ที่ไม่ถูกต้องอาจทำให้การเชื่อมต่อมือถือของคุณหยุดชะงัก</translation>
 <translation id="7119389851461848805">เปิด/ปิด</translation>
 <translation id="7129287270910503851">ปริมาณการใช้อินเทอร์เน็ตจะรีเซ็ตในวันนี้ของทุกเดือน</translation>
 <translation id="7130438335435247835">จุดเข้าใช้งาน (APN)</translation>
@@ -1393,7 +1416,7 @@
 <translation id="7210635925306941239">ฟ้าอมเขียว</translation>
 <translation id="7212547870105584639">จัดการการตั้งค่า APN ของเครือข่าย APN จะเริ่มการเชื่อมต่อระหว่างเครือข่ายมือถือกับอินเทอร์เน็ต <ph name="BEGIN_LINK_LEARN_MORE" />ดูข้อมูลเพิ่มเติม<ph name="END_LINK_LEARN_MORE" /></translation>
 <translation id="7212734716605298123">การอัปเดตเฟิร์มแวร์สำหรับอุปกรณ์ภายนอก</translation>
-<translation id="7216409898977639127">ผู้ให้บริการเครือข่ายมือถือ</translation>
+<translation id="7216409898977639127">ผู้ให้บริการมือถือ</translation>
 <translation id="7221869452894271364">โหลดหน้านี้ใหม่</translation>
 <translation id="7223952304612664117">การตั้งค่านี้จะช่วยให้บริการของระบบใช้ความแม่นยำของตำแหน่งเพื่อระบุตำแหน่งของคุณได้ ความแม่นยำของตำแหน่งจะใช้ข้อมูลเกี่ยวกับสัญญาณไร้สายและเซ็นเซอร์เพื่อประมาณตำแหน่งของอุปกรณ์</translation>
 <translation id="7233782086689993269">คืนค่าแป้นพิมพ์ลัดแล้ว</translation>
@@ -1405,6 +1428,7 @@
 <translation id="7271040990581020067">เครื่องสแกนกำลังทำงานอยู่ ลองอีกครั้งในภายหลัง</translation>
 <translation id="7271932918253517778">แป้นพิมพ์ลัดที่ประกอบด้วยแป้นแถวบนสุดต้องมีแป้น<ph name="META_KEY" />รวมอยู่ด้วย</translation>
 <translation id="7274587244503383581"><ph name="PRINTED_PAGES_NUMBER" />/<ph name="TOTAL_PAGES_NUMBER" /></translation>
+<translation id="7275707758336796649">สุนัขพันธุ์ดัลเมเชียนอยู่หน้าพื้นหลังสีชมพูในท่าทางที่มีชีวิตชีวาเต็มตัว ถ่ายเป็นภาพความละเอียดสูงที่มีพื้นหลังสมจริงมากพร้อมการปรับสี</translation>
 <translation id="7281657306185710294">สัมผัสสายลมเย็น</translation>
 <translation id="7287310195820267359">คอลเล็กชันภาพวอลเปเปอร์</translation>
 <translation id="7293429513719260019">เลือกภาษา</translation>
@@ -1431,6 +1455,7 @@
 <translation id="7353413232959255829">ผลการค้นหา <ph name="LIST_POSITION" /> จาก <ph name="LIST_SIZE" /> รายการ: <ph name="SEARCH_RESULT_TEXT" /> กด Enter เพื่อไปยังทางลัด</translation>
 <translation id="7359657277149375382">ประเภทไฟล์</translation>
 <translation id="73631062356239394">แชร์ข้อมูลการวินิจฉัย</translation>
+<translation id="7369648056634183167">ภาพระยะใกล้ของดอกบัวในสระน้ำที่ปกคลุมไปด้วยหยดน้ำท่ามกลางสายฝน โฟกัสอยู่ที่กลีบดอกอันบอบบางและหยดน้ำที่สะท้อนแสง จับภาพสีพาสเทลอ่อนๆ ตัดกับพื้นหลังสีน้ำเงิน ถ่ายจากระดับสายตาโดยใช้แสงธรรมชาติ</translation>
 <translation id="7375053625150546623">EAP</translation>
 <translation id="7378170410161264436">โปรแกรมอัดเสียงสามารถสร้างการถอดเสียงเป็นคำสำหรับการบันทึกที่มีเสียงพูดได้
 ดาวน์โหลดโมเดลการถอดเสียงเป็นคำ (สูงสุด 100 MB) เพื่อรับการถอดเสียงเป็นคำเหล่านี้</translation>
@@ -1438,7 +1463,6 @@
 <translation id="7388345524791662148">ตัวเลือกเพิ่มเติมสำหรับ <ph name="RECORDING_NAME" /></translation>
 <translation id="7388959671917308825">ทัชแพดในตัว</translation>
 <translation id="7397270852490618635">ปิดธีมสว่าง</translation>
-<translation id="7400166052988585408">ครูจะล็อกหน้าจอของคุณใน <ph name="NUM_SECONDS" /> วินาที</translation>
 <translation id="7401543881546089382">ลบทางลัด</translation>
 <translation id="7405493795721832710"><ph name="DEVICE_NAME" /> พร้อมอัปเดตแล้ว</translation>
 <translation id="741244894080940828">การแปลง</translation>
@@ -1593,7 +1617,7 @@
 <translation id="8088963492174775412">กดเพื่อบันทึก</translation>
 <translation id="8094062939584182041">อนุญาตให้ Google ส่งอีเมลถึงคุณเกี่ยวกับปัญหานี้</translation>
 <translation id="8104083085214006426">คุณกำลังใช้เครือข่ายแบบเปิดที่ไม่ปลอดภัย</translation>
-<translation id="8110942816572072814">ครูล็อกหน้าจอของคุณไว้</translation>
+<translation id="8108879170356113798">คุณจะสามารถใช้เครื่องมือสำหรับชั้นเรียนได้เท่านั้นในอีก <ph name="NUM_SECONDS" /> วินาที</translation>
 <translation id="811820734797650957">(Android) ปิงเกตเวย์ได้</translation>
 <translation id="8129620843620772246"><ph name="TEMPERATURE_C" />°C</translation>
 <translation id="8131740175452115882">ยืนยัน</translation>
@@ -1601,6 +1625,7 @@
 <translation id="8135609423982943441">Chromebook รีเซ็ตเป็นค่าเริ่มต้นที่ปลอดภัยแล้ว คุณปรับเปลี่ยนสิ่งเหล่านี้ได้ทุกเมื่อในการตั้งค่า</translation>
 <translation id="8138405288920084977">LTEAdvanced</translation>
 <translation id="8140591278915222789">สร้างของคุณเอง</translation>
+<translation id="8142182840415860496">ภาพระยะใกล้ของดอกไม้สีขาวและสีเหลืองหลายดอก ภาพนิ่งจากภาพยนตร์แอนิเมชัน ดอกไม้สีชมพูอ่อนที่บอบบางมีกลีบยาวและก้านสีเขียวอยู่ระหว่างดอกทิวลิปสีเหลืองขนาดใหญ่ 2 ดอกตัดกับท้องฟ้าสีฟ้าโดยไม่มีใบไม้ ภาพใช้โทนสีพาสเทล ภาพนิ่งสไตล์ภาพยนตร์ที่มีความละเอียดสูงและรายละเอียดที่ซับซ้อนมาก การแสดงผลอย่างสมจริงที่มีแสงที่สวยงาม แสงที่มีมิติ และแสงแสดงอารมณ์</translation>
 <translation id="8143951647992294073">เลือก <ph name="TOPIC_SOURCE" /> <ph name="TOPIC_SOURCE_DESC" /></translation>
 <translation id="8151185429379586178">เครื่องมือสำหรับนักพัฒนาซอฟต์แวร์</translation>
 <translation id="8152370627892825"><ph name="DESCRIPTION" />, <ph name="ACCELERATOR_INFO" /></translation>
@@ -1681,6 +1706,7 @@
 <translation id="8503813439785031346">ชื่อผู้ใช้</translation>
 <translation id="8503836310948963452">อีกเพียงไม่กี่นาทีเท่านั้น...</translation>
 <translation id="8505011850330200833">โมเดล Gemini ต้องใช้พื้นที่เก็บข้อมูล 2 GB ในการประมวลผลข้อความถอดเสียงและสร้างข้อมูลสรุป</translation>
+<translation id="8506063704538210734">รูปภาพท้องฟ้ายามค่ำคืนที่มีฝนดาวตกและต้นไม้จำนวนหนึ่งอยู่เบื้องหน้า มีโทนสีม่วงและชมพู</translation>
 <translation id="8506394543220680287">ปกคลุมด้วยหิมะ</translation>
 <translation id="8508640263392900755">รายละเอียด APN</translation>
 <translation id="8522687886059337719">ตอนนี้คุณเข้าถึง<ph name="BEGIN_LINK_WALLPAPER_SUBPAGE" />วอลเปเปอร์<ph name="END_LINK_WALLPAPER_SUBPAGE" />และ<ph name="BEGIN_LINK_SCREENSAVER_SUBPAGE" />ภาพพักหน้าจอ<ph name="END_LINK_SCREENSAVER_SUBPAGE" />ใหม่ได้แล้ว</translation>
@@ -1827,12 +1853,12 @@
 <translation id="9149391708638971077">ทดสอบหน่วยความจำ</translation>
 <translation id="9159524746324788320">แฮมเบอร์เกอร์</translation>
 <translation id="9161276708550942948">วรรค</translation>
-<translation id="9169345239923038539">คุณยังไม่ได้เชื่อมต่อ หากผู้ให้บริการเครือข่ายมือถือของคุณแนะนำ APN ที่กําหนดเอง ให้<ph name="BEGIN_LINK" />ป้อนข้อมูล APN ดังกล่าว<ph name="END_LINK" /></translation>
+<translation id="9169345239923038539">คุณยังไม่ได้เชื่อมต่อ หากผู้ให้บริการมือถือของคุณแนะนำ APN ที่กําหนดเอง ให้<ph name="BEGIN_LINK" />ป้อนข้อมูล APN ดังกล่าว<ph name="END_LINK" /></translation>
 <translation id="9173638680043580060">เหลืออีกไม่ถึง 1 นาที</translation>
 <translation id="9174334653006917325">สีของ UI</translation>
 <translation id="917720651393141712">ทดสอบ</translation>
 <translation id="9188992814426075118">แป้นพิมพ์สามารถจับคู่กับวอลเปเปอร์ได้โดยอัตโนมัติ</translation>
-<translation id="9189000703457422362">ไม่สามารถเชื่อมต่อกับเครือข่ายนี้โดยใช้ APN ที่ตรวจพบโดยอัตโนมัติ โปรดติดต่อสอบถามข้อมูลเพิ่มเติมจากผู้ให้บริการเครือข่ายมือถือ</translation>
+<translation id="9189000703457422362">ไม่สามารถเชื่อมต่อกับเครือข่ายนี้โดยใช้ APN ที่ตรวจพบโดยอัตโนมัติ โปรดติดต่อสอบถามข้อมูลเพิ่มเติมจากผู้ให้บริการมือถือ</translation>
 <translation id="9190726385682694354"><ph name="QUERY_TEXT" />; <ph name="SUBTEXT" />; <ph name="RESULT_TEXT" /></translation>
 <translation id="9193744392140377127">APN*</translation>
 <translation id="9195918315673527512">คีย์จอยสติ๊กที่เลือกคือ <ph name="KEYS" /> แตะปุ่มเพื่อแก้ไขตัวควบคุม</translation>

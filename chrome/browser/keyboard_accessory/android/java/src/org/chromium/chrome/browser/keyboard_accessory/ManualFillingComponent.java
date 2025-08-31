@@ -4,14 +4,12 @@
 
 package org.chromium.chrome.browser.keyboard_accessory;
 
-import android.content.Context;
 import android.view.View;
 import android.view.ViewGroup;
 
 import androidx.annotation.Px;
 
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.back_press.BackPressManager;
 import org.chromium.chrome.browser.keyboard_accessory.data.KeyboardAccessoryData;
@@ -26,9 +24,11 @@ import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.AsyncViewStub;
 import org.chromium.ui.DropdownPopupWindow;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.insets.InsetObserver;
 
 import java.util.List;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /** This component handles the new, non-popup filling UI. */
 @NullMarked
@@ -62,12 +62,11 @@ public interface ManualFillingComponent extends BackPressHandler {
         /**
          * Returns whether Android soft keyboard is showing and ignores all extensions/replacements.
          *
-         * @param context A {@link Context} instance.
          * @param view A {@link View}.
          * @return Returns true if Android's soft keyboard is visible. Ignores
          *     extensions/replacements.
          */
-        boolean isSoftKeyboardShowing(Context context, View view);
+        boolean isSoftKeyboardShowing(View view);
 
         /**
          * Requests Android's soft keyboard.
@@ -108,6 +107,7 @@ public interface ManualFillingComponent extends BackPressHandler {
      * @param keyboardDelegate A {@link SoftKeyboardDelegate} to control only the system keyboard.
      * @param backPressManager A {@link BackPressManager} to register {@link BackPressHandler}.
      * @param edgeToEdgeControllerSupplier A {@link Supplier<EdgeToEdgeController>}.
+     * @param insetObserver An {@link InsetObserver}.
      * @param barStub The {@link AsyncViewStub} used to inflate the keyboard accessory bar.
      */
     void initialize(
@@ -117,7 +117,8 @@ public interface ManualFillingComponent extends BackPressHandler {
             BooleanSupplier isContextualSearchOpened,
             SoftKeyboardDelegate keyboardDelegate,
             BackPressManager backPressManager,
-            Supplier<EdgeToEdgeController> edgeToEdgeControllerSupplier,
+            ObservableSupplier<EdgeToEdgeController> edgeToEdgeControllerSupplier,
+            InsetObserver insetObserver,
             AsyncViewStub sheetStub,
             AsyncViewStub barStub);
 
@@ -188,8 +189,10 @@ public interface ManualFillingComponent extends BackPressHandler {
      * Signals that the accessory has permission to show.
      *
      * @param waitForKeyboard signals if the keyboard is requested.
+     * @param isCredentialFieldOrHasAutofillSuggestions signals if the form field is either a
+     *     username/password field or it has autofill suggestions.
      */
-    void show(boolean waitForKeyboard);
+    void show(boolean waitForKeyboard, boolean isCredentialFieldOrHasAutofillSuggestions);
 
     /**
      * Requests to close the active tab in the keyboard accessory. If there is no active tab, this
@@ -246,15 +249,20 @@ public interface ManualFillingComponent extends BackPressHandler {
     boolean removeObserver(Observer observer);
 
     /**
-     * Show a confimation dialog.
+     * Show a deletion confimation dialog.
      *
      * @param title A title of the confirmation dialog.
      * @param message The message of the confirmation dialog.
+     * @param confirmButtonText The text on the confirmation button.
      * @param confirmedCallback A {@link Runnable} to trigger upon confirmation.
      * @param declinedCallback A {@link Runnable} to trigger upon rejection.
      */
-    void confirmOperation(
-            String title, String message, Runnable confirmedCallback, Runnable declinedCallback);
+    void confirmDeletionOperation(
+            String title,
+            CharSequence message,
+            String confirmButtonText,
+            Runnable confirmedCallback,
+            Runnable declinedCallback);
 
     /**
      * Returns the amount that the keyboard will be extended by the filling component when shown.
@@ -269,8 +277,15 @@ public interface ManualFillingComponent extends BackPressHandler {
     void forceShowForTesting();
 
     /**
+     * Returns a supplier for {@link KeyboardAccessoryVisualStateProvider} that can be observed to
+     * be notified of changes to the visual state of the keyboard accessory.
+     */
+    ObservableSupplier<KeyboardAccessoryVisualStateProvider>
+            getKeyboardAccessoryVisualStateProvider();
+
+    /**
      * Returns a supplier for {@link AccessorySheetVisualStateProvider} that can be observed to be
-     * notified of changes to the visual state of the accessory sheel.
+     * notified of changes to the visual state of the keyboard accessory sheet.
      */
     ObservableSupplier<AccessorySheetVisualStateProvider> getAccessorySheetVisualStateProvider();
 }

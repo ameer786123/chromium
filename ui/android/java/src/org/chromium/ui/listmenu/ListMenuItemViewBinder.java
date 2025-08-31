@@ -4,6 +4,8 @@
 
 package org.chromium.ui.listmenu;
 
+import android.graphics.Bitmap;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.text.TextUtils;
 import android.view.View;
@@ -33,9 +35,13 @@ import org.chromium.ui.modelutil.PropertyModel.ReadableIntPropertyKey;
 @NullMarked
 public class ListMenuItemViewBinder {
     public static void binder(PropertyModel model, View view, PropertyKey propertyKey) {
-        TextView textView = view.findViewById(R.id.menu_item_text);
-        ImageView startIcon = view.findViewById(R.id.menu_item_icon);
-        ImageView endIcon = view.findViewById(R.id.menu_item_end_icon);
+        TextView textView =
+                (view instanceof TextView text) ? text : view.findViewById(R.id.menu_item_text);
+        @Nullable ImageView startIcon = view.findViewById(R.id.menu_item_icon);
+        @Nullable ImageView endIcon = view.findViewById(R.id.menu_item_end_icon);
+        boolean keepIconSpacing =
+                model.containsKey(ListMenuItemProperties.KEEP_START_ICON_SPACING_WHEN_HIDDEN)
+                        && model.get(ListMenuItemProperties.KEEP_START_ICON_SPACING_WHEN_HIDDEN);
         if (propertyKey == ListMenuItemProperties.TITLE_ID) {
             @StringRes int titleId = model.get(ListMenuItemProperties.TITLE_ID);
             if (titleId != 0) {
@@ -46,6 +52,20 @@ public class ListMenuItemViewBinder {
             if (title != null) {
                 textView.setText(title);
             }
+        } else if (propertyKey == ListMenuItemProperties.SUBTITLE) {
+            TextView subtitleView = view.findViewById(R.id.menu_item_subtitle);
+            CharSequence subtitleText = model.get(ListMenuItemProperties.SUBTITLE);
+            subtitleView.setText(subtitleText != null ? subtitleText : "");
+            subtitleView.setVisibility(TextUtils.isEmpty(subtitleText) ? View.GONE : View.VISIBLE);
+        } else if (propertyKey == ListMenuItemProperties.IS_SUBTITLE_ELLIPSIZED_AT_END) {
+            TextView subtitleView = view.findViewById(R.id.menu_item_subtitle);
+            if (model.get(ListMenuItemProperties.IS_SUBTITLE_ELLIPSIZED_AT_END)) {
+                subtitleView.setMaxLines(1);
+                subtitleView.setEllipsize(TextUtils.TruncateAt.END);
+            } else {
+                subtitleView.setEllipsize(null);
+                subtitleView.setMaxLines(Integer.MAX_VALUE);
+            }
         } else if (propertyKey == ListMenuItemProperties.CONTENT_DESCRIPTION) {
             textView.setContentDescription(model.get(ListMenuItemProperties.CONTENT_DESCRIPTION));
         } else if (propertyKey == ListMenuItemProperties.START_ICON_ID
@@ -53,18 +73,22 @@ public class ListMenuItemViewBinder {
             int id = model.get((ReadableIntPropertyKey) propertyKey);
             Drawable drawable =
                     id == 0 ? null : AppCompatResources.getDrawable(view.getContext(), id);
-            boolean keepStartIconSpacing =
-                    model.get(ListMenuItemProperties.KEEP_START_ICON_SPACING_WHEN_HIDDEN);
             if (propertyKey == ListMenuItemProperties.START_ICON_ID) {
-                setStartIcon(startIcon, endIcon, drawable, keepStartIconSpacing);
+                setStartIcon(startIcon, endIcon, drawable, keepIconSpacing);
             } else {
-                setEndIcon(startIcon, endIcon, drawable, keepStartIconSpacing);
+                setEndIcon(startIcon, endIcon, drawable, keepIconSpacing);
             }
         } else if (propertyKey == ListMenuItemProperties.START_ICON_DRAWABLE) {
             Drawable drawable = model.get(ListMenuItemProperties.START_ICON_DRAWABLE);
-            boolean keepStartIconSpacing =
-                    model.get(ListMenuItemProperties.KEEP_START_ICON_SPACING_WHEN_HIDDEN);
-            setStartIcon(startIcon, endIcon, drawable, keepStartIconSpacing);
+            setStartIcon(startIcon, endIcon, drawable, keepIconSpacing);
+        } else if (propertyKey == ListMenuItemProperties.START_ICON_BITMAP) {
+            Bitmap bitmap = model.get(ListMenuItemProperties.START_ICON_BITMAP);
+            if (bitmap == null) {
+                hideStartIcon(startIcon, keepIconSpacing);
+            } else {
+                Drawable drawable = new BitmapDrawable(view.getResources(), bitmap);
+                setStartIcon(startIcon, endIcon, drawable, keepIconSpacing);
+            }
         } else if (propertyKey == ListMenuItemProperties.GROUP_ID) {
             // Not tracked intentionally because it's mainly for clients to know which group a
             // menu item belongs to.
@@ -75,6 +99,8 @@ public class ListMenuItemViewBinder {
             // Not tracked intentionally because it's mainly for setting a custom click listener
             // for an item. The click listener will be expected to be retrieved and used
             // by the component using this binder and not the binder itself.
+        } else if (propertyKey == ListMenuItemProperties.HOVER_LISTENER) {
+            view.setOnHoverListener(model.get(ListMenuItemProperties.HOVER_LISTENER));
         } else if (propertyKey == ListMenuItemProperties.INTENT) {
             // Not tracked intentionally because it's mainly for setting a custom intent
             // for an item. The intent will be expected to be retrieved and used
@@ -87,9 +113,12 @@ public class ListMenuItemViewBinder {
                         model.get(ListMenuItemProperties.KEEP_START_ICON_SPACING_WHEN_HIDDEN));
             }
         } else if (propertyKey == ListMenuItemProperties.ENABLED) {
+            // Set enabled state on view, textView, and icons (because with some layout files,
+            // textView and icons inherit state from view, and sometimes they don't)
+            view.setEnabled(model.get(ListMenuItemProperties.ENABLED));
             textView.setEnabled(model.get(ListMenuItemProperties.ENABLED));
-            startIcon.setEnabled(model.get(ListMenuItemProperties.ENABLED));
-            endIcon.setEnabled(model.get(ListMenuItemProperties.ENABLED));
+            if (startIcon != null) startIcon.setEnabled(model.get(ListMenuItemProperties.ENABLED));
+            if (endIcon != null) endIcon.setEnabled(model.get(ListMenuItemProperties.ENABLED));
         } else if (propertyKey == ListMenuItemProperties.ICON_TINT_COLOR_STATE_LIST_ID) {
             @ColorRes
             int tintColorId = model.get(ListMenuItemProperties.ICON_TINT_COLOR_STATE_LIST_ID);
@@ -118,6 +147,8 @@ public class ListMenuItemViewBinder {
             } else {
                 textView.setEllipsize(null);
             }
+        } else if (propertyKey == ListMenuItemProperties.KEY_LISTENER) {
+            view.setOnKeyListener(model.get(ListMenuItemProperties.KEY_LISTENER));
         } else {
             assert false : "Supplied propertyKey not implemented in ListMenuItemProperties.";
         }
@@ -125,7 +156,7 @@ public class ListMenuItemViewBinder {
 
     private static void setStartIcon(
             ImageView startIcon,
-            ImageView endIcon,
+            @Nullable ImageView endIcon,
             @Nullable Drawable drawable,
             boolean keepStartIconSpacing) {
         if (drawable != null) {
@@ -138,7 +169,7 @@ public class ListMenuItemViewBinder {
     }
 
     private static void setEndIcon(
-            ImageView startIcon,
+            @Nullable ImageView startIcon,
             ImageView endIcon,
             @Nullable Drawable drawable,
             boolean keepStartIconSpacing) {
@@ -152,12 +183,14 @@ public class ListMenuItemViewBinder {
         }
     }
 
-    private static void hideStartIcon(ImageView startIcon, boolean keepIconSpacing) {
+    private static void hideStartIcon(@Nullable ImageView startIcon, boolean keepIconSpacing) {
+        if (startIcon == null) return;
         startIcon.setImageDrawable(null);
         startIcon.setVisibility(keepIconSpacing ? View.INVISIBLE : View.GONE);
     }
 
-    private static void hideEndIcon(ImageView endIcon) {
+    private static void hideEndIcon(@Nullable ImageView endIcon) {
+        if (endIcon == null) return;
         endIcon.setImageDrawable(null);
         endIcon.setVisibility(View.GONE);
     }

@@ -45,6 +45,7 @@
 #include "third_party/blink/public/web/web_plugin.h"
 #include "third_party/blink/public/web/web_text_check_client.h"
 #include "third_party/blink/renderer/core/annotation/annotation_agent_container_impl.h"
+#include "third_party/blink/renderer/core/annotation/annotation_agent_impl.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
@@ -96,6 +97,7 @@
 #include "third_party/blink/renderer/core/svg/svg_a_element.h"
 #include "third_party/blink/renderer/platform/bindings/script_regexp.h"
 #include "third_party/blink/renderer/platform/exported/wrapped_resource_response.h"
+#include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_visitor.h"
 
 namespace blink {
@@ -200,7 +202,8 @@ void ContextMenuController::DocumentDetached(Document* document) {
 
 void ContextMenuController::HandleContextMenuEvent(MouseEvent* mouse_event) {
   DCHECK(mouse_event->type() == event_type_names::kContextmenu);
-  LocalFrame* frame = mouse_event->target()->ToNode()->GetDocument().GetFrame();
+  LocalFrame* frame =
+      mouse_event->RawTarget()->ToNode()->GetDocument().GetFrame();
   PhysicalOffset location =
       PhysicalOffset::FromPointFRound(mouse_event->AbsoluteLocation());
 
@@ -423,7 +426,7 @@ bool ContextMenuController::ShouldShowContextMenuFromTouch(
          !data.link_url.is_empty() ||
          data.media_type == mojom::blink::ContextMenuDataMediaType::kImage ||
          data.media_type == mojom::blink::ContextMenuDataMediaType::kVideo ||
-         data.is_editable || data.opened_from_highlight ||
+         data.is_editable || data.annotation_type ||
          !data.selected_text.empty();
 }
 
@@ -480,7 +483,7 @@ bool ContextMenuController::ShowContextMenu(LocalFrame* frame,
           ->GetEditor());
 
   if (mouse_event && source_type == kMenuSourceKeyboard) {
-    Node* target_node = mouse_event->target()->ToNode();
+    Node* target_node = mouse_event->RawTarget()->ToNode();
     if (target_node && IsA<Element>(target_node)) {
       // Get the url from an explicitly set target, e.g. the focused element
       // when the context menu is evoked from the keyboard. Note: the innerNode
@@ -502,12 +505,18 @@ bool ContextMenuController::ShowContextMenu(LocalFrame* frame,
     data.alt_text = html_element->AltText().Utf8();
   }
 
-  if (source_type == kMenuSourceLongPress ||
-      source_type == kMenuSourceLongTap) {
+  const bool from_touch = source_type == kMenuSourceTouch ||
+                          source_type == kMenuSourceLongPress ||
+                          source_type == kMenuSourceLongTap;
+
+  if (from_touch) {
     for (Node* node = result.InnerNode(); node; node = node->parentNode()) {
       if (HTMLElement* element = DynamicTo<HTMLElement>(node);
-          element && element->InterestTargetElement()) {
-        data.opened_from_interest_target = true;
+          element && element->InterestForElement()) {
+        auto* context = element->GetDocument().GetExecutionContext();
+        CHECK(RuntimeEnabledFeatures::HTMLInterestForAttributeEnabled(context));
+        data.opened_from_interest_for = true;
+        data.interest_for_node_id = element->NodeID();
         break;
       }
     }
@@ -704,8 +713,9 @@ bool ContextMenuController::ShowContextMenu(LocalFrame* frame,
   if (result.InnerNodeFrame()) {
     result.InnerNodeFrame()->View()->UpdateAllLifecyclePhasesExceptPaint(
         DocumentUpdateReason::kHitTest);
-    if (TextFragmentHandler::IsOverTextFragment(result)) {
-      data.opened_from_highlight = true;
+    if (std::optional<mojom::blink::AnnotationType> annotation =
+            AnnotationAgentImpl::IsOverAnnotation(result)) {
+      data.annotation_type = annotation;
     }
   }
 
@@ -797,18 +807,29 @@ bool ContextMenuController::ShowContextMenu(LocalFrame* frame,
     }
   }
 
-  if (RuntimeEnabledFeatures::SvgAnchorElementRelAttributesEnabled()) {
-    if (auto* anchor = DynamicTo<SVGAElement>(result.URLElement())) {
-      // TODO(dmangal): Add support for `download` attribute
+  // TODO(crbug.com/40589293): Merge with the equivalent block in
+  // HTMLAnchorElement. The logic is nearly identical aside from runtime flag
+  // checks. Consider using a templated helper once the flag is removed.
+  if (auto* anchor = DynamicTo<SVGAElement>(result.URLElement())) {
+    if (RuntimeEnabledFeatures::SvgAnchorElementDownloadAttributeEnabled()) {
+      // Extract suggested filename for same-origin URLS for saving file.
+      const SecurityOrigin* origin =
+          selected_frame->GetSecurityContext()->GetSecurityOrigin();
+      const KURL& complete_url = anchor->LegacyHrefURL(anchor->GetDocument());
+      if (origin->CanReadContent(complete_url)) {
+        data.suggested_filename =
+            anchor->FastGetAttribute(svg_names::kDownloadAttr).Utf8();
+      }
+    }
 
-      // If the anchor wants to suppress the referrer, update the referrerPolicy
-      // accordingly.
+    // If the anchor wants to suppress the referrer, update the referrerPolicy
+    // accordingly.
+    if (RuntimeEnabledFeatures::SvgAnchorElementRelAttributesEnabled()) {
       if (anchor->HasRel(kRelationNoReferrer)) {
         data.referrer_policy = network::mojom::ReferrerPolicy::kNever;
       }
-
-      data.link_text = anchor->innerText().Utf8();
     }
+    data.link_text = anchor->innerText().Utf8();
   }
 
   data.selection_rect = ComputeSelectionRect(selected_frame);
@@ -816,9 +837,6 @@ bool ContextMenuController::ShowContextMenu(LocalFrame* frame,
 
   SetAutofillData(result.InnerNode(), data);
 
-  const bool from_touch = source_type == kMenuSourceTouch ||
-                          source_type == kMenuSourceLongPress ||
-                          source_type == kMenuSourceLongTap;
   if (from_touch && !ShouldShowContextMenuFromTouch(data))
     return false;
 

@@ -403,8 +403,13 @@ ColorSpaceGamut MediaValues::CalculateColorGamut(LocalFrame* frame) {
       frame->GetPage()->GetMediaFeatureOverrides();
   std::optional<ColorSpaceGamut> override_value =
       overrides ? overrides->GetColorGamut() : std::nullopt;
-  return override_value.value_or(color_space_utilities::GetColorSpaceGamut(
-      frame->GetPage()->GetChromeClient().GetScreenInfo(*frame)));
+  ColorSpaceGamut actual = color_space_utilities::GetColorSpaceGamut(
+      frame->GetPage()->GetChromeClient().GetScreenInfo(*frame));
+  if (frame->DomWindow() &&
+      frame->DomWindow()->screen()->ShouldReduceScreenSize()) {
+    actual = ColorSpaceGamut::SRGB;
+  }
+  return override_value.value_or(actual);
 }
 
 mojom::blink::PreferredColorScheme MediaValues::CalculatePreferredColorScheme(
@@ -537,7 +542,7 @@ int MediaValues::CalculateHorizontalViewportSegments(LocalFrame* frame) {
 
   std::vector<gfx::Rect> viewport_segments =
       frame->GetWidgetForLocalRoot()->ViewportSegments();
-  WTF::HashSet<int> unique_x;
+  HashSet<int> unique_x;
   for (const auto& segment : viewport_segments) {
     // HashSet can't have 0 as a key, so add 1 to all the values we see.
     unique_x.insert(segment.x() + 1);
@@ -553,7 +558,7 @@ int MediaValues::CalculateVerticalViewportSegments(LocalFrame* frame) {
 
   std::vector<gfx::Rect> viewport_segments =
       frame->GetWidgetForLocalRoot()->ViewportSegments();
-  WTF::HashSet<int> unique_y;
+  HashSet<int> unique_y;
   for (const auto& segment : viewport_segments) {
     // HashSet can't have 0 as a key, so add 1 to all the values we see.
     unique_y.insert(segment.y() + 1);

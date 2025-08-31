@@ -9,6 +9,9 @@
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/tabs/features.h"
+#include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/common/chrome_features.h"
@@ -32,7 +35,7 @@
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/views/widget/widget.h"
 #endif
 
@@ -41,8 +44,11 @@
 #endif
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/resources/grit/glic_browser_resources.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
 #endif
+
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(SystemMenuModelBuilder,
+                                      kSwitchTabToSideElementId);
 
 SystemMenuModelBuilder::SystemMenuModelBuilder(
     ui::AcceleratorProvider* provider,
@@ -85,9 +91,34 @@ void SystemMenuModelBuilder::BuildSystemMenuForBrowserWindow(
   model->AddItemWithStringId(IDC_BOOKMARK_ALL_TABS, IDS_BOOKMARK_ALL_TABS);
   model->AddItemWithStringId(IDC_NAME_WINDOW, IDS_NAME_WINDOW);
 #if BUILDFLAG(ENABLE_GLIC)
-  model->AddSeparator(ui::NORMAL_SEPARATOR);
-  model->AddItemWithStringId(IDC_GLIC_TOGGLE_PIN, IDS_GLIC_PIN);
-#endif
+#if BUILDFLAG(IS_WIN)
+  // On Windows we can not remove an item when showing the menu. So only add
+  // the glic toggle option if glic is enabled when building the menu.
+  if (glic::GlicEnabling::IsEnabledForProfile(browser()->profile())) {
+#endif  // BUILDFLAG(IS_WIN)
+    model->AddSeparator(ui::NORMAL_SEPARATOR);
+    model->AddItemWithStringId(IDC_GLIC_TOGGLE_PIN, IDS_GLIC_PIN);
+#if BUILDFLAG(IS_WIN)
+  }
+#endif  // BUILDFLAG(IS_WIN)
+#endif  // BUILDFLAG(ENABLE_GLIC)
+
+  if (tabs::AreVerticalTabsEnabled()) {
+    model->AddSeparator(ui::NORMAL_SEPARATOR);
+    if (browser()
+            ->browser_window_features()
+            ->vertical_tab_strip_state_controller()
+            ->IsVerticalTabsEnabled()) {
+      model->AddItemWithStringId(IDC_TOGGLE_VERTICAL_TABS,
+                                 IDS_SWITCH_TO_HORIZONTAL_TAB);
+    } else {
+      model->AddItemWithStringId(IDC_TOGGLE_VERTICAL_TABS,
+                                 IDS_SWITCH_TO_VERTICAL_TAB);
+    }
+    model->SetElementIdentifierAt(model->GetItemCount() - 1,
+                                  kSwitchTabToSideElementId);
+  }
+
   if (chrome::CanOpenTaskManager()) {
     model->AddSeparator(ui::NORMAL_SEPARATOR);
     model->AddItemWithStringId(IDC_TASK_MANAGER_CONTEXT_MENU, IDS_TASK_MANAGER);

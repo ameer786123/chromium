@@ -5,6 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_MEDIASTREAM_MEDIA_STREAM_AUDIO_DELIVERER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_MEDIASTREAM_MEDIA_STREAM_AUDIO_DELIVERER_H_
 
+#include <inttypes.h>
+
 #include <algorithm>
 
 #include "base/containers/contains.h"
@@ -159,7 +161,7 @@ class MediaStreamAudioDeliverer {
   }
 
  private:
-  void SendLogMessage(const WTF::String& message) {
+  void SendLogMessage(const String& message) {
     WebRtcLogMessage(String::Format("MSAD::%s [this=0x%" PRIXPTR "]",
                                     message.Utf8().c_str(),
                                     reinterpret_cast<uintptr_t>(this))

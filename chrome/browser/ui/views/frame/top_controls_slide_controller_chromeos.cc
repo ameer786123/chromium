@@ -55,10 +55,9 @@ cc::BrowserControlsState GetBrowserControlsStateConstraints(
     content::WebContents* contents) {
   DCHECK(contents);
 
-  if (!display::Screen::GetScreen()->InTabletMode() ||
-      contents->IsFullscreen() || contents->IsFocusedElementEditable() ||
-      contents->IsBeingDestroyed() || contents->IsCrashed() ||
-      IsSpokenFeedbackEnabled()) {
+  if (!display::Screen::Get()->InTabletMode() || contents->IsFullscreen() ||
+      contents->IsFocusedElementEditable() || contents->IsBeingDestroyed() ||
+      contents->IsCrashed() || IsSpokenFeedbackEnabled()) {
     return cc::BrowserControlsState::kShown;
   }
 
@@ -96,7 +95,7 @@ cc::BrowserControlsState GetBrowserControlsStateConstraints(
   // Keep top-chrome visible while a permission bubble is visible.
   auto* permission_manager =
       permissions::PermissionRequestManager::FromWebContents(contents);
-  if (permission_manager && permission_manager->IsRequestInProgress()) {
+  if (permission_manager && permission_manager->GetCurrentPrompt()) {
     return cc::BrowserControlsState::kShown;
   }
 
@@ -611,7 +610,7 @@ void TopControlsSlideControllerChromeOS::UpdateBrowserControlsStateShown(
 
 bool TopControlsSlideControllerChromeOS::CanEnable(
     std::optional<bool> fullscreen_state) const {
-  return display::Screen::GetScreen()->InTabletMode() &&
+  return display::Screen::Get()->InTabletMode() &&
          !(fullscreen_state.value_or(browser_view_->IsFullscreen()));
 }
 

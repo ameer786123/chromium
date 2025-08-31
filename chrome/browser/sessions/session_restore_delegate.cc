@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/sessions/session_restore_delegate.h"
 
 #include <stddef.h>
@@ -14,6 +9,9 @@
 #include <array>
 #include <utility>
 
+#include "base/strings/string_util.h"
+#include "base/metrics/field_trial.h"
+#include "base/compiler_specific.h"
 #include "base/metrics/field_trial.h"
 #include "chrome/browser/performance_manager/public/background_tab_loading_policy.h"
 #include "chrome/browser/sessions/session_restore_stats_collector.h"
@@ -36,12 +34,11 @@ bool IsInternalPage(const GURL& url) {
       chrome::kChromeUINewTabURL,
       chrome::kChromeUISettingsURL,
   });
-  // Prefix-match against the table above. Use strncmp to avoid allocating
-  // memory to convert the URL prefix constants into std::strings.
-  for (size_t i = 0; i < std::size(kReloadableUrlPrefixes); ++i) {
-    if (!strncmp(url.spec().c_str(), kReloadableUrlPrefixes[i],
-                 strlen(kReloadableUrlPrefixes[i])))
+  // Prefix-match against the table above.
+  for (const char* prefix : kReloadableUrlPrefixes) {
+    if (base::StartsWith(url.spec(), prefix)) {
       return true;
+    }
   }
   return false;
 }
@@ -53,13 +50,15 @@ SessionRestoreDelegate::RestoredTab::RestoredTab(
     bool is_active,
     bool is_app,
     bool is_pinned,
-    const std::optional<tab_groups::TabGroupId>& group)
+    const std::optional<tab_groups::TabGroupId>& group,
+    const std::optional<split_tabs::SplitTabId>& split)
     : contents_(contents->GetWeakPtr()),
       is_active_(is_active),
       is_app_(is_app),
       is_internal_page_(IsInternalPage(contents->GetLastCommittedURL())),
       is_pinned_(is_pinned),
-      group_(group) {}
+      group_(group),
+      split_(split) {}
 
 SessionRestoreDelegate::RestoredTab::RestoredTab(const RestoredTab&) = default;
 
@@ -121,7 +120,7 @@ void SessionRestoreDelegate::RestoreTabs(
   } else {
     std::vector<content::WebContents*> web_contents_vector;
     web_contents_vector.reserve(tabs.size());
-    for (auto tab : tabs) {
+    for (const auto& tab : tabs) {
       CHECK(tab.contents());
       web_contents_vector.push_back(tab.contents());
     }

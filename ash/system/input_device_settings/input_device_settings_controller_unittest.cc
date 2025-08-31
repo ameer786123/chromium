@@ -647,7 +647,6 @@ class InputDeviceSettingsControllerTest : public NoSessionAshTestBase {
     image_downloader_ = std::make_unique<TestImageDownloader>();
     scoped_feature_list_.InitWithFeatures(
         {features::kPeripheralCustomization,
-         features::kInputDeviceSettingsSplit,
          features::kAltClickAndSixPackCustomization,
          features::kPeripheralNotification, features::kWelcomeExperience,
          ::features::kSupportF11AndF12KeyShortcuts, features::kModifierSplit},
@@ -800,40 +799,6 @@ TEST_F(InputDeviceSettingsControllerTest, KeyboardAddingAndRemoving) {
   EXPECT_EQ(keyboard_pref_handler_->num_keyboard_settings_initialized(), 2u);
 }
 
-// Test the scenario that these pref data is deleted with a split flag disabled
-// upon login.
-TEST_F(InputDeviceSettingsControllerTest,
-       DeletesPrefsWhenInputDeviceSettingsSplitFlagDisabled) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(features::kInputDeviceSettingsSplit);
-
-  auto pref_service = TestPrefServiceProvider::CreateUserPrefServiceSimple();
-  base::Value::Dict test_pref_value;
-  test_pref_value.Set("Fake Key", base::Value::Dict());
-  pref_service->SetDict(prefs::kKeyboardDeviceSettingsDictPref,
-                        test_pref_value.Clone());
-  pref_service->SetDict(prefs::kMouseDeviceSettingsDictPref,
-                        test_pref_value.Clone());
-  pref_service->SetDict(prefs::kPointingStickDeviceSettingsDictPref,
-                        test_pref_value.Clone());
-  pref_service->SetDict(prefs::kTouchpadDeviceSettingsDictPref,
-                        test_pref_value.Clone());
-
-  SimulateUserLogin({}, kAccountId3, std::move(pref_service));
-
-  PrefService* active_pref_service =
-      Shell::Get()->session_controller()->GetActivePrefService();
-  EXPECT_EQ(base::Value::Dict(), active_pref_service->GetDict(
-                                     prefs::kKeyboardDeviceSettingsDictPref));
-  EXPECT_EQ(base::Value::Dict(),
-            active_pref_service->GetDict(prefs::kMouseDeviceSettingsDictPref));
-  EXPECT_EQ(base::Value::Dict(),
-            active_pref_service->GetDict(
-                prefs::kPointingStickDeviceSettingsDictPref));
-  EXPECT_EQ(base::Value::Dict(), active_pref_service->GetDict(
-                                     prefs::kTouchpadDeviceSettingsDictPref));
-}
-
 TEST_F(InputDeviceSettingsControllerTest,
        DeletesPrefsWhenPeripheralCustomizationFlagDisabled) {
   base::test::ScopedFeatureList feature_list;
@@ -929,10 +894,10 @@ TEST_F(InputDeviceSettingsControllerTest,
   EXPECT_EQ(observer_->num_keyboards_connected(), 1u);
   EXPECT_EQ(keyboard_pref_handler_->num_keyboard_settings_initialized(), 1u);
 
-  SimulateUserLogin(kAccountId2);
+  SwitchActiveUser(kAccountId2);
   task_runner_->RunUntilIdle();
   EXPECT_EQ(keyboard_pref_handler_->num_keyboard_settings_initialized(), 2u);
-  SimulateUserLogin(kAccountId1);
+  SwitchActiveUser(kAccountId1);
   task_runner_->RunUntilIdle();
   EXPECT_EQ(keyboard_pref_handler_->num_keyboard_settings_initialized(), 3u);
 }
@@ -1349,7 +1314,7 @@ TEST_F(InputDeviceSettingsControllerTest, RecordsMetricsSettings) {
       "ChromeOS.Settings.Device.Keyboard.ExternalChromeOS.TopRowAreFKeys."
       "Initial",
       /*expected_count=*/4u);
-  SimulateUserLogin(kAccountId2);
+  SwitchActiveUser(kAccountId2);
   task_runner_->RunUntilIdle();
 
   histogram_tester.ExpectTotalCount(

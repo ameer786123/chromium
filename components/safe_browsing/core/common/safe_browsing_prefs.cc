@@ -205,6 +205,10 @@ void RecordExtendedReportingMetrics(const PrefService& prefs) {
 }
 
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
+  // TODO(crbug.com/422747384): Implement correct logic to set bundle level
+  // based on user's safe browsing status.
+  registry->RegisterIntegerPref(prefs::kSecuritySettingsBundle,
+                                SecuritySettingsBundleLevel::STANDARD);
   registry->RegisterListPref(prefs::kSafeBrowsingCsdPingTimestamps);
   registry->RegisterBooleanPref(prefs::kSafeBrowsingScoutReportingEnabled,
                                 false);
@@ -237,9 +241,8 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterDictionaryPref(prefs::kSafeBrowsingIncidentsSent);
   registry->RegisterDictionaryPref(
       prefs::kSafeBrowsingUnhandledGaiaPasswordReuses);
-  registry->RegisterStringPref(
-      prefs::kSafeBrowsingNextPasswordCaptureEventLogTime,
-      "0");  // int64 as string
+  registry->RegisterInt64Pref(
+      prefs::kSafeBrowsingNextPasswordCaptureEventLogTime, 0);
   registry->RegisterListPref(prefs::kSafeBrowsingAllowlistDomains);
   registry->RegisterStringPref(prefs::kPasswordProtectionChangePasswordURL, "");
   registry->RegisterListPref(prefs::kPasswordProtectionLoginURLs);
@@ -282,6 +285,14 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
                              base::Time::Now());
   registry->RegisterDictionaryPref(prefs::kExtensionTelemetryConfig);
   registry->RegisterDictionaryPref(prefs::kExtensionTelemetryFileData);
+  registry->RegisterTimePref(
+      prefs::kExtensionTelemetrySearchHijackingLastCheckTime, base::Time());
+  registry->RegisterDictionaryPref(
+      prefs::kExtensionTelemetrySearchHijackingSignalData);
+  registry->RegisterIntegerPref(
+      prefs::kExtensionTelemetrySearchHijackingOmniboxSearchCount, 0);
+  registry->RegisterIntegerPref(
+      prefs::kExtensionTelemetrySearchHijackingSerpLandingCount, 0);
   registry->RegisterBooleanPref(prefs::kHashPrefixRealTimeChecksAllowedByPolicy,
                                 true);
   registry->RegisterBooleanPref(prefs::kSafeBrowsingSurveysEnabled, true);

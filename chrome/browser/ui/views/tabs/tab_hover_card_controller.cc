@@ -8,7 +8,7 @@
 #include <optional>
 
 #include "base/callback_list.h"
-#include "base/check.h"
+#include "base/check_is_test.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -104,17 +104,20 @@ base::TimeDelta GetShowDelay(int tab_width) {
   //               |                                |
   //       pinned tab width               standard tab width
   constexpr base::TimeDelta kMinimumTriggerDelay = base::Milliseconds(300);
-  if (tab_width < tab_style->GetPinnedWidth()) {
+  const int tab_pinned_width = tab_style->GetPinnedWidth(/*is_split=*/false);
+  const int tab_standard_width =
+      tab_style->GetStandardWidth(/*is_split=*/false);
+  if (tab_width < tab_pinned_width) {
     return kMinimumTriggerDelay;
   }
   constexpr base::TimeDelta kMaximumTriggerDelay = base::Milliseconds(800);
   double logarithmic_fraction =
-      std::log(tab_width - tab_style->GetPinnedWidth() + 1) /
-      std::log(tab_style->GetStandardWidth() - tab_style->GetPinnedWidth() + 1);
+      std::log(tab_width - tab_pinned_width + 1) /
+      std::log(tab_standard_width - tab_pinned_width + 1);
   base::TimeDelta scaling_factor = kMaximumTriggerDelay - kMinimumTriggerDelay;
   base::TimeDelta delay =
       logarithmic_fraction * scaling_factor + kMinimumTriggerDelay;
-  if (tab_width >= tab_style->GetStandardWidth()) {
+  if (tab_width >= tab_standard_width) {
     delay += base::Milliseconds(max_width_additional_delay);
   }
   return delay;
@@ -122,6 +125,7 @@ base::TimeDelta GetShowDelay(int tab_width) {
 
 bool IsBrowserForSystemWebApp(const Browser* browser) {
 #if BUILDFLAG(IS_CHROMEOS)
+  CHECK(browser);
   const auto* const app_controller = browser->app_controller();
   if (app_controller && app_controller->system_app()) {
     return true;
@@ -208,7 +212,10 @@ TabHoverCardController::TabHoverCardController(TabStrip* tab_strip)
 
     // Register for memory usage enabled pref change events. Exclude
     // tracking them for system web apps (e.g. ChromeOS terminal app).
-    if (!IsBrowserForSystemWebApp(tab_strip_->GetBrowser())) {
+    Browser* browser = tab_strip_->GetBrowser();
+    if (!browser) {
+      CHECK_IS_TEST();
+    } else if (!IsBrowserForSystemWebApp(browser)) {
       OnHovercardMemoryUsageEnabledChanged();
       pref_change_registrar_.Add(
           prefs::kHoverCardMemoryUsageEnabled,
@@ -264,8 +271,6 @@ void TabHoverCardController::UpdateHoverCard(
       target_tab_observation_.Observe(tab);
     }
     target_tab_ = tab;
-    DUMP_WILL_BE_CHECK(!in_show_hover_card_)
-        << "Changing target tab to " << (tab ? "non-null" : "null");
   }
 
   // If there's nothing to attach to then there's no point in creating a card.
@@ -393,23 +398,23 @@ void TabHoverCardController::ShowHoverCard(bool is_initial,
     return;
   }
 
-  // TODO(crbug.com/40865488): See below. Remove this after crash diagnosis.
-  base::AutoReset<bool> auto_resetter(&in_show_hover_card_, true);
-
+  // Note: `target_tab_` can be nullified via reentreant callbacks invoked
+  // throughout the HoverCard creation process. The doc mentioned at
+  // crbug.com/40865488#comment23 discusses proper fixes for this. Until then,
+  // early-return after vulnerable calls here if `target_tab_` has become null.
+  // See also: crbug.com/1295601, crbug.com/1322117, crbug.com/1348956
   CreateHoverCard(target_tab_);
-
-  // For some reason, `target_tab_` can be rendered invalid before the next
-  // call. There may be an asynchronous operation buried deep within
-  // CreateHoverCard() above. Regardless, the validity needs to be checked
-  // before the next call. Note that this check helps, but isn't sufficient,
-  // as subsequent calls are also vulnerable.
-  // See: crbug.com/1295601, crbug.com/1322117, crbug.com/1348956
   if (!TargetTabIsValid()) {
     HideHoverCard();
     return;
   }
 
   UpdateCardContent(target_tab_);
+  if (!TargetTabIsValid()) {
+    HideHoverCard();
+    return;
+  }
+
   slide_animator_->UpdateTargetBounds();
   MaybeStartThumbnailObservation(target_tab_, is_initial);
   hover_card_->GetWidget()->SetZOrderSublevel(
@@ -477,21 +482,15 @@ void TabHoverCardController::OnViewIsDeleting(views::View* observed_view) {
   }
 }
 
-void TabHoverCardController::OnViewVisibilityChanged(
-    views::View* observed_view,
-    views::View* starting_view) {
+void TabHoverCardController::OnViewVisibilityChanged(views::View* observed_view,
+                                                     views::View* starting_view,
+                                                     bool visible) {
   // Only care about target tab becoming invisible.
   if (observed_view != target_tab_) {
     return;
   }
-  // Visibility comes from `starting_view` or the widget, if no starting view;
-  // see documentation for ViewObserver::OnViewVisibilityChanged().
-  const bool visible = starting_view
-                           ? starting_view->GetVisible()
-                           : (observed_view->GetWidget() &&
-                              observed_view->GetWidget()->IsVisible());
-  // If visibility changed to false, treat it as if the target tab had gone
-  // away.
+  // If visibility anywhere in the hierarchy changed to false, then the target
+  // view is not visible, so treat it as if it is going away.
   if (!visible) {
     OnViewIsDeleting(observed_view);
   }

@@ -56,9 +56,9 @@ DigitalIdentityProviderAndroid::~DigitalIdentityProviderAndroid() {
       env, j_digital_identity_provider_android_);
 }
 
-bool DigitalIdentityProviderAndroid::IsLowRiskOrigin(
-    const url::Origin& to_check) const {
-  return digital_credentials::IsLowRiskOrigin(to_check);
+bool DigitalIdentityProviderAndroid::IsLastCommittedOriginLowRisk(
+    content::RenderFrameHost& render_frame_host) const {
+  return digital_credentials::IsLastCommittedOriginLowRisk(render_frame_host);
 }
 
 DigitalIdentityInterstitialAbortCallback

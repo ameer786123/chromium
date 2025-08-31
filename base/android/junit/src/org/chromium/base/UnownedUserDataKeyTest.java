@@ -25,6 +25,7 @@ import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.base.test.BaseRobolectricTestRule;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.build.BuildConfig;
 
@@ -49,7 +50,7 @@ public class UnownedUserDataKeyTest {
     }
 
     private static class TestUnownedUserData implements UnownedUserData {
-        private List<UnownedUserDataHost> mDetachedHosts = new ArrayList<>();
+        private final List<UnownedUserDataHost> mDetachedHosts = new ArrayList<>();
 
         public boolean informOnDetachment = true;
 
@@ -838,6 +839,7 @@ public class UnownedUserDataKeyTest {
                 new FutureTask<>(
                         () -> assertAsserts(() -> Foo.KEY.retrieveDataFromHost(mHost1)), null);
         PostTask.postTask(TaskTraits.USER_VISIBLE, getTask);
+        BaseRobolectricTestRule.runAllBackgroundAndUi();
         getTask.get();
 
         // Manual cleanup to ensure we can verify host map size during tear down.

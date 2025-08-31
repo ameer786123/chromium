@@ -16,7 +16,6 @@ import org.chromium.base.CallbackController;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.OneshotSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
@@ -33,6 +32,7 @@ import org.chromium.ui.modaldialog.DialogDismissalCause;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * This is the access point for showing the Incognito re-auth dialog. It controls building the
@@ -127,7 +127,7 @@ public class IncognitoReauthControllerImpl
     // crash when accessing the pref. Therefore this callback is fired when the Profile is ready
     // which sets the |mProfile| and shows the re-auth dialog if required.
     private final Callback<Profile> mProfileSupplierCallback =
-            new Callback<Profile>() {
+            new Callback<>() {
                 @Override
                 public void onResult(Profile profile) {
                     mProfile = profile;

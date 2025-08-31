@@ -32,6 +32,7 @@
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/i18n/time_formatting.h"
+#include "base/strings/string_util.h"
 #include "chromeos/ui/base/window_state_type.h"
 #include "chromeos/ui/frame/frame_header.h"
 #include "components/prefs/pref_service.h"
@@ -396,7 +397,7 @@ void GameDashboardContext::OnVideoFileFinalized() {
 
 void GameDashboardContext::SetGameDashboardButtonVisibility(bool visible) {
   if (visible && !game_dashboard_button_widget_->IsVisible() &&
-      !display::Screen::GetScreen()->InTabletMode()) {
+      !display::Screen::Get()->InTabletMode()) {
     // Show the Game Dashboard button if it's not visible.
     // When the top edge timer fires, it's going to try to show the Game
     // Dashboard button. Because this is already showing the button, stop
@@ -774,7 +775,7 @@ void GameDashboardContext::AnimateToolbarWidgetBoundsChange(
 void GameDashboardContext::MaybeShowToolbar() {
   if (game_dashboard_utils::ShouldShowToolbar() && !toolbar_widget_ &&
       !OverviewController::Get()->InOverviewSession() &&
-      !display::Screen::GetScreen()->InTabletMode()) {
+      !display::Screen::Get()->InTabletMode()) {
     // Show the toolbar, if it's not already showing.
     ToggleToolbar();
     DCHECK(toolbar_widget_);

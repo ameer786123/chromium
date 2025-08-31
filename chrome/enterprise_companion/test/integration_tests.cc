@@ -21,6 +21,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/test/task_environment.h"
 #include "base/values.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/enterprise_companion/app/app.h"
 #include "chrome/enterprise_companion/device_management_storage/dm_storage.h"
@@ -283,16 +284,16 @@ class IntegrationTests : public ::testing::Test {
   // Copies artifacts from the installed application (e.g. logs, crash dumps,
   // etc.) to ISOLATED_OUTDIR, if present.
   void CopyApplicationArtifacts() {
-    std::string isolated_outdir_str;
-    if (!base::Environment::Create()->GetVar("ISOLATED_OUTDIR",
-                                             &isolated_outdir_str)) {
+    std::optional<std::string> isolated_outdir_str =
+        base::Environment::Create()->GetVar("ISOLATED_OUTDIR");
+    if (!isolated_outdir_str.has_value()) {
       return;
     }
 
     std::optional<base::FilePath> install_dir = GetInstallDirectory();
     ASSERT_TRUE(install_dir);
     base::FilePath artifacts_dir =
-        base::FilePath::FromUTF8Unsafe(isolated_outdir_str)
+        base::FilePath::FromUTF8Unsafe(isolated_outdir_str.value())
             .AppendUTF8(base::StrCat(
                 {testing::UnitTest::GetInstance()->current_test_suite()->name(),
                  ".",
@@ -829,6 +830,44 @@ TEST_F(IntegrationTests, GroupPolicyProxy_PacScript) {
   ASSERT_NO_FATAL_FAILURE(ExpectDefaultPolicyValuesPersisted());
 }
 
+// The application should canonicalize proxy URLs sources from PAC scripts
+// containing special characters.
+TEST_F(IntegrationTests, GroupPolicyProxy_PacProxyRequiresCanonicalization) {
+  base::Value::Dict overrides = GetDefaultConstantsOverrides();
+  overrides.Set(kDMServerUrlKey, "http://dm.server.not_exist/dmapi");
+  ASSERT_NO_FATAL_FAILURE(InstallConstantsOverrides(overrides));
+  ASSERT_NO_FATAL_FAILURE(SetLocalProxyPolicies(
+      /*proxy_mode=*/"pac_script", test_server_.proxy_pac_url().spec(),
+      /*proxy_server=*/std::nullopt,
+      /*cloud_policy_overrides_platform_policy=*/std::nullopt));
+  // URL canonicalization should remove the leading zero width space.
+  test_server_.ExpectOnce(
+      {CreatePacUrlMatcher(test_server_)},
+      base::StringPrintf(
+          "function FindProxyForURL(url, host) { return \"PROXY %s\"; }",
+          base::StrCat(
+              {"\u200b", ToProxyURL(dm_test_server_.GetServiceURL())})));
+
+  SetDefaultPolicyFetchResponses();
+  ASSERT_NO_FATAL_FAILURE(StoreEnrollmentToken(kFakeEnrollmentToken));
+  ASSERT_NO_FATAL_FAILURE(GetTestMethods().Install());
+  ASSERT_NO_FATAL_FAILURE(LaunchApp());
+  ASSERT_NO_FATAL_FAILURE(WaitForServerStart());
+
+  test_server_.ExpectOnce(
+      {CreateEventLogMatcher(
+          test_server_,
+          {{proto::EnterpriseCompanionEvent::kBrowserEnrollmentEvent,
+            EnterpriseCompanionStatus::Success()},
+           {proto::EnterpriseCompanionEvent::kPolicyFetchEvent,
+            EnterpriseCompanionStatus::Success()}})},
+      CreateLogResponse());
+
+  EXPECT_TRUE(CreateAppFetchPolicies()->Run().ok());
+
+  ASSERT_NO_FATAL_FAILURE(ExpectDefaultPolicyValuesPersisted());
+}
+
 // The application should exit with a failure if proxy navigation fails and the
 // server is not directly reachable.
 TEST_F(IntegrationTests, GroupPolicyProxy_BadProxyServer) {
@@ -843,4 +882,25 @@ TEST_F(IntegrationTests, GroupPolicyProxy_BadProxyServer) {
 }
 
 #endif  // BUILDFLAG(IS_WIN)
+
+#if BUILDFLAG(CHROMIUM_BRANDING)
+
+// The application should be able to install over a previous version.
+TEST_F(IntegrationTests, OverInstallRealOld) {
+  ASSERT_NO_FATAL_FAILURE(GetTestMethods().InstallOlderVersion());
+  ASSERT_NO_FATAL_FAILURE(GetTestMethods().ExpectInstalled());
+  ASSERT_NO_FATAL_FAILURE(LaunchApp());
+  ASSERT_NO_FATAL_FAILURE(WaitForServerStart());
+
+  ASSERT_NO_FATAL_FAILURE(GetTestMethods().Install());
+
+  // The server process should be shut down by the install process. Reset the
+  // handle in the test fixture to ensure that a second shutdown is not
+  // attempted during `TearDown`.
+  EXPECT_EQ(WaitForProcess(server_process_), 0);
+  server_process_ = base::Process();
+  ASSERT_NO_FATAL_FAILURE(GetTestMethods().ExpectInstalled());
+}
+
+#endif  // BUILDFLAG(CHROMIUM_BRANDING)
 }  // namespace enterprise_companion

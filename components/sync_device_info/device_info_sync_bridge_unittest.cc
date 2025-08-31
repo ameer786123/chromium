@@ -13,16 +13,20 @@
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/mock_callback.h"
+#include "base/test/protobuf_matchers.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/sync/base/data_type.h"
+#include "components/sync/base/features.h"
 #include "components/sync/base/time.h"
 #include "components/sync/model/data_batch.h"
 #include "components/sync/model/data_type_activation_request.h"
@@ -50,6 +54,7 @@
 namespace syncer {
 namespace {
 
+using base::test::EqualsProto;
 using sync_pb::DataTypeState;
 using sync_pb::DeviceInfoSpecifics;
 using sync_pb::EntitySpecifics;
@@ -88,10 +93,6 @@ MATCHER_P(HasDeviceInfo, expected, "") {
   return arg.device_info().SerializeAsString() == expected.SerializeAsString();
 }
 
-MATCHER_P(EqualsProto, expected, "") {
-  return arg.SerializeAsString() == expected.SerializeAsString();
-}
-
 MATCHER_P(ModelEqualsSpecifics, expected_specifics, "") {
   if (expected_specifics.has_sharing_fields() !=
       arg.sharing_info().has_value()) {
@@ -101,12 +102,7 @@ MATCHER_P(ModelEqualsSpecifics, expected_specifics, "") {
   if (expected_specifics.has_sharing_fields()) {
     auto& expected_fields = expected_specifics.sharing_fields();
     auto& arg_info = *arg.sharing_info();
-    if (expected_fields.vapid_fcm_token() !=
-            arg_info.vapid_target_info.fcm_token ||
-        expected_fields.vapid_p256dh() != arg_info.vapid_target_info.p256dh ||
-        expected_fields.vapid_auth_secret() !=
-            arg_info.vapid_target_info.auth_secret ||
-        expected_fields.sender_id_fcm_token_v2() !=
+    if (expected_fields.sender_id_fcm_token_v2() !=
             arg_info.sender_id_target_info.fcm_token ||
         expected_fields.sender_id_p256dh_v2() !=
             arg_info.sender_id_target_info.p256dh ||
@@ -242,18 +238,6 @@ std::string ManufacturerForSuffix(int suffix) {
   return base::StringPrintf("manufacturer %d", suffix);
 }
 
-std::string SharingVapidFcmTokenForSuffix(int suffix) {
-  return base::StringPrintf("sharing vapid fcm token %d", suffix);
-}
-
-std::string SharingVapidP256dhForSuffix(int suffix) {
-  return base::StringPrintf("sharing vapid p256dh %d", suffix);
-}
-
-std::string SharingVapidAuthSecretForSuffix(int suffix) {
-  return base::StringPrintf("sharing vapid auth secret %d", suffix);
-}
-
 std::string SharingSenderIdFcmTokenForSuffix(int suffix) {
   return base::StringPrintf("sharing sender-id fcm token %d", suffix);
 }
@@ -310,12 +294,6 @@ DeviceInfoSpecifics CreateSpecifics(
   specifics.mutable_feature_fields()->set_send_tab_to_self_receiving_type(
       sync_pb::
           SyncEnums_SendTabReceivingType_SEND_TAB_RECEIVING_TYPE_CHROME_OR_UNSPECIFIED);
-  specifics.mutable_sharing_fields()->set_vapid_fcm_token(
-      SharingVapidFcmTokenForSuffix(suffix));
-  specifics.mutable_sharing_fields()->set_vapid_p256dh(
-      SharingVapidP256dhForSuffix(suffix));
-  specifics.mutable_sharing_fields()->set_vapid_auth_secret(
-      SharingVapidAuthSecretForSuffix(suffix));
   specifics.mutable_sharing_fields()->set_sender_id_fcm_token_v2(
       SharingSenderIdFcmTokenForSuffix(suffix));
   specifics.mutable_sharing_fields()->set_chime_representative_target_id(
@@ -433,9 +411,6 @@ class TestLocalDeviceInfoProvider : public MutableLocalDeviceInfoProvider {
         sync_pb::
             SyncEnums_SendTabReceivingType_SEND_TAB_RECEIVING_TYPE_CHROME_OR_UNSPECIFIED,
         DeviceInfo::SharingInfo(
-            {SharingVapidFcmTokenForSuffix(kLocalSuffix),
-             SharingVapidP256dhForSuffix(kLocalSuffix),
-             SharingVapidAuthSecretForSuffix(kLocalSuffix)},
             {SharingSenderIdFcmTokenForSuffix(kLocalSuffix),
              SharingSenderIdP256dhForSuffix(kLocalSuffix),
              SharingSenderIdAuthSecretForSuffix(kLocalSuffix)},
@@ -681,28 +656,8 @@ class DeviceInfoSyncBridgeTest : public testing::Test,
   }
 
   std::map<std::string, DeviceInfoSpecifics> ReadAllFromStore() {
-    std::unique_ptr<DataTypeStore::RecordList> records;
-    base::RunLoop loop;
-    store()->ReadAllData(base::BindOnce(
-        [](std::unique_ptr<DataTypeStore::RecordList>* output_records,
-           base::RunLoop* loop, const std::optional<syncer::ModelError>& error,
-           std::unique_ptr<DataTypeStore::RecordList> input_records) {
-          EXPECT_FALSE(error) << error->ToString();
-          EXPECT_THAT(input_records, NotNull());
-          *output_records = std::move(input_records);
-          loop->Quit();
-        },
-        &records, &loop));
-    loop.Run();
-    std::map<std::string, DeviceInfoSpecifics> result;
-    if (records) {
-      for (const DataTypeStore::Record& record : *records) {
-        DeviceInfoSpecifics specifics;
-        EXPECT_TRUE(specifics.ParseFromString(record.value));
-        result.emplace(record.id, specifics);
-      }
-    }
-    return result;
+    return DataTypeStoreTestUtil::ReadAllDataAsProtoAndWait<
+        DeviceInfoSpecifics>(*store());
   }
 
   std::map<std::string, sync_pb::EntitySpecifics> GetAllData() {
@@ -1396,12 +1351,37 @@ TEST_F(DeviceInfoSyncBridgeTest, RefreshLocalDeviceInfo) {
   EXPECT_EQ(4, change_count());
 }
 
-TEST_F(DeviceInfoSyncBridgeTest, DeviceNameForTransportOnlySyncMode) {
+// Implicit signin doesn't exist on mobile.
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+TEST_F(DeviceInfoSyncBridgeTest,
+       DeviceNameForTransportOnlySyncModeWithImplicitSignin) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(
+      syncer::kReplaceSyncPromosWithSignInPromos);
+
   InitializeAndMergeInitialData(SyncMode::kTransportOnly);
   ASSERT_EQ(1, change_count());
   ASSERT_TRUE(local_device()->GetLocalDeviceInfo());
 
+  // With implicit signin, only the model name is allowed, not the
+  // personalizable name.
   EXPECT_EQ(local_device_model_name(),
+            local_device()->GetLocalDeviceInfo()->client_name());
+}
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+
+TEST_F(DeviceInfoSyncBridgeTest,
+       DeviceNameForTransportOnlySyncModeWithExplicitSignin) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kReplaceSyncPromosWithSignInPromos);
+
+  InitializeAndMergeInitialData(SyncMode::kTransportOnly);
+  ASSERT_EQ(1, change_count());
+  ASSERT_TRUE(local_device()->GetLocalDeviceInfo());
+
+  // With explicit signin, the personalizable name (not just the model name) is
+  // supported.
+  EXPECT_EQ(local_personalizable_name(),
             local_device()->GetLocalDeviceInfo()->client_name());
 }
 
@@ -1414,12 +1394,47 @@ TEST_F(DeviceInfoSyncBridgeTest, DeviceNameForFullSyncMode) {
             local_device()->GetLocalDeviceInfo()->client_name());
 }
 
+// Implicit signin doesn't exist on mobile.
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 // Tests local client name when device is initially synced with transport only
 // sync mode, but the sync mode is not available after restart since it is not
 // persisted.
 TEST_F(DeviceInfoSyncBridgeTest,
-       DeviceNameForTransportOnlySyncMode_RestartBridge) {
+       DeviceNameForTransportOnlySyncModeWithImplicitSignin_RestartBridge) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(
+      syncer::kReplaceSyncPromosWithSignInPromos);
+
+  // With implicit signin, only the model name is allowed, not the
+  // personalizable name.
   std::string expected_device_name = local_device_model_name();
+  InitializeAndMergeInitialData(SyncMode::kTransportOnly);
+
+  ASSERT_TRUE(local_device()->GetLocalDeviceInfo());
+  ASSERT_EQ(expected_device_name,
+            local_device()->GetLocalDeviceInfo()->client_name());
+
+  EXPECT_CALL(*processor(),
+              Put(local_device()->GetLocalDeviceInfo()->guid(), _, _))
+      .Times(0);
+  RestartBridge();
+  ASSERT_TRUE(local_device()->GetLocalDeviceInfo());
+  EXPECT_EQ(expected_device_name,
+            local_device()->GetLocalDeviceInfo()->client_name());
+}
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+
+// Tests local client name when device is initially synced with transport only
+// sync mode, but the sync mode is not available after restart since it is not
+// persisted.
+TEST_F(DeviceInfoSyncBridgeTest,
+       DeviceNameForTransportOnlySyncModeWithExplicitSignin_RestartBridge) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kReplaceSyncPromosWithSignInPromos);
+
+  // With explicit signin, the personalizable name (not just the model name) is
+  // supported.
+  std::string expected_device_name = local_personalizable_name();
   InitializeAndMergeInitialData(SyncMode::kTransportOnly);
 
   ASSERT_TRUE(local_device()->GetLocalDeviceInfo());
@@ -1454,7 +1469,13 @@ TEST_F(DeviceInfoSyncBridgeTest, DeviceNameForFullSyncMode_RestartBridge) {
             local_device()->GetLocalDeviceInfo()->client_name());
 }
 
+// Implicit signin doesn't exist on mobile.
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 TEST_F(DeviceInfoSyncBridgeTest, RefreshLocalDeviceNameForSyncModeToggle) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(
+      syncer::kReplaceSyncPromosWithSignInPromos);
+
   std::string expected_device_name_full_sync = local_personalizable_name();
   std::string expected_device_name_transport_only = local_device_model_name();
 
@@ -1482,6 +1503,7 @@ TEST_F(DeviceInfoSyncBridgeTest, RefreshLocalDeviceNameForSyncModeToggle) {
   ASSERT_TRUE(device);
   ASSERT_EQ(expected_device_name_full_sync, device->client_name());
 }
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 
 TEST_F(DeviceInfoSyncBridgeTest, ShouldSendInvalidationFields) {
   EXPECT_CALL(*processor(),

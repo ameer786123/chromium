@@ -22,6 +22,9 @@
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/enterprise/connectors/core/analysis_settings.h"
+#include "components/safe_browsing/content/browser/safe_browsing_navigation_observer_manager.h"
+#include "components/safe_browsing/core/browser/realtime/url_lookup_service_base.h"
+#include "components/sessions/core/session_id.h"
 #include "content/public/browser/clipboard_types.h"
 #include "url/gurl.h"
 
@@ -33,10 +36,13 @@ class WebContent;
 
 namespace enterprise_connectors {
 
-class ContentAnalysisDialog;
+class ContentAnalysisDialogController;
 class FilesRequestHandler;
 class PagePrintRequestHandler;
 class ClipboardRequestHandler;
+
+using ReferrerChain =
+    google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>;
 
 // A class that performs deep scans of data (for example malicious or sensitive
 // content checks) before allowing a page to access it.
@@ -116,6 +122,10 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
     // The clipboard source of data being pasted into the browser. Empty for
     // non-clipboard pastes, and clipboard pastes in special cases (ex. OTR).
     ContentMetaData::CopiedTextSource clipboard_source;
+
+    // The email for the content area user of the source of clipboard data.
+    // Only populated for Workspace sites.
+    std::string source_content_area_email;
 
     // The settings to use for the analysis of the data in this struct.
     AnalysisSettings settings;
@@ -224,11 +234,10 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   // in the background.
   //
   // Whether the UI is enabled or not, verdicts of the scan will be reported.
-  static void CreateForWebContents(
-      content::WebContents* web_contents,
-      Data data,
-      CompletionCallback callback,
-      safe_browsing::DeepScanAccessPoint access_point);
+  static void CreateForWebContents(content::WebContents* web_contents,
+                                   Data data,
+                                   CompletionCallback callback,
+                                   DeepScanAccessPoint access_point);
 
   // Helper function for calling CreateForWebContents() when the data to
   // process is a collection of files on disk.  This requires first expanding
@@ -238,11 +247,10 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   //
   // `data.paths` is expected to contain the files and/or directories to
   // analyze.  `text` and `page` are expected to be null/empty.
-  static void CreateForFilesInWebContents(
-      content::WebContents* web_contents,
-      Data data,
-      ForFilesCompletionCallback callback,
-      safe_browsing::DeepScanAccessPoint access_point);
+  static void CreateForFilesInWebContents(content::WebContents* web_contents,
+                                          Data data,
+                                          ForFilesCompletionCallback callback,
+                                          DeepScanAccessPoint access_point);
 
   // In tests, sets a factory function for creating fake
   // ContentAnalysisDelegates.
@@ -267,19 +275,25 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
 
   // ContentAnalysisInfo:
   const AnalysisSettings& settings() const override;
+  signin::IdentityManager* identity_manager() const override;
   int user_action_requests_count() const override;
   std::string tab_title() const override;
   std::string user_action_id() const override;
   std::string email() const override;
-  std::string url() const override;
+  const GURL& url() const override;
   const GURL& tab_url() const override;
   ContentAnalysisRequest::Reason reason() const override;
+  google::protobuf::RepeatedPtrField<::safe_browsing::ReferrerChainEntry>
+  referrer_chain() const override;
+  google::protobuf::RepeatedPtrField<std::string> frame_url_chain()
+      const override;
+  content::WebContents* web_contents() const override;
 
  protected:
   ContentAnalysisDelegate(content::WebContents* web_contents,
                           Data data,
                           CompletionCallback callback,
-                          safe_browsing::DeepScanAccessPoint access_point);
+                          DeepScanAccessPoint access_point);
 
   // Callbacks from uploading data. Protected so they can be called from
   // testing derived classes.
@@ -378,6 +392,9 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   // Virtual to override in tests.
   virtual safe_browsing::BinaryUploadService* GetBinaryUploadService();
 
+  safe_browsing::SafeBrowsingNavigationObserverManager*
+  GetNavigationObserverManager() const;
+
   // Returns the content transfer method for the action. This is only used for
   // reporting and can be empty if the exact transfer method isn't supported in
   // reporting.
@@ -393,6 +410,9 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
 
   // The GURL corresponding to the page where the scan triggered.
   GURL url_;
+
+  // Parent URL chain of the frame from which the action was triggered.
+  google::protobuf::RepeatedPtrField<std::string> frame_url_chain_;
 
   // The title corresponding to the WebContents triggering the scan.
   std::string title_;
@@ -431,10 +451,10 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   CompletionCallback callback_;
 
   // Pointer to UI when enabled.
-  raw_ptr<ContentAnalysisDialog> dialog_ = nullptr;
+  raw_ptr<ContentAnalysisDialogController> dialog_ = nullptr;
 
   // Access point to use to record UMA metrics.
-  safe_browsing::DeepScanAccessPoint access_point_;
+  DeepScanAccessPoint access_point_;
 
   // Scanning result to be shown to the user once every request is done.
   FinalContentAnalysisResult final_result_ =
@@ -498,6 +518,8 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   // Custom message for rule.
   ContentAnalysisResponse::Result::TriggeredRule::CustomRuleMessage
       custom_rule_message_;
+
+  base::WeakPtr<content::WebContents> web_contents_;
 
   base::WeakPtrFactory<ContentAnalysisDelegate> weak_ptr_factory_{this};
 };

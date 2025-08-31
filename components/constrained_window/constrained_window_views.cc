@@ -8,7 +8,6 @@
 #include <memory>
 
 #include "base/check_op.h"
-#include "base/debug/crash_logging.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
@@ -22,7 +21,7 @@
 #include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/views/bubble/bubble_dialog_model_host.h"
 #include "ui/views/widget/native_widget.h"
 #include "ui/views/widget/widget.h"
@@ -81,9 +80,11 @@ class ModalDialogHostObserverViews : public ModalDialogHostObserver {
     }
   }
   void OnHostDestroying() override {
-    dialog_widget_->Close();
+    // Synchronously close the dialog widget to avoid dangling references to the
+    // host.
     modal_dialog_host_observation_.Reset();
     host_ = nullptr;
+    dialog_widget_->CloseNow();
   }
 
  private:
@@ -129,7 +130,7 @@ gfx::Rect GetModalDialogBounds(views::Widget* widget,
 
     // Adjust the dialog bound to ensure it remains visible on the display.
     const gfx::Rect display_work_area =
-        display::Screen::GetScreen()
+        display::Screen::Get()
             ->GetDisplayNearestView(dialog_host->GetHostView())
             .work_area();
     if (!display_work_area.Contains(dialog_screen_bounds)) {
@@ -282,21 +283,15 @@ views::Widget* CreateWebModalDialogViews(views::WidgetDelegate* dialog,
   DCHECK_EQ(ui::mojom::ModalType::kChild, dialog->GetModalType());
   web_modal::WebContentsModalDialogManager* manager =
       web_modal::WebContentsModalDialogManager::FromWebContents(web_contents);
-
-  // TODO(http://crbug/1273287): Drop "if" and DEBUG_ALIAS_FOR_GURL after fix.
-  if (!manager) {
-    const GURL& url = web_contents->GetLastCommittedURL();
-    DEBUG_ALIAS_FOR_GURL(url_alias, url);
-
-    SCOPED_CRASH_KEY_STRING32("WebModal", "scheme", url.scheme_piece());
-    SCOPED_CRASH_KEY_STRING32("WebModal", "host", url.host_piece());
-    LOG_IF(FATAL, !manager)
-        << "CreateWebModalDialogViews without a manager"
-        << ", scheme=" << url.scheme_piece() << ", host=" << url.host_piece();
-  }
-
   web_modal::ModalDialogHost* const dialog_host =
-      manager->delegate()->GetWebContentsModalDialogHost();
+      manager->delegate()->GetWebContentsModalDialogHost(web_contents);
+  CHECK(dialog_host);
+
+  // Use desktop widget so that it is not constrained by the boundary of the
+  // host window.
+  dialog->set_use_desktop_widget_override(
+      !dialog_host->ShouldDialogBoundsConstrainedByHost());
+
   views::Widget* widget = views::DialogDelegate::CreateDialogWidget(
       dialog, gfx::NativeWindow(), dialog_host->GetHostView());
   std::unique_ptr<ModalDialogHostObserver> observer =

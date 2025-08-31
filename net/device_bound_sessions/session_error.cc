@@ -4,26 +4,66 @@
 
 #include "net/device_bound_sessions/session_error.h"
 
+#include "base/notreached.h"
+
 namespace net::device_bound_sessions {
 
-SessionError::SessionError(SessionError::ErrorType type,
-                           net::SchemefulSite site,
-                           std::optional<std::string> session_id)
-    : type(type), site(std::move(site)), session_id(std::move(session_id)) {}
+SessionError::SessionError(SessionError::ErrorType type) : type(type) {}
 
 SessionError::~SessionError() = default;
 
 SessionError::SessionError(SessionError&&) noexcept = default;
 SessionError& SessionError::operator=(SessionError&&) noexcept = default;
 
-bool SessionError::IsFatal() const {
+std::optional<DeletionReason> SessionError::GetDeletionReason() const {
   using enum ErrorType;
 
   switch (type) {
     case kSuccess:
-      return false;
+      return std::nullopt;
+    case kServerRequestedTermination:
+      return DeletionReason::kServerRequested;
     case kKeyError:
     case kSigningError:
+    case kPersistentHttpError:
+    case kInvalidChallenge:
+    case kTooManyChallenges:
+      return DeletionReason::kRefreshFatalError;
+    case kInvalidConfigJson:
+    case kInvalidSessionId:
+    case kInvalidCredentials:
+    case kInvalidFetcherUrl:
+    case kInvalidRefreshUrl:
+    case kScopeOriginSameSiteMismatch:
+    case kRefreshUrlSameSiteMismatch:
+    case kInvalidScopeOrigin:
+    case kMismatchedSessionId:
+    case kInvalidRefreshInitiators:
+    case kInvalidScopeRule:
+    case kMissingScope:
+    case kNoCredentials:
+    case kInvalidScopeIncludeSite:
+      return DeletionReason::kInvalidSessionParams;
+    case kNetError:
+    case kTransientHttpError:
+      return std::nullopt;
+    // Registration-only errors never trigger session deletion.
+    case kWellKnownUnavailable:
+    case kSubdomainRegistrationUnauthorized:
+    case kWellKnownMalformed:
+      NOTREACHED();
+  }
+}
+
+bool SessionError::IsServerError() const {
+  using enum ErrorType;
+
+  switch (type) {
+    case kSuccess:
+    case kKeyError:
+    case kSigningError:
+    case kNetError:
+      return false;
     case kServerRequestedTermination:
     case kInvalidConfigJson:
     case kInvalidSessionId:
@@ -36,11 +76,19 @@ bool SessionError::IsFatal() const {
     case kScopeOriginSameSiteMismatch:
     case kRefreshUrlSameSiteMismatch:
     case kInvalidScopeOrigin:
-      return true;
-
-    case kNetError:
     case kTransientHttpError:
-      return false;
+    case kMismatchedSessionId:
+    case kInvalidRefreshInitiators:
+    case kInvalidScopeRule:
+    case kMissingScope:
+    case kNoCredentials:
+    case kInvalidScopeIncludeSite:
+      return true;
+    // Registration-only errors never get reported to the server.
+    case kWellKnownUnavailable:
+    case kSubdomainRegistrationUnauthorized:
+    case kWellKnownMalformed:
+      NOTREACHED();
   }
 }
 

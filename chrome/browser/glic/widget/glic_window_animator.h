@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_GLIC_WIDGET_GLIC_WINDOW_ANIMATOR_H_
 #define CHROME_BROWSER_GLIC_WIDGET_GLIC_WINDOW_ANIMATOR_H_
 
-#include "base/callback_list.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/views/tabs/glic_button.h"
@@ -14,7 +14,7 @@
 
 namespace glic {
 
-class GlicWindowController;
+class GlicWidget;
 class GlicWindowResizeAnimation;
 
 // This class will handle the open and close animations for the glic widget
@@ -22,24 +22,11 @@ class GlicWindowResizeAnimation;
 // resizing-related animations.
 class GlicWindowAnimator : public gfx::AnimationDelegate {
  public:
-  explicit GlicWindowAnimator(GlicWindowController* window_controller);
+  explicit GlicWindowAnimator(base::WeakPtr<GlicWidget> widget,
+                              base::RepeatingClosure resize_finished_callback);
   GlicWindowAnimator(const GlicWindowAnimator&) = delete;
   GlicWindowAnimator& operator=(const GlicWindowAnimator&) = delete;
   ~GlicWindowAnimator() override;
-
-  // Runs the attached open widget animation for the Glic widget.
-  void RunOpenAttachedAnimation(GlicButton* glic_button,
-                                const gfx::Size& target_size,
-                                base::OnceClosure callback);
-
-  // Runs the attached close animation for the Glic widget.
-  void RunCloseAnimation(GlicButton* glic_button, base::OnceClosure callback);
-
-  // Fades in the GlicView's web view layer.
-  void FadeInWebView();
-
-  // Sets the background color and corner radius of the Glic widget.
-  void SetRoundedRectBackground();
 
   // Animate the window size, maintaining the position of the top right corner.
   // If there is already a running bounds change animation, update that
@@ -55,28 +42,24 @@ class GlicWindowAnimator : public gfx::AnimationDelegate {
                        base::TimeDelta duration,
                        base::OnceClosure callback);
 
-  // Sets the visibility of the GlicView's web view.
-  void SetGlicWebViewVisibility(bool is_visible);
-
   // Called when the programmatic resize has finished. Public for use by
   // GlicWindowResizeAnimation.
   void ResizeFinished();
-
-  // Called when the widget's opacity fading animation has finished. Public for
-  // use by GlicWindowOpacityAnimation.
-  void OnWindowOpacityAnimationEnded();
-
-  // Called when the view's opacity fading animation has finished. Public for
-  // use by GlicViewOpacityAnimation.
-  void OnViewOpacityAnimationEnded();
 
   // Gets the bounds for the widget's resize animation. If there is an animation
   // already ongoing, use the target bounds for that animation. Otherwise, use
   // the widget's current bounds.
   gfx::Rect GetCurrentTargetBounds();
 
+  // Reset the saved target size.
+  void ResetLastTargetSize();
+
   // If there's a saved target size, start the resize animation for it.
   void MaybeAnimateToTargetSize();
+
+  bool IsAnimating() const;
+
+  void CancelAnimation();
 
  private:
   // Sets target bounds for the widget (must exist) and creates a
@@ -99,17 +82,12 @@ class GlicWindowAnimator : public gfx::AnimationDelegate {
                           float target_opacity,
                           base::TimeDelta duration);
 
-  // GlicWindowController owns GlicWindowAnimator and will outlive it
-  const raw_ptr<GlicWindowController> window_controller_;
+  // The widget that this animator is responsible for.
+  base::WeakPtr<GlicWidget> widget_;
   std::unique_ptr<GlicWindowResizeAnimation> window_resize_animation_;
 
-  class GlicWindowOpacityAnimation;
-  std::unique_ptr<GlicWindowOpacityAnimation> glic_window_opacity_animation_;
+  base::RepeatingClosure resize_finished_callback_;
 
-  class GlicViewOpacityAnimation;
-  std::unique_ptr<GlicViewOpacityAnimation> glic_view_opacity_animation_;
-
- private:
   // Last requested target size. Will be (0, 0) if there hasn't been a resize
   // request or glic has already been resized to the target size.
   gfx::Size last_target_size_;

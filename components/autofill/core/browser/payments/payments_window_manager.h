@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/functional/callback.h"
+#include "components/autofill/core/browser/data_model/payments/bnpl_issuer.h"
 #include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/payments/card_unmask_challenge_option.h"
 #include "url/gurl.h"
@@ -131,7 +132,7 @@ class PaymentsWindowManager {
     ~BnplContext();
 
     // The ID of the issuer for the BNPL flow.
-    std::string issuer_id;
+    autofill::BnplIssuer::IssuerId issuer_id;
     // The starting location of the BNPL flow, which is an initial URL to
     // open inside of the pop-up.
     GURL initial_url;
@@ -150,6 +151,49 @@ class PaymentsWindowManager {
     // The callback to run to notify the caller that the flow inside of the
     // pop-up was finished, with the result.
     OnBnplPopupClosedCallback completion_callback;
+  };
+
+  // Contains the possible flows that this class can support.
+  enum class FlowType {
+    kNoFlow = 0,
+    kVcn3ds = 1,
+    kBnpl = 2,
+    kMaxValue = kBnpl,
+  };
+
+  // Keeps track of the state for the ongoing flow.
+  struct FlowState {
+    FlowState();
+    FlowState(FlowState&&);
+    FlowState& operator=(FlowState&&);
+    ~FlowState();
+
+    // Only present if `flow_type` is `kVcn3ds`.
+    std::optional<Vcn3dsContext> vcn_3ds_context;
+
+    // Only present if `flow_type` is `kBnpl`.
+    std::optional<BnplContext> bnpl_context;
+
+    // The timestamp for when the VCN 3DS pop-up was shown to the user. Used for
+    // logging purposes. Present if `flow_type` is `kVcn3ds` and a
+    // popup was created for the flow.
+    std::optional<base::TimeTicks> vcn_3ds_popup_shown_timestamp;
+
+    // The timestamp for when the BNPL payments window popup was shown to the
+    // user. Used for logging purposes. Present if `flow_type` is `kBnpl` and a
+    // tab popup was created for the flow.
+    std::optional<base::TimeTicks> bnpl_popup_shown_timestamp;
+
+    // Set on every navigation inside of the observed tab. Used on tab
+    // destruction to understand the reason for destruction, and to notify the
+    // caller. This member is required because at the point where the most
+    // recent URL navigation needs to be known, accessing the observed web
+    // contents is unsafe. Thus it is preferred to cache this earlier and read
+    // from it when needed.
+    GURL most_recent_url_navigation;
+
+    // The type of flow that is currently ongoing. Set when a flow is initiated.
+    FlowType flow_type = FlowType::kNoFlow;
   };
 
   virtual ~PaymentsWindowManager() = default;

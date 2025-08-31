@@ -38,6 +38,7 @@
 #include "chrome/browser/ui/user_education/show_promo_in_page.h"
 #include "chrome/common/compose/type_conversions.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/webui_url_constants.h"
 #include "components/autofill/content/browser/content_autofill_client.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/core/browser/filling/filling_product.h"
@@ -801,10 +802,7 @@ void ChromeComposeClient::OpenProactiveNudgeSettings() {
       break;
   }
 
-  chrome::ShowSettingsSubPage(
-      browser, optimization_guide::features::IsAiSettingsPageRefreshEnabled()
-                   ? chrome::kAiHelpMeWriteSubpage
-                   : chrome::kOfferWritingHelpSubpage);
+  chrome::ShowSettingsSubPage(browser, chrome::kAiHelpMeWriteSubpage);
 }
 
 void ChromeComposeClient::AddSiteToNeverPromptList(const url::Origin& origin) {

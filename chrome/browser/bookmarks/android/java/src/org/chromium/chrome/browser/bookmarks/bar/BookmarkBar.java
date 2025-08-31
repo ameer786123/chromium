@@ -4,22 +4,22 @@
 
 package org.chromium.chrome.browser.bookmarks.bar;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.util.AttributeSet;
-import android.view.View;
+import android.view.MotionEvent;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
-import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.bookmarks.R;
+import org.chromium.ui.util.MotionEventUtils;
 
 /** View for the bookmark bar which provides users with bookmark access from top chrome. */
-class BookmarkBar extends LinearLayout implements View.OnLayoutChangeListener {
+@NullMarked
+class BookmarkBar extends LinearLayout {
 
-    private Callback<Integer> mHeightChangeCallback;
     private ImageButton mOverflowButton;
 
     /**
@@ -28,14 +28,8 @@ class BookmarkBar extends LinearLayout implements View.OnLayoutChangeListener {
      * @param context the context the bookmark bar is running in.
      * @param attrs the attributes of the XML tag that is inflating the bookmark bar.
      */
-    public BookmarkBar(@NonNull Context context, @Nullable AttributeSet attrs) {
+    public BookmarkBar(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
-        addOnLayoutChangeListener(this);
-    }
-
-    /** Destroys the bookmark bar. */
-    public void destroy() {
-        removeOnLayoutChangeListener(this);
     }
 
     @Override
@@ -45,36 +39,24 @@ class BookmarkBar extends LinearLayout implements View.OnLayoutChangeListener {
     }
 
     @Override
-    public void onLayoutChange(
-            View v,
-            int left,
-            int top,
-            int right,
-            int bottom,
-            int oldLeft,
-            int oldTop,
-            int oldRight,
-            int oldBottom) {
-        if (mHeightChangeCallback != null) {
-            final int oldHeight = oldBottom - oldTop;
-            final int newHeight = bottom - top;
-            if (newHeight != oldHeight) {
-                mHeightChangeCallback.onResult(newHeight);
-            }
-        }
+    @SuppressLint("ClickableViewAccessibility")
+    public boolean onTouchEvent(MotionEvent event) {
+        super.onTouchEvent(event);
+        // Prevent touch events from "falling through" to views below.
+        return true;
     }
 
-    /**
-     * Sets the callback to notify of bookmark bar height change events. Note that the callback will
-     * be immediately notified of the current bookmark bar height.
-     *
-     * @param heightChangeCallback the callback to notify.
-     */
-    public void setHeightChangeCallback(@Nullable Callback<Integer> heightChangeCallback) {
-        mHeightChangeCallback = heightChangeCallback;
-        if (mHeightChangeCallback != null) {
-            mHeightChangeCallback.onResult(getHeight());
+    @Override
+    public boolean onGenericMotionEvent(MotionEvent event) {
+        if (MotionEventUtils.isPointerEvent(event)) {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_BUTTON_PRESS
+                    || action == MotionEvent.ACTION_BUTTON_RELEASE
+                    || action == MotionEvent.ACTION_SCROLL) {
+                return true;
+            }
         }
+        return super.onGenericMotionEvent(event);
     }
 
     /**
@@ -93,5 +75,12 @@ class BookmarkBar extends LinearLayout implements View.OnLayoutChangeListener {
      */
     public void setOverflowButtonVisibility(int visibility) {
         mOverflowButton.setVisibility(visibility);
+    }
+
+    /**
+     * @return The overflow button view.
+     */
+    public ImageButton getOverflowButton() {
+        return mOverflowButton;
     }
 }

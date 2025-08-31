@@ -15,6 +15,7 @@
 #include "ash/public/cpp/wallpaper/wallpaper_types.h"
 #include "ash/webui/common/mojom/sea_pen.mojom.h"
 #include "base/containers/adapters.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/account_id/account_id.h"
@@ -63,14 +64,6 @@ void TestWallpaperController::SetClient(
 void TestWallpaperController::SetDriveFsDelegate(
     std::unique_ptr<ash::WallpaperDriveFsDelegate> drivefs_delegate) {
   NOTIMPLEMENTED_LOG_ONCE();
-}
-
-void TestWallpaperController::Init(
-    const base::FilePath& user_data,
-    const base::FilePath& wallpapers,
-    const base::FilePath& custom_wallpapers,
-    const base::FilePath& device_policy_wallpaper) {
-  NOTIMPLEMENTED();
 }
 
 bool TestWallpaperController::CanSetUserWallpaper(

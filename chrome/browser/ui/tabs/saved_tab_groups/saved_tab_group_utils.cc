@@ -12,7 +12,6 @@
 #include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
 #include "base/metrics/user_metrics.h"
-#include "base/not_fatal_until.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/uuid.h"
 #include "chrome/browser/collaboration/collaboration_service_factory.h"
@@ -28,10 +27,8 @@
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_navigator.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_keyed_service.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_service_factory.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_action_context_desktop.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_sync_service_proxy.h"
 #include "chrome/browser/ui/tabs/tab_group_deletion_dialog_controller.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_group_theme.h"
@@ -39,6 +36,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 #include "chrome/browser/ui/views/data_sharing/collaboration_controller_delegate_desktop.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/tabs/recent_activity_bubble_dialog_view.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
@@ -46,6 +44,7 @@
 #include "components/data_sharing/public/data_sharing_service.h"
 #include "components/data_sharing/public/features.h"
 #include "components/data_sharing/public/group_data.h"
+#include "components/prefs/pref_service.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/saved_tab_groups/public/pref_names.h"
 #include "components/saved_tab_groups/public/saved_tab_group_tab.h"
@@ -57,7 +56,9 @@
 #include "components/sync/service/sync_service.h"
 #include "components/sync/service/sync_user_settings.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "components/user_education/common/help_bubble/help_bubble_params.h"
 #include "content/public/browser/web_contents.h"
+#include "ui/gfx/range/range.h"
 #include "url/gurl.h"
 
 namespace tab_groups {
@@ -68,21 +69,8 @@ bool SavedTabGroupUtils::IsEnabledForProfile(Profile* profile) {
     return false;
   }
 
-  return SavedTabGroupUtils::GetServiceForProfile(profile) != nullptr;
-}
-
-// static
-TabGroupSyncService* SavedTabGroupUtils::GetServiceForProfile(
-    Profile* profile) {
-  CHECK(profile);
-
-  if (tab_groups::IsTabGroupSyncServiceDesktopMigrationEnabled()) {
-    return tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile);
-  }
-
-  tab_groups::SavedTabGroupKeyedService* service =
-      tab_groups::SavedTabGroupServiceFactory::GetForProfile(profile);
-  return service ? service->proxy() : nullptr;
+  return tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile) !=
+         nullptr;
 }
 
 // static
@@ -112,10 +100,10 @@ void SavedTabGroupUtils::RemoveGroupFromTabstrip(
 }
 
 // static
-void SavedTabGroupUtils::UngroupSavedGroup(const Browser* browser,
+void SavedTabGroupUtils::UngroupSavedGroup(Browser* browser,
                                            const base::Uuid& saved_group_guid) {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(browser->profile());
   if (!tab_group_service) {
     return;
   }
@@ -147,17 +135,19 @@ void SavedTabGroupUtils::UngroupSavedGroup(const Browser* browser,
   DeletionDialogController::DialogMetadata dialog_metadata(
       DeletionDialogController::DialogType::UngroupSingle,
       /*closing_group_count=*/1, closing_multiple_tabs);
-  browser->tab_group_deletion_dialog_controller()->MaybeShowDialog(
-      dialog_metadata,
-      base::IgnoreArgs<DeletionDialogController::DeletionDialogTiming>(
-          std::move(ungroup_callback)));
+  browser->GetFeatures()
+      .tab_group_deletion_dialog_controller()
+      ->MaybeShowDialog(
+          dialog_metadata,
+          base::IgnoreArgs<DeletionDialogController::DeletionDialogTiming>(
+              std::move(ungroup_callback)));
 }
 
 // static
-void SavedTabGroupUtils::DeleteSavedGroup(const Browser* browser,
+void SavedTabGroupUtils::DeleteSavedGroup(Browser* browser,
                                           const base::Uuid& saved_group_guid) {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(browser->profile());
   if (!tab_group_service) {
     return;
   }
@@ -185,8 +175,8 @@ void SavedTabGroupUtils::DeleteSavedGroup(const Browser* browser,
 
   base::OnceCallback<void()> close_callback = base::BindOnce(
       [](const Browser* browser, const base::Uuid& saved_group_guid) {
-        tab_groups::TabGroupSyncService* tab_group_service =
-            tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+        TabGroupSyncService* tab_group_service =
+            tab_groups::TabGroupSyncServiceFactory::GetForProfile(
                 browser->profile());
         if (!tab_group_service) {
           return;
@@ -229,10 +219,12 @@ void SavedTabGroupUtils::DeleteSavedGroup(const Browser* browser,
   shared_dialog_metadata.title_of_closing_group = group->title();
 
   const bool is_group_shared = group.value().collaboration_id().has_value();
-  browser->tab_group_deletion_dialog_controller()->MaybeShowDialog(
-      is_group_shared ? shared_dialog_metadata : saved_dialog_metadata,
-      base::IgnoreArgs<DeletionDialogController::DeletionDialogTiming>(
-          std::move(close_callback)));
+  browser->GetFeatures()
+      .tab_group_deletion_dialog_controller()
+      ->MaybeShowDialog(
+          is_group_shared ? shared_dialog_metadata : saved_dialog_metadata,
+          base::IgnoreArgs<DeletionDialogController::DeletionDialogTiming>(
+              std::move(close_callback)));
 }
 
 // static
@@ -243,7 +235,7 @@ void SavedTabGroupUtils::LeaveSharedGroup(const Browser* browser,
   }
 
   TabGroupSyncService* tab_group_service =
-      SavedTabGroupUtils::GetServiceForProfile(browser->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(browser->profile());
   if (!tab_group_service) {
     return;
   }
@@ -270,15 +262,15 @@ void SavedTabGroupUtils::LeaveSharedGroup(const Browser* browser,
 
 // static
 void SavedTabGroupUtils::MaybeShowSavedTabGroupDeletionDialog(
-    const Browser* browser,
+    Browser* browser,
     GroupDeletionReason reason,
-    const std::vector<TabGroupId>& group_ids,
+    base::span<const TabGroupId> group_ids,
     base::OnceCallback<void(DeletionDialogController::DeletionDialogTiming)>
         callback) {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(browser->profile());
 
-  CHECK(group_ids.size() > 0, base::NotFatalUntil::M130);
+  CHECK(!group_ids.empty());
 
   // Confirmation is only needed if SavedTabGroups are being deleted. If the
   // service doesnt exist there are no saved tab groups.
@@ -290,7 +282,8 @@ void SavedTabGroupUtils::MaybeShowSavedTabGroupDeletionDialog(
 
   // If there's no way to show the group deletion dialog, then fallback to
   // running the callback.
-  auto* dialog_controller = browser->tab_group_deletion_dialog_controller();
+  auto* const dialog_controller =
+      browser->GetFeatures().tab_group_deletion_dialog_controller();
   if (!dialog_controller || !dialog_controller->CanShowDialog()) {
     std::move(callback).Run(
         DeletionDialogController::DeletionDialogTiming::Synchronous);
@@ -321,8 +314,8 @@ void SavedTabGroupUtils::MaybeShowSavedTabGroupDeletionDialog(
   // TODO(tbergquist): If multiple types of groups are being closed, queue
   // multiple dialogs. For now, just act as if they are all the kind of the
   // first group.
-  const tab_groups::SavedTabGroup saved_group =
-      tab_group_service->GetGroup(group_ids[0]).value();
+  const auto saved_group_opt = tab_group_service->GetGroup(group_ids[0]);
+  const tab_groups::SavedTabGroup& saved_group = saved_group_opt.value();
 
   DeletionDialogController::DialogType dialog_type =
       reason == GroupDeletionReason::ClosedLastTab
@@ -367,7 +360,7 @@ void SavedTabGroupUtils::OpenOrMoveSavedGroupToNewWindow(
     Browser* browser,
     const base::Uuid& saved_group_guid) {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(browser->profile());
   std::optional<SavedTabGroup> save_group =
       tab_group_service->GetGroup(saved_group_guid);
   // In case the group has been deleted or has no tabs.
@@ -407,7 +400,7 @@ void SavedTabGroupUtils::ToggleGroupPinState(
     Browser* browser,
     const base::Uuid& saved_group_guid) {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(browser->profile());
   std::optional<SavedTabGroup> group =
       tab_group_service->GetGroup(saved_group_guid);
   CHECK(group.has_value());
@@ -539,8 +532,8 @@ SavedTabGroup SavedTabGroupUtils::CreateSavedTabGroupFromLocalId(
 std::unordered_set<std::string> SavedTabGroupUtils::GetURLsInSavedTabGroup(
     Profile* profile,
     const base::Uuid& saved_id) {
-  tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(profile);
+  TabGroupSyncService* tab_group_service =
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile);
 
   const std::optional<SavedTabGroup> saved_group =
       tab_group_service->GetGroup(saved_id);
@@ -568,21 +561,20 @@ void SavedTabGroupUtils::FocusFirstTabOrWindowInOpenGroup(
       browser_for_activation->tab_strip_model()->group_model()->GetTabGroup(
           local_group_id);
 
-  std::optional<int> first_tab = tab_group->GetFirstTab();
-  std::optional<int> last_tab = tab_group->GetLastTab();
+  gfx::Range tab_group_index_range = tab_group->ListTabs();
+  CHECK(!tab_group_index_range.is_empty());
+
   int active_index = browser_for_activation->tab_strip_model()->active_index();
-  CHECK(first_tab.has_value());
-  CHECK(last_tab.has_value());
   CHECK_GE(active_index, 0);
 
-  if (active_index >= first_tab.value() && active_index <= last_tab) {
+  if (active_index >= static_cast<int>(tab_group_index_range.GetMin()) &&
+      active_index < static_cast<int>(tab_group_index_range.GetMax())) {
     browser_for_activation->window()->Activate();
     return;
   }
 
   browser_for_activation->ActivateContents(
-      browser_for_activation->tab_strip_model()->GetWebContentsAt(
-          first_tab.value()));
+      tab_group->GetFirstTab()->GetContents());
 
   base::RecordAction(
       base::UserMetricsAction("TabGroups_SavedTabGroups_Focused"));
@@ -615,6 +607,17 @@ ui::TrackedElement* SavedTabGroupUtils::GetAnchorElementForTabGroupsV2IPH(
 }
 
 // static
+user_education::HelpBubbleArrow SavedTabGroupUtils::GetArrowForTabGroupsV2IPH(
+    const ui::TrackedElement* el) {
+  // Because the overflow button is often on the left side of the browser
+  // window, switch the arrow to the top left to avoid bubble placement that
+  // would otherwise leave the browser's bounds.
+  return el->identifier() == kSavedTabGroupOverflowButtonElementId
+             ? user_education::HelpBubbleArrow::kTopLeft
+             : user_education::HelpBubbleArrow::kTopRight;
+}
+
+// static
 bool SavedTabGroupUtils::ShouldAutoPinNewTabGroups(Profile* profile) {
   return profile->GetPrefs()->GetBoolean(
       tab_groups::prefs::kAutoPinNewTabGroups);
@@ -625,12 +628,9 @@ bool SavedTabGroupUtils::AreSavedTabGroupsSyncedForProfile(Profile* profile) {
   const syncer::SyncService* const sync_service =
       SyncServiceFactory::GetForProfile(profile);
 
-  if (!sync_service || !sync_service->IsSyncFeatureEnabled()) {
-    return false;
-  }
-
-  return sync_service->GetUserSettings()->GetSelectedTypes().Has(
-      syncer::UserSelectableType::kSavedTabGroups);
+  return sync_service &&
+         sync_service->GetUserSettings()->GetSelectedTypes().Has(
+             syncer::UserSelectableType::kSavedTabGroups);
 }
 
 // static
@@ -654,7 +654,7 @@ bool SavedTabGroupUtils::IsOwnerOfSharedTabGroup(Profile* profile,
   }
 
   TabGroupSyncService* tab_group_service =
-      SavedTabGroupUtils::GetServiceForProfile(profile);
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile);
   if (!tab_group_service) {
     return true;
   }
@@ -711,7 +711,7 @@ std::optional<data_sharing::GroupId> SavedTabGroupUtils::GetDataSharingGroupId(
     Profile* profile,
     LocalTabGroupID group_id) {
   auto* tab_group_sync_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(profile);
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile);
   CHECK(tab_group_sync_service);
 
   std::optional<SavedTabGroup> saved_tab_group =

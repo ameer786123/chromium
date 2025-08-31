@@ -5,14 +5,16 @@
 package org.chromium.chrome.browser.facilitated_payments;
 
 import android.content.Context;
+import android.content.pm.ResolveInfo;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsComponent.Delegate;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.autofill.payments.BankAccount;
@@ -29,6 +31,7 @@ import java.util.List;
  * sheet.
  */
 @JNINamespace("payments::facilitated")
+@NullMarked
 public class FacilitatedPaymentsPaymentMethodsViewBridge {
     private final FacilitatedPaymentsPaymentMethodsComponent mComponent;
 
@@ -93,13 +96,19 @@ public class FacilitatedPaymentsPaymentMethodsViewBridge {
     }
 
     /**
-     * Requests to show an eWallet FOP selector in a bottom sheet.
+     * Requests to show a payment link FOP selector in a bottom sheet.
      *
      * @param ewallets User's eWallet accounts which passed from facilitated payments client.
+     * @param apps User's installed apps which passed from facilitated payments client.
      */
     @CalledByNative
-    public void requestShowContentForEwallet(@JniType("std::vector") Object[] eWallets) {
-        mComponent.showSheetForEwallet((List<Ewallet>) (List<?>) Arrays.asList(eWallets));
+    public void requestShowContentForPaymentLink(
+            @JniType("std::vector") Object[] eWallets, Object[] apps) {
+        List<Ewallet> eWalletList =
+                (eWallets == null) ? List.of() : (List<Ewallet>) (List<?>) Arrays.asList(eWallets);
+        List<ResolveInfo> appList =
+                (apps == null) ? List.of() : (List<ResolveInfo>) (List<?>) Arrays.asList(apps);
+        mComponent.showSheetForPaymentLink(eWalletList, appList);
     }
 
     /**
@@ -128,5 +137,11 @@ public class FacilitatedPaymentsPaymentMethodsViewBridge {
     @CalledByNative
     public void dismiss() {
         mComponent.dismiss();
+    }
+
+    /** Requests to show the Pix account linking prompt in a bottom sheet. */
+    @CalledByNative
+    public void showPixAccountLinkingPrompt() {
+        mComponent.showPixAccountLinkingPrompt();
     }
 }

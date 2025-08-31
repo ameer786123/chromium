@@ -38,6 +38,7 @@
 #include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/trace_event/trace_event.h"
 #include "chromeos/constants/chromeos_features.h"
@@ -235,7 +236,7 @@ DeskMiniView::DeskMiniView(
     const ui::ColorId background_color_id =
         chromeos::features::IsSystemBlurEnabled()
             ? static_cast<ui::ColorId>(kColorAshShieldAndBase80)
-            : cros_tokens::kCrosSysSystemBaseElevatedOpaque;
+            : cros_tokens::kCrosSysSystemOnBaseOpaque;
     desk_shortcut_view_->SetBackground(
         views::CreateSolidBackground(background_color_id));
 
@@ -299,12 +300,6 @@ void DeskMiniView::UpdateDeskButtonVisibility() {
   CHECK(desk_);
 
   auto get_visible = [this]() -> bool {
-    // If revamp is enabled, then we still want to show the save desk options,
-    // even if we can't remove the desk.
-    if (!features::IsForestFeatureEnabled() &&
-        !DesksController::Get()->CanRemoveDesks()) {
-      return false;
-    }
     if (owner_bar_->dragged_item_over_bar()) {
       return false;
     }
@@ -342,16 +337,8 @@ void DeskMiniView::UpdateDeskButtonVisibility() {
 
   const bool visible = get_visible();
 
-  // Only show the combine desks button if there are app windows in the desk,
-  // or if the desk is active and there are windows that should be visible on
-  // all desks.
-  if (features::IsForestFeatureEnabled()) {
-    auto* context_menu_button = desk_action_view_->context_menu_button();
-    context_menu_button->SetVisible(context_menu_button->CanShow());
-  } else {
-    auto* combine_desks_button = desk_action_view_->combine_desks_button();
-    combine_desks_button->SetVisible(combine_desks_button->CanShow());
-  }
+  auto* context_menu_button = desk_action_view_->context_menu_button();
+  context_menu_button->SetVisible(context_menu_button->CanShow());
   auto* close_all_button = desk_action_view_->close_all_button();
   close_all_button->SetVisible(close_all_button->CanShow());
   desk_action_view_->SetVisible(visible);
@@ -375,7 +362,7 @@ void DeskMiniView::OnWidgetGestureTap(const gfx::Rect& screen_rect,
   // the desk.
   const bool old_force_show_desk_buttons = force_show_desk_buttons_;
   force_show_desk_buttons_ =
-      !display::Screen::GetScreen()->InTabletMode() &&
+      !display::Screen::Get()->InTabletMode() &&
       ((is_long_gesture && IsPointOnMiniView(screen_rect.CenterPoint())) ||
        (!is_long_gesture && desk_action_view_->GetVisible() &&
         desk_action_view_->HitTestRect(
@@ -510,11 +497,7 @@ void DeskMiniView::OpenContextMenu(ui::mojom::MenuSourceType source) {
 
   // Holdback metrics for the Saved Desk UI revamp.
   if (ShouldRecordSavedDesksOptionsHistogram(desk_, owner_bar_.get())) {
-    if (features::IsForestFeatureEnabled()) {
-      base::UmaHistogramBoolean(kSavedDeskMenuOptionsShownHistogramName, true);
-    } else {
-      base::UmaHistogramBoolean(kSavedDeskButtonsShownHistogramName, true);
-    }
+    base::UmaHistogramBoolean(kSavedDeskMenuOptionsShownHistogramName, true);
   }
 
   desk_preview_->SetHighlightOverlayVisibility(true);
@@ -830,12 +813,6 @@ void DeskMiniView::OnContextMenuClosed() {
   if (desk_) {
     UpdateDeskButtonVisibility();
     desk_preview_->SetHighlightOverlayVisibility(false);
-  }
-}
-
-void DeskMiniView::OnSetLacrosProfileId(uint64_t lacros_profile_id) {
-  if (desk_) {
-    desk_->SetLacrosProfileId(lacros_profile_id);
   }
 }
 

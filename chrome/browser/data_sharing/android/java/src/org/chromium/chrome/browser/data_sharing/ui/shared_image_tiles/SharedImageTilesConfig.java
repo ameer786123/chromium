@@ -9,6 +9,7 @@ import android.content.res.Resources;
 import android.util.Pair;
 
 import androidx.annotation.ColorInt;
+import androidx.annotation.ColorRes;
 import androidx.annotation.DimenRes;
 import androidx.annotation.Px;
 import androidx.annotation.StyleRes;
@@ -16,6 +17,8 @@ import androidx.core.content.ContextCompat;
 
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
+import org.chromium.components.tab_groups.TabGroupColorId;
+import org.chromium.components.tab_groups.TabGroupColorPickerUtils;
 
 /**
  * Config class for the SharedImageTiles UI. By default this component is dynamically colored with a
@@ -95,30 +98,38 @@ public class SharedImageTilesConfig {
             this.mIconSizeDp = R.dimen.shared_image_tiles_icon_height;
             this.mBorderSizeDp = R.dimen.shared_image_tiles_icon_border;
             this.mTextPaddingDp = R.dimen.shared_image_tiles_text_padding;
-            this.mTextColor = SemanticColorUtils.getDefaultTextColorAccent1(context);
+            this.mTextColor = SemanticColorUtils.getDefaultIconColorOnAccent1Container(context);
             this.mBorderColor = SemanticColorUtils.getDefaultBgColor(context);
             this.mBackgroundColor = SemanticColorUtils.getColorPrimaryContainer(context);
-            this.mTextStyle = R.style.TextAppearance_TextAccentMediumThick_Primary;
+            this.mTextStyle = R.style.TextAppearance_TextAccentMediumThick;
         }
 
         /**
-         * Creates a builder with preset values for a tab group thumbnail.
+         * Creates a builder with preset values for a button.
          *
          * @param context The Android context.
-         * @param tabGroupColor The color of the tab group.
-         * @return A builder instance configured for a tab group thumbnail.
+         * @return A builder instance configured for a button.
          */
-        public static Builder createThumbnail(Context context, @ColorInt int tabGroupColor) {
+        public static Builder createForButton(Context context) {
+            return new Builder(context)
+                    .setTextStyle(R.style.TextAppearance_TextAccentMediumThick_Primary);
+        }
+
+        /**
+         * Creates a builder with preset values for being drawn on a tab group color.
+         *
+         * @param context The Android context.
+         * @param tabGroupColorId The color id of the tab group.
+         * @return A builder instance configured for a tab group favicon.
+         */
+        public static Builder createForTabGroupColorContext(
+                Context context, @TabGroupColorId int tabGroupColorId) {
             return new Builder(context)
                     .setIconSizeDp(R.dimen.small_shared_image_tiles_icon_height)
                     .setBorderSizeDp(R.dimen.shared_image_tiles_icon_border)
                     .setTextPaddingDp(R.dimen.small_shared_image_tiles_text_padding)
-                    .setTextColor(
-                            ContextCompat.getColor(
-                                    context, R.color.small_shared_image_tiles_text_color))
-                    .setBorderColor(tabGroupColor)
-                    .setBackgroundColor(tabGroupColor)
-                    .setTextStyle(R.style.TextAppearance_SharedImageTilesSmall);
+                    .setTextStyle(R.style.TextAppearance_SharedImageTilesSmall)
+                    .setTabGroupColor(context, tabGroupColorId);
         }
 
         /**
@@ -201,12 +212,23 @@ public class SharedImageTilesConfig {
         /**
          * Sets the a new tab group color and updates all relevant colors to match.
          *
-         * @param tabGroupColor The color associated with the tab group.
+         * @param context The Android context.
+         * @param tabGroupColorId The color associated with the tab group.
          * @return This builder instance for chaining.
          */
-        public Builder setTabGroupColor(@ColorInt int tabGroupColor) {
+        public Builder setTabGroupColor(Context context, @TabGroupColorId int tabGroupColorId) {
+            @ColorInt
+            int tabGroupColor =
+                    TabGroupColorPickerUtils.getTabGroupColorPickerItemColor(
+                            context, tabGroupColorId, false);
             setBorderColor(tabGroupColor);
             setBackgroundColor(tabGroupColor);
+            @ColorRes
+            int textColorRes =
+                    TabGroupColorPickerUtils.shouldUseDarkTextColorOnTabGroupColor(tabGroupColorId)
+                            ? R.color.small_shared_image_tiles_text_color_dark
+                            : R.color.small_shared_image_tiles_text_color_light;
+            setTextColor(ContextCompat.getColor(context, textColorRes));
             return this;
         }
 

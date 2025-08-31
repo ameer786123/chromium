@@ -9,6 +9,8 @@ import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.contrib.RecyclerViewActions.actionOnItemAtPosition;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 
+import static org.chromium.base.test.transit.Triggers.noopTo;
+
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Context;
@@ -31,14 +33,18 @@ import org.hamcrest.Matcher;
 import org.hamcrest.Matchers;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.transit.ConditionStatus;
+import org.chromium.base.test.transit.UiThreadCondition;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.KeyUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.omnibox.LocationBarLayout;
 import org.chromium.chrome.browser.omnibox.UrlBar;
 import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteController.OnSuggestionsReceivedListener;
 import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteCoordinator;
 import org.chromium.chrome.browser.omnibox.suggestions.DropdownItemViewInfo;
+import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsContainer;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsDropdown;
 import org.chromium.chrome.browser.omnibox.suggestions.base.ActionChipsProperties;
 import org.chromium.chrome.browser.searchwidget.SearchActivity;
@@ -46,7 +52,6 @@ import org.chromium.chrome.browser.toolbar.top.ToolbarLayout;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteResult;
 import org.chromium.components.omnibox.suggestions.OmniboxSuggestionUiType;
-import org.chromium.content_public.browser.test.util.KeyUtils;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 
@@ -180,21 +185,7 @@ public class OmniboxTestUtils {
      * @param active Whether the Omnibox is expected to have focus or not.
      */
     public void checkFocus(boolean active) {
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    Criteria.checkThat(
-                            "unexpected Omnibox focus state",
-                            mUrlBar.hasFocus(),
-                            Matchers.is(active));
-                    InputMethodManager imm =
-                            (InputMethodManager)
-                                    mUrlBar.getContext()
-                                            .getSystemService(Context.INPUT_METHOD_SERVICE);
-                    Criteria.checkThat(
-                            "Keyboard did not reach expected state",
-                            imm.isActive(mUrlBar),
-                            Matchers.is(active));
-                });
+        noopTo().waitFor(new UrlBarHasFocusCondition(mUrlBar, active));
     }
 
     /**
@@ -257,41 +248,7 @@ public class OmniboxTestUtils {
 
     /** Waits for a non-empty list of omnibox suggestions to be shown. */
     public void checkSuggestionsShown() {
-        checkSuggestionsShown(true);
-    }
-
-    /** Waits for a non-empty list of omnibox suggestions to be {@link shown}. */
-    public void checkSuggestionsShown(boolean shown) {
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    OmniboxSuggestionsDropdown suggestionsDropdown =
-                            mLocationBar
-                                    .getAutocompleteCoordinator()
-                                    .getSuggestionsDropdownForTest();
-                    Criteria.checkThat(
-                            "suggestion list is null",
-                            suggestionsDropdown,
-                            Matchers.notNullValue());
-                    if (shown) {
-                        Criteria.checkThat(
-                                "suggestion list is not shown",
-                                suggestionsDropdown.getViewGroup().isShown(),
-                                Matchers.is(true));
-                        Criteria.checkThat(
-                                "suggestion list has no entries",
-                                suggestionsDropdown.getDropdownItemViewCountForTest(),
-                                Matchers.greaterThan(0));
-                    } else {
-                        Criteria.checkThat(
-                                "suggestion list is shown",
-                                suggestionsDropdown.getViewGroup().isShown(),
-                                Matchers.is(false));
-                        Criteria.checkThat(
-                                "suggestion list has entries",
-                                suggestionsDropdown.getDropdownItemViewCountForTest(),
-                                Matchers.equalTo(0));
-                    }
-                });
+        noopTo().waitFor(new SuggestionsShownCondition(mLocationBar));
     }
 
     /**
@@ -357,21 +314,18 @@ public class OmniboxTestUtils {
 
         CriteriaHelper.pollUiThread(
                 () -> {
+                    OmniboxSuggestionsContainer container =
+                            mAutocomplete.getSuggestionsContainerForTest();
                     OmniboxSuggestionsDropdown dropdown =
-                            mLocationBar
-                                    .getAutocompleteCoordinator()
-                                    .getSuggestionsDropdownForTest();
+                            container.findViewById(R.id.omnibox_suggestions_dropdown);
 
-                    ModelList currentModels =
-                            mLocationBar
-                                    .getAutocompleteCoordinator()
-                                    .getSuggestionModelListForTest();
+                    ModelList currentModels = mAutocomplete.getSuggestionModelListForTest();
                     for (int i = 0; i < currentModels.size(); i++) {
                         DropdownItemViewInfo info = (DropdownItemViewInfo) currentModels.get(i);
                         T view = (T) dropdown.getDropdownItemViewForTest(i);
                         if (filter.apply(info) && view != null) {
                             result.set(
-                                    new SuggestionInfo<T>(
+                                    new SuggestionInfo<>(
                                             i,
                                             info.type,
                                             mAutocomplete.getSuggestionAt(i),
@@ -697,5 +651,102 @@ public class OmniboxTestUtils {
                                 suggestionIndex,
                                 OmniboxTestUtils.actionOnOmniboxActionAtPosition(
                                         actionIndex, click())));
+    }
+
+    /** Checks that the suggestions dropdown is shown. */
+    public static class SuggestionsShownCondition extends UiThreadCondition {
+        private final LocationBarLayout mLocationBar;
+
+        public SuggestionsShownCondition(LocationBarLayout locationBar) {
+            mLocationBar = locationBar;
+        }
+
+        @Override
+        protected ConditionStatus checkWithSuppliers() {
+            OmniboxSuggestionsContainer container =
+                    mLocationBar.getAutocompleteCoordinator().getSuggestionsContainerForTest();
+            OmniboxSuggestionsDropdown dropdown =
+                    mLocationBar.getAutocompleteCoordinator().getSuggestionsDropdownForTest();
+            if (container == null || dropdown == null) {
+                return notFulfilled("suggestion list is null");
+            }
+            if (!container.isShown() || !dropdown.isShown()) {
+                return notFulfilled("suggestion list is not shown");
+            }
+            int count = dropdown.getDropdownItemViewCountForTest();
+            return whether(count > 0, "suggestion list has %d entries", count);
+        }
+
+        @Override
+        public String buildDescription() {
+            return "Suggestions shown";
+        }
+    }
+
+    /** Checks that the suggestions dropdown is hidden. */
+    public static class SuggestionsNotShownCondition extends UiThreadCondition {
+        private final LocationBarLayout mLocationBar;
+
+        public SuggestionsNotShownCondition(LocationBarLayout locationBar) {
+            mLocationBar = locationBar;
+        }
+
+        @Override
+        protected ConditionStatus checkWithSuppliers() {
+            OmniboxSuggestionsContainer container =
+                    mLocationBar.getAutocompleteCoordinator().getSuggestionsContainerForTest();
+            OmniboxSuggestionsDropdown dropdown =
+                    mLocationBar.getAutocompleteCoordinator().getSuggestionsDropdownForTest();
+            // Suggestions list can't be showing if it's not constructed.
+            if (container == null || dropdown == null) {
+                return fulfilled();
+            }
+            if (container.isShown() && dropdown.isShown()) {
+                return notFulfilled("suggestion list is shown");
+            }
+            int entries = dropdown.getDropdownItemViewCountForTest();
+            if (dropdown.getDropdownItemViewCountForTest() > 0) {
+                return notFulfilled("suggestion list has %d entries", entries);
+            }
+            return fulfilled();
+        }
+
+        @Override
+        public String buildDescription() {
+            return "Suggestions not shown";
+        }
+    }
+
+    public static class UrlBarHasFocusCondition extends UiThreadCondition {
+        private final UrlBar mUrlBar;
+        private final boolean mActive;
+
+        public UrlBarHasFocusCondition(UrlBar urlBar) {
+            this(urlBar, /* active= */ true);
+        }
+
+        public UrlBarHasFocusCondition(UrlBar urlBar, boolean active) {
+            mUrlBar = urlBar;
+            mActive = active;
+        }
+
+        @Override
+        protected ConditionStatus checkWithSuppliers() {
+            if (mUrlBar.hasFocus() != mActive) {
+                return notFulfilled("urlBar.getFocus() is %b", !mActive);
+            }
+            InputMethodManager imm =
+                    (InputMethodManager)
+                            mUrlBar.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm.isActive(mUrlBar) != mActive) {
+                return notFulfilled("InputMethodManager.isActive() is %b", !mActive);
+            }
+            return fulfilled();
+        }
+
+        @Override
+        public String buildDescription() {
+            return mActive ? "UrlBar has focus" : "UrlBar does not have focus";
+        }
     }
 }

@@ -78,6 +78,7 @@ public class HistoricalTabModelObserverUnitTest {
         when(mTabGroupModelFilter.getTabModel()).thenReturn(mTabModel);
         when(mTabModel.getComprehensiveModel()).thenReturn(mTabModel);
         when(mTabModel.getProfile()).thenReturn(mProfile);
+        when(mTabModel.iterator()).thenAnswer(inv -> Collections.emptyList().iterator());
 
         mObserver = new HistoricalTabModelObserver(mTabGroupModelFilter, mHistoricalTabSaver);
         verify(mTabGroupModelFilter).addObserver(mObserver);
@@ -338,7 +339,7 @@ public class HistoricalTabModelObserverUnitTest {
         Token tabGroupId = new Token(3L, 4L);
         createGroup(tabGroupId, title, color, new MockTab[] {mockTab0});
         when(mTabGroupModelFilter.getLazyAllTabGroupIds(any(), anyBoolean()))
-                .thenReturn(LazyOneshotSupplier.fromValue(new HashSet<Token>()));
+                .thenReturn(LazyOneshotSupplier.fromValue(new HashSet<>()));
 
         mSavedTabGroup.collaborationId = COLLABORATION_ID;
 
@@ -538,7 +539,6 @@ public class HistoricalTabModelObserverUnitTest {
 
     private MockTab createMockTab(int id) {
         MockTab mockTab = new MockTab(id, mProfile);
-        mockTab.setRootId(id);
         return mockTab;
     }
 
@@ -557,14 +557,13 @@ public class HistoricalTabModelObserverUnitTest {
             MockTab[] tabList) {
         assert tabList.length != 0;
 
-        final int rootId = tabList[0].getId();
-        when(mTabGroupModelFilter.getTabGroupTitle(rootId)).thenReturn(title);
-        when(mTabGroupModelFilter.getTabGroupColorWithFallback(rootId)).thenReturn(color);
+        when(mTabGroupModelFilter.getTabsInGroup(tabGroupId)).thenReturn(Arrays.asList(tabList));
         when(mTabGroupModelFilter.getTabCountForGroup(tabGroupId)).thenReturn(tabList.length);
         when(mTabGroupModelFilter.tabGroupExists(tabGroupId)).thenReturn(true);
         for (MockTab tab : tabList) {
-            tab.setRootId(rootId);
             tab.setTabGroupId(tabGroupId);
+            when(mTabGroupModelFilter.getTabGroupTitle(tab)).thenReturn(title);
+            when(mTabGroupModelFilter.getTabGroupColorWithFallback(tab)).thenReturn(color);
             when(mTabGroupModelFilter.isTabInTabGroup(tab)).thenReturn(true);
         }
     }

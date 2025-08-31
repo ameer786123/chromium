@@ -15,8 +15,8 @@ class WebContents;
 
 namespace autofill {
 
-class CreditCard;
 class Iban;
+class LoyaltyCard;
 struct Suggestion;
 class TouchToFillPaymentMethodViewController;
 
@@ -36,12 +36,15 @@ class TouchToFillPaymentMethodViewImpl : public TouchToFillPaymentMethodView {
   bool IsReadyToShow(TouchToFillPaymentMethodViewController* controller,
                      JNIEnv* env);
   // TouchToFillPaymentMethodView:
-  bool Show(TouchToFillPaymentMethodViewController* controller,
-            base::span<const autofill::CreditCard> cards_to_suggest,
-            base::span<const Suggestion> suggestions,
-            bool should_show_scan_credit_card) override;
-  bool Show(TouchToFillPaymentMethodViewController* controller,
-            base::span<const autofill::Iban> ibans_to_suggest) override;
+  bool ShowPaymentMethods(TouchToFillPaymentMethodViewController* controller,
+                          base::span<const Suggestion> suggestions,
+                          bool should_show_scan_credit_card) override;
+  bool ShowIbans(TouchToFillPaymentMethodViewController* controller,
+                 base::span<const autofill::Iban> ibans_to_suggest) override;
+  bool ShowLoyaltyCards(TouchToFillPaymentMethodViewController* controller,
+                        base::span<const LoyaltyCard> affiliated_loyalty_cards,
+                        base::span<const LoyaltyCard> all_loyalty_cards,
+                        bool first_time_usage) override;
   void Hide() override;
 
   // The corresponding Java TouchToFillPaymentMethodViewBridge.

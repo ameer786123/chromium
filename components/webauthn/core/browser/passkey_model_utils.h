@@ -50,9 +50,6 @@ struct ExtensionInputData {
   // Returns whether the extension data contains the PRF extension.
   bool hasPRF() const;
 
-  // Generates a CBOR output from the extension input data.
-  std::optional<cbor::Value> ToCBOR() const;
-
   // Generates the extensions output data from the input data and encrypted
   // secrets. See:
   // https://w3c.github.io/webauthn/#sctn-defined-client-extensions
@@ -115,22 +112,25 @@ bool EncryptWebauthnCredentialSpecificsData(
     sync_pb::WebauthnCredentialSpecifics* out);
 
 // Returns the WebAuthn authenticator data for the GPM authenticator.
+// Set `did_complete_uv` iff the user has completed user verification (e.g.,
+// biometrics or PIN) during this operation.
 // For assertion signatures, the AT flag MUST NOT be set and the
 // attestedCredentialData MUST NOT be included. See
 // https://w3c.github.io/webauthn/#authenticator-data
-std::vector<uint8_t> MakeAuthenticatorDataForAssertion(
-    std::string_view rp_id,
-    const ExtensionInputData& extension_input_data);
+std::vector<uint8_t> MakeAuthenticatorDataForAssertion(std::string_view rp_id,
+                                                       bool did_complete_uv);
 
 // Returns the WebAuthn attestation object for the GPM authenticator.
+// Set `did_complete_uv` iff the user has completed user verification (e.g.,
+// biometrics or PIN) during this operation.
 // For attestation signatures, the authenticator MUST set the AT flag and
 // include the attestedCredentialData. See
 // https://w3c.github.io/webauthn/#authenticator-data
 std::vector<uint8_t> MakeAttestationObjectForCreation(
     std::string_view rp_id,
+    bool did_complete_uv,
     base::span<const uint8_t> credential_id,
-    base::span<const uint8_t> public_key_spki_der,
-    const ExtensionInputData& extension_input_data);
+    base::span<const uint8_t> public_key_spki_der);
 
 // Performs the signing operation over the signed over data using the private
 // key. The signed over data is the concatenation to the authenticator data and

@@ -7,11 +7,13 @@
 #include <memory>
 
 #include "ash/constants/ash_features.h"
+#include "ash/public/cpp/multi_user_window_manager.h"
 #include "base/containers/fixed_flat_set.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/ash/scalable_iph/customizable_test_env_browser_test_base.h"
 #include "chrome/browser/ash/scalable_iph/mock_scalable_iph_delegate.h"
 #include "chrome/browser/ash/scalable_iph/scalable_iph_delegate_impl.h"
@@ -177,15 +179,6 @@ void ScalableIphBrowserTestBase::SetUpOnMainThread() {
   if (test_environment().user_session_type() ==
       CustomizableTestEnvBrowserTestBase::UserSessionType::kRegularWithOobe) {
     return;
-  }
-
-  if (enable_multi_user_) {
-    // By default, `MultiUserWindowManager` is created with multi profile off.
-    // Re-create for multi profile tests. This has to be done after
-    // `SetUpOnMainThread` of a base class as the original multi-profile-off
-    // `MultiUserWindowManager` is created there.
-    MultiUserWindowManagerHelper::CreateInstanceForTest(
-        GetPrimaryUserContext().GetAccountId());
   }
 
   // If we don't intend to enforce ScalableIph setup (i.e. the user profile

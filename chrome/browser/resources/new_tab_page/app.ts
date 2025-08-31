@@ -4,18 +4,23 @@
 
 import './iframe.js';
 import './logo.js';
-import './footer.js';
 import '/strings.m.js';
+import 'chrome://new-tab-page/shared/customize_buttons/customize_buttons.js';
 import 'chrome://resources/cr_components/searchbox/searchbox.js';
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/cr_components/composebox/composebox.js';
 
+import type {CustomizeButtonsElement} from 'chrome://new-tab-page/shared/customize_buttons/customize_buttons.js';
 import {ColorChangeUpdater} from 'chrome://resources/cr_components/color_change_listener/colors_css_updater.js';
+import type {ComposeboxElement} from 'chrome://resources/cr_components/composebox/composebox.js';
 import {HelpBubbleMixinLit} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin_lit.js';
+import type {SearchboxElement} from 'chrome://resources/cr_components/searchbox/searchbox.js';
 import type {CrToastElement} from 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import type {ClickInfo} from 'chrome://resources/js/browser_command.mojom-webui.js';
 import {Command} from 'chrome://resources/js/browser_command.mojom-webui.js';
 import {BrowserCommandProxy} from 'chrome://resources/js/browser_command/browser_command_proxy.js';
-import {hexColorToSkColor} from 'chrome://resources/js/color_utils.js';
+import {hexColorToSkColor, skColorToRgba} from 'chrome://resources/js/color_utils.js';
 import {EventTracker} from 'chrome://resources/js/event_tracker.js';
 import {FocusOutlineManager} from 'chrome://resources/js/focus_outline_manager.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
@@ -27,18 +32,25 @@ import type {SkColor} from 'chrome://resources/mojo/skia/public/mojom/skcolor.mo
 import {getCss} from './app.css.js';
 import {getHtml} from './app.html.js';
 import {BackgroundManager} from './background_manager.js';
+import type {CustomizeButtonsDocumentCallbackRouter, CustomizeButtonsHandlerRemote} from './customize_buttons.mojom-webui.js';
+import {CustomizeChromeSection, SidePanelOpenTrigger} from './customize_buttons.mojom-webui.js';
+import {CustomizeButtonsProxy} from './customize_buttons_proxy.js';
 import {CustomizeDialogPage} from './customize_dialog_types.js';
 import type {IframeElement} from './iframe.js';
 import type {LogoElement} from './logo.js';
-import {recordDuration, recordLoadDuration} from './metrics_utils.js';
+import {recordBoolean, recordDuration, recordEnumeration, recordLoadDuration, recordSparseValueWithPersistentHash, recordValue} from './metrics_utils.js';
 import {ParentTrustedDocumentProxy} from './modules/microsoft_auth_frame_connector.js';
 import type {PageCallbackRouter, PageHandlerRemote, Theme} from './new_tab_page.mojom-webui.js';
-import {CustomizeChromeSection, IphFeature, NtpBackgroundImageSource} from './new_tab_page.mojom-webui.js';
+import {IphFeature, NtpBackgroundImageSource} from './new_tab_page.mojom-webui.js';
 import {NewTabPageProxy} from './new_tab_page_proxy.js';
 import type {MicrosoftAuthUntrustedDocumentRemote} from './ntp_microsoft_auth_shared_ui.mojom-webui.js';
-import {$$, rgbaOrInherit} from './utils.js';
+import {ShowNtpPromosResult} from './ntp_promo.mojom-webui.js';
+import {$$} from './utils.js';
 import {Action as VoiceAction, recordVoiceAction} from './voice_search_overlay.js';
 import {WindowProxy} from './window_proxy.js';
+
+const MODULE_LOAD_IN_PROGRESS = -2;
+const MODULE_LOAD_NOT_ATTEMPTED = -1;
 
 interface ExecutePromoBrowserCommandData {
   commandId: Command;
@@ -108,12 +120,11 @@ const realboxCanShowSecondarySideMediaQueryList =
     window.matchMedia('(min-width: 900px)');
 
 function recordClick(element: NtpElement) {
-  chrome.metricsPrivate.recordEnumerationValue(
-      'NewTabPage.Click', element, NtpElement.MAX_VALUE + 1);
+  recordEnumeration('NewTabPage.Click', element, NtpElement.MAX_VALUE + 1);
 }
 
 function recordCustomizeChromeOpen(element: NtpCustomizeChromeEntryPoint) {
-  chrome.metricsPrivate.recordEnumerationValue(
+  recordEnumeration(
       'NewTabPage.CustomizeChromeOpened', element,
       NtpCustomizeChromeEntryPoint.MAX_VALUE + 1);
 }
@@ -126,12 +137,21 @@ function ensureLazyLoaded() {
   document.body.appendChild(script);
 }
 
+function recordShowBrowserPromosResult(result: ShowNtpPromosResult) {
+  recordEnumeration(
+      'UserEducation.NtpPromos.ShowResult', result,
+      ShowNtpPromosResult.MAX_VALUE + 1);
+}
+
 const AppElementBase = HelpBubbleMixinLit(CrLitElement);
 
 export interface AppElement {
   $: {
+    customizeButtons: CustomizeButtonsElement,
     oneGoogleBarClipPath: HTMLElement,
     logo: LogoElement,
+    searchbox: SearchboxElement,
+    composebox: ComposeboxElement,
   };
 }
 
@@ -157,10 +177,9 @@ export class AppElement extends AppElementBase {
       showCustomize_: {type: Boolean},
       showCustomizeChromeText_: {type: Boolean},
 
-      showWallpaperSearch_: {
-        type: Boolean,
-        reflect: true,
-      },
+      showWallpaperSearch_: {type: Boolean},
+
+      isFooterVisible_: {type: Boolean},
 
       selectedCustomizeDialogPage_: {type: String},
       showVoiceSearchOverlay_: {type: Boolean},
@@ -170,7 +189,9 @@ export class AppElement extends AppElementBase {
         type: Boolean,
       },
 
-      backgroundColor_: {type: Object},
+      backgroundImageAttribution1_: {type: String},
+      backgroundImageAttribution2_: {type: String},
+      backgroundImageAttributionUrl_: {type: String},
 
       // Used in cr-searchbox component via host-context.
       colorSourceIsBaseline: {type: Boolean},
@@ -196,6 +217,14 @@ export class AppElement extends AppElementBase {
         notify: true,
       },
 
+      composeboxCloseByClickOutside_: {type: Boolean},
+      composeboxEnabled: {type: Boolean},
+      composeButtonEnabled: {type: Boolean},
+
+      browserPromoType_: {type: String},
+      browserPromoLimit_: {type: Number},
+      browserPromoCompletedLimit_: {type: Number},
+
       realboxShown_: {type: Boolean},
       logoEnabled_: {type: Boolean},
       oneGoogleBarEnabled_: {type: Boolean},
@@ -203,7 +232,7 @@ export class AppElement extends AppElementBase {
       middleSlotPromoEnabled_: {type: Boolean},
       modulesEnabled_: {type: Boolean},
       middleSlotPromoLoaded_: {type: Boolean},
-      modulesLoaded_: {type: Boolean},
+      modulesLoaded_: {type: Number},
 
       modulesShownToUser: {
         type: Boolean,
@@ -220,6 +249,11 @@ export class AppElement extends AppElementBase {
        */
       promoAndModulesLoaded_: {type: Boolean},
 
+      showComposebox_: {
+        type: Boolean,
+        reflect: true,
+      },
+
       showLensUploadDialog_: {type: Boolean},
 
       /**
@@ -230,85 +264,108 @@ export class AppElement extends AppElementBase {
 
       scrolledToTop_: {type: Boolean},
 
-      wallpaperSearchButtonAnimationEnabled_: {
-        type: Boolean,
-        reflect: true,
-      },
+      wallpaperSearchButtonAnimationEnabled_: {type: Boolean},
 
-      wallpaperSearchButtonEnabled_: {
-        type: Boolean,
-      },
+      wallpaperSearchButtonEnabled_: {type: Boolean},
 
-      showWallpaperSearchButton_: {
-        type: Boolean,
-        reflect: true,
-      },
+      showWallpaperSearchButton_: {type: Boolean},
+
+      /**
+       * Whether the composebox has been opened at least once.
+       */
+      wasComposeboxOpened_: {type: Boolean},
     };
   }
 
   protected accessor oneGoogleBarIframeOrigin_: string = OGB_IFRAME_ORIGIN;
-  protected accessor oneGoogleBarIframePath_: string;
-  protected accessor oneGoogleBarLoaded_: boolean;
-  protected accessor theme_: Theme|undefined;
-  protected accessor showCustomize_: boolean;
-  protected accessor showCustomizeChromeText_: boolean;
+  protected accessor oneGoogleBarIframePath_: string|undefined;
+  protected accessor oneGoogleBarLoaded_: boolean = false;
+  protected accessor theme_: Theme|null = null;
+  protected accessor showCustomize_: boolean = false;
+  protected accessor showCustomizeChromeText_: boolean = false;
   protected accessor showWallpaperSearch_: boolean = false;
-  private accessor selectedCustomizeDialogPage_: string|null;
+  private accessor selectedCustomizeDialogPage_: string|null = null;
   protected accessor showVoiceSearchOverlay_: boolean = false;
-  protected accessor showBackgroundImage_: boolean;
-  protected accessor backgroundColor_: SkColor|null;
-  protected accessor colorSourceIsBaseline: boolean;
+  protected accessor showBackgroundImage_: boolean = false;
+  protected accessor backgroundImageAttribution1_: string = '';
+  protected accessor backgroundImageAttribution2_: string = '';
+  protected accessor backgroundImageAttributionUrl_: string = '';
+  protected accessor colorSourceIsBaseline: boolean = false;
   protected accessor logoColor_: SkColor|null = null;
-  protected accessor singleColoredLogo_: boolean;
-  accessor realboxCanShowSecondarySide: boolean;
-  accessor realboxHadSecondarySide: boolean;
-  protected accessor realboxShown_: boolean;
+  protected accessor singleColoredLogo_: boolean = false;
+  accessor realboxCanShowSecondarySide: boolean = false;
+  accessor realboxHadSecondarySide: boolean = false;
+  protected accessor realboxShown_: boolean = false;
+  protected accessor wasComposeboxOpened_: boolean = false;
   protected accessor showLensUploadDialog_: boolean = false;
+  protected accessor showComposebox_: boolean = false;
   protected accessor logoEnabled_: boolean =
       loadTimeData.getBoolean('logoEnabled');
   protected accessor oneGoogleBarEnabled_: boolean =
       loadTimeData.getBoolean('oneGoogleBarEnabled');
   protected accessor shortcutsEnabled_: boolean =
       loadTimeData.getBoolean('shortcutsEnabled');
-  private modulesFreShown: boolean;
   protected accessor middleSlotPromoEnabled_: boolean =
       loadTimeData.getBoolean('middleSlotPromoEnabled');
   protected accessor modulesEnabled_: boolean =
       loadTimeData.getBoolean('modulesEnabled');
+  protected accessor browserPromoType_: string =
+      loadTimeData.getString('browserPromoType');
+  protected accessor browserPromoLimit_: number =
+      loadTimeData.getInteger('browserPromoLimit');
+  protected accessor browserPromoCompletedLimit_: number =
+      loadTimeData.getInteger('browserPromoCompletedLimit');
   private accessor middleSlotPromoLoaded_: boolean = false;
-  private accessor modulesLoaded_: boolean = false;
-  protected accessor modulesShownToUser: boolean;
+  private accessor modulesLoaded_: number = MODULE_LOAD_IN_PROGRESS;
+  protected accessor modulesShownToUser: boolean = false;
   protected accessor microsoftModuleEnabled_: boolean =
       loadTimeData.getBoolean('microsoftModuleEnabled');
   protected accessor microsoftAuthIframePath_: string = MSAL_IFRAME_ORIGIN;
   protected accessor promoAndModulesLoaded_: boolean = false;
-  protected accessor lazyRender_: boolean;
+  protected accessor lazyRender_: boolean = false;
   protected accessor scrolledToTop_: boolean =
       document.documentElement.scrollTop <= 0;
-  private accessor wallpaperSearchButtonAnimationEnabled_: boolean =
+  protected accessor wallpaperSearchButtonAnimationEnabled_: boolean =
       loadTimeData.getBoolean('wallpaperSearchButtonAnimationEnabled');
   protected accessor wallpaperSearchButtonEnabled_: boolean =
       loadTimeData.getBoolean('wallpaperSearchButtonEnabled');
-  protected accessor showWallpaperSearchButton_: boolean;
+  protected accessor showWallpaperSearchButton_: boolean = false;
+  accessor composeButtonEnabled: boolean =
+      loadTimeData.getBoolean('searchboxShowComposeEntrypoint');
+  protected accessor composeboxCloseByClickOutside_: boolean =
+      loadTimeData.getBoolean('composeboxCloseByClickOutside');
+  accessor composeboxEnabled: boolean =
+      loadTimeData.getBoolean('searchboxShowComposebox');
+  protected accessor isFooterVisible_: boolean = false;
 
   private callbackRouter_: PageCallbackRouter;
   private pageHandler_: PageHandlerRemote;
+  private customizeButtonsCallbackRouter_:
+      CustomizeButtonsDocumentCallbackRouter;
+  private customizeButtonsHandler_: CustomizeButtonsHandlerRemote;
   private backgroundManager_: BackgroundManager;
   private connectMicrosoftAuthToParentDocumentListenerId_: number|null = null;
   private setThemeListenerId_: number|null = null;
   private setCustomizeChromeSidePanelVisibilityListener_: number|null = null;
   private setWallpaperSearchButtonVisibilityListener_: number|null = null;
+  private footerVisibilityUpdatedListener_: number|null = null;
   private eventTracker_: EventTracker = new EventTracker();
-  private shouldPrintPerformance_: boolean;
-  private backgroundImageLoadStartEpoch_: number;
+  private shouldPrintPerformance_: boolean = false;
+  private backgroundImageLoadStartEpoch_: number = 0;
   private backgroundImageLoadStart_: number = 0;
   private showWebstoreToastListenerId_: number|null = null;
+
+  // Protected for testing only.
+  protected browserPromoMetricsRecorded_: boolean = false;
 
   constructor() {
     performance.mark('app-creation-start');
     super();
     this.callbackRouter_ = NewTabPageProxy.getInstance().callbackRouter;
     this.pageHandler_ = NewTabPageProxy.getInstance().handler;
+    this.customizeButtonsCallbackRouter_ =
+        CustomizeButtonsProxy.getInstance().callbackRouter;
+    this.customizeButtonsHandler_ = CustomizeButtonsProxy.getInstance().handler;
     this.backgroundManager_ = BackgroundManager.getInstance();
     this.shouldPrintPerformance_ =
         new URLSearchParams(location.search).has('print_perf');
@@ -335,7 +392,7 @@ export class AppElement extends AppElementBase {
      */
     this.backgroundImageLoadStartEpoch_ = performance.timeOrigin;
 
-    chrome.metricsPrivate.recordValue(
+    recordValue(
         {
           metricName: 'NewTabPage.Height',
           type: chrome.metricsPrivate.MetricTypeType.HISTOGRAM_LINEAR,
@@ -344,7 +401,7 @@ export class AppElement extends AppElementBase {
           buckets: 200,
         },
         Math.floor(window.innerHeight));
-    chrome.metricsPrivate.recordValue(
+    recordValue(
         {
           metricName: 'NewTabPage.Width',
           type: chrome.metricsPrivate.MetricTypeType.HISTOGRAM_LINEAR,
@@ -379,13 +436,14 @@ export class AppElement extends AppElementBase {
           this.theme_ = theme;
         });
     this.setCustomizeChromeSidePanelVisibilityListener_ =
-        this.callbackRouter_.setCustomizeChromeSidePanelVisibility.addListener(
-            (visible: boolean) => {
-              this.showCustomize_ = visible;
-              if (!visible) {
-                this.showWallpaperSearch_ = false;
-              }
-            });
+        this.customizeButtonsCallbackRouter_
+            .setCustomizeChromeSidePanelVisibility.addListener(
+                (visible: boolean) => {
+                  this.showCustomize_ = visible;
+                  if (!visible) {
+                    this.showWallpaperSearch_ = false;
+                  }
+                });
     this.showWebstoreToastListenerId_ =
         this.callbackRouter_.showWebstoreToast.addListener(() => {
           if (this.showCustomize_) {
@@ -408,6 +466,13 @@ export class AppElement extends AppElementBase {
                 this.wallpaperSearchButtonEnabled_ = visible;
               }
             });
+
+    this.footerVisibilityUpdatedListener_ =
+        this.callbackRouter_.footerVisibilityUpdated.addListener(
+            (visible: boolean) => {
+              this.isFooterVisible_ = visible;
+            });
+    this.pageHandler_.updateFooterVisibility();
 
     // Open Customize Chrome if there are Customize Chrome URL params.
     if (this.showCustomize_) {
@@ -451,6 +516,10 @@ export class AppElement extends AppElementBase {
           });
     }
     FocusOutlineManager.forDocument(document);
+    if (this.composeButtonEnabled) {
+      recordBoolean('NewTabPage.ComposeEntrypoint.Shown', true);
+      this.pageHandler_.incrementComposeButtonShownCount();
+    }
   }
 
   override disconnectedCallback() {
@@ -460,11 +529,12 @@ export class AppElement extends AppElementBase {
     this.callbackRouter_.removeListener(
         this.connectMicrosoftAuthToParentDocumentListenerId_!);
     this.callbackRouter_.removeListener(this.setThemeListenerId_!);
-    this.callbackRouter_.removeListener(
-        this.setCustomizeChromeSidePanelVisibilityListener_!);
     this.callbackRouter_.removeListener(this.showWebstoreToastListenerId_!);
     this.callbackRouter_.removeListener(
         this.setWallpaperSearchButtonVisibilityListener_!);
+    this.customizeButtonsCallbackRouter_.removeListener(
+        this.setCustomizeChromeSidePanelVisibilityListener_!);
+    this.callbackRouter_.removeListener(this.footerVisibilityUpdatedListener_!);
     this.eventTracker_.removeAll();
   }
 
@@ -487,13 +557,21 @@ export class AppElement extends AppElementBase {
 
     if (changedPrivateProperties.has('theme_')) {
       this.showBackgroundImage_ = this.computeShowBackgroundImage_();
+      this.backgroundImageAttribution1_ =
+          this.computeBackgroundImageAttribution1_();
+      this.backgroundImageAttribution2_ =
+          this.computeBackgroundImageAttribution2_();
+      this.backgroundImageAttributionUrl_ =
+          this.computeBackgroundImageAttributionUrl_();
       this.colorSourceIsBaseline = this.computeColorSourceIsBaseline();
       this.logoColor_ = this.computeLogoColor_();
       this.singleColoredLogo_ = this.computeSingleColoredLogo_();
     }
 
-    // theme_, showBackgroundImage_
-    this.backgroundColor_ = this.computeBackgroundColor_();
+    if (changedPrivateProperties.has('showComposebox_')) {
+      this.logoColor_ = this.computeLogoColor_();
+      this.singleColoredLogo_ = this.computeSingleColoredLogo_();
+    }
 
     // theme_, showLensUploadDialog_
     this.realboxShown_ = this.computeRealboxShown_();
@@ -524,7 +602,7 @@ export class AppElement extends AppElementBase {
 
     if (changedPrivateProperties.has('logoColor_')) {
       this.style.setProperty(
-          '--ntp-logo-color', rgbaOrInherit(this.logoColor_));
+          '--ntp-logo-color', this.rgbaOrInherit_(this.logoColor_));
     }
 
     if (changedPrivateProperties.has('showBackgroundImage_')) {
@@ -536,7 +614,8 @@ export class AppElement extends AppElementBase {
     }
 
     if (changedPrivateProperties.has('oneGoogleBarLoaded_') ||
-        changedPrivateProperties.has('theme_')) {
+        changedPrivateProperties.has('theme_') ||
+        changedPrivateProperties.has('showComposebox_')) {
       this.updateOneGoogleBarAppearance_();
     }
   }
@@ -544,8 +623,13 @@ export class AppElement extends AppElementBase {
   // Called to update the OGB of relevant NTP state changes.
   private updateOneGoogleBarAppearance_() {
     if (this.oneGoogleBarLoaded_) {
-      const isNtpDarkTheme =
-          this.theme_ && (!!this.theme_.backgroundImage || this.theme_.isDark);
+      let isNtpDarkTheme;
+      if (this.showComposebox_) {
+        isNtpDarkTheme = this.theme_ && this.theme_.isDark;
+      } else {
+        isNtpDarkTheme = this.theme_ &&
+            (!!this.theme_.backgroundImage || this.theme_.isDark);
+      }
       $$<IframeElement>(this, '#oneGoogleBar')!.postMessage({
         type: 'updateAppearance',
         // We should be using a light OGB for dark themes and vice versa.
@@ -561,15 +645,31 @@ export class AppElement extends AppElementBase {
     return !this.showBackgroundImage_;
   }
 
+  private computeBackgroundImageAttribution1_(): string {
+    return this.theme_ && this.theme_.backgroundImageAttribution1 || '';
+  }
+
+  private computeBackgroundImageAttribution2_(): string {
+    return this.theme_ && this.theme_.backgroundImageAttribution2 || '';
+  }
+
+  private computeBackgroundImageAttributionUrl_(): string {
+    return this.theme_ && this.theme_.backgroundImageAttributionUrl ?
+        this.theme_.backgroundImageAttributionUrl.url :
+        '';
+  }
+
   private computeRealboxShown_(): boolean {
     // Do not show the realbox if the upload dialog is showing.
-    return !!this.theme_ && !this.showLensUploadDialog_;
+    return !!this.theme_ && !this.showLensUploadDialog_ &&
+        !this.showComposebox_;
   }
 
   private computePromoAndModulesLoaded_(): boolean {
     return (!loadTimeData.getBoolean('middleSlotPromoEnabled') ||
             this.middleSlotPromoLoaded_) &&
-        (!loadTimeData.getBoolean('modulesEnabled') || this.modulesLoaded_);
+        (!loadTimeData.getBoolean('modulesEnabled') ||
+         this.modulesLoaded_ >= 0);
   }
 
   private onRealboxCanShowSecondarySideChanged_(e: MediaQueryListEvent) {
@@ -580,12 +680,54 @@ export class AppElement extends AppElementBase {
     // Integration tests use this attribute to determine when lazy load has
     // completed.
     document.documentElement.setAttribute('lazy-loaded', String(true));
-    this.registerHelpBubble(
-        CUSTOMIZE_CHROME_BUTTON_ELEMENT_ID, '#customizeButton', {fixed: true});
-    this.pageHandler_.maybeShowFeaturePromo(IphFeature.kCustomizeChrome);
-    if (this.showWallpaperSearchButton_) {
-      this.pageHandler_.incrementWallpaperSearchButtonShownCount();
+    if (!this.isFooterVisible_) {
+      this.registerHelpBubble(
+          CUSTOMIZE_CHROME_BUTTON_ELEMENT_ID,
+          ['ntp-customize-buttons', '#customizeButton'], {fixed: true});
+      this.pageHandler_.maybeShowFeaturePromo(IphFeature.kCustomizeChrome);
     }
+    if (this.showWallpaperSearchButton_) {
+      this.customizeButtonsHandler_.incrementWallpaperSearchButtonShownCount();
+    }
+  }
+
+  protected toggleComposebox_() {
+    this.showComposebox_ = !this.showComposebox_;
+    if (!this.wasComposeboxOpened_) {
+      recordLoadDuration(
+          'NewTabPage.Composebox.FromNTPLoadToSessionStart',
+          WindowProxy.getInstance().now());
+      this.wasComposeboxOpened_ = true;
+    }
+  }
+
+  protected onComposeboxClickOutside_() {
+    const composebox =
+        this.shadowRoot.querySelector<ComposeboxElement>('#composebox');
+    assert(composebox);
+    const closeComposebox = new CustomEvent('closeComposebox', {
+      detail: {composeboxText: composebox.getText()},
+      bubbles: true,
+      cancelable: true,
+    });
+
+    this.closeComposebox_(closeComposebox);
+  }
+
+  protected closeComposebox_(e: CustomEvent) {
+    const composeboxText = e.detail.composeboxText;
+
+    if (composeboxText && composeboxText.trim()) {
+      this.$.searchbox.setInputText(composeboxText);
+    }
+    const composebox =
+        this.shadowRoot.querySelector<ComposeboxElement>('#composebox');
+    assert(composebox);
+    composebox.resetText();
+    this.toggleComposebox_();
+    this.logoColor_ = this.computeLogoColor_();
+    this.singleColoredLogo_ = this.computeSingleColoredLogo_();
+    this.updateOneGoogleBarAppearance_();
   }
 
   protected onOpenVoiceSearch_() {
@@ -606,7 +748,7 @@ export class AppElement extends AppElementBase {
     this.selectedCustomizeDialogPage_ = null;
     this.setCustomizeChromeSidePanelVisible_(!this.showCustomize_);
     if (!this.showCustomize_) {
-      this.pageHandler_.incrementCustomizeChromeButtonOpenCount();
+      this.customizeButtonsHandler_.incrementCustomizeChromeButtonOpenCount();
       recordCustomizeChromeOpen(NtpCustomizeChromeEntryPoint.CUSTOMIZE_BUTTON);
     }
   }
@@ -641,7 +783,7 @@ export class AppElement extends AppElementBase {
     this.showWallpaperSearch_ = true;
     this.setCustomizeChromeSidePanelVisible_(this.showWallpaperSearch_);
     if (!this.showCustomize_) {
-      this.pageHandler_.incrementCustomizeChromeButtonOpenCount();
+      this.customizeButtonsHandler_.incrementCustomizeChromeButtonOpenCount();
       recordCustomizeChromeOpen(
           NtpCustomizeChromeEntryPoint.WALLPAPER_SEARCH_BUTTON);
     }
@@ -666,6 +808,10 @@ export class AppElement extends AppElementBase {
     }
   }
 
+  private rgbaOrInherit_(skColor: SkColor|null): string {
+    return skColor ? skColorToRgba(skColor) : 'inherit';
+  }
+
   private computeShowBackgroundImage_(): boolean {
     return !!this.theme_ && !!this.theme_.backgroundImage;
   }
@@ -678,23 +824,26 @@ export class AppElement extends AppElementBase {
     if (this.theme_) {
       this.backgroundManager_.setBackgroundColor(this.theme_.backgroundColor);
       this.style.setProperty(
+          '--color-new-tab-page-attribution-foreground',
+          this.rgbaOrInherit_(this.theme_.textColor));
+      this.style.setProperty(
           '--color-new-tab-page-most-visited-foreground',
-          rgbaOrInherit(this.theme_.textColor));
+          this.rgbaOrInherit_(this.theme_.textColor));
     }
     this.updateBackgroundImagePath_();
   }
 
   private onThemeLoaded_(theme: Theme) {
-    chrome.metricsPrivate.recordSparseValueWithPersistentHash(
+    recordSparseValueWithPersistentHash(
         'NewTabPage.Collections.IdOnLoad',
         theme.backgroundImageCollectionId ?? '');
 
     if (!theme.backgroundImage) {
-      chrome.metricsPrivate.recordEnumerationValue(
+      recordEnumeration(
           'NewTabPage.BackgroundImageSource', NtpBackgroundImageSource.kNoImage,
           NtpBackgroundImageSource.MAX_VALUE + 1);
     } else {
-      chrome.metricsPrivate.recordEnumerationValue(
+      recordEnumeration(
           'NewTabPage.BackgroundImageSource', theme.backgroundImage.imageSource,
           NtpBackgroundImageSource.MAX_VALUE + 1);
     }
@@ -733,14 +882,6 @@ export class AppElement extends AppElementBase {
     }
   }
 
-  private computeBackgroundColor_(): SkColor|null {
-    if (this.showBackgroundImage_ || !this.theme_) {
-      return null;
-    }
-
-    return this.theme_.backgroundColor;
-  }
-
   private computeColorSourceIsBaseline(): boolean {
     return !!this.theme_ && this.theme_.isBaseline;
   }
@@ -750,11 +891,18 @@ export class AppElement extends AppElementBase {
       return null;
     }
 
+    if (this.showComposebox_) {
+      return this.theme_.isDark ? hexColorToSkColor('#ffffff') : null;
+    }
+
     return this.theme_.logoColor ||
         (this.theme_.isDark ? hexColorToSkColor('#ffffff') : null);
   }
 
   private computeSingleColoredLogo_(): boolean {
+    if (this.showComposebox_) {
+      return !!this.theme_ && this.theme_.isDark;
+    }
     return !!this.theme_ && (!!this.theme_.logoColor || this.theme_.isDark);
   }
 
@@ -857,8 +1005,41 @@ export class AppElement extends AppElementBase {
     this.middleSlotPromoLoaded_ = true;
   }
 
-  protected onModulesLoaded_() {
-    this.modulesLoaded_ = true;
+  protected onModulesLoaded_(e: CustomEvent<number|null>) {
+    this.modulesLoaded_ =
+        e.detail === null ? MODULE_LOAD_NOT_ATTEMPTED : e.detail;
+  }
+
+  protected getBrowserPromoType_(): string {
+    let result: string = '';
+    if (!this.modulesEnabled_ ||
+        this.modulesLoaded_ === MODULE_LOAD_NOT_ATTEMPTED ||
+        this.modulesLoaded_ === 0) {
+      // If we know for sure there are no modules to show, the promo can show.
+      result = this.browserPromoType_;
+    } else if (this.modulesLoaded_ > 0) {
+      // If at least one module was loaded, block the promo.
+      result = 'blocked';
+    }
+    if (result !== '' && !this.browserPromoMetricsRecorded_) {
+      this.browserPromoMetricsRecorded_ = true;
+      switch (result) {
+        case 'blocked':
+          recordShowBrowserPromosResult(
+              ShowNtpPromosResult.kNotShownDueToPolicy);
+          break;
+        case 'empty':
+          recordShowBrowserPromosResult(ShowNtpPromosResult.kNotShownNoPromos);
+          break;
+        case 'simple':
+        case 'setuplist':
+          recordShowBrowserPromosResult(ShowNtpPromosResult.kShown);
+          break;
+        default:
+          break;
+      }
+    }
+    return result;
   }
 
   protected onCustomizeModule_() {
@@ -885,7 +1066,8 @@ export class AppElement extends AppElementBase {
         section = CustomizeChromeSection.kWallpaperSearch;
         break;
     }
-    this.pageHandler_.setCustomizeChromeSidePanelVisible(visible, section);
+    this.customizeButtonsHandler_.setCustomizeChromeSidePanelVisible(
+        visible, section, SidePanelOpenTrigger.kNewTabPage);
   }
 
   private printPerformanceDatum_(
@@ -954,14 +1136,24 @@ export class AppElement extends AppElementBase {
         case $$(this, '#modules'):
           recordClick(NtpElement.MODULE);
           return;
-        case $$(this, '#customizeButton'):
-          recordClick(NtpElement.CUSTOMIZE_BUTTON);
-          return;
-        case $$(this, '#wallpaperSearchButton'):
-          recordClick(NtpElement.WALLPAPER_SEARCH_BUTTON);
-          return;
       }
     }
+
+    const customizeButtonsElement =
+        this.shadowRoot.querySelector('ntp-customize-buttons');
+    if (customizeButtonsElement) {
+      for (const target of e.composedPath()) {
+        switch (target) {
+          case $$(customizeButtonsElement, '#customizeButton'):
+            recordClick(NtpElement.CUSTOMIZE_BUTTON);
+            return;
+          case $$(customizeButtonsElement, '#wallpaperSearchButton'):
+            recordClick(NtpElement.WALLPAPER_SEARCH_BUTTON);
+            return;
+        }
+      }
+    }
+
     recordClick(NtpElement.OTHER);
   }
 

@@ -4,21 +4,24 @@
 
 package org.chromium.chrome.test.transit;
 
+import static org.chromium.base.test.transit.Triggers.noopTo;
+
 import org.junit.rules.RuleChain;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 
 import org.chromium.base.test.transit.BatchedPublicTransitRule;
-import org.chromium.base.test.transit.EntryPointSentinelStation;
 import org.chromium.base.test.transit.Station;
 import org.chromium.base.test.transit.TrafficControl;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
 import org.chromium.chrome.test.transit.ntp.RegularNewTabPageStation;
-import org.chromium.chrome.test.transit.page.PageStation;
+import org.chromium.chrome.test.transit.page.CtaPageStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.components.embedder_support.util.UrlConstants;
+
+import java.util.List;
 
 /**
  * Rule for integration tests that reuse a ChromeTabbedActivity but reset tab state between cases.
@@ -28,14 +31,15 @@ import org.chromium.components.embedder_support.util.UrlConstants;
 @NullMarked
 public class AutoResetCtaTransitTestRule extends BaseCtaTransitTestRule implements TestRule {
     private final BlankCTATabInitialStateRule mInitialStateRule;
-    private final BatchedPublicTransitRule<PageStation> mBatchedRule;
+    private final BatchedPublicTransitRule<CtaPageStation> mBatchedRule;
     private final RuleChain mChain;
 
     /** Create with {@link ChromeTransitTestRules#autoResetCtaActivityRule()}. */
     AutoResetCtaTransitTestRule(boolean clearAllTabState) {
         super();
         mBatchedRule =
-                new BatchedPublicTransitRule<>(PageStation.class, /* expectResetByTest= */ false);
+                new BatchedPublicTransitRule<>(
+                        CtaPageStation.class, /* expectResetByTest= */ false);
         mInitialStateRule = new BlankCTATabInitialStateRule(mActivityTestRule, clearAllTabState);
         mChain =
                 RuleChain.outerRule(mActivityTestRule)
@@ -54,18 +58,23 @@ public class AutoResetCtaTransitTestRule extends BaseCtaTransitTestRule implemen
      * <p>From the second test onwards, state was reset by {@link BlankCTATabInitialStateRule}.
      */
     public WebPageStation startOnBlankPage() {
-        // Null in the first test, non-null from the second test onwards.
-        Station<?> homeStation = TrafficControl.getActiveStation();
-        if (homeStation == null) {
-            EntryPointSentinelStation entryPoint = new EntryPointSentinelStation();
-            entryPoint.setAsEntryPoint();
-            homeStation = entryPoint;
+        // Empty in the first test, should be size 1 from the second test onwards.
+        List<Station<?>> activeStations = TrafficControl.getActiveStations();
+        if (activeStations.size() > 1) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Expected at most one active station, found %d",
+                            activeStations.size()));
         }
+
+        // Remove the last station of the previous test from |activeStations| to go to an entry
+        // point again.
+        TrafficControl.hopOffPublicTransit();
 
         WebPageStation entryPageStation = WebPageStation.newBuilder().withEntryPoint().build();
 
         // Wait for the Conditions to be met to return an active PageStation.
-        return homeStation.travelToSync(entryPageStation, /* trigger= */ null);
+        return noopTo().inNewTask().arriveAt(entryPageStation);
     }
 
     /**
@@ -77,5 +86,15 @@ public class AutoResetCtaTransitTestRule extends BaseCtaTransitTestRule implemen
         WebPageStation blankPage = startOnBlankPage();
         return blankPage.loadPageProgrammatically(
                 UrlConstants.NTP_URL, RegularNewTabPageStation.newBuilder());
+    }
+
+    /**
+     * Start the batched test in a URL.
+     *
+     * <p>From the second test onwards, state was reset by {@link BlankCTATabInitialStateRule}.
+     */
+    public WebPageStation startOnWebPage(String url) {
+        WebPageStation blankPage = startOnBlankPage();
+        return blankPage.loadWebPageProgrammatically(url);
     }
 }

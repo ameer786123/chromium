@@ -92,7 +92,8 @@ class NET_EXPORT_PRIVATE MemBackendImpl final : public Backend {
   void SetClockForTesting(base::Clock* clock);  // doesn't take ownership.
 
   // Backend interface.
-  int32_t GetEntryCount() const override;
+  int32_t GetEntryCount(
+      net::Int32CompletionOnceCallback callback) const override;
   EntryResult OpenOrCreateEntry(const std::string& key,
                                 net::RequestPriority request_priority,
                                 EntryResultCallback callback) override;
@@ -155,7 +156,7 @@ class NET_EXPORT_PRIVATE MemBackendImpl final : public Backend {
   raw_ptr<net::NetLog> net_log_;
   base::OnceClosure post_cleanup_callback_;
 
-  base::MemoryPressureListener memory_pressure_listener_;
+  base::AsyncMemoryPressureListener memory_pressure_listener_;
 
   base::WeakPtrFactory<MemBackendImpl> weak_factory_{this};
 };

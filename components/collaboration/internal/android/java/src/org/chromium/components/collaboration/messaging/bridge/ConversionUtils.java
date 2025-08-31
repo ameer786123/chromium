@@ -29,6 +29,8 @@ import org.chromium.components.tab_groups.TabGroupColorId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Helper class meant to be called by native. Used to create Java objects from C++ objects. Do not
@@ -49,6 +51,7 @@ class ConversionUtils {
             @Nullable String syncTabId,
             @Nullable String lastKnownTabTitle,
             @Nullable String lastKnownTabUrl,
+            @Nullable String previousTabUrl,
             @Nullable GroupMember affectedUser,
             boolean affectedUserIsSelf,
             GroupMember triggeringUser,
@@ -79,6 +82,7 @@ class ConversionUtils {
             attribution.tabMetadata.syncTabId = syncTabId;
             attribution.tabMetadata.lastKnownTitle = lastKnownTabTitle;
             attribution.tabMetadata.lastKnownUrl = lastKnownTabUrl;
+            attribution.tabMetadata.previousUrl = previousTabUrl;
         }
         attribution.affectedUser = affectedUser;
         attribution.affectedUserIsSelf = affectedUserIsSelf;
@@ -89,7 +93,7 @@ class ConversionUtils {
 
     @CalledByNative
     private static ArrayList<PersistentMessage> createPersistentMessageList() {
-        return new ArrayList<PersistentMessage>();
+        return new ArrayList<>();
     }
 
     @CalledByNative
@@ -128,6 +132,16 @@ class ConversionUtils {
     }
 
     @CalledByNative
+    private static Set<String> createStringSet() {
+        return new TreeSet<>();
+    }
+
+    @CalledByNative
+    private static void addStringToStringSet(Set<String> set, String string) {
+        set.add(string);
+    }
+
+    @CalledByNative
     private static List<MessageAttribution> addAttributionToList(
             @Nullable List<MessageAttribution> attributions, MessageAttribution attribution) {
         if (attributions == null) {
@@ -139,7 +153,7 @@ class ConversionUtils {
 
     @CalledByNative
     private static ArrayList<ActivityLogItem> createActivityLogItemList() {
-        return new ArrayList<ActivityLogItem>();
+        return new ArrayList<>();
     }
 
     @CalledByNative

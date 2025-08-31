@@ -272,6 +272,8 @@ data/bear_audio_longer_than_video.ogv
 data/bear_audio_longer_than_video_vp8.ogv
 data/bear_audio_shorter_than_video.ogv
 data/bear_audio_shorter_than_video_vp8.ogv
+data/bear_av1_720p_444_10bit.ivf
+data/bear_av1_720p_444_8bit.ivf
 data/bear_dtsc.mp4
 data/bear_dtse.mp4
 data/bear_dtsx.mp4
@@ -342,6 +344,7 @@ data/eme_player_js/utils.js
 data/eme_player_js/widevine_player.js
 data/eme_remove_session_test.html
 data/encrypted_frame_size_change.html
+data/extra-nalu.ts
 data/four-colors-aspect-4x3.mp4
 data/four-colors-av1.mp4
 data/four-colors-hevc.mp4
@@ -355,6 +358,7 @@ data/four-colors.mp4
 data/four-colors.png
 data/four-colors.y4m
 data/frame_size_change-av_enc-v.webm
+data/front-discard.mp4
 data/gbrp-av1.mp4
 data/gbrp-h264.mp4
 data/gbrp-h265.mp4
@@ -375,6 +379,7 @@ data/hls/generate_hls.py
 data/hls/hls_support_matrix.html
 data/hls/init_0.mp4
 data/hls/mp_mp4_avc1.m3u8
+data/hls/mp_ts_avc1.hls
 data/hls/mp_ts_avc1.m3u8
 data/hls/multi-bitrate-multivariant-bear/out_0.m3u8
 data/hls/multi-bitrate-multivariant-bear/out_00.ts
@@ -391,6 +396,7 @@ data/load_many_videos.html
 data/media_foundation_fallback.html
 data/media_source_player.html
 data/media_suspend_test.html
+data/mid-file-start-time.mp4
 data/midstream_config_change.mp3
 data/mono_cpe.adts
 data/mse_config_change.html

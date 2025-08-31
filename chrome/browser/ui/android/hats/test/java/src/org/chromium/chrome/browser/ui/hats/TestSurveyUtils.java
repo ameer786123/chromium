@@ -17,14 +17,15 @@ import org.junit.runners.model.Statement;
 
 import org.chromium.base.CommandLine;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.util.InMemorySharedPreferences;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /** Util class for survey related testing. */
 public class TestSurveyUtils {
@@ -144,9 +145,15 @@ public class TestSurveyUtils {
         public SurveyClient createClient(
                 @NonNull SurveyConfig config,
                 @NonNull SurveyUiDelegate uiDelegate,
-                Profile profile) {
+                Profile profile,
+                TabModelSelector tabModelSelector) {
             return new SurveyClientImpl(
-                    config, uiDelegate, mTestController, mCrashUploadPermissionSupplier, profile);
+                    config,
+                    uiDelegate,
+                    mTestController,
+                    mCrashUploadPermissionSupplier,
+                    profile,
+                    tabModelSelector);
         }
 
         @Override
@@ -253,9 +260,9 @@ public class TestSurveyUtils {
         }
 
         private static class SurveyEntry {
-            public String triggerId;
-            public Runnable onSuccessRunnable;
-            public Runnable onFailureRunnable;
+            public final String triggerId;
+            public final Runnable onSuccessRunnable;
+            public final Runnable onFailureRunnable;
 
             public boolean isShown;
             public boolean isExpired;

@@ -9,6 +9,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "components/visited_url_ranking/internal/url_grouping/group_suggestions_tracker.h"
+#include "components/visited_url_ranking/internal/url_grouping/grouping_heuristics.h"
 #include "components/visited_url_ranking/public/url_grouping/group_suggestions.h"
 #include "components/visited_url_ranking/public/url_grouping/group_suggestions_delegate.h"
 #include "components/visited_url_ranking/public/url_grouping/group_suggestions_service.h"
@@ -37,14 +38,26 @@ class GroupSuggestionsManager {
                         const GroupSuggestionsService::Scope& scope);
   void UnregisterDelegate(GroupSuggestionsDelegate* delegate);
 
-  bool GetCurrentComputationForTesting() const;
-
   void set_suggestion_computed_callback_for_testing(
       base::RepeatingClosure callback) {
     suggestion_computed_callback_ = std::move(callback);
   }
 
+  void set_consecutive_computation_delay_for_testing(base::TimeDelta delay) {
+    consecutive_computation_delay_ = delay;
+  }
+
+  // Retrieves the last cached suggestions for the given scope.
+  // Does not clear the cache.
+  std::optional<CachedSuggestions> GetCachedSuggestions(
+      const GroupSuggestionsService::Scope& scope);
+
+  // Invalidates the cached suggestions in the tracker.
+  void InvalidateCache();
+
  private:
+  friend class GroupSuggestionsManagerTest;
+
   class GroupSuggestionComputer;
 
   struct DelegateMetadata {
@@ -53,23 +66,32 @@ class GroupSuggestionsManager {
   };
 
   void OnFinishComputeSuggestions(const GroupSuggestionsService::Scope& scope,
-                                  std::optional<GroupSuggestions> suggestions);
+                                  GroupingHeuristics::SuggestionsResult result);
 
-  void ShowSuggestion(const GroupSuggestionsService::Scope& scope,
-                      std::optional<GroupSuggestions> suggestions);
+  void ShowSuggestion(
+      const GroupSuggestionsService::Scope& scope,
+      GroupSuggestions suggestions,
+      const std::vector<scoped_refptr<segmentation_platform::InputContext>>&
+          inputs);
 
   void OnSuggestionResult(
-      GroupSuggestion shown_suggestion,
-      GroupSuggestionsDelegate::UserResponseMetadata user_response);
+      const GroupSuggestion& shown_suggestion,
+      const std::vector<scoped_refptr<segmentation_platform::InputContext>>&
+          inputs,
+      UserResponseMetadata user_response);
 
   const raw_ptr<VisitedURLRankingService> visited_url_ranking_service_;
   base::flat_map<GroupSuggestionsDelegate*, DelegateMetadata>
       registered_delegates_;
 
+  base::TimeDelta consecutive_computation_delay_;
+
   base::RepeatingClosure suggestion_computed_callback_;
 
   std::unique_ptr<GroupSuggestionComputer> suggestion_computer_;
   std::unique_ptr<GroupSuggestionsTracker> suggestion_tracker_;
+
+  base::Time last_computation_time_;
 
   base::WeakPtrFactory<GroupSuggestionsManager> weak_ptr_factory_{this};
 };

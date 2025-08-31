@@ -135,10 +135,14 @@ TEST_F(RunSegmenterTest, JapaneseHindiEmojiMix) {
         FontFallbackPriority::kEmojiEmoji}});
 }
 
-TEST_F(RunSegmenterTest, CombiningCirlce) {
-  CheckRunsHorizontal(
-      {{"◌́◌̀◌̈◌̂◌̄◌̊", USCRIPT_COMMON, OrientationIterator::kOrientationKeep,
-        FontFallbackPriority::kText}});
+TEST_F(RunSegmenterTest, CombiningCircle) {
+#if U_ICU_VERSION_MAJOR_NUM >= 76
+  const UScriptCode script = USCRIPT_LATIN;
+#else
+  const UScriptCode script = USCRIPT_COMMON;
+#endif
+  CheckRunsHorizontal({{"◌́◌̀◌̈◌̂◌̄◌̊", script, OrientationIterator::kOrientationKeep,
+                        FontFallbackPriority::kText}});
 }
 
 TEST_F(RunSegmenterTest, HangulSpace) {

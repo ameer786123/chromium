@@ -28,6 +28,7 @@
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
+#include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
@@ -462,22 +463,6 @@ void Desk::SetName(std::u16string new_name, bool set_by_user) {
 void Desk::SetGuid(base::Uuid new_guid) {
   if (new_guid.is_valid()) {
     uuid_ = std::move(new_guid);
-  }
-}
-
-void Desk::SetLacrosProfileId(uint64_t lacros_profile_id,
-                              bool skip_prefs_update) {
-  if (lacros_profile_id == lacros_profile_id_) {
-    return;
-  }
-
-  lacros_profile_id_ = lacros_profile_id;
-  if (!skip_prefs_update) {
-    desks_restore_util::UpdatePrimaryUserDeskLacrosProfileIdPrefs();
-  }
-
-  for (auto& observer : observers_) {
-    observer.OnDeskProfileChanged(lacros_profile_id_);
   }
 }
 
@@ -1027,10 +1012,9 @@ void Desk::MoveWindowToDeskInternal(aura::Window* window,
     // Move the window to the container with the same ID on the target display's
     // root (i.e. container that belongs to the same desk), and adjust its
     // bounds to fit in the new display's work area.
-    window_util::MoveWindowToDisplay(window,
-                                     display::Screen::GetScreen()
-                                         ->GetDisplayNearestWindow(target_root)
-                                         .id());
+    window_util::MoveWindowToDisplay(
+        window,
+        display::Screen::Get()->GetDisplayNearestWindow(target_root).id());
     DCHECK_EQ(target_desk->container_id_, window->parent()->GetId());
   }
 }

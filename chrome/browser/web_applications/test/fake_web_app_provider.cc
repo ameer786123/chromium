@@ -16,14 +16,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/externally_managed_app_manager.h"
 #include "chrome/browser/web_applications/file_utils_wrapper.h"
+#include "chrome/browser/web_applications/isolated_web_apps/chrome_iwa_client.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_installation_manager.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_manager.h"
-#include "chrome/browser/web_applications/isolated_web_apps/iwa_identity_validator.h"
 #include "chrome/browser/web_applications/manifest_update_manager.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_manager.h"
-#include "chrome/browser/web_applications/test/fake_externally_managed_app_manager.h"
 #include "chrome/browser/web_applications/test/fake_os_integration_manager.h"
 #include "chrome/browser/web_applications/test/fake_web_app_database_factory.h"
 #include "chrome/browser/web_applications/test/fake_web_app_ui_manager.h"
@@ -48,6 +47,7 @@
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/sync/test/mock_data_type_local_change_processor.h"
+#include "components/webapps/isolated_web_apps/identity/iwa_identity_validator.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -310,10 +310,8 @@ void FakeWebAppProvider::CreateFakeSubsystems() {
 
   SetWebAppUiManager(std::make_unique<FakeWebAppUiManager>());
 
-  SetExternallyManagedAppManager(
-      std::make_unique<FakeExternallyManagedAppManager>(profile_));
-
   IwaIdentityValidator::CreateSingleton();
+  ChromeIwaClient::CreateSingleton();
 
   // Do not create real subsystems here. That will be done already by
   // WebAppProvider::CreateSubsystems in the WebAppProvider constructor.
@@ -355,6 +353,10 @@ void FakeWebAppProvider::Shutdown() {
 
 FakeWebAppProvider* FakeWebAppProvider::AsFakeWebAppProviderForTesting() {
   return this;
+}
+
+FakeWebContentsManager* FakeWebAppProvider::GetFakeWebContentsManager() const {
+  return static_cast<FakeWebContentsManager*>(web_contents_manager_.get());
 }
 
 void FakeWebAppProvider::CheckNotStartedAndDisconnect(

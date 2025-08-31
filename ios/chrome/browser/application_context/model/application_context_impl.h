@@ -70,7 +70,7 @@ class ApplicationContextImpl : public ApplicationContext {
   scoped_refptr<network::SharedURLLoaderFactory> GetSharedURLLoaderFactory()
       override;
   network::mojom::NetworkContext* GetSystemNetworkContext() override;
-  const std::string& GetApplicationLocale() override;
+  ApplicationLocaleStorage* GetApplicationLocaleStorage() override;
   const std::string& GetApplicationCountry() override;
   ProfileManagerIOS* GetProfileManager() override;
   metrics_services_manager::MetricsServicesManager* GetMetricsServicesManager()
@@ -98,12 +98,8 @@ class ApplicationContextImpl : public ApplicationContext {
   os_crypt_async::OSCryptAsync* GetOSCryptAsync() override;
   AdditionalFeaturesController* GetAdditionalFeaturesController() override;
   auto_deletion::AutoDeletionService* GetAutoDeletionService() override;
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-  optimization_guide::OnDeviceModelServiceController*
-  GetOnDeviceModelServiceController(
-      base::WeakPtr<optimization_guide::OnDeviceModelComponentStateManager>
-          on_device_component_manager) override;
-#endif  // BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE
+  optimization_guide::OptimizationGuideGlobalState*
+  GetOptimizationGuideGlobalState() override;
 
  private:
   // Represents the possible application states the app can be in.
@@ -118,7 +114,7 @@ class ApplicationContextImpl : public ApplicationContext {
   // application states.
   void OnAppEnterState(AppState app_state);
 
-  // Sets the locale used by the application.
+  // TODO(crbug.com/414379493): Remove this method.
   void SetApplicationLocale(const std::string& locale);
 
   // Create the local state.
@@ -159,6 +155,7 @@ class ApplicationContextImpl : public ApplicationContext {
       network_connection_tracker_;
 
   std::unique_ptr<PrefService> local_state_;
+  std::unique_ptr<ApplicationLocaleStorage> application_locale_storage_;
   std::unique_ptr<net_log::NetExportFileWriter> net_export_file_writer_;
   std::unique_ptr<network_time::NetworkTimeTracker> network_time_tracker_;
   std::unique_ptr<IOSChromeIOThread> ios_chrome_io_thread_;
@@ -170,7 +167,6 @@ class ApplicationContextImpl : public ApplicationContext {
   std::unique_ptr<component_updater::ComponentUpdateService> component_updater_;
 
   std::unique_ptr<ProfileManagerIOS> profile_manager_;
-  std::string application_locale_;
   std::string application_country_;
 
   // Sequenced task runner for local state related I/O tasks.
@@ -191,10 +187,8 @@ class ApplicationContextImpl : public ApplicationContext {
 
   std::unique_ptr<auto_deletion::AutoDeletionService> auto_deletion_service_;
 
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-  scoped_refptr<optimization_guide::OnDeviceModelServiceController>
-      on_device_model_service_controller_;
-#endif  // BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE
+  std::unique_ptr<optimization_guide::OptimizationGuideGlobalState>
+      optimization_guide_global_state_;
 
   // Must be the last member variable.
   base::WeakPtrFactory<ApplicationContextImpl> weak_ptr_factory_{this};

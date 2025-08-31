@@ -49,6 +49,7 @@
 
                   "setPressureSourceOverrideEnabled",
                   "setPressureStateOverride",
+                  "setPressureDataOverride",
 
                   "setIdleOverride",
                   "clearIdleOverride",
@@ -66,7 +67,8 @@
                 "async": [
                   "getOverriddenSensorInformation",
                   "setSensorOverrideReadings",
-                  "setPressureStateOverride"
+                  "setPressureStateOverride",
+                  "setPressureDataOverride"
                 ]
             },
             {
@@ -100,9 +102,50 @@
             },
             {
                 "domain": "Network",
-                "include": ["enable", "disable", "clearBrowserCache", "clearBrowserCookies", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "setExtraHTTPHeaders", "canEmulateNetworkConditions", "emulateNetworkConditions", "setBypassServiceWorker", "setRequestInterception", "continueInterceptedRequest", "getResponseBody", "getResponseBodyForInterception", "setCacheDisabled", "takeResponseBodyForInterceptionAsStream", "getSecurityIsolationStatus", "loadNetworkResource", "setAcceptedEncodings", "clearAcceptedEncodingsOverride", "enableReportingApi", "setCookieControls"],
+                "include": [
+                  "enable",
+                  "disable",
+                  "clearBrowserCache",
+                  "clearBrowserCookies",
+                  "getCookies",
+                  "getAllCookies",
+                  "deleteCookies",
+                  "setCookie",
+                  "setCookies",
+                  "setExtraHTTPHeaders",
+                  "canEmulateNetworkConditions",
+                  "emulateNetworkConditions",
+                  "setBypassServiceWorker",
+                  "setRequestInterception",
+                  "continueInterceptedRequest",
+                  "getResponseBody",
+                  "getResponseBodyForInterception",
+                  "setCacheDisabled",
+                  "takeResponseBodyForInterceptionAsStream",
+                  "getSecurityIsolationStatus",
+                  "loadNetworkResource",
+                  "setAcceptedEncodings",
+                  "clearAcceptedEncodingsOverride",
+                  "enableReportingApi",
+                  "setCookieControls",
+                  "getIPProtectionProxyStatus"
+                ],
                 "include_events": ["requestWillBeSent", "responseReceived", "loadingFinished", "loadingFailed", "requestIntercepted", "signedExchangeReceived", "requestWillBeSentExtraInfo", "responseReceivedExtraInfo", "responseReceivedEarlyHints", "trustTokenOperationDone", "subresourceWebBundleMetadataReceived", "subresourceWebBundleMetadataError", "subresourceWebBundleInnerResponseParsed", "subresourceWebBundleInnerResponseError", "policyUpdated", "reportingApiReportAdded", "reportingApiReportUpdated", "reportingApiEndpointsChangedForOrigin"],
-                "async": ["clearBrowserCookies", "clearBrowserCache", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "continueInterceptedRequest", "getResponseBody", "getResponseBodyForInterception", "takeResponseBodyForInterceptionAsStream", "loadNetworkResource"]
+                "async": [
+                  "clearBrowserCookies",
+                  "clearBrowserCache",
+                  "getCookies",
+                  "getAllCookies",
+                  "deleteCookies",
+                  "setCookie",
+                  "setCookies",
+                  "continueInterceptedRequest",
+                  "getResponseBody",
+                  "getResponseBodyForInterception",
+                  "takeResponseBodyForInterceptionAsStream",
+                  "loadNetworkResource",
+                  "getIPProtectionProxyStatus"
+                ]
             },
             {
                 "domain": "Overlay",
@@ -180,18 +223,20 @@
             },
             {
                 "domain": "BluetoothEmulation",
-                "include_events": ["gattOperationReceived"],
                 "async": [
                     "setSimulatedCentralState",
                     "simulatePreconnectedPeripheral",
                     "simulateAdvertisement",
                     "simulateGATTOperationResponse",
+                    "simulateCharacteristicOperationResponse",
+                    "simulateDescriptorOperationResponse",
                     "addService",
                     "removeService",
                     "addCharacteristic",
                     "removeCharacteristic",
                     "addDescriptor",
-                    "removeDescriptor"
+                    "removeDescriptor",
+                    "simulateGATTDisconnection"
                 ]
             }
         ]

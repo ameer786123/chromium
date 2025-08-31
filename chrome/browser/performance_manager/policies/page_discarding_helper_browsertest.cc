@@ -270,10 +270,9 @@ class PageDiscardingHelperBrowserTest
     auto* helper = PageDiscardingHelper::GetFromGraph(graph);
     ASSERT_TRUE(helper);
 
-    std::optional<base::TimeTicks> first_discarded_at =
-        helper->ImmediatelyDiscardMultiplePages({page_node.get()},
-                                                discard_reason);
-    EXPECT_EQ(first_discarded_at.has_value(), expected_result);
+    const bool discard_success = helper->ImmediatelyDiscardMultiplePages(
+        {page_node.get()}, discard_reason);
+    EXPECT_EQ(discard_success, expected_result);
     EXPECT_EQ(
         browser()->tab_strip_model()->GetWebContentsAt(index)->WasDiscarded(),
         expected_result);
@@ -307,7 +306,9 @@ class PageDiscardingHelperBrowserTest
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-IN_PROC_BROWSER_TEST_P(PageDiscardingHelperBrowserTest, DiscardSpecificPage) {
+// TODO(crbug.com/438908221): Crashes/flaky on Linux dbg bots.
+IN_PROC_BROWSER_TEST_P(PageDiscardingHelperBrowserTest,
+                       DISABLED_DiscardSpecificPage) {
   // Test urgent and proactive discards in a loop to avoid the overhead of
   // starting a new browser every time.
   // TODO(crbug.com/40899366): Add tests for all the other heuristics in
@@ -523,8 +524,16 @@ IN_PROC_BROWSER_TEST_P(PageDiscardingHelperBrowserTest,
 
 // Regression test for crbug.com/386801193. Ensure discarded tabs remain
 // eligible for successive discard operations following a reactivation / reload.
+// TODO(crbug.com/436300896): Re-enable on MSAN/ASAN.
+#if defined(MEMORY_SANITIZER) || defined(ADDRESS_SANITIZER)
+#define MAYBE_DiscardedTabEligibleForSuccessiveDiscards \
+  DISABLED_DiscardedTabEligibleForSuccessiveDiscards
+#else
+#define MAYBE_DiscardedTabEligibleForSuccessiveDiscards \
+  DiscardedTabEligibleForSuccessiveDiscards
+#endif
 IN_PROC_BROWSER_TEST_P(PageDiscardingHelperBrowserTest,
-                       DiscardedTabEligibleForSuccessiveDiscards) {
+                       MAYBE_DiscardedTabEligibleForSuccessiveDiscards) {
   // Add a new background tab.
   OpenNewBackgroundPage();
   EXPECT_EQ(browser()->tab_strip_model()->count(), 2);

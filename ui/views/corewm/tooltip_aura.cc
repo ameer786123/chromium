@@ -40,11 +40,13 @@ namespace {
 // be wrapped.
 static constexpr int kTooltipMaxWidth = 800;
 
-// TODO(varkha): Update if native widget can be transparent on Linux.
 bool CanUseTranslucentTooltipWidget() {
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_WIN)
   return false;
 #else
+  // On Linux, when using the toolkit theme (eg. Adwaita, the default GTK
+  // theme), tooltips may be translucent. This must be indicated to the Wayland
+  // compositor to prevent visual artifacts such as flickering.
   return true;
 #endif
 }
@@ -166,7 +168,7 @@ gfx::Rect TooltipAura::GetTooltipBounds(const gfx::Size& tooltip_size,
     return tooltip_rect;
   }
 
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   gfx::Rect display_bounds(
       screen->GetDisplayNearestPoint(anchor_point).bounds());
 
@@ -229,7 +231,7 @@ void TooltipAura::DestroyWidget() {
 }
 
 int TooltipAura::GetMaxWidth(const gfx::Point& location) const {
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   gfx::Rect display_bounds(screen->GetDisplayNearestPoint(location).bounds());
   return std::min(max_width_, (display_bounds.width() + 1) / 2);
 }

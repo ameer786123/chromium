@@ -86,9 +86,9 @@ public class PlayerFrameMediatorTest {
 
     /** Used for keeping track of all bitmap requests that {@link PlayerFrameMediator} makes. */
     private static class RequestedBitmap {
-        UnguessableToken mFrameGuid;
-        Rect mClipRect;
-        float mScaleFactor;
+        final UnguessableToken mFrameGuid;
+        final Rect mClipRect;
+        final float mScaleFactor;
         Callback<Bitmap> mBitmapCallback;
         Runnable mErrorCallback;
 
@@ -137,9 +137,9 @@ public class PlayerFrameMediatorTest {
      * PlayerCompositorDelegate}.
      */
     private static class ClickedPoint {
-        UnguessableToken mFrameGuid;
-        int mX;
-        int mY;
+        final UnguessableToken mFrameGuid;
+        final int mX;
+        final int mY;
 
         public ClickedPoint(UnguessableToken frameGuid, int x, int y) {
             mFrameGuid = frameGuid;
@@ -177,8 +177,8 @@ public class PlayerFrameMediatorTest {
      * RequestedBitmap}s.
      */
     private static class TestPlayerCompositorDelegate implements PlayerCompositorDelegate {
-        List<RequestedBitmap> mRequestedBitmap = new ArrayList<>();
-        List<ClickedPoint> mClickedPoints = new ArrayList<>();
+        final List<RequestedBitmap> mRequestedBitmap = new ArrayList<>();
+        final List<ClickedPoint> mClickedPoints = new ArrayList<>();
         Runnable mOnMemoryPressureRunnable;
         private int mNextRequestId;
 
@@ -239,7 +239,7 @@ public class PlayerFrameMediatorTest {
     }
 
     private static class MatrixMatcher implements ArgumentMatcher<Matrix> {
-        private Matrix mLeft;
+        private final Matrix mLeft;
 
         MatrixMatcher(Matrix left) {
             mLeft = left;
@@ -300,7 +300,7 @@ public class PlayerFrameMediatorTest {
     }
 
     private static void assertViewportStateIs(Matrix matrix, PlayerFrameViewport viewport) {
-        float matrixValues[] = new float[9];
+        float[] matrixValues = new float[9];
         matrix.getValues(matrixValues);
         assert matrixValues[Matrix.MSCALE_X] == matrixValues[Matrix.MSCALE_Y];
         assertViewportStateIs(
@@ -592,7 +592,6 @@ public class PlayerFrameMediatorTest {
         Bitmap bitmap00 = Mockito.mock(Bitmap.class);
         Bitmap bitmap10 = Mockito.mock(Bitmap.class);
         Bitmap bitmap20 = Mockito.mock(Bitmap.class);
-        Bitmap bitmap30 = Mockito.mock(Bitmap.class);
         Bitmap bitmap01 = Mockito.mock(Bitmap.class);
         Bitmap bitmap11 = Mockito.mock(Bitmap.class);
         Bitmap bitmap21 = Mockito.mock(Bitmap.class);

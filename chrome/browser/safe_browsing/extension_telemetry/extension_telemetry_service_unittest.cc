@@ -16,29 +16,34 @@
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client.h"
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client_factory.h"
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/policy/dm_token_utils.h"
 #include "chrome/browser/safe_browsing/extension_telemetry/cookies_get_signal.h"
 #include "chrome/browser/safe_browsing/extension_telemetry/extension_telemetry_uploader.h"
+#include "chrome/browser/safe_browsing/extension_telemetry/search_hijacking_detector.h"
 #include "chrome/browser/safe_browsing/extension_telemetry/tabs_execute_script_signal.h"
 #include "chrome/browser/safe_browsing/test_extension_event_observer.h"
+#include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/crx_file/id_util.h"
 #include "components/enterprise/connectors/core/reporting_service_settings.h"
+#include "components/omnibox/browser/autocomplete_match.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
 #include "components/policy/core/common/management/scoped_management_service_override_for_testing.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
+#include "components/search_engines/template_url.h"
+#include "components/search_engines/template_url_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/blocklist_extension_prefs.h"
 #include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/install_prefs_helper.h"
 #include "extensions/browser/pref_names.h"
@@ -120,6 +125,7 @@ class ExtensionTelemetryServiceTest : public ::testing::Test {
                                              int flags);
   void UnregisterExtensionWithExtensionService(const ExtensionId& extension_id);
   void PrimeTelemetryServiceWithSignal();
+  void SetDefaultSearchProvider(const std::string& url);
 
   bool IsTelemetryServiceEnabled() {
     return IsTelemetryServiceEnabledForESB() ||
@@ -177,6 +183,13 @@ class ExtensionTelemetryServiceTest : public ::testing::Test {
     return telemetry_service_->GetExtensionInfoForReport(extension);
   }
 
+  // Create telemetry service instance.
+  std::unique_ptr<ExtensionTelemetryService> CreateTelemetryService(
+      Profile* profile) {
+    return std::make_unique<ExtensionTelemetryService>(
+        profile, test_url_loader_factory_.GetSafeWeakWrapper());
+  }
+
   PrefService* prefs() { return profile_.GetPrefs(); }
 
   void TearDown() override {
@@ -193,8 +206,8 @@ class ExtensionTelemetryServiceTest : public ::testing::Test {
   TestingProfile profile_;
   network::TestURLLoaderFactory test_url_loader_factory_;
   std::unique_ptr<ExtensionTelemetryService> telemetry_service_;
-  raw_ptr<extensions::ExtensionService> extension_service_;
   raw_ptr<extensions::ExtensionPrefs> extension_prefs_;
+  raw_ptr<extensions::ExtensionRegistrar> extension_registrar_;
   raw_ptr<extensions::ExtensionRegistry> extension_registry_;
   std::unique_ptr<policy::MockCloudPolicyClient> cloud_policy_client_;
   base::TimeDelta kStartupUploadCheckDelaySeconds = base::Seconds(20);
@@ -204,12 +217,13 @@ ExtensionTelemetryServiceTest::ExtensionTelemetryServiceTest(
     base::test::TaskEnvironment::TimeSource time_source)
     : task_environment_{time_source} {
   scoped_feature_list_.InitWithFeatures(
-      /*enabled_features=*/{kExtensionTelemetryFileDataForCommandLineExtensions,
-                            kExtensionTelemetryForEnterprise},
+      /*enabled_features=*/
+      {kExtensionTelemetryFileDataForCommandLineExtensions},
       /*disabled_features=*/{});
 
   // Create extension prefs and registry instances.
   extension_prefs_ = extensions::ExtensionPrefs::Get(&profile_);
+  extension_registrar_ = extensions::ExtensionRegistrar::Get(&profile_);
   extension_registry_ = extensions::ExtensionRegistry::Get(&profile_);
 
   // Set up and enable ESB telemetry reporting by default.
@@ -228,17 +242,16 @@ ExtensionTelemetryServiceTest::ExtensionTelemetryServiceTest(
   enterprise_connectors::test::SetOnSecurityEventReporting(/*prefs=*/prefs(),
                                                            /*enabled=*/false);
 
-  // Create fake extension service instance.
+  // Create test extension service instance.
   base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
   auto* test_extension_system = static_cast<extensions::TestExtensionSystem*>(
       extensions::ExtensionSystem::Get(&profile_));
-  extension_service_ = test_extension_system->CreateExtensionService(
+  test_extension_system->CreateExtensionService(
       &command_line, base::FilePath() /* install_directory */,
       false /* autoupdate_enabled */);
 
   // Create telemetry service instance.
-  telemetry_service_ = std::make_unique<ExtensionTelemetryService>(
-      &profile_, test_url_loader_factory_.GetSafeWeakWrapper());
+  telemetry_service_ = CreateTelemetryService(&profile_);
 }
 
 base::FilePath ExtensionTelemetryServiceTest::CreateExtensionForCommandLineLoad(
@@ -305,8 +318,8 @@ void ExtensionTelemetryServiceTest::RegisterExtensionWithExtensionService(
       .Serialize(*extension->manifest()->value());
   EXPECT_TRUE(base::PathExists(manifest_path));
 
-  // Register the extension with the extension service.
-  extension_service_->AddExtension(extension.get());
+  // Register the extension.
+  extension_registrar_->AddExtension(extension);
 
   extension_prefs_->UpdateExtensionPref(
       extension_id, "last_update_time",
@@ -315,7 +328,7 @@ void ExtensionTelemetryServiceTest::RegisterExtensionWithExtensionService(
 
 void ExtensionTelemetryServiceTest::UnregisterExtensionWithExtensionService(
     const ExtensionId& extension_id) {
-  extension_service_->UnloadExtension(
+  extension_registrar_->RemoveExtension(
       extension_id, extensions::UnloadedExtensionReason::UNINSTALL);
   extension_prefs_->DeleteExtensionPrefs(extension_id);
 }
@@ -330,6 +343,22 @@ void ExtensionTelemetryServiceTest::PrimeTelemetryServiceWithSignal() {
   telemetry_service_->AddSignal(std::move(signal));
 }
 
+void ExtensionTelemetryServiceTest::SetDefaultSearchProvider(
+    const std::string& url) {
+  TemplateURLServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+      &profile_,
+      base::BindRepeating(&TemplateURLServiceFactory::BuildInstanceFor));
+  TemplateURLService* turl_service =
+      TemplateURLServiceFactory::GetForProfile(&profile_);
+  TemplateURLData data;
+  data.SetShortName(u"test");
+  data.SetKeyword(u"test");
+  data.SetURL(url);
+  TemplateURL* template_url =
+      turl_service->Add(std::make_unique<TemplateURL>(data));
+  turl_service->SetUserSelectedDefaultSearchProvider(template_url);
+}
+
 TEST_F(ExtensionTelemetryServiceTest, CheckEnableConditionsForESB) {
   // Test fixture enables ESB and creates telemetry service.
   // Verify that service is enabled for ESB users.
@@ -341,8 +370,7 @@ TEST_F(ExtensionTelemetryServiceTest, CheckEnableConditionsForESB) {
 
   // Destruct and restart service and verify that it starts disabled for ESB
   // users.
-  telemetry_service_ = std::make_unique<ExtensionTelemetryService>(
-      &profile_, test_url_loader_factory_.GetSafeWeakWrapper());
+  telemetry_service_ = CreateTelemetryService(&profile_);
   EXPECT_FALSE(IsTelemetryServiceEnabledForESB());
 
   // Re-enable ESB. Verify that ESB reporting is enabled.
@@ -365,8 +393,7 @@ TEST_F(ExtensionTelemetryServiceTest, CheckEnableConditionsForEnterprise) {
   EXPECT_TRUE(IsTelemetryServiceEnabledForEnterprise());
 
   // Destruct and restart service and verify that it starts enabled.
-  telemetry_service_ = std::make_unique<ExtensionTelemetryService>(
-      &profile_, test_url_loader_factory_.GetSafeWeakWrapper());
+  telemetry_service_ = CreateTelemetryService(&profile_);
   EXPECT_TRUE(IsTelemetryServiceEnabledForEnterprise());
 
   // Disable enterprise policy. Verify that enterprise reporting is disabled.
@@ -972,6 +999,185 @@ TEST_F(ExtensionTelemetryServiceTest,
 }
 
 TEST_F(ExtensionTelemetryServiceTest,
+       SearchHijackingDetectorIsCreatedWithFeature) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(kExtensionTelemetrySearchHijackingSignal);
+  telemetry_service_ = CreateTelemetryService(&profile_);
+  EXPECT_NE(telemetry_service_->search_hijacking_detector_for_testing(),
+            nullptr);
+}
+
+TEST_F(ExtensionTelemetryServiceTest,
+       SearchHijackingDetectorNotCreatedWithoutFeature) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(kExtensionTelemetrySearchHijackingSignal);
+  telemetry_service_ = CreateTelemetryService(&profile_);
+  EXPECT_EQ(telemetry_service_->search_hijacking_detector_for_testing(),
+            nullptr);
+}
+
+TEST_F(ExtensionTelemetryServiceTest,
+       SearchHijackingDetectorConfiguredByFeature) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeatureWithParameters(
+      kExtensionTelemetrySearchHijackingSignal,
+      {{kExtensionTelemetrySearchHijackingSignalHeuristicCheckIntervalSeconds
+            .name,
+        "3600"},
+       {kExtensionTelemetrySearchHijackingSignalHeuristicThreshold.name, "5"}});
+  telemetry_service_ = CreateTelemetryService(&profile_);
+  SearchHijackingDetector* detector =
+      telemetry_service_->search_hijacking_detector_for_testing();
+  ASSERT_NE(detector, nullptr);
+  EXPECT_EQ(detector->GetHeuristicCheckInterval(), base::Seconds(3600));
+  EXPECT_EQ(detector->GetHeuristicThreshold(), 5);
+}
+
+TEST_F(ExtensionTelemetryServiceTest,
+       IncludesSearchHijackingSignalWhenPresent) {
+  // Disable telemetry service for ESB first.
+  telemetry_service_->SetEnabledForESB(false);
+
+  // Enable search hijacking feature and set up a default search provider for
+  // testing.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeatureWithParameters(
+      kExtensionTelemetrySearchHijackingSignal,
+      {{kExtensionTelemetrySearchHijackingSignalHeuristicCheckIntervalSeconds
+            .name,
+        "0"},
+       {kExtensionTelemetrySearchHijackingSignalHeuristicThreshold.name, "2"}});
+  SetDefaultSearchProvider("http://www.google.com/search?q={searchTerms}");
+
+  // Re-enable telemetry service for ESB now.
+  telemetry_service_->SetEnabledForESB(true);
+
+  // Part 1: No signal generated.
+  std::unique_ptr<TelemetryReport> report = GetTelemetryReport();
+  ASSERT_TRUE(report);
+  EXPECT_FALSE(report->has_search_hijacking_signal());
+
+  // Part 2: Signal generated.
+  SearchHijackingDetector* detector =
+      telemetry_service_->search_hijacking_detector_for_testing();
+  ASSERT_NE(detector, nullptr);
+
+  AutocompleteMatch match(nullptr, 0, false,
+                          AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED);
+  match.destination_url = GURL("http://www.google.com/search?q=test");
+
+  telemetry_service_->OnOmniboxSearch(match);
+  telemetry_service_->OnOmniboxSearch(match);
+  telemetry_service_->OnOmniboxSearch(match);
+  telemetry_service_->OnDseSerpLoaded();
+
+  // Manually trigger the heuristic check.
+  detector->MaybeCheckForHeuristicMatch();
+
+  // Check that report data includes search hijacking signal.
+  report = GetTelemetryReport();
+  ASSERT_TRUE(report);
+  ASSERT_TRUE(report->has_search_hijacking_signal());
+  EXPECT_EQ(report->search_hijacking_signal().omnibox_search_count(), 3u);
+  EXPECT_EQ(report->search_hijacking_signal().serp_landing_count(), 1u);
+}
+
+TEST_F(ExtensionTelemetryServiceTest,
+       SearchHijackingDetectorDataClearedOnESBDisabled) {
+  // Disable telemetry service for ESB first.
+  telemetry_service_->SetEnabledForESB(false);
+
+  // Enable search hijacking feature and set up a default search provider for
+  // testing.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(kExtensionTelemetrySearchHijackingSignal);
+  SetDefaultSearchProvider("http://www.google.com/search?q={searchTerms}");
+
+  // Re-enable the service for ESB now.
+  telemetry_service_->SetEnabledForESB(true);
+
+  AutocompleteMatch match(nullptr, 0, false,
+                          AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED);
+  match.destination_url = GURL("http://www.google.com/search?q=test");
+  telemetry_service_->OnOmniboxSearch(match);
+  telemetry_service_->OnDseSerpLoaded();
+
+  SearchHijackingDetector* detector =
+      telemetry_service_->search_hijacking_detector_for_testing();
+  ASSERT_NE(detector, nullptr);
+
+  // Check that the detector counts have been saved.
+  {
+    SearchHijackingDetector::EventCounts counts =
+        detector->GetCurrentEventCountsForTesting();
+    EXPECT_EQ(counts.omnibox_searches, 1);
+    EXPECT_EQ(counts.serp_landings, 1);
+  }
+
+  // Disable and re-enable the service.
+  telemetry_service_->SetEnabledForESB(false);
+  telemetry_service_->SetEnabledForESB(true);
+  // Need to get the detector again since it is a new instance.
+  detector = telemetry_service_->search_hijacking_detector_for_testing();
+  ASSERT_NE(detector, nullptr);
+
+  // Check that the detector counts have been cleared.
+  {
+    SearchHijackingDetector::EventCounts counts =
+        detector->GetCurrentEventCountsForTesting();
+    EXPECT_EQ(counts.omnibox_searches, 0);
+    EXPECT_EQ(counts.serp_landings, 0);
+  }
+}
+
+TEST_F(ExtensionTelemetryServiceTest,
+       SearchHijackingDetectorDataSavedAcrossServiceRestart) {
+  // Disable telemetry service for ESB first.
+  telemetry_service_->SetEnabledForESB(false);
+
+  // Enable search hijacking feature and set up a default search provider for
+  // testing.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(kExtensionTelemetrySearchHijackingSignal);
+  SetDefaultSearchProvider("http://www.google.com/search?q={searchTerms}");
+
+  // Re-enable the service for ESB now.
+  telemetry_service_->SetEnabledForESB(true);
+
+  AutocompleteMatch match(nullptr, 0, false,
+                          AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED);
+  match.destination_url = GURL("http://www.google.com/search?q=test");
+  telemetry_service_->OnOmniboxSearch(match);
+  telemetry_service_->OnDseSerpLoaded();
+
+  SearchHijackingDetector* detector =
+      telemetry_service_->search_hijacking_detector_for_testing();
+  ASSERT_NE(detector, nullptr);
+
+  // Check that the detector counts have been saved.
+  {
+    SearchHijackingDetector::EventCounts counts =
+        detector->GetCurrentEventCountsForTesting();
+    EXPECT_EQ(counts.omnibox_searches, 1);
+    EXPECT_EQ(counts.serp_landings, 1);
+  }
+
+  // Now restart the service, by deleting and creating it.
+  telemetry_service_ = CreateTelemetryService(&profile_);
+  // Get the detector object again, as it too was re-created.
+  detector = telemetry_service_->search_hijacking_detector_for_testing();
+  ASSERT_NE(detector, nullptr);
+
+  // Check that the detector counts are still there.
+  {
+    SearchHijackingDetector::EventCounts counts =
+        detector->GetCurrentEventCountsForTesting();
+    EXPECT_EQ(counts.omnibox_searches, 1);
+    EXPECT_EQ(counts.serp_landings, 1);
+  }
+}
+
+TEST_F(ExtensionTelemetryServiceTest,
        DoesNotPersistsReportsOnShutdownWithNoSignalDataPresent) {
   // Setting up the persister and signals.
   task_environment_.RunUntilIdle();
@@ -1120,8 +1326,7 @@ TEST_F(ExtensionTelemetryServiceTest, StartupUploadCheck) {
 
 TEST_F(ExtensionTelemetryServiceTest, PersisterThreadSafetyCheck) {
   std::unique_ptr<ExtensionTelemetryService> telemetry_service_2 =
-      std::make_unique<ExtensionTelemetryService>(
-          &profile_, test_url_loader_factory_.GetSafeWeakWrapper());
+      CreateTelemetryService(&profile_);
   telemetry_service_2->SetEnabledForESB(true);
   telemetry_service_2.reset();
 }

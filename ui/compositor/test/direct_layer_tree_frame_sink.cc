@@ -11,8 +11,8 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "cc/tiles/image_decode_cache_utils.h"
 #include "cc/trees/layer_tree_frame_sink_client.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/hit_test/hit_test_region_list.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
@@ -33,12 +33,11 @@ DirectLayerTreeFrameSink::DirectLayerTreeFrameSink(
     viz::FrameSinkManagerImpl* frame_sink_manager,
     viz::Display* display,
     scoped_refptr<viz::RasterContextProvider> context_provider,
-    scoped_refptr<cc::RasterContextProviderWrapper>
-        worker_context_provider_wrapper,
+    scoped_refptr<viz::RasterContextProvider> worker_context_provider,
     scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
     gfx::AcceleratedWidget widget)
     : LayerTreeFrameSink(std::move(context_provider),
-                         std::move(worker_context_provider_wrapper),
+                         std::move(worker_context_provider),
                          std::move(compositor_task_runner),
                          /*shared_image_interface=*/nullptr),
       frame_sink_id_(frame_sink_id),
@@ -137,6 +136,10 @@ void DirectLayerTreeFrameSink::DidNotProduceFrame(
   support_->DidNotProduceFrame(ack);
 }
 
+void DirectLayerTreeFrameSink::NotifyNewLocalSurfaceIdExpectedWhilePaused() {
+  support_->NotifyNewLocalSurfaceIdExpectedWhilePaused();
+}
+
 void DirectLayerTreeFrameSink::DisplayOutputSurfaceLost() {
   is_lost_ = true;
   client_->DidLoseLayerTreeFrameSink();
@@ -167,13 +170,6 @@ void DirectLayerTreeFrameSink::DisplayDidReceiveCALayerParams(
 #endif
 }
 
-base::TimeDelta
-DirectLayerTreeFrameSink::GetPreferredFrameIntervalForFrameSinkId(
-    const viz::FrameSinkId& id,
-    viz::mojom::CompositorFrameSinkType* type) {
-  return frame_sink_manager_->GetPreferredFrameIntervalForFrameSinkId(id, type);
-}
-
 void DirectLayerTreeFrameSink::DidReceiveCompositorFrameAck(
     std::vector<viz::ReturnedResource> resources) {
   // Submitting a CompositorFrame can synchronously draw and dispatch a frame
@@ -188,6 +184,9 @@ void DirectLayerTreeFrameSink::DidReceiveCompositorFrameAck(
 void DirectLayerTreeFrameSink::DidReceiveCompositorFrameAckInternal(
     std::vector<viz::ReturnedResource> resources) {
   client_->ReclaimResources(std::move(resources));
+  if (base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks)) {
+    return;
+  }
   client_->DidReceiveCompositorFrameAck();
 }
 

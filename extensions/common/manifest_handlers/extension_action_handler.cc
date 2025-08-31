@@ -28,13 +28,9 @@ void SetWarningsForNonExistentDefaultPopup(
     return;
   }
 
-  GURL extension_base_url =
-      extension->GetBaseURLFromExtensionId(extension->id());
-  base::FilePath relative_path =
-      extensions::file_util::ExtensionURLToRelativeFilePath(default_popup_url);
   base::FilePath resource_path =
-      extension->GetResource(relative_path).GetFilePath();
-
+      extensions::file_util::ExtensionURLToAbsoluteFilePath(*extension,
+                                                            default_popup_url);
   if (resource_path.empty() || !base::PathExists(resource_path)) {
     warnings->emplace_back(
         extensions::manifest_errors::kNonexistentDefaultPopup, manifest_key,
@@ -126,10 +122,10 @@ bool ExtensionActionHandler::Parse(Extension* extension,
 }
 
 bool ExtensionActionHandler::Validate(
-    const Extension* extension,
+    const Extension& extension,
     std::string* error,
     std::vector<InstallWarning>* warnings) const {
-  const ActionInfo* action = ActionInfo::GetExtensionActionInfo(extension);
+  const ActionInfo* action = ActionInfo::GetExtensionActionInfo(&extension);
 
   if (!action) {
     return true;
@@ -139,7 +135,7 @@ bool ExtensionActionHandler::Validate(
       ActionInfo::GetManifestKeyForActionType(action->type);
   DCHECK(manifest_key);
 
-  SetWarningsForNonExistentDefaultPopup(action, manifest_key, extension,
+  SetWarningsForNonExistentDefaultPopup(action, manifest_key, &extension,
                                         warnings);
 
   // Empty default icon is valid.
@@ -149,7 +145,7 @@ bool ExtensionActionHandler::Validate(
 
   // Analyze the icons for visibility using the default toolbar color, since
   // the majority of Chrome users don't modify their theme.
-  return file_util::ValidateExtensionIconSet(action->default_icon, extension,
+  return file_util::ValidateExtensionIconSet(action->default_icon, &extension,
                                              manifest_key, error);
 }
 

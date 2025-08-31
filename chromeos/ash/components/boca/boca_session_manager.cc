@@ -11,12 +11,16 @@
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/public/cpp/network_config_service.h"
+#include "base/check.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "chromeos/ash/components/boca/babelorca/soda_installer.h"
 #include "chromeos/ash/components/boca/boca_app_client.h"
+#include "chromeos/ash/components/boca/boca_metrics_util.h"
 #include "chromeos/ash/components/boca/boca_role_util.h"
 #include "chromeos/ash/components/boca/boca_session_util.h"
 #include "chromeos/ash/components/boca/notifications/boca_notification_handler.h"
@@ -28,9 +32,17 @@
 #include "chromeos/ash/components/boca/session_api/session_client_impl.h"
 #include "chromeos/ash/components/boca/session_api/student_heartbeat_request.h"
 #include "chromeos/ash/components/boca/session_api/update_student_activities_request.h"
+#include "chromeos/ash/components/boca/session_api/upload_token_request.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_constants.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_frame_consumer.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_remoting_client_manager.h"
 #include "chromeos/services/network_config/public/cpp/cros_network_config_util.h"
+#include "chromeos/strings/grit/chromeos_strings.h"
+#include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/user_manager.h"
 #include "google_apis/common/api_error_codes.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/message_center/message_center.h"
 
 namespace ash::boca {
@@ -46,12 +58,15 @@ const net::BackoffEntry::Policy kStudentHeartbeatBackoffPolicy = {
     .always_use_initial_delay = false};
 }  // namespace
 
-BocaSessionManager::BocaSessionManager(SessionClientImpl* session_client_impl,
-                                       const PrefService* pref_service,
-                                       AccountId account_id,
-                                       bool is_producer)
+BocaSessionManager::BocaSessionManager(
+    SessionClientImpl* session_client_impl,
+    const PrefService* pref_service,
+    AccountId account_id,
+    bool is_producer,
+    std::unique_ptr<SpotlightRemotingClientManager> remoting_client_manager)
     : is_producer_(is_producer),
       account_id_(std::move(account_id)),
+      remoting_client_manager_(std::move(remoting_client_manager)),
       pref_service_(pref_service),
       session_client_impl_(std::move(session_client_impl)),
       student_heartbeat_retry_backoff_{&kStudentHeartbeatBackoffPolicy} {
@@ -82,6 +97,10 @@ BocaSessionManager::BocaSessionManager(SessionClientImpl* session_client_impl,
   }
   if (user_manager::UserManager::IsInitialized()) {
     user_manager::UserManager::Get()->AddSessionStateObserver(this);
+  }
+  if (session_manager::SessionManager::Get()) {
+    session_manager_observation_.Observe(
+        session_manager::SessionManager::Get());
   }
   LoadInitialNetworkState();
   LoadCurrentSession(/*from_polling=*/false);
@@ -114,7 +133,11 @@ void BocaSessionManager::Observer::OnSessionCaptionConfigUpdated(
 void BocaSessionManager::Observer::OnLocalCaptionConfigUpdated(
     const ::boca::CaptionsConfig& config) {}
 
+void BocaSessionManager::Observer::OnSodaStatusUpdate(SodaStatus status) {}
+
 void BocaSessionManager::Observer::OnLocalCaptionClosed() {}
+
+void BocaSessionManager::Observer::OnSessionCaptionClosed(bool is_error) {}
 
 void BocaSessionManager::Observer::OnSessionRosterUpdated(
     const ::boca::Roster& roster) {}
@@ -216,7 +239,8 @@ void BocaSessionManager::LoadCurrentSession(bool from_polling) {
       base::BindOnce(&BocaSessionManager::ParseSessionResponse,
                      weak_factory_.GetWeakPtr(), from_polling));
   request->set_device_id(BocaAppClient::Get()->GetDeviceId());
-  session_client_impl_->GetSession(std::move(request));
+  session_client_impl_->GetSession(std::move(request),
+                                   /*can_skip_duplicate_request=*/true);
 }
 
 void BocaSessionManager::ParseSessionResponse(
@@ -228,7 +252,7 @@ void BocaSessionManager::ParseSessionResponse(
   }
 
   if (from_polling) {
-    RecordPollingResult(current_session_.get(), result.value().get());
+    boca::RecordPollingResult(current_session_.get(), result.value().get());
   }
 
   UpdateCurrentSession(std::move(result.value()), true);
@@ -275,30 +299,41 @@ void BocaSessionManager::UpdateTabActivity(std::u16string title) {
       base::BindOnce(
           [](base::expected<bool, google_apis::ApiErrorCode> result) {
             if (!result.has_value()) {
-              // TODO: crbug.com/366316261 - Add metrics for update failure.
-              LOG(WARNING) << "[Boca]Failed to update student activity.";
+              boca::RecordUpdateStudentActivitiesErrorCode(result.error());
+              LOG(WARNING)
+                  << "[Boca]Failed to update student activity with error code: "
+                  << result.error();
             }
           }));
 
   // TODO: crbug.com/376550427 - Make a permanet fix to provide URL resource for
   // home page, and remove this after that.
-  request->set_active_tab_title(active_tab_title_.empty()
-                                    ? kHomePageTitle
-                                    : base::UTF16ToUTF8(active_tab_title_));
+  request->set_active_tab_title(
+      active_tab_title_.empty()
+          ? l10n_util::GetStringUTF8(IDS_CLASS_TOOLS_HOME_PAGE)
+          : base::UTF16ToUTF8(active_tab_title_));
   session_client_impl_->UpdateStudentActivity(std::move(request));
 }
 
-void BocaSessionManager::ToggleAppStatus(bool is_app_opened) {
-  is_app_opened_ = is_app_opened;
-  if (on_app_status_toggled_cb_for_test_) {
-    std::move(on_app_status_toggled_cb_for_test_).Run(is_app_opened_);
+void BocaSessionManager::OnAppWindowOpened() {
+  if (soda_installer_ != nullptr) {
+    // TODO(378702821) Notify observers of SODA status change.
+    soda_installer_->InstallSoda(
+        base::BindOnce(&BocaSessionManager::NotifySodaStatusListeners,
+                       weak_factory_.GetWeakPtr()));
+  }
+}
+
+void BocaSessionManager::OnSessionStateChanged() {
+  if (session_manager::SessionManager::Get()->IsScreenLocked()) {
+    CloseAllCaptions();
   }
 }
 
 void BocaSessionManager::NotifyLocalCaptionEvents(
     ::boca::CaptionsConfig caption_config) {
   for (auto& observer : observers_) {
-    observer.OnLocalCaptionConfigUpdated(std::move(caption_config));
+    observer.OnLocalCaptionConfigUpdated(caption_config);
   }
   is_local_caption_enabled_ = caption_config.captions_enabled();
   HandleCaptionNotification();
@@ -310,6 +345,18 @@ void BocaSessionManager::NotifyLocalCaptionClosed() {
   }
   is_local_caption_enabled_ = false;
   HandleCaptionNotification();
+}
+
+void BocaSessionManager::NotifySessionCaptionProducerEvents(
+    const ::boca::CaptionsConfig& caption_config) {
+  if (!is_producer_ || !IsSessionActive(current_session_.get())) {
+    return;
+  }
+  for (auto& observer : observers_) {
+    observer.OnSessionCaptionConfigUpdated(
+        kMainStudentGroupName, caption_config,
+        current_session_->tachyon_group_id());
+  }
 }
 
 void BocaSessionManager::NotifyAppReload() {
@@ -339,6 +386,60 @@ void BocaSessionManager::InitSessionCaption(
     return;
   }
   session_caption_initializer_.Run(std::move(success_cb));
+}
+
+BocaSessionManager::SodaStatus BocaSessionManager::GetSodaStatus() {
+  if (soda_installer_ != nullptr) {
+    return soda_installer_->GetStatus();
+  }
+
+  return SodaStatus::kUninstalled;
+}
+
+void BocaSessionManager::StartCrdClient(
+    std::string crd_connection_code,
+    base::OnceClosure done_callback,
+    SpotlightFrameConsumer::FrameReceivedCallback frame_received_callback,
+    SpotlightCrdStateUpdatedCallback crd_state_callback) {
+  CHECK(ash::features::IsBocaSpotlightRobotRequesterEnabled());
+
+  remoting_client_manager_->StartCrdClient(
+      crd_connection_code, std::move(done_callback),
+      std::move(frame_received_callback), std::move(crd_state_callback));
+}
+
+void BocaSessionManager::EndSpotlightSession() {
+  CHECK(ash::features::IsBocaSpotlightRobotRequesterEnabled());
+  remoting_client_manager_->StopCrdClient();
+}
+
+std::string BocaSessionManager::GetDeviceRobotEmail() {
+  CHECK(ash::features::IsBocaSpotlightRobotRequesterEnabled());
+  return remoting_client_manager_->GetDeviceRobotEmail();
+}
+
+void BocaSessionManager::UploadToken(
+    const std::string& fcm_token,
+    base::OnceCallback<void(bool)> on_token_uploaded_cb) {
+  auto request = std::make_unique<UploadTokenRequest>(
+      session_client_impl_->sender(),
+      BocaAppClient::Get()->GetSchoolToolsServerBaseUrl(),
+      account_id_.GetGaiaId(), fcm_token,
+      base::BindOnce(&BocaSessionManager::OnTokenUploadResult,
+                     weak_factory_.GetWeakPtr(),
+                     std::move(on_token_uploaded_cb)));
+  session_client_impl_->UploadToken(std::move(request));
+}
+
+void BocaSessionManager::OnInvalidationReceived(const std::string& payload) {
+  // TODO(crbug.com/354769102): Potentially validate FCM payload before
+  // dispatching. And implement a thread-safe approach to skip loading when
+  // there is already active loading in progress.
+
+  // FCM message will be delivered even user not logged in. But
+  // LoadCurrentSession has a validation to skip load if the current active user
+  // doesn't match the profile user.
+  LoadCurrentSession(/*from_polling=*/false);
 }
 
 void BocaSessionManager::LoadInitialNetworkState() {
@@ -381,6 +482,7 @@ void BocaSessionManager::OnIdentityManagerShutdown(
 
 void BocaSessionManager::ActiveUserChanged(user_manager::User* active_user) {
   if (!active_user || active_user->GetAccountId() != account_id_) {
+    CloseAllCaptions();
     return;
   }
   LoadCurrentSession(/*from_polling=*/false);
@@ -405,25 +507,6 @@ bool BocaSessionManager::IsSessionTakeOver(
     return false;
   }
   return previous_session->session_id() != current_session->session_id();
-}
-
-void BocaSessionManager::RecordPollingResult(
-    const ::boca::Session* previous_session,
-    const ::boca::Session* current_session) {
-  BocaPollingResult polling_result;
-  if (!previous_session && !current_session) {
-    polling_result = BocaPollingResult::kNoUpdate;
-  } else if (!previous_session) {
-    polling_result = BocaPollingResult::kSessionStart;
-  } else if (!current_session) {
-    polling_result = BocaPollingResult::kSessionEnd;
-  } else if (previous_session->SerializeAsString() !=
-             current_session->SerializeAsString()) {
-    polling_result = BocaPollingResult::kInSessionUpdate;
-  } else {
-    polling_result = BocaPollingResult::kNoUpdate;
-  }
-  base::UmaHistogramEnumeration(kPollingResultHistName, polling_result);
 }
 
 void BocaSessionManager::HandleTakeOver(
@@ -513,6 +596,11 @@ void BocaSessionManager::NotifyOnTaskUpdate() {
 }
 
 void BocaSessionManager::NotifySessionCaptionConfigUpdate() {
+  // Session captions notifications for producer is done by calling
+  // `NotifySessionCaptionProducerEvents`
+  if (is_producer_) {
+    return;
+  }
   if (!IsSessionActive(current_session_.get())) {
     VLOG(1) << "[Boca] no active session, will not notify captions update";
     return;
@@ -520,20 +608,6 @@ void BocaSessionManager::NotifySessionCaptionConfigUpdate() {
 
   auto current_session_caption_config =
       GetSessionConfigSafe(current_session_.get()).captions_config();
-
-  // We should never turn on caption for teacher when app is not opened. We
-  // already make sure turn off caption when app load/unload, but in the event
-  // of OS crash, we won't be able to fire update in time, this would cause
-  // server caption config to be still on. This check make sure we don't turn on
-  // it for user before they realize.
-  if (is_producer_ && !is_app_opened_ &&
-      current_session_caption_config.captions_enabled()) {
-    VLOG(1) << "[Boca] will not notify captions update, producer: "
-            << is_producer_ << ", app opened: " << is_app_opened_
-            << ", captions enabled: "
-            << current_session_caption_config.captions_enabled();
-    return;
-  }
 
   auto previous_session_caption_config =
       GetSessionConfigSafe(previous_session_.get()).captions_config();
@@ -703,8 +777,8 @@ void BocaSessionManager::SendStudentHeartbeatRequest() {
 void BocaSessionManager::OnStudentHeartbeat(
     base::expected<bool, google_apis::ApiErrorCode> result) {
   if (!result.has_value()) {
-    // TODO: crbug.com/366316261 - Add metrics for update failure.
-    LOG(WARNING) << "[Boca]Failed to call student heartbeat with error code: ."
+    boca::RecordStudentHeartBeatErrorCode(result.error());
+    LOG(WARNING) << "[Boca]Failed to call student heartbeat with error code: "
                  << result.error();
     if ((result.error() >= 500 && result.error() < 600) ||
         result.error() == 429) {
@@ -740,6 +814,31 @@ void BocaSessionManager::UpdateNetworkRestriction(
     disabled_on_non_managed_network_ = should_disable_on_non_managed_network;
     LoadCurrentSession(/*from_polling=*/false);
   }
+}
+
+void BocaSessionManager::NotifySodaStatusListeners(SodaStatus status) {
+  for (auto& observer : observers_) {
+    observer.OnSodaStatusUpdate(status);
+  }
+}
+
+void BocaSessionManager::CloseAllCaptions() {
+  is_local_caption_enabled_ = false;
+  for (auto& observer : observers_) {
+    if (is_producer_) {
+      observer.OnSessionCaptionClosed(/*is_error=*/false);
+    }
+    observer.OnLocalCaptionClosed();
+  }
+}
+
+void BocaSessionManager::OnTokenUploadResult(
+    base::OnceCallback<void(bool)> on_token_uploaded_cb,
+    base::expected<bool, google_apis::ApiErrorCode> result) {
+  if (!result.has_value()) {
+    boca::RecordUploadTokenErrorCode(result.error());
+  }
+  std::move(on_token_uploaded_cb).Run(result.has_value());
 }
 
 }  // namespace ash::boca

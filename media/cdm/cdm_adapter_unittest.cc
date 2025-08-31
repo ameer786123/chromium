@@ -2,19 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <string_view>
+
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
 #pragma allow_unsafe_buffers
 #endif
 
-#include "media/cdm/cdm_adapter.h"
-
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 
 #include "base/check.h"
 #include "base/command_line.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -28,6 +30,7 @@
 #include "media/base/media_switches.h"
 #include "media/base/mock_filters.h"
 #include "media/cdm/api/content_decryption_module.h"
+#include "media/cdm/cdm_adapter.h"
 #include "media/cdm/cdm_module.h"
 #include "media/cdm/external_clear_key_test_helper.h"
 #include "media/cdm/library_cdm/cdm_host_proxy.h"
@@ -86,15 +89,29 @@ namespace {
 const uint64_t kExpectedLicenseSdkVersion = 12345;
 
 // Random key ID used to create a session.
-const uint8_t kKeyId[] = {
+const auto kKeyId = std::to_array<uint8_t>({
     // base64 equivalent is AQIDBAUGBwgJCgsMDQ4PEA
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-};
+    0x01,
+    0x02,
+    0x03,
+    0x04,
+    0x05,
+    0x06,
+    0x07,
+    0x08,
+    0x09,
+    0x0a,
+    0x0b,
+    0x0c,
+    0x0d,
+    0x0e,
+    0x0f,
+    0x10,
+});
 
-const char kKeyIdAsJWK[] = "{\"kids\": [\"AQIDBAUGBwgJCgsMDQ4PEA\"]}";
+const std::string_view kKeyIdAsJWK = "{\"kids\": [\"AQIDBAUGBwgJCgsMDQ4PEA\"]}";
 
-const uint8_t kKeyIdAsPssh[] = {
+const auto kKeyIdAsPssh = std::to_array<uint8_t>({
     0x00, 0x00, 0x00, 0x34,                          // size = 52
     'p',  's',  's',  'h',                           // 'pssh'
     0x01,                                            // version = 1
@@ -105,7 +122,7 @@ const uint8_t kKeyIdAsPssh[] = {
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,  // key
     0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
     0x00, 0x00, 0x00, 0x00,  // datasize
-};
+});
 
 // Key is 0x0405060708090a0b0c0d0e0f10111213,
 // base64 equivalent is BAUGBwgJCgsMDQ4PEBESEw.
@@ -430,24 +447,26 @@ TEST_P(CdmAdapterTestWithClearKeyCdm, BadLibraryPath) {
 TEST_P(CdmAdapterTestWithClearKeyCdm, CreateWebmSession) {
   InitializeAndExpect(SUCCESS);
 
-  std::vector<uint8_t> key_id(kKeyId, kKeyId + std::size(kKeyId));
+  std::vector<uint8_t> key_id(
+      kKeyId.data(),
+      base::span<const uint8_t>(kKeyId).subspan(std::size(kKeyId)).data());
   CreateSessionAndExpect(EmeInitDataType::WEBM, key_id, SUCCESS);
 }
 
 TEST_P(CdmAdapterTestWithClearKeyCdm, CreateKeyIdsSession) {
   InitializeAndExpect(SUCCESS);
 
-  // Don't include the trailing /0 from the string in the data passed in.
-  std::vector<uint8_t> key_id(kKeyIdAsJWK,
-                              kKeyIdAsJWK + std::size(kKeyIdAsJWK) - 1);
+  std::vector<uint8_t> key_id(kKeyIdAsJWK.begin(), kKeyIdAsJWK.end());
   CreateSessionAndExpect(EmeInitDataType::KEYIDS, key_id, SUCCESS);
 }
 
 TEST_P(CdmAdapterTestWithClearKeyCdm, CreateCencSession) {
   InitializeAndExpect(SUCCESS);
 
-  std::vector<uint8_t> key_id(kKeyIdAsPssh,
-                              kKeyIdAsPssh + std::size(kKeyIdAsPssh));
+  std::vector<uint8_t> key_id(kKeyIdAsPssh.data(),
+                              base::span<const uint8_t>(kKeyIdAsPssh)
+                                  .subspan(std::size(kKeyIdAsPssh))
+                                  .data());
   CreateSessionAndExpect(EmeInitDataType::CENC, key_id, SUCCESS);
 }
 
@@ -455,7 +474,9 @@ TEST_P(CdmAdapterTestWithClearKeyCdm, CreateSessionWithBadData) {
   InitializeAndExpect(SUCCESS);
 
   // Use |kKeyId| but specify KEYIDS format.
-  std::vector<uint8_t> key_id(kKeyId, kKeyId + std::size(kKeyId));
+  std::vector<uint8_t> key_id(
+      kKeyId.data(),
+      base::span<const uint8_t>(kKeyId).subspan(std::size(kKeyId)).data());
   CreateSessionAndExpect(EmeInitDataType::KEYIDS, key_id, FAILURE);
 }
 
@@ -463,14 +484,18 @@ TEST_P(CdmAdapterTestWithClearKeyCdm, LoadSession) {
   InitializeAndExpect(SUCCESS);
 
   // LoadSession() is not supported by AesDecryptor.
-  std::vector<uint8_t> key_id(kKeyId, kKeyId + std::size(kKeyId));
+  std::vector<uint8_t> key_id(
+      kKeyId.data(),
+      base::span<const uint8_t>(kKeyId).subspan(std::size(kKeyId)).data());
   CreateSessionAndExpect(EmeInitDataType::KEYIDS, key_id, FAILURE);
 }
 
 TEST_P(CdmAdapterTestWithClearKeyCdm, UpdateSession) {
   InitializeAndExpect(SUCCESS);
 
-  std::vector<uint8_t> key_id(kKeyId, kKeyId + std::size(kKeyId));
+  std::vector<uint8_t> key_id(
+      kKeyId.data(),
+      base::span<const uint8_t>(kKeyId).subspan(std::size(kKeyId)).data());
   CreateSessionAndExpect(EmeInitDataType::WEBM, key_id, SUCCESS);
 
   UpdateSessionAndExpect(SessionId(), kKeyAsJWK, SUCCESS, true);
@@ -479,7 +504,9 @@ TEST_P(CdmAdapterTestWithClearKeyCdm, UpdateSession) {
 TEST_P(CdmAdapterTestWithClearKeyCdm, UpdateSessionWithBadData) {
   InitializeAndExpect(SUCCESS);
 
-  std::vector<uint8_t> key_id(kKeyId, kKeyId + std::size(kKeyId));
+  std::vector<uint8_t> key_id(
+      kKeyId.data(),
+      base::span<const uint8_t>(kKeyId).subspan(std::size(kKeyId)).data());
   CreateSessionAndExpect(EmeInitDataType::WEBM, key_id, SUCCESS);
 
   UpdateSessionAndExpect(SessionId(), "random data", FAILURE, true);

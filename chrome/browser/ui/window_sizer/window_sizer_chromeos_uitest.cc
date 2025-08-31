@@ -9,7 +9,6 @@
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/run_loop.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -92,7 +91,7 @@ IN_PROC_BROWSER_TEST_F(WindowSizerTest, MAYBE_OpenBrowserUsingShelfItem) {
   OpenBrowserUsingShelfOnRootWindow(root_windows[1]);
 
   // A new browser window should be opened on the 2nd display.
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   std::pair<display::Display, display::Display> displays =
       ui_test_utils::GetDisplays(screen);
   EXPECT_EQ(1u, browser_list->size());

@@ -66,9 +66,8 @@ found in the LICENSE file.
         <org.chromium.ui.AsyncViewStub
             android:id="@+id/keyboard_accessory_stub"
             android:inflatedId="@+id/keyboard_accessory"
-            android:layout_height="@dimen/keyboard_accessory_height_with_shadow"
-            android:layout_width="match_parent"
-            android:layout_gravity="start|bottom"/>
+            android:layout_height="wrap_content"
+            android:layout_width="match_parent"/>
 
         <org.chromium.ui.AsyncViewStub
             android:id="@+id/keyboard_accessory_sheet_stub"
@@ -102,8 +101,7 @@ found in the LICENSE file.
         <org.chromium.ui.AsyncViewStub
             android:id="@+id/omnibox_results_container_stub"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:layout_anchor="@id/control_container"
+            android:layout_height="match_parent"
             android:inflatedId="@+id/omnibox_results_container"
             app:layout="@layout/omnibox_results_container" />
 
@@ -124,11 +122,6 @@ found in the LICENSE file.
             android:layout="@layout/bottom_control_container" />
 
         <ViewStub
-            android:id="@+id/control_container_stub"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
-
-        <ViewStub
             android:id="@+id/bookmark_bar_stub"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -136,12 +129,17 @@ found in the LICENSE file.
             android:layout="@layout/bookmark_bar" />
 
         <ViewStub
+            android:id="@+id/control_container_stub"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <ViewStub
             android:inflatedId="@+id/toolbar_progress_bar_container"
             android:id="@+id/progress_bar_stub"
             android:layout="@layout/toolbar_progress_bar"
             android:layout_width="match_parent"
             android:layout_height="@dimen/toolbar_progress_bar_height"
-            android:layout_gravity="top"
+            android:layout_gravity="center"
             app:layout_anchor="@id/control_container"
             app:layout_anchorGravity="bottom"/>
 
@@ -158,13 +156,6 @@ found in the LICENSE file.
             android:layout_height="wrap_content"
             android:inflatedId="@+id/tab_hover_card_holder"
             android:layout="@layout/tab_hover_card_holder" />
-
-        <ViewStub
-            android:id="@+id/tab_strip_tooltip_holder_stub"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:inflatedId="@+id/tab_strip_tooltip_holder"
-            android:layout="@layout/tab_strip_tooltip_holder" />
 
         <org.chromium.components.messages.MessageContainer
             android:id="@+id/message_container"
@@ -207,10 +198,11 @@ found in the LICENSE file.
             android:inflatedId="@+id/page_zoom_layout"
             android:layout="@layout/page_zoom_view" />
 
-        <ViewStub
-            android:id="@+id/tab_grid_dialog_stub"
+        <FrameLayout
+            android:id="@+id/tab_group_ui_dialog_container"
             android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            android:layout_height="match_parent"
+            android:visibility="gone"/>
 
         <FrameLayout
             android:id="@+id/sheet_container"

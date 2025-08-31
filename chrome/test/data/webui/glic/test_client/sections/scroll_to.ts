@@ -45,11 +45,17 @@ function getDocumentIdAndNodes(annotatedPageContent: any): DocumentIdAndNodes {
   return result;
 }
 
+function getURL(annotatedPageContent: any): string {
+  return annotatedPageContent.mainFrameData.url;
+}
+
 async function scrollTo(selector: ScrollToSelector): Promise<void> {
   const documentId = $.scrollToDocumentId.innerText;
+  const url = $.scrollToURL.innerText;
   const params: ScrollToParams = {
     selector,
     documentId: documentId === 'null' ? undefined : documentId,
+    url: url === 'null' ? undefined : url,
     highlight: true,
   };
   logMessage(`scrollTo called with ${JSON.stringify(params)}`);
@@ -57,8 +63,7 @@ async function scrollTo(selector: ScrollToSelector): Promise<void> {
   logMessage('scrollTo succeeded!');
 }
 
-function getSearchRangeStartNodeId(selectElement: HTMLSelectElement): number|
-    undefined {
+function getNodeId(selectElement: HTMLSelectElement): number|undefined {
   let searchRangeStartNodeId: number|undefined = undefined;
   if (!selectElement.disabled) {
     searchRangeStartNodeId = parseInt(selectElement.value) || undefined;
@@ -67,12 +72,12 @@ function getSearchRangeStartNodeId(selectElement: HTMLSelectElement): number|
 }
 
 $.scrollToFetchAPCBn.addEventListener('click', async () => {
-  let annotatedPageContent: Uint8Array|undefined = undefined;
+  let annotatedPageContentBytes: Uint8Array|undefined = undefined;
   try {
     const pageContent = await getBrowser()!.getContextFromFocusedTab!
                         ({annotatedPageContent: true});
     if (pageContent.annotatedPageData?.annotatedPageContent) {
-      annotatedPageContent =
+      annotatedPageContentBytes =
           await readStream(pageContent.annotatedPageData.annotatedPageContent);
     }
   } catch (err) {
@@ -80,21 +85,23 @@ $.scrollToFetchAPCBn.addEventListener('click', async () => {
     return;
   }
 
-  if (!annotatedPageContent) {
+  if (!annotatedPageContentBytes) {
     logMessage('fetching APC failed');
     return;
   }
 
-  const postResponse =
-      await fetch('/parse-apc', {method: 'POST', body: annotatedPageContent});
+  const postResponse = await fetch(
+      '/parse-apc', {method: 'POST', body: annotatedPageContentBytes});
+  const annotatedPageContent = await postResponse.json();
   const result: DocumentIdAndNodes =
-      getDocumentIdAndNodes(await postResponse.json());
+      getDocumentIdAndNodes(annotatedPageContent);
 
   $.scrollToDocumentId.innerText = result.documentId;
+  $.scrollToURL.innerText = getURL(annotatedPageContent);
 
   for (const selectElement
            of [$.scrollToExactTextSearchStart,
-               $.scrollToTextFragmentSearchStart]) {
+               $.scrollToTextFragmentSearchStart, $.scrollToNode]) {
     selectElement.innerHTML = '';
     selectElement.disabled = false;
 
@@ -128,8 +135,7 @@ $.scrollToBn.addEventListener('click', async () => {
   try {
     const exactText = $.scrollToExactText.value;
     if (exactText) {
-      const searchRangeStartNodeId =
-          getSearchRangeStartNodeId($.scrollToExactTextSearchStart);
+      const searchRangeStartNodeId = getNodeId($.scrollToExactTextSearchStart);
       await scrollTo({exactText: {text: exactText, searchRangeStartNodeId}});
       return;
     }
@@ -138,9 +144,15 @@ $.scrollToBn.addEventListener('click', async () => {
     const textEnd = $.scrollToTextFragmentTextEnd.value;
     if (textStart && textEnd) {
       const searchRangeStartNodeId =
-          getSearchRangeStartNodeId($.scrollToTextFragmentSearchStart);
+          getNodeId($.scrollToTextFragmentSearchStart);
       await scrollTo(
           {textFragment: {textStart, textEnd, searchRangeStartNodeId}});
+      return;
+    }
+
+    const nodeId = getNodeId($.scrollToNode);
+    if (nodeId) {
+      await scrollTo({node: {nodeId}});
       return;
     }
 
@@ -148,4 +160,13 @@ $.scrollToBn.addEventListener('click', async () => {
   } catch (error) {
     logMessage(`scrollTo failed: ${error}`);
   }
+});
+
+$.dropScrollToHighlightBtn.addEventListener('click', () => {
+  getBrowser()!.dropScrollToHighlight!();
+});
+
+$.mqlsClientIdBtn.addEventListener('click', () => {
+  const clientId = getBrowser()!.getModelQualityClientId!();
+  logMessage(`MQLS Client ID: ${clientId}`);
 });

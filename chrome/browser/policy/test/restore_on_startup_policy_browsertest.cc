@@ -2,10 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
+#include <array>
+
 
 #include <algorithm>
 #include <vector>
@@ -43,10 +41,10 @@ namespace policy {
 
 namespace {
 
-constexpr const char* kRestoredURLs[] = {
+constexpr auto kRestoredURLs = std::to_array<const char*>({
     "https://aaa.com/empty.html",
     "https://bbb.com/empty.html",
-};
+});
 
 bool IsNonSwitchArgument(const base::CommandLine::StringType& s) {
   return s.empty() || s[0] != '-';
@@ -183,10 +181,6 @@ class RestoreOnStartupPolicyTest : public UrlBlockingPolicyTest,
 };
 
 IN_PROC_BROWSER_TEST_P(RestoreOnStartupPolicyTest, PRE_RunTest) {
-  // Do not show Welcome Page.
-  browser()->profile()->GetPrefs()->SetBoolean(prefs::kHasSeenWelcomePage,
-                                               true);
-
   // If policy urls are set, those might be opened at startup. Because
   // some tabs are already opened, we don't need to navigate or open more tabs
   // for verification of tab restoration.

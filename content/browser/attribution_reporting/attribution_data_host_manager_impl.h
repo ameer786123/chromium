@@ -98,9 +98,10 @@ class CONTENT_EXPORT AttributionDataHostManagerImpl final
   bool NotifyNavigationRegistrationData(
       const blink::AttributionSrcToken& attribution_src_token,
       const net::HttpResponseHeaders* headers,
-      GURL reporting_url) override;
+      const GURL& reporting_url) override;
   void NotifyNavigationRegistrationCompleted(
-      const blink::AttributionSrcToken& attribution_src_token) override;
+      const blink::AttributionSrcToken& attribution_src_token,
+      int64_t navigation_id = 0) override;
 
   void NotifyBackgroundRegistrationStarted(
       BackgroundRegistrationsId id,
@@ -213,18 +214,13 @@ class CONTENT_EXPORT AttributionDataHostManagerImpl final
                    HeaderPendingDecode,
                    attribution_reporting::Registrar);
   void HandleNextWebDecode(const Registrations&);
-  void OnWebHeaderParsed(RegistrationsId,
-                         data_decoder::DataDecoder::ValueOrError result);
+  void OnWebHeaderParsed(RegistrationsId);
 
   base::expected<void, attribution_reporting::mojom::SourceRegistrationError>
-  HandleParsedWebSource(const Registrations&,
-                        HeaderPendingDecode&,
-                        data_decoder::DataDecoder::ValueOrError);
+  HandleParsedWebSource(const Registrations&, HeaderPendingDecode&);
 
   base::expected<void, attribution_reporting::mojom::TriggerRegistrationError>
-  HandleParsedWebTrigger(const Registrations&,
-                         HeaderPendingDecode&,
-                         data_decoder::DataDecoder::ValueOrError);
+  HandleParsedWebTrigger(const Registrations&, HeaderPendingDecode&);
 
   void HandleNextOsDecode(const Registrations&);
 

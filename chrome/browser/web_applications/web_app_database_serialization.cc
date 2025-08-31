@@ -12,17 +12,14 @@
 
 #include "base/check.h"
 #include "base/containers/contains.h"
-#include "base/functional/overloaded.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/pickle.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/web_applications/generated_icon_fix_util.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_integrity_block_data.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_version.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolation_data.h"
-#include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom-shared.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/os_integration/web_app_file_handler_manager.h"
@@ -47,8 +44,12 @@
 #include "components/sync/base/time.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
 #include "components/webapps/common/web_app_id.h"
+#include "components/webapps/isolated_web_apps/types/iwa_version.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
+#include "components/webapps/isolated_web_apps/types/update_channel.h"
 #include "services/network/public/cpp/permissions_policy/origin_with_possible_wildcards.h"
 #include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/manifest/manifest.h"
 #include "third_party/blink/public/common/permissions_policy/policy_helper_public.h"
 #include "third_party/blink/public/common/safe_url_pattern.h"
@@ -170,64 +171,50 @@ proto::WebApp::CaptureLinks CaptureLinksToProto(
   }
 }
 
-LaunchHandler ProtoLaunchHandlerToLaunchHandlerClientMode(
-    proto::LaunchHandler::DeprecatedRouteTo route_to,
-    proto::LaunchHandler::DeprecatedNavigateExistingClient
-        navigate_existing_client,
-    proto::LaunchHandler::ClientMode client_mode,
-    std::optional<bool> client_mode_valid_and_specified) {
-  // When migrating from a database that doesn't have the
-  // client_mode_valid_and_specified field saved yet, set it to `true` when the
-  // client mode is non-auto. If the site did set the client_mode to 'auto',
-  // then this is corrected on the next manifest update.
-  switch (client_mode) {
+LaunchHandler ProtoToLaunchHandler(const proto::LaunchHandler& proto) {
+  switch (proto.client_mode()) {
+    case proto::LaunchHandler::CLIENT_MODE_UNSPECIFIED:
+      return LaunchHandler(std::nullopt);
     case proto::LaunchHandler::CLIENT_MODE_AUTO:
-      return LaunchHandler{LaunchHandler::ClientMode::kAuto};
+      return LaunchHandler(LaunchHandler::ClientMode::kAuto);
     case proto::LaunchHandler::CLIENT_MODE_NAVIGATE_NEW:
-      return LaunchHandler{LaunchHandler::ClientMode::kNavigateNew};
+      return LaunchHandler(LaunchHandler::ClientMode::kNavigateNew);
     case proto::LaunchHandler::CLIENT_MODE_NAVIGATE_EXISTING:
-      return LaunchHandler{LaunchHandler::ClientMode::kNavigateExisting};
+      return LaunchHandler(LaunchHandler::ClientMode::kNavigateExisting);
     case proto::LaunchHandler::CLIENT_MODE_FOCUS_EXISTING:
-      return LaunchHandler{LaunchHandler::ClientMode::kFocusExisting};
-    case proto::LaunchHandler::CLIENT_MODE_UNSPECIFIED: {
-      // route_to was removed in favor of client_mode, fall back to it if client
-      // mode is unset.
-      switch (route_to) {
-        case proto::LaunchHandler_DeprecatedRouteTo_UNSPECIFIED_ROUTE:
-        case proto::LaunchHandler_DeprecatedRouteTo_AUTO_ROUTE:
-          return LaunchHandler{std::nullopt};
-        case proto::LaunchHandler_DeprecatedRouteTo_NEW_CLIENT:
-          return LaunchHandler{LaunchHandler::ClientMode::kNavigateNew};
-        case proto::LaunchHandler_DeprecatedRouteTo_EXISTING_CLIENT:
-          // route_to: existing-client and navigate_existing_client were
-          // removed in favor of existing-client-navigate and
-          // existing-client-retain.
-          if (navigate_existing_client ==
-              proto::LaunchHandler_DeprecatedNavigateExistingClient_NEVER) {
-            return LaunchHandler{LaunchHandler::ClientMode::kFocusExisting};
-          }
-          return LaunchHandler{LaunchHandler::ClientMode::kNavigateExisting};
-        case proto::LaunchHandler_DeprecatedRouteTo_EXISTING_CLIENT_NAVIGATE:
-          return LaunchHandler{LaunchHandler::ClientMode::kNavigateExisting};
-        case proto::LaunchHandler_DeprecatedRouteTo_EXISTING_CLIENT_RETAIN:
-          return LaunchHandler{LaunchHandler::ClientMode::kFocusExisting};
-      }
-    }
+      return LaunchHandler(LaunchHandler::ClientMode::kFocusExisting);
+    default:
+      // Because proto deserialization populates the enum from an 'int'
+      // without bounds checking, we need to handle the default case.
+      return LaunchHandler(std::nullopt);
   }
 }
 
-proto::LaunchHandler::ClientMode LaunchHandlerClientModeToProto(
-    LaunchHandler::ClientMode client_mode) {
-  switch (client_mode) {
-    case LaunchHandler::ClientMode::kAuto:
-      return proto::LaunchHandler::CLIENT_MODE_AUTO;
-    case LaunchHandler::ClientMode::kNavigateNew:
-      return proto::LaunchHandler::CLIENT_MODE_NAVIGATE_NEW;
-    case LaunchHandler::ClientMode::kNavigateExisting:
-      return proto::LaunchHandler::CLIENT_MODE_NAVIGATE_EXISTING;
-    case LaunchHandler::ClientMode::kFocusExisting:
-      return proto::LaunchHandler::CLIENT_MODE_FOCUS_EXISTING;
+proto::LaunchHandler LaunchHandlerToProto(LaunchHandler launch_handler) {
+  proto::LaunchHandler proto_launch_handler;
+  if (!launch_handler.client_mode_valid_and_specified()) {
+    proto_launch_handler.set_client_mode(
+        proto::LaunchHandler::CLIENT_MODE_UNSPECIFIED);
+    return proto_launch_handler;
   }
+  proto::LaunchHandler::ClientMode client_mode =
+      proto::LaunchHandler::CLIENT_MODE_UNSPECIFIED;
+  switch (launch_handler.parsed_client_mode()) {
+    case LaunchHandler::ClientMode::kAuto:
+      client_mode = proto::LaunchHandler::CLIENT_MODE_AUTO;
+      break;
+    case LaunchHandler::ClientMode::kNavigateNew:
+      client_mode = proto::LaunchHandler::CLIENT_MODE_NAVIGATE_NEW;
+      break;
+    case LaunchHandler::ClientMode::kNavigateExisting:
+      client_mode = proto::LaunchHandler::CLIENT_MODE_NAVIGATE_EXISTING;
+      break;
+    case LaunchHandler::ClientMode::kFocusExisting:
+      client_mode = proto::LaunchHandler::CLIENT_MODE_FOCUS_EXISTING;
+      break;
+  }
+  proto_launch_handler.set_client_mode(client_mode);
+  return proto_launch_handler;
 }
 
 ApiApprovalState ProtoToApiApprovalState(
@@ -378,7 +365,7 @@ template <typename T>
 void IsolationDataLocationToProto(const IsolatedWebAppStorageLocation& location,
                                   T* proto) {
   std::visit(
-      base::Overloaded{
+      absl::Overload{
           [&proto](const IwaStorageOwnedBundle& bundle) {
             proto->mutable_owned_bundle()->set_dir_name_ascii(
                 bundle.dir_name_ascii());
@@ -471,6 +458,11 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
 
   const sync_pb::WebAppSpecifics& sync_data = proto.sync_data();
 
+  if (!sync_data.has_start_url()) {
+    DLOG(ERROR) << "WebApp proto start_url parse error: no start_url field";
+    return nullptr;
+  }
+
   GURL start_url(sync_data.start_url());
   if (start_url.is_empty() || !start_url.is_valid()) {
     DLOG(ERROR) << "WebApp proto start_url parse error: "
@@ -478,12 +470,38 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
     return nullptr;
   }
 
-  webapps::ManifestId manifest_id;
-  if (sync_data.has_relative_manifest_id()) {
-    manifest_id =
-        GenerateManifestId(sync_data.relative_manifest_id(), start_url);
-  } else {
-    manifest_id = GenerateManifestIdFromStartUrlOnly(start_url);
+  // Post-migration check: Scope should not be empty.
+  if (!proto.has_scope() || proto.scope().empty()) {
+    DLOG(ERROR) << "WebApp proto parse error: scope is empty.";
+    return nullptr;
+  }
+  GURL scope(proto.scope());
+  if (!scope.is_valid()) {
+    DLOG(ERROR) << "WebApp proto scope parse error: "
+                << scope.possibly_invalid_spec();
+    return nullptr;
+  }
+  if (scope.has_ref()) {
+    DLOG(ERROR) << "WebApp proto has ref: " << scope.possibly_invalid_spec();
+    return nullptr;
+  }
+  if (scope.has_query()) {
+    DLOG(ERROR) << "WebApp proto has query: " << scope.possibly_invalid_spec();
+    return nullptr;
+  }
+
+  if (!sync_data.has_relative_manifest_id()) {
+    DLOG(ERROR) << "WebApp proto parse error: no relative_manifest_id field.";
+    return nullptr;
+  }
+  webapps::ManifestId manifest_id =
+      GenerateManifestId(sync_data.relative_manifest_id(), start_url);
+  if (!manifest_id.is_valid()) {
+    DLOG(ERROR) << "WebApp proto manifest_id parse error: cannot generate "
+                   "valid manifest id from relative_manifest_id: "
+                << sync_data.relative_manifest_id()
+                << " and start_url: " << start_url.spec();
+    return nullptr;
   }
 
   webapps::AppId app_id = GenerateAppIdFromManifestId(manifest_id);
@@ -491,10 +509,20 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
   auto web_app = std::make_unique<WebApp>(app_id);
   web_app->SetStartUrl(start_url);
   web_app->SetManifestId(manifest_id);
+  // Set the sync proto early, as other setters might depend on it.
+  web_app->SetSyncProto(sync_data);
+  web_app->SetScope(scope);
 
   if (!sync_data.has_user_display_mode_cros() &&
       !sync_data.has_user_display_mode_default()) {
     DLOG(ERROR) << "WebApp proto parse error: no user_display_mode field";
+    return nullptr;
+  }
+
+  // Post-migration check: Ensure current platform UDM is set.
+  if (!HasCurrentPlatformUserDisplayMode(sync_data)) {
+    DLOG(ERROR) << "WebApp proto parse error: missing user display mode for "
+                   "current platform";
     return nullptr;
   }
 
@@ -572,6 +600,15 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
   }
   web_app->SetInstallState(proto.install_state());
 
+  // Because the OS integration current state is saved in a two-phase-commit
+  // flow, where the app is saved to the database first without os integration,
+  // and then after the desired integration is complete the current os
+  // integration state is saved, we don't reject parsing apps where the
+  // install_state is INSTALLED_WITH_OS_INTEGRATION but the current os
+  // integration state is not set.
+  // This is handled in
+  // MaybeInstallAppsFromSyncAndPendingInstallOrSyncOsIntegration.
+
   auto& chromeos_data_proto = proto.chromeos_data();
 
   if (IsChromeOsDataMandatory() && !proto.has_chromeos_data()) {
@@ -631,19 +668,6 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
     web_app->SetDescription(proto.description());
   }
 
-  if (proto.has_scope()) {
-    GURL scope(proto.scope());
-    if (scope.is_empty() || !scope.is_valid()) {
-      DLOG(ERROR) << "WebApp proto scope parse error: "
-                  << scope.possibly_invalid_spec();
-      return nullptr;
-    }
-
-    // WebApp::SetScope() takes care of removing the queries and fragments from
-    // the scope before storing it in memory.
-    web_app->SetScope(scope);
-  }
-
   if (proto.has_theme_color()) {
     web_app->SetThemeColor(proto.theme_color());
   }
@@ -680,8 +704,8 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
   if (proto.has_latest_install_source()) {
     int install_source = proto.latest_install_source();
     if (install_source >= 0 &&
-        install_source <
-            static_cast<int>(webapps::WebappInstallSource::COUNT)) {
+        install_source <=
+            static_cast<int>(webapps::WebappInstallSource::kMaxValue)) {
       web_app->SetLatestInstallSource(
           static_cast<webapps::WebappInstallSource>(install_source));
     }
@@ -1078,16 +1102,7 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
   }
 
   if (proto.has_launch_handler()) {
-    const proto::LaunchHandler& launch_handler_proto = proto.launch_handler();
-    LaunchHandler launch_handler = ProtoLaunchHandlerToLaunchHandlerClientMode(
-        launch_handler_proto.route_to(),
-        launch_handler_proto.navigate_existing_client(),
-        launch_handler_proto.client_mode(),
-        launch_handler_proto.has_client_mode_valid_and_specified()
-            ? std::optional(
-                  launch_handler_proto.client_mode_valid_and_specified())
-            : std::nullopt);
-    web_app->SetLaunchHandler(launch_handler);
+    web_app->SetLaunchHandler(ProtoToLaunchHandler(proto.launch_handler()));
   }
 
   if (proto.has_parent_app_id()) {
@@ -1179,11 +1194,12 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
   }
 
   if (proto.has_isolation_data()) {
-    auto version = ParseIwaVersion(proto.isolation_data().version());
-    if (!version.has_value()) {
+    auto iwa_version = IwaVersion::Create(proto.isolation_data().version());
+
+    if (!iwa_version.has_value()) {
       DLOG(ERROR) << "WebApp proto isolation_data.version parse error: cannot "
                      "deserialize version: "
-                  << IwaVersionParseErrorToString(version.error());
+                  << IwaVersion::GetErrorString(iwa_version.error());
       return nullptr;
     }
 
@@ -1195,7 +1211,7 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
     }
 
     auto isolation_data_builder =
-        IsolationData::Builder(std::move(*location), std::move(*version));
+        IsolationData::Builder(*std::move(location), *std::move(iwa_version));
 
     const google::protobuf::RepeatedPtrField<std::string>& partitions =
         proto.isolation_data().controlled_frame_partitions();
@@ -1224,13 +1240,14 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
         return nullptr;
       }
 
-      auto pending_version =
-          ParseIwaVersion(pending_update_info_proto.version());
-      if (!pending_version.has_value()) {
+      auto pending_iwa_version =
+          IwaVersion::Create(pending_update_info_proto.version());
+
+      if (!pending_iwa_version.has_value()) {
         DLOG(ERROR)
             << "WebApp proto isolation_data.pending_update_info.version parse "
                "error: cannot deserialize version: "
-            << IwaVersionParseErrorToString(pending_version.error());
+            << IwaVersion::GetErrorString(pending_iwa_version.error());
         return nullptr;
       }
 
@@ -1251,7 +1268,7 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
 
       isolation_data_builder.SetPendingUpdateInfo(
           IsolationData::PendingUpdateInfo(
-              std::move(*pending_location), std::move(*pending_version),
+              *std::move(pending_location), *std::move(pending_iwa_version),
               std::move(pending_integrity_block_data)));
     }
 
@@ -1288,10 +1305,13 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
       }
       isolation_data_builder.SetUpdateChannel(std::move(*update_channel));
     }
-
+    if (proto.isolation_data().has_opened_tabs_counter_notification_state()) {
+      isolation_data_builder.SetOpenedTabsCounterNotificationState(
+          IsolationData::OpenedTabsCounterNotificationState(
+              proto.isolation_data().opened_tabs_counter_notification_state()));
+    }
     web_app->SetIsolationData(std::move(isolation_data_builder).Build());
   }
-
   if (proto.has_user_link_capturing_preference()) {
     web_app->SetLinkCapturingUserPreference(
         proto.user_link_capturing_preference());
@@ -1305,8 +1325,10 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
         syncer::ProtoTimeToTime(proto.first_install_time()));
   }
 
-  if (proto.has_generated_icon_fix() &&
-      generated_icon_fix_util::IsValid(proto.generated_icon_fix())) {
+  if (proto.has_generated_icon_fix()) {
+    if (!generated_icon_fix_util::IsValid(proto.generated_icon_fix())) {
+      return nullptr;
+    }
     web_app->SetGeneratedIconFix(proto.generated_icon_fix());
   }
 
@@ -1342,9 +1364,60 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
   }
   web_app->SetRelatedApplications(std::move(related_applications));
 
-  if (proto.has_update_token()) {
-    web_app->SetUpdateToken(proto.update_token());
+  if (proto.has_pending_update_info()) {
+    // Exit early if there is a `PendingUpdateInfo` that is completely empty.
+    if (!proto.pending_update_info().has_name() &&
+        proto.pending_update_info().trusted_icons().empty() &&
+        proto.pending_update_info().manifest_icons().empty()) {
+      return nullptr;
+    }
+
+    // Exit early if trusted icons is populated but manifest icons is not, and
+    // vice versa.
+    if (proto.pending_update_info().trusted_icons().empty() !=
+        proto.pending_update_info().manifest_icons().empty()) {
+      return nullptr;
+    }
+
+    // Populate manifest_icons and trusted_icons only if both are populated.
+    if (!proto.pending_update_info().manifest_icons().empty() &&
+        !proto.pending_update_info().trusted_icons().empty()) {
+      for (const auto& icon : proto.pending_update_info().manifest_icons()) {
+        if (!icon.has_url() || !icon.has_size_in_px() || !icon.has_purpose()) {
+          return nullptr;
+        }
+      }
+      for (const auto& icon : proto.pending_update_info().trusted_icons()) {
+        if (!icon.has_url() || !icon.has_size_in_px() || !icon.has_purpose()) {
+          return nullptr;
+        }
+      }
+    }
+    web_app->SetPendingUpdateInfo(proto.pending_update_info());
   }
+
+  std::optional<std::vector<apps::IconInfo>> parsed_trusted_icons =
+      ParseAppIconInfos("WebApp", proto.trusted_icons());
+  if (!parsed_trusted_icons) {
+    // ParseWebAppIconInfos() reports any errors.
+    return nullptr;
+  }
+  web_app->SetTrustedIcons(std::move(parsed_trusted_icons.value()));
+
+  std::vector<SquareSizePx> trusted_icon_sizes_any;
+  for (int32_t size : proto.stored_trusted_icon_sizes_any()) {
+    trusted_icon_sizes_any.push_back(size);
+  }
+  web_app->SetStoredTrustedIconSizes(
+      IconPurpose::ANY, SortedSizesPx(std::move(trusted_icon_sizes_any)));
+
+  std::vector<SquareSizePx> trusted_icon_sizes_maskable;
+  for (int32_t size : proto.stored_trusted_icon_sizes_maskable()) {
+    trusted_icon_sizes_maskable.push_back(size);
+  }
+  web_app->SetStoredTrustedIconSizes(
+      IconPurpose::MASKABLE,
+      SortedSizesPx(std::move(trusted_icon_sizes_maskable)));
 
   return web_app;
 }
@@ -1666,7 +1739,7 @@ std::unique_ptr<proto::WebApp> WebAppToProto(const WebApp& web_app) {
     local_data->clear_capture_links();
   }
 
-  if (!web_app.manifest_url().is_empty()) {
+  if (web_app.manifest_url().is_valid()) {
     local_data->set_manifest_url(web_app.manifest_url().spec());
   }
 
@@ -1677,11 +1750,8 @@ std::unique_ptr<proto::WebApp> WebAppToProto(const WebApp& web_app) {
       web_app.window_controls_overlay_enabled());
 
   if (web_app.launch_handler()) {
-    local_data->mutable_launch_handler()->set_client_mode(
-        LaunchHandlerClientModeToProto(
-            web_app.launch_handler()->parsed_client_mode()));
-    local_data->mutable_launch_handler()->set_client_mode_valid_and_specified(
-        web_app.launch_handler()->client_mode_valid_and_specified());
+    *local_data->mutable_launch_handler() =
+        LaunchHandlerToProto(*web_app.launch_handler());
   }
 
   if (web_app.parent_app_id_) {
@@ -1794,6 +1864,12 @@ std::unique_ptr<proto::WebApp> WebAppToProto(const WebApp& web_app) {
       auto* mutable_pending_update_info =
           mutable_data->mutable_pending_update_info();
 
+      CHECK_EQ(isolation_data.location().dev_mode(),
+               pending_update_info.location.dev_mode(),
+               base::NotFatalUntil::M138)
+          << "IsolationData dev_mode mismatch between current location and "
+             "pending update location during serialization.";
+
       IsolationDataLocationToProto(pending_update_info.location,
                                    mutable_pending_update_info);
       mutable_pending_update_info->set_version(
@@ -1804,13 +1880,19 @@ std::unique_ptr<proto::WebApp> WebAppToProto(const WebApp& web_app) {
       }
     }
 
+    if (const auto& notification_state =
+            isolation_data.opened_tabs_counter_notification_state()) {
+      *mutable_data->mutable_opened_tabs_counter_notification_state() =
+          notification_state->GetState();
+    }
+
     if (isolation_data.integrity_block_data()) {
       *mutable_data->mutable_integrity_block_data() =
           isolation_data.integrity_block_data()->ToProto();
     }
 
-    if (const auto& update_manifest_url =
-            isolation_data.update_manifest_url()) {
+    if (const auto& update_manifest_url = isolation_data.update_manifest_url();
+        update_manifest_url.has_value() && update_manifest_url->is_valid()) {
       mutable_data->set_update_manifest_url(update_manifest_url->spec());
     }
 
@@ -1860,8 +1942,34 @@ std::unique_ptr<proto::WebApp> WebAppToProto(const WebApp& web_app) {
     }
   }
 
-  if (web_app.update_token().has_value()) {
-    local_data->set_update_token(web_app.update_token().value());
+  if (web_app.pending_update_info().has_value()) {
+    CHECK(web_app.pending_update_info()->has_name() ||
+          (!web_app.pending_update_info()->trusted_icons().empty() &&
+           !web_app.pending_update_info()->manifest_icons().empty()));
+    if (!web_app.pending_update_info()->manifest_icons().empty() &&
+        !web_app.pending_update_info()->trusted_icons().empty()) {
+      for (const auto& icon : web_app.pending_update_info()->manifest_icons()) {
+        CHECK(icon.has_url() && icon.has_size_in_px() && icon.has_purpose());
+      }
+      for (const auto& icon : web_app.pending_update_info()->trusted_icons()) {
+        CHECK(icon.has_url() && icon.has_size_in_px() && icon.has_purpose());
+      }
+    }
+    *local_data->mutable_pending_update_info() = *web_app.pending_update_info();
+  }
+
+  for (const apps::IconInfo& trusted_icon_info : web_app.trusted_icons()) {
+    *(local_data->add_trusted_icons()) =
+        AppIconInfoToSyncProto(trusted_icon_info);
+  }
+
+  for (SquareSizePx size :
+       web_app.stored_trusted_icon_sizes(IconPurpose::ANY)) {
+    local_data->add_stored_trusted_icon_sizes_any(size);
+  }
+  for (SquareSizePx size :
+       web_app.stored_trusted_icon_sizes(IconPurpose::MASKABLE)) {
+    local_data->add_stored_trusted_icon_sizes_maskable(size);
   }
 
   return local_data;

@@ -111,7 +111,7 @@ export class PdfViewerPrintElement extends PdfViewerBaseElement {
 
     this.toolbarManager_!.hideToolbarAfterTimeout();
     // Let the viewport handle directional key events.
-    if (this.viewport.handleDirectionalKeyEvent(e, false)) {
+    if (this.viewport.handleDirectionalKeyEvent(e, false, false)) {
       return;
     }
 
@@ -319,6 +319,7 @@ export class PdfViewerPrintElement extends PdfViewerBaseElement {
       case 'getPassword':
       case 'metadata':
       case 'navigate':
+      case 'sendClickEvent':
       case 'setIsEditing':
         // These messages are not relevant in Print Preview.
         return;

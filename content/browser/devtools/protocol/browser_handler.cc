@@ -21,11 +21,14 @@
 #include "base/metrics/statistics_recorder.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/types/expected_macros.h"
 #include "build/build_config.h"
 #include "components/download/public/common/download_item.h"
 #include "components/embedder_support/user_agent_utils.h"
 #include "content/browser/devtools/browser_devtools_agent_host.h"
+#include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/browser/devtools/devtools_manager.h"
 #include "content/browser/devtools/protocol/devtools_download_manager_delegate.h"
 #include "content/browser/gpu/gpu_process_host.h"
@@ -47,6 +50,25 @@ using blink::PermissionType;
 
 namespace content {
 namespace protocol {
+
+namespace {
+
+base::expected<std::optional<url::Origin>, Response> ParseOriginString(
+    base::optional_ref<const std::string> origin_string) {
+  if (!origin_string.has_value()) {
+    return std::nullopt;
+  }
+
+  url::Origin origin = url::Origin::Create(GURL(origin_string.value()));
+  if (origin.opaque()) {
+    return base::unexpected(Response::InvalidParams(
+        "Permission can't be granted to opaque origins."));
+  }
+
+  return origin;
+}
+
+}  // namespace
 
 BrowserHandler::BrowserHandler(bool allow_set_download_behavior)
     : DevToolsDomainHandler(Browser::Metainfo::domainName),
@@ -367,6 +389,7 @@ Response BrowserHandler::SetPermission(
     std::unique_ptr<protocol::Browser::PermissionDescriptor> permission,
     const protocol::Browser::PermissionSetting& setting,
     std::optional<std::string> origin,
+    std::optional<std::string> embedding_origin,
     std::optional<std::string> browser_context_id) {
   BrowserContext* browser_context = nullptr;
   Response response = FindBrowserContext(browser_context_id, &browser_context);
@@ -388,16 +411,24 @@ Response BrowserHandler::SetPermission(
   PermissionControllerImpl* permission_controller =
       PermissionControllerImpl::FromBrowserContext(browser_context);
 
-  std::optional<url::Origin> overridden_origin;
+  std::optional<url::Origin> overridden_requesting_origin;
+  std::optional<url::Origin> overridden_embedding_origin;
   if (origin.has_value()) {
-    overridden_origin = url::Origin::Create(GURL(origin.value()));
-    if (overridden_origin->opaque())
-      return Response::InvalidParams(
-          "Permission can't be granted to opaque origins.");
+    ASSIGN_OR_RETURN(overridden_requesting_origin, ParseOriginString(origin));
+
+    // Only consider the embedding origin if there's a requesting origin. Use
+    // the requesting origin as the embedding origin, if one is not provided.
+    ASSIGN_OR_RETURN(overridden_embedding_origin,
+                     ParseOriginString(embedding_origin));
+    if (!overridden_embedding_origin) {
+      overridden_embedding_origin = overridden_requesting_origin;
+    }
   }
+
   PermissionControllerImpl::OverrideStatus status =
-      permission_controller->SetOverrideForDevTools(overridden_origin, type,
-                                                    permission_status);
+      permission_controller->SetOverrideForDevTools(
+          overridden_requesting_origin, overridden_embedding_origin, type,
+          permission_status);
   if (status != PermissionControllerImpl::OverrideStatus::kOverrideSet) {
     return Response::InvalidParams(
         "Permission can't be granted in current context.");
@@ -437,8 +468,8 @@ Response BrowserHandler::GrantPermissions(
           "Permission can't be granted to opaque origins.");
   }
   PermissionControllerImpl::OverrideStatus status =
-      permission_controller->GrantOverridesForDevTools(overridden_origin,
-                                                       internal_permissions);
+      permission_controller->GrantOverridesForDevTools(
+          overridden_origin, overridden_origin, internal_permissions);
 
   if (status != PermissionControllerImpl::OverrideStatus::kOverrideSet) {
     return Response::InvalidParams(
@@ -661,12 +692,24 @@ void BrowserHandler::AddPrivacySandboxCoordinatorKeyConfig(
 
 void BrowserHandler::OnDownloadUpdated(download::DownloadItem* item) {
   std::string state;
+  std::optional<std::string> maybe_file_path;
   switch (item->GetState()) {
     case download::DownloadItem::IN_PROGRESS:
       state = Browser::DownloadProgress::StateEnum::InProgress;
       break;
     case download::DownloadItem::COMPLETE:
       state = Browser::DownloadProgress::StateEnum::Completed;
+      {
+        base::FilePath target_file_path = item->GetTargetFilePath();
+        if (!target_file_path.empty()) {
+#if BUILDFLAG(IS_WIN)
+          // On Windows, the target file path is a wide string.
+          maybe_file_path = base::WideToUTF8(target_file_path.value());
+#else
+          maybe_file_path = target_file_path.value();
+#endif
+        }
+      }
       break;
     case download::DownloadItem::CANCELLED:
     case download::DownloadItem::INTERRUPTED:
@@ -676,7 +719,7 @@ void BrowserHandler::OnDownloadUpdated(download::DownloadItem* item) {
       NOTREACHED();
   }
   frontend_->DownloadProgress(item->GetGuid(), item->GetTotalBytes(),
-                              item->GetReceivedBytes(), state);
+                              item->GetReceivedBytes(), state, maybe_file_path);
   if (state != Browser::DownloadProgress::StateEnum::InProgress) {
     item->RemoveObserver(this);
     pending_downloads_.erase(item);

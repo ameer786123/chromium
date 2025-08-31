@@ -40,7 +40,8 @@ import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.content_public.browser.NavigationEntry;
 import org.chromium.content_public.browser.NavigationHistory;
 import org.chromium.net.test.EmbeddedTestServer;
@@ -65,8 +66,8 @@ public class IncognitoHistoryLeakageTest {
     private String mTestPage2;
 
     @Rule
-    public ChromeTabbedActivityTestRule mChromeActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mChromeActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule
     public IncognitoCustomTabActivityTestRule mCustomTabActivityTestRule =
@@ -126,10 +127,10 @@ public class IncognitoHistoryLeakageTest {
     @Test
     @LargeTest
     public void testBrowsingHistoryDoNotLeakFromIncognitoTabbedActivity() throws TimeoutException {
-        mChromeActivityTestRule.startMainActivityOnBlankPage();
+        mChromeActivityTestRule.startOnBlankPage();
         mChromeActivityTestRule.loadUrlInNewTab(mTestPage1, /* incognito= */ true);
         List<HistoryItem> historyEntriesOfIncognitoMode =
-                getBrowsingHistory(mChromeActivityTestRule.getActivity().getActivityTab());
+                getBrowsingHistory(mChromeActivityTestRule.getActivityTab());
         assertTrue(historyEntriesOfIncognitoMode.isEmpty());
     }
 
@@ -142,7 +143,7 @@ public class IncognitoHistoryLeakageTest {
                         ApplicationProvider.getApplicationContext(), mTestPage1);
         mCustomTabActivityTestRule.startCustomTabActivityWithIntent(intent);
         List<HistoryItem> historyEntriesOfIncognitoMode =
-                getBrowsingHistory(mCustomTabActivityTestRule.getActivity().getActivityTab());
+                getBrowsingHistory(mCustomTabActivityTestRule.getActivityTab());
         assertTrue(historyEntriesOfIncognitoMode.isEmpty());
     }
 

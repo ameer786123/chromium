@@ -241,7 +241,7 @@ const char kUmaSelectDefaultSearchEngine[] =
   if (_firstList.size() > 0) {
     [model addSectionWithIdentifier:SectionIdentifierFirstList];
 
-    if (_regionalCapabilitiesService->IsInEeaCountry()) {
+    if (_regionalCapabilitiesService->IsInSearchEngineChoiceScreenRegion()) {
       TableViewTextHeaderFooterItem* header =
           [[TableViewTextHeaderFooterItem alloc] initWithType:ItemTypeHeader];
       header.subtitle =
@@ -474,6 +474,11 @@ const char kUmaSelectDefaultSearchEngine[] =
   _secondList.reserve(urls.size());
   // Classify TemplateURLs.
   for (TemplateURL* url : urls) {
+    // Starter pack is not supported on iOS.
+    if (url->starter_pack_id() != 0) {
+      continue;
+    }
+
     if ([self isPrepopulatedOrDefaultSearchEngine:url]) {
       _firstList.push_back(url);
     } else {
@@ -566,7 +571,7 @@ const char kUmaSelectDefaultSearchEngine[] =
     // section. The settings should either contains a selected custom search
     // engine (which cannot be removed as long as it is selected),
     // or prepopulated search engine.
-    CHECK_EQ(path.section, secondSectionIdentifier, base::NotFatalUntil::M135);
+    CHECK_EQ(path.section, secondSectionIdentifier);
     std::erase(_secondList, engineItem.templateURL);
     _templateURLService->Remove(engineItem.templateURL);
   }

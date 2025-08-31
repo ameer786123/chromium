@@ -23,20 +23,23 @@ export class TestBookmarksApiProxy extends TestBrowserProxy implements
   constructor() {
     super([
       'getActiveUrl',
+      'isActiveTabInSplit',
       'bookmarkCurrentTabInFolder',
       'openBookmark',
       'contextMenuOpenBookmarkInNewTab',
       'contextMenuOpenBookmarkInNewWindow',
       'contextMenuOpenBookmarkInIncognitoWindow',
       'contextMenuOpenBookmarkInNewTabGroup',
+      'contextMenuOpenBookmarkInSplitView',
       'contextMenuEdit',
       'contextMenuMove',
       'contextMenuAddToBookmarksBar',
       'contextMenuRemoveFromBookmarksBar',
       'contextMenuDelete',
       'createFolder',
-      'editBookmarks',
       'deleteBookmarks',
+      'dropBookmarks',
+      'editBookmarks',
       'renameBookmark',
       'setSortOrder',
       'setViewType',
@@ -59,6 +62,11 @@ export class TestBookmarksApiProxy extends TestBrowserProxy implements
   getActiveUrl() {
     this.methodCalled('getActiveUrl');
     return Promise.resolve('http://www.test.com');
+  }
+
+  isActiveTabInSplit() {
+    this.methodCalled('isActiveTabInSplit');
+    return Promise.resolve(false);
   }
 
   bookmarkCurrentTabInFolder() {
@@ -86,6 +94,10 @@ export class TestBookmarksApiProxy extends TestBrowserProxy implements
 
   contextMenuOpenBookmarkInNewTabGroup(ids: string[], source: ActionSource) {
     this.methodCalled('contextMenuOpenBookmarkInNewTabGroup', ids, source);
+  }
+
+  contextMenuOpenBookmarkInSplitView(ids: string[], source: ActionSource) {
+    this.methodCalled('contextMenuOpenBookmarkInSplitView', ids, source);
   }
 
   contextMenuEdit(ids: string[], source: ActionSource) {
@@ -123,15 +135,20 @@ export class TestBookmarksApiProxy extends TestBrowserProxy implements
     this.methodCalled('cutBookmark', id);
   }
 
+  deleteBookmarks(ids: string[]) {
+    this.methodCalled('deleteBookmarks', ids);
+    return Promise.resolve();
+  }
+
+  dropBookmarks(parentId: string) {
+    this.methodCalled('dropBookmarks', parentId);
+    return Promise.resolve();
+  }
+
   editBookmarks(
       ids: string[], newTitle: string|undefined, newUrl: string|undefined,
       newParentId: string|undefined) {
     this.methodCalled('editBookmarks', ids, newTitle, newUrl, newParentId);
-  }
-
-  deleteBookmarks(ids: string[]) {
-    this.methodCalled('deleteBookmarks', ids);
-    return Promise.resolve();
   }
 
   pasteToBookmark(parentId: string, destinationId?: string): Promise<void> {

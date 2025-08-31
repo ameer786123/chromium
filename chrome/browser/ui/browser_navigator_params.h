@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
@@ -31,7 +31,6 @@
 #include "third_party/blink/public/mojom/window_features/window_features.mojom.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
-#include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -237,7 +236,7 @@ struct NavigateParams {
   // Whether the browser popup is being created as a tab modal. If true,
   // `disposition` should be NEW_POPUP. Additionally, it prevents card saving
   // and other prompts for payments autofill enrollment.
-  bool is_tab_modal_popup = false;
+  bool is_tab_modal_popup_deprecated = false;
 
   // If false then the navigation was not initiated by a user gesture. This
   // variable will be set to true for popups to get windows focus even if
@@ -317,13 +316,9 @@ struct NavigateParams {
   // Optional URLLoaderFactory to facilitate blob URL loading.
   scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory;
 
-  // Indicates that the navigation should happen in an pwa window if
-  // possible, i.e. if the is a PWA installed for the target URL.
-  bool open_pwa_window_if_possible = false;
-
-  // Indicates that the navigation must happen in a PWA window. If a PWA
-  // window can't be created, the navigation will be cancelled.
-  bool force_open_pwa_window = false;
+  // Indicates that this is a service worker openWindow() call targeting a new
+  // window.
+  bool is_service_worker_open_window = false;
 
   // The time when the input which led to the navigation occurred. Currently
   // only set when a link is clicked or the navigation takes place from the

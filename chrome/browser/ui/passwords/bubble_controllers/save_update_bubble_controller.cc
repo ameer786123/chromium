@@ -10,6 +10,7 @@
 #include "base/functional/bind.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/time/default_clock.h"
+#include "chrome/browser/password_manager/factories/password_counter_factory.h"
 #include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/sync_service_factory.h"
@@ -19,7 +20,9 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/password_manager/core/browser/manage_passwords_referrer.h"
+#include "components/password_manager/core/browser/password_counter.h"
 #include "components/password_manager/core/browser/password_form_metrics_recorder.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/password_store/smart_bubble_stats_store.h"
 #include "components/password_manager/core/browser/password_sync_util.h"
@@ -152,6 +155,14 @@ void SaveUpdateBubbleController::OnNeverForThisSiteClicked() {
   }
 }
 
+void SaveUpdateBubbleController::OnNotNowClicked() {
+  CHECK_EQ(password_manager::ui::PENDING_PASSWORD_STATE, GetState());
+  SetDismissalReason(metrics_util::CLICKED_NOT_NOW);
+  if (delegate_) {
+    delegate_->OnNotNowClicked();
+  }
+}
+
 bool SaveUpdateBubbleController::IsCurrentStateUpdate() const {
   CHECK(GetState() == password_manager::ui::PENDING_PASSWORD_UPDATE_STATE ||
         GetState() == password_manager::ui::PENDING_PASSWORD_STATE);
@@ -168,12 +179,6 @@ bool SaveUpdateBubbleController::IsCurrentStateUpdate() const {
   return base::Contains(existing_credentials_,
                         GetPendingPassword().username_value,
                         &password_manager::PasswordForm::username_value);
-}
-
-bool SaveUpdateBubbleController::ShouldShowFooter() const {
-  return (GetState() == password_manager::ui::PENDING_PASSWORD_UPDATE_STATE ||
-          GetState() == password_manager::ui::PENDING_PASSWORD_STATE) &&
-         IsSyncUser(GetProfile());
 }
 
 bool SaveUpdateBubbleController::
@@ -257,9 +262,11 @@ void SaveUpdateBubbleController::ReportInteractions() {
     // Update the statistics for the save password bubble.
     Profile* profile = GetProfile();
     if (profile) {
-      if (GetDismissalReason() == metrics_util::NO_DIRECT_INTERACTION &&
+      if ((GetDismissalReason() == metrics_util::NO_DIRECT_INTERACTION ||
+           GetDismissalReason() == metrics_util::CLICKED_NOT_NOW) &&
           GetDisplayDisposition() ==
               metrics_util::AUTOMATIC_WITH_PASSWORD_PENDING) {
+        // When closed via X or "Not now", count the dismissals.
         if (interaction_stats_.dismissal_count <
             std::numeric_limits<
                 decltype(interaction_stats_.dismissal_count)>::max()) {
@@ -289,20 +296,16 @@ void SaveUpdateBubbleController::ReportInteractions() {
     if (profile) {
       user_state = password_manager::features_util::
           ComputePasswordAccountStorageUserState(
-              profile->GetPrefs(), SyncServiceFactory::GetForProfile(profile));
+              SyncServiceFactory::GetForProfile(profile));
     }
 
     // Log additional UMA for users who don't yet have any passwords saved in
     // the password manager (in both profile and account stores) to measure
     // saving adoption.
     const bool log_adoption_metric =
-        profile &&
-        !profile->GetPrefs()->GetBoolean(
-            password_manager::prefs::
-                kAutofillableCredentialsProfileStoreLoginDatabase) &&
-        !profile->GetPrefs()->GetBoolean(
-            password_manager::prefs::
-                kAutofillableCredentialsAccountStoreLoginDatabase);
+        profile && PasswordCounterFactory::GetForProfile(profile) &&
+        PasswordCounterFactory::GetForProfile(profile)
+                ->autofillable_passwords() == 0;
     metrics_util::LogSaveUIDismissalReason(GetDismissalReason(), user_state,
                                            log_adoption_metric);
   }

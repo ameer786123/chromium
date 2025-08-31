@@ -11,10 +11,9 @@
 
 #include "base/base_paths.h"
 #include "base/containers/span.h"
-#include "base/files/file_path.h"
-#include "base/files/scoped_temp_dir.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/types/cxx23_to_underlying.h"
@@ -23,48 +22,26 @@
 #include "chrome/renderer/accessibility/ax_tree_distiller.h"
 #include "chrome/renderer/accessibility/phrase_segmentation/dependency_parser_model.h"
 #include "chrome/renderer/accessibility/read_anything/read_aloud_app_model.h"
+#include "chrome/renderer/accessibility/read_anything/read_aloud_traversal_utils.h"
 #include "chrome/renderer/accessibility/read_anything/read_anything_test_utils.h"
 #include "chrome/test/base/chrome_render_view_test.h"
 #include "content/public/renderer/render_frame.h"
 #include "read_anything_test_utils.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/strings/grit/services_strings.h"
-#include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "ui/accessibility/accessibility_features.h"
+#include "ui/accessibility/ax_enums.mojom-data-view.h"
 #include "ui/accessibility/ax_location_and_scroll_updates.h"
 #include "ui/accessibility/ax_node.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_node_id_forward.h"
 #include "ui/accessibility/ax_serializable_tree.h"
+#include "ui/accessibility/ax_tree_id.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
 namespace {
-
-base::File GetInvalidModelFile() {
-  base::ScopedTempDir temp_dir;
-  EXPECT_TRUE(temp_dir.CreateUniqueTempDir());
-  base::FilePath file_path =
-      temp_dir.GetPath().AppendASCII("model_file.tflite");
-  base::File file(file_path, (base::File::FLAG_CREATE | base::File::FLAG_READ |
-                              base::File::FLAG_WRITE |
-                              base::File::FLAG_CAN_DELETE_ON_CLOSE));
-  EXPECT_EQ(5u, file.WriteAtCurrentPos(base::byte_span_from_cstring("12345")));
-  return file;
-}
-
-base::File GetValidModelFile() {
-  base::FilePath source_root_dir;
-  base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source_root_dir);
-  base::FilePath model_file_path = source_root_dir.AppendASCII("chrome")
-                                       .AppendASCII("test")
-                                       .AppendASCII("data")
-                                       .AppendASCII("accessibility")
-                                       .AppendASCII("phrase_segmentation")
-                                       .AppendASCII("model.tflite");
-  base::File file(model_file_path,
-                  (base::File::FLAG_OPEN | base::File::FLAG_READ));
-  return file;
-}
 
 constexpr auto kTimeSincePageLoadForDataCollection = base::Seconds(30);
 constexpr auto kTimeSinceTreeChangedForDataCollection = base::Seconds(30);
@@ -153,6 +130,7 @@ class MockReadAnythingUntrustedPageHandler
               OnImageDataRequested,
               (const ::ui::AXTreeID& target_tree_id, int32_t target_node_id),
               (override));
+  MOCK_METHOD(void, OnReadAloudAudioStateChange, (bool playing), (override));
 
   mojo::PendingRemote<read_anything::mojom::UntrustedPageHandler>
   BindNewPipeAndPassRemote() {
@@ -182,6 +160,7 @@ class ReadAnythingAppControllerTest : public ChromeRenderViewTest {
       "edit?ouid=103677288878638916900&usp=docs_home&ths=true";
 
   void SetUp() override {
+    EnableReadAloud();
     ChromeRenderViewTest::SetUp();
     content::RenderFrame* render_frame =
         content::RenderFrame::FromWebFrame(GetMainFrame());
@@ -260,27 +239,24 @@ class ReadAnythingAppControllerTest : public ChromeRenderViewTest {
                                             updates, events);
   }
 
-  std::vector<ui::AXNodeID> MoveToNextGranularityAndGetText() {
+  std::u16string MoveToNextGranularityAndGetText() {
     controller().MovePositionToNextGranularity();
-    return controller().GetCurrentText();
+    return controller().GetCurrentTextContent();
   }
 
-  std::vector<ui::AXNodeID> MoveToPreviousGranularityAndGetText() {
+  std::vector<ReadAloudTextSegment> MoveToNextGranularityAndGetSegments() {
+    controller().MovePositionToNextGranularity();
+    return GetCurrentTextSegments(model().GetCurrentlyVisibleNodes());
+  }
+
+  // std::vector<ui::AXNodeID> MoveToPreviousGranularityAndGetText() {
+  //   controller().MovePositionToPreviousGranularity();
+  //   return GetCurrentTextSegments();
+  // }
+
+  std::vector<ReadAloudTextSegment> MoveToPreviousGranularityAndGetSegments() {
     controller().MovePositionToPreviousGranularity();
-    return controller().GetCurrentText();
-  }
-
-  ui::AXNodePosition::AXPositionInstance GetNextNodePosition(
-      a11y::ReadAloudCurrentGranularity granularity =
-          a11y::ReadAloudCurrentGranularity()) {
-    return read_aloud_model().GetNextValidPositionFromCurrentPosition(
-        granularity, model().is_pdf(), model().IsDocs(),
-        &model().display_node_ids());
-  }
-
-  a11y::ReadAloudCurrentGranularity GetNextNodes() {
-    return read_aloud_model().GetNextNodes(model().is_pdf(), model().IsDocs(),
-                                           &model().display_node_ids());
+    return GetCurrentTextSegments(model().GetCurrentlyVisibleNodes());
   }
 
   void ProcessDisplayNodes(const std::vector<ui::AXNodeID>& content_node_ids) {
@@ -323,13 +299,73 @@ class ReadAnythingAppControllerTest : public ChromeRenderViewTest {
     scoped_feature_list_.InitAndEnableFeature(features::kReadAnythingReadAloud);
   }
 
+  void EnableDocs() {
+    scoped_feature_list_.Reset();
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kReadAnythingDocsIntegration);
+  }
+
+  void DisableReadAloud() {
+    scoped_feature_list_.Reset();
+    scoped_feature_list_.InitWithFeatures({},
+                                          {features::kReadAnythingReadAloud});
+  }
+
+  void EnablePhraseHighlighting() {
+    scoped_feature_list_.Reset();
+    scoped_feature_list_.InitWithFeatures(
+        {features::kReadAnythingReadAloud,
+         features::kReadAnythingReadAloudPhraseHighlighting},
+        {});
+  }
+
+  void ExpectNodesMapToEntireText(std::vector<ReadAloudTextSegment> segments,
+                                  std::vector<ui::AXNodeID> node_ids,
+                                  std::vector<std::u16string> texts) {
+    EXPECT_EQ(segments.size(), node_ids.size());
+    EXPECT_EQ(segments.size(), texts.size());
+    for (int i = 0; i < segments.size(); i++) {
+      EXPECT_EQ(segments.at(i).id, node_ids.at(i));
+      EXPECT_EQ(segments.at(i).text_start, 0);
+      EXPECT_EQ(segments.at(i).text_end, texts.at(i).length());
+    }
+  }
+
+  void ExpectCurrentSegments(
+      std::vector<ReadAloudTextSegment> expected_segments) {
+    std::vector<ReadAloudTextSegment> segments = GetCurrentTextSegments();
+    EXPECT_EQ(segments.size(), expected_segments.size());
+    for (int i = 0; i < segments.size(); i++) {
+      EXPECT_EQ(segments.at(i).id, expected_segments.at(i).id);
+      EXPECT_EQ(segments.at(i).text_start, expected_segments.at(i).text_start);
+      EXPECT_EQ(segments.at(i).text_end, expected_segments.at(i).text_end);
+    }
+  }
+
+  void MoveToNextAndAssertEmpty() {
+    EXPECT_EQ(MoveToNextGranularityAndGetText(), u"");
+  }
+
+  std::vector<ReadAloudTextSegment> GetCurrentTextSegments(
+      bool is_pdf = false,
+      bool is_docs = false) {
+    return read_aloud_model().GetCurrentTextSegments(
+        is_pdf, is_docs, model().GetCurrentlyVisibleNodes());
+  }
+
+  static constexpr ui::AXNodeID kId1 = 2;
+  static constexpr ui::AXNodeID kId2 = 3;
+  static constexpr ui::AXNodeID kId3 = 4;
+  static constexpr ui::AXNodeID kId4 = 12;
+  static constexpr ui::AXNodeID kId5 = 100;
+
   ui::AXTreeID tree_id_;
   raw_ptr<MockAXTreeDistiller, DanglingUntriaged> distiller_ = nullptr;
   testing::StrictMock<MockReadAnythingUntrustedPageHandler> page_handler_;
   base::test::ScopedFeatureList scoped_feature_list_;
 
-  // ReadAnythingAppController constructor and destructor are protected so it's
-  // not accessible by std::make_unique.
+  // ReadAnythingAppController constructor and destructor are protected so
+  // it's not accessible by std::make_unique.
   raw_ptr<ReadAnythingAppController, DanglingUntriaged> controller_ = nullptr;
 };
 
@@ -339,79 +375,190 @@ TEST_F(ReadAnythingAppControllerTest, IsReadAloudEnabled) {
   EXPECT_TRUE(controller().IsReadAloudEnabled());
 
 #else
-  EXPECT_FALSE(controller().IsReadAloudEnabled());
-
-  EnableReadAloud();
   EXPECT_TRUE(controller().IsReadAloudEnabled());
+
+  DisableReadAloud();
+  EXPECT_FALSE(controller().IsReadAloudEnabled());
 #endif  // IS_CHROMEOS
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
 TEST_F(ReadAnythingAppControllerTest, OnDeviceLocked_OnlyLogsIfSpeechPlaying) {
-  read_aloud_model().set_speech_playing(false);
+  read_aloud_model().SetSpeechPlaying(false);
   base::HistogramTester histogram_tester;
 
   controller().OnDeviceLocked();
   EXPECT_EQ(0, histogram_tester.GetTotalSum(
                    ReadAloudAppModel::kSpeechStopSourceHistogramName));
 
-  EnableReadAloud();
   controller().OnDeviceLocked();
   EXPECT_EQ(0, histogram_tester.GetTotalSum(
                    ReadAloudAppModel::kSpeechStopSourceHistogramName));
 
-  read_aloud_model().set_speech_playing(true);
+  read_aloud_model().SetSpeechPlaying(true);
   controller().OnDeviceLocked();
   histogram_tester.ExpectUniqueSample(
       ReadAloudAppModel::kSpeechStopSourceHistogramName,
       ReadAloudAppModel::ReadAloudStopSource::kLockChromeosDevice, 1);
 }
+
+TEST_F(ReadAnythingAppControllerTest, OnDeviceLocked_LogsWordsSeen) {
+  base::HistogramTester histogram_tester;
+  controller().UpdateWordsSeen(123);
+  controller().OnDeviceLocked();
+
+  histogram_tester.ExpectUniqueSample(
+      ReadAnythingAppController::kWordsSeenHistogramName, 123, 1);
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnDeviceLocked_ResetsWordsSeen) {
+  controller().UpdateWordsSeen(123);
+  controller().OnDeviceLocked();
+
+  EXPECT_EQ(0, model().words_seen());
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnDeviceLocked_LogsWordsHeard) {
+  base::HistogramTester histogram_tester;
+  controller().UpdateWordsHeard(123);
+  controller().OnDeviceLocked();
+
+  histogram_tester.ExpectUniqueSample(
+      ReadAnythingAppController::kWordsHeardHistogramName, 123, 1);
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnDeviceLocked_ResetsWordsHeard) {
+  controller().UpdateWordsHeard(123);
+  controller().OnDeviceLocked();
+
+  EXPECT_EQ(0, model().words_heard());
+}
 #endif
+
+TEST_F(ReadAnythingAppControllerTest, OnIsAudioCurrentlyPlayingChanged) {
+  controller().OnIsAudioCurrentlyPlayingChanged(true);
+  EXPECT_CALL(page_handler_, OnReadAloudAudioStateChange(true)).Times(1);
+  controller().OnIsAudioCurrentlyPlayingChanged(false);
+  EXPECT_CALL(page_handler_, OnReadAloudAudioStateChange(false)).Times(1);
+}
 
 TEST_F(ReadAnythingAppControllerTest,
        OnReadingModeHidden_OnlyLogsIfSpeechPlaying) {
-  read_aloud_model().set_speech_playing(false);
+  read_aloud_model().SetSpeechPlaying(false);
   base::HistogramTester histogram_tester;
 
   controller().OnReadingModeHidden();
   EXPECT_EQ(0, histogram_tester.GetTotalSum(
                    ReadAloudAppModel::kSpeechStopSourceHistogramName));
 
-  EnableReadAloud();
   controller().OnReadingModeHidden();
   EXPECT_EQ(0, histogram_tester.GetTotalSum(
                    ReadAloudAppModel::kSpeechStopSourceHistogramName));
 
-  read_aloud_model().set_speech_playing(true);
+  read_aloud_model().SetSpeechPlaying(true);
   controller().OnReadingModeHidden();
   histogram_tester.ExpectUniqueSample(
       ReadAloudAppModel::kSpeechStopSourceHistogramName,
       ReadAloudAppModel::ReadAloudStopSource::kCloseReadingMode, 1);
 }
 
+TEST_F(ReadAnythingAppControllerTest, OnReadingModeHidden_LogsWordsSeen) {
+  base::HistogramTester histogram_tester;
+  controller().UpdateWordsSeen(123);
+  controller().OnReadingModeHidden();
+
+  histogram_tester.ExpectUniqueSample(
+      ReadAnythingAppController::kWordsSeenHistogramName, 123, 1);
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnReadingModeHidden_ResetsWordsSeen) {
+  controller().UpdateWordsSeen(123);
+  controller().OnReadingModeHidden();
+
+  EXPECT_EQ(0, model().words_seen());
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnReadingModeHidden_LogsWordsHeard) {
+  base::HistogramTester histogram_tester;
+  controller().UpdateWordsHeard(123);
+  controller().OnReadingModeHidden();
+
+  histogram_tester.ExpectUniqueSample(
+      ReadAnythingAppController::kWordsHeardHistogramName, 123, 1);
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       OnReadingModeHidden_ReadAloudDisabled_DoesNotLogWordsHeard) {
+  DisableReadAloud();
+  base::HistogramTester histogram_tester;
+  controller().UpdateWordsHeard(123);
+
+  controller().OnReadingModeHidden();
+
+  histogram_tester.ExpectTotalCount(
+      ReadAnythingAppController::kWordsHeardHistogramName, 0);
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnReadingModeHidden_ResetsWordsHeard) {
+  controller().UpdateWordsHeard(123);
+  controller().OnReadingModeHidden();
+
+  EXPECT_EQ(0, model().words_heard());
+}
+
 TEST_F(ReadAnythingAppControllerTest, OnTabWillDetach_OnlyLogsIfSpeechPlaying) {
-  read_aloud_model().set_speech_playing(false);
+  read_aloud_model().SetSpeechPlaying(false);
   base::HistogramTester histogram_tester;
 
   controller().OnTabWillDetach();
   EXPECT_EQ(0, histogram_tester.GetTotalSum(
                    ReadAloudAppModel::kSpeechStopSourceHistogramName));
 
-  EnableReadAloud();
   controller().OnTabWillDetach();
   EXPECT_EQ(0, histogram_tester.GetTotalSum(
                    ReadAloudAppModel::kSpeechStopSourceHistogramName));
 
-  read_aloud_model().set_speech_playing(true);
+  read_aloud_model().SetSpeechPlaying(true);
   controller().OnTabWillDetach();
   histogram_tester.ExpectUniqueSample(
       ReadAloudAppModel::kSpeechStopSourceHistogramName,
       ReadAloudAppModel::ReadAloudStopSource::kCloseTabOrWindow, 1);
 }
 
+TEST_F(ReadAnythingAppControllerTest, OnTabWillDetach_LogsWordsSeen) {
+  base::HistogramTester histogram_tester;
+  controller().UpdateWordsSeen(123456);
+  controller().OnTabWillDetach();
+
+  histogram_tester.ExpectUniqueSample(
+      ReadAnythingAppController::kWordsSeenHistogramName, 123456, 1);
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnTabWillDetach_ResetsWordsSeen) {
+  controller().UpdateWordsSeen(123);
+  controller().OnTabWillDetach();
+
+  EXPECT_EQ(0, model().words_seen());
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnTabWillDetach_LogsWordsHeard) {
+  base::HistogramTester histogram_tester;
+  controller().UpdateWordsHeard(1357);
+  controller().OnTabWillDetach();
+
+  histogram_tester.ExpectUniqueSample(
+      ReadAnythingAppController::kWordsHeardHistogramName, 1357, 1);
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnTabWillDetach_ResetsWordsHeard) {
+  controller().UpdateWordsHeard(2468);
+  controller().OnTabWillDetach();
+
+  EXPECT_EQ(0, model().words_heard());
+}
+
 TEST_F(ReadAnythingAppControllerTest, OnUrlInformationSet_LogsReload) {
-  EnableReadAloud();
-  read_aloud_model().set_speech_playing(true);
+  read_aloud_model().SetSpeechPlaying(true);
   ui::AXTreeUpdate update1;
   ui::AXTreeID id_1 = ui::AXTreeID::CreateNewAXTreeID();
   test::SetUpdateTreeID(&update1, id_1);
@@ -445,8 +592,7 @@ TEST_F(ReadAnythingAppControllerTest, OnUrlInformationSet_LogsReload) {
 }
 
 TEST_F(ReadAnythingAppControllerTest, OnUrlInformationSet_LogsNewPage) {
-  EnableReadAloud();
-  read_aloud_model().set_speech_playing(true);
+  read_aloud_model().SetSpeechPlaying(true);
   ui::AXTreeUpdate update1;
   ui::AXTreeID id_1 = ui::AXTreeID::CreateNewAXTreeID();
   test::SetUpdateTreeID(&update1, id_1);
@@ -474,6 +620,37 @@ TEST_F(ReadAnythingAppControllerTest, OnUrlInformationSet_LogsNewPage) {
   histogram_tester.ExpectBucketCount(
       ReadAloudAppModel::kSpeechStopSourceHistogramName,
       ReadAloudAppModel::ReadAloudStopSource::kChangePage, 2);
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       OnUrlInformationSet_DoesNotLogIfSpeechWasNotPlaying) {
+  read_aloud_model().SetSpeechPlaying(false);
+  ui::AXTreeUpdate update1;
+  ui::AXTreeID id_1 = ui::AXTreeID::CreateNewAXTreeID();
+  test::SetUpdateTreeID(&update1, id_1);
+  ui::AXNodeData root1 = test::LinkNode(/* id= */ 1, "https://www.google.com");
+  update1.root_id = root1.id;
+  update1.nodes = {std::move(root1)};
+
+  ui::AXTreeUpdate update2;
+  ui::AXTreeID id_2 = ui::AXTreeID::CreateNewAXTreeID();
+  test::SetUpdateTreeID(&update2, id_2);
+  ui::AXNodeData root2 = test::LinkNode(/* id= */ 5, "https://waymo.com");
+  update2.root_id = root2.id;
+  update2.nodes = {std::move(root2)};
+  base::HistogramTester histogram_tester;
+
+  AccessibilityEventReceived({std::move(update1)});
+  controller().OnActiveAXTreeIDChanged(id_1, ukm::kInvalidSourceId, false);
+  EXPECT_TRUE(
+      model().tree_infos_for_testing().at(id_1)->is_url_information_set);
+
+  AccessibilityEventReceived({std::move(update2)});
+  controller().OnActiveAXTreeIDChanged(id_2, ukm::kInvalidSourceId, false);
+  EXPECT_TRUE(
+      model().tree_infos_for_testing().at(id_2)->is_url_information_set);
+  histogram_tester.ExpectTotalCount(
+      ReadAloudAppModel::kSpeechStopSourceHistogramName, 0);
 }
 
 TEST_F(ReadAnythingAppControllerTest, OnLetterSpacingChange_ValidChange) {
@@ -611,13 +788,11 @@ TEST_F(ReadAnythingAppControllerTest,
 }
 
 TEST_F(ReadAnythingAppControllerTest, GetStoredVoice_NoVoices_ReturnsEmpty) {
-  scoped_feature_list_.InitWithFeatures({features::kReadAnythingReadAloud}, {});
   ASSERT_EQ(controller().GetStoredVoice(), "");
 }
 
 TEST_F(ReadAnythingAppControllerTest,
        GetStoredVoice_CurrentBaseLangStored_ReturnsExpectedVoice) {
-  scoped_feature_list_.InitWithFeatures({features::kReadAnythingReadAloud}, {});
   std::string base_lang = "fr";
   std::string expected_voice_name = "French voice 1";
 
@@ -630,7 +805,6 @@ TEST_F(ReadAnythingAppControllerTest,
 
 TEST_F(ReadAnythingAppControllerTest,
        GetStoredVoice_CurrentFullLangStored_ReturnsExpectedVoice) {
-  scoped_feature_list_.InitWithFeatures({features::kReadAnythingReadAloud}, {});
   std::string full_lang = "en-UK";
   std::string expected_voice_name = "British voice 45";
 
@@ -644,7 +818,6 @@ TEST_F(ReadAnythingAppControllerTest,
 TEST_F(
     ReadAnythingAppControllerTest,
     GetStoredVoice_BaseLangStoredButCurrentLangIsFull_ReturnsStoredBaseLang) {
-  scoped_feature_list_.InitWithFeatures({features::kReadAnythingReadAloud}, {});
   std::string base_lang = "zh";
   std::string full_lang = "zh-TW";
   std::string expected_voice_name = "Chinese voice";
@@ -658,7 +831,6 @@ TEST_F(
 
 TEST_F(ReadAnythingAppControllerTest,
        GetStoredVoice_CurrentLangNotStored_ReturnsEmpty) {
-  scoped_feature_list_.InitWithFeatures({features::kReadAnythingReadAloud}, {});
   std::string current_lang = "de-DE";
   std::string stored_lang = "it-IT";
 
@@ -754,7 +926,6 @@ TEST_F(ReadAnythingAppControllerTest,
   ui::AXTreeUpdate update;
   test::SetUpdateTreeID(&update, tree_id_);
   update.has_tree_data = true;
-  update.event_from = ax::mojom::EventFrom::kUser;
   update.tree_data.sel_anchor_object_id = 3;
   update.tree_data.sel_focus_object_id = 4;
   update.tree_data.sel_anchor_offset = 0;
@@ -777,7 +948,6 @@ TEST_F(ReadAnythingAppControllerTest,
   ui::AXTreeUpdate update;
   test::SetUpdateTreeID(&update, tree_id_);
   update.has_tree_data = true;
-  update.event_from = ax::mojom::EventFrom::kUser;
   update.tree_data.sel_anchor_object_id = 4;
   update.tree_data.sel_focus_object_id = 3;
   update.tree_data.sel_anchor_offset = 0;
@@ -1055,39 +1225,6 @@ TEST_F(ReadAnythingAppControllerTest, GetAltText_Unset) {
   EXPECT_EQ("", controller().GetAltText(2));
 }
 
-TEST_F(ReadAnythingAppControllerTest, GetImageDataUrl) {
-  std::string img = "img";
-  std::string img_data =
-      "data:image/"
-      "png;base64,"
-      "iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAADElEQVQImWNgoBMAAABpAAFE"
-      "I8ARAAAAAElFTkSuQmCC";
-  ui::AXNodeData img_node;
-  img_node.id = 2;
-  img_node.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag, img);
-  img_node.AddStringAttribute(ax::mojom::StringAttribute::kImageDataUrl,
-                              img_data);
-
-  SendUpdateWithNodes({std::move(img_node)});
-
-  controller().OnAXTreeDistilled(tree_id_, {});
-  EXPECT_EQ(img, controller().GetHtmlTag(2));
-  EXPECT_EQ(img_data, controller().GetImageDataUrl(2));
-}
-
-TEST_F(ReadAnythingAppControllerTest, GetImageDataUrl_Unset) {
-  std::string img = "img";
-  ui::AXNodeData img_node;
-  img_node.id = 2;
-  img_node.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag, img);
-
-  SendUpdateWithNodes({std::move(img_node)});
-
-  controller().OnAXTreeDistilled(tree_id_, {});
-  EXPECT_EQ(img, controller().GetHtmlTag(2));
-  EXPECT_EQ("", controller().GetImageDataUrl(2));
-}
-
 TEST_F(ReadAnythingAppControllerTest, GetTextContent_NoSelection) {
   ui::AXNodeData node1 = test::TextNode(/* id= */ 2, u"Hello");
   ui::AXNodeData node2 = test::ExplicitlyEmptyTextNode(/* id= */ 3);
@@ -1315,7 +1452,6 @@ TEST_F(ReadAnythingAppControllerTest,
   ui::AXTreeUpdate update;
   test::SetUpdateTreeID(&update, tree_id_);
   update.has_tree_data = true;
-  update.event_from = ax::mojom::EventFrom::kUser;
   update.tree_data.sel_anchor_object_id = 2;
   update.tree_data.sel_focus_object_id = 3;
   update.tree_data.sel_anchor_offset = 0;
@@ -1334,7 +1470,6 @@ TEST_F(ReadAnythingAppControllerTest,
   ui::AXTreeUpdate update;
   test::SetUpdateTreeID(&update, tree_id_);
   update.has_tree_data = true;
-  update.event_from = ax::mojom::EventFrom::kUser;
   update.tree_data.sel_anchor_object_id = 3;
   update.tree_data.sel_focus_object_id = 2;
   update.tree_data.sel_anchor_offset = 0;
@@ -1382,12 +1517,16 @@ TEST_F(ReadAnythingAppControllerTest, DoesNotCrashIfContentNodeNotFoundInTree) {
 TEST_F(ReadAnythingAppControllerTest, Draw_RecomputeDisplayNodes) {
   ui::AXNodeData node;
   node.id = 4;
+  controller().InitAXPositionWithNode(node.id);
+  EXPECT_TRUE(controller().IsSpeechTreeInitialized());
 
   // This update changes the structure of the tree. When the controller receives
   // it in AccessibilityEventReceived, it will re-distill the tree.
   SendUpdateWithNodes({std::move(node)});
   model().Reset({3, 4});
   controller().Draw(/* recompute_display_nodes= */ true);
+
+  EXPECT_FALSE(controller().IsSpeechTreeInitialized());
   EXPECT_TRUE(base::Contains(model().display_node_ids(), 1));
   EXPECT_FALSE(base::Contains(model().display_node_ids(), 2));
   EXPECT_TRUE(base::Contains(model().display_node_ids(), 3));
@@ -1522,7 +1661,7 @@ TEST_F(ReadAnythingAppControllerTest, AccessibilityEventReceivedWhileSpeaking) {
   EXPECT_EQ(u"", controller().GetTextContent(4));
 
   // Send three updates while playing.
-  controller().OnSpeechPlayingStateChanged(/* is_speech_active= */ true);
+  controller().OnIsSpeechActiveChanged(/* is_speech_active= */ true);
   SendBatchUpdates();
 
   // The updates shouldn't be applied yet.
@@ -1533,7 +1672,7 @@ TEST_F(ReadAnythingAppControllerTest, AccessibilityEventReceivedWhileSpeaking) {
   // OnAXTreeDistilled would unserialize the pending updates. Since a11y events
   // happen asynchronously, they can come between the time distillation finishes
   // and pending updates are unserialized.
-  controller().OnSpeechPlayingStateChanged(/* is_speech_active= */ false);
+  controller().OnIsSpeechActiveChanged(/* is_speech_active= */ false);
   ui::AXNodeData final_node = test::TextNode(/* id= */ 2, u"Final update");
   SendUpdateWithNodes({std::move(final_node)});
 
@@ -1544,6 +1683,7 @@ TEST_F(ReadAnythingAppControllerTest, AccessibilityEventReceivedWhileSpeaking) {
 }
 
 TEST_F(ReadAnythingAppControllerTest, AccessibilityLocationChangesReceived) {
+  EnableDocs();
   ui::AXTreeUpdate update;
   ui::AXTreeID id_1 = ui::AXTreeID::CreateNewAXTreeID();
   test::SetUpdateTreeID(&update, id_1);
@@ -1576,45 +1716,6 @@ TEST_F(ReadAnythingAppControllerTest, AccessibilityLocationChangesReceived) {
   controller().AccessibilityLocationChangesReceived(
       id_1, location_and_scroll_updates);
   EXPECT_EQ(model().GetAXNode(2)->data().relative_bounds, location_update);
-}
-
-TEST_F(ReadAnythingAppControllerTest,
-       AccessibilityLocationChangesReceivedOnMissingTree) {
-  ui::AXTreeUpdate update;
-  ui::AXTreeID id_1 = ui::AXTreeID::CreateNewAXTreeID();
-  test::SetUpdateTreeID(&update, id_1);
-
-  ui::AXRelativeBounds initial_bounds;
-  initial_bounds.bounds = gfx::RectF(1, 1, 100, 100);
-  initial_bounds.offset_container_id = 12345;
-  ui::AXNodeData node;
-  node.id = 2;
-  node.relative_bounds = std::move(initial_bounds);
-
-  ui::AXNodeData root;
-  root.id = 1;
-  root.child_ids = {node.id};
-  update.root_id = root.id;
-  update.nodes = {std::move(root), std::move(node)};
-
-  AccessibilityEventReceived({std::move(update)});
-  controller().OnAXTreeDistilled(tree_id_, {1});
-  controller().OnActiveAXTreeIDChanged(id_1, ukm::kInvalidSourceId, false);
-
-  // Create a new bounding box that the node will update to have
-  ui::AXRelativeBounds location_update;
-  location_update.offset_container_id = 1;
-  location_update.bounds = gfx::RectF(5, 5, 100, 100);
-  ui::AXLocationAndScrollUpdates location_and_scroll_updates;
-  location_and_scroll_updates.location_changes.emplace_back(2, location_update);
-
-  // Destroy the tree.
-  controller().OnAXTreeDestroyed(id_1);
-
-  // Receive location updates after the tree is destroyed.
-  controller().AccessibilityLocationChangesReceived(
-      id_1, location_and_scroll_updates);
-  EXPECT_EQ(model().active_tree_id(), ui::AXTreeIDUnknown());
 }
 
 TEST_F(ReadAnythingAppControllerTest, OnActiveAXTreeIDChanged) {
@@ -1741,6 +1842,28 @@ TEST_F(ReadAnythingAppControllerTest, AddAndRemoveTrees) {
   ASSERT_FALSE(model().ContainsTree(tree_ids[1]));
 }
 
+TEST_F(ReadAnythingAppControllerTest,
+       AccessiblityEvent_DuringSpeech_DoesNothing) {
+  ui::AXTreeUpdate initial_update;
+  test::SetUpdateTreeID(&initial_update, tree_id_);
+  static constexpr int kInitialId = 2;
+  ui::AXNodeData initial_node = test::GenericContainerNode(kInitialId);
+  initial_update.nodes = {std::move(initial_node)};
+  AccessibilityEventReceived({std::move(initial_update)});
+  model().Reset({kInitialId});
+
+  EXPECT_FALSE(model().requires_distillation());
+  EXPECT_FALSE(model().redraw_required());
+
+  ui::AXTreeUpdate update;
+  test::SetUpdateTreeID(&update, tree_id_);
+  static constexpr int kExpandedId = 4;
+  ui::AXNodeData updated_node = test::GenericContainerNode(kExpandedId);
+  updated_node.AddState(ax::mojom::State::kExpanded);
+  update.nodes = {std::move(updated_node)};
+  AccessibilityEventReceived({std::move(update)});
+}
+
 TEST_F(ReadAnythingAppControllerTest, OnAXTreeDestroyed_EraseTreeCalled) {
   std::vector<int> child_ids = SendSimpleUpdateAndGetChildIds();
   std::vector<ui::AXTreeUpdate> updates =
@@ -1830,7 +1953,7 @@ TEST_F(ReadAnythingAppControllerTest,
   // unserialized. Speech starts playing
   EXPECT_CALL(*distiller_, Distill).Times(0);
   ui::AXEvent load_complete_2(2, ax::mojom::Event::kLoadComplete);
-  controller().OnSpeechPlayingStateChanged(/*is_speech_active=*/true);
+  controller().OnIsSpeechActiveChanged(/*is_speech_active=*/true);
   AccessibilityEventReceived({std::move(updates[2])},
                              {std::move(load_complete_2)});
   EXPECT_EQ(u"23456", controller().GetTextContent(1));
@@ -1845,7 +1968,7 @@ TEST_F(ReadAnythingAppControllerTest,
 
   // Speech stops. We request distillation (deferred from above)
   EXPECT_CALL(*distiller_, Distill).Times(1);
-  controller().OnSpeechPlayingStateChanged(/*is_speech_active=*/false);
+  controller().OnIsSpeechActiveChanged(/*is_speech_active=*/false);
   EXPECT_EQ(u"23456", controller().GetTextContent(1));
   Mock::VerifyAndClearExpectations(distiller_);
 
@@ -1979,7 +2102,7 @@ TEST_F(ReadAnythingAppControllerTest, OnLinkClicked) {
   Mock::VerifyAndClearExpectations(distiller_);
 }
 
-TEST_F(ReadAnythingAppControllerTest, RequestImageDataUrl) {
+TEST_F(ReadAnythingAppControllerTest, RequestImageData) {
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitWithFeatures(
       {features::kReadAnythingImagesViaAlgorithm,
@@ -2010,7 +2133,7 @@ TEST_F(ReadAnythingAppControllerTest, RequestImageDataUrl) {
       line_spacing, letter_spacing, font_name, font_size, links_enabled,
       images_enabled, color, speech_rate, std::move(voices),
       std::move(languages_enabled_in_pref), highlight_granularity);
-  controller().RequestImageDataUrl(ax_node_id);
+  controller().RequestImageData(ax_node_id);
   page_handler_.FlushForTesting();
   Mock::VerifyAndClearExpectations(distiller_);
 }
@@ -2035,6 +2158,32 @@ TEST_F(ReadAnythingAppControllerTest, OnLinkClicked_DistillationInProgress) {
   controller().OnLinkClicked(2);
   page_handler_.FlushForTesting();
   Mock::VerifyAndClearExpectations(distiller_);
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       InitAXPositionWithNode_PreprocessesTextForSpeech) {
+  // Text indices:             0123456789012345678901234567890
+  std::u16string sentence1 = u"Never feel heavy ";
+  std::u16string sentence2 = u"or earthbound, ";
+  std::u16string sentence3 = u"no worries or doubts interfere.";
+  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
+  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
+  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
+
+  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(1, false),
+              IsEmpty());
+
+  InitializeWithAndProcessNodes({std::move(static_text1),
+                                 std::move(static_text2),
+                                 std::move(static_text3)});
+
+  // After initializing, GetHighlightForCurrentSegmentIndex should return
+  // highlights, since this means text was preprocessed.
+  EXPECT_EQ(
+      read_aloud_model().GetHighlightForCurrentSegmentIndex(1, false).size(),
+      1u);
+  EXPECT_EQ(controller().GetCurrentTextContent(),
+            sentence1 + sentence2 + sentence3);
 }
 
 TEST_F(ReadAnythingAppControllerTest, ScrollToTargetNode_ScrollsIfGoogleDocs) {
@@ -2117,6 +2266,7 @@ TEST_F(ReadAnythingAppControllerTest, OnSelectionChange) {
       .Times(1);
   controller().OnSelectionChange(anchor_node_id, anchor_offset, focus_node_id,
                                  focus_offset);
+  ASSERT_EQ(1, model().unprocessed_selections_from_reading_mode());
   Mock::VerifyAndClearExpectations(distiller_);
 }
 
@@ -2131,6 +2281,31 @@ TEST_F(ReadAnythingAppControllerTest, OnCollapseSelection) {
   Mock::VerifyAndClearExpectations(distiller_);
 }
 
+TEST_F(ReadAnythingAppControllerTest, DrawSelection_ResetsReadAloudState) {
+  ui::AXNodeData node1 = test::TextNode(/* id= */ 2, u"Not like you- ");
+  ui::AXNodeData node2 =
+      test::TextNode(/* id= */ 3, u" you lost your nerve, you lost the game.");
+  SendUpdateWithNodes({std::move(node1), std::move(node2)});
+
+  // Initialize read aloud state.
+  controller().InitAXPositionWithNode(2);
+  EXPECT_TRUE(controller().IsSpeechTreeInitialized());
+
+  // Create a selection from node 2-3. This will trigger DrawSelection.
+  ui::AXTreeUpdate update;
+  test::SetUpdateTreeID(&update, tree_id_);
+  update.has_tree_data = true;
+  update.tree_data.sel_anchor_object_id = 2;
+  update.tree_data.sel_focus_object_id = 3;
+  update.tree_data.sel_anchor_offset = 1;
+  update.tree_data.sel_focus_offset = 3;
+  update.tree_data.sel_is_backward = false;
+  AccessibilityEventReceived({std::move(update)});
+
+  // After a selection, the read aloud state should be reset.
+  EXPECT_FALSE(controller().IsSpeechTreeInitialized());
+}
+
 TEST_F(ReadAnythingAppControllerTest,
        OnSelectionChange_ClickAfterClickDoesNotUpdateSelection) {
   ui::AXNodeData node1 = test::TextNode(/* id= */ 2);
@@ -2140,7 +2315,6 @@ TEST_F(ReadAnythingAppControllerTest,
   ui::AXTreeUpdate selection;
   test::SetUpdateTreeID(&selection, tree_id_);
   selection.has_tree_data = true;
-  selection.event_from = ax::mojom::EventFrom::kUser;
   selection.tree_data.sel_anchor_object_id = 2;
   selection.tree_data.sel_focus_object_id = 2;
   selection.tree_data.sel_anchor_offset = 0;
@@ -2149,7 +2323,67 @@ TEST_F(ReadAnythingAppControllerTest,
 
   EXPECT_CALL(page_handler_, OnSelectionChange).Times(0);
   controller().OnSelectionChange(3, 5, 3, 5);
+  ASSERT_EQ(0, model().unprocessed_selections_from_reading_mode());
   page_handler_.FlushForTesting();
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       OnSelectionChange_MultipleTimesBeforePostProcess) {
+  ui::AXNodeData node1 = test::TextNode(/* id= */ 2);
+  ui::AXNodeData node2 = test::TextNode(/* id= */ 3);
+  SendUpdateWithNodes({std::move(node1), std::move(node2)});
+
+  EXPECT_CALL(page_handler_, OnSelectionChange).Times(2);
+  controller().OnSelectionChange(3, 5, 3, 6);
+  controller().OnSelectionChange(3, 5, 3, 10);
+
+  ASSERT_EQ(2, model().unprocessed_selections_from_reading_mode());
+  page_handler_.FlushForTesting();
+  Mock::VerifyAndClearExpectations(distiller_);
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnSelectionChange_ThenPostProcess) {
+  ui::AXNodeData node1 = test::TextNode(/* id= */ 2);
+  ui::AXNodeData node2 = test::TextNode(/* id= */ 3);
+  SendUpdateWithNodes({std::move(node1), std::move(node2)});
+
+  EXPECT_CALL(page_handler_, OnSelectionChange).Times(2);
+  controller().OnSelectionChange(3, 5, 3, 6);
+  controller().OnSelectionChange(3, 5, 3, 10);
+  ASSERT_EQ(2, model().unprocessed_selections_from_reading_mode());
+
+  ui::AXTreeUpdate selection1;
+  test::SetUpdateTreeID(&selection1, tree_id_);
+  selection1.has_tree_data = true;
+  selection1.tree_data.sel_anchor_object_id = 2;
+  selection1.tree_data.sel_focus_object_id = 3;
+  selection1.tree_data.sel_anchor_offset = 0;
+  selection1.tree_data.sel_focus_offset = 1;
+  AccessibilityEventReceived({std::move(selection1)});
+  ASSERT_EQ(1, model().unprocessed_selections_from_reading_mode());
+
+  ui::AXTreeUpdate selection2;
+  test::SetUpdateTreeID(&selection2, tree_id_);
+  selection2.has_tree_data = true;
+  selection2.tree_data.sel_anchor_object_id = 2;
+  selection2.tree_data.sel_focus_object_id = 3;
+  selection2.tree_data.sel_anchor_offset = 0;
+  selection2.tree_data.sel_focus_offset = 5;
+  AccessibilityEventReceived({std::move(selection2)});
+  ASSERT_EQ(0, model().unprocessed_selections_from_reading_mode());
+
+  ui::AXTreeUpdate selection3;
+  test::SetUpdateTreeID(&selection3, tree_id_);
+  selection3.has_tree_data = true;
+  selection3.tree_data.sel_anchor_object_id = 2;
+  selection3.tree_data.sel_focus_object_id = 3;
+  selection3.tree_data.sel_anchor_offset = 0;
+  selection3.tree_data.sel_focus_offset = 7;
+  AccessibilityEventReceived({std::move(selection3)});
+  ASSERT_EQ(0, model().unprocessed_selections_from_reading_mode());
+
+  page_handler_.FlushForTesting();
+  Mock::VerifyAndClearExpectations(distiller_);
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -2161,7 +2395,6 @@ TEST_F(ReadAnythingAppControllerTest,
   ui::AXTreeUpdate selection;
   test::SetUpdateTreeID(&selection, tree_id_);
   selection.has_tree_data = true;
-  selection.event_from = ax::mojom::EventFrom::kUser;
   selection.tree_data.sel_anchor_object_id = 2;
   selection.tree_data.sel_focus_object_id = 3;
   selection.tree_data.sel_anchor_offset = 0;
@@ -2175,6 +2408,7 @@ TEST_F(ReadAnythingAppControllerTest,
   EXPECT_CALL(page_handler_, OnCollapseSelection()).Times(1);
   controller().OnSelectionChange(anchor_node_id, anchor_offset, focus_node_id,
                                  focus_offset);
+  ASSERT_EQ(1, model().unprocessed_selections_from_reading_mode());
   page_handler_.FlushForTesting();
   Mock::VerifyAndClearExpectations(distiller_);
 }
@@ -2196,6 +2430,7 @@ TEST_F(ReadAnythingAppControllerTest,
   // If distillation is in progress, OnSelectionChange should not be called.
   EXPECT_CALL(page_handler_, OnSelectionChange).Times(0);
   controller().OnSelectionChange(2, 0, 3, 1);
+  ASSERT_EQ(0, model().unprocessed_selections_from_reading_mode());
   page_handler_.FlushForTesting();
   Mock::VerifyAndClearExpectations(distiller_);
 }
@@ -2224,6 +2459,7 @@ TEST_F(ReadAnythingAppControllerTest,
       .Times(0);
   controller().OnSelectionChange(anchor_node_id, anchor_offset, focus_node_id,
                                  focus_offset);
+  ASSERT_EQ(0, model().unprocessed_selections_from_reading_mode());
   page_handler_.FlushForTesting();
   Mock::VerifyAndClearExpectations(distiller_);
 }
@@ -2233,17 +2469,17 @@ TEST_F(ReadAnythingAppControllerTest, Selection_Forward) {
   ui::AXTreeUpdate update;
   test::SetUpdateTreeID(&update, tree_id_);
   update.has_tree_data = true;
-  update.event_from = ax::mojom::EventFrom::kUser;
   update.tree_data.sel_anchor_object_id = 3;
   update.tree_data.sel_focus_object_id = 4;
   update.tree_data.sel_anchor_offset = 0;
   update.tree_data.sel_focus_offset = 1;
   update.tree_data.sel_is_backward = false;
   AccessibilityEventReceived({std::move(update)});
-  EXPECT_EQ(3, controller().StartNodeId());
-  EXPECT_EQ(4, controller().EndNodeId());
-  EXPECT_EQ(0, controller().StartOffset());
-  EXPECT_EQ(1, controller().EndOffset());
+  ASSERT_EQ(3, controller().StartNodeId());
+  ASSERT_EQ(4, controller().EndNodeId());
+  ASSERT_EQ(0, controller().StartOffset());
+  ASSERT_EQ(1, controller().EndOffset());
+  ASSERT_EQ(0, model().unprocessed_selections_from_reading_mode());
 }
 
 TEST_F(ReadAnythingAppControllerTest, Selection_Backward) {
@@ -2251,7 +2487,6 @@ TEST_F(ReadAnythingAppControllerTest, Selection_Backward) {
   ui::AXTreeUpdate update;
   test::SetUpdateTreeID(&update, tree_id_);
   update.has_tree_data = true;
-  update.event_from = ax::mojom::EventFrom::kUser;
   update.tree_data.sel_anchor_object_id = 4;
   update.tree_data.sel_focus_object_id = 3;
   update.tree_data.sel_anchor_offset = 1;
@@ -2262,6 +2497,7 @@ TEST_F(ReadAnythingAppControllerTest, Selection_Backward) {
   EXPECT_EQ(4, controller().EndNodeId());
   EXPECT_EQ(0, controller().StartOffset());
   EXPECT_EQ(1, controller().EndOffset());
+  ASSERT_EQ(0, model().unprocessed_selections_from_reading_mode());
 }
 
 TEST_F(ReadAnythingAppControllerTest, Selection_IgnoredNode) {
@@ -2300,7 +2536,6 @@ TEST_F(ReadAnythingAppControllerTest, Selection_IsCollapsed) {
   ui::AXTreeUpdate update;
   test::SetUpdateTreeID(&update, tree_id_);
   update.has_tree_data = true;
-  update.event_from = ax::mojom::EventFrom::kUser;
   update.tree_data.sel_anchor_object_id = 2;
   update.tree_data.sel_focus_object_id = 2;
   update.tree_data.sel_anchor_offset = 3;
@@ -2404,45 +2639,52 @@ TEST_F(ReadAnythingAppControllerTest,
 }
 
 TEST_F(ReadAnythingAppControllerTest,
-       GetCurrentText_WhenCalledManyTimes_ReturnsSameNode) {
+       GetCurrentTextContent_WhenCalledManyTimes_ReturnsSameText) {
   std::u16string sentence1 = u"This is a sentence. ";
   std::u16string sentence2 = u"This is another sentence. ";
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
 
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2)});
 
-  EXPECT_EQ(controller().GetCurrentText().size(), 1u);
+  EXPECT_EQ(controller().GetCurrentTextContent(), sentence1);
+  EXPECT_EQ(controller().GetCurrentTextContent(), sentence1);
+  EXPECT_EQ(controller().GetCurrentTextContent(), sentence1);
+  EXPECT_EQ(controller().GetCurrentTextContent(), sentence1);
+  EXPECT_EQ(controller().GetCurrentTextContent(), sentence1);
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       GetCurrentTextSegments_WhenCalledManyTimes_ReturnsSameSegment) {
+  std::u16string sentence1 = u"This is a sentence. ";
+  std::u16string sentence2 = u"This is another sentence. ";
+  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
+  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
+  std::set<ui::AXNodeID> node_ids = {kId1, kId2};
+
+  SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2)});
+
   // The returned id should be the first node id, 2
-  EXPECT_EQ(controller().GetCurrentText()[0], kId1);
-  EXPECT_EQ(controller().GetCurrentText()[0], kId1);
-  EXPECT_EQ(controller().GetCurrentText()[0], kId1);
-  EXPECT_EQ(controller().GetCurrentText()[0], kId1);
-  // Confirm size is still 1.
-  EXPECT_EQ(controller().GetCurrentText().size(), 1u);
+  EXPECT_EQ(GetCurrentTextSegments()[0].id, kId1);
+  EXPECT_EQ(GetCurrentTextSegments()[0].id, kId1);
+  EXPECT_EQ(GetCurrentTextSegments()[0].id, kId1);
+  EXPECT_EQ(GetCurrentTextSegments()[0].id, kId1);
 
   // The returned id should be the second node id, 3
   controller().MovePositionToNextGranularity();
-  EXPECT_EQ(controller().GetCurrentText().size(), 1u);
-  EXPECT_EQ(controller().GetCurrentText()[0], kId2);
-  EXPECT_EQ(controller().GetCurrentText()[0], kId2);
-  EXPECT_EQ(controller().GetCurrentText()[0], kId2);
-  EXPECT_EQ(controller().GetCurrentText()[0], kId2);
-  // Confirm size is still 1.
-  EXPECT_EQ(controller().GetCurrentText().size(), 1u);
+  EXPECT_EQ(GetCurrentTextSegments()[0].id, kId2);
+  EXPECT_EQ(GetCurrentTextSegments()[0].id, kId2);
+  EXPECT_EQ(GetCurrentTextSegments()[0].id, kId2);
+  EXPECT_EQ(GetCurrentTextSegments()[0].id, kId2);
 }
 
-TEST_F(ReadAnythingAppControllerTest, GetCurrentText_ReturnsExpectedNodes) {
+TEST_F(ReadAnythingAppControllerTest,
+       GetCurrentTextContent_ReturnsExpectedText) {
   // TODO(crbug.com/40927698): Investigate if we can improve in scenarios when
   // there's not a space between sentences.
   std::u16string sentence1 = u"This is a sentence. ";
   std::u16string sentence2 = u"This is another sentence. ";
   std::u16string sentence3 = u"And this is yet another sentence. ";
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -2450,45 +2692,56 @@ TEST_F(ReadAnythingAppControllerTest, GetCurrentText_ReturnsExpectedNodes) {
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
                              std::move(static_text3)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  // The returned id should be the next node id, 2
-  EXPECT_EQ(next_node_ids[0], kId1);
-  // The returned int should be the beginning of the node's text.
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  // The returned int should be equivalent to the text in the node.
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
+  std::u16string content = controller().GetCurrentTextContent();
+  EXPECT_EQ(content, sentence1);
 
   // Move to the next node
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence2.length());
+  content = MoveToNextGranularityAndGetText();
+  EXPECT_EQ(content, sentence2);
 
   // Move to the last node
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.length());
+  content = MoveToNextGranularityAndGetText();
+  EXPECT_EQ(content, sentence3);
 
   // Attempt to move to another node.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       GetCurrentTextSegments_ReturnsExpectedText) {
+  // TODO(crbug.com/40927698): Investigate if we can improve in scenarios when
+  // there's not a space between sentences.
+  std::u16string sentence1 = u"This is a sentence. ";
+  std::u16string sentence2 = u"This is another sentence. ";
+  std::u16string sentence3 = u"And this is yet another sentence. ";
+  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
+  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
+  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
+  std::set<ui::AXNodeID> node_ids = {kId1, kId2, kId3};
+
+  SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
+                             std::move(static_text3)});
+
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {sentence1});
+
+  // Move to the next node
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {sentence2});
+
+  // Move to the last node
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {sentence3});
+
+  // Attempt to move to another node.
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
        PreprocessNodes_DoesNotImpactCurrentNodes) {
   std::u16string sentence1 = u"Life was a chore. ";
   std::u16string sentence2 = u"So she set sail. ";
-  std::u16string sentence3 = u"Fifteen twenty-two, came straight to the UK. ";
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
+  std::u16string sentence3 = u"Fifteen twenty-two, came straight to the UK.";
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -2496,51 +2749,27 @@ TEST_F(ReadAnythingAppControllerTest,
                              std::move(static_text3)});
   controller().PreprocessTextForSpeech();
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  // The returned id should be the next node id, 2
-  EXPECT_EQ(next_node_ids[0], kId1);
-  // The returned int should be the beginning of the node's text.
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  // The returned int should be equivalent to the text in the node.
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {sentence1});
 
   // Move to the next node
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence2.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {sentence2});
 
   // Move to the last node
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {sentence3});
 
   // Move backwards
-  next_node_ids = MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence2.length());
+  next_segments = MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {sentence2});
 
   // Move to the last node again.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {sentence3});
 
   // Attempt to move to another node.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -2550,9 +2779,6 @@ TEST_F(ReadAnythingAppControllerTest,
   std::u16string sentence3 =
       u"Put on a show, rewards will flow, and we'll go from there. ";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -2562,90 +2788,52 @@ TEST_F(ReadAnythingAppControllerTest,
   controller().PreprocessTextForSpeech();
   controller().PreprocessTextForSpeech();
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  // The returned id should be the next node id, 2
-  EXPECT_EQ(next_node_ids[0], kId1);
-  // The returned int should be the beginning of the node's text.
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  // The returned int should be equivalent to the text in the node.
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
+
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {sentence1});
 
   // Preprocess is called again.
   controller().PreprocessTextForSpeech();
   controller().PreprocessTextForSpeech();
 
   // But nothing changes with what's returned by GetCurrentText
-  next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  // The returned id should be the next node id, 2
-  EXPECT_EQ(next_node_ids[0], kId1);
-  // The returned int should be the beginning of the node's text.
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  // The returned int should be equivalent to the text in the node.
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
+  next_segments = GetCurrentTextSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {sentence1});
 
   // Move to the next node
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence2.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {sentence2});
 
   // Move to the last node
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {sentence3});
 
   // Preprocess is called again.
   controller().PreprocessTextForSpeech();
   controller().PreprocessTextForSpeech();
 
   // And nothing has changed with the current text.
-  next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.length());
+  next_segments = GetCurrentTextSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {sentence3});
 
   // Move backwards
-  next_node_ids = MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence2.length());
+  next_segments = MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {sentence2});
 
   // Preprocess is called again.
   controller().PreprocessTextForSpeech();
   controller().PreprocessTextForSpeech();
 
   // And nothing has changed with the current text.
-  next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence2.length());
+  next_segments = GetCurrentTextSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {sentence2});
 
   // Move to the last node again.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {sentence3});
 
   // Attempt to move to another node.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -2654,9 +2842,6 @@ TEST_F(ReadAnythingAppControllerTest,
   std::u16string sentence2 = u"And a gleam in my eyes. ";
   std::u16string sentence3 = u"And an endless horizon. ";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -2664,31 +2849,30 @@ TEST_F(ReadAnythingAppControllerTest,
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
                              std::move(static_text3)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId1);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
+
+  EXPECT_EQ(next_segments[0].id, kId1);
 
   // Move to the next sentence.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId2);
+  next_segments = MoveToNextGranularityAndGetSegments();
+  EXPECT_EQ(next_segments[0].id, kId2);
 
   // If we init without restarting we should just go to the next sentence.
   controller().InitAXPositionWithNode(kId1);
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
+  next_segments = MoveToNextGranularityAndGetSegments();
+  EXPECT_EQ(next_segments[0].id, kId3);
 
   // After reset and before an init, the current text should be empty.
   read_aloud_model().ResetReadAloudState();
-  std::vector<ui::AXNodeID> after_reset_ids = controller().GetCurrentText();
-  EXPECT_EQ(after_reset_ids.size(), 0u);
+  std::vector<ReadAloudTextSegment> after_reset_segments =
+      GetCurrentTextSegments();
+  EXPECT_EQ(after_reset_segments.size(), 0u);
 
   // After an init, we should get the first sentence again.
   controller().InitAXPositionWithNode(kId1);
-  after_reset_ids = controller().GetCurrentText();
-  EXPECT_EQ(after_reset_ids.size(), 1u);
-  EXPECT_EQ(after_reset_ids[0], kId1);
+  after_reset_segments = GetCurrentTextSegments();
+  EXPECT_EQ(after_reset_segments.size(), 1u);
+  EXPECT_EQ(after_reset_segments[0].id, kId1);
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -2696,35 +2880,31 @@ TEST_F(ReadAnythingAppControllerTest,
   std::u16string sentence1 = u"I've got the wind in my hair. ";
   std::u16string sentence2 = u"And a gleam in my eyes. ";
   std::u16string sentence3 = u"And an endless horizon. ";
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
                              std::move(static_text3)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId1);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
+
+  EXPECT_EQ(next_segments[0].id, kId1);
 
   // Move to the next sentence.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId2);
+  next_segments = MoveToNextGranularityAndGetSegments();
+  EXPECT_EQ(next_segments[0].id, kId2);
 
   // If we init without restarting we should just go to the next sentence.
   controller().InitAXPositionWithNode(kId1);
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
+  next_segments = MoveToNextGranularityAndGetSegments();
+  EXPECT_EQ(next_segments[0].id, kId3);
 
   // After reset, we should get the first sentence again.
   controller().ResetGranularityIndex();
-  std::vector<ui::AXNodeID> after_reset_ids = controller().GetCurrentText();
-  EXPECT_EQ(after_reset_ids.size(), 1u);
-  EXPECT_EQ(after_reset_ids[0], kId1);
+  std::vector<ReadAloudTextSegment> after_reset_segments =
+      GetCurrentTextSegments();
+  EXPECT_EQ(after_reset_segments.size(), 1u);
+  EXPECT_EQ(after_reset_segments[0].id, kId1);
 }
 
 TEST_F(ReadAnythingAppControllerTest, GetCurrentText_AfterAXTreeRefresh) {
@@ -2732,9 +2912,6 @@ TEST_F(ReadAnythingAppControllerTest, GetCurrentText_AfterAXTreeRefresh) {
   std::u16string sentence2 = u"This is another sentence. ";
   std::u16string sentence3 = u"And this is yet another sentence.";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -2742,12 +2919,9 @@ TEST_F(ReadAnythingAppControllerTest, GetCurrentText_AfterAXTreeRefresh) {
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
                              std::move(static_text3)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
+
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {sentence1});
 
   // Simulate updating the page text.
   std::u16string new_sentence_1 =
@@ -2781,30 +2955,83 @@ TEST_F(ReadAnythingAppControllerTest, GetCurrentText_AfterAXTreeRefresh) {
   controller().InitAXPositionWithNode(kNewId1);
 
   // The nodes from the new tree are used.
-  next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kNewId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)new_sentence_1.length());
+  next_segments = GetCurrentTextSegments();
+  ExpectNodesMapToEntireText(next_segments, {kNewId1}, {new_sentence_1});
 
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kNewId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)new_sentence_2.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kNewId2}, {new_sentence_2});
 
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kNewId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)new_sentence_3.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kNewId3}, {new_sentence_3});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
+}
+
+TEST_F(ReadAnythingAppControllerTest, GetCurrentText_WithMultipleTrees) {
+  std::u16string sentence1 = u"Trials and tribulations, I\'ve had my share. ";
+  std::u16string sentence2 = u"There ain\'t nothing gonna stop me now. ";
+  std::u16string sentence3 = u"\'Cause I\'m almost there. ";
+  std::u16string ad_break = u"Click here to learn more! ";
+
+  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
+  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
+  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
+  // This should have the same id as one of the other text nodes.
+  ui::AXNodeData static_text_with_duplicate_id = test::TextNode(kId2, ad_break);
+
+  ui::AXNodeData ad_child_node;
+  ad_child_node.id = 333;
+  ui::AXNodeData ad_child_root;
+
+  ui::AXTreeID ad_child_tree_id = ui::AXTreeID::CreateNewAXTreeID();
+  ui::AXTreeUpdate ad_child_update;
+  test::SetUpdateTreeID(&ad_child_update, ad_child_tree_id);
+  ad_child_root.id = 150;
+  ad_child_root.child_ids = {kId2};
+  ad_child_update.root_id = ad_child_root.id;
+  ad_child_update.nodes = {std::move(ad_child_root),
+                           std::move(static_text_with_duplicate_id)};
+  ad_child_node.AddChildTreeId(ad_child_tree_id);
+
+  ui::AXTreeID parent_tree_id = ui::AXTreeID::CreateNewAXTreeID();
+  ui::AXTreeUpdate parent_update;
+  test::SetUpdateTreeID(&parent_update, parent_tree_id);
+  ui::AXNodeData root;
+  root.id = 1;
+  root.child_ids = {kId1, ad_child_node.id, kId2, kId3};
+
+  ad_child_update.tree_data.parent_tree_id = parent_tree_id;
+
+  parent_update.root_id = root.id;
+  parent_update.nodes = {std::move(root), std::move(static_text1),
+                         std::move(ad_child_node), std::move(static_text2),
+                         std::move(static_text3)};
+  controller().OnActiveAXTreeIDChanged(ad_child_tree_id, ukm::kInvalidSourceId,
+                                       false);
+  AccessibilityEventReceived({std::move(ad_child_update)});
+  controller().OnActiveAXTreeIDChanged(parent_tree_id, ukm::kInvalidSourceId,
+                                       false);
+  AccessibilityEventReceived({std::move(parent_update)});
+  controller().OnAXTreeDistilled(parent_tree_id,
+                                 {kId1, ad_child_node.id, kId2, kId3});
+  controller().InitAXPositionWithNode(kId1);
+
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
+
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {sentence1});
+
+  // Move to the 2nd sentence
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {sentence2});
+
+  // Move to the third sentence- the content on a different tree should be
+  // skipped.
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {sentence3});
+
+  // Nodes are empty at the end of the new tree.
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -2813,9 +3040,6 @@ TEST_F(ReadAnythingAppControllerTest,
   std::u16string sentence2 = u"swirling storm ";
   std::u16string sentence3 = u"inside.";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -2823,29 +3047,13 @@ TEST_F(ReadAnythingAppControllerTest,
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
                              std::move(static_text3)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
 
-  // The first segment was returned correctly.
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
-
-  // The second segment was returned correctly.
-  EXPECT_EQ(next_node_ids[1], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[1]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[1]),
-            (int)sentence2.length());
-
-  // The third segment was returned correctly.
-  EXPECT_EQ(next_node_ids[2], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[2]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[2]),
-            (int)sentence3.length());
+  ExpectNodesMapToEntireText(next_segments, {kId1, kId2, kId3},
+                             {sentence1, sentence2, sentence3});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -2854,9 +3062,6 @@ TEST_F(ReadAnythingAppControllerTest,
   std::u16string sentence2 = u"there. ";
   std::u16string sentence3 = u"I am almost there.";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -2864,66 +3069,39 @@ TEST_F(ReadAnythingAppControllerTest,
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
                              std::move(static_text3)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 2u);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
 
-  // The first segment was returned correctly.
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
-
-  // The second segment was returned correctly.
-  EXPECT_EQ(next_node_ids[1], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[1]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[1]),
-            (int)sentence2.length());
+  ExpectNodesMapToEntireText(next_segments, {kId1, kId2},
+                             {sentence1, sentence2});
 
   // The third segment was returned correctly after getting the next text.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {sentence3});
 
   // Nodes are empty at the end of the tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
        GetCurrentText_OpeningPunctuationIgnored) {
   std::u16string sentence1 = u"And I am almost there.";
   std::u16string sentence2 = u"[2]";
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
 
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
 
   // The first segment was returned correctly.
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {sentence1});
 
   // The parenthetical expression is returned as a single separate segment.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence2.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {sentence2});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -2937,17 +3115,14 @@ TEST_F(ReadAnythingAppControllerTest,
   ui::AXTreeID id_1 = ui::AXTreeID::CreateNewAXTreeID();
   test::SetUpdateTreeID(&update, id_1);
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  static constexpr ui::AXNodeID kId4 = 12;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-  ui::AXNodeData static_text4 = test::TextNode(kId4, sentence3);
+  ui::AXNodeData static_text4 = test::TextNode(kId4, sentence4);
 
   static constexpr ui::AXNodeID kSuperscriptId = 13;
   ui::AXNodeData superscript = test::GenericContainerNode(kSuperscriptId);
+  superscript.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag, "<p>");
   superscript.child_ids = {kId2, kId3, kId4};
 
   ui::AXNodeData root;
@@ -2965,100 +3140,55 @@ TEST_F(ReadAnythingAppControllerTest,
       id_1, {kRootId, kId1, kSuperscriptId, kId2, kId3, kId4});
   controller().InitAXPositionWithNode(kId1);
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
 
   // The first segment was returned correctly.
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {sentence1});
 
   // The next segment contains the entire bracketed statement '[2]' with both
   // opening and closing brackets so neither bracket is read out-of-context.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 3u);
-
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence2.length());
-
-  EXPECT_EQ(next_node_ids[1], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[1]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[1]),
-            (int)sentence3.length());
-
-  EXPECT_EQ(next_node_ids[2], kId4);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[2]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[2]),
-            (int)sentence4.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2, kId3, kId4},
+                             {sentence2, sentence3, sentence4});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
        GetCurrentText_SuperscriptCombinedWithCurrentSegment) {
   std::u16string sentence1 = u"And I am almost there.";
   std::u16string sentence2 = u"2";
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::SuperscriptNode(kId2, sentence2);
 
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 2u);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
 
-  // The first segment was returned correctly.
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
-
-  // The superscript is attached to the first sentence.
-  EXPECT_EQ(next_node_ids[1], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[1]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[1]),
-            (int)sentence2.length());
+  ExpectNodesMapToEntireText(next_segments, {kId1, kId2},
+                             {sentence1, sentence2});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
        GetCurrentText_SuperscriptWithBracketsCombinedWithCurrentSegment) {
   std::u16string sentence1 = u"And I am almost there.";
   std::u16string sentence2 = u"[2]";
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::SuperscriptNode(kId2, sentence2);
 
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 2u);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
 
-  // The first segment was returned correctly.
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
-
-  // The superscript is attached to the first sentence.
-  EXPECT_EQ(next_node_ids[1], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[1]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[1]),
-            (int)sentence2.length());
+  ExpectNodesMapToEntireText(next_segments, {kId1, kId2},
+                             {sentence1, sentence2});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -3072,10 +3202,6 @@ TEST_F(ReadAnythingAppControllerTest,
   ui::AXTreeID id_1 = ui::AXTreeID::CreateNewAXTreeID();
   test::SetUpdateTreeID(&update, id_1);
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  static constexpr ui::AXNodeID kId4 = 12;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::SuperscriptNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::SuperscriptNode(kId3, sentence3);
@@ -3085,6 +3211,7 @@ TEST_F(ReadAnythingAppControllerTest,
   static constexpr ui::AXNodeID kSuperscriptId = 13;
   superscript.id = kSuperscriptId;
   superscript.role = ax::mojom::Role::kSuperscript;
+  superscript.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag, "<p>");
   superscript.child_ids = {kId2, kId3, kId4};
 
   ui::AXNodeData root;
@@ -3102,33 +3229,14 @@ TEST_F(ReadAnythingAppControllerTest,
       id_1, {kRootId, kId1, kSuperscriptId, kId2, kId3, kId4});
   controller().InitAXPositionWithNode(kId1);
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 4u);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
 
   // The first sentence and its superscript are returned as one segment.
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
-
-  EXPECT_EQ(next_node_ids[1], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[1]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[1]),
-            (int)sentence2.length());
-
-  EXPECT_EQ(next_node_ids[2], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[2]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[2]),
-            (int)sentence3.length());
-
-  EXPECT_EQ(next_node_ids[3], kId4);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[3]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[3]),
-            (int)sentence4.length());
+  ExpectNodesMapToEntireText(next_segments, {kId1, kId2, kId3, kId4},
+                             {sentence1, sentence2, sentence3, sentence4});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -3143,10 +3251,6 @@ TEST_F(ReadAnythingAppControllerTest,
   ui::AXTreeID id_1 = ui::AXTreeID::CreateNewAXTreeID();
   test::SetUpdateTreeID(&update, id_1);
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  static constexpr ui::AXNodeID kId4 = 12;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::SuperscriptNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::SuperscriptNode(kId3, sentence3);
@@ -3156,9 +3260,9 @@ TEST_F(ReadAnythingAppControllerTest,
   static constexpr ui::AXNodeID kSuperscriptId = 13;
   superscript.id = kSuperscriptId;
   superscript.role = ax::mojom::Role::kSuperscript;
+  superscript.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag, "<p>");
   superscript.child_ids = {kId2, kId3, kId4};
 
-  static constexpr ui::AXNodeID kId5 = 100;
   ui::AXNodeData static_text5 = test::TextNode(kId5, sentence5);
 
   ui::AXNodeData root;
@@ -3177,40 +3281,16 @@ TEST_F(ReadAnythingAppControllerTest,
       id_1, {kRootId, kId1, kSuperscriptId, kId2, kId3, kId4, kId5});
   controller().InitAXPositionWithNode(kId1);
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 4u);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
 
-  // The first segment was returned correctly.
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
+  ExpectNodesMapToEntireText(next_segments, {kId1, kId2, kId3, kId4},
+                             {sentence1, sentence2, sentence3, sentence4});
 
-  // The superscript is returned as a segment.
-  EXPECT_EQ(next_node_ids[1], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[1]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[1]),
-            (int)sentence2.length());
-
-  EXPECT_EQ(next_node_ids[2], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[2]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[2]),
-            (int)sentence3.length());
-
-  EXPECT_EQ(next_node_ids[3], kId4);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[3]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[3]),
-            (int)sentence4.length());
-
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids[0], kId5);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence5.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId5}, {sentence5});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest, GetCurrentText_IncludesListMarkers) {
@@ -3225,7 +3305,7 @@ TEST_F(ReadAnythingAppControllerTest, GetCurrentText_IncludesListMarkers) {
   test::SetUpdateTreeID(&update, id_1);
 
   ui::AXNodeData list_marker1;
-  static constexpr ui::AXNodeID kListMarkerId1 = 2;
+  static constexpr ui::AXNodeID kListMarkerId1 = 102;
   list_marker1.id = kListMarkerId1;
   list_marker1.role = ax::mojom::Role::kListMarker;
   list_marker1.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag,
@@ -3233,11 +3313,10 @@ TEST_F(ReadAnythingAppControllerTest, GetCurrentText_IncludesListMarkers) {
   list_marker1.SetName(bullet1);
   list_marker1.SetNameFrom(ax::mojom::NameFrom::kContents);
 
-  static constexpr ui::AXNodeID kId1 = 3;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
 
   ui::AXNodeData list_marker2;
-  static constexpr ui::AXNodeID kListMarkerId2 = 4;
+  static constexpr ui::AXNodeID kListMarkerId2 = 104;
   list_marker2.id = kListMarkerId2;
   list_marker2.role = ax::mojom::Role::kListMarker;
   list_marker2.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag,
@@ -3245,7 +3324,6 @@ TEST_F(ReadAnythingAppControllerTest, GetCurrentText_IncludesListMarkers) {
   list_marker2.SetName(bullet2);
   list_marker2.SetNameFrom(ax::mojom::NameFrom::kContents);
 
-  static constexpr ui::AXNodeID kId2 = 12;
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
 
   ui::AXNodeData root;
@@ -3263,45 +3341,25 @@ TEST_F(ReadAnythingAppControllerTest, GetCurrentText_IncludesListMarkers) {
       id_1, {kRootId, kListMarkerId1, kId1, kListMarkerId2, kId2});
   controller().InitAXPositionWithNode(kListMarkerId1);
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
 
   // The first segment was returned correctly.
-  EXPECT_EQ(next_node_ids[0], kListMarkerId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)bullet1.length());
+  ExpectNodesMapToEntireText(next_segments, {kListMarkerId1}, {bullet1});
 
   // Move to the next segment.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {sentence1});
 
   // Move to the next segment.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-
-  EXPECT_EQ(next_node_ids[0], kListMarkerId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)bullet2.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kListMarkerId2}, {bullet2});
 
   // Move to the next segment.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence2.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {sentence2});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -3312,9 +3370,6 @@ TEST_F(ReadAnythingAppControllerTest,
   ui::AXTreeUpdate update;
   test::SetUpdateTreeID(&update, tree_id_);
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, header_text);
   ui::AXNodeData static_text2 = test::TextNode(kId2, paragraph_text1);
   ui::AXNodeData static_text3 = test::TextNode(kId3, paragraph_text2);
@@ -3331,6 +3386,8 @@ TEST_F(ReadAnythingAppControllerTest,
   static constexpr ui::AXNodeID kParagraphId1 = 6;
   paragraph_node1.id = kParagraphId1;
   paragraph_node1.role = ax::mojom::Role::kParagraph;
+  paragraph_node1.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag,
+                                     "<p>");
   paragraph_node1.AddBoolAttribute(
       ax::mojom::BoolAttribute::kIsLineBreakingObject, true);
   paragraph_node1.child_ids = {kId2};
@@ -3339,6 +3396,8 @@ TEST_F(ReadAnythingAppControllerTest,
   static constexpr ui::AXNodeID kParagraphId2 = 7;
   paragraph_node2.id = kParagraphId2;
   paragraph_node2.role = ax::mojom::Role::kParagraph;
+  paragraph_node2.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag,
+                                     "<p>");
   paragraph_node2.AddBoolAttribute(
       ax::mojom::BoolAttribute::kIsLineBreakingObject, true);
   paragraph_node2.child_ids = {kId3};
@@ -3361,32 +3420,20 @@ TEST_F(ReadAnythingAppControllerTest,
   controller().InitAXPositionWithNode(kId1);
 
   // The header is returned alone.
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)header_text.length());
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
+
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {header_text});
 
   // Paragraph 1 is returned alone.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)paragraph_text1.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {paragraph_text1});
 
   // Paragraph 2 is returned alone.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)paragraph_text2.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {paragraph_text2});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -3408,32 +3455,20 @@ TEST_F(ReadAnythingAppControllerTest,
                              std::move(paragraph_node2)});
 
   // The header is returned alone.
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kHeaderId);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)header_text.length());
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
+
+  ExpectNodesMapToEntireText(next_segments, {kHeaderId}, {header_text});
 
   // Paragraph 1 is returned alone.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kParagraphId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)paragraph_text1.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kParagraphId1}, {paragraph_text1});
 
   // Paragraph 2 is returned alone.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kParagraphId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)paragraph_text2.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kParagraphId2}, {paragraph_text2});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -3444,9 +3479,6 @@ TEST_F(ReadAnythingAppControllerTest,
       u"looks so small. And suddenly life seems so clear. And from up here. "
       u"You coast past it all. The obstacles just disappear.";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -3454,89 +3486,69 @@ TEST_F(ReadAnythingAppControllerTest,
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
                              std::move(static_text3)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
 
   // The first segment was returned correctly.
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.find(u"The"));
+  EXPECT_EQ(next_segments[0].id, kId1);
+  std::vector<ReadAloudTextSegment> expected_segments = {
+      ReadAloudTextSegment(kId1, 0, sentence1.find(u"The")),
+  };
+  ExpectCurrentSegments(expected_segments);
 
   // The second segment was returned correctly, across 3 nodes.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 3u);
+  next_segments = MoveToNextGranularityAndGetSegments();
+  EXPECT_EQ(next_segments.size(), 3u);
+  EXPECT_EQ(next_segments[0].id, kId1);
+  expected_segments = {
+      ReadAloudTextSegment(kId1, sentence1.find(u"The"), sentence1.length()),
+      ReadAloudTextSegment(kId2, 0, sentence2.length()),
+      ReadAloudTextSegment(kId3, 0, sentence3.find(u"And")),
+  };
+  ExpectCurrentSegments(expected_segments);
 
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]),
-            (int)sentence1.find(u"The"));
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
-
-  EXPECT_EQ(next_node_ids[1], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[1]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[1]),
-            (int)sentence2.length());
-
-  EXPECT_EQ(next_node_ids[2], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[2]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[2]),
-            (int)sentence3.find(u"And"));
-
-  // The next sentence "And suddenly life seems so clear" was returned correctly
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]),
-            (int)sentence3.find(u"And"));
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.find(u"And from"));
+  // The next sentence "And suddenly life seems so clear" was returned
+  // correctly
+  next_segments = MoveToNextGranularityAndGetSegments();
+  EXPECT_EQ(next_segments[0].id, kId3);
+  expected_segments = {
+      ReadAloudTextSegment(kId3, sentence3.find(u"And"),
+                           sentence3.find(u"And from")),
+  };
+  ExpectCurrentSegments(expected_segments);
 
   // The next sentence "And from up here" was returned correctly
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]),
-            (int)sentence3.find(u"And from"));
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.find(u"You"));
+  next_segments = MoveToNextGranularityAndGetSegments();
+  EXPECT_EQ(next_segments[0].id, kId3);
+  expected_segments = {
+      ReadAloudTextSegment(kId3, sentence3.find(u"And from"),
+                           sentence3.find(u"You")),
+  };
+  ExpectCurrentSegments(expected_segments);
 
   // The next sentence "You coast past it all" was returned correctly
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]),
-            (int)sentence3.find(u"You"));
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.find(u"The"));
+  next_segments = MoveToNextGranularityAndGetSegments();
+  EXPECT_EQ(next_segments[0].id, kId3);
+  expected_segments = {
+      ReadAloudTextSegment(kId3, sentence3.find(u"You"),
+                           sentence3.find(u"The")),
+  };
+  ExpectCurrentSegments(expected_segments);
 
   // The next sentence "The obstacles just disappear" was returned correctly
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]),
-            (int)sentence3.find(u"The"));
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  EXPECT_EQ(next_segments[0].id, kId3);
+  expected_segments = {
+      ReadAloudTextSegment(kId3, sentence3.find(u"The"), sentence3.length()),
+  };
+  ExpectCurrentSegments(expected_segments);
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest, GetCurrentText_EmptyTree) {
   // If InitAXPosition hasn't been called, GetCurrentText should return nothing.
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
-
-  // GetCurrentTextStartIndex and GetCurrentTextEndIndex should return -1  on an
-  // invalid id.
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(0), -1);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(0), -1);
+  EXPECT_THAT(GetCurrentTextSegments(), IsEmpty());
 }
 
 TEST_F(ReadAnythingAppControllerTest, GetPreviousText_AfterAXTreeRefresh) {
@@ -3544,9 +3556,6 @@ TEST_F(ReadAnythingAppControllerTest, GetPreviousText_AfterAXTreeRefresh) {
   std::u16string sentence2 = u"This is another sentence. ";
   std::u16string sentence3 = u"And this is yet another sentence.";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -3554,12 +3563,9 @@ TEST_F(ReadAnythingAppControllerTest, GetPreviousText_AfterAXTreeRefresh) {
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
                              std::move(static_text3)});
 
-  std::vector<ui::AXNodeID> next_node_ids = controller().GetCurrentText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence1.length());
+  std::vector<ReadAloudTextSegment> next_segments = GetCurrentTextSegments();
+
+  ExpectNodesMapToEntireText(next_segments, {kId1}, {sentence1});
 
   // Simulate updating the page text.
   std::u16string new_sentence1 = u"Welcome to the show to the histo-remix. ";
@@ -3596,49 +3602,28 @@ TEST_F(ReadAnythingAppControllerTest, GetPreviousText_AfterAXTreeRefresh) {
   controller().MovePositionToNextGranularity();
   controller().MovePositionToNextGranularity();
 
-  std::vector<ui::AXNodeID> previous_node_ids =
-      MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(previous_node_ids.size(), 1u);
-  EXPECT_EQ(previous_node_ids[0], kNewId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[0]),
-            (int)new_sentence2.length());
+  std::vector<ReadAloudTextSegment> previous_segments =
+      MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(previous_segments, {kNewId2}, {new_sentence2});
 
-  previous_node_ids = MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(previous_node_ids.size(), 1u);
-  EXPECT_EQ(previous_node_ids[0], kNewId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[0]),
-            (int)new_sentence1.length());
+  previous_segments = MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(previous_segments, {kNewId1}, {new_sentence1});
 
   // We're at the beginning of the content again, so the first sentence
   // should be retrieved next.
-  previous_node_ids = MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(previous_node_ids.size(), 1u);
-  EXPECT_EQ(previous_node_ids[0], kNewId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[0]),
-            (int)new_sentence1.length());
+  previous_segments = MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(previous_segments, {kNewId1}, {new_sentence1});
 
   // After navigating previous text, navigating forwards should continue
   // to work as expected.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kNewId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)new_sentence2.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kNewId2}, {new_sentence2});
 
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kNewId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)new_sentence3.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kNewId3}, {new_sentence3});
 
   // Attempt to move to another node.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest, GetPreviousText_ReturnsExpectedNodes) {
@@ -3646,9 +3631,6 @@ TEST_F(ReadAnythingAppControllerTest, GetPreviousText_ReturnsExpectedNodes) {
   std::u16string sentence2 = u"It calls me. ";
   std::u16string sentence3 = u"And no one knows how far it goes.";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -3658,66 +3640,39 @@ TEST_F(ReadAnythingAppControllerTest, GetPreviousText_ReturnsExpectedNodes) {
 
   // Move to the last granularity of the content.
   controller().MovePositionToNextGranularity();
-  std::vector<ui::AXNodeID> next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
+  std::vector<ReadAloudTextSegment> next_segments =
+      MoveToNextGranularityAndGetSegments();
+  EXPECT_EQ(next_segments[0].id, kId3);
 
-  std::vector<ui::AXNodeID> previous_node_ids =
-      MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(previous_node_ids.size(), 1u);
-  EXPECT_EQ(previous_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[0]),
-            (int)sentence2.length());
+  std::vector<ReadAloudTextSegment> previous_node_ids =
+      MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(previous_node_ids, {kId2}, {sentence2});
 
-  previous_node_ids = MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(previous_node_ids.size(), 1u);
-  EXPECT_EQ(previous_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[0]),
-            (int)sentence1.length());
+  previous_node_ids = MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(previous_node_ids, {kId1}, {sentence1});
 
   // We're at the beginning of the content again, so the first sentence
   // should be retrieved next.
-  previous_node_ids = MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(previous_node_ids.size(), 1u);
-  EXPECT_EQ(previous_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[0]),
-            (int)sentence1.length());
+  previous_node_ids = MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(previous_node_ids, {kId1}, {sentence1});
 
   // After navigating previous text, navigating forwards should continue
   // to work as expected.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence2.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId2}, {sentence2});
 
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.length());
+  next_segments = MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {sentence3});
 
   // Attempt to move to another node.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest, GetPreviousText_EmptyTree) {
   // If InitAXPosition hasn't been called, GetPreviousText should return
   // nothing.
-  std::vector<ui::AXNodeID> previous_node_ids =
-      MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(previous_node_ids.size(), 0u);
-
-  // GetCurrentTextStartIndex and GetCurrentTextEndIndex should return -1  on an
-  // invalid id.
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(0), -1);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(0), -1);
+  EXPECT_TRUE(MoveToPreviousGranularityAndGetSegments().empty());
+  EXPECT_TRUE(GetCurrentTextSegments().empty());
 }
 
 TEST_F(
@@ -3726,22 +3681,17 @@ TEST_F(
   std::u16string sentence1 = u"This is a sentence. ";
   std::u16string sentence2 = u"This is another sentence. ";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
 
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2)});
 
-  // If we haven't called moveToNextGranularity, controller().GetCurrentText()
+  // If we haven't called moveToNextGranularity,
+  GetCurrentTextSegments();
   // should still return the first granularity.
-  std::vector<ui::AXNodeID> previous_node_ids =
-      MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(previous_node_ids.size(), 1u);
-  EXPECT_EQ(previous_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[0]),
-            (int)sentence1.length());
+  std::vector<ReadAloudTextSegment> previous_segments =
+      MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(previous_segments, {kId1}, {sentence1});
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -3750,9 +3700,6 @@ TEST_F(ReadAnythingAppControllerTest,
   std::u16string sentence2 = u"It calls me. ";
   std::u16string sentence3 = u"And no one knows how far it goes.";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -3763,14 +3710,13 @@ TEST_F(ReadAnythingAppControllerTest,
   // Move to third node
   controller().MovePositionToNextGranularity();
   controller().MovePositionToNextGranularity();
-  EXPECT_EQ(controller().GetCurrentText()[0], kId3);
-  EXPECT_EQ(controller().GetCurrentText().size(), 1u);
+  EXPECT_EQ(GetCurrentTextSegments()[0].id, kId3);
+  EXPECT_EQ(GetCurrentTextSegments().size(), 1u);
 
   // Move to second node which was initially skipped
-  std::vector<ui::AXNodeID> previous_node_ids =
-      MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(previous_node_ids[0], kId2);
-  EXPECT_EQ(previous_node_ids.size(), 1u);
+  std::vector<ReadAloudTextSegment> previous_segments =
+      MoveToPreviousGranularityAndGetSegments();
+  EXPECT_EQ(previous_segments[0].id, kId2);
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -3779,9 +3725,6 @@ TEST_F(ReadAnythingAppControllerTest,
   std::u16string sentence2 = u"swirling storm ";
   std::u16string sentence3 = u"inside.";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -3789,31 +3732,14 @@ TEST_F(ReadAnythingAppControllerTest,
   SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
                              std::move(static_text3)});
 
-  controller().GetCurrentText();
-  std::vector<ui::AXNodeID> previous_node_ids =
-      MoveToPreviousGranularityAndGetText();
-
-  // The first segment was returned correctly.
-  EXPECT_EQ(previous_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[0]),
-            (int)sentence1.length());
-
-  // The second segment was returned correctly.
-  EXPECT_EQ(previous_node_ids[1], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[1]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[1]),
-            (int)sentence2.length());
-
-  // The third segment was returned correctly.
-  EXPECT_EQ(previous_node_ids[2], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[2]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[2]),
-            (int)sentence3.length());
+  GetCurrentTextSegments();
+  std::vector<ReadAloudTextSegment> previous_segments =
+      MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(previous_segments, {kId1, kId2, kId3},
+                             {sentence1, sentence2, sentence3});
 
   // Nodes are empty at the end of the new tree.
-  std::vector<ui::AXNodeID> next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -3822,9 +3748,6 @@ TEST_F(ReadAnythingAppControllerTest,
   std::u16string sentence2 = u"there. ";
   std::u16string sentence3 = u"I am almost there.";
 
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
   ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
   ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
   ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
@@ -3834,34 +3757,19 @@ TEST_F(ReadAnythingAppControllerTest,
 
   // Move to last granularity.
   controller().MovePositionToNextGranularity();
-  std::vector<ui::AXNodeID> previous_node_ids =
-      MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(previous_node_ids.size(), 2u);
-
-  // Returns the 2nd segment correctly.
-  EXPECT_EQ(previous_node_ids[1], kId2);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[1]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[1]),
-            (int)sentence2.length());
-
-  // Returns the 1st segment correctly.
-  EXPECT_EQ(previous_node_ids[0], kId1);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(previous_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(previous_node_ids[0]),
-            (int)sentence1.length());
+  std::vector<ReadAloudTextSegment> previous_segments =
+      MoveToPreviousGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(previous_segments, {kId1, kId2},
+                             {sentence1, sentence2});
 
   // After moving forward again, the third segment was returned correctly.
   // The third segment was returned correctly after getting the next text.
-  std::vector<ui::AXNodeID> next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 1u);
-  EXPECT_EQ(next_node_ids[0], kId3);
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(next_node_ids[0]), 0);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(next_node_ids[0]),
-            (int)sentence3.length());
+  std::vector<ReadAloudTextSegment> next_segments =
+      MoveToNextGranularityAndGetSegments();
+  ExpectNodesMapToEntireText(next_segments, {kId3}, {sentence3});
 
   // Nodes are empty at the end of the new tree.
-  next_node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(next_node_ids.size(), 0u);
+  MoveToNextAndAssertEmpty();
 }
 
 TEST_F(ReadAnythingAppControllerTest,
@@ -3898,891 +3806,6 @@ TEST_F(
   EXPECT_EQ(sentence.substr(0, index), u"Hello, ");
 }
 
-TEST_F(ReadAnythingAppControllerTest, GetNextValidPosition) {
-  std::u16string sentence1 = u"This is a sentence.";
-  std::u16string sentence2 = u"This is another sentence.";
-  std::u16string sentence3 = u"And this is yet another sentence.";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-
-  SendUpdateAndDistillNodes({std::move(static_text1), std::move(static_text2),
-                             std::move(static_text3)});
-
-  ui::AXNodePosition::AXPositionInstance new_position = GetNextNodePosition();
-  EXPECT_EQ(new_position->anchor_id(), kId2);
-  EXPECT_EQ(new_position->GetText(), sentence2);
-
-  // Getting the next node position shouldn't update the current AXPosition.
-  new_position = GetNextNodePosition();
-  EXPECT_EQ(new_position->anchor_id(), kId2);
-  EXPECT_EQ(new_position->GetText(), sentence2);
-}
-
-TEST_F(ReadAnythingAppControllerTest, GetNextValidPosition_SkipsNonTextNode) {
-  std::u16string sentence1 = u"This is a sentence.";
-  std::u16string sentence2 = u"This is another sentence.";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-
-  ui::AXNodeData empty_node;
-  empty_node.id = 3;
-
-  InitializeWithAndProcessNodes({std::move(static_text1), std::move(empty_node),
-                                 std::move(static_text2)});
-
-  ui::AXNodePosition::AXPositionInstance new_position = GetNextNodePosition();
-  EXPECT_EQ(new_position->anchor_id(), kId2);
-  EXPECT_EQ(new_position->GetText(), sentence2);
-}
-
-TEST_F(ReadAnythingAppControllerTest,
-       GetNextValidPosition_SkipsNonDistilledNode) {
-  std::u16string sentence1 = u"This is a sentence.";
-  std::u16string sentence2 = u"This is another sentence.";
-  std::u16string sentence3 = u"And this is yet another sentence.";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-
-  SendUpdateWithNodes({std::move(static_text1), std::move(static_text2),
-                       std::move(static_text3)});
-  // Don't distill the node with id 3.
-  ProcessDisplayNodes({kId1, kId3});
-  controller().InitAXPositionWithNode(kId1);
-  ui::AXNodePosition::AXPositionInstance new_position = GetNextNodePosition();
-  EXPECT_EQ(new_position->anchor_id(), kId3);
-  EXPECT_EQ(new_position->GetText(), sentence3);
-}
-
-TEST_F(ReadAnythingAppControllerTest,
-       GetNextValidPosition_SkipsNodeWithHTMLTag) {
-  std::u16string sentence1 = u"This is a sentence.";
-  std::u16string sentence2 = u"This is another sentence.";
-  std::u16string sentence3 = u"And this is yet another sentence.";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-  static_text2.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag, "h1");
-
-  InitializeWithAndProcessNodes({std::move(static_text1),
-                                 std::move(static_text2),
-                                 std::move(static_text3)});
-
-  ui::AXNodePosition::AXPositionInstance new_position = GetNextNodePosition();
-  EXPECT_EQ(new_position->anchor_id(), kId3);
-  EXPECT_EQ(new_position->GetText(), sentence3);
-}
-
-TEST_F(ReadAnythingAppControllerTest,
-       GetNextValidPosition_ReturnsNullPositionAtEndOfTree) {
-  std::u16string sentence1 = u"This is a sentence.";
-  ui::AXNodeData static_text = test::TextNode(/* id= */ 2, sentence1);
-  ui::AXNodeData empty_node1;
-  empty_node1.id = 3;
-  ui::AXNodeData empty_node2;
-  empty_node2.id = 4;
-  InitializeWithAndProcessNodes(
-      {std::move(static_text), std::move(empty_node1), std::move(empty_node2)});
-
-  ui::AXNodePosition::AXPositionInstance new_position = GetNextNodePosition();
-  EXPECT_TRUE(new_position->IsNullPosition());
-}
-
-TEST_F(
-    ReadAnythingAppControllerTest,
-    GetNextValidPosition_AfterGetNextNodesButBeforeGetCurrentText_UsesCurrentGranularity) {
-  std::u16string sentence1 = u"But from up here. The ";
-  std::u16string sentence2 = u"world ";
-  std::u16string sentence3 =
-      u"looks so small. And suddenly life seems so clear. And from up here. "
-      u"You coast past it all. The obstacles just disappear.";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-
-  InitializeWithAndProcessNodes({std::move(static_text1),
-                                 std::move(static_text2),
-                                 std::move(static_text3)});
-
-  a11y::ReadAloudCurrentGranularity current_granularity = GetNextNodes();
-  // Expect that current_granularity contains static_text1
-  // Expect that the indices aren't returned correctly
-  // Expect that GetNextValidPosition fails without inserted the granularity.
-  // The first segment was returned correctly.
-  EXPECT_EQ(current_granularity.node_ids.size(), 1u);
-  EXPECT_TRUE(base::Contains(current_granularity.node_ids, kId1));
-  EXPECT_EQ(controller().GetCurrentTextStartIndex(kId1), -1);
-  EXPECT_EQ(controller().GetCurrentTextEndIndex(kId1), -1);
-
-  // Get the next position without using the current granularity. This
-  // simulates getting the next node position from within GetNextNode if
-  // the current granularity hasn't yet been added to the list processed
-  // granularities. This should return the ID for static_text1, even though
-  // it's already been used because the current granularity isn't being used.
-  ui::AXNodePosition::AXPositionInstance new_position = GetNextNodePosition();
-  EXPECT_EQ(new_position->anchor_id(), kId1);
-
-  // Now get the next position using the correct current granularity. This
-  // simulates calling GetNextNodePosition from within GetNextNodes before
-  // the nodes have been added to the list of processed granularities. This
-  // should correctly return the next node in the tree.
-  new_position = GetNextNodePosition(current_granularity);
-  EXPECT_EQ(new_position->anchor_id(), kId2);
-}
-
-TEST_F(ReadAnythingAppControllerTest,
-       GetNextNodes_AfterResetReadAloudState_StartsOver) {
-  std::u16string sentence1 = u"Where the north wind meets the sea. ";
-  std::u16string sentence2 = u"There's a river full of memory. ";
-  std::u16string sentence3 = u"Sleep my darling safe and sound. ";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-
-  InitializeWithAndProcessNodes({std::move(static_text1),
-                                 std::move(static_text2),
-                                 std::move(static_text3)});
-
-  // Get first and second granularity.
-  a11y::ReadAloudCurrentGranularity first_granularity = GetNextNodes();
-  EXPECT_EQ(first_granularity.node_ids.size(), 1u);
-  EXPECT_TRUE(base::Contains(first_granularity.node_ids, kId1));
-  EXPECT_EQ(first_granularity.text, sentence1);
-  a11y::ReadAloudCurrentGranularity next_granularity = GetNextNodes();
-  EXPECT_EQ(next_granularity.node_ids.size(), 1u);
-  EXPECT_TRUE(base::Contains(next_granularity.node_ids, kId2));
-  EXPECT_EQ(next_granularity.text, sentence2);
-
-  // If we init without resetting we should just go to the next sentence
-  controller().InitAXPositionWithNode(kId1);
-  a11y::ReadAloudCurrentGranularity last_granularity = GetNextNodes();
-  EXPECT_EQ(last_granularity.node_ids.size(), 1u);
-  EXPECT_TRUE(base::Contains(last_granularity.node_ids, kId3));
-  EXPECT_EQ(last_granularity.text, sentence3);
-
-  // After reset and then init, we should get the first sentence again.
-  read_aloud_model().ResetReadAloudState();
-  controller().InitAXPositionWithNode(kId1);
-  a11y::ReadAloudCurrentGranularity after_reset = GetNextNodes();
-  EXPECT_EQ(after_reset.node_ids.size(), 1u);
-  EXPECT_TRUE(base::Contains(after_reset.node_ids, kId1));
-  EXPECT_EQ(first_granularity.text, sentence1);
-}
-
-testing::Matcher<ReadAloudTextSegment> TextSegmentMatcher(ui::AXNodeID id,
-                                                          int text_start,
-                                                          int text_end) {
-  return testing::AllOf(
-      ::testing::Field(&ReadAloudTextSegment::id, ::testing::Eq(id)),
-      ::testing::Field(&ReadAloudTextSegment::text_start,
-                       ::testing::Eq(text_start)),
-      ::testing::Field(&ReadAloudTextSegment::text_end,
-                       ::testing::Eq(text_end)));
-}
-
-TEST_F(ReadAnythingAppControllerTest,
-       GetHighlightForCurrentSegmentIndex_ReturnsCorrectNodes) {
-  // Text indices             0 123456789012345678901
-  std::u16string sentence = u"I\'m crossing the line!";
-  static constexpr ui::AXNodeID kId = 2;
-  ui::AXNodeData static_text = test::TextNode(kId, sentence);
-
-  InitializeWithAndProcessNodes({std::move(static_text)});
-
-  // Before there are any processed granularities, GetHighlightStartIndex
-  // should return an invalid id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(1, false),
-              IsEmpty());
-
-  std::vector<ui::AXNodeID> node_ids = controller().GetCurrentText();
-  EXPECT_EQ(node_ids.size(), 1u);
-
-  // Since we just have one node with one text segment, the returned index
-  // should equal the passed parameter.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-              ElementsAre(TextSegmentMatcher(kId, 0, 4)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(3, false),
-              ElementsAre(TextSegmentMatcher(kId, 3, 4)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(7, false),
-              ElementsAre(TextSegmentMatcher(kId, 7, 13)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  static_cast<int>(sentence.length()) - 1, false),
-              ElementsAre(TextSegmentMatcher(kId, 21, 22)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  static_cast<int>(sentence.length()), false),
-              IsEmpty());
-}
-
-TEST_F(
-    ReadAnythingAppControllerTest,
-    GetHighlightForCurrentSegmentIndex_SentenceSpansMultipleNodes_ReturnsCorrectNodes) {
-  // Text indices:             0123456789012345678901234567890
-  std::u16string sentence1 = u"Never feel heavy ";
-  std::u16string sentence2 = u"or earthbound, ";
-  std::u16string sentence3 = u"no worries or doubts interfere.";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-
-  InitializeWithAndProcessNodes({std::move(static_text1),
-                                 std::move(static_text2),
-                                 std::move(static_text3)});
-
-  // Before there are any processed granularities,
-  // GetHighlightForCurrentSegmentIndex should return an empty array.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(1, false),
-              IsEmpty());
-
-  std::vector<ui::AXNodeID> node_ids = controller().GetCurrentText();
-  EXPECT_EQ(node_ids.size(), 3u);
-
-  // Spot check that indices 0->sentence1.length() map to the first node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 6)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(7, false),
-              ElementsAre(TextSegmentMatcher(kId1, 7, 11)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() - 1, false),
-              ElementsAre(TextSegmentMatcher(kId1, 16, 17)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length(), false),
-              ElementsAre(TextSegmentMatcher(kId2, 0, 3)));
-
-  // Spot check that indices in sentence 2 map to the second node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + 1, false),
-              ElementsAre(TextSegmentMatcher(kId2, 1, 3)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(26, false),
-              ElementsAre(TextSegmentMatcher(kId2, 9, 15)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + sentence2.length() - 1, false),
-              ElementsAre(TextSegmentMatcher(kId2, 14, 15)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + sentence2.length(), false),
-              ElementsAre(TextSegmentMatcher(kId3, 0, 3)));
-
-  // Spot check that indices in sentence 3 map to the third node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + sentence2.length() + 1, false),
-              ElementsAre(TextSegmentMatcher(kId3, 1, 3)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(40, false),
-              ElementsAre(TextSegmentMatcher(kId3, 8, 11)));
-  EXPECT_THAT(
-      read_aloud_model().GetHighlightForCurrentSegmentIndex(
-          sentence1.length() + sentence2.length() + sentence3.length() - 1,
-          false),
-      ElementsAre(TextSegmentMatcher(kId3, 30, 31)));
-  EXPECT_THAT(
-      read_aloud_model().GetHighlightForCurrentSegmentIndex(
-          sentence1.length() + sentence2.length() + sentence3.length(), false),
-      IsEmpty());
-
-  // Out-of-bounds nodes return an empty array.
-  EXPECT_THAT(
-      read_aloud_model().GetHighlightForCurrentSegmentIndex(
-          sentence1.length() + sentence2.length() + sentence3.length() + 1,
-          false),
-      IsEmpty());
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(535, false),
-              IsEmpty());
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(-10, false),
-              IsEmpty());
-}
-
-TEST_F(
-    ReadAnythingAppControllerTest,
-    GetHighlightForCurrentSegmentIndex_NodeSpansMultipleSentences_ReturnsCorrectNodes) {
-  // Text indices:            0 12345678901234 5678901234
-  std::u16string segment1 = u"I\'m taking what\'s mine! ";
-  // Text indices:            012345678901234567890123456
-  std::u16string segment2 = u"Every drop, every smidge. ";
-  // Text indices:            0123 45678901234 5678901234567890123456
-  std::u16string segment3 = u"If I\'m burning a bridge, let it burn. ";
-  // Text indices:            01234 56789012345678901
-  std::u16string segment4 = u"But I\'m crossing the ";
-
-  std::u16string node1_text = segment1 + segment2 + segment3 + segment4;
-  std::u16string node2_text = u"line.";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, node1_text);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, node2_text);
-
-  InitializeWithAndProcessNodes(
-      {std::move(static_text1), std::move(static_text2)});
-  // Before there are any processed granularities, GetHighlightStartIndex
-  // should return an invalid id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(1, false),
-              IsEmpty());
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(1, false),
-              IsEmpty());
-
-  std::vector<ui::AXNodeID> node_ids = controller().GetCurrentText();
-  EXPECT_EQ(node_ids.size(), 1u);
-
-  // Storing as a separate variable so we don't need to cast every time.
-  int segment1_length = (int)segment1.length();
-  int segment2_length = (int)segment2.length();
-  int segment3_length = (int)segment3.length();
-  int segment4_partial_length = (int)segment4.length();
-  int segment4_full_length = (int)segment4.length() + (int)node2_text.length();
-
-  // For the first node in the first segment, the returned index should equal
-  // the passed parameter.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 4)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(6, false),
-              ElementsAre(TextSegmentMatcher(kId1, 6, 11)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(15, false),
-              ElementsAre(TextSegmentMatcher(kId1, 15, 16)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  static_cast<int>(segment1.length() - 1), false),
-              ElementsAre(TextSegmentMatcher(kId1, segment1_length - 1,
-                                             segment1_length)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  static_cast<int>(segment1.length()), false),
-              IsEmpty());
-
-  // Move to segment 2.
-  node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(node_ids.size(), 1u);
-
-  // For the second segment, the boundary index will have reset for the new
-  // speech segment. The correct highlight start index is the index that the
-  // boundary index within the segment corresponds to within the node.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-              ElementsAre(TextSegmentMatcher(kId1, segment1_length,
-                                             segment1_length + 6)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(10, false),
-              ElementsAre(TextSegmentMatcher(kId1, segment1_length + 10,
-                                             segment1_length + 12)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(13, false),
-              ElementsAre(TextSegmentMatcher(kId1, segment1_length + 13,
-                                             segment1_length + 18)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  static_cast<int>(segment2.length() - 1), false),
-              ElementsAre(TextSegmentMatcher(
-                  kId1, segment1_length + segment2_length - 1,
-                  segment1_length + segment2_length)));
-  EXPECT_THAT(
-      read_aloud_model().GetHighlightForCurrentSegmentIndex(
-          static_cast<int>(segment1.length() + segment2.length()), false),
-      IsEmpty());
-
-  // Move to segment 3.
-  node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(node_ids.size(), 1u);
-
-  // For the third segment, the boundary index will have reset for the new
-  // speech segment. The correct highlight start index is the index that the
-  // boundary index within the segment corresponds to within the node.
-  EXPECT_THAT(
-      read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-      ElementsAre(TextSegmentMatcher(kId1, segment1_length + segment2_length,
-                                     segment1_length + segment2_length + 3)));
-
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(9, false),
-              ElementsAre(TextSegmentMatcher(
-                  kId1, segment1_length + segment2_length + 9,
-                  segment1_length + segment2_length + 15)));
-
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(13, false),
-              ElementsAre(TextSegmentMatcher(
-                  kId1, segment1_length + segment2_length + 13,
-                  segment1_length + segment2_length + 15)));
-
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  segment3_length - 1, false),
-              ElementsAre(TextSegmentMatcher(
-                  kId1, segment1_length + segment2_length + segment3_length - 1,
-                  segment1_length + segment2_length + segment3_length)));
-
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  static_cast<int>(segment1.length() + segment2.length() +
-                                   segment3.length()),
-                  false),
-              IsEmpty());
-
-  // Move to segment 4.
-  node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(node_ids.size(), 2u);
-  EXPECT_EQ(node_ids[0], kId1);
-  EXPECT_EQ(node_ids[1], kId2);
-
-  // For the fourth segment, there are two nodes. For the first node,
-  // the correct highlight start corresponds to the index within the first
-  // node.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-              ElementsAre(TextSegmentMatcher(
-                  kId1, segment1_length + segment2_length + segment3_length,
-                  segment1_length + segment2_length + segment3_length + 4)));
-
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(2, false),
-              ElementsAre(TextSegmentMatcher(
-                  kId1, segment1_length + segment2_length + segment3_length + 2,
-                  segment1_length + segment2_length + segment3_length + 4)));
-
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(8, false),
-              ElementsAre(TextSegmentMatcher(
-                  kId1, segment1_length + segment2_length + segment3_length + 8,
-                  segment1_length + segment2_length + segment3_length + 17)));
-
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  segment4_partial_length - 1, false),
-              ElementsAre(TextSegmentMatcher(
-                  kId1,
-                  segment1_length + segment2_length + segment3_length +
-                      segment4_partial_length - 1,
-                  segment1_length + segment2_length + segment3_length +
-                      segment4_partial_length)));
-
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  static_cast<int>(segment1.length() + segment2.length() +
-                                   segment3.length() + segment4.length()),
-                  false),
-              IsEmpty());
-
-  // For the second node, the highlight index corresponds to the position within
-  // the second node.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  segment4_partial_length, false),
-              ElementsAre(TextSegmentMatcher(kId2, 0, 5)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  segment4_partial_length + 2, false),
-              ElementsAre(TextSegmentMatcher(kId2, 2, 5)));
-
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  segment4_full_length - 1, false),
-              ElementsAre(TextSegmentMatcher(kId2, (int)node2_text.length() - 1,
-                                             (int)node2_text.length())));
-
-  EXPECT_THAT(
-      read_aloud_model().GetHighlightForCurrentSegmentIndex(
-          static_cast<int>(segment4.length() + node2_text.length()), false),
-      IsEmpty());
-}
-
-TEST_F(ReadAnythingAppControllerTest,
-       GetHighlightForCurrentSegmentIndex_AfterNext_ReturnsCorrectNodes) {
-  // Text indices:             012345678901234567890123456789012
-  std::u16string sentence1 = u"Never feel heavy or earthbound. ";
-  std::u16string sentence2 = u"No worries or doubts ";
-  std::u16string sentence3 = u"interfere.";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-
-  InitializeWithAndProcessNodes({std::move(static_text1),
-                                 std::move(static_text2),
-                                 std::move(static_text3)});
-
-  // Before there are any processed granularities,
-  // GetNodeIdForCurrentSegmentIndex should return an invalid id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(1, false),
-              IsEmpty());
-
-  std::vector<ui::AXNodeID> node_ids = controller().GetCurrentText();
-  EXPECT_EQ(node_ids.size(), 1u);
-
-  // Spot check that indices 0->sentence1.length() map to the first node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 6)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(7, false),
-              ElementsAre(TextSegmentMatcher(kId1, 7, 11)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() - 1, false),
-              ElementsAre(TextSegmentMatcher(kId1, 31, 32)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length(), false),
-              IsEmpty());
-
-  // Move to the next granularity.
-  node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(node_ids.size(), 2u);
-
-  // Spot check that indices in sentence 2 map to the second node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-              ElementsAre(TextSegmentMatcher(kId2, 0, 3)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(7, false),
-              ElementsAre(TextSegmentMatcher(kId2, 7, 11)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence2.length() - 1, false),
-              ElementsAre(TextSegmentMatcher(kId2, 20, 21)));
-
-  // Spot check that indices in sentence 3 map to the third node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence2.length() + 1, false),
-              ElementsAre(TextSegmentMatcher(kId3, 1, 10)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(27, false),
-              ElementsAre(TextSegmentMatcher(kId3, 6, 10)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence2.length() + sentence3.length() - 1, false),
-              ElementsAre(TextSegmentMatcher(kId3, 9, 10)));
-
-  // Out-of-bounds nodes return invalid.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence2.length() + sentence3.length() + 1, false),
-              IsEmpty());
-}
-
-TEST_F(ReadAnythingAppControllerTest,
-       GetHighlightForCurrentSegmentIndex_AfterPrevious_ReturnsCorrectNodes) {
-  // Text indices:             01234567890123456789012345678901234567890
-  std::u16string sentence1 = u"There's nothing but you ";
-  std::u16string sentence2 = u"looking down on the view from up here. ";
-  std::u16string sentence3 = u"Stretch out with the wind behind you.";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-
-  InitializeWithAndProcessNodes({std::move(static_text1),
-                                 std::move(static_text2),
-                                 std::move(static_text3)});
-
-  // Before there are any processed granularities,
-  // GetNodeIdForCurrentSegmentIndex should return an invalid id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(1, false),
-              IsEmpty());
-
-  std::vector<ui::AXNodeID> node_ids = controller().GetCurrentText();
-  EXPECT_EQ(node_ids.size(), 2u);
-
-  // Move forward.
-  node_ids = MoveToNextGranularityAndGetText();
-  EXPECT_EQ(node_ids.size(), 1u);
-
-  // Spot check that indices 0->sentence3.length() map to the third node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-              ElementsAre(TextSegmentMatcher(kId3, 0, 8)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(7, false),
-              ElementsAre(TextSegmentMatcher(kId3, 7, 8)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence3.length() - 1, false),
-              ElementsAre(TextSegmentMatcher(kId3, 36, 37)));
-
-  // Move backwards.
-  node_ids = MoveToPreviousGranularityAndGetText();
-  EXPECT_EQ(node_ids.size(), 2u);
-
-  // Spot check that indices in sentence 1 map to the first node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 8)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(6, false),
-              ElementsAre(TextSegmentMatcher(kId1, 6, 8)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() - 1, false),
-              ElementsAre(TextSegmentMatcher(kId1, 23, 24)));
-
-  // Spot check that indices in sentence 2 map to the second node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + 1, false),
-              ElementsAre(TextSegmentMatcher(kId2, 1, 8)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(27, false),
-              ElementsAre(TextSegmentMatcher(kId2, 3, 8)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + sentence2.length() - 1, false),
-              ElementsAre(TextSegmentMatcher(kId2, 38, 39)));
-
-  // Out-of-bounds nodes return invalid.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + sentence2.length() + 1, false),
-              IsEmpty());
-}
-
-TEST_F(ReadAnythingAppControllerTest,
-       GetHighlightForCurrentSegmentIndex_MultinodeWords_ReturnsCorrectLength) {
-  std::u16string word1 = u"Stretch ";
-  std::u16string word2 = u"out ";
-  std::u16string word3 = u"with ";
-  std::u16string word4 = u"the ";
-  std::u16string word5 = u"wind ";
-  std::u16string word6 = u"beh";
-  std::u16string word7 = u"ind ";
-  std::u16string word8 = u"you.";
-  std::u16string sentence1 = word1 + word2 + word3 + word4 + word5 + word6;
-  std::u16string sentence2 = word7 + word8;
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-
-  InitializeWithAndProcessNodes(
-      {std::move(static_text1), std::move(static_text2)});
-
-  // Before there are any processed granularities,
-  // GetNodeIdForCurrentSegmentIndex should return an invalid id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(1, false),
-              IsEmpty());
-
-  std::vector<ui::AXNodeID> node_ids = controller().GetCurrentText();
-  EXPECT_EQ(node_ids.size(), 2u);
-
-  // Throughout first word.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, false),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 8)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(2, false),
-              ElementsAre(TextSegmentMatcher(kId1, 2, 8)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  static_cast<int>(word1.length() - 2), false),
-              ElementsAre(TextSegmentMatcher(kId1, 6, 8)));
-
-  // Throughout third word.
-  int third_word_index = sentence1.find(word3);
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  third_word_index, false),
-              ElementsAre(TextSegmentMatcher(kId1, 12, 17)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  third_word_index + 2, false),
-              ElementsAre(TextSegmentMatcher(kId1, 14, 17)));
-
-  // Words split across node boundaries
-  int sixth_word_index = sentence1.find(word6);
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sixth_word_index, false),
-              ElementsAre(TextSegmentMatcher(kId1, 26, 29),
-                          TextSegmentMatcher(kId2, 0, 4)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sixth_word_index + 2, false),
-              ElementsAre(TextSegmentMatcher(kId1, 28, 29),
-                          TextSegmentMatcher(kId2, 0, 4)));
-
-  int seventh_word_index = sentence1.length();
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  seventh_word_index, false),
-              ElementsAre(TextSegmentMatcher(kId2, 0, 4)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  seventh_word_index + 2, false),
-              ElementsAre(TextSegmentMatcher(kId2, 2, 4)));
-
-  int last_word_index = sentence1.length() + sentence2.find(word8);
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  last_word_index, false),
-              ElementsAre(TextSegmentMatcher(kId2, 4, 8)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  last_word_index + 2, false),
-              ElementsAre(TextSegmentMatcher(kId2, 6, 8)));
-
-  // Boundary testing.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(-5, false),
-              IsEmpty());
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + sentence2.length(), false),
-              IsEmpty());
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + sentence2.length() + 1, false),
-              IsEmpty());
-}
-
-TEST_F(
-    ReadAnythingAppControllerTest,
-    GetHighlightForCurrentSegmentIndex_PhrasesEnabled_NoModel_SentenceSpansMultipleNodes_ReturnsCorrectNodes) {
-  scoped_feature_list_.InitWithFeatures(
-      {features::kReadAnythingReadAloud,
-       features::kReadAnythingReadAloudPhraseHighlighting},
-      {});
-
-  EXPECT_TRUE(controller().IsPhraseHighlightingEnabled());
-  // Text indices:             0123456789012345678901234567890
-  std::u16string sentence1 = u"Never feel heavy ";
-  std::u16string sentence2 = u"or earthbound, ";
-  std::u16string sentence3 = u"no worries or doubts interfere.";
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-
-  InitializeWithAndProcessNodes({std::move(static_text1),
-                                 std::move(static_text2),
-                                 std::move(static_text3)});
-  controller().PreprocessTextForSpeech();
-
-  std::vector<ui::AXNodeID> node_ids = controller().GetCurrentText();
-  EXPECT_EQ(node_ids.size(), 3u);
-
-  // Spot check that indices 0->sentence1.length() map to the first node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, true),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 17)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(7, true),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 17)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() - 1, true),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 17)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length(), true),
-              ElementsAre(TextSegmentMatcher(kId2, 0, 15),
-                          TextSegmentMatcher(kId3, 0, 3)));
-
-  // Spot check that indices in sentence 2 map to the second node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + 1, true),
-              ElementsAre(TextSegmentMatcher(kId2, 0, 15),
-                          TextSegmentMatcher(kId3, 0, 3)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(26, true),
-              ElementsAre(TextSegmentMatcher(kId2, 0, 15),
-                          TextSegmentMatcher(kId3, 0, 3)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + sentence2.length() - 1, true),
-              ElementsAre(TextSegmentMatcher(kId2, 0, 15),
-                          TextSegmentMatcher(kId3, 0, 3)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + sentence2.length(), true),
-              ElementsAre(TextSegmentMatcher(kId2, 0, 15),
-                          TextSegmentMatcher(kId3, 0, 3)));
-
-  // Spot check that indices in sentence 3 map to the third node id.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(
-                  sentence1.length() + sentence2.length() + 1, true),
-              ElementsAre(TextSegmentMatcher(kId2, 0, 15),
-                          TextSegmentMatcher(kId3, 0, 3)));
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(40, true),
-              ElementsAre(TextSegmentMatcher(kId3, 3, 21)));
-  EXPECT_THAT(
-      read_aloud_model().GetHighlightForCurrentSegmentIndex(
-          sentence1.length() + sentence2.length() + sentence3.length() - 1,
-          true),
-      ElementsAre(TextSegmentMatcher(kId3, 21, 31)));
-  EXPECT_THAT(
-      read_aloud_model().GetHighlightForCurrentSegmentIndex(
-          sentence1.length() + sentence2.length() + sentence3.length(), true),
-      IsEmpty());
-
-  // Out-of-bounds nodes return an empty array.
-  EXPECT_THAT(
-      read_aloud_model().GetHighlightForCurrentSegmentIndex(
-          sentence1.length() + sentence2.length() + sentence3.length() + 1,
-          true),
-      IsEmpty());
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(535, true),
-              IsEmpty());
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(-10, true),
-              IsEmpty());
-}
-
-TEST_F(
-    ReadAnythingAppControllerTest,
-    GetHighlightForCurrentSegmentIndex_PhrasesEnabled_ValidModel_SentenceSpansMultipleNodes_ReturnsCorrectNodes) {
-  scoped_feature_list_.InitWithFeatures(
-      {features::kReadAnythingReadAloud,
-       features::kReadAnythingReadAloudPhraseHighlighting},
-      {});
-
-  controller().UpdateDependencyParserModel(GetValidModelFile());
-  DependencyParserModel& model =
-      controller().GetDependencyParserModelForTesting();
-
-  EXPECT_TRUE(model.IsAvailable());
-
-  EXPECT_TRUE(controller().IsPhraseHighlightingEnabled());
-
-  // Text indices:             0123456789012345678901234567890
-  std::u16string sentence1 = u"Never feel heavy or ";
-  std::u16string sentence2 = u"earthbound, no ";
-  std::u16string sentence3 = u"worries or doubts interfere.";
-
-  // Expected phrases:
-  // Never feel heavy or earthbound, /no worries or doubts interfere.
-  // Expected phrase breaks: 0, 32
-
-  static constexpr ui::AXNodeID kId1 = 2;
-  static constexpr ui::AXNodeID kId2 = 3;
-  static constexpr ui::AXNodeID kId3 = 4;
-  ui::AXNodeData static_text1 = test::TextNode(kId1, sentence1);
-  ui::AXNodeData static_text2 = test::TextNode(kId2, sentence2);
-  ui::AXNodeData static_text3 = test::TextNode(kId3, sentence3);
-
-  InitializeWithAndProcessNodes({std::move(static_text1),
-                                 std::move(static_text2),
-                                 std::move(static_text3)});
-  controller().PreprocessTextForSpeech();
-
-  // Wait till all async calculations complete.
-  task_environment_.RunUntilIdle();
-
-  std::vector<ui::AXNodeID> node_ids = controller().GetCurrentText();
-  EXPECT_EQ(node_ids.size(), 3u);
-
-  // First character (N) => first phrase
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(0, true),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 20),
-                          TextSegmentMatcher(kId2, 0, 12)));
-
-  // 20th character (e of earthbound) => first phrase
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(20, true),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 20),
-                          TextSegmentMatcher(kId2, 0, 12)));
-
-  // 31st character (space before "no") => first phrase
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(31, true),
-              ElementsAre(TextSegmentMatcher(kId1, 0, 20),
-                          TextSegmentMatcher(kId2, 0, 12)));
-
-  // 32nd character (n of no) => second phrase
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(32, true),
-              ElementsAre(TextSegmentMatcher(kId2, 12, 15),
-                          TextSegmentMatcher(kId3, 0, 28)));
-
-  // 35th character (w of worries) => second phrase
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(35, true),
-              ElementsAre(TextSegmentMatcher(kId2, 12, 15),
-                          TextSegmentMatcher(kId3, 0, 28)));
-
-  // 62nd character (final .) => second phrase
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(62, true),
-              ElementsAre(TextSegmentMatcher(kId2, 12, 15),
-                          TextSegmentMatcher(kId3, 0, 28)));
-
-  // 63rd character (past the end of the sentence) => empty
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(63, true),
-              IsEmpty());
-
-  // Invalid indices.
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(535, true),
-              IsEmpty());
-  EXPECT_THAT(read_aloud_model().GetHighlightForCurrentSegmentIndex(-10, true),
-              IsEmpty());
-}
-
 TEST_F(ReadAnythingAppControllerTest,
        GetDependencyParserModel_UnavailableWithoutModelFile) {
   DependencyParserModel& model =
@@ -4792,7 +3815,7 @@ TEST_F(ReadAnythingAppControllerTest,
 
 TEST_F(ReadAnythingAppControllerTest,
        GetDependencyParserModel_AvailableWithValidModelFile) {
-  controller().UpdateDependencyParserModel(GetValidModelFile());
+  controller().UpdateDependencyParserModel(test::GetValidModelFile());
   DependencyParserModel& model =
       controller().GetDependencyParserModelForTesting();
 
@@ -4801,11 +3824,149 @@ TEST_F(ReadAnythingAppControllerTest,
 
 TEST_F(ReadAnythingAppControllerTest,
        GetDependencyParserModel_UnavailableWithInvalidModelFile) {
-  controller().UpdateDependencyParserModel(GetInvalidModelFile());
+  controller().UpdateDependencyParserModel(test::GetInvalidModelFile());
   DependencyParserModel& model =
       controller().GetDependencyParserModelForTesting();
 
   EXPECT_FALSE(model.IsAvailable());
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       OnStringAttributeChanged_ImageSrcChange_RequestsImageData) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kReadAnythingImagesViaAlgorithm);
+
+  // Create an image node with a placeholder "data:" URL, mimicking a
+  // lazy-loaded image.
+  static constexpr ui::AXNodeID kImageNodeId = 2;
+  std::string placeholder_src = "data:image/svg+xml,...";
+  ui::AXNodeData image_node = test::ImageNode(kImageNodeId, placeholder_src);
+  SendUpdateAndDistillNodes({std::move(image_node)});
+
+  // Now update with the actual image url.
+  std::string final_src = "https://example.com/real_image.png";
+  ui::AXNodeData updated_image_node = test::ImageNode(kImageNodeId, final_src);
+  SendUpdateAndDistillNodes({std::move(updated_image_node)});
+
+  EXPECT_CALL(page_handler_, OnImageDataRequested(tree_id_, kImageNodeId))
+      .Times(2);
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       OnStringAttributeChanged_NonImageNode_DoesNothing) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kReadAnythingImagesViaAlgorithm);
+
+  static constexpr ui::AXNodeID kLinkNodeId = 2;
+  std::string placeholder_url = "data:image/svg+xml,...";
+  ui::AXNodeData link_node = test::LinkNode(kLinkNodeId, placeholder_url);
+  SendUpdateAndDistillNodes({std::move(link_node)});
+
+  std::string final_url = "https://example.com/real_image.png";
+  ui::AXNodeData updated_link_node = test::LinkNode(kLinkNodeId, final_url);
+  SendUpdateAndDistillNodes({std::move(updated_link_node)});
+
+  EXPECT_CALL(page_handler_, OnImageDataRequested).Times(0);
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       OnStringAttributeChanged_ImageFlagDisabled_DoesNothing) {
+  static constexpr ui::AXNodeID kImageNodeId = 2;
+  std::string placeholder_src = "data:image/svg+xml,...";
+  ui::AXNodeData image_node = test::ImageNode(kImageNodeId, placeholder_src);
+  SendUpdateAndDistillNodes({std::move(image_node)});
+  std::string final_src = "https://example.com/real_image.png";
+  ui::AXNodeData updated_image_node = test::ImageNode(kImageNodeId, final_src);
+  SendUpdateAndDistillNodes({std::move(updated_image_node)});
+
+  EXPECT_CALL(page_handler_, OnImageDataRequested).Times(0);
+}
+
+TEST_F(ReadAnythingAppControllerTest, UpdateWordsSeen_ReplacesWordsSeen) {
+  controller().UpdateWordsSeen(123);
+  EXPECT_EQ(123, model().words_seen());
+  controller().UpdateWordsSeen(54);
+  EXPECT_EQ(54, model().words_seen());
+  controller().UpdateWordsSeen(746);
+  EXPECT_EQ(746, model().words_seen());
+}
+
+TEST_F(ReadAnythingAppControllerTest, UpdateWordsHeard_ReplacesWordsHeard) {
+  controller().UpdateWordsHeard(123);
+  EXPECT_EQ(123, model().words_heard());
+  controller().UpdateWordsHeard(54);
+  EXPECT_EQ(54, model().words_heard());
+  controller().UpdateWordsHeard(746);
+  EXPECT_EQ(746, model().words_heard());
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnActiveAXTreeIDChanged_LogsWordsSeen) {
+  base::HistogramTester histogram_tester;
+  auto const id = ui::AXTreeID::CreateNewAXTreeID();
+  controller().UpdateWordsSeen(2468);
+
+  controller().OnActiveAXTreeIDChanged(id, ukm::kInvalidSourceId, false);
+
+  histogram_tester.ExpectUniqueSample(
+      ReadAnythingAppController::kWordsSeenHistogramName, 2468, 1);
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       OnActiveAXTreeIDChanged_NoPreviousTree_DoesNotLogWordsSeen) {
+  auto const id = ui::AXTreeID::CreateNewAXTreeID();
+  controller().OnActiveAXTreeIDChanged(ui::AXTreeIDUnknown(),
+                                       ukm::kInvalidSourceId, false);
+  controller().UpdateWordsSeen(2468);
+
+  base::HistogramTester histogram_tester;
+  controller().OnActiveAXTreeIDChanged(id, ukm::kInvalidSourceId, false);
+
+  histogram_tester.ExpectTotalCount(
+      ReadAnythingAppController::kWordsSeenHistogramName, 0);
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnActiveAXTreeIDChanged_ResetsWordsSeen) {
+  auto const id = ui::AXTreeID::CreateNewAXTreeID();
+
+  controller().UpdateWordsSeen(123);
+  controller().OnActiveAXTreeIDChanged(id, ukm::kInvalidSourceId, false);
+
+  EXPECT_EQ(0, model().words_seen());
+}
+
+TEST_F(ReadAnythingAppControllerTest, OnActiveAXTreeIDChanged_LogsWordsHeard) {
+  base::HistogramTester histogram_tester;
+  auto const id = ui::AXTreeID::CreateNewAXTreeID();
+  controller().UpdateWordsHeard(2468);
+
+  controller().OnActiveAXTreeIDChanged(id, ukm::kInvalidSourceId, false);
+
+  histogram_tester.ExpectUniqueSample(
+      ReadAnythingAppController::kWordsHeardHistogramName, 2468, 1);
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       OnActiveAXTreeIDChanged_NoPreviousTree_DoesNotLogWordsHeard) {
+  auto const id = ui::AXTreeID::CreateNewAXTreeID();
+  controller().OnActiveAXTreeIDChanged(ui::AXTreeIDUnknown(),
+                                       ukm::kInvalidSourceId, false);
+  controller().UpdateWordsHeard(2468);
+
+  base::HistogramTester histogram_tester;
+  controller().OnActiveAXTreeIDChanged(id, ukm::kInvalidSourceId, false);
+
+  histogram_tester.ExpectTotalCount(
+      ReadAnythingAppController::kWordsHeardHistogramName, 0);
+}
+
+TEST_F(ReadAnythingAppControllerTest,
+       OnActiveAXTreeIDChanged_ResetsWordsHeard) {
+  auto const id = ui::AXTreeID::CreateNewAXTreeID();
+
+  controller().UpdateWordsHeard(123);
+  controller().OnActiveAXTreeIDChanged(id, ukm::kInvalidSourceId, false);
+
+  EXPECT_EQ(0, model().words_heard());
 }
 
 class ReadAnythingAppControllerScreen2xDataCollectionModeTest

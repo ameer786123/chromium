@@ -13,11 +13,12 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/common/checked_lock.h"
 #include "base/task/thread_pool/worker_thread.h"
+#include "base/threading/platform_thread_metrics.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/threading/scoped_blocking_call_internal.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time_override.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 
 namespace base::internal {
@@ -211,14 +212,16 @@ ThreadGroupImpl::ThreadGroupImpl(std::string_view histogram_label,
                                  ThreadType thread_type_hint,
                                  int64_t thread_group_type,
                                  TrackedRef<TaskTracker> task_tracker,
-                                 TrackedRef<Delegate> delegate)
+                                 TrackedRef<Delegate> delegate,
+                                 bool monitor_worker_thread_priorities)
     : ThreadGroup(histogram_label,
                   thread_group_label,
                   thread_type_hint,
                   std::move(task_tracker),
                   std::move(delegate)),
       thread_group_type_(thread_group_type),
-      tracked_ref_factory_(this) {
+      tracked_ref_factory_(this),
+      monitor_worker_thread_priorities_(monitor_worker_thread_priorities) {
   DCHECK(!thread_group_label_.empty());
 }
 
@@ -338,8 +341,14 @@ void ThreadGroupImpl::WorkerDelegate::OnMainEntry(WorkerThread* worker) {
       outer_->after_start().worker_environment);
 #endif  // BUILDFLAG(IS_WIN)
 
-  PlatformThread::SetName(
-      StringPrintf("ThreadPool%sWorker", outer_->thread_group_label_.c_str()));
+  std::string thread_name =
+      StringPrintf("ThreadPool%sWorker", outer_->thread_group_label_.c_str());
+  PlatformThread::SetName(thread_name);
+#if BUILDFLAG(IS_ANDROID)
+  if (outer_->monitor_worker_thread_priorities_) {
+    PlatformThreadPriorityMonitor::Get().RegisterCurrentThread(thread_name);
+  }
+#endif  // BUILDFLAG(IS_ANDROID)
 
   outer_->BindToCurrentThread();
   worker_only().worker_thread_ = static_cast<WorkerThread*>(worker);
@@ -615,7 +624,7 @@ void ThreadGroupImpl::WorkerDelegate::CleanupLockRequired(
 
   // Remove the worker from |workers_|.
   auto worker_iter = std::ranges::find(outer_->workers_, worker);
-  CHECK(worker_iter != outer_->workers_.end(), base::NotFatalUntil::M125);
+  CHECK(worker_iter != outer_->workers_.end());
   outer_->workers_.erase(worker_iter);
 }
 
@@ -985,10 +994,7 @@ bool ThreadGroupImpl::IsOnIdleSetLockRequired(WorkerThread* worker) const {
 
 void ThreadGroupImpl::ScheduleAdjustMaxTasks() {
   // |adjust_max_tasks_posted_| can't change before the task posted below runs.
-  // Skip check on NaCl to avoid unsafe reference acquisition warning.
-#if !BUILDFLAG(IS_NACL)
   DCHECK(TS_UNCHECKED_READ(adjust_max_tasks_posted_));
-#endif
 
   after_start().service_thread_task_runner->PostDelayedTask(
       FROM_HERE, BindOnce(&ThreadGroupImpl::AdjustMaxTasks, Unretained(this)),

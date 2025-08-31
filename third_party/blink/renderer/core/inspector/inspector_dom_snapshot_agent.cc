@@ -168,7 +168,7 @@ class DOMTreeIterator {
 
  private:
   Node* current_;
-  WTF::Vector<int> path_to_current_node_;
+  Vector<int> path_to_current_node_;
 };
 
 }  // namespace
@@ -593,7 +593,8 @@ void InspectorDOMSnapshotAgent::VisitPseudoElements(
     InspectorContrast& contrast) {
   for (PseudoId pseudo_id :
        {kPseudoIdFirstLetter, kPseudoIdCheckMark, kPseudoIdBefore,
-        kPseudoIdAfter, kPseudoIdPickerIcon, kPseudoIdMarker}) {
+        kPseudoIdAfter, kPseudoIdPickerIcon, kPseudoIdInterestHint,
+        kPseudoIdMarker}) {
     if (Node* pseudo_node = parent->GetPseudoElement(pseudo_id))
       VisitNode(pseudo_node, parent_index, contrast);
   }
@@ -706,7 +707,7 @@ int InspectorDOMSnapshotAgent::BuildLayoutTreeNode(
   layout_tree_snapshot->getText()->emplace_back(AddString(text));
 
   if (node->GetPseudoIdForStyling()) {
-    // For pseudo elements, visit the children of the layout object.
+    // For pseudo-elements, visit the children of the layout object.
     // Combinding ::before { content: 'hello' } and ::first-letter would produce
     // two boxes for the ::before node, one for 'hello' and one for 'ello'.
     for (LayoutObject* child = layout_object->SlowFirstChild(); child;

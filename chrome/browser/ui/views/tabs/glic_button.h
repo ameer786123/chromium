@@ -14,6 +14,10 @@
 #include "ui/gfx/vector_icon_types.h"
 #include "ui/views/controls/menu/menu_model_adapter.h"
 
+#if BUILDFLAG(ENABLE_GLIC)
+#include "chrome/browser/glic/fre/glic_fre.mojom.h"
+#endif  // BUILDFLAG(ENABLE_GLIC)
+
 class PrefService;
 
 namespace glic {
@@ -22,7 +26,6 @@ namespace glic {
 // TabSearchButton for sizing and appropriate theming.
 
 class GlicButton : public TabStripNudgeButton,
-                   public GlicButtonControllerDelegate,
                    public views::ContextMenuController,
                    public ui::SimpleMenuModel::Delegate {
   METADATA_HEADER(GlicButton, TabStripNudgeButton)
@@ -38,10 +41,6 @@ class GlicButton : public TabStripNudgeButton,
   GlicButton(const GlicButton&) = delete;
   GlicButton& operator=(const GlicButton&) = delete;
   ~GlicButton() override;
-
-  // GlicButtonControllerDelegate:
-  void SetShowState(bool show) override;
-  void SetIcon(const gfx::VectorIcon& icon) override;
 
   // TabStripNudgeButton:
   void SetIsShowingNudge(bool is_showing) override;
@@ -74,6 +73,12 @@ class GlicButton : public TabStripNudgeButton,
 
   bool IsContextMenuShowingForTest();
 
+  // Sets the button back to its default colors.
+  void SetDefaultColors();
+
+  // Sets the button to its highlighted state.
+  void HighlightGlicButton();
+
  private:
   // Creates the model for the context menu.
   std::unique_ptr<ui::SimpleMenuModel> CreateMenuModel();
@@ -89,6 +94,23 @@ class GlicButton : public TabStripNudgeButton,
     return tab_strip_controller_->GetProfile()->GetPrefs();
   }
 
+#if BUILDFLAG(ENABLE_GLIC)
+  void PanelStateChanged(bool active);
+
+  void OnFreWebUiStateChanged(mojom::FreWebUiState new_state);
+
+  // Used to update the tooltip text when the showing states of the Glic
+  // window/FRE change.
+  void UpdateTooltipText();
+
+  // Callback subscription for listening to changes to the Glic window
+  // activation changes.
+  base::CallbackListSubscription glic_window_activation_subscription_;
+
+  // Callback subscription for listening to changes to the FRE WebUI state.
+  base::CallbackListSubscription fre_subscription_;
+#endif  // BUILDFLAG(ENABLE_GLIC)
+
   // The model adapter for the context menu.
   std::unique_ptr<views::MenuModelAdapter> menu_model_adapter_;
 
@@ -103,10 +125,6 @@ class GlicButton : public TabStripNudgeButton,
 
   // Tab strip that contains this button.
   raw_ptr<TabStripController> tab_strip_controller_;
-
-  // Represents the show state of the button. Visibility of the button
-  // is reflected by the show state except when the nudge is showing.
-  bool show_state_ = true;
 
   // Callback which is invoked when the button is hovered (i.e., the user is
   // more likely to interact with it soon).

@@ -5,11 +5,14 @@
 #ifndef CHROME_BROWSER_PRIVACY_SANDBOX_NOTICE_NOTICE_MODEL_H_
 #define CHROME_BROWSER_PRIVACY_SANDBOX_NOTICE_NOTICE_MODEL_H_
 
+#include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/privacy_sandbox/notice/notice.mojom.h"
+#include "chrome/browser/privacy_sandbox/notice/notice_definitions.h"
 
 namespace privacy_sandbox {
 class NoticeApi;
+class NoticeStorage;
 
 // Types of notices that can be shown.
 enum class NoticeType {
@@ -17,23 +20,15 @@ enum class NoticeType {
   kConsent,  // This type of notice requires an explicit choice to be made.
 };
 
-// The different surface types a notice can be shown on.
-enum class SurfaceType {
-  kDesktopNewTab,
-  kClankBrApp,      // Clank Browser App.
-  kClankCustomTab,  // Clank CCT.
-};
-
-// Levels of eligibility required for a notice.
-enum class EligibilityLevel {
-  kNotEligible,
-  kEligibleNotice,
-  kEligibleConsent,
+// Notice view groups. Defining the notices that can be grouped together.
+enum class NoticeViewGroup {
+  kNotSet,
+  kAdsNoticeEeaGroup,
 };
 
 using NoticeId = std::pair<notice::mojom::PrivacySandboxNotice, SurfaceType>;
+
 class Notice {
-  // TODO(crbug.com/392612108): Include view group information.
  public:
   explicit Notice(NoticeId notice_id);
   // Delete copy constructor and copy assignment operator
@@ -51,14 +46,36 @@ class Notice {
   Notice* SetTargetApis(const std::vector<NoticeApi*>& apis);
   Notice* SetPreReqApis(const std::vector<NoticeApi*>& apis);
   Notice* SetFeature(const base::Feature* feature);
+  Notice* SetViewGroup(std::pair<NoticeViewGroup, int> view_group);
 
-  bool WasFulfilled();
+  // Returns the cached was_fulfilled status.
+  bool was_fulfilled() const { return was_fulfilled_; }
 
   // Accessors.
-  const std::vector<raw_ptr<NoticeApi>>& GetTargetApis();
-  const std::vector<raw_ptr<NoticeApi>>& GetPreReqApis();
-  NoticeId GetNoticeId();
-  const base::Feature* GetFeature() const;
+  base::span<NoticeApi*> target_apis() { return target_apis_; }
+  base::span<NoticeApi*> pre_req_apis() { return pre_req_apis_; }
+  NoticeId notice_id() const { return notice_id_; }
+  const base::Feature* feature() const { return feature_; }
+
+  // Returns the view_group, consisting of the group and the order in the group.
+  std::pair<NoticeViewGroup, int> view_group() const { return view_group_; }
+
+  // Update the cached was_fulfilled status for the notice.
+  void RefreshFulfillmentStatus(NoticeStorage& storage);
+
+  // Validates that all of the target apis can be fulfilled by the current
+  // notice. Takes into consideration the eligibility which is only available at
+  // runtime. For this reason, Fulfillemnt of each Target API has to be checked
+  // at the time of computing the required notices, and not at Catalog
+  // registration time.
+  // Note that the eligibility check vs the notice type is
+  // strict: Notice of Consent type cannot fulfil APIs that require Notice
+  // Eligibility only.
+  bool CanFulfillAllTargetApis();
+
+  // Evaluates if the Notice feature is enabled.
+  bool IsEnabled() const;
+
   const char* GetStorageName() const;
 
   // Gets the type of notice.
@@ -85,9 +102,11 @@ class Notice {
       notice::mojom::PrivacySandboxNoticeEvent event);
 
   NoticeId notice_id_;
-  std::vector<raw_ptr<NoticeApi>> target_apis_;
-  std::vector<raw_ptr<NoticeApi>> pre_req_apis_;
+  bool was_fulfilled_ = false;
+  std::vector<NoticeApi*> target_apis_;
+  std::vector<NoticeApi*> pre_req_apis_;
   raw_ptr<const base::Feature> feature_;
+  std::pair<NoticeViewGroup, int> view_group_;
 };
 
 class Consent : public Notice {
@@ -114,28 +133,43 @@ class NoticeApi {
   virtual ~NoticeApi();
 
   // Accessors.
-  const std::vector<Notice*>& GetLinkedNotices();
+  base::span<Notice*> linked_notices() { return linked_notices_; }
+  const base::Feature* feature() { return feature_; }
+
+  // Computes the eligibility level
   EligibilityLevel GetEligibilityLevel();
+
+  // Runs the Result Callback.
   void UpdateResult(bool enabled);
 
-  // TODO(crbug.com/392612108): Have enablement of an api set by a feature
-  // flag.
-
   // Sets a notice this Api can be fulfilled by.
-  void CanBeFulfilledBy(Notice* notice);
+  void SetFulfilledBy(Notice* notice);
 
   // Returns whether the api was fulfilled.
+  // A Notice is considered fulfilled if any of its linked notices are
+  // fulfilled.
   bool IsFulfilled();
+
+  // Returns whether the API is enabled and should be considered by the
+  // Orchestrator.
+  bool IsEnabled();
 
   // Callbacks.
   NoticeApi* SetEligibilityCallback(
       base::RepeatingCallback<EligibilityLevel()> callback);
   NoticeApi* SetResultCallback(base::OnceCallback<void(bool)> callback);
 
+  // Feature controlling the API.
+  NoticeApi* SetFeature(const base::Feature* feature);
+
+  // TODO(crbug.com/409386887) Add Supersedes call when multiple versions of the
+  // same API are introduced.
+
  private:
   std::vector<Notice*> linked_notices_;
   base::RepeatingCallback<EligibilityLevel()> eligibility_callback_;
   base::OnceCallback<void(bool)> result_callback_;
+  raw_ptr<const base::Feature> feature_;
 };
 
 }  // namespace privacy_sandbox

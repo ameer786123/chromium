@@ -18,6 +18,7 @@
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/background/ntp_custom_background_service_constants.h"
+#include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/themes/theme_service_test_utils.h"
@@ -32,10 +33,14 @@
 #include "components/sync/model/sync_change.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/protocol/theme_specifics.pb.h"
+#include "components/sync/protocol/theme_types.pb.h"
 #include "components/sync/service/local_data_description.h"
 #include "components/sync/test/fake_sync_change_processor.h"
 #include "components/sync/test/sync_change_processor_wrapper_for_test.h"
+#include "components/sync/test/test_matchers.h"
+#include "components/sync/test/test_sync_service.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -43,6 +48,9 @@
 namespace {
 
 using base::test::EqualsProto;
+using ::syncer::IsEmptyLocalDataDescription;
+using ::syncer::MatchesLocalDataDescription;
+using ::syncer::MatchesLocalDataItemModel;
 using ::testing::AllOf;
 using ::testing::ElementsAre;
 using ::testing::Field;
@@ -96,7 +104,7 @@ class ThemeLocalDataBatchUploaderTestBase
 
     extensions::ExtensionServiceTestBase::SetUp();
     InitializeExtensionService(ExtensionServiceInitParams());
-    service_->Init();
+    service()->Init();
 
     theme_service_ = ThemeServiceFactory::GetForProfile(profile());
     theme_sync_service_ = theme_service_->GetThemeSyncableService();
@@ -110,13 +118,25 @@ class ThemeLocalDataBatchUploaderTestBase
         extensions::mojom::ManifestLocation::kInternal, kCustomThemeUrl);
     extensions::ExtensionPrefs::Get(profile())->AddGrantedPermissions(
         theme_extension_->id(), extensions::PermissionSet());
-    service_->AddExtension(theme_extension_.get());
+    registrar()->AddExtension(theme_extension_);
     ASSERT_EQ(1u, extensions::ExtensionRegistry::Get(profile())
                       ->enabled_extensions()
                       .size());
 
     batch_uploader_ = std::make_unique<ThemeLocalDataBatchUploader>(
         theme_sync_service_.get());
+
+    // Avoid using the real SyncService instance, to avoid triggering sync
+    // startup notifications, specifically clearing of existing account data
+    // upon startup when there is no sync metadata.
+    // TODO(crbug.com/425913203): Remove once usage of TestSyncService is
+    // simplified.
+    SyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+        profile_.get(),
+        base::BindRepeating([](content::BrowserContext* context)
+                                -> std::unique_ptr<KeyedService> {
+          return std::make_unique<syncer::TestSyncService>();
+        }));
   }
 
   ThemeService* theme_service() { return theme_service_; }
@@ -177,8 +197,7 @@ class ThemeLocalDataBatchUploaderTestWithFlagDisabled
  public:
   ThemeLocalDataBatchUploaderTestWithFlagDisabled() {
     feature_list_.InitWithFeatures(
-        /*enabled_features=*/{syncer::kMoveThemePrefsToSpecifics,
-                              syncer::kSeparateLocalAndAccountThemes},
+        /*enabled_features=*/{syncer::kSeparateLocalAndAccountThemes},
         /*disabled_features=*/{syncer::kThemesBatchUpload});
   }
 
@@ -198,9 +217,7 @@ TEST_F(ThemeLocalDataBatchUploaderTestWithFlagDisabled, ShouldReturnNoItems) {
 
   StartSyncing(remote_theme_specifics);
 
-  syncer::LocalDataDescription desc = GetLocalDataDescription();
-  EXPECT_EQ(desc.type, syncer::THEMES);
-  EXPECT_THAT(desc.local_data_models, IsEmpty());
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 }
 
 using ThemeLocalDataBatchUploaderDeathTestWithFlagDisabled =
@@ -228,8 +245,7 @@ class ThemeLocalDataBatchUploaderTest
  public:
   ThemeLocalDataBatchUploaderTest() {
     feature_list_.InitWithFeatures(
-        /*enabled_features=*/{syncer::kMoveThemePrefsToSpecifics,
-                              syncer::kSeparateLocalAndAccountThemes,
+        /*enabled_features=*/{syncer::kSeparateLocalAndAccountThemes,
                               syncer::kThemesBatchUpload},
         /*disabled_features=*/{});
   }
@@ -244,10 +260,7 @@ TEST_F(ThemeLocalDataBatchUploaderTest,
       theme_sync_service()->GetThemeSpecificsFromCurrentThemeForTesting(),
       EqualsProto(theme_service::test::EmptySpecifics()));
 
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 
   theme_sync_service()->WillStartInitialSync();
   ASSERT_FALSE(theme_sync_service()->MergeDataAndStartSyncing(
@@ -256,10 +269,7 @@ TEST_F(ThemeLocalDataBatchUploaderTest,
           fake_change_processor())));
 
   base::HistogramTester histogram_tester;
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
   histogram_tester.ExpectUniqueSample("Theme.BatchUpload.HasLocalTheme", false,
                                       1);
 }
@@ -281,21 +291,18 @@ TEST_F(ThemeLocalDataBatchUploaderTest,
               fake_change_processor()))));
   ASSERT_TRUE(base::test::RunUntil(
       [&]() { return theme_service()->UsingExtensionTheme(); }));
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 
   // Set a non-extension account theme.
   theme_specifics.Clear();
   theme_specifics.set_use_custom_theme(false);
   theme_specifics.set_browser_color_scheme(
       ::sync_pb::ThemeSpecifics_BrowserColorScheme_SYSTEM);
-  sync_pb::ThemeSpecifics::UserColorTheme* user_color_theme =
+  sync_pb::UserColorTheme* user_color_theme =
       theme_specifics.mutable_user_color_theme();
   user_color_theme->set_color(SK_ColorRED);
   user_color_theme->set_browser_color_variant(
-      sync_pb::ThemeSpecifics_UserColorTheme_BrowserColorVariant_TONAL_SPOT);
+      sync_pb::UserColorTheme_BrowserColorVariant_TONAL_SPOT);
 
   ASSERT_FALSE(theme_sync_service()->ProcessSyncChanges(
       FROM_HERE, MakeThemeChangeList(theme_specifics)));
@@ -304,10 +311,7 @@ TEST_F(ThemeLocalDataBatchUploaderTest,
   EXPECT_EQ(theme_service()->GetThemeID(), ThemeService::kUserColorThemeID);
 
   base::HistogramTester histogram_tester;
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
   histogram_tester.ExpectUniqueSample("Theme.BatchUpload.HasLocalTheme", false,
                                       1);
 }
@@ -381,10 +385,7 @@ TEST_F(ThemeLocalDataBatchUploaderTest,
       "Theme.BatchUpload.LocalThemeMigrationTriggered", true, 1);
 
   // GetLocalDataDescription should now return empty.
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
   histogram_tester.ExpectUniqueSample("Theme.BatchUpload.HasLocalTheme", false,
                                       1);
 
@@ -405,14 +406,15 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalExtensionTheme) {
 
   StartSyncing(remote_theme_specifics);
 
-  syncer::LocalDataDescription desc = GetLocalDataDescription();
-  EXPECT_EQ(desc.type, syncer::THEMES);
-  EXPECT_THAT(
-      desc.local_data_models,
-      ElementsAre(
-          AllOf(Field(&syncer::LocalDataItemModel::id,
-                      ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId),
-                Field(&syncer::LocalDataItemModel::title, kCustomThemeName))));
+  EXPECT_THAT(GetLocalDataDescription(),
+              MatchesLocalDataDescription(
+                  syncer::DataType::THEMES,
+                  ElementsAre(MatchesLocalDataItemModel(
+                      ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId,
+                      syncer::LocalDataItemModel::NoIcon(),
+                      /*title=*/kCustomThemeName, /*subtitle=*/IsEmpty())),
+                  /*item_count=*/0u, /*domains=*/IsEmpty(),
+                  /*domain_count=*/0u));
 
   // Skip the rest of the test if remote theme is the same.
   if (local_theme_specifics.SerializeAsString() ==
@@ -436,10 +438,7 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalExtensionTheme) {
               HasThemeSpecifics(local_theme_specifics));
 
   // GetLocalDataDescription should now return empty.
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 
   theme_sync_service()->StopSyncing(syncer::THEMES);
   EXPECT_TRUE(theme_service()->UsingDefaultTheme());
@@ -456,14 +455,15 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalAutogeneratedColorTheme) {
 
   StartSyncing(remote_theme_specifics);
 
-  syncer::LocalDataDescription desc = GetLocalDataDescription();
-  EXPECT_EQ(desc.type, syncer::THEMES);
-  EXPECT_THAT(
-      desc.local_data_models,
-      ElementsAre(
-          AllOf(Field(&syncer::LocalDataItemModel::id,
-                      ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId),
-                Field(&syncer::LocalDataItemModel::title, "Custom color"))));
+  EXPECT_THAT(GetLocalDataDescription(),
+              MatchesLocalDataDescription(
+                  syncer::DataType::THEMES,
+                  ElementsAre(MatchesLocalDataItemModel(
+                      ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId,
+                      syncer::LocalDataItemModel::NoIcon(),
+                      /*title=*/"Custom color", /*subtitle=*/IsEmpty())),
+                  /*item_count=*/0u, /*domains=*/IsEmpty(),
+                  /*domain_count=*/0u));
 
   ASSERT_NE(theme_service()->GetAutogeneratedThemeColor(), SK_ColorBLUE);
   EXPECT_THAT(
@@ -481,10 +481,7 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalAutogeneratedColorTheme) {
               HasThemeSpecifics(local_theme_specifics));
 
   // GetLocalDataDescription should now return empty.
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 
   theme_sync_service()->StopSyncing(syncer::THEMES);
   EXPECT_TRUE(theme_service()->UsingDefaultTheme());
@@ -502,14 +499,15 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalUserColorTheme) {
 
   StartSyncing(remote_theme_specifics);
 
-  syncer::LocalDataDescription desc = GetLocalDataDescription();
-  EXPECT_EQ(desc.type, syncer::THEMES);
-  EXPECT_THAT(
-      desc.local_data_models,
-      ElementsAre(
-          AllOf(Field(&syncer::LocalDataItemModel::id,
-                      ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId),
-                Field(&syncer::LocalDataItemModel::title, "Green color"))));
+  EXPECT_THAT(GetLocalDataDescription(),
+              MatchesLocalDataDescription(
+                  syncer::DataType::THEMES,
+                  ElementsAre(MatchesLocalDataItemModel(
+                      ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId,
+                      syncer::LocalDataItemModel::NoIcon(),
+                      /*title=*/"Green color", /*subtitle=*/IsEmpty())),
+                  /*item_count=*/0u, /*domains=*/IsEmpty(),
+                  /*domain_count=*/0u));
 
   ASSERT_NE(theme_service()->GetUserColor(), SK_ColorGREEN);
   EXPECT_THAT(
@@ -527,10 +525,7 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalUserColorTheme) {
               HasThemeSpecifics(local_theme_specifics));
 
   // GetLocalDataDescription should now return empty.
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 
   theme_sync_service()->StopSyncing(syncer::THEMES);
   EXPECT_TRUE(theme_service()->UsingDefaultTheme());
@@ -547,14 +542,15 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalGrayscaleTheme) {
 
   StartSyncing(remote_theme_specifics);
 
-  syncer::LocalDataDescription desc = GetLocalDataDescription();
-  EXPECT_EQ(desc.type, syncer::THEMES);
-  EXPECT_THAT(
-      desc.local_data_models,
-      ElementsAre(AllOf(
-          Field(&syncer::LocalDataItemModel::id,
-                ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId),
-          Field(&syncer::LocalDataItemModel::title, "Grey default color"))));
+  EXPECT_THAT(GetLocalDataDescription(),
+              MatchesLocalDataDescription(
+                  syncer::DataType::THEMES,
+                  ElementsAre(MatchesLocalDataItemModel(
+                      ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId,
+                      syncer::LocalDataItemModel::NoIcon(),
+                      /*title=*/"Grey default color", /*subtitle=*/IsEmpty())),
+                  /*item_count=*/0u, /*domains=*/IsEmpty(),
+                  /*domain_count=*/0u));
 
   // Skip the rest of the test if remote theme is the same.
   if (local_theme_specifics.SerializeAsString() ==
@@ -577,10 +573,7 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalGrayscaleTheme) {
               HasThemeSpecifics(local_theme_specifics));
 
   // GetLocalDataDescription should now return empty.
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 
   theme_sync_service()->StopSyncing(syncer::THEMES);
   EXPECT_TRUE(theme_service()->UsingDefaultTheme());
@@ -601,7 +594,7 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalNtpBackground) {
                static_cast<int>(1234567890))
           .Set(kNtpCustomBackgroundMainColor, static_cast<int>(SK_ColorRED));
 
-  profile()->GetPrefs()->Set(prefs::kNonSyncingNtpCustomBackgroundDictDoNotUse,
+  profile()->GetPrefs()->Set(prefs::kNtpCustomBackgroundDict,
                              base::Value(background_dict.Clone()));
 
   const sync_pb::ThemeSpecifics local_theme_specifics =
@@ -610,25 +603,24 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalNtpBackground) {
 
   StartSyncing(remote_theme_specifics);
 
-  syncer::LocalDataDescription desc = GetLocalDataDescription();
-  EXPECT_EQ(desc.type, syncer::THEMES);
-  EXPECT_THAT(
-      desc.local_data_models,
-      ElementsAre(AllOf(
-          Field(&syncer::LocalDataItemModel::id,
-                ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId),
-          Field(&syncer::LocalDataItemModel::title, "attribution_line_1"))));
+  EXPECT_THAT(GetLocalDataDescription(),
+              MatchesLocalDataDescription(
+                  syncer::DataType::THEMES,
+                  ElementsAre(MatchesLocalDataItemModel(
+                      ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId,
+                      syncer::LocalDataItemModel::NoIcon(),
+                      /*title=*/"attribution_line_1", /*subtitle=*/IsEmpty())),
+                  /*item_count=*/0u, /*domains=*/IsEmpty(),
+                  /*domain_count=*/0u));
 
-  EXPECT_NE(profile()->GetPrefs()->GetDict(
-                prefs::kNonSyncingNtpCustomBackgroundDictDoNotUse),
+  EXPECT_NE(profile()->GetPrefs()->GetDict(prefs::kNtpCustomBackgroundDict),
             background_dict);
   EXPECT_THAT(
       theme_sync_service()->GetThemeSpecificsFromCurrentThemeForTesting(),
       EqualsProto(remote_theme_specifics));
 
   TriggerLocalDataMigration();
-  EXPECT_EQ(profile()->GetPrefs()->GetDict(
-                prefs::kNonSyncingNtpCustomBackgroundDictDoNotUse),
+  EXPECT_EQ(profile()->GetPrefs()->GetDict(prefs::kNtpCustomBackgroundDict),
             background_dict);
   EXPECT_THAT(
       theme_sync_service()->GetThemeSpecificsFromCurrentThemeForTesting(),
@@ -638,19 +630,14 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalNtpBackground) {
               HasThemeSpecifics(local_theme_specifics));
 
   // GetLocalDataDescription should now return empty.
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 
   theme_sync_service()->StopSyncing(syncer::THEMES);
-  EXPECT_FALSE(profile()->GetPrefs()->GetUserPrefValue(
-      prefs::kNonSyncingNtpCustomBackgroundDictDoNotUse));
+  EXPECT_FALSE(
+      profile()->GetPrefs()->GetUserPrefValue(prefs::kNtpCustomBackgroundDict));
   EXPECT_TRUE(theme_service()->UsingDefaultTheme());
 }
 
-// TODO(crbug.com/392074002): Re-think if it makes sense to offer batch upload
-// if local theme is only the browser color scheme.
 TEST_P(ThemeLocalDataBatchUploaderTest, LocalBrowserColorScheme) {
   // Local browser color scheme.
   theme_service()->SetBrowserColorScheme(
@@ -662,36 +649,25 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalBrowserColorScheme) {
 
   StartSyncing(remote_theme_specifics);
 
-  syncer::LocalDataDescription desc = GetLocalDataDescription();
-  EXPECT_EQ(desc.type, syncer::THEMES);
-  EXPECT_THAT(
-      desc.local_data_models,
-      ElementsAre(
-          AllOf(Field(&syncer::LocalDataItemModel::id,
-                      ThemeLocalDataBatchUploader::kThemesLocalDataItemModelId),
-                Field(&syncer::LocalDataItemModel::title, "Custom color"))));
+  // Just a browser color scheme by itself is considered equivalent to a default
+  // theme and should not be offered for batch upload.
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 
-  TriggerLocalDataMigration();
-  EXPECT_EQ(theme_service()->GetBrowserColorScheme(),
-            ThemeService::BrowserColorScheme::kLight);
-  EXPECT_TRUE(theme_service()->UsingDefaultTheme());
   EXPECT_THAT(
       theme_sync_service()->GetThemeSpecificsFromCurrentThemeForTesting(),
-      EqualsProto(local_theme_specifics));
-  // The local theme is committed.
-  EXPECT_THAT(fake_change_processor()->changes(),
-              HasThemeSpecifics(local_theme_specifics));
+      EqualsProto(remote_theme_specifics));
 
-  // GetLocalDataDescription should now return empty.
-  EXPECT_THAT(GetLocalDataDescription(),
-              AllOf(Field(&syncer::LocalDataDescription::type, syncer::THEMES),
-                    Field(&syncer::LocalDataDescription::local_data_models,
-                          IsEmpty())));
+  TriggerLocalDataMigration();
+  EXPECT_THAT(
+      theme_sync_service()->GetThemeSpecificsFromCurrentThemeForTesting(),
+      EqualsProto(remote_theme_specifics));
+  // The local theme is not committed.
+  EXPECT_THAT(fake_change_processor()->changes(),
+              Not(HasThemeSpecifics(local_theme_specifics)));
 
   theme_sync_service()->StopSyncing(syncer::THEMES);
-  ASSERT_EQ(theme_service()->GetBrowserColorScheme(),
+  EXPECT_EQ(theme_service()->GetBrowserColorScheme(),
             ThemeService::BrowserColorScheme::kLight);
-  EXPECT_TRUE(theme_service()->UsingDefaultTheme());
 }
 
 TEST_P(ThemeLocalDataBatchUploaderTest, LocalSystemTheme) {
@@ -708,9 +684,7 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalSystemTheme) {
 
   StartSyncing(remote_theme_specifics);
 
-  syncer::LocalDataDescription desc = GetLocalDataDescription();
-  EXPECT_EQ(desc.type, syncer::THEMES);
-  EXPECT_THAT(desc.local_data_models, IsEmpty());
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 
   ASSERT_FALSE(theme_service()->UsingSystemTheme());
   EXPECT_THAT(
@@ -740,9 +714,7 @@ TEST_P(ThemeLocalDataBatchUploaderTest, LocalDefaultTheme) {
 
   StartSyncing(remote_theme_specifics);
 
-  syncer::LocalDataDescription desc = GetLocalDataDescription();
-  EXPECT_EQ(desc.type, syncer::THEMES);
-  EXPECT_THAT(desc.local_data_models, IsEmpty());
+  EXPECT_THAT(GetLocalDataDescription(), IsEmptyLocalDataDescription());
 
   EXPECT_THAT(
       theme_sync_service()->GetThemeSpecificsFromCurrentThemeForTesting(),

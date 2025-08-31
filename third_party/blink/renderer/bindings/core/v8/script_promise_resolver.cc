@@ -35,7 +35,7 @@ ScriptPromiseResolverBase::ScriptPromiseResolverBase(
     source_location_ =
         CapturePartialSourceLocationFromStack(script_state->GetIsolate());
   } else {
-    source_location_ = std::make_unique<SourceLocation>(
+    source_location_ = MakeGarbageCollected<SourceLocation>(
         CaptureCurrentScriptUrl(script_state->GetIsolate()), -1);
   }
 }
@@ -94,7 +94,9 @@ void ScriptPromiseResolverBase::RejectWithDOMException(
   v8::Isolate* isolate = script_state_->GetIsolate();
   auto exception =
       V8ThrowDOMException::CreateOrDie(isolate, exception_code, message);
-  ApplyContextToException(script_state_, exception, exception_context_);
+  ApplyContextToException(
+      script_state_, exception, exception_context_.GetType(),
+      exception_context_.GetClassName(), exception_context_.GetPropertyName());
   Reject(exception);
 }
 
@@ -106,7 +108,9 @@ void ScriptPromiseResolverBase::RejectWithSecurityError(
   auto exception = V8ThrowDOMException::CreateOrDie(
       isolate, DOMExceptionCode::kSecurityError, sanitized_message,
       unsanitized_message);
-  ApplyContextToException(script_state_, exception, exception_context_);
+  ApplyContextToException(
+      script_state_, exception, exception_context_.GetType(),
+      exception_context_.GetClassName(), exception_context_.GetPropertyName());
   Reject(exception);
 }
 
@@ -169,7 +173,7 @@ void ScriptPromiseResolverBase::ResolveOrRejectImmediately() {
   probe::WillHandlePromise(
       GetExecutionContext(), script_state_, state_ == kResolving,
       exception_context_.GetClassName(), exception_context_.GetPropertyName(),
-      source_location_.get());
+      source_location_.Get());
 
   v8::MicrotasksScope microtasks_scope(
       script_state_->GetIsolate(), ToMicrotaskQueue(script_state_),
@@ -192,10 +196,9 @@ void ScriptPromiseResolverBase::ResolveOrRejectImmediately() {
 void ScriptPromiseResolverBase::ScheduleResolveOrReject() {
   GetExecutionContext()
       ->GetTaskRunner(TaskType::kMicrotask)
-      ->PostTask(
-          FROM_HERE,
-          WTF::BindOnce(&ScriptPromiseResolverBase::ResolveOrRejectDeferred,
-                        WrapPersistent(this)));
+      ->PostTask(FROM_HERE,
+                 BindOnce(&ScriptPromiseResolverBase::ResolveOrRejectDeferred,
+                          WrapPersistent(this)));
 }
 
 void ScriptPromiseResolverBase::ResolveOrRejectDeferred() {
@@ -212,6 +215,7 @@ void ScriptPromiseResolverBase::Trace(Visitor* visitor) const {
   visitor->Trace(script_state_);
   visitor->Trace(resolver_);
   visitor->Trace(value_);
+  visitor->Trace(source_location_);
 }
 
 ExecutionContext* ScriptPromiseResolverBase::GetExecutionContext() {

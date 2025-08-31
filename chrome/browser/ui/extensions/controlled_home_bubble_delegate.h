@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "base/auto_reset.h"
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar_bubble_delegate.h"
 #include "extensions/browser/extension_registry.h"
@@ -47,7 +48,7 @@ class ControlledHomeBubbleDelegate
   // ToolbarActionsBarBubbleDelegate:
   bool ShouldShow() override;
   std::u16string GetHeadingText() override;
-  std::u16string GetBodyText(bool anchored_to_action) override;
+  std::u16string GetBodyText() override;
   std::u16string GetActionButtonText() override;
   std::u16string GetDismissButtonText() override;
   ui::mojom::DialogButton GetDefaultDialogButton() override;

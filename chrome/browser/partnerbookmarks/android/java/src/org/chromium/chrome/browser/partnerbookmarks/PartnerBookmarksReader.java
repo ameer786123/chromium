@@ -30,7 +30,7 @@ import javax.annotation.concurrent.GuardedBy;
 @NullMarked
 public class PartnerBookmarksReader {
     private static final String TAG = "PartnerBMReader";
-    private static Set<FaviconUpdateObserver> sFaviconUpdateObservers = new HashSet<>();
+    private static final Set<FaviconUpdateObserver> sFaviconUpdateObservers = new HashSet<>();
     private static final float DESIRED_FAVICON_SIZE_DP = 16.0f;
 
     /** Root bookmark id reserved for the implied root of the bookmarks */
@@ -39,7 +39,7 @@ public class PartnerBookmarksReader {
     /** ID used to indicate an invalid bookmark node. */
     static final long INVALID_BOOKMARK_ID = -1;
 
-    /** Storage for failed favicon retrieval attempts to throttle future requests. * */
+    /** Storage for failed favicon retrieval attempts to throttle future requests. */
     private @Nullable PartnerBookmarksFaviconThrottle mFaviconThrottle;
 
     // JNI c++ pointer
@@ -195,7 +195,6 @@ public class PartnerBookmarksReader {
         return PartnerBookmarksReaderJni.get()
                 .addPartnerBookmark(
                         mNativePartnerBookmarksReader,
-                        PartnerBookmarksReader.this,
                         url,
                         title,
                         isFolder,
@@ -231,8 +230,7 @@ public class PartnerBookmarksReader {
         }
         Log.i(TAG, "Partner bookmarks creation complete.");
         PartnerBookmarksReaderJni.get()
-                .partnerBookmarksCreationComplete(
-                        mNativePartnerBookmarksReader, PartnerBookmarksReader.this);
+                .partnerBookmarksCreationComplete(mNativePartnerBookmarksReader);
     }
 
     @GuardedBy("mProgressLock")
@@ -260,8 +258,7 @@ public class PartnerBookmarksReader {
                 observer.onCompletedFaviconLoading();
             }
         }
-        PartnerBookmarksReaderJni.get()
-                .destroy(mNativePartnerBookmarksReader, PartnerBookmarksReader.this);
+        PartnerBookmarksReaderJni.get().destroy(mNativePartnerBookmarksReader);
         mNativePartnerBookmarksReader = 0;
         mShutDown = true;
     }
@@ -289,8 +286,8 @@ public class PartnerBookmarksReader {
             }
 
             // Get a snapshot of the bookmarks.
-            LinkedHashMap<Long, PartnerBookmark> idMap = new LinkedHashMap<Long, PartnerBookmark>();
-            HashSet<String> urlSet = new HashSet<String>();
+            LinkedHashMap<Long, PartnerBookmark> idMap = new LinkedHashMap<>();
+            HashSet<String> urlSet = new HashSet<>();
 
             PartnerBookmark rootBookmarksFolder = createRootBookmarksFolderBookmark();
             idMap.put(ROOT_FOLDER_ID, rootBookmarksFolder);
@@ -332,7 +329,7 @@ public class PartnerBookmarksReader {
                 return null;
             }
 
-            readBookmarkHierarchy(rootBookmarksFolder, new HashSet<PartnerBookmark>());
+            readBookmarkHierarchy(rootBookmarksFolder, new HashSet<>());
 
             return null;
         }
@@ -416,13 +413,12 @@ public class PartnerBookmarksReader {
     interface Natives {
         long init(@JniType("Profile*") Profile profile);
 
-        void reset(long nativePartnerBookmarksReader, PartnerBookmarksReader caller);
+        void reset(long nativePartnerBookmarksReader);
 
-        void destroy(long nativePartnerBookmarksReader, PartnerBookmarksReader caller);
+        void destroy(long nativePartnerBookmarksReader);
 
         long addPartnerBookmark(
                 long nativePartnerBookmarksReader,
-                PartnerBookmarksReader caller,
                 @Nullable String url,
                 String title,
                 boolean isFolder,
@@ -433,8 +429,7 @@ public class PartnerBookmarksReader {
                 int desiredFaviconSizePx,
                 FetchFaviconCallback callback);
 
-        void partnerBookmarksCreationComplete(
-                long nativePartnerBookmarksReader, PartnerBookmarksReader caller);
+        void partnerBookmarksCreationComplete(long nativePartnerBookmarksReader);
 
         @JniType("std::string")
         String getNativeUrlString(@JniType("std::string") String url);

@@ -27,6 +27,7 @@
 #import "components/prefs/pref_service.h"
 #import "components/prefs/testing_pref_service.h"
 #import "components/signin/public/identity_manager/identity_test_environment.h"
+#import "components/signin/public/identity_manager/tribool.h"
 #import "components/sync/base/user_selectable_type.h"
 #import "components/sync/test/test_sync_service.h"
 #import "components/webauthn/core/browser/test_passkey_model.h"
@@ -34,12 +35,15 @@
 #import "ios/chrome/browser/credential_provider/model/credential_provider_util.h"
 #import "ios/chrome/browser/credential_provider/model/features.h"
 #import "ios/chrome/browser/favicon/model/mock_favicon_loader.h"
+#import "ios/chrome/browser/shared/model/application_context/application_context.h"
+#import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/common/app_group/app_group_constants.h"
 #import "ios/chrome/common/credential_provider/constants.h"
 #import "ios/chrome/common/credential_provider/credential.h"
 #import "ios/chrome/common/credential_provider/memory_credential_store.h"
+#import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "testing/gmock/include/gmock/gmock.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
@@ -109,14 +113,20 @@ class CredentialProviderServiceTest : public PlatformTest {
     PlatformTest::TearDown();
   }
 
+  PrefService* local_state() {
+    return GetApplicationContext()->GetLocalState();
+  }
+
   void CreateCredentialProviderService(bool with_account_store = false) {
     // Make sure to shut down the previous instance before creating a new one.
     if (credential_provider_service_) {
       credential_provider_service_->Shutdown();
     }
 
+    const std::string profile_name = "profile_name";
+    local_state()->SetString(prefs::kLastUsedProfile, profile_name);
     credential_provider_service_ = std::make_unique<CredentialProviderService>(
-        &testing_pref_service_, password_store_,
+        profile_name, &testing_pref_service_, local_state(), password_store_,
         with_account_store ? account_password_store_ : nullptr,
         test_passkey_model_.get(), credential_store_,
         identity_test_environment_.identity_manager(), &sync_service_,
@@ -133,9 +143,49 @@ class CredentialProviderServiceTest : public PlatformTest {
         });
   }
 
+  bool WaitForCredentialUsername(NSString* username, NSUInteger index) {
+    // For add and remove operations to propagate to the credential store, both
+    // the message loop and the NSRunLoop need to spin.
+    return base::test::ios::WaitUntilConditionOrTimeout(
+        base::test::ios::kWaitForActionTimeout,
+        /* run_message_loop = */ true, ^{
+          return credential_store_.credentials.count > index &&
+                 [credential_store_.credentials[index].username
+                     isEqualToString:username];
+        });
+  }
+
+  bool WaitForCredentialPassword(NSString* password, NSUInteger index) {
+    // For add and remove operations to propagate to the credential store, both
+    // the message loop and the NSRunLoop need to spin.
+    return base::test::ios::WaitUntilConditionOrTimeout(
+        base::test::ios::kWaitForActionTimeout,
+        /* run_message_loop = */ true, ^{
+          return credential_store_.credentials.count > index &&
+                 [credential_store_.credentials[index].password
+                     isEqualToString:password];
+        });
+  }
+
+  bool WaitForCredentialTimestamp(const base::Time& timestamp,
+                                  NSUInteger index) {
+    // For add and remove operations to propagate to the credential store, both
+    // the message loop and the NSRunLoop need to spin.
+    const int64_t lastUsedTime =
+        timestamp.ToDeltaSinceWindowsEpoch().InMicroseconds();
+    return base::test::ios::WaitUntilConditionOrTimeout(
+        base::test::ios::kWaitForActionTimeout,
+        /* run_message_loop = */ true, ^{
+          return credential_store_.credentials.count > index &&
+                 credential_store_.credentials[index].lastUsedTime ==
+                     lastUsedTime;
+        });
+  }
+
  protected:
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
+  IOSChromeScopedTestingLocalState scoped_local_state_;
   TestingPrefServiceSimple testing_pref_service_;
   scoped_refptr<password_manager::TestPasswordStore> password_store_ =
       base::MakeRefCounted<password_manager::TestPasswordStore>();
@@ -269,7 +319,7 @@ TEST_F(CredentialProviderServiceTest, AccountChange) {
   account.gaia = core_account.gaia;
   account.email = core_account.email;
   account.hosted_domain = "managed.com";
-  ASSERT_TRUE(account.IsManaged());
+  ASSERT_EQ(account.IsManaged(), signin::Tribool::kTrue);
   identity_test_environment_.UpdateAccountInfoForAccount(account);
   identity_test_environment_.SetPrimaryAccount("foo@gmail.com",
                                                signin::ConsentLevel::kSignin);
@@ -396,32 +446,6 @@ TEST_F(CredentialProviderServiceTest, SignedInUserStoredEmail) {
       stringForKey:AppGroupUserDefaultsCredentialProviderUserEmail()]);
 }
 
-// Tests that the CredentialProviderService correctly stores the enabled state
-// of the Passkeys M2 feature.
-TEST_F(CredentialProviderServiceTest, PasskeysM2Availability) {
-  {
-    // Enable the `kIOSPasskeysM2` feature.
-    base::test::ScopedFeatureList feature_list(kIOSPasskeysM2);
-
-    CreateCredentialProviderService();
-
-    EXPECT_TRUE([[app_group::GetGroupUserDefaults()
-        objectForKey:AppGroupUserDefaultsCredentialProviderPasskeysM2Enabled()]
-        boolValue]);
-  }
-  {
-    // Disable the `kIOSPasskeysM2` feature.
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndDisableFeature(kIOSPasskeysM2);
-
-    CreateCredentialProviderService();
-
-    EXPECT_FALSE([[app_group::GetGroupUserDefaults()
-        objectForKey:AppGroupUserDefaultsCredentialProviderPasskeysM2Enabled()]
-        boolValue]);
-  }
-}
-
 TEST_F(CredentialProviderServiceTest, AddCredentialsWithValidURL) {
   CreateCredentialProviderService();
 
@@ -509,16 +533,8 @@ TEST_F(CredentialProviderServiceTest, AddCredentialsRefactored) {
   ASSERT_TRUE(WaitForCredentialCount(2u));
 }
 
-// TODO(crbug.com/407946269): Fails on device.
-#if TARGET_IPHONE_SIMULATOR
-#define MAYBE_OnLoginsChanged_WithPerformanceImprovements_SingleOperation \
-  OnLoginsChanged_WithPerformanceImprovements_SingleOperation
-#else
-#define MAYBE_OnLoginsChanged_WithPerformanceImprovements_SingleOperation \
-  DISABLED_OnLoginsChanged_WithPerformanceImprovements_SingleOperation
-#endif
 TEST_F(CredentialProviderServiceTest,
-       MAYBE_OnLoginsChanged_WithPerformanceImprovements_SingleOperation) {
+       OnLoginsChanged_WithPerformanceImprovements_SingleOperation) {
   base::test::ScopedFeatureList scoped_feature_list_;
   scoped_feature_list_.InitWithFeatureState(
       kCredentialProviderPerformanceImprovements, true);
@@ -559,8 +575,9 @@ TEST_F(CredentialProviderServiceTest,
                                                 change_list);
   task_environment_.RunUntilIdle();
 
+  ASSERT_TRUE(WaitForCredentialPassword(@"54321", /*index=*/0));
+
   ASSERT_EQ(credential_store_.credentials.count, 1u);
-  EXPECT_NSEQ(credential_store_.credentials[0].password, @"54321");
   histogram_tester.ExpectTotalCount(kSyncStoreHistogramName, 2);
 
   // Test deleting a password.
@@ -759,13 +776,7 @@ TEST_F(CredentialProviderServiceTest, DeletePasskey) {
   EXPECT_TRUE(WaitForCredentialCount(0u));
 }
 
-// TODO(crbug.com/407946269): Fails on device.
-#if TARGET_IPHONE_SIMULATOR
-#define MAYBE_UpdatePasskey UpdatePasskey
-#else
-#define MAYBE_UpdatePasskey DISABLED_UpdatePasskey
-#endif
-TEST_F(CredentialProviderServiceTest, MAYBE_UpdatePasskey) {
+TEST_F(CredentialProviderServiceTest, UpdatePasskey) {
   CreateCredentialProviderService(/*with_account_store=*/true);
 
   ASSERT_EQ(credential_store_.credentials.count, 0u);
@@ -790,18 +801,20 @@ TEST_F(CredentialProviderServiceTest, MAYBE_UpdatePasskey) {
       },
       /*updated_by_user=*/true);
 
+  task_environment_.RunUntilIdle();
+
+  ASSERT_TRUE(WaitForCredentialUsername(@"new_passkey_username", /*index=*/0));
+
   test_passkey_model_->UpdatePasskeyTimestamp(passkey.credential_id(),
                                               timestamp);
 
   task_environment_.RunUntilIdle();
 
+  ASSERT_TRUE(WaitForCredentialTimestamp(timestamp, /*index=*/0));
+
   ASSERT_EQ(credential_store_.credentials.count, 1u);
-  EXPECT_NSEQ(credential_store_.credentials[0].username,
-              @"new_passkey_username");
   EXPECT_NSEQ(credential_store_.credentials[0].userDisplayName,
               @"new_passkey_display_name");
-  ASSERT_EQ(credential_store_.credentials[0].lastUsedTime,
-            timestamp.ToDeltaSinceWindowsEpoch().InMicroseconds());
 }
 
 TEST_F(CredentialProviderServiceTest,

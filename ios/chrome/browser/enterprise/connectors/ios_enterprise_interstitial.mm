@@ -4,11 +4,14 @@
 
 #import "ios/chrome/browser/enterprise/connectors/ios_enterprise_interstitial.h"
 
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/grit/components_resources.h"
 #import "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 #import "components/safe_browsing/core/browser/safe_browsing_metrics_collector.h"
+#import "components/safe_browsing/core/common/proto/realtimeapi.pb.h"
 #import "components/safe_browsing/ios/browser/safe_browsing_url_allow_list.h"
 #import "components/security_interstitials/core/urls.h"
+#import "ios/chrome/browser/enterprise/connectors/reporting/reporting_util.h"
 #import "ios/chrome/browser/safe_browsing/model/safe_browsing_metrics_collector_factory.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
@@ -47,6 +50,9 @@ class IOSEnterpriseBlockInterstitial : public IOSEnterpriseInterstitial {
       : IOSEnterpriseInterstitial(resource, std::move(client)) {
     DCHECK_EQ(resource.threat_type,
               safe_browsing::SBThreatType::SB_THREAT_TYPE_MANAGED_POLICY_BLOCK);
+
+    ReportEnterpriseUrlFilteringEvent(UrlFilteringEventType::kBlockedSeen,
+                                      request_url(), web_state());
   }
 
   // EnterpriseInterstitialBase:
@@ -63,6 +69,8 @@ class IOSEnterpriseWarnInterstitial : public IOSEnterpriseInterstitial {
       : IOSEnterpriseInterstitial(resource, std::move(client)) {
     DCHECK_EQ(resource.threat_type,
               safe_browsing::SBThreatType::SB_THREAT_TYPE_MANAGED_POLICY_WARN);
+    ReportEnterpriseUrlFilteringEvent(UrlFilteringEventType::kWarnedSeen,
+                                      request_url(), web_state());
   }
 
   // EnterpriseInterstitialBase:
@@ -168,7 +176,7 @@ IOSEnterpriseInterstitial::EnterprisePageControllerClient::
     : IOSBlockingPageControllerClient(
           resource.weak_web_state.get(),
           CreateMetricsHelper(resource),
-          GetApplicationContext()->GetApplicationLocale()),
+          GetApplicationContext()->GetApplicationLocaleStorage()->Get()),
       request_url_(resource.url),
       threat_type_(resource.threat_type),
       threat_source_(resource.threat_source) {}
@@ -203,6 +211,10 @@ void IOSEnterpriseInterstitial::EnterprisePageControllerClient::HandleCommand(
       if (!web_state()) {
         return;
       }
+
+      // Report that the user bypassed the warning.
+      ReportEnterpriseUrlFilteringEvent(UrlFilteringEventType::kBypassed,
+                                        request_url_, web_state());
 
       // Add the URL to the allowlist for this specific threat type.
       if (SafeBrowsingUrlAllowList* allow_list =

@@ -9,11 +9,14 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import android.content.Context;
 import android.view.LayoutInflater;
+import android.view.View;
 
 import androidx.test.core.app.ApplicationProvider;
 
@@ -177,14 +180,59 @@ public class CustomTileEditViewUnitTest {
     }
 
     @Test
+    public void testFocusOnName() {
+        // Focus on some other view first.
+        mUrlField.requestFocus();
+        assertFalse(mNameField.hasFocus());
+        assertTrue(mUrlField.hasFocus());
+
+        mView.focusOnName();
+        assertTrue(mNameField.hasFocus());
+        assertFalse(mUrlField.hasFocus());
+    }
+
+    @Test
     public void testFocusOnUrl() {
+        String urlText = "https://example.com";
+        mUrlField.setText(urlText);
+
         // Focus on some other view first.
         mNameField.requestFocus();
         assertTrue(mNameField.hasFocus());
         assertFalse(mUrlField.hasFocus());
 
-        mView.focusOnUrl();
+        mView.focusOnUrl(false);
         assertTrue(mUrlField.hasFocus());
         assertFalse(mNameField.hasFocus());
+        assertEquals(mUrlField.getSelectionStart(), mUrlField.getSelectionEnd());
+
+        mView.focusOnUrl(true);
+        assertTrue(mUrlField.hasFocus());
+        assertFalse(mNameField.hasFocus());
+        assertEquals(0, mUrlField.getSelectionStart());
+        assertEquals(urlText.length(), mUrlField.getSelectionEnd());
+    }
+
+    @Test
+    public void testOnWindowFocusChanged() {
+        Runnable task = mock(Runnable.class);
+        mView.addOnWindowFocusGainedTask(task);
+
+        // Task shouldn't run if view is not visible, or focus is lost.
+        mView.setVisibility(View.GONE);
+        mView.onWindowFocusChanged(true);
+        verify(task, never()).run();
+
+        mView.setVisibility(View.VISIBLE);
+        mView.onWindowFocusChanged(false);
+        verify(task, never()).run();
+
+        // Task should run when view is visible and has window focus.
+        mView.onWindowFocusChanged(true);
+        verify(task).run();
+
+        // Task should only run once.
+        mView.onWindowFocusChanged(true);
+        verifyNoMoreInteractions(task);
     }
 }

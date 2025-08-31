@@ -387,7 +387,9 @@ TEST_F(TextIteratorTest, PlaceholderBRInTextArea) {
   // innerEditor is "<div>abc\n<br></div>"
   const auto& range =
       EphemeralRange::RangeOfContents(*target.InnerEditorElement());
-  EXPECT_EQ("[abc\n][\n]",
+  EXPECT_EQ(RuntimeEnabledFeatures::TextareaLineEndingsAsBrEnabled()
+                ? "[abc][\n][\n]"
+                : "[abc\n][\n]",
             IteratePartial<DOMTree>(range.StartPosition(), range.EndPosition()))
       << "The placeholder <br> emits [\\n].";
 }
@@ -1012,7 +1014,7 @@ TEST_F(TextIteratorTest, PositionInShadowTree) {
   Element& host = *GetDocument().getElementById(AtomicString("host"));
   ShadowRoot& shadow_root =
       host.AttachShadowRootForTesting(ShadowRootMode::kOpen);
-  shadow_root.setInnerHTML("A<slot name=c></slot>");
+  shadow_root.SetInnerHTMLWithoutTrustedTypes("A<slot name=c></slot>");
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   Element& body = *GetDocument().body();
   Node& text_a = *shadow_root.firstChild();

@@ -12,6 +12,7 @@
 #include <optional>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/files/scoped_file.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -27,7 +28,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/trace_event/trace_event.h"
-#include "gpu/ipc/common/gpu_memory_buffer_impl.h"
 #include "media/base/bitstream_buffer.h"
 #include "media/base/format_utils.h"
 #include "media/base/video_frame.h"
@@ -42,7 +42,6 @@
 #include "media/gpu/vaapi/vaapi_wrapper.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 
 namespace media {
 
@@ -233,8 +232,8 @@ void VaapiMjpegDecodeAccelerator::Decoder::DecodeFromDmaBufTask(
     error_cb_.Run(task_id, UNREADABLE_INPUT);
     return;
   }
-  base::span<const uint8_t> src_image(static_cast<const uint8_t*>(src_addr),
-                                      src_size);
+  UNSAFE_TODO(base::span<const uint8_t> src_image(
+      static_cast<const uint8_t*>(src_addr), src_size));
 
   DecodeImpl(task_id, src_image, std::move(dst_frame));
 
@@ -407,9 +406,9 @@ bool VaapiMjpegDecodeAccelerator::Decoder::OutputPictureLibYuv(
   // Wrap |image| into VideoFrame.
   std::vector<size_t> strides(image->num_planes);
   for (size_t i = 0; i < image->num_planes; ++i) {
-    if (!base::CheckedNumeric<size_t>(image->pitches[i])
-             .AssignIfValid(&strides[i])) {
-      VLOGF(1) << "Invalid VAImage stride " << image->pitches[i]
+    if (!base::CheckedNumeric<size_t>(UNSAFE_TODO(image->pitches[i]))
+             .AssignIfValid(UNSAFE_TODO(&strides[i]))) {
+      VLOGF(1) << "Invalid VAImage stride " << UNSAFE_TODO(image->pitches[i])
                << " for plane " << i;
       return false;
     }
@@ -426,7 +425,8 @@ bool VaapiMjpegDecodeAccelerator::Decoder::OutputPictureLibYuv(
         return false;
       }
       src_frame = VideoFrame::WrapExternalDataWithLayout(
-          *layout, crop_rect, crop_rect.size(), data + image->offsets[0],
+          *layout, crop_rect, crop_rect.size(),
+          UNSAFE_TODO(data + image->offsets[0]),
           base::strict_cast<size_t>(image->data_size), base::TimeDelta());
       break;
     }
@@ -438,9 +438,10 @@ bool VaapiMjpegDecodeAccelerator::Decoder::OutputPictureLibYuv(
         return false;
       }
       src_frame = VideoFrame::WrapExternalYuvDataWithLayout(
-          *layout, crop_rect, crop_rect.size(), data + image->offsets[0],
-          data + image->offsets[1], data + image->offsets[2],
-          base::TimeDelta());
+          *layout, crop_rect, crop_rect.size(),
+          UNSAFE_TODO(data + image->offsets[0]),
+          UNSAFE_TODO(data + image->offsets[1]),
+          UNSAFE_TODO(data + image->offsets[2]), base::TimeDelta());
       break;
     }
     default:

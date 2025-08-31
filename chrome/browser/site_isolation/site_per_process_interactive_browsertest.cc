@@ -10,6 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/run_until.h"
@@ -116,7 +117,7 @@ class SitePerProcessInteractiveBrowserTest : public InProcessBrowserTest {
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
     const display::Display display =
-        display::Screen::GetScreen()->GetDisplayNearestView(
+        display::Screen::Get()->GetDisplayNearestView(
             web_contents->GetRenderWidgetHostView()->GetNativeView());
     return display.bounds().size();
   }

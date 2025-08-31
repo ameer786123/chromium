@@ -148,12 +148,33 @@ static_assert(PROTOBUF_ABSL_MIN(20230125, 3),
 // Owner: mkruskal@
 #define PROTOBUF_FUTURE_RENAME_ADD_UNUSED_IMPORT 1
 
+// Removes google::protobuf::util::MessageDifferencer::AddIgnoreCriteria that takes a
+// raw pointer as an argument in favor of the overload that takes a unique_ptr.
+// Owner: mkruskal@, natebrennan@
+#define PROTOBUF_FUTURE_REMOVE_ADD_IGNORE_CRITERIA 1
+
+// Marks several logically constant operations on Repeated*Field as nodiscard.
+// Owner: ckennelly@, mkruskal@
+#define PROTOBUF_FUTURE_ADD_NODISCARD [[nodiscard]]
+
+#else
+
+#define PROTOBUF_FUTURE_ADD_NODISCARD
+
 #endif
 
-#ifdef PROTOBUF_FUTURE_STRING_VIEW_RETURN_TYPE
-#error PROTOBUF_FUTURE_STRING_VIEW_RETURN_TYPE was previously defined
+// Introducing a future-breaking change guard for descriptor database migration.
+// This allows google3 to transition to absl::string_view while keeping OSS
+// on std::string until the migration is fully completed.
+// The temporary macro enables incremental migration before permanently flipping
+// the switch.
+#ifdef PROTOBUF_FUTURE_STRING_VIEW_DESCRIPTOR_DATABASE
+#error PROTOBUF_FUTURE_STRING_VIEW_DESCRIPTOR_DATABASE was previously defined
 #endif
-#define PROTOBUF_FUTURE_STRING_VIEW_RETURN_TYPE 1
+
+#if defined(PROTOBUF_TEMPORARY_ENABLE_STRING_VIEW_DESCRIPTOR_DATABASE)
+#define PROTOBUF_FUTURE_STRING_VIEW_DESCRIPTOR_DATABASE 1
+#endif
 
 #ifdef PROTOBUF_ALWAYS_INLINE
 #error PROTOBUF_ALWAYS_INLINE was previously defined
@@ -164,7 +185,7 @@ static_assert(PROTOBUF_ABSL_MIN(20230125, 3),
 #elif defined(__GNUC__)
 #define PROTOBUF_ALWAYS_INLINE inline __attribute__((always_inline))
 #elif defined(_MSC_VER)
-#define PROTOBUF_ALWAYS_INLINE inline __forceinline
+#define PROTOBUF_ALWAYS_INLINE __forceinline
 #else
 #define PROTOBUF_ALWAYS_INLINE inline
 #endif
@@ -221,9 +242,8 @@ static_assert(PROTOBUF_ABSL_MIN(20230125, 3),
 #ifdef PROTOBUF_TAILCALL
 #error PROTOBUF_TAILCALL was previously defined
 #endif
-#if ABSL_HAVE_CPP_ATTRIBUTE(clang::musttail) && !defined(__arm__) &&  \
-    !defined(_ARCH_PPC) && !defined(__wasm__) &&                      \
-    !(defined(_MSC_VER) && defined(_M_IX86)) && !defined(__i386__)
+#if ABSL_HAVE_CPP_ATTRIBUTE(clang::musttail) && (defined(__aarch64__) || \
+    defined(__x86_64__) || defined(_M_X64))
 // Compilation fails on ARM32: b/195943306
 // Compilation fails on powerpc64le: b/187985113
 // Compilation fails on X86 Windows:
@@ -299,9 +319,9 @@ static_assert(PROTOBUF_ABSL_MIN(20230125, 3),
   _Pragma("clang diagnostic ignored \"-Winvalid-offsetof\"") \
   __builtin_offsetof(TYPE, FIELD)                            \
   _Pragma("clang diagnostic pop")
-#elif defined(__GNUC__)
+#elif defined(__GNUC__) || defined(_MSC_VER)
 #define PROTOBUF_FIELD_OFFSET(TYPE, FIELD) __builtin_offsetof(TYPE, FIELD)
-#else  // defined(__clang__)
+#else
 // Note that we calculate relative to the pointer value 16 here since if we
 // just use zero, GCC complains about dereferencing a NULL pointer.  We
 // choose 16 rather than some other number just in case the compiler would
@@ -573,8 +593,6 @@ static_assert(PROTOBUF_ABSL_MIN(20230125, 3),
 #define PROTOBUF_FINAL final
 #endif
 
-
-
 // TODO: Enable the feature by default and remove this flag.
 #ifdef PROTOBUF_PREFETCH_PARSE_TABLE
 #error PROTOBUF_PREFETCH_PARSE_TABLE was previously defined
@@ -772,6 +790,10 @@ static_assert(PROTOBUF_ABSL_MIN(20230125, 3),
 // Turn on -Wdeprecated-enum-enum-conversion. This deprecation comes in C++20
 // via http://wg21.link/p1120r0.
 #pragma clang diagnostic error "-Wdeprecated-enum-enum-conversion"
+// Turn on -Wconstant-conversion which is used in chromiumos_x86_64 builds.
+#pragma clang diagnostic error "-Wconstant-conversion"
+// Turn on -Wunused-label which is used in chromiumos_x86_64 builds.
+#pragma clang diagnostic error "-Wunused-label"
 // This error has been generally flaky, but we need to disable it specifically
 // to fix https://github.com/protocolbuffers/protobuf/issues/12313
 #pragma clang diagnostic ignored "-Wunused-parameter"

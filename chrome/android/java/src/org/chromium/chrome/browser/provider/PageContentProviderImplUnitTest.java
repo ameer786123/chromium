@@ -38,6 +38,8 @@ import org.chromium.chrome.browser.content_extraction.InnerTextBridge;
 import org.chromium.chrome.browser.content_extraction.InnerTextBridgeJni;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.components.ukm.UkmRecorder;
+import org.chromium.components.ukm.UkmRecorderJni;
 import org.chromium.content_public.browser.RenderFrameHost;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.url.JUnitTestGURLs;
@@ -60,6 +62,8 @@ public class PageContentProviderImplUnitTest {
     @Mock private Tab mTab;
     @Mock private ActivityTabProvider mActivityTabProvider;
     @Mock private InnerTextBridge.Natives mInnerTextNatives;
+    @Mock private UkmRecorder.Natives mUkmRecorderJniMock;
+
     private PageContentProvider mProvider;
 
     @Before
@@ -68,6 +72,7 @@ public class PageContentProviderImplUnitTest {
         // thread checks for these tests.
         ThreadUtils.hasSubtleSideEffectsSetThreadAssertsDisabledForTesting(true);
         PageContentProviderImpl.clearCachedContent();
+        UkmRecorderJni.setInstanceForTesting(mUkmRecorderJniMock);
         mProvider = new PageContentProvider();
 
         InnerTextBridgeJni.setInstanceForTesting(mInnerTextNatives);
@@ -77,7 +82,7 @@ public class PageContentProviderImplUnitTest {
         when(mActivityTabProvider.get()).thenReturn(mTab);
     }
 
-    @Test()
+    @Test
     public void testInvalidUrl() {
         var result =
                 mProvider.query(
@@ -86,7 +91,7 @@ public class PageContentProviderImplUnitTest {
         assertCursorContainsErrorMessage(result, "Invalid URI");
     }
 
-    @Test()
+    @Test
     public void testUrlAfterExpiration() throws InterruptedException {
         var contentUri =
                 PageContentProviderImpl.getContentUriForUrl(
@@ -114,7 +119,7 @@ public class PageContentProviderImplUnitTest {
 
         var contentUri =
                 PageContentProviderImpl.getContentUriForUrl(
-                        mTab.getUrl().getSpec(), mActivityTabProvider);
+                        JUnitTestGURLs.GOOGLE_URL.getSpec(), mActivityTabProvider);
         // Wait 300ms between creating URI and querying it.
         mFakeTimeTestRule.advanceMillis(300);
         Cursor resultCursor;
@@ -135,7 +140,9 @@ public class PageContentProviderImplUnitTest {
             resultCursor = mProvider.query(Uri.parse(contentUri), null, null, null, null);
         }
         assertCursorContainsValues(
-                resultCursor, mTab.getUrl().getSpec(), /* contents= */ "Page contents!");
+                resultCursor,
+                JUnitTestGURLs.GOOGLE_URL.getSpec(),
+                /* contents= */ "Page contents!");
         verify(mInnerTextNatives).getInnerText(eq(mRenderFrameHost), any());
     }
 
@@ -145,7 +152,7 @@ public class PageContentProviderImplUnitTest {
 
         var contentUri =
                 PageContentProviderImpl.getContentUriForUrl(
-                        mTab.getUrl().getSpec(), mActivityTabProvider);
+                        JUnitTestGURLs.GOOGLE_URL.getSpec(), mActivityTabProvider);
         mFakeTimeTestRule.advanceMillis(300);
         Cursor resultCursor = mProvider.query(Uri.parse(contentUri), null, null, null, null);
         assertCursorContainsErrorMessage(resultCursor, "Error during extraction");

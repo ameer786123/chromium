@@ -121,6 +121,8 @@ GetRotationDebugTerminationReason(
                            : RotationDebugInfo::TERMINATION_REASON_OTHER;
     case kSessionOverride:
       return RotationDebugInfo::SESSION_OVERRIDE;
+    case kRotationStoppedTimeout:
+      return RotationDebugInfo::ROTATION_STOPPED_TIMEOUT;
     case kCookiesCleared:
       // `kCookiesCleared` should not be reported in the debug header.
       NOTREACHED();
@@ -219,7 +221,7 @@ void BoundSessionCookieRefreshServiceImpl::Initialize() {
 
   for (const auto& params : bound_session_params) {
     if (IsSessionInitializationEnabled(profile_prefs_, params.is_wsbeta())) {
-      InitializeBoundSession(params);
+      InitializeBoundSession(params, /*is_new_session=*/false);
     }
   }
   UpdateAllRenderers();
@@ -227,7 +229,9 @@ void BoundSessionCookieRefreshServiceImpl::Initialize() {
 
 void BoundSessionCookieRefreshServiceImpl::RegisterNewBoundSession(
     const bound_session_credentials::BoundSessionParams& params) {
-  CHECK(IsNewSessionRegistrationEnabled(profile_prefs_, params.is_wsbeta()));
+  if (!IsNewSessionRegistrationEnabled(profile_prefs_, params.is_wsbeta())) {
+    return;
+  }
 
   if (!session_params_storage_->SaveParams(params)) {
     DVLOG(1) << "Invalid session params or failed to serialize session params.";
@@ -244,7 +248,7 @@ void BoundSessionCookieRefreshServiceImpl::RegisterNewBoundSession(
     // starting with the same scope.
   }
 
-  InitializeBoundSession(params);
+  InitializeBoundSession(params, /*is_new_session=*/true);
   UpdateAllRenderers();
 }
 
@@ -407,6 +411,15 @@ void BoundSessionCookieRefreshServiceImpl::CreateRegistrationRequest(
   }
 }
 
+void BoundSessionCookieRefreshServiceImpl::StopCookieRotation(
+    const BoundSessionKey& key) {
+  auto controller_it = cookie_controllers_.find(key);
+  if (controller_it == cookie_controllers_.end()) {
+    return;
+  }
+  controller_it->second->StopCookieRotation();
+}
+
 base::WeakPtr<BoundSessionCookieRefreshService>
 BoundSessionCookieRefreshServiceImpl::GetWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
@@ -464,6 +477,12 @@ void BoundSessionCookieRefreshServiceImpl::OnRegistrationRequestComplete(
 void BoundSessionCookieRefreshServiceImpl::
     OnBoundSessionThrottlerParamsChanged() {
   UpdateAllRenderers();
+}
+
+void BoundSessionCookieRefreshServiceImpl::OnCookieRotationStoppedTimeout(
+    BoundSessionCookieController* controller) {
+  TerminateSession(controller,
+                   SessionTerminationTrigger::kRotationStoppedTimeout);
 }
 
 void BoundSessionCookieRefreshServiceImpl::OnPersistentErrorEncountered(
@@ -525,7 +544,8 @@ BoundSessionCookieRefreshServiceImpl::CreateBoundSessionCookieController(
 }
 
 void BoundSessionCookieRefreshServiceImpl::InitializeBoundSession(
-    const bound_session_credentials::BoundSessionParams& bound_session_params) {
+    const bound_session_credentials::BoundSessionParams& bound_session_params,
+    bool is_new_session) {
   CHECK(IsSessionInitializationEnabled(profile_prefs_,
                                        bound_session_params.is_wsbeta()));
   if (bound_session_params.is_wsbeta()) {
@@ -543,7 +563,7 @@ void BoundSessionCookieRefreshServiceImpl::InitializeBoundSession(
   auto [it, inserted] =
       cookie_controllers_.emplace(std::move(key), std::move(controller));
   CHECK(inserted);
-  it->second->Initialize();
+  it->second->Initialize(is_new_session);
 }
 
 void BoundSessionCookieRefreshServiceImpl::UpdateAllRenderers() {
@@ -598,8 +618,9 @@ void BoundSessionCookieRefreshServiceImpl::MaybeReportTerminationReason(
     SessionTerminationTrigger trigger,
     std::optional<BoundSessionRefreshCookieFetcher::Result> refresh_error) {
   if (trigger == SessionTerminationTrigger::kCookiesCleared) {
-    // Do not send the debug report if cookies were cleared as the request won't
-    // be attributed to a user in any case.
+    // Do not send the debug report if cookies were cleared or the rotation was
+    // terminated due to a stopping timeout as the request won't be attributed
+    // to a user in any case.
     return;
   }
 

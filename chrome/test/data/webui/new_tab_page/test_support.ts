@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import type {DomIf} from 'chrome://new-tab-page/new_tab_page.js';
 import type {BackgroundImage, Theme} from 'chrome://new-tab-page/new_tab_page.mojom-webui.js';
 import {NtpBackgroundImageSource} from 'chrome://new-tab-page/new_tab_page.mojom-webui.js';
 import {getDeepActiveElement} from 'chrome://resources/js/util.js';
@@ -67,14 +66,20 @@ export function createBackgroundImage(url: string): BackgroundImage {
   };
 }
 
-export function createTheme({isDark = false, isBaseline = true} = {}): Theme {
+export function createTheme({
+  isDark = false,
+  isBaseline = true,
+  backgroundColor = {
+    value: 0xffff0000,
+  },
+} = {}): Theme {
   const mostVisited = {
     backgroundColor: {value: 0xff00ff00},
     isDark,
     useWhiteTileIcon: false,
   };
   return {
-    backgroundColor: {value: 0xffff0000},
+    backgroundColor: backgroundColor,
     backgroundImage: null,
     backgroundImageAttributionUrl: null,
     backgroundImageAttribution1: '',
@@ -96,11 +101,6 @@ export function initNullModule(): Promise<null> {
 
 export function createElement(): HTMLElement {
   return document.createElement('div');
-}
-
-export function render(element: HTMLElement) {
-  element.shadowRoot!.querySelectorAll<DomIf>('dom-if').forEach(
-      tmpl => tmpl.render());
 }
 
 export function capture(

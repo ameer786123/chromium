@@ -84,8 +84,7 @@ void PlatformThreadBase::SetName(const std::string& name) {
 }
 
 // Whether optimized real-time thread config should be used for audio.
-BASE_FEATURE(kOptimizedRealtimeThreadingMac,
-             "OptimizedRealtimeThreadingMac",
+BASE_FEATURE(OptimizedRealtimeThreadingMac,
 #if BUILDFLAG(IS_MAC)
              FEATURE_ENABLED_BY_DEFAULT
 #else
@@ -303,16 +302,13 @@ void SetCurrentThreadTypeImpl(ThreadType thread_type,
     case ThreadType::kUtility:
       pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
       break;
-    case ThreadType::kResourceEfficient:
-      pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
-      break;
     case ThreadType::kDefault:
       pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
       break;
-    case ThreadType::kDisplayCritical: {
+    case ThreadType::kDisplayCritical:
+    case ThreadType::kInteractive:
       pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
       break;
-    }
     case ThreadType::kRealtimeAudio:
       SetPriorityRealtimeAudio(GetCurrentThreadRealtimePeriod());
       DCHECK_EQ([NSThread.currentThread threadPriority], 1.0);

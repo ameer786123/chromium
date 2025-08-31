@@ -21,6 +21,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/extensions/extension_action_test_helper.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
@@ -29,6 +30,7 @@
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
 #include "extensions/test/test_extension_dir.h"
 #include "ui/base/ozone_buildflags.h"
@@ -47,7 +49,7 @@ using ExtensionTabsTest = InProcessBrowserTest;
 IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, GetLastFocusedWindow) {
   // Create a new window which making it the "last focused" window.
   // Note that "last focused" means the "top" most window.
-  Browser* new_browser = CreateBrowser(browser()->profile());
+  Browser* new_browser = CreateBrowser(GetProfile());
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(new_browser));
 
   GURL url("about:blank");
@@ -74,7 +76,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, GetLastFocusedWindow) {
   function = new extensions::WindowsGetLastFocusedFunction();
   function->set_extension(extension.get());
   result = utils::ToDict(utils::RunFunctionAndReturnSingleResult(
-      function.get(), "[{\"populate\": true}]", browser()->profile()));
+      function.get(), "[{\"populate\": true}]", GetProfile()));
 
   // The id should always match the last focused window and does not depend
   // on what was passed to RunFunctionAndReturnSingleResult.
@@ -85,10 +87,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, GetLastFocusedWindow) {
 
 IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, QueryLastFocusedWindowTabs) {
   const size_t kExtraWindows = 2;
-  for (size_t i = 0; i < kExtraWindows; ++i)
-    CreateBrowser(browser()->profile());
+  for (size_t i = 0; i < kExtraWindows; ++i) {
+    CreateBrowser(GetProfile());
+  }
 
-  Browser* focused_window = CreateBrowser(browser()->profile());
+  Browser* focused_window = CreateBrowser(GetProfile());
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(focused_window));
 
   GURL url("about:blank");
@@ -105,8 +108,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, QueryLastFocusedWindowTabs) {
   function->set_extension(extension.get());
   base::Value::List result_tabs(
       utils::ToList(utils::RunFunctionAndReturnSingleResult(
-          function.get(), "[{\"lastFocusedWindow\":true}]",
-          browser()->profile())));
+          function.get(), "[{\"lastFocusedWindow\":true}]", GetProfile())));
 
   // We should have one initial tab and one added tab.
   EXPECT_EQ(2u, result_tabs.size());
@@ -120,7 +122,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, QueryLastFocusedWindowTabs) {
   function = new extensions::TabsQueryFunction();
   function->set_extension(extension.get());
   result_tabs = utils::ToList(utils::RunFunctionAndReturnSingleResult(
-      function.get(), "[{\"lastFocusedWindow\":false}]", browser()->profile()));
+      function.get(), "[{\"lastFocusedWindow\":false}]", GetProfile()));
 
   // We should get one tab for each extra window and one for the initial window.
   EXPECT_EQ(kExtraWindows + 1, result_tabs.size());
@@ -263,10 +265,9 @@ Browser* ExtensionWindowLastFocusedTest::CreateBrowserWithEmptyTab(
   Browser* new_browser;
   if (as_popup) {
     new_browser = Browser::Create(
-        Browser::CreateParams(Browser::TYPE_POPUP, browser()->profile(), true));
+        Browser::CreateParams(Browser::TYPE_POPUP, GetProfile(), true));
   } else {
-    new_browser =
-        Browser::Create(Browser::CreateParams(browser()->profile(), true));
+    new_browser = Browser::Create(Browser::CreateParams(GetProfile(), true));
   }
   AddBlankTabAndShow(new_browser);
   return new_browser;
@@ -290,7 +291,7 @@ std::optional<base::Value> ExtensionWindowLastFocusedTest::RunFunction(
     const std::string& params) {
   function->set_extension(extension_.get());
   return utils::RunFunctionAndReturnSingleResult(function, params,
-                                                 browser()->profile());
+                                                 GetProfile());
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionWindowLastFocusedTest,
@@ -315,7 +316,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWindowLastFocusedTest,
       " \"minWidth\": 200, \"minHeight\": 200,"
       " \"maxWidth\": 400, \"maxHeight\": 400}}");
   {
-    apps::AppWindowWaiter waiter(AppWindowRegistry::Get(browser()->profile()),
+    apps::AppWindowWaiter waiter(AppWindowRegistry::Get(GetProfile()),
                                  app_window->extension_id());
     waiter.WaitForActivated();
 
@@ -387,7 +388,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWindowLastFocusedTest,
       " \"minWidth\": 200, \"minHeight\": 200,"
       " \"maxWidth\": 400, \"maxHeight\": 400}}");
   {
-    apps::AppWindowWaiter waiter(AppWindowRegistry::Get(browser()->profile()),
+    apps::AppWindowWaiter waiter(AppWindowRegistry::Get(GetProfile()),
                                  app_window->extension_id());
     waiter.WaitForActivated();
 
@@ -398,7 +399,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWindowLastFocusedTest,
               api_test_utils::RunFunctionAndReturnError(
                   get_current_app_function.get(),
                   "[{\"populate\": true, \"windowTypes\": [ \"app\" ]}]",
-                  browser()->profile()));
+                  GetProfile()));
   }
 
   chrome::CloseWindow(normal_browser);
@@ -421,7 +422,7 @@ IN_PROC_BROWSER_TEST_F(TabsApiInteractiveTest,
 
   // Navigate to `url1` and ensure the browser is active.
   {
-    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url1));
+    ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), url1));
     ui_test_utils::BrowserActivationWaiter activation_waiter(browser());
     browser()->window()->Activate();
     activation_waiter.WaitForActivation();
@@ -513,6 +514,86 @@ IN_PROC_BROWSER_TEST_F(TabsApiInteractiveTest,
   // EXPECT_TRUE(views::test::WidgetTest::IsWindowStackedAbove(
   //     BrowserView::GetBrowserViewForBrowser(browser())->frame(),
   //     BrowserView::GetBrowserViewForBrowser(new_browser)->frame()));
+}
+
+// Test for crbug.com/405283740
+// Verifies that an extension popup does not immediately close after calling
+// chrome.windows.create with focus: false, allowing subsequent JS to run.
+IN_PROC_BROWSER_TEST_F(TabsApiInteractiveTest,
+                       PopupDoesNotCloseOnUnfocusedWindowCreate) {
+  ASSERT_TRUE(StartEmbeddedTestServer());
+
+  static constexpr char kManifest[] =
+      R"({
+        "name": "Popup Window Create Test",
+        "version": "1.0",
+        "manifest_version": 3,
+        "action": { "default_popup": "popup.html" },
+        "permissions": ["tabs"]
+      })";
+
+  static constexpr char kPopupHtml[] =
+      R"(
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <script src="popup.js"></script>
+      </head>
+      <body>
+        Creating window...
+      </body>
+      </html>
+    )";
+
+  // popup.js: Calls chrome.windows.create, then sends a message.
+  // If the popup closes, the message won't be sent.
+  static constexpr char kPopupJs[] =
+      R"(
+      // Use an async function to so that we can await the create call.
+      async function createWindowAndSignal() {
+        const win = await chrome.windows.create(
+            { focused: false, url: 'about:blank' });
+        chrome.test.assertEq(undefined, chrome.runtime.lastError);
+        chrome.test.assertNe(null, win);
+        // Crucial part: This message is sent *after* create call
+        chrome.test.sendMessage('popup_still_open');
+      }
+      createWindowAndSignal();
+   )";
+
+  TestExtensionDir test_dir;
+  test_dir.WriteManifest(kManifest);
+  test_dir.WriteFile(FILE_PATH_LITERAL("popup.html"), kPopupHtml);
+  test_dir.WriteFile(FILE_PATH_LITERAL("popup.js"), kPopupJs);
+
+  // Load the extension
+  const Extension* extension = LoadExtension(test_dir.UnpackedPath());
+  ASSERT_TRUE(extension);
+
+  // Prepare to listen for the message from the popup
+  ExtensionTestMessageListener listener("popup_still_open");
+
+  // Create a BrowserActionTestUtil to trigger the popup.
+  std::unique_ptr<ExtensionActionTestHelper> browser_action_test_util =
+      ExtensionActionTestHelper::Create(browser());
+  ASSERT_EQ(1, browser_action_test_util->NumberOfBrowserActions());
+  browser_action_test_util->Press(extension->id());
+
+  // Wait for the 'popup_still_open' message.
+  // If the popup closed prematurely, this will time out or fail.
+  ASSERT_TRUE(listener.WaitUntilSatisfied())
+      << "Listener failed to hear from popup.";
+
+  // Additional Verification.
+  BrowserList* browser_list = BrowserList::GetInstance();
+  // We should have the original browser and the new one
+  ASSERT_EQ(2u, browser_list->size());
+
+  // Check Z-Order.
+  // Under the hood, the original browser was temporarily pinned to the front by
+  // setting its z-order to kFloatingWindow. This checks that the original
+  // browser's z-order is reset.
+  EXPECT_EQ(ui::ZOrderLevel::kNormal, browser()->window()->GetZOrderLevel());
 }
 
 }  // namespace extensions

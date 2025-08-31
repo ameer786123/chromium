@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/chrome/browser/infobars/ui_bundled/modals/autofill_address_profile/legacy_infobar_edit_address_profile_table_view_controller.h"
 
 #import <memory>
@@ -10,10 +15,12 @@
 #import "base/feature_list.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
 #import "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #import "components/autofill/core/common/autofill_features.h"
 #import "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/autofill/ui_bundled/address_editor/autofill_constants.h"
 #import "ios/chrome/browser/autofill/ui_bundled/address_editor/autofill_profile_edit_handler.h"
 #import "ios/chrome/browser/autofill/ui_bundled/address_editor/autofill_profile_edit_mediator.h"
 #import "ios/chrome/browser/autofill/ui_bundled/address_editor/autofill_profile_edit_table_view_controller.h"
@@ -70,8 +77,7 @@ class LegacyInfobarEditAddressProfileTableViewControllerTest
             initWithDelegate:autofill_profile_edit_mediator_
                    userEmail:base::SysUTF16ToNSString(kTestSyncingEmail)
                   controller:viewController
-                settingsView:NO
-            addManualAddress:NO];
+              addressContext:SaveAddressContext::kInfobarSaveUpdateAddress];
     viewController.handler = autofill_profile_edit_table_view_controller_;
     autofill_profile_edit_mediator_.consumer =
         autofill_profile_edit_table_view_controller_;
@@ -102,8 +108,9 @@ class LegacyInfobarEditAddressProfileTableViewControllerTest
 
       expected_values.push_back(
           {field.autofillType,
-           profile_->GetInfo(field.autofillType,
-                             GetApplicationContext()->GetApplicationLocale())});
+           profile_->GetInfo(
+               field.autofillType,
+               GetApplicationContext()->GetApplicationLocaleStorage()->Get())});
     }
 
     EXPECT_EQ(1, [model numberOfSections]);
@@ -147,8 +154,10 @@ class LegacyInfobarEditAddressProfileTableViewControllerTest
 };
 
 // Tests the edit view initialisation for the save prompt of an account profile.
+// TODO(crbug.com/416030990): Remove test for cleanup of
+// AutofillDynamicallyLoadsFieldsForAddressInput.
 TEST_F(LegacyInfobarEditAddressProfileTableViewControllerTest,
-       TestEditForAccountProfile) {
+       DISABLED_TestEditForAccountProfile) {
   CreateAccountProfile();
 
   NSString* expected_footer_text = l10n_util::GetNSStringF(
@@ -170,8 +179,10 @@ class LegacyInfobarEditAddressProfileTableViewControllerMigrationPromptTest
 };
 
 // Tests the edit view initialisation for the migration prompt to account.
+// TODO(crbug.com/416030990): Remove test for cleanup of
+// AutofillDynamicallyLoadsFieldsForAddressInput.
 TEST_F(LegacyInfobarEditAddressProfileTableViewControllerMigrationPromptTest,
-       TestMigrationPrompt) {
+       DISABLED_TestMigrationPrompt) {
   NSString* expected_footer_text = l10n_util::GetNSStringF(
       IDS_IOS_AUTOFILL_SAVE_ADDRESS_IN_ACCOUNT_FOOTER, kTestSyncingEmail);
   TestModelRowsAndButtons(

@@ -25,6 +25,7 @@
 #include "chrome/browser/profiles/reporting_util.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "components/enterprise/browser/identifiers/profile_id_service.h"
+#include "components/enterprise/connectors/core/content_area_user_provider.h"
 #include "components/enterprise/connectors/core/reporting_service_settings.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_util.h"
@@ -60,6 +61,10 @@
 #endif
 
 namespace enterprise_connectors {
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+using Event = ::chrome::cros::reporting::proto::Event;
+#endif
 
 RealtimeReportingClient::RealtimeReportingClient(
     content::BrowserContext* context)
@@ -179,7 +184,92 @@ void AddCrowdstrikeSignalsToEvent(
   event.Set("securityAgents", std::move(agents));
 }
 
-#endif
+void AddCrowdstrikeSignalsToEvent(
+    Event& event,
+    const device_signals::SignalsAggregationResponse& response) {
+  if (!response.agent_signals_response ||
+      !response.agent_signals_response->crowdstrike_signals) {
+    return;
+  }
+
+  const auto& crowdstrike_signals =
+      response.agent_signals_response->crowdstrike_signals.value();
+
+  ::chrome::cros::reporting::proto::SecurityAgent security_agent;
+  ::chrome::cros::reporting::proto::CrowdstrikeAgent* agent =
+      security_agent.mutable_crowdstrike();
+  agent->set_agent_id(crowdstrike_signals.agent_id);
+  agent->set_customer_id(crowdstrike_signals.customer_id);
+
+  switch (event.event_case()) {
+    case Event::kPasswordReuseEvent:
+      *event.mutable_password_reuse_event()->mutable_security_agents()->Add() =
+          std::move(security_agent);
+      break;
+    case Event::kPasswordChangedEvent:
+      *event.mutable_password_changed_event()
+           ->mutable_security_agents()
+           ->Add() = security_agent;
+      break;
+    case Event::kDangerousDownloadEvent:
+      *event.mutable_dangerous_download_event()
+           ->mutable_security_agents()
+           ->Add() = security_agent;
+      break;
+    case Event::kInterstitialEvent:
+      *event.mutable_interstitial_event()->mutable_security_agents()->Add() =
+          security_agent;
+      break;
+    case Event::kSensitiveDataEvent:
+      *event.mutable_sensitive_data_event()->mutable_security_agents()->Add() =
+          security_agent;
+      break;
+    case Event::kUnscannedFileEvent:
+      *event.mutable_unscanned_file_event()->mutable_security_agents()->Add() =
+          security_agent;
+      break;
+    case Event::kLoginEvent:
+      *event.mutable_login_event()->mutable_security_agents()->Add() =
+          security_agent;
+      break;
+    case Event::kPasswordBreachEvent:
+      *event.mutable_password_breach_event()->mutable_security_agents()->Add() =
+          security_agent;
+      break;
+    case Event::kBrowserExtensionInstallEvent:
+      *event.mutable_browser_extension_install_event()
+           ->mutable_security_agents()
+           ->Add() = security_agent;
+      break;
+    case Event::kBrowserCrashEvent:
+      *event.mutable_browser_crash_event()->mutable_security_agents()->Add() =
+          security_agent;
+      break;
+    case Event::kUrlFilteringInterstitialEvent:
+      *event.mutable_url_filtering_interstitial_event()
+           ->mutable_security_agents()
+           ->Add() = security_agent;
+      break;
+    case Event::kExtensionTelemetryEvent:
+      *event.mutable_extension_telemetry_event()
+           ->mutable_security_agents()
+           ->Add() = security_agent;
+      break;
+    // The events below don't have `security_agents` field.
+    case Event::EVENT_NOT_SET:
+    case Event::kPolicyValidationReportEvent:
+    case Event::kReportingRecordEvent:
+    case Event::kContentTransferEvent:
+    case Event::kExtensionAppInstallEvent:
+    case Event::kUrlNavigationEvent:
+    case Event::kSuspiciousUrlEvent:
+    case Event::kPrototypeRawEvent:
+    case Event::kTelomereEvent:
+      break;
+  }
+}
+
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
 void RealtimeReportingClient::SetProfileUserNameForTesting(
     std::string username) {
@@ -217,6 +307,11 @@ std::string RealtimeReportingClient::GetProfileIdentifier() {
   return Profile::FromBrowserContext(context_)->GetPath().AsUTF8Unsafe();
 }
 
+std::string RealtimeReportingClient::GetContentAreaAccountEmail(
+    const GURL& url) {
+  return GetActiveContentAreaUser(identity_manager_, url);
+}
+
 std::string RealtimeReportingClient::GetBrowserClientId() {
   std::string client_id;
 #if BUILDFLAG(IS_CHROMEOS)
@@ -247,7 +342,7 @@ std::string RealtimeReportingClient::GetBrowserClientId() {
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 void RealtimeReportingClient::MaybeCollectDeviceSignalsAndReportEvent(
-    ::chrome::cros::reporting::proto::Event event,
+    Event event,
     policy::CloudPolicyClient* client,
     const ReportingSettings& settings) {
   Profile* profile = Profile::FromBrowserContext(context_);
@@ -256,6 +351,8 @@ void RealtimeReportingClient::MaybeCollectDeviceSignalsAndReportEvent(
   if (signals_aggregator) {
     device_signals::SignalsAggregationRequest request;
     request.signal_names.emplace(device_signals::SignalName::kAgent);
+    request.agent_signal_parameters.emplace(
+        device_signals::AgentSignalCollectionType::kCrowdstrikeIdentifiers);
     signals_aggregator->GetSignals(
         request,
         base::BindOnce(&RealtimeReportingClient::PopulateSignalsAndReportEvent,
@@ -266,11 +363,11 @@ void RealtimeReportingClient::MaybeCollectDeviceSignalsAndReportEvent(
 }
 
 void RealtimeReportingClient::PopulateSignalsAndReportEvent(
-    ::chrome::cros::reporting::proto::Event event,
+    Event event,
     policy::CloudPolicyClient* client,
     ReportingSettings settings,
     device_signals::SignalsAggregationResponse response) {
-  // TODO: AddCrowdstrikeSignalsToEvent(event, response);
+  AddCrowdstrikeSignalsToEvent(event, response);
   UploadSecurityEvent(std::move(event), client, settings);
 }
 
@@ -316,11 +413,23 @@ bool RealtimeReportingClient::ShouldIncludeDeviceInfo(bool per_profile) {
   return IncludeDeviceInfo(Profile::FromBrowserContext(context_), per_profile);
 }
 
+base::Value::Dict RealtimeReportingClient::ReportErrorDetails(
+    const policy::CloudPolicyClient::Result& upload_result) {
+  base::Value::Dict event_wrapper = base::Value::Dict();
+  event_wrapper.Set("uploaded_successfully", upload_result.IsSuccess());
+  if (!upload_result.IsSuccess()) {
+    event_wrapper.Set("error_code", upload_result.GetNetError());
+    event_wrapper.Set("error_message", upload_result.GetResponse().Clone());
+  }
+  return event_wrapper;
+}
+
 void RealtimeReportingClient::UploadCallbackDeprecated(
     base::Value::Dict event_wrapper,
     bool per_profile,
     policy::CloudPolicyClient* client,
-    EnterpriseReportingEventType eventType,
+    EnterpriseReportingEventType event_type,
+    base::TimeTicks upload_started_at,
     policy::CloudPolicyClient::Result upload_result) {
   // TODO(crbug.com/256553070): Do not crash if the client is unregistered.
   CHECK(!upload_result.IsClientNotRegisteredError());
@@ -334,17 +443,27 @@ void RealtimeReportingClient::UploadCallbackDeprecated(
             BuildDeviceDictionary(client->dm_token(), client->client_id()));
   }
 #endif
-  event_wrapper.Set("uploaded_successfully", upload_result.IsSuccess());
+  base::Value::Dict error_details = ReportErrorDetails(upload_result);
+  event_wrapper.Merge(std::move(error_details));
 
   safe_browsing::WebUIInfoSingleton::GetInstance()->AddToReportingEvents(
       std::move(event_wrapper));
 
   if (upload_result.IsSuccess()) {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadSuccess",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetSuccessfulUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
+
   } else {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadFailure",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetFailedUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
   }
 }
 
@@ -352,23 +471,34 @@ void RealtimeReportingClient::UploadCallback(
     ::chrome::cros::reporting::proto::UploadEventsRequest request,
     bool per_profile,
     policy::CloudPolicyClient* client,
-    EnterpriseReportingEventType eventType,
+    EnterpriseReportingEventType event_type,
+    base::TimeTicks upload_started_at,
     policy::CloudPolicyClient::Result upload_result) {
   base::Value::Dict event_wrapper = base::Value::Dict();
-  event_wrapper.Set("uploaded_successfully", upload_result.IsSuccess());
+  base::Value::Dict error_details = ReportErrorDetails(upload_result);
+  event_wrapper.Merge(std::move(error_details));
   event_wrapper.Set("upload_request",
                     base::EscapeNonASCII(request.SerializeAsString()));
-  event_wrapper.Set("event_type", static_cast<int>(eventType));
+  event_wrapper.Set("event_type", static_cast<int>(event_type));
 
   safe_browsing::WebUIInfoSingleton::GetInstance()->AddToReportingEvents(
       std::move(event_wrapper));
 
   if (upload_result.IsSuccess()) {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadSuccess",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetSuccessfulUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
+
   } else {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadFailure",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetFailedUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
   }
 }
 
@@ -400,7 +530,9 @@ void RealtimeReportingClient::RemoveDmTokenFromRejectedSet(
 void RealtimeReportingClient::OnClientError(policy::CloudPolicyClient* client) {
   base::Value::Dict error_value;
   error_value.Set("error",
-                  "An event got an error status and hasn't been reported");
+                  "An event got an error status and hasn't been reported. Find "
+                  "details below in error_message and error_code.");
+
   error_value.Set("status", client->last_dm_status());
   safe_browsing::WebUIInfoSingleton::GetInstance()->AddToReportingEvents(
       error_value);

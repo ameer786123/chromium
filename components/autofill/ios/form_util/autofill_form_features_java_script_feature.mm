@@ -61,21 +61,21 @@ void AutofillFormFeaturesJavaScriptFeature::SetAutofillAcrossIframesThrottling(
       base::Value::List().Append(enabled));
 }
 
+void AutofillFormFeaturesJavaScriptFeature::SetAutofillIgnoreCheckableElements(
+    web::WebFrame* frame,
+    bool enabled) {
+  CHECK(frame);
+  frame->CallJavaScriptFunction(
+      "autofill_form_features.setAutofillIgnoreCheckableElements",
+      base::Value::List().Append(enabled));
+}
+
 void AutofillFormFeaturesJavaScriptFeature::SetAutofillIsolatedContentWorld(
     web::WebFrame* frame,
     bool enabled) {
   CHECK(frame);
   frame->CallJavaScriptFunction(
       "autofill_form_features.setAutofillIsolatedContentWorld",
-      base::Value::List().Append(enabled));
-}
-
-void AutofillFormFeaturesJavaScriptFeature::SetAutofillFixPaymentSheetSpam(
-    web::WebFrame* frame,
-    bool enabled) {
-  CHECK(frame);
-  frame->CallJavaScriptFunction(
-      "autofill_form_features.setAutofillFixPaymentSheetSpam",
       base::Value::List().Append(enabled));
 }
 
@@ -94,6 +94,31 @@ void AutofillFormFeaturesJavaScriptFeature::
   CHECK(frame);
   frame->CallJavaScriptFunction(
       "autofill_form_features.setAutofillAllowDefaultPreventedSubmission",
+      base::Value::List().Append(enabled));
+}
+
+void AutofillFormFeaturesJavaScriptFeature::SetAutofillDedupeFormSubmission(
+    web::WebFrame* frame,
+    bool enabled) {
+  CHECK(frame);
+  frame->CallJavaScriptFunction(
+      "autofill_form_features.setAutofillDedupeFormSubmission",
+      base::Value::List().Append(enabled));
+}
+
+// Enables/disables reporting form submission errors.
+void AutofillFormFeaturesJavaScriptFeature::
+    SetAutofillReportFormSubmissionErrors(web::WebFrame* frame, bool enabled) {
+  frame->CallJavaScriptFunction(
+      "autofill_form_features.setAutofillReportFormSubmissionErrors",
+      base::Value::List().Append(enabled));
+}
+
+void AutofillFormFeaturesJavaScriptFeature::
+    SetAutofillCountFormSubmissionInRenderer(web::WebFrame* frame,
+                                             bool enabled) {
+  frame->CallJavaScriptFunction(
+      "autofill_form_features.setAutofillCountFormSubmissionInRenderer",
       base::Value::List().Append(enabled));
 }
 

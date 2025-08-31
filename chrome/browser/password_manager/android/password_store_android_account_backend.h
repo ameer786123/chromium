@@ -25,8 +25,7 @@ class PasswordStoreAndroidAccountBackend : public PasswordStoreBackend,
  public:
   // `is_account_store` allows to control whether the backend is used by profile
   // or account password store.
-  PasswordStoreAndroidAccountBackend(
-      PrefService* prefs,
+  explicit PasswordStoreAndroidAccountBackend(
       password_manager::IsAccountStore is_account_store);
 
   PasswordStoreAndroidAccountBackend(
@@ -34,8 +33,7 @@ class PasswordStoreAndroidAccountBackend : public PasswordStoreBackend,
       std::unique_ptr<PasswordStoreAndroidBackendBridgeHelper> bridge_helper,
       std::unique_ptr<PasswordManagerLifecycleHelper> lifecycle_helper,
       std::unique_ptr<PasswordSyncControllerDelegateAndroid>
-          sync_controller_delegate,
-      PrefService* prefs);
+          sync_controller_delegate);
   ~PasswordStoreAndroidAccountBackend() override;
 
   // PasswordStoreBackend implementation.
@@ -74,8 +72,6 @@ class PasswordStoreAndroidAccountBackend : public PasswordStoreBackend,
   std::unique_ptr<syncer::DataTypeControllerDelegate>
   CreateSyncControllerDelegate() override;
   void OnSyncServiceInitialized(syncer::SyncService* sync_service) override;
-  void RecordAddLoginAsyncCalledFromTheStore() override;
-  void RecordUpdateLoginAsyncCalledFromTheStore() override;
   SmartBubbleStatsStore* GetSmartBubbleStatsStore() override;
   base::WeakPtr<PasswordStoreBackend> AsWeakPtr() override;
 

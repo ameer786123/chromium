@@ -26,6 +26,7 @@
 #include "third_party/blink/public/web/web_heap.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_settings.h"
+#include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_track_impl.h"
 #include "third_party/blink/renderer/modules/mediastream/mock_encoded_video_frame.h"
 #include "third_party/blink/renderer/modules/mediastream/mock_media_stream_video_sink.h"
@@ -49,7 +50,6 @@ using base::test::RunOnceClosure;
 using ::testing::_;
 using ::testing::Eq;
 using ::testing::InSequence;
-using ::testing::Invoke;
 using ::testing::Mock;
 using ::testing::NiceMock;
 using ::testing::Optional;
@@ -108,9 +108,9 @@ class MediaStreamVideoTrackTest
                                        MockMediaStreamVideoSink* sink) {
     base::RunLoop run_loop;
     base::RepeatingClosure quit_closure = run_loop.QuitClosure();
-    EXPECT_CALL(*sink, OnEncodedVideoFrame)
-        .WillOnce(
-            Invoke([&](base::TimeTicks) { std::move(quit_closure).Run(); }));
+    EXPECT_CALL(*sink, OnEncodedVideoFrame).WillOnce([&](base::TimeTicks) {
+      std::move(quit_closure).Run();
+    });
     mock_source()->DeliverEncodedVideoFrame(frame);
     run_loop.Run();
   }
@@ -272,9 +272,9 @@ TEST_F(MediaStreamVideoTrackTest, ResetCallbackOnThread) {
   base::RunLoop run_loop;
   bool correct = false;
   sink.ConnectToTrackWithCallback(
-      track, WTF::BindRepeating(&CheckThreadVideoFrameReceiver,
-                                base::Owned(new CheckThreadHelper(
-                                    run_loop.QuitClosure(), &correct))));
+      track, blink::BindRepeating(&CheckThreadVideoFrameReceiver,
+                                  base::Owned(new CheckThreadHelper(
+                                      run_loop.QuitClosure(), &correct))));
   sink.DisconnectFromTrack();
   run_loop.Run();
   EXPECT_TRUE(correct) << "Not called on correct thread.";
@@ -1067,9 +1067,9 @@ TEST_F(MediaStreamVideoTrackEncodedTest, TransferOneEncodedVideoFrame) {
   sink.ConnectEncodedToTrack(track);
   base::RunLoop run_loop;
   base::RepeatingClosure quit_closure = run_loop.QuitClosure();
-  EXPECT_CALL(sink, OnEncodedVideoFrame).WillOnce(Invoke([&](base::TimeTicks) {
+  EXPECT_CALL(sink, OnEncodedVideoFrame).WillOnce([&](base::TimeTicks) {
     std::move(quit_closure).Run();
-  }));
+  });
   mock_source()->DeliverEncodedVideoFrame(
       base::MakeRefCounted<MockEncodedVideoFrame>());
   run_loop.Run();

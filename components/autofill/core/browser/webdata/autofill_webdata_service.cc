@@ -130,7 +130,7 @@ void AutofillWebDataService::AddOrUpdateEntityInstance(
 }
 
 void AutofillWebDataService::RemoveEntityInstance(
-    base::Uuid guid,
+    EntityInstance::EntityId guid,
     base::OnceCallback<void(EntityInstanceChange)> on_success) {
   wdbs_->ScheduleDBTask(
       FROM_HERE,
@@ -287,6 +287,13 @@ void AutofillWebDataService::ClearLocalCvcs() {
   wdbs_->ScheduleDBTask(
       FROM_HERE, base::BindOnce(&AutofillWebDataBackendImpl::ClearLocalCvcs,
                                 autofill_backend_));
+}
+
+void AutofillWebDataService::CleanupForCrbug411681430() {
+  wdbs_->ScheduleDBTask(
+      FROM_HERE,
+      base::BindOnce(&AutofillWebDataBackendImpl::CleanupForCrbug411681430,
+                     autofill_backend_));
 }
 
 WebDataServiceBase::Handle AutofillWebDataService::GetCreditCards(

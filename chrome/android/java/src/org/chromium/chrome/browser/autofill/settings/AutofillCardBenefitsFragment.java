@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.autofill.settings;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
@@ -26,16 +29,20 @@ import org.chromium.base.Callback;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.autofill.AutofillImageFetcherFactory;
 import org.chromium.chrome.browser.autofill.AutofillUiUtils;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.autofill.PersonalDataManagerFactory;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.settings.ChromeBaseSettingsFragment;
 import org.chromium.components.autofill.ImageSize;
 import org.chromium.components.browser_ui.settings.ChromeBasePreference;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
+import org.chromium.components.browser_ui.settings.SettingsFragment;
 import org.chromium.components.browser_ui.settings.TextMessagePreference;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.url.GURL;
@@ -43,6 +50,7 @@ import org.chromium.url.GURL;
 import java.util.HashSet;
 
 /** Preferences fragment to allow users to manage card benefits linked to their credit cards. */
+@NullMarked
 public class AutofillCardBenefitsFragment extends ChromeBaseSettingsFragment
         implements PersonalDataManager.PersonalDataManagerObserver,
                 Preference.OnPreferenceClickListener,
@@ -62,18 +70,21 @@ public class AutofillCardBenefitsFragment extends ChromeBaseSettingsFragment
     @VisibleForTesting static final String PREF_KEY_LEARN_ABOUT = "learn_about";
     @VisibleForTesting static final String PREF_KEY_CARD_BENEFIT_TERM = "card_benefit_term";
 
-    private static Callback<Fragment> sObserverForTest;
+    private static @Nullable Callback<Fragment> sObserverForTest;
 
     private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
 
     private PersonalDataManager mPersonalDataManager;
 
     @Override
-    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+    public void onCreatePreferences(@Nullable Bundle savedInstanceState, @Nullable String rootKey) {
         mPageTitle.set(getString(R.string.autofill_card_benefits_settings_page_title));
 
         // Create blank preference screen.
         PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(getStyledContext());
+        // Suppresses unwanted animations while Preferences are removed from and re-added to the
+        // screen.
+        screen.setShouldUseGeneratedIds(false);
         setPreferenceScreen(screen);
         if (sObserverForTest != null) {
             sObserverForTest.onResult(this);
@@ -85,10 +96,10 @@ public class AutofillCardBenefitsFragment extends ChromeBaseSettingsFragment
         return mPageTitle;
     }
 
-    // ChromeBaseSettingsFramgent override.
+    // ChromeBaseSettingsFragment override.
     @Override
-    public void onResume() {
-        super.onResume();
+    public void onStart() {
+        super.onStart();
         // Rebuild the preference list in case any of the underlying data has been updated and if
         // any preferences need to be added/removed based on that.
         rebuildPage();
@@ -101,7 +112,9 @@ public class AutofillCardBenefitsFragment extends ChromeBaseSettingsFragment
         createCardBenefitSwitch();
         createLearnAboutCardBenefitsLink();
         createPreferencesForCardBenefitTerms();
-        drawBottomDivider();
+        if (!ChromeFeatureList.sAndroidSettingsContainment.isEnabled()) {
+            drawBottomDivider();
+        }
     }
 
     private Context getStyledContext() {
@@ -116,7 +129,13 @@ public class AutofillCardBenefitsFragment extends ChromeBaseSettingsFragment
     private void createCardBenefitSwitch() {
         ChromeSwitchPreference cardBenefitSwitch = new ChromeSwitchPreference(getStyledContext());
         cardBenefitSwitch.setTitle(R.string.autofill_settings_page_card_benefits_label);
-        cardBenefitSwitch.setSummary(R.string.autofill_settings_page_card_benefits_toggle_summary);
+        int summaryText =
+                ChromeFeatureList.isEnabled(
+                                ChromeFeatureList.AUTOFILL_ENABLE_NEW_CARD_BENEFITS_TOGGLE_TEXT)
+                        ? R.string
+                                .autofill_settings_page_card_benefits_toggle_summary_with_issuer_terms_apply_text
+                        : R.string.autofill_settings_page_card_benefits_toggle_summary;
+        cardBenefitSwitch.setSummary(summaryText);
         cardBenefitSwitch.setKey(PREF_KEY_ENABLE_CARD_BENEFIT);
         cardBenefitSwitch.setChecked(mPersonalDataManager.isCardBenefitEnabled());
         cardBenefitSwitch.setOnPreferenceChangeListener(this);
@@ -149,27 +168,30 @@ public class AutofillCardBenefitsFragment extends ChromeBaseSettingsFragment
     }
 
     private void createPreferencesForCardBenefitTerms() {
-        HashSet<Pair<String, String>> issuersAndProductDescriptions = new HashSet<>();
+        HashSet<Pair<String, String>> benefitSourcesAndProductDescriptions = new HashSet<>();
 
         // List the card for product terms redirect if:
-        // 1. The card has a valid product term url.
-        // 2. Same issuer and card product combination is not listed before.
+        // 1. The card is eligible for benefits.
+        // 2. The card has a valid product term url.
+        // 3. Same benefit source and card product combination is not listed before.
         for (CreditCard card : mPersonalDataManager.getCreditCardsForSettings()) {
-            Pair<String, String> issuerAndProductDescriptionPair =
-                    Pair.create(card.getIssuerId(), card.getProductDescription());
+            Pair<String, String> benefitSourceAndProductDescriptionPair =
+                    Pair.create(card.getBenefitSource(), card.getProductDescription());
 
-            if (issuersAndProductDescriptions.contains(issuerAndProductDescriptionPair)
+            if (!mPersonalDataManager.isCardEligibleForBenefits(card.getGUID())
+                    || benefitSourcesAndProductDescriptions.contains(
+                            benefitSourceAndProductDescriptionPair)
                     || GURL.isEmptyOrInvalid(card.getProductTermsUrl())) {
                 continue;
             }
 
-            issuersAndProductDescriptions.add(issuerAndProductDescriptionPair);
+            benefitSourcesAndProductDescriptions.add(benefitSourceAndProductDescriptionPair);
 
             // Add a preference for the credit card.
             ChromeBasePreference cardPref = new ChromeBasePreference(getStyledContext());
             cardPref.setDividerAllowedAbove(false);
             cardPref.setDividerAllowedBelow(false);
-            cardPref.setTitle(issuerAndProductDescriptionPair.second);
+            cardPref.setTitle(benefitSourceAndProductDescriptionPair.second);
             cardPref.setSummary(R.string.autofill_settings_page_card_benefits_issuer_term_text);
             cardPref.setKey(PREF_KEY_CARD_BENEFIT_TERM);
 
@@ -211,7 +233,7 @@ public class AutofillCardBenefitsFragment extends ChromeBaseSettingsFragment
 
     @Override
     public boolean onPreferenceClick(Preference preference) {
-        openUrlInCct(preference.getExtras().getString(PREF_LIST_TERMS_URL));
+        openUrlInCct(assumeNonNull(preference.getExtras().getString(PREF_LIST_TERMS_URL)));
         RecordUserAction.record(CARD_BENEFITS_TERMS_CLICKED_USER_ACTION);
         return true;
     }
@@ -228,7 +250,7 @@ public class AutofillCardBenefitsFragment extends ChromeBaseSettingsFragment
     }
 
     @Override
-    public void onActivityCreated(Bundle savedInstanceState) {
+    public void onActivityCreated(@Nullable Bundle savedInstanceState) {
         super.onActivityCreated(savedInstanceState);
         mPersonalDataManager = PersonalDataManagerFactory.getForProfile(getProfile());
         mPersonalDataManager.registerDataObserver(this);
@@ -247,7 +269,7 @@ public class AutofillCardBenefitsFragment extends ChromeBaseSettingsFragment
 
         public BottomDividerItemDecoration(Context context) {
             final TypedArray a = context.obtainStyledAttributes(ATTRS);
-            mDivider = a.getDrawable(0);
+            mDivider = assertNonNull(a.getDrawable(0));
             a.recycle();
         }
 
@@ -270,5 +292,10 @@ public class AutofillCardBenefitsFragment extends ChromeBaseSettingsFragment
             mDivider.setBounds(left, top, right, bottom);
             mDivider.draw(canvas);
         }
+    }
+
+    @Override
+    public @SettingsFragment.AnimationType int getAnimationType() {
+        return SettingsFragment.AnimationType.PROPERTY;
     }
 }

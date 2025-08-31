@@ -61,10 +61,9 @@ class SessionImpl : public OptimizationGuideModelExecutor::Session {
   ~SessionImpl() override;
 
   // optimization_guide::OptimizationGuideModelExecutor::Session:
-  on_device_model::mojom::Session& GetSession() override;
   const TokenLimits& GetTokenLimits() const override;
   const proto::Any& GetOnDeviceFeatureMetadata() const override;
-  void SetInput(MultimodalMessage request) override;
+  void SetInput(MultimodalMessage request, SetInputCallback callback) override;
   void AddContext(
       const google::protobuf::MessageLite& request_metadata) override;
   void Score(const std::string& text,
@@ -72,9 +71,9 @@ class SessionImpl : public OptimizationGuideModelExecutor::Session {
   void ExecuteModel(
       const google::protobuf::MessageLite& request_metadata,
       OptimizationGuideModelExecutionResultStreamingCallback callback) override;
-  void ExecuteModelWithResponseJsonSchema(
+  void ExecuteModelWithResponseConstraint(
       const google::protobuf::MessageLite& request_metadata,
-      const std::optional<std::string>& response_json_schema,
+      on_device_model::mojom::ResponseConstraintPtr constraint,
       OptimizationGuideModelExecutionResultStreamingCallback callback) override;
   void GetSizeInTokens(
       const std::string& text,
@@ -94,7 +93,8 @@ class SessionImpl : public OptimizationGuideModelExecutor::Session {
   bool ShouldUseOnDeviceModel() const;
 
  private:
-  AddContextResult AddContextImpl(MultimodalMessage request);
+  AddContextResult AddContextImpl(MultimodalMessage request,
+                                  SetInputCallback callback);
 
   void DestroyOnDeviceState();
 

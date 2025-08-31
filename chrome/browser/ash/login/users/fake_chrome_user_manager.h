@@ -37,10 +37,11 @@ class FakeChromeUserManager : public user_manager::UserManagerImpl {
 
   // Create and add various types of users.
   user_manager::User* AddGuestUser();
-  user_manager::User* AddKioskAppUser(const AccountId& account_id);
-  user_manager::User* AddWebKioskAppUser(const AccountId& account_id);
+  user_manager::User* AddKioskChromeAppUser(const AccountId& account_id);
+  user_manager::User* AddKioskWebAppUser(const AccountId& account_id);
   user_manager::User* AddKioskIwaUser(const AccountId& account_id);
   user_manager::User* AddPublicAccountUser(const AccountId& account_id);
+  user_manager::User* AddKioskArcvmAppUser(const AccountId& account_id);
 
   // Calculates the user name hash and calls UserLoggedIn to login a user.
   // Sets the user as having its profile created if `set_profile_created_flag`
@@ -104,15 +105,13 @@ class FakeChromeUserManager : public user_manager::UserManagerImpl {
   bool IsLoggedInAsChildUser() const override;
   bool IsLoggedInAsManagedGuestSession() const override;
   bool IsLoggedInAsGuest() const override;
-  bool IsLoggedInAsKioskApp() const override;
-  bool IsLoggedInAsWebKioskApp() const override;
+  bool IsLoggedInAsKioskChromeApp() const override;
+  bool IsLoggedInAsKioskWebApp() const override;
   bool IsLoggedInAsKioskIWA() const override;
   bool IsLoggedInAsAnyKioskApp() const override;
   bool IsLoggedInAsStub() const override;
   bool IsUserNonCryptohomeDataEphemeral(
       const AccountId& account_id) const override;
-  bool IsGuestSessionAllowed() const override;
-  bool IsGaiaUserAllowed(const user_manager::User& user) const override;
   bool IsUserAllowed(const user_manager::User& user) const override;
   bool IsDeprecatedSupervisedAccountId(
       const AccountId& account_id) const override;

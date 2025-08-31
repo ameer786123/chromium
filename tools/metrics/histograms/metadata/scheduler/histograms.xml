@@ -34,7 +34,7 @@ chromium-metrics-reviews@google.com.
 </variants>
 
 <histogram name="MessagePumpEpoll.WatchedFileDescriptors"
-    units="FileDescriptors" expires_after="2025-10-05">
+    units="FileDescriptors" expires_after="2026-02-09">
   <owner>mthiesse@chromium.org</owner>
   <owner>lizeb@chromium.org</owner>
   <summary>
@@ -44,8 +44,27 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="Scheduling.ContendedLockAcquisitionTime.BaseLock.{ThreadName}"
+    units="microseconds" expires_after="2026-07-01">
+  <owner>anandrv@google.com</owner>
+  <owner>clank-performance-team@google.com</owner>
+  <summary>
+    The time it takes to acquire a contended base::Lock on {ThreadName}. This is
+    recorded with probability 1/1000 when acquisitiion of the lock is likely to
+    cause the thread to wait in the kernel.
+
+    Note: The metric is reported for only clients with high-resolution clocks (a
+    subset of Windows clients won't report it, see the
+    Windows.HasHighResolutionTimeTicks histogram).
+  </summary>
+  <token key="ThreadName">
+    <variant name="CrBrowserMain" summary="the browser main thread"/>
+    <variant name="CrRendererMain" summary="the renderer main thread"/>
+  </token>
+</histogram>
+
 <histogram name="Scheduling.DBusSchedQoS.PidReusedOnSetProcessState"
-    enum="PidReuseResult" expires_after="2025-08-24">
+    enum="PidReuseResult" expires_after="2025-10-26">
   <owner>kawasin@google.com</owner>
   <owner>joelaf@google.com</owner>
   <summary>
@@ -59,7 +78,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Scheduling.DBusSchedQoS.PidReusedOnSetThreadState"
-    enum="PidReuseResult" expires_after="2025-08-24">
+    enum="PidReuseResult" expires_after="2025-10-26">
   <owner>kawasin@google.com</owner>
   <owner>joelaf@google.com</owner>
   <summary>
@@ -73,7 +92,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Scheduling.DBusSchedQoS.ServiceConnectionSuccess"
-    enum="Boolean" expires_after="2025-06-22">
+    enum="Boolean" expires_after="2025-11-02">
   <owner>kawasin@google.com</owner>
   <owner>joelaf@google.com</owner>
   <summary>
@@ -85,7 +104,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Scheduling.DBusSchedQoS.SetProcessStateLatency"
-    units="microseconds" expires_after="2025-08-24">
+    units="microseconds" expires_after="2025-10-26">
   <owner>kawasin@google.com</owner>
   <owner>joelaf@google.com</owner>
   <summary>
@@ -96,7 +115,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Scheduling.DBusSchedQoS.SetThreadStateLatency"
-    units="microseconds" expires_after="2025-08-24">
+    units="microseconds" expires_after="2025-10-26">
   <owner>kawasin@google.com</owner>
   <owner>joelaf@google.com</owner>
   <summary>
@@ -107,10 +126,10 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Scheduling.MessagePumpTimeKeeper.{NamedThread}"
-    enum="MessagePumpPhases" expires_after="2025-08-17">
+    enum="MessagePumpPhases" expires_after="2025-10-19">
   <owner>gab@chromium.org</owner>
   <owner>fdoray@chromium.org</owner>
-  <owner>spvw@chromium.org</owner>
+  <owner>spvm@chromium.org</owner>
   <summary>
     Records the number of milliseconds spent in each phase of pumping tasks on
     {NamedThread}. Each enum value can be analyzed for its total time or as a
@@ -144,7 +163,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Scheduling.SchedQoS.SetProcessStateError" enum="QoSErrorType"
-    expires_after="2025-09-07">
+    expires_after="2026-01-11">
   <owner>kawasin@google.com</owner>
   <owner>joelaf@google.com</owner>
   <summary>
@@ -154,7 +173,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Scheduling.SchedQoS.SetThreadStateError" enum="QoSErrorType"
-    expires_after="2025-09-07">
+    expires_after="2026-01-11">
   <owner>kawasin@google.com</owner>
   <owner>joelaf@google.com</owner>
   <summary>
@@ -182,7 +201,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Scheduling.ThreadController.ActiveIntervalDuration.{Length}.{NamedThread}"
-    units="ms" expires_after="2025-10-12">
+    units="ms" expires_after="2026-02-22">
   <owner>olivierli@google.com</owner>
   <owner>etienneb@google.com</owner>
   <summary>
@@ -213,7 +232,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Scheduling.ThreadController.ActiveIntervalOffCpuDuration.{Length}.{NamedThread}"
-    units="ms" expires_after="2025-10-12">
+    units="ms" expires_after="2026-02-22">
   <owner>olivierli@google.com</owner>
   <owner>etienneb@google.com</owner>
   <summary>
@@ -244,7 +263,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Scheduling.ThreadController.ActiveIntervalOnCpuDuration.{Length}.{NamedThread}"
-    units="ms" expires_after="2025-10-12">
+    units="ms" expires_after="2026-02-22">
   <owner>olivierli@google.com</owner>
   <owner>etienneb@google.com</owner>
   <summary>
@@ -258,7 +277,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Scheduling.ThreadController.ActiveIntervalOnCpuPercentage.Short.{NamedThread}"
-    units="%" expires_after="2025-08-10">
+    units="%" expires_after="2026-01-04">
   <owner>olivierli@google.com</owner>
   <owner>etienneb@google.com</owner>
   <summary>
@@ -271,7 +290,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Scheduling.ThreadController.ActiveIntervalOnCpuPercentage.{Length}.{NamedThread}"
-    units="%" expires_after="2025-10-12">
+    units="%" expires_after="2026-02-22">
   <owner>olivierli@google.com</owner>
   <owner>etienneb@google.com</owner>
   <summary>
@@ -362,7 +381,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="Scheduling.ThreadController.IdleDuration.{Length}.{NamedThread}"
-    units="ms" expires_after="2025-10-12">
+    units="ms" expires_after="2026-02-22">
   <owner>olivierli@google.com</owner>
   <owner>etienneb@google.com</owner>
   <summary>
@@ -372,6 +391,66 @@ chromium-metrics-reviews@google.com.
   </summary>
   <token key="Length" variants="Length"/>
   <token key="NamedThread" variants="NamedThread"/>
+</histogram>
+
+<histogram name="Scheduling.ThreadPriority.Browser.{ThreadName}" units="int"
+    expires_after="2026-08-14">
+  <owner>anandrv@google.com</owner>
+  <owner>clank-performance-team@google.com</owner>
+  <summary>
+    The nice value of {ThreadName} in the browser process.
+
+    Recorded only on Android. Sampled once every five minutes.
+  </summary>
+  <token key="ThreadName">
+    <variant name="IOThread" summary="the IO thread"/>
+    <variant name="NetworkService" summary="the network thread"/>
+    <variant name="ThreadPoolBackgroundWorker"
+        summary="a thread pool background worker thread"/>
+    <variant name="ThreadPoolForegroundWorker"
+        summary="a thread pool foreground worker thread"/>
+    <variant name="UIThread" summary="the main thread"/>
+  </token>
+</histogram>
+
+<histogram name="Scheduling.ThreadPriority.GPUProcess.{ThreadName}" units="int"
+    expires_after="2026-08-14">
+  <owner>anandrv@google.com</owner>
+  <owner>clank-performance-team@google.com</owner>
+  <summary>
+    The nice value of {ThreadName} in the GPU process.
+
+    Recorded only on Android. Sampled once every five minutes.
+  </summary>
+  <token key="ThreadName">
+    <variant name="GpuMain" summary="the main thread"/>
+    <variant name="IOThread" summary="the IO thread"/>
+    <variant name="ThreadPoolBackgroundWorker"
+        summary="a thread pool background worker thread"/>
+    <variant name="ThreadPoolForegroundWorker"
+        summary="a thread pool foreground worker thread"/>
+    <variant name="VizCompositor" summary="the viz compositor thread"/>
+  </token>
+</histogram>
+
+<histogram name="Scheduling.ThreadPriority.Renderer.{ThreadName}" units="int"
+    expires_after="2026-08-14">
+  <owner>anandrv@google.com</owner>
+  <owner>clank-performance-team@google.com</owner>
+  <summary>
+    The nice value of {ThreadName} in a renderer process.
+
+    Recorded only on Android. Sampled once every five minutes.
+  </summary>
+  <token key="ThreadName">
+    <variant name="Compositor" summary="the compositor thread"/>
+    <variant name="IOThread" summary="the IO thread"/>
+    <variant name="RendererMain" summary="the main thread"/>
+    <variant name="ThreadPoolBackgroundWorker"
+        summary="a thread pool background worker thread"/>
+    <variant name="ThreadPoolForegroundWorker"
+        summary="a thread pool foreground worker thread"/>
+  </token>
 </histogram>
 
 <histogram
@@ -396,8 +475,8 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="ThreadPool.UnnecessaryWakeup.{ThreadPoolName}.{WorkerGroup}"
-    enum="BooleanHit" expires_after="2025-10-12">
-  <owner>spvw@chromium.org</owner>
+    enum="BooleanHit" expires_after="2026-02-22">
+  <owner>spvm@chromium.org</owner>
   <owner>gab@chromium.org</owner>
   <summary>
     Records a hit when a thread pool worker thread woke up unnecessarily (when

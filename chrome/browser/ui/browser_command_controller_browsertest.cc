@@ -20,10 +20,10 @@
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
 #include "chrome/browser/sessions/tab_restore_service_load_waiter.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/translate/translate_test_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
@@ -32,6 +32,7 @@
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/tab_modal_confirm_dialog_browsertest.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_browser_window.h"
@@ -64,8 +65,9 @@
 #endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/glic_pref_names.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -235,7 +237,7 @@ class BrowserCommandControllerBrowserTestLockedFullscreen
   }
 
   void EnterLockedFullscreen() {
-    PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
+    ash::PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
 
     // Update the corresponding command controller state as well as other
     // states so we can verify what commands are enabled.
@@ -250,7 +252,7 @@ class BrowserCommandControllerBrowserTestLockedFullscreen
   }
 
   void ExitLockedFullscreen() {
-    UnpinWindow(browser()->window()->GetNativeWindow());
+    ash::UnpinWindow(browser()->window()->GetNativeWindow());
     browser()->command_controller()->LockedFullscreenStateChanged();
   }
 
@@ -610,10 +612,7 @@ class BrowserCommandControllerBrowserTestCompare
     : public BrowserCommandControllerBrowserTest {
  public:
   BrowserCommandControllerBrowserTestCompare() {
-    scoped_feature_list_.InitWithFeatures(
-        {commerce::kProductSpecifications,
-         commerce::kCompareManagementInterface},
-        {});
+    scoped_feature_list_.InitAndEnableFeature(commerce::kProductSpecifications);
   }
 
  private:
@@ -692,38 +691,17 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
 
 IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
                        DisabledInIncognitoProfile) {
-  // Set up a profile with an off the record profile.
-  std::unique_ptr<TestingProfile> profile = TestingProfile::Builder().Build();
-  Profile* incognito_profile =
-      profile->GetPrimaryOTRProfile(/*create_if_needed=*/true);
-  ASSERT_EQ(incognito_profile->GetOriginalProfile(), profile.get());
-  ASSERT_TRUE(incognito_profile->IsIncognitoProfile());
-
-  // Create a new browser based on the off the record profile.
-  Browser::CreateParams profile_params(incognito_profile, true);
-  std::unique_ptr<Browser> incognito_browser =
-      CreateBrowserWithTestWindowForParams(profile_params);
-
+  Browser* incognito_browser = CreateIncognitoBrowser();
+  EXPECT_TRUE(incognito_browser->profile()->IsIncognitoProfile());
   EXPECT_FALSE(
-      chrome::IsCommandEnabled(incognito_browser.get(), IDC_GLIC_TOGGLE_PIN));
+      chrome::IsCommandEnabled(incognito_browser, IDC_GLIC_TOGGLE_PIN));
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
                        DisabledInGuestProfile) {
-  // Set up a guest profile.
-  std::unique_ptr<TestingProfile> profile = TestingProfile::Builder().Build();
-  profile->SetGuestSession(true);
-  Profile* guest_profile =
-      profile->GetPrimaryOTRProfile(/*create_if_needed=*/true);
-  ASSERT_TRUE(guest_profile->IsGuestSession());
-
-  // Create a new browser based on the off the record profile.
-  Browser::CreateParams profile_params(guest_profile, true);
-  std::unique_ptr<Browser> guest_browser =
-      CreateBrowserWithTestWindowForParams(profile_params);
-
-  EXPECT_FALSE(
-      chrome::IsCommandEnabled(guest_browser.get(), IDC_GLIC_TOGGLE_PIN));
+  Browser* guest_browser = CreateGuestBrowser();
+  EXPECT_TRUE(guest_browser->profile()->IsGuestSession());
+  EXPECT_FALSE(chrome::IsCommandEnabled(guest_browser, IDC_GLIC_TOGGLE_PIN));
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
@@ -740,14 +718,15 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
       ::prefs::kGeminiSettings,
       static_cast<int>(glic::prefs::SettingsPolicyState::kEnabled));
   // Bypass fre.
-  profile_prefs->SetInteger(glic::prefs::kGlicCompletedFre,
-                            static_cast<int>(glic::prefs::FreStatus::kCompleted));
+  profile_prefs->SetInteger(
+      glic::prefs::kGlicCompletedFre,
+      static_cast<int>(glic::prefs::FreStatus::kCompleted));
 
   EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_OPEN_GLIC));
   ASSERT_TRUE(
       glic::GlicKeyedServiceFactory::GetGlicKeyedService(browser()->profile())
           ->IsWindowShowing());
 }
-#endif
+#endif  // BUILDFLAG(ENABLE_GLIC)
 
 }  // namespace chrome

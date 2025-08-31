@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,7 +42,6 @@
 #include "components/sync/service/sync_service_crypto.h"
 #include "components/sync/service/sync_stopped_reporter.h"
 #include "components/sync/service/sync_user_settings_impl.h"
-#include "components/sync/service/trusted_vault_synthetic_field_trial.h"
 #include "components/version_info/channel.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/google_service_auth_error.h"
@@ -66,7 +66,6 @@ class SyncServiceAndroidBridge;
 // You should not need to know about SyncServiceImpl directly.
 class SyncServiceImpl : public SyncService,
                         public SyncEngineHost,
-                        public SyncPrefObserver,
                         public DataTypeManagerObserver,
                         public SyncAuthManager::Delegate,
                         public SyncServiceCrypto::Delegate,
@@ -88,6 +87,7 @@ class SyncServiceImpl : public SyncService,
     ~InitParams();
 
     std::unique_ptr<SyncClient> sync_client;
+    CreateHttpPostProviderFactory create_http_post_provider_factory;
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory;
     raw_ptr<network::NetworkConnectionTracker> network_connection_tracker =
         nullptr;
@@ -111,7 +111,6 @@ class SyncServiceImpl : public SyncService,
 #if BUILDFLAG(IS_ANDROID)
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject() override;
 #endif  // BUILDFLAG(IS_ANDROID)
-  void SetSyncFeatureRequested() override;
   SyncUserSettings* GetUserSettings() override;
   const SyncUserSettings* GetUserSettings() const override;
   DisableReasonSet GetDisableReasons() const override;
@@ -157,7 +156,8 @@ class SyncServiceImpl : public SyncService,
   DataTypeDownloadStatus GetDownloadStatusFor(DataType type) const override;
   void GetTypesWithUnsyncedData(
       DataTypeSet requested_types,
-      base::OnceCallback<void(DataTypeSet)> callback) const override;
+      base::OnceCallback<void(absl::flat_hash_map<DataType, size_t>)> callback)
+      const override;
   void GetLocalDataDescriptions(
       DataTypeSet types,
       base::OnceCallback<void(std::map<DataType, LocalDataDescription>)>
@@ -189,7 +189,6 @@ class SyncServiceImpl : public SyncService,
   // SyncAuthManager::Delegate implementation.
   void SyncAuthAccountStateChanged() override;
   void SyncAuthCredentialsChanged() override;
-  GaiaId SyncAuthGetLastSyncingGaiaId() override;
 
   // SyncServiceCrypto::Delegate implementation.
   void CryptoStateChanged() override;
@@ -204,6 +203,13 @@ class SyncServiceImpl : public SyncService,
   bool IsCustomPassphraseAllowed() const override;
   SyncPrefs::SyncAccountState GetSyncAccountStateForPrefs() const override;
   CoreAccountInfo GetSyncAccountInfoForPrefs() const override;
+  void OnSyncClientDisabledByPolicyChanged() override;
+  void OnSelectedTypesChanged() override;
+#if BUILDFLAG(IS_CHROMEOS)
+  void OnSyncFeatureDisabledViaDashboardCleared() override;
+#else   // BUILDFLAG(IS_CHROMEOS)
+  void OnInitialSyncFeatureSetupCompleted() override;
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // IdentityManager::Observer implementation.
   void OnAccountsCookieDeletedByUserAction() override;
@@ -212,6 +218,8 @@ class SyncServiceImpl : public SyncService,
       const GoogleServiceAuthError& error) override;
   void OnPrimaryAccountChanged(
       const signin::PrimaryAccountChangeEvent& event_details) override;
+  void OnIdentityManagerShutdown(
+      signin::IdentityManager* identity_manager) override;
 
   // Similar to above but with a callback that will be invoked on completion.
   void OnAccountsInCookieUpdatedWithCallback(
@@ -222,14 +230,6 @@ class SyncServiceImpl : public SyncService,
   // accounts from cookie jar.
   bool HasCookieJarMismatch(
       const std::vector<gaia::ListedAccount>& cookie_jar_accounts);
-
-  // SyncPrefObserver implementation.
-  void OnSyncManagedPrefChange(bool is_sync_managed) override;
-#if !BUILDFLAG(IS_CHROMEOS)
-  void OnFirstSetupCompletePrefChange(
-      bool is_initial_sync_feature_setup_complete) override;
-#endif  // !BUILDFLAG(IS_CHROMEOS)
-  void OnSelectedTypesPrefChange() override;
 
   // KeyedService implementation.  This must be called exactly
   // once (before this object is destroyed).
@@ -253,8 +253,10 @@ class SyncServiceImpl : public SyncService,
   // TODO(crbug.com/41451146): Inject this in the ctor instead. As it is, it's
   // possible that the real callback was already used before the test had a
   // chance to call this.
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   void OverrideNetworkForTest(const CreateHttpPostProviderFactory&
                                   create_http_post_provider_factory_cb);
+#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 
   DataTypeSet GetRegisteredDataTypesForTest() const;
   bool HasAnyModelErrorForTest(DataTypeSet types) const;
@@ -362,18 +364,12 @@ class SyncServiceImpl : public SyncService,
       signin_metrics::AccessPoint access_point,
       signin::ConsentLevel consent_level);
 
-  // Computes the enum value that should be propagated via ConfigureContext.
-  PreviouslySyncingGaiaIdInfoForMetrics
-  DeterminePreviouslySyncingGaiaIdInfoForMetrics() const;
-
   // Called when a SetupInProgressHandle issued by this instance is destroyed.
   void OnSetupInProgressHandleDestroyed();
 
   // Records (or may record) histograms related to trusted vault passphrase
   // type.
   void MaybeRecordTrustedVaultHistograms();
-
-  void OnPasswordSyncAllowedChanged();
 
   // Updates PrefService (SyncPrefs) to cache the last known value for trusted
   // vault AutoUpgradeDebugInfo. It also notifies SyncClient.
@@ -394,6 +390,12 @@ class SyncServiceImpl : public SyncService,
   // This profile's SyncClient.
   const std::unique_ptr<SyncClient> sync_client_;
 
+  // Callback used to create network connections.
+  const CreateHttpPostProviderFactory create_http_post_provider_factory_;
+
+  std::optional<CreateHttpPostProviderFactory>
+      create_http_post_provider_factory_override_for_test_;
+
   // The class that handles getting, setting, and persisting sync preferences.
   SyncPrefs sync_prefs_;
 
@@ -404,6 +406,9 @@ class SyncServiceImpl : public SyncService,
   // email address and sign-out upon error.
   // May be null (if local Sync is enabled).
   const raw_ptr<signin::IdentityManager> identity_manager_;
+  base::ScopedObservation<signin::IdentityManager,
+                          signin::IdentityManager::Observer>
+      identity_manager_observation_{this};
 
   // The user-configurable knobs. Non-null between Initialize() and Shutdown().
   std::unique_ptr<SyncUserSettingsImpl> user_settings_;
@@ -480,8 +485,6 @@ class SyncServiceImpl : public SyncService,
   // an action set on it.
   SyncProtocolError last_actionable_error_;
 
-  CreateHttpPostProviderFactory create_http_post_provider_factory_cb_;
-
   std::unique_ptr<SyncStoppedReporter> sync_stopped_reporter_;
 
   // Used for UMA to determine whether TrustedVaultErrorShownOnStartup
@@ -490,10 +493,8 @@ class SyncServiceImpl : public SyncService,
   bool should_record_trusted_vault_error_shown_on_startup_ = true;
 
   // Whether or not SyncClient was exercised to register synthetic field trials
-  // related to trusted vault passphrase, and if yes which precise group was
-  // registered.
-  std::optional<TrustedVaultAutoUpgradeSyntheticFieldTrialGroup>
-      registered_trusted_vault_auto_upgrade_synthetic_field_trial_group_;
+  // related to trusted vault passphrase.
+  bool trusted_vault_auto_upgrade_synthetic_field_trial_registered_ = false;
 
   // Whether we want to receive invalidations for the SESSIONS data type. This
   // is typically false on Android (to save network traffic), but true on all
@@ -508,9 +509,6 @@ class SyncServiceImpl : public SyncService,
   std::unique_ptr<SyncFeatureStatusForMigrationsRecorder> sync_status_recorder_;
 
   std::unique_ptr<LocalDataMigrationItemQueue> local_data_migration_item_queue_;
-
-  base::ScopedObservation<SyncPrefs, SyncPrefObserver> sync_prefs_observation_{
-      this};
 
 #if BUILDFLAG(IS_ANDROID)
   // Manage and fetch the java object that wraps this SyncService on

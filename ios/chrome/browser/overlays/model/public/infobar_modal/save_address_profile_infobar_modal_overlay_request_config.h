@@ -68,8 +68,12 @@ class SaveAddressProfileModalRequestConfig
     return is_profile_an_account_profile_;
   }
 
+  bool is_profile_a_home_profile() const { return is_profile_a_home_profile_; }
+
+  bool is_profile_a_work_profile() const { return is_profile_a_work_profile_; }
+
  private:
-  OVERLAY_USER_DATA_SETUP(SaveAddressProfileModalRequestConfig);
+  friend class OverlayUserData<SaveAddressProfileModalRequestConfig>;
   explicit SaveAddressProfileModalRequestConfig(InfoBarIOS* infobar);
 
   // OverlayUserData:
@@ -105,6 +109,10 @@ class SaveAddressProfileModalRequestConfig
 
   // Denotes that the profile is an account profile.
   bool is_profile_an_account_profile_ = false;
+
+  // Denotes that the profile is a home/work profile.
+  bool is_profile_a_home_profile_ = false;
+  bool is_profile_a_work_profile_ = false;
 
   // Denotes the email address of the signed-in account.
   std::optional<std::u16string> user_email_;

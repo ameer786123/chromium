@@ -18,7 +18,7 @@
 #include "chrome/browser/keyboard_accessory/android/manual_filling_controller.h"
 #include "components/autofill/core/common/mojom/autofill_types.mojom-shared.h"
 #include "components/autofill/core/common/unique_ids.h"
-#include "components/plus_addresses/plus_address_types.h"
+#include "components/plus_addresses/core/browser/plus_address_types.h"
 #include "content/public/browser/web_contents_user_data.h"
 
 namespace autofill {
@@ -126,8 +126,9 @@ class ManualFillingControllerImpl
       const base::trace_event::MemoryDumpArgs& args,
       base::trace_event::ProcessMemoryDump* process_memory_dump) override;
 
-  // Returns true if the keyboard accessory needs to be shown.
-  bool ShouldShowAccessory() const;
+  // Returns true if the keyboard accessory needs to be shown for last focused
+  // field type..
+  bool ShouldShowAccessoryForLastFocusedFieldType() const;
 
   // Adjusts visibility based on focused field type and available suggestions.
   void UpdateVisibility();

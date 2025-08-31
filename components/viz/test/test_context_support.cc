@@ -12,6 +12,7 @@
 
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/notimplemented.h"
 #include "base/task/single_thread_task_runner.h"
 
 namespace viz {
@@ -92,9 +93,10 @@ bool TestContextSupport::ThreadsafeDiscardableTextureIsDeletedForTracing(
   return false;
 }
 
-void* TestContextSupport::MapTransferCacheEntry(uint32_t serialized_size) {
+base::span<uint8_t> TestContextSupport::MapTransferCacheEntry(
+    uint32_t serialized_size) {
   NOTIMPLEMENTED();
-  return nullptr;
+  return {};
 }
 
 void TestContextSupport::UnmapAndCreateTransferCacheEntry(uint32_t type,

@@ -5,13 +5,16 @@
 #ifndef CHROME_BROWSER_ASH_LOGIN_DEMO_MODE_DEMO_MODE_IDLE_HANDLER_H_
 #define CHROME_BROWSER_ASH_LOGIN_DEMO_MODE_DEMO_MODE_IDLE_HANDLER_H_
 
+#include <optional>
 #include <string>
 
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
 #include "base/scoped_observation.h"
+#include "base/timer/timer.h"
 #include "chrome/browser/ash/login/demo_mode/demo_mode_window_closer.h"
 #include "chrome/browser/chromeos/extensions/login_screen/login/cleanup/files_cleanup_handler.h"
 #include "ui/base/user_activity/user_activity_detector.h"
@@ -48,6 +51,9 @@ class DemoModeIdleHandler : public ui::UserActivityObserver {
   // Removes an observer from the observer list.
   void RemoveObserver(Observer* observer);
 
+  const std::optional<base::OneShotTimer>& GetMGSLogoutTimeoutForTest() const {
+    return mgs_logout_timer_;
+  }
   void SetIdleTimeoutForTest(std::optional<base::TimeDelta> timeout);
 
  private:
@@ -69,6 +75,10 @@ class DemoModeIdleHandler : public ui::UserActivityObserver {
   // function and it is not playing, it indicates that a user is actively engage
   // with device.
   std::unique_ptr<IdleDetector> idle_detector_;
+
+  // Timer to schedule logout for the fallback MGS due to peak time requests of
+  // demo account.
+  std::optional<base::OneShotTimer> mgs_logout_timer_;
 
   // Not owned:
   raw_ptr<DemoModeWindowCloser> window_closer_;

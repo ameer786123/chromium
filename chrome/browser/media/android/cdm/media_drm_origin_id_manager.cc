@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #include "base/check.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -16,6 +16,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/task_traits.h"
@@ -134,8 +135,8 @@ void RemoveExpirableToken(base::Value::Dict& origin_id_dict) {
 // TODO(b/253295050): Remove this workaround if Android R patched to fix this.
 
 bool IsAndroidR() {
-  return base::android::BuildInfo::GetInstance()->sdk_int() ==
-         base::android::SDK_VERSION_R;
+  return base::android::android_info::sdk_int() ==
+         base::android::android_info::SDK_VERSION_R;
 }
 
 bool ShouldAttemptProvisioning(base::Value::Dict& origin_id_dict) {

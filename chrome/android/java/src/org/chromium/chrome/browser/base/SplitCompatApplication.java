@@ -9,7 +9,6 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Process;
 
@@ -30,7 +29,6 @@ import org.chromium.base.TraceEvent;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.memory.MemoryPressureMonitor;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.AsyncTask;
 import org.chromium.base.version_info.VersionConstants;
 import org.chromium.build.BuildConfig;
@@ -52,17 +50,20 @@ import org.chromium.components.embedder_support.application.FontPreloadingWorkar
 import org.chromium.components.module_installer.util.ModuleUtil;
 import org.chromium.ui.base.ResourceBundle;
 
+import java.util.function.Supplier;
+
 /**
  * Application base class which will call through to the given {@link Impl}. Application classes
  * which extend this class should also extend {@link Impl}, and call {@link #setImpl(Impl)} before
  * calling {@link attachBaseContext(Context)}.
  *
- * This is the base class of all Chrome applications. Logic specific to isolated splits should go in
- * {@link SplitChromeApplication}.
+ * <p>This is the base class of all Chrome applications. Logic specific to isolated splits should go
+ * in {@link SplitChromeApplication}.
  */
 @NullMarked
 public class SplitCompatApplication extends Application {
     public static final String CHROME_SPLIT_NAME = "chrome";
+    public static final String ON_DEMAND_SPLIT_NAME = "on_demand";
     private static final String TAG = "SplitCompatApp";
     private static final String COMMAND_LINE_FILE = "chrome-command-line";
     private static final String ATTACH_BASE_CONTEXT_EVENT = "ChromeApplication.attachBaseContext";
@@ -76,10 +77,6 @@ public class SplitCompatApplication extends Application {
     private Supplier<Impl> mImplSupplier;
     private @Nullable Impl mImpl;
     private @Nullable ServiceTracingProxyProvider mServiceTracingProxyProvider;
-    // This doesn't work in Monochrome, since we try to load the WebView library as well when
-    // loading Chrome's library, and WebView requires attachBaseContext to have finished before
-    // you may attempt to load it's library. See crbug.com/390730928.
-    protected boolean mPreloadLibraryAttachBaseContext = true;
 
     /**
      * Holds the implementation of application logic. Will be called by {@link
@@ -162,14 +159,14 @@ public class SplitCompatApplication extends Application {
 
         Log.i(
                 TAG,
-                "version=%s (%s) minSdkVersion=%s isBundle=%s processName=%s isIsolatedProcess=%s",
+                "version=%s (%s) minSdkVersion=%s processName=%s isIsolatedProcess=%s splits=%s",
                 VersionConstants.PRODUCT_VERSION,
                 BuildConfig.VERSION_CODE,
                 BuildConfig.MIN_SDK_VERSION,
-                // BundleUtils uses getApplicationContext, so logging after we init it.
-                BundleUtils.isBundle(),
                 ContextUtils.getProcessName(),
-                isIsolatedProcess);
+                isIsolatedProcess,
+                // BundleUtils uses getApplicationContext, so logging after we init it.
+                BundleUtils.getInstalledSplitNamesForLogging());
 
         if (isBrowserProcess) {
             // This must come as early as possible to avoid early loading of the native library from
@@ -200,34 +197,36 @@ public class SplitCompatApplication extends Application {
         }
 
         maybeInitProcessType();
+        LibraryLoader.getInstance().setLinkerImplementation(ProductConfig.USE_CHROMIUM_LINKER);
 
-        if (isBrowserProcess && !ChromeFeatureList.sSkipIsolatedSplitPreload.isEnabled()) {
+        // Renderer and GPU processes have command line passed to them via IPC
+        // (see ChildProcessService.java).
+        if (isBrowserProcess && ChromeFeatureList.sLoadNativeEarly.isEnabled()) {
+            CommandLineInitUtil.initCommandLine(
+                    COMMAND_LINE_FILE, SplitCompatApplication::shouldUseDebugFlags);
+        }
+
+        if (isBrowserProcess) {
             performBrowserProcessPreloading(context);
         }
 
-        // Write installed modules to crash keys. This needs to be done as early as possible so
-        // that these values are set before any crashes are reported.
-        ModuleUtil.updateCrashKeys();
-
         AsyncTask.takeOverAndroidThreadPool();
         ResourceBundle.setAvailablePakLocales(ProductConfig.LOCALES);
-        LibraryLoader.getInstance().setLinkerImplementation(ProductConfig.USE_CHROMIUM_LINKER);
 
         if (!isBrowserProcess) {
             EarlyTraceEvent.earlyEnableInChildWithoutCommandLine();
             TraceEvent.begin(ATTACH_BASE_CONTEXT_EVENT);
         } else {
             checkAppBeingReplaced();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                // Fixes are never required before O (where "cmd package compile" does not exist).
-                DexFixer.scheduleDexFix();
-            }
+            DexFixer.scheduleDexFix();
 
             PathUtils.setPrivateDataDirectorySuffix(PRIVATE_DATA_DIRECTORY_SUFFIX);
             // Renderer and GPU processes have command line passed to them via IPC
             // (see ChildProcessService.java).
-            CommandLineInitUtil.initCommandLine(
-                    COMMAND_LINE_FILE, SplitCompatApplication::shouldUseDebugFlags);
+            if (!ChromeFeatureList.sLoadNativeEarly.isEnabled()) {
+                CommandLineInitUtil.initCommandLine(
+                        COMMAND_LINE_FILE, SplitCompatApplication::shouldUseDebugFlags);
+            }
 
             TraceEvent.maybeEnableEarlyTracing(/* readCommandLine= */ true);
             TraceEvent.begin(ATTACH_BASE_CONTEXT_EVENT);
@@ -254,6 +253,9 @@ public class SplitCompatApplication extends Application {
             }
         }
 
+        // Write installed modules to crash keys.
+        ModuleUtil.updateCrashKeys();
+
         // WebView installs its own PureJavaExceptionHandler.
         // Incremental install disables process isolation, so things in this block will
         // actually be run for incremental apks, but not normal apks.
@@ -274,11 +276,6 @@ public class SplitCompatApplication extends Application {
             CustomAssertionHandler.installPreNativeHandler(factory);
         }
 
-        // Skipping tests since some use "--disable-native-initialization", and some tests manually
-        // test loading the native library themselves.
-        if (mPreloadLibraryAttachBaseContext) {
-            maybeInitChromeSplitAndPreloadNativeLibrary();
-        }
         TraceEvent.end(ATTACH_BASE_CONTEXT_EVENT);
     }
 
@@ -289,19 +286,7 @@ public class SplitCompatApplication extends Application {
         // they use under-the-hood) does not work until after it returns.
         FontPreloadingWorkaround.maybeInstallWorkaround(this);
         MemoryPressureMonitor.INSTANCE.registerComponentCallbacks();
-        if (!mPreloadLibraryAttachBaseContext) {
-            maybeInitChromeSplitAndPreloadNativeLibrary();
-        }
         getImpl().onCreate();
-    }
-
-    private void maybeInitChromeSplitAndPreloadNativeLibrary() {
-        if (isBrowserProcess()
-                && ChromeFeatureList.sSkipIsolatedSplitPreload.isEnabled()
-                && !BuildConfig.IS_FOR_TEST) {
-            new Thread(() -> LibraryLoader.getInstance().loadNow()).start();
-            performBrowserProcessPreloading(this, true);
-        }
     }
 
     @Override
@@ -344,8 +329,6 @@ public class SplitCompatApplication extends Application {
      * as early as possible to maximize preload time.
      */
     protected void performBrowserProcessPreloading(Context context) {}
-
-    protected void performBrowserProcessPreloading(Context context, boolean blockingLoad) {}
 
     public boolean isWebViewProcess() {
         return false;

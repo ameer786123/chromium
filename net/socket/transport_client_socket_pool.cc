@@ -20,7 +20,6 @@
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
@@ -1136,7 +1135,8 @@ bool TransportClientSocketPool::FindTopStalledGroup(Group** group,
   return has_stalled_group;
 }
 
-void TransportClientSocketPool::OnIPAddressChanged() {
+void TransportClientSocketPool::OnIPAddressChanged(
+    NetworkChangeNotifier::IPAddressChangeType change_type) {
   DCHECK(cleanup_on_ip_address_change_);
   FlushWithError(ERR_NETWORK_CHANGED, kNetworkChanged);
 }
@@ -1582,7 +1582,7 @@ std::unique_ptr<ConnectJob> TransportClientSocketPool::Group::RemoveUnboundJob(
 
   // Check that |job| is in the list.
   auto it = std::ranges::find(jobs_, job, &std::unique_ptr<ConnectJob>::get);
-  CHECK(it != jobs_.end(), base::NotFatalUntil::M130);
+  CHECK(it != jobs_.end());
 
   // Check if |job| is in the unassigned jobs list. If so, remove it.
   auto it2 = std::ranges::find(unassigned_jobs_, job);

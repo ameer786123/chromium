@@ -34,8 +34,8 @@
 #include "chrome/updater/tag.h"
 #include "chrome/updater/update_service.h"
 #include "chrome/updater/update_service_internal.h"
-#include "chrome/updater/update_usage_stats_task.h"
 #include "chrome/updater/updater_version.h"
+#include "chrome/updater/usage_stats_permissions.h"
 #include "chrome/updater/util/util.h"
 #include "components/prefs/pref_service.h"
 #include "components/update_client/protocol_definition.h"
@@ -58,7 +58,7 @@ class AppInstallControllerImpl : public AppInstallController {
     // TODO(crbug.com/40282228): Factor out common code from app_install_win.cc.
     RegistrationRequest request;
     request.app_id = app_id;
-    request.version = base::Version(kNullVersion);
+    request.version = kNullVersion;
     std::optional<tagging::AppArgs> app_args = GetAppArgs(app_id);
     std::optional<tagging::TagArgs> tag_args = GetTagArgs().tag_args;
     if (app_args) {
@@ -125,8 +125,7 @@ void AppInstall::SendPing(int exit_code, base::OnceClosure callback) {
           base::BindOnce(
               [](base::OnceClosure callback, UpdaterScope scope,
                  int exit_code) {
-                if (exit_code == kErrorOk || !UsageStatsProvider::Create(scope)
-                                                  ->AnyAppEnablesUsageStats()) {
+                if (exit_code == kErrorOk || !AnyAppEnablesUsageStats(scope)) {
                   std::move(callback).Run();
                   return;
                 }
@@ -291,7 +290,7 @@ void AppInstall::RegisterUpdater() {
 
   RegistrationRequest request;
   request.app_id = kUpdaterAppId;
-  request.version = base::Version(kUpdaterVersion);
+  request.version = kUpdaterVersion;
   update_service_->RegisterApp(
       request, base::BindOnce(
                    [](scoped_refptr<AppInstall> app_install, int result) {

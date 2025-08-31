@@ -69,6 +69,13 @@
   return self;
 }
 
+- (void)dealloc {
+  // TODO(crbug.com/40272467)
+  DUMP_WILL_BE_CHECK(!_historySyncCoordinator);
+}
+
+#pragma mark - ChromeCoordinator
+
 - (void)start {
   [super start];
   ProfileIOS* profile = self.profile;
@@ -101,21 +108,14 @@
                                       completion:nil];
 }
 
-- (void)dealloc {
-  // TODO(crbug.com/40272467)
-  DUMP_WILL_BE_CHECK(!_historySyncCoordinator);
-}
-
-- (void)stop {
-  [self stopAnimated:NO];
-}
+#pragma mark - AnimatedCoordinator
 
 - (void)stopAnimated:(BOOL)animated {
   [self stopHistorySyncCoordinator];
   _navigationController.presentationController.delegate = nil;
   [_navigationController dismissViewControllerAnimated:animated completion:nil];
   _navigationController = nil;
-  [super stop];
+  [super stopAnimated:animated];
 }
 
 #pragma mark - Private
@@ -125,8 +125,8 @@
   _historySyncCoordinator = nil;
 }
 
-- (void)viewWasDismissedWithResult:(SigninCoordinatorResult)result {
-  if (result != SigninCoordinatorResultSuccess && _signOutIfDeclined) {
+- (void)viewWasDismissedWithResult:(HistorySyncResult)result {
+  if (result == HistorySyncResult::kUserCanceled && _signOutIfDeclined) {
     signin::ProfileSignoutRequest(
         signin_metrics::ProfileSignout::
             kUserDeclinedHistorySyncAfterDedicatedSignIn)
@@ -137,13 +137,9 @@
 
 #pragma mark - HistorySyncCoordinatorDelegate
 
-- (void)closeHistorySyncCoordinator:
-            (HistorySyncCoordinator*)historySyncCoordinator
-                     declinedByUser:(BOOL)declined {
+- (void)historySyncCoordinator:(HistorySyncCoordinator*)historySyncCoordinator
+                    withResult:(HistorySyncResult)result {
   [self stopHistorySyncCoordinator];
-  SigninCoordinatorResult result = declined
-                                       ? SigninCoordinatorResultCanceledByUser
-                                       : SigninCoordinatorResultSuccess;
   __weak __typeof(self) weakSelf = self;
   [_navigationController
       dismissViewControllerAnimated:YES
@@ -161,7 +157,7 @@
   [self stopHistorySyncCoordinator];
   _navigationController.presentationController.delegate = nil;
   _navigationController = nil;
-  [self viewWasDismissedWithResult:SigninCoordinatorResultCanceledByUser];
+  [self viewWasDismissedWithResult:HistorySyncResult::kUserCanceled];
 }
 
 #pragma mark - NSObject

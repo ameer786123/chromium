@@ -4,15 +4,18 @@
 
 #include "chrome/browser/actor/site_policy.h"
 
+#include "base/files/scoped_temp_dir.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/actor/actor_features.h"
+#include "chrome/browser/actor/actor_keyed_service.h"
 #include "chrome/browser/optimization_guide/mock_optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
-#include "chrome/browser/ui/tabs/test/mock_tab_interface.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
+#include "components/optimization_guide/core/filters/optimization_hints_component_update_listener.h"
+#include "components/tabs/public/mock_tab_interface.h"
 #include "content/public/test/navigation_simulator.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -48,6 +51,14 @@ class ActorSitePolicyTest : public ChromeRenderViewHostTestHarness {
         .WillByDefault(base::test::RunOnceCallback<2>(
             optimization_guide::OptimizationGuideDecision::kTrue,
             optimization_guide::OptimizationMetadata{}));
+
+    // Simulate the component loading, as the implementation checks it, but the
+    // actual outcomes are determined by the mock.
+    ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
+    optimization_guide::OptimizationHintsComponentUpdateListener::GetInstance()
+        ->MaybeUpdateHintsComponent(
+            {base::Version("123"),
+             temp_dir_.GetPath().Append(FILE_PATH_LITERAL("dont_care"))});
   }
 
   void TearDown() override {
@@ -83,8 +94,10 @@ class ActorSitePolicyTest : public ChromeRenderViewHostTestHarness {
     tabs::MockTabInterface tab;
     ON_CALL(tab, GetContents).WillByDefault(::testing::Return(web_contents()));
 
+    auto* actor_service = ActorKeyedService::Get(profile());
     base::test::TestFuture<bool> allowed;
-    MayActOnTab(tab, allowed.GetCallback());
+    MayActOnTab(tab, actor_service->GetJournal(), TaskId(),
+                allowed.GetCallback());
     // The result should not be provided synchronously.
     EXPECT_FALSE(allowed.IsReady());
     EXPECT_EQ(expected_allowed, allowed.Get());
@@ -100,6 +113,7 @@ class ActorSitePolicyTest : public ChromeRenderViewHostTestHarness {
       mock_optimization_guide_keyed_service_;
 
   base::test::ScopedFeatureList scoped_feature_list_;
+  base::ScopedTempDir temp_dir_;
 };
 
 class ActorSitePolicyAllowlistOnlyTest : public ActorSitePolicyTest {
@@ -139,6 +153,14 @@ TEST_F(ActorSitePolicyTest, BlockInsecureHTTP) {
   CheckUrl(GURL("http://a.test/"), false);
 }
 
+TEST_F(ActorSitePolicyTest, InsecureHTTPAllowedWhenSpecified) {
+  base::test::TestFuture<bool> allowed;
+  MayActOnUrl(GURL("http://a.test/"), /*allow_insecure_http=*/true, profile(),
+              ActorKeyedService::Get(profile())->GetJournal(), TaskId(),
+              allowed.GetCallback());
+  EXPECT_TRUE(allowed.Get());
+}
+
 TEST_F(ActorSitePolicyTest, AllowAllowlistedHosts) {
   CheckUrl(GURL("https://a.test/"), true);
   CheckUrl(GURL("https://b.test/"), true);
@@ -156,15 +178,6 @@ TEST_F(ActorSitePolicyTest, BlockIfInBlocklist) {
   const GURL url("https://c.test/");
   SetExpectedOptimizationGuideCall(
       url, optimization_guide::OptimizationGuideDecision::kFalse);
-  CheckUrl(url, false);
-}
-
-TEST_F(ActorSitePolicyTest, BlockIfBlocklistUnavailable) {
-  const GURL url("https://c.test/");
-  // Simulate the blocklist not being loaded. This should cause the URL check to
-  // fail closed.
-  SetExpectedOptimizationGuideCall(
-      url, optimization_guide::OptimizationGuideDecision::kUnknown);
   CheckUrl(url, false);
 }
 

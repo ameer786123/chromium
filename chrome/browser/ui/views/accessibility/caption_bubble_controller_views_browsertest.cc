@@ -5,13 +5,18 @@
 #include "components/live_caption/views/caption_bubble_controller_views.h"
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "base/functional/callback_forward.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_mock_time_message_loop_task_runner.h"
 #include "build/build_config.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -25,6 +30,7 @@
 #include "components/live_caption/live_caption_bubble_settings.h"
 #include "components/live_caption/pref_names.h"
 #include "components/live_caption/views/caption_bubble.h"
+#include "components/live_caption/views/translation_view_wrapper.h"
 #include "components/soda/soda_installer.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/test/browser_test.h"
@@ -37,13 +43,17 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/keycodes/keyboard_codes.h"
+#include "ui/gfx/font.h"
+#include "ui/gfx/font_list.h"
 #include "ui/views/accessibility/ax_virtual_view.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
+#include "ui/views/controls/webview/webview.h"
 #include "ui/views/layout/box_layout.h"
+#include "ui/views/layout/fill_layout.h"
 #include "ui/views/test/views_test_utils.h"
 #include "ui/views/test/widget_activation_waiter.h"
 #include "ui/views/test/widget_test.h"
@@ -56,13 +66,46 @@
 #endif  // USE_AURA
 
 namespace captions {
+namespace {
 
-class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
+// Create a widget that contains only a views::WebView with an empty
+// WebContents.
+std::unique_ptr<views::Widget> MakeWebViewWidget(Profile* profile,
+                                                 const gfx::Rect& bounds) {
+  views::Widget::InitParams params(
+      views::Widget::InitParams::CLIENT_OWNS_WIDGET,
+      views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+  params.bounds = bounds;
+  auto widget = std::make_unique<views::Widget>(std::move(params));
+  auto web_view = std::make_unique<views::WebView>(profile);
+  web_view->SetLayoutManager(std::make_unique<views::FillLayout>());
+  // Create the WebContents
+  web_view->GetWebContents();
+  widget->SetContentsView(std::move(web_view));
+  return widget;
+}
+
+}  // namespace
+
+class CaptionBubbleControllerViewsTest
+    : public InProcessBrowserTest,
+      public ::testing::WithParamInterface<bool> {
  public:
   CaptionBubbleControllerViewsTest() {
-    scoped_feature_list_.InitWithFeatures(
-        {media::kLiveTranslate, media::kFeatureManagementLiveTranslateCrOS},
-        {});
+    if (GetParam()) {
+      std::map<std::string, std::string> params;
+      params["live_caption_scrollable_max_lines"] =
+          "9";  // Same size as non-scrollable.
+      scoped_feature_list_.InitWithFeaturesAndParameters(
+          {{media::kLiveTranslate, {}},
+           {media::kFeatureManagementLiveTranslateCrOS, {}},
+           {kLiveCaptionScrollable, params}},
+          {});
+    } else {
+      scoped_feature_list_.InitWithFeatures(
+          {media::kLiveTranslate, media::kFeatureManagementLiveTranslateCrOS},
+          {captions::kLiveCaptionScrollable});
+    }
   }
 
   ~CaptionBubbleControllerViewsTest() override = default;
@@ -83,7 +126,9 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
       caption_bubble_settings_ = std::make_unique<LiveCaptionBubbleSettings>(
           browser()->profile()->GetPrefs());
       controller_ = std::make_unique<CaptionBubbleControllerViews>(
-          caption_bubble_settings_.get(), "en-US" /* application_locale */);
+          caption_bubble_settings_.get(), "en-US" /* application_locale */,
+          std::make_unique<TranslationViewWrapper>(
+              caption_bubble_settings_.get()));
     }
     return controller_.get();
   }
@@ -96,16 +141,13 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
     return caption_bubble_context_.get();
   }
 
-  CaptionBubbleContext* GetCaptionBubbleContext2() {
-    if (!caption_bubble_context2_) {
-      caption_bubble_context2_ = CaptionBubbleContextBrowser::Create(
-          browser()->tab_strip_model()->GetActiveWebContents());
-    }
-    return caption_bubble_context2_.get();
-  }
-
   CaptionBubble* GetBubble() {
     return controller_ ? controller_->GetCaptionBubbleForTesting() : nullptr;
+  }
+
+  views::ScrollView* GetScrollView() {
+    return controller_ ? controller_->caption_bubble_->GetScrollViewForTesting()
+                       : nullptr;
   }
 
   views::Label* GetLabel() {
@@ -121,12 +163,14 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
 
   views::Label* GetSourceLanguageLabel() {
     return controller_ ? controller_->caption_bubble_
+                             ->GetTranslationViewWrapperForTesting()
                              ->GetSourceLanguageLabelForTesting()
                        : nullptr;
   }
 
   views::Label* GetTargetLanguageLabel() {
     return controller_ ? controller_->caption_bubble_
+                             ->GetTranslationViewWrapperForTesting()
                              ->GetTargetLanguageLabelForTesting()
                        : nullptr;
   }
@@ -134,6 +178,12 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
   views::View* GetHeader() {
     return controller_ ? controller_->caption_bubble_->GetHeaderForTesting()
                        : nullptr;
+  }
+
+  void SetNewFontListGetter(
+      CaptionBubble::NewFontListGetter new_font_list_getter) {
+    GetController()->caption_bubble_->SetNewFontListGetterForTesting(
+        std::move(new_font_list_getter));
   }
 
   views::Label* GetTitle() {
@@ -164,26 +214,36 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
 
   views::MdTextButton* GetSourceLanguageButton() {
     return controller_ ? controller_->caption_bubble_
+                             ->GetTranslationViewWrapperForTesting()
                              ->GetSourceLanguageButtonForTesting()
                        : nullptr;
   }
 
   views::MdTextButton* GetTargetLanguageButton() {
     return controller_ ? controller_->caption_bubble_
+                             ->GetTranslationViewWrapperForTesting()
                              ->GetTargetLanguageButtonForTesting()
                        : nullptr;
   }
 
+  views::MdTextButton* GetScrollLockButton() {
+    return controller_
+               ? controller_->caption_bubble_->GetScrollLockButtonForTesting()
+               : nullptr;
+  }
+
   views::View* GetTranslateIconAndText() {
     return controller_ ? controller_->caption_bubble_
+                             ->GetTranslationViewWrapperForTesting()
                              ->GetTranslateIconAndTextForTesting()
                        : nullptr;
   }
 
   views::View* GetTranslateArrowIcon() {
-    return controller_
-               ? controller_->caption_bubble_->GetTranslateArrowIconForTesting()
-               : nullptr;
+    return controller_ ? controller_->caption_bubble_
+                             ->GetTranslationViewWrapperForTesting()
+                             ->GetTranslateArrowIconForTesting()
+                       : nullptr;
   }
 
   views::Button* GetCollapseButton() {
@@ -229,8 +289,9 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
   }
 
   void SetTargetLanguage(std::string language_code) {
-    GetController()->caption_bubble_->SetTargetLanguageForTesting(
-        language_code);
+    GetController()
+        ->caption_bubble_->GetTranslationViewWrapperForTesting()
+        ->SetTargetLanguageForTesting(language_code);
   }
 
   void DestroyController() { controller_.reset(nullptr); }
@@ -261,7 +322,8 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
   bool OnPartialTranscription(std::string text,
                               CaptionBubbleContext* caption_bubble_context) {
     return GetController()->OnTranscription(
-        caption_bubble_context, media::SpeechRecognitionResult(text, false));
+        GetPrimaryMainFrame(), caption_bubble_context,
+        media::SpeechRecognitionResult(text, false));
   }
 
   bool OnFinalTranscription(std::string text) {
@@ -278,7 +340,8 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
   bool OnFinalTranscription(std::string text,
                             CaptionBubbleContext* caption_bubble_context) {
     return GetController()->OnTranscription(
-        caption_bubble_context, media::SpeechRecognitionResult(text, true));
+        GetPrimaryMainFrame(), caption_bubble_context,
+        media::SpeechRecognitionResult(text, true));
   }
 
   void OnLanguageIdentificationEvent(std::string language) {
@@ -286,8 +349,8 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
         media::mojom::LanguageIdentificationEvent::New();
     event->language = language;
     event->asr_switch_result = media::mojom::AsrSwitchResult::kSwitchSucceeded;
-    GetController()->OnLanguageIdentificationEvent(GetCaptionBubbleContext(),
-                                                   event);
+    GetController()->OnLanguageIdentificationEvent(
+        GetPrimaryMainFrame(), GetCaptionBubbleContext(), event);
   }
 
   void OnError() { OnError(GetCaptionBubbleContext()); }
@@ -314,7 +377,8 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
   }
 
   void OnAudioStreamEnd() {
-    GetController()->OnAudioStreamEnd(GetCaptionBubbleContext());
+    GetController()->OnAudioStreamEnd(GetPrimaryMainFrame(),
+                                      GetCaptionBubbleContext());
   }
 
   std::vector<ui::AXNodeData> GetAXLinesNodeData() {
@@ -361,15 +425,25 @@ class CaptionBubbleControllerViewsTest : public InProcessBrowserTest {
         speech::LanguageCode::kFrFr);
   }
 
+  content::RenderFrameHost* GetPrimaryMainFrame() {
+    return browser()
+        ->tab_strip_model()
+        ->GetActiveWebContents()
+        ->GetPrimaryMainFrame();
+  }
+
  private:
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList scoped_prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
   base::test::ScopedFeatureList scoped_feature_list_;
   std::unique_ptr<LiveCaptionBubbleSettings> caption_bubble_settings_;
   std::unique_ptr<CaptionBubbleControllerViews> controller_;
   std::unique_ptr<CaptionBubbleContext> caption_bubble_context_;
-  std::unique_ptr<CaptionBubbleContext> caption_bubble_context2_;
 };
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ShowsCaptionInBubble) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, ShowsCaptionInBubble) {
   OnPartialTranscription("Taylor");
   EXPECT_TRUE(IsWidgetVisible());
   EXPECT_EQ("Taylor", GetLabelText());
@@ -393,7 +467,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ShowsCaptionInBubble) {
       GetLabelText());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, LaysOutCaptionLabel) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, LaysOutCaptionLabel) {
   // A short caption is bottom-aligned with the bubble. The bubble bounds
   // are inset by 18 dip on the the sides and 24 dip on the bottom. The label
   // top can change, but the bubble height and width should not change.
@@ -424,14 +498,21 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, LaysOutCaptionLabel) {
   EXPECT_EQ(bubble_width, bubble_bounds.width());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        CaptionTitleShownAtFirst) {
-  // With one line of text, the title is visible and positioned between the
-  // top of the bubble and top of the label.
   OnPartialTranscription("Cats rock");
   EXPECT_TRUE(GetTitle()->GetVisible());
-  EXPECT_EQ(GetTitle()->GetBoundsInScreen().bottom(),
-            GetLabel()->GetBoundsInScreen().y());
+  if (GetParam()) {
+    // Scrolling enabled. With one line of text, the title is visible and
+    // positioned between the top of the bubble and top of the scrollable.
+    EXPECT_EQ(GetTitle()->GetBoundsInScreen().bottom(),
+              GetScrollView()->GetBoundsInScreen().y());
+  } else {
+    // Scrolling disabled. With one line of text, the title is visible and
+    // positioned between the top of the bubble and top of the label.
+    EXPECT_EQ(GetTitle()->GetBoundsInScreen().bottom(),
+              GetLabel()->GetBoundsInScreen().y());
+  }
 
   OnPartialTranscription("Cats rock\nDogs too");
   EXPECT_FALSE(GetTitle()->GetVisible());
@@ -452,7 +533,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
 #else
 #define MAYBE_BubblePositioning BubblePositioning
 #endif
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        MAYBE_BubblePositioning) {
   int bubble_width = 536;
   gfx::Insets bubble_margins(6);
@@ -502,7 +583,35 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   EXPECT_EQ(GetBubble()->margins(), bubble_margins);
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ShowsAndHidesError) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
+                       BubblePositioningSmallBrowserContext) {
+  auto* web_contents = browser()->tab_strip_model()->GetActiveWebContents();
+  SetWindowBounds({{0, 0}, {300, 100}});
+
+  OnPartialTranscription("Mantis shrimp have 12-16 photoreceptors");
+  base::RunLoop().RunUntilIdle();
+
+  gfx::Rect web_contents_bounds_in_screen = web_contents->GetViewBounds();
+  gfx::Rect bubble_bounds = GetCaptionWidget()->GetWindowBoundsInScreen();
+  // We shouldn't be repositioning the bubble below the context if it's a tab.
+  EXPECT_LT(bubble_bounds.y(), web_contents_bounds_in_screen.bottom());
+}
+
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
+                       BubblePositioningSmallNonBrowserContext) {
+  auto context_widget =
+      MakeWebViewWidget(browser()->profile(), {{0, 0}, {300, 100}});
+
+  OnPartialTranscription("Mantis shrimp have 12-16 photoreceptors");
+  base::RunLoop().RunUntilIdle();
+
+  gfx::Rect widget_bounds_in_screen = context_widget->GetWindowBoundsInScreen();
+  gfx::Rect bubble_bounds = GetCaptionWidget()->GetWindowBoundsInScreen();
+  // Reposition the bubble below the widget.
+  EXPECT_GT(bubble_bounds.y(), widget_bounds_in_screen.bottom());
+}
+
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, ShowsAndHidesError) {
   OnPartialTranscription("Elephants' trunks average 6 feet long.");
   EXPECT_TRUE(GetTitle()->GetVisible());
   EXPECT_TRUE(GetLabel()->GetVisible());
@@ -523,8 +632,9 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ShowsAndHidesError) {
   OnError();
 
   // The error should not be visible on a different media stream.
-  OnPartialTranscription("Elephants are vegetarians.",
-                         GetCaptionBubbleContext2());
+  auto media_1 = CaptionBubbleContextBrowser::Create(
+      browser()->tab_strip_model()->GetActiveWebContents());
+  OnPartialTranscription("Elephants are vegetarians.", media_1.get());
   EXPECT_TRUE(GetTitle()->GetVisible());
   EXPECT_TRUE(GetLabel()->GetVisible());
   EXPECT_FALSE(GetErrorMessage()->GetVisible());
@@ -537,7 +647,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ShowsAndHidesError) {
   EXPECT_TRUE(GetErrorMessage()->GetVisible());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, CloseButtonCloses) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, CloseButtonCloses) {
   bool success = OnPartialTranscription("Elephants have 3-4 toenails per foot");
   EXPECT_TRUE(success);
   EXPECT_TRUE(GetCaptionWidget());
@@ -552,7 +662,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, CloseButtonCloses) {
   EXPECT_EQ("", GetLabelText());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        ClosesOnAudioStreamEnd) {
   OnPartialTranscription("Giraffes have black tongues that grow to 53 cm.");
   EXPECT_TRUE(GetCaptionWidget());
@@ -565,7 +675,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
 
 // TODO(crbug.com/40119836): Re-enable this test once it is passing. Tab
 // traversal works in app but doesn't work in tests right now.
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        DISABLED_FocusableInTabOrder) {
   OnPartialTranscription(
       "A narwhal's tusk is an enlarged tooth containing "
@@ -618,7 +728,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   EXPECT_TRUE(GetCloseButton()->HasFocus());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        UpdateCaptionStyleTextSize) {
   int text_size = 16;
   int line_height = 24;
@@ -696,7 +806,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   EXPECT_EQ(GetBubble()->GetPreferredSize().width(), bubble_width / 2);
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        UpdateCaptionStyleFontFamily) {
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   std::string default_font = "Roboto";
@@ -747,7 +857,30 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
             GetErrorText()->font_list().GetPrimaryFont().GetFontName());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
+                       FontFamilyArabicFallback) {
+#if BUILDFLAG(IS_CHROMEOS)
+  constexpr size_t kExpectedSize = 4;
+#else
+  constexpr size_t kExpectedSize = 3;
+#endif
+  std::vector<std::string> fonts;
+  SetNewFontListGetter(base::BindLambdaForTesting(
+      [&fonts](const std::vector<std::string>& font_names, int font_style,
+               int font_size, gfx::Font::Weight font_weight) -> gfx::FontList {
+        fonts = font_names;
+        return gfx::FontList(font_names, font_style, font_size, font_weight);
+      }));
+  ui::CaptionStyle caption_style;
+  caption_style.font_family = "";
+  GetController()->UpdateCaptionStyle(caption_style);
+  ASSERT_EQ(kExpectedSize, fonts.size());
+#if BUILDFLAG(IS_CHROMEOS)
+  EXPECT_EQ("Noto Sans Arabic UI", fonts[3]);
+#endif
+}
+
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        UpdateCaptionStyleTextColor) {
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kLiveTranslateEnabled,
                                                true);
@@ -838,7 +971,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   EXPECT_EQ(language_label_color, GetTargetLanguageLabel()->GetEnabledColor());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        UpdateCaptionStyleBackgroundColor) {
   SkColor default_color = browser()->window()->GetColorProvider()->GetColor(
       ui::kColorLiveCaptionBubbleBackgroundDefault);
@@ -925,7 +1058,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   EXPECT_EQ(SK_ColorGREEN, GetBubble()->background_color());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        PartialAndFinalTranscriptions) {
   OnPartialTranscription("No");
   EXPECT_EQ("No", GetLabelText());
@@ -943,7 +1076,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   EXPECT_EQ("No human has ever seen a living giant squid", GetLabelText());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ShowsAndHidesBubble) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, ShowsAndHidesBubble) {
   // Bubble isn't shown when controller is created.
   GetController();
   EXPECT_FALSE(IsWidgetVisible());
@@ -975,11 +1108,13 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ShowsAndHidesBubble) {
   EXPECT_FALSE(IsWidgetVisible());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ChangeMedia) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, ChangeMedia) {
   // This test has two medias.
   // Media 0 has the text "Polar bears are the largest carnivores on land".
   // Media 1 has the text "A snail can sleep for two years".
   CaptionBubbleContext* media_0 = GetCaptionBubbleContext();
+  auto media_1 = CaptionBubbleContextBrowser::Create(
+      browser()->tab_strip_model()->GetActiveWebContents());
 
   // Send final transcription from media 0.
   OnPartialTranscription("Polar bears are the largest", media_0);
@@ -988,7 +1123,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ChangeMedia) {
 
   // Send transcriptions from media 1. Check that the caption bubble now shows
   // text from media 1.
-  OnPartialTranscription("A snail can sleep", GetCaptionBubbleContext2());
+  OnPartialTranscription("A snail can sleep", media_1.get());
   EXPECT_TRUE(IsWidgetVisible());
   EXPECT_EQ("A snail can sleep", GetLabelText());
 
@@ -1002,8 +1137,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ChangeMedia) {
   // Close the bubble. Check that the bubble is still closed.
   ClickButton(GetCloseButton());
   EXPECT_FALSE(IsWidgetVisible());
-  OnPartialTranscription("A snail can sleep for two years",
-                         GetCaptionBubbleContext2());
+  OnPartialTranscription("A snail can sleep for two years", media_1.get());
   EXPECT_FALSE(IsWidgetVisible());
   EXPECT_EQ("", GetLabelText());
 
@@ -1012,7 +1146,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ChangeMedia) {
   EXPECT_FALSE(IsWidgetVisible());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, TruncatesFinalText) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, TruncatesFinalText) {
   // Make a string with 30 lines of 500 characters each.
   std::string text;
   std::string line(497, 'a');
@@ -1031,7 +1165,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, TruncatesFinalText) {
   EXPECT_EQ(9u, GetNumLinesInLabel());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        DestroysWithoutCrashing) {
   // Test passes if destroying the controller does not crash.
   OnPartialTranscription("Deer have a four-chambered stomach");
@@ -1042,7 +1176,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   DestroyController();
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ExpandsAndCollapses) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, ExpandsAndCollapses) {
   int line_height = 24;
   EXPECT_FALSE(browser()->profile()->GetPrefs()->GetBoolean(
       prefs::kLiveCaptionBubbleExpanded));
@@ -1063,8 +1197,9 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ExpandsAndCollapses) {
       prefs::kLiveCaptionBubbleExpanded));
 
   // Switch media. The bubble should remain expanded.
-  OnPartialTranscription("Nearly all ants are female.",
-                         GetCaptionBubbleContext2());
+  auto media_1 = CaptionBubbleContextBrowser::Create(
+      browser()->tab_strip_model()->GetActiveWebContents());
+  OnPartialTranscription("Nearly all ants are female.", media_1.get());
   EXPECT_TRUE(GetCollapseButton()->GetVisible());
   EXPECT_FALSE(GetExpandButton()->GetVisible());
   EXPECT_EQ(7 * line_height, GetLabel()->GetBoundsInScreen().height());
@@ -1078,19 +1213,19 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, ExpandsAndCollapses) {
   EXPECT_EQ(line_height, GetLabel()->GetBoundsInScreen().height());
 
   // The expand and collapse buttons are not visible when there is an error.
-  OnError(GetCaptionBubbleContext2());
+  OnError(media_1.get());
   EXPECT_FALSE(GetCollapseButton()->GetVisible());
   EXPECT_FALSE(GetExpandButton()->GetVisible());
 
   // Clear the error message. The expand button should appear.
   OnPartialTranscription("An ant can lift 20 times its own body weight.",
-                         GetCaptionBubbleContext2());
+                         media_1.get());
   EXPECT_TRUE(GetExpandButton()->GetVisible());
   EXPECT_FALSE(GetCollapseButton()->GetVisible());
   EXPECT_EQ(line_height, GetLabel()->GetBoundsInScreen().height());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, AccessibleProperties) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, AccessibleProperties) {
   base::ScopedMockTimeMessageLoopTaskRunner test_task_runner;
   OnPartialTranscription(
       "Sea otters have the densest fur of any mammal at about 1 million "
@@ -1138,7 +1273,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, AccessibleProperties) {
       GetBubble()->GetAccessibleWindowTitle());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, NonAsciiCharacter) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, NonAsciiCharacter) {
   OnPartialTranscription("犬は最高です");
   EXPECT_EQ("犬は最高です", GetLabelText());
 
@@ -1146,7 +1281,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, NonAsciiCharacter) {
   EXPECT_EQ("猫も大丈夫", GetLabelText());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, AccessibleTextSetUp) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, AccessibleTextSetUp) {
   OnPartialTranscription("Capybaras are the world's largest rodents.");
 
   // The label is a readonly document.
@@ -1167,7 +1302,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, AccessibleTextSetUp) {
                 ax::mojom::StringAttribute::kName));
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        AccessibleTextSplitsIntoNodesByLine) {
   // Make a line of 500 characters.
   std::string line(499, 'a');
@@ -1185,7 +1320,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   EXPECT_EQ(line, GetAXLineText()[0]);
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        AccessibleTextClearsWhenBubbleCloses) {
   OnPartialTranscription("Dogs' noses are wet to help them smell.");
   EXPECT_EQ(1u, GetAXLineText().size());
@@ -1194,16 +1329,17 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   EXPECT_EQ(0u, GetAXLineText().size());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        AccessibleTextChangesWhenMediaChanges) {
   CaptionBubbleContext* media_0 = GetCaptionBubbleContext();
+  auto media_1 = CaptionBubbleContextBrowser::Create(
+      browser()->tab_strip_model()->GetActiveWebContents());
 
   OnPartialTranscription("3 dogs survived the Titanic sinking.", media_0);
   EXPECT_EQ(1u, GetAXLineText().size());
   EXPECT_EQ("3 dogs survived the Titanic sinking.", GetAXLineText()[0]);
 
-  OnFinalTranscription("30% of Dalmations are deaf in one ear.",
-                       GetCaptionBubbleContext2());
+  OnFinalTranscription("30% of Dalmations are deaf in one ear.", media_1.get());
   EXPECT_EQ(1u, GetAXLineText().size());
   EXPECT_EQ("30% of Dalmations are deaf in one ear.", GetAXLineText()[0]);
 
@@ -1212,7 +1348,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   EXPECT_EQ("3 dogs survived the Titanic sinking.", GetAXLineText()[0]);
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        AccessibleTextTruncates) {
   // Make a string with 30 lines of 500 characters each.
   std::string text;
@@ -1242,8 +1378,8 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   EXPECT_EQ("a ", GetAXLineText()[8]);
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
-                       AccessibleTextIsSometimesFocusable) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
+                       AccessibleTextIsFocusableInScreenReaderMode) {
   OnPartialTranscription("Capybaras can sleep in water.");
 
   // The label is not normally focusable.
@@ -1259,7 +1395,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
 #endif
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        HasAccessibleWindowTitle) {
   OnPartialTranscription("A turtle's shell is part of its skeleton.");
   EXPECT_FALSE(GetAccessibleWindowTitle().empty());
@@ -1267,22 +1403,19 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
             base::UTF16ToUTF8(GetTitle()->GetText()));
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        BackToTabButtonActivatesTab) {
   OnPartialTranscription("Whale sharks are the world's largest fish.");
-  ASSERT_FALSE(GetBackToTabButton()->GetVisible());
   chrome::AddTabAt(browser(), GURL(), -1, true);
   browser()->tab_strip_model()->ActivateTabAt(1);
   EXPECT_EQ(1, browser()->tab_strip_model()->active_index());
-  ASSERT_TRUE(GetBackToTabButton()->GetVisible());
   ClickButton(GetBackToTabButton());
   EXPECT_EQ(0, browser()->tab_strip_model()->active_index());
-  ASSERT_FALSE(GetBackToTabButton()->GetVisible());
   // TODO(crbug.com/40119836): Test that browser window is active. It works in
   // app but the tests aren't working.
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, LiveTranslateLabel) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, LiveTranslateLabel) {
   int line_height = 18;
 
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kLiveTranslateEnabled,
@@ -1298,6 +1431,9 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, LiveTranslateLabel) {
   ASSERT_FALSE(GetTranslateIconAndText()->GetVisible());
   ASSERT_FALSE(GetTranslateArrowIcon()->GetVisible());
   ASSERT_FALSE(GetTargetLanguageButton()->GetVisible());
+  if (GetParam()) {
+    ASSERT_FALSE(GetScrollLockButton()->GetVisible());
+  }
 
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kLiveTranslateEnabled,
                                                true);
@@ -1306,6 +1442,9 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, LiveTranslateLabel) {
   ASSERT_FALSE(GetTranslateArrowIcon()->GetVisible());
   ASSERT_TRUE(GetTargetLanguageButton()->GetVisible());
   EXPECT_EQ("English", base::UTF16ToUTF8(GetTargetLanguageButton()->GetText()));
+  if (GetParam()) {
+    ASSERT_FALSE(GetScrollLockButton()->GetVisible());
+  }
 
   browser()->profile()->GetPrefs()->SetString(prefs::kLiveCaptionLanguageCode,
                                               "fr");
@@ -1315,6 +1454,9 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, LiveTranslateLabel) {
   ASSERT_TRUE(GetTranslateIconAndText()->GetVisible());
   ASSERT_TRUE(GetTranslateArrowIcon()->GetVisible());
   ASSERT_TRUE(GetTargetLanguageButton()->GetVisible());
+  if (GetParam()) {
+    ASSERT_FALSE(GetScrollLockButton()->GetVisible());
+  }
   EXPECT_EQ("French", base::UTF16ToUTF8(GetSourceLanguageButton()->GetText()));
   EXPECT_EQ("English", base::UTF16ToUTF8(GetTargetLanguageButton()->GetText()));
   EXPECT_EQ(line_height, GetSourceLanguageLabel()->GetLineHeight());
@@ -1335,7 +1477,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, LiveTranslateLabel) {
   ASSERT_TRUE(GetSourceLanguageButton()->GetVisible());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, HeaderView) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, HeaderView) {
   OnPartialTranscription(
       "Stoats are able to change their fur color from brown to white in the "
       "winter.");
@@ -1345,9 +1487,9 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, HeaderView) {
   views::View* left_header_container = GetHeader()->children()[0];
 
   // The left header container should contain the translate
-  // header{{icon, text}, source language button, arrow icon, and
-  // target language button}.
-  EXPECT_EQ(1u, left_header_container->children().size());
+  // header{{icon, text}, source language button, arrow icon,
+  // target language button and scroll/lock button, if scrolling enabled}.
+  EXPECT_EQ(GetParam() ? 2u : 1u, left_header_container->children().size());
   views::View* translate_header_container =
       left_header_container->children()[0];
   EXPECT_EQ(4u, translate_header_container->children().size());
@@ -1360,11 +1502,14 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, HeaderView) {
   ASSERT_FALSE(GetTranslateIconAndText()->GetVisible());
   ASSERT_FALSE(GetTranslateArrowIcon()->GetVisible());
   ASSERT_FALSE(GetTargetLanguageButton()->GetVisible());
+  if (GetParam()) {
+    ASSERT_FALSE(GetScrollLockButton()->GetVisible());
+  }
   ASSERT_EQ(4, static_cast<views::BoxLayout*>(
                    left_header_container->GetLayoutManager())
                    ->inside_border_insets()
                    .left());
-  EXPECT_EQ(512, left_header_container->GetPreferredSize().width());
+  EXPECT_EQ(488, left_header_container->GetPreferredSize().width());
 
   EXPECT_EQ(u"English", source_language_button->GetText());
 
@@ -1406,7 +1551,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, HeaderView) {
   EXPECT_EQ(u"English (auto-detected)", translate_language_button->GetText());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        NavigateToCaptionSettings) {
   OnPartialTranscription(
       "Whale songs are so low in frequency that they can travel for thousands "
@@ -1432,7 +1577,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   ASSERT_EQ(GetCaptionSettingsUrl(), new_web_contents->GetLastCommittedURL());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, LabelTextDirection) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, LabelTextDirection) {
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kLiveTranslateEnabled,
                                                true);
   browser()->profile()->GetPrefs()->SetString(
@@ -1456,7 +1601,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, LabelTextDirection) {
             GetLabel()->GetHorizontalAlignment());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, TranslateSynonyms) {
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest, TranslateSynonyms) {
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kLiveTranslateEnabled,
                                                true);
   browser()->profile()->GetPrefs()->SetString(
@@ -1469,6 +1614,9 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, TranslateSynonyms) {
       "grams.");
   EXPECT_TRUE(IsWidgetVisible());
   ASSERT_TRUE(GetTargetLanguageButton()->GetVisible());
+  if (GetParam()) {
+    ASSERT_FALSE(GetScrollLockButton()->GetVisible());
+  }
 
   auto* target_language_label = GetTargetLanguageLabel();
   ASSERT_EQ(u"English", target_language_label->GetText());
@@ -1501,7 +1649,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest, TranslateSynonyms) {
 }
 
 #if !BUILDFLAG(IS_CHROMEOS)
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        DownloadProgressLabel) {
   speech::SodaInstaller::GetInstance()->NeverDownloadSodaForTesting();
   GetController();
@@ -1535,7 +1683,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
   ASSERT_FALSE(GetDownloadProgressLabel()->GetVisible());
 }
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        AutomaticLanguageDownload) {
   OnLanguageIdentificationEvent("fr-FR");
   OnSodaProgress(12);
@@ -1547,7 +1695,7 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
 }
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 
-IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
                        SpaceBetweenFinalAndPartial) {
   OnFinalTranscription(
       "Sea otters hold hands while they sleep so they don't drift apart.");
@@ -1562,4 +1710,9 @@ IN_PROC_BROWSER_TEST_F(CaptionBubbleControllerViewsTest,
       "weather.",
       GetLabelText());
 }
+
+INSTANTIATE_TEST_SUITE_P(CaptionBubbleControllerViewsSuite,
+                         CaptionBubbleControllerViewsTest,
+                         ::testing::Bool());
+
 }  // namespace captions

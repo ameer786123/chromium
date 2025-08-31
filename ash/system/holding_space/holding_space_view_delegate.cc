@@ -153,7 +153,7 @@ HoldingSpaceViewDelegate::HoldingSpaceViewDelegate(
 
   // Multi-select is the only selection UI in tablet mode. Outside of tablet
   // mode, selection UI is based on the `selection_size_`.
-  selection_ui_ = display::Screen::GetScreen()->InTabletMode()
+  selection_ui_ = display::Screen::Get()->InTabletMode()
                       ? SelectionUi::kMultiSelect
                       : SelectionUi::kSingleSelect;
 }
@@ -415,7 +415,7 @@ void HoldingSpaceViewDelegate::OnHoldingSpaceTrayChildBubbleMousePressed(
   ClearSelection();
 }
 
-base::RepeatingClosureList::Subscription
+base::CallbackListSubscription
 HoldingSpaceViewDelegate::AddSelectionUiChangedCallback(
     base::RepeatingClosureList::CallbackType callback) {
   return selection_ui_changed_callbacks_.Add(std::move(callback));
@@ -787,7 +787,7 @@ void HoldingSpaceViewDelegate::SetSelectedRange(HoldingSpaceItemView* start,
 
 void HoldingSpaceViewDelegate::UpdateSelectionUi() {
   const SelectionUi selection_ui =
-      display::Screen::GetScreen()->InTabletMode() || selection_size_ > 1u
+      display::Screen::Get()->InTabletMode() || selection_size_ > 1u
           ? SelectionUi::kMultiSelect
           : SelectionUi::kSingleSelect;
 

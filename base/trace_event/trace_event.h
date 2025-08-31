@@ -23,7 +23,7 @@
 #include "base/trace_event/builtin_categories.h"
 #include "base/trace_event/common/trace_event_common.h"  // IWYU pragma: export
 #include "base/trace_event/trace_arguments.h"
-#include "base/trace_event/trace_log.h"
+#include "base/trace_event/trace_event_impl.h"
 #include "base/trace_event/traced_value_support.h"
 #include "base/tracing_buildflags.h"
 
@@ -192,6 +192,17 @@ class TraceScopedTrackableObject {
   const char* name_;
   IDType id_;
 };
+
+template <class TrackType>
+TrackType InitializeTrack(const TrackType& track) {
+  if (perfetto::Tracing::IsInitialized()) {
+    // Because the track may not get any events of its own it must manually
+    // emit the track descriptor. SetTrackDescriptor may crash in unit tests
+    // where tracing isn't initialized.
+    base::TrackEvent::SetTrackDescriptor(track, track.Serialize());
+  }
+  return track;
+}
 
 }  // namespace trace_event
 }  // namespace base

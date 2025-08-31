@@ -82,6 +82,7 @@ public class AdaptiveToolbarButtonControllerTest {
 
     private ButtonDataImpl mButtonData;
     private ObservableSupplierImpl<Profile> mProfileSupplier;
+    private AdaptiveToolbarBehavior mToolbarBehavior;
 
     @Before
     public void setUp() {
@@ -97,11 +98,13 @@ public class AdaptiveToolbarButtonControllerTest {
                         /* iphCommandBuilder= */ null,
                         /* isEnabled= */ true,
                         AdaptiveToolbarButtonVariant.UNKNOWN,
-                        /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false);
+                        /* tooltipTextResId= */ Resources.ID_NULL);
         mConfiguration.screenWidthDp = 420;
         doReturn(mProfile).when(mProfile).getOriginalProfile();
         mProfileSupplier = new ObservableSupplierImpl<>();
+        mToolbarBehavior =
+                AdaptiveToolbarBehavior.getDefaultBehavior(
+                        Robolectric.setupActivity(Activity.class));
     }
 
     @After
@@ -238,7 +241,7 @@ public class AdaptiveToolbarButtonControllerTest {
                         mActivityLifecycleDispatcher,
                         mProfileSupplier,
                         menuCoordinator,
-                        /* toolbarBehavior= */ null,
+                        mToolbarBehavior,
                         mAndroidPermissionDelegate);
         adaptiveToolbarButtonController.addButtonVariant(
                 AdaptiveToolbarButtonVariant.NEW_TAB, mNewTabButtonController);
@@ -290,7 +293,7 @@ public class AdaptiveToolbarButtonControllerTest {
                         mActivityLifecycleDispatcher,
                         mProfileSupplier,
                         menuCoordinator,
-                        /* toolbarBehavior= */ null,
+                        mToolbarBehavior,
                         mAndroidPermissionDelegate);
         adaptiveToolbarButtonController.addButtonVariant(
                 AdaptiveToolbarButtonVariant.PRICE_TRACKING, mPriceTrackingButtonController);
@@ -302,8 +305,6 @@ public class AdaptiveToolbarButtonControllerTest {
         mButtonData.setEnabled(true);
         mButtonData.setButtonSpec(makeButtonSpec(AdaptiveToolbarButtonVariant.PRICE_TRACKING));
         when(mPriceTrackingButtonController.get(any())).thenReturn(mButtonData);
-        View view = mock(View.class);
-        when(view.getContext()).thenReturn(activity);
 
         adaptiveToolbarButtonController.showDynamicAction(
                 AdaptiveToolbarButtonVariant.PRICE_TRACKING);
@@ -451,7 +452,7 @@ public class AdaptiveToolbarButtonControllerTest {
                         mActivityLifecycleDispatcher,
                         mProfileSupplier,
                         mock(AdaptiveButtonActionMenuCoordinator.class),
-                        /* toolbarBehavior= */ null,
+                        mToolbarBehavior,
                         mAndroidPermissionDelegate);
         adaptiveToolbarButtonController.addButtonVariant(
                 AdaptiveToolbarButtonVariant.NEW_TAB, mNewTabButtonController);
@@ -473,7 +474,6 @@ public class AdaptiveToolbarButtonControllerTest {
                 variant,
                 /* actionChipLabelResId= */ 0,
                 /* tooltipTextResId= */ Resources.ID_NULL,
-                /* showBackgroundHighlight= */ false,
                 /* hasErrorBadge= */ false);
     }
 }

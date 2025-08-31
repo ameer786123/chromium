@@ -25,6 +25,7 @@
 #include "third_party/blink/renderer/core/css/parser/css_tokenizer.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -153,10 +154,11 @@ CSSNumericValue* CalcToNumericValue(const CSSMathExpressionNode& root) {
     return CSSMathSum::Create(std::move(values));
   }
 
-  // TODO(crbug.com/1376521): Implement Typed OM API for `anchor()`, and turn
-  // the CHECK below back into a DCHECK.
-
-  CHECK(root.IsOperation());
+  // TODO(crbug.com/40243221): Implement Typed OM API for `anchor()` and
+  // `sibling-index()`, and turn that if below into a DCHECK.
+  if (!root.IsOperation()) {
+    return nullptr;
+  }
 
   CSSNumericValueVector values;
 
@@ -173,11 +175,15 @@ CSSNumericValue* CalcToNumericValue(const CSSMathExpressionNode& root) {
     if (node.OperatorType() == CSSMathOperator::kMax) {
       return CSSMathMax::Create(std::move(values));
     }
-    DCHECK_EQ(CSSMathOperator::kClamp, node.OperatorType());
-    auto& min = values[0];
-    auto& val = values[1];
-    auto& max = values[2];
-    return CSSMathClamp::Create(std::move(min), std::move(val), std::move(max));
+    if (node.OperatorType() == CSSMathOperator::kClamp) {
+      auto& min = values[0];
+      auto& val = values[1];
+      auto& max = values[2];
+      return CSSMathClamp::Create(std::move(min), std::move(val),
+                                  std::move(max));
+    }
+    // Other CSS math functions are not yet implemented.
+    return nullptr;
   }
 
   DCHECK_EQ(To<CSSMathExpressionOperation>(root).GetOperands().size(), 2u);
@@ -212,6 +218,9 @@ CSSNumericValue* CalcToNumericValue(const CSSMathExpressionNode& root) {
     DCHECK(right_node);
 
     auto* const value = CalcToNumericValue(*right_node);
+    if (!value) {
+      return nullptr;
+    }
 
     // If the current node is a '-' or '/', it's really just a '+' or '*' with
     // the right child negated or inverted, respectively.
@@ -225,7 +234,7 @@ CSSNumericValue* CalcToNumericValue(const CSSMathExpressionNode& root) {
 
   // Our algorithm collects the children in reverse order, so we have to reverse
   // the values.
-  std::reverse(values.begin(), values.end());
+  std::ranges::reverse(values);
   CSSMathOperator operator_type =
       To<CSSMathExpressionOperation>(root).OperatorType();
   if (operator_type == CSSMathOperator::kAdd ||
@@ -309,9 +318,12 @@ CSSNumericValue* CSSNumericValue::parse(
             CSSMathExpressionNode::ParseMathFunction(
                 CSSValueID::kCalc, stream,
                 *MakeGarbageCollected<CSSParserContext>(*execution_context),
-                Flags({AllowPercent}), kCSSAnchorQueryTypesNone);
-        if (expression) {
-          return CalcToNumericValue(*expression);
+                Flags({AllowPercent}), kCSSAnchorQueryTypesAll);
+        if (!expression) {
+          break;
+        }
+        if (CSSNumericValue* numeric_value = CalcToNumericValue(*expression)) {
+          return numeric_value;
         }
       }
       break;
@@ -376,7 +388,7 @@ CSSUnitValue* CSSNumericValue::to(const String& unit_string,
 
   CSSUnitValue* result = to(target_unit);
   if (!result) {
-    exception_state.ThrowTypeError("Cannot convert to " + unit_string);
+    exception_state.ThrowTypeError(StrCat({"Cannot convert to ", unit_string}));
     return nullptr;
   }
 
@@ -424,8 +436,8 @@ CSSMathSum* CSSNumericValue::toSum(const Vector<String>& unit_strings,
 
   if (unit_strings.size() == 0) {
     std::sort(values.begin(), values.end(), [](const auto& a, const auto& b) {
-      return WTF::CodeUnitCompareLessThan(To<CSSUnitValue>(a.Get())->unit(),
-                                          To<CSSUnitValue>(b.Get())->unit());
+      return CodeUnitCompareLessThan(To<CSSUnitValue>(a.Get())->unit(),
+                                     To<CSSUnitValue>(b.Get())->unit());
     });
 
     // We got 'values' from a sum value, so it must be a valid CSSMathSum.

@@ -10,6 +10,7 @@
 #import "components/enterprise/browser/controller/browser_dm_token_storage.h"
 #import "components/enterprise/browser/controller/chrome_browser_cloud_management_controller.h"
 #import "components/enterprise/browser/identifiers/profile_id_service.h"
+#import "components/enterprise/connectors/core/content_area_user_provider.h"
 #import "components/policy/core/common/cloud/affiliation.h"
 #import "components/policy/core/common/cloud/cloud_policy_client.h"
 #import "components/policy/core/common/cloud/cloud_policy_constants.h"
@@ -98,6 +99,12 @@ IOSRealtimeReportingClient::InitProfileReportingClient(
   return {GetProfilePolicyClientDescription(), client};
 }
 
+std::string IOSRealtimeReportingClient::GetContentAreaAccountEmail(
+    const GURL& url) {
+  return enterprise_connectors::GetActiveContentAreaUser(identity_manager_,
+                                                         url);
+}
+
 std::optional<ReportingSettings>
 IOSRealtimeReportingClient::GetReportingSettings() {
   auto* service = ConnectorsServiceFactory::GetForProfile(profile_);
@@ -147,39 +154,33 @@ std::string IOSRealtimeReportingClient::GetBrowserClientId() {
 }
 
 bool IOSRealtimeReportingClient::ShouldIncludeDeviceInfo(bool per_profile) {
-  if (!per_profile) {
-    return true;
-  }
-
-  // An unmanaged browser shouldn't share its device info for privacy reasons.
-  if (!policy::ChromeBrowserCloudManagementController::IsEnabled() ||
-      !policy::BrowserDMTokenStorage::Get()->RetrieveDMToken().is_valid()) {
-    return false;
-  }
-
-  // A managed device can share its info with the profile if they are
-  // affiliated.
-  return policy::IsAffiliated(GetUserAffiliationIds(profile_),
-                              GetApplicationContext()
-                                  ->GetBrowserPolicyConnector()
-                                  ->GetDeviceAffiliationIds());
+  return IncludeDeviceInfo(profile_, per_profile);
 }
 
 void IOSRealtimeReportingClient::UploadCallbackDeprecated(
     base::Value::Dict event_wrapper,
     bool per_profile,
     policy::CloudPolicyClient* client,
-    EnterpriseReportingEventType eventType,
+    EnterpriseReportingEventType event_type,
+    base::TimeTicks upload_started_at,
     policy::CloudPolicyClient::Result upload_result) {
   // TODO(crbug.com/256553070): Do not crash if the client is unregistered.
   CHECK(!upload_result.IsClientNotRegisteredError());
 
   if (upload_result.IsSuccess()) {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadSuccess",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetSuccessfulUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
   } else {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadFailure",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetFailedUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
   }
 }
 
@@ -187,14 +188,23 @@ void IOSRealtimeReportingClient::UploadCallback(
     ::chrome::cros::reporting::proto::UploadEventsRequest request,
     bool per_profile,
     policy::CloudPolicyClient* client,
-    EnterpriseReportingEventType eventType,
+    EnterpriseReportingEventType event_type,
+    base::TimeTicks upload_started_at,
     policy::CloudPolicyClient::Result upload_result) {
   if (upload_result.IsSuccess()) {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadSuccess",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetSuccessfulUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
   } else {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadFailure",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetFailedUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
   }
 }
 

@@ -189,10 +189,6 @@ class PasswordGenerationFrameHelperTest : public testing::Test {
         new TestingPrefServiceSimple());
     prefs->registry()->RegisterBooleanPref(prefs::kCredentialsEnableService,
                                            true);
-#if BUILDFLAG(IS_ANDROID)
-    prefs->registry()->RegisterIntegerPref(
-        password_manager::prefs::kPasswordsUseUPMLocalAndSeparateStores, 0);
-#endif
     client_ = std::make_unique<MockPasswordManagerClient>(std::move(prefs));
   }
 
@@ -245,19 +241,6 @@ TEST_F(PasswordGenerationFrameHelperTest, IsGenerationEnabled) {
       .WillRepeatedly(testing::Return(true));
   EXPECT_FALSE(IsGenerationEnabled());
 }
-
-#if BUILDFLAG(IS_ANDROID)
-TEST_F(PasswordGenerationFrameHelperTest,
-       GenerationDisabledDueToOutdatedGMSCore) {
-  EXPECT_CALL(*client_->mock_store(), IsAbleToSavePasswords())
-      .WillOnce(testing::Return(true));
-  EXPECT_CALL(*client_, IsSavingAndFillingEnabled(_))
-      .WillRepeatedly(testing::Return(true));
-  EXPECT_CALL(*client_->GetPasswordFeatureManager(), ShouldUpdateGmsCore())
-      .WillRepeatedly(testing::Return(false));
-  EXPECT_FALSE(IsGenerationEnabled());
-}
-#endif
 
 // Verify that password requirements received from the autofill server are
 // stored and that domain-wide password requirements are fetched as well.

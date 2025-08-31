@@ -17,6 +17,7 @@
 #import "components/signin/public/base/signin_metrics.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
 #import "components/signin/public/identity_manager/objc/identity_manager_observer_bridge.h"
+#import "components/signin/public/identity_manager/tribool.h"
 #import "components/sync/service/sync_user_settings.h"
 #import "ios/chrome/browser/authentication/ui_bundled/account_settings_presenter.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_configurator.h"
@@ -107,7 +108,6 @@ bool IsSupportedAccessPoint(signin_metrics::AccessPoint access_point) {
     case signin_metrics::AccessPoint::kAccountConsistencyService:
     case signin_metrics::AccessPoint::kSearchCompanion:
     case signin_metrics::AccessPoint::kSetUpList:
-    case signin_metrics::AccessPoint::kPasswordMigrationWarningAndroid:
     case signin_metrics::AccessPoint::kSaveToDriveIos:
     case signin_metrics::AccessPoint::kSaveToPhotosIos:
     case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
@@ -138,6 +138,16 @@ bool IsSupportedAccessPoint(signin_metrics::AccessPoint access_point) {
     case signin_metrics::AccessPoint::
         kHistorySyncOptinExpansionPillOnInactivity:
     case signin_metrics::AccessPoint::kHistorySyncEducationalTip:
+    case signin_metrics::AccessPoint::kManagedProfileAutoSigninIos:
+    case signin_metrics::AccessPoint::kNonModalSigninPasswordPromo:
+    case signin_metrics::AccessPoint::kNonModalSigninBookmarkPromo:
+    case signin_metrics::AccessPoint::kUserManagerWithPrefilledEmail:
+    case signin_metrics::AccessPoint::kEnterpriseManagementDisclaimerAtStartup:
+    case signin_metrics::AccessPoint::
+        kEnterpriseManagementDisclaimerAfterBrowserFocus:
+    case signin_metrics::AccessPoint::
+        kEnterpriseManagementDisclaimerAfterSignin:
+    case signin_metrics::AccessPoint::kNtpFeaturePromo:
       return false;
   }
 }
@@ -205,7 +215,6 @@ void RecordImpressionsTilSigninButtonsHistogramForAccessPoint(
     case signin_metrics::AccessPoint::kAccountConsistencyService:
     case signin_metrics::AccessPoint::kSearchCompanion:
     case signin_metrics::AccessPoint::kSetUpList:
-    case signin_metrics::AccessPoint::kPasswordMigrationWarningAndroid:
     case signin_metrics::AccessPoint::kSaveToDriveIos:
     case signin_metrics::AccessPoint::kSaveToPhotosIos:
     case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
@@ -236,6 +245,16 @@ void RecordImpressionsTilSigninButtonsHistogramForAccessPoint(
     case signin_metrics::AccessPoint::
         kHistorySyncOptinExpansionPillOnInactivity:
     case signin_metrics::AccessPoint::kHistorySyncEducationalTip:
+    case signin_metrics::AccessPoint::kManagedProfileAutoSigninIos:
+    case signin_metrics::AccessPoint::kNonModalSigninPasswordPromo:
+    case signin_metrics::AccessPoint::kNonModalSigninBookmarkPromo:
+    case signin_metrics::AccessPoint::kUserManagerWithPrefilledEmail:
+    case signin_metrics::AccessPoint::kEnterpriseManagementDisclaimerAtStartup:
+    case signin_metrics::AccessPoint::
+        kEnterpriseManagementDisclaimerAfterBrowserFocus:
+    case signin_metrics::AccessPoint::
+        kEnterpriseManagementDisclaimerAfterSignin:
+    case signin_metrics::AccessPoint::kNtpFeaturePromo:
       NOTREACHED() << "Unexpected value for access point "
                    << static_cast<int>(access_point);
   }
@@ -304,7 +323,6 @@ void RecordImpressionsTilXButtonHistogramForAccessPoint(
     case signin_metrics::AccessPoint::kAccountConsistencyService:
     case signin_metrics::AccessPoint::kSearchCompanion:
     case signin_metrics::AccessPoint::kSetUpList:
-    case signin_metrics::AccessPoint::kPasswordMigrationWarningAndroid:
     case signin_metrics::AccessPoint::kSaveToDriveIos:
     case signin_metrics::AccessPoint::kSaveToPhotosIos:
     case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
@@ -335,6 +353,16 @@ void RecordImpressionsTilXButtonHistogramForAccessPoint(
     case signin_metrics::AccessPoint::
         kHistorySyncOptinExpansionPillOnInactivity:
     case signin_metrics::AccessPoint::kHistorySyncEducationalTip:
+    case signin_metrics::AccessPoint::kManagedProfileAutoSigninIos:
+    case signin_metrics::AccessPoint::kNonModalSigninPasswordPromo:
+    case signin_metrics::AccessPoint::kNonModalSigninBookmarkPromo:
+    case signin_metrics::AccessPoint::kUserManagerWithPrefilledEmail:
+    case signin_metrics::AccessPoint::kEnterpriseManagementDisclaimerAtStartup:
+    case signin_metrics::AccessPoint::
+        kEnterpriseManagementDisclaimerAfterBrowserFocus:
+    case signin_metrics::AccessPoint::
+        kEnterpriseManagementDisclaimerAfterSignin:
+    case signin_metrics::AccessPoint::kNtpFeaturePromo:
       NOTREACHED() << "Unexpected value for access point "
                    << static_cast<int>(access_point);
   }
@@ -392,7 +420,6 @@ const char* DisplayedCountPreferenceKey(
     case signin_metrics::AccessPoint::kAccountConsistencyService:
     case signin_metrics::AccessPoint::kSearchCompanion:
     case signin_metrics::AccessPoint::kSetUpList:
-    case signin_metrics::AccessPoint::kPasswordMigrationWarningAndroid:
     case signin_metrics::AccessPoint::kSaveToDriveIos:
     case signin_metrics::AccessPoint::kSaveToPhotosIos:
     case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
@@ -423,6 +450,16 @@ const char* DisplayedCountPreferenceKey(
     case signin_metrics::AccessPoint::
         kHistorySyncOptinExpansionPillOnInactivity:
     case signin_metrics::AccessPoint::kHistorySyncEducationalTip:
+    case signin_metrics::AccessPoint::kManagedProfileAutoSigninIos:
+    case signin_metrics::AccessPoint::kNonModalSigninPasswordPromo:
+    case signin_metrics::AccessPoint::kNonModalSigninBookmarkPromo:
+    case signin_metrics::AccessPoint::kUserManagerWithPrefilledEmail:
+    case signin_metrics::AccessPoint::kEnterpriseManagementDisclaimerAtStartup:
+    case signin_metrics::AccessPoint::
+        kEnterpriseManagementDisclaimerAfterBrowserFocus:
+    case signin_metrics::AccessPoint::
+        kEnterpriseManagementDisclaimerAfterSignin:
+    case signin_metrics::AccessPoint::kNtpFeaturePromo:
       return nullptr;
   }
 }
@@ -479,7 +516,6 @@ const char* AlreadySeenSigninViewPreferenceKey(
     case signin_metrics::AccessPoint::kAccountConsistencyService:
     case signin_metrics::AccessPoint::kSearchCompanion:
     case signin_metrics::AccessPoint::kSetUpList:
-    case signin_metrics::AccessPoint::kPasswordMigrationWarningAndroid:
     case signin_metrics::AccessPoint::kSaveToDriveIos:
     case signin_metrics::AccessPoint::kSaveToPhotosIos:
     case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
@@ -510,6 +546,16 @@ const char* AlreadySeenSigninViewPreferenceKey(
     case signin_metrics::AccessPoint::
         kHistorySyncOptinExpansionPillOnInactivity:
     case signin_metrics::AccessPoint::kHistorySyncEducationalTip:
+    case signin_metrics::AccessPoint::kManagedProfileAutoSigninIos:
+    case signin_metrics::AccessPoint::kNonModalSigninPasswordPromo:
+    case signin_metrics::AccessPoint::kNonModalSigninBookmarkPromo:
+    case signin_metrics::AccessPoint::kUserManagerWithPrefilledEmail:
+    case signin_metrics::AccessPoint::kEnterpriseManagementDisclaimerAtStartup:
+    case signin_metrics::AccessPoint::
+        kEnterpriseManagementDisclaimerAfterBrowserFocus:
+    case signin_metrics::AccessPoint::
+        kEnterpriseManagementDisclaimerAfterSignin:
+    case signin_metrics::AccessPoint::kNtpFeaturePromo:
       return nullptr;
   }
 }
@@ -563,14 +609,9 @@ id<SystemIdentity> GetDisplayedIdentity(
 // Redefined to be readwrite. See documentation in the header file.
 @property(nonatomic, strong, readwrite) id<SystemIdentity> displayedIdentity;
 
-// YES if the sign-in flow is in progress.
-@property(nonatomic, assign, readwrite) BOOL signinInProgress;
 // YES if the initial sync for a specific data type is in progress. The data
 // type is based on `dataTypeToWaitForInitialSync`.
 @property(nonatomic, assign, readwrite) BOOL initialSyncInProgress;
-
-// Presenter which can show signin UI.
-@property(nonatomic, weak, readonly) id<SigninPresenter> signinPresenter;
 
 // Presenter which can show the signed-in account settings UI.
 @property(nonatomic, weak, readonly) id<AccountSettingsPresenter>
@@ -609,6 +650,8 @@ id<SystemIdentity> GetDisplayedIdentity(
   // Observer for changes to the sync state.
   std::unique_ptr<SyncObserverBridge> _syncObserverBridge;
   ChangeProfileContinuationProvider _changeProfileContinuationProvider;
+  // Presenter which can show signin UI.
+  __weak id<SigninPromoViewMediatorDelegate> _delegate;
 }
 
 + (void)registerProfilePrefs:(user_prefs::PrefRegistrySyncable*)registry {
@@ -638,17 +681,9 @@ id<SystemIdentity> GetDisplayedIdentity(
                                   (AuthenticationService*)authenticationService
                                         prefService:(PrefService*)prefService {
   // Checks if user can't sign in.
-  switch (authenticationService->GetServiceStatus()) {
-    case AuthenticationService::ServiceStatus::SigninForcedByPolicy:
-    case AuthenticationService::ServiceStatus::SigninAllowed:
-      // The user is allowed to sign-in, so the sign-in/sync promo can be
-      // displayed.
-      break;
-    case AuthenticationService::ServiceStatus::SigninDisabledByUser:
-    case AuthenticationService::ServiceStatus::SigninDisabledByPolicy:
-    case AuthenticationService::ServiceStatus::SigninDisabledByInternal:
-      // The user is not allowed to sign-in. The promo cannot be displayed.
-      return NO;
+  if (!authenticationService->SigninEnabled()) {
+    // The user is not allowed to sign-in. The promo cannot be displayed.
+    return NO;
   }
 
   // Always show the feed signin promo if the experimental setting is enabled.
@@ -700,7 +735,8 @@ id<SystemIdentity> GetDisplayedIdentity(
                           prefService:(PrefService*)prefService
                           syncService:(syncer::SyncService*)syncService
                           accessPoint:(signin_metrics::AccessPoint)accessPoint
-                      signinPresenter:(id<SigninPresenter>)signinPresenter
+                             delegate:
+                                 (id<SigninPromoViewMediatorDelegate>)delegate
              accountSettingsPresenter:
                  (id<AccountSettingsPresenter>)accountSettingsPresenter
     changeProfileContinuationProvider:(const ChangeProfileContinuationProvider&)
@@ -721,7 +757,7 @@ id<SystemIdentity> GetDisplayedIdentity(
     _signinPromoViewState = SigninPromoViewState::kNeverVisible;
     _signinPromoAction = SigninPromoAction::kInstantSignin;
     _dataTypeToWaitForInitialSync = syncer::DataType::UNSPECIFIED;
-    _signinPresenter = signinPresenter;
+    _delegate = delegate;
     _accountSettingsPresenter = accountSettingsPresenter;
     _identityManagerObserver =
         std::make_unique<signin::IdentityManagerObserverBridge>(
@@ -884,6 +920,8 @@ id<SystemIdentity> GetDisplayedIdentity(
 }
 
 - (void)disconnect {
+  // It is possible to interrupt sign-in in progress even if the UI is blocked.
+  // This can happen if the user opens an external URL during sign-in.
   [self signinPromoViewIsRemoved];
   self.consumer = nil;
   _accountManagerService = nullptr;
@@ -894,6 +932,26 @@ id<SystemIdentity> GetDisplayedIdentity(
   _syncObserverBridge.reset();
 }
 
+// Finishes the sign-in process.
+- (void)signinDidCompleteWithResult:(SigninCoordinatorResult)result {
+  if (self.signinPromoViewState == SigninPromoViewState::kInvalid) {
+    // The mediator owner can remove the view before the sign-in is done.
+    return;
+  }
+  // We can turn on `self.initialSyncInProgress`, if the sign-in is successful.
+  // We can't call now GetTypesWithPendingDownloadForInitialSync() related to
+  // a post task issue.
+  self.initialSyncInProgress = (result == SigninCoordinatorResultSuccess) &&
+                               [self shouldWaitForInitialSync];
+  CHECK_EQ(SigninPromoViewState::kUsedAtLeastOnce, self.signinPromoViewState,
+           base::NotFatalUntil::M144)
+      << base::SysNSStringToUTF8([self description]);
+  CHECK_NE(self.signinInProgress, signin::Tribool::kFalse,
+           base::NotFatalUntil::M144)
+      << base::SysNSStringToUTF8([self description]);
+  self.signinInProgress = signin::Tribool::kFalse;
+}
+
 #pragma mark - Public properties
 
 - (BOOL)isInvalidClosedOrNeverVisible {
@@ -902,7 +960,11 @@ id<SystemIdentity> GetDisplayedIdentity(
 }
 
 - (BOOL)showSpinner {
-  return self.signinInProgress || self.initialSyncInProgress;
+  // In the unknown case, the sign-in is very probably in progress.
+  // It’s quite rare that the sign-in’s view disappear silently. So it seems
+  // safe to show the spinner even if the screen is not otherwise frozen.
+  return (self.signinInProgress != signin::Tribool::kFalse) ||
+         self.initialSyncInProgress;
 }
 
 #pragma mark - Private properties
@@ -926,7 +988,7 @@ id<SystemIdentity> GetDisplayedIdentity(
 
 // Updates `_signinInProgress` value, and sends a notification the consumer
 // to update the sign-in promo, so the progress indicator can be displayed.
-- (void)setSigninInProgress:(BOOL)signinInProgress {
+- (void)setSigninInProgress:(signin::Tribool)signinInProgress {
   if (_signinInProgress == signinInProgress) {
     return;
   }
@@ -995,50 +1057,36 @@ id<SystemIdentity> GetDisplayedIdentity(
                                                            displayedCount);
 }
 
-// Finishes the sign-in process.
-- (void)signinCallbackWithResult:(SigninCoordinatorResult)result {
-  if (self.signinPromoViewState == SigninPromoViewState::kInvalid) {
-    // The mediator owner can remove the view before the sign-in is done.
-    return;
-  }
-  // We can turn on `self.initialSyncInProgress`, if the sign-in is successful.
-  // We can't call now GetTypesWithPendingDownloadForInitialSync() related to
-  // a post task issue.
-  self.initialSyncInProgress = (result == SigninCoordinatorResultSuccess) &&
-                               [self shouldWaitForInitialSync];
-  DCHECK_EQ(SigninPromoViewState::kUsedAtLeastOnce, self.signinPromoViewState)
-      << base::SysNSStringToUTF8([self description]);
-  DCHECK(self.signinInProgress) << base::SysNSStringToUTF8([self description]);
-  self.signinInProgress = NO;
-}
-
 // Starts sign-in process with the Chrome identity from `identity`.
 - (void)showSigninWithIdentity:(id<SystemIdentity>)identity
                      operation:(AuthenticationOperation)operation
                    promoAction:(signin_metrics::PromoAction)promoAction {
   self.signinPromoViewState = SigninPromoViewState::kUsedAtLeastOnce;
-  self.signinInProgress = YES;
-  __weak SigninPromoViewMediator* weakSelf = self;
+  if (@available(iOS 26, *)) {
+    // Once iOS 26 is the minimal supported version, signinInProgress can’t be
+    // kUnknown anymore, and thus can become a Boolean instead of a tribool.
+    self.signinInProgress = signin::Tribool::kTrue;
+  } else {
+    if (operation != AuthenticationOperation::kInstantSignin) {
+      self.signinInProgress = signin::Tribool::kTrue;
+    } else {
+      // During the add account, the sign-in view may disappear silently until
+      // iOS 18. So we can’t be certain that sign in is in progress.
+      self.signinInProgress = signin::Tribool::kUnknown;
+    }
+  }
   // This mediator might be removed before the sign-in callback is invoked.
   // (if the owner receive primary account notification).
   // To make sure -[<SigninPromoViewConsumer> signinDidFinish], we have to save
   // in a variable and not get it from weakSelf (that might not exist anymore).
-  __weak id<SigninPromoViewConsumer> weakConsumer = self.consumer;
-  SigninCoordinatorCompletionCallback completion =
-      ^(SigninCoordinatorResult result, id<SystemIdentity> completionIdentity) {
-        [weakSelf signinCallbackWithResult:result];
-        if ([weakConsumer respondsToSelector:@selector(signinDidFinish)]) {
-          [weakConsumer signinDidFinish];
-        }
-      };
   ShowSigninCommand* command = [[ShowSigninCommand alloc]
                       initWithOperation:operation
                                identity:identity
                             accessPoint:self.accessPoint
                             promoAction:promoAction
-                             completion:completion
+                             completion:nil
       changeProfileContinuationProvider:_changeProfileContinuationProvider];
-  [self.signinPresenter showSignin:command];
+  [_delegate showSignin:self command:command];
 }
 
 // Shows account settings.

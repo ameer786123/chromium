@@ -18,6 +18,8 @@
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/payments/test/mock_iban_manager.h"
 #include "components/autofill/core/browser/payments/test/mock_mandatory_reauth_manager.h"
+#include "components/autofill/core/browser/payments/test/mock_multiple_request_payments_network_interface.h"
+#include "components/autofill/core/browser/payments/test/mock_save_and_fill_manager.h"
 #include "components/autofill/core/browser/payments/test/test_credit_card_risk_based_authenticator.h"
 #include "components/autofill/core/browser/payments/test_payments_network_interface.h"
 #include "components/autofill/core/browser/single_field_fillers/payments/mock_merchant_promo_code_manager.h"
@@ -43,6 +45,8 @@ class VirtualCardEnrollmentManager;
 
 namespace payments {
 
+class BnplStrategy;
+class BnplUiDelegate;
 class PaymentsWindowManager;
 
 // This class is for easier writing of tests. It is owned by TestAutofillClient.
@@ -79,6 +83,8 @@ class TestPaymentsAutofillClient : public PaymentsAutofillClient {
           callback) override;
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
   PaymentsNetworkInterface* GetPaymentsNetworkInterface() override;
+  MockMultipleRequestPaymentsNetworkInterface*
+  GetMultipleRequestPaymentsNetworkInterface() override;
   void ShowAutofillProgressDialog(
       AutofillProgressDialogType autofill_progress_dialog_type,
       base::OnceClosure cancel_callback) override;
@@ -87,6 +93,7 @@ class TestPaymentsAutofillClient : public PaymentsAutofillClient {
       base::OnceClosure no_user_perceived_authentication_callback) override;
   void ShowAutofillErrorDialog(AutofillErrorDialogContext context) override;
   void ShowCardUnmaskOtpInputDialog(
+      CreditCard::RecordType card_type,
       const CardUnmaskChallengeOption& challenge_option,
       base::WeakPtr<OtpUnmaskDelegate> delegate) override;
   PaymentsWindowManager* GetPaymentsWindowManager() override;
@@ -100,14 +107,15 @@ class TestPaymentsAutofillClient : public PaymentsAutofillClient {
       base::RepeatingClosure close_mandatory_reauth_callback) override;
   MockIbanManager* GetIbanManager() override;
   MockIbanAccessManager* GetIbanAccessManager() override;
+  MockSaveAndFillManager* GetSaveAndFillManager() override;
   void ShowMandatoryReauthOptInConfirmation() override;
   MockMerchantPromoCodeManager* GetMerchantPromoCodeManager() override;
   AutofillOfferManager* GetAutofillOfferManager() override;
   bool ShowTouchToFillCreditCard(
       base::WeakPtr<TouchToFillDelegate> delegate,
-      base::span<const CreditCard> cards_to_suggest,
       base::span<const Suggestion> suggestions) override;
-  bool IsTabModalPopup() const override;
+  bool IsTabModalPopupDeprecated() const override;
+  bool IsRiskBasedAuthEffectivelyAvailable() const override;
 #if !BUILDFLAG(IS_IOS)
   std::unique_ptr<webauthn::InternalAuthenticator>
   CreateCreditCardInternalAuthenticator(AutofillDriver* driver) override;
@@ -132,6 +140,13 @@ class TestPaymentsAutofillClient : public PaymentsAutofillClient {
   void set_payments_network_interface(
       std::unique_ptr<PaymentsNetworkInterface> payments_network_interface) {
     payments_network_interface_ = std::move(payments_network_interface);
+  }
+
+  void set_multiple_request_payments_network_interface(
+      std::unique_ptr<MockMultipleRequestPaymentsNetworkInterface>
+          multiple_request_payments_network_interface) {
+    multiple_request_payments_network_interface_ =
+        std::move(multiple_request_payments_network_interface);
   }
 
   bool autofill_error_dialog_shown() { return autofill_error_dialog_shown_; }
@@ -199,10 +214,19 @@ class TestPaymentsAutofillClient : public PaymentsAutofillClient {
   void SetUpDeviceBiometricAuthenticatorSuccessOnAutomotive();
 #endif
 
+  BnplStrategy* GetBnplStrategy() override;
+
+  BnplUiDelegate* GetBnplUiDelegate() override;
+
+  void set_bnpl_ui_delegate(std::unique_ptr<BnplUiDelegate> bnpl_ui_delegate);
+
  private:
   const raw_ref<AutofillClient> client_;
 
   std::unique_ptr<PaymentsNetworkInterface> payments_network_interface_;
+
+  std::unique_ptr<MockMultipleRequestPaymentsNetworkInterface>
+      multiple_request_payments_network_interface_;
 
   bool autofill_progress_dialog_shown_ = false;
 
@@ -265,6 +289,8 @@ class TestPaymentsAutofillClient : public PaymentsAutofillClient {
 
   std::unique_ptr<MockIbanAccessManager> mock_iban_access_manager_;
 
+  std::unique_ptr<MockSaveAndFillManager> mock_save_and_fill_manager_;
+
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   // Populated if name fix flow was offered. True if bubble was shown, false
   // otherwise.
@@ -276,6 +302,16 @@ class TestPaymentsAutofillClient : public PaymentsAutofillClient {
   std::unique_ptr<AutofillOfferManager> autofill_offer_manager_;
   std::unique_ptr<MockMandatoryReauthManager>
       mock_payments_mandatory_reauth_manager_;
+
+  // The BnplStrategy used to determine the next step in a BNPL flow depending
+  // on the platform.
+  // Lazily initialized: access only through `GetBnplStrategy()`.
+  std::unique_ptr<BnplStrategy> bnpl_strategy_;
+
+  // The BnplUiDelegate used to handle the UI in a BNPL flow depending on the
+  // platform.
+  // Lazily initialized: access only through `GetBnplUiDelegate()`.
+  std::unique_ptr<BnplUiDelegate> bnpl_ui_delegate_;
 };
 
 }  // namespace payments

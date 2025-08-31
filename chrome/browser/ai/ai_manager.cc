@@ -25,59 +25,83 @@
 #include "base/types/pass_key.h"
 #include "chrome/browser/ai/ai_context_bound_object.h"
 #include "chrome/browser/ai/ai_context_bound_object_set.h"
+#include "chrome/browser/ai/ai_crx_component.h"
 #include "chrome/browser/ai/ai_language_model.h"
+#include "chrome/browser/ai/ai_never_load_component.h"
+#include "chrome/browser/ai/ai_proofreader.h"
 #include "chrome/browser/ai/ai_rewriter.h"
 #include "chrome/browser/ai/ai_summarizer.h"
 #include "chrome/browser/ai/ai_utils.h"
 #include "chrome/browser/ai/ai_writer.h"
 #include "chrome/browser/ai/features.h"
+#include "chrome/browser/component_updater/optimization_guide_on_device_model_installer.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/language/core/common/locale_util.h"
+#include "components/optimization_guide/core/delivery/model_util.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
-#include "components/optimization_guide/core/model_util.h"
 #include "components/optimization_guide/core/optimization_guide_enums.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
+#include "components/policy/core/common/policy_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "content/public/common/page_visibility_state.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote_set.h"
 #include "services/on_device_model/public/cpp/capabilities.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_set.h"
 #include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/mojom/ai/ai_common.mojom.h"
-#include "third_party/blink/public/mojom/ai/ai_language_model.mojom-forward.h"
-#include "third_party/blink/public/mojom/ai/ai_language_model.mojom-shared.h"
 #include "third_party/blink/public/mojom/ai/ai_language_model.mojom.h"
 #include "third_party/blink/public/mojom/ai/ai_manager.mojom.h"
+#include "third_party/blink/public/mojom/ai/ai_proofreader.mojom.h"
 #include "third_party/blink/public/mojom/ai/ai_rewriter.mojom.h"
 #include "third_party/blink/public/mojom/ai/ai_writer.mojom.h"
 #include "third_party/blink/public/mojom/ai/model_download_progress_observer.mojom.h"
 #include "third_party/blink/public/mojom/ai/model_streaming_responder.mojom.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom-data-view.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-shared.h"
 
 namespace {
 
 constexpr float kDefaultMaxTemperature = 2.0f;
+constexpr uint32_t kMinTopK = 1;
+constexpr float kMinTemperature = 0.0f;
 
-// Checks if the model path configured via command line is valid.
-bool IsModelPathValid(const std::string& model_path_str) {
-  std::optional<base::FilePath> model_path =
-      optimization_guide::StringToFilePath(model_path_str);
-  if (!model_path) {
-    return false;
-  }
-  return base::PathExists(*model_path);
-}
+// Base set of supported language codes when features don't have their own
+// set of supported languages.
+constexpr auto kDefaultSupportedBaseLanguages =
+    base::MakeFixedFlatSet<std::string_view>({"en"});
+
+const char kUnsupportedLanguageError[] =
+    "Unsupported %s API languages were specified, and the request was aborted. "
+    "API calls must only specify supported languages to ensure successful "
+    "processing and guarantee output characteristics. Please only specify "
+    "supported language codes: [%s]";
+const char kEmptyOutputLanguageWarning[] =
+    "No output language was specified in a %s API request. An output language "
+    "should be specified to ensure optimal output quality and properly attest "
+    "to output safety. Please specify a supported output language code: [%s]";
 
 blink::mojom::ModelAvailabilityCheckResult
 ConvertOnDeviceModelEligibilityReasonToModelAvailabilityCheckResult(
     optimization_guide::OnDeviceModelEligibilityReason
         on_device_model_eligibility_reason,
     bool is_downloading) {
+  auto availability = optimization_guide::AvailabilityFromEligibilityReason(
+      on_device_model_eligibility_reason);
+  if (availability ==
+      optimization_guide::mojom::ModelUnavailableReason::kPendingAssets) {
+    if (is_downloading) {
+      return blink::mojom::ModelAvailabilityCheckResult::kDownloading;
+    }
+    return blink::mojom::ModelAvailabilityCheckResult::kDownloadable;
+  }
   switch (on_device_model_eligibility_reason) {
     case optimization_guide::OnDeviceModelEligibilityReason::kUnknown:
       return blink::mojom::ModelAvailabilityCheckResult::kUnavailableUnknown;
@@ -143,14 +167,6 @@ ConvertOnDeviceModelEligibilityReasonToModelAvailabilityCheckResult(
   NOTREACHED();
 }
 
-// TODO(crbug.com/394841624): Consider using the model execution config instead
-// of using the hardcoded list.
-// Checks for supported language code options (currently just "en").
-auto is_language_supported = [](const AILanguageCodePtr& language) {
-  return language->code.empty() ||
-         language::ExtractBaseLanguage(language->code) == "en";
-};
-
 template <typename ContextBoundObjectType,
           typename ContextBoundObjectReceiverInterface,
           typename ClientRemoteInterface,
@@ -163,13 +179,14 @@ void OnSessionCreated(
     std::unique_ptr<optimization_guide::OptimizationGuideModelExecutor::Session>
         session) {
   if (!session) {
-    client_remote->OnError(
+    AIUtils::AIUtils::SendClientRemoteError(
+        client_remote,
         blink::mojom::AIManagerCreateClientError::kUnableToCreateSession);
     return;
   }
 
   if (initial_request.has_value()) {
-    session->GetContextSizeInTokens(
+    session->GetExecutionInputSizeInTokens(
         initial_request.value().read(),
         base::BindOnce(
             [](AIContextBoundObjectSet& context_bound_object_set,
@@ -180,16 +197,19 @@ void OnSessionCreated(
                    session,
                std::optional<uint32_t> result) {
               if (!result.has_value()) {
-                client_remote->OnError(
-                    blink::mojom::AIManagerCreateClientError::
-                        kUnableToCalculateTokenSize);
+                AIUtils::SendClientRemoteError(
+                    client_remote, blink::mojom::AIManagerCreateClientError::
+                                       kUnableToCalculateTokenSize);
                 return;
               }
-              if (result.value() >
-                  blink::mojom::kWritingAssistanceMaxInputTokenSize) {
-                client_remote->OnError(
+              uint32_t quota =
+                  blink::mojom::kWritingAssistanceMaxInputTokenSize;
+              if (result.value() > quota) {
+                AIUtils::SendClientRemoteError(
+                    client_remote,
                     blink::mojom::AIManagerCreateClientError::
-                        kInitialInputTooLarge);
+                        kInitialInputTooLarge,
+                    blink::mojom::QuotaErrorInfo::New(result.value(), quota));
                 return;
               }
               mojo::PendingRemote<ContextBoundObjectReceiverInterface>
@@ -218,6 +238,11 @@ void OnSessionCreated(
 template <typename ClientRemoteInterface>
 class CreateWritingAssistanceSessionTask : public CreateOnDeviceSessionTask {
  public:
+  // TODO(crbug.com/394841624): Using the model execution config instead
+  // of using the hardcoded list.
+  // Set of supported (base) languages for writing assistance tasks.
+  static constexpr auto kSupportedBaseLanguages =
+      base::MakeFixedFlatSet<std::string_view>({"en", "ja", "es"});
   using WritingAssistanceSessionTaskCallback = base::OnceCallback<void(
       mojo::Remote<ClientRemoteInterface>,
       std::unique_ptr<
@@ -270,21 +295,24 @@ class CreateWritingAssistanceSessionTask : public CreateOnDeviceSessionTask {
   mojo::Remote<ClientRemoteInterface> client_remote_;
 };
 
-// Get the capabilities specified from the expected input types.
+// Get the capabilities specified from the expected input or output types.
 on_device_model::Capabilities GetExpectedCapabilities(
-    std::vector<blink::mojom::AILanguageModelExpectedInputPtr>& inputs) {
+    const std::optional<std::vector<blink::mojom::AILanguageModelExpectedPtr>>&
+        expected_vector) {
   on_device_model::Capabilities capabilities;
-  for (const auto& input : inputs) {
-    switch (input->type) {
-      case blink::mojom::AILanguageModelPromptType::kText:
-        // Text capabilities are included by default.
-        break;
-      case blink::mojom::AILanguageModelPromptType::kImage:
-        capabilities.Put(on_device_model::CapabilityFlags::kImageInput);
-        break;
-      case blink::mojom::AILanguageModelPromptType::kAudio:
-        capabilities.Put(on_device_model::CapabilityFlags::kAudioInput);
-        break;
+  if (expected_vector) {
+    for (const auto& expected_entry : expected_vector.value()) {
+      switch (expected_entry->type) {
+        case blink::mojom::AILanguageModelPromptType::kText:
+          // Text capabilities are included by default.
+          break;
+        case blink::mojom::AILanguageModelPromptType::kImage:
+          capabilities.Put(on_device_model::CapabilityFlags::kImageInput);
+          break;
+        case blink::mojom::AILanguageModelPromptType::kAudio:
+          capabilities.Put(on_device_model::CapabilityFlags::kAudioInput);
+          break;
+      }
     }
   }
   return capabilities;
@@ -301,34 +329,158 @@ on_device_model::mojom::Priority GetPriorityFromVisibility(
              : on_device_model::mojom::Priority::kBackground;
 }
 
+// A struct for hashing and comparison of language base codes.
+struct BaseCode {
+  size_t operator()(const AILanguageCodePtr& l) const {
+    return absl::DefaultHashContainerHash<std::string_view>()(
+        language::ExtractBaseLanguage(l->code));
+  }
+  bool operator()(const AILanguageCodePtr& a,
+                  const AILanguageCodePtr& b) const {
+    return language::ExtractBaseLanguage(a->code) ==
+           language::ExtractBaseLanguage(b->code);
+  }
+};
+using LanguageSet = absl::flat_hash_set<AILanguageCodePtr, BaseCode, BaseCode>;
+
+void Insert(LanguageSet& set, const AILanguageCodePtr& language) {
+  if (language && !language->code.empty()) {
+    set.insert(language.Clone());
+  }
+}
+
+void Insert(LanguageSet& set, const std::vector<AILanguageCodePtr>& languages) {
+  for (const AILanguageCodePtr& language : languages) {
+    Insert(set, language);
+  }
+}
+
+template <typename OptionsPtr>
+LanguageSet GetLanguages(const OptionsPtr& options) {
+  LanguageSet languages;
+  if (options) {
+    Insert(languages, options->expected_input_languages);
+    Insert(languages, options->expected_context_languages);
+    Insert(languages, options->output_language);
+  }
+  return languages;
+}
+
+template <>
+LanguageSet GetLanguages(
+    const blink::mojom::AIProofreaderCreateOptionsPtr& options) {
+  LanguageSet languages;
+  if (options) {
+    Insert(languages, options->expected_input_languages);
+    Insert(languages, options->correction_explanation_language);
+  }
+  return languages;
+}
+
+template <>
+LanguageSet GetLanguages(
+    const blink::mojom::AILanguageModelCreateOptionsPtr& options) {
+  LanguageSet languages;
+  if (options && options->expected_inputs.has_value()) {
+    for (const auto& expected_entry : options->expected_inputs.value()) {
+      if (expected_entry->languages.has_value()) {
+        for (const auto& language : expected_entry->languages.value()) {
+          Insert(languages, language);
+        }
+      }
+    }
+  }
+  if (options && options->expected_outputs.has_value()) {
+    for (const auto& expected_entry : options->expected_outputs.value()) {
+      if (expected_entry->languages.has_value()) {
+        for (const auto& language : expected_entry->languages.value()) {
+          Insert(languages, language);
+        }
+      }
+    }
+  }
+  return languages;
+}
+
+bool AreLanguagesSupported(const LanguageSet& requested,
+                           const base::flat_set<std::string_view>& supported) {
+  return std::ranges::all_of(requested, [&](const AILanguageCodePtr& lang) {
+    return supported.contains(language::ExtractBaseLanguage(lang->code));
+  });
+}
+
+// Returns whether an output language was specified or initialized here using an
+// inferred language, i.e. when all input languages use the same base language.
+template <typename OptionsWithOutputLanguagePtrType>
+bool CheckAndFixOutputLanguage(OptionsWithOutputLanguagePtrType& options,
+                               const LanguageSet& languages) {
+  if ((!options->output_language || options->output_language->code.empty()) &&
+      languages.size() == 1) {
+    options->output_language = languages.begin()->Clone();
+  }
+  return options->output_language && !options->output_language->code.empty();
+}
+
+template <>
+bool CheckAndFixOutputLanguage(
+    blink::mojom::AIProofreaderCreateOptionsPtr& options,
+    const LanguageSet& languages) {
+  if ((!options->correction_explanation_language ||
+       options->correction_explanation_language->code.empty()) &&
+      languages.size() == 1) {
+    options->correction_explanation_language = languages.begin()->Clone();
+  }
+  return options->correction_explanation_language &&
+         !options->correction_explanation_language->code.empty();
+}
+
+// Returns whether an output language was specified; does not initialize.
+template <>
+bool CheckAndFixOutputLanguage(
+    blink::mojom::AILanguageModelCreateOptionsPtr& options,
+    const LanguageSet& languages) {
+  if (options->expected_outputs.has_value()) {
+    for (const auto& expected_entry : options->expected_outputs.value()) {
+      if (expected_entry->languages.has_value()) {
+        if (std::ranges::any_of(expected_entry->languages.value(),
+                                [](const AILanguageCodePtr& lang) {
+                                  return !lang->code.empty();
+                                })) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
-AIManager::AIManager(content::BrowserContext* browser_context,
-                     content::RenderFrameHost* rfh)
-    : component_observer_(
-          std::make_unique<AIOnDeviceModelComponentObserver>(this)),
+AIManager::AIManager(
+    content::BrowserContext* browser_context,
+    component_updater::ComponentUpdateService* component_update_service,
+    content::RenderFrameHost* rfh)
+    : component_update_service_(*component_update_service),
       context_bound_object_set_(GetPriorityFromVisibility(rfh)),
-      browser_context_(browser_context) {
+      browser_context_(browser_context),
+      rfh_(rfh ? rfh->GetWeakDocumentPtr() : content::WeakDocumentPtr()) {
   if (rfh && rfh->GetRenderWidgetHost()) {
     widget_observer_.Observe(rfh->GetRenderWidgetHost());
+  }
+  auto* service = OptimizationGuideKeyedServiceFactory::GetForProfile(
+      Profile::FromBrowserContext(browser_context_));
+  if (service) {
+    model_broker_client_ = service->CreateModelBrokerClient();
   }
 }
 
 AIManager::~AIManager() = default;
 
-// static
-bool AIManager::IsLanguagesSupported(
-    const std::vector<AILanguageCodePtr>& languages) {
-  return std::ranges::all_of(languages, is_language_supported);
-}
-
-// static
-bool AIManager::IsLanguagesSupported(
-    const std::vector<AILanguageCodePtr>& input,
-    const std::vector<AILanguageCodePtr>& context,
-    const AILanguageCodePtr& output) {
-  return IsLanguagesSupported(input) && IsLanguagesSupported(context) &&
-         is_language_supported(output);
+bool AIManager::IsBuiltInAIAPIsEnabledByPolicy() {
+  PrefService* prefs =
+      Profile::FromBrowserContext(browser_context_)->GetPrefs();
+  return !prefs->HasPrefPath(policy::policy_prefs::kBuiltInAIAPIsEnabled) ||
+         prefs->GetBoolean(policy::policy_prefs::kBuiltInAIAPIsEnabled);
 }
 
 void AIManager::AddReceiver(
@@ -339,89 +491,34 @@ void AIManager::AddReceiver(
 void AIManager::CanCreateLanguageModel(
     blink::mojom::AILanguageModelCreateOptionsPtr options,
     CanCreateLanguageModelCallback callback) {
-  on_device_model::Capabilities capabilities;
-  if (options && options->expected_inputs.has_value()) {
-    capabilities = GetExpectedCapabilities(options->expected_inputs.value());
-    if (!capabilities.empty() &&
-        !base::FeatureList::IsEnabled(
-            blink::features::kAIPromptAPIMultimodalInput)) {
+  if (!IsBuiltInAIAPIsEnabledByPolicy()) {
+    std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                kUnavailableEnterprisePolicyDisabled);
+    return;
+  }
+
+  on_device_model::Capabilities input_capabilities;
+  if (options) {
+    input_capabilities = GetExpectedCapabilities(options->expected_inputs);
+    if (!GetExpectedCapabilities(options->expected_outputs).empty() ||
+        (!input_capabilities.empty() &&
+         !base::FeatureList::IsEnabled(
+             blink::features::kAIPromptAPIMultimodalInput))) {
       std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
                                   kUnavailableModelAdaptationNotAvailable);
       return;
     }
-    for (const auto& expected_input : options->expected_inputs.value()) {
-      if (expected_input->languages.has_value() &&
-          !IsLanguagesSupported(expected_input->languages.value())) {
-        std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
-                                    kUnavailableUnsupportedLanguage);
-        return;
-      }
-    }
+  }
+
+  if (!CheckAndFixLanguages(options, "LanguageModel",
+                            AILanguageModel::GetSupportedLanguageBaseCodes())) {
+    std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                kUnavailableUnsupportedLanguage);
+    return;
   }
 
   CanCreateSession(optimization_guide::ModelBasedCapabilityKey::kPromptApi,
-                   capabilities, std::move(callback));
-}
-
-std::unique_ptr<CreateLanguageModelOnDeviceSessionTask>
-AIManager::CreateLanguageModelInternal(
-    blink::mojom::AILanguageModelSamplingParamsPtr sampling_params,
-    on_device_model::Capabilities capabilities,
-    AIContextBoundObjectSet& context_bound_object_set,
-    base::OnceCallback<void(AILanguageModelOrCreationError)> callback,
-    const std::optional<const AILanguageModel::Context>& context,
-    std::unique_ptr<optimization_guide::OptimizationGuideModelExecutor::Session>
-        override_session) {
-  blink::mojom::AILanguageModelParamsPtr language_model_params =
-      GetLanguageModelParams();
-
-  optimization_guide::SamplingParams resolved_sampling_params;
-  if (sampling_params) {
-    resolved_sampling_params = optimization_guide::SamplingParams{
-        .top_k = std::min(sampling_params->top_k,
-                          language_model_params->max_sampling_params->top_k),
-        .temperature =
-            std::min(sampling_params->temperature,
-                     language_model_params->max_sampling_params->temperature)};
-  } else {
-    resolved_sampling_params = optimization_guide::SamplingParams{
-        .top_k = language_model_params->default_sampling_params->top_k,
-        .temperature =
-            language_model_params->default_sampling_params->temperature};
-  }
-
-  auto task = std::make_unique<CreateLanguageModelOnDeviceSessionTask>(
-      *this, context_bound_object_set, browser_context_,
-      std::move(resolved_sampling_params), capabilities,
-      base::BindOnce(
-          [](base::WeakPtr<content::BrowserContext> browser_context,
-             AIContextBoundObjectSet& context_bound_object_set,
-             const std::optional<const AILanguageModel::Context>& context,
-             AIManager& ai_manager,
-             base::OnceCallback<void(
-                 base::expected<std::unique_ptr<AILanguageModel>,
-                                blink::mojom::AIManagerCreateClientError>)>
-                 callback,
-             std::unique_ptr<
-                 optimization_guide::OptimizationGuideModelExecutor::Session>
-                 session) {
-            if (!session) {
-              std::move(callback).Run(
-                  base::unexpected(blink::mojom::AIManagerCreateClientError::
-                                       kUnableToCalculateTokenSize));
-              return;
-            }
-
-            mojo::PendingRemote<blink::mojom::AILanguageModel> pending_remote;
-            std::move(callback).Run(std::make_unique<AILanguageModel>(
-                std::move(session), browser_context, std::move(pending_remote),
-                context_bound_object_set, ai_manager, context));
-          },
-          browser_context_->GetWeakPtr(), std::ref(context_bound_object_set),
-          context, std::ref(*this), std::move(callback)));
-  task->set_override_session(std::move(override_session));
-  task->Start();
-  return task;
+                   input_capabilities, std::move(callback));
 }
 
 void AIManager::CreateLanguageModel(
@@ -429,109 +526,107 @@ void AIManager::CreateLanguageModel(
         client,
     blink::mojom::AILanguageModelCreateOptionsPtr options) {
   CHECK(options);
-  on_device_model::Capabilities capabilities;
-  if (options->expected_inputs.has_value()) {
-    capabilities = GetExpectedCapabilities(options->expected_inputs.value());
-    if (!capabilities.empty()) {
-      auto* service = OptimizationGuideKeyedServiceFactory::GetForProfile(
-          Profile::FromBrowserContext(browser_context_));
-      if (!base::FeatureList::IsEnabled(
-              blink::features::kAIPromptAPIMultimodalInput) ||
-          !service->GetOnDeviceCapabilities().HasAll(capabilities)) {
-        mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
-            client_remote(std::move(client));
-        client_remote->OnError(
-            blink::mojom::AIManagerCreateClientError::kUnableToCreateSession);
-        return;
-      }
-    }
-    for (const auto& expected_input : options->expected_inputs.value()) {
-      if (expected_input->languages.has_value() &&
-          !IsLanguagesSupported(expected_input->languages.value())) {
-        mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
-            client_remote(std::move(client));
-        client_remote->OnError(
-            blink::mojom::AIManagerCreateClientError::kUnsupportedLanguage);
-        return;
-      }
-    }
+  if (!CheckAndFixLanguages(options, "LanguageModel",
+                            AILanguageModel::GetSupportedLanguageBaseCodes())) {
+    mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
+        client_remote(std::move(client));
+    AIUtils::SendClientRemoteError(
+        client_remote,
+        blink::mojom::AIManagerCreateClientError::kUnsupportedLanguage);
+    return;
   }
 
+  if (!model_broker_client_) {
+    mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
+        client_remote(std::move(client));
+    AIUtils::SendClientRemoteError(
+        client_remote,
+        blink::mojom::AIManagerCreateClientError::kUnableToCreateSession);
+    return;
+  }
+  model_broker_client_
+      ->GetSubscriber(
+          optimization_guide::mojom::ModelBasedCapabilityKey::kPromptApi)
+      .WaitForClient(base::BindOnce(&AIManager::CreateLanguageModelInternal,
+                                    weak_factory_.GetWeakPtr(),
+                                    std::move(client), std::move(options)));
+}
+
+void AIManager::CreateLanguageModelInternal(
+    mojo::PendingRemote<blink::mojom::AIManagerCreateLanguageModelClient>
+        client,
+    blink::mojom::AILanguageModelCreateOptionsPtr options,
+    base::WeakPtr<optimization_guide::ModelClient> model_client) {
+  if (!model_client) {
+    mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
+        client_remote(std::move(client));
+    AIUtils::SendClientRemoteError(
+        client_remote,
+        blink::mojom::AIManagerCreateClientError::kUnableToCreateSession);
+    return;
+  }
+
+  blink::mojom::AILanguageModelParamsPtr language_model_params =
+      GetLanguageModelParams();
   blink::mojom::AILanguageModelSamplingParamsPtr sampling_params =
       std::move(options->sampling_params);
-
-  auto create_language_model_callback = base::BindOnce(
-      [](mojo::PendingRemote<blink::mojom::AIManagerCreateLanguageModelClient>
-             client,
-         AIContextBoundObjectSet& context_bound_object_set,
-         blink::mojom::AILanguageModelCreateOptionsPtr options,
-         AILanguageModelOrCreationError creation_result) {
-        mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
-            client_remote(std::move(client));
-        if (!creation_result.has_value()) {
-          client_remote->OnError(creation_result.error());
-          return;
-        }
-        std::unique_ptr<AILanguageModel> language_model =
-            std::move(creation_result.value());
-        CHECK(language_model);
-
-        const std::optional<std::string>& system_prompt =
-            options->system_prompt;
-        std::vector<blink::mojom::AILanguageModelPromptPtr>& initial_prompts =
-            options->initial_prompts;
-        if (system_prompt.has_value() || !initial_prompts.empty()) {
-          // If the initial prompt is provided, we need to set it and
-          // invoke the callback after this, because the token counting
-          // happens asynchronously.
-          language_model->SetInitialPrompts(
-              system_prompt, std::move(initial_prompts),
-              base::BindOnce(
-                  [](mojo::Remote<
-                         blink::mojom::AIManagerCreateLanguageModelClient>
-                         client_remote,
-                     base::expected<
-                         mojo::PendingRemote<blink::mojom::AILanguageModel>,
-                         blink::mojom::AIManagerCreateClientError> remote,
-                     blink::mojom::AILanguageModelInstanceInfoPtr info) {
-                    if (remote.has_value()) {
-                      client_remote->OnResult(std::move(remote.value()),
-                                              std::move(info));
-                    } else {
-                      client_remote->OnError(remote.error());
-                    }
-                  },
-                  std::move(client_remote)));
-        } else {
-          client_remote->OnResult(
-              language_model->TakePendingRemote(),
-              language_model->GetLanguageModelInstanceInfo());
-        }
-
-        context_bound_object_set.AddContextBoundObject(
-            std::move(language_model));
-      },
-      std::move(client), std::ref(context_bound_object_set_),
-      std::move(options));
-
-  // When creating a new language model, the `context` will not be set since it
-  // should start fresh.
-  auto task = CreateLanguageModelInternal(
-      std::move(sampling_params), capabilities, context_bound_object_set_,
-      std::move(create_language_model_callback));
-  if (task->IsPending()) {
-    // Put `task` to AIContextBoundObjectSet to continue observing the model
-    // availability.
-    context_bound_object_set_.AddContextBoundObject(std::move(task));
+  auto params = on_device_model::mojom::SessionParams::New();
+  if (sampling_params) {
+    params->top_k = std::min(std::max(kMinTopK, sampling_params->top_k),
+                             language_model_params->max_sampling_params->top_k);
+    params->temperature =
+        std::min(std::max(kMinTemperature, sampling_params->temperature),
+                 language_model_params->max_sampling_params->temperature);
+  } else {
+    params->top_k = language_model_params->default_sampling_params->top_k;
+    params->temperature =
+        language_model_params->default_sampling_params->temperature;
   }
+
+  auto* service = OptimizationGuideKeyedServiceFactory::GetForProfile(
+      Profile::FromBrowserContext(browser_context_));
+  params->capabilities = GetExpectedCapabilities(options->expected_inputs);
+  on_device_model::Capabilities output_capabilities =
+      GetExpectedCapabilities(options->expected_outputs);
+  if (!params->capabilities.empty() || !output_capabilities.empty()) {
+    if (!output_capabilities.empty() ||
+        !base::FeatureList::IsEnabled(
+            blink::features::kAIPromptAPIMultimodalInput) ||
+        !service->GetOnDeviceCapabilities().HasAll(params->capabilities)) {
+      mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
+          client_remote(std::move(client));
+      AIUtils::SendClientRemoteError(
+          client_remote,
+          blink::mojom::AIManagerCreateClientError::kUnableToCreateSession);
+      return;
+    }
+  }
+
+  mojo::PendingRemote<on_device_model::mojom::Session> session;
+  model_client->solution().CreateSession(
+      session.InitWithNewPipeAndPassReceiver(), params.Clone());
+
+  auto model = std::make_unique<AILanguageModel>(
+      context_bound_object_set_, std::move(params), std::move(model_client),
+      std::move(session),
+      service->GetOptimizationGuideLogger()
+          ? service->GetOptimizationGuideLogger()->GetWeakPtr()
+          : nullptr);
+  model->Initialize(std::move(options->initial_prompts), std::move(client));
+
+  context_bound_object_set_.AddContextBoundObject(std::move(model));
 }
 
 void AIManager::CanCreateSummarizer(
     blink::mojom::AISummarizerCreateOptionsPtr options,
     CanCreateSummarizerCallback callback) {
-  if (options && !IsLanguagesSupported(options->expected_input_languages,
-                                       options->expected_context_languages,
-                                       options->output_language)) {
+  if (!IsBuiltInAIAPIsEnabledByPolicy()) {
+    std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                kUnavailableEnterprisePolicyDisabled);
+    return;
+  }
+  if (!CheckAndFixLanguages(options, "Summarizer",
+                            AISummarizer::GetSupportedLanguageBaseCodes())) {
     std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
                                 kUnavailableUnsupportedLanguage);
     return;
@@ -543,26 +638,28 @@ void AIManager::CanCreateSummarizer(
 void AIManager::CreateSummarizer(
     mojo::PendingRemote<blink::mojom::AIManagerCreateSummarizerClient> client,
     blink::mojom::AISummarizerCreateOptionsPtr options) {
-  if (options && !IsLanguagesSupported(options->expected_input_languages,
-                                       options->expected_context_languages,
-                                       options->output_language)) {
+  if (!CheckAndFixLanguages(options, "Summarizer",
+                            AISummarizer::GetSupportedLanguageBaseCodes())) {
     mojo::Remote<blink::mojom::AIManagerCreateSummarizerClient> client_remote(
         std::move(client));
-    client_remote->OnError(
+    AIUtils::SendClientRemoteError(
+        client_remote,
         blink::mojom::AIManagerCreateClientError::kUnsupportedLanguage);
     return;
   }
-  // TODO(crbug.com/398888519): For Summarizer, any context is not set as
-  // `input_context_substitutions` in the optimization guide model config,
-  // which makes it unable to calculate the context token size. Passing in
-  // std::nullopt would prevent unnecessary calculate calls to be made. Consider
-  // updating the model config, or use `SessionImpl::GetSizeInTokens()` instead.
+  std::optional<optimization_guide::MultimodalMessage> initial_request;
+  if (options->shared_context.has_value() &&
+      !options->shared_context.value().empty()) {
+    optimization_guide::proto::SummarizeRequest request;
+    request.set_context(options->shared_context.value());
+    initial_request = optimization_guide::MultimodalMessage(request);
+  }
   auto callback = base::BindOnce(
       &OnSessionCreated<AISummarizer, blink::mojom::AISummarizer,
                         blink::mojom::AIManagerCreateSummarizerClient,
                         blink::mojom::AISummarizerCreateOptionsPtr>,
       std::ref(context_bound_object_set_), std::move(options),
-      /*initial_request=*/std::nullopt);
+      std::move(initial_request));
   CreateWritingAssistanceSessionTask<
       blink::mojom::AIManagerCreateSummarizerClient>::
       CreateAndStart(browser_context_,
@@ -571,13 +668,57 @@ void AIManager::CreateSummarizer(
                      std::move(client));
 }
 
+void AIManager::CanCreateProofreader(
+    blink::mojom::AIProofreaderCreateOptionsPtr options,
+    CanCreateProofreaderCallback callback) {
+  // TODO(crbug.com/424673180): Add a warning message when options
+  // `includeCorrectionTypes` and `includeCorrectionExplanations` are set to
+  // true as those features are not yet supported by the API.
+  auto supported =
+      base::MakeFlatSet<std::string_view>(kDefaultSupportedBaseLanguages);
+  if (!CheckAndFixLanguages(options, "Proofreader", supported)) {
+    std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                kUnavailableUnsupportedLanguage);
+    return;
+  }
+  CanCreateSession(optimization_guide::ModelBasedCapabilityKey::kProofreaderApi,
+                   on_device_model::Capabilities(), std::move(callback));
+}
+
+void AIManager::CreateProofreader(
+    mojo::PendingRemote<blink::mojom::AIManagerCreateProofreaderClient> client,
+    blink::mojom::AIProofreaderCreateOptionsPtr options) {
+  auto supported =
+      base::MakeFlatSet<std::string_view>(kDefaultSupportedBaseLanguages);
+  if (!CheckAndFixLanguages(options, "Proofreader", supported)) {
+    mojo::Remote<blink::mojom::AIManagerCreateProofreaderClient> client_remote(
+        std::move(client));
+    AIUtils::SendClientRemoteError(
+        client_remote,
+        blink::mojom::AIManagerCreateClientError::kUnsupportedLanguage);
+    return;
+  }
+  auto callback = base::BindOnce(
+      &OnSessionCreated<AIProofreader, blink::mojom::AIProofreader,
+                        blink::mojom::AIManagerCreateProofreaderClient,
+                        blink::mojom::AIProofreaderCreateOptionsPtr>,
+      std::ref(context_bound_object_set_), std::move(options),
+      /*initial_request=*/std::nullopt);
+  CreateWritingAssistanceSessionTask<
+      blink::mojom::AIManagerCreateProofreaderClient>::
+      CreateAndStart(
+          browser_context_,
+          optimization_guide::ModelBasedCapabilityKey::kProofreaderApi,
+          context_bound_object_set_, std::move(callback), std::move(client));
+}
+
 blink::mojom::AILanguageModelParamsPtr AIManager::GetLanguageModelParams() {
   auto model_info = blink::mojom::AILanguageModelParams::New(
       blink::mojom::AILanguageModelSamplingParams::New(),
       blink::mojom::AILanguageModelSamplingParams::New());
-  model_info->max_sampling_params->top_k = GetLanguageModelMaxTopK();
-  model_info->max_sampling_params->temperature =
-      GetLanguageModelMaxTemperature();
+  model_info->max_sampling_params->top_k =
+      optimization_guide::features::GetOnDeviceModelMaxTopK();
+  model_info->max_sampling_params->temperature = kDefaultMaxTemperature;
 
   auto* service = OptimizationGuideKeyedServiceFactory::GetForProfile(
       Profile::FromBrowserContext(browser_context_));
@@ -620,9 +761,13 @@ void AIManager::GetLanguageModelParams(
 
 void AIManager::CanCreateWriter(blink::mojom::AIWriterCreateOptionsPtr options,
                                 CanCreateWriterCallback callback) {
-  if (options && !IsLanguagesSupported(options->expected_input_languages,
-                                       options->expected_context_languages,
-                                       options->output_language)) {
+  if (!IsBuiltInAIAPIsEnabledByPolicy()) {
+    std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                kUnavailableEnterprisePolicyDisabled);
+    return;
+  }
+  if (!CheckAndFixLanguages(options, "Writer",
+                            AIWriter::GetSupportedLanguageBaseCodes())) {
     std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
                                 kUnavailableUnsupportedLanguage);
     return;
@@ -635,12 +780,12 @@ void AIManager::CanCreateWriter(blink::mojom::AIWriterCreateOptionsPtr options,
 void AIManager::CreateWriter(
     mojo::PendingRemote<blink::mojom::AIManagerCreateWriterClient> client,
     blink::mojom::AIWriterCreateOptionsPtr options) {
-  if (options && !IsLanguagesSupported(options->expected_input_languages,
-                                       options->expected_context_languages,
-                                       options->output_language)) {
+  if (!CheckAndFixLanguages(options, "Writer",
+                            AIWriter::GetSupportedLanguageBaseCodes())) {
     mojo::Remote<blink::mojom::AIManagerCreateWriterClient> client_remote(
         std::move(client));
-    client_remote->OnError(
+    AIUtils::SendClientRemoteError(
+        client_remote,
         blink::mojom::AIManagerCreateClientError::kUnsupportedLanguage);
     return;
   }
@@ -668,9 +813,13 @@ void AIManager::CreateWriter(
 void AIManager::CanCreateRewriter(
     blink::mojom::AIRewriterCreateOptionsPtr options,
     CanCreateRewriterCallback callback) {
-  if (options && !IsLanguagesSupported(options->expected_input_languages,
-                                       options->expected_context_languages,
-                                       options->output_language)) {
+  if (!IsBuiltInAIAPIsEnabledByPolicy()) {
+    std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                kUnavailableEnterprisePolicyDisabled);
+    return;
+  }
+  if (!CheckAndFixLanguages(options, "Rewriter",
+                            AIRewriter::GetSupportedLanguageBaseCodes())) {
     std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
                                 kUnavailableUnsupportedLanguage);
     return;
@@ -683,12 +832,12 @@ void AIManager::CanCreateRewriter(
 void AIManager::CreateRewriter(
     mojo::PendingRemote<blink::mojom::AIManagerCreateRewriterClient> client,
     blink::mojom::AIRewriterCreateOptionsPtr options) {
-  if (options && !IsLanguagesSupported(options->expected_input_languages,
-                                       options->expected_context_languages,
-                                       options->output_language)) {
+  if (!CheckAndFixLanguages(options, "Rewriter",
+                            AIRewriter::GetSupportedLanguageBaseCodes())) {
     mojo::Remote<blink::mojom::AIManagerCreateRewriterClient> client_remote(
         std::move(client));
-    client_remote->OnError(
+    AIUtils::SendClientRemoteError(
+        client_remote,
         blink::mojom::AIManagerCreateClientError::kUnsupportedLanguage);
     return;
   }
@@ -721,11 +870,11 @@ void AIManager::CanCreateSession(
       optimization_guide::switches::GetOnDeviceModelExecutionOverride();
   if (model_path.has_value()) {
     // If the model path is provided, we do this additional check and post a
-    // warning message to dev tools if it's invalid.
+    // warning message to dev tools if it does not exist.
     // This needs to be done in a task runner with `MayBlock` trait.
     base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE, {base::MayBlock()},
-        base::BindOnce(IsModelPathValid, model_path.value()),
+        base::BindOnce(base::PathExists, model_path.value()),
         base::BindOnce(&AIManager::OnModelPathValidationComplete,
                        weak_factory_.GetWeakPtr(), model_path.value()));
   }
@@ -737,20 +886,36 @@ void AIManager::CanCreateSession(
 
   // If the `OptimizationGuideKeyedService` cannot be retrieved, return false.
   if (!service) {
-    std::move(callback).Run(
-        blink::mojom::ModelAvailabilityCheckResult::
-            kUnavailableServiceNotRunning);
+    std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                kUnavailableServiceNotRunning);
     return;
   }
 
+  service->GetOnDeviceModelEligibilityAsync(
+      capability, capabilities,
+      base::BindOnce(&AIManager::FinishCanCreateSession,
+                     weak_factory_.GetWeakPtr(), capability, capabilities,
+                     std::move(callback)));
+}
+
+void AIManager::FinishCanCreateSession(
+    optimization_guide::ModelBasedCapabilityKey capability,
+    on_device_model::Capabilities capabilities,
+    CanCreateLanguageModelCallback callback,
+    optimization_guide::OnDeviceModelEligibilityReason eligibility) {
+  OptimizationGuideKeyedService* service =
+      OptimizationGuideKeyedServiceFactory::GetForProfile(
+          Profile::FromBrowserContext(browser_context_));
+
   // If the `OptimizationGuideKeyedService` cannot create new session, return
   // the reason.
-  auto eligibility = service->GetOnDeviceModelEligibility(capability);
   if (eligibility !=
       optimization_guide::OnDeviceModelEligibilityReason::kSuccess) {
+    bool is_downloading =
+        model_download_progress_manager_.GetNumberOfReporters() >= 1;
     std::move(callback).Run(
         ConvertOnDeviceModelEligibilityReasonToModelAvailabilityCheckResult(
-            eligibility, component_observer_->is_downloading()));
+            eligibility, is_downloading));
     return;
   }
 
@@ -765,107 +930,51 @@ void AIManager::CanCreateSession(
       blink::mojom::ModelAvailabilityCheckResult::kAvailable);
 }
 
-void AIManager::CreateLanguageModelForCloning(
-    base::PassKey<AILanguageModel> pass_key,
-    blink::mojom::AILanguageModelSamplingParamsPtr sampling_params,
-    on_device_model::Capabilities capabilities,
-    AIContextBoundObjectSet& context_bound_object_set,
-    const AILanguageModel::Context& context,
-    mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
-        client_remote,
-    std::unique_ptr<optimization_guide::OptimizationGuideModelExecutor::Session>
-        override_session) {
-  auto create_language_model_callback = base::BindOnce(
-      [](AIContextBoundObjectSet& context_bound_object_set,
-         mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
-             client_remote,
-         AILanguageModelOrCreationError creation_result) {
-        if (!creation_result.has_value()) {
-          client_remote->OnError(creation_result.error());
-          return;
-        }
-        std::unique_ptr<AILanguageModel> language_model =
-            std::move(creation_result.value());
-        CHECK(language_model);
-
-        client_remote->OnResult(language_model->TakePendingRemote(),
-                                language_model->GetLanguageModelInstanceInfo());
-        context_bound_object_set.AddContextBoundObject(
-            std::move(language_model));
-      },
-      std::ref(context_bound_object_set), std::move(client_remote));
-  // When cloning an existing language model, the `context` from the source of
-  // clone should be provided.
-  auto task = CreateLanguageModelInternal(
-      std::move(sampling_params), capabilities, context_bound_object_set,
-      std::move(create_language_model_callback), context,
-      std::move(override_session));
-  // The on-device model must be available before the existing language model
-  // was created, so the `CreateLanguageModelOnDeviceSessionTask` should
-  // complete without waiting for the on-device model availability changes.
-  CHECK(!task->IsPending());
+template <typename OptionsPtrType>
+bool AIManager::CheckAndFixLanguages(
+    OptionsPtrType& options,
+    std::string_view api_name,
+    const base::flat_set<std::string_view>& supported) {
+  LanguageSet languages = GetLanguages(options);
+  if (!AreLanguagesSupported(languages, supported)) {
+    MaybeLogUnsupportedLanguageError(api_name, supported);
+    return false;
+  }
+  if (!options || !CheckAndFixOutputLanguage(options, languages)) {
+    MaybeLogMissingOutputLanguageWarning(api_name, supported);
+  }
+  return true;
 }
 
-void AIManager::OnModelPathValidationComplete(const std::string& model_path,
+void AIManager::OnModelPathValidationComplete(const base::FilePath& model_path,
                                               bool is_valid_path) {
   // TODO(crbug.com/346491542): Remove this when the error page is implemented.
   if (!is_valid_path) {
     VLOG(1) << base::StringPrintf(
         "Unable to create a session because the model path ('%s') is invalid.",
-        model_path.c_str());
+        model_path.AsUTF8Unsafe());
   }
-}
-
-// TODO(crbug.com/367771112): remove these methods after we roll out the model
-// execution config change.
-uint32_t AIManager::GetLanguageModelMaxTopK() {
-  if (base::FeatureList::IsEnabled(
-          features::kAILanguageModelOverrideConfiguration)) {
-    return std::min(
-        optimization_guide::features::GetOnDeviceModelMaxTopK(),
-        features::kAILanguageModelOverrideConfigurationMaxTopK.Get());
-  }
-
-  return optimization_guide::features::GetOnDeviceModelMaxTopK();
-}
-
-float AIManager::GetLanguageModelMaxTemperature() {
-  if (base::FeatureList::IsEnabled(
-          features::kAILanguageModelOverrideConfiguration)) {
-    return std::min(
-        kDefaultMaxTemperature,
-        float(features::kAILanguageModelOverrideConfigurationMaxTemperature
-                  .Get()));
-  }
-
-  return kDefaultMaxTemperature;
 }
 
 void AIManager::AddModelDownloadProgressObserver(
     mojo::PendingRemote<blink ::mojom::ModelDownloadProgressObserver>
         observer_remote) {
-  download_progress_observers_.Add(std::move(observer_remote));
-}
+  auto components = on_device_ai::AICrxComponent::FromComponentIds(
+      &component_update_service_.get(),
+      {component_updater::OptimizationGuideOnDeviceModelInstallerPolicy::
+           GetOnDeviceModelExtensionId()});
 
-void AIManager::SendDownloadProgressUpdate(uint64_t downloaded_bytes,
-                                           uint64_t total_bytes) {
-  for (auto& observer : download_progress_observers_) {
-    observer->OnDownloadProgressUpdate(
-        AIUtils::NormalizeModelDownloadProgress(downloaded_bytes, total_bytes),
-        AIUtils::kNormalizedDownloadProgressMax);
+  // Have some portion of the loading bar occupied until the renderer sends the
+  // 100% download progress on creation. This is to indicate that there is still
+  // work going on between when the model is downloaded and the actual API
+  // instance is created.
+  if (base::FeatureList::IsEnabled(features::kAIModelUnloadableProgress)) {
+    components.insert(std::make_unique<on_device_ai::AINeverLoadComponent>(
+        features::kAIModelUnloadableProgressBytes.Get()));
   }
-}
 
-void AIManager::SendDownloadProgressUpdateForTesting(uint64_t downloaded_bytes,
-                                                     uint64_t total_bytes) {
-  SendDownloadProgressUpdate(downloaded_bytes, total_bytes);
-}
-
-void AIManager::OnTextModelDownloadProgressChange(
-    base::PassKey<AIOnDeviceModelComponentObserver> observer_key,
-    uint64_t downloaded_bytes,
-    uint64_t total_bytes) {
-  SendDownloadProgressUpdate(downloaded_bytes, total_bytes);
+  model_download_progress_manager_.AddObserver(std::move(observer_remote),
+                                               std::move(components));
 }
 
 void AIManager::RenderWidgetHostVisibilityChanged(
@@ -880,4 +989,32 @@ void AIManager::RenderWidgetHostDestroyed(
     content::RenderWidgetHost* widget_host) {
   DCHECK(widget_observer_.IsObservingSource(widget_host));
   widget_observer_.Reset();
+}
+
+void AIManager::MaybeLogMissingOutputLanguageWarning(
+    const std::string_view api_name,
+    const base::flat_set<std::string_view>& supported_languages) {
+  auto* rfh = rfh_.AsRenderFrameHostIfValid();
+  if (!rfh || did_log_missing_output_language_warning_) {
+    return;
+  }
+  did_log_missing_output_language_warning_ = true;
+  auto list = base::JoinString(supported_languages, ", ");
+  rfh->AddMessageToConsole(
+      blink::mojom::ConsoleMessageLevel::kWarning,
+      base::StringPrintf(kEmptyOutputLanguageWarning, api_name, list));
+}
+
+void AIManager::MaybeLogUnsupportedLanguageError(
+    const std::string_view api_name,
+    const base::flat_set<std::string_view>& supported_languages) {
+  auto* rfh = rfh_.AsRenderFrameHostIfValid();
+  if (!rfh || did_log_unsupported_language_error_) {
+    return;
+  }
+  did_log_unsupported_language_error_ = true;
+  auto list = base::JoinString(supported_languages, ", ");
+  rfh->AddMessageToConsole(
+      blink::mojom::ConsoleMessageLevel::kError,
+      base::StringPrintf(kUnsupportedLanguageError, api_name, list));
 }

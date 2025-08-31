@@ -4,6 +4,8 @@
 
 #include "components/viz/service/display_embedder/skia_output_surface_impl.h"
 
+#include <inttypes.h>
+
 #include <memory>
 #include <string>
 #include <string_view>
@@ -115,7 +117,7 @@ class GraphiteVizMemoryAssistant
           this, "GraphiteVizMemoryAssistant", std::move(task_runner));
 
       memory_pressure_listener_.emplace(
-          FROM_HERE,
+          FROM_HERE, base::MemoryPressureListenerTag::kSkiaOutputSurfaceImpl,
           base::BindRepeating(&GraphiteVizMemoryAssistant::HandleMemoryPressure,
                               base::Unretained(this)));
     }
@@ -199,7 +201,7 @@ class GraphiteVizMemoryAssistant
 
   // NOTE: The implementation guarantees that the callback will always be called
   // on the thread that created the listener.
-  std::optional<base::MemoryPressureListener> memory_pressure_listener_;
+  std::optional<base::AsyncMemoryPressureListener> memory_pressure_listener_;
 
   raw_ptr<skgpu::graphite::Recorder> recorder_ = nullptr;
   raw_ptr<gpu::raster::GraphiteCacheController> cache_controller_ = nullptr;
@@ -678,17 +680,15 @@ void SkiaOutputSurfaceImpl::MakePromiseSkImageMultiPlane(
   CHECK(!image_context->has_image());
   auto format = image_context->format();
   CHECK(format.is_multi_plane());
+  // There should be no usages of RGB matrix for color space here.
+  CHECK(color_space.GetMatrixID() != gfx::ColorSpace::MatrixID::RGB,
+        base::NotFatalUntil::M139);
   SkYUVAInfo::PlaneConfig plane_config = gpu::ToSkYUVAPlaneConfig(format);
   SkYUVAInfo::Subsampling subsampling = gpu::ToSkYUVASubsampling(format);
-  // TODO(crbug.com/368870063): Implement RGB matrix support in
-  // ToSkYUVColorSpace.
-  SkYUVColorSpace sk_yuv_color_space = kIdentity_SkYUVColorSpace;
-  if (color_space.GetMatrixID() != gfx::ColorSpace::MatrixID::RGB) {
-    // TODO(crbug.com/41380578): This should really default to rec709.
-    sk_yuv_color_space = kRec601_SkYUVColorSpace;
-    color_space.ToSkYUVColorSpace(format.MultiplanarBitDepth(),
-                                  &sk_yuv_color_space);
-  }
+  // TODO(crbug.com/41380578): This should really default to rec709.
+  SkYUVColorSpace sk_yuv_color_space = kRec601_SkYUVColorSpace;
+  color_space.ToSkYUVColorSpace(format.MultiplanarBitDepth(),
+                                &sk_yuv_color_space);
   SkYUVAInfo yuva_info(gfx::SizeToSkISize(image_context->size()), plane_config,
                        subsampling, sk_yuv_color_space);
   if (graphite_recorder_) {
@@ -767,9 +767,10 @@ gpu::SyncToken SkiaOutputSurfaceImpl::ReleaseImageContexts(
 std::unique_ptr<ExternalUseClient::ImageContext>
 SkiaOutputSurfaceImpl::CreateImageContext(const TransferableResource& resource,
                                           bool maybe_concurrent_reads,
-                                          bool raw_draw_if_possible) {
+                                          bool raw_draw_if_possible,
+                                          uint32_t client_id) {
   return std::make_unique<ImageContextImpl>(resource, maybe_concurrent_reads,
-                                            raw_draw_if_possible);
+                                            raw_draw_if_possible, client_id);
 }
 
 DBG_FLAG_FBOOL("skia_gpu.swap_buffers.force_disable_makecurrent",

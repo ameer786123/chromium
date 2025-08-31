@@ -9,25 +9,32 @@
 # suite is no longer needed in //testing/buildbot, targets.bundle (which does
 # not yet exist) can be used for grouping tests in a more flexible manner.
 
-load("//lib/targets.star", "targets")
+load("@chromium-luci//targets.star", "targets")
 
 targets.legacy_matrix_compound_suite(
     name = "chromeos_vmlab_tests",
     basic_suites = {
-        "chromeos_chrome_all_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_all_tast_tests_tfc": targets.legacy_matrix_config(
             mixins = [
-                "skylab-shards-20",
+                "skylab-40-tests-per-shard",
             ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_criticalstaging_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_criticalstaging_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-40-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_disabled_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_disabled_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                # Setting smaller max_in_shard to offset tast level retries.
+                "skylab-20-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
@@ -66,17 +73,27 @@ targets.legacy_matrix_compound_suite(
 targets.legacy_matrix_compound_suite(
     name = "chromeos_vmlab_tests_no_gtests",
     basic_suites = {
-        "chromeos_chrome_all_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_all_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-40-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_criticalstaging_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_criticalstaging_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-40-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_disabled_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_disabled_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                # Setting smaller max_in_shard to offset tast level retries.
+                "skylab-20-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
@@ -92,17 +109,27 @@ targets.legacy_matrix_compound_suite(
 targets.legacy_matrix_compound_suite(
     name = "chromeos_vmlab_tests_no_gtests_no_arc",
     basic_suites = {
-        "chromeos_chrome_all_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_all_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-40-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_criticalstaging_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_criticalstaging_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-40-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_disabled_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_disabled_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                # Setting smaller max_in_shard to offset tast level retries.
+                "skylab-20-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
@@ -122,17 +149,27 @@ targets.legacy_matrix_compound_suite(
 targets.legacy_matrix_compound_suite(
     name = "chromeos_brya_skylab_tests",
     basic_suites = {
-        "chromeos_chrome_all_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_all_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-50-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_criticalstaging_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_criticalstaging_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-40-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_disabled_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_disabled_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                # Setting smaller max_in_shard to offset tast level retries.
+                "skylab-20-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
@@ -158,21 +195,26 @@ targets.legacy_matrix_compound_suite(
 targets.legacy_matrix_compound_suite(
     name = "chromeos_jacuzzi_skylab_tests",
     basic_suites = {
-        "chromeos_chrome_all_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_all_tast_tests_tfc": targets.legacy_matrix_config(
             mixins = [
-                # jacuzzi is slow. So that we use more number of shards.
-                "skylab-shards-30",
+                "skylab-40-tests-per-shard",
             ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_criticalstaging_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_criticalstaging_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-40-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_disabled_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_disabled_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-20-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
@@ -193,7 +235,10 @@ targets.legacy_matrix_compound_suite(
 targets.legacy_matrix_compound_suite(
     name = "chromeos_octopus_skylab_tests",
     basic_suites = {
-        "chromeos_chrome_all_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_all_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-50-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
@@ -209,10 +254,26 @@ targets.legacy_matrix_compound_suite(
 targets.legacy_matrix_compound_suite(
     name = "chromeos_trogdor_skylab_tests",
     basic_suites = {
-        "chromeos_chrome_all_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_all_tast_tests_tfc": targets.legacy_matrix_config(
             mixins = [
-                # trogdor is slow. So that we use more number of shards.
-                "skylab-shards-20",
+                "skylab-40-tests-per-shard",
+            ],
+            variants = [
+                "CROS_RELEASE_LKGM",
+            ],
+        ),
+        "chromeos_chrome_criticalstaging_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-40-tests-per-shard",
+            ],
+            variants = [
+                "CROS_RELEASE_LKGM",
+            ],
+        ),
+        "chromeos_chrome_disabled_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                # Setting smaller max_in_shard to offset tast level retries.
+                "skylab-20-tests-per-shard",
             ],
             variants = [
                 "CROS_RELEASE_LKGM",
@@ -234,17 +295,27 @@ targets.legacy_matrix_compound_suite(
 targets.legacy_matrix_compound_suite(
     name = "chromeos_volteer_skylab_tests",
     basic_suites = {
-        "chromeos_chrome_all_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_all_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-50-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_criticalstaging_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_criticalstaging_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                "skylab-40-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
         ),
-        "chromeos_chrome_disabled_tast_tests": targets.legacy_matrix_config(
+        "chromeos_chrome_disabled_tast_tests_tfc": targets.legacy_matrix_config(
+            mixins = [
+                # Setting smaller max_in_shard to offset tast level retries.
+                "skylab-20-tests-per-shard",
+            ],
             variants = [
                 "CROS_RELEASE_LKGM",
             ],
@@ -294,7 +365,7 @@ targets.legacy_matrix_compound_suite(
         "chromeos_chrome_all_tast_tests": targets.legacy_matrix_config(
             mixins = [
                 # jacuzzi is slow. So that we use more number of shards.
-                "skylab-shards-50",
+                "skylab-shards-45",
             ],
             variants = [
                 "CROS_RELEASE_LKGM",
@@ -442,7 +513,7 @@ targets.legacy_matrix_compound_suite(
     basic_suites = {
         "optimization_guide_ios_unittests": targets.legacy_matrix_config(
             variants = [
-                "SIM_IPHONE_14_18_0",
+                "SIM_IPHONE_14_18_2",
             ],
         ),
     },
@@ -465,7 +536,6 @@ targets.legacy_matrix_compound_suite(
         "model_validation_tests_suite": None,
         "model_validation_tests_light_suite": None,
         "ondevice_stability_tests_suite": None,
-        "chrome_ai_wpt_tests_suite": None,
     },
 )
 

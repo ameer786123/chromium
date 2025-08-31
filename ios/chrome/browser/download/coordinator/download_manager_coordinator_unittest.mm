@@ -37,6 +37,7 @@
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
+#import "ios/chrome/browser/shared/ui/util/file_size_util.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/fakes/fake_contained_presenter.h"
 #import "ios/chrome/test/scoped_key_window.h"
@@ -62,17 +63,6 @@ const int64_t kTestReceivedBytes = 0;
 const base::FilePath::CharType kTestSuggestedFileName[] =
     FILE_PATH_LITERAL("file.zip");
 
-// Returns formatted size string.
-NSString* GetSizeString(int64_t size_in_bytes) {
-  NSByteCountFormatter* formatter = [[NSByteCountFormatter alloc] init];
-  formatter.countStyle = NSByteCountFormatterCountStyleFile;
-  formatter.zeroPadsFractionDigits = YES;
-  NSString* result = [formatter stringFromByteCount:size_in_bytes];
-  // Replace spaces with non-breaking spaces.
-  result = [result stringByReplacingOccurrencesOfString:@" "
-                                             withString:@"\u00A0"];
-  return result;
-}
 
 }  // namespace
 
@@ -460,7 +450,7 @@ TEST_F(DownloadManagerCoordinatorTest, OpenIn) {
                                                       animated:YES
                                                     completion:[OCMArg any]])
       .andDo(^(NSInvocation* invocation) {
-        __weak id object;
+        __unsafe_unretained id object;
         [invocation getArgument:&object atIndex:2];
         EXPECT_EQ([UIActivityViewController class], [object class]);
         UIActivityViewController* open_in_controller =
@@ -482,6 +472,11 @@ TEST_F(DownloadManagerCoordinatorTest, OpenIn) {
 
     // Complete the download before presenting Open In... menu.
     task_ptr->SetDone(true);
+
+    ASSERT_TRUE(WaitUntilConditionOrTimeout(
+        base::test::ios::kWaitForDownloadTimeout, true, ^{
+          return !tab_helper()->GetDownloadTaskFinalFilePath().empty();
+        }));
 
     [view_controller.delegate
         presentOpenInForDownloadManagerViewController:view_controller];
@@ -585,7 +580,8 @@ TEST_F(DownloadManagerCoordinatorTest, QuitDuringInProgressDownload) {
       }));
 
   // Web States are closed without user action only during app termination.
-  CloseAllWebStates(*browser_->GetWebStateList(), WebStateList::CLOSE_NO_FLAGS);
+  CloseAllWebStates(*browser_->GetWebStateList(),
+                    WebStateList::ClosingReason::kDefault);
 
   // Download task is destroyed before the download is complete.
   web_state_ = nullptr;

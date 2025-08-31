@@ -16,7 +16,6 @@
 #include "components/ntp_tiles/most_visited_sites.h"
 #include "components/ntp_tiles/ntp_tile.h"
 #include "components/ntp_tiles/section_type.h"
-#include "content/public/browser/prerender_handle.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "ui/webui/resources/cr_components/most_visited/most_visited.mojom.h"
@@ -45,8 +44,9 @@ class MostVisitedHandler : public most_visited::mojom::MostVisitedPageHandler,
   MostVisitedHandler& operator=(const MostVisitedHandler&) = delete;
   ~MostVisitedHandler() override;
 
-  // See MostVisitedSites::EnableCustomLinks.
-  void EnableCustomLinks(bool enable);
+  // See MostVisitedSites::EnableTileTypes.
+  void EnableTileTypes(
+      const ntp_tiles::MostVisitedSites::EnableTileTypesOptions& options);
   // See MostVisitedSites::SetShortcutsVisible.
   void SetShortcutsVisible(bool visible);
 
@@ -63,8 +63,8 @@ class MostVisitedHandler : public most_visited::mojom::MostVisitedPageHandler,
                              const GURL& new_url,
                              const std::string& new_title,
                              UpdateMostVisitedTileCallback callback) override;
-  void PrerenderMostVisitedTile(most_visited::mojom::MostVisitedTilePtr tile,
-                                bool is_hover_trigger) override;
+  void PrerenderMostVisitedTile(
+      most_visited::mojom::MostVisitedTilePtr tile) override;
   void PreconnectMostVisitedTile(
       most_visited::mojom::MostVisitedTilePtr tile) override;
   void CancelPrerender() override;
@@ -82,6 +82,7 @@ class MostVisitedHandler : public most_visited::mojom::MostVisitedPageHandler,
  private:
   // ntp_tiles::MostVisitedSites::Observer:
   void OnURLsAvailable(
+      bool is_user_triggered,
       const std::map<ntp_tiles::SectionType, ntp_tiles::NTPTilesVector>&
           sections) override;
   void OnIconMadeAvailable(const GURL& site_url) override;
@@ -96,8 +97,6 @@ class MostVisitedHandler : public most_visited::mojom::MostVisitedPageHandler,
   NTPUserDataLogger logger_;
   base::Time ntp_navigation_start_time_;
   GURL last_blocklisted_;
-
-  base::WeakPtr<content::PrerenderHandle> prerender_handle_;
 
   mojo::Receiver<most_visited::mojom::MostVisitedPageHandler> page_handler_;
   mojo::Remote<most_visited::mojom::MostVisitedPage> page_;

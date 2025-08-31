@@ -31,8 +31,8 @@ public class ArCoreInstallUtils {
      */
     private static class InstallRequest implements ActivityLifecycleCallbacks {
         private @Nullable ArCoreInstallUtils mInstallInstance;
-        private ImmutableWeakReference<Activity> mWeakActivity;
-        private ImmutableWeakReference<Application> mWeakApplication;
+        private final ImmutableWeakReference<Activity> mWeakActivity;
+        private final ImmutableWeakReference<Application> mWeakApplication;
 
         public InstallRequest(ArCoreInstallUtils instance, Activity activity) {
             this.mInstallInstance = instance;
@@ -179,7 +179,7 @@ public class ArCoreInstallUtils {
                 // Install flow will resume in onArCoreRequestInstallReturned, mark that
                 // there is active request. Native code notification will be deferred until
                 // our activity gets resumed.
-                sInstallRequest = new InstallRequest(ArCoreInstallUtils.this, activity);
+                sInstallRequest = new InstallRequest(this, activity);
             } else if (installStatus == ArCoreShim.InstallStatus.INSTALLED) {
                 // No need to install - notify native code.
                 maybeNotifyNativeOnRequestInstallSupportedArCoreResult(true);

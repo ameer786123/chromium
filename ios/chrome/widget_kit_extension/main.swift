@@ -7,22 +7,23 @@ import SwiftUI
 import WidgetKit
 
 @main
-struct ChromeWidgets: WidgetBundle {
-  init() {
-    CrashHelper.configure()
-  }
+struct ChromeWidgetsMain {
 
-  var body: some Widget {
+  static func main() {
+    CrashHelper.configure()
+
     if #available(iOS 17.0, *) {
-      return body17
+      return ChromeWidgetsForMIM.main()
     } else {
-      return body16
+      return ChromeWidgets.main()
     }
   }
+}
 
-  @available(iOS 17, *)
+@available(iOS 17, *)
+struct ChromeWidgetsForMIM: WidgetBundle {
   @WidgetBundleBuilder
-  var body17: some Widget {
+  var body: some Widget {
     #if IOS_ENABLE_WIDGETS_FOR_MIM
       QuickActionsWidgetConfigurable()
       SearchWidgetConfigurable()
@@ -45,9 +46,11 @@ struct ChromeWidgets: WidgetBundle {
       #endif
     #endif
   }
+}
 
+struct ChromeWidgets: WidgetBundle {
   @WidgetBundleBuilder
-  var body16: some Widget {
+  var body: some Widget {
     QuickActionsWidget()
     SearchWidget()
     ShortcutsWidget()

@@ -325,7 +325,7 @@ public class ContextualSearchManagerTest extends ContextualSearchInstrumentation
     @Test
     @SmallTest
     @Feature({"ContextualSearch"})
-    @DisableIf.Device(DeviceFormFactor.TABLET) // crbug.com/41485867
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // crbug.com/41485867
     public void testRedirectedExternalNavigationWithUserGesture() throws Exception {
         ExternalNavigationHandler.sAllowIntentsToSelfForTesting = true;
         simulateResolveSearch("intelligence");
@@ -489,9 +489,7 @@ public class ContextualSearchManagerTest extends ContextualSearchInstrumentation
     public void testTapContentAndExpandPanelInFullscreen() throws Exception {
         // Toggle tab to fulllscreen.
         FullscreenTestUtils.togglePersistentFullscreenAndAssert(
-                mActivityTestRule.getActivity().getActivityTab(),
-                true,
-                mActivityTestRule.getActivity());
+                mActivityTestRule.getActivityTab(), true, mActivityTestRule.getActivity());
 
         // Simulate a resolving search and assert that the panel peeks.
         simulateResolveSearch("search");
@@ -517,7 +515,7 @@ public class ContextualSearchManagerTest extends ContextualSearchInstrumentation
         simulateResolveSearch("search");
 
         // Toggle tab to fullscreen.
-        Tab tab = mActivityTestRule.getActivity().getActivityTab();
+        Tab tab = mActivityTestRule.getActivityTab();
         FullscreenTestUtils.togglePersistentFullscreenAndAssert(
                 tab, true, mActivityTestRule.getActivity());
 
@@ -624,11 +622,7 @@ public class ContextualSearchManagerTest extends ContextualSearchInstrumentation
                 expectedCaptionStart,
                 barControl.getCaptionText().subSequence(0, expectedCaptionStart.length()));
         // TODO(donnd): figure out why we get ~0.65 on Oreo rather than 1. https://crbug.com/818515.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            Assert.assertEquals(1.f, imageControl.getCustomImageVisibilityPercentage(), 0);
-        } else {
-            Assert.assertTrue(0.5f < imageControl.getCustomImageVisibilityPercentage());
-        }
+        Assert.assertTrue(0.5f < imageControl.getCustomImageVisibilityPercentage());
 
         CompositorAnimationHandler.setTestingMode(false);
     }
@@ -684,7 +678,7 @@ public class ContextualSearchManagerTest extends ContextualSearchInstrumentation
     @SmallTest
     @Feature({"ContextualSearch"})
     // TODO(donnd): reenable - recent fixes as of 3/31/2023
-    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.O, message = "crbug.com/1075895")
+    @DisabledTest(message = "crbug.com/1075895")
     // Previously disabled: https://crbug.com/1127796
     public void testQuickActionUrl() throws Exception {
         final String testUrl = mTestServer.getURL("/chrome/test/data/android/google.html");
@@ -955,7 +949,7 @@ public class ContextualSearchManagerTest extends ContextualSearchInstrumentation
         ChromeTabUtils.newTabFromMenu(InstrumentationRegistry.getInstrumentation(), ca);
         ChromeTabUtils.switchTabInCurrentTabModel(ca, 0);
 
-        int testTabId = ca.getActivityTab().getId();
+        int testTabId = mActivityTestRule.getActivityTab().getId();
         MenuUtils.invokeCustomMenuActionSync(
                 InstrumentationRegistry.getInstrumentation(),
                 ca,
@@ -966,7 +960,7 @@ public class ContextualSearchManagerTest extends ContextualSearchInstrumentation
         waitForTabs("CTA2", activity2, 1, testTabId);
 
         // Trigger on a word and wait for the selection to be established.
-        triggerNode(activity2.getActivityTab(), "search");
+        triggerNode(ThreadUtils.runOnUiThreadBlocking(() -> activity2.getActivityTab()), "search");
         CriteriaHelper.pollUiThread(
                 () -> {
                     String selection =
@@ -1017,15 +1011,15 @@ public class ContextualSearchManagerTest extends ContextualSearchInstrumentation
     /** Monitor user action UMA recording operations. */
     private static class UserActionMonitor extends UserActionTester {
         // TODO(donnd): merge into UserActionTester. See https://crbug.com/1103757.
-        private Set<String> mUserActionPrefixes;
-        private Map<String, Integer> mUserActionCounts;
+        private final Set<String> mUserActionPrefixes;
+        private final Map<String, Integer> mUserActionCounts;
 
         /**
          * @param userActionPrefixes A set of plain prefix strings for user actions to monitor.
          */
         UserActionMonitor(Set<String> userActionPrefixes) {
             mUserActionPrefixes = userActionPrefixes;
-            mUserActionCounts = new HashMap<String, Integer>();
+            mUserActionCounts = new HashMap<>();
             for (String action : mUserActionPrefixes) {
                 mUserActionCounts.put(action, 0);
             }

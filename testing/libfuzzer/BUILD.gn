@@ -11,6 +11,7 @@
 import("//build/buildflag_header.gni")
 import("//build/config/features.gni")
 import("//build/config/sanitizers/sanitizers.gni")
+import("//testing/test.gni")
 
 # This file is depended upon from builds that don't include all
 # of Chromium, so nothing in here should assume the existence of
@@ -18,11 +19,13 @@ import("//build/config/sanitizers/sanitizers.gni")
 # or research subdirectories) to have dependencies on other parts
 # of Chromium, but not this file.
 
-declare_args() {
-  # Build individual_fuzztest_wrapper if use_fuzztest_wrapper is set.
-  # Some projects doesn't have //base and cannot build
-  # individual_fuzztest_wrapper.
-  use_fuzztest_wrapper = true
+buildflag_header("buildflags") {
+  header = "buildflags.h"
+  flags = [
+    "ARCHIVE_SEED_CORPUS=$archive_seed_corpus",
+    "REGISTER_FUZZTESTS_IN_TEST_SUITES=$register_fuzztests_in_test_suites",
+    "USE_CENTIPEDE=$use_centipede",
+  ]
 }
 
 # Temporary target for legacy reasons. Some third party repos explicitly
@@ -140,11 +143,6 @@ if (use_fuzzing_engine) {
   }
 }
 
-buildflag_header("fuzztest_wrapper_buildflags") {
-  header = "fuzztest_wrapper_buildflags.h"
-  flags = [ "USE_CENTIPEDE=$use_centipede" ]
-}
-
 if (use_fuzztest_wrapper) {
   # A wrapper that knows how to execute a single fuzztest within a binary
   # containing many fuzztests.
@@ -153,7 +151,7 @@ if (use_fuzztest_wrapper) {
   source_set("individual_fuzztest_wrapper") {
     sources = [ "//testing/libfuzzer/fuzztest_wrapper.cpp" ]
     deps = [
-      ":fuzztest_wrapper_buildflags",
+      ":buildflags",
       ":is_a_fuzz_target",
       "//base",
     ]
@@ -168,20 +166,18 @@ source_set("fuzztest_init_support") {
   ]
 }
 
-buildflag_header("confirm_fuzztest_init_buildflags") {
-  header = "confirm_fuzztest_init_buildflags.h"
-  flags =
-      [ "REGISTER_FUZZTESTS_IN_TEST_SUITES=$register_fuzztests_in_test_suites" ]
-}
-
 # Contains a static initializer which will arrange for fuzztests to be
 # registered. Usually invoked from testing/test.gni
 source_set("confirm_fuzztest_init") {
   sources = [ "confirm_fuzztest_init.cc" ]
   testonly = true
   deps = [
-    ":confirm_fuzztest_init_buildflags",
+    ":buildflags",
     ":fuzztest_init_support",
     "//third_party/fuzztest:init_fuzztest",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

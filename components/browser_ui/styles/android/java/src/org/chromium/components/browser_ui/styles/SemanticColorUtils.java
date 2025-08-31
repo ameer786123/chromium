@@ -8,7 +8,6 @@ import android.content.Context;
 
 import androidx.annotation.AttrRes;
 import androidx.annotation.ColorInt;
-import androidx.annotation.DimenRes;
 import androidx.core.content.ContextCompat;
 
 import com.google.android.material.color.MaterialColors;
@@ -25,11 +24,6 @@ public class SemanticColorUtils {
 
     private static @ColorInt int resolve(@AttrRes int attrRes, Context context) {
         return MaterialColors.getColor(context, attrRes, TAG);
-    }
-
-    private static @ColorInt int resolveSurfaceColorElev(
-            @DimenRes int elevationDimen, Context context) {
-        return ChromeColors.getSurfaceColor(context, elevationDimen);
     }
 
     // LINT.IfChange(SemanticColorUtils)
@@ -98,7 +92,7 @@ public class SemanticColorUtils {
 
     /** Returns the semantic color value that corresponds to divider_line_bg_color. */
     public static @ColorInt int getDividerLineBgColor(Context context) {
-        return resolve(R.attr.colorSurfaceContainerHighest, context);
+        return ContextCompat.getColor(context, R.color.drag_handlebar_color_list);
     }
 
     /** Returns the semantic color value that corresponds to bottom_system_nav_color. */
@@ -131,29 +125,29 @@ public class SemanticColorUtils {
         return getDefaultControlColorActive(context);
     }
 
+    /** Returns the semantic color value that corresponds to progress_bar_track_color. */
+    public static @ColorInt int getProgressBarTrackColor(Context context) {
+        return resolve(R.attr.colorSecondaryContainer, context);
+    }
+
+    /** Returns the semantic color value that corresponds to settings_bg_color. */
+    public static @ColorInt int getSettingsBackgroundColor(Context context) {
+        return resolve(R.attr.colorSurfaceContainerHigh, context);
+    }
+
     /** Returns the surface color value of the conceptual toolbar_background_primary. */
     public static @ColorInt int getToolbarBackgroundPrimary(Context context) {
         return getDefaultBgColor(context);
     }
 
-    /** Returns the semantic color value that corresponds to default_bg_color_elev_1. */
-    public static @ColorInt int getDefaultBgColorElev1(Context context) {
-        return resolveSurfaceColorElev(R.dimen.default_elevation_1, context);
-    }
-
-    /** Returns the semantic color value that corresponds to default_bg_color_elev_2. */
-    public static @ColorInt int getDefaultBgColorElev2(Context context) {
-        return resolveSurfaceColorElev(R.dimen.default_elevation_2, context);
-    }
-
     /** Returns the semantic color value that corresponds to navigation_bubble_background_color. */
     public static @ColorInt int getNavigationBubbleBackgroundColor(Context context) {
-        return getDefaultBgColorElev2(context);
+        return getColorSurfaceContainer(context);
     }
 
     /** Returns the semantic color value that corresponds to drag_handlebar_color. */
     public static @ColorInt int getDragHandlebarColor(Context context) {
-        return getDividerLineBgColor(context);
+        return ContextCompat.getColor(context, R.color.drag_handlebar_color_list);
     }
 
     /** Returns the surface color value of the conceptual dialog_bg_color. */
@@ -199,6 +193,11 @@ public class SemanticColorUtils {
         return resolve(R.attr.colorOnPrimary, context);
     }
 
+    /** Returns the semantic color values that correspond to colorOnSurface. */
+    public static @ColorInt int getColorOnSurface(Context context) {
+        return resolve(R.attr.colorOnSurface, context);
+    }
+
     /** Returns the semantic color values that correspond to colorOnSurfaceInverse. */
     public static @ColorInt int getColorOnSurfaceInverse(Context context) {
         return resolve(R.attr.colorOnSurfaceInverse, context);
@@ -209,6 +208,12 @@ public class SemanticColorUtils {
         return resolve(R.attr.colorSecondaryContainer, context);
     }
 
+    /** Returns the semantic color values that correspond to colorSecondaryContainer. */
+    public static @ColorInt int getColorSecondaryContainer(Context context) {
+        return resolve(R.attr.colorSecondaryContainer, context);
+    }
+
+    /** Returns the semantic color values that correspond to colorOnSecondaryContainer. */
     public static @ColorInt int getColorOnSecondaryContainer(Context context) {
         return resolve(R.attr.colorOnSecondaryContainer, context);
     }
@@ -216,6 +221,11 @@ public class SemanticColorUtils {
     /** Returns the semantic color values that correspond to colorSurface. */
     public static @ColorInt int getColorSurface(Context context) {
         return resolve(R.attr.colorSurface, context);
+    }
+
+    /** Returns the semantic color values that correspond to colorSurfaceBright. */
+    public static @ColorInt int getColorSurfaceBright(Context context) {
+        return resolve(R.attr.colorSurfaceBright, context);
     }
 
     /** Returns the semantic color values that correspond to colorPrimary. */
@@ -226,6 +236,11 @@ public class SemanticColorUtils {
     /** Returns the semantic color values that correspond to colorSurfaceContainerLow. */
     public static @ColorInt int getColorSurfaceContainerLow(Context context) {
         return resolve(R.attr.colorSurfaceContainerLow, context);
+    }
+
+    /** Returns the semantic color values that correspond to colorSurfaceContainerLowest. */
+    public static @ColorInt int getColorSurfaceContainerLowest(Context context) {
+        return resolve(R.attr.colorSurfaceContainerLowest, context);
     }
 
     /** Returns the semantic color values that correspond to colorSurfaceContainer. */
@@ -241,5 +256,15 @@ public class SemanticColorUtils {
     /** Returns the semantic color values that correspond to colorSurfaceContainerHighest. */
     public static @ColorInt int getColorSurfaceContainerHighest(Context context) {
         return resolve(R.attr.colorSurfaceContainerHighest, context);
+    }
+
+    /** Returns the semantic color values that correspond to colorSurfaceDim. */
+    public static @ColorInt int getColorSurfaceDim(Context context) {
+        return resolve(R.attr.colorSurfaceDim, context);
+    }
+
+    /** Returns the surface color value of the conceptual floating snackbar background color. */
+    public static @ColorInt int getFloatingSnackbarBackgroundColor(Context context) {
+        return resolve(R.attr.colorSurfaceContainerHigh, context);
     }
 }

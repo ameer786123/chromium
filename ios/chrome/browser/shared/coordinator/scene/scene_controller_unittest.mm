@@ -21,7 +21,6 @@
 #import "ios/chrome/browser/intents/model/user_activity_browser_agent.h"
 #import "ios/chrome/browser/main/ui_bundled/browser_view_wrangler.h"
 #import "ios/chrome/browser/main/ui_bundled/wrangled_browser.h"
-#import "ios/chrome/browser/prerender/model/prerender_service_factory.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/sessions/model/session_restoration_service_factory.h"
 #import "ios/chrome/browser/sessions/model/test_session_restoration_service.h"
@@ -50,7 +49,7 @@
 @property(nonatomic, assign) Browser* browser;
 @property(nonatomic, assign) ProfileIOS* profile;
 // Mocked currentInterface.
-@property(nonatomic, assign) WrangledBrowser* currentInterface;
+@property(nonatomic, strong) WrangledBrowser* currentInterface;
 // BrowserViewWrangler to provide test setup for main coordinator and interface.
 @property(nonatomic, strong) BrowserViewWrangler* browserViewWrangler;
 // Argument for
@@ -102,8 +101,6 @@ class SceneControllerTest : public PlatformTest {
         IdentityManagerFactory::GetInstance(),
         base::BindRepeating(IdentityTestEnvironmentBrowserStateAdaptor::
                                 BuildIdentityManagerForTests));
-    builder.AddTestingFactory(PrerenderServiceFactory::GetInstance(),
-                              PrerenderServiceFactory::GetDefaultFactory());
     builder.AddTestingFactory(
         SendTabToSelfSyncServiceFactory::GetInstance(),
         SendTabToSelfSyncServiceFactory::GetDefaultFactory());

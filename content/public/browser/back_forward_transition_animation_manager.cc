@@ -4,6 +4,7 @@
 
 #include "content/public/browser/back_forward_transition_animation_manager.h"
 
+#include "content/browser/renderer_host/navigation_transitions/navigation_transition_config.h"
 #include "content/public/common/content_features.h"
 #include "third_party/blink/public/common/features_generated.h"
 #include "ui/gfx/animation/animation.h"
@@ -15,11 +16,16 @@
 namespace content {
 
 // static
+bool BackForwardTransitionAnimationManager::AreBackForwardTransitionsEnabled() {
+  return NavigationTransitionConfig::AreBackForwardTransitionsEnabled();
+}
+
+// static
 bool BackForwardTransitionAnimationManager::ShouldAnimateNavigationTransition(
     NavigationDirection navigation_direction,
     ui::BackGestureEventSwipeEdge edge) {
 #if BUILDFLAG(IS_ANDROID)
-  if (!base::FeatureList::IsEnabled(blink::features::kBackForwardTransitions)) {
+  if (!AreBackForwardTransitionsEnabled()) {
     return false;
   }
 

@@ -30,7 +30,9 @@
 #include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
@@ -38,6 +40,7 @@
 #include "chrome/browser/ash/crosapi/crosapi_ash.h"
 #include "chrome/browser/ash/crosapi/crosapi_manager.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/file_manager/path_util.h"
 #include "chrome/browser/ash/policy/dlp/dlp_content_manager_ash.h"
@@ -54,7 +57,6 @@
 #include "chrome/browser/screen_ai/public/optical_character_recognizer.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/ui/ash/capture_mode/lens_overlay_image_helper.h"
 #include "chrome/browser/ui/ash/capture_mode/search_results_view.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_util.h"
@@ -85,6 +87,7 @@
 #include "services/network/public/cpp/header_util.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/screen_ai/public/mojom/screen_ai_service.mojom.h"
 #include "services/video_capture/public/mojom/video_capture_service.mojom.h"
@@ -101,8 +104,6 @@
 namespace {
 
 ChromeCaptureModeDelegate* g_instance = nullptr;
-
-constexpr char kConsumerName[] = "ChromeCaptureModeDelegate";
 
 // The image quality when encoding the image being searched into the body of the
 // POST request.
@@ -272,6 +273,8 @@ scoped_refptr<network::SharedURLLoaderFactory> GetSharedURLLoaderFactory() {
       ->GetURLLoaderFactoryForBrowserProcess();
 }
 
+// TODO: crbug.com/438030515 - Add a Tast or E2E test to verify that responses
+// with and without text are being parsed properly.
 // Attempts to parse the `response` as if it was a
 // `FetchQueryFormulationMetadataResponse` encoded in JSON, and store the
 // formatted text in `extracted_text`. Returns true if the response was
@@ -301,28 +304,28 @@ bool ParseQueryFormulationMetadataResponse(
   }
 
   // Deconstruct the metadata response in order to build our string for Copy
-  // Text.
+  // Text. If there is no `detected_text` object or the field is empty, then
+  // there might not be any text to detect, so we can return true.
   const base::Value::List* detected_text =
       (*metadata_response)[kQFMetadataResponseFieldDetectedText].GetIfList();
   if (!detected_text || detected_text->empty()) {
-    return false;
-  }
-
-  // If we don't have a `text_layout` object, then there may not be any text to
-  // detect, so we should return true.
-  const base::Value::List* text_layout =
-      (*detected_text)[kDetectedTextFieldTextLayout].GetIfList();
-  if (!text_layout) {
     return true;
   }
-  if (text_layout->empty()) {
-    return false;
+
+  // Similarly, if we don't have a `text_layout` object, then there may not be
+  // any text to detect, so we should return true.
+  const base::Value::List* text_layout =
+      (*detected_text)[kDetectedTextFieldTextLayout].GetIfList();
+  if (!text_layout || text_layout->empty()) {
+    return true;
   }
 
+  // Lastly, if we don't have a `paragraph_list` object, then there may not be
+  // any text to detect, so we should return true.
   const base::Value::List* paragraph_list =
       (*text_layout)[kTextLayoutFieldParagraphs].GetIfList();
   if (!paragraph_list || paragraph_list->empty()) {
-    return false;
+    return true;
   }
 
   // Begin constructing the extracted text by looping through a sequence of
@@ -510,9 +513,10 @@ bool ChromeCaptureModeDelegate::Uses24HourFormat() const {
 }
 
 void ChromeCaptureModeDelegate::CheckCaptureModeInitRestrictionByDlp(
+    bool shutting_down,
     ash::OnCaptureModeDlpRestrictionChecked callback) {
   policy::DlpContentManagerAsh::Get()->CheckCaptureModeInitRestriction(
-      std::move(callback));
+      shutting_down, std::move(callback));
 }
 
 void ChromeCaptureModeDelegate::CheckCaptureOperationRestrictionByDlp(
@@ -829,83 +833,6 @@ void ChromeCaptureModeDelegate::SendLensWebRegionSearch(
       lens_request_id_));
 }
 
-void ChromeCaptureModeDelegate::SendRegionSearch(
-    const SkBitmap& image,
-    const gfx::Rect& region,
-    ash::OnSearchUrlFetchedCallback search_callback,
-    ash::OnTextDetectionComplete text_callback) {
-  Profile* profile = ProfileManager::GetActiveUserProfile();
-  if (!profile || image.empty() || region.IsEmpty()) {
-    return;
-  }
-  // We should not use `CanShowSunfishUi` here, as that could change between
-  // starting the image capture and finishing the image capture (for example, if
-  // the Sunfish policy changes).
-  DCHECK(ash::features::IsSunfishFeatureEnabled());
-  if (!lens_overlay_query_controller_) {
-    lens_overlay_query_controller_ =
-        std::make_unique<LensOverlayQueryController>(
-            &application_locale_storage_.get(),
-            base::BindRepeating(
-                &ChromeCaptureModeDelegate::HandleStartQueryResponse,
-                weak_ptr_factory_.GetWeakPtr()),
-            base::BindRepeating(
-                &ChromeCaptureModeDelegate::HandleInteractionURLResponse,
-                weak_ptr_factory_.GetWeakPtr()),
-            base::BindRepeating(
-                &ChromeCaptureModeDelegate::HandleSuggestInputsResponse,
-                weak_ptr_factory_.GetWeakPtr()),
-            base::BindRepeating(
-                &ChromeCaptureModeDelegate::HandleThumbnailCreated,
-                weak_ptr_factory_.GetWeakPtr()),
-            profile->GetVariationsClient(), /*identity_manager=*/nullptr,
-            profile, lens::LensOverlayInvocationSource(),
-            /*use_dark_mode=*/false);
-  }
-
-  on_search_url_fetched_callback_ = std::move(search_callback);
-  on_text_detection_complete_callback_ = std::move(text_callback);
-
-  lens_overlay_query_controller_->StartQueryFlow(
-      /*screenshot=*/image,
-      /*page_url=*/GURL(),
-      /*page_title=*/std::nullopt, /*significant_region_boxes=*/
-      std::vector<lens::CenterRotatedBox>(),
-      /*underlying_content_bytes=*/base::span<const uint8_t>(),
-      /*underlying_content_type=*/lens::MimeType(),
-      /*ui_scale_factor=*/1.f, /*invocation_time=*/base::TimeTicks::Now());
-  lens_overlay_query_controller_->SendRegionSearch(
-      GetCenterRotatedBoxFromTabViewAndImageBounds(
-          /*tab_bounds=*/region, /*view_bounds=*/region,
-          /*image_bounds=*/region),
-      lens::LensOverlaySelectionType::REGION_SEARCH,
-      /*additional_search_query_params=*/std::map<std::string, std::string>(),
-      /*region_bytes=*/image);
-}
-
-void ChromeCaptureModeDelegate::SendMultimodalSearch(
-    const SkBitmap& image,
-    const gfx::Rect& region,
-    const std::string& text,
-    ash::OnSearchUrlFetchedCallback callback) {
-  // TODO(crbug.com/375670205): Investigate edge cases when the region is
-  // adjusted or `SendMultimodalSearch()` is called before `StartQueryFlow()`.
-  if (!lens_overlay_query_controller_ || image.empty() || region.IsEmpty() ||
-      text.empty()) {
-    return;
-  }
-  on_search_url_fetched_callback_ = std::move(callback);
-  lens_overlay_query_controller_->SendMultimodalRequest(
-      GetCenterRotatedBoxFromTabViewAndImageBounds(
-          /*tab_bounds=*/region, /*view_bounds=*/region,
-          /*image_bounds=*/region),
-      text,
-      lens::LensOverlaySelectionType::
-          MULTIMODAL_SEARCH, /*additional_search_query_params=*/
-      std::map<std::string, std::string>(),
-      /*region_bytes=*/image);
-}
-
 bool ChromeCaptureModeDelegate::IsNetworkConnectionOffline() const {
   return content::GetNetworkConnectionTracker()->IsOffline();
 }
@@ -1087,11 +1014,9 @@ void ChromeCaptureModeDelegate::GetPrimaryAccountAccessToken(
     return;
   }
 
-  signin::ScopeSet scopes;
-  scopes.insert(GaiaConstants::kSupportContentOAuth2Scope);
   primary_account_token_fetcher_ =
       std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
-          kConsumerName, identity_manager, scopes,
+          signin::OAuthConsumerId::kCaptureModeDelegate, identity_manager,
           base::BindOnce(
               &ChromeCaptureModeDelegate::PrimaryAccountAccessTokenAvailable,
               base::Unretained(this), std::move(callback)),
@@ -1310,12 +1235,6 @@ void ChromeCaptureModeDelegate::OnDispatchCompleteForImageSearch(
   const GURL final_url = simple_url_loader->GetFinalURL();
   if (on_search_url_fetched_callback_) {
     std::move(on_search_url_fetched_callback_).Run(final_url);
-  }
-
-  // No other actions to take if we are not using the Lens Web API for Copy
-  // Text.
-  if (!ash::features::IsSunfishLensWebCopyTextEnabled()) {
-    return;
   }
 
   // Get the vsr ID from the redirect URL so it can be used again in the

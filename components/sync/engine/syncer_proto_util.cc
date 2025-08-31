@@ -11,6 +11,7 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
@@ -199,13 +200,6 @@ void ProcessClientCommand(const sync_pb::ClientCommand& command,
       cycle->context()->set_poll_interval(interval);
       cycle->delegate()->OnReceivedPollIntervalUpdate(interval);
     }
-  }
-
-  if (command.has_gu_retry_delay_seconds()) {
-    // TODO(crbug.com/40252048): The server no longer supports retry GU this
-    // field. Clean up client-side code.
-    cycle->delegate()->OnReceivedGuRetryDelay(
-        base::Seconds(command.gu_retry_delay_seconds()));
   }
 
   if (command.custom_nudge_delays_size() > 0) {

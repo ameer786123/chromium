@@ -17,6 +17,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ref.h"
+#include "base/notimplemented.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -40,11 +41,12 @@
 #include "third_party/webrtc/api/audio_codecs/audio_encoder_factory_template.h"
 #include "third_party/webrtc/api/audio_codecs/opus/audio_decoder_opus.h"
 #include "third_party/webrtc/api/audio_codecs/opus/audio_encoder_opus.h"
+#include "third_party/webrtc/api/create_modular_peer_connection_factory.h"
 #include "third_party/webrtc/api/enable_media.h"
 #include "third_party/webrtc/api/peer_connection_interface.h"
 #include "third_party/webrtc/api/rtc_event_log/rtc_event_log_factory.h"
 #include "third_party/webrtc/api/video_codecs/builtin_video_decoder_factory.h"
-#include "third_party/webrtc_overrides/task_queue_factory.h"
+#include "third_party/webrtc_overrides/environment.h"
 
 #if !defined(NDEBUG)
 #include "base/command_line.h"
@@ -102,11 +104,11 @@ bool IsValidSessionDescriptionType(webrtc::SdpType type) {
   return type == webrtc::SdpType::kOffer || type == webrtc::SdpType::kAnswer;
 }
 
-void UpdateCodecParameters(SdpMessage* sdp_message, bool incoming) {
+void UpdateCodecParameters(SdpMessage& sdp_message, bool incoming) {
   // Update SDP format to use 160kbps stereo for opus codec.
-  if (sdp_message->has_audio() &&
-      !sdp_message->AddCodecParameter("opus",
-                                      "stereo=1; maxaveragebitrate=163840")) {
+  if (sdp_message.has_audio() &&
+      !sdp_message.AddCodecParameter("opus",
+                                     "stereo=1; maxaveragebitrate=163840")) {
     if (incoming) {
       LOG(WARNING) << "Opus not found in an incoming SDP.";
     } else {
@@ -284,7 +286,7 @@ class WebrtcTransport::PeerConnectionWrapper
     pcf_deps.network_thread = worker_thread;
     pcf_deps.worker_thread = worker_thread;
     pcf_deps.signaling_thread = webrtc::Thread::Current();
-    pcf_deps.task_queue_factory = CreateWebRtcTaskQueueFactory();
+    pcf_deps.env = WebRtcEnvironment();
     pcf_deps.event_log_factory = std::make_unique<webrtc::RtcEventLogFactory>();
     pcf_deps.adm = audio_module_;
     pcf_deps.audio_encoder_factory =
@@ -392,7 +394,7 @@ class WebrtcTransport::PeerConnectionWrapper
       transport_->OnIceGatheringChange(new_state);
     }
   }
-  void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override {
+  void OnIceCandidate(const webrtc::IceCandidate* candidate) override {
     if (transport_) {
       transport_->OnIceCandidate(candidate);
     }
@@ -565,7 +567,7 @@ bool WebrtcTransport::ProcessTransportInfo(XmlElement* transport_info) {
       }
     }
 
-    UpdateCodecParameters(&sdp_message, /*incoming=*/true);
+    UpdateCodecParameters(sdp_message, /*incoming=*/true);
 
     webrtc::SdpParseError error;
     std::unique_ptr<webrtc::SessionDescriptionInterface>
@@ -612,9 +614,8 @@ bool WebrtcTransport::ProcessTransportInfo(XmlElement* transport_info) {
     }
 
     webrtc::SdpParseError error;
-    std::unique_ptr<webrtc::IceCandidateInterface> candidate(
-        webrtc::CreateIceCandidate(sdp_mid, sdp_mlineindex, candidate_str,
-                                   &error));
+    std::unique_ptr<webrtc::IceCandidate> candidate(webrtc::CreateIceCandidate(
+        sdp_mid, sdp_mlineindex, candidate_str, &error));
     if (!candidate) {
       LOG(ERROR) << "Failed to parse incoming candidate: " << error.description
                  << " line: " << error.line;
@@ -763,10 +764,6 @@ void WebrtcTransport::Close(ErrorCode error,
 void WebrtcTransport::ApplySessionOptions(const SessionOptions& options) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   session_options_ = options;
-  std::optional<std::string> video_codec = options.Get("Video-Codec");
-  if (video_codec) {
-    preferred_video_codec_ = *video_codec;
-  }
 }
 
 void WebrtcTransport::OnAudioTransceiverCreated(
@@ -806,14 +803,15 @@ void WebrtcTransport::OnLocalSessionDescriptionCreated(
   }
 
   SdpMessage sdp_message(description_sdp);
-  UpdateCodecParameters(&sdp_message, /*incoming=*/false);
-  if (preferred_video_codec_.empty()) {
-    sdp_message.PreferVideoCodec("VP8");
-  } else {
-    sdp_message.PreferVideoCodec(preferred_video_codec_);
+  UpdateCodecParameters(sdp_message, /*incoming=*/false);
+  if (sdp_message.has_video() &&
+      transport_context_->preferred_video_format().has_value()) {
+    sdp_message.SetPreferredVideoFormat(
+        *transport_context_->preferred_video_format());
   }
   description_sdp = sdp_message.ToString();
   webrtc::SdpParseError parse_error;
+
   description = webrtc::CreateSessionDescription(description->GetType(),
                                                  description_sdp, &parse_error);
   if (!description) {
@@ -843,10 +841,15 @@ void WebrtcTransport::OnLocalSessionDescriptionCreated(
 
   send_transport_info_callback_.Run(std::move(transport_info));
 
-  peer_connection()->SetLocalDescription(
-      SetSessionDescriptionObserver::Create(base::BindOnce(
-          &WebrtcTransport::OnLocalDescriptionSet, weak_factory_.GetWeakPtr())),
-      description.release());
+  {
+    // Addresses an issue reported on ChromeOS M140 with DCHECKs enabled.
+    ScopedAllowSyncPrimitivesForWebRtcTransport allow_sync_primitives;
+    peer_connection()->SetLocalDescription(
+        SetSessionDescriptionObserver::Create(
+            base::BindOnce(&WebrtcTransport::OnLocalDescriptionSet,
+                           weak_factory_.GetWeakPtr())),
+        description.release());
+  }
 }
 
 void WebrtcTransport::OnLocalDescriptionSet(bool success,
@@ -1005,8 +1008,7 @@ void WebrtcTransport::OnIceGatheringChange(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 }
 
-void WebrtcTransport::OnIceCandidate(
-    const webrtc::IceCandidateInterface* candidate) {
+void WebrtcTransport::OnIceCandidate(const webrtc::IceCandidate* candidate) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   std::unique_ptr<XmlElement> candidate_element(

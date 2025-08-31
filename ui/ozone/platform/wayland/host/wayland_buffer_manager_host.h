@@ -93,6 +93,8 @@ class WaylandBufferManagerHost : public ozone::mojom::WaylandBufferManagerHost {
                                const std::vector<uint64_t>& modifiers,
                                uint32_t format,
                                uint32_t planes_count,
+                               const gfx::ColorSpace& color_space,
+                               const gfx::HDRMetadata& hdr_metadata,
                                uint32_t buffer_id) override;
   // Called by the GPU and asks to import a wl_buffer based on a shared memory
   // file descriptor using wl_shm protocol. Check comments in the
@@ -148,9 +150,8 @@ class WaylandBufferManagerHost : public ozone::mojom::WaylandBufferManagerHost {
   // compositor tries to read from this DMA-BUF via GL, the kernel will
   // automatically force its GPU context to wait on all write fences in the
   // DMA-BUF, including the fence we inserted. This is used to synchronize with
-  // compositors that don't support the
-  // linux-explicit-synchronization-unstable-v1 protocol. Requires Linux 6.0 or
-  // higher.
+  // compositors that don't support the linux-drm-syncobj protocol. Requires
+  // Linux 6.0 or higher.
   void InsertAcquireFence(uint32_t buffer_id, int sync_fd);
 
   // Extracts a sync_file that represents all pending fences inside the DMA-BUF
@@ -158,8 +159,7 @@ class WaylandBufferManagerHost : public ozone::mojom::WaylandBufferManagerHost {
   // automatically adds a completion fence to the read fences list of the
   // DMA-BUF that will be signalled once the read operation completes. This is
   // used to synchronize with compositors that don't support the
-  // linux-explicit-synchronization-unstable-v1 protocol. Requires Linux 6.0 or
-  // higher.
+  // linux-drm-syncobj protocol. Requires Linux 6.0 or higher.
   base::ScopedFD ExtractReleaseFence(uint32_t buffer_id);
 
   static bool SupportsImplicitSyncInterop();

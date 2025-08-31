@@ -92,8 +92,9 @@ class ProfileCustomizationBubbleSyncControllerTest : public testing::Test {
         testing_profile_manager_.CreateTestingProfile(kTestingProfileName);
 
     Browser::CreateParams params(testing_profile_, /*user_gesture=*/true);
-    params.window = &test_browser_window_;
-    browser_ = std::unique_ptr<Browser>(Browser::Create(params));
+    auto browser_window = std::make_unique<TestBrowserWindow>();
+    params.window = browser_window.release();
+    browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
 
     theme_syncable_service_ = std::make_unique<ThemeSyncableService>(
         testing_profile_, &fake_theme_service_);
@@ -142,7 +143,6 @@ class ProfileCustomizationBubbleSyncControllerTest : public testing::Test {
   TestingProfileManager testing_profile_manager_;
   raw_ptr<Profile> testing_profile_ = nullptr;
 
-  TestBrowserWindow test_browser_window_;
   std::unique_ptr<Browser> browser_;
 
   FakeThemeService fake_theme_service_;

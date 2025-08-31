@@ -236,7 +236,7 @@ public class AllSiteSettings extends BaseSiteSettingsFragment
         getInfoForOrigins();
     }
 
-    /** OnClickListener for the zoom button **/
+    /** OnClickListener for the zoom button */
     @Initializer
     public void handleZoomClearAll(View v) {
         Resources resources = getContext().getResources();
@@ -439,8 +439,8 @@ public class AllSiteSettings extends BaseSiteSettingsFragment
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
+    public void onStart() {
+        super.onStart();
 
         if (mSearch == null && mSearchItem != null) {
             SearchUtils.clearSearch(mSearchItem, getActivity());
@@ -501,7 +501,6 @@ public class AllSiteSettings extends BaseSiteSettingsFragment
                                     getSiteSettingsDelegate(),
                                     entry,
                                     getActivity().getLayoutInflater(),
-                                    /* showRwsMembershipLabels= */ true,
                                     /* isClickable= */ true);
                     preference.setOnDeleteCallback(
                             () -> {
@@ -551,5 +550,10 @@ public class AllSiteSettings extends BaseSiteSettingsFragment
                 it.remove();
             }
         }
+    }
+
+    @Override
+    public @AnimationType int getAnimationType() {
+        return AnimationType.PROPERTY;
     }
 }

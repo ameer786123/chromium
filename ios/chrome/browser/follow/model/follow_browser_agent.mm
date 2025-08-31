@@ -76,8 +76,6 @@ bool IsFollowSourceFromMenu(FollowSource source) {
 
 }  // namespace
 
-BROWSER_USER_DATA_KEY_IMPL(FollowBrowserAgent)
-
 FollowBrowserAgent::~FollowBrowserAgent() = default;
 
 bool FollowBrowserAgent::IsWebSiteFollowed(WebPageURLs* web_page_urls) {
@@ -153,7 +151,8 @@ base::WeakPtr<FollowBrowserAgent> FollowBrowserAgent::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
 }
 
-FollowBrowserAgent::FollowBrowserAgent(Browser* browser) : browser_(browser) {}
+FollowBrowserAgent::FollowBrowserAgent(Browser* browser)
+    : BrowserUserData(browser) {}
 
 void FollowBrowserAgent::ShowOverlayMessage(FollowSource source,
                                             NSString* message,

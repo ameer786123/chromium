@@ -58,6 +58,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/unique_identifier.h"
 #include "third_party/blink/renderer/platform/timer.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -92,6 +93,32 @@ bool CreateStreamDataPipe(mojo::ScopedDataPipeProducerHandle* producer,
   }
 
   return true;
+}
+
+// Validates the conditions outlined in
+// https://w3c.github.io/webtransport/#webtransport-constructor and returns an
+// error message, or null string if the name is valid.
+[[nodiscard]] String ValidateProtocolName(StringView protocol) {
+  if (protocol.empty()) {
+    return "Protocol name cannot be empty.";
+  }
+  if (!VisitCharacters(protocol, [](auto span) {
+        for (const auto c : span) {
+          // Protocol names are sf-strings, which are defined as sequences of
+          // printable ASCII characters.
+          // See <https://www.rfc-editor.org/rfc/rfc8941.html#name-strings>.
+          if (c < 32 || c >= 127) {
+            return false;
+          }
+        }
+        return true;
+      })) {
+    return "Protocol name contains invalid characters.";
+  }
+  if (protocol.length() >= 512) {
+    return "Protocol name is longer than 512 bytes.";
+  }
+  return String();
 }
 
 }  // namespace
@@ -156,8 +183,8 @@ class WebTransport::DatagramUnderlyingSink final : public UnderlyingSinkBase {
     for (const auto& datagram : pending_datagrams_) {
       web_transport_->transport_remote_->SendDatagram(
           base::span(datagram),
-          WTF::BindOnce(&DatagramUnderlyingSink::OnDatagramProcessed,
-                        WrapWeakPersistent(this)));
+          BindOnce(&DatagramUnderlyingSink::OnDatagramProcessed,
+                   WrapWeakPersistent(this)));
     }
     pending_datagrams_.clear();
   }
@@ -184,8 +211,8 @@ class WebTransport::DatagramUnderlyingSink final : public UnderlyingSinkBase {
 
     if (web_transport_->transport_remote_.is_bound()) {
       web_transport_->transport_remote_->SendDatagram(
-          data, WTF::BindOnce(&DatagramUnderlyingSink::OnDatagramProcessed,
-                              WrapWeakPersistent(this)));
+          data, BindOnce(&DatagramUnderlyingSink::OnDatagramProcessed,
+                         WrapWeakPersistent(this)));
     } else {
       Vector<uint8_t> datagram;
       datagram.AppendSpan(data);
@@ -575,8 +602,8 @@ class WebTransport::StreamVendingUnderlyingSource final
       return ToResolvedUndefinedPromise(script_state);
     }
 
-    vendor_->RequestStream(WTF::BindOnce(
-        &StreamVendingUnderlyingSource::Enqueue, WrapWeakPersistent(this)));
+    vendor_->RequestStream(BindOnce(&StreamVendingUnderlyingSource::Enqueue,
+                                    WrapWeakPersistent(this)));
 
     return ToResolvedUndefinedPromise(script_state);
   }
@@ -625,9 +652,10 @@ class WebTransport::ReceiveStreamVendor final
       : script_state_(script_state), web_transport_(web_transport) {}
 
   void RequestStream(EnqueueCallback enqueue) override {
-    web_transport_->transport_remote_->AcceptUnidirectionalStream(WTF::BindOnce(
-        &ReceiveStreamVendor::OnAcceptUnidirectionalStreamResponse,
-        WrapWeakPersistent(this), std::move(enqueue)));
+    web_transport_->transport_remote_->AcceptUnidirectionalStream(
+        blink::BindOnce(
+            &ReceiveStreamVendor::OnAcceptUnidirectionalStreamResponse,
+            WrapWeakPersistent(this), std::move(enqueue)));
   }
 
   void Trace(Visitor* visitor) const override {
@@ -688,9 +716,10 @@ class WebTransport::BidirectionalStreamVendor final
       : script_state_(script_state), web_transport_(web_transport) {}
 
   void RequestStream(EnqueueCallback enqueue) override {
-    web_transport_->transport_remote_->AcceptBidirectionalStream(WTF::BindOnce(
-        &BidirectionalStreamVendor::OnAcceptBidirectionalStreamResponse,
-        WrapWeakPersistent(this), std::move(enqueue)));
+    web_transport_->transport_remote_->AcceptBidirectionalStream(
+        blink::BindOnce(
+            &BidirectionalStreamVendor::OnAcceptBidirectionalStreamResponse,
+            WrapWeakPersistent(this), std::move(enqueue)));
   }
 
   void Trace(Visitor* visitor) const override {
@@ -810,9 +839,9 @@ ScriptPromise<WritableStream> WebTransport::createUnidirectionalStream(
   create_stream_resolvers_.insert(resolver);
   transport_remote_->CreateStream(
       std::move(data_pipe_consumer), mojo::ScopedDataPipeProducerHandle(),
-      WTF::BindOnce(&WebTransport::OnCreateSendStreamResponse,
-                    WrapWeakPersistent(this), WrapWeakPersistent(resolver),
-                    std::move(data_pipe_producer)));
+      BindOnce(&WebTransport::OnCreateSendStreamResponse,
+               WrapWeakPersistent(this), WrapWeakPersistent(resolver),
+               std::move(data_pipe_producer)));
 
   return resolver->Promise();
 }
@@ -857,10 +886,9 @@ ScriptPromise<BidirectionalStream> WebTransport::createBidirectionalStream(
   create_stream_resolvers_.insert(resolver);
   transport_remote_->CreateStream(
       std::move(outgoing_consumer), std::move(incoming_producer),
-      WTF::BindOnce(&WebTransport::OnCreateBidirectionalStreamResponse,
-                    WrapWeakPersistent(this), WrapWeakPersistent(resolver),
-                    std::move(outgoing_producer),
-                    std::move(incoming_consumer)));
+      BindOnce(&WebTransport::OnCreateBidirectionalStreamResponse,
+               WrapWeakPersistent(this), WrapWeakPersistent(resolver),
+               std::move(outgoing_producer), std::move(incoming_consumer)));
 
   return resolver->Promise();
 }
@@ -960,8 +988,8 @@ ScriptPromise<WebTransportConnectionStats> WebTransport::getStats(
   const bool request_already_sent = !pending_get_stats_resolvers_.empty();
   pending_get_stats_resolvers_.push_back(resolver);
   if (transport_remote_.is_bound() && !request_already_sent) {
-    transport_remote_->GetStats(WTF::BindOnce(&WebTransport::OnGetStatsResponse,
-                                              WrapWeakPersistent(this)));
+    transport_remote_->GetStats(
+        BindOnce(&WebTransport::OnGetStatsResponse, WrapWeakPersistent(this)));
   }
   return resolver->Promise();
 }
@@ -971,6 +999,7 @@ void WebTransport::OnConnectionEstablished(
     mojo::PendingReceiver<network::mojom::blink::WebTransportClient>
         client_receiver,
     network::mojom::blink::HttpResponseHeadersPtr response_headers,
+    const String& selected_application_protocol,
     network::mojom::blink::WebTransportStatsPtr initial_stats) {
   DVLOG(1) << "WebTransport::OnConnectionEstablished() this=" << this;
   connector_.reset();
@@ -983,8 +1012,8 @@ void WebTransport::OnConnectionEstablished(
       GetExecutionContext()->GetTaskRunner(TaskType::kNetworking);
 
   client_receiver_.Bind(std::move(client_receiver), task_runner);
-  client_receiver_.set_disconnect_handler(WTF::BindOnce(
-      &WebTransport::OnConnectionError, WrapWeakPersistent(this)));
+  client_receiver_.set_disconnect_handler(
+      BindOnce(&WebTransport::OnConnectionError, WrapWeakPersistent(this)));
 
   DCHECK(!transport_remote_.is_bound());
   transport_remote_.Bind(std::move(web_transport), task_runner);
@@ -994,6 +1023,9 @@ void WebTransport::OnConnectionEstablished(
         outgoing_datagram_expiration_duration_);
   }
 
+  if (!selected_application_protocol.IsNull()) {
+    selected_application_protocol_ = selected_application_protocol;
+  }
   latest_stats_ = ConvertStatsFromMojom(std::move(initial_stats));
 
   datagram_underlying_sink_->SendPendingDatagrams();
@@ -1013,6 +1045,11 @@ void WebTransport::OnConnectionEstablished(
 }
 
 WebTransport::~WebTransport() = default;
+
+void WebTransport::OnBeforeConnect(const net::IPEndPoint& server_address) {
+  // |server_address| should be invalid from security/privacy reasons.
+  DCHECK_EQ(server_address, net::IPEndPoint());
+}
 
 void WebTransport::OnHandshakeFailed(
     network::mojom::blink::WebTransportErrorPtr error) {
@@ -1226,24 +1263,25 @@ void WebTransport::Init(const String& url_for_diagnostics,
     // original URL and not the canonicalized version stored in `url_`.
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
-        "The URL '" + url_for_diagnostics + "' is invalid.");
+        StrCat({"The URL '", url_for_diagnostics, "' is invalid."}));
     return;
   }
 
   if (!url_.ProtocolIs("https")) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kSyntaxError,
-                                      "The URL's scheme must be 'https'. '" +
-                                          url_.Protocol() +
-                                          "' is not allowed.");
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kSyntaxError,
+        StrCat({"The URL's scheme must be 'https'. '", url_.Protocol(),
+                "' is not allowed."}));
     return;
   }
 
   if (url_.HasFragmentIdentifier()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
-        "The URL contains a fragment identifier ('#" +
-            url_.FragmentIdentifier() +
-            "'). Fragment identifiers are not allowed in WebTransport URLs.");
+        StrCat({"The URL contains a fragment identifier ('#",
+                url_.FragmentIdentifier(),
+                "'). Fragment identifiers are not allowed in WebTransport "
+                "URLs."}));
     return;
   }
 
@@ -1257,8 +1295,9 @@ void WebTransport::Init(const String& url_for_diagnostics,
         WebTransportError::Create(
             script_state_->GetIsolate(),
             /*stream_error_code=*/std::nullopt,
-            "Refused to connect to '" + url_.ElidedString() +
-                "' because it violates the document's Content Security Policy",
+            StrCat({"Refused to connect to '", url_.ElidedString(),
+                    "' because it violates the document's Content Security "
+                    "Policy"}),
             V8WebTransportErrorSource::Enum::kSession));
 
     connection_pending_ = false;
@@ -1293,6 +1332,26 @@ void WebTransport::Init(const String& url_for_diagnostics,
   if (!fingerprints.empty()) {
     execution_context->CountUse(
         WebFeature::kWebTransportServerCertificateHashes);
+  }
+
+  if (options.hasProtocols()) {
+    HashSet<String> encountered_protocols;
+    for (const String& protocol : options.protocols()) {
+      String validation_error = ValidateProtocolName(protocol);
+      if (!validation_error.IsNull()) {
+        exception_state.ThrowDOMException(DOMExceptionCode::kSyntaxError,
+                                          validation_error);
+        return;
+      }
+      HashSet<String>::AddResult add_result =
+          encountered_protocols.insert(protocol);
+      if (!add_result.is_new_entry) {
+        exception_state.ThrowDOMException(
+            DOMExceptionCode::kSyntaxError,
+            "Duplicate protocols are not allowed.");
+        return;
+      }
+    }
   }
 
   if (auto* scheduler = execution_context->GetScheduler()) {
@@ -1331,11 +1390,12 @@ void WebTransport::Init(const String& url_for_diagnostics,
 
     connector_->Connect(
         url_, std::move(fingerprints),
+        options.hasProtocols() ? options.protocols() : Vector<String>(),
         handshake_client_receiver_.BindNewPipeAndPassRemote(
             execution_context->GetTaskRunner(TaskType::kNetworking)));
 
-    handshake_client_receiver_.set_disconnect_handler(WTF::BindOnce(
-        &WebTransport::OnConnectionError, WrapWeakPersistent(this)));
+    handshake_client_receiver_.set_disconnect_handler(
+        BindOnce(&WebTransport::OnConnectionError, WrapWeakPersistent(this)));
   }
 
   probe::WebTransportCreated(execution_context, inspector_transport_id_, url_);
@@ -1616,6 +1676,10 @@ WebTransportConnectionStats* WebTransport::ConvertStatsFromMojom(
   }
   out->setDatagrams(datagram_stats);
   return out;
+}
+
+const String& WebTransport::protocol() {
+  return selected_application_protocol_;
 }
 
 }  // namespace blink

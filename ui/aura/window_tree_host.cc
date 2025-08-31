@@ -14,6 +14,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/no_destructor.h"
+#include "base/notimplemented.h"
 #include "base/observer_list.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -39,7 +40,6 @@
 #include "ui/base/ui_base_features.h"
 #include "ui/base/view_prop.h"
 #include "ui/compositor/compositor.h"
-#include "ui/compositor/compositor_switches.h"
 #include "ui/compositor/layer.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
@@ -136,7 +136,7 @@ WindowTreeHost* WindowTreeHost::GetForAcceleratedWidget(
 }
 
 void WindowTreeHost::InitHost() {
-  device_scale_factor_ = display::Screen::GetScreen()
+  device_scale_factor_ = display::Screen::Get()
                              ->GetPreferredScaleFactorForWindow(window())
                              .value_or(1.f);
 
@@ -325,7 +325,7 @@ ui::EventSink* WindowTreeHost::GetEventSink() {
 }
 
 int64_t WindowTreeHost::GetDisplayId() {
-  return display::Screen::GetScreen()->GetDisplayNearestWindow(window()).id();
+  return display::Screen::Get()->GetDisplayNearestWindow(window()).id();
 }
 
 void WindowTreeHost::Show() {
@@ -345,7 +345,7 @@ void WindowTreeHost::Hide() {
 
 gfx::Rect WindowTreeHost::GetBoundsInDIP() const {
   aura::Window* root_window = const_cast<aura::Window*>(window());
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   gfx::Rect screen_bounds = GetBoundsInPixels();
   return screen->ScreenToDIPRectInWindow(root_window, screen_bounds);
 }
@@ -470,7 +470,7 @@ WindowTreeHost::WindowTreeHost(std::unique_ptr<Window> window)
   if (!window_) {
     window_ = new Window(nullptr);
   }
-  device_scale_factor_ = display::Screen::GetScreen()
+  device_scale_factor_ = display::Screen::Get()
                              ->GetPreferredScaleFactorForWindow(window_)
                              .value_or(1.f);
 #if BUILDFLAG(IS_WIN)
@@ -550,9 +550,9 @@ void WindowTreeHost::CreateCompositor(bool force_software_compositor,
   compositor_ = std::make_unique<ui::Compositor>(
       context_factory->AllocateFrameSinkId(), context_factory,
       base::SingleThreadTaskRunner::GetCurrentDefault(),
-      ui::IsPixelCanvasRecordingEnabled(), use_external_begin_frame_control,
-      force_software_compositor, enable_compositing_based_throttling,
-      memory_limit_when_visible_mb);
+      features::IsPixelCanvasRecordingEnabled(),
+      use_external_begin_frame_control, force_software_compositor,
+      enable_compositing_based_throttling, memory_limit_when_visible_mb);
   compositor_->AddObserver(this);
   if (!dispatcher()) {
     window()->Init(ui::LAYER_NOT_DRAWN);
@@ -569,8 +569,10 @@ void WindowTreeHost::InitCompositor() {
   compositor_->SetRootLayer(window()->layer());
 
   display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window());
-  compositor_->SetDisplayColorSpaces(display.GetColorSpaces());
+      display::Screen::Get()->GetDisplayNearestWindow(window());
+  compositor_->SetDisplayColorSpaces(display_color_spaces_
+                                         ? display_color_spaces_->color_spaces()
+                                         : display.GetColorSpaces());
 }
 
 void WindowTreeHost::OnAcceleratedWidgetAvailable() {
@@ -599,7 +601,7 @@ void WindowTreeHost::OnHostResizedInPixels(
 
   // If we don't have the actual preferred scale, don't overwrite the scale
   // factor with the default value. See https://crbug.com/1285476 for details.
-  auto* screen = display::Screen::GetScreen();
+  auto* screen = display::Screen::Get();
   if (auto scale = screen->GetPreferredScaleFactorForWindow(window())) {
     device_scale_factor_ = scale.value();
   }
@@ -620,10 +622,11 @@ void WindowTreeHost::OnHostWorkspaceChanged() {
 }
 
 void WindowTreeHost::OnHostDisplayChanged() {
-  if (!compositor_)
+  if (!compositor_ || display_color_spaces_) {
     return;
+  }
   display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window());
+      display::Screen::Get()->GetDisplayNearestWindow(window());
   compositor_->SetDisplayColorSpaces(display.GetColorSpaces());
 }
 
@@ -646,8 +649,9 @@ void WindowTreeHost::OnHostLostWindowCapture() {
 void WindowTreeHost::OnDisplayMetricsChanged(const display::Display& display,
                                              uint32_t metrics) {
   if (metrics & DisplayObserver::DISPLAY_METRIC_COLOR_SPACE && compositor_ &&
-      display.id() == GetDisplayId())
+      display.id() == GetDisplayId() && !display_color_spaces_) {
     compositor_->SetDisplayColorSpaces(display.GetColorSpaces());
+  }
 
 // Chrome OS is handled in WindowTreeHostManager::OnDisplayMetricsChanged.
 // Chrome OS requires additional handling for the bounds that we do not need to
@@ -657,6 +661,15 @@ void WindowTreeHost::OnDisplayMetricsChanged(const display::Display& display,
       display.id() == GetDisplayId())
     OnHostResizedInPixels(GetBoundsInPixels().size());
 #endif
+}
+
+void WindowTreeHost::OnDisplayColorSpacesChanged(
+    scoped_refptr<gfx::DisplayColorSpacesRef> color_spaces) {
+  DCHECK(color_spaces);
+  display_color_spaces_ = color_spaces;
+  if (compositor_) {
+    compositor_->SetDisplayColorSpaces(color_spaces->color_spaces());
+  }
 }
 
 gfx::Rect WindowTreeHost::GetTransformedRootWindowBoundsFromPixelSize(
@@ -790,34 +803,31 @@ void WindowTreeHost::MoveCursorToInternal(const gfx::Point& root_location,
   client::CursorClient* cursor_client = client::GetCursorClient(window());
   if (cursor_client) {
     const display::Display& display =
-        display::Screen::GetScreen()->GetDisplayNearestWindow(window());
+        display::Screen::Get()->GetDisplayNearestWindow(window());
     cursor_client->SetDisplay(display);
   }
   dispatcher()->OnCursorMovedToRootLocation(root_location);
 }
 
-void WindowTreeHost::OnCompositingAckDeprecated(ui::Compositor* compositor) {
-  // Currently, input is only throttled on ash and is not well supported on
-  // other platforms. See crbug.com/41359082.
 #if BUILDFLAG(IS_CHROMEOS)
-  if (!holding_pointer_moves_)
+void WindowTreeHost::OnChildResizeActivated() {
+  if (!holding_pointer_moves_) {
     return;
+  }
 
   dispatcher_->ReleasePointerMoves();
   holding_pointer_moves_ = false;
-#endif
 }
 
-void WindowTreeHost::OnCompositingChildResizing(ui::Compositor* compositor) {
+void WindowTreeHost::OnCompositingChildResizing() {
   // Currently, input is only throttled on ash and is not well supported on
   // other platforms. See crbug.com/41359082.
-#if BUILDFLAG(IS_CHROMEOS)
   if (!Env::GetInstance()->throttle_input_on_resize() || holding_pointer_moves_)
     return;
   dispatcher_->HoldPointerMoves();
   holding_pointer_moves_ = true;
-#endif
 }
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 void WindowTreeHost::OnFrameSinksToThrottleUpdated(
     const base::flat_set<viz::FrameSinkId>& ids) {

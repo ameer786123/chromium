@@ -13,7 +13,7 @@
 #include "base/check_op.h"
 #include "base/containers/contains.h"
 #include "base/memory/raw_ptr.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "third_party/blink/renderer/modules/peerconnection/mock_data_channel_impl.h"
 #include "third_party/blink/renderer/modules/peerconnection/mock_peer_connection_dependency_factory.h"
 #include "third_party/blink/renderer/modules/peerconnection/mock_rtc_peer_connection_handler_platform.h"
@@ -26,7 +26,7 @@ using webrtc::AudioTrackInterface;
 using webrtc::CreateSessionDescriptionObserver;
 using webrtc::DtmfSenderInterface;
 using webrtc::DtmfSenderObserverInterface;
-using webrtc::IceCandidateInterface;
+using webrtc::IceCandidate;
 using webrtc::MediaStreamInterface;
 using webrtc::PeerConnectionInterface;
 using webrtc::SessionDescriptionInterface;
@@ -346,23 +346,23 @@ MockPeerConnectionImpl::MockPeerConnectionImpl(
       .WillByDefault(testing::Invoke(
           this, &MockPeerConnectionImpl::SetLocalDescriptionWorker));
   ON_CALL(*this, SetLocalDescriptionForMock(_, _))
-      .WillByDefault(testing::Invoke(
+      .WillByDefault(
           [this](std::unique_ptr<webrtc::SessionDescriptionInterface>* desc,
                  webrtc::scoped_refptr<
                      webrtc::SetLocalDescriptionObserverInterface>* observer) {
             SetLocalDescriptionWorker(nullptr, desc->release());
-          }));
+          });
   // TODO(hbos): Remove once no longer mandatory to implement.
   ON_CALL(*this, SetRemoteDescription(_, _))
       .WillByDefault(testing::Invoke(
           this, &MockPeerConnectionImpl::SetRemoteDescriptionWorker));
   ON_CALL(*this, SetRemoteDescriptionForMock(_, _))
-      .WillByDefault(testing::Invoke(
+      .WillByDefault(
           [this](std::unique_ptr<webrtc::SessionDescriptionInterface>* desc,
                  webrtc::scoped_refptr<
                      webrtc::SetRemoteDescriptionObserverInterface>* observer) {
             SetRemoteDescriptionWorker(nullptr, desc->release());
-          }));
+          });
 }
 
 MockPeerConnectionImpl::~MockPeerConnectionImpl() {}
@@ -565,15 +565,14 @@ webrtc::RTCError MockPeerConnectionImpl::SetConfiguration(
   return webrtc::RTCError(setconfiguration_error_type_);
 }
 
-bool MockPeerConnectionImpl::AddIceCandidate(
-    const IceCandidateInterface* candidate) {
+bool MockPeerConnectionImpl::AddIceCandidate(const IceCandidate* candidate) {
   sdp_mid_ = candidate->sdp_mid();
   sdp_mline_index_ = candidate->sdp_mline_index();
   return candidate->ToString(&ice_sdp_);
 }
 
 void MockPeerConnectionImpl::AddIceCandidate(
-    std::unique_ptr<webrtc::IceCandidateInterface> candidate,
+    std::unique_ptr<webrtc::IceCandidate> candidate,
     std::function<void(webrtc::RTCError)> callback) {
   bool result = AddIceCandidate(candidate.get());
   callback(result

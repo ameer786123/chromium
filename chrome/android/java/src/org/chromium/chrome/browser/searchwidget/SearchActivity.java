@@ -17,6 +17,7 @@ import android.view.View;
 import android.view.ViewGroup;
 
 import androidx.annotation.ColorInt;
+import androidx.annotation.ColorRes;
 import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -24,6 +25,7 @@ import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.app.ActivityOptionsCompat;
+import androidx.core.content.ContextCompat;
 
 import org.jni_zero.CheckDiscard;
 
@@ -74,12 +76,12 @@ import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.I
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.ResolutionType;
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.SearchType;
 import org.chromium.chrome.browser.ui.system.StatusBarColorController;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
 import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.ui.base.ActivityKeyboardVisibilityDelegate;
 import org.chromium.ui.base.ActivityWindowAndroid;
+import org.chromium.ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.url.GURL;
 
@@ -169,6 +171,7 @@ public class SearchActivity extends AsyncInitializationActivity
         TerminationReason.FRE_NOT_COMPLETED,
         TerminationReason.CUSTOM_BACK_ARROW,
         TerminationReason.BRING_TAB_TO_FRONT,
+        TerminationReason.BRING_TAB_GROUP_TO_FRONT,
         TerminationReason.COUNT
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -182,7 +185,8 @@ public class SearchActivity extends AsyncInitializationActivity
         int FRE_NOT_COMPLETED = 6;
         int CUSTOM_BACK_ARROW = 7;
         int BRING_TAB_TO_FRONT = 8;
-        int COUNT = 9;
+        int BRING_TAB_GROUP_TO_FRONT = 9;
+        int COUNT = 10;
     }
 
     // LINT.ThenChange(/tools/metrics/histograms/metadata/android/enums.xml:SearchActivityTerminationReason)
@@ -244,7 +248,6 @@ public class SearchActivity extends AsyncInitializationActivity
     private UmaActivityObserver mUmaActivityObserver;
 
     public SearchActivity() {
-        mUmaActivityObserver = new UmaActivityObserver(this);
         mStartupMetricsTracker = new StartupMetricsTracker(mTabModelSelectorSupplier);
         mLocationBarUiOverrides.setForcedPhoneStyleOmnibox();
     }
@@ -320,7 +323,7 @@ public class SearchActivity extends AsyncInitializationActivity
                         /* backKeyBehavior= */ this,
                         /* pageInfoAction= */ (tab, pageInfoHighlight) -> {},
                         this::bringTabToFront,
-                        /* saveOfflineButtonState= */ (tab) -> false,
+                        this::bringTabGroupToFront,
                         /*omniboxUma*/ (url, transition, isNtp) -> {},
                         TabWindowManagerSingleton::getInstance,
                         /* bookmarkState= */ (url) -> false,
@@ -397,6 +400,15 @@ public class SearchActivity extends AsyncInitializationActivity
         mIntentOrigin = SearchActivityUtils.getIntentOrigin(intent);
         mSearchType = SearchActivityUtils.getIntentSearchType(intent);
 
+        if (mUmaActivityObserver != null) mUmaActivityObserver.endUmaSession();
+        mUmaActivityObserver =
+                new UmaActivityObserver(
+                        this,
+                        getLifecycleDispatcher(),
+                        mIntentOrigin == IntentOrigin.CUSTOM_TAB
+                                ? ActivityType.CUSTOM_TAB
+                                : ActivityType.TABBED);
+
         RecordHistogram.recordEnumeratedHistogram(
                 HISTOGRAM_INTENT_ORIGIN, mIntentOrigin, IntentOrigin.COUNT);
         RecordHistogram.recordEnumeratedHistogram(
@@ -407,10 +419,7 @@ public class SearchActivity extends AsyncInitializationActivity
 
         mSearchBoxDataProvider.setCurrentUrl(SearchActivityUtils.getIntentUrl(intent));
 
-        if (OmniboxFeatures.sAndroidHubSearch.isEnabled()
-                && mSearchBoxDataProvider.isIncognitoBranded()) {
-            setIncognitoColorScheme();
-        }
+        setColorScheme(mSearchBoxDataProvider.isIncognitoBranded());
 
         switch (mIntentOrigin) {
             case IntentOrigin.CUSTOM_TAB:
@@ -501,14 +510,15 @@ public class SearchActivity extends AsyncInitializationActivity
     public void finishNativeInitialization() {
         super.finishNativeInitialization();
 
-        if (mProfileSupplier.hasValue()) {
-            finishNativeInitializationWithProfile(mProfileSupplier.get());
+        Profile profile = mProfileSupplier.get();
+        if (profile != null) {
+            finishNativeInitializationWithProfile(profile);
         } else {
             new OneShotCallback<>(
                     mProfileSupplier,
-                    (profile) -> {
+                    newProfile -> {
                         if (isDestroyed()) return;
-                        finishNativeInitializationWithProfile(profile);
+                        finishNativeInitializationWithProfile(newProfile);
                     });
         }
     }
@@ -516,7 +526,7 @@ public class SearchActivity extends AsyncInitializationActivity
     private void finishNativeInitializationWithProfile(Profile profile) {
         refinePageClassWithProfile(profile);
 
-        if (OmniboxFeatures.sAndroidHubSearch.isEnabled() && mIntentOrigin == IntentOrigin.HUB) {
+        if (mIntentOrigin == IntentOrigin.HUB) {
             setHubSearchBoxUrlBarElements();
         }
 
@@ -591,12 +601,7 @@ public class SearchActivity extends AsyncInitializationActivity
 
     /** Initiate new UMA session, associating metrics with appropriate Activity type. */
     private void umaSessionResume() {
-        mUmaActivityObserver.startUmaSession(
-                mIntentOrigin == IntentOrigin.CUSTOM_TAB
-                        ? ActivityType.CUSTOM_TAB
-                        : ActivityType.TABBED,
-                null,
-                getWindowAndroid());
+        mUmaActivityObserver.startUmaSession(null, getWindowAndroid());
     }
 
     /** Mark that the UMA session has ended. */
@@ -644,11 +649,16 @@ public class SearchActivity extends AsyncInitializationActivity
     private void setHubSearchBoxUrlBarElements() {
         boolean isIncognito = mSearchBoxDataProvider.isIncognitoBranded();
         @StringRes
-        int hintTextRes =
-                isIncognito
-                        ? R.string.hub_search_empty_hint_incognito
+        int regularHintTextRes =
+                OmniboxFeatures.sAndroidHubSearchTabGroups.isEnabled()
+                        ? R.string.hub_search_empty_hint_with_tab_groups
                         : R.string.hub_search_empty_hint;
-        mLocationBarCoordinator.getUrlBarCoordinator().setUrlBarHintText(hintTextRes);
+        @StringRes
+        int hintTextRes =
+                isIncognito ? R.string.hub_search_empty_hint_incognito : regularHintTextRes;
+        mLocationBarCoordinator
+                .getUrlBarCoordinator()
+                .setUrlBarHintText(getResources().getString(hintTextRes));
     }
 
     /* package */ boolean loadUrl(@NonNull OmniboxLoadUrlParams params, boolean isIncognito) {
@@ -664,8 +674,7 @@ public class SearchActivity extends AsyncInitializationActivity
             intent.putExtra(SearchWidgetProvider.EXTRA_FROM_SEARCH_WIDGET, true);
         }
 
-        if (OmniboxFeatures.sAndroidHubSearch.isEnabled()
-                && mSearchBoxDataProvider.isIncognitoBranded()) {
+        if (mSearchBoxDataProvider.isIncognitoBranded()) {
             intent.putExtra(Browser.EXTRA_APPLICATION_ID, getApplicationContext().getPackageName());
             intent.putExtra(IntentHandler.EXTRA_OPEN_NEW_INCOGNITO_TAB, true);
             IntentUtils.addTrustedIntentExtras(intent);
@@ -694,16 +703,28 @@ public class SearchActivity extends AsyncInitializationActivity
                         });
     }
 
-    private void setIncognitoColorScheme() {
-        @ColorInt
-        int anchorViewBackgroundColor = getColor(R.color.omnibox_dropdown_bg_incognito);
-        GradientDrawable anchorViewBackground = (GradientDrawable) mAnchorView.getBackground();
-        anchorViewBackground.setColor(anchorViewBackgroundColor);
+    // Set the color scheme of the search box background and anchor view background based on the
+    // current incognito state. In the non incognito state, the color scheme is the same as what is
+    // defined on initialize in {@link SearchActivityLocationBarLayout}.
+    private void setColorScheme(boolean isIncognito) {
+        @ColorRes int anchorViewBackgroundColorRes = R.color.omnibox_suggestion_dropdown_bg;
         GradientDrawable searchBoxBackground =
                 (GradientDrawable) ((LayerDrawable) mSearchBox.getBackground()).getDrawable(0);
-        searchBoxBackground.setTintList(
-                AppCompatResources.getColorStateList(
-                        this, R.color.toolbar_text_box_background_incognito));
+
+        if (isIncognito) {
+            anchorViewBackgroundColorRes = R.color.omnibox_dropdown_bg_incognito;
+            searchBoxBackground.setTintList(
+                    AppCompatResources.getColorStateList(
+                            this, R.color.toolbar_text_box_background_incognito));
+        } else {
+            searchBoxBackground.setTintList(null);
+            searchBoxBackground.setTint(
+                    ContextCompat.getColor(this, R.color.omnibox_suggestion_bg));
+        }
+
+        @ColorInt int anchorViewBackgroundColor = getColor(anchorViewBackgroundColorRes);
+        GradientDrawable anchorViewBackground = (GradientDrawable) mAnchorView.getBackground();
+        anchorViewBackground.setColor(anchorViewBackgroundColor);
         setStatusAndNavBarColors();
     }
 
@@ -723,7 +744,9 @@ public class SearchActivity extends AsyncInitializationActivity
                         ? getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper()
                         : null;
         StatusBarColorController.setStatusBarColor(helper, getWindow(), anchorViewColor);
-        helper.setNavigationBarColor(anchorViewColor);
+        if (helper != null) {
+            helper.setNavigationBarColor(anchorViewColor);
+        }
     }
 
     @VisibleForTesting
@@ -875,6 +898,11 @@ public class SearchActivity extends AsyncInitializationActivity
         IntentHandler.bringTabToFront(tab);
     }
 
+    private void bringTabGroupToFront(String tabGroupId) {
+        finish(TerminationReason.BRING_TAB_GROUP_TO_FRONT, /* loadUrlParams= */ null);
+        IntentHandler.bringTabGroupToFront(tabGroupId);
+    }
+
     /* package */ void setLocationBarCoordinatorForTesting(LocationBarCoordinator coordinator) {
         mLocationBarCoordinator = coordinator;
     }
@@ -901,6 +929,10 @@ public class SearchActivity extends AsyncInitializationActivity
 
     /* package */ void setUmaActivityObserverForTesting(UmaActivityObserver observer) {
         mUmaActivityObserver = observer;
+    }
+
+    /* package */ void setAnchorViewForTesting(View anchorView) {
+        mAnchorView = anchorView;
     }
 
     @Override

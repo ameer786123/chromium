@@ -7,14 +7,13 @@
 
 #import <UIKit/UIKit.h>
 
-#include <memory>
-
+#import "base/memory/scoped_refptr.h"
 #import "components/history/core/browser/top_sites.h"
 #import "ios/chrome/browser/omnibox/model/omnibox_autocomplete_controller_delegate.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/popup/carousel/carousel_item_menu_provider.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/popup/omnibox_popup_mutator.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/popup/row/favicon_retriever.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/popup/row/image_retriever.h"
+#import "ios/chrome/browser/omnibox/ui/popup/carousel/carousel_item_menu_provider.h"
+#import "ios/chrome/browser/omnibox/ui/popup/omnibox_popup_mutator.h"
+#import "ios/chrome/browser/omnibox/ui/popup/row/favicon_retriever.h"
+#import "ios/chrome/browser/omnibox/ui/popup/row/image_retriever.h"
 #import "ui/base/window_open_disposition.h"
 
 @protocol ApplicationCommands;
@@ -28,6 +27,8 @@
 @class OmniboxPopupPresenter;
 @class SceneState;
 @protocol SnackbarCommands;
+@protocol LoadQueryCommands;
+class TemplateURLService;
 
 namespace feature_engagement {
 class Tracker;
@@ -84,7 +85,8 @@ class Tracker;
 /// Flag that marks that incognito actions are available. Those can be disabled
 /// by an enterprise policy.
 @property(nonatomic, assign) BOOL allowIncognitoActions;
-
+/// Template URL service.
+@property(nonatomic, assign) TemplateURLService* templateURLService;
 /// Delegate for sharing popup content.
 @property(nonatomic, weak) id<OmniboxPopupMediatorSharingDelegate>
     sharingDelegate;

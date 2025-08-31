@@ -19,7 +19,7 @@ import org.chromium.ui.display.DisplayAndroid.DisplayAndroidObserver;
 @Lifetime.Singleton
 @NullMarked
 public class RootBeginFrameSourceWebView implements DisplayAndroidObserver {
-    private long mNativeRootBeginFrameSourceWebView;
+    private final long mNativeRootBeginFrameSourceWebView;
     private final DisplayAndroid mDisplayAndroid;
 
     @CalledByNative
@@ -34,17 +34,11 @@ public class RootBeginFrameSourceWebView implements DisplayAndroidObserver {
     @Override
     public void onRefreshRateChanged(float refreshRate) {
         RootBeginFrameSourceWebViewJni.get()
-                .onUpdateRefreshRate(
-                        mNativeRootBeginFrameSourceWebView,
-                        RootBeginFrameSourceWebView.this,
-                        refreshRate);
+                .onUpdateRefreshRate(mNativeRootBeginFrameSourceWebView, refreshRate);
     }
 
     @NativeMethods
     interface Natives {
-        void onUpdateRefreshRate(
-                long nativeRootBeginFrameSourceWebView,
-                RootBeginFrameSourceWebView caller,
-                float refreshRate);
+        void onUpdateRefreshRate(long nativeRootBeginFrameSourceWebView, float refreshRate);
     }
 }

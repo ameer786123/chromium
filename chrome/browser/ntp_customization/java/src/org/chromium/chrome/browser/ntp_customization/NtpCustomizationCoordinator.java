@@ -4,9 +4,12 @@
 
 package org.chromium.chrome.browser.ntp_customization;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.FEED;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.MAIN;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.MVT;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.NTP_CARDS;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.THEME;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LAYOUT_TO_DISPLAY;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LIST_CONTAINER_KEYS;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.VIEW_FLIPPER_KEYS;
@@ -18,10 +21,15 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.ViewFlipper;
 
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsCoordinator;
+import org.chromium.chrome.browser.ntp_customization.most_visited_tiles.MvtSettingsCoordinator;
 import org.chromium.chrome.browser.ntp_customization.ntp_cards.NtpCardsCoordinator;
-import org.chromium.chrome.browser.profiles.ProfileProvider;
+import org.chromium.chrome.browser.ntp_customization.theme.NtpThemeCoordinator;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -29,8 +37,10 @@ import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.function.Supplier;
 
 /** Coordinator of the NTP customization main bottom sheet. */
+@NullMarked
 public class NtpCustomizationCoordinator {
     /**
      * mDelegate will be passed to every bottom sheet coordinator created by {@link
@@ -39,54 +49,101 @@ public class NtpCustomizationCoordinator {
     private final BottomSheetDelegate mDelegate;
 
     private final Context mContext;
-    private final Supplier<ProfileProvider> mProfileSupplier;
+    private final Supplier<Profile> mProfileSupplier;
+    private final int mBottomSheetType;
     private NtpCustomizationMediator mMediator;
-    private NtpCardsCoordinator mNtpCardsCoordinator;
-    private FeedSettingsCoordinator mFeedSettingsCoordinator;
+    private @Nullable MvtSettingsCoordinator mMvtSettingCoordinator;
+    private @MonotonicNonNull NtpCardsCoordinator mNtpCardsCoordinator;
+    private @Nullable FeedSettingsCoordinator mFeedSettingsCoordinator;
+    private @Nullable NtpThemeCoordinator mNtpThemeCoordinator;
     private ViewFlipper mViewFlipperView;
 
-    @IntDef({BottomSheetType.MAIN, BottomSheetType.NTP_CARDS, BottomSheetType.FEED})
+    /**
+     * New Tab Page Customization bottom sheet type.
+     *
+     * <p>These values are persisted to logs. Entries should not be renumbered and numeric values
+     * should never be reused. See tools/metrics/histograms/enums.xml.
+     */
+    @IntDef({
+        BottomSheetType.MAIN,
+        BottomSheetType.NTP_CARDS,
+        BottomSheetType.FEED,
+        BottomSheetType.THEME,
+        BottomSheetType.MVT,
+        BottomSheetType.CHROME_COLORS,
+        BottomSheetType.THEME_COLLECTIONS,
+        BottomSheetType.SINGLE_THEME_COLLECTION
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface BottomSheetType {
         int MAIN = 0;
         int NTP_CARDS = 1;
         int FEED = 2;
-        int NUM_ENTRIES = 3;
+        int THEME = 3;
+        int MVT = 4;
+        int THEME_COLLECTIONS = 5;
+        int SINGLE_THEME_COLLECTION = 6;
+        int CHROME_COLORS = 7;
+        int NUM_ENTRIES = 8;
     }
 
-    @IntDef({EntryPointType.MAIN_MENU, EntryPointType.TOOL_BAR})
+    /**
+     * New Tab Page Customization bottom sheet entry point.
+     *
+     * <p>These values are persisted to logs. Entries should not be renumbered and numeric values
+     * should never be reused. See tools/metrics/histograms/enums.xml.
+     */
+    @IntDef({EntryPointType.MAIN_MENU, EntryPointType.TOOL_BAR, EntryPointType.NEW_TAB_PAGE})
     @Retention(RetentionPolicy.SOURCE)
     public @interface EntryPointType {
         int MAIN_MENU = 0;
         int TOOL_BAR = 1;
-        int NUM_ENTRIES = 2;
+        int NEW_TAB_PAGE = 2;
+        int NUM_ENTRIES = 3;
     }
 
+    /**
+     * @param context The Context used for displaying the bottom sheet.
+     * @param bottomSheetController A controller for managing the bottom sheet's lifecycle and
+     *     behavior.
+     * @param profileSupplier A supplier for the profile, used to fetch the state of the feeds
+     *     section.
+     * @param bottomSheetType The bottom sheet type to display independently. If set to `MAIN`, the
+     *     main bottom sheet will be shown instead, enabling its full navigation flow, otherwise the
+     *     bottom sheet of the bottomSheetType will show by itself.
+     */
     public NtpCustomizationCoordinator(
             Context context,
             BottomSheetController bottomSheetController,
-            Supplier<ProfileProvider> profileSupplier) {
+            Supplier<Profile> profileSupplier,
+            @BottomSheetType int bottomSheetType) {
         mContext = context;
         mProfileSupplier = profileSupplier;
+        mBottomSheetType = bottomSheetType;
         View contentView =
                 LayoutInflater.from(mContext)
                         .inflate(R.layout.ntp_customization_bottom_sheet, /* root= */ null);
         mViewFlipperView = contentView.findViewById(R.id.ntp_customization_view_flipper);
 
-        NtpCustomizationBottomSheetContent bottomSheetContent =
-                new NtpCustomizationBottomSheetContent(
-                        contentView,
-                        /* backPressRunnable= */ () -> mMediator.backPressOnCurrentBottomSheet(),
-                        this::destroy);
+        // This empty OnClickListener is added to the ViewFlipper to prevent TalkBack from
+        // unexpectedly triggering the click listeners of its child list items.
+        mViewFlipperView.setOnClickListener(v -> {});
+
+        NtpCustomizationBottomSheetContent bottomSheetContent = initBottomSheetContent(contentView);
 
         // The containerPropertyModel is responsible for managing a BottomSheetDelegate which
         // provides list content and event handlers to a list container view in the bottom sheet.
-        View mainBottomSheetView = mViewFlipperView.findViewById(R.id.main_bottom_sheet);
-        PropertyModel containerPropertyModel = new PropertyModel(LIST_CONTAINER_KEYS);
-        PropertyModelChangeProcessor.create(
-                containerPropertyModel,
-                mainBottomSheetView.findViewById(R.id.ntp_customization_options_container),
-                BottomSheetListContainerViewBinder::bind);
+        PropertyModel containerPropertyModel = null;
+        // Skips creating property model for the main bottom sheet if only one bottom sheet
+        // should show.
+        if (mBottomSheetType == MAIN) {
+            View mainBottomSheetView = mViewFlipperView.findViewById(R.id.main_bottom_sheet);
+            containerPropertyModel = new PropertyModel(LIST_CONTAINER_KEYS);
+            PropertyModelChangeProcessor.create(
+                    containerPropertyModel,
+                    mainBottomSheetView.findViewById(R.id.ntp_customization_options_container),
+                    BottomSheetListContainerViewBinder::bind);
+        }
 
         // The viewFlipperPropertyModel is responsible for controlling which bottom sheet layout to
         // display.
@@ -107,16 +164,78 @@ public class NtpCustomizationCoordinator {
 
         mDelegate = createBottomSheetDelegate();
 
-        // The click listener for each list item in the main bottom sheet should be registered
-        // before calling renderListContent().
-        mMediator.registerClickListener(NTP_CARDS, getOptionClickListener(NTP_CARDS));
-        mMediator.registerClickListener(FEED, getOptionClickListener(FEED));
-        mMediator.renderListContent();
+        // Skips creating main bottom sheet content if only one bottom sheet should show.
+        if (mBottomSheetType == MAIN) {
+            // The click listener for each list item in the main bottom sheet should be registered
+            // before calling renderListContent().
+            if (ChromeFeatureList.sNewTabPageCustomizationForMvt.isEnabled()) {
+                mMediator.registerClickListener(MVT, getOptionClickListener(MVT));
+            }
+            mMediator.registerClickListener(NTP_CARDS, getOptionClickListener(NTP_CARDS));
+            mMediator.registerClickListener(FEED, getOptionClickListener(FEED));
+            mMediator.registerClickListener(THEME, getOptionClickListener(THEME));
+            mMediator.renderListContent();
+        }
     }
 
-    /** Opens the NTP customization main bottom sheet. */
+    @VisibleForTesting
+    NtpCustomizationBottomSheetContent initBottomSheetContent(View contentView) {
+        return new NtpCustomizationBottomSheetContent(
+                contentView,
+                mBottomSheetType == MAIN
+                        ? () -> mMediator.backPressOnCurrentBottomSheet()
+                        : () -> mMediator.dismissBottomSheet(),
+                this::destroy,
+                () -> mMediator.getCurrentBottomSheetType());
+    }
+
+    /**
+     * Opens the NTP customization bottom sheet. Depending on the value of `mStandAlonePage`, the
+     * function will either show a specific bottom sheet independently or show the main bottom sheet
+     * and enable a full navigation flow that begins from the main bottom sheet.
+     */
     public void showBottomSheet() {
-        mMediator.showBottomSheet(MAIN);
+        switch (mBottomSheetType) {
+            case MAIN -> mMediator.showBottomSheet(MAIN);
+            case NTP_CARDS -> showNtpCardsBottomSheet();
+            case FEED -> showFeedBottomSheet();
+            case THEME -> showThemeBottomSheet();
+            default -> {
+                assert false : "Bottom sheet type not supported!";
+            }
+        }
+    }
+
+    private void showNtpCardsBottomSheet() {
+        if (mNtpCardsCoordinator == null) {
+            mNtpCardsCoordinator = new NtpCardsCoordinator(mContext, mDelegate);
+        }
+        mMediator.showBottomSheet(NTP_CARDS);
+    }
+
+    private void showFeedBottomSheet() {
+        if (mFeedSettingsCoordinator == null) {
+            Profile profile = assumeNonNull(mProfileSupplier.get());
+            mFeedSettingsCoordinator =
+                    new FeedSettingsCoordinator(mContext, mDelegate, profile.getOriginalProfile());
+        }
+        mMediator.showBottomSheet(FEED);
+    }
+
+    private void showMvtSettingCoordinator() {
+        if (mMvtSettingCoordinator == null) {
+            mMvtSettingCoordinator = new MvtSettingsCoordinator(mContext, mDelegate);
+        }
+        mMediator.showBottomSheet(MVT);
+    }
+
+    private void showThemeBottomSheet() {
+        if (mNtpThemeCoordinator == null) {
+            Profile profile = assumeNonNull(mProfileSupplier.get());
+            mNtpThemeCoordinator =
+                    new NtpThemeCoordinator(mContext, mDelegate, profile.getOriginalProfile());
+        }
+        mMediator.showBottomSheet(THEME);
     }
 
     /**
@@ -126,27 +245,22 @@ public class NtpCustomizationCoordinator {
     @VisibleForTesting
     View.OnClickListener getOptionClickListener(@BottomSheetType int type) {
         switch (type) {
-            case NTP_CARDS:
-                return v -> {
-                    if (mNtpCardsCoordinator == null) {
-                        mNtpCardsCoordinator = new NtpCardsCoordinator(mContext, mDelegate);
-                    }
-                    mMediator.showBottomSheet(NTP_CARDS);
-                };
-            case FEED:
-                return v -> {
-                    if (mFeedSettingsCoordinator == null) {
-                        mFeedSettingsCoordinator =
-                                new FeedSettingsCoordinator(
-                                        mContext,
-                                        mDelegate,
-                                        mProfileSupplier.get().getOriginalProfile());
-                    }
-                    mMediator.showBottomSheet(FEED);
-                };
-            default:
+            case NTP_CARDS -> {
+                return v -> showNtpCardsBottomSheet();
+            }
+            case FEED -> {
+                return v -> showFeedBottomSheet();
+            }
+            case THEME -> {
+                return v -> showThemeBottomSheet();
+            }
+            case MVT -> {
+                return v -> showMvtSettingCoordinator();
+            }
+            default -> {
                 assert false : "Bottom sheet type not supported!";
-                return null;
+                return assumeNonNull(null);
+            }
         }
     }
 
@@ -165,6 +279,16 @@ public class NtpCustomizationCoordinator {
             @Override
             public void backPressOnCurrentBottomSheet() {
                 mMediator.backPressOnCurrentBottomSheet();
+            }
+
+            @Override
+            public boolean shouldShowAlone() {
+                return mBottomSheetType != MAIN;
+            }
+
+            @Override
+            public void showBottomSheet(@BottomSheetType int type) {
+                mMediator.showBottomSheet(type);
             }
         };
     }
@@ -187,11 +311,17 @@ public class NtpCustomizationCoordinator {
     public void destroy() {
         mViewFlipperView.removeAllViews();
         mMediator.destroy();
+        if (mMvtSettingCoordinator != null) {
+            mMvtSettingCoordinator.destroy();
+        }
         if (mNtpCardsCoordinator != null) {
             mNtpCardsCoordinator.destroy();
         }
         if (mFeedSettingsCoordinator != null) {
             mFeedSettingsCoordinator.destroy();
+        }
+        if (mNtpThemeCoordinator != null) {
+            mNtpThemeCoordinator.destroy();
         }
     }
 
@@ -199,7 +329,7 @@ public class NtpCustomizationCoordinator {
         return mDelegate;
     }
 
-    NtpCardsCoordinator getNtpCardsCoordinatorForTesting() {
+    @Nullable NtpCardsCoordinator getNtpCardsCoordinatorForTesting() {
         return mNtpCardsCoordinator;
     }
 

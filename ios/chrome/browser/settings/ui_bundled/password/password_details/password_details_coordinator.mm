@@ -8,6 +8,7 @@
 #import <vector>
 
 #import "base/apple/foundation_util.h"
+#import "base/check.h"
 #import "base/memory/scoped_refptr.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/password_manager/core/browser/password_manager_client.h"
@@ -187,10 +188,11 @@ const CGFloat kShareSpinnerMinTimeInSeconds = 0.5;
   self.mediator.consumer = self.viewController;
   self.viewController.handler = self;
   self.viewController.delegate = self.mediator;
-  self.viewController.applicationCommandsHandler = HandlerForProtocol(
-      self.browser->GetCommandDispatcher(), ApplicationCommands);
-  self.viewController.snackbarCommandsHandler = HandlerForProtocol(
-      self.browser->GetCommandDispatcher(), SnackbarCommands);
+  CommandDispatcher* dispatcher = self.browser->GetCommandDispatcher();
+  self.viewController.applicationHandler =
+      HandlerForProtocol(dispatcher, ApplicationCommands);
+  self.viewController.snackbarHandler =
+      HandlerForProtocol(dispatcher, SnackbarCommands);
   self.viewController.reauthModule = self.reauthenticationModule;
   if (self.openInEditMode) {
     [self.viewController editButtonPressed];
@@ -431,8 +433,8 @@ const CGFloat kShareSpinnerMinTimeInSeconds = 0.5;
 - (void)updateFormManagers {
   BrowserList* browserList = BrowserListFactory::GetForProfile(self.profile);
 
-  for (Browser* browser :
-       browserList->BrowsersOfType(BrowserList::BrowserType::kAll)) {
+  for (Browser* browser : browserList->BrowsersOfType(
+           BrowserList::BrowserType::kRegularAndIncognito)) {
     [self updateFormManagersForBrowser:browser];
   }
 }
@@ -510,6 +512,8 @@ const CGFloat kShareSpinnerMinTimeInSeconds = 0.5;
 #pragma mark - Private
 
 - (void)dismissActionSheetCoordinator {
+  UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification,
+                                  self.viewController.customLeftBarButtonItem);
   [self.actionSheetCoordinator stop];
   self.actionSheetCoordinator = nil;
 }
@@ -596,6 +600,7 @@ const CGFloat kShareSpinnerMinTimeInSeconds = 0.5;
   if (!webState) {
     return;
   }
+  CHECK(webState->IsRealized(), base::NotFatalUntil::M150);
   password_manager::PasswordManagerClient* passwordManagerClient =
       PasswordTabHelper::FromWebState(webState)->GetPasswordManagerClient();
   passwordManagerClient->UpdateFormManagers();

@@ -15,17 +15,20 @@
 #include "android_webview/browser/aw_web_ui_controller_factory.h"
 #include "android_webview/browser/metrics/aw_metrics_service_accessor.h"
 #include "android_webview/browser/metrics/aw_metrics_service_client.h"
+#include "android_webview/browser/metrics/memory_metrics_logger.h"
 #include "android_webview/browser/metrics/system_state_util.h"
 #include "android_webview/browser/network_service/aw_network_change_notifier_factory.h"
+#include "android_webview/common/aw_cached_flags.h"
 #include "android_webview/common/aw_descriptors.h"
 #include "android_webview/common/aw_paths.h"
 #include "android_webview/common/aw_resource.h"
 #include "android_webview/common/aw_switches.h"
 #include "android_webview/common/crash_reporter/aw_crash_reporter_client.h"
 #include "base/android/apk_assets.h"
-#include "base/android/build_info.h"
+#include "base/android/apk_info.h"
 #include "base/android/bundle_utils.h"
 #include "base/android/memory_pressure_listener_android.h"
+#include "base/android/path_utils.h"
 #include "base/base_paths_android.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
@@ -36,10 +39,10 @@
 #include "base/message_loop/message_pump_type.h"
 #include "base/path_service.h"
 #include "base/task/current_thread.h"
+#include "base/task/thread_pool.h"
 #include "base/trace_event/named_trigger.h"
 #include "components/crash/content/browser/child_exit_observer_android.h"
 #include "components/crash/core/common/crash_key.h"
-#include "components/embedder_support/android/metrics/memory_metrics_logger.h"
 #include "components/embedder_support/origin_trials/component_updater_utils.h"
 #include "components/embedder_support/origin_trials/origin_trials_settings_storage.h"
 #include "components/heap_profiling/multi_process/supervisor.h"
@@ -182,6 +185,14 @@ int AwBrowserMainParts::PreEarlyInitialization() {
   blink::OriginTrialsSettingsProvider::Get()->SetSettings(
       origin_trials_settings_storage->GetSettings());
 
+  if (base::FeatureList::IsEnabled(
+          features::kWebViewCacheSizeLimitDerivedFromAppCacheQuota)) {
+    base::ThreadPool::PostTask(
+        FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
+        base::BindOnce(&AwBrowserProcess::FetchHostAppCacheQuota,
+                       base::Unretained(browser_process_.get())));
+  }
+
   return content::RESULT_CODE_NORMAL_EXIT;
 }
 
@@ -274,9 +285,8 @@ void AwBrowserMainParts::RegisterSyntheticTrials() {
   //    represented mainly by version codes ending with 41 and 42, which
   //    dominate, but we want to filter them out nonetheless because it's harder
   //    to set up experiment for them.)
-  std::string version_code =
-      base::android::BuildInfo::GetInstance()->package_version_code();
-  size_t ram_mb = base::SysInfo::AmountOfPhysicalMemoryMB();
+  std::string version_code = base::android::apk_info::package_version_code();
+  size_t ram_mb = base::SysInfo::AmountOfPhysicalMemory().InMiB();
   auto cpu_abi_bitness_support =
       metrics::AndroidMetricsHelper::GetInstance()->cpu_abi_bitness_support();
   bool is_device_of_interest =
@@ -322,23 +332,43 @@ void AwBrowserMainParts::RegisterSyntheticTrials() {
       metrics, "WebViewStartupTasksMetrics",
       webview_startup_tasks_experiment_enabled ? "Enabled" : "Control",
       variations::SyntheticTrialAnnotationMode::kCurrentLog);
+
+  bool in_seed_experiment = base::FeatureList::GetStateIfOverridden(
+                                features::kWebViewReducedSeedExpiration)
+                                .has_value() ||
+                            base::FeatureList::GetStateIfOverridden(
+                                features::kWebViewReducedSeedRequestPeriod)
+                                .has_value();
+  bool reduced_seed_expiration = android_webview::CachedFlags::IsEnabled(
+      features::kWebViewReducedSeedExpiration);
+  bool reduced_seed_request_period = android_webview::CachedFlags::IsEnabled(
+      features::kWebViewReducedSeedRequestPeriod);
+
+  std::string group = "Default";
+  if (in_seed_experiment) {
+    if (reduced_seed_expiration && reduced_seed_request_period) {
+      group = "BothEnabled";
+    } else if (reduced_seed_expiration) {
+      group = "ReducedSeedExpiration";
+    } else if (reduced_seed_request_period) {
+      group = "ReducedSeedRequestPeriod";
+    } else {
+      group = "Control";
+    }
+  }
+  AwMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+      metrics, "WebViewFasterFinchSeed", group,
+      variations::SyntheticTrialAnnotationMode::kCurrentLog);
 }
 
 int AwBrowserMainParts::PreMainMessageLoopRun() {
   TRACE_EVENT0("startup", "AwBrowserMainParts::PreMainMessageLoopRun");
   AwBrowserProcess::GetInstance()->PreMainMessageLoopRun();
-  browser_client_->InitBrowserContext();
+  browser_client_->InitBrowserContextStore();
   content::WebUIControllerFactory::RegisterFactory(
       AwWebUIControllerFactory::GetInstance());
   content::RenderFrameHost::AllowInjectingJavaScript();
   metrics_logger_ = std::make_unique<metrics::MemoryMetricsLogger>();
-
-  // Requesting the |OriginTrialsControllerDelegate| will initialize
-  // it if the feature is enabled.
-  //
-  // This should be done as soon as possible in the start-up process, in order
-  // to load the database from disk.
-  AwBrowserContext::GetDefault()->GetOriginTrialsControllerDelegate();
 
   Java_AwInterfaceRegistrar_registerMojoInterfaces(
       base::android::AttachCurrentThread());
@@ -365,7 +395,23 @@ void AwBrowserMainParts::PostCreateThreads() {
 
 bool AwBrowserMainParts::isWebViewStartupTasksExperimentEnabled() {
   return Java_AwBrowserMainParts_isWebViewStartupTasksLogicEnabled(
-      base::android::AttachCurrentThread());
+             base::android::AttachCurrentThread()) ||
+         base::CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kWebViewUseStartupTasksLogic);
+}
+
+bool AwBrowserMainParts::isWebViewStartupTasksExperimentEnabledP2() {
+  return Java_AwBrowserMainParts_isWebViewStartupTasksExperimentEnabledP2(
+             base::android::AttachCurrentThread()) ||
+         base::CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kWebViewUseStartupTasksLogicP2);
+}
+
+bool AwBrowserMainParts::isStartupTaskYieldToNativeExperimentEnabled() {
+  return Java_AwBrowserMainParts_isWebViewStartupTasksYieldToNativeExperimentEnabled(
+             base::android::AttachCurrentThread()) ||
+         base::CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kWebViewStartupTasksYieldToNative);
 }
 
 }  // namespace android_webview

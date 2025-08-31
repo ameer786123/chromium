@@ -5,10 +5,13 @@
 /**
  * @fileoverview ChromeVox keyboard handler.
  */
+import {BridgeHelper} from '/common/bridge_helper.js';
 import {KeyCode} from '/common/key_code.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
 
+import {BridgeConstants} from '../../common/bridge_constants.js';
 import {EventSourceType} from '../../common/event_source_type.js';
+import type {InternalKeyEvent} from '../../common/internal_key_event.js'
 import {ChromeVoxKbHandler} from '../../common/keyboard_handler.js';
 import {Msgs} from '../../common/msgs.js';
 import {QueueMode} from '../../common/tts_types.js';
@@ -19,6 +22,9 @@ import {ForcedActionPath} from '../forced_action_path.js';
 import {MathHandler} from '../math_handler.js';
 import {Output} from '../output/output.js';
 import {ChromeVoxPrefs} from '../prefs.js';
+
+const TARGET = BridgeConstants.BackgroundKeyboardHandler.TARGET;
+const Action = BridgeConstants.BackgroundKeyboardHandler.Action;
 
 /**
  * Internal pass through mode state (see usage below).
@@ -36,10 +42,6 @@ enum KeyboardPassThroughState {
   PENDING_SHORTCUT_KEYUPS = 'pending_shortcut_keyups',
 }
 
-export class InternalKeyEvent extends KeyboardEvent {
-  stickyMode?: boolean;
-}
-
 export class BackgroundKeyboardHandler {
   static instance?: BackgroundKeyboardHandler;
   private static passThroughModeEnabled_: boolean = false;
@@ -52,9 +54,12 @@ export class BackgroundKeyboardHandler {
     this.passThroughState_ = KeyboardPassThroughState.NO_PASS_THROUGH;
     this.passedThroughKeyDowns_ = new Set();
 
-    document.addEventListener(
-        'keydown', (event) => this.onKeyDown(event), false);
-    document.addEventListener('keyup', (event) => this.onKeyUp(event), false);
+    BridgeHelper.registerHandler(
+        TARGET, Action.ON_KEY_DOWN,
+        (internalEvent: InternalKeyEvent) => this.onKeyDown_(internalEvent));
+    BridgeHelper.registerHandler(
+        TARGET, Action.ON_KEY_UP,
+        (internalEvent: InternalKeyEvent) => this.onKeyUp_(internalEvent));
 
     chrome.accessibilityPrivate.setKeyboardListener(
         true, ChromeVoxPrefs.isStickyPrefOn);
@@ -75,9 +80,9 @@ export class BackgroundKeyboardHandler {
   /**
    * Handles key down events.
    * The return value has no effect since we ignore it in
-   *     SpokenFeedbackEventRewriterDelegate::HandleKeyboardEvent.
+   *     AccessibilityEventRewriter::RewriteEventForChromeVox.
    */
-  onKeyDown(evt: InternalKeyEvent): boolean {
+  private onKeyDown_(evt: InternalKeyEvent): boolean {
     EventSource.set(EventSourceType.STANDARD_KEYBOARD);
     evt.stickyMode = ChromeVoxPrefs.isStickyModeOn();
 
@@ -99,22 +104,22 @@ export class BackgroundKeyboardHandler {
     // Try to restore to the last valid range.
     ChromeVoxRange.restoreLastValidRangeIfNeeded();
 
+    let stopPropagation = false;
     if (!this.callOnKeyDownHandlers_(evt) ||
         this.shouldConsumeSearchKey_(evt)) {
       if (BackgroundKeyboardHandler.passThroughModeEnabled_) {
         this.passThroughState_ =
             KeyboardPassThroughState.PENDING_PASS_THROUGH_SHORTCUT_KEYUPS;
       }
-      evt.preventDefault();
-      evt.stopPropagation();
+
+      stopPropagation = true;
       this.eatenKeyDowns_.add(evt.keyCode);
     }
-
-    return false;
+    return stopPropagation;
   }
 
   /** Returns true if the key should continue propagation. */
-  private callOnKeyDownHandlers_(evt: KeyboardEvent): boolean {
+  private callOnKeyDownHandlers_(evt: InternalKeyEvent): boolean {
     // Defer first to the math handler, if it exists, then ordinary keyboard
     // commands.
     if (!MathHandler.onKeyDown(evt)) {
@@ -143,14 +148,11 @@ export class BackgroundKeyboardHandler {
     return Boolean(evt.metaKey) || evt.keyCode === KeyCode['SEARCH'];
   }
 
-  /**
-   * The return value has no effect since we ignore it in
-   *     SpokenFeedbackEventRewriterDelegate::HandleKeyboardEvent.
-   */
-  onKeyUp(evt: InternalKeyEvent): boolean {
+  /** Returns true if the key event should stop propagating. */
+  private onKeyUp_(evt: InternalKeyEvent): boolean {
+    let stopPropagation = false;
     if (this.eatenKeyDowns_.has(evt.keyCode)) {
-      evt.preventDefault();
-      evt.stopPropagation();
+      stopPropagation = true;
       this.eatenKeyDowns_.delete(evt.keyCode);
     }
 
@@ -177,8 +179,7 @@ export class BackgroundKeyboardHandler {
         this.passThroughState_ = KeyboardPassThroughState.NO_PASS_THROUGH;
       }
     }
-
-    return false;
+    return stopPropagation;
   }
 }
 

@@ -185,15 +185,6 @@ const char kVerboseLogging[] = "verbose-logging";
 
 }  // namespace switches
 
-namespace env_vars {
-
-// The presence of this environment variable with a value of 1 implies that
-// setup.exe should run as a system installation regardless of what is on the
-// command line.
-const char kGoogleUpdateIsMachineEnvVar[] = "GoogleUpdateIsMachine";
-
-}  // namespace env_vars
-
 // The Active Setup executable will be an identical copy of setup.exe; this is
 // necessary because Windows' installer detection heuristics (which include
 // things like process name being "setup.exe") will otherwise force elevation
@@ -217,6 +208,7 @@ const wchar_t kCmdOnOsUpgrade[] = L"on-os-upgrade";
 const wchar_t kCmdRotateDeviceTrustKey[] = L"rotate-dtkey";
 const wchar_t kCmdStoreDMToken[] = L"store-dmtoken";
 const wchar_t kCmdDeleteDMToken[] = L"delete-dmtoken";
+const wchar_t kCmdInstallPEH[] = L"install-peh";
 const wchar_t kEulaSentinelFile[] = L"EULA Accepted";
 const wchar_t kInstallBinaryDir[] = L"Application";
 const wchar_t kInstallerDir[] = L"Installer";

@@ -89,7 +89,7 @@ class COMPONENT_EXPORT(VELOCITY_TRACKER) MotionEvent {
   virtual base::TimeTicks GetLatestEventTime() const;
   // Returns the event time (in milliseconds) of first down in the input
   // sequence.
-  virtual base::TimeTicks GetDownTime() const;
+  virtual base::TimeTicks GetRawDownTime() const;
 
   virtual Classification GetClassification() const;
 
@@ -103,8 +103,13 @@ class COMPONENT_EXPORT(VELOCITY_TRACKER) MotionEvent {
   virtual float GetHistoricalY(size_t pointer_index,
                                size_t historical_index) const;
 
+  // Returns 0 (SOURCE_UNKNOWN) on non-android platforms.
+  virtual int GetSource() const;
+
   // Get the id of the device which created the event. Currently Aura only.
   virtual int GetSourceDeviceId(size_t pointer_index) const;
+
+  virtual bool IsLatestEventTimeResampled() const;
 
   // Utility accessor methods for convenience.
   int GetPointerId() const { return GetPointerId(0); }
@@ -148,7 +153,7 @@ class COMPONENT_EXPORT(VELOCITY_TRACKER) MotionEvent {
   // They guarantee only that the returned type will reflect the same
   // data exposed by the MotionEvent interface; no guarantees are made that the
   // underlying implementation is identical to the source implementation.
-  std::unique_ptr<MotionEvent> Clone() const;
+  std::unique_ptr<MotionEvent> Clone(bool with_history = true) const;
   std::unique_ptr<MotionEvent> Cancel() const;
 };
 

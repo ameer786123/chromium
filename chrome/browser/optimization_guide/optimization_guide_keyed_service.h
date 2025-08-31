@@ -13,19 +13,22 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/scoped_observation.h"
 #include "build/build_config.h"
+#include "chrome/browser/optimization_guide/model_execution/optimization_guide_global_state.h"
 #include "chrome/browser/profiles/profile_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/optimization_guide/core/delivery/optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decider.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
+#include "components/optimization_guide/core/model_execution/model_broker_client.h"
 #include "components/optimization_guide/core/model_execution/model_execution_features_controller.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_adaptation_loader.h"
-#include "components/optimization_guide/core/optimization_guide_decider.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
-#include "components/optimization_guide/core/optimization_guide_model_provider.h"
 #include "components/optimization_guide/core/optimization_guide_on_device_capability_provider.h"
 #include "components/optimization_guide/proto/hints.pb.h"
 #include "components/optimization_guide/proto/model_execution.pb.h"
 #include "components/optimization_guide/proto/model_quality_service.pb.h"
 #include "components/optimization_guide/proto/models.pb.h"
+#include "components/optimization_guide/public/mojom/model_broker.mojom.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
@@ -36,9 +39,21 @@ namespace content {
 class BrowserContext;
 }  // namespace content
 
+namespace contextual_cueing {
+class ZeroStateSuggestionsPageData;
+}  // namespace contextual_cueing
+
 namespace download {
 class BackgroundDownloadService;
 }  // namespace download
+
+namespace glic {
+class GlicPageContextEligibilityObserver;
+}  // namespace glic
+
+namespace on_device_internals {
+class PageHandler;
+}
 
 namespace optimization_guide {
 class ChromeHintsManager;
@@ -106,6 +121,12 @@ class OptimizationGuideKeyedService
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 #endif
 
+  // Allow models to be subscribed via the broker.
+  void BindModelBroker(
+      mojo::PendingReceiver<optimization_guide::mojom::ModelBroker> receiver);
+  virtual std::unique_ptr<optimization_guide::ModelBrokerClient>
+  CreateModelBrokerClient();
+
   // optimization_guide::OptimizationGuideDecider implementation:
   void RegisterOptimizationTypes(
       const std::vector<optimization_guide::proto::OptimizationType>&
@@ -152,6 +173,12 @@ class OptimizationGuideKeyedService
   optimization_guide::OnDeviceModelEligibilityReason
   GetOnDeviceModelEligibility(
       optimization_guide::ModelBasedCapabilityKey feature) override;
+  void GetOnDeviceModelEligibilityAsync(
+      optimization_guide::ModelBasedCapabilityKey feature,
+      const on_device_model::Capabilities& capabilities,
+      base::OnceCallback<
+          void(optimization_guide::OnDeviceModelEligibilityReason)> callback)
+      override;
   std::optional<optimization_guide::SamplingParamsConfig>
   GetSamplingParamsConfig(
       optimization_guide::ModelBasedCapabilityKey feature) override;
@@ -202,6 +229,21 @@ class OptimizationGuideKeyedService
       optimization_guide::proto::OptimizationType optimization_type,
       const std::optional<optimization_guide::OptimizationMetadata>& metadata);
 
+  // Adds hints for a URL with provided metadata to the optimization guide.
+  // Hints added via this method will work for `CanApplyOptimizationOnDemand`
+  // calls. For testing purposes only.
+  void AddOnDemandHintForTesting(
+      const GURL& url,
+      optimization_guide::proto::OptimizationType optimization_type,
+      const optimization_guide::OptimizationGuideDecisionWithMetadata&
+          decision);
+
+  // Adds a model execution result to be provided when an execution request
+  // comes in with the given `feature`.
+  void AddExecutionResultForTesting(
+      optimization_guide::ModelBasedCapabilityKey feature,
+      optimization_guide::OptimizationGuideModelExecutionResult result);
+
   // Override the model file sent to observers of |optimization_target|. Use
   // |TestModelInfoBuilder| to construct the model metadata. For
   // testing purposes only.
@@ -234,11 +276,12 @@ class OptimizationGuideKeyedService
   GetModelExecutionFeaturesController();
 
  private:
-  friend class BrowserView;
   friend class ChromeBrowserMainExtraPartsOptimizationGuide;
   friend class ChromeBrowsingDataRemoverDelegate;
+  friend class contextual_cueing::ZeroStateSuggestionsPageData;
+  friend class glic::GlicPageContextEligibilityObserver;
   friend class HintsFetcherBrowserTest;
-  friend class OnDeviceInternalsPageHandler;
+  friend class on_device_internals::PageHandler;
   friend class OptimizationGuideInternalsUI;
   friend class OptimizationGuideMessageHandler;
   friend class OptimizationGuideWebContentsObserver;
@@ -256,12 +299,8 @@ class OptimizationGuideKeyedService
   friend class optimization_guide::android::OptimizationGuideBridge;
 #endif  // BUILDFLAG(IS_ANDROID)
 
-  // Evaluates and records the device performance class to local state prefs.
-  static void DeterminePerformanceClass(
-      base::WeakPtr<optimization_guide::OnDeviceModelComponentStateManager>
-          on_device_component_state_manager);
-  static void RegisterPerformanceClassSyntheticTrial(
-      optimization_guide::OnDeviceModelPerformanceClass perf_class);
+  // Allows tests to override the value of `version_info::IsOfficialBuild()`.
+  static void SetIsOfficialBuildForTesting(bool is_official_build);
 
   // Initializes |this|.
   void Initialize();
@@ -279,9 +318,13 @@ class OptimizationGuideKeyedService
     return prediction_manager_.get();
   }
 
+  optimization_guide::OptimizationGuideGlobalState& GetGlobalState() {
+    return *optimization_guide_global_state_;
+  }
+
   optimization_guide::OnDeviceModelComponentStateManager*
   GetComponentManager() {
-    return on_device_component_manager_.get();
+    return &optimization_guide_global_state_->component_state_manager();
   }
 
   optimization_guide::ModelExecutionManager* GetModelExecutionManager() {
@@ -318,10 +361,6 @@ class OptimizationGuideKeyedService
       std::optional<optimization_guide::proto::RequestContextMetadata>
           request_context_metadata = std::nullopt) override;
 
-  // Returns whether all conditions are met to show the IPH promo for
-  // experimental AI.
-  bool ShouldShowExperimentalAIPromo() const;
-
   download::BackgroundDownloadService* BackgroundDownloadServiceProvider();
 
   bool ComponentUpdatesEnabledProvider() const;
@@ -331,6 +370,21 @@ class OptimizationGuideKeyedService
   void RecordModelExecutionFeatureSyntheticFieldTrial(
       optimization_guide::UserVisibleFeatureKey feature,
       std::string_view feature_name);
+
+  // Ensures the performance class will be up to date and available when
+  // `complete` runs.
+  void EnsurePerformanceClassAvailable(base::OnceClosure complete);
+
+  void FinishGetOnDeviceModelEligibility(
+      optimization_guide::ModelBasedCapabilityKey feature,
+      const on_device_model::Capabilities& capabilities,
+      base::OnceCallback<
+          void(optimization_guide::OnDeviceModelEligibilityReason)> callback);
+
+  // Gets the possible capabilities that this device can support. This can be
+  // used to get all the capabilities this device supports before downloading
+  // the model. This will be a superset of GetOnDeviceCapabilities().
+  on_device_model::Capabilities GetPossibleOnDeviceCapabilities() const;
 
   raw_ptr<content::BrowserContext> browser_context_;
 
@@ -342,8 +396,8 @@ class OptimizationGuideKeyedService
   raw_ptr<OptimizationGuideLogger> optimization_guide_logger_;
 
   // Keep a reference to this so it stays alive.
-  scoped_refptr<optimization_guide::OnDeviceModelComponentStateManager>
-      on_device_component_manager_;
+  scoped_refptr<optimization_guide::OptimizationGuideGlobalState>
+      optimization_guide_global_state_;
 
   // The tab URL provider to use for fetching information for the user's active
   // tabs. Will be null if the user is off the record.
@@ -361,6 +415,10 @@ class OptimizationGuideKeyedService
   // prediction models.
   std::unique_ptr<optimization_guide::PredictionManager> prediction_manager_;
 
+  // Provides assets to optimization_guide_global_state_ from
+  // prediction_manager_. This *MUST* be destroyed before
+  // `optimization_guide_global_state_`, because it holds raw_ptrs to some of
+  // it's members.
   std::unique_ptr<optimization_guide::OnDeviceAssetManager>
       on_device_asset_manager_;
 
@@ -385,6 +443,8 @@ class OptimizationGuideKeyedService
 
   // Used to observe profile initialization event.
   base::ScopedObservation<Profile, ProfileObserver> profile_observation_{this};
+
+  base::WeakPtrFactory<OptimizationGuideKeyedService> weak_factory_{this};
 };
 
 #endif  // CHROME_BROWSER_OPTIMIZATION_GUIDE_OPTIMIZATION_GUIDE_KEYED_SERVICE_H_

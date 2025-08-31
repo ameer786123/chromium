@@ -18,6 +18,7 @@
 #include "chromecast/starboard/chromecast/starboard_cast_api/cast_starboard_api_types.h"
 #include "chromecast/starboard/media/media/drm_util.h"
 #include "chromecast/starboard/media/media/starboard_api_wrapper.h"
+#include "chromecast/starboard/media/media/starboard_resampler.h"
 
 namespace chromecast {
 namespace media {
@@ -110,6 +111,14 @@ const std::optional<StarboardAudioSampleInfo>&
 StarboardAudioDecoder::GetAudioSampleInfo() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return audio_sample_info_;
+}
+
+std::optional<EncryptionScheme> StarboardAudioDecoder::GetEncryptionScheme() {
+  if (audio_sample_info_.has_value()) {
+    // The config is populated when audio_sample_info_ is populated.
+    return config_.encryption_scheme;
+  }
+  return std::nullopt;
 }
 
 bool StarboardAudioDecoder::SetConfig(const AudioConfig& config) {
@@ -218,6 +227,12 @@ StarboardAudioDecoder::GetAudioTrackTimestamp() {
 
 int StarboardAudioDecoder::GetStartThresholdInFrames() {
   return 0;
+}
+
+// This must return false, so that AudioPipelineImpl does not clear the
+// encryption field of the audio config.
+bool MediaPipelineBackend::AudioDecoder::RequiresDecryption() {
+  return false;
 }
 
 }  // namespace media

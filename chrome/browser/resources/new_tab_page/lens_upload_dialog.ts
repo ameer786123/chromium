@@ -13,6 +13,7 @@ import type {LensFormElement} from './lens_form.js';
 import {LensErrorType, LensSubmitType} from './lens_form.js';
 import {getCss} from './lens_upload_dialog.css.js';
 import {getHtml} from './lens_upload_dialog.html.js';
+import {recordEnumeration} from './metrics_utils.js';
 import {WindowProxy} from './window_proxy.js';
 
 enum DialogState {
@@ -96,13 +97,13 @@ export enum LensUploadDialogError {
 }
 
 export function recordLensUploadDialogAction(action: LensUploadDialogAction) {
-  chrome.metricsPrivate.recordEnumerationValue(
+  recordEnumeration(
       'NewTabPage.Lens.UploadDialog.DialogAction', action,
       Object.keys(LensUploadDialogAction).length);
 }
 
 export function recordLensUploadDialogError(action: LensUploadDialogError) {
-  chrome.metricsPrivate.recordEnumerationValue(
+  recordEnumeration(
       'NewTabPage.Lens.UploadDialog.DialogError', action,
       Object.keys(LensUploadDialogError).length);
 }
@@ -146,12 +147,12 @@ export class LensUploadDialogElement extends LensUploadDialogElementBase {
     };
   }
 
-  protected accessor isHidden_: boolean;
-  protected accessor isError_: boolean;
-  protected accessor isNormalOrError_: boolean;
-  protected accessor isDragging_: boolean;
-  protected accessor isLoading_: boolean;
-  protected accessor isOffline_: boolean;
+  protected accessor isHidden_: boolean = false;
+  protected accessor isError_: boolean = false;
+  protected accessor isNormalOrError_: boolean = false;
+  protected accessor isDragging_: boolean = false;
+  protected accessor isLoading_: boolean = false;
+  protected accessor isOffline_: boolean = false;
   private accessor dialogState_ = DialogState.HIDDEN;
   private accessor lensErrorMessage_ = LensErrorMessage.NONE;
   private outsideHandlerAttached_ = false;

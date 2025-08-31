@@ -10,17 +10,22 @@
 #include <vector>
 
 #include "base/check.h"
+#include "base/feature_list.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/types/optional_util.h"
+#include "bubble_controller_base.h"
 #include "chrome/browser/autofill/ui/ui_util.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/global_features.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/promos/promos_types.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_promo_util.h"
 #include "chrome/browser/ui/autofill/autofill_bubble_handler.h"
+#include "chrome/browser/ui/autofill/bubble_manager.h"
+#include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/browser/ui/autofill/edit_address_profile_dialog_controller_impl.h"
 #include "chrome/browser/ui/autofill/save_address_bubble_controller.h"
 #include "chrome/browser/ui/autofill/update_address_bubble_controller.h"
@@ -30,6 +35,7 @@
 #include "chrome/browser/ui/promos/ios_promos_utils.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/grit/theme_resources.h"
+#include "components/application_locale_storage/application_locale_storage.h"
 #include "components/autofill/content/browser/content_autofill_client.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
@@ -52,8 +58,8 @@ AutofillBubbleBase* ShowSaveBubble(
     base::WeakPtr<AddressBubbleControllerDelegate> delegate) {
   auto controller = std::make_unique<SaveAddressBubbleController>(
       delegate, web_contents, profile, is_migration_to_account);
-  return chrome::FindBrowserWithTab(web_contents)
-      ->window()
+
+  return BrowserWindow::FindBrowserWindowWithWebContents(web_contents)
       ->GetAutofillBubbleHandler()
       ->ShowSaveAddressProfileBubble(web_contents, std::move(controller),
                                      shown_by_user_gesture);
@@ -67,8 +73,7 @@ AutofillBubbleBase* ShowUpdateBubble(
     base::WeakPtr<AddressBubbleControllerDelegate> delegate) {
   auto update_controller = std::make_unique<UpdateAddressBubbleController>(
       delegate, web_contents, profile, original_profile);
-  return chrome::FindBrowserWithTab(web_contents)
-      ->window()
+  return BrowserWindow::FindBrowserWindowWithWebContents(web_contents)
       ->GetAutofillBubbleHandler()
       ->ShowUpdateAddressProfileBubble(
           web_contents, std::move(update_controller), shown_by_user_gesture);
@@ -79,8 +84,7 @@ AutofillBubbleBase* ShowSignInPromo(content::WebContents* web_contents,
                                     const AutofillProfile& autofill_profile) {
   // TODO(crbug.com/381390420): Expose the `AutofillBubbleHandler` in
   // `BrowserWindowInterface` and use that instead.
-  return chrome::FindBrowserWithTab(web_contents)
-      ->window()
+  return BrowserWindow::FindBrowserWindowWithWebContents(web_contents)
       ->GetAutofillBubbleHandler()
       ->ShowAddressSignInPromo(web_contents, autofill_profile);
 }
@@ -92,7 +96,9 @@ AddressBubblesController::AddressBubblesController(
     content::WebContents* web_contents)
     : AutofillBubbleControllerBase(web_contents),
       content::WebContentsUserData<AddressBubblesController>(*web_contents),
-      app_locale_(g_browser_process->GetApplicationLocale()) {}
+      app_locale_(g_browser_process->GetFeatures()
+                      ->application_locale_storage()
+                      ->Get()) {}
 
 AddressBubblesController::~AddressBubblesController() {
   // `address_profile_save_prompt_callback_` must have been invoked before
@@ -109,6 +115,7 @@ void AddressBubblesController::SetUpAndShowSaveOrUpdateAddressBubble(
     const AutofillProfile& profile,
     const AutofillProfile* original_profile,
     bool is_migration_to_account,
+    bool user_has_any_profile_saved,
     AutofillClient::AddressProfileSavePromptCallback callback) {
   AddressBubblesController::CreateForWebContents(web_contents);
   auto* controller = AddressBubblesController::FromWebContents(web_contents);
@@ -126,9 +133,9 @@ void AddressBubblesController::SetUpAndShowSaveOrUpdateAddressBubble(
                             : IDS_AUTOFILL_SAVE_ADDRESS_PROMPT_TITLE)
                      : IDS_AUTOFILL_UPDATE_ADDRESS_PROMPT_TITLE);
 
-  controller->SetUpAndShowBubble(std::move(show_bubble_view_impl),
-                                 std::move(page_action_icon_tootip),
-                                 is_migration_to_account, std::move(callback));
+  controller->SetUpAndShowBubble(
+      std::move(show_bubble_view_impl), std::move(page_action_icon_tootip),
+      is_migration_to_account, user_has_any_profile_saved, std::move(callback));
 }
 
 void AddressBubblesController::ShowEditor(
@@ -153,7 +160,7 @@ void AddressBubblesController::OnUserDecision(
   if (decision == AutofillClient::AddressPromptUserDecision::kEditDeclined) {
     // Reopen this bubble if the user canceled editing.
     shown_by_user_gesture_ = false;
-    Show();
+    ShowBubble();
     return;
   }
   if (address_profile_save_prompt_callback_) {
@@ -164,6 +171,14 @@ void AddressBubblesController::OnUserDecision(
   if (decision == AutofillClient::AddressPromptUserDecision::kAccepted ||
       decision == AutofillClient::AddressPromptUserDecision::kEditAccepted) {
     MaybeShowIOSDektopAddressPromo();
+  } else if (decision == AutofillClient::AddressPromptUserDecision::kDeclined &&
+             !user_has_any_profile_saved_ &&
+             base::FeatureList::IsEnabled(
+                 features::kAutofillAddressUserDeclinedSaveSurvey)) {
+    if (auto* autofill_client =
+            ChromeAutofillClient::FromWebContents(web_contents())) {
+      autofill_client->TriggerDeclinedSaveAddressReasonSurvey();
+    }
   }
 }
 
@@ -179,7 +194,7 @@ void AddressBubblesController::OnIconClicked() {
     return;
   }
   shown_by_user_gesture_ = true;
-  Show();
+  ShowBubble();
 }
 
 bool AddressBubblesController::IsBubbleActive() const {
@@ -221,10 +236,20 @@ void AddressBubblesController::DoShowBubble() {
   CHECK(bubble_view());
 }
 
+BubbleType AddressBubblesController::GetBubbleType() const {
+  return BubbleType::kSaveUpdateAddress;
+}
+
+base::WeakPtr<BubbleControllerBase>
+AddressBubblesController::GetBubbleControllerBaseWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+
 void AddressBubblesController::SetUpAndShowBubble(
     ShowBubbleViewCallback show_bubble_view_callback,
     std::u16string page_action_icon_tootip,
     bool is_migration_to_account,
+    bool user_has_any_profile_saved,
     AutofillClient::AddressProfileSavePromptCallback
         address_profile_save_prompt_callback) {
   // Don't show the bubble if it's already visible, and inform the backend.
@@ -234,30 +259,65 @@ void AddressBubblesController::SetUpAndShowBubble(
              std::nullopt);
     return;
   }
-  // If the user closed the bubble of the previous import process using the
-  // "Close" button without making a decision to "Accept" or "Deny" the prompt,
-  // a fallback icon is shown, so the user can get back to the prompt. In this
-  // specific scenario the import process is considered in progress (since the
-  // backend didn't hear back via the callback yet), but hidden. When a second
-  // prompt arrives, we finish the previous import process as "Ignored", before
-  // showing the 2nd prompt.
+
+  const bool bubble_manager_enabled = base::FeatureList::IsEnabled(
+      features::kAutofillShowBubblesBasedOnPriorities);
+
+  if (bubble_manager_enabled) {
+    auto* manager = BubbleManager::GetForWebContents(web_contents());
+    if (!manager || manager->HasPendingBubble(*this)) {
+      std::move(address_profile_save_prompt_callback)
+          .Run(AutofillClient::AddressPromptUserDecision::kAutoDeclined,
+               std::nullopt);
+      return;
+    }
+  }
+
   if (address_profile_save_prompt_callback_) {
+    // If the user closed the bubble of the previous import process using the
+    // "Close" button without making a decision to "Accept" or "Deny" the
+    // prompt, a fallback icon is shown, so the user can get back to the prompt.
+    // In this specific scenario the import process is considered in progress
+    // (since the backend didn't hear back via the callback yet), but hidden. Or
+    // when `bubble_manager_enabled` and the bubble is in the queue to be shown
+    // but timed out. When a second prompt arrives, we finish the previous
+    // import process as "Ignored", before showing the 2nd prompt.
     std::move(address_profile_save_prompt_callback_)
         .Run(AutofillClient::AddressPromptUserDecision::kIgnored, std::nullopt);
   }
 
+  SetUpBubble(std::move(show_bubble_view_callback),
+              std::move(page_action_icon_tootip), is_migration_to_account,
+              user_has_any_profile_saved,
+              std::move(address_profile_save_prompt_callback));
+
+  if (bubble_manager_enabled) {
+    if (auto* manager = BubbleManager::GetForWebContents(web_contents())) {
+      manager->RequestShowController(*this);
+    }
+  } else {
+    ShowBubble();
+  }
+}
+
+void AddressBubblesController::SetUpBubble(
+    ShowBubbleViewCallback show_bubble_view_callback,
+    std::u16string page_action_icon_tootip,
+    bool is_migration_to_account,
+    bool user_has_any_profile_saved,
+    AutofillClient::AddressProfileSavePromptCallback
+        address_profile_save_prompt_callback) {
   show_bubble_view_callback_ = std::move(show_bubble_view_callback);
   page_action_icon_tootip_ = std::move(page_action_icon_tootip);
   address_profile_save_prompt_callback_ =
       std::move(address_profile_save_prompt_callback);
   shown_by_user_gesture_ = false;
   is_migration_to_account_ = is_migration_to_account;
-
-  Show();
+  user_has_any_profile_saved_ = user_has_any_profile_saved;
 }
 
 void AddressBubblesController::MaybeShowIOSDektopAddressPromo() {
-  Browser* browser = chrome::FindBrowserWithTab(web_contents());
+  Browser* browser = BrowserWindow::FindBrowserWindowWithWebContents(web_contents())->AsBrowserView()->browser();
 
   // Verify if user is eligible for iOS promo, and attempt showing if they are.
   ios_promos_utils::VerifyIOSPromoEligibility(IOSPromoType::kAddress, browser);

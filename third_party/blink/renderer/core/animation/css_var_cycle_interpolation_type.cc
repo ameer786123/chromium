@@ -10,6 +10,7 @@
 #include "base/memory/ptr_util.h"
 #include "third_party/blink/renderer/core/animation/css_interpolation_environment.h"
 #include "third_party/blink/renderer/core/animation/string_keyframe.h"
+#include "third_party/blink/renderer/core/animation/underlying_value_owner.h"
 #include "third_party/blink/renderer/core/css/css_unparsed_declaration_value.h"
 #include "third_party/blink/renderer/core/css/css_unset_value.h"
 #include "third_party/blink/renderer/core/css/property_registration.h"
@@ -67,8 +68,13 @@ InterpolationValue CSSVarCycleInterpolationType::MaybeConvertSingle(
     const InterpolationValue& underlying,
     ConversionCheckers& conversion_checkers) const {
   const auto& property_specific = To<CSSPropertySpecificKeyframe>(keyframe);
-  const CSSValue& value = *property_specific.Value();
+  const CSSValue* value = property_specific.Value();
   const TreeScope* keyframe_tree_scope = property_specific.GetTreeScope();
+
+  if (!value) {
+    DCHECK(keyframe.IsNeutral());
+    return nullptr;
+  }
 
   // It is only possible to form a cycle if the value points to something else.
   // This is only possible with var(), or with revert-[layer] which may revert
@@ -77,15 +83,15 @@ InterpolationValue CSSVarCycleInterpolationType::MaybeConvertSingle(
     if (!declaration->VariableDataValue()->NeedsVariableResolution()) {
       return nullptr;
     }
-  } else if (!value.IsRevertValue() && !value.IsRevertLayerValue()) {
+  } else if (!value->IsRevertValue() && !value->IsRevertLayerValue()) {
     return nullptr;
   }
 
   PropertyHandle property = GetProperty();
   bool cycle_detected =
-      !environment.Resolve(property, &value, keyframe_tree_scope);
+      !environment.Resolve(property, value, keyframe_tree_scope);
   conversion_checkers.push_back(MakeGarbageCollected<CycleChecker>(
-      property, value, keyframe_tree_scope, cycle_detected));
+      property, *value, keyframe_tree_scope, cycle_detected));
   return cycle_detected ? CreateCycleDetectedValue() : nullptr;
 }
 
@@ -125,6 +131,14 @@ InterpolationValue CSSVarCycleInterpolationType::MaybeConvertUnderlyingValue(
          !style.GetVariableData(GetProperty().CustomPropertyName())
               ->NeedsVariableResolution());
   return nullptr;
+}
+
+void CSSVarCycleInterpolationType::Composite(
+    UnderlyingValueOwner& underlying_value_owner,
+    double underlying_fraction,
+    const InterpolationValue& value,
+    double interpolation_fraction) const {
+  underlying_value_owner.Set(this, value);
 }
 
 void CSSVarCycleInterpolationType::Apply(

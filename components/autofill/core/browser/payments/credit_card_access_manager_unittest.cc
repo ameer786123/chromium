@@ -37,20 +37,22 @@
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/payments/payments_window_manager.h"
 #include "components/autofill/core/browser/payments/test/mock_payments_window_manager.h"
+#include "components/autofill/core/browser/payments/test/mock_virtual_card_enrollment_manager.h"
 #include "components/autofill/core/browser/payments/test/test_credit_card_otp_authenticator.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/autofill/core/common/autofill_prefs.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/device_info.h"
+#endif
+
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_ANDROID)
 #include "components/autofill/core/browser/payments/test_credit_card_fido_authenticator.h"
 #include "components/autofill/core/browser/strike_databases/payments/fido_authentication_strike_database.h"
 #endif
 
-#if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
-#endif
 
 using base::ASCIIToUTF16;
 using testing::NiceMock;
@@ -131,7 +133,7 @@ INSTANTIATE_TEST_SUITE_P(,
 // Tests retrieving local cards.
 TEST_F(CreditCardAccessManagerTest, FetchLocalCardSuccess) {
 #if BUILDFLAG(IS_ANDROID)
-  if (base::android::BuildInfo::GetInstance()->is_automotive()) {
+  if (base::android::device_info::is_automotive()) {
     GTEST_SKIP() << "This test should not run on automotive.";
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -1649,14 +1651,12 @@ TEST_F(CreditCardAccessManagerTest, FetchCreditCardUsesUnmaskedCardCache) {
   // version.
   FetchCreditCard(&masked_card);
 
-  histogram_tester.ExpectBucketCount("Autofill.UsedCachedServerCard", 1, 1);
   histogram_tester.ExpectUniqueSample(
       "Autofill.ServerCardUnmask.ServerCard.Result.UnspecifiedFlowType",
       autofill_metrics::ServerCardUnmaskResult::kLocalCacheHit, 1);
 
   FetchCreditCard(&masked_card);
 
-  histogram_tester.ExpectBucketCount("Autofill.UsedCachedServerCard", 2, 1);
   histogram_tester.ExpectUniqueSample(
       "Autofill.ServerCardUnmask.ServerCard.Result.UnspecifiedFlowType",
       autofill_metrics::ServerCardUnmaskResult::kLocalCacheHit, 2);
@@ -1673,7 +1673,6 @@ TEST_F(CreditCardAccessManagerTest, FetchCreditCardUsesUnmaskedCardCache) {
   masked_card.set_record_type(CreditCard::RecordType::kVirtualCard);
   FetchCreditCard(&masked_card);
 
-  histogram_tester.ExpectBucketCount("Autofill.UsedCachedVirtualCard", 1, 1);
   histogram_tester.ExpectUniqueSample(
       "Autofill.ServerCardUnmask.VirtualCard.Result.UnspecifiedFlowType",
       autofill_metrics::ServerCardUnmaskResult::kLocalCacheHit, 1);
@@ -1733,7 +1732,7 @@ TEST_F(CreditCardAccessManagerTest,
   base::HistogramTester histogram_tester;
 
 #if BUILDFLAG(IS_ANDROID)
-  if (base::android::BuildInfo::GetInstance()->is_automotive()) {
+  if (base::android::device_info::is_automotive()) {
     GTEST_SKIP() << "This test should not run on automotive.";
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -2556,6 +2555,85 @@ TEST_F(CreditCardAccessManagerTest, DestructorResetsCardIdentifier) {
       test_api(*form_data_importer)
           .payment_method_type_if_non_interactive_authentication_flow_completed()
           .has_value());
+}
+
+TEST_F(CreditCardAccessManagerTest, InvokeVirtualCardEnrollmentPreflightCall) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::
+          kAutofillEnableMultipleRequestInVirtualCardDownstreamEnrollment);
+  auto virtual_card_enrollment_manager =
+      std::make_unique<MockVirtualCardEnrollmentManager>(
+          &personal_data().payments_data_manager(),
+          /*payments_network_interface=*/nullptr, &autofill_client_);
+  autofill_client_.GetPaymentsAutofillClient()
+      ->set_virtual_card_enrollment_manager(
+          std::move(virtual_card_enrollment_manager));
+  CreditCard card = test::GetMaskedServerCard();
+  card.set_virtual_card_enrollment_state(
+      CreditCard::VirtualCardEnrollmentState::kUnenrolledAndEligible);
+  personal_data().test_payments_data_manager().AddServerCreditCard(card);
+  EXPECT_CALL(*static_cast<MockVirtualCardEnrollmentManager*>(
+                  autofill_client_.GetPaymentsAutofillClient()
+                      ->GetVirtualCardEnrollmentManager()),
+              InitVirtualCardEnroll);
+
+  PrepareToFetchCreditCardAndWaitForCallbacks();
+  CreditCardAccessManagerTestBase::FetchCreditCard(&card);
+}
+
+TEST_F(CreditCardAccessManagerTest,
+       DoNotInvokeVirtualCardEnrollmentPreflightCall_FlagOff) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(
+      features::
+          kAutofillEnableMultipleRequestInVirtualCardDownstreamEnrollment);
+  auto virtual_card_enrollment_manager =
+      std::make_unique<MockVirtualCardEnrollmentManager>(
+          &personal_data().payments_data_manager(),
+          /*payments_network_interface=*/nullptr, &autofill_client_);
+  autofill_client_.GetPaymentsAutofillClient()
+      ->set_virtual_card_enrollment_manager(
+          std::move(virtual_card_enrollment_manager));
+  CreditCard card = test::GetMaskedServerCard();
+  card.set_virtual_card_enrollment_state(
+      CreditCard::VirtualCardEnrollmentState::kUnenrolledAndEligible);
+  personal_data().test_payments_data_manager().AddServerCreditCard(card);
+  EXPECT_CALL(*static_cast<MockVirtualCardEnrollmentManager*>(
+                  autofill_client_.GetPaymentsAutofillClient()
+                      ->GetVirtualCardEnrollmentManager()),
+              InitVirtualCardEnroll)
+      .Times(0);
+
+  PrepareToFetchCreditCardAndWaitForCallbacks();
+  CreditCardAccessManagerTestBase::FetchCreditCard(&card);
+}
+
+TEST_F(CreditCardAccessManagerTest,
+       DoNotInvokeVirtualCardEnrollmentPreflightCall_CardNotEligible) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::
+          kAutofillEnableMultipleRequestInVirtualCardDownstreamEnrollment);
+  auto virtual_card_enrollment_manager =
+      std::make_unique<MockVirtualCardEnrollmentManager>(
+          &personal_data().payments_data_manager(),
+          /*payments_network_interface=*/nullptr, &autofill_client_);
+  autofill_client_.GetPaymentsAutofillClient()
+      ->set_virtual_card_enrollment_manager(
+          std::move(virtual_card_enrollment_manager));
+  CreditCard card = test::GetMaskedServerCard();
+  card.set_virtual_card_enrollment_state(
+      CreditCard::VirtualCardEnrollmentState::kUnenrolledAndNotEligible);
+  personal_data().test_payments_data_manager().AddServerCreditCard(card);
+  EXPECT_CALL(*static_cast<MockVirtualCardEnrollmentManager*>(
+                  autofill_client_.GetPaymentsAutofillClient()
+                      ->GetVirtualCardEnrollmentManager()),
+              InitVirtualCardEnroll)
+      .Times(0);
+
+  PrepareToFetchCreditCardAndWaitForCallbacks();
+  CreditCardAccessManagerTestBase::FetchCreditCard(&card);
 }
 
 }  // namespace autofill

@@ -19,6 +19,7 @@
 #import "base/test/ios/wait_util.h"
 #import "base/test/test_timeouts.h"
 #import "base/values.h"
+#import "components/autofill/core/browser/autofill_field.h"
 #import "components/autofill/core/browser/data_model/payments/credit_card.h"
 #import "components/autofill/core/browser/filling/filling_product.h"
 #import "components/autofill/core/browser/foundations/test_autofill_client.h"
@@ -31,7 +32,7 @@
 #import "components/autofill/core/common/autofill_prefs.h"
 #import "components/autofill/core/common/field_data_manager.h"
 #import "components/autofill/core/common/form_data.h"
-#include "components/autofill/core/common/form_field_data.h"
+#import "components/autofill/core/common/form_field_data.h"
 #import "components/autofill/core/common/mojom/autofill_types.mojom-shared.h"
 #import "components/autofill/core/common/unique_ids.h"
 #import "components/autofill/ios/browser/autofill_driver_ios.h"
@@ -64,6 +65,7 @@ using autofill::FieldDataManager;
 using autofill::FieldRendererId;
 using autofill::FillingProduct;
 using autofill::FormRendererId;
+using autofill::Section;
 using autofill::SuggestionType;
 using base::test::ios::WaitUntilConditionOrTimeout;
 
@@ -71,6 +73,8 @@ namespace {
 
 using autofill::AutofillDriverIOS;
 using autofill::AutofillDriverIOSFactory;
+
+constexpr char kTestFrameId[] = "11111111111111111111111111111111";
 
 // Returns the minimal FormData content for testing filling.
 std::vector<autofill::FormFieldData::FillData>
@@ -146,7 +150,7 @@ class AutofillAgentTests : public web::WebTest {
 
     GURL url("https://example.com");
     fake_web_state_.SetCurrentURL(url);
-    auto main_frame = web::FakeWebFrame::Create("frameID", true, url);
+    auto main_frame = web::FakeWebFrame::Create(kTestFrameId, true, url);
     main_frame->set_browser_state(GetBrowserState());
     fake_main_frame_ = main_frame.get();
     AddWebFrame(std::move(main_frame));
@@ -161,7 +165,7 @@ class AutofillAgentTests : public web::WebTest {
         [[AutofillAgent alloc] initWithPrefService:prefs_.get()
                                           webState:&fake_web_state_];
 
-    client_ = std::make_unique<autofill::TestAutofillClientIOS>(
+    autofill::TestAutofillClientIOS::CreateForWebState(
         &fake_web_state_,
         should_set_autofill_driver_ios_bridge() ? autofill_agent_ : nil);
   }
@@ -184,9 +188,6 @@ class AutofillAgentTests : public web::WebTest {
   // the latter of which can be de-allocated as part of de-allocating the
   // fake_web_state_.
   std::unique_ptr<PrefService> prefs_;
-  // The client_ needs to outlive the fake_web_state_, which owns the
-  // frames.
-  std::unique_ptr<autofill::TestAutofillClientIOS> client_;
   web::FakeWebState fake_web_state_;
   raw_ptr<web::FakeWebFrame> fake_main_frame_ = nullptr;
   raw_ptr<web::FakeWebFramesManager> fake_web_frames_manager_ = nullptr;
@@ -236,13 +237,14 @@ TEST_F(AutofillAgentTests,
   fill_data.push_back(autofill::FormFieldData::FillData(field));
 
   [autofill_agent_ fillData:fill_data
+                    section:Section()
                     inFrame:fake_web_frames_manager_->GetMainWebFrame()];
   fake_web_state_.WasShown();
 
-  EXPECT_EQ(u"__gCrWeb.autofill.fillForm({\"fields\":{\"2\":{\"hostFormId\":0,"
-            u"\"section\":\"-default\",\"value\":\"number_value\"},\"3\":{"
-            u"\"hostFormId\":0,\"section\":\"-default\","
-            u"\"value\":\"name_value\"}}}, 0);",
+  EXPECT_EQ(u"__gCrWeb.callFunctionInGcrWeb('autofill', 'fillForm', "
+            u"[{\"fields\":{\"2\":{\"hostFormId\":0,\"section\":\"-default\","
+            u"\"value\":\"number_value\"},\"3\":{\"hostFormId\":0,\"section\":"
+            u"\"-default\",\"value\":\"name_value\"}}}, 0]);",
             fake_main_frame_->GetLastJavaScriptCall());
 }
 
@@ -264,9 +266,10 @@ TEST_F(AutofillAgentTests, FillSpecificFormField) {
                   withValue:u"mattwashere"
                     inFrame:fake_web_frames_manager_->GetMainWebFrame()];
   fake_web_state_.WasShown();
-  EXPECT_EQ(u"__gCrWeb.autofill.fillSpecificFormField({\"renderer_id\":"
-            u"2,\"value\":\"mattwashere\"});",
-            fake_main_frame_->GetLastJavaScriptCall());
+  EXPECT_EQ(
+      u"__gCrWeb.callFunctionInGcrWeb('autofill', 'fillSpecificFormField', "
+      u"[{\"renderer_id\":2,\"value\":\"mattwashere\"}]);",
+      fake_main_frame_->GetLastJavaScriptCall());
 }
 
 // Test that the updates are applied when filling specific form field is done
@@ -355,15 +358,25 @@ TEST_F(AutofillAgentTests, DriverFillSpecificFormField) {
   AutofillDriverIOS* main_frame_driver =
       AutofillDriverIOS::FromWebStateAndWebFrame(
           &fake_web_state_, fake_web_frames_manager_->GetMainWebFrame());
+  field.set_host_frame(main_frame_driver->GetFrameToken());
+
+  autofill::FormData form;
+  form.set_host_frame(main_frame_driver->GetFrameToken());
+  form.set_renderer_id(autofill::FormRendererId(1));
+  field.set_host_form_id(form.renderer_id());
+  form.set_fields({field});
+  main_frame_driver->FormsSeen({form}, {});
+
   main_frame_driver->ApplyFieldAction(
       autofill::mojom::FieldActionType::kReplaceAll,
       autofill::mojom::ActionPersistence::kFill, field.global_id(),
       u"mattwashere");
 
   fake_web_state_.WasShown();
-  EXPECT_EQ(u"__gCrWeb.autofill.fillSpecificFormField({\"renderer_id\":"
-            u"2,\"value\":\"mattwashere\"});",
-            fake_main_frame_->GetLastJavaScriptCall());
+  EXPECT_EQ(
+      u"__gCrWeb.callFunctionInGcrWeb('autofill', 'fillSpecificFormField', "
+      u"[{\"renderer_id\":2,\"value\":\"mattwashere\"}]);",
+      fake_main_frame_->GetLastJavaScriptCall());
 }
 
 // Tests that `ApplyFieldAction` with `ActionPersistence::kPreview`in
@@ -382,6 +395,15 @@ TEST_F(AutofillAgentTests, DriverPreviewSpecificFormField) {
   AutofillDriverIOS* main_frame_driver =
       AutofillDriverIOS::FromWebStateAndWebFrame(
           &fake_web_state_, fake_web_frames_manager_->GetMainWebFrame());
+  field.set_host_frame(main_frame_driver->GetFrameToken());
+
+  autofill::FormData form;
+  form.set_host_frame(main_frame_driver->GetFrameToken());
+  form.set_renderer_id(autofill::FormRendererId(1));
+  field.set_host_form_id(form.renderer_id());
+  form.set_fields({field});
+  main_frame_driver->FormsSeen({form}, {});
+
   // Preview is not currently supported; no JS should be run.
   main_frame_driver->ApplyFieldAction(
       autofill::mojom::FieldActionType::kReplaceAll,
@@ -400,16 +422,16 @@ TEST_F(AutofillAgentTests,
   __block BOOL completion_handler_success = NO;
   __block BOOL completion_handler_called = NO;
 
-  FormSuggestionProviderQuery* form_query =
-      [[FormSuggestionProviderQuery alloc] initWithFormName:@"form"
-                                             formRendererID:FormRendererId(1)
-                                            fieldIdentifier:@"address"
-                                            fieldRendererID:FieldRendererId(2)
-                                                  fieldType:@"text"
-                                                       type:@"focus"
-                                                 typedValue:@""
-                                                    frameID:@"frameID"
-                                               onlyPassword:NO];
+  FormSuggestionProviderQuery* form_query = [[FormSuggestionProviderQuery alloc]
+      initWithFormName:@"form"
+        formRendererID:FormRendererId(1)
+       fieldIdentifier:@"address"
+       fieldRendererID:FieldRendererId(2)
+             fieldType:@"text"
+                  type:@"focus"
+            typedValue:@""
+               frameID:base::SysUTF8ToNSString(kTestFrameId)
+          onlyPassword:NO];
   [autofill_agent_ checkIfSuggestionsAvailableForForm:form_query
                                        hasUserGesture:NO
                                              webState:&fake_web_state_
@@ -689,16 +711,16 @@ TEST_F(AutofillAgentTests, onSuggestionsReady_ClearForm) {
     completion_handler_suggestions = [suggestions copy];
     completion_handler_called = YES;
   };
-  FormSuggestionProviderQuery* form_query =
-      [[FormSuggestionProviderQuery alloc] initWithFormName:@"form"
-                                             formRendererID:FormRendererId(1)
-                                            fieldIdentifier:@"address"
-                                            fieldRendererID:FieldRendererId(2)
-                                                  fieldType:@"text"
-                                                       type:@"focus"
-                                                 typedValue:@""
-                                                    frameID:@"frameID"
-                                               onlyPassword:NO];
+  FormSuggestionProviderQuery* form_query = [[FormSuggestionProviderQuery alloc]
+      initWithFormName:@"form"
+        formRendererID:FormRendererId(1)
+       fieldIdentifier:@"address"
+       fieldRendererID:FieldRendererId(2)
+             fieldType:@"text"
+                  type:@"focus"
+            typedValue:@""
+               frameID:base::SysUTF8ToNSString(kTestFrameId)
+          onlyPassword:NO];
   [autofill_agent_ retrieveSuggestionsForForm:form_query
                                      webState:&fake_web_state_
                             completionHandler:completionHandler];
@@ -748,16 +770,16 @@ TEST_F(AutofillAgentTests, onSuggestionsReady_ClearFormWithGPay) {
     completion_handler_suggestions = [suggestions copy];
     completion_handler_called = YES;
   };
-  FormSuggestionProviderQuery* form_query =
-      [[FormSuggestionProviderQuery alloc] initWithFormName:@"form"
-                                             formRendererID:FormRendererId(1)
-                                            fieldIdentifier:@"address"
-                                            fieldRendererID:FieldRendererId(2)
-                                                  fieldType:@"text"
-                                                       type:@"focus"
-                                                 typedValue:@""
-                                                    frameID:@"frameID"
-                                               onlyPassword:NO];
+  FormSuggestionProviderQuery* form_query = [[FormSuggestionProviderQuery alloc]
+      initWithFormName:@"form"
+        formRendererID:FormRendererId(1)
+       fieldIdentifier:@"address"
+       fieldRendererID:FieldRendererId(2)
+             fieldType:@"text"
+                  type:@"focus"
+            typedValue:@""
+               frameID:base::SysUTF8ToNSString(kTestFrameId)
+          onlyPassword:NO];
   [autofill_agent_ retrieveSuggestionsForForm:form_query
                                      webState:&fake_web_state_
                             completionHandler:completionHandler];
@@ -783,9 +805,9 @@ TEST_F(AutofillAgentTests, onSuggestionsReady_ClearFormWithGPay) {
 class AutofillAgentTestFrameInitializationOrderFrames
     : public AutofillAgentTests {
  public:
-  // If we do pass `autofill_agent_` to `client_` (which would then pass it on
-  // to the AutofillDriverIOS objects), then the test fixture crashes during
-  // destruction.
+  // If we do pass `autofill_agent_` to `autofill::TestAutofillClientIOS`
+  // (which would then pass it on to the AutofillDriverIOS objects), then
+  // the test fixture crashes during destruction.
   //
   // TODO(crbug.com/40100455): Understand what happens at destruction and fix
   // this. Then eliminate should_set_autofill_driver_ios_bridge().
@@ -938,7 +960,7 @@ TEST_F(AutofillAgentTests, FillData_UpdateWithResults) {
   fake_web_state_.WasShown();
 
   // Fill form data.
-  [autofill_agent_ fillData:fields inFrame:fake_main_frame_];
+  [autofill_agent_ fillData:fields section:Section() inFrame:fake_main_frame_];
 
   // Run queues to yield the filling results.
   web::test::WaitForBackgroundTasks();
@@ -979,7 +1001,7 @@ TEST_F(AutofillAgentTests, FillData_UnknowFieldIdInResults) {
   fake_web_state_.WasShown();
 
   // Fill form data.
-  [autofill_agent_ fillData:fields inFrame:fake_main_frame_];
+  [autofill_agent_ fillData:fields section:Section() inFrame:fake_main_frame_];
 
   // Run queues to yield the filling results.
   web::test::WaitForBackgroundTasks();
@@ -1009,8 +1031,7 @@ TEST_F(AutofillAgentTests, DidSelectSuggestion_AutocompleteEntry) {
                         formRendererID:form_id
                        fieldIdentifier:@"username-field-1"
                        fieldRendererID:field1_id
-                               frameID:base::SysUTF8ToNSString(
-                                           fake_main_frame_->GetFrameId())
+                               frameID:base::SysUTF8ToNSString(kTestFrameId)
                      completionHandler:^() {
                        completion_handler_called = YES;
                      }];
@@ -1063,8 +1084,7 @@ TEST_F(AutofillAgentTests, DidSelectSuggestion_ClearFormEntry) {
                         formRendererID:form_id
                        fieldIdentifier:@"username-field-1"
                        fieldRendererID:field1_id
-                               frameID:base::SysUTF8ToNSString(
-                                           fake_main_frame_->GetFrameId())
+                               frameID:base::SysUTF8ToNSString(kTestFrameId)
                      completionHandler:^() {
                        completion_handler_called = YES;
                      }];

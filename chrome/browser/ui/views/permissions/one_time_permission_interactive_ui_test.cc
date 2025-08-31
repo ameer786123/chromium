@@ -35,8 +35,8 @@
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/performance_manager/public/performance_manager.h"
+#include "components/permissions/content_setting_permission_context_base.h"
 #include "components/permissions/features.h"
-#include "components/permissions/permission_context_base.h"
 #include "components/permissions/permission_decision_auto_blocker.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/permissions/permission_uma_util.h"
@@ -93,8 +93,6 @@ class OneTimePermissionInteractiveUiTest : public WebRtcTestBase {
   OneTimePermissionInteractiveUiTest()
       : geolocation_overrider_(
             std::make_unique<device::ScopedGeolocationOverrider>(6.66, 9.99)) {
-    feature_list_.InitWithFeatures({permissions::features::kOneTimePermission},
-                                   {});
   }
 
   OneTimePermissionInteractiveUiTest(
@@ -265,8 +263,6 @@ class OneTimePermissionInteractiveUiTest : public WebRtcTestBase {
   // The render frame host where JS calls will be executed.
   raw_ptr<content::RenderFrameHost, AcrossTasksDanglingUntriaged>
       render_frame_host_ = nullptr;
-
-  base::test::ScopedFeatureList feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(OneTimePermissionInteractiveUiTest,

@@ -64,6 +64,11 @@ public interface SiteSettingsDelegate {
     boolean isIncognitoModeEnabled();
 
     /**
+     * @return true if the delegate is for an incognito-branded profile.
+     */
+    boolean isIncognito();
+
+    /**
      * @return true if the QuietNotificationPrompts Feature is enabled.
      */
     boolean isQuietNotificationPromptsFeatureEnabled();
@@ -76,10 +81,11 @@ public interface SiteSettingsDelegate {
     boolean isPermissionSiteSettingsRadioButtonFeatureEnabled();
 
     /**
-     * @return The id of the notification channel associated with the given origin.
+     * Get the id of the notification channel associated with the given origin.
+     *
+     * @param callback Callback to be invoked with the Id of the channel.
      */
-    // TODO(crbug.com/40126121): Remove this once WebLayer supports notifications.
-    String getChannelIdForOrigin(String origin);
+    void getChannelIdForOrigin(String origin, Callback<String> callback);
 
     /**
      * @return The name of the app the settings are associated with.
@@ -177,30 +183,14 @@ public interface SiteSettingsDelegate {
     boolean shouldShowTrackingProtectionUi();
 
     /**
-     * @return true if the IP Protection UI should be displayed in User Bypass.
-     */
-    boolean shouldDisplayIpProtection();
-
-    /***
-     * @return true if the Fingerprinting Protection UI should be displayed in User
-     *         Bypass.
-     */
-    boolean shouldDisplayFingerprintingProtection();
-
-    /**
-     * @return whether the 100% 3PCD Tracking Protection with ACT features UI should be shown.
-     */
-    boolean shouldShowTrackingProtectionActFeaturesUi();
-
-    /**
-     * @return whether all 3pcs should be blocked in incognito.
-     */
-    boolean isAlwaysBlock3pcsIncognitoEnabled();
-
-    /**
      * @return true if all third-party cookies are blocked when Tracking Protection is on.
      */
     boolean isBlockAll3pcEnabledInTrackingProtection();
+
+    /**
+     * @return true if wildcards should be shown in content settings patterns.
+     */
+    boolean isDisplayWildcardInContentSettingsEnabled();
 
     /** Enables/disables Related Website Sets data access. */
     void setRelatedWebsiteSetsDataAccessEnabled(boolean enabled);
@@ -236,19 +226,19 @@ public interface SiteSettingsDelegate {
     void getBrowsingDataModel(Callback<BrowsingDataModel> callback);
 
     /**
-     * @return whether the Privacy Sandbox Rws UI should be shown in the Settings.
-     */
-    boolean shouldShowPrivacySandboxRwsUi();
-
-    /**
-     * @return whether the Safety Hub is enabled.
-     */
-    boolean isSafetyHubEnabled();
-
-    /**
      * @return whether the unused site permission autorevocation is enabled.
      */
     boolean isPermissionAutorevocationEnabled();
+
+    /**
+     * @return whether the related website sets UI is enabled.
+     */
+    boolean isRelatedWebsiteSetsUiEnabled();
+
+    /**
+     * @return whether the settings containment feature is enabled.
+     */
+    boolean isSettingsContainmentEnabled();
 
     /** Enable/Disable unused site permission autorevocation. */
     void setPermissionAutorevocationEnabled(boolean isEnabled);

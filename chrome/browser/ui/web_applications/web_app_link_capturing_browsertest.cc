@@ -762,8 +762,14 @@ IN_PROC_BROWSER_TEST_P(WebAppLinkCapturingBrowserTest,
   }
 }
 
+// TODO(crbug.com/394710875): Re-enable this test
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_NoLinkCapturePopupNavigation DISABLED_NoLinkCapturePopupNavigation
+#else
+#define MAYBE_NoLinkCapturePopupNavigation NoLinkCapturePopupNavigation
+#endif
 IN_PROC_BROWSER_TEST_P(WebAppLinkCapturingBrowserTest,
-                       NoLinkCapturePopupNavigation) {
+                       MAYBE_NoLinkCapturePopupNavigation) {
   const auto [app_id, in_scope, _, scope] =
       InstallTestApp("/web_apps/basic.html");
 
@@ -795,6 +801,7 @@ IN_PROC_BROWSER_TEST_P(WebAppLinkCapturingBrowserTest,
       nullptr, BrowserChangeObserver::ChangeType::kAdded);
   auto navigation_observer = GetTestNavigationObserver(in_scope);
 
+  content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(web_contents);
   content::SimulateMouseClickOrTapElementWithId(web_contents, "popup");
   Browser* popup_browser = added_observer.Wait();
   // We need to wait for the navigation to complete inside the popup browser, to
@@ -879,9 +886,11 @@ IN_PROC_BROWSER_TEST_P(WebAppTabStripLinkCapturingBrowserTest,
   ExpectTabs(app_browser, {in_scope_1, in_scope_2, scope});
 
   // Middle clicking links should not be captured.
+  auto* web_contents = browser()->tab_strip_model()->GetActiveWebContents();
+  content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(web_contents);
   ClickLinkWithModifiersAndWaitForURL(
-      browser()->tab_strip_model()->GetActiveWebContents(), scope, scope,
-      LinkTarget::SELF, "", blink::WebInputEvent::Modifiers::kNoModifiers,
+      web_contents, scope, scope, LinkTarget::SELF, "",
+      blink::WebInputEvent::Modifiers::kNoModifiers,
       blink::WebMouseEvent::Button::kMiddle);
   ExpectTabs(browser(), {out_of_scope_, scope});
   ExpectTabs(app_browser, {in_scope_1, in_scope_2, scope});

@@ -7,31 +7,26 @@
 #include "ash/constants/generative_ai_country_restrictions.h"
 #include "base/command_line.h"
 #include "base/containers/fixed_flat_set.h"
-#include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/manta/manta_service_factory.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "chromeos/constants/chromeos_switches.h"
-#include "components/manta/features.h"
 #include "components/manta/manta_service.h"
 #include "components/user_manager/user_manager.h"
 #include "components/variations/service/variations_service.h"
 
 namespace ash::mahi_availability {
 
-bool CanUseMahiService() {
-  if (!manta::features::IsMantaServiceEnabled()) {
-    return false;
-  }
-
+std::optional<bool> CanUseMahiService() {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           chromeos::switches::kMahiRestrictionsOverride)) {
     return true;
   }
 
-  if (!ash::DemoSession::IsDeviceInDemoMode()) {
+  if (!ash::demo_mode::IsDeviceInDemoMode()) {
     if (!user_manager::UserManager::IsInitialized() ||
         !user_manager::UserManager::Get()->IsUserLoggedIn()) {
       return false;
@@ -56,9 +51,15 @@ bool CanUseMahiService() {
     // MantaService might not be available in tests.
     if (manta::MantaService* service =
             manta::MantaServiceFactory::GetForProfile(profile);
-        service && service->CanAccessMantaFeaturesWithoutMinorRestrictions() !=
-                       manta::FeatureSupportStatus::kSupported) {
-      return false;
+        service) {
+      switch (service->CanAccessMantaFeaturesWithoutMinorRestrictions()) {
+        case manta::FeatureSupportStatus::kSupported:
+          break;
+        case manta::FeatureSupportStatus::kUnsupported:
+          return false;
+        case manta::FeatureSupportStatus::kUnknown:
+          return std::nullopt;
+      }
     }
   }
 
@@ -71,8 +72,12 @@ bool CanUseMahiService() {
   return IsGenerativeAiAllowedForCountry(country_code);
 }
 
-bool IsMahiAvailable() {
-  return chromeos::features::IsMahiEnabled() && CanUseMahiService();
+std::optional<bool> IsMahiAvailable() {
+  if (!chromeos::features::IsMahiEnabled()) {
+    return false;
+  }
+
+  return CanUseMahiService();
 }
 
 bool IsPompanoAvailable() {

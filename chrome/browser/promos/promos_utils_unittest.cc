@@ -10,12 +10,11 @@
 #include "chrome/browser/promos/promos_pref_names.h"
 #include "chrome/browser/promos/promos_types.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/feature_engagement/public/feature_constants.h"
+#include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
-#include "components/prefs/testing_pref_service.h"
 #include "components/segmentation_platform/embedder/default_model/device_switcher_model.h"
 #include "components/sync/test/test_sync_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
@@ -27,16 +26,8 @@ namespace promos_utils {
 class IOSPromoOnDesktopTest : public ::testing::Test {
  public:
   void SetUp() override {
-    local_state_.registry()->RegisterBooleanPref(prefs::kPromotionsEnabled,
-                                                 true);
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&local_state_);
-
     sync_service_.GetUserSettings()->SetSelectedTypes(/*sync_everything=*/true,
                                                       {});
-  }
-
-  void TearDown() override {
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
   }
 
   // Getter for the test syncable prefs service.
@@ -58,9 +49,6 @@ class IOSPromoOnDesktopTest : public ::testing::Test {
 
   // Getter for the testing sync_service.
   syncer::TestSyncService* sync_service() { return &sync_service_; }
-
- protected:
-  TestingPrefServiceSimple local_state_;
 
  private:
   content::BrowserTaskEnvironment task_environment_{
@@ -253,7 +241,8 @@ TEST_F(IOSPromoOnDesktopTest,
 // disabled.
 TEST_F(IOSPromoOnDesktopTest,
        ShouldShowIOSDesktopPromoTestFalsePromotionsDisabled) {
-  local_state_.SetBoolean(prefs::kPromotionsEnabled, false);
+  TestingBrowserProcess::GetGlobal()->local_state()->SetBoolean(
+      prefs::kPromotionsEnabled, false);
   EXPECT_FALSE(ShouldShowIOSDesktopPromo(profile(), sync_service(),
                                          IOSPromoType::kPassword));
 }
@@ -968,7 +957,8 @@ TEST_F(IOSPromoOnDesktopTest, ShouldShowIOSDesktopNtpPromo) {
 // disabled.
 TEST_F(IOSPromoOnDesktopTest,
        ShouldShowIOSDesktopNtpPromoFalsePromotionsDisabled) {
-  local_state_.SetBoolean(prefs::kPromotionsEnabled, false);
+  TestingBrowserProcess::GetGlobal()->local_state()->SetBoolean(
+      prefs::kPromotionsEnabled, false);
   EXPECT_FALSE(ShouldShowIOSDesktopNtpPromo(profile(), sync_service()));
 }
 

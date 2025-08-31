@@ -42,11 +42,13 @@ import org.chromium.components.browser_ui.widget.displaystyle.UiConfig.DisplaySt
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.browser_ui.widget.selectable_list.SelectionDelegate.SelectionObserver;
 import org.chromium.ui.display.DisplayUtil;
+import org.chromium.ui.edge_to_edge.EdgeToEdgePadAdjuster;
 import org.chromium.ui.widget.LoadingView;
 
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Contains UI elements common to selectable list views: a loading view, empty view, selection
@@ -75,6 +77,7 @@ public class SelectableListLayout<E> extends FrameLayout
     private RecyclerView mRecyclerView;
     private @Nullable ItemAnimator mItemAnimator;
     SelectableListToolbar<E> mToolbar;
+    private @Nullable EdgeToEdgePadAdjuster mEdgeToEdgePadAdjuster;
 
     private FadingShadowView mToolbarShadow;
 
@@ -154,6 +157,17 @@ public class SelectableListLayout<E> extends FrameLayout
      */
     public RecyclerView initializeRecyclerView(RecyclerView.Adapter adapter) {
         return initializeRecyclerView(adapter, null);
+    }
+
+    public RecyclerView initializeRecyclerView(
+            RecyclerView.Adapter adapter,
+            @Nullable RecyclerView recyclerView,
+            @Nullable Function<View, EdgeToEdgePadAdjuster> edgeToEdgePadAdjusterGenerator) {
+        RecyclerView view = initializeRecyclerView(adapter, recyclerView);
+        if (edgeToEdgePadAdjusterGenerator != null) {
+            mEdgeToEdgePadAdjuster = edgeToEdgePadAdjusterGenerator.apply(view);
+        }
+        return view;
     }
 
     /**
@@ -406,6 +420,9 @@ public class SelectableListLayout<E> extends FrameLayout
         mToolbar.destroy();
         mLoadingView.destroy();
         mRecyclerView.setAdapter(null);
+        if (mEdgeToEdgePadAdjuster != null) {
+            mEdgeToEdgePadAdjuster.destroy();
+        }
     }
 
     /**
@@ -551,7 +568,7 @@ public class SelectableListLayout<E> extends FrameLayout
             return true;
         }
 
-        if (mToolbar.isSearching()) {
+        if (mToolbar.isSearching() && !mToolbar.isLargeScreenWithKeyboard()) {
             mToolbar.hideSearchView();
             return true;
         }
@@ -578,5 +595,9 @@ public class SelectableListLayout<E> extends FrameLayout
         }
         mBackPressStateSupplier.set(
                 mToolbar.getSelectionDelegate().isSelectionEnabled() || mToolbar.isSearching());
+    }
+
+    public RecyclerView getRecyclerViewForTesting() {
+        return mRecyclerView;
     }
 }

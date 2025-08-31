@@ -199,7 +199,7 @@ SystemNudgeView::SystemNudgeView(
   const ui::ColorId default_background_color_id =
       chromeos::features::IsSystemBlurEnabled()
           ? static_cast<ui::ColorId>(kColorAshShieldAndBase80)
-          : cros_tokens::kCrosSysSystemBaseElevatedOpaque;
+          : cros_tokens::kCrosSysSystemOnBaseOpaque;
   SetBackground(views::CreateSolidBackground(
       nudge_data.background_color_id.value_or(default_background_color_id)));
   SetNotifyEnterExitOnChild(true);
@@ -449,11 +449,11 @@ SystemNudgeView::~SystemNudgeView() {
 void SystemNudgeView::AddedToWidget() {
   GetWidget()->AddObserver(this);
 
-  // Attach the shadow at the bottom of the widget layer.
+  // Attach the shadow at the bottom of the parent layer.
   auto* shadow_layer = shadow_->GetLayer();
-  auto* widget_layer = GetWidget()->GetLayer();
-  widget_layer->Add(shadow_layer);
-  widget_layer->StackAtBottom(shadow_layer);
+  auto* parent_layer = layer()->parent();
+  parent_layer->Add(shadow_layer);
+  parent_layer->StackAtBottom(shadow_layer);
 }
 
 void SystemNudgeView::RemovedFromWidget() {

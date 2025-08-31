@@ -137,9 +137,9 @@ std::string FormStructuresToString(
         }
       }
       string_form += base::JoinString(
-          {field->Type().ToStringView(), base::UTF16ToUTF8(field->name()),
-           base::UTF16ToUTF8(field->label()),
-           base::UTF16ToUTF8(field->value(ValueSemantics::kCurrent)), section},
+          {field->Type().ToString(), base::UTF16ToUTF8(field->name()),
+           base::UTF16ToUTF8(field->label()), base::UTF16ToUTF8(field->value()),
+           section},
           " | ");
       string_form.push_back('\n');
     }
@@ -208,11 +208,14 @@ FormStructureBrowserTest::FormStructureBrowserTest()
   feature_list_.InitWithFeatures(
       // Enabled
       {
-          features::kAutofillFixValueSemantics,
           // TODO(crbug.com/40741721): Remove once shared labels are launched.
           features::kAutofillEnableSupportForParsingWithSharedLabels,
           // TODO(crbug.com/40266396): Remove once launched.
           features::kAutofillEnableExpirationDateImprovements,
+          features::kAutofillIgnoreCheckableElements,
+          features::kAutofillUnifyRationalizationAndSectioningOrder,
+          // TODO(crbug.com/369503318): Remove once launched.
+          features::kAutofillSupportSplitZipCode,
       },
       // Disabled
       {
@@ -220,8 +223,6 @@ FormStructureBrowserTest::FormStructureBrowserTest()
           // renderer side and disabled to avoid too many differences between
           // the expectations.
           features::kAutofillBetterLocalHeuristicPlaceholderSupport,
-          // TODO(crbug.com/40285735): Remove when launched.
-          features::kAutofillEnableEmailHeuristicOutsideForms,
           // TODO(crbug.com/395831853): Remove once launched.
           features::kAutofillEnableLoyaltyCardsFilling,
           // TODO(crbug.com/360322019): kAutofillPageLanguageDetection needs to
@@ -249,11 +250,6 @@ void FormStructureBrowserTest::SetUpCommandLine(
   command_line->AppendSwitchASCII(switches::kLoggingLevel, "2");
   command_line->AppendSwitchASCII(
       variations::switches::kVariationsOverrideCountry, "us");
-  // SelectParserRelaxation affects the results from the test data because the
-  // test data has unclosed <select> tags. Since SelectParserRelaxation is not
-  // enabled by default, we are disabling it for this test.
-  command_line->AppendSwitchASCII("disable-blink-features",
-                                  "SelectParserRelaxation");
 }
 
 void FormStructureBrowserTest::SetUpOnMainThread() {

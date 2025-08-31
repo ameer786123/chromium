@@ -204,7 +204,7 @@ struct QuickActionsWidgetEntryView: View {
 
   var body: some View {
     // The account to display was deleted (entry.deleted can only be true if
-    // IOS_ENABLE_WIDGETS_FOR_MIM is enabled).
+    // IOS_ENABLE_WIDGETS_FOR_MIM is true).
     if entry.deleted && !entry.isPreview {
       MediumWidgetDeletedAccountView()
     } else {

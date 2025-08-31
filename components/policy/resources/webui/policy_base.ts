@@ -201,6 +201,7 @@ export class Page {
                         `https://chromeenterprise.google/policies/?policy=${
                             name}` :
                         undefined,
+                    isExtension: value.isExtension || false,
                   },
                   value?.policies[name]));
 
@@ -218,12 +219,14 @@ export class Page {
     policyGroups.forEach(group => this.createOrUpdatePolicyTable(group));
 
     // <if expr="not is_chromeos">
-    this.updateReportButton(
-        !!policyValues['chrome']?.policies['CloudReportingEnabled']?.value ||
-            !!policyValues['chrome']
-                  ?.policies['CloudProfileReportingEnabled']
-                  ?.value,
-    );
+    const enableReportButton =
+        [
+          'CloudReportingEnabled',
+          'CloudProfileReportingEnabled',
+          'UserSecuritySignalsReporting',
+        ].map(p => !!policyValues['chrome']?.policies[p]?.value)
+            .reduce((accumulator, current) => accumulator ||= current, false);
+    this.updateReportButton(enableReportButton);
     // </if>
     this.reloadPoliciesDone();
   }
@@ -253,6 +256,7 @@ export class Page {
     document.addEventListener('click', function(event) {
       if (moreActionsList && event.target !== moreActionsButton &&
           event.target !== moreActionsIcon) {
+        moreActionsButton.setAttribute('aria-expanded', 'false');
         moreActionsList.classList.add('more-actions-visibility');
       }
     });
@@ -301,6 +305,7 @@ export class Page {
       } else if (event.key === 'Escape') {
         event.preventDefault();
         moreActionsList.classList.add('more-actions-visibility');
+        moreActionsButton.setAttribute('aria-expanded', 'false');
       }
     });
 
@@ -310,8 +315,10 @@ export class Page {
       if (moreActionsList.classList.contains('more-actions-visibility')) {
         currentIndex = 0;
         focusMenuItem(currentIndex);
+        moreActionsButton.setAttribute('aria-expanded', 'false');
       } else {
         currentIndex = -1;
+        moreActionsButton.setAttribute('aria-expanded', 'true');
       }
     });
   }

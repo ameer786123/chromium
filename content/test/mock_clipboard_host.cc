@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "content/test/mock_clipboard_host.h"
 
 #include <vector>
@@ -141,6 +136,7 @@ void MockClipboardHost::WriteText(const std::u16string& text) {
   if (needs_reset_)
     Reset();
   plain_text_ = text;
+  OnClipboardDataChanged();
 }
 
 void MockClipboardHost::WriteHtml(const std::u16string& markup,
@@ -149,6 +145,7 @@ void MockClipboardHost::WriteHtml(const std::u16string& markup,
     Reset();
   html_text_ = markup;
   url_ = url;
+  OnClipboardDataChanged();
 }
 
 void MockClipboardHost::WriteSvg(const std::u16string& markup) {
@@ -212,7 +209,7 @@ void MockClipboardHost::WriteUnsanitizedCustomFormat(
   if (needs_reset_)
     Reset();
   // Simulate the underlying platform copying this data.
-  std::vector<uint8_t> data_copy(data.data(), data.data() + data.size());
+  std::vector<uint8_t> data_copy(data.begin(), data.end());
   // Append the "web " prefix since it is removed by the clipboard writer during
   // write.
   std::u16string web_format =
@@ -220,8 +217,26 @@ void MockClipboardHost::WriteUnsanitizedCustomFormat(
   unsanitized_custom_data_map_[web_format] = std::move(data_copy);
 }
 
+void MockClipboardHost::RegisterClipboardListener(
+    mojo::PendingRemote<blink::mojom::ClipboardListener> listener) {
+  clipboard_listener_.reset();
+  clipboard_listener_.Bind(std::move(listener));
+}
+
+void MockClipboardHost::OnClipboardDataChanged() {
+  if (clipboard_listener_) {
+    clipboard_listener_->OnClipboardDataChanged();
+  }
+}
+
 #if BUILDFLAG(IS_MAC)
 void MockClipboardHost::WriteStringToFindPboard(const std::u16string& text) {}
+
+void MockClipboardHost::GetPlatformPermissionState(
+    GetPlatformPermissionStateCallback callback) {
+  std::move(callback).Run(
+      blink::mojom::PlatformClipboardPermissionState::kAllow);
+}
 #endif
 
 }  // namespace content

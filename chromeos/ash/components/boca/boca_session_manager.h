@@ -6,21 +6,31 @@
 #define CHROMEOS_ASH_COMPONENTS_BOCA_BOCA_SESSION_MANAGER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
+#include "base/scoped_observation.h"
+#include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/types/expected.h"
+#include "chromeos/ash/components/boca/babelorca/soda_installer.h"
+#include "chromeos/ash/components/boca/invalidations/invalidation_service_delegate.h"
 #include "chromeos/ash/components/boca/notifications/boca_notification_handler.h"
 #include "chromeos/ash/components/boca/proto/session.pb.h"
 #include "chromeos/ash/components/boca/session_api/session_client_impl.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_constants.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_frame_consumer.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_remoting_client_manager.h"
 #include "chromeos/services/network_config/public/cpp/cros_network_config_observer.h"
 #include "components/account_id/account_id.h"
 #include "components/prefs/pref_service.h"
+#include "components/session_manager/core/session_manager_observer.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/user_manager/user_manager.h"
 #include "google_apis/common/api_error_codes.h"
@@ -38,24 +48,29 @@ namespace google_apis {
 enum ApiErrorCode;
 }
 
+namespace session_manager {
+class SessionManager;
+}  // namespace session_manager
+
 namespace ash::boca {
 
 class BocaSessionManager
     : public chromeos::network_config::CrosNetworkConfigObserver,
       public signin::IdentityManager::Observer,
-      public user_manager::UserManager::UserSessionStateObserver {
+      public user_manager::UserManager::UserSessionStateObserver,
+      public session_manager::SessionManagerObserver,
+      public remoting::ClientStatusObserver,
+      public InvalidationServiceDelegate {
  public:
   using SessionCaptionInitializer =
       base::RepeatingCallback<void(base::OnceCallback<void(bool)>)>;
+  using SodaStatus = babelorca::SodaInstaller::InstallationStatus;
 
   inline static constexpr char kDummyDeviceId[] = "kDummyDeviceId";
-  inline static constexpr char kHomePageTitle[] = "School Tools Home page";
   inline static constexpr int kDefaultPollingIntervalInSeconds = 60;
   inline static constexpr int kLocalSessionTrackerBufferInSeconds = 60;
   inline static constexpr int kDefaultStudentHeartbeatIntervalInSeconds = 30;
   inline static constexpr int kSkipPollingBufferInSeconds = 2;
-  inline static constexpr char kPollingResultHistName[] =
-      "Ash.Boca.PollingResult";
 
   enum class BocaAction {
     kDefault = 0,
@@ -97,7 +112,9 @@ class BocaSessionManager
   BocaSessionManager(SessionClientImpl* session_client_impl,
                      const PrefService* pref_service,
                      AccountId account_id,
-                     bool is_producer);
+                     bool is_producer,
+                     std::unique_ptr<SpotlightRemotingClientManager>
+                         remoting_client_manager = nullptr);
   BocaSessionManager(const BocaSessionManager&) = delete;
   BocaSessionManager& operator=(const BocaSessionManager&) = delete;
   ~BocaSessionManager() override;
@@ -134,6 +151,13 @@ class BocaSessionManager
     // Notifies when local caption is disabled from a source other than the boca
     // app.
     virtual void OnLocalCaptionClosed();
+
+    // Notifies when the status of SODA changes.
+    virtual void OnSodaStatusUpdate(SodaStatus status);
+
+    // Notifies when session caption is disabled from a source other than the
+    // boca app.
+    virtual void OnSessionCaptionClosed(bool is_error);
 
     // Notifies when session roster updated. Will emit when only elements order
     // changed in the vector too. Deferred to events consumer to decide on
@@ -181,12 +205,18 @@ class BocaSessionManager
 
   virtual void UpdateTabActivity(std::u16string title);
 
-  virtual void ToggleAppStatus(bool is_app_opened);
+  virtual void OnAppWindowOpened();
+
+  // session_manager::SessionManagerObserver::Observer
+  void OnSessionStateChanged() override;
 
   // Local events.
   virtual void NotifyLocalCaptionEvents(::boca::CaptionsConfig caption_config);
 
   virtual void NotifyLocalCaptionClosed();
+
+  virtual void NotifySessionCaptionProducerEvents(
+      const ::boca::CaptionsConfig& caption_config);
 
   // Triggered by SWA delegate to notify app reload events.
   virtual void NotifyAppReload();
@@ -197,6 +227,28 @@ class BocaSessionManager
       SessionCaptionInitializer session_caption_initializer);
   void RemoveSessionCaptionInitializer();
   void InitSessionCaption(base::OnceCallback<void(bool)> success_cb);
+  void SetSodaInstaller(babelorca::SodaInstaller* soda_installer) {
+    soda_installer_ = soda_installer;
+  }
+  SodaStatus GetSodaStatus();
+
+  void StartCrdClient(
+      std::string crd_connection_code,
+      base::OnceClosure done_callback,
+      SpotlightFrameConsumer::FrameReceivedCallback frame_received_callback,
+      SpotlightCrdStateUpdatedCallback crd_state_callback);
+
+  // Calls the `SpotlightRemotingClientManager` to try and stop an existing
+  // session and then free up any remaining resources.
+  void EndSpotlightSession();
+
+  virtual std::string GetDeviceRobotEmail();
+
+  // InvalidationServiceDelegate:
+  void UploadToken(
+      const std::string& fcm_token,
+      base::OnceCallback<void(bool)> on_token_uploaded_cb) override;
+  void OnInvalidationReceived(const std::string& payload) override;
 
   base::ObserverList<Observer>& observers() { return observers_; }
 
@@ -208,9 +260,12 @@ class BocaSessionManager
     return session_duration_timer_;
   }
 
-  void set_on_app_status_toggled_cb_for_test(
-      base::OnceCallback<void(bool)> on_app_status_toggled_cb) {
-    on_app_status_toggled_cb_for_test_ = std::move(on_app_status_toggled_cb);
+  base::OnceClosure& end_session_callback_for_testing() {
+    return end_session_callback_for_testing_;
+  }
+
+  void set_end_session_callback_for_testing(base::OnceClosure cb) {
+    end_session_callback_for_testing_ = std::move(cb);
   }
 
  private:
@@ -224,8 +279,6 @@ class BocaSessionManager
   bool IsSessionActive(const ::boca::Session* session);
   bool IsSessionTakeOver(const ::boca::Session* previous_session,
                          const ::boca::Session* current_session);
-  void RecordPollingResult(const ::boca::Session* previous_session,
-                           const ::boca::Session* current_session);
   void HandleTakeOver(bool dispatch_event,
                       std::unique_ptr<::boca::Session> session);
   void DispatchEvent();
@@ -245,9 +298,16 @@ class BocaSessionManager
   void HandleCaptionNotification();
   void UpdateNetworkRestriction(
       chromeos::network_config::mojom::NetworkStatePropertiesPtr network_state);
+  void NotifySodaStatusListeners(SodaStatus status);
+
+  void CloseAllCaptions();
+
+  void OnTokenUploadResult(
+      base::OnceCallback<void(bool)> on_token_uploaded_cb,
+      base::expected<bool, google_apis::ApiErrorCode> result);
 
   const bool is_producer_;
-  bool is_app_opened_ = false;
+  base::OnceClosure end_session_callback_for_testing_;
   base::TimeDelta in_session_polling_interval_;
   base::TimeDelta indefinite_polling_interval_;
   base::ObserverList<Observer> observers_;
@@ -285,13 +345,17 @@ class BocaSessionManager
   AccountId account_id_;
   std::u16string active_tab_title_;
   BocaNotificationHandler notification_handler_;
+  std::unique_ptr<SpotlightRemotingClientManager> remoting_client_manager_;
   raw_ptr<const PrefService> pref_service_;
   raw_ptr<SessionClientImpl> session_client_impl_;
   raw_ptr<signin::IdentityManager> identity_manager_;
+  raw_ptr<babelorca::SodaInstaller> soda_installer_;
   bool is_local_caption_enabled_ = false;
   SessionCaptionInitializer session_caption_initializer_;
   net::BackoffEntry student_heartbeat_retry_backoff_;
-  base::OnceCallback<void(bool)> on_app_status_toggled_cb_for_test_;
+  base::ScopedObservation<session_manager::SessionManager,
+                          session_manager::SessionManagerObserver>
+      session_manager_observation_{this};
   base::WeakPtrFactory<BocaSessionManager> weak_factory_{this};
 };
 }  // namespace ash::boca

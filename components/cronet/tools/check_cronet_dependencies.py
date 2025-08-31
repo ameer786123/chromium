@@ -20,6 +20,7 @@ import build.android.gyp.util.build_utils as build_utils  # pylint: disable=wron
 import components.cronet.tools.utils as cronet_utils  # pylint: disable=wrong-import-position
 
 _THIRD_PARTY_STR = 'third_party/'
+_THIRD_PARTY_RUST_STR = _THIRD_PARTY_STR + 'rust/'
 _GN_PATH = os.path.join(REPOSITORY_ROOT, 'buildtools/linux64/gn')
 
 
@@ -56,7 +57,12 @@ def normalize_third_party_dep(dependency: str) -> str:
   """
   if _THIRD_PARTY_STR not in dependency:
     raise ValueError('Dependency is not a third_party dependency')
-  root_end_index = dependency.rfind(_THIRD_PARTY_STR) + len(_THIRD_PARTY_STR)
+
+  root_to_keep = _THIRD_PARTY_STR
+  if _THIRD_PARTY_RUST_STR in dependency:
+    root_to_keep = _THIRD_PARTY_RUST_STR
+
+  root_end_index = dependency.rfind(root_to_keep) + len(root_to_keep)
   dependency_name_end_index = dependency.find("/", root_end_index)
   if dependency_name_end_index == -1:
     return dependency
@@ -157,9 +163,7 @@ def main():
   # Generate a new GN output directory in order
   # not to mess with the current one.
   with tempfile.TemporaryDirectory() as tmp_dir_name:
-    if cronet_utils.gn(tmp_dir_name, " ".join(gn_args)) != 0:
-      print("Failed to execute `gn gen` in a temporary directory")
-      return -1
+    cronet_utils.gn(tmp_dir_name, " ".join(gn_args))
 
     final_deps = normalize_and_dedup_deps(
         _get_transitive_deps_from_root_targets(tmp_dir_name, args.root_deps))

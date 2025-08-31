@@ -18,6 +18,7 @@
 #include "cc/metrics/frame_info.h"
 #include "cc/metrics/frame_sequence_tracker.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 namespace cc {
 
@@ -172,7 +173,7 @@ FrameSequenceMetrics::~FrameSequenceMetrics() {
   //
   // However we may not be merged before teardown, if so terminate the trace
   // now.
-  if (trace_data_.trace_id) {
+  if (trace_data_.trace_track) {
     trace_data_.Terminate(v3_, v4_, GetEffectiveThread());
   }
 }
@@ -268,13 +269,15 @@ bool FrameSequenceMetrics::HasDataLeftForReporting() const {
 }
 
 void FrameSequenceMetrics::AdoptTrace(FrameSequenceMetrics* adopt_from) {
-  DCHECK(!trace_data_.trace_id);
-  trace_data_.trace_id = adopt_from->trace_data_.trace_id;
+  DCHECK(!trace_data_.trace_track);
+  if (adopt_from->trace_data_.trace_track) {
+    trace_data_.trace_track.emplace(*adopt_from->trace_data_.trace_track);
+    adopt_from->trace_data_.trace_track = std::nullopt;
+  }
   trace_data_.last_presented_sequence_number =
       adopt_from->trace_data_.last_presented_sequence_number;
   trace_data_.last_timestamp = adopt_from->trace_data_.last_timestamp;
   trace_data_.frame_count = adopt_from->trace_data_.frame_count;
-  adopt_from->trace_data_.trace_id = 0u;
 }
 
 int FrameSequenceMetrics::ReportMetrics() {
@@ -320,11 +323,7 @@ int FrameSequenceMetrics::ReportMetrics() {
 
     const int percent_missing_content = get_percent(v3_.frames_missing_content);
     const int percent_dropped = get_percent(v3_.frames_dropped);
-    const int percent_dropped_v4 =
-        ((type() == FrameSequenceTrackerType::kCompositorRasterAnimation) ||
-         thread_type == SmoothEffectDrivingThread::kRaster)
-            ? get_percent(v4_.frames_dropped)
-            : percent_dropped;
+    const int percent_dropped_v4 = get_percent(v4_.frames_dropped);
     const int percent_jank = get_percent(v3_.jank_count);
 
     // v4.
@@ -484,13 +483,14 @@ void FrameSequenceMetrics::TraceData::Terminate(
     const V3& v3,
     const V4& v4,
     FrameInfo::SmoothEffectDrivingThread effective_thread) {
-  if (!enabled || !trace_id) {
+  if (!enabled || !trace_track) {
     return;
   }
   auto dict = std::make_unique<base::trace_event::TracedValue>();
   dict->BeginDictionary("data");
   dict->SetInteger("expected", v3.frames_expected);
-  dict->SetInteger("dropped", v3.frames_dropped);
+  dict->SetInteger("dropped_v3", v3.frames_dropped);
+  dict->SetInteger("dropped_v4", v4.frames_dropped);
   dict->SetInteger("missing_content", v3.frames_missing_content);
   // v4.
   dict->SetInteger("checkerboarded", v4.frames_checkerboarded);
@@ -523,21 +523,21 @@ void FrameSequenceMetrics::TraceData::Terminate(
       termination_time = base::TimeTicks::Now();
     }
   }
-  TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP1(
-      "cc,benchmark", "FrameSequenceTrackerV3", TRACE_ID_LOCAL(trace_id),
-      termination_time, "args", std::move(dict));
-  trace_id = 0u;
+  TRACE_EVENT_END("cc,benchmark", *trace_track, termination_time, "args",
+                  std::move(dict));
+  trace_track = std::nullopt;
 }
 
 void FrameSequenceMetrics::TraceData::Advance(base::TimeTicks start_timestamp,
                                               base::TimeTicks new_timestamp,
                                               uint32_t expected,
-                                              uint32_t dropped,
+                                              uint32_t dropped_v3,
+                                              uint32_t dropped_v4,
                                               uint64_t sequence_number,
                                               const char* histogram_name) {
   if (!enabled)
     return;
-  if (!trace_id) {
+  if (!trace_track) {
     // The underlying usage of TRACE_ID_LOCAL is mapping the raw uint64_t from
     // the point into either `trace_event_internal::TraceID::LocalId` or
     // `perfetto::internal::LegacyTraceId`. However the trace macros don't
@@ -546,9 +546,9 @@ void FrameSequenceMetrics::TraceData::Advance(base::TimeTicks start_timestamp,
     // nest other traces, as well as close the async trace at a later time. The
     // value can also be merged into future sequences. This avoids holding
     // dangling ptrs.
-    trace_id = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this));
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
-        "cc,benchmark", histogram_name, TRACE_ID_LOCAL(trace_id),
+    trace_track.emplace(perfetto::Track::FromPointer(this));
+    TRACE_EVENT_BEGIN(
+        "cc,benchmark", perfetto::StaticString(histogram_name), *trace_track,
         start_timestamp, "name",
         FrameSequenceTracker::GetFrameSequenceTrackerTypeName(metrics->type()));
   }
@@ -558,20 +558,19 @@ void FrameSequenceMetrics::TraceData::Advance(base::TimeTicks start_timestamp,
   dict->SetInteger("sequence_number", sequence_number);
   dict->SetInteger("last_sequence", last_presented_sequence_number);
   dict->SetInteger("expected", expected);
-  dict->SetInteger("dropped", dropped);
+  dict->SetInteger("dropped_v3", dropped_v3);
+  dict->SetInteger("dropped_v4", dropped_v4);
   dict->EndDictionary();
 
   // Use different names, because otherwise the trace-viewer shows the slices in
   // the same color, and that makes it difficult to tell the traces apart from
   // each other.
   static constexpr auto trace_names =
-      std::to_array<const char*>({"Frame", "Frame ", "Frame   "});
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
-      "cc,benchmark", trace_names[++this->frame_count % 3],
-      TRACE_ID_LOCAL(trace_id), start_timestamp);
-  TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP1(
-      "cc,benchmark", trace_names[this->frame_count % 3],
-      TRACE_ID_LOCAL(trace_id), new_timestamp, "data", std::move(dict));
+      std::to_array<perfetto::StaticString>({"Frame", "Frame ", "Frame   "});
+  TRACE_EVENT_BEGIN("cc,benchmark", trace_names[++this->frame_count % 3],
+                    *trace_track, start_timestamp);
+  TRACE_EVENT_END("cc,benchmark", *trace_track, new_timestamp, "data",
+                  std::move(dict));
   this->last_presented_sequence_number = sequence_number;
   this->last_timestamp = new_timestamp;
 }
@@ -599,6 +598,8 @@ void FrameSequenceMetrics::AddSortedFrame(const viz::BeginFrameArgs& args,
       if (frame_info.WasSmoothMainUpdateExpected()) {
         if (frame_info.WasSmoothMainUpdateDropped()) {
           ++v3_.frames_dropped;
+        }
+        if (frame_info.WasSmoothMainUpdateDroppedV4()) {
           ++v4_.frames_dropped;
         }
         ++v3_.frames_expected;
@@ -644,6 +645,7 @@ void FrameSequenceMetrics::CalculateJankV3(
     case FrameInfo::FrameFinalState::kPresentedAll:
     case FrameInfo::FrameFinalState::kPresentedPartialOldMain:
     case FrameInfo::FrameFinalState::kPresentedPartialNewMain:
+    case FrameInfo::FrameFinalState::kPresentedPartialWithoutWaiting:
       // The first frame of a sequence will have no previous timestamp. We don't
       // calculate it for jank. However we start the tracing from when the
       // sequence was started.
@@ -664,7 +666,7 @@ void FrameSequenceMetrics::CalculateJankV3(
           termination_time > last_presented_termination_time) {
         trace_data_.Advance(last_presented_termination_time, termination_time,
                             v3_.frames_expected, v3_.frames_dropped,
-                            frame_info.sequence_number,
+                            v4_.frames_dropped, frame_info.sequence_number,
                             "FrameSequenceTrackerV3");
       }
 
@@ -772,11 +774,12 @@ void FrameSequenceMetrics::TraceJankV3(uint64_t sequence_number,
   dict->SetString("tracker-type",
                   FrameSequenceTracker::GetFrameSequenceTrackerTypeName(type_));
   dict->EndDictionary();
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
-      "cc,benchmark", "JankV3", TRACE_ID_LOCAL(this), last_termination_time,
-      "data", std::move(dict));
-  TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
-      "cc,benchmark", "JankV3", TRACE_ID_LOCAL(this), termination_time);
+  TRACE_EVENT_BEGIN("cc,benchmark", "JankV3",
+                    perfetto::Track::FromPointer(this), last_termination_time,
+                    "data", std::move(dict));
+  TRACE_EVENT_END("cc,benchmark",
+                  /*"JankV3"*/ perfetto::Track::FromPointer(this),
+                  termination_time);
 }
 
 }  // namespace cc

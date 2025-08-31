@@ -5,6 +5,8 @@
 #ifndef IOS_CHROME_BROWSER_SESSIONS_MODEL_LEGACY_SESSION_RESTORATION_SERVICE_H_
 #define IOS_CHROME_BROWSER_SESSIONS_MODEL_LEGACY_SESSION_RESTORATION_SERVICE_H_
 
+#include <MacTypes.h>
+
 #include <map>
 #include <set>
 
@@ -29,7 +31,6 @@ class LegacySessionRestorationService final : public SessionRestorationService,
  public:
   LegacySessionRestorationService(
       bool enable_pinned_tabs,
-      bool enable_tab_groups,
       const base::FilePath& storage_path,
       SessionServiceIOS* session_service_ios,
       WebSessionStateCache* web_session_state_cache);
@@ -85,7 +86,6 @@ class LegacySessionRestorationService final : public SessionRestorationService,
   // allow easily testing code controlled by this boolean independently of
   // whether the feature is enabled in the application).
   const bool enable_pinned_tabs_;
-  const bool enable_tab_groups_;
 
   // Root directory in which the data should be written to or loaded from.
   const base::FilePath storage_path_;

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h"
 
 #include <map>
@@ -47,8 +42,10 @@
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/back_forward_cache_util.h"
+#include "content/public/test/mock_navigation_throttle_registry.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/navigation_simulator.h"
+#include "content/public/test/test_navigation_throttle_inserter.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
@@ -130,9 +127,9 @@ class FakeSubresourceFilterAgent : public mojom::SubresourceFilterAgent {
 class MockPageStateActivationThrottle : public content::NavigationThrottle {
  public:
   MockPageStateActivationThrottle(
-      content::NavigationHandle* navigation_handle,
+      content::NavigationThrottleRegistry& registry,
       PageActivationNotificationTiming activation_throttle_state)
-      : content::NavigationThrottle(navigation_handle),
+      : content::NavigationThrottle(registry),
         activation_throttle_state_(activation_throttle_state) {
     // Add some default activations.
     mojom::ActivationState enabled_state;
@@ -246,6 +243,13 @@ class ContentSubresourceFilterThrottleManagerTest
 
     Observe(web_contents);
 
+    test_navigation_throttle_inserter_ =
+        std::make_unique<content::TestNavigationThrottleInserter>(
+            web_contents,
+            base::BindRepeating(
+                &ContentSubresourceFilterThrottleManagerTest::InsertThrottle,
+                base::Unretained(this)));
+
     NavigateAndCommit(GURL("https://example.first"));
 
 #if BUILDFLAG(IS_ANDROID)
@@ -256,8 +260,11 @@ class ContentSubresourceFilterThrottleManagerTest
   }
 
   void TearDown() override {
-    throttle_manager_test_support_.reset();
+    // Delete `WebContents` before deleting the dealer handle.
+    DeleteContents();
     dealer_handle_.reset();
+
+    throttle_manager_test_support_.reset();
     base::RunLoop().RunUntilIdle();
     content::RenderViewHostTestHarness::TearDown();
 #if BUILDFLAG(IS_ANDROID)
@@ -354,34 +361,24 @@ class ContentSubresourceFilterThrottleManagerTest
     agent_map_.erase(host);
   }
 
-  void DidStartNavigation(
-      content::NavigationHandle* navigation_handle) override {
-    if (navigation_handle->IsSameDocument()) {
+  void InsertThrottle(content::NavigationThrottleRegistry& registry) {
+    if (registry.GetNavigationHandle().IsSameDocument()) {
       return;
     }
 
-    // Inject the proper throttles at this time.
-    std::vector<std::unique_ptr<content::NavigationThrottle>> throttles;
     PageActivationNotificationTiming state =
         ::testing::UnitTest::GetInstance()->current_test_info()->value_param()
             ? GetParam()
             : WILL_PROCESS_RESPONSE;
-    throttles.push_back(std::make_unique<MockPageStateActivationThrottle>(
-        navigation_handle, state));
+    registry.AddThrottle(
+        std::make_unique<MockPageStateActivationThrottle>(registry, state));
 
     ContentSubresourceFilterThrottleManager::FromNavigationHandle(
-        *navigation_handle)
-        ->MaybeAppendNavigationThrottles(navigation_handle, &throttles);
+        registry.GetNavigationHandle())
+        ->MaybeCreateAndAddNavigationThrottles(registry);
 
-    created_safe_browsing_throttle_for_last_navigation_ = false;
-    for (auto& it : throttles) {
-      if (strcmp(it->GetNameForLogging(),
-                 "SafeBrowsingPageActivationThrottle") == 0) {
-        created_safe_browsing_throttle_for_last_navigation_ = true;
-      }
-
-      navigation_handle->RegisterThrottleForTesting(std::move(it));
-    }
+    created_safe_browsing_throttle_for_last_navigation_ =
+        registry.HasThrottle("SafeBrowsingPageActivationThrottle");
   }
 
   void CreateAgentForHost(content::RenderFrameHost* host) {
@@ -424,6 +421,9 @@ class ContentSubresourceFilterThrottleManagerTest
     return ContentSubresourceFilterWebContentsHelper::FromWebContents(
         RenderViewHostTestHarness::web_contents());
   }
+
+  std::unique_ptr<content::TestNavigationThrottleInserter>
+      test_navigation_throttle_inserter_;
 
   testing::TestRulesetCreator test_ruleset_creator_;
   testing::TestRulesetPair test_ruleset_pair_;

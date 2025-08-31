@@ -4,9 +4,8 @@
 
 package org.chromium.base.test.transit;
 
-import org.chromium.base.test.transit.Transition.Trigger;
-import org.chromium.build.annotations.MonotonicNonNull;
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 /**
  * Facility is a {@link ConditionalState} scoped to a single host {@link Station} instance.
@@ -22,18 +21,48 @@ import org.chromium.build.annotations.NullMarked;
  * Condition}s will be waited upon for the {@link Trip} to be complete.
  *
  * <p>Transitions into and out of a Facility while the host {@link Station} is ACTIVE should be done
- * with {@link Station#enterFacilitySync(Facility, Trigger)} and {@link
- * Station#exitFacilitySync(Facility, Trigger)}.
+ * with:
+ *
+ * <ul>
+ *   <li>{@link TripBuilder#enterFacility(Facility)}
+ *   <li>{@link TripBuilder#exitFacility(Facility)}}
+ * </ul>
  *
  * @param <HostStationT> the type of host {@link Station} this is scoped to.
  */
 @NullMarked
-public abstract class Facility<HostStationT extends Station<?>> extends ConditionalState {
+public class Facility<HostStationT extends Station<?>> extends ConditionalState {
     private static int sLastFacilityId = 1000;
     private final int mId = ++sLastFacilityId;
 
-    // Use getHostStation() instead and make this private.
-    @Deprecated protected @MonotonicNonNull HostStationT mHostStation;
+    // Until setHostStation() this is null, but this field is accessed very often and asserting
+    // doesn't add much value.
+    @SuppressWarnings("NullAway")
+    protected HostStationT mHostStation;
+
+    protected final @Nullable String mCustomName;
+
+    /**
+     * Constructor for named subclasses.
+     *
+     * <p>Named subclasses should let name default to the simple class name, e.g. "<S4|F1002:
+     * SubclassNameFacility>".
+     */
+    protected Facility() {
+        super();
+        mCustomName = null;
+    }
+
+    /**
+     * Create an empty Facility. Elements can be declared after creation.
+     *
+     * @param name Direct instantiations should provide a name which will be displayed as
+     *     "<S4|F1002: ProvidedName>",
+     */
+    public Facility(String name) {
+        super();
+        mCustomName = name;
+    }
 
     void setHostStation(Station station) {
         assert mHostStation == null
@@ -41,11 +70,8 @@ public abstract class Facility<HostStationT extends Station<?>> extends Conditio
         mHostStation = (HostStationT) station;
     }
 
-    /**
-     * @return the host {@link Station} this facility is scoped to.
-     */
+    /** Get the host {@link Station} this facility is scoped to. */
     public HostStationT getHostStation() {
-        assert mHostStation != null : "setHostStation was not called for " + this;
         return mHostStation;
     }
 
@@ -55,11 +81,6 @@ public abstract class Facility<HostStationT extends Station<?>> extends Conditio
                 "<S%s|F%s: %s>",
                 mHostStation == null ? "-unset" : mHostStation.getId(),
                 mId,
-                getClass().getSimpleName());
-    }
-
-    @Override
-    public String toString() {
-        return getName();
+                mCustomName != null ? mCustomName : getClass().getSimpleName());
     }
 }

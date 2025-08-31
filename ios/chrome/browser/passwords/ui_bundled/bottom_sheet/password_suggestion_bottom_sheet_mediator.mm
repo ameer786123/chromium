@@ -14,14 +14,13 @@
 #import "components/feature_engagement/public/tracker.h"
 #import "components/image_fetcher/core/image_fetcher_impl.h"
 #import "components/image_fetcher/ios/ios_image_decoder_impl.h"
-#import "components/password_manager/core/browser/features/password_features.h"
 #import "components/password_manager/core/browser/password_form.h"
 #import "components/password_manager/core/browser/password_manager.h"
 #import "components/password_manager/core/browser/password_store/password_store_interface.h"
 #import "components/password_manager/core/browser/password_ui_utils.h"
 #import "components/password_manager/core/browser/ui/credential_ui_entry.h"
+#import "components/password_manager/ios/features.h"
 #import "components/password_manager/ios/ios_password_manager_driver_factory.h"
-#import "components/password_manager/ios/shared_password_controller.h"
 #import "components/prefs/pref_service.h"
 #import "ios/chrome/browser/autofill/model/bottom_sheet/autofill_bottom_sheet_java_script_feature.h"
 #import "ios/chrome/browser/autofill/model/bottom_sheet/autofill_bottom_sheet_tab_helper.h"
@@ -31,13 +30,13 @@
 #import "ios/chrome/browser/passwords/model/password_tab_helper.h"
 #import "ios/chrome/browser/passwords/ui_bundled/bottom_sheet/password_suggestion_bottom_sheet_consumer.h"
 #import "ios/chrome/browser/passwords/ui_bundled/bottom_sheet/password_suggestion_bottom_sheet_presenter.h"
+#import "ios/chrome/browser/passwords/ui_bundled/password_suggestion_utils.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_sharing/multi_avatar_image_util.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/web_state_list/active_web_state_observation_forwarder.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list_observer_bridge.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
-#import "ios/chrome/common/ui/favicon/favicon_attributes.h"
 #import "ios/chrome/common/ui/favicon/favicon_constants.h"
 #import "ios/chrome/common/ui/reauthentication/reauthentication_event.h"
 #import "ios/chrome/common/ui/reauthentication/reauthentication_protocol.h"
@@ -83,82 +82,25 @@ FormSuggestionProviderQuery* MakeQueryFromParameters(
           onlyPassword:YES];
 }
 
+// Makes a copy of suggestions with `params` and `provider` set in the copies.
+NSArray<FormSuggestion*>* SetParamsAndProviderInSuggestions(
+    NSArray<FormSuggestion*>* suggestions,
+    const autofill::FormActivityParams& params,
+    id<FormSuggestionProvider> provider) {
+  NSMutableArray<FormSuggestion*>* suggestions_copy =
+      [NSMutableArray<FormSuggestion*> arrayWithCapacity:[suggestions count]];
+  for (FormSuggestion* suggestion in suggestions) {
+    [suggestions_copy addObject:[FormSuggestion copy:suggestion
+                                        andSetParams:params
+                                            provider:provider]];
+  }
+  return suggestions_copy;
+}
+
 }  // namespace
 
 // TODO(crbug.com/372426818): Move this is to its own specific file/module.
-// Interface that wraps a concrete provider to provide and fill suggestions for
-// the bottom sheet.
-@protocol BottomSheetFormSuggestionProviderWrapper <NSObject>
-
-// Retrieves suggestions for the form.
-- (void)retrieveSuggestionsForForm:(autofill::FormActivityParams)params
-                          webState:(web::WebState*)webState
-                        completion:
-                            (void (^)(NSArray<FormSuggestion*>* suggestions))
-                                completion;
-
-// Handles suggestions selection.
-- (void)didSelectSuggestion:(FormSuggestion*)suggestion
-                    atIndex:(NSInteger)index
-                   webState:(web::WebState*)webState;
-
-// Returns the type of the provider.
-- (SuggestionProviderType)type;
-
-@end
-
-// TODO(crbug.com/372426818): Move this is to its own specific file/module.
-// Provider for V1.
-@interface BottomSheetFormSuggestionProviderWrapperV1
-    : NSObject <BottomSheetFormSuggestionProviderWrapper>
-
-- (instancetype)initWithFormInputSuggestionProvider:
-    (id<FormInputSuggestionsProvider>)provider;
-
-@end
-
-@implementation BottomSheetFormSuggestionProviderWrapperV1 {
-  __weak id<FormInputSuggestionsProvider> _providerWrapper;
-}
-
-- (instancetype)initWithFormInputSuggestionProvider:
-    (id<FormInputSuggestionsProvider>)provider {
-  if ((self = [super init])) {
-    _providerWrapper = provider;
-  }
-  return self;
-}
-
-- (void)retrieveSuggestionsForForm:(autofill::FormActivityParams)params
-                          webState:(web::WebState*)webState
-                        completion:
-                            (void (^)(NSArray<FormSuggestion*>* suggestions))
-                                completion {
-  [_providerWrapper
-      retrieveSuggestionsForForm:params
-                        webState:webState
-        accessoryViewUpdateBlock:^(NSArray<FormSuggestion*>* suggestions,
-                                   id<FormInputSuggestionsProvider> provider) {
-          completion(suggestions);
-        }];
-}
-
-- (void)didSelectSuggestion:(FormSuggestion*)suggestion
-                    atIndex:(NSInteger)index
-                   webState:(web::WebState*)webState {
-  [_providerWrapper didSelectSuggestion:suggestion atIndex:index];
-}
-
-- (SuggestionProviderType)type {
-  return _providerWrapper.type;
-}
-
-@end
-
-// TODO(crbug.com/372426818): Move this is to its own specific file/module.
-// Provider for V2.
-@interface BottomSheetFormSuggestionProviderWrapperV2
-    : NSObject <BottomSheetFormSuggestionProviderWrapper>
+@interface BottomSheetFormSuggestionProviderWrapper : NSObject
 
 - (instancetype)
     initWithFormSuggestionProvider:(id<FormSuggestionProvider>)provider
@@ -176,7 +118,7 @@ FormSuggestionProviderQuery* MakeQueryFromParameters(
 
 @end
 
-@implementation BottomSheetFormSuggestionProviderWrapperV2 {
+@implementation BottomSheetFormSuggestionProviderWrapper {
   // Suggestions provider for the bottom sheet.
   __weak id<FormSuggestionProvider> _providerWrapper;
 
@@ -205,7 +147,13 @@ FormSuggestionProviderQuery* MakeQueryFromParameters(
                         webState:webState
                completionHandler:^(NSArray<FormSuggestion*>* suggestions,
                                    id<FormSuggestionProvider> delegate) {
-                 completion(suggestions);
+                 bool stateless = base::FeatureList::IsEnabled(
+                     password_manager::features::kIOSStatelessFillDataFlow);
+                 NSArray<FormSuggestion*>* wrappedSuggestions =
+                     stateless ? SetParamsAndProviderInSuggestions(
+                                     suggestions, params, delegate)
+                               : suggestions;
+                 completion(wrappedSuggestions);
                }];
 }
 
@@ -306,7 +254,7 @@ FormSuggestionProviderQuery* MakeQueryFromParameters(
   // Provider wrapper that gives suggestions and handles suggestion selection.
   // The underlying concrete provider will be determined during initialization
   // depending on the version of the sheet.
-  id<BottomSheetFormSuggestionProviderWrapper> _suggestionsProviderWrapper;
+  BottomSheetFormSuggestionProviderWrapper* _suggestionsProviderWrapper;
 }
 
 @synthesize defaultGlobeIconAttributes = _defaultGlobeIconAttributes;
@@ -358,33 +306,16 @@ FormSuggestionProviderQuery* MakeQueryFromParameters(
     _params = params;
 
     if (activeWebState) {
-      if (base::FeatureList::IsEnabled(
-              password_manager::features::kIOSPasswordBottomSheetV2)) {
-        // Use the V2 provider.
-        PasswordTabHelper* passwordTabHelper =
-            PasswordTabHelper::FromWebState(activeWebState);
-        CHECK(passwordTabHelper);
-        id<FormSuggestionProvider> provider =
-            passwordTabHelper->GetSuggestionProvider();
-        CHECK(provider);
-        _suggestionsProviderWrapper =
-            [[BottomSheetFormSuggestionProviderWrapperV2 alloc]
-                initWithFormSuggestionProvider:provider
-                                        params:_params];
-      } else {
-        // Use the V1 provider;
-        FormSuggestionTabHelper* tabHelper =
-            FormSuggestionTabHelper::FromWebState(activeWebState);
-        DCHECK(tabHelper);
-
-        id<FormInputSuggestionsProvider> provider =
-            tabHelper->GetAccessoryViewProvider();
-        CHECK(provider);
-
-        _suggestionsProviderWrapper =
-            [[BottomSheetFormSuggestionProviderWrapperV1 alloc]
-                initWithFormInputSuggestionProvider:provider];
-      }
+      PasswordTabHelper* passwordTabHelper =
+          PasswordTabHelper::FromWebState(activeWebState);
+      CHECK(passwordTabHelper);
+      id<FormSuggestionProvider> provider =
+          passwordTabHelper->GetSuggestionProvider();
+      CHECK(provider);
+      _suggestionsProviderWrapper =
+          [[BottomSheetFormSuggestionProviderWrapper alloc]
+              initWithFormSuggestionProvider:provider
+                                      params:_params];
 
       // The 'params' argument may go out of scope before the completion block
       // is called, so we need to store variables used in the completion block
@@ -429,11 +360,6 @@ FormSuggestionProviderQuery* MakeQueryFromParameters(
 - (std::optional<password_manager::CredentialUIEntry>)
     getCredentialForFormSuggestion:(FormSuggestion*)formSuggestion {
   NSString* username = formSuggestion.value;
-  if ([username containsString:kPasswordFormSuggestionSuffix]) {
-    username = [username
-        stringByReplacingOccurrencesOfString:kPasswordFormSuggestionSuffix
-                                  withString:@""];
-  }
   auto it = std::ranges::find_if(
       _credentials,
       [username](const password_manager::CredentialUIEntry& credential) {
@@ -547,19 +473,6 @@ FormSuggestionProviderQuery* MakeQueryFromParameters(
   }
 }
 
-- (NSString*)usernameAtRow:(NSInteger)row {
-  FormSuggestion* suggestion = [self.suggestions objectAtIndex:row];
-
-  // Removing suffix ' ••••••••' appended to the username in the suggestion.
-  NSString* username = suggestion.value;
-  if ([username containsString:kPasswordFormSuggestionSuffix]) {
-    username = [username
-        stringByReplacingOccurrencesOfString:kPasswordFormSuggestionSuffix
-                                  withString:@""];
-  }
-  return username;
-}
-
 - (void)loadFaviconWithBlockHandler:
     (FaviconLoader::FaviconAttributesCompletionBlock)faviconLoadedBlock {
   if (!_faviconLoader) {
@@ -654,10 +567,7 @@ FormSuggestionProviderQuery* MakeQueryFromParameters(
 // initialized.
 - (FaviconAttributes*)defaultGlobeIconAttributes {
   if (!_defaultGlobeIconAttributes) {
-    _defaultGlobeIconAttributes = [FaviconAttributes
-        attributesWithImage:DefaultSymbolWithPointSize(
-                                kGlobeAmericasSymbol,
-                                kDesiredMediumFaviconSizePt)];
+    _defaultGlobeIconAttributes = GetDefaultGlobeFaviconAttributes();
   }
   return _defaultGlobeIconAttributes;
 }

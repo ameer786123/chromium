@@ -130,14 +130,18 @@ CustomizeChromeUI::CustomizeChromeUI(content::WebUI* web_ui)
        IDS_NTP_CUSTOMIZE_CHROME_RESET_TO_UPLOADED_IMAGE_COMPLETE},
       {"followThemeToggle", IDS_NTP_CUSTOMIZE_CHROME_FOLLOW_THEME_LABEL},
       {"refreshDaily", IDS_NTP_CUSTOM_BG_DAILY_REFRESH},
-      {"newTabPageManagedBy", IDS_NTP_CUSTOMIZE_CHROME_MANAGED_NEW_TAB_PAGE},
+      {"managedByExtension", IDS_NTP_MANAGED_BY_EXTENSION},
+      {"managedBySearchEngine", IDS_NTP_MANAGED_BY_SEARCH_ENGINE},
       {"newTabPageManagedByA11yLabel",
        IDS_NTP_CUSTOMIZE_CHROME_MANAGED_NEW_TAB_PAGE_ACCESSIBILITY},
       // Shortcut strings.
-      {"mostVisited", IDS_NTP_CUSTOMIZE_MOST_VISITED_LABEL},
+      {"topSites", IDS_NTP_CUSTOMIZE_MOST_VISITED_LABEL},
       {"myShortcuts", IDS_NTP_CUSTOMIZE_MY_SHORTCUTS_LABEL},
+      {"enterpriseShortcuts", IDS_NTP_CUSTOMIZE_ENTERPRISE_SHORTCUTS_LABEL},
       {"shortcutsCurated", IDS_NTP_CUSTOMIZE_MY_SHORTCUTS_DESC},
       {"shortcutsSuggested", IDS_NTP_CUSTOMIZE_MOST_VISITED_DESC},
+      {"enterpriseShortcutsCurated",
+       IDS_NTP_CUSTOMIZE_ENTERPRISE_SHORTCUTS_DESC},
       {"showShortcutsToggle", IDS_NTP_CUSTOMIZE_SHOW_SHORTCUTS_LABEL},
       // Card strings.
       {"showCardsToggleTitle", IDS_NTP_CUSTOMIZE_SHOW_CARDS_LABEL},
@@ -305,13 +309,11 @@ void CustomizeChromeUI::ScrollToSection(CustomizeChromeSection section) {
   }
 }
 
-void CustomizeChromeUI::AttachedTabStateUpdated(
-    bool is_source_tab_first_party_ntp) {
+void CustomizeChromeUI::AttachedTabStateUpdated(const GURL& url) {
   if (customize_chrome_page_handler_) {
-    customize_chrome_page_handler_->AttachedTabStateUpdated(
-        is_source_tab_first_party_ntp);
+    customize_chrome_page_handler_->AttachedTabStateUpdated(url);
   } else {
-    is_source_tab_first_party_ntp_ = is_source_tab_first_party_ntp;
+    source_tab_url_ = url;
   }
 }
 
@@ -409,10 +411,8 @@ void CustomizeChromeUI::CreatePageHandler(
     customize_chrome_page_handler_->ScrollToSection(*section_);
     section_.reset();
   }
-  if (is_source_tab_first_party_ntp_.has_value()) {
-    customize_chrome_page_handler_->AttachedTabStateUpdated(
-        is_source_tab_first_party_ntp_.value());
-    is_source_tab_first_party_ntp_.reset();
+  if (!source_tab_url_.is_empty()) {
+    customize_chrome_page_handler_->AttachedTabStateUpdated(source_tab_url_);
   }
   if (is_theme_editable_.has_value()) {
     customize_chrome_page_handler_->UpdateThemeEditable(

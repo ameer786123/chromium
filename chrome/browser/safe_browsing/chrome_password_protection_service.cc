@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/containers/contains.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
@@ -27,7 +28,7 @@
 #include "chrome/browser/enterprise/connectors/reporting/reporting_event_router_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/password_manager/account_password_store_factory.h"
-#include "chrome/browser/password_manager/password_reuse_manager_factory.h"
+#include "chrome/browser/password_manager/factories/password_reuse_manager_factory.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
@@ -47,6 +48,7 @@
 #include "components/enterprise/connectors/core/reporting_event_router.h"
 #include "components/google/core/common/google_util.h"
 #include "components/omnibox/common/omnibox_features.h"
+#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/form_parsing/form_data_parser.h"
 #include "components/password_manager/core/browser/insecure_credentials_helper.h"
 #include "components/password_manager/core/browser/leak_detection_dialog_utils.h"
@@ -88,6 +90,7 @@
 #include "components/variations/service/variations_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/global_routing_id.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
@@ -113,8 +116,8 @@
 #include "chrome/browser/password_manager/android/password_manager_android_util.h"
 #include "chrome/browser/safe_browsing/android/password_reuse_controller_android.h"
 #include "chrome/browser/safe_browsing/android/safe_browsing_referring_app_bridge_android.h"
+#include "components/enterprise/connectors/core/features.h"
 #include "components/password_manager/core/browser/password_check_referrer_android.h"
-#include "components/password_manager/core/browser/split_stores_and_local_upm.h"
 #include "ui/android/window_android.h"
 #else
 #include "chrome/browser/ui/browser_list.h"
@@ -957,15 +960,12 @@ void ChromePasswordProtectionService::OnGaiaPasswordChanged(
   for (auto& observer : observer_list_)
     observer.OnGaiaPasswordChanged();
 
-// Disabled on Android, because enterprise reporting extension is not supported.
-#if !BUILDFLAG(IS_ANDROID)
   // Only report if the current password changed is the primary account and it's
   // not a consumer account or if the current password changed is a content area
   // account and it's not a consumer account.
   if (!IsAccountConsumer(username)) {
     ReportPasswordChanged();
   }
-#endif
 }
 
 GURL ChromePasswordProtectionService::GetEnterpriseChangePasswordURL() const {
@@ -1144,11 +1144,8 @@ void ChromePasswordProtectionService::OpenPasswordCheck(
       // checkup for that store will open.
 
       bool should_show_checkup_for_local = true;
+
       if (credentials_store.is_account_store) {
-        should_show_checkup_for_local = false;
-      } else if (credentials_store.is_profile_store && is_syncing_passwords &&
-                 !password_manager::UsesSplitStoresAndUPMForLocal(
-                     profile_->GetPrefs())) {
         should_show_checkup_for_local = false;
       }
       checkup_launcher_->LaunchCheckupOnDevice(
@@ -1281,8 +1278,6 @@ std::string ChromePasswordProtectionService::GetOrganizationName(
   return email.empty() ? std::string() : gaia::ExtractDomainName(email);
 }
 
-// Disabled on Android, because enterprise reporting extension is not supported.
-#if !BUILDFLAG(IS_ANDROID)
 void ChromePasswordProtectionService::MaybeReportPasswordReuseDetected(
     const GURL& main_frame_url,
     const std::string& username,
@@ -1310,6 +1305,9 @@ void ChromePasswordProtectionService::MaybeReportPasswordReuseDetected(
     // is called.
     std::string username_or_email =
         username.empty() ? GetAccountInfo().email : username;
+
+// Disabled on Android, because enterprise reporting extension is not supported.
+#if !BUILDFLAG(IS_ANDROID)
     auto* safe_browsing_event_router =
         extensions::SafeBrowsingPrivateEventRouterFactory::GetForProfile(
             profile_);
@@ -1322,6 +1320,13 @@ void ChromePasswordProtectionService::MaybeReportPasswordReuseDetected(
           "PasswordProtection.GmailReportSent",
           base::EndsWith(username_or_email, "@gmail.com"));
     }
+#else   // BUILDFLAG(IS_ANDROID)
+    if (!base::FeatureList::IsEnabled(
+            enterprise_connectors::
+                kEnterpriseSecurityEventReportingOnAndroid)) {
+      return;
+    }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
     auto* reporting_event_router = enterprise_connectors::
         ReportingEventRouterFactory::GetForBrowserContext(profile_);
@@ -1333,16 +1338,33 @@ void ChromePasswordProtectionService::MaybeReportPasswordReuseDetected(
 }
 
 void ChromePasswordProtectionService::ReportPasswordChanged() {
-  if (!IsIncognito()) {
-    auto* router =
-        extensions::SafeBrowsingPrivateEventRouterFactory::GetForProfile(
-            profile_);
-    if (router) {
-      router->OnPolicySpecifiedPasswordChanged(GetAccountInfo().email);
-    }
+  if (IsIncognito()) {
+    return;
+  }
+
+// Disabled on Android, because enterprise reporting extension is not supported.
+#if !BUILDFLAG(IS_ANDROID)
+  auto* safe_browsing_event_router =
+      extensions::SafeBrowsingPrivateEventRouterFactory::GetForProfile(
+          profile_);
+  if (safe_browsing_event_router) {
+    safe_browsing_event_router->OnPolicySpecifiedPasswordChanged(
+        GetAccountInfo().email);
+  }
+#else   // BUILDFLAG(IS_ANDROID)
+  if (!base::FeatureList::IsEnabled(
+          enterprise_connectors::kEnterpriseSecurityEventReportingOnAndroid)) {
+    return;
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+  auto* reporting_event_router =
+      enterprise_connectors::ReportingEventRouterFactory::GetForBrowserContext(
+          profile_);
+  if (reporting_event_router) {
+    reporting_event_router->OnPasswordChanged(GetAccountInfo().email);
   }
 }
-#endif
 
 bool ChromePasswordProtectionService::HasUnhandledEnterprisePasswordReuse(
     content::WebContents* web_contents) const {
@@ -1752,11 +1774,6 @@ AccountInfo ChromePasswordProtectionService::GetAccountInfo() const {
 
   return identity_manager->FindExtendedAccountInfo(
       identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin));
-}
-
-ChromeUserPopulation::UserPopulation
-ChromePasswordProtectionService::GetUserPopulationPref() const {
-  return ::safe_browsing::GetUserPopulationPref(profile_->GetPrefs());
 }
 
 ChromePasswordProtectionService::ChromePasswordProtectionService(

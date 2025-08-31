@@ -1,4 +1,4 @@
-// Copyright 2024 The Chromium Authors
+// Copyright 2025 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -59,6 +59,8 @@ class MODULES_EXPORT AIPageContentAgent final
   // LocalFrameView::LifecycleNotificationObserver overrides.
   void DidFinishPostLifecycleSteps(const LocalFrameView&) override;
 
+  String DumpContentNodeTreeForTest();
+
  private:
   void GetAIPageContentSync(mojom::blink::AIPageContentOptionsPtr options,
                             GetAIPageContentCallback callback,
@@ -75,30 +77,52 @@ class MODULES_EXPORT AIPageContentAgent final
     mojom::blink::AIPageContentPtr Build(LocalFrame& frame);
 
    private:
+    class RecursionData {
+      STACK_ALLOCATED();
+
+     public:
+      RecursionData(const ComputedStyle& document_style);
+
+      bool is_aria_disabled = false;
+      const ComputedStyle& document_style;
+      int stack_depth = 0;
+    };
+
+    bool actionable_mode() const {
+      return options_->mode ==
+             mojom::blink::AIPageContentMode::kActionableElements;
+    }
     // Returns true if any descendant of `object` has a computed value of
     // visible for `visibility`.
     bool WalkChildren(const LayoutObject& object,
                       mojom::blink::AIPageContentNode& content_node,
-                      const ComputedStyle& document_style);
+                      const RecursionData& recursion_data);
     void ProcessIframe(const LayoutIFrame& object,
-                       mojom::blink::AIPageContentNode& content_node);
+                       mojom::blink::AIPageContentNode& content_node,
+                       const RecursionData& recursion_data);
     mojom::blink::AIPageContentNodePtr MaybeGenerateContentNode(
         const LayoutObject& object,
-        const ComputedStyle& document_style);
+        const RecursionData& recursion_data);
     void AddPageInteractionInfo(const Document& document,
                                 mojom::blink::AIPageContent& page_content);
-    void AddFrameData(const LocalFrame& frame,
+    void AddFrameData(LocalFrame& frame,
                       mojom::blink::AIPageContentFrameData& frame_data);
     void AddFrameInteractionInfo(
         const LocalFrame& frame,
         mojom::blink::AIPageContentFrameInteractionInfo&
             frame_interaction_info);
+    void AddAriaRole(const LayoutObject& object,
+                     mojom::blink::AIPageContentAttributes& attributes);
     void AddNodeInteractionInfo(
         const LayoutObject& object,
-        mojom::blink::AIPageContentAttributes& attributes) const;
+        mojom::blink::AIPageContentAttributes& attributes,
+        bool is_aria_disabled) const;
+    void AddInteractionInfoForHitTesting(
+        const Node* node,
+        mojom::blink::AIPageContentNodeInteractionInfo& interaction_info) const;
     void AddMetaData(
         const LocalFrame& frame,
-        WTF::Vector<mojom::blink::AIPageContentMetaPtr>& meta_data) const;
+        Vector<mojom::blink::AIPageContentMetaPtr>& meta_data) const;
     void AddNodeGeometry(
         const LayoutObject& object,
         mojom::blink::AIPageContentAttributes& attributes) const;
@@ -107,6 +131,13 @@ class MODULES_EXPORT AIPageContentAgent final
                                annotated_roles) const;
     void AddLabel(const LayoutObject& object,
                   mojom::blink::AIPageContentAttributes& attributes) const;
+    // Adds the control node id if this is a label associated with a form
+    // control. This includes both explicit association using for, or
+    // implicit association when the input node is a descendant of the label
+    // node.
+    void AddForDomNodeId(
+        const LayoutObject& object,
+        mojom::blink::AIPageContentAttributes& attributes) const;
     bool IsGenericContainer(
         const LayoutObject& object,
         const mojom::blink::AIPageContentAttributes& attributes) const;
@@ -120,12 +151,13 @@ class MODULES_EXPORT AIPageContentAgent final
     // produce a ContentNode.
     base::flat_set<DOMNodeId> interactive_dom_node_ids_;
 
+    // If present, the node which is accessibility focused. This is used to
+    // determine which node to add geometry for in non-actionable mode.
+    DOMNodeId accessibility_focused_node_id_ = kInvalidDOMNodeId;
+
     const raw_ref<const mojom::blink::AIPageContentOptions> options_;
 
-    base::flat_map<DOMNodeId, gfx::Rect> dom_node_to_visible_bounding_box_;
-
-    // The current depth of the tree being walked.
-    int stack_depth_ = 0;
+    base::flat_map<DOMNodeId, int32_t> dom_node_to_z_order_;
 
     // Whether the stack depth has exceeded the max tree depth.
     bool stack_depth_exceeded_ = false;
@@ -141,7 +173,7 @@ class MODULES_EXPORT AIPageContentAgent final
   // Already registered for lifetime notifications.
   bool is_registered_ = false;
   // Tasks to run when post lifecycle.
-  WTF::Vector<base::OnceClosure> async_extraction_tasks_;
+  Vector<base::OnceClosure> async_extraction_tasks_;
 };
 
 }  // namespace blink

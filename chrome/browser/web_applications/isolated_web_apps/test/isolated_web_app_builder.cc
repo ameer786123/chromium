@@ -16,7 +16,6 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_file.h"
 #include "base/functional/function_ref.h"
-#include "base/functional/overloaded.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -30,7 +29,6 @@
 #include "base/types/optional_ref.h"
 #include "chrome/browser/web_applications/isolated_web_apps/commands/install_isolated_web_app_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_install_source.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_source.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_trust_checker.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
@@ -41,6 +39,7 @@
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
 #include "components/web_package/test_support/signed_web_bundles/web_bundle_signer.h"
 #include "components/web_package/web_bundle_builder.h"
+#include "components/webapps/isolated_web_apps/types/source.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
@@ -52,6 +51,7 @@
 #include "services/network/public/cpp/permissions_policy/origin_with_possible_wildcards.h"
 #include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "skia/ext/codec_utils.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/manifest/manifest.h"
 #include "third_party/blink/public/common/manifest/manifest_util.h"
 #include "third_party/blink/public/common/permissions_policy/policy_helper_public.h"
@@ -199,7 +199,9 @@ ManifestBuilder::PermissionsPolicy::PermissionsPolicy(
 ManifestBuilder::PermissionsPolicy::~PermissionsPolicy() = default;
 
 ManifestBuilder::ManifestBuilder()
-    : name_("Test App"), version_("0.0.1"), start_url_("/") {
+    : name_("Test App"),
+      version_(*IwaVersion::Create("0.0.1")),
+      start_url_("/") {
   AddPermissionsPolicy(
       network::mojom::PermissionsPolicyFeature::kCrossOriginIsolated,
       /*self=*/true, /*origins=*/{});
@@ -214,7 +216,7 @@ ManifestBuilder& ManifestBuilder::SetName(std::string_view name) {
 }
 
 ManifestBuilder& ManifestBuilder::SetVersion(std::string_view version) {
-  version_ = version;
+  version_ = *IwaVersion::Create(version);
   return *this;
 }
 
@@ -226,6 +228,12 @@ ManifestBuilder& ManifestBuilder::SetStartUrl(std::string_view start_url) {
 ManifestBuilder& ManifestBuilder::SetDisplayMode(
     blink::mojom::DisplayMode display_mode) {
   display_mode_ = display_mode;
+  return *this;
+}
+
+ManifestBuilder& ManifestBuilder::SetLaunchHandlerClientMode(
+    ClientMode launch_handler_client_mode) {
+  launch_handler_client_mode_ = launch_handler_client_mode;
   return *this;
 }
 
@@ -284,16 +292,14 @@ const std::vector<ManifestBuilder::IconMetadata>& ManifestBuilder::icons()
   return icons_;
 }
 
-base::Version ManifestBuilder::version() const {
-  base::Version version(version_);
-  CHECK(version.IsValid());
-  return version;
+const IwaVersion& ManifestBuilder::version() const {
+  return version_;
 }
 
 std::string ManifestBuilder::ToJson() const {
   auto json = base::Value::Dict()
                   .Set("name", name_)
-                  .Set("version", version_)
+                  .Set("version", version_.GetString())
                   .Set("id", "/")
                   .Set("scope", "/")
                   .Set("start_url", start_url_)
@@ -301,6 +307,21 @@ std::string ManifestBuilder::ToJson() const {
                   .Set("display_override",
                        base::ToValueList(display_mode_override_,
                                          &blink::DisplayModeToString));
+
+  if (launch_handler_client_mode_) {
+    json.SetByDottedPath("launch_handler.client_mode", [&] {
+      switch (*launch_handler_client_mode_) {
+        case ClientMode::kAuto:
+          return "auto";
+        case ClientMode::kNavigateNew:
+          return "navigate-new";
+        case ClientMode::kNavigateExisting:
+          return "navigate-existing";
+        case ClientMode::kFocusExisting:
+          return "focus-existing";
+      }
+    }());
+  }
 
   base::Value::Dict policies;
   for (const auto& policy : permissions_policy_) {
@@ -365,12 +386,16 @@ blink::mojom::ManifestPtr ManifestBuilder::ToBlinkManifest(
   GURL base_url = app_origin.GetURL();
   auto manifest = blink::mojom::Manifest::New();
   manifest->name = base::UTF8ToUTF16(name_);
-  manifest->version = base::UTF8ToUTF16(version_);
+  manifest->version = base::UTF8ToUTF16(version_.GetString());
   manifest->id = base_url;
   manifest->scope = base_url;
   manifest->start_url = base_url.Resolve(start_url_);
   manifest->display = display_mode_;
   manifest->display_override = display_mode_override_;
+  if (launch_handler_client_mode_) {
+    manifest->launch_handler =
+        blink::Manifest::LaunchHandler(*launch_handler_client_mode_);
+  }
 
   for (const auto& icon : icons_) {
     blink::Manifest::ImageResource blink_icon;
@@ -463,7 +488,7 @@ IsolatedWebAppBuilder::Resource::headers(std::string_view resource_path) const {
 
   if (!has_content_type) {
     base::FilePath file_path =
-        std::visit(base::Overloaded{
+        std::visit(absl::Overload{
                        [&](const std::string&) {
                          return base::FilePath::FromUTF8Unsafe(resource_path);
                        },
@@ -483,7 +508,7 @@ IsolatedWebAppBuilder::Resource::headers(std::string_view resource_path) const {
 }
 
 std::string IsolatedWebAppBuilder::Resource::body() const {
-  return std::visit(base::Overloaded{
+  return std::visit(absl::Overload{
                         [&](const std::string& content) { return content; },
                         [&](const base::FilePath& path) {
                           std::string content;

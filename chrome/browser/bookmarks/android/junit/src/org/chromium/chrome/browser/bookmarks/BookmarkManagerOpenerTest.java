@@ -23,10 +23,10 @@ import org.robolectric.annotation.Config;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.UserActionTester;
-import org.chromium.chrome.browser.app.bookmarks.BookmarkFolderPickerActivity;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileResolver;
 import org.chromium.chrome.browser.profiles.ProfileResolverJni;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.ui.base.TestActivity;
 
 /** Unit tests for {@link BookmarkManagerOpener}. */
@@ -40,14 +40,12 @@ public class BookmarkManagerOpenerTest {
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
+    @Mock private Tab mCurrentTab;
     @Mock private Profile mProfile;
     @Mock private ProfileResolver.Natives mProfileResolverNatives;
-    @Mock private BookmarkFolderPickerActivity mBookmarkFolderPickerActivity;
-    @Mock private BookmarkFolderPickerActivity mBookmarkFolderPickerActivity2;
-    @Mock private Runnable mRunnable;
 
     private Activity mActivity;
-    private BookmarkManagerOpener mBookmarkManagerOpener = new BookmarkManagerOpenerImpl();
+    private final BookmarkManagerOpener mBookmarkManagerOpener = new BookmarkManagerOpenerImpl();
 
     @Before
     public void setUp() {
@@ -65,7 +63,7 @@ public class BookmarkManagerOpenerTest {
         BookmarkUtils.setLastUsedUrl("https://test.com");
         UserActionTester userActionTester = new UserActionTester();
 
-        mBookmarkManagerOpener.showBookmarkManager(mActivity, mProfile, /* folderId= */ null);
+        mBookmarkManagerOpener.showBookmarkManager(mActivity, mCurrentTab, mProfile, /* folderId= */ null);
         assertEquals(
                 1,
                 userActionTester.getActionCount(

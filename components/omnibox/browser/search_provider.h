@@ -21,7 +21,9 @@
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "components/history/core/browser/history_types.h"
 #include "components/omnibox/browser/answers_cache.h"
+#include "components/omnibox/browser/autocomplete_enums.h"
 #include "components/omnibox/browser/base_search_provider.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
@@ -32,10 +34,6 @@ class AutocompleteProviderClient;
 class AutocompleteProviderListener;
 class AutocompleteResult;
 class SearchProviderTest;
-
-namespace history {
-struct KeywordSearchTermVisit;
-}
 
 namespace network {
 class SimpleURLLoader;
@@ -131,8 +129,8 @@ class SearchProvider : public BaseSearchProvider,
     // by this class.
     bool equal(const std::u16string& default_provider,
                const std::u16string& keyword_provider) const {
-      return (default_provider == default_provider_) &&
-          (keyword_provider == keyword_provider_);
+      return default_provider == default_provider_ &&
+             keyword_provider == keyword_provider_;
     }
 
     // Resets the cached providers.
@@ -163,17 +161,13 @@ class SearchProvider : public BaseSearchProvider,
 
   class CompareScoredResults;
 
-  typedef std::vector<std::unique_ptr<history::KeywordSearchTermVisit>>
-      HistoryResults;
-
   // A helper function for UpdateAllOldResults().
   static void UpdateOldResults(bool minimal_changes,
                                SearchSuggestionParser::Results* results);
 
   // AutocompleteProvider:
   void Start(const AutocompleteInput& input, bool minimal_changes) override;
-  void Stop(bool clear_cached_results,
-            bool due_to_user_inactivity) override;
+  void Stop(AutocompleteStopReason stop_reason) override;
 
   // BaseSearchProvider:
   bool ShouldAppendExtraParams(
@@ -314,7 +308,7 @@ class SearchProvider : public BaseSearchProvider,
 
   // Calculates relevance scores for all |results|.
   SearchSuggestionParser::SuggestResults ScoreHistoryResultsHelper(
-      const HistoryResults& results,
+      const history::KeywordSearchTermVisitList& results,
       bool base_prevent_inline_autocomplete,
       bool input_multiple_words,
       const std::u16string& input_text,
@@ -324,7 +318,7 @@ class SearchProvider : public BaseSearchProvider,
   // conditions around multi-word queries. (See inline comments in function
   // definition for more details.)
   void ScoreHistoryResults(
-      const HistoryResults& results,
+      const history::KeywordSearchTermVisitList& results,
       bool is_keyword,
       SearchSuggestionParser::SuggestResults* scored_results);
 
@@ -393,8 +387,8 @@ class SearchProvider : public BaseSearchProvider,
   AutocompleteInput keyword_input_;
 
   // Searches in the user's history that begin with the input text.
-  HistoryResults raw_keyword_history_results_;
-  HistoryResults raw_default_history_results_;
+  history::KeywordSearchTermVisitList raw_keyword_history_results_;
+  history::KeywordSearchTermVisitList raw_default_history_results_;
 
   // Scored searches in the user's history - based on |keyword_history_results_|
   // or |default_history_results_| as appropriate.
@@ -424,7 +418,7 @@ class SearchProvider : public BaseSearchProvider,
   GURL top_navigation_suggestion_;
 
   // Answers prefetch management.
-  AnswersCache answers_cache_;  // Cache for last answers seen.
+  AnswersCache answers_cache_;      // Cache for last answers seen.
   AnswersQueryData prefetch_data_;  // Data to use for query prefetching.
 
   base::ScopedObservation<TemplateURLService, TemplateURLServiceObserver>

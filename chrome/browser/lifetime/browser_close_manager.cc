@@ -11,6 +11,7 @@
 
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
+#include "base/metrics/histogram_functions.h"
 #include "build/build_config.h"
 #include "chrome/browser/background/extensions/background_mode_manager.h"
 #include "chrome/browser/browser_process.h"
@@ -38,45 +39,6 @@
 
 namespace {
 
-// Make a copy of the BrowserList and watch for any calls to AddBrowser or
-// RemoveBrowser. This class allows a safe iteration over the list assuming
-// that removing some Browser instance may remove another pending Browser
-// instance.
-class BrowserListIterator : public BrowserListObserver {
- public:
-  BrowserListIterator()
-      : browsers_(BrowserList::GetInstance()->begin(),
-                  BrowserList::GetInstance()->end()) {
-    BrowserList::GetInstance()->AddObserver(this);
-  }
-  BrowserListIterator(const BrowserListIterator&) = delete;
-  BrowserListIterator(BrowserListIterator&&) = delete;
-  ~BrowserListIterator() override {
-    BrowserList::GetInstance()->RemoveObserver(this);
-  }
-
-  void OnBrowserAdded(Browser* browser) override {
-    browsers_.push_back(browser);
-  }
-  void OnBrowserRemoved(Browser* browser) override {
-    auto it = std::ranges::find(browsers_.begin(), browsers_.end(), browser);
-    if (it != browsers_.end()) {
-      browsers_.erase(it);
-    }
-  }
-  bool IsEmpty() const { return browsers_.empty(); }
-
-  Browser* Pop() {
-    Browser* browser = browsers_.front();
-    browsers_.erase(browsers_.begin());
-    DCHECK(base::Contains(*BrowserList::GetInstance(), browser));
-    return browser;
-  }
-
- private:
-  BrowserList::BrowserVector browsers_;
-};
-
 // Navigates a browser window for |profile|, creating one if necessary, to the
 // downloads page if there are downloads in progress for |profile|.
 void ShowInProgressDownloads(Profile* profile) {
@@ -95,6 +57,8 @@ BrowserCloseManager::BrowserCloseManager() : current_browser_(nullptr) {}
 BrowserCloseManager::~BrowserCloseManager() = default;
 
 void BrowserCloseManager::StartClosingBrowsers() {
+  close_timer_.emplace();
+
   // If the session is ending or a silent exit was requested, skip straight to
   // closing the browsers without waiting for beforeunload dialogs.
   if (browser_shutdown::ShouldIgnoreUnloadHandlers()) {
@@ -107,6 +71,13 @@ void BrowserCloseManager::StartClosingBrowsers() {
 }
 
 void BrowserCloseManager::CancelBrowserClose() {
+  // This is the abort endpoint. Record the metric if we haven't already.
+  if (close_timer_) {
+    base::UmaHistogramMediumTimes("Shutdown.Time.BrowserCloseManager.Canceled",
+                                  close_timer_->Elapsed());
+    close_timer_.reset();
+  }
+
   browser_shutdown::SetTryingToQuit(false);
   for (Browser* browser : *BrowserList::GetInstance()) {
     browser->ResetTryToCloseWindow();
@@ -127,6 +98,15 @@ void BrowserCloseManager::TryToCloseBrowsers() {
       return;
     }
   }
+
+  // This is the success endpoint. If we get here, all beforeunload handlers
+  // have been processed successfully.
+  if (close_timer_) {
+    base::UmaHistogramMediumTimes("Shutdown.Time.BrowserCloseManager.Confirmed",
+                                  close_timer_->Elapsed());
+    close_timer_.reset();
+  }
+
   CheckForDownloadsInProgress();
 }
 
@@ -220,14 +200,9 @@ void BrowserCloseManager::CloseBrowsers() {
   }
 #endif
 
-  // Make a copy of the BrowserList to simplify the case where we need to
-  // destroy a Browser during the loop.
-  BrowserListIterator browser_list_copy;
-
-  bool ignore_unload_handlers = browser_shutdown::ShouldIgnoreUnloadHandlers();
-
-  while (!browser_list_copy.IsEmpty()) {
-    Browser* browser = browser_list_copy.Pop();
+  BrowserList::GetInstance()->ForEachCurrentAndNewBrowser([](Browser* browser) {
+    bool ignore_unload_handlers =
+        browser_shutdown::ShouldIgnoreUnloadHandlers();
     browser->set_force_skip_warning_user_on_close(ignore_unload_handlers);
     browser->window()->Close();
     if (ignore_unload_handlers) {
@@ -238,11 +213,11 @@ void BrowserCloseManager::CloseBrowsers() {
       // force skip these warnings and manually close all the tabs to make sure
       // the browser is destroyed and cleanup can happen.
       browser->tab_strip_model()->CloseAllTabs();
-      browser->window()->DestroyBrowser();
+      browser->SynchronouslyDestroyBrowser();
       // Destroying the browser should have removed it from the browser list.
       DCHECK(!base::Contains(*BrowserList::GetInstance(), browser));
     }
-  }
+  });
 
 #if BUILDFLAG(ENABLE_CHROME_NOTIFICATIONS)
   NotificationUIManager* notification_manager =

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "content/public/app/content_main.h"
 
 #include <memory>
@@ -18,7 +13,6 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/debug/debugger.h"
-#include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
@@ -40,8 +34,6 @@
 #include "base/trace_event/trace_log.h"
 #include "build/build_config.h"
 #include "components/embedder_support/switches.h"
-#include "components/tracing/common/trace_to_console.h"
-#include "components/tracing/common/tracing_switches.h"
 #include "content/app/content_main_runner_impl.h"
 #include "content/public/app/content_main_delegate.h"
 #include "content/public/common/content_switches.h"
@@ -109,8 +101,7 @@ void SetupSignalHandlers() {
   CHECK_EQ(0, sigemptyset(&empty_signal_set));
   CHECK_EQ(0, sigprocmask(SIG_SETMASK, &empty_signal_set, nullptr));
 
-  struct sigaction sigact;
-  memset(&sigact, 0, sizeof(sigact));
+  struct sigaction sigact = {};
   sigact.sa_handler = SIG_DFL;
   static const int signals_to_reset[] = {SIGHUP,  SIGINT,  SIGQUIT, SIGILL,
                                          SIGABRT, SIGFPE,  SIGSEGV, SIGALRM,
@@ -125,7 +116,6 @@ bool IsSubprocess() {
   auto type = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
       switches::kProcessType);
   return type == switches::kGpuProcess ||
-         type == switches::kPpapiPluginProcess ||
          type == switches::kRendererProcess ||
          type == switches::kUtilityProcess || type == switches::kZygoteProcess;
 }
@@ -314,6 +304,10 @@ NO_STACK_PROTECTOR int RunContentProcess(
 #if BUILDFLAG(IS_IOS_TVOS)
     // Set tvOS to single-process mode by default.
     command_line->AppendSwitch(switches::kSingleProcess);
+
+    // Enable spatial navigation; we interpret remote control swipes as arrow
+    // keys.
+    command_line->AppendSwitch(switches::kEnableSpatialNavigation);
 #endif
 #endif
 
@@ -345,13 +339,6 @@ NO_STACK_PROTECTOR int RunContentProcess(
 
     base::trace_event::TraceLog::GetInstance()->AddOwnedEnabledStateObserver(
         base::WrapUnique(new TracingEnabledStateObserver));
-
-    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-            ::switches::kTraceToConsole)) {
-      base::trace_event::TraceConfig trace_config =
-          tracing::GetConfigForTraceToConsole();
-      base::trace_event::TraceLog::GetInstance()->SetEnabled(trace_config);
-    }
   }
 
   if (IsSubprocess())

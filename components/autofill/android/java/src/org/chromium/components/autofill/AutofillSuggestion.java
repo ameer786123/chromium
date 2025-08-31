@@ -22,15 +22,16 @@ public class AutofillSuggestion extends DropdownItemBase {
     private final @Nullable String mSecondaryLabel;
     private final String mSublabel;
     private final @Nullable String mSecondarySublabel;
-    private final @Nullable String mLabelContentDescription;
     private final int mIconId;
-    private final int mSuggestionType;
+    private final @SuggestionType int mSuggestionType;
     private final boolean mIsDeletable;
     private final boolean mApplyDeactivatedStyle;
-    private final boolean mShouldDisplayTermsAvailable;
     private final @Nullable String mFeatureForIph;
     private final @Nullable String mIphDescriptionText;
     private final @Nullable GURL mCustomIconUrl;
+    private final @Nullable Payload mPayload;
+
+    public sealed interface Payload permits AutofillProfilePayload, PaymentsPayload {}
 
     /**
      * Constructs a Autofill suggestion container. Use the {@link AutofillSuggestion.Builder}
@@ -43,10 +44,10 @@ public class AutofillSuggestion extends DropdownItemBase {
      * @param popupItemId The type of suggestion.
      * @param isDeletable Whether the item can be deleted by the user.
      * @param applyDeactivatedStyle Whether to apply deactivated style to the suggestion.
-     * @param shouldDisplayTermsAvailable Whether the terms message is displayed.
      * @param featureForIph The IPH feature for the autofill suggestion. If present, it'll be
      *     attempted to be shown in the keyboard accessory.
      * @param customIconUrl The {@link GURL} for the custom icon, if any.
+     * @param payload Additional data passed with the suggestion.
      */
     @VisibleForTesting
     public AutofillSuggestion(
@@ -54,28 +55,26 @@ public class AutofillSuggestion extends DropdownItemBase {
             @Nullable String secondaryLabel,
             String sublabel,
             @Nullable String secondarySublabel,
-            @Nullable String labelContentDescription,
             int iconId,
             @SuggestionType int popupItemId,
             boolean isDeletable,
             boolean applyDeactivatedStyle,
-            boolean shouldDisplayTermsAvailable,
             @Nullable String featureForIph,
             @Nullable String iphDescriptionText,
-            @Nullable GURL customIconUrl) {
+            @Nullable GURL customIconUrl,
+            @Nullable Payload payload) {
         mLabel = label;
         mSecondaryLabel = secondaryLabel;
         mSublabel = sublabel;
         mSecondarySublabel = secondarySublabel;
-        mLabelContentDescription = labelContentDescription;
         mIconId = iconId;
         mSuggestionType = popupItemId;
         mIsDeletable = isDeletable;
         mApplyDeactivatedStyle = applyDeactivatedStyle;
-        mShouldDisplayTermsAvailable = shouldDisplayTermsAvailable;
         mFeatureForIph = featureForIph;
         mIphDescriptionText = iphDescriptionText;
         mCustomIconUrl = customIconUrl;
+        mPayload = payload;
     }
 
     @Override
@@ -116,11 +115,7 @@ public class AutofillSuggestion extends DropdownItemBase {
         return mCustomIconUrl;
     }
 
-    public @Nullable String getLabelContentDescription() {
-        return mLabelContentDescription;
-    }
-
-    public int getSuggestionType() {
+    public @SuggestionType int getSuggestionType() {
         return mSuggestionType;
     }
 
@@ -137,16 +132,26 @@ public class AutofillSuggestion extends DropdownItemBase {
         return mApplyDeactivatedStyle;
     }
 
-    public boolean shouldDisplayTermsAvailable() {
-        return mShouldDisplayTermsAvailable;
-    }
-
     public @Nullable String getFeatureForIph() {
         return mFeatureForIph;
     }
 
     public @Nullable String getIphDescriptionText() {
         return mIphDescriptionText;
+    }
+
+    public @Nullable AutofillProfilePayload getAutofillProfilePayload() {
+        if (mPayload instanceof AutofillProfilePayload) {
+            return (AutofillProfilePayload) mPayload;
+        }
+        return null;
+    }
+
+    public @Nullable PaymentsPayload getPaymentsPayload() {
+        if (mPayload instanceof PaymentsPayload) {
+            return (PaymentsPayload) mPayload;
+        }
+        return null;
     }
 
     @Override
@@ -162,15 +167,14 @@ public class AutofillSuggestion extends DropdownItemBase {
                 && Objects.equals(this.mSecondaryLabel, other.mSecondaryLabel)
                 && this.mSublabel.equals(other.mSublabel)
                 && Objects.equals(this.mSecondarySublabel, other.mSecondarySublabel)
-                && Objects.equals(this.mLabelContentDescription, other.mLabelContentDescription)
                 && this.mIconId == other.mIconId
                 && this.mSuggestionType == other.mSuggestionType
                 && this.mIsDeletable == other.mIsDeletable
                 && this.mApplyDeactivatedStyle == other.mApplyDeactivatedStyle
-                && this.mShouldDisplayTermsAvailable == other.mShouldDisplayTermsAvailable
                 && Objects.equals(this.mFeatureForIph, other.mFeatureForIph)
                 && Objects.equals(this.mIphDescriptionText, other.mIphDescriptionText)
-                && Objects.equals(this.mCustomIconUrl, other.mCustomIconUrl);
+                && Objects.equals(this.mCustomIconUrl, other.mCustomIconUrl)
+                && Objects.equals(this.mPayload, other.mPayload);
     }
 
     /** Builder for the {@link AutofillSuggestion}. */
@@ -179,15 +183,14 @@ public class AutofillSuggestion extends DropdownItemBase {
         private @Nullable GURL mCustomIconUrl;
         private boolean mIsDeletable;
         private boolean mApplyDeactivatedStyle;
-        private boolean mShouldDisplayTermsAvailable;
         private @Nullable String mFeatureForIph;
         private @Nullable String mIphDescriptionText;
         private @Nullable String mLabel;
         private @Nullable String mSecondaryLabel;
         private @Nullable String mSubLabel;
         private @Nullable String mSecondarySubLabel;
-        private @Nullable String mLabelContentDescription;
         private int mSuggestionType;
+        private @Nullable Payload mPayload;
 
         public Builder setIconId(int iconId) {
             this.mIconId = iconId;
@@ -206,11 +209,6 @@ public class AutofillSuggestion extends DropdownItemBase {
 
         public Builder setApplyDeactivatedStyle(boolean applyDeactivatedStyle) {
             this.mApplyDeactivatedStyle = applyDeactivatedStyle;
-            return this;
-        }
-
-        public Builder setShouldDisplayTermsAvailable(boolean shouldDisplayTermsAvailable) {
-            this.mShouldDisplayTermsAvailable = shouldDisplayTermsAvailable;
             return this;
         }
 
@@ -244,13 +242,13 @@ public class AutofillSuggestion extends DropdownItemBase {
             return this;
         }
 
-        public Builder setLabelContentDescription(String labelContentDescription) {
-            this.mLabelContentDescription = labelContentDescription;
+        public Builder setSuggestionType(int popupItemId) {
+            this.mSuggestionType = popupItemId;
             return this;
         }
 
-        public Builder setSuggestionType(int popupItemId) {
-            this.mSuggestionType = popupItemId;
+        public Builder setPayload(Payload payload) {
+            this.mPayload = payload;
             return this;
         }
 
@@ -264,15 +262,14 @@ public class AutofillSuggestion extends DropdownItemBase {
                     mSecondaryLabel,
                     mSubLabel,
                     mSecondarySubLabel,
-                    mLabelContentDescription,
                     mIconId,
                     mSuggestionType,
                     mIsDeletable,
                     mApplyDeactivatedStyle,
-                    mShouldDisplayTermsAvailable,
                     mFeatureForIph,
                     mIphDescriptionText,
-                    mCustomIconUrl);
+                    mCustomIconUrl,
+                    mPayload);
         }
     }
 }

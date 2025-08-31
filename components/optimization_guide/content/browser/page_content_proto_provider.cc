@@ -8,11 +8,14 @@
 #include "base/functional/concurrent_closures.h"
 #include "base/i18n/char_iterator.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/timer/elapsed_timer.h"
+#include "components/optimization_guide/content/browser/media_transcript_provider.h"
 #include "components/optimization_guide/content/browser/page_content_proto_util.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
+#include "content/public/browser/media_session.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
@@ -48,8 +51,7 @@ void ApplyOptionsOverridesForWebContents(
 
   if (base::FeatureList::IsEnabled(
           features::kAnnotatedPageContentWithActionableElements)) {
-    options.enable_experimental_actionable_data = true;
-    options.include_geometry = true;
+    options.mode = blink::mojom::AIPageContentMode::kActionableElements;
   }
 }
 
@@ -67,6 +69,107 @@ blink::mojom::AIPageContentOptionsPtr ApplyOptionsOverridesForSubframe(
   auto new_options = blink::mojom::AIPageContentOptions::New(input);
   new_options->on_critical_path = true;
   return new_options;
+}
+
+// Validate that the media session has all the required data before proceeding
+// to create media data.
+bool ValidateMediaSession(
+    const media_session::mojom::MediaSessionInfoPtr& media_session_info,
+    const std::optional<media_session::MediaPosition>& media_position) {
+  return media_session_info && media_session_info->audio_video_states &&
+         !media_session_info->audio_video_states->empty() && media_position &&
+         !media_position->duration().is_zero();
+}
+
+// Find the media data from the web contents for the given render frame host if
+// the media data exists, otherwise return nullopt.
+std::optional<optimization_guide::proto::MediaData> ComputeMediaData(
+    content::RenderFrameHost* render_frame_host) {
+  CHECK(render_frame_host);
+  if (!base::FeatureList::IsEnabled(
+          features::kAnnotatedPageContentWithMediaData)) {
+    return std::nullopt;
+  }
+
+  auto* web_contents =
+      content::WebContents::FromRenderFrameHost(render_frame_host);
+  if (!web_contents) {
+    return std::nullopt;
+  }
+
+  // Populate the transcripts field in media data if the transcripts exist for
+  // this render frame host. The transcripts could have been generated for
+  // previous media sessions in this render frame host, or are being generated
+  // for the currently active media session. The transcripts will be cleared
+  // when the render frame host changes.
+  std::optional<optimization_guide::proto::MediaData> media_data;
+  if (auto* media_transcript_provider =
+          MediaTranscriptProvider::GetFor(web_contents)) {
+    auto transcripts =
+        media_transcript_provider->GetTranscriptsForFrame(render_frame_host);
+    if (!transcripts.empty()) {
+      media_data.emplace();
+      media_data->mutable_transcripts()->Add(transcripts.begin(),
+                                             transcripts.end());
+    }
+  }
+
+  // If there is an active media session in the web page, we may generate other
+  // fields in media data if the given render frame host controls the media
+  // session.
+  auto* media_session = content::MediaSession::GetIfExists(web_contents);
+  if (!media_session ||
+      (render_frame_host != media_session->GetRoutedFrame())) {
+    return media_data;
+  }
+
+  // Validate the media data for other fields before populating them.
+  auto media_session_info = media_session->GetMediaSessionInfoSync();
+  auto media_position = media_session->GetMediaSessionPosition();
+  if (!ValidateMediaSession(media_session_info, media_position)) {
+    return media_data;
+  }
+
+  // Initialize the media data if there are no transcripts so that it was not
+  // initialized before.
+  if (!media_data) {
+    media_data.emplace();
+  }
+
+  media_data->set_is_playing(
+      media_session_info->playback_state ==
+      media_session::mojom::MediaPlaybackState::kPlaying);
+  media_data->set_duration_milliseconds(
+      media_position->duration().InMilliseconds());
+  media_data->set_current_position_milliseconds(
+      media_position->GetPosition().InMilliseconds());
+
+  // Find the media data type via the audio video states in the media session
+  // info. If there are multiple media in the frame which is rare, select the
+  // first media for simplicity.
+  auto& first_state = media_session_info->audio_video_states->at(0);
+  switch (first_state) {
+    case media_session::mojom::MediaAudioVideoState::kAudioOnly:
+      media_data->set_media_data_type(
+          optimization_guide::proto::MediaDataType::MEDIA_DATA_TYPE_AUDIO);
+      break;
+    case media_session::mojom::MediaAudioVideoState::kAudioVideo:
+    case media_session::mojom::MediaAudioVideoState::kVideoOnly:
+      media_data->set_media_data_type(
+          optimization_guide::proto::MediaDataType::MEDIA_DATA_TYPE_VIDEO);
+      break;
+    case media_session::mojom::MediaAudioVideoState::kDeprecatedUnknown:
+      NOTREACHED();
+  }
+
+  // Set the media metadata.
+  const media_session::MediaMetadata& media_metadata =
+      media_session->GetMediaSessionMetadata();
+  media_data->set_title(base::UTF16ToUTF8(media_metadata.title));
+  media_data->set_artist(base::UTF16ToUTF8(media_metadata.artist));
+  media_data->set_album(base::UTF16ToUTF8(media_metadata.album));
+
+  return media_data;
 }
 
 std::optional<optimization_guide::RenderFrameInfo> GetRenderFrameInfo(
@@ -104,6 +207,7 @@ std::optional<optimization_guide::RenderFrameInfo> GetRenderFrameInfo(
   //    convey that.
   render_frame_info.source_origin = render_frame_host->GetLastCommittedOrigin();
   render_frame_info.url = render_frame_host->GetLastCommittedURL();
+  render_frame_info.media_data = ComputeMediaData(render_frame_host);
   return render_frame_info;
 }
 
@@ -135,6 +239,8 @@ void ComputeContentNodeMetrics(
 void RecordPageContentExtractionMetrics(
     base::TimeDelta total_latency,
     ukm::SourceId source_id,
+    blink::mojom::AIPageContentMode mode,
+    bool on_critical_path,
     optimization_guide::proto::AnnotatedPageContent proto) {
   ContentNodeMetrics metrics;
   auto total_size = proto.ByteSizeLong();
@@ -143,19 +249,55 @@ void RecordPageContentExtractionMetrics(
   ComputeContentNodeMetrics(proto.root_node(), &metrics);
   UMA_HISTOGRAM_TIMES("OptimizationGuide.AIPageContent.TotalLatency",
                       total_latency);
+  if (mode == blink::mojom::AIPageContentMode::kDefault) {
+    if (on_critical_path) {
+      UMA_HISTOGRAM_TIMES(
+          "OptimizationGuide.AIPageContent.TotalLatency.Default.CriticalPath",
+          total_latency);
+    } else {
+      UMA_HISTOGRAM_TIMES(
+          "OptimizationGuide.AIPageContent.TotalLatency.Default."
+          "NotCriticalPath",
+          total_latency);
+    }
+  } else if (mode == blink::mojom::AIPageContentMode::kActionableElements) {
+    if (on_critical_path) {
+      UMA_HISTOGRAM_TIMES(
+          "OptimizationGuide.AIPageContent.TotalLatency.ActionableElements."
+          "CriticalPath",
+          total_latency);
+    } else {
+      UMA_HISTOGRAM_TIMES(
+          "OptimizationGuide.AIPageContent.TotalLatency.ActionableElements."
+          "NotCriticalPath",
+          total_latency);
+    }
+  }
   // 10KB bucket up to 5MB.
   // TODO(crbug.com/392115749): Use provided metrics when available.
-  UMA_HISTOGRAM_CUSTOM_COUNTS(
-      "OptimizationGuide.AnnotatedPageContent.TotalSize2", total_size / 1024,
-      10, 5000, 50);
-  UMA_HISTOGRAM_CUSTOM_COUNTS(
-      "OptimizationGuide.AnnotatedPageContent.TotalNodeCount",
-      metrics.node_count, 1, kMaxNodeLimit, 50);
+  if (mode == blink::mojom::AIPageContentMode::kDefault) {
+    UMA_HISTOGRAM_CUSTOM_COUNTS(
+        "OptimizationGuide.AnnotatedPageContent.TotalSize2.Default",
+        total_size / 1024, 10, 5000, 50);
+    UMA_HISTOGRAM_CUSTOM_COUNTS(
+        "OptimizationGuide.AnnotatedPageContent.TotalNodeCount.Default",
+        metrics.node_count, 1, kMaxNodeLimit, 50);
+  } else if (mode == blink::mojom::AIPageContentMode::kActionableElements) {
+    UMA_HISTOGRAM_CUSTOM_COUNTS(
+        "OptimizationGuide.AnnotatedPageContent.TotalSize2.ActionableElements",
+        total_size / 1024, 10, 5000, 50);
+    UMA_HISTOGRAM_CUSTOM_COUNTS(
+        "OptimizationGuide.AnnotatedPageContent.TotalNodeCount."
+        "ActionableElements",
+        metrics.node_count, 1, kMaxNodeLimit, 50);
+  }
   UMA_HISTOGRAM_CUSTOM_COUNTS(
       "OptimizationGuide.AnnotatedPageContent.TotalWordCount",
       metrics.word_count, 1, kMaxWordLimit, 50);
 
   ukm::builders::OptimizationGuide_AnnotatedPageContent(source_id)
+      .SetMode(static_cast<int64_t>(mode))
+      .SetOnCriticalPath(on_critical_path)
       .SetTotalSize(ukm::GetExponentialBucketMinForBytes(total_size))
       .SetExtractionLatency(ukm::GetExponentialBucketMinForUserTiming(
           total_latency.InMilliseconds()))
@@ -188,11 +330,14 @@ void OnGotAIPageContentForAllFrames(
     OnAIPageContentDone done_callback) {
   optimization_guide::AIPageContentResult page_content;
   optimization_guide::FrameTokenSet frame_token_set;
+  auto mode = main_frame_options->mode;
+  bool on_critical_path = main_frame_options->on_critical_path;
 
-  if (!optimization_guide::ConvertAIPageContentToProto(
+  if (auto result = optimization_guide::ConvertAIPageContentToProto(
           std::move(main_frame_options), main_frame_token, *page_content_map,
           base::BindRepeating(&GetRenderFrameInfo), frame_token_set,
-          page_content)) {
+          page_content);
+      !result.has_value()) {
     std::move(done_callback).Run(std::nullopt);
     return;
   }
@@ -211,10 +356,11 @@ void OnGotAIPageContentForAllFrames(
         render_frame_host->GetWeakDocumentPtr();
   }
 
-  base::ThreadPool::PostTask(
-      FROM_HERE, {base::TaskPriority::BEST_EFFORT},
-      base::BindOnce(RecordPageContentExtractionMetrics,
-                     elapsed_timer.Elapsed(), source_id, page_content.proto));
+  base::ThreadPool::PostTask(FROM_HERE, {base::TaskPriority::BEST_EFFORT},
+                             base::BindOnce(
+                                 RecordPageContentExtractionMetrics,
+                                 elapsed_timer.Elapsed(), source_id, mode, on_critical_path,
+                                 page_content.proto));
   std::move(done_callback).Run(std::move(page_content));
 }
 
@@ -235,20 +381,27 @@ void OnGotAIPageContentForFrame(
 }  // namespace
 
 AIPageContentResult::AIPageContentResult() {
-  metadata = optimization_guide::mojom::PageMetadata::New();
+  metadata = blink::mojom::PageMetadata::New();
 }
 AIPageContentResult::~AIPageContentResult() = default;
 AIPageContentResult::AIPageContentResult(AIPageContentResult&& other) = default;
 AIPageContentResult& AIPageContentResult::operator=(
     AIPageContentResult&& other) = default;
 
-blink::mojom::AIPageContentOptionsPtr DefaultAIPageContentOptions() {
-  auto request = blink::mojom::AIPageContentOptions::New();
-  request->include_geometry = true;
-  request->on_critical_path = true;
-  request->include_hidden_searchable_content = true;
+blink::mojom::AIPageContentOptionsPtr DefaultAIPageContentOptions(
+    bool on_critical_path) {
+  auto options = blink::mojom::AIPageContentOptions::New();
+  options->mode = blink::mojom::AIPageContentMode::kDefault;
+  options->on_critical_path = on_critical_path;
+  return options;
+}
 
-  return request;
+blink::mojom::AIPageContentOptionsPtr ActionableAIPageContentOptions(
+    bool on_critical_path) {
+  auto options = blink::mojom::AIPageContentOptions::New();
+  options->mode = blink::mojom::AIPageContentMode::kActionableElements;
+  options->on_critical_path = on_critical_path;
+  return options;
 }
 
 void GetAIPageContent(content::WebContents* web_contents,
@@ -308,7 +461,7 @@ void GetAIPageContent(content::WebContents* web_contents,
 
   std::move(concurrent)
       .Done(base::BindOnce(
-          &OnGotAIPageContentForAllFrames, std::move(options),
+          &OnGotAIPageContentForAllFrames, options.Clone(),
           base::ElapsedTimer(),
           web_contents->GetPrimaryMainFrame()->GetGlobalFrameToken(),
           web_contents->GetPrimaryMainFrame()->GetPageUkmSourceId(),
@@ -330,5 +483,13 @@ std::optional<std::string> DocumentIdentifierUserData::GetDocumentIdentifier(
 }
 
 DOCUMENT_USER_DATA_KEY_IMPL(DocumentIdentifierUserData);
+
+DocumentIdentifierUserData::DocumentIdentifierUserData(
+    content::RenderFrameHost* rfh)
+    : DocumentUserData<DocumentIdentifierUserData>(rfh),
+      token_(base::UnguessableToken::Create()),
+      serialized_token_(token_.ToString()) {}
+
+DocumentIdentifierUserData::~DocumentIdentifierUserData() = default;
 
 }  // namespace optimization_guide

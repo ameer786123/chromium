@@ -11,13 +11,13 @@
 
 #include <cstddef>
 #include <memory>
-#include <string>
+#include <optional>
 #include <vector>
 
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
 #include "absl/memory/memory.h"
-#include "absl/types/optional.h"
+#include "absl/strings/string_view.h"
 #include "google/protobuf/compiler/cpp/field.h"
 #include "google/protobuf/compiler/cpp/field_generators/generators.h"
 #include "google/protobuf/compiler/cpp/helpers.h"
@@ -26,6 +26,10 @@
 #include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/io/printer.h"
 #include "google/protobuf/wire_format.h"
+#include "google/protobuf/wire_format_lite.h"
+
+// Must be included last.
+#include "google/protobuf/port_def.inc"
 
 namespace google {
 namespace protobuf {
@@ -38,7 +42,7 @@ using Sub = ::google::protobuf::io::Printer::Sub;
 using Semantic = ::google::protobuf::io::AnnotationCollector::Semantic;
 
 // For encodings with fixed sizes, returns that size in bytes.
-absl::optional<size_t> FixedSize(FieldDescriptor::Type type) {
+std::optional<size_t> FixedSize(FieldDescriptor::Type type) {
   switch (type) {
     case FieldDescriptor::TYPE_INT32:
     case FieldDescriptor::TYPE_INT64:
@@ -51,7 +55,7 @@ absl::optional<size_t> FixedSize(FieldDescriptor::Type type) {
     case FieldDescriptor::TYPE_BYTES:
     case FieldDescriptor::TYPE_GROUP:
     case FieldDescriptor::TYPE_MESSAGE:
-      return absl::nullopt;
+      return std::nullopt;
 
     case FieldDescriptor::TYPE_FIXED32:
       return WireFormatLite::kFixed32Size;
@@ -73,7 +77,7 @@ absl::optional<size_t> FixedSize(FieldDescriptor::Type type) {
   }
 
   ABSL_LOG(FATAL) << "Can't get here.";
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 std::vector<Sub> Vars(const FieldDescriptor* field, const Options& options) {
@@ -285,6 +289,7 @@ void SingularPrimitive::GenerateByteSize(io::Printer* p) const {
                                     this_._internal_$name$());
   )cc");
 }
+
 
 class RepeatedPrimitive final : public FieldGeneratorBase {
  public:
@@ -610,7 +615,7 @@ void RepeatedPrimitive::GenerateByteSize(io::Printer* p) const {
              auto fixed_size = FixedSize(field_->type());
              if (fixed_size.has_value()) {
                p->Emit({{"kFixed", *fixed_size}}, R"cc(
-                 std::size_t{$kFixed$} *
+                 ::size_t{$kFixed$} *
                      ::_pbi::FromIntSize(this_._internal_$name$_size());
                )cc");
              } else {
@@ -631,15 +636,15 @@ void RepeatedPrimitive::GenerateByteSize(io::Printer* p) const {
                )cc");
              } else {
                p->Emit(R"cc(
-                 std::size_t{$kTagBytes$} *
+                 ::size_t{$kTagBytes$} *
                      ::_pbi::FromIntSize(this_._internal_$name$_size());
                )cc");
              }
            }},
       },
       R"cc(
-        std::size_t data_size = $data_size$;
-        std::size_t tag_size = $tag_size$;
+        ::size_t data_size = $data_size$;
+        ::size_t tag_size = $tag_size$;
         total_size += tag_size + data_size;
       )cc");
 }
@@ -661,3 +666,5 @@ std::unique_ptr<FieldGeneratorBase> MakeRepeatedPrimitiveGenerator(
 }  // namespace compiler
 }  // namespace protobuf
 }  // namespace google
+
+#include "google/protobuf/port_undef.inc"

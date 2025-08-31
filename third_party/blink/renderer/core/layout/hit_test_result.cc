@@ -286,12 +286,22 @@ void HitTestResult::SetToShadowHostIfInUAShadowRoot() {
 }
 
 CompositorElementId HitTestResult::GetScrollableContainer() const {
+  if (ScrollableArea* scrollable_area = GetScrollableArea(InnerNode())) {
+    return scrollable_area->GetScrollElementId();
+  }
+
   // If no node was found, return an invalid element ID, which we check for in
   // InputHandlerProxy::ContinueScrollBeginAfterMainThreadHitTest.
-  if (!InnerNode())
-    return CompositorElementId();
+  return CompositorElementId();
+}
 
-  LayoutBox* cur_box = InnerNode()->GetLayoutObject()->EnclosingBox();
+// static
+ScrollableArea* HitTestResult::GetScrollableArea(const Node* node) {
+  if (!node || !node->GetLayoutObject()) {
+    return nullptr;
+  }
+
+  LayoutBox* cur_box = node->GetLayoutObject()->EnclosingBox();
 
   // Scrolling propagates along the containing block chain and ends at the
   // RootScroller node. The RootScroller node will have a custom applyScroll
@@ -300,8 +310,9 @@ CompositorElementId HitTestResult::GetScrollableContainer() const {
   while (cur_box) {
     if (cur_box->IsGlobalRootScroller() ||
         (cur_box->IsScrollContainer() &&
-         cur_box->GetScrollableArea()->ScrollsOverflow())) {
-      return cur_box->GetScrollableArea()->GetScrollElementId();
+         (cur_box->GetScrollableArea()->ScrollsOverflow() ||
+          !cur_box->GetScrollableArea()->CanPropagateScroll()))) {
+      return cur_box->GetScrollableArea();
     }
 
     if (IsA<LayoutView>(cur_box))
@@ -310,11 +321,7 @@ CompositorElementId HitTestResult::GetScrollableContainer() const {
       cur_box = cur_box->ContainingBlock();
   }
 
-  return InnerNode()
-      ->GetDocument()
-      .GetPage()
-      ->GetVisualViewport()
-      .GetScrollElementId();
+  return &node->GetDocument().GetPage()->GetVisualViewport();
 }
 
 HTMLAreaElement* HitTestResult::ImageAreaForImage() const {
@@ -391,7 +398,15 @@ String HitTestResult::Title(TextDirection& dir) const {
   // using it.
   for (Node* title_node = inner_node_.Get(); title_node;
        title_node = FlatTreeTraversal::Parent(*title_node)) {
-    if (auto* element = DynamicTo<Element>(title_node)) {
+    if (auto* html_element = DynamicTo<HTMLElement>(title_node)) {
+      TextDirection title_dir;
+      const AtomicString& title = html_element->GetDirectionalAttribute(
+          html_names::kTitleAttr, title_dir);
+      if (!title.IsNull()) {
+        dir = title_dir;
+        return title;
+      }
+    } else if (auto* element = DynamicTo<Element>(title_node)) {
       String title = element->title();
       if (!title.IsNull()) {
         if (LayoutObject* layout_object = title_node->GetLayoutObject())

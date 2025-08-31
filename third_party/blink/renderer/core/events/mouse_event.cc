@@ -345,6 +345,12 @@ bool MouseEvent::IsLeftButton() const {
   return button() == static_cast<int16_t>(WebPointerProperties::Button::kLeft);
 }
 
+bool MouseEvent::IsLinkClickButton() const {
+  int16_t b = button();
+  return b == static_cast<int16_t>(WebPointerProperties::Button::kLeft) ||
+         b == static_cast<int16_t>(WebPointerProperties::Button::kMiddle);
+}
+
 unsigned MouseEvent::which() const {
   // For the DOM, the return values for left, middle and right mouse buttons are
   // 0, 1, 2, respectively.
@@ -361,7 +367,7 @@ Node* MouseEvent::toElement() const {
       type() == event_type_names::kMouseleave)
     return relatedTarget() ? relatedTarget()->ToNode() : nullptr;
 
-  return target() ? target()->ToNode() : nullptr;
+  return RawTarget() ? RawTarget()->ToNode() : nullptr;
 }
 
 Node* MouseEvent::fromElement() const {
@@ -371,7 +377,7 @@ Node* MouseEvent::fromElement() const {
       type() != event_type_names::kMouseleave)
     return relatedTarget() ? relatedTarget()->ToNode() : nullptr;
 
-  return target() ? target()->ToNode() : nullptr;
+  return RawTarget() ? RawTarget()->ToNode() : nullptr;
 }
 
 void MouseEvent::Trace(Visitor* visitor) const {
@@ -412,7 +418,7 @@ DispatchEventResult MouseEvent::DispatchEvent(EventDispatcher& dispatcher) {
     }
   }
 
-  DCHECK(!target() || target() != relatedTarget());
+  DCHECK(!RawTarget() || RawTarget() != relatedTarget());
 
   EventTarget* related_target = relatedTarget();
 
@@ -448,7 +454,7 @@ void MouseEvent::ReceivedTarget() {
 }
 
 void MouseEvent::ComputeRelativePosition() {
-  Node* target_node = target() ? target()->ToNode() : nullptr;
+  Node* target_node = RawTarget() ? RawTarget()->ToNode() : nullptr;
   if (!target_node)
     return;
 
@@ -508,8 +514,11 @@ void MouseEvent::ComputeRelativePosition() {
     layer = layer->EnclosingSelfPaintingLayer();
 
     PhysicalOffset physical_offset =
-        layer->GetLayoutObject().LocalToAbsolutePoint(PhysicalOffset(),
-                                                      kIgnoreTransforms);
+        layer->GetLayoutObject().LocalToAbsolutePoint(
+            PhysicalOffset(),
+            RuntimeEnabledFeatures::IncludeTransformsForLayerXandLayerYEnabled()
+                ? 0
+                : kIgnoreTransforms);
     layer_location_ -= gfx::Vector2dF(physical_offset);
 
     layer_location_.Scale(inverse_zoom_factor);
@@ -519,7 +528,7 @@ void MouseEvent::ComputeRelativePosition() {
 }
 
 void MouseEvent::RecordLayerXYMetrics() {
-  Node* node = target() ? target()->ToNode() : nullptr;
+  Node* node = RawTarget() ? RawTarget()->ToNode() : nullptr;
   if (!node)
     return;
   // Using the target for these metrics is a heuristic for measuring the impact

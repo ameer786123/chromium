@@ -16,6 +16,7 @@ import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge.
 import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.content_settings.ProviderType;
+import org.chromium.components.content_settings.SessionModel;
 import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.content_public.browser.BrowserContextHandle;
 import org.chromium.url.GURL;
@@ -33,16 +34,17 @@ public final class Website implements WebsiteEntry {
     private final @Nullable WebsiteAddress mEmbedder;
 
     /** Indexed by ContentSettingsType. */
-    private Map<Integer, ContentSettingException> mContentSettingExceptions = new HashMap<>();
+    private final Map<Integer, ContentSettingException> mContentSettingExceptions = new HashMap<>();
 
     /** Indexed by ContentSettingsType. */
-    private Map<Integer, PermissionInfo> mPermissionInfos = new HashMap<>();
+    private final Map<Integer, PermissionInfo> mPermissionInfos = new HashMap<>();
 
     /**
      * Indexed by ContentSettingsType. For Permissions like the StorageAccess API that are keyed by
      * requesting and embedding site.
      */
-    private Map<Integer, List<ContentSettingException>> mEmbeddedPermissionInfos = new HashMap<>();
+    private final Map<Integer, List<ContentSettingException>> mEmbeddedPermissionInfos =
+            new HashMap<>();
 
     private @Nullable LocalStorageInfo mLocalStorageInfo;
     private @Nullable RwsCookieInfo mRwsCookieInfo;
@@ -55,7 +57,7 @@ public final class Website implements WebsiteEntry {
     // The collection of chooser-based permissions (e.g. USB device access) granted to this site.
     // Each entry declares its own ContentSettingsType and so depending on how this object was
     // built this list could contain multiple types of objects.
-    private final List<ChosenObjectInfo> mObjectInfo = new ArrayList<ChosenObjectInfo>();
+    private final List<ChosenObjectInfo> mObjectInfo = new ArrayList<>();
 
     private boolean mIsDomainImportant;
 
@@ -209,6 +211,13 @@ public final class Website implements WebsiteEntry {
         return mContentSettingExceptions.get(type);
     }
 
+    /** Returns the title for a specific type of content setting for this Website. */
+    public String getTitleForContentSetting(@ContentSettingsType.EnumType int type) {
+        return getContentSettingException(type) != null
+                ? assumeNonNull(getContentSettingException(type)).getDisplayPattern()
+                : getTitle();
+    }
+
     /** Sets the exception info for this Website for specified type. */
     public void setContentSettingException(
             @ContentSettingsType.EnumType int type, ContentSettingException exception) {
@@ -270,6 +279,23 @@ public final class Website implements WebsiteEntry {
             @ContentSettingsType.EnumType int type,
             @ContentSettingValues int value) {
         PermissionInfo permissionInfo = getPermissionInfo(type);
+        if (type == ContentSettingsType.AUTO_PICTURE_IN_PICTURE) {
+            // The Auto Picture-in-Picture permission is defaulted to allowed/denied based on the
+            // incognito status. When the user explicitly sets the permission for the first time, no
+            // PermissionInfo object has been created for Auto Picture-in-Picture yet. This logic
+            // should be removed when a prompt is implemented for parity with desktop.
+            if (permissionInfo == null) {
+                // TODO(crbug.com/421606013): query the real isEmbargoed status for auto-pip.
+                permissionInfo =
+                        new PermissionInfo(
+                                type,
+                                mOrigin.getOrigin(),
+                                /* embedder= */ null,
+                                /* isEmbargoed= */ false,
+                                SessionModel.DURABLE);
+                setPermissionInfo(permissionInfo);
+            }
+        }
         if (permissionInfo != null) {
             permissionInfo.setContentSetting(browserContextHandle, value);
             return;
@@ -409,7 +435,7 @@ public final class Website implements WebsiteEntry {
     }
 
     public List<StorageInfo> getStorageInfo() {
-        return new ArrayList<StorageInfo>(mStorageInfo);
+        return new ArrayList<>(mStorageInfo);
     }
 
     public void addSharedDictionaryInfo(SharedDictionaryInfo info) {
@@ -417,7 +443,7 @@ public final class Website implements WebsiteEntry {
     }
 
     public List<SharedDictionaryInfo> getSharedDictionaryInfo() {
-        return new ArrayList<SharedDictionaryInfo>(mSharedDictionaryInfo);
+        return new ArrayList<>(mSharedDictionaryInfo);
     }
 
     public void setCookiesInfo(CookiesInfo info) {
@@ -482,7 +508,7 @@ public final class Website implements WebsiteEntry {
 
     /** An interface to implement to get a callback when storage info has been cleared. */
     public interface StoredDataClearedCallback {
-        public void onStoredDataCleared();
+        void onStoredDataCleared();
     }
 
     /** Add information about an object the user has granted permission for this site to access. */
@@ -492,7 +518,7 @@ public final class Website implements WebsiteEntry {
 
     /** Returns the set of objects this website has been granted permission to access. */
     public List<ChosenObjectInfo> getChosenObjectInfo() {
-        return new ArrayList<ChosenObjectInfo>(mObjectInfo);
+        return new ArrayList<>(mObjectInfo);
     }
 
     public String getTitleForEmbeddedPreferenceRow() {

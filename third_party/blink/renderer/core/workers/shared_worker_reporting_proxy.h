@@ -28,8 +28,8 @@ class SharedWorkerReportingProxy final
 
   // WorkerReportingProxy methods:
   void CountFeature(WebFeature) override;
-  void ReportException(const WTF::String&,
-                       std::unique_ptr<SourceLocation>,
+  void ReportException(const String&,
+                       SourceLocation*,
                        int exception_id) override;
   void ReportConsoleMessage(mojom::ConsoleMessageSource,
                             mojom::ConsoleMessageLevel,
@@ -49,6 +49,7 @@ class SharedWorkerReportingProxy final
   WebSharedWorkerImpl* worker_;
 
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
+  bool script_evaluated_ = false;
 };
 
 }  // namespace blink

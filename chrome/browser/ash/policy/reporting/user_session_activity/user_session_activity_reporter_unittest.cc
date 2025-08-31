@@ -22,13 +22,13 @@
 #include "chrome/browser/ash/power/ml/idle_event_notifier.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/policy/messaging_layer/proto/synced/user_session_activity.pb.h"
-#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/dbus/power/fake_power_manager_client.h"
-#include "components/policy/core/common/device_local_account_type.h"
 #include "components/reporting/client/mock_report_queue.h"
 #include "components/reporting/proto/synced/record_constants.pb.h"
+#include "components/session_manager/core/fake_session_manager_delegate.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user.h"
@@ -115,7 +115,8 @@ class UserSessionActivityReporterTest : public ::testing::Test {
 
   std::unique_ptr<ash::SessionTerminationManager> session_termination_manager_;
 
-  session_manager::SessionManager session_manager_;
+  session_manager::SessionManager session_manager_{
+      std::make_unique<session_manager::FakeSessionManagerDelegate>()};
 
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
@@ -348,8 +349,8 @@ TEST_F(UserSessionActivityReporterTest,
 
   // Create a list of users with types that should be ignored.
   user_manager::User* kIgnoredUserTypes[] = {
-      fake_user_manager_->AddKioskAppUser(account_id),
-      fake_user_manager_->AddWebKioskAppUser(account_id),
+      fake_user_manager_->AddKioskChromeAppUser(account_id),
+      fake_user_manager_->AddKioskWebAppUser(account_id),
       fake_user_manager_->AddGuestUser(),
       fake_user_manager_->AddChildUser(account_id),
   };

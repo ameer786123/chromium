@@ -103,7 +103,7 @@ class ContentSettingsPattern {
                                               // *:443 etc.
     kMaxValue = kCustomScope
   };
-  // LINT.ThenChange(//tools/metrics/histograms/enums.xml:ContentSettingPatternScope)
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/privacy/enums.xml:ContentSettingPatternScope)
 
   struct PatternParts {
     PatternParts();
@@ -269,7 +269,10 @@ class ContentSettingsPattern {
   GURL ToRepresentativeUrl() const;
 
   // Returns scheme type of pattern.
-  ContentSettingsPattern::SchemeType GetScheme() const;
+  ContentSettingsPattern::SchemeType GetSchemeType() const;
+
+  // Returns the scheme of the pattern as a string.
+  const std::string& GetScheme() const;
 
   // Returns the host of a pattern.
   const std::string& GetHost() const;

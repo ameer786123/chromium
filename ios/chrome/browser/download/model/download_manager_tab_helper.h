@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "ios/chrome/browser/download/model/download_manager_tab_helper_delegate.h"
@@ -43,6 +44,9 @@ class DownloadManagerTabHelper
 
   // Set the current download task for this tab.
   virtual void SetCurrentDownload(std::unique_ptr<web::DownloadTask> task);
+
+  // Returns the final file path for the current download if stored locally.
+  const base::FilePath& GetDownloadTaskFinalFilePath() const;
 
   // Returns `true` after Download() was called, `false` after the task was
   // cancelled.
@@ -94,10 +98,31 @@ class DownloadManagerTabHelper
   // Displays a snackbar when download is restricted.
   void ShowRestrictDownloadSnackbar();
 
+  // Use `user_documents_path` as the download file destination.
+  void UseAvailableUserDocumentsPath(base::FilePath user_documents_path);
+
+  // Moves the downloaded file to user's Documents if it exists.
+  void MoveToUserDocumentsIfFileExists(base::FilePath task_path,
+                                       bool file_exists);
+
+  // Checks if the move has been completed.
+  void MoveComplete(bool move_completed);
+
+  // Schedules the downloaded file for Auto-deletion if enabled.
+  void MaybeScheduleFileForAutoDeletion();
+
+  // Defers task destruction to avoid iterator invalidation during notification.
+  void ScheduleTaskDestruction();
+
+  // Destroys the task. Must not be called directly.
+  // See ScheduleTaskDestruction().
+  void DestroyTask();
+
   raw_ptr<web::WebState> web_state_ = nullptr;
   __weak id<DownloadManagerTabHelperDelegate> delegate_ = nil;
   __weak id<SnackbarCommands> snackbar_handler_ = nil;
   std::unique_ptr<web::DownloadTask> task_;
+  base::FilePath task_final_file_path_;
   bool delegate_started_ = false;
 
   base::WeakPtrFactory<DownloadManagerTabHelper> weak_ptr_factory_{this};

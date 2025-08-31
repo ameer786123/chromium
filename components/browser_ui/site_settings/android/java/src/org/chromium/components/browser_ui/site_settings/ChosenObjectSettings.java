@@ -173,8 +173,8 @@ public class ChosenObjectSettings extends BaseSiteSettingsFragment
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
+    public void onStart() {
+        super.onStart();
 
         if (mSites == null) {
             getInfo();
@@ -219,7 +219,7 @@ public class ChosenObjectSettings extends BaseSiteSettingsFragment
             String exampleObject = mObjectInfos.get(0).getObject();
 
             mObjectInfos.clear();
-            mSites = new ArrayList<Website>();
+            mSites = new ArrayList<>();
             for (Website site : sites) {
                 for (ChosenObjectInfo info : site.getChosenObjectInfo()) {
                     if (info.getObject().equals(exampleObject)) {
@@ -354,5 +354,10 @@ public class ChosenObjectSettings extends BaseSiteSettingsFragment
 
     private Context getStyledContext() {
         return getPreferenceManager().getContext();
+    }
+
+    @Override
+    public @AnimationType int getAnimationType() {
+        return AnimationType.PROPERTY;
     }
 }

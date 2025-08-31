@@ -21,6 +21,8 @@
 #include "mojo/public/cpp/system/handle.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "services/audio/input_sync_writer.h"
+#include "services/audio/reference_signal_provider.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 namespace audio {
 
@@ -43,6 +45,16 @@ const char* ErrorCodeToString(InputController::ErrorCode error) {
       return "STREAM_OPEN_SYSTEM_PERMISSIONS_ERROR";
     case (InputController::STREAM_OPEN_DEVICE_IN_USE_ERROR):
       return "STREAM_OPEN_DEVICE_IN_USE_ERROR";
+    case (InputController::REFERENCE_STREAM_ERROR):
+      return "REFERENCE_STREAM_ERROR";
+    case (InputController::REFERENCE_STREAM_CREATE_ERROR):
+      return "REFERENCE_STREAM_CREATE_ERROR";
+    case (InputController::REFERENCE_STREAM_OPEN_ERROR):
+      return "REFERENCE_STREAM_OPEN_ERROR";
+    case (InputController::REFERENCE_STREAM_OPEN_SYSTEM_PERMISSIONS_ERROR):
+      return "REFERENCE_STREAM_OPEN_SYSTEM_PERMISSIONS_ERROR";
+    case (InputController::REFERENCE_STREAM_OPEN_DEVICE_IN_USE_ERROR):
+      return "REFERENCE_STREAM_OPEN_DEVICE_IN_USE_ERROR";
     default:
       NOTREACHED();
   }
@@ -67,11 +79,12 @@ InputStream::InputStream(
     mojo::PendingReceiver<media::mojom::AudioInputStream> receiver,
     mojo::PendingRemote<media::mojom::AudioInputStreamClient> client,
     mojo::PendingRemote<media::mojom::AudioInputStreamObserver> observer,
-    mojo::PendingRemote<media::mojom::AudioLog> log,
+    mojo::SharedRemote<media::mojom::AudioLog> log,
     media::AudioManager* audio_manager,
     media::AecdumpRecordingManager* aecdump_recording_manager,
-    DeviceOutputListener* device_output_listener,
+    std::unique_ptr<ReferenceSignalProvider> reference_signal_provider,
     media::mojom::AudioProcessingConfigPtr processing_config,
+    LoopbackMixin::MaybeCreateCallback maybe_create_loopback_mixin_cb,
     const std::string& device_id,
     const media::AudioParameters& params,
     uint32_t shared_memory_count,
@@ -97,10 +110,11 @@ InputStream::InputStream(
   DCHECK(created_callback_);
   DCHECK(delete_callback_);
   DCHECK(params.IsValid());
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("audio", "audio::InputStream", this);
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN2("audio", "InputStream", this, "device id",
-                                    device_id, "params",
-                                    params.AsHumanReadableString());
+  TRACE_EVENT_BEGIN("audio", "audio::InputStream",
+                    perfetto::Track::FromPointer(this));
+  TRACE_EVENT_BEGIN("audio", "InputStream", perfetto::Track::FromPointer(this),
+                    "device id", device_id, "params",
+                    params.AsHumanReadableString());
   SendLogMessage("%s", GetCtorLogString(device_id, params, enable_agc).c_str());
 
   // |this| owns these objects, so unretained is safe.
@@ -129,9 +143,9 @@ InputStream::InputStream(
   }
 
   controller_ = InputController::Create(
-      audio_manager, this, writer_.get(), device_output_listener,
-      aecdump_recording_manager, std::move(processing_config), params,
-      device_id, enable_agc);
+      audio_manager, this, writer_.get(), std::move(reference_signal_provider),
+      aecdump_recording_manager, std::move(processing_config),
+      std::move(maybe_create_loopback_mixin_cb), params, device_id, enable_agc);
 }
 
 InputStream::~InputStream() {
@@ -162,8 +176,10 @@ InputStream::~InputStream() {
   // content/ streams are removed, destructor should suffice.
   controller_->Close();
 
-  TRACE_EVENT_NESTABLE_ASYNC_END0("audio", "InputStream", this);
-  TRACE_EVENT_NESTABLE_ASYNC_END0("audio", "audio::InputStream", this);
+  TRACE_EVENT_END("audio",
+                  /* InputStream */ perfetto::Track::FromPointer(this));
+  TRACE_EVENT_END("audio",
+                  /* audio::InputStream */ perfetto::Track::FromPointer(this));
 }
 
 void InputStream::SetOutputDeviceForAec(const std::string& output_device_id) {
@@ -177,7 +193,7 @@ void InputStream::SetOutputDeviceForAec(const std::string& output_device_id) {
 void InputStream::Record() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
   DCHECK(controller_);
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT0("audio", "Record", this);
+  TRACE_EVENT_INSTANT("audio", "Record", perfetto::Track::FromPointer(this));
   SendLogMessage("%s()", __func__);
   controller_->Record();
   if (observer_)
@@ -189,8 +205,8 @@ void InputStream::Record() {
 void InputStream::SetVolume(double volume) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
   DCHECK(controller_);
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT1("audio", "SetVolume", this, "volume",
-                                      volume);
+  TRACE_EVENT_INSTANT("audio", "SetVolume", perfetto::Track::FromPointer(this),
+                      "volume", volume);
 
   if (volume < 0 || volume > 1) {
     receiver_.ReportBadMessage("Invalid volume");
@@ -204,8 +220,8 @@ void InputStream::SetVolume(double volume) {
 }
 
 void InputStream::OnCreated(bool initially_muted) {
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT1("audio", "Created", this,
-                                      "initially muted", initially_muted);
+  TRACE_EVENT_INSTANT("audio", "Created", perfetto::Track::FromPointer(this),
+                      "initially muted", initially_muted);
   DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
   SendLogMessage("%s({muted=%s})", __func__,
                  base::ToString(initially_muted).c_str());
@@ -253,7 +269,7 @@ InputStreamErrorCode InputControllerErrorToStreamError(
 
 void InputStream::OnError(InputController::ErrorCode error_code) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT0("audio", "Error", this);
+  TRACE_EVENT_INSTANT("audio", "Error", perfetto::Track::FromPointer(this));
 
   client_->OnError(InputControllerErrorToStreamError(error_code));
   if (log_)
@@ -281,7 +297,8 @@ void InputStream::OnStreamPlatformError() {
 void InputStream::OnStreamError(
     std::optional<DisconnectReason> reason_to_report) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT0("audio", "OnStreamError", this);
+  TRACE_EVENT_INSTANT("audio", "OnStreamError",
+                      perfetto::Track::FromPointer(this));
 
   if (reason_to_report.has_value()) {
     if (observer_) {

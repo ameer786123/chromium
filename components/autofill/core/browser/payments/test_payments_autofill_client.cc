@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/android/device_info.h"
 #include "base/check_deref.h"
 #include "base/functional/callback.h"
 #include "base/strings/utf_string_conversions.h"
@@ -14,6 +15,7 @@
 #include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "components/autofill/core/browser/integrators/touch_to_fill/touch_to_fill_delegate.h"
 #include "components/autofill/core/browser/payments/autofill_offer_manager.h"
+#include "components/autofill/core/browser/payments/bnpl_strategy.h"
 #include "components/autofill/core/browser/payments/credit_card_cvc_authenticator.h"
 #include "components/autofill/core/browser/payments/credit_card_otp_authenticator.h"
 #include "components/autofill/core/browser/payments/mandatory_reauth_manager.h"
@@ -22,16 +24,21 @@
 #include "components/autofill/core/browser/single_field_fillers/payments/merchant_promo_code_manager.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
+#include "components/autofill/core/browser/ui/payments/bnpl_ui_delegate.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
 #include "base/test/gmock_callback_support.h"
+#include "components/autofill/core/browser/payments/android_bnpl_strategy.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if !BUILDFLAG(IS_IOS)
 #include "components/autofill/core/browser/payments/test_internal_authenticator.h"
 #include "components/webauthn/core/browser/internal_authenticator.h"
 #endif  // !BUILDFLAG(IS_IOS)
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+#include "components/autofill/core/browser/payments/desktop_bnpl_strategy.h"
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 
 namespace autofill::payments {
 
@@ -93,6 +100,11 @@ TestPaymentsAutofillClient::GetPaymentsNetworkInterface() {
   return payments_network_interface_.get();
 }
 
+MockMultipleRequestPaymentsNetworkInterface*
+TestPaymentsAutofillClient::GetMultipleRequestPaymentsNetworkInterface() {
+  return multiple_request_payments_network_interface_.get();
+}
+
 void TestPaymentsAutofillClient::ShowAutofillProgressDialog(
     AutofillProgressDialogType autofill_progress_dialog_type,
     base::OnceClosure cancel_callback) {
@@ -115,6 +127,7 @@ void TestPaymentsAutofillClient::ShowAutofillErrorDialog(
 }
 
 void TestPaymentsAutofillClient::ShowCardUnmaskOtpInputDialog(
+    CreditCard::RecordType card_type,
     const CardUnmaskChallengeOption& challenge_option,
     base::WeakPtr<OtpUnmaskDelegate> delegate) {
   show_otp_input_dialog_ = true;
@@ -131,10 +144,18 @@ PaymentsWindowManager* TestPaymentsAutofillClient::GetPaymentsWindowManager() {
 VirtualCardEnrollmentManager*
 TestPaymentsAutofillClient::GetVirtualCardEnrollmentManager() {
   if (!virtual_card_enrollment_manager_) {
+    PaymentsNetworkInterfaceVariation payments_network_interface;
+    if (base::FeatureList::IsEnabled(
+            features::
+                kAutofillEnableMultipleRequestInVirtualCardDownstreamEnrollment)) {
+      payments_network_interface = GetMultipleRequestPaymentsNetworkInterface();
+    } else {
+      payments_network_interface = GetPaymentsNetworkInterface();
+    }
     virtual_card_enrollment_manager_ =
         std::make_unique<VirtualCardEnrollmentManager>(
             &client_->GetPersonalDataManager().payments_data_manager(),
-            GetPaymentsNetworkInterface(), &client_.get());
+            payments_network_interface, &client_.get());
   }
 
   return virtual_card_enrollment_manager_.get();
@@ -189,6 +210,14 @@ MockIbanAccessManager* TestPaymentsAutofillClient::GetIbanAccessManager() {
   return mock_iban_access_manager_.get();
 }
 
+MockSaveAndFillManager* TestPaymentsAutofillClient::GetSaveAndFillManager() {
+  if (!mock_save_and_fill_manager_) {
+    mock_save_and_fill_manager_ =
+        std::make_unique<testing::NiceMock<MockSaveAndFillManager>>();
+  }
+  return mock_save_and_fill_manager_.get();
+}
+
 void TestPaymentsAutofillClient::ShowMandatoryReauthOptInConfirmation() {
   mandatory_reauth_opt_in_prompt_was_reshown_ = true;
 }
@@ -204,12 +233,11 @@ AutofillOfferManager* TestPaymentsAutofillClient::GetAutofillOfferManager() {
 
 bool TestPaymentsAutofillClient::ShowTouchToFillCreditCard(
     base::WeakPtr<TouchToFillDelegate> delegate,
-    base::span<const CreditCard> cards_to_suggest,
     base::span<const Suggestion> suggestions) {
   return false;
 }
 
-bool TestPaymentsAutofillClient::IsTabModalPopup() const {
+bool TestPaymentsAutofillClient::IsTabModalPopupDeprecated() const {
   return is_tab_model_popup_;
 }
 
@@ -242,6 +270,10 @@ bool TestPaymentsAutofillClient::GetMandatoryReauthOptInPromptWasReshown() {
   return mandatory_reauth_opt_in_prompt_was_reshown_;
 }
 
+bool TestPaymentsAutofillClient::IsRiskBasedAuthEffectivelyAvailable() const {
+  return true;
+}
+
 void TestPaymentsAutofillClient::set_virtual_card_enrollment_manager(
     std::unique_ptr<VirtualCardEnrollmentManager> vcem) {
   virtual_card_enrollment_manager_ = std::move(vcem);
@@ -263,7 +295,7 @@ void TestPaymentsAutofillClient::ShowUnmaskAuthenticatorSelectionDialog(
 #if BUILDFLAG(IS_ANDROID)
 void TestPaymentsAutofillClient::
     SetUpDeviceBiometricAuthenticatorSuccessOnAutomotive() {
-  if (!base::android::BuildInfo::GetInstance()->is_automotive()) {
+  if (!base::android::device_info::is_automotive()) {
     return;
   }
 
@@ -275,11 +307,33 @@ void TestPaymentsAutofillClient::
           payments::MandatoryReauthAuthenticationMethod::kBiometric));
 
   ON_CALL(mandatory_reauth_manager, Authenticate)
-      .WillByDefault(testing::WithArg<0>(
-          testing::Invoke([](base::OnceCallback<void(bool)> callback) {
+      .WillByDefault(
+          testing::WithArg<0>([](base::OnceCallback<void(bool)> callback) {
             std::move(callback).Run(true);
-          })));
+          }));
 }
 #endif
+
+BnplStrategy* TestPaymentsAutofillClient::GetBnplStrategy() {
+  if (!bnpl_strategy_) {
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+    bnpl_strategy_ = std::make_unique<DesktopBnplStrategy>();
+#elif BUILDFLAG(IS_ANDROID)
+    bnpl_strategy_ = std::make_unique<AndroidBnplStrategy>();
+#else   // BUILDFLAG(IS_IOS)
+    bnpl_strategy_ = nullptr;
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+  }
+  return bnpl_strategy_.get();
+}
+
+BnplUiDelegate* TestPaymentsAutofillClient::GetBnplUiDelegate() {
+  return bnpl_ui_delegate_.get();
+}
+
+void TestPaymentsAutofillClient::set_bnpl_ui_delegate(
+    std::unique_ptr<BnplUiDelegate> bnpl_ui_delegate) {
+  bnpl_ui_delegate_ = std::move(bnpl_ui_delegate);
+}
 
 }  // namespace autofill::payments

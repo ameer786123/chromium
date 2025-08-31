@@ -188,8 +188,8 @@ void IdleSpellCheckController::SetNeedsColdModeInvocation() {
                                  : kColdModeTimerInterval;
   cold_mode_timer_ = PostDelayedCancellableTask(
       *GetWindow().GetTaskRunner(TaskType::kInternalDefault), FROM_HERE,
-      WTF::BindOnce(&IdleSpellCheckController::ColdModeTimerFired,
-                    WrapPersistent(this)),
+      BindOnce(&IdleSpellCheckController::ColdModeTimerFired,
+               WrapPersistent(this)),
       interval);
   state_ = State::kColdModeTimerStarted;
 }
@@ -269,6 +269,22 @@ void IdleSpellCheckController::Invoke(IdleDeadline* deadline) {
   if (!IsSpellCheckingEnabled()) {
     Deactivate();
     return;
+  }
+
+  // If focus node has canonical position null then spellcheck should not
+  // be executed.
+  if (RuntimeEnabledFeatures::
+          CheckForCanonicalPositionInIdleSpellCheckEnabled()) {
+    Position selection_focus =
+        GetWindow().GetFrame()->Selection().GetSelectionInDOMTree().Focus();
+    if (selection_focus) {
+      GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
+      if (CanonicalPositionOf(EphemeralRange(selection_focus).StartPosition())
+              .IsNull()) {
+        Deactivate();
+        return;
+      }
+    }
   }
 
   if (state_ == State::kHotModeRequested) {

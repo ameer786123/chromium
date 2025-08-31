@@ -12,6 +12,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -29,11 +30,11 @@
 #include "chrome/browser/ssl/https_upgrades_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/navigation_throttle_registry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -49,12 +50,15 @@
 #include "content/public/test/fenced_frame_test_util.h"
 #include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/prerender_test_util.h"
+#include "content/public/test/test_navigation_throttle_inserter.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/background_script_executor.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/switches.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
+#include "extensions/test/test_extension_dir.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
@@ -103,25 +107,32 @@ class DelayLoadStartAndExecuteJavascript : public TabStripModelObserver,
       TabStripModel* tab_strip_model,
       const TabStripModelChange& change,
       const TabStripSelectionChange& selection) override {
-    if (change.type() != TabStripModelChange::kInserted)
+    if (change.type() != TabStripModelChange::kInserted) {
       return;
+    }
 
     content::WebContentsObserver::Observe(
         change.GetInsert()->contents[0].contents);
     tab_strip_model->RemoveObserver(this);
+
+    throttle_inserter_ =
+        std::make_unique<content::TestNavigationThrottleInserter>(
+            web_contents(),
+            base::BindRepeating(
+                &DelayLoadStartAndExecuteJavascript::InsertThrottle,
+                base::Unretained(this)));
   }
 
-  // WebContentsObserver:
-  void DidStartNavigation(
-      content::NavigationHandle* navigation_handle) override {
-    if (navigation_handle->GetURL() != delay_url_ || !render_frame_host_) {
+  void InsertThrottle(content::NavigationThrottleRegistry& registry) {
+    auto& navigation_handle = registry.GetNavigationHandle();
+    if (navigation_handle.GetURL() != delay_url_ || !render_frame_host_) {
       return;
     }
 
     auto throttle =
-        std::make_unique<WillStartRequestObserverThrottle>(navigation_handle);
+        std::make_unique<WillStartRequestObserverThrottle>(registry);
     throttle_ = throttle->AsWeakPtr();
-    navigation_handle->RegisterThrottleForTesting(std::move(throttle));
+    registry.AddThrottle(std::move(throttle));
 
     if (has_user_gesture_) {
       render_frame_host_->ExecuteJavaScriptWithUserGestureForTests(
@@ -135,21 +146,26 @@ class DelayLoadStartAndExecuteJavascript : public TabStripModelObserver,
     script_was_executed_ = true;
   }
 
+  // WebContentsObserver:
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override {
-    if (!navigation_handle->HasCommitted() || navigation_handle->IsErrorPage())
+    if (!navigation_handle->HasCommitted() ||
+        navigation_handle->IsErrorPage()) {
       return;
+    }
 
     if (script_was_executed_ &&
         base::EndsWith(navigation_handle->GetURL().spec(), until_url_suffix_,
                        base::CompareCase::SENSITIVE)) {
       content::WebContentsObserver::Observe(nullptr);
-      if (throttle_)
+      if (throttle_) {
         throttle_->Unblock();
+      }
     }
 
-    if (navigation_handle->IsInMainFrame())
+    if (navigation_handle->IsInMainFrame()) {
       render_frame_host_ = navigation_handle->GetRenderFrameHost();
+    }
   }
 
   void set_has_user_gesture(bool has_user_gesture) {
@@ -159,8 +175,9 @@ class DelayLoadStartAndExecuteJavascript : public TabStripModelObserver,
  private:
   class WillStartRequestObserverThrottle : public content::NavigationThrottle {
    public:
-    explicit WillStartRequestObserverThrottle(content::NavigationHandle* handle)
-        : NavigationThrottle(handle) {}
+    explicit WillStartRequestObserverThrottle(
+        content::NavigationThrottleRegistry& registry)
+        : NavigationThrottle(registry) {}
     ~WillStartRequestObserverThrottle() override = default;
 
     const char* GetNameForLogging() override {
@@ -197,6 +214,7 @@ class DelayLoadStartAndExecuteJavascript : public TabStripModelObserver,
   bool script_was_executed_ = false;
   raw_ptr<content::RenderFrameHost, AcrossTasksDanglingUntriaged>
       render_frame_host_ = nullptr;
+  std::unique_ptr<content::TestNavigationThrottleInserter> throttle_inserter_;
 };
 
 // Handles requests for URLs with paths of "/test*" sent to the test server, so
@@ -320,7 +338,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, GetFrameIncognito) {
 
   GURL url = embedded_test_server()->GetURL("a.com", "/empty.html");
 
-  Browser* incognito_browser = OpenURLOffTheRecord(browser()->profile(), url);
+  Browser* incognito_browser = OpenURLOffTheRecord(profile(), url);
   ASSERT_TRUE(incognito_browser);
 
   // Now that we have a OTR browser, run the extension test.
@@ -356,15 +374,61 @@ IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType, FormSubmission) {
   ASSERT_TRUE(RunExtensionTest("webnavigation/formSubmission")) << message_;
 }
 
+// Test that WebNavigation API does not emit the same event twice when providing
+// filters in addListener. Regression test for https://crbug.com/439995191.
+IN_PROC_BROWSER_TEST_F(WebNavigationApiTest,
+                       MultipleListenersWithFilterDontDuplicateEvents) {
+  ASSERT_TRUE(StartEmbeddedTestServer());
+
+  TestExtensionDir test_dir;
+  test_dir.WriteManifest(R"({
+      "name": "WebNavigation Duplicate Event Regression Test",
+      "manifest_version": 3,
+      "version": "1.0",
+      "background": { "service_worker": "background.js" },
+      "permissions": ["webNavigation"]
+  })");
+
+  test_dir.WriteFile(FILE_PATH_LITERAL("background.js"), R"(
+      let counts = { listener1: 0, listener2: 0 };
+
+      chrome.webNavigation.onCompleted.addListener((details) => {
+        if (details.frameId === 0) { counts.listener1++; }
+      }, { url: [{ schemes: ["http", "https"] }] });
+
+      chrome.webNavigation.onCompleted.addListener((details) => {
+        if (details.frameId === 0) { counts.listener2++; }
+      });
+  )");
+
+  const Extension* extension = LoadExtension(test_dir.UnpackedPath());
+  ASSERT_TRUE(extension);
+
+  // Navigate to trigger the onCompleted events.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/simple.html")));
+
+  // Execute a script to retrieve the invocation counts.
+  const char kGetCountsScript[] = "chrome.test.sendScriptResult(counts);";
+  base::Value result = BackgroundScriptExecutor::ExecuteScript(
+      profile(), extension->id(), kGetCountsScript,
+      BackgroundScriptExecutor::ResultCapture::kSendScriptResult);
+
+  ASSERT_TRUE(result.is_dict());
+  const base::Value::Dict& counts = result.GetDict();
+
+  // Each listener is invoked only once.
+  EXPECT_EQ(1, counts.FindInt("listener1"));
+  EXPECT_EQ(1, counts.FindInt("listener2"));
+}
+
 class WebNavigationApiPrerenderTestWithServiceWorker
     : public WebNavigationApiTest {
  public:
   WebNavigationApiPrerenderTestWithServiceWorker()
       // This test uses chrome.tabs.executeScript, which is not available in
       // MV3 or later. See crbug.com/332328868.
-      : WebNavigationApiTest(ContextType::kServiceWorkerMV2) {
-
-  }
+      : WebNavigationApiTest(ContextType::kServiceWorkerMV2) {}
   ~WebNavigationApiPrerenderTestWithServiceWorker() override = default;
   WebNavigationApiPrerenderTestWithServiceWorker(
       const WebNavigationApiPrerenderTestWithServiceWorker&) = delete;
@@ -378,7 +442,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiPrerenderTestWithServiceWorker,
   // TODO(crbug.com/40248833): Use https in the test and remove this allowlist
   // entry.
   ScopedAllowHttpForHostnamesForTesting scoped_allow_http(
-      {"a.test"}, browser()->profile()->GetPrefs());
+      {"a.test"}, profile()->GetPrefs());
 
   ASSERT_TRUE(StartEmbeddedTestServer());
   EXPECT_TRUE(RunExtensionTest("webnavigation/prerendering")) << message_;
@@ -393,8 +457,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiPrerenderTestWithServiceWorker,
 #endif
 IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType, MAYBE_Download) {
   ASSERT_TRUE(StartEmbeddedTestServer());
-  content::DownloadManager* download_manager =
-      browser()->profile()->GetDownloadManager();
+  content::DownloadManager* download_manager = profile()->GetDownloadManager();
   content::DownloadTestObserverTerminal observer(
       download_manager, 1,
       content::DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_FAIL);
@@ -408,7 +471,7 @@ IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType,
   // TODO(crbug.com/40248833): Use https in the test and remove these allowlist
   // entries.
   ScopedAllowHttpForHostnamesForTesting scoped_allow_http(
-      {"www.a.com", "www.b.com"}, browser()->profile()->GetPrefs());
+      {"www.a.com", "www.b.com"}, profile()->GetPrefs());
 
   ASSERT_TRUE(StartEmbeddedTestServer());
 
@@ -615,7 +678,7 @@ IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType,
   GURL url = embedded_test_server()->GetURL(
       "/extensions/api_test/webnavigation/targetBlank/a.html");
 
-  Browser* otr_browser = OpenURLOffTheRecord(browser()->profile(), url);
+  Browser* otr_browser = OpenURLOffTheRecord(profile(), url);
   WebContents* tab = otr_browser->tab_strip_model()->GetActiveWebContents();
   content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(tab);
 
@@ -721,7 +784,7 @@ IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType, Crash) {
   // TODO(crbug.com/40248833): Use https in the test and remove this allowlist
   // entry.
   ScopedAllowHttpForHostnamesForTesting scoped_allow_http(
-      {"www.a.com"}, browser()->profile()->GetPrefs());
+      {"www.a.com"}, profile()->GetPrefs());
 
   content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
   ASSERT_TRUE(StartEmbeddedTestServer());

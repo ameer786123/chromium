@@ -79,7 +79,7 @@ class HTMLAreaElement;
 class WebLocalFrameClient;
 
 // Describes a decision on whether to create an AXNodeObject with or without a
-// LayoutObject, or to prune the AX subtree at that point. Only pseudo element
+// LayoutObject, or to prune the AX subtree at that point. Only pseudo-element
 // descendants are missing DOM nodes.
 enum AXObjectType { kPruneSubtree = 0, kCreateFromNode, kCreateFromLayout };
 
@@ -110,9 +110,11 @@ struct TextChangedOperation {
 // This class should only be used from inside the accessibility directory.
 class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
  public:
-  static AXObjectCache* Create(Document&, const ui::AXMode&);
+  static AXObjectCache* Create(Document&,
+                               const ui::AXMode&,
+                               bool for_snapshot_only = false);
 
-  AXObjectCacheImpl(Document&, const ui::AXMode&);
+  AXObjectCacheImpl(Document&, const ui::AXMode&, bool for_snapshot_only);
 
   AXObjectCacheImpl(const AXObjectCacheImpl&) = delete;
   AXObjectCacheImpl& operator=(const AXObjectCacheImpl&) = delete;
@@ -140,8 +142,11 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   // aria-hidden and restore the subtree, then return the new AXObject.
   AXObject* EnsureFocusedObject();
 
-  const ui::AXMode& GetAXMode() override;
+  const ui::AXMode& GetAXMode() const override;
   void SetAXMode(const ui::AXMode&) override;
+  // Contact accessibility owners before using.
+  bool IsScreenReaderActive() const override;
+  bool IsForSnapshot() const { return for_snapshot_only_; }
 
   const AXObjectCacheLifecycle& lifecycle() const { return lifecycle_; }
 
@@ -204,11 +209,10 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   void ListboxSelectedChildrenChanged(HTMLSelectElement*) override;
   void ListboxActiveIndexChanged(HTMLSelectElement*) override;
   void SetMenuListOptionsBounds(HTMLSelectElement*,
-                                const WTF::Vector<gfx::Rect>&) override;
+                                const Vector<gfx::Rect>&) override;
   // Return the bounds for <option>s in an open <select>, or nullptr if they
   // are not available.
-  const WTF::Vector<gfx::Rect>* GetOptionsBounds(
-      const AXObject& ax_menu_list) const;
+  const Vector<gfx::Rect>* GetOptionsBounds(const AXObject& ax_menu_list) const;
 
   // Return true if the node has previously had aria-hidden="true" that was used
   // illegally, e.g. focus went inside of it.
@@ -360,7 +364,9 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   int GetLocationSerializationDelay();
 
   // Called during the accessibility lifecycle to refresh the AX tree.
-  void CommitAXUpdates(Document&, bool force) override;
+  bool CommitAXUpdates(Document&, bool force) override;
+
+  void SerializeAXUpdatesIfNeeded(Document&) override;
 
   // Called when a HTMLFrameOwnerElement (such as an iframe element) changes the
   // embedding token of its child frame.
@@ -565,11 +571,11 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   void SerializeLocationChanges();
 
   // This method is used to fulfill AXTreeSnapshotter requests.
-  bool SerializeEntireTree(
-      size_t max_node_count,
+  void SerializeEntireTreeAndDispose(
+      size_t max_nodes,
       base::TimeDelta timeout,
       ui::AXTreeUpdate*,
-      std::set<ui::AXSerializationErrorFlag>* out_error = nullptr) override;
+      std::set<ui::AXSerializationErrorFlag>* out_error) override;
 
   // Marks an object as dirty to be serialized in the next serialization.
   // If |subtree| is true, the entire subtree is dirty.
@@ -653,7 +659,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
 
   // Returns the `TextChangedOperation` associated with the `id` from the
   // `text_operation_in_node_ids_` map, if `id` is in the map.
-  WTF::Vector<TextChangedOperation>* GetFromTextOperationInNodeIdMap(AXID id);
+  Vector<TextChangedOperation>* GetFromTextOperationInNodeIdMap(AXID id);
 
   // Clears the map after each call, should be called after each serialization.
   void ClearTextOperationInNodeIdMap();
@@ -880,6 +886,8 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   bool IsMainDocumentDirty() const;
   bool IsPopupDocumentDirty() const;
 
+  bool CommitAndSerializeAXUpdates(Document&, bool force);
+
   // Returns true if the AXID is for a DOM node.
   // All other AXIDs are generated.
   bool IsDOMNodeID(AXID axid) { return axid > 0; }
@@ -1007,7 +1015,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
 
   // When the AXMode filter flag kOnScreenOnly is set, this set holds the IDs of
   // nodes that are not on-screen, but are still serialized.
-  WTF::HashSet<AXID> extra_off_screen_nodes_to_serialize_;
+  HashSet<AXID> extra_off_screen_nodes_to_serialize_;
 #if AX_FAIL_FAST_BUILD()
   size_t included_node_count_ = 0;
   size_t plugin_included_node_count_ = 0;
@@ -1172,6 +1180,13 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
 
   void IncrementGenerationalCacheId() { ++generational_cache_id_; }
 
+  // These methods help compute paint orders for AXObjects
+#if BUILDFLAG(IS_ANDROID)
+  void ComputeXrHitTestOrder(
+      HashMap<DOMNodeId, int>& dom_node_hit_test_order_map) override;
+  void ApplyXrHitTestOrder(const HashMap<DOMNodeId, int>& order_map) override;
+#endif
+
   // Queued callbacks.
   TreeUpdateCallbackQueue tree_update_callback_queue_main_;
   TreeUpdateCallbackQueue tree_update_callback_queue_popup_;
@@ -1236,7 +1251,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   // bounding boxes for the options, which are rendered in a special popup
   // document that is not in the AX tree that duplicates the option elements
   // from the main document.
-  WTF::Vector<gfx::Rect> options_bounds_;
+  Vector<gfx::Rect> options_bounds_;
   // AXID for the <select> containing tracked options bounds.
   AXID current_menu_list_axid_ = 0;
 
@@ -1255,7 +1270,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   // Map of node IDs where there was an operation done, could be deletion or
   // insertion. The items in the vector are in the order that the operations
   // were made in.
-  HashMap<AXID, WTF::Vector<TextChangedOperation>> text_operation_in_node_ids_;
+  HashMap<AXID, Vector<TextChangedOperation>> text_operation_in_node_ids_;
 
   // A set of ARIA notifications that have yet to be added to `ax_tree_data`.
   HashMap<AXID, AriaNotifications> aria_notifications_;
@@ -1293,7 +1308,16 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   // Make sure the next serialization sends everything.
   bool mark_all_dirty_ = false;
 
+  // Helper for ComputeXrHitTestOrder, walks over all elements in a layer
+  // and assigns sequential increasing paint order values to them.
+  static void AddLayerXrHitTestEntries(const cc::Layer* layer,
+                                       HashMap<DOMNodeId, int>& order_map);
+
   mutable bool has_axid_generator_looped_ = false;
+
+  // Set to true when CommitAXUpdates() runs with no early return. Set to false
+  // once the updates are serialized via SerializeUpdatesIfNeeded.
+  bool needs_serialization_ = false;
 
   // These maps get cleared when the tree is thawed. Contains the data used to
   // compute Next|PreviousOnLineId attributes.
@@ -1365,6 +1389,12 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCacheBase {
   // when another tree with some generated content should be stitched into the
   // current tree.
   HashMap<AXID, ui::AXTreeID> ax_id_to_child_tree_id_;
+
+  // The current AXObjectCacheImpl is only being used for an AX tree snapshot,
+  // and will be disposed at the end of SerializeEntireTreeAndDispose().
+  // TODO(accessibility): create an AXObjectCacheForSnapshots that separates
+  // that use from the "keep a11y alive" use more cleanly.
+  bool for_snapshot_only_;
 };
 
 // This is the only subclass of AXObjectCache.

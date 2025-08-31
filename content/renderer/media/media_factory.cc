@@ -18,6 +18,7 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -76,8 +77,6 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "content/renderer/media/android/flinging_renderer_client_factory.h"
-#include "content/renderer/media/android/media_player_renderer_client_factory.h"
-#include "content/renderer/media/android/stream_texture_wrapper_impl.h"
 #include "media/base/android/media_codec_util.h"
 #include "media/base/media.h"
 #include "url/gurl.h"
@@ -431,13 +430,14 @@ std::unique_ptr<blink::WebMediaPlayer> MediaFactory::CreateMediaPlayer(
 
   media::MediaPlayerLoggingID player_id = media::GetNextMediaPlayerLoggingID();
   std::vector<std::unique_ptr<BatchingMediaLog::EventHandler>> handlers;
-  handlers.push_back(
-      std::make_unique<InspectorMediaEventHandler>(inspector_context));
+  handlers.push_back(std::make_unique<InspectorMediaEventHandler>(
+      inspector_context, client->GetElementId()));
   handlers.push_back(std::make_unique<RenderMediaEventHandler>(player_id));
 
-  // This must be created for every new WebMediaPlayer
+  // This must be created for every new WebMediaPlayer. We use the inspector
+  // task runner so logs are properly flushed even when frozen.
   auto media_log = std::make_unique<BatchingMediaLog>(
-      render_frame_->GetTaskRunner(blink::TaskType::kInternalMedia),
+      render_frame_->GetTaskRunner(blink::TaskType::kInternalInspector),
       std::move(handlers));
 
   EnsureDecoderFactory();
@@ -488,7 +488,8 @@ std::unique_ptr<blink::WebMediaPlayer> MediaFactory::CreateMediaPlayer(
   if (!media_player_builder_) {
     media_player_builder_ = std::make_unique<blink::WebMediaPlayerBuilder>(
         *web_frame,
-        render_frame_->GetTaskRunner(blink::TaskType::kInternalMedia));
+        /*network_task_runner=*/render_frame_->GetTaskRunner(
+            blink::TaskType::kNetworkingUnfreezable));
   }
 
   return media_player_builder_->Build(
@@ -506,8 +507,7 @@ std::unique_ptr<blink::WebMediaPlayer> MediaFactory::CreateMediaPlayer(
       enable_instant_source_buffer_gc, embedded_media_experience_enabled,
       std::move(metrics_provider),
       base::BindOnce(&blink::WebSurfaceLayerBridge::Create,
-                     parent_frame_sink_id,
-                     blink::WebSurfaceLayerBridge::ContainsVideo::kYes),
+                     parent_frame_sink_id),
       RenderThreadImpl::current()->SharedMainThreadContextProvider(),
       use_surface_layer,
       render_frame_->GetRenderFrameMediaPlaybackOptions()
@@ -573,21 +573,6 @@ MediaFactory::CreateRendererFactorySelector(
   }
 
 #if BUILDFLAG(IS_ANDROID)
-  // MediaPlayerRendererClientFactory setup. It is used for HLS playback.
-  auto media_player_factory =
-      std::make_unique<MediaPlayerRendererClientFactory>(
-          render_thread->compositor_task_runner(), CreateMojoRendererFactory(),
-          base::BindRepeating(
-              &StreamTextureWrapperImpl::Create,
-              render_thread->EnableStreamTextureCopy(),
-              render_thread->GetStreamTexureFactory(),
-              render_frame_->GetTaskRunner(blink::TaskType::kInternalMedia)));
-
-  // Always give |factory_selector| a MediaPlayerRendererClient factory. WMPI
-  // might fallback to it if the final redirected URL is an HLS url.
-  factory_selector->AddFactory(RendererType::kMediaPlayer,
-                               std::move(media_player_factory));
-
   // FlingingRendererClientFactory (FRCF) setup.
   auto flinging_factory = std::make_unique<FlingingRendererClientFactory>(
       CreateMojoRendererFactory(), std::move(client_wrapper));
@@ -771,8 +756,8 @@ MediaFactory::CreateWebMediaPlayerForMediaStream(
 
   media::MediaPlayerLoggingID player_id = media::GetNextMediaPlayerLoggingID();
   std::vector<std::unique_ptr<BatchingMediaLog::EventHandler>> handlers;
-  handlers.push_back(
-      std::make_unique<InspectorMediaEventHandler>(inspector_context));
+  handlers.push_back(std::make_unique<InspectorMediaEventHandler>(
+      inspector_context, client->GetElementId()));
   handlers.push_back(std::make_unique<RenderMediaEventHandler>(player_id));
 
   // This must be created for every new WebMediaPlayer, each instance generates
@@ -796,8 +781,7 @@ MediaFactory::CreateWebMediaPlayerForMediaStream(
       std::move(compositor_worker_task_runner),
       render_thread->GetGpuFactories(), sink_id,
       base::BindOnce(&blink::WebSurfaceLayerBridge::Create,
-                     parent_frame_sink_id,
-                     blink::WebSurfaceLayerBridge::ContainsVideo::kYes),
+                     parent_frame_sink_id),
       std::move(submitter), use_surface_layer);
 }
 

@@ -1,14 +1,7 @@
 // Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
-#include "media/formats/webm/webm_parser.h"
-
+//
 // This file contains code to parse WebM file elements. It was created
 // from information in the Matroska spec.
 // http://www.matroska.org/technical/specs/index.html
@@ -16,17 +9,23 @@
 // WebM Container Guidelines is at https://www.webmproject.org/docs/container/
 // WebM Encryption spec is at: https://www.webmproject.org/docs/webm-encryption/
 
+#include "media/formats/webm/webm_parser.h"
+
 #include <stddef.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <iomanip>
 #include <limits>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
-#include "base/notreached.h"
+#include "base/memory/raw_span.h"
+#include "base/notimplemented.h"
 #include "base/numerics/safe_conversions.h"
 #include "media/formats/webm/webm_constants.h"
 
@@ -58,7 +57,7 @@ struct ElementIdInfo {
 struct ListElementInfo {
   int id_;
   int level_;
-  raw_ptr<const ElementIdInfo> id_info_;
+  base::raw_span<const ElementIdInfo> id_info_;
   int id_info_count_;
 };
 
@@ -75,12 +74,16 @@ static const ElementIdInfo kEBMLHeaderIds[] = {
     {UINT, kWebMIdDocTypeReadVersion},
 };
 
-static const ElementIdInfo kSegmentIds[] = {
-    {LIST, kWebMIdSeekHead}, {LIST, kWebMIdInfo},
-    {LIST, kWebMIdCluster},  {LIST, kWebMIdTracks},
-    {LIST, kWebMIdCues},     {SKIP_LIST, kWebMIdAttachments},
-    {LIST, kWebMIdChapters}, {LIST, kWebMIdTags},
-};
+static const auto kSegmentIds = std::to_array<ElementIdInfo>({
+    {LIST, kWebMIdSeekHead},
+    {LIST, kWebMIdInfo},
+    {LIST, kWebMIdCluster},
+    {LIST, kWebMIdTracks},
+    {LIST, kWebMIdCues},
+    {SKIP_LIST, kWebMIdAttachments},
+    {LIST, kWebMIdChapters},
+    {LIST, kWebMIdTags},
+});
 
 static const ElementIdInfo kSeekHeadIds[] = {
     {LIST, kWebMIdSeek},
@@ -390,7 +393,7 @@ static const ElementIdInfo kSimpleTagIds[] = {
 #define LIST_ELEMENT_INFO(id, level, id_info) \
   { (id), (level), (id_info), std::size(id_info) }
 
-static const ListElementInfo kListElementInfo[] = {
+static const auto kListElementInfo = std::to_array<ListElementInfo>({
     LIST_ELEMENT_INFO(kWebMIdCluster, 1, kClusterIds),
     LIST_ELEMENT_INFO(kWebMIdEBMLHeader, 0, kEBMLHeaderIds),
     LIST_ELEMENT_INFO(kWebMIdSegment, 0, kSegmentIds),
@@ -440,7 +443,7 @@ static const ListElementInfo kListElementInfo[] = {
     LIST_ELEMENT_INFO(kWebMIdColour, 4, kColourIds),
     LIST_ELEMENT_INFO(kWebMIdColorVolumeMetadata, 5, kColorVolumeMetadataIds),
     LIST_ELEMENT_INFO(kWebMIdProjection, 4, kProjectionIds),
-};
+});
 
 // Parses an element header id or size field. These fields are variable length
 // encoded. The first byte indicates how many bytes the field occupies.
@@ -498,7 +501,7 @@ static int ParseWebMElementHeaderField(const uint8_t* buf,
   int bytes_used = 1;
 
   for (int i = 0; i < extra_bytes; ++i) {
-    ch = buf[bytes_used++];
+    ch = UNSAFE_TODO(buf[bytes_used++]);
     all_ones &= (ch == 0xff);
     *num = (*num << 8) | ch;
   }
@@ -537,7 +540,7 @@ int WebMParseElementHeader(const uint8_t* buf,
   *id = static_cast<int>(tmp);
 
   int num_size_bytes = ParseWebMElementHeaderField(
-      buf + num_id_bytes, size - num_id_bytes, 8, true, &tmp);
+      UNSAFE_TODO(buf + num_id_bytes), size - num_id_bytes, 8, true, &tmp);
 
   if (num_size_bytes <= 0) {
     return num_size_bytes;
@@ -555,7 +558,7 @@ int WebMParseElementHeader(const uint8_t* buf,
 
 // Finds ElementType for a specific ID.
 static ElementType FindIdType(int id,
-                              const ElementIdInfo* id_info,
+                              base::span<const ElementIdInfo> id_info,
                               int id_info_count) {
   // Check for global element IDs that can be anywhere.
   if (id == kWebMIdVoid || id == kWebMIdCRC32) {
@@ -579,7 +582,7 @@ static const ListElementInfo* FindListInfo(int id) {
     }
   }
 
-  return NULL;
+  return nullptr;
 }
 
 static int FindListLevel(int id) {
@@ -602,7 +605,7 @@ static int ParseUInt(const uint8_t* buf,
   // Read in the big-endian integer.
   uint64_t value = 0;
   for (int i = 0; i < size; ++i) {
-    value = (value << 8) | buf[i];
+    value = (value << 8) | UNSAFE_TODO(buf[i]);
   }
 
   // We use int64_t in place of uint64_t everywhere for convenience.  See this
@@ -632,7 +635,7 @@ static int ParseFloat(const uint8_t* buf,
   // Read the bytes from big-endian form into a native endian integer.
   int64_t tmp = 0;
   for (int i = 0; i < size; ++i) {
-    tmp = (tmp << 8) | buf[i];
+    tmp = (tmp << 8) | UNSAFE_TODO(buf[i]);
   }
 
   // Use a union to convert the integer bit pattern into a floating point
@@ -673,8 +676,9 @@ static int ParseString(const uint8_t* buf,
                        int size,
                        int id,
                        WebMParserClient* client) {
-  const uint8_t* end = static_cast<const uint8_t*>(memchr(buf, '\0', size));
-  int length = (end != NULL) ? static_cast<int>(end - buf) : size;
+  const uint8_t* end =
+      static_cast<const uint8_t*>(UNSAFE_TODO(memchr(buf, '\0', size)));
+  int length = (end != nullptr) ? static_cast<int>(end - buf) : size;
   std::string str(reinterpret_cast<const char*>(buf), length);
   return client->OnString(id, str) ? size : -1;
 }
@@ -722,7 +726,7 @@ WebMParserClient::~WebMParserClient() = default;
 
 WebMParserClient* WebMParserClient::OnListStart(int id) {
   DVLOG(1) << "Unexpected list element start with ID " << std::hex << id;
-  return NULL;
+  return nullptr;
 }
 
 bool WebMParserClient::OnListEnd(int id) {
@@ -819,7 +823,7 @@ int WebMListParser::Parse(const uint8_t* buf, int size) {
 
       case INSIDE_LIST: {
         int header_size = result;
-        const uint8_t* element_data = cur + header_size;
+        const uint8_t* element_data = UNSAFE_TODO(cur + header_size);
         int element_data_size = cur_size - header_size;
 
         if (element_size < element_data_size) {
@@ -848,7 +852,7 @@ int WebMListParser::Parse(const uint8_t* buf, int size) {
         break;
     }
 
-    cur += result;
+    UNSAFE_TODO(cur += result);
     cur_size -= result;
     bytes_parsed += result;
   }
@@ -960,7 +964,7 @@ bool WebMListParser::OnListStart(int id, int64_t size) {
     return false;
   }
 
-  WebMParserClient* current_list_client = NULL;
+  WebMParserClient* current_list_client = nullptr;
   if (!list_state_stack_.empty()) {
     // Make sure the new list doesn't go past the end of the current list.
     ListState current_list_state = list_state_stack_.back();
@@ -1001,7 +1005,7 @@ bool WebMListParser::OnListEnd() {
 
     list_state_stack_.pop_back();
 
-    WebMParserClient* client = NULL;
+    WebMParserClient* client = nullptr;
     if (!list_state_stack_.empty()) {
       // Update the bytes_parsed_ for the parent element.
       list_state_stack_.back().bytes_parsed_ += bytes_parsed;

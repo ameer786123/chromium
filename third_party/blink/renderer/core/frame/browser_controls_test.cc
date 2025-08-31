@@ -1049,7 +1049,6 @@ TEST_F(BrowserControlsTest, MAYBE(StateUpdateRecomputesSafeAreaInset)) {
 
 TEST_F(BrowserControlsTest, MAYBE(SafeAreaMaxInsetVars)) {
   ScopedDynamicSafeAreaInsetsForTest dynamic_safe_area_insets(true);
-  ScopedCSSSafeAreaMaxInsetForTest safe_area_max_inset(true);
 
   WebViewImpl* web_view = Initialize();
   web_view->GetSettings()->SetDynamicSafeAreaInsetsEnabled(true);
@@ -2107,6 +2106,26 @@ TEST_F(BrowserControlsTest, MAYBE(BottomControlsSizeAdjustment)) {
   web_view->GetBrowserControls().SetShownRatio(0.0, 0.0);
   EXPECT_FLOAT_EQ(0.f,
                   web_view->GetBrowserControls().UnreportedSizeAdjustment());
+}
+
+TEST_F(BrowserControlsTest, MAYBE(TopControlsMinHeightNoSizeAdjustment)) {
+  WebViewImpl* web_view = Initialize();
+  gfx::Size viewport_size = web_view->MainFrameViewWidget()->Size();
+
+  cc::BrowserControlsParams params;
+  params.top_controls_height = 50.f;
+  params.top_controls_min_height = 50.f;
+  params.browser_controls_shrink_blink_size = false;
+
+  web_view->ResizeWithBrowserControls(viewport_size, viewport_size, params);
+  web_view->GetBrowserControls().SetShownRatio(/* top_ratio */ 1,
+                                               /* bottom_ratio */ 0);
+
+  // With top controls shown and height == min_height, there should be no size
+  // adjustment, even with browser_controls_shrink_blink_size == false.
+  EXPECT_FLOAT_EQ(0.f,
+                  web_view->GetBrowserControls().UnreportedSizeAdjustment());
+  EXPECT_FLOAT_EQ(0.f, GetVisualViewport().MaximumScrollOffset().y());
 }
 
 TEST_F(BrowserControlsTest, MAYBE(GrowingHeightKeepsTopControlsHidden)) {

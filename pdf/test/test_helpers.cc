@@ -4,9 +4,12 @@
 
 #include "pdf/test/test_helpers.h"
 
+#include <string_view>
+
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "cc/test/pixel_comparator.h"
 #include "cc/test/pixel_test_utils.h"
@@ -34,12 +37,14 @@ namespace chrome_pdf {
 
 namespace {
 
+base::test::TaskEnvironment* g_task_environment = nullptr;
+
 testing::AssertionResult MatchesPngFileImpl(
-    const SkImage* actual_image,
+    const SkImage& actual_image,
     const base::FilePath& expected_png_file,
     const cc::PixelComparator& comparitor) {
   SkBitmap actual_bitmap;
-  if (!actual_image->asLegacyBitmap(&actual_bitmap)) {
+  if (!actual_image.asLegacyBitmap(&actual_bitmap)) {
     return testing::AssertionFailure() << "Reference: " << expected_png_file;
   }
 
@@ -102,15 +107,27 @@ base::FilePath::StringType GetTestDataPathWithPlatformSuffix(
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 }
 
+base::FilePath GetReferenceFilePath(
+    base::FilePath::StringViewType sub_directory,
+    std::string_view test_filename,
+    bool use_platform_suffix) {
+  if (use_platform_suffix) {
+    return base::FilePath(sub_directory)
+        .Append(GetTestDataPathWithPlatformSuffix(test_filename));
+  }
+
+  return base::FilePath(sub_directory).AppendASCII(test_filename);
+}
+
 testing::AssertionResult MatchesPngFile(
-    const SkImage* actual_image,
+    const SkImage& actual_image,
     const base::FilePath& expected_png_file) {
   return MatchesPngFileImpl(actual_image, expected_png_file,
                             cc::ExactPixelComparator());
 }
 
 testing::AssertionResult FuzzyMatchesPngFile(
-    const SkImage* actual_image,
+    const SkImage& actual_image,
     const base::FilePath& expected_png_file) {
   // Effectively a "FuzzyPixelOffByTwoComparator".
   cc::FuzzyPixelComparator comparator;
@@ -119,13 +136,33 @@ testing::AssertionResult FuzzyMatchesPngFile(
   return MatchesPngFileImpl(actual_image, expected_png_file, comparator);
 }
 
+bool IsBitmapBlank(const SkBitmap& bitmap) {
+  for (int i = 0; i < bitmap.width(); ++i) {
+    for (int j = 0; j < bitmap.height(); ++j) {
+      if (bitmap.getColor(i, j) != SK_ColorWHITE) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool IsImageBlank(const SkImage& image) {
+  SkBitmap bitmap;
+  if (!image.asLegacyBitmap(&bitmap)) {
+    ADD_FAILURE();
+    return false;
+  }
+  return IsBitmapBlank(bitmap);
+}
+
 void CheckPdfRendering(base::span<const uint8_t> pdf_data,
                        int page_index,
                        const gfx::Size& size_in_points,
                        const base::FilePath& expected_png_file) {
   SkBitmap page_bitmap =
       RenderPdfToSkBitmap(pdf_data, page_index, size_in_points);
-  EXPECT_TRUE(MatchesPngFile(page_bitmap.asImage().get(), expected_png_file));
+  EXPECT_TRUE(MatchesPngFile(*page_bitmap.asImage(), expected_png_file));
 }
 
 void CheckFuzzyPdfRendering(base::span<const uint8_t> pdf_data,
@@ -134,8 +171,7 @@ void CheckFuzzyPdfRendering(base::span<const uint8_t> pdf_data,
                             const base::FilePath& expected_png_file) {
   SkBitmap page_bitmap =
       RenderPdfToSkBitmap(pdf_data, page_index, size_in_points);
-  EXPECT_TRUE(
-      FuzzyMatchesPngFile(page_bitmap.asImage().get(), expected_png_file));
+  EXPECT_TRUE(FuzzyMatchesPngFile(*page_bitmap.asImage(), expected_png_file));
 }
 
 sk_sp<SkSurface> CreateSkiaSurfaceForTesting(const gfx::Size& size,
@@ -166,6 +202,15 @@ blink::WebPrintParams GetDefaultPrintParams() {
   params.printable_area_in_css_pixels = kUSLetterRect;
   params.print_scaling_option = printing::mojom::PrintScalingOption::kNone;
   return params;
+}
+
+void SetPdfTestTaskEnvironment(base::test::TaskEnvironment* task_environment) {
+  g_task_environment = task_environment;
+}
+
+base::test::TaskEnvironment& GetPdfTestTaskEnvironment() {
+  CHECK(g_task_environment);
+  return *g_task_environment;
 }
 
 }  // namespace chrome_pdf

@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/web/web_state/ui/crw_web_controller.h"
 
 #import <WebKit/WebKit.h>
 
 #import "base/apple/foundation_util.h"
+#import "base/check.h"
 #import "base/containers/contains.h"
 #import "base/feature_list.h"
 #import "base/functional/bind.h"
@@ -53,6 +59,7 @@
 #import "ios/web/security/crw_ssl_status_updater.h"
 #import "ios/web/util/content_type_util.h"
 #import "ios/web/util/wk_web_view_util.h"
+#import "ios/web/web_state/crw_data_controls_delegate.h"
 #import "ios/web/web_state/crw_web_view.h"
 #import "ios/web/web_state/ui/crw_context_menu_controller.h"
 #import "ios/web/web_state/ui/crw_web_controller_container_view.h"
@@ -78,20 +85,12 @@ char const kFullScreenStateHistogram[] = "IOS.Fullscreen.State";
 
 // Disables logic to update CRWWebController's `_currentURLLoadWasTriggered`
 // when setting a WKWebView's interaction state.
-BASE_FEATURE(kIOSSessionRestoreLoadTriggerKillSwitch,
-             "IOSSessionRestoreLoadTriggerKillSwitch",
+BASE_FEATURE(IOSSessionRestoreLoadTriggerKillSwitch,
              base::FEATURE_DISABLED_BY_DEFAULT);
 }  // namespace
 
-// TODO(crbug.com/40746865): Allow usage of iOS15 interactionState on iOS 14 SDK
-// based builds.
-#if !defined(__IPHONE_15_0) || __IPHONE_OS_VERSION_MAX_ALLOWED < __IPHONE_15_0
-@interface WKWebView (Additions)
-@property(nonatomic, nullable, copy) id interactionState;
-@end
-#endif
-
-@interface CRWWebController () <CRWWKNavigationHandlerDelegate,
+@interface CRWWebController () <CRWDataControlsDelegate,
+                                CRWWKNavigationHandlerDelegate,
                                 CRWEditMenuBuilder,
                                 CRWInputViewProvider,
                                 CRWSSLStatusUpdaterDataSource,
@@ -229,6 +228,7 @@ BASE_FEATURE(kIOSSessionRestoreLoadTriggerKillSwitch,
     _webUsageEnabled = YES;
 
     _allowsBackForwardNavigationGestures = YES;
+    _allowsLinkPreview = YES;
 
     DCHECK(_webStateImpl);
     // Content area is lazily instantiated.
@@ -336,6 +336,14 @@ BASE_FEATURE(kIOSSessionRestoreLoadTriggerKillSwitch,
       allowsBackForwardNavigationGestures;
 }
 
+- (void)setAllowsLinkPreview:(BOOL)allowsLinkPreview {
+  // Store it to an instance variable as well as
+  // self.webView.allowsLinkPreview because self.webView may be nil. When
+  // self.webView is nil, it will be set later in -setWebView:.
+  _allowsLinkPreview = allowsLinkPreview;
+  self.webView.allowsLinkPreview = allowsLinkPreview;
+}
+
 #pragma mark - Private properties accessors
 
 - (void)setWebView:(WKWebView*)webView {
@@ -381,6 +389,7 @@ BASE_FEATURE(kIOSSessionRestoreLoadTriggerKillSwitch,
 
     _webView.allowsBackForwardNavigationGestures =
         _allowsBackForwardNavigationGestures;
+    _webView.allowsLinkPreview = _allowsLinkPreview;
   }
   self.webViewNavigationObserver.webView = _webView;
 
@@ -959,7 +968,9 @@ BASE_FEATURE(kIOSSessionRestoreLoadTriggerKillSwitch,
                                        webview:self.webView
                                       delegate:delegate];
   [download startDownload];
-  handler(download);
+  if (handler) {
+    handler(download);
+  }
 }
 
 - (BOOL)findInteractionSupported {
@@ -1025,6 +1036,12 @@ BASE_FEATURE(kIOSSessionRestoreLoadTriggerKillSwitch,
       DLOG(WARNING) << "Script execution failed with error: "
                     << base::SysNSStringToUTF16(
                            error.userInfo[NSLocalizedDescriptionKey]);
+
+      if (base::FeatureList::IsEnabled(
+              web::features::kAssertOnJavaScriptErrors)) {
+        CHECK(false) << "JavaScript error occurred with "
+                        "kAssertOnJavaScriptErrors enabled.";
+      }
     }
     if (stack_completion_block) {
       stack_completion_block(value, error);
@@ -1168,6 +1185,9 @@ BASE_FEATURE(kIOSSessionRestoreLoadTriggerKillSwitch,
       _allowsBackForwardNavigationGestures) {
     _webView.allowsBackForwardNavigationGestures =
         _allowsBackForwardNavigationGestures;
+  }
+  if (_webView.allowsLinkPreview != _allowsLinkPreview) {
+    _webView.allowsLinkPreview = _allowsLinkPreview;
   }
 
   BOOL success = !context || !context->GetError();
@@ -1402,7 +1422,7 @@ CrFullscreenState CrFullscreenStateFromWKFullscreenState(
 
   return web::BuildWKWebView(CGRectZero, config,
                              self.webStateImpl->GetBrowserState(),
-                             userAgentType, self, self);
+                             userAgentType, self, self, self);
 }
 
 // Wraps the web view in a CRWWebViewContentView and adds it to the container
@@ -1840,6 +1860,44 @@ CrFullscreenState CrFullscreenStateFromWKFullscreenState(
 - (CRWWKNavigationHandler*)webRequestControllerNavigationHandler:
     (CRWWebRequestController*)requestController {
   return self.navigationHandler;
+}
+
+#pragma mark - CRWDataControlsDelegate
+
+- (void)shouldAllowCopyWithDecisionHandler:(void (^)(BOOL))completionHandler {
+  web::WebState* webState = self.webStateImpl;
+  if (webState && webState->GetDelegate()) {
+    webState->GetDelegate()->ShouldAllowCopy(webState,
+                                             base::BindOnce(^(bool allowed) {
+                                               completionHandler(allowed);
+                                             }));
+  } else {
+    completionHandler(YES);
+  }
+}
+
+- (void)shouldAllowPasteWithDecisionHandler:(void (^)(BOOL))completionHandler {
+  web::WebState* webState = self.webStateImpl;
+  if (webState && webState->GetDelegate()) {
+    webState->GetDelegate()->ShouldAllowPaste(webState,
+                                              base::BindOnce(^(bool allowed) {
+                                                completionHandler(allowed);
+                                              }));
+  } else {
+    completionHandler(YES);
+  }
+}
+
+- (void)shouldAllowCutWithDecisionHandler:(void (^)(BOOL))completionHandler {
+  web::WebState* webState = self.webStateImpl;
+  if (webState && webState->GetDelegate()) {
+    webState->GetDelegate()->ShouldAllowCut(webState,
+                                            base::BindOnce(^(bool allowed) {
+                                              completionHandler(allowed);
+                                            }));
+  } else {
+    completionHandler(YES);
+  }
 }
 
 #pragma mark -  CRWEditMenuBuilder

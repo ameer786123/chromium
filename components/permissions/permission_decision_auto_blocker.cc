@@ -49,13 +49,13 @@ constexpr int kDefaultEmbargoDays = 7;
 // automatically blocked.
 constexpr int kFederatedIdentityApiDismissalsBeforeBlock = 1;
 
-// The number of times that users may ignore a FEDERATED_IDENTITY_API permission
-// prompt from an origin before it is automatically blocked.
-constexpr int kFederatedIdentityApiIgnoresBeforeBlock = 1;
-
-// The number of hours that an origin will stay under embargo for a requested
-// permission due to users ignoring the prompt.
-constexpr base::TimeDelta kFederatedIdentityApiIgnoresEmbargo = base::Hours(4);
+// The durations that an origin will stay under embargo for the
+// FEDERATED_IDENTITY_API permission due to the user explicitly dismissing the
+// permission prompt.
+constexpr auto kFederatedIdentityApiEmbargoDurationDismiss =
+    std::to_array<base::TimeDelta>({base::Hours(2) /* 1st dismissal */,
+                                    base::Days(1) /* 2nd dismissal */,
+                                    base::Days(7), base::Days(28)});
 
 // The duration that an origin will stay under embargo for the
 // FEDERATED_IDENTITY_AUTO_REAUTHN_PERMISSION permission due to an auto re-authn
@@ -84,6 +84,10 @@ std::string GetStringForContentType(ContentSettingsType content_type) {
       return "FileSystemWriteGuard";
     case ContentSettingsType::SUB_APP_INSTALLATION_PROMPTS:
       return "SubAppInstallationPrompts";
+#if BUILDFLAG(IS_CHROMEOS)
+    case ContentSettingsType::SMART_CARD_GUARD:
+      return "SmartCard";
+#endif  // BUILDFLAG(IS_CHROMEOS)
     // If you add a new Content Setting here, also add it to
     // IsEnabledForContentSetting.
     default:
@@ -149,40 +153,17 @@ int GetDismissalsBeforeBlockForContentSettingsType(
              : kDefaultDismissalsBeforeBlock;
 }
 
-// Returns the number of times that users may ignore a permission prompt for an
-// origin for the passed-in |permission| before it is automatically blocked.
-int GetIgnoresBeforeBlockForContentSettingsType(
-    ContentSettingsType permission) {
-  return (permission == ContentSettingsType::FEDERATED_IDENTITY_API)
-             ? kFederatedIdentityApiIgnoresBeforeBlock
-             : kDefaultIgnoresBeforeBlock;
-}
-
 // The duration that an origin will stay under embargo for the passed-in
 // |permission| due to the user explicitly dismissing the permission prompt.
 base::TimeDelta GetEmbargoDurationForContentSettingsType(
     ContentSettingsType permission,
     int dismiss_count) {
-  // The durations that an origin will stay under embargo for the
-  // FEDERATED_IDENTITY_API permission due to the user explicitly dismissing the
-  // permission prompt.
-  auto FederatedIdentityApiEmbargoDurationDismiss =
-      std::to_array<base::TimeDelta>(
-          {base::Hours(base::GetFieldTrialParamByFeatureAsInt(
-               features::kFedCmUpdatedCooldownPeriod, "FirstDismissal", 2)),
-           base::Days(base::GetFieldTrialParamByFeatureAsInt(
-               features::kFedCmUpdatedCooldownPeriod, "SecondDismissal", 1)),
-           base::Days(base::GetFieldTrialParamByFeatureAsInt(
-               features::kFedCmUpdatedCooldownPeriod, "ThirdDismissal", 7)),
-           base::Days(base::GetFieldTrialParamByFeatureAsInt(
-               features::kFedCmUpdatedCooldownPeriod, "FourthDismissal", 28))});
-
   if (permission == ContentSettingsType::FEDERATED_IDENTITY_API) {
     int duration_index =
         std::clamp(dismiss_count - 1, 0,
                    static_cast<int>(
-                       FederatedIdentityApiEmbargoDurationDismiss.size() - 1));
-    return FederatedIdentityApiEmbargoDurationDismiss[duration_index];
+                       kFederatedIdentityApiEmbargoDurationDismiss.size() - 1));
+    return kFederatedIdentityApiEmbargoDurationDismiss[duration_index];
   }
 
   if (permission ==
@@ -198,15 +179,6 @@ base::TimeDelta GetEmbargoDurationForContentSettingsType(
   }
 
   return base::Days(kDefaultEmbargoDays);
-}
-
-// The duration that an origin will stay under embargo for the passed-in
-// |permission| due to the user ignoring the permission prompt.
-base::TimeDelta GetIgnoreEmbargoDurationForContentSettingsType(
-    ContentSettingsType permission) {
-  return (permission == ContentSettingsType::FEDERATED_IDENTITY_API)
-             ? kFederatedIdentityApiIgnoresEmbargo
-             : base::Days(kDefaultEmbargoDays);
 }
 
 base::Time GetEmbargoStartTime(base::Value::Dict* permission_dict,
@@ -270,7 +242,11 @@ bool PermissionDecisionAutoBlocker::IsEnabledForContentSetting(
          content_setting ==
              ContentSettingsType::FILE_SYSTEM_ACCESS_RESTORE_PERMISSION ||
          content_setting == ContentSettingsType::FILE_SYSTEM_WRITE_GUARD ||
-         content_setting == ContentSettingsType::SUB_APP_INSTALLATION_PROMPTS;
+         content_setting == ContentSettingsType::SUB_APP_INSTALLATION_PROMPTS
+#if BUILDFLAG(IS_CHROMEOS)
+         || content_setting == ContentSettingsType::SMART_CARD_GUARD
+#endif  // BUILDFLAG(IS_CHROMEOS)
+      ;
   // If you add a new content setting here, also add it to
   // GetStringForContentType.
 }
@@ -301,9 +277,8 @@ PermissionDecisionAutoBlocker::GetEmbargoResult(
         content::PermissionStatusSource::MULTIPLE_DISMISSALS);
   }
 
-  if (IsUnderEmbargo(
-          permission_dict, kPermissionIgnoreEmbargoKey, current_time,
-          GetIgnoreEmbargoDurationForContentSettingsType(permission))) {
+  if (IsUnderEmbargo(permission_dict, kPermissionIgnoreEmbargoKey, current_time,
+                     base::Days(kDefaultEmbargoDays))) {
     return content::PermissionResult(
         PermissionStatus::DENIED,
         content::PermissionStatusSource::MULTIPLE_IGNORES);
@@ -414,10 +389,11 @@ bool PermissionDecisionAutoBlocker::RecordDismissAndEmbargo(
           : -1;
 
   // TODO(dominickn): ideally we would have a method
-  // PermissionContextBase::ShouldEmbargoAfterRepeatedDismissals() to specify
-  // if a permission is opted in. This is difficult right now because:
+  // ContentSettingPermissionContextBase::ShouldEmbargoAfterRepeatedDismissals()
+  // to specify if a permission is opted in. This is difficult right now
+  // because:
   // 1. PermissionQueueController needs to call this method at a point where it
-  //    does not have a PermissionContextBase available
+  //    does not have a ContentSettingPermissionContextBase available
   // 2. Not calling RecordDismissAndEmbargo means no repeated dismissal metrics
   //    are recorded
   if (current_dismissal_count >=
@@ -429,7 +405,8 @@ bool PermissionDecisionAutoBlocker::RecordDismissAndEmbargo(
   if (current_dismissal_count_with_quiet_ui >=
       kDefaultDismissalsBeforeBlockWithQuietUi) {
     DCHECK(permission == ContentSettingsType::NOTIFICATIONS ||
-           permission == ContentSettingsType::GEOLOCATION);
+           permission == ContentSettingsType::GEOLOCATION ||
+           permission == ContentSettingsType::GEOLOCATION_WITH_OPTIONS);
     PlaceUnderEmbargo(url, permission, kPermissionDismissalEmbargoKey);
     return true;
   }
@@ -450,8 +427,7 @@ bool PermissionDecisionAutoBlocker::RecordIgnoreAndEmbargo(
                                           settings_map_)
           : -1;
 
-  if (current_ignore_count >=
-      GetIgnoresBeforeBlockForContentSettingsType(permission)) {
+  if (current_ignore_count >= kDefaultIgnoresBeforeBlock) {
     PlaceUnderEmbargo(url, permission, kPermissionIgnoreEmbargoKey);
     return true;
   }
@@ -459,7 +435,7 @@ bool PermissionDecisionAutoBlocker::RecordIgnoreAndEmbargo(
   if (current_ignore_count_with_quiet_ui >=
       kDefaultIgnoresBeforeBlockWithQuietUi) {
     DCHECK(permission == ContentSettingsType::NOTIFICATIONS ||
-           permission == ContentSettingsType::GEOLOCATION);
+           permission == permissions::PermissionUtil::GetGeolocationType());
     PlaceUnderEmbargo(url, permission, kPermissionIgnoreEmbargoKey);
     return true;
   }

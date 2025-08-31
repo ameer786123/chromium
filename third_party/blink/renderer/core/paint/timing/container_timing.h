@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_TIMING_CONTAINER_TIMING_H_
 
 #include "base/time/time.h"
+#include "cc/base/region.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -36,6 +37,8 @@ class CORE_EXPORT ContainerTiming final
   }
 
   bool CanReportToContainerTiming() const;
+  void MaybeUpdateContainerRootNestingPolicy(Element* element,
+                                             const AtomicString& new_value);
 
   void EmitPerformanceEntries();
 
@@ -51,16 +54,22 @@ class CORE_EXPORT ContainerTiming final
   class Record final : public GarbageCollected<Record> {
    public:
     Record(const DOMPaintTimingInfo& paint_timing_info,
-           const AtomicString& identifier);
+           const AtomicString& identifier,
+           const AtomicString& nested_policy);
     Record(const Record&) = delete;
     Record& operator=(const Record&) = delete;
+
+    enum class NestingPolicy { kIgnore, kTransparent, kShadowed };
+    static NestingPolicy ToNestingPolicy(const AtomicString& str);
+
+    NestingPolicy GetNestingPolicy() const { return nesting_policy_; }
 
     void MaybeUpdateLastNewPaintedArea(
         ContainerTiming* container_timing,
         const DOMPaintTimingInfo& paint_timing_info,
         Element* container_root,
         Element* element,
-        const gfx::RectF& intersection_rect);
+        const gfx::Rect& enclosing_rect);
 
     void MaybeEmitPerformanceEntry(WindowPerformance*);
 
@@ -69,6 +78,7 @@ class CORE_EXPORT ContainerTiming final
    private:
     const DOMPaintTimingInfo first_paint_timing_info_;
     const AtomicString identifier_;
+    const NestingPolicy nesting_policy_ = NestingPolicy::kIgnore;
     DOMPaintTimingInfo last_new_painted_area_paint_timing_info_;
     WeakMember<Element> last_new_painted_area_element_;
     cc::Region painted_region_;

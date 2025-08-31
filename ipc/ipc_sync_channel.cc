@@ -22,15 +22,11 @@
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "ipc/ipc_channel_factory.h"
-#include "ipc/ipc_logging.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_sync_message.h"
-#include "mojo/public/cpp/bindings/sync_event_watcher.h"
-
-#if !BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
 #include "ipc/trace_ipc_message.h"
-#endif
+#include "mojo/public/cpp/bindings/sync_event_watcher.h"
 
 using base::WaitableEvent;
 
@@ -145,19 +141,12 @@ class SyncChannel::ReceivedSyncMsgQueue :
           it = message_queue_.begin();
           first_time = false;
         }
-        for (; it != message_queue_.end(); it++) {
-          int message_group = it->context->restrict_dispatch_group();
-          if (message_group == kRestrictDispatchGroup_None ||
-              (dispatching_context &&
-               message_group ==
-                   dispatching_context->restrict_dispatch_group())) {
-            message = std::move(it->message);
-            context = std::move(it->context);
-            it = message_queue_.erase(it);
-            message_queue_version_++;
-            expected_version = message_queue_version_;
-            break;
-          }
+        if (it != message_queue_.end()) {
+          message = std::move(it->message);
+          context = std::move(it->context);
+          it = message_queue_.erase(it);
+          message_queue_version_++;
+          expected_version = message_queue_version_;
         }
       }
       if (!message) {
@@ -279,8 +268,7 @@ SyncChannel::SyncContext::SyncContext(
     WaitableEvent* shutdown_event)
     : ChannelProxy::Context(listener, ipc_task_runner, listener_task_runner),
       received_sync_msgs_(ReceivedSyncMsgQueue::AddContext()),
-      shutdown_event_(shutdown_event),
-      restrict_dispatch_group_(kRestrictDispatchGroup_None) {}
+      shutdown_event_(shutdown_event) {}
 
 void SyncChannel::SyncContext::OnSendDoneEventSignaled(
     base::RunLoop* nested_loop,
@@ -496,40 +484,10 @@ SyncChannel::SyncChannel(
   StartWatching();
 }
 
-void SyncChannel::AddListenerTaskRunner(
-    int32_t routing_id,
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
-  context()->AddListenerTaskRunner(routing_id, std::move(task_runner));
-}
-
-void SyncChannel::RemoveListenerTaskRunner(int32_t routing_id) {
-  context()->RemoveListenerTaskRunner(routing_id);
-}
-
 SyncChannel::~SyncChannel() = default;
 
-void SyncChannel::SetRestrictDispatchChannelGroup(int group) {
-  sync_context()->set_restrict_dispatch_group(group);
-}
-
-scoped_refptr<SyncMessageFilter> SyncChannel::CreateSyncMessageFilter() {
-  scoped_refptr<SyncMessageFilter> filter = new SyncMessageFilter(
-      sync_context()->shutdown_event());
-  AddFilter(filter.get());
-  if (!did_init())
-    pre_init_sync_message_filters_.push_back(filter);
-  return filter;
-}
-
 bool SyncChannel::Send(Message* message) {
-#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
-  std::string name;
-  Logging::GetInstance()->GetMessageText(
-      message->type(), &name, message, nullptr);
-  TRACE_EVENT1("ipc", "SyncChannel::Send", "name", name);
-#else
   TRACE_IPC_MESSAGE_SEND("ipc", "SyncChannel::Send", message);
-#endif
   if (!message->is_sync()) {
     ChannelProxy::SendInternal(message);
     return true;
@@ -610,8 +568,6 @@ void SyncChannel::StartWatching() {
       sync_context()->listener_task_runner());
 }
 
-void SyncChannel::OnChannelInit() {
-  pre_init_sync_message_filters_.clear();
-}
+void SyncChannel::OnChannelInit() {}
 
 }  // namespace IPC

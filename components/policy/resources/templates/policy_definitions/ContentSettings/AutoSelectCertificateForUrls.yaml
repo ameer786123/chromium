@@ -26,8 +26,9 @@ features:
   per_profile: true
 future_on:
 - fuchsia
+- android
 owners:
-- file://components/policy/OWNERS
+- chromeos-commercial-networking-team@google.com
 - miersh@google.com
 schema:
   items:

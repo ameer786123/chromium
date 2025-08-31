@@ -4,6 +4,7 @@
 
 #include "chrome/browser/fast_checkout/fast_checkout_trigger_validator_impl.h"
 
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/fast_checkout/fast_checkout_capabilities_fetcher.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/logging/log_manager.h"
@@ -72,10 +73,6 @@ FastCheckoutTriggerOutcome FastCheckoutTriggerValidatorImpl::ShouldRun(
   }
 
   // Trigger only on empty fields.
-  // TODO: crbug.com/40227496 - `field.value()` is ambiguous: sometimes it's the
-  // current value, sometimes it's the initial value. The reason is that some
-  // callers upcast `field` from `AutofillField`, whose `value()` is the initial
-  // value. The feature `kAutofillFixValueSemantics` fixes this.
   if (!field.value().empty()) {
     LogAutofillInternals("not triggered because field was not empty.");
     return FastCheckoutTriggerOutcome::kFailureFieldNotEmpty;

@@ -16,6 +16,7 @@
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
 #include "base/task/sequenced_task_runner.h"
@@ -59,12 +60,12 @@ using Operation = base::OnceCallback<base::OnceClosure(
         base::expected<base::FilePath, CategorizedError>)>)>;
 
 constexpr CategorizedError kUnsupportedOperationError = CategorizedError(
-    {.category_ = ErrorCategory::kUpdateCheck,
-     .code_ = static_cast<int>(ProtocolError::UNSUPPORTED_OPERATION)});
+    {.category = ErrorCategory::kUpdateCheck,
+     .code = static_cast<int>(ProtocolError::UNSUPPORTED_OPERATION)});
 
 constexpr CategorizedError kInvalidOperationAttributesError = CategorizedError(
-    {.category_ = ErrorCategory::kUpdateCheck,
-     .code_ = static_cast<int>(ProtocolError::INVALID_OPERATION_ATTRIBUTES)});
+    {.category = ErrorCategory::kUpdateCheck,
+     .code = static_cast<int>(ProtocolError::INVALID_OPERATION_ATTRIBUTES)});
 
 // `Pipeline` manages the flow of operations, passing the output path of
 // each operation to the next one, short-circuiting on errors.
@@ -141,8 +142,8 @@ void Pipeline::OpComplete(
   if (cancel_->IsCancelled()) {
     // Pipeline still running, but cancelled.
     std::move(callback_).Run(
-        {.category_ = ErrorCategory::kService,
-         .code_ = static_cast<int>(ServiceError::CANCELLED)});
+        {.category = ErrorCategory::kService,
+         .code = static_cast<int>(ServiceError::CANCELLED)});
     return;
   }
   // Pipeline still running: start next operation.
@@ -271,13 +272,13 @@ std::queue<Operation> MakeOperations(
       }
       ops.push(SkipIfCached(
           cache_check,
-          base::BindOnce(&DownloadOperation, config, get_available_space,
+          base::BindOnce(&DownloadOperation, config, id, get_available_space,
                          is_foreground, operation.urls, operation.size,
                          operation.sha256_out, event_adder, state_tracker,
                          download_progress_callback)));
     } else if (operation.type == "puff") {
-      // expects: `previous` (hash object)
-      if (operation.sha256_previous.empty()) {
+      // expects: `previous` (hash object) and `out` (hash object)
+      if (operation.sha256_previous.empty() || operation.sha256_out.empty()) {
         return MakeErrorOperations(event_adder,
                                    kInvalidOperationAttributesError,
                                    protocol_request::kEventPuff);
@@ -285,17 +286,18 @@ std::queue<Operation> MakeOperations(
       ops.push(SkipIfCached(
           cache_check,
           base::BindOnce(&PuffOperation, crx_cache,
-                         config->GetPatcherFactory()->Create(), event_adder, id,
-                         operation.sha256_previous)));
+                         config->GetPatcherFactory()->Create(), event_adder,
+                         state_tracker, operation.sha256_previous,
+                         operation.sha256_out)));
     } else if (operation.type == "xz") {
       // expects no extra fields.
       ops.push(SkipIfCached(
           cache_check,
           base::BindOnce(&XzOperation, config->GetUnzipperFactory()->Create(),
-                         event_adder)));
+                         event_adder, state_tracker)));
     } else if (operation.type == "zucc") {
-      // expects: `previous` (hash object)
-      if (operation.sha256_previous.empty()) {
+      // expects: `previous` (hash object) and `out` (hash object)
+      if (operation.sha256_previous.empty() || operation.sha256_out.empty()) {
         return MakeErrorOperations(event_adder,
                                    kInvalidOperationAttributesError,
                                    protocol_request::kEventZucchini);
@@ -303,8 +305,9 @@ std::queue<Operation> MakeOperations(
       ops.push(SkipIfCached(
           cache_check,
           base::BindOnce(&ZucchiniOperation, crx_cache,
-                         config->GetPatcherFactory()->Create(), event_adder, id,
-                         operation.sha256_previous)));
+                         config->GetPatcherFactory()->Create(), event_adder,
+                         state_tracker, operation.sha256_previous,
+                         operation.sha256_out)));
     } else if (operation.type == "crx3") {
       // expects: `in` (hash object)
       // Note: `path` and `arguments` fields are optional.
@@ -385,7 +388,7 @@ void MakePipeline(
         FROM_HERE,
         base::BindOnce(std::move(callback),
                        base::unexpected(CategorizedError(
-                           {.category_ = ErrorCategory::kUpdateCheck}))));
+                           {.category = ErrorCategory::kUpdateCheck}))));
     return;
   }
 

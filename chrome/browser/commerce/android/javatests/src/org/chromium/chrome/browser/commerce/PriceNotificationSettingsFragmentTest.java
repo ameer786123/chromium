@@ -29,12 +29,14 @@ import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.settings.SettingsActivityTestRule;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.CoreAccountInfo;
-import org.chromium.components.signin.base.GaiaId;
 import org.chromium.components.signin.identitymanager.IdentityManager;
+import org.chromium.google_apis.gaia.GaiaId;
 
 /**
  * Tests for the price notification setting UI. These tests are not batched because each requires
@@ -45,22 +47,26 @@ import org.chromium.components.signin.identitymanager.IdentityManager;
 @DoNotBatch(reason = "Layout and behavior are dependent on setup params for the activity.")
 public class PriceNotificationSettingsFragmentTest {
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
+    @Rule
     public final SettingsActivityTestRule<PriceNotificationSettingsFragment> mTestRule =
             new SettingsActivityTestRule<>(PriceNotificationSettingsFragment.class);
 
-    public final ChromeTabbedActivityTestRule mActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    @Rule
+    public final FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Mock private IdentityServicesProvider mIdentityServicesProvider;
 
     @Mock private IdentityManager mIdentityManager;
 
     @Mock private PrefService mPrefs;
+    private WebPageStation mPage;
 
     @Before
     public void setUp() {
         // Make sure the browser is set up correctly prior to mocking everything for settings.
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mPage = mActivityTestRule.startOnBlankPage();
 
         when(mIdentityManager.getPrimaryAccountInfo(anyInt()))
                 .thenReturn(

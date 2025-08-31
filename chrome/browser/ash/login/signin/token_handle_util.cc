@@ -7,6 +7,7 @@
 #include "base/json/values_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notreached.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -229,6 +230,15 @@ void TokenHandleUtil::StoreTokenHandle(const AccountId& account_id,
                      base::TimeToValue(base::Time::Now()));
 }
 
+void TokenHandleUtil::MaybeFetchTokenHandle(
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    const AccountId& account_id,
+    const std::string& access_token,
+    const std::string& refresh_token_hash) {
+  NOTREACHED() << "This is a new interface method not defined for the legacy"
+               << "implementation and should not be accessed";
+}
+
 // static
 void TokenHandleUtil::SetInvalidTokenForTesting(const char* token) {
   g_invalid_token_for_testing = token;
@@ -319,6 +329,11 @@ void TokenHandleUtil::TokenDelegate::OnGetTokenInfoResponse(
 
   std::move(callback_).Run(account_id_, token_, outcome);
   NotifyDone(/*request_completed=*/true);
+}
+
+void TokenHandleUtil::SetTokenHandleStale(const AccountId& account_id) {
+  NOTREACHED() << "This is a new interface method not defined for the legacy"
+               << "implementation and should not be accessed";
 }
 
 }  // namespace ash

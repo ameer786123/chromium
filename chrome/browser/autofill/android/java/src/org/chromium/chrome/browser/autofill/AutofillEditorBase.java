@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.autofill;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.Bundle;
@@ -26,13 +28,18 @@ import androidx.fragment.app.Fragment;
 
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.components.browser_ui.settings.EmbeddableSettingsPage;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.FadingEdgeScrollView;
 import org.chromium.ui.text.EmptyTextWatcher;
 
 /** Base class for Autofill editors (e.g. credit cards and profiles). */
+@NullMarked
 public abstract class AutofillEditorBase extends Fragment
         implements EmbeddableSettingsPage,
                 OnItemSelectedListener,
@@ -57,19 +64,24 @@ public abstract class AutofillEditorBase extends Fragment
 
     @Override
     public View onCreateView(
-            LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
+            LayoutInflater inflater,
+            @Nullable ViewGroup container,
+            @Nullable Bundle savedInstanceState) {
         super.onCreateView(inflater, container, savedInstanceState);
+        assumeNonNull(container);
         setHasOptionsMenu(true);
         mContext = container.getContext();
 
         Bundle extras = getArguments();
+        String guid = null;
         if (extras != null) {
-            mGUID = extras.getString(AUTOFILL_GUID);
+            guid = extras.getString(AUTOFILL_GUID);
         }
-        if (mGUID == null) {
+        if (guid == null) {
             mGUID = "";
             mIsNewEntry = true;
         } else {
+            mGUID = guid;
             mIsNewEntry = false;
         }
         mPageTitle.set(getString(getTitleResourceId(mIsNewEntry)));
@@ -90,6 +102,11 @@ public abstract class AutofillEditorBase extends Fragment
         LinearLayout contentLayout = (LinearLayout) scrollView.findViewById(R.id.content);
         inflater.inflate(getLayoutId(), contentLayout, true);
         inflater.inflate(R.layout.autofill_editor_base_buttons, contentLayout, true);
+
+        if (ChromeFeatureList.sAndroidSettingsContainment.isEnabled()) {
+            baseView.findViewById(R.id.button_bar)
+                    .setBackgroundColor(SemanticColorUtils.getSettingsBackgroundColor(mContext));
+        }
 
         return baseView;
     }

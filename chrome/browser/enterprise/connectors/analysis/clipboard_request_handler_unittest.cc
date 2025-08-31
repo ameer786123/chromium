@@ -5,6 +5,7 @@
 #include "chrome/browser/enterprise/connectors/analysis/clipboard_request_handler.h"
 
 #include "base/run_loop.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_info.h"
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/cloud_binary_upload_service.h"
@@ -15,6 +16,8 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/enterprise/connectors/core/analysis_settings.h"
+#include "components/enterprise/connectors/core/common.h"
+#include "components/safe_browsing/core/common/features.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -25,6 +28,7 @@ namespace {
 constexpr char kAnalysisUrl[] = "https://scan.com/";
 constexpr char kUrl[] = "https://bar.com/";
 constexpr char kSourceUrl[] = "https://baz.com/";
+constexpr char kSourceEmail[] = "test-user@gmail.com";
 constexpr char kTabTitle[] = "tab_title";
 constexpr char kMessage[] = "message";
 constexpr char kMethod[] = "METHOD";
@@ -66,6 +70,8 @@ class TestContentAnalysisInfo : public ContentAnalysisInfo {
 
   const AnalysisSettings& settings() const override { return settings_; }
 
+  signin::IdentityManager* identity_manager() const override { return nullptr; }
+
   int user_action_requests_count() const override { return 1; }
 
   std::string tab_title() const override { return kTabTitle; }
@@ -74,13 +80,26 @@ class TestContentAnalysisInfo : public ContentAnalysisInfo {
 
   std::string email() const override { return "test@user.com"; }
 
-  std::string url() const override { return kUrl; }
+  const GURL& url() const override { return tab_url_; }
 
   const GURL& tab_url() const override { return tab_url_; }
 
   ContentAnalysisRequest::Reason reason() const override {
     return ContentAnalysisRequest::PRINT_PREVIEW_PRINT;
   }
+
+  google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>
+  referrer_chain() const override {
+    return google::protobuf::RepeatedPtrField<
+        safe_browsing::ReferrerChainEntry>();
+  }
+
+  google::protobuf::RepeatedPtrField<std::string> frame_url_chain()
+      const override {
+    return {};
+  }
+
+  content::WebContents* web_contents() const override { return nullptr; }
 
  private:
   GURL tab_url_{kUrl};
@@ -96,6 +115,8 @@ class ClipboardRequestHandlerTest : public testing::Test {
   }
 
   void SetUp() override {
+    scoped_feature_list_.InitAndEnableFeature(
+        safe_browsing::kEnhancedFieldsForSecOps);
     helper_ = std::make_unique<test::EventReportValidatorHelper>(profile_);
 
     ContentAnalysisResponse response;
@@ -130,6 +151,7 @@ class ClipboardRequestHandlerTest : public testing::Test {
   raw_ptr<TestingProfile> profile_;
   std::unique_ptr<test::EventReportValidatorHelper> helper_;
   safe_browsing::TestBinaryUploadService binary_upload_service_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 }  // namespace
@@ -139,9 +161,9 @@ TEST_F(ClipboardRequestHandlerTest, Text) {
 
   auto handler = ClipboardRequestHandler::Create(
       &info, &binary_upload_service_, profile_.get(), GURL(kUrl),
-      ClipboardRequestHandler::Type::kText,
-      safe_browsing::DeepScanAccessPoint::PASTE, GetSource(), kMethod,
-      CreateTestData(kMaxSize), base::BindOnce([](RequestHandlerResult result) {
+      ClipboardRequestHandler::Type::kText, DeepScanAccessPoint::PASTE,
+      GetSource(), kSourceEmail, kMethod, CreateTestData(kMaxSize),
+      base::BindOnce([](RequestHandlerResult result) {
         EXPECT_EQ(result.final_result, FinalContentAnalysisResult::FAILURE);
         EXPECT_EQ(result.complies, false);
         EXPECT_EQ(result.custom_rule_message.message_segments_size(), 1);
@@ -153,6 +175,7 @@ TEST_F(ClipboardRequestHandlerTest, Text) {
   base::RunLoop run_loop;
   auto validator = helper_->CreateValidator();
   validator.SetDoneClosure(run_loop.QuitClosure());
+  validator.ExpectSourceActiveUser(kSourceEmail);
   validator.ExpectSensitiveDataEvent(
       /*url*/
       kUrl,
@@ -180,7 +203,10 @@ TEST_F(ClipboardRequestHandlerTest, Text) {
   EXPECT_TRUE(handler->UploadData());
   run_loop.Run();
 
-  validator.ExpectSensitiveDataEvent(
+  base::RunLoop run_loop_bypass;
+  auto validator_bypass = helper_->CreateValidator();
+  validator_bypass.SetDoneClosure(run_loop_bypass.QuitClosure());
+  validator_bypass.ExpectSensitiveDataEvent(
       /*url*/
       kUrl,
       /*tab_url*/ kUrl,
@@ -204,6 +230,7 @@ TEST_F(ClipboardRequestHandlerTest, Text) {
       /*content_transfer_method*/ kMethod,
       /*user_justification*/ kJustification);
   handler->ReportWarningBypass(kJustification);
+  run_loop_bypass.Run();
 }
 
 TEST_F(ClipboardRequestHandlerTest, Image) {
@@ -211,9 +238,9 @@ TEST_F(ClipboardRequestHandlerTest, Image) {
 
   auto handler = ClipboardRequestHandler::Create(
       &info, &binary_upload_service_, profile_.get(), GURL(kUrl),
-      ClipboardRequestHandler::Type::kImage,
-      safe_browsing::DeepScanAccessPoint::DRAG_AND_DROP, GetSource(), kMethod,
-      CreateTestData(kMaxSize), base::BindOnce([](RequestHandlerResult result) {
+      ClipboardRequestHandler::Type::kImage, DeepScanAccessPoint::DRAG_AND_DROP,
+      GetSource(), kSourceEmail, kMethod, CreateTestData(kMaxSize),
+      base::BindOnce([](RequestHandlerResult result) {
         EXPECT_EQ(result.final_result, FinalContentAnalysisResult::FAILURE);
         EXPECT_EQ(result.complies, false);
         EXPECT_EQ(result.custom_rule_message.message_segments_size(), 1);
@@ -225,6 +252,7 @@ TEST_F(ClipboardRequestHandlerTest, Image) {
   base::RunLoop run_loop;
   auto validator = helper_->CreateValidator();
   validator.SetDoneClosure(run_loop.QuitClosure());
+  validator.ExpectSourceActiveUser(kSourceEmail);
   validator.ExpectSensitiveDataEvent(
       /*url*/
       kUrl,
@@ -252,7 +280,10 @@ TEST_F(ClipboardRequestHandlerTest, Image) {
   EXPECT_TRUE(handler->UploadData());
   run_loop.Run();
 
-  validator.ExpectSensitiveDataEvent(
+  base::RunLoop run_loop_bypass;
+  auto validator_bypass = helper_->CreateValidator();
+  validator_bypass.SetDoneClosure(run_loop_bypass.QuitClosure());
+  validator_bypass.ExpectSensitiveDataEvent(
       /*url*/
       kUrl,
       /*tab_url*/ kUrl,
@@ -276,6 +307,7 @@ TEST_F(ClipboardRequestHandlerTest, Image) {
       /*content_transfer_method*/ kMethod,
       /*user_justification*/ kJustification);
   handler->ReportWarningBypass(kJustification);
+  run_loop_bypass.Run();
 }
 
 }  // namespace enterprise_connectors

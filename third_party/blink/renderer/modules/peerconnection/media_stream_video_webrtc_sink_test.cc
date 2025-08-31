@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/modules/peerconnection/media_stream_video_webrtc_sink.h"
 
+#include "media/base/video_frame.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/renderer/modules/mediastream/mock_media_stream_registry.h"
@@ -19,7 +20,6 @@ namespace blink {
 
 using ::testing::AllOf;
 using ::testing::Field;
-using ::testing::Invoke;
 using ::testing::Mock;
 using ::testing::Optional;
 
@@ -148,10 +148,10 @@ TEST_F(MediaStreamVideoWebRtcSinkTest,
   dependency_factory_ = dependency_factory2;
   MockVideoTrackSourceProxy* source_proxy = nullptr;
   EXPECT_CALL(*dependency_factory2, CreateVideoTrackSourceProxy)
-      .WillOnce(Invoke([&source_proxy](webrtc::VideoTrackSourceInterface*) {
+      .WillOnce([&source_proxy](webrtc::VideoTrackSourceInterface*) {
         source_proxy = new MockVideoTrackSourceProxy();
         return source_proxy;
-      }));
+      });
   SetVideoTrack();
   blink::MediaStreamVideoWebRtcSink sink(
       component_, dependency_factory_.Get(),

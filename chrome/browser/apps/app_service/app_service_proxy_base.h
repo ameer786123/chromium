@@ -36,7 +36,6 @@
 #include "components/services/app_service/public/cpp/permission.h"
 #include "components/services/app_service/public/cpp/preferred_app.h"
 #include "components/services/app_service/public/cpp/preferred_apps_impl.h"
-#include "ui/gfx/native_widget_types.h"
 
 class Profile;
 class GURL;
@@ -47,7 +46,7 @@ class FilePath;
 
 namespace apps {
 
-class AppPublisher;
+class Publisher;
 class AppUpdate;
 class BrowserAppLauncher;
 class PreferredAppsListHandle;
@@ -102,7 +101,7 @@ class AppServiceProxyBase : public KeyedService,
   // Registers `publisher` with the App Service as exclusively publishing apps
   // of type `app_type`. `publisher` must have a lifetime equal to or longer
   // than this object.
-  void RegisterPublisher(AppType app_type, AppPublisher* publisher);
+  void RegisterPublisher(AppType app_type, Publisher* publisher);
 
   // UnRegisters the publisher for `app_type`, As the publisher(ArcApps) might
   // be destroyed earlier than AppServiceProxy.
@@ -386,7 +385,7 @@ class AppServiceProxyBase : public KeyedService,
   // avoid calling other virtual methods in the AppServiceProxy constructor).
   virtual void Initialize();
 
-  AppPublisher* GetPublisher(AppType app_type);
+  Publisher* GetPublisher(AppType app_type);
 
   // Returns true if the app cannot be launched and a launch prevention dialog
   // is shown to the user (e.g. the app is paused or blocked). Returns false
@@ -432,7 +431,7 @@ class AppServiceProxyBase : public KeyedService,
       const apps::IntentFilterPtr& filter,
       const apps::AppUpdate& update);
 
-  base::flat_map<AppType, raw_ptr<AppPublisher, CtnExperimental>> publishers_;
+  base::flat_map<AppType, raw_ptr<Publisher, CtnExperimental>> publishers_;
 
   apps::AppRegistryCache app_registry_cache_;
   apps::AppCapabilityAccessCache app_capability_access_cache_;

@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/functional/callback_helpers.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/web_apps/web_app_views_utils.h"
 #include "chrome/grit/generated_resources.h"
@@ -130,7 +131,8 @@ void SiteIconTextAndOriginView::ContentsChanged(
   }
 
   auto* const modal_dialog_host =
-      modal_dialog_manager->delegate()->GetWebContentsModalDialogHost();
+      modal_dialog_manager->delegate()->GetWebContentsModalDialogHost(
+          web_contents_);
   if (!modal_dialog_host) {
     return;
   }

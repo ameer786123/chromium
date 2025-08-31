@@ -10,6 +10,8 @@ import android.view.View;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.cc.input.OffsetTag;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.EventFilter;
@@ -28,15 +30,16 @@ import java.util.List;
  * scrolling.
  */
 @JNINamespace("android")
+@NullMarked
 public class ScrollingBottomViewSceneLayer extends SceneOverlayLayer implements SceneOverlay {
     /** Handle to the native side of this class. */
     private long mNativePtr;
 
     /** The resource ID used to reference the view bitmap in native. */
-    private int mResourceId;
+    private final int mResourceId;
 
     /** The height of the view's top shadow. */
-    private int mTopShadowHeightPx;
+    private final int mTopShadowHeightPx;
 
     /** The current Y offset of the bottom view in px. */
     private int mCurrentYOffsetPx;
@@ -48,10 +51,10 @@ public class ScrollingBottomViewSceneLayer extends SceneOverlayLayer implements 
     private boolean mIsVisible;
 
     /** The OffsetTag indicating that this layer will be moved by viz. */
-    private OffsetTag mOffsetTag;
+    private @Nullable OffsetTag mOffsetTag;
 
     /** The {@link ViewResourceFrameLayout} that this scene layer represents. */
-    private ViewResourceFrameLayout mBottomView;
+    private final ViewResourceFrameLayout mBottomView;
 
     /**
      * Build a composited bottom view layer.
@@ -108,16 +111,14 @@ public class ScrollingBottomViewSceneLayer extends SceneOverlayLayer implements 
     @Override
     protected void initializeNative() {
         if (mNativePtr == 0) {
-            mNativePtr =
-                    ScrollingBottomViewSceneLayerJni.get().init(ScrollingBottomViewSceneLayer.this);
+            mNativePtr = ScrollingBottomViewSceneLayerJni.get().init(this);
         }
         assert mNativePtr != 0;
     }
 
     @Override
     public void setContentTree(SceneLayer contentTree) {
-        ScrollingBottomViewSceneLayerJni.get()
-                .setContentTree(mNativePtr, ScrollingBottomViewSceneLayer.this, contentTree);
+        ScrollingBottomViewSceneLayerJni.get().setContentTree(mNativePtr, contentTree);
     }
 
     @Override
@@ -134,7 +135,6 @@ public class ScrollingBottomViewSceneLayer extends SceneOverlayLayer implements 
         ScrollingBottomViewSceneLayerJni.get()
                 .updateScrollingBottomViewLayer(
                         mNativePtr,
-                        ScrollingBottomViewSceneLayer.this,
                         resourceManager,
                         mResourceId,
                         mTopShadowHeightPx,
@@ -153,7 +153,7 @@ public class ScrollingBottomViewSceneLayer extends SceneOverlayLayer implements 
     }
 
     @Override
-    public EventFilter getEventFilter() {
+    public @Nullable EventFilter getEventFilter() {
         return null;
     }
 
@@ -186,22 +186,18 @@ public class ScrollingBottomViewSceneLayer extends SceneOverlayLayer implements 
 
     @NativeMethods
     interface Natives {
-        long init(ScrollingBottomViewSceneLayer caller);
+        long init(ScrollingBottomViewSceneLayer self);
 
-        void setContentTree(
-                long nativeScrollingBottomViewSceneLayer,
-                ScrollingBottomViewSceneLayer caller,
-                SceneLayer contentTree);
+        void setContentTree(long nativeScrollingBottomViewSceneLayer, SceneLayer contentTree);
 
         void updateScrollingBottomViewLayer(
                 long nativeScrollingBottomViewSceneLayer,
-                ScrollingBottomViewSceneLayer caller,
                 ResourceManager resourceManager,
                 int viewResourceId,
                 int shadowHeightPx,
                 float xOffset,
                 float yOffset,
                 boolean showShadow,
-                OffsetTag offsetTag);
+                @Nullable OffsetTag offsetTag);
     }
 }

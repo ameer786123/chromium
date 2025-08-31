@@ -19,6 +19,7 @@
 #include "base/containers/queue.h"
 #include "base/debug/alias.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/observer_list.h"
@@ -27,6 +28,7 @@
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "components/input/utils.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/performance_hint_utils.h"
 #include "components/viz/common/surfaces/subtree_capture_id.h"
 #include "components/viz/common/surfaces/video_capture_target.h"
@@ -41,6 +43,7 @@
 #include "components/viz/service/surfaces/pending_copy_output_request.h"
 #include "components/viz/service/surfaces/surface.h"
 #include "services/viz/privileged/mojom/compositing/frame_sink_manager.mojom.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace viz {
 
@@ -90,11 +93,17 @@ FrameSinkManagerImpl::FrameSinkManagerImpl(const InitParams& params)
       log_capture_pipeline_in_webrtc_(params.log_capture_pipeline_in_webrtc),
       debug_settings_(params.debug_renderer_settings),
       host_process_id_(params.host_process_id),
-      hint_session_factory_(params.hint_session_factory) {
+      hint_session_factory_(params.hint_session_factory),
+      frame_sink_manager_receiver_(std::in_place_type<Receiver>, this) {
+  if (mojo::IsDirectReceiverSupported() &&
+      features::IsVizDirectCompositorThreadIpcFrameSinkManagerEnabled()) {
+    frame_sink_manager_receiver_.emplace<DirectReceiver>(
+        mojo::DirectReceiverKey{}, this);
+  }
   surface_manager_.AddObserver(&hit_test_manager_);
   surface_manager_.AddObserver(this);
 
-  if (input::IsTransferInputToVizSupported()) {
+  if (input::InputUtils::IsTransferInputToVizSupported()) {
     input_manager_ = std::make_unique<InputManager>(this);
   }
 }
@@ -135,16 +144,22 @@ FrameSinkBundleImpl* FrameSinkManagerImpl::GetFrameSinkBundle(
 }
 
 void FrameSinkManagerImpl::BindAndSetClient(
-    mojo::PendingReceiver<mojom::FrameSinkManager> receiver,
+    mojo::PendingReceiver<mojom::FrameSinkManager> interface_receiver,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     mojo::PendingRemote<mojom::FrameSinkManagerClient> client,
     SharedImageInterfaceProvider* shared_image_interface_provider) {
   DCHECK(!client_);
-  DCHECK(!frame_sink_manager_receiver_.is_bound());
   DCHECK(shared_image_interface_provider);
   shared_image_interface_provider_ = shared_image_interface_provider;
-  frame_sink_manager_receiver_.Bind(std::move(receiver),
-                                    std::move(task_runner));
+
+  std::visit(absl::Overload{[&](Receiver& receiver) {
+                              receiver.Bind(std::move(interface_receiver),
+                                            task_runner);
+                            },
+                            [&](DirectReceiver& receiver) {
+                              receiver.Bind(std::move(interface_receiver));
+                            }},
+             frame_sink_manager_receiver_);
   client_remote_.Bind(std::move(client));
   client_ = client_remote_.get();
 }
@@ -160,7 +175,7 @@ void FrameSinkManagerImpl::SetLocalClient(
 
 void FrameSinkManagerImpl::SetInputManagerForTesting(
     std::unique_ptr<InputManager> input_manager) {
-  if (!input::IsTransferInputToVizSupported()) {
+  if (!input::InputUtils::IsTransferInputToVizSupported()) {
     return;
   }
 
@@ -176,14 +191,16 @@ void FrameSinkManagerImpl::RegisterFrameSinkId(const FrameSinkId& frame_sink_id,
 
   if (video_detector_)
     video_detector_->OnFrameSinkIdRegistered(frame_sink_id);
-
-  for (auto& observer : observer_list_)
-    observer.OnRegisteredFrameSinkId(frame_sink_id);
 }
 
 void FrameSinkManagerImpl::InvalidateFrameSinkId(
-    const FrameSinkId& frame_sink_id) {
+    const FrameSinkId& frame_sink_id,
+    InvalidateFrameSinkIdCallback callback) {
+  TRACE_EVENT("viz", "FrameSinkManagerImpl::InvalidateFrameSinkId",
+              "frame_sink_id", frame_sink_id);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  base::ScopedClosureRunner callback_runner(std::move(callback));
 
   surface_manager_.InvalidateFrameSinkId(frame_sink_id);
   if (video_detector_)
@@ -196,9 +213,6 @@ void FrameSinkManagerImpl::InvalidateFrameSinkId(
   root_sink_map_.erase(frame_sink_id);
 
   frame_sink_data_.erase(frame_sink_id);
-
-  for (auto& observer : observer_list_)
-    observer.OnInvalidatedFrameSinkId(frame_sink_id);
 }
 
 void FrameSinkManagerImpl::SetFrameSinkDebugLabel(
@@ -260,8 +274,11 @@ void FrameSinkManagerImpl::CreateFrameSinkBundle(
   if (base::Contains(bundle_map_, bundle_id)) {
     uint32_t client_id = bundle_id.client_id();
     uint32_t bundle_id_value = bundle_id.bundle_id();
-    frame_sink_manager_receiver_.ReportBadMessage(
-        "Duplicate FrameSinkBundle ID");
+    std::visit(
+        [](auto& receiver) {
+          receiver.ReportBadMessage("Duplicate FrameSinkBundle ID");
+        },
+        frame_sink_manager_receiver_);
     base::debug::Alias(&client_id);
     base::debug::Alias(&bundle_id_value);
     return;
@@ -281,7 +298,11 @@ void FrameSinkManagerImpl::CreateCompositorFrameSink(
   TRACE_EVENT("viz", "FrameSinkManagerImpl::CreateCompositorFrameSink",
               "frame_sink_id", frame_sink_id);
   if (base::Contains(sink_map_, frame_sink_id)) {
-    frame_sink_manager_receiver_.ReportBadMessage("Duplicate FrameSinkId");
+    std::visit(
+        [](auto& receiver) {
+          receiver.ReportBadMessage("Duplicate FrameSinkId");
+        },
+        frame_sink_manager_receiver_);
     return;
   }
   if (bundle_id && !GetFrameSinkBundle(*bundle_id)) {
@@ -297,6 +318,12 @@ void FrameSinkManagerImpl::CreateCompositorFrameSink(
         frame_sink_id,
         /*is_root=*/false, std::move(render_input_router_config),
         /*create_input_receiver=*/false, gpu::SurfaceHandle());
+    // Set BeginFrameSource here since RenderInputRouter associated with
+    // |frame_sink_id| would've been created by now.
+    auto it = frame_sink_source_map_.find(frame_sink_id);
+    if (it != frame_sink_source_map_.end() && it->second.source) {
+      GetInputManager()->SetBeginFrameSource(frame_sink_id, it->second.source);
+    }
   }
 }
 
@@ -346,16 +373,14 @@ void FrameSinkManagerImpl::RegisterFrameSinkHierarchy(
 void FrameSinkManagerImpl::UnregisterFrameSinkHierarchy(
     const FrameSinkId& parent_frame_sink_id,
     const FrameSinkId& child_frame_sink_id) {
+  TRACE_EVENT("viz", "FrameSinkManagerImpl::UnregisterFrameSinkHierarchy",
+              "parent_frame_sink_id", parent_frame_sink_id,
+              "child_frame_sink_id", child_frame_sink_id);
   // Deliberately do not check validity of either parent or child FrameSinkId
   // here. They were valid during the registration, so were valid at some point
   // in time. This makes it possible to invalidate parent and child FrameSinkIds
   // independently of each other and not have an ordering dependency of
   // unregistering the hierarchy first before either of them.
-
-  for (auto& observer : observer_list_) {
-    observer.OnUnregisteredFrameSinkHierarchy(parent_frame_sink_id,
-                                              child_frame_sink_id);
-  }
 
   auto iter_child = frame_sink_source_map_.find(child_frame_sink_id);
   CHECK(iter_child != frame_sink_source_map_.end());
@@ -383,6 +408,11 @@ void FrameSinkManagerImpl::UnregisterFrameSinkHierarchy(
   auto& mapping = iter_parent->second;
   DCHECK(base::Contains(mapping.children, child_frame_sink_id));
   mapping.children.erase(child_frame_sink_id);
+
+  for (auto& observer : observer_list_) {
+    observer.OnUnregisteredFrameSinkHierarchy(parent_frame_sink_id,
+                                              child_frame_sink_id);
+  }
 
   // Now the hierarchy has been updated, update throttling.
   UpdateThrottling();
@@ -591,23 +621,22 @@ void FrameSinkManagerImpl::RegisterCompositorFrameSinkSupport(
   if (it != frame_sink_source_map_.end() && it->second.source)
     support->SetBeginFrameSource(it->second.source);
 
-  for (auto& observer : observer_list_)
-    observer.OnCreatedCompositorFrameSink(frame_sink_id, support->is_root());
-
   if (global_throttle_interval_) {
     UpdateThrottlingRecursively(frame_sink_id,
                                 global_throttle_interval_.value());
   }
 
   if (frame_counter_) {
-    frame_counter_->AddFrameSink(frame_sink_id, support->frame_sink_type(),
-                                 support->is_root(),
+    frame_counter_->AddFrameSink(frame_sink_id, support->is_root(),
                                  GetFrameSinkDebugLabel(frame_sink_id));
   }
 }
 
 void FrameSinkManagerImpl::UnregisterCompositorFrameSinkSupport(
     const FrameSinkId& frame_sink_id) {
+  TRACE_EVENT("viz",
+              "FrameSinkManagerImpl::UnregisterCompositorFrameSinkSupport",
+              "frame_sink_id", frame_sink_id);
   DCHECK(base::Contains(support_map_, frame_sink_id));
 
   for (auto& observer : observer_list_)
@@ -667,8 +696,16 @@ void FrameSinkManagerImpl::RecursivelyAttachBeginFrameSource(
   if (!mapping.source) {
     mapping.source = source;
     auto iter = support_map_.find(frame_sink_id);
-    if (iter != support_map_.end())
+    if (iter != support_map_.end()) {
+      // Updates the InputManager(or FlingScheduler) of BeginFrameSource changes
+      // before CompositorFrameSinkSupport since it is 1:1 with
+      // RenderInputRouter (for layer tree frame sinks associated CFSS) and
+      // updating it earlier may cause UAF bugs.
+      if (GetInputManager()) {
+        GetInputManager()->SetBeginFrameSource(frame_sink_id, source);
+      }
       iter->second->SetBeginFrameSource(source);
+    }
   }
 
   // Copy the list of children because RecursivelyAttachBeginFrameSource() can
@@ -689,8 +726,16 @@ void FrameSinkManagerImpl::RecursivelyDetachBeginFrameSource(
   if (mapping.source == source) {
     mapping.source = nullptr;
     auto client_iter = support_map_.find(frame_sink_id);
-    if (client_iter != support_map_.end())
+    if (client_iter != support_map_.end()) {
+      // Updates the InputManager(or FlingScheduler) of BeginFrameSource changes
+      // before CompositorFrameSinkSupport since it is 1:1 with
+      // RenderInputRouter (for layer tree frame sinks associated CFSS) and
+      // updating it earlier may cause UAF bugs.
+      if (GetInputManager()) {
+        GetInputManager()->SetBeginFrameSource(frame_sink_id, nullptr);
+      }
       client_iter->second->SetBeginFrameSource(nullptr);
+    }
   }
 
   // Delete the FrameSinkSourceMapping for `frame_sink_id` if both parent and
@@ -824,6 +869,15 @@ void FrameSinkManagerImpl::OnFrameSinkDeviceScaleFactorChanged(
   }
 }
 
+void FrameSinkManagerImpl::OnFrameSinkMobileOptimizedChanged(
+    const FrameSinkId& frame_sink_id,
+    bool is_mobile_optimized) {
+  for (auto& observer : observer_list_) {
+    observer.OnFrameSinkMobileOptimizedChanged(frame_sink_id,
+                                               is_mobile_optimized);
+  }
+}
+
 void FrameSinkManagerImpl::AddObserver(FrameSinkObserver* obs) {
   observer_list_.AddObserver(obs);
 }
@@ -851,6 +905,15 @@ FrameSinkId FrameSinkManagerImpl::GetOldestParentByChildFrameId(
   return it->second.parent.front();
 }
 
+int FrameSinkManagerImpl::GetNumParents(
+    const FrameSinkId& frame_sink_id) const {
+  auto it = frame_sink_source_map_.find(frame_sink_id);
+  if (it == frame_sink_source_map_.end()) {
+    return 0;
+  }
+  return it->second.parent.size();
+}
+
 FrameSinkId FrameSinkManagerImpl::GetOldestRootCompositorFrameSinkId(
     const FrameSinkId& child_frame_sink_id) const {
   auto parent_id = GetOldestParentByChildFrameId(child_frame_sink_id);
@@ -876,18 +939,6 @@ CompositorFrameSinkSupport* FrameSinkManagerImpl::GetFrameSinkForId(
   if (it != support_map_.end())
     return it->second;
   return nullptr;
-}
-
-base::TimeDelta FrameSinkManagerImpl::GetPreferredFrameIntervalForFrameSinkId(
-    const FrameSinkId& id,
-    mojom::CompositorFrameSinkType* type) const {
-  auto it = support_map_.find(id);
-  if (it != support_map_.end())
-    return it->second->GetPreferredFrameInterval(type);
-
-  if (type)
-    *type = mojom::CompositorFrameSinkType::kUnspecified;
-  return BeginFrameArgs::MinInterval();
 }
 
 void FrameSinkManagerImpl::DiscardPendingCopyOfOutputRequests(
@@ -1035,7 +1086,7 @@ void FrameSinkManagerImpl::ClearThrottling(const FrameSinkId& id) {
 
 void FrameSinkManagerImpl::MaybeEraseHitTestQuery(
     const FrameSinkId& frame_sink_id) {
-  if (!input::IsTransferInputToVizSupported()) {
+  if (!input::InputUtils::IsTransferInputToVizSupported()) {
     return;
   }
   display_hit_test_query_.erase(frame_sink_id);
@@ -1043,7 +1094,7 @@ void FrameSinkManagerImpl::MaybeEraseHitTestQuery(
 
 void FrameSinkManagerImpl::MaybeAddHitTestQuery(
     const FrameSinkId& frame_sink_id) {
-  if (!input::IsTransferInputToVizSupported()) {
+  if (!input::InputUtils::IsTransferInputToVizSupported()) {
     return;
   }
   auto it = support_map_.find(frame_sink_id);
@@ -1113,8 +1164,7 @@ void FrameSinkManagerImpl::StartFrameCounting(base::TimeTicks start_time,
 
   for (auto& [sink_id, support] : support_map_) {
     DCHECK_EQ(sink_id, support->frame_sink_id());
-    frame_counter_->AddFrameSink(sink_id, support->frame_sink_type(),
-                                 support->is_root(),
+    frame_counter_->AddFrameSink(sink_id, support->is_root(),
                                  GetFrameSinkDebugLabel(sink_id));
   }
 }
@@ -1214,15 +1264,10 @@ void FrameSinkManagerImpl::EnableFrameSinkManagerTestApi(
   test_api_receiver_.Bind(std::move(receiver));
 }
 
-void FrameSinkManagerImpl::SetupRenderInputRouterDelegateConnection(
-    const base::UnguessableToken& grouping_id,
-    mojo::PendingRemote<input::mojom::RenderInputRouterDelegateClient>
-        rir_delegate_client_remote,
-    mojo::PendingReceiver<input::mojom::RenderInputRouterDelegate>
-        rir_delegate_receiver) {
-  input_manager_->SetupRenderInputRouterDelegateConnection(
-      grouping_id, std::move(rir_delegate_client_remote),
-      std::move(rir_delegate_receiver));
+void FrameSinkManagerImpl::SetupRendererInputRouterDelegateRegistry(
+    mojo::PendingReceiver<mojom::RendererInputRouterDelegateRegistry>
+        receiver) {
+  input_manager_->SetupRendererInputRouterDelegateRegistry(std::move(receiver));
 }
 
 void FrameSinkManagerImpl::NotifyRendererBlockStateChanged(

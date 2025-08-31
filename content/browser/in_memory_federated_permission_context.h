@@ -16,9 +16,9 @@
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
-#include "content/public/browser/federated_identity_api_permission_context_delegate.h"
-#include "content/public/browser/federated_identity_auto_reauthn_permission_context_delegate.h"
-#include "content/public/browser/federated_identity_permission_context_delegate.h"
+#include "content/public/browser/webid/federated_identity_api_permission_context_delegate.h"
+#include "content/public/browser/webid/federated_identity_auto_reauthn_permission_context_delegate.h"
+#include "content/public/browser/webid/federated_identity_permission_context_delegate.h"
 #include "net/base/schemeful_site.h"
 #include "third_party/blink/public/mojom/webid/federated_auth_request.mojom-forward.h"
 #include "url/gurl.h"
@@ -49,8 +49,6 @@ class InMemoryFederatedPermissionContext
   void RecordDismissAndEmbargo(
       const url::Origin& relying_party_embedder) override;
   void RemoveEmbargoAndResetCounts(
-      const url::Origin& relying_party_embedder) override;
-  void RecordIgnoreAndEmbargo(
       const url::Origin& relying_party_embedder) override;
   bool ShouldCompleteRequestImmediately() const override;
   bool HasThirdPartyCookiesAccess(

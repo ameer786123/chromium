@@ -67,10 +67,6 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformNode {
   static void SetAXModeChangeAllowed(bool allow);
   static bool IsAXModeChangeAllowed();
 
-  // Helper static function to notify all global observers about
-  // the addition of an AXMode flag.
-  static void NotifyAddAXModeFlags(AXMode mode_flags);
-
   // Return the focused object in any UI popup overlaying content, or null.
   static gfx::NativeViewAccessible GetPopupFocusOverride();
 
@@ -78,6 +74,14 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformNode {
   // The focus override is the perceived focus within the popup, and it changes
   // each time a user navigates to a new item within the popup.
   static void SetPopupFocusOverride(gfx::NativeViewAccessible focus_override);
+
+  // Returns true if the instance has been destroyed. Generally, no consumers
+  // should hold a pointer to an instance after calling `Destroy`. On platforms
+  // where an instance may outlive its delegate (e.g., on Windows where an
+  // accessibility tool may hold references to COM objects), it is necessary to
+  // check that an instance hasn't been destroyed before handling an inbound
+  // call from the platform.
+  virtual bool IsDestroyed() const = 0;
 
   // Get the platform-specific accessible object type for this instance.
   // On some platforms this is just a type cast, on others it may be a
@@ -92,6 +96,9 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformNode {
   // correspond to what would be shown in the Omnibox.
   virtual std::string GetRootURL() const = 0;
 
+  // Returns true if this node from web content.
+  virtual bool IsWebContent() const = 0;
+
 #if BUILDFLAG(IS_APPLE)
   // Fire a platform-specific notification to speak the |text| string.
   // AnnouncementType kPolite will speak the given string.
@@ -103,7 +110,8 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformNode {
                               AnnouncementType announcement_type) = 0;
 #endif
 
-  // Return this object's delegate.
+  // Return this object's delegate. As with all methods, this must not be called
+  // on an instance that has been destroyed (see `IsDestroyed()`).
   virtual AXPlatformNodeDelegate* GetDelegate() const = 0;
 
   // Return true if this object is equal to or a descendant of |ancestor|.

@@ -5,15 +5,14 @@
 package org.chromium.chrome.browser.bookmarks;
 
 import android.content.res.Resources;
-import android.os.Build;
-
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import com.google.common.primitives.UnsignedLongs;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.Contract;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.commerce.PriceTrackingUtils;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
 import org.chromium.chrome.browser.price_tracking.PriceDropNotificationManager;
@@ -35,13 +34,15 @@ import org.chromium.components.power_bookmarks.ShoppingSpecifics;
 /** Utilities for use in power bookmarks. */
 // TODO(crbug.com/40234642): We should add a JNI layer for the native version of these utilities in
 //                price_tracking_utils and use those instead.
+@NullMarked
 public class PowerBookmarkUtils {
-    private static Boolean sPriceTrackingEligibleForTesting;
-    private static PowerBookmarkMeta sPowerBookmarkMetaForTesting;
+    private static @Nullable Boolean sPriceTrackingEligibleForTesting;
+    private static @Nullable PowerBookmarkMeta sPowerBookmarkMetaForTesting;
 
     /** Returns whether the given meta is a shopping list item. */
+    @Contract("_, null -> false")
     public static boolean isShoppingListItem(
-            ShoppingService shoppingService, PowerBookmarkMeta meta) {
+            ShoppingService shoppingService, @Nullable PowerBookmarkMeta meta) {
         return CommerceFeatureUtils.isShoppingListEligible(shoppingService)
                 && meta != null
                 && meta.hasShoppingSpecifics();
@@ -73,8 +74,8 @@ public class PowerBookmarkUtils {
      * @param meta The {@link PowerBookmarkMeta} to create the {@link CommerceSubscription} for.
      * @return The {@link CommerceSubsription} for the given {@link PowerBookmarkMeta}
      */
-    public static @NonNull CommerceSubscription createCommerceSubscriptionForPowerBookmarkMeta(
-            @NonNull PowerBookmarkMeta meta) {
+    public static CommerceSubscription createCommerceSubscriptionForPowerBookmarkMeta(
+            PowerBookmarkMeta meta) {
         return createCommerceSubscriptionForShoppingSpecifics(meta.getShoppingSpecifics());
     }
 
@@ -86,8 +87,8 @@ public class PowerBookmarkUtils {
      *     CommerceSubscription} for.
      * @return The {@link CommerceSubsription} for the given {@link ShoppingSpecifics}
      */
-    public static @NonNull CommerceSubscription createCommerceSubscriptionForShoppingSpecifics(
-            @NonNull ShoppingSpecifics shoppingSpecifics) {
+    public static CommerceSubscription createCommerceSubscriptionForShoppingSpecifics(
+            ShoppingSpecifics shoppingSpecifics) {
         // Use UnsignedLongs to convert ProductClusterId to avoid overflow.
         UserSeenOffer seenOffer =
                 new UserSeenOffer(
@@ -118,14 +119,14 @@ public class PowerBookmarkUtils {
      * @param priceDropNotificationManager Manages price drop notifications.
      */
     public static void setPriceTrackingEnabledWithSnackbars(
-            @NonNull BookmarkModel bookmarkModel,
+            BookmarkModel bookmarkModel,
             @Nullable BookmarkId bookmarkId,
             boolean enabled,
             SnackbarManager snackbarManager,
             Resources resources,
             Profile profile,
             Callback<Boolean> callback,
-            @NonNull PriceDropNotificationManager priceDropNotificationManager) {
+            PriceDropNotificationManager priceDropNotificationManager) {
         // TODO(crbug.com/393186352): Fix nullable annotation for bookmarkId parameter.
         // Early return when bookmarkId is null.
         if (bookmarkId == null) {
@@ -145,7 +146,7 @@ public class PowerBookmarkUtils {
         SnackbarManager.SnackbarController retrySnackbarControllerAction =
                 new SnackbarManager.SnackbarController() {
                     @Override
-                    public void onAction(Object actionData) {
+                    public void onAction(@Nullable Object actionData) {
                         setPriceTrackingEnabledWithSnackbars(
                                 bookmarkModel,
                                 bookmarkId,
@@ -193,9 +194,7 @@ public class PowerBookmarkUtils {
         // Make sure the notification channel is initialized when the user tracks a product.
         // TODO(crbug.com/40245507): Add a SubscriptionsObserver in the PriceDropNotificationManager
         // and initialize the channel there.
-        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            priceDropNotificationManager.createNotificationChannel();
-        }
+        priceDropNotificationManager.createNotificationChannel();
         PriceTrackingUtils.setPriceTrackingStateForBookmark(
                 profile, bookmarkId.getId(), enabled, wrapperCallback);
     }

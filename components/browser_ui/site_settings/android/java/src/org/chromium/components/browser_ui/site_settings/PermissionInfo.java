@@ -9,6 +9,8 @@ import org.chromium.build.annotations.Nullable;
 import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.content_settings.SessionModel;
+import org.chromium.components.permissions.PermissionsAndroidFeatureList;
+import org.chromium.components.permissions.PermissionsAndroidFeatureMap;
 import org.chromium.content_public.browser.BrowserContextHandle;
 
 import java.io.Serializable;
@@ -68,7 +70,8 @@ public class PermissionInfo implements Serializable {
             @ContentSettingsType.EnumType int mContentSettingsType,
             String origin,
             @Nullable String embeddingOrigin) {
-        return org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni.get()
+        assert mContentSettingsType != ContentSettingsType.GEOLOCATION_WITH_OPTIONS;
+        return WebsitePreferenceBridgeJni.get()
                 .getPermissionSettingForOrigin(
                         browserContextHandle,
                         mContentSettingsType,
@@ -79,20 +82,52 @@ public class PermissionInfo implements Serializable {
     /** Returns the ContentSetting value for this origin. */
     public @ContentSettingValues @Nullable Integer getContentSetting(
             BrowserContextHandle browserContextHandle) {
+        assert mContentSettingsType != ContentSettingsType.GEOLOCATION_WITH_OPTIONS;
         return PermissionInfo.getContentSetting(
                 browserContextHandle, mContentSettingsType, mOrigin, mEmbedder);
     }
 
-
     /** Sets the native ContentSetting value for this origin. */
     public void setContentSetting(
             BrowserContextHandle browserContextHandle, @ContentSettingValues int value) {
-        org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni.get()
+        assert mContentSettingsType != ContentSettingsType.GEOLOCATION_WITH_OPTIONS;
+        WebsitePreferenceBridgeJni.get()
                 .setPermissionSettingForOrigin(
                         browserContextHandle,
                         mContentSettingsType,
                         mOrigin,
                         getEmbedderSafe(),
                         value);
+    }
+
+    /** Returns the Geolocation permission value for this origin. */
+    public GeolocationSetting getGeolocationSetting(BrowserContextHandle browserContextHandle) {
+        assert mContentSettingsType == ContentSettingsType.GEOLOCATION_WITH_OPTIONS;
+        assert PermissionsAndroidFeatureMap.isEnabled(
+                PermissionsAndroidFeatureList.APPROXIMATE_GEOLOCATION_PERMISSION);
+
+        GeolocationSetting setting =
+                WebsitePreferenceBridgeJni.get()
+                        .getGeolocationSettingForOrigin(
+                                browserContextHandle,
+                                mContentSettingsType,
+                                mOrigin,
+                                getEmbedderSafe());
+
+        return setting;
+    }
+
+    /** Set the Geolocation permission value for this origin. */
+    public void setGeolocationSetting(
+            BrowserContextHandle browserContextHandle, @Nullable GeolocationSetting setting) {
+        assert mContentSettingsType == ContentSettingsType.GEOLOCATION_WITH_OPTIONS;
+        WebsitePreferenceBridgeJni.get()
+                .setGeolocationSettingForOrigin(
+                        browserContextHandle,
+                        mContentSettingsType,
+                        mOrigin,
+                        getEmbedderSafe(),
+                        setting != null ? setting.mApproximate : ContentSettingValues.DEFAULT,
+                        setting != null ? setting.mPrecise : ContentSettingValues.DEFAULT);
     }
 }

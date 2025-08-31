@@ -11,7 +11,9 @@
 #include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/signin/signin_modal_dialog.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
@@ -19,6 +21,7 @@
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/sync/base/data_type.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "url/gurl.h"
 
@@ -30,7 +33,9 @@
 #error This file should only be included on desktop.
 #endif
 
-class Browser;
+class BrowserWindowInterface;
+class Profile;
+class TabStripModel;
 struct AccountInfo;
 struct CoreAccountId;
 
@@ -64,8 +69,24 @@ class SigninViewController {
  public:
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(
       kSignoutConfirmationDialogViewElementId);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kHistorySyncOptinViewId);
 
-  explicit SigninViewController(Browser* browser);
+  class Observer : public base::CheckedObserver {
+   public:
+    // Called when a sigin-in modal dialog is closed.
+    virtual void OnModalSigninDialogClosed() {}
+
+   protected:
+    ~Observer() override = default;
+  };
+
+  // Add/Remove an `observer`; cannot be NULL.
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
+
+  SigninViewController(BrowserWindowInterface* browser,
+                       Profile* profile,
+                       TabStripModel* tab_strip_model);
 
   SigninViewController(const SigninViewController&) = delete;
   SigninViewController& operator=(const SigninViewController&) = delete;
@@ -148,6 +169,12 @@ class SigninViewController {
   void ShowModalSyncConfirmationDialog(bool is_signin_intercept,
                                        bool is_sync_promo);
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  // Shows the modal history sync opt in dialog as a browser-modal dialog on top
+  // of the `browser_`'s window.
+  void ShowModalHistorySyncOptInDialog();
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
   // Shows the modal managed user notice dialog as a browser-modal dialog on
   // top of the `browser_`'s window. `domain_name` is the domain of the
   // enterprise account being shown. `callback` is called with the user's action
@@ -185,6 +212,8 @@ class SigninViewController {
   void OnModalDialogClosed();
 
   base::WeakPtr<SigninViewController> AsWeakPtr();
+
+  void TearDownPreBrowserWindowDestruction();
 
  private:
   FRIEND_TEST_ALL_PREFIXES(SignInViewControllerBrowserTest,
@@ -230,7 +259,7 @@ class SigninViewController {
       signin_metrics::AccessPoint reauth_access_point,
       signin_metrics::ProfileSignout profile_signout_source,
       signin_metrics::SourceForRefreshTokenOperation token_signout_source,
-      syncer::DataTypeSet unsynced_datatypes);
+      absl::flat_hash_map<syncer::DataType, size_t> unsynced_datatypes);
 
   void ShowChromeSigninDialogForExtensions(
       const std::u16string& extension_name_for_display,
@@ -256,8 +285,14 @@ class SigninViewController {
   // Helper to create an on close callback for `SigninModalDialog`.
   base::OnceClosure GetOnModalDialogClosedCallback();
 
-  // Browser owning this controller.
-  raw_ptr<Browser> browser_;
+  Profile* GetProfile();
+  TabStripModel* GetTabStripModel();
+
+  // BrowserWindowInterface owning this controller.
+  const raw_ref<BrowserWindowInterface> browser_;
+
+  const raw_ref<Profile> profile_;
+  const raw_ref<TabStripModel> tab_strip_model_;
 
   // Currently displayed modal dialog, or nullptr if none is displayed.
   std::unique_ptr<SigninModalDialog> dialog_;
@@ -265,6 +300,8 @@ class SigninViewController {
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
   std::unique_ptr<NewTabWebContentsObserver> new_tab_web_contents_observer_;
 #endif
+
+  base::ObserverList<Observer> observer_list_;
 
   base::WeakPtrFactory<SigninViewController> weak_ptr_factory_{this};
 };

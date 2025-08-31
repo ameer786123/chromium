@@ -10,13 +10,15 @@ import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
 import androidx.preference.ListPreference;
 import androidx.preference.Preference;
-import androidx.preference.PreferenceFragmentCompat;
 
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
+import org.chromium.chrome.browser.settings.ChromeBaseSettingsFragment;
 import org.chromium.chrome.browser.tracing.TracingController;
 import org.chromium.chrome.browser.tracing.TracingNotificationManager;
 import org.chromium.components.browser_ui.settings.EmbeddableSettingsPage;
@@ -30,7 +32,8 @@ import java.util.Map;
 import java.util.Set;
 
 /** Settings fragment that shows options for recording a performance trace. */
-public class TracingSettings extends PreferenceFragmentCompat
+@NullMarked
+public class TracingSettings extends ChromeBaseSettingsFragment
         implements EmbeddableSettingsPage, TracingController.Observer {
     static final String NON_DEFAULT_CATEGORY_PREFIX = "disabled-by-default-";
 
@@ -181,7 +184,7 @@ public class TracingSettings extends PreferenceFragmentCompat
     }
 
     @Override
-    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+    public void onCreatePreferences(@Nullable Bundle savedInstanceState, @Nullable String rootKey) {
         SettingsUtils.addPreferencesFromResource(this, R.xml.tracing_preferences);
 
         mPrefDefaultCategories = findPreference(UI_PREF_DEFAULT_CATEGORIES);
@@ -232,9 +235,14 @@ public class TracingSettings extends PreferenceFragmentCompat
     }
 
     @Override
+    public void onStart() {
+        super.onStart();
+        updatePreferences();
+    }
+
+    @Override
     public void onResume() {
         super.onResume();
-        updatePreferences();
         TracingController.getInstance().addObserver(this);
     }
 
@@ -301,5 +309,10 @@ public class TracingSettings extends PreferenceFragmentCompat
             mPrefStartRecording.setTitle(MSG_ACTIVE);
             mPrefTracingStatus.setTitle(MSG_ACTIVE_SUMMARY);
         }
+    }
+
+    @Override
+    public @AnimationType int getAnimationType() {
+        return AnimationType.PROPERTY;
     }
 }

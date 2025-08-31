@@ -15,12 +15,15 @@
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "base/allocator/partition_alloc_features.h"
+#include "base/android/background_thread_pool_field_trial.h"
 #include "base/feature_list.h"
 #include "base/features.h"
 #include "base/notreached.h"
@@ -35,6 +38,10 @@
 #include "sandbox/linux/system_headers/linux_ptrace.h"
 #include "sandbox/linux/system_headers/linux_syscalls.h"
 #include "sandbox/linux/system_headers/linux_time.h"
+
+#if !defined(MAP_DROPPABLE)
+#define MAP_DROPPABLE 0x08  // Zero memory under memory pressure.
+#endif
 
 #if BUILDFLAG(IS_LINUX) && !defined(__arm__) && !defined(__aarch64__) && \
     !defined(PTRACE_GET_THREAD_AREA)
@@ -235,11 +242,22 @@ ResultExpr RestrictMmapFlags() {
   const uint64_t kArchSpecificAllowedMask = 0;
 #endif
   // The flags MAP_HUGETLB and MAP_POPULATE are specifically not permitted.
+  // MAP_DROPPABLE originally added for getrandom() vDSO implementation:
+  // https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/lib/vdso/getrandom.c#n86
+  // ...for which glibc support landed in 2.41:
+  // https://sourceware.org/git/?p=glibc.git;a=commit;h=461cab1de747f3842f27a5d24977d78d561d45f9
   // TODO(davidung), remove MAP_DENYWRITE with updated Tegra libraries.
   const uint64_t kAllowedMask = MAP_SHARED | MAP_PRIVATE | MAP_ANONYMOUS |
                                 MAP_STACK | MAP_NORESERVE | MAP_FIXED |
-                                MAP_DENYWRITE | MAP_LOCKED |
+                                MAP_DENYWRITE | MAP_LOCKED | MAP_DROPPABLE |
                                 kArchSpecificAllowedMask;
+  const Arg<int> flags(3);
+  return If((flags & ~kAllowedMask) == 0, Allow()).Else(CrashSIGSYS());
+}
+
+SANDBOX_EXPORT ResultExpr RestrictMremapFlagsForODML() {
+  // No flags are allowed.
+  const uint64_t kAllowedMask = 0;
   const Arg<int> flags(3);
   return If((flags & ~kAllowedMask) == 0, Allow()).Else(CrashSIGSYS());
 }
@@ -347,19 +365,19 @@ ResultExpr RestrictFutex() {
       .Cases({FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE, FUTEX_CMP_REQUEUE,
               FUTEX_WAKE_OP, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET},
              Allow())
-#if BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)
+#if BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE) && BUILDFLAG(IS_ANDROID)
       // Priority-inheritance futex operations are enabled only on Android
       // kernels 6.1+. Bionic uses the PI variants of the futex operations
       // (FUTEX_LOCK_PI2, FUTEX_UNLOCK_PI) to implement priority inheriting
       // mutexes.
       .Cases({FUTEX_LOCK_PI, FUTEX_UNLOCK_PI, FUTEX_TRYLOCK_PI,
               FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI2},
-             (base::KernelSupportsPriorityInheritanceFutex() &&
-              base::FeatureList::IsEnabled(
-                  base::features::kUsePriorityInheritanceMutex))
+             base::android::BackgroundThreadPoolFieldTrial::
+                     ShouldUsePriorityInheritanceLocks()
                  ? Allow()
                  : error)
-#endif  // BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)
+#endif  // BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)  &&
+        // BUILDFLAG(IS_ANDROID)
       .Default(error);
 }
 
@@ -503,6 +521,52 @@ ResultExpr RestrictGoogle3Threading(int sysno) {
 ResultExpr RestrictPipe2() {
   const Arg<int> flags(1);
   return If((flags & ~(O_CLOEXEC|O_DIRECT|O_NONBLOCK)) == 0, Allow())
+      .Else(CrashSIGSYS());
+}
+
+SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictSockSendFlags(int sysno) {
+  size_t argIndex;
+  switch (sysno) {
+#if defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
+    case __NR_send:
+      argIndex = 3;
+      break;
+#endif
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || \
+    defined(__mips__) || defined(__aarch64__)
+    case __NR_sendto:  // Could specify destination.
+      argIndex = 3;
+      break;
+    case __NR_sendmsg:  // Could specify destination.
+      argIndex = 2;
+      break;
+#endif
+    case __NR_sendmmsg:  // Could specify destination.
+      argIndex = 3;
+      break;
+    default:
+      NOTREACHED();
+  }
+
+  // In particular, does not include MSG_OOB due to its history of security
+  // vulnerabilities, see crbug.com/428177287.
+  const Arg<int> flags(argIndex);
+  return If((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) == 0, Allow())
+      .Else(CrashSIGSYS());
+}
+
+SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictMemfdCreate() {
+  const Arg<int> flags(1);
+  return If((flags & ~(MFD_CLOEXEC | MFD_ALLOW_SEALING)) == 0, Allow())
+      // ChromeOS uses ~0 as the flags to check if memfd_create exists (will
+      // return -EINVAL).
+      // https://source.chromium.org/chromium/chromium/src/+/main:mojo/core/channel_linux.cc;drc=c4987dbe36be309f8db36cba174310cb8a23e989;l=918
+      // Instead of doing something fancy to avoid this, just allow the syscall.
+      // ~0 will always be invalid; even if every flag bit gets a usage in the
+      // future, `flags` still encodes the huge page size which must be a power
+      // of 2, which it will not be if every bit is set.
+      .ElseIf(flags == ~0, Allow())
       .Else(CrashSIGSYS());
 }
 

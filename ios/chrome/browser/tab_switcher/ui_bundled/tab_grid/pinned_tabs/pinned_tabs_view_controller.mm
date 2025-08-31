@@ -20,7 +20,10 @@
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_context_menu/tab_context_menu_provider.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/legacy_grid_transition_layout.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/tab_grid_transition_item.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/tab_grid_transition_layout.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_snapshot_and_favicon.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_switcher_item.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_switcher_item_snapshot_and_favicon_data_source.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_utils.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
@@ -206,7 +209,7 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
   [self dragSessionEnabled:NO];
 }
 
-- (LegacyGridTransitionLayout*)transitionLayout {
+- (LegacyGridTransitionLayout*)legacyTransitionLayout {
   [self.collectionView layoutIfNeeded];
 
   LegacyGridTransitionActiveItem* activeItem;
@@ -236,7 +239,7 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
     // If the active item is the last inserted item, it needs to be animated
     // differently.
     if (selectedCell.pinnedItemIdentifier == _lastInsertedItemID) {
-      activeItem.isAppearing = YES;
+      activeItem.shouldUseBVCSnapshot = YES;
     }
 
     selectionItem = [LegacyGridTransitionItem
@@ -247,6 +250,12 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
   return [LegacyGridTransitionLayout layoutWithInactiveItems:@[]
                                                   activeItem:activeItem
                                                selectionItem:selectionItem];
+}
+
+- (TabGridTransitionLayout*)transitionLayout {
+  return [TabGridTransitionLayout
+      layoutWithActiveCell:self.transitionItemForActiveCell
+                activeGrid:self];
 }
 
 - (TabGridTransitionItem*)transitionItemForActiveCell {
@@ -271,8 +280,8 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
   attributes.frame = [self.collectionView convertRect:attributes.frame
                                                toView:nil];
 
-  return [TabGridTransitionItem itemWithView:cell
-                               originalFrame:attributes.frame];
+  return [TabGridTransitionItem itemWithSnapshot:cell.snapshot
+                                   originalFrame:attributes.frame];
 }
 
 - (BOOL)isCollectionEmpty {
@@ -841,20 +850,18 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
   if (item) {
     cell.pinnedItemIdentifier = item.identifier;
     cell.title = item.title;
-    [item fetchFavicon:^(TabSwitcherItem* innerItem, UIImage* icon) {
-      // Only update the icon if the cell is not already reused for another
+
+    auto completion = ^(TabSwitcherItem* innerItem,
+                        TabSnapshotAndFavicon* tabSnapshotAndFavicon) {
+      // Only apply changes if the cell is not already reused for another
       // item.
       if (cell.pinnedItemIdentifier == innerItem.identifier) {
-        cell.icon = icon;
+        cell.icon = tabSnapshotAndFavicon.favicon;
+        cell.snapshot = tabSnapshotAndFavicon.snapshot;
       }
-    }];
-    [item fetchSnapshot:^(TabSwitcherItem* innerItem, UIImage* snapshot) {
-      // Only update the icon if the cell is not already reused for another
-      // item.
-      if (cell.pinnedItemIdentifier == innerItem.identifier) {
-        cell.snapshot = snapshot;
-      }
-    }];
+    };
+    [self.snapshotAndfaviconDataSource fetchTabSnapshotAndFavicon:item
+                                                       completion:completion];
   }
 
   cell.accessibilityIdentifier = [NSString

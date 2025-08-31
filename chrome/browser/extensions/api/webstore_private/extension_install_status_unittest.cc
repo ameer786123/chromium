@@ -230,7 +230,7 @@ TEST_F(ExtensionInstallStatusTest, ExtensionBlockByIdWithRequestEnabled) {
             GetWebstoreExtensionInstallStatus(kExtensionId, profile()));
 }
 
-TEST_F(ExtensionInstallStatusTest, PendingExtenisonIsWaitingToBeReviewed) {
+TEST_F(ExtensionInstallStatusTest, PendingExtensionIsWaitingToBeReviewed) {
   SetPolicy(prefs::kCloudExtensionRequestEnabled,
             std::make_unique<base::Value>(true));
   std::vector<ExtensionId> ids = {kExtensionId};
@@ -242,7 +242,7 @@ TEST_F(ExtensionInstallStatusTest, PendingExtenisonIsWaitingToBeReviewed) {
             GetWebstoreExtensionInstallStatus(kExtensionId, profile()));
 }
 
-TEST_F(ExtensionInstallStatusTest, PendingExtenisonIsApproved) {
+TEST_F(ExtensionInstallStatusTest, PendingExtensionIsApproved) {
   // Extension is approved but not installed, returns as INSTALLABLE.
   SetPolicy(prefs::kCloudExtensionRequestEnabled,
             std::make_unique<base::Value>(true));
@@ -256,7 +256,7 @@ TEST_F(ExtensionInstallStatusTest, PendingExtenisonIsApproved) {
             GetWebstoreExtensionInstallStatus(kExtensionId, profile()));
 }
 
-TEST_F(ExtensionInstallStatusTest, PendingExtenisonIsRejected) {
+TEST_F(ExtensionInstallStatusTest, PendingExtensionIsRejected) {
   // Extension is rejected, it should be moved from the pending list soon.
   SetPolicy(prefs::kCloudExtensionRequestEnabled,
             std::make_unique<base::Value>(true));
@@ -591,8 +591,9 @@ class ExtensionInstallStatusTestWithoutMv2Deprecation
     // This test assumes MV2 is not blocked by Chrome. Versions with MV2
     // blocked by Chrome are exercised in
     // `ExtensionInstallStatusTestWithMV2Deprecation`.
-    feature_list_.InitAndDisableFeature(
-        extensions_features::kExtensionManifestV2Disabled);
+    feature_list_.InitWithFeatures(
+        {}, {extensions_features::kExtensionManifestV2Disabled,
+             extensions_features::kExtensionManifestV2Unsupported});
   }
   ExtensionInstallStatusTestWithoutMv2Deprecation(
       const ExtensionInstallStatusTestWithoutMv2Deprecation&) = delete;
@@ -664,28 +665,7 @@ TEST_F(ExtensionInstallStatusTest, ExtensionCorrupted) {
 }
 
 class SupervisedUserExtensionInstallStatusTest
-    : public ExtensionInstallStatusTest {
- public:
-  SupervisedUserExtensionInstallStatusTest() {
-    std::vector<base::test::FeatureRef> enabled_features;
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN) || \
-    BUILDFLAG(IS_DESKTOP_ANDROID)
-    enabled_features.push_back(
-        supervised_user::
-            kEnableExtensionsPermissionsForSupervisedUsersOnDesktop);
-#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN) ||
-        // BUILDFLAG(IS_DESKTOP_ANDROID)
-    enabled_features.push_back(
-        supervised_user::
-            kEnableSupervisedUserSkipParentApprovalToInstallExtensions);
-    enabled_features.push_back(
-        supervised_user::kExposedParentalControlNeededForExtensionInstallation);
-    feature_list_.InitWithFeatures(enabled_features, /*disabled_features=*/{});
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
+    : public ExtensionInstallStatusTest {};
 
 // If a supervised user requires parent approval to install a new extension that
 // has not received parental approval before, then
@@ -745,8 +725,17 @@ class ExtensionInstallStatusTestWithMV2Deprecation
       public testing::WithParamInterface<bool> {
  public:
   ExtensionInstallStatusTestWithMV2Deprecation() {
-    feature_list_.InitWithFeatureState(
-        extensions_features::kExtensionManifestV2Disabled, GetParam());
+    std::vector<base::test::FeatureRef> enabled_features;
+    std::vector<base::test::FeatureRef> disabled_features(
+        {extensions_features::kExtensionManifestV2Unsupported});
+    if (GetParam()) {
+      enabled_features.push_back(
+          extensions_features::kExtensionManifestV2Disabled);
+    } else {
+      disabled_features.push_back(
+          extensions_features::kExtensionManifestV2Disabled);
+    }
+    feature_list_.InitWithFeatures(enabled_features, disabled_features);
   }
   ~ExtensionInstallStatusTestWithMV2Deprecation() override = default;
 

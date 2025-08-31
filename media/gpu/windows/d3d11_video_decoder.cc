@@ -177,7 +177,7 @@ bool D3D11VideoDecoder::InitializeAcceleratedDecoder(
     accelerated_video_decoder_ = std::make_unique<AV1Decoder>(
         std::make_unique<D3D11AV1Accelerator>(
             this, media_log_.get(),
-            gpu_workarounds_.use_current_picture_for_av1_invalid_ref),
+            gpu_workarounds_.use_first_valid_ref_for_av1_invalid_ref),
         profile_, config.color_space_info());
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
   } else if (config.codec() == VideoCodec::kHEVC) {
@@ -314,7 +314,8 @@ D3D11VideoDecoder::CreateD3DVideoDecoderWrapper(
     return nullptr;
   }
   use_single_video_decoder_texture_ =
-      use_single_texture.value() | use_shared_handle_;
+      use_single_texture.value() || use_shared_handle_ ||
+      gpu_workarounds_.disable_decode_into_array_texture;
   if (use_single_video_decoder_texture_) {
     MEDIA_LOG(INFO, media_log_) << "D3D11VideoDecoder is using single textures";
   } else {
@@ -586,7 +587,7 @@ void D3D11VideoDecoder::DoDecode() {
     // EOS buffer.
     current_timestamp_ = current_buffer_->timestamp();
 
-    accelerated_video_decoder_->SetStream(-1, *current_buffer_);
+    accelerated_video_decoder_->SetStream(-1, current_buffer_);
   }
 
   while (true) {
@@ -1110,20 +1111,18 @@ D3D11VideoDecoder::GetSupportedVideoDecoderConfigs(
   std::vector<SupportedVideoDecoderConfig> configs;
   for (const auto& kv : supported_resolutions) {
     const auto profile = kv.first;
-    // TODO(liberato): Add VP8 support to D3D11VideoDecoder.
-    if (profile == VP8PROFILE_ANY)
-      continue;
-
     const auto& resolution_range = kv.second;
+
+    DCHECK(!resolution_range.min_resolution.IsEmpty());
+    DCHECK(!resolution_range.max_landscape_resolution.IsEmpty());
+
     configs.emplace_back(profile, profile, resolution_range.min_resolution,
                          resolution_range.max_landscape_resolution,
                          /*allow_encrypted=*/false,
                          /*require_encrypted=*/false);
-    if (!resolution_range.max_portrait_resolution.IsEmpty() &&
-        resolution_range.max_portrait_resolution !=
-            resolution_range.max_landscape_resolution) {
+    if (resolution_range.max_portrait_resolution) {
       configs.emplace_back(profile, profile, resolution_range.min_resolution,
-                           resolution_range.max_portrait_resolution,
+                           *resolution_range.max_portrait_resolution,
                            /*allow_encrypted=*/false,
                            /*require_encrypted=*/false);
     }

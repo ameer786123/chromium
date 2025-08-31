@@ -37,6 +37,7 @@
 #include "chrome/common/renderer_configuration.mojom.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/signin/public/base/signin_switches.h"
+#include "components/signin/public/identity_manager/tribool.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/unexportable_keys/fake_unexportable_key_service.h"
 #include "content/public/browser/network_service_instance.h"
@@ -119,7 +120,15 @@ class FakeBoundSessionCookieController : public BoundSessionCookieController {
     }
   }
 
+  void Initialize(bool is_new_session) override {
+    was_new_session_at_init_ = signin::TriboolFromBool(is_new_session);
+  }
+
   const std::vector<uint8_t>& wrapped_key() const { return wrapped_key_; }
+
+  // `signin::Tribool::kUnknown` means that the controller hasn't been
+  // initialized yet.
+  signin::Tribool was_new_session_at_init() { return was_new_session_at_init_; }
 
   void HandleRequestBlockedOnCookie(
       chrome::mojom::BoundSessionRequestThrottledHandler::
@@ -132,6 +141,10 @@ class FakeBoundSessionCookieController : public BoundSessionCookieController {
     }
     resume_blocked_requests_.push_back(std::move(resume_blocked_request));
   }
+
+  bool rotation_stopped() const { return rotation_stopped_; }
+
+  void StopCookieRotation() override { rotation_stopped_ = true; }
 
   bound_session_credentials::RotationDebugInfo TakeDebugInfo() override {
     return {};
@@ -160,6 +173,10 @@ class FakeBoundSessionCookieController : public BoundSessionCookieController {
         this, BoundSessionRefreshCookieFetcher::Result::kServerPersistentError);
   }
 
+  void SimulateOnCookieRotationStoppedTimeout() {
+    delegate_->OnCookieRotationStoppedTimeout(this);
+  }
+
   void SimulateRefreshBoundSessionCompleted() {
     EXPECT_FALSE(resume_blocked_requests_.empty());
     std::vector<chrome::mojom::BoundSessionRequestThrottledHandler::
@@ -180,7 +197,9 @@ class FakeBoundSessionCookieController : public BoundSessionCookieController {
                   HandleRequestBlockedOnCookieCallback>
       resume_blocked_requests_;
   std::vector<uint8_t> wrapped_key_;
+  signin::Tribool was_new_session_at_init_ = signin::Tribool::kUnknown;
   bool throttling_requests_paused_ = false;
+  bool rotation_stopped_ = false;
   base::WeakPtrFactory<FakeBoundSessionCookieController> weak_ptr_factory_{
       this};
 };
@@ -302,6 +321,7 @@ class FakeBoundSessionDebugReportFetcher
   base::flat_set<std::string> GetNonRefreshedCookieNames() override {
     return {};
   }
+  Trigger GetTrigger() const override { return Trigger::kOther; }
 };
 
 class MockObserver : public BoundSessionCookieRefreshService::Observer {
@@ -394,7 +414,9 @@ class BoundSessionCookieRefreshServiceImplTestBase : public testing::Test {
                bound_session_credentials::RotationDebugInfo debug_info),
               ());
 
-  BoundSessionCookieRefreshServiceImpl* GetCookieRefreshServiceImpl() {
+  // Returns the cookie refresh service if it already exists, or creates a new
+  // one.
+  BoundSessionCookieRefreshServiceImpl* GetOrCreateCookieRefreshServiceImpl() {
     if (!cookie_refresh_service_) {
       cookie_refresh_service_ = CreateBoundSessionCookieRefreshServiceImpl();
     }
@@ -452,6 +474,10 @@ class BoundSessionCookieRefreshServiceImplTestBase : public testing::Test {
   BoundSessionParamsStorage* storage() { return test_storage_.get(); }
 
   MockObserver* mock_observer() { return &mock_observer_; }
+
+  void FastForwardBy(base::TimeDelta delta) {
+    task_environment_.FastForwardBy(delta);
+  }
 
   void RunUntilIdle() { task_environment_.RunUntilIdle(); }
 
@@ -592,20 +618,23 @@ class BoundSessionCookieRefreshServiceImplTest
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest, VerifyControllerParams) {
   SetupPreConditionForBoundSession();
-  GetCookieRefreshServiceImpl();
+  GetOrCreateCookieRefreshServiceImpl();
   VerifyBoundSession(CreateTestBoundSessionParams());
+  EXPECT_EQ(cookie_controller()->was_new_session_at_init(),
+            signin::Tribool::kFalse);
 }
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        VerifyBoundSessionThrottlerParamsUnboundSession) {
-  GetCookieRefreshServiceImpl();
+  GetOrCreateCookieRefreshServiceImpl();
   VerifyNoBoundSession();
 }
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        VerifyBoundSessionThrottlerParamsBoundSession) {
   SetupPreConditionForBoundSession();
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   ASSERT_TRUE(cookie_controller());
 
   std::vector<chrome::mojom::BoundSessionThrottlerParamsPtr>
@@ -627,14 +656,15 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
       CreateCookieCredential("cookieB", GURL("https://accounts.google.com"));
 
   ASSERT_TRUE(storage()->SaveParams(params));
-  GetCookieRefreshServiceImpl();
+  GetOrCreateCookieRefreshServiceImpl();
   VerifyBoundSession(params);
 }
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        RefreshBoundSessionCookieBoundSession) {
   SetupPreConditionForBoundSession();
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   EXPECT_TRUE(cookie_controller());
   base::test::TestFuture<ResumeBlockedRequestsTrigger> future;
   service->HandleRequestBlockedOnCookie(kTestGoogleURL, future.GetCallback());
@@ -648,7 +678,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        RequestBlockedOnCookieThrottlingPaused) {
   SetupPreConditionForBoundSession();
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   EXPECT_TRUE(cookie_controller());
   cookie_controller()->SetThrottlingRequestsPaused(true);
   base::test::TestFuture<ResumeBlockedRequestsTrigger> future;
@@ -661,7 +692,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        RefreshBoundSessionCookieUnboundSession) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   EXPECT_FALSE(cookie_controller());
 
   // Unbound session, the callback should be called immediately.
@@ -674,7 +706,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        UpdateAllRenderersOnBoundSessionStarted) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   EXPECT_FALSE(cookie_controller());
   EXPECT_THAT(service->GetBoundSessionThrottlerParams(), IsEmpty());
   base::MockRepeatingCallback<void()> renderer_updater;
@@ -696,7 +729,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
   base::MockRepeatingCallback<void()> renderer_updater;
   EXPECT_CALL(renderer_updater, Run()).Times(0);
   SetupPreConditionForBoundSession();
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   EXPECT_TRUE(cookie_controller());
   SetRendererUpdater(renderer_updater.Get());
   testing::Mock::VerifyAndClearExpectations(&renderer_updater);
@@ -720,7 +754,7 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
   base::MockRepeatingCallback<void()> renderer_updater;
   EXPECT_CALL(renderer_updater, Run()).Times(0);
   SetupPreConditionForBoundSession();
-  GetCookieRefreshServiceImpl();
+  GetOrCreateCookieRefreshServiceImpl();
   EXPECT_TRUE(cookie_controller());
   SetRendererUpdater(renderer_updater.Get());
   testing::Mock::VerifyAndClearExpectations(&renderer_updater);
@@ -742,7 +776,7 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        SendDebugReportOnBoundSessionTerminated) {
   SetupPreConditionForBoundSession();
-  GetCookieRefreshServiceImpl();
+  GetOrCreateCookieRefreshServiceImpl();
   EXPECT_TRUE(cookie_controller());
 
   EXPECT_CALL(
@@ -770,7 +804,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest, TerminateSession) {
   SetupPreConditionForBoundSession();
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   EXPECT_THAT(service->GetBoundSessionThrottlerParams(), Not(IsEmpty()));
 
   EXPECT_CALL(
@@ -788,7 +823,7 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest, TerminateSession) {
   // Verify prefs were cleared.
   // Ensure on next startup, there won't be a bound session.
   ResetCookieRefreshService();
-  service = GetCookieRefreshServiceImpl();
+  service = GetOrCreateCookieRefreshServiceImpl();
 
   SCOPED_TRACE("No bound session on Startup.");
   VerifyNoBoundSession();
@@ -797,7 +832,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest, TerminateSession) {
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        TerminateSessionOnPersistentErrorEncountered) {
   SetupPreConditionForBoundSession();
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   EXPECT_THAT(service->GetBoundSessionThrottlerParams(), Not(IsEmpty()));
 
   ASSERT_TRUE(cookie_controller());
@@ -816,7 +852,7 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
   // Verify prefs were cleared.
   // Ensure on next startup, there won't be a bound session.
   ResetCookieRefreshService();
-  service = GetCookieRefreshServiceImpl();
+  service = GetOrCreateCookieRefreshServiceImpl();
 
   SCOPED_TRACE("No bound session on Startup.");
   VerifyNoBoundSession();
@@ -829,7 +865,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
       base::MakeRefCounted<net::HttpResponseHeaders>("");
   headers->AddHeader(kSessionTerminationHeaderName,
                      GetSessionTerminationHeaderValue(kTestSessionId));
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   EXPECT_CALL(
       *mock_observer(),
       OnBoundSessionTerminated(kTestGoogleURL,
@@ -853,7 +890,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
       base::StringPrintf(
           "first_attribute=abc;session_id=%s;third_attribute=edf",
           kTestSessionId));
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   EXPECT_CALL(
       *mock_observer(),
       OnBoundSessionTerminated(kTestGoogleURL,
@@ -874,7 +912,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
       base::MakeRefCounted<net::HttpResponseHeaders>("");
   headers->AddHeader(kSessionTerminationHeaderName,
                      GetSessionTerminationHeaderValue(kTestSessionId));
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   EXPECT_CALL(
       *mock_observer(),
       OnBoundSessionTerminated(kTestGoogleURL,
@@ -896,7 +935,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
   headers->AddHeader(kSessionTerminationHeaderName,
                      GetSessionTerminationHeaderValue("different_session_id"));
 
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->MaybeTerminateSession(kTestGoogleURL, headers.get());
   VerifyBoundSession(CreateTestBoundSessionParams());
   histogram_tester().ExpectTotalCount(
@@ -911,7 +951,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
   headers->AddHeader(kSessionTerminationHeaderName,
                      GetSessionTerminationHeaderValue(kTestSessionId));
 
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   // `kTestOtherURL` and the bound session URL are from different sites.
   service->MaybeTerminateSession(kTestOtherURL, headers.get());
   VerifyBoundSession(CreateTestBoundSessionParams());
@@ -925,7 +966,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
   scoped_refptr<net::HttpResponseHeaders> headers =
       base::MakeRefCounted<net::HttpResponseHeaders>("");
 
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->MaybeTerminateSession(kTestGoogleURL, headers.get());
   VerifyBoundSession(CreateTestBoundSessionParams());
   histogram_tester().ExpectTotalCount(
@@ -939,7 +981,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
       base::MakeRefCounted<net::HttpResponseHeaders>("");
   headers->AddHeader(kSessionTerminationHeaderName,
                      kTestSessionId);  // no "session_id=" key
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
 
   service->MaybeTerminateSession(kTestGoogleURL, headers.get());
 
@@ -956,7 +999,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
   headers->AddHeader(kSessionTerminationHeaderName,
                      base::StringPrintf("other_attribute=%s", kTestSessionId));
 
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->MaybeTerminateSession(kTestGoogleURL, headers.get());
   VerifyBoundSession(CreateTestBoundSessionParams());
   histogram_tester().ExpectTotalCount(
@@ -966,7 +1010,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        AddBoundSessionRequestThrottledHandlerReceivers) {
   SetupPreConditionForBoundSession();
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   ASSERT_TRUE(cookie_controller());
   mojo::Remote<chrome::mojom::BoundSessionRequestThrottledHandler> handler_1;
   mojo::Remote<chrome::mojom::BoundSessionRequestThrottledHandler> handler_2;
@@ -994,17 +1039,21 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 }
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest, RegisterNewBoundSession) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   VerifyNoBoundSession();
 
   auto params = CreateTestBoundSessionParams();
   service->RegisterNewBoundSession(params);
   VerifyBoundSession(params);
+  EXPECT_EQ(cookie_controller()->was_new_session_at_init(),
+            signin::Tribool::kTrue);
 }
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        OverrideExistingBoundSessionSameSessionId) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->RegisterNewBoundSession(CreateTestBoundSessionParams());
 
   auto new_params = CreateTestBoundSessionParams();
@@ -1021,7 +1070,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        OverrideExistingBoundSessionWithInvalidParams) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   auto original_params = CreateTestBoundSessionParams();
   service->RegisterNewBoundSession(original_params);
 
@@ -1036,7 +1086,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 }
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest, ClearMatchingData) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->RegisterNewBoundSession(CreateTestBoundSessionParams());
 
   EXPECT_CALL(
@@ -1054,7 +1105,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest, ClearMatchingData) {
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        ClearMatchingDataTypeMismatch) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   auto params = CreateTestBoundSessionParams();
   service->RegisterNewBoundSession(params);
 
@@ -1067,7 +1119,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        ClearMatchingDataOriginMismatch) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   auto params = CreateTestBoundSessionParams();
   service->RegisterNewBoundSession(params);
 
@@ -1080,7 +1133,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        ClearMatchingDataOriginMismatchSuborigin) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   auto params = CreateTestBoundSessionParams();
   service->RegisterNewBoundSession(params);
 
@@ -1093,7 +1147,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        ClearMatchingDataCreationTimeMismatch) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   auto params = CreateTestBoundSessionParams();
   service->RegisterNewBoundSession(params);
 
@@ -1107,7 +1162,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
 }
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest, CreateRegistrationRequest) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->CreateRegistrationRequest(
       CreateTestRegistrationFetcherParams(kDefaultRegistrationPath));
   ASSERT_TRUE(registration_fetcher());
@@ -1118,12 +1174,15 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest, CreateRegistrationRequest) {
   registration_fetcher()->SimulateRegistrationFetchCompleted(params);
   EXPECT_FALSE(registration_fetcher());
   VerifyBoundSession(params);
+  EXPECT_EQ(cookie_controller()->was_new_session_at_init(),
+            signin::Tribool::kTrue);
 }
 
 TEST_F(BoundSessionCookieRefreshServiceImplTest,
        CreateRegistrationRequestNonDefaultPath) {
   const std::string kNonDefaultRegistrationPath = "/NonDefaultPath";
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->CreateRegistrationRequest(
       CreateTestRegistrationFetcherParams(kNonDefaultRegistrationPath));
   ASSERT_TRUE(registration_fetcher());
@@ -1138,7 +1197,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
   scoped_feature_list.InitAndEnableFeatureWithParameters(
       switches::kEnableBoundSessionCredentials,
       {{"exclusive-registration-path", ""}});
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->CreateRegistrationRequest(
       CreateTestRegistrationFetcherParams(kNonDefaultRegistrationPath));
   ASSERT_TRUE(registration_fetcher());
@@ -1153,7 +1213,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
   scoped_feature_list.InitAndEnableFeatureWithParameters(
       switches::kEnableBoundSessionCredentials,
       {{"exclusive-registration-path", kCustomPath}});
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->CreateRegistrationRequest(
       CreateTestRegistrationFetcherParams(kCustomPath));
   ASSERT_TRUE(registration_fetcher());
@@ -1167,10 +1228,59 @@ TEST_F(BoundSessionCookieRefreshServiceImplTest,
   scoped_feature_list.InitAndEnableFeatureWithParameters(
       switches::kEnableBoundSessionCredentials,
       {{"exclusive-registration-path", "/CustomPath"}});
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->CreateRegistrationRequest(
       CreateTestRegistrationFetcherParams("/AnotherPath"));
   EXPECT_FALSE(registration_fetcher());
+}
+
+TEST_F(BoundSessionCookieRefreshServiceImplTest, StopCookieRotation) {
+  SetupPreConditionForBoundSession();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
+  ASSERT_NE(service, nullptr);
+  ASSERT_NE(cookie_controller(), nullptr);
+  EXPECT_FALSE(cookie_controller()->rotation_stopped());
+
+  service->StopCookieRotation(cookie_controller()->GetBoundSessionKey());
+
+  EXPECT_TRUE(cookie_controller()->rotation_stopped());
+}
+
+TEST_F(BoundSessionCookieRefreshServiceImplTest,
+       StopCookieRotationUnknownSession) {
+  SetupPreConditionForBoundSession();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
+  ASSERT_NE(service, nullptr);
+  ASSERT_NE(cookie_controller(), nullptr);
+  EXPECT_FALSE(cookie_controller()->rotation_stopped());
+
+  service->StopCookieRotation(
+      {.site = kTestGoogleURL, .session_id = "unknown_session"});
+
+  EXPECT_FALSE(cookie_controller()->rotation_stopped());
+}
+
+TEST_F(BoundSessionCookieRefreshServiceImplTest,
+       TerminatesSessionOnCookieRotationStoppedTimeout) {
+  SetupPreConditionForBoundSession();
+  GetOrCreateCookieRefreshServiceImpl();
+
+  EXPECT_CALL(
+      *mock_observer(),
+      OnBoundSessionTerminated(kTestGoogleURL,
+                               base::flat_set<std::string>(
+                                   {k1PSIDTSCookieName, k3PSIDTSCookieName})))
+      .Times(1);
+
+  ASSERT_NE(cookie_controller(), nullptr);
+  cookie_controller()->SimulateOnCookieRotationStoppedTimeout();
+
+  VerifyNoBoundSession();
+  VerifySessionTerminationTriggerRecorded(
+      SessionTerminationTrigger::kRotationStoppedTimeout);
 }
 
 // Test suite for tests involving multiple sessions.
@@ -1269,7 +1379,7 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest, Initialize) {
   for (const auto& params : all_params) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
-  GetCookieRefreshServiceImpl();
+  GetOrCreateCookieRefreshServiceImpl();
   VerifyBoundSessions(all_params);
 }
 
@@ -1281,7 +1391,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
       switches::kEnableBoundSessionCredentials,
       {{"exclusive-registration-path", ""}});
 
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   const std::string kFirstPath = "/First";
   const std::string kSecondPath = "/Second";
 
@@ -1324,7 +1435,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
   for (const auto& params : all_params) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
 
   base::test::TestFuture<ResumeBlockedRequestsTrigger> future;
   service->HandleRequestBlockedOnCookie(kTestGoogleURL, future.GetCallback());
@@ -1348,7 +1460,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
   for (const auto& params : all_params) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
 
   base::test::TestFuture<ResumeBlockedRequestsTrigger> future;
   service->HandleRequestBlockedOnCookie(kTestGoogleURL, future.GetCallback());
@@ -1378,7 +1491,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
     ASSERT_TRUE(storage()->SaveParams(params));
   }
 
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   GetCookieController(kGoogleSessionKeyOne)->SetThrottlingRequestsPaused(true);
 
   base::test::TestFuture<ResumeBlockedRequestsTrigger> future;
@@ -1401,7 +1515,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
     ASSERT_TRUE(storage()->SaveParams(params));
   }
 
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   GetCookieController(kGoogleSessionKeyOne)->SetThrottlingRequestsPaused(true);
   GetCookieController(kGoogleSessionKeyTwo)->SetThrottlingRequestsPaused(true);
 
@@ -1420,7 +1535,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
   for (const auto& params : all_params) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   // Mark the second session as fresh.
   GetCookieController(kGoogleSessionKeyTwo)
       ->SimulateOnCookieExpirationDateChanged(
@@ -1444,7 +1560,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
   for (const auto& params : all_params) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   // Mark both sessions as fresh.
   GetCookieController(kGoogleSessionKeyOne)
       ->SimulateOnCookieExpirationDateChanged(
@@ -1471,7 +1588,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
   for (const auto& params : all_params) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
 
   base::test::TestFuture<ResumeBlockedRequestsTrigger> future;
   // This request is not covered by any session.
@@ -1483,7 +1601,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
        HandleRequestBlockedOnCookieNoSessions) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
 
   base::test::TestFuture<ResumeBlockedRequestsTrigger> future;
   service->HandleRequestBlockedOnCookie(kTestGoogleURL, future.GetCallback());
@@ -1501,7 +1620,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
   for (const auto& params : all_params) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
 
   base::test::TestFuture<ResumeBlockedRequestsTrigger> future;
   service->HandleRequestBlockedOnCookie(kTestGoogleURL, future.GetCallback());
@@ -1515,7 +1635,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
        RegisterNewBoundSession) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   VerifyBoundSessions({});
 
   auto params =
@@ -1526,7 +1647,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
        RegisterSecondBoundSessionSameDomainDifferentSessionIds) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   auto first_params =
       CreateBoundSessionParams(kGoogleSessionKeyOne, {"cookieA", "cookieB"});
   service->RegisterNewBoundSession(first_params);
@@ -1539,7 +1661,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
        RegisterSecondBoundSessionSameSessionIdDifferentDomains) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   auto first_params =
       CreateBoundSessionParams(kGoogleSessionKeyOne, {"cookieA", "cookieB"});
   service->RegisterNewBoundSession(first_params);
@@ -1552,7 +1675,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
 
 TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
        RegisterBoundSessionSameSessionKey) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   auto other_params =
       CreateBoundSessionParams(kGoogleSessionKeyTwo, {"cookieX"});
   service->RegisterNewBoundSession(other_params);
@@ -1577,7 +1701,7 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
   for (const auto& params : all_params) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
-  GetCookieRefreshServiceImpl();
+  GetOrCreateCookieRefreshServiceImpl();
 
   EXPECT_CALL(
       *mock_observer(),
@@ -1612,7 +1736,8 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
       OnBoundSessionTerminated(
           kTestGoogleURL, base::flat_set<std::string>({"cookieA", "cookieB"})))
       .WillOnce([this] { PruneDestroyedControllers(); });
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->MaybeTerminateSession(GURL("https://google.com/SignOut"),
                                  headers.get());
   // all_params[0] should have been terminated.
@@ -1630,7 +1755,7 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest,
   for (const auto& params : all_params) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
-  GetCookieRefreshServiceImpl();
+  GetOrCreateCookieRefreshServiceImpl();
 
   EXPECT_CALL(
       *mock_observer(),
@@ -1659,7 +1784,7 @@ TEST_F(BoundSessionCookieRefreshServiceImplMultiSessionTest, ReportsCountUma) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
   base::HistogramTester histogram_tester;
-  GetCookieRefreshServiceImpl();
+  GetOrCreateCookieRefreshServiceImpl();
   histogram_tester.ExpectUniqueSample(
       "Signin.BoundSessionCredentials.SessionCountOnInit", all_params.size(),
       /*expected_bucket_count=*/1);
@@ -1707,7 +1832,7 @@ TEST_P(BoundSessionCookieRefreshServiceImplFeatureDisabledTest,
   for (const auto& params : all_params) {
     ASSERT_TRUE(storage()->SaveParams(params));
   }
-  GetCookieRefreshServiceImpl();
+  GetOrCreateCookieRefreshServiceImpl();
   std::vector<bound_session_credentials::BoundSessionParams> expected_sessions;
   if (IsContinuityEnabled()) {
     // All sessions are expected to run.
@@ -1721,7 +1846,8 @@ TEST_P(BoundSessionCookieRefreshServiceImplFeatureDisabledTest,
 
 TEST_P(BoundSessionCookieRefreshServiceImplFeatureDisabledTest,
        CreateRegistrationRequest) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->CreateRegistrationRequest(
       CreateTestRegistrationFetcherParams("/RegisterSession"));
   // New sessions shouldn't be registered no matter the extra feature state.
@@ -1730,7 +1856,8 @@ TEST_P(BoundSessionCookieRefreshServiceImplFeatureDisabledTest,
 
 TEST_P(BoundSessionCookieRefreshServiceImplFeatureDisabledTest,
        CreateRegistrationRequestWithWsbeta) {
-  BoundSessionCookieRefreshServiceImpl* service = GetCookieRefreshServiceImpl();
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
   service->CreateRegistrationRequest(CreateTestRegistrationFetcherParams(
       "/RegisterSession", /*is_wsbeta=*/true));
   if (IsWsbetaEnabled()) {
@@ -1740,6 +1867,21 @@ TEST_P(BoundSessionCookieRefreshServiceImplFeatureDisabledTest,
   } else {
     EXPECT_THAT(registration_fetchers(), IsEmpty());
   }
+}
+
+TEST_P(BoundSessionCookieRefreshServiceImplFeatureDisabledTest,
+       RegisterNewBoundSession) {
+  BoundSessionCookieRefreshServiceImpl* service =
+      GetOrCreateCookieRefreshServiceImpl();
+
+  ASSERT_NE(service, nullptr);
+  service->RegisterNewBoundSession(CreateBoundSessionParams(
+      kTestGoogleURL, kTestSessionId, {k1PSIDTSCookieName, k3PSIDTSCookieName},
+      /*is_wsbeta=*/false));
+
+  // New sessions shouldn't be registered if `is_wsbeta` is `false`, no matter
+  // the extra feature state.
+  VerifyBoundSessions({});
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -24,6 +24,7 @@
 
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
 #include "third_party/blink/renderer/core/animation/css/css_animations.h"
+#include "third_party/blink/renderer/core/css/css_gradient_value.h"
 #include "third_party/blink/renderer/core/css/css_light_dark_value_pair.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/css/css_uri_value.h"
@@ -74,12 +75,10 @@ StyleResolverState::StyleResolverState(
       pseudo_id_(style_request.pseudo_id),
       originating_element_style_(style_request.originating_element_style),
       is_for_highlight_(IsHighlightPseudoElement(style_request.pseudo_id)),
-      uses_highlight_pseudo_inheritance_(
-          ::blink::UsesHighlightPseudoInheritance(style_request.pseudo_id)),
       can_trigger_animations_(style_request.can_trigger_animations) {
   DCHECK(!!parent_style_ == !!layout_parent_style_);
 
-  if (UsesHighlightPseudoInheritance()) {
+  if (is_for_highlight_) {
     DCHECK(originating_element_style_);
   } else {
     if (!parent_style_) {
@@ -105,7 +104,7 @@ StyleResolverState::~StyleResolverState() {
 
 bool StyleResolverState::IsInheritedForUnset(
     const CSSProperty& property) const {
-  return property.IsInherited() || UsesHighlightPseudoInheritance();
+  return property.IsInherited() || IsForHighlight();
 }
 
 EInsideLink StyleResolverState::InsideLink() const {
@@ -119,7 +118,7 @@ EInsideLink StyleResolverState::InsideLink() const {
   }
   if (!IsForPseudoElement() && GetElement().IsLink()) {
     inside_link_ = ElementLinkState();
-  } else if (uses_highlight_pseudo_inheritance_) {
+  } else if (IsForHighlight()) {
     // Highlight pseudo-elements acquire the link status of the originating
     // element. Note that highlight pseudo-elements do not *inherit* from
     // the originating element [1], and therefore ParentStyle()->InsideLink()
@@ -137,6 +136,14 @@ const ComputedStyle* StyleResolverState::TakeStyle() {
     return nullptr;
   }
   return style_builder_->TakeStyle();
+}
+
+const ComputedStyle* StyleResolverState::CloneStyle() const {
+  if (had_no_matched_properties_ &&
+      pseudo_request_type_ == StyleRequest::kForRenderer) {
+    return nullptr;
+  }
+  return style_builder_->CloneStyle();
 }
 
 void StyleResolverState::UpdateLengthConversionData() {
@@ -343,9 +350,9 @@ CSSParserMode StyleResolverState::GetParserMode() const {
 }
 
 Element* StyleResolverState::GetAnimatingElement() const {
-  // When querying pseudo element styles for an element that does not generate
-  // such a pseudo element, the styled_element_ is the originating element. Make
-  // sure we only do animations for true pseudo elements.
+  // When querying pseudo-element styles for an element that does not generate
+  // such a pseudo-element, the styled_element_ is the originating element. Make
+  // sure we only do animations for true pseudo-elements.
   return IsForPseudoElement() ? GetPseudoElement() : styled_element_;
 }
 
@@ -360,6 +367,15 @@ const CSSValue& StyleResolverState::ResolveLightDarkPair(
       return pair->First();
     }
     return pair->Second();
+  }
+  return value;
+}
+
+const CSSValue& StyleResolverState::ResolveGradient(const CSSValue& value) {
+  if (const auto* gradient_value =
+          DynamicTo<cssvalue::CSSGradientValue>(&value)) {
+    return *gradient_value->ResolveValuesIfNeeded(
+        css_to_length_conversion_data_);
   }
   return value;
 }
@@ -381,6 +397,30 @@ void StyleResolverState::UpdateLineHeight() {
 bool StyleResolverState::CanAffectAnimations() const {
   return conditionally_affects_animations_ ||
          StyleBuilder().CanAffectAnimations();
+}
+
+void StyleResolverState::SetComputedStyleFlagsFromAuthorFlags(
+    CSSProperty::Flags author_flags) {
+  // These three flags are only used if HasAppearance() is set
+  // (they are used for knowing whether appearance: auto is to be overridden),
+  // but we compute them nevertheless, to avoid suddenly having to compute them
+  // after-the-fact if inline style is updated incrementally.
+  if (author_flags & CSSProperty::kBackground) {
+    StyleBuilder().SetHasAuthorBackground();
+  }
+  if (author_flags & CSSProperty::kBorder) {
+    StyleBuilder().SetHasAuthorBorder();
+  }
+  if (author_flags & CSSProperty::kBorderRadius) {
+    StyleBuilder().SetHasAuthorBorderRadius();
+  }
+
+  if ((InsideLink() != EInsideLink::kInsideVisitedLink &&
+       (author_flags & CSSProperty::kHighlightColors)) ||
+      (InsideLink() == EInsideLink::kInsideVisitedLink &&
+       (author_flags & CSSProperty::kVisitedHighlightColors))) {
+    StyleBuilder().SetHasAuthorHighlightColors();
+  }
 }
 
 }  // namespace blink

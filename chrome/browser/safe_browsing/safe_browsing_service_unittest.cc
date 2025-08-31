@@ -10,12 +10,14 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "chrome/browser/download/download_item_warning_data.h"
+#include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/safe_browsing/chrome_ping_manager_factory.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/mock_download_item.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/safe_browsing/content/browser/safe_browsing_service_interface.h"
 #include "components/safe_browsing/core/browser/ping_manager.h"
 #include "components/safe_browsing/core/common/features.h"
@@ -84,11 +86,6 @@ class SafeBrowsingServiceTest : public testing::Test {
 
     profile_ = std::make_unique<TestingProfile>();
     profile2_ = std::make_unique<TestingProfile>();
-#if BUILDFLAG(IS_CHROMEOS)
-    // Local state is needed to construct ProxyConfigService, which is a
-    // dependency of PingManager on ChromeOS.
-    TestingBrowserProcess::GetGlobal()->SetLocalState(profile_->GetPrefs());
-#endif
   }
 
   void TearDown() override {
@@ -96,9 +93,6 @@ class SafeBrowsingServiceTest : public testing::Test {
     browser_process_->safe_browsing_service()->ShutDown();
     browser_process_->SetSafeBrowsingService(nullptr);
     safe_browsing::SafeBrowsingServiceInterface::RegisterFactory(nullptr);
-#if BUILDFLAG(IS_CHROMEOS)
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
-#endif
     base::RunLoop().RunUntilIdle();
   }
 
@@ -215,6 +209,7 @@ class SafeBrowsingServiceTest : public testing::Test {
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   raw_ptr<TestingBrowserProcess> browser_process_;
+
   scoped_refptr<SafeBrowsingService> sb_service_;
   TestingProfile::Builder profile_builder_;
   std::unique_ptr<TestingProfile> profile_;
@@ -753,14 +748,10 @@ TEST_F(SendNotificationsAcceptedTest, SendReportForAllowlistedURL) {
   ping_manager->SetURLLoaderFactoryForTesting(
       base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
           &test_url_loader_factory));
-// TODO(b/325636200): We should remove this once we figure out why the test is
-// crashing for ChromeOS and how to properly test it.
-#if !BUILDFLAG(IS_CHROMEOS)
   EXPECT_TRUE(sb_service_->MaybeSendNotificationsAcceptedReport(
       nullptr, profile(), notification_url1, notification_url2,
       notification_url3, display_duration));
   EXPECT_TRUE(request_validated);
-#endif
 }
 
 TEST_F(SendNotificationsAcceptedTest,

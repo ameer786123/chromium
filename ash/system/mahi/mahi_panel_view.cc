@@ -35,6 +35,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "chromeos/components/magic_boost/public/cpp/views/experiment_badge.h"
 #include "chromeos/components/mahi/public/cpp/mahi_manager.h"
@@ -59,6 +60,7 @@
 #include "ui/views/animation/animation_builder.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
+#include "ui/views/controls/focus_ring.h"
 #include "ui/views/controls/highlight_path_generator.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -510,8 +512,7 @@ MahiPanelView::MahiPanelView(MahiUiController* ui_controller)
       chromeos::features::IsSystemBlurEnabled()
           ? cros_tokens::kCrosSysSystemBaseElevated
           : cros_tokens::kCrosSysSystemBaseElevatedOpaque;
-  SetBackground(views::CreateRoundedRectBackground(
-      background_color_id, mahi_constants::kPanelCornerRadius));
+  SetBackground(views::CreateSolidBackground(background_color_id));
 
   // Create a layer for the view for background blur and rounded corners.
   SetPaintToLayer();
@@ -727,7 +728,16 @@ MahiPanelView::MahiPanelView(MahiUiController* ui_controller)
                                            weak_ptr_factory_.GetWeakPtr()))
           .SetAccessibleName(l10n_util::GetStringUTF16(
               IDS_ASH_MAHI_PANEL_INPUT_TEXTFIELD_SEND_BUTTON_ACCESSIBLE_NAME))
+          .SetEnabled(false)
           .Build());
+
+  send_button_->SetImageModel(
+      views::Button::STATE_NORMAL,
+      ui::ImageModel::FromVectorIcon(vector_icons::kSendIcon));
+  send_button_->SetImageModel(
+      views::Button::STATE_DISABLED,
+      ui::ImageModel::FromVectorIcon(vector_icons::kSendIcon,
+                                     ui::kColorSysStateDisabled));
 
   question_textfield_->RemoveHoverEffect();
   InstallTextfieldFocusRing(question_textfield_, send_button_);
@@ -869,6 +879,17 @@ bool MahiPanelView::HandleKeyEvent(views::Textfield* textfield,
   return false;
 }
 
+void MahiPanelView::OnAfterUserAction(views::Textfield* sender) {
+  if (!send_button_) {
+    return;
+  }
+
+  // `send_button_` is enabled when question text field has user input AND there
+  // is no pending QA request.
+  bool enabled = !pending_answer_ && !sender->GetText().empty();
+  send_button_->SetEnabled(enabled);
+}
+
 views::View* MahiPanelView::GetView() {
   return this;
 }
@@ -881,8 +902,9 @@ bool MahiPanelView::GetViewVisibility(VisibilityState state) const {
 void MahiPanelView::OnUpdated(const MahiUiUpdate& update) {
   switch (update.type()) {
     case MahiUiUpdateType::kAnswerLoaded:
-      // Input is re-enabled after backend has finished processing a question.
-      send_button_->SetEnabled(true);
+      // Pending QA request is complete, resets the `send_button_` state.
+      pending_answer_ = false;
+      send_button_->SetEnabled(!question_textfield_->GetText().empty());
       return;
     case MahiUiUpdateType::kContentsRefreshInitiated: {
       content_source_button_->RefreshContentSourceInfo();
@@ -897,8 +919,11 @@ void MahiPanelView::OnUpdated(const MahiUiUpdate& update) {
       return;
     }
     case MahiUiUpdateType::kErrorReceived:
-      // Input is re-enabled after backend returns an error.
-      send_button_->SetEnabled(true);
+      // The error may indicate the pending QA request is complete, resets the
+      // `send_button_` state.
+      // It's a no-op if the error is not for a QA request.
+      pending_answer_ = false;
+      send_button_->SetEnabled(!question_textfield_->GetText().empty());
       return;
     case MahiUiUpdateType::kOutlinesLoaded:
     case MahiUiUpdateType::kPanelBoundsChanged:
@@ -923,7 +948,7 @@ void MahiPanelView::OnCloseButtonPressed(const ui::Event& event) {
 }
 
 void MahiPanelView::OnLearnMoreLinkClicked() {
-  NewWindowDelegate::GetPrimary()->OpenUrl(
+  NewWindowDelegate::GetInstance()->OpenUrl(
       GURL(chrome::kHelpMeReadWriteLearnMoreURL),
       NewWindowDelegate::OpenUrlFrom::kUserInteraction,
       NewWindowDelegate::Disposition::kNewForegroundTab);
@@ -944,7 +969,8 @@ void MahiPanelView::OnSendButtonPressed() {
   if (std::u16string_view trimmed_text = base::TrimWhitespace(
           question_textfield_->GetText(), base::TrimPositions::TRIM_ALL);
       !trimmed_text.empty()) {
-    // Input is disabled while backend is processing a question.
+    // Send button is disabled while backend is processing a question.
+    pending_answer_ = true;
     send_button_->SetEnabled(false);
 
     ui_controller_->SendQuestion(std::u16string(trimmed_text),

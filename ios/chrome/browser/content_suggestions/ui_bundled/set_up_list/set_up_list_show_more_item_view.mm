@@ -11,7 +11,6 @@
 #import "ios/chrome/browser/content_suggestions/ui_bundled/set_up_list/set_up_list_item_view_data.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/set_up_list/set_up_list_tap_delegate.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_item_type.h"
-#import "ios/chrome/browser/segmentation_platform/model/segmented_default_browser_utils.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/elements/crossfade_label.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
@@ -191,9 +190,6 @@ NSAttributedString* Strikethrough(NSString* text) {
 // Returns the text for the title label.
 - (NSString*)titleText {
   switch (_data.type) {
-    case SetUpListItemType::kSignInSync:
-      return l10n_util::GetNSString(
-          IDS_IOS_CONSISTENCY_PROMO_DEFAULT_ACCOUNT_TITLE);
     case SetUpListItemType::kDefaultBrowser:
       return l10n_util::GetNSString(
           ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET
@@ -202,15 +198,7 @@ NSAttributedString* Strikethrough(NSString* text) {
     case SetUpListItemType::kAutofill:
       return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_AUTOFILL_TITLE);
     case SetUpListItemType::kNotifications:
-      return IsIOSTipsNotificationsEnabled()
-                 ? l10n_util::GetNSString(
-                       IDS_IOS_SET_UP_LIST_NOTIFICATIONS_TITLE)
-                 : l10n_util::GetNSString(
-                       IDS_IOS_SET_UP_LIST_CONTENT_NOTIFICATION_TITLE);
-    case SetUpListItemType::kDocking:
-      return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_DOCK_CHROME_TITLE);
-    case SetUpListItemType::kAddressBar:
-      return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_ADDRESS_BAR_TITLE);
+      return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_NOTIFICATIONS_TITLE);
     case SetUpListItemType::kAllSet:
       return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_ALL_SET_TITLE);
     case SetUpListItemType::kFollow:
@@ -242,28 +230,17 @@ NSAttributedString* Strikethrough(NSString* text) {
 // Returns the text for the description label.
 - (NSString*)descriptionText {
   switch (_data.type) {
-    case SetUpListItemType::kSignInSync:
-      return l10n_util::GetNSString(IDS_IOS_IDENTITY_DISC_SIGN_IN_PROMO_LABEL);
     case SetUpListItemType::kDefaultBrowser:
       return l10n_util::GetNSString(
-          IsSegmentedDefaultBrowserPromoEnabled()
-              ? GetSetUpListDefaultBrowserDescriptionStringID(_data.userSegment)
-              : IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_SEE_MORE_DESCRIPTION);
+          IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_SEE_MORE_DESCRIPTION);
     case SetUpListItemType::kAutofill:
       return l10n_util::GetNSString(
           IDS_IOS_SET_UP_LIST_AUTOFILL_SEE_MORE_DESCRIPTION);
     case SetUpListItemType::kNotifications:
-      return IsIOSTipsNotificationsEnabled()
-                 ? l10n_util::GetNSString(
-                       IDS_IOS_SET_UP_LIST_NOTIFICATIONS_DESCRIPTION)
-                 : l10n_util::GetNSString(
-                       IDS_IOS_SET_UP_LIST_CONTENT_NOTIFICATION_DESCRIPTION);
-    case SetUpListItemType::kDocking:
       return l10n_util::GetNSString(
-          IDS_IOS_SET_UP_LIST_DOCK_CHROME_SHORT_DESCRIPTION);
-    case SetUpListItemType::kAddressBar:
-      return l10n_util::GetNSString(
-          IDS_IOS_SET_UP_LIST_ADDRESS_BAR_LONG_DESCRIPTION);
+          _data.priceTrackingEnabled
+              ? IDS_IOS_SET_UP_LIST_NOTIFICATIONS_DESCRIPTION
+              : IDS_IOS_SET_UP_LIST_NOTIFICATIONS_SHORT_DESCRIPTION);
     case SetUpListItemType::kAllSet:
     case SetUpListItemType::kFollow:
       NOTREACHED();
@@ -298,7 +275,7 @@ NSAttributedString* Strikethrough(NSString* text) {
 
 #endif
 
-#pragma mark - UIAccessibility
+#pragma mark - UIAccessibilityAction
 
 - (BOOL)accessibilityActivate {
   if (_data.complete) {

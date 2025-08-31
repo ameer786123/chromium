@@ -18,6 +18,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
+#include "chrome/browser/privacy_sandbox/notice/desktop_entrypoint_handlers_helper.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -57,9 +58,9 @@
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.h"
 #include "chrome/browser/ui/webui/whats_new/whats_new_util.h"
-#include "chrome/common/extensions/chrome_manifest_url_handlers.h"
 #include "chrome/common/webui_url_constants.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/common/manifest_handlers/chrome_url_overrides_handler.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
@@ -209,11 +210,6 @@ StartupTabs StartupTabProviderImpl::GetNewTabPageTabs(
       StartupBrowserCreator::GetSessionStartupPref(command_line, profile));
 }
 
-StartupTabs StartupTabProviderImpl::GetPostCrashTabs(
-    bool has_incompatible_applications) const {
-  return GetPostCrashTabsForState(has_incompatible_applications);
-}
-
 StartupTabs StartupTabProviderImpl::GetCommandLineTabs(
     const base::CommandLine& command_line,
     const base::FilePath& cur_dir,
@@ -349,16 +345,6 @@ StartupTabs StartupTabProviderImpl::GetNewTabPageTabsForState(
   return tabs;
 }
 
-// static
-StartupTabs StartupTabProviderImpl::GetPostCrashTabsForState(
-    bool has_incompatible_applications) {
-  StartupTabs tabs;
-  if (has_incompatible_applications) {
-    AddIncompatibleApplicationsUrl(&tabs);
-  }
-  return tabs;
-}
-
 #if !BUILDFLAG(IS_ANDROID)
 // static
 StartupTabs StartupTabProviderImpl::GetNewFeaturesTabsForState(
@@ -386,7 +372,7 @@ StartupTabs StartupTabProviderImpl::GetPrivacySandboxTabsForState(
           return !HasExtensionNtpOverride(extension_registry) &&
                  IsChromeControlledNtpUrl(ntp_url);
         }
-        return PrivacySandboxService::IsUrlSuitableForPrompt(tab.url);
+        return privacy_sandbox::IsUrlSuitableForPrompt(tab.url);
       });
 
   if (suitable_tab_available) {
@@ -407,14 +393,6 @@ StartupTabs StartupTabProviderImpl::GetPrivacySandboxTabsForState(
 }
 
 #endif
-
-// static
-void StartupTabProviderImpl::AddIncompatibleApplicationsUrl(StartupTabs* tabs) {
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  GURL url(chrome::kChromeUISettingsURL);
-  tabs->emplace_back(url.Resolve("incompatibleApplications"));
-#endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
-}
 
 // static
 GURL StartupTabProviderImpl::GetTriggeredResetSettingsUrl() {

@@ -26,7 +26,6 @@
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/ash/experiences/arc/app/arc_app_constants.h"
 #include "components/app_constants/constants.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "components/services/app_service/public/cpp/app_types.h"
@@ -50,6 +49,7 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/app_list/arc/arc_app_utils.h"
+#include "chromeos/ash/experiences/arc/app/arc_app_constants.h"
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -112,8 +112,8 @@ std::optional<std::string> MaybeFormatBytes(std::optional<uint64_t> bytes) {
   // expect that converting from unsigned to signed int here should always
   // yield a positive value, since overflowing into negative would require an
   // implausibly large app (2^63 bytes ~= 9 exabytes).
-  int64_t signed_bytes = static_cast<int64_t>(bytes.value());
-  if (signed_bytes < 0) {
+  base::ByteCount signed_bytes = base::ByteCount(bytes.value());
+  if (signed_bytes < base::ByteCount(0)) {
     // TODO(crbug.com/40063212): Investigate ARC apps which have negative data
     // sizes.
     LOG(ERROR) << "Invalid app size: " << signed_bytes;

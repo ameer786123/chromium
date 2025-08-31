@@ -6,9 +6,12 @@
 
 #include "base/notimplemented.h"
 #include "chrome/browser/extensions/extension_management.h"
+#include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
+#include "extensions/browser/api/management/management_api.h"
 #include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/launch_util.h"
+#include "extensions/browser/uninstall_reason.h"
 
 namespace extensions {
 
@@ -19,8 +22,9 @@ ChromeManagementAPIDelegate::~ChromeManagementAPIDelegate() = default;
 bool ChromeManagementAPIDelegate::LaunchAppFunctionDelegate(
     const Extension* extension,
     content::BrowserContext* context) const {
-  NOTIMPLEMENTED();
-  return true;
+  // Return false to to cause the chrome.management API call to return an error.
+  // This is similar to how we behave with Chrome Apps on Win/Mac/Linux.
+  return false;
 }
 
 GURL ChromeManagementAPIDelegate::GetFullLaunchURL(
@@ -40,16 +44,10 @@ ChromeManagementAPIDelegate::SetEnabledFunctionDelegate(
     content::BrowserContext* browser_context,
     const Extension* extension,
     base::OnceCallback<void(bool)> callback) const {
-  NOTIMPLEMENTED();
-  return nullptr;
-}
-
-std::unique_ptr<UninstallDialogDelegate>
-ChromeManagementAPIDelegate::UninstallFunctionDelegate(
-    ManagementUninstallFunctionBase* function,
-    const Extension* target_extension,
-    bool show_programmatic_uninstall_ui) const {
-  NOTIMPLEMENTED();
+  // TODO(crbug.com/410932770): Show a permission dialog. For now, pretend that
+  // the user accepted it.
+  NOTIMPLEMENTED() << "Skipping enable extension dialog";
+  std::move(callback).Run(true);
   return nullptr;
 }
 
@@ -129,8 +127,8 @@ GURL ChromeManagementAPIDelegate::GetIconURL(const Extension* extension,
                                              int icon_size,
                                              ExtensionIconSet::Match match,
                                              bool grayscale) const {
-  NOTIMPLEMENTED();
-  return GURL();
+  return ExtensionIconSource::GetIconURL(extension, icon_size, match,
+                                         grayscale);
 }
 
 GURL ChromeManagementAPIDelegate::GetEffectiveUpdateURL(

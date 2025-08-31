@@ -12,19 +12,32 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/logging.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "base/uuid.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/sync_service_factory.h"
+#include "components/data_sharing/public/group_data.h"
+#include "components/saved_tab_groups/internal/saved_tab_group_sync_bridge.h"
+#include "components/saved_tab_groups/public/saved_tab_group.h"
+#include "components/saved_tab_groups/public/types.h"
+#include "components/sync/base/collaboration_id.h"
 #include "components/sync/base/data_type.h"
 #include "components/sync/base/time.h"
+#include "components/sync/model/data_type_sync_bridge.h"
+#include "components/sync/model/in_memory_metadata_change_list.h"
+#include "components/sync/model/mutable_data_batch.h"
+#include "components/sync/protocol/collaboration_group_specifics.pb.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
+#include "components/sync/protocol/saved_tab_group_specifics.pb.h"
+#include "components/sync/protocol/shared_tab_group_data_specifics.pb.h"
 #include "components/sync/protocol/sync_entity.pb.h"
 #include "components/sync/protocol/sync_enums.pb.h"
 #include "components/sync/service/sync_service_impl.h"
 #include "components/sync/test/bookmark_entity_builder.h"
+#include "components/sync/test/collaboration_group_util.h"
 #include "components/sync/test/entity_builder_factory.h"
 #include "components/sync/test/fake_server.h"
 #include "components/sync/test/fake_server_network_resources.h"
@@ -43,12 +56,12 @@ using base::android::JavaParamRef;
 
 namespace {
 
-void DeserializeEntity(JNIEnv* env,
-                       jbyteArray serialized_entity,
-                       sync_pb::SyncEntity* entity) {
-  int bytes_length = env->GetArrayLength(serialized_entity);
-  jbyte* bytes = env->GetByteArrayElements(serialized_entity, nullptr);
-  std::string string(reinterpret_cast<char*>(bytes), bytes_length);
+void DeserializeEntity(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jbyteArray>& serialized_entity,
+    sync_pb::SyncEntity* entity) {
+  std::string string;
+  base::android::JavaByteArrayToString(env, serialized_entity, &string);
 
   bool success = entity->ParseFromString(string);
   DCHECK(success) << "Could not deserialize Entity";
@@ -90,10 +103,48 @@ std::unique_ptr<syncer::LoopbackServerEntity> CreateBookmarkEntity(
   return bookmark_builder.BuildBookmark(gurl);
 }
 
+// Creates a saved tab belonging to `group_guid` group.
+tab_groups::SavedTabGroupTab CreateSavedTab(const base::Uuid& group_guid,
+                                            int position) {
+  tab_groups::SavedTabGroupTab saved_tab(GURL("https://google.com"), u"Google",
+                                         group_guid, position);
+  return saved_tab;
+}
+
+// Creates a saved tab group with the given parameters.
+tab_groups::SavedTabGroup CreateSavedGroup(
+    const base::Uuid& group_guid,
+    const std::string& group_title,
+    const std::vector<tab_groups::SavedTabGroupTab>& saved_tabs) {
+  std::u16string group_title_u16 = base::UTF8ToUTF16(group_title);
+  tab_groups::SavedTabGroup saved_group(
+      group_title_u16, tab_groups::TabGroupColorId::kOrange, saved_tabs,
+      /*position=*/std::nullopt, /*saved_guid=*/group_guid);
+  return saved_group;
+}
+
 syncer::SyncServiceImpl* GetSyncServiceImpl() {
   DCHECK(g_browser_process && g_browser_process->profile_manager());
   return SyncServiceFactory::GetAsSyncServiceImplForProfileForTesting(
       ProfileManager::GetLastUsedProfile());
+}
+
+// Adds SavedTabGroup `specifics` to the fake server.
+void AddSavedTabGroupDataToFakeServer(
+    fake_server::FakeServer* fake_server,
+    const sync_pb::SavedTabGroupSpecifics& specifics) {
+  sync_pb::EntitySpecifics group_entity_specifics;
+  *group_entity_specifics.mutable_saved_tab_group() = specifics;
+
+  std::string client_tag = specifics.guid();
+  int64_t creation_time = specifics.creation_time_windows_epoch_micros();
+  int64_t update_time = specifics.update_time_windows_epoch_micros();
+
+  fake_server->InjectEntity(
+      syncer::PersistentUniqueClientEntity::CreateFromSpecificsForTesting(
+          "non_unique_name", client_tag, group_entity_specifics,
+          /*creation_time=*/creation_time,
+          /*last_modified_time=*/update_time));
 }
 
 }  // namespace
@@ -126,8 +177,9 @@ static jboolean JNI_FakeServerHelper_VerifyEntityCountByTypeAndName(
       fake_server_verifier.VerifyEntityCountByTypeAndName(
           count, static_cast<syncer::DataType>(data_type), name);
 
-  if (!result)
+  if (!result) {
     LOG(WARNING) << result.message();
+  }
 
   return result;
 }
@@ -149,8 +201,9 @@ static jboolean JNI_FakeServerHelper_VerifySessions(
   testing::AssertionResult result =
       fake_server_verifier.VerifySessions(expected_sessions);
 
-  if (!result)
+  if (!result) {
     LOG(WARNING) << result.message();
+  }
 
   return result;
 }
@@ -383,4 +436,83 @@ static void JNI_FakeServerHelper_ClearServerData(JNIEnv* env,
   fake_server::FakeServer* fake_server_ptr =
       reinterpret_cast<fake_server::FakeServer*>(fake_server);
   fake_server_ptr->ClearServerData();
+}
+
+static void JNI_FakeServerHelper_AddCollaboration(
+    JNIEnv* env,
+    jlong fake_server,
+    std::string& collaboration_id) {
+  fake_server::FakeServer* fake_server_ptr =
+      reinterpret_cast<fake_server::FakeServer*>(fake_server);
+  fake_server_ptr->AddCollaboration(syncer::CollaborationId(collaboration_id));
+}
+
+static void JNI_FakeServerHelper_RemoveCollaboration(
+    JNIEnv* env,
+    jlong fake_server,
+    std::string& collaboration_id) {
+  fake_server::FakeServer* fake_server_ptr =
+      reinterpret_cast<fake_server::FakeServer*>(fake_server);
+  fake_server_ptr->RemoveCollaboration(
+      syncer::CollaborationId(collaboration_id));
+}
+
+static void JNI_FakeServerHelper_AddCollaborationGroupToFakeServer(
+    JNIEnv* env,
+    jlong fake_server,
+    std::string& collaboration_id) {
+  const data_sharing::GroupId group_id =
+      data_sharing::GroupId(collaboration_id);
+  const sync_pb::CollaborationGroupSpecifics collab_specifics =
+      collaboration_group_utils::MakeCollaborationGroupSpecifics(
+          group_id.value());
+
+  sync_pb::EntitySpecifics entity_specifics;
+  *entity_specifics.mutable_collaboration_group() = collab_specifics;
+
+  sync_pb::SyncEntity::CollaborationMetadata metadata;
+  metadata.set_collaboration_id(collaboration_id);
+
+  std::string client_tag = collab_specifics.collaboration_id();
+  int64_t creation_time =
+      collab_specifics.changed_at_timestamp_millis_since_unix_epoch();
+  int64_t update_time = creation_time;
+
+  fake_server::FakeServer* fake_server_ptr =
+      reinterpret_cast<fake_server::FakeServer*>(fake_server);
+  fake_server_ptr->InjectEntity(
+      syncer::PersistentUniqueClientEntity::CreateFromSharedSpecificsForTesting(
+          "non_unique_name", client_tag, entity_specifics, creation_time,
+          update_time, metadata));
+}
+
+static void JNI_FakeServerHelper_AddSavedTabGroupToFakeServer(
+    JNIEnv* env,
+    jlong fake_server,
+    const JavaParamRef<jstring>& sync_group_id,
+    std::string& group_title,
+    int number_of_tabs) {
+  base::Uuid group_guid = base::Uuid::ParseLowercase(
+      base::android::ConvertJavaStringToUTF8(env, sync_group_id));
+  std::vector<tab_groups::SavedTabGroupTab> tabs;
+  for (int i = 0; i < number_of_tabs; i++) {
+    tabs.push_back(CreateSavedTab(group_guid, i));
+  }
+  tab_groups::SavedTabGroup saved_group =
+      CreateSavedGroup(group_guid, group_title, tabs);
+  fake_server::FakeServer* fake_server_ptr =
+      reinterpret_cast<fake_server::FakeServer*>(fake_server);
+  AddSavedTabGroupDataToFakeServer(
+      fake_server_ptr,
+      tab_groups::SavedTabGroupSyncBridge::SavedTabGroupToSpecificsForTest(
+          saved_group));
+}
+
+static void JNI_FakeServerHelper_DeleteAllEntitiesForDataType(JNIEnv* env,
+                                                              jlong fake_server,
+                                                              jint data_type) {
+  fake_server::FakeServer* fake_server_ptr =
+      reinterpret_cast<fake_server::FakeServer*>(fake_server);
+  fake_server_ptr->DeleteAllEntitiesForDataType(
+      static_cast<syncer::DataType>(data_type));
 }

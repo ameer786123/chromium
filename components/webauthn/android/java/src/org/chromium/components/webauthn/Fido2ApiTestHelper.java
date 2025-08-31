@@ -24,7 +24,9 @@ import org.chromium.base.test.util.UrlUtils;
 import org.chromium.blink.mojom.AuthenticationExtensionsClientInputs;
 import org.chromium.blink.mojom.AuthenticatorAttachment;
 import org.chromium.blink.mojom.AuthenticatorSelectionCriteria;
+import org.chromium.blink.mojom.AuthenticatorStatus;
 import org.chromium.blink.mojom.CableAuthentication;
+import org.chromium.blink.mojom.CredentialInfo;
 import org.chromium.blink.mojom.GetAssertionAuthenticatorResponse;
 import org.chromium.blink.mojom.MakeCredentialAuthenticatorResponse;
 import org.chromium.blink.mojom.PaymentCredentialInstrument;
@@ -439,7 +441,7 @@ public class Fido2ApiTestHelper {
     private static final int[] TEST_USER_VERIFICATION_METHOD = new int[] {0x00000002, 0x00000200};
     private static final short[] TEST_KEY_PROTECTION_TYPE = new short[] {0x0002, 0x0001};
     private static final short[] TEST_MATCHER_PROTECTION_TYPE = new short[] {0x0004, 0x0001};
-    private static final String TEST_SERIALIZED_MAKE_CREDENTIAL_REQUEST_JSON =
+    public static final String TEST_SERIALIZED_MAKE_CREDENTIAL_REQUEST_JSON =
             "{serialized_make_request}";
     private static final String TEST_SERIALIZED_GET_ASSERTION_REQUEST_JSON =
             "{serialized_get_request}";
@@ -493,10 +495,9 @@ public class Fido2ApiTestHelper {
      *
      * @return Options for the Fido2 API.
      */
-    public static PublicKeyCredentialCreationOptions createDefaultMakeCredentialOptions()
-            throws Exception {
+    public static PublicKeyCredentialCreationOptions createDefaultMakeCredentialOptions() {
         PublicKeyCredentialCreationOptions options = new PublicKeyCredentialCreationOptions();
-        options.challenge = "climb a mountain".getBytes("UTF8");
+        options.challenge = "climb a mountain".getBytes(UTF_8);
         options.hints = new int[0];
 
         options.relyingParty = new PublicKeyCredentialRpEntity();
@@ -504,7 +505,7 @@ public class Fido2ApiTestHelper {
         options.relyingParty.name = "Acme";
 
         options.user = new PublicKeyCredentialUserEntity();
-        options.user.id = "1098237235409872".getBytes("UTF8");
+        options.user.id = "1098237235409872".getBytes(UTF_8);
         options.user.name = "avery.a.jones@example.com";
         options.user.displayName = "Avery A. Jones";
 
@@ -550,11 +551,10 @@ public class Fido2ApiTestHelper {
      *
      * @return Options for the Fido2 API
      */
-    public static PublicKeyCredentialRequestOptions createDefaultGetAssertionOptions()
-            throws Exception {
+    public static PublicKeyCredentialRequestOptions createDefaultGetAssertionOptions() {
         PublicKeyCredentialRequestOptions options = new PublicKeyCredentialRequestOptions();
         options.extensions = new AuthenticationExtensionsClientInputs();
-        options.challenge = "climb a mountain".getBytes("UTF8");
+        options.challenge = "climb a mountain".getBytes(UTF_8);
         options.timeout = new TimeDelta();
         options.timeout.microseconds = TimeUnit.MILLISECONDS.toMicros(TIMEOUT_MS);
         options.relyingPartyId = "subdomain.example.test";
@@ -739,6 +739,7 @@ public class Fido2ApiTestHelper {
         options.instrument.displayName = "MaxPay";
         options.instrument.icon = new Url();
         options.instrument.icon.url = "https://www.google.com/icon.png";
+        options.instrument.details = "instrument details";
         options.payeeOrigin = new org.chromium.url.internal.mojom.Origin();
         options.payeeOrigin.scheme = "https";
         options.payeeOrigin.host = "test.example";
@@ -767,6 +768,11 @@ public class Fido2ApiTestHelper {
                     }
                 };
         ClientDataJsonImplJni.setInstanceForTesting(clientDataJsonJni);
+    }
+
+    /** Mocks ClientDataJson with the default test value. */
+    public static void mockClientDataJson() {
+        mockClientDataJson(new String(TEST_CLIENT_DATA_JSON));
     }
 
     /**
@@ -821,6 +827,7 @@ public class Fido2ApiTestHelper {
         private Integer mOutcome;
         private MakeCredentialAuthenticatorResponse mMakeCredentialResponse;
         private GetAssertionAuthenticatorResponse mGetAssertionAuthenticatorResponse;
+        private CredentialInfo mPasswordCredential;
         private List<byte[]> mGetMatchingCredentialIdsResponse;
 
         // Signals when request is complete.
@@ -835,7 +842,18 @@ public class Fido2ApiTestHelper {
             unblock();
         }
 
-        public void onSignResponse(int status, GetAssertionAuthenticatorResponse response) {
+        public void onSignResponse(
+                @Nullable GetAssertionAuthenticatorResponse response,
+                @Nullable CredentialInfo passwordCredential) {
+            assert mStatus == null;
+            mStatus = AuthenticatorStatus.SUCCESS;
+            mGetAssertionAuthenticatorResponse = response;
+            mPasswordCredential = passwordCredential;
+            unblock();
+        }
+
+        public void onSignResponseWithStatus(
+                int status, GetAssertionAuthenticatorResponse response) {
             assert mStatus == null;
             mStatus = status;
             mGetAssertionAuthenticatorResponse = response;
@@ -872,6 +890,10 @@ public class Fido2ApiTestHelper {
 
         public GetAssertionAuthenticatorResponse getGetAssertionResponse() {
             return mGetAssertionAuthenticatorResponse;
+        }
+
+        public CredentialInfo getGetAssertionPasswordCredential() {
+            return mPasswordCredential;
         }
 
         public List<byte[]> getGetMatchingCredentialIdsResponse() {

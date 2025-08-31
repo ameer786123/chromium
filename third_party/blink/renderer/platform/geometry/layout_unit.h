@@ -49,10 +49,6 @@
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/vector_traits.h"
 
-namespace WTF {
-class String;
-}  // namespace WTF
-
 namespace blink {
 
 #if DCHECK_IS_ON()
@@ -347,11 +343,11 @@ class PLATFORM_EXPORT FixedPoint {
   std::optional<FixedPoint> NullOptIf(FixedPoint null_value) const;
   std::optional<FixedPoint> NullOptIfMin() const { return NullOptIf(Min()); }
 
-  WTF::String ToString() const;
+  String ToString() const;
 
  private:
 #if defined(ARCH_CPU_ARM_FAMILY) && defined(ARCH_CPU_32_BITS) && \
-    defined(COMPILER_GCC) && !BUILDFLAG(IS_NACL) && __OPTIMIZE__
+    defined(COMPILER_GCC) && __OPTIMIZE__
   // If we're building ARM 32-bit on GCC we replace the C++ versions with some
   // native ARM assembly for speed.
   constexpr inline void SaturatedSet(int value) {
@@ -824,7 +820,7 @@ FixedPoint<fractional_bits, RawValue>::NullOptIf(FixedPoint null_value) const {
 }
 
 #if defined(ARCH_CPU_ARM_FAMILY) && defined(ARCH_CPU_32_BITS) && \
-    defined(COMPILER_GCC) && !BUILDFLAG(IS_NACL) && __OPTIMIZE__
+    defined(COMPILER_GCC) && __OPTIMIZE__
 inline int GetMaxSaturatedSetResultForTesting() {
   // For ARM Asm version the set function maxes out to the biggest
   // possible integer part with the fractional part zero'd out.

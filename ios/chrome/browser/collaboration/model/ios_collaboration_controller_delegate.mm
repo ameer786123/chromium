@@ -7,7 +7,10 @@
 #import "base/check.h"
 #import "base/functional/callback.h"
 #import "base/functional/callback_helpers.h"
+#import "base/metrics/user_metrics.h"
+#import "base/metrics/user_metrics_action.h"
 #import "base/strings/sys_string_conversions.h"
+#import "components/collaboration/public/collaboration_flow_type.h"
 #import "components/collaboration/public/collaboration_service.h"
 #import "components/collaboration/public/service_status.h"
 #import "components/saved_tab_groups/public/saved_tab_group.h"
@@ -15,7 +18,9 @@
 #import "components/sync/base/user_selectable_type.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_user_settings.h"
+#import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/collaboration/model/collaboration_service_factory.h"
 #import "ios/chrome/browser/favicon/model/favicon_loader.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
@@ -24,6 +29,7 @@
 #import "ios/chrome/browser/saved_tab_groups/model/ios_tab_group_action_context.h"
 #import "ios/chrome/browser/saved_tab_groups/model/ios_tab_group_sync_util.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_service.h"
+#import "ios/chrome/browser/saved_tab_groups/model/tab_group_service_factory.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_flow_outcome.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_join_configuration.h"
@@ -33,10 +39,12 @@
 #import "ios/chrome/browser/share_kit/model/share_kit_service_factory.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_share_group_configuration.h"
 #import "ios/chrome/browser/shared/coordinator/alert/alert_coordinator.h"
+#import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/web_state_list/tab_group.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/settings_commands.h"
 #import "ios/chrome/browser/shared/public/commands/show_signin_command.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/util/top_view_controller.h"
@@ -54,6 +62,19 @@ namespace collaboration {
 
 namespace {
 
+// Converts `outcome` between the two enums.
+CollaborationControllerDelegate::Outcome ConvertShareKitFlowOutcome(
+    ShareKitFlowOutcome outcome) {
+  switch (outcome) {
+    case ShareKitFlowOutcome::kSuccess:
+      return CollaborationControllerDelegate::Outcome::kSuccess;
+    case ShareKitFlowOutcome::kFailure:
+      return CollaborationControllerDelegate::Outcome::kFailure;
+    case ShareKitFlowOutcome::kCancel:
+      return CollaborationControllerDelegate::Outcome::kCancel;
+  }
+}
+
 // The size in point of the join group image.
 const CGFloat kJoinGroupImageSize = 64.0;
 
@@ -66,78 +87,106 @@ const CGFloat kFaviconSize = 16.0;
 // The opacity of the scrim view.
 const CGFloat kScrimOpacity = 0.3;
 
-// Maximum delay to return preview items.
-constexpr base::TimeDelta kFetchPreviewItemsTimeDelay = base::Seconds(15);
+// The timing to show/hide the scrim view.
+const CGFloat kScrimAnimationDelay = 0.5;
+const CGFloat kScrimAnimationTiming = 0.25;
 
-// Converts `outcome` between the two enums.
-CollaborationControllerDelegate::Outcome ConvertOutcome(
-    ShareKitFlowOutcome outcome) {
-  switch (outcome) {
-    case ShareKitFlowOutcome::kSuccess:
-      return CollaborationControllerDelegate::Outcome::kSuccess;
-    case ShareKitFlowOutcome::kFailure:
-      return CollaborationControllerDelegate::Outcome::kFailure;
-    case ShareKitFlowOutcome::kCancel:
-      return CollaborationControllerDelegate::Outcome::kCancel;
-  }
-}
+// Maximum delay to return preview items.
+constexpr base::TimeDelta kFetchPreviewItemsTimeDelay = base::Seconds(5);
 
 }  // namespace
 
-IOSCollaborationControllerDelegate::IOSCollaborationControllerDelegate(
-    Browser* browser,
+IOSCollaborationControllerDelegateParams
+CreateControllerDelegateParamsFromProfile(
+    ProfileIOS* profile,
     UIViewController* base_view_controller,
-    TabGroupService* tab_group_service)
-    : browser_(browser),
-      base_view_controller_(base_view_controller),
-      tab_group_service_(tab_group_service) {
-  CHECK(browser_);
-  CHECK(base_view_controller_);
-  CHECK(tab_group_service_);
-  ProfileIOS* profile = browser_->GetProfile();
-
-  share_kit_service_ = ShareKitServiceFactory::GetForProfile(profile);
-  tab_groups::TabGroupSyncService* tab_group_sync_service =
-      tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile);
-  favicon_loader_ = IOSChromeFaviconLoaderFactory::GetForProfile(profile);
-  favicons_grid_configurator_ =
-      std::make_unique<TabGroupFaviconsGridConfigurator>(tab_group_sync_service,
-                                                         favicon_loader_);
-  CHECK(share_kit_service_);
-  CHECK(favicon_loader_);
-  CHECK(favicons_grid_configurator_);
+    FlowType flow_type) {
+  return IOSCollaborationControllerDelegateParams(
+      {TabGroupServiceFactory::GetForProfile(profile),
+       ShareKitServiceFactory::GetForProfile(profile),
+       IOSChromeFaviconLoaderFactory::GetForProfile(profile),
+       tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile),
+       SyncServiceFactory::GetForProfile(profile),
+       CollaborationServiceFactory::GetForProfile(profile),
+       base_view_controller, flow_type});
 }
 
-IOSCollaborationControllerDelegate::~IOSCollaborationControllerDelegate() {}
+IOSCollaborationControllerDelegate::IOSCollaborationControllerDelegate(
+    Browser* browser,
+    IOSCollaborationControllerDelegateParams params)
+    : browser_(browser) {
+  CHECK(browser_);
+  browser_->AddObserver(this);
+
+  tab_group_service_ = params.tab_group_service;
+  tab_group_sync_service_ = params.tab_group_sync_service;
+  share_kit_service_ = params.share_kit_service;
+  sync_service_ = params.sync_service;
+  collaboration_service_ = params.collaboration_service;
+  favicon_loader_ = params.favicon_loader;
+  favicons_grid_configurator_ =
+      std::make_unique<TabGroupFaviconsGridConfigurator>(
+          tab_group_sync_service_, favicon_loader_);
+  flow_type_ = params.flow_type;
+  base_view_controller_ = params.base_view_controller;
+  CHECK(tab_group_service_);
+  CHECK(tab_group_sync_service_);
+  CHECK(share_kit_service_);
+  CHECK(sync_service_);
+  CHECK(collaboration_service_);
+  CHECK(favicon_loader_);
+  CHECK(favicons_grid_configurator_);
+  CHECK(base_view_controller_);
+  switch (flow_type_) {
+    case FlowType::kJoin:
+      base::RecordAction(base::UserMetricsAction("IOSCollaborationInitJoin"));
+      break;
+    case FlowType::kShareOrManage:
+      base::RecordAction(
+          base::UserMetricsAction("IOSCollaborationInitShareOrManage"));
+      break;
+    case FlowType::kLeaveOrDelete:
+      base::RecordAction(
+          base::UserMetricsAction("IOSCollaborationInitLeaveOrDelete"));
+      break;
+  }
+}
+
+IOSCollaborationControllerDelegate::~IOSCollaborationControllerDelegate() {
+  StopSigninCoordinator();
+  if (IsInObserverList()) {
+    CHECK(browser_);
+    browser_->RemoveObserver(this);
+    browser_ = nullptr;
+  }
+}
 
 // CollaborationControllerDelegate.
 void IOSCollaborationControllerDelegate::PrepareFlowUI(
     base::OnceCallback<void()> exit_callback,
     ResultCallback result) {
-  // TODO(crbug.com/399584431): Improve the design of the spinner/scrim.
-  scrim_view_ = [[UIView alloc] init];
-  scrim_view_.backgroundColor = [UIColor colorWithWhite:0 alpha:kScrimOpacity];
-  UIActivityIndicatorView* activity_view = [[UIActivityIndicatorView alloc]
-      initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
-  activity_view.translatesAutoresizingMaskIntoConstraints = NO;
-  [scrim_view_ addSubview:activity_view];
-  AddSameCenterConstraints(scrim_view_, activity_view);
-  [activity_view startAnimating];
-  scrim_view_.translatesAutoresizingMaskIntoConstraints = NO;
-  [base_view_controller_.view addSubview:scrim_view_];
-  AddSameConstraints(base_view_controller_.view, scrim_view_);
+  exit_callback_ = std::move(exit_callback);
+  switch (flow_type_) {
+    case FlowType::kJoin:
+      AddScrimView();
+      break;
+    case FlowType::kShareOrManage:
+    case FlowType::kLeaveOrDelete:
+      break;
+  }
   std::move(result).Run(CollaborationControllerDelegate::Outcome::kSuccess);
 }
 
 void IOSCollaborationControllerDelegate::ShowError(const ErrorInfo& error,
                                                    ResultCallback result) {
+  if (!browser_) {
+    return;
+  }
+
   NSString* title = base::SysUTF8ToNSString(error.error_header);
   NSString* message = base::SysUTF8ToNSString(error.error_body);
 
-  auto alert_action = base::CallbackToBlock(
-      base::BindOnce(&IOSCollaborationControllerDelegate::ErrorAccepted,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(result)));
-  // Make sure to present it on top of any visible view.
+  // Make sure to present the alert on top of any visible view.
   UIViewController* top_view_controller =
       top_view_controller::TopPresentedViewControllerFrom(
           base_view_controller_);
@@ -147,14 +196,52 @@ void IOSCollaborationControllerDelegate::ShowError(const ErrorInfo& error,
                                                    browser:browser_
                                                      title:title
                                                    message:message];
-  [alert_coordinator_
-      addItemWithTitle:l10n_util::GetNSString(IDS_IOS_SHARED_GROUP_ERROR_GOT_IT)
-                action:alert_action
-                 style:UIAlertActionStyleDefault];
+
+  if (error.type() == ErrorInfo::Type::kUpdateChromeUiForVersionOutOfDate) {
+    auto split_result_callback = base::SplitOnceCallback(std::move(result));
+
+    auto update_action = base::CallbackToBlock(
+        base::BindOnce(&IOSCollaborationControllerDelegate::Update,
+                       weak_ptr_factory_.GetWeakPtr(),
+                       std::move(split_result_callback.first)));
+    [alert_coordinator_
+        addItemWithTitle:
+            l10n_util::GetNSString(
+                IDS_COLLABORATION_CHROME_OUT_OF_DATE_ERROR_DIALOG_UPDATE_BUTTON)
+                  action:update_action
+                   style:UIAlertActionStyleDefault
+               preferred:YES
+                 enabled:YES];
+
+    auto dismiss_action = base::CallbackToBlock(
+        base::BindOnce(&IOSCollaborationControllerDelegate::ErrorAccepted,
+                       weak_ptr_factory_.GetWeakPtr(),
+                       std::move(split_result_callback.second)));
+    [alert_coordinator_
+        addItemWithTitle:
+            l10n_util::GetNSString(
+                IDS_COLLABORATION_CHROME_OUT_OF_DATE_ERROR_DIALOG_NOT_NOW_BUTTON)
+                  action:dismiss_action
+                   style:UIAlertActionStyleCancel];
+  } else {
+    auto alert_action = base::CallbackToBlock(
+        base::BindOnce(&IOSCollaborationControllerDelegate::ErrorAccepted,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(result)));
+    [alert_coordinator_ addItemWithTitle:l10n_util::GetNSString(
+                                             IDS_IOS_SHARED_GROUP_ERROR_GOT_IT)
+                                  action:alert_action
+                                   style:UIAlertActionStyleDefault];
+  }
+
   [alert_coordinator_ start];
 }
 
 void IOSCollaborationControllerDelegate::Cancel(ResultCallback result) {
+  if (!browser_) {
+    return;
+  }
+  StopSigninCoordinator();
+
   if (dismiss_join_screen_callback_) {
     std::move(dismiss_join_screen_callback_).Run();
   }
@@ -168,65 +255,76 @@ void IOSCollaborationControllerDelegate::Cancel(ResultCallback result) {
 void IOSCollaborationControllerDelegate::ShowAuthenticationUi(
     FlowType flow_type,
     ResultCallback result) {
-  CollaborationService* collaboration_service =
-      CollaborationServiceFactory::GetForProfile(browser_->GetProfile());
-  ServiceStatus service_status = collaboration_service->GetServiceStatus();
+  if (!browser_) {
+    return;
+  }
 
-  AuthenticationOperation operation;
+  // Add the scrim view to prevent interaction during authentication.
+  AddScrimView();
 
+  const signin_metrics::PromoAction promo_action =
+      signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO;
+  const FlowConfig flow_config = GetFlowConfig(flow_type);
+
+  ServiceStatus service_status = collaboration_service_->GetServiceStatus();
   switch (service_status.signin_status) {
-    case SigninStatus::kNotSignedIn:
-      operation = AuthenticationOperation::kSheetSigninAndHistorySync;
-      break;
-
-    case SigninStatus::kSignedInPaused:
-      // TODO(crbug.com/390153810): Handle the sign in paused.
-      NOTREACHED();
-
-    case SigninStatus::kSignedIn:
-      operation = AuthenticationOperation::kHistorySync;
-      break;
+    case SigninStatus::kNotSignedIn:  // Fallthrough
+    case SigninStatus::kSignedIn: {
+      auto completion_block = base::CallbackToBlock(base::BindOnce(
+          &IOSCollaborationControllerDelegate::OnAuthenticationComplete,
+          weak_ptr_factory_.GetWeakPtr(), std::move(result)));
+      AuthenticationOperation operation =
+          service_status.signin_status == SigninStatus::kNotSignedIn
+              ? AuthenticationOperation::kSheetSigninAndHistorySync
+              : AuthenticationOperation::kHistorySync;
+      ShowSigninCommand* command =
+          [[ShowSigninCommand alloc] initWithOperation:operation
+                                              identity:nil
+                                           accessPoint:flow_config.access_point
+                                           promoAction:promo_action
+                                            completion:completion_block];
+      command.optionalHistorySync = NO;
+      command.fullScreenPromo = flow_config.full_screen_promo;
+      command.contextStyle = flow_config.context_style;
+      // In case of double-tap, we must stop the already started coordinator.
+      // This may occur because, up to iOS 18, the view may have disappeared
+      // without calling the signin completion. See crbug.com/395959814
+      [signin_coordinator_ stop];
+      signin_coordinator_ = [SigninCoordinator
+          signinCoordinatorWithCommand:command
+                               browser:browser_
+                    baseViewController:base_view_controller_];
+      [signin_coordinator_ start];
+      return;
+    }
+    case SigninStatus::kSigninDisabled:
+      ShowSignInDisabledByUserAlert(std::move(result));
+      return;
+    case SigninStatus::kSignedInPaused: {
+      auto completion_block = base::CallbackToBlock(base::BindOnce(
+          &IOSCollaborationControllerDelegate::OnAuthenticationComplete,
+          weak_ptr_factory_.GetWeakPtr(), std::move(result)));
+      // For a paused sign-in, re-authentication is required.
+      // In case of double-tap, we must stop the already started coordinator.
+      // This may occur because, up to iOS 18, the view may have disappeared
+      // without calling the signin completion. See crbug.com/395959814
+      [signin_coordinator_ stop];
+      signin_coordinator_ = [SigninCoordinator
+          primaryAccountReauthCoordinatorWithBaseViewController:
+              base_view_controller_
+                                                        browser:browser_
+                                                   contextStyle:
+                                                       flow_config.context_style
+                                                    accessPoint:
+                                                        flow_config.access_point
+                                                    promoAction:promo_action
+                                           continuationProvider:
+                                               DoNothingContinuationProvider()];
+      signin_coordinator_.signinCompletion = completion_block;
+      [signin_coordinator_ start];
+      return;
+    }
   }
-
-  id<ApplicationCommands> application_handler =
-      HandlerForProtocol(browser_->GetCommandDispatcher(), ApplicationCommands);
-  auto completion_block = base::CallbackToBlock(base::BindOnce(
-      &IOSCollaborationControllerDelegate::OnAuthenticationComplete,
-      weak_ptr_factory_.GetWeakPtr(), std::move(result)));
-
-  AccessPoint access_point;
-  SigninContextStyle context_style;
-  BOOL fullScreenPromo = NO;
-  switch (flow_type) {
-    case FlowType::kJoin:
-      access_point = AccessPoint::kCollaborationJoinTabGroup;
-      context_style = SigninContextStyle::kCollaborationJoinTabGroup;
-      fullScreenPromo = YES;
-      break;
-    case FlowType::kShareOrManage:
-      access_point = AccessPoint::kCollaborationShareTabGroup;
-      context_style = SigninContextStyle::kCollaborationShareTabGroup;
-      break;
-    case FlowType::kLeaveOrDelete:
-      access_point = AccessPoint::kCollaborationLeaveOrDeleteTabGroup;
-      context_style = SigninContextStyle::kDefault;
-      break;
-  }
-
-  ShowSigninCommand* command = [[ShowSigninCommand alloc]
-      initWithOperation:operation
-               identity:nil
-            accessPoint:access_point
-            promoAction:signin_metrics::PromoAction::
-                            PROMO_ACTION_NO_SIGNIN_PROMO
-             completion:completion_block];
-
-  command.optionalHistorySync = NO;
-  command.fullScreenPromo = fullScreenPromo;
-  command.contextStyle = context_style;
-
-  [application_handler showSignin:command
-               baseViewController:base_view_controller_];
 }
 
 void IOSCollaborationControllerDelegate::NotifySignInAndSyncStatusChange() {
@@ -237,6 +335,10 @@ void IOSCollaborationControllerDelegate::ShowJoinDialog(
     const data_sharing::GroupToken& token,
     const data_sharing::SharedDataPreview& preview_data,
     ResultCallback result) {
+  if (!browser_) {
+    return;
+  }
+
   const auto& tab_group_preview = preview_data.shared_tab_group_preview;
 
   std::string group_title = tab_group_preview ? tab_group_preview->title : "";
@@ -260,6 +362,10 @@ void IOSCollaborationControllerDelegate::ShowJoinDialog(
 void IOSCollaborationControllerDelegate::ShowShareDialog(
     const tab_groups::EitherGroupID& either_id,
     ResultWithGroupTokenCallback result) {
+  if (!browser_) {
+    return;
+  }
+
   const TabGroup* tab_group = GetLocalGroup(either_id);
   if (!tab_group) {
     std::move(result).Run(CollaborationControllerDelegate::Outcome::kFailure,
@@ -285,6 +391,10 @@ void IOSCollaborationControllerDelegate::OnUrlReadyToShare(
     const data_sharing::GroupId& group_id,
     const GURL& url,
     ResultCallback result) {
+  if (!browser_) {
+    return;
+  }
+
   CHECK(link_generation_callback_);
   std::move(link_generation_callback_).Run(url);
   std::move(result).Run(CollaborationControllerDelegate::Outcome::kSuccess);
@@ -293,6 +403,10 @@ void IOSCollaborationControllerDelegate::OnUrlReadyToShare(
 void IOSCollaborationControllerDelegate::ShowManageDialog(
     const tab_groups::EitherGroupID& either_id,
     ResultCallback result) {
+  if (!browser_) {
+    return;
+  }
+
   const TabGroup* tab_group = GetLocalGroup(either_id);
   if (!tab_group) {
     std::move(result).Run(CollaborationControllerDelegate::Outcome::kFailure);
@@ -310,28 +424,41 @@ void IOSCollaborationControllerDelegate::ShowManageDialog(
 void IOSCollaborationControllerDelegate::ShowLeaveDialog(
     const tab_groups::EitherGroupID& either_id,
     ResultCallback result) {
-  std::move(result).Run(CollaborationControllerDelegate::Outcome::kFailure);
+  if (!browser_) {
+    return;
+  }
+
+  base::RecordAction(
+      base::UserMetricsAction("IOSCollaborationShowLeaveDialog"));
+  ShowLeaveOrDeleteDialog(either_id, std::move(result));
 }
 
 void IOSCollaborationControllerDelegate::ShowDeleteDialog(
     const tab_groups::EitherGroupID& either_id,
     ResultCallback result) {
-  std::move(result).Run(CollaborationControllerDelegate::Outcome::kFailure);
+  if (!browser_) {
+    return;
+  }
+
+  base::RecordAction(
+      base::UserMetricsAction("IOSCollaborationShowDeleteDialog"));
+  ShowLeaveOrDeleteDialog(either_id, std::move(result));
 }
 
 void IOSCollaborationControllerDelegate::PromoteTabGroup(
     const data_sharing::GroupId& group_id,
     ResultCallback result) {
+  if (!browser_) {
+    return;
+  }
+
   if (dismiss_join_screen_callback_) {
     std::move(dismiss_join_screen_callback_).Run();
   }
 
-  tab_groups::TabGroupSyncService* tab_group_sync_service =
-      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-          browser_->GetProfile());
   base::Uuid sync_id;
   for (const tab_groups::SavedTabGroup& group :
-       tab_group_sync_service->GetAllGroups()) {
+       tab_group_sync_service_->GetAllGroups()) {
     if (!group.collaboration_id().has_value()) {
       continue;
     }
@@ -346,17 +473,36 @@ void IOSCollaborationControllerDelegate::PromoteTabGroup(
   if (!sync_id.is_valid()) {
     std::move(result).Run(CollaborationControllerDelegate::Outcome::kFailure);
   }
-  tab_group_sync_service->OpenTabGroup(
+  tab_group_sync_service_->OpenTabGroup(
       sync_id,
       std::make_unique<tab_groups::IOSTabGroupActionContext>(browser_));
   std::move(result).Run(CollaborationControllerDelegate::Outcome::kSuccess);
 }
 
 void IOSCollaborationControllerDelegate::PromoteCurrentScreen() {
-  // TODO(crbug.com/399595276): Implement this.
+  if (!browser_) {
+    return;
+  }
+  SceneState* scene_state = browser_->GetSceneState();
+  UISceneActivationRequestOptions* options =
+      [[UISceneActivationRequestOptions alloc] init];
+  UISceneSessionActivationRequest* request = [UISceneSessionActivationRequest
+      requestWithSession:scene_state.scene.session];
+  request.options = options;
+  [[UIApplication sharedApplication]
+      activateSceneSessionForRequest:request
+                        errorHandler:^(NSError* error) {
+                          LOG(ERROR) << base::SysNSStringToUTF8(
+                              error.localizedDescription);
+                          NOTREACHED();
+                        }];
 }
 
 void IOSCollaborationControllerDelegate::OnFlowFinished() {
+  if (!browser_) {
+    return;
+  }
+
   if (tab_group_service_registration_id_) {
     tab_group_service_->UnregisterCollaborationControllerDelegate(
         tab_group_service_registration_id_.value());
@@ -366,14 +512,17 @@ void IOSCollaborationControllerDelegate::OnFlowFinished() {
     NOTREACHED(base::NotFatalUntil::M140);
     std::move(dismiss_join_screen_callback_).Run();
   }
-  [scrim_view_ removeFromSuperview];
+  RemoveScrimView(/*delayed=*/false);
 }
 
 void IOSCollaborationControllerDelegate::ShareGroupAndGenerateLink(
     std::string collaboration_group_id,
     std::string access_token,
     base::OnceCallback<void(GURL)> callback) {
-  CHECK(share_screen_callback_);
+  if (!browser_ || !share_screen_callback_) {
+    return;
+  }
+
   link_generation_callback_ = std::move(callback);
   data_sharing::GroupToken token(data_sharing::GroupId(collaboration_group_id),
                                  access_token);
@@ -382,18 +531,63 @@ void IOSCollaborationControllerDelegate::ShareGroupAndGenerateLink(
       .Run(CollaborationControllerDelegate::Outcome::kSuccess, token);
 }
 
+void IOSCollaborationControllerDelegate::SetLeaveOrDeleteConfirmationCallback(
+    base::OnceCallback<void(ResultCallback)> callback) {
+  leave_or_delete_confirmation_callback_ = std::move(callback);
+}
+
+#pragma mark - BrowserObserver
+
+void IOSCollaborationControllerDelegate::BrowserDestroyed(Browser* browser) {
+  browser->RemoveObserver(this);
+  browser_ = nullptr;
+  if (exit_callback_) {
+    std::move(exit_callback_).Run();
+  }
+}
+
+#pragma mark - Private
+
+void IOSCollaborationControllerDelegate::StopSigninCoordinator() {
+  [signin_coordinator_ stop];
+  signin_coordinator_ = nil;
+}
+
+void IOSCollaborationControllerDelegate::ShowLeaveOrDeleteDialog(
+    const tab_groups::EitherGroupID& either_id,
+    ResultCallback result) {
+  CHECK(leave_or_delete_confirmation_callback_);
+
+  auto final_result = base::BindOnce(
+      [](base::WeakPtr<IOSCollaborationControllerDelegate> weak_this,
+         ResultCallback inner_result, Outcome outcome) {
+        if (weak_this && outcome == Outcome::kSuccess) {
+          weak_this->AddScrimView();
+        }
+        std::move(inner_result).Run(outcome);
+      },
+      weak_ptr_factory_.GetWeakPtr(), std::move(result));
+
+  std::move(leave_or_delete_confirmation_callback_)
+      .Run(std::move(final_result));
+}
+
 void IOSCollaborationControllerDelegate::OnAuthenticationComplete(
     ResultCallback result,
     SigninCoordinatorResult sign_in_result,
     id<SystemIdentity> completion_info) {
+  StopSigninCoordinator();
+  if (sign_in_result == SigninCoordinatorResultCanceledByUser) {
+    std::move(result).Run(CollaborationControllerDelegate::Outcome::kCancel);
+    return;
+  }
+
   if (sign_in_result != SigninCoordinatorResultSuccess) {
     std::move(result).Run(CollaborationControllerDelegate::Outcome::kFailure);
     return;
   }
 
-  syncer::SyncService* sync_service =
-      SyncServiceFactory::GetForProfile(browser_->GetProfile());
-  syncer::SyncUserSettings* user_settings = sync_service->GetUserSettings();
+  syncer::SyncUserSettings* user_settings = sync_service_->GetUserSettings();
 
   bool sync_opted_in = user_settings->GetSelectedTypes().HasAll(
       {syncer::UserSelectableType::kHistory,
@@ -408,7 +602,14 @@ void IOSCollaborationControllerDelegate::OnAuthenticationComplete(
 
 void IOSCollaborationControllerDelegate::OnCollaborationJoinSuccess(
     void (^dismiss_join_screen)()) {
+  RemoveScrimView(/*delayed=*/false);
   dismiss_join_screen_callback_ = base::BindOnce(dismiss_join_screen);
+}
+
+void IOSCollaborationControllerDelegate::OnJoinComplete(ResultCallback result,
+                                                        Outcome outcome) {
+  RemoveScrimView(/*delayed=*/false);
+  std::move(result).Run(outcome);
 }
 
 void IOSCollaborationControllerDelegate::OnShareFlowComplete(
@@ -418,7 +619,7 @@ void IOSCollaborationControllerDelegate::OnShareFlowComplete(
     return;
   }
   std::move(share_screen_callback_)
-      .Run(ConvertOutcome(outcome), data_sharing::GroupToken());
+      .Run(ConvertShareKitFlowOutcome(outcome), data_sharing::GroupToken());
 }
 
 void IOSCollaborationControllerDelegate::WillUnshareGroup(
@@ -427,10 +628,7 @@ void IOSCollaborationControllerDelegate::WillUnshareGroup(
   if (!local_id.has_value()) {
     continuation_block(YES);
   }
-  tab_groups::TabGroupSyncService* tab_group_sync_service =
-      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-          browser_->GetProfile());
-  tab_group_sync_service->AboutToUnShareTabGroup(
+  tab_group_sync_service_->AboutToUnShareTabGroup(
       local_id.value(), base::BindOnce(continuation_block, YES));
 }
 
@@ -441,10 +639,7 @@ void IOSCollaborationControllerDelegate::DidUnshareGroup(
     return;
   }
   bool success = (error == nil);
-  tab_groups::TabGroupSyncService* tab_group_sync_service =
-      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-          browser_->GetProfile());
-  tab_group_sync_service->OnTabGroupUnShareComplete(local_id.value(), success);
+  tab_group_sync_service_->OnTabGroupUnShareComplete(local_id.value(), success);
 }
 
 void IOSCollaborationControllerDelegate::ErrorAccepted(ResultCallback result) {
@@ -454,17 +649,22 @@ void IOSCollaborationControllerDelegate::ErrorAccepted(ResultCallback result) {
   std::move(result).Run(CollaborationControllerDelegate::Outcome::kSuccess);
 }
 
+void IOSCollaborationControllerDelegate::Update(ResultCallback result) {
+  CommandDispatcher* dispatcher = browser_->GetCommandDispatcher();
+  id<ApplicationCommands> application_handler =
+      HandlerForProtocol(dispatcher, ApplicationCommands);
+  [application_handler showAppStorePage];
+  std::move(result).Run(CollaborationControllerDelegate::Outcome::kSuccess);
+}
+
 const TabGroup* IOSCollaborationControllerDelegate::GetLocalGroup(
     const tab_groups::EitherGroupID& either_id) {
-  tab_groups::TabGroupSyncService* tab_group_sync_service =
-      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-          browser_->GetProfile());
-  if (!tab_group_sync_service) {
+  if (!tab_group_sync_service_) {
     return nullptr;
   }
 
   std::optional<tab_groups::SavedTabGroup> saved_group =
-      tab_group_sync_service->GetGroup(either_id);
+      tab_group_sync_service_->GetGroup(either_id);
   if (!saved_group.has_value()) {
     return nullptr;
   }
@@ -539,6 +739,7 @@ void IOSCollaborationControllerDelegate::ConfigureAndJoinTabGroup(
     const std::string& group_title,
     ResultCallback result,
     NSArray<ShareKitPreviewItem*>* preview_items) {
+  base::RecordAction(base::UserMetricsAction("IOSCollaborationShowJoinDialog"));
   ShareKitJoinConfiguration* config = [[ShareKitJoinConfiguration alloc] init];
   config.token = token;
   config.baseViewController = base_view_controller_;
@@ -554,18 +755,24 @@ void IOSCollaborationControllerDelegate::ConfigureAndJoinTabGroup(
   config.previewItems = preview_items;
   config.previewImage = JoinGroupImage(preview_items);
 
+  // The scrim will be dismissed on completion.
   auto join_success_completion = base::BindOnce(
       &IOSCollaborationControllerDelegate::OnCollaborationJoinSuccess,
       weak_ptr_factory_.GetWeakPtr());
   config.joinCollaborationGroupSuccessBlock =
       base::CallbackToBlock(std::move(join_success_completion));
 
-  auto completion_block = base::CallbackToBlock(std::move(result));
+  auto completion_block = base::CallbackToBlock(
+      base::BindOnce(&IOSCollaborationControllerDelegate::OnJoinComplete,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(result)));
+
   config.completion = ^(ShareKitFlowOutcome outcome) {
-    completion_block(ConvertOutcome(outcome));
+    completion_block(ConvertShareKitFlowOutcome(outcome));
   };
 
   session_id_ = share_kit_service_->JoinTabGroup(config);
+
+  // The scrim will be dismissed on the completion.
 }
 
 void IOSCollaborationControllerDelegate::ConfigureAndShareTabGroup(
@@ -579,6 +786,8 @@ void IOSCollaborationControllerDelegate::ConfigureAndShareTabGroup(
     return;
   }
 
+  base::RecordAction(
+      base::UserMetricsAction("IOSCollaborationShowShareDialog"));
   share_screen_callback_ = std::move(result);
 
   ShareKitShareGroupConfiguration* config =
@@ -593,6 +802,9 @@ void IOSCollaborationControllerDelegate::ConfigureAndShareTabGroup(
                      weak_ptr_factory_.GetWeakPtr()));
 
   session_id_ = share_kit_service_->ShareTabGroup(config);
+
+  // Remove the scrim view to avoid having it visible when dismissing the flow.
+  RemoveScrimView(/*delayed=*/true);
 }
 
 void IOSCollaborationControllerDelegate::ConfigureAndManageTabGroup(
@@ -605,29 +817,32 @@ void IOSCollaborationControllerDelegate::ConfigureAndManageTabGroup(
     return;
   }
 
-  tab_groups::TabGroupSyncService* tab_group_sync_service =
-      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-          browser_->GetProfile());
   tab_groups::CollaborationId collaboration_id =
-      tab_groups::utils::GetTabGroupCollabID(either_id, tab_group_sync_service);
+      tab_groups::utils::GetTabGroupCollabID(either_id,
+                                             tab_group_sync_service_);
   std::optional<tab_groups::SavedTabGroup> group =
-      tab_group_sync_service->GetGroup(either_id);
+      tab_group_sync_service_->GetGroup(either_id);
   if (collaboration_id->empty() || !group.has_value()) {
     std::move(result).Run(CollaborationControllerDelegate::Outcome::kFailure);
     return;
   }
 
+  base::RecordAction(
+      base::UserMetricsAction("IOSCollaborationShowManageDialog"));
   ShareKitManageConfiguration* config =
       [[ShareKitManageConfiguration alloc] init];
   config.baseViewController = base_view_controller_;
   config.tabGroup = tab_group;
   config.groupImage = faviconsGridImage;
   config.collabID = base::SysUTF8ToNSString(collaboration_id.value());
+  config.enterpriseSharingDisabled =
+      collaboration_service_->GetServiceStatus().collaboration_status ==
+      CollaborationStatus::kDisabledForPolicy;
   config.applicationHandler =
       HandlerForProtocol(browser_->GetCommandDispatcher(), ApplicationCommands);
   auto completion_block = base::CallbackToBlock(std::move(result));
   config.completion = ^(ShareKitFlowOutcome outcome) {
-    completion_block(ConvertOutcome(outcome));
+    completion_block(ConvertShareKitFlowOutcome(outcome));
   };
   std::optional<tab_groups::LocalTabGroupID> local_id = group->local_group_id();
   config.willUnshareGroupBlock = base::CallbackToBlock(
@@ -639,6 +854,9 @@ void IOSCollaborationControllerDelegate::ConfigureAndManageTabGroup(
                      weak_ptr_factory_.GetWeakPtr(), local_id));
 
   session_id_ = share_kit_service_->ManageTabGroup(config);
+
+  // Remove the scrim view to avoid having it visible when dismissing the flow.
+  RemoveScrimView(/*delayed=*/true);
 }
 
 UIImage* IOSCollaborationControllerDelegate::JoinGroupImage(
@@ -646,12 +864,141 @@ UIImage* IOSCollaborationControllerDelegate::JoinGroupImage(
   CGRect frame = CGRectMake(0, 0, kJoinGroupImageSize, kJoinGroupImageSize);
   TabGroupFaviconsGrid* favicons_grid =
       [[TabGroupFaviconsGrid alloc] initWithFrame:frame];
+  favicons_grid.overrideUserInterfaceStyle =
+      base_view_controller_.traitCollection.userInterfaceStyle;
   favicons_grid.translatesAutoresizingMaskIntoConstraints = NO;
   favicons_grid.numberOfTabs = [preview_items count];
   favicons_grid_configurator_->ConfigureFaviconsGrid(favicons_grid,
                                                      preview_items);
   [favicons_grid layoutIfNeeded];
   return ImageFromView(favicons_grid, nil, UIEdgeInsetsZero);
+}
+
+void IOSCollaborationControllerDelegate::AddScrimView() {
+  if (scrim_view_) {
+    return;
+  }
+  // TODO(crbug.com/399584431): Improve the design of the spinner/scrim.
+  scrim_view_ = [[UIView alloc] init];
+  scrim_view_.backgroundColor = [UIColor colorWithWhite:0 alpha:kScrimOpacity];
+  UIActivityIndicatorView* activity_view = [[UIActivityIndicatorView alloc]
+      initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+  activity_view.translatesAutoresizingMaskIntoConstraints = NO;
+  [scrim_view_ addSubview:activity_view];
+  AddSameCenterConstraints(scrim_view_, activity_view);
+  [activity_view startAnimating];
+  scrim_view_.translatesAutoresizingMaskIntoConstraints = NO;
+  [base_view_controller_.view addSubview:scrim_view_];
+  AddSameConstraints(base_view_controller_.view, scrim_view_);
+}
+
+void IOSCollaborationControllerDelegate::RemoveScrimView(bool delayed) {
+  if (!scrim_view_) {
+    return;
+  }
+  UIView* scrim = scrim_view_;
+  scrim_view_ = nil;
+
+  auto animation_block = ^{
+    [UIView animateWithDuration:kScrimAnimationTiming
+        animations:^{
+          scrim.alpha = 0;
+        }
+        completion:^(BOOL finished) {
+          [scrim removeFromSuperview];
+        }];
+  };
+
+  if (delayed) {
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW,
+                      (int64_t)(kScrimAnimationDelay * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), animation_block);
+  } else {
+    animation_block();
+  }
+}
+
+FlowConfig IOSCollaborationControllerDelegate::GetFlowConfig(
+    FlowType flow_type) {
+  FlowConfig config;
+  config.full_screen_promo = NO;
+  switch (flow_type) {
+    case FlowType::kJoin:
+      config.access_point = AccessPoint::kCollaborationJoinTabGroup;
+      config.context_style = SigninContextStyle::kCollaborationJoinTabGroup;
+      config.full_screen_promo = YES;
+      break;
+    case FlowType::kShareOrManage:
+      config.access_point = AccessPoint::kCollaborationShareTabGroup;
+      config.context_style = SigninContextStyle::kCollaborationShareTabGroup;
+      break;
+    case FlowType::kLeaveOrDelete:
+      config.access_point = AccessPoint::kCollaborationLeaveOrDeleteTabGroup;
+      config.context_style = SigninContextStyle::kDefault;
+      break;
+  }
+  return config;
+}
+
+void IOSCollaborationControllerDelegate::ShowSignInDisabledByUserAlert(
+    ResultCallback result) {
+  if (!browser_) {
+    return;
+  }
+
+  auto split_result_callback = base::SplitOnceCallback(std::move(result));
+  auto alert_action_cancel = base::CallbackToBlock(base::BindOnce(
+      &IOSCollaborationControllerDelegate::SignInDisabledByUserAlertDismissed,
+      weak_ptr_factory_.GetWeakPtr(), std::move(split_result_callback.first),
+      false));
+  auto alert_action_open_settings = base::CallbackToBlock(base::BindOnce(
+      &IOSCollaborationControllerDelegate::SignInDisabledByUserAlertDismissed,
+      weak_ptr_factory_.GetWeakPtr(), std::move(split_result_callback.second),
+      true));
+
+  // Make sure to present it on top of any visible view.
+  UIViewController* top_view_controller =
+      top_view_controller::TopPresentedViewControllerFrom(
+          base_view_controller_);
+
+  NSString* title = l10n_util::GetNSString(IDS_COLLABORATION_SIGNED_OUT_HEADER);
+  NSString* message = l10n_util::GetNSString(IDS_COLLABORATION_SIGNED_OUT_BODY);
+  alert_coordinator_ =
+      [[AlertCoordinator alloc] initWithBaseViewController:top_view_controller
+                                                   browser:browser_
+                                                     title:title
+                                                   message:message];
+
+  [alert_coordinator_
+      addItemWithTitle:l10n_util::GetNSString(
+                           IDS_COLLABORATION_SIGNED_OUT_POSITIVE_BUTTON)
+                action:alert_action_open_settings
+                 style:UIAlertActionStyleDefault
+             preferred:YES
+               enabled:YES];
+
+  [alert_coordinator_ addItemWithTitle:l10n_util::GetNSString(IDS_CANCEL)
+                                action:alert_action_cancel
+                                 style:UIAlertActionStyleDefault];
+  [alert_coordinator_ start];
+  RemoveScrimView(/*delayed=*/false);
+}
+
+void IOSCollaborationControllerDelegate::SignInDisabledByUserAlertDismissed(
+    ResultCallback result,
+    bool open_settings) {
+  if (dismiss_join_screen_callback_) {
+    std::move(dismiss_join_screen_callback_).Run();
+  }
+  std::move(result).Run(CollaborationControllerDelegate::Outcome::kCancel);
+  if (open_settings) {
+    CommandDispatcher* dispatcher = browser_->GetCommandDispatcher();
+    id<SettingsCommands> settings_handler =
+        HandlerForProtocol(dispatcher, SettingsCommands);
+    [settings_handler
+        showGoogleServicesSettingsFromViewController:base_view_controller_];
+  }
 }
 
 }  // namespace collaboration

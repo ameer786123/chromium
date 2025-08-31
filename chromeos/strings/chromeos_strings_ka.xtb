@@ -20,6 +20,7 @@
 <translation id="1059913517121127803">სკანირების დაწყება ვერ მოხერხდა</translation>
 <translation id="1061864016440983342">მდებარეობის გარეშე გამოყენება</translation>
 <translation id="1062823486781306604"><ph name="INDEX" /> / <ph name="COUNT" />-დან, <ph name="NAME" />.</translation>
+<translation id="106558928761833284">ლამაზი კოსმოსური გალაქტიკა სწრაფი ფუტურისტული კოსმოსური ხომალდით, ლურჯი, ვარდისფერი და იისფერი ტონებით</translation>
 <translation id="1069150558259542054">შეუძლებელია სწრაფი ჩასმის გამოყენება მორგებული მალსახმობებისთვის.</translation>
 <translation id="1070066693520972135">WEP</translation>
 <translation id="1071587090247825784">აღმოჩენილია ქსელის დაცვა</translation>
@@ -27,6 +28,7 @@
 <translation id="1082009148392559545">მიმდინარეობს ეკრანმზოგის ჩამოტვირთვა</translation>
 <translation id="1094693127011229778">IP მისამართი მიუწვდომელია</translation>
 <translation id="1100902271996134409">მიმდინარეობს სურათების შექმნა...</translation>
+<translation id="1102946598597843031">ტბის თავზე მთვარისა და აყვავებული ალუბლის მოფარფატე ფოთლების ფოტო, 4K</translation>
 <translation id="1107856713690040084"><ph name="DEVICE_TYPE" /> აუდიო</translation>
 <translation id="1116694919640316211">ინფო</translation>
 <translation id="1118572504348554005">ამ ფორმის მეშვეობით წარმოდგენილი გამოხმაურება, შესაძლოა, გავუზიაროთ ჩვენს პარტნიორებს ხარვეზებისა და თქვენ მიერ ჩვენთვის შეტყობინებული სხვა პრობლემების აღმოფხვრისა მიზნით. არ მიუთითოთ სენსიტიური ინფორმაცია, მაგალითად, პაროლები.</translation>
@@ -67,6 +69,7 @@
 <translation id="1238163879850290856">გადააყენეთ, რომ სხვებმა ვერ შეძლონ მონაცემებზე წვდომა. გამოიყენეთ შეყვანის მხოლოდ სანდო მეთოდები.</translation>
 <translation id="1238612778414822719">HTTPS რეაგირების დრო</translation>
 <translation id="1252766349417594414">ჯოისტიკი</translation>
+<translation id="1261045951892393759">კატა, რომელიც თამაშობს მფრინავ v-სთან, თან მარტორქაზე ზის, ხოლო მის ფონზე ელვის ნიშანია</translation>
 <translation id="1270369111467284986">სავარაუდოდ, გამოიყენება ავტორიზაციის პორტალი</translation>
 <translation id="1274654146705270731">ფორთოხლები</translation>
 <translation id="1275718070701477396">შერჩეული</translation>
@@ -203,6 +206,7 @@
 <translation id="1758018619400202187">EAP-TLS</translation>
 <translation id="1758459542619182298"><ph name="CONTROL_TYPE" /> <ph name="KEY_LIST" /></translation>
 <translation id="1759842336958782510">Chrome</translation>
+<translation id="1762353673362288306">თქვენ ახლა მხოლოდ საკლასო ხელსაწყოების გამოყენება შეგიძლიათ</translation>
 <translation id="1762483337755424125">ტრანსკრიპტი</translation>
 <translation id="1765169783255151332">სწრაფად შეცვალეთ კლავიშები</translation>
 <translation id="1768959921651994223">ავტორიზაციის ტიპი</translation>
@@ -273,6 +277,7 @@
 <translation id="2045814230297767491">დანა-ჩანგალი</translation>
 <translation id="2047316797244836561">ეკრანმზოგის სანახავად დაუკავშირდით ქსელს და გადატვირთეთ გვერდი.</translation>
 <translation id="2056550196601855911">IPv4/IPv6</translation>
+<translation id="2068472557797646626">ყვითელი სფეროებისა და სფეროს ფორმების 3D რენდერი, რომლებიც ქრომული არქიტექტურული ელემენტების ფონზეა განლაგებული. კომპოზიცია არის თანამედროვე მინიმალისტური კონცეფცია რეკლამის, ბრენდინგის ან პრეზენტაციისთვის, სადაც არის ტექსტის სივრცე. დიდი თაღი დგას აბსტრაქტულ ფონზე მინიმალისტურ სტილში. სტუდიური განათება. ახლო კადრი.</translation>
 <translation id="2073232437457681324">უზარმაზარი ოკეანე</translation>
 <translation id="2080070583977670716">დამატებითი პარამეტრები</translation>
 <translation id="2082932131694554252">მინიჭებულია კლავიატურის კლავიში</translation>
@@ -322,6 +327,7 @@
 <translation id="2240366984605217732">განლაგების გადართვა</translation>
 <translation id="224421911978987610">ხანგრძლივი ექსპოზიცია</translation>
 <translation id="2244834438220057800">მწვანე</translation>
+<translation id="2248689665683494517">მინიმალისტურ სურათზე ყაყაჩოს რამდენიმე ყვავილია მინის ლარნაკში შავ ფონზე</translation>
 <translation id="225692081236532131">აქტივაციის სტატუსი</translation>
 <translation id="2267285889943769271">ეკრანის ანაბეჭდის დამატება</translation>
 <translation id="2268044343513325586">დახვეწა</translation>
@@ -390,7 +396,6 @@
 <translation id="2584559707064218956">დასაყენებლად გადადით პარამეტრებზე</translation>
 <translation id="2586146417912237930">ლურჯი და ინდიგო</translation>
 <translation id="2589921777872778654">რედაქტირების და წაშლის მენიუ</translation>
-<translation id="2590424100019931043">თქვენი ამოგშალეს ამ კლასიდან</translation>
 <translation id="2597774443162333062">ფაილები, გამართვის მიზნით, Google-ს გაეგზავნება</translation>
 <translation id="2599691907981599502">{NUMBER_OF_PAGES,plural, =1{სკანირება დასრულდა. დასკანირდა 1 გვერდი.}other{სკანირება დასრულდა. დასკანირდა {NUMBER_OF_PAGES} გვერდი.}}</translation>
 <translation id="261322795497077164">მოსაუბრის იდენტიფიკაცია</translation>
@@ -430,6 +435,7 @@
 <translation id="2805756323405976993">პროგრამები</translation>
 <translation id="28232023175184696">ინტერნეტთან დაკავშირება ვერ მოხერხდა. დააწკაპუნეთ ხელახლა საცდელად.</translation>
 <translation id="2855718259207180827">შალი</translation>
+<translation id="2856429654176718363">უზარმაზარი კოსმოსური ხომალდი უახლოვდება განათებულ ქალაქს. მთელ სცენას ზეთში დახატული ნახატის სტილი აქვს და მუქ ტონებს ასახავს. ეს ქმნის მისტიკურ ატმოსფეროს ფუტურისტული სამეცნიერო ფანტასტიკის ელემენტებით. ეს ხელოვნების ნიმუში შექმნილია C4D პროგრამის და OC რენდერის შემქმნელის გამოყენებით, რათა მიგვეღო მაღალი გარჩევადობა და გამოკვეთილი დეტალები. ახლო კადრში რამდენიმე ურბანული შენობაც იყო, რაც მას სიღრმეს მატებს. სცენის რენდერი მომზადებულია ზეთში დახატული ნახატის სტილში, ასახავს რა მუქ ტონებს და ქმნის მისტიკურ ატმოსფეროს ფუტურისტული სამეცნიერო ფანტასტიკის ელემენტებით.</translation>
 <translation id="2859243502336719778">კრიტიკულად მნიშვნელოვანი განახლება</translation>
 <translation id="2860473693272905224">მოათავსეთ სხვა გვერდი სკანერზე</translation>
 <translation id="286265581261662583">მარჯვენა დაწკაპუნებით ან ხანგრძლივად დაჭერით მიიღეთ განმარტებები, თარგმანები ან დააკონვერტირეთ ზომის ერთეულები.</translation>
@@ -446,9 +452,11 @@
 <translation id="2895772081848316509">მუქი</translation>
 <translation id="2915996080311180594">მოგვიანებით გადატვირთვა</translation>
 <translation id="2926057806159140518">შეიყვანეთ თქვენი მომხმარებლის სახელი და პაროლი ან დაასკანირეთ თქვენი QR კოდი</translation>
+<translation id="2927007463545347013">ანიმაციური გზა, რომელიც გადაჰყურებს ოკეანეს, სადაც აყვავებული ალუბლის ფოთლები ცვივა</translation>
 <translation id="2940811910881150316">მოწყობილობის შემოწმება ვერ ხერხდება. შესამოწმებლად ხელახლა გახსენით თავსახური.</translation>
 <translation id="2941112035454246133">დაბალი</translation>
 <translation id="2956070106555335453">მოკლე შინაარსი</translation>
+<translation id="2968959705684615497">სიურრეალისტური თეთრი ვეფხვი ოქროსფერი თვალებითა და ზოლებით ზის თეთრი ქვიშის დიუნზე</translation>
 <translation id="299385721391037602">ვარდისფერი და ყვითელი</translation>
 <translation id="3008341117444806826">განახლება</translation>
 <translation id="3009958530611748826">აირჩიეთ საქაღალდე, რომელშიც უნდა შეინახოს</translation>
@@ -470,6 +478,7 @@
 <translation id="3091839911843451378">ვერ მოხერხდა — შეწყვიტა მუშაობა</translation>
 <translation id="3102119246920354026">ქეში</translation>
 <translation id="3103783611481501187">სიურრეალისტური</translation>
+<translation id="3119672627216736407">ხელმისაწვდომია თარგმანი</translation>
 <translation id="3122464029669770682">CPU</translation>
 <translation id="3122614491980756867">აუზები</translation>
 <translation id="3122883569442693641">დაწვრილებით</translation>
@@ -518,6 +527,7 @@
 <translation id="3321030238473337787">დაკვრის სიჩქარე</translation>
 <translation id="3327613592010997943">ამ მოწყობილობის ხელახლა გამოყენებას შეძლებთ <ph name="DAY" />-ში <ph name="TIME" />-ზე.</translation>
 <translation id="3328783797891415197">ტესტი გაშვებულია</translation>
+<translation id="3332683265015995419">სტიმპანკის კოსმოსური ხომალდი, რომელიც მიფრინავს ქვიშის ქარიშხალში</translation>
 <translation id="3340011300870565703">მოწყობილობის მარჯვენა ყურსაცვამის ბატარეის დონეა <ph name="BATTERY_PERCENTAGE" />%.</translation>
 <translation id="3340978935015468852">პარამეტრები</translation>
 <translation id="3347558044552027859">თანამედროვე</translation>
@@ -529,6 +539,7 @@
 <translation id="3369632935976756339"><ph name="INTENT" />; <ph name="QUERY_TEXT" />; <ph name="SUBTEXT" />; <ph name="RESULT_TEXT" /></translation>
 <translation id="3373141842870501561">მიწის ნაკადის ფონი</translation>
 <translation id="33736539805963175"><ph name="LETTERS_COLOR" /> ფონი, რომელზეც გამოსახულია ასო <ph name="LETTERS_LETTER" /></translation>
+<translation id="3382806462014639823"><ph name="TEACHER_NAME" /> ნახულობს თქვენს ეკრანს</translation>
 <translation id="3383623117265110236">ექსკლუზიური</translation>
 <translation id="3404249063913988450">ეკრანმზოგის ჩართვა</translation>
 <translation id="3413935475507503304">განახლების გასაგრძელებლად დაწკაპუნებით აირჩიეთ „შემდეგი“.</translation>
@@ -561,6 +572,7 @@
 <translation id="3532980081107202182">დარჩენილია დაახლოებით <ph name="MIN_REMAINING" /> წუთი</translation>
 <translation id="3533790840489634638">აუზი</translation>
 <translation id="3547264467365135390">ფორმულა</translation>
+<translation id="3552832331940389362">იაპონური ანიმაციის ილუსტრაცია, რომელშიც კატა ზის ფანჯრის რაფაზე და უყურებს წვიმას შუადღისას</translation>
 <translation id="3557205324756024651">ადგილობრივი იდენტობა (არასავალდებულო)</translation>
 <translation id="3565064564551103223">დაშვებული IP-ები</translation>
 <translation id="3569407787324516067">ეკრანმზოგი</translation>
@@ -636,12 +648,14 @@
 <translation id="38811596981744338">სამართლებრივი საკითხი</translation>
 <translation id="3885327323343477505">ეკრანმზოგის შეცვლა</translation>
 <translation id="3889914174935857450">გადაყენების თარიღი</translation>
+<translation id="3889954687526985291">შავი ქაღალდისგან დამზადებული ფუტურისტული მოტოციკლი ნეონური განათებით მუქ ფონზე</translation>
 <translation id="3897092660631435901">მენიუ</translation>
 <translation id="3902271751020176019">ტრანსკრიფციის ენა</translation>
 <translation id="390890062090528082">ვარსკვლავებით მოჭედილი ცა</translation>
 <translation id="391412459402535266">მოწყობილობის შემოწმება ვერ ხერხდება. შესამოწმებლად გადადით ლეპტოპის რეჟიმზე.</translation>
 <translation id="3916998944874125962">ეკრანის ანაბეჭდის გადაღება</translation>
 <translation id="3923184630988645767">მონაცემთა მოხმარება</translation>
+<translation id="392943705803418306">საკლასო ხელსაწყოების თქვენი სესია დასრულდა</translation>
 <translation id="3932043219784172185">დაკავშირებული მოწყობილობები არ არის</translation>
 <translation id="3934185438132762746">მიუნიჭებელი <ph name="CONTROL_TYPE" /></translation>
 <translation id="3941014780699102620">ჰოსტის გარდაქმნა ვერ მოხერხდა</translation>
@@ -744,6 +758,7 @@
 <translation id="430786093962686457">შიფონი</translation>
 <translation id="4310735698903592804">Google-ის ხელოვნური ინტელექტის მიერ უზრუნველყოფილი ბოლოდროინდელი ფონები</translation>
 <translation id="4320904097188876154">ნეონური ვარდისფერი</translation>
+<translation id="432961742358282111">მარჯვენა დაწკაპუნებით ან ხანგრძლივი დაჭერით მიიღეთ განმარტებები, თარგმანები და ერთეულების კონვერტაცია. ამ ფუნქციის სამართავად გამოიყენეთ კლავიშები მარცხნივ ან მარჯვნივ მიმართული ისრებით.</translation>
 <translation id="4333390807948134856"><ph name="KEY_NAME" /> კლავიში დაჭერილია</translation>
 <translation id="4334293042716981313">შეგიძლიათ, <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />საკუთარი მოთხოვნაც დაწეროთ<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">კლავიში</translation>
@@ -808,6 +823,7 @@
 <translation id="4593212453765072419">საჭიროა პროქსი-სერვერის ავტორიზაცია</translation>
 <translation id="4594021849294327751">ტრანსკრიპტის შექმნა</translation>
 <translation id="4594541568452132351">აირჩიეთ ტრანსკრიპტის ენა და ჩამოტვირთეთ მოდელი</translation>
+<translation id="4600301862817165514">Delorean ნეონური განათებით, რომელიც მოძრაობს გალაქტიკაში, ვარსკვლავებს შორის</translation>
 <translation id="4609350030397390689">კლავიატურის სიკაშკაშის დაკლება</translation>
 <translation id="4627232916386272576"><ph name="DOCUMENT_TITLE" />, <ph name="PRINTER_NAME" />, <ph name="CREATION_TIME" />, <ph name="PRINTED_PAGE_NUMBER" /> / <ph name="TOTAL_PAGE_NUMBER" />. გთხოვთ დააჭიროთ შეყვანის ღილაკს ამ ბეჭდვის დავალების გასაუქმებლად.</translation>
 <translation id="463791356324567266">მიმდინარეობს სკანირების გაუქმება...</translation>
@@ -830,6 +846,7 @@
 <translation id="4697260493945012995">აირჩიეთ მართვის საშუალების ტიპი</translation>
 <translation id="4712940987669302829">ბოკე ეფექტი</translation>
 <translation id="4731797938093519117">მშობლის წვდომა</translation>
+<translation id="4733200407105375152">არ არის საკლასო ხელსაწყოებში</translation>
 <translation id="4734982181169850310">პასტელური ფერები</translation>
 <translation id="473775607612524610">განახლება</translation>
 <translation id="4744944742468440486">თქვენს არჩევანთან დაკავშირებული ინფორმაცია</translation>
@@ -1006,6 +1023,7 @@
 <translation id="5499762266711462226">კლავიატურის ფერს განსაზღვრავს ფონი</translation>
 <translation id="5502931783115429516">Android არ არის გაშვებული</translation>
 <translation id="550600468576850160">მდელო</translation>
+<translation id="5507504956167780539">შავი მბრწყინავი ქვიშის დიუნებისა და ჩრდილების მინიმალისტური პროფესიონალური ფოტო</translation>
 <translation id="551689408806449779">მოწყობილობა გაითიშა. ტესტირებისთვის ცადეთ მისი ხელახლა დაკავშირება.</translation>
 <translation id="5519195206574732858">LTE</translation>
 <translation id="552644173505433109">შეიტყვეთ მეტი შეჯამებისა და სათაურის შექმნის შესახებ</translation>
@@ -1077,6 +1095,7 @@
 <translation id="5876385649737594562">ჩართეთ ვარიანტების ასარჩევად</translation>
 <translation id="5877503382465267833"><ph name="RECORDING_NAME" />-ის დაპაუზება</translation>
 <translation id="588258955323874662">სრული ეკრანი</translation>
+<translation id="5889539348012432386">საკლასო ხელსაწყოების მთავარი გვერდი</translation>
 <translation id="5893975327266416093">მისანიჭებლად შეეხეთ კლავიატურის კლავიშს</translation>
 <translation id="5895138241574237353">გადატვირთვა</translation>
 <translation id="5896602941605730551">დაკვრა</translation>
@@ -1121,10 +1140,12 @@
 <translation id="6058625436358447366">დასასრულებლად შეიყვანეთ თქვენი ძველი და ახალი პაროლები</translation>
 <translation id="6061772781719867950">HTTP მოთხოვნები ვერ შესრულდა</translation>
 <translation id="6073292342939316679">კლავიატურის სიკაშკაშის დაკლება</translation>
+<translation id="6074608334942655098">თარგმნის შეწყვეტა</translation>
 <translation id="6074752328838739425">შეჯამების დამალვა</translation>
 <translation id="6075872808778243331">(Android) HTTP რეაგირების დრო</translation>
 <translation id="6078323886959318429">მალსახმობის დამატება</translation>
 <translation id="6079693086494835199">გადააყენეთ, რათა დარწმუნდეთ, რომ ნაგულისხმევი მთავარი გვერდი არ არის ფიშინგის საიტი. გამოიყენეთ მხოლოდ სანდო ვებსაიტები.</translation>
+<translation id="6090672065638047175">ვარსკვლავებისგან შექმნილი მანათობელი ხის ფოტო, ღამის ლამაზი ცისა და გალაქტიკის ფონზე</translation>
 <translation id="6091080061796993741">ყვითელი</translation>
 <translation id="6104112872696127344">სკანირება გაუქმდა</translation>
 <translation id="6106186594183574873">დასასრულებლად შეიყვანეთ თქვენი ძველი პაროლი</translation>
@@ -1310,6 +1331,7 @@
 <translation id="6900701049656042631">ამ ალბომში ფოტოები არ არის. ფოტოების დასამატებლად გადადით აქ: <ph name="LINK" /></translation>
 <translation id="6902359863093437070">შექმენით ფონი ხელოვნური ინტელექტის მეშვეობით</translation>
 <translation id="6905163627763043954">ცდა</translation>
+<translation id="6905275015682612674">ხანგრძლივი ექსპოზიციით გადაღებული ფოტო მანათობელ სანაპიროზე მზის ჩასვლისას, ცაზე ვარსკვლავებით, ლამაზ პასტელურ ფერებში, 4K</translation>
 <translation id="6905724422583748843"><ph name="PAGE_NAME" />-ზე დაბრუნება</translation>
 <translation id="6910312834584889076">სკანერის თავსახური გახსნილია. დააფარეთ თავსახური და ცადეთ ხელახლა.</translation>
 <translation id="6910845598686542904">ჩანაწერში აღმოჩენილი ხმების მოდელების გამოთვლა</translation>
@@ -1319,6 +1341,7 @@
 <translation id="6930597342185648547">ფოტოს შესახებ</translation>
 <translation id="6931666215260956151">გალაქტიკა</translation>
 <translation id="6939766318048400022">კაფე</translation>
+<translation id="6940212863873359282">თეთრი ორგანზას ნაჭერი, რომელიც ტივტივებს შუაში, თეთრი მარმარილოს თაღის ზემოთ, კრემისფერ ფონზე</translation>
 <translation id="6942253772720771875">გამოგვეხმაურეთ ან აღწერეთ პრობლემა</translation>
 <translation id="6943893908656559156">დისტანციური იდენტობა (არასავალდებულო)</translation>
 <translation id="694981048020558038">ჩანაწერის სათაურის ძიება</translation>
@@ -1405,6 +1428,7 @@
 <translation id="7271040990581020067">სკანერი ამჟამად გამოიყენება. ცადეთ მოგვიანებით.</translation>
 <translation id="7271932918253517778">ზედა მწკრივის კლავიშების შემცველი მალსახმობი უნდა შეიცავდეს „<ph name="META_KEY" />“ კლავიშს.</translation>
 <translation id="7274587244503383581"><ph name="PRINTED_PAGES_NUMBER" />/<ph name="TOTAL_PAGES_NUMBER" /></translation>
+<translation id="7275707758336796649">დალმაციელი ძაღლი ვარდისფერ ფონზე, სრული სხეულის დინამიკური პოზით, გადაღებული მაღალი რეზოლუციის ჰიპერრეალისტურ ფონზე, ფერების გრადირებით</translation>
 <translation id="7281657306185710294">ბრიზი</translation>
 <translation id="7287310195820267359">ფონების კოლექციები</translation>
 <translation id="7293429513719260019">აირჩიეთ ენა</translation>
@@ -1431,6 +1455,7 @@
 <translation id="7353413232959255829">ძიების შედეგი <ph name="LIST_POSITION" /> / <ph name="LIST_SIZE" />-დან: <ph name="SEARCH_RESULT_TEXT" />. დააჭირეთ შეყვანას მალსახმობზე ნავიგაციისთვის.</translation>
 <translation id="7359657277149375382">ფაილის ტიპი</translation>
 <translation id="73631062356239394">დიაგნოსტიკური მონაცემების გაზიარება</translation>
+<translation id="7369648056634183167">ნამით დაფარული შროშანის ახლო ხედი წვიმაში ფოკუსში ნაზი ფურცლები და შუქის ამრეკლავი წყლის წვეთებია, აღბეჭდილია მათი რბილი პასტელური ფერები ლურჯ ფონზე. კადრი თვალების დონიდან ბუნებრივი შუქის გამოყენებით</translation>
 <translation id="7375053625150546623">EAP</translation>
 <translation id="7378170410161264436">რეკორდერს შეუძლია, შექმნას ტრანსკრიპტები ისეთი ჩანაწერებისთვის, რომლებშიც გამოყენებულია მეტყველება.
 ჩამოტვირთეთ ტრანსკრიფციის მოდელი (100 მბაიტამდე) აღნიშნული ტრანსკრიპტების მისაღებად.</translation>
@@ -1438,7 +1463,6 @@
 <translation id="7388345524791662148">მეტი ვარიანტი <ph name="RECORDING_NAME" />-ისთვის</translation>
 <translation id="7388959671917308825">ჩაშენებული სენსორული პანელი</translation>
 <translation id="7397270852490618635">ღია თემის გამორთვა</translation>
-<translation id="7400166052988585408">თქვენი მასწავლებელი თქვენს ეკრანს ჩაკეტავს <ph name="NUM_SECONDS" /> წამში</translation>
 <translation id="7401543881546089382">წაშალეთ მალსახმობი</translation>
 <translation id="7405493795721832710"><ph name="DEVICE_NAME" /> მზადაა განახლებისთვის</translation>
 <translation id="741244894080940828">გარდაქმნა</translation>
@@ -1593,7 +1617,7 @@
 <translation id="8088963492174775412">დააჭირეთ ჩასაწერად</translation>
 <translation id="8094062939584182041">ამ პრობლემის თაობაზე ელფოსტით დაკავშირების დაშვება Google-ისთვის</translation>
 <translation id="8104083085214006426">თქვენ ღია და არასტაბილური ქსელით სარგებლობთ</translation>
-<translation id="8110942816572072814">თქვენმა მასწავლებელმა თქვენი ეკრანი ჩაკეტა</translation>
+<translation id="8108879170356113798">თქვენ <ph name="NUM_SECONDS" /> წამში მხოლოდ საკლასო ხელსაწყოების გამოყენება შეგეძლებათ</translation>
 <translation id="811820734797650957">(Android) გეითვეის ping-მეთოდით ტესტირება</translation>
 <translation id="8129620843620772246"><ph name="TEMPERATURE_C" />°C</translation>
 <translation id="8131740175452115882">დაადასტურება</translation>
@@ -1601,6 +1625,7 @@
 <translation id="8135609423982943441">თქვენი Chromebook გადაყენდა უსაფრთხო, ნაგულისხმევ პარამეტრებზე. ამ ცვლილებების კორექტირება ნებისმიერ დროს შეგიძლიათ პარამეტრებიდან.</translation>
 <translation id="8138405288920084977">LTEAdvanced</translation>
 <translation id="8140591278915222789">საკუთრის შექმნა</translation>
+<translation id="8142182840415860496">რამდენიმე თეთრი და ყვითელი ყვავილის ახლო კადრი, ანიმაციური ფილმის კადრი, ნაზი ღია ვარდისფერი ყვავილი გრძელი ფურცლებით და მწვანე ღეროთი ორ დიდ ყვითელ უფოთლო ტიტასთან ლურჯი ცის ფონზე, პასტელურ ფერებში. კინემატოგრაფიული კადრი მაღალი გარჩევადობით და ძალიან დეტალური, რთული ელემენტებით, ოქტანური რენდერი მშვენიერი განათებით, ვოლუმეტრული სინათლითა და სახასიათო განათებით.</translation>
 <translation id="8143951647992294073">აირჩიეთ <ph name="TOPIC_SOURCE" /> <ph name="TOPIC_SOURCE_DESC" /></translation>
 <translation id="8151185429379586178">დეველოპერის ხელსაწყოები</translation>
 <translation id="8152370627892825"><ph name="DESCRIPTION" />, <ph name="ACCELERATOR_INFO" />.</translation>
@@ -1681,6 +1706,7 @@
 <translation id="8503813439785031346">მომხმარებლის სახელი</translation>
 <translation id="8503836310948963452">კიდევ რამდენიმე წუთიც...</translation>
 <translation id="8505011850330200833">Gemini-ს მოდელს სჭირდება მეხსიერების 2 გბაიტი, რომ დაამუშაოს ტრანსკრიპტები და შექმნას შეჯამებები</translation>
+<translation id="8506063704538210734">ღამის ცის ფოტო, მეტეორის წვიმა და რამდენიმე ხე წინა პლანზე, იისფერი და ვარდისფერი ჩრდილებით</translation>
 <translation id="8506394543220680287">თოვლით დაფარული</translation>
 <translation id="8508640263392900755">APN-ის დეტალები</translation>
 <translation id="8522687886059337719">ამიერიდან წვდომა გაქვთ ახალ <ph name="BEGIN_LINK_WALLPAPER_SUBPAGE" />ფონებსა<ph name="END_LINK_WALLPAPER_SUBPAGE" /> და <ph name="BEGIN_LINK_SCREENSAVER_SUBPAGE" />ეკრანმზოგზე<ph name="END_LINK_SCREENSAVER_SUBPAGE" /></translation>

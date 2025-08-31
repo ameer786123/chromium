@@ -33,6 +33,7 @@
 #import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
 #import "ios/chrome/browser/segmentation_platform/model/ukm_data_manager_test_utils.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/web/public/test/web_task_environment.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/platform_test.h"
@@ -127,7 +128,6 @@ class SegmentationPlatformServiceFactoryTest : public PlatformTest {
         {{optimization_guide::features::kOptimizationTargetPrediction, {}},
          {features::kSegmentationPlatformFeature, {}},
          {features::kSegmentationPlatformUkmEngine, {}},
-         {features::kContextualPageActionShareModel, {}},
          {features::kSegmentationPlatformEphemeralCardRanker, {}},
          {commerce::kPriceTrackingPromo, {}}},
         {});
@@ -146,11 +146,10 @@ class SegmentationPlatformServiceFactoryTest : public PlatformTest {
     WaitForServiceInit();
 
     ProfileIOS* otr_profile =
-        profile_data_->profile
-            ->CreateOffTheRecordBrowserStateWithTestingFactories(
-                {TestProfileIOS::TestingFactory{
-                    SegmentationPlatformServiceFactory::GetInstance(),
-                    SegmentationPlatformServiceFactory::GetDefaultFactory()}});
+        profile_data_->profile->CreateOffTheRecordProfileWithTestingFactories(
+            {TestProfileIOS::TestingFactory{
+                SegmentationPlatformServiceFactory::GetInstance(),
+                SegmentationPlatformServiceFactory::GetDefaultFactory()}});
     ASSERT_FALSE(
         SegmentationPlatformServiceFactory::GetForProfile(otr_profile));
   }
@@ -314,6 +313,7 @@ class SegmentationPlatformServiceFactoryTest : public PlatformTest {
 
   std::unique_ptr<UkmDataManagerTestUtils> test_utils_;
   std::unique_ptr<ProfileData> profile_data_;
+  IOSChromeScopedTestingLocalState scoped_testing_local_state_;
 };
 
 TEST_F(SegmentationPlatformServiceFactoryTest, Test) {
@@ -499,6 +499,16 @@ TEST_F(SegmentationPlatformServiceFactoryTest,
       kEphemeralHomeModuleBackendKey, prediction_options, input_context,
       /*expected_status=*/segmentation_platform::PredictionStatus::kSucceeded,
       /*expected_labels=*/result);
+}
+
+// Verify that kIosDefaultBrowserPromoKey fails execution since it should never
+// be executed by the client.
+TEST_F(SegmentationPlatformServiceFactoryTest, TestDefaultBrowserModel) {
+  PredictionOptions prediction_options;
+
+  ExpectGetClassificationResult(
+      kIosDefaultBrowserPromoKey, prediction_options, nullptr,
+      /*expected_status=*/PredictionStatus::kFailed, std::nullopt);
 }
 
 }  // namespace segmentation_platform

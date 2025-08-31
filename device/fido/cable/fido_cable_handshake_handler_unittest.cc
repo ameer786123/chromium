@@ -20,6 +20,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
@@ -43,7 +44,6 @@ namespace device {
 namespace {
 
 using ::testing::_;
-using ::testing::Invoke;
 using ::testing::Test;
 using TestDeviceFuture =
     base::test::TestFuture<std::optional<std::vector<uint8_t>>>;
@@ -275,12 +275,12 @@ class FidoCableHandshakeHandlerTest : public Test {
   }
 
   void ConnectWithLength(uint16_t length) {
-    EXPECT_CALL(*connection(), ConnectPtr).WillOnce(Invoke([](auto* callback) {
+    EXPECT_CALL(*connection(), ConnectPtr).WillOnce([](auto* callback) {
       std::move(*callback).Run(true);
-    }));
+    });
 
     EXPECT_CALL(*connection(), ReadControlPointLengthPtr(_))
-        .WillOnce(Invoke([length](auto* cb) { std::move(*cb).Run(length); }));
+        .WillOnce([length](auto* cb) { std::move(*cb).Run(length); });
 
     device()->Connect();
   }
@@ -313,7 +313,7 @@ TEST_F(FidoCableHandshakeHandlerTest, HandShakeSuccess) {
   ConnectWithLength(kControlPointLength);
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(IsControlFrame(), _))
-      .WillOnce(Invoke([this](const auto& data, auto* cb) {
+      .WillOnce([this](const auto& data, auto* cb) {
         base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
@@ -326,7 +326,7 @@ TEST_F(FidoCableHandshakeHandlerTest, HandShakeSuccess) {
                 ConstructSerializedOutgoingFragment(
                     authenticator()->RelyWithAuthenticatorHandShakeMessage(
                         client_ble_handshake_message))));
-      }));
+      });
 
   auto handshake_handler =
       CreateHandshakeHandler(kTestNonce, kTestSessionPreKey);
@@ -345,7 +345,7 @@ TEST_F(FidoCableHandshakeHandlerTest, HandShakeWithIncorrectSessionPreKey) {
   ConnectWithLength(kControlPointLength);
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(IsControlFrame(), _))
-      .WillOnce(Invoke([this](const auto& data, auto* cb) {
+      .WillOnce([this](const auto& data, auto* cb) {
         base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
@@ -358,7 +358,7 @@ TEST_F(FidoCableHandshakeHandlerTest, HandShakeWithIncorrectSessionPreKey) {
                 ConstructSerializedOutgoingFragment(
                     authenticator()->RelyWithAuthenticatorHandShakeMessage(
                         client_ble_handshake_message))));
-      }));
+      });
 
   auto handshake_handler =
       CreateHandshakeHandler(kTestNonce, kIncorrectSessionPreKey);
@@ -372,7 +372,7 @@ TEST_F(FidoCableHandshakeHandlerTest, HandshakeFailWithIncorrectNonce) {
   ConnectWithLength(kControlPointLength);
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(IsControlFrame(), _))
-      .WillOnce(Invoke([this](const auto& data, auto* cb) {
+      .WillOnce([this](const auto& data, auto* cb) {
         base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
@@ -385,7 +385,7 @@ TEST_F(FidoCableHandshakeHandlerTest, HandshakeFailWithIncorrectNonce) {
                 ConstructSerializedOutgoingFragment(
                     authenticator()->RelyWithAuthenticatorHandShakeMessage(
                         client_ble_handshake_message))));
-      }));
+      });
 
   auto handshake_handler =
       CreateHandshakeHandler(kIncorrectNonce, kTestSessionPreKey);

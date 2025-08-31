@@ -80,11 +80,58 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/scheduler/public/worker_pool.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/uuid.h"
 
 namespace blink {
+
+namespace {
+
+void NotifyDecodingComplete(V8DecodeSuccessCallback* success_callback,
+                            V8DecodeErrorCallback* error_callback,
+                            AudioBus* audio_bus,
+                            ScriptPromiseResolver<AudioBuffer>* resolver,
+                            BaseAudioContext* context) {
+  DCHECK(IsMainThread());
+
+  AudioBuffer* audio_buffer = AudioBuffer::CreateFromAudioBus(audio_bus);
+
+  // If the context is available, let the context finish the notification.
+  if (context) {
+    context->HandleDecodeAudioData(audio_buffer, resolver, success_callback,
+                                   error_callback);
+  }
+}
+
+void DecodeOnBackgroundThread(
+    ArrayBufferContents audio_data_contents,
+    float sample_rate,
+    CrossThreadHandle<V8DecodeSuccessCallback> success_callback,
+    CrossThreadHandle<V8DecodeErrorCallback> error_callback,
+    CrossThreadHandle<ScriptPromiseResolver<AudioBuffer>> resolver,
+    CrossThreadHandle<BaseAudioContext> context,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  DCHECK(!IsMainThread());
+  scoped_refptr<AudioBus> bus = AudioBus::CreateBusFromInMemoryAudioFile(
+      audio_data_contents.ByteSpan(), false, sample_rate);
+
+  // A reference to `bus` is retained by base::OnceCallback and will be removed
+  // after `NotifyDecodingComplete()` is done.
+  PostCrossThreadTask(
+      *task_runner, FROM_HERE,
+      CrossThreadBindOnce(&NotifyDecodingComplete,
+                          MakeUnwrappingCrossThreadHandle(success_callback),
+                          MakeUnwrappingCrossThreadHandle(error_callback),
+                          blink::RetainedRef(std::move(bus)),
+                          MakeUnwrappingCrossThreadHandle(resolver),
+                          MakeUnwrappingCrossThreadHandle(context)));
+}
+
+}  // namespace
 
 // Constructor for rendering to the audio hardware.
 BaseAudioContext::BaseAudioContext(LocalDOMWindow* window,
@@ -186,16 +233,15 @@ void BaseAudioContext::Dispose() {
 }
 
 void BaseAudioContext::ContextLifecycleStateChanged(
-    mojom::FrameLifecycleState state) {
+    mojom::blink::FrameLifecycleState state) {
   // Don't need to do anything for an offline context.
   if (!HasRealtimeConstraint()) {
     return;
   }
 
-  if (state == mojom::FrameLifecycleState::kRunning) {
+  if (state == mojom::blink::FrameLifecycleState::kRunning) {
     destination()->GetAudioDestinationHandler().Resume();
-  } else if (state == mojom::FrameLifecycleState::kFrozen ||
-             state == mojom::FrameLifecycleState::kFrozenAutoResumeMedia) {
+  } else if (state == mojom::blink::FrameLifecycleState::kFrozen) {
     destination()->GetAudioDestinationHandler().Pause();
   }
 }
@@ -231,8 +277,8 @@ void BaseAudioContext::WarnIfContextClosed(const AudioHandler* handler) const {
         MakeGarbageCollected<ConsoleMessage>(
             mojom::ConsoleMessageSource::kOther,
             mojom::ConsoleMessageLevel::kWarning,
-            "Construction of " + handler->NodeTypeName() +
-                " is not useful when context is closed."));
+            StrCat({"Construction of ", handler->NodeTypeName(),
+                    " is not useful when context is closed."})));
   }
 }
 
@@ -339,7 +385,7 @@ ScriptPromise<AudioBuffer> BaseAudioContext::decodeAudioData(
         "Cannot decode detached ArrayBuffer");
     // Fall through in order to invoke the error_callback.
   } else if (!audio_data->Transfer(isolate, buffer_contents,
-                                   IgnoreException(isolate))) {
+                                   IGNORE_EXCEPTION)) {
     // Transfer may throw a TypeError, which is not a DOMException. However, the
     // spec requires throwing a DOMException with kDataCloneError. Hence ignore
     // that exception and throw a DOMException instead.
@@ -355,8 +401,28 @@ ScriptPromise<AudioBuffer> BaseAudioContext::decodeAudioData(
     auto promise = resolver->Promise();
     decode_audio_resolvers_.insert(resolver);
 
-    audio_decoder_.DecodeAsync(audio, sampleRate(), success_callback,
-                               error_callback, resolver, this, exception_state);
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+        GetExecutionContext()->GetTaskRunner(blink::TaskType::kInternalMedia);
+
+    // ArrayBufferContents is a thread-safe smart pointer around the backing
+    // store.
+    ArrayBufferContents audio_data_contents = *audio->Content();
+
+    // Asynchronously decode audio file data from a DOMArrayBuffer in the
+    // background thread. Upon successful decoding, a completion callback will
+    // be invoked with the decoded PCM data in an AudioBuffer.  Must be called
+    // on the main thread.  Must not modify any of the parameters except
+    // `audio_data_contents`.  They are used to associate this decoding instance
+    // with the caller to process the decoding appropriately when finished.
+    worker_pool::PostTask(
+        FROM_HERE,
+        CrossThreadBindOnce(
+            &DecodeOnBackgroundThread, std::move(audio_data_contents),
+            sampleRate(), MakeCrossThreadHandle(success_callback),
+            MakeCrossThreadHandle(error_callback),
+            MakeCrossThreadHandle(resolver), MakeCrossThreadHandle(this),
+            std::move(task_runner)));
+
     return promise;
   }
 
@@ -374,8 +440,7 @@ void BaseAudioContext::HandleDecodeAudioData(
     AudioBuffer* audio_buffer,
     ScriptPromiseResolver<AudioBuffer>* resolver,
     V8DecodeSuccessCallback* success_callback,
-    V8DecodeErrorCallback* error_callback,
-    ExceptionContext exception_context) {
+    V8DecodeErrorCallback* error_callback) {
   DCHECK(IsMainThread());
   DCHECK(resolver);
 
@@ -648,11 +713,6 @@ void BaseAudioContext::SetContextState(V8AudioContextState::Enum new_state) {
     return;
   }
 
-  if (!RuntimeEnabledFeatures::AudioContextInterruptedStateEnabled() &&
-      new_state == V8AudioContextState::Enum::kInterrupted) {
-    return;
-  }
-
   // If there's no change in the current state, there's nothing that needs to be
   // done.
   if (new_state == control_thread_state_) {
@@ -692,9 +752,8 @@ void BaseAudioContext::SetContextState(V8AudioContextState::Enum new_state) {
   if (GetExecutionContext()) {
     GetExecutionContext()
         ->GetTaskRunner(TaskType::kMediaElementEvent)
-        ->PostTask(FROM_HERE,
-                   WTF::BindOnce(&BaseAudioContext::NotifyStateChange,
-                                 WrapPersistent(this)));
+        ->PostTask(FROM_HERE, BindOnce(&BaseAudioContext::NotifyStateChange,
+                                       WrapPersistent(this)));
 
     GraphTracer().DidChangeBaseAudioContext(this);
   }

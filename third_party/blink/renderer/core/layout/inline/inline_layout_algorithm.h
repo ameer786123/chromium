@@ -53,6 +53,7 @@ class CORE_EXPORT InlineLayoutAlgorithm final
 
   void CreateLine(const LineLayoutOpportunity&,
                   LineInfo*,
+                  bool should_scale_line_height,
                   LogicalLineContainer* line_container);
 
   const LayoutResult* Layout();
@@ -62,7 +63,7 @@ class CORE_EXPORT InlineLayoutAlgorithm final
   }
 
 #if EXPENSIVE_DCHECKS_ARE_ON()
-  void CheckBoxStates(const LineInfo&) const;
+  void CheckBoxStates(const LineInfo&, bool should_scale_line_height) const;
 #endif
   void PlaceBlockInInline(const InlineItem&,
                           InlineItemResult*,
@@ -80,6 +81,8 @@ class CORE_EXPORT InlineLayoutAlgorithm final
     return line_clamp_ellipsis_;
   }
 
+  static LineClampEllipsis ShapeLineClampEllipsis(const InlineNode&);
+
  private:
   friend class LineWidthsTest;
 
@@ -88,7 +91,9 @@ class CORE_EXPORT InlineLayoutAlgorithm final
                                 LayoutObject* floating_object,
                                 ExclusionSpace*);
 
-  void PrepareBoxStates(const LineInfo&, const InlineBreakToken*);
+  void PrepareBoxStates(const LineInfo&,
+                        bool should_scale_line_height,
+                        const InlineBreakToken*);
 
   void PlaceOutOfFlowObjects(const LineInfo&,
                              const FontHeight&,
@@ -123,8 +128,11 @@ class CORE_EXPORT InlineLayoutAlgorithm final
     kTextOverflowEllipsis,
     kHide,
   };
-  LineClampState GetLineClampState(const LineInfo*,
-                                   LayoutUnit line_box_height) const;
+  // nullptr is a valid input, in which case this method ignores
+  // post-line-breaking details such as whether the line overflows or is a
+  // block-in-inline. This is used to determine whether to set the line-clamp
+  // ellipsis during line breaking.
+  LineClampState GetLineClampState(const LineInfo*) const;
 
   // Checks whether the remainder of the IFC (i.e. anything after the current
   // break token) would be able to fit in the current line if it didn't have a
@@ -149,6 +157,9 @@ class CORE_EXPORT InlineLayoutAlgorithm final
   // True if in quirks or limited-quirks mode, which require line-height quirks.
   // https://quirks.spec.whatwg.org/#the-line-height-calculation-quirk
   unsigned quirks_mode_ : 1;
+
+  // Is text-grow or text-shrink workable?
+  bool apply_fit_text_ = false;
 
 #if EXPENSIVE_DCHECKS_ARE_ON()
   // True if |box_states_| is taken from |context_|, to check the |box_states_|

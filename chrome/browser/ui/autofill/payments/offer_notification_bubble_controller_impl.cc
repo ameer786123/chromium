@@ -13,6 +13,7 @@
 #include "chrome/browser/ui/actions/chrome_action_id.h"
 #include "chrome/browser/ui/autofill/autofill_bubble_base.h"
 #include "chrome/browser/ui/autofill/autofill_bubble_handler.h"
+#include "chrome/browser/ui/autofill/bubble_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -21,7 +22,6 @@
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
-#include "components/autofill/core/browser/metrics/payments/offers_metrics.h"
 #include "components/autofill/core/browser/payments/offer_notification_options.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_features.h"
@@ -127,31 +127,6 @@ void OfferNotificationBubbleControllerImpl::OnBubbleClosed(
   set_bubble_view(nullptr);
   promo_code_button_clicked_ = false;
   UpdatePageActionIcon();
-
-  // Log bubble result according to the closed reason.
-  autofill_metrics::OfferNotificationBubbleResultMetric metric;
-  switch (closed_reason) {
-    case PaymentsUiClosedReason::kAccepted:
-      metric = autofill_metrics::OfferNotificationBubbleResultMetric::
-          OFFER_NOTIFICATION_BUBBLE_ACKNOWLEDGED;
-      break;
-    case PaymentsUiClosedReason::kClosed:
-      metric = autofill_metrics::OfferNotificationBubbleResultMetric::
-          OFFER_NOTIFICATION_BUBBLE_CLOSED;
-      break;
-    case PaymentsUiClosedReason::kNotInteracted:
-      metric = autofill_metrics::OfferNotificationBubbleResultMetric::
-          OFFER_NOTIFICATION_BUBBLE_NOT_INTERACTED;
-      break;
-    case PaymentsUiClosedReason::kLostFocus:
-      metric = autofill_metrics::OfferNotificationBubbleResultMetric::
-          OFFER_NOTIFICATION_BUBBLE_LOST_FOCUS;
-      break;
-    default:
-      NOTREACHED();
-  }
-  autofill_metrics::LogOfferNotificationBubbleResultMetric(
-      offer_.GetOfferType(), metric, is_user_gesture_);
 }
 
 void OfferNotificationBubbleControllerImpl::ShowOfferNotificationIfApplicable(
@@ -168,25 +143,48 @@ void OfferNotificationBubbleControllerImpl::ShowOfferNotificationIfApplicable(
     return;
   }
 
-  offer_ = offer;
+  const bool bubble_manager_enabled = base::FeatureList::IsEnabled(
+      features::kAutofillShowBubblesBasedOnPriorities);
+
+  if (bubble_manager_enabled) {
+    auto* manager = BubbleManager::GetForWebContents(web_contents());
+    if (!manager || manager->HasPendingBubble(*this)) {
+      // Early return if a pre-existing of similar type is in the queue or the
+      // manager does not exist.
+      return;
+    }
+  }
 
   // Hides the old bubble. Sets bubble_state_ to show icon here since we are
   // going to show another bubble anyway.
   HideBubbleAndClearTimestamp(/*should_show_icon=*/true);
+
+  SetupOfferNotification(offer, card);
+
+  if (options.show_notification_automatically) {
+    if (bubble_manager_enabled) {
+      if (auto* manager = BubbleManager::GetForWebContents(web_contents())) {
+        manager->RequestShowController(*this);
+      }
+    } else {
+      ShowBubble();
+    }
+  } else {
+    HideBubbleAndClearTimestamp(/*should_show_icon=*/true);
+  }
+}
+
+void OfferNotificationBubbleControllerImpl::SetupOfferNotification(
+    AutofillOfferData offer,
+    const CreditCard* card) {
+  offer_ = std::move(offer);
 
   DCHECK(IsIconVisible());
 
   if (card) {
     card_ = *card;
   }
-
   is_user_gesture_ = false;
-
-  if (options.show_notification_automatically) {
-    Show();
-  } else {
-    HideBubbleAndClearTimestamp(/*should_show_icon=*/true);
-  }
 }
 
 void OfferNotificationBubbleControllerImpl::ReshowBubble() {
@@ -197,7 +195,7 @@ void OfferNotificationBubbleControllerImpl::ReshowBubble() {
 
   is_user_gesture_ = true;
 
-  Show();
+  ShowBubble();
 }
 
 void OfferNotificationBubbleControllerImpl::DismissNotification() {
@@ -208,7 +206,7 @@ void OfferNotificationBubbleControllerImpl::OnVisibilityChanged(
     content::Visibility visibility) {
   if (visibility == content::Visibility::VISIBLE && !bubble_view() &&
       bubble_state_ == BubbleState::kShowingIconAndBubble) {
-    Show();
+    ShowBubble();
   } else if (visibility == content::Visibility::HIDDEN) {
     HideBubbleAndClearTimestamp(bubble_state_ == BubbleState::kShowingIcon);
   }
@@ -248,9 +246,15 @@ void OfferNotificationBubbleControllerImpl::DoShowBubble() {
   if (observer_for_testing_) {
     observer_for_testing_->OnBubbleShown();
   }
+}
 
-  autofill_metrics::LogOfferNotificationBubbleOfferMetric(offer_.GetOfferType(),
-                                                          is_user_gesture_);
+BubbleType OfferNotificationBubbleControllerImpl::GetBubbleType() const {
+  return BubbleType::kOfferNotification;
+}
+
+base::WeakPtr<BubbleControllerBase>
+OfferNotificationBubbleControllerImpl::GetBubbleControllerBaseWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 bool OfferNotificationBubbleControllerImpl::IsWebContentsActive() {

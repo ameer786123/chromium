@@ -10,12 +10,13 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import org.chromium.base.Token;
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.compositor.overlays.strip.AnimationHost;
 import org.chromium.chrome.browser.compositor.overlays.strip.ScrollDelegate;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutGroupTitle;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutTab;
+import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutTabDelegate;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutView;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripTabModelActionListener.ActionType;
@@ -26,11 +27,15 @@ import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
 import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.tasks.tab_management.TabShareUtils;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Drag and drop reorder - start dragging strip view. Subsequently drag out of, within and back onto
@@ -38,9 +43,10 @@ import java.util.List;
  */
 class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
     // Drag helpers
-    private final TabDragSource mTabDragSource;
+    private final TabStripDragHandler mTabStripDragHandler;
     private final ActionConfirmationManager mActionConfirmationManager;
     private final ReorderSubStrategy mTabSubStrategy;
+    private final ReorderSubStrategy mMultiTabSubStrategy;
     private final ReorderSubStrategy mGroupSubStrategy;
 
     // View on strip being dragged.
@@ -61,12 +67,13 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
             TabModel model,
             TabGroupModelFilter tabGroupModelFilter,
             View containerView,
-            ObservableSupplierImpl<Integer> groupIdToHideSupplier,
+            ObservableSupplierImpl<Token> groupIdToHideSupplier,
             Supplier<Float> tabWidthSupplier,
             Supplier<Long> lastReorderScrollTimeSupplier,
-            @NonNull TabDragSource tabDragSource,
+            @NonNull TabStripDragHandler tabStripDragHandler,
             @NonNull ActionConfirmationManager actionConfirmationManager,
             ReorderStrategy tabStrategy,
+            ReorderStrategy multiTabStrategy,
             ReorderStrategy groupStrategy) {
         super(
                 reorderDelegate,
@@ -79,9 +86,10 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
                 groupIdToHideSupplier,
                 tabWidthSupplier,
                 lastReorderScrollTimeSupplier);
-        mTabDragSource = tabDragSource;
+        mTabStripDragHandler = tabStripDragHandler;
         mActionConfirmationManager = actionConfirmationManager;
         mTabSubStrategy = new TabReorderSubStrategy(tabStrategy);
+        mMultiTabSubStrategy = new MultiTabReorderSubStrategy(multiTabStrategy);
         mGroupSubStrategy = new GroupReorderSubStrategy(groupStrategy);
     }
 
@@ -99,12 +107,19 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
 
         // Set the correct sub-strategy.
         if (interactingView instanceof StripLayoutTab) {
-            mActiveSubStrategy = mTabSubStrategy;
+            StripLayoutTab tab = (StripLayoutTab) interactingView;
+            if (mModel.isTabMultiSelected(tab.getTabId())
+                    && mModel.getMultiSelectedTabsCount() > 1) {
+                mActiveSubStrategy = mMultiTabSubStrategy;
+            } else {
+                mActiveSubStrategy = mTabSubStrategy;
+            }
         } else if (interactingView instanceof StripLayoutGroupTitle) {
             mActiveSubStrategy = mGroupSubStrategy;
         }
 
         // Attempt to start a drag and drop action. If the drag successfully started, early-out.
+        // Drag and drop for multi tab selection will be added later.
         if (mActiveSubStrategy != null
                 && mActiveSubStrategy.startViewDragAction(stripTabs, startPoint)) {
             return;
@@ -162,7 +177,7 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
     }
 
     boolean isReorderingTab() {
-        return mActiveSubStrategy == mTabSubStrategy;
+        return mActiveSubStrategy == mTabSubStrategy || mActiveSubStrategy == mMultiTabSubStrategy;
     }
 
     private void removeViewOutOfStrip(StripLayoutView draggedView) {
@@ -184,6 +199,9 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
     }
 
     private boolean shouldShowUserPrompt(StripLayoutTab draggedTab) {
+        if (mTabGroupModelFilter.getTabModel().isIncognitoBranded()) {
+            return false;
+        }
         int tabId = draggedTab.getTabId();
         boolean draggingLastTabInGroup =
                 StripLayoutUtils.isLastTabInGroup(mTabGroupModelFilter, tabId);
@@ -191,7 +209,6 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
                 mActionConfirmationManager.willSkipUngroupTabAttempt()
                         && !isTabInCollaboration(tabId);
         return draggingLastTabInGroup
-                && !mTabGroupModelFilter.getTabModel().isIncognitoBranded()
                 && !willSkipDialog;
     }
 
@@ -256,8 +273,19 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
             return mWrappedStrategy.getInteractingView();
         }
 
+        @Override
+        public void reorderViewInDirection(
+                StripLayoutTabDelegate tabDelegate,
+                StripLayoutView[] stripViews,
+                StripLayoutGroupTitle[] groupTitles,
+                StripLayoutTab[] stripTabs,
+                StripLayoutView reorderingView,
+                boolean toRight) {
+            // Intentionally no-op.
+        }
+
         /**
-         * Attempts to start the view tearing action through {@link TabDragSource}.
+         * Attempts to start the view tearing action through {@link TabStripDragHandler}.
          *
          * @param stripTabs The list of {@link StripLayoutTab}.
          * @param startPoint The location on-screen that the gesture started at.
@@ -312,10 +340,10 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
             // return if so.
             boolean draggedLastTabInGroupWithPrompt = shouldShowUserPrompt(draggedTab);
             if (draggedLastTabInGroupWithPrompt) {
-                moveInteractingTabOutOfGroup(
+                moveInteractingTabsOutOfGroup(
                         stripViews,
                         groupTitles,
-                        draggedTab,
+                        Collections.singletonList(draggedTab),
                         /* groupTitleToAnimate= */ null,
                         /* towardEnd= */ false,
                         ActionType.DRAG_OFF_STRIP);
@@ -338,7 +366,7 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
         boolean startViewDragAction(StripLayoutTab[] stripTabs, PointF startPoint) {
             Tab tab = mModel.getTabById(((StripLayoutTab) mViewBeingDragged).getTabId());
             assert tab != null : "No matching Tab found.";
-            return mTabDragSource.startTabDragAction(
+            return mTabStripDragHandler.startTabDragAction(
                     mContainerView,
                     tab,
                     startPoint,
@@ -358,7 +386,7 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
                 // If tab was ungrouped during drag, restore group indicator.
                 if (StripLayoutUtils.isLastTabInGroup(mTabGroupModelFilter, draggedTab.getTabId())
                         && mActionConfirmationManager.willSkipUngroupTabAttempt()) {
-                    mGroupIdToHideSupplier.set(Tab.INVALID_TAB_ID);
+                    mGroupIdToHideSupplier.set(null);
                 }
                 mAnimationHost.finishAnimationsAndPushTabUpdates();
                 draggedTab.setIsDraggedOffStrip(false);
@@ -371,11 +399,11 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
         }
     }
 
-    private class GroupReorderSubStrategy extends ReorderSubStrategy {
-        List<StripLayoutView> mViewsBeingDragged = new ArrayList<>();
+    private abstract class MultiViewTearingSubStrategy extends ReorderSubStrategy {
+        final List<StripLayoutView> mViewsBeingDragged = new ArrayList<>();
 
-        GroupReorderSubStrategy(ReorderStrategy groupReorderStrategy) {
-            super(groupReorderStrategy);
+        MultiViewTearingSubStrategy(ReorderStrategy reorderStrategy) {
+            super(reorderStrategy);
         }
 
         @Override
@@ -420,6 +448,93 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
             mStripUpdateDelegate.resizeTabStrip(
                     /* animate= */ false, /* tabToAnimate= */ null, /* animateTabAdded= */ false);
         }
+    }
+
+    private class MultiTabReorderSubStrategy extends MultiViewTearingSubStrategy {
+        MultiTabReorderSubStrategy(ReorderStrategy multiTabReorderStrategy) {
+            super(multiTabReorderStrategy);
+        }
+
+        @Override
+        boolean startViewDragAction(StripLayoutTab[] stripTabs, PointF startPoint) {
+            // Populate the list of views being dragged.
+            mViewsBeingDragged.clear();
+            List<Tab> selectedTabs = new ArrayList<>();
+            HashSet<Integer> tabIdsToUnselect = new HashSet();
+
+            StripLayoutTab primaryStripTab = (StripLayoutTab) mViewBeingDragged;
+            for (StripLayoutTab stripTab : stripTabs) {
+                if (stripTab != null && mModel.isTabMultiSelected(stripTab.getTabId())) {
+                    // TODO(crbug.com/441978834):  This is a temporary workaround: if the selection
+                    // mixes pinned and unpinned tabs, only keep the tabs have the same pin state
+                    // as the primary tab. To match desktop behavior for mixed pinned/unpinned
+                    // tabs, when "ungather" them on drop we should:
+                    // 1. When drop in pinned range: place pinned tabs at the drop point; snap
+                    // unpinned
+                    // tabs to the nearest valid indices.
+                    // 2. Drop in unpinned range: place unpinned tabs at the drop point; move pinned
+                    // tabs to the end of the pinned range.
+                    if (stripTab.getIsPinned() == primaryStripTab.getIsPinned()) {
+                        mViewsBeingDragged.add(stripTab);
+                        selectedTabs.add(mModel.getTabById(stripTab.getTabId()));
+                    } else {
+                        tabIdsToUnselect.add(stripTab.getTabId());
+                    }
+                }
+            }
+
+            // Deselect the ones that don't move due to a different pin state. If this includes the
+            // current tab, switch to the primary tab.
+            if (tabIdsToUnselect.contains(TabModelUtils.getCurrentTabId(mModel))) {
+                TabModelUtils.setIndex(
+                        mModel, TabModelUtils.getTabIndexById(mModel, primaryStripTab.getTabId()));
+            }
+            if (!tabIdsToUnselect.isEmpty()) {
+                mModel.setTabsMultiSelected(tabIdsToUnselect, /* isSelected= */ false);
+            }
+
+            if (mViewsBeingDragged.isEmpty()) return false;
+
+            // The primary tab is the one being interacted with.
+            Tab primaryTab = mModel.getTabById(primaryStripTab.getTabId());
+            assert primaryTab != null : "No matching Tab found.";
+
+            return mTabStripDragHandler.startMultiTabDragAction(
+                    mContainerView,
+                    selectedTabs,
+                    primaryTab,
+                    startPoint,
+                    mViewBeingDragged.getDrawX(),
+                    mViewBeingDragged.getWidth());
+        }
+
+        @Override
+        void onStopViewDragAction(
+                StripLayoutView[] stripViews, StripLayoutGroupTitle[] groupTitles) {
+            // If the dragged views were re-parented, they will no longer be present in model.
+            // If this is not the case, attempt to restore views to their original position.
+            StripLayoutTab draggedTab = (StripLayoutTab) mViewBeingDragged;
+            if (draggedTab != null
+                    && mModel.getTabById(draggedTab.getTabId()) != null
+                    && draggedTab.isDraggedOffStrip()) {
+                mAnimationHost.finishAnimationsAndPushTabUpdates();
+                for (StripLayoutView view : mViewsBeingDragged) {
+                    bringViewOntoStrip(view);
+                }
+                mStripUpdateDelegate.resizeTabStrip(
+                        /* animate= */ false,
+                        /* tabToAnimate= */ null,
+                        /* animateTabAdded= */ false);
+            }
+            mViewsBeingDragged.clear();
+            super.onStopViewDragAction(stripViews, groupTitles);
+        }
+    }
+
+    private class GroupReorderSubStrategy extends MultiViewTearingSubStrategy {
+        GroupReorderSubStrategy(ReorderStrategy groupReorderStrategy) {
+            super(groupReorderStrategy);
+        }
 
         @Override
         boolean startViewDragAction(StripLayoutTab[] stripTabs, PointF startPoint) {
@@ -427,9 +542,9 @@ class SourceViewDragDropReorderStrategy extends ReorderStrategyBase {
             mViewsBeingDragged.add(draggedGroupTitle);
             mViewsBeingDragged.addAll(
                     StripLayoutUtils.getGroupedTabs(
-                            mModel, stripTabs, draggedGroupTitle.getRootId()));
+                            mModel, stripTabs, draggedGroupTitle.getTabGroupId()));
 
-            return mTabDragSource.startGroupDragAction(
+            return mTabStripDragHandler.startGroupDragAction(
                     mContainerView,
                     draggedGroupTitle.getTabGroupId(),
                     draggedGroupTitle.isGroupShared(),

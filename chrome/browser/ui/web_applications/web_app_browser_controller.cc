@@ -19,6 +19,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/ash/browser_delegate/browser_controller.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -92,7 +93,7 @@ class SystemAppTabMenuModelFactory : public TabMenuModelFactory {
   }
 
  private:
-  raw_ptr<const ash::SystemWebAppDelegate> system_app_ = nullptr;
+  const raw_ptr<const ash::SystemWebAppDelegate> system_app_;
 };
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -117,12 +118,14 @@ WebAppBrowserController::WebAppBrowserController(
 #endif  // BUILDFLAG(IS_CHROMEOS)
     bool has_tab_strip)
     : AppBrowserController(browser, std::move(app_id), has_tab_strip),
-      provider_(provider)
+      provider_(provider),
 #if BUILDFLAG(IS_CHROMEOS)
-      ,
-      system_app_(system_app)
+      system_app_(system_app),
 #endif  // BUILDFLAG(IS_CHROMEOS)
-{
+      has_pinned_home_tab_(has_tab_strip &&
+                           provider.registrar_unsafe()
+                               .GetAppPinnedHomeTabUrl(this->app_id())
+                               .has_value()) {
   effective_display_mode_ =
       registrar().GetAppEffectiveDisplayMode(this->app_id());
   install_manager_observation_.Observe(&provider.install_manager());
@@ -136,10 +139,6 @@ bool WebAppBrowserController::HasMinimalUiButtons() const {
     return false;
   }
   return effective_display_mode_ == DisplayMode::kMinimalUi;
-}
-
-bool WebAppBrowserController::IsHostedApp() const {
-  return true;
 }
 
 std::unique_ptr<TabMenuModelFactory>
@@ -202,7 +201,8 @@ void WebAppBrowserController::SetIsolatedWebAppTrueForTesting() {
 gfx::Rect WebAppBrowserController::GetDefaultBounds() const {
 #if BUILDFLAG(IS_CHROMEOS)
   if (system_app_) {
-    return system_app_->GetDefaultBounds(browser());
+    return system_app_->GetDefaultBounds(
+        ash::BrowserController::GetInstance()->GetDelegate(browser()));
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
   return gfx::Rect();
@@ -215,6 +215,14 @@ bool WebAppBrowserController::HasReloadButton() const {
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
   return true;
+}
+
+bool WebAppBrowserController::HasPendingUpdate() const {
+  if (!base::FeatureList::IsEnabled(features::kWebAppPredictableAppUpdating)) {
+    return false;
+  }
+  const WebApp* app = registrar().GetAppById(app_id());
+  return app && app->pending_update_info().has_value();
 }
 
 #if !BUILDFLAG(IS_CHROMEOS)
@@ -370,6 +378,10 @@ gfx::ImageSkia WebAppBrowserController::GetFallbackHomeTabIcon() const {
   return provider_->icon_manager().GetFaviconImageSkia(app_id());
 }
 
+gfx::ImageSkia WebAppBrowserController::GetAppMenuIcon() const {
+  return provider_->icon_manager().GetFaviconImageSkia(app_id());
+}
+
 ui::ImageModel WebAppBrowserController::GetWindowIcon() const {
   return GetWindowAppIcon();
 }
@@ -442,12 +454,18 @@ std::optional<SkColor> WebAppBrowserController::GetBackgroundColor() const {
   return result;
 }
 
-GURL WebAppBrowserController::GetAppStartUrl() const {
+const GURL& WebAppBrowserController::GetAppStartUrl() const {
   return registrar().GetAppStartUrl(app_id());
 }
 
-GURL WebAppBrowserController::GetAppNewTabUrl() const {
+const GURL& WebAppBrowserController::GetAppNewTabUrl() const {
   return registrar().GetAppNewTabUrl(app_id());
+}
+
+content::WebContents* WebAppBrowserController::GetPinnedHomeTab() const {
+  return has_pinned_home_tab_
+             ? browser()->tab_strip_model()->GetWebContentsAt(0)
+             : nullptr;
 }
 
 bool WebAppBrowserController::ShouldHideNewTabButton() const {
@@ -640,10 +658,6 @@ void WebAppBrowserController::OnTabInserted(content::WebContents* contents) {
 
   WebAppTabHelper* tab_helper = WebAppTabHelper::FromWebContents(contents);
   tab_helper->SetIsInAppWindow(app_id());
-
-  if (AppUsesTabbed() && IsUrlInHomeTabScope(contents->GetLastCommittedURL())) {
-    tab_helper->set_is_pinned_home_tab(true);
-  }
 }
 
 void WebAppBrowserController::OnTabRemoved(content::WebContents* contents) {

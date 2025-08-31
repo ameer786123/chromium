@@ -241,11 +241,10 @@ SyncStatusLabels GetSyncStatusLabels(Profile* profile) {
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
   CHECK(identity_manager);
-  return GetSyncStatusLabels(
-      SyncServiceFactory::GetForProfile(profile), identity_manager,
-      ChromeSigninClientFactory::GetForProfile(profile)
-          ->IsClearPrimaryAccountAllowed(identity_manager->HasPrimaryAccount(
-              signin::ConsentLevel::kSync)));
+  return GetSyncStatusLabels(SyncServiceFactory::GetForProfile(profile),
+                             identity_manager,
+                             ChromeSigninClientFactory::GetForProfile(profile)
+                                 ->IsClearPrimaryAccountAllowed());
 }
 
 SyncStatusMessageType GetSyncStatusMessageType(Profile* profile) {
@@ -297,6 +296,7 @@ SyncStatusLabels GetSyncStatusLabelsForSettings(
 }
 
 SyncStatusLabels GetAvatarSyncErrorLabelsForSettings(
+    Profile* profile,
     AvatarSyncErrorType error) {
   switch (error) {
     case AvatarSyncErrorType::kSyncPaused:
@@ -322,7 +322,11 @@ SyncStatusLabels GetAvatarSyncErrorLabelsForSettings(
     case AvatarSyncErrorType::kPassphraseError:
       return {SyncStatusMessageType::kSyncError,
               IDS_SETTINGS_ERROR_PASSPHRASE_USER_ERROR_DESCRIPTION_WITH_EMAIL,
-              IDS_SYNC_STATUS_NEEDS_PASSWORD_BUTTON, IDS_SETTINGS_SIGN_OUT,
+              IDS_SYNC_STATUS_NEEDS_PASSWORD_BUTTON,
+              base::FeatureList::IsEnabled(
+                  syncer::kReplaceSyncPromosWithSignInPromos)
+                  ? IDS_SETTINGS_PEOPLE_SIGN_OUT
+                  : IDS_SETTINGS_SIGN_OUT,
               SyncStatusActionType::kEnterPassphrase};
 
     case AvatarSyncErrorType::
@@ -347,13 +351,15 @@ SyncStatusLabels GetAvatarSyncErrorLabelsForSettings(
               IDS_PROFILES_ACCOUNT_REMOVAL_TITLE,
               SyncStatusActionType::kConfirmSyncSettings};
 
-    case AvatarSyncErrorType::kManagedUserUnrecoverableError:
-      return {SyncStatusMessageType::kSyncError,
-              IDS_SYNC_STATUS_UNRECOVERABLE_ERROR_NEEDS_SIGNOUT,
-              IDS_SYNC_RELOGIN_BUTTON, IDS_PROFILES_ACCOUNT_REMOVAL_TITLE,
-              SyncStatusActionType::kReauthenticate};
-
     case AvatarSyncErrorType::kUnrecoverableError:
+      // Managed users get different labels.
+      if (!ChromeSigninClientFactory::GetForProfile(profile)
+               ->IsClearPrimaryAccountAllowed()) {
+        return {SyncStatusMessageType::kSyncError,
+                IDS_SYNC_STATUS_UNRECOVERABLE_ERROR_NEEDS_SIGNOUT,
+                IDS_SYNC_RELOGIN_BUTTON, IDS_PROFILES_ACCOUNT_REMOVAL_TITLE,
+                SyncStatusActionType::kReauthenticate};
+      }
       return {SyncStatusMessageType::kSyncError,
               IDS_SYNC_STATUS_UNRECOVERABLE_ERROR, IDS_SYNC_RELOGIN_BUTTON,
               IDS_PROFILES_ACCOUNT_REMOVAL_TITLE,
@@ -368,37 +374,16 @@ std::optional<AvatarSyncErrorType> GetAvatarSyncErrorType(Profile* profile) {
     return std::nullopt;
   }
 
-  if (!service->HasSyncConsent()) {
-    // Only some errors can be shown if the account isn't a consented primary
-    // account.
-    // Note the condition checked is not IsInitialSyncFeatureSetupComplete(),
-    // because the setup incomplete case is treated separately below. See the
-    // comment in ShouldRequestSyncConfirmation() about dashboard resets.
-
-    if (switches::IsImprovedSigninUIOnDesktopEnabled()) {
-      if (service->RequiresClientUpgrade()) {
-        return AvatarSyncErrorType::kUpgradeClientError;
-      }
-
-      if (service->GetUserSettings()
-              ->IsPassphraseRequiredForPreferredDataTypes()) {
-        return AvatarSyncErrorType::kPassphraseError;
-      }
+  if (service->HasSyncConsent()) {
+    if (ShouldRequestSyncConfirmation(service)) {
+      return AvatarSyncErrorType::kSettingsUnconfirmedError;
     }
 
-    return GetTrustedVaultError(service);
-  }
-
-  // RequiresClientUpgrade() is unrecoverable, but is treated separately below.
-  if (service->HasUnrecoverableError() && !service->RequiresClientUpgrade()) {
-    // Display different messages and buttons for managed accounts.
-    if (!ChromeSigninClientFactory::GetForProfile(profile)
-             ->IsClearPrimaryAccountAllowed(
-                 IdentityManagerFactory::GetForProfile(profile)
-                     ->HasPrimaryAccount(signin::ConsentLevel::kSync))) {
-      return AvatarSyncErrorType::kManagedUserUnrecoverableError;
+    // RequiresClientUpgrade() is unrecoverable, but is treated separately
+    // below.
+    if (service->HasUnrecoverableError() && !service->RequiresClientUpgrade()) {
+      return AvatarSyncErrorType::kUnrecoverableError;
     }
-    return AvatarSyncErrorType::kUnrecoverableError;
   }
 
   if (service->GetTransportState() ==
@@ -414,76 +399,41 @@ std::optional<AvatarSyncErrorType> GetAvatarSyncErrorType(Profile* profile) {
     return AvatarSyncErrorType::kPassphraseError;
   }
 
-  const std::optional<AvatarSyncErrorType> trusted_vault_error =
-      GetTrustedVaultError(service);
-  if (trusted_vault_error) {
-    return trusted_vault_error;
-  }
-
-  if (ShouldRequestSyncConfirmation(service)) {
-    return AvatarSyncErrorType::kSettingsUnconfirmedError;
-  }
-
-  return std::nullopt;
+  return GetTrustedVaultError(service);
 }
 
 std::u16string GetAvatarSyncErrorDescription(AvatarSyncErrorType error,
-                                             bool is_sync_feature_enabled,
                                              const std::string& user_email) {
   switch (error) {
     case AvatarSyncErrorType::kSyncPaused:
       return l10n_util::GetStringUTF16(IDS_PROFILES_DICE_SYNC_PAUSED_TITLE);
     case AvatarSyncErrorType::kTrustedVaultKeyMissingForPasswordsError:
-      if (switches::IsImprovedSigninUIOnDesktopEnabled()) {
-        return l10n_util::GetStringFUTF16(
-            IDS_SYNC_ERROR_PASSWORDS_USER_MENU_ERROR_DESCRIPTION,
-            base::UTF8ToUTF16(user_email));
-      }
-      return l10n_util::GetStringUTF16(
-          is_sync_feature_enabled
-              ? IDS_SYNC_ERROR_PASSWORDS_USER_MENU_TITLE
-              : IDS_SYNC_ERROR_PASSWORDS_USER_MENU_TITLE_SIGNED_IN_ONLY);
+      return l10n_util::GetStringFUTF16(
+          IDS_SYNC_ERROR_PASSWORDS_USER_MENU_ERROR_DESCRIPTION,
+          base::UTF8ToUTF16(user_email));
     case AvatarSyncErrorType::
         kTrustedVaultRecoverabilityDegradedForPasswordsError:
-      if (switches::IsImprovedSigninUIOnDesktopEnabled()) {
-        return l10n_util::GetStringFUTF16(
-            IDS_SYNC_ERROR_RECOVERABILITY_DEGRADED_FOR_PASSWORDS_USER_MENU_ERROR_DESCRIPTION,
-            base::UTF8ToUTF16(user_email));
-      }
-      return l10n_util::GetStringUTF16(
-          IDS_SYNC_ERROR_RECOVERABILITY_DEGRADED_FOR_PASSWORDS_USER_MENU_TITLE);
+      return l10n_util::GetStringFUTF16(
+          IDS_SYNC_ERROR_RECOVERABILITY_DEGRADED_FOR_PASSWORDS_USER_MENU_ERROR_DESCRIPTION,
+          base::UTF8ToUTF16(user_email));
     case AvatarSyncErrorType::
         kTrustedVaultRecoverabilityDegradedForEverythingError:
-      if (switches::IsImprovedSigninUIOnDesktopEnabled()) {
-        return l10n_util::GetStringFUTF16(
-            IDS_SYNC_ERROR_TRUSTED_VAULT_USER_MENU_ERROR_DESCRIPTION,
-            base::UTF8ToUTF16(user_email));
-      }
-      return l10n_util::GetStringUTF16(
-          IDS_SYNC_ERROR_RECOVERABILITY_DEGRADED_FOR_EVERYTHING_USER_MENU_TITLE);
+      return l10n_util::GetStringFUTF16(
+          IDS_SYNC_ERROR_TRUSTED_VAULT_USER_MENU_ERROR_DESCRIPTION,
+          base::UTF8ToUTF16(user_email));
     case AvatarSyncErrorType::kPassphraseError:
-      if (switches::IsImprovedSigninUIOnDesktopEnabled()) {
-        return l10n_util::GetStringFUTF16(
-            IDS_SYNC_ERROR_PASSPHRASE_USER_MENU_ERROR_DESCRIPTION,
-            base::UTF8ToUTF16(user_email));
-      }
-      return l10n_util::GetStringUTF16(IDS_SYNC_ERROR_USER_MENU_TITLE);
+      return l10n_util::GetStringFUTF16(
+          IDS_SYNC_ERROR_PASSPHRASE_USER_MENU_ERROR_DESCRIPTION,
+          base::UTF8ToUTF16(user_email));
     case AvatarSyncErrorType::kUpgradeClientError:
-      if (switches::IsImprovedSigninUIOnDesktopEnabled()) {
-        return l10n_util::GetStringFUTF16(
-            IDS_SYNC_ERROR_UPGRADE_CLIENT_USER_MENU_ERROR_DESCRIPTION,
-            base::UTF8ToUTF16(user_email));
-      }
-      return l10n_util::GetStringUTF16(IDS_SYNC_ERROR_USER_MENU_TITLE);
+      return l10n_util::GetStringFUTF16(
+          IDS_SYNC_ERROR_UPGRADE_CLIENT_USER_MENU_ERROR_DESCRIPTION,
+          base::UTF8ToUTF16(user_email));
     case AvatarSyncErrorType::kTrustedVaultKeyMissingForEverythingError:
-      if (switches::IsImprovedSigninUIOnDesktopEnabled()) {
-        return l10n_util::GetStringFUTF16(
-            IDS_SYNC_ERROR_TRUSTED_VAULT_USER_MENU_ERROR_DESCRIPTION,
-            base::UTF8ToUTF16(user_email));
-      }
-      return l10n_util::GetStringUTF16(IDS_SYNC_ERROR_USER_MENU_TITLE);
+      return l10n_util::GetStringFUTF16(
+          IDS_SYNC_ERROR_TRUSTED_VAULT_USER_MENU_ERROR_DESCRIPTION,
+          base::UTF8ToUTF16(user_email));
     case AvatarSyncErrorType::kSettingsUnconfirmedError:
-    case AvatarSyncErrorType::kManagedUserUnrecoverableError:
     case AvatarSyncErrorType::kUnrecoverableError:
       return l10n_util::GetStringUTF16(IDS_SYNC_ERROR_USER_MENU_TITLE);
   }
@@ -502,8 +452,11 @@ bool ShouldRequestSyncConfirmation(const syncer::SyncService* service) {
 
 bool ShouldShowSyncPassphraseError(const syncer::SyncService* service) {
   const syncer::SyncUserSettings* settings = service->GetUserSettings();
-  return settings->IsInitialSyncFeatureSetupComplete() &&
-         settings->IsPassphraseRequiredForPreferredDataTypes();
+  if (service->HasSyncConsent() &&
+      !settings->IsInitialSyncFeatureSetupComplete()) {
+    return false;
+  }
+  return settings->IsPassphraseRequiredForPreferredDataTypes();
 }
 
 #if !BUILDFLAG(IS_ANDROID)

@@ -21,17 +21,17 @@
 #include "chrome/browser/ash/login/test/embedded_test_server_setup_mixin.h"
 #include "chrome/browser/ash/login/test/local_state_mixin.h"
 #include "chrome/browser/ash/ownership/owner_settings_service_ash_factory.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/lifetime/termination_notification.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/session_manager/fake_session_manager_client.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
 #include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
+#include "chromeos/ash/components/settings/device_settings_cache.h"
 #include "components/ownership/mock_owner_key_util.h"
-#include "components/policy/core/common/device_local_account_type.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test.h"
@@ -127,7 +127,7 @@ class KioskCrashRestoreTest : public MixinBasedInProcessBrowserTest,
     const std::string policy_data_string = policy_data.SerializeAsString();
 
     // Store policy data and existing device local accounts in local state.
-    local_state().SetString(prefs::kDeviceSettingsCache,
+    local_state().SetString(device_settings_cache::prefs::kDeviceSettingsCache,
                             base::Base64Encode(policy_data_string));
 
     base::Value::List accounts;
@@ -158,8 +158,9 @@ IN_PROC_BROWSER_TEST_F(ChromeKioskCrashRestoreTest,
   // If app is not installed when restoring from crash, the kiosk launch is
   // expected to fail, as in that case the crash occured during the app
   // initialization - before the app was actually launched.
-  EXPECT_EQ(KioskAppLaunchError::Error::kUnableToLaunch,
-            KioskAppLaunchError::Get());
+  EXPECT_EQ(
+      KioskAppLaunchError::Error::kUnableToLaunch,
+      KioskAppLaunchError::Get(CHECK_DEREF(g_browser_process->local_state())));
 }
 
 class WebKioskCrashRestoreTest : public KioskCrashRestoreTest {
@@ -175,7 +176,9 @@ IN_PROC_BROWSER_TEST_F(WebKioskCrashRestoreTest, ShouldRelaunchCrashedWebApp) {
   // Wait for the kiosk app to launch (through the crash recovery flow).
   ASSERT_TRUE(WaitKioskLaunched());
   // Check there was no launch error.
-  EXPECT_EQ(KioskAppLaunchError::Error::kNone, KioskAppLaunchError::Get());
+  EXPECT_EQ(
+      KioskAppLaunchError::Error::kNone,
+      KioskAppLaunchError::Get(CHECK_DEREF(g_browser_process->local_state())));
 }
 
 }  // namespace ash

@@ -6,6 +6,7 @@
 #define IPCZ_SRC_IPCZ_NODE_LINK_H_
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -25,6 +26,7 @@
 #include "ipcz/sequence_number.h"
 #include "ipcz/sublink_id.h"
 #include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_set.h"
 #include "third_party/abseil-cpp/absl/synchronization/mutex.h"
 #include "third_party/abseil-cpp/absl/types/span.h"
 #include "util/ref_counted.h"
@@ -216,6 +218,11 @@ class NodeLink : public msg::NodeMessageListener {
   // memory.
   void Transmit(Message& message);
 
+  void AcceptEarlyParcelsForSublink(SublinkId sublink_id);
+
+  size_t DeletedSublinkCountForTesting();
+  size_t EarlyParcelCountForTesting();
+
  private:
   friend class RefCounted<NodeLink>;
 
@@ -313,6 +320,36 @@ class NodeLink : public msg::NodeMessageListener {
   using SublinkMap = absl::flat_hash_map<SublinkId, Sublink>;
   SublinkMap sublinks_ ABSL_GUARDED_BY(mutex_);
 
+  // A set of SublinkIds retained for a short period of time. The assumption is
+  // that by the time a sublink from this set needs to be cleared, all the
+  // queued NodeLink messages referencing this sublink will be already
+  // processed.
+  class AutoClearedSublinkSet {
+   public:
+    AutoClearedSublinkSet();
+
+    void Insert(SublinkId id);
+
+    bool Contains(SublinkId id);
+
+    size_t Size();
+
+    void Clear();
+
+   private:
+    void ClearExpiredIdsIfNeeded();
+    static constexpr std::chrono::minutes kClearDurationMinutes{5};
+    absl::flat_hash_set<SublinkId> previous_;
+    absl::flat_hash_set<SublinkId> current_;
+    std::chrono::time_point<std::chrono::steady_clock> last_clear_time_;
+  };
+
+  // SublinkIds that were once associated with Router that is now deactivated.
+  // The auto-clearing heuristic mitigates memory growth for long running
+  // processes. TODO(crbug.com/424438875): Add a Node message to determine the
+  // safe time for purging a deleted SublinkId more reliably.
+  AutoClearedSublinkSet deleted_sublinks_ ABSL_GUARDED_BY(mutex_);
+
   // Pending memory allocation request callbacks. Keyed by request size, when
   // an incoming ProvideMemory message is received, the front of the list for
   // that size is removed from the map and invoked with the new memory object.
@@ -342,6 +379,11 @@ class NodeLink : public msg::NodeMessageListener {
   using SubparcelTrackerMap =
       absl::flat_hash_map<SubparcelTrackerKey, SubparcelTracker>;
   SubparcelTrackerMap subparcel_trackers_ ABSL_GUARDED_BY(mutex_);
+
+  // A queue for parcels arriving before their corresponding Router.
+  using SublinkEarlyParcelsMap =
+      absl::flat_hash_map<SublinkId, std::vector<std::unique_ptr<Parcel>>>;
+  SublinkEarlyParcelsMap early_parcels_for_sublink_ ABSL_GUARDED_BY(mutex_);
 
   // Tracks pending referrals sent to the broker.
   uint64_t next_referral_id_ = 0;

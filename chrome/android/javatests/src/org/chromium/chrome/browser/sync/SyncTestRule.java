@@ -36,13 +36,14 @@ import org.chromium.chrome.browser.signin.services.UnifiedConsentServiceBridge;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
-import org.chromium.chrome.test.util.browser.signin.AccountManagerTestRule;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
 import org.chromium.components.prefs.PrefService;
+import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.test.util.TestAccounts;
+import org.chromium.components.sync.SyncFirstSetupCompleteSource;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.internal.SyncPrefNames;
 import org.chromium.components.sync.protocol.AutofillWalletSpecifics;
@@ -210,14 +211,14 @@ public class SyncTestRule extends ChromeTabbedActivityTestRule {
      * Adds an account of default account name to AccountManagerFacade and waits for the seeding.
      */
     public CoreAccountInfo addTestAccount() {
-        return addAccount(AccountManagerTestRule.TEST_ACCOUNT_EMAIL);
+        return addAccount(TestAccounts.ACCOUNT1);
     }
 
     /** Adds an account of given account name to AccountManagerFacade and waits for the seeding. */
-    public CoreAccountInfo addAccount(String accountName) {
-        CoreAccountInfo coreAccountInfo = mSigninTestRule.addAccount(accountName);
+    public CoreAccountInfo addAccount(AccountInfo account) {
+        mSigninTestRule.addAccount(account);
         Assert.assertFalse(SyncTestUtil.isSyncFeatureEnabled());
-        return coreAccountInfo;
+        return account;
     }
 
     /**
@@ -236,7 +237,15 @@ public class SyncTestRule extends ChromeTabbedActivityTestRule {
     @Deprecated
     public CoreAccountInfo setUpAccountAndEnableSyncForTesting() {
         CoreAccountInfo accountInfo =
-                mSigninTestRule.addTestAccountThenSigninAndEnableSync(mSyncService);
+                mSigninTestRule.addTestAccountThenSigninWithConsentLevelSync();
+
+        // In addition to using ConsentLevel.SYNC above, configure SyncService
+        // to enable the legacy Sync-the-feature.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mSyncService.setInitialSyncFeatureSetupComplete(
+                            SyncFirstSetupCompleteSource.BASIC_FLOW);
+                });
 
         // Enable UKM when enabling sync as it is done by the sync confirmation UI.
         enableUKM();
@@ -252,22 +261,35 @@ public class SyncTestRule extends ChromeTabbedActivityTestRule {
      */
     public CoreAccountInfo setUpAccountAndEnableHistorySync() {
         mSigninTestRule.addAccountThenSigninAndEnableHistorySync(TestAccounts.ACCOUNT1);
+        SyncTestUtil.waitForSyncTransportActive();
         return TestAccounts.ACCOUNT1;
     }
 
     /**
-     * Set up a test account and sign in. Does not setup sync.
+     * Set up a test account, sign in, and waits for sync machinery to become active.
      *
      * @return the test {@link CoreAccountInfo} that is signed in.
      */
     public CoreAccountInfo setUpAccountAndSignInForTesting() {
+        mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
+        SyncTestUtil.waitForSyncTransportActive();
+        return TestAccounts.ACCOUNT1;
+    }
+
+    /**
+     * Set up a test account and sign in. Use this instead of setUpAccountAndSignInForTesting if
+     * sync can't become active, e.g. because there is a policy preventing it.
+     *
+     * @return the test {@link CoreAccountInfo} that is signed in.
+     */
+    public CoreAccountInfo setUpAccountAndSignInWithoutWaitingForTesting() {
         mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
         return TestAccounts.ACCOUNT1;
     }
 
     public void signOut() {
         mSigninTestRule.signOut();
-        Assert.assertNull(mSigninTestRule.getPrimaryAccount(ConsentLevel.SYNC));
+        Assert.assertNull(mSigninTestRule.getPrimaryAccount(ConsentLevel.SIGNIN));
         Assert.assertFalse(SyncTestUtil.isSyncFeatureEnabled());
     }
 

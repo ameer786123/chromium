@@ -4,6 +4,7 @@
 
 package org.chromium.components.browser_ui.media;
 
+import static org.chromium.build.NullUtil.assertNonNull;
 import static org.chromium.build.NullUtil.assumeNonNull;
 
 import android.app.PendingIntent;
@@ -100,7 +101,7 @@ public class MediaNotificationController {
 
     @VisibleForTesting public Delegate mDelegate;
 
-    private SparseArray<MediaButtonInfo> mActionToButtonInfo;
+    private final SparseArray<MediaButtonInfo> mActionToButtonInfo;
 
     @VisibleForTesting public @Nullable NotificationWrapperBuilder mNotificationBuilder;
 
@@ -396,7 +397,7 @@ public class MediaNotificationController {
 
     @VisibleForTesting
     public PendingIntentProvider createPendingIntent(String action) {
-        Intent intent = mDelegate.createServiceIntent().setAction(action);
+        Intent intent = assumeNonNull(mDelegate.createServiceIntent()).setAction(action);
         return PendingIntentProvider.getService(
                 getContext(),
                 0,
@@ -411,16 +412,16 @@ public class MediaNotificationController {
      */
     private static final class MediaButtonInfo {
         /** The resource ID of this media button icon. */
-        public int iconResId;
+        public final int iconResId;
 
         /** The resource ID of this media button description. */
-        public int descriptionResId;
+        public final int descriptionResId;
 
         /** The intent string to be fired when this media button is clicked. */
-        public String intentString;
+        public final String intentString;
 
         /** The ID to identify the notification button. */
-        public int buttonId;
+        public final int buttonId;
 
         public MediaButtonInfo(
                 int buttonResId, int descriptionResId, String intentString, int buttonId) {
@@ -434,7 +435,7 @@ public class MediaNotificationController {
     /** An interface for separating embedder-specific logic. */
     public interface Delegate {
         /** Returns an intent that will start a Service which listens to notification actions. */
-        Intent createServiceIntent();
+        @Nullable Intent createServiceIntent();
 
         /** Returns the name of the embedding app. */
         String getAppName();
@@ -531,7 +532,7 @@ public class MediaNotificationController {
         mService = null;
     }
 
-    public boolean processIntent(Service service, Intent intent) {
+    public boolean processIntent(Service service, @Nullable Intent intent) {
         if (intent == null || mMediaNotificationInfo == null) return false;
 
         if (intent.getAction() == null) {
@@ -639,7 +640,7 @@ public class MediaNotificationController {
             // catch the exception, and `mService` will remain null for us to try again later.
             try {
                 ForegroundServiceUtils.getInstance()
-                        .startForegroundService(mDelegate.createServiceIntent());
+                        .startForegroundService(assertNonNull(mDelegate.createServiceIntent()));
             } catch (RuntimeException e) {
             }
         } else {

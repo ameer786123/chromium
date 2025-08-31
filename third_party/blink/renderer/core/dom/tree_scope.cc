@@ -42,10 +42,12 @@
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/tree_scope_adopter.h"
 #include "third_party/blink/renderer/core/editing/dom_selection.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/picture_in_picture_controller.h"
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
+#include "third_party/blink/renderer/core/html/custom/custom_element_registry.h"
 #include "third_party/blink/renderer/core/html/html_anchor_element.h"
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
 #include "third_party/blink/renderer/core/html/html_map_element.h"
@@ -259,20 +261,16 @@ Element* TreeScope::HitTestPoint(double x,
   HitTestResult result =
       HitTestInDocument(&RootNode().GetDocument(), x, y, request);
   if (request.AllowsChildFrameContent()) {
-    return HitTestPointInternal(result.InnerNode(),
-                                HitTestPointType::kInternal);
+    return ElementForHitTest(result.InnerNode(), HitTestPointType::kInternal);
   }
-  return HitTestPointInternal(result.InnerNode(),
-                              HitTestPointType::kWebExposed);
+  return ElementForHitTest(result.InnerNode(), HitTestPointType::kWebExposed);
 }
 
-Element* TreeScope::HitTestPointInternal(Node* node,
-                                         HitTestPointType type) const {
+Element* TreeScope::ElementForHitTest(Node* node, HitTestPointType type) const {
   if (!node || node->IsDocumentNode())
     return nullptr;
   Element* element;
-  if ((node->IsPseudoElement() && !node->IsScrollMarkerPseudoElement()) ||
-      node->IsTextNode()) {
+  if (node->IsPseudoElement() || node->IsTextNode()) {
     element = node->ParentOrShadowHostElement();
   } else {
     element = To<Element>(node);
@@ -282,6 +280,53 @@ Element* TreeScope::HitTestPointInternal(Node* node,
   if (type == HitTestPointType::kWebExposed)
     return &Retarget(*element);
   return element;
+}
+
+CustomElementRegistry* TreeScope::customElementRegistry() const {
+  if (custom_element_registry_) {
+    CHECK(RuntimeEnabledFeatures::ScopedCustomElementRegistryEnabled());
+    DCHECK(!waiting_for_registry_);
+    return custom_element_registry_;
+  }
+
+  if (RuntimeEnabledFeatures::ScopedCustomElementRegistryEnabled() &&
+      waiting_for_registry_) {
+    return nullptr;
+  }
+
+  if (LocalDOMWindow* window = GetDocument().domWindow()) {
+    return window->customElements();
+  }
+
+  return nullptr;
+}
+
+// Custom element registry of a tree scope can only be set once.
+// Setting registry on a tree scope with existing registry will fail.
+bool TreeScope::SetCustomElementRegistry(CustomElementRegistry* registry) {
+  if (!RuntimeEnabledFeatures::ScopedCustomElementRegistryEnabled() ||
+      custom_element_registry_) {
+    return false;
+  }
+
+  if (registry) {
+    custom_element_registry_ = registry;
+    waiting_for_registry_ = false;
+    registry->AssociatedWith(GetDocument());
+    return true;
+  } else if (!custom_element_registry_) {
+    waiting_for_registry_ = true;
+    return true;
+  }
+
+  return false;
+}
+
+bool TreeScope::IsWaitingForScopedRegistry() const {
+  // Waiting for registry should never be true when we have a custom
+  // element registry.
+  DCHECK(!custom_element_registry_ || !waiting_for_registry_);
+  return waiting_for_registry_;
 }
 
 static bool ShouldAcceptNonElementNode(const Node& node) {
@@ -306,7 +351,7 @@ HeapVector<Member<Element>> TreeScope::ElementsFromHitTestResult(
     Node* node = rect_based_node.Get();
     if (!node->IsElementNode() && !ShouldAcceptNonElementNode(*node))
       continue;
-    node = HitTestPointInternal(node, HitTestPointType::kWebExposed);
+    node = ElementForHitTest(node, HitTestPointType::kWebExposed);
     // Prune duplicate entries. A pseduo ::before content above its parent
     // node should only result in a single entry.
     if (node == last_node)
@@ -422,7 +467,7 @@ void TreeScope::ClearAdoptedStyleSheets() {
   removed.AppendRange(adopted_style_sheets_->begin(),
                       adopted_style_sheets_->end());
   adopted_style_sheets_->clear();
-  for (auto sheet : removed) {
+  for (const auto& sheet : removed) {
     StyleSheetWasRemoved(sheet);
   }
 }
@@ -431,7 +476,7 @@ void TreeScope::SetAdoptedStyleSheetsForTesting(
     HeapVector<Member<CSSStyleSheet>>& adopted_style_sheets) {
   ClearAdoptedStyleSheets();
   EnsureAdoptedStyleSheets();
-  for (auto sheet : adopted_style_sheets) {
+  for (const auto& sheet : adopted_style_sheets) {
     DCHECK(sheet->IsConstructed());
     DCHECK_EQ(sheet->ConstructorDocument(), GetDocument());
     adopted_style_sheets_->push_back(sheet);
@@ -575,7 +620,7 @@ Element* TreeScope::AdjustedFocusedElement() const {
   if (!element)
     return nullptr;
 
-  // https://github.com/flackr/carousel/tree/main/scroll-marker#what-is-the-documentactiveelement-of-a-focused-pseudo-element
+  // https://drafts.csswg.org/css-overflow-5/#active-element
   if (auto* scroll_marker = DynamicTo<ScrollMarkerPseudoElement>(element)) {
     CHECK(scroll_marker->ScrollMarkerGroup());
     element = &scroll_marker->ScrollMarkerGroup()->UltimateOriginatingElement();
@@ -757,6 +802,7 @@ void TreeScope::Trace(Visitor* visitor) const {
   visitor->Trace(svg_tree_scoped_resources_);
   visitor->Trace(style_sheet_list_);
   visitor->Trace(adopted_style_sheets_);
+  visitor->Trace(custom_element_registry_);
 }
 
 IdTargetObserverRegistry& TreeScope::EnsureIdTargetObserverRegistry() {

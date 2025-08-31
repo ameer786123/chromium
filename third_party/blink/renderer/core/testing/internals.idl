@@ -200,6 +200,8 @@ interface Internals {
 
     [RaisesException] DOMString layerTreeAsText(Document document, optional unsigned short flags);
 
+    [RaisesException] DOMString dumpContentNodeTree(Document document);
+
     [RaisesException] DOMString mainThreadScrollingReasons(Document document);
 
     void evictAllResources();
@@ -325,7 +327,7 @@ interface Internals {
     unsigned long canvasFontCacheMaxFonts();
     void forceLoseCanvasContext(CanvasRenderingContext2D ctx);
     void forceLoseCanvasContext(OffscreenCanvasRenderingContext2D ctx);
-    void disableCanvasAcceleration(HTMLCanvasElement canvas);
+    void disableCanvasAccelerationForCanvas2D(HTMLCanvasElement canvas);
     boolean isCanvasImageSourceAccelerated(HTMLCanvasElement imageSource);
     boolean isCanvasImageSourceAccelerated(OffscreenCanvas imageSource);
 

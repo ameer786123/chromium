@@ -96,6 +96,10 @@ bool WebNode::LessThan(const WebNode& n) const {
   return private_.Get() < n.private_.Get();
 }
 
+bool WebNode::Contains(const WebNode* n) const {
+  return private_->contains(n->private_.Get());
+}
+
 WebNode WebNode::ParentNode() const {
   return WebNode(const_cast<ContainerNode*>(private_->parentNode()));
 }
@@ -103,6 +107,10 @@ WebNode WebNode::ParentNode() const {
 WebNode WebNode::ParentOrShadowHostNode() const {
   return WebNode(
       const_cast<ContainerNode*>(private_->ParentOrShadowHostNode()));
+}
+
+bool WebNode::IsInUserAgentShadowRoot() const {
+  return private_->IsInUserAgentShadowRoot();
 }
 
 WebString WebNode::NodeValue() const {
@@ -197,9 +205,9 @@ void WebNode::SimulateClick() {
   private_->GetExecutionContext()
       ->GetTaskRunner(TaskType::kUserInteraction)
       ->PostTask(FROM_HERE,
-                 WTF::BindOnce(&Node::DispatchSimulatedClick,
-                               WrapWeakPersistent(private_.Get()), nullptr,
-                               SimulatedClickCreationScope::kFromUserAgent));
+                 BindOnce(&Node::DispatchSimulatedClick,
+                          WrapWeakPersistent(private_.Get()), nullptr,
+                          SimulatedClickCreationScope::kFromUserAgent));
 }
 
 WebElementCollection WebNode::GetElementsByHTMLTagName(
@@ -338,7 +346,7 @@ base::ScopedClosureRunner WebNode::AddEventListener(
   WebPrivatePtrForGC<EventListener> listener =
       MakeGarbageCollected<EventListener>(Unwrap<Node>(), std::move(handler));
   listener->AddListener();
-  return base::ScopedClosureRunner(WTF::BindOnce(
+  return base::ScopedClosureRunner(BindOnce(
       &EventListener::RemoveListener, WrapWeakPersistent(listener.Get())));
 }
 

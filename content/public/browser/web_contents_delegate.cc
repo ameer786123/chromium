@@ -23,6 +23,7 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/url_constants.h"
 #include "third_party/blink/public/common/security/protocol_handler_security_level.h"
+#include "third_party/blink/public/mojom/input/pointer_lock_result.mojom.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/base/ui_base_types.h"
@@ -109,12 +110,6 @@ bool WebContentsDelegate::HandleContextMenu(RenderFrameHost& render_frame_host,
   return false;
 }
 
-bool WebContentsDelegate::PreHandleMouseEvent(
-    WebContents* source,
-    const blink::WebMouseEvent& event) {
-  return false;
-}
-
 KeyboardEventProcessingResult WebContentsDelegate::PreHandleKeyboardEvent(
     WebContents* source,
     const input::NativeWebKeyboardEvent& event) {
@@ -145,6 +140,7 @@ bool WebContentsDelegate::OnGoToEntryOffset(int offset) {
 }
 
 bool WebContentsDelegate::IsWebContentsCreationOverridden(
+    RenderFrameHost* opener,
     SiteInstance* source_site_instance,
     mojom::WindowContainerType window_container_type,
     const GURL& opener_url,
@@ -340,10 +336,6 @@ gfx::Size WebContentsDelegate::GetSizeForNewRenderView(
   return gfx::Size();
 }
 
-bool WebContentsDelegate::IsNeverComposited(WebContents* web_contents) {
-  return false;
-}
-
 bool WebContentsDelegate::GuestSaveFrame(WebContents* guest_web_contents) {
   return false;
 }
@@ -416,9 +408,7 @@ PreloadingEligibility WebContentsDelegate::IsPrerender2Supported(
 }
 
 int WebContentsDelegate::AllowedPrerenderingCount(WebContents& web_contents) {
-  return base::GetFieldTrialParamByFeatureAsInt(
-      features::kPrerender2NewLimitAndScheduler,
-      "max_num_of_running_embedder_prerenders", 2);
+  return 2;
 }
 
 NavigationController::UserAgentOverrideOption

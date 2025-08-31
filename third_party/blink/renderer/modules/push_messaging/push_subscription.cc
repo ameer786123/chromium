@@ -27,7 +27,7 @@ namespace {
 // This method and its dependencies must remain constant time, thus not branch
 // based on the value of |buffer| while encoding, assuming a known length.
 String ToBase64URLWithoutPadding(DOMArrayBuffer* buffer) {
-  String value = WTF::Base64URLEncode(buffer->ByteSpan());
+  String value = Base64URLEncode(buffer->ByteSpan());
   DCHECK_GT(value.length(), 0u);
 
   unsigned padding_to_remove = 0;
@@ -74,9 +74,9 @@ PushSubscription* PushSubscription::Create(
 PushSubscription::PushSubscription(
     const KURL& endpoint,
     bool user_visible_only,
-    const WTF::Vector<uint8_t>& application_server_key,
-    const WTF::Vector<unsigned char>& p256dh,
-    const WTF::Vector<unsigned char>& auth,
+    const Vector<uint8_t>& application_server_key,
+    const Vector<unsigned char>& p256dh,
+    const Vector<unsigned char>& auth,
     const std::optional<DOMTimeStamp>& expiration_time,
     ServiceWorkerRegistration* service_worker_registration)
     : endpoint_(endpoint),

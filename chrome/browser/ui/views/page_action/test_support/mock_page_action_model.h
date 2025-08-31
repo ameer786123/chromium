@@ -7,6 +7,8 @@
 
 #include <memory>
 
+#include "base/functional/callback_forward.h"
+#include "chrome/browser/ui/views/page_action/page_action_controller.h"
 #include "chrome/browser/ui/views/page_action/page_action_model.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/actions/action_id.h"
@@ -19,12 +21,15 @@ class MockPageActionModel : public PageActionModelInterface {
   ~MockPageActionModel() override;
 
   MOCK_METHOD(bool, GetVisible, (), (const, override));
-  MOCK_METHOD(bool, GetShowSuggestionChip, (), (const, override));
+  MOCK_METHOD(bool, IsChipShowing, (), (const, override));
+  MOCK_METHOD(bool, ShouldShowSuggestionChip, (), (const, override));
   MOCK_METHOD(bool, GetShouldAnimateChip, (), (const, override));
+  MOCK_METHOD(bool, GetShouldAnnounceChip, (), (const, override));
   MOCK_METHOD(const std::u16string&, GetText, (), (const, override));
   MOCK_METHOD(const std::u16string&, GetAccessibleName, (), (const, override));
   MOCK_METHOD(const std::u16string&, GetTooltipText, (), (const, override));
   MOCK_METHOD(const ui::ImageModel&, GetImage, (), (const, override));
+  MOCK_METHOD(bool, GetActionActive, (), (const, override));
   MOCK_METHOD(bool, GetActionItemIsShowingBubble, (), (const, override));
   MOCK_METHOD(void,
               AddObserver,
@@ -44,12 +49,17 @@ class MockPageActionModel : public PageActionModelInterface {
               (base::PassKey<PageActionController>, bool requested),
               (override));
   MOCK_METHOD(void,
-              SetShowSuggestionChip,
+              SetShouldShowSuggestionChip,
               (base::PassKey<PageActionController>, bool show),
               (override));
   MOCK_METHOD(void,
-              SetShouldAnimateChip,
-              (base::PassKey<PageActionController>, bool animate),
+              SetSuggestionChipConfig,
+              (base::PassKey<PageActionController>,
+               const SuggestionChipConfig& config),
+              (override));
+  MOCK_METHOD(void,
+              SetIsChipShowing,
+              (base::PassKey<PageActionController>, bool is_chip_showing),
               (override));
   MOCK_METHOD(void,
               SetHasPinnedIcon,
@@ -80,15 +90,22 @@ class MockPageActionModel : public PageActionModelInterface {
                const std::optional<std::u16string>& override_tooltip),
               (override));
   MOCK_METHOD(void,
+              SetActionActive,
+              (base::PassKey<PageActionController>, bool is_active),
+              (override));
+  MOCK_METHOD(void,
               SetShouldHidePageAction,
               (base::PassKey<PageActionController>, bool should_hide),
               (override));
+  MOCK_METHOD(bool, IsEphemeral, (), (const, override));
 };
 
 template <typename PageActionModelType>
 class FakePageActionModelFactory : public PageActionModelFactory {
  public:
-  std::unique_ptr<PageActionModelInterface> Create(int action_id) override {
+  std::unique_ptr<PageActionModelInterface> Create(
+      int action_id,
+      bool /*is_ephemeral*/) override {
     auto model = std::make_unique<PageActionModelType>();
     model_map_.emplace(action_id, model.get());
     return model;

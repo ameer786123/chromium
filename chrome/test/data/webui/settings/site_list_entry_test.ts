@@ -13,7 +13,7 @@ import type {SiteListEntryElement} from 'chrome://settings/lazy_load.js';
 import {ContentSetting, ContentSettingsTypes, CookiesExceptionType, SITE_EXCEPTION_WILDCARD, SiteSettingsPrefsBrowserProxyImpl} from 'chrome://settings/lazy_load.js';
 import {Router, routes} from 'chrome://settings/settings.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
-import {eventToPromise} from 'chrome://webui-test/test_util.js';
+import {eventToPromise, isChildVisible} from 'chrome://webui-test/test_util.js';
 
 import {TestSiteSettingsPrefsBrowserProxy} from './test_site_settings_prefs_browser_proxy.js';
 import {assertTooltipIsHidden} from './test_util.js';
@@ -108,14 +108,13 @@ suite('SiteListEntry', function() {
     const args = await browserProxy.whenCalled('isOriginValid');
     assertEquals('http://example.com', args);
     flush();
-    const settingsRow =
-        testElement.shadowRoot!.querySelector<HTMLElement>('.settings-row')!;
-    assertTrue(settingsRow.hasAttribute('actionable'));
-    const subpageArrow = settingsRow.querySelector('.subpage-arrow');
-    assertFalse(!subpageArrow);
-    const separator = settingsRow.querySelector('.separator');
-    assertFalse(!separator);
-    settingsRow.click();
+    const originArea =
+        testElement.shadowRoot!.querySelector<HTMLElement>('#originArea');
+    assertTrue(!!originArea);
+    assertTrue(originArea.hasAttribute('actionable'));
+    assertTrue(isChildVisible(originArea, '.subpage-arrow', true));
+    assertTrue(isChildVisible(originArea, '.separator', true));
+    originArea.click();
     assertEquals(
         routes.SITE_SETTINGS_SITE_DETAILS.path,
         Router.getInstance().getCurrentRoute().path);
@@ -269,4 +268,69 @@ suite('SiteListEntry', function() {
     const siteDescription = testElement.$$('#siteDescription')!;
     assertEquals('foo', siteDescription.textContent);
   });
+
+  test('the reset button aria-label includes the section header', function() {
+    testElement.model = {
+      category: ContentSettingsTypes.GEOLOCATION,
+      controlledBy: chrome.settingsPrivate.ControlledBy.OWNER,
+      displayName: 'example.com',
+      embeddingOrigin: 'http://bar',
+      description: 'foo',
+      enforcement: null,
+      incognito: false,
+      isEmbargoed: true,
+      origin: 'https://example.com',
+      setting: ContentSetting.ALLOW,
+    };
+    testElement.setSectionHeaderForTest(
+        loadTimeData.getString('siteSettingsLocationAllowedExceptions'));
+    flush();
+
+    const resetSite = testElement.shadowRoot!.querySelector('#resetSite');
+    assertTrue(!!resetSite);
+
+    assertEquals(
+        loadTimeData.getStringF(
+            'siteSettingsActionResetFromListA11y', 'example.com',
+            loadTimeData.getString('siteSettingsLocationAllowedExceptions')),
+        resetSite.getAttribute('aria-label'));
+  });
+
+  test(
+      'the view details button aria-label includes the section header',
+      async function() {
+        browserProxy.setIsOriginValid(true);
+        testElement.model = {
+          category: ContentSettingsTypes.GEOLOCATION,
+          controlledBy: chrome.settingsPrivate.ControlledBy.OWNER,
+          displayName: 'example.com',
+          embeddingOrigin: 'http://bar',
+          description: 'foo',
+          enforcement: null,
+          incognito: false,
+          isEmbargoed: true,
+          origin: 'https://example.com',
+          setting: ContentSetting.ALLOW,
+        };
+        testElement.setSectionHeaderForTest(
+            loadTimeData.getString('siteSettingsLocationAllowedExceptions'));
+
+        Router.getInstance().navigateTo(routes.SITE_SETTINGS);
+        // Wait for the `isOriginValid` call to set `allowNavigateToSiteDetail_`
+        // to true, otherwise the subpage-arrow button will not be shown.
+        const args = await browserProxy.whenCalled('isOriginValid');
+        assertEquals('https://example.com', args);
+        flush();
+
+        const subpageArrow =
+            testElement.shadowRoot!.querySelector('.subpage-arrow');
+        assertTrue(!!subpageArrow);
+
+        assertEquals(
+            loadTimeData.getStringF(
+                'siteSettingsActionViewFromListA11y', 'example.com',
+                loadTimeData.getString(
+                    'siteSettingsLocationAllowedExceptions')),
+            subpageArrow.getAttribute('aria-label'));
+      });
 });

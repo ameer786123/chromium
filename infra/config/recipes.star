@@ -2,8 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-load("//lib/bootstrap.star", "POLYMORPHIC", "register_recipe_bootstrappability")
-load("//lib/recipe_experiments.star", "register_recipe_experiments")
+load("@chromium-luci//bootstrap.star", "POLYMORPHIC", "register_recipe_bootstrappability")
+load("@chromium-luci//recipe_experiments.star", "register_recipe_experiments")
 
 _RECIPE_NAME_PREFIX = "recipe:"
 
@@ -63,7 +63,6 @@ def _recipe_for_package(cipd_package):
             cipd_version = cipd_version,
             recipe = recipe,
             use_bbagent = True,
-            use_python3 = True,
         )
 
         register_recipe_bootstrappability(name, bootstrappable)
@@ -162,6 +161,11 @@ build_recipe(
 )
 
 build_recipe(
+    name = "recipe:chromium/autosharder_test",
+    bootstrappable = True,
+)
+
+build_recipe(
     name = "recipe:chromium/generic_script_runner",
 )
 
@@ -186,10 +190,6 @@ build_recipe(
 
 build_recipe(
     name = "recipe:chromium/targets_config_verifier",
-)
-
-build_recipe(
-    name = "recipe:chromium_licenses/scan",
 )
 
 build_recipe(

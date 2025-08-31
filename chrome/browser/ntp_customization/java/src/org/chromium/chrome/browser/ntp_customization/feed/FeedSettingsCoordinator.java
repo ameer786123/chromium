@@ -7,14 +7,19 @@ package org.chromium.chrome.browser.ntp_customization.feed;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.FEED;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.FEED_SETTINGS_KEYS;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.FEED_SWITCH_ON_CHECKED_CHANGE_LISTENER;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.IS_FEED_LIST_ITEMS_TITLE_VISIBLE;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.IS_FEED_SWITCH_CHECKED;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LEARN_MORE_BUTTON_CLICK_LISTENER;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.SET_FEED_SWITCH_CONTENT_DESCRIPTION_RES_ID;
 
 import android.content.Context;
 import android.support.annotation.IntDef;
 import android.support.annotation.VisibleForTesting;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.ImageView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.ntp_customization.BottomSheetDelegate;
 import org.chromium.chrome.browser.ntp_customization.BottomSheetListContainerViewBinder;
 import org.chromium.chrome.browser.ntp_customization.BottomSheetViewBinder;
@@ -30,6 +35,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /** Coordinator for the feed settings bottom sheet in the NTP customization. */
+@NullMarked
 public class FeedSettingsCoordinator {
     private FeedSettingsMediator mMediator;
 
@@ -94,8 +100,8 @@ public class FeedSettingsCoordinator {
     }
 
     /**
-     * Handles the binding of display and interaction for the feed toggle control in the feed
-     * settings bottom sheet.
+     * Handles the binding of display and interaction for the feed toggle control and feed list
+     * items title in the feed settings bottom sheet.
      */
     @VisibleForTesting
     static void bindFeedSettingsBottomSheet(
@@ -106,6 +112,16 @@ public class FeedSettingsCoordinator {
                     model.get(FEED_SWITCH_ON_CHECKED_CHANGE_LISTENER));
         } else if (propertyKey == IS_FEED_SWITCH_CHECKED) {
             feedSwitch.setChecked(model.get(IS_FEED_SWITCH_CHECKED));
+        } else if (propertyKey == IS_FEED_LIST_ITEMS_TITLE_VISIBLE) {
+            View feedListItemsTitle = view.findViewById(R.id.feed_list_items_title);
+            feedListItemsTitle.setVisibility(
+                    model.get(IS_FEED_LIST_ITEMS_TITLE_VISIBLE) ? View.VISIBLE : View.GONE);
+        } else if (propertyKey == SET_FEED_SWITCH_CONTENT_DESCRIPTION_RES_ID) {
+            feedSwitch.setTextContentDescriptionResId(
+                    model.get(SET_FEED_SWITCH_CONTENT_DESCRIPTION_RES_ID));
+        } else if (propertyKey == LEARN_MORE_BUTTON_CLICK_LISTENER) {
+            ImageView learnMoreButton = view.findViewById(R.id.learn_more_button);
+            learnMoreButton.setOnClickListener(model.get(LEARN_MORE_BUTTON_CLICK_LISTENER));
         }
     }
 

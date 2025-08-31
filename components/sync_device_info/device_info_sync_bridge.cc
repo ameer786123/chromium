@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/sync_device_info/device_info_sync_bridge.h"
 
 #include <stdint.h>
@@ -18,6 +13,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/containers/to_vector.h"
 #include "base/functional/bind.h"
@@ -27,7 +23,9 @@
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "components/sync/base/data_type.h"
+#include "components/sync/base/features.h"
 #include "components/sync/base/time.h"
 #include "components/sync/engine/commit_and_get_updates_types.h"
 #include "components/sync/model/data_type_activation_request.h"
@@ -90,9 +88,6 @@ std::optional<DeviceInfo::SharingInfo> SpecificsToSharingInfo(
     enabled_features.insert(specifics.sharing_fields().enabled_features(i));
   }
   return DeviceInfo::SharingInfo(
-      {specifics.sharing_fields().vapid_fcm_token(),
-       specifics.sharing_fields().vapid_p256dh(),
-       specifics.sharing_fields().vapid_auth_secret()},
       {specifics.sharing_fields().sender_id_fcm_token_v2(),
        specifics.sharing_fields().sender_id_p256dh_v2(),
        specifics.sharing_fields().sender_id_auth_secret_v2()},
@@ -121,13 +116,14 @@ SpecificsToPhoneAsASecurityKeyInfo(const DeviceInfoSpecifics& specifics) {
   if (from.secret().size() != to.secret.size()) {
     return std::nullopt;
   }
-  memcpy(to.secret.data(), from.secret().data(), to.secret.size());
+  UNSAFE_TODO(memcpy(to.secret.data(), from.secret().data(), to.secret.size()));
 
   if (from.peer_public_key_x962().size() != to.peer_public_key_x962.size()) {
     return std::nullopt;
   }
-  memcpy(to.peer_public_key_x962.data(), from.peer_public_key_x962().data(),
-         to.peer_public_key_x962.size());
+  UNSAFE_TODO(memcpy(to.peer_public_key_x962.data(),
+                     from.peer_public_key_x962().data(),
+                     to.peer_public_key_x962.size()));
 
   return to;
 }
@@ -264,11 +260,6 @@ std::unique_ptr<DeviceInfoSpecifics> MakeLocalDeviceSpecifics(
       info.sharing_info();
   if (sharing_info) {
     SharingSpecificFields* sharing_fields = specifics->mutable_sharing_fields();
-    sharing_fields->set_vapid_fcm_token(
-        sharing_info->vapid_target_info.fcm_token);
-    sharing_fields->set_vapid_p256dh(sharing_info->vapid_target_info.p256dh);
-    sharing_fields->set_vapid_auth_secret(
-        sharing_info->vapid_target_info.auth_secret);
     sharing_fields->set_sender_id_fcm_token_v2(
         sharing_info->sender_id_target_info.fcm_token);
     sharing_fields->set_sender_id_p256dh_v2(
@@ -526,14 +517,22 @@ std::unique_ptr<DataBatch> DeviceInfoSyncBridge::GetAllDataForDebugging() {
   return batch;
 }
 
-std::string DeviceInfoSyncBridge::GetClientTag(const EntityData& entity_data) {
+std::string DeviceInfoSyncBridge::GetClientTag(
+    const EntityData& entity_data) const {
   DCHECK(entity_data.specifics.has_device_info());
   return DeviceInfoUtil::SpecificsToTag(entity_data.specifics.device_info());
 }
 
-std::string DeviceInfoSyncBridge::GetStorageKey(const EntityData& entity_data) {
+std::string DeviceInfoSyncBridge::GetStorageKey(
+    const EntityData& entity_data) const {
   DCHECK(entity_data.specifics.has_device_info());
   return entity_data.specifics.device_info().cache_guid();
+}
+
+bool DeviceInfoSyncBridge::IsEntityDataValid(
+    const EntityData& entity_data) const {
+  CHECK(entity_data.specifics.has_device_info());
+  return !entity_data.specifics.device_info().cache_guid().empty();
 }
 
 void DeviceInfoSyncBridge::ApplyDisableSyncChanges(
@@ -666,7 +665,8 @@ std::optional<ModelError> DeviceInfoSyncBridge::ParseSpecificsOnBackendSequence(
   for (const Record& r : *record_list) {
     DeviceInfoSpecifics specifics;
     if (!specifics.ParseFromString(r.value)) {
-      return ModelError(FROM_HERE, "Failed to deserialize specifics.");
+      return ModelError(
+          FROM_HERE, ModelError::Type::kDeviceInfoDeserializeSpecificsFailed);
     }
 
     std::string cache_guid = specifics.cache_guid();
@@ -705,7 +705,20 @@ std::string DeviceInfoSyncBridge::GetLocalClientName() const {
     }
   }
 
-  return sync_mode_ == SyncMode::kFull
+  bool can_use_personalizable_name =
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+      // On mobile, all sign-ins are considered explicit and thus can use the
+      // personalizable device name.
+      true;
+#else
+      // On desktop, sign-ins are explicit for Sync-the-feature users, or if
+      // kReplaceSyncPromosWithSignInPromos is enabled. (Or if
+      // prefs::kExplicitBrowserSignin is true, but that information is not
+      // easily available here and not worth the plumbing.)
+      (sync_mode_ == SyncMode::kFull) ||
+      base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos);
+#endif
+  return can_use_personalizable_name
              ? local_device_name_info_.personalizable_name
              : local_device_name_info_.model_name;
 }
@@ -714,7 +727,8 @@ void DeviceInfoSyncBridge::OnStoreCreated(
     const std::optional<syncer::ModelError>& error,
     std::unique_ptr<DataTypeStore> store) {
   if (error) {
-    change_processor()->ReportError(*error);
+    change_processor()->ReportError(
+        {FROM_HERE, ModelError::Type::kDeviceInfoStoreCreationFailed});
     return;
   }
 

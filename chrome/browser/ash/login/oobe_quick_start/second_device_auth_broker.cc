@@ -22,9 +22,9 @@
 #include "base/types/expected.h"
 #include "base/values.h"
 #include "chrome/browser/ash/login/oobe_quick_start/connectivity/fido_assertion_info.h"
-#include "chrome/common/channel_info.h"
 #include "chromeos/ash/components/attestation/attestation_features.h"
 #include "chromeos/ash/components/attestation/attestation_flow.h"
+#include "chromeos/ash/components/channel/channel_info.h"
 #include "chromeos/ash/components/dbus/attestation/keystore.pb.h"
 #include "chromeos/ash/components/dbus/constants/attestation_constants.h"
 #include "chromeos/ash/components/quick_start/logging.h"
@@ -41,6 +41,11 @@
 #include "services/data_decoder/public/cpp/data_decoder.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "url/gurl.h"
+
+using endpoint_fetcher::EndpointFetcher;
+using endpoint_fetcher::EndpointResponse;
+using endpoint_fetcher::FetchErrorType;
+using endpoint_fetcher::HttpMethod;
 
 namespace ash::quick_start {
 
@@ -530,7 +535,7 @@ void SecondDeviceAuthBroker::FetchChallengeBytes(
       /*timeout=*/kGetChallengeDataTimeout,
       /*post_data=*/kGetChallengeDataRequest,
       /*headers=*/std::vector<std::string>(),
-      /*cors_exempt_headers=*/std::vector<std::string>(), chrome::GetChannel(),
+      /*cors_exempt_headers=*/std::vector<std::string>(), ash::GetChannel(),
       EndpointFetcher::RequestParams::Builder(kHttpPost,
                                               kChallengeDataAnnotation)
           .Build());
@@ -590,7 +595,7 @@ void SecondDeviceAuthBroker::FetchAuthCode(
       /*post_data=*/
       CreateStartSessionRequestData(fido_assertion_info, certificate),
       /*headers=*/std::vector<std::string>(),
-      /*cors_exempt_headers=*/std::vector<std::string>(), chrome::GetChannel(),
+      /*cors_exempt_headers=*/std::vector<std::string>(), ash::GetChannel(),
       EndpointFetcher::RequestParams::Builder(kHttpPost,
                                               kStartSessionAnnotation)
           .Build());

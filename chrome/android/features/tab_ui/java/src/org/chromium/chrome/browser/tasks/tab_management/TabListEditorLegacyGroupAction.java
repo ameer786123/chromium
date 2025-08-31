@@ -4,13 +4,17 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.graphics.drawable.Drawable;
 
-import androidx.annotation.Nullable;
 import androidx.appcompat.content.res.AppCompatResources;
 
 import org.chromium.base.Token;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
@@ -18,6 +22,7 @@ import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiMetricsHelper.TabListEditorActionMetricGroups;
 import org.chromium.chrome.tab_ui.R;
+import org.chromium.components.browser_ui.util.motion.MotionEventInfo;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 
 import java.util.ArrayList;
@@ -28,6 +33,7 @@ import java.util.List;
  * Legacy group action for the {@link TabListEditorMenu}. This menu item will be replaced with new
  * items allowing for more explicit control of merging and creation of tab groups.
  */
+@NullMarked
 public class TabListEditorLegacyGroupAction extends TabListEditorAction {
     private final TabGroupCreationDialogManager mTabGroupCreationDialogManager;
 
@@ -75,30 +81,36 @@ public class TabListEditorLegacyGroupAction extends TabListEditorAction {
      * group has its Tab ID used.
      */
     @Override
-    public void onSelectionStateChange(List<Integer> tabIds) {
+    public void onSelectionStateChange(List<TabListEditorItemSelectionId> itemIds) {
         int tabCount =
                 editorSupportsActionOnRelatedTabs()
-                        ? getTabCountIncludingRelatedTabs(getTabGroupModelFilter(), tabIds)
-                        : tabIds.size();
+                        ? getTabCountIncludingRelatedTabs(getTabGroupModelFilter(), itemIds)
+                        : itemIds.size();
 
         TabGroupModelFilter filter = getTabGroupModelFilter();
         TabModel tabModel = filter.getTabModel();
 
         boolean isEnabled = true;
-        int tabIdsSize = tabIds.size();
+        int tabIdsSize = itemIds.size();
         if (tabIdsSize == 0) {
             isEnabled = false;
         } else if (tabIdsSize == 1) {
-            Tab tab = tabModel.getTabById(tabIds.get(0));
-            isEnabled = tab != null && !filter.isTabInTabGroup(tab);
+            assert !itemIds.get(0).isTabGroupSyncId();
+            if (itemIds.get(0).isTabId()) {
+                Tab tab = tabModel.getTabById(itemIds.get(0).getTabId());
+                isEnabled = tab != null && !filter.isTabInTabGroup(tab);
+            }
         } else {
-            isEnabled = !hasMultipleCollaborations(tabModel, tabIds);
+            isEnabled = !hasMultipleCollaborations(tabModel, itemIds);
         }
         setEnabledAndItemCount(isEnabled, tabCount);
     }
 
     @Override
-    public boolean performAction(List<Tab> tabs) {
+    public boolean performAction(
+            List<Tab> tabs,
+            List<String> tabGroupSyncIds,
+            @Nullable MotionEventInfo triggeringMotion) {
         TabGroupModelFilter tabGroupModelFilter = getTabGroupModelFilter();
 
         if (tabs.size() == 1) {
@@ -119,18 +131,13 @@ public class TabListEditorLegacyGroupAction extends TabListEditorAction {
         // Sort tabs by index prevent visual bugs when undoing.
         List<Tab> sortedTabs = new ArrayList<>(selectedTabs.size());
         TabModel model = tabGroupModelFilter.getTabModel();
-        for (int i = 0; i < model.getCount(); i++) {
-            Tab tab = model.getTabAt(i);
+        for (Tab tab : model) {
             if (!selectedTabs.contains(tab)) continue;
 
             sortedTabs.add(tab);
         }
 
-        List<Tab> tabsToMerge = new ArrayList<>();
-        tabsToMerge.addAll(sortedTabs);
-        tabsToMerge.add(destinationTab);
-        boolean willMergingCreateNewGroup =
-                tabGroupModelFilter.willMergingCreateNewGroup(tabsToMerge);
+        boolean willMergingCreateNewGroup = tabGroupModelFilter.willMergingCreateNewGroup(tabs);
         tabGroupModelFilter.mergeListOfTabsToGroup(sortedTabs, destinationTab, /* notify= */ true);
 
         if (willMergingCreateNewGroup) {
@@ -161,11 +168,12 @@ public class TabListEditorLegacyGroupAction extends TabListEditorAction {
     private Tab getDestinationTab(
             List<Tab> tabs, TabGroupModelFilter filter, boolean actionOnRelatedTabs) {
         TabModel model = filter.getTabModel();
-        @Nullable
-        TabGroupSyncService tabGroupSyncService =
+
+        Profile profile = assumeNonNull(model.getProfile());
+        @Nullable TabGroupSyncService tabGroupSyncService =
                 model.isIncognitoBranded()
                         ? null
-                        : TabGroupSyncServiceFactory.getForProfile(model.getProfile());
+                        : TabGroupSyncServiceFactory.getForProfile(profile);
 
         @Nullable Token collaborationTabGroupId = null;
         int greatestTabIndex = TabModel.INVALID_TAB_INDEX;
@@ -192,32 +200,41 @@ public class TabListEditorLegacyGroupAction extends TabListEditorAction {
                 }
             }
         }
-        return model.getTabAt(
-                (groupIndex != TabModel.INVALID_TAB_INDEX) ? groupIndex : greatestTabIndex);
+
+        Tab tab =
+                model.getTabAt(
+                        (groupIndex != TabModel.INVALID_TAB_INDEX) ? groupIndex : greatestTabIndex);
+        return assumeNonNull(tab);
     }
 
     /**
      * Computes whether multiple collaborations are selected.
      *
      * @param tabModel The {@link TabModel} to use for checking.
-     * @param tabIds The list of Tab IDs to check for collaboration membership. For tab groups only
-     *     a single tab ID for one of the members of the tab group is provided.
+     * @param itemIds The list of Tab IDs to check for collaboration membership. For tab groups only
+     *     a single tab ID for one of the members of the tab group is provided. This can also be a a
+     *     sync ID representing a saved tab group.
      */
-    private boolean hasMultipleCollaborations(TabModel tabModel, List<Integer> tabIds) {
+    private boolean hasMultipleCollaborations(
+            TabModel tabModel, List<TabListEditorItemSelectionId> itemIds) {
         if (tabModel.isIncognitoBranded()) return false;
 
-        @Nullable
-        TabGroupSyncService tabGroupSyncService =
-                TabGroupSyncServiceFactory.getForProfile(tabModel.getProfile());
+        Profile profile = assumeNonNull(tabModel.getProfile());
+        @Nullable TabGroupSyncService tabGroupSyncService =
+                TabGroupSyncServiceFactory.getForProfile(profile);
         if (tabGroupSyncService == null) return false;
 
         boolean foundCollaboration = false;
-        for (int tabId : tabIds) {
-            if (TabShareUtils.isCollaborationIdValid(
-                    TabShareUtils.getCollaborationIdOrNull(tabId, tabModel, tabGroupSyncService))) {
-                if (foundCollaboration) return true;
+        for (TabListEditorItemSelectionId itemId : itemIds) {
+            assert !itemId.isTabGroupSyncId();
+            if (itemId.isTabId()) {
+                if (TabShareUtils.isCollaborationIdValid(
+                        TabShareUtils.getCollaborationIdOrNull(
+                                itemId.getTabId(), tabModel, tabGroupSyncService))) {
+                    if (foundCollaboration) return true;
 
-                foundCollaboration = true;
+                    foundCollaboration = true;
+                }
             }
         }
         return false;

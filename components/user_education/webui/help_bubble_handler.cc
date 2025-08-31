@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "components/user_education/webui/help_bubble_handler.h"
 
 #include <memory>
@@ -20,13 +15,16 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/types/pass_key.h"
 #include "components/user_education/common/help_bubble/help_bubble.h"
 #include "components/user_education/common/help_bubble/help_bubble_params.h"
 #include "components/user_education/webui/help_bubble_webui.h"
-#include "components/user_education/webui/tracked_element_webui.h"
+#include "components/user_education/webui/tracked_element_help_bubble_webui_anchor.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents.h"
@@ -125,7 +123,7 @@ struct HelpBubbleHandlerBase::ElementData {
   bool visible = false;
   gfx::RectF last_known_bounds;
 
-  std::unique_ptr<TrackedElementWebUI> element;
+  std::unique_ptr<TrackedElementHelpBubbleWebUIAnchor> element;
   std::unique_ptr<HelpBubbleParams> params;
   raw_ptr<HelpBubbleWebUI> help_bubble = nullptr;
   base::CallbackListSubscription external_bubble_subscription;
@@ -157,7 +155,8 @@ HelpBubbleHandlerBase::HelpBubbleHandlerBase(
     const auto it = element_data_.emplace(identifier, ElementData());
     DCHECK(it.second) << "Duplicate identifier not allowed: " << identifier;
     it.first->second.element =
-        std::make_unique<TrackedElementWebUI>(this, identifier, context);
+        std::make_unique<TrackedElementHelpBubbleWebUIAnchor>(this, identifier,
+                                                              context);
   }
 }
 
@@ -288,7 +287,7 @@ void HelpBubbleHandlerBase::OnWebContentsVisibilityChanged(
   }
 }
 
-void HelpBubbleHandlerBase::HelpBubbleAnchorVisibilityChanged(
+void HelpBubbleHandlerBase::TrackedElementVisibilityChanged(
     const std::string& identifier_name,
     bool visible,
     const gfx::RectF& rect) {
@@ -338,7 +337,7 @@ void HelpBubbleHandlerBase::HelpBubbleAnchorVisibilityChanged(
   }
 }
 
-void HelpBubbleHandlerBase::HelpBubbleAnchorActivated(
+void HelpBubbleHandlerBase::TrackedElementActivated(
     const std::string& identifier_name) {
   ui::ElementIdentifier id;
   ElementData* const data = GetDataByName(identifier_name, &id);
@@ -347,7 +346,7 @@ void HelpBubbleHandlerBase::HelpBubbleAnchorActivated(
 
   if (!data->element->visible()) {
     ReportBadMessage(
-        base::StringPrintf("HelpBubbleAnchorActivated message received for "
+        base::StringPrintf("TrackedElementActivated message received for "
                            "anchor element \"%s\" but element was not visible.",
                            identifier_name.c_str()));
     return;
@@ -356,7 +355,7 @@ void HelpBubbleHandlerBase::HelpBubbleAnchorActivated(
   data->element->Activate();
 }
 
-void HelpBubbleHandlerBase::HelpBubbleAnchorCustomEvent(
+void HelpBubbleHandlerBase::TrackedElementCustomEvent(
     const std::string& identifier_name,
     const std::string& event_name) {
   ui::ElementIdentifier id;
@@ -366,7 +365,7 @@ void HelpBubbleHandlerBase::HelpBubbleAnchorCustomEvent(
 
   if (!data->element->visible()) {
     ReportBadMessage(
-        base::StringPrintf("HelpBubbleAnchorCustomEvent message received for "
+        base::StringPrintf("TrackedElementCustomEvent message received for "
                            "anchor element \"%s\" but element was not visible.",
                            identifier_name.c_str()));
     return;
@@ -470,6 +469,13 @@ void HelpBubbleHandlerBase::HelpBubbleClosed(
     return;
 
   data->closing = false;
+}
+
+void HelpBubbleHandlerBase::BindTrackedElementHandler(
+    mojo::PendingReceiver<tracked_element::mojom::TrackedElementHandler>
+        handler) {
+  tracked_element_handler_receiver_.reset();
+  tracked_element_handler_receiver_.Bind(std::move(handler));
 }
 
 bool HelpBubbleHandlerBase::ToggleHelpBubbleFocusForAccessibility(
@@ -584,7 +590,7 @@ HelpBubbleHandler::HelpBubbleHandler(
           std::make_unique<ClientProvider>(std::move(pending_client)),
           std::make_unique<VisibilityProvider>(),
           identifiers,
-          ui::ElementContext(controller)),
+          ui::ElementContext(controller, base::PassKey<HelpBubbleHandler>())),
       receiver_(this, std::move(pending_handler)),
       controller_(controller) {
   DCHECK(controller);

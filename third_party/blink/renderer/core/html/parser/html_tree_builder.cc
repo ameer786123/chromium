@@ -37,6 +37,8 @@
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_control_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_opt_group_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_option_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_text_area_element.h"
 #include "third_party/blink/renderer/core/html/html_template_element.h"
@@ -62,6 +64,7 @@
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_visitor.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_buffer.h"
 
 namespace blink {
@@ -205,7 +208,7 @@ class HTMLTreeBuilder::CharacterTokenBuffer {
   }
 
   void GiveRemainingTo(StringBuilder& recipient) {
-    WTF::VisitCharacters(characters_, [&](auto chars) {
+    VisitCharacters(characters_, [&](auto chars) {
       recipient.Append(chars.subspan(current_, end_ - current_));
     });
     current_ = end_;
@@ -285,12 +288,12 @@ HTMLTreeBuilder::HTMLTreeBuilder(HTMLDocumentParser* parser,
                                  ParserContentPolicy parser_content_policy,
                                  const HTMLParserOptions& options,
                                  bool include_shadow_roots,
-                                 DocumentFragment* for_fragment,
+                                 ContainerNode* fragment_target,
                                  Element* fragment_context_element)
     : tree_(parser->ReentryPermit(),
             document,
             parser_content_policy,
-            for_fragment,
+            fragment_target,
             fragment_context_element),
       insertion_mode_(kInitialMode),
       original_insertion_mode_(kInitialMode),
@@ -313,27 +316,27 @@ HTMLTreeBuilder::HTMLTreeBuilder(HTMLDocumentParser* parser,
                       nullptr,
                       nullptr) {}
 HTMLTreeBuilder::HTMLTreeBuilder(HTMLDocumentParser* parser,
-                                 DocumentFragment* fragment,
+                                 ContainerNode* fragment_target,
                                  Element* context_element,
                                  ParserContentPolicy parser_content_policy,
                                  const HTMLParserOptions& options,
                                  bool include_shadow_roots)
     : HTMLTreeBuilder(parser,
-                      fragment->GetDocument(),
+                      fragment_target->GetDocument(),
                       parser_content_policy,
                       options,
                       include_shadow_roots,
-                      fragment,
+                      fragment_target,
                       context_element) {
   DCHECK(IsMainThread());
-  fragment_context_.Init(fragment, context_element);
+  fragment_context_.Init(fragment_target, context_element);
 
   // Steps 4.2-4.6 of the HTML5 Fragment Case parsing algorithm:
   // http://www.whatwg.org/specs/web-apps/current-work/multipage/the-end.html#fragment-case
   // For efficiency, we skip step 4.2 ("Let root be a new html element with no
   // attributes") and instead use the DocumentFragment as a root node.
   tree_.OpenElements()->PushRootNode(MakeGarbageCollected<HTMLStackItem>(
-      fragment, HTMLStackItem::kItemForDocumentFragmentNode));
+      fragment_target, HTMLStackItem::kItemForDocumentFragmentNode));
 
   if (IsA<HTMLTemplateElement>(*context_element))
     template_insertion_modes_.push_back(kTemplateContentsMode);
@@ -343,17 +346,21 @@ HTMLTreeBuilder::HTMLTreeBuilder(HTMLDocumentParser* parser,
 
 HTMLTreeBuilder::~HTMLTreeBuilder() = default;
 
-void HTMLTreeBuilder::FragmentParsingContext::Init(DocumentFragment* fragment,
-                                                   Element* context_element) {
-  DCHECK(fragment);
-  DCHECK(!fragment->HasChildren());
-  fragment_ = fragment;
+void HTMLTreeBuilder::FragmentParsingContext::Init(
+    ContainerNode* fragment_target,
+    Element* context_element) {
+  DCHECK(fragment_target);
+  DCHECK((fragment_target == context_element &&
+          RuntimeEnabledFeatures::DocumentPatchingEnabled()) ||
+         (fragment_target->IsDocumentFragment() &&
+          !fragment_target->HasChildren()));
+  fragment_target_ = fragment_target;
   context_element_stack_item_ = MakeGarbageCollected<HTMLStackItem>(
       context_element, HTMLStackItem::kItemForContextElement);
 }
 
 void HTMLTreeBuilder::FragmentParsingContext::Trace(Visitor* visitor) const {
-  visitor->Trace(fragment_);
+  visitor->Trace(fragment_target_);
   visitor->Trace(context_element_stack_item_);
 }
 
@@ -611,7 +618,8 @@ void AddNamesWithPrefix(PrefixedNameToQualifiedNameMap* map,
   for (size_t i = 0; i < names.size(); ++i) {
     const QualifiedName& name = *names[i];
     const AtomicString& local_name = name.LocalName();
-    AtomicString prefix_colon_local_name = prefix + ':' + local_name;
+    AtomicString prefix_colon_local_name =
+        AtomicString(StrCat({prefix, ":", local_name}));
     QualifiedName name_with_prefix(prefix, local_name, name.NamespaceURI());
     map->insert(prefix_colon_local_name, name_with_prefix);
   }
@@ -628,7 +636,7 @@ void AdjustForeignAttributes(AtomicHTMLToken* token) {
     base::HeapArray<const QualifiedName*> xml_attrs = xml_names::GetAttrs();
     AddNamesWithPrefix(map, g_xml_atom, xml_attrs);
 
-    map->insert(WTF::g_xmlns_atom, xmlns_names::kXmlnsAttr);
+    map->insert(g_xmlns_atom, xmlns_names::kXmlnsAttr);
     map->insert(
         AtomicString("xmlns:xlink"),
         QualifiedName(g_xmlns_atom, g_xlink_atom, xmlns_names::kNamespaceURI));
@@ -734,15 +742,35 @@ void HTMLTreeBuilder::ProcessStartTagForInBody(AtomicHTMLToken* token) {
       ProcessCloseWhenNestedTag<IsLi>(token);
       break;
     case HTMLTag::kInput: {
-      if (RuntimeEnabledFeatures::InputClosesSelectEnabled() &&
-          HTMLSelectElement::SelectParserRelaxationEnabled(
-              tree_.CurrentNode())) {
-        if (tree_.OpenElements()->InScope(HTMLTag::kSelect)) {
+      // Per spec https://html.spec.whatwg.org/C/#parsing-main-inbody,
+      // section "A start tag whose tag name is "input""
+      if (tree_.OpenElements()->InScope(HTMLTag::kSelect)) {
+        bool parent_select = IsA<HTMLSelectElement>(tree_.CurrentNode());
+        bool parent_option_optgroup =
+            IsA<HTMLOptionElement>(tree_.CurrentNode()) ||
+            IsA<HTMLOptGroupElement>(tree_.CurrentNode());
+
+        if (parent_select) {
+          UseCounter::Count(tree_.CurrentNode()->GetDocument(),
+                            WebFeature::kInputParsedParentSelect);
+        } else if (parent_option_optgroup) {
+          UseCounter::Count(tree_.CurrentNode()->GetDocument(),
+                            WebFeature::kInputParsedParentOptionOrOptgroup);
+        }
+
+        if (parent_select || parent_option_optgroup) {
+          if (RuntimeEnabledFeatures::InputInSelectEnabled()) {
+            ProcessFakeEndTag(HTMLTag::kSelect);
+          }
+        } else {
+          UseCounter::Count(tree_.CurrentNode()->GetDocument(),
+                            WebFeature::kInputParsedAncestorSelect);
+        }
+
+        if (!RuntimeEnabledFeatures::InputInSelectEnabled()) {
           ProcessFakeEndTag(HTMLTag::kSelect);
         }
       }
-      // Per spec https://html.spec.whatwg.org/C/#parsing-main-inbody,
-      // section "A start tag whose tag name is "input""
 
       Attribute* type_attribute =
           token->GetAttributeItem(html_names::kTypeAttr);
@@ -886,11 +914,8 @@ void HTMLTreeBuilder::ProcessStartTagForInBody(AtomicHTMLToken* token) {
       break;
     case HTMLTag::kHr:
       ProcessFakePEndTagIfPInButtonScope();
-      if (HTMLSelectElement::SelectParserRelaxationEnabled(
-              tree_.CurrentNode())) {
-        if (tree_.OpenElements()->InScope(HTMLTag::kSelect)) {
-          tree_.GenerateImpliedEndTags();
-        }
+      if (tree_.OpenElements()->InScope(HTMLTag::kSelect)) {
+        tree_.GenerateImpliedEndTags();
       }
       tree_.InsertSelfClosingHTMLElementDestroyingToken(token);
       frameset_ok_ = false;
@@ -925,80 +950,60 @@ void HTMLTreeBuilder::ProcessStartTagForInBody(AtomicHTMLToken* token) {
       }
       break;
     case HTMLTag::kSelect:
-      if (HTMLSelectElement::SelectParserRelaxationEnabled(
-              tree_.CurrentNode())) {
-        if (IsParsingFragment() &&
-            fragment_context_.ContextElement()->HasTagName(
-                html_names::kSelectTag)) {
-          fragment_context_.ContextElement()->AddConsoleMessage(
-              mojom::blink::ConsoleMessageSource::kJavaScript,
-              mojom::blink::ConsoleMessageLevel::kWarning,
-              "A <select> tag was parsed within another <select> tag and was "
-              "ignored. Please do not nest <select> tags.");
-          // Don't allow nested <select>s.
-          ParseError(token);
-          break;
-        }
+      if (IsParsingFragment() && fragment_context_.ContextElement()->HasTagName(
+                                     html_names::kSelectTag)) {
+        fragment_context_.ContextElement()->AddConsoleMessage(
+            mojom::blink::ConsoleMessageSource::kJavaScript,
+            mojom::blink::ConsoleMessageLevel::kWarning,
+            "A <select> tag was parsed within another <select> tag and was "
+            "ignored. Please do not nest <select> tags.");
+        // Don't allow nested <select>s.
+        ParseError(token);
+        break;
+      }
 
-        if (tree_.OpenElements()->InScope(HTMLTag::kSelect)) {
-          tree_.OpenElements()->TopNode()->AddConsoleMessage(
-              mojom::blink::ConsoleMessageSource::kJavaScript,
-              mojom::blink::ConsoleMessageLevel::kWarning,
-              "A <select> tag was parsed within another <select> tag and was "
-              "converted into </select>. Please add the missing </select> end "
-              "tag.");
-          // Don't allow nested <select>s. This is the exact same logic as
-          // <button>s.
-          ParseError(token);
-          ProcessFakeEndTag(HTMLTag::kSelect);
-          break;
-        }
+      if (tree_.OpenElements()->InScope(HTMLTag::kSelect)) {
+        tree_.OpenElements()->TopNode()->AddConsoleMessage(
+            mojom::blink::ConsoleMessageSource::kJavaScript,
+            mojom::blink::ConsoleMessageLevel::kWarning,
+            "A <select> tag was parsed within another <select> tag and was "
+            "converted into </select>. Please add the missing </select> end "
+            "tag.");
+        // Don't allow nested <select>s. This is the exact same logic as
+        // <button>s.
+        ParseError(token);
+        ProcessFakeEndTag(HTMLTag::kSelect);
+        break;
       }
 
       tree_.ReconstructTheActiveFormattingElements();
       tree_.InsertHTMLElement(token);
       frameset_ok_ = false;
-      // When SelectParserRelaxation is enabled, we don't want to enter
-      // InSelectMode or InSelectInTableMode.
-      if (!HTMLSelectElement::SelectParserRelaxationEnabled(
-              tree_.CurrentNode())) {
-        if (GetInsertionMode() == kInTableMode ||
-            GetInsertionMode() == kInCaptionMode ||
-            GetInsertionMode() == kInColumnGroupMode ||
-            GetInsertionMode() == kInTableBodyMode ||
-            GetInsertionMode() == kInRowMode ||
-            GetInsertionMode() == kInCellMode) {
-          SetInsertionMode(kInSelectInTableMode);
-        } else {
-          SetInsertionMode(kInSelectMode);
-        }
-      }
       break;
     case HTMLTag::kOptgroup:
+      if (tree_.OpenElements()->InScope(HTMLTag::kSelect)) {
+        tree_.GenerateImpliedEndTags();
+        if (tree_.OpenElements()->InScope(HTMLTag::kOption) ||
+            tree_.OpenElements()->InScope(HTMLTag::kOptgroup)) {
+          ParseError(token);
+        }
+      } else if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOption)) {
+        AtomicHTMLToken end_option(HTMLToken::kEndTag, HTMLTag::kOption);
+        ProcessEndTag(&end_option);
+      }
+      tree_.ReconstructTheActiveFormattingElements();
+      tree_.InsertHTMLElement(token);
+      break;
     case HTMLTag::kOption:
-      if (HTMLSelectElement::SelectParserRelaxationEnabled(
-              tree_.CurrentNode()) &&
-          tree_.OpenElements()->InScope(HTMLTag::kSelect)) {
-        // TODO(crbug.com/1511354): Remove this if by separating the optgroup
-        // and option cases when the SelectParserRelaxation flag is removed.
-        if (token->GetHTMLTag() == HTMLTag::kOption) {
-          tree_.GenerateImpliedEndTagsWithExclusion(
-              HTMLTokenName(HTMLTag::kOptgroup));
-          if (tree_.OpenElements()->InScope(HTMLTag::kOption)) {
-            ParseError(token);
-          }
-        } else {
-          tree_.GenerateImpliedEndTags();
-          if (tree_.OpenElements()->InScope(HTMLTag::kOption) ||
-              tree_.OpenElements()->InScope(HTMLTag::kOptgroup)) {
-            ParseError(token);
-          }
+      if (tree_.OpenElements()->InScope(HTMLTag::kSelect)) {
+        tree_.GenerateImpliedEndTagsWithExclusion(
+            HTMLTokenName(HTMLTag::kOptgroup));
+        if (tree_.OpenElements()->InScope(HTMLTag::kOption)) {
+          ParseError(token);
         }
-      } else {
-        if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOption)) {
-          AtomicHTMLToken end_option(HTMLToken::kEndTag, HTMLTag::kOption);
-          ProcessEndTag(&end_option);
-        }
+      } else if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOption)) {
+        AtomicHTMLToken end_option(HTMLToken::kEndTag, HTMLTag::kOption);
+        ProcessEndTag(&end_option);
       }
       tree_.ReconstructTheActiveFormattingElements();
       tree_.InsertHTMLElement(token);
@@ -1088,6 +1093,10 @@ void HTMLTreeBuilder::ProcessTemplateStartTag(AtomicHTMLToken* token) {
   frameset_ok_ = false;
   template_insertion_modes_.push_back(kTemplateContentsMode);
   SetInsertionMode(kTemplateContentsMode);
+  if (DynamicTo<HTMLTemplateElement>(tree_.CurrentElement())->OutgoingPatch()) {
+    DCHECK(RuntimeEnabledFeatures::DocumentPatchingEnabled());
+    parser_->tokenizer().SetState(HTMLTokenizer::kRAWTEXTState);
+  }
 }
 
 bool HTMLTreeBuilder::ProcessTemplateEndTag(AtomicHTMLToken* token) {
@@ -1500,149 +1509,6 @@ void HTMLTreeBuilder::ProcessStartTag(AtomicHTMLToken* token) {
       }
       ParseError(token);
       break;
-    case kInSelectInTableMode:
-      switch (tag) {
-        case HTMLTag::kCaption:
-        case HTMLTag::kTable:
-        case TABLE_BODY_CONTEXT_CASES:
-        case HTMLTag::kTr:
-        case TABLE_CELL_CONTEXT_CASES: {
-          ParseError(token);
-          AtomicHTMLToken end_select(HTMLToken::kEndTag, HTMLTag::kSelect);
-          ProcessEndTag(&end_select);
-          ProcessStartTag(token);
-          return;
-        }
-        default:
-          break;
-      }
-      [[fallthrough]];
-    case kInSelectMode:
-      switch (tag) {
-        case HTMLTag::kHTML:
-          ProcessHtmlStartTagForInBody(token);
-          return;
-        case HTMLTag::kOption:
-          if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOption)) {
-            AtomicHTMLToken end_option(HTMLToken::kEndTag, HTMLTag::kOption);
-            ProcessEndTag(&end_option);
-          }
-          tree_.InsertHTMLElement(token);
-          return;
-        case HTMLTag::kOptgroup:
-          if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOption)) {
-            AtomicHTMLToken end_option(HTMLToken::kEndTag, HTMLTag::kOption);
-            ProcessEndTag(&end_option);
-          }
-          if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOptgroup)) {
-            AtomicHTMLToken end_optgroup(HTMLToken::kEndTag,
-                                         HTMLTag::kOptgroup);
-            ProcessEndTag(&end_optgroup);
-          }
-          tree_.InsertHTMLElement(token);
-          return;
-        case HTMLTag::kHr:
-          if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOption)) {
-            AtomicHTMLToken end_option(HTMLToken::kEndTag, HTMLTag::kOption);
-            ProcessEndTag(&end_option);
-          }
-          if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOptgroup)) {
-            AtomicHTMLToken end_optgroup(HTMLToken::kEndTag,
-                                         HTMLTag::kOptgroup);
-            ProcessEndTag(&end_optgroup);
-          }
-          tree_.InsertSelfClosingHTMLElementDestroyingToken(token);
-          return;
-        case HTMLTag::kSelect: {
-          tree_.OpenElements()->TopNode()->AddConsoleMessage(
-            mojom::blink::ConsoleMessageSource::kJavaScript,
-            mojom::blink::ConsoleMessageLevel::kError,
-            "A <select> tag was parsed within another <select> tag and was converted into </select>. This behavior will change in a future browser version. Please add the missing </select> end tag.");
-          ParseError(token);
-          AtomicHTMLToken end_select(HTMLToken::kEndTag, HTMLTag::kSelect);
-          ProcessEndTag(&end_select);
-          return;
-        }
-        case HTMLTag::kInput:
-          // TODO(crbug.com/1511354): Remove this UseCounter when the
-          // SelectParserRelaxation/CustomizableSelect flags are removed.
-          UseCounter::Count(tree_.CurrentNode()->GetDocument(),
-                            WebFeature::kHTMLInputInSelect);
-          [[fallthrough]];
-        case HTMLTag::kKeygen:
-        case HTMLTag::kTextarea: {
-          if (HTMLSelectElement::SelectParserRelaxationEnabled(
-                  tree_.CurrentNode())) {
-            ProcessStartTagForInBody(token);
-          } else {
-            ParseError(token);
-            if (!tree_.OpenElements()->InSelectScope(HTMLTag::kSelect)) {
-              DCHECK(IsParsingFragment());
-              return;
-            }
-            AtomicHTMLToken end_select(HTMLToken::kEndTag, HTMLTag::kSelect);
-            ProcessEndTag(&end_select);
-            ProcessStartTag(token);
-
-            tree_.OpenElements()->TopNode()->AddConsoleMessage(
-                mojom::blink::ConsoleMessageSource::kJavaScript,
-                mojom::blink::ConsoleMessageLevel::kWarning,
-                "A " + token->GetName() +
-                    " tag was parsed inside of a <select> which caused a "
-                    "</select> to be inserted before this tag. "
-                    "This is not valid HTML and the behavior may be changed in "
-                    "future versions of chrome.");
-          }
-          return;
-        }
-        case HTMLTag::kScript: {
-          bool did_process = ProcessStartTagForInHead(token);
-          DCHECK(did_process);
-          return;
-        }
-        case HTMLTag::kTemplate:
-          ProcessTemplateStartTag(token);
-          return;
-        case HTMLTag::kButton:
-          if (!HTMLSelectElement::SelectParserRelaxationEnabled(
-                  tree_.CurrentNode())) {
-            // TODO(crbug.com/1511354): Remove this UseCounter when the
-            // SelectParserRelaxation/CustomizableSelect flags are removed.
-            UseCounter::Count(tree_.CurrentNode()->GetDocument(),
-                              WebFeature::kHTMLButtonInSelect);
-          }
-          [[fallthrough]];
-        case HTMLTag::kDatalist:
-          if (tag == HTMLTag::kDatalist &&
-              !HTMLSelectElement::SelectParserRelaxationEnabled(
-                  tree_.CurrentNode())) {
-            // TODO(crbug.com/1511354): Remove this UseCounter when the
-            // SelectParserRelaxation/CustomizableSelect flags are removed.
-            UseCounter::Count(tree_.CurrentNode()->GetDocument(),
-                              WebFeature::kHTMLDatalistInSelect);
-          }
-          [[fallthrough]];
-        default:
-          if (HTMLSelectElement::SelectParserRelaxationEnabled(
-                  tree_.CurrentNode())) {
-            ProcessStartTagForInBody(token);
-          } else {
-            // TODO(crbug.com/1511354): Remove this UseCounter when the
-            // SelectParserRelaxation/CustomizableSelect flags are removed.
-            UseCounter::Count(tree_.CurrentNode()->GetDocument(),
-                              WebFeature::kSelectParserDroppedTag);
-            tree_.OpenElements()->TopNode()->AddConsoleMessage(
-                mojom::blink::ConsoleMessageSource::kJavaScript,
-                mojom::blink::ConsoleMessageLevel::kWarning,
-                "A " + token->GetName() +
-                    " tag was parsed inside of a <select> which was not "
-                    "inserted into the document. This is not valid HTML and "
-                    "the behavior may be changed in future versions of "
-                    "chrome.");
-          }
-          break;
-      }
-      break;
     case kInTableTextMode:
       DefaultForInTableText();
       ProcessStartTag(token);
@@ -1874,20 +1740,6 @@ void HTMLTreeBuilder::ResetInsertionModeAppropriately() {
       switch (tag) {
         case HTMLTag::kTemplate:
           return SetInsertionMode(template_insertion_modes_.back());
-        case HTMLTag::kSelect:
-          if (HTMLSelectElement::SelectParserRelaxationEnabled(
-                  tree_.CurrentNode())) {
-            break;
-          }
-          if (!last) {
-            while (item->GetNode() != tree_.OpenElements()->RootNode() &&
-                   !item->MatchesHTMLTag(HTMLTag::kTemplate)) {
-              item = item->NextItemInStack();
-              if (item->MatchesHTMLTag(HTMLTag::kTable))
-                return SetInsertionMode(kInSelectInTableMode);
-            }
-          }
-          return SetInsertionMode(kInSelectMode);
         case HTMLTag::kTd:
         case HTMLTag::kTh:
           return SetInsertionMode(kInCellMode);
@@ -1904,9 +1756,10 @@ void HTMLTreeBuilder::ResetInsertionModeAppropriately() {
         case HTMLTag::kTable:
           return SetInsertionMode(kInTableMode);
         case HTMLTag::kHead:
-          if (!fragment_context_.Fragment() ||
-              fragment_context_.ContextElement() != item->GetNode())
+          if (!fragment_context_.FragmentTarget() ||
+              fragment_context_.ContextElement() != item->GetNode()) {
             return SetInsertionMode(kInHeadMode);
+          }
           return SetInsertionMode(kInBodyMode);
         case HTMLTag::kBody:
           return SetInsertionMode(kInBodyMode);
@@ -2484,62 +2337,6 @@ void HTMLTreeBuilder::ProcessEndTag(AtomicHTMLToken* token) {
     case kAfterAfterFramesetMode:
       ParseError(token);
       break;
-    case kInSelectInTableMode:
-      switch (tag) {
-        case HTMLTag::kCaption:
-        case HTMLTag::kTable:
-        case TABLE_BODY_CONTEXT_CASES:
-        case HTMLTag::kTr:
-        case TABLE_CELL_CONTEXT_CASES:
-          ParseError(token);
-          if (tree_.OpenElements()->InTableScope(tag)) {
-            AtomicHTMLToken end_select(HTMLToken::kEndTag, HTMLTag::kSelect);
-            ProcessEndTag(&end_select);
-            ProcessEndTag(token);
-          }
-          return;
-        default:
-          break;
-      }
-      [[fallthrough]];
-    case kInSelectMode:
-      CHECK(!HTMLSelectElement::SelectParserRelaxationEnabled(
-          tree_.CurrentNode()));
-      switch (tag) {
-        case HTMLTag::kOptgroup:
-          if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOption) &&
-              tree_.OneBelowTop() &&
-              tree_.OneBelowTop()->MatchesHTMLTag(HTMLTag::kOptgroup))
-            ProcessFakeEndTag(HTMLTag::kOption);
-          if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOptgroup)) {
-            tree_.OpenElements()->Pop();
-            return;
-          }
-          ParseError(token);
-          return;
-        case HTMLTag::kOption:
-          if (tree_.CurrentStackItem()->MatchesHTMLTag(HTMLTag::kOption)) {
-            tree_.OpenElements()->Pop();
-            return;
-          }
-          ParseError(token);
-          return;
-        case HTMLTag::kSelect:
-          if (!tree_.OpenElements()->InSelectScope(tag)) {
-            DCHECK(IsParsingFragment());
-            ParseError(token);
-            return;
-          }
-          tree_.OpenElements()->PopUntilPopped(HTMLTag::kSelect);
-          ResetInsertionModeAppropriately();
-          return;
-        case HTMLTag::kTemplate:
-          ProcessTemplateEndTag(token);
-          return;
-        default:
-          break;
-      }
-      break;
     case kInTableTextMode:
       DefaultForInTableText();
       ProcessEndTag(token);
@@ -2745,11 +2542,6 @@ ReprocessBuffer:
       // non-whitespace characters.
       break;
     }
-    case kInSelectInTableMode:
-    case kInSelectMode: {
-      tree_.InsertTextNode(buffer.TakeRemaining());
-      break;
-    }
     case kAfterAfterFramesetMode: {
       auto leading_whitespace = buffer.TakeRemainingWhitespace();
       if (!leading_whitespace.string.empty()) {
@@ -2823,8 +2615,6 @@ void HTMLTreeBuilder::ProcessEndOfFile(AtomicHTMLToken* token) {
     case kInFramesetMode:
     case kInTableMode:
     case kInTableBodyMode:
-    case kInSelectInTableMode:
-    case kInSelectMode:
       if (tree_.CurrentNode() != tree_.OpenElements()->RootNode())
         ParseError(token);
       if (!template_insertion_modes_.empty() &&
@@ -3203,8 +2993,6 @@ const char* HTMLTreeBuilder::ToString(HTMLTreeBuilder::InsertionMode mode) {
     DEFINE_STRINGIFY(kInTableBodyMode)
     DEFINE_STRINGIFY(kInRowMode)
     DEFINE_STRINGIFY(kInCellMode)
-    DEFINE_STRINGIFY(kInSelectMode)
-    DEFINE_STRINGIFY(kInSelectInTableMode)
     DEFINE_STRINGIFY(kAfterBodyMode)
     DEFINE_STRINGIFY(kInFramesetMode)
     DEFINE_STRINGIFY(kAfterFramesetMode)

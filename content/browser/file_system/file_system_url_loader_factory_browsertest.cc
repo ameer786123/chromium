@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/byte_count.h"
 #include "base/command_line.h"
 #include "base/containers/heap_array.h"
 #include "base/containers/span.h"
@@ -22,6 +23,8 @@
 #include "base/i18n/unicodestring.h"
 #include "base/memory/raw_ptr.h"
 #include "base/rand_util.h"
+#include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -40,6 +43,7 @@
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "net/base/directory_listing.h"
 #include "net/base/mime_util.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_util.h"
@@ -382,7 +386,7 @@ class FileSystemURLLoaderFactoryTest
               match.group(3, status));
     if (size >= 0) {
       icu::UnicodeString size_string(
-          base::FormatBytesUnlocalized(size).c_str());
+          net::GetSizeStringForTesting(base::ByteCount(size)).c_str());
       EXPECT_EQ(size_string, match.group(5, status));
     }
 

@@ -47,7 +47,7 @@
 #include "base/test/malloc_wrapper.h"
 #endif
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -188,8 +188,8 @@ class OutOfMemoryDeathTest : public OutOfMemoryTest {
   // These tests don't work properly on old x86 Android; crbug.com/1181112
   bool ShouldSkipTest() {
 #if BUILDFLAG(IS_ANDROID) && defined(ARCH_CPU_X86)
-    return base::android::BuildInfo::GetInstance()->sdk_int() <
-           base::android::SDK_VERSION_NOUGAT;
+    return base::android::android_info::sdk_int() <
+           base::android::android_info::SDK_VERSION_NOUGAT;
 #else
     return false;
 #endif
@@ -503,10 +503,7 @@ TEST_F(OutOfMemoryDeathTest, CFAllocatorMalloc) {
 
 #if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 // PartitionAlloc-Everywhere does not intercept other malloc zones than the
-// default (the top) malloc zone.  Plus,
-// CFAllocatorAllocate(kCFAllocatorSystemDefault, size, 0) does not call the
-// default (the top) malloc zone on macOS 10.xx (does call it on macOS 11 and
-// later though).
+// default (the top) malloc zone.
 #define MAYBE_CFAllocatorSystemDefault DISABLED_CFAllocatorSystemDefault
 #else
 #define MAYBE_CFAllocatorSystemDefault CFAllocatorSystemDefault
@@ -523,10 +520,7 @@ TEST_F(OutOfMemoryDeathTest, MAYBE_CFAllocatorSystemDefault) {
 
 #if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 // PartitionAlloc-Everywhere does not intercept other malloc zones than the
-// default (the top) malloc zone.  Plus,
-// CFAllocatorAllocate(kCFAllocatorMallocZone, size, 0) does not call the
-// default (the top) malloc zone on macOS 10.xx (does call it on macOS 11 and
-// later though).
+// default (the top) malloc zone.
 #define MAYBE_CFAllocatorMallocZone DISABLED_CFAllocatorMallocZone
 #else
 #define MAYBE_CFAllocatorMallocZone CFAllocatorMallocZone

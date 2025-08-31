@@ -17,6 +17,7 @@
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/widget/widget_delegate.h"
 
 namespace ash {
 namespace {
@@ -128,7 +129,9 @@ void CaptivePortalWindowProxy::Show(const std::string& network_name) {
       web_modal::WebContentsModalDialogManager::FromWebContents(web_contents_);
   widget_ = CreateWindowAsFramelessChild(
       profile_, std::move(delegate),
-      manager->delegate()->GetWebContentsModalDialogHost()->GetHostView());
+      manager->delegate()
+          ->GetWebContentsModalDialogHost(web_contents_)
+          ->GetHostView());
   portal->Init();
   widget_->AddObserver(this);
   constrained_window::ShowModalDialog(widget_->GetNativeView(), web_contents_);

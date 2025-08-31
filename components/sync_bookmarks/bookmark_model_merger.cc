@@ -30,13 +30,13 @@
 #include "components/sync_bookmarks/synced_bookmark_tracker_entity.h"
 #include "ui/base/models/tree_node_iterator.h"
 
-using syncer::EntityData;
-using syncer::UpdateResponseData;
-using syncer::UpdateResponseDataList;
-
 namespace sync_bookmarks {
 
 namespace {
+
+using syncer::EntityData;
+using syncer::UpdateResponseData;
+using syncer::UpdateResponseDataList;
 
 static const size_t kInvalidIndex = -1;
 
@@ -532,13 +532,10 @@ BookmarkModelMerger::BookmarkModelMerger(
     UpdateResponseDataList updates,
     BookmarkModelView* bookmark_model,
     favicon::FaviconService* favicon_service,
-    SyncedBookmarkTracker* bookmark_tracker,
-    syncer::PreviouslySyncingGaiaIdInfoForMetrics
-        previously_syncing_gaia_id_info)
+    SyncedBookmarkTracker* bookmark_tracker)
     : bookmark_model_(bookmark_model),
       favicon_service_(favicon_service),
       bookmark_tracker_(bookmark_tracker),
-      previously_syncing_gaia_id_info_(previously_syncing_gaia_id_info),
       remote_updates_size_(updates.size()),
       remote_forest_(BuildRemoteForest(std::move(updates), bookmark_tracker)),
       uuid_to_match_map_(
@@ -562,13 +559,6 @@ BookmarkModelMerger::~BookmarkModelMerger() = default;
 
 void BookmarkModelMerger::Merge() {
   TRACE_EVENT0("sync", "BookmarkModelMerger::Merge");
-
-  if (previously_syncing_gaia_id_info_ !=
-      syncer::PreviouslySyncingGaiaIdInfoForMetrics::kUnspecified) {
-    base::UmaHistogramEnumeration(
-        "Sync.BookmarkModelMerger.PreviouslySyncingGaiaId",
-        previously_syncing_gaia_id_info_);
-  }
 
   // Algorithm description:
   // Match up the roots and recursively do the following:

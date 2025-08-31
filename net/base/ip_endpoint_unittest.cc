@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "net/base/ip_endpoint.h"
 
 #include <string.h>
@@ -15,6 +10,7 @@
 #include <string>
 #include <tuple>
 
+#include "base/containers/span.h"
 #include "base/check_op.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
@@ -83,13 +79,13 @@ uint32_t FakeNameToIndexFunc(const char* name) {
   return index;
 }
 
-char* FakeIndexToNameFunc(unsigned int index, char* ifname) {
+char* FakeIndexToNameFunc(unsigned int index, base::span<char>ifname) {
   if (index > kMaxFakeInterfaceIndex) {
     return nullptr;
   }
   std::string name = base::NumberToString(index);
   ifname[0] = name[0];
-  return ifname;
+  return ifname.data();
 }
 
 struct TestData {
@@ -203,8 +199,7 @@ TEST_F(IPEndPointTest, ToSockAddrBufTooSmall) {
 }
 
 TEST_F(IPEndPointTest, FromSockAddrBufTooSmall) {
-  struct sockaddr_in addr;
-  memset(&addr, 0, sizeof(addr));
+  struct sockaddr_in addr = {};
   addr.sin_family = AF_INET;
   IPEndPoint ip_endpoint;
   struct sockaddr* sockaddr = reinterpret_cast<struct sockaddr*>(&addr);
@@ -228,8 +223,7 @@ SOCKADDR_BTH BuildBluetoothSockAddr(const IPAddress& ip_address,
                                     uint32_t port) {
   SOCKADDR_BTH addr = {};
   addr.addressFamily = AF_BTH;
-  DCHECK_LE(ip_address.bytes().size(), sizeof(addr.btAddr));
-  memcpy(&addr.btAddr, ip_address.bytes().data(), ip_address.bytes().size());
+  base::byte_span_from_ref(addr.btAddr).copy_prefix_from(ip_address.bytes());
   addr.port = port;
   return addr;
 }

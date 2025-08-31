@@ -7,12 +7,10 @@
 #import "base/metrics/user_metrics.h"
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/fallback_view_controller.h"
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_constants.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/elements/extended_touch_target_button.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
-#import "ios/chrome/common/ui/elements/form_input_accessory_view.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -23,10 +21,18 @@ using manual_fill::ManualFillDataType;
 
 namespace {
 
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
 // Size of the Chrome logo.
-constexpr CGFloat kChromeLogoSize = 24;
+constexpr CGFloat kChromeLogoSize = 28;
+#endif
+// Size of the Chrome logo when liquid glass is disabled.
+constexpr CGFloat kChromeLogoSizePreLiquidGlass = 24;
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
 // Size of the close button.
-constexpr CGFloat kCloseButtonSize = 30;
+constexpr CGFloat kCloseButtonSize = 44;
+#endif
+// Size of the close button when liquid glass is disabled.
+constexpr CGFloat kCloseButtonSizePreLiquidGlass = 30;
 // Size of the data type icons representing the different segments
 // of the segmented control.
 constexpr CGFloat kDataTypeIconSize = 18;
@@ -38,6 +44,10 @@ constexpr CGFloat kHeaderViewHorizontalPadding = 16;
 constexpr CGFloat kHeaderViewTopPadding = 8;
 // Top padding for the header view when in a bottom popover.
 constexpr CGFloat kHeaderViewPopoverTopPadding = 22;
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+// Opacity of the segmented control background color.
+constexpr CGFloat kSegmentedControlBackgroundColorOpacity = 0.05;
+#endif
 // Height of the segmented control.
 constexpr CGFloat kSegmentedControlHeight = 32;
 // Multiplier used to constraint the view's height.
@@ -70,6 +80,70 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
     case ManualFillDataType::kOther:
       NOTREACHED();
   }
+}
+
+// Returns the color to use for the view's background.
+UIColor* GetBackgroundColor() {
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (@available(iOS 26, *)) {
+    return UIColor.clearColor;
+  }
+#endif
+
+  return [UIColor colorNamed:kGroupedPrimaryBackgroundColor];
+}
+
+// Returns the size to use for the Chrome logo.
+CGFloat GetChromeLogoSize() {
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (@available(iOS 26, *)) {
+    return kChromeLogoSize;
+  }
+#endif
+
+  return kChromeLogoSizePreLiquidGlass;
+}
+
+// Returns the symbol configuration to use for the close button.
+UIImageSymbolConfiguration* GetCloseButtonSymbolConfiguration() {
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (@available(iOS 26, *)) {
+    return [UIImageSymbolConfiguration
+        configurationWithPointSize:kCloseButtonSize
+                            weight:UIImageSymbolWeightThin
+                             scale:UIImageSymbolScaleDefault];
+  }
+#endif
+
+  return [UIImageSymbolConfiguration
+      configurationWithPointSize:kCloseButtonSizePreLiquidGlass
+                          weight:UIImageSymbolWeightRegular
+                           scale:UIImageSymbolScaleMedium];
+}
+
+// Returns the foreground color to use for the close button color palette.
+UIColor* GetCloseButtonForegroundColor() {
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (@available(iOS 26, *)) {
+    return [UIColor colorNamed:kTextPrimaryColor];
+  }
+#endif
+
+  return [[UIColor secondaryLabelColor] colorWithAlphaComponent:0.6];
+}
+
+// Returns the constant to apply to the header view top constraint.
+CGFloat GetHeaderViewTopConstraintConstant(bool is_compact_height) {
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (@available(iOS 26, *)) {
+    if (!(is_compact_height ||
+          ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET)) {
+      return -kHeaderViewTopPadding;
+    }
+  }
+#endif
+
+  return kHeaderViewTopPadding;
 }
 
 }  // namespace
@@ -148,18 +222,14 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
   [super viewDidLoad];
 
   self.view.accessibilityIdentifier = manual_fill::kExpandedManualFillViewID;
-  self.view.backgroundColor =
-      [UIColor colorNamed:kGroupedPrimaryBackgroundColor];
+  self.view.backgroundColor = GetBackgroundColor();
 
-  if (!IsKeyboardAccessoryUpgradeWithShortManualFillMenuEnabled()) {
-    // Set the view's frame to get the right height initially. Once the view's
-    // window is loaded in `viewDidAppear`, the view's height will be
-    // dynamically constraint to its window's height instead.
-    self.view.autoresizingMask = UIViewAutoresizingNone;
-    self.view.frame = CGRectMake(
-        0, 0, 0,
-        UIScreen.mainScreen.bounds.size.height * kViewHeightMultiplier);
-  }
+  // Set the view's frame to get the right height initially. Once the view's
+  // window is loaded in `viewDidAppear`, the view's height will be
+  // dynamically constraint to its window's height instead.
+  self.view.autoresizingMask = UIViewAutoresizingNone;
+  self.view.frame = CGRectMake(
+      0, 0, 0, UIScreen.mainScreen.bounds.size.height * kViewHeightMultiplier);
 
   _headerView = [self createHeaderView];
   _headerTopView = [self createHeaderTopView];
@@ -169,9 +239,12 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
       [self createSegmentedControlAndSelectDataType:_initialDataType];
   _headerViewHeightConstraint = [_headerView.heightAnchor
       constraintEqualToConstant:kHeaderViewHeightWideLayout];
+  _headerViewTopConstraint =
+      [_headerView.topAnchor constraintEqualToAnchor:self.view.topAnchor];
 
   [self setUpHeaderView:_headerView
       headerViewHeightConstraint:_headerViewHeightConstraint
+         headerViewTopConstraint:_headerViewTopConstraint
                       chromeLogo:_chromeLogo
                      closeButton:_closeButton
                 segmentedControl:_segmentedControl
@@ -185,9 +258,6 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
   _headerViewTrailingConstraint = [_headerView.trailingAnchor
       constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor
                      constant:-kHeaderViewHorizontalPadding];
-  _headerViewTopConstraint =
-      [_headerView.topAnchor constraintEqualToAnchor:self.view.topAnchor
-                                            constant:kHeaderViewTopPadding];
   _headerViewPopoverTopConstraint = [_headerView.topAnchor
       constraintEqualToAnchor:self.view.topAnchor
                      constant:kHeaderViewPopoverTopPadding];
@@ -212,37 +282,20 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 - (void)viewWillAppear:(BOOL)animated {
   [super viewWillAppear:animated];
 
-  // The top padding must take into account the arrow of the popover view if the
-  // arrow is at the top of the view.
-  BOOL isPopoverUpArrow = self.popoverPresentationController.arrowDirection ==
-                          UIPopoverArrowDirectionUp;
-  _headerViewTopConstraint.active = !isPopoverUpArrow;
-  _headerViewPopoverTopConstraint.active = isPopoverUpArrow;
-
-  if (IsKeyboardAccessoryUpgradeWithShortManualFillMenuEnabled()) {
-    // Set the view to be the same height as the keyboard and keyboard accessory
-    // combined.
-    [NSLayoutConstraint activateConstraints:@[
-      [self.view.heightAnchor
-          constraintEqualToAnchor:self.view.superview.heightAnchor
-                         constant:kFormInputAccessoryViewLargeHeight],
-    ]];
-  }
+  [self adjustTopHeaderViewConstraint];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
   [super viewDidAppear:animated];
 
-  if (!IsKeyboardAccessoryUpgradeWithShortManualFillMenuEnabled()) {
-    // Anchor the view's height to its window's height so that the view's height
-    // resizes dynamically when switching between portrait and landscape modes.
-    self.view.autoresizingMask = UIViewAutoresizingFlexibleHeight;
-    [NSLayoutConstraint activateConstraints:@[
-      [self.view.heightAnchor
-          constraintEqualToAnchor:self.view.window.heightAnchor
-                       multiplier:kViewHeightMultiplier],
-    ]];
-  }
+  // Anchor the view's height to its window's height so that the view's height
+  // resizes dynamically when switching between portrait and landscape modes.
+  self.view.autoresizingMask = UIViewAutoresizingFlexibleHeight;
+  [NSLayoutConstraint activateConstraints:@[
+    [self.view.heightAnchor
+        constraintEqualToAnchor:self.view.window.heightAnchor
+                     multiplier:kViewHeightMultiplier],
+  ]];
 
   // Bring focus to the expanded view by focusing on the Chrome logo.
   UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification,
@@ -266,6 +319,8 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
                              trailingConstraint:_headerViewTrailingConstraint
                                        constant:_tableViewCellHorizontalInset];
   }
+
+  [self adjustTopHeaderViewConstraint];
 }
 
 #pragma mark - UITraitEnvironment
@@ -315,6 +370,15 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 
 #pragma mark - Private
 
+// Adjusts the top padding so that it takes into account the arrow of the
+// popover view if the arrow is at the top of the view.
+- (void)adjustTopHeaderViewConstraint {
+  BOOL isPopoverUpArrow = self.popoverPresentationController.arrowDirection ==
+                          UIPopoverArrowDirectionUp;
+  _headerViewTopConstraint.active = !isPopoverUpArrow;
+  _headerViewPopoverTopConstraint.active = isPopoverUpArrow;
+}
+
 // Creates and configures the header view.
 - (UIView*)createHeaderView {
   UIView* headerView = [[UIView alloc] init];
@@ -338,11 +402,11 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 // Creates and configures the Chrome logo.
 - (UIImageView*)createChromeLogo {
 #if BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
-  UIImage* image = MakeSymbolMulticolor(
-      CustomSymbolWithPointSize(kMulticolorChromeballSymbol, kChromeLogoSize));
+  UIImage* image = MakeSymbolMulticolor(CustomSymbolWithPointSize(
+      kMulticolorChromeballSymbol, GetChromeLogoSize()));
 #else
   UIImage* image =
-      CustomSymbolWithPointSize(kChromeProductSymbol, kChromeLogoSize);
+      CustomSymbolWithPointSize(kChromeProductSymbol, GetChromeLogoSize());
 #endif  // BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
   UIImageView* chromeLogo = [[UIImageView alloc] initWithImage:image];
   chromeLogo.translatesAutoresizingMaskIntoConstraints = NO;
@@ -372,17 +436,12 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
   closeButton.accessibilityLabel = l10n_util::GetNSString(
       IDS_IOS_EXPANDED_MANUAL_FILL_CLOSE_BUTTON_ACCESSIBILITY_LABEL);
 
-  UIImageSymbolConfiguration* symbolConfiguration = [UIImageSymbolConfiguration
-      configurationWithPointSize:kCloseButtonSize
-                          weight:UIImageSymbolWeightRegular
-                           scale:UIImageSymbolScaleMedium];
+  UIImageSymbolConfiguration* symbolConfiguration =
+      GetCloseButtonSymbolConfiguration();
   UIImage* buttonImage = SymbolWithPalette(
       DefaultSymbolWithConfiguration(kXMarkCircleFillSymbol,
                                      symbolConfiguration),
-      @[
-        [[UIColor secondaryLabelColor] colorWithAlphaComponent:0.6],
-        [UIColor tertiarySystemFillColor]
-      ]);
+      @[ GetCloseButtonForegroundColor(), [UIColor tertiarySystemFillColor] ]);
   [closeButton setImage:buttonImage forState:UIControlStateNormal];
 
   [closeButton setContentHuggingPriority:UILayoutPriorityRequired
@@ -430,19 +489,30 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
                        action:@selector(onSegmentSelected:)
              forControlEvents:UIControlEventValueChanged];
 
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (@available(iOS 26, *)) {
+    segmentedControl.backgroundColor = [[UIColor colorNamed:kGrey700Color]
+        colorWithAlphaComponent:kSegmentedControlBackgroundColorOpacity];
+  }
+#endif
+
   return segmentedControl;
 }
 
 // Sets up the header view depending on the device's orientation.
 - (void)setUpHeaderView:(UIView*)headerView
     headerViewHeightConstraint:(NSLayoutConstraint*)headerViewHeightConstraint
+       headerViewTopConstraint:(NSLayoutConstraint*)headerViewTopConstraint
                     chromeLogo:(UIImageView*)chromeLogo
                    closeButton:(UIButton*)closeButton
               segmentedControl:(UISegmentedControl*)segmentedControl
                  headerTopView:(UIView*)headerTopView {
   // If the vertical size class is compact, apply the wide layout. Otherwise,
   // apply the narrow layout.
-  if (IsCompactHeight(self)) {
+  bool isCompactHeight = IsCompactHeight(self);
+  _headerViewTopConstraint.constant =
+      GetHeaderViewTopConstraintConstant(isCompactHeight);
+  if (isCompactHeight) {
     [headerView addSubview:chromeLogo];
     [headerView addSubview:closeButton];
     [headerView addSubview:segmentedControl];
@@ -527,6 +597,7 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 // Resets the header view. Called when a layout change is needed.
 - (void)resetHeaderView:(UIView*)headerView
     headerViewHeightConstraint:(NSLayoutConstraint*)headerViewHeightConstraint
+       headerViewTopConstraint:(NSLayoutConstraint*)headerViewTopConstraint
                     chromeLogo:(UIImageView*)chromeLogo
                    closeButton:(UIButton*)closeButton
               segmentedControl:(UISegmentedControl*)segmentedControl
@@ -539,6 +610,7 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 
   [self setUpHeaderView:headerView
       headerViewHeightConstraint:headerViewHeightConstraint
+         headerViewTopConstraint:headerViewTopConstraint
                       chromeLogo:chromeLogo
                      closeButton:closeButton
                 segmentedControl:segmentedControl
@@ -576,6 +648,7 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 - (void)resetHeaderViewOnTraitChange {
   [self resetHeaderView:_headerView
       headerViewHeightConstraint:_headerViewHeightConstraint
+         headerViewTopConstraint:_headerViewTopConstraint
                       chromeLogo:_chromeLogo
                      closeButton:_closeButton
                 segmentedControl:_segmentedControl

@@ -8,7 +8,7 @@ import * as fillConstants from '//components/autofill/ios/form_util/resources/fi
 import {inferLabelFromNext} from '//components/autofill/ios/form_util/resources/fill_element_inference.js';
 import * as inferenceUtil from '//components/autofill/ios/form_util/resources/fill_element_inference_util.js';
 import type * as fillUtil from '//components/autofill/ios/form_util/resources/fill_util.js';
-import {gCrWebLegacy} from '//ios/web/public/js_messaging/resources/gcrweb.js';
+import {gCrWeb, gCrWebLegacy} from '//ios/web/public/js_messaging/resources/gcrweb.js';
 import {isTextField, removeQueryAndReferenceFromURL} from '//ios/web/public/js_messaging/resources/utils.js';
 
 // This file provides methods used to fill forms in JavaScript.
@@ -353,7 +353,7 @@ function formOrFieldsetsToFormData(
   // Protect against custom implementation of Array.toJSON in host pages.
   (form.fields as any).toJSON = null;
 
-  form.host_frame = gCrWebLegacy.message.getFrameId();
+  form.host_frame = gCrWeb.getFrameId();
 
   if (childFrames.length > 0) {
     form.child_frames = childFrames;
@@ -377,6 +377,21 @@ function getChildFrameRemoteToken(frame: HTMLIFrameElement|null): string|null {
   return gCrWebLegacy.remoteFrameRegistration?.registerChildFrame(frame) ??
       frame.getAttribute(fillConstants.CHILD_FRAME_REMOTE_TOKEN_ATTRIBUTE);
 }
+
+// Returns the URL for the frame to be set in the FormData.
+function getFrameUrlOrOrigin(frame: Window): string {
+  if ((frame === frame.top) ||
+      ((frame.location.href !== 'about:blank') &&
+       (frame.location.href !== 'about:srcdoc'))) {
+    // If the full URL is available, use it.
+    return removeQueryAndReferenceFromURL(frame.location.href);
+  } else {
+    // Iframes might have empty own URLs, and they do not have access to the
+    // parent frame URL, only to the origin. Use it as the only available data.
+    return frame.origin;
+  }
+}
+
 
 /**
  * Fills |form| with the form data object corresponding to the
@@ -418,7 +433,7 @@ gCrWebLegacy.fill.webFormElementToFormData = function(
   }
 
   form.name = gCrWebLegacy.form.getFormIdentifier(formElement);
-  form.origin = removeQueryAndReferenceFromURL(frame.origin);
+  form.origin = getFrameUrlOrOrigin(frame);
   form.action = gCrWebLegacy.fill.getCanonicalActionForForm(formElement);
 
   // The raw name and id attributes, which may be empty.
@@ -427,7 +442,7 @@ gCrWebLegacy.fill.webFormElementToFormData = function(
 
   form.renderer_id = gCrWebLegacy.fill.getUniqueID(formElement);
 
-  form.host_frame = frame.__gCrWeb.message.getFrameId();
+  form.host_frame = frame.__gCrWeb.getFrameId();
 
   // Note different from form_autofill_util.cc version of this method, which
   // computes |form.action| using document.completeURL(form_element.action())
@@ -663,7 +678,7 @@ gCrWebLegacy.fill.unownedFormElementsAndFieldSetsToFormData = function(
     return false;
   }
   form.name = '';
-  form.origin = removeQueryAndReferenceFromURL(frame.origin);
+  form.origin = getFrameUrlOrOrigin(frame);
   form.action = '';
 
   // To avoid performance bottlenecks, do not keep child frames if their

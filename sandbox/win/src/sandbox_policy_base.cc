@@ -20,6 +20,7 @@
 #include "base/containers/span.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/notreached.h"
 #include "base/win/access_control_list.h"
 #include "base/win/access_token.h"
 #include "base/win/sid.h"
@@ -237,7 +238,9 @@ ConfigBase::~ConfigBase() {
   // `policy_maker_` holds a raw_ptr on `policy_`, so we need to make sure it
   // gets destroyed first.
   policy_maker_.reset();
-  policy_.ClearAndDelete();  // Allocated by MakeBrokerPolicyMemory.
+  sandbox::PolicyGlobal* policy = policy_.get();
+  policy_ = nullptr;
+  ::operator delete(policy);
 }
 
 sandbox::LowLevelPolicy* ConfigBase::PolicyMaker() {
@@ -429,17 +432,18 @@ void ConfigBase::AddKernelObjectToClose(HandleToClose handle_info) {
   switch (handle_info) {
     case HandleToClose::kWindowsShellGlobalCounters:
       handle_closer_.section_windows_global_shell_counters = true;
-      break;
+      return;
     case HandleToClose::kDeviceApi:
       handle_closer_.file_device_api = true;
-      break;
+      return;
     case HandleToClose::kKsecDD:
       handle_closer_.file_ksecdd = true;
-      break;
+      return;
     case HandleToClose::kDisconnectCsrss:
       handle_closer_.disconnect_csrss = true;
-      break;
+      return;
   }
+  NOTREACHED();
 }
 
 void ConfigBase::SetDisconnectCsrss() {

@@ -7,6 +7,7 @@
 
 #include <optional>
 
+#include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -14,6 +15,8 @@
 #include "base/scoped_observation.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_widget_fade_animator.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_window.h"
 #include "chrome/browser/ui/content_settings/content_setting_image_model_states.h"
 #include "chrome/browser/ui/toolbar/chrome_location_bar_model_delegate.h"
 #include "chrome/browser/ui/views/frame/browser_frame.h"
@@ -26,25 +29,23 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/animation/multi_animation.h"
 #include "ui/gfx/animation/slide_animation.h"
+#include "ui/gfx/geometry/point.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/layout/flex_layout_view.h"
 #include "ui/views/widget/widget_observer.h"
 
-#if BUILDFLAG(IS_LINUX)
-#include "ui/linux/window_frame_provider.h"
-#endif
-
-class BrowserFrameBoundsChangeAnimation;
+class PictureInPictureBoundsChangeAnimation;
+class PictureInPictureTucker;
 
 namespace views {
-class FrameBackground;
 class Label;
 class View;
 }  // namespace views
 
 namespace {
 class WindowEventObserver;
-}
+}  // namespace
 
 class PictureInPictureBrowserFrameView
     : public BrowserNonClientFrameView,
@@ -53,6 +54,7 @@ class PictureInPictureBrowserFrameView
       public IconLabelBubbleView::Delegate,
       public ContentSettingImageView::Delegate,
       public views::WidgetObserver,
+      public PictureInPictureWindow,
       public gfx::AnimationDelegate {
   METADATA_HEADER(PictureInPictureBrowserFrameView, BrowserNonClientFrameView)
 
@@ -70,8 +72,6 @@ class PictureInPictureBrowserFrameView
       const gfx::Size& tabstrip_minimum_size) const override;
   gfx::Rect GetBoundsForWebAppFrameToolbar(
       const gfx::Size& toolbar_preferred_size) const override;
-  void LayoutWebAppWindowTitle(const gfx::Rect& available_space,
-                               views::Label& window_title_label) const override;
   int GetTopInset(bool restored) const override;
   void OnBrowserViewInitViewsComplete() override;
   void UpdateThrobber(bool running) override {}
@@ -87,11 +87,6 @@ class PictureInPictureBrowserFrameView
   void Layout(PassKey) override;
   void AddedToWidget() override;
   void RemovedFromWidget() override;
-#if BUILDFLAG(IS_LINUX)
-  gfx::Insets RestoredMirroredFrameBorderInsets() const override;
-  gfx::Insets GetInputInsets() const override;
-  SkRRect GetRestoredClipRegion() const override;
-#endif
   void SetFrameBounds(const gfx::Rect& bounds) override;
 
   // ChromeLocationBarModelDelegate:
@@ -126,17 +121,20 @@ class PictureInPictureBrowserFrameView
   // views::WidgetObserver:
   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
   void OnWidgetDestroying(views::Widget* widget) override;
+  void OnWidgetVisibilityChanged(views::Widget* eidget, bool visible) override;
   void OnWidgetBoundsChanged(views::Widget* widget,
                              const gfx::Rect& new_bounds) override;
+
+  // PictureInPictureWindow:
+  void SetForcedTucking(bool tuck) override;
 
   // gfx::AnimationDelegate:
   void AnimationEnded(const gfx::Animation* animation) override;
   void AnimationProgressed(const gfx::Animation* animation) override;
 
-  // views::View:
-  void OnPaint(gfx::Canvas* canvas) override;
-
   // PictureInPictureBrowserFrameView:
+  virtual gfx::Rect GetHitRegion() const;
+
   // Convert the bounds of a child control view of |top_bar_container_view_| to
   // use the system's coordinate system while we need to know the original
   // container view.
@@ -163,9 +161,6 @@ class PictureInPictureBrowserFrameView
   // - Dialogs are opened in the PiP window
   void UpdateTopBarView(bool render_active);
 
-  // Returns the insets of the window frame borders.
-  gfx::Insets FrameBorderInsets() const;
-
   // Returns the height of the top bar area, including the window top border.
   int GetTopAreaHeight() const;
 
@@ -178,15 +173,6 @@ class PictureInPictureBrowserFrameView
 
   // Returns true if there's an overlay view that's currently shown.
   bool IsOverlayViewVisible() const;
-
-#if BUILDFLAG(IS_LINUX)
-  // Returns whether a client-side shadow should be drawn for the window.
-  bool ShouldDrawFrameShadow() const;
-
-  // Gets the shadow metrics (radius, offset, and number of shadows) even if
-  // shadows are not drawn.
-  static gfx::ShadowValues GetShadowValues();
-#endif
 
 #if BUILDFLAG(IS_WIN)
   gfx::Insets GetClientAreaInsets(HMONITOR monitor) const;
@@ -201,6 +187,7 @@ class PictureInPictureBrowserFrameView
   views::View* GetBackToTabButtonForTesting();
   views::View* GetCloseButtonForTesting();
   views::Label* GetWindowTitleForTesting();
+  PictureInPictureWidgetFadeAnimator* GetFadeAnimatorForTesting();
 
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
@@ -242,9 +229,14 @@ class PictureInPictureBrowserFrameView
   // Returns the insets of the window frame borders for resizing.
   virtual gfx::Insets ResizeBorderInsets() const;
 
+  // Returns the insets of the window frame borders.
+  virtual gfx::Insets FrameBorderInsets() const;
+
  private:
   // Show `auto_pip_setting_overlay_` if we have it, and have a widget.
   void ShowOverlayIfNeeded();
+
+  void EnforceTucking();
 
   CloseReason close_reason_ = CloseReason::kOther;
 
@@ -301,6 +293,16 @@ class PictureInPictureBrowserFrameView
       kSizedToChildren,
     };
 
+    // Animates the picture-in-picture child dialogs that are waiting to be
+    // resized.
+    //
+    // When child dialogs that require a resize of the parent window are
+    // opened, we first make them transparent and non-interactive to avoid
+    // visual glitches while the parent resizes. This function is called after
+    // the parent resize is complete to fade in the child dialogs and make them
+    // interactive again.
+    void AnimateDialogsWaitingForResize();
+
     void PostResizeForChild(const gfx::Rect& new_bounds);
     void FinishPendingResizeForChild();
 
@@ -326,6 +328,19 @@ class PictureInPictureBrowserFrameView
     // The bounds that we forced the window to be in response to a child dialog
     // opening.
     gfx::Rect latest_child_dialog_forced_bounds_;
+
+    // The child dialogs that are waiting for the picture-in-picture window to
+    // resize.
+    //
+    // Used to disable visibility changed animations while child
+    // dialogs are waiting for the picture-in-picture window to resize. After
+    // the picture-in-picture window resizes, or if the user resizes the
+    // picture-in-picture window before the resize takes place, this set
+    // is used to enable visibility changed animations.
+    base::flat_set<raw_ptr<views::Widget>> child_dialogs_waiting_for_resize_;
+
+    // The sizes of the child dialogs. Used to avoid unnecessary resizes.
+    base::flat_map<raw_ptr<views::Widget>, gfx::Size> child_dialog_sizes_;
 
     // The bounds that the window would ideally be if we did not have to enlarge
     // to fit a child dialog.
@@ -388,16 +403,6 @@ class PictureInPictureBrowserFrameView
   // `top_bar_color_animation_`.
   std::optional<SkColor> current_foreground_color_;
 
-#if BUILDFLAG(IS_LINUX)
-  // Used to draw window frame borders and shadow on Linux when GTK theme is
-  // enabled.
-  raw_ptr<ui::WindowFrameProvider> window_frame_provider_ = nullptr;
-
-  // Used to draw window frame borders and shadow on Linux when classic theme is
-  // enabled.
-  std::unique_ptr<views::FrameBackground> frame_background_;
-#endif
-
   // Used to monitor key and mouse events from native window.
   std::unique_ptr<WindowEventObserver> window_event_observer_;
 
@@ -406,7 +411,15 @@ class PictureInPictureBrowserFrameView
 
   // Animates programmatic changes to bounds (e.g. via `resizeTo()` or
   // `resizeBy()` calls).
-  std::unique_ptr<BrowserFrameBoundsChangeAnimation> bounds_change_animation_;
+  std::unique_ptr<PictureInPictureBoundsChangeAnimation>
+      bounds_change_animation_;
+
+  // Used to animate the Picture-in-Picture window creation.
+  std::unique_ptr<PictureInPictureWidgetFadeAnimator> fade_animator_;
+
+  // Used to tuck/untuck this widget into the side of the screen.
+  std::unique_ptr<PictureInPictureTucker> tucker_;
+  bool is_tucking_forced_ = false;
 
   base::WeakPtrFactory<PictureInPictureBrowserFrameView> weak_factory_{this};
 };

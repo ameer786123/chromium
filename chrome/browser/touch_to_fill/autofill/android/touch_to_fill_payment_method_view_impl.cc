@@ -4,16 +4,20 @@
 
 #include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_payment_method_view_impl.h"
 
+#include <algorithm>
 #include <variant>
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/containers/to_vector.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/autofill/android/personal_data_manager_android.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_payment_method_view_controller.h"
+#include "components/autofill/core/browser/data_model/valuables/android/loyalty_card_android.h"
+#include "components/autofill/core/browser/data_model/valuables/loyalty_card.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "components/autofill/core/browser/ui/autofill_resource_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
@@ -23,7 +27,8 @@
 #include "url/android/gurl_android.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
-#include "chrome/browser/touch_to_fill/autofill/android/internal/jni/TouchToFillPaymentMethodViewBridge_jni.h"
+#include "chrome/android/chrome_jni_headers/TouchToFillPaymentMethodViewBridge_jni.h"
+#include "components/autofill/android/main_autofill_jni_headers/LoyaltyCard_jni.h"
 
 namespace autofill {
 
@@ -65,22 +70,13 @@ bool TouchToFillPaymentMethodViewImpl::IsReadyToShow(
   return true;
 }
 
-bool TouchToFillPaymentMethodViewImpl::Show(
+bool TouchToFillPaymentMethodViewImpl::ShowPaymentMethods(
     TouchToFillPaymentMethodViewController* controller,
-    base::span<const autofill::CreditCard> cards_to_suggest,
     base::span<const Suggestion> suggestions,
     bool should_show_scan_credit_card) {
-  CHECK_EQ(cards_to_suggest.size(), suggestions.size());
   JNIEnv* env = base::android::AttachCurrentThread();
   if (!IsReadyToShow(controller, env)) {
     return false;
-  }
-
-  std::vector<base::android::ScopedJavaLocalRef<jobject>> credit_cards_array;
-  credit_cards_array.reserve(cards_to_suggest.size());
-  for (const autofill::CreditCard& card : cards_to_suggest) {
-    credit_cards_array.push_back(
-        PersonalDataManagerAndroid::CreateJavaCreditCardFromNative(env, card));
   }
 
   std::vector<base::android::ScopedJavaLocalRef<jobject>> suggestions_array;
@@ -109,21 +105,20 @@ bool TouchToFillPaymentMethodViewImpl::Show(
         Java_TouchToFillPaymentMethodViewBridge_createAutofillSuggestion(
             env, suggestion.main_text.value, minor_text,
             suggestion.labels[0][0].value, secondarySubLabel,
-            payments_payload.main_text_content_description,
             base::to_underlying(suggestion.type),
             custom_icon_url ? url::GURLAndroid::FromNativeGURL(
                                   env, custom_icon_url->value())
                             : url::GURLAndroid::EmptyGURL(env),
             android_icon_id, suggestion.HasDeactivatedStyle(),
-            payments_payload.should_display_terms_available));
+            payments_payload.CreateJavaObject()));
   }
-  Java_TouchToFillPaymentMethodViewBridge_showSheet(
-      env, java_object_, std::move(credit_cards_array),
-      std::move(suggestions_array), should_show_scan_credit_card);
+  Java_TouchToFillPaymentMethodViewBridge_showPaymentMethods(
+      env, java_object_, std::move(suggestions_array),
+      should_show_scan_credit_card);
   return true;
 }
 
-bool TouchToFillPaymentMethodViewImpl::Show(
+bool TouchToFillPaymentMethodViewImpl::ShowIbans(
     TouchToFillPaymentMethodViewController* controller,
     base::span<const autofill::Iban> ibans_to_suggest) {
   JNIEnv* env = base::android::AttachCurrentThread();
@@ -137,8 +132,27 @@ bool TouchToFillPaymentMethodViewImpl::Show(
     ibans_array.push_back(
         PersonalDataManagerAndroid::CreateJavaIbanFromNative(env, iban));
   }
-  Java_TouchToFillPaymentMethodViewBridge_showSheet(env, java_object_,
+  Java_TouchToFillPaymentMethodViewBridge_showIbans(env, java_object_,
                                                     std::move(ibans_array));
+  return true;
+}
+
+bool TouchToFillPaymentMethodViewImpl::ShowLoyaltyCards(
+    TouchToFillPaymentMethodViewController* controller,
+    base::span<const LoyaltyCard> affiliated_loyalty_cards,
+    base::span<const LoyaltyCard> all_loyalty_cards,
+    bool first_time_usage) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  if (!IsReadyToShow(controller, env)) {
+    return false;
+  }
+
+  // TODO: crbug.com/421839554 - Pass a boolean indicating whether the user has
+  // seen the feature promotion UI or not.
+  Java_TouchToFillPaymentMethodViewBridge_showLoyaltyCards(
+      env, java_object_, affiliated_loyalty_cards, all_loyalty_cards,
+      first_time_usage);
+
   return true;
 }
 

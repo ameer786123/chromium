@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "components/page_load_metrics/browser/observers/ad_metrics/frame_data_utils.h"
 
@@ -67,7 +63,7 @@ void ResourceLoadAggregator::ProcessResourceLoad(
   }
 }
 
-void ResourceLoadAggregator::AdjustAdBytes(int64_t unaccounted_ad_bytes,
+void ResourceLoadAggregator::AdjustAdBytes(base::ByteCount unaccounted_ad_bytes,
                                            ResourceMimeType mime_type) {
   ad_network_bytes_ += unaccounted_ad_bytes;
   ad_bytes_ += unaccounted_ad_bytes;
@@ -97,7 +93,7 @@ void PeakCpuAggregator::UpdatePeakWindowedPercent(
     peak_windowed_percent_ = current_windowed_percent;
 }
 
-void MemoryUsageAggregator::UpdateUsage(int64_t delta_bytes) {
+void MemoryUsageAggregator::UpdateUsage(base::ByteCount delta_bytes) {
   current_bytes_used_ += delta_bytes;
   if (current_bytes_used_ > max_bytes_used_)
     max_bytes_used_ = current_bytes_used_;

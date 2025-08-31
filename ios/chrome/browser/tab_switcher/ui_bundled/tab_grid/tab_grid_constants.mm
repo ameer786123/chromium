@@ -11,8 +11,6 @@ const char kUMATabSwitcherIdleIncognitoTabGridPageHistogram[] =
     "IOS.TabSwitcher.Idle.IncognitoTabGridPage";
 const char kUMATabSwitcherIdleRegularTabGridPageHistogram[] =
     "IOS.TabSwitcher.Idle.RegularTabGridPage";
-const char kUMATabSwitcherIdleRecentTabsHistogram[] =
-    "IOS.TabSwitcher.Idle.RecentTabs";
 const char kUMATabSwitcherIdleTabGroupsHistogram[] =
     "IOS.TabSwitcher.Idle.TabGroups";
 
@@ -30,8 +28,6 @@ NSString* const kTabGridCancelButtonIdentifier =
     @"TabGridCancelButtonIdentifier";
 NSString* const kTabGridSearchButtonIdentifier =
     @"TabGridSearchButtonIdentifier";
-NSString* const kTabGridCloseAllButtonIdentifier =
-    @"TabGridCloseAllButtonIdentifier";
 NSString* const kTabGridUndoCloseAllButtonIdentifier =
     @"TabGridUndoCloseAllButtonIdentifier";
 NSString* const kTabGridIncognitoTabsEmptyStateIdentifier =
@@ -61,12 +57,9 @@ NSString* const kTabGridScrimIdentifier = @"kTabGridScrimIdentifier";
 NSString* const kTabCellActivityLabelIdentifier =
     @"TabCellActivityLabelIdentifier";
 
-// The color of the text buttons in the toolbars.
-const int kTabGridToolbarTextButtonColor = 0xFFFFFF;
-
-// Colors for the empty state and disabled tab view.
-const int kTabGridEmptyStateTitleTextColor = 0xF8F9FA;
-const int kTabGridEmptyStateBodyTextColor = 0xBDC1C6;
+UIColor* TabGridGlassButtonTintColor() {
+  return [UIColor.blackColor colorWithAlphaComponent:0.25];
+}
 
 // The distance the toolbar content is inset from either side.
 const CGFloat kTabGridToolbarHorizontalInset = 16.0f;
@@ -79,8 +72,8 @@ extern const CGFloat kTabGridEmptyStateVerticalInset = 17.0f;
 extern const CGFloat kTabGridEmptyStateHorizontalInset = 80.0f;
 
 // The insets from the edges for the floating button.
-const CGFloat kTabGridFloatingButtonVerticalInset = 28.0f;
-const CGFloat kTabGridFloatingButtonHorizontalInset = 20.0f;
+const CGFloat kTabGridFloatingButtonInset = 10.0f;
+const CGFloat kTabGridFloatingButtonInsetIPad = 20.0f;
 
 // The Search bar original width ratio of the available space from the
 // containing toolbar before any width modifiers.

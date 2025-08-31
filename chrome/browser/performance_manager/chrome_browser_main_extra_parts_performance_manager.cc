@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/byte_count.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/memory_pressure_monitor.h"
@@ -26,6 +27,7 @@
 #include "chrome/browser/performance_manager/policies/freezing_opt_out_checker.h"
 #include "chrome/browser/performance_manager/policies/keep_alive_dse_policy.h"
 #include "chrome/browser/performance_manager/policies/policy_features.h"
+#include "chrome/browser/performance_manager/policies/termination_target_policy.h"
 #include "chrome/browser/performance_manager/policies/working_set_trimmer_policy.h"
 #include "chrome/browser/performance_manager/user_tuning/profile_discard_opt_out_list_helper.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -180,17 +182,26 @@ void ChromeBrowserMainExtraPartsPerformanceManager::CreatePoliciesAndDecorators(
           performance_manager::policies::ReportPageProcessesPolicy>());
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if !BUILDFLAG(IS_ANDROID)
   using performance_manager::policies::DiscardEligibilityPolicy;
-  using performance_manager::policies::FreezingOptOutChecker;
-
-  graph->PassToGraph(FormInteractionTabHelper::CreateGraphObserver());
-
   auto discard_eligibility_policy =
       std::make_unique<DiscardEligibilityPolicy>();
   auto weak_discard_eligibility_policy =
       discard_eligibility_policy->GetWeakPtr();
   graph->PassToGraph(std::move(discard_eligibility_policy));
+
+#if BUILDFLAG(IS_WIN)
+  if (base::FeatureList::IsEnabled(
+          performance_manager::features::kTerminationTargetPolicy)) {
+    graph->PassToGraph(
+        std::make_unique<performance_manager::TerminationTargetPolicy>());
+  }
+#endif  // BUILDFLAG(IS_WIN)
+
+#if !BUILDFLAG(IS_ANDROID)
+  using performance_manager::policies::FreezingOptOutChecker;
+
+  graph->PassToGraph(FormInteractionTabHelper::CreateGraphObserver());
+
   graph->PassToGraph(
       std::make_unique<performance_manager::policies::PageDiscardingHelper>());
 
@@ -299,14 +310,21 @@ void ChromeBrowserMainExtraPartsPerformanceManager::PostCreateThreads() {
 
   g_browser_process->profile_manager()->AddObserver(this);
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
+  if (base::FeatureList::IsEnabled(chrome::android::kProtectedTabsAndroid)) {
+    // performance_manager::policies::DiscardEligibilityPolicy requires
+    // performance_manager::user_tuning::ProfileDiscardOptOutListHelper.
+    profile_discard_opt_out_list_helper_ = std::make_unique<
+        performance_manager::user_tuning::ProfileDiscardOptOutListHelper>();
+  }
+#else
   profile_discard_opt_out_list_helper_ = std::make_unique<
       performance_manager::user_tuning::ProfileDiscardOptOutListHelper>();
   // Create the UserPerformanceTuningManager and BatterySaverMode here so that
   // early UI code can register observers, but only start them in
   // PreMainMessageLoopRun because they require other systems like the
   // HostFrameSinkManager to exist.
-  uint64_t system_memory_kb = base::SysInfo::AmountOfPhysicalMemory() / 1024;
+  base::ByteCount system_memory = base::SysInfo::AmountOfPhysicalMemory();
   user_performance_tuning_manager_ = base::WrapUnique(
       new performance_manager::user_tuning::UserPerformanceTuningManager(
           g_browser_process->local_state(),
@@ -315,10 +333,11 @@ void ChromeBrowserMainExtraPartsPerformanceManager::PostCreateThreads() {
               base::WrapUnique(new performance_manager::user_tuning::
                                    UserPerformanceTuningManager::
                                        UserPerformanceTuningReceiverImpl),
-              /*resident_set_threshold_kb=*/system_memory_kb * 100 /
+              /*resident_set_threshold=*/system_memory *
                   performance_manager::user_tuning::
                       UserPerformanceTuningNotifier::
-                          kMemoryPercentThresholdForPromo,
+                          kMemoryPercentThresholdForPromo /
+                  100,
               /*tab_count_threshold=*/
               performance_manager::user_tuning::UserPerformanceTuningNotifier::
                   kTabCountThresholdForPromo)));
@@ -407,7 +426,9 @@ void ChromeBrowserMainExtraPartsPerformanceManager::PostMainMessageLoopRun() {
   page_live_state_data_helper_.reset();
   page_load_metrics_observer_.reset();
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
+  profile_discard_opt_out_list_helper_.reset();
+#else
   battery_saver_mode_manager_.reset();
   user_performance_tuning_manager_.reset();
   performance_detection_manager_.reset();
@@ -428,7 +449,11 @@ void ChromeBrowserMainExtraPartsPerformanceManager::OnProfileAdded(
   performance_manager::PerformanceManagerRegistry::GetInstance()
       ->NotifyBrowserContextAdded(profile);
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
+  if (profile_discard_opt_out_list_helper_) {
+    profile_discard_opt_out_list_helper_->OnProfileAdded(profile);
+  }
+#else
   profile_discard_opt_out_list_helper_->OnProfileAdded(profile);
 #endif
 }
@@ -444,7 +469,11 @@ void ChromeBrowserMainExtraPartsPerformanceManager::OnProfileWillBeDestroyed(
   performance_manager::PerformanceManagerRegistry::GetInstance()
       ->NotifyBrowserContextRemoved(profile);
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
+  if (profile_discard_opt_out_list_helper_) {
+    profile_discard_opt_out_list_helper_->OnProfileWillBeRemoved(profile);
+  }
+#else
   profile_discard_opt_out_list_helper_->OnProfileWillBeRemoved(profile);
 #endif
 }

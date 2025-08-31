@@ -37,7 +37,6 @@
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_features.h"
-#include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/autofill/core/common/autofill_regexes.h"
 #include "components/autofill/core/common/credit_card_network_identifiers.h"
 #include "components/autofill/core/common/credit_card_number_validation.h"
@@ -52,12 +51,7 @@ namespace {
 
 constexpr char16_t kCreditCardObfuscationSymbol = '*';
 
-constexpr char16_t kWhiteSpaceSeparator = ' ';
-
 constexpr int kMaxNicknameLength = 25;
-
-constexpr auto k15DigitAmexNumberSegmentations = std::to_array({4, 6, 5});
-constexpr auto k16DigitNumberSegmentations = std::to_array({4, 4, 4, 4});
 
 // Suffix for GUID of a virtual card to differentiate it from it's corresponding
 // masked server card.
@@ -124,25 +118,6 @@ std::u16string GetLastFourDigits(const std::u16string& number) {
   }
 
   return stripped.substr(stripped.size() - kNumLastDigits, kNumLastDigits);
-}
-
-// Returns a new string based on the input `number` by adding a white space
-// between `segments`. The provided `segments` denotes the length of each
-// segment, and we don't need to add whitespace to the last segmentation. For
-// example, if you would like to format 15-digit card number into "XXXX XXXXXX
-// XXXXX", you need to provide [4, 6, 5] as the `segments`.
-std::u16string AddWhiteSpaceSeparatorForNumber(const std::u16string& number,
-                                               base::span<const int> segments) {
-  std::u16string formatted;
-  int pos = 0;
-  // We don't need to add white space to the last segmentation.
-  for (size_t i = 0; i < segments.size() - 1; i++) {
-    formatted += number.substr(pos, segments[i]) + kWhiteSpaceSeparator;
-    pos += segments[i];
-  }
-  // Add the remaining digits.
-  formatted += number.substr(pos);
-  return formatted;
 }
 
 Suggestion::Icon ConvertCardNetworkIntoIcon(std::string_view network) {
@@ -221,6 +196,37 @@ std::u16string CreditCard::GetObfuscatedStringForCardDigits(
   obfuscated_string.append(digits);
   base::i18n::WrapStringWithLTRFormatting(&obfuscated_string);
   return obfuscated_string;
+}
+
+// static
+std::string_view CreditCard::GetBenefitSourceStringFromEnum(
+    BenefitSource benefit_source_enum) {
+  switch (benefit_source_enum) {
+    case BenefitSource::kSourceUnknown:
+      return "";
+    case BenefitSource::kSourceAmex:
+      return kAmexCardBenefitSource;
+    case BenefitSource::kSourceBmo:
+      return kBmoCardBenefitSource;
+    case BenefitSource::kSourceCurinos:
+      return kCurinosCardBenefitSource;
+  }
+  NOTREACHED();
+}
+
+// static
+CreditCard::BenefitSource CreditCard::GetEnumFromBenefitSourceString(
+    std::string_view benefit_source_string) {
+  if (benefit_source_string == kAmexCardBenefitSource) {
+    return BenefitSource::kSourceAmex;
+  }
+  if (benefit_source_string == kBmoCardBenefitSource) {
+    return BenefitSource::kSourceBmo;
+  }
+  if (benefit_source_string == kCurinosCardBenefitSource) {
+    return BenefitSource::kSourceCurinos;
+  }
+  return BenefitSource::kSourceUnknown;
 }
 
 CreditCard::CreditCard(const std::string& guid, const std::string& origin)
@@ -343,13 +349,19 @@ int CreditCard::IconResourceId(Suggestion::Icon icon) {
     case Suggestion::Icon::kNoIcon:
     case Suggestion::Icon::kOfferTag:
     case Suggestion::Icon::kPenSpark:
+    case Suggestion::Icon::kPersonCheck:
     case Suggestion::Icon::kPlusAddress:
+    case Suggestion::Icon::kQuestionMark:
+    case Suggestion::Icon::kRecoveryPassword:
     case Suggestion::Icon::kSaveAndFill:
     case Suggestion::Icon::kScanCreditCard:
     case Suggestion::Icon::kSettings:
     case Suggestion::Icon::kSettingsAndroid:
     case Suggestion::Icon::kUndo:
     case Suggestion::Icon::kBnpl:
+    case Suggestion::Icon::kGoogleWallet:
+    case Suggestion::Icon::kGoogleWalletMonochrome:
+    case Suggestion::Icon::kAndroidMessages:
       NOTREACHED();
   }
   NOTREACHED();
@@ -619,10 +631,11 @@ void CreditCard::GetMatchingTypes(const std::u16string& text,
     }
   }
 
-  int month = 0;
-  if (data_util::ParseExpirationMonth(text, app_locale, &month) &&
-      month == expiration_month_) {
-    matching_types->insert(CREDIT_CARD_EXP_MONTH);
+  if (std::optional<int> parsed_month =
+          data_util::ParseMonthFromString(text, app_locale)) {
+    if (*parsed_month == expiration_month_) {
+      matching_types->insert(CREDIT_CARD_EXP_MONTH);
+    }
   }
 }
 
@@ -647,11 +660,17 @@ void CreditCard::SetInfoForMonthInputType(const std::u16string& value) {
 }
 
 void CreditCard::SetExpirationMonth(int expiration_month) {
-  data_util::SetExpirationMonth(expiration_month, &expiration_month_);
+  if (std::optional<int> parsed_month =
+          data_util::GetExpirationMonth(expiration_month)) {
+    expiration_month_ = *parsed_month;
+  }
 }
 
 void CreditCard::SetExpirationYear(int expiration_year) {
-  data_util::SetExpirationYear(expiration_year, &expiration_year_);
+  if (std::optional<int> parsed_year =
+          data_util::GetExpirationYear(expiration_year)) {
+    expiration_year_ = *parsed_year;
+  }
 }
 
 void CreditCard::SetNickname(const std::u16string& nickname) {
@@ -791,6 +810,11 @@ int CreditCard::Compare(const CreditCard& credit_card) const {
     return comparison;
   }
 
+  comparison = benefit_source_.compare(credit_card.benefit_source_);
+  if (comparison != 0) {
+    return comparison;
+  }
+
   // Do not distinguish masked server cards from full server cards as this is
   // not needed and not desired - we want to identify masked server card from
   // sync with the (potential) full server card stored locally.
@@ -809,6 +833,15 @@ int CreditCard::Compare(const CreditCard& credit_card) const {
   }
   if (static_cast<int>(card_info_retrieval_enrollment_state_) >
       static_cast<int>(credit_card.card_info_retrieval_enrollment_state_)) {
+    return 1;
+  }
+
+  if (static_cast<int>(card_creation_source_) <
+      static_cast<int>(credit_card.card_creation_source_)) {
+    return -1;
+  }
+  if (static_cast<int>(card_creation_source_) >
+      static_cast<int>(credit_card.card_creation_source_)) {
     return 1;
   }
   return 0;
@@ -923,11 +956,20 @@ bool CreditCard::HasValidExpirationDate() const {
 
 bool CreditCard::SetExpirationMonthFromString(const std::u16string& text,
                                               const std::string& app_locale) {
-  return data_util::ParseExpirationMonth(text, app_locale, &expiration_month_);
+  if (std::optional<int> parsed_month =
+          data_util::ParseMonthFromString(text, app_locale)) {
+    expiration_month_ = *parsed_month;
+    return true;
+  }
+  return false;
 }
 
 bool CreditCard::SetExpirationYearFromString(const std::u16string& text) {
-  return data_util::ParseExpirationYear(text, &expiration_year_);
+  if (std::optional<int> parsed_year = data_util::ParseYearFromString(text)) {
+    expiration_year_ = *parsed_year;
+    return true;
+  }
+  return false;
 }
 
 void CreditCard::SetExpirationDateFromString(const std::u16string& text) {
@@ -1016,17 +1058,7 @@ std::u16string CreditCard::LastFourDigits() const {
 }
 
 std::u16string CreditCard::FullDigitsForDisplay() const {
-  std::u16string stripped = StripCardNumberSeparators(number_);
-  if (stripped.size() == 16) {
-    return AddWhiteSpaceSeparatorForNumber(stripped,
-                                           k16DigitNumberSegmentations);
-  }
-  if (stripped.size() == 15 && network_ == kAmericanExpressCard) {
-    return AddWhiteSpaceSeparatorForNumber(stripped,
-                                           k15DigitAmexNumberSegmentations);
-  }
-
-  return number_;
+  return GetFormattedCardNumberForDisplay(number_);
 }
 
 std::u16string CreditCard::NetworkForDisplay() const {
@@ -1200,7 +1232,7 @@ FieldTypeSet CreditCard::GetSupportedTypes() const {
 
 std::u16string CreditCard::GetInfo(const AutofillType& autofill_type,
                                    const std::string& app_locale) const {
-  FieldType type = autofill_type.GetStorableType();
+  const FieldType type = autofill_type.GetCreditCardType();
   if (type == CREDIT_CARD_NUMBER) {
     // Web pages should never actually be filled by a masked server card,
     // but this function is used at the preview stage.
@@ -1216,7 +1248,7 @@ bool CreditCard::SetInfoWithVerificationStatus(const AutofillType& type,
                                                const std::u16string& value,
                                                const std::string& app_locale,
                                                VerificationStatus status) {
-  FieldType storable_type = type.GetStorableType();
+  const FieldType storable_type = type.GetCreditCardType();
   if (storable_type == CREDIT_CARD_EXP_MONTH) {
     return SetExpirationMonthFromString(value, app_locale);
   }
@@ -1323,9 +1355,10 @@ std::ostream& operator<<(std::ostream& os, const CreditCard& credit_card) {
             << " " << credit_card.card_art_url().spec() << " "
             << base::UTF16ToUTF8(credit_card.product_description()) << " "
             << credit_card.product_terms_url().spec() << " "
-            << credit_card.cvc() << " "
+            << credit_card.benefit_source() << " " << credit_card.cvc() << " "
             << base::to_underlying(
-                   credit_card.card_info_retrieval_enrollment_state());
+                   credit_card.card_info_retrieval_enrollment_state())
+            << " " << base::to_underlying(credit_card.card_creation_source());
 }
 
 void CreditCard::SetNameOnCardFromSeparateParts() {

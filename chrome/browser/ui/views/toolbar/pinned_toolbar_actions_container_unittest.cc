@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/toolbar/pinned_toolbar/pinned_toolbar_actions_model.h"
 #include "chrome/browser/ui/toolbar/pinned_toolbar/pinned_toolbar_actions_model_factory.h"
 #include "chrome/browser/ui/toolbar/toolbar_pref_names.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/test_with_browser_view.h"
 #include "chrome/browser/ui/views/toolbar/pinned_action_toolbar_button.h"
@@ -23,10 +24,10 @@
 #include "chrome/browser/ui/views/toolbar/pinned_toolbar_button_status_indicator.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_button.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/browser_context.h"
 #include "ui/actions/action_id.h"
@@ -51,6 +52,9 @@ class PinnedToolbarActionsContainerTest : public TestWithBrowserView {
     ASSERT_TRUE(model_);
 
     model_->UpdatePinnedState(kActionShowChromeLabs, false);
+    if (features::HasTabSearchToolbarButton()) {
+      model_->UpdatePinnedState(kActionTabSearch, false);
+    }
     WaitForAnimations();
   }
 
@@ -425,7 +429,7 @@ TEST_F(PinnedToolbarActionsContainerTest,
   UpdateActionItem(actions::kActionCopy);
 
   // Set pinned state for an action item that isn't registered
-  model()->UpdatePinnedState(kActionRouteMedia, true);
+  model()->UpdatePinnedState(kActionExit, true);
   model()->UpdatePinnedState(actions::kActionCut, true);
   model()->UpdatePinnedState(actions::kActionCopy, true);
 
@@ -697,8 +701,9 @@ TEST_F(PinnedToolbarActionsContainerTest, MetricsRecordedForPinnableActions) {
   const auto pinnable_action_suffixes = base::ReadActionSuffixesForAction(
       "Actions.PinnedToolbarButtonActivation");
   EXPECT_EQ(1U, pinnable_action_suffixes.size());
-  // Only one of history or history clusters should be pinnable.
-  size_t expected_pinnable_count = pinnable_action_suffixes[0].size() - 1;
+  // Only one of history or history clusters should be pinnable. The Split View
+  // action is not available via `root_action_item()`.
+  size_t expected_pinnable_count = pinnable_action_suffixes[0].size() - 2;
   if (!features::HasTabSearchToolbarButton()) {
     // Tab search is not pinnable if the feature is disabled.
     expected_pinnable_count -= 1;

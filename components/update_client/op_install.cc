@@ -94,7 +94,7 @@ void InstallComplete(
       MakeSimpleOperationEvent(result.result, protocol_request::kEventCrx3));
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(installer_result_callback), result));
-  if (result.result.category_ != ErrorCategory::kNone) {
+  if (result.result.category != ErrorCategory::kNone) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(std::move(callback), base::unexpected(result.result)));
@@ -124,9 +124,9 @@ void Install(base::OnceCallback<void(const CrxInstaller::Result&)> callback,
              const Unpacker::Result& result) {
   if (result.error != UnpackerError::kNone) {
     std::move(callback).Run(
-        CrxInstaller::Result({.category_ = ErrorCategory::kUnpack,
-                              .code_ = static_cast<int>(result.error),
-                              .extra_ = result.extended_error}));
+        CrxInstaller::Result({.category = ErrorCategory::kUnpack,
+                              .code = static_cast<int>(result.error),
+                              .extra = result.extended_error}));
     return;
   }
 
@@ -162,6 +162,7 @@ void Install(base::OnceCallback<void(const CrxInstaller::Result&)> callback,
 
 // Runs on the original sequence.
 void Unpack(base::OnceCallback<void(const Unpacker::Result&)> callback,
+            const std::string& id,
             const base::FilePath& crx_file,
             std::unique_ptr<Unzipper> unzipper,
             const std::vector<uint8_t>& pk_hash,
@@ -187,7 +188,7 @@ void Unpack(base::OnceCallback<void(const Unpacker::Result&)> callback,
       ->PostTask(
           FROM_HERE,
           base::BindOnce(
-              &Unpacker::Unpack, pk_hash,
+              &Unpacker::Unpack, id, pk_hash,
               // If and only if cached, the original path no longer exists.
               cache_result.has_value() ? cache_result.value() : crx_file,
               std::move(unzipper), crx_format,
@@ -225,7 +226,7 @@ base::OnceClosure InstallOperation(
                              std::move(installer_result_callback),
                              std::move(callback), event_adder, crx_file),
               std::move(install_params), installer, progress_callback),
-          crx_file, std::move(unzipper), pk_hash, crx_format));
+          id, crx_file, std::move(unzipper), pk_hash, crx_format));
   return base::DoNothing();
 }
 

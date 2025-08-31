@@ -20,12 +20,14 @@
 #include "chrome/updater/branded_constants.h"
 #include "chrome/updater/check_for_updates_task.h"
 #include "chrome/updater/configurator.h"
+#include "chrome/updater/constants.h"
 #include "chrome/updater/persisted_data.h"
 #include "chrome/updater/prefs.h"
 #include "chrome/updater/registration_data.h"
 #include "chrome/updater/update_service_impl.h"
 #include "chrome/updater/update_service_internal.h"
 #include "components/prefs/pref_service.h"
+#include "components/update_client/crx_cache.h"
 
 namespace updater {
 namespace {
@@ -96,10 +98,9 @@ class UpdateServiceInternalQualifyingImpl : public UpdateServiceInternal {
     // by registering a higher version of the qualification app. This is because
     // the qualification app update will not happen if the update check period
     // is set to zero.
-    registration.version =
-        base::Version(config_->NextCheckDelay().is_zero()
-                          ? kQualificationUpdatesSuppressedVersion
-                          : kQualificationInitialVersion);
+    registration.version = config_->NextCheckDelay().is_zero()
+                               ? kQualificationUpdatesSuppressedVersion
+                               : kQualificationInitialVersion;
     base::MakeRefCounted<UpdateServiceImpl>(GetUpdaterScope(), config_)
         ->RegisterApp(registration,
                       base::BindOnce(&UpdateServiceInternalQualifyingImpl::
@@ -151,7 +152,13 @@ class UpdateServiceInternalQualifyingImpl : public UpdateServiceInternal {
     VLOG(1) << "Qualification complete, qualified = " << qualified;
     local_prefs_->SetQualified(qualified);
     local_prefs_->GetPrefService()->CommitPendingWrite();
-    std::move(callback).Run();
+    if (qualified) {
+      config_->GetCrxCache()->RemoveAll(kQualificationAppId,
+                                        std::move(callback));
+      return;
+    }
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, std::move(callback));
   }
 
   scoped_refptr<Configurator> config_;

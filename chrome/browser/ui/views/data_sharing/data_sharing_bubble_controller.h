@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_DATA_SHARING_DATA_SHARING_BUBBLE_CONTROLLER_H_
 #define CHROME_BROWSER_UI_VIEWS_DATA_SHARING_DATA_SHARING_BUBBLE_CONTROLLER_H_
 
-#include "chrome/browser/ui/browser_user_data.h"
+#include "base/memory/raw_ref.h"
 #include "chrome/browser/ui/views/bubble/webui_bubble_manager.h"
 #include "chrome/browser/ui/views/data_sharing/data_sharing_utils.h"
 #include "chrome/browser/ui/webui/data_sharing/data_sharing_ui.h"
@@ -14,22 +14,33 @@
 #include "components/saved_tab_groups/public/types.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
 #include "ui/views/widget/widget_observer.h"
 
+class BrowserWindowInterface;
+class Profile;
+class TabStripModel;
+
 // Controller responsible for hosting the data sharing bubble per browser.
-class DataSharingBubbleController
-    : public BrowserUserData<DataSharingBubbleController>,
-      public views::WidgetObserver,
-      public DataSharingUI::Delegate {
+class DataSharingBubbleController : public views::WidgetObserver,
+                                    public DataSharingUI::Delegate {
  public:
+  DECLARE_USER_DATA(DataSharingBubbleController);
+
   using OnCloseCallback = base::OnceCallback<void(
       std::optional<data_sharing::mojom::GroupAction> action,
       std::optional<data_sharing::mojom::GroupActionProgress> progress)>;
 
+  DataSharingBubbleController(BrowserWindowInterface* browser,
+                              Profile* profile,
+                              TabStripModel* tab_strip_model);
   DataSharingBubbleController(const DataSharingBubbleController&) = delete;
   DataSharingBubbleController& operator=(const DataSharingBubbleController&) =
       delete;
   ~DataSharingBubbleController() override;
+
+  static DataSharingBubbleController* From(
+      BrowserWindowInterface* browser_window_interface);
 
   // `request_info` contains the values we want to pass into the loaded WebUI in
   // this bubble.
@@ -46,6 +57,9 @@ class DataSharingBubbleController
   void SetOnShareLinkRequestedCallback(
       collaboration::CollaborationControllerDelegate::
           ResultWithGroupTokenCallback callback);
+
+  void SetJoinCallback(
+      collaboration::CollaborationControllerDelegate::ResultCallback callback);
 
   void OnUrlReadyToShare(GURL url);
 
@@ -67,10 +81,24 @@ class DataSharingBubbleController
     return bubble_view_;
   }
 
- private:
-  friend class BrowserUserData<DataSharingBubbleController>;
+  std::optional<data_sharing::mojom::GroupAction> group_action_for_testing()
+      const {
+    return group_action_;
+  }
 
-  explicit DataSharingBubbleController(Browser* browser);
+  std::optional<data_sharing::mojom::GroupActionProgress>
+  group_action_progress_for_testing() const {
+    return group_action_progress_;
+  }
+
+ private:
+  void MaybeRunJoinCallback(bool on_close);
+
+  Profile* GetProfile();
+
+  const raw_ref<BrowserWindowInterface> browser_;
+  const raw_ref<Profile> profile_;
+  const raw_ref<TabStripModel> tab_strip_model_;
 
   base::ScopedObservation<views::Widget, views::WidgetObserver>
       bubble_widget_observation_{this};
@@ -90,6 +118,10 @@ class DataSharingBubbleController
   // failed to share.
   base::OnceCallback<void(const std::optional<GURL>&)> share_link_callback_;
 
+  // Callback passed from CollaborationService to invoke after successfully join
+  // a group or cancel.
+  collaboration::CollaborationControllerDelegate::ResultCallback join_callback_;
+
   // The latest group action received from Data Sharing SDK.
   std::optional<data_sharing::mojom::GroupAction> group_action_;
 
@@ -97,9 +129,10 @@ class DataSharingBubbleController
   std::optional<data_sharing::mojom::GroupActionProgress>
       group_action_progress_;
 
-  base::WeakPtr<WebUIBubbleDialogView> bubble_view_;
+  ui::ScopedUnownedUserData<DataSharingBubbleController>
+      scoped_unowned_user_data_;
 
-  BROWSER_USER_DATA_KEY_DECL();
+  base::WeakPtr<WebUIBubbleDialogView> bubble_view_;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_DATA_SHARING_DATA_SHARING_BUBBLE_CONTROLLER_H_

@@ -34,6 +34,7 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "mojo/public/cpp/bindings/shared_remote.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 namespace media {
 
@@ -199,7 +200,8 @@ void MojoVideoDecoder::InitializeRemoteDecoder(
   }
 
   remote_decoder_->Initialize(
-      config, low_delay, cdm_id,
+      config, low_delay,
+      cdm_id ? mojom::Cdm::NewCdmId(cdm_id.value()) : nullptr,
       base::BindOnce(&MojoVideoDecoder::OnInitializeDone,
                      base::Unretained(this)));
 }
@@ -207,7 +209,8 @@ void MojoVideoDecoder::InitializeRemoteDecoder(
 void MojoVideoDecoder::OnInitializeDone(const DecoderStatus& status,
                                         bool needs_bitstream_conversion,
                                         int32_t max_decode_requests,
-                                        VideoDecoderType decoder_type) {
+                                        VideoDecoderType decoder_type,
+                                        bool needs_transcryption) {
   DVLOG(1) << __func__ << ": status = " << status.group() << ":"
            << static_cast<int>(status.code());
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -279,11 +282,10 @@ void MojoVideoDecoder::OnVideoFrameDecoded(
     const auto decode_start_time = timestamp_it->second;
     const auto decode_end_time = base::TimeTicks::Now();
 
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
-        "media", "MojoVideoDecoder::Decode", timestamp, decode_start_time);
-    TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP1(
-        "media", "MojoVideoDecoder::Decode", timestamp, decode_end_time,
-        "timestamp", timestamp);
+    TRACE_EVENT_BEGIN("media", "MojoVideoDecoder::Decode",
+                      perfetto::Track(timestamp), decode_start_time);
+    TRACE_EVENT_END("media", perfetto::Track(timestamp), decode_end_time,
+                    "timestamp", timestamp);
     UMA_HISTOGRAM_TIMES("Media.MojoVideoDecoder.Decode",
                         decode_end_time - decode_start_time);
   }

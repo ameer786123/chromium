@@ -77,7 +77,7 @@ class IndicatorDividerBackground : public views::Background {
     cc::PaintFlags flags;
     flags.setAntiAlias(true);
     flags.setStyle(cc::PaintFlags::kFill_Style);
-    flags.setColor(color().ConvertToSkColor(view->GetColorProvider()));
+    flags.setColor(color().ResolveToSkColor(view->GetColorProvider()));
     canvas->DrawPath(path, flags);
   }
 
@@ -190,9 +190,7 @@ gfx::Size PermissionDashboardView::CalculatePreferredSize(
 
 views::View::Views PermissionDashboardView::GetChildrenInZOrder() {
   View::Views paint_order = View::GetChildrenInZOrder();
-
-  std::reverse(paint_order.begin(), paint_order.end());
-
+  std::ranges::reverse(paint_order);
   return paint_order;
 }
 

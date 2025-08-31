@@ -11,9 +11,7 @@
 
 #include "base/functional/callback_helpers.h"
 #include "base/i18n/case_conversion.h"
-#include "chrome/browser/ui/monogram_utils.h"
 #include "chrome/browser/ui/views/controls/hover_button.h"
-#include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/webid/account_selection_view.h"
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
@@ -21,6 +19,10 @@
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/styled_label.h"
+
+namespace network {
+class SharedURLLoaderFactory;
+}  // namespace network
 
 namespace webid {
 
@@ -76,6 +78,9 @@ inline constexpr int kModalButtonSpinnerSize = 20;
 
 inline constexpr char kImageFetcherUmaClient[] = "FedCMAccountChooser";
 
+using AccountSelectionCallback =
+    base::RepeatingCallback<bool(const ui::Event&)>;
+
 class BrandIconImageView : public views::ImageView {
   METADATA_HEADER(BrandIconImageView, views::ImageView)
 
@@ -96,7 +101,7 @@ class BrandIconImageView : public views::ImageView {
 
 class AccountHoverButton : public HoverButton {
  public:
-  AccountHoverButton(PressedCallback callback,
+  AccountHoverButton(AccountSelectionCallback callback,
                      std::unique_ptr<views::View> icon_view,
                      const std::u16string& title,
                      const std::u16string& subtitle,
@@ -106,7 +111,10 @@ class AccountHoverButton : public HoverButton {
                      int button_position);
   AccountHoverButton(const AccountHoverButton&) = delete;
   AccountHoverButton& operator=(const AccountHoverButton&) = delete;
-  ~AccountHoverButton() override = default;
+  ~AccountHoverButton() override;
+
+  // HoverButton
+  void StateChanged(ButtonState old_state) override;
 
   void OnPressed(const ui::Event& event);
   bool HasBeenClicked();
@@ -119,8 +127,11 @@ class AccountHoverButton : public HoverButton {
   // Should only be invoked when the button has a secondary view.
   void ReplaceSecondaryViewWithSpinner();
 
+  // Used for testing.
+  void SetCallbackForTesting(AccountSelectionCallback callback);
+
  private:
-  PressedCallback callback_;
+  AccountSelectionCallback callback_;
   // The order of this account button relative to other account buttons in
   // the dialog (e.g. 0 is the topmost account, 1 the one below it, etc.). Used
   // to record a metric when the button is clicked.
@@ -152,7 +163,8 @@ class AccountSelectionViewBase {
   AccountSelectionViewBase(
       FedCmAccountSelectionView* owner,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      std::u16string rp_for_display);
+      const content::RelyingPartyData& rp_data,
+      float device_scale_factor);
   virtual ~AccountSelectionViewBase();
 
   // Updates the FedCM dialog to show the "account picker" sheet.
@@ -193,10 +205,8 @@ class AccountSelectionViewBase {
   // Gets the title of the dialog.
   virtual std::string GetDialogTitle() const = 0;
 
-  // Gets the initial letter from the given string and returns it as
-  // a UTF-16 string. Correctly handles non-BMP characters.
-  static std::u16string GetInitialLetterAsUppercase(
-      const std::string& utf8_string);
+  // Gets the subtitle of the dialog, if any.
+  virtual std::optional<std::string> GetDialogSubtitle() const = 0;
 
  protected:
   void SetLabelProperties(views::Label* label);
@@ -205,24 +215,24 @@ class AccountSelectionViewBase {
   // the account on the left, and information about the account on the right.
   // |clickable_position| contains an int if and only if the account is a
   // HoverButton, and in that case the number is the 0-based position of that
-  // account in the overall dialog.
+  // account in the overall dialog. |used_string| is set if this is a returning
+  // account in a multi IDP dialog.
   std::unique_ptr<views::View> CreateAccountRow(
       const IdentityRequestAccountPtr& account,
       std::optional<int> clickable_position,
       bool should_include_idp,
       bool is_modal_dialog = false,
       int additional_vertical_padding = 0,
-      std::optional<std::u16string> last_used_string = std::nullopt);
+      std::optional<std::u16string> used_string = std::nullopt);
 
   // Returns a StyledLabel containing a disclosure label. The label links to
   // privacy policy and terms of service URLs, if available.
   std::unique_ptr<views::StyledLabel> CreateDisclosureLabel(
-      const content::IdentityProviderData& idp_data);
+      const IdentityRequestAccountPtr& account);
 
   // Gets the summary and description string of the error.
   std::pair<std::u16string, std::u16string> GetErrorDialogText(
       const std::optional<TokenError>& error,
-      const std::u16string& rp_for_display,
       const std::u16string& idp_for_display);
 
   // Observes events on AccountSelectionBubbleView.
@@ -239,8 +249,11 @@ class AccountSelectionViewBase {
   // but that's after FedCmAccountSelectionView is destroyed.
   raw_ptr<FedCmAccountSelectionView, DanglingUntriaged> owner_{nullptr};
 
-  // The description of the RP to be used in the dialog.
-  std::u16string rp_for_display_;
+  // Relying party data to customize the dialog.
+  content::RelyingPartyData rp_data_;
+
+  // The device's scale factor.
+  float device_scale_factor_;
 
   // Used to ensure that callbacks are not run if the AccountSelectionViewBase
   // is destroyed.

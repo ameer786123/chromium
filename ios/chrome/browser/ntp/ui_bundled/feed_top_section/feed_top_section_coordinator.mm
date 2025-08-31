@@ -12,6 +12,7 @@
 #import "components/search_engines/template_url_service.h"
 #import "components/signin/public/base/signin_metrics.h"
 #import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_presenter.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_promo_view_mediator.h"
 #import "ios/chrome/browser/ntp/ui_bundled/feed_top_section/feed_top_section_mediator.h"
@@ -20,6 +21,7 @@
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_delegate.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_utils.h"
 #import "ios/chrome/browser/push_notification/model/constants.h"
+#import "ios/chrome/browser/push_notification/model/provisional_push_notification_service_factory.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_client_id.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_service.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_util.h"
@@ -47,7 +49,7 @@ using base::UmaHistogramEnumeration;
 using base::UserMetricsAction;
 
 @interface FeedTopSectionCoordinator () <
-    SigninPresenter,
+    SigninPromoViewMediatorDelegate,
     NotificationsOptInAlertCoordinatorDelegate>
 
 @property(nonatomic, strong) FeedTopSectionMediator* feedTopSectionMediator;
@@ -85,13 +87,16 @@ using base::UserMetricsAction;
   AuthenticationService* authenticationService =
       AuthenticationServiceFactory::GetForProfile(profile);
   syncer::SyncService* syncService = SyncServiceFactory::GetForProfile(profile);
+  ProvisionalPushNotificationService* provisionalPushNotificationService =
+      ProvisionalPushNotificationServiceFactory::GetForProfile(profile);
 
   self.feedTopSectionMediator = [[FeedTopSectionMediator alloc]
-      initWithConsumer:self.feedTopSectionViewController
-       identityManager:identityManager
-           authService:authenticationService
-           isIncognito:profile->IsOffTheRecord()
-           prefService:profile->GetPrefs()];
+                        initWithConsumer:self.feedTopSectionViewController
+                         identityManager:identityManager
+                             authService:authenticationService
+      provisionalPushNotificationService:provisionalPushNotificationService
+                               incognito:profile->IsOffTheRecord()
+                             prefService:profile->GetPrefs()];
   self.isSignInPromoEnabled =
       ShouldShowTopOfFeedSyncPromo() && authenticationService &&
       [self.NTPDelegate isSignInAllowed] &&
@@ -111,7 +116,7 @@ using base::UserMetricsAction;
                               syncService:syncService
                               accessPoint:signin_metrics::AccessPoint::
                                               kNtpFeedTopPromo
-                          signinPresenter:self
+                                 delegate:self
                  accountSettingsPresenter:nil
         changeProfileContinuationProvider:DoNothingContinuationProvider()];
 
@@ -172,12 +177,16 @@ using base::UserMetricsAction;
   self.isSigninPromoVisibleOnScreen = visible;
 }
 
-#pragma mark - SigninPresenter
+#pragma mark - SigninPromoViewMediatorDelegate
 
-- (void)showSignin:(ShowSigninCommand*)command {
-  id<ApplicationCommands> handler = HandlerForProtocol(
-      self.browser->GetCommandDispatcher(), ApplicationCommands);
-  [handler showSignin:command baseViewController:self.baseViewController];
+- (void)showSignin:(SigninPromoViewMediator*)mediator
+           command:(ShowSigninCommand*)command {
+  __weak __typeof(self) weakSelf = self;
+  [command addSigninCompletion:^(SigninCoordinatorResult result,
+                                 id<SystemIdentity>) {
+    [weakSelf.signinPromoMediator signinDidCompleteWithResult:result];
+  }];
+  [self.NTPDelegate showSigninWithCommand:command];
 }
 
 #pragma mark - Setters

@@ -38,7 +38,6 @@
 #include "chrome/browser/page_load_metrics/observers/protocol_page_load_metrics_observer.h"
 #include "chrome/browser/page_load_metrics/observers/scheme_page_load_metrics_observer.h"
 #include "chrome/browser/page_load_metrics/observers/security_state_page_load_metrics_observer.h"
-#include "chrome/browser/page_load_metrics/observers/service_worker_page_load_metrics_observer.h"
 #include "chrome/browser/page_load_metrics/observers/signed_exchange_page_load_metrics_observer.h"
 #include "chrome/browser/page_load_metrics/observers/tab_strip_page_load_metrics_observer.h"
 #include "chrome/browser/page_load_metrics/observers/third_party_cookie_deprecation_page_load_metrics_observer.h"
@@ -49,6 +48,7 @@
 #include "chrome/browser/search/search.h"
 #include "chrome/common/url_constants.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_contents.h"
+#include "components/page_load_metrics/browser/features.h"
 #include "components/page_load_metrics/browser/metrics_web_contents_observer.h"
 #include "components/page_load_metrics/browser/observers/ad_metrics/ads_page_load_metrics_observer.h"
 #include "components/page_load_metrics/browser/observers/third_party_metrics_observer.h"
@@ -77,6 +77,7 @@
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/page_load_metrics/observers/serp_page_load_metrics_observer.h"
 #include "extensions/common/constants.h"
 #endif
 
@@ -87,8 +88,8 @@ bool IsNonTabWebUI(content::BrowserContext* browser_context, const GURL& url) {
   return TopChromeWebUIConfig::From(browser_context, url) != nullptr;
 }
 
-std::string GetNonTabWebUIName(content::BrowserContext* browser_context,
-                               const GURL& url) {
+std::string_view GetNonTabWebUIName(content::BrowserContext* browser_context,
+                                    const GURL& url) {
   CHECK(IsNonTabWebUI(browser_context, url));
   return TopChromeWebUIConfig::From(browser_context, url)->GetWebUIName();
 }
@@ -149,9 +150,9 @@ void PageLoadMetricsEmbedder::RegisterObservers(
 #if !BUILDFLAG(IS_ANDROID)
   if (IsNonTabWebUI(navigation_handle->GetURL())) {
     // This embedder is for a non-tab chrome:// page.
-    tracker->AddObserver(
-        std::make_unique<NonTabPageLoadMetricsObserver>(GetNonTabWebUIName(
-            web_contents()->GetBrowserContext(), navigation_handle->GetURL())));
+    tracker->AddObserver(std::make_unique<NonTabPageLoadMetricsObserver>(
+        std::string(GetNonTabWebUIName(web_contents()->GetBrowserContext(),
+                                       navigation_handle->GetURL()))));
     return;
   }
 #endif
@@ -185,8 +186,6 @@ void PageLoadMetricsEmbedder::RegisterObservers(
     tracker->AddObserver(
         std::make_unique<OptimizationGuidePageLoadMetricsObserver>());
     tracker->AddObserver(
-        std::make_unique<ServiceWorkerPageLoadMetricsObserver>());
-    tracker->AddObserver(
         std::make_unique<SignedExchangePageLoadMetricsObserver>());
     tracker->AddObserver(
         std::make_unique<HttpsEngagementPageLoadMetricsObserver>(
@@ -204,15 +203,17 @@ void PageLoadMetricsEmbedder::RegisterObservers(
                         web_contents()->GetBrowserContext()),
                     ServiceAccessType::EXPLICIT_ACCESS),
                 base::BindRepeating(&GetApplicationLocale), is_incognito);
-    if (ads_observer)
+    if (ads_observer) {
       tracker->AddObserver(std::move(ads_observer));
+    }
 
     tracker->AddObserver(std::make_unique<ThirdPartyMetricsObserver>());
 
     std::unique_ptr<page_load_metrics::PageLoadMetricsObserver> ukm_observer =
         UkmPageLoadMetricsObserver::CreateIfNeeded(is_incognito);
-    if (ukm_observer)
+    if (ukm_observer) {
       tracker->AddObserver(std::move(ukm_observer));
+    }
 
 #if BUILDFLAG(IS_ANDROID)
     tracker->AddObserver(std::make_unique<AndroidPageLoadMetricsObserver>());
@@ -221,8 +222,9 @@ void PageLoadMetricsEmbedder::RegisterObservers(
         loading_predictor_observer =
             LoadingPredictorPageLoadMetricsObserver::CreateIfNeeded(
                 web_contents());
-    if (loading_predictor_observer)
+    if (loading_predictor_observer) {
       tracker->AddObserver(std::move(loading_predictor_observer));
+    }
     if (blink::LcppEnabled()) {
       tracker->AddObserver(
           std::make_unique<LcpCriticalPathPredictorPageLoadMetricsObserver>());
@@ -244,13 +246,17 @@ void PageLoadMetricsEmbedder::RegisterObservers(
   tracker->AddObserver(
       SecurityStatePageLoadMetricsObserver::MaybeCreateForProfile(
           web_contents()->GetBrowserContext()));
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  tracker->AddObserver(std::make_unique<SerpPageLoadMetricsObserver>());
+#endif
   tracker->AddObserver(
       std::make_unique<PageAnchorsMetricsObserver>(tracker->GetWebContents()));
   std::unique_ptr<TranslatePageLoadMetricsObserver> translate_observer =
       TranslatePageLoadMetricsObserver::CreateIfNeeded(
           tracker->GetWebContents());
-  if (translate_observer)
+  if (translate_observer) {
     tracker->AddObserver(std::move(translate_observer));
+  }
   tracker->AddObserver(std::make_unique<ZstdPageLoadMetricsObserver>());
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -266,8 +272,9 @@ void PageLoadMetricsEmbedder::RegisterObservers(
 bool PageLoadMetricsEmbedder::IsNewTabPageUrl(const GURL& url) {
   Profile* profile =
       Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  if (!profile)
+  if (!profile) {
     return false;
+  }
   return search::IsInstantNTPURL(url, profile);
 }
 
@@ -304,8 +311,10 @@ bool PageLoadMetricsEmbedder::IsIncognito(content::WebContents* web_contents) {
 page_load_metrics::PageLoadMetricsMemoryTracker*
 PageLoadMetricsEmbedder::GetMemoryTrackerForBrowserContext(
     content::BrowserContext* browser_context) {
-  if (!base::FeatureList::IsEnabled(features::kV8PerFrameMemoryMonitoring))
+  if (!base::FeatureList::IsEnabled(
+          page_load_metrics::features::kV8PerFrameMemoryMonitoring)) {
     return nullptr;
+  }
 
   return page_load_metrics::PageLoadMetricsMemoryTrackerFactory::
       GetForBrowserContext(browser_context);
@@ -317,7 +326,6 @@ void InitializePageLoadMetricsForWebContents(
     content::WebContents* web_contents) {
   // Change this method? consider to modify the peer in
   // android_webview/browser/page_load_metrics/page_load_metrics_initialize.cc
-  // weblayer/browser/page_load_metrics_initialize.cc
   // as well.
   page_load_metrics::MetricsWebContentsObserver::CreateForWebContents(
       web_contents, std::make_unique<PageLoadMetricsEmbedder>(web_contents));

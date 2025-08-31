@@ -323,10 +323,14 @@ void InputHandlerProxy::HandleInputEventWithLatencyInfo(
               });
 
   bool is_fling =
-      WebInputEvent::Type::kGestureScrollUpdate == event->Event().GetType() &&
-      static_cast<const WebGestureEvent&>(event->Event())
-              .data.scroll_update.inertial_phase ==
-          WebGestureEvent::InertialPhaseState::kMomentum;
+      (WebInputEvent::Type::kGestureScrollUpdate == event->Event().GetType() &&
+       static_cast<const WebGestureEvent&>(event->Event())
+               .data.scroll_update.inertial_phase ==
+           WebGestureEvent::InertialPhaseState::kMomentum) ||
+      (WebInputEvent::Type::kGestureScrollEnd == event->Event().GetType() &&
+       static_cast<const WebGestureEvent&>(event->Event())
+               .data.scroll_end.inertial_phase ==
+           WebGestureEvent::InertialPhaseState::kMomentum);
   DCHECK(input_handler_);
   input_handler_->NotifyInputEvent(is_fling);
 
@@ -1055,7 +1059,8 @@ InputHandlerProxy::EventDisposition InputHandlerProxy::HandleMouseWheel(
 
   gfx::PointF position_in_widget = wheel_event.PositionInWidget();
   if (input_handler_->HasBlockingWheelEventHandlerAt(
-          gfx::Point(position_in_widget.x(), position_in_widget.y()))) {
+          gfx::Point(position_in_widget.x(), position_in_widget.y())) ||
+      wheel_event.phase == WebMouseWheelEvent::kPhaseMayBegin) {
     result = DID_NOT_HANDLE;
   } else {
     cc::EventListenerProperties properties =

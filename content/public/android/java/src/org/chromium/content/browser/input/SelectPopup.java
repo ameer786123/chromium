@@ -4,6 +4,7 @@
 
 package org.chromium.content.browser.input;
 
+
 import android.content.Context;
 import android.view.View;
 import android.view.ViewGroup;
@@ -41,17 +42,18 @@ public class SelectPopup
     /** UI for Select popup. */
     public interface Ui {
         /** Shows the popup. */
-        public void show();
+        void show();
 
         /**
          * Hides the popup.
+         *
          * @param sendsCancelMessage Sends cancel message before hiding if true.
          */
-        public void hide(boolean sendsCancelMessage);
+        void hide(boolean sendsCancelMessage);
     }
 
     private final WebContentsImpl mWebContents;
-    private View mContainerView;
+    private @Nullable View mContainerView;
     private @Nullable Ui mPopupView;
     private long mNativeSelectPopup;
     private long mNativeSelectPopupSourceFrame;
@@ -111,7 +113,7 @@ public class SelectPopup
     // ViewAndroidDelegate.ContainerViewObserver
 
     @Override
-    public void onUpdateContainerView(ViewGroup view) {
+    public void onUpdateContainerView(@Nullable ViewGroup view) {
         mContainerView = view;
         hide();
     }
@@ -142,7 +144,9 @@ public class SelectPopup
             boolean multiple,
             int[] selectedIndices,
             boolean rightAligned) {
-        if (mContainerView.getParent() == null || mContainerView.getVisibility() != View.VISIBLE) {
+        if (mContainerView == null
+                || mContainerView.getParent() == null
+                || mContainerView.getVisibility() != View.VISIBLE) {
             mNativeSelectPopupSourceFrame = nativeSelectPopupSourceFrame;
             selectMenuItems(null);
             return;
@@ -208,11 +212,7 @@ public class SelectPopup
     public void selectMenuItems(int @Nullable [] indices) {
         if (mNativeSelectPopup != 0) {
             SelectPopupJni.get()
-                    .selectMenuItems(
-                            mNativeSelectPopup,
-                            SelectPopup.this,
-                            mNativeSelectPopupSourceFrame,
-                            indices);
+                    .selectMenuItems(mNativeSelectPopup, mNativeSelectPopupSourceFrame, indices);
         }
         mNativeSelectPopupSourceFrame = 0;
         mPopupView = null;
@@ -222,7 +222,6 @@ public class SelectPopup
     interface Natives {
         void selectMenuItems(
                 long nativeSelectPopup,
-                SelectPopup caller,
                 long nativeSelectPopupSourceFrame,
                 int @Nullable [] indices);
     }

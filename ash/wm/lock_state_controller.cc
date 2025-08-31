@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/wm/lock_state_controller.h"
 
 #include <algorithm>
@@ -18,6 +13,7 @@
 #include "ash/cancel_mode.h"
 #include "ash/capture_mode/capture_mode_controller.h"
 #include "ash/constants/ash_pref_names.h"
+#include "ash/multi_user/multi_user_window_manager_impl.h"
 #include "ash/public/cpp/saved_desk_delegate.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/shutdown_controller.h"
@@ -40,6 +36,7 @@
 #include "ash/wm/workspace/backdrop_controller.h"
 #include "ash/wm/workspace/workspace_layout_manager.h"
 #include "ash/wm/workspace_controller.h"
+#include "base/containers/span.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/files/file_path.h"
@@ -147,8 +144,7 @@ void EncodeAndSaveImage(const base::FilePath& file_path, gfx::Image image) {
       image, gfx::Size(informed_restore::kPreviewContainerWidth,
                        resized_image_height));
   auto png_bytes = resized_image.As1xPNGBytes();
-  if (!base::WriteFile(file_path,
-                       base::span(png_bytes->data(), png_bytes->size()))) {
+  if (!base::WriteFile(file_path, base::span(*png_bytes))) {
     LOG(ERROR) << "Failed to write informed restore image to "
                << file_path.MaybeAsASCII();
   }
@@ -185,10 +181,27 @@ void DeleteInformedRestoreImage(base::OnceClosure& for_test_callback,
                              std::move(delete_image_cb));
 }
 
+bool IsInformedRestoreEnabledForPrimaryUser() {
+  auto* session_controller_impl = Shell::Get()->session_controller();
+  CHECK(session_controller_impl);
+  auto* prefs = session_controller_impl->GetPrimaryUserPrefService();
+  if (!prefs) {
+    // Note: this may be called on the login screen.
+    return false;
+  }
+  return IsAskEveryTime(prefs);
+}
+
 // TODO(minch): Check whether the screenshot should be taken in kiosk mode.
 // Returns true if the informed restore screenshot should be taken on session
 // state changes.
 bool ShouldTakeInformedRestoreScreenshot() {
+  // If the current active user disables the informed restore feature, we should
+  // not take the screenshot.
+  if (!IsInformedRestoreEnabledForPrimaryUser()) {
+    return false;
+  }
+
   auto* shell = Shell::Get();
   // Do not take the informed restore screenshot if it is in overview mode, lock
   // screen, home launcher or pinned mode.
@@ -219,15 +232,27 @@ bool ShouldTakeInformedRestoreScreenshot() {
         ScreenshotOnShutdownStatus::kFailedInPinnedMode);
     return false;
   }
+  // In MUSI scenario, do not take screenshot if another user's desk is active.
+  if (!session_controller->IsUserPrimary()) {
+    RecordScreenshotOnShutdownStatus(
+        ScreenshotOnShutdownStatus::kFailedOtherUserIsActive);
+    return false;
+  }
+
+  auto* multi_user_window_manager = MultiUserWindowManagerImpl::Get();
+  CHECK(multi_user_window_manager);
+
+  const AccountId& current_active_user =
+      multi_user_window_manager->CurrentAccountId();
 
   bool has_regular_unminimized_window = false;
   for (aura::Window* window :
        shell->mru_window_tracker()->BuildMruWindowList(kActiveDesk)) {
+    const bool is_minimized = WindowState::Get(window)->IsMinimized();
+
+    // Do not take the screenshot if there is an incognito ash browser window.
     const bool is_non_regular_profile_window =
         !shell->saved_desk_delegate()->IsWindowPersistable(window);
-    const bool is_minimized = WindowState::Get(window)->IsMinimized();
-    // Do not take the screenshot if there is an incognito ash browser window or
-    // a lacros window with the non-regular profile.
     if (!is_minimized && is_non_regular_profile_window) {
       RecordScreenshotOnShutdownStatus(
           ScreenshotOnShutdownStatus::kFailedWithIncognito);
@@ -235,6 +260,17 @@ bool ShouldTakeInformedRestoreScreenshot() {
     }
     has_regular_unminimized_window |=
         !is_non_regular_profile_window && !is_minimized;
+
+    // Do not take the screenshot if there is an window that was moved from
+    // another user's desk.
+    AccountId owner = multi_user_window_manager->GetWindowOwner(window);
+    const bool is_window_owned_by_other_user =
+        owner != EmptyAccountId() && owner != current_active_user;
+    if (!is_minimized && is_window_owned_by_other_user) {
+      RecordScreenshotOnShutdownStatus(
+          ScreenshotOnShutdownStatus::kFailedWithVisibleWindowFromOtherUser);
+      return false;
+    }
   }
 
   // Take the screenshot if there are unminimized non-incognito windows inside
@@ -243,8 +279,10 @@ bool ShouldTakeInformedRestoreScreenshot() {
   if (!has_regular_unminimized_window) {
     RecordScreenshotOnShutdownStatus(
         ScreenshotOnShutdownStatus::kFailedWithNoWindows);
+    return false;
   }
-  return has_regular_unminimized_window;
+
+  return true;
 }
 
 // Hide the cursor and lock the cursor as well if `lock` is true.
@@ -873,6 +911,7 @@ void LockStateController::SessionStateChangeWithInformedRestore(
   // Check if there are any content currently on the screen that are restricted
   // by DLP.
   CaptureModeController::Get()->CheckScreenCaptureDlpRestrictions(
+      shutting_down_,
       base::BindOnce(
           &LockStateController::OnDlpRestrictionCheckedAtScreenCapture,
           weak_ptr_factory_.GetWeakPtr(), requested_session_state, file_path));

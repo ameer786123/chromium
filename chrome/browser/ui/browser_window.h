@@ -19,17 +19,16 @@
 #include "chrome/browser/lifetime/browser_close_manager.h"
 #include "chrome/browser/share/share_attempt.h"
 #include "chrome/browser/signin/chrome_signin_helper.h"
-#include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_type.h"
 #include "chrome/browser/ui/hats/hats_service.h"
 #include "chrome/browser/ui/page_action/page_action_icon_type.h"
 #include "chrome/browser/ui/translate/partial_translate_bubble_model.h"
-#include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "chrome/browser/ui/webui/tab_search/tab_search.mojom.h"
 #include "chrome/common/buildflags.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/translate/core/browser/translate_step.h"
 #include "components/translate/core/common/translate_errors.h"
 #include "ui/base/base_window.h"
 #include "ui/base/interaction/element_identifier.h"
@@ -45,7 +44,6 @@
 class Browser;
 class BrowserView;
 class DownloadBubbleUIController;
-class DownloadShelf;
 class ExclusiveAccessContext;
 class ExtensionsContainer;
 class FindBar;
@@ -131,10 +129,9 @@ enum class BrowserThemeChangeType {
 //
 // NOTE: All getters may return NULL.
 //
-class BrowserWindow : public ui::BaseWindow,
-                      public BrowserUserEducationInterface {
+class BrowserWindow : public ui::BaseWindow {
  public:
-  ~BrowserWindow() override = default;
+  virtual ~BrowserWindow() = default;
 
   //////////////////////////////////////////////////////////////////////////////
   // ui::BaseWindow interface notes:
@@ -166,6 +163,9 @@ class BrowserWindow : public ui::BaseWindow,
   // synchronous call like SendMessage, because IsWindowOnCurrentVirtualDesktop
   // will return an error.
   virtual bool IsOnCurrentWorkspace() const = 0;
+
+  // Returns true if the browser window is visible on the screen.
+  virtual bool IsVisibleOnScreen() const = 0;
 
   // Sets the shown |ratio| of the browser's top controls (a.k.a. top-chrome) as
   // a result of gesture scrolling in |web_contents|.
@@ -212,9 +212,6 @@ class BrowserWindow : public ui::BaseWindow,
   // Returns the ColorProvider associated with the frame.
   virtual const ui::ColorProvider* GetColorProvider() const = 0;
 
-  // Returns the context for use with ElementTracker, InteractionSequence, etc.
-  virtual ui::ElementContext GetElementContext() = 0;
-
   // Returns the height of the browser's top controls. This height doesn't
   // change with the current shown ratio above. Renderers will call this to
   // calculate the top-chrome shown ratio from the gesture scroll offset.
@@ -247,7 +244,7 @@ class BrowserWindow : public ui::BaseWindow,
 
   // Inform the frame that the dev tools window for the selected tab has
   // changed.
-  virtual void UpdateDevTools() = 0;
+  virtual void UpdateDevTools(content::WebContents* inspected_web_contents) = 0;
 
   // Update any loading animations running in the window. |is_visible| is true
   // if the window is visible.
@@ -257,12 +254,13 @@ class BrowserWindow : public ui::BaseWindow,
   virtual void SetStarredState(bool is_starred) = 0;
 
   // Checks if the browser popup is a tab modal popup.
-  virtual bool IsTabModalPopup() const = 0;
+  virtual bool IsTabModalPopupDeprecated() const = 0;
 
   // Sets whether the browser popup is a tab modal popup. Tab modal popups, used
   // by autofill features, intentionally disable save card prompts because they
   // are not intended for saving new card details.
-  virtual void SetIsTabModalPopup(bool is_tab_modal_popup) = 0;
+  virtual void SetIsTabModalPopupDeprecated(
+      bool is_tab_modal_popup_deprecated) = 0;
 
   // Called when the active tab changes.  Subclasses which implement
   // TabStripModelObserver should implement this instead of ActiveTabChanged();
@@ -320,7 +318,7 @@ class BrowserWindow : public ui::BaseWindow,
 
   // Tries to focus the location bar.  Clears the window focus (to avoid
   // inconsistent state) if this fails.
-  virtual void SetFocusToLocationBar(bool select_all) = 0;
+  virtual void SetFocusToLocationBar(bool is_user_initiated) = 0;
 
   // Informs the view whether or not a load is in progress for the current tab.
   // The view can use this notification to update the reload/stop button.
@@ -337,8 +335,8 @@ class BrowserWindow : public ui::BaseWindow,
   // transition if |animate| is true.
   virtual void UpdateCustomTabBarVisibility(bool visible, bool animate) = 0;
 
-  // Updates the visibility of the scrim that covers the content area.
-  virtual void SetContentScrimVisibility(bool visible) = 0;
+  // Updates the visibility of the scrim that covers the devtools area.
+  virtual void SetDevToolsScrimVisibility(bool visible) = 0;
 
   // Resets the toolbar's tab state for |contents|.
   virtual void ResetToolbarTabState(content::WebContents* contents) = 0;
@@ -386,6 +384,9 @@ class BrowserWindow : public ui::BaseWindow,
 
   // Returns whether the tab strip is editable (for extensions).
   virtual bool IsTabStripEditable() const = 0;
+
+  // Forces the tab strip into a not editable state for testing.
+  virtual void SetTabStripNotEditableForTesting() = 0;
 
   // Returns whether the toolbar is available or not. It's called "Visible()"
   // to follow the name convention. But it does not indicate the visibility of
@@ -452,9 +453,6 @@ class BrowserWindow : public ui::BaseWindow,
                                bool show_signin_button) = 0;
 
 #if BUILDFLAG(IS_CHROMEOS)
-  // Returns the PageActionIconView for the Sharing Hub.
-  virtual views::Button* GetSharingHubIconButton() = 0;
-
   // Toggles the multitask menu on the browser frame size button.
   virtual void ToggleMultitaskMenu() const = 0;
 #else
@@ -487,13 +485,6 @@ class BrowserWindow : public ui::BaseWindow,
       const std::u16string& email,
       base::OnceCallback<void(bool)> confirmed_callback) = 0;
 
-  // Whether or not the shelf view is visible.
-  virtual bool IsDownloadShelfVisible() const = 0;
-
-  // Returns the DownloadShelf. Returns null if download shelf is disabled. This
-  // can happen if the new download bubble UI is enabled.
-  virtual DownloadShelf* GetDownloadShelf() = 0;
-
   // Returns the TopContainerView.
   virtual views::View* GetTopContainer() = 0;
 
@@ -519,10 +510,13 @@ class BrowserWindow : public ui::BaseWindow,
   // Shows the app menu (for accessibility).
   virtual void ShowAppMenu() = 0;
 
-  // Allows the BrowserWindow object to handle the specified mouse event
+  // Allows the BrowserWindow object to handle a mouse drag update
   // before sending it to the renderer.
-  virtual bool PreHandleMouseEvent(const blink::WebMouseEvent& event) = 0;
-
+  // `point` is relative to the content view.
+  virtual void PreHandleDragUpdate(const content::DropData& drop_data,
+                                   const gfx::PointF& point) = 0;
+  virtual void PreHandleDragExit() = 0;
+  virtual void HandleDragEnded() = 0;
   // Allows the BrowserWindow object to handle the specified keyboard event
   // before sending it to the renderer.
   virtual content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
@@ -541,6 +535,13 @@ class BrowserWindow : public ui::BaseWindow,
   // instance during tab drag on Views/Win32).
   virtual web_modal::WebContentsModalDialogHost*
   GetWebContentsModalDialogHost() = 0;
+
+  // Return the WebContentsModalDialogHost for use in positioning web contents
+  // modal dialogs relative to its corresponding container view if possible,
+  // otherwise falls back to returning the WebContentsModalDialogHost that is
+  // responsible for modal positioning relative to the browser window.
+  virtual web_modal::WebContentsModalDialogHost*
+  GetWebContentsModalDialogHostFor(content::WebContents* web_contents) = 0;
 
   // Construct a BrowserWindow implementation for the specified |browser|.
   static BrowserWindow* CreateBrowserWindow(std::unique_ptr<Browser> browser,
@@ -650,8 +651,10 @@ class BrowserWindow : public ui::BaseWindow,
   virtual BrowserView* AsBrowserView() = 0;
 
  protected:
-  friend class BrowserCloseManager;
-  friend class BrowserView;
+  // Synchronously destroys the Browser.
+  // TODO(crbug.com/413168662): This can be removed once the ownership structure
+  // is updated and Browser owns BrowserWindow.
+  friend class Browser;
   virtual void DestroyBrowser() = 0;
 };
 

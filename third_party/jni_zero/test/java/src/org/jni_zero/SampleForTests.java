@@ -49,6 +49,7 @@ class SampleForTests {
     }
 
     public void doStuff() {
+        class TestDuplicateClassName {}
         // This will call CPPClass::Method() using nativePtr as a pointer to the object. This must
         // be done to:
         // * avoid leaks.
@@ -60,6 +61,7 @@ class SampleForTests {
     // private native void thisShouldNotExist();
 
     public void finishExample() {
+        class TestDuplicateClassName {}
         // We're done, so let's destroy nativePtr object.
         SampleForTestsJni.get().destroy(mNativeCPPObject, this, new byte[0]);
     }
@@ -375,6 +377,9 @@ class SampleForTests {
                 @JniType("std::vector<int64_t>") long[] l,
                 @JniType("std::vector<float>") float[] f,
                 @JniType("std::vector<double>") double[] d);
+
+        @JniType("MyEnum")
+        int returnFromEnum();
 
         // Similar to nativeMethod above, but here the C++ fully qualified class name is taken from
         // the annotation rather than parameter name, which can thus be chosen freely.

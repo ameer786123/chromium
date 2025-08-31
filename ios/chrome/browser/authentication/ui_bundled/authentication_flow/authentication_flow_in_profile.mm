@@ -13,13 +13,14 @@
 #import "ios/chrome/app/application_delegate/app_state.h"
 #import "ios/chrome/app/change_profile_commands.h"
 #import "ios/chrome/app/profile/profile_state.h"
-#import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_performer.h"
-#import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_performer_delegate.h"
+#import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_in_profile_performer.h"
+#import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_in_profile_performer_delegate.h"
 #import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
-#import "ios/chrome/browser/authentication/ui_bundled/history_sync/history_sync_capabilities_fetcher.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
+#import "ios/chrome/browser/shared/model/browser/browser_observer_bridge.h"
 #import "ios/chrome/browser/shared/model/profile/profile_attributes_storage_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_manager_ios.h"
@@ -49,7 +50,9 @@ enum class AuthenticationFlowInProfileState {
 
 }  // namespace
 
-@interface AuthenticationFlowInProfile () <AuthenticationFlowPerformerDelegate>
+@interface AuthenticationFlowInProfile () <
+    AuthenticationFlowInProfilePerformerDelegate,
+    BrowserObserving>
 @end
 
 @implementation AuthenticationFlowInProfile {
@@ -64,8 +67,9 @@ enum class AuthenticationFlowInProfileState {
   id<SystemIdentity> _identityToSignIn;
   // `YES` if `_identityToSignIn` is a managed identity.
   BOOL _isManagedIdentity;
-  AuthenticationFlowPerformer* _performer;
+  AuthenticationFlowInProfilePerformer* _performer;
   raw_ptr<Browser> _browser;
+  std::unique_ptr<BrowserObserverBridge> _browserObserver;
   signin_metrics::AccessPoint _accessPoint;
   BOOL _precedingHistorySync;
   PostSignInActionSet _postSignInActions;
@@ -77,8 +81,6 @@ enum class AuthenticationFlowInProfileState {
   // to compare with a similiar list from device mangement to understand whether
   // user and device are managed by the same domain.
   NSArray<NSString*>* _userAffiliationIDs;
-  // Capabilities fetcher for the subsequent History Sync Opt-In screen.
-  HistorySyncCapabilitiesFetcher* _capabilitiesFetcher;
 
   // The lifetime of this ScopedClosureRunner denotes a batch of primary account
   // changes. UI listens to batched changes to avoid visual artifacts during an
@@ -97,6 +99,7 @@ enum class AuthenticationFlowInProfileState {
     CHECK(browser);
     CHECK(identity);
     _browser = browser;
+    _browserObserver = std::make_unique<BrowserObserverBridge>(_browser, self);
     _identityToSignIn = identity;
     _isManagedIdentity = isManagedIdentity;
     _accessPoint = accessPoint;
@@ -118,9 +121,9 @@ enum class AuthenticationFlowInProfileState {
   id<ChangeProfileCommands> changeProfileHandler = HandlerForProtocol(
       _browser->GetSceneState().profileState.appState.appCommandDispatcher,
       ChangeProfileCommands);
-  _performer = [[AuthenticationFlowPerformer alloc]
-          initWithDelegate:self
-      changeProfileHandler:changeProfileHandler];
+  _performer = [[AuthenticationFlowInProfilePerformer alloc]
+      initWithInProfileDelegate:self
+           changeProfileHandler:changeProfileHandler];
   // Make sure -[AuthenticationFlow startSignInWithCompletion:] doesn't call
   // the completion block synchronously.
   // Related to http://crbug.com/1246480.
@@ -159,7 +162,7 @@ enum class AuthenticationFlowInProfileState {
 
 - (UIViewController*)findViewController {
   UIViewController* viewController =
-      _browser->GetSceneState().rootViewController;
+      _browser->GetSceneState().window.rootViewController;
   while (viewController.presentedViewController) {
     viewController = viewController.presentedViewController;
   }
@@ -348,6 +351,7 @@ enum class AuthenticationFlowInProfileState {
                      clientID:_clientID
            userAffiliationIDs:_userAffiliationIDs
                      identity:_identityToSignIn];
+  [self continueFlow];
 }
 
 // Fetches capabilities on successful authentication for the upcoming History
@@ -357,19 +361,7 @@ enum class AuthenticationFlowInProfileState {
     [self continueFlow];
     return;
   }
-  ProfileIOS* profile = [self originalProfile];
-  // Create the capability fetcher and start fetching capabilities.
-  __weak __typeof(self) weakSelf = self;
-  _capabilitiesFetcher = [[HistorySyncCapabilitiesFetcher alloc]
-      initWithIdentityManager:IdentityManagerFactory::GetForProfile(profile)];
-
-  [_capabilitiesFetcher
-      startFetchingRestrictionCapabilityWithCallback:base::BindOnce(^(
-                                                         signin::Tribool
-                                                             capability) {
-        // The capability value is ignored.
-        [weakSelf continueFlow];
-      })];
+  [_performer fetchAccountCapabilities:[self originalProfile]];
 }
 
 - (void)successCompleteFlowStep {
@@ -383,14 +375,17 @@ enum class AuthenticationFlowInProfileState {
   signin_ui::SigninCompletionCallback signInCompletion = _signInCompletion;
   _signInCompletion = nil;
   signInCompletion(SigninCoordinatorResult::SigninCoordinatorResultSuccess);
-  [_performer completePostSignInActions:_postSignInActions
-                           withIdentity:_identityToSignIn
-                                browser:_browser
-                            accessPoint:_accessPoint];
   [self continueFlow];
 }
 
 - (void)switchBackToPersonalProfileIfNeededStep {
+  if (!_browser) {
+    // Browser was destroyed in the meantime. This can happen if a switch is
+    // already in progress, or if the window/scene got closed. Either way, no
+    // switching necessary here.
+    [self continueFlow];
+    return;
+  }
   // Note: It's theoretically possible that the originating profile was not the
   // personal one, but rather another managed profile. In that case, switching
   // back to that managed profile would be "more correct". However, that would
@@ -410,14 +405,19 @@ enum class AuthenticationFlowInProfileState {
   SceneState* sceneState = _browser->GetSceneState();
   [_performer switchToProfileWithName:personalProfileName
                            sceneState:sceneState
-            changeProfileContinuation:DoNothingContinuation()];
+                               reason:ChangeProfileReason::kAuthenticationError
+            changeProfileContinuation:DoNothingContinuation()
+                    postSignInActions:_postSignInActions
+                         withIdentity:_identityToSignIn
+                          accessPoint:_accessPoint];
 }
 
 - (void)failureCompleteFlowStep {
-  // None of the steps after signin can fail. If any failable steps after the
-  // signin step get added in the future, then a call to
+  // None of the steps after signin can fail (except for the case of the browser
+  // going away, which is more "abort" than "fail)"). If any failable steps
+  // after the signin step get added in the future, then a call to
   // `[_performer signOutImmediatelyFromProfile:...]` should be added here.
-  CHECK(!_didSignIn);
+  CHECK(!_browser || !_didSignIn, base::NotFatalUntil::M140);
   CHECK(_signInCompletion);
   signin_ui::SigninCompletionCallback signInCompletion = _signInCompletion;
   _signInCompletion = nil;
@@ -445,48 +445,6 @@ enum class AuthenticationFlowInProfileState {
   [self continueFlow];
 }
 
-- (void)didClearData {
-  // TODO(crbug.com/403183877): Split `AuthenticationFlowPerformer` into 2
-  // classes to avoid having all those NOTREACHED methods.
-  NOTREACHED();
-}
-
-- (void)didFetchUnsyncedDataWithUnsyncedDataTypes:
-    (syncer::DataTypeSet)unsyncedDataTypes {
-  // Unsynced data is checked by AuthenticationFlow before calling
-  // `AuthenticationFlowInProfile`.
-  // So unsynced data is checked when leaving a profile (for profile switching),
-  // or before sign-out (for account switching).
-  NOTREACHED();
-}
-
-- (void)didAcceptToLeavePrimaryAccount:(BOOL)acceptToContinue {
-  // Unsynced data confirmation dialog should not be shown. See the explaination
-  // in `-[AuthenticationFlowInProfile
-  // didFetchUnsyncedDataWithUnsyncedDataTypes:]`.
-  NOTREACHED();
-}
-
-- (void)didFetchManagedStatus:(NSString*)hostedDomain {
-  NOTREACHED();
-}
-
-- (void)didFailFetchManagedStatus:(NSError*)error {
-  NOTREACHED();
-}
-
-- (void)didAcceptManagedConfirmation:(BOOL)keepBrowsingDataSeparate {
-  NOTREACHED();
-}
-
-- (void)didCancelManagedConfirmation {
-  NOTREACHED();
-}
-
-- (void)didFailToSwitchToProfile {
-  NOTREACHED();
-}
-
 - (void)didSwitchToProfileWithNewProfileBrowser:(Browser*)newProfileBrowser
                                      completion:(base::OnceClosure)completion {
   CHECK(newProfileBrowser);
@@ -509,22 +467,16 @@ enum class AuthenticationFlowInProfileState {
   [self continueFlow];
 }
 
-- (void)didFetchUserPolicyWithSuccess:(BOOL)success {
-  // The result can be ignored, the goal was to prefetch the user policy.
-  CHECK_EQ(AuthenticationFlowInProfileState::kFetchUserPolicyIfNeeded, _state,
-           base::NotFatalUntil::M138);
-  DLOG_IF(ERROR, !success) << "Error fetching policy for user";
+- (void)didFetchAccountCapabilities {
   [self continueFlow];
 }
 
-- (void)didMakePersonalProfileManaged {
-  NOTREACHED();
-}
+#pragma mark - BrowserObserving
 
-- (void)didFetchProfileSeparationPolicies:
-    (policy::ProfileSeparationDataMigrationSettings)
-        profileSeparationDataMigrationSettings {
-  NOTREACHED();
+- (void)browserDestroyed:(Browser*)browser {
+  CHECK_EQ(browser, _browser);
+  _browser = nullptr;
+  _error = ios::provider::CreateUserCancelledSigninError();
 }
 
 @end

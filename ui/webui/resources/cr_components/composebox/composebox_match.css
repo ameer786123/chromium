@@ -1,0 +1,51 @@
+/* Copyright 2025 The Chromium Authors
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the LICENSE file. */
+
+/* #css_wrapper_metadata_start
+ * #type=style-lit
+ * #import=//resources/cr_elements/cr_icons_lit.css.js
+ * #scheme=relative
+ * #include=cr-icons-lit
+ * #css_wrapper_metadata_end */
+
+:host {
+  --input-inline-spacing: 24px;
+  outline: none;
+}
+
+.container {
+  border-start-end-radius: 24px;
+  border-end-end-radius: 24px;
+  color: var(--color-new-tab-page-composebox-font);
+  cursor: default;
+  display: flex;
+  font-size: 16px;
+  height: 36px;
+  line-height: 24px;
+  position: relative;
+}
+
+.container:hover,
+:host(:is(:focus-visible, [selected])) .container {
+  background-color: var(--color-searchbox-results-background-hovered);
+}
+
+#focusIndicator {
+  background-color: var(--color-searchbox-results-focus-indicator);
+  border-radius: 3px;
+  display: none;
+  margin-inline-start: -3.5px;
+  height: 100%;
+  position: absolute;
+  width: 7px;
+}
+
+:host(:is(:focus-visible, [selected])) #focusIndicator {
+  display: block;
+}
+
+#textContainer {
+  align-content: center;
+  padding-inline-start: var(--input-inline-spacing);
+}

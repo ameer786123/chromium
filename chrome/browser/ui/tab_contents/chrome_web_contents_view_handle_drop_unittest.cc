@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/ui/tab_contents/chrome_web_contents_view_handle_drop.h"
 
@@ -52,14 +48,16 @@ class TestDragDropRequestHandler
       Profile* profile,
       GURL url,
       Type type,
-      safe_browsing::DeepScanAccessPoint access_point,
+      enterprise_connectors::DeepScanAccessPoint access_point,
       enterprise_connectors::ContentMetaData::CopiedTextSource clipboard_source,
+      std::string source_content_area_email,
       std::string content_transfer_method,
       std::string data,
       CompletionCallback callback) {
     auto handler = base::WrapUnique(new TestDragDropRequestHandler(
         content_analysis_info, upload_service, profile, std::move(url), type,
         access_point, std::move(clipboard_source),
+        std::move(source_content_area_email),
         std::move(content_transfer_method), std::move(data),
         std::move(callback)));
     handler->delegate_ = delegate;

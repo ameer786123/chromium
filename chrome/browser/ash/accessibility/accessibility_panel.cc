@@ -12,6 +12,7 @@
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/view_type_utils.h"
 #include "extensions/common/mojom/view_type.mojom.h"
+#include "ui/accessibility/accessibility_features.h"
 #include "ui/compositor/layer.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
@@ -58,8 +59,13 @@ AccessibilityPanel::AccessibilityPanel(content::BrowserContext* browser_context,
       std::make_unique<AccessibilityPanelWebContentsObserver>(web_contents_,
                                                               this);
   web_contents_->SetDelegate(this);
-  extensions::SetViewType(web_contents_,
-                          extensions::mojom::ViewType::kComponent);
+  if (::features::IsAccessibilityManifestV3EnabledForChromeVox()) {
+    extensions::SetViewType(web_contents_,
+                            extensions::mojom::ViewType::kExtensionPopup);
+  } else {
+    extensions::SetViewType(web_contents_,
+                            extensions::mojom::ViewType::kComponent);
+  }
   web_view->LoadInitialURL(GURL(content_url));
   web_view_ = web_view;
 
@@ -72,7 +78,7 @@ AccessibilityPanel::AccessibilityPanel(content::BrowserContext* browser_context,
   // The AccessibilityPanel is only shown in the primary root window.
   ash_util::SetupWidgetInitParamsForContainerInPrimary(
       &params, ShellWindowId::kShellWindowId_AccessibilityPanelContainer);
-  params.bounds = display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
+  params.bounds = display::Screen::Get()->GetPrimaryDisplay().bounds();
   params.delegate = this;
   params.activatable = views::Widget::InitParams::Activatable::kNo;
   params.name = widget_name;

@@ -6,6 +6,7 @@
 
 #import "base/functional/callback_helpers.h"
 #import "base/notimplemented.h"
+#import "components/collaboration/public/collaboration_flow_type.h"
 #import "components/collaboration/public/collaboration_service.h"
 #import "ios/chrome/browser/collaboration/model/ios_collaboration_controller_delegate.h"
 #import "ios/chrome/browser/data_sharing/model/ios_share_url_interception_context.h"
@@ -17,17 +18,17 @@
 #import "ios_share_url_interception_context.h"
 #import "url/gurl.h"
 
+using collaboration::FlowType;
 using collaboration::IOSCollaborationControllerDelegate;
 
 namespace data_sharing {
 
 DataSharingUIDelegateIOS::DataSharingUIDelegateIOS(
     ShareKitService* share_kit_service,
-    collaboration::CollaborationService* collaboration_service,
-    TabGroupService* tab_group_service)
+    collaboration::CollaborationService* collaboration_service)
     : share_kit_service_(share_kit_service),
-      collaboration_service_(collaboration_service),
-      tab_group_service_(tab_group_service) {}
+      collaboration_service_(collaboration_service) {}
+
 DataSharingUIDelegateIOS::~DataSharingUIDelegateIOS() = default;
 
 void DataSharingUIDelegateIOS::HandleShareURLIntercepted(
@@ -38,7 +39,7 @@ void DataSharingUIDelegateIOS::HandleShareURLIntercepted(
   }
   IOSShareURLInterceptionContext* ios_context =
       static_cast<IOSShareURLInterceptionContext*>(context.get());
-  Browser* browser = ios_context->browser;
+  Browser* browser = ios_context->weak_browser.get();
   if (!browser) {
     return;
   }
@@ -50,20 +51,27 @@ void DataSharingUIDelegateIOS::HandleShareURLIntercepted(
       dismissModalDialogsWithCompletion:
           base::CallbackToBlock(base::BindOnce(
               &DataSharingUIDelegateIOS::OnJoinFlowReadyToBePresented,
-              weak_ptr_factory_.GetWeakPtr(), url, browser))];
+              weak_ptr_factory_.GetWeakPtr(), url,
+              std::move(ios_context->weak_browser)))];
 }
 
-void DataSharingUIDelegateIOS::OnJoinFlowReadyToBePresented(GURL url,
-                                                            Browser* browser) {
+void DataSharingUIDelegateIOS::OnJoinFlowReadyToBePresented(
+    GURL url,
+    base::WeakPtr<Browser> weak_browser) {
+  Browser* browser = weak_browser.get();
+  if (!browser) {
+    return;
+  }
+
   UIViewController* base_view_controller =
-      browser->GetSceneState().rootViewController;
+      browser->GetSceneState().window.rootViewController;
 
   std::unique_ptr<IOSCollaborationControllerDelegate> delegate =
       std::make_unique<IOSCollaborationControllerDelegate>(
-          browser, base_view_controller, tab_group_service_);
-  collaboration_service_->StartJoinFlow(
-      std::move(delegate), url,
-      collaboration::CollaborationServiceJoinEntryPoint::kUnknown);
+          browser,
+          CreateControllerDelegateParamsFromProfile(
+              browser->GetProfile(), base_view_controller, FlowType::kJoin));
+  collaboration_service_->StartJoinFlow(std::move(delegate), url);
 }
 
 }  // namespace data_sharing

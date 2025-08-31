@@ -5,7 +5,6 @@
 #include "components/ip_protection/common/ip_protection_core_impl.h"
 
 #include <cstddef>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +15,7 @@
 #include "base/timer/elapsed_timer.h"
 #include "components/content_settings/core/common/content_settings_rules.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
+#include "components/ip_protection/common/ip_protection_core_impl.h"
 #include "components/ip_protection/common/ip_protection_data_types.h"
 #include "components/ip_protection/common/ip_protection_probabilistic_reveal_token_manager.h"
 #include "components/ip_protection/common/ip_protection_proxy_config_manager.h"
@@ -29,6 +29,7 @@
 #include "net/base/network_change_notifier.h"
 #include "net/base/proxy_chain.h"
 #include "net/base/proxy_server.h"
+#include "net/base/schemeful_site.h"
 #include "services/network/public/cpp/features.h"
 #include "url/gurl.h"
 
@@ -41,7 +42,7 @@ namespace {
 // only with SCHEME_QUIC.
 std::vector<net::ProxyChain> MakeQuicProxyList(
     const std::vector<net::ProxyChain>& proxy_list,
-    bool include_https_fallback = true) {
+    bool include_https_fallback) {
   if (proxy_list.empty()) {
     return proxy_list;
   }
@@ -53,8 +54,14 @@ std::vector<net::ProxyChain> MakeQuicProxyList(
       quic_servers.emplace_back(net::ProxyServer::Scheme::SCHEME_QUIC,
                                 proxy_server.host_port_pair());
     }
-    return net::ProxyChain::ForIpProtection(
+    auto quic_proxy_chain = net::ProxyChain::ForIpProtection(
         std::move(quic_servers), proxy_chain.ip_protection_chain_id());
+    // The proxy chains passed to this function are assumed to be valid (
+    // validated by the `IpProtectionProxyConfigFetcher()` that created them),
+    // so creating a new QUIC proxy chain from those should also result in valid
+    // proxy chains.
+    CHECK(quic_proxy_chain.IsValid());
+    return quic_proxy_chain;
   };
 
   std::vector<net::ProxyChain> quic_proxy_list;
@@ -77,8 +84,7 @@ IpProtectionCoreImpl::IpProtectionCoreImpl(
     MaskedDomainListManager* masked_domain_list_manager,
     std::unique_ptr<IpProtectionProxyConfigManager>
         ip_protection_proxy_config_manager,
-    std::map<ProxyLayer, std::unique_ptr<IpProtectionTokenManager>>
-        ip_protection_token_managers,
+    ProxyTokenManagerMap ip_protection_token_managers,
     ProbabilisticRevealTokenRegistry* probabilistic_reveal_token_registry,
     std::unique_ptr<IpProtectionProbabilisticRevealTokenManager>
         ipp_prt_manager,
@@ -96,7 +102,10 @@ IpProtectionCoreImpl::IpProtectionCoreImpl(
                                                : MdlType::kRegularBrowsing)
                     : MdlType::kIncognito) {
   net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
-  if (ip_protection_incognito && ipp_prt_manager_) {
+  bool should_request_prts =
+      ip_protection_incognito ||
+      !net::features::kProbabilisticRevealTokensOnlyInIncognito.Get();
+  if (ipp_prt_manager_ && should_request_prts) {
     ipp_prt_manager_->RequestTokens();
   }
 }
@@ -170,22 +179,21 @@ std::optional<BlindSignedAuthToken> IpProtectionCoreImpl::GetAuthToken(
     return result;
   }
 
-  auto proxy_layer =
-      chain_index == 0 ? ProxyLayer::kProxyA : ProxyLayer::kProxyB;
-  if (ipp_token_managers_.count(proxy_layer) > 0) {
-    result = ipp_token_managers_[proxy_layer]->GetAuthToken(
-        ipp_proxy_config_manager_->CurrentGeo());
+  auto it = ipp_token_managers_.find(chain_index == 0 ? ProxyLayer::kProxyA
+                                                      : ProxyLayer::kProxyB);
+  if (it != ipp_token_managers_.end()) {
+    result = it->second->GetAuthToken(ipp_proxy_config_manager_->CurrentGeo());
   }
   return result;
 }
 
 std::optional<std::string> IpProtectionCoreImpl::GetProbabilisticRevealToken(
-    const std::string& top_level,
-    const std::string& third_party) {
+    const GURL& url,
+    const net::SchemefulSite& top_frame_site) {
   if (!ipp_prt_manager_) {
     return std::nullopt;
   }
-  return ipp_prt_manager_->GetToken(top_level, third_party);
+  return ipp_prt_manager_->GetToken(url, top_frame_site);
 }
 
 IpProtectionTokenManager*
@@ -200,9 +208,8 @@ IpProtectionCoreImpl::GetIpProtectionProxyConfigManagerForTesting() {
 }
 
 bool IpProtectionCoreImpl::IsProxyListAvailable() {
-  return ipp_proxy_config_manager_ != nullptr
-             ? ipp_proxy_config_manager_->IsProxyListAvailable()
-             : false;
+  return ipp_proxy_config_manager_ &&
+         ipp_proxy_config_manager_->IsProxyListAvailable();
 }
 
 void IpProtectionCoreImpl::QuicProxiesFailed() {
@@ -254,8 +261,7 @@ bool IpProtectionCoreImpl::ShouldRequestIncludeProbabilisticRevealToken(
           net::features::kEnableProbabilisticRevealTokens)) {
     return false;
   }
-  if (net::features::kAttachProbabilisticRevealTokensOnAllProxiedRequests
-          .Get()) {
+  if (net::features::kBypassProbabilisticRevealTokenRegistry.Get()) {
     return true;
   }
   return probabilistic_reveal_token_registry_->IsRegistered(request_url);
@@ -307,6 +313,26 @@ void IpProtectionCoreImpl::SetTrackingProtectionContentSetting(
     const ContentSettingsForOneType& settings) {
   tp_content_settings_ =
       content_settings::HostIndexedContentSettings::Create(settings);
+}
+
+IpProxyStatus IpProtectionCoreImpl::GetIpProxyStatus() {
+  // Checking conditions that may cause IP protection to not work when it is
+  // eligible to be run
+  if (!net::features::kIpPrivacyEnableIppInDevTools.Get() ||
+      !base::FeatureList::IsEnabled(net::features::kEnableIpProtectionProxy)) {
+    return IpProxyStatus::kFeatureNotEnabled;
+  }
+  if (!masked_domain_list_manager_->IsEnabled()) {
+    return IpProxyStatus::kMaskedDomainListNotEnabled;
+  }
+  if (!IpProtectionCoreImpl::IsMdlPopulated()) {
+    return IpProxyStatus::kMaskedDomainListNotPopulated;
+  }
+  if (!AreAuthTokensAvailable()) {
+    return IpProxyStatus::kAuthTokensUnavailable;
+  }
+  return IsIpProtectionEnabled() ? IpProxyStatus::kOk
+                                 : IpProxyStatus::kUnavailable;
 }
 
 }  // namespace ip_protection

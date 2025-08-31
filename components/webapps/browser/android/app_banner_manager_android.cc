@@ -120,9 +120,7 @@ AppBannerManagerAndroid::GetJavaBannerManager() const {
   return base::android::ScopedJavaLocalRef<jobject>(java_banner_manager_);
 }
 
-bool AppBannerManagerAndroid::IsRunningForTesting(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
+bool AppBannerManagerAndroid::IsRunningForTesting(JNIEnv* env) {
   return IsRunning();
 }
 
@@ -139,7 +137,6 @@ int AppBannerManagerAndroid::GetBadgeStatusForTesting(JNIEnv* env) {
 
 void AppBannerManagerAndroid::OnAppDetailsRetrieved(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     int request_id,
     const JavaParamRef<jobject>& japp_data,
     const JavaParamRef<jstring>& japp_title,
@@ -413,6 +410,15 @@ void AppBannerManagerAndroid::ResetCurrentPageData() {
   ambient_badge_manager_.reset();
   native_check_callback_storage_.Reset();
   native_java_app_data_.Reset();
+}
+
+void AppBannerManagerAndroid::InstallableWebAppStatusUpdate() {
+  if (java_banner_manager_.is_null()) {
+    return;
+  }
+
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_AppBannerManager_onInstallabilityUpdated(env, java_banner_manager_);
 }
 
 void AppBannerManagerAndroid::OnInstallEvent(
@@ -714,6 +720,19 @@ JNI_AppBannerManager_GetInstallableWebAppManifestId(
   return base::android::ConvertUTF8ToJavaString(
       env, AppBannerManager::GetInstallableWebAppManifestId(
                content::WebContents::FromJavaWebContents(java_web_contents)));
+}
+
+// static
+jboolean JNI_AppBannerManager_IsProbablyPromotable(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& java_web_contents) {
+  auto* manager =
+      static_cast<AppBannerManagerAndroid*>(AppBannerManager::FromWebContents(
+          content::WebContents::FromJavaWebContents(java_web_contents)));
+  if (!manager) {
+    return false;
+  }
+  return manager->IsProbablyPromotableWebApp();
 }
 
 // static

@@ -13,7 +13,7 @@
 namespace privacy_sandbox {
 
 class MockDesktopViewManagerObserver
-    : public privacy_sandbox::DesktopViewManager::Observer {
+    : public privacy_sandbox::DesktopViewManagerInterface::Observer {
  public:
   MockDesktopViewManagerObserver();
   ~MockDesktopViewManagerObserver();
@@ -22,6 +22,7 @@ class MockDesktopViewManagerObserver
               MaybeNavigateToNextStep,
               (std::optional<notice::mojom::PrivacySandboxNotice>),
               (override));
+  MOCK_METHOD(BrowserWindowInterface*, GetBrowser, (), (override));
 };
 
 }  // namespace privacy_sandbox

@@ -104,18 +104,9 @@ class BrowserCloseTest : public testing::Test {
   void SetUp() override { ASSERT_TRUE(profile_manager_.SetUp()); }
 
   void TearDown() override {
-    for (auto& browser_window_pair : browser_windows_) {
-      while (!browser_window_pair.second.empty()) {
-        TestBrowserWindow* window = browser_window_pair.second.back();
-        browser_window_pair.second.pop_back();
-        delete window;
-      }
-    }
     for (auto& browser_pair : browsers_) {
       while (!browser_pair.second.empty()) {
-        Browser* browser = browser_pair.second.back();
         browser_pair.second.pop_back();
-        delete browser;
       }
     }
   }
@@ -155,7 +146,7 @@ class BrowserCloseTest : public testing::Test {
     CHECK(browsers_.end() != browsers_.find(profile));
     CHECK_GT(browsers_[profile].size(), static_cast<size_t>(index));
 
-    return browsers_[profile][index];
+    return browsers_[profile][index].get();
   }
 
  private:
@@ -170,33 +161,25 @@ class BrowserCloseTest : public testing::Test {
         static_cast<TestingDownloadCoreService*>(download_core_service));
     mock_download_service->SetDownloadCount(num_downloads);
 
-    CHECK(browser_windows_.end() == browser_windows_.find(profile));
     CHECK(browsers_.end() == browsers_.find(profile));
 
     std::vector<raw_ptr<TestBrowserWindow, VectorExperimental>> windows;
-    std::vector<raw_ptr<Browser, VectorExperimental>> browsers;
+    std::vector<std::unique_ptr<Browser>> browsers;
     for (int i = 0; i < num_windows; ++i) {
-      TestBrowserWindow* window = new TestBrowserWindow();
+      auto window = std::make_unique<TestBrowserWindow>();
       Browser::CreateParams params(profile, true);
       params.type = Browser::TYPE_NORMAL;
-      params.window = window;
-      Browser* browser = Browser::Create(params);
+      params.window = window.release();
 
-      windows.push_back(window);
-      browsers.push_back(browser);
+      browsers.emplace_back(Browser::DeprecatedCreateOwnedForTesting(params));
     }
 
-    browser_windows_[profile] = windows;
-    browsers_[profile] = browsers;
+    browsers_[profile] = std::move(browsers);
   }
 
   // Note that the vector elements are all owned by this class and must be
   // cleaned up.
-  std::map<Profile*,
-           std::vector<raw_ptr<TestBrowserWindow, VectorExperimental>>>
-      browser_windows_;
-  std::map<Profile*, std::vector<raw_ptr<Browser, VectorExperimental>>>
-      browsers_;
+  std::map<Profile*, std::vector<std::unique_ptr<Browser>>> browsers_;
 
   content::BrowserTaskEnvironment task_environment_;
   TestingProfileManager profile_manager_;

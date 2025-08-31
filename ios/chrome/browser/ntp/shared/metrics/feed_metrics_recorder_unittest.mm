@@ -21,7 +21,6 @@
 #import "ios/chrome/browser/ntp/model/new_tab_page_state.h"
 #import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_constants.h"
 #import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_recorder+testing.h"
-#import "ios/chrome/browser/ntp/ui_bundled/feed_control_delegate.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
 #import "ios/chrome/browser/shared/model/prefs/browser_prefs.h"
 #import "ios/web/public/test/web_task_environment.h"
@@ -131,7 +130,7 @@ TEST_F(FeedMetricsRecorderTest, GoodVisit_NonGoodVisitActionTriggered) {
   histogram_tester_->ExpectBucketCount(kAllFeedsEngagementTypeHistogram,
                                        FeedEngagementType::kGoodVisit, 0);
   // Trigger a non-Good Visit action.
-  [recorder_ recordHeaderMenuManageTapped];
+  [recorder_ recordDeviceOrientationChanged:UIDeviceOrientationLandscapeRight];
   // There should not be a Good Visit recorded as the action was not a trigger
   // for a Good Visit.
   histogram_tester_->ExpectBucketCount(kAllFeedsEngagementTypeHistogram,
@@ -303,7 +302,7 @@ TEST_F(FeedMetricsRecorderTest,
   histogram_tester_->ExpectBucketCount(kDiscoverFeedEngagementTypeHistogram,
                                        FeedEngagementType::kGoodVisit, 0);
   // Trigger a non-Good Visit action.
-  [recorder_ recordHeaderMenuManageTapped];
+  [recorder_ recordDeviceOrientationChanged:UIDeviceOrientationLandscapeRight];
   // There should not be a Good Visit recorded as the action was not a trigger
   // for a Good Visit.
   histogram_tester_->ExpectBucketCount(kDiscoverFeedEngagementTypeHistogram,
@@ -412,7 +411,7 @@ TEST_F(FeedMetricsRecorderTest,
   histogram_tester_->ExpectBucketCount(kFollowingFeedEngagementTypeHistogram,
                                        FeedEngagementType::kGoodVisit, 0);
   // Trigger a non-Good Visit action.
-  [recorder_ recordHeaderMenuManageTapped];
+  [recorder_ recordDeviceOrientationChanged:UIDeviceOrientationLandscapeRight];
   // There should not be a Good Visit recorded as the action was not a trigger
   // for a Good Visit.
   histogram_tester_->ExpectBucketCount(kFollowingFeedEngagementTypeHistogram,
@@ -517,12 +516,6 @@ TEST_F(FeedMetricsRecorderTest, Actions_RecordChangeOrientation) {
 TEST_F(FeedMetricsRecorderTest, Actions_PreviewTapped) {
   EXPECT_ACTION(kDiscoverFeedUserActionPreviewTapped,
                 recordDiscoverFeedPreviewTapped);
-}
-
-// Testing `recordHeaderMenuManageFollowingTapped`.
-TEST_F(FeedMetricsRecorderTest, Actions_ManageFollowingTapped) {
-  EXPECT_ACTION(kDiscoverFeedUserActionManageFollowingTapped,
-                recordHeaderMenuManageFollowingTapped);
 }
 
 // Testing `recordOpenURLInNewTab`.

@@ -16,11 +16,12 @@ import androidx.core.view.ViewCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.blink.mojom.RpMode;
 import org.chromium.chrome.R;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
+
+import java.util.function.Supplier;
 
 /**
  * This view renders content that gets displayed inside the bottom sheet. This is a simple container
@@ -33,7 +34,7 @@ public class AccountSelectionBottomSheetContent implements BottomSheetContent {
      * trigger. Therefore, we are able to show more accounts at once compared to passive mode. And
      * multi IDP UI accounts take more space, so we show even less accounts in that case.
      */
-    private static final float MAX_VISIBLE_ACCOUNTS_PASSIVE_MODE_MULTI_IDP = 1.5f;
+    private static final float MAX_VISIBLE_ACCOUNTS_PASSIVE_MODE_MULTI_IDP = 1.4f;
 
     private static final float MAX_VISIBLE_ACCOUNTS_PASSIVE_MODE_SINGLE_IDP = 2.5f;
 
@@ -235,11 +236,6 @@ public class AccountSelectionBottomSheetContent implements BottomSheetContent {
     @Override
     public boolean skipHalfStateOnScrollingDown() {
         return false;
-    }
-
-    @Override
-    public int getPeekHeight() {
-        return BottomSheetContent.HeightMode.DISABLED;
     }
 
     @Override

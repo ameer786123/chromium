@@ -56,8 +56,8 @@ const auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr
                 /*bucket=*/1,
                 /*value=*/2,
                 /*filtering_id=*/std::nullopt),
-            blink::mojom::AggregationServiceMode::kDefault,
-            blink::mojom::DebugModeDetails::New());
+            blink::mojom::DebugModeDetails::New(),
+            /*error_event=*/std::nullopt);
 
 const auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr
     kPrivateAggregationRequest2 =
@@ -66,8 +66,8 @@ const auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr
                 /*bucket=*/3,
                 /*value=*/4,
                 /*filtering_id=*/1),
-            blink::mojom::AggregationServiceMode::kDefault,
-            blink::mojom::DebugModeDetails::New());
+            blink::mojom::DebugModeDetails::New(),
+            /*error_event=*/std::nullopt);
 
 // Helper to avoid excess boilerplate.
 template <typename... Ts>

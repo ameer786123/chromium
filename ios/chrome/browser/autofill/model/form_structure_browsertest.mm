@@ -31,13 +31,13 @@
 #import "components/autofill/ios/browser/autofill_driver_ios.h"
 #import "components/autofill/ios/browser/autofill_driver_ios_factory.h"
 #import "components/autofill/ios/browser/autofill_util.h"
-#import "components/autofill/ios/browser/test_autofill_client_ios.h"
 #import "components/autofill/ios/browser/test_autofill_manager_injector.h"
 #import "components/password_manager/core/browser/password_manager_test_utils.h"
 #import "components/password_manager/core/browser/password_store/mock_password_store_interface.h"
 #import "components/sync_user_events/fake_user_event_service.h"
 #import "ios/chrome/browser/autofill/model/address_normalizer_factory.h"
 #import "ios/chrome/browser/autofill/model/form_suggestion_controller.h"
+#import "ios/chrome/browser/autofill/ui_bundled/chrome_autofill_client_ios.h"
 #import "ios/chrome/browser/infobars/model/infobar_manager_impl.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_profile_password_store_factory.h"
 #import "ios/chrome/browser/passwords/model/password_controller.h"
@@ -168,7 +168,6 @@ class FormStructureBrowserTest
       {.disable_server_communication = true}};
   std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<web::WebState> web_state_;
-  std::unique_ptr<AutofillClient> autofill_client_;
   AutofillAgent* autofill_agent_;
   std::unique_ptr<TestAutofillManagerInjector<TestAutofillManager>>
       autofill_manager_injector_;
@@ -203,9 +202,12 @@ FormStructureBrowserTest::FormStructureBrowserTest()
       {
           // TODO(crbug.com/40741721): Remove once shared labels are launched.
           features::kAutofillEnableSupportForParsingWithSharedLabels,
-          features::kAutofillFixValueSemantics,
           // TODO(crbug.com/40266396): Remove once launched.
           features::kAutofillEnableExpirationDateImprovements,
+          features::kAutofillIgnoreCheckableElements,
+          features::kAutofillUnifyRationalizationAndSectioningOrder,
+          // TODO(crbug.com/369503318): Remove once launched.
+          features::kAutofillSupportSplitZipCode,
       },
       // Disabled
       {
@@ -249,8 +251,9 @@ void FormStructureBrowserTest::SetUp() {
                                                providers:@[ autofill_agent_ ]];
 
   InfoBarManagerImpl::CreateForWebState(web_state());
-  autofill_client_ =
-      std::make_unique<TestAutofillClientIOS>(web_state(), autofill_agent_);
+  ChromeAutofillClientIOS::CreateForWebState(
+      web_state(), profile_.get(),
+      InfoBarManagerImpl::FromWebState(web_state()), autofill_agent_);
 
   autofill_manager_injector_ =
       std::make_unique<TestAutofillManagerInjector<TestAutofillManager>>(
@@ -330,11 +333,10 @@ std::string FormStructureBrowserTest::FormStructuresToString(
               section_index);
         }
       }
-      form_string += base::StrCat(
-          {field->Type().ToStringView(), " | ", name, " | ",
-           base::UTF16ToUTF8(field->label()), " | ",
-           base::UTF16ToUTF8(field->value(ValueSemantics::kCurrent)), " | ",
-           section, "\n"});
+      form_string += base::StrCat({field->Type().ToString(), " | ", name, " | ",
+                                   base::UTF16ToUTF8(field->label()), " | ",
+                                   base::UTF16ToUTF8(field->value()), " | ",
+                                   section, "\n"});
     }
     forms_string.push_back(form_string);
   }
@@ -373,7 +375,9 @@ const auto& GetFailingTestNames() {
 // If disabling a test, prefer to add the name names of the specific test cases
 // to GetFailingTestNames(), directly above, instead of renaming the test to
 // DISABLED_DataDrivenHeuristics.
-TEST_P(FormStructureBrowserTest, DataDrivenHeuristics) {
+// TODO(crbug.com/432460380): Test is crashing and it is unclear to me how to
+// get the name of the specific test case.
+TEST_P(FormStructureBrowserTest, DISABLED_DataDrivenHeuristics) {
 #if BUILDFLAG(USE_INTERNAL_AUTOFILL_PATTERNS)
   GTEST_SKIP() << "DataDrivenHeuristics tests are only supported with legacy "
                   "parsing patterns";

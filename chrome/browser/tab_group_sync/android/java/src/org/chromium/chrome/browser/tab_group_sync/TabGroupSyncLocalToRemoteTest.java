@@ -19,9 +19,7 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.sync.SyncTestRule;
 import org.chromium.chrome.browser.tab.Tab;
@@ -51,7 +49,6 @@ import java.util.List;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @DoNotBatch(reason = "TODO(b/40743432): SyncTestRule doesn't support batching.")
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
 @Restriction({DeviceFormFactor.PHONE, Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE})
 public class TabGroupSyncLocalToRemoteTest {
     public SyncTestRule mSyncTestRule = new SyncTestRule();
@@ -66,7 +63,6 @@ public class TabGroupSyncLocalToRemoteTest {
     public void setUp() {
         mHelper = new TabGroupSyncIntegrationTestHelper(mSyncTestRule);
         mSyncTestRule.setUpAccountAndEnableHistorySync();
-        SyncTestUtil.waitForHistorySyncEnabled();
         mHelper.assertSyncEntityCount(0);
     }
 
@@ -76,24 +72,25 @@ public class TabGroupSyncLocalToRemoteTest {
     @DisabledTest(message = "crbug.com/353952795")
     public void testCreateTabGroup() {
         WebPageStation firstPage = mCtaTestRule.alreadyStartedOnBlankPage();
-        Tab firstTab = firstPage.getLoadedTab();
+        Tab firstTab = firstPage.loadedTabElement.value();
         int firstTabId = firstTab.getId();
         String firstTabTitle = ChromeTabUtils.getTitleOnUiThread(firstTab);
         String firstTabUrl = ChromeTabUtils.getUrlStringOnUiThread(firstTab);
 
         RegularNewTabPageStation secondPage = firstPage.openNewTabFast();
-        Tab secondTab = secondPage.getLoadedTab();
+        Tab secondTab = secondPage.loadedTabElement.value();
         int secondTabId = secondTab.getId();
         String secondTabTitle = ChromeTabUtils.getTitleOnUiThread(secondTab);
         String secondTabUrl = ChromeTabUtils.getUrlStringOnUiThread(secondTab);
 
         RegularTabSwitcherStation tabSwitcher = secondPage.openRegularTabSwitcher();
-        TabSwitcherListEditorFacility editor = tabSwitcher.openAppMenu().clickSelectTabs();
+        TabSwitcherListEditorFacility<RegularTabSwitcherStation> editor =
+                tabSwitcher.openAppMenu().clickSelectTabs();
         editor = editor.addTabToSelection(0, firstTabId);
         editor = editor.addTabToSelection(1, secondTabId);
 
         String title = "test_tab_group_name";
-        NewTabGroupDialogFacility dialog =
+        NewTabGroupDialogFacility<RegularTabSwitcherStation> dialog =
                 editor.openAppMenuWithEditor().groupTabs();
         dialog = dialog.inputName(title);
         dialog = dialog.pickColor(TabGroupColorId.RED);

@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
 import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
-import type {AnnotationText, TextStyles} from '../constants.js';
+import type {TextAttributes, TextStyles} from '../constants.js';
 import {TextStyle} from '../constants.js';
 import {Ink2Manager} from '../ink2_manager.js';
 
@@ -12,7 +13,8 @@ import {InkTextObserverMixin} from './ink_text_observer_mixin.js';
 import {getCss} from './text_styles_selector.css.js';
 import {getHtml} from './text_styles_selector.html.js';
 
-const TextStylesSelectorElementBase = InkTextObserverMixin(CrLitElement);
+const TextStylesSelectorElementBase =
+    InkTextObserverMixin(I18nMixinLit(CrLitElement));
 
 export class TextStylesSelectorElement extends TextStylesSelectorElementBase {
   static get is() {
@@ -36,8 +38,6 @@ export class TextStylesSelectorElement extends TextStylesSelectorElementBase {
   protected accessor currentStyles_: TextStyles = {
     [TextStyle.BOLD]: false,
     [TextStyle.ITALIC]: false,
-    [TextStyle.UNDERLINE]: false,
-    [TextStyle.STRIKETHROUGH]: false,
   };
 
   protected getTextStyles_(): TextStyle[] {
@@ -59,8 +59,17 @@ export class TextStylesSelectorElement extends TextStylesSelectorElementBase {
     return this.currentStyles_[style] ? 'true' : 'false';
   }
 
-  override onTextChanged(text: AnnotationText) {
-    this.currentStyles_ = text.styles;
+  protected getTitle_(style: TextStyle) {
+    switch (style) {
+      case TextStyle.BOLD:
+        return this.i18n('ink2TextStyleBold');
+      case TextStyle.ITALIC:
+        return this.i18n('ink2TextStyleItalic');
+    }
+  }
+
+  override onTextAttributesChanged(attributes: TextAttributes) {
+    this.currentStyles_ = attributes.styles;
   }
 }
 

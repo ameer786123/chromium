@@ -38,9 +38,9 @@ id<GREYMatcher> SafetyCheckSwitchMatcher() {
   return grey_accessibilityID([NSString stringWithFormat:@"%@, switch", title]);
 }
 
-// Taps the context menu item with the given label.
-void TapMenuItem(int labelId) {
-  id item = chrome_test_util::ContextMenuItemWithAccessibilityLabelId(labelId);
+// Taps the alert item with the given label.
+void TapAlertItem(int labelId) {
+  id item = chrome_test_util::AlertItemWithAccessibilityLabelId(labelId);
   [[EarlGrey selectElementWithMatcher:item] performAction:grey_tap()];
 }
 
@@ -71,11 +71,9 @@ id<GREYMatcher> NotificationsSettingsMatcher() {
             (testNotificationsSwipeDown_WithUpdatedSettingsView)] ||
       [self isRunningTest:@selector(testTipsSwitch)] ||
       [self isRunningTest:@selector(testSafetyCheckSwitch)]) {
-    config.additional_args.push_back("--enable-features=IOSTipsNotifications");
     config.additional_args.push_back(
         "--enable-features=SafetyCheckNotifications");
   } else {
-    config.additional_args.push_back("--disable-features=IOSTipsNotifications");
     config.additional_args.push_back(
         "--disable-features=SafetyCheckNotifications");
   }
@@ -156,7 +154,7 @@ id<GREYMatcher> NotificationsSettingsMatcher() {
       performAction:grey_turnSwitchOn(YES)];
 
   // Tap Go To Settings action.
-  TapMenuItem(IDS_IOS_NOTIFICATIONS_ALERT_GO_TO_SETTINGS);
+  TapAlertItem(IDS_IOS_NOTIFICATIONS_ALERT_GO_TO_SETTINGS);
 
   // Verify that settings has opened, then close it.
   XCUIApplication* settingsApp = [[XCUIApplication alloc]
@@ -195,7 +193,7 @@ id<GREYMatcher> NotificationsSettingsMatcher() {
       performAction:grey_turnSwitchOn(YES)];
 
   // Tap Go To Settings action.
-  TapMenuItem(IDS_IOS_NOTIFICATIONS_ALERT_GO_TO_SETTINGS);
+  TapAlertItem(IDS_IOS_NOTIFICATIONS_ALERT_GO_TO_SETTINGS);
 
   // Verify that settings has opened, then close it.
   XCUIApplication* settingsApp = [[XCUIApplication alloc]

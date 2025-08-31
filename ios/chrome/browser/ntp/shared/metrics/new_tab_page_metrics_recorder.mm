@@ -66,11 +66,18 @@
   base::RecordAction(base::UserMetricsAction(kNTPIdentityDiscTappedAction));
 }
 
+- (void)recordIncognitoTapped {
+  base::RecordAction(base::UserMetricsAction(kNTPIncognitoButtonTappedAction));
+}
+
+- (void)recordMIATapped {
+  base::RecordAction(base::UserMetricsAction(kNTPMIAEntryPointTappedAction));
+}
+
 - (void)
     recordMagicStackCustomizationStateWithSetUpList:(BOOL)setUpListEnabled
                                         safetyCheck:(BOOL)safetyCheckEnabled
                                       tabResumption:(BOOL)tabResumptionEnabled
-                                     parcelTracking:(BOOL)parcelTrackingEnabled
                                                tips:(BOOL)tipsEnabled {
   base::UmaHistogramBoolean(kMagicStackSetUpListEnabledHistogram,
                             setUpListEnabled);
@@ -78,8 +85,6 @@
                             safetyCheckEnabled);
   base::UmaHistogramBoolean(kMagicStackTabResumptionEnabledHistogram,
                             tabResumptionEnabled);
-  base::UmaHistogramBoolean(kMagicStackParcelTrackingEnabledHistogram,
-                            parcelTrackingEnabled);
   base::UmaHistogramBoolean(kMagicStackTipsEnabledHistogram, tipsEnabled);
 }
 

@@ -7,7 +7,6 @@
 #import "base/containers/contains.h"
 #import "base/memory/raw_ptr.h"
 #import "base/test/scoped_feature_list.h"
-#import "components/collaboration/test_support/mock_collaboration_service.h"
 #import "components/collaboration/test_support/mock_messaging_backend_service.h"
 #import "components/data_sharing/public/features.h"
 #import "components/policy/core/common/policy_pref_names.h"
@@ -15,11 +14,11 @@
 #import "components/saved_tab_groups/test_support/saved_tab_group_test_utils.h"
 #import "components/sessions/core/tab_restore_service.h"
 #import "components/sync_preferences/testing_pref_service_syncable.h"
-#import "ios/chrome/browser/collaboration/model/collaboration_service_factory.h"
 #import "ios/chrome/browser/collaboration/model/messaging/messaging_backend_service_bridge.h"
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_service.h"
+#import "ios/chrome/browser/saved_tab_groups/ui/fake_face_pile_provider.h"
 #import "ios/chrome/browser/sessions/model/ios_chrome_tab_restore_service_factory.h"
 #import "ios/chrome/browser/share_kit/model/test_share_kit_service.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
@@ -31,6 +30,7 @@
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_item_identifier.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_mediator_test.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/regular/regular_grid_mediator_delegate.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_grid_mode_holder.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_group_sync_service_observer_bridge.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/toolbars/tab_grid_toolbars_configuration.h"
@@ -40,6 +40,19 @@
 
 using testing::_;
 using testing::Return;
+
+@interface FakeRegularGridMediatorDelegate
+    : NSObject <RegularGridMediatorDelegate>
+@end
+
+@implementation FakeRegularGridMediatorDelegate
+
+- (id<FacePileProviding>)facePileProviderForGroupID:(const std::string&)groupID
+                                         groupColor:(UIColor*)groupColor {
+  return [[FakeFacePileProvider alloc] init];
+}
+
+@end
 
 @interface TestRegularGridMediator
     : RegularGridMediator <MessagingBackendServiceObserving,
@@ -58,9 +71,6 @@ class RegularGridMediatorTest : public GridMediatorTestClass {
     scoped_feature_list_.InitWithFeatures(
         /*enabled_features=*/
         {
-            kTabGroupSync,
-            kTabGroupsIPad,
-            kTabGroupIndicator,
             data_sharing::features::kDataSharingFeature,
         },
         /*disable_features=*/{});
@@ -69,15 +79,12 @@ class RegularGridMediatorTest : public GridMediatorTestClass {
     mode_holder_ = [[TabGridModeHolder alloc] init];
     share_kit_service_ = std::make_unique<TestShareKitService>(
         nullptr, nullptr, nullptr, tab_group_service_);
-    collaboration_service_ =
-        std::make_unique<collaboration::MockCollaborationService>();
 
     mediator_ = [[TestRegularGridMediator alloc]
-          initWithModeHolder:mode_holder_
-         tabGroupSyncService:tab_group_sync_service_.get()
-             shareKitService:share_kit_service_.get()
-        collaborationService:collaboration_service_.get()
-            messagingService:&messaging_backend_];
+         initWithModeHolder:mode_holder_
+        tabGroupSyncService:tab_group_sync_service_.get()
+            shareKitService:share_kit_service_.get()
+           messagingService:&messaging_backend_];
     mediator_.consumer = consumer_;
     mediator_.browser = browser_.get();
     mediator_.toolbarsMutator = fake_toolbars_mediator_;
@@ -96,8 +103,6 @@ class RegularGridMediatorTest : public GridMediatorTestClass {
   base::test::ScopedFeatureList scoped_feature_list_;
   TestRegularGridMediator* mediator_ = nullptr;
   std::unique_ptr<ShareKitService> share_kit_service_;
-  std::unique_ptr<collaboration::MockCollaborationService>
-      collaboration_service_;
   raw_ptr<sessions::TabRestoreService> tab_restore_service_ = nullptr;
   TabGridModeHolder* mode_holder_;
   collaboration::messaging::MockMessagingBackendService messaging_backend_;
@@ -251,8 +256,13 @@ TEST_F(RegularGridMediatorTest, TestToolbarsNormalModeWithoutWebstates) {
   EXPECT_FALSE(fake_toolbars_mediator_.configuration.cancelSearchButton);
 }
 
-// Tests that `facePileViewForItem` returns an UIView when the group is shared.
-TEST_F(RegularGridMediatorTest, FacePileViewForItem) {
+// Tests that `facePileProviderForItem` returns an UIView when the group is
+// shared.
+TEST_F(RegularGridMediatorTest, facePileProviderForItem) {
+  FakeRegularGridMediatorDelegate* fakeDelegate =
+      [[FakeRegularGridMediatorDelegate alloc] init];
+  mediator_.regularDelegate = fakeDelegate;
+
   // Set a saved tab group.
   tab_groups::TabGroupId tab_group_id = tab_groups::TabGroupId::GenerateNew();
   const TabGroup* local_group = browser_->GetWebStateList()->CreateGroup(
@@ -264,15 +274,14 @@ TEST_F(RegularGridMediatorTest, FacePileViewForItem) {
       tab_group_sync_service_->GetGroup(group.saved_guid()).has_value());
 
   GridItemIdentifier* group_item_id =
-      [GridItemIdentifier groupIdentifier:local_group
-                         withWebStateList:browser_->GetWebStateList()];
-  EXPECT_EQ(nil, [mediator_ facePileViewForItem:group_item_id]);
+      [GridItemIdentifier groupIdentifier:local_group];
+  EXPECT_EQ(nil, [mediator_ facePileProviderForItem:group_item_id]);
 
   // Share the group.
   tab_group_sync_service_->MakeTabGroupShared(
-      group.local_group_id().value(), "collaboration",
+      group.local_group_id().value(), syncer::CollaborationId("collaboration"),
       tab_groups::TabGroupSyncService::TabGroupSharingCallback());
-  EXPECT_NE(nil, [mediator_ facePileViewForItem:group_item_id]);
+  EXPECT_NE(nil, [mediator_ facePileProviderForItem:group_item_id]);
 }
 
 // Tests that `-activityLabelDataForGroup:` returns the data for a specific tab

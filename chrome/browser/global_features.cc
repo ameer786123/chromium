@@ -8,6 +8,7 @@
 #include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/no_destructor.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/permissions/system/platform_handle.h"
@@ -18,9 +19,9 @@
 // This causes a gn error on Android builds, because gn does not understand
 // buildflags, so we include it only on platforms where it is used.
 #include "chrome/browser/background/glic/glic_background_mode_manager.h"  // nogncheck
-#include "chrome/browser/glic/glic_enabling.h"         // nogncheck
-#include "chrome/browser/glic/glic_profile_manager.h"  // nogncheck
+#include "chrome/browser/glic/glic_profile_manager.h"               // nogncheck
 #include "chrome/browser/glic/host/glic_synthetic_trial_manager.h"  // nogncheck
+#include "chrome/browser/glic/public/glic_enabling.h"               // nogncheck
 #endif
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
@@ -28,6 +29,13 @@
 // buildflags, so we include it only on platforms where it is used.
 #include "chrome/browser/ui/webui/whats_new/whats_new_registrar.h"
 #include "components/user_education/common/user_education_features.h"  // nogncheck
+#endif
+
+#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
+#include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
+#include "chrome/browser/win/installer_downloader/installer_downloader_controller.h"
+#include "chrome/browser/win/installer_downloader/installer_downloader_feature.h"
+#include "chrome/browser/win/installer_downloader/installer_downloader_infobar_delegate.h"
 #endif
 
 namespace {
@@ -73,12 +81,23 @@ void GlobalFeatures::Init() {
         std::make_unique<glic::GlicBackgroundModeManager>(
             g_browser_process->status_tray());
     synthetic_trial_manager_ =
-        std::make_unique<glic::GlicSyntheticTrialManager>(
-            g_browser_process->GetMetricsServicesManager());
+        std::make_unique<glic::GlicSyntheticTrialManager>();
   }
 #endif
 
   application_locale_storage_ = std::make_unique<ApplicationLocaleStorage>();
+
+#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  if (base::FeatureList::IsEnabled(
+          installer_downloader::kInstallerDownloader)) {
+    installer_downloader_controller_ = std::make_unique<
+        installer_downloader::InstallerDownloaderController>(
+        base::BindRepeating(
+            &installer_downloader::InstallerDownloaderInfoBarDelegate::Show),
+        base::BindRepeating(static_cast<bool (*)()>(
+            &ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled)));
+  }
+#endif
 }
 
 void GlobalFeatures::Shutdown() {
@@ -86,6 +105,10 @@ void GlobalFeatures::Shutdown() {
   if (glic_background_mode_manager_) {
     glic_background_mode_manager_->Shutdown();
     glic_background_mode_manager_.reset();
+  }
+  if (glic_profile_manager_) {
+    glic_profile_manager_->Shutdown();
+    glic_profile_manager_.reset();
   }
   synthetic_trial_manager_.reset();
 #endif

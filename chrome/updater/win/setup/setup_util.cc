@@ -85,9 +85,9 @@ void AddInstallComProgIdWorkItems(UpdaterScope scope,
 std::wstring GetTaskName(UpdaterScope scope) {
   scoped_refptr<TaskScheduler> task_scheduler =
       TaskScheduler::CreateInstance(scope);
-  return task_scheduler
-             ? task_scheduler->FindFirstTaskName(GetTaskNamePrefix(scope))
-             : std::wstring();
+  return task_scheduler ? task_scheduler->FindFirstTaskName(
+                              GetTaskNamePrefix(scope) + L"{")
+                        : std::wstring();
 }
 
 void UnregisterWakeTask(UpdaterScope scope) {
@@ -623,7 +623,12 @@ std::wstring GetComTypeLibResourceIndex(REFIID iid) {
       {__uuidof(IProcessLauncher2System), kUpdaterLegacySystemIndex},
   };
   const auto index = kTypeLibIndexes.find(iid);
-  CHECK(index != kTypeLibIndexes.end()) << StringFromGuid(iid);
+  if (index == kTypeLibIndexes.end()) {
+    base::debug::Alias(&iid);
+    VLOG(1) << "index == kTypeLibIndexes.end() for interface: "
+            << StringFromGuid(iid);
+    CHECK(false) << StringFromGuid(iid);
+  }
   return index->second;
 }
 

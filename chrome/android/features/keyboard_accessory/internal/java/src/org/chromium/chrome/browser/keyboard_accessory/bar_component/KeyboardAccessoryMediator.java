@@ -6,34 +6,40 @@ package org.chromium.chrome.browser.keyboard_accessory.bar_component;
 
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.ANIMATION_LISTENER;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.BAR_ITEMS;
-import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.BOTTOM_OFFSET_PX;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.DISABLE_ANIMATIONS_FOR_TESTING;
+import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.DISMISS_ITEM;
+import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.HAS_STICKY_LAST_ITEM;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.HAS_SUGGESTIONS;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.OBFUSCATED_CHILD_AT_CALLBACK;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.ON_TOUCH_EVENT_CALLBACK;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.SHEET_OPENER_ITEM;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.SHOW_SWIPING_IPH;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.SKIP_CLOSING_ANIMATION;
+import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.STYLE;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.VISIBLE;
 
 import androidx.annotation.Nullable;
-import androidx.annotation.Px;
 import androidx.annotation.StringRes;
 
+import org.chromium.base.ObserverList;
 import org.chromium.base.TraceEvent;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.keyboard_accessory.AccessoryAction;
+import org.chromium.chrome.browser.keyboard_accessory.KeyboardAccessoryVisualStateProvider;
 import org.chromium.chrome.browser.keyboard_accessory.ManualFillingMetricsRecorder;
 import org.chromium.chrome.browser.keyboard_accessory.R;
 import org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryCoordinator.BarVisibilityDelegate;
 import org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryCoordinator.TabSwitchingDelegate;
 import org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.AutofillBarItem;
 import org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.BarItem;
+import org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.DismissBarItem;
 import org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.SheetOpenerBarItem;
 import org.chromium.chrome.browser.keyboard_accessory.button_group_component.KeyboardAccessoryButtonGroupCoordinator;
 import org.chromium.chrome.browser.keyboard_accessory.data.KeyboardAccessoryData;
 import org.chromium.chrome.browser.keyboard_accessory.data.KeyboardAccessoryData.Action;
 import org.chromium.chrome.browser.keyboard_accessory.data.Provider;
 import org.chromium.chrome.browser.keyboard_accessory.sheet_component.AccessorySheetCoordinator;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.autofill.AutofillDelegate;
 import org.chromium.components.autofill.AutofillSuggestion;
 import org.chromium.components.autofill.SuggestionType;
@@ -46,6 +52,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * This is the second part of the controller of the keyboard accessory component. It is responsible
@@ -62,23 +69,36 @@ class KeyboardAccessoryMediator
     private final BarVisibilityDelegate mBarVisibilityDelegate;
     private final AccessorySheetCoordinator.SheetVisibilityDelegate mSheetVisibilityDelegate;
     private final TabSwitchingDelegate mTabSwitcher;
+    private final Supplier<Integer> mBackgroundColorSupplier;
+    private final Supplier<Boolean> mIsLargeFormFactorSupplier;
+    private final Profile mProfile;
     private Optional<Boolean> mHasFilteredTouchEvent = Optional.empty();
+    private final ObserverList<KeyboardAccessoryVisualStateProvider.Observer> mVisualObservers =
+            new ObserverList<>();
 
     KeyboardAccessoryMediator(
             PropertyModel model,
+            Profile profile,
             BarVisibilityDelegate barVisibilityDelegate,
             AccessorySheetCoordinator.SheetVisibilityDelegate sheetVisibilityDelegate,
             TabSwitchingDelegate tabSwitcher,
-            KeyboardAccessoryButtonGroupCoordinator.SheetOpenerCallbacks sheetOpenerCallbacks) {
+            KeyboardAccessoryButtonGroupCoordinator.SheetOpenerCallbacks sheetOpenerCallbacks,
+            Supplier<Integer> backgroundColorSupplier,
+            Supplier<Boolean> isLargeFormFactorSupplier,
+            Runnable dismissRunnable) {
         mModel = model;
+        mProfile = profile;
         mBarVisibilityDelegate = barVisibilityDelegate;
         mSheetVisibilityDelegate = sheetVisibilityDelegate;
         mTabSwitcher = tabSwitcher;
+        mBackgroundColorSupplier = backgroundColorSupplier;
+        mIsLargeFormFactorSupplier = isLargeFormFactorSupplier;
 
         // Add mediator as observer so it can use model changes as signal for accessory visibility.
         mModel.set(OBFUSCATED_CHILD_AT_CALLBACK, this::onSuggestionObfuscatedAt);
         mModel.set(ON_TOUCH_EVENT_CALLBACK, this::onTouchEvent);
         mModel.set(SHEET_OPENER_ITEM, new SheetOpenerBarItem(sheetOpenerCallbacks));
+        mModel.set(DISMISS_ITEM, new DismissBarItem(dismissRunnable));
         mModel.set(ANIMATION_LISTENER, mBarVisibilityDelegate::onBarFadeInAnimationEnd);
         mModel.get(BAR_ITEMS).add(mModel.get(SHEET_OPENER_ITEM));
         mModel.addObserver(this);
@@ -100,6 +120,12 @@ class KeyboardAccessoryMediator
             List<BarItem> retainedItems = collectItemsToRetain(AccessoryAction.AUTOFILL_SUGGESTION);
             retainedItems.addAll(toBarItems(suggestions, delegate));
             retainedItems.add(retainedItems.size(), mModel.get(SHEET_OPENER_ITEM));
+            // TODO(crbug.com/441006939): Show dismiss on first launch too.
+            if (mIsLargeFormFactorSupplier.get()
+                    && ChromeFeatureList.isEnabled(
+                            ChromeFeatureList.AUTOFILL_ANDROID_DESKTOP_KEYBOARD_ACCESSORY_REVAMP)) {
+                retainedItems.add(retainedItems.size(), mModel.get(DISMISS_ITEM));
+            }
             mModel.get(BAR_ITEMS).set(retainedItems);
             mModel.set(HAS_SUGGESTIONS, barHasSuggestions());
         };
@@ -120,12 +146,18 @@ class KeyboardAccessoryMediator
         TraceEvent.begin("KeyboardAccessoryMediator#onItemAvailable");
         assert typeId == AccessoryAction.CREDMAN_CONDITIONAL_UI_REENTRY
                         || typeId == AccessoryAction.GENERATE_PASSWORD_AUTOMATIC
+                        || typeId == AccessoryAction.RETRIEVE_TRUSTED_VAULT_KEY
                 : "Did not specify which Action type has been updated.";
         List<BarItem> retainedItems = collectItemsToRetain(typeId);
         retainedItems.addAll(
                 typeId == AccessoryAction.CREDMAN_CONDITIONAL_UI_REENTRY ? retainedItems.size() : 0,
                 toBarItems(actions));
         retainedItems.add(retainedItems.size(), mModel.get(SHEET_OPENER_ITEM));
+        if (mIsLargeFormFactorSupplier.get()
+                && ChromeFeatureList.isEnabled(
+                        ChromeFeatureList.AUTOFILL_ANDROID_DESKTOP_KEYBOARD_ACCESSORY_REVAMP)) {
+            retainedItems.add(mModel.get(DISMISS_ITEM));
+        }
         mModel.get(BAR_ITEMS).set(retainedItems);
         mModel.set(HAS_SUGGESTIONS, barHasSuggestions());
         TraceEvent.end("KeyboardAccessoryMediator#onItemAvailable");
@@ -135,6 +167,7 @@ class KeyboardAccessoryMediator
         List<BarItem> retainedItems = new ArrayList<>();
         for (BarItem item : mModel.get(BAR_ITEMS)) {
             if (item.getAction() == null) continue;
+            if (item.getAction().getActionType() == AccessoryAction.DISMISS) continue;
             if (item.getAction().getActionType() == actionType) continue;
             retainedItems.add(item);
         }
@@ -155,12 +188,14 @@ class KeyboardAccessoryMediator
             case SuggestionType.TITLE:
             case SuggestionType.SEPARATOR:
             case SuggestionType.UNDO_OR_CLEAR:
+            case SuggestionType.ALL_LOYALTY_CARDS_ENTRY:
             case SuggestionType.ALL_SAVED_PASSWORDS_ENTRY:
             case SuggestionType.GENERATE_PASSWORD_ENTRY:
             case SuggestionType.MANAGE_ADDRESS:
             case SuggestionType.MANAGE_CREDIT_CARD:
             case SuggestionType.MANAGE_IBAN:
             case SuggestionType.MANAGE_PLUS_ADDRESS:
+            case SuggestionType.MANAGE_LOYALTY_CARD:
                 return false;
             case SuggestionType.AUTOCOMPLETE_ENTRY:
             case SuggestionType.PASSWORD_ENTRY:
@@ -178,7 +213,9 @@ class KeyboardAccessoryMediator
         for (int position = 0; position < suggestions.size(); ++position) {
             AutofillSuggestion suggestion = suggestions.get(position);
             if (!shouldShowSuggestion(suggestion)) continue;
-            barItems.add(new AutofillBarItem(suggestion, createAutofillAction(delegate, position)));
+            barItems.add(
+                    new AutofillBarItem(
+                            suggestion, createAutofillAction(delegate, position), mProfile));
         }
 
         // Annotates the first suggestion in with an in-product help bubble. For password
@@ -228,6 +265,7 @@ class KeyboardAccessoryMediator
             case AccessoryAction.AUTOFILL_SUGGESTION:
                 return BarItem.Type.SUGGESTION;
             case AccessoryAction.GENERATE_PASSWORD_AUTOMATIC:
+            case AccessoryAction.RETRIEVE_TRUSTED_VAULT_KEY:
                 return BarItem.Type.ACTION_BUTTON;
             case AccessoryAction.CREDMAN_CONDITIONAL_UI_REENTRY:
                 return BarItem.Type.ACTION_CHIP;
@@ -271,15 +309,21 @@ class KeyboardAccessoryMediator
                 // TODO: crbug.com/398065928 - The generation controller should control the timing..
                 onItemAvailable(AccessoryAction.GENERATE_PASSWORD_AUTOMATIC, new Action[0]);
             }
+            for (KeyboardAccessoryVisualStateProvider.Observer observer : mVisualObservers) {
+                observer.onKeyboardAccessoryVisualStateChanged(
+                        mModel.get(VISIBLE), mBackgroundColorSupplier.get());
+            }
             return;
         }
-        if (propertyKey == BOTTOM_OFFSET_PX
+        if (propertyKey == STYLE
                 || propertyKey == SHEET_OPENER_ITEM
+                || propertyKey == DISMISS_ITEM
                 || propertyKey == SKIP_CLOSING_ANIMATION
                 || propertyKey == DISABLE_ANIMATIONS_FOR_TESTING
                 || propertyKey == OBFUSCATED_CHILD_AT_CALLBACK
                 || propertyKey == SHOW_SWIPING_IPH
                 || propertyKey == HAS_SUGGESTIONS
+                || propertyKey == HAS_STICKY_LAST_ITEM
                 || propertyKey == ANIMATION_LISTENER) {
             return;
         }
@@ -325,8 +369,12 @@ class KeyboardAccessoryMediator
         return mModel.get(BAR_ITEMS).size() > 1; // Ignore tab switcher item.
     }
 
-    void setBottomOffset(@Px int bottomOffset) {
-        mModel.set(BOTTOM_OFFSET_PX, bottomOffset);
+    void setStyle(KeyboardAccessoryStyle style) {
+        mModel.set(STYLE, style);
+    }
+
+    void setHasStickyLastItem(boolean hasStickyLastItem) {
+        mModel.set(HAS_STICKY_LAST_ITEM, hasStickyLastItem);
     }
 
     boolean isShown() {
@@ -375,6 +423,8 @@ class KeyboardAccessoryMediator
         switch (actionType) {
             case AccessoryAction.GENERATE_PASSWORD_AUTOMATIC:
                 return R.string.password_generation_accessory_button;
+            case AccessoryAction.RETRIEVE_TRUSTED_VAULT_KEY:
+                return R.string.retrieve_trusted_vault_key_button;
             case AccessoryAction.CREDMAN_CONDITIONAL_UI_REENTRY:
                 return getCaptionIdForCredManEntry();
             case AccessoryAction.AUTOFILL_SUGGESTION:
@@ -401,5 +451,15 @@ class KeyboardAccessoryMediator
             }
         }
         return R.string.select_passkey;
+    }
+
+    void addObserver(KeyboardAccessoryVisualStateProvider.Observer observer) {
+        mVisualObservers.addObserver(observer);
+        observer.onKeyboardAccessoryVisualStateChanged(
+                mModel.get(VISIBLE), mBackgroundColorSupplier.get());
+    }
+
+    void removeObserver(KeyboardAccessoryVisualStateProvider.Observer observer) {
+        mVisualObservers.removeObserver(observer);
     }
 }

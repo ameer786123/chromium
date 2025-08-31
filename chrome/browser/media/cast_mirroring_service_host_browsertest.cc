@@ -17,7 +17,8 @@
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/tabs/tab_enums.h"
+#include "chrome/browser/ui/tabs/alert/tab_alert.h"
+#include "chrome/browser/ui/tabs/alert/tab_alert_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
@@ -351,6 +352,13 @@ class CastMirroringServiceHostBrowserTest
   // InProcessBrowserTest override.
   void SetUp() override { InProcessBrowserTest::SetUp(); }
 
+  std::vector<tabs::TabAlert> GetTabAlertStatesForContents(
+      content::WebContents* web_contents) {
+    return tabs::TabAlertController::From(
+               tabs::TabInterface::GetFromContents(web_contents))
+        ->GetAllActiveAlerts();
+  }
+
  private:
   // mojom::SessionObserver mocks.
   MOCK_METHOD(void, OnError, (mojom::SessionError));
@@ -437,11 +445,11 @@ IN_PROC_BROWSER_TEST_F(CastMirroringServiceHostBrowserTest, TabIndicator) {
   // Run the browser until the indicator turns on.
   const base::TimeTicks start_time = base::TimeTicks::Now();
   while (!base::Contains(GetTabAlertStatesForContents(contents),
-                         TabAlertState::TAB_CAPTURING)) {
+                         tabs::TabAlert::TAB_CAPTURING)) {
     if (base::TimeTicks::Now() - start_time >
         TestTimeouts::action_max_timeout()) {
       EXPECT_THAT(GetTabAlertStatesForContents(contents),
-                  ::testing::Contains(TabAlertState::TAB_CAPTURING));
+                  ::testing::Contains(tabs::TabAlert::TAB_CAPTURING));
       return;
     }
     observer.WaitForTabChange();

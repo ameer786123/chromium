@@ -4,10 +4,9 @@
 
 package org.chromium.chrome.browser.quick_delete;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Token;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browsing_data.TimePeriod;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabGroupUtils;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabGroupUtils.GroupsPendingDestroy;
@@ -21,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** A class responsible for providing logic around filtered tabs. */
+@NullMarked
 class QuickDeleteTabsFilter {
     static final long FIFTEEN_MINUTES_IN_MS = 15 * 60 * 1000;
     static final long ONE_HOUR_IN_MS = FIFTEEN_MINUTES_IN_MS * 4;
@@ -46,7 +46,7 @@ class QuickDeleteTabsFilter {
      * @param tabModel A regular {@link TabGroupModelFilter} which is used to observe the tab
      *     related changes.
      */
-    QuickDeleteTabsFilter(@NonNull TabGroupModelFilter tabGroupModelFilter) {
+    QuickDeleteTabsFilter(TabGroupModelFilter tabGroupModelFilter) {
         assert !tabGroupModelFilter.getTabModel().isIncognito()
                 : "Incognito tab model is not supported.";
         mTabGroupModelFilter = tabGroupModelFilter;
@@ -55,8 +55,7 @@ class QuickDeleteTabsFilter {
     private List<Tab> getListOfAllTabsToBeClosed() {
         List<Tab> mTabList = new ArrayList<>();
         TabModel tabModel = mTabGroupModelFilter.getTabModel();
-        for (int i = 0; i < tabModel.getCount(); ++i) {
-            Tab tab = tabModel.getTabAt(i);
+        for (Tab tab : tabModel) {
             if (tab == null || tab.isCustomTab()) continue;
             mTabList.add(tab);
         }
@@ -126,8 +125,8 @@ class QuickDeleteTabsFilter {
         }
         // Use a list here since the number of elements is likely to be small and outperform a set
         // most of the time.
-        List<Token> placeholderTabGroupIds = new ArrayList<Token>();
-        List<Tab> placeholderExcludedTabList = new ArrayList<Tab>();
+        List<Token> placeholderTabGroupIds = new ArrayList<>();
+        List<Tab> placeholderExcludedTabList = new ArrayList<>();
         for (LocalTabGroupId localId : destroyedGroups.collaborationGroupsDestroyed) {
             placeholderTabGroupIds.add(localId.tabGroupId);
         }
@@ -156,8 +155,7 @@ class QuickDeleteTabsFilter {
 
         List<Tab> mTabList = new ArrayList<>();
         TabModel tabModel = mTabGroupModelFilter.getTabModel();
-        for (int i = 0; i < tabModel.getCount(); ++i) {
-            Tab tab = tabModel.getTabAt(i);
+        for (Tab tab : tabModel) {
             if (tab == null || tab.isCustomTab()) continue;
 
             final long recentNavigationTime = tab.getLastNavigationCommittedTimestampMillis();

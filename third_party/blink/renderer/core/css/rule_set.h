@@ -34,6 +34,7 @@
 #include "third_party/blink/renderer/core/css/css_keyframes_rule.h"
 #include "third_party/blink/renderer/core/css/css_position_try_rule.h"
 #include "third_party/blink/renderer/core/css/media_query_evaluator.h"
+#include "third_party/blink/renderer/core/css/mixin_map.h"
 #include "third_party/blink/renderer/core/css/resolver/media_query_result.h"
 #include "third_party/blink/renderer/core/css/robin_hood_map.h"
 #include "third_party/blink/renderer/core/css/rule_feature_set.h"
@@ -42,6 +43,7 @@
 #include "third_party/blink/renderer/core/css/style_rule_font_feature_values.h"
 #include "third_party/blink/renderer/core/css/style_rule_font_palette_values.h"
 #include "third_party/blink/renderer/core/css/style_rule_view_transition.h"
+#include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_linked_stack.h"
@@ -162,6 +164,10 @@ class CORE_EXPORT RuleData {
                                Vector<uint16_t>& new_backing,
                                unsigned new_position);
 
+  bool RejectElement(Element::TinyBloomFilter element_filter) const {
+    return (element_filter & subject_filter_) != subject_filter_;
+  }
+
   void Trace(Visitor*) const;
 
   // This number is picked fairly arbitrary. If lowered, be aware that there
@@ -193,6 +199,14 @@ class CORE_EXPORT RuleData {
   // remember to adjust the clamping in ComputeBloomFilterHashes() too.
   unsigned bloom_hash_size_ : 8;
   unsigned bloom_hash_pos_ : 24;
+
+  // A Bloom filter that this selector needs the element to match;
+  // in other words, similar to bloom_hash_{pos_size} but for the element
+  // itself instead of the ancestor chain. This is only really useful
+  // if the selector's subject consists of multiple selectors,
+  // e.g. something like .foo.bar[baz]; otherwise, it will be redundant
+  // with bucketing.
+  Element::TinyBloomFilter subject_filter_ = 0;
 };
 
 }  // namespace blink
@@ -207,6 +221,7 @@ struct SameSizeAsRuleData {
   unsigned b;
   unsigned c;
   unsigned d;
+  unsigned e;
 };
 
 ASSERT_SIZE(RuleData, SameSizeAsRuleData);
@@ -289,8 +304,7 @@ class RuleMap {
     RobinHoodMap<AtomicString, Extent>::const_iterator sub_it;
     const RuleMap* rule_map;
 
-    WTF::KeyValuePair<AtomicString, base::span<const RuleData>> operator*()
-        const {
+    KeyValuePair<AtomicString, base::span<const RuleData>> operator*() const {
       return {sub_it->key, rule_map->GetRulesFromExtent(sub_it->value)};
     }
     bool operator==(const ConstIterator& other) const {
@@ -367,20 +381,37 @@ class CORE_EXPORT RuleSet final : public GarbageCollected<RuleSet> {
   RuleSet(const RuleSet&) = delete;
   RuleSet& operator=(const RuleSet&) = delete;
 
-  void AddRulesFromSheet(const StyleSheetContents*,
-                         const MediaQueryEvaluator&,
-                         CascadeLayer* = nullptr,
-                         const StyleScope* = nullptr);
+  void AddRulesFromSheet(const StyleSheetContents* contents,
+                         const MediaQueryEvaluator& medium,
+                         const MixinMap& mixins,
+                         CascadeLayer* cascade_layer = nullptr,
+                         const StyleScope* style_scope = nullptr);
 
-  // “within_mixin” means that we are currently adding this rule
+  // Keeps track of what @apply rules are we currently processing.
+  struct ApplyingMixin {
+    DISALLOW_NEW();
+
+   public:
+    Member<StyleRuleMixin> mixin;
+    Member<StyleRuleApplyMixin> invoking_apply_rule;
+
+    void Trace(Visitor* visitor) const {
+      visitor->Trace(mixin);
+      visitor->Trace(invoking_apply_rule);
+    }
+  };
+  using ApplyMixinsStack = HeapVector<ApplyingMixin, 4>;
+
+  // Nonempty “apply_mixins_stack” means that we are currently adding this rule
   // as part of @apply in a mixin, and all rules we add must be
-  // duplicated and reparented. This is also propagated through
-  // AddChildRules().
+  // duplicated and reparented (to the uppermost one9. This is also propagated
+  // through AddChildRules().
   void AddStyleRule(StyleRule* style_rule,
                     StyleRule* parent_rule,
                     const MediaQueryEvaluator& medium,
+                    const MixinMap& mixins,
                     AddRuleFlags add_rule_flags,
-                    bool within_mixin,
+                    ApplyMixinsStack& apply_mixins_stack,
                     const ContainerQuery* container_query = nullptr,
                     CascadeLayer* cascade_layer = nullptr,
                     const StyleScope* style_scope = nullptr);
@@ -422,6 +453,20 @@ class CORE_EXPORT RuleSet final : public GarbageCollected<RuleSet> {
   base::span<const RuleData> TagRules(const AtomicString& key) const {
     return tag_rules_.Find(key);
   }
+  bool HasAnyInputRules() const { return !input_rules_.IsEmpty(); }
+
+  // Rules with a subject of the form input[type="<key>"], including
+  // case-insensitive ones. These are common in our UA stylesheet
+  // and would otherwise give large amounts of false positives in bucketing,
+  // so we special-case this. We do not verify the namespace of the tag
+  // nor the attribute; that is up to selector matching. This allows us
+  // to include such rules both from the UA stylesheet (which only affects
+  // elements in the HTML namespace) and from author stylesheets (which
+  // typically do not include a namespace).
+  base::span<const RuleData> InputRules(const AtomicString& key) const {
+    return input_rules_.Find(key);
+  }
+
   base::span<const RuleData> UAShadowPseudoElementRules(
       const AtomicString& key) const {
     return ua_shadow_pseudo_element_rules_.Find(key);
@@ -438,6 +483,7 @@ class CORE_EXPORT RuleSet final : public GarbageCollected<RuleSet> {
   base::span<const RuleData> FocusVisiblePseudoClassRules() const {
     return focus_visible_pseudo_class_rules_;
   }
+  base::span<const RuleData> ScrollbarRules() const { return scrollbar_rules_; }
   base::span<const RuleData> RootElementRules() const {
     return root_element_rules_;
   }
@@ -539,6 +585,14 @@ class CORE_EXPORT RuleSet final : public GarbageCollected<RuleSet> {
 
   bool DidMediaQueryResultsChange(const MediaQueryEvaluator& evaluator) const;
 
+  bool DependingOnMixins() const {
+    return based_on_mixin_generation_ != std::numeric_limits<uint64_t>::max();
+  }
+  bool DependingOnOutdatedMixins(uint64_t current_mixin_generation) const {
+    return based_on_mixin_generation_ != std::numeric_limits<uint64_t>::max() &&
+           based_on_mixin_generation_ != current_mixin_generation;
+  }
+
   // We use a vector of Interval<T> to represent that rules with positions
   // between start_position (inclusive) and the next Interval<T>'s
   // start_position (exclusive) share some property:
@@ -613,11 +667,12 @@ class CORE_EXPORT RuleSet final : public GarbageCollected<RuleSet> {
   void AddChildRules(StyleRule* parent_rule,
                      base::span<const Member<StyleRuleBase>>,
                      const MediaQueryEvaluator& medium,
+                     const MixinMap& mixins,
                      AddRuleFlags,
                      const ContainerQuery*,
                      CascadeLayer*,
                      const StyleScope*,
-                     bool within_mixin);
+                     ApplyMixinsStack& apply_mixins_stack);
 
   // Determines whether or not CSSSelector::is_covered_by_bucketing_ should
   // be computed during calls to FindBestRuleSetAndAdd.
@@ -702,10 +757,17 @@ class CORE_EXPORT RuleSet final : public GarbageCollected<RuleSet> {
   SubstringMatcherMap attr_substring_matchers_;
   RuleMap tag_rules_;
   RuleMap ua_shadow_pseudo_element_rules_;
+  RuleMap input_rules_;
   HeapVector<RuleData> link_pseudo_class_rules_;
   HeapVector<RuleData> cue_pseudo_rules_;
   HeapVector<RuleData> focus_pseudo_class_rules_;
   HeapVector<RuleData> focus_visible_pseudo_class_rules_;
+  // NOTE: This covers only ::-webkit-scrollbar-*, not ::-webkit-scrollbar
+  // itself. This is because ::-webkit-scrollbar works by dynamic pseudo,
+  // so it needs to match normal elements as well, but the others (the ones
+  // that go into this bucket) are only ever checked once we know that
+  // we have a scrollbar.
+  HeapVector<RuleData> scrollbar_rules_;
   HeapVector<RuleData> universal_rules_;
   HeapVector<RuleData> shadow_host_rules_;
   HeapVector<RuleData> part_pseudo_rules_;
@@ -724,7 +786,6 @@ class CORE_EXPORT RuleSet final : public GarbageCollected<RuleSet> {
   HeapVector<Member<StyleRulePositionTry>> position_try_rules_;
   HeapVector<MediaQuerySetResult> media_query_set_results_;
   HeapVector<Member<StyleRuleFunction>> function_rules_;
-  HeapHashMap<AtomicString, Member<StyleRuleMixin>> mixins_;
 
   // Whether there is a ruleset bucket for rules with a selector on
   // the style attribute (which is rare, but allowed). If so, the caller
@@ -767,6 +828,12 @@ class CORE_EXPORT RuleSet final : public GarbageCollected<RuleSet> {
   // (without the overhead of a Vector in each RuleData).
   Vector<uint16_t> bloom_hash_backing_;
 
+  // When creating the RuleSet, which generation of mixins (see
+  // StyleSheetContents) we used. The special initial value means that we did
+  // not see any @apply rules and thus do not need invalidation when mixins
+  // change.
+  uint64_t based_on_mixin_generation_ = std::numeric_limits<uint64_t>::max();
+
 #if DCHECK_IS_ON()
   HeapVector<RuleData> all_rules_;
 
@@ -786,5 +853,6 @@ WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(
     blink::RuleSet::Interval<blink::ContainerQuery>)
 WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(
     blink::RuleSet::Interval<blink::StyleScope>)
+WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(blink::RuleSet::ApplyingMixin)
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RULE_SET_H_

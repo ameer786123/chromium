@@ -55,10 +55,12 @@
 #include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
 #endif
 
+namespace {
+
 using ::ip_protection::BlindSignedAuthToken;
 using ::ip_protection::GeoHint;
-
-namespace {
+using ::testing::Pair;
+using ::testing::UnorderedElementsAre;
 
 constexpr char kTryGetAuthTokensResultHistogram[] =
     "NetworkService.IpProtection.TryGetAuthTokensResult";
@@ -123,11 +125,6 @@ class IpProtectionCoreHostTest : public testing::Test {
     host_content_settings_map_ = base::MakeRefCounted<HostContentSettingsMap>(
         prefs(), /*is_off_the_record=*/false, /*store_last_modified=*/false,
         /*restore_session=*/false, /*should_record_metrics=*/false);
-    tracking_protection_settings_ =
-        std::make_unique<privacy_sandbox::TrackingProtectionSettings>(
-            prefs(),
-            /*host_content_settings_map=*/host_content_settings_map_.get(),
-            /*is_incognito=*/false);
     auto bsa = std::make_unique<ip_protection::MockBlindSignAuth>();
     bsa_ = bsa.get();
 #if BUILDFLAG(IS_CHROMEOS)
@@ -136,9 +133,14 @@ class IpProtectionCoreHostTest : public testing::Test {
 #endif
     management_service_ = std::make_unique<policy::ManagementService>(
         std::vector<std::unique_ptr<policy::ManagementStatusProvider>>());
+    tracking_protection_settings_ =
+        std::make_unique<privacy_sandbox::TrackingProtectionSettings>(
+            prefs(),
+            /*host_content_settings_map=*/host_content_settings_map_.get(),
+            /*management_service=*/management_service_.get(),
+            /*is_incognito=*/false);
     core_host_ = std::make_unique<IpProtectionCoreHost>(
-        IdentityManager(), tracking_protection_settings_.get(),
-        management_service_.get(), prefs(),
+        IdentityManager(), tracking_protection_settings_.get(), prefs(),
         /*profile=*/nullptr);
     core_host_->SetUpForTesting(test_url_loader_factory_.GetSafeWeakWrapper(),
                                 std::move(bsa));
@@ -304,14 +306,13 @@ class IpProtectionCoreHostTest : public testing::Test {
   base::HistogramTester histogram_tester_;
 
   sync_preferences::TestingPrefServiceSyncable prefs_;
+  scoped_refptr<HostContentSettingsMap> host_content_settings_map_;
   std::unique_ptr<privacy_sandbox::TrackingProtectionSettings>
       tracking_protection_settings_;
 #if BUILDFLAG(IS_CHROMEOS)
   std::unique_ptr<ash::StubInstallAttributes> install_attributes_;
 #endif
   std::unique_ptr<policy::ManagementService> management_service_;
-
-  scoped_refptr<HostContentSettingsMap> host_content_settings_map_;
 
   std::unique_ptr<IpProtectionCoreHost> core_host_;
   // quiche::BlindSignAuthInterface owned and used by the sequence bound
@@ -1167,4 +1168,28 @@ TEST_F(IpProtectionCoreHostTest, TokenFormat) {
   size_t comma_position = token.find(",", token_position);
   EXPECT_NE(comma_position, std::string::npos);
   EXPECT_LT(comma_position, extensions_position);
+}
+
+TEST_F(IpProtectionCoreHostTest, RecycleAndTakeRecycledTokens) {
+  std::vector<BlindSignedAuthToken> tokens_a;
+  tokens_a.push_back(ip_protection::IpProtectionTokenFetcherHelper::
+                         CreateMockBlindSignedAuthTokenForTesting(
+                             "single-use-1", expiration_time_, geo_hint_)
+                             .value());
+  std::vector<BlindSignedAuthToken> tokens_b;
+  tokens_b.push_back(ip_protection::IpProtectionTokenFetcherHelper::
+                         CreateMockBlindSignedAuthTokenForTesting(
+                             "single-use-2", expiration_time_, geo_hint_)
+                             .value());
+
+  core_host_->RecycleTokens(ip_protection::ProxyLayer::kProxyA, tokens_a);
+  core_host_->RecycleTokens(ip_protection::ProxyLayer::kProxyB, tokens_b);
+
+  EXPECT_THAT(
+      core_host_->TakeRecycledTokens(),
+      UnorderedElementsAre(Pair(ip_protection::ProxyLayer::kProxyA, tokens_a),
+                           Pair(ip_protection::ProxyLayer::kProxyB, tokens_b)));
+
+  // The previous operation should empty the cache.
+  EXPECT_THAT(core_host_->TakeRecycledTokens(), testing::IsEmpty());
 }

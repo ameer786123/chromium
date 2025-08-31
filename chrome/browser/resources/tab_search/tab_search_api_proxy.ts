@@ -20,6 +20,8 @@ export enum RecentlyClosedItemOpenAction {
 export interface TabSearchApiProxy {
   closeTab(tabId: number): void;
 
+  closeWebUiTab(): void;
+
   declutterTabs(tabIds: number[], urls: Url[]): void;
 
   acceptTabOrganization(sessionId: number, organizationId: number, tabs: Tab[]):
@@ -65,6 +67,8 @@ export interface TabSearchApiProxy {
   removeTabFromOrganization(
       sessionId: number, organizationId: number, tab: Tab): void;
 
+  replaceActiveSplitTab(replacementTabId: number): void;
+
   saveRecentlyClosedExpandedPref(expanded: boolean): void;
 
   setOrganizationFeature(feature: TabOrganizationFeature): void;
@@ -101,6 +105,10 @@ export class TabSearchApiProxyImpl implements TabSearchApiProxy {
 
   closeTab(tabId: number) {
     this.handler.closeTab(tabId);
+  }
+
+  closeWebUiTab() {
+    this.handler.closeWebUiTab();
   }
 
   declutterTabs(tabIds: number[], urls: Url[]) {
@@ -197,6 +205,10 @@ export class TabSearchApiProxyImpl implements TabSearchApiProxy {
   removeTabFromOrganization(
       sessionId: number, organizationId: number, tab: Tab) {
     this.handler.removeTabFromOrganization(sessionId, organizationId, tab);
+  }
+
+  replaceActiveSplitTab(replacementSplitTabId: number) {
+    this.handler.replaceActiveSplitTab(replacementSplitTabId);
   }
 
   saveRecentlyClosedExpandedPref(expanded: boolean) {

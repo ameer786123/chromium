@@ -10,6 +10,8 @@ static_library("enterprise") {
     "browser/reporting/browser_report_generator.h",
     "browser/reporting/chrome_profile_request_generator.cc",
     "browser/reporting/chrome_profile_request_generator.h",
+    "browser/reporting/cloud_profile_reporting_policy_handler.cc",
+    "browser/reporting/cloud_profile_reporting_policy_handler.h",
     "browser/reporting/cloud_reporting_frequency_policy_handler.cc",
     "browser/reporting/cloud_reporting_frequency_policy_handler.h",
     "browser/reporting/cloud_reporting_policy_handler.cc",
@@ -29,6 +31,8 @@ static_library("enterprise") {
     "browser/reporting/real_time_report_type.h",
     "browser/reporting/real_time_uploader.cc",
     "browser/reporting/real_time_uploader.h",
+    "browser/reporting/report_generation_config.cc",
+    "browser/reporting/report_generation_config.h",
     "browser/reporting/report_generator.cc",
     "browser/reporting/report_generator.h",
     "browser/reporting/report_request.cc",
@@ -59,13 +63,6 @@ static_library("enterprise") {
     ]
   }
 
-  if (!is_ios) {
-    sources += [
-      "browser/reporting/cloud_profile_reporting_policy_handler.cc",
-      "browser/reporting/cloud_profile_reporting_policy_handler.h",
-    ]
-  }
-
   if (!is_ios && !is_android) {
     sources += [
       "browser/promotion/promotion_eligibility_checker.cc",
@@ -80,6 +77,8 @@ static_library("enterprise") {
 
   deps = [
     "//base",
+    "//components/device_signals/core/browser",
+    "//components/device_signals/core/common:features",
     "//components/policy/core/browser",
     "//components/policy/core/common",
     "//components/policy/proto",
@@ -88,6 +87,7 @@ static_library("enterprise") {
     "//components/strings",
     "//components/version_info",
     "//crypto",
+    "//google_apis",
     "//net",
     "//services/network/public/cpp",
   ]
@@ -114,7 +114,7 @@ static_library("enterprise") {
   }
 
   if (!is_ios && !is_android) {
-    deps += [ "//components/signin/public/identity_manager:identity_manager" ]
+    deps += [ "//components/signin/public/identity_manager" ]
   }
 }
 
@@ -170,6 +170,8 @@ source_set("unit_tests") {
     ":reporting_test_support",
     "common/proto:connectors_proto",
     "//base/test:test_support",
+    "//components/device_signals/core/browser:test_support",
+    "//components/device_signals/core/common:features",
     "//components/enterprise/browser/identifiers",
     "//components/enterprise/browser/identifiers:test_support",
     "//components/enterprise/signin:unit_tests",
@@ -202,7 +204,7 @@ source_set("unit_tests") {
       "//components/enterprise/common/proto:extensions_workflow_events_proto",
       "//components/reporting/client:mock_report_queue_provider",
       "//components/reporting/client:test_support",
-      "//components/signin/public/identity_manager:identity_manager",
+      "//components/signin/public/identity_manager",
       "//components/signin/public/identity_manager:test_support",
     ]
   }

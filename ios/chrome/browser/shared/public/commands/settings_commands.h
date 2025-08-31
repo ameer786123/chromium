@@ -7,6 +7,8 @@
 
 #import <UIKit/UIKit.h>
 
+#import <optional>
+
 namespace autofill {
 class AutofillProfile;
 class CreditCard;
@@ -16,6 +18,7 @@ namespace password_manager {
 struct CredentialUIEntry;
 enum class PasswordCheckReferrer;
 }  // namespace password_manager
+enum class PushNotificationClientId;
 
 @protocol SettingsCommands
 
@@ -27,6 +30,9 @@ enum class PasswordCheckReferrer;
 - (void)showAccountsSettingsFromViewController:
             (UIViewController*)baseViewController
                           skipIfUINotAvailable:(BOOL)skipIfUINotAvailable;
+
+// Shows the BWG settings UI.
+- (void)showBWGSettings;
 
 // TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
 // Shows the Google services settings UI, presenting from `baseViewController`.
@@ -107,6 +113,11 @@ enum class PasswordCheckReferrer;
 
 // Shows the Notifications Settings page in the settings.
 - (void)showNotificationsSettings;
+
+// Shows the Notification Settings page and highlights the row for the push
+// notification client with the given `clientID`.
+- (void)showNotificationsSettingsAndHighlightClient:
+    (std::optional<PushNotificationClientId>)clientID;
 
 @end
 

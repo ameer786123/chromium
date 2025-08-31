@@ -392,6 +392,23 @@ static std::unique_ptr<ScopedPasswordSettingsReauthModuleOverride>
   GetPasskeyStore()->AddNewPasskeyForTesting(passkey);
 }
 
+// Creates a hidden passkey in the passkey store.
++ (void)saveHiddenPasskeyToStore:(NSString*)rpId
+                          userId:(NSString*)userId
+                        username:(NSString*)username
+                 userDisplayName:(NSString*)userDisplayName {
+  sync_pb::WebauthnCredentialSpecifics passkey;
+  passkey.set_sync_id(base::RandBytesAsString(16));
+  passkey.set_credential_id(base::RandBytesAsString(16));
+  passkey.set_rp_id(base::SysNSStringToUTF8(rpId));
+  passkey.set_user_id(base::SysNSStringToUTF8(userId));
+  passkey.set_user_name(base::SysNSStringToUTF8(username));
+  passkey.set_user_display_name(base::SysNSStringToUTF8(userDisplayName));
+  passkey.set_encrypted(kEncrypted);
+  passkey.set_hidden(true);
+  GetPasskeyStore()->AddNewPasskeyForTesting(passkey);
+}
+
 + (NSInteger)passwordProfileStoreResultsCount {
   FakeStoreConsumer consumer;
   if (!consumer.FetchProfileStoreResults()) {
@@ -426,6 +443,12 @@ static std::unique_ptr<ScopedPasswordSettingsReauthModuleOverride>
       password_manager::prefs::kCredentialsEnableService);
 }
 
++ (BOOL)isAutomaticPasskeyUpgradesEnabled {
+  ProfileIOS* profile = chrome_test_util::GetOriginalProfile();
+  return profile->GetPrefs()->GetBoolean(
+      password_manager::prefs::kAutomaticPasskeyUpgrades);
+}
+
 + (void)setFakeBulkLeakCheckBufferedState:
     (password_manager::BulkLeakCheckServiceInterface::State)state {
   FakeBulkLeakCheckService* fakeBulkLeakCheckService =
@@ -433,6 +456,16 @@ static std::unique_ptr<ScopedPasswordSettingsReauthModuleOverride>
           IOSChromeBulkLeakCheckServiceFactory::GetForProfile(
               chrome_test_util::GetOriginalProfile()));
   fakeBulkLeakCheckService->SetBufferedState(state);
+}
+
++ (void)setFakeBulkLeakCheckBufferedStateAndNotifyObservers:
+    (password_manager::BulkLeakCheckServiceInterface::State)state {
+  FakeBulkLeakCheckService* fakeBulkLeakCheckService =
+      static_cast<FakeBulkLeakCheckService*>(
+          IOSChromeBulkLeakCheckServiceFactory::GetForProfile(
+              chrome_test_util::GetOriginalProfile()));
+  fakeBulkLeakCheckService->SetBufferedState(state);
+  fakeBulkLeakCheckService->SetStateToBufferedState();
 }
 
 + (BOOL)isPasscodeSettingsAvailable {

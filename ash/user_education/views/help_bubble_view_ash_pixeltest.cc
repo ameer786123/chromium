@@ -11,6 +11,7 @@
 #include "ash/user_education/user_education_types.h"
 #include "ash/user_education/views/help_bubble_view_ash.h"
 #include "ash/user_education/views/help_bubble_view_ash_test_base.h"
+#include "base/strings/string_util.h"
 #include "components/user_education/common/help_bubble/help_bubble_params.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/color_palette.h"
@@ -98,7 +99,7 @@ TEST_P(HelpBubbleViewAshPixelTest, Appearance) {
                            with_body_icon(), with_buttons(), with_progress());
 
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
-      "appearance", /*revision_number=*/8, help_bubble_view,
+      "appearance", /*revision_number=*/9, help_bubble_view,
       help_bubble_view->anchor_widget()));
 }
 
@@ -164,7 +165,7 @@ TEST_P(HelpBubbleViewAshArrowPixelTest, Placement) {
       /*with_buttons=*/true, /*with_progress=*/true);
 
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
-      "placement", /*revision_number=*/8, help_bubble_view,
+      "placement", /*revision_number=*/9, help_bubble_view,
       help_bubble_view->anchor_widget()));
 }
 

@@ -6,6 +6,7 @@
 #define COMPONENTS_COLLABORATION_INTERNAL_MESSAGING_INSTANT_MESSAGE_PROCESSOR_IMPL_H_
 
 #include <memory>
+#include <set>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
@@ -18,6 +19,7 @@
 namespace collaboration::messaging {
 using InstantMessageDelegate = MessagingBackendService::InstantMessageDelegate;
 
+// The concrete implementation of the `InstantMessageProcessor`.
 class InstantMessageProcessorImpl : public InstantMessageProcessor {
  public:
   InstantMessageProcessorImpl();
@@ -30,6 +32,7 @@ class InstantMessageProcessorImpl : public InstantMessageProcessor {
       InstantMessageDelegate* instant_message_delegate) override;
   bool IsEnabled() const override;
   void DisplayInstantMessage(const InstantMessage& message) override;
+  void HideInstantMessage(const std::set<base::Uuid>& message_ids) override;
 
  private:
   void ScheduleProcessing();

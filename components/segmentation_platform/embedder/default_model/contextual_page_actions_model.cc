@@ -18,39 +18,19 @@ namespace {
 using proto::SegmentId;
 
 // Label input size
-constexpr int kLabelInputSize = 4;
+constexpr int kLabelInputSize = 5;
 // Default parameters for contextual page actions model.
 constexpr SegmentId kSegmentId =
     SegmentId::OPTIMIZATION_TARGET_CONTEXTUAL_PAGE_ACTION_PRICE_TRACKING;
 constexpr int64_t kOneDayInSeconds = 86400;
-// Parameters for share action model.
-constexpr std::array<MetadataWriter::UMAFeature, 6> kShareUMAFeatures = {
-    MetadataWriter::UMAFeature::FromUserAction(
-        "MobileMenuShare",
-        ContextualPageActionsModel::kShareOutputCollectionDelayInSec),
-    MetadataWriter::UMAFeature::FromUserAction(
-        "Omnibox.EditUrlSuggestion.Share",
-        ContextualPageActionsModel::kShareOutputCollectionDelayInSec),
-    MetadataWriter::UMAFeature::FromUserAction(
-        "MobileActionMode.Share",
-        ContextualPageActionsModel::kShareOutputCollectionDelayInSec),
-    MetadataWriter::UMAFeature::FromUserAction(
-        "MobileMenuDirectShare",
-        ContextualPageActionsModel::kShareOutputCollectionDelayInSec),
-    MetadataWriter::UMAFeature::FromUserAction(
-        "Omnibox.EditUrlSuggestion.Copy",
-        ContextualPageActionsModel::kShareOutputCollectionDelayInSec),
-    MetadataWriter::UMAFeature::FromUserAction(
-        "Tab.Screenshot",
-        ContextualPageActionsModel::kShareOutputCollectionDelayInSec),
-};
 
 constexpr std::array<const char*, kLabelInputSize>
     kContextualPageActionModelLabels = {
         kContextualPageActionModelLabelDiscounts,
         kContextualPageActionModelLabelPriceInsights,
         kContextualPageActionModelLabelPriceTracking,
-        kContextualPageActionModelLabelReaderMode};
+        kContextualPageActionModelLabelReaderMode,
+        kContextualPageActionModelLabelTabGrouping};
 
 MetadataWriter::CustomInput CreateCustomInput(std::string name) {
   return MetadataWriter::CustomInput{
@@ -98,19 +78,11 @@ ContextualPageActionsModel::GetModelConfig() {
   (*reader_mode_input->mutable_additional_args())["name"] =
       kContextualPageActionModelInputReaderMode;
 
-  if (base::FeatureList::IsEnabled(features::kContextualPageActionShareModel)) {
-    // Add share related input features.
-    writer.AddUmaFeatures(kShareUMAFeatures.data(), kShareUMAFeatures.size(),
-                          false);
-
-    metadata.set_upload_tensors(true);
-
-    // Add share output collection with delay.
-    writer.AddDelayTrigger(
-        ContextualPageActionsModel::kShareOutputCollectionDelayInSec);
-    writer.AddUmaFeatures(kShareUMAFeatures.data(), kShareUMAFeatures.size(),
-                          true);
-  }
+  // Add tab grouping cusotm input.
+  proto::CustomInput* tab_grouping_input =
+      writer.AddCustomInput(CreateCustomInput("tab_grouping_input"));
+  (*tab_grouping_input->mutable_additional_args())["name"] =
+      kContextualPageActionModelInputTabGrouping;
 
   // A threshold used to differentiate labels with score zero from non-zero
   // values.
@@ -128,13 +100,8 @@ ContextualPageActionsModel::GetModelConfig() {
 void ContextualPageActionsModel::ExecuteModelWithInput(
     const ModelProvider::Request& inputs,
     ExecutionCallback callback) {
-  size_t expected_input_size =
-      base::FeatureList::IsEnabled(features::kContextualPageActionShareModel)
-          ? kShareUMAFeatures.size() + kLabelInputSize
-          : kLabelInputSize;
-
   // Invalid inputs.
-  if (inputs.size() != expected_input_size) {
+  if (inputs.size() != kLabelInputSize) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), std::nullopt));
     return;
@@ -145,6 +112,7 @@ void ContextualPageActionsModel::ExecuteModelWithInput(
   bool has_price_insights = inputs[1];
   bool can_track_price = inputs[2];
   bool has_reader_mode = inputs[3];
+  bool has_tab_grouping_suggestions = inputs[4];
 
   // Create response.
   ModelProvider::Response response(kLabelInputSize, 0);
@@ -152,6 +120,7 @@ void ContextualPageActionsModel::ExecuteModelWithInput(
   response[1] = has_price_insights;
   response[2] = can_track_price;
   response[3] = has_reader_mode;
+  response[4] = has_tab_grouping_suggestions;
   // TODO(crbug.com/40249852): Set a classifier threshold.
 
   // TODO(shaktisahu): This class needs some rethinking to correctly associate

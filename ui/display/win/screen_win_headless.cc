@@ -9,13 +9,19 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/notreached.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_number_conversions_win.h"
+#include "base/strings/string_util.h"
 #include "base/strings/string_util_win.h"
 #include "components/headless/screen_info/headless_screen_info.h"
 #include "ui/display/display_finder.h"
+#include "ui/display/types/display_constants.h"
 #include "ui/display/win/display_info.h"
 #include "ui/display/win/dpi.h"
+#include "ui/display/win/screen_win_display.h"
 
 namespace display::win {
 
@@ -60,6 +66,30 @@ ScreenWinHeadless::ScreenWinHeadless(
 }
 
 ScreenWinHeadless::~ScreenWinHeadless() = default;
+
+int64_t ScreenWinHeadless::GetDisplayIdFromWindow(HWND hwnd,
+                                                  DWORD default_options) {
+  if (auto monitor_info = MonitorInfoFromWindow(hwnd, default_options)) {
+    return GetDisplayIdFromMonitorInfo(monitor_info.value());
+  }
+
+  return kInvalidDisplayId;
+}
+
+int64_t ScreenWinHeadless::GetDisplayIdFromScreenRect(
+    const gfx::Rect& screen_rect) {
+  if (auto monitor_info = MonitorInfoFromScreenRect(screen_rect)) {
+    return GetDisplayIdFromMonitorInfo(monitor_info.value());
+  }
+
+  return GetPrimaryDisplay().id();
+}
+
+int ScreenWinHeadless::GetSystemMetricsForDisplayId(int64_t id, int metric) {
+  const Display display = GetScreenWinDisplayWithDisplayId(id).display();
+  return base::ClampRound(::GetSystemMetrics(metric) *
+                          display.device_scale_factor());
+}
 
 void ScreenWinHeadless::SetCursorScreenPointForTesting(
     const gfx::Point& point) {
@@ -117,6 +147,21 @@ Display ScreenWinHeadless::GetPrimaryDisplay() const {
   return GetNumDisplays() ? GetAllDisplays()[0] : Display::GetDefaultDisplay();
 }
 
+HMONITOR ScreenWinHeadless::HMONITORFromScreenPoint(
+    const gfx::Point& screen_point) const {
+  NOTREACHED();
+}
+
+HMONITOR ScreenWinHeadless::HMONITORFromScreenRect(
+    const gfx::Rect& screen_rect) const {
+  NOTREACHED();
+}
+
+HMONITOR ScreenWinHeadless::HMONITORFromWindow(HWND hwnd,
+                                               DWORD default_options) const {
+  NOTREACHED();
+}
+
 std::optional<MONITORINFOEX> ScreenWinHeadless::MonitorInfoFromScreenPoint(
     const gfx::Point& screen_point) const {
   // ScreenWin::MonitorInfoFromScreenPoint() uses Win32 ::MonitorFromPoint()
@@ -126,6 +171,11 @@ std::optional<MONITORINFOEX> ScreenWinHeadless::MonitorInfoFromScreenPoint(
     return GetMONITORINFOFromDisplayId(display->id());
   }
 
+  return std::nullopt;
+}
+
+std::optional<MONITORINFOEX> ScreenWinHeadless::MonitorInfoFromHMONITOR(
+    HMONITOR monitor) const {
   return std::nullopt;
 }
 
@@ -246,6 +296,16 @@ ScreenWinDisplay ScreenWinHeadless::GetScreenWinDisplayNearestHWND(
       MonitorInfoFromWindow(hwnd, MONITOR_DEFAULTTONEAREST));
 }
 
+ScreenWinDisplay ScreenWinHeadless::GetScreenWinDisplayNearestScreenRect(
+    const gfx::Rect& screen_rect) const {
+  return GetScreenWinDisplay(MonitorInfoFromScreenRect(screen_rect));
+}
+
+ScreenWinDisplay ScreenWinHeadless::GetScreenWinDisplayNearestScreenPoint(
+    const gfx::Point& screen_point) const {
+  return GetScreenWinDisplay(MonitorInfoFromScreenPoint(screen_point));
+}
+
 ScreenWinDisplay ScreenWinHeadless::GetPrimaryScreenWinDisplay() const {
   // ScreenWin::GetPrimaryScreenWinDisplay() searches the ScreenWinDisplay
   // table for a display with origin at (0,0), however, for headless primary
@@ -266,6 +326,13 @@ ScreenWinDisplay ScreenWinHeadless::GetScreenWinDisplay(
   }
 
   return GetPrimaryScreenWinDisplay();
+}
+
+ScreenWinDisplay ScreenWinHeadless::GetScreenWinDisplayForHMONITOR(
+    HMONITOR monitor) const {
+  // Headless displays don't have a real HMONITOR, so all paths that call this
+  // method should be overridden.
+  NOTREACHED();
 }
 
 std::vector<internal::DisplayInfo>
@@ -368,6 +435,12 @@ std::optional<MONITORINFOEX> ScreenWinHeadless::GetMONITORINFOFromDisplayId(
   }
 
   return it->second;
+}
+
+DISPLAY_EXPORT ScreenWinHeadless* GetScreenWinHeadless() {
+  ScreenWin* screen_win = GetScreenWin();
+  CHECK(screen_win->IsHeadless());
+  return static_cast<ScreenWinHeadless*>(screen_win);
 }
 
 namespace internal {

@@ -16,7 +16,9 @@
 @protocol ActivityServiceCommands;
 @protocol ApplicationCommands;
 @protocol BadgeViewVisibilityDelegate;
+@protocol IncognitoBadgeViewVisibilityDelegate;
 @protocol BrowserCoordinatorCommands;
+@protocol BWGCommands;
 @protocol ContextualPanelEntrypointVisibilityDelegate;
 @protocol FakeboxButtonsSnapshotProvider;
 @protocol HelpCommands;
@@ -24,6 +26,9 @@
 @protocol LensOverlayCommands;
 @protocol LocationBarOffsetProvider;
 @protocol LoadQueryCommands;
+@protocol PageActionMenuCommands;
+@protocol PageActionMenuEntryPointCommands;
+@protocol ReaderModeChipVisibilityDelegate;
 @protocol TextFieldViewContaining;
 class PrefService;
 namespace feature_engagement {
@@ -37,6 +42,9 @@ class Tracker;
 
 // Notifies the delegate about a tap on the Copy entry in the editing menu.
 - (void)locationBarCopyTapped;
+
+// Notifies the delegate about a tap on the Share entry in the editing menu.
+- (void)locationBarShareTapped;
 
 // Returns the target that location bar scribble events should be forwarded to.
 - (UIResponder<UITextInput>*)omniboxScribbleForwardingTarget;
@@ -112,14 +120,37 @@ class Tracker;
 // The help command handler.
 @property(nonatomic, weak) id<HelpCommands> helpCommandsHandler;
 
+// The page action menu handler.
+@property(nonatomic, weak) id<PageActionMenuCommands> pageActionMenuHandler;
+
+// The BWG command handler.
+@property(nonatomic, weak) id<BWGCommands> BWGHandler;
+
+// The page action menu entry point handler. Returns the page action menu entry
+// point view for direct communication between a command dispatched and the page
+// action button.
+@property(nonatomic, weak, readonly) id<PageActionMenuEntryPointCommands>
+    pageActionMenuEntryPointHandler;
+
 // An object to provide a snapshot of the fakebox buttons to be used during
 // focus and defocus transitions.
 @property(nonatomic, weak) id<FakeboxButtonsSnapshotProvider>
     fakeboxButtonsSnapshotProvider;
 
+// Whether Lens overlay is currently visible.
+@property(nonatomic, assign) BOOL lensOverlayVisible;
+
+// Whether PageActionEntryPoint button should show "New" badge.
+@property(nonatomic, assign) BOOL isAIHubNewBadgeVisible;
+
 // Sets the edit view to use in the editing state. This must be set before the
 // view of this view controller is initialized. This must only be called once.
 - (void)setEditView:(UIView<TextFieldViewContaining>*)editView;
+
+// Sets the incognito badge view to display the incognito badge. This must
+// be called only once and set before the view of this view controller is
+// initialized.
+- (void)setIncognitoBadgeView:(UIView*)incognitoBadgeView;
 
 // Sets the badge view to display badges. This must be set before the
 // view of this view controller is initialized. This must only be called once.
@@ -129,6 +160,10 @@ class Tracker;
 // UIs. This must be called only once and set before the view of this view
 // controller is initialized.
 - (void)setContextualPanelEntrypointView:(UIView*)contextualPanelEntrypointView;
+
+// Sets the Reader Mode Chip view. This must be called only once and set before
+// the view of this view controller is initialized.
+- (void)setReaderModeChipView:(UIView*)readerModeChipView;
 
 // Switches between the two states of the location bar:
 // - editing state, with the textfield;
@@ -166,11 +201,21 @@ class Tracker;
 // Returns the badge view visibility delegate.
 - (id<BadgeViewVisibilityDelegate>)badgeViewVisibilityDelegate;
 
+// Returns the badge view visibility delegate.
+- (id<IncognitoBadgeViewVisibilityDelegate>)
+    incognitoBadgeViewVisibilityDelegate;
+
+// Returns the reader mode chip visibility delegate.
+- (id<ReaderModeChipVisibilityDelegate>)readerModeChipVisibilityDelegate;
+
 // Attempts to show the lens overlay IPH.
 - (void)attemptShowingLensOverlayIPH;
 
 // Records the lens overlay entrypoint availability in the location bar.
 - (void)recordLensOverlayAvailability;
+
+// Moves the focus of VoiceOver to the steady view.
+- (void)focusSteadyViewForVoiceOver;
 
 @end
 

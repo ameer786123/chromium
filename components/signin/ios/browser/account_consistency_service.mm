@@ -13,6 +13,7 @@
 #import "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/google/core/common/google_util.h"
 #include "components/signin/core/browser/account_reconcilor.h"
@@ -162,7 +163,9 @@ class AccountConsistencyService::AccountConsistencyHandler
   void WebStateDestroyed() override;
 
   // Handles the AddAccount request depending on |has_cookie_changed|.
-  void HandleAddAccountRequest(GURL url, BOOL has_cookie_changed);
+  void HandleAddAccountRequest(GURL url,
+                               const std::string& email,
+                               BOOL has_cookie_changed);
 
   // The consistency web sign-in needs to be shown once the page is loaded.
   // It is required to avoid having the keyboard showing up on top of the web
@@ -257,11 +260,11 @@ void AccountConsistencyService::AccountConsistencyHandler::ShouldAllowResponse(
   base::UmaHistogramEnumeration("Signin.ManageAccountsResponse.ServiceType",
                                 params.service_type);
 
+  GURL continue_url = GURL(params.continue_url);
+  DLOG_IF(ERROR, !params.continue_url.empty() && !continue_url.is_valid())
+      << "Invalid continuation URL: \"" << continue_url << "\"";
   switch (params.service_type) {
     case signin::GAIA_SERVICE_TYPE_INCOGNITO: {
-      GURL continue_url = GURL(params.continue_url);
-      DLOG_IF(ERROR, !params.continue_url.empty() && !continue_url.is_valid())
-          << "Invalid continuation URL: \"" << continue_url << "\"";
       if (delegate_) {
         delegate_->OnGoIncognito(continue_url);
       }
@@ -274,25 +277,22 @@ void AccountConsistencyService::AccountConsistencyHandler::ShouldAllowResponse(
       if (identity_manager_->HasPrimaryAccount(signin::ConsentLevel::kSignin)) {
         LogIOSGaiaCookiesState(GaiaCookieStateOnSignedInNavigation::
                                    kGaiaCookieAbsentOnAddSessionNavigation);
-        GURL continue_url = GURL(params.continue_url);
-        DLOG_IF(ERROR, !params.continue_url.empty() && !continue_url.is_valid())
-            << "Invalid continuation URL: \"" << continue_url << "\"";
         if (account_consistency_service_->RestoreGaiaCookies(base::BindOnce(
                 &AccountConsistencyHandler::HandleAddAccountRequest,
-                weak_ptr_factory_.GetWeakPtr(), continue_url))) {
+                weak_ptr_factory_.GetWeakPtr(), continue_url, params.email))) {
           // Continue URL will be processed in a callback once Gaia cookies
           // have been restored.
           return;
         }
       }
       if (delegate_) {
-        delegate_->OnAddAccount();
+        delegate_->OnAddAccount(continue_url, params.email);
       }
       break;
     case signin::GAIA_SERVICE_TYPE_SIGNOUT:
     case signin::GAIA_SERVICE_TYPE_DEFAULT:
       if (delegate_) {
-        delegate_->OnManageAccounts();
+        delegate_->OnManageAccounts(continue_url);
       }
       break;
     case signin::GAIA_SERVICE_TYPE_NONE:
@@ -310,14 +310,16 @@ void AccountConsistencyService::AccountConsistencyHandler::ShouldAllowResponse(
 }
 
 void AccountConsistencyService::AccountConsistencyHandler::
-    HandleAddAccountRequest(GURL url, BOOL has_cookie_changed) {
+    HandleAddAccountRequest(GURL url,
+                            const std::string& email,
+                            BOOL has_cookie_changed) {
   if (!has_cookie_changed) {
     // If the cookies on the device did not need to be updated then the user
     // is not in an inconsistent state (where the identities on the device
     // are different than those on the web). Fallback to asking the user to
     // add an account.
     if (delegate_) {
-      delegate_->OnAddAccount();
+      delegate_->OnAddAccount(url, email);
     }
     return;
   }

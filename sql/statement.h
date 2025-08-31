@@ -141,17 +141,20 @@ class COMPONENT_EXPORT(SQL) Statement {
   // If you need to store (potentially invalid) UTF-16 strings losslessly,
   // store them as BLOBs instead. `BindBlob()` has an overload for this purpose.
   void BindString16(int param_index, std::u16string_view value);
+
+  // Binds a blob to the statement.
+  void BindBlob(int param_index, scoped_refptr<base::RefCountedMemory> blob);
+
+  // Convenience overloads for `BindBlob()`.
+  void BindBlob(int param_index, std::string blob);
+  void BindBlob(int param_index, std::u16string blob);
+  void BindBlob(int param_index, std::vector<uint8_t> blob);
   void BindBlob(int param_index, base::span<const uint8_t> value);
 
-  // Overload that makes it easy to pass in std::string values.
-  void BindBlob(int param_index, base::span<const char> value) {
-    BindBlob(param_index, base::as_byte_span(value));
-  }
-
-  // Overload that makes it easy to pass in std::u16string values.
-  void BindBlob(int param_index, base::span<const char16_t> value) {
-    BindBlob(param_index, base::as_byte_span(value));
-  }
+  // Reserves `size` bytes of space for a blob. The actual bytes should be set
+  // via a `StreamingBlobHandle`. This method will assert if `size` is too big
+  // for the database, which by default means > 1GB.
+  void BindBlobForStreaming(int param_index, uint64_t size);
 
   // Conforms with base::Time serialization recommendations.
   //
@@ -192,7 +195,10 @@ class COMPONENT_EXPORT(SQL) Statement {
   // on a column before getting the value out in any way.
   ColumnType GetColumnType(int col);
 
-  // These all take a 0-based argument index.
+  // Returns the value at `column_index` (zero-based) in the current result set
+  // produced by a successful call to `Step()`. `column_index` must be less than
+  // the number of columns in the result set. Must only be called following a
+  // successful call to `Step()`.
   bool ColumnBool(int column_index);
   int ColumnInt(int column_index);
   int64_t ColumnInt64(int column_index);
@@ -225,8 +231,7 @@ class COMPONENT_EXPORT(SQL) Statement {
   //       base::Microseconds(ColumnInt64(col)))
   //
   // TODO(crbug.com/40176243): Migrate all time serialization to this method,
-  // and
-  //                          then remove the migration details above.
+  // and then remove the migration details above.
   base::Time ColumnTime(int column_index);
 
   // Conforms with base::TimeDelta deserialization recommendations.
@@ -235,8 +240,7 @@ class COMPONENT_EXPORT(SQL) Statement {
   // * base::TimeDelta::FromInternalValue(ColumnInt64(column_index))
   //
   // TODO(crbug.com/40251269): Migrate all TimeDelta serialization to this
-  // method
-  //                          and remove the migration details above.
+  // method and remove the migration details above.
   base::TimeDelta ColumnTimeDelta(int column_index);
 
   // Returns a span pointing to a buffer containing the blob data.
@@ -249,9 +253,9 @@ class COMPONENT_EXPORT(SQL) Statement {
   // call GetColumnType() before calling ColumnBlob().
   base::span<const uint8_t> ColumnBlob(int column_index);
 
+  // TODO(crbug.com/439769605): pass `result` via return value instead of param.
   bool ColumnBlobAsString(int column_index, std::string* result);
   bool ColumnBlobAsString16(int column_index, std::u16string* result);
-  bool ColumnBlobAsVector(int column_index, std::vector<char>* result);
   bool ColumnBlobAsVector(int column_index, std::vector<uint8_t>* result);
 
   // Diagnostics --------------------------------------------------------------
@@ -288,6 +292,11 @@ class COMPONENT_EXPORT(SQL) Statement {
   // ensuring that contracts are honored in error edge cases.
   bool CheckValid() const;
 
+  // Crashes the process if `this` is not in a state that allows reading from
+  // columns (i.e. `Step()` was called and succeeded), and specifically the
+  // given column.
+  void CheckCanReadColumn(int column_index) const;
+
   // Helper for Run() and Step(), calls sqlite3_step() and returns the checked
   // value from it.
   SqliteResultCode StepInternal();
@@ -295,14 +304,21 @@ class COMPONENT_EXPORT(SQL) Statement {
   // Retrieve and log the count of VM steps required to execute the query.
   void ReportQueryExecutionMetrics() const;
 
+  // Runs some basic sanity checks and frees memory previously associated with
+  // `param_index`, if any. Should be called when a parameter is about to be
+  // bound regardless of its type.
+  void WillBindParameter(int param_index)
+      VALID_CONTEXT_REQUIRED(sequence_checker_);
+
   // The actual sqlite statement. This may be unique to us, or it may be cached
   // by the Database, which is why it's ref-counted. This pointer is
   // guaranteed non-null.
   scoped_refptr<Database::StatementRef> ref_
       GUARDED_BY_CONTEXT(sequence_checker_);
 
-  // See Succeeded() for what this holds.
-  bool succeeded_ GUARDED_BY_CONTEXT(sequence_checker_) = false;
+  // The result code for the last `Run()` or `Step()`.
+  std::optional<SqliteResultCode> last_sqlite_result_code_
+      GUARDED_BY_CONTEXT(sequence_checker_);
 
 #if DCHECK_IS_ON()
   // Used to DCHECK() that Bind*() is called before Step() or Run() are called.

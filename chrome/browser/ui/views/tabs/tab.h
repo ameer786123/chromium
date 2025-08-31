@@ -15,6 +15,7 @@
 #include "chrome/browser/ui/tabs/tab_renderer_data.h"
 #include "chrome/browser/ui/views/tabs/tab_slot_view.h"
 #include "chrome/browser/ui/views/tabs/tab_style_views.h"
+#include "chrome/common/buildflags.h"
 #include "components/performance_manager/public/freezing/freezing.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -42,6 +43,16 @@ namespace views {
 class Label;
 class View;
 }  // namespace views
+
+namespace tabs {
+enum class TabAlert;
+}
+
+#if BUILDFLAG(ENABLE_GLIC)
+namespace glic {
+class GlicTabUnderlineView;
+}  // namespace glic
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -101,6 +112,7 @@ class Tab : public gfx::AnimationDelegate,
   TabSlotView::ViewType GetTabSlotViewType() const override;
   TabSizeInfo GetTabSizeInfo() const override;
   void SetGroup(std::optional<tab_groups::TabGroupId> group) override;
+  void SetSplit(std::optional<split_tabs::SplitTabId> split) override;
   void UpdateAccessibleName();
 
   void OnAXNameChanged(ax::mojom::StringAttribute attribute,
@@ -116,7 +128,7 @@ class Tab : public gfx::AnimationDelegate,
   std::optional<SkColor> GetGroupColor() const;
 
   // Returns the color used for the alert indicator icon.
-  ui::ColorId GetAlertIndicatorColor(TabAlertState state) const;
+  ui::ColorId GetAlertIndicatorColor(tabs::TabAlert state) const;
 
   // Returns true if this tab is the active tab.
   bool IsActive() const;
@@ -179,11 +191,11 @@ class Tab : public gfx::AnimationDelegate,
   // Exposed publicly for tests.
   static std::u16string GetTooltipText(
       const std::u16string& title,
-      std::optional<TabAlertState> alert_state);
+      std::optional<tabs::TabAlert> alert_state);
 
   // Returns an alert state to be shown among given alert states.
-  static std::optional<TabAlertState> GetAlertStateToShow(
-      const std::vector<TabAlertState>& alert_states);
+  static std::optional<tabs::TabAlert> GetAlertStateToShow(
+      const std::vector<tabs::TabAlert>& alert_states);
 
   bool showing_close_button_for_testing() const {
     return showing_close_button_;
@@ -199,9 +211,17 @@ class Tab : public gfx::AnimationDelegate,
 
   void SetShouldShowDiscardIndicator(bool enabled);
 
+  void UpdateInsets();
+
+#if BUILDFLAG(ENABLE_GLIC)
+  glic::GlicTabUnderlineView* glic_underline() const {
+    return glic_tab_underline_view_;
+  }
+#endif
+
  private:
   class TabCloseButtonObserver;
-  friend class AlertIndicatorButtonTest;
+  friend class TabContentsTest;
   friend class TabTest;
   friend class TabStripTestBase;
 #if BUILDFLAG(IS_CHROMEOS)
@@ -211,7 +231,9 @@ class Tab : public gfx::AnimationDelegate,
   FRIEND_TEST_ALL_PREFIXES(TabTest, TitleTextHasSufficientContrast);
   FRIEND_TEST_ALL_PREFIXES(TabHoverCardInteractiveUiTest,
                            HoverCardVisibleOnTabCloseButtonFocusAfterTabFocus);
-  FRIEND_TEST_ALL_PREFIXES(AlertIndicatorButtonTest, AccessibleNameChanged);
+  FRIEND_TEST_ALL_PREFIXES(TabContentsTest, AccessibleNameChanged);
+  FRIEND_TEST_ALL_PREFIXES(TabContentsTest,
+                           AccessibleNameChangesWithCollaborationMessages);
 
   bool ShouldUpdateAccessibleName(TabRendererData& old_data,
                                   TabRendererData& new_data);
@@ -254,6 +276,10 @@ class Tab : public gfx::AnimationDelegate,
 
   // True if the tab is being animated closed.
   bool closing_ = false;
+
+#if BUILDFLAG(ENABLE_GLIC)
+  raw_ptr<glic::GlicTabUnderlineView> glic_tab_underline_view_ = nullptr;
+#endif
 
   raw_ptr<TabIcon> icon_ = nullptr;
   raw_ptr<AlertIndicatorButton> alert_indicator_button_ = nullptr;

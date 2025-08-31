@@ -17,9 +17,9 @@
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "url/gurl.h"
 
-class CommercePushNotificationClientTest;
-
 class Browser;
+class CommercePushNotificationClientTest;
+enum class NotificationType;
 
 // Holds the configuration information for a UNNNotificationRequest.
 struct ScheduledNotificationRequest {
@@ -34,12 +34,29 @@ struct ScheduledNotificationRequest {
 // the PushNotificationClient class.
 class PushNotificationClient {
  public:
+  // Constructor for `PushNotificationClient`s that are scoped per-Profile.
+  // This constructor should be used for clients whose `scope` is implicitly
+  // `PushNotificationClientScope::kPerProfile`. It is intended for use when
+  // multi-Profile push notification handling is enabled (i.e.,
+  // `IsMultiProfilePushNotificationHandlingEnabled()` returns YES).
+  PushNotificationClient(PushNotificationClientId client_id,
+                         ProfileIOS* profile);
+  // Constructor for `PushNotificationClient`s that are app-scoped (i.e., not
+  // tied to a specific user Profile).
+  // This constructor should be used for clients where `scope` is not
+  // `PushNotificationClientScope::kPerProfile` (e.g., typically
+  // `PushNotificationClientScope::kAppWide`).
   PushNotificationClient(PushNotificationClientId client_id,
                          PushNotificationClientScope scope);
   virtual ~PushNotificationClient() = 0;
 
   // Returns true if this client can handle the given `notification`.
   virtual bool CanHandleNotification(UNNotification* notification) = 0;
+
+  // Returns the `NotificationType` of the given `notification` if this client
+  // can handle the notification. Otherwise returns `std::nullopt`.
+  virtual std::optional<NotificationType> GetNotificationType(
+      UNNotification* notification);
 
   // When the user interacts with a push notification, this function is called
   // to route the user to the appropriate destination. Returns `true` if the
@@ -101,7 +118,7 @@ class PushNotificationClient {
   // interactions. `profile_name` must not be empty. Calls `completion` upon
   // finish.
   //
-  // `kIOSPushNotificationMultiProfile` must be enabled.
+  // `IsMultiProfilePushNotificationHandlingEnabled()` must return YES.
   void ScheduleProfileNotification(
       ScheduledNotificationRequest request,
       base::OnceCallback<void(NSError*)> completion,
@@ -124,24 +141,23 @@ class PushNotificationClient {
   // or per-Profile.
   const PushNotificationClientScope client_scope_;
 
-  // Returns an arbitrary Browser with an active Scene (i.e. a Scene at the
-  // level SceneActivationLevelForegroundActive) if any. This will return a
-  // valid Browser if there is one, but when multiple profiles are loaded it
-  // will be arbitrary. The push notification system should be re-designed
-  // to not depend on this method (either create specific manager per-profile,
-  // or include in the notification an identifier, e.g. gaia id).
-  // TODO(crbug.com/41497027): This API should be redesigned.
-  Browser* GetSceneLevelForegroundActiveBrowser();
+  // Returns the most appropriate active foreground browser based on the
+  // client's scope. Encapsulates the logic for choosing between
+  // Profile-specific and arbitrary browser lookups. Returns `nullptr` if no
+  // suitable browser is found.
+  Browser* GetActiveForegroundBrowser() const;
 
-  // Similar to `GetSceneLevelForegroundActiveBrowser()`, but specifically
-  // searches for a browser associated with the provided `profile`. Returns the
-  // first matching browser with scene level
-  // `SceneActivationLevelForegroundActive`, or `nullptr` if none exists for
-  // this profile.
-  Browser* GetSceneLevelForegroundActiveBrowserForProfile(ProfileIOS* profile);
+  // Returns the `ProfileIOS` associated with this client instance. Set during
+  // construction, primarily for clients with `kPerProfile` scope.
+  ProfileIOS* GetProfile() const;
 
  private:
   friend class ::CommercePushNotificationClientTest;
+
+  // Pointer to the user Profile if this client is per-Profile scoped
+  // (`client_scope_` is `PushNotificationClientScope::kPerProfile`).
+  base::WeakPtr<ProfileIOS> profile_;
+
   std::vector<std::pair<GURL, base::OnceCallback<void(Browser*)>>>
       urls_delayed_for_loading_;
 
@@ -180,7 +196,7 @@ class PushNotificationClient {
   // Creates a `UNNotificationRequest` specific to the given `profile_name`.
   // Uses the provided `request.content` and triggers after
   // `request.time_interval`. Requires multi-profile handling to be enabled
-  // (`kIOSPushNotificationMultiProfile` must be enabled).
+  // (`IsMultiProfilePushNotificationHandlingEnabled()` must return YES).
   UNNotificationRequest* CreateRequestForProfile(
       ScheduledNotificationRequest request,
       std::string_view profile_name);

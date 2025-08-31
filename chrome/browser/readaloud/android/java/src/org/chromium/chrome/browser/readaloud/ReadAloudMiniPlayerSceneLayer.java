@@ -7,12 +7,13 @@ package org.chromium.chrome.browser.readaloud;
 import android.graphics.RectF;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.layouts.EventFilter;
 import org.chromium.chrome.browser.layouts.SceneOverlay;
@@ -28,6 +29,7 @@ import java.util.List;
  * a solid-color rectangle that acts as a placeholder for the mini player UI while transitioning
  * between hidden and shown states.
  */
+@NullMarked
 @JNINamespace("android")
 public class ReadAloudMiniPlayerSceneLayer extends SceneOverlayLayer implements SceneOverlay {
     /** Handle to the native side of this class. */
@@ -47,14 +49,14 @@ public class ReadAloudMiniPlayerSceneLayer extends SceneOverlayLayer implements 
      *     controls offsets.
      */
     public ReadAloudMiniPlayerSceneLayer(
-            @NonNull BrowserControlsStateProvider browserControlsStateProvider) {
+            BrowserControlsStateProvider browserControlsStateProvider) {
         mBrowserControlsStateProvider = browserControlsStateProvider;
     }
 
     @Override
     public void destroy() {
         if (mNativePtr != 0L) {
-            ReadAloudMiniPlayerSceneLayerJni.get().destroy(mNativePtr, this);
+            ReadAloudMiniPlayerSceneLayerJni.get().destroy(mNativePtr);
             mNativePtr = 0L;
         }
     }
@@ -90,8 +92,7 @@ public class ReadAloudMiniPlayerSceneLayer extends SceneOverlayLayer implements 
     @Override
     protected void initializeNative() {
         if (mNativePtr == 0) {
-            mNativePtr =
-                    ReadAloudMiniPlayerSceneLayerJni.get().init(ReadAloudMiniPlayerSceneLayer.this);
+            mNativePtr = ReadAloudMiniPlayerSceneLayerJni.get().init(this);
         }
         assert mNativePtr != 0;
     }
@@ -125,7 +126,7 @@ public class ReadAloudMiniPlayerSceneLayer extends SceneOverlayLayer implements 
     }
 
     @Override
-    public EventFilter getEventFilter() {
+    public @Nullable EventFilter getEventFilter() {
         return null;
     }
 
@@ -159,10 +160,9 @@ public class ReadAloudMiniPlayerSceneLayer extends SceneOverlayLayer implements 
     @VisibleForTesting
     @NativeMethods
     public interface Natives {
-        long init(ReadAloudMiniPlayerSceneLayer caller);
+        long init(ReadAloudMiniPlayerSceneLayer self);
 
-        void destroy(
-                long nativeReadAloudMiniPlayerSceneLayer, ReadAloudMiniPlayerSceneLayer caller);
+        void destroy(long nativeReadAloudMiniPlayerSceneLayer);
 
         void setContentTree(long nativeReadAloudMiniPlayerSceneLayer, SceneLayer contentTree);
 

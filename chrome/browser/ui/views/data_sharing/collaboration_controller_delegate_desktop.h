@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_DATA_SHARING_COLLABORATION_CONTROLLER_DELEGATE_DESKTOP_H_
 #define CHROME_BROWSER_UI_VIEWS_DATA_SHARING_COLLABORATION_CONTROLLER_DELEGATE_DESKTOP_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
@@ -74,21 +75,17 @@ class CollaborationControllerDelegateDesktop
   // BrowserListObserver:
   void OnBrowserClosing(Browser* browser) override;
 
-  void OnJoinDialogClosing(
-      ResultCallback result,
-      std::optional<data_sharing::mojom::GroupAction> action,
-      std::optional<data_sharing::mojom::GroupActionProgress> progress);
-
   void OnManageDialogClosing(
       ResultCallback result,
       std::optional<data_sharing::mojom::GroupAction> action,
       std::optional<data_sharing::mojom::GroupActionProgress> progress);
 
-  void ShowErrorDialog();
+  void ShowErrorDialog(const ErrorInfo& error);
   void MaybeShowSignInAndSyncUi();
   void MaybeShowSignInOrSyncPromptDialog();
   void OnPromptDialogOk();
   void OnPromptDialogCancel();
+  void OnErrorDialogOkForUpdate();
   void OnErrorDialogOk();
   void MaybeCloseDialogs();
   void ExitFlow();

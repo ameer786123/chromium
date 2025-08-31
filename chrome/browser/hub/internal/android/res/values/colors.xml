@@ -5,5 +5,5 @@ Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
 <resources>
-    <color name="action_button_ripple">@color/filled_button_ripple_color</color>
+    <color name="pane_switcher_tab_item_hover_incognito">@color/baseline_neutral_90</color>
 </resources>

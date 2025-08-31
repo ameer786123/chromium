@@ -27,7 +27,7 @@ public class AccessibilityEventDispatcher {
     // Set of AccessibilityEvent types to throttle wholesale, rather than on a per |virtualViewId|
     // basis. Delays are still set independently in the |mEventThrottleDelays| map. This is
     // populated once in the constructor.
-    private Set<Integer> mViewIndependentEventsToThrottle;
+    private final Set<Integer> mViewIndependentEventsToThrottle;
 
     // Set of AccessibilityEvent types that are relevant to enabled accessibility services and
     // will be enqueued to be dispatched.
@@ -35,15 +35,15 @@ public class AccessibilityEventDispatcher {
 
     // For events being throttled (see: |mEventsToThrottle|), this array will map the eventType
     // to the last time (long in milliseconds) such an event has been sent.
-    private Map<Long, Long> mEventLastFiredTimes = new HashMap<Long, Long>();
+    private final Map<Long, Long> mEventLastFiredTimes = new HashMap<Long, Long>();
 
     // For events being throttled (see: |mEventsToThrottle|), this array will map the eventType
     // to a single Runnable that will send an event after some delay.
-    private Map<Long, Runnable> mPendingEvents = new HashMap<Long, Runnable>();
+    private final Map<Long, Runnable> mPendingEvents = new HashMap<Long, Runnable>();
 
     // Implementation of the callback interface to {@link WebContentsAccessibilityImpl} so that we
     // can maintain a connection through JNI to the native code.
-    private Client mClient;
+    private final Client mClient;
 
     /**
      * Callback interface to link {@link WebContentsAccessibilityImpl} with an instance of the
@@ -170,6 +170,10 @@ public class AccessibilityEventDispatcher {
      */
     public void updateRelevantEventTypes(Set<Integer> relevantEventTypes) {
         this.mRelevantEventTypes = relevantEventTypes;
+    }
+
+    public void setEventThrottleDelays(Map<Integer, Integer> eventThrottleDelays) {
+        this.mEventThrottleDelays = eventThrottleDelays;
     }
 
     /**

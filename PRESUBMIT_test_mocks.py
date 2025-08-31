@@ -210,41 +210,45 @@ class MockOutputApi(object):
 
     class PresubmitResult(object):
 
-        def __init__(self, message, items=None, long_text=''):
+        def __init__(self, message, items=None, long_text='', locations=[]):
             self.message = message
             self.items = items
             self.long_text = long_text
+            self.locations = locations
 
         def __repr__(self):
             return self.message
 
     class PresubmitError(PresubmitResult):
 
-        def __init__(self, message, items=None, long_text=''):
-            MockOutputApi.PresubmitResult.__init__(self, message, items,
-                                                   long_text)
+        def __init__(self, *args, **kwargs):
+            MockOutputApi.PresubmitResult.__init__(self, *args, **kwargs)
             self.type = 'error'
 
     class PresubmitPromptWarning(PresubmitResult):
 
-        def __init__(self, message, items=None, long_text=''):
-            MockOutputApi.PresubmitResult.__init__(self, message, items,
-                                                   long_text)
+        def __init__(self, *args, **kwargs):
+            MockOutputApi.PresubmitResult.__init__(self, *args, **kwargs)
             self.type = 'warning'
 
     class PresubmitNotifyResult(PresubmitResult):
 
-        def __init__(self, message, items=None, long_text=''):
-            MockOutputApi.PresubmitResult.__init__(self, message, items,
-                                                   long_text)
+        def __init__(self, *args, **kwargs):
+            MockOutputApi.PresubmitResult.__init__(self, *args, **kwargs)
             self.type = 'notify'
 
     class PresubmitPromptOrNotify(PresubmitResult):
 
-        def __init__(self, message, items=None, long_text=''):
-            MockOutputApi.PresubmitResult.__init__(self, message, items,
-                                                   long_text)
+        def __init__(self, *args, **kwargs):
+            MockOutputApi.PresubmitResult.__init__(self, *args,  **kwargs)
             self.type = 'promptOrNotify'
+
+    class PresubmitResultLocation(object):
+
+        def __init__(self, file_path, start_line, end_line):
+            self.file_path = file_path
+            self.start_line = start_line
+            self.end_line = end_line
 
     def __init__(self):
         self.more_cc = []
@@ -309,6 +313,10 @@ class MockFile(object):
 
     def OldContents(self):
         return self._old_contents
+
+    def Extension(self):
+        _, ext = os.path.splitext(self._local_path)
+        return ext
 
     def rfind(self, p):
         """Required when os.path.basename() is called on MockFile."""

@@ -44,7 +44,7 @@ void ScopedAssistantBrowserDelegate::RequestMediaControllerManager(
 }
 
 void ScopedAssistantBrowserDelegate::OpenUrl(GURL url) {
-  NewWindowDelegate::GetPrimary()->OpenUrl(
+  NewWindowDelegate::GetInstance()->OpenUrl(
       url, NewWindowDelegate::OpenUrlFrom::kUserInteraction,
       NewWindowDelegate::Disposition::kNewForegroundTab);
 }
@@ -65,12 +65,6 @@ void ScopedAssistantBrowserDelegate::OpenNewEntryPoint() {
   }
 
   std::move(open_new_entry_point_closure_).Run();
-}
-
-int ScopedAssistantBrowserDelegate::GetNewEntryPointIconResourceId() {
-  // A placeholder resource id. Use resource id in //ash to avoid having a
-  // dependency to //chrome.
-  return IDR_SETTINGS_LOGO_192;
 }
 
 std::optional<std::string>

@@ -24,7 +24,7 @@ import org.chromium.url.GURL;
  */
 @NullMarked
 public class AndroidPrerenderManager {
-    private long mNativeAndroidPrerenderManager;
+    private final long mNativeAndroidPrerenderManager;
     private @Nullable WebContents mWebContents;
     private static @Nullable AndroidPrerenderManager sAndroidPrerenderManager;
 
@@ -69,7 +69,7 @@ public class AndroidPrerenderManager {
     }
 
     private AndroidPrerenderManager() {
-        mNativeAndroidPrerenderManager = AndroidPrerenderManagerJni.get().init(this);
+        mNativeAndroidPrerenderManager = AndroidPrerenderManagerJni.get().init();
     }
 
     /**
@@ -87,11 +87,10 @@ public class AndroidPrerenderManager {
      * AndroidPrerenderManager is properly initialized.
      *
      * @param prerenderUrl The url to be prerendered.
-     * @return Whether prerendering has been started successfully.
      */
-    public boolean startPrerendering(GURL prerenderUrl) {
-        if (mNativeAndroidPrerenderManager == 0 || mWebContents == null) return false;
-        return AndroidPrerenderManagerJni.get()
+    public void startPrerendering(GURL prerenderUrl) {
+        if (mNativeAndroidPrerenderManager == 0 || mWebContents == null) return;
+        AndroidPrerenderManagerJni.get()
                 .startPrerendering(mNativeAndroidPrerenderManager, prerenderUrl, mWebContents);
     }
 
@@ -107,9 +106,9 @@ public class AndroidPrerenderManager {
 
     @NativeMethods
     public interface Natives {
-        long init(AndroidPrerenderManager caller);
+        long init();
 
-        boolean startPrerendering(
+        void startPrerendering(
                 long nativeAndroidPrerenderManager,
                 @JniType("GURL") GURL prerenderUrl,
                 WebContents webContents);

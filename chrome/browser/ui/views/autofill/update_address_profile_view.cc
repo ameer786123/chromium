@@ -36,8 +36,10 @@ namespace {
 constexpr int kIconSize = 16;
 constexpr int kValuesLabelWidth = 190;
 
-const gfx::VectorIcon& GetVectorIconForType(FieldType type) {
+base::optional_ref<const gfx::VectorIcon> GetVectorIconForType(FieldType type) {
   switch (GetAddressUIComponentIconTypeForFieldType(type)) {
+    case AddressUIComponentIconType::kNoIcon:
+      return std::nullopt;
     case AddressUIComponentIconType::kName:
       return kAccountCircleIcon;
     case AddressUIComponentIconType::kAddress:
@@ -46,8 +48,6 @@ const gfx::VectorIcon& GetVectorIconForType(FieldType type) {
       return vector_icons::kEmailIcon;
     case AddressUIComponentIconType::kPhone:
       return vector_icons::kCallIcon;
-    case AddressUIComponentIconType::kNoIcon:
-      NOTREACHED();
   }
 }
 
@@ -95,8 +95,13 @@ std::unique_ptr<views::View> CreateValuesView(
     label_view->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT);
 
     auto icon_view = std::make_unique<views::ImageView>();
-    icon_view->SetImage(ui::ImageModel::FromVectorIcon(
-        GetVectorIconForType(diff_entry.type), icon_color, kIconSize));
+    base::optional_ref<const gfx::VectorIcon> icon_ref =
+        GetVectorIconForType(diff_entry.type);
+
+    if (icon_ref.has_value()) {
+      icon_view->SetImage(
+          ui::ImageModel::FromVectorIcon(*icon_ref, icon_color, kIconSize));
+    }
 
     // The container aligns the icon vertically in the middle of the first label
     // line, the icon size is expected to be smaller than the label height.
@@ -170,6 +175,11 @@ UpdateAddressProfileView::UpdateAddressProfileView(
       controller_(std::move(controller)) {
   auto* layout_provider = views::LayoutProvider::Get();
 
+  std::vector<ProfileValueDifference> profile_diff = GetProfileDifferenceForUi(
+      controller_->GetProfileToSave(), controller_->GetOriginalProfile(),
+      g_browser_process->GetApplicationLocale());
+  has_empty_original_values_ = !HasNonEmptySecondValues(profile_diff);
+
   SetAcceptCallback(
       base::BindOnce(&UpdateAddressBubbleController::OnUserDecision,
                      base::Unretained(controller_.get()),
@@ -181,13 +191,13 @@ UpdateAddressProfileView::UpdateAddressProfileView(
       AutofillClient::AddressPromptUserDecision::kDeclined, std::nullopt));
 
   SetProperty(views::kElementIdentifierKey, kTopViewId);
-  SetTitle(controller_->GetWindowTitle());
-  SetButtonLabel(ui::mojom::DialogButton::kOk,
-                 l10n_util::GetStringUTF16(
-                     IDS_AUTOFILL_UPDATE_ADDRESS_PROMPT_OK_BUTTON_LABEL));
-  SetButtonLabel(ui::mojom::DialogButton::kCancel,
-                 l10n_util::GetStringUTF16(
-                     IDS_AUTOFILL_UPDATE_ADDRESS_PROMPT_CANCEL_BUTTON_LABEL));
+  SetTitle(controller_->GetWindowTitle(has_empty_original_values_));
+  SetButtonLabel(
+      ui::mojom::DialogButton::kOk,
+      controller_->GetPositiveButtonText(has_empty_original_values_));
+  SetButtonLabel(
+      ui::mojom::DialogButton::kCancel,
+      controller_->GetNegativeButtonText(has_empty_original_values_));
 
   SetLayoutManager(std::make_unique<views::FlexLayout>())
       ->SetOrientation(views::LayoutOrientation::kVertical)
@@ -198,10 +208,6 @@ UpdateAddressProfileView::UpdateAddressProfileView(
                   gfx::Insets::VH(layout_provider->GetDistanceMetric(
                                       views::DISTANCE_CONTROL_LIST_VERTICAL),
                                   0));
-
-  std::vector<ProfileValueDifference> profile_diff = GetProfileDifferenceForUi(
-      controller_->GetProfileToSave(), controller_->GetOriginalProfile(),
-      g_browser_process->GetApplicationLocale());
 
   std::u16string subtitle = GetProfileDescription(
       controller_->GetOriginalProfile(),
@@ -217,12 +223,10 @@ UpdateAddressProfileView::UpdateAddressProfileView(
   auto* main_content_view =
       AddChildView(std::make_unique<views::TableLayoutView>());
 
-  bool has_non_empty_original_values = HasNonEmptySecondValues(profile_diff);
-
   // Build the TableLayoutView columns.
   const int column_divider = layout_provider->GetDistanceMetric(
       views::DISTANCE_RELATED_CONTROL_HORIZONTAL);
-  if (has_non_empty_original_values) {
+  if (!has_empty_original_values_) {
     // Label column exists only if there is a section for original values.
     main_content_view
         ->AddColumn(
@@ -249,12 +253,12 @@ UpdateAddressProfileView::UpdateAddressProfileView(
 
   AddValuesRow(
       main_content_view, profile_diff,
-      /*show_row_label=*/has_non_empty_original_values,
+      /*show_row_label=*/!has_empty_original_values_,
       /*edit_button_callback=*/
       base::BindRepeating(&UpdateAddressBubbleController::OnEditButtonClicked,
                           base::Unretained(controller_.get())));
 
-  if (has_non_empty_original_values) {
+  if (!has_empty_original_values_) {
     main_content_view->AddPaddingRow(
         views::TableLayout::kFixedSize,
         layout_provider->GetDistanceMetric(
@@ -288,7 +292,7 @@ bool UpdateAddressProfileView::ShouldShowCloseButton() const {
 }
 
 std::u16string UpdateAddressProfileView::GetWindowTitle() const {
-  return controller_->GetWindowTitle();
+  return controller_->GetWindowTitle(has_empty_original_values_);
 }
 
 void UpdateAddressProfileView::WindowClosing() {

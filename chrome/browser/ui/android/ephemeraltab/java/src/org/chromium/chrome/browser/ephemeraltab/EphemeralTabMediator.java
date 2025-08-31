@@ -58,7 +58,7 @@ public class EphemeralTabMediator {
         mBottomSheetController = bottomSheetController;
         mFaviconLoader = faviconLoader;
         mTopControlsHeightDp = topControlsHeightDp;
-        mObservers = new ObserverList<EphemeralTabObserver>();
+        mObservers = new ObserverList<>();
     }
 
     /** Initializes various objects for a new tab. */
@@ -111,6 +111,24 @@ public class EphemeralTabMediator {
         }
     }
 
+    /** Notify observers on navigation finish. */
+    public void onNavigationFinished(GURL url) {
+        RewindableIterator<EphemeralTabObserver> observersIterator =
+                mObservers.rewindableIterator();
+        while (observersIterator.hasNext()) {
+            observersIterator.next().onNavigationFinished(url);
+        }
+    }
+
+    /** Notify observers on web contents destroyed. */
+    public void onWebContentsDestroyed() {
+        RewindableIterator<EphemeralTabObserver> observersIterator =
+                mObservers.rewindableIterator();
+        while (observersIterator.hasNext()) {
+            observersIterator.next().onWebContentsDestroyed();
+        }
+    }
+
     /** Notify observers on title set. */
     public void onTitleSet(EphemeralTabSheetContent sheetContent, String title) {
         RewindableIterator<EphemeralTabObserver> observersIterator =
@@ -130,8 +148,7 @@ public class EphemeralTabMediator {
 
     private void loadUrl(GURL url) {
         assumeNonNull(mWebContents);
-        assumeNonNull(mWebContents.getNavigationController())
-                .loadUrl(new LoadUrlParams(url.getSpec()));
+        mWebContents.getNavigationController().loadUrl(new LoadUrlParams(url.getSpec()));
     }
 
     @EnsuresNonNull("mWebContentsObserver")
@@ -190,6 +207,7 @@ public class EphemeralTabMediator {
                             mIsOnErrorPage = navigation.isErrorPage();
                             mSheetContent.updateURL(
                                     assumeNonNull(getWebContents()).getVisibleUrl());
+                            onNavigationFinished(navigation.getUrl());
                         } else if (navigation.isDownload()) {
                             // Not viewable contents such as download. Show a toast and close the
                             // tab.
@@ -200,6 +218,11 @@ public class EphemeralTabMediator {
                                     .show();
                             mBottomSheetController.hideContent(mSheetContent, /* animate= */ true);
                         }
+                    }
+
+                    @Override
+                    public void webContentsDestroyed() {
+                        onWebContentsDestroyed();
                     }
                 };
     }

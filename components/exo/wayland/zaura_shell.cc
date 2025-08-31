@@ -31,12 +31,12 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chromeos/constants/chromeos_features.h"
-#include "chromeos/ui/base/chromeos_ui_constants.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/base/window_state_type.h"
+#include "chromeos/ui/frame/frame_utils.h"
 #include "chromeos/ui/frame/multitask_menu/float_controller_base.h"
 #include "components/exo/display.h"
 #include "components/exo/seat.h"
@@ -592,9 +592,7 @@ void AuraSurface::ComputeAndSendOcclusion(
   switch (occlusion_state) {
     case aura::Window::OcclusionState::VISIBLE: {
       const gfx::Rect display_bounds_in_screen =
-          display::Screen::GetScreen()
-              ->GetDisplayNearestWindow(window)
-              .bounds();
+          display::Screen::Get()->GetDisplayNearestWindow(window).bounds();
       const gfx::Rect bounds_in_screen = GetTransformedBoundsInScreen(window);
       const int tracked_area =
           bounds_in_screen.width() * bounds_in_screen.height();
@@ -1262,10 +1260,10 @@ class WaylandAuraShell : public ash::DesksController::Observer,
       : aura_shell_resource_(aura_shell_resource), seat_(display->seat()) {
     ash::DesksController::Get()->AddObserver(this);
     ash::Shell::Get()->overview_controller()->AddObserver(this);
-    display::Screen::GetScreen()->AddObserver(this);
+    display::Screen::Get()->AddObserver(this);
     if (wl_resource_get_version(aura_shell_resource_) >=
         ZAURA_SHELL_LAYOUT_MODE_SINCE_VERSION) {
-      auto layout_mode = display::Screen::GetScreen()->InTabletMode()
+      auto layout_mode = display::Screen::Get()->InTabletMode()
                              ? ZAURA_SHELL_LAYOUT_MODE_TABLET
                              : ZAURA_SHELL_LAYOUT_MODE_WINDOWED;
       zaura_shell_send_layout_mode(aura_shell_resource_, layout_mode);
@@ -1290,17 +1288,11 @@ class WaylandAuraShell : public ash::DesksController::Observer,
 
     if (wl_resource_get_version(aura_shell_resource_) >=
         ZAURA_SHELL_WINDOW_CORNERS_RADII_SINCE_VERSION) {
-      const int window_corner_radius =
-          chromeos::features::IsRoundedWindowsEnabled()
-              ? chromeos::features::RoundedWindowsRadius()
-              : chromeos::kTopCornerRadiusWhenRestored;
-
+      const auto window_radii = chromeos::GetWindowRoundedCorners();
       zaura_shell_send_window_corners_radii(
-          aura_shell_resource_, window_corner_radius, window_corner_radius,
-          chromeos::features::IsRoundedWindowsEnabled() ? window_corner_radius
-                                                        : 0,
-          chromeos::features::IsRoundedWindowsEnabled() ? window_corner_radius
-                                                        : 0);
+          aura_shell_resource_, window_radii.upper_left(),
+          window_radii.upper_right(), window_radii.lower_right(),
+          window_radii.lower_left());
     }
 
     display->seat()->AddObserver(this, kAuraShellSeatObserverPriority);
@@ -1312,7 +1304,7 @@ class WaylandAuraShell : public ash::DesksController::Observer,
   WaylandAuraShell(const WaylandAuraShell&) = delete;
   WaylandAuraShell& operator=(const WaylandAuraShell&) = delete;
   ~WaylandAuraShell() override {
-    display::Screen::GetScreen()->RemoveObserver(this);
+    display::Screen::Get()->RemoveObserver(this);
     ash::Shell::Get()->overview_controller()->RemoveObserver(this);
     ash::DesksController::Get()->RemoveObserver(this);
     if (seat_)

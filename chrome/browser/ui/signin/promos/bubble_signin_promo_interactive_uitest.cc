@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "base/test/metrics/histogram_tester.h"
+#include "base/version.h"
+#include "base/version_info/version_info.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/password_manager/password_manager_test_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -12,6 +14,9 @@
 #include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/hats/hats_service_factory.h"
+#include "chrome/browser/ui/hats/mock_hats_service.h"
+#include "chrome/browser/ui/hats/survey_config.h"
 #include "chrome/browser/ui/passwords/manage_passwords_test.h"
 #include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
 #include "chrome/browser/ui/signin/promos/bubble_signin_promo_signin_button_view.h"
@@ -30,6 +35,7 @@
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/password_manager/core/browser/password_form.h"
+#include "components/password_manager/core/browser/password_form_manager.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
 #include "components/password_manager/core/browser/password_store/test_password_store.h"
 #include "components/signin/public/base/consent_level.h"
@@ -60,7 +66,10 @@ using autofill::SaveAddressProfileView;
 constexpr char kButton[] = "SignInButton";
 
 using testing::_;
+using testing::Eq;
+using testing::Pair;
 using testing::Return;
+using testing::UnorderedElementsAre;
 
 std::unique_ptr<KeyedService> BuildMockSyncService(
     content::BrowserContext* context) {
@@ -71,6 +80,13 @@ std::unique_ptr<KeyedService> BuildMockSyncService(
 
 class BubbleSignInPromoInteractiveUITest : public ManagePasswordsTest {
  public:
+  BubbleSignInPromoInteractiveUITest() {
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/
+        {switches::kSyncEnableBookmarksInTransportMode,
+         switches::kChromeIdentitySurveySigninPromoBubbleDismissed},
+        /*disabled_features=*/{});
+  }
   void SetUpInProcessBrowserTestFixture() override {
     ManagePasswordsTest::SetUpInProcessBrowserTestFixture();
     url_loader_factory_helper_.SetUp();
@@ -80,11 +96,6 @@ class BubbleSignInPromoInteractiveUITest : public ManagePasswordsTest {
                 base::BindRepeating(&BubbleSignInPromoInteractiveUITest::
                                         OnWillCreateBrowserContextServices,
                                     base::Unretained(this)));
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/
-        {switches::kImprovedSigninUIOnDesktop,
-         switches::kSyncEnableBookmarksInTransportMode},
-        /*disabled_features=*/{});
   }
 
   void OnWillCreateBrowserContextServices(content::BrowserContext* context) {
@@ -98,6 +109,15 @@ class BubbleSignInPromoInteractiveUITest : public ManagePasswordsTest {
     ManagePasswordsTest::SetUpOnMainThread();
     ON_CALL(sync_service_mock(), GetDataTypesForTransportOnlyMode())
         .WillByDefault(Return(syncer::DataTypeSet::All()));
+
+    mock_hats_service_ = static_cast<MockHatsService*>(
+        HatsServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+            browser()->profile(), base::BindRepeating(&BuildMockHatsService)));
+  }
+
+  void TearDownOnMainThread() override {
+    mock_hats_service_ = nullptr;
+    ManagePasswordsTest::TearDownOnMainThread();
   }
 
   // Trigger the password save by simulating an "Accept" in the password bubble,
@@ -161,6 +181,7 @@ class BubbleSignInPromoInteractiveUITest : public ManagePasswordsTest {
   }
 
  protected:
+  raw_ptr<MockHatsService> mock_hats_service_ = nullptr;
   base::test::ScopedFeatureList scoped_feature_list_;
 
   ChromeSigninClientWithURLLoaderHelper url_loader_factory_helper_;
@@ -242,16 +263,17 @@ IN_PROC_BROWSER_TEST_F(BubbleSignInPromoInteractiveUITest,
   RunTestSequence(
       WaitForEvent(BubbleSignInPromoSignInButtonView::kPromoSignInButton,
                    kBubbleSignInPromoSignInButtonHasCallback),
-      EnsurePresent(PasswordSaveUpdateView::kPasswordBubble),
+      EnsurePresent(PasswordSaveUpdateView::kPasswordBubbleElementId),
+      EnsureNotPresent(PasswordSaveUpdateView::kExtraButtonElementId),
       SetOnIncompatibleAction(
           OnIncompatibleAction::kIgnoreAndContinue,
           "Screenshot can only run in pixel_tests on Windows."),
-      Screenshot(PasswordSaveUpdateView::kPasswordBubble, std::string(),
-                 "5455375"),
+      Screenshot(PasswordSaveUpdateView::kPasswordBubbleElementId,
+                 std::string(), "5455375"),
       NameChildViewByType<views::MdTextButton>(
           BubbleSignInPromoSignInButtonView::kPromoSignInButton, kButton),
       PressButton(kButton).SetMustRemainVisible(false),
-      EnsureNotPresent(PasswordSaveUpdateView::kPasswordBubble));
+      EnsureNotPresent(PasswordSaveUpdateView::kPasswordBubbleElementId));
 
   // Check that clicking the sign in button navigated to a sign in page.
   EXPECT_TRUE(IsSignInURL());
@@ -326,16 +348,17 @@ IN_PROC_BROWSER_TEST_F(BubbleSignInPromoInteractiveUITest,
   RunTestSequence(
       WaitForEvent(BubbleSignInPromoSignInButtonView::kPromoSignInButton,
                    kBubbleSignInPromoSignInButtonHasCallback),
-      EnsurePresent(PasswordSaveUpdateView::kPasswordBubble),
+      EnsurePresent(PasswordSaveUpdateView::kPasswordBubbleElementId),
+      EnsureNotPresent(PasswordSaveUpdateView::kExtraButtonElementId),
       SetOnIncompatibleAction(
           OnIncompatibleAction::kIgnoreAndContinue,
           "Screenshot can only run in pixel_tests on Windows."),
-      Screenshot(PasswordSaveUpdateView::kPasswordBubble, std::string(),
-                 "5455375"),
+      Screenshot(PasswordSaveUpdateView::kPasswordBubbleElementId,
+                 std::string(), "5455375"),
       NameChildViewByType<views::MdTextButton>(
           BubbleSignInPromoSignInButtonView::kPromoSignInButton, kButton),
       PressButton(kButton).SetMustRemainVisible(false),
-      EnsureNotPresent(PasswordSaveUpdateView::kPasswordBubble));
+      EnsureNotPresent(PasswordSaveUpdateView::kPasswordBubbleElementId));
 
   // Check that there is no helper attached to the sign in tab, because the
   // password was already moved.
@@ -394,16 +417,17 @@ IN_PROC_BROWSER_TEST_F(BubbleSignInPromoInteractiveUITest,
   RunTestSequence(
       WaitForEvent(BubbleSignInPromoSignInButtonView::kPromoSignInButton,
                    kBubbleSignInPromoSignInButtonHasCallback),
-      EnsurePresent(PasswordSaveUpdateView::kPasswordBubble),
+      EnsurePresent(PasswordSaveUpdateView::kPasswordBubbleElementId),
+      EnsureNotPresent(PasswordSaveUpdateView::kExtraButtonElementId),
       SetOnIncompatibleAction(
           OnIncompatibleAction::kIgnoreAndContinue,
           "Screenshot can only run in pixel_tests on Windows."),
-      Screenshot(PasswordSaveUpdateView::kPasswordBubble, std::string(),
-                 "5455375"),
+      Screenshot(PasswordSaveUpdateView::kPasswordBubbleElementId,
+                 std::string(), "5455375"),
       NameChildViewByType<views::MdTextButton>(
           BubbleSignInPromoSignInButtonView::kPromoSignInButton, kButton),
       PressButton(kButton).SetMustRemainVisible(false),
-      EnsureNotPresent(PasswordSaveUpdateView::kPasswordBubble));
+      EnsureNotPresent(PasswordSaveUpdateView::kPasswordBubbleElementId));
 
   // Check that clicking the sign in button navigated to a sign in page.
   EXPECT_TRUE(IsSignInURL());
@@ -679,6 +703,13 @@ IN_PROC_BROWSER_TEST_F(BubbleSignInPromoInteractiveUITest,
   ExtendAccountInfo(info);
   signin::SetInvalidRefreshTokenForPrimaryAccount(identity_manager());
 
+  // Verify that the HaTS service launches a survey when the user actively
+  // dismisses the sign-in promo bubble with the escape key.
+  EXPECT_CALL(
+      *mock_hats_service_,
+      LaunchDelayedSurvey(kHatsSurveyTriggerIdentitySigninPromoBubbleDismissed,
+                          _, _, _));
+
   // Trigger the address save bubble.
   AutofillProfile address = autofill::test::GetFullProfile();
   TriggerSaveAddressBubble(address);
@@ -691,8 +722,8 @@ IN_PROC_BROWSER_TEST_F(BubbleSignInPromoInteractiveUITest,
                    kBubbleSignInPromoSignInButtonHasCallback),
       EnsureNotPresent(SaveAddressProfileView::kTopViewId),
       EnsurePresent(AddressSignInPromoView::kBubbleFrameViewId),
-      // Click the promo to put the bubble into focus.
-      MoveMouseTo(AddressSignInPromoView::kBubbleFrameViewId), ClickMouse(),
+      // Ensure the surface containing the promo is active.
+      ActivateSurface(AddressSignInPromoView::kBubbleFrameViewId),
       SendKeyPress(ui::VKEY_ESCAPE),
       WaitForHide(AddressSignInPromoView::kBubbleFrameViewId));
 
@@ -711,6 +742,20 @@ IN_PROC_BROWSER_TEST_F(BubbleSignInPromoInteractiveUITest,
       identity_manager(), "test@email.com", signin::ConsentLevel::kSignin);
   ExtendAccountInfo(info);
   signin::SetInvalidRefreshTokenForPrimaryAccount(identity_manager());
+
+  // Verify that the HaTS service launches a survey when the user actively
+  // dismisses the sign-in promo bubble with the close button.
+  EXPECT_CALL(
+      *mock_hats_service_,
+      LaunchDelayedSurvey(
+          kHatsSurveyTriggerIdentitySigninPromoBubbleDismissed, _, _,
+          UnorderedElementsAre(
+              Pair("Channel", _),
+              Pair("Chrome Version", version_info::GetVersion().GetString()),
+              Pair("Number of Chrome Profiles", "1"),
+              Pair("Number of Google Accounts", "1"),
+              Pair("Data type Sign-in Bubble Dismissed", "Address Bubble"),
+              Pair("Sign-in Status", "Sign-in Pending"))));
 
   // Trigger the address save bubble.
   AutofillProfile address = autofill::test::GetFullProfile();

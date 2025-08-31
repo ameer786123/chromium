@@ -9,11 +9,13 @@
 #include <string_view>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "net/base/completion_once_callback.h"
+#include "net/base/features.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
-#include "net/base/tracing.h"
+#include "net/dns/public/host_resolver_results.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/tcp_stream_attempt.h"
 #include "net/ssl/ssl_cert_request_info.h"
@@ -40,16 +42,24 @@ TlsStreamAttempt::TlsStreamAttempt(const StreamAttemptParams* params,
                                    IPEndPoint ip_endpoint,
                                    perfetto::Track track,
                                    HostPortPair host_port_pair,
-                                   SSLConfigProvider* ssl_config_provider)
+                                   SSLConfig base_ssl_config,
+                                   Delegate* delegate)
     : StreamAttempt(params,
                     ip_endpoint,
-                    std::move(track),
+                    track,
                     NetLogSourceType::TLS_STREAM_ATTEMPT,
                     NetLogEventType::TLS_STREAM_ATTEMPT_ALIVE),
       host_port_pair_(std::move(host_port_pair)),
-      ssl_config_provider_(ssl_config_provider) {}
+      base_ssl_config_(std::move(base_ssl_config)),
+      delegate_(delegate) {
+  // ECH and trust anchor IDs are configured via DNS after GetServiceEndpoint().
+  DCHECK(base_ssl_config_.ech_config_list.empty());
+  DCHECK(!base_ssl_config_.trust_anchor_ids.has_value());
+}
 
-TlsStreamAttempt::~TlsStreamAttempt() = default;
+TlsStreamAttempt::~TlsStreamAttempt() {
+  MaybeRecordTlsHandshakeEnd(ERR_ABORTED);
+}
 
 LoadState TlsStreamAttempt::GetLoadState() const {
   switch (next_state_) {
@@ -79,15 +89,6 @@ base::Value::Dict TlsStreamAttempt::GetInfoAsValue() const {
 
 scoped_refptr<SSLCertRequestInfo> TlsStreamAttempt::GetCertRequestInfo() {
   return ssl_cert_request_info_;
-}
-
-void TlsStreamAttempt::SetTcpHandshakeCompletionCallback(
-    CompletionOnceCallback callback) {
-  CHECK(!tls_handshake_started_);
-  CHECK(!tcp_handshake_completion_callback_);
-  if (next_state_ <= State::kTcpAttemptComplete) {
-    tcp_handshake_completion_callback_ = std::move(callback);
-  }
 }
 
 int TlsStreamAttempt::StartInternal() {
@@ -151,15 +152,14 @@ int TlsStreamAttempt::DoTcpAttemptComplete(int rv) {
   mutable_connect_timing().connect_start = nested_timing.connect_start;
 
   tcp_handshake_completed_ = true;
-  if (tcp_handshake_completion_callback_) {
-    std::move(tcp_handshake_completion_callback_).Run(rv);
-  }
+  delegate_->OnTcpHandshakeComplete();
 
   if (rv != OK) {
     return rv;
   }
 
-  net_log().BeginEvent(NetLogEventType::TLS_STREAM_ATTEMPT_WAIT_FOR_SSL_CONFIG);
+  net_log().BeginEvent(
+      NetLogEventType::TLS_STREAM_ATTEMPT_WAIT_FOR_SERVICE_ENDPOINT);
 
   next_state_ = State::kTlsAttempt;
 
@@ -169,37 +169,46 @@ int TlsStreamAttempt::DoTcpAttemptComplete(int rv) {
     return OK;
   }
 
-  int ssl_config_ready_result =
-      ssl_config_provider_->WaitForSSLConfigReady(base::BindOnce(
-          &TlsStreamAttempt::OnIOComplete, weak_ptr_factory_.GetWeakPtr()));
-  if (ssl_config_ready_result == ERR_IO_PENDING) {
-    TRACE_EVENT_INSTANT("net.stream", "WaitForSSLConfig", track());
+  int wait_result = delegate_->WaitForServiceEndpointReady(base::BindOnce(
+      &TlsStreamAttempt::OnIOComplete, weak_ptr_factory_.GetWeakPtr()));
+  if (wait_result == ERR_IO_PENDING) {
+    TRACE_EVENT_INSTANT("net.stream", "WaitForServiceEndpointReady", track());
   }
-  return ssl_config_ready_result;
+  return wait_result;
 }
 
 int TlsStreamAttempt::DoTlsAttempt(int rv) {
   CHECK_EQ(rv, OK);
 
-  net_log().EndEvent(NetLogEventType::TLS_STREAM_ATTEMPT_WAIT_FOR_SSL_CONFIG);
+  net_log().EndEvent(
+      NetLogEventType::TLS_STREAM_ATTEMPT_WAIT_FOR_SERVICE_ENDPOINT);
 
   next_state_ = State::kTlsAttemptComplete;
 
   std::unique_ptr<StreamSocket> nested_socket =
       nested_attempt_->ReleaseStreamSocket();
   if (!ssl_config_) {
-    CHECK(ssl_config_provider_);
-    auto get_config_result = ssl_config_provider_->GetSSLConfig();
-    // Clear `ssl_config_provider_` to avoid dangling pointer.
-    // TODO(bashi): Try not to clear the pointer. It seems that
-    // `ssl_config_provider_` should always outlive `this`.
-    ssl_config_provider_ = nullptr;
-
-    if (get_config_result.has_value()) {
-      ssl_config_ = *get_config_result;
-    } else {
-      CHECK_EQ(get_config_result.error(), GetSSLConfigError::kAbort);
+    auto endpoint = delegate_->GetServiceEndpoint();
+    if (!endpoint.has_value()) {
+      CHECK_EQ(endpoint.error(), GetServiceEndpointError::kAbort);
       return ERR_ABORTED;
+    }
+
+    is_ech_capable_ = !endpoint->metadata.ech_config_list.empty();
+    trust_anchor_ids_from_dns_ = !endpoint->metadata.trust_anchor_ids.empty();
+
+    // Configure ServiceEndpoint-specific TLS settings.
+    const SSLContextConfig& ssl_context_config =
+        params().ssl_client_context->config();
+    ssl_config_ = base_ssl_config_;
+    if (!ssl_context_config.trust_anchor_ids.empty() &&
+        base::FeatureList::IsEnabled(features::kTLSTrustAnchorIDs)) {
+      ssl_config_->trust_anchor_ids =
+          SSLConfig::SelectTrustAnchorIDs(endpoint->metadata.trust_anchor_ids,
+                                          ssl_context_config.trust_anchor_ids);
+    }
+    if (ssl_context_config.ech_enabled) {
+      ssl_config_->ech_config_list = endpoint->metadata.ech_config_list;
     }
   }
 
@@ -216,7 +225,7 @@ int TlsStreamAttempt::DoTlsAttempt(int rv) {
       params().ssl_client_context, std::move(nested_socket), host_port_pair_,
       *ssl_config_);
 
-  TRACE_EVENT_INSTANT("net.stream", "TlsConnectStart", track());
+  TRACE_EVENT_BEGIN("net.stream", "TlsConnect", track());
   net_log().BeginEvent(NetLogEventType::TLS_STREAM_ATTEMPT_CONNECT);
 
   return ssl_socket_->Connect(
@@ -224,7 +233,7 @@ int TlsStreamAttempt::DoTlsAttempt(int rv) {
 }
 
 int TlsStreamAttempt::DoTlsAttemptComplete(int rv) {
-  TRACE_EVENT_INSTANT("net.stream", "TlsConnectEnd", track(), "result", rv);
+  MaybeRecordTlsHandshakeEnd(rv);
   net_log().EndEventWithNetErrorCode(
       NetLogEventType::TLS_STREAM_ATTEMPT_CONNECT, rv);
 
@@ -248,21 +257,48 @@ int TlsStreamAttempt::DoTlsAttemptComplete(int rv) {
 
     // TODO(crbug.com/346835898): Add a NetLog to record ECH retry configs.
 
-    // Reset states.
-    tcp_handshake_completed_ = false;
-    tls_handshake_started_ = false;
-    ssl_socket_.reset();
-    ssl_cert_request_info_.reset();
-
+    ResetStateForRestart();
     next_state_ = State::kTcpAttempt;
     return OK;
   }
 
-  const bool is_ech_capable =
-      ssl_config_ && !ssl_config_->ech_config_list.empty();
-  SSLClientSocket::RecordSSLConnectResult(ssl_socket_.get(), rv, is_ech_capable,
-                                          ech_enabled, ech_retry_configs_,
-                                          connect_timing());
+  // If we got a certificate error and the server advertised some Trust Anchor
+  // IDs in the handshake that we trust, then retry the connection, using the
+  // fresh Trust Anchor IDs from the server. We only want to retry once; if we
+  // have we already retried, so we skip all of this and treat the connection
+  // error as usual.
+  //
+  // TODO(https://crbug.com/399937371): clarify and test the interactions of ECH
+  // retry and TAI retry.
+  if (IsCertificateError(rv) && !retried_for_trust_anchor_ids_ &&
+      base::FeatureList::IsEnabled(features::kTLSTrustAnchorIDs)) {
+    CHECK(ssl_socket_);
+
+    std::vector<std::vector<uint8_t>> server_trust_anchor_ids =
+        ssl_socket_->GetServerTrustAnchorIDsForRetry();
+    // https://tlswg.org/tls-trust-anchor-ids/draft-ietf-tls-trust-anchor-ids.html#name-retry-mechanism:
+    // If the EncryptedExtensions had no trust_anchor extension, or no match was
+    // found, the client returns the error to the application.
+    if (!server_trust_anchor_ids.empty()) {
+      std::vector<uint8_t> trust_anchor_ids_for_retry =
+          SSLConfig::SelectTrustAnchorIDs(
+              server_trust_anchor_ids,
+              params().ssl_client_context->config().trust_anchor_ids);
+      if (!trust_anchor_ids_for_retry.empty()) {
+        retried_for_trust_anchor_ids_ = true;
+        ssl_config_->trust_anchor_ids = trust_anchor_ids_for_retry;
+
+        ResetStateForRestart();
+        next_state_ = State::kTcpAttempt;
+        return OK;
+      }
+    }
+  }
+
+  SSLClientSocket::RecordSSLConnectResult(
+      ssl_socket_.get(), rv, is_ech_capable_, ech_enabled, ech_retry_configs_,
+      trust_anchor_ids_from_dns_, retried_for_trust_anchor_ids_,
+      connect_timing());
 
   if (rv == OK || IsCertificateError(rv)) {
     CHECK(ssl_socket_);
@@ -280,6 +316,20 @@ void TlsStreamAttempt::OnTlsHandshakeTimeout() {
   // TODO(bashi): The error code should be ERR_CONNECTION_TIMED_OUT but use
   // ERR_TIMED_OUT for consistency with ConnectJobs.
   OnIOComplete(ERR_TIMED_OUT);
+}
+
+void TlsStreamAttempt::MaybeRecordTlsHandshakeEnd(int rv) {
+  if (!tls_handshake_started_ || !tls_handshake_timeout_timer_.IsRunning()) {
+    return;
+  }
+  TRACE_EVENT_END("net.stream", track(), "result", rv);
+}
+
+void TlsStreamAttempt::ResetStateForRestart() {
+  tcp_handshake_completed_ = false;
+  tls_handshake_started_ = false;
+  ssl_socket_.reset();
+  ssl_cert_request_info_.reset();
 }
 
 }  // namespace net

@@ -4,7 +4,7 @@
 
 import {MetricsBrowserProxyImpl, ReadAnythingSpeechError, ReadAnythingVoiceType} from './metrics_browser_proxy.js';
 import type {MetricsBrowserProxy, ReadAloudSettingsChange, ReadAnythingSettingsChange} from './metrics_browser_proxy.js';
-import {isEspeak, isNatural} from './voice_language_util.js';
+import {isEspeak, isNatural} from './read_aloud/voice_language_conversions.js';
 
 export enum TimeFrom {
   APP = 'App',
@@ -85,7 +85,7 @@ export class ReadAnythingLogger {
     this.metrics.recordHighlightGranularity(highlight);
   }
 
-  private logVoiceTypeUsedForReading_(voice: SpeechSynthesisVoice|undefined) {
+  private logVoiceTypeUsedForReading_(voice: SpeechSynthesisVoice|null) {
     if (!voice) {
       return;
     }
@@ -96,10 +96,10 @@ export class ReadAnythingLogger {
     } else if (isEspeak(voice)) {
       voiceType = ReadAnythingVoiceType.ESPEAK;
     } else {
-      // <if expr="chromeos_ash">
+      // <if expr="is_chromeos">
       voiceType = ReadAnythingVoiceType.CHROMEOS;
       // </if>
-      // <if expr="not chromeos_ash">
+      // <if expr="not is_chromeos">
       voiceType = ReadAnythingVoiceType.SYSTEM;
       // </if>
     }
@@ -112,7 +112,7 @@ export class ReadAnythingLogger {
       return;
     }
 
-    // See tools/metrics/histograms/enums.xml enum LocaleCodeISO639. The enum
+    // See tools/metrics/histograms/enums.xml enum LocaleCodeBCP47. The enum
     // there doesn't always have locales where the base lang and the locale
     // are the same (e.g. they don't have id-id, but do have id). So if the
     // base lang and the locale are the same, just use the base lang.
@@ -136,8 +136,7 @@ export class ReadAnythingLogger {
     this.metrics.recordVoiceSpeed(index);
   }
 
-  logSpeechPlaySession(
-      startTime: number, voice: SpeechSynthesisVoice|undefined) {
+  logSpeechPlaySession(startTime: number, voice: SpeechSynthesisVoice|null) {
     this.logVoiceTypeUsedForReading_(voice);
     this.logLanguageUsedForReading_(voice?.lang);
     this.metrics.recordSpeechPlaybackLength(Date.now() - startTime);

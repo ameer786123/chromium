@@ -164,17 +164,6 @@ std::optional<AppIconIdentityChange> CompareIdentityIconBitmaps(
   return std::nullopt;
 }
 
-void RecordIconDownloadMetrics(IconsDownloadedResult result,
-                               DownloadedIconsHttpResults icons_http_results) {
-  // TODO(crbug.com/40193545): Report `result` and `icons_http_results` in
-  // internals.
-  base::UmaHistogramEnumeration("WebApp.Icon.DownloadedResultOnUpdate", result);
-  RecordDownloadedIconHttpStatusCodes(
-      "WebApp.Icon.DownloadedHttpStatusCodeOnUpdate", icons_http_results);
-  RecordDownloadedIconsHttpResultsCodeClass(
-      "WebApp.Icon.HttpStatusCodeClassOnUpdate", result, icons_http_results);
-}
-
 bool CanWebAppSilentlyUpdateIdentity(const WebApp& web_app) {
   if (web_app.IsPolicyInstalledApp() &&
       base::FeatureList::IsEnabled(
@@ -350,11 +339,11 @@ void RecordIdentityConfirmationMetrics(
     kAppNameAndIconChanging = 5,
     // Values 6 through 15 (inclusive) are reserved for Android (icon mask/app
     // short name).
-    kLastAndroidSpecificValue = 15,
+    kLastAndroidSpecificValue = 29,
 
     // Add any new values above this one, and update kMaxValue to the highest
     // enumerator value.
-    kMaxValue = 15
+    kMaxValue = kLastAndroidSpecificValue,
   };
 
   AppIdentityDisplayMetric app_id_changes = [&] {

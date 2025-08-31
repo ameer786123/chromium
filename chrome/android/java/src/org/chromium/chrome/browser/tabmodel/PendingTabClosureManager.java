@@ -4,23 +4,24 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import org.chromium.base.ThreadUtils.ThreadChecker;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.ListIterator;
 
 /**
- * Manages the logic pertaining to tracking pending tab closures for a {@link TabModelImpl}.
- * This class does not directly perform any tab related actions and delegates that work
- * to the {@link PendingTabClosureDelegate} it is provided.
+ * Manages the logic pertaining to tracking pending tab closures for a {@link TabModelImpl}. This
+ * class does not directly perform any tab related actions and delegates that work to the {@link
+ * PendingTabClosureDelegate} it is provided.
  */
+@NullMarked
 public class PendingTabClosureManager {
     /**
      * Delegate for applying changes to a {@link TabList} based on the decision logic in
@@ -52,9 +53,12 @@ public class PendingTabClosureManager {
         /**
          * Called when a TabClosureEvent is completely cancelled and about to be removed.
          *
-         * @param event The event that's been cancelled.
+         * @param undoRunnable The runnable to run if the event was undone.
          */
         void notifyOnCancelingTabClosure(@Nullable Runnable undoRunnable);
+
+        /** Returns all tabs in the model. */
+        List<Tab> getAllTabs();
     }
 
     /** Represents a set of tabs closed together. */
@@ -155,27 +159,29 @@ public class PendingTabClosureManager {
         }
 
         @Override
-        public Tab getTabAt(int index) {
+        public @Nullable Tab getTabAt(int index) {
             if (index < 0 || index >= mRewoundTabs.size()) return null;
             return mRewoundTabs.get(index);
         }
 
         @Override
-        public int indexOf(Tab tab) {
+        public int indexOf(@Nullable Tab tab) {
             return mRewoundTabs.indexOf(tab);
         }
 
+        @Override
+        public Iterator<Tab> iterator() {
+            return ReadOnlyIterator.maybeCreate(mRewoundTabs.iterator());
+        }
+
         /**
-         * Resets this list to match the original {@link TabList}.  Note that if the
-         * {@link TabList} doesn't support pending closures this model will be empty.  This should
-         * be called whenever {@link TabList}'s list of tabs changes.
+         * Resets this list to match the original {@link TabList}. Note that if the {@link TabList}
+         * doesn't support pending closures this model will be empty. This should be called whenever
+         * {@link TabList}'s list of tabs changes.
          */
         public void resetRewoundState() {
             mRewoundTabs.clear();
-
-            for (int i = 0; i < mTabModel.getCount(); i++) {
-                mRewoundTabs.add(mTabModel.getTabAt(i));
-            }
+            mRewoundTabs.addAll(mDelegate.getAllTabs());
         }
 
         /**
@@ -187,7 +193,7 @@ public class PendingTabClosureManager {
          * @return The {@link Tab} specified by {@code tabId} as long as that tab only exists in
          *     this model and not in {@code mTabModel}. {@code null} otherwise.
          */
-        public Tab getPendingRewindTab(int tabId) {
+        public @Nullable Tab getPendingRewindTab(int tabId) {
             if (mTabModel.getTabById(tabId) != null) return null;
             for (Tab tab : mRewoundTabs) {
                 if (tab.getId() == tabId) return tab;
@@ -206,7 +212,7 @@ public class PendingTabClosureManager {
         }
 
         /**
-         * Destroy all tabs in this model.  This will check to see if the tab is already destroyed
+         * Destroy all tabs in this model. This will check to see if the tab is already destroyed
          * before destroying it.
          */
         public void destroy() {
@@ -228,12 +234,12 @@ public class PendingTabClosureManager {
     private boolean mIsCommittingAllTabClosures;
 
     /** The {@link TabModel} that this {@link PendingTabClosureManager} operates on. */
-    private TabModel mTabModel;
+    private final TabModel mTabModel;
 
-    private PendingTabClosureDelegate mDelegate;
+    private final PendingTabClosureDelegate mDelegate;
 
     /** Representation of a set of tabs that were closed together. */
-    private LinkedList<TabClosureEvent> mTabClosureEvents = new LinkedList<>();
+    private final LinkedList<TabClosureEvent> mTabClosureEvents = new LinkedList<>();
 
     /**
      * A {@link TabList} that represents the complete list of {@link Tab}s. This is so that
@@ -248,8 +254,7 @@ public class PendingTabClosureManager {
      * @param delegate A {@link PendingTabClosureDelegate} to use to apply cancelled and committed
      *     tab closures.
      */
-    public PendingTabClosureManager(
-            @NonNull TabModel tabModel, @NonNull PendingTabClosureDelegate delegate) {
+    public PendingTabClosureManager(TabModel tabModel, PendingTabClosureDelegate delegate) {
         assert tabModel != null;
         assert delegate != null;
 
@@ -441,22 +446,23 @@ public class PendingTabClosureManager {
     private void cancelClosureInternal(Tab tab) {
         tab.setClosing(false);
 
-        // Find a valid previous tab entry so we know what tab to insert after.  With the following
-        // example, calling cancelTabClosure(4) would need to know to insert after 2.  So we have to
+        // Find a valid previous tab entry so we know what tab to insert after. With the following
+        // example, calling cancelTabClosure(4) would need to know to insert after 2. So we have to
         // track across mRewoundTabs and mTabModel and see what the last valid mTabModel entry was
-        // (2) when we hit the 4 in the rewound list.  An insertIndex of -1 represents the beginning
+        // (2) when we hit the 4 in the rewound list. An insertIndex of -1 represents the beginning
         // of the list, as this is the index of tab to insert after.
         // mTabModel:   0   2     5
         // mRewoundTabs 0 1 2 3 4 5
         int prevIndex = -1;
         final int stopIndex = mRewoundList.indexOf(tab);
+        List<Tab> tabs = mDelegate.getAllTabs();
         for (int rewoundIndex = 0; rewoundIndex < stopIndex; rewoundIndex++) {
             Tab rewoundTab = mRewoundList.getTabAt(rewoundIndex);
-            if (prevIndex == mTabModel.getCount() - 1) break;
-            if (rewoundTab == mTabModel.getTabAt(prevIndex + 1)) prevIndex++;
+            if (prevIndex == tabs.size() - 1) break;
+            if (rewoundTab == tabs.get(prevIndex + 1)) prevIndex++;
         }
 
-        // Figure out where to insert the tab.  Just add one to prevIndex, as -1 represents the
+        // Figure out where to insert the tab. Just add one to prevIndex, as -1 represents the
         // beginning of the list, so we'll insert at 0.
         int insertIndex = prevIndex + 1;
         mDelegate.insertUndoneTabClosureAt(tab, insertIndex);

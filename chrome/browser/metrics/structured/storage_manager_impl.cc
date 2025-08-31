@@ -11,7 +11,6 @@
 #include "base/task/thread_pool.h"
 #include "base/types/expected.h"
 #include "chrome/browser/metrics/structured/arena_event_buffer.h"
-#include "chrome/browser/metrics/structured/event_logging_features.h"
 #include "components/metrics/structured/histogram_util.h"
 #include "components/metrics/structured/structured_metrics_features.h"
 
@@ -137,8 +136,8 @@ StorageManagerConfig StorageManagerImpl::GetStorageManagerConfig() {
 
   free_disk_space = GetMaxDiskSizeRatio() * free_disk_space;
 
-  int64_t buffer_max_size =
-      base::SysInfo::AmountOfPhysicalMemory() * GetMaxBufferSizeRatio();
+  int64_t buffer_max_size = base::SysInfo::AmountOfPhysicalMemory().InBytes() *
+                            GetMaxBufferSizeRatio();
 
   return StorageManagerConfig{
       .buffer_max_bytes = std::max(buffer_max_size, kMinBufferSize),

@@ -10,6 +10,7 @@
 #include <optional>
 #include <utility>
 
+#include "base/containers/lru_cache.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
@@ -221,6 +222,11 @@ class SearchPrefetchService : public KeyedService,
   friend class PrerenderOmniboxSearchSuggestionBrowserTest;
   friend class SearchPrefetchServiceEnabledBrowserTest;
 
+  struct RealNaivigationServingResult {
+    bool served_from_prefetch_cache = false;
+    base::Time last_navigation_time;
+  };
+
   // Returns whether the prefetch started or not.
   bool MaybePrefetchURL(const GURL& url,
                         bool navigation_prefetch,
@@ -267,9 +273,10 @@ class SearchPrefetchService : public KeyedService,
                                        TemplateURLService* template_url_service,
                                        const GURL& canonical_search_url);
 
-  // Preloads the compression dictionaries in the network service.
-  void MaybePreloadDictionary(const AutocompleteResult& result);
-  void DeletePreloadedDictionaries();
+  void RecordInterceptionMetrics(const std::u16string& search_terms,
+                                 SearchPrefetchServingReason serving_status);
+  void RecordPotentialDuplicateSearchTermsAheadOfNavigationalPrefetch(
+      const std::u16string& search_terms);
 
   // Prefetches that are started are stored using search terms as a key. Only
   // one prefetch should be started for a given search term until the old
@@ -295,9 +302,8 @@ class SearchPrefetchService : public KeyedService,
   // serving time of the response.
   std::map<GURL, std::pair<GURL, base::Time>> prefetch_cache_;
 
-  mojo::PendingRemote<network::mojom::PreloadedSharedDictionaryInfoHandle>
-      preloaded_shared_dictionaries_handle_;
-  base::OneShotTimer preloaded_shared_dictionaries_expiry_timer_;
+  base::LRUCache<std::u16string, RealNaivigationServingResult>
+      search_terms_cache_{50};
 
   base::WeakPtrFactory<SearchPrefetchService> weak_factory_{this};
 };

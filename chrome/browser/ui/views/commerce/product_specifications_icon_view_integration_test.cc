@@ -42,7 +42,7 @@ class ProductSpecificationsIconViewIntegrationTest
       public ::testing::WithParamInterface<bool> {
  public:
   ProductSpecificationsIconViewIntegrationTest() {
-    MockCommerceUiTabHelper::ReplaceFactory();
+    commerce_ui_override_ = MockCommerceUiTabHelper::ReplaceFactory();
   }
 
   ProductSpecificationsIconViewIntegrationTest(
@@ -56,7 +56,6 @@ class ProductSpecificationsIconViewIntegrationTest
     std::vector<base::test::FeatureRef> enabled_features = {
         commerce::kProductSpecifications};
     if (GetParam()) {
-      enabled_features.push_back(toast_features::kToastFramework);
       enabled_features.push_back(commerce::kCompareConfirmationToast);
     }
     test_features_.InitWithFeatures(enabled_features, /*disabled_features*/ {});
@@ -114,6 +113,7 @@ class ProductSpecificationsIconViewIntegrationTest
   raw_ptr<commerce::MockShoppingService, AcrossTasksDanglingUntriaged>
       shopping_service_;
   std::unique_ptr<commerce::MockAccountChecker> account_checker_;
+  ui::UserDataFactory::ScopedOverride commerce_ui_override_;
 };
 
 TEST_P(ProductSpecificationsIconViewIntegrationTest, IconVisibility) {

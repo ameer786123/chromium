@@ -54,23 +54,15 @@ class TranslateIconViewTest : public InProcessBrowserTest,
     ToolbarButtonProvider* provider =
         BrowserView::GetBrowserViewForBrowser(browser())
             ->toolbar_button_provider();
-    if (IsMigrationEnabled()) {
-      return provider->GetPageActionView(kActionShowTranslate);
-    }
-    return provider->GetPageActionIconView(PageActionIconType::kTranslate);
+    return provider->GetPageActionView(kActionShowTranslate);
   }
 
   views::BubbleDialogDelegate* GetBubble() const {
-    return browser()
-        ->GetFeatures()
-        .translate_bubble_controller()
-        ->GetTranslateBubble();
+    return TranslateBubbleController::From(browser())->GetTranslateBubble();
   }
 
   PartialTranslateBubbleView* GetPartialTranslateBubble() {
-    return browser()
-        ->GetFeatures()
-        .translate_bubble_controller()
+    return TranslateBubbleController::From(browser())
         ->GetPartialTranslateBubble();
   }
 
@@ -120,7 +112,7 @@ IN_PROC_BROWSER_TEST_P(TranslateIconViewTest, ClosePartialTranslateBubble) {
   EXPECT_THAT(translate_icon, ::testing::NotNull());
 
   TranslateBubbleController* controller =
-      browser()->GetFeatures().translate_bubble_controller();
+      TranslateBubbleController::From(browser());
   auto anchor_widget =
       CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   views::View* anchor_view = anchor_widget->GetContentsView();

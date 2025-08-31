@@ -229,6 +229,13 @@ mod offset_of;
 mod transparent;
 pub use transparent::*;
 
+// This module is just an implementation detail for the derive macros. It needs
+// to be public to be usable from the macros, but it shouldn't be considered
+// part of bytemuck's public API.
+#[cfg(feature = "derive")]
+#[doc(hidden)]
+pub mod derive;
+
 #[cfg(feature = "derive")]
 #[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "derive")))]
 pub use bytemuck_derive::{
@@ -266,6 +273,10 @@ impl core::fmt::Display for PodCastError {
 #[cfg(feature = "extern_crate_std")]
 #[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "extern_crate_std")))]
 impl std::error::Error for PodCastError {}
+
+// Rust 1.81+
+#[cfg(all(feature = "impl_core_error", not(feature = "extern_crate_std")))]
+impl core::error::Error for PodCastError {}
 
 /// Re-interprets `&T` as `&[u8]`.
 ///

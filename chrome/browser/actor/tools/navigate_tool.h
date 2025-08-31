@@ -9,6 +9,7 @@
 
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/actor/tools/tool.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "url/gurl.h"
 
@@ -16,22 +17,28 @@ namespace content {
 class NavigationHandle;
 }  // namespace content
 
-namespace tabs {
-class TabInterface;
-}  // namespace tabs
-
 namespace actor {
 
-// Navigates a tab to the given URL.
+// Navigates a the primary main frame in a WebContents to the given URL.
 class NavigateTool : public Tool, content::WebContentsObserver {
  public:
-  NavigateTool(tabs::TabInterface& tab, const GURL& url);
+  NavigateTool(TaskId task_id,
+               ToolDelegate& tool_delegate,
+               tabs::TabInterface& tab,
+               const GURL& url);
   ~NavigateTool() override;
 
+  // actor::Tool
   void Validate(ValidateCallback callback) override;
   void Invoke(InvokeCallback callback) override;
+  std::string DebugString() const override;
+  std::string JournalEvent() const override;
+  std::unique_ptr<ObservationDelayController> GetObservationDelayer()
+      const override;
+  void UpdateTaskBeforeInvoke(ActorTask& task,
+                              InvokeCallback callback) const override;
 
-  // WebContentsObserver
+  // content::WebContentsObserver
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
 
@@ -47,6 +54,8 @@ class NavigateTool : public Tool, content::WebContentsObserver {
   // after which this is set (asynchronously). Once set, this class observes the
   // WebContents until this handle completes and the above callback is invoked.
   std::optional<int64_t> pending_navigation_handle_id_;
+
+  tabs::TabHandle tab_handle_;
 
   base::WeakPtrFactory<NavigateTool> weak_ptr_factory_{this};
 };

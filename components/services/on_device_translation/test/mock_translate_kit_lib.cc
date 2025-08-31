@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 // This file implements the ABI of libtranslatekit only for testing. It is not
 // used in production.
 // This mock implementation runs as follows:
@@ -196,7 +191,7 @@ TRANSLATE_KIT_EXPORT bool GetTranslateKitVersion(TranslateKitVersion* version) {
 
   // Always return a maximum version.
   constexpr char kMaxVersion[] = "9999.99.99.99";
-  strncpy(version->buffer, kMaxVersion, sizeof(kMaxVersion));
+  UNSAFE_TODO(strncpy(version->buffer, kMaxVersion, sizeof(kMaxVersion)));
   version->buffer_size = sizeof(kMaxVersion) - 1;
   return true;
 }
@@ -247,7 +242,7 @@ TranslateKitCreateTranslator(uintptr_t kit_ptr,
                              TranslateKitLanguage target_lang) {
   CHECK(kit_ptr);
   if (std::string_view(source_lang.language_code,
-                       source_lang.language_code_size) == "cause_crash") {
+                       source_lang.language_code_size) == "crash") {
     LOG(ERROR) << "Intentionally terminating current process to simulate"
                   " the on device translation service crash for testing.";
     // Use `TerminateCurrentProcessImmediately()` instead of `CHECK()` to avoid

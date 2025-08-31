@@ -40,7 +40,6 @@ extern NSString* const kCustomizationToggleDiscoverIdentifier;
 extern NSString* const kCustomizationToggleSetUpListIdentifier;
 extern NSString* const kCustomizationToggleSafetyCheckIdentifier;
 extern NSString* const kCustomizationToggleTabResumptionIdentifier;
-extern NSString* const kCustomizationToggleParcelTrackingIdentifier;
 extern NSString* const kCustomizationToggleShopCardPriceTrackingIdentifier;
 extern NSString* const kCustomizationToggleShopCardReviewsIdentifier;
 extern NSString* const kCustomizationToggleTipsIdentifier;
@@ -99,7 +98,6 @@ enum class CustomizationToggleType : NSInteger {
   kSetUpList,
   kSafetyCheck,
   kTapResumption,
-  kParcelTracking,
   kShopCard,
 };
 
@@ -109,6 +107,21 @@ enum class CustomizationLinkType : NSInteger {
   kHidden,
   kActivity,
   kLearnMore,
+};
+
+// Represents the background style used for home customization.
+enum class HomeCustomizationBackgroundStyle : NSInteger {
+  // No background (default appearance).
+  kDefault,
+
+  // Solid background color.
+  kColor,
+
+  // Background chosen from preset gallery.
+  kPreset,
+
+  // User-uploaded background image.
+  kUserUploaded,
 };
 
 #endif  // IOS_CHROME_BROWSER_HOME_CUSTOMIZATION_UTILS_HOME_CUSTOMIZATION_CONSTANTS_H_

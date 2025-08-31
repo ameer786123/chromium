@@ -15,6 +15,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
+#include "gpu/command_buffer/client/shared_image_interface.h"
 #include "media/base/bitrate.h"
 #include "media/base/encoder_status.h"
 #include "media/base/media_export.h"
@@ -350,6 +351,11 @@ class MEDIA_EXPORT VideoEncodeAccelerator {
     // Indicates what type of encoder is required. Useful when OS software
     // encoders may be present and/or superior to built-in encoders.
     EncoderType required_encoder_type = EncoderType::kHardware;
+
+    // When set to true, indicates that the frame reference structure is
+    // specified per frame by application, and ignores config item specified by
+    // `spatial_layers` and `inter_layer_pred`.
+    bool manual_reference_buffer_control = false;
   };
 
   // Interface for clients that use VideoEncodeAccelerator. These callbacks will
@@ -508,6 +514,9 @@ class MEDIA_EXPORT VideoEncodeAccelerator {
       base::RepeatingCallback<scoped_refptr<CommandBufferHelper>()>
           get_command_buffer_helper_cb,
       scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner);
+
+  virtual void SetSharedImageInterfaceForTesting(
+      scoped_refptr<gpu::SharedImageInterface> sii);
 
  protected:
   // Do not delete directly; use Destroy() or own it with a unique_ptr, which

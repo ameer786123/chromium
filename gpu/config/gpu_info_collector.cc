@@ -41,7 +41,6 @@
 #include "ui/gl/gl_version_info.h"
 #include "ui/gl/init/create_gr_gl_interface.h"
 #include "ui/gl/init/gl_factory.h"
-#include "ui/gl/startup_trace.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "base/apple/bundle_locations.h"
@@ -90,7 +89,7 @@ scoped_refptr<gl::GLSurface> InitializeGLSurface(gl::GLDisplay* display) {
 }
 
 scoped_refptr<gl::GLContext> InitializeGLContext(gl::GLSurface* surface) {
-  GPU_STARTUP_TRACE_EVENT("gpu_info_collector::InitializeGLContext");
+  TRACE_EVENT("gpu,startup", "gpu_info_collector::InitializeGLContext");
   gl::GLContextAttribs attribs;
   attribs.client_major_es_version = 2;
   scoped_refptr<gl::GLContext> context(
@@ -298,6 +297,10 @@ void GetDawnTogglesForSkiaGraphite(
 #endif  // BUILDFLAG(IS_WIN)
   if (backend_type == wgpu::BackendType::Vulkan) {
     force_enabled_toggles->push_back("vulkan_monolithic_pipeline_cache");
+#if BUILDFLAG(IS_ANDROID)
+    force_enabled_toggles->push_back(
+        "ignore_imported_ahardwarebuffer_vulkan_image_size");
+#endif
   }
 #endif  // DCHECK_IS_ON()
 }
@@ -358,8 +361,7 @@ void ReportWebGPUAdapterMetrics(dawn::native::Instance* instance) {
 }
 
 void ReportWebGPUSupportMetrics(dawn::native::Instance* instance) {
-  static BASE_FEATURE(kCollectWebGPUSupportMetrics,
-                      "CollectWebGPUSupportMetrics",
+  static BASE_FEATURE(CollectWebGPUSupportMetrics,
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
                       base::FEATURE_DISABLED_BY_DEFAULT);
 #else
@@ -532,7 +534,7 @@ bool CollectGraphicsDeviceInfoFromCommandLine(
 
 bool CollectBasicGraphicsInfo(const base::CommandLine* command_line,
                               GPUInfo* gpu_info) {
-  GPU_STARTUP_TRACE_EVENT("gpu_info_collector::CollectBasicGraphicsInfo");
+  TRACE_EVENT("gpu,startup", "gpu_info_collector::CollectBasicGraphicsInfo");
   // In the info-collection GPU process on Windows, we get the device info from
   // the browser.
   if (CollectGraphicsDeviceInfoFromCommandLine(command_line, gpu_info)) {
@@ -581,7 +583,7 @@ bool CollectBasicGraphicsInfo(const base::CommandLine* command_line,
 }
 
 bool CollectGraphicsInfoGL(GPUInfo* gpu_info, gl::GLDisplay* display) {
-  GPU_STARTUP_TRACE_EVENT("gpu_info_collector::CollectGraphicsInfoGL");
+  TRACE_EVENT("gpu,startup", "gpu_info_collector::CollectGraphicsInfoGL");
   DCHECK_NE(gl::GetGLImplementationParts(), gl::kGLImplementationNone);
   gl::GLDisplayEGL* egl_display = display->GetAs<gl::GLDisplayEGL>();
 
@@ -656,7 +658,7 @@ bool CollectGraphicsInfoGL(GPUInfo* gpu_info, gl::GLDisplay* display) {
       gfx::HasExtension(extension_set, "GL_ARB_robustness");
   if (supports_robustness) {
     glGetIntegerv(
-        GL_RESET_NOTIFICATION_STRATEGY_ARB,
+        GL_RESET_NOTIFICATION_STRATEGY,
         reinterpret_cast<GLint*>(&gpu_info->gl_reset_notification_strategy));
   }
 
@@ -802,7 +804,7 @@ void CollectGraphicsInfoForTesting(GPUInfo* gpu_info) {
 
 bool CollectGpuExtraInfo(gfx::GpuExtraInfo* gpu_extra_info,
                          const GpuPreferences& prefs) {
-  GPU_STARTUP_TRACE_EVENT("gpu_info_collector::CollectGpuExtraInfo");
+  TRACE_EVENT("gpu,startup", "gpu_info_collector::CollectGpuExtraInfo");
   // Populate the list of ANGLE features by querying the functions exposed by
   // EGL_ANGLE_feature_control if it's available.
   if (gl::g_driver_egl.client_ext.b_EGL_ANGLE_feature_control) {
@@ -835,7 +837,7 @@ bool CollectGpuExtraInfo(gfx::GpuExtraInfo* gpu_extra_info,
 void CollectDawnInfo(const gpu::GpuPreferences& gpu_preferences,
                      bool collect_metrics,
                      std::vector<std::string>* dawn_info_list) {
-  GPU_STARTUP_TRACE_EVENT("gpu_info_collector::CollectDawnInfo");
+  TRACE_EVENT("gpu,startup", "gpu_info_collector::CollectDawnInfo");
 #if BUILDFLAG(USE_DAWN)
   DawnProcTable procs = dawn::native::GetProcs();
   dawnProcSetProcs(&procs);
@@ -939,7 +941,9 @@ void CollectDawnInfo(const gpu::GpuPreferences& gpu_preferences,
       wgpu::AdapterInfo info = {};
       adapter.GetInfo(&info);
       if (featureLevel == wgpu::FeatureLevel::Compatibility &&
-          info.backendType != wgpu::BackendType::OpenGLES) {
+          adapter.HasFeature(wgpu::FeatureName::CoreFeaturesAndLimits)) {
+        // If this adapter also supports Core feature level, then skip listing it as Compat
+        // mode adapter.
         continue;
       }
 

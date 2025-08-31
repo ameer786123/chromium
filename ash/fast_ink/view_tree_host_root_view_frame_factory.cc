@@ -124,7 +124,7 @@ ViewTreeHostRootViewFrameFactory::CreateCompositorFrame(
       gfx::ScaleToCeiledSize(content_rect.size(), device_scale_factor);
 
   display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window);
+      display::Screen::Get()->GetDisplayNearestWindow(window);
 
   if (display.panel_rotation() == display::Display::ROTATE_90 ||
       display.panel_rotation() == display::Display::ROTATE_270) {
@@ -275,8 +275,7 @@ void ViewTreeHostRootViewFrameFactory::AppendQuad(
   uv_crop.Scale(1.f / buffer_size.width(), 1.f / buffer_size.height());
 
   texture_quad->SetNew(quad_state, quad_rect, quad_rect,
-                       /*needs_blending=*/true, resource.id,
-                       /*premultiplied=*/true, uv_crop.origin(),
+                       /*needs_blending=*/true, resource.id, uv_crop.origin(),
                        uv_crop.bottom_right(), SkColors::kTransparent,
                        /*nearest=*/false,
                        /*secure_output=*/false,

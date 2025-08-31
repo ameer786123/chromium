@@ -9,6 +9,7 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_switches.h"
+#include "base/command_line.h"
 #include "base/files/scoped_file.h"
 #include "base/files/scoped_temp_file.h"
 #include "base/memory/raw_ptr.h"
@@ -20,6 +21,8 @@
 #include "chromeos/ash/components/dbus/fwupd/fwupd_properties.h"
 #include "chromeos/ash/components/dbus/fwupd/fwupd_request.h"
 #include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
+#include "chromeos/ash/components/settings/cros_settings.h"
+#include "chromeos/ash/components/settings/fake_cros_settings_provider.h"
 #include "dbus/message.h"
 #include "dbus/mock_bus.h"
 #include "dbus/mock_object_proxy.h"
@@ -159,6 +162,17 @@ namespace ash {
 
 class FwupdClientTest : public testing::Test {
  public:
+  void SetUp() override {
+    cros_settings_ = std::make_unique<ash::CrosSettings>();
+    // for ensuring enrolled users only get internal updates
+    // when FlexSyStemFirmwareUpdates are enabled
+    auto provider =
+        std::make_unique<ash::FakeCrosSettingsProvider>(base::DoNothing());
+    provider->Set(ash::kDeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled,
+                  false);
+    cros_settings_->AddSettingsProvider(std::move(provider));
+  }
+  void TearDown() override { cros_settings_.reset(); }
   FwupdClientTest() {
     dbus::Bus::Options options;
     options.bus_type = dbus::Bus::SYSTEM;
@@ -307,7 +321,7 @@ class FwupdClientTest : public testing::Test {
     // This value is returned by DBus as a uint32_t and is added to a dictionary
     // that doesn't support unsigned numbers. So it needs to be casted to int.
     EXPECT_EQ(expected_priority_, (*updates)[0].priority);
-    EXPECT_EQ(kFakeUpdateUriForTesting, (*updates)[0].filepath.value());
+    EXPECT_EQ(expected_location_, (*updates)[0].filepath.value());
     EXPECT_EQ(expected_checksum_, (*updates)[0].checksum);
   }
 
@@ -328,6 +342,10 @@ class FwupdClientTest : public testing::Test {
   }
 
   void SetExpectNoUpdates(bool no_updates) { expect_no_updates_ = no_updates; }
+
+  void SetExpectedLocation(const std::string& location) {
+    expected_location_ = location;
+  }
 
   void CheckPropertyChanged(FwupdProperties* properties) {
     if (properties->IsPercentageValid()) {
@@ -371,6 +389,8 @@ class FwupdClientTest : public testing::Test {
   std::unique_ptr<FwupdProperties> expected_properties_;
   ash::ScopedStubInstallAttributes test_install_attributes_;
 
+  std::unique_ptr<ash::CrosSettings> cros_settings_;
+
  private:
   // Handles calls to |proxy_|'s ConnectToSignal() method.
   void ConnectToSignal(
@@ -406,12 +426,27 @@ class FwupdClientTest : public testing::Test {
   std::string expected_checksum_;
   std::string expected_description_;
   int expected_priority_ = kFakeUpdatePriorityForTesting;
+  std::string expected_location_ = kFakeUpdateUriForTesting;
 
   base::test::ScopedFeatureList scoped_feature_list_;
 
  protected:
   // This field must come after |task_environment_|.
   base::RunLoop run_loop_;
+};
+
+class FwupdClientTestPolicyEnabled : public FwupdClientTest {
+ public:
+  void SetUp() override {
+    cros_settings_ = std::make_unique<ash::CrosSettings>();
+    // for ensuring enrolled users only get internal updates
+    // when FlexSyStemFirmwareUpdates are enabled
+    auto provider =
+        std::make_unique<ash::FakeCrosSettingsProvider>(base::DoNothing());
+    provider->Set(ash::kDeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled,
+                  true);
+    cros_settings_->AddSettingsProvider(std::move(provider));
+  }
 };
 
 // TODO (swifton): Rewrite this test with an observer when it's available.
@@ -470,6 +505,35 @@ TEST_F(FwupdClientTest, RequestDevicesEnrolledFlexEnabled) {
   EXPECT_CALL(observer, OnDeviceListResponse(_))
       .Times(1)
       .WillRepeatedly(Invoke(this, &FwupdClientTest::CheckDevices));
+  fwupd_client_->AddObserver(&observer);
+
+  EXPECT_CALL(*proxy_, DoCallMethodWithErrorResponse(_, _, _))
+      .WillRepeatedly(Invoke(this, &FwupdClientTest::OnMethodCalled));
+
+  AddDbusMethodCallResultSimulation(CreateCheckDevicesResponse(), nullptr);
+
+  // Enable reven firmware updates.
+  base::CommandLine& command_line = *base::CommandLine::ForCurrentProcess();
+  command_line.AppendSwitch(switches::kRevenBranding);
+  EnableFeatureFlag(features::kFlexFirmwareUpdate);
+
+  // Set enrolled.
+  test_install_attributes_.Get()->SetCloudManaged("test-domain",
+                                                  "FAKE_DEVICE_ID");
+
+  fwupd_client_->RequestDevices();
+
+  run_loop_.Run();
+}
+
+TEST_F(FwupdClientTestPolicyEnabled,
+       RequestDevicesEnrolledFlexEnabledPolicyEnabled) {
+  // The observer will check that the device description is parsed and passed
+  // correctly.
+  MockObserver observer;
+  EXPECT_CALL(observer, OnDeviceListResponse(_))
+      .Times(1)
+      .WillRepeatedly(Invoke(this, &FwupdClientTest::CheckDevicesWithInternal));
   fwupd_client_->AddObserver(&observer);
 
   EXPECT_CALL(*proxy_, DoCallMethodWithErrorResponse(_, _, _))
@@ -723,6 +787,63 @@ TEST_F(FwupdClientTest, NoTrustedReportsFlexEnabled) {
   run_loop_.Run();
 }
 
+// Test that accepts firmware with invalid URI when fwupd dev mode is enabled.
+TEST_F(FwupdClientTest, AcceptAnyUriInDevMode) {
+  // The observer will check that the update description is parsed and passed
+  // correctly.
+  MockObserver observer;
+  EXPECT_CALL(observer, OnUpdateListResponse(_, _))
+      .Times(1)
+      .WillRepeatedly(Invoke(this, &FwupdClientTest::CheckUpdates));
+  fwupd_client_->AddObserver(&observer);
+
+  EXPECT_CALL(*proxy_, DoCallMethodWithErrorResponse(_, _, _))
+      .WillRepeatedly(Invoke(this, &FwupdClientTest::OnMethodCalled));
+
+  std::string fake_location = "http://fakelocation.com/firmware.cab/auth";
+  RequestUpdatesResponse response;
+  response.locations = {fake_location};
+
+  AddDbusMethodCallResultSimulation(response.Create(), nullptr);
+  EnableFeatureFlag(features::kFwupdDeveloperMode);
+
+  SetExpectedLocation(fake_location);
+  SetExpectedDescription(kFakeUpdateDescriptionForTesting);
+  SetExpectedChecksum(kFakeSha256ForTesting);
+
+  fwupd_client_->RequestUpdates(kFakeDeviceIdForTesting);
+
+  run_loop_.Run();
+}
+
+// Test that accepts firmware with no trusted reports when fwupd dev mode is
+// enabled.
+TEST_F(FwupdClientTest, AcceptNoTrustedReportsInDevMode) {
+  // The observer will check that the update description is parsed and passed
+  // correctly.
+  MockObserver observer;
+  EXPECT_CALL(observer, OnUpdateListResponse(_, _))
+      .Times(1)
+      .WillRepeatedly(Invoke(this, &FwupdClientTest::CheckUpdates));
+  fwupd_client_->AddObserver(&observer);
+
+  EXPECT_CALL(*proxy_, DoCallMethodWithErrorResponse(_, _, _))
+      .WillRepeatedly(Invoke(this, &FwupdClientTest::OnMethodCalled));
+
+  RequestUpdatesResponse response;
+  response.trusted = false;
+
+  AddDbusMethodCallResultSimulation(response.Create(), nullptr);
+  EnableFeatureFlag(features::kFwupdDeveloperMode);
+
+  SetExpectedDescription(kFakeUpdateDescriptionForTesting);
+  SetExpectedChecksum(kFakeSha256ForTesting);
+
+  fwupd_client_->RequestUpdates(kFakeDeviceIdForTesting);
+
+  run_loop_.Run();
+}
+
 TEST_F(FwupdClientTest, Install) {
   EXPECT_CALL(*proxy_, DoCallMethodWithErrorResponse(_, _, _))
       .WillRepeatedly(Invoke(this, &FwupdClientTest::OnMethodCalled));
@@ -913,11 +1034,11 @@ TEST_P(FwupdClientTest_DeviceRequest, OnDeviceRequestReceived) {
 
   MockObserver observer;
   EXPECT_CALL(observer, OnDeviceRequestResponse(_))
-      .WillOnce(Invoke([&](FwupdRequest req) {
+      .WillOnce([&](FwupdRequest req) {
         EXPECT_EQ(req.id, GetParam().expected_index_of_request_id);
         EXPECT_EQ(req.kind, 2u);
         run_loop_.Quit();
-      }));
+      });
 
   fwupd_client_->AddObserver(&observer);
 

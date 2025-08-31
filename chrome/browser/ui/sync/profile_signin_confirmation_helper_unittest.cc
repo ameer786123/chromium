@@ -47,10 +47,10 @@
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
@@ -208,9 +208,9 @@ TEST_F(ProfileSigninConfirmationHelperTest, PromptForNewProfile_Bookmarks) {
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 TEST_F(ProfileSigninConfirmationHelperTest, PromptForNewProfile_Extensions) {
-  extensions::ExtensionService* extensions =
-      extensions::ExtensionSystem::Get(profile_.get())->extension_service();
-  ASSERT_TRUE(extensions);
+  extensions::ExtensionRegistrar* extension_registrar =
+      extensions::ExtensionRegistrar::Get(profile_.get());
+  ASSERT_TRUE(extension_registrar);
 
   // Profile is new but has synced extensions (The web store doesn't count).
   profile_->SetIsNewProfile(true);
@@ -219,7 +219,7 @@ TEST_F(ProfileSigninConfirmationHelperTest, PromptForNewProfile_Extensions) {
                       extensions::mojom::ManifestLocation::kComponent);
   extensions::ExtensionPrefs::Get(profile_.get())
       ->AddGrantedPermissions(webstore->id(), extensions::PermissionSet());
-  extensions->AddExtension(webstore.get());
+  extension_registrar->AddExtension(webstore);
   EXPECT_FALSE(GetCallbackResult(
       base::BindOnce(&ui::CheckShouldPromptForNewProfile, profile_.get())));
 
@@ -227,7 +227,7 @@ TEST_F(ProfileSigninConfirmationHelperTest, PromptForNewProfile_Extensions) {
       "foo", std::string(), extensions::mojom::ManifestLocation::kInternal);
   extensions::ExtensionPrefs::Get(profile_.get())
       ->AddGrantedPermissions(extension->id(), extensions::PermissionSet());
-  extensions->AddExtension(extension.get());
+  extension_registrar->AddExtension(extension);
   EXPECT_TRUE(GetCallbackResult(
       base::BindOnce(&ui::CheckShouldPromptForNewProfile, profile_.get())));
 }
@@ -248,7 +248,8 @@ TEST_F(ProfileSigninConfirmationHelperTest,
     base::SpanPrintf(buf, "http://foo.com/%d", i);
     history->AddPage(GURL(std::string(buf)), base::Time::Now(),
                      /*context_id=*/{}, 1, GURL(), history::RedirectList(),
-                     ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED, false);
+                     ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED,
+                     history::VisitResponseCodeCategory::kNot404, false);
   }
   EXPECT_TRUE(GetCallbackResult(
       base::BindOnce(&ui::CheckShouldPromptForNewProfile, profile_.get())));
@@ -265,7 +266,8 @@ TEST_F(ProfileSigninConfirmationHelperTest,
   profile_->SetIsNewProfile(true);
   history->AddPage(GURL("http://example.com"), base::Time::Now(),
                    /*context_id=*/{}, 1, GURL(), history::RedirectList(),
-                   ui::PAGE_TRANSITION_TYPED, history::SOURCE_BROWSED, false);
+                   ui::PAGE_TRANSITION_TYPED, history::SOURCE_BROWSED,
+                   history::VisitResponseCodeCategory::kNot404, false);
   EXPECT_TRUE(GetCallbackResult(
       base::BindOnce(&ui::CheckShouldPromptForNewProfile, profile_.get())));
 }

@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/containers/span.h"
 #ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
+// TODO(crbug.com/390223051): spanify to fix the errors.
+#pragma allow_unsafe_buffers
 #endif
 
 #include "media/gpu/v4l2/v4l2_video_encode_accelerator.h"
@@ -31,11 +32,14 @@
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/trace_event/trace_event.h"
+#include "gpu/ipc/service/gpu_channel_shared_image_interface.h"
+#include "gpu/ipc/service/shared_image_stub.h"
 #include "media/base/bitstream_buffer.h"
 #include "media/base/color_plane_layout.h"
 #include "media/base/encoder_status.h"
@@ -47,11 +51,13 @@
 #include "media/gpu/chromeos/fourcc.h"
 #include "media/gpu/chromeos/image_processor_factory.h"
 #include "media/gpu/chromeos/platform_video_frame_utils.h"
+#include "media/gpu/command_buffer_helper.h"
 #include "media/gpu/gpu_video_encode_accelerator_helpers.h"
 #include "media/gpu/macros.h"
 #include "media/gpu/v4l2/v4l2_utils.h"
 #include "media/parsers/h264_level_limits.h"
 #include "media/parsers/h264_parser.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 #ifndef V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L0_BR
 #define V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L0_BR (V4L2_CID_CODEC_BASE + 391)
@@ -306,10 +312,34 @@ EncoderStatus V4L2VideoEncodeAccelerator::Initialize(
   }
 
   driver_name_ = device_->GetDriverName();
+  config_ = config;
 
-  encoder_task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&V4L2VideoEncodeAccelerator::InitializeTask,
-                                weak_this_, config));
+  if (gpu_task_runner_ && get_command_buffer_helper_cb_) {
+    gpu_task_runner_->PostTaskAndReplyWithResult(
+        FROM_HERE,
+        base::BindOnce(
+            [](base::RepeatingCallback<scoped_refptr<CommandBufferHelper>()>
+                   get_command_buffer_helper_cb)
+                -> scoped_refptr<gpu::SharedImageInterface> {
+              auto helper = get_command_buffer_helper_cb.Run();
+              if (helper && helper->GetSharedImageStub()) {
+                return helper->GetSharedImageStub()->shared_image_interface();
+              }
+              return nullptr;
+            },
+            std::move(get_command_buffer_helper_cb_)),
+        base::BindOnce(
+            &V4L2VideoEncodeAccelerator::OnSharedImageInterfaceAvailable,
+            weak_this_));
+  } else {
+    // |gpu_task_runner_| or |get_command_buffer_helper_cb_| were not set. The
+    // shared image interface must not be important for the client. Finishes
+    // initialization now.
+    encoder_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&V4L2VideoEncodeAccelerator::InitializeTask,
+                                  weak_this_, config_));
+  }
+
   return {EncoderStatus::Codes::kOk};
 }
 
@@ -555,11 +585,12 @@ bool V4L2VideoEncodeAccelerator::AllocateImageProcessorOutputBuffers(
   for (size_t i = 0; i < count; i++) {
     switch (output_config.storage_type) {
       case VideoFrame::STORAGE_GPU_MEMORY_BUFFER:
-        image_processor_output_buffers_[i] = CreateGpuMemoryBufferVideoFrame(
+        CHECK(sii_);
+        image_processor_output_buffers_[i] = CreateMappableVideoFrame(
             output_config.fourcc.ToVideoPixelFormat(), output_config.size,
             output_config.visible_rect, output_config.visible_rect.size(),
             base::TimeDelta(),
-            gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE);
+            gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE, sii_.get());
         break;
       default:
         LOG(ERROR) << "Unsupported output storage type of image processor: "
@@ -705,6 +736,36 @@ bool V4L2VideoEncodeAccelerator::IsFlushSupported() {
   return is_flush_supported_;
 }
 
+void V4L2VideoEncodeAccelerator::OnSharedImageInterfaceAvailable(
+    scoped_refptr<gpu::SharedImageInterface> sii) {
+  sii_ = std::move(sii);
+  // We can now run the 'InitializeTask' given the valid sii from the gpu.
+  encoder_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&V4L2VideoEncodeAccelerator::InitializeTask,
+                                weak_this_, config_));
+}
+
+void V4L2VideoEncodeAccelerator::SetCommandBufferHelperCB(
+    base::RepeatingCallback<scoped_refptr<CommandBufferHelper>()>
+        get_command_buffer_helper_cb,
+    scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner) {
+  // we should store this here and then run it on init.
+  // this way we know when the ssi comes back we can finish off with the
+  // InitializeTask (knowing that init has actually run)
+  // We store the callback and task runner here so that when the ssi comes back
+  // we know that 'Initialize' has been run and it is save to run
+  // 'InitializeTask' on the encoder. (Which likely uses ssi to allocate
+  // buffers)
+  get_command_buffer_helper_cb_ = get_command_buffer_helper_cb;
+  gpu_task_runner_ = gpu_task_runner;
+}
+
+void V4L2VideoEncodeAccelerator::SetSharedImageInterfaceForTesting(
+    scoped_refptr<gpu::SharedImageInterface> sii) {
+  CHECK(!sii_) << "SharedImageInterface is already set.";
+  sii_ = std::move(sii);
+}
+
 VideoEncodeAccelerator::SupportedProfiles
 V4L2VideoEncodeAccelerator::GetSupportedProfiles() {
   auto device = base::MakeRefCounted<V4L2Device>();
@@ -720,10 +781,9 @@ void V4L2VideoEncodeAccelerator::FrameProcessed(
   DVLOGF(4) << "force_keyframe=" << force_keyframe
             << ", output_buffer_index=" << output_buffer_index;
   DCHECK_GE(output_buffer_index, 0u);
-  TRACE_EVENT_NESTABLE_ASYNC_END2(
-      "media,gpu", "V4L2VEA::ImageProcessor::Process",
-      timestamp.InMicroseconds(), "timestamp", timestamp.InMicroseconds(),
-      "output_size", image_processor_->output_config().size.ToString());
+  TRACE_EVENT_END("media,gpu", perfetto::Track(timestamp.InMicroseconds()),
+                  "timestamp", timestamp.InMicroseconds(), "output_size",
+                  image_processor_->output_config().size.ToString());
 
   encoder_input_queue_.emplace(std::move(frame), force_keyframe,
                                output_buffer_index);
@@ -815,23 +875,23 @@ size_t V4L2VideoEncodeAccelerator::CopyIntoOutputBuffer(
   bool inserted_pps = false;
   while (parser.AdvanceToNextNALU(&nalu) == H264Parser::kOk) {
     // nalu.size is always without the start code, regardless of the NALU type.
-    if (nalu.size + kH264StartCodeSize > remaining_dst_size) {
+    if (nalu.data.size() + kH264StartCodeSize > remaining_dst_size) {
       VLOGF(1) << "Output data did not fit in the BitstreamBuffer";
       break;
     }
 
     switch (nalu.nal_unit_type) {
       case H264NALU::kSPS:
-        cached_sps_.resize(nalu.size);
-        memcpy(cached_sps_.data(), nalu.data, nalu.size);
+        cached_sps_.resize(nalu.data.size());
+        base::as_writable_byte_span(cached_sps_).copy_from(nalu.data);
         cached_h264_header_size_ =
             cached_sps_.size() + cached_pps_.size() + 2 * kH264StartCodeSize;
         inserted_sps = true;
         break;
 
       case H264NALU::kPPS:
-        cached_pps_.resize(nalu.size);
-        memcpy(cached_pps_.data(), nalu.data, nalu.size);
+        cached_pps_.resize(nalu.data.size());
+        base::as_writable_byte_span(cached_pps_).copy_from(nalu.data);
         cached_h264_header_size_ =
             cached_sps_.size() + cached_pps_.size() + 2 * kH264StartCodeSize;
         inserted_pps = true;
@@ -848,8 +908,8 @@ size_t V4L2VideoEncodeAccelerator::CopyIntoOutputBuffer(
           VLOGF(1) << "Cannot inject IDR slice without SPS and PPS";
           break;
         }
-        if (cached_h264_header_size_ + nalu.size + kH264StartCodeSize >
-                remaining_dst_size) {
+        if (cached_h264_header_size_ + nalu.data.size() + kH264StartCodeSize >
+            remaining_dst_size) {
           VLOGF(1) << "Not enough space to inject a stream header before IDR";
           break;
         }
@@ -866,7 +926,7 @@ size_t V4L2VideoEncodeAccelerator::CopyIntoOutputBuffer(
         break;
     }
 
-    CopyNALUPrependingStartCode(nalu.data, nalu.size, &dst_ptr,
+    CopyNALUPrependingStartCode(nalu.data.data(), nalu.data.size(), &dst_ptr,
                                 &remaining_dst_size);
   }
 
@@ -1063,9 +1123,9 @@ void V4L2VideoEncodeAccelerator::InputImageProcessorTask() {
   auto frame = std::move(frame_info.frame);
   const bool force_keyframe = frame_info.force_keyframe;
   auto timestamp = frame->timestamp();
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
-      "media,gpu", "V4L2VEA::ImageProcessor::Process",
-      timestamp.InMicroseconds(), "timestamp", timestamp.InMicroseconds());
+  TRACE_EVENT_BEGIN("media,gpu", "V4L2VEA::ImageProcessor::Process",
+                    perfetto::Track(timestamp.InMicroseconds()), "timestamp",
+                    timestamp.InMicroseconds());
   auto output_frame = image_processor_output_buffers_[output_buffer_index];
 
   if (!image_processor_->Process(
@@ -1351,9 +1411,9 @@ void V4L2VideoEncodeAccelerator::Dequeue() {
     const uint64_t timestamp_us =
         ret.second->GetTimeStamp().tv_usec +
         ret.second->GetTimeStamp().tv_sec * base::Time::kMicrosecondsPerSecond;
-    TRACE_EVENT_NESTABLE_ASYNC_END2(
-        "media,gpu", "PlatformEncoding.Encode", timestamp_us, "timestamp",
-        timestamp_us, "size", encoder_input_visible_rect_.size().ToString());
+    TRACE_EVENT_END("media,gpu", /*"PlatformEncoding.Encode"*/
+                    perfetto::Track(timestamp_us), "timestamp", timestamp_us,
+                    "size", encoder_input_visible_rect_.size().ToString());
 
     output_buffer_queue_.push_back(std::move(ret.second));
     buffer_dequeued = true;
@@ -1505,7 +1565,7 @@ bool V4L2VideoEncodeAccelerator::EnqueueInputRecord(
 
       case V4L2_MEMORY_DMABUF: {
         const std::vector<gfx::NativePixmapPlane>& planes =
-            gmb_handle.native_pixmap_handle.planes;
+            gmb_handle.native_pixmap_handle().planes;
         // TODO(crbug.com/901264): The way to pass an offset within a DMA-buf is
         // not defined in V4L2 specification, so we abuse data_offset for now.
         // Fix it when we have the right interface, including any necessary
@@ -1525,10 +1585,9 @@ bool V4L2VideoEncodeAccelerator::EnqueueInputRecord(
     input_buf.SetPlaneBytesUsed(i, bytesused);
   }
 
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("media,gpu", "PlatformEncoding.Encode",
-                                    frame->timestamp().InMicroseconds(),
-                                    "timestamp",
-                                    frame->timestamp().InMicroseconds());
+  TRACE_EVENT_BEGIN("media,gpu", "PlatformEncoding.Encode",
+                    perfetto::Track(frame->timestamp().InMicroseconds()),
+                    "timestamp", frame->timestamp().InMicroseconds());
 
   switch (input_buf.Memory()) {
     case V4L2_MEMORY_USERPTR: {
@@ -1556,7 +1615,7 @@ bool V4L2VideoEncodeAccelerator::EnqueueInputRecord(
     }
     case V4L2_MEMORY_DMABUF: {
       if (!std::move(input_buf).QueueDMABuf(
-              gmb_handle.native_pixmap_handle.planes)) {
+              gmb_handle.native_pixmap_handle().planes)) {
         SetErrorState(
             {EncoderStatus::Codes::kEncoderHardwareDriverError,
              base::StrCat(

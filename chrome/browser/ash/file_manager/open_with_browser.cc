@@ -23,6 +23,7 @@
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/launch_result_type.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/file_manager/file_tasks.h"
 #include "chrome/browser/ash/file_manager/filesystem_api_util.h"
 #include "chrome/browser/ash/file_manager/office_file_tasks.h"
@@ -80,10 +81,10 @@ bool IsViewableInBrowser(const base::FilePath& file_path) {
 bool OpenNewTab(const GURL& url) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (!ash::NewWindowDelegate::GetPrimary()) {
+  if (!ash::NewWindowDelegate::GetInstance()) {
     return false;
   }
-  ash::NewWindowDelegate::GetPrimary()->OpenUrl(
+  ash::NewWindowDelegate::GetInstance()->OpenUrl(
       url, ash::NewWindowDelegate::OpenUrlFrom::kUserInteraction,
       ash::NewWindowDelegate::Disposition::kNewForegroundTab);
   return true;
@@ -234,10 +235,12 @@ bool OpenFileWithAppOrBrowser(Profile* profile,
         integration_service->GetRelativeDrivePath(file_path, &path)) {
       integration_service->GetDriveFsInterface()->GetMetadata(
           path, base::BindOnce(&OpenEncryptedDriveFsFile, file_path));
+      std::move(callback).Run({apps::LaunchResult::State::kSuccess});
       return true;
     }
     LOG(WARNING) << "Failed to open file (extension): " << file_path.Extension()
                  << ": no connection to integration service";
+    std::move(callback).Run({apps::LaunchResult::State::kFailed});
     return false;
   }
 
@@ -272,6 +275,7 @@ bool OpenFileWithAppOrBrowser(Profile* profile,
     // Failed to open the file of unknown type.
     LOG(WARNING) << "Unknown file type (extension): " << file_path.Extension()
                  << " action: " << action_id;
+    std::move(callback).Run({apps::LaunchResult::State::kFailed});
     return false;
   }
 
@@ -297,10 +301,12 @@ bool OpenFileWithAppOrBrowser(Profile* profile,
             page_url = net::FilePathToFileURL(file_path);
           }
           OpenNewTab(page_url);
+          std::move(callback).Run({apps::LaunchResult::State::kSuccess});
           return;
         }
         LOG(WARNING) << "Not viewable in browser: MIME: " << mime
                      << " action: " << action_id;
+        std::move(callback).Run({apps::LaunchResult::State::kFailed});
       },
       std::move(callback), file_path, file_system_url, action_id,
       base::Owned(mime_type_collector));

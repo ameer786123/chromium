@@ -5,7 +5,6 @@
 #import "ios/chrome/browser/whats_new/coordinator/promo/whats_new_scene_agent.h"
 
 #import "base/test/scoped_feature_list.h"
-#import "base/test/task_environment.h"
 #import "components/commerce/core/commerce_feature_list.h"
 #import "ios/chrome/app/application_delegate/app_state.h"
 #import "ios/chrome/app/application_delegate/fake_startup_information.h"
@@ -18,6 +17,7 @@
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/whats_new/coordinator/whats_new_util.h"
 #import "ios/chrome/browser/whats_new/public/constants.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/gtest_support.h"
@@ -44,18 +44,13 @@ class WhatsNewSceneAgentTest : public PlatformTest {
     agent_.sceneState = scene_state_;
   }
 
-  void TearDown() override {
-    [[NSUserDefaults standardUserDefaults]
-        removeObjectForKey:kWhatsNewM116UsageEntryKey];
-  }
-
  protected:
   WhatsNewSceneAgent* agent_;
   // SceneState only weakly holds AppState, so keep it alive here.
   AppState* app_state_;
   base::test::ScopedFeatureList feature_list_;
   SceneState* scene_state_;
-  base::test::TaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_;
   std::unique_ptr<MockPromosManager> promos_manager_;
 };
 
@@ -65,16 +60,5 @@ TEST_F(WhatsNewSceneAgentTest, TestWhatsNewPromoRegistration) {
   EXPECT_CALL(*promos_manager_.get(), RegisterPromoForContinuousDisplay(
                                           promos_manager::Promo::WhatsNew))
       .Times(1);
-  scene_state_.activationLevel = SceneActivationLevelForegroundActive;
-}
-
-// Tests that the What's New promo did not register in the promo manager if the
-// user viewed What's New M116 prior to the migration to FET.
-TEST_F(WhatsNewSceneAgentTest, TestWhatsNewDoesNotRegisterWhenDefaultM116Used) {
-  [[NSUserDefaults standardUserDefaults] setBool:YES
-                                          forKey:kWhatsNewM116UsageEntryKey];
-  EXPECT_CALL(*promos_manager_.get(), RegisterPromoForContinuousDisplay(
-                                          promos_manager::Promo::WhatsNew))
-      .Times(0);
   scene_state_.activationLevel = SceneActivationLevelForegroundActive;
 }

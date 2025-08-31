@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "gpu/command_buffer/client/vertex_array_object_manager.h"
 
 #include <GLES2/gl2ext.h>
@@ -14,8 +9,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace gpu {
@@ -24,16 +21,9 @@ namespace gles2 {
 class VertexArrayObjectManagerTest : public testing::Test {
  protected:
   static const GLuint kMaxAttribs = 4;
-  static const GLuint kClientSideArrayBuffer = 0x1234;
-  static const GLuint kClientSideElementArrayBuffer = 0x1235;
-  static const bool kSupportClientSideArrays = true;
 
   void SetUp() override {
-    manager_.reset(new VertexArrayObjectManager(
-        kMaxAttribs,
-        kClientSideArrayBuffer,
-        kClientSideElementArrayBuffer,
-        kSupportClientSideArrays));
+    manager_ = std::make_unique<VertexArrayObjectManager>(kMaxAttribs);
   }
   void TearDown() override {}
 
@@ -41,8 +31,6 @@ class VertexArrayObjectManagerTest : public testing::Test {
 };
 
 const GLuint VertexArrayObjectManagerTest::kMaxAttribs;
-const GLuint VertexArrayObjectManagerTest::kClientSideArrayBuffer;
-const GLuint VertexArrayObjectManagerTest::kClientSideElementArrayBuffer;
 
 TEST_F(VertexArrayObjectManagerTest, Basic) {
   EXPECT_FALSE(manager_->HaveEnabledClientSideBuffers());
@@ -85,7 +73,7 @@ TEST_F(VertexArrayObjectManagerTest, UnbindBuffer) {
   manager_->GenVertexArrays(std::size(ids), ids);
   // Bind buffers to attribs on 2 vaos.
   for (size_t ii = 0; ii < std::size(ids); ++ii) {
-    EXPECT_TRUE(manager_->BindVertexArray(ids[ii], &changed));
+    UNSAFE_TODO(EXPECT_TRUE(manager_->BindVertexArray(ids[ii], &changed)));
     EXPECT_TRUE(manager_->SetAttribPointer(
         kBufferToUnbind, 0, 4, GL_FLOAT, false, 0, 0, GL_FALSE));
     EXPECT_TRUE(manager_->SetAttribPointer(
@@ -107,25 +95,32 @@ TEST_F(VertexArrayObjectManagerTest, UnbindBuffer) {
   // The attribs are still enabled but their buffer is 0.
   EXPECT_TRUE(manager_->HaveEnabledClientSideBuffers());
   // Check the status of the bindings.
-  static const uint32_t expected[][4] = {
+  static const auto expected = std::to_array<std::array<const uint32_t, 4>>({
       {
-          0, kBufferToRemain, 0, kBufferToRemain,
+          0,
+          kBufferToRemain,
+          0,
+          kBufferToRemain,
       },
       {
-          kBufferToUnbind, kBufferToRemain, kBufferToUnbind, kBufferToRemain,
+          kBufferToUnbind,
+          kBufferToRemain,
+          kBufferToUnbind,
+          kBufferToRemain,
       },
-  };
-  static const GLuint expected_element_array[] = {
-    0, kElementArray,
-  };
+  });
+  static const auto expected_element_array = std::to_array<GLuint>({
+      0,
+      kElementArray,
+  });
   for (size_t ii = 0; ii < std::size(ids); ++ii) {
-    EXPECT_TRUE(manager_->BindVertexArray(ids[ii], &changed));
+    UNSAFE_TODO(EXPECT_TRUE(manager_->BindVertexArray(ids[ii], &changed)));
     for (size_t jj = 0; jj < 4; ++jj) {
       uint32_t param = 1;
       EXPECT_TRUE(manager_->GetVertexAttrib(
           jj, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &param));
       EXPECT_EQ(expected[ii][jj], param)
-          << "id: " << ids[ii] << ", attrib: " << jj;
+          << "id: " << UNSAFE_TODO(ids[ii]) << ", attrib: " << jj;
     }
     EXPECT_EQ(expected_element_array[ii],
               manager_->bound_element_array_buffer());
@@ -265,14 +260,5 @@ TEST_F(VertexArrayObjectManagerTest, GenBindDelete) {
   EXPECT_FALSE(changed);
 }
 
-TEST_F(VertexArrayObjectManagerTest, IsReservedId) {
-  EXPECT_TRUE(manager_->IsReservedId(kClientSideArrayBuffer));
-  EXPECT_TRUE(manager_->IsReservedId(kClientSideElementArrayBuffer));
-  EXPECT_FALSE(manager_->IsReservedId(0));
-  EXPECT_FALSE(manager_->IsReservedId(1));
-  EXPECT_FALSE(manager_->IsReservedId(2));
-}
-
 }  // namespace gles2
 }  // namespace gpu
-

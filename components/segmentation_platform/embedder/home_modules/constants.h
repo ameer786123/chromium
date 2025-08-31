@@ -36,8 +36,13 @@ inline constexpr char kDidNotUsePasswordAutofill[] =
     "did_not_use_password_autofill";
 inline constexpr char kSendTabInfobarReceivedInLastSession[] =
     "send_tab_infobar_received_in_last_session";
+inline constexpr char kAppBundleAppsInstalledCount[] =
+    "app_bundle_apps_installed_count";
+inline constexpr char kIsDefaultBrowserChromeIos[] =
+    "is_default_browser_chrome_ios";
 
 // Input Context keys for emphemeral android modules.
+const char kIsUserSignedIn[] = "is_user_signed_in";
 const char kShouldShowNonRoleManagerDefaultBrowserPromo[] =
     "should_show_non_role_manager_default_browser_promo";
 const char kHasDefaultBrowserPromoShownInOtherSurface[] =
@@ -45,12 +50,16 @@ const char kHasDefaultBrowserPromoShownInOtherSurface[] =
 const char kTabGroupExists[] = "tab_group_exists";
 const char kNumberOfTabs[] = "number_of_tabs";
 const char kTabGroupPromoShownCount[] = "tab_group_shown_count";
+const char kEducationalTipShownCount[] = "educational_tip_shown_count";
 const char kSyncedTabGroupExists[] = "synced_tab_group_exists";
 const char kTabGroupSyncPromoShownCount[] = "tab_group_sync_shown_count";
 const char kCountOfClearingBrowsingData[] = "count_of_clearing_browsing_data";
 const char kCountOfClearingBrowsingDataThroughQuickDelete[] =
     "count_of_clearing_browsing_data_through_quick_delete";
 const char kQuickDeletePromoShownCount[] = "quick_delete_shown_count";
+const char kIsEligibleToHistoryOptIn[] = "is_eligible_to_history_opt_in";
+const char kHistorySyncPromoShownCount[] = "history_sync_promo_shown_count";
+
 const char kAuxiliarySearchAvailable[] = "auxiliary_search_available";
 
 // Placeholder output label for segmentation model executor.
@@ -69,6 +78,10 @@ inline constexpr char kSavePasswordsEphemeralModule[] =
     "save_passwords_ephemeral_module";
 inline constexpr char kLensEphemeralModule[] = "lens_ephemeral_module";
 inline constexpr char kSendTabNotificationPromo[] = "send_tab_promo";
+inline constexpr char kAppBundlePromoEphemeralModule[] =
+    "app_bundle_promo_ephemeral_module";
+inline constexpr char kDefaultBrowserPromoEphemeralModule[] =
+    "default_browser_promo_ephemeral_module";
 
 // Variation labels for emphemeral IOS modules.
 // Lens variation labels
@@ -90,6 +103,7 @@ const char kDefaultBrowserPromo[] = "DefaultBrowserPromo";
 const char kTabGroupPromo[] = "TabGroupPromo";
 const char kTabGroupSyncPromo[] = "TabGroupSyncPromo";
 const char kQuickDeletePromo[] = "QuickDeletePromo";
+const char kHistorySyncPromo[] = "HistorySyncPromo";
 
 // Commandline ASCII Switch key to indicate that the test module backend ranker
 // should be used.

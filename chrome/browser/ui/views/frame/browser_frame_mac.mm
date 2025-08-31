@@ -6,6 +6,7 @@
 
 #import "base/apple/foundation_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/apps/app_shim/app_shim_host_mac.h"
 #include "chrome/browser/apps/app_shim/app_shim_manager_mac.h"
@@ -31,6 +32,7 @@
 #include "components/input/native_web_keyboard_event.h"
 #include "components/lens/lens_features.h"
 #include "components/omnibox/browser/omnibox_prefs.h"
+#import "components/omnibox/common/omnibox_feature_configs.h"
 #import "components/remote_cocoa/app_shim/native_widget_mac_nswindow.h"
 #import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
 #import "components/remote_cocoa/app_shim/window_touch_bar_delegate.h"
@@ -39,6 +41,7 @@
 #include "components/remote_cocoa/common/native_widget_ns_window_host.mojom.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
+#include "ui/base/accelerators/global_accelerator_listener/global_accelerator_listener.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
@@ -127,12 +130,7 @@ BrowserFrameMac::BrowserFrameMac(BrowserFrame* browser_frame,
   }
 }
 
-BrowserFrameMac::~BrowserFrameMac() {
-  if (UsesRemoteCocoaApplicationHost(browser_view_->browser())) {
-    chrome::RemoveCommandObserver(browser_view_->browser(), IDC_BACK, this);
-    chrome::RemoveCommandObserver(browser_view_->browser(), IDC_FORWARD, this);
-  }
-}
+BrowserFrameMac::~BrowserFrameMac() = default;
 
 BrowserWindowTouchBarController* BrowserFrameMac::GetTouchBarController()
     const {
@@ -180,6 +178,16 @@ void BrowserFrameMac::OnWindowFullscreenTransitionStart() {
 
 void BrowserFrameMac::OnWindowFullscreenTransitionComplete() {
   browser_view_->FullscreenStateChanged();
+}
+
+void BrowserFrameMac::OnWidgetDestroyed(views::Widget* widget) {
+  if (UsesRemoteCocoaApplicationHost(browser_view_->browser())) {
+    chrome::RemoveCommandObserver(browser_view_->browser(), IDC_BACK, this);
+    chrome::RemoveCommandObserver(browser_view_->browser(), IDC_FORWARD, this);
+  }
+  touch_bar_delegate_ = nullptr;
+  browser_view_ = nullptr;
+  NativeWidgetMac::OnWidgetDestroyed(widget);
 }
 
 void BrowserFrameMac::ValidateUserInterfaceItem(
@@ -271,6 +279,13 @@ void BrowserFrameMac::ValidateUserInterfaceItem(
                        browser->GetFeatures()
                            .lens_overlay_entry_point_controller()
                            ->IsEnabled();
+      break;
+    }
+    case IDC_SHOW_SEARCH_TOOLS: {
+      PrefService* prefs = browser->profile()->GetPrefs();
+      result->new_toggle_state = prefs->GetBoolean(omnibox::kShowSearchTools);
+      // Disable this menu option if the toolbelt feature is not enabled.
+      result->enable = omnibox_feature_configs::Toolbelt::Get().enabled;
       break;
     }
     case IDC_TOGGLE_JAVASCRIPT_APPLE_EVENTS: {
@@ -446,9 +461,9 @@ void BrowserFrameMac::EnabledStateChangedForCommand(int id, bool enabled) {
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserFrameMac, NativeBrowserFrame implementation:
 
-views::Widget::InitParams BrowserFrameMac::GetWidgetParams() {
-  views::Widget::InitParams params(
-      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
+views::Widget::InitParams BrowserFrameMac::GetWidgetParams(
+    views::Widget::InitParams::Ownership ownership) {
+  views::Widget::InitParams params(ownership);
   params.native_widget = this;
   return params;
 }

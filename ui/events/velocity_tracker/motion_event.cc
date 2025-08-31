@@ -6,6 +6,7 @@
 
 #include <ostream>
 
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "ui/events/velocity_tracker/motion_event_generic.h"
 
@@ -27,7 +28,7 @@ base::TimeTicks MotionEvent::GetLatestEventTime() const {
   return GetEventTime();
 }
 
-base::TimeTicks MotionEvent::GetDownTime() const {
+base::TimeTicks MotionEvent::GetRawDownTime() const {
   NOTREACHED();
 }
 
@@ -63,13 +64,21 @@ int MotionEvent::FindPointerIndexOfId(int id) const {
   return -1;
 }
 
+int MotionEvent::GetSource() const {
+  return 0;
+}
+
 int MotionEvent::GetSourceDeviceId(size_t pointer_index) const {
   NOTIMPLEMENTED();
   return 0;
 }
 
-std::unique_ptr<MotionEvent> MotionEvent::Clone() const {
-  return MotionEventGeneric::CloneEvent(*this);
+bool MotionEvent::IsLatestEventTimeResampled() const {
+  return false;
+}
+
+std::unique_ptr<MotionEvent> MotionEvent::Clone(bool with_history) const {
+  return MotionEventGeneric::CloneEvent(*this, with_history);
 }
 
 std::unique_ptr<MotionEvent> MotionEvent::Cancel() const {

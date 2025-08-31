@@ -19,7 +19,7 @@ import java.util.Map;
 @NullMarked
 public interface ReadAloudReadabilityHooks {
     /** Result of a readability check for a specific mode. */
-    public static class ReadabilityResult {
+    class ReadabilityResult {
         public final boolean readable;
         public final boolean supportsHighlighting;
 
@@ -116,6 +116,6 @@ public interface ReadAloudReadabilityHooks {
      * @return a hashset of compatible languages with the voices.
      */
     default HashSet<String> getCompatibleLanguages() {
-        return new HashSet<String>();
+        return new HashSet<>();
     }
 }

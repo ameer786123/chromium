@@ -3,25 +3,29 @@
 # found in the LICENSE file.
 """Definitions of builders in the chromium.dawn builder group."""
 
-load("//lib/args.star", "args")
-load("//lib/branches.star", "branches")
-load("//lib/builder_config.star", "builder_config")
-load("//lib/builder_health_indicators.star", "health_spec")
-load("//lib/builders.star", "cpu", "gardener_rotations", "siso")
-load("//lib/ci.star", "ci")
-load("//lib/consoles.star", "consoles")
-load("//lib/gn_args.star", "gn_args")
-load("//lib/targets.star", "targets")
+load("@chromium-luci//args.star", "args")
+load("@chromium-luci//branches.star", "branches")
+load("@chromium-luci//builder_config.star", "builder_config")
+load("@chromium-luci//builder_health_indicators.star", "health_spec")
+load("@chromium-luci//builders.star", "cpu")
+load("@chromium-luci//ci.star", "ci")
+load("@chromium-luci//consoles.star", "consoles")
+load("@chromium-luci//gn_args.star", "gn_args")
+load("@chromium-luci//targets.star", "targets")
+load("//lib/ci_constants.star", "ci_constants")
+load("//lib/gardener_rotations.star", "gardener_rotations")
+load("//lib/gpu.star", "gpu")
+load("//lib/siso.star", "siso")
 load("//project.star", "settings")
 
 ci.defaults.set(
-    executable = ci.DEFAULT_EXECUTABLE,
+    executable = ci_constants.DEFAULT_EXECUTABLE,
     builder_group = "chromium.dawn",
-    pool = ci.gpu.POOL,
+    pool = gpu.ci.POOL,
     gardener_rotations = gardener_rotations.DAWN,
     contact_team_email = "chrome-gpu-infra@google.com",
-    execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
-    health_spec = health_spec.DEFAULT,
+    execution_timeout = ci_constants.DEFAULT_EXECUTION_TIMEOUT,
+    health_spec = health_spec.default(),
     # This property is read by the the dawn_top_of_tree gclient config and must
     # be set for branched builders in order to check out the appropriate branch.
     # Setting it for the non-branched builders and/or builders not using
@@ -29,10 +33,8 @@ ci.defaults.set(
     properties = {
         "dawn_ref": settings.dawn_ref,
     },
-    reclient_enabled = False,
-    service_account = ci.gpu.SERVICE_ACCOUNT,
-    shadow_service_account = ci.gpu.SHADOW_SERVICE_ACCOUNT,
-    siso_enabled = True,
+    service_account = gpu.ci.SERVICE_ACCOUNT,
+    shadow_service_account = gpu.ci.SHADOW_SERVICE_ACCOUNT,
     siso_project = siso.project.DEFAULT_TRUSTED,
     siso_remote_jobs = siso.remote_jobs.DEFAULT,
     thin_tester_cores = 2,
@@ -66,7 +68,7 @@ consoles.console_view(
     },
 )
 
-ci.gpu.linux_builder(
+gpu.ci.linux_builder(
     name = "Dawn Chromium Presubmit",
     branch_selector = [
         branches.selector.ANDROID_BRANCHES,
@@ -121,7 +123,7 @@ ci.gpu.linux_builder(
     execution_timeout = 30 * time.minute,
 )
 
-ci.gpu.linux_builder(
+gpu.ci.linux_builder(
     name = "Dawn Linux x64 Builder",
     description_html = "Builds Linux x64 binaries using ToT Dawn",
     builder_spec = builder_config.builder_spec(
@@ -140,7 +142,6 @@ ci.gpu.linux_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -161,7 +162,7 @@ ci.gpu.linux_builder(
     ),
 )
 
-ci.gpu.linux_builder(
+gpu.ci.linux_builder(
     name = "Dawn Linux x64 DEPS Builder",
     branch_selector = branches.selector.LINUX_BRANCHES,
     description_html = "Builds Linux x64 binaries using DEPS-ed in Dawn",
@@ -180,7 +181,6 @@ ci.gpu.linux_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -202,7 +202,7 @@ ci.gpu.linux_builder(
     cq_mirrors_console_view = "mirrors",
 )
 
-ci.gpu.linux_builder(
+gpu.ci.linux_builder(
     name = "Dawn Android arm DEPS Builder",
     description_html = "Builds Android arm binaries using DEPS-ed in Dawn",
     builder_spec = builder_config.builder_spec(
@@ -223,7 +223,6 @@ ci.gpu.linux_builder(
         android_config = builder_config.android_config(
             config = "base_config",
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -244,7 +243,7 @@ ci.gpu.linux_builder(
     siso_remote_jobs = siso.remote_jobs.HIGH_JOBS_FOR_CI,
 )
 
-ci.gpu.linux_builder(
+gpu.ci.linux_builder(
     name = "Dawn Android arm64 DEPS Builder",
     description_html = "Builds Android arm64 binaries using DEPS-ed in Dawn",
     builder_spec = builder_config.builder_spec(
@@ -265,7 +264,6 @@ ci.gpu.linux_builder(
         android_config = builder_config.android_config(
             config = "base_config",
         ),
-        build_gs_bucket = "chromium-dawn-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -286,54 +284,9 @@ ci.gpu.linux_builder(
 )
 
 ci.thin_tester(
-    name = "Dawn Android arm DEPS Release (Nexus 5X)",
-    description_html = "Runs DEPS-ed in Dawn tests on stable Nexus 5X configs",
-    triggered_by = ["ci/Dawn Android arm DEPS Builder"],
-    builder_spec = builder_config.builder_spec(
-        execution_mode = builder_config.execution_mode.TEST,
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-            apply_configs = [
-                "android",
-            ],
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "main_builder",
-            apply_configs = ["mb"],
-            build_config = builder_config.build_config.RELEASE,
-            target_arch = builder_config.target_arch.ARM,
-            target_bits = 32,
-            target_platform = builder_config.target_platform.ANDROID,
-        ),
-        android_config = builder_config.android_config(
-            config = "base_config",
-        ),
-        build_gs_bucket = "chromium-dawn-archive",
-        run_tests_serially = True,
-    ),
-    targets = targets.bundle(
-        targets = [
-            "gpu_noop_sleep_telemetry_test",
-        ],
-        mixins = [
-            "chromium_nexus_5x_oreo",
-            "has_native_resultdb_integration",
-        ],
-    ),
-    targets_settings = targets.settings(
-        browser_config = targets.browser_config.ANDROID_CHROMIUM,
-        os_type = targets.os_type.ANDROID,
-    ),
-    console_view_entry = consoles.console_view_entry(
-        category = "DEPS|Android",
-        short_name = "n5x",
-    ),
-)
-
-ci.thin_tester(
     name = "Dawn Android arm DEPS Release (Pixel 4)",
     description_html = "Runs DEPS-ed in Dawn tests on stable Pixel 4 configs",
-    triggered_by = ["ci/Dawn Android arm DEPS Builder"],
+    parent = "ci/Dawn Android arm DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -353,7 +306,6 @@ ci.thin_tester(
         android_config = builder_config.android_config(
             config = "base_config",
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -418,7 +370,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Android arm64 DEPS Release (Pixel 6)",
     description_html = "Runs DEPS-ed in Dawn tests on stable Pixel 6 configs",
-    triggered_by = ["ci/Dawn Android arm64 DEPS Builder"],
+    parent = "ci/Dawn Android arm64 DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -438,7 +390,6 @@ ci.thin_tester(
         android_config = builder_config.android_config(
             config = "base_config",
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -501,7 +452,7 @@ ci.thin_tester(
     name = "Dawn Linux x64 DEPS Release (Intel UHD 630)",
     branch_selector = branches.selector.LINUX_BRANCHES,
     description_html = "Runs DEPS-ed in Dawn tests on stable Linux/Intel UHD 630 configs",
-    triggered_by = ["ci/Dawn Linux x64 DEPS Builder"],
+    parent = "ci/Dawn Linux x64 DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -516,7 +467,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -572,7 +522,7 @@ ci.thin_tester(
     name = "Dawn Linux x64 DEPS Release (NVIDIA)",
     branch_selector = branches.selector.LINUX_BRANCHES,
     description_html = "Runs DEPS-ed in Dawn tests on stable Linux/NVIDIA GTX 1660 configs",
-    triggered_by = ["ci/Dawn Linux x64 DEPS Builder"],
+    parent = "ci/Dawn Linux x64 DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -587,7 +537,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -611,7 +560,7 @@ ci.thin_tester(
     cq_mirrors_console_view = "mirrors",
 )
 
-ci.gpu.linux_builder(
+gpu.ci.linux_builder(
     name = "Dawn Linux TSAN Release",
     description_html = "Runs ToT Dawn tests on stable Linux/NVIDIA GTX 1660 configs with TSan enabled",
     builder_spec = builder_config.builder_spec(
@@ -630,7 +579,6 @@ ci.gpu.linux_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -669,7 +617,7 @@ ci.gpu.linux_builder(
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
 
-ci.gpu.linux_builder(
+gpu.ci.linux_builder(
     name = "Dawn Android arm Builder",
     description_html = "Builds Android arm binaries using ToT Dawn",
     builder_spec = builder_config.builder_spec(
@@ -691,7 +639,6 @@ ci.gpu.linux_builder(
         android_config = builder_config.android_config(
             config = "base_config",
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -712,7 +659,7 @@ ci.gpu.linux_builder(
     siso_remote_jobs = siso.remote_jobs.HIGH_JOBS_FOR_CI,
 )
 
-ci.gpu.linux_builder(
+gpu.ci.linux_builder(
     name = "Dawn Android arm64 Builder",
     description_html = "Builds Android arm64 binaries using ToT Dawn",
     builder_spec = builder_config.builder_spec(
@@ -734,7 +681,6 @@ ci.gpu.linux_builder(
         android_config = builder_config.android_config(
             config = "base_config",
         ),
-        build_gs_bucket = "chromium-dawn-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -755,55 +701,9 @@ ci.gpu.linux_builder(
 )
 
 ci.thin_tester(
-    name = "Dawn Android arm Release (Nexus 5X)",
-    description_html = "Runs ToT Dawn tests on stable Nexus 5X configs",
-    triggered_by = ["ci/Dawn Android arm Builder"],
-    builder_spec = builder_config.builder_spec(
-        execution_mode = builder_config.execution_mode.TEST,
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-            apply_configs = [
-                "android",
-                "dawn_top_of_tree",
-            ],
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "main_builder",
-            apply_configs = ["mb"],
-            build_config = builder_config.build_config.RELEASE,
-            target_arch = builder_config.target_arch.ARM,
-            target_bits = 32,
-            target_platform = builder_config.target_platform.ANDROID,
-        ),
-        android_config = builder_config.android_config(
-            config = "base_config",
-        ),
-        build_gs_bucket = "chromium-dawn-archive",
-        run_tests_serially = True,
-    ),
-    targets = targets.bundle(
-        targets = [
-            "gpu_noop_sleep_telemetry_test",
-        ],
-        mixins = [
-            "chromium_nexus_5x_oreo",
-            "has_native_resultdb_integration",
-        ],
-    ),
-    targets_settings = targets.settings(
-        browser_config = targets.browser_config.ANDROID_CHROMIUM,
-        os_type = targets.os_type.ANDROID,
-    ),
-    console_view_entry = consoles.console_view_entry(
-        category = "ToT|Android",
-        short_name = "n5x",
-    ),
-)
-
-ci.thin_tester(
     name = "Dawn Android arm Release (Pixel 4)",
     description_html = "Runs ToT Dawn tests on stable Pixel 4 configs",
-    triggered_by = ["ci/Dawn Android arm Builder"],
+    parent = "ci/Dawn Android arm Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -824,7 +724,6 @@ ci.thin_tester(
         android_config = builder_config.android_config(
             config = "base_config",
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -889,7 +788,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Android arm64 Release (Pixel 6)",
     description_html = "Runs ToT Dawn tests on stable Pixel 6 configs",
-    triggered_by = ["ci/Dawn Android arm64 Builder"],
+    parent = "ci/Dawn Android arm64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -910,7 +809,6 @@ ci.thin_tester(
         android_config = builder_config.android_config(
             config = "base_config",
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -972,7 +870,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Android arm64 Experimental Release (Pixel 6)",
     description_html = "Runs ToT Dawn tests on experimental Pixel 6 configs",
-    triggered_by = ["ci/Dawn Android arm64 Builder"],
+    parent = "ci/Dawn Android arm64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -993,7 +891,6 @@ ci.thin_tester(
         android_config = builder_config.android_config(
             config = "base_config",
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1065,7 +962,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Android arm64 Release (Samsung S24)",
     description_html = "Runs ToT Dawn tests on stable Samsung S24 configs",
-    triggered_by = ["ci/Dawn Android arm64 Builder"],
+    parent = "ci/Dawn Android arm64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1086,7 +983,6 @@ ci.thin_tester(
         android_config = builder_config.android_config(
             config = "base_config",
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1117,86 +1013,10 @@ ci.thin_tester(
     ),
 )
 
-ci.gpu.linux_builder(
-    name = "Dawn ChromeOS Skylab Release (volteer)",
-    description_html = "Runs ToT Dawn tests on Skylab-hosted volteer devices",
-    builder_spec = builder_config.builder_spec(
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-            apply_configs = [
-                "chromeos",
-            ],
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "chromium",
-            apply_configs = [
-                "mb",
-            ],
-            build_config = builder_config.build_config.RELEASE,
-            target_arch = builder_config.target_arch.INTEL,
-            target_bits = 64,
-            target_platform = builder_config.target_platform.CHROMEOS,
-            target_cros_boards = [
-                "volteer",
-            ],
-        ),
-        run_tests_serially = True,
-        skylab_upload_location = builder_config.skylab_upload_location(
-            gs_bucket = "chromium-ci-skylab",
-            gs_extra = "chromeos_gpu",
-        ),
-    ),
-    gn_args = gn_args.config(
-        configs = [
-            "dawn_enable_opengles",
-            "gpu_tests",
-            "chromeos_device",
-            "volteer",
-            "ozone_headless",
-            "release_builder",
-            "try_builder",
-            "remoteexec",
-            "dcheck_off",
-            "no_symbols",
-            "is_skylab",
-            "chromeos",
-            "x64",
-        ],
-    ),
-    targets = targets.bundle(
-        targets = [
-            targets.bundle(
-                targets = [
-                    "dawn_chromeos_release_tests_volteer_skylab",
-                    "dawn_chromeos_release_telemetry_tests_volteer_skylab",
-                ],
-            ),
-        ],
-        additional_compile_targets = [
-            "chromiumos_preflight",
-        ],
-    ),
-    targets_settings = targets.settings(
-        browser_config = targets.browser_config.CROS_CHROME,
-        os_type = targets.os_type.CROS,
-        use_android_merge_script_by_default = False,
-        use_swarming = False,
-    ),
-    # TODO(crbug.com/40942991): This config is experimental and currently
-    # is too difficult for gardeners to keep green.
-    gardener_rotations = args.ignore_default(None),
-    console_view_entry = consoles.console_view_entry(
-        category = "ChromeOS|Intel",
-        short_name = "vlt",
-    ),
-    execution_timeout = 6 * time.hour,
-    siso_remote_jobs = siso.remote_jobs.HIGH_JOBS_FOR_CI,
-)
-
 ci.thin_tester(
     name = "Dawn Linux x64 Experimental Release (Intel UHD 630)",
     description_html = "Runs ToT Dawn tests on experimental Linux/Intel UHD 630 configs",
-    triggered_by = ["Dawn Linux x64 Builder"],
+    parent = "Dawn Linux x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1211,7 +1031,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1275,7 +1094,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Linux x64 Experimental Release (NVIDIA GTX 1660)",
     description_html = "Runs ToT Dawn tests on experimental Linux/NVIDIA GTX 1660 configs",
-    triggered_by = ["Dawn Linux x64 Builder"],
+    parent = "Dawn Linux x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1290,7 +1109,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1319,7 +1137,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Linux x64 Release (Intel UHD 630)",
     description_html = "Runs ToT Dawn tests on stable Linux/Intel UHD 630 configs",
-    triggered_by = ["Dawn Linux x64 Builder"],
+    parent = "Dawn Linux x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1334,7 +1152,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1388,7 +1205,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Linux x64 Release (Intel UHD 770)",
     description_html = "Runs ToT Dawn tests on stable Linux/Intel UHD 770 configs",
-    triggered_by = ["Dawn Linux x64 Builder"],
+    parent = "Dawn Linux x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1403,7 +1220,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1439,7 +1255,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Linux x64 Release (NVIDIA)",
     description_html = "Runs ToT Dawn tests on stable Linux/NVIDIA GTX 1660 configs",
-    triggered_by = ["Dawn Linux x64 Builder"],
+    parent = "Dawn Linux x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1454,7 +1270,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1477,7 +1292,7 @@ ci.thin_tester(
     ),
 )
 
-ci.gpu.mac_builder(
+gpu.ci.mac_builder(
     name = "Dawn Mac arm64 Builder",
     description_html = "Builds Mac arm64 binaries using ToT Dawn",
     builder_spec = builder_config.builder_spec(
@@ -1497,7 +1312,6 @@ ci.gpu.mac_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -1516,7 +1330,7 @@ ci.gpu.mac_builder(
     ),
 )
 
-ci.gpu.mac_builder(
+gpu.ci.mac_builder(
     name = "Dawn Mac arm64 DEPS Builder",
     branch_selector = branches.selector.MAC_BRANCHES,
     description_html = "Builds Mac arm64 binaries using DEPS-ed in Dawn",
@@ -1534,7 +1348,6 @@ ci.gpu.mac_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -1559,7 +1372,7 @@ ci.thin_tester(
     name = "Dawn Mac arm64 DEPS Release (Apple M2)",
     branch_selector = branches.selector.MAC_BRANCHES,
     description_html = "Runs DEPS-ed in Dawn tests on stable Mac/M2 Macbook Pro configs",
-    triggered_by = ["Dawn Mac arm64 DEPS Builder"],
+    parent = "Dawn Mac arm64 DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1575,7 +1388,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1601,7 +1413,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Mac arm64 Experimental Release (Apple M2)",
     description_html = "Runs ToT Dawn tests on experimental Mac/M2 Macbook Pro configs",
-    triggered_by = ["Dawn Mac arm64 Builder"],
+    parent = "Dawn Mac arm64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1620,7 +1432,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1650,7 +1461,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Mac arm64 Release (Apple M2)",
     description_html = "Runs ToT Dawn tests on stable Mac/M2 Macbook Pro configs",
-    triggered_by = ["Dawn Mac arm64 Builder"],
+    parent = "Dawn Mac arm64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1669,7 +1480,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1692,7 +1502,7 @@ ci.thin_tester(
     ),
 )
 
-ci.gpu.mac_builder(
+gpu.ci.mac_builder(
     name = "Dawn Mac x64 Builder",
     description_html = "Builds Mac x64 binaries using ToT Dawn",
     builder_spec = builder_config.builder_spec(
@@ -1712,7 +1522,6 @@ ci.gpu.mac_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -1733,7 +1542,7 @@ ci.gpu.mac_builder(
     ),
 )
 
-ci.gpu.mac_builder(
+gpu.ci.mac_builder(
     name = "Dawn Mac x64 DEPS Builder",
     branch_selector = branches.selector.MAC_BRANCHES,
     description_html = "Builds Mac x64 binaries using DEPS-ed in Dawn",
@@ -1751,7 +1560,6 @@ ci.gpu.mac_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -1779,7 +1587,7 @@ ci.thin_tester(
     name = "Dawn Mac x64 DEPS Release (AMD)",
     branch_selector = branches.selector.MAC_BRANCHES,
     description_html = "Runs DEPS-ed in Dawn tests on stable Mac/AMD Macbook Pro configs",
-    triggered_by = ["ci/Dawn Mac x64 DEPS Builder"],
+    parent = "ci/Dawn Mac x64 DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1795,7 +1603,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1834,7 +1641,7 @@ ci.thin_tester(
     name = "Dawn Mac x64 DEPS Release (Intel)",
     branch_selector = branches.selector.MAC_BRANCHES,
     description_html = "Runs DEPS-ed in Dawn tests on stable Mac/Intel UHD 630 Mac Mini configs",
-    triggered_by = ["ci/Dawn Mac x64 DEPS Builder"],
+    parent = "ci/Dawn Mac x64 DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1850,7 +1657,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1888,7 +1694,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Mac x64 Experimental Release (AMD)",
     description_html = "Runs ToT Dawn tests on experimental Mac/AMD Macbook Pro configs",
-    triggered_by = ["Dawn Mac x64 Builder"],
+    parent = "Dawn Mac x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1904,7 +1710,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1947,7 +1752,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Mac x64 Experimental Release (Intel)",
     description_html = "Runs ToT Dawn tests on experimental Mac/Intel UHD 630 Mac Mini configs",
-    triggered_by = ["Dawn Mac x64 Builder"],
+    parent = "Dawn Mac x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -1963,7 +1768,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -1971,22 +1775,24 @@ ci.thin_tester(
         # the gpu_noop_sleep_telemetry_test test should be used. Otherwise, this
         # should have the same test_suites as 'Dawn Mac x64 Release (Intel)'.
         targets = [
-            "gpu_noop_sleep_telemetry_test",
+            "gpu_dawn_telemetry_tests",
+            "gpu_dawn_integration_gtests_passthrough",
+            "gpu_dawn_isolated_scripts",
         ],
         mixins = [
             "limited_capacity_bot",
             "mac_mini_intel_gpu_experimental",
         ],
         per_test_modifications = {
-            # "webgpu_cts_dedicated_worker_tests": targets.remove(
-            #     reason = "We only need coverage on one GPU per OS, so remove from lower capacity configs.",
-            # ),
-            # "webgpu_cts_service_worker_tests": targets.remove(
-            #     reason = "We only need coverage on one GPU per OS, so remove from lower capacity configs.",
-            # ),
-            # "webgpu_cts_shared_worker_tests": targets.remove(
-            #     reason = "We only need coverage on one GPU per OS, so remove from lower capacity configs.",
-            # ),
+            "webgpu_cts_dedicated_worker_tests": targets.remove(
+                reason = "We only need coverage on one GPU per OS, so remove from lower capacity configs.",
+            ),
+            "webgpu_cts_service_worker_tests": targets.remove(
+                reason = "We only need coverage on one GPU per OS, so remove from lower capacity configs.",
+            ),
+            "webgpu_cts_shared_worker_tests": targets.remove(
+                reason = "We only need coverage on one GPU per OS, so remove from lower capacity configs.",
+            ),
         },
     ),
     targets_settings = targets.settings(
@@ -1994,17 +1800,17 @@ ci.thin_tester(
         os_type = targets.os_type.MAC,
     ),
     # Uncomment this entry when this experimental tester is actually in use.
-    #console_view_entry = consoles.console_view_entry(
-    #    category = "ToT|Mac|Intel",
-    #    short_name = "exp",
-    #),
+    console_view_entry = consoles.console_view_entry(
+        category = "ToT|Mac|Intel",
+        short_name = "exp",
+    ),
     list_view = "chromium.gpu.experimental",
 )
 
 ci.thin_tester(
     name = "Dawn Mac x64 Release (AMD)",
     description_html = "Runs ToT Dawn tests on stable Mac/AMD Macbook Pro configs",
-    triggered_by = ["Dawn Mac x64 Builder"],
+    parent = "Dawn Mac x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2020,7 +1826,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2057,7 +1862,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Mac x64 Release (Intel)",
     description_html = "Runs ToT Dawn tests on stable Mac/Intel UHD 630 Mac Mini configs",
-    triggered_by = ["Dawn Mac x64 Builder"],
+    parent = "Dawn Mac x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2073,7 +1878,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2107,7 +1911,7 @@ ci.thin_tester(
     ),
 )
 
-ci.gpu.windows_builder(
+gpu.ci.windows_builder(
     name = "Dawn Win10 x64 ASAN Builder",
     description_html = "Builds Windows x64 binaries with ASan enabled using ToT Dawn",
     # One build every 2 hours.
@@ -2128,7 +1932,6 @@ ci.gpu.windows_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -2148,13 +1951,15 @@ ci.gpu.windows_builder(
         category = "ToT|Windows|Builder",
         short_name = "asn",
     ),
+    # Can hit the default build timeout when building with clean cache.
+    execution_timeout = 5 * time.hour,
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
 
 ci.thin_tester(
     name = "Dawn Win10 x64 ASAN Release (Intel)",
     description_html = "Runs ToT Dawn tests with ASan enabled on stable Windows 10/Intel UHD 630 configs",
-    triggered_by = ["ci/Dawn Win10 x64 ASAN Builder"],
+    parent = "ci/Dawn Win10 x64 ASAN Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2172,7 +1977,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2252,7 +2056,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Win10 x64 ASAN Release (NVIDIA)",
     description_html = "Runs ToT Dawn tests with ASan enabled on stable Windows 10/NVIDIA GTX 1660 configs",
-    triggered_by = ["ci/Dawn Win10 x64 ASAN Builder"],
+    parent = "ci/Dawn Win10 x64 ASAN Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2270,7 +2074,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2326,7 +2129,7 @@ ci.thin_tester(
     execution_timeout = 4 * time.hour,
 )
 
-ci.gpu.windows_builder(
+gpu.ci.windows_builder(
     name = "Dawn Win10 x64 Builder",
     description_html = "Builds Windows x64 binaries using ToT Dawn",
     builder_spec = builder_config.builder_spec(
@@ -2345,7 +2148,6 @@ ci.gpu.windows_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -2368,7 +2170,7 @@ ci.gpu.windows_builder(
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
 
-ci.gpu.windows_builder(
+gpu.ci.windows_builder(
     name = "Dawn Win10 x64 DEPS Builder",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     description_html = "Builds Windows x64 binaries using DEPS-ed in Dawn",
@@ -2385,7 +2187,6 @@ ci.gpu.windows_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -2409,7 +2210,7 @@ ci.gpu.windows_builder(
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
 
-ci.gpu.windows_builder(
+gpu.ci.windows_builder(
     name = "Dawn Win11 arm64 Builder",
     description_html = "Builds Windows arm64 binaries using ToT Dawn",
     builder_spec = builder_config.builder_spec(
@@ -2429,7 +2230,6 @@ ci.gpu.windows_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -2460,7 +2260,7 @@ ci.gpu.windows_builder(
     ),
 )
 
-ci.gpu.windows_builder(
+gpu.ci.windows_builder(
     name = "Dawn Win11 arm64 DEPS Builder",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     description_html = "Builds Windows arm64 binaries using DEPS-ed in Dawn",
@@ -2478,7 +2278,6 @@ ci.gpu.windows_builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -2515,7 +2314,7 @@ ci.thin_tester(
     name = "Dawn Win10 x64 DEPS Release (Intel)",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     description_html = "Runs DEPS-ed in Dawn tests on stable Windows 10/Intel UHD 630 configs",
-    triggered_by = ["ci/Dawn Win10 x64 DEPS Builder"],
+    parent = "ci/Dawn Win10 x64 DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2530,7 +2329,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2578,7 +2376,7 @@ ci.thin_tester(
     name = "Dawn Win10 x64 DEPS Release (NVIDIA)",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     description_html = "Runs DEPS-ed in Dawn tests on stable Windows 10/NVIDIA GTX 1660 configs",
-    triggered_by = ["ci/Dawn Win10 x64 DEPS Builder"],
+    parent = "ci/Dawn Win10 x64 DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2593,7 +2391,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2622,7 +2419,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Win10 x64 Experimental Release (Intel)",
     description_html = "Runs ToT Dawn tests on experimental Windows 10/Intel UHD 630 configs",
-    triggered_by = ["Dawn Win10 x64 Builder"],
+    parent = "Dawn Win10 x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2637,7 +2434,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2688,7 +2484,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Win10 x64 Release (Intel)",
     description_html = "Runs ToT Dawn tests on stable Windows 10/Intel UHD 630 configs",
-    triggered_by = ["Dawn Win10 x64 Builder"],
+    parent = "Dawn Win10 x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2703,7 +2499,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2749,7 +2544,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Win10 x64 Release (Intel UHD 770)",
     description_html = "Runs ToT Dawn tests on stable Windows 10/Intel UHD 770 configs",
-    triggered_by = ["Dawn Win10 x64 Builder"],
+    parent = "Dawn Win10 x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2764,7 +2559,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2793,13 +2587,13 @@ ci.thin_tester(
         short_name = "770",
     ),
     # Can hit the default build timeout if no tasks end up being deduped.
-    execution_timeout = 4 * time.hour,
+    execution_timeout = 5 * time.hour,
 )
 
 ci.thin_tester(
     name = "Dawn Win10 x64 Experimental Release (NVIDIA)",
     description_html = "Runs ToT Dawn tests on experimental Windows 10/NVIDIA GTX 1660 configs",
-    triggered_by = ["Dawn Win10 x64 Builder"],
+    parent = "Dawn Win10 x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2814,7 +2608,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2823,22 +2616,31 @@ ci.thin_tester(
         # should be running the same test_suites as
         # 'Dawn Win10 x64 Release (NVIDIA)'
         targets = [
-            "gpu_noop_sleep_telemetry_test",
+            "gpu_dawn_telemetry_win_x64_tests",
+            "gpu_dawn_integration_gtests_passthrough_win_x64",
+            "gpu_dawn_isolated_scripts",
         ],
         mixins = [
             "limited_capacity_bot",
             "win10_nvidia_gtx_1660_experimental",
         ],
+        per_test_modifications = {
+            "gl_unittests": targets.mixin(
+                args = [
+                    "--test-launcher-filter-file=../../testing/buildbot/filters/win.nvidia.gtx.1660.gl_unittests.filter",
+                ],
+            ),
+        },
     ),
     targets_settings = targets.settings(
         browser_config = targets.browser_config.RELEASE_X64,
         os_type = targets.os_type.WINDOWS,
     ),
     # Uncomment this entry when this experimental tester is actually in use.
-    # console_view_entry = consoles.console_view_entry(
-    #     category = "ToT|Windows|x64|Nvidia",
-    #     short_name = "exp",
-    # ),
+    console_view_entry = consoles.console_view_entry(
+        category = "ToT|Windows|x64|Nvidia",
+        short_name = "exp",
+    ),
     list_view = "chromium.gpu.experimental",
     execution_timeout = 6 * time.hour,
 )
@@ -2846,7 +2648,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Win10 x64 Release (NVIDIA)",
     description_html = "Runs ToT Dawn tests on stable Windows 10/NVIDIA GTX 1660 configs",
-    triggered_by = ["Dawn Win10 x64 Builder"],
+    parent = "Dawn Win10 x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2861,7 +2663,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -2886,7 +2687,7 @@ ci.thin_tester(
     execution_timeout = 4 * time.hour,
 )
 
-ci.gpu.windows_builder(
+gpu.ci.windows_builder(
     name = "Dawn Win10 x86 Builder",
     description_html = "Builds Windows x86 binaries using ToT Dawn",
     builder_spec = builder_config.builder_spec(
@@ -2905,7 +2706,6 @@ ci.gpu.windows_builder(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -2927,7 +2727,7 @@ ci.gpu.windows_builder(
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
 
-ci.gpu.windows_builder(
+gpu.ci.windows_builder(
     name = "Dawn Win10 x86 DEPS Builder",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     description_html = "Builds Windows x86 binaries using DEPS-ed in Dawn",
@@ -2944,7 +2744,6 @@ ci.gpu.windows_builder(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     gn_args = gn_args.config(
@@ -2973,7 +2772,7 @@ ci.thin_tester(
     name = "Dawn Win10 x86 DEPS Release (Intel)",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     description_html = "Runs DEPS-ed in Dawn tests on stable Windows 10/Intel UHD 630 configs",
-    triggered_by = ["ci/Dawn Win10 x86 DEPS Builder"],
+    parent = "ci/Dawn Win10 x86 DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -2988,7 +2787,6 @@ ci.thin_tester(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -3027,7 +2825,7 @@ ci.thin_tester(
     name = "Dawn Win10 x86 DEPS Release (NVIDIA)",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     description_html = "Runs DEPS-ed in Dawn tests on stable Windows 10/NVIDIA GTX 1660 configs",
-    triggered_by = ["ci/Dawn Win10 x86 DEPS Builder"],
+    parent = "ci/Dawn Win10 x86 DEPS Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -3042,7 +2840,6 @@ ci.thin_tester(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -3077,7 +2874,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Win10 x86 Experimental Release (Intel)",
     description_html = "Runs ToT Dawn tests on experimental Windows 10/Intel UHD 630 configs",
-    triggered_by = ["Dawn Win10 x86 Builder"],
+    parent = "Dawn Win10 x86 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -3092,7 +2889,6 @@ ci.thin_tester(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -3143,7 +2939,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Win10 x86 Experimental Release (NVIDIA)",
     description_html = "Runs ToT Dawn tests on experimental Windows 10/NVIDIA GTX 1660 configs",
-    triggered_by = ["Dawn Win10 x86 Builder"],
+    parent = "Dawn Win10 x86 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -3158,7 +2954,6 @@ ci.thin_tester(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -3167,29 +2962,38 @@ ci.thin_tester(
         # should be running the same test_suites as 'Dawn Win10 x86 Release
         # (NVIDIA)'.
         targets = [
-            "gpu_noop_sleep_telemetry_test",
+            "gpu_dawn_telemetry_tests_fxc",
+            "gpu_dawn_integration_gtests_passthrough",
+            "gpu_dawn_isolated_scripts",
         ],
         mixins = [
             "limited_capacity_bot",
             "win10_nvidia_gtx_1660_experimental",
         ],
+        per_test_modifications = {
+            "gl_unittests": targets.mixin(
+                args = [
+                    "--test-launcher-filter-file=../../testing/buildbot/filters/win.nvidia.gtx.1660.gl_unittests.filter",
+                ],
+            ),
+        },
     ),
     targets_settings = targets.settings(
         browser_config = targets.browser_config.RELEASE,
         os_type = targets.os_type.WINDOWS,
     ),
     # Uncomment this entry when this experimental tester is actually in use.
-    # console_view_entry = consoles.console_view_entry(
-    #     category = "ToT|Windows|x86|Nvidia",
-    #     short_name = "exp",
-    # ),
+    console_view_entry = consoles.console_view_entry(
+        category = "ToT|Windows|x86|Nvidia",
+        short_name = "exp",
+    ),
     list_view = "chromium.gpu.experimental",
 )
 
 ci.thin_tester(
     name = "Dawn Win10 x86 Release (Intel)",
     description_html = "Runs ToT Dawn tests on stable Windows 10/Intel UHD 630 configs",
-    triggered_by = ["Dawn Win10 x86 Builder"],
+    parent = "Dawn Win10 x86 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -3204,7 +3008,6 @@ ci.thin_tester(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(
@@ -3241,7 +3044,7 @@ ci.thin_tester(
 ci.thin_tester(
     name = "Dawn Win10 x86 Release (NVIDIA)",
     description_html = "Runs ToT Dawn tests on stable Windows 10/NVIDIA GTX 1660 configs",
-    triggered_by = ["Dawn Win10 x86 Builder"],
+    parent = "Dawn Win10 x86 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -3256,7 +3059,6 @@ ci.thin_tester(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-dawn-archive",
         run_tests_serially = True,
     ),
     targets = targets.bundle(

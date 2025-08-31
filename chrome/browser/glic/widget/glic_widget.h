@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
@@ -19,13 +20,15 @@
 
 namespace glic {
 
+class GlicView;
+
 extern void* kGlicWidgetIdentifier;
 
 // Glic panel widget.
 class GlicWidget : public views::Widget, public ThemeServiceObserver {
  public:
-  GlicWidget(const Widget&) = delete;
-  GlicWidget& operator=(const Widget&) = delete;
+  GlicWidget(const GlicWidget&) = delete;
+  GlicWidget& operator=(const GlicWidget&) = delete;
   ~GlicWidget() override;
 
   static gfx::Size GetInitialSize();
@@ -47,6 +50,15 @@ class GlicWidget : public views::Widget, public ThemeServiceObserver {
   // Gets the minimum size a user can resize to for the widget.
   gfx::Size GetMinimumSize() const override;
 
+  // Convert bounds rects between the visible on-screen bounds, and the actual
+  //  widget bounds, which may require additional space for an invisible border
+  // on Windows, when the widget is resizable.
+  gfx::Rect VisibleToWidgetBounds(gfx::Rect visible_bounds);
+  gfx::Rect WidgetToVisibleBounds(gfx::Rect widget_bounds);
+
+  base::WeakPtr<GlicWidget> GetWeakPtr();
+  GlicView* GetGlicView();
+
  private:
   GlicWidget(ThemeService* theme_service, InitParams params);
 
@@ -60,6 +72,8 @@ class GlicWidget : public views::Widget, public ThemeServiceObserver {
 
   base::ScopedObservation<ThemeService, ThemeServiceObserver>
       theme_service_observation_{this};
+
+  base::WeakPtrFactory<GlicWidget> weak_ptr_factory_{this};
 };
 
 }  // namespace glic

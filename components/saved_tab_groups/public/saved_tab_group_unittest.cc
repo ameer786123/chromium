@@ -155,6 +155,25 @@ TEST(SavedTabGroupTest, RemoveTabLocallyReordersPositions) {
   }
 }
 
+TEST(SavedTabGroupTest, RemoveTabLocallyStoresMetadata) {
+  SavedTabGroup group = CreateDefaultEmptySavedTabGroup().CloneAsSharedTabGroup(
+      CollaborationId("collaboration"));
+  SavedTabGroupTab tab_1 = CreateDefaultSavedTabGroupTab(group.saved_guid());
+  SavedTabGroupTab tab_2 = CreateDefaultSavedTabGroupTab(group.saved_guid());
+
+  group.AddTabLocally(tab_1);
+  group.AddTabLocally(tab_2);
+
+  GaiaId removed_by("user_id");
+  group.RemoveTabLocally(tab_2.saved_tab_guid(), removed_by);
+
+  EXPECT_THAT(group.last_removed_tabs_metadata(),
+              UnorderedElementsAre(testing::Key(tab_2.saved_tab_guid())));
+  EXPECT_EQ(
+      group.last_removed_tabs_metadata().at(tab_2.saved_tab_guid()).removed_by,
+      removed_by);
+}
+
 TEST(SavedTabGroupTest, AddTabFromSyncRespectsPositions) {
   // Create a group and 2 tabs
   SavedTabGroup group = CreateDefaultEmptySavedTabGroup();
@@ -357,6 +376,38 @@ TEST(SavedTabGroupTest, GetOriginatingTabGroupGuid) {
   // regardless of the group owner.
   EXPECT_EQ(shared_group.GetOriginatingTabGroupGuid(/*for_sync=*/true),
             kOriginatingTabGroupGuid);
+}
+
+TEST(SavedTabGroupTest, ConvertToSharedTabGroupAndBackRetainsPosition) {
+  std::optional<size_t> position = 0;
+  SavedTabGroup saved_group(std::u16string(u"default_group"),
+                            tab_groups::TabGroupColorId::kGrey, {}, position);
+  EXPECT_EQ(position, saved_group.position());
+  SavedTabGroup shared_group =
+      saved_group.CloneAsSharedTabGroup(CollaborationId("collaboration"));
+  EXPECT_EQ(position, shared_group.position());
+  SavedTabGroup saved_group2 = shared_group.CloneAsSavedTabGroup();
+  EXPECT_EQ(position, saved_group2.position());
+}
+
+TEST(SavedTabGroupTest, MergeRemoteGroupPosition) {
+  std::u16string title = u"title";
+  tab_groups::TabGroupColorId color = tab_groups::TabGroupColorId::kBlue;
+  std::optional<size_t> position = 0;
+
+  // Saved group should merge position.
+  SavedTabGroup saved_group = CreateDefaultEmptySavedTabGroup();
+  saved_group.MergeRemoteGroupMetadata(title, color, position, std::nullopt,
+                                       std::nullopt, base::Time::Now());
+  EXPECT_EQ(position, saved_group.position());
+
+  // Shared group should not merge position.
+  SavedTabGroup shared_group =
+      CreateDefaultEmptySavedTabGroup().CloneAsSharedTabGroup(
+          CollaborationId("collaboration"));
+  shared_group.MergeRemoteGroupMetadata(title, color, position, std::nullopt,
+                                        std::nullopt, base::Time::Now());
+  EXPECT_EQ(std::nullopt, shared_group.position());
 }
 
 }  // namespace tab_groups

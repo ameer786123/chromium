@@ -27,17 +27,17 @@
 #import "components/search_engines/template_url_service.h"
 #import "components/search_engines/template_url_service_client.h"
 #import "ios/chrome/browser/omnibox/coordinator/popup/omnibox_popup_mediator+Testing.h"
-#import "ios/chrome/browser/omnibox/model/autocomplete_match_formatter.h"
-#import "ios/chrome/browser/omnibox/model/autocomplete_result_wrapper.h"
-#import "ios/chrome/browser/omnibox/model/autocomplete_suggestion.h"
-#import "ios/chrome/browser/omnibox/model/autocomplete_suggestion_group_impl.h"
 #import "ios/chrome/browser/omnibox/model/omnibox_image_fetcher.h"
-#import "ios/chrome/browser/omnibox/model/omnibox_pedal.h"
-#import "ios/chrome/browser/omnibox/model/omnibox_pedal_swift.h"
-#import "ios/chrome/browser/omnibox/model/suggest_action.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/popup/omnibox_popup_consumer.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/popup/row/favicon_retriever.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/popup/row/image_retriever.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/autocomplete_match_formatter.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/autocomplete_result_wrapper.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/autocomplete_suggestion.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/autocomplete_suggestion_group_impl.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/omnibox_pedal.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/omnibox_pedal_swift.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/suggest_action.h"
+#import "ios/chrome/browser/omnibox/ui/popup/omnibox_popup_consumer.h"
+#import "ios/chrome/browser/omnibox/ui/popup/row/favicon_retriever.h"
+#import "ios/chrome/browser/omnibox/ui/popup/row/image_retriever.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_manager_ios.h"
 #import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
@@ -55,7 +55,8 @@ namespace {
 // Returns an autocomplete suggestion with a reviews action attached to it.
 id<AutocompleteSuggestion> SuggestionWithReviewsAction() {
   AutocompleteMatch actionMatch = CreateActionInSuggestMatch(
-      u"Action", {omnibox::ActionInfo_ActionType_REVIEWS});
+      u"Action",
+      {omnibox::SuggestTemplateInfo_TemplateAction_ActionType_REVIEWS});
 
   AutocompleteMatchFormatter* suggestion =
       [[AutocompleteMatchFormatter alloc] initWithMatch:actionMatch];

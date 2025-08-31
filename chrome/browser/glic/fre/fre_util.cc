@@ -8,12 +8,14 @@
 #include <cstddef>
 
 #include "base/command_line.h"
-#include "chrome/browser/glic/browser_ui/theme_util.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/glic/glic_hotkey.h"
+#include "chrome/browser/glic/host/guest_util.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
+#include "components/language/core/common/language_util.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition_config.h"
 #include "net/base/url_util.h"
@@ -26,25 +28,35 @@ GURL GetFreURL(Profile* profile) {
   // Use the corresponding command line argument as the URL, if available.
   auto* command_line = base::CommandLine::ForCurrentProcess();
   bool has_glic_fre_url = command_line->HasSwitch(::switches::kGlicFreURL);
-  GURL base_url =
+  GURL url =
       GURL(has_glic_fre_url
                ? command_line->GetSwitchValueASCII(::switches::kGlicFreURL)
                : features::kGlicFreURL.Get());
-  if (base_url.is_empty()) {
+  if (url.is_empty()) {
     LOG(ERROR) << "No glic fre url";
+    return GURL();
   }
 
   // Add the hotkey configuration to the URL as a query parameter.
-  std::string hotkey_param_value = GetHotkeyString();
+  std::string hotkey_param_value;
+#if !BUILDFLAG(IS_MAC)
+  hotkey_param_value = GetHotkeyString();
+#else
+  hotkey_param_value = GetLongFormMacHotkeyString();
+#endif
+
   if (!hotkey_param_value.empty()) {
-    base_url = net::AppendOrReplaceQueryParameter(base_url, "hotkey",
-                                                  hotkey_param_value);
+    url = net::AppendOrReplaceQueryParameter(url, "hotkey", hotkey_param_value);
   }
 
-  // Add the current Chrome theme to the URL as a query parameter
-  ThemeService* theme_service = ThemeServiceFactory::GetForProfile(profile);
-  std::string theme_value = UseDarkMode(theme_service) ? "dark" : "light";
-  return net::AppendOrReplaceQueryParameter(base_url, "theme", theme_value);
+  // Add the current Chrome theme to the URL as a query parameter.
+  const bool use_dark_mode =
+      ThemeServiceFactory::GetForProfile(profile)->BrowserUsesDarkColors();
+  std::string theme_value = use_dark_mode ? "dark" : "light";
+  url = net::AppendOrReplaceQueryParameter(url, "theme", theme_value);
+
+  // Localize to Chrome UI language.
+  return GetLocalizedGuestURL(url);
 }
 
 content::StoragePartitionConfig GetFreStoragePartitionConfig(

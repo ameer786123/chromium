@@ -8,9 +8,11 @@
 #include <cstdint>
 
 #include "base/memory/raw_ref.h"
-#include "base/memory/weak_ptr.h"
+#include "base/types/expected.h"
 #include "chrome/common/actor.mojom.h"
 #include "chrome/renderer/actor/tool_base.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 
 namespace content {
 class RenderFrame;
@@ -21,19 +23,32 @@ namespace actor {
 // A tool that can be invoked to perform a scroll over a target.
 class ScrollTool : public ToolBase {
  public:
-  ScrollTool(mojom::ScrollActionPtr action,
-             base::raw_ref<content::RenderFrame> frame);
+  ScrollTool(content::RenderFrame& frame,
+             Journal::TaskId task_id,
+             Journal& journal,
+             mojom::ScrollActionPtr action,
+             mojom::ToolTargetPtr target,
+             mojom::ObservedToolTargetPtr observed_target);
 
   ~ScrollTool() override;
 
-  // Performs a scroll on the specified node.
-  // Invoke callback with true if success and false otherwise.
+  // actor::ToolBase
   void Execute(ToolFinishedCallback callback) override;
+  std::string DebugString() const override;
+  base::TimeDelta ExecutionObservationDelay() const override;
 
  private:
-  // Raw ref since this is owned by ToolExecutor whose lifetime is tied to
-  // RenderFrame.
-  base::raw_ref<content::RenderFrame> frame_;
+  struct ScrollerAndDistance {
+    blink::WebElement scroller;
+    gfx::Vector2dF scroll_by_offset;
+  };
+  using ValidatedResult =
+      base::expected<ScrollerAndDistance, mojom::ActionResultPtr>;
+
+  ValidatedResult Validate() const;
+
+  bool targeting_smooth_scroller_ = false;
+
   mojom::ScrollActionPtr action_;
 };
 

@@ -21,10 +21,9 @@
 #import "ios/web/public/web_state.h"
 #import "ui/base/mojom/window_show_state.mojom.h"
 
-BROWSER_USER_DATA_KEY_IMPL(LiveTabContextBrowserAgent)
-
 LiveTabContextBrowserAgent::LiveTabContextBrowserAgent(Browser* browser)
-    : profile_(browser->GetProfile()),
+    : BrowserUserData(browser),
+      profile_(browser->GetProfile()),
       web_state_list_(browser->GetWebStateList()),
       session_id_(SessionID::NewUnique()) {}
 
@@ -153,5 +152,5 @@ sessions::LiveTab* LiveTabContextBrowserAgent::ReplaceRestoredTab(
 
 void LiveTabContextBrowserAgent::CloseTab() {
   web_state_list_->CloseWebStateAt(web_state_list_->active_index(),
-                                   WebStateList::CLOSE_USER_ACTION);
+                                   WebStateList::ClosingReason::kUserAction);
 }

@@ -32,6 +32,7 @@
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
+#include "components/viz/common/resources/shared_image_format.h"
 #include "components/viz/service/surfaces/surface.h"
 #include "components/viz/service/surfaces/surface_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -50,7 +51,6 @@
 #include "ui/gfx/geometry/test/geometry_util.h"
 #include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/gpu_fence_handle.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/wm/core/window_util.h"
 
 namespace exo {
@@ -101,13 +101,9 @@ std::string TransformToString(Transform transform) {
 }
 
 class SurfaceTest : public test::ExoTestBase,
-                    public ::testing::WithParamInterface<
-                        std::tuple<test::FrameSubmissionType, float>> {
+                    public ::testing::WithParamInterface<float> {
  public:
-  SurfaceTest() {
-    test::SetFrameSubmissionFeatureFlags(&feature_list_,
-                                         GetFrameSubmissionType());
-  }
+  SurfaceTest() = default;
 
   SurfaceTest(const SurfaceTest&) = delete;
   SurfaceTest& operator=(const SurfaceTest&) = delete;
@@ -127,10 +123,7 @@ class SurfaceTest : public test::ExoTestBase,
     display::Display::ResetForceDeviceScaleFactorForTesting();
   }
 
-  test::FrameSubmissionType GetFrameSubmissionType() const {
-    return std::get<0>(GetParam());
-  }
-  float device_scale_factor() const { return std::get<1>(GetParam()); }
+  float device_scale_factor() const { return GetParam(); }
 
   gfx::Rect ToPixel(const gfx::Rect rect) {
     return gfx::ToEnclosingRect(
@@ -182,14 +175,8 @@ class SurfaceTest : public test::ExoTestBase,
   base::test::ScopedFeatureList feature_list_;
 };
 
-// Instantiate the values of frame submission types and device scale factor in
-// the parameterized tests.
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    SurfaceTest,
-    testing::Combine(testing::Values(test::FrameSubmissionType::kNoReactive,
-                                     test::FrameSubmissionType::kReactive),
-                     testing::Values(1.0f, 1.25f, 2.0f)));
+// Instantiate the values of device scale factor in the parameterized tests.
+INSTANTIATE_TEST_SUITE_P(All, SurfaceTest, testing::Values(1.0f, 1.25f, 2.0f));
 
 TEST_P(SurfaceTest, AttachOffset) {
   gfx::Size buffer_size(256, 256);
@@ -584,7 +571,7 @@ TEST_P(SurfaceTest, MAYBE_SetOpaqueRegion) {
   }
 
   auto buffer_without_alpha = test::ExoTestHelper::CreateBuffer(
-      buffer_size, gfx::BufferFormat::RGBX_8888);
+      buffer_size, viz::SinglePlaneFormat::kRGBX_8888);
 
   // Attaching a buffer without an alpha channel doesn't require draw with
   // blending.
@@ -1120,7 +1107,7 @@ TEST_P(SurfaceTest, SetBlendMode) {
 TEST_P(SurfaceTest, OverlayCandidate) {
   gfx::Size buffer_size(1, 1);
   auto buffer = test::ExoTestHelper::CreateBuffer(
-      buffer_size, gfx::BufferFormat::RGBA_8888,
+      buffer_size, viz::SinglePlaneFormat::kRGBA_8888,
       /*is_overlay_candidate=*/true);
   auto surface = std::make_unique<Surface>();
   auto shell_surface = std::make_unique<ShellSurface>(surface.get());
@@ -1139,7 +1126,7 @@ TEST_P(SurfaceTest, OverlayCandidate) {
 TEST_P(SurfaceTest, SetAlpha) {
   gfx::Size buffer_size(1, 1);
   auto buffer = test::ExoTestHelper::CreateBuffer(
-      buffer_size, gfx::BufferFormat::RGBA_8888,
+      buffer_size, viz::SinglePlaneFormat::kRGBA_8888,
       /*is_overlay_candidate=*/true);
   auto surface = std::make_unique<Surface>();
   auto shell_surface = std::make_unique<ShellSurface>(surface.get());
@@ -1196,7 +1183,8 @@ TEST_P(SurfaceTest, SetAlpha) {
 TEST_P(SurfaceTest, DisableNonYUVOverlays) {
   gfx::Size buffer_size(2, 2);
   auto buffer_non_yuv = test::ExoTestHelper::CreateBuffer(
-      buffer_size, gfx::BufferFormat::RGBA_8888, /*is_overlay_candidate=*/true);
+      buffer_size, viz::SinglePlaneFormat::kRGBA_8888,
+      /*is_overlay_candidate=*/true);
   auto surface = std::make_unique<Surface>();
   auto shell_surface = std::make_unique<ShellSurface>(surface.get());
 
@@ -1223,7 +1211,7 @@ TEST_P(SurfaceTest, DisableNonYUVOverlays) {
 TEST_P(SurfaceTest, ForceRgbxTest) {
   gfx::Size buffer_size(1, 1);
   auto buffer = test::ExoTestHelper::CreateBuffer(
-      buffer_size, gfx::BufferFormat::RGBA_8888,
+      buffer_size, viz::SinglePlaneFormat::kRGBA_8888,
       /*is_overlay_candidate=*/true);
   auto surface = std::make_unique<Surface>();
   auto shell_surface = std::make_unique<ShellSurface>(surface.get());
@@ -1252,7 +1240,7 @@ TEST_P(SurfaceTest, ForceRgbxTest) {
 TEST_P(SurfaceTest, ForceRgbxTestNoBufferAlpha) {
   gfx::Size buffer_size(1, 1);
   auto buffer = test::ExoTestHelper::CreateBuffer(
-      buffer_size, gfx::BufferFormat::RGBX_8888,
+      buffer_size, viz::SinglePlaneFormat::kRGBX_8888,
       /*is_overlay_candidate=*/true);
   auto surface = std::make_unique<Surface>();
   auto shell_surface = std::make_unique<ShellSurface>(surface.get());
@@ -1815,30 +1803,7 @@ TEST_P(SurfaceTest, SimpleSurfaceGraphicsOcclusion) {
   }
 }
 
-// Tests that only apply if ExoReactiveFrameSubmission is enabled.
-class ReactiveFrameSubmissionSurfaceTest : public SurfaceTest {
- public:
-  ReactiveFrameSubmissionSurfaceTest() {
-    DCHECK_EQ(GetFrameSubmissionType(), test::FrameSubmissionType::kReactive);
-  }
-
-  ReactiveFrameSubmissionSurfaceTest(
-      const ReactiveFrameSubmissionSurfaceTest&) = delete;
-  ReactiveFrameSubmissionSurfaceTest& operator=(
-      const ReactiveFrameSubmissionSurfaceTest&) = delete;
-
-  ~ReactiveFrameSubmissionSurfaceTest() override = default;
-};
-
-// Instantiate the values of frame submission types and device scale factor in
-// the parameterized tests.
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    ReactiveFrameSubmissionSurfaceTest,
-    testing::Combine(testing::Values(test::FrameSubmissionType::kReactive),
-                     testing::Values(1.0f, 1.25f, 2.0f)));
-
-TEST_P(ReactiveFrameSubmissionSurfaceTest, FullDamageAfterDiscardingFrame) {
+TEST_P(SurfaceTest, FullDamageAfterDiscardingFrame) {
   gfx::Size buffer_size(256, 256);
   auto buffer = test::ExoTestHelper::CreateBuffer(buffer_size);
   std::unique_ptr<Surface> surface(new Surface);

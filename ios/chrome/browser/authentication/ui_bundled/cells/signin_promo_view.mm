@@ -373,7 +373,7 @@ constexpr CGFloat kNonProfileBackgroundImageCompactHeightWidth = 54.0;
 
 // Configures primary button with a standard font.
 - (void)configurePrimaryButtonWithTitle:(NSString*)title {
-  CHECK_GT(title.length, 0ul, base::NotFatalUntil::M135);
+  CHECK_GT(title.length, 0ul);
   // Declaring variables that are used throughout different switch cases.
   UIFont* font;
   NSAttributedString* attributedTitle;
@@ -401,7 +401,7 @@ constexpr CGFloat kNonProfileBackgroundImageCompactHeightWidth = 54.0;
   self.primaryButton.configuration = buttonConfiguration;
 }
 
-#pragma mark - NSObject(Accessibility)
+#pragma mark - UIAccessibility
 
 - (void)setAccessibilityLabel:(NSString*)accessibilityLabel {
   NOTREACHED();
@@ -418,6 +418,14 @@ constexpr CGFloat kNonProfileBackgroundImageCompactHeightWidth = 54.0;
   }
   NOTREACHED();
 }
+
+- (NSArray<NSString*>*)accessibilityUserInputLabels {
+  // The name for Voice Control includes only
+  // `self.primaryButton.titleLabel.text`.
+  return @[ [self primaryButtonTitle] ];
+}
+
+#pragma mark - UIAccessibilityAction
 
 - (BOOL)accessibilityActivate {
   if (!self.primaryButton.enabled) {
@@ -451,12 +459,6 @@ constexpr CGFloat kNonProfileBackgroundImageCompactHeightWidth = 54.0;
     [actions addObject:closeCustomAction];
   }
   return actions;
-}
-
-- (NSArray<NSString*>*)accessibilityUserInputLabels {
-  // The name for Voice Control includes only
-  // `self.primaryButton.titleLabel.text`.
-  return @[ [self primaryButtonTitle] ];
 }
 
 #pragma mark - Setters
@@ -582,7 +584,7 @@ constexpr CGFloat kNonProfileBackgroundImageCompactHeightWidth = 54.0;
 - (NSString*)primaryButtonTitle {
   NSString* buttonTitle = self.primaryButton.configuration.title;
   // The primary button should always be set.
-  CHECK_GT(buttonTitle.length, 0ul, base::NotFatalUntil::M135);
+  CHECK_GT(buttonTitle.length, 0ul);
   return buttonTitle;
 }
 

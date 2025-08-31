@@ -15,13 +15,12 @@ import org.chromium.content_public.browser.WebContents;
 @JNINamespace("content")
 @NullMarked
 public class CaptioningController implements SystemCaptioningBridge.SystemCaptioningBridgeListener {
-    private SystemCaptioningBridge mSystemCaptioningBridge;
+    private final SystemCaptioningBridge mSystemCaptioningBridge;
     private long mNativeCaptioningController;
 
     public CaptioningController(WebContents webContents) {
         mSystemCaptioningBridge = CaptioningBridge.getInstance();
-        mNativeCaptioningController =
-                CaptioningControllerJni.get().init(CaptioningController.this, webContents);
+        mNativeCaptioningController = CaptioningControllerJni.get().init(this, webContents);
     }
 
     @SuppressWarnings("unused")
@@ -43,7 +42,6 @@ public class CaptioningController implements SystemCaptioningBridge.SystemCaptio
         CaptioningControllerJni.get()
                 .setTextTrackSettings(
                         mNativeCaptioningController,
-                        CaptioningController.this,
                         settings.getTextTracksEnabled(),
                         settings.getTextTrackBackgroundColor(),
                         settings.getTextTrackFontFamily(),
@@ -64,11 +62,10 @@ public class CaptioningController implements SystemCaptioningBridge.SystemCaptio
 
     @NativeMethods
     interface Natives {
-        long init(CaptioningController caller, WebContents webContents);
+        long init(CaptioningController self, WebContents webContents);
 
         void setTextTrackSettings(
                 long nativeCaptioningController,
-                CaptioningController caller,
                 boolean textTracksEnabled,
                 String textTrackBackgroundColor,
                 String textTrackFontFamily,

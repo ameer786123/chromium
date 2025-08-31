@@ -9,7 +9,9 @@
 #include <utility>
 
 #include "base/test/gmock_callback_support.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
+#include "chromeos/ash/components/boca/boca_metrics_util.h"
 #include "components/gcm_driver/fake_gcm_driver.h"
 #include "components/gcm_driver/gcm_driver.h"
 #include "components/gcm_driver/instance_id/instance_id.h"
@@ -21,7 +23,6 @@ using base::test::RunOnceCallback;
 using base::test::RunOnceCallbackRepeatedly;
 using instance_id::InstanceID;
 using testing::_;
-using testing::Invoke;
 using testing::NiceMock;
 using testing::Return;
 using testing::WithArg;
@@ -121,6 +122,7 @@ class FCMHandlerTest : public testing::Test {
 };
 
 TEST_F(FCMHandlerTest, ShouldReturnValidToken) {
+  base::HistogramTester histogram_tester;
   // Check that the handler gets the token through GetToken.
   EXPECT_CALL(mock_instance_id_, GetToken)
       .WillOnce(RunOnceCallback<4>("token", InstanceID::Result::SUCCESS));
@@ -128,9 +130,14 @@ TEST_F(FCMHandlerTest, ShouldReturnValidToken) {
   fcm_handler_.StartListening();
 
   EXPECT_EQ("token", fcm_handler_.GetFCMRegistrationToken());
+
+  histogram_tester.ExpectTotalCount(boca::kBocaTokenRetrievalIsValidation, 1);
+  histogram_tester.ExpectBucketCount(boca::kBocaTokenRetrievalIsValidation,
+                                     false, 1);
 }
 
 TEST_F(FCMHandlerTest, ShouldPropagatePayloadToListener) {
+  base::HistogramTester histogram_tester;
   const std::string kPayloadValue = "some_payload";
   NiceMock<MockListener> mock_listener;
   fcm_handler_.AddListener(&mock_listener);
@@ -141,9 +148,11 @@ TEST_F(FCMHandlerTest, ShouldPropagatePayloadToListener) {
   EXPECT_CALL(mock_listener, OnInvalidationReceived(kPayloadValue));
   fcm_handler_.OnMessage(kInvalidationsAppId, gcm_message);
   fcm_handler_.RemoveListener(&mock_listener);
+  histogram_tester.ExpectTotalCount(boca::kBocaTokenRetrievalIsValidation, 0);
 }
 
 TEST_F(FCMHandlerTest, ShouldNotifyOnTokenChange) {
+  base::HistogramTester histogram_tester;
   NiceMock<MockTokenObserver> mock_token_observer;
   fcm_handler_.AddTokenObserver(&mock_token_observer);
 
@@ -156,9 +165,13 @@ TEST_F(FCMHandlerTest, ShouldNotifyOnTokenChange) {
   fcm_handler_.StartListening();
 
   fcm_handler_.RemoveTokenObserver(&mock_token_observer);
+  histogram_tester.ExpectTotalCount(boca::kBocaTokenRetrievalIsValidation, 1);
+  histogram_tester.ExpectBucketCount(boca::kBocaTokenRetrievalIsValidation,
+                                     false, 1);
 }
 
 TEST_F(FCMHandlerTest, ShouldScheduleTokenValidationAndActOnNewToken) {
+  base::HistogramTester histogram_tester;
   NiceMock<MockTokenObserver> mock_token_observer;
   fcm_handler_.AddTokenObserver(&mock_token_observer);
 
@@ -180,9 +193,15 @@ TEST_F(FCMHandlerTest, ShouldScheduleTokenValidationAndActOnNewToken) {
   task_environment_.FastForwardBy(base::Seconds(1));
 
   fcm_handler_.RemoveTokenObserver(&mock_token_observer);
+  histogram_tester.ExpectTotalCount(boca::kBocaTokenRetrievalIsValidation, 2);
+  histogram_tester.ExpectBucketCount(boca::kBocaTokenRetrievalIsValidation,
+                                     true, 1);
+  histogram_tester.ExpectBucketCount(boca::kBocaTokenRetrievalIsValidation,
+                                     false, 1);
 }
 
 TEST_F(FCMHandlerTest, ShouldScheduleTokenValidationAndNotActOnSameToken) {
+  base::HistogramTester histogram_tester;
   NiceMock<MockTokenObserver> mock_token_observer;
   fcm_handler_.AddTokenObserver(&mock_token_observer);
 
@@ -204,9 +223,15 @@ TEST_F(FCMHandlerTest, ShouldScheduleTokenValidationAndNotActOnSameToken) {
   task_environment_.FastForwardBy(base::Seconds(1));
 
   fcm_handler_.RemoveTokenObserver(&mock_token_observer);
+  histogram_tester.ExpectTotalCount(boca::kBocaTokenRetrievalIsValidation, 2);
+  histogram_tester.ExpectBucketCount(boca::kBocaTokenRetrievalIsValidation,
+                                     true, 1);
+  histogram_tester.ExpectBucketCount(boca::kBocaTokenRetrievalIsValidation,
+                                     false, 1);
 }
 
 TEST_F(FCMHandlerTest, ShouldClearTokenOnStopListeningPermanently) {
+  base::HistogramTester histogram_tester;
   // Check that the handler gets the token through GetToken.
   EXPECT_CALL(mock_instance_id_, GetToken)
       .WillOnce(RunOnceCallback<4>("token", InstanceID::Result::SUCCESS));
@@ -223,6 +248,9 @@ TEST_F(FCMHandlerTest, ShouldClearTokenOnStopListeningPermanently) {
   EXPECT_EQ(std::nullopt, fcm_handler_.GetFCMRegistrationToken());
 
   fcm_handler_.RemoveTokenObserver(&mock_token_observer);
+  histogram_tester.ExpectTotalCount(boca::kBocaTokenRetrievalIsValidation, 1);
+  histogram_tester.ExpectBucketCount(boca::kBocaTokenRetrievalIsValidation,
+                                     false, 1);
 }
 
 }  // namespace

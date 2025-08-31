@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {AnnotationMode, UserAction} from 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_viewer_wrapper.js';
+import {AnnotationMode, PluginController, PluginControllerEventType, UserAction} from 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_viewer_wrapper.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {isVisible, microtasksFinished} from 'chrome://webui-test/test_util.js';
@@ -15,9 +15,8 @@ setupTestMockPluginForInk();
 const mockMetricsPrivate = setupMockMetricsPrivate();
 
 chrome.test.runTests([
-  // Test that PDF annotations and the new ink mode are enabled.
+  // Test that Ink2 mode are enabled.
   function testAnnotationsEnabled() {
-    chrome.test.assertTrue(loadTimeData.getBoolean('pdfAnnotationsEnabled'));
     chrome.test.assertTrue(loadTimeData.getBoolean('pdfInk2Enabled'));
     // When ink2 and annotations are enabled in loadTimeData, the ink2
     // button section displays.
@@ -205,6 +204,51 @@ chrome.test.runTests([
     await microtasksFinished();
     chrome.test.assertFalse(!!viewer.shadowRoot.querySelector(textPanelQuery));
     chrome.test.assertFalse(!!viewer.shadowRoot.querySelector(drawPanelQuery));
+
+    chrome.test.succeed();
+  },
+
+  async function testTextboxVisibility() {
+    // Enable text annotations.
+    loadTimeData.overrideValues({'pdfTextAnnotationsEnabled': true});
+    viewerToolbar.strings = Object.assign({}, viewerToolbar.strings);
+    await microtasksFinished();
+
+    // Annotation mode off. Textbox is not in the DOM.
+    viewerToolbar.setAnnotationMode(AnnotationMode.OFF);
+    await microtasksFinished();
+    let textbox = viewer.shadowRoot.querySelector('ink-text-box');
+    chrome.test.assertFalse(!!textbox);
+
+    // Text annotation mode. Textbox is in the DOM but isn't visible.
+    viewerToolbar.setAnnotationMode(AnnotationMode.TEXT);
+    await microtasksFinished();
+    textbox = viewer.shadowRoot.querySelector('ink-text-box');
+    chrome.test.assertTrue(!!textbox);
+    chrome.test.assertFalse(isVisible(textbox));
+
+    // Simulate clicking the plugin. pdf-viewer should notify Ink2Manager to
+    // initialize an annotation, which shows the box.
+    PluginController.getInstance().getEventTarget().dispatchEvent(
+        new CustomEvent(
+            PluginControllerEventType.PLUGIN_MESSAGE,
+            {detail: {type: 'sendClickEvent', x: 50, y: 50}}));
+    await microtasksFinished();
+    chrome.test.assertTrue(isVisible(textbox));
+
+    // Switching to a different annotation mode removes the box from the DOM.
+    viewerToolbar.setAnnotationMode(AnnotationMode.DRAW);
+    await microtasksFinished();
+    textbox = viewer.shadowRoot.querySelector('ink-text-box');
+    chrome.test.assertFalse(!!textbox);
+
+    // Text annotation mode. Switching back to text puts the box back in the
+    // DOM, but does not immediately make it visible.
+    viewerToolbar.setAnnotationMode(AnnotationMode.TEXT);
+    await microtasksFinished();
+    textbox = viewer.shadowRoot.querySelector('ink-text-box');
+    chrome.test.assertTrue(!!textbox);
+    chrome.test.assertFalse(isVisible(textbox));
 
     chrome.test.succeed();
   },

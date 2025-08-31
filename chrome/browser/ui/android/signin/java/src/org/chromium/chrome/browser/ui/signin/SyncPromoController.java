@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.ui.signin;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.drawable.Drawable;
@@ -12,17 +14,16 @@ import android.view.View;
 import android.view.ViewGroup;
 
 import androidx.annotation.DimenRes;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.StringDef;
 import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.BuildInfo;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.Promise;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -61,6 +62,7 @@ import java.util.Set;
  * The controller also takes care of counting impressions, recording signin related user actions and
  * histograms.
  */
+@NullMarked
 public class SyncPromoController {
     public interface Delegate {
         /**
@@ -90,8 +92,6 @@ public class SyncPromoController {
     @VisibleForTesting
     static final int NTP_SYNC_PROMO_NTP_SINCE_FIRST_TIME_SHOWN_LIMIT_HOURS =
             336; // 14 days in hours.
-
-    @VisibleForTesting static final String GMAIL_DOMAIN = "gmail.com";
 
     /** Strings used for promo shown count histograms. */
     @StringDef({UserAction.CONTINUED, UserAction.DISMISSED, UserAction.SHOWN})
@@ -188,7 +188,7 @@ public class SyncPromoController {
      */
     public SyncPromoController(
             Profile profile,
-            @NonNull AccountPickerBottomSheetStrings bottomSheetStrings,
+            AccountPickerBottomSheetStrings bottomSheetStrings,
             @SigninAndHistorySyncActivityLauncher.AccessPoint int accessPoint,
             SigninAndHistorySyncActivityLauncher signinAndHistorySyncActivityLauncher) {
         mProfile = profile;
@@ -253,8 +253,7 @@ public class SyncPromoController {
     }
 
     private boolean canShowNTPPromo() {
-        if (IdentityServicesProvider.get()
-                .getIdentityManager(mProfile)
+        if (assumeNonNull(IdentityServicesProvider.get().getIdentityManager(mProfile))
                 .hasPrimaryAccount(ConsentLevel.SIGNIN)) {
             return false;
         }
@@ -277,14 +276,11 @@ public class SyncPromoController {
             return false;
         }
 
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.FORCE_DISABLE_EXTENDED_SYNC_PROMOS)) {
-            return false;
-        }
         final @Nullable CoreAccountInfo visibleAccount = getVisibleAccount();
         if (visibleAccount == null) {
             return true;
         }
-        final Promise<AccountInfo> visibleAccountPromise =
+        final Promise<@Nullable AccountInfo> visibleAccountPromise =
                 AccountInfoServiceProvider.get().getAccountInfoByEmail(visibleAccount.getEmail());
 
         AccountInfo accountInfo =
@@ -293,13 +289,13 @@ public class SyncPromoController {
     }
 
     private boolean canShowBookmarkPromo() {
-        if (IdentityServicesProvider.get()
-                .getIdentityManager(mProfile)
+        if (assumeNonNull(IdentityServicesProvider.get().getIdentityManager(mProfile))
                 .hasPrimaryAccount(ConsentLevel.SIGNIN)) {
             return false;
         }
 
         SyncService syncService = SyncServiceFactory.getForProfile(mProfile);
+        assumeNonNull(syncService);
         if (syncService
                 .getSelectedTypes()
                 .containsAll(
@@ -328,6 +324,8 @@ public class SyncPromoController {
                 IdentityServicesProvider.get().getSigninManager(mProfile);
         final IdentityManager identityManager =
                 IdentityServicesProvider.get().getIdentityManager(mProfile);
+        assumeNonNull(signinManager);
+        assumeNonNull(identityManager);
         if (!signinManager.isSigninAllowed()
                 && !identityManager.hasPrimaryAccount(ConsentLevel.SIGNIN)) {
             // If sign-in is not possible, then history sync isn't possible either.
@@ -340,20 +338,20 @@ public class SyncPromoController {
     private @Nullable CoreAccountInfo getVisibleAccount() {
         final IdentityManager identityManager =
                 IdentityServicesProvider.get().getIdentityManager(mProfile);
-        @Nullable
+        assumeNonNull(identityManager);
         CoreAccountInfo visibleAccount = identityManager.getPrimaryAccountInfo(ConsentLevel.SIGNIN);
         final AccountManagerFacade accountManagerFacade =
                 AccountManagerFacadeProvider.getInstance();
         if (visibleAccount == null) {
             visibleAccount =
-                    AccountUtils.getDefaultCoreAccountInfoIfFulfilled(
-                            accountManagerFacade.getCoreAccountInfos());
+                    AccountUtils.getDefaultAccountIfFulfilled(accountManagerFacade.getAccounts());
         }
         return visibleAccount;
     }
 
     /**
      * Sets up the sync promo view.
+     *
      * @param profileDataCache The {@link ProfileDataCache} that stores profile data.
      * @param view The {@link PersonalizedSigninPromoView} that should be set up.
      * @param listener The {@link SyncPromoController.OnDismissListener} to be set to the view.
@@ -361,9 +359,10 @@ public class SyncPromoController {
     public void setUpSyncPromoView(
             ProfileDataCache profileDataCache,
             PersonalizedSigninPromoView view,
-            SyncPromoController.OnDismissListener listener) {
+            SyncPromoController.@Nullable OnDismissListener listener) {
         final IdentityManager identityManager =
                 IdentityServicesProvider.get().getIdentityManager(mProfile);
+        assumeNonNull(identityManager);
         assert !identityManager.hasPrimaryAccount(ConsentLevel.SYNC) : "Sync is already enabled!";
 
         final @Nullable CoreAccountInfo visibleAccount = getVisibleAccount();
@@ -484,6 +483,7 @@ public class SyncPromoController {
 
     private void setupHotState(PersonalizedSigninPromoView view) {
         final Context context = view.getContext();
+        assumeNonNull(mProfileData);
         Drawable accountImage = mProfileData.getImage();
         view.getImage().setImageDrawable(accountImage);
         setImageSize(context, view, R.dimen.sync_promo_account_image_size);
@@ -494,6 +494,7 @@ public class SyncPromoController {
         view.getPrimaryButton().setText(mDelegate.getTextForPrimaryButton(context, mProfileData));
         IdentityManager identityManager =
                 IdentityServicesProvider.get().getIdentityManager(mProfile);
+        assumeNonNull(identityManager);
         if (identityManager.hasPrimaryAccount(ConsentLevel.SIGNIN)
                 || mShouldSuppressSecondaryButton) {
             view.getSecondaryButton().setVisibility(View.GONE);
@@ -501,7 +502,7 @@ public class SyncPromoController {
         }
 
         // Hide secondary button on automotive devices, as they only support one account per device
-        if (BuildInfo.getInstance().isAutomotive) {
+        if (DeviceInfo.isAutomotive()) {
             view.getSecondaryButton().setVisibility(View.GONE);
         } else {
             view.getSecondaryButton().setText(R.string.signin_promo_choose_another_account);
@@ -602,7 +603,8 @@ public class SyncPromoController {
         RecordUserAction.record(mImpressionUserActionName);
     }
 
-    private String getPromoPrimaryButtonText(Context context, DisplayableProfileData profileData) {
+    private String getPromoPrimaryButtonText(
+            Context context, @Nullable DisplayableProfileData profileData) {
         return profileData == null
                 ? context.getString(R.string.signin_promo_signin)
                 : SigninUtils.getContinueAsButtonText(context, profileData);

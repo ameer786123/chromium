@@ -49,6 +49,8 @@
                                                       window:window];
   _detentsManager.delegate = self;
   [_detentsManager adjustDetentsForState:SheetDetentStateConsentDialog];
+
+  [self.delegate lensOverlayConsentPresenterWillShowConsent:self];
   [_presentingViewController
       presentViewController:_presentedConsentViewController
                    animated:YES
@@ -57,6 +59,8 @@
 
 - (void)dismissConsentViewControllerAnimated:(BOOL)animated
                                   completion:(void (^)(void))completion {
+  [self.delegate lensOverlayConsentPresenterWillDismissConsent:self];
+
   // As the presenting view controller is not owned by the presenter it can be
   // released independently. If this is the case, make sure the completion is
   // called before exiting.
@@ -81,7 +85,7 @@
 - (BOOL)lensOverlayDetentsManagerShouldDismissBottomSheet:
     (LensOverlayDetentsManager*)detentsManager {
   DCHECK(detentsManager.sheetDimension == SheetDimensionState::kConsent);
-  return YES;
+  return NO;
 }
 
 @end

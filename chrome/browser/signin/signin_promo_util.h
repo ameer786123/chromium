@@ -5,8 +5,12 @@
 #ifndef CHROME_BROWSER_SIGNIN_SIGNIN_PROMO_UTIL_H_
 #define CHROME_BROWSER_SIGNIN_SIGNIN_PROMO_UTIL_H_
 
+#include "base/memory/raw_ref.h"
+#include "base/scoped_observation.h"
 #include "build/build_config.h"
 #include "components/signin/public/base/signin_buildflags.h"
+#include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "extensions/buildflags/buildflags.h"
 
 class Profile;
@@ -23,6 +27,9 @@ class AutofillProfile;
 namespace extensions {
 class Extension;
 }
+
+class PrefService;
+
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 namespace signin {
@@ -69,19 +76,48 @@ SignInPromoType GetSignInPromoTypeFromAccessPoint(
 void RecordSignInPromoShown(signin_metrics::AccessPoint access_point,
                             Profile* profile);
 
-class SyncPromoIdentityPillManager {
+class SyncPromoIdentityPillManager : public signin::IdentityManager::Observer {
  public:
-  SyncPromoIdentityPillManager();
+  explicit SyncPromoIdentityPillManager(
+      signin::IdentityManager* identity_manager,
+      PrefService* pref_service);
   // Used only for testing.
-  SyncPromoIdentityPillManager(int max_shown_count, int max_used_count);
+  SyncPromoIdentityPillManager(signin::IdentityManager* identity_manager,
+                               PrefService* pref_service,
+                               int max_shown_count,
+                               int max_used_count);
+  ~SyncPromoIdentityPillManager() override;
 
-  bool ShouldShowPromo(Profile& profile) const;
-  void RecordPromoShown(Profile& profile);
-  void RecordPromoUsed(Profile& profile);
+  SyncPromoIdentityPillManager(const SyncPromoIdentityPillManager&) = delete;
+  SyncPromoIdentityPillManager& operator=(const SyncPromoIdentityPillManager&) =
+      delete;
+
+  SyncPromoIdentityPillManager(SyncPromoIdentityPillManager&&) = delete;
+  SyncPromoIdentityPillManager& operator=(SyncPromoIdentityPillManager&&) =
+      delete;
+
+  bool ShouldShowPromo() const;
+  void RecordPromoShown();
+  void RecordPromoUsed();
+
+  // signin::IdentityManager::Observer:
+  void OnIdentityManagerShutdown(IdentityManager* identity_manager) override;
 
  private:
+  bool ArePromotionsEnabled() const;
+  // Returns an empty account if the profile sign in state is anything different
+  // than signed in.
+  AccountInfo GetSignedInAccountInfo() const;
+
+  raw_ptr<signin::IdentityManager> identity_manager_;
+  const raw_ref<PrefService> pref_service_;
+
   const int max_shown_count_ = 0;
   const int max_used_count_ = 0;
+
+  base::ScopedObservation<signin::IdentityManager,
+                          signin::IdentityManager::Observer>
+      identity_manager_scoped_observation_{this};
 };
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 

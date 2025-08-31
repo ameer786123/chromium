@@ -55,7 +55,7 @@ class TabsEventRouter : public TabStripModelObserver,
   ~TabsEventRouter() override;
 
   // BrowserTabStripTrackerDelegate:
-  bool ShouldTrackBrowser(Browser* browser) override;
+  bool ShouldTrackBrowser(BrowserWindowInterface* browser) override;
 
   // BrowserListObserver:
   void OnBrowserSetLastActive(Browser* browser) override;
@@ -78,6 +78,7 @@ class TabsEventRouter : public TabStripModelObserver,
                               tabs::TabInterface* tab,
                               int index) override;
   void OnTabGroupChanged(const TabGroupChange& change) override;
+  void OnSplitTabChanged(const SplitTabChange& change) override;
 
   // ZoomObserver:
   void OnZoomControllerDestroyed(
@@ -138,7 +139,7 @@ class TabsEventRouter : public TabStripModelObserver,
   // Triggers a tab updated event if the favicon URL changes.
   void FaviconUrlUpdated(content::WebContents* contents);
 
-  // The DispatchEvent methods forward events to the |profile|'s event router.
+  // The DispatchEvent methods forward events to the `profile`'s event router.
   // The TabsEventRouter listens to events for all profiles,
   // so we avoid duplication by dropping events destined for other profiles.
   void DispatchEvent(Profile* profile,
@@ -147,8 +148,8 @@ class TabsEventRouter : public TabStripModelObserver,
                      base::Value::List args,
                      EventRouter::UserGestureState user_gesture);
 
-  // Packages |changed_property_names| as a tab updated event for the tab
-  // |contents| and dispatches the event to the extension.
+  // Packages `changed_property_names` as a tab updated event for the tab
+  // `contents` and dispatches the event to the extension.
   void DispatchTabUpdatedEvent(content::WebContents* contents,
                                std::set<std::string> changed_property_names);
 
@@ -170,7 +171,7 @@ class TabsEventRouter : public TabStripModelObserver,
   class TabEntry : public content::WebContentsObserver {
    public:
     // Create a TabEntry associated with, and tracking state changes to,
-    // |contents|.
+    // `contents`.
     TabEntry(TabsEventRouter* router, content::WebContents* contents);
 
     TabEntry(const TabEntry&) = delete;
@@ -211,7 +212,7 @@ class TabsEventRouter : public TabStripModelObserver,
     raw_ptr<TabsEventRouter> router_;
   };
 
-  // Gets the TabEntry for the given |contents|. Returns TabEntry* if found,
+  // Gets the TabEntry for the given `contents`. Returns TabEntry* if found,
   // nullptr if not.
   TabEntry* GetTabEntry(content::WebContents* contents);
 

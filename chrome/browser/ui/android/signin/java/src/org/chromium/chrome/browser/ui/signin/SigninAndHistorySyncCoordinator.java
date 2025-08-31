@@ -4,17 +4,21 @@
 
 package org.chromium.chrome.browser.ui.signin;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.view.View;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.NonNull;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncConfig;
 import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncHelper;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler.BackPressResult;
+import org.chromium.components.signin.SigninFeatureMap;
+import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 
@@ -25,6 +29,7 @@ import java.lang.annotation.RetentionPolicy;
  * Interface for coordinators responsible of showing the correct sub-component of the sign-in and
  * history opt-in flow.
  */
+@NullMarked
 public interface SigninAndHistorySyncCoordinator {
 
     /** Indicates the sign-in flow completion status. */
@@ -58,10 +63,9 @@ public interface SigninAndHistorySyncCoordinator {
      * Called when an account is added via Google Play Services "add account" flow started at the
      * activity level.
      */
-    void onAccountAdded(@NonNull String accountEmail);
+    void onAccountAdded(String accountEmail);
 
     /** Provides the root view of the sign-in and history opt-in flow. */
-    @NonNull
     View getView();
 
     /** Called when the configuration of the embedder activity changes. */
@@ -78,8 +82,9 @@ public interface SigninAndHistorySyncCoordinator {
      *
      * @param profile The current profile.
      */
-    public static boolean willShowSigninUi(Profile profile) {
+    static boolean willShowSigninUi(Profile profile) {
         SigninManager signinManager = IdentityServicesProvider.get().getSigninManager(profile);
+        assumeNonNull(signinManager);
         return signinManager.isSigninAllowed();
     }
 
@@ -93,10 +98,11 @@ public interface SigninAndHistorySyncCoordinator {
      * @param historyOptInMode Whether the history opt-in should be always, optionally or never
      *     shown.
      */
-    public static boolean willShowHistorySyncUi(
+    static boolean willShowHistorySyncUi(
             Profile profile, @HistorySyncConfig.OptInMode int historyOptInMode) {
         IdentityManager identityManager =
                 IdentityServicesProvider.get().getIdentityManager(profile);
+        assumeNonNull(identityManager);
         if (!willShowSigninUi(profile) && !identityManager.hasPrimaryAccount(ConsentLevel.SIGNIN)) {
             // Signin is suppressed because of something other than the user being signed in. Since
             // the user cannot sign in, we should not show history sync either.
@@ -108,11 +114,13 @@ public interface SigninAndHistorySyncCoordinator {
     static boolean shouldShowHistorySync(
             Profile profile, @HistorySyncConfig.OptInMode int historyOptInMode) {
         HistorySyncHelper historySyncHelper = HistorySyncHelper.getForProfile(profile);
+        boolean forceHistoryOptInScreen =
+                SigninFeatureMap.isEnabled(SigninFeatures.FORCE_HISTORY_OPT_IN_SCREEN);
         return switch (historyOptInMode) {
             case HistorySyncConfig.OptInMode.NONE -> false;
             case HistorySyncConfig.OptInMode.OPTIONAL -> !historySyncHelper
                             .shouldSuppressHistorySync()
-                    && !historySyncHelper.isDeclinedOften();
+                    && (forceHistoryOptInScreen || !historySyncHelper.isDeclinedOften());
             case HistorySyncConfig.OptInMode.REQUIRED -> !historySyncHelper
                     .shouldSuppressHistorySync();
             default -> throw new IllegalArgumentException(

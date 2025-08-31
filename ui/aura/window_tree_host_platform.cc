@@ -10,6 +10,7 @@
 
 #include "base/check_is_test.h"
 #include "base/functional/bind.h"
+#include "base/notimplemented.h"
 #include "base/observer_list.h"
 #include "base/run_loop.h"
 #include "base/trace_event/trace_event.h"
@@ -262,7 +263,7 @@ void WindowTreeHostPlatform::OnBoundsChanged(const BoundsChange& change) {
   }
 
   const auto preferred_scale =
-      display::Screen::GetScreen()->GetPreferredScaleFactorForWindow(window());
+      display::Screen::Get()->GetPreferredScaleFactorForWindow(window());
   float current_scale = compositor()->device_scale_factor();
   float new_scale = preferred_scale.value_or(1.0f);
   auto weak_ref = GetWeakPtr();
@@ -333,11 +334,10 @@ void WindowTreeHostPlatform::OnAcceleratedWidgetDestroyed() {
 
 void WindowTreeHostPlatform::OnActivationChanged(bool active) {}
 
-void WindowTreeHostPlatform::OnMouseEnter() {
+void WindowTreeHostPlatform::OnCursorUpdate() {
   client::CursorClient* cursor_client = client::GetCursorClient(window());
   if (cursor_client) {
-    auto display =
-        display::Screen::GetScreen()->GetDisplayNearestWindow(window());
+    auto display = display::Screen::Get()->GetDisplayNearestWindow(window());
     DCHECK(display.is_valid());
     cursor_client->SetDisplay(display);
   }
@@ -405,6 +405,11 @@ int64_t WindowTreeHostPlatform::OnStateUpdate(
   compositor()->SetLocalSurfaceIdFromParent(window()->GetLocalSurfaceId());
 
   return window()->GetLocalSurfaceId().parent_sequence_number();
+}
+
+void WindowTreeHostPlatform::OnDisplayColorSpacesChanged(
+    scoped_refptr<gfx::DisplayColorSpacesRef> color_spaces) {
+  WindowTreeHost::OnDisplayColorSpacesChanged(std::move(color_spaces));
 }
 
 }  // namespace aura

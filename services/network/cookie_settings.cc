@@ -16,6 +16,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/not_fatal_until.h"
+#include "base/rand_util.h"
 #include "base/strings/to_string.h"
 #include "base/types/optional_ref.h"
 #include "base/types/optional_util.h"
@@ -389,22 +390,29 @@ bool CookieSettings::IsThirdPartyCookiesAllowedScheme(
 bool CookieSettings::ShouldBlockThirdPartyCookies(
     base::optional_ref<const url::Origin> top_frame_origin,
     net::CookieSettingOverrides overrides) const {
+  if (std::optional<bool> modifier_decision =
+          MaybeBlockThirdPartyCookiesPerModifiers(top_frame_origin,
+                                                  overrides)) {
+    return modifier_decision.value();
+  }
   return block_third_party_cookies_ ||
-         Are3pcsForceDisabledByOverride(overrides) ||
-         IsThirdPartyPhaseoutEnabled(top_frame_origin, overrides);
+         net::cookie_util::IsForceThirdPartyCookieBlockingEnabled() ||
+         tracking_protection_enabled_for_3pcd_;
 }
 
 bool CookieSettings::IsThirdPartyPhaseoutEnabled(
     base::optional_ref<const url::Origin> top_frame_origin,
     net::CookieSettingOverrides overrides) const {
-  return net::cookie_util::IsForceThirdPartyCookieBlockingEnabled() ||
-         tracking_protection_enabled_for_3pcd_ ||
-         (top_frame_origin &&
-          IsBlockedByTopLevel3pcdOriginTrial(top_frame_origin->GetURL())) ||
-         overrides.HasAll(
-             {net::CookieSettingOverride::kForceDisableThirdPartyCookies,
-              net::CookieSettingOverride::
-                  kForceEnableThirdPartyCookieMitigations});
+  switch (GetModifierMode(top_frame_origin, overrides)) {
+    case ModifierMode::kUndefined:
+      return net::cookie_util::IsForceThirdPartyCookieBlockingEnabled() ||
+             tracking_protection_enabled_for_3pcd_;
+    case ModifierMode::kPhaseout:
+      return true;
+    case ModifierMode::kAllow:
+    case ModifierMode::kBlock:
+      return false;
+  }
 }
 
 bool CookieSettings::MitigationsEnabledFor3pcd() const {
@@ -464,13 +472,6 @@ void CookieSettings::AugmentInclusionStatus(
   // The cookie is blocked, but not by 3PCD.
   out_status.AddExclusionReason(
       net::CookieInclusionStatus::ExclusionReason::EXCLUDE_USER_PREFERENCES);
-}
-
-// TODO(crbug.com/366284840): Deprecate this function when moving storage access
-// status out of //net.
-// static
-bool CookieSettings::IsStorageAccessHeadersEnabled() {
-  return base::FeatureList::IsEnabled(network::features::kStorageAccessHeaders);
 }
 
 bool CookieSettings::ShouldAlwaysAllowCookiesForTesting(

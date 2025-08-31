@@ -4,6 +4,8 @@
 
 #include "chrome/browser/headless/headless_mode_browsertest.h"
 
+#include <windows.h>
+
 #include <set>
 
 #include "base/strings/stringprintf.h"
@@ -16,14 +18,16 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
-#include "ui/base/ui_base_switches.h"
+#include "ui/base/win/hwnd_metrics.h"
 #include "ui/compositor/layer_type.h"
+#include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/display/win/screen_win_headless.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/switches.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_win.h"
 #include "ui/views/widget/widget.h"
 
@@ -78,6 +82,13 @@ aura::Window* CreateAuraWindow(aura::Window* parent, const gfx::Rect& bounds) {
   window->Show();
   parent->AddChild(window);
   return window;
+}
+
+int GetSystemFrameThickness() {
+  // Mimic ui::GetFrameThickness() for 1x.
+  const int resize_frame_thickness = ::GetSystemMetrics(SM_CXSIZEFRAME);
+  const int padding_thickness = ::GetSystemMetrics(SM_CXPADDEDBORDER);
+  return resize_frame_thickness + padding_thickness;
 }
 
 }  // namespace test
@@ -177,46 +188,6 @@ IN_PROC_BROWSER_TEST_F(HeadlessModeBrowserTest,
   EXPECT_FALSE(::IsWindowVisible(desktop_window_hwnd));
 }
 
-IN_PROC_BROWSER_TEST_F(HeadlessModeBrowserTestWithWindowSize, LargeWindowSize) {
-  DesktopWindowTreeHostWinWrapper* desktop_window_tree_host =
-      static_cast<DesktopWindowTreeHostWinWrapper*>(
-          browser()->window()->GetNativeWindow()->GetHost());
-  HWND desktop_window_hwnd = desktop_window_tree_host->GetHWND();
-
-  // Expect the platform window size to be smaller than the requested window
-  // size due to Windows clamping the window dimensions to the monitor work
-  // area.
-  RECT platform_window_rect;
-  CHECK(::GetWindowRect(desktop_window_hwnd, &platform_window_rect));
-  EXPECT_LT(gfx::Rect(platform_window_rect).width(), kWindowSize.width());
-  EXPECT_LT(gfx::Rect(platform_window_rect).height(), kWindowSize.height());
-
-  // Expect the reported browser window size to be the same as the requested
-  // window size.
-  gfx::Rect bounds = browser()->window()->GetBounds();
-  EXPECT_EQ(bounds.size(), kWindowSize);
-}
-
-IN_PROC_BROWSER_TEST_F(HeadlessModeBrowserTestWithWindowSizeAndScale,
-                       WindowSizeWithScale) {
-  DesktopWindowTreeHostWinWrapper* desktop_window_tree_host =
-      static_cast<DesktopWindowTreeHostWinWrapper*>(
-          browser()->window()->GetNativeWindow()->GetHost());
-  HWND desktop_window_hwnd = desktop_window_tree_host->GetHWND();
-
-  // Expect the platform window size to be larger than the requested window size
-  // due to scaling.
-  RECT platform_window_rect;
-  CHECK(::GetWindowRect(desktop_window_hwnd, &platform_window_rect));
-  EXPECT_GT(gfx::Rect(platform_window_rect).width(), kWindowSize.width());
-  EXPECT_GT(gfx::Rect(platform_window_rect).height(), kWindowSize.height());
-
-  // Expect the reported browser window size to be the same as the requested
-  // window size.
-  gfx::Rect bounds = browser()->window()->GetBounds();
-  EXPECT_EQ(bounds.size(), kWindowSize);
-}
-
 // display::win::ScreenWinHeadless tests -------------------------------------
 
 class HeadlessModeBrowserTestWithScreenInfo : public HeadlessModeBrowserTest {
@@ -233,9 +204,21 @@ class HeadlessModeBrowserTestWithScreenInfo : public HeadlessModeBrowserTest {
 
   display::win::ScreenWinHeadless* screen() const {
     return static_cast<display::win::ScreenWinHeadless*>(
-        display::Screen::GetScreen());
+        display::Screen::Get());
   }
 };
+
+#define HEADLESS_MODE_PROTOCOL_TEST_WITH_SCREEN_INFO(TEST_NAME, SCREEEN_INFO) \
+  class HeadlessModeBrowserTestWithScreenInfo_##TEST_NAME                     \
+      : public HeadlessModeBrowserTestWithScreenInfo {                        \
+   public:                                                                    \
+    std::string GetScreenInfo() override {                                    \
+      return SCREEEN_INFO;                                                    \
+    }                                                                         \
+  };                                                                          \
+                                                                              \
+  IN_PROC_BROWSER_TEST_F(HeadlessModeBrowserTestWithScreenInfo_##TEST_NAME,   \
+                         TEST_NAME)
 
 IN_PROC_BROWSER_TEST_F(HeadlessModeBrowserTestWithScreenInfo,
                        GetCursorScreenPoint) {
@@ -343,7 +326,7 @@ class HeadlessModeBrowserTest2ndScreen
 
 IN_PROC_BROWSER_TEST_F(HeadlessModeBrowserTest2ndScreen,
                        GetWindowAt2ndScreenPoint) {
-  ASSERT_EQ(display::Screen::GetScreen()->GetNumDisplays(), 2);
+  ASSERT_EQ(display::Screen::Get()->GetNumDisplays(), 2);
 
   // Try off 2nd screen point.
   EXPECT_FALSE(screen()->GetWindowAtScreenPoint(gfx::Point(800 - 100, 0)));
@@ -353,6 +336,35 @@ IN_PROC_BROWSER_TEST_F(HeadlessModeBrowserTest2ndScreen,
   aura::Window* window = screen()->GetWindowAtScreenPoint(kScreenCenter);
   ASSERT_TRUE(window);
   EXPECT_TRUE(window->GetBoundsInScreen().Contains(kScreenCenter));
+}
+
+HEADLESS_MODE_PROTOCOL_TEST_WITH_SCREEN_INFO(GetFrameThicknessFromScreenRect,
+                                             "{}{devicePixelRatio=2.0}") {
+  ASSERT_EQ(screen()->GetNumDisplays(), 2);
+  ASSERT_EQ(screen()->GetAllDisplays()[0].device_scale_factor(), 1.f);
+  ASSERT_EQ(screen()->GetAllDisplays()[1].device_scale_factor(), 2.f);
+
+  const int kSystemFrameThickness = test::GetSystemFrameThickness();
+  EXPECT_EQ(ui::GetFrameThicknessFromScreenRect(gfx::Rect(0, 0, 10, 20)),
+            kSystemFrameThickness);
+  EXPECT_EQ(ui::GetFrameThicknessFromScreenRect(gfx::Rect(800, 600, 10, 20)),
+            kSystemFrameThickness * 2);
+}
+
+HEADLESS_MODE_PROTOCOL_TEST_WITH_SCREEN_INFO(GetFrameThicknessFromWindow,
+                                             "{devicePixelRatio=2.0}") {
+  ASSERT_EQ(screen()->GetNumDisplays(), 1);
+  ASSERT_EQ(screen()->GetAllDisplays()[0].device_scale_factor(), 2.f);
+
+  DesktopWindowTreeHostWinWrapper* desktop_window_tree_host =
+      static_cast<DesktopWindowTreeHostWinWrapper*>(
+          browser()->window()->GetNativeWindow()->GetHost());
+  HWND desktop_window_hwnd = desktop_window_tree_host->GetHWND();
+
+  const int kSystemFrameThickness = test::GetSystemFrameThickness();
+  EXPECT_EQ(ui::GetFrameThicknessFromWindow(desktop_window_hwnd,
+                                            MONITOR_DEFAULTTONEAREST),
+            kSystemFrameThickness * 2);
 }
 
 }  // namespace

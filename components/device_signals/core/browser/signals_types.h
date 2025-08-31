@@ -12,7 +12,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/device_signals/core/common/common_types.h"
-#include "components/enterprise/connectors/core/common.h"
+#include "components/enterprise/connectors/core/reporting_constants.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -61,6 +61,13 @@ enum class SignalCollectionError {
   kParsingFailed,
   kUnexpectedValue,
   kMaxValue = kUnexpectedValue
+};
+
+// Enum representing the type of signals the AgentSignalCollector can collect.
+enum class AgentSignalCollectionType {
+  kDetectedAgents,
+  kCrowdstrikeIdentifiers,
+  kMaxValue = kCrowdstrikeIdentifiers
 };
 
 const std::string ErrorToString(SignalCollectionError error);
@@ -232,6 +239,9 @@ struct OsSignalsResponse : BaseSignalResponse {
   std::optional<device_signals::SettingValue> secure_boot_mode = std::nullopt;
   std::optional<std::string> windows_machine_domain = std::nullopt;
   std::optional<std::string> windows_user_domain = std::nullopt;
+
+  // Linux specific
+  std::optional<std::string> distribution_version = std::nullopt;
 };
 
 struct ProfileSignalsResponse : BaseSignalResponse {
@@ -251,9 +261,15 @@ struct ProfileSignalsResponse : BaseSignalResponse {
   std::optional<std::string> profile_enrollment_domain = std::nullopt;
   safe_browsing::SafeBrowsingState safe_browsing_protection_level;
   bool site_isolation_enabled;
+  std::optional<std::string> profile_id = std::nullopt;
 
-  // Enterprise cloud content analysis exclusive
+  // Enterprise cloud content analysis exclusives
   enterprise_connectors::EnterpriseRealTimeUrlCheckMode realtime_url_check_mode;
+  std::vector<std::string> file_downloaded_providers{};
+  std::vector<std::string> file_attached_providers{};
+  std::vector<std::string> bulk_data_entry_providers{};
+  std::vector<std::string> print_providers{};
+  std::vector<std::string> security_event_providers{};
 };
 
 struct FileSystemInfoResponse : BaseSignalResponse {
@@ -280,6 +296,7 @@ struct AgentSignalsResponse : BaseSignalResponse {
   ~AgentSignalsResponse() override;
 
   std::optional<CrowdStrikeSignals> crowdstrike_signals = std::nullopt;
+  std::vector<Agents> detected_agents{};
 };
 
 // Request struct containing properties that will be used by the
@@ -304,6 +321,9 @@ struct SignalsAggregationRequest {
   // Parameters required when requesting the collection of signals living on
   // the device's file system.
   std::vector<GetFileSystemInfoOptions> file_system_signal_parameters;
+
+  // Parameters required when requesting the collection of agent signals.
+  std::unordered_set<AgentSignalCollectionType> agent_signal_parameters;
 
   std::vector<GetSettingsOptions> settings_signal_parameters;
 

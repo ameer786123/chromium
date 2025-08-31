@@ -9,16 +9,15 @@ import sys
 from typing import Any
 import unittest
 
+from telemetry.util import image_util
+from telemetry.util import rgba_color
+
+import gpu_path_util
 from gpu_tests import color_profile_manager
 from gpu_tests import common_browser_args as cba
 from gpu_tests import common_typing as ct
 from gpu_tests import gpu_integration_test
-
-import gpu_path_util
-
-from telemetry.util import image_util
-from telemetry.util import rgba_color
-
+from gpu_tests.util import screenshot_utils
 
 class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
   """Tests that screenshots are properly synchronized with the frame on
@@ -122,17 +121,18 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
                            green=canvasRGB.g,
                            blue=canvasRGB.b)
     screenshot = tab.Screenshot(10)
+    effective_dpr = screenshot_utils.GetEffectiveDpr(tab)
     # Avoid checking along antialiased boundary due to limited Adreno 3xx
     # interpolation precision (crbug.com/847984). We inset by one CSS pixel
     # adjusted by the device pixel ratio.
-    inset = int(math.ceil(tab.EvaluateJavaScript('window.devicePixelRatio')))
+    inset = int(math.ceil(effective_dpr))
     # It seems that we should be able to set start_x to 2 * inset (one to
     # account for the inner div having left=1 and one to avoid sampling the
     # aa edge). For reasons not fully understood this is insufficent on
     # several bots (N9, 6P, mac-rel).
     start_x = 10
     start_y = inset
-    outer_size = 256 - inset
+    outer_size = int(math.floor(256 * effective_dpr)) - inset
     skip = 10
     for y in range(start_y, outer_size, skip):
       for x in range(start_x, outer_size, skip):

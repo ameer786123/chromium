@@ -8,8 +8,8 @@
 #include "base/check_deref.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_info_provider.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
 #include "content/public/browser/isolated_web_apps_policy.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
@@ -19,19 +19,19 @@
 
 namespace web_app {
 
-std::unique_ptr<content::NavigationThrottle>
-IsolatedWebAppThrottle::MaybeCreateThrottleFor(
-    content::NavigationHandle* handle) {
-  if (content::AreIsolatedWebAppsEnabled(
-          handle->GetWebContents()->GetBrowserContext())) {
-    return std::make_unique<IsolatedWebAppThrottle>(handle);
+// static
+void IsolatedWebAppThrottle::MaybeCreateAndAdd(
+    content::NavigationThrottleRegistry& registry) {
+  if (content::AreIsolatedWebAppsEnabled(registry.GetNavigationHandle()
+                                             .GetWebContents()
+                                             ->GetBrowserContext())) {
+    registry.AddThrottle(std::make_unique<IsolatedWebAppThrottle>(registry));
   }
-  return nullptr;
 }
 
 IsolatedWebAppThrottle::IsolatedWebAppThrottle(
-    content::NavigationHandle* handle)
-    : content::NavigationThrottle(handle) {}
+    content::NavigationThrottleRegistry& registry)
+    : content::NavigationThrottle(registry) {}
 
 IsolatedWebAppThrottle::~IsolatedWebAppThrottle() = default;
 
@@ -42,7 +42,7 @@ IsolatedWebAppThrottle::WillStartRequest() {
   }
 
   IwaKeyDistributionInfoProvider& key_distribution_info_provider =
-      CHECK_DEREF(IwaKeyDistributionInfoProvider::GetInstance());
+      IwaKeyDistributionInfoProvider::GetInstance();
   WebAppProvider& provider =
       CHECK_DEREF(WebAppProvider::GetForWebApps(profile()));
   if (provider.is_registry_ready() &&

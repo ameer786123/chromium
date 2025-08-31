@@ -8,6 +8,7 @@
 
 #include "base/check_deref.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/rand_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/foundations/autofill_client.h"
@@ -80,8 +81,8 @@ void FormInteractionsUkmLogger::LogSuggestionsShown(
       .SetServerType(static_cast<int>(field.server_type()))
       .SetFormSignature(HashFormSignature(form.form_signature()))
       .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
-      .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form_parsed_timestamp))
+      .SetMillisecondsSinceFormParsed(MillisecondsSinceFormParsed(
+          form_parsed_timestamp, base::TimeTicks::Now()))
       .Record(autofill_client_->GetUkmRecorder());
 
   base::UmaHistogramBoolean("Autofill.SuggestionShown.OffTheRecord",
@@ -102,8 +103,8 @@ void FormInteractionsUkmLogger::LogDidFillSuggestion(
     metric.SetRecordType(base::to_underlying(*record_type));
   }
   metric.SetIsForCreditCard(record_type.has_value())
-      .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form.form_parsed_timestamp()))
+      .SetMillisecondsSinceFormParsed(MillisecondsSinceFormParsed(
+          form.form_parsed_timestamp(), base::TimeTicks::Now()))
       .SetFormSignature(HashFormSignature(form.form_signature()))
       .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
       .Record(autofill_client_->GetUkmRecorder());
@@ -117,10 +118,15 @@ void FormInteractionsUkmLogger::LogEditedAutofilledFieldAtSubmission(
     return;
   }
 
+  FieldTypeSet field_types = field.Type().GetTypes();
+  auto field_type = static_cast<uint64_t>(
+      !field_types.empty() ? *field_types.begin() : NO_SERVER_DATA);
+
+  // TODO(crbug.com/432645177): Emit more than just one FieldType.
   ukm::builders::Autofill_EditedAutofilledFieldAtSubmission(ukm_source_id)
       .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
       .SetFormSignature(HashFormSignature(form.form_signature()))
-      .SetOverallType(static_cast<int64_t>(field.Type().GetStorableType()))
+      .SetOverallType(field_type)
       .Record(autofill_client_->GetUkmRecorder());
 }
 
@@ -132,18 +138,24 @@ void FormInteractionsUkmLogger::LogTextFieldValueChanged(
     return;
   }
 
+  FieldTypeGroupSet field_type_groups = field.Type().GetGroups();
+  auto field_type_group = static_cast<uint64_t>(!field_type_groups.empty()
+                                                    ? *field_type_groups.begin()
+                                                    : FieldTypeGroup::kNoGroup);
+
+  // TODO(crbug.com/432645177): Emit more than just one FieldTypeGroup.
   ukm::builders::Autofill_TextFieldDidChange(ukm_source_id)
       .SetFormSignature(HashFormSignature(form.form_signature()))
       .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
-      .SetFieldTypeGroup(static_cast<int>(field.Type().group()))
+      .SetFieldTypeGroup(field_type_group)
       .SetHeuristicType(static_cast<int>(field.heuristic_type()))
       .SetServerType(static_cast<int>(field.server_type()))
       .SetHtmlFieldType(static_cast<int>(field.html_type()))
       .SetHtmlFieldMode(static_cast<int>(field.html_mode()))
       .SetIsAutofilled(field.is_autofilled())
-      .SetIsEmpty(field.value(ValueSemantics::kCurrent).empty())
-      .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form.form_parsed_timestamp()))
+      .SetIsEmpty(field.value().empty())
+      .SetMillisecondsSinceFormParsed(MillisecondsSinceFormParsed(
+          form.form_parsed_timestamp(), base::TimeTicks::Now()))
       .Record(autofill_client_->GetUkmRecorder());
 }
 
@@ -151,20 +163,21 @@ void FormInteractionsUkmLogger::LogFieldFillStatus(
     ukm::SourceId ukm_source_id,
     const FormStructure& form,
     const AutofillField& field,
-    QualityMetricType metric_type) {
+    QualityMetricType metric_type,
+    base::TimeTicks now) {
   if (!CanLog(ukm_source_id)) {
     return;
   }
 
   ukm::builders::Autofill_FieldFillStatus(ukm_source_id)
-      .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form.form_parsed_timestamp()))
       .SetFormSignature(HashFormSignature(form.form_signature()))
       .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
       .SetValidationEvent(static_cast<int64_t>(metric_type))
       .SetIsAutofilled(static_cast<int64_t>(field.is_autofilled()))
       .SetWasPreviouslyAutofilled(
           static_cast<int64_t>(field.previously_autofilled()))
+      .SetMillisecondsSinceFormParsed(
+          MillisecondsSinceFormParsed(form.form_parsed_timestamp(), now))
       .Record(autofill_client_->GetUkmRecorder());
 }
 
@@ -178,14 +191,15 @@ void FormInteractionsUkmLogger::LogFieldType(
     QualityMetricPredictionSource prediction_source,
     QualityMetricType metric_type,
     FieldType predicted_type,
-    FieldType actual_type) {
+    FieldType actual_type,
+    base::TimeTicks now) {
   if (!CanLog(ukm_source_id)) {
     return;
   }
 
   ukm::builders::Autofill_FieldTypeValidation(ukm_source_id)
       .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form_parsed_timestamp))
+          MillisecondsSinceFormParsed(form_parsed_timestamp, now))
       .SetFormSignature(HashFormSignature(form_signature))
       .SetFieldSignature(HashFieldSignature(field_signature))
       .SetValidationEvent(static_cast<int64_t>(metric_type))
@@ -715,68 +729,70 @@ void FormInteractionsUkmLogger::LogFocusedComplexFormAtFormRemove(
   int day_in_ablation_window = -1;
 
   for (const std::unique_ptr<AutofillField>& field : form_structure.fields()) {
-    FormType form_type = FieldTypeGroupToFormType(field->Type().group());
-    if (form_type == FormType::kUnknownFormType) {
-      continue;
-    }
-
-    some_classified_field_was_focused |= field->was_focused();
-
-    OptionalBoolean had_value_after_filling = OptionalBoolean::kUndefined;
-    OptionalBoolean has_value_after_typing = OptionalBoolean::kUndefined;
-
-    const std::vector<AutofillField::FieldLogEventType>& field_log_events =
-        field->field_log_events();
-
-    bool current_field_was_autofilled = false;
-    for (const AutofillField::FieldLogEventType& log_event : field_log_events) {
-      if (auto* event =
-              std::get_if<AskForValuesToFillFieldLogEvent>(&log_event)) {
-        autofill_data_queried.insert(form_type);
-        if (event->has_suggestion == OptionalBoolean::kTrue) {
-          suggestions_available.insert(form_type);
-        }
+    for (FormType form_type : field->Type().GetFormTypes()) {
+      if (form_type == FormType::kUnknownFormType) {
+        continue;
       }
 
-      if (auto* event = std::get_if<FillFieldLogEvent>(&log_event)) {
-        if (event->filling_prevented_by_iframe_security_policy ==
-            OptionalBoolean::kFalse) {
+      some_classified_field_was_focused |= field->was_focused();
+
+      OptionalBoolean had_value_after_filling = OptionalBoolean::kUndefined;
+      OptionalBoolean has_value_after_typing = OptionalBoolean::kUndefined;
+
+      const std::vector<AutofillField::FieldLogEventType>& field_log_events =
+          field->field_log_events();
+
+      bool current_field_was_autofilled = false;
+      for (const AutofillField::FieldLogEventType& log_event :
+           field_log_events) {
+        if (auto* event =
+                std::get_if<AskForValuesToFillFieldLogEvent>(&log_event)) {
+          autofill_data_queried.insert(form_type);
+          if (event->has_suggestion == OptionalBoolean::kTrue) {
+            suggestions_available.insert(form_type);
+          }
+        }
+
+        if (auto* event = std::get_if<FillFieldLogEvent>(&log_event)) {
+          if (event->filling_prevented_by_iframe_security_policy ==
+              OptionalBoolean::kFalse) {
+            user_modified.insert(form_type);
+            autofilled.insert(form_type);
+            current_field_was_autofilled = true;
+            had_value_after_filling = event->had_value_after_filling;
+          }
+        }
+
+        if (auto* event = std::get_if<TypingFieldLogEvent>(&log_event)) {
           user_modified.insert(form_type);
-          autofilled.insert(form_type);
-          current_field_was_autofilled = true;
-          had_value_after_filling = event->had_value_after_filling;
+          if (current_field_was_autofilled) {
+            edited_after_autofill.insert(form_type);
+          }
+          has_value_after_typing = event->has_value_after_typing;
+        }
+
+        if (auto* event = std::get_if<AblationFieldLogEvent>(&log_event)) {
+          if (event->ablation_group == AblationGroup::kControl) {
+            control_group_of_ablation.insert(form_type);
+          } else if (event->ablation_group == AblationGroup::kAblation) {
+            ablation_group_of_ablation.insert(form_type);
+          }
+          if (event->conditional_ablation_group == AblationGroup::kControl) {
+            control_group_of_conditional_ablation.insert(form_type);
+          } else if (event->conditional_ablation_group ==
+                     AblationGroup::kAblation) {
+            ablation_group_of_conditional_ablation.insert(form_type);
+          }
+          if (event->day_in_ablation_window >= 0) {
+            day_in_ablation_window = event->day_in_ablation_window;
+          }
         }
       }
 
-      if (auto* event = std::get_if<TypingFieldLogEvent>(&log_event)) {
-        user_modified.insert(form_type);
-        if (current_field_was_autofilled) {
-          edited_after_autofill.insert(form_type);
-        }
-        has_value_after_typing = event->has_value_after_typing;
+      if (had_value_after_filling == OptionalBoolean::kTrue ||
+          has_value_after_typing == OptionalBoolean::kTrue) {
+        had_non_empty_value_at_submission.insert(form_type);
       }
-
-      if (auto* event = std::get_if<AblationFieldLogEvent>(&log_event)) {
-        if (event->ablation_group == AblationGroup::kControl) {
-          control_group_of_ablation.insert(form_type);
-        } else if (event->ablation_group == AblationGroup::kAblation) {
-          ablation_group_of_ablation.insert(form_type);
-        }
-        if (event->conditional_ablation_group == AblationGroup::kControl) {
-          control_group_of_conditional_ablation.insert(form_type);
-        } else if (event->conditional_ablation_group ==
-                   AblationGroup::kAblation) {
-          ablation_group_of_conditional_ablation.insert(form_type);
-        }
-        if (event->day_in_ablation_window >= 0) {
-          day_in_ablation_window = event->day_in_ablation_window;
-        }
-      }
-    }
-
-    if (had_value_after_filling == OptionalBoolean::kTrue ||
-        has_value_after_typing == OptionalBoolean::kTrue) {
-      had_non_empty_value_at_submission.insert(form_type);
     }
   }
 
@@ -837,11 +853,23 @@ void FormInteractionsUkmLogger::LogHiddenRepresentationalFieldSkipDecision(
     return;
   }
 
+  FieldTypeSet field_types = field.Type().GetTypes();
+  auto field_type = static_cast<uint64_t>(
+      !field_types.empty() ? *field_types.begin() : NO_SERVER_DATA);
+
+  FieldTypeGroupSet field_type_groups = field.Type().GetGroups();
+  auto field_type_group = static_cast<uint64_t>(!field_type_groups.empty()
+                                                    ? *field_type_groups.begin()
+                                                    : FieldTypeGroup::kNoGroup);
+
+  // TODO(crbug.com/432645177): Emit more than just one FieldType and
+  // FieldTypeGroup.
+  // TODO(crbug.com/432645177): Emit the AutofillField::autofilled_type()?
   ukm::builders::Autofill_HiddenRepresentationalFieldSkipDecision(ukm_source_id)
       .SetFormSignature(HashFormSignature(form.form_signature()))
       .SetFieldSignature(HashFieldSignature(field.GetFieldSignature()))
-      .SetFieldTypeGroup(static_cast<int>(field.Type().group()))
-      .SetFieldOverallType(static_cast<int>(field.Type().GetStorableType()))
+      .SetFieldTypeGroup(field_type_group)
+      .SetFieldOverallType(field_type)
       .SetHeuristicType(static_cast<int>(field.heuristic_type()))
       .SetServerType(static_cast<int>(field.server_type()))
       .SetHtmlFieldType(static_cast<int>(field.html_type()))
@@ -902,8 +930,8 @@ void FormInteractionsUkmLogger::LogFormEvent(
   ukm::builders::Autofill_FormEvent builder(ukm_source_id);
   builder.SetAutofillFormEvent(static_cast<int>(form_event))
       .SetFormTypes(AutofillMetrics::FormTypesToBitVector(form_types))
-      .SetMillisecondsSinceFormParsed(
-          MillisecondsSinceFormParsed(form_parsed_timestamp))
+      .SetMillisecondsSinceFormParsed(MillisecondsSinceFormParsed(
+          form_parsed_timestamp, base::TimeTicks::Now()))
       .Record(autofill_client_->GetUkmRecorder());
 }
 
@@ -913,26 +941,11 @@ bool FormInteractionsUkmLogger::CanLog(ukm::SourceId ukm_source_id) const {
 }
 
 int64_t FormInteractionsUkmLogger::MillisecondsSinceFormParsed(
-    base::TimeTicks form_parsed_timestamp) const {
-  DCHECK(!form_parsed_timestamp.is_null());
-  // Use the pinned timestamp as the current time if it's set.
-  base::TimeTicks now =
-      pinned_timestamp_.is_null() ? base::TimeTicks::Now() : pinned_timestamp_;
-
+    base::TimeTicks form_parsed_timestamp,
+    base::TimeTicks now) const {
   return ukm::GetExponentialBucketMin(
       (now - form_parsed_timestamp).InMilliseconds(),
       kAutofillEventDataBucketSpacing);
-}
-
-UkmTimestampPin::UkmTimestampPin(FormInteractionsUkmLogger* logger)
-    : logger_(*logger) {
-  DCHECK(!logger_->has_pinned_timestamp(/*pass_key=*/{}));
-  logger_->set_pinned_timestamp(base::TimeTicks::Now(), /*pass_key=*/{});
-}
-
-UkmTimestampPin::~UkmTimestampPin() {
-  DCHECK(logger_->has_pinned_timestamp(/*pass_key=*/{}));
-  logger_->set_pinned_timestamp(base::TimeTicks(), /*pass_key=*/{});
 }
 
 int64_t GetSemanticBucketMinForAutofillDurationTiming(int64_t sample) {

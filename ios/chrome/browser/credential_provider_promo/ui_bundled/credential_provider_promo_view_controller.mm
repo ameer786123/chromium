@@ -5,7 +5,6 @@
 #import "ios/chrome/browser/credential_provider_promo/ui_bundled/credential_provider_promo_view_controller.h"
 
 #import "base/values.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/confirmation_alert/confirmation_alert_view_controller.h"
@@ -17,6 +16,11 @@
 namespace {
 constexpr CGFloat kCustomSpacingAtTopIfNoNavigationBar = 24;
 constexpr CGFloat kCustomSpacingAfterImageWithoutAnimation = 0;
+// The image resource used in this promo has lots of blank space around it,
+// and a subtle drop shadow. Setting the spacing after the image to a negative
+// value reduces the extra padding allowing all the content to fit on the
+// screen.
+constexpr CGFloat kCustomSpacingAfterImageWithAnimation = -8;
 constexpr CGFloat kPreferredCornerRadius = 20;
 NSString* const kDarkModeAnimationSuffix = @"_darkmode";
 NSString* const kPasswordOptionsKeypath = @"text_password_options";
@@ -135,15 +139,14 @@ NSString* const kCredentialProviderPromoAccessibilityId =
   self.alertScreen.titleTextStyle = UIFontTextStyleTitle2;
   self.alertScreen.topAlignedLayout = YES;
 
-  if (self.shouldShowAnimation || IOSPasskeysM2Enabled()) {
+  if (!self.shouldShowAnimation || !self.alertScreen.image) {
     self.alertScreen.customSpacingBeforeImageIfNoNavigationBar =
         kCustomSpacingAtTopIfNoNavigationBar;
   }
 
-  if (!self.shouldShowAnimation) {
-    self.alertScreen.customSpacingAfterImage =
-        kCustomSpacingAfterImageWithoutAnimation;
-  }
+  self.alertScreen.customSpacingAfterImage =
+      self.shouldShowAnimation ? kCustomSpacingAfterImageWithAnimation
+                               : kCustomSpacingAfterImageWithoutAnimation;
 
   [self addChildViewController:self.alertScreen];
   [self.view addSubview:self.alertScreen.view];
@@ -197,8 +200,7 @@ NSString* const kCredentialProviderPromoAccessibilityId =
       self.alertScreen.sheetPresentationController;
   presentationController.prefersEdgeAttachedInCompactHeight = YES;
   presentationController.detents = @[
-    IOSPasskeysM2Enabled() ? self.alertScreen.preferredHeightDetent
-                           : [UISheetPresentationControllerDetent mediumDetent],
+    self.alertScreen.preferredHeightDetent,
     [UISheetPresentationControllerDetent largeDetent]
   ];
   presentationController.preferredCornerRadius = kPreferredCornerRadius;

@@ -13,14 +13,18 @@
 #import "ios/chrome/browser/authentication/ui_bundled/identity_chooser/identity_chooser_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/identity_chooser/identity_chooser_coordinator_delegate.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/instant_signin/instant_signin_mediator.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin/interruptible_chrome_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/logging/user_signin_logger.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator+protected.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
 #import "ios/chrome/browser/shared/coordinator/alert/alert_coordinator.h"
+#import "ios/chrome/browser/shared/coordinator/chrome_coordinator/animated_coordinator.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/elements/activity_overlay_coordinator.h"
+#import "ios/chrome/browser/signin/model/authentication_service.h"
+#import "ios/chrome/browser/signin/model/authentication_service_factory.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service_factory.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
@@ -40,8 +44,7 @@
   // Coordinator for the user to select an account.
   IdentityChooserCoordinator* _identityChooserCoordinator;
   // Coordinator to add an account.
-  SigninCoordinator<InterruptibleChromeCoordinator>*
-      _addAccountSigninCoordinator;
+  SigninCoordinator* _addAccountSigninCoordinator;
   // Overlay to block the current window while the sign-in is in progress.
   ActivityOverlayCoordinator* _activityOverlayCoordinator;
   // Action recorded if sign-in succeeded.
@@ -67,6 +70,8 @@
                               contextStyle:contextStyle
                                accessPoint:accessPoint];
   if (self) {
+    CHECK(browser, base::NotFatalUntil::M142);
+    CHECK(viewController, base::NotFatalUntil::M142);
     CHECK(continuationProvider);
     _identity = identity;
     _promoAction = promoAction;
@@ -79,17 +84,28 @@
   // TODO(crbug.com/40067451): Switch back to DCHECK if the number of reports is
   // low.
   DUMP_WILL_BE_CHECK(!_mediator) << base::SysNSStringToUTF8([self description]);
+  DUMP_WILL_BE_CHECK(!_signinLogger)
+      << base::SysNSStringToUTF8([self description]);
 }
 
 #pragma mark - ChromeCoordinator
 
 - (void)start {
   [super start];
+  signin::IdentityManager* identityManager =
+      IdentityManagerFactory::GetForProfile(self.profile->GetOriginalProfile());
+  CHECK(!identityManager->HasPrimaryAccount(signin::ConsentLevel::kSignin),
+        base::NotFatalUntil::M142);
   _signinLogger = [[UserSigninLogger alloc] initWithAccessPoint:self.accessPoint
                                                     promoAction:_promoAction];
   [_signinLogger logSigninStarted];
+  AuthenticationService* authenticationService =
+      AuthenticationServiceFactory::GetForProfile(
+          self.profile->GetOriginalProfile());
   _mediator =
       [[InstantSigninMediator alloc] initWithAccessPoint:self.accessPoint
+                                   authenticationService:authenticationService
+                                         identityManager:identityManager
                                     continuationProvider:_continuationProvider];
   _mediator.delegate = self;
 
@@ -107,8 +123,6 @@
     return;
   }
 
-  signin::IdentityManager* identityManager =
-      IdentityManagerFactory::GetForProfile(self.profile);
   bool hasAccountOnDevice = !identityManager->GetAccountsOnDevice().empty();
   if (!hasAccountOnDevice) {
     signin_metrics::RecordConsistencyPromoUserAction(
@@ -135,34 +149,47 @@
   [_identityChooserCoordinator start];
 }
 
-- (void)stop {
-  CHECK(!_addAccountSigninCoordinator);
-  CHECK(!_activityOverlayCoordinator);
-  CHECK(!_identityChooserCoordinator);
-  _signinLogger = nil;
-  [_mediator disconnect];
-  _mediator.delegate = nil;
-  _mediator = nil;
-  [super stop];
-}
+#pragma mark - AnimatedCoordinator
 
-#pragma mark - InterruptibleChromeCoordinator
-
-- (void)interruptAnimated:(BOOL)animated {
+- (void)stopAnimated:(BOOL)animated {
   if (_addAccountSigninCoordinator) {
     CHECK(!_identityChooserCoordinator);
     CHECK(!_activityOverlayCoordinator);
-    [_addAccountSigninCoordinator interruptAnimated:animated];
+    [_addAccountSigninCoordinator stopAnimated:animated];
+    _addAccountSigninCoordinator = nil;
   } else if (_identityChooserCoordinator) {
     CHECK(!_activityOverlayCoordinator);
     [self stopIdentityChooserCoordinator];
   } else {
     [self stopActivityOverlay];
   }
+  CHECK(!_addAccountSigninCoordinator, base::NotFatalUntil::M145);
+  CHECK(!_activityOverlayCoordinator, base::NotFatalUntil::M145);
+  CHECK(!_identityChooserCoordinator, base::NotFatalUntil::M145);
+  _signinLogger = nil;
+  // Methods on mediator's delegate should not be called anymore. If the sign-in
+  // is progress, when calling the mediator disconnect method, it will call
+  // `-[<InstantSigninMediatorDelegate> instantSigninMediator:
+  // didSigninWithResult]` on this coordinator.
+  // That will trigger the signinCompletion block. And the coordinator's oner
+  // will dealloc this self.
+  // Result, at the end of `[_mediator disconnect]`, self would be deallocated.
+  // The owner is already aware that InstantSigninCoordinator is aborted since
+  // stop is called.
   _mediator.delegate = nil;
-  [_mediator interrupt];
-  [self runCompletionWithSigninResult:SigninCoordinatorResultInterrupted
-                   completionIdentity:nil];
+  [_mediator disconnect];
+  _mediator = nil;
+  [super stopAnimated:animated];
+}
+
+#pragma mark - BuggyAuthenticationViewOwner
+
+- (BOOL)viewWillPersist {
+  // This coordinator has no view of its own. The view may only have disappeared
+  // if it owns a started coordinator whose view silently disappeared. The only
+  // coordinator for which this is possible is the add account one.
+  return !_addAccountSigninCoordinator ||
+         _addAccountSigninCoordinator.viewWillPersist;
 }
 
 #pragma mark - IdentityChooserCoordinatorDelegate
@@ -236,6 +263,13 @@
                    completionIdentity:_identity];
 }
 
+- (void)instantSigninMediatorSigninIsImpossible:
+    (InstantSigninMediator*)mediator {
+  CHECK_EQ(mediator, _mediator, base::NotFatalUntil::M144);
+  [self runCompletionWithSigninResult:SigninCoordinatorResultInterrupted
+                   completionIdentity:nil];
+}
+
 #pragma mark - Private
 
 // Starts the sign-in flow.
@@ -269,11 +303,16 @@
 
 // Starts the add account coordinator.
 - (void)startAddAccountForSignInOnly {
+  if (_addAccountSigninCoordinator.viewWillPersist) {
+    return;
+  }
+  [_addAccountSigninCoordinator stop];
   _addAccountSigninCoordinator = [SigninCoordinator
       addAccountCoordinatorWithBaseViewController:self.baseViewController
                                           browser:self.browser
                                      contextStyle:self.contextStyle
                                       accessPoint:self.accessPoint
+                                   prefilledEmail:nil
                              continuationProvider:_continuationProvider];
   __weak __typeof(self) weakSelf = self;
   _addAccountSigninCoordinator.signinCompletion = ^(

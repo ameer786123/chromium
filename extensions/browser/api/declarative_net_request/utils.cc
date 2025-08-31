@@ -51,12 +51,12 @@ namespace flat_rule = url_pattern_index::flat;
 // url_pattern_index.fbs. Whenever an extension with an indexed ruleset format
 // version different from the one currently used by Chrome is loaded, the
 // extension ruleset will be reindexed.
-constexpr int kIndexedRulesetFormatVersion = 34;
+constexpr int kIndexedRulesetFormatVersion = 36;
 
 // This static assert is meant to catch cases where
 // url_pattern_index::kUrlPatternIndexFormatVersion is incremented without
 // updating kIndexedRulesetFormatVersion.
-static_assert(url_pattern_index::kUrlPatternIndexFormatVersion == 15,
+static_assert(url_pattern_index::kUrlPatternIndexFormatVersion == 16,
               "kUrlPatternIndexFormatVersion has changed, make sure you've "
               "also updated kIndexedRulesetFormatVersion above.");
 
@@ -543,6 +543,9 @@ std::string GetParseError(ParseResult error_reason, int rule_id) {
     case ParseResult::ERROR_EMPTY_REQUEST_DOMAINS_LIST:
       return ErrorUtils::FormatErrorMessage(
           kErrorEmptyList, base::NumberToString(rule_id), kRequestDomainsKey);
+    case ParseResult::ERROR_EMPTY_TOP_DOMAINS_LIST:
+      return ErrorUtils::FormatErrorMessage(
+          kErrorEmptyList, base::NumberToString(rule_id), kTopDomainsKey);
     case ParseResult::ERROR_DOMAINS_AND_INITIATOR_DOMAINS_BOTH_SPECIFIED:
       return ErrorUtils::FormatErrorMessage(
           kErrorDomainsAndInitiatorDomainsBothSpecified,
@@ -592,6 +595,13 @@ std::string GetParseError(ParseResult error_reason, int rule_id) {
       return ErrorUtils::FormatErrorMessage(kErrorNonAscii,
                                             base::NumberToString(rule_id),
                                             kExcludedRequestDomainsKey);
+    case ParseResult::ERROR_NON_ASCII_TOP_DOMAIN:
+      return ErrorUtils::FormatErrorMessage(
+          kErrorNonAscii, base::NumberToString(rule_id), kTopDomainsKey);
+    case ParseResult::ERROR_NON_ASCII_EXCLUDED_TOP_DOMAIN:
+      return ErrorUtils::FormatErrorMessage(kErrorNonAscii,
+                                            base::NumberToString(rule_id),
+                                            kExcludedTopDomainsKey);
     case ParseResult::ERROR_INVALID_URL_FILTER:
       return ErrorUtils::FormatErrorMessage(
           kErrorInvalidKey, base::NumberToString(rule_id), kUrlFilterKey);

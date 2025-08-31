@@ -22,6 +22,7 @@
 #include "ash/wm/workspace_controller.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/strings/string_number_conversions.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/layer.h"
@@ -100,7 +101,7 @@ void AutoclickMenuBubbleController::SetPosition(
   // TODO(396681078): Confirm the preventive fix, clean up logging, and swap to
   // a valid display if needed.
   const display::Display target_display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(
+      display::Screen::Get()->GetDisplayNearestWindow(
           bubble_widget_->GetNativeWindow());
   if (!target_display.is_valid() ||
       !Shell::GetRootWindowControllerWithDisplayId(target_display.id())) {

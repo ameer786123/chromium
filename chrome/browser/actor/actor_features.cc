@@ -13,7 +13,7 @@ namespace actor {
 
 BASE_FEATURE(kGlicActionAllowlist,
              "GlicActionAllowlist",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE_PARAM(std::string,
                    kAllowlist,
@@ -34,5 +34,9 @@ BASE_FEATURE_PARAM(bool,
 BASE_FEATURE(kGlicActionUseOptimizationGuide,
              "GlicActionUseOptimizationGuide",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kGlicCrossOriginNavigationGating,
+             "GlicCrossOriginNavigationGating",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace actor

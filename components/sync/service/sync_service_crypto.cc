@@ -24,17 +24,6 @@ namespace syncer {
 
 namespace {
 
-// These values are persisted to logs. Entries should not be renumbered and
-// numeric values should never be reused. Keep in sync with
-// TrustedVaultFetchKeysAttempt in
-// tools/metrics/histograms/metadata/sync/enums.xml.
-// LINT.IfChange(TrustedVaultFetchKeysAttempt)
-enum class TrustedVaultFetchKeysAttemptForUMA {
-  kFirstAttempt = 0,
-  kSecondAttempt = 1,
-  kMaxValue = kSecondAttempt
-};
-// LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:TrustedVaultFetchKeysAttempt)
 
 // A SyncEncryptionHandler::Observer implementation that simply posts all calls
 // to another task runner.
@@ -189,10 +178,12 @@ SyncServiceCrypto::SyncServiceCrypto(
 SyncServiceCrypto::~SyncServiceCrypto() = default;
 
 void SyncServiceCrypto::Reset() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   state_ = State();
 }
 
 void SyncServiceCrypto::StopObservingTrustedVaultClient() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   trusted_vault_client_->RemoveObserver(this);
 }
 
@@ -256,10 +247,9 @@ void SyncServiceCrypto::SetEncryptionPassphrase(const std::string& passphrase) {
     case RequiredUserAction::kTrustedVaultKeyRequired:
     case RequiredUserAction::kTrustedVaultKeyRequiredButFetching:
       // Cryptographer has pending keys.
-      // TODO(crbug.com/40904402): this is currently reachable on iOS due to
-      // discrepancy in UI code. Fix iOS implementation and avoid using more
-      // strict checks here until this is done.
-      DUMP_WILL_BE_NOTREACHED()
+      // TODO(crbug.com/40904402): verify this is not reachable anymore and
+      // remove NotFatalUntil.
+      NOTREACHED(base::NotFatalUntil::M140)
           << "Can not set explicit passphrase when decryption is needed.";
       return;
   }
@@ -338,10 +328,12 @@ void SyncServiceCrypto::SetExplicitPassphraseDecryptionNigoriKey(
 
 std::unique_ptr<Nigori>
 SyncServiceCrypto::GetExplicitPassphraseDecryptionNigoriKey() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return ReadNigoriFromBootstrapToken(delegate_->GetEncryptionBootstrapToken());
 }
 
 bool SyncServiceCrypto::IsTrustedVaultKeyRequiredStateKnown() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   switch (state_.required_user_action) {
     case RequiredUserAction::kUnknownDuringInitialization:
     case RequiredUserAction::kFetchingTrustedVaultKeys:
@@ -363,6 +355,7 @@ std::optional<PassphraseType> SyncServiceCrypto::GetPassphraseType() const {
 
 void SyncServiceCrypto::SetSyncEngine(const CoreAccountInfo& account_info,
                                       SyncEngine* engine) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(engine);
   CHECK(!state_.engine);
   state_.account_info = account_info;
@@ -574,6 +567,7 @@ void SyncServiceCrypto::OnPassphraseTypeChanged(PassphraseType type,
 }
 
 void SyncServiceCrypto::OnTrustedVaultKeysChanged() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   switch (state_.required_user_action) {
     case RequiredUserAction::kUnknownDuringInitialization:
     case RequiredUserAction::kNone:
@@ -601,6 +595,7 @@ void SyncServiceCrypto::OnTrustedVaultKeysChanged() {
 }
 
 void SyncServiceCrypto::OnTrustedVaultRecoverabilityChanged() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Ignore calls during engine initialization, as decoverability will be
   // refreshed in SetSyncEngine().
   if (!state_.engine) {
@@ -615,12 +610,6 @@ void SyncServiceCrypto::FetchTrustedVaultKeys(bool is_second_fetch_attempt) {
              RequiredUserAction::kFetchingTrustedVaultKeys ||
          state_.required_user_action ==
              RequiredUserAction::kTrustedVaultKeyRequiredButFetching);
-
-  base::UmaHistogramEnumeration(
-      "Sync.TrustedVaultFetchKeysAttempt",
-      is_second_fetch_attempt
-          ? TrustedVaultFetchKeysAttemptForUMA::kSecondAttempt
-          : TrustedVaultFetchKeysAttemptForUMA::kFirstAttempt);
 
   if (!is_second_fetch_attempt) {
     state_.deferred_trusted_vault_fetch_keys_pending = false;
@@ -767,6 +756,7 @@ void SyncServiceCrypto::RefreshIsRecoverabilityDegraded() {
 
 void SyncServiceCrypto::GetIsRecoverabilityDegradedCompleted(
     bool is_recoverability_degraded) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // `engine` could have been reset.
   if (!state_.engine) {
     DCHECK_EQ(state_.required_user_action,

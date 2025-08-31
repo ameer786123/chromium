@@ -5,12 +5,17 @@
 #import "ios/chrome/browser/autofill/ui_bundled/bottom_sheet/save_card_bottom_sheet_view_controller.h"
 
 #import "build/branding_buildflags.h"
+#import "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/autofill/model/message/save_card_message_with_links.h"
+#import "ios/chrome/browser/autofill/ui_bundled/autofill_credit_card_util.h"
 #import "ios/chrome/browser/autofill/ui_bundled/bottom_sheet/bottom_sheet_constants.h"
+#import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/shared/ui/bottom_sheet/table_view_bottom_sheet_view_controller+subclassing.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_detail_icon_item.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/confirmation_alert/confirmation_alert_action_handler.h"
+#import "ui/base/l10n/l10n_util.h"
 
 namespace {
 
@@ -27,15 +32,20 @@ CGFloat const kSpacingBeforeAboveTitleImage = 12;
 CGFloat const kSpacingAfterAboveTitleImage = 4;
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-// Height of the Google Pay logo used as the image above the title of the
-// bottomsheet.
+//  Height of the Google Pay logo used as the image above the title of the
+//  bottomsheet for upload save.
 CGFloat const kGooglePayLogoHeight = 32;
+
+// Height of the Chrome logo used as the image above the title of the
+// bottomsheet for local save.
+CGFloat const kChromeLogoHeight = 22;
 #endif
 
 }  // namespace
 
 @interface SaveCardBottomSheetViewController () <ConfirmationAlertActionHandler,
-                                                 UITableViewDataSource>
+                                                 UITableViewDataSource,
+                                                 UITextViewDelegate>
 @end
 
 // TODO(crbug.com/391366699): Implement SaveCardBottomSheetViewController.
@@ -44,14 +54,18 @@ CGFloat const kGooglePayLogoHeight = 32;
   NSString* _cardExpiryDate;
   UIImage* _cardIcon;
   NSString* _cardAccessibilityLabel;
+  NSArray<SaveCardMessageWithLinks*>* _legalMessages;
   // Image to be displayed above the title of the bottomsheet.
   UIImage* _aboveTitleImage;
+  // Accessibility label for the _aboveTitleImage.
+  NSString* _aboveTitleImageAccessibilityLabel;
 }
 
 #pragma mark - UIViewController
 
 - (void)viewDidLoad {
   self.image = [self aboveTitleImage];
+  self.imageViewAccessibilityLabel = [self aboveTitleImageAccessibilityLabel];
   self.customSpacingBeforeImageIfNoNavigationBar =
       kSpacingBeforeAboveTitleImage;
   self.customSpacingAfterImage = kSpacingAfterAboveTitleImage;
@@ -61,6 +75,11 @@ CGFloat const kGooglePayLogoHeight = 32;
   [super viewDidLoad];
 }
 
+- (void)viewDidDisappear:(BOOL)animated {
+  [super viewDidDisappear:animated];
+  [self.delegate onViewDisappeared];
+}
+
 #pragma mark - SaveCardBottomSheetConsumer
 
 - (void)setAboveTitleImage:(UIImage*)logoImage {
@@ -68,7 +87,7 @@ CGFloat const kGooglePayLogoHeight = 32;
 }
 
 - (void)setAboveTitleImageDescription:(NSString*)description {
-  self.imageViewAccessibilityLabel = description;
+  _aboveTitleImageAccessibilityLabel = description;
 }
 
 - (void)setTitle:(NSString*)title {
@@ -90,6 +109,10 @@ CGFloat const kGooglePayLogoHeight = 32;
   self.secondaryActionString = cancelActionText;
 }
 
+- (void)setLegalMessages:(NSArray<SaveCardMessageWithLinks*>*)legalMessages {
+  _legalMessages = legalMessages;
+}
+
 - (void)setCardNameAndLastFourDigits:(NSString*)label
                   withCardExpiryDate:(NSString*)subLabel
                          andCardIcon:(UIImage*)issuerIcon
@@ -99,6 +122,35 @@ CGFloat const kGooglePayLogoHeight = 32;
   _cardIcon = issuerIcon;
   _cardAccessibilityLabel = accessibilityLabel;
   [self reloadTableViewData];
+}
+
+- (void)showLoadingStateWithAccessibilityLabel:(NSString*)accessibilityLabel {
+  self.primaryActionButton.accessibilityLabel = accessibilityLabel;
+  self.isLoading = YES;
+  self.isConfirmed = NO;
+}
+
+- (void)showConfirmationState {
+  BOOL wasLoadingShown = self.isLoading;
+  self.isLoading = NO;
+  self.isConfirmed = YES;
+  self.primaryActionButton.accessibilityLabel = l10n_util::GetNSString(
+      IDS_AUTOFILL_SAVE_CARD_CONFIRMATION_SUCCESS_ACCESSIBLE_NAME);
+
+  if (wasLoadingShown) {
+    // When transitioning from loading state to confirmation state an
+    // accessibility announcement needs to be posted since the
+    // primaryActionButton would already be in a disabled state during the
+    // loading state. As only its label changes in confirmation state, it would
+    // not be announced by VoiceOver. However, when transitioning from normal
+    // state directly to confirmation state, posting an accessibility
+    // announcement must be avoided to not interfere with the announcement from
+    // the primaryActionButton.
+    UIAccessibilityPostNotification(
+        UIAccessibilityAnnouncementNotification,
+        l10n_util::GetNSString(
+            IDS_AUTOFILL_SAVE_CARD_CONFIRMATION_SUCCESS_ACCESSIBLE_NAME));
+  }
 }
 
 #pragma mark - UITableViewDataSource
@@ -131,7 +183,12 @@ CGFloat const kGooglePayLogoHeight = 32;
 
   [underTitleView addArrangedSubview:[self createTableView]];
 
-  // TODO(crbug.com/391366699): Add subview to show legal message.
+  for (SaveCardMessageWithLinks* message in _legalMessages) {
+    UITextView* legalMessageTextView =
+        [AutofillCreditCardUtil createTextViewForLegalMessage:message];
+    legalMessageTextView.delegate = self;
+    [underTitleView addArrangedSubview:legalMessageTextView];
+  }
 
   return underTitleView;
 }
@@ -171,17 +228,60 @@ CGFloat const kGooglePayLogoHeight = 32;
   [self.mutator didCancel];
 }
 
+#pragma mark - UITextViewDelegate
+
+#if __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
+- (BOOL)textView:(UITextView*)textView
+    shouldInteractWithURL:(NSURL*)URL
+                  inRange:(NSRange)characterRange
+              interaction:(UITextItemInteraction)interaction {
+  // A link in legal message was clicked.
+  [self.delegate didTapLinkURL:[[CrURL alloc] initWithNSURL:URL]];
+  return NO;
+}
+#endif
+
+- (UIAction*)textView:(UITextView*)textView
+    primaryActionForTextItem:(UITextItem*)textItem
+               defaultAction:(UIAction*)defaultAction API_AVAILABLE(ios(17.0)) {
+  // A link in legal message was clicked.
+  __weak __typeof__(self) weakSelf = self;
+  return [UIAction actionWithHandler:^(UIAction* action) {
+    [weakSelf.delegate
+        didTapLinkURL:[[CrURL alloc] initWithNSURL:textItem.link]];
+  }];
+}
+
 #pragma mark - Private
 
 // Returns the image to be used above the title of the bottomsheet.
 - (UIImage*)aboveTitleImage {
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  // iOS-specific symbol is used to get an optimized image with better
-  // resolution.
-  return MakeSymbolMulticolor(
-      CustomSymbolWithPointSize(kGooglePaySymbol, kGooglePayLogoHeight));
+  //  iOS-specific symbol is used to get an optimized image with better
+  //  resolution.
+  switch ([self.dataSource logoType]) {
+    case kChromeLogo:
+      return MakeSymbolMulticolor(CustomSymbolWithPointSize(
+          kMulticolorChromeballSymbol, kChromeLogoHeight));
+    case kGooglePayLogo:
+      return MakeSymbolMulticolor(
+          CustomSymbolWithPointSize(kGooglePaySymbol, kGooglePayLogoHeight));
+    case kNoLogo:
+    default:
+      NOTREACHED() << "Unsupported logo type for save card bottomsheet.";
+  }
 #else
   return _aboveTitleImage;
+#endif
+}
+
+// Returns the accessibility label to be used for the image to be used above the
+// title of the bottomsheet.
+- (NSString*)aboveTitleImageAccessibilityLabel {
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  return [self.dataSource logoAccessibilityLabel];
+#else
+  return _aboveTitleImageAccessibilityLabel;
 #endif
 }
 

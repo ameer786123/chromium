@@ -50,9 +50,11 @@ class AutocompleteControllerAndroid : public AutocompleteController::Observer,
              bool prefer_keyword,
              bool allow_exact_keyword_match,
              bool want_asynchronous_matches);
-  void StartPrefetch(JNIEnv* env,
-                     const base::android::JavaRef<jstring>& j_current_url,
-                     jint j_page_classification);
+  void StartPrefetch(
+      JNIEnv* env,
+      const base::android::JavaRef<jstring>& j_current_url,
+      jint j_page_classification,
+      const base::android::JavaParamRef<jobject>& j_web_contents);
   base::android::ScopedJavaLocalRef<jobject> Classify(
       JNIEnv* env,
       const base::android::JavaParamRef<jstring>& j_text);
@@ -126,6 +128,10 @@ class AutocompleteControllerAndroid : public AutocompleteController::Observer,
     T* result = autocomplete_controller.get();
     autocomplete_controller_ = std::move(autocomplete_controller);
     return result;
+  }
+
+  AutocompleteController* autocomplete_controller_for_test() {
+    return autocomplete_controller_.get();
   }
 
   class Factory : public ProfileKeyedServiceFactory {

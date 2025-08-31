@@ -17,10 +17,6 @@ BASE_FEATURE(kDedicatedWorkerThrottling,
              "BlinkSchedulerWorkerThrottling",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kBestEffortPriorityForFindInPage,
-             "BlinkSchedulerBestEffortPriorityForFindInPage",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 // Enable setting high priority database task type from field trial parameters.
 BASE_FEATURE(kHighPriorityDatabaseTaskType,
              "HighPriorityDatabaseTaskType",
@@ -70,18 +66,6 @@ BASE_FEATURE(kMbiOverrideTaskRunnerHandle,
 // received.
 PLATFORM_EXPORT base::TimeDelta
 GetLoadingPhaseBufferTimeAfterFirstMeaningfulPaint();
-
-// Kill switch for throttling timed-out requestIdleCallback tasks.
-PLATFORM_EXPORT BASE_DECLARE_FEATURE(kThrottleTimedOutIdleTasks);
-
-// crbug.com/40785325 and crbug.com/378738907: If enabled, the signals used for
-// idle periods are requested via WidgetScheduler::Delegate instead of via
-// PageScheduler. This fixes a few issues where we might not get the requisite
-// RequestBeginMainFrameNotExpected signals from a BeginMainFrame source, but
-// are receiving BeginMainFrames, which can cause idle tasks to stop running.
-BASE_FEATURE(kUseWidgetSchedulerForIdlePeriodSignals,
-             "UseWidgetSchedulerForIdlePeriodSignals",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace scheduler
 }  // namespace blink

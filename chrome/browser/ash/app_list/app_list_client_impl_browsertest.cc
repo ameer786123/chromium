@@ -31,6 +31,7 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -43,6 +44,7 @@
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/apps/app_service/chrome_app_deprecation/chrome_app_deprecation.h"
 #include "chrome/browser/apps/app_service/launch_utils.h"
 #include "chrome/browser/apps/app_service/promise_apps/promise_app.h"
 #include "chrome/browser/apps/app_service/promise_apps/promise_app_registry_cache.h"
@@ -69,7 +71,6 @@
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
@@ -94,6 +95,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/ash/services/assistant/public/cpp/assistant_browser_delegate.h"
 #include "chromeos/ash/services/assistant/public/cpp/features.h"
 #include "components/account_id/account_id.h"
@@ -119,6 +121,7 @@
 #include "ui/display/screen.h"
 #include "ui/display/test/display_manager_test_api.h"
 #include "ui/menus/simple_menu_model.h"
+#include "ui/message_center/test/message_center_waiter.h"
 #include "ui/wm/core/window_util.h"
 #include "url/gurl.h"
 
@@ -191,6 +194,10 @@ IN_PROC_BROWSER_TEST_F(AppListClientImplBrowserTest, IsExtensionAppOpen) {
   base::FilePath extension_path = test_data_dir_.AppendASCII("app");
   const extensions::Extension* extension_app = LoadExtension(extension_path);
   ASSERT_NE(nullptr, extension_app);
+
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      extension_app->id());
+
   EXPECT_FALSE(delegate->IsAppOpen(extension_app->id()));
   {
     content::CreateAndLoadWebContentsObserver app_loaded_observer;
@@ -200,7 +207,7 @@ IN_PROC_BROWSER_TEST_F(AppListClientImplBrowserTest, IsExtensionAppOpen) {
                             false /* preferred_containner */),
         apps::LaunchSource::kFromTest,
         std::make_unique<apps::WindowInfo>(
-            display::Screen::GetScreen()->GetPrimaryDisplay().id()));
+            display::Screen::Get()->GetPrimaryDisplay().id()));
     app_loaded_observer.Wait();
   }
   EXPECT_TRUE(delegate->IsAppOpen(extension_app->id()));
@@ -684,7 +691,7 @@ IN_PROC_BROWSER_TEST_F(AppListClientImplBrowserTest,
   display_manager.UpdateDisplay("400x300,500x400");
 
   const display::Display& primary_display =
-      display::Screen::GetScreen()->GetPrimaryDisplay();
+      display::Screen::Get()->GetPrimaryDisplay();
   AppListClientImpl* const client = AppListClientImpl::GetInstance();
   ASSERT_TRUE(client);
   // Associate |client| with the current profile.
@@ -819,12 +826,12 @@ IN_PROC_BROWSER_TEST_F(AppListClientImplBrowserTest,
 
   {
     display::ScopedDisplayForNewWindows scoped_display(
-        display::Screen::GetScreen()->GetPrimaryDisplay().id());
+        display::Screen::Get()->GetPrimaryDisplay().id());
     client->ShowAppList(ash::AppListShowSource::kSearchKey);
     ash::AppListTestApi().WaitForBubbleWindow(
         /*wait_for_opening_animation=*/true);
   }
-  EXPECT_EQ(display::Screen::GetScreen()->GetPrimaryDisplay().id(),
+  EXPECT_EQ(display::Screen::Get()->GetPrimaryDisplay().id(),
             client->GetAppListDisplayId());
 }
 
@@ -1075,7 +1082,7 @@ class AppListAppLaunchTest : public extensions::ExtensionBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(AppListAppLaunchTest,
                        NoDemoModeAppLaunchSourceReported) {
-  EXPECT_FALSE(ash::DemoSession::IsDeviceInDemoMode());
+  EXPECT_FALSE(ash::demo_mode::IsDeviceInDemoMode());
   LaunchChromeAppListItem(app_constants::kChromeAppId);
 
   // Should see 0 apps launched from the Launcher in the histogram when not in
@@ -1085,7 +1092,7 @@ IN_PROC_BROWSER_TEST_F(AppListAppLaunchTest,
 
 IN_PROC_BROWSER_TEST_F(AppListAppLaunchTest, DemoModeAppLaunchSourceReported) {
   ash::test::LockDemoDeviceInstallAttributes();
-  EXPECT_TRUE(ash::DemoSession::IsDeviceInDemoMode());
+  EXPECT_TRUE(ash::demo_mode::IsDeviceInDemoMode());
 
   // Should see 0 apps launched from the Launcher in the histogram at first.
   histogram_tester_->ExpectTotalCount("DemoMode.AppLaunchSource", 0);
@@ -1114,7 +1121,6 @@ class DurationBetweenSeesionActivationAndFirstLauncherShowingBrowserTest
   }
   ~DurationBetweenSeesionActivationAndFirstLauncherShowingBrowserTest()
       override = default;
-
  protected:
   void ShowAppListAndVerify() {
     auto* client = AppListClientImpl::GetInstance();
@@ -1283,10 +1289,6 @@ class AppListClientNewUserTest : public InProcessBrowserTest,
 
   void SetUpOnMainThread() override {
     SetUpEnvironment();
-    // Inject the testing profile into the client, since once a user session was
-    // created, with one browser, the client stops observing the profile
-    // manager.
-    AppListClientImpl::GetInstance()->OnProfileAdded(profile_);
     InProcessBrowserTest::SetUpOnMainThread();
   }
 
@@ -1437,8 +1439,6 @@ class AppListSurveyTriggerTest
   void SetUpOnMainThread() override {
     AppListClientImplBrowserTest::SetUpOnMainThread();
 
-    display_service_ = std::make_unique<NotificationDisplayServiceTester>(
-        browser()->profile());
     user_manager::UserManager::Get()->SetIsCurrentUserNew(true);
     AppListClientImpl::GetInstance()->InitializeAsIfNewUserLoginForTest();
   }
@@ -1463,9 +1463,8 @@ class AppListSurveyTriggerTest
   }
 
   bool IsHatsNotificationActive() const {
-    return display_service_
-        ->GetNotification(ash::HatsNotificationController::kNotificationId)
-        .has_value();
+    return message_center::MessageCenter::Get()->FindVisibleNotificationById(
+               ash::HatsNotificationController::kNotificationId) != nullptr;
   }
 
   void MaybeWaitForHatsNotification() {
@@ -1473,9 +1472,9 @@ class AppListSurveyTriggerTest
       return;
     }
 
-    base::RunLoop loop;
-    display_service_->SetNotificationAddedClosure(loop.QuitClosure());
-    loop.Run();
+    message_center::MessageCenterWaiter(
+        ash::HatsNotificationController::kNotificationId)
+        .Wait();
   }
 
   const ash::HatsNotificationController* GetHatsNotificationController() const {
@@ -1502,8 +1501,6 @@ class AppListSurveyTriggerTest
   }
 
   base::test::ScopedFeatureList scoped_feature_list_;
-
-  std::unique_ptr<NotificationDisplayServiceTester> display_service_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1721,59 +1718,4 @@ IN_PROC_BROWSER_TEST_P(AppListModifiedDefaultAppOrderTest,
   EXPECT_EQ(camera_ordinal, new_camera_ordinal);
   EXPECT_EQ(youtube_ordinal, new_youtube_ordinal);
   EXPECT_EQ(calculator_ordinal, new_calculator_ordinal);
-}
-
-class AppListClientImplAssistantNewEntryPointTest
-    : public AppListClientImplBrowserPromiseAppTest {
- protected:
-  static constexpr char kTestAppName[] = "test app";
-  const GURL kTestAppUrl = GURL("https://example.com/path");
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_{
-      ash::assistant::features::kEnableNewEntryPoint};
-};
-
-IN_PROC_BROWSER_TEST_F(AppListClientImplAssistantNewEntryPointTest, Eligible) {
-  webapps::AppId app_id =
-      web_app::test::InstallDummyWebApp(profile(), kTestAppName, kTestAppUrl);
-
-  AssistantBrowserDelegateImpl* delegate =
-      static_cast<AssistantBrowserDelegateImpl*>(
-          ash::assistant::AssistantBrowserDelegate::Get());
-  ASSERT_TRUE(delegate);
-  delegate->OverrideEntryPointIdForTesting(app_id);
-
-  AppListClientImpl* client = AppListClientImpl::GetInstance();
-  ASSERT_TRUE(client);
-
-  base::test::TestFuture<bool> eligibility_future;
-  client->GetAssistantNewEntryPointEligibility(
-      eligibility_future.GetCallback());
-  EXPECT_TRUE(eligibility_future.Get());
-}
-
-IN_PROC_BROWSER_TEST_F(AppListClientImplAssistantNewEntryPointTest, Name) {
-  AppListClientImpl* client = AppListClientImpl::GetInstance();
-  ASSERT_TRUE(client);
-
-  EXPECT_EQ(std::nullopt, client->GetAssistantNewEntryPointName())
-      << "Querying new entry point name before it's installed will return "
-         "std::nullopt";
-
-  webapps::AppId app_id =
-      web_app::test::InstallDummyWebApp(profile(), kTestAppName, kTestAppUrl);
-
-  AssistantBrowserDelegateImpl* delegate =
-      static_cast<AssistantBrowserDelegateImpl*>(
-          ash::assistant::AssistantBrowserDelegate::Get());
-  ASSERT_TRUE(delegate);
-  delegate->OverrideEntryPointIdForTesting(app_id);
-
-  base::test::TestFuture<bool> eligibility_future;
-  client->GetAssistantNewEntryPointEligibility(
-      eligibility_future.GetCallback());
-  EXPECT_TRUE(eligibility_future.Get());
-
-  EXPECT_EQ(kTestAppName, client->GetAssistantNewEntryPointName());
 }

@@ -12,10 +12,6 @@
 #include "third_party/blink/renderer/platform/geometry/physical_offset.h"
 #include "third_party/blink/renderer/platform/text/writing_direction_mode.h"
 
-namespace WTF {
-class String;
-}  // namespace WTF
-
 namespace blink {
 
 struct LogicalDelta;
@@ -91,7 +87,7 @@ struct CORE_EXPORT LogicalOffset {
            block_offset <= other.block_offset;
   }
 
-  WTF::String ToString() const;
+  String ToString() const;
 };
 
 CORE_EXPORT std::ostream& operator<<(std::ostream&, const LogicalOffset&);

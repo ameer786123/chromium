@@ -8,6 +8,7 @@
 #include "base/sequence_checker.h"
 #include "base/thread_annotations.h"
 #include "base/types/pass_key.h"
+#include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "services/webnn/public/mojom/webnn_tensor.mojom.h"
 #include "services/webnn/queueable_resource_state.h"
@@ -24,21 +25,29 @@ class BufferContent;
 class API_AVAILABLE(macos(12.3)) TensorImplCoreml final
     : public WebNNTensorImpl {
  public:
-  static base::expected<std::unique_ptr<WebNNTensorImpl>, mojom::ErrorPtr>
-  Create(mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
-         WebNNContextImpl* context,
-         mojom::TensorInfoPtr tensor_info);
+  static base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr> Create(
+      mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
+      base::WeakPtr<WebNNContextImpl> context,
+      mojom::TensorInfoPtr tensor_info);
+
+  static base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr> Create(
+      mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
+      base::WeakPtr<WebNNContextImpl> context,
+      mojom::TensorInfoPtr tensor_info,
+      std::unique_ptr<gpu::WebNNTensorRepresentation> representation);
 
   TensorImplCoreml(
       mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
-      WebNNContextImpl* context,
+      base::WeakPtr<WebNNContextImpl> context,
       mojom::TensorInfoPtr tensor_info,
       scoped_refptr<QueueableResourceState<BufferContent>> buffer_state,
+      std::unique_ptr<gpu::WebNNTensorRepresentation> representation,
+      std::unique_ptr<gpu::WebNNTensorRepresentation::ScopedAccess>
+          representation_access,
       base::PassKey<TensorImplCoreml> pass_key);
 
   TensorImplCoreml(const TensorImplCoreml&) = delete;
   TensorImplCoreml& operator=(const TensorImplCoreml&) = delete;
-  ~TensorImplCoreml() override;
 
   // WebNNTensorImpl:
   void ReadTensorImpl(mojom::WebNNTensor::ReadTensorCallback callback) override;
@@ -48,6 +57,8 @@ class API_AVAILABLE(macos(12.3)) TensorImplCoreml final
       const;
 
  private:
+  ~TensorImplCoreml() override;
+
   SEQUENCE_CHECKER(sequence_checker_);
 
   scoped_refptr<QueueableResourceState<BufferContent>> buffer_state_

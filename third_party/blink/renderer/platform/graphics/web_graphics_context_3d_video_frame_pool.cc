@@ -14,7 +14,6 @@
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/client/context_support.h"
-#include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
 #include "gpu/command_buffer/client/raster_interface.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_capabilities.h"
@@ -36,8 +35,7 @@ namespace blink {
 
 namespace {
 
-BASE_FEATURE(kUseCopyToGpuMemoryBufferAsync,
-             "UseCopyToGpuMemoryBufferAsync",
+BASE_FEATURE(UseCopyToGpuMemoryBufferAsync,
 #if BUILDFLAG(IS_WIN)
              base::FEATURE_ENABLED_BY_DEFAULT
 #else
@@ -69,9 +67,6 @@ class Context : public media::RenderableGpuMemoryBufferVideoFramePool::Context {
     if (!client_shared_image) {
       return nullptr;
     }
-#if BUILDFLAG(IS_MAC)
-    client_shared_image->SetColorSpaceOnNativeBuffer(color_space);
-#endif
     sync_token = sii->GenVerifiedSyncToken();
     return client_shared_image;
   }
@@ -342,8 +337,7 @@ void ApplyMetadataAndRunCallback(
   std::move(orig_callback).Run(std::move(wrapped));
 }
 
-BASE_FEATURE(kGpuMemoryBufferReadbackFromTexture,
-             "GpuMemoryBufferReadbackFromTexture",
+BASE_FEATURE(GpuMemoryBufferReadbackFromTexture,
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS) || \
     BUILDFLAG(IS_LINUX)
              base::FEATURE_ENABLED_BY_DEFAULT
@@ -367,8 +361,8 @@ bool WebGraphicsContext3DVideoFramePool::ConvertVideoFrame(
   return CopyRGBATextureToVideoFrame(
              src_video_frame->coded_size(), src_video_frame->shared_image(),
              src_video_frame->acquire_sync_token(), dst_color_space,
-             WTF::BindOnce(ApplyMetadataAndRunCallback, src_video_frame,
-                           std::move(callback)))
+             blink::BindOnce(ApplyMetadataAndRunCallback, src_video_frame,
+                             std::move(callback)))
       .has_value();
 }
 

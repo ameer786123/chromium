@@ -89,8 +89,7 @@ public class BluetoothChooserDialog
     final Context mContext;
 
     // The dialog to show to let the user pick a device.
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-    public ItemChooserDialog mItemChooserDialog;
+    @VisibleForTesting public ItemChooserDialog mItemChooserDialog;
 
     // The origin for the site wanting to pair with the bluetooth devices.
     final String mOrigin;
@@ -102,18 +101,14 @@ public class BluetoothChooserDialog
     // The embedder-provided delegate.
     final BluetoothChooserAndroidDelegate mDelegate;
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-    public @Nullable Drawable mConnectedIcon;
+    @VisibleForTesting public @Nullable Drawable mConnectedIcon;
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-    public String mConnectedIconDescription;
+    @VisibleForTesting public String mConnectedIconDescription;
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-    public Drawable[] mSignalStrengthLevelIcon;
+    @VisibleForTesting public Drawable[] mSignalStrengthLevelIcon;
 
     // A pointer back to the native part of the implementation for this dialog.
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-    public long mNativeBluetoothChooserDialogPtr;
+    @VisibleForTesting public long mNativeBluetoothChooserDialogPtr;
 
     // Used to keep track of when the Mode Changed Receiver is registered.
     boolean mIsLocationModeChangedReceiverRegistered;
@@ -124,10 +119,7 @@ public class BluetoothChooserDialog
     // The status message to show when the bluetooth adapter is turned off.
     private final SpannableString mAdapterOffStatus;
 
-    // Should the "adapter off" message be shown once Bluetooth permission is granted?
-    private boolean mAdapterOff;
-
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public final BroadcastReceiver mLocationModeBroadcastReceiver =
             new BroadcastReceiver() {
                 @Override
@@ -137,11 +129,6 @@ public class BluetoothChooserDialog
                     if (!checkLocationServicesAndPermission()) return;
 
                     mItemChooserDialog.clear();
-
-                    if (mAdapterOff) {
-                        notifyAdapterTurnedOff();
-                        return;
-                    }
 
                     Natives jni = BluetoothChooserDialogJni.get();
                     jni.restartSearch(mNativeBluetoothChooserDialogPtr);
@@ -170,7 +157,7 @@ public class BluetoothChooserDialog
     }
 
     /** Creates the BluetoothChooserDialog. */
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public BluetoothChooserDialog(
             WindowAndroid windowAndroid,
             String origin,
@@ -223,7 +210,7 @@ public class BluetoothChooserDialog
     }
 
     /** Show the BluetoothChooserDialog. */
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     @Initializer
     public void show() {
         SpannableString origin = new SpannableString(mOrigin);
@@ -316,11 +303,6 @@ public class BluetoothChooserDialog
         if (!checkLocationServicesAndPermission()) return;
 
         mItemChooserDialog.clear();
-
-        if (mAdapterOff) {
-            notifyAdapterTurnedOff();
-            return;
-        }
 
         Natives jni = BluetoothChooserDialogJni.get();
         jni.restartSearch(mNativeBluetoothChooserDialogPtr);
@@ -485,7 +467,7 @@ public class BluetoothChooserDialog
         return dialog;
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     @CalledByNative
     public void addOrUpdateDevice(
             String deviceId, String deviceName, boolean isGATTConnected, int signalStrengthLevel) {
@@ -509,51 +491,45 @@ public class BluetoothChooserDialog
         mItemChooserDialog.addOrUpdateItem(deviceId, deviceName, icon, iconDescription);
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     @CalledByNative
     public void closeDialog() {
         mNativeBluetoothChooserDialogPtr = 0;
         mItemChooserDialog.dismiss();
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     @CalledByNative
     public void notifyAdapterTurnedOff() {
-        mAdapterOff = true;
+        SpannableString adapterOffMessage =
+                SpanApplier.applySpans(
+                        mContext.getString(R.string.bluetooth_adapter_off),
+                        new SpanInfo("<link>", "</link>", createLinkSpan(LinkType.ADAPTER_OFF)));
 
-        // Permission is required to turn the adapter on so make sure to ask for that first.
-        if (checkLocationServicesAndPermission()) {
-            SpannableString adapterOffMessage =
-                    SpanApplier.applySpans(
-                            mContext.getString(R.string.bluetooth_adapter_off),
-                            new SpanInfo(
-                                    "<link>", "</link>", createLinkSpan(LinkType.ADAPTER_OFF)));
-
-            mItemChooserDialog.setErrorState(adapterOffMessage, mAdapterOffStatus);
-        }
+        mItemChooserDialog.setErrorState(adapterOffMessage, mAdapterOffStatus);
     }
 
     @CalledByNative
     private void notifyAdapterTurnedOn() {
-        mAdapterOff = false;
         mItemChooserDialog.clear();
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
+    @CalledByNative
+    public void notifyAdapterUnauthorized() {
+        checkLocationServicesAndPermission();
+    }
+
+    @VisibleForTesting
     @CalledByNative
     public void notifyDiscoveryState(@DiscoveryMode int discoveryState) {
         switch (discoveryState) {
-            case DiscoveryMode.DISCOVERY_FAILED_TO_START:
-                // FAILED_TO_START might be caused by a missing Location
-                // permission or by the Location service being turned off.
-                // Check, and show a request if so.
-                checkLocationServicesAndPermission();
-                break;
             case DiscoveryMode.DISCOVERY_IDLE:
                 mItemChooserDialog.setIdleState();
                 break;
             default:
                 // TODO(jyasskin): Report the new state to the user.
+                Log.e(TAG, "Unexpected discovery state: " + discoveryState);
                 break;
         }
     }

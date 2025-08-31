@@ -17,17 +17,12 @@
 
 #vertical-separator {
   background: rgba(255, 255, 255, 0.3);
-  height: 15px;
-  margin-inline: 12px;
+  height: 20px;
+  margin-inline: var(--toolbar-item-gap);
   width: 1px;
 }
 
-:host-context([pdfcr23enabled]) #vertical-separator {
-  height: 20px;
-}
-
 ink-brush-selector {
-  --ink-brush-button-gap: 4px;
-  --ink-brush-button-size: 40px;
-  padding: 4px;
+  --ink-brush-button-gap: 8px;
+  --ink-brush-button-size: 32px;
 }

@@ -7,6 +7,7 @@ package org.chromium.support_lib_glue;
 import static org.chromium.support_lib_glue.SupportLibWebViewChromiumFactory.recordApiCall;
 
 import android.os.CancellationSignal;
+import android.os.SystemClock;
 import android.webkit.CookieManager;
 import android.webkit.GeolocationPermissions;
 import android.webkit.ServiceWorkerController;
@@ -17,10 +18,13 @@ import androidx.annotation.Nullable;
 
 import com.android.webview.chromium.PrefetchOperationCallback;
 import com.android.webview.chromium.PrefetchOperationStatusCode;
+import com.android.webview.chromium.PrefetchParams;
 import com.android.webview.chromium.Profile;
 import com.android.webview.chromium.SpeculativeLoadingConfig;
 
 import org.chromium.android_webview.common.Lifetime;
+import org.chromium.base.ThreadUtils;
+import org.chromium.base.TraceEvent;
 import org.chromium.support_lib_boundary.PrefetchOperationCallbackBoundaryInterface;
 import org.chromium.support_lib_boundary.ProfileBoundaryInterface;
 import org.chromium.support_lib_boundary.SpeculativeLoadingConfigBoundaryInterface;
@@ -29,7 +33,9 @@ import org.chromium.support_lib_boundary.util.BoundaryInterfaceReflectionUtil;
 import org.chromium.support_lib_glue.SupportLibWebViewChromiumFactory.ApiCall;
 
 import java.lang.reflect.InvocationHandler;
+import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 /** The support-lib glue implementation for Profile, delegates all the calls to {@link Profile}. */
 @Lifetime.Profile
@@ -82,10 +88,13 @@ public class SupportLibProfile implements ProfileBoundaryInterface {
             Executor callbackExecutor,
             /* PrefetchOperationCallback */ InvocationHandler callback) {
         recordApiCall(ApiCall.PREFETCH_URL);
-        int prefetchKey =
-                mProfileImpl.prefetchUrl(
-                        url, null, callbackExecutor, createOperationCallback(callback));
-        setCancelListener(cancellationSignal, prefetchKey);
+        prefetchUrlInternal(
+                SystemClock.uptimeMillis(),
+                url,
+                null,
+                cancellationSignal,
+                callbackExecutor,
+                createOperationCallback(callback));
     }
 
     @Override
@@ -96,21 +105,48 @@ public class SupportLibProfile implements ProfileBoundaryInterface {
             /* SpeculativeLoadingParameters */ InvocationHandler speculativeLoadingParams,
             /* PrefetchOperationCallback */ InvocationHandler callback) {
         recordApiCall(ApiCall.PREFETCH_URL_WITH_PARAMS);
+        long apiCallTriggerTimeMs = SystemClock.uptimeMillis();
         SpeculativeLoadingParametersBoundaryInterface speculativeLoadingParameters =
                 BoundaryInterfaceReflectionUtil.castToSuppLibClass(
                         SpeculativeLoadingParametersBoundaryInterface.class,
                         speculativeLoadingParams);
 
-        int prefetchKey =
-                mProfileImpl.prefetchUrl(
-                        url,
-                        SupportLibSpeculativeLoadingParametersAdapter
-                                .fromSpeculativeLoadingParametersBoundaryInterface(
-                                        speculativeLoadingParameters),
-                        callbackExecutor,
-                        createOperationCallback(callback));
+        assert speculativeLoadingParameters != null;
+        PrefetchParams prefetchParams =
+                SupportLibSpeculativeLoadingParametersAdapter
+                        .fromSpeculativeLoadingParametersBoundaryInterface(
+                                speculativeLoadingParameters);
+        prefetchUrlInternal(
+                apiCallTriggerTimeMs,
+                url,
+                prefetchParams,
+                cancellationSignal,
+                callbackExecutor,
+                createOperationCallback(callback));
+    }
 
-        setCancelListener(cancellationSignal, prefetchKey);
+    private void prefetchUrlInternal(
+            long apiCallTriggerTimeMs,
+            String url,
+            @Nullable PrefetchParams prefetchParams,
+            @Nullable CancellationSignal cancellationSignal,
+            Executor callbackExecutor,
+            PrefetchOperationCallback callback) {
+        if (ThreadUtils.runningOnUiThread()) {
+            int prefetchKey =
+                    mProfileImpl.prefetchUrl(url, prefetchParams, callbackExecutor, callback);
+            setCancelListener(cancellationSignal, prefetchKey);
+        } else {
+            Consumer<Integer> prefetchKeyListener =
+                    prefetchKey -> setCancelListener(cancellationSignal, prefetchKey);
+            mProfileImpl.prefetchUrlAsync(
+                    apiCallTriggerTimeMs,
+                    url,
+                    prefetchParams,
+                    callbackExecutor,
+                    callback,
+                    prefetchKeyListener);
+        }
     }
 
     public void setCancelListener(CancellationSignal cancellationSignal, int prefetchKey) {
@@ -184,5 +220,59 @@ public class SupportLibProfile implements ProfileBoundaryInterface {
                             .PrefetchExceptionTypeBoundaryInterface.GENERIC;
                 };
         callback.onFailure(type, message, networkErrorCode);
+    }
+
+    @Override
+    public void warmUpRendererProcess() {
+        assert ThreadUtils.runningOnUiThread();
+        recordApiCall(ApiCall.PROFILE_WARM_UP_RENDERER_PROCESS);
+        mProfileImpl.warmUpRendererProcess();
+    }
+
+    @Override
+    public void setOriginMatchedHeader(
+            @NonNull String headerName,
+            @NonNull String headerValue,
+            @NonNull Set<String> originRules) {
+        recordApiCall(ApiCall.SET_ORIGIN_MATCHED_HEADER);
+        try (TraceEvent event =
+                TraceEvent.scoped("WebView.APICall.AndroidX.SET_ORIGIN_MATCHED_HEADER")) {
+            mProfileImpl.setOriginMatchedHeader(headerName, headerValue, originRules);
+        }
+    }
+
+    @Override
+    public boolean hasOriginMatchedHeader(@NonNull String headerName) {
+        recordApiCall(ApiCall.HAS_ORIGIN_MATCHED_HEADER);
+        try (TraceEvent event =
+                TraceEvent.scoped("WebView.APICall.AndroidX.HAS_ORIGIN_MATCHED_HEADER")) {
+            return mProfileImpl.hasOriginMatchedHeader(headerName);
+        }
+    }
+
+    @Override
+    public void clearOriginMatchedHeader(@NonNull String headerName) {
+        recordApiCall(ApiCall.CLEAR_ORIGIN_MATCHED_HEADER);
+        try (TraceEvent event =
+                TraceEvent.scoped("WebView.APICall.AndroidX.CLEAR_ORIGIN_MATCHED_HEADER")) {
+            mProfileImpl.clearOriginMatchedHeader(headerName);
+        }
+    }
+
+    @Override
+    public void clearAllOriginMatchedHeaders() {
+        recordApiCall(ApiCall.CLEAR_ALL_ORIGIN_MATCHED_HEADERS);
+        try (TraceEvent event =
+                TraceEvent.scoped("WebView.APICall.AndroidX.CLEAR_ALL_ORIGIN_MATCHED_HEADERS")) {
+            mProfileImpl.clearAllOriginMatchedHeaders();
+        }
+    }
+
+    @Override
+    public void preconnect(String url) {
+        recordApiCall(ApiCall.PRECONNECT);
+        try (TraceEvent event = TraceEvent.scoped("WebView.APICall.AndroidX.PRECONNECT")) {
+            mProfileImpl.preconnect(url);
+        }
     }
 }

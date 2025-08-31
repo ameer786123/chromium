@@ -8,7 +8,6 @@
 #include <memory>
 #include <vector>
 
-#include "ash/assistant/ui/main_stage/launcher_search_iph_view.h"
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/ash_typography.h"
 #include "ash/public/cpp/style/color_provider.h"
@@ -18,6 +17,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/base/ime/text_input_flags.h"
@@ -131,7 +131,7 @@ class SearchBoxBackground : public views::Background {
 
     cc::PaintFlags flags;
     flags.setAntiAlias(true);
-    flags.setColor(color().ConvertToSkColor(view->GetColorProvider()));
+    flags.setColor(color().ResolveToSkColor(view->GetColorProvider()));
     canvas->DrawRoundRect(bounds, corner_radius_, flags);
   }
 
@@ -528,14 +528,14 @@ views::ImageButton* SearchBoxViewBase::CreateAssistantButton(
   return assistant_button_;
 }
 
-views::ImageButton* SearchBoxViewBase::CreateAssistantNewEntryPointButton(
+views::ImageButton* SearchBoxViewBase::CreateGeminiButton(
     const base::RepeatingClosure& button_callback) {
   CHECK(end_button_container_);
-  CHECK(!assistant_new_entry_point_button_);
+  CHECK(!gemini_button_);
 
-  assistant_new_entry_point_button_ = end_button_container_->AddChildView(
+  gemini_button_ = end_button_container_->AddChildView(
       std::make_unique<SearchBoxImageButton>(button_callback));
-  return assistant_new_entry_point_button_;
+  return gemini_button_;
 }
 
 views::ImageButton* SearchBoxViewBase::CreateFilterButton(
@@ -566,8 +566,8 @@ views::ImageButton* SearchBoxViewBase::assistant_button() {
   return assistant_button_;
 }
 
-views::ImageButton* SearchBoxViewBase::assistant_new_entry_point_button() {
-  return assistant_new_entry_point_button_;
+views::ImageButton* SearchBoxViewBase::gemini_button() {
+  return gemini_button_;
 }
 
 views::ImageButton* SearchBoxViewBase::sunfish_button() {
@@ -592,32 +592,6 @@ views::View* SearchBoxViewBase::filter_and_close_button_container() {
 
 views::ImageView* SearchBoxViewBase::search_icon() {
   return search_icon_;
-}
-
-void SearchBoxViewBase::SetIphView(
-    std::unique_ptr<LauncherSearchIphView> view) {
-  if (GetIphView()) {
-    DCHECK(false) << "SetIphView gets called with an IPH view being shown.";
-
-    DeleteIphView();
-  }
-
-  iph_view_tracker_.SetView(main_container_->AddChildView(std::move(view)));
-}
-
-LauncherSearchIphView* SearchBoxViewBase::GetIphView() {
-  views::View* view = iph_view_tracker_.view();
-  if (!view) {
-    return nullptr;
-  }
-
-  CHECK(views::IsViewClass<LauncherSearchIphView>(view))
-      << "Only LaunchserSearchIph view is supported now";
-  return static_cast<LauncherSearchIphView*>(view);
-}
-
-void SearchBoxViewBase::DeleteIphView() {
-  main_container_->RemoveChildViewT(GetIphView());
 }
 
 void SearchBoxViewBase::TriggerSearch() {
@@ -711,8 +685,8 @@ void SearchBoxViewBase::OnEnabledChanged() {
   if (sunfish_button_) {
     sunfish_button_->SetEnabled(enabled);
   }
-  if (assistant_new_entry_point_button_) {
-    assistant_new_entry_point_button_->SetEnabled(enabled);
+  if (gemini_button_) {
+    gemini_button_->SetEnabled(enabled);
   }
   if (filter_button_) {
     filter_button_->SetEnabled(enabled);
@@ -798,9 +772,8 @@ void SearchBoxViewBase::UpdateButtonsVisibility() {
   }
 
   if (end_button_container_ && !end_button_container_->children().empty()) {
-    const bool any_edge_button_shown = show_assistant_button_ ||
-                                       show_assistant_new_entry_point_button_ ||
-                                       show_sunfish_button_;
+    const bool any_edge_button_shown =
+        show_assistant_button_ || show_gemini_button_ || show_sunfish_button_;
     const bool should_show_edge_buttons =
         any_edge_button_shown && !should_show_close_button;
 
@@ -889,19 +862,10 @@ void SearchBoxViewBase::SetSearchIconImage(gfx::ImageSkia image) {
   search_icon_->SetSearchIconImage(image);
 }
 
-void SearchBoxViewBase::SetShowAssistantButton(bool show) {
-  DCHECK(assistant_button_);
-  show_assistant_button_ = show;
-  assistant_button_->SetVisible(show);
-  UpdateButtonsVisibility();
-}
-
-void SearchBoxViewBase::SetShowAssistantNewEntryPointButton(bool show) {
-  if (show) {
-    CHECK(assistant_new_entry_point_button_);
-    show_assistant_new_entry_point_button_ = show;
-    assistant_new_entry_point_button_->SetVisible(show);
-  }
+void SearchBoxViewBase::SetShowGeminiButton(bool show) {
+  CHECK(gemini_button_);
+  show_gemini_button_ = show;
+  gemini_button_->SetVisible(show);
 
   UpdateButtonsVisibility();
 }

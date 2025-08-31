@@ -4,8 +4,11 @@
 
 #include "gpu/ipc/service/gpu_memory_buffer_factory_native_pixmap.h"
 
+#include "base/logging.h"
 #include "build/build_config.h"
 #include "components/viz/common/gpu/vulkan_context_provider.h"
+#include "components/viz/common/resources/shared_image_format_utils.h"
+#include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/buffer_usage_util.h"
 #include "ui/gfx/client_native_pixmap.h"
@@ -32,47 +35,19 @@ GpuMemoryBufferFactoryNativePixmap::~GpuMemoryBufferFactoryNativePixmap() =
     default;
 
 gfx::GpuMemoryBufferHandle
-GpuMemoryBufferFactoryNativePixmap::CreateGpuMemoryBuffer(
-    gfx::GpuMemoryBufferId id,
+GpuMemoryBufferFactoryNativePixmap::CreateNativeGmbHandle(
     const gfx::Size& size,
-    const gfx::Size& framebuffer_size,
-    gfx::BufferFormat format,
-    gfx::BufferUsage usage,
-    int client_id,
-    SurfaceHandle surface_handle) {
+    viz::SharedImageFormat format,
+    gfx::BufferUsage usage) {
+  CHECK(viz::HasEquivalentBufferFormat(format));
+  gfx::BufferFormat buffer_format = ToBufferFormat(format);
   scoped_refptr<gfx::NativePixmap> pixmap =
       ui::OzonePlatform::GetInstance()
           ->GetSurfaceFactoryOzone()
-          ->CreateNativePixmap(surface_handle, GetVulkanDeviceQueue(), size,
-                               format, usage, framebuffer_size);
-  return CreateGpuMemoryBufferFromNativePixmap(id, size, format, usage,
-                                               client_id, std::move(pixmap));
-}
-
-void GpuMemoryBufferFactoryNativePixmap::CreateGpuMemoryBufferAsync(
-    gfx::GpuMemoryBufferId id,
-    const gfx::Size& size,
-    gfx::BufferFormat format,
-    gfx::BufferUsage usage,
-    int client_id,
-    SurfaceHandle surface_handle,
-    CreateGpuMemoryBufferAsyncCallback callback) {
-  ui::OzonePlatform::GetInstance()
-      ->GetSurfaceFactoryOzone()
-      ->CreateNativePixmapAsync(
-          surface_handle, GetVulkanDeviceQueue(), size, format, usage,
-          base::BindOnce(
-              &GpuMemoryBufferFactoryNativePixmap::OnNativePixmapCreated, id,
-              size, format, usage, client_id, std::move(callback),
-              weak_factory_.GetWeakPtr()));
-}
-
-void GpuMemoryBufferFactoryNativePixmap::DestroyGpuMemoryBuffer(
-    gfx::GpuMemoryBufferId id,
-    int client_id) {
-  base::AutoLock lock(native_pixmaps_lock_);
-  NativePixmapMapKey key(id.id, client_id);
-  native_pixmaps_.erase(key);
+          ->CreateNativePixmap(gpu::kNullSurfaceHandle, GetVulkanDeviceQueue(),
+                               size, buffer_format, usage, size);
+  return CreateNativeGmbHandleFromNativePixmap(size, format, usage,
+                                               std::move(pixmap));
 }
 
 bool GpuMemoryBufferFactoryNativePixmap::
@@ -91,56 +66,25 @@ VulkanDeviceQueue* GpuMemoryBufferFactoryNativePixmap::GetVulkanDeviceQueue() {
   return nullptr;
 }
 
-// static
-void GpuMemoryBufferFactoryNativePixmap::OnNativePixmapCreated(
-    gfx::GpuMemoryBufferId id,
-    const gfx::Size& size,
-    gfx::BufferFormat format,
-    gfx::BufferUsage usage,
-    int client_id,
-    CreateGpuMemoryBufferAsyncCallback callback,
-    base::WeakPtr<GpuMemoryBufferFactoryNativePixmap> weak_ptr,
-    scoped_refptr<gfx::NativePixmap> pixmap) {
-  if (weak_ptr) {
-    std::move(callback).Run(weak_ptr->CreateGpuMemoryBufferFromNativePixmap(
-        id, size, format, usage, client_id, pixmap));
-  } else {
-    std::move(callback).Run(gfx::GpuMemoryBufferHandle());
-  }
-}
-
 gfx::GpuMemoryBufferHandle
-GpuMemoryBufferFactoryNativePixmap::CreateGpuMemoryBufferFromNativePixmap(
-    gfx::GpuMemoryBufferId id,
+GpuMemoryBufferFactoryNativePixmap::CreateNativeGmbHandleFromNativePixmap(
     const gfx::Size& size,
-    gfx::BufferFormat format,
+    viz::SharedImageFormat format,
     gfx::BufferUsage usage,
-    int client_id,
     scoped_refptr<gfx::NativePixmap> pixmap) {
   if (!pixmap.get()) {
     DLOG(ERROR) << "Failed to create pixmap " << size.ToString() << ",  "
-                << gfx::BufferFormatToString(format) << ", usage "
+                << format.ToString() << ", usage "
                 << gfx::BufferUsageToString(usage);
     return gfx::GpuMemoryBufferHandle();
   }
 
-  gfx::GpuMemoryBufferHandle new_handle;
-  new_handle.type = gfx::NATIVE_PIXMAP;
-  new_handle.id = id;
-  new_handle.native_pixmap_handle = pixmap->ExportHandle();
-
-  if (new_handle.native_pixmap_handle.planes.empty())
+  gfx::NativePixmapHandle native_pixmap_handle = pixmap->ExportHandle();
+  if (native_pixmap_handle.planes.empty()) {
     return gfx::GpuMemoryBufferHandle();
-
-  // TODO(reveman): Remove this once crbug.com/628334 has been fixed.
-  {
-    base::AutoLock lock(native_pixmaps_lock_);
-    NativePixmapMapKey key(id.id, client_id);
-    DCHECK(native_pixmaps_.find(key) == native_pixmaps_.end());
-    native_pixmaps_[key] = pixmap;
   }
 
-  return new_handle;
+  return gfx::GpuMemoryBufferHandle(std::move(native_pixmap_handle));
 }
 
 }  // namespace gpu

@@ -6,25 +6,34 @@
 
 #include <memory>
 
+#include "base/check_deref.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
-#include "base/lazy_instance.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/no_destructor.h"
 #include "base/types/expected_macros.h"
-#include "base/version.h"
+#include "base/types/optional_util.h"
 #include "chrome/browser/web_applications/callback_utils.h"
 #include "chrome/browser/web_applications/isolated_web_apps/commands/install_isolated_web_app_command.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_downloader.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_source.h"
 #include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_external_install_options.h"
 #include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest.h"
 #include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest_fetcher.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/common/chrome_features.h"
-#include "chromeos/components/mgs/managed_guest_session_utils.h"
+#include "chromeos/components/kiosk/kiosk_utils.h"
+#include "components/webapps/isolated_web_apps/download/bundle_downloader.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
+#include "components/webapps/isolated_web_apps/types/source.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
+#include "base/metrics/histogram_functions.h"
+#include "base/types/expected.h"
+#include "chrome/browser/web_applications/isolated_web_apps/commands/copy_bundle_to_cache_command.h"
+#include "chrome/browser/web_applications/isolated_web_apps/commands/get_bundle_cache_path_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_cache_client.h"
+#include "chromeos/components/mgs/managed_guest_session_utils.h"
+#include "components/webapps/isolated_web_apps/error/uma_logging.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace web_app {
@@ -95,12 +104,33 @@ IsolatedWebAppInstallSource GetIsolatedWebAppInstallSource(
 std::optional<UpdateManifest::VersionEntry> GetVersionWithOptions(
     const UpdateManifest& update_manifest,
     const IsolatedWebAppExternalInstallOptions& install_options) {
-  if (install_options.pinned_version()) {
+  if (install_options.pinned_version().has_value()) {
     return update_manifest.GetVersion(*install_options.pinned_version(),
                                       install_options.update_channel());
   } else {
     return update_manifest.GetLatestVersion(install_options.update_channel());
   }
+}
+constexpr std::string_view kNonAllowlistedAppInstallationRejectedHistogramName =
+    "WebApp.Isolated.NonAllowlistedAppInstallationRejected";
+
+enum class ManagedSessionType {
+  kManagedUserSession = 0,
+  kManagedGuestSession = 1,
+  kKiosk = 2,
+  kMaxValue = kKiosk,
+};
+
+ManagedSessionType GetCurrentManagedSessionType() {
+#if BUILDFLAG(IS_CHROMEOS)
+  if (chromeos::IsManagedGuestSession()) {
+    return ManagedSessionType::kManagedGuestSession;
+  }
+  if (chromeos::IsKioskSession()) {
+    return ManagedSessionType::kKiosk;
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  return ManagedSessionType::kManagedUserSession;
 }
 
 }  // namespace
@@ -112,7 +142,7 @@ IwaInstaller::IwaInstallCommandWrapperImpl::IwaInstallCommandWrapperImpl(
 void IwaInstaller::IwaInstallCommandWrapperImpl::Install(
     const IsolatedWebAppInstallSource& install_source,
     const IsolatedWebAppUrlInfo& url_info,
-    const base::Version& expected_version,
+    const IwaVersion& expected_version,
     WebAppCommandScheduler::InstallIsolatedWebAppCallback callback) {
   // There is no need to keep the browser or profile alive when
   // policy-installing an IWA. If the browser or profile shut down, installation
@@ -139,15 +169,17 @@ IwaInstaller::IwaInstaller(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     std::unique_ptr<IwaInstallCommandWrapper> install_command_wrapper,
     base::Value::List& log,
+    WebAppProvider* provider,
     ResultCallback callback)
     : install_options_(std::move(install_options)),
       install_source_type_(install_source_type),
       url_loader_factory_(std::move(url_loader_factory)),
       install_command_wrapper_(std::move(install_command_wrapper)),
       log_(log),
+      provider_(provider),
       callback_(std::move(callback)) {
 #if BUILDFLAG(IS_CHROMEOS)
-  if (IsIwaBundleCacheEnabled()) {
+  if (IsIwaBundleCacheEnabledInCurrentSession()) {
     log_->Append(base::Value(u"IWA bundle cache is enabled"));
     cache_client_ = std::make_unique<IwaCacheClient>();
   }
@@ -157,6 +189,15 @@ IwaInstaller::IwaInstaller(
 IwaInstaller::~IwaInstaller() = default;
 
 void IwaInstaller::Start() {
+  if (!IwaKeyDistributionInfoProvider::GetInstance().IsManagedInstallPermitted(
+          install_options_.web_bundle_id().id())) {
+    base::UmaHistogramEnumeration(
+        kNonAllowlistedAppInstallationRejectedHistogramName,
+        GetCurrentManagedSessionType());
+    Finish(Result(Result::Type::kErrorAppNotInAllowlist,
+                  "Not in the managed allowlist."));
+    return;
+  }
 #if BUILDFLAG(IS_CHROMEOS)
   if (chromeos::IsManagedGuestSession() &&
       !base::FeatureList::IsEnabled(
@@ -166,14 +207,22 @@ void IwaInstaller::Start() {
     return;
   }
 
-  if (IsIwaBundleCacheEnabled()) {
+  if (IsIwaBundleCacheEnabledInCurrentSession()) {
     // Install IWA from cache if possible, otherwise install it from the
     // Internet.
     log_->Append(base::Value(u"looking for cached bundle"));
-    cache_client_->GetCacheFilePath(
-        install_options_.web_bundle_id(), install_options_.pinned_version(),
-        base::BindOnce(&IwaInstaller::OnGetCacheFilePath,
-                       weak_factory_.GetWeakPtr()));
+
+    IsolatedWebAppUrlInfo url_info =
+        IsolatedWebAppUrlInfo::CreateFromSignedWebBundleId(
+            install_options_.web_bundle_id());
+
+    CHECK_DEREF(provider_.get())
+        .scheduler()
+        .GetIsolatedWebAppBundleCachePath(
+            url_info, install_options_.pinned_version(),
+            IwaCacheClient::GetCurrentSessionType(),
+            base::BindOnce(&IwaInstaller::OnBundleCachePathReceived,
+                           weak_factory_.GetWeakPtr()));
     return;
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -182,13 +231,12 @@ void IwaInstaller::Start() {
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
-void IwaInstaller::OnGetCacheFilePath(
-    std::optional<IwaCacheClient::CachedBundleData> cached_bundle) {
-  if (cached_bundle) {
+void IwaInstaller::OnBundleCachePathReceived(GetBundleCachePathResult result) {
+  if (result.has_value()) {
     log_->Append(base::Value("cached bundle is available, version: " +
-                             cached_bundle->version.GetString() +
-                             ", path: " + cached_bundle->path.MaybeAsASCII()));
-    InstallFromCache(cached_bundle->path, cached_bundle->version);
+                             result->cached_version().GetString() + ", path: " +
+                             result->cached_bundle_path().MaybeAsASCII()));
+    InstallFromCache(result->cached_bundle_path(), result->cached_version());
     return;
   }
 
@@ -197,7 +245,7 @@ void IwaInstaller::OnGetCacheFilePath(
 }
 
 void IwaInstaller::InstallFromCache(const base::FilePath& cache_file,
-                                    const base::Version& version) {
+                                    const IwaVersion& version) {
   log_->Append(base::Value("start installing from the cache"));
   IsolatedWebAppUrlInfo url_info =
       IsolatedWebAppUrlInfo::CreateFromSignedWebBundleId(
@@ -215,6 +263,8 @@ void IwaInstaller::InstallFromCache(const base::FilePath& cache_file,
 void IwaInstaller::OnIwaInstalledFromCache(
     base::expected<InstallIsolatedWebAppCommandSuccess,
                    InstallIsolatedWebAppCommandError> result) {
+  base::UmaHistogramBoolean("WebApp.Isolated.InstallFromCache",
+                            result.has_value());
   if (result.has_value()) {
     log_->Append(base::Value("successfully installed IWA from the cache"));
     Finish(Result(Result::Type::kSuccess));
@@ -223,24 +273,18 @@ void IwaInstaller::OnIwaInstalledFromCache(
     // When installing from cache failed, try to install IWA from the Internet.
     InstallFromInternet();
   }
-  // TODO(crbug.com/388727600): add UMA metrics for failed and successful cache
-  // installation.
 }
 
-void IwaInstaller::OnBundleCopiedToCache(
-    base::expected<IwaCacheClient::CopyBundleToCacheSuccess,
-                   IwaCacheClient::CopyBundleToCacheError> result) {
+void IwaInstaller::OnBundleCopiedToCache(CopyBundleToCacheResult result) {
+  web_app::UmaLogExpectedStatus(
+      "WebApp.Isolated.CopyBundleToCacheAfterInstallation", result);
   if (result.has_value()) {
     log_->Append(base::Value(u"successfully copied bundle to the cache: " +
-                             result->cached_bundle_path.LossyDisplayName()));
+                             result->cached_bundle_path().LossyDisplayName()));
   } else {
-    log_->Append(
-        base::Value("failed to copy bundle to cache: " +
-                    IwaCacheClient::CopyErrorToString(result.error())));
+    log_->Append(base::Value("failed to copy bundle to cache: " +
+                             CopyBundleToCacheErrorToString(result.error())));
   }
-
-  // TODO(crbug.com/388727600): add UMA metrics for failed and successful copy
-  // to cache.
 
   // `OnBundleCopiedToCache` is called only after the successful IWA
   // installation.
@@ -279,7 +323,7 @@ void IwaInstaller::OnTempFileCreated(base::OnceClosure next_step_callback,
 }
 
 void IwaInstaller::DownloadUpdateManifest(
-    base::OnceCallback<void(GURL, base::Version)> next_step_callback) {
+    base::OnceCallback<void(GURL, IwaVersion)> next_step_callback) {
   log_->Append(base::Value(
       "Downloading Update Manifest from " +
       install_options_.update_manifest_url().possibly_invalid_spec()));
@@ -293,7 +337,7 @@ void IwaInstaller::DownloadUpdateManifest(
 }
 
 void IwaInstaller::OnUpdateManifestParsed(
-    base::OnceCallback<void(GURL, base::Version)> next_step_callback,
+    base::OnceCallback<void(GURL, IwaVersion)> next_step_callback,
     base::expected<UpdateManifest, UpdateManifestFetcher::Error> fetch_result) {
   update_manifest_fetcher_.reset();
   ASSIGN_OR_RETURN(
@@ -327,9 +371,9 @@ void IwaInstaller::OnUpdateManifestParsed(
 }
 
 void IwaInstaller::DownloadWebBundle(
-    base::OnceCallback<void(base::Version)> next_step_callback,
+    base::OnceCallback<void(IwaVersion)> next_step_callback,
     GURL web_bundle_url,
-    base::Version expected_version) {
+    IwaVersion expected_version) {
   log_->Append(base::Value("Downloading Web Bundle from " +
                            web_bundle_url.possibly_invalid_spec()));
 
@@ -357,41 +401,23 @@ void IwaInstaller::OnWebBundleDownloaded(base::OnceClosure next_step_callback,
   std::move(next_step_callback).Run();
 }
 
-void IwaInstaller::RunInstallFromInternetCommand(
-    base::Version expected_version) {
+void IwaInstaller::RunInstallFromInternetCommand(IwaVersion expected_version) {
   log_->Append(base::Value("Running install command, expected version: " +
                            expected_version.GetString()));
   IsolatedWebAppUrlInfo url_info =
       IsolatedWebAppUrlInfo::CreateFromSignedWebBundleId(
           install_options_.web_bundle_id());
 
-  // TODO: crbug.com/306638108 - In the time it took to download everything, the
-  // app might have already been installed by other means.
-
-  IwaSourceBundleProdFileOp bundle_source_operation =
-      IwaSourceBundleProdFileOp::kMove;
-
-#if BUILDFLAG(IS_CHROMEOS)
-  if (IsIwaBundleCacheEnabled()) {
-    // Bundle should be copied to the cache later, so we should not move it
-    // during the installation.
-    // Note: `bundle_` will be deleted later when this class is destroyed, since
-    // it is `ScopedTempWebBundleFile`, no need to delete it manually after the
-    // copying.
-    bundle_source_operation = IwaSourceBundleProdFileOp::kCopy;
-  }
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
   install_command_wrapper_->Install(
       GetIsolatedWebAppInstallSource(install_source_type_, bundle_.path(),
-                                     bundle_source_operation),
+                                     IwaSourceBundleProdFileOp::kMove),
       url_info, expected_version,
       base::BindOnce(&IwaInstaller::OnIwaInstalledFromInternet,
                      weak_factory_.GetWeakPtr(), expected_version));
 }
 
 void IwaInstaller::OnIwaInstalledFromInternet(
-    base::Version installed_version,
+    IwaVersion installed_version,
     base::expected<InstallIsolatedWebAppCommandSuccess,
                    InstallIsolatedWebAppCommandError> result) {
   if (!result.has_value()) {
@@ -402,16 +428,22 @@ void IwaInstaller::OnIwaInstalledFromInternet(
     return;
   }
 #if BUILDFLAG(IS_CHROMEOS)
-  if (IsIwaBundleCacheEnabled()) {
+  if (IsIwaBundleCacheEnabledInCurrentSession()) {
     // Successfully installed bundles should be copied to cache, so next time
     // the installation will happen from the cache.
-    log_->Append(
-        base::Value("start copying bundle to cache after successful "
-                    "installation from the Internet"));
-    cache_client_->CopyBundleToCache(
-        bundle_.path(), install_options_.web_bundle_id(), installed_version,
-        base::BindOnce(&IwaInstaller::OnBundleCopiedToCache,
-                       weak_factory_.GetWeakPtr()));
+    log_->Append(base::Value(
+        "start copying bundle: " + install_options_.web_bundle_id().id() +
+        " to cache after successful installation from the Internet"));
+
+    IsolatedWebAppUrlInfo url_info =
+        IsolatedWebAppUrlInfo::CreateFromSignedWebBundleId(
+            install_options_.web_bundle_id());
+    CHECK_DEREF(provider_.get())
+        .scheduler()
+        .CopyIsolatedWebAppBundleToCache(
+            url_info, IwaCacheClient::GetCurrentSessionType(),
+            base::BindOnce(&IwaInstaller::OnBundleCopiedToCache,
+                           weak_factory_.GetWeakPtr()));
     return;
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -437,12 +469,11 @@ std::unique_ptr<IwaInstaller> IwaInstallerFactory::Create(
 
 IwaInstallerFactory::IwaInstallerFactoryCallback&
 IwaInstallerFactory::GetIwaInstallerFactory() {
-  static base::LazyInstance<IwaInstallerFactoryCallback>::Leaky
-      iwa_installer_factory = LAZY_INSTANCE_INITIALIZER;
-  if (!iwa_installer_factory.Get()) {
-    iwa_installer_factory.Get() = GetDefaultIwaInstallerFactory();
+  static base::NoDestructor<IwaInstallerFactoryCallback> iwa_installer_factory;
+  if (!*iwa_installer_factory) {
+    *iwa_installer_factory = GetDefaultIwaInstallerFactory();
   }
-  return iwa_installer_factory.Get();
+  return *iwa_installer_factory;
 }
 
 IwaInstallerFactory::IwaInstallerFactoryCallback
@@ -458,7 +489,7 @@ IwaInstallerFactory::GetDefaultIwaInstallerFactory() {
             std::move(url_loader_factory),
             std::make_unique<IwaInstaller::IwaInstallCommandWrapperImpl>(
                 provider),
-            log, std::move(callback));
+            log, provider, std::move(callback));
       });
 }
 
@@ -483,6 +514,8 @@ std::ostream& operator<<(std::ostream& os,
       return os << "kErrorCantInstallFromWebBundle";
     case Type::kErrorManagedGuestSessionInstallDisabled:
       return os << "kErrorManagedGuestSessionInstallDisabled";
+    case Type::kErrorAppNotInAllowlist:
+      return os << "kErrorAppNotInAllowlist";
   }
 }
 

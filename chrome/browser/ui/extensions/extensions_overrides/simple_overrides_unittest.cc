@@ -13,9 +13,9 @@
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/strings/string_split.h"
-#include "chrome/common/extensions/api/chrome_url_overrides.h"
 #include "chrome/common/extensions/api/omnibox.h"
 #include "chrome/common/extensions/api/side_panel.h"
+#include "extensions/common/api/chrome_url_overrides.h"
 #include "extensions/common/api/content_scripts.h"
 #include "extensions/common/api/cross_origin_isolation.h"
 #include "extensions/common/api/declarative_net_request.h"
@@ -73,7 +73,6 @@ const char* kDisallowedFeatures[] = {
     extensions::manifest_keys::kLinkedAppIcons,
     extensions::manifest_keys::kMIMETypes,
     extensions::manifest_keys::kMimeTypesHandler,
-    extensions::manifest_keys::kNaClModules,
     extensions::manifest_keys::kNativelyConnectable,
     extensions::manifest_keys::kOptionalHostPermissions,
     extensions::manifest_keys::kOptionalPermissions,
@@ -81,6 +80,7 @@ const char* kDisallowedFeatures[] = {
     extensions::manifest_keys::kPermissions,
     extensions::manifest_keys::kPlatformAppBackground,
     extensions::manifest_keys::kPlatformAppContentSecurityPolicy,
+    extensions::manifest_keys::kProtocolHandlers,
     extensions::manifest_keys::kReplacementWebApp,
     extensions::manifest_keys::kSockets,
     extensions::manifest_keys::kTheme,
@@ -126,6 +126,7 @@ const char* kDisallowedFeatures[] = {
     // and thus not exposed in a .h).
     "chrome_url_overrides.activationmessage",
     "chrome_url_overrides.keyboard",
+    "nacl_modules",
     "oauth2.auto_approve",
     "platforms",
     "sandbox",

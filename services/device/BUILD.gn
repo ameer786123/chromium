@@ -193,6 +193,7 @@ source_set("tests") {
     sources += [
       "compute_pressure/cpu_probe_manager_unittest.cc",
       "compute_pressure/pressure_manager_impl_unittest.cc",
+      "public/cpp/compute_pressure/cpu_pressure_converter_unittest.cc",
     ]
     deps += [ "//services/device/compute_pressure" ]
   }
@@ -219,7 +220,7 @@ source_set("tests") {
       "generic_sensor/platform_sensor_provider_chromeos_unittest.cc",
     ]
     deps += [
-      "//chromeos/components/sensors:sensors",
+      "//chromeos/components/sensors",
       "//chromeos/components/sensors:test_support",
     ]
   } else if (is_linux && use_udev) {
@@ -323,7 +324,7 @@ source_set("tests") {
 
     deps += [
       "//device/bluetooth:mocks",
-      "//services/device/public/cpp/bluetooth:bluetooth",
+      "//services/device/public/cpp/bluetooth",
       "//services/device/serial",
       "//services/device/serial:test_support",
     ]
@@ -415,6 +416,10 @@ source_set("tests") {
       "sensorsapi.lib",
     ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("test_support") {
@@ -440,6 +445,10 @@ source_set("test_support") {
     "//services/service_manager/public/cpp/test:test_support",
     "//testing/gtest",
   ]
+
+  if (is_linux && use_dbus) {
+    deps += [ "//components/dbus" ]
+  }
 }
 
 if (is_android) {

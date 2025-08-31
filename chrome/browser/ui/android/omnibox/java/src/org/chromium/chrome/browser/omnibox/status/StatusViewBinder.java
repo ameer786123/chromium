@@ -5,13 +5,17 @@
 package org.chromium.chrome.browser.omnibox.status;
 
 import android.view.View;
+import android.view.ViewGroup.MarginLayoutParams;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.chrome.browser.omnibox.R;
 import org.chromium.chrome.browser.omnibox.status.StatusProperties.StatusIconResource;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor.ViewBinder;
 
 /** StatusViewBinder observes StatusModel changes and triggers StatusView updates. */
+@NullMarked
 class StatusViewBinder implements ViewBinder<PropertyModel, StatusView, PropertyKey> {
     StatusViewBinder() {}
 
@@ -35,9 +39,6 @@ class StatusViewBinder implements ViewBinder<PropertyModel, StatusView, Property
             applyStatusIconAndTooltipProperties(model, view);
         } else if (StatusProperties.STATUS_VIEW_BACKGROUND.equals(propertyKey)) {
             applyStatusIconAndTooltipProperties(model, view);
-        } else if (StatusProperties.SHOW_STATUS_ICON_BACKGROUND.equals(propertyKey)) {
-            view.setStatusIconBackgroundVisibility(
-                    model.get(StatusProperties.SHOW_STATUS_ICON_BACKGROUND));
         } else if (StatusProperties.STATUS_CLICK_LISTENER.equals(propertyKey)) {
             view.setStatusClickListener(model.get(StatusProperties.STATUS_CLICK_LISTENER));
         } else if (StatusProperties.STATUS_ACCESSIBILITY_TOAST_RES.equals(propertyKey)) {
@@ -74,6 +75,15 @@ class StatusViewBinder implements ViewBinder<PropertyModel, StatusView, Property
             applyStatusIconAndTooltipProperties(model, view);
         } else if (StatusProperties.VERBOSE_STATUS_TEXT_WIDTH.equals(propertyKey)) {
             view.setVerboseStatusTextWidth(model.get(StatusProperties.VERBOSE_STATUS_TEXT_WIDTH));
+        } else if (StatusProperties.USE_SMALL_WIDGET.equals(propertyKey)) {
+            var params = view.getLayoutParams();
+            boolean useSmallWidget = model.get(StatusProperties.USE_SMALL_WIDGET);
+            params.height =
+                    useSmallWidget
+                            ? MarginLayoutParams.MATCH_PARENT
+                            : view.getResources()
+                                    .getDimensionPixelSize(R.dimen.location_bar_height);
+            view.setLayoutParams(params);
         } else {
             assert false : "Unhandled property update";
         }

@@ -7,28 +7,24 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "components/autofill/core/browser/data_model/payments/bnpl_issuer.h"
 #include "components/autofill/core/browser/payments/constants.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 
 namespace autofill::autofill_metrics {
 
-SupportedBnplIssuer GetEnumForIssuerId(std::string_view issuer_id) {
-  if (issuer_id == kBnplAffirmIssuerId) {
-    return SupportedBnplIssuer::kAffirm;
-  } else if (issuer_id == kBnplZipIssuerId) {
-    return SupportedBnplIssuer::kZip;
-  } else if (issuer_id == kBnplAfterpayIssuerId) {
-    return SupportedBnplIssuer::kAfterpay;
-  }
-  NOTREACHED();
-}
+using IssuerId = autofill::BnplIssuer::IssuerId;
 
-std::string GetHistogramSuffixFromIssuerId(std::string_view issuer_id) {
-  if (issuer_id == kBnplAffirmIssuerId) {
-    return "Affirm";
-  } else if (issuer_id == kBnplZipIssuerId) {
-    return "Zip";
-  } else if (issuer_id == kBnplAfterpayIssuerId) {
-    return "Afterpay";
+std::string GetHistogramSuffixFromIssuerId(IssuerId issuer_id) {
+  switch (issuer_id) {
+    case IssuerId::kBnplAffirm:
+      return "Affirm";
+    case IssuerId::kBnplZip:
+      return "Zip";
+    case IssuerId::kBnplAfterpay:
+      return "Afterpay";
+    case IssuerId::kBnplKlarna:
+      return "Klarna";
   }
   NOTREACHED();
 }
@@ -54,15 +50,14 @@ void LogBnplIssuersSyncedCountAtStartup(int count) {
                               count);
 }
 
-void LogBnplTosDialogShown(std::string_view issuer_id) {
+void LogBnplTosDialogShown(IssuerId issuer_id) {
   std::string histogram_name =
       base::StrCat({"Autofill.Bnpl.TosDialogShown.",
                     GetHistogramSuffixFromIssuerId(issuer_id)});
   base::UmaHistogramBoolean(histogram_name, /*sample=*/true);
 }
 
-void LogBnplTosDialogResult(BnplTosDialogResult result,
-                            std::string_view issuer_id) {
+void LogBnplTosDialogResult(BnplTosDialogResult result, IssuerId issuer_id) {
   std::string histogram_name =
       base::StrCat({"Autofill.Bnpl.TosDialogResult.",
                     GetHistogramSuffixFromIssuerId(issuer_id)});
@@ -73,9 +68,9 @@ void LogSelectBnplIssuerDialogResult(SelectBnplIssuerDialogResult result) {
   base::UmaHistogramEnumeration("Autofill.Bnpl.SelectionDialogResult", result);
 }
 
-void LogBnplIssuerSelection(std::string_view issuer_id) {
+void LogBnplIssuerSelection(IssuerId issuer_id) {
   base::UmaHistogramEnumeration("Autofill.Bnpl.SelectionDialogIssuerSelected",
-                                GetEnumForIssuerId(issuer_id));
+                                issuer_id);
 }
 
 void LogBnplSuggestionNotShownReason(BnplSuggestionNotShownReason reason) {
@@ -83,15 +78,14 @@ void LogBnplSuggestionNotShownReason(BnplSuggestionNotShownReason reason) {
                                 reason);
 }
 
-void LogBnplPopupWindowShown(std::string_view issuer_id) {
+void LogBnplPopupWindowShown(IssuerId issuer_id) {
   std::string histogram_name =
       base::StrCat({"Autofill.Bnpl.PopupWindowShown.",
                     GetHistogramSuffixFromIssuerId(issuer_id)});
   base::UmaHistogramBoolean(histogram_name, /*sample=*/true);
 }
 
-void LogBnplPopupWindowResult(std::string_view issuer_id,
-                              BnplFlowResult result) {
+void LogBnplPopupWindowResult(IssuerId issuer_id, BnplFlowResult result) {
   std::string histogram_name =
       base::StrCat({"Autofill.Bnpl.PopupWindowResult.",
                     GetHistogramSuffixFromIssuerId(issuer_id)});
@@ -99,7 +93,7 @@ void LogBnplPopupWindowResult(std::string_view issuer_id,
 }
 
 void LogBnplPopupWindowLatency(base::TimeDelta duration,
-                               std::string_view issuer_id,
+                               IssuerId issuer_id,
                                BnplFlowResult result) {
   std::string histogram_name =
       base::StrCat({"Autofill.Bnpl.PopupWindowLatency.",
@@ -113,28 +107,54 @@ void LogBnplFormEvent(BnplFormEvent event) {
   base::UmaHistogramEnumeration("Autofill.FormEvents.CreditCard.Bnpl", event);
 }
 
-void LogFormFilledWithBnplVcn(std::string_view issuer_id) {
-  if (issuer_id == kBnplAffirmIssuerId) {
-    LogBnplFormEvent(BnplFormEvent::kFormFilledWithAffirmOnce);
-  } else if (issuer_id == kBnplZipIssuerId) {
-    LogBnplFormEvent(BnplFormEvent::kFormFilledWithZipOnce);
-  } else if (issuer_id == kBnplAfterpayIssuerId) {
-    LogBnplFormEvent(BnplFormEvent::kFormFilledWithAfterpayOnce);
-  } else {
-    NOTREACHED();
-  }
+void LogBnplSuggestionShown(ukm::SourceId ukm_source_id) {
+  LogBnplFormEvent(BnplFormEvent::kBnplSuggestionShown);
+  ukm::builders::Autofill_BnplSuggestionShown(ukm_source_id)
+      .SetShown(true)
+      .Record(ukm::UkmRecorder::Get());
 }
 
-void LogFormSubmittedWithBnplVcn(std::string_view issuer_id) {
-  if (issuer_id == kBnplAffirmIssuerId) {
-    LogBnplFormEvent(BnplFormEvent::kFormSubmittedWithAffirmOnce);
-  } else if (issuer_id == kBnplZipIssuerId) {
-    LogBnplFormEvent(BnplFormEvent::kFormSubmittedWithZipOnce);
-  } else if (issuer_id == kBnplAfterpayIssuerId) {
-    LogBnplFormEvent(BnplFormEvent::kFormSubmittedWithAfterpayOnce);
-  } else {
-    NOTREACHED();
+void LogBnplSuggestionAccepted(ukm::SourceId ukm_source_id) {
+  LogBnplFormEvent(BnplFormEvent::kBnplSuggestionAccepted);
+  ukm::builders::Autofill_BnplSuggestionAccepted(ukm_source_id)
+      .SetAccepted(true)
+      .Record(ukm::UkmRecorder::Get());
+}
+
+void LogFormFilledWithBnplVcn(IssuerId issuer_id) {
+  switch (issuer_id) {
+    case IssuerId::kBnplAffirm:
+      LogBnplFormEvent(BnplFormEvent::kFormFilledWithAffirm);
+      return;
+    case IssuerId::kBnplZip:
+      LogBnplFormEvent(BnplFormEvent::kFormFilledWithZip);
+      return;
+    case IssuerId::kBnplAfterpay:
+      LogBnplFormEvent(BnplFormEvent::kFormFilledWithAfterpay);
+      return;
+    case IssuerId::kBnplKlarna:
+      LogBnplFormEvent(BnplFormEvent::kFormFilledWithKlarna);
+      return;
   }
+  NOTREACHED();
+}
+
+void LogFormSubmittedWithBnplVcn(IssuerId issuer_id) {
+  switch (issuer_id) {
+    case IssuerId::kBnplAffirm:
+      LogBnplFormEvent(BnplFormEvent::kFormSubmittedWithAffirm);
+      return;
+    case IssuerId::kBnplZip:
+      LogBnplFormEvent(BnplFormEvent::kFormSubmittedWithZip);
+      return;
+    case IssuerId::kBnplAfterpay:
+      LogBnplFormEvent(BnplFormEvent::kFormSubmittedWithAfterpay);
+      return;
+    case IssuerId::kBnplKlarna:
+      LogBnplFormEvent(BnplFormEvent::kFormSubmittedWithKlarna);
+      return;
+  }
+  NOTREACHED();
 }
 
 void LogBnplSelectionDialogShown() {

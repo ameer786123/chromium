@@ -59,7 +59,8 @@ class TestBrowserAutofillManager : public BrowserAutofillManager {
       const FormData& form,
       const FieldGlobalId& field_id,
       const gfx::Rect& caret_bounds,
-      AutofillSuggestionTriggerSource trigger_source) override;
+      AutofillSuggestionTriggerSource trigger_source,
+      std::optional<PasswordSuggestionRequest> password_request) override;
   void OnFocusOnFormField(const FormData& form,
                           const FieldGlobalId& field_id) override;
   void OnDidFillAutofillFormData(const FormData& form,
@@ -108,7 +109,8 @@ class TestBrowserAutofillManager : public BrowserAutofillManager {
       const FormData& form,
       const FieldGlobalId& field_id,
       AutofillSuggestionTriggerSource trigger_source =
-          AutofillSuggestionTriggerSource::kTextFieldValueChanged);
+          AutofillSuggestionTriggerSource::kTextFieldValueChanged,
+      std::optional<PasswordSuggestionRequest> password_request = std::nullopt);
 
  private:
   const gfx::Image card_image_ = gfx::test::CreateImage(40, 24);

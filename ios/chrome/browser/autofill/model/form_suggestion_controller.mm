@@ -17,7 +17,7 @@
 #import "components/autofill/ios/browser/form_suggestion.h"
 #import "components/autofill/ios/browser/form_suggestion_provider.h"
 #import "components/autofill/ios/form_util/form_activity_params.h"
-#import "components/plus_addresses/features.h"
+#import "components/plus_addresses/core/common/features.h"
 #import "components/prefs/pref_service.h"
 #import "ios/chrome/browser/autofill/model/features.h"
 #import "ios/chrome/browser/autofill/model/form_input_navigator.h"
@@ -104,16 +104,25 @@ UIImage* defaultIconForType(FormSuggestion* suggestion) {
       BOOL isPlusAddressFeaturesEnabled = base::FeatureList::IsEnabled(
           plus_addresses::features::kPlusAddressesEnabled);
       return isPlusAddressFeaturesEnabled
-                 ? DefaultSymbolWithPointSize(kShieldedEnvelope,
-                                              kSymbolPointSize)
+          ? SymbolWithPalette(
+                DefaultSymbolWithPointSize(kShieldedEnvelope, kSymbolPointSize),
+                @[
+                  [UIColor colorNamed:kTextPrimaryColor],
+                ])
                  : nil;
     }
     case autofill::SuggestionType::kAddressEntry: {
       switch (suggestion.suggestionIconType) {
         case SuggestionIconType::kAccountHome:
-          return DefaultSymbolWithPointSize(kHomeSymbol, kSymbolPointSize);
+          return SymbolWithPalette(
+              DefaultSymbolWithPointSize(kHomeSymbol, kSymbolPointSize), @[
+                [UIColor colorNamed:kTextPrimaryColor],
+              ]);
         case SuggestionIconType::kAccountWork:
-          return DefaultSymbolWithPointSize(kWorkSymbol, kSymbolPointSize);
+          return SymbolWithPalette(
+              DefaultSymbolWithPointSize(kWorkSymbol, kSymbolPointSize), @[
+                [UIColor colorNamed:kTextPrimaryColor],
+              ]);
         default:
           return nil;
       }
@@ -424,7 +433,7 @@ bool IsRequestDedupingAllowed() {
   if (IsStateless()) {
     // Check that there are always params attached to the suggestion when no
     // params are provided by the -didSelectSuggestion caller itself.
-    CHECK(suggestion.params, base::NotFatalUntil::M134);
+    CHECK(suggestion.params);
     if (!suggestion.params) {
       // Just skip if the check isn't triggered. This is to handle the absence
       // of params when the CHECK isn't fatal.

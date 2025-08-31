@@ -275,7 +275,7 @@ base::FilePath DownloadTaskImpl::GenerateFileName() const {
   return net::GenerateFileName(original_url_, content_disposition_,
                                /*referrer_charset=*/std::string(),
                                /*suggested_name=*/GetSuggestedName(),
-                               /*mime_type=*/std::string(),
+                               /*mime_type=*/mime_type_,
                                /*default_name=*/"document");
 }
 
@@ -349,9 +349,7 @@ void DownloadTaskImpl::OnDownloadFinished(DownloadResult download_result) {
 
 void DownloadTaskImpl::OnDownloadUpdated() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  for (auto& observer : observers_) {
-    observer.OnDownloadUpdated(this);
-  }
+  observers_.Notify(&DownloadTaskObserver::OnDownloadUpdated, this);
 }
 
 void DownloadTaskImpl::OnRedirected(const GURL& redirected_url) {
@@ -362,9 +360,7 @@ void DownloadTaskImpl::OnRedirected(const GURL& redirected_url) {
     return;
   }
   redirected_url_ = redirected_url;
-  for (auto& observer : observers_) {
-    observer.OnDownloadUpdated(this);
-  }
+  observers_.Notify(&DownloadTaskObserver::OnDownloadUpdated, this);
 }
 
 }  // namespace web

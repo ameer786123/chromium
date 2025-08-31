@@ -5,10 +5,12 @@
 #import "ios/chrome/browser/authentication/ui_bundled/signin/add_account_signin/add_account_signin_manager.h"
 
 #import "base/metrics/histogram_functions.h"
+#import "base/metrics/user_metrics.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/time/time.h"
 #import "components/prefs/pref_service.h"
 #import "components/signin/public/base/signin_pref_names.h"
+#import "components/signin/public/base/signin_switches.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
 #import "ios/chrome/browser/signin/model/signin_util.h"
 #import "ios/chrome/browser/signin/model/system_identity_interaction_manager.h"
@@ -17,23 +19,30 @@ namespace {
 // Logs the histograms for add to account operation:
 //   * Signin.AddAccountToDevice.Result
 //   * Signin.AddAccountToDevice.{Interrupted|CancelledByUser|Error|Succes}.Duration
+// Also emits an action.
 void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
                                      base::TimeDelta duration) {
   base::UmaHistogramEnumeration("Signin.AddAccountToDevice.Result", result);
   switch (result) {
     case SigninAddAccountToDeviceResult::kInterrupted:
+      base::RecordAction(
+          base::UserMetricsAction("Signin_AddAccount_Interrupted"));
       base::UmaHistogramMediumTimes(
           "Signin.AddAccountToDevice.Interrupted.Duration", duration);
       break;
     case SigninAddAccountToDeviceResult::kError:
+      base::RecordAction(base::UserMetricsAction("Signin_AddAccount_Error"));
       base::UmaHistogramMediumTimes("Signin.AddAccountToDevice.Error.Duration",
                                     duration);
       break;
     case SigninAddAccountToDeviceResult::kCancelledByUser:
+      base::RecordAction(
+          base::UserMetricsAction("Signin_AddAccount_Cancelled"));
       base::UmaHistogramMediumTimes(
           "Signin.AddAccountToDevice.CancelledByUser.Duration", duration);
       break;
     case SigninAddAccountToDeviceResult::kSuccess:
+      base::RecordAction(base::UserMetricsAction("Signin_AddAccount_Success"));
       base::UmaHistogramMediumTimes(
           "Signin.AddAccountToDevice.Success.Duration", duration);
       break;
@@ -62,6 +71,8 @@ void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
   BOOL _addAccountFlowDone;
   // Timestamp of the last start of the flow to add an account to the device.
   base::TimeTicks _lastStartAddAccountToDeviceTs;
+  // Email to pre-fill.
+  NSString* _prefilledEmail;
 }
 
 #pragma mark - Public
@@ -71,13 +82,19 @@ void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
                    prefService:(PrefService*)prefService
                identityManager:(signin::IdentityManager*)identityManager
     identityInteractionManager:
-        (id<SystemIdentityInteractionManager>)identityInteractionManager {
+        (id<SystemIdentityInteractionManager>)identityInteractionManager
+                prefilledEmail:(NSString*)email {
   self = [super init];
   if (self) {
+    CHECK(baseViewController, base::NotFatalUntil::M140);
+    CHECK(prefService, base::NotFatalUntil::M140);
+    CHECK(identityManager, base::NotFatalUntil::M140);
+    CHECK(identityInteractionManager, base::NotFatalUntil::M140);
     _baseViewController = baseViewController;
     _prefService = prefService;
     _identityManager = identityManager;
     _identityInteractionManager = identityInteractionManager;
+    _prefilledEmail = [email copy];
   }
   return self;
 }
@@ -96,7 +113,10 @@ void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
       userEmail = base::SysUTF8ToNSString(primaryAccount.email);
       break;
     case AddAccountSigninIntent::kAddAccount:
-      // The user wants to add a new account, don't pre-fill any email.
+      if (base::FeatureList::IsEnabled(
+              switches::kSupportAddSessionEmailPrefill)) {
+        userEmail = _prefilledEmail;
+      }
       break;
     case AddAccountSigninIntent::kResignin:
       DUMP_WILL_BE_CHECK(primaryAccount.IsEmpty())
@@ -113,6 +133,9 @@ void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
 
   __weak AddAccountSigninManager* weakSelf = self;
   _lastStartAddAccountToDeviceTs = base::TimeTicks::Now();
+  // Note that, up to iOS 18, the view may disappear if the user turn off their
+  // screen, without calling the completion block, due to a bug in UIKit. See
+  // crbug.com/395959814.
   [self.identityInteractionManager
       startAuthActivityWithViewController:self.baseViewController
                                 userEmail:userEmail
@@ -141,7 +164,7 @@ void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
     // See: `interruptAddAccountAnimated:completion:`.
     return;
   }
-  CHECK(!_lastStartAddAccountToDeviceTs.is_null(), base::NotFatalUntil::M135);
+  CHECK(!_lastStartAddAccountToDeviceTs.is_null());
   base::TimeDelta addAccountDuration =
       base::TimeTicks::Now() - _lastStartAddAccountToDeviceTs;
   _lastStartAddAccountToDeviceTs = base::TimeTicks();
@@ -169,9 +192,13 @@ void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
   }
 
   LogAddAccountToDeviceHistograms(result, addAccountDuration);
-  [self.delegate addAccountSigninManagerFinishedWithResult:result
-                                                  identity:resultIdentity
-                                                     error:resultError];
+  if (!self.signinInterrupted) {
+    // If the coordinator interrupted the manager, it is in charge of doing
+    // the cleanup.
+    [self.delegate addAccountSigninManagerFinishedWithResult:result
+                                                    identity:resultIdentity
+                                                       error:resultError];
+  }
 }
 
 @end

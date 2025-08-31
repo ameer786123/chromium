@@ -23,10 +23,12 @@
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "base/values.h"
 #include "pdf/draw_utils/page_boundary_intersect.h"
 #include "pdf/input_utils.h"
 #include "pdf/message_util.h"
+#include "pdf/page_orientation.h"
 #include "pdf/pdf_features.h"
 #include "pdf/pdf_ink_brush.h"
 #include "pdf/pdf_ink_conversions.h"
@@ -53,10 +55,15 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/cursor/cursor.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom.h"
+#include "ui/events/event_constants.h"
+#include "ui/gfx/geometry/point.h"
+#include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/skia_conversions.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 
 namespace chrome_pdf {
 
@@ -74,14 +81,13 @@ base::Value::Dict CreateUpdateThumbnailMessage(
     bool is_ink,
     std::vector<uint8_t> image_data,
     const gfx::Size& thumbnail_size) {
-  base::Value::Dict message;
-  message.Set("type", "updateInk2Thumbnail");
-  message.Set("pageNumber", page_index + 1);
-  message.Set("isInk", is_ink);
-  message.Set("imageData", std::move(image_data));
-  message.Set("width", thumbnail_size.width());
-  message.Set("height", thumbnail_size.height());
-  return message;
+  return base::Value::Dict()
+      .Set("type", "updateInk2Thumbnail")
+      .Set("pageNumber", page_index + 1)
+      .Set("isInk", is_ink)
+      .Set("imageData", std::move(image_data))
+      .Set("width", thumbnail_size.width())
+      .Set("height", thumbnail_size.height());
 }
 
 ink::StrokeInput::ToolType GetToolTypeFromTouchEvent(
@@ -92,18 +98,6 @@ ink::StrokeInput::ToolType GetToolTypeFromTouchEvent(
                  blink::WebPointerProperties::PointerType::kPen
              ? ink::StrokeInput::ToolType::kStylus
              : ink::StrokeInput::ToolType::kTouch;
-}
-
-PdfInkModule::StrokeInputPoints GetStrokePointsForTesting(  // IN-TEST
-    const ink::StrokeInputBatch& input_batch) {
-  PdfInkModule::StrokeInputPoints stroke_points;
-  stroke_points.reserve(input_batch.Size());
-  for (size_t i = 0; i < input_batch.Size(); ++i) {
-    ink::StrokeInput stroke_input = input_batch.Get(i);
-    stroke_points.emplace_back(stroke_input.position.x,
-                               stroke_input.position.y);
-  }
-  return stroke_points;
 }
 
 PdfInkBrush CreateDefaultHighlighterBrush() {
@@ -160,38 +154,69 @@ PdfInkModule::PdfInkModule(PdfInkModuleClient& client)
 
 PdfInkModule::~PdfInkModule() = default;
 
+bool PdfInkModule::ShouldBlockTextSelectionChanged() {
+  return features::kPdfInk2TextHighlighting.Get() && is_text_highlighting();
+}
+
 bool PdfInkModule::HasInputsToDraw() const {
-  if (!enabled_ || !is_drawing_stroke()) {
+  if (mode_ != InkAnnotationMode::kDraw || is_erasing_stroke()) {
     return false;
   }
 
-  const DrawingStrokeState& state = drawing_stroke_state();
-  return !state.inputs.empty();
+  if (is_text_highlighting()) {
+    return !text_highlight_state().highlight_strokes.empty();
+  }
+
+  CHECK(is_drawing_stroke());
+  return !drawing_stroke_state().inputs.empty();
 }
 
 void PdfInkModule::Draw(SkCanvas& canvas) {
   ink::SkiaRenderer skia_renderer;
 
-  const gfx::Vector2dF origin_offset = client_->GetViewportOriginOffset();
-  const PageOrientation rotation = client_->GetOrientation();
+  if (is_text_highlighting()) {
+    const auto& highlight_strokes = text_highlight_state().highlight_strokes;
+    CHECK(!highlight_strokes.empty());
+
+    for (const auto& [page_index, strokes] : highlight_strokes) {
+      SkAutoCanvasRestore save_restore(&canvas, /*doSave=*/true);
+      const auto [transform, clip_rect] = GetTransformAndClipRect(page_index);
+      canvas.clipRect(clip_rect);
+      for (const auto& stroke : strokes) {
+        auto status = skia_renderer.Draw(nullptr, stroke, transform, canvas);
+        CHECK(status.ok());
+      }
+    }
+    return;
+  }
+
+  CHECK(is_drawing_stroke());
 
   auto in_progress_stroke = CreateInProgressStrokeSegmentsFromInputs();
   CHECK(!in_progress_stroke.empty());
 
-  DrawingStrokeState& state = drawing_stroke_state();
-
-  const gfx::Rect content_rect = client_->GetPageContentsRect(state.page_index);
-  const gfx::SizeF page_size_in_points =
-      client_->GetPageSizeInPoints(state.page_index);
-  const ink::AffineTransform transform = GetInkRenderTransform(
-      origin_offset, rotation, content_rect, page_size_in_points);
-
   SkAutoCanvasRestore save_restore(&canvas, /*doSave=*/true);
-  canvas.clipRect(GetDrawPageClipRect(content_rect, origin_offset));
+  const auto [transform, clip_rect] =
+      GetTransformAndClipRect(drawing_stroke_state().page_index);
+  canvas.clipRect(clip_rect);
   for (const auto& segment : in_progress_stroke) {
     auto status = skia_renderer.Draw(nullptr, segment, transform, canvas);
     CHECK(status.ok());
   }
+}
+
+PdfInkModule::TransformAndClipRect PdfInkModule::GetTransformAndClipRect(
+    int page_index) {
+  const gfx::Vector2dF origin_offset = client_->GetViewportOriginOffset();
+  const PageOrientation rotation = client_->GetOrientation();
+
+  const gfx::Rect content_rect = client_->GetPageContentsRect(page_index);
+  const gfx::SizeF page_size_in_points =
+      client_->GetPageSizeInPoints(page_index);
+  ink::AffineTransform transform = GetInkRenderTransform(
+      origin_offset, rotation, content_rect, page_size_in_points);
+
+  return {transform, GetDrawPageClipRect(content_rect, origin_offset)};
 }
 
 void PdfInkModule::GenerateAndSendInkThumbnail(
@@ -268,22 +293,13 @@ void PdfInkModule::OnGotThumbnail(int page_index, Thumbnail thumbnail) {
       /*is_ink=*/false, thumbnail.TakeData(), thumbnail.image_size()));
 }
 
-PdfInkModule::PageInkStrokeIterator PdfInkModule::GetVisibleStrokesIterator() {
-  return PageInkStrokeIterator(strokes_);
-}
-
 bool PdfInkModule::HandleInputEvent(const blink::WebInputEvent& event) {
-  if (!enabled()) {
+  if (mode_ != InkAnnotationMode::kDraw) {
     return false;
   }
 
   switch (event.GetType()) {
     case blink::WebInputEvent::Type::kMouseDown: {
-      // TODO(crbug.com/377733396): Send a content focused message for certain
-      // non-mouse inputs, too.
-      base::Value::Dict message;
-      message.Set("type", "contentFocused");
-      client_->PostMessage(std::move(message));
       return OnMouseDown(static_cast<const blink::WebMouseEvent&>(event));
     }
     case blink::WebInputEvent::Type::kMouseUp:
@@ -309,15 +325,17 @@ bool PdfInkModule::OnMessage(const base::Value::Dict& message) {
       base::MakeFixedFlatMap<std::string_view, MessageHandler>({
           {"annotationRedo", &PdfInkModule::HandleAnnotationRedoMessage},
           {"annotationUndo", &PdfInkModule::HandleAnnotationUndoMessage},
+          {"finishTextAnnotation",
+           &PdfInkModule::HandleFinishTextAnnotationMessage},
+          {"getAllTextAnnotations",
+           &PdfInkModule::HandleGetAllTextAnnotationsMessage},
           {"getAnnotationBrush",
            &PdfInkModule::HandleGetAnnotationBrushMessage},
           {"setAnnotationBrush",
            &PdfInkModule::HandleSetAnnotationBrushMessage},
           {"setAnnotationMode", &PdfInkModule::HandleSetAnnotationModeMessage},
-          {"getTextAnnotFontNames",
-           &PdfInkModule::HandleGetTextAnnotFontNamesMessage},
-          {"setTextAnnotationFont",
-           &PdfInkModule::HandleSetTextAnnotationFontMessage},
+          {"startTextAnnotation",
+           &PdfInkModule::HandleStartTextAnnotationMessage},
       });
 
   auto it = kMessageHandlers.find(*message.FindString("type"));
@@ -331,6 +349,10 @@ bool PdfInkModule::OnMessage(const base::Value::Dict& message) {
 }
 
 void PdfInkModule::OnGeometryChanged() {
+  // If the highlighter tool is selected, and zooming moves the cursor onto
+  // text, the cursor should be an I-beam, but it will instead be the drawing
+  // cursor until a mousemove event occurs. There is not a way to get the new
+  // mouse position on geometry change.
   MaybeSetCursor();
 }
 
@@ -338,93 +360,43 @@ const PdfInkBrush* PdfInkModule::GetPdfInkBrushForTesting() const {
   return is_drawing_stroke() ? &GetDrawingBrush() : nullptr;
 }
 
-PdfInkModule::DocumentStrokeInputPointsMap
-PdfInkModule::GetStrokesInputPositionsForTesting() const {
-  DocumentStrokeInputPointsMap all_strokes_points;
-
-  for (const auto& [page_index, strokes] : strokes_) {
-    for (const auto& stroke : strokes) {
-      all_strokes_points[page_index].push_back(
-          GetStrokePointsForTesting(stroke.stroke.GetInputs()));  // IN-TEST
-    }
-  }
-
-  return all_strokes_points;
-}
-
-PdfInkModule::DocumentStrokeInputPointsMap
-PdfInkModule::GetVisibleStrokesInputPositionsForTesting() const {
-  DocumentStrokeInputPointsMap all_strokes_points;
-
-  for (const auto& [page_index, strokes] : strokes_) {
-    for (const auto& stroke : strokes) {
-      if (!stroke.should_draw) {
-        continue;
-      }
-
-      all_strokes_points[page_index].push_back(
-          GetStrokePointsForTesting(stroke.stroke.GetInputs()));  // IN-TEST
-    }
-  }
-
-  return all_strokes_points;
-}
-
-int PdfInkModule::GetInputOfTypeCountForPageForTesting(
-    int page_index,
-    ink::StrokeInput::ToolType tool_type) const {
-  CHECK_GE(page_index, 0);
-  auto it = strokes_.find(page_index);
-  if (it == strokes_.end()) {
-    return 0;
-  }
-
-  int count = 0;
-  for (const FinishedStrokeState& stroke_state : it->second) {
-    const ink::StrokeInputBatch& input_batch = stroke_state.stroke.GetInputs();
-    for (ink::StrokeInput input : input_batch) {
-      if (input.tool_type == tool_type) {
-        ++count;
-      }
-    }
-  }
-  return count;
-}
-
 bool PdfInkModule::OnMouseDown(const blink::WebMouseEvent& event) {
-  CHECK(enabled());
+  CHECK_EQ(InkAnnotationMode::kDraw, mode_);
 
   blink::WebMouseEvent normalized_event = NormalizeMouseEvent(event);
   if (normalized_event.button != blink::WebPointerProperties::Button::kLeft) {
     return false;
   }
 
-  if (is_drawing_stroke()) {
-    DrawingStrokeState& state = drawing_stroke_state();
-    if (state.start_time.has_value()) {
-      CHECK(state.input_last_event.has_value());
-      const DrawingStrokeState::EventDetails& input_last_event =
-          state.input_last_event.value();
-      bool mouse_up_result = OnMouseUp(GenerateLeftMouseUpEvent(
-          input_last_event.position, input_last_event.timestamp));
-      CHECK(mouse_up_result);
-    }
-  }
   gfx::PointF position = normalized_event.PositionInWidget();
-  return is_drawing_stroke()
-             ? StartStroke(position, event.TimeStamp(),
-                           ink::StrokeInput::ToolType::kMouse)
-             : StartEraseStroke(position, ink::StrokeInput::ToolType::kMouse);
+  if (is_drawing_stroke()) {
+    MaybeFinishStrokeForMissingMouseUpEvent();
+
+    if (IsHighlightingTextAtPosition(position)) {
+      return StartTextHighlight(position, event.ClickCount(), event.TimeStamp(),
+                                ink::StrokeInput::ToolType::kMouse);
+    }
+
+    return StartStroke(position, event.TimeStamp(),
+                       ink::StrokeInput::ToolType::kMouse);
+  }
+
+  return StartEraseStroke(position, ink::StrokeInput::ToolType::kMouse);
 }
 
 bool PdfInkModule::OnMouseUp(const blink::WebMouseEvent& event) {
-  CHECK(enabled());
+  CHECK_EQ(InkAnnotationMode::kDraw, mode_);
 
   if (event.button != blink::WebPointerProperties::Button::kLeft) {
     return false;
   }
 
   gfx::PointF position = event.PositionInWidget();
+  if (features::kPdfInk2TextHighlighting.Get() && is_text_highlighting()) {
+    return FinishTextHighlight(position, /*is_multi_click=*/false,
+                               ink::StrokeInput::ToolType::kMouse);
+  }
+
   return is_drawing_stroke()
              ? FinishStroke(position, event.TimeStamp(),
                             ink::StrokeInput::ToolType::kMouse)
@@ -432,12 +404,25 @@ bool PdfInkModule::OnMouseUp(const blink::WebMouseEvent& event) {
 }
 
 bool PdfInkModule::OnMouseMove(const blink::WebMouseEvent& event) {
-  CHECK(enabled());
+  CHECK_EQ(InkAnnotationMode::kDraw, mode_);
+
+  // Before the multi-click text selection timer fired, the mouse moved to a new
+  // position, so the click count can no longer increment. Fire the timer
+  // immediately.
+  if (features::kPdfInk2TextHighlighting.Get() &&
+      text_selection_click_timer_.IsRunning()) {
+    text_selection_click_timer_.FireNow();
+  }
 
   gfx::PointF position = event.PositionInWidget();
+
   bool still_interacting_with_ink =
       event.GetModifiers() & blink::WebInputEvent::kLeftButtonDown;
   if (still_interacting_with_ink) {
+    if (features::kPdfInk2TextHighlighting.Get() && is_text_highlighting()) {
+      return ContinueTextHighlight(position);
+    }
+
     return is_drawing_stroke()
                ? ContinueStroke(position, event.TimeStamp(),
                                 ink::StrokeInput::ToolType::kMouse)
@@ -450,6 +435,7 @@ bool PdfInkModule::OnMouseMove(const blink::WebMouseEvent& event) {
   // that now, and compensate by synthesizing a mouse-up input event at the
   // last known input position.  Intentionally do not use `position`.
   if (is_drawing_stroke()) {
+    MaybeSetCursorOnMouseMove(position);
     DrawingStrokeState& state = drawing_stroke_state();
     if (!state.input_last_event.has_value()) {
       // Ignore when not drawing.
@@ -460,6 +446,13 @@ bool PdfInkModule::OnMouseMove(const blink::WebMouseEvent& event) {
         state.input_last_event.value();
     return OnMouseUp(GenerateLeftMouseUpEvent(input_last_event.position,
                                               input_last_event.timestamp));
+  }
+
+  if (features::kPdfInk2TextHighlighting.Get() && is_text_highlighting()) {
+    // Mouse up event does not modify the text selection, so the position does
+    // not matter here.
+    return OnMouseUp(
+        GenerateLeftMouseUpEvent(gfx::PointF(), base::TimeTicks::Now()));
   }
 
   CHECK(is_erasing_stroke());
@@ -476,7 +469,7 @@ bool PdfInkModule::OnMouseMove(const blink::WebMouseEvent& event) {
 }
 
 bool PdfInkModule::OnTouchStart(const blink::WebTouchEvent& event) {
-  CHECK(enabled());
+  CHECK_EQ(InkAnnotationMode::kDraw, mode_);
 
   if (event.touches_length != 1) {
     return false;
@@ -489,13 +482,22 @@ bool PdfInkModule::OnTouchStart(const blink::WebTouchEvent& event) {
   }
 
   gfx::PointF position = event.touches[0].PositionInWidget();
-  return is_drawing_stroke()
-             ? StartStroke(position, event.TimeStamp(), tool_type)
-             : StartEraseStroke(position, tool_type);
+  if (is_drawing_stroke()) {
+    MaybeFinishStrokeForMissingMouseUpEvent();
+
+    if (IsHighlightingTextAtPosition(position)) {
+      // Multi-click text selection for touch is not supported.
+      return StartTextHighlight(position, /*click_count=*/1, event.TimeStamp(),
+                                tool_type);
+    }
+    return StartStroke(position, event.TimeStamp(), tool_type);
+  }
+
+  return StartEraseStroke(position, tool_type);
 }
 
 bool PdfInkModule::OnTouchEnd(const blink::WebTouchEvent& event) {
-  CHECK(enabled());
+  CHECK_EQ(InkAnnotationMode::kDraw, mode_);
 
   if (event.touches_length != 1) {
     return false;
@@ -508,13 +510,17 @@ bool PdfInkModule::OnTouchEnd(const blink::WebTouchEvent& event) {
   }
 
   gfx::PointF position = event.touches[0].PositionInWidget();
+  if (features::kPdfInk2TextHighlighting.Get() && is_text_highlighting()) {
+    return FinishTextHighlight(position, /*is_multi_click=*/false, tool_type);
+  }
+
   return is_drawing_stroke()
              ? FinishStroke(position, event.TimeStamp(), tool_type)
              : FinishEraseStroke(position, tool_type);
 }
 
 bool PdfInkModule::OnTouchMove(const blink::WebTouchEvent& event) {
-  CHECK(enabled());
+  CHECK_EQ(InkAnnotationMode::kDraw, mode_);
 
   if (event.touches_length != 1) {
     return false;
@@ -527,9 +533,27 @@ bool PdfInkModule::OnTouchMove(const blink::WebTouchEvent& event) {
   }
 
   gfx::PointF position = event.touches[0].PositionInWidget();
+  if (features::kPdfInk2TextHighlighting.Get() && is_text_highlighting()) {
+    return ContinueTextHighlight(position);
+  }
+
   return is_drawing_stroke()
              ? ContinueStroke(position, event.TimeStamp(), tool_type)
              : ContinueEraseStroke(position, tool_type);
+}
+
+void PdfInkModule::MaybeFinishStrokeForMissingMouseUpEvent() {
+  DrawingStrokeState& state = drawing_stroke_state();
+  if (!state.start_time.has_value()) {
+    return;
+  }
+
+  CHECK(state.input_last_event.has_value());
+  const DrawingStrokeState::EventDetails& input_last_event =
+      state.input_last_event.value();
+  bool mouse_up_result = OnMouseUp(GenerateLeftMouseUpEvent(
+      input_last_event.position, input_last_event.timestamp));
+  CHECK(mouse_up_result);
 }
 
 bool PdfInkModule::StartStroke(const gfx::PointF& position,
@@ -541,11 +565,13 @@ bool PdfInkModule::StartStroke(const gfx::PointF& position,
     return false;
   }
 
+  client_->StrokeStarted();
+
   CHECK(is_drawing_stroke());
   DrawingStrokeState& state = drawing_stroke_state();
 
   gfx::PointF page_position =
-      ConvertEventPositionToCanonicalPosition(position, page_index);
+      GetEventToCanonicalTransformForPage(page_index).MapPoint(position);
 
   CHECK(!state.start_time.has_value());
   state.start_time = timestamp;
@@ -619,9 +645,10 @@ bool PdfInkModule::ContinueStroke(const gfx::PointF& position,
     if (boundary_position != last_position) {
       // Record the last point before leaving the page, if `last_position` was
       // not already on the page boundary.
-      RecordStrokePosition(boundary_position, timestamp, tool_type);
-      client_->Invalidate(GetDrawingBrush().GetInvalidateArea(
-          last_position, boundary_position));
+      if (RecordStrokePosition(boundary_position, timestamp, tool_type)) {
+        client_->Invalidate(GetDrawingBrush().GetInvalidateArea(
+            last_position, boundary_position));
+      }
     }
 
     // Remember `position` and `timestamp` for use in the next event and treat
@@ -642,17 +669,18 @@ bool PdfInkModule::ContinueStroke(const gfx::PointF& position,
         last_position);
     if (boundary_position != position) {
       // Record the first point after entering the page.
-      RecordStrokePosition(boundary_position, timestamp, tool_type);
-      invalidation_position = boundary_position;
+      if (RecordStrokePosition(boundary_position, timestamp, tool_type)) {
+        invalidation_position = boundary_position;
+      }
     }
   }
 
-  RecordStrokePosition(position, timestamp, tool_type);
-
-  // Invalidate area covering a straight line between this position and the
-  // previous one.
-  client_->Invalidate(
-      GetDrawingBrush().GetInvalidateArea(position, invalidation_position));
+  if (RecordStrokePosition(position, timestamp, tool_type)) {
+    // Invalidate area covering a straight line between this position and the
+    // previous one.
+    client_->Invalidate(
+        GetDrawingBrush().GetInvalidateArea(position, invalidation_position));
+  }
 
   // Remember `position` and `timestamp` for use in the next event.
   state.input_last_event =
@@ -688,11 +716,11 @@ bool PdfInkModule::FinishStroke(const gfx::PointF& position,
     }
 
     client_->Invalidate(CanonicalInkEnvelopeToInvalidationScreenRect(
-        invalidate_envelope, client_->GetOrientation(),
-        client_->GetPageContentsRect(state.page_index), client_->GetZoom()));
+        invalidate_envelope,
+        GetCanonicalToEventTransformForPage(state.page_index)));
   }
 
-  client_->StrokeFinished();
+  client_->StrokeFinished(/*modified=*/true);
   GenerateAndSendInkThumbnailInternal(state.page_index);
 
   bool undo_redo_success = undo_redo_model_.FinishDraw();
@@ -706,7 +734,12 @@ bool PdfInkModule::FinishStroke(const gfx::PointF& position,
   state.page_index = -1;
   state.input_last_event.reset();
 
-  MaybeSetDrawingBrushAndCursor();
+  bool set_drawing_brush = MaybeSetDrawingBrush();
+  if (IsHighlightingTextAtPosition(position)) {
+    client_->UpdateInkCursor(ui::mojom::CursorType::kIBeam);
+  } else if (set_drawing_brush) {
+    MaybeSetCursor();
+  }
 
   return true;
 }
@@ -718,6 +751,8 @@ bool PdfInkModule::StartEraseStroke(const gfx::PointF& position,
     // Do not erase when not on a page.
     return false;
   }
+
+  client_->StrokeStarted();
 
   CHECK(is_erasing_stroke());
   EraserState& state = erasing_stroke_state();
@@ -780,14 +815,17 @@ bool PdfInkModule::FinishEraseStroke(const gfx::PointF& position,
 
   CHECK(is_erasing_stroke());
   EraserState& state = erasing_stroke_state();
-  if (!state.page_indices_with_stroke_erasures.empty() ||
-      !state.page_indices_with_partitioned_mesh_erasures.empty()) {
-    client_->StrokeFinished();
+  const bool modified =
+      !state.page_indices_with_stroke_erasures.empty() ||
+      !state.page_indices_with_partitioned_mesh_erasures.empty();
+  if (modified) {
     RequestThumbnailUpdates(
         /*ink_updates=*/state.page_indices_with_stroke_erasures,
         /*pdf_updates=*/state.page_indices_with_partitioned_mesh_erasures);
     ReportEraseStroke(tool_type);
   }
+
+  client_->StrokeFinished(modified);
 
   // Reset `state` now that the erase operation is done.
   state.erasing = false;
@@ -796,7 +834,9 @@ bool PdfInkModule::FinishEraseStroke(const gfx::PointF& position,
   state.input_last_event_position.reset();
   state.tool_type = ink::StrokeInput::ToolType::kUnknown;
 
-  MaybeSetDrawingBrushAndCursor();
+  if (MaybeSetDrawingBrush()) {
+    MaybeSetCursor();
+  }
 
   return true;
 }
@@ -805,7 +845,7 @@ void PdfInkModule::EraseHelper(const gfx::PointF& position, int page_index) {
   CHECK_GE(page_index, 0);
 
   const gfx::PointF canonical_position =
-      ConvertEventPositionToCanonicalPosition(position, page_index);
+      GetEventToCanonicalTransformForPage(page_index).MapPoint(position);
   const ink::Rect eraser_rect = GetEraserRect(canonical_position);
   ink::Envelope invalidate_envelope;
 
@@ -870,8 +910,7 @@ void PdfInkModule::EraseHelper(const gfx::PointF& position, int page_index) {
 
   // If `invalidate_envelope` isn't empty, then something got erased.
   client_->Invalidate(CanonicalInkEnvelopeToInvalidationScreenRect(
-      invalidate_envelope, client_->GetOrientation(),
-      client_->GetPageContentsRect(page_index), client_->GetZoom()));
+      invalidate_envelope, GetCanonicalToEventTransformForPage(page_index)));
 
   CHECK(erased_stroke || erased_partitioned_mesh);
   EraserState& state = erasing_stroke_state();
@@ -881,6 +920,212 @@ void PdfInkModule::EraseHelper(const gfx::PointF& position, int page_index) {
   if (erased_partitioned_mesh) {
     state.page_indices_with_partitioned_mesh_erasures.insert(page_index);
   }
+}
+
+bool PdfInkModule::StartTextHighlight(const gfx::PointF& position,
+                                      int click_count,
+                                      base::TimeTicks timestamp,
+                                      ink::StrokeInput::ToolType tool_type) {
+  client_->StrokeStarted();
+
+  current_tool_state_.emplace<TextHighlightState>();
+
+  bool is_double_click = click_count == 2;
+  bool is_triple_click = click_count == 3;
+  if (is_double_click) {
+    StartTextSelectionMultiClickTimer(tool_type);
+  } else if (is_triple_click) {
+    StopTextSelectionMultiClickTimer();
+    // Clicking the same text position two times will select the word. An
+    // additional third click will select the line. `StartTextHighlight()` is
+    // called for every click count, so the two click text selection has already
+    // been processed in a previous call. Undo that highlight.
+    ApplyUndoRedoCommands(undo_redo_model_.Undo());
+  }
+
+  std::optional<PdfInkUndoRedoModel::DiscardedDrawCommands> discards =
+      undo_redo_model_.StartDraw();
+  CHECK(discards.has_value());
+  ApplyUndoRedoDiscards(discards.value());
+
+  // Notifying the client will update the text selection.
+  client_->OnTextOrLinkAreaClick(position, click_count);
+
+  if (is_double_click || is_triple_click) {
+    return FinishTextHighlight(position, /*is_multi_click=*/true, tool_type);
+  }
+
+  return true;
+}
+
+bool PdfInkModule::ContinueTextHighlight(const gfx::PointF& position) {
+  CHECK(is_text_highlighting());
+  auto& state = text_highlight_state();
+  if (state.finished_multi_click) {
+    // This text highlight has already processed multi-click text selection, so
+    // do not extend the selection.
+    return true;
+  }
+
+  client_->ExtendSelectionByPoint(position);
+  state.highlight_strokes = GetTextSelectionAsStrokes();
+  return true;
+}
+
+bool PdfInkModule::FinishTextHighlight(const gfx::PointF& position,
+                                       bool is_multi_click,
+                                       ink::StrokeInput::ToolType tool_type) {
+  CHECK(is_text_highlighting());
+
+  auto& state = text_highlight_state();
+  if (!state.finished_multi_click) {
+    auto& highlight_strokes = state.highlight_strokes;
+    highlight_strokes = GetTextSelectionAsStrokes();
+    for (const auto& [page_index, strokes] : highlight_strokes) {
+      for (const auto& stroke : strokes) {
+        InkStrokeId id = stroke_id_generator_.GetIdAndAdvance();
+        client_->StrokeAdded(page_index, id, stroke);
+        strokes_[page_index].push_back(
+            FinishedStrokeState(std::move(stroke), id));
+        bool undo_redo_success = undo_redo_model_.Draw(id);
+        CHECK(undo_redo_success);
+      }
+
+      GenerateAndSendInkThumbnailInternal(page_index);
+    }
+
+    const bool modified = !highlight_strokes.empty();
+    if (modified) {
+      if (!text_selection_click_timer_.IsRunning()) {
+        ReportTextHighlight(highlighter_brush_.ink_brush(), tool_type);
+      }
+
+      // Invalidation is already handled by the client during text selection.
+    }
+
+    bool undo_redo_success = undo_redo_model_.FinishDraw();
+    CHECK(undo_redo_success);
+
+    client_->ClearSelection();
+
+    // Only call StrokeFinished() in this block, where
+    // `!state.finished_multi_click` is false.
+    client_->StrokeFinished(modified);
+  }
+
+  if (is_multi_click) {
+    // Stay in text highlight state to handle any additional events.
+    state.finished_multi_click = true;
+
+    // Clear the current state's highlight strokes to avoid drawing in-progress
+    // strokes on top of the strokes added.
+    state.highlight_strokes.clear();
+    return true;
+  }
+
+  // Reset state back to a drawing highlighter brush.
+  current_tool_state_.emplace<DrawingStrokeState>();
+  drawing_stroke_state().brush_type = PdfInkBrush::Type::kHighlighter;
+
+  if (!client_->IsSelectableTextOrLinkArea(position)) {
+    MaybeSetCursor();
+  }
+  return true;
+}
+
+ink::Stroke PdfInkModule::GetHighlightStrokeFromSelectionRect(
+    const gfx::RectF& selection_rect) {
+  CHECK(is_text_highlighting());
+
+  TextSelectionHighlightStrokeData stroke_data =
+      GetTextSelectionHighlightStrokeData(selection_rect);
+
+  ink::StrokeInputBatch batch;
+  ink::StrokeInput input = CreateInkStrokeInput(
+      ink::StrokeInput::ToolType::kMouse, stroke_data.first_point,
+      /*elapsed_time=*/base::TimeDelta());
+  auto result = batch.Append(input);
+  CHECK(result.ok()) << result.message();
+
+  // Skip the second input point if it matches the first input point.
+  if (stroke_data.first_point != stroke_data.second_point) {
+    input = CreateInkStrokeInput(ink::StrokeInput::ToolType::kMouse,
+                                 stroke_data.second_point,
+                                 /*elapsed_time=*/base::TimeDelta());
+    result = batch.Append(input);
+    CHECK(result.ok()) << result.message();
+  }
+
+  // Make a copy of the ink brush to avoid modifying the drawing highlighter.
+  ink::Brush ink_brush = highlighter_brush_.ink_brush();
+  result = ink_brush.SetSize(stroke_data.brush_size);
+  CHECK(result.ok()) << result.message();
+  return ink::Stroke(ink_brush, batch);
+}
+
+PdfInkModule::TextSelectionHighlightStrokeData
+PdfInkModule::GetTextSelectionHighlightStrokeData(
+    const gfx::RectF& selection_rect) {
+  // The stroke should be drawn along the largest dimension, so have the brush
+  // size equal the smallest dimension.
+  float brush_size = std::min(selection_rect.width(), selection_rect.height());
+  bool is_vertical_stroke = brush_size == selection_rect.width();
+
+  // The first input point will always either be the top center of the text
+  // characters or the left center of the text characters, depending on whether
+  // `selection_rect` is longer vertically. The second input point will be on
+  // the opposite end of the rect.
+  gfx::PointF start;
+  gfx::PointF end;
+  if (is_vertical_stroke) {
+    start = selection_rect.top_center();
+    end = selection_rect.bottom_center();
+  } else {
+    start = selection_rect.left_center();
+    end = selection_rect.right_center();
+  }
+
+  // These points need to be offset to account for brush size. Depending on the
+  // direction of the stroke, the points will need to be offset in either the x
+  // or y axis. Strokes will always be drawn along the largest dimension of the
+  // rectangle.
+  gfx::Vector2dF offset(brush_size / 2, 0);
+  if (is_vertical_stroke) {
+    offset.Transpose();
+  }
+  start += offset;
+  end -= offset;
+  return TextSelectionHighlightStrokeData{
+      .first_point = start, .second_point = end, .brush_size = brush_size};
+}
+
+std::map<int, std::vector<ink::Stroke>>
+PdfInkModule::GetTextSelectionAsStrokes() {
+  std::map<int, std::vector<ink::Stroke>> result;
+  for (const auto& [page_index, selection_rects] :
+       client_->GetSelectionRectMap()) {
+    auto& page_result = result[page_index];
+    page_result.reserve(selection_rects.size());
+    const gfx::Transform transform =
+        client_->GetCanonicalToPdfTransform(page_index).GetCheckedInverse();
+    for (const auto& selection_rect : selection_rects) {
+      page_result.push_back({GetHighlightStrokeFromSelectionRect(
+          transform.MapRect(selection_rect.AsGfxRectF()))});
+    }
+  }
+  return result;
+}
+
+void PdfInkModule::StartTextSelectionMultiClickTimer(
+    ink::StrokeInput::ToolType tool_type) {
+  text_selection_click_timer_.Start(
+      FROM_HERE, base::Milliseconds(ui::kDoubleClickTimeMs),
+      base::BindOnce(&ReportTextHighlight, highlighter_brush_.ink_brush(),
+                     tool_type));
+}
+
+void PdfInkModule::StopTextSelectionMultiClickTimer() {
+  text_selection_click_timer_.Stop();
 }
 
 void PdfInkModule::MaybeRecordPenInput(ink::StrokeInput::ToolType tool_type) {
@@ -905,9 +1150,17 @@ void PdfInkModule::HandleAnnotationUndoMessage(
   ApplyUndoRedoCommands(undo_redo_model_.Undo());
 }
 
+void PdfInkModule::HandleGetAllTextAnnotationsMessage(
+    const base::Value::Dict& message) {
+  // TODO(crbug.com/408926609): Fill in this method. For now, just return an
+  // empty set of annotations.
+  client_->PostMessage(
+      PrepareReplyMessage(message).Set("annotations", base::Value::List()));
+}
+
 void PdfInkModule::HandleGetAnnotationBrushMessage(
     const base::Value::Dict& message) {
-  CHECK(enabled_);
+  CHECK_EQ(InkAnnotationMode::kDraw, mode_);
 
   base::Value::Dict reply = PrepareReplyMessage(message);
 
@@ -941,11 +1194,10 @@ void PdfInkModule::HandleGetAnnotationBrushMessage(
   data.Set("size", ink_brush.GetSize());
 
   SkColor color = GetSkColorFromInkBrush(ink_brush);
-  base::Value::Dict color_reply;
-  color_reply.Set("r", static_cast<int>(SkColorGetR(color)));
-  color_reply.Set("g", static_cast<int>(SkColorGetG(color)));
-  color_reply.Set("b", static_cast<int>(SkColorGetB(color)));
-  data.Set("color", std::move(color_reply));
+  data.Set("color", base::Value::Dict()
+                        .Set("r", static_cast<int>(SkColorGetR(color)))
+                        .Set("g", static_cast<int>(SkColorGetG(color)))
+                        .Set("b", static_cast<int>(SkColorGetB(color))));
 
   reply.Set("data", std::move(data));
   client_->PostMessage(std::move(reply));
@@ -953,13 +1205,14 @@ void PdfInkModule::HandleGetAnnotationBrushMessage(
 
 void PdfInkModule::HandleSetAnnotationBrushMessage(
     const base::Value::Dict& message) {
-  CHECK(enabled_);
+  CHECK_EQ(InkAnnotationMode::kDraw, mode_);
 
   const base::Value::Dict* data = message.FindDict("data");
   CHECK(data);
 
   const std::string& brush_type_string = *data->FindString("type");
   if (brush_type_string == "eraser") {
+    // TODO(crbug.com/342445982): Handle tool changes during text highlighting.
     if (is_drawing_stroke()) {
       DrawingStrokeState& state = drawing_stroke_state();
       if (state.start_time.has_value()) {
@@ -1001,6 +1254,7 @@ void PdfInkModule::HandleSetAnnotationBrushMessage(
   }
 
   // All brush types except the eraser should have a color and size.
+  // TODO(crbug.com/342445982): Handle tool changes during text highlighting.
   const base::Value::Dict* color = data->FindDict("color");
   CHECK(color);
 
@@ -1025,16 +1279,27 @@ void PdfInkModule::HandleSetAnnotationBrushMessage(
     return;
   }
 
-  MaybeSetDrawingBrushAndCursor();
+  if (MaybeSetDrawingBrush()) {
+    MaybeSetCursor();
+  }
 }
 
 void PdfInkModule::HandleSetAnnotationModeMessage(
     const base::Value::Dict& message) {
   const std::string* mode = message.FindString("mode");
   CHECK(mode);
-  enabled_ = *mode == "draw";
-  client_->OnAnnotationModeToggled(enabled_);
-  if (enabled_ && !loaded_data_from_pdf_) {
+  if (*mode == "off") {
+    mode_ = InkAnnotationMode::kOff;
+  } else if (*mode == "draw") {
+    mode_ = InkAnnotationMode::kDraw;
+  } else if (*mode == "text") {
+    CHECK(features::kPdfInk2TextAnnotations.Get());
+    mode_ = InkAnnotationMode::kText;
+  } else {
+    NOTREACHED();
+  }
+  client_->OnAnnotationModeToggled(enabled());
+  if (enabled() && !loaded_data_from_pdf_) {
     loaded_data_from_pdf_ = true;
     PdfInkModuleClient::DocumentV2InkPathShapesMap loaded_v2_shapes =
         client_->LoadV2InkPathsFromPdf();
@@ -1049,16 +1314,23 @@ void PdfInkModule::HandleSetAnnotationModeMessage(
   MaybeSetCursor();
 }
 
-void PdfInkModule::HandleGetTextAnnotFontNamesMessage(
+void PdfInkModule::HandleStartTextAnnotationMessage(
     const base::Value::Dict& message) {
   // TODO(crbug.com/409439509): Fill in this method. For now, just create it
   // so the backend doesn't CHECK when it's sent from the frontend.
 }
 
-void PdfInkModule::HandleSetTextAnnotationFontMessage(
+void PdfInkModule::HandleFinishTextAnnotationMessage(
     const base::Value::Dict& message) {
   // TODO(crbug.com/409439509): Fill in this method. For now, just create it
   // so the backend doesn't CHECK when it's sent from the frontend.
+}
+
+bool PdfInkModule::IsHighlightingTextAtPosition(
+    const gfx::PointF& position) const {
+  return features::kPdfInk2TextHighlighting.Get() &&
+         drawing_stroke_state().brush_type == PdfInkBrush::Type::kHighlighter &&
+         client_->IsSelectableTextOrLinkArea(position);
 }
 
 PdfInkBrush& PdfInkModule::GetDrawingBrush() {
@@ -1116,29 +1388,31 @@ PdfInkModule::CreateInProgressStrokeSegmentsFromInputs() const {
   return stroke_segments;
 }
 
-gfx::PointF PdfInkModule::ConvertEventPositionToCanonicalPosition(
-    const gfx::PointF& position,
+gfx::Transform PdfInkModule::GetEventToCanonicalTransformForPage(
     int page_index) {
-  // If the page is visible at `position`, then its rect must not be empty.
+  // If the page is visible, then its screen rect must not be empty.
+  // GetEventToCanonicalTransform() will check this.
   auto page_contents_rect = client_->GetPageContentsRect(page_index);
-  CHECK(!page_contents_rect.IsEmpty());
-
-  return EventPositionToCanonicalPosition(position, client_->GetOrientation(),
-                                          page_contents_rect,
-                                          client_->GetZoom());
+  return GetEventToCanonicalTransform(client_->GetOrientation(),
+                                      page_contents_rect, client_->GetZoom());
 }
 
-void PdfInkModule::RecordStrokePosition(const gfx::PointF& position,
+gfx::Transform PdfInkModule::GetCanonicalToEventTransformForPage(
+    int page_index) {
+  return GetEventToCanonicalTransformForPage(page_index).GetCheckedInverse();
+}
+
+bool PdfInkModule::RecordStrokePosition(const gfx::PointF& position,
                                         base::TimeTicks timestamp,
                                         ink::StrokeInput::ToolType tool_type) {
   CHECK(is_drawing_stroke());
   DrawingStrokeState& state = drawing_stroke_state();
   gfx::PointF canonical_position =
-      ConvertEventPositionToCanonicalPosition(position, state.page_index);
+      GetEventToCanonicalTransformForPage(state.page_index).MapPoint(position);
   base::TimeDelta time_diff = timestamp - state.start_time.value();
   auto result = state.inputs.back().Append(
       CreateInkStrokeInput(tool_type, canonical_position, time_diff));
-  CHECK(result.ok()) << result.message();
+  return result.ok();
 }
 
 void PdfInkModule::ApplyUndoRedoCommands(
@@ -1225,8 +1499,7 @@ void PdfInkModule::ApplyUndoRedoCommandsHelper(
     }
 
     client_->Invalidate(CanonicalInkEnvelopeToInvalidationScreenRect(
-        invalidate_envelope, client_->GetOrientation(),
-        client_->GetPageContentsRect(page_index), client_->GetZoom()));
+        invalidate_envelope, GetCanonicalToEventTransformForPage(page_index)));
     page_indices_with_ink_thumbnail_updates.insert(page_index);
 
     if (stroke_ids.empty()) {
@@ -1267,8 +1540,7 @@ void PdfInkModule::ApplyUndoRedoCommandsHelper(
     }
 
     client_->Invalidate(CanonicalInkEnvelopeToInvalidationScreenRect(
-        invalidate_envelope, client_->GetOrientation(),
-        client_->GetPageContentsRect(page_index), client_->GetZoom()));
+        invalidate_envelope, GetCanonicalToEventTransformForPage(page_index)));
     page_indices_with_pdf_thumbnail_updates.insert(page_index);
 
     if (shape_ids.empty()) {
@@ -1332,9 +1604,9 @@ void PdfInkModule::ApplyUndoRedoDiscards(
   }
 }
 
-void PdfInkModule::MaybeSetDrawingBrushAndCursor() {
+bool PdfInkModule::MaybeSetDrawingBrush() {
   if (!pending_drawing_brush_state_.has_value()) {
-    return;
+    return false;
   }
 
   current_tool_state_.emplace<DrawingStrokeState>();
@@ -1346,35 +1618,68 @@ void PdfInkModule::MaybeSetDrawingBrushAndCursor() {
 
   pending_drawing_brush_state_.reset();
 
-  // If the brush could have changed, reflect that in the cursor as well.
-  MaybeSetCursor();
+  return true;
 }
 
 void PdfInkModule::MaybeSetCursor() {
-  if (!enabled()) {
-    // Do nothing when disabled. The code outside of PdfInkModule will select a
-    // normal mouse cursor and switch to that.
+  switch (mode_) {
+    case InkAnnotationMode::kOff:
+      // Do nothing when disabled. The code outside of PdfInkModule will select
+      // a normal mouse cursor and switch to that.
+      return;
+
+    case InkAnnotationMode::kDraw: {
+      if (features::kPdfInk2TextHighlighting.Get() && is_text_highlighting()) {
+        return;
+      }
+
+      SkColor color;
+      float brush_size;
+      if (is_drawing_stroke()) {
+        const auto& ink_brush = GetDrawingBrush().ink_brush();
+        color = GetSkColorFromInkBrush(ink_brush);
+        brush_size = ink_brush.GetSize();
+      } else {
+        CHECK(is_erasing_stroke());
+        color = kEraserColor;
+        brush_size = kEraserSize;
+      }
+
+      SkBitmap bitmap = GenerateToolCursor(
+          color,
+          CursorDiameterFromBrushSizeAndZoom(brush_size, client_->GetZoom()));
+      gfx::Point hotspot(bitmap.width() / 2, bitmap.height() / 2);
+      client_->UpdateInkCursor(
+          ui::Cursor::NewCustom(std::move(bitmap), std::move(hotspot)));
+      return;
+    }
+
+    case InkAnnotationMode::kText:
+      // TODO(crbug.com/402546153): Update cursor for text annotation, once
+      // UX determines if it should always use I-beam.
+      client_->UpdateInkCursor(ui::mojom::CursorType::kIBeam);
+      return;
+  }
+  NOTREACHED();
+}
+
+void PdfInkModule::MaybeSetCursorOnMouseMove(const gfx::PointF& position) {
+  if (!features::kPdfInk2TextHighlighting.Get()) {
     return;
   }
 
-  SkColor color;
-  float brush_size;
-  if (is_drawing_stroke()) {
-    const auto& ink_brush = GetDrawingBrush().ink_brush();
-    color = GetSkColorFromInkBrush(ink_brush);
-    brush_size = ink_brush.GetSize();
-  } else {
-    CHECK(is_erasing_stroke());
-    color = kEraserColor;
-    brush_size = kEraserSize;
+  CHECK(is_drawing_stroke());
+  if (drawing_stroke_state().brush_type != PdfInkBrush::Type::kHighlighter ||
+      !client_->IsSelectableTextOrLinkArea(position)) {
+    if (client_->GetCursor().type() == ui::mojom::CursorType::kIBeam) {
+      MaybeSetCursor();
+    }
+    return;
   }
 
-  SkBitmap bitmap = GenerateToolCursor(
-      color,
-      CursorDiameterFromBrushSizeAndZoom(brush_size, client_->GetZoom()));
-  gfx::Point hotspot(bitmap.width() / 2, bitmap.height() / 2);
-  client_->UpdateInkCursor(
-      ui::Cursor::NewCustom(std::move(bitmap), std::move(hotspot)));
+  if (client_->GetCursor().type() != ui::mojom::CursorType::kIBeam) {
+    client_->UpdateInkCursor(ui::mojom::CursorType::kIBeam);
+  }
 }
 
 PdfInkModule::DrawingStrokeState::DrawingStrokeState() = default;
@@ -1384,6 +1689,10 @@ PdfInkModule::DrawingStrokeState::~DrawingStrokeState() = default;
 PdfInkModule::EraserState::EraserState() = default;
 
 PdfInkModule::EraserState::~EraserState() = default;
+
+PdfInkModule::TextHighlightState::TextHighlightState() = default;
+
+PdfInkModule::TextHighlightState::~TextHighlightState() = default;
 
 PdfInkModule::FinishedStrokeState::FinishedStrokeState(ink::Stroke stroke,
                                                        InkStrokeId id)
@@ -1423,73 +1732,6 @@ InkStrokeId PdfInkModule::StrokeIdGenerator::GetIdAndAdvance() {
 
 void PdfInkModule::StrokeIdGenerator::ResetIdTo(InkStrokeId id) {
   next_stroke_id_ = id;
-}
-
-PdfInkModule::PageInkStrokeIterator::PageInkStrokeIterator(
-    const PdfInkModule::DocumentStrokesMap& strokes)
-    : strokes_(strokes), pages_iterator_(strokes_->cbegin()) {
-  // Set up internal iterators for the first visible stroke, if there is one.
-  AdvanceToNextPageWithVisibleStrokes();
-}
-
-PdfInkModule::PageInkStrokeIterator::~PageInkStrokeIterator() = default;
-
-std::optional<PdfInkModule::PageInkStroke>
-PdfInkModule::PageInkStrokeIterator::GetNextStrokeAndAdvance() {
-  if (pages_iterator_ == strokes_->cend()) {
-    return std::nullopt;
-  }
-
-  // `page_strokes_iterator_` is set up when finding the page, and is updated
-  // after establishing the stroke to return.  So the return value is based
-  // upon the current position of the iterator.  Callers should not get here
-  // if the end of the strokes has been reached for the current page.
-  CHECK(page_strokes_iterator_ != pages_iterator_->second.cend());
-  CHECK(page_strokes_iterator_->should_draw);
-  const ink::Stroke& page_stroke = page_strokes_iterator_->stroke;
-  int page_index = pages_iterator_->first;
-  AdvanceForCurrentPage();
-
-  if (page_strokes_iterator_ == pages_iterator_->second.cend()) {
-    // This was the last stroke for the current page, so advancing requires
-    // moving on to another page and reinitializing `page_strokes_iterator_`.
-    ++pages_iterator_;
-    AdvanceToNextPageWithVisibleStrokes();
-  }
-
-  return PageInkStroke{page_index, raw_ref<const ink::Stroke>(page_stroke)};
-}
-
-void PdfInkModule::PageInkStrokeIterator::
-    AdvanceToNextPageWithVisibleStrokes() {
-  for (; pages_iterator_ != strokes_->cend(); ++pages_iterator_) {
-    // Initialize and scan to the location of the first (if any) visible
-    // stroke for this page.
-    for (page_strokes_iterator_ = pages_iterator_->second.cbegin();
-         page_strokes_iterator_ != pages_iterator_->second.cend();
-         ++page_strokes_iterator_) {
-      if (page_strokes_iterator_->should_draw) {
-        // This page has visible strokes, and `page_strokes_iterator_` has
-        // been initialized to the position of the first visible stroke.
-        return;
-      }
-    }
-  }
-
-  // No pages with visible strokes found.
-}
-
-void PdfInkModule::PageInkStrokeIterator::AdvanceForCurrentPage() {
-  CHECK(pages_iterator_ != strokes_->cend());
-
-  // Advance the iterator to next visible stroke in this page (if any) before
-  // returning.
-  do {
-    ++page_strokes_iterator_;
-    if (page_strokes_iterator_ == pages_iterator_->second.cend()) {
-      break;
-    }
-  } while (!page_strokes_iterator_->should_draw);
 }
 
 }  // namespace chrome_pdf

@@ -11,7 +11,6 @@
 #include "ash/ambient/test/ambient_ash_test_helper.h"
 #include "ash/app_list/test/app_list_test_helper.h"
 #include "ash/assistant/assistant_controller_impl.h"
-#include "ash/assistant/test/test_assistant_service.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_switches.h"
 #include "ash/display/display_configuration_controller_test_api.h"
@@ -42,6 +41,7 @@
 #include "ash/wm/desks/templates/saved_desk_test_helper.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
+#include "base/notimplemented.h"
 #include "base/run_loop.h"
 #include "base/system/sys_info.h"
 #include "base/system/system_monitor.h"
@@ -57,6 +57,7 @@
 #include "chromeos/ash/services/hotspot_config/public/cpp/cros_hotspot_config_test_helper.h"
 #include "chromeos/dbus/power/power_policy_controller.h"
 #include "chromeos/ui/frame/multitask_menu/multitask_menu_nudge_controller.h"
+#include "components/session_manager/core/fake_session_manager_delegate.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/floss/floss_dbus_manager.h"
@@ -124,8 +125,12 @@ class AshTestHelper::PowerPolicyControllerInitializer {
 AshTestHelper::AshTestHelper(ui::ContextFactory* context_factory)
     : AuraTestHelper(context_factory),
       system_monitor_(std::make_unique<base::SystemMonitor>()),
-      scoped_fake_federated_service_connection_for_test_(
-          &fake_federated_service_connection_) {
+      session_manager_(
+          !session_manager::SessionManager::Get()
+              ? std::make_unique<session_manager::SessionManager>(
+                    std::make_unique<
+                        session_manager::FakeSessionManagerDelegate>())
+              : nullptr) {
   views::ViewsTestHelperAura::SetFallbackTestViewsDelegateFactory(
       &MakeTestViewsDelegate);
 
@@ -229,7 +234,6 @@ void AshTestHelper::TearDown() {
   bluez_dbus_manager_initializer_.reset();
   floss_dbus_manager_initializer_.reset();
   system_tray_client_.reset();
-  assistant_service_.reset();
   notifier_settings_controller_.reset();
   prefs_provider_.reset();
   statistics_provider_.reset();
@@ -388,8 +392,6 @@ void AshTestHelper::SetUp(InitParams init_params) {
   // Cursor is visible by default in tests.
   shell->cursor_manager()->ShowCursor();
 
-  shell->assistant_controller()->SetAssistant(assistant_service_.get());
-
   shell->system_tray_model()->SetClient(system_tray_client_.get());
   prefs_provider_ = std::make_unique<TestPrefServiceProvider>();
 
@@ -480,6 +482,24 @@ AccountId AshTestHelper::SimulateUserLogin(
     std::unique_ptr<PrefService> pref_service) {
   AccountId account_id = session_controller_client_->AddUserSession(
       login_info, opt_account_id, std::move(pref_service));
+
+  // Taken some concept from User::CanLock(). Kiosk/Guest accounts are
+  // disallowed to lock screen here. Other accounts are allowed by default.
+  // We may need to consider the pref following the production behavior.
+  switch (login_info.user_type) {
+    case user_manager::UserType::kRegular:
+    case user_manager::UserType::kChild:
+    case user_manager::UserType::kPublicAccount:
+      break;
+    case user_manager::UserType::kKioskChromeApp:
+    case user_manager::UserType::kKioskWebApp:
+    case user_manager::UserType::kKioskIWA:
+    case user_manager::UserType::kGuest:
+    case user_manager::UserType::kKioskArcvmApp:
+      session_controller_client_->SetCanLockScreen(false);
+      break;
+  }
+
   session_controller_client_->SwitchActiveUser(account_id);
 
   if (login_info.activate_session) {

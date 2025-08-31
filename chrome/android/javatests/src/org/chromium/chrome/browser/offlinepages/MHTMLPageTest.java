@@ -54,7 +54,7 @@ public class MHTMLPageTest implements CustomMainActivityStart {
      * receive the update.
      */
     private static class TestNewDownloadBackendObserver implements OfflineContentProvider.Observer {
-        private Semaphore mSemaphore;
+        private final Semaphore mSemaphore;
 
         TestNewDownloadBackendObserver(Semaphore semaphore) {
             mSemaphore = semaphore;
@@ -97,7 +97,7 @@ public class MHTMLPageTest implements CustomMainActivityStart {
     public void testDownloadMultipartRelatedPageFromServer() throws Exception {
         // .mhtml file is mapped to "multipart/related" by the test server.
         final String url = mTestServer.getURL("/chrome/test/data/android/hello.mhtml");
-        final Tab tab = mDownloadTestRule.getActivity().getActivityTab();
+        final Tab tab = mDownloadTestRule.getActivityTab();
         final Semaphore semaphore = new Semaphore(0);
 
         ThreadUtils.runOnUiThreadBlocking(
@@ -117,7 +117,7 @@ public class MHTMLPageTest implements CustomMainActivityStart {
     public void testDownloadMessageRfc822PageFromServer() throws Exception {
         // .mht file is mapped to "message/rfc822" by the test server.
         final String url = mTestServer.getURL("/chrome/test/data/android/test.mht");
-        final Tab tab = mDownloadTestRule.getActivity().getActivityTab();
+        final Tab tab = mDownloadTestRule.getActivityTab();
         final Semaphore semaphore = new Semaphore(0);
 
         ThreadUtils.runOnUiThreadBlocking(

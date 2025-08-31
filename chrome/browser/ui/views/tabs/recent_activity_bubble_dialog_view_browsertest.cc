@@ -4,22 +4,26 @@
 
 #include "chrome/browser/ui/views/tabs/recent_activity_bubble_dialog_view.h"
 
+#include "base/strings/string_view_util.h"
+#include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "chrome/browser/data_sharing/data_sharing_service_factory.h"
 #include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/collaboration_messaging_tab_data.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
+#include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/views/data_sharing/data_sharing_bubble_controller.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/top_container_view.h"
 #include "chrome/browser/ui/views/tabs/tab_group_editor_bubble_view.h"
-#include "chrome/browser/ui/views/tabs/tab_strip.h"
-#include "chrome/browser/ui/views/tabs/tab_strip_controller.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/collaboration/public/features.h"
@@ -191,6 +195,12 @@ std::vector<ActivityLogItem> CreateMockActivityLog(int n) {
 
 class RecentActivityBubbleDialogViewBrowserTest : public DialogBrowserTest {
  public:
+  RecentActivityBubbleDialogViewBrowserTest() {
+    features_.InitWithFeatures(
+        {data_sharing::features::kDataSharingFeature,
+         collaboration::features::kCollaborationMessaging},
+        {});
+  }
   void ShowUi(const std::string& name) override {
     if (name == "Empty") {
       ShowLog({});
@@ -210,9 +220,10 @@ class RecentActivityBubbleDialogViewBrowserTest : public DialogBrowserTest {
     views::View* anchor_view =
         BrowserView::GetBrowserViewForBrowser(browser())->top_container();
 
-    bubble_coordinator_ = std::make_unique<RecentActivityBubbleCoordinator>();
-    EXPECT_EQ(nullptr, bubble_coordinator_->GetBubble());
-    bubble_coordinator_->Show(anchor_view,
+    EXPECT_NE(nullptr, BubbleCoordinator());
+    EXPECT_EQ(nullptr, BubbleCoordinator()->GetBubble());
+
+    BubbleCoordinator()->Show(anchor_view,
                               browser()->tab_strip_model()->GetWebContentsAt(0),
                               activity_log, browser()->profile());
   }
@@ -222,17 +233,20 @@ class RecentActivityBubbleDialogViewBrowserTest : public DialogBrowserTest {
     views::View* anchor_view =
         BrowserView::GetBrowserViewForBrowser(browser())->top_container();
 
-    bubble_coordinator_ = std::make_unique<RecentActivityBubbleCoordinator>();
-    EXPECT_EQ(nullptr, bubble_coordinator_->GetBubble());
-    bubble_coordinator_->ShowForCurrentTab(
+    EXPECT_NE(nullptr, BubbleCoordinator());
+    EXPECT_EQ(nullptr, BubbleCoordinator()->GetBubble());
+
+    BubbleCoordinator()->ShowForCurrentTab(
         anchor_view, browser()->tab_strip_model()->GetWebContentsAt(0), {},
         activity_log, browser()->profile());
   }
 
   bool VerifyUi() override {
-    EXPECT_TRUE(bubble_coordinator_->IsShowing());
-    EXPECT_NE(nullptr, bubble_coordinator_->GetBubble());
-    auto* bubble = bubble_coordinator_->GetBubble();
+    EXPECT_NE(nullptr, BubbleCoordinator());
+
+    EXPECT_TRUE(BubbleCoordinator()->IsShowing());
+    EXPECT_NE(nullptr, BubbleCoordinator()->GetBubble());
+    auto* bubble = BubbleCoordinator()->GetBubble();
     auto children = bubble->children();
 
     std::string test_name =
@@ -245,9 +259,9 @@ class RecentActivityBubbleDialogViewBrowserTest : public DialogBrowserTest {
     // All dialogs have 4 children, except for empty state dialog, which
     // also contains the label for the empty state.
     if (test_name == "InvokeUi_Empty") {
-      EXPECT_EQ(5u, children.size());
+      EXPECT_EQ(6u, children.size());
     } else {
-      EXPECT_EQ(4u, children.size());
+      EXPECT_EQ(5u, children.size());
     }
 
     // Tab container empty and hidden.
@@ -272,15 +286,15 @@ class RecentActivityBubbleDialogViewBrowserTest : public DialogBrowserTest {
     return true;
   }
 
-  void DismissUi() override { bubble_coordinator_->Hide(); }
+  void DismissUi() override { BubbleCoordinator()->Hide(); }
 
   RecentActivityBubbleCoordinator* BubbleCoordinator() {
-    return bubble_coordinator_.get();
+    return RecentActivityBubbleCoordinator::From(browser());
   }
 
  private:
   views::UniqueWidgetPtr anchor_widget_;
-  std::unique_ptr<RecentActivityBubbleCoordinator> bubble_coordinator_;
+  base::test::ScopedFeatureList features_;
 };
 
 IN_PROC_BROWSER_TEST_F(RecentActivityBubbleDialogViewBrowserTest,
@@ -318,32 +332,34 @@ IN_PROC_BROWSER_TEST_F(RecentActivityBubbleDialogViewBrowserTest,
 
 #if BUILDFLAG(IS_MAC)
   // Initial caps on Mac.
-  EXPECT_EQ(bubble->GetWindowTitle(), u"Recent Activity");
+  EXPECT_EQ(bubble->GetTitleForTesting(), u"Recent Activity");
 #else
-  EXPECT_EQ(bubble->GetWindowTitle(), u"Recent activity");
+  EXPECT_EQ(bubble->GetTitleForTesting(), u"Recent activity");
 #endif
 
-  EXPECT_EQ(bubble->GetRowForTesting(0)->activity_text(), u"You changed a tab");
-  EXPECT_EQ(bubble->GetRowForTesting(0)->metadata_text(),
+  EXPECT_EQ(bubble->GetRowForTesting(0)->GetAccessibleName(),
+            u"You changed a tab");
+  EXPECT_EQ(bubble->GetRowForTesting(0)->GetAccessibleDescription(),
             u"airbnb.com \u2022 5h ago");
 
-  EXPECT_EQ(bubble->GetRowForTesting(1)->activity_text(),
+  EXPECT_EQ(bubble->GetRowForTesting(1)->GetAccessibleName(),
             u"Shirley changed a tab");
-  EXPECT_EQ(bubble->GetRowForTesting(1)->metadata_text(),
+  EXPECT_EQ(bubble->GetRowForTesting(1)->GetAccessibleDescription(),
             u"hotels.com \u2022 4h ago");
 
-  EXPECT_EQ(bubble->GetRowForTesting(2)->activity_text(),
+  EXPECT_EQ(bubble->GetRowForTesting(2)->GetAccessibleName(),
             u"Elisa removed a tab");
-  EXPECT_EQ(bubble->GetRowForTesting(2)->metadata_text(),
+  EXPECT_EQ(bubble->GetRowForTesting(2)->GetAccessibleDescription(),
             u"expedia.com \u2022 6h ago");
 
-  EXPECT_EQ(bubble->GetRowForTesting(3)->activity_text(),
+  EXPECT_EQ(bubble->GetRowForTesting(3)->GetAccessibleName(),
             u"Shirley joined the group");
-  EXPECT_EQ(bubble->GetRowForTesting(3)->metadata_text(),
+  EXPECT_EQ(bubble->GetRowForTesting(3)->GetAccessibleDescription(),
             u"shirleys-email \u2022 8h ago");
 
-  EXPECT_EQ(bubble->GetRowForTesting(4)->activity_text(), u"Elisa added a tab");
-  EXPECT_EQ(bubble->GetRowForTesting(4)->metadata_text(),
+  EXPECT_EQ(bubble->GetRowForTesting(4)->GetAccessibleName(),
+            u"Elisa added a tab");
+  EXPECT_EQ(bubble->GetRowForTesting(4)->GetAccessibleDescription(),
             u"expedia.com \u2022 2d ago");
 }
 
@@ -351,11 +367,6 @@ class RecentActivityBubbleDialogViewActionBrowserTest
     : public RecentActivityBubbleDialogViewBrowserTest {
  public:
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatures(
-        {tab_groups::kTabGroupSyncServiceDesktopMigration,
-         data_sharing::features::kDataSharingFeature,
-         collaboration::features::kCollaborationMessaging},
-        {});
     ASSERT_TRUE(embedded_test_server()->InitializeAndListen());
     embedded_test_server()->RegisterRequestHandler(base::BindRepeating(
         &RecentActivityBubbleDialogViewActionBrowserTest::HandleRequest,
@@ -426,9 +437,8 @@ class RecentActivityBubbleDialogViewActionBrowserTest
   }
 
   void CloseTab(tabs::TabInterface* tab) {
-    auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
-    auto* tabstrip_controller = browser_view->tabstrip()->controller();
-    tabstrip_controller->CloseTab(TabIndex(tab));
+    browser()->tab_strip_model()->CloseWebContentsAt(TabIndex(tab),
+                                                     TabCloseTypes::CLOSE_NONE);
   }
 
   LocalTabID TabId(tabs::TabInterface* tab) {
@@ -449,7 +459,7 @@ class RecentActivityBubbleDialogViewActionBrowserTest
   }
 
   SavedTabGroup ShareTabGroup(TabGroupId group_id) {
-    std::string collaboration_id = "fake_collaboration_id";
+    syncer::CollaborationId collaboration_id("fake_collaboration_id");
     TabGroupSyncService* tab_group_sync_service =
         TabGroupSyncServiceFactory::GetForProfile(browser()->profile());
     tab_group_sync_service->MakeTabGroupSharedForTesting(group_id,
@@ -506,7 +516,6 @@ class RecentActivityBubbleDialogViewActionBrowserTest
   const std::string avatar_url_ =
       base::StringPrintf("/avatar=s%d-cc-rp-ns", kAvatarSize);
   std::unique_ptr<base::RunLoop> run_loop_;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Trigger kFocusTab action from the recent activity dialog.
@@ -650,12 +659,6 @@ IN_PROC_BROWSER_TEST_F(RecentActivityBubbleDialogViewActionBrowserTest,
   EXPECT_TRUE(bubble);
 
   bubble->GetRowForTesting(0)->ManageSharing();
-
-  auto sharing_bubble =
-      DataSharingBubbleController::GetOrCreateForBrowser(browser())
-          ->BubbleViewForTesting();
-
-  EXPECT_TRUE(sharing_bubble.get());
 }
 
 }  // namespace tab_groups

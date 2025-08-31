@@ -40,16 +40,23 @@ class PaymentsDataManagerTestApi {
   }
 
   // Returns whether Autofill card benefit suggestion labels should be blocked.
-  bool ShouldBlockCardBenefitSuggestionLabels(
-      const CreditCard& credit_card,
-      const url::Origin& origin,
-      const AutofillOptimizationGuide* optimization_guide);
+  bool ShouldBlockCardBenefitSuggestionLabels();
 
   void SetImageFetcher(AutofillImageFetcherBase* image_fetcher) {
     payments_data_manager_->image_fetcher_ = image_fetcher;
   }
 
+  void SetAutofillOptimizationGuideDecider(
+      AutofillOptimizationGuideDecider* autofill_optimization_guide_decider) {
+    payments_data_manager_->autofill_optimization_guide_decider_ =
+        autofill_optimization_guide_decider;
+  }
+
   bool ShouldSuggestServerPaymentMethods();
+
+  bool AreBnplIssuersSupported() const {
+    return payments_data_manager_->AreBnplIssuersSupported();
+  }
 
  private:
   const raw_ref<PaymentsDataManager> payments_data_manager_;

@@ -44,12 +44,12 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
+#include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/extensions/permissions/active_tab_permission_granter.h"
 #include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
-#include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/extensions/test_extension_action_dispatcher_observer.h"
 #include "chrome/browser/net/profile_network_context_service.h"
 #include "chrome/browser/net/profile_network_context_service_factory.h"
@@ -78,6 +78,7 @@
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/fenced_frame_test_util.h"
 #include "content/public/test/privacy_sandbox_coordinator_test_util.h"
 #include "content/public/test/simple_url_loader_test_helper.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -102,12 +103,14 @@
 #include "extensions/browser/extension_action.h"
 #include "extensions/browser/extension_action_manager.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/install_prefs_helper.h"
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/browser/warning_service.h"
 #include "extensions/browser/warning_set.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/api/declarative_net_request/constants.h"
 #include "extensions/common/api/declarative_net_request/test_utils.h"
 #include "extensions/common/api/extension_action/action_info.h"
@@ -123,7 +126,6 @@
 #include "extensions/common/url_pattern_set.h"
 #include "extensions/test/extension_background_page_waiter.h"
 #include "extensions/test/extension_test_message_listener.h"
-#include "ipc/ipc_message.h"
 #include "net/base/net_errors.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_request_headers.h"
@@ -134,7 +136,6 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/embedded_test_server/install_default_websocket_handlers.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
 #include "net/test/test_data_directory.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "services/network/public/cpp/features.h"
@@ -144,16 +145,14 @@
 #include "third_party/blink/public/common/features.h"
 #include "ui/webui/untrusted_web_ui_browsertest_util.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_browsertest.h"
-#else
-#include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/extensions/extension_service.h"
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions::declarative_net_request {
 namespace {
@@ -253,14 +252,8 @@ class RulesetLoaderThrottle {
   base::OnceClosure quit_closure_;
 };
 
-#if BUILDFLAG(IS_ANDROID)
-using ExtensionBrowserTestBase = ExtensionPlatformBrowserTest;
-#else
-using ExtensionBrowserTestBase = ExtensionBrowserTest;
-#endif
-
 class DeclarativeNetRequestBrowserTest
-    : public ExtensionBrowserTestBase,
+    : public ExtensionBrowserTest,
       public ::testing::WithParamInterface<
           ::testing::tuple<ExtensionLoadType, bool>> {
  public:
@@ -296,7 +289,7 @@ class DeclarativeNetRequestBrowserTest
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ExtensionBrowserTestBase::SetUpCommandLine(command_line);
+    ExtensionBrowserTest::SetUpCommandLine(command_line);
 
     if (GetAllowChromeURLs()) {
       command_line->AppendSwitch(switches::kExtensionsOnChromeURLs);
@@ -307,13 +300,17 @@ class DeclarativeNetRequestBrowserTest
 
   // ExtensionBrowserTest overrides:
   void SetUpOnMainThread() override {
-    ExtensionBrowserTestBase::SetUpOnMainThread();
+    ExtensionBrowserTest::SetUpOnMainThread();
 
     embedded_test_server()->ServeFilesFromDirectory(GetHttpServerPath());
 
     embedded_test_server()->RegisterRequestMonitor(
         base::BindRepeating(&DeclarativeNetRequestBrowserTest::MonitorRequest,
                             base::Unretained(this)));
+
+    // Set up WebSockets for any test that needs it. This does not interfere
+    // with non-WebSocket requests.
+    net::test_server::InstallDefaultWebSocketHandlers(embedded_test_server());
 
     content::SetupCrossSiteRedirector(embedded_test_server());
 
@@ -330,7 +327,7 @@ class DeclarativeNetRequestBrowserTest
     // Ensure |ruleset_manager_observer_| gets destructed on the UI thread.
     ruleset_manager_observer_.reset();
 
-    ExtensionBrowserTestBase::TearDownOnMainThread();
+    ExtensionBrowserTest::TearDownOnMainThread();
   }
 
   // Handler to monitor the requests which reach the EmbeddedTestServer. This
@@ -365,21 +362,13 @@ class DeclarativeNetRequestBrowserTest
     ruleset_manager_observer()->WaitForExtensionsWithRulesetsCount(count);
   }
 
-#if !BUILDFLAG(IS_ANDROID)
-  content::WebContents* web_contents(Browser* browser) const {
-    return browser->tab_strip_model()->GetActiveWebContents();
-  }
-#endif
-
-  content::WebContents* web_contents() const { return GetActiveWebContents(); }
-
-  content::RenderFrameHost* GetPrimaryMainFrame() const {
+  content::RenderFrameHost* GetPrimaryMainFrame() {
     return GetActiveWebContents()->GetPrimaryMainFrame();
   }
 
-  content::RenderFrameHost* GetFrameByName(const std::string& name) const {
+  content::RenderFrameHost* GetFrameByName(const std::string& name) {
     return content::FrameMatchingPredicate(
-        web_contents()->GetPrimaryPage(),
+        GetActiveWebContents()->GetPrimaryPage(),
         base::BindRepeating(&content::FrameMatchesName, name));
   }
 
@@ -400,18 +389,18 @@ class DeclarativeNetRequestBrowserTest
         last_loaded_extension_id());
   }
 
-  content::PageType GetPageType() const {
+  content::PageType GetPageType() {
     return GetPageType(GetActiveWebContents());
   }
 
-  std::string GetPageBody() const {
+  std::string GetPageBody() {
     const char* script = "document.body.innerText.trim()";
-    return content::EvalJs(web_contents(), script).ExtractString();
+    return content::EvalJs(GetActiveWebContents(), script).ExtractString();
   }
 
-  std::string GetPageCookie() const {
+  std::string GetPageCookie() {
     const char* script = "document.cookie";
-    return content::EvalJs(web_contents(), script).ExtractString();
+    return content::EvalJs(GetActiveWebContents(), script).ExtractString();
   }
 
   void set_config_flags(unsigned flags) { flags_ = flags; }
@@ -668,7 +657,7 @@ class DeclarativeNetRequestBrowserTest
                      const GURL& url,
                      bool use_frame_referrer = true) {
     content::TestNavigationObserver navigation_observer(
-        web_contents(), 1 /*number_of_navigations*/);
+        GetActiveWebContents(), 1 /*number_of_navigations*/);
 
     const char* referrer_policy = use_frame_referrer ? "origin" : "no-referrer";
 
@@ -687,7 +676,7 @@ class DeclarativeNetRequestBrowserTest
   void RemoveNavigateAndReAddFrame(const std::string& frame_name,
                                    const GURL& url) {
     content::TestNavigationObserver navigation_observer(
-        web_contents(), 1 /*number_of_navigations*/);
+        GetActiveWebContents(), 1 /*number_of_navigations*/);
 
     ASSERT_TRUE(content::ExecJs(GetPrimaryMainFrame(),
                                 content::JsReplace(R"(
@@ -895,6 +884,10 @@ class DeclarativeNetRequestBrowserTest
     return https_server_.get();
   }
 
+  content::test::FencedFrameTestHelper& fenced_frame_test_helper() {
+    return fenced_frame_test_helper_;
+  }
+
  private:
   enum class RulesetScope { kDynamic, kSession };
   void UpdateRules(const ExtensionId& extension_id,
@@ -959,9 +952,6 @@ class DeclarativeNetRequestBrowserTest
     const Extension* extension = nullptr;
     switch (GetLoadType()) {
       case ExtensionLoadType::PACKED: {
-#if BUILDFLAG(IS_ANDROID)
-        FAIL() << "Android does not yet support packed extensions.";
-#else
         base::FilePath crx_dir =
             temp_dir_.GetPath().AppendASCII("crx").AppendASCII(directory);
         base::FilePath crx_path = crx_dir.AppendASCII("temp.crx");
@@ -992,7 +982,7 @@ class DeclarativeNetRequestBrowserTest
             // Force a reload of the extension to complete the delayed update.
             // This invalidates the existing `extension` pointer so it needs to
             // be set again after the reload.
-            extension_service()->ReloadExtension(extension_id);
+            extension_registrar()->ReloadExtension(extension_id);
             extension =
                 ExtensionRegistry::Get(profile())->enabled_extensions().GetByID(
                     extension_id);
@@ -1005,7 +995,6 @@ class DeclarativeNetRequestBrowserTest
               crx_path, /*expected_change=*/1);
         }
         break;
-#endif  // BUILDFLAG(IS_ANDROID)
       }
       case ExtensionLoadType::UNPACKED:
         extension = LoadExtension(extension_dir);
@@ -1100,6 +1089,8 @@ class DeclarativeNetRequestBrowserTest
         base::BindRepeating(&DeclarativeNetRequestBrowserTest::MonitorRequest,
                             base::Unretained(this)));
   }
+
+  content::test::FencedFrameTestHelper fenced_frame_test_helper_;
 
   base::test::ScopedFeatureList feature_list_;
   base::ScopedTempDir temp_dir_;
@@ -1472,6 +1463,119 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   }
 }
 
+// Tests the "topDomains" and "excludedTopDomains" properties of
+// declarativeNetRequest rule conditions.
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
+                       BlockRequests_TopDomains) {
+  struct {
+    size_t id;
+    std::string url_filter;
+    std::vector<std::string> top_domains;
+    std::vector<std::string> excluded_top_domains;
+  } rules_data[] = {
+      {1, "script.js", {"x.com", "y.com"}, {"a.x.com"}},
+      {2, "script.js", {/* all domains */}, {"z.com", "a.x.com", "y.com"}},
+      {3, "xhr_target.txt?specific", {"x.com", "y.com"}, {"a.x.com"}},
+      {4, "xhr_target.txt?generic", {/* all domains */}, {"z.com"}},
+  };
+
+  std::vector<TestRule> rules;
+  for (const auto& rule_data : rules_data) {
+    TestRule rule = CreateGenericRule();
+    rule.condition->url_filter = rule_data.url_filter;
+    rule.id = rule_data.id;
+
+    // An empty list is not allowed for the "top_domains" property.
+    if (!rule_data.top_domains.empty()) {
+      rule.condition->top_domains = rule_data.top_domains;
+    }
+
+    rule.condition->excluded_top_domains = rule_data.excluded_top_domains;
+    rules.push_back(rule);
+  }
+  ASSERT_NO_FATAL_FAILURE(LoadExtensionWithRules(rules));
+
+  // Test requests made in tabs.
+  struct {
+    std::string domain;
+    bool expect_scripts_loaded;
+  } tab_test_cases[] = {
+      {"x.com", false /* Rule 1 */}, {"a.x.com", true},
+      {"y.com", false /* Rule 1 */}, {"z.com", true},
+      {"w.com", false /* Rule 2 */},
+  };
+
+  for (const auto& test_case : tab_test_cases) {
+    SCOPED_TRACE(
+        base::StringPrintf("Testing domain %s", test_case.domain.c_str()));
+
+    // Load the test page.
+    GURL url = embedded_test_server()->GetURL(
+        test_case.domain, "/request_domain_test.html?third-party.com");
+    ASSERT_TRUE(ExtensionBrowserTest::NavigateToURL(web_contents(), url));
+    ASSERT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
+
+    // Confirm the script was/wasn't loaded by main_frame as expected.
+    EXPECT_EQ(test_case.expect_scripts_loaded,
+              WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
+
+    // Check the test page's child frame also loaded/blocked the script
+    // request as expected.
+    content::RenderFrameHost* child = GetFrameByName("third-party.com");
+    EXPECT_TRUE(child);
+    EXPECT_EQ(test_case.expect_scripts_loaded, WasFrameWithScriptLoaded(child));
+
+    // Check the requests made via fencedframes are also loaded/blocked as
+    // expected.
+    GURL fencedframe_url =
+        embedded_test_server()->GetURL("third-party.test", "/child_frame.html");
+    content::RenderFrameHost* fencedframe =
+        fenced_frame_test_helper().CreateFencedFrame(GetPrimaryMainFrame(),
+                                                     fencedframe_url);
+    EXPECT_TRUE(fencedframe);
+    EXPECT_EQ(test_case.expect_scripts_loaded,
+              WasFrameWithScriptLoaded(fencedframe));
+  }
+
+  // Test requests made outside of tabs (from a shared worker).
+#if !BUILDFLAG(IS_ANDROID)
+  // TODO(https://crbug.com/40290702): Enable once SharedWorker support comes to
+  // Android.
+  struct {
+    std::string path;
+    bool expect_request_loaded;
+  } worker_test_cases[] = {
+      {"/subresources/xhr_target.txt?specific", true},
+      {"/subresources/xhr_target.txt?generic", false /* Rule 4 */},
+  };
+
+  for (const auto& test_case : worker_test_cases) {
+    SCOPED_TRACE(base::StringPrintf("Testing path %s", test_case.path.c_str()));
+
+    // Load the test page.
+    GURL test_page_url = embedded_test_server()->GetURL(
+        "example.com", "/fetch_from_shared_worker.html");
+    ASSERT_TRUE(
+        ExtensionBrowserTest::NavigateToURL(web_contents(), test_page_url));
+    ASSERT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
+
+    // Perform the test requests.
+    GURL fetch_url =
+        embedded_test_server()->GetURL("example.com", test_case.path);
+    auto actual_response = content::EvalJs(
+        web_contents(), base::StringPrintf("fetchFromSharedWorker('%s');",
+                                           fetch_url.spec().c_str()));
+
+    // Check the test requests passed/failed as expected.
+    if (test_case.expect_request_loaded) {
+      EXPECT_EQ(fetch_url, actual_response);
+    } else {
+      EXPECT_EQ("TypeError: Failed to fetch", actual_response);
+    }
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+}
+
 // Tests the "domainType" property of a declarative rule condition.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                        BlockRequests_DomainType) {
@@ -1683,7 +1787,13 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, AllowBlock) {
 }
 
 // Tests allowing rules for redirects.
-IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, AllowRedirect) {
+// TODO(crbug.com/crbug.com/371298229): Flaky on Android.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_AllowRedirect DISABLED_AllowRedirect
+#else
+#define MAYBE_AllowRedirect AllowRedirect
+#endif
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, MAYBE_AllowRedirect) {
   set_config_flags(ConfigFlag::kConfig_HasBackgroundScript);
 
   const GURL static_redirect_url = embedded_test_server()->GetURL(
@@ -1752,7 +1862,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, AllowRedirect) {
     NavigateToURL(url);
     EXPECT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
 
-    GURL final_url = web_contents()->GetLastCommittedURL();
+    GURL final_url = GetActiveWebContents()->GetLastCommittedURL();
     EXPECT_EQ(test_case.expected_final_url, final_url);
   }
 
@@ -1777,7 +1887,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, AllowRedirect) {
     NavigateToURL(url);
     EXPECT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
 
-    GURL final_url = web_contents()->GetLastCommittedURL();
+    GURL final_url = GetActiveWebContents()->GetLastCommittedURL();
     EXPECT_EQ(test_case.expected_final_url, final_url);
   }
 }
@@ -1843,10 +1953,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
     test_extension_enabled(false);
   }
 
-#if !BUILDFLAG(IS_ANDROID)
-  // TODO(crbug.com/391920604, crbug.com/391920206): Port to desktop Android
-  // when EnableExtension(), ReloadExtension(), and UninstallExtension() are
-  // supported.
   {
     SCOPED_TRACE("Testing EnableExtension");
     EnableExtension(extension_id);
@@ -1859,7 +1965,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
     // Don't use ExtensionBrowserTest::ReloadExtension since it waits for the
     // extension to be loaded again. But we need to use our custom waiting logic
     // below.
-    extension_service()->ReloadExtension(extension_id);
+    extension_registrar()->ReloadExtension(extension_id);
     WaitForExtensionsWithRulesetsCount(0);
     WaitForExtensionsWithRulesetsCount(1);
     test_extension_enabled(true);
@@ -1871,7 +1977,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
     WaitForExtensionsWithRulesetsCount(0);
     test_extension_enabled(false);
   }
-#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 // Tests that multiple enabled extensions with declarative rulesets having
@@ -1977,7 +2082,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   NavigateToURL(url);
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
   EXPECT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
-  GURL final_url = web_contents()->GetLastCommittedURL();
+  GURL final_url = GetActiveWebContents()->GetLastCommittedURL();
   EXPECT_EQ(GURL(redirect_url_for_extension_number(kNumExtensions)), final_url);
 }
 
@@ -2055,11 +2160,11 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, BlockAndRedirect) {
     } else {
       EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
 
-      GURL final_url = web_contents()->GetLastCommittedURL();
+      GURL final_url = GetActiveWebContents()->GetLastCommittedURL();
       EXPECT_EQ(*test_case.expected_final_url, final_url);
 
       EXPECT_EQ(*test_case.expected_redirect_chain_length,
-                web_contents()
+                GetActiveWebContents()
                     ->GetController()
                     .GetLastCommittedEntry()
                     ->GetRedirectChain()
@@ -2119,7 +2224,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, RedirectPriority) {
     NavigateToURL(url);
     EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
     EXPECT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
-    GURL final_url = web_contents()->GetLastCommittedURL();
+    GURL final_url = GetActiveWebContents()->GetLastCommittedURL();
 
     bool expect_redirection = i >= 1 && i <= kNumPatternTypes;
     if (expect_redirection) {
@@ -2214,7 +2319,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, UpgradeRules) {
     } else {
       EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
 
-      const GURL& final_url = web_contents()->GetLastCommittedURL();
+      const GURL& final_url = GetActiveWebContents()->GetLastCommittedURL();
       EXPECT_EQ(*test_case.expected_final_url, final_url);
     }
   }
@@ -2365,7 +2470,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, HostAccessPermission) {
     NavigateToURL(test_case.url);
     EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
     EXPECT_EQ(*test_case.expected_final_url,
-              web_contents()->GetLastCommittedURL());
+              GetActiveWebContents()->GetLastCommittedURL());
   }
 }
 
@@ -2395,11 +2500,11 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, MAYBE_ChromeURLS) {
   }
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Test that a packed extension with a DNR ruleset behaves correctly after
 // browser restart.
-// TODO(crbug.com/391924202): Port to desktop Android once it supports packed
-// extensions.
+// TODO(crbug.com/40200835): Port to desktop Android once it supports PRE_
+// tests.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Packed,
                        PRE_BrowserRestart) {
   // This is not tested for unpacked extensions since the unpacked extension
@@ -2477,11 +2582,10 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Packed,
   EXPECT_FALSE(IsNavigationBlocked(embedded_test_server()->GetURL(
       "unmatched.com", "/pages_with_script/index.html")));
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Tests than an extension can omit the "declarative_net_request" manifest key
 // but can still use dynamic rules.
-// TODO(crbug.com/392953825): Port to desktop Android once EnableExtension() is
-// supported there.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, ZeroRulesets) {
   set_config_flags(ConfigFlag::kConfig_HasBackgroundScript |
                    ConfigFlag::kConfig_OmitDeclarativeNetRequestKey);
@@ -2512,7 +2616,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, ZeroRulesets) {
   WaitForExtensionsWithRulesetsCount(1);
   EXPECT_TRUE(IsNavigationBlocked(url));
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Ensure that when an extension blocks a main-frame request using
 // declarativeNetRequest, the resultant error page attributes this to an
@@ -2526,7 +2629,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   EXPECT_EQ(content::PAGE_TYPE_ERROR, GetPageType());
 
   std::string body =
-      content::EvalJs(web_contents(), "document.body.textContent")
+      content::EvalJs(GetActiveWebContents(), "document.body.textContent")
           .ExtractString();
 
   EXPECT_TRUE(
@@ -2699,7 +2802,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   // manifest.json or that of the Extension 2, even with "<all_urls>" host
   // permissions.
   NavigateToURL(get_manifest_url(extension_id_1));
-  GURL final_url = web_contents()->GetLastCommittedURL();
+  GURL final_url = GetActiveWebContents()->GetLastCommittedURL();
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
   NavigateToURL(get_manifest_url(extension_id_2));
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
@@ -2712,7 +2815,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, ImageCollapsed) {
     NavigateToURL(embedded_test_server()->GetURL("google.com", "/image.html"));
     EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
     const std::string script = "!!window.imageCollapsed;";
-    return content::EvalJs(web_contents(), script).ExtractBool();
+    return content::EvalJs(GetActiveWebContents(), script).ExtractBool();
   };
 
   // Initially the image shouldn't be collapsed.
@@ -2798,12 +2901,9 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, IFrameCollapsed) {
   }
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 // Tests that we correctly reindex a corrupted ruleset. This is only tested for
 // packed extensions, since the JSON ruleset is reindexed on each extension
 // load for unpacked extensions, so corruption is not an issue.
-// TODO(crbug.com/391924202): Port to desktop Android once packed extensions
-// are supported.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Packed,
                        CorruptedIndexedRuleset) {
   set_config_flags(ConfigFlag::kConfig_HasBackgroundScript);
@@ -2924,8 +3024,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Packed,
 }
 
 // Tests that we reindex rulesets on checksum mismatch.
-// TODO(crbug.com/392953825): Port to desktop Android once EnableExtension()
-// is supported.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                        RulesetLoadReindexOnChecksumMismatch) {
   const size_t kNumStaticRulesets = 4;
@@ -3004,7 +3102,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   VerifyNavigations(expected_blocked_urls,
                     /*expected_allowed_urls=*/std::vector<GURL>());
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Tests that checksum mismatches resulting from prefs corruption shouldn't
 // prevent rulesets from being re-enabled.
@@ -3071,11 +3168,8 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   VerifyNavigations(google_url, /*expected_allowed_urls=*/std::vector<GURL>());
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 // Tests that we reindex the extension rulesets in case its ruleset format
 // version is not the same as one used by Chrome.
-// TODO(crbug.com/391924202): Port to desktop Android once packed extensions
-// are supported.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Packed,
                        ReindexOnRulesetVersionMismatch) {
   set_config_flags(ConfigFlag::kConfig_HasBackgroundScript);
@@ -3157,8 +3251,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Packed,
 // Tests that static ruleset preferences are deleted on uninstall for an edge
 // case where ruleset loading is completed after extension uninstallation.
 // Regression test for crbug.com/1067441.
-// TODO(crbug.com/392953825): Port to desktop Android once EnableExtension() is
-// supported.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                        RulesetPrefsDeletedOnUninstall) {
   ASSERT_NO_FATAL_FAILURE(LoadExtensionWithRules({} /* rules */));
@@ -3244,7 +3336,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                                       const GURL& page_url,
                                       bool expect_script_redirected,
                                       int expected_blocked_actions) {
-    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
+    NavigateToURL(page_url);
 
     // The page should have loaded correctly.
     EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
@@ -3266,7 +3358,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
               base::Contains(seen_requests, redirected_script_url));
 
     ExtensionActionRunner* runner =
-        ExtensionActionRunner::GetForWebContents(web_contents());
+        ExtensionActionRunner::GetForWebContents(GetActiveWebContents());
     ASSERT_TRUE(runner);
     EXPECT_EQ(expected_blocked_actions,
               runner->GetBlockedActions(extension->id()));
@@ -3352,8 +3444,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
 
 // Ensures that withholding permissions has no effect on blocking requests using
 // the declarative net request API.
-// TODO(crbug.com/393147570): Port to desktop Android when the permissions API
-// and ScriptingPermissionsModifier are available.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                        WithheldPermissions_Block) {
   // Load an extension with access to <all_urls> which blocks all script
@@ -3395,7 +3485,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       "foo.com", "/pages_with_script/index.html"));
   EXPECT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Tests the dynamic rule support.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, DynamicRules) {
@@ -3445,7 +3534,8 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, DynamicRules) {
   NavigateToURL(example_url);
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
   EXPECT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
-  EXPECT_EQ(dynamic_redirect_url, web_contents()->GetLastCommittedURL());
+  EXPECT_EQ(dynamic_redirect_url,
+            GetActiveWebContents()->GetLastCommittedURL());
 
   // Now add a dynamic rule to allow requests to yahoo.com.
   TestRule allow_rule = block_static_rule;
@@ -3549,15 +3639,13 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, Redirect) {
   for (const auto& test_case : cases) {
     SCOPED_TRACE("Testing " + test_case.url.spec());
     NavigateToURL(test_case.url);
-    EXPECT_EQ(test_case.expected_url, web_contents()->GetLastCommittedURL());
+    EXPECT_EQ(test_case.expected_url,
+              GetActiveWebContents()->GetLastCommittedURL());
   }
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 // Test that the badge text for an extension will update to reflect the number
 // of actions taken on requests matching the extension's ruleset.
-// TODO(crbug.com/371298229): Port to desktop Android when extension badges are
-// supported.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                        ActionsMatchedCountAsBadgeText) {
   // Load the extension with a background script so scripts can be run from its
@@ -3624,7 +3712,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   helper.SetUseActionCountAsBadgeText(extension_id, true);
 
   ExtensionAction* action =
-      ExtensionActionManager::Get(web_contents()->GetBrowserContext())
+      ExtensionActionManager::Get(GetActiveWebContents()->GetBrowserContext())
           ->GetExtensionAction(*dnr_extension);
 
   struct {
@@ -3653,12 +3741,12 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       {"abcd.com", "3", false},
   };
 
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
+  NavigateToURL(page_url);
   ASSERT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
 
   // Verify that the badge text is empty when navigation finishes because no
   // actions have been matched.
-  int first_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int first_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
   EXPECT_EQ("", action->GetDisplayBadgeText(first_tab_id));
 
   for (const auto& test_case : test_cases) {
@@ -3675,14 +3763,15 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   std::string first_tab_badge_text = action->GetDisplayBadgeText(first_tab_id);
 
   const GURL second_tab_url = get_url_for_host("nomatch.com");
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), second_tab_url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  NavigateToURLInNewTab(second_tab_url);
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  // TODO(crbug.com/419057482): Support cross-platform browser windows.
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
   ASSERT_TRUE(browser()->tab_strip_model()->IsTabSelected(1));
+#endif
 
-  int second_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int second_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
   EXPECT_EQ("", action->GetDisplayBadgeText(second_tab_id));
 
   // Verify that the badge text for the first tab is unaffected.
@@ -3726,7 +3815,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   // No rule should be matched on the tab with |second_tab_id|.
   EXPECT_EQ("", get_matched_rules(second_tab_id));
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Ensure web request events are still dispatched even if DNR blocks/redirects
 // the request. (Regression test for crbug.com/999744).
@@ -3824,13 +3912,13 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, WebRequestPriority) {
   // Ensure the response from the web request listener was ignored and the
   // request was redirected.
   ASSERT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
-  EXPECT_EQ(web_contents()->GetLastCommittedURL(), redirect_url);
+  EXPECT_EQ(GetActiveWebContents()->GetLastCommittedURL(), redirect_url);
 
   // Ensure onBeforeRequest is seen by the web request extension.
   EXPECT_TRUE(seen_listener.WaitUntilSatisfied());
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Tests filtering based on the tab ID of the request.
 // TODO(crbug.com/371298229): Port to desktop Android when we have better
 // support for the tab strip (e.g. ActivateTabAt()).
@@ -3841,20 +3929,16 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, TabIdFiltering) {
   GURL url = embedded_test_server()->GetURL("example.com", kUrlPath);
   // Open three tabs to `url`.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
-  int first_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int first_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
 
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
-  int second_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  NavigateToURLInNewTab(url);
+  int second_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
   ASSERT_NE(first_tab_id, second_tab_id);
 
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  NavigateToURLInNewTab(url);
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
   ASSERT_EQ(3, tab_strip_model->count());
-  int third_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int third_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
   ASSERT_NE(first_tab_id, third_tab_id);
 
   int rule_id = kMinValidID;
@@ -3924,17 +4008,17 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, TabIdFiltering) {
     // Navigate the i'th tab to `new_url`.
     tab_strip_model->ActivateTabAt(static_cast<int>(i));
     EXPECT_EQ(cases[i].expected_tab_id,
-              ExtensionTabUtil::GetTabId(web_contents()));
+              ExtensionTabUtil::GetTabId(GetActiveWebContents()));
 
     // Verify tab ID filtering works on a main-frame request.
     ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), new_url));
     EXPECT_EQ(embedded_test_server()->GetURL(cases[i].expected_host, kUrlPath),
-              web_contents()->GetLastCommittedURL());
+              GetActiveWebContents()->GetLastCommittedURL());
 
     // Verify tab ID filtering works on a subresource request.
     EXPECT_EQ(
         embedded_test_server()->GetURL(cases[i].expected_host, kFetchPath),
-        content::EvalJs(web_contents(), script));
+        content::EvalJs(GetActiveWebContents(), script));
   }
 
   // Test matching against requests which don't originate from a tab (tab ID of
@@ -3946,10 +4030,10 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest, TabIdFiltering) {
   // This navigation should have matched the third rule.
   ASSERT_EQ(embedded_test_server()->GetURL("rule3.com",
                                            "/fetch_from_shared_worker.html"),
-            web_contents()->GetLastCommittedURL());
+            GetActiveWebContents()->GetLastCommittedURL());
 
   EXPECT_EQ(embedded_test_server()->GetURL("rule2.com", kFetchPath),
-            content::EvalJs(web_contents(),
+            content::EvalJs(GetActiveWebContents(),
                             base::StringPrintf("fetchFromSharedWorker('%s');",
                                                fetch_url.spec().c_str())));
 }
@@ -3986,7 +4070,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       {rule}, "test_extension", {URLPattern::kAllUrlsPattern}));
   const Extension* extension_1 = last_loaded_extension();
   ExtensionAction* action_1 =
-      ExtensionActionManager::Get(web_contents()->GetBrowserContext())
+      ExtensionActionManager::Get(GetActiveWebContents()->GetBrowserContext())
           ->GetExtensionAction(*extension_1);
 
   TestRule rule_2 = CreateGenericRule();
@@ -4003,7 +4087,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       {rule_2}, "test_extension_2", {URLPattern::kAllUrlsPattern}));
   const Extension* extension_2 = last_loaded_extension();
   ExtensionAction* action_2 =
-      ExtensionActionManager::Get(web_contents()->GetBrowserContext())
+      ExtensionActionManager::Get(GetActiveWebContents()->GetBrowserContext())
           ->GetExtensionAction(*extension_2);
 
   const std::string default_badge_text = "asdf";
@@ -4016,15 +4100,14 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       embedded_test_server()->GetURL("abc.com", "/page_with_two_frames.html");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
 
-  TabHelper* tab_helper = TabHelper::FromWebContents(web_contents());
   ActiveTabPermissionGranter* active_tab_granter =
-      tab_helper->active_tab_permission_granter();
+      ActiveTabPermissionGranter::FromWebContents(GetActiveWebContents());
   ASSERT_TRUE(active_tab_granter);
 
   // The preference is initially turned off. Both the visible badge text and the
   // badge text queried by the extension using getBadgeText() should return the
   // default badge text.
-  int first_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int first_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
   EXPECT_EQ(default_badge_text, action_1->GetDisplayBadgeText(first_tab_id));
   EXPECT_EQ(default_badge_text, action_2->GetDisplayBadgeText(first_tab_id));
 
@@ -4143,14 +4226,14 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   const Extension* dnr_extension = last_loaded_extension();
 
   ExtensionAction* extension_action =
-      ExtensionActionManager::Get(web_contents()->GetBrowserContext())
+      ExtensionActionManager::Get(GetActiveWebContents()->GetBrowserContext())
           ->GetExtensionAction(*dnr_extension);
 
   const GURL page_url = embedded_test_server()->GetURL(
       "abc.com", "/pages_with_script/index.html");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
 
-  int first_browser_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int first_browser_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
   EXPECT_EQ("", extension_action->GetDisplayBadgeText(first_browser_tab_id));
 
   // Now create a new browser with the same profile as |browser()| and navigate
@@ -4167,7 +4250,8 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   // Set up an observer to listen for ExtensionAction updates for the active web
   // contents of both browser windows.
   TestExtensionActionDispatcherObserver test_dispatcher_observer(
-      profile(), extension_id, {web_contents(), second_browser_contents});
+      profile(), extension_id,
+      {GetActiveWebContents(), second_browser_contents});
 
   EXPECT_EQ(SetExtensionActionOptions(extension_id,
                                       "{displayActionCountAsBadgeText: true}"),
@@ -4189,8 +4273,8 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
 // Test that the action matched badge text for an extension is visible in an
 // incognito context if the extension is incognito enabled.
 // Test is disabled on Mac. See https://crbug.com/1280116
-// TODO(crbug.com/393179880): Port to desktop Android when we support browser
-// actions and badging.
+// TODO(crbug.com/393191910): Port to desktop Android. The test fails with
+// no stack and no logs.
 #if BUILDFLAG(IS_MAC)
 #define MAYBE_ActionsMatchedCountAsBadgeTextIncognito \
   DISABLED_ActionsMatchedCountAsBadgeTextIncognito
@@ -4231,11 +4315,10 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   EXPECT_EQ("1", incognito_action->GetDisplayBadgeText(
                      ExtensionTabUtil::GetTabId(incognito_contents)));
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test that the actions matched badge text for an extension will be reset
 // when a main-frame navigation finishes.
-// TODO(crbug.com/393179880): Port to desktop Android when we support browser
-// actions and badging.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                        // TODO(crbug.com/40843749): Re-enable this test
                        DISABLED_ActionsMatchedCountAsBadgeTextMainFrame) {
@@ -4299,7 +4382,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   helper.SetUseActionCountAsBadgeText(last_loaded_extension_id(), true);
 
   ExtensionAction* action =
-      ExtensionActionManager::Get(web_contents()->GetBrowserContext())
+      ExtensionActionManager::Get(GetActiveWebContents()->GetBrowserContext())
           ->GetExtensionAction(*dnr_extension);
 
   struct {
@@ -4328,19 +4411,17 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       {"gotosetcookie.com", "2"},
   };
 
-  int first_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int first_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
   for (const auto& test_case : test_cases) {
     GURL url = get_url_for_host(test_case.frame_hostname);
     SCOPED_TRACE(base::StringPrintf("Testing %s", url.spec().c_str()));
 
-    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+    NavigateToURL(url);
     EXPECT_EQ(test_case.expected_badge_text,
               action->GetDisplayBadgeText(first_tab_id));
   }
 }
 
-// TODO(crbug.com/393179880): Port to desktop Android when we support browser
-// actions and badging.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                        ModifyHeadersBadgeText) {
   auto get_referer_url = [this](const std::string& host) {
@@ -4403,7 +4484,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   helper.SetUseActionCountAsBadgeText(extension_1_id, true);
 
   ExtensionAction* extension_1_action =
-      ExtensionActionManager::Get(web_contents()->GetBrowserContext())
+      ExtensionActionManager::Get(GetActiveWebContents()->GetBrowserContext())
           ->GetExtensionAction(
               *extension_registry()->enabled_extensions().GetByID(
                   extension_1_id));
@@ -4435,7 +4516,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   helper.SetUseActionCountAsBadgeText(extension_2_id, true);
 
   ExtensionAction* extension_2_action =
-      ExtensionActionManager::Get(web_contents()->GetBrowserContext())
+      ExtensionActionManager::Get(GetActiveWebContents()->GetBrowserContext())
           ->GetExtensionAction(
               *extension_registry()->enabled_extensions().GetByID(
                   extension_2_id));
@@ -4475,10 +4556,10 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       {get_no_headers_url("ghi.com"), false, "6", "4"},
   };
 
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
+  NavigateToURL(page_url);
   ASSERT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
 
-  int first_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int first_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
   EXPECT_EQ("", extension_1_action->GetDisplayBadgeText(first_tab_id));
   EXPECT_EQ("", extension_2_action->GetDisplayBadgeText(first_tab_id));
 
@@ -4497,8 +4578,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
 }
 
 // Test that the setExtensionActionOptions tabUpdate option works correctly.
-// TODO(crbug.com/393179880): Port to desktop Android when we support browser
-// actions and badging.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                        ActionsMatchedCountAsBadgeTextTabUpdate) {
   // Load the extension with a background script so scripts can be run from its
@@ -4514,7 +4593,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       {rule}, "extension", {URLPattern::kAllUrlsPattern}));
   const Extension* extension = last_loaded_extension();
   ExtensionAction* action =
-      ExtensionActionManager::Get(web_contents()->GetBrowserContext())
+      ExtensionActionManager::Get(GetActiveWebContents()->GetBrowserContext())
           ->GetExtensionAction(*extension);
 
   const std::string default_badge_text = "asdf";
@@ -4528,9 +4607,9 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   // Navigate to a page with two frames, the same-origin one should be blocked.
   const GURL page_url =
       embedded_test_server()->GetURL("abc.com", "/page_with_two_frames.html");
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
+  NavigateToURL(page_url);
 
-  int tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
 
   // Verify that the initial badge text reflects that the same-origin frame was
   // blocked.
@@ -4615,7 +4694,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
             "success");
   EXPECT_EQ("8", action->GetDisplayBadgeText(tab_id));
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Test that the onRuleMatchedDebug event is only available for unpacked
 // extensions.
@@ -4721,7 +4799,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Unpacked,
   EXPECT_EQ("1,2", matched_rule_ids);
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Test that getMatchedRules returns the correct rules when called by different
 // extensions with rules matched by requests initiated from different tabs.
 // TODO(crbug.com/371298229): Port to desktop Android when we have better
@@ -4772,7 +4850,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
 
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
   ASSERT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
-  const int first_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  const int first_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
 
   // Navigate to abc.com. The rule from |extension_1| should match for
   // |first_tab_id|.
@@ -4791,7 +4869,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
 
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
   ASSERT_TRUE(WasFrameWithScriptLoaded(GetPrimaryMainFrame()));
-  const int second_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  const int second_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
 
   // Navigate to abc.com from the second tab. The rule from |extension_1| should
   // match for |second_tab_id|.
@@ -4895,20 +4973,20 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   ASSERT_NO_FATAL_FAILURE(LoadExtensionWithRules({rule}, "extension_1", {}));
 
   // Navigate to abc.com.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
+  NavigateToURL(page_url);
   std::string actual_rule_and_tab_ids =
       GetRuleAndTabIdsMatched(last_loaded_extension_id(), std::nullopt);
 
   // Since the block rule for abc.com is matched for the main-frame navigation
   // request, it should be attributed to the current tab.
-  const int first_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  const int first_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
   std::string expected_rule_and_tab_ids =
       base::StringPrintf("%d,%d", *rule.id, first_tab_id);
 
   EXPECT_EQ(expected_rule_and_tab_ids, actual_rule_and_tab_ids);
 
   // Navigate to abc.com again.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
+  NavigateToURL(page_url);
   actual_rule_and_tab_ids =
       GetRuleAndTabIdsMatched(last_loaded_extension_id(), std::nullopt);
 
@@ -4922,10 +5000,9 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
 
   EXPECT_EQ(expected_rule_and_tab_ids, actual_rule_and_tab_ids);
 
-  // Navigate to nomatch,com.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), embedded_test_server()->GetURL(
-                     "nomatch.com", "/pages_with_script/index.html")));
+  // Navigate to nomatch.com.
+  NavigateToURL(embedded_test_server()->GetURL(
+      "nomatch.com", "/pages_with_script/index.html"));
 
   // No rules should be matched for the navigation request to nomatch.com and
   // all rules previously attributed to |first_tab_id| should now be attributed
@@ -5015,7 +5092,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   clock_.Advance(base::Milliseconds(100));
   base::Time timestamp_2 = clock_.Now();
 
-  int first_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int first_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
 
   // Two rules should be matched on |first_tab_id|.
   std::string rule_count = GetMatchedRuleCount(extension_id, first_tab_id,
@@ -5032,11 +5109,10 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
 
   rules_monitor_service()->action_tracker().SetClockForTests(nullptr);
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test that getMatchedRules will only return matched rules for individual tabs
 // where activeTab is granted.
-// TODO(crbug.com/393147570): Port to desktop Android when the permissions API
-// and ActiveTabPermissionsGranter are available.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                        GetMatchedRulesActiveTab) {
   // Load the extension with a background script so scripts can be run from its
@@ -5061,25 +5137,23 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   const ExtensionId& extension_id = last_loaded_extension_id();
 
   // Navigate to |page_url| which will cause |rule| to be matched.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
+  NavigateToURL(page_url);
 
-  int first_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int first_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
 
   // Open a new tab and navigate to |page_url| which will cause |rule| to be
   // matched.
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), page_url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  NavigateToURLInNewTab(page_url);
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  // TODO(crbug.com/419057482): Support cross-platform browser windows.
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
   ASSERT_TRUE(browser()->tab_strip_model()->IsTabSelected(1));
-
-  TabHelper* tab_helper = TabHelper::FromWebContents(web_contents());
-  ASSERT_TRUE(tab_helper);
+#endif
 
   // Get the ActiveTabPermissionGranter for the second tab.
   ActiveTabPermissionGranter* active_tab_granter =
-      tab_helper->active_tab_permission_granter();
+      ActiveTabPermissionGranter::FromWebContents(GetActiveWebContents());
   ASSERT_TRUE(active_tab_granter);
 
   const Extension* dnr_extension = last_loaded_extension();
@@ -5087,7 +5161,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   // Grant the activeTab permission for the second tab.
   active_tab_granter->GrantIfRequested(dnr_extension);
 
-  int second_tab_id = ExtensionTabUtil::GetTabId(web_contents());
+  int second_tab_id = ExtensionTabUtil::GetTabId(GetActiveWebContents());
 
   // Calling getMatchedRules with no tab ID specified should result in an error
   // since the extension does not have the feedback permission.
@@ -5106,7 +5180,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   EXPECT_EQ("1", GetMatchedRuleCount(extension_id, second_tab_id,
                                      std::nullopt /* timestamp */));
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Test that getMatchedRules will not be throttled if the call is associated
 // with a user gesture.
@@ -5155,10 +5228,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   EXPECT_EQ("0", get_matched_rules_count(true));
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 // Tests extension update for an extension using declarativeNetRequest.
-// TODO(crbug.com/391924202): Port to desktop Android once packed extensions are
-// supported.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Packed,
                        ExtensionRemovesOneRulesetOnUpdate) {
   auto create_single_rule_ruleset = [this](
@@ -5449,6 +5519,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Packed,
   EXPECT_TRUE(is_checksum_in_prefs(kMinValidStaticRulesetID));
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Fixture to test the "allowAllRequests" action.
 // TODO(crbug.com/393191910): Port to desktop Android. These tests fail with
 // no logging and no stack.
@@ -5669,11 +5740,10 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestAllowAllRequestsBrowserTest,
           {requests[1], requests[2], requests[3], requests[4], requests[5]},
           true);
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Tests that when an extension is updated but loses the declarativeNetRequest
 // permission, its dynamic ruleset is not enabled.
-// TODO(crbug.com/391924202): Port to desktop Android once it supports packed
-// extensions.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Packed,
                        UpdateRespectsPermission) {
   set_config_flags(ConfigFlag::kConfig_HasBackgroundScript);
@@ -5713,7 +5783,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest_Packed,
   VerifyPublicRulesetIds(last_loaded_extension(),
                          {dnr_api::DYNAMIC_RULESET_ID});
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Test fixture to verify that host permissions for the request url and the
 // request initiator are properly checked when redirecting requests. Loads an
@@ -5812,7 +5881,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestHostPermissionsBrowserTest,
             {"frame_4", false}});
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Fixture to test the "resourceTypes" and "excludedResourceTypes" fields of a
 // declarative rule condition.
 // TODO(crbug.com/393191910): Port to desktop Android. These tests fail with
@@ -5975,14 +6044,14 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestResourceTypeBrowserTest, Test2) {
             {"block_all_but_xhr_and_script.com", kAll & ~kXHR & ~kScript},
             {"block_none.com", kNone}});
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 class DeclarativeNetRequestSubresourceWebBundlesBrowserTest
     : public DeclarativeNetRequestBrowserTest {
  public:
   DeclarativeNetRequestSubresourceWebBundlesBrowserTest() = default;
   void SetUpOnMainThread() override {
-    ExtensionBrowserTestBase::SetUpOnMainThread();
+    ExtensionBrowserTest::SetUpOnMainThread();
     CreateTempDir();
     InitializeRulesetManagerObserver();
   }
@@ -6476,7 +6545,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestSubresourceWebBundlesBrowserTest,
   EXPECT_TRUE(TryLoadBundle("redirected.wbn", js_url_str));
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 class DeclarativeNetRequestGlobalRulesBrowserTest
     : public DeclarativeNetRequestBrowserTest {
  public:
@@ -6518,10 +6586,11 @@ class DeclarativeNetRequestGlobalRulesBrowserTest
 using DeclarativeNetRequestGlobalRulesBrowserTest_Packed =
     DeclarativeNetRequestGlobalRulesBrowserTest;
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Test that extensions with allocated global rules keep their allocations after
 // the browser restarts.
-// TODO(crbug.com/391924202): Port to desktop Android once packed extensions
-// are supported.
+// TODO(crbug.com/40200835): Port to desktop Android once it supports PRE_
+// tests.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestGlobalRulesBrowserTest_Packed,
                        PRE_GlobalRulesBrowserRestart) {
   // This is not tested for unpacked extensions since the unpacked extension
@@ -6605,11 +6674,10 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestGlobalRulesBrowserTest_Packed,
               UnorderedElementsAre(std::make_pair("extension_1", 1),
                                    std::make_pair("extension_2", 1)));
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test that an extension will not have its allocation reclaimed on load if it
 // is the first load after a packed update.
-// TODO(crbug.com/391924202): Port to desktop Android once packed extensions
-// are supported.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestGlobalRulesBrowserTest_Packed,
                        PackedUpdateAndReload) {
   // This is not tested for unpacked extensions since the unpacked extension
@@ -6664,8 +6732,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestGlobalRulesBrowserTest_Packed,
 
 // Tests that excess allocation is no longer kept after an update once the
 // current allocation exceeds the allocation from before the update.
-// TODO(crbug.com/391924202): Port to desktop Android once packed extensions
-// are supported.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestGlobalRulesBrowserTest_Packed,
                        UpdateEnabledRulesetsAfterPackedUpdate) {
   // This is not tested for unpacked extensions since the unpacked extension
@@ -6744,8 +6810,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestGlobalRulesBrowserTest_Packed,
 // Test that GetAvailableStaticRuleCount includes the excess unused allocation
 // after an extension update.
 // TODO(crbug.com/40883375): Deflake and re-enable.
-// TODO(crbug.com/391924202): Port to desktop Android once packed extensions
-// are supported.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestGlobalRulesBrowserTest_Packed,
                        DISABLED_GetAvailableStaticRuleCountAfterPackedUpdate) {
   // This is not tested for unpacked extensions since the unpacked extension
@@ -6805,7 +6869,6 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestGlobalRulesBrowserTest_Packed,
   VerifyExtensionAllocationInPrefs(last_loaded_extension_id(), 2);
   EXPECT_EQ("3", GetAvailableStaticRuleCount(last_loaded_extension_id()));
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Tests the "requestMethods" and "excludedRequestMethods" property of a
 // declarative rule condition.
@@ -6875,7 +6938,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   }
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Tests that the "requestMethods" and "excludedRequestMethods" properties of a
 // rule condition are considered properly for WebSocket requests.
 // TODO(crbug.com/371298229): Port to desktop Android. The RemoteTestServer
@@ -6914,12 +6977,10 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
 
   ASSERT_NO_FATAL_FAILURE(LoadExtensionWithRules(rules));
 
-  // Start a web socket test server.
-  net::SpawnedTestServer websocket_test_server(
-      net::SpawnedTestServer::TYPE_WS, net::GetWebSocketTestDataDirectory());
-  ASSERT_TRUE(websocket_test_server.Start());
   std::string websocket_url =
-      websocket_test_server.GetURL("echo-with-no-extension").spec();
+      net::test_server::GetWebSocketURL(*embedded_test_server(),
+                                        "/echo-with-no-extension")
+          .spec();
 
   static constexpr char kOpenWebSocketsScript[] = R"(
     {
@@ -7035,7 +7096,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestWebTransportTest, BlockRequests) {
                                 kOpenWebTransportScript,
                                 webtransport_server_.server_address().port())));
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Tests that Protected Audience requests can have their headers modified by the
 // declarativeNetRequest API.
@@ -7077,7 +7138,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   const url::Origin kCoordinatorOrigin =
       url::Origin::Create(GURL("https://coordinator.test"));
   ConfigureTestPrivacySandboxCoordinatorKeys(
-      web_contents()
+      GetActiveWebContents()
           ->GetBrowserContext()
           ->GetDefaultStoragePartition()
           ->GetInterestGroupManager(),
@@ -7091,7 +7152,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   GURL ad_url = https_server()->GetURL("/echo");
 
   // Add an interest group.
-  EXPECT_EQ("done", content::EvalJs(web_contents(),
+  EXPECT_EQ("done", content::EvalJs(GetActiveWebContents(),
                                     content::JsReplace(
                                         R"(
                               (function() {
@@ -7148,8 +7209,8 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       scoring_signals_url, kCoordinatorOrigin);
 
   // The auction should return a unique URN URL.
-  GURL ad_urn(
-      content::EvalJs(web_contents(), run_auction_command).ExtractString());
+  GURL ad_urn(content::EvalJs(GetActiveWebContents(), run_auction_command)
+                  .ExtractString());
   EXPECT_TRUE(ad_urn.SchemeIs(url::kUrnScheme));
 
   // Wait to see both the report request of both worklets.
@@ -7173,9 +7234,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
 }
 
 // Tests that Protected Audience requests can be blocked by the
-// declarativeNetRequest API, and that if they try to redirect requests, the
-// request is blocked by the Protected Audience logic, which doesn't allow
-// redirects, instead of being redirected.
+// declarativeNetRequest API.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
                        ProtectedAudienceNetworkRequestsBlockRequests) {
   privacy_sandbox::ScopedPrivacySandboxAttestations scoped_attestations(
@@ -7207,7 +7266,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
 
   // Add an interest group.
   EXPECT_EQ("done", content::EvalJs(
-                        web_contents(),
+                        GetActiveWebContents(),
                         content::JsReplace(
                             R"(
                               (function() {
@@ -7251,8 +7310,9 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       {block_report_rule}, "test_extension2", {URLPattern::kAllUrlsPattern}));
 
   // Run the auction.
-  GURL ad_urn = GURL(
-      content::EvalJs(web_contents(), run_auction_command).ExtractString());
+  GURL ad_urn =
+      GURL(content::EvalJs(GetActiveWebContents(), run_auction_command)
+               .ExtractString());
   EXPECT_TRUE(ad_urn.SchemeIs(url::kUrnScheme));
 
   // Wait for the decision script's report URL to be requested.
@@ -7265,10 +7325,74 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
       FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
   run_loop.Run();
   EXPECT_EQ(0u, GetAndResetRequestsToServer().count(bidder_report_url));
+}
 
-  // Load a second extension which redirects requests for the bidding script
-  // (not the report URL, which the first extension blocks) to a URL that serves
-  // an identical bidding script.
+// Tests that if the declarativeNetRequest API tries to redirect Protected
+// Audience requests, the request is blocked by the Protected Audience logic,
+// which doesn't allow redirects, instead of being redirected.
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
+                       ProtectedAudienceNetworkRequestsBlockRedirect) {
+  privacy_sandbox::ScopedPrivacySandboxAttestations scoped_attestations(
+      privacy_sandbox::PrivacySandboxAttestations::CreateForTesting());
+  // Mark all Privacy Sandbox APIs as attested since the test case is testing
+  // behaviors not related to attestations.
+  privacy_sandbox::PrivacySandboxAttestations::GetInstance()
+      ->SetAllPrivacySandboxAttestedForTesting(true);
+
+  ASSERT_TRUE(https_server()->Start());
+
+  PrivacySandboxSettingsFactory::GetForProfile(profile())
+      ->SetAllPrivacySandboxAllowedForTesting();
+
+  NavigateToURL(https_server()->GetURL("/interest_group/fenced_frame.html"));
+
+  GURL bidding_logic_url =
+      https_server()->GetURL("/interest_group/bidding_logic.js");
+  GURL decision_logic_url =
+      https_server()->GetURL("/interest_group/decision_logic.js");
+  GURL bidder_report_url = https_server()->GetURL("/echo?bidder_report");
+  GURL decision_report_url = https_server()->GetURL("/echo?decision_report");
+
+  // Add an interest group.
+  EXPECT_EQ("done", content::EvalJs(
+                        GetActiveWebContents(),
+                        content::JsReplace(
+                            R"(
+          (function() {
+            navigator.joinAdInterestGroup({
+              name: 'cars',
+              owner: $1,
+              biddingLogicURL: $2,
+              userBiddingSignals: [],
+              ads: [{
+                renderURL: 'https://example.com/render',
+                metadata: {ad: 'metadata', here: [1, 2, 3]}
+              }]
+            }, /*joinDurationSec=*/ 300);
+            return 'done';
+          })();
+        )",
+                            url::Origin::Create(bidding_logic_url).Serialize(),
+                            bidding_logic_url)));
+
+  std::string run_auction_command = content::JsReplace(
+      R"(
+             (async function() {
+               let config = await navigator.runAdAuction({
+                 seller: $1,
+                 decisionLogicURL: $2,
+                 interestGroupBuyers: [$1],
+               });
+               document.querySelector('fencedframe').config =
+                  new FencedFrameConfig(config);
+               return config;
+             })()
+          )",
+      url::Origin::Create(decision_logic_url).Serialize(),
+      decision_logic_url.spec());
+
+  // Add an extension which redirects requests for the bidding script to a URL
+  // that serves an identical bidding script.
   TestRule redirect_bidding_logic_rule = CreateGenericRule();
   redirect_bidding_logic_rule.condition->url_filter =
       bidding_logic_url.spec() + "^";
@@ -7285,10 +7409,11 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestBrowserTest,
   // Redirecting a bidder script, even to another bidder script, should cause
   // the request to fail, which causes the entire auction to fail, since there's
   // only one bidder script.
-  EXPECT_EQ(nullptr, content::EvalJs(web_contents(), run_auction_command));
+  EXPECT_EQ(base::Value(),
+            content::EvalJs(GetActiveWebContents(), run_auction_command));
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // TODO(crbug.com/393191910): Port to desktop Android. These tests fail with
 // no logging and no stack.
 class DeclarativeNetRequestBackForwardCacheBrowserTest
@@ -7501,7 +7626,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestControllableResponseTest,
   ASSERT_TRUE(content::WaitForLoadStop(web_contents));
   EXPECT_FALSE(extension_registrar()->IsExtensionEnabled(extension_id));
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 class DNRMatchResponseHeadersBrowserTest
     : public DeclarativeNetRequestBrowserTest {
@@ -7578,7 +7703,7 @@ IN_PROC_BROWSER_TEST_P(DNRMatchResponseHeadersBrowserTest, BlockRequests) {
         embedded_test_server()->GetURL(test_case.hostname, test_case.path);
     SCOPED_TRACE(base::StringPrintf("Testing %s", url.spec().c_str()));
 
-    content::TestNavigationObserver nav_observer(web_contents());
+    content::TestNavigationObserver nav_observer(GetActiveWebContents());
     NavigateToURL(url);
     content::PageType expected_page_type = test_case.expect_main_frame_loaded
                                                ? content::PAGE_TYPE_NORMAL
@@ -7600,7 +7725,7 @@ IN_PROC_BROWSER_TEST_P(DNRMatchResponseHeadersBrowserTest, ImageCollapsed) {
     NavigateToURL(embedded_test_server()->GetURL(host_name, "/image.html"));
     EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
     const std::string script = "!!window.imageCollapsed;";
-    return content::EvalJs(web_contents(), script).ExtractBool();
+    return content::EvalJs(GetActiveWebContents(), script).ExtractBool();
   };
 
   // Initially the image shouldn't be collapsed.
@@ -7727,7 +7852,7 @@ IN_PROC_BROWSER_TEST_P(DNRMatchResponseHeadersBrowserTest, RedirectAndUpgrade) {
 
     EXPECT_EQ(content::PAGE_TYPE_NORMAL, GetPageType());
 
-    const GURL& final_url = web_contents()->GetLastCommittedURL();
+    const GURL& final_url = GetActiveWebContents()->GetLastCommittedURL();
     EXPECT_EQ(test_case.expected_final_url, final_url);
   }
 }
@@ -7874,12 +7999,12 @@ IN_PROC_BROWSER_TEST_P(DNRMatchResponseHeadersBrowserTest,
                                                ? content::PAGE_TYPE_NORMAL
                                                : content::PAGE_TYPE_ERROR;
     EXPECT_EQ(expected_page_type, GetPageType());
-    const GURL& final_url = web_contents()->GetLastCommittedURL();
+    const GURL& final_url = GetActiveWebContents()->GetLastCommittedURL();
     EXPECT_EQ(test_case.expected_final_url, final_url);
   }
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Test that frames where response header matched allowAllRequests rules will
 // prevent lower priority matched rules from taking action on requests made
 // under these frames.
@@ -8001,7 +8126,7 @@ IN_PROC_BROWSER_TEST_P(DNRMatchResponseHeadersBrowserTest, AllowAllRequests) {
   EXPECT_TRUE(test_image_added(frame_2, "subresources/image_2.png"));
   EXPECT_TRUE(test_image_added(frame_2, "subresources/image_3.png"));
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test that an onBeforeRequest block rule for a frame will still override an
 // onHeadersReceived allowAllRequests rule with a higher priority.
@@ -8312,7 +8437,7 @@ IN_PROC_BROWSER_TEST_P(DNRMatchResponseHeadersBrowserTest,
   }
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Test that modifyHeaders rules matched in both onBeforeRequest and
 // onHeadersReceived phases will perform the correct action(s) on the request.
 // TODO(crbug.com/393191910): Port to desktop Android. This test fails with
@@ -8556,7 +8681,7 @@ IN_PROC_BROWSER_TEST_P(DNRMatchResponseHeadersBrowserTest,
     EXPECT_EQ(test_case.expected_set_cookie_value, GetPageCookie());
   }
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Fixture for use by tests that care about the --extensions-on-chrome-urls
 // switch.
@@ -8679,7 +8804,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestAllowChromeURLsBrowserTest,
   }
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Ensure that extensions can block main_frame navigation requests that other
 // extensions initiated, but not sub_frame requests unless the
 // --extensions-on-chrome-urls switch is used.
@@ -8715,7 +8840,7 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestAllowChromeURLsBrowserTest,
 
   // Initiate main_frame and sub_frame requests via an extension page.
   base::Time start_time = base::Time::Now();
-  GURL extension_page_url = extension_2->GetResourceURL("/manifest.json");
+  GURL extension_page_url = extension_2->GetResourceURL("manifest.json");
   GURL main_frame_url = embedded_test_server()->GetURL("example.com", "/");
   GURL sub_frame_url =
       embedded_test_server()->GetURL("example.com", "/child_frame.html");
@@ -8770,8 +8895,8 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestAllowChromeURLsBrowserTest,
 
 // A derivative of DeclarativeNetRequestBrowserTest which allows the test to
 // wait for ruleset loads to start, and throttle/resume them as needed.
-// TODO(crbug.com/391924202): Port to desktop Android once it supports packed
-// extensions.
+// TODO(crbug.com/40200835): Port to desktop Android once it supports PRE_
+// tests.
 class DeclarativeNetRequestThrottledRulesetLoadBrowserTest
     : public DeclarativeNetRequestBrowserTest {
  public:
@@ -8804,33 +8929,37 @@ class DeclarativeNetRequestThrottledRulesetLoadBrowserTest
     return test_data_dir_.AppendASCII("declarative_net_request/rule_updates");
   }
 
+  // Installs v1 of `kUpdateFlowExtensionId` and waits for its ruleset to load.
+  void SetupExtensionAndWaitForRulesetLoad() {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    base::ScopedTempDir scoped_temp_dir;
+    EXPECT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
+
+    base::FilePath pem_path =
+        update_flow_extension_path().AppendASCII("pem.pem");
+    base::FilePath crx_path = scoped_temp_dir.GetPath().AppendASCII("v1.crx");
+    base::FilePath result_path =
+        PackExtensionWithOptions(update_flow_extension_path().AppendASCII("v1"),
+                                 crx_path, pem_path, base::FilePath());
+    EXPECT_EQ(crx_path, result_path);
+
+    const Extension* extension =
+        InstallExtensionWithPermissionsGranted(crx_path, /*expected_change=*/1);
+    ASSERT_TRUE(extension);
+    EXPECT_EQ(extension->id(), kUpdateFlowExtensionId);
+    EXPECT_TRUE(extension_registry()->enabled_extensions().Contains(
+        kUpdateFlowExtensionId));
+    WaitForExtensionsWithRulesetsCount(1u);
+  }
+
  private:
   std::optional<ScopedIncrementRulesetVersion> increment_ruleset_version_;
   std::optional<RulesetLoaderThrottle> ruleset_loader_throttle_;
 };
 
-// Setup: Installs v1 of `kUpdateFlowExtensionId` and waits for its ruleset to
-// load.
 IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestThrottledRulesetLoadBrowserTest,
                        PRE_RulesetLoadFromOldExtensionVersion) {
-  base::ScopedAllowBlockingForTesting allow_blocking;
-  base::ScopedTempDir scoped_temp_dir;
-  EXPECT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
-
-  base::FilePath pem_path = update_flow_extension_path().AppendASCII("pem.pem");
-  base::FilePath crx_path = scoped_temp_dir.GetPath().AppendASCII("v1.crx");
-  base::FilePath result_path =
-      PackExtensionWithOptions(update_flow_extension_path().AppendASCII("v1"),
-                               crx_path, pem_path, base::FilePath());
-  EXPECT_EQ(crx_path, result_path);
-
-  const Extension* extension =
-      InstallExtensionWithPermissionsGranted(crx_path, /*expected_change=*/1);
-  ASSERT_TRUE(extension);
-  EXPECT_EQ(extension->id(), kUpdateFlowExtensionId);
-  EXPECT_TRUE(extension_registry()->enabled_extensions().Contains(
-      kUpdateFlowExtensionId));
-  WaitForExtensionsWithRulesetsCount(1u);
+  SetupExtensionAndWaitForRulesetLoad();
 }
 
 // Test that if a ruleset load initiated from an older extension version
@@ -8885,15 +9014,72 @@ IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestThrottledRulesetLoadBrowserTest,
   // Attempt to enable the ruleset from `extension` v2. It should still succeed.
   UpdateEnabledRulesets(kUpdateFlowExtensionId, {}, {"ruleset"});
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_ANDROID)
-// TODO(crbug.com/391924202): Add packed extensions once supported on Android.
-const auto kExtensionLoadTypes = ::testing::Values(ExtensionLoadType::UNPACKED);
-#else
+// Setup is same as the `RulesetLoadFromOldExtensionVersion` test.
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestThrottledRulesetLoadBrowserTest,
+                       PRE_RulesetLoadFromSameExtensionVersion) {
+  SetupExtensionAndWaitForRulesetLoad();
+}
+
+// Test that if an extension gets force installed again with the same version,
+// which is possible for policy installs, will no-op a ruleset load initiated
+// from the extension before the force install and will allow the more recent
+// ruleset load to go through.
+// Regression for crbug.com/358617943.
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestThrottledRulesetLoadBrowserTest,
+                       RulesetLoadFromSameExtensionVersion) {
+  scoped_refptr<const Extension> extension =
+      extension_registry()->enabled_extensions().GetByID(
+          kUpdateFlowExtensionId);
+  ASSERT_TRUE(extension);
+  EXPECT_EQ("1", extension->version().GetString());
+
+  // Wait for `extension` to start loading its rulesets.
+  ruleset_loader_throttle().WaitForLoaderRequest();
+
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  base::ScopedTempDir scoped_temp_dir;
+  EXPECT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
+
+  // "Update" the extension with the same version. This replicates some policy
+  // extension force installs that could still install the extension with the
+  // same version.
+  base::FilePath pem_path = update_flow_extension_path().AppendASCII("pem.pem");
+  base::FilePath crx_path = scoped_temp_dir.GetPath().AppendASCII("v1.crx");
+  base::FilePath result_path =
+      PackExtensionWithOptions(update_flow_extension_path().AppendASCII("v1"),
+                               crx_path, pem_path, base::FilePath());
+  EXPECT_EQ(crx_path, result_path);
+  UpdateExtension(kUpdateFlowExtensionId, crx_path, /*expected_change=*/0);
+
+  extension = extension_registry()->enabled_extensions().GetByID(
+      kUpdateFlowExtensionId);
+  ASSERT_TRUE(extension);
+  EXPECT_EQ("1", extension->version().GetString());
+
+  // Wait for the extension to "start" by waiting for its background service
+  // worker.
+  ExtensionBackgroundPageWaiter(profile(), *extension)
+      .WaitForBackgroundInitialized();
+
+  RulesetLoadObserver ruleset_load_observer(rules_monitor_service(),
+                                            kUpdateFlowExtensionId);
+
+  // `extension` v1's ruleset should still be loading after being re-indexed as
+  // a result of the simulated force install of the extension with the same
+  // version.
+  ruleset_loader_throttle().Resume();
+
+  // Let the ruleset loads finish.
+  ruleset_load_observer.Wait();
+
+  // Attempt to enable the other ruleset from `extension` v1. It should succeed.
+  UpdateEnabledRulesets(kUpdateFlowExtensionId, {}, {"forgotten_ruleset"});
+}
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
 const auto kExtensionLoadTypes =
     ::testing::Values(ExtensionLoadType::PACKED, ExtensionLoadType::UNPACKED);
-#endif
 
 INSTANTIATE_TEST_SUITE_P(All,
                          DeclarativeNetRequestBrowserTest,
@@ -8905,27 +9091,25 @@ INSTANTIATE_TEST_SUITE_P(All,
                          ::testing::Combine(kExtensionLoadTypes,
                                             ::testing::Values(false)));
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 INSTANTIATE_TEST_SUITE_P(
     All,
     DeclarativeNetRequestResourceTypeBrowserTest,
     ::testing::Combine(::testing::Values(ExtensionLoadType::PACKED,
                                          ExtensionLoadType::UNPACKED),
                        ::testing::Values(false)));
-#endif
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 INSTANTIATE_TEST_SUITE_P(All,
                          DeclarativeNetRequestSubresourceWebBundlesBrowserTest,
                          ::testing::Combine(kExtensionLoadTypes,
                                             ::testing::Values(false)));
 
-#if !BUILDFLAG(IS_ANDROID)
 INSTANTIATE_TEST_SUITE_P(
     All,
     DeclarativeNetRequestBrowserTest_Packed,
     ::testing::Combine(::testing::Values(ExtensionLoadType::PACKED),
                        ::testing::Values(false)));
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 INSTANTIATE_TEST_SUITE_P(
     All,
@@ -8933,13 +9117,13 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Combine(::testing::Values(ExtensionLoadType::UNPACKED),
                        ::testing::Values(false)));
 
-#if !BUILDFLAG(IS_ANDROID)
 INSTANTIATE_TEST_SUITE_P(
     All,
     DeclarativeNetRequestGlobalRulesBrowserTest_Packed,
     ::testing::Combine(::testing::Values(ExtensionLoadType::PACKED),
                        ::testing::Values(false)));
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 INSTANTIATE_TEST_SUITE_P(
     All,
     DeclarativeNetRequestAllowAllRequestsBrowserTest,
@@ -8967,7 +9151,7 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Combine(::testing::Values(ExtensionLoadType::PACKED,
                                          ExtensionLoadType::UNPACKED),
                        ::testing::Values(false)));
-#endif
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 INSTANTIATE_TEST_SUITE_P(All,
                          DNRMatchResponseHeadersBrowserTest,
@@ -8979,13 +9163,13 @@ INSTANTIATE_TEST_SUITE_P(All,
                          ::testing::Combine(kExtensionLoadTypes,
                                             ::testing::Bool()));
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 INSTANTIATE_TEST_SUITE_P(
     All,
     DeclarativeNetRequestThrottledRulesetLoadBrowserTest,
     ::testing::Combine(::testing::Values(ExtensionLoadType::PACKED),
                        ::testing::Values(false)));
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 }  // namespace
 }  // namespace extensions::declarative_net_request

@@ -15,6 +15,8 @@
 #include "chrome/browser/buildflags.h"
 #include "chrome/browser/dom_distiller/dom_distiller_service_factory.h"
 #include "chrome/browser/navigation_predictor/navigation_predictor.h"
+#include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
+#include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/predictors/lcp_critical_path_predictor/lcp_critical_path_predictor_host.h"
 #include "chrome/browser/predictors/network_hints_handler_impl.h"
@@ -26,10 +28,11 @@
 #include "chrome/browser/speech/on_device_speech_recognition_impl.h"
 #include "chrome/browser/translate/translate_frame_binder.h"
 #include "chrome/browser/ui/search_engines/search_engine_tab_helper.h"
-#include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/services/speech/buildflags/buildflags.h"
+#include "components/autofill/content/browser/content_autofill_client.h"
+#include "components/credential_management/content_credential_manager.h"
 #include "components/dom_distiller/content/browser/distillability_driver.h"
 #include "components/dom_distiller/content/browser/distiller_javascript_service_impl.h"
 #include "components/dom_distiller/content/common/mojom/distillability_service.mojom.h"
@@ -40,10 +43,10 @@
 #include "components/live_caption/pref_names.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_contents.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_processor_impl.h"
+#include "components/optimization_guide/public/mojom/model_broker.mojom.h"
 #include "components/performance_manager/embedder/binders.h"
 #include "components/performance_manager/embedder/performance_manager_registry.h"
 #include "components/prefs/pref_service.h"
-#include "components/reading_list/features/reading_list_switches.h"
 #include "components/security_state/content/content_utils.h"
 #include "components/security_state/content/security_state_tab_helper.h"
 #include "components/security_state/core/security_state.h"
@@ -55,6 +58,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/url_constants.h"
+#include "mojo/public/cpp/bindings/binder_map.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/image_annotation/public/mojom/image_annotation.mojom.h"
@@ -66,6 +70,7 @@
 #include "third_party/blink/public/mojom/loader/navigation_predictor.mojom.h"
 #include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 #include "third_party/blink/public/mojom/payments/secure_payment_confirmation_service.mojom.h"
+#include "third_party/blink/public/mojom/persistent_renderer_prefs.mojom.h"
 #include "third_party/blink/public/mojom/prerender/prerender.mojom.h"
 #include "third_party/blink/public/public_buildflags.h"
 #include "ui/accessibility/accessibility_features.h"
@@ -94,6 +99,7 @@
 #else
 #include "chrome/browser/badging/badge_manager.h"
 #include "chrome/browser/payments/payment_request_factory.h"
+#include "chrome/browser/prefs/persistent_renderer_prefs_manager.h"
 #include "chrome/browser/ui/views/side_panel/customize_chrome/customize_chrome_utils.h"
 #include "chrome/browser/web_applications/web_install_service_impl.h"
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -317,7 +323,8 @@ void BindSpeechRecognitionRecognizerClientHandler(
   Profile* profile = Profile::FromBrowserContext(
       frame_host->GetProcess()->GetBrowserContext());
   PrefService* profile_prefs = profile->GetPrefs();
-  if (profile_prefs->GetBoolean(prefs::kLiveCaptionEnabled) &&
+  if ((profile_prefs->GetBoolean(prefs::kLiveCaptionEnabled) ||
+       profile_prefs->GetBoolean(prefs::kHeadlessCaptionEnabled)) &&
       captions::IsLiveCaptionFeatureSupported()) {
     captions::LiveCaptionSpeechRecognitionHost::Create(
         frame_host, std::move(client_receiver));
@@ -379,31 +386,68 @@ void BindScreen2xMainContentExtractor(
 }
 #endif
 
+void BindModelBroker(
+    content::RenderFrameHost* frame_host,
+    mojo::PendingReceiver<optimization_guide::mojom::ModelBroker> receiver) {
+  content::BrowserContext* browser_context = frame_host->GetBrowserContext();
+  Profile* profile = Profile::FromBrowserContext(browser_context);
+  OptimizationGuideKeyedService* optimization_guide_service =
+      OptimizationGuideKeyedServiceFactory::GetForProfile(profile);
+  if (optimization_guide_service) {
+    optimization_guide_service->BindModelBroker(std::move(receiver));
+  }
+}
+
+void BindCredentialManager(
+    content::RenderFrameHost* frame_host,
+    mojo::PendingReceiver<blink::mojom::CredentialManager> receiver) {
+  content::WebContents* web_contents =
+      content::WebContents::FromRenderFrameHost(frame_host);
+  autofill::ContentAutofillClient* autofill_client =
+      autofill::ContentAutofillClient::FromWebContents(web_contents);
+  // Not every `WebContents` has a `ContentAutofillClient`.
+  if (!autofill_client) {
+    return;
+  }
+  credential_management::ContentCredentialManager* content_credential_manager =
+      autofill_client->GetContentCredentialManager();
+
+  // Try to bind to the credential manager, but if it's not available for this
+  // render frame host, the request will be just dropped. This will cause the
+  // message pipe to be closed, which will raise a connection error on the peer
+  // side.
+  if (!content_credential_manager) {
+    // TODO(crbug.com/406224744): Retry to bind the credential manager.
+    return;
+  }
+
+  content_credential_manager->BindRequest(frame_host, std::move(receiver));
+}
+
 }  // namespace
 
 void PopulateChromeFrameBinders(
     mojo::BinderMapWithContext<content::RenderFrameHost*>* map,
     content::RenderFrameHost* render_frame_host) {
-  map->Add<image_annotation::mojom::Annotator>(
-      base::BindRepeating(&BindImageAnnotator));
+  map->Add<image_annotation::mojom::Annotator>(&BindImageAnnotator);
 
   map->Add<blink::mojom::AnchorElementMetricsHost>(
-      base::BindRepeating(&NavigationPredictor::Create));
+      &NavigationPredictor::Create);
 
   map->Add<blink::mojom::LCPCriticalPathPredictorHost>(
-      base::BindRepeating(&predictors::LCPCriticalPathPredictorHost::Create));
+      &predictors::LCPCriticalPathPredictorHost::Create);
 
   map->Add<dom_distiller::mojom::DistillabilityService>(
-      base::BindRepeating(&BindDistillabilityService));
+      &BindDistillabilityService);
 
   map->Add<dom_distiller::mojom::DistillerJavaScriptService>(
-      base::BindRepeating(&BindDistillerJavaScriptService));
+      &BindDistillerJavaScriptService);
 
   map->Add<prerender::mojom::NoStatePrefetchCanceler>(
-      base::BindRepeating(&BindNoStatePrefetchCanceler));
+      &BindNoStatePrefetchCanceler);
 
   map->Add<blink::mojom::NoStatePrefetchProcessor>(
-      base::BindRepeating(&BindNoStatePrefetchProcessor));
+      &BindNoStatePrefetchProcessor);
 
   auto* pm_registry =
       performance_manager::PerformanceManagerRegistry::GetInstance();
@@ -412,7 +456,9 @@ void PopulateChromeFrameBinders(
   }
 
   map->Add<translate::mojom::ContentTranslateDriver>(
-      base::BindRepeating(&translate::BindContentTranslateDriver));
+      &translate::BindContentTranslateDriver);
+
+  map->Add<optimization_guide::mojom::ModelBroker>(&BindModelBroker);
 
   if (!base::FeatureList::IsEnabled(blink::features::kLanguageDetectionAPI)) {
     // When the feature is enabled, the driver is bound by
@@ -422,80 +468,78 @@ void PopulateChromeFrameBinders(
     //
     // TODO(https://crbug.com/354069716): Remove this when the flag is removed.
     map->Add<language_detection::mojom::ContentLanguageDetectionDriver>(
-        base::BindRepeating(&translate::BindContentLanguageDetectionDriver));
+        &translate::BindContentLanguageDetectionDriver);
   }
 
-  map->Add<blink::mojom::CredentialManager>(
-      base::BindRepeating(&ChromePasswordManagerClient::BindCredentialManager));
+  map->Add<blink::mojom::CredentialManager>(&BindCredentialManager);
 
   map->Add<chrome::mojom::OpenSearchDescriptionDocumentHandler>(
       base::BindRepeating(
           &SearchEngineTabHelper::BindOpenSearchDescriptionDocumentHandler));
 
 #if BUILDFLAG(IS_ANDROID)
-  map->Add<blink::mojom::InstalledAppProvider>(base::BindRepeating(
-      &ForwardToJavaFrame<blink::mojom::InstalledAppProvider>));
-  map->Add<payments::mojom::DigitalGoodsFactory>(base::BindRepeating(
-      &ForwardToJavaFrame<payments::mojom::DigitalGoodsFactory>));
+  map->Add<blink::mojom::InstalledAppProvider>(
+      &ForwardToJavaFrame<blink::mojom::InstalledAppProvider>);
+  map->Add<payments::mojom::DigitalGoodsFactory>(
+      &ForwardToJavaFrame<payments::mojom::DigitalGoodsFactory>);
 #if defined(BROWSER_MEDIA_CONTROLS_MENU)
-  map->Add<blink::mojom::MediaControlsMenuHost>(base::BindRepeating(
-      &ForwardToJavaFrame<blink::mojom::MediaControlsMenuHost>));
+  map->Add<blink::mojom::MediaControlsMenuHost>(
+      &ForwardToJavaFrame<blink::mojom::MediaControlsMenuHost>);
 #endif
   map->Add<chrome::mojom::OfflinePageAutoFetcher>(
-      base::BindRepeating(&offline_pages::OfflinePageAutoFetcher::Create));
+      &offline_pages::OfflinePageAutoFetcher::Create);
   if (base::FeatureList::IsEnabled(features::kWebPayments)) {
-    map->Add<payments::mojom::PaymentRequest>(base::BindRepeating(
-        &ForwardToJavaFrame<payments::mojom::PaymentRequest>));
+    map->Add<payments::mojom::PaymentRequest>(
+        &ForwardToJavaFrame<payments::mojom::PaymentRequest>);
   }
-  map->Add<blink::mojom::ShareService>(base::BindRepeating(
-      &ForwardToJavaWebContents<blink::mojom::ShareService>));
 
 #if BUILDFLAG(ENABLE_UNHANDLED_TAP)
   map->Add<blink::mojom::UnhandledTapNotifier>(
-      base::BindRepeating(&BindUnhandledTapWebContentsObserver));
+      &BindUnhandledTapWebContentsObserver);
 #endif  // BUILDFLAG(ENABLE_UNHANDLED_TAP)
 
 #else
   map->Add<blink::mojom::BadgeService>(
-      base::BindRepeating(&badging::BadgeManager::BindFrameReceiverIfAllowed));
+      &badging::BadgeManager::BindFrameReceiverIfAllowed);
+  map->Add<blink::mojom::PersistentRendererPrefsService>(
+      &PersistentRendererPrefsManager::BindFrameReceiver);
   if (base::FeatureList::IsEnabled(features::kWebPayments)) {
-    map->Add<payments::mojom::PaymentRequest>(
-        base::BindRepeating(&payments::CreatePaymentRequest));
+    map->Add<payments::mojom::PaymentRequest>(&payments::CreatePaymentRequest);
   }
   if (base::FeatureList::IsEnabled(blink::features::kWebAppInstallation) &&
       !render_frame_host->GetParentOrOuterDocument()) {
     map->Add<blink::mojom::WebInstallService>(
-        base::BindRepeating(&web_app::WebInstallServiceImpl::CreateIfAllowed));
+        &web_app::WebInstallServiceImpl::CreateIfAllowed);
   }
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
-  map->Add<payments::mojom::DigitalGoodsFactory>(base::BindRepeating(
-      &apps::DigitalGoodsFactoryImpl::BindDigitalGoodsFactory));
+  map->Add<payments::mojom::DigitalGoodsFactory>(
+      &apps::DigitalGoodsFactoryImpl::BindDigitalGoodsFactory);
 #endif
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
-  if (base::FeatureList::IsEnabled(features::kWebShare)) {
-    map->Add<blink::mojom::ShareService>(
-        base::BindRepeating(&ShareServiceImpl::Create));
-  }
+  map->Add<blink::mojom::ShareService>(&ShareServiceImpl::Create);
+#endif
+#if BUILDFLAG(IS_ANDROID)
+  map->Add<blink::mojom::ShareService>(
+      &ForwardToJavaWebContents<blink::mojom::ShareService>);
 #endif
 
-  map->Add<network_hints::mojom::NetworkHintsHandler>(
-      base::BindRepeating(&BindNetworkHintsHandler));
+  map->Add<network_hints::mojom::NetworkHintsHandler>(&BindNetworkHintsHandler);
   map->Add<media::mojom::OnDeviceSpeechRecognition>(
-      base::BindRepeating(&BindOnDeviceSpeechRecognitionHandler));
+      &BindOnDeviceSpeechRecognitionHandler);
 
 #if BUILDFLAG(ENABLE_SPEECH_SERVICE)
   map->Add<media::mojom::SpeechRecognitionContext>(
-      base::BindRepeating(&BindSpeechRecognitionContextHandler));
+      &BindSpeechRecognitionContextHandler);
   map->Add<media::mojom::SpeechRecognitionClientBrowserInterface>(
-      base::BindRepeating(&BindSpeechRecognitionClientBrowserInterfaceHandler));
+      &BindSpeechRecognitionClientBrowserInterfaceHandler);
   map->Add<media::mojom::SpeechRecognitionRecognizerClient>(
-      base::BindRepeating(&BindSpeechRecognitionRecognizerClientHandler));
+      &BindSpeechRecognitionRecognizerClientHandler);
 #if BUILDFLAG(IS_WIN)
   map->Add<media::mojom::MediaFoundationRendererNotifier>(
-      base::BindRepeating(&BindMediaFoundationRendererNotifierHandler));
+      &BindMediaFoundationRendererNotifierHandler);
 #endif
 #endif  // BUILDFLAG(ENABLE_SPEECH_SERVICE)
 
@@ -507,40 +551,39 @@ void PopulateChromeFrameBinders(
     // to register it for them because a non-primary main frame could become a
     // primary main frame at a later time (eg. a prerendered page).
     map->Add<blink::mojom::SubAppsService>(
-        base::BindRepeating(&web_app::SubAppsServiceImpl::CreateIfAllowed));
+        &web_app::SubAppsServiceImpl::CreateIfAllowed);
   }
 
-  map->Add<screen_ai::mojom::ScreenAIAnnotator>(
-      base::BindRepeating(&BindScreenAIAnnotator));
+  map->Add<screen_ai::mojom::ScreenAIAnnotator>(&BindScreenAIAnnotator);
 
   map->Add<screen_ai::mojom::Screen2xMainContentExtractor>(
-      base::BindRepeating(&BindScreen2xMainContentExtractor));
+      &BindScreen2xMainContentExtractor);
 #endif
 
 #if BUILDFLAG(IS_WIN)
   map->Add<media::mojom::MediaFoundationPreferences>(
-      base::BindRepeating(&BindMediaFoundationPreferences));
+      &BindMediaFoundationPreferences);
 #endif
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   map->Add<blink::mojom::WebPrintingService>(
-      base::BindRepeating(&printing::CreateWebPrintingServiceForFrame));
+      &printing::CreateWebPrintingServiceForFrame);
 #endif
 
 #if BUILDFLAG(IS_ANDROID)
   if (base::FeatureList::IsEnabled(blink::features::kPaymentLinkDetection)) {
     map->Add<payments::facilitated::mojom::PaymentLinkHandler>(
-        base::BindRepeating(&BindPaymentLinkHandler));
+        &BindPaymentLinkHandler);
   }
 #endif
 
 #if BUILDFLAG(ENABLE_SPELLCHECK)
-  map->Add<spellcheck::mojom::SpellCheckHost>(base::BindRepeating(
+  map->Add<spellcheck::mojom::SpellCheckHost>(
       [](content::RenderFrameHost* frame_host,
          mojo::PendingReceiver<spellcheck::mojom::SpellCheckHost> receiver) {
         SpellCheckHostChromeImpl::Create(
             frame_host->GetProcess()->GetDeprecatedID(), std::move(receiver));
-      }));
+      });
 #endif  // BUILDFLAG(ENABLE_SPELLCHECK)
 }
 

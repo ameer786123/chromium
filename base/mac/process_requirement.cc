@@ -31,6 +31,7 @@
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/thread_pool.h"
 #include "base/types/expected.h"
 #include "base/types/expected_macros.h"
@@ -568,8 +569,7 @@ bool ProcessRequirement::ValidateProcess(
 
 // static
 void ProcessRequirement::MaybeGatherMetrics() {
-  static BASE_FEATURE(kGatherProcessRequirementMetrics,
-                      "GatherProcessRequirementMetrics",
+  static BASE_FEATURE(GatherProcessRequirementMetrics,
                       base::FEATURE_ENABLED_BY_DEFAULT);
   if (base::FeatureList::IsEnabled(kGatherProcessRequirementMetrics)) {
     base::ThreadPool::PostTask(

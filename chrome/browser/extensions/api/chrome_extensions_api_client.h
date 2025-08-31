@@ -61,17 +61,20 @@ class ChromeExtensionsAPIClient : public ExtensionsAPIClient {
   void OpenFileUrl(const GURL& file_url,
                    content::BrowserContext* browser_context) override;
 #if BUILDFLAG(ENABLE_GUEST_VIEW)
-  AppViewGuestDelegate* CreateAppViewGuestDelegate() const override;
-  ExtensionOptionsGuestDelegate* CreateExtensionOptionsGuestDelegate(
+  std::unique_ptr<AppViewGuestDelegate> CreateAppViewGuestDelegate()
+      const override;
+  std::unique_ptr<ExtensionOptionsGuestDelegate>
+  CreateExtensionOptionsGuestDelegate(
       ExtensionOptionsGuest* guest) const override;
   std::unique_ptr<guest_view::GuestViewManagerDelegate>
   CreateGuestViewManagerDelegate() const override;
   std::unique_ptr<MimeHandlerViewGuestDelegate>
   CreateMimeHandlerViewGuestDelegate(
       MimeHandlerViewGuest* guest) const override;
-  WebViewGuestDelegate* CreateWebViewGuestDelegate(
+  std::unique_ptr<WebViewGuestDelegate> CreateWebViewGuestDelegate(
       WebViewGuest* web_view_guest) const override;
-  WebViewPermissionHelperDelegate* CreateWebViewPermissionHelperDelegate(
+  std::unique_ptr<WebViewPermissionHelperDelegate>
+  CreateWebViewPermissionHelperDelegate(
       WebViewPermissionHelper* web_view_permission_helper) const override;
 #endif  // BUILDFLAG(ENABLE_GUEST_VIEW)
 #if BUILDFLAG(IS_CHROMEOS)
@@ -92,13 +95,16 @@ class ChromeExtensionsAPIClient : public ExtensionsAPIClient {
   std::unique_ptr<SupervisedUserExtensionsDelegate>
   CreateSupervisedUserExtensionsDelegate(
       content::BrowserContext* browser_context) const override;
-
   std::unique_ptr<DisplayInfoProvider> CreateDisplayInfoProvider()
       const override;
   MetricsPrivateDelegate* GetMetricsPrivateDelegate() override;
-  FileSystemDelegate* GetFileSystemDelegate() override;
   MessagingDelegate* GetMessagingDelegate() override;
+
+#if !BUILDFLAG(IS_ANDROID)
+  FileSystemDelegate* GetFileSystemDelegate() override;
   FeedbackPrivateDelegate* GetFeedbackPrivateDelegate() override;
+  AutomationInternalApiDelegate* GetAutomationInternalApiDelegate() override;
+#endif
 
 #if BUILDFLAG(IS_CHROMEOS)
   MediaPerceptionAPIDelegate* GetMediaPerceptionAPIDelegate() override;
@@ -112,7 +118,6 @@ class ChromeExtensionsAPIClient : public ExtensionsAPIClient {
       base::OnceCallback<void(const std::string&)> error_callback) override;
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-  AutomationInternalApiDelegate* GetAutomationInternalApiDelegate() override;
   std::vector<KeyedServiceBaseFactory*> GetFactoryDependencies() override;
 
   std::unique_ptr<NativeMessagePortDispatcher>
@@ -123,17 +128,21 @@ class ChromeExtensionsAPIClient : public ExtensionsAPIClient {
 
  private:
   std::unique_ptr<ChromeMetricsPrivateDelegate> metrics_private_delegate_;
-  std::unique_ptr<FileSystemDelegate> file_system_delegate_;
   std::unique_ptr<MessagingDelegate> messaging_delegate_;
+
+#if !BUILDFLAG(IS_ANDROID)
+  // Desktop Android does not support these APIs.
+  std::unique_ptr<FileSystemDelegate> file_system_delegate_;
   std::unique_ptr<FeedbackPrivateDelegate> feedback_private_delegate_;
+  std::unique_ptr<extensions::ChromeAutomationInternalApiDelegate>
+      extensions_automation_api_delegate_;
+#endif
 
 #if BUILDFLAG(IS_CHROMEOS)
   std::unique_ptr<MediaPerceptionAPIDelegate> media_perception_api_delegate_;
   std::unique_ptr<NonNativeFileSystemDelegate> non_native_file_system_delegate_;
   std::unique_ptr<ClipboardExtensionHelper> clipboard_extension_helper_;
 #endif
-  std::unique_ptr<extensions::ChromeAutomationInternalApiDelegate>
-      extensions_automation_api_delegate_;
 };
 
 }  // namespace extensions

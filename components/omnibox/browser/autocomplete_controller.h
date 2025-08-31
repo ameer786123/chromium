@@ -23,6 +23,7 @@
 #include "base/trace_event/memory_dump_provider.h"
 #include "build/build_config.h"
 #include "components/omnibox/browser/autocomplete_controller_metrics.h"
+#include "components/omnibox/browser/autocomplete_enums.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/autocomplete_provider_client.h"
@@ -33,10 +34,12 @@
 #include "components/omnibox/browser/bookmark_provider.h"
 #include "components/omnibox/browser/omnibox_log.h"
 #include "components/omnibox/browser/open_tab_provider.h"
+#include "components/omnibox/browser/tab_group_provider.h"
 #include "components/optimization_guide/machine_learning_tflite_buildflags.h"
 #include "third_party/omnibox_proto/types.pb.h"
 
 class ClipboardProvider;
+class ContextualSearchProvider;
 class DocumentProvider;
 class FeaturedSearchProvider;
 class HistoryFuzzyProvider;
@@ -205,12 +208,11 @@ class AutocompleteController : public AutocompleteProviderListener,
   // Made virtual for mocking in tests.
   virtual void StartPrefetch(const AutocompleteInput& input);
 
-  // Cancels the current query, ensuring there will be no future notifications
-  // fired.  If new matches have come in since the most recent notification was
-  // fired, they will be discarded. If `clear_result` is true, the controller
-  // will also erase the result set. `due_to_user_inactivity` means this call
-  // was triggered by a user's idleness, i.e., not an explicit user action.
-  void Stop(bool clear_result, bool due_to_user_inactivity = false);
+  // Cancels the current query, ensuring most future updates won't fire
+  // notifications. If new matches have come in since the most recent
+  // notification was fired, they may be discarded. See
+  // `AutocompleteProvider::Stop()` & `AutocompleteStopReason`.
+  void Stop(AutocompleteStopReason stop_reason);
 
   // Asks the relevant provider to delete |match|, and ensures observers are
   // notified of resulting changes immediately.  This should only be called when
@@ -270,6 +272,9 @@ class AutocompleteController : public AutocompleteProviderListener,
     return voice_suggest_provider_;
   }
   OpenTabProvider* open_tab_provider() const { return open_tab_provider_; }
+  ContextualSearchProvider* contextual_search_provider() const {
+    return contextual_search_provider_;
+  }
 
   const AutocompleteInput& input() const { return input_; }
   const AutocompleteResult& result() const { return published_result_; }
@@ -315,6 +320,7 @@ class AutocompleteController : public AutocompleteProviderListener,
  private:
   friend class FakeAutocompleteController;
   friend class AutocompleteProviderTest;
+  friend class OmniboxRowGroupedViewBrowserTest;
   friend class OmniboxSuggestionButtonRowBrowserTest;
   friend class ZeroSuggestPrefetchTabHelperBrowserTest;
 #if BUILDFLAG(IS_IOS)
@@ -325,9 +331,16 @@ class AutocompleteController : public AutocompleteProviderListener,
   FRIEND_TEST_ALL_PREFIXES(AutocompleteControllerTest,
                            NoActionsAttachedToLensSearchboxMatches);
   FRIEND_TEST_ALL_PREFIXES(AutocompleteControllerTest,
+                           ContextualQueryAppendsSearchboxStats);
+  FRIEND_TEST_ALL_PREFIXES(AutocompleteControllerTest,
                            ContextualSearchActionAttachedPageKeywordMode);
   FRIEND_TEST_ALL_PREFIXES(AutocompleteControllerTest,
                            ContextualSearchActionAttachedInZeroSuggest);
+  FRIEND_TEST_ALL_PREFIXES(AutocompleteControllerTest,
+                           AttachContextualSearchOpenLensActionToMatches);
+  FRIEND_TEST_ALL_PREFIXES(
+      AutocompleteControllerTest,
+      ContextualSearchOpenLensActionAttachedPageKeywordMode);
   FRIEND_TEST_ALL_PREFIXES(AutocompleteProviderTest,
                            RedundantKeywordsIgnoredInResult);
   FRIEND_TEST_ALL_PREFIXES(AutocompleteProviderTest, UpdateSearchboxStats);
@@ -339,6 +352,8 @@ class AutocompleteController : public AutocompleteProviderListener,
                            SupportedProvider_OngoingNonPrefetch);
   FRIEND_TEST_ALL_PREFIXES(AutocompleteProviderPrefetchTest,
                            UnsupportedProvider_Prefetch);
+  FRIEND_TEST_ALL_PREFIXES(OmniboxPopupSuggestionGroupHeadersTest,
+                           ShowSuggestionGroupHeadersByPageContext);
   FRIEND_TEST_ALL_PREFIXES(OmniboxPopupViewViewsTest, EmitAccessibilityEvents);
   FRIEND_TEST_ALL_PREFIXES(OmniboxPopupViewViewsTest,
                            EmitAccessibilityEventsOnButtonFocusHint);
@@ -397,7 +412,7 @@ class AutocompleteController : public AutocompleteProviderListener,
   // `UpdateResult()`'s helper methods.
   struct OldResult {
     OldResult(UpdateType update_type,
-              AutocompleteInput input,
+              const AutocompleteInput& input,
               AutocompleteResult* result);
     ~OldResult();
 
@@ -523,6 +538,10 @@ class AutocompleteController : public AutocompleteProviderListener,
   void MaybeCleanSuggestionsForKeywordMode(const AutocompleteInput& input,
                                            AutocompleteResult* result);
 
+  // Removes promotional IPH suggestions if `result` contains toolbelt. Does not
+  // remove disclaimer IPHs.
+  void MaybeCleanIphSuggestions(AutocompleteResult* result);
+
   // Get the experiment stats v2 entry for the omnibox position. Used on iOS.
   const omnibox::metrics::ChromeSearchboxStats::ExperimentStatsV2
   GetOmniboxPositionExperimentStatsV2() const;
@@ -561,7 +580,11 @@ class AutocompleteController : public AutocompleteProviderListener,
 
   raw_ptr<OpenTabProvider> open_tab_provider_;
 
+  raw_ptr<TabGroupProvider> tab_group_provider_;
+
   raw_ptr<FeaturedSearchProvider> featured_search_provider_;
+
+  raw_ptr<ContextualSearchProvider> contextual_search_provider_;
 
   // A vector of scoring signals annotators for URL suggestions.
   // Unlike the other existing annotators (e.g., pedals and keywords), these

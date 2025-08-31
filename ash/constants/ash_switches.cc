@@ -30,12 +30,6 @@ constexpr char kCampbellHashKey[] =
     "\x78\xb6\xa7\x59\x06\x11\xc7\xea\x09\x7e\x92\xe3\xe9\xff\xa6\x01\x4c"
     "\x03\x18\x32";
 
-// The hash value for the secret key of the mantis feature.
-constexpr char kMantisHashKey[] =
-    "\x7c\x8c\x82\x6f\x3e\xcd\x16\xf0\xfb\xfe\xfc\x9c\x2a\x48\x07\x75\x7e\xea"
-    "\x46\xf2";
-
-
 }  // namespace
 
 // Please keep the order of these switches synchronized with the header file
@@ -477,6 +471,10 @@ const char kDisableRollbackOption[] = "disable-rollback-option";
 // Disables volume adjust sound.
 const char kDisableVolumeAdjustSound[] = "disable-volume-adjust-sound";
 
+// Disables the Welcome Recap feature for factory testing.
+const char kDisableWelcomeRecapForFactoryTest[] =
+    "disable-welcome-recap-for-factory-testing";
+
 // DEPRECATED. Please use --arc-availability=officially-supported.
 // Enables starting the ARC instance upon session start.
 const char kEnableArc[] = "enable-arc";
@@ -779,9 +777,6 @@ const char kBrowserDataMigrationForUser[] = "browser-data-migration-for-user";
 const char kBrowserDataBackwardMigrationForUser[] =
     "browser-data-backward-migration-for-user";
 
-// Supply secret key for Mantis feature.
-const char kMantisFeatureKey[] = "mantis-feature-key";
-
 // Tells Chrome to forcefully trigger backward data migration.
 extern const char kForceBrowserDataBackwardMigration[] =
     "force-browser-data-backward-migration";
@@ -844,6 +839,10 @@ const char kOobeSkipNewUserCheckForTesting[] =
 // Skips all other OOBE pages after user login.
 const char kOobeSkipPostLogin[] = "oobe-skip-postlogin";
 
+// Disable metrics consent for testing.
+const char kOobeDisablePreConsentMetricsForTesting[] =
+    "oobe-disable-pre-consent-metrics-for-testing";
+
 // Returns true if we should skip split modifier check on the split modifier
 // info screen.
 const char kOobeSkipSplitModifierCheckForTesting[] =
@@ -864,6 +863,9 @@ const char kOobeTriggerSyncTimeoutForTests[] =
 
 // If set, the overview button will be visible.
 const char kOverviewButtonForTests[] = "overview-button-for-tests";
+
+// If set, the overrrides the overscan settings on all displays.
+const char kOverscanInsetsOverride[] = "overscan-insets-override";
 
 // Controls how often the HiddenNetworkHandler class checks for wrongly hidden
 // networks. The interval should be provided in seconds, should follow the
@@ -933,18 +935,9 @@ const char kSafeMode[] = "safe-mode";
 // TODO(crbug.com/40618074): Remove when the bug is fixed.
 const char kSamlPasswordChangeUrl[] = "saml-password-change-url";
 
-// Selects which type of disclaimer should be shown for Scanner for debugging.
-const char kScannerDisclaimerDebugOverride[] =
-    "scanner-disclaimer-debug-override";
-const char kScannerDisclaimerDebugOverrideReminder[] = "reminder";
-const char kScannerDisclaimerDebugOverrideFull[] = "full";
-
 // New modular design for the shelf with apps separated into a hotseat UI and
 // smaller shelf in clamshell mode.
 const char kShelfHotseat[] = "shelf-hotseat";
-
-// Supply secret key for Seal feature.
-const char kSealKey[] = "seal-key";
 
 // Testing grace period for DeviceScheduledReboot policy. Useful for tast tests.
 // See `ShouldSkipRebootDueToGracePeriod` in scheduled_task_util.h.
@@ -1114,6 +1107,11 @@ bool ShouldSkipOobePostLogin() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(kOobeSkipPostLogin);
 }
 
+bool ShouldDisablePreConsentMetricsForTesting() {
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      kOobeDisablePreConsentMetricsForTesting);
+}
+
 bool ShouldShowAccessibilityButtonOnMarketingOptInForTesting() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
       kOobeShowAccessibilityButtonOnMarketingOptInForTesting);
@@ -1269,23 +1267,6 @@ bool IsCampbellSecretKeyMatched() {
   if (!key_matched) {
     LOG(ERROR)
         << "Provided campbel secrey key does not match the expected one.";
-  }
-
-  return key_matched;
-}
-
-bool IsMantisSecretKeyMatched() {
-  // Commandline looks like:
-  //  out/Default/chrome --user-data-dir=/tmp/tmp123
-  //  --mantis-feature-key="INSERT KEY HERE"
-  //  --enable-features=MediaAppImageMantis
-  const std::string provided_key_hash = base::SHA1HashString(
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          kMantisFeatureKey));
-
-  const bool key_matched = (provided_key_hash == kMantisHashKey);
-  if (!key_matched) {
-    LOG(ERROR) << "Provided secret key does not match the expected one.";
   }
 
   return key_matched;

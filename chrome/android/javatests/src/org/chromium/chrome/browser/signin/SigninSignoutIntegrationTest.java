@@ -34,7 +34,6 @@ import org.mockito.quality.Strictness;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.settings.MainSettings;
@@ -46,11 +45,11 @@ import org.chromium.chrome.browser.signin.services.SigninMetricsUtilsJni;
 import org.chromium.chrome.browser.sync.settings.AccountManagementFragment;
 import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncHelper;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.components.externalauth.ExternalAuthUtils;
-import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
@@ -68,8 +67,8 @@ public class SigninSignoutIntegrationTest {
     private final SettingsActivityTestRule<MainSettings> mMainSettingsActivityTestRule =
             new SettingsActivityTestRule<>(MainSettings.class);
 
-    private final ChromeTabbedActivityTestRule mActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    private final FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private final SigninTestRule mSigninTestRule = new SigninTestRule();
 
@@ -97,7 +96,7 @@ public class SigninSignoutIntegrationTest {
     @Before
     public void setUp() {
         SigninMetricsUtilsJni.setInstanceForTesting(mSigninMetricsUtilsNativeMock);
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mSigninManager =
@@ -186,11 +185,10 @@ public class SigninSignoutIntegrationTest {
 
     @Test
     @LargeTest
-    @Features.EnableFeatures(SigninFeatures.FORCE_SUPERVISED_SIGNIN_WITH_CAPABILITIES)
     public void testSecondaryAccountRemovedOnChildAccountSignIn() {
         mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
 
-        try (var unused = mSigninTestRule.blockGetCoreAccountInfosUpdate(true)) {
+        try (var unused = mSigninTestRule.blockGetAccountsUpdate(true)) {
             // Remove TestAccounts.ACCOUNT1 from the device so that its still signed in.
             mSigninTestRule.removeAccount(TestAccounts.ACCOUNT1.getId());
 

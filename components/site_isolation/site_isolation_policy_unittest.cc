@@ -9,6 +9,8 @@
 #include "base/json/values_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_entropy_provider.h"
@@ -137,6 +139,82 @@ class BaseSiteIsolationTest : public testing::Test {
   SiteIsolationContentBrowserClient browser_client_;
   raw_ptr<content::ContentBrowserClient> original_client_ = nullptr;
 };
+
+class OriginIsolationForJsOptExceptionsTest : public BaseSiteIsolationTest {};
+// IsOriginIsolationForJsOptExceptionsEnabled returns false when any of :
+//   kOriginIsolationForJsOptExceptions is disabled
+//   SiteIsolationPolicy::IsStrictOriginIsolationEnabled() returns
+//   false AreDynamicIsolatedOriginsEnabled() is true
+//   AreOriginKeyedProcessesEnabledByDefault returns true
+TEST_F(OriginIsolationForJsOptExceptionsTest,
+       ReturnsFalseWhenFeatureIsDisabled) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(
+      site_isolation::features::kOriginIsolationForJsOptExceptions);
+  EXPECT_FALSE(
+      SiteIsolationPolicy::IsOriginIsolationForJsOptExceptionsEnabled());
+}
+
+TEST_F(OriginIsolationForJsOptExceptionsTest, ReturnsTrueWhenFeatureEnabled) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      site_isolation::features::kOriginIsolationForJsOptExceptions);
+  EXPECT_TRUE(
+      SiteIsolationPolicy::IsOriginIsolationForJsOptExceptionsEnabled());
+}
+
+TEST_F(OriginIsolationForJsOptExceptionsTest,
+       ReturnsFalseWhenStrictOriginIsolationEnabled) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      {site_isolation::features::kOriginIsolationForJsOptExceptions,
+       ::features::kStrictOriginIsolation},
+      {});
+  EXPECT_FALSE(
+      SiteIsolationPolicy::IsOriginIsolationForJsOptExceptionsEnabled());
+}
+
+TEST_F(OriginIsolationForJsOptExceptionsTest,
+       ReturnsFalseWhenOriginKeyedProcessesEnabledByDefault) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      {site_isolation::features::kOriginIsolationForJsOptExceptions,
+       ::features::kOriginKeyedProcessesByDefault},
+      {::features::kStrictOriginIsolation});
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kSitePerProcess);
+  SetEnableStrictSiteIsolation(true);
+  EXPECT_FALSE(
+      SiteIsolationPolicy::IsOriginIsolationForJsOptExceptionsEnabled());
+}
+
+#if BUILDFLAG(IS_ANDROID)
+class OriginIsolationForJsOptExceptionsLowMemoryTest
+    : public OriginIsolationForJsOptExceptionsTest {
+ public:
+  void SetUp() override {
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kEnableLowEndDeviceMode);
+    // Without strict site isolation, AreOriginKeyedProcessesByDefaultEnabled()
+    // will always be false. This is needed to run the test on Android.
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kSitePerProcess);
+    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemory().InMiB());
+    OriginIsolationForJsOptExceptionsTest::SetUp();
+  }
+};
+
+TEST_F(OriginIsolationForJsOptExceptionsLowMemoryTest,
+       ReturnsFalseOnLowMemoryDevice) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      {site_isolation::features::kOriginIsolationForJsOptExceptions},
+      {::features::kStrictOriginIsolation,
+       ::features::kOriginKeyedProcessesByDefault});
+  EXPECT_FALSE(
+      SiteIsolationPolicy::IsOriginIsolationForJsOptExceptionsEnabled());
+}
+#endif
 
 // Tests with OriginKeyedProcessesByDefault enabled.
 class OriginKeyedProcessesByDefaultSiteIsolationPolicyTest
@@ -571,7 +649,7 @@ class OriginIsolationMemoryThresholdBrowserTest
     // will always be false. This is needed to run the test on Android.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kSitePerProcess);
-    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemoryMB());
+    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemory().InMiB());
     BaseSiteIsolationTest::SetUp();
   }
 
@@ -724,7 +802,7 @@ class SitePerProcessMemoryThresholdBrowserTest
     // available in the testing environment.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kEnableLowEndDeviceMode);
-    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemoryMB());
+    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemory().InMiB());
 
     // On Android official builds, we expect to isolate an additional set of
     // built-in origins.
@@ -945,7 +1023,7 @@ class PasswordSiteIsolationFieldTrialTest : public BaseSiteIsolationTest {
     // available in the testing environment.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kEnableLowEndDeviceMode);
-    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemoryMB());
+    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemory().InMiB());
     BaseSiteIsolationTest::SetUp();
   }
 
@@ -1176,7 +1254,7 @@ class StrictOriginIsolationFieldTrialTest : public BaseSiteIsolationTest {
     // available in the testing environment.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kEnableLowEndDeviceMode);
-    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemoryMB());
+    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemory().InMiB());
     BaseSiteIsolationTest::SetUp();
   }
 
@@ -1305,7 +1383,7 @@ class BuiltInIsolatedOriginsTest : public SiteIsolationPolicyTest {
     // Simulate a 512MB device.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kEnableLowEndDeviceMode);
-    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemoryMB());
+    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemory().InMiB());
     SiteIsolationPolicyTest::SetUp();
   }
 };
@@ -1434,7 +1512,7 @@ class OptInOriginIsolationPolicyTest : public BaseSiteIsolationTest {
     // Simulate a 512MB device.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kEnableLowEndDeviceMode);
-    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemoryMB());
+    EXPECT_EQ(512, base::SysInfo::AmountOfPhysicalMemory().InMiB());
     // Turn off strict site isolation.  This simulates what would happen on
     // Android.
     SetEnableStrictSiteIsolation(false);

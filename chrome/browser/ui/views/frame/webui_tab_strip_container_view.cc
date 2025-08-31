@@ -648,9 +648,6 @@ void WebUITabStripContainerView::EndDragToOpen(
 
   if (opening) {
     RecordTabStripUIOpenHistogram(TabStripUIOpenAction::kToolbarDrag);
-  } else {
-    browser_view_->AbortFeaturePromo(
-        feature_engagement::kIPHWebUITabStripFeature);
   }
 
   animation_.Reset(open_proportion);
@@ -708,10 +705,6 @@ void WebUITabStripContainerView::SetContainerTargetVisibility(
     web_view_->RequestFocus();
 
     time_at_open_ = base::TimeTicks::Now();
-
-    browser_view_->NotifyFeaturePromoFeatureUsed(
-        feature_engagement::kIPHWebUITabStripFeature,
-        FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   } else {
     if (time_at_open_) {
       RecordTabStripUIOpenDurationHistogram(base::TimeTicks::Now() -
@@ -795,7 +788,8 @@ void WebUITabStripContainerView::ShowEditDialogForGroupAtPoint(
   ConvertPointToScreen(this, &point);
   rect.set_origin(point);
   editor_bubble_widget_ = TabGroupEditorBubbleView::Show(
-      browser_view_->browser(), group, nullptr, rect, this);
+      browser_view_->browser(), group, /*anchor_view=*/this,
+      /*anchor_rect=*/rect, /*stop_context_menu_propagation=*/false);
   scoped_widget_observation_.Observe(editor_bubble_widget_.get());
 }
 

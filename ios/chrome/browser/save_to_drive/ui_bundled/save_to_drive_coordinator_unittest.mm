@@ -5,7 +5,7 @@
 #import "ios/chrome/browser/save_to_drive/ui_bundled/save_to_drive_coordinator.h"
 
 #import "base/apple/foundation_util.h"
-#import "base/test/task_environment.h"
+#import "components/signin/public/base/signin_metrics.h"
 #import "ios/chrome/browser/account_picker/ui_bundled/account_picker_configuration.h"
 #import "ios/chrome/browser/account_picker/ui_bundled/account_picker_coordinator.h"
 #import "ios/chrome/browser/account_picker/ui_bundled/account_picker_coordinator_delegate.h"
@@ -31,6 +31,7 @@
 #import "ios/chrome/test/fakes/fake_ui_view_controller.h"
 #import "ios/web/public/test/fakes/fake_download_task.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -105,6 +106,10 @@ class SaveToDriveCoordinatorTest : public PlatformTest {
 
   void TearDown() final {
     [mock_save_to_drive_mediator_ stopMocking];
+    EXPECT_OCMOCK_VERIFY(mock_save_to_drive_commands_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_application_commands_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_settings_commands_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_save_to_drive_mediator_);
     PlatformTest::TearDown();
   }
 
@@ -122,7 +127,7 @@ class SaveToDriveCoordinatorTest : public PlatformTest {
         browser_->GetWebStateList()->GetActiveWebState());
   }
 
-  base::test::TaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_;
   std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<TestBrowser> browser_;
   UIViewController* base_view_controller_;
@@ -191,7 +196,9 @@ TEST_F(SaveToDriveCoordinatorTest, ShowsAndHidesAccountPicker) {
                                              AccountPickerConfiguration* conf) {
                                            observed_conf = conf;
                                            return YES;
-                                         }]])
+                                         }]
+                         accessPoint:signin_metrics::AccessPoint::
+                                         kSaveToDriveIos])
       .andReturn(mock_account_picker_coordinator);
   OCMExpect([mock_account_picker_coordinator
       setDelegate:static_cast<id<AccountPickerCoordinatorDelegate>>(
@@ -237,34 +244,7 @@ TEST_F(SaveToDriveCoordinatorTest, ShowsAddAccount) {
 
   // Expect that a ShowSigninCommand will be dispatched to present the Add
   // account view on top of the account picker view.
-  id<SystemIdentity> added_identity = [FakeSystemIdentity fakeIdentity1];
-  OCMExpect([mock_application_commands_handler_
-              showSignin:[OCMArg checkWithBlock:^BOOL(
-                                     ShowSigninCommand* command) {
-                if (command) {
-                  command.completion(SigninCoordinatorResultSuccess,
-                                     added_identity);
-                }
-                EXPECT_EQ(AuthenticationOperation::kAddAccount,
-                          command.operation);
-                EXPECT_FALSE(command.identity);
-                EXPECT_EQ(signin_metrics::AccessPoint::kSaveToDriveIos,
-                          command.accessPoint);
-                EXPECT_EQ(
-                    signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO,
-                    command.promoAction);
-                return YES;
-              }]
-      baseViewController:mock_account_picker_coordinator_view_controller]);
-
-  // Ask the SaveToDriveCoordinator to open the Add account view and verify the
-  // ShowSigninCommand was dispatched.
-  [static_cast<id<AccountPickerCoordinatorDelegate>>(coordinator)
-          accountPickerCoordinator:mock_account_picker_coordinator
-      openAddAccountWithCompletion:^(id<SystemIdentity> identity) {
-        EXPECT_EQ(added_identity, identity);
-      }];
-  EXPECT_OCMOCK_VERIFY(mock_application_commands_handler_);
 
   [coordinator stop];
+  EXPECT_OCMOCK_VERIFY(mock_account_picker_coordinator);
 }

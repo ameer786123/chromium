@@ -20,6 +20,8 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
@@ -27,8 +29,10 @@ import org.chromium.base.test.util.UrlUtils;
 import org.chromium.base.test.util.UserActionTester;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.pagecontroller.utils.UiAutomatorUtils;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.browser.TabLoadObserver;
 import org.chromium.content_public.browser.GestureListenerManager;
 import org.chromium.content_public.browser.GestureStateListener;
@@ -41,11 +45,12 @@ import org.chromium.content_public.browser.test.util.WebContentsUtils;
 @EnableFeatures({"InputOnViz"})
 @MinAndroidSdkLevel(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 public class InputOnVizTest {
-    private final String mLongHtmlTestPage =
+    private final String mLongHtmlTestPageUri =
             UrlUtils.encodeHtmlDataUri("<html><body style='height:100000px;'></body></html>");
 
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private GestureStateListener mGestureListener;
     private View.OnTouchListener mViewOnTouchListener;
@@ -54,10 +59,11 @@ public class InputOnVizTest {
 
     public int mScrollOffsetY;
     private boolean mScrolling;
+    private WebPageStation mPage;
 
     @Before
     public void setUp() {
-        mActivityTestRule.startMainActivityWithURL(mLongHtmlTestPage);
+        mPage = mActivityTestRule.startOnUrl(mLongHtmlTestPageUri);
         mGestureListener =
                 new GestureStateListener() {
                     @Override
@@ -104,7 +110,19 @@ public class InputOnVizTest {
     }
 
     @Test
-    public void scrollIsHandledOnViz() {
+    @DisableFeatures({"UseAndroidBufferedInputDispatch"})
+    public void scrollIsHandledOnViz_unbufferedInput() {
+        checkScrollIsHandledOnViz();
+    }
+
+    @Test
+    @DisabledTest(message = "https://crbug.com/409346743")
+    @EnableFeatures({"UseAndroidBufferedInputDispatch"})
+    public void scrollIsHandledOnViz_bufferedInput() {
+        checkScrollIsHandledOnViz();
+    }
+
+    private void checkScrollIsHandledOnViz() {
         UiAutomatorUtils.getInstance().swipeUpVertically(0.3f);
         // Wait for the scroll offset to have changed as a result of scroll.
         CriteriaHelper.pollInstrumentationThread(
@@ -121,9 +139,8 @@ public class InputOnVizTest {
 
     @Test
     public void handlesOverscrollsWithInputVizard() throws Exception {
-        TabLoadObserver observer =
-                new TabLoadObserver(mActivityTestRule.getActivity().getActivityTab());
-        observer.fullyLoadUrl(mLongHtmlTestPage);
+        TabLoadObserver observer = new TabLoadObserver(mActivityTestRule.getActivityTab());
+        observer.fullyLoadUrl(mLongHtmlTestPageUri);
 
         UserActionTester userActionTester = new UserActionTester();
         HistogramWatcher histograms =
@@ -133,8 +150,7 @@ public class InputOnVizTest {
                                 TransferInputToVizResult.SUCCESSFULLY_TRANSFERRED)
                         .build();
 
-        WebContentsUtils.waitForCopyableViewInWebContents(
-                mActivityTestRule.getActivity().getActivityTab().getWebContents());
+        WebContentsUtils.waitForCopyableViewInWebContents(mActivityTestRule.getWebContents());
 
         // Scrolling down should trigger refresh effect on the page.
         UiAutomatorUtils.getInstance().swipeDownVertically(0.6f);

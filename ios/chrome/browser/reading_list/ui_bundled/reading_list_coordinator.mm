@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/reading_list/ui_bundled/reading_list_coordinator.h"
 
+#import "base/check_op.h"
 #import "base/ios/ios_util.h"
 #import "base/memory/raw_ptr.h"
 #import "base/memory/scoped_refptr.h"
@@ -15,7 +16,7 @@
 #import "components/feature_engagement/public/tracker.h"
 #import "components/prefs/pref_service.h"
 #import "components/reading_list/core/reading_list_entry.h"
-#import "components/reading_list/features/reading_list_switches.h"
+#import "components/send_tab_to_self/features.h"
 #import "components/signin/public/base/signin_pref_names.h"
 #import "components/signin/public/identity_manager/objc/identity_manager_observer_bridge.h"
 #import "components/sync/base/user_selectable_type.h"
@@ -25,6 +26,8 @@
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_consumer.h"
 #import "ios/chrome/browser/authentication/ui_bundled/change_profile/change_profile_reading_list_continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/enterprise/enterprise_utils.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_presenter.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_promo_view_mediator.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
@@ -47,6 +50,7 @@
 #import "ios/chrome/browser/reading_list/ui_bundled/reading_list_mediator.h"
 #import "ios/chrome/browser/reading_list/ui_bundled/reading_list_menu_provider.h"
 #import "ios/chrome/browser/reading_list/ui_bundled/reading_list_table_view_controller.h"
+#import "ios/chrome/browser/reminder_notifications/coordinator/reminder_notifications_coordinator.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
@@ -62,6 +66,7 @@
 #import "ios/chrome/browser/sharing/ui_bundled/sharing_params.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
+#import "ios/chrome/browser/signin/model/authentication_service_observer_bridge.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service_factory.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
 #import "ios/chrome/browser/sync/model/sync_service_factory.h"
@@ -79,13 +84,15 @@
 // we can move the SigninPromoViewConsumer implementation from the coordinator
 // to the view.
 @interface ReadingListCoordinator () <AccountSettingsPresenter,
+                                      AuthenticationServiceObserving,
                                       IdentityManagerObserverBridgeDelegate,
                                       ReadingListMenuProvider,
                                       ReadingListListItemFactoryDelegate,
                                       ReadingListListViewControllerAudience,
                                       ReadingListListViewControllerDelegate,
-                                      SigninPresenter,
-                                      SigninPromoViewConsumer>
+                                      SigninPromoViewConsumer,
+                                      SigninPromoViewMediatorDelegate,
+                                      UIAdaptivePresentationControllerDelegate>
 
 // Whether the coordinator is started.
 @property(nonatomic, assign, getter=isStarted) BOOL started;
@@ -114,12 +121,19 @@
   id<ApplicationCommands> _applicationCommandsHandler;
   // Authentication Service to retrieve the user's signed-in state.
   raw_ptr<AuthenticationService> _authService;
+  // Observer for auth service status changes.
+  std::unique_ptr<AuthenticationServiceObserverBridge>
+      _authServiceObserverBridge;
   // Service to retrieve preference values.
   raw_ptr<PrefService> _prefService;
   // Manager for user's Google identities.
   raw_ptr<signin::IdentityManager> _identityManager;
   // Sync service.
   raw_ptr<syncer::SyncService> _syncService;
+  SigninCoordinator* _signinCoordinator;
+  // Coordinator to display the "Set a reminder" screen for the user's current
+  // tab.
+  ReminderNotificationsCoordinator* _reminderNotificationsCoordinator;
 }
 
 #pragma mark - ChromeCoordinator
@@ -148,6 +162,8 @@
   _applicationCommandsHandler = HandlerForProtocol(
       self.browser->GetCommandDispatcher(), ApplicationCommands);
   _authService = AuthenticationServiceFactory::GetForProfile(profile);
+  _authServiceObserverBridge =
+      std::make_unique<AuthenticationServiceObserverBridge>(_authService, self);
   _identityManager = IdentityManagerFactory::GetForProfile(profile);
   _prefService = profile->GetPrefs();
 
@@ -184,8 +200,7 @@
 
   [self.navigationController
       setModalPresentationStyle:UIModalPresentationFormSheet];
-  self.navigationController.presentationController.delegate =
-      self.tableViewController;
+  self.navigationController.presentationController.delegate = self;
 
   [self.baseViewController presentViewController:self.navigationController
                                         animated:YES
@@ -212,7 +227,7 @@
                             syncService:_syncService
                             accessPoint:signin_metrics::AccessPoint::
                                             kReadingList
-                        signinPresenter:self
+                               delegate:self
                accountSettingsPresenter:self
       changeProfileContinuationProvider:provider];
   _signinPromoViewMediator.signinPromoAction =
@@ -235,6 +250,7 @@
   if (!self.started) {
     return;
   }
+  [self stopSigninCoordinator];
   [self.tableViewController willBeDismissed];
   [self.navigationController.presentingViewController
       dismissViewControllerAnimated:YES
@@ -256,6 +272,9 @@
 
   [self.sharingCoordinator stop];
   self.sharingCoordinator = nil;
+
+  [_reminderNotificationsCoordinator stop];
+  _reminderNotificationsCoordinator = nil;
 
   [_signinPromoViewMediator disconnect];
   _signinPromoViewMediator = nil;
@@ -280,17 +299,16 @@
   self.navigationController.toolbarHidden = !hasItems;
 }
 
-#pragma mark - ReadingListTableViewControllerDelegate
+#pragma mark - ReadingListListViewControllerDelegate
 
 - (void)dismissReadingListListViewController:(UIViewController*)viewController {
-  DCHECK_EQ(self.tableViewController, viewController);
-  [self.tableViewController willBeDismissed];
-  [_delegate closeReadingList];
+  CHECK_EQ(self.tableViewController, viewController);
+  [self dismissReadingList];
 }
 
 - (void)readingListListViewController:(UIViewController*)viewController
                              openItem:(id<ReadingListListItem>)item {
-  DCHECK_EQ(self.tableViewController, viewController);
+  CHECK_EQ(self.tableViewController, viewController);
   scoped_refptr<const ReadingListEntry> entry =
       [self.mediator entryFromItem:item];
   if (!entry) {
@@ -306,7 +324,7 @@
 - (void)readingListListViewController:(UIViewController*)viewController
                      openItemInNewTab:(id<ReadingListListItem>)item
                             incognito:(BOOL)incognito {
-  DCHECK_EQ(self.tableViewController, viewController);
+  CHECK_EQ(self.tableViewController, viewController);
   scoped_refptr<const ReadingListEntry> entry =
       [self.mediator entryFromItem:item];
   if (!entry) {
@@ -321,8 +339,30 @@
 
 - (void)readingListListViewController:(UIViewController*)viewController
               openItemOfflineInNewTab:(id<ReadingListListItem>)item {
-  DCHECK_EQ(self.tableViewController, viewController);
+  CHECK_EQ(self.tableViewController, viewController);
   [self openItemOfflineInNewTab:item];
+}
+
+- (void)readingListListViewController:(UIViewController*)viewController
+          showSetTabReminderUIForItem:(id<ReadingListListItem>)item {
+  CHECK(
+      send_tab_to_self::IsSendTabIOSPushNotificationsEnabledWithTabReminders());
+  CHECK_EQ(self.tableViewController, viewController);
+
+  scoped_refptr<const ReadingListEntry> entry =
+      [self.mediator entryFromItem:item];
+
+  if (!entry) {
+    [self.tableViewController reloadData];
+    return;
+  }
+
+  // TODO(crbug.com/430850955): Implement support for scheduling reminders for
+  // any URL, allowing proper handling of the URL from the reading list `entry`.
+  _reminderNotificationsCoordinator = [[ReminderNotificationsCoordinator alloc]
+      initWithBaseViewController:self.tableViewController
+                         browser:self.browser];
+  [_reminderNotificationsCoordinator start];
 }
 
 - (void)didLoadContent {
@@ -336,6 +376,12 @@
                             promoConfigurator:promoConfigurator
                                 promoDelegate:_signinPromoViewMediator
                                     promoText:[self promoTextForPromoAction]];
+}
+
+- (BOOL)canDismiss {
+  // In case we don’t know, allow the view to be dismissed in order not to block
+  // the user on a frozen view if sign-in is acciddentally stopped.
+  return _signinPromoViewMediator.signinInProgress != signin::Tribool::kTrue;
 }
 
 #pragma mark - URL Loading Helpers
@@ -380,7 +426,7 @@
       self.browser->GetWebStateList()->GetActiveWebState();
   bool is_ntp = activeWebState->GetVisibleURL() == kChromeUINewTabURL;
   new_tab_page_uma::RecordNTPAction(
-      self.profile->IsOffTheRecord(), is_ntp,
+      self.isOffTheRecord, is_ntp,
       new_tab_page_uma::ACTION_OPENED_READING_LIST_ENTRY);
 
   // Prepare the table for dismissal.
@@ -420,7 +466,7 @@
     return;
   }
 
-  BOOL offTheRecord = self.profile->IsOffTheRecord();
+  BOOL offTheRecord = self.isOffTheRecord;
 
   if (entry->DistilledState() == ReadingListEntry::PROCESSED) {
     const GURL entryURL = entry->URL();
@@ -539,11 +585,33 @@
                                                actionProvider:actionProvider];
 }
 
-#pragma mark - SigninPresenter
+#pragma mark - SigninPromoViewMediatorDelegate
 
-- (void)showSignin:(ShowSigninCommand*)command {
-  [_applicationCommandsHandler showSignin:command
-                       baseViewController:self.tableViewController];
+- (void)showSignin:(SigninPromoViewMediator*)mediator
+           command:(ShowSigninCommand*)command {
+  CHECK_EQ(mediator, _signinPromoViewMediator);
+  if (_signinCoordinator.viewWillPersist) {
+    return;
+  }
+  [_signinCoordinator stop];
+  __weak __typeof(self) weakSelf = self;
+  [command addSigninCompletion:^(SigninCoordinatorResult result,
+                                 id<SystemIdentity>) {
+    [weakSelf signinDidCompleteWithResult:result];
+  }];
+  _signinCoordinator = [SigninCoordinator
+      signinCoordinatorWithCommand:command
+                           browser:self.browser
+                baseViewController:self.navigationController];
+  [_signinCoordinator start];
+}
+
+#pragma mark - SigninPromoViewMediatorDelegate Helper
+
+- (void)signinDidCompleteWithResult:(SigninCoordinatorResult)result {
+  [_signinPromoViewMediator signinDidCompleteWithResult:result];
+  [self updateSignInPromoVisibility];
+  [self stopSigninCoordinator];
 }
 
 #pragma mark - AccountSettingsPresenter
@@ -566,10 +634,6 @@
 }
 
 - (void)promoProgressStateDidChange {
-  [self updateSignInPromoVisibility];
-}
-
-- (void)signinDidFinish {
   [self updateSignInPromoVisibility];
 }
 
@@ -599,7 +663,24 @@
   }
 }
 
+#pragma mark - AuthenticationServiceObserving
+
+- (void)onServiceStatusChanged {
+  [self updateSignInPromoVisibility];
+}
+
 #pragma mark - Private
+
+- (void)dismissReadingList {
+  CHECK([self canDismiss], base::NotFatalUntil::M145);
+  [self.tableViewController willBeDismissed];
+  [_delegate closeReadingList];
+}
+
+- (void)stopSigninCoordinator {
+  [_signinCoordinator stop];
+  _signinCoordinator = nil;
+}
 
 // Computes whether the sign-in promo should be visible in the reading list and
 // updates the view accordingly.
@@ -717,6 +798,21 @@
 
 - (BOOL)isIncognitoAvailable {
   return !IsIncognitoModeDisabled(_prefService);
+}
+
+#pragma mark - UIAdaptivePresentationControllerDelegate
+
+- (void)presentationControllerDidDismiss:
+    (UIPresentationController*)presentationController {
+  base::RecordAction(base::UserMetricsAction("IOSReadingListCloseWithSwipe"));
+  // Call the delegate dismissReadingListListViewController to clean up state
+  // and stop the Coordinator.
+  [self dismissReadingList];
+}
+
+- (BOOL)presentationControllerShouldDismiss:
+    (UIPresentationController*)presentationController {
+  return [self canDismiss];
 }
 
 @end

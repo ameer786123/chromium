@@ -5,6 +5,7 @@
 #include "chrome/browser/enterprise/connectors/reporting/crash_reporting_context.h"
 
 #include "base/command_line.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/thread_pool.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client.h"
@@ -13,10 +14,18 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/channel_info.h"
 #include "components/crash/core/app/crashpad.h"
+#include "components/enterprise/common/proto/synced_from_google3/chrome_reporting_entity.pb.h"
 #include "components/enterprise/connectors/core/connectors_prefs.h"
+#include "components/enterprise/connectors/core/realtime_reporting_client_base.h"
 #include "components/enterprise/connectors/core/reporting_service_settings.h"
+#include "components/enterprise/connectors/core/reporting_utils.h"
+#include "components/policy/core/common/cloud/realtime_reporting_job_configuration.h"
 #include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
+
+#if BUILDFLAG(IS_ANDROID)
+#include "components/enterprise/connectors/core/features.h"
+#endif
 
 namespace enterprise_connectors {
 
@@ -34,6 +43,37 @@ constexpr int kDefaultCrashpadPollingIntervalSeconds = 3600;
 policy::ChromeBrowserCloudManagementController* GetCBCMController() {
   return g_browser_process->browser_policy_connector()
       ->chrome_browser_cloud_management_controller();
+}
+
+base::Value::Dict GetBrowserCrashEventDeprecated(const std::string& channel,
+                                                 const std::string& version,
+                                                 const std::string& report_id,
+                                                 const std::string& platform) {
+  base::Value::Dict event;
+  event.Set(kKeyChannel, channel);
+  event.Set(kKeyVersion, version);
+  event.Set(kKeyReportId, report_id);
+  event.Set(kKeyPlatform, platform);
+
+  return event;
+}
+
+::chrome::cros::reporting::proto::Event GetBrowserCrashEvent(
+    const std::string& channel,
+    const std::string& version,
+    const std::string& report_id,
+    const std::string& platform,
+    time_t report_creation_time) {
+  ::chrome::cros::reporting::proto::Event event;
+  auto* browser_crash_event = event.mutable_browser_crash_event();
+  browser_crash_event->set_channel(channel);
+  browser_crash_event->set_version(version);
+  browser_crash_event->set_report_id(report_id);
+  browser_crash_event->set_platform(platform);
+  *event.mutable_time() =
+      ToProtoTimestamp(base::Time::FromTimeT(report_creation_time));
+
+  return event;
 }
 
 // Copy new reports (i.e. reports that have not been sent to the
@@ -68,6 +108,13 @@ std::vector<crashpad::CrashReportDatabase::Report> GetNewReports(
 }
 
 void ReportCrashes() {
+#if BUILDFLAG(IS_ANDROID)
+  if (!base::FeatureList::IsEnabled(
+          enterprise_connectors::kEnterpriseSecurityEventReportingOnAndroid)) {
+    return;
+  }
+#endif  // BUILDFLAG(IS_ANDROID)
+
   CrashReportingContext* context = CrashReportingContext::GetInstance();
   if (!context->HasActiveProfile()) {
     return;
@@ -158,14 +205,19 @@ void UploadToReportingServer(
   int64_t latest_creation_time = -1;
 
   for (const auto& report : reports) {
-    base::Value::Dict event;
-    event.Set(kKeyChannel, channel);
-    event.Set(kKeyVersion, version);
-    event.Set(kKeyReportId, report.id);
-    event.Set(kKeyPlatform, platform);
-    reporting_client->ReportPastEvent(
-        kBrowserCrashEvent, settings.value(), std::move(event),
-        base::Time::FromTimeT(report.creation_time));
+    if (base::FeatureList::IsEnabled(
+            policy::kUploadRealtimeReportingEventsUsingProto)) {
+      reporting_client->ReportEvent(
+          GetBrowserCrashEvent(channel, version, report.id, platform,
+                               report.creation_time),
+          settings.value());
+    } else {
+      reporting_client->ReportPastEvent(
+          kBrowserCrashEvent, settings.value(),
+          GetBrowserCrashEventDeprecated(channel, version, report.id, platform),
+          base::Time::FromTimeT(report.creation_time));
+    }
+
     if (report.creation_time > latest_creation_time) {
       latest_creation_time = report.creation_time;
     }

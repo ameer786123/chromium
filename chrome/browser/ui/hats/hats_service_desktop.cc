@@ -14,7 +14,6 @@
 #include "base/functional/callback_helpers.h"
 #include "base/json/values_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/rand_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
@@ -137,7 +136,7 @@ HatsServiceDesktop::DelayedSurveyTask::DelayedSurveyTask(
     content::WebContents* web_contents,
     const SurveyBitsData& product_specific_bits_data,
     const SurveyStringData& product_specific_string_data,
-    NavigationBehaviour navigation_behaviour,
+    NavigationBehavior navigation_behavior,
     base::OnceClosure success_callback,
     base::OnceClosure failure_callback,
     std::optional<std::string_view> supplied_trigger_id)
@@ -145,7 +144,7 @@ HatsServiceDesktop::DelayedSurveyTask::DelayedSurveyTask(
       trigger_(trigger),
       product_specific_bits_data_(product_specific_bits_data),
       product_specific_string_data_(product_specific_string_data),
-      navigation_behaviour_(navigation_behaviour),
+      navigation_behavior_(navigation_behavior),
       success_callback_(std::move(success_callback)),
       failure_callback_(std::move(failure_callback)),
       supplied_trigger_id_(std::move(supplied_trigger_id)) {
@@ -160,31 +159,23 @@ HatsServiceDesktop::DelayedSurveyTask::GetWeakPtr() {
 }
 
 void HatsServiceDesktop::DelayedSurveyTask::Launch() {
-  CHECK(web_contents());
+  // web_contents() might be null here despite removing the task in
+  // WebContentsDestroyed.
   if (web_contents() &&
       web_contents()->GetVisibility() == content::Visibility::VISIBLE) {
     hats_service_->LaunchSurveyForWebContents(
         trigger_, web_contents(), product_specific_bits_data_,
         product_specific_string_data_, std::move(success_callback_),
         std::move(failure_callback_), supplied_trigger_id_, SurveyOptions());
-    hats_service_->RemoveTask(*this);
   }
+
+  hats_service_->RemoveTask(*this);
 }
 
 void HatsServiceDesktop::DelayedSurveyTask::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (navigation_behaviour_ == NavigationBehaviour::ALLOW_ANY ||
-      !navigation_handle || !navigation_handle->IsInPrimaryMainFrame()) {
-    return;
-  }
-
-  if (navigation_behaviour_ == NavigationBehaviour::REQUIRE_SAME_DOCUMENT &&
-      navigation_handle->IsSameDocument()) {
-    return;
-  }
-
-  if (navigation_behaviour_ == NavigationBehaviour::REQUIRE_SAME_ORIGIN &&
-      navigation_handle->HasCommitted() && navigation_handle->IsSameOrigin()) {
+  if (hats_service_->IsNavigationAllowed(navigation_handle,
+                                         navigation_behavior_)) {
     return;
   }
 
@@ -287,7 +278,7 @@ bool HatsServiceDesktop::LaunchDelayedSurveyForWebContents(
     int timeout_ms,
     const SurveyBitsData& product_specific_bits_data,
     const SurveyStringData& product_specific_string_data,
-    NavigationBehaviour navigation_behaviour,
+    NavigationBehavior navigation_behavior,
     base::OnceClosure success_callback,
     base::OnceClosure failure_callback,
     const std::optional<std::string>& supplied_trigger_id,
@@ -313,7 +304,7 @@ bool HatsServiceDesktop::LaunchDelayedSurveyForWebContents(
   }
   auto result = pending_tasks_.emplace(
       this, trigger, web_contents, product_specific_bits_data,
-      product_specific_string_data, navigation_behaviour,
+      product_specific_string_data, navigation_behavior,
       std::move(success_callback), std::move(failure_callback),
       supplied_trigger_id);
   if (!result.second) {
@@ -542,7 +533,8 @@ bool HatsServiceDesktop::CanShowSurvey(const std::string& trigger) const {
 bool HatsServiceDesktop::CanShowAnySurvey(bool user_prompted) const {
   // HaTS requires metrics consent to run. This is also how HaTS can be
   // disabled by policy.
-  if (!g_browser_process->GetMetricsServicesManager()
+  if (!g_browser_process->GetMetricsServicesManager() ||
+      !g_browser_process->GetMetricsServicesManager()
            ->IsMetricsConsentGiven()) {
     return false;
   }
@@ -601,8 +593,7 @@ void HatsServiceDesktop::RecordSurveyAsShown(std::string trigger_id) {
                           return pair.second.trigger_id;
                         });
 
-  CHECK(trigger_survey_config != survey_configs_by_triggers_.end(),
-        base::NotFatalUntil::M130);
+  CHECK(trigger_survey_config != survey_configs_by_triggers_.end());
   std::string trigger = trigger_survey_config->first;
 
   UMA_HISTOGRAM_ENUMERATION(kHatsShouldShowSurveyReasonHistogram,
@@ -677,10 +668,14 @@ void HatsServiceDesktop::LaunchSurveyForBrowser(
     const SurveyBitsData& product_specific_bits_data,
     const SurveyStringData& product_specific_string_data,
     const std::optional<std::string_view>& supplied_trigger_id) {
+  if (!browser || browser->IsAttemptingToCloseBrowser()) {
+    // Don't launch surveys during browser closure.
+    return;
+  }
+
   CHECK(survey_configs_by_triggers_.find(trigger) !=
         survey_configs_by_triggers_.end());
   auto survey_config = survey_configs_by_triggers_[trigger];
-
   if (!IsRightBrowserType(browser, survey_config.requested_browser_type)) {
     UMA_HISTOGRAM_ENUMERATION(kHatsShouldShowSurveyReasonHistogram,
                               ShouldShowSurveyReasons::kNoWrongBrowserType);
@@ -740,7 +735,7 @@ void HatsServiceDesktop::CheckSurveyStatusAndMaybeShow(
   // trigger. If fields are set for a trigger, they must be provided.
   CHECK_EQ(product_specific_bits_data.size(),
            survey_config.product_specific_bits_data_fields.size());
-  for (auto field_value : product_specific_bits_data) {
+  for (const auto& field_value : product_specific_bits_data) {
     CHECK(base::Contains(survey_config.product_specific_bits_data_fields,
                          field_value.first));
   }
@@ -749,7 +744,7 @@ void HatsServiceDesktop::CheckSurveyStatusAndMaybeShow(
   // trigger. If fields are set for a trigger, they must be provided.
   CHECK_EQ(product_specific_string_data.size(),
            survey_config.product_specific_string_data_fields.size());
-  for (auto field_value : product_specific_string_data) {
+  for (const auto& field_value : product_specific_string_data) {
     CHECK(base::Contains(survey_config.product_specific_string_data_fields,
                          field_value.first));
   }

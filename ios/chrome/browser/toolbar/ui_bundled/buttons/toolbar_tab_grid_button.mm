@@ -11,7 +11,6 @@
 #import "ios/chrome/browser/toolbar/ui_bundled/buttons/toolbar_configuration.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/buttons/toolbar_tab_group_state.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_constants.h"
-#import "ios/chrome/browser/toolbar/ui_bundled/tab_groups/tab_group_indicator_features_utils.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/l10n/l10n_util.h"
@@ -49,12 +48,10 @@ const CGFloat kLabelOffset = 3;
     (ToolbarTabGridButtonImageLoader)tabGroupStateImageLoader {
   CHECK(tabGroupStateImageLoader);
   self = [super
-      initWithImageLoader:^{
-        return [[UIImage alloc] init];
-      }
-      IPHHighlightedImageLoader:^{
-        return [[UIImage alloc] init];
-      }];
+            initWithImageLoader:^{
+              return [[UIImage alloc] init];
+            }
+      IPHHighlightedImageLoader:nil];
   if (self) {
     _normalStateImageLoader = ^{
       return tabGroupStateImageLoader(ToolbarTabGroupState::kNormal);
@@ -79,8 +76,6 @@ const CGFloat kLabelOffset = 3;
 }
 
 - (void)setTabGroupState:(ToolbarTabGroupState)tabGroupState {
-  CHECK(tabGroupState == ToolbarTabGroupState::kNormal ||
-        (IsTabGroupIndicatorEnabled() && HasTabGroupIndicatorButtonsUpdated()));
   if (_tabGroupState == tabGroupState) {
     return;
   }
@@ -90,11 +85,18 @@ const CGFloat kLabelOffset = 3;
   [self updateTabCountLabelTextColor];
 }
 
-#pragma mark - UIAccessibility
+- (void)setIphHighlighted:(BOOL)iphHighlighted {
+  [super setIphHighlighted:iphHighlighted];
+  [self updateTabCountLabelTextColor];
+}
+
+#pragma mark - UIAccessibilityIdentification
 
 - (NSString*)accessibilityIdentifier {
   return kToolbarStackButtonIdentifier;
 }
+
+#pragma mark - UIAccessibility
 
 - (NSString*)accessibilityLabel {
   switch (self.tabGroupState) {
@@ -109,18 +111,6 @@ const CGFloat kLabelOffset = 3;
 
 - (void)setHighlighted:(BOOL)highlighted {
   [super setHighlighted:highlighted];
-  [self updateTabCountLabelTextColor];
-}
-
-#pragma mark - ToolbarButton
-
-// TODO(crbug.com/40265763): Rename all the references of 'iphHighlighted' to
-// 'customHighlighted' as the highlighting UI wont be limited to IPH cases.
-- (void)setIphHighlighted:(BOOL)iphHighlighted {
-  if (self.iphHighlighted == iphHighlighted) {
-    return;
-  }
-  [super setIphHighlighted:iphHighlighted];
   [self updateTabCountLabelTextColor];
 }
 

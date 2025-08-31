@@ -25,6 +25,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/values.h"
@@ -34,7 +35,7 @@
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
-#include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/interaction/browser_elements.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/contents_web_view.h"
@@ -746,21 +747,16 @@ base::Value WebContentsInteractionTestUtil::Evaluate(
     std::string* error_message) {
   CHECK(is_page_loaded());
   auto result = EvalJsLocal(web_contents(), function);
-  if (!result.error.empty()) {
+  if (!result.is_ok()) {
     if (error_message) {
-      *error_message = result.error;
+      *error_message = result.ExtractError();
       return base::Value();
     } else {
-      NOTREACHED() << "Uncaught JS exception: " << result.error;
+      NOTREACHED() << "Uncaught JS exception: " << result;
     }
   }
 
-  // Despite the fact that EvalJsResult::value is const, base::Value in general
-  // is moveable and nothing special is done on EvalJsResult destructor, which
-  // means it's safe to const-cast and move the value out of the struct.
-  auto& value = const_cast<base::Value&>(result.value);
-
-  return std::move(value);
+  return std::move(result).TakeValue();
 }
 
 void WebContentsInteractionTestUtil::Execute(const std::string& function) {
@@ -779,12 +775,16 @@ void WebContentsInteractionTestUtil::SendEventOnStateChange(
 }
 
 bool WebContentsInteractionTestUtil::Exists(const DeepQuery& query,
-                                            std::string* not_found) {
+                                            std::string* not_found) const {
   const std::string full_query =
       CreateDeepQuery(query, GetExistsQuery("err.selector", "''"));
-  const std::string result = Evaluate(full_query).GetString();
-  if (not_found)
+  // Const cast is safe as the query cannot modify the WebContents.
+  const std::string result = const_cast<WebContentsInteractionTestUtil*>(this)
+                                 ->Evaluate(full_query)
+                                 .GetString();
+  if (not_found) {
     *not_found = result;
+  }
   return result.empty();
 }
 
@@ -1085,7 +1085,7 @@ ui::ElementContext TabWebContentsInteractionTestUtil::GetElementContext()
     const {
   ui::ElementContext context;
   if (Browser* const browser = chrome::FindBrowserWithTab(web_contents())) {
-    context = browser->window()->GetElementContext();
+    context = BrowserElements::From(browser)->GetContext();
   }
   return context;
 }

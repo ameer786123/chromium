@@ -21,7 +21,7 @@
 #include "ui/events/event.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/message_center/message_center_observer.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/metadata/view_factory.h"
@@ -236,7 +236,6 @@ class ASH_EXPORT TrayBubbleView : public views::BubbleDialogDelegateView,
   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
   void OnWidgetBoundsChanged(views::Widget* widget,
                              const gfx::Rect& bounds) override;
-  ui::LayerType GetLayerType() const override;
 
   // views::View:
   void AddedToWidget() override;
@@ -244,7 +243,6 @@ class ASH_EXPORT TrayBubbleView : public views::BubbleDialogDelegateView,
       const views::SizeBounds& available_size) const override;
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
-  void OnThemeChanged() override;
 
   // views::MouseWatcherListener:
   void MouseMovedOutOfHost() override;

@@ -54,7 +54,7 @@ struct SearchPasswordsWidgetEntryView: View {
 
   var body: some View {
     // The account to display was deleted (entry.deleted can only be true if
-    // IOS_ENABLE_WIDGETS_FOR_MIM is enabled).
+    // IOS_ENABLE_WIDGETS_FOR_MIM is true).
     if entry.deleted && !entry.isPreview {
       SmallWidgetDeletedAccountView()
     } else {
@@ -62,7 +62,9 @@ struct SearchPasswordsWidgetEntryView: View {
         destinationURL: destinationURL(
           url: WidgetConstants.SearchPasswordsWidget.url, gaia: entry.gaiaID),
         imageName: "widget_password_manager_logo",
-        title: "IDS_IOS_WIDGET_KIT_EXTENSION_SEARCH_PASSWORDS_TITLE",
+        title: entry.avatar != nil
+          ? "IDS_IOS_WIDGET_KIT_EXTENSION_SEARCH_PASSWORDS_AVATAR_TITLE"
+          : "IDS_IOS_WIDGET_KIT_EXTENSION_SEARCH_PASSWORDS_TITLE",
         accessibilityLabel: "IDS_IOS_WIDGET_KIT_EXTENSION_SEARCH_PASSWORDS_A11Y_LABEL", entry: entry
       )
     }

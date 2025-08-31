@@ -6,8 +6,10 @@ package org.chromium.chrome.browser.tabmodel;
 
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+
+import java.util.function.Supplier;
 
 /** Creates a {@link TabUngrouper} for {@link TabGroupModelFilterFactory}. */
 @FunctionalInterface
@@ -21,5 +23,6 @@ public interface TabUngrouperFactory {
      */
     /*package*/
     TabUngrouper create(
-            boolean isIncognitoBranded, Supplier<TabGroupModelFilter> tabGroupModelFilterSupplier);
+            boolean isIncognitoBranded,
+            Supplier<@Nullable TabGroupModelFilter> tabGroupModelFilterSupplier);
 }

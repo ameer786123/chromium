@@ -7,16 +7,15 @@
 
 #include <stdint.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "base/strings/string_split.h"
-#include "ui/accessibility/ax_action_handler_registry.h"
 #include "ui/accessibility/ax_base_export.h"
 #include "ui/accessibility/ax_constants.mojom.h"
-#include "ui/accessibility/ax_enums.mojom-forward.h"
-#include "ui/accessibility/ax_node_data.h"
-#include "ui/gfx/geometry/rect.h"
+#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/ax_node_id_forward.h"
+#include "ui/accessibility/ax_tree_id.h"
 
 namespace ui {
 
@@ -82,11 +81,10 @@ struct AX_BASE_EXPORT AXTreeData final {
   // Metadata from an HTML HEAD, such as <meta> tags. Stored here
   // unparsed because the only applications that need these just want
   // raw strings. Only included if the kHTMLMetadata AXMode is enabled.
-  std::vector<std::string> metadata;
+  std::optional<std::vector<std::string>> metadata;
 };
 
 AX_BASE_EXPORT bool operator==(const AXTreeData& lhs, const AXTreeData& rhs);
-AX_BASE_EXPORT bool operator!=(const AXTreeData& lhs, const AXTreeData& rhs);
 
 AX_BASE_EXPORT const AXTreeData& AXTreeDataUnknown();
 

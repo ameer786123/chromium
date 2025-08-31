@@ -38,6 +38,7 @@
 #include "base/sequence_checker.h"
 #include "base/strings/cstring_view.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -1008,6 +1009,15 @@ TEST_P(SQLDatabaseTest, Raze) {
   }
 }
 
+TEST_P(SQLDatabaseTest, RazeFailedOnPoisoned) {
+  // Poison the database.
+  db_->Poison();
+
+  base::HistogramTester tester;
+  EXPECT_FALSE(db_->Raze());
+  tester.ExpectTotalCount("Sql.Database.Raze.FailureReason.Test", 1);
+}
+
 TEST_P(SQLDatabaseTest, RazeDuringSelect) {
   ASSERT_TRUE(
       db_->Execute("CREATE TABLE rows(id INTEGER PRIMARY KEY NOT NULL)"));
@@ -1269,9 +1279,13 @@ TEST_P(SQLDatabaseTest, RazeCallbackReopen) {
   // callback will call RazeAndPoison().  Open() will then fail and be
   // retried.  The second Open() on the empty database will succeed
   // cleanly.
-  ASSERT_TRUE(db_->Open(db_path_));
-  ASSERT_TRUE(db_->Execute("PRAGMA auto_vacuum"));
-  EXPECT_EQ(0, SqliteSchemaCount(db_.get()));
+  {
+    base::HistogramTester tester;
+    ASSERT_TRUE(db_->Open(db_path_));
+    tester.ExpectTotalCount("Sql.Database.RazeTime.Test", 1);
+    ASSERT_TRUE(db_->Execute("PRAGMA auto_vacuum"));
+    EXPECT_EQ(0, SqliteSchemaCount(db_.get()));
+  }
 }
 
 TEST_P(SQLDatabaseTest, RazeAndPoison_DeletesData) {
@@ -1335,12 +1349,6 @@ TEST_P(SQLDatabaseTest, RazeAndPoison_OpenTransaction) {
   EXPECT_TRUE(
       db_->Execute("CREATE TABLE rows(id INTEGER PRIMARY KEY NOT NULL)"))
       << "RazeAndPoison() did not produce a healthy empty database";
-}
-
-TEST_P(SQLDatabaseTest, RazeAndPoison_Preload_NoCrash) {
-  db_->Preload();
-  db_->RazeAndPoison();
-  db_->Preload();
 }
 
 TEST_P(SQLDatabaseTest, RazeAndPoison_DoesTableExist) {
@@ -1592,12 +1600,6 @@ TEST_P(SQLDatabaseTest, Poison_Close_Reopen_NoChanges) {
   EXPECT_TRUE(
       db_->Execute("CREATE TABLE rows(id INTEGER PRIMARY KEY NOT NULL)"))
       << "Execute() returned false but went through after Poison()";
-}
-
-TEST_P(SQLDatabaseTest, Poison_Preload_NoCrash) {
-  db_->Preload();
-  db_->Poison();
-  db_->Preload();
 }
 
 TEST_P(SQLDatabaseTest, Poison_DoesTableExist) {
@@ -1968,90 +1970,6 @@ TEST_P(SQLDatabaseTest, MmapInitiallyEnabledAltStatus) {
   EXPECT_EQ("0", ExecuteWithResult(db_.get(), "PRAGMA mmap_size"));
 }
 
-TEST_P(SQLDatabaseTest, ComputeMmapSizeForOpen) {
-  const size_t kMmapAlot = 25 * 1024 * 1024;
-  int64_t mmap_status = MetaTable::kMmapFailure;
-
-  // If there is no meta table (as for a fresh database), assume that everything
-  // should be mapped, and the status of the meta table is not affected.
-  ASSERT_TRUE(!db_->DoesTableExist("meta"));
-  ASSERT_GT(db_->ComputeMmapSizeForOpen(), kMmapAlot);
-  ASSERT_TRUE(!db_->DoesTableExist("meta"));
-
-  // When the meta table is first created, it sets up to map everything.
-  ASSERT_TRUE(MetaTable().Init(db_.get(), 1, 1));
-  ASSERT_TRUE(db_->DoesTableExist("meta"));
-  ASSERT_GT(db_->ComputeMmapSizeForOpen(), kMmapAlot);
-  ASSERT_TRUE(MetaTable::GetMmapStatus(db_.get(), &mmap_status));
-  ASSERT_EQ(MetaTable::kMmapSuccess, mmap_status);
-
-  // Preload with partial progress of one page.  Should map everything.
-  ASSERT_TRUE(db_->Execute("REPLACE INTO meta VALUES ('mmap_status', 1)"));
-  ASSERT_GT(db_->ComputeMmapSizeForOpen(), kMmapAlot);
-  ASSERT_TRUE(MetaTable::GetMmapStatus(db_.get(), &mmap_status));
-  ASSERT_EQ(MetaTable::kMmapSuccess, mmap_status);
-
-  // Failure status maps nothing.
-  ASSERT_TRUE(db_->Execute("REPLACE INTO meta VALUES ('mmap_status', -2)"));
-  ASSERT_EQ(0UL, db_->ComputeMmapSizeForOpen());
-
-  // Re-initializing the meta table does not re-create the key if the table
-  // already exists.
-  ASSERT_TRUE(db_->Execute("DELETE FROM meta WHERE key = 'mmap_status'"));
-  ASSERT_TRUE(MetaTable().Init(db_.get(), 1, 1));
-  ASSERT_EQ(MetaTable::kMmapSuccess, mmap_status);
-  ASSERT_TRUE(MetaTable::GetMmapStatus(db_.get(), &mmap_status));
-  ASSERT_EQ(0, mmap_status);
-
-  // With no key, map everything and create the key.
-  // TODO(shess): This really should be "maps everything after validating it",
-  // but that is more complicated to structure.
-  ASSERT_GT(db_->ComputeMmapSizeForOpen(), kMmapAlot);
-  ASSERT_TRUE(MetaTable::GetMmapStatus(db_.get(), &mmap_status));
-  ASSERT_EQ(MetaTable::kMmapSuccess, mmap_status);
-}
-
-TEST_P(SQLDatabaseTest, ComputeMmapSizeForOpenAltStatus) {
-  const size_t kMmapAlot = 25 * 1024 * 1024;
-
-  // At this point, Database still expects a future [meta] table.
-  ASSERT_FALSE(db_->DoesTableExist("meta"));
-  ASSERT_FALSE(db_->DoesViewExist("MmapStatus"));
-  ASSERT_GT(db_->ComputeMmapSizeForOpen(), kMmapAlot);
-  ASSERT_FALSE(db_->DoesTableExist("meta"));
-  ASSERT_FALSE(db_->DoesViewExist("MmapStatus"));
-
-  // Using alt status, everything should be mapped, with state in the view.
-  DatabaseOptions options = GetDBOptions()
-                                .set_mmap_alt_status_discouraged(true)
-                                .set_enable_views_discouraged(true);
-  db_ = std::make_unique<Database>(options, test::kTestTag);
-  ASSERT_TRUE(db_->Open(db_path_));
-
-  ASSERT_GT(db_->ComputeMmapSizeForOpen(), kMmapAlot);
-  ASSERT_FALSE(db_->DoesTableExist("meta"));
-  ASSERT_TRUE(db_->DoesViewExist("MmapStatus"));
-  EXPECT_EQ(base::NumberToString(MetaTable::kMmapSuccess),
-            ExecuteWithResult(db_.get(), "SELECT * FROM MmapStatus"));
-
-  // Also maps everything when kMmapSuccess is already in the view.
-  ASSERT_GT(db_->ComputeMmapSizeForOpen(), kMmapAlot);
-
-  // Preload with partial progress of one page.  Should map everything.
-  ASSERT_TRUE(db_->Execute("DROP VIEW MmapStatus"));
-  ASSERT_TRUE(db_->Execute("CREATE VIEW MmapStatus (value) AS SELECT 1"));
-  ASSERT_GT(db_->ComputeMmapSizeForOpen(), kMmapAlot);
-  EXPECT_EQ(base::NumberToString(MetaTable::kMmapSuccess),
-            ExecuteWithResult(db_.get(), "SELECT * FROM MmapStatus"));
-
-  // Failure status leads to nothing being mapped.
-  ASSERT_TRUE(db_->Execute("DROP VIEW MmapStatus"));
-  ASSERT_TRUE(db_->Execute("CREATE VIEW MmapStatus (value) AS SELECT -2"));
-  ASSERT_EQ(0UL, db_->ComputeMmapSizeForOpen());
-  EXPECT_EQ(base::NumberToString(MetaTable::kMmapFailure),
-            ExecuteWithResult(db_.get(), "SELECT * FROM MmapStatus"));
-}
-
 TEST_P(SQLDatabaseTest, GetMemoryUsage) {
   // Databases with mmap enabled may not follow the assumptions below.
   db_->Close();
@@ -2326,12 +2244,9 @@ TEST_P(SQLDatabaseTest, CheckpointDatabase) {
   if (!IsWALEnabled())
     return;
 
+  // WAL file initially not present until there are modifications to the db.
   base::FilePath wal_path = Database::WriteAheadLogPath(db_path_);
-
-  // WAL file initially empty.
-  EXPECT_TRUE(base::PathExists(wal_path));
-  std::optional<int64_t> wal_size = GetFileSize(wal_path);
-  EXPECT_THAT(wal_size, testing::Optional(0));
+  EXPECT_FALSE(base::PathExists(wal_path));
 
   ASSERT_TRUE(
       db_->Execute("CREATE TABLE foo (id INTEGER UNIQUE, value INTEGER)"));
@@ -2339,7 +2254,7 @@ TEST_P(SQLDatabaseTest, CheckpointDatabase) {
   ASSERT_TRUE(db_->Execute("INSERT INTO foo VALUES (2, 2)"));
 
   // Writes reach WAL file but not db file.
-  wal_size = GetFileSize(wal_path);
+  std::optional<int64_t> wal_size = GetFileSize(wal_path);
   ASSERT_TRUE(wal_size.has_value());
   EXPECT_GT(wal_size.value(), 0);
 
@@ -2425,31 +2340,6 @@ TEST_P(SQLDatabaseTest, OpenFails_ExclusiveLock) {
   ASSERT_TRUE(db_->Open(db_path_));
 }
 
-// This test is simulating an common error code received on Windows when
-// the database file is being copied by a third-party. The common API used
-// is CopyFileEx(...) which is acquiring a shared lock on the file.
-TEST_P(SQLDatabaseTest, OpenFails_SharedLock) {
-  db_->Close();
-
-  base::File file(db_path_, base::File::FLAG_OPEN | base::File::FLAG_READ);
-  ASSERT_TRUE(file.IsValid());
-  ASSERT_EQ(base::File::FILE_OK, file.Lock(base::File::LockMode::kShared));
-
-  {
-    base::HistogramTester tester;
-    sql::test::ScopedErrorExpecter expecter;
-    expecter.ExpectError(SQLITE_BUSY);
-    ASSERT_FALSE(db_->Open(db_path_));
-    ASSERT_TRUE(expecter.SawExpectedErrors());
-    tester.ExpectTotalCount("Sql.Database.Open.FailureReason.Test", 1);
-    db_->Close();
-  }
-
-  ASSERT_EQ(base::File::FILE_OK, file.Unlock());
-
-  ASSERT_TRUE(db_->Open(db_path_));
-}
-
 #endif  // BUILDFLAG(IS_WIN)
 
 TEST_P(SQLDatabaseTest, OpenHistograms) {
@@ -2461,8 +2351,6 @@ TEST_P(SQLDatabaseTest, OpenHistograms) {
   ASSERT_TRUE(db_->Open(db_path_));
   tester.ExpectTotalCount("Sql.Database.Success.SqliteOpenTime.Test", 1);
   tester.ExpectTotalCount("Sql.Database.Success.OpenInternalTime.Test", 1);
-  tester.ExpectUniqueSample("Sql.Database.Success.SqliteOpenAttempts.Test", 1,
-                            1);
 }
 
 TEST_P(SQLDatabaseTest, OpenFailsAfterCorruptSizeInHeader) {
@@ -2595,6 +2483,20 @@ TEST_P(SQLDatabaseTest, SchemaFailsAfterCorruptSizeInHeader) {
   }
 }
 
+TEST_P(SQLDatabaseTest, StatementErrorHistogram) {
+  static constexpr char kCreateSql[] = "CREATE TABLE foo (id INTEGER UNIQUE)";
+  ASSERT_TRUE(db_->Execute(kCreateSql));
+
+  sql::test::ScopedErrorExpecter expecter;
+  expecter.ExpectError(SQLITE_ERROR);
+
+  base::HistogramTester tester;
+  EXPECT_FALSE(db_->Execute("SELECT invalid_column from foo"));
+  tester.ExpectUniqueSample("Sql.Database.Statement.Error.Test",
+                            SqliteResultCode::kError, 1);
+  EXPECT_TRUE(expecter.SawExpectedErrors());
+}
+
 TEST(SQLEmptyPathDatabaseTest, EmptyPathTest) {
   Database db(test::kTestTag);
   EXPECT_TRUE(db.OpenInMemory());
@@ -2614,4 +2516,118 @@ INSTANTIATE_TEST_SUITE_P(JournalMode,
                          SQLDatabaseTestExclusiveMode,
                          testing::Values(false));
 #endif
+
+class ReadOnlySQLDatabaseTest
+    : public testing::Test,
+      public testing::WithParamInterface<std::tuple<bool, bool, bool>> {
+ protected:
+  void SetUp() override {
+    ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
+    const char* db_name = "database_test.db";
+    db_path_ = temp_dir_.GetPath().AppendASCII(db_name);
+
+    std::tie(wal_mode_, exclusive_mode_, readonly_mode_) = GetParam();
+  }
+
+  // Opens a database with options that depend on test params. If
+  // `force_readwrite` is true, the database is opened in read/write mode
+  // irrespective of the "read-only" test param. The database is created
+  // if it doesn't already exist iff it is opened in read/write mode.
+  void OpenDatabase(bool force_read_write) {
+    ASSERT_FALSE(db_path_.empty());
+    db_.reset();
+    db_ = std::make_unique<Database>(GetDBOptions(force_read_write),
+                                     test::kTestTag);
+    ASSERT_TRUE(db_->Open(db_path_));
+  }
+
+  void CreateTable() {
+    ASSERT_TRUE(db_->Execute(
+        "CREATE TABLE IF NOT EXISTS entries(key TEXT PRIMARY KEY UNIQUE NOT "
+        "NULL, content BLOB NOT NULL)"));
+  }
+
+  void Insert() {
+    sql::Statement stm(
+        db_->GetCachedStatement(SQL_FROM_HERE,
+                                "REPLACE INTO entries (key, content "
+                                ") VALUES (?, ?)"));
+    stm.BindString(0, value);
+    stm.BindString(1, base::as_string_view(value));
+    ASSERT_TRUE(stm.is_valid());
+    EXPECT_TRUE(stm.Run());
+  }
+
+  void Select() {
+    sql::Statement stm = sql::Statement(db_->GetCachedStatement(
+        SQL_FROM_HERE, "SELECT content FROM entries WHERE key = ?"));
+    stm.BindString(0, value);
+    ASSERT_TRUE(stm.is_valid());
+    EXPECT_TRUE(stm.Step());
+  }
+
+  DatabaseOptions GetDBOptions(bool force_readwrite_only) {
+    return DatabaseOptions()
+        .set_read_only(force_readwrite_only ? false : readonly_mode_)
+        .set_wal_mode(wal_mode_)
+        .set_exclusive_locking(exclusive_mode_);
+  }
+
+ protected:
+  const std::string value{"VALUE"};
+  base::ScopedTempDir temp_dir_;
+  base::FilePath db_path_;
+  std::unique_ptr<Database> db_;
+
+  bool wal_mode_;
+  bool exclusive_mode_;
+  bool readonly_mode_;
+};
+
+TEST_P(ReadOnlySQLDatabaseTest, MmapSize) {
+  // Ensures the DB exists.
+  ASSERT_NO_FATAL_FAILURE(OpenDatabase(true));
+  // Re-open and test the mmap on the existing DB.
+  ASSERT_NO_FATAL_FAILURE(OpenDatabase(false));
+  sql::Statement pragma_mmap_size(db_->GetUniqueStatement("PRAGMA mmap_size"));
+  pragma_mmap_size.Step();
+  EXPECT_NE(pragma_mmap_size.ColumnInt64(0), 0);
+}
+
+TEST_P(ReadOnlySQLDatabaseTest, Histograms) {
+  base::HistogramTester tester;
+  ASSERT_NO_FATAL_FAILURE(OpenDatabase(true));
+
+  tester.ExpectTotalCount("Sql.Database.Success.OpenInternalTime.Test", 1);
+  tester.ExpectTotalCount("Sql.Database.Success.SqliteOpenTime.Test", 1);
+
+  ASSERT_NO_FATAL_FAILURE(OpenDatabase(false));
+
+  tester.ExpectTotalCount("Sql.Database.Success.OpenInternalTime.Test", 2);
+  tester.ExpectTotalCount("Sql.Database.Success.SqliteOpenTime.Test", 2);
+}
+
+TEST_P(ReadOnlySQLDatabaseTest, CreateAndSelect) {
+  // Not yet supported by Sqlite. Cannot be tested.
+  // TODO(crbug.com/413595430): Remove this if the combination of flags ever
+  // works.
+  if (wal_mode_ && exclusive_mode_ && readonly_mode_) {
+    return;
+  }
+
+  ASSERT_NO_FATAL_FAILURE(OpenDatabase(true));
+  ASSERT_NO_FATAL_FAILURE(CreateTable());
+  ASSERT_NO_FATAL_FAILURE(Insert());
+  ASSERT_NO_FATAL_FAILURE(Select());
+
+  ASSERT_NO_FATAL_FAILURE(OpenDatabase(false));
+  ASSERT_NO_FATAL_FAILURE(Select());
+}
+
+INSTANTIATE_TEST_SUITE_P(LockingMode,
+                         ReadOnlySQLDatabaseTest,
+                         testing::Combine(testing::Bool(),
+                                          testing::Bool(),
+                                          testing::Bool()));
+
 }  // namespace sql

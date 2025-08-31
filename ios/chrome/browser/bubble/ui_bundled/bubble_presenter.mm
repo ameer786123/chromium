@@ -27,6 +27,8 @@
 #import "ios/chrome/browser/bubble/ui_bundled/gesture_iph/gesture_in_product_help_view_delegate.h"
 #import "ios/chrome/browser/bubble/ui_bundled/gesture_iph/toolbar_swipe_gesture_in_product_help_view.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
+#import "ios/chrome/browser/fullscreen/ui_bundled/animated_scoped_fullscreen_disabler.h"
+#import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_controller.h"
 #import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_recorder.h"
 #import "ios/chrome/browser/overlays/model/public/overlay_presenter.h"
 #import "ios/chrome/browser/overlays/model/public/overlay_presenter_observer_bridge.h"
@@ -39,12 +41,12 @@
 #import "ios/chrome/browser/shared/model/utils/first_run_util.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/page_action_menu_entry_point_commands.h"
 #import "ios/chrome/browser/shared/public/commands/popup_menu_commands.h"
 #import "ios/chrome/browser/shared/public/commands/tab_strip_commands.h"
 #import "ios/chrome/browser/shared/public/commands/toolbar_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
-#import "ios/chrome/browser/shared/ui/elements/custom_highlight_button.h"
 #import "ios/chrome/browser/shared/ui/util/layout_guide_names.h"
 #import "ios/chrome/browser/shared/ui/util/named_guide.h"
 #import "ios/chrome/browser/shared/ui/util/rtl_geometry.h"
@@ -97,6 +99,11 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
   // Whether the presenter is started.
   BOOL _started;
 
+  // The fullscreen controller and disabler to block fullscreen momentarily for
+  // some bubbles while they present.
+  raw_ptr<FullscreenController> _fullscreenController;
+  std::unique_ptr<AnimatedScopedFullscreenDisabler> _animatedFullscreenDisabler;
+
   // List of existing bubble view presenters.
   BubbleViewControllerPresenter* _bottomToolbarTipBubblePresenter;
   BubbleViewControllerPresenter* _discoverFeedHeaderMenuTipBubblePresenter;
@@ -113,6 +120,7 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
   BubbleViewControllerPresenter*
       _switchAccountWithNTPIdentityDiscBubblePresenter;
   BubbleViewControllerPresenter* _feedSwipeBubblePresenter;
+  BubbleViewControllerPresenter* _pageActionMenuBubblePresenter;
 
   // List of existing gestural IPH views.
   GestureInProductHelpView* _pullToRefreshGestureIPH;
@@ -125,6 +133,8 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
                 engagementTracker:
                     (raw_ptr<feature_engagement::Tracker>)engagementTracker
                      webStateList:(raw_ptr<WebStateList>)webStateList
+             fullscreenController:
+                 (raw_ptr<FullscreenController>)fullscreenController
     overlayPresenterForWebContent:
         (raw_ptr<OverlayPresenter>)webContentOverlayPresenter
                     infobarBanner:(raw_ptr<OverlayPresenter>)bannerPresenter
@@ -136,6 +146,7 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
     _layoutGuideCenter = layoutGuideCenter;
     _engagementTracker = engagementTracker;
     _webStateList = webStateList;
+    _fullscreenController = fullscreenController;
 
     _overlayPresenterObserver =
         std::make_unique<OverlayPresenterObserverBridge>(self);
@@ -181,6 +192,7 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
   [_lensKeyboardPresenter dismissAnimated:NO];
   [_defaultPageModeTipBubblePresenter dismissAnimated:NO];
   [_lensOverlayEntrypointBubblePresenter dismissAnimated:NO];
+  [_pageActionMenuBubblePresenter dismissAnimated:NO];
   [self hideAllGestureInProductHelpViewsForReason:IPHDismissalReasonType::
                                                       kUnknown];
 }
@@ -523,9 +535,6 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
 
   BubbleArrowDirection arrowDirection = BubbleArrowDirectionUp;
 
-  // TODO(crbug.com/405076601): Add final (translatable) string once available.
-  NSString* text = @"You can now switch accounts in Chrome";
-
   CGPoint identityDiscAnchor =
       [self anchorPointToGuide:kNTPIdentityDiscButtonGuide
                      direction:arrowDirection];
@@ -540,8 +549,11 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
               kIPHiOSSwitchAccountsWithNTPAccountParticleDiscFeature
                     direction:arrowDirection
                     alignment:BubbleAlignmentBottomOrTrailing
-                         text:text
-        voiceOverAnnouncement:text
+                         text:l10n_util::GetNSString(
+                                  IDS_IOS_SWITCH_ACCOUNTS_IPH_MESSAGE)
+        voiceOverAnnouncement:
+            l10n_util::GetNSString(
+                IDS_IOS_SWITCH_ACCOUNTS_IPH_ACCESSIBILITY_LABEL)
                   anchorPoint:CGPoint(identityDiscAnchor.x,
                                       identityDiscAnchor.y + anchorYOffset)];
   if (presenter) {
@@ -737,6 +749,55 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
   }
 }
 
+- (void)presentPageActionMenuBubble {
+  if (![self canPresentBubbleWithCheckTabScrolledToTop:NO]) {
+    return;
+  }
+
+  web::WebState* currentWebState = _webStateList->GetActiveWebState();
+  if (currentWebState && IsUrlNtp(currentWebState->GetVisibleURL())) {
+    return;
+  }
+
+  BOOL isBottomOmnibox = IsBottomOmniboxAvailable() &&
+                         GetApplicationContext()->GetLocalState()->GetBoolean(
+                             prefs::kBottomOmnibox);
+  BubbleArrowDirection arrowDirection =
+      isBottomOmnibox ? BubbleArrowDirectionDown : BubbleArrowDirectionUp;
+  NSString* text = l10n_util::GetNSString(IDS_IOS_BWG_IPH_TEXT);
+
+  CGPoint pageActionMenuEntrypointAnchor =
+      [self anchorPointToGuide:kPageActionMenuEntrypointGuide
+                     direction:arrowDirection];
+
+  // To prevent the bubble from extending beyond the screen's edge, an offset is
+  // added, with the anchor point positioned at the top left corner.
+  // TODO(crbug.com/365049480): Remove this offset once the bubble view margins
+  // are fixed.
+  CGFloat anchorXOffset = UseRTLLayout() ? -2 : 2;
+
+  __weak __typeof(self) weakSelf = self;
+  BubbleViewControllerPresenter* presenter = [self
+      presentBubbleForFeature:feature_engagement::kIPHIOSPageActionMenu
+      direction:arrowDirection
+      alignment:BubbleAlignmentTopOrLeading
+      text:text
+      voiceOverAnnouncement:text
+      anchorPoint:CGPoint(pageActionMenuEntrypointAnchor.x + anchorXOffset,
+                          pageActionMenuEntrypointAnchor.y)
+      presentAction:^{
+        [weakSelf.pageActionMenuEntryPointHandler
+            toggleEntryPointHighlight:YES];
+      }
+      dismissAction:^{
+        [weakSelf.pageActionMenuEntryPointHandler toggleEntryPointHighlight:NO];
+      }];
+
+  if (presenter) {
+    _pageActionMenuBubblePresenter = presenter;
+  }
+}
+
 #pragma mark - GestureInProductHelpViewDelegate
 
 - (void)gestureInProductHelpView:(GestureInProductHelpView*)view
@@ -852,6 +913,9 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
                       anchorPoint:anchorPoint] &&
       ([self shouldForcePresentBubbleForFeature:feature] ||
        _engagementTracker->ShouldTriggerHelpUI(feature))) {
+    if ([self shouldDisableFullscreenForFeature:feature]) {
+      [self startAnimatedFullscreenDisabler];
+    }
     [presenter presentInViewController:self.rootViewController
                            anchorPoint:anchorPoint];
     if (presentAction) {
@@ -964,6 +1028,7 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
         if (dismissAction) {
           dismissAction();
         }
+        [weakSelf stopAnimatedFullscreenDisabler];
         [weakSelf featureDismissed:feature];
       };
 
@@ -976,6 +1041,8 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
 
   bubbleViewControllerPresenter.customBubbleVisibilityDuration =
       [self bubbleVisibilityDurationForFeature:feature];
+  bubbleViewControllerPresenter.ignoreWebContentAreaInteractions =
+      [self shouldIgnoreWebContentAreaInteractionsForFeature:feature];
 
   BOOL shouldDisablePanRecognizer =
       base::FeatureList::IsEnabled(kLensOverlayDisableIPHPanGesture);
@@ -984,8 +1051,10 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
            feature_engagement::kIPHiOSLensOverlayEscapeHatchTipFeature.name ||
        feature.name ==
            feature_engagement::kIPHiOSLensOverlayEntrypointTipFeature.name);
+  BOOL isPageActionMenuIPH =
+      feature.name == feature_engagement::kIPHIOSPageActionMenu.name;
   bubbleViewControllerPresenter.forceDisablePanGestureRecognizer =
-      shouldDisablePanRecognizer && isLensOverlayIPH;
+      (shouldDisablePanRecognizer && isLensOverlayIPH) || isPageActionMenuIPH;
 
   return bubbleViewControllerPresenter;
 }
@@ -1066,6 +1135,18 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
   return nil;
 }
 
+// Stops the animated fullscreen disabler.
+- (void)stopAnimatedFullscreenDisabler {
+  _animatedFullscreenDisabler = nullptr;
+}
+
+// Creates and starts the animated fullscreen disabler.
+- (void)startAnimatedFullscreenDisabler {
+  _animatedFullscreenDisabler =
+      std::make_unique<AnimatedScopedFullscreenDisabler>(_fullscreenController);
+  _animatedFullscreenDisabler->StartAnimation();
+}
+
 - (void)featureDismissed:(const base::Feature&)feature {
   if (!_engagementTracker) {
     return;
@@ -1078,11 +1159,33 @@ BOOL CanGestureInProductHelpViewFitInGuide(GestureInProductHelpView* view,
 - (NSTimeInterval)bubbleVisibilityDurationForFeature:
     (const base::Feature&)feature {
   // Display FollowWhileBrowsing in-product help bubble with custom duration.
-  if (feature.name == feature_engagement::kIPHFollowWhileBrowsingFeature.name) {
+  if (feature.name == feature_engagement::kIPHFollowWhileBrowsingFeature.name ||
+      feature.name == feature_engagement::kIPHIOSPageActionMenu.name) {
     return kDefaultLongDurationBubbleVisibility;
   }
 
   return 0;
+}
+
+// Returns whether the web content area interactions should be ignored for the
+// given feature.
+- (BOOL)shouldIgnoreWebContentAreaInteractionsForFeature:
+    (const base::Feature&)feature {
+  if (feature.name == feature_engagement::kIPHIOSPageActionMenu.name) {
+    return YES;
+  }
+
+  return NO;
+}
+
+// Returns whether fullscreen should be disabled before presenting the bubble
+// for a given feature.
+- (BOOL)shouldDisableFullscreenForFeature:(const base::Feature&)feature {
+  if (feature.name == feature_engagement::kIPHIOSPageActionMenu.name) {
+    return YES;
+  }
+
+  return NO;
 }
 
 // Return YES if the bubble should always be presented. Ex. if force present

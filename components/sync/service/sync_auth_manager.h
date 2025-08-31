@@ -10,19 +10,21 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/account_managed_status_finder_outcome.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/sync/engine/connection_status.h"
 #include "components/sync/service/sync_token_status.h"
-#include "google_apis/gaia/gaia_id.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/backoff_entry.h"
 
 namespace signin {
 class AccessTokenFetcher;
 struct AccessTokenInfo;
+class AccountManagedStatusFinder;
 }  // namespace signin
 
 namespace syncer {
@@ -32,6 +34,11 @@ struct SyncCredentials;
 struct SyncAccountInfo {
   CoreAccountInfo account_info;
   bool is_sync_consented = false;
+  signin::AccountManagedStatusFinderOutcome managed_status =
+      signin::AccountManagedStatusFinderOutcome::kPending;
+
+  friend bool operator==(const SyncAccountInfo&,
+                         const SyncAccountInfo&) = default;
 };
 
 // SyncAuthManager tracks the account to be used for Sync and its authentication
@@ -53,11 +60,6 @@ class SyncAuthManager : public signin::IdentityManager::Observer {
     // Called when the credential state changes, i.e. an access token was
     // added/changed/removed. Call GetCredentials to get the new state.
     virtual void SyncAuthCredentialsChanged() = 0;
-
-    // The delegate is expected to return the value of the preference
-    // `prefs::kGoogleServicesLastSyncingGaiaId`, representing the last gaia ID
-    // with sync on. If sync is currently on, it returns the current gaia ID.
-    virtual GaiaId SyncAuthGetLastSyncingGaiaId() = 0;
   };
 
   // `identity_manager` may be null (this is the case if local Sync is enabled),
@@ -98,21 +100,6 @@ class SyncAuthManager : public signin::IdentityManager::Observer {
   // don't have credentials for it anymore.
   bool IsSyncPaused() const;
 
-  // Returns the Gaia ID of the account that had sync on previously. This is
-  // similar to IdentityManager's internal notion with preferece
-  // `prefs::kGoogleServicesLastSyncingGaiaId` but this function returns the
-  // same (previous) account when sync is newly turned on, whereas the pref
-  // immediately changes to reflect the current gaia ID.
-  //
-  // Note that this function doesn't handle all cases and may return an
-  // nullopt if the previous account isn't known. A notable example is the case
-  // where sync was already on upon profile startup (as existing prefs do not
-  // include enough information to determine the previous account).
-  //
-  // A return value of an empty GaiaId indicates the result is known, namely
-  // known to NOT have existed a previous account.
-  const std::optional<GaiaId>& GetPreviouslySyncingGaiaIdIfKnown() const;
-
   // Returns the credentials to be passed to the SyncEngine.
   SyncCredentials GetCredentials() const;
 
@@ -148,20 +135,58 @@ class SyncAuthManager : public signin::IdentityManager::Observer {
       signin_metrics::SourceForRefreshTokenOperation token_operation_source)
       override;
   void OnRefreshTokensLoaded() override;
+  void OnIdentityManagerShutdown(
+      signin::IdentityManager* identity_manager) override;
 
   // Test-only methods for inspecting/modifying internal state.
   bool IsRetryingAccessTokenFetchForTest() const;
   void ResetRequestAccessTokenBackoffForTest();
 
  private:
-  SyncAccountInfo DetermineAccountToUse() const;
+  // Helper class that ensures the account's managed-status gets queried
+  // whenever the account itself changes.
+  class ActiveAccount {
+   public:
+    // The `account_changed_callback` will be called whenever an account's
+    // managed-ness is determined asynchronously.
+    ActiveAccount(signin::IdentityManager* identity_manager,
+                  base::RepeatingClosure account_changed_callback);
+    ~ActiveAccount();
+
+    ActiveAccount(const ActiveAccount&) = delete;
+    ActiveAccount& operator=(const ActiveAccount&) = delete;
+
+    // To be called when the basic account info changes (e.g. sign in or sign
+    // out). Will kick off determining the managed-ness status, which may
+    // complete synchronously or asynchronously.
+    void Set(const SyncAccountInfo& new_account);
+
+    const SyncAccountInfo& Get() const;
+
+   private:
+    // Starts the process of determining the account type (managed or not). This
+    // may be synchronous or asynchronous.
+    void StartDeterminingAccountType();
+    // Callback for the async case.
+    void AccountTypeDeterminedAsynchronously();
+
+    const raw_ptr<signin::IdentityManager> identity_manager_;
+    base::RepeatingClosure account_changed_callback_;
+    SyncAccountInfo account_info_;
+    std::unique_ptr<signin::AccountManagedStatusFinder> managed_status_finder_;
+    base::Time managed_status_finder_start_time_;
+  };
 
   // Updates `sync_account_` to the appropriate account (i.e.
-  // DetermineAccountToUse) if necessary, and notifies observers of any changes
-  // (sign-in/sign-out/"primary" bit change). Note that changing from one
-  // account to another is exposed to observers as a sign-out + sign-in.
+  // DetermineAccountToUse()) if necessary, and notifies observers of any
+  // changes (sign-in/sign-out/"primary" bit change). Note that changing from
+  // one account to another is exposed to observers as a sign-out + sign-in.
   // Returns whether the syncing account was updated.
   bool UpdateSyncAccountIfNecessary();
+
+  // Called by ActiveAccount when the account's managed-ness has been determined
+  // asynchronously.
+  void AccountManagednessDetermined();
 
   // Invalidates any current access token, which means invalidating it with the
   // IdentityManager and also dropping our own cached copy. Meant to be called
@@ -189,6 +214,9 @@ class SyncAuthManager : public signin::IdentityManager::Observer {
   void SetLastAuthError(const GoogleServiceAuthError& error);
 
   const raw_ptr<signin::IdentityManager> identity_manager_;
+  base::ScopedObservation<signin::IdentityManager,
+                          signin::IdentityManager::Observer>
+      identity_manager_observation_{this};
   const raw_ptr<Delegate> delegate_;
 
   bool registered_for_auth_notifications_ = false;
@@ -196,19 +224,12 @@ class SyncAuthManager : public signin::IdentityManager::Observer {
   // The account which we are using to sync. If this is non-empty, that does
   // *not* necessarily imply that Sync is actually running, e.g. because of
   // delayed startup.
-  SyncAccountInfo sync_account_;
+  ActiveAccount sync_account_;
 
   // This is a cache of the last authentication response we received from
   // Chrome's identity/token management system.
   GoogleServiceAuthError last_auth_error_;
   base::Time last_auth_error_time_;
-
-  // Similar to `prefs::kGoogleServicesLastSyncingGaiaId` but returns the
-  // same (previous) account when sync is newly turned on (whereas the pref
-  // immediately changes to reflect the current gaia ID). Note that this
-  // in-memory cache doesn't handle all cases, in particular it remains nullopt
-  // if sync was already on upon profile startup.
-  std::optional<GaiaId> previously_syncing_gaia_id_;
 
   // Whether Sync is currently connected to the server, i.e. ConnectionOpened()
   // has been called, but ConnectionClosed() hasn't. While this is false, we

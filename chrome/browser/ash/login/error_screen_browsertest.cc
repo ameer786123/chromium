@@ -240,7 +240,10 @@ class GuestErrorScreenTest
     : public MixinBasedInProcessBrowserTest,
       public testing::WithParamInterface<DeviceStateMixin::State> {
  public:
-  GuestErrorScreenTest() { login_manager_.set_session_restore_enabled(); }
+  GuestErrorScreenTest() {
+    login_manager_.set_session_restore_enabled();
+    SetAllowFeaturesSwitches(/*allow=*/true);
+  }
 
   GuestErrorScreenTest(const GuestErrorScreenTest&) = delete;
   GuestErrorScreenTest& operator=(const GuestErrorScreenTest&) = delete;
@@ -324,7 +327,12 @@ class KioskErrorScreenTest
     : public MixinBasedInProcessBrowserTest,
       public testing::WithParamInterface<KioskMixin::Config> {
  public:
-  KioskErrorScreenTest() = default;
+  KioskErrorScreenTest() {
+    // Force allow Chrome Apps in Kiosk, since they are default disabled since
+    // M138.
+    scoped_feature_list_.InitFromCommandLine("AllowChromeAppsInKioskSessions",
+                                             "");
+  }
 
   KioskErrorScreenTest(const KioskErrorScreenTest&) = delete;
   KioskErrorScreenTest& operator=(const KioskErrorScreenTest&) = delete;
@@ -337,6 +345,7 @@ class KioskErrorScreenTest
   KioskMixin kiosk_{&mixin_host_, /*cached_configuration=*/config()};
   FakeGaiaMixin fake_gaia_{&mixin_host_};
   LoginManagerMixin login_mixin_{&mixin_host_, {}, &fake_gaia_};
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Verify that certificate manager dialog opens.

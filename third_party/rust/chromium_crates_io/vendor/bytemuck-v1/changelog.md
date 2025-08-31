@@ -1,5 +1,18 @@
 # `bytemuck` changelog
 
+## 1.23.2
+
+* bump `derive` minimum version.
+
+## 1.23.1
+
+* Added a windows-only `ZeroableInOption` impl for "stdcall" functions.
+
+## 1.23
+
+* `impl_core_error` crate feature adds `core::error::Error` impl.
+* More `ZeroableInOption` impls.
+
 ## 1.22
 
 * Add the `pod_saturating` feature, which adds `Pod` impls for `Saturating<T>`

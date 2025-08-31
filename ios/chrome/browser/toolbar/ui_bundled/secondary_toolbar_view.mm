@@ -23,6 +23,8 @@
 namespace {
 const CGFloat kToolsMenuOffset = -7;
 
+const CGFloat kDiamondLocationBarStackViewMargin = 8;
+
 // Button shown when the view is collapsed to exit fullscreen.
 UIButton* SecondaryToolbarCollapsedToolbarButton() {
   UIButton* collapsedToolbarButton = [[UIButton alloc] init];
@@ -67,6 +69,8 @@ UIView* SecondaryToolbarLocationBarContainerView(
 @property(nonatomic, strong, readwrite) ToolbarButton* forwardButton;
 // Button to display the tools menu, redefined as readwrite.
 @property(nonatomic, strong, readwrite) ToolbarButton* toolsMenuButton;
+// Button for diamond prototype, redefined as readwrite.
+@property(nonatomic, strong, readwrite) ToolbarButton* diamondPrototypeButton;
 // Button to display the tab grid, redefined as readwrite.
 @property(nonatomic, strong, readwrite) ToolbarTabGridButton* tabGridButton;
 // Button to create a new tab, redefined as readwrite.
@@ -102,6 +106,21 @@ UIView* SecondaryToolbarLocationBarContainerView(
   UIVisualEffectView* _visualEffectView;
   // Content view to hold the main toolbar content above the visual effect view.
   UIView* _contentView;
+
+  // Stack view for the location bar in Diamond.
+  UIStackView* _diamondLocationBarStackView;
+
+  // TODO(crbug.com/429955447): Remove when diamond prototype is cleaned.
+  NSArray<NSLayoutConstraint*>* _diamondToolbarTopConstraints;
+  NSArray<NSLayoutConstraint*>* _diamondToolbarBottomConstraints;
+
+  // Constraints to be activated when the location bar is expanded and
+  // positioned relatively to the cancel button.
+  NSArray<NSLayoutConstraint*>* _expandedConstraints;
+
+  // Constraints to be activated when the location bar is contracted with large
+  // padding between the location bar and the controls.
+  NSArray<NSLayoutConstraint*>* _contractedConstraints;
 }
 
 @synthesize allButtons = _allButtons;
@@ -115,6 +134,7 @@ UIView* SecondaryToolbarLocationBarContainerView(
 @synthesize openNewTabButton = _openNewTabButton;
 @synthesize progressBar = _progressBar;
 @synthesize toolsMenuButton = _toolsMenuButton;
+@synthesize cancelButton = _cancelButton;
 @synthesize tabGridButton = _tabGridButton;
 
 #pragma mark - Public
@@ -162,6 +182,18 @@ UIView* SecondaryToolbarLocationBarContainerView(
   }
 }
 
+- (void)updateConstraints {
+  if (_expanded) {
+    [NSLayoutConstraint deactivateConstraints:_contractedConstraints];
+    [NSLayoutConstraint activateConstraints:_expandedConstraints];
+  } else {
+    [NSLayoutConstraint deactivateConstraints:_expandedConstraints];
+    [NSLayoutConstraint activateConstraints:_contractedConstraints];
+  }
+
+  [super updateConstraints];
+}
+
 #pragma mark - Setup
 
 // Sets all the subviews and constraints of the view.
@@ -190,49 +222,106 @@ UIView* SecondaryToolbarLocationBarContainerView(
   _contentView.backgroundColor =
       self.buttonFactory.toolbarConfiguration.backgroundColor;
 
+  [self setUpCancelButton];
+
+  if (IsDiamondPrototypeEnabled()) {
+    _diamondLocationBarStackView = [[UIStackView alloc] init];
+    _diamondLocationBarStackView.translatesAutoresizingMaskIntoConstraints = NO;
+  }
+
   UIView* contentView = _contentView;
 
-  // Toolbar buttons.
-  self.backButton = [self.buttonFactory backButton];
-  self.forwardButton = [self.buttonFactory forwardButton];
-  self.openNewTabButton = [self.buttonFactory openNewTabButton];
-  self.tabGridButton = [self.buttonFactory tabGridButton];
-  self.toolsMenuButton = [self.buttonFactory toolsMenuButton];
+  if (IsDiamondPrototypeEnabled()) {
+    self.toolsMenuButton = [self.buttonFactory toolsMenuButton];
+    [self.toolsMenuButton updateHiddenInCurrentSizeClass];
+    [self addSubview:self.toolsMenuButton];
 
-  // Move the tools menu button such as it looks visually balanced with the
-  // button on the other side of the toolbar.
-  NSInteger textDirection = base::i18n::IsRTL() ? -1 : 1;
-  self.toolsMenuButton.transform =
-      CGAffineTransformMakeTranslation(textDirection * kToolsMenuOffset, 0);
+    self.diamondPrototypeButton = [self.buttonFactory diamondPrototypeButton];
+    [self.diamondPrototypeButton updateHiddenInCurrentSizeClass];
+    [self addSubview:self.self.diamondPrototypeButton];
 
-  self.allButtons = @[
-    self.backButton, self.forwardButton, self.openNewTabButton,
-    self.tabGridButton, self.toolsMenuButton
-  ];
+    self.backButton = [self.buttonFactory backButton];
+    [self.backButton
+        setContentHuggingPriority:UILayoutPriorityRequired
+                          forAxis:UILayoutConstraintAxisHorizontal];
+    [self.backButton updateHiddenInCurrentSizeClass];
+    self.forwardButton = [self.buttonFactory forwardButton];
+    [self.forwardButton
+        setContentHuggingPriority:UILayoutPriorityRequired
+                          forAxis:UILayoutConstraintAxisHorizontal];
+    [self.forwardButton updateHiddenInCurrentSizeClass];
 
-  // Separator.
-  self.separator = [[UIView alloc] init];
-  self.separator.backgroundColor = [UIColor colorNamed:kToolbarShadowColor];
-  self.separator.translatesAutoresizingMaskIntoConstraints = NO;
-  [contentView addSubview:self.separator];
+    [_diamondLocationBarStackView addArrangedSubview:self.backButton];
+    [_diamondLocationBarStackView addArrangedSubview:self.forwardButton];
+
+    self.allButtons = @[ self.diamondPrototypeButton, self.toolsMenuButton ];
+
+  } else {
+    // Toolbar buttons.
+    self.backButton = [self.buttonFactory backButton];
+    self.forwardButton = [self.buttonFactory forwardButton];
+    self.openNewTabButton = [self.buttonFactory openNewTabButton];
+    self.tabGridButton = [self.buttonFactory tabGridButton];
+    self.toolsMenuButton = [self.buttonFactory toolsMenuButton];
+
+    // Move the tools menu button such as it looks visually balanced with the
+    // button on the other side of the toolbar.
+    NSInteger textDirection = base::i18n::IsRTL() ? -1 : 1;
+    self.toolsMenuButton.transform =
+        CGAffineTransformMakeTranslation(textDirection * kToolsMenuOffset, 0);
+
+    self.allButtons = @[
+      self.backButton, self.forwardButton, self.openNewTabButton,
+      self.tabGridButton, self.toolsMenuButton
+    ];
+  }
+
+    // Separator.
+    self.separator = [[UIView alloc] init];
+    self.separator.backgroundColor = [UIColor colorNamed:kToolbarShadowColor];
+    self.separator.translatesAutoresizingMaskIntoConstraints = NO;
+    [contentView addSubview:self.separator];
 
   // Button StackView.
-  self.buttonStackView =
-      [[UIStackView alloc] initWithArrangedSubviews:self.allButtons];
+  if (IsDiamondPrototypeEnabled()) {
+    self.buttonStackView = [[UIStackView alloc] init];
+  } else {
+    self.buttonStackView =
+        [[UIStackView alloc] initWithArrangedSubviews:self.allButtons];
+  }
   self.buttonStackView.distribution = UIStackViewDistributionEqualSpacing;
   self.buttonStackView.translatesAutoresizingMaskIntoConstraints = NO;
   [contentView addSubview:self.buttonStackView];
 
   UILayoutGuide* safeArea = self.safeAreaLayoutGuide;
 
+  UIView* locationBarContainer = self.locationBarContainer;
+
   if (IsBottomOmniboxAvailable()) {
     self.collapsedToolbarButton = SecondaryToolbarCollapsedToolbarButton();
     self.locationBarContainer =
         SecondaryToolbarLocationBarContainerView(self.buttonFactory);
+    locationBarContainer = self.locationBarContainer;
+
+    if (IsDiamondPrototypeEnabled()) {
+      [locationBarContainer addSubview:_diamondLocationBarStackView];
+      [NSLayoutConstraint activateConstraints:@[
+        [_diamondLocationBarStackView.leadingAnchor
+            constraintEqualToAnchor:locationBarContainer.leadingAnchor
+                           constant:kDiamondLocationBarStackViewMargin],
+        [_diamondLocationBarStackView.topAnchor
+            constraintEqualToAnchor:locationBarContainer.topAnchor],
+        [_diamondLocationBarStackView.bottomAnchor
+            constraintEqualToAnchor:locationBarContainer.bottomAnchor],
+        [locationBarContainer.trailingAnchor
+            constraintEqualToAnchor:_diamondLocationBarStackView.trailingAnchor
+                           constant:kDiamondLocationBarStackViewMargin],
+      ]];
+    }
 
     // Add locationBarContainer below buttons as it might move under the
     // buttons.
-    [contentView insertSubview:self.locationBarContainer
+    [contentView insertSubview:locationBarContainer
                   belowSubview:self.buttonStackView];
 
     // Put `collapsedToolbarButton` on top of everything.
@@ -247,25 +336,45 @@ UIView* SecondaryToolbarLocationBarContainerView(
     [_progressBar.heightAnchor constraintEqualToConstant:kProgressBarHeight]
         .active = YES;
     [contentView addSubview:_progressBar];
-    AddSameConstraintsToSides(
-        self, _progressBar,
-        LayoutSides::kTop | LayoutSides::kLeading | LayoutSides::kTrailing);
+    if (IsDiamondPrototypeEnabled()) {
+      AddSameConstraintsToSides(self, _progressBar,
+                                LayoutSides::kLeading | LayoutSides::kTrailing);
+    } else {
+      AddSameConstraintsToSides(
+          self, _progressBar,
+          LayoutSides::kTop | LayoutSides::kLeading | LayoutSides::kTrailing);
+    }
 
     // LocationBarView constraints.
     if (self.locationBarView) {
-      AddSameConstraints(self.locationBarView, self.locationBarContainer);
+      AddSameConstraints(self.locationBarView, locationBarContainer);
     }
 
     // Height of location bar, constant controlled by view controller.
     self.locationBarContainerHeight =
-        [self.locationBarContainer.heightAnchor constraintEqualToConstant:0];
+        [locationBarContainer.heightAnchor constraintEqualToConstant:0];
     // Top margin of location bar, constant controlled by view controller.
-    self.locationBarTopConstraint = [self.locationBarContainer.topAnchor
-        constraintEqualToAnchor:self.topAnchor];
+    self.locationBarTopConstraint =
+        [locationBarContainer.topAnchor constraintEqualToAnchor:self.topAnchor];
     _locationBarBottomConstraint = [self.buttonStackView.topAnchor
-        constraintEqualToAnchor:self.locationBarContainer.bottomAnchor
+        constraintEqualToAnchor:locationBarContainer.bottomAnchor
                        constant:kBottomAdaptiveLocationBarBottomMargin];
 
+    if (IsDiamondPrototypeEnabled()) {
+      _diamondToolbarTopConstraints = @[
+        [_progressBar.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],
+        [self.separator.topAnchor constraintEqualToAnchor:self.bottomAnchor],
+        [self.buttonStackView.centerYAnchor
+            constraintEqualToAnchor:self.locationBarContainer.centerYAnchor],
+      ];
+      _diamondToolbarBottomConstraints = @[
+        [_progressBar.topAnchor constraintEqualToAnchor:self.topAnchor],
+        [self.separator.bottomAnchor constraintEqualToAnchor:self.topAnchor],
+        [self.buttonStackView.centerYAnchor
+            constraintEqualToAnchor:self.locationBarContainer.centerYAnchor],
+      ];
+      [self setUsedAsPrimaryToolbar:self.usedAsPrimaryToolbar];
+    }
     _buttonStackViewNoOmniboxConstraint = [self.buttonStackView.topAnchor
         constraintEqualToAnchor:self.topAnchor
                        constant:kBottomButtonsTopMargin];
@@ -281,15 +390,60 @@ UIView* SecondaryToolbarLocationBarContainerView(
     AddSameConstraintsToSides(self, self.bottomSeparator,
                               LayoutSides::kLeading | LayoutSides::kTrailing);
 
+    NSLayoutConstraint* visibleCancel = [self.cancelButton.trailingAnchor
+        constraintEqualToAnchor:safeArea.trailingAnchor
+                       constant:-kExpandedLocationBarHorizontalMargin];
+
+    NSLayoutConstraint* hiddenCancel = [self.cancelButton.leadingAnchor
+        constraintEqualToAnchor:self.trailingAnchor];
+
+    _contractedConstraints = @[
+      hiddenCancel,
+      [locationBarContainer.trailingAnchor
+          constraintEqualToAnchor:safeArea.trailingAnchor
+                         constant:-kExpandedLocationBarHorizontalMargin],
+    ];
+
+    _expandedConstraints = @[
+      visibleCancel,
+      [locationBarContainer.trailingAnchor
+          constraintEqualToAnchor:self.cancelButton.leadingAnchor],
+    ];
+
+    if (IsDiamondPrototypeEnabled()) {
+      [NSLayoutConstraint activateConstraints:@[
+        [self.diamondPrototypeButton.leadingAnchor
+            constraintEqualToAnchor:safeArea.leadingAnchor
+                           constant:kExpandedLocationBarHorizontalMargin],
+        [self.diamondPrototypeButton.centerYAnchor
+            constraintEqualToAnchor:locationBarContainer.centerYAnchor],
+        [self.diamondPrototypeButton.trailingAnchor
+            constraintEqualToAnchor:locationBarContainer.leadingAnchor
+                           constant:-kExpandedLocationBarHorizontalMargin],
+        [self.toolsMenuButton.trailingAnchor
+            constraintEqualToAnchor:safeArea.trailingAnchor
+                           constant:-kExpandedLocationBarHorizontalMargin],
+        [self.toolsMenuButton.centerYAnchor
+            constraintEqualToAnchor:locationBarContainer.centerYAnchor],
+        [locationBarContainer.trailingAnchor
+            constraintEqualToAnchor:self.toolsMenuButton.leadingAnchor
+                           constant:-kExpandedLocationBarHorizontalMargin],
+      ]];
+
+    } else {
+      [NSLayoutConstraint activateConstraints:@[
+        [self.cancelButton.topAnchor
+            constraintEqualToAnchor:locationBarContainer.topAnchor],
+        [self.cancelButton.bottomAnchor
+            constraintEqualToAnchor:locationBarContainer.bottomAnchor],
+        [locationBarContainer.leadingAnchor
+            constraintEqualToAnchor:safeArea.leadingAnchor
+                           constant:kExpandedLocationBarHorizontalMargin],
+      ]];
+    }
     [NSLayoutConstraint activateConstraints:@[
       self.locationBarTopConstraint,
       self.locationBarContainerHeight,
-      [self.locationBarContainer.leadingAnchor
-          constraintEqualToAnchor:safeArea.leadingAnchor
-                         constant:kExpandedLocationBarHorizontalMargin],
-      [self.locationBarContainer.trailingAnchor
-          constraintEqualToAnchor:safeArea.trailingAnchor
-                         constant:-kExpandedLocationBarHorizontalMargin],
       [self.buttonStackView.topAnchor
           constraintGreaterThanOrEqualToAnchor:self.topAnchor
                                       constant:kBottomButtonsTopMargin],
@@ -297,8 +451,10 @@ UIView* SecondaryToolbarLocationBarContainerView(
           constraintEqualToConstant:ui::AlignValueToUpperPixel(
                                         kToolbarSeparatorHeight)],
       [self.bottomSeparator.bottomAnchor
-          constraintEqualToAnchor:self.locationBarContainer.bottomAnchor],
+          constraintEqualToAnchor:locationBarContainer.bottomAnchor],
     ]];
+
+    [self updateConstraints];
 
   } else {  // Bottom omnibox flag disabled.
     [self.buttonStackView.topAnchor
@@ -314,14 +470,57 @@ UIView* SecondaryToolbarLocationBarContainerView(
     [self.buttonStackView.trailingAnchor
         constraintEqualToAnchor:safeArea.trailingAnchor
                        constant:-kAdaptiveToolbarMargin],
+  ]];
 
+  [NSLayoutConstraint activateConstraints:@[
     [self.separator.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
     [self.separator.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
-    [self.separator.bottomAnchor constraintEqualToAnchor:self.topAnchor],
     [self.separator.heightAnchor
         constraintEqualToConstant:ui::AlignValueToUpperPixel(
                                       kToolbarSeparatorHeight)],
   ]];
+  if (!IsDiamondPrototypeEnabled()) {
+    [NSLayoutConstraint activateConstraints:@[
+      [self.separator.bottomAnchor constraintEqualToAnchor:self.topAnchor],
+    ]];
+  }
+}
+
+// Sets the cancel button to stop editing the location bar.
+- (void)setUpCancelButton {
+  _cancelButton = [self.buttonFactory cancelButton];
+  _cancelButton.translatesAutoresizingMaskIntoConstraints = NO;
+  _cancelButton.hidden = YES;
+  [self addSubview:self.cancelButton];
+}
+
+- (void)setExpanded:(BOOL)expanded {
+  _expanded = expanded;
+  [self setNeedsUpdateConstraints];
+}
+
+#pragma mark - Setters
+
+// TODO(crbug.com/429955447): Remove when diamond prototype is cleaned.
+- (void)setUsedAsPrimaryToolbar:(BOOL)usedAsPrimaryToolbar {
+  CHECK(IsDiamondPrototypeEnabled());
+  _usedAsPrimaryToolbar = usedAsPrimaryToolbar;
+  CGFloat constraintConstant = self.locationBarTopConstraint.constant;
+  self.locationBarTopConstraint.active = NO;
+  if (usedAsPrimaryToolbar) {
+    self.locationBarTopConstraint = [self.bottomAnchor
+        constraintEqualToAnchor:self.locationBarContainer.bottomAnchor
+                       constant:constraintConstant];
+    [NSLayoutConstraint deactivateConstraints:_diamondToolbarBottomConstraints];
+    [NSLayoutConstraint activateConstraints:_diamondToolbarTopConstraints];
+  } else {
+    self.locationBarTopConstraint = [self.locationBarContainer.topAnchor
+        constraintEqualToAnchor:self.topAnchor
+                       constant:constraintConstant];
+    [NSLayoutConstraint deactivateConstraints:_diamondToolbarTopConstraints];
+    [NSLayoutConstraint activateConstraints:_diamondToolbarBottomConstraints];
+  }
+  self.locationBarTopConstraint.active = YES;
 }
 
 #pragma mark - AdaptiveToolbarView
@@ -357,8 +556,14 @@ UIView* SecondaryToolbarLocationBarContainerView(
     return;
   }
 
-  [self.locationBarContainer addSubview:locationBarView];
-  AddSameConstraints(self.locationBarView, self.locationBarContainer);
+  if (IsDiamondPrototypeEnabled()) {
+    // Insert between the two back/foward buttons.
+    [_diamondLocationBarStackView insertArrangedSubview:locationBarView
+                                                atIndex:1];
+  } else {
+    [self.locationBarContainer addSubview:locationBarView];
+    AddSameConstraints(self.locationBarView, self.locationBarContainer);
+  }
 }
 
 - (void)updateTabGroupState:(ToolbarTabGroupState)tabGroupState {
@@ -377,6 +582,10 @@ UIView* SecondaryToolbarLocationBarContainerView(
   // Reset `buttonStackView` top constraints.
   _locationBarBottomConstraint.active = NO;
   _buttonStackViewNoOmniboxConstraint.active = NO;
+
+  if (IsDiamondPrototypeEnabled()) {
+    return;
+  }
 
   // Set the correct constraint for `buttonStackView.topAnchor`.
   if (self.locationBarView) {

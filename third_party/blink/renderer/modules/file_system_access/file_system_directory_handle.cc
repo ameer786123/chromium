@@ -150,7 +150,7 @@ ScriptPromise<FileSystemFileHandle> FileSystemDirectoryHandle::getFileHandle(
 
   mojo_ptr_->GetFile(
       name, options->create(),
-      WTF::BindOnce(
+      BindOnce(
           [](FileSystemDirectoryHandle*,
              ScriptPromiseResolver<FileSystemFileHandle>* resolver,
              const String& name, FileSystemAccessErrorPtr result,
@@ -193,7 +193,7 @@ FileSystemDirectoryHandle::getDirectoryHandle(
 
   mojo_ptr_->GetDirectory(
       name, options->create(),
-      WTF::BindOnce(
+      BindOnce(
           [](FileSystemDirectoryHandle*,
              ScriptPromiseResolver<FileSystemDirectoryHandle>* resolver,
              const String& name, FileSystemAccessErrorPtr result,
@@ -233,7 +233,7 @@ ScriptPromise<IDLUndefined> FileSystemDirectoryHandle::removeEntry(
   auto result = resolver->Promise();
 
   mojo_ptr_->RemoveEntry(name, options->recursive(),
-                         WTF::BindOnce(
+                         BindOnce(
                              [](FileSystemDirectoryHandle*,
                                 ScriptPromiseResolver<IDLUndefined>* resolver,
                                 FileSystemAccessErrorPtr result) {
@@ -265,7 +265,7 @@ FileSystemDirectoryHandle::resolve(ScriptState* script_state,
 
   mojo_ptr_->Resolve(
       possible_child->Transfer(),
-      WTF::BindOnce(
+      BindOnce(
           [](FileSystemDirectoryHandle*,
              ScriptPromiseResolver<IDLNullable<IDLSequence<IDLUSVString>>>*
                  resolver,
@@ -303,17 +303,17 @@ void FileSystemDirectoryHandle::Trace(Visitor* visitor) const {
 }
 
 void FileSystemDirectoryHandle::QueryPermissionImpl(
-    bool writable,
+    mojom::blink::FileSystemAccessPermissionMode mode,
     base::OnceCallback<void(mojom::blink::PermissionStatus)> callback) {
   if (!mojo_ptr_.is_bound()) {
     std::move(callback).Run(mojom::blink::PermissionStatus::DENIED);
     return;
   }
-  mojo_ptr_->GetPermissionStatus(writable, std::move(callback));
+  mojo_ptr_->GetPermissionStatus(mode, std::move(callback));
 }
 
 void FileSystemDirectoryHandle::RequestPermissionImpl(
-    bool writable,
+    mojom::blink::FileSystemAccessPermissionMode mode,
     base::OnceCallback<void(mojom::blink::FileSystemAccessErrorPtr,
                             mojom::blink::PermissionStatus)> callback) {
   if (!mojo_ptr_.is_bound()) {
@@ -325,7 +325,7 @@ void FileSystemDirectoryHandle::RequestPermissionImpl(
     return;
   }
 
-  mojo_ptr_->RequestPermission(writable, std::move(callback));
+  mojo_ptr_->RequestPermission(mode, std::move(callback));
 }
 
 void FileSystemDirectoryHandle::MoveImpl(
@@ -374,7 +374,7 @@ void FileSystemDirectoryHandle::IsSameEntryImpl(
 
   mojo_ptr_->Resolve(
       std::move(other),
-      WTF::BindOnce(
+      blink::BindOnce(
           [](base::OnceCallback<void(mojom::blink::FileSystemAccessErrorPtr,
                                      bool)> callback,
              FileSystemAccessErrorPtr result,
@@ -387,7 +387,7 @@ void FileSystemDirectoryHandle::IsSameEntryImpl(
 
 void FileSystemDirectoryHandle::GetUniqueIdImpl(
     base::OnceCallback<void(mojom::blink::FileSystemAccessErrorPtr,
-                            const WTF::String&)> callback) {
+                            const String&)> callback) {
   if (!mojo_ptr_.is_bound()) {
     std::move(callback).Run(
         mojom::blink::FileSystemAccessError::New(

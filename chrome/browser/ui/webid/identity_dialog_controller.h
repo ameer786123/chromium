@@ -16,8 +16,8 @@
 #include "chrome/browser/webid/proto/fedcm_clickthrough_rate_metadata.pb.h"
 #include "components/segmentation_platform/public/segmentation_platform_service.h"
 #include "components/segmentation_platform/public/trigger.h"
-#include "content/public/browser/identity_request_dialog_controller.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/webid/identity_request_dialog_controller.h"
 #include "ui/gfx/native_widget_types.h"
 
 using AccountSelectionCallback =
@@ -48,40 +48,44 @@ class IdentityDialogController
   // This enum describes the user action taken when the UI shown uses
   // segmentation platform's UI volume recommendation and is used for
   // histograms. Do not remove or modify existing values, but you may add new
-  // values at the end. This enum should be kept in sync with FedCmUserAction in
-  // tools/metrics/histograms/enums.xml.
+  // values at the end.
+  // LINT.IfChange(UserAction)
+
   enum class UserAction {
-    kSuccess = 0,
+    // kSuccess = 0,  // Deprecated.
     kIgnored = 1,
     kClosed = 2,
-
-    kMaxValue = kClosed
+    kSuccess = 3,
+    kMaxValue = kSuccess
   };
+
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/blink/enums.xml:FedCmUserAction)
 
   // content::IdentityRequestDelegate
   int GetBrandIconMinimumSize(blink::mojom::RpMode rp_mode) override;
   int GetBrandIconIdealSize(blink::mojom::RpMode rp_mode) override;
 
   // content::IdentityRequestDialogController
+  void ShouldShowAccountsPassiveDialog(
+      ShouldShowAccountsPassiveDialogCallback cb) override;
   bool ShowAccountsDialog(
       content::RelyingPartyData rp_data,
       const std::vector<IdentityProviderDataPtr>& identity_provider_data,
       const std::vector<IdentityRequestAccountPtr>& accounts,
-      content::IdentityRequestAccount::SignInMode sign_in_mode,
       blink::mojom::RpMode rp_mode,
       const std::vector<IdentityRequestAccountPtr>& new_accounts,
       AccountSelectionCallback on_selected,
       LoginToIdPCallback on_add_account,
       DismissCallback dismiss_callback,
       AccountsDisplayedCallback accounts_displayed_callback) override;
-  bool ShowFailureDialog(const std::string& rp_for_display,
+  bool ShowFailureDialog(const content::RelyingPartyData& rp_data,
                          const std::string& idp_for_display,
                          blink::mojom::RpContext rp_context,
                          blink::mojom::RpMode rp_mode,
                          const content::IdentityProviderMetadata& idp_metadata,
                          DismissCallback dismiss_callback,
                          LoginToIdPCallback login_callback) override;
-  bool ShowErrorDialog(const std::string& rp_for_display,
+  bool ShowErrorDialog(const content::RelyingPartyData& rp_data,
                        const std::string& idp_for_display,
                        blink::mojom::RpContext rp_context,
                        blink::mojom::RpMode rp_mode,
@@ -89,11 +93,18 @@ class IdentityDialogController
                        const std::optional<TokenError>& error,
                        DismissCallback dismiss_callback,
                        MoreDetailsCallback more_details_callback) override;
-  bool ShowLoadingDialog(const std::string& rp_for_display,
+  bool ShowLoadingDialog(const content::RelyingPartyData& rp_data,
                          const std::string& idp_for_display,
                          blink::mojom::RpContext rp_context,
                          blink::mojom::RpMode rp_mode,
                          DismissCallback dismiss_callback) override;
+  bool ShowVerifyingDialog(
+      const content::RelyingPartyData& rp_data,
+      const IdentityProviderDataPtr& idp_data,
+      const IdentityRequestAccountPtr& account,
+      Account::SignInMode sign_in_mode,
+      blink::mojom::RpMode rp_mode,
+      AccountsDisplayedCallback accounts_displayed_callback) override;
 
   std::string GetTitle() const override;
   std::optional<std::string> GetSubtitle() const override;
@@ -106,6 +117,10 @@ class IdentityDialogController
       DismissCallback dismiss_callback) override;
   void CloseModalDialog() override;
   content::WebContents* GetRpWebContents() override;
+  void RequestIdPRegistrationPermision(
+      const url::Origin& origin,
+      base::OnceCallback<void(bool accepted)> callback) override;
+  bool DidShowUi() const override;
 
   // AccountSelectionView::Delegate:
   void OnAccountSelected(
@@ -120,11 +135,6 @@ class IdentityDialogController
   gfx::NativeView GetNativeView() override;
   content::WebContents* GetWebContents() override;
 
-  // Request the IdP Registration permission.
-  void RequestIdPRegistrationPermision(
-      const url::Origin& origin,
-      base::OnceCallback<void(bool accepted)> callback) override;
-
   // Allows setting a mock AccountSelectionView for testing purposes.
   void SetAccountSelectionViewForTesting(
       std::unique_ptr<AccountSelectionView> account_view);
@@ -135,12 +145,7 @@ class IdentityDialogController
 
   // Called when |RequestUiVolumeRecommendation| returns a result.
   void OnRequestUiVolumeRecommendationResultReceived(
-      const content::RelyingPartyData& rp_data,
-      const std::vector<IdentityProviderDataPtr>& identity_provider_data,
-      const std::vector<IdentityRequestAccountPtr>& accounts,
-      Account::SignInMode sign_in_mode,
-      blink::mojom::RpMode rp_mode,
-      const std::vector<IdentityRequestAccountPtr>& new_accounts,
+      ShouldShowAccountsPassiveDialogCallback cb,
       const segmentation_platform::ClassificationResult&
           ui_volume_recommendation);
 
@@ -164,6 +169,9 @@ class IdentityDialogController
   AccountsDisplayedCallback on_accounts_displayed_;
   raw_ptr<content::WebContents> rp_web_contents_{nullptr};
   blink::mojom::RpMode rp_mode_;
+  // Whether we show any FedCM UI or not. Excludes the loading dialog since that
+  // one is not something that modifies user state or is actionable by the user.
+  bool did_show_ui_ = false;
 
   // Request ID associated with a |GetClassificationResult| call to
   // |segmentation_platform_service_|. This is nullopt when the
@@ -178,6 +186,8 @@ class IdentityDialogController
   // been navigated to. e.g. Aggregated FedCM clickthrough rate.
   raw_ptr<optimization_guide::OptimizationGuideDecider>
       optimization_guide_decider_{nullptr};
+
+  base::WeakPtrFactory<IdentityDialogController> weak_ptr_factory_{this};
 };
 
 #endif  // CHROME_BROWSER_UI_WEBID_IDENTITY_DIALOG_CONTROLLER_H_

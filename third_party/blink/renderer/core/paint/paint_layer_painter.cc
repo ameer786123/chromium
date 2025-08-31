@@ -191,10 +191,6 @@ static bool ShouldCreateSubsequence(const PaintLayer& paint_layer,
   if (paint_flags & PaintFlag::kOmitCompositingInfo)
     return false;
 
-  if (!RuntimeEnabledFeatures::FewerSubsequencesEnabled()) {
-    return true;
-  }
-
   // Create subsequence if the layer will create a paint chunk because of
   // different properties.
   if (context.GetPaintController().NumNewChunks() > 0 &&
@@ -266,8 +262,7 @@ PaintResult PaintLayerPainter::Paint(GraphicsContext& context,
       !paint_layer_.HasSelfPaintingLayerDescendant())
     return kFullyPainted;
 
-  if (((paint_flags & PaintFlag::kPlacedElement) == 0) &&
-      !IsA<HTMLCanvasElement>(object.GetNode()) &&
+  if (((paint_flags & PaintFlag::kPaintingCanvasDrawElement) == 0) &&
       IsA<Element>(object.GetNode()) &&
       To<Element>(object.GetNode())->IsInCanvasSubtree()) {
     // This prevents canvas fallback content from being rendered.

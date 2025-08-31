@@ -12,10 +12,10 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
-#include "chrome/browser/ui/views/frame/browser_frame_bounds_change_animation.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
 #include "chrome/browser/ui/views/tabs/glic_button.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/interaction/element_identifier.h"
@@ -36,12 +36,7 @@ GlicView::GlicView(Profile* profile,
     : accelerator_delegate_(accelerator_delegate) {
   SetProperty(views::kElementIdentifierKey, kGlicViewElementId);
   SetLayoutManager(std::make_unique<views::FillLayout>());
-  auto web_view = std::make_unique<views::WebView>(profile);
-  web_view->SetProperty(views::kElementIdentifierKey,
-                        kWebViewElementIdForTesting);
-  web_view_ = web_view.get();
-  web_view->SetSize(initial_size);
-  AddChildView(std::move(web_view));
+  SetSize(initial_size);
   // As there is no WebContents yet, this will apply the default background.
   UpdateBackgroundColor();
 }
@@ -70,17 +65,28 @@ void GlicView::UpdatePrimaryDraggableAreaOnResize() {
   draggable_areas_[0].set_width(width());
 }
 
-void GlicView::SetWebContents(content::WebContents* web_contents) {
-  web_view_->SetWebContents(web_contents);
-  UpdateBackgroundColor();
-}
-
 void GlicView::UpdateBackgroundColor() {
-  std::optional<SkColor> client_background = GetClientBackgroundColor();
-  if (client_background) {
-    SetBackground(views::CreateSolidBackground(*client_background));
-  } else {
-    SetBackground(views::CreateSolidBackground(kColorGlicBackground));
+  const bool explicit_background =
+      base::FeatureList::IsEnabled(features::kGlicExplicitBackgroundColor);
+
+  std::unique_ptr<views::Background> background;
+  if (!explicit_background) {
+    std::optional<SkColor> client_background = GetClientBackgroundColor();
+    if (client_background) {
+      background = views::CreateSolidBackground(*client_background);
+    }
+  }
+
+  if (!background) {
+    background = views::CreateSolidBackground(kColorGlicBackground);
+  }
+
+  SetBackground(std::move(background));
+
+  if (views::Widget* widget = GetWidget(); explicit_background && widget) {
+    // Set the native widget background color if needed.
+    widget->SetColorModeOverride(
+        /*color_mode=*/std::nullopt, kColorGlicBackground);
   }
 }
 
@@ -93,7 +99,7 @@ bool GlicView::AcceleratorPressed(const ui::Accelerator& accelerator) {
 }
 
 std::optional<SkColor> GlicView::GetClientBackgroundColor() {
-  content::WebContents* host = web_view_->GetWebContents();
+  content::WebContents* host = GetWebContents();
   if (!host) {
     return std::nullopt;
   }

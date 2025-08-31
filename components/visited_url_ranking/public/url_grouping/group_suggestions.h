@@ -9,6 +9,7 @@
 
 #include "base/types/id_type.h"
 #include "components/visited_url_ranking/public/url_visit.h"
+#include "components/visited_url_ranking/public/visited_url_ranking_service.h"
 
 namespace visited_url_ranking {
 
@@ -27,14 +28,18 @@ struct GroupSuggestion {
 
   GroupSuggestion DeepCopy() const;
 
+  // LINT.IfChange
+  // These values are persisted to logs. Entries should not be
+  // renumbered and numeric values should never be reused.
   enum class SuggestionReason {
     kUnknown = 0,
     kRecentlyOpened = 1,
     kSwitchedBetween = 2,
     kSimilarSource = 3,
     kSameOrigin = 4,
-    kNumReasons
+    kMaxValue = kSameOrigin
   };
+  // LINT.ThenChange(/tools/metrics/histograms/visited_url_ranking/enums.xml:GroupSuggesionReason)
 
   // LINT.IfChange
 
@@ -64,10 +69,67 @@ struct GroupSuggestions {
   GroupSuggestions(GroupSuggestions&&);
   GroupSuggestions& operator=(GroupSuggestions&&);
 
+  GroupSuggestions DeepCopy() const;
+
   // List of suggestions ordered by priority.
   // Currently the service only supports one suggestion at a time.
   std::vector<GroupSuggestion> suggestions;
 };
+
+// The action taken by the user in response to the suggestion.
+// GENERATED_JAVA_ENUM_PACKAGE: (
+// org.chromium.components.visited_url_ranking.url_grouping)
+enum class UserResponse {
+  kUnknown = 0,
+  kNotShown = 1,
+  kAccepted = 2,
+  kRejected = 3,
+  kIgnored = 4,
+};
+
+// The response of the user with metadata like edits made by the user or
+// feedback comments.
+struct UserResponseMetadata {
+  UrlGroupingSuggestionId suggestion_id;
+  UserResponse user_response;
+
+  UserResponseMetadata() = default;
+  ~UserResponseMetadata() = default;
+};
+
+using SuggestionResponseCallback =
+    base::OnceCallback<void(UserResponseMetadata)>;
+
+// Struct to cache suggestions and the associated response callback.
+struct CachedSuggestions {
+  CachedSuggestions();
+  ~CachedSuggestions();
+  CachedSuggestions(const CachedSuggestions&) = delete;
+  CachedSuggestions& operator=(const CachedSuggestions&) = delete;
+  CachedSuggestions(CachedSuggestions&&);
+  CachedSuggestions& operator=(CachedSuggestions&&);
+
+  GroupSuggestions suggestions;
+
+  // The callback must be called after the UI closes with the user action and
+  // the suggestion that was shown.
+  SuggestionResponseCallback response_callback;
+};
+
+// Returns a string representation of the reason.
+const char* GetSuggestionReasonString(GroupSuggestion::SuggestionReason reason);
+
+// LINT.IfChange
+// These values are persisted to logs. Entries should not be
+// renumbered and numeric values should never be reused.
+enum class TabGroupSuggestionThrottleReason {
+  kUnknown = 0,
+  kOverlappingTabs = 1,
+  kOverlappingHosts = 2,
+  kGroupNotVisible = 3,
+  kMaxValue = kGroupNotVisible
+};
+// LINT.ThenChange(/tools/metrics/histograms/visited_url_ranking/enums.xml:TabGroupSuggestionThrottleReason)
 
 }  // namespace visited_url_ranking
 

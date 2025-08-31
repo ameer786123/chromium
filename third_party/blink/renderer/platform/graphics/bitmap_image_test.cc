@@ -28,10 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "third_party/blink/renderer/platform/graphics/bitmap_image.h"
 
@@ -325,6 +321,14 @@ TEST_F(BitmapImageTest, pngHasColorProfile) {
   image_->PaintImageForCurrentFrame();
   EXPECT_EQ(65536u, DecodedSize());
   EXPECT_TRUE(image_->HasColorProfile());
+}
+
+TEST_F(BitmapImageTest, pngHasInvalidColorProfile) {
+  LoadImage("png-zero-gamma-color-profile.png");
+  auto actualBitmap = GenerateBitmap(0u);
+  auto expectedBitmap =
+      GenerateBitmapForImage("png-zero-gamma-color-profile-ref.png");
+  VerifyBitmap(actualBitmap, expectedBitmap);
 }
 
 TEST_F(BitmapImageTest, webpHasColorProfile) {

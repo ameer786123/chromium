@@ -14,13 +14,13 @@
 #include "base/types/to_address.h"
 #include "base/uuid.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils_desktop.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_metrics.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_service_factory.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_action_context_desktop.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -100,7 +100,7 @@ SavedTabGroupBar::SavedTabGroupBar(Browser* browser,
 
 SavedTabGroupBar::SavedTabGroupBar(Browser* browser, bool animations_enabled)
     : SavedTabGroupBar(browser,
-                       tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+                       tab_groups::TabGroupSyncServiceFactory::GetForProfile(
                            browser->profile()),
                        animations_enabled) {}
 
@@ -274,8 +274,8 @@ void SavedTabGroupBar::OnPaint(gfx::Canvas* canvas) {
 
 void SavedTabGroupBar::OnInitialized() {
   RemoveAllChildViews();
-  LoadAllButtonsFromModel();
   overflow_button_ = AddChildView(CreateOverflowButton());
+  LoadAllButtonsFromModel();
   InvalidateLayout();
 }
 
@@ -653,7 +653,8 @@ void SavedTabGroupBar::MaybeShowClosePromo(const base::Uuid& saved_group_id) {
 
   user_education::FeaturePromoParams params(
       feature_engagement::kIPHTabGroupsSaveV2CloseGroupFeature);
-  browser_->window()->MaybeShowFeaturePromo(std::move(params));
+  BrowserUserEducationInterface::From(browser_)->MaybeShowFeaturePromo(
+      std::move(params));
 }
 
 // New function implementation

@@ -12,17 +12,22 @@ import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.feed.v2.FeedUserActionType;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.url.GURL;
 
+import java.util.List;
+
 /** Java bridge to feed::SurfaceRenderer, provides shallow JNI bindings. */
 @JNINamespace("feed::android")
+@NullMarked
 public class FeedSurfaceRendererBridge {
     private final Profile mProfile;
-    private int mSurfaceId;
+    private final int mSurfaceId;
     private long mNativeSurfaceRenderer;
-    private Renderer mRenderer;
+    private @Nullable Renderer mRenderer;
 
     /**
      * Calls from native to Java to implement rendering for the feed. See `feed::SurfaceRenderer`
@@ -43,7 +48,7 @@ public class FeedSurfaceRendererBridge {
                 Renderer renderer,
                 FeedReliabilityLoggingBridge reliabilityLoggingBridge,
                 @StreamKind int streamKind,
-                SingleWebFeedParameters webFeedParameters) {
+                @Nullable SingleWebFeedParameters webFeedParameters) {
             return new FeedSurfaceRendererBridge(
                     profile, renderer, reliabilityLoggingBridge, streamKind, webFeedParameters);
         }
@@ -54,10 +59,11 @@ public class FeedSurfaceRendererBridge {
             Renderer renderer,
             FeedReliabilityLoggingBridge reliabilityLoggingBridge,
             @StreamKind int streamKind,
-            SingleWebFeedParameters webFeedParameters) {
+            @Nullable SingleWebFeedParameters webFeedParameters) {
         mProfile = profile;
         mRenderer = renderer;
         if (streamKind == StreamKind.SINGLE_WEB_FEED) {
+            assert webFeedParameters != null;
             mNativeSurfaceRenderer =
                     FeedSurfaceRendererBridgeJni.get()
                             .initWebFeed(
@@ -166,7 +172,7 @@ public class FeedSurfaceRendererBridge {
         FeedSurfaceRendererBridgeJni.get().reportPageLoaded(mProfile, mSurfaceId, inNewTab);
     }
 
-    void reportOpenAction(GURL url, String sliceId, @OpenActionType int openActionType) {
+    void reportOpenAction(GURL url, @Nullable String sliceId, @OpenActionType int openActionType) {
         FeedSurfaceRendererBridgeJni.get()
                 .reportOpenAction(mProfile, mSurfaceId, url, sliceId, openActionType);
     }
@@ -214,6 +220,10 @@ public class FeedSurfaceRendererBridge {
         return FeedSurfaceRendererBridgeJni.get().getLastFetchTimeMs(mProfile, mSurfaceId);
     }
 
+    List<String> getFeedUrls() {
+        return FeedSurfaceRendererBridgeJni.get().getFeedUrls(mProfile, mSurfaceId);
+    }
+
     void reportInfoCardTrackViewStarted(int type) {
         FeedSurfaceRendererBridgeJni.get()
                 .reportInfoCardTrackViewStarted(mProfile, mSurfaceId, type);
@@ -255,13 +265,13 @@ public class FeedSurfaceRendererBridge {
     public interface Natives {
         // Constructors.
         long init(
-                FeedSurfaceRendererBridge caller,
+                FeedSurfaceRendererBridge self,
                 @JniType("Profile*") Profile profile,
                 @StreamKind int streamKind,
                 long nativeFeedReliabilityLoggingBridge);
 
         long initWebFeed(
-                FeedSurfaceRendererBridge caller,
+                FeedSurfaceRendererBridge self,
                 @JniType("Profile*") Profile profile,
                 byte[] webFeedId,
                 long nativeFeedReliabilityLoggingBridge,
@@ -295,7 +305,7 @@ public class FeedSurfaceRendererBridge {
                 @JniType("Profile*") Profile profile,
                 int surfaceId,
                 GURL url,
-                @JniType("std::string") String sliceId,
+                @JniType("std::string") @Nullable String sliceId,
                 @OpenActionType int openActionType);
 
         void reportOpenVisitComplete(
@@ -327,6 +337,9 @@ public class FeedSurfaceRendererBridge {
                 @JniType("Profile*") Profile profile, int surfaceId, int changeId);
 
         long getLastFetchTimeMs(@JniType("Profile*") Profile profile, int surfaceId);
+
+        @JniType("std::vector<std::string>")
+        List<String> getFeedUrls(@JniType("Profile*") Profile profile, int surfaceId);
 
         void reportInfoCardTrackViewStarted(
                 @JniType("Profile*") Profile profile, int surfaceId, int type);

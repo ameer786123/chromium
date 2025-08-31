@@ -19,6 +19,7 @@
 #import "base/strings/string_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/autofill/core/browser/crowdsourcing/votes_uploader.h"
 #import "components/autofill/core/browser/data_manager/valuables/valuables_data_manager.h"
 #import "components/autofill/core/browser/form_import/addresses/autofill_save_update_address_profile_delegate_ios.h"
@@ -38,7 +39,6 @@
 #import "components/infobars/core/infobar_manager.h"
 #import "components/keyed_service/core/service_access_type.h"
 #import "components/optimization_guide/machine_learning_tflite_buildflags.h"
-#import "components/password_manager/core/browser/features/password_features.h"
 #import "components/password_manager/core/browser/form_parsing/form_data_parser.h"
 #import "components/password_manager/core/browser/password_form.h"
 #import "components/password_manager/core/common/password_manager_pref_names.h"
@@ -77,18 +77,18 @@
 #import "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
+#import "ios/chrome/browser/autofill/model/ios_autofill_field_classification_model_handler_factory.h"
 #import "ios/chrome/browser/passwords/model/ios_password_field_classification_model_handler_factory.h"
 #endif
 
 namespace autofill {
 
 ChromeAutofillClientIOS::ChromeAutofillClientIOS(
-    FromWebStateImpl from_web_state_impl,
-    ProfileIOS* profile,
     web::WebState* web_state,
+    ProfileIOS* profile,
     infobars::InfoBarManager* infobar_manager,
     id<AutofillClientIOSBridge, AutofillDriverIOSBridge> bridge)
-    : AutofillClientIOS(from_web_state_impl, web_state, bridge),
+    : AutofillClientIOSMixin<ChromeAutofillClientIOS>(web_state, bridge),
       pref_service_(profile->GetPrefs()),
       sync_service_(SyncServiceFactory::GetForProfile(profile)),
       personal_data_manager_(PersonalDataManagerFactory::GetForProfile(
@@ -117,7 +117,7 @@ base::WeakPtr<autofill::AutofillClient> ChromeAutofillClientIOS::GetWeakPtr() {
 }
 
 const std::string& ChromeAutofillClientIOS::GetAppLocale() const {
-  return GetApplicationContext()->GetApplicationLocale();
+  return GetApplicationContext()->GetApplicationLocaleStorage()->Get();
 }
 
 version_info::Channel ChromeAutofillClientIOS::GetChannel() const {
@@ -125,13 +125,13 @@ version_info::Channel ChromeAutofillClientIOS::GetChannel() const {
 }
 
 bool ChromeAutofillClientIOS::IsOffTheRecord() const {
-  return web_state()->GetBrowserState()->IsOffTheRecord();
+  return profile_->IsOffTheRecord();
 }
 
 scoped_refptr<network::SharedURLLoaderFactory>
 ChromeAutofillClientIOS::GetURLLoaderFactory() {
   return base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
-      web_state()->GetBrowserState()->GetURLLoaderFactory());
+      profile_->GetURLLoaderFactory());
 }
 
 AutofillCrowdsourcingManager&
@@ -152,8 +152,8 @@ PersonalDataManager& ChromeAutofillClientIOS::GetPersonalDataManager() {
   return CHECK_DEREF(personal_data_manager_.get());
 }
 
-ValuablesDataManager& ChromeAutofillClientIOS::GetValuablesDataManager() {
-  NOTREACHED();
+ValuablesDataManager* ChromeAutofillClientIOS::GetValuablesDataManager() {
+  return nullptr;
 }
 
 EntityDataManager* ChromeAutofillClientIOS::GetEntityDataManager() {
@@ -161,15 +161,24 @@ EntityDataManager* ChromeAutofillClientIOS::GetEntityDataManager() {
 }
 
 FieldClassificationModelHandler*
-ChromeAutofillClientIOS::GetPasswordManagerFieldClassificationModelHandler() {
+ChromeAutofillClientIOS::GetAutofillFieldClassificationModelHandler() {
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
-  if (base::FeatureList::IsEnabled(
-          password_manager::features::kPasswordFormClientsideClassifier)) {
-    return IOSPasswordFieldClassificationModelHandlerFactory::GetForProfile(
+  if (base::FeatureList::IsEnabled(features::kAutofillModelPredictions)) {
+    return IOSAutofillFieldClassificationModelHandlerFactory::GetForProfile(
         profile_);
   }
 #endif
   return nullptr;
+}
+
+FieldClassificationModelHandler*
+ChromeAutofillClientIOS::GetPasswordManagerFieldClassificationModelHandler() {
+#if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
+  return IOSPasswordFieldClassificationModelHandlerFactory::GetForProfile(
+      profile_);
+#else
+  return nullptr;
+#endif
 }
 
 SingleFieldFillRouter& ChromeAutofillClientIOS::GetSingleFieldFillRouter() {

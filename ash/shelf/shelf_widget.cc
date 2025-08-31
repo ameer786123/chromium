@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "ash/accessibility/ui/accessibility_focusable_widget_delegate.h"
 #include "ash/animation/animation_change_type.h"
 #include "ash/app_list/app_list_controller_impl.h"
 #include "ash/constants/ash_features.h"
@@ -265,10 +266,11 @@ class ShelfBackgroundLayerDelegate : public ui::LayerOwner,
 // The contents view of the Shelf. In an active session, this is used to
 // display a semi-opaque background behind the shelf. Outside of an active
 // session, this also contains the login shelf view.
-class ShelfWidgetDelegateView : public views::WidgetDelegate,
-                                public views::AccessiblePaneView,
-                                public ShelfBackgroundAnimatorObserver,
-                                public HotseatTransitionAnimator::Observer {
+class ShelfWidgetDelegateView
+    : public AccessibilityFocusable<views::WidgetDelegate>,
+      public views::AccessiblePaneView,
+      public ShelfBackgroundAnimatorObserver,
+      public HotseatTransitionAnimator::Observer {
  public:
   ShelfWidgetDelegateView(ShelfWidget* shelf_widget, Shelf* shelf);
 
@@ -276,12 +278,6 @@ class ShelfWidgetDelegateView : public views::WidgetDelegate,
   ShelfWidgetDelegateView& operator=(const ShelfWidgetDelegateView&) = delete;
 
   ~ShelfWidgetDelegateView() override;
-
-  void set_focus_cycler(FocusCycler* focus_cycler) {
-    focus_cycler_ = focus_cycler;
-  }
-
-  FocusCycler* focus_cycler() { return focus_cycler_; }
 
   void SetParentLayer(ui::Layer* layer);
 
@@ -341,7 +337,6 @@ class ShelfWidgetDelegateView : public views::WidgetDelegate,
   // |opaque_background_| during animations.
   bool hide_background_for_transitions_ = false;
   const raw_ptr<ShelfWidget> shelf_widget_;
-  raw_ptr<FocusCycler> focus_cycler_ = nullptr;
 
   // A background layer that may be visible depending on a
   // ShelfBackgroundAnimator.
@@ -509,16 +504,12 @@ void ShelfWidgetDelegateView::UpdateOpaqueBackground() {
       -shelf->SelectValueForShelfAlignment(0, 0, safety_margin)));
   opaque_back_ground_layer->SetBounds(opaque_background_bounds);
 
-  const bool is_vertical_alignment_in_overview =
-      in_overview_mode && !shelf->IsHorizontalAlignment();
-
-  // Show rounded corners except in maximized (which includes split view) mode,
-  // or whenever we are "in app", or the shelf is on the vertical alignment in
-  // overview mode.
+  // Do not show rounded corners when the background is in maximized mode (app
+  // window covers entire background, including splitscreen), whenever we are
+  // "in app", or in overview mode (vertical or horizontal).
   if (background_type == ShelfBackgroundType::kMaximized ||
       background_type == ShelfBackgroundType::kInApp ||
-      (tablet_mode && (in_app || split_view)) ||
-      is_vertical_alignment_in_overview) {
+      background_type == ShelfBackgroundType::kOverview) {
     opaque_background_.SetRoundedCornerRadius(0);
   } else {
     opaque_background_.SetRoundedCornerRadius(radius);
@@ -720,7 +711,6 @@ void ShelfWidget::Shutdown() {
 
   // Don't need to observe focus/activation during shutdown.
   Shell::Get()->focus_cycler()->RemoveWidget(this);
-  SetFocusCycler(nullptr);
 
   if (auto* overview_controller = Shell::Get()->overview_controller()) {
     overview_controller->RemoveObserver(this);
@@ -739,12 +729,13 @@ void ShelfWidget::RegisterHotseatWidget(HotseatWidget* hotseat_widget) {
 
 void ShelfWidget::PostCreateShelf() {
   ash::FocusCycler* focus_cycler = Shell::Get()->focus_cycler();
-  SetFocusCycler(focus_cycler);
+
+  focus_cycler->AddWidget(this);
 
   // Add widgets to |focus_cycler| in the desired focus order in LTR.
   focus_cycler->AddWidget(navigation_widget());
   focus_cycler->AddWidget(desk_button_widget());
-  hotseat_widget()->SetFocusCycler(focus_cycler);
+  focus_cycler->AddWidget(hotseat_widget());
   focus_cycler->AddWidget(status_area_widget());
 
   shelf_layout_manager_->UpdateAutoHideState();
@@ -753,16 +744,6 @@ void ShelfWidget::PostCreateShelf() {
 
 bool ShelfWidget::IsShowingMenu() const {
   return hotseat_widget()->GetShelfView()->IsShowingMenu();
-}
-
-void ShelfWidget::SetFocusCycler(FocusCycler* focus_cycler) {
-  delegate_view_->set_focus_cycler(focus_cycler);
-  if (focus_cycler)
-    focus_cycler->AddWidget(this);
-}
-
-FocusCycler* ShelfWidget::GetFocusCycler() {
-  return delegate_view_->focus_cycler();
 }
 
 gfx::Rect ShelfWidget::GetScreenBoundsOfItemIconForWindow(
@@ -779,7 +760,7 @@ gfx::Rect ShelfWidget::GetScreenBoundsOfItemIconForWindow(
 gfx::Rect ShelfWidget::GetVisibleShelfBounds() const {
   gfx::Rect shelf_region = GetWindowBoundsInScreen();
   const display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(GetNativeWindow());
+      display::Screen::Get()->GetDisplayNearestWindow(GetNativeWindow());
   DCHECK(!display.bounds().IsEmpty());
   shelf_region.Intersect(display.bounds());
   return screen_util::SnapBoundsToDisplayEdge(shelf_region, GetNativeWindow());
@@ -826,8 +807,7 @@ void ShelfWidget::CalculateTargetBounds() {
 
   if (layout_manager->is_shelf_auto_hidden()) {
     const display::Display display =
-        display::Screen::GetScreen()->GetDisplayNearestWindow(
-            GetNativeWindow());
+        display::Screen::Get()->GetDisplayNearestWindow(GetNativeWindow());
     shelf_in_screen_portion =
         Shell::Get()->app_list_controller()->GetTargetVisibility(display.id())
             ? shelf_size

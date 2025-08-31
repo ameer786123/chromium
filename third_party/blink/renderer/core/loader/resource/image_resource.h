@@ -70,6 +70,10 @@ class CORE_EXPORT ImageResource final
                                const DOMWrapperWorld* world);
   static ImageResource* CreateForTest(const KURL&);
 
+  // This will exclude ~65% of images on the web, based on:
+  //   https://almanac.httparchive.org/en/2024/media#image-dimensions
+  static constexpr int kSpeculativeDecodeMinImageSize = 100000;
+
   ImageResource(const ResourceRequest&,
                 const ResourceLoaderOptions&,
                 ImageResourceContent*);
@@ -102,11 +106,16 @@ class CORE_EXPORT ImageResource final
   void UpdateResourceInfoFromObservers() override;
   std::pair<ResourcePriority, ResourcePriority> PriorityFromObservers()
       const override;
-  bool HasNonDegenerateSizeForDecode() const override;
+  bool IsAboveSpeculativeDecodeSizeThreshold() const override;
 
   // MultipartImageResourceParser::Client
   void OnePartInMultipartReceived(const ResourceResponse&) final;
   void MultipartDataReceived(base::span<const uint8_t> bytes) final;
+
+  bool RequestedSpeculativeDecode() const {
+    return requested_speculative_decode_;
+  }
+  void OnRequestSpeculativeDecode() { requested_speculative_decode_ = true; }
 
   // If the ImageResource came from a user agent CSS stylesheet then we should
   // flag it so that it can persist beyond navigation.
@@ -157,6 +166,8 @@ class CORE_EXPORT ImageResource final
   bool is_referenced_from_ua_stylesheet_ = false;
 
   bool is_pending_flushing_ = false;
+
+  bool requested_speculative_decode_ = false;
 
   V8ExternalMemoryAccounter external_memory_accounter_;
 };

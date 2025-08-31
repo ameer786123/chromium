@@ -98,7 +98,7 @@ const int kNodeTrimBackoffTimeSec = 1800;
 //
 // * To mitigate load pressure on system because the system is busy just after
 //   resuming for a while.
-// * GetTimeSinceLastVisibilityChange() of each node become meaningless because
+// * GetLastVisibilityChangeTime() of each node become meaningless because
 //   the monotonic clock keeps proceeding during dark resume. Waiting for
 //   kNodeInvisibleTimeSec after resuming ensures that enough time has elapsed
 //   so that inappropriately added time from dark resume can no longer affect
@@ -153,6 +153,12 @@ TrimOnMemoryPressureParams TrimOnMemoryPressureParams::GetParams() {
 }
 
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_WIN)
+BASE_FEATURE(kTerminationTargetPolicy,
+             "TerminationTargetPolicy",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(IS_WIN)
 
 }  // namespace features
 }  // namespace performance_manager

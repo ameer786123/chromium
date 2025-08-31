@@ -35,7 +35,9 @@
 #import "ios/chrome/app/application_delegate/app_state.h"
 #import "ios/chrome/app/profile/profile_state.h"
 #import "ios/chrome/app/tests_hook.h"
+#import "ios/chrome/browser/app_store_bundle/model/app_store_bundle_service_factory.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
 #import "ios/chrome/browser/commerce/model/push_notification/push_notification_feature.h"
 #import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
@@ -64,8 +66,6 @@
 #import "ios/chrome/browser/content_suggestions/ui_bundled/safety_check/types.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/safety_check/utils.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/send_tab_to_self/send_tab_promo_mediator.h"
-#import "ios/chrome/browser/content_suggestions/ui_bundled/set_up_list/set_up_list_content_notification_promo_coordinator.h"
-#import "ios/chrome/browser/content_suggestions/ui_bundled/set_up_list/set_up_list_content_notification_promo_coordinator_delegate.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/set_up_list/set_up_list_default_browser_promo_coordinator.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/set_up_list/set_up_list_default_browser_promo_coordinator_delegate.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/set_up_list/set_up_list_item_view.h"
@@ -108,14 +108,13 @@
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/promos_manager/model/promos_manager_factory.h"
 #import "ios/chrome/browser/push_notification/model/constants.h"
-#import "ios/chrome/browser/push_notification/model/provisional_push_notification_util.h"
+#import "ios/chrome/browser/push_notification/model/provisional_push_notification_service.h"
+#import "ios/chrome/browser/push_notification/model/provisional_push_notification_service_factory.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_client_id.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_service.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_settings_util.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_util.h"
 #import "ios/chrome/browser/push_notification/ui_bundled/notifications_opt_in_alert_coordinator.h"
-#import "ios/chrome/browser/push_notification/ui_bundled/notifications_opt_in_coordinator.h"
-#import "ios/chrome/browser/push_notification/ui_bundled/notifications_opt_in_coordinator_delegate.h"
 #import "ios/chrome/browser/reading_list/model/reading_list_model_factory.h"
 #import "ios/chrome/browser/safety_check/model/ios_chrome_safety_check_manager.h"
 #import "ios/chrome/browser/safety_check/model/ios_chrome_safety_check_manager_factory.h"
@@ -145,7 +144,6 @@
 #import "ios/chrome/browser/shared/public/commands/price_tracked_items_commands.h"
 #import "ios/chrome/browser/shared/public/commands/search_image_with_lens_command.h"
 #import "ios/chrome/browser/shared/public/commands/settings_commands.h"
-#import "ios/chrome/browser/shared/public/commands/show_signin_command.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/public/commands/whats_new_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
@@ -155,7 +153,6 @@
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service_factory.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
-#import "ios/chrome/browser/sync/model/sync_service_factory.h"
 #import "ios/chrome/browser/tips_manager/model/tips_manager_ios_factory.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_params.h"
@@ -201,9 +198,7 @@ using segmentation_platform::TipIdentifier;
     MagicStackModuleContainerDelegate,
     TipsPasswordsCoordinatorDelegate,
     NotificationsOptInAlertCoordinatorDelegate,
-    NotificationsOptInCoordinatorDelegate,
     PriceTrackingPromoActionDelegate,
-    SetUpListContentNotificationPromoCoordinatorDelegate,
     SetUpListDefaultBrowserPromoCoordinatorDelegate,
     SetUpListTapDelegate,
     ShopCardActionDelegate>
@@ -226,14 +221,6 @@ using segmentation_platform::TipIdentifier;
   // The coordinator that displays the Default Browser Promo for the Set Up
   // List.
   SetUpListDefaultBrowserPromoCoordinator* _defaultBrowserPromoCoordinator;
-
-  // The coordinator that displays the Content Notification Promo for the Set Up
-  // List.
-  SetUpListContentNotificationPromoCoordinator* _contentNotificationCoordinator;
-
-  // The coordinator that displays the opt-in notification settings view for the
-  // Set Up List.
-  NotificationsOptInCoordinator* _notificationsOptInCoordinator;
 
   // The Show More Menu presented from the Set Up List in the Magic Stack.
   SetUpListShowMoreViewController* _setUpListShowMoreViewController;
@@ -260,13 +247,11 @@ using segmentation_platform::TipIdentifier;
   PriceTrackingPromoMediator* _priceTrackingPromoMediator;
   ShopCardMediator* _shopCardMediator;
   SendTabPromoMediator* _sendTabPromoMediator;
-
+  SigninCoordinator* _signinCoordinator;
   MagicStackCollectionViewController* _magicStackCollectionView;
 
   raw_ptr<segmentation_platform::SegmentationPlatformService>
       _segmentationService;
-  raw_ptr<segmentation_platform::DeviceSwitcherResultDispatcher>
-      _deviceSwitcherResultDispatcher;
 }
 
 - (void)start {
@@ -284,8 +269,6 @@ using segmentation_platform::TipIdentifier;
   _segmentationService =
       segmentation_platform::SegmentationPlatformServiceFactory::GetForProfile(
           profile);
-  _deviceSwitcherResultDispatcher = segmentation_platform::
-      SegmentationPlatformServiceFactory::GetDispatcherForProfile(profile);
 
   self.authService = AuthenticationServiceFactory::GetForProfile(profile);
 
@@ -294,15 +277,15 @@ using segmentation_platform::TipIdentifier;
   //
   // TODO(crbug.com/366182129): Move Safety Check provisional notification
   // enrollment to `SafetyCheckNotificationClient` once
-  // `ProvisionalPushNotificationUtil` circular dependencies are fixed.
+  // `ProvisionalPushNotificationService` circular dependencies are fixed.
   if (IsSafetyCheckNotificationsEnabled() &&
       ProvisionalSafetyCheckNotificationsEnabled()) {
-    [ProvisionalPushNotificationUtil
-        enrollUserToProvisionalNotificationsForClientIds:
-            {PushNotificationClientId::kSafetyCheck}
-                             clientEnabledForProvisional:NO
-                                         withAuthService:self.authService
-                                   deviceInfoSyncService:nil];
+    if (ProvisionalPushNotificationService* service =
+            ProvisionalPushNotificationServiceFactory::GetForProfile(profile)) {
+      service->EnrollUserToProvisionalNotifications(
+          ProvisionalPushNotificationService::ClientIdState::kDisabled,
+          {PushNotificationClientId::kSafetyCheck});
+    }
   }
 
   favicon::LargeIconService* largeIconService =
@@ -320,11 +303,6 @@ using segmentation_platform::TipIdentifier;
   self.contentSuggestionsMetricsRecorder =
       [[ContentSuggestionsMetricsRecorder alloc]
           initWithLocalState:GetApplicationContext()->GetLocalState()];
-
-  syncer::SyncService* syncService = SyncServiceFactory::GetForProfile(profile);
-
-  AuthenticationService* authenticationService =
-      AuthenticationServiceFactory::GetForProfile(profile);
 
   signin::IdentityManager* identityManager =
       IdentityManagerFactory::GetForProfile(profile);
@@ -363,7 +341,7 @@ using segmentation_platform::TipIdentifier;
       initWithReadingListModel:readingListModel
       featureEngagementTracker:feature_engagement::TrackerFactory::
                                    GetForProfile(profile)
-                   authService:authenticationService];
+               identityManager:identityManager];
   _shortcutsMediator.contentSuggestionsMetricsRecorder =
       self.contentSuggestionsMetricsRecorder;
   _shortcutsMediator.NTPActionsDelegate = self.NTPActionsDelegate;
@@ -393,13 +371,13 @@ using segmentation_platform::TipIdentifier;
     _tabResumptionMediator.NTPActionsDelegate = self.NTPActionsDelegate;
     _tabResumptionMediator.contentSuggestionsMetricsRecorder =
         self.contentSuggestionsMetricsRecorder;
-    _tabResumptionMediator.dispatcher =
-        static_cast<id<ApplicationCommands, SnackbarCommands>>(
-            self.browser->GetCommandDispatcher());
+    _tabResumptionMediator.dispatcher = static_cast<
+        id<ApplicationCommands, PriceTrackedItemsCommands, SnackbarCommands>>(
+        self.browser->GetCommandDispatcher());
 
     [moduleMediators addObject:_tabResumptionMediator];
   }
-  if (IsPriceTrackingPromoCardEnabled(shoppingService, authenticationService,
+  if (IsPriceTrackingPromoCardEnabled(shoppingService, self.authService,
                                       prefs)) {
     _priceTrackingPromoMediator = [[PriceTrackingPromoMediator alloc]
         initWithShoppingService:commerce::ShoppingServiceFactory::GetForProfile(
@@ -486,16 +464,15 @@ using segmentation_platform::TipIdentifier;
     [moduleMediators addObject:_tipsMediator];
   }
 
-  if (!_mostVisitedTilesMediator.inMagicStack) {
-    ContentSuggestionsViewController* viewController =
-        [[ContentSuggestionsViewController alloc] init];
-    viewController.audience = self;
-    viewController.urlLoadingBrowserAgent =
-        UrlLoadingBrowserAgent::FromBrowser(self.browser);
-    viewController.contentSuggestionsMetricsRecorder =
-        self.contentSuggestionsMetricsRecorder;
-    self.contentSuggestionsViewController = viewController;
-  }
+  ContentSuggestionsViewController* viewController =
+      [[ContentSuggestionsViewController alloc] init];
+  viewController.audience = self;
+  viewController.urlLoadingBrowserAgent =
+      UrlLoadingBrowserAgent::FromBrowser(self.browser);
+  viewController.contentSuggestionsMetricsRecorder =
+      self.contentSuggestionsMetricsRecorder;
+  self.contentSuggestionsViewController = viewController;
+
   BOOL isSetupListEnabled = set_up_list_utils::IsSetUpListActive(
       GetApplicationContext()->GetLocalState(), prefs);
   if (isSetupListEnabled) {
@@ -506,17 +483,11 @@ using segmentation_platform::TipIdentifier;
                                  defaultSearchURLTemplate->prepopulate_id() ==
                                      TemplateURLPrepopulateData::google.id;
     _setUpListMediator = [[SetUpListMediator alloc]
-                   initWithPrefService:prefs
-                           syncService:syncService
-                       identityManager:identityManager
-                 authenticationService:authenticationService
-                            sceneState:self.browser->GetSceneState()
-                 isDefaultSearchEngine:isDefaultSearchEngine
-                   segmentationService:_segmentationService
-        deviceSwitcherResultDispatcher:_deviceSwitcherResultDispatcher];
-    if (IsSegmentedDefaultBrowserPromoEnabled()) {
-      [_setUpListMediator retrieveUserSegment];
-    }
+          initWithPrefService:prefs
+              identityManager:identityManager
+                   sceneState:self.browser->GetSceneState()
+        isDefaultSearchEngine:isDefaultSearchEngine
+         priceTrackingEnabled:IsPriceTrackingEnabled(self.profile)];
     _setUpListMediator.commandHandler = self;
     _setUpListMediator.contentSuggestionsMetricsRecorder =
         self.contentSuggestionsMetricsRecorder;
@@ -535,6 +506,8 @@ using segmentation_platform::TipIdentifier;
                       tipsManager:TipsManagerIOSFactory::GetForProfile(
                                       self.profile)
                templateURLService:ios::TemplateURLServiceFactory::GetForProfile(
+                                      self.profile)
+            appStoreBundleService:AppStoreBundleServiceFactory::GetForProfile(
                                       self.profile)];
   _magicStackRankingModel.contentSuggestionsMetricsRecorder =
       self.contentSuggestionsMetricsRecorder;
@@ -558,7 +531,6 @@ using segmentation_platform::TipIdentifier;
 
 - (void)stop {
   _segmentationService = nullptr;
-  _deviceSwitcherResultDispatcher = nullptr;
   [_shortcutsMediator disconnect];
   _shortcutsMediator = nil;
   [_safetyCheckMediator disconnect];
@@ -581,10 +553,7 @@ using segmentation_platform::TipIdentifier;
   self.contentSuggestionsMetricsRecorder = nil;
   self.contentSuggestionsViewController.audience = nil;
   self.contentSuggestionsViewController = nil;
-  [_defaultBrowserPromoCoordinator stop];
-  _defaultBrowserPromoCoordinator = nil;
-  [_notificationsOptInAlertCoordinator stop];
-  _notificationsOptInAlertCoordinator = nil;
+  [self clearPresentedState];
   [self.browser->GetCommandDispatcher()
       stopDispatchingForProtocol:@protocol(ContentSuggestionsCommands)];
   _started = NO;
@@ -592,6 +561,14 @@ using segmentation_platform::TipIdentifier;
 
 - (ContentSuggestionsViewController*)viewController {
   return self.contentSuggestionsViewController;
+}
+
+- (void)clearPresentedState {
+  [_defaultBrowserPromoCoordinator stop];
+  _defaultBrowserPromoCoordinator = nil;
+  [_notificationsOptInAlertCoordinator stop];
+  _notificationsOptInAlertCoordinator = nil;
+  [self stopSigninCoordinator];
 }
 
 #pragma mark - Public methods
@@ -615,13 +592,18 @@ using segmentation_platform::TipIdentifier;
       dismissViewControllerAnimated:NO
                          completion:nil];
   NSArray<SetUpListItemViewData*>* items = [self.setUpListMediator allItems];
+
   _setUpListShowMoreViewController =
       [[SetUpListShowMoreViewController alloc] initWithItems:items
                                                  tapDelegate:self];
-  _setUpListShowMoreViewController.modalPresentationStyle =
-      UIModalPresentationPageSheet;
+
+  UINavigationController* navController = [[UINavigationController alloc]
+      initWithRootViewController:_setUpListShowMoreViewController];
+  navController.modalPresentationStyle = UIModalPresentationPageSheet;
+
   UISheetPresentationController* presentationController =
-      _setUpListShowMoreViewController.sheetPresentationController;
+      navController.sheetPresentationController;
+
   presentationController.prefersEdgeAttachedInCompactHeight = YES;
   presentationController.widthFollowsPreferredContentSizeWhenEdgeAttached = YES;
   presentationController.detents = @[
@@ -633,10 +615,10 @@ using segmentation_platform::TipIdentifier;
         UISheetPresentationControllerDetentIdentifierLarge;
   }
   presentationController.preferredCornerRadius = 16;
-  [_magicStackCollectionView
-      presentViewController:_setUpListShowMoreViewController
-                   animated:YES
-                 completion:nil];
+
+  [_magicStackCollectionView presentViewController:navController
+                                          animated:YES
+                                        completion:nil];
 }
 
 #pragma mark - ContentSuggestionsViewControllerAudience
@@ -813,9 +795,6 @@ using segmentation_platform::TipIdentifier;
     case ContentSuggestionsModuleType::kCompactedSetUpList:
       [self showSetUpListSeeMoreMenuExpanded:NO];
       break;
-    case ContentSuggestionsModuleType::kParcelTracking:
-      // TODO(crbug.com/391002352): Remove kParcelTracking entirely.
-      break;
     case ContentSuggestionsModuleType::kTabResumption:
       [self showMagicStackRecentTabs];
       break;
@@ -843,17 +822,11 @@ using segmentation_platform::TipIdentifier;
     case ContentSuggestionsModuleType::kSafetyCheck:
       [_safetyCheckMediator disableModule];
       break;
-    case ContentSuggestionsModuleType::kSetUpListSync:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
     case ContentSuggestionsModuleType::kSetUpListNotifications:
-    case ContentSuggestionsModuleType::kSetUpListDocking:
-    case ContentSuggestionsModuleType::kSetUpListAddressBar:
     case ContentSuggestionsModuleType::kCompactedSetUpList:
       [_setUpListMediator disableModule];
-      break;
-    case ContentSuggestionsModuleType::kParcelTracking:
-      // TODO(crbug.com/391002352): Remove kParcelTracking entirely.
       break;
     case ContentSuggestionsModuleType::kPriceTrackingPromo: {
       base::RecordAction(base::UserMetricsAction(
@@ -944,12 +917,9 @@ using segmentation_platform::TipIdentifier;
       return NotificationOptInAccessPoint::kSafetyCheck;
     case ContentSuggestionsModuleType::kSendTabPromo:
       return NotificationOptInAccessPoint::kSendTabMagicStackPromo;
-    case ContentSuggestionsModuleType::kSetUpListSync:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
     case ContentSuggestionsModuleType::kSetUpListNotifications:
-    case ContentSuggestionsModuleType::kSetUpListDocking:
-    case ContentSuggestionsModuleType::kSetUpListAddressBar:
     case ContentSuggestionsModuleType::kCompactedSetUpList:
     case ContentSuggestionsModuleType::kSetUpListAllSet:
       return NotificationOptInAccessPoint::kSetUpList;
@@ -1157,9 +1127,6 @@ using segmentation_platform::TipIdentifier;
 // Displays the UI for the given SetUpListItemType.
 - (void)showUIForSelectedSetUpListItem:(SetUpListItemType)type {
   switch (type) {
-    case SetUpListItemType::kSignInSync:
-      [self showSignIn];
-      break;
     case SetUpListItemType::kDefaultBrowser:
       [self showDefaultBrowserPromo];
       break;
@@ -1167,18 +1134,11 @@ using segmentation_platform::TipIdentifier;
       [self showCredentialProviderPromo];
       break;
     case SetUpListItemType::kNotifications:
-      if (IsIOSTipsNotificationsEnabled()) {
-        [self showNotificationsOptInView:NotificationOptInAccessPoint::
-                                             kSetUpList];
-      } else {
-        [self showContentNotificationBottomSheet];
-      }
-      break;
-    case SetUpListItemType::kDocking:
-      [self showDockingPromo];
-      break;
-    case SetUpListItemType::kAddressBar:
-      [self showAddressBarPromo];
+      [HandlerForProtocol(self.browser->GetCommandDispatcher(),
+                          BrowserCoordinatorCommands)
+          showNotificationsOptInFromAccessPoint:NotificationOptInAccessPoint::
+                                                    kSetUpList
+                             baseViewController:self.magicStackCollectionView];
       break;
     case SetUpListItemType::kFollow:
     case SetUpListItemType::kAllSet:
@@ -1196,40 +1156,17 @@ using segmentation_platform::TipIdentifier;
 
   _defaultBrowserPromoCoordinator =
       [[SetUpListDefaultBrowserPromoCoordinator alloc]
-              initWithBaseViewController:self.magicStackCollectionView
-                                 browser:self.browser
-                             application:[UIApplication sharedApplication]
-                     segmentationService:_segmentationService
-          deviceSwitcherResultDispatcher:_deviceSwitcherResultDispatcher];
+          initWithBaseViewController:self.magicStackCollectionView
+                             browser:self.browser
+                         application:[UIApplication sharedApplication]];
   _defaultBrowserPromoCoordinator.delegate = self;
   [_defaultBrowserPromoCoordinator start];
 }
 
-// Shows the SigninSync UI with the SetUpList access point.
-- (void)showSignIn {
-  SigninCoordinatorCompletionCallback completion =
-      ^(SigninCoordinatorResult result, id<SystemIdentity> completionIdentity) {
-        if (result == SigninCoordinatorResultSuccess ||
-            result == SigninCoordinatorResultCanceledByUser) {
-          PrefService* localState = GetApplicationContext()->GetLocalState();
-          set_up_list_prefs::MarkItemComplete(localState,
-                                              SetUpListItemType::kSignInSync);
-        }
-      };
-  // If there are 0 identities, kInstantSignin requires less taps.
-  AuthenticationOperation operation =
-      [self hasIdentitiesOnDevice] ? AuthenticationOperation::kSigninOnly
-                                   : AuthenticationOperation::kInstantSignin;
-  ShowSigninCommand* command = [[ShowSigninCommand alloc]
-      initWithOperation:operation
-               identity:nil
-            accessPoint:signin_metrics::AccessPoint::kSetUpList
-            promoAction:signin_metrics::PromoAction::
-                            PROMO_ACTION_NO_SIGNIN_PROMO
-             completion:completion];
-  [HandlerForProtocol(self.browser->GetCommandDispatcher(), ApplicationCommands)
-              showSignin:command
-      baseViewController:self.magicStackCollectionView];
+// Stops the SigninCoordinator.
+- (void)stopSigninCoordinator {
+  [_signinCoordinator stop];
+  _signinCoordinator = nil;
 }
 
 // Shows the Credential Provider Promo using the SetUpList trigger.
@@ -1238,43 +1175,6 @@ using segmentation_platform::TipIdentifier;
                       CredentialProviderPromoCommands)
       showCredentialProviderPromoWithTrigger:CredentialProviderPromoTrigger::
                                                  SetUpList];
-}
-
-- (void)showContentNotificationBottomSheet {
-  // Stop the coordinator if it is already running. If the user swipes to
-  // dismiss a previous instance and then clicks the item again the
-  // previous instance may not have been stopped yet due to the animation.
-  [_contentNotificationCoordinator stop];
-  _contentNotificationCoordinator =
-      [[SetUpListContentNotificationPromoCoordinator alloc]
-          initWithBaseViewController:self.magicStackCollectionView
-                             browser:self.browser
-                         application:[UIApplication sharedApplication]];
-  _contentNotificationCoordinator.delegate = self;
-  [_contentNotificationCoordinator start];
-}
-
-- (void)showNotificationsOptInView:(NotificationOptInAccessPoint)accessPoint {
-  [_notificationsOptInCoordinator stop];
-  _notificationsOptInCoordinator = [[NotificationsOptInCoordinator alloc]
-      initWithBaseViewController:self.magicStackCollectionView
-                         browser:self.browser];
-  _notificationsOptInCoordinator.accessPoint = accessPoint;
-  _notificationsOptInCoordinator.delegate = self;
-  [_notificationsOptInCoordinator start];
-}
-
-// Shows the Docking promo.
-- (void)showDockingPromo {
-  [HandlerForProtocol(self.browser->GetCommandDispatcher(),
-                      DockingPromoCommands)
-      showDockingPromoWithTrigger:DockingPromoTrigger::kSetUpList];
-}
-
-// Shows the Address Bar promo.
-- (void)showAddressBarPromo {
-  [HandlerForProtocol(self.browser->GetCommandDispatcher(),
-                      BrowserCoordinatorCommands) showOmniboxPositionChoice];
 }
 
 #pragma mark - NotificationsOptInAlertCoordinatorDelegate
@@ -1314,15 +1214,6 @@ using segmentation_platform::TipIdentifier;
   }];
 }
 
-#pragma mark - NotificationsOptInCoordinatorDelegate
-
-- (void)notificationsOptInScreenDidFinish:
-    (NotificationsOptInCoordinator*)coordinator {
-  CHECK_EQ(coordinator, _notificationsOptInCoordinator);
-  [_notificationsOptInCoordinator stop];
-  _notificationsOptInCoordinator = nil;
-}
-
 #pragma mark - PriceTrackingPromoActionDelegate
 
 // TODO(crbug.com/378554727): Integrate Price Tracking with
@@ -1346,9 +1237,7 @@ using segmentation_platform::TipIdentifier;
                   base::RecordAction(base::UserMetricsAction(
                       "Commerce.PriceTracking.MagicStackPromo.Reenable.Allow"));
                   NSString* settingURL = UIApplicationOpenSettingsURLString;
-                  if (@available(iOS 15.4, *)) {
-                    settingURL = UIApplicationOpenNotificationSettingsURLString;
-                  }
+                  settingURL = UIApplicationOpenNotificationSettingsURLString;
 
                   [[UIApplication sharedApplication]
                       openURL:[NSURL URLWithString:settingURL]
@@ -1407,13 +1296,6 @@ using segmentation_platform::TipIdentifier;
   _defaultBrowserPromoCoordinator = nil;
 }
 
-#pragma mark - SetUpListContentNotificationPromoCoordinatorDelegate
-
-- (void)setUpListContentNotificationPromoDidFinish {
-  [_contentNotificationCoordinator stop];
-  _contentNotificationCoordinator = nil;
-}
-
 #pragma mark - ShopCardActionDelegate
 
 - (void)openURL:(GURL)url {
@@ -1433,12 +1315,6 @@ using segmentation_platform::TipIdentifier;
 }
 
 #pragma mark - Helpers
-
-- (bool)hasIdentitiesOnDevice {
-  return !IdentityManagerFactory::GetForProfile(self.profile)
-              ->GetAccountsOnDevice()
-              .empty();
-}
 
 - (void)showMagicStackRecentTabs {
   CommandDispatcher* dispatcher = self.browser->GetCommandDispatcher();

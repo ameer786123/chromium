@@ -78,7 +78,7 @@ public class PermissionDialogController {
     // 1) Multiple open windows request permissions due to Android split-screen
     // 2) A tab navigates or is closed while the Android permission request is open, and the
     // subsequent page requests a permission
-    private List<PermissionDialogDelegate> mRequestQueue;
+    private final List<PermissionDialogDelegate> mRequestQueue;
 
     // Static holder to ensure safe initialization of the singleton instance.
     private static class Holder {
@@ -176,6 +176,15 @@ public class PermissionDialogController {
             assumeNonNull(mCoordinator).dismissFromNative();
         }
         delegate.destroy();
+    }
+
+    public void dismissByCloseButton(PermissionDialogDelegate delegate) {
+        if (mDialogDelegate != null && mDialogDelegate != delegate) {
+            assert mRequestQueue.contains(delegate);
+            mRequestQueue.remove(delegate);
+        } else {
+            assumeNonNull(mCoordinator).dismissByCloseButton();
+        }
     }
 
     public void notifyObservers(@ContentSettingValues int result) {

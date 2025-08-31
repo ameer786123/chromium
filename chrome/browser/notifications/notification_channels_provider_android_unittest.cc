@@ -12,7 +12,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/not_fatal_until.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
@@ -26,6 +26,7 @@
 #include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/browser/content_settings_provider.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
+#include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/content_settings/core/test/content_settings_mock_provider.h"
@@ -37,6 +38,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
+#include "notification_channels_provider_android.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -64,7 +66,7 @@ class FakeNotificationChannelsBridge
     auto it = std::ranges::find(
         channels_, origin,
         [](const Channels::value_type& pair) { return pair.second.origin; });
-    CHECK(it != channels_.end(), base::NotFatalUntil::M130)
+    CHECK(it != channels_.end())
         << "Must call bridge.CreateChannel before SetChannelStatus.";
     it->second.status = status;
   }
@@ -96,6 +98,17 @@ class FakeNotificationChannelsBridge
       channels.push_back(it->second);
     content::GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), channels));
+  }
+
+  std::optional<NotificationChannel> GetChannelForOrigin(
+      const std::string& origin) {
+    auto it = std::ranges::find(
+        channels_, origin,
+        [](const Channels::value_type& pair) { return pair.second.origin; });
+    if (it == channels_.end()) {
+      return std::nullopt;
+    }
+    return it->second;
   }
 
  private:
@@ -152,8 +165,44 @@ class NotificationChannelsProviderAndroidTest : public testing::Test {
             profile_->GetPrefs(), base::WrapUnique(fake_bridge_.get())));
   }
 
+  void SetChannelStatus(const std::string& origin,
+                        NotificationChannelStatus status) {
+    fake_bridge_->SetChannelStatus(origin, status);
+    channels_provider_->OnChannelStateChanged(
+        fake_bridge_->GetChannelForOrigin(origin).value());
+  }
+
   ContentSettingsPattern GetTestPattern() {
     return ContentSettingsPattern::FromURLNoWildcard(GURL(kTestOrigin));
+  }
+
+  void ExpectRuleIteratorCount(int expected_count) {
+    std::unique_ptr<content_settings::RuleIterator> rule_iterator =
+        channels_provider_->GetRuleIterator(
+            ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
+            content_settings::PartitionKey::GetDefaultForTesting());
+    if (expected_count == 0) {
+      EXPECT_FALSE(rule_iterator);
+      return;
+    }
+    for (int i = 0; i < expected_count; ++i) {
+      EXPECT_TRUE(rule_iterator->HasNext());
+      rule_iterator->Next();
+    }
+    EXPECT_FALSE(rule_iterator->HasNext());
+  }
+
+  void VerifyOnlyOneRuleExists(ContentSetting expected_setting) {
+    std::unique_ptr<content_settings::RuleIterator> rule_iterator =
+        channels_provider_->GetRuleIterator(
+            ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
+            content_settings::PartitionKey::GetDefaultForTesting());
+    EXPECT_TRUE(rule_iterator->HasNext());
+    std::unique_ptr<content_settings::Rule> rule = rule_iterator->Next();
+    EXPECT_EQ(GetTestPattern(), rule->primary_pattern);
+    EXPECT_EQ(expected_setting,
+              content_settings::ValueToContentSetting(rule->value));
+    EXPECT_FALSE(rule_iterator->HasNext());
   }
 
   content::BrowserTaskEnvironment task_environment_;
@@ -176,18 +225,14 @@ TEST_F(NotificationChannelsProviderAndroidTest,
       content_settings::PartitionKey::GetDefaultForTesting());
   EXPECT_TRUE(result);
 
-  // Rule is not created immediately after SetWebsiteSetting().
+  // One rule is available after SetWebsiteSetting().
+  ExpectRuleIteratorCount(1);
+
+  // Wait for all async tasks to complete and check the new rules.
   std::unique_ptr<content_settings::RuleIterator> rule_iterator =
       channels_provider_->GetRuleIterator(
           ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
           content_settings::PartitionKey::GetDefaultForTesting());
-  EXPECT_FALSE(rule_iterator);
-
-  // Wait for all async tasks to complete and check the new rules.
-  content::RunAllTasksUntilIdle();
-  rule_iterator = channels_provider_->GetRuleIterator(
-      ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
-      content_settings::PartitionKey::GetDefaultForTesting());
   EXPECT_TRUE(rule_iterator->HasNext());
   std::unique_ptr<content_settings::Rule> rule = rule_iterator->Next();
   EXPECT_EQ(GetTestPattern(), rule->primary_pattern);
@@ -206,19 +251,14 @@ TEST_F(NotificationChannelsProviderAndroidTest,
       /*constraints=*/{},
       content_settings::PartitionKey::GetDefaultForTesting());
   EXPECT_TRUE(result);
-  // Rule is not created immediately after SetWebsiteSetting().
+
+  // One rule is available after SetWebsiteSetting().
+  ExpectRuleIteratorCount(1);
+
   std::unique_ptr<content_settings::RuleIterator> rule_iterator =
       channels_provider_->GetRuleIterator(
           ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
           content_settings::PartitionKey::GetDefaultForTesting());
-  EXPECT_FALSE(rule_iterator);
-
-  content::RunAllTasksUntilIdle();
-
-  // Wait for all async tasks to complete and check the new rules.
-  rule_iterator = channels_provider_->GetRuleIterator(
-      ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
-      content_settings::PartitionKey::GetDefaultForTesting());
   EXPECT_TRUE(rule_iterator->HasNext());
   std::unique_ptr<content_settings::Rule> rule = rule_iterator->Next();
   EXPECT_EQ(GetTestPattern(), rule->primary_pattern);
@@ -287,6 +327,77 @@ TEST_F(NotificationChannelsProviderAndroidTest,
   EXPECT_FALSE(rule_iterator->HasNext());
 }
 
+TEST_F(
+    NotificationChannelsProviderAndroidTest,
+    SetWebsiteSettingAllowedAndThenBlockedForSameOriginCreatesOneBlockedRule) {
+  InitChannelsProvider();
+  content_settings::MockObserver mock_observer;
+  channels_provider_->AddObserver(&mock_observer);
+
+  // Create channel as enabled initially - this should notify the mock observer.
+  EXPECT_CALL(mock_observer,
+              OnContentSettingChanged(GetTestPattern(),
+                                      ContentSettingsPattern::Wildcard(),
+                                      ContentSettingsType::NOTIFICATIONS))
+      .Times(2);
+
+  EXPECT_TRUE(channels_provider_->SetWebsiteSetting(
+      GetTestPattern(), ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(CONTENT_SETTING_ALLOW),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting()));
+  EXPECT_TRUE(channels_provider_->SetWebsiteSetting(
+      GetTestPattern(), ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(CONTENT_SETTING_BLOCK),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting()));
+  fake_bridge_->CreateChannel("https://example.com", base::Time::Now(),
+                              false /* enabled */);
+
+  // Only 1 blocked rule is created, and it should not change after all async
+  // tasks completes.
+  for (int i = 0; i < 2; ++i) {
+    std::unique_ptr<content_settings::RuleIterator> rule_iterator =
+        channels_provider_->GetRuleIterator(
+            ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
+            content_settings::PartitionKey::GetDefaultForTesting());
+    EXPECT_TRUE(rule_iterator->HasNext());
+    std::unique_ptr<content_settings::Rule> rule = rule_iterator->Next();
+    EXPECT_EQ(GetTestPattern(), rule->primary_pattern);
+    EXPECT_EQ(CONTENT_SETTING_BLOCK,
+              content_settings::ValueToContentSetting(rule->value));
+    EXPECT_FALSE(rule_iterator->HasNext());
+    content::RunAllTasksUntilIdle();
+  }
+}
+
+TEST_F(NotificationChannelsProviderAndroidTest,
+       SetWebsiteSettingAllowedAndThenDefaultForSameOrigin) {
+  InitChannelsProvider();
+
+  channels_provider_->SetWebsiteSetting(
+      GetTestPattern(), ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(CONTENT_SETTING_ALLOW),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting());
+  EXPECT_FALSE(channels_provider_->SetWebsiteSetting(
+      GetTestPattern(), ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting()));
+
+  // No rules should exist since the settings are default.
+  EXPECT_FALSE(channels_provider_->GetRuleIterator(
+      ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
+      content_settings::PartitionKey::GetDefaultForTesting()));
+
+  // Rules should not change after all async tasks complete.
+  content::RunAllTasksUntilIdle();
+  EXPECT_FALSE(channels_provider_->GetRuleIterator(
+      ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
+      content_settings::PartitionKey::GetDefaultForTesting()));
+}
+
 TEST_F(NotificationChannelsProviderAndroidTest,
        SetWebsiteSettingDefault_DeletesRule) {
   InitChannelsProvider();
@@ -313,15 +424,7 @@ TEST_F(NotificationChannelsProviderAndroidTest,
       content_settings::PartitionKey::GetDefaultForTesting());
   EXPECT_FALSE(result)
       << "SetWebsiteSetting should return false when passed a null value.";
-  // Rule should still exist before the async task completes.
-  rule_iterator = channels_provider_->GetRuleIterator(
-      ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
-      content_settings::PartitionKey::GetDefaultForTesting());
-  EXPECT_TRUE(rule_iterator->HasNext());
-
-  content::RunAllTasksUntilIdle();
-
-  // Rule should now get deleted.
+  // Rule should have been immediately removed.
   EXPECT_FALSE(channels_provider_->GetRuleIterator(
       ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
       content_settings::PartitionKey::GetDefaultForTesting()));
@@ -406,18 +509,16 @@ TEST_F(NotificationChannelsProviderAndroidTest,
   testing::Mock::VerifyAndClearExpectations(&mock_observer);
 
   // Emulate user blocking the channel.
-  fake_bridge_->SetChannelStatus("https://example.com",
-                                 NotificationChannelStatus::BLOCKED);
+  SetChannelStatus("https://example.com", NotificationChannelStatus::BLOCKED);
 
-  // Observer should be notified on invocation of GetRuleIterator.
+  // Observer should be notified of the channel block after the
+  // SetChannelStatus() call.
   EXPECT_CALL(mock_observer,
               OnContentSettingChanged(ContentSettingsPattern::Wildcard(),
                                       ContentSettingsPattern::Wildcard(),
                                       ContentSettingsType::NOTIFICATIONS))
       .Times(1);
-  channels_provider_->GetRuleIterator(
-      ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
-      content_settings::PartitionKey::GetDefaultForTesting());
+
   content::RunAllTasksUntilIdle();
 
   // Observer should be notified when a new website setting is added.
@@ -518,15 +619,78 @@ TEST_F(NotificationChannelsProviderAndroidTest,
   content::RunAllTasksUntilIdle();
 
   // Check two rules are still returned.
-  std::unique_ptr<content_settings::RuleIterator> rule_iterator =
-      channels_provider_->GetRuleIterator(
-          ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
-          content_settings::PartitionKey::GetDefaultForTesting());
-  EXPECT_TRUE(rule_iterator->HasNext());
-  rule_iterator->Next();
-  EXPECT_TRUE(rule_iterator->HasNext());
-  rule_iterator->Next();
-  EXPECT_FALSE(rule_iterator->HasNext());
+  ExpectRuleIteratorCount(2);
+}
+
+TEST_F(NotificationChannelsProviderAndroidTest,
+       ClearAllContentSettingsRulesAndThenAllowAndBlockMultipleOrigins) {
+  InitChannelsProvider();
+  content_settings::MockObserver mock_observer;
+  channels_provider_->AddObserver(&mock_observer);
+
+  // Set up some channels.
+  ContentSettingsPattern abc_pattern =
+      ContentSettingsPattern::FromURLNoWildcard(GURL("https://abc.com"));
+  ContentSettingsPattern xyz_pattern =
+      ContentSettingsPattern::FromURLNoWildcard(GURL("https://xyz.com"));
+  EXPECT_CALL(
+      mock_observer,
+      OnContentSettingChanged(abc_pattern, ContentSettingsPattern::Wildcard(),
+                              ContentSettingsType::NOTIFICATIONS))
+      .Times(1);
+  channels_provider_->SetWebsiteSetting(
+      abc_pattern, ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(CONTENT_SETTING_ALLOW),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting());
+  EXPECT_CALL(
+      mock_observer,
+      OnContentSettingChanged(xyz_pattern, ContentSettingsPattern::Wildcard(),
+                              ContentSettingsType::NOTIFICATIONS))
+      .Times(1);
+  channels_provider_->SetWebsiteSetting(
+      xyz_pattern, ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(CONTENT_SETTING_BLOCK),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting());
+
+  EXPECT_CALL(mock_observer,
+              OnContentSettingChanged(ContentSettingsPattern::Wildcard(),
+                                      ContentSettingsPattern::Wildcard(),
+                                      ContentSettingsType::NOTIFICATIONS))
+      .Times(1);
+  channels_provider_->ClearAllContentSettingsRules(
+      ContentSettingsType::NOTIFICATIONS,
+      content_settings::PartitionKey::GetDefaultForTesting());
+
+  // Check norules are returned.
+  EXPECT_FALSE(channels_provider_->GetRuleIterator(
+      ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
+      content_settings::PartitionKey::GetDefaultForTesting()));
+
+  EXPECT_CALL(
+      mock_observer,
+      OnContentSettingChanged(abc_pattern, ContentSettingsPattern::Wildcard(),
+                              ContentSettingsType::NOTIFICATIONS))
+      .Times(1);
+  channels_provider_->SetWebsiteSetting(
+      abc_pattern, ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(CONTENT_SETTING_BLOCK),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting());
+  EXPECT_CALL(
+      mock_observer,
+      OnContentSettingChanged(xyz_pattern, ContentSettingsPattern::Wildcard(),
+                              ContentSettingsType::NOTIFICATIONS))
+      .Times(1);
+  channels_provider_->SetWebsiteSetting(
+      xyz_pattern, ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(CONTENT_SETTING_ALLOW),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting());
+
+  // Check two rules are returned.
+  ExpectRuleIteratorCount(2);
 }
 
 TEST_F(NotificationChannelsProviderAndroidTest,
@@ -664,16 +828,8 @@ TEST_F(NotificationChannelsProviderAndroidTest,
       content_settings::PartitionKey::GetDefaultForTesting());
   content::RunAllTasksUntilIdle();
 
-  EXPECT_CALL(mock_observer,
-              OnContentSettingChanged(blocked_pattern,
-                                      ContentSettingsPattern::Wildcard(),
-                                      ContentSettingsType::NOTIFICATIONS))
-      .Times(1);
-  EXPECT_CALL(mock_observer,
-              OnContentSettingChanged(allowed_pattern,
-                                      ContentSettingsPattern::Wildcard(),
-                                      ContentSettingsType::NOTIFICATIONS))
-      .Times(1);
+  // Migrating content settings shouldn't notify observers.
+  EXPECT_CALL(mock_observer, OnContentSettingChanged(_, _, _)).Times(0);
   MigrateToChannelsIfNecessary(old_provider.get());
   content::RunAllTasksUntilIdle();
   base::RunLoop run_loop;
@@ -700,9 +856,8 @@ TEST_F(NotificationChannelsProviderAndroidTest,
       },
       &run_loop));
   run_loop.Run();
-  EXPECT_FALSE(old_provider->GetRuleIterator(
-      ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
-      content_settings::PartitionKey::GetDefaultForTesting()));
+  // There should still exist 2 rules after migration.
+  ExpectRuleIteratorCount(2);
 }
 
 TEST_F(NotificationChannelsProviderAndroidTest,
@@ -825,4 +980,160 @@ TEST_F(NotificationChannelsProviderAndroidTest,
 
   EXPECT_TRUE(profile_->GetPrefs()->GetBoolean(
       prefs::kClearedBlockedSiteNotificationChannels));
+}
+
+TEST_F(NotificationChannelsProviderAndroidTest, EnsureUpdatedSettings) {
+  InitChannelsProvider();
+  content_settings::MockObserver mock_observer;
+  channels_provider_->AddObserver(&mock_observer);
+  ContentSettingsPattern primary_pattern =
+      ContentSettingsPattern::FromURLNoWildcard(GURL("https://abc.com"));
+
+  // Create channel as enabled initially - this should notify the mock observer.
+  EXPECT_CALL(mock_observer,
+              OnContentSettingChanged(primary_pattern,
+                                      ContentSettingsPattern::Wildcard(),
+                                      ContentSettingsType::NOTIFICATIONS));
+
+  channels_provider_->SetWebsiteSetting(
+      primary_pattern, ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(CONTENT_SETTING_ALLOW),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting());
+  content::RunAllTasksUntilIdle();
+  testing::Mock::VerifyAndClearExpectations(&mock_observer);
+
+  // Emulate user blocking the channel.
+  SetChannelStatus("https://abc.com", NotificationChannelStatus::BLOCKED);
+
+  // Observer should be notified on invocation of EnsureUpdatedSettings.
+  EXPECT_CALL(mock_observer,
+              OnContentSettingChanged(ContentSettingsPattern::Wildcard(),
+                                      ContentSettingsPattern::Wildcard(),
+                                      ContentSettingsType::NOTIFICATIONS))
+      .Times(1);
+
+  base::RunLoop run_loop;
+  channels_provider_->EnsureUpdatedSettings(run_loop.QuitClosure());
+  run_loop.Run();
+
+  content::RunAllTasksUntilIdle();
+
+  // Since we called `EnsureUpdatedSettings`, now `GetRuleIterator` should
+  // return up-to-date rules.
+  std::unique_ptr<content_settings::RuleIterator> rule_iterator =
+      channels_provider_->GetRuleIterator(
+          ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
+          content_settings::PartitionKey::GetDefaultForTesting());
+  EXPECT_TRUE(rule_iterator->HasNext());
+  std::unique_ptr<content_settings::Rule> first_rule = rule_iterator->Next();
+  EXPECT_EQ(primary_pattern, first_rule->primary_pattern);
+  EXPECT_EQ(CONTENT_SETTING_BLOCK,
+            content_settings::ValueToContentSetting(first_rule->value));
+}
+
+TEST_F(NotificationChannelsProviderAndroidTest,
+       OnChannelStateChanged_NewNotificationChannel) {
+  InitChannelsProvider();
+
+  NotificationChannel channel = fake_bridge_->CreateChannel(
+      "https://example.com", base::Time::Now(), false /* enabled */);
+
+  channels_provider_->OnChannelStateChanged(channel);
+  // Only 1 blocked rule is created, and it should not change after all async
+  // tasks completes.
+  std::unique_ptr<content_settings::RuleIterator> rule_iterator =
+      channels_provider_->GetRuleIterator(
+          ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
+          content_settings::PartitionKey::GetDefaultForTesting());
+  EXPECT_TRUE(rule_iterator->HasNext());
+  std::unique_ptr<content_settings::Rule> rule = rule_iterator->Next();
+  EXPECT_EQ(GetTestPattern(), rule->primary_pattern);
+  EXPECT_EQ(CONTENT_SETTING_BLOCK,
+            content_settings::ValueToContentSetting(rule->value));
+  EXPECT_FALSE(rule_iterator->HasNext());
+}
+
+TEST_F(NotificationChannelsProviderAndroidTest,
+       OnChannelStateChanged_ExistingNotificationChannel) {
+  InitChannelsProvider();
+  content_settings::MockObserver mock_observer;
+  channels_provider_->AddObserver(&mock_observer);
+  ContentSettingsPattern primary_pattern =
+      ContentSettingsPattern::FromString("https://example.com");
+
+  // Create channel as enabled initially - this should notify the mock observer.
+  EXPECT_CALL(mock_observer,
+              OnContentSettingChanged(primary_pattern,
+                                      ContentSettingsPattern::Wildcard(),
+                                      ContentSettingsType::NOTIFICATIONS));
+
+  channels_provider_->SetWebsiteSetting(
+      primary_pattern, ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(CONTENT_SETTING_ALLOW),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting());
+  content::RunAllTasksUntilIdle();
+  std::unique_ptr<content_settings::RuleIterator> rule_iterator =
+      channels_provider_->GetRuleIterator(
+          ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
+          content_settings::PartitionKey::GetDefaultForTesting());
+  EXPECT_TRUE(rule_iterator->HasNext());
+  std::unique_ptr<content_settings::Rule> rule = rule_iterator->Next();
+  EXPECT_EQ(GetTestPattern(), rule->primary_pattern);
+  EXPECT_EQ(CONTENT_SETTING_ALLOW,
+            content_settings::ValueToContentSetting(rule->value));
+  EXPECT_FALSE(rule_iterator->HasNext());
+
+  NotificationChannel channel = fake_bridge_->CreateChannel(
+      "https://example.com", base::Time::Now(), false /* enabled */);
+  channels_provider_->OnChannelStateChanged(channel);
+  // Only 1 blocked rule is created, and it should not change after all async
+  // tasks completes.
+  rule_iterator = channels_provider_->GetRuleIterator(
+      ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
+      content_settings::PartitionKey::GetDefaultForTesting());
+  EXPECT_TRUE(rule_iterator->HasNext());
+  rule = rule_iterator->Next();
+  EXPECT_EQ(GetTestPattern(), rule->primary_pattern);
+  EXPECT_EQ(CONTENT_SETTING_BLOCK,
+            content_settings::ValueToContentSetting(rule->value));
+  EXPECT_FALSE(rule_iterator->HasNext());
+}
+
+// Tests the situation that OnChannelStateChanged is called during
+// a SetWebsiteSetting() call.
+TEST_F(NotificationChannelsProviderAndroidTest,
+       OnChannelStateChanged_InTheMiddleOfSetWebsiteSetting) {
+  InitChannelsProvider();
+
+  content_settings::MockObserver mock_observer;
+  channels_provider_->AddObserver(&mock_observer);
+  NotificationChannel channel = fake_bridge_->CreateChannel(
+      "https://example.com", base::Time::Now(), false /* enabled */);
+  ContentSettingsPattern primary_pattern =
+      ContentSettingsPattern::FromString("https://example.com");
+
+  // The observer will be notified 2 times.
+  // 1. After SetWebsiteSetting(), the returned rule is ALLOW.
+  // 2. After the pending channel from SetWebsiteSetting() is destroyed
+  //   and a task to update all channels. The returned rule is BLOCK.
+  EXPECT_CALL(mock_observer,
+              OnContentSettingChanged(_, ContentSettingsPattern::Wildcard(),
+                                      ContentSettingsType::NOTIFICATIONS))
+      .Times(2);
+  channels_provider_->SetWebsiteSetting(
+      primary_pattern, ContentSettingsPattern::Wildcard(),
+      ContentSettingsType::NOTIFICATIONS, base::Value(CONTENT_SETTING_ALLOW),
+      /*constraints=*/{},
+      content_settings::PartitionKey::GetDefaultForTesting());
+  VerifyOnlyOneRuleExists(CONTENT_SETTING_ALLOW);
+  // Since there is a pending allowed channel, SetChannelStatus() will not
+  // change the result from GetRuleIterator() due to the pending allowed channel
+  SetChannelStatus("https://example.com", NotificationChannelStatus::BLOCKED);
+  VerifyOnlyOneRuleExists(CONTENT_SETTING_ALLOW);
+  content::RunAllTasksUntilIdle();
+  // The pending allowed channel is destroyed and all channels should be updated
+  // to reflect the real channel settings.
+  VerifyOnlyOneRuleExists(CONTENT_SETTING_BLOCK);
 }

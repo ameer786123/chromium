@@ -153,6 +153,16 @@ class GnGenerator(object):
         ('target_environment', self.TARGET_ENVIRONMENT_VALUES[self._target]))
     args.append(('target_platform', self.TARGET_PLATFORM_VALUES[self._target]))
 
+    use_blink = self._settings.getboolean('gn_args', 'use_blink')
+
+    if self.TARGET_PLATFORM_VALUES[self._target] == '"tvos"' and not use_blink:
+      args.append(('use_blink', True))
+      use_blink = True
+
+    has_symbol_level = self._settings.has_option('gn_args', 'symbol_level')
+    if use_blink and is_optim and not has_symbol_level:
+      args.append(('symbol_level', 1))
+
     # Add user overrides after the other configurations so that they can
     # refer to them and override them.
     args.extend(self._settings.items('gn_args'))
@@ -302,13 +312,12 @@ def GenerateXcodeProject(gn_path, root_dir, proj_name, out_dir, settings):
 
 def CreateLLDBInitFile(root_dir, out_dir, settings):
   '''
-  Generate an .lldbinit file for the project that load the script that fixes
-  the mapping of source files (see docs/ios/build_instructions.md#debugging).
+  Generate an .lldbinit file for the project that fixes the mapping of source files.
   '''
+  absolute_root_dir = os.path.abspath(root_dir)
   with open(os.path.join(out_dir, 'build', '.lldbinit'), 'w') as lldbinit:
-    lldb_script_dir = os.path.join(os.path.abspath(root_dir), 'tools', 'lldb')
-    lldbinit.write('script sys.path[:0] = [\'%s\']\n' % lldb_script_dir)
-    lldbinit.write('script import lldbinit\n')
+    lldbinit.write(f'settings set target.env-vars CHROMIUM_LLDBINIT_SOURCED=1\n')
+    lldbinit.write(f'settings set target.source-map ../.. {absolute_root_dir}\n')
 
     workspace_name = settings.getstring(
         'gn_args',

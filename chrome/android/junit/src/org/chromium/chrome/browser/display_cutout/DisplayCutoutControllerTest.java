@@ -42,8 +42,8 @@ import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.components.browser_ui.display_cutout.DisplayCutoutController;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.content_public.browser.test.mock.MockWebContents;
-import org.chromium.ui.InsetObserver;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.insets.InsetObserver;
 
 import java.lang.ref.WeakReference;
 
@@ -73,7 +73,7 @@ public class DisplayCutoutControllerTest {
 
     private WeakReference<Activity> mActivityRef;
 
-    private UserDataHost mTabDataHost = new UserDataHost();
+    private final UserDataHost mTabDataHost = new UserDataHost();
 
     @Before
     public void setUp() {
@@ -265,6 +265,7 @@ public class DisplayCutoutControllerTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testGetIsViewportFitCover() {
         // Go through the live creation of DisplayCutoutTabHelper.from(Tab) with our mock Tab.
         UserDataHost tabDataHost = new UserDataHost();

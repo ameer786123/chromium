@@ -43,6 +43,8 @@ DesktopBrowserFrameAura::~DesktopBrowserFrameAura() = default;
 // DesktopBrowserFrameAura, views::DesktopNativeWidgetAura overrides:
 
 void DesktopBrowserFrameAura::OnHostClosed() {
+  browser_frame_ = nullptr;
+  browser_view_ = nullptr;
   aura::client::SetVisibilityClient(GetNativeView()->GetRootWindow(), nullptr);
   DesktopNativeWidgetAura::OnHostClosed();
 }
@@ -75,9 +77,9 @@ void DesktopBrowserFrameAura::OnOcclusionStateChanged(
 ////////////////////////////////////////////////////////////////////////////////
 // DesktopBrowserFrameAura, NativeBrowserFrame implementation:
 
-views::Widget::InitParams DesktopBrowserFrameAura::GetWidgetParams() {
-  views::Widget::InitParams params(
-      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
+views::Widget::InitParams DesktopBrowserFrameAura::GetWidgetParams(
+    views::Widget::InitParams::Ownership ownership) {
+  views::Widget::InitParams params(ownership);
   params.native_widget = this;
   return params;
 }
@@ -129,4 +131,10 @@ bool DesktopBrowserFrameAura::ShouldRestorePreviousBrowserWidgetState() const {
 
 bool DesktopBrowserFrameAura::ShouldUseInitialVisibleOnAllWorkspaces() const {
   return true;
+}
+
+void DesktopBrowserFrameAura::ClientDestroyedWidget() {
+  browser_frame_ = nullptr;
+  browser_view_ = nullptr;
+  DesktopNativeWidgetAura::ClientDestroyedWidget();
 }

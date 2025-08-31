@@ -14,6 +14,7 @@
 #import "components/signin/public/identity_manager/identity_manager.h"
 #import "components/signin/public/identity_manager/tribool.h"
 #import "components/supervised_user/core/browser/family_link_user_capabilities.h"
+#import "ios/chrome/browser/incognito_reauth/ui_bundled/features.h"
 #import "ios/chrome/browser/incognito_reauth/ui_bundled/incognito_reauth_constants.h"
 #import "ios/chrome/browser/incognito_reauth/ui_bundled/incognito_reauth_scene_agent.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
@@ -23,7 +24,7 @@
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_browser_agent.h"
 #import "ios/chrome/browser/supervised_user/model/family_link_user_capabilities_observer_bridge.h"
-#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/base_grid_mediator.h"
+#import "ios/chrome/browser/tab_switcher/tab_grid/base_grid/coordinator/base_grid_mediator.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_consumer.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_toolbars_mutator.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/incognito/incognito_grid_mediator_delegate.h"
@@ -71,7 +72,8 @@
   base::RecordAction(
       base::UserMetricsAction("MobileTabGridCloseAllIncognitoTabs"));
   // This is a no-op if `webStateList` is already empty.
-  CloseAllWebStates(*self.webStateList, WebStateList::CLOSE_USER_ACTION);
+  CloseAllWebStates(*self.webStateList,
+                    WebStateList::ClosingReason::kUserAction);
   SnapshotBrowserAgent::FromBrowser(self.browser)->RemoveAllSnapshots();
 }
 
@@ -158,6 +160,10 @@
 
   BOOL authenticationRequired = self.reauthSceneAgent.authenticationRequired;
   if (_incognitoDisabled || authenticationRequired) {
+    if (IsIOSSoftLockEnabled()) {
+      [self.toolbarsMutator
+          setIncognitoToolbarsBackgroundHidden:authenticationRequired];
+    }
     [self.toolbarsMutator
         setToolbarConfiguration:
             [TabGridToolbarsConfiguration
@@ -236,9 +242,9 @@
 
 - (void)reauthAgent:(IncognitoReauthSceneAgent*)agent
     didUpdateIncognitoLockState:(IncognitoLockState)incogitoLockState {
-  [self reauthAgent:agent
-      didUpdateAuthenticationRequirement:incogitoLockState !=
-                                         IncognitoLockState::kNone];
+  BOOL reauthRequired = incogitoLockState != IncognitoLockState::kNone;
+  [self reauthAgent:agent didUpdateAuthenticationRequirement:reauthRequired];
+  [self.toolbarsMutator setIncognitoToolbarsBackgroundHidden:reauthRequired];
 }
 
 #pragma mark - FamilyLinkUserCapabilitiesObserving

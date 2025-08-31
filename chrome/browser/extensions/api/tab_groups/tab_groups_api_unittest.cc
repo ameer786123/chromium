@@ -25,7 +25,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_sync_service_initialized_observer.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -38,6 +38,7 @@
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tab_groups/tab_group_visual_data.h"
+#include "components/tabs/public/tab_group.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/api_test_utils.h"
@@ -113,13 +114,20 @@ class TabGroupsApiUnitTest : public ExtensionServiceTestBase {
     return web_contentses_[index];
   }
 
+  void WaitForTabGroupSyncServiceInitialized() {
+    auto observer =
+        std::make_unique<tab_groups::TabGroupSyncServiceInitializedObserver>(
+            tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile()));
+    observer->Wait();
+  }
+
   // ExtensionServiceTestBase:
   void SetUp() override;
   void TearDown() override;
 
  private:
   // The browser (and accompanying window).
-  std::unique_ptr<TestBrowserWindow> browser_window_;
+  raw_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
 
   // The original web contentses in order.
@@ -132,11 +140,12 @@ void TabGroupsApiUnitTest::SetUp() {
   InitializeEmptyExtensionService();
 
   // Create a browser window.
-  browser_window_ = std::make_unique<TestBrowserWindow>();
+  auto browser_window = std::make_unique<TestBrowserWindow>();
+  browser_window_ = browser_window.get();
   Browser::CreateParams params(profile(), /* user_gesture */ true);
   params.type = Browser::TYPE_NORMAL;
-  params.window = browser_window_.get();
-  browser_ = std::unique_ptr<Browser>(Browser::Create(params));
+  params.window = browser_window.release();
+  browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
   BrowserList::SetLastActive(browser_.get());
 
   // Add several tabs to the browser and get their tab IDs and web contents.
@@ -159,12 +168,16 @@ void TabGroupsApiUnitTest::SetUp() {
   // We need to call TabGroupsEventRouterFactory::Get() in order to instantiate
   // the keyed service, since it's not created by default in unit tests.
   TabGroupsEventRouterFactory::Get(browser_context());
+
+  // Wait for the TabGroupSyncService to properly initialize before making any
+  // changes to tab groups.
+  WaitForTabGroupSyncServiceInitialized();
 }
 
 void TabGroupsApiUnitTest::TearDown() {
+  browser_window_ = nullptr;
   browser_->tab_strip_model()->CloseAllTabs();
   browser_.reset();
-  browser_window_.reset();
   ExtensionServiceTestBase::TearDown();
 }
 
@@ -173,16 +186,13 @@ TEST_F(TabGroupsApiUnitTest, TabStripModelWithNoTabGroupFails) {
   // Create a new window that doesnt support groups and add a few tabs.
   auto window2 = std::make_unique<TestBrowserWindow>();
 
-  Browser::CreateParams params(profile(), /* user_gesture */ true);
-  params.type = Browser::TYPE_NORMAL;
-  params.window = window2.get();
-  params.are_tab_groups_enabled = false;
+  // App windows don't allow tab groups.
+  Browser::CreateParams params = Browser::CreateParams::CreateForApp(
+      "some app", /*trusted_source=*/false, gfx::Rect(), profile(),
+      /*user_gesture=*/true);
+  params.window = window2.release();
 
-  // TestBrowserWindowOwner handles its own lifetime, and also cleans up
-  // |window2|.
-  new TestBrowserWindowOwner(std::move(window2));
-
-  std::unique_ptr<Browser> browser2(Browser::Create(params));
+  auto browser2 = Browser::DeprecatedCreateOwnedForTesting(params);
   BrowserList::SetLastActive(browser2.get());
 
   ASSERT_FALSE(browser2->tab_strip_model()->SupportsTabGroups());
@@ -217,22 +227,20 @@ TEST_F(TabGroupsApiUnitTest, TabGroupsQueryTitle) {
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
   ASSERT_TRUE(tab_strip_model->SupportsTabGroups());
 
-  TabGroupModel* tab_group_model = tab_strip_model->group_model();
-
   // Create 3 groups with different titles.
   const tab_groups::TabGroupColorId color = tab_groups::TabGroupColorId::kGrey;
 
   tab_groups::TabGroupId group1 = tab_strip_model->AddToNewGroup({0});
   tab_groups::TabGroupVisualData visual_data1(u"Sample title", color);
-  tab_group_model->GetTabGroup(group1)->SetVisualData(visual_data1);
+  tab_strip_model->ChangeTabGroupVisuals(group1, visual_data1);
 
   tab_groups::TabGroupId group2 = tab_strip_model->AddToNewGroup({1});
   tab_groups::TabGroupVisualData visual_data2(u"Sample title suffixed", color);
-  tab_group_model->GetTabGroup(group2)->SetVisualData(visual_data2);
+  tab_strip_model->ChangeTabGroupVisuals(group2, visual_data2);
 
   tab_groups::TabGroupId group3 = tab_strip_model->AddToNewGroup({2});
   tab_groups::TabGroupVisualData visual_data3(u"Prefixed Sample title", color);
-  tab_group_model->GetTabGroup(group3)->SetVisualData(visual_data3);
+  tab_strip_model->ChangeTabGroupVisuals(group3, visual_data3);
 
   // Query by title and verify results.
   const char* kTitleQueryInfo = R"([{"title": "Sample title"}])";
@@ -253,23 +261,21 @@ TEST_F(TabGroupsApiUnitTest, TabGroupsQueryColor) {
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
   ASSERT_TRUE(tab_strip_model->SupportsTabGroups());
 
-  TabGroupModel* tab_group_model = tab_strip_model->group_model();
-
   // Create 3 groups with different colors.
   tab_groups::TabGroupId group1 = tab_strip_model->AddToNewGroup({0});
   tab_groups::TabGroupVisualData visual_data1(
       std::u16string(), tab_groups::TabGroupColorId::kGrey);
-  tab_group_model->GetTabGroup(group1)->SetVisualData(visual_data1);
+  tab_strip_model->ChangeTabGroupVisuals(group1, visual_data1);
 
   tab_groups::TabGroupId group2 = tab_strip_model->AddToNewGroup({1});
   tab_groups::TabGroupVisualData visual_data2(
       std::u16string(), tab_groups::TabGroupColorId::kRed);
-  tab_group_model->GetTabGroup(group2)->SetVisualData(visual_data2);
+  tab_strip_model->ChangeTabGroupVisuals(group2, visual_data2);
 
   tab_groups::TabGroupId group3 = tab_strip_model->AddToNewGroup({2});
   tab_groups::TabGroupVisualData visual_data3(
       std::u16string(), tab_groups::TabGroupColorId::kBlue);
-  tab_group_model->GetTabGroup(group3)->SetVisualData(visual_data3);
+  tab_strip_model->ChangeTabGroupVisuals(group3, visual_data3);
 
   // Query by color and verify results.
   const char* kColorQueryInfo = R"([{"color": "blue"}])";
@@ -288,7 +294,6 @@ class SharedTabGroupExtensionsTabUtilTest : public TabGroupsApiUnitTest {
   SharedTabGroupExtensionsTabUtilTest() {
     feature_list_.InitWithFeatures(
         {
-            tab_groups::kTabGroupSyncServiceDesktopMigration,
             data_sharing::features::kDataSharingFeature,
         },
         {});
@@ -303,17 +308,15 @@ class SharedTabGroupExtensionsTabUtilTest : public TabGroupsApiUnitTest {
     TabGroupsApiUnitTest ::SetUp();
     tab_groups::TabGroupSyncService* service =
         static_cast<tab_groups::TabGroupSyncService*>(
-            tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-                browser()->profile()));
+            tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile()));
     service->SetIsInitializedForTesting(true);
   }
 
   void ShareTabGroup(const tab_groups::TabGroupId& group_id,
-                     const std::string& collaboration_id) {
+                     const syncer::CollaborationId& collaboration_id) {
     tab_groups::TabGroupSyncService* service =
         static_cast<tab_groups::TabGroupSyncService*>(
-            tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-                browser()->profile()));
+            tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile()));
     service->MakeTabGroupSharedForTesting(group_id, collaboration_id);
   }
 
@@ -326,13 +329,11 @@ TEST_F(SharedTabGroupExtensionsTabUtilTest, TabGroupsQueryShared) {
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
   ASSERT_TRUE(tab_strip_model->SupportsTabGroups());
 
-  TabGroupModel* tab_group_model = tab_strip_model->group_model();
-
   // Create a group that is unshared.
   tab_groups::TabGroupId group1 = tab_strip_model->AddToNewGroup({0});
   tab_groups::TabGroupVisualData visual_data1(
       std::u16string(), tab_groups::TabGroupColorId::kGrey);
-  tab_group_model->GetTabGroup(group1)->SetVisualData(visual_data1);
+  tab_strip_model->ChangeTabGroupVisuals(group1, visual_data1);
 
   const char* not_shared_query = R"([{"shared": false}])";
   const char* shared_query = R"([{"shared": true}])";
@@ -340,8 +341,8 @@ TEST_F(SharedTabGroupExtensionsTabUtilTest, TabGroupsQueryShared) {
   {  // Query unshared groups.
     scoped_refptr<const Extension> extension = CreateTabGroupsExtension();
 
-    base::Value::List groups_list = RunTabGroupsQueryFunction(
-        browser()->profile(), extension.get(), not_shared_query);
+    base::Value::List groups_list =
+        RunTabGroupsQueryFunction(profile(), extension.get(), not_shared_query);
     ASSERT_EQ(1u, groups_list.size());
 
     const base::Value& group_info = groups_list[0];
@@ -357,7 +358,7 @@ TEST_F(SharedTabGroupExtensionsTabUtilTest, TabGroupsQueryShared) {
     ASSERT_EQ(0u, groups_list.size());
   }
 
-  ShareTabGroup(group1, "collaboration_id_1");
+  ShareTabGroup(group1, syncer::CollaborationId("collaboration_id_1"));
 
   {  // Query unshared groups.
     scoped_refptr<const Extension> extension = CreateTabGroupsExtension();
@@ -386,13 +387,11 @@ TEST_F(TabGroupsApiUnitTest, TabGroupsGetSuccess) {
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
   ASSERT_TRUE(tab_strip_model->SupportsTabGroups());
 
-  TabGroupModel* tab_group_model = tab_strip_model->group_model();
-
   // Create a group.
   tab_groups::TabGroupId group = tab_strip_model->AddToNewGroup({0, 1, 2});
   tab_groups::TabGroupVisualData visual_data(
       u"Title", tab_groups::TabGroupColorId::kBlue);
-  tab_group_model->GetTabGroup(group)->SetVisualData(visual_data);
+  tab_strip_model->ChangeTabGroupVisuals(group, visual_data);
   int group_id = ExtensionTabUtil::GetGroupId(group);
 
   // Use the TabGroupsGetFunction to get the group object.
@@ -431,7 +430,7 @@ TEST_F(TabGroupsApiUnitTest, TabGroupsUpdateSuccess) {
   tab_groups::TabGroupId group = tab_strip_model->AddToNewGroup({0, 1, 2});
   tab_groups::TabGroupVisualData visual_data(
       u"Initial title", tab_groups::TabGroupColorId::kBlue);
-  tab_group_model->GetTabGroup(group)->SetVisualData(visual_data);
+  tab_strip_model->ChangeTabGroupVisuals(group, visual_data);
   int group_id = ExtensionTabUtil::GetGroupId(group);
 
   // Use the TabGroupsUpdateFunction to update the title and color.
@@ -476,11 +475,10 @@ TEST_F(TabGroupsApiUnitTest, TabGroupsUpdateSavedTab) {
   tab_groups::TabGroupId group = tab_strip_model->AddToNewGroup({0, 1, 2});
   tab_groups::TabGroupVisualData visual_data(
       u"Initial title", tab_groups::TabGroupColorId::kBlue);
-  tab_group_model->GetTabGroup(group)->SetVisualData(visual_data);
+  tab_strip_model->ChangeTabGroupVisuals(group, visual_data);
 
   tab_groups::TabGroupSyncService* saved_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(
-          browser()->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile());
   ASSERT_TRUE(saved_service);
   saved_service->SetIsInitializedForTesting(true);
   saved_service->AddGroup(
@@ -660,13 +658,9 @@ TEST_F(TabGroupsApiUnitTest, TabGroupsMoveAcrossWindows) {
   auto window2 = std::make_unique<TestBrowserWindow>();
   Browser::CreateParams params(profile(), /* user_gesture */ true);
   params.type = Browser::TYPE_NORMAL;
-  params.window = window2.get();
+  params.window = window2.release();
 
-  // TestBrowserWindowOwner handles its own lifetime, and also cleans up
-  // |window2|.
-  new TestBrowserWindowOwner(std::move(window2));
-
-  std::unique_ptr<Browser> browser2(Browser::Create(params));
+  auto browser2 = Browser::DeprecatedCreateOwnedForTesting(params);
   BrowserList::SetLastActive(browser2.get());
   int window_id2 = ExtensionTabUtil::GetWindowId(browser2.get());
 
@@ -787,8 +781,7 @@ TEST_F(TabGroupsApiUnitTest, TabGroupsOnUpdated) {
 
   tab_groups::TabGroupVisualData visual_data(u"Title",
                                              tab_groups::TabGroupColorId::kRed);
-  tab_strip_model->group_model()->GetTabGroup(group)->SetVisualData(
-      visual_data);
+  tab_strip_model->ChangeTabGroupVisuals(group, visual_data);
 
   EXPECT_EQ(1u, event_observer.events().size());
   EXPECT_TRUE(base::Contains(event_observer.events(),
@@ -846,7 +839,7 @@ TEST_F(TabGroupsApiUnitTest, IsTabStripEditable) {
   }
 
   // Make tab strip uneditable.
-  browser_window()->SetIsTabStripEditable(false);
+  browser_window()->SetTabStripNotEditableForTesting();
   EXPECT_FALSE(browser_window()->IsTabStripEditable());
 
   // Succeed querying group when tab strip is not editable.

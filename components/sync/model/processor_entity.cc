@@ -27,6 +27,11 @@ namespace syncer {
 
 namespace {
 
+bool MetadataIsValid(const sync_pb::EntityMetadata& metadata) {
+  return metadata.has_client_tag_hash() && metadata.has_creation_time() &&
+         metadata.sequence_number() >= metadata.acked_sequence_number();
+}
+
 std::string HashSpecifics(const sync_pb::EntitySpecifics& specifics) {
   DCHECK_GT(specifics.ByteSizeLong(), 0u);
   return base::Base64Encode(
@@ -38,18 +43,19 @@ std::string HashSpecifics(const sync_pb::EntitySpecifics& specifics) {
 std::unique_ptr<ProcessorEntity> ProcessorEntity::CreateNew(
     const std::string& storage_key,
     const ClientTagHash& client_tag_hash,
-    const std::string& id,
+    const std::string& server_id,
     base::Time creation_time) {
-  // Initialize metadata
+  // Initialize metadata.
   sync_pb::EntityMetadata metadata;
   metadata.set_client_tag_hash(client_tag_hash.value());
-  if (!id.empty()) {
-    metadata.set_server_id(id);
+  if (!server_id.empty()) {
+    metadata.set_server_id(server_id);
   }
   metadata.set_sequence_number(0);
   metadata.set_acked_sequence_number(0);
   metadata.set_server_version(kUncommittedVersion);
   metadata.set_creation_time(TimeToProtoTime(creation_time));
+  CHECK(MetadataIsValid(metadata));
 
   return base::WrapUnique(
       new ProcessorEntity(storage_key, std::move(metadata)));
@@ -59,6 +65,9 @@ std::unique_ptr<ProcessorEntity> ProcessorEntity::CreateFromMetadata(
     const std::string& storage_key,
     sync_pb::EntityMetadata metadata) {
   DCHECK(!storage_key.empty());
+  if (!MetadataIsValid(metadata)) {
+    return nullptr;
+  }
   return base::WrapUnique(
       new ProcessorEntity(storage_key, std::move(metadata)));
 }
@@ -66,10 +75,9 @@ std::unique_ptr<ProcessorEntity> ProcessorEntity::CreateFromMetadata(
 ProcessorEntity::ProcessorEntity(const std::string& storage_key,
                                  sync_pb::EntityMetadata metadata)
     : storage_key_(storage_key),
-      commit_requested_sequence_number_(metadata.acked_sequence_number()) {
-  DCHECK(metadata.has_client_tag_hash());
-  DCHECK(metadata.has_creation_time());
-  metadata_ = std::move(metadata);
+      metadata_(std::move(metadata)),
+      commit_requested_sequence_number_(metadata_.acked_sequence_number()) {
+  CHECK(MetadataIsValid(metadata_));
 }
 
 ProcessorEntity::~ProcessorEntity() = default;
@@ -96,6 +104,7 @@ void ProcessorEntity::SetCommitData(std::unique_ptr<EntityData> data) {
   data->modification_time = ProtoTimeToTime(metadata_.modification_time());
 
   commit_data_ = std::move(data);
+  // TODO(crbug.com/408182457): This DCHECK is sometimes violated for SESSIONS.
   DCHECK(HasCommitData());
 }
 

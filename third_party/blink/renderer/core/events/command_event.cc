@@ -15,7 +15,6 @@ namespace blink {
 CommandEvent::CommandEvent(const AtomicString& type,
                          const CommandEventInit* initializer)
     : Event(type, initializer) {
-  DCHECK(RuntimeEnabledFeatures::HTMLCommandAttributesEnabled());
   if (initializer->hasSource()) {
     source_ = initializer->source();
   }
@@ -28,9 +27,13 @@ CommandEvent::CommandEvent(const AtomicString& type,
 CommandEvent::CommandEvent(const AtomicString& type,
                            const String& command,
                            Element* source)
-    : Event(type, Bubbles::kNo, Cancelable::kYes, ComposedMode::kComposed),
+    : Event(type,
+            Bubbles::kNo,
+            Cancelable::kYes,
+            RuntimeEnabledFeatures::CommandEventNotComposedEnabled()
+                ? ComposedMode::kScoped
+                : ComposedMode::kComposed),
       source_(source) {
-  DCHECK(RuntimeEnabledFeatures::HTMLCommandAttributesEnabled());
   command_ = command;
 }
 
@@ -39,6 +42,10 @@ Element* CommandEvent::source() const {
   Element* source = source_.Get();
   if (!source) {
     return nullptr;
+  }
+
+  if (RuntimeEnabledFeatures::ImprovedSourceRetargetingEnabled()) {
+    return Retarget(source);
   }
 
   if (current) {

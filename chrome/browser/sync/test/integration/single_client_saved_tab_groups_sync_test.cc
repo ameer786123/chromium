@@ -9,7 +9,7 @@
 #include "chrome/browser/sync/test/integration/saved_tab_groups_helper.h"
 #include "chrome/browser/sync/test/integration/sync_service_impl_harness.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "components/saved_tab_groups/internal/saved_tab_group_sync_bridge.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/saved_tab_groups/public/saved_tab_group.h"
@@ -121,7 +121,7 @@ class SingleClientSavedTabGroupsSyncTest : public SyncTest {
   }
 
   TabGroupSyncService* GetService() {
-    return tab_groups::SavedTabGroupUtils::GetServiceForProfile(GetProfile(0));
+    return tab_groups::TabGroupSyncServiceFactory::GetForProfile(GetProfile(0));
   }
 
  private:
@@ -143,7 +143,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -174,25 +174,15 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
   // Add a group with no tabs from sync.
   AddGroupToFakeServer(group1);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
   TabGroupSyncService* service = GetService();
 
-  if (tab_groups::IsTabGroupSyncServiceDesktopMigrationEnabled()) {
-    // TabGroupSyncService does not notify observers that an empty group has
-    // been added .
-    EXPECT_TRUE(service->GetGroup(group1.saved_guid()));
-  } else {
-    // Verify the group is added to the model but not the tab.
-    EXPECT_TRUE(
-        tab_groups::SavedTabOrGroupExistsChecker(service, group1.saved_guid())
-            .Wait());
-
-    EXPECT_TRUE(service->GetGroup(group1.saved_guid()));
-    EXPECT_TRUE(service->GetGroup(group1.saved_guid())->saved_tabs().empty());
-  }
+  // TabGroupSyncService does not notify observers that an empty group has
+  // been added .
+  EXPECT_TRUE(service->GetGroup(group1.saved_guid()));
 }
 
 // Save a tab with no group and validate it is added to the model.
@@ -206,7 +196,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
   // Add a group with no tabs from sync.
   AddTabToFakeServer(tab1);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -240,7 +230,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, AddToExistingGroup) {
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -282,7 +272,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, RemoveTabFromGroup) {
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -324,7 +314,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, RemoveGroup) {
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -375,7 +365,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
   AddGroupToFakeServer(group1);
   AddTabToFakeServer(tab1);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -409,7 +399,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, UpdatedTabData) {
   AddGroupToFakeServer(group1);
   AddTabToFakeServer(tab1);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -451,7 +441,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, ReorderGroups) {
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -490,7 +480,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, ReorderTabs) {
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -528,7 +518,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
                         /*position=*/0);
   AddTabToFakeServer(tab1);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   TabGroupSyncService* service = GetService();
 
   // Verify guid1 is added to the model.

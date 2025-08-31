@@ -139,6 +139,7 @@
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
+#include "base/test/test_future.h"
 #include "base/test/test_timeouts.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -152,8 +153,8 @@
 #include "components/autofill/core/common/autofill_test_utils.h"
 #include "components/autofill/core/common/form_data_test_api.h"
 #include "components/autofill/core/common/language_code.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
-#include "components/optimization_guide/core/test_optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/test_optimization_guide_model_provider.h"
 #include "components/optimization_guide/machine_learning_tflite_buildflags.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "components/variations/variations_switches.h"
@@ -248,28 +249,29 @@ void ResultAnalyzer::AnalyzeClassification(const FormStructure& form_structure,
     }
 
     // Determine the type assigned to the field by the heuristic classification.
-    std::string heuristic_type =
-        FieldTypeToString(form_structure.field(i)->Type().GetStorableType());
+    for (FieldType field_type : form_structure.field(i)->Type().GetTypes()) {
+      std::string heuristic_type = FieldTypeToString(field_type);
 
-    // Record metrics on the divergence between tester and heuristics.
-    if (fields_in_scope_.contains(tester_type)) {
-      if (TesterAndHeuristicTypeMatch(tester_type, heuristic_type)) {
-        ++matches_;
-        ++match_by_type_count_[tester_type];
-        json_fields[i].GetDict().Set("last_correctness", "correct");
+      // Record metrics on the divergence between tester and heuristics.
+      if (fields_in_scope_.contains(tester_type)) {
+        if (TesterAndHeuristicTypeMatch(tester_type, heuristic_type)) {
+          ++matches_;
+          ++match_by_type_count_[tester_type];
+          json_fields[i].GetDict().Set("last_correctness", "correct");
+        } else {
+          ++mismatches_;
+          ++mismatch_by_type_count_[tester_type];
+          json_fields[i].GetDict().Set(
+              "last_correctness", "not_recognized: " + tester_type +
+                                      ", chosen_instead: " + heuristic_type);
+        }
       } else {
-        ++mismatches_;
-        ++mismatch_by_type_count_[tester_type];
+        ++ignored_by_type_count_[tester_type];
         json_fields[i].GetDict().Set("last_correctness",
-                                     "not_recognized: " + tester_type +
-                                         ", chosen_instead: " + heuristic_type);
+                                     "ignored: " + tester_type);
       }
-    } else {
-      ++ignored_by_type_count_[tester_type];
-      json_fields[i].GetDict().Set("last_correctness",
-                                   "ignored: " + tester_type);
+      json_fields[i].GetDict().Set("last_classification", heuristic_type);
     }
-    json_fields[i].GetDict().Set("last_classification", heuristic_type);
   }
 }
 
@@ -406,9 +408,11 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
           field_dict.FindList("select_options")) {
     for (const base::Value& option : *select_options) {
       const base::Value::Dict& option_dict = option.GetDict();
-      options.push_back(SelectOption{
-          .value = base::UTF8ToUTF16(*option_dict.FindString("value")),
-          .text = base::UTF8ToUTF16(*option_dict.FindString("label"))});
+      const std::string* value = option_dict.FindString("value");
+      const std::string* label = option_dict.FindString("label");
+      options.push_back(
+          SelectOption{.value = value ? base::UTF8ToUTF16(*value) : u"",
+                       .text = label ? base::UTF8ToUTF16(*label) : u""});
     }
   }
   field.set_options(std::move(options));
@@ -477,23 +481,17 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
       return result;
     }
     auto form_structure = std::make_unique<FormStructure>(form_data);
-    form_structure->set_current_page_language(page_language);
     if (ml_predictions_handler) {
-      base::RunLoop run_loop;
+      base::test::TestFuture<ModelPredictions> future;
       ml_predictions_handler->GetModelPredictionsForForm(
-          std::move(form_structure),
-          base::BindLambdaForTesting(
-              [&form_structure,
-               &run_loop](std::unique_ptr<FormStructure> result_form) {
-                form_structure = std::move(result_form);
-                run_loop.Quit();
-              }));
-      run_loop.Run();
+          form_structure->ToFormData(), client_country, future.GetCallback());
+      future.Get().ApplyTo(form_structure->fields());
     }
     // Similarly to AutofillManager::ParseFormsAsync, the heuristics are
     // executed after the ML model. If ML predictions are enabled, this does
     // not override the heuristic types but performs rationalization.
-    form_structure->DetermineHeuristicTypes(client_country, log_manager);
+    form_structure->DetermineHeuristicTypes(client_country, page_language,
+                                            log_manager);
 
     result_analyzer.AnalyzeClassification(*form_structure, form.GetDict());
   }
@@ -631,13 +629,13 @@ TEST_P(HeuristicClassificationTests, EndToEnd) {
 
   std::vector<base::test::FeatureRef> enabled_features = {
       // Support for new field types.
-      features::kAutofillUseFRAddressModel,
-      features::kAutofillUseNLAddressModel,
       features::kAutofillUseINAddressModel,
       features::kAutofillSupportPhoneticNameForJP,
       features::kAutofillEnableExpirationDateImprovements,
       features::kAutofillSupportLastNamePrefix,
       features::kAutofillEnableLoyaltyCardsFilling,
+      features::kAutofillEnableEmailOrLoyaltyCardsFilling,
+      features::kAutofillSupportSplitZipCode,
       // Other improvements.
       features::kAutofillEnableCacheForRegexMatching,
       features::kAutofillEnableSupportForParsingWithSharedLabels,

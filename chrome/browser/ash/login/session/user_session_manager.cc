@@ -17,6 +17,7 @@
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
 #include "ash/metrics/login_unlock_throughput_recorder.h"
+#include "ash/public/cpp/token_handle_store.h"
 #include "ash/shell.h"
 #include "ash/wm/window_util.h"
 #include "base/base_paths.h"
@@ -38,6 +39,7 @@
 #include "base/path_service.h"
 #include "base/scoped_observation.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/syslog_logging.h"
 #include "base/system/sys_info.h"
 #include "base/task/single_thread_task_runner.h"
@@ -83,10 +85,13 @@
 #include "chrome/browser/ash/login/session/user_session_initializer.h"
 #include "chrome/browser/ash/login/signin/auth_error_observer.h"
 #include "chrome/browser/ash/login/signin/auth_error_observer_factory.h"
+#include "chrome/browser/ash/login/signin/legacy_token_handle_fetcher.h"
 #include "chrome/browser/ash/login/signin/oauth2_login_manager_factory.h"
 #include "chrome/browser/ash/login/signin/offline_signin_limiter.h"
 #include "chrome/browser/ash/login/signin/offline_signin_limiter_factory.h"
-#include "chrome/browser/ash/login/signin/token_handle_fetcher.h"
+#include "chrome/browser/ash/login/signin/token_handle_service.h"
+#include "chrome/browser/ash/login/signin/token_handle_service_factory.h"
+#include "chrome/browser/ash/login/signin/token_handle_store_factory.h"
 #include "chrome/browser/ash/login/startup_utils.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/net/alwayson_vpn_pre_connect_url_allowlist_service.h"
@@ -110,7 +115,6 @@
 #include "chrome/browser/lifetime/application_lifetime_chromeos.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/metrics/first_web_contents_profiler.h"
-#include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -123,7 +127,6 @@
 #include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/ash/system/system_tray_client_impl.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
-#include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
@@ -132,9 +135,11 @@
 #include "chromeos/ash/components/account_manager/account_manager_factory.h"
 #include "chromeos/ash/components/assistant/buildflags.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_flusher.h"
+#include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "chromeos/ash/components/login/auth/auth_session_authenticator.h"
 #include "chromeos/ash/components/login/auth/authenticator_builder.h"
@@ -193,6 +198,7 @@
 #include "google_apis/gaia/gaia_id.h"
 #include "rlz/buildflags/buildflags.h"
 #include "third_party/cros_system_api/switches/chrome_switches.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "ui/aura/window.h"
 #include "ui/base/ime/ash/input_method_descriptor.h"
 #include "ui/base/ime/ash/input_method_manager.h"
@@ -370,7 +376,24 @@ void InitLocaleAndInputMethodsForNewUser(
   prefs->SetBoolean(::prefs::kLanguageShouldMergeInputMethods, true);
 }
 
-bool CanPerformEarlyRestart() {
+bool IsKioskProfile(Profile* profile) {
+  const user_manager::User* user =
+      ash::BrowserContextHelper::Get()->GetUserByBrowserContext(profile);
+  return user && user->IsKioskType();
+}
+
+bool AreKioskTroubleshootingToolsEnabled(Profile* profile) {
+  return profile->GetPrefs()->GetBoolean(
+      ::prefs::kKioskTroubleshootingToolsEnabled);
+}
+
+bool CanPerformEarlyRestart(Profile* profile) {
+  // Allow early restart in kiosk mode to apply flags for experimentation when
+  // the troubleshooting tools policy is set.
+  if (IsKioskProfile(profile) && AreKioskTroubleshootingToolsEnabled(profile)) {
+    return true;
+  }
+
   const ExistingUserController* controller =
       ExistingUserController::current_controller();
   if (!controller)
@@ -765,8 +788,8 @@ void UserSessionManager::StartSession(
     bool has_auth_cookies,
     bool has_active_session,
     base::WeakPtr<UserSessionManagerDelegate> delegate) {
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(kEventCategoryChromeOS, kEventStartSession,
-                                    TRACE_ID_LOCAL(this));
+  TRACE_EVENT_BEGIN(kEventCategoryChromeOS, kEventStartSession,
+                    perfetto::Track::FromPointer(this));
 
   delegate_ = std::move(delegate);
   start_session_type_ = start_session_type;
@@ -786,8 +809,8 @@ void UserSessionManager::StartSession(
                          user_context_.GetAccountId()),
                      user_context_, known_user);
 
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
-      kEventCategoryChromeOS, kEventPrePrepareProfile, TRACE_ID_LOCAL(this));
+  TRACE_EVENT_BEGIN(kEventCategoryChromeOS, kEventPrePrepareProfile,
+                    perfetto::Track::FromPointer(this));
   InitDemoSessionIfNeeded(base::BindOnce(
       &UserSessionManager::UpdateArcFileSystemCompatibilityAndPrepareProfile,
       GetUserSessionManagerAsWeakPtr()));
@@ -909,7 +932,7 @@ bool UserSessionManager::RespectLocalePreference(
 
   // In Demo Mode, each sessions uses a new empty User Profile, so we need to
   // rely on the local state set in the browser process.
-  if (DemoSession::IsDeviceInDemoMode() && pref_app_locale.empty()) {
+  if (ash::demo_mode::IsDeviceInDemoMode() && pref_app_locale.empty()) {
     const std::string local_state_locale =
         g_browser_process->local_state()->GetString(
             language::prefs::kApplicationLocale);
@@ -985,14 +1008,9 @@ bool UserSessionManager::RestartToApplyPerSessionFlagsIfNeed(
 
   MaybeSaveSessionStartedTimeBeforeRestart(profile);
 
-  // Kiosk sessions keeps the startup flags.
-  if (user_manager::UserManager::Get() &&
-      user_manager::UserManager::Get()->IsLoggedInAsKioskApp()) {
+  if (early_restart && !CanPerformEarlyRestart(profile)) {
     return false;
   }
-
-  if (early_restart && !CanPerformEarlyRestart())
-    return false;
 
   // We can't really restart if we've already restarted as a part of
   // user session restore after crash of in case when flags were changed inside
@@ -1337,8 +1355,12 @@ void UserSessionManager::InitializeAccountManager() {
       ProfileHelper::GetProfilePathByUserIdHash(user_context_.GetUserIDHash());
 
   if (ProfileHelper::IsUserProfilePath(profile_path)) {
+    // TODO(crbug.com/404133029): Avoid g_browser_process usage.
+    scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory =
+        g_browser_process->shared_url_loader_factory();
+
     ash::InitializeAccountManager(
-        profile_path,
+        std::move(shared_url_loader_factory), profile_path,
         base::BindOnce(&UserSessionManager::PrepareProfile,
                        GetUserSessionManagerAsWeakPtr(),
                        profile_path) /* initialization_callback */);
@@ -1348,11 +1370,10 @@ void UserSessionManager::InitializeAccountManager() {
 }
 
 void UserSessionManager::PrepareProfile(const base::FilePath& profile_path) {
-  TRACE_EVENT_NESTABLE_ASYNC_END0(
-      kEventCategoryChromeOS, kEventPrePrepareProfile, TRACE_ID_LOCAL(this));
-
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(kEventCategoryChromeOS,
-                                    kEventPrepareProfile, TRACE_ID_LOCAL(this));
+  // End previous kEventPrePrepareProfile event.
+  TRACE_EVENT_END(kEventCategoryChromeOS, perfetto::Track::FromPointer(this));
+  TRACE_EVENT_BEGIN(kEventCategoryChromeOS, kEventPrepareProfile,
+                    perfetto::Track::FromPointer(this));
 
   g_browser_process->profile_manager()->CreateProfileAsync(
       profile_path,
@@ -1392,7 +1413,7 @@ void UserSessionManager::InitProfilePreferences(
   DVLOG(1) << "Initializing profile preferences";
   const user_manager::User* user =
       ProfileHelper::Get()->GetUserByProfile(profile);
-  if (user->GetType() == user_manager::UserType::kKioskApp &&
+  if (user->GetType() == user_manager::UserType::kKioskChromeApp &&
       profile->IsNewProfile()) {
     user_manager::UserManager::Get()->SetIsCurrentUserNew(true);
   }
@@ -1616,7 +1637,7 @@ void UserSessionManager::InitializeDeviceId(
     return;
   }
 
-  if (!base::FeatureList::IsEnabled(kStableDeviceId)) {
+  if (!base::FeatureList::IsEnabled(::switches::kStableDeviceId)) {
     // Do not generate and store new device identifiers if the feature is not
     // enabled yet.
     return;
@@ -1661,19 +1682,14 @@ void UserSessionManager::UserProfileInitialized(Profile* profile,
       }
     }
 
-    const bool in_session_password_change_feature_enabled =
-        base::FeatureList::IsEnabled(::features::kInSessionPasswordChange);
-
-    if (in_session_password_change_feature_enabled &&
-        user_context_.GetSamlPasswordAttributes().has_value()) {
+    if (user_context_.GetSamlPasswordAttributes().has_value()) {
       // Update password expiry data if new data came in during SAML login,
       // and the in-session password change feature is enabled:
       user_context_.GetSamlPasswordAttributes()->SaveToPrefs(
           profile->GetPrefs());
 
-    } else if (!in_session_password_change_feature_enabled ||
-               user_context_.GetAuthFlow() ==
-                   UserContext::AUTH_FLOW_GAIA_WITHOUT_SAML) {
+    } else if (user_context_.GetAuthFlow() ==
+               UserContext::AUTH_FLOW_GAIA_WITHOUT_SAML) {
       // These attributes are no longer relevant and should be deleted if
       // either a) the in-session password change feature is no longer enabled
       // or b) this user is no longer using SAML to log in.
@@ -1767,8 +1783,8 @@ void UserSessionManager::FinalizePrepareProfile(Profile* profile) {
 
   profile->OnLogin();
 
-  TRACE_EVENT_NESTABLE_ASYNC_END0(kEventCategoryChromeOS, kEventPrepareProfile,
-                                  TRACE_ID_LOCAL(this));
+  // End kEventPrepareProfile event.
+  TRACE_EVENT_END(kEventCategoryChromeOS, perfetto::Track::FromPointer(this));
 
   {
     TRACE_EVENT0(kEventCategoryChromeOS, kEventHandleProfileLoad);
@@ -2115,28 +2131,81 @@ void UserSessionManager::OnUserProfileLoaded(Profile* profile,
     observer->StartObserving();
   }
 
-  if (TokenHandlesEnabled() && user && user->HasGaiaAccount()) {
-    CreateTokenUtilIfMissing();
-    if (IsOnlineSignin(user_context_)) {
-      // If the user has gone through an online Gaia flow, then their LST is
-      // guaranteed to have changed/created. We need to update the token handle,
-      // regardless of the state of the previous token handle, if any.
-      if (!token_handle_util_->HasToken(user_context_.GetAccountId())) {
-        // New user.
-        token_handle_fetcher_ = std::make_unique<TokenHandleFetcher>(
-            profile, token_handle_util_.get(), user_context_.GetAccountId());
-        token_handle_fetcher_->FillForNewUser(
-            user_context_.GetAccessToken(),
-            Sha1Digest(user_context_.GetRefreshToken()),
-            base::BindOnce(&UserSessionManager::OnTokenHandleObtained,
-                           GetUserSessionManagerAsWeakPtr()));
-      } else {
-        // Existing user.
-        UpdateTokenHandle(profile, user->GetAccountId());
-      }
+  if (!TokenHandlesEnabled() || !user || !user->HasGaiaAccount()) {
+    VLOG(1) << "UserSessionManager::OnUserProfileLoaded:"
+            << " token handles disabled or user invalid, returning early";
+    return;
+  }
+
+  CreateTokenHandleStoreIfMissing();
+
+  if (!ash::features::IsUseTokenHandleStoreEnabled()) {
+    FetchTokenHandleLegacy(profile, user);
+  } else {
+    FetchTokenHandle(profile, user);
+  }
+}
+
+void UserSessionManager::FetchTokenHandleLegacy(
+    Profile* profile,
+    const user_manager::User* user) {
+  if (IsOnlineSignin(user_context_)) {
+    // If the user has gone through an online Gaia flow, then their LST is
+    // guaranteed to have changed/created. We need to update the token handle,
+    // regardless of the state of the previous token handle, if any.
+    if (!token_handle_store_->HasToken(user_context_.GetAccountId())) {
+      // New user.
+      token_handle_fetcher_ = std::make_unique<LegacyTokenHandleFetcher>(
+          profile, token_handle_store_.get(), user_context_.GetAccountId());
+      token_handle_fetcher_->FillForNewUser(
+          user_context_.GetAccessToken(),
+          Sha1Digest(user_context_.GetRefreshToken()),
+          base::BindOnce(&UserSessionManager::OnTokenHandleObtained,
+                         GetUserSessionManagerAsWeakPtr()));
     } else {
-      UpdateTokenHandleIfRequired(profile, user->GetAccountId());
+      // Existing user.
+      UpdateTokenHandle(profile, user->GetAccountId());
     }
+  } else {
+    UpdateTokenHandleIfRequired(profile, user->GetAccountId());
+  }
+}
+
+void UserSessionManager::FetchTokenHandle(Profile* profile,
+                                          const user_manager::User* user) {
+  TokenHandleService* token_handle_service =
+      TokenHandleServiceFactory::GetInstance()->GetForProfile(profile);
+
+  if (!IsOnlineSignin(user_context_)) {
+    MaybeFetchTokenHandleForExistingUserIfInvalidOrEmpty(user,
+                                                         token_handle_service);
+    return;
+  }
+
+  if (!token_handle_store_->HasToken(user_context_.GetAccountId())) {
+    VLOG(1) << "UserSessionManager::OnUserProfileLoaded: new user";
+    // New user.
+    token_handle_service->MaybeFetchForNewUser(
+        user_context_.GetAccountId(), user_context_.GetAccessToken(),
+        Sha1Digest(user_context_.GetRefreshToken()));
+  } else {
+    VLOG(1) << "UserSessionManager::OnUserProfileLoaded: existing user";
+    // Existing user.
+    MaybeFetchTokenHandleForExistingUser(token_handle_service);
+  }
+}
+
+void UserSessionManager::MaybeFetchTokenHandleForExistingUser(
+    TokenHandleService* token_handle_service) {
+  token_handle_service->MaybeFetchForExistingUser(user_context_.GetAccountId());
+  token_handle_backfill_tried_for_testing_ = true;
+}
+
+void UserSessionManager::MaybeFetchTokenHandleForExistingUserIfInvalidOrEmpty(
+    const user_manager::User* user,
+    TokenHandleService* token_handle_service) {
+  if (token_handle_store_->ShouldObtainHandle(user->GetAccountId())) {
+    MaybeFetchTokenHandleForExistingUser(token_handle_service);
   }
 }
 
@@ -2361,21 +2430,24 @@ void UserSessionManager::DoBrowserLaunchInternal(Profile* profile,
   VLOG(1) << "Launching browser...";
   TRACE_EVENT0("login", "LaunchBrowser");
   if (should_launch_browser_) {
-    if (floating_workspace_util::IsFloatingWorkspaceV1Enabled() ||
-        floating_workspace_util::IsFloatingWorkspaceV2Enabled()) {
-      // If floating workspace is enabled, it will override full restore.
-      FloatingWorkspaceService* floating_workspace_service =
-          FloatingWorkspaceServiceFactory::GetForProfile(profile);
-      if (floating_workspace_util::IsFloatingWorkspaceV1Enabled() &&
-          floating_workspace_service) {
-        floating_workspace_service->SubscribeToForeignSessionUpdates();
+    const bool floating_workspace_handles_restore =
+        floating_workspace_util::IsFloatingWorkspaceV2Enabled();
+    if (floating_workspace_handles_restore ||
+        floating_workspace_util::IsFloatingSsoEnabled(profile)) {
+      // Calling `GetForProfile` here ensures that `FloatingWorkspaceService` is
+      // created.
+      // TODO(crbug.com/419801387): we can likely remove this call and
+      // instead override `ServiceIsCreatedWithBrowserContext` in the
+      // factory to conditionally construct the service after profile creation.
+      FloatingWorkspaceServiceFactory::GetForProfile(profile);
+    } else if (!floating_workspace_handles_restore) {
+      if (!IsFullRestoreEnabled(profile)) {
+        LaunchBrowser(profile);
+        PerformPostBrowserLaunchOOBEActions(profile);
+      } else {
+        full_restore::FullRestoreServiceFactory::GetForProfile(profile)
+            ->LaunchBrowserWhenReady();
       }
-    } else if (!IsFullRestoreEnabled(profile)) {
-      LaunchBrowser(profile);
-      PerformPostBrowserLaunchOOBEActions(profile);
-    } else {
-      full_restore::FullRestoreServiceFactory::GetForProfile(profile)
-          ->LaunchBrowserWhenReady();
     }
   }
 
@@ -2417,13 +2489,12 @@ void UserSessionManager::DoBrowserLaunchInternal(Profile* profile,
   }
 
   base::OnceClosure login_host_finalized_callback = base::BindOnce(
-      [](uint64_t trace_id) {
+      [](perfetto::Track track) {
         session_manager::SessionManager::Get()->SessionStarted();
-        TRACE_EVENT_NESTABLE_ASYNC_END0(kEventCategoryChromeOS,
-                                        kEventStartSession,
-                                        TRACE_ID_LOCAL(trace_id));
+        // End kEventStartSession event.
+        TRACE_EVENT_END(kEventCategoryChromeOS, track);
       },
-      static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this)));
+      perfetto::Track::FromPointer(this));
 
   // Mark login host for deletion after browser starts.  This
   // guarantees that the message loop will be referenced by the
@@ -2550,7 +2621,6 @@ bool UserSessionManager::TokenHandlesEnabled() {
 
 void UserSessionManager::Shutdown() {
   token_handle_fetcher_.reset();
-  token_handle_util_.reset();
   token_observers_.clear();
   always_on_vpn_manager_.reset();
   child_policy_observer_.reset();
@@ -2559,6 +2629,7 @@ void UserSessionManager::Shutdown() {
   password_service_voted_.reset();
   password_was_saved_ = false;
   xdr_manager_.reset();
+  token_handle_store_ = nullptr;
 }
 
 void UserSessionManager::SetSwitchesForUser(
@@ -2615,16 +2686,18 @@ UserSessionManager::GetUserSessionManagerAsWeakPtr() {
   return weak_factory_.GetWeakPtr();
 }
 
-void UserSessionManager::CreateTokenUtilIfMissing() {
-  if (!token_handle_util_.get())
-    token_handle_util_ = std::make_unique<TokenHandleUtil>();
+void UserSessionManager::CreateTokenHandleStoreIfMissing() {
+  if (!token_handle_store_) {
+    token_handle_store_ = TokenHandleStoreFactory::Get()->GetTokenHandleStore();
+  }
 }
 
 void UserSessionManager::UpdateTokenHandleIfRequired(
     Profile* const profile,
     const AccountId& account_id) {
-  if (!token_handle_util_->ShouldObtainHandle(account_id))
+  if (!token_handle_store_->ShouldObtainHandle(account_id)) {
     return;
+  }
   if (token_handle_fetcher_.get())
     return;
 
@@ -2633,8 +2706,8 @@ void UserSessionManager::UpdateTokenHandleIfRequired(
 
 void UserSessionManager::UpdateTokenHandle(Profile* const profile,
                                            const AccountId& account_id) {
-  token_handle_fetcher_ = std::make_unique<TokenHandleFetcher>(
-      profile, token_handle_util_.get(), account_id);
+  token_handle_fetcher_ = std::make_unique<LegacyTokenHandleFetcher>(
+      profile, token_handle_store_.get(), account_id);
   token_handle_fetcher_->BackfillToken(
       base::BindOnce(&UserSessionManager::OnTokenHandleObtained,
                      GetUserSessionManagerAsWeakPtr()));

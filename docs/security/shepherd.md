@@ -74,7 +74,7 @@ All this is hard, so please remember to [ask for help](#Ask-for-help).
 Here are some of the important references and resources you need or may need
 during your shepherding shift:
 
-* [Current Shepherds](https://script.google.com/a/macros/google.com/s/AKfycbz02xD4ghSzZu_tXyNRgjC95wFURATZeD_FHq0KRMHeqA-b0b9sow4NV1lhi0P2vy1j/exec)
+* [Current Shepherds](https://goto.google.com/whos-the-shepherd)
 * [Chrome Security Bug Dashboard](https://goto.google.com/chrome-security-bugs)
 * [Security Severity Guidelines](severity-guidelines.md)
 * [Security Labels](security-labels.md)
@@ -326,14 +326,17 @@ account to move this bug into that component.
 ### Assign
 
 Security bugs are not automatically visible, so you must add people to get them
-fixed. For each bug, set:
+fixed. **Every security bug that is severity S0, S1, or S2 must have an assigned
+owner.** For each bug, set:
 
 * The **Component** – due to a limited set of auto-cc rules, this may add
   some visibility. This will "move" the bug into that component; this is the
   expected outcome. It can also be helpful to set additional **Component Tags**
   when a bug does not fall neatly into a single component.
 * An **assignee/owner**. Use `git blame` or look for similar past bugs in the
-  tracker.
+  tracker. Every security bug that is severity S0, S1, or S2 must always have an
+  assigned owner. Every security bug, regardless of severity, should initially
+  be assigned to an owner.
 * Lots of **cc**s. Copy everyone who could possibly be relevant. Use the owners
   file for a particular feature to help achieve this.
 * Add a **comment** so that recipients know what’s expected, and why you think
@@ -354,7 +357,7 @@ pass it along to / include someone who can direct it more precisely.
       memory corruption.
     * Set a provisional `Found In` of the current Extended Stable.
     * Assign it to the current [V8
-      Sheriff](https://goto.google.com/current-v8-sheriff) with
+      Shepherd](https://goto.google.com/current-v8-sheriff) with
       a comment explaining that the severity and `Found In` are provisional.
       Note that V8 CHECK failure crashes can have security implications, so
       don't triage it yourself.
@@ -370,7 +373,7 @@ pass it along to / include someone who can direct it more precisely.
     * Set a provisional severity of Medium (S2).
     * Set a provisional priority of P1.
     * Assign to the current [V8
-      Sheriff](https://goto.google.com/current-v8-sheriff).
+      Shepherd](https://goto.google.com/current-v8-sheriff).
     * Apply the `Security_Impact-None` hotlist (hotlistID:5433277).
     * If possible, please also apply the `V8 Sandbox` hotlist
       (hotlistID:4802478).
@@ -608,10 +611,20 @@ right side of the banner, and triage the report as you normally would.
 
 * [Current Shepherds](http://go/whos-the-shepherd)
 * [Rotation schedule](https://docs.google.com/spreadsheets/d/10sLYZbi6QfLcXrhO-j5eSc82uc7NKnBz_o1pR9y8h7U/edit#gid=0)
-* If you're a Shepherd, you should get a calendar invite.
-  Please accept it to acknowledge your upcoming shepherding duty.
-* If you need to swap shifts, ask around for a volunteer and then just update
-  the [rotation sheet](https://docs.google.com/spreadsheets/d/10sLYZbi6QfLcXrhO-j5eSc82uc7NKnBz_o1pR9y8h7U/edit#gid=0) and wait 10 minutes for the calendar invites to be updated.
+* A calendar invite will be sent for your upcoming shift. Please accept it to
+  acknowledge your upcoming shepherding duty.
+* If you **cannot make the shift**:
+  * Declining the invite does not alert anyone or trigger any re-assignment.
+  * If you are OOO or the assigned shift is during a holiday, please do your
+    best to swap shifts with someone! You are not expected to shepherd on a
+    holiday (: but we do want to maximize coverage where/when possible.
+  * Ask around (shepherding chat is a good place!) for a volunteer and then
+  update the [rotation sheet](https://docs.google.com/spreadsheets/d/10sLYZbi6QfLcXrhO-j5eSc82uc7NKnBz_o1pR9y8h7U/edit#gid=0).
+  The calendar invites should be updated in ~10 minutes.
+* To become a shepherd, please reach out to the Chrome Product Security team.
+* To stop shepherding, remove yourself from g/chrome-security-shepherds. Please
+  find suitable substitutes for shifts that have already been assigned to you.
+  Automation should take care of the rest.
 
 ### Incident response
 

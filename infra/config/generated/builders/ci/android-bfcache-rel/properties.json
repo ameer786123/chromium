@@ -13,7 +13,6 @@
               "project": "chromium"
             },
             "builder_spec": {
-              "build_gs_bucket": "chromium-android-archive",
               "builder_group": "chromium.android",
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_android_config": {
@@ -52,6 +51,8 @@
           "group": "tryserver.chromium.android"
         }
       ],
+      "retry_failed_shards": true,
+      "retry_invalid_shards": true,
       "targets_spec_directory": "src/infra/config/generated/builders/ci/android-bfcache-rel/targets"
     }
   },
@@ -75,11 +76,5 @@
     ]
   },
   "builder_group": "chromium.android",
-  "gardener_rotations": [
-    "android"
-  ],
-  "recipe": "chromium",
-  "sheriff_rotations": [
-    "android"
-  ]
+  "recipe": "chromium"
 }

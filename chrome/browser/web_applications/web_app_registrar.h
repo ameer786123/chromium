@@ -17,6 +17,7 @@
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
+#include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -76,6 +77,11 @@ using DiyAppCount = base::StrongAlias<class DiyAppCountTag, int>;
 using InstallableAppCount =
     base::StrongAlias<class InstallableAppCountTag, int>;
 using NonSyncingAppCount = base::StrongAlias<class NonSyncingAppCountTag, int>;
+
+using AppsHavingNoTrustedIconsCount =
+    base::StrongAlias<class AppsHavingNoTrustedIconsCountTag, int>;
+using AppsHavingTrustedIconsCount =
+    base::StrongAlias<class AppsHavingTrustedIconsCountTag, int>;
 
 // Enabling this will force all apps that are exclusively preinstalled and open
 // in a browser tab to have the default navigation capturing setting be 'on'.
@@ -287,11 +293,25 @@ class WebAppRegistrar {
   bool IsAppFileHandlerPermissionBlocked(const webapps::AppId& app_id) const;
   bool IsIsolated(const webapps::AppId& app_id) const;
 
-  // Returns the state of the File Handling API for the given app.
+  // Returns approval state for File Handling API including
+  // DefaultHandlersForFileExtensions policy check.
   ApiApprovalState GetAppFileHandlerApprovalState(
+      const webapps::AppId& app_id,
+      std::optional<std::string> file_extension) const;
+
+  bool IsAppPolicyDefinedHandlerForFileExtension(
+      const webapps::AppId& app_id,
+      const std::string file_extension) const;
+
+  bool IsAppSetAsPolicyDefinedFileHandlerForAnyFileExtension(
       const webapps::AppId& app_id) const;
-  // Returns true iff it's expected that File Handlers have been, **or are in
-  // the process of being**, registered with the OS.
+
+  // Returns the state of the File Handling API for the given app.
+  ApiApprovalState GetAppFileHandlerUserApprovalState(
+      const webapps::AppId& app_id) const;
+
+  // Returns true iff it's expected that File Handlers have been, **or are
+  // in the process of being**, registered with the OS.
   bool ExpectThatFileHandlersAreRegisteredWithOs(
       const webapps::AppId& app_id) const;
 
@@ -335,8 +355,10 @@ class WebAppRegistrar {
   std::vector<apps::IconInfo> GetAppIconInfos(
       const webapps::AppId& app_id) const;
 
-  // Represents which icon sizes we successfully downloaded from the IconInfos.
-  SortedSizesPx GetAppDownloadedIconSizesAny(
+  // Represents which icon sizes of trusted icons exist on the disk. If trusted
+  // icons do not exist, fallbacks to returning sizes of icons of purpose `ANY`
+  // as per the fallback mechanism.
+  SortedSizesPx GetAppTrustedIconSizesFallbackToUntrusted(
       const webapps::AppId& app_id) const;
 
   // Returns the "shortcuts" field from the app manifest, use
@@ -416,7 +438,7 @@ class WebAppRegistrar {
   // Returns whether the app should be opened in tabbed window mode.
   bool IsTabbedWindowModeEnabled(const webapps::AppId& app_id) const;
 
-  GURL GetAppNewTabUrl(const webapps::AppId& app_id) const;
+  const GURL& GetAppNewTabUrl(const webapps::AppId& app_id) const;
 
   // Returns the URL of the pinned home tab for tabbed apps which have this
   // enabled, otherwise returns nullopt.
@@ -501,10 +523,28 @@ class WebAppRegistrar {
                                                   bool show);
 #endif
 
+  // Returns whether the DIY app's icons are marked as masked on Mac.
+  bool IsDiyAppIconsMarkedMaskedOnMac(const webapps::AppId& app_id) const;
+
+  // Returns the trusted icon metadata stored in the web app. If the
+  // `trusted_icons` field in the web_app is empty, fallback to using the
+  // `manifest_icons` instead. This can happen for web apps that are installed
+  // from a trusted source, like policy.
+  std::vector<apps::IconInfo> GetTrustedAppIconsMetadata(
+      const webapps::AppId& app_id) const;
+
+  // Returns the icon metadata for a single trusted icon to be used in security
+  // sensitive surfaces that interact with the web_applications/ system. This
+  // relies on the output of `GetTrustedAppIconsMetadata()` to choose a single
+  // icon based on the size being passed to it.
+  std::optional<apps::IconInfo> GetSingleTrustedAppIconForSecuritySurfaces(
+      const webapps::AppId& app_id,
+      const SquareSizePx input_size);
+
   void AddObserver(WebAppRegistrarObserver* observer);
   void RemoveObserver(WebAppRegistrarObserver* observer);
 
-  void NotifyWebAppProtocolSettingsChanged();
+  void NotifyWebAppProtocolSettingsChanged(const webapps::AppId& app_id);
   void NotifyWebAppFileHandlerApprovalStateChanged(
       const webapps::AppId& app_id);
   void NotifyWebAppsWillBeUpdatedFromSync(
@@ -641,6 +681,11 @@ class WebAppRegistrar {
   // Requires app registry to be in a ready state.
   std::tuple<DiyAppCount, InstallableAppCount, NonSyncingAppCount>
   CountTotalUserInstalledAppsIncludingDiy() const;
+
+  // Count number of apps that are installed and have trusted icons populated or
+  // not populated.
+  std::tuple<AppsHavingNoTrustedIconsCount, AppsHavingTrustedIconsCount>
+  CountAppsHavingTrustedIcons() const;
 
   const raw_ptr<Profile> profile_;
   raw_ptr<WebAppProvider> provider_ = nullptr;

@@ -21,6 +21,8 @@
 
 #include "third_party/blink/renderer/core/page/page.h"
 
+#include <optional>
+
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/feature_list.h"
@@ -65,6 +67,7 @@
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/console_message_storage.h"
 #include "third_party/blink/renderer/core/inspector/inspector_issue_storage.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/text_autosizer.h"
 #include "third_party/blink/renderer/core/loader/idleness_detector.h"
@@ -77,7 +80,6 @@
 #include "third_party/blink/renderer/core/page/page_animator.h"
 #include "third_party/blink/renderer/core/page/page_hidden_state.h"
 #include "third_party/blink/renderer/core/page/plugin_data.h"
-#include "third_party/blink/renderer/core/page/plugins_changed_observer.h"
 #include "third_party/blink/renderer/core/page/pointer_lock_controller.h"
 #include "third_party/blink/renderer/core/page/scoped_browsing_context_group_pauser.h"
 #include "third_party/blink/renderer/core/page/scoped_page_pauser.h"
@@ -210,8 +212,10 @@ Page* Page::CreateNonOrdinary(
     const ColorProviderColorMaps* color_provider_colors) {
   return MakeGarbageCollected<Page>(
       base::PassKey<Page>(), chrome_client, agent_group_scheduler,
-      BrowsingContextGroupInfo::CreateUnique(), color_provider_colors,
+      /*browsing_context_group_token=*/base::UnguessableToken::Create(),
+      color_provider_colors,
       /*partitioned_popin_params=*/nullptr,
+      /*canvas_noise_token=*/std::nullopt,
       /*is_ordinary=*/false);
 }
 
@@ -219,13 +223,15 @@ Page* Page::CreateOrdinary(
     ChromeClient& chrome_client,
     Page* opener,
     AgentGroupScheduler& agent_group_scheduler,
-    const BrowsingContextGroupInfo& browsing_context_group_info,
+    const base::UnguessableToken& browsing_context_group_token,
     const ColorProviderColorMaps* color_provider_colors,
-    blink::mojom::PartitionedPopinParamsPtr partitioned_popin_params) {
+    blink::mojom::PartitionedPopinParamsPtr partitioned_popin_params,
+    const std::optional<uint64_t>& canvas_noise_token) {
   Page* page = MakeGarbageCollected<Page>(
       base::PassKey<Page>(), chrome_client, agent_group_scheduler,
-      browsing_context_group_info, color_provider_colors,
-      std::move(partitioned_popin_params), /*is_ordinary=*/true);
+      browsing_context_group_token, color_provider_colors,
+      std::move(partitioned_popin_params), canvas_noise_token,
+      /*is_ordinary=*/true);
   page->opener_ = opener;
 
   OrdinaryPages().insert(page);
@@ -247,9 +253,10 @@ Page* Page::CreateOrdinary(
 Page::Page(base::PassKey<Page>,
            ChromeClient& chrome_client,
            AgentGroupScheduler& agent_group_scheduler,
-           const BrowsingContextGroupInfo& browsing_context_group_info,
+           const base::UnguessableToken& browsing_context_group_token,
            const ColorProviderColorMaps* color_provider_colors,
            blink::mojom::PartitionedPopinParamsPtr partitioned_popin_params,
+           const std::optional<uint64_t>& canvas_noise_token,
            bool is_ordinary)
     : SettingsDelegate(std::make_unique<Settings>()),
       main_frame_(nullptr),
@@ -286,6 +293,7 @@ Page::Page(base::PassKey<Page>,
       next_related_page_(this),
       prev_related_page_(this),
       autoplay_flags_(0),
+      canvas_noise_token_(canvas_noise_token),
       web_text_autosizer_page_info_({0, 0, 1.f}),
       v8_compile_hints_producer_(
           MakeGarbageCollected<
@@ -293,7 +301,7 @@ Page::Page(base::PassKey<Page>,
       v8_compile_hints_consumer_(
           MakeGarbageCollected<
               v8_compile_hints::V8CrowdsourcedCompileHintsConsumer>()),
-      browsing_context_group_info_(browsing_context_group_info) {
+      browsing_context_group_token_(browsing_context_group_token) {
   if (partitioned_popin_params) {
     partitioned_popin_opener_properties_ = PartitionedPopinOpenerProperties(
         SecurityOrigin::CreateFromUrlOrigin(
@@ -510,7 +518,7 @@ void Page::TakePropertiesForLocalMainFrameSwap(Page* old_page) {
 
   // If the previous page is an opener for other pages, make sure that the
   // openees point to the new page instead.
-  for (auto page : RelatedPages()) {
+  for (auto& page : RelatedPages()) {
     if (page->opener_ == old_page) {
       page->opener_ = this;
     }
@@ -536,6 +544,14 @@ Page::GetPartitionedPopinOpenerProperties() const {
   CHECK(IsPartitionedPopin());
 
   return *partitioned_popin_opener_properties_;
+}
+
+void Page::SetCanvasNoiseToken(std::optional<uint64_t> canvas_noise_token) {
+  canvas_noise_token_ = canvas_noise_token;
+}
+
+const std::optional<uint64_t> Page::CanvasNoiseToken() {
+  return canvas_noise_token_;
 }
 
 LocalFrame* Page::DeprecatedLocalMainFrame() const {
@@ -721,7 +737,6 @@ void Page::ResetPluginData() {
   for (Page* page : AllPages()) {
     if (page->plugin_data_) {
       page->plugin_data_->ResetPluginData();
-      page->NotifyPluginsChanged();
     }
   }
 }
@@ -849,7 +864,7 @@ void Page::SetVisibilityState(
   if (is_initial_state)
     return;
 
-  for (auto observer : page_visibility_observer_set_) {
+  for (auto& observer : page_visibility_observer_set_) {
     observer->PageVisibilityChanged();
   }
 
@@ -1026,9 +1041,7 @@ void Page::SetMaxSafeAreaInsets(LocalFrame* setter, gfx::Insets max_safe_area) {
     applied_safe_area_insets_ = scaled_max_safe_area_insets_;
     SetSafeAreaEnvVariables(setter, scaled_max_safe_area_insets_);
   }
-  if (RuntimeEnabledFeatures::CSSSafeAreaMaxInsetEnabled()) {
-    SetSafeAreaMaxEnvVariables(setter, scaled_max_safe_area_insets_);
-  }
+  SetSafeAreaMaxEnvVariables(setter, scaled_max_safe_area_insets_);
 }
 
 void Page::SettingsChanged(ChangeType change_type) {
@@ -1092,10 +1105,10 @@ void Page::SettingsChanged(ChangeType change_type) {
         if (!document || !document->IsActive()) {
           continue;
         }
-        document->GetStyleEngine().EnsureEnvironmentVariables().SetVariable(
-            UADefinedVariable::kPreferredTextScale,
-            String::Number(
-                document->GetSettings()->GetAccessibilityFontScaleFactor()));
+        document->GetStyleEngine()
+            .EnsureEnvironmentVariables()
+            .SetPreferredTextScale(
+                document->GetSettings()->GetAccessibilityFontScaleFactor());
       }
       break;
     case ChangeType::kTextAutosizing:
@@ -1185,10 +1198,8 @@ void Page::SettingsChanged(ChangeType change_type) {
           HTMLMediaElement::OnMediaControlsEnabledChange(doc);
       }
       break;
-    case ChangeType::kPlugins: {
-      NotifyPluginsChanged();
+    case ChangeType::kPlugins:
       break;
-    }
     case ChangeType::kHighlightAds: {
       for (Frame* frame = MainFrame(); frame;
            frame = frame->Tree().TraverseNext()) {
@@ -1276,13 +1287,6 @@ void Page::InvalidatePaint() {
     if (LayoutView* view = local_frame->ContentLayoutObject())
       view->InvalidatePaintForViewAndDescendants();
   }
-}
-
-void Page::NotifyPluginsChanged() const {
-  HeapVector<Member<PluginsChangedObserver>, 32> observers(
-      plugins_changed_observers_);
-  for (PluginsChangedObserver* observer : observers)
-    observer->PluginsChanged();
 }
 
 void Page::UpdateAcceleratedCompositingSettings() {
@@ -1378,7 +1382,6 @@ void Page::Trace(Visitor* visitor) const {
   visitor->Trace(previous_main_frame_for_local_swap_);
   visitor->Trace(plugin_data_);
   visitor->Trace(validation_message_client_);
-  visitor->Trace(plugins_changed_observers_);
   visitor->Trace(next_related_page_);
   visitor->Trace(prev_related_page_);
   visitor->Trace(agent_group_scheduler_);
@@ -1444,7 +1447,7 @@ void Page::WillBeDestroyed() {
     validation_message_client_->WillBeDestroyed();
   main_frame_ = nullptr;
 
-  for (auto observer : page_visibility_observer_set_) {
+  for (auto& observer : page_visibility_observer_set_) {
     observer->ObserverSetWillBeCleared();
   }
   page_visibility_observer_set_.clear();
@@ -1455,10 +1458,6 @@ void Page::WillBeDestroyed() {
     close_task_handler_->SetPage(nullptr);
     close_task_handler_ = nullptr;
   }
-}
-
-void Page::RegisterPluginsChangedObserver(PluginsChangedObserver* observer) {
-  plugins_changed_observers_.insert(observer);
 }
 
 ScrollbarTheme& Page::GetScrollbarTheme() const {
@@ -1481,15 +1480,6 @@ PageScheduler* Page::GetPageScheduler() const {
 
 bool Page::IsOrdinary() const {
   return is_ordinary_;
-}
-
-bool Page::RequestBeginMainFrameNotExpected(bool new_state) {
-  if (!main_frame_ || !main_frame_->IsLocalFrame())
-    return false;
-
-  chrome_client_->RequestBeginMainFrameNotExpected(*DeprecatedLocalMainFrame(),
-                                                   new_state);
-  return true;
 }
 
 void Page::AddAutoplayFlags(int32_t value) {
@@ -1602,16 +1592,12 @@ void Page::UpdateLifecycle(LocalFrame& root,
 }
 
 const base::UnguessableToken& Page::BrowsingContextGroupToken() {
-  return browsing_context_group_info_.browsing_context_group_token;
-}
-
-const base::UnguessableToken& Page::CoopRelatedGroupToken() {
-  return browsing_context_group_info_.coop_related_group_token;
+  return browsing_context_group_token_;
 }
 
 void Page::UpdateBrowsingContextGroup(
-    const blink::BrowsingContextGroupInfo& browsing_context_group_info) {
-  if (browsing_context_group_info_ == browsing_context_group_info) {
+    const base::UnguessableToken& browsing_context_group_token) {
+  if (browsing_context_group_token_ == browsing_context_group_token) {
     return;
   }
 
@@ -1622,7 +1608,7 @@ void Page::UpdateBrowsingContextGroup(
     SetPaused(false);
   }
 
-  browsing_context_group_info_ = browsing_context_group_info;
+  browsing_context_group_token_ = browsing_context_group_token;
 
   if (base::FeatureList::IsEnabled(
           features::kPausePagesPerBrowsingContextGroup) &&

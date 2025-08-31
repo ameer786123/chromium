@@ -15,7 +15,6 @@
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/image_fetcher/image_decoder_impl.h"
 #include "chrome/browser/net/system_network_context_manager.h"
-#include "chrome/browser/ui/monogram_utils.h"
 #include "chrome/browser/ui/views/controls/hover_button.h"
 #include "chrome/browser/ui/views/extensions/security_dialog_tracker.h"
 #include "chrome/browser/ui/views/webid/account_selection_view_base.h"
@@ -30,8 +29,9 @@
 #include "components/strings/grit/components_strings.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
-#include "content/public/browser/identity_request_dialog_controller.h"
+#include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/webid/identity_request_dialog_controller.h"
 #include "skia/ext/image_operations.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -41,6 +41,7 @@
 #include "ui/base/ui_base_types.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
+#include "ui/compositor/compositor.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/insets.h"
@@ -63,6 +64,7 @@
 #include "ui/views/style/platform_style.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/view_class_properties.h"
+#include "ui/views/window/dialog_delegate.h"
 
 namespace webid {
 
@@ -138,28 +140,69 @@ std::unique_ptr<views::View> CreateButtonContainer() {
 }
 }  // namespace
 
+AccountSelectionModalDelegate::AccountSelectionModalDelegate(
+    std::unique_ptr<AccountSelectionModalView> account_selection_modal_view) {
+  auto* selection_modal =
+      SetContentsView(std::move(account_selection_modal_view));
+  SetModalType(ui::mojom::ModalType::kChild);
+  SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  set_fixed_width(kDialogWidth);
+  SetShowTitle(false);
+  SetShowCloseButton(false);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+  SetTitle(selection_modal->dialog_title());
+}
+
+AccountSelectionModalDelegate::~AccountSelectionModalDelegate() = default;
+
+views::View* AccountSelectionModalDelegate::GetInitiallyFocusedView() {
+  if (auto* initially_focused_view =
+          GetAccountSelectionView()->GetInitiallyFocusedView()) {
+    return initially_focused_view;
+  }
+  return views::DialogDelegate::GetInitiallyFocusedView();
+}
+
+views::Widget* AccountSelectionModalDelegate::GetWidget() {
+  return GetAccountSelectionView()->GetWidget();
+}
+
+const views::Widget* AccountSelectionModalDelegate::GetWidget() const {
+  return const_cast<AccountSelectionModalDelegate*>(this)
+      ->GetAccountSelectionView()
+      ->GetWidget();
+}
+
+AccountSelectionModalView*
+AccountSelectionModalDelegate::GetAccountSelectionView() {
+  if (auto* account_selection_modal_view =
+          views::AsViewClass<AccountSelectionModalView>(GetContentsView())) {
+    return account_selection_modal_view;
+  }
+  NOTREACHED()
+      << "Dialog ContentsView isn't of type AccountSelectionModalView!";
+}
+
 AccountSelectionModalView::AccountSelectionModalView(
-    const std::u16string& rp_for_display,
+    const content::RelyingPartyData& rp_data,
     const std::optional<std::u16string>& idp_title,
     blink::mojom::RpContext rp_context,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     FedCmAccountSelectionView* owner)
     : AccountSelectionViewBase(owner,
                                std::move(url_loader_factory),
-                               rp_for_display) {
-  SetModalType(ui::mojom::ModalType::kChild);
-  SetOwnedByWidget(OwnedByWidgetPassKey());
-  SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-  set_fixed_width(kDialogWidth);
-  SetShowTitle(false);
-  SetShowCloseButton(false);
-  SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kVertical, gfx::Insets(),
-      kBetweenChildSpacing));
-  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+                               rp_data,
+                               owner->web_contents()
+                                   ->GetPrimaryMainFrame()
+                                   ->GetRenderWidgetHost()
+                                   ->GetDeviceScaleFactor()) {
+  // Configure the BoxLayoutView
+  SetOrientation(views::BoxLayout::Orientation::kVertical);
+  SetBetweenChildSpacing(kBetweenChildSpacing);
 
-  title_ = GetTitle(rp_for_display_, idp_title, rp_context);
-  SetTitle(title_);
+  title_ = GetTitle(rp_data_, idp_title, rp_context);
+
+  subtitle_ = GetSubtitle(rp_data_);
 
   header_view_ = AddChildView(CreateHeader());
   AddChildView(CreatePlaceholderAccountRow());
@@ -181,10 +224,10 @@ AccountSelectionModalView::CreatePlaceholderAccountRow() {
   std::unique_ptr<views::View> placeholder_account_icon =
       std::make_unique<views::View>();
   placeholder_account_icon->SetPreferredSize(
-      gfx::Size(kModalAvatarSize, kModalAvatarSize));
+      gfx::Size(webid::kModalAvatarSize, webid::kModalAvatarSize));
   placeholder_account_icon->SizeToPreferredSize();
-  placeholder_account_icon->SetBackground(
-      views::CreateRoundedRectBackground(kPlaceholderColor, kModalAvatarSize));
+  placeholder_account_icon->SetBackground(views::CreateRoundedRectBackground(
+      kPlaceholderColor, webid::kModalAvatarSize));
 
   constexpr int kPlaceholderAccountRowPadding = 16;
   auto row = std::make_unique<views::View>();
@@ -317,7 +360,17 @@ std::unique_ptr<views::View> AccountSelectionModalView::CreateHeader() {
   title_label_ = header->AddChildView(
       std::make_unique<views::Label>(title_, views::style::CONTEXT_DIALOG_TITLE,
                                      views::style::STYLE_HEADLINE_4));
+
   SetLabelProperties(title_label_);
+
+  if (!subtitle_.empty()) {
+    // Add the subtitle.
+    views::Label* subtitle =
+        header->AddChildView(std::make_unique<views::Label>(
+            subtitle_, views::style::CONTEXT_DIALOG_BODY_TEXT,
+            views::style::STYLE_BODY_4));
+    SetLabelProperties(subtitle);
+  }
 
   return header;
 }
@@ -546,11 +599,13 @@ void AccountSelectionModalView::ShowErrorDialog(
   std::u16string summary_text;
   std::u16string description_text;
   std::tie(summary_text, description_text) =
-      GetErrorDialogText(error, rp_for_display_, idp_for_display);
+      GetErrorDialogText(error, idp_for_display);
 
   title_ = summary_text;
   title_label_->SetText(title_);
-  SetTitle(title_);
+  if (auto* widget = GetWidget()) {
+    widget->widget_delegate()->SetTitle(title_);
+  }
 
   // body_label_ may be invisible if the preceding UI is the disclosure UI. When
   // error is triggered directly from the loading UI in case of auto re-authn,
@@ -637,10 +692,16 @@ void AccountSelectionModalView::ShowRequestPermissionDialog(
                                      /*should_hover=*/false,
                                      /*show_separator=*/false,
                                      /*is_request_permission_dialog=*/true));
-  if (account->login_state == Account::LoginState::kSignUp) {
+  // It must be that either the account's login state is kSignUp or that fields
+  // are empty if the account's login state is kSignIn.
+  CHECK(account->idp_claimed_login_state.value_or(
+            account->browser_trusted_login_state) ==
+            Account::LoginState::kSignUp ||
+        account->fields.empty());
+  if (!account->fields.empty()) {
     // Add disclosure label.
     std::unique_ptr<views::StyledLabel> disclosure_label =
-        CreateDisclosureLabel(*account->identity_provider);
+        CreateDisclosureLabel(account);
     disclosure_label->SetDefaultTextStyle(views::style::STYLE_BODY_4);
     disclosure_label->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(
         /*top=*/kVerticalSpacing, /*left=*/0, /*bottom=*/0,
@@ -829,6 +890,22 @@ std::string AccountSelectionModalView::GetDialogTitle() const {
   return base::UTF16ToUTF8(title_label_->GetText());
 }
 
+std::optional<std::string> AccountSelectionModalView::GetDialogSubtitle()
+    const {
+  if (subtitle_.empty()) {
+    return std::nullopt;
+  }
+  return base::UTF16ToUTF8(subtitle_);
+}
+
+void AccountSelectionModalView::VisibilityChanged(View* starting_from,
+                                                  bool is_visible) {
+  if (is_visible && !queued_announcement_.empty()) {
+    GetViewAccessibility().AnnounceAlert(queued_announcement_);
+    queued_announcement_ = u"";
+  }
+}
+
 std::u16string AccountSelectionModalView::GetQueuedAnnouncementForTesting() {
   return queued_announcement_;
 }
@@ -845,16 +922,8 @@ views::View* AccountSelectionModalView::GetInitiallyFocusedView() {
     return continue_button_;
   }
 
-  // Default to superclass.
-  return views::DialogDelegateView::GetInitiallyFocusedView();
-}
-
-void AccountSelectionModalView::VisibilityChanged(View* starting_from,
-                                                  bool is_visible) {
-  if (is_visible && !queued_announcement_.empty()) {
-    GetViewAccessibility().AnnounceAlert(queued_announcement_);
-    queued_announcement_ = u"";
-  }
+  // Return null to indicate to the delegate to use the delegate's super-class.
+  return nullptr;
 }
 
 void AccountSelectionModalView::

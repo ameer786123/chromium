@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/views/tabs/dragging/dragging_tabs_session.h"
 
+#include <optional>
+
 #include "base/metrics/histogram_functions.h"
 #include "base/types/pass_key.h"
 #include "chrome/browser/ui/layout_constants.h"
@@ -124,8 +126,6 @@ void DraggingTabsSession::MoveAttachedImpl(gfx::Point point_in_screen,
 
   const gfx::Point dragged_view_point = GetAttachedDragPoint(point_in_screen);
 
-  const int threshold = attached_context_->GetHorizontalDragThreshold();
-
   std::vector<TabSlotView*> views(drag_data_.tab_drag_data_.size());
   for (size_t i = 0; i < drag_data_.tab_drag_data_.size(); ++i) {
     views[i] = drag_data_.tab_drag_data_[i].attached_view.get();
@@ -135,6 +135,17 @@ void DraggingTabsSession::MoveAttachedImpl(gfx::Point point_in_screen,
 
   const gfx::Point point_in_attached_context =
       views::View::ConvertPointFromScreen(attached_context_, point_in_screen);
+
+  const int to_index = attached_context_->GetInsertionIndexForDraggedBounds(
+      GetDraggedViewTabStripBounds(dragged_view_point),
+      drag_data_.attached_views(), drag_data_.num_dragging_tabs());
+
+  constexpr int kHorizontalMoveThreshold = 16;  // DIPs.
+  const int threshold = base::ClampRound(
+      static_cast<double>(
+          attached_context_->GetTabAt(to_index)->bounds().width()) /
+      TabStyle::Get()->GetStandardWidth(/*is_split=*/false) *
+      kHorizontalMoveThreshold);
 
   // Update the model, moving the WebContents from one index to another. Do this
   // only if we have moved a minimum distance since the last reorder (to prevent
@@ -146,9 +157,6 @@ void DraggingTabsSession::MoveAttachedImpl(gfx::Point point_in_screen,
        threshold) ||
       (initial_move_ && !AreTabsConsecutive())) {
     TabStripModel* attached_model = attached_context_->GetTabStripModel();
-    const int to_index = attached_context_->GetInsertionIndexForDraggedBounds(
-        GetDraggedViewTabStripBounds(dragged_view_point),
-        drag_data_.attached_views(), drag_data_.num_dragging_tabs());
 
     content::WebContents* last_contents =
         drag_data_.tab_drag_data_.back().contents;
@@ -230,7 +238,7 @@ gfx::Rect DraggingTabsSession::GetDraggedViewTabStripBounds(
   }
 
   return gfx::Rect(tab_strip_point.x(), tab_strip_point.y(),
-                   attached_context_->GetActiveTabWidth(),
+                   TabStyle::Get()->GetStandardWidth(/*is_split=*/false),
                    GetLayoutConstant(TAB_HEIGHT));
 }
 
@@ -251,6 +259,13 @@ bool DraggingTabsSession::AreTabsConsecutive() const {
 std::optional<tab_groups::TabGroupId>
 DraggingTabsSession::CalculateGroupForDraggedTabs(int to_index) {
   TabStripModel* attached_model = attached_context_->GetTabStripModel();
+
+  // If a group is moved, the drag cannot be inserted into another group.
+  for (const TabDragData& tab_drag_datum : drag_data_.tab_drag_data_) {
+    if (tab_drag_datum.view_type == TabSlotView::ViewType::kTabGroupHeader) {
+      return std::nullopt;
+    }
+  }
 
   // Get the proposed tabstrip model assuming the selection has taken place.
   std::pair<std::optional<int>, std::optional<int>> adjacent_indices =
@@ -308,7 +323,7 @@ DraggingTabsSession::CalculateGroupForDraggedTabs(int to_index) {
   const auto tab_bounds_in_drag_context_coords = [this](int model_index) {
     const Tab* const tab = attached_context_->GetTabAt(model_index);
     return ToEnclosingRect(views::View::ConvertRectToTarget(
-        tab, attached_context_, gfx::RectF(tab->GetLocalBounds())));
+        tab->parent(), attached_context_, gfx::RectF(tab->bounds())));
   };
 
   // Use the left edge for a reliable fallback, e.g. if this is the leftmost
@@ -331,7 +346,7 @@ DraggingTabsSession::CalculateGroupForDraggedTabs(int to_index) {
     left_edge -= buffer;
   }
 
-  int left_most_selected_x_position =
+  const int left_most_selected_x_position =
       left_most_selected_tab->x() + tab_left_inset;
 
   if (left_group.has_value() &&

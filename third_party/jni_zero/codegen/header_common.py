@@ -21,12 +21,18 @@ def class_accessors(sb, java_classes, module_name):
     # Uses std::atomic<> instead of "static jclass cached_class = ..." because
     # that moves the initialize-once logic into the helper method (smaller code
     # size).
+    # The static local cached_class might get duplicated in component builds,
+    # due to having hidden visibility. However, this duplication is safe because
+    # it will always hold the same value, so the copies can't get out-of-sync.
     sb(f"""\
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunique-object-duplication"
 inline jclass {escaped_name}_clazz(JNIEnv* env) {{
   static const char kClassName[] = "{java_class.full_name_with_slashes}";
   static std::atomic<jclass> cached_class;
   return jni_zero::internal::LazyGetClass(env, kClassName, {split_arg}&cached_class);
 }}
+#pragma clang diagnostic pop
 #endif
 
 """)
@@ -43,8 +49,8 @@ def class_accessor_expression(java_class):
 
 def header_preamble(script_name,
                     java_class,
-                    system_includes,
-                    user_includes,
+                    system_includes=None,
+                    user_includes=None,
                     header_guard=None):
   if header_guard is None:
     header_guard = f'{java_class.to_cpp()}_JNI'
@@ -59,9 +65,12 @@ def header_preamble(script_name,
 #define {header_guard}
 
 """)
-  sb.extend(f'#include <{x}>\n' for x in system_includes)
-  sb.append('\n')
-  sb.extend(f'#include "{x}"\n' for x in user_includes)
+  if system_includes:
+    sb.extend(f'#include <{x}>\n' for x in system_includes)
+    sb.append('\n')
+  if user_includes:
+    sb.extend(f'#include "{x}"\n' for x in user_includes)
+    sb.append('\n')
   preamble = ''.join(sb)
 
   epilogue = f"""

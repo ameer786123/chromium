@@ -14,6 +14,7 @@
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -27,6 +28,7 @@
 #include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/permissions/notifications_engagement_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/safety_hub/disruptive_notification_permissions_manager.h"
@@ -68,6 +70,8 @@
 #include "chrome/browser/web_applications/web_app_icon_manager.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
+#else
+#include "chrome/browser/safe_browsing/android/notification_content_detection_manager_android.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -138,7 +142,10 @@ static bool ShouldDisplayWebNotificationOnFullScreen(Profile* profile,
     //  (b) the browser is fullscreen
     //  (c) the browser has focus.
     if (active_contents->GetURL().DeprecatedGetOriginAsURL() == origin &&
-        browser->exclusive_access_manager()->context()->IsFullscreen() &&
+        browser->GetFeatures()
+            .exclusive_access_manager()
+            ->context()
+            ->IsFullscreen() &&
         browser->window()->IsActive()) {
       return true;
     }
@@ -275,11 +282,21 @@ void PlatformNotificationServiceImpl::DisplayNotification(
       ContentSettingsType::NOTIFICATIONS, profile_, nullptr,
       notification.origin_url());
 
-    auto* service =
-        NotificationsEngagementServiceFactory::GetForProfile(profile_);
-    // This service might be missing for incognito profiles and in tests.
-    if (service)
-      service->RecordNotificationDisplayed(notification.origin_url());
+  auto* service =
+      NotificationsEngagementServiceFactory::GetForProfile(profile_);
+  // This service might be missing for incognito profiles and in tests.
+  if (service) {
+    service->RecordNotificationDisplayed(notification.origin_url());
+  }
+
+  // Logs metrics for proposed disruptive notification revocation when
+  // displaying a non persistent notification. Disruptive are notifications
+  // with high notification volume and low site engagement score.
+  ukm::SourceId source_id = ukm::UkmRecorder::GetSourceIdForNotificationEvent(
+      base::PassKey<PlatformNotificationServiceImpl>(),
+      notification.origin_url());
+  DisruptiveNotificationPermissionsManager::LogMetrics(
+      profile_, notification.origin_url(), source_id);
 }
 
 void PlatformNotificationServiceImpl::DisplayPersistentNotification(
@@ -308,9 +325,7 @@ void PlatformNotificationServiceImpl::DisplayPersistentNotification(
 
 #if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   if (safe_browsing::IsSafeBrowsingEnabled(*profile_->GetPrefs()) &&
-      !safe_browsing::IsURLAllowlistedByPolicy(origin, *profile_->GetPrefs()) &&
-      base::FeatureList::IsEnabled(
-          safe_browsing::kOnDeviceNotificationContentDetectionModel)) {
+      !safe_browsing::IsURLAllowlistedByPolicy(origin, *profile_->GetPrefs())) {
     auto* notification_content_service = safe_browsing::
         NotificationContentDetectionServiceFactory::GetForProfile(profile_);
     if (notification_content_service) {
@@ -764,35 +779,37 @@ void PlatformNotificationServiceImpl::UpdatePersistentMetadataThenDisplay(
     bool should_show_warning,
     std::optional<std::string> serialized_content_detection_metadata) {
   if (base::FeatureList::IsEnabled(
-          safe_browsing::kReportNotificationContentDetectionData) &&
-      serialized_content_detection_metadata.has_value()) {
-    // Obtain the storage partition for the url and if found, update
-    // `NotificationDatabase` with metadata.
-    auto storage_partition_config = content::StoragePartitionConfig::Create(
-        profile_, notification.origin_url().host(), /*partition_name=*/"",
-        /*in_memory=*/false);
-    // If there is no storage partition for the url, then there is also no
-    // notification data so do not create a partition to store metadata.
-    content::StoragePartition* current_storage_partition_ =
-        profile_->GetStoragePartition(storage_partition_config,
-                                      /*can_create=*/false);
-    if (current_storage_partition_ &&
-        current_storage_partition_->GetPlatformNotificationContext()) {
-      current_storage_partition_->GetPlatformNotificationContext()
-          ->WriteNotificationMetadata(
-              notification.id(), notification.origin_url(),
-              safe_browsing::kMetadataDictionaryKey,
-              serialized_content_detection_metadata.value(),
-              base::BindOnce(
-                  &PlatformNotificationServiceImpl::DidUpdatePersistentMetadata,
-                  weak_ptr_factory_.GetWeakPtr(),
-                  std::move(persistent_metadata), notification,
-                  should_show_warning));
-      return;
+          safe_browsing::kReportNotificationContentDetectionData)) {
+    content::PlatformNotificationContext::WriteResourcesResultCallback
+        callback = base::BindOnce(
+            &PlatformNotificationServiceImpl::DidUpdatePersistentMetadata,
+            weak_ptr_factory_.GetWeakPtr(), std::move(persistent_metadata),
+            notification, should_show_warning);
+#if BUILDFLAG(IS_ANDROID)
+    if (should_show_warning) {
+      // Keep track of suspicious notification ids.
+      safe_browsing::UpdateSuspiciousNotificationIds(
+          HostContentSettingsMapFactory::GetForProfile(profile_),
+          notification.origin_url(), notification.id());
     }
+#endif
+    if (serialized_content_detection_metadata.has_value()) {
+      scoped_refptr<content::PlatformNotificationContext> notification_context =
+          profile_->GetStoragePartitionForUrl(notification.origin_url())
+              ->GetPlatformNotificationContext();
+      if (notification_context) {
+        notification_context->WriteNotificationMetadata(
+            notification.id(), notification.origin_url(),
+            safe_browsing::kNotificationContentDetectionMetadataDictionaryKey,
+            serialized_content_detection_metadata.value(), std::move(callback));
+        return;
+      }
+    }
+    std::move(callback).Run(/*success=*/false);
+  } else {
+    DoUpdatePersistentMetadataThenDisplay(std::move(persistent_metadata),
+                                          notification, should_show_warning);
   }
-  DoUpdatePersistentMetadataThenDisplay(std::move(persistent_metadata),
-                                        notification, should_show_warning);
 }
 
 void PlatformNotificationServiceImpl::LogPersistentNotificationShownMetrics(

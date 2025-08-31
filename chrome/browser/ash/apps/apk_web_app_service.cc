@@ -12,6 +12,7 @@
 #include "base/containers/flat_map.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
@@ -97,7 +98,7 @@ std::optional<webapps::AppId> GetWebAppIdForPackage(
 }
 
 // TODO(b/304184466): Refactor this DelegateImpl to reduce code duplication.
-// Delegate implementation that actually talks to ARC And Lacros.
+// Delegate implementation that actually talks to ARC.
 // It looks up |ArcAppListPrefs| in the profile to find the ARC connection.
 class ApkWebAppServiceDelegateImpl : public ApkWebAppService::Delegate,
                                      public ApkWebAppInstaller::Owner {

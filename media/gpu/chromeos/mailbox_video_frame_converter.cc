@@ -30,55 +30,8 @@
 #include "media/gpu/macros.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/gpu_fence.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gl/gl_bindings.h"
-
-namespace {
-
-// Based on `buffer_format` support by VideoPixelFormatToGfxBufferFormat.
-viz::SharedImageFormat GetSharedImageFormat(gfx::BufferFormat buffer_format) {
-  viz::SharedImageFormat format;
-  switch (buffer_format) {
-    case gfx::BufferFormat::RGBA_8888:
-      format = viz::SinglePlaneFormat::kRGBA_8888;
-      break;
-    case gfx::BufferFormat::RGBX_8888:
-      format = viz::SinglePlaneFormat::kRGBX_8888;
-      break;
-    case gfx::BufferFormat::BGRA_8888:
-      format = viz::SinglePlaneFormat::kBGRA_8888;
-      break;
-    case gfx::BufferFormat::BGRX_8888:
-      format = viz::SinglePlaneFormat::kBGRX_8888;
-      break;
-    case gfx::BufferFormat::YVU_420:
-      format = viz::MultiPlaneFormat::kYV12;
-      break;
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      format = viz::MultiPlaneFormat::kNV12;
-      break;
-    case gfx::BufferFormat::YUVA_420_TRIPLANAR:
-      format = viz::MultiPlaneFormat::kNV12A;
-      break;
-    case gfx::BufferFormat::P010:
-      format = viz::MultiPlaneFormat::kP010;
-      break;
-    default:
-      DLOG(WARNING) << "Unsupported buffer_format: "
-                    << static_cast<int>(buffer_format);
-      NOTREACHED();
-  }
-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
-  // If format is true multiplanar format, we prefer external sampler on
-  // ChromeOS and Linux.
-  if (format.is_multi_plane()) {
-    format.SetPrefersExternalSampler();
-  }
-#endif
-  return format;
-}
-
-}  // namespace
 
 namespace media {
 class MailboxVideoFrameConverter::ScopedSharedImage {
@@ -113,7 +66,6 @@ std::unique_ptr<FrameResourceConverter> MailboxVideoFrameConverter::Create(
 
   scoped_refptr<gpu::SharedImageInterface> sii;
   gpu::Scheduler* scheduler;
-  gpu::SequenceId sequence;
 
   base::WaitableEvent wait;
   bool success = gpu_task_runner->PostTask(
@@ -121,51 +73,27 @@ std::unique_ptr<FrameResourceConverter> MailboxVideoFrameConverter::Create(
       base::BindOnce(
           [](GetCommandBufferStubCB get_stub_cb,
              scoped_refptr<gpu::SharedImageInterface>* sii,
-             gpu::SequenceId* sequence, gpu::Scheduler** scheduler,
-             base::WaitableEvent* wait) {
+             gpu::Scheduler** scheduler, base::WaitableEvent* wait) {
             auto* cb_stub = get_stub_cb.Run();
             if (cb_stub) {
               DCHECK(cb_stub->channel());
               *sii = cb_stub->channel()
                          ->shared_image_stub()
                          ->shared_image_interface();
-              *sequence = cb_stub->channel()->shared_image_stub()->sequence();
               *scheduler = cb_stub->channel()->scheduler();
             }
             wait->Signal();
           },
-          get_stub_cb, &sii, &sequence, &scheduler, &wait));
+          get_stub_cb, &sii, &scheduler, &wait));
   if (success) {
     // Sync wait for retrieval of `sii`, `scheduler`, and `sequence`.
     base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
     wait.Wait();
   }
-  base::RepeatingCallback<bool(scoped_refptr<FrameResource> frame,
-                               const gpu::SyncToken& sync_token)>
-      release_cb = base::BindRepeating(
-          [](gpu::Scheduler* scheduler, gpu::SequenceId sequence,
-             scoped_refptr<FrameResource> frame,
-             const gpu::SyncToken& sync_token) {
-            auto keep_video_frame_alive =
-                base::DoNothingWithBoundArgs(std::move(frame));
-            DCHECK(scheduler);
-            scheduler->ScheduleTask(gpu::Scheduler::Task(
-                sequence, std::move(keep_video_frame_alive),
-                std::vector<gpu::SyncToken>({sync_token})));
-            return true;
-          },
-          scheduler, sequence);
-  return Create(sii, std::move(release_cb));
-}
-
-// static
-std::unique_ptr<FrameResourceConverter> MailboxVideoFrameConverter::Create(
-    scoped_refptr<gpu::SharedImageInterface> sii,
-    base::RepeatingCallback<bool(scoped_refptr<FrameResource> frame,
-                                 const gpu::SyncToken& sync_token)>
-        release_cb) {
-  return base::WrapUnique<FrameResourceConverter>(
-      new MailboxVideoFrameConverter(sii, std::move(release_cb)));
+  return (sii && scheduler)
+             ? base::WrapUnique<FrameResourceConverter>(
+                   new MailboxVideoFrameConverter(sii, scheduler))
+             : nullptr;
 }
 
 MailboxVideoFrameConverter::MailboxVideoFrameConverter(
@@ -177,10 +105,38 @@ MailboxVideoFrameConverter::MailboxVideoFrameConverter(
   weak_this_ = weak_this_factory_.GetWeakPtr();
 }
 
+MailboxVideoFrameConverter::MailboxVideoFrameConverter(
+    scoped_refptr<gpu::SharedImageInterface> sii,
+    gpu::Scheduler* scheduler)
+    : shared_image_interface_(sii),
+      scheduler_(scheduler),
+      sequence_(scheduler->CreateSequence(
+          gpu::SchedulingPriority::kNormal,
+          base::SingleThreadTaskRunner::GetCurrentDefault())) {
+  DVLOGF(2);
+  release_cb_ =
+      base::BindRepeating(
+          [](gpu::Scheduler* scheduler, gpu::SequenceId sequence,
+             scoped_refptr<FrameResource> frame,
+             const gpu::SyncToken& sync_token) {
+            auto keep_video_frame_alive =
+                base::DoNothingWithBoundArgs(std::move(frame));
+            scheduler->ScheduleTask(gpu::Scheduler::Task(
+                sequence, std::move(keep_video_frame_alive),
+                std::vector<gpu::SyncToken>({sync_token})));
+            return true;
+          },
+          scheduler_, sequence_);
+  weak_this_ = weak_this_factory_.GetWeakPtr();
+}
+
 void MailboxVideoFrameConverter::Destroy() {
   DCHECK(!parent_task_runner() ||
          parent_task_runner()->RunsTasksInCurrentSequence());
   DVLOGF(2);
+  if (scheduler_) {
+    scheduler_->DestroySequence(sequence_);
+  }
 
   weak_this_factory_.InvalidateWeakPtrs();
   delete this;
@@ -231,24 +187,29 @@ void MailboxVideoFrameConverter::WrapSharedImageAndVideoFrameAndOutput(
 
   input_frame_queue_.pop();
 
-  const auto buffer_format = VideoPixelFormatToGfxBufferFormat(frame->format());
   // GenerateSharedImage() should have checked the |origin_frame|'s format
   // (which should be the same as the |frame|'s format).
   CHECK_EQ(frame->format(), origin_frame->format());
-  CHECK(buffer_format);
 
   VideoFrame::ReleaseMailboxCB release_mailbox_cb = base::BindOnce(
-      [](base::WeakPtr<MailboxVideoFrameConverter> weak_ptr,
+      [](scoped_refptr<base::SequencedTaskRunner> parent_task_runner,
+         base::WeakPtr<MailboxVideoFrameConverter> parent_weak_ptr,
          scoped_refptr<FrameResource> frame, const gpu::SyncToken& sync_token) {
         if (!sync_token.HasData()) {
           return;
         }
-
-        if (weak_ptr) {
-          weak_ptr->ReleaseFrame(std::move(frame), sync_token);
+        if (parent_task_runner->RunsTasksInCurrentSequence()) {
+          if (parent_weak_ptr) {
+            parent_weak_ptr->ReleaseFrame(std::move(frame), sync_token);
+            return;
+          }
         }
+        parent_task_runner->PostTask(
+            FROM_HERE,
+            base::BindOnce(&MailboxVideoFrameConverter::ReleaseFrame,
+                           parent_weak_ptr, std::move(frame), sync_token));
       },
-      weak_this_, frame);
+      parent_task_runner(), weak_this_, frame);
 
   // Note the use of GetRectSizeFromOrigin() as the coded size. The reason is
   // that the coded_size() of the outgoing FrameResource tells the client what
@@ -279,7 +240,7 @@ void MailboxVideoFrameConverter::WrapSharedImageAndVideoFrameAndOutput(
       frame->format(), shared_image, shared_image_sync_token,
       std::move(release_mailbox_cb), coded_size, frame->visible_rect(),
       frame->natural_size(), frame->timestamp());
-  mailbox_frame->set_color_space(frame->ColorSpace());
+  mailbox_frame->set_color_space(shared_image->color_space());
   mailbox_frame->set_hdr_metadata(frame->hdr_metadata());
   mailbox_frame->set_metadata(frame->metadata());
   mailbox_frame->metadata().read_lock_fences_enabled = true;
@@ -354,13 +315,19 @@ bool MailboxVideoFrameConverter::GenerateSharedImage(
     return false;
   }
 
-  const auto buffer_format =
-      VideoPixelFormatToGfxBufferFormat(origin_frame->format());
-  if (!buffer_format) {
+  auto si_format = VideoPixelFormatToSharedImageFormat(origin_frame->format());
+  if (!si_format) {
     OnError(FROM_HERE, "Unsupported format: " +
                            VideoPixelFormatToString(origin_frame->format()));
     return false;
   }
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+  // If format is true multiplanar format, we prefer external sampler on
+  // ChromeOS and Linux.
+  if (si_format->is_multi_plane()) {
+    si_format->SetPrefersExternalSampler();
+  }
+#endif
 
   auto gpu_memory_buffer_handle = origin_frame->CreateGpuMemoryBufferHandle();
   DCHECK(!gpu_memory_buffer_handle.is_null());
@@ -387,9 +354,11 @@ bool MailboxVideoFrameConverter::GenerateSharedImage(
   }
 
   // The allocated SharedImages should be usable for the (Display) compositor
-  // and, potentially, for overlays (Scanout).
+  // and, potentially, for overlays (Scanout). The shared image can be copied to
+  // GL texture over WebGL either directly or over raster interface.
   gpu::SharedImageUsageSet shared_image_usage =
-      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
+      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT |
+      gpu::SHARED_IMAGE_USAGE_GLES2_READ | gpu::SHARED_IMAGE_USAGE_RASTER_READ;
 
   // These SharedImages might also be used for zero-copy import into WebGPU to
   // serve as the sources of WebGPU reads (e.g., for video effects processing).
@@ -400,8 +369,8 @@ bool MailboxVideoFrameConverter::GenerateSharedImage(
 
   scoped_refptr<gpu::ClientSharedImage> client_shared_image =
       shared_image_interface_->CreateSharedImage(
-          {GetSharedImageFormat(*buffer_format), shared_image_size,
-           src_color_space, shared_image_usage, "MailboxVideoFrameConverter"},
+          {*si_format, shared_image_size, src_color_space, shared_image_usage,
+           "MailboxVideoFrameConverter"},
           std::move(gpu_memory_buffer_handle));
   if (!client_shared_image) {
     OnError(FROM_HERE, "Failed to create shared image.");

@@ -8,6 +8,7 @@
 #include "components/saved_tab_groups/delegate/tab_group_sync_delegate.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/saved_tab_groups/public/types.h"
+#include "components/saved_tab_groups/public/versioning_message_controller.h"
 #include "components/sync/model/data_type_sync_bridge.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -33,6 +34,9 @@ class MockTabGroupSyncService : public TabGroupSyncService {
                std::optional<bool> is_pinned,
                std ::optional<int> new_index));
   MOCK_METHOD(void,
+              UpdateBookmarkNodeId,
+              (const base::Uuid&, std::optional<base::Uuid>));
+  MOCK_METHOD(void,
               AddTab,
               (const LocalTabGroupID&,
                const LocalTabID&,
@@ -57,17 +61,17 @@ class MockTabGroupSyncService : public TabGroupSyncService {
               (const std::optional<LocalTabGroupID>&,
                const LocalTabID&,
                const std::u16string&));
-  MOCK_METHOD((SelectedTabInfo), GetCurrentlySelectedTabInfo, ());
   MOCK_METHOD(void, SaveGroup, (SavedTabGroup));
   MOCK_METHOD(void, UnsaveGroup, (const LocalTabGroupID&));
   MOCK_METHOD(void,
               MakeTabGroupShared,
               (const LocalTabGroupID&,
-               std::string_view,
+               const syncer::CollaborationId&,
                TabGroupSharingCallback));
   MOCK_METHOD(void,
               MakeTabGroupSharedForTesting,
-              (const LocalTabGroupID&, std::string_view));
+              (const LocalTabGroupID&, const syncer::CollaborationId&));
+  MOCK_METHOD(void, MakeTabGroupUnsharedForTesting, (const LocalTabGroupID&));
   MOCK_METHOD(void,
               AboutToUnShareTabGroup,
               (const LocalTabGroupID&, base::OnceClosure));
@@ -119,6 +123,9 @@ class MockTabGroupSyncService : public TabGroupSyncService {
               (const));
   MOCK_METHOD(void, RecordTabGroupEvent, (const EventDetails&));
   MOCK_METHOD(void, UpdateArchivalStatus, (const base::Uuid&, bool));
+  MOCK_METHOD(void,
+              UpdateTabLastSeenTime,
+              (const base::Uuid&, const base::Uuid&, TriggerSource));
   MOCK_METHOD(TabGroupSyncMetricsLogger*, GetTabGroupSyncMetricsLogger, ());
 
   MOCK_METHOD(syncer::DataTypeSyncBridge*, bridge, ());
@@ -140,6 +147,11 @@ class MockTabGroupSyncService : public TabGroupSyncService {
   MOCK_METHOD(std::unique_ptr<std::vector<SavedTabGroup>>,
               TakeSharedTabGroupsAvailableAtStartupForMessaging,
               ());
+  MOCK_METHOD(bool, HadSharedTabGroupsLastSession, (bool), (override));
+  MOCK_METHOD(VersioningMessageController*,
+              GetVersioningMessageController,
+              (),
+              (override));
   MOCK_METHOD(void, OnLastTabClosed, (const SavedTabGroup&));
 
   MOCK_METHOD(void, AddObserver, (Observer*));

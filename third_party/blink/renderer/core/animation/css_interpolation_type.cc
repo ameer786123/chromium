@@ -315,7 +315,15 @@ InterpolationValue CSSInterpolationType::MaybeConvertCustomPropertyDeclaration(
 
   const CSSValue* value = &declaration;
   value = environment.Resolve(GetProperty(), value, keyframe_tree_scope);
-  DCHECK(value) << "CSSVarCycleInterpolationType should have handled nullptr";
+
+  if (!value) {
+    // The custom property is in a cycle. This is supposed to be handled
+    // by CSSVarCycleInterpolationType, but we can still reach here when
+    // neutral keyframes are involved.
+    //
+    // TODO(crbug.com/40753334): Handle cycles in a better way.
+    value = cssvalue::CSSUnsetValue::Create();
+  }
 
   if (declaration.IsRevertValue()) {
     conversion_checkers.push_back(
@@ -376,6 +384,11 @@ InterpolationValue CSSInterpolationType::MaybeConvertCustomPropertyDeclaration(
 
   DCHECK(value);
   return MaybeConvertValue(*value, state, conversion_checkers);
+}
+
+void CSSInterpolationType::Trace(Visitor* v) const {
+  InterpolationType::Trace(v);
+  v->Trace(registration_);
 }
 
 InterpolationValue CSSInterpolationType::MaybeConvertUnderlyingValue(

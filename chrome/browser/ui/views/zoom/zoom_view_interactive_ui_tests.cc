@@ -16,12 +16,14 @@
 #include "chrome/browser/ui/views/page_action/page_action_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_button.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/zoom/zoom_controller.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/page_zoom.h"
 #include "content/public/test/browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/interaction/element_identifier.h"
+#include "ui/base/interaction/state_observer.h"
 #include "ui/base/models/image_model.h"
 #include "ui/views/view.h"
 #include "ui/views/view_class_properties.h"
@@ -32,9 +34,12 @@ namespace {
 class ZoomViewInteractiveUiTest : public InteractiveBrowserTest {
  public:
   ZoomViewInteractiveUiTest() {
-    scoped_feature_list_.InitAndEnableFeatureWithParameters(
-        features::kPageActionsMigration,
-        {{features::kPageActionsMigrationZoom.name, "true"}});
+    // TODO(crbug.com/441102004): Update ShowAndHideZoomBubbleByClickWithMouse
+    //   to support kAiModeOmniboxEntryPoint.
+    scoped_feature_list_.InitWithFeaturesAndParameters(
+        {{features::kPageActionsMigration,
+          {{features::kPageActionsMigrationZoom.name, "true"}}}},
+        {omnibox::kAiModeOmniboxEntryPoint});
   }
 
   ZoomViewInteractiveUiTest(const ZoomViewInteractiveUiTest&) = delete;
@@ -67,14 +72,22 @@ class ZoomViewInteractiveUiTest : public InteractiveBrowserTest {
     return Do([&]() { SetZoomLevel(content::PAGE_ZOOM_RESET); });
   }
 
-  auto EnsureZoomBubblePresent() {
-    return CheckResult([&]() { return ZoomBubbleView::GetZoomBubble(); },
-                       testing::Ne(nullptr));
-  }
+  auto WaitForZoomBubbleShow() { return WaitForZoomBubble(/*visible=*/true); }
 
-  auto EnsureZoomBubbleNotPresent() {
-    return CheckResult([&]() { return ZoomBubbleView::GetZoomBubble(); },
-                       testing::Eq(nullptr));
+  auto WaitForZoomBubbleHide() { return WaitForZoomBubble(/*visible=*/false); }
+
+  MultiStep WaitForZoomBubble(bool visible) {
+    DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(ui::test::PollingStateObserver<bool>,
+                                        kZoomBubbleVisible);
+
+    return Steps(PollState(kZoomBubbleVisible,
+                           [&, visible]() {
+                             bool is_visible =
+                                 ZoomBubbleView::GetZoomBubble() != nullptr;
+                             return is_visible == visible;
+                           }),
+                 WaitForState(kZoomBubbleVisible, true),
+                 StopObservingState(kZoomBubbleVisible));
   }
 
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -85,9 +98,8 @@ IN_PROC_BROWSER_TEST_F(ZoomViewInteractiveUiTest, ZoomStateUpdates) {
   // image.
   ui::ImageModel zoom_in_image;
   RunTestSequence(
-      EnsureZoomBubbleNotPresent(), DoZoomIn(),
-      CheckViewProperty(kActionItemZoomElementId,
-                        &page_actions::PageActionView::GetVisible, true),
+      WaitForZoomBubbleHide(), DoZoomIn(),
+      WaitForShow(kActionItemZoomElementId),
       CheckViewProperty(kActionItemZoomElementId,
                         &page_actions::PageActionView::GetTooltipText,
                         u"Zoom: 110%"),
@@ -99,11 +111,9 @@ IN_PROC_BROWSER_TEST_F(ZoomViewInteractiveUiTest, ZoomStateUpdates) {
                          ->GetImageModel(views::Button::STATE_NORMAL)
                          .value();
                }),
-      EnsureZoomBubblePresent(), DoZoomReset(), EnsureZoomBubblePresent(),
+      WaitForZoomBubbleShow(), DoZoomReset(), WaitForZoomBubbleShow(),
       CheckResult([&]() { return GetZoomPercent(); }, testing::Eq(100)),
-      DoZoomOut(),
-      CheckViewProperty(kActionItemZoomElementId,
-                        &page_actions::PageActionView::GetVisible, true),
+      DoZoomOut(), WaitForShow(kActionItemZoomElementId),
       CheckViewProperty(kActionItemZoomElementId,
                         &page_actions::PageActionView::GetTooltipText,
                         u"Zoom: 90%"),
@@ -114,7 +124,67 @@ IN_PROC_BROWSER_TEST_F(ZoomViewInteractiveUiTest, ZoomStateUpdates) {
                              ->GetImageModel(views::Button::STATE_NORMAL)
                              .value() != zoom_in_image;
                 }),
-      EnsureZoomBubblePresent());
+      WaitForZoomBubbleShow());
+}
+
+IN_PROC_BROWSER_TEST_F(ZoomViewInteractiveUiTest,
+                       ShowAndHideZoomBubbleByClickWithMouse) {
+  RunTestSequence(WaitForZoomBubbleHide(), DoZoomIn(),
+                  WaitForShow(kActionItemZoomElementId),
+                  MoveMouseTo(kActionItemZoomElementId), ClickMouse(),
+                  WaitForZoomBubbleShow(),
+                  MoveMouseTo(kActionItemZoomElementId), ClickMouse(),
+                  WaitForZoomBubbleHide(),
+                  MoveMouseTo(kActionItemZoomElementId), ClickMouse(),
+                  WaitForZoomBubbleShow());
+}
+
+IN_PROC_BROWSER_TEST_F(ZoomViewInteractiveUiTest,
+                       ShowAndHideZoomBubbleByClickWithKeyboardPress) {
+  RunTestSequence(
+      WaitForZoomBubbleHide(), DoZoomIn(),
+      WaitForShow(kActionItemZoomElementId),
+      PressButton(kActionItemZoomElementId), WaitForZoomBubbleShow(),
+      PressButton(kActionItemZoomElementId), WaitForZoomBubbleHide(),
+      PressButton(kActionItemZoomElementId), WaitForZoomBubbleShow());
+}
+
+// Verifies that after a "Reset", and then after the closing of the
+// bubble, the page-action icon disappears immediately.
+IN_PROC_BROWSER_TEST_F(ZoomViewInteractiveUiTest,
+                       IconHidesAfterResetAndBubbleClose) {
+  RunTestSequence(
+      WaitForZoomBubbleHide(), DoZoomIn(),
+      WaitForShow(kActionItemZoomElementId),
+      MoveMouseTo(kActionItemZoomElementId), ClickMouse(),
+      WaitForZoomBubbleShow(), DoZoomReset(),
+      CheckResult([&] { return GetZoomPercent(); }, testing::Eq(100)),
+      WaitForZoomBubbleShow(), MoveMouseTo(kActionItemZoomElementId),
+      ClickMouse(), WaitForZoomBubbleHide(),
+      WaitForHide(kActionItemZoomElementId));
+}
+
+// Verifies that if the user resets to 100 % *without* opening the bubble
+// first, the icon is hidden right after the reset, independent of the
+// bubble’s existence.
+IN_PROC_BROWSER_TEST_F(ZoomViewInteractiveUiTest,
+                       IconHidesImmediatelyAfterProgrammaticReset) {
+  RunTestSequence(WaitForZoomBubbleHide(), DoZoomIn(),
+                  WaitForShow(kActionItemZoomElementId), DoZoomReset(),
+                  WaitForHide(kActionItemZoomElementId),
+                  WaitForZoomBubbleHide());
+}
+
+// Verifies that the icon remains hidden after an auto-closed bubble at
+// default zoom.
+IN_PROC_BROWSER_TEST_F(ZoomViewInteractiveUiTest,
+                       IconStaysHiddenAfterAutoCloseAtDefaultZoom) {
+  RunTestSequence(WaitForZoomBubbleHide(), DoZoomIn(),
+                  MoveMouseTo(kActionItemZoomElementId), ClickMouse(),
+                  WaitForZoomBubbleShow(), DoZoomReset(),
+                  CheckResult([&] { return GetZoomPercent(); }, 100),
+                  WaitForZoomBubbleHide(),
+                  WaitForHide(kActionItemZoomElementId));
 }
 
 }  // namespace

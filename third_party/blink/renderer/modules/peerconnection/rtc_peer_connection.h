@@ -122,16 +122,14 @@ class MODULES_EXPORT RTCPeerConnection final
   ScriptPromise<IDLUndefined> createOffer(ScriptState*,
                                           V8RTCSessionDescriptionCallback*,
                                           V8RTCPeerConnectionErrorCallback*,
-                                          const RTCOfferOptions*,
-                                          ExceptionState&);
+                                          const RTCOfferOptions*);
 
   ScriptPromise<RTCSessionDescriptionInit> createAnswer(ScriptState*,
                                                         const RTCAnswerOptions*,
                                                         ExceptionState&);
   ScriptPromise<IDLUndefined> createAnswer(ScriptState*,
                                            V8RTCSessionDescriptionCallback*,
-                                           V8RTCPeerConnectionErrorCallback*,
-                                           ExceptionState&);
+                                           V8RTCPeerConnectionErrorCallback*);
 
   ScriptPromise<IDLUndefined> setLocalDescription(ScriptState*,
                                                   ExceptionState&);
@@ -197,9 +195,9 @@ class MODULES_EXPORT RTCPeerConnection final
   // A remote stream is any stream associated with a receiver.
   MediaStreamVector getRemoteStreams() const;
 
-  void addStream(v8::Isolate*, MediaStream*, ExceptionState&);
+  void addStream(ScriptState*, MediaStream*, ExceptionState&);
 
-  void removeStream(v8::Isolate*, MediaStream*, ExceptionState&);
+  void removeStream(MediaStream*, ExceptionState&);
 
   ScriptPromise<RTCStatsReport> getStats(ScriptState* script_state,
                                          MediaStreamTrack* selector,
@@ -366,6 +364,8 @@ class MODULES_EXPORT RTCPeerConnection final
       const RTCRtpSenderPlatform& web_sender);
   HeapVector<Member<RTCRtpReceiver>>::iterator FindReceiver(
       const RTCRtpReceiverPlatform& platform_receiver);
+  HeapVector<Member<RTCRtpTransceiver>>::iterator FindTransceiverById(
+      uintptr_t id);
   HeapVector<Member<RTCRtpTransceiver>>::iterator FindTransceiver(
       const RTCRtpTransceiverPlatform& platform_transceiver);
 

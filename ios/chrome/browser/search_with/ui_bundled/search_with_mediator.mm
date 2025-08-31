@@ -69,19 +69,14 @@ void LogSelectedNumberChar(NSUInteger textLength) {
 @end
 
 @implementation SearchWithMediator {
-  // The Browser's WebStateList.
-  base::WeakPtr<WebStateList> _webStateList;
-
   // The service to retrieve default search engine URL.
   raw_ptr<TemplateURLService> _templateURLService;
 }
 
-- (instancetype)initWithWebStateList:(WebStateList*)webStateList
-                  templateURLService:(TemplateURLService*)templateURLService
-                           incognito:(BOOL)incognito {
+- (instancetype)initWithTemplateURLService:
+                    (TemplateURLService*)templateURLService
+                                 incognito:(BOOL)incognito {
   if ((self = [super init])) {
-    CHECK(webStateList);
-    _webStateList = webStateList->AsWeakPtr();
     _incognito = incognito;
     _templateURLService = templateURLService;
   }
@@ -92,18 +87,16 @@ void LogSelectedNumberChar(NSUInteger textLength) {
   _templateURLService = nullptr;
 }
 
-- (WebSelectionTabHelper*)webSelectionTabHelper {
-  web::WebState* webState =
-      _webStateList ? _webStateList->GetActiveWebState() : nullptr;
-  if (!webState) {
-    return nullptr;
-  }
-  WebSelectionTabHelper* helper = WebSelectionTabHelper::FromWebState(webState);
-  return helper;
-}
+#pragma mark - Private
 
-- (BOOL)canPerformSearch {
-  WebSelectionTabHelper* tabHelper = [self webSelectionTabHelper];
+// Whether a search can be performed on the current page presented in
+// `webState`.
+- (BOOL)canPerformSearchInWebState:(web::WebState*)webState {
+  if (!webState) {
+    return NO;
+  }
+  WebSelectionTabHelper* tabHelper =
+      WebSelectionTabHelper::FromWebState(webState);
   if (!tabHelper || !tabHelper->CanRetrieveSelectedText() ||
       !self.applicationCommandHandler || !_templateURLService ||
       !_templateURLService->GetDefaultSearchProvider()) {
@@ -112,22 +105,50 @@ void LogSelectedNumberChar(NSUInteger textLength) {
   return YES;
 }
 
+// The title for the `Search with` button.
 - (NSString*)buttonTitle {
-  if (![self canPerformSearch]) {
-    return @"";
-  }
   // Default value
   return l10n_util::GetNSStringF(
       IDS_IOS_SEARCH_WITH_TITLE_SEARCH_WITH,
       _templateURLService->GetDefaultSearchProvider()->short_name());
 }
 
-- (void)addItemWithCompletion:(ProceduralBlockWithItemArray)completion {
-  WebSelectionTabHelper* tabHelper = [self webSelectionTabHelper];
-  if (![self canPerformSearch] || !tabHelper) {
+// Fetches the selection in the web page. On success, trigger a search on the
+// selection. This is used on iOS26 where the action must be added before the
+// selection is retrieved.
+- (void)fetchSelectionForWebState:(base::WeakPtr<web::WebState>)weakWebState {
+  if (!weakWebState) {
+    return;
+  }
+  web::WebState* webState = weakWebState.get();
+  if (![self canPerformSearchInWebState:webState]) {
+    return;
+  }
+  WebSelectionTabHelper* tabHelper =
+      WebSelectionTabHelper::FromWebState(webState);
+  __weak __typeof(self) weakSelf = self;
+  tabHelper->GetSelectedText(base::BindOnce(^(WebSelectionResponse* response) {
+    if (weakSelf && response.valid && response.selectedText.length) {
+      [weakSelf triggerSearchForText:response.selectedText];
+    }
+  }));
+}
+
+// Fetches the selection in the web page. On success, add the action in the menu
+// to trigger a search.
+- (void)addItemForWebState:(base::WeakPtr<web::WebState>)weakWebState
+            withCompletion:(ProceduralBlockWithItemArray)completion {
+  if (!weakWebState) {
     completion(@[]);
     return;
   }
+  web::WebState* webState = weakWebState.get();
+  if (![self canPerformSearchInWebState:webState]) {
+    completion(@[]);
+    return;
+  }
+  WebSelectionTabHelper* tabHelper =
+      WebSelectionTabHelper::FromWebState(webState);
 
   __weak __typeof(self) weakSelf = self;
   tabHelper->GetSelectedText(base::BindOnce(^(WebSelectionResponse* response) {
@@ -139,9 +160,10 @@ void LogSelectedNumberChar(NSUInteger textLength) {
   }));
 }
 
+// Adds the search button if the selection is valid.
 - (void)addItemWithResponse:(WebSelectionResponse*)response
                  completion:(ProceduralBlockWithItemArray)completion {
-  if (!response.valid || ![self canPerformSearch]) {
+  if (!response.valid) {
     completion(@[]);
     return;
   }
@@ -157,21 +179,17 @@ void LogSelectedNumberChar(NSUInteger textLength) {
     return;
   }
 
-  NSString* searchWithMenuId = @"chromeAction.searchWith";
   __weak __typeof(self) weakSelf = self;
-  UIAction* action = [UIAction
-      actionWithTitle:searchWithMenuTitle
-                image:DefaultSymbolWithPointSize(kMagnifyingglassCircleSymbol,
-                                                 kSymbolActionPointSize)
-           identifier:searchWithMenuId
-              handler:^(UIAction* a) {
-                [weakSelf triggerSearchForText:text];
-              }];
+  UIAction* action = [self actionWithHandler:^(UIAction* a) {
+    [weakSelf triggerSearchForText:text];
+  }];
   completion(@[ action ]);
 }
 
+// Triggeres a search for `text`.
 - (void)triggerSearchForText:(NSString*)text {
-  if (![self canPerformSearch]) {
+  if (!_templateURLService ||
+      !_templateURLService->GetDefaultSearchProvider()) {
     return;
   }
   GURL searchURL =
@@ -197,22 +215,46 @@ void LogSelectedNumberChar(NSUInteger textLength) {
   [self.applicationCommandHandler openURLInNewTab:command];
 }
 
-#pragma mark - EditMenuProvider
+// Returns the action to trigger the search with feature. Calls `handler` on
+// activation.
+- (UIAction*)actionWithHandler:(void (^)(UIAction*))handler {
+  return [UIAction
+      actionWithTitle:[self buttonTitle]
+                image:DefaultSymbolWithPointSize(kMagnifyingglassCircleSymbol,
+                                                 kSymbolActionPointSize)
+           identifier:@"chromeAction.searchWith"
+              handler:handler];
+}
 
-- (void)buildMenuWithBuilder:(id<UIMenuBuilder>)builder {
-  if (![self canPerformSearch]) {
+#pragma mark - EditMenuBuilder
+
+- (void)buildEditMenuWithBuilder:(id<UIMenuBuilder>)builder
+                      inWebState:(web::WebState*)webState {
+  if (!webState) {
+    return;
+  }
+  if (![self canPerformSearchInWebState:webState]) {
     return;
   }
 
   __weak __typeof(self) weakSelf = self;
-  ProceduralBlockWithBlockWithItemArray provider =
-      ^(ProceduralBlockWithItemArray completion) {
-        [weakSelf addItemWithCompletion:completion];
-      };
-  UIDeferredMenuElement* deferredMenuElement =
-      [UIDeferredMenuElement elementWithProvider:provider];
-  edit_menu::AddElementToChromeMenu(builder, deferredMenuElement,
-                                    /*primary*/ YES);
+  base::WeakPtr<web::WebState> weakWebState = webState->GetWeakPtr();
+  if (ShouldShowEditMenuItemsSynchronously()) {
+    UIAction* action = [self actionWithHandler:^(UIAction* a) {
+      [weakSelf fetchSelectionForWebState:weakWebState];
+    }];
+    edit_menu::AddElementToChromeMenu(builder, action,
+                                      /*primary*/ YES);
+  } else {
+    ProceduralBlockWithBlockWithItemArray provider =
+        ^(ProceduralBlockWithItemArray completion) {
+          [weakSelf addItemForWebState:weakWebState withCompletion:completion];
+        };
+    UIDeferredMenuElement* deferredMenuElement =
+        [UIDeferredMenuElement elementWithProvider:provider];
+    edit_menu::AddElementToChromeMenu(builder, deferredMenuElement,
+                                      /*primary*/ YES);
+  }
 }
 
 @end

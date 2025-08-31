@@ -25,7 +25,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/sequence_checker.h"
 #include "base/strings/string_number_conversions.h"
@@ -407,9 +406,11 @@ CacheStorageHandle CacheStorageManager::OpenCacheStorage(
   // object is needed.  This ensures we create the listener on the correct
   // thread.
   if (!memory_pressure_listener_) {
-    memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
-        FROM_HERE, base::BindRepeating(&CacheStorageManager::OnMemoryPressure,
-                                       base::Unretained(this)));
+    memory_pressure_listener_ =
+        std::make_unique<base::AsyncMemoryPressureListener>(
+            FROM_HERE, base::MemoryPressureListenerTag::kCacheStorageManager,
+            base::BindRepeating(&CacheStorageManager::OnMemoryPressure,
+                                base::Unretained(this)));
   }
 
   CacheStorageMap::const_iterator it =
@@ -470,7 +471,7 @@ void CacheStorageManager::CacheStorageUnreferenced(
   DCHECK(cache_storage);
   cache_storage->AssertUnreferenced();
   auto it = cache_storage_map_.find({bucket_locator, owner});
-  CHECK(it != cache_storage_map_.end(), base::NotFatalUntil::M130);
+  CHECK(it != cache_storage_map_.end());
   DCHECK(it->second.get() == cache_storage);
 
   // Currently we don't do anything when a CacheStorage instance becomes
@@ -702,7 +703,7 @@ void CacheStorageManager::DeleteBucketDataDidGetExists(
   CacheStorageHandle handle = OpenCacheStorage(bucket_locator, owner);
 
   auto it = cache_storage_map_.find({bucket_locator, owner});
-  CHECK(it != cache_storage_map_.end(), base::NotFatalUntil::M130);
+  CHECK(it != cache_storage_map_.end());
 
   CacheStorage* cache_storage = it->second.release();
   cache_storage->ResetManager();

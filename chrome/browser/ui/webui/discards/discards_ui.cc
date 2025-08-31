@@ -14,17 +14,15 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/android_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/performance_manager/policies/discard_eligibility_policy.h"
 #include "chrome/browser/performance_manager/public/user_tuning/performance_detection_manager.h"
 #include "chrome/browser/performance_manager/public/user_tuning/user_tuning_utils.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/resource_coordinator/lifecycle_unit.h"
-#include "chrome/browser/resource_coordinator/lifecycle_unit_state.mojom.h"
-#include "chrome/browser/resource_coordinator/tab_lifecycle_unit.h"
-#include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
 #include "chrome/browser/resource_coordinator/time.h"
 #include "chrome/browser/ui/webui/discards/discards.mojom.h"
 #include "chrome/browser/ui/webui/discards/graph_dump_impl.h"
@@ -37,6 +35,7 @@
 #include "components/favicon_base/favicon_url_parser.h"
 #include "components/performance_manager/public/decorators/page_live_state_decorator.h"
 #include "components/performance_manager/public/features.h"
+#include "components/performance_manager/public/freezing/cannot_freeze_reason.h"
 #include "components/performance_manager/public/freezing/freezing.h"
 #include "components/performance_manager/public/graph/graph.h"
 #include "components/performance_manager/public/graph/page_node.h"
@@ -59,6 +58,13 @@
 #include "ui/webui/webui_util.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+#if !BUILDFLAG(IS_DESKTOP_ANDROID)
+#include "chrome/browser/resource_coordinator/lifecycle_unit.h"
+#include "chrome/browser/resource_coordinator/lifecycle_unit_state.mojom.h"
+#include "chrome/browser/resource_coordinator/tab_lifecycle_unit.h"
+#include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
+#endif  // !BUILDFLAG(IS_DESKTOP_ANDROID)
 
 using performance_manager::PageNode;
 using performance_manager::policies::DiscardEligibilityPolicy;
@@ -114,6 +120,38 @@ mojom::LifecycleUnitLoadingState GetLifecycleUnitLoadingState(
   }
 }
 
+#if !BUILDFLAG(IS_ANDROID)
+discards::mojom::CanFreeze ToCanFreezeMojom(
+    performance_manager::freezing::CanFreeze can_freeze) {
+  switch (can_freeze) {
+    case performance_manager::freezing::CanFreeze::kYes:
+      return discards::mojom::CanFreeze::YES;
+    case performance_manager::freezing::CanFreeze::kNo:
+      return discards::mojom::CanFreeze::NO;
+    case performance_manager::freezing::CanFreeze::kVaries:
+      return discards::mojom::CanFreeze::VARIES;
+  }
+  NOTREACHED();
+}
+
+std::vector<std::string> ToCannotFreezeReasonsStrings(
+    const performance_manager::freezing::CanFreezeDetails& details) {
+  std::vector<std::string> reasons;
+  reasons.reserve(details.cannot_freeze_reasons.size() +
+                  details.cannot_freeze_reasons_connected_pages.size());
+  for (auto reason : details.cannot_freeze_reasons) {
+    reasons.push_back(
+        performance_manager::freezing::CannotFreezeReasonToString(reason));
+  }
+  for (auto reason : details.cannot_freeze_reasons_connected_pages) {
+    reasons.push_back(base::StringPrintf(
+        "%s (from connected page)",
+        performance_manager::freezing::CannotFreezeReasonToString(reason)));
+  }
+  return reasons;
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
+
 class DiscardsDetailsProviderImpl
     : public discards::mojom::DetailsProvider,
       public performance_manager::GraphOwnedDefaultImpl {
@@ -145,9 +183,9 @@ class DiscardsDetailsProviderImpl
       performance_manager::policies::CanDiscardResult can_discard_result =
           eligiblity_policy->CanDiscard(
               page_node, DiscardEligibilityPolicy::DiscardReason::URGENT);
-      candidates.emplace_back(page_node, can_discard_result,
+      candidates.emplace_back(page_node->GetWeakPtr(), can_discard_result,
                               page_node->IsVisible(), page_node->IsFocused(),
-                              page_node->GetTimeSinceLastVisibilityChange());
+                              page_node->GetLastVisibilityChangeTime());
     }
 
     // Sorts with ascending importance.
@@ -161,7 +199,7 @@ class DiscardsDetailsProviderImpl
       discards::mojom::TabDiscardsInfoPtr info(
           discards::mojom::TabDiscardsInfo::New());
 
-      const PageNode* page_node = candidate.page_node();
+      const base::WeakPtr<const PageNode> page_node = candidate.page_node();
       content::WebContents* contents = page_node->GetWebContents().get();
       CHECK(contents);
 
@@ -173,27 +211,35 @@ class DiscardsDetailsProviderImpl
 
       info->cannot_discard_reasons =
           performance_manager::user_tuning::GetCannotDiscardReasonsForPageNode(
-              page_node);
+              page_node.get());
       info->can_discard = info->cannot_discard_reasons.empty();
-      info->cannot_freeze_reasons = base::ToVector(
-          performance_manager::freezing::GetCannotFreezeReasonsForPageNode(
-              page_node));
-      info->can_freeze = info->cannot_freeze_reasons.empty()
-                             ? discards::mojom::CanFreeze::YES
-                             : discards::mojom::CanFreeze::NO;
+
+#if BUILDFLAG(IS_ANDROID)
+      info->cannot_freeze_reasons = {"not implemented"};
+      info->can_freeze = discards::mojom::CanFreeze::NO;
+#else
+      // TODO(crbug.com/40160563): Add FreezingPolicy to Android.
+      const auto can_freeze_details =
+          performance_manager::freezing::GetCanFreezeDetailsForPageNode(
+              page_node.get());
+      info->cannot_freeze_reasons =
+          ToCannotFreezeReasonsStrings(can_freeze_details);
+      info->can_freeze = ToCanFreezeMojom(can_freeze_details.can_freeze);
+#endif  // BUILDFLAG(IS_ANDROID)
 
       info->utility_rank = rank++;
       info->id = id++;
       page_nodes_by_id_.insert(std::make_pair(info->id, page_node));
       const auto* live_state_data =
           performance_manager::PageLiveStateDecorator::Data::FromPageNode(
-              page_node);
+              page_node.get());
       if (live_state_data) {
         info->is_auto_discardable = live_state_data->IsAutoDiscardable();
       }
       info->site_engagement_score = GetSiteEngagementScore(contents);
       info->has_focus = page_node->IsFocused();
 
+#if !BUILDFLAG(IS_DESKTOP_ANDROID)
       auto* lifecycle_unit_external = resource_coordinator::
           TabLifecycleUnitSource::GetTabLifecycleUnitExternal(contents);
       // A TabLifecycleUnitExternal object is always a TabLifecycleUnit object.
@@ -216,6 +262,7 @@ class DiscardsDetailsProviderImpl
         info->state_change_time =
             lifecycle_unit->GetStateChangeTime() - base::TimeTicks::UnixEpoch();
       }
+#endif  // !BUILDFLAG(IS_DESKTOP_ANDROID)
 
       infos.push_back(std::move(info));
     }
@@ -240,8 +287,8 @@ class DiscardsDetailsProviderImpl
                    mojom::LifecycleUnitDiscardReason reason,
                    DiscardByIdCallback callback) override {
     auto it = page_nodes_by_id_.find(id);
-    if (it != page_nodes_by_id_.end()) {
-      const PageNode* page_node = it->second;
+    if (it != page_nodes_by_id_.end() && it->second) {
+      const PageNode* page_node = it->second.get();
       performance_manager::user_tuning::DiscardPage(
           page_node, reason,
           /*ignore_minimum_time_in_background=*/true);
@@ -251,8 +298,8 @@ class DiscardsDetailsProviderImpl
 
   void FreezeById(int32_t id) override {
     auto it = page_nodes_by_id_.find(id);
-    if (it != page_nodes_by_id_.end()) {
-      const PageNode* page_node = it->second;
+    if (it != page_nodes_by_id_.end() && it->second) {
+      const PageNode* page_node = it->second.get();
       content::WebContents* contents = page_node->GetWebContents().get();
       CHECK(contents);
       contents->SetPageFrozen(true);
@@ -261,8 +308,8 @@ class DiscardsDetailsProviderImpl
 
   void LoadById(int32_t id) override {
     auto it = page_nodes_by_id_.find(id);
-    if (it != page_nodes_by_id_.end()) {
-      const PageNode* page_node = it->second;
+    if (it != page_nodes_by_id_.end() && it->second) {
+      const PageNode* page_node = it->second.get();
       PageNode::LoadingState loading_state = page_node->GetLoadingState();
       if (loading_state != PageNode::LoadingState::kLoadingNotStarted &&
           loading_state != PageNode::LoadingState::kLoadingTimedOut) {
@@ -299,16 +346,17 @@ class DiscardsDetailsProviderImpl
   }
 
   void RefreshPerformanceTabCpuMeasurements() override {
+#if !BUILDFLAG(IS_DESKTOP_ANDROID)
     performance_manager::user_tuning::PerformanceDetectionManager::GetInstance()
         ->ForceTabCpuDataRefresh();
+#endif  // !BUILDFLAG(IS_DESKTOP_ANDROID)
   }
 
  private:
   mojo::Receiver<discards::mojom::DetailsProvider> receiver_;
 
   // Mapping from id to page node.
-  base::flat_map<int32_t, raw_ptr<const PageNode, CtnExperimental>>
-      page_nodes_by_id_;
+  base::flat_map<int32_t, base::WeakPtr<const PageNode>> page_nodes_by_id_;
 };
 
 }  // namespace
@@ -319,10 +367,13 @@ DiscardsUI::DiscardsUI(content::WebUI* web_ui)
   content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
       profile, chrome::kChromeUIDiscardsHost);
 
-  source->AddBoolean(
-      "isPerformanceInterventionDemoModeEnabled",
-      base::FeatureList::IsEnabled(
-          performance_manager::features::kPerformanceInterventionDemoMode));
+  bool demoModeEnabled = false;
+#if !BUILDFLAG(IS_DESKTOP_ANDROID)
+  demoModeEnabled = base::FeatureList::IsEnabled(
+      performance_manager::features::kPerformanceInterventionDemoMode);
+#endif  // !BUILDFLAG(IS_DESKTOP_ANDROID)
+  source->AddBoolean("isPerformanceInterventionDemoModeEnabled",
+                     demoModeEnabled);
 
   webui::SetupWebUIDataSource(source, kDiscardsResources,
                               IDR_DISCARDS_DISCARDS_HTML);

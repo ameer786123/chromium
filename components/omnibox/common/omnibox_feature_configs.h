@@ -118,28 +118,283 @@ struct CalcProvider : Config<CalcProvider> {
   size_t num_non_calc_inputs;
 };
 
+// AIM related omnibox features.
+struct AiMode : Config<AiMode> {
+  DECLARE_FEATURE(kAllowAiModeMatches);
+  DECLARE_FEATURE(kAiModeEligibility);
+
+  AiMode();
+
+  // Chromium-side guard for AI matches from the search server. Enabling this
+  // won't guarantee AI mode matches are shown; that mostly depends on server
+  // side. But disabling this will hide the server echo matches.
+  bool allow_ai_mode_matches;
+
+  // Deduping doesn't consider extra query params like `udm=50`.
+  // `google.com/?q=query&udm=50` and `google.com/?q=query` would usually be
+  // deduped. This param makes `udm=50` in the match's suggest template a
+  // differentiating signal in deduping. Does not apply to `udm=50` in normal
+  // URLs. Does not apply to e.g. `udm=49` in the suggest template.
+  bool do_not_dedupe_aim_suggestions = true;
+
+  // Navigations that match a site search update the `keyword_search_terms`
+  // table in the history DB. E.g. youtube.com/id/x, google.com/?q=x, or
+  // google.com/?q=x&udm=50. Determining which site search was used and should
+  // be attributed does not consider query params. Navigating to either
+  // google.com/?q=x or google.com/?q=x&udm=50 will each attribute both the
+  // Google and AI mode site searches. When
+  // `do_not_show_historic_aim_suggestions` is enabled, 2 things change:
+  // 1. AI mode navigations don't increment any site search. This ensures the
+  //    user won't see a traditional history search suggestion for an AI mode
+  //    search they've done.
+  // 2. No navigation increments the AI mode site search. This ensures the user
+  //    won't see AI mode history search suggestions for a traditional search
+  //    they've done.
+  // These changes apply to both omnibox and other (e.g. bookmark, web)
+  // navigations.
+  bool do_not_show_historic_aim_suggestions = true;
+
+  // Whether to check for AI mode eligibility on the client side
+  // `AimEligibilityService` based on the user's locale.
+  bool check_ai_locale_client_side = true;
+
+  // If true, use the gws side eligibility values. Otherwise, ignore the gws
+  // side response and use client side eligibility values.
+  bool check_ai_eligibility_gws_side = false;
+};
+
+// If enabled, show the AIM entrypoint in the omnibox.
+struct AiModeOmniboxEntryPoint : Config<AiModeOmniboxEntryPoint> {
+  AiModeOmniboxEntryPoint();
+  bool enabled;
+  // Whether to hide the AIM hint text on NTP open.
+  bool hide_aim_hint_text_on_ntp_open;
+};
+
 // A config struct for features related to contextual search in omnibox.
 struct ContextualSearch : Config<ContextualSearch> {
   ContextualSearch();
+  ContextualSearch(const ContextualSearch&);
+  ContextualSearch& operator=(const ContextualSearch&);
+  ~ContextualSearch();
 
-  // Feature to enable use of the "ctxus" param on zero suggest requests.
+  DECLARE_FEATURE(kContextualSuggestionsAblateOthersWhenPresent);
+  DECLARE_FEATURE(kOmniboxContextualSuggestions);
+  DECLARE_FEATURE(kStarterPackPage);
+  DECLARE_FEATURE(kContextualZeroSuggestLensFulfillment);
+  DECLARE_FEATURE(kContextualSearchProviderAsyncSuggestInputs);
   DECLARE_FEATURE(kSendContextualUrlSuggestParam);
+  DECLARE_FEATURE(kOmniboxContextualSearchOnFocusSuggestions);
+  DECLARE_FEATURE(kContextualSearchBoxUsesContextualSearchProvider);
+  DECLARE_FEATURE(kOmniboxZeroSuggestSynchronousMatchesOnly);
+  DECLARE_FEATURE(kContextualSearchOpenLensActionUsesThumbnail);
+  DECLARE_FEATURE(kSendPageTitleSuggestParam);
+  DECLARE_FEATURE(kContextualSearchAlternativeActionLabel);
+  DECLARE_FEATURE(kUseApcPaywallSignal);
+  DECLARE_FEATURE(kShowSuggestionsOnNoApc);
+  DECLARE_FEATURE(kOpenLensActionUITweaks);
+  DECLARE_FEATURE(kSuggestionsFulfilledByLensSupported);
+  DECLARE_FEATURE(kLoadingSuggestionsAnimation);
+
+  // Whether to use contextual search features, for example the lens action.
+  bool IsContextualSearchEnabled() const;
+
+  // Whether to enable prefetching to support this feature's synchronous
+  // match production requirement.
+  bool IsEnabledWithPrefetch() const;
+
+  // Whether to make contextual suggestions exclusive; that is, remove
+  // other kinds of zero suggest matches when there are any contextual
+  // search matches.
+  bool contextual_suggestions_ablate_others_when_present;
+
+  // Whether to restrict the ablation logic, triggered via
+  // `contextual_suggestions_ablate_others_when_present`, such that we only
+  // remove (non-contextual) search suggestions, instead of removing all
+  // (non-contextual) zero suggest matches altogether.
+  bool contextual_suggestions_ablate_search_only;
+
+  // Whether to restrict the ablation logic, triggered via
+  // `contextual_suggestions_ablate_others_when_present`, such that we only
+  // remove URL suggestions, instead of removing all (non-contextual) zero
+  // suggest matches altogether.
+  bool contextual_suggestions_ablate_url_only;
+
+  // Whether the starter pack page scope is enabled.
+  bool starter_pack_page;
+
+  // Enables fullfillment of contextual zero-prefix suggestions by delegating
+  // the logic to Lens.
+  bool contextual_zero_suggest_lens_fulfillment;
+
+  // Controls async request handling in `ContextualSearchProvider`.
+  bool csp_async_suggest_inputs;
 
   // This specifies the value for "ctxus" param on zero suggest requests,
   // and is left empty when that parameter is not to be included.
   std::string contextual_url_suggest_param;
+
+  // Maximum number of contextual search suggestions for zero prefix suggest.
+  size_t contextual_zps_limit;
+
+  // Whether to use ContextualSearchProvider instead of ZeroSuggestProvider for
+  // sourcing contextual search box matches.
+  bool csb_uses_csp;
+
+  // Whether to omit asynchronous matches in ZeroSuggestProvider specifically,
+  // a behavior that is relevant to one planned configuration of this feature.
+  bool zero_suggest_synchronous_matches_only;
+
+  // Whether the Lens entrypoint action uses a thumbnail of web contents view
+  // instead of its regular vector icon.
+  bool open_lens_action_uses_thumbnail;
+
+  // Whether to send the current page title (via "pageTitle" CGI param) on zero
+  // suggest requests.
+  // When set to false, the CGI param will not be sent at all (as opposed to
+  // sending an empty value).
+  bool send_page_title_suggest_param;
+
+  // Which alternative action label to use for lens entrypoint action.
+  int alternative_action_label;
+
+  // Whether the Lens entrypoint action should be shown in the Omnibox popup.
+  bool show_open_lens_action;
+
+  // Whether to use the APC paywall signal to determine whether to show
+  // contextual suggestions.
+  bool use_apc_paywall_signal;
+
+  // Whether to show contextual suggestions when the user focuses the omnibox
+  // but APC is not yet available.
+  bool show_suggestions_on_no_apc;
+
+  // Whether to show the Lens entrypoint action with the new UI tweaks.
+  bool open_lens_action_ui_tweaks;
+
+  // Whether the feature to allow contextual search suggestions to be fulfilled
+  // by Lens is supported. This allows contextual suggestions to open the Lens
+  // overlay in the selection state. This is in contrast to the default behavior
+  // where the suggestion is fulfilled by the contextual searchbox.
+  bool suggestions_fulfilled_by_lens_supported;
+
+  // Whether to enable the loading suggestions animation. This adds an
+  // animation when contextual suggestions load into the omnibox popup.
+  bool enable_loading_suggestions_animation;
+
+  // The duration of the position animation when loading suggestions.
+  int loading_suggestions_position_animation_duration;
+
+  // The delay after the position animation begins that the opacity animation
+  // should start after.
+  int loading_suggestions_opacity_animation_delay;
+
+  // The duration of the opacity animation when loading suggestions.
+  int loading_suggestions_opacity_animation_duration;
+};
+
+// If enabled, allows MIA zero-prefix suggestions in NTP omnibox and realbox.
+struct MiaZPS : Config<MiaZPS> {
+  DECLARE_FEATURE(kOmniboxMiaZPS);
+
+  MiaZPS();
+  MiaZPS(const MiaZPS&);
+  MiaZPS(MiaZPS&&);
+  MiaZPS& operator=(const MiaZPS&);
+  MiaZPS& operator=(MiaZPS&&);
+  ~MiaZPS();
+  bool enabled;
+  // Whether to use non-normalized text for local history zp suggestions.
+  bool local_history_non_normalized_contents;
+  bool suppress_psuggest_backfill_with_mia;
+};
+
+// A config struct for the omnibox toolbelt.
+struct Toolbelt : Config<Toolbelt> {
+  DECLARE_FEATURE(kOmniboxToolbelt);
+
+  Toolbelt();
+  Toolbelt(const Toolbelt&);
+  Toolbelt& operator=(const Toolbelt&);
+  ~Toolbelt();
+
+  // Whether the toolbelt is to be included in the omnibox.
+  bool enabled;
+
+  // Whether the toolbelt will be preserved after user types (after
+  // input clears the zero suggest).
+  bool keep_toolbelt_after_input;
+
+  // Whether the toolbelt is preserved after entering keyword mode.
+  bool keep_toolbelt_in_keyword_mode;
+
+  // Whether the lens entrypoint action should stay unconditionally on the
+  // toolbelt. When this is false, the regular triggering conditions apply
+  // so the action can sometimes be included or sometimes not.
+  bool always_include_lens_action;
+
+  // Some of the variants we want to experiment with want a subset of actions.
+  // For flexibility, may as well make all the actions finch params.
+
+  // Disabling `show_lens_action` takes precedence over
+  // `always_include_lens_action`.
+  bool show_lens_action_on_non_ntp;
+  bool show_lens_action_on_ntp;
+  bool show_ai_mode_action_on_non_ntp;
+  bool show_ai_mode_action_on_ntp;
+  bool show_history_action_on_non_ntp;
+  bool show_history_action_on_ntp;
+  bool show_bookmarks_action_on_non_ntp;
+  bool show_bookmarks_action_on_ntp;
+  bool show_tabs_action_on_non_ntp;
+  bool show_tabs_action_on_ntp;
+
+  // Whether to rebuild button row views for the toolbelt without checking
+  // the row's action count. This defaults to true and is just a kill switch
+  // in case of an unexpected performance regression (safer to merge).
+  bool rebuild_button_row_views;
+
+  // Whether to set the location bar `OmniboxView` icon to the selected
+  // toolbelt action's icon, when a toolbelt action is selected via keyboard.
+  bool use_action_icons_in_location_bar;
+
+  // Whether to select the toolbelt match before opening one of its actions.
+  // This has the effect of taking the toolbelt match's fill into edit, the
+  // verbatim user input text, instead of any text that might have been selected
+  // or inline autocompleted previously.
+  bool select_toolbelt_before_opening;
+};
+
+// If enabled, adjusts the indentation of the omnibox input and matches to fix
+// the visual shift in omnibox input text when the omnibox popup opens.
+struct AdjustOmniboxIndent : Config<AdjustOmniboxIndent> {
+  DECLARE_FEATURE(kAdjustOmniboxIndent);
+
+  AdjustOmniboxIndent();
+  // Whether to indent the omnibox input text and icon when the popup is closed.
+  bool indent_input_when_popup_closed;
+  // Amount by which the indentation of the omnibox input icon is offset.
+  int input_icon_indent_offset;
+  // Amount by which the indentation of the omnibox input text is offset.
+  int input_text_indent_offset;
+  // Amount by which the indentation of the omnibox match icon is offset.
+  int match_icon_indent_offset;
+  // Amount by which the indentation of the omnibox match text is offset.
+  int match_text_indent_offset;
 };
 
 // If enabled, allow document provider requests when all other conditions are
 // met.
 struct DocumentProvider : Config<DocumentProvider> {
   DocumentProvider();
+  DocumentProvider(const DocumentProvider&);
+  DocumentProvider(DocumentProvider&&);
+  DocumentProvider& operator=(const DocumentProvider&);
+  DocumentProvider& operator=(DocumentProvider&&);
+  ~DocumentProvider();
   bool enabled;
   // The minimum input length required before requesting document suggestions.
   size_t min_query_length;
-  // Whether to ignore the state of the document provider when deciding to
-  // finish debouncing.
-  bool ignore_when_debouncing;
   // Whether to scope backoff state to the profile instead of the current
   // window.
   bool scope_backoff_to_profile;
@@ -162,6 +417,11 @@ struct DocumentProvider : Config<DocumentProvider> {
 struct ForceAllowedToBeDefault : Config<ForceAllowedToBeDefault> {
   DECLARE_FEATURE(kForceAllowedToBeDefault);
   ForceAllowedToBeDefault();
+  ForceAllowedToBeDefault(const ForceAllowedToBeDefault&);
+  ForceAllowedToBeDefault(ForceAllowedToBeDefault&&);
+  ForceAllowedToBeDefault& operator=(const ForceAllowedToBeDefault&);
+  ForceAllowedToBeDefault& operator=(ForceAllowedToBeDefault&&);
+  ~ForceAllowedToBeDefault();
   bool enabled;
 };
 
@@ -171,6 +431,15 @@ struct RealboxContextualAndTrendingSuggestions
     : Config<RealboxContextualAndTrendingSuggestions> {
   DECLARE_FEATURE(kRealboxContextualAndTrendingSuggestions);
   RealboxContextualAndTrendingSuggestions();
+  RealboxContextualAndTrendingSuggestions(
+      const RealboxContextualAndTrendingSuggestions&);
+  RealboxContextualAndTrendingSuggestions(
+      RealboxContextualAndTrendingSuggestions&&);
+  RealboxContextualAndTrendingSuggestions& operator=(
+      const RealboxContextualAndTrendingSuggestions&);
+  RealboxContextualAndTrendingSuggestions& operator=(
+      RealboxContextualAndTrendingSuggestions&&);
+  ~RealboxContextualAndTrendingSuggestions();
   bool enabled;
 
   // The total number of matches a Section can contain across all Groups.
@@ -208,6 +477,17 @@ struct SearchAggregatorProvider : Config<SearchAggregatorProvider> {
   // If true, the `EnterpriseSearchAggregatorSuggestionsService` will make
   // parallel requests for each type of suggestion.
   bool multiple_requests;
+  // The specified value controls how `EnterpriseSearchAggregatorProvider` will
+  // score suggestions. The following values are supported:
+  //   "mixed": Use server-provided scores in scoped mode and client-calculated
+  //     scores in unscoped mode. This is the default behavior and is also used
+  //     if the supplied value is not one of the other options.
+  //   "server": Use server-provided scores in both scoped and unscoped mode.
+  //   "client": Use client-calculated scores in both scoped and unscoped mode.
+  std::string relevance_scoring_mode;
+  // If true, show unscoped `EnterpriseSearchAggregatorProvider` suggestions in
+  // the NTP realbox.
+  bool realbox_unscoped_suggestions;
 
   // See comments in enterprise_search_aggregator_provider.cc
   size_t scoring_max_matches_created_per_type;
@@ -220,6 +500,7 @@ struct SearchAggregatorProvider : Config<SearchAggregatorProvider> {
   int scoring_score_per_weak_text_match;
   int scoring_max_text_score;
   int scoring_people_score_boost;
+  int scoring_people_email_match_score_boost;
   bool scoring_prefer_contents_over_queries;
   size_t scoring_scoped_max_low_quality_matches;
   size_t scoring_unscoped_max_low_quality_matches;
@@ -258,7 +539,29 @@ struct SearchAggregatorProvider : Config<SearchAggregatorProvider> {
 struct SuggestionAnswerMigration : Config<SuggestionAnswerMigration> {
   DECLARE_FEATURE(kOmniboxSuggestionAnswerMigration);
   SuggestionAnswerMigration();
+  SuggestionAnswerMigration(const SuggestionAnswerMigration&);
+  SuggestionAnswerMigration(SuggestionAnswerMigration&&);
+  SuggestionAnswerMigration& operator=(const SuggestionAnswerMigration&);
+  SuggestionAnswerMigration& operator=(SuggestionAnswerMigration&&);
+  ~SuggestionAnswerMigration();
   bool enabled;
+};
+
+struct OmniboxZpsSuggestionLimit : Config<OmniboxZpsSuggestionLimit> {
+  DECLARE_FEATURE(kOmniboxZpsSuggestionLimit);
+  OmniboxZpsSuggestionLimit();
+  OmniboxZpsSuggestionLimit(const OmniboxZpsSuggestionLimit&);
+  OmniboxZpsSuggestionLimit(OmniboxZpsSuggestionLimit&&);
+  OmniboxZpsSuggestionLimit& operator=(const OmniboxZpsSuggestionLimit&);
+  OmniboxZpsSuggestionLimit& operator=(OmniboxZpsSuggestionLimit&&);
+  ~OmniboxZpsSuggestionLimit();
+  bool enabled;
+  // Max number of zps suggestions to show.
+  size_t max_suggestions;
+  // Max number of search zps suggestions to show.
+  size_t max_search_suggestions;
+  // Max number of url zps suggestions to show.
+  size_t max_url_suggestions;
 };
 
 // Enables url suggestions when omnibox is focused on Web/SRP.
@@ -270,12 +573,6 @@ struct OmniboxUrlSuggestionsOnFocus : Config<OmniboxUrlSuggestionsOnFocus> {
   ~OmniboxUrlSuggestionsOnFocus();
   bool enabled;
   bool show_recently_closed_tabs;
-  // Max number of zps suggestions to show.
-  size_t max_suggestions;
-  // Max number of search zps suggestions to show.
-  size_t max_search_suggestions;
-  // Max number of url zps suggestions to show.
-  size_t max_url_suggestions;
   // Number of days to consider for most visited sites (0-indexed).
   size_t most_visited_recency_window;
   // Recency factor heuristic used to calculate most visited sites.  Must be
@@ -290,6 +587,8 @@ struct OmniboxUrlSuggestionsOnFocus : Config<OmniboxUrlSuggestionsOnFocus> {
   // The debouncing delay (in milliseconds) to use when throttling
   // HistoryService requests.
   int prefetch_most_visited_sites_delay_ms;
+  // Max number of URLs that will be requested from history.
+  size_t max_requested_urls_from_history;
 
   bool MostVisitedPrefetchingEnabled() const;
 };
@@ -299,12 +598,42 @@ struct HappinessTrackingSurveyForOmniboxOnFocusZps
     : Config<HappinessTrackingSurveyForOmniboxOnFocusZps> {
   DECLARE_FEATURE(kHappinessTrackingSurveyForOmniboxOnFocusZps);
   HappinessTrackingSurveyForOmniboxOnFocusZps();
+  HappinessTrackingSurveyForOmniboxOnFocusZps(
+      const HappinessTrackingSurveyForOmniboxOnFocusZps&);
+  HappinessTrackingSurveyForOmniboxOnFocusZps(
+      HappinessTrackingSurveyForOmniboxOnFocusZps&&);
+  HappinessTrackingSurveyForOmniboxOnFocusZps& operator=(
+      const HappinessTrackingSurveyForOmniboxOnFocusZps&);
+  HappinessTrackingSurveyForOmniboxOnFocusZps& operator=(
+      HappinessTrackingSurveyForOmniboxOnFocusZps&&);
+  ~HappinessTrackingSurveyForOmniboxOnFocusZps();
   bool enabled;
   // Number of times the omnibox must be focused on SRP/Web before the survey
   // may be shown
   size_t focus_threshold;
   // Number of ms before the survey may be shown.
   size_t survey_delay;
+  // Trigger ID of Intent and Satisfaction survey.
+  std::string happiness_trigger_id;
+  // Trigger ID of Usefulness and Distraction survey.
+  std::string utility_trigger_id;
+};
+
+struct ComposeboxSuggestionLimit : Config<ComposeboxSuggestionLimit> {
+  DECLARE_FEATURE(kComposeboxSuggestionLimit);
+  ComposeboxSuggestionLimit();
+  ComposeboxSuggestionLimit(const ComposeboxSuggestionLimit&);
+  ComposeboxSuggestionLimit(ComposeboxSuggestionLimit&&);
+  ComposeboxSuggestionLimit& operator=(const ComposeboxSuggestionLimit&);
+  ComposeboxSuggestionLimit& operator=(ComposeboxSuggestionLimit&&);
+  ~ComposeboxSuggestionLimit();
+  bool enabled;
+  // Max number of zps suggestions to show.
+  size_t max_suggestions;
+  // Max number of aim zps suggestions to show.
+  size_t max_aim_suggestions;
+  // Max number of contextual zps suggestions to show.
+  size_t max_contextual_suggestions;
 };
 
 // Do not add new configs here at the bottom by default. They should be ordered

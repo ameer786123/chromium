@@ -16,10 +16,10 @@
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
 #include "components/commerce/core/proto/merchant_trust.pb.h"
-#include "components/optimization_guide/core/mock_optimization_guide_decider.h"
-#include "components/optimization_guide/core/optimization_guide_decision.h"
+#include "components/optimization_guide/core/hints/mock_optimization_guide_decider.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decision.h"
+#include "components/optimization_guide/core/hints/optimization_metadata.h"
 #include "components/optimization_guide/core/optimization_guide_proto_util.h"
-#include "components/optimization_guide/core/optimization_metadata.h"
 #include "components/optimization_guide/proto/common_types.pb.h"
 #include "components/page_info/core/features.h"
 #include "components/page_info/core/merchant_trust_validation.h"
@@ -33,7 +33,6 @@
 namespace page_info {
 using testing::_;
 using testing::An;
-using testing::Invoke;
 using testing::Return;
 
 using DecisionWithMetadata = MerchantTrustService::DecisionAndMetadata;
@@ -113,12 +112,10 @@ class MerchantTrustServiceTest : public ::testing::Test {
         CanApplyOptimization(
             _, _, An<optimization_guide::OptimizationGuideDecisionCallback>()))
         .WillByDefault(
-            Invoke([decision, metadata](
-                       const GURL& url, OptimizationType optimization_type,
-                       optimization_guide::OptimizationGuideDecisionCallback
-                           callback) {
-              std::move(callback).Run(decision, metadata);
-            }));
+            [decision, metadata](
+                const GURL& url, OptimizationType optimization_type,
+                optimization_guide::OptimizationGuideDecisionCallback
+                    callback) { std::move(callback).Run(decision, metadata); });
   }
 
   void SetOptimizationGuideAllowed(bool allowed) {

@@ -34,9 +34,6 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Batch;
-import org.chromium.base.test.util.Features;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.password_manager.PasswordCheckupClientHelper.PasswordCheckBackendException;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.safety_check.SafetyCheckSettingsFragment;
 import org.chromium.chrome.browser.safety_hub.SafetyHubFragment;
@@ -53,8 +50,6 @@ import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.components.user_prefs.UserPrefsJni;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modaldialog.ModalDialogManager;
-import org.chromium.ui.modaldialog.ModalDialogProperties;
-import org.chromium.ui.modelutil.PropertyModel;
 
 import java.lang.ref.WeakReference;
 import java.util.Collections;
@@ -64,8 +59,6 @@ import java.util.Set;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 @Batch(Batch.PER_CLASS)
-// TODO(crbug.com/396631651): Update the tests once the logic in PasswordCheckupLauncher is updated.
-@Features.DisableFeatures(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID)
 public class PasswordCheckupLauncherTest {
     private static final AccountInfo TEST_ACCOUNT = TestAccounts.ACCOUNT1;
     private static final String TEST_NO_EMAIL_ADDRESS = null;
@@ -92,13 +85,14 @@ public class PasswordCheckupLauncherTest {
 
     @Mock private PendingIntent mMockPendingIntentForAccountCheckup;
 
-    private FakePasswordManagerBackendSupportHelper mFakeBackendSupportHelper =
+    private final FakePasswordManagerBackendSupportHelper mFakeBackendSupportHelper =
             new FakePasswordManagerBackendSupportHelper();
 
     private ModalDialogManager mModalDialogManager;
 
-    private FakePasswordCheckupClientHelperFactoryImpl mFakePasswordCheckupClientHelperFactory =
-            new FakePasswordCheckupClientHelperFactoryImpl();
+    private final FakePasswordCheckupClientHelperFactoryImpl
+            mFakePasswordCheckupClientHelperFactory =
+                    new FakePasswordCheckupClientHelperFactoryImpl();
 
     private FakePasswordCheckupClientHelper mFakePasswordCheckupClientHelper;
 
@@ -106,10 +100,9 @@ public class PasswordCheckupLauncherTest {
             new FakeAccountManagerFacade();
 
     @Before
-    public void setUp() throws PasswordCheckBackendException {
+    public void setUp() {
         UserPrefsJni.setInstanceForTesting(mMockUserPrefsJni);
         PasswordManagerUtilBridgeJni.setInstanceForTesting(mMockPasswordManagerUtilBridgeJni);
-        when(mMockPasswordManagerUtilBridgeJni.areMinUpmRequirementsMet()).thenReturn(true);
 
         when(mProfile.getOriginalProfile()).thenReturn(mProfile);
         when(mMockUserPrefsJni.get(mProfile)).thenReturn(mPrefService);
@@ -145,21 +138,6 @@ public class PasswordCheckupLauncherTest {
     }
 
     @Test
-    @Features.DisableFeatures(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID)
-    public void testLaunchCheckupOnDeviceShowsAccountCheckupPreLoginDbDeprecation()
-            throws PendingIntent.CanceledException {
-        when(mMockSyncService.getSelectedTypes()).thenReturn(Set.of(UserSelectableType.PASSWORDS));
-        when(mMockPasswordManagerUtilBridgeJni.shouldUseUpmWiring(mMockSyncService, mPrefService))
-                .thenReturn(true);
-
-        PasswordCheckupLauncher.launchCheckupOnDevice(
-                mProfile, mMockWindowAndroid, LEAK_DIALOG, TestAccounts.ACCOUNT1.getEmail());
-
-        verify(mMockPendingIntentForAccountCheckup).send();
-    }
-
-    @Test
-    @Features.EnableFeatures(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID)
     public void testLaunchCheckupOnDeviceShowsAccountCheckup()
             throws PendingIntent.CanceledException {
         when(mMockSyncService.getSelectedTypes()).thenReturn(Set.of(UserSelectableType.PASSWORDS));
@@ -174,21 +152,6 @@ public class PasswordCheckupLauncherTest {
     }
 
     @Test
-    @Features.DisableFeatures(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID)
-    public void testLaunchCheckupOnDeviceShowsLocalCheckupPreLoginDbDeprecation()
-            throws PendingIntent.CanceledException {
-        when(mMockSyncService.getSelectedTypes()).thenReturn(Collections.emptySet());
-        when(mMockPasswordManagerUtilBridgeJni.shouldUseUpmWiring(mMockSyncService, mPrefService))
-                .thenReturn(true);
-
-        PasswordCheckupLauncher.launchCheckupOnDevice(
-                mProfile, mMockWindowAndroid, LEAK_DIALOG, TEST_NO_EMAIL_ADDRESS);
-
-        verify(mMockPendingIntentForLocalCheckup).send();
-    }
-
-    @Test
-    @Features.EnableFeatures(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID)
     public void testLaunchCheckupOnDeviceShowsLocalCheckup()
             throws PendingIntent.CanceledException {
         when(mMockSyncService.getSelectedTypes()).thenReturn(Collections.emptySet());
@@ -203,23 +166,6 @@ public class PasswordCheckupLauncherTest {
     }
 
     @Test
-    @Features.DisableFeatures(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID)
-    public void testLaunchCheckupOnDeviceShowsLocalCheckupWhenSyncingPreLoginDbDeprecation()
-            throws PendingIntent.CanceledException {
-        // Local checkup will be launched from the leak detection dialog if the leaked credential is
-        // stored only in the local store, even though the user is syncing passwords.
-        when(mMockSyncService.getSelectedTypes()).thenReturn(Set.of(UserSelectableType.PASSWORDS));
-        when(mMockPasswordManagerUtilBridgeJni.shouldUseUpmWiring(mMockSyncService, mPrefService))
-                .thenReturn(true);
-
-        PasswordCheckupLauncher.launchCheckupOnDevice(
-                mProfile, mMockWindowAndroid, LEAK_DIALOG, TEST_NO_EMAIL_ADDRESS);
-
-        verify(mMockPendingIntentForLocalCheckup).send();
-    }
-
-    @Test
-    @Features.EnableFeatures(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID)
     public void testLaunchCheckupOnDeviceShowsLocalCheckupWhenSyncing()
             throws PendingIntent.CanceledException {
         // Local checkup will be launched from the leak detection dialog if the leaked credential is
@@ -236,32 +182,9 @@ public class PasswordCheckupLauncherTest {
     }
 
     @Test
-    @Features.DisableFeatures(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID)
-    public void testLaunchPasswordCheckShowsUpdateGmsDialog()
-            throws PendingIntent.CanceledException {
-        when(mMockPasswordManagerUtilBridgeJni.shouldUseUpmWiring(mMockSyncService, mPrefService))
-                .thenReturn(true);
-        when(mMockPasswordManagerUtilBridgeJni.isGmsCoreUpdateRequired(
-                        mPrefService, mMockSyncService))
-                .thenReturn(true);
-
-        PasswordCheckupLauncher.launchCheckupOnDevice(
-                mProfile, mMockWindowAndroid, LEAK_DIALOG, TEST_NO_EMAIL_ADDRESS);
-
-        verify(mMockPendingIntentForLocalCheckup, times(0)).send();
-        verify(mMockPendingIntentForAccountCheckup, times(0)).send();
-        PropertyModel dialogModel = mModalDialogManager.getCurrentDialogForTest();
-        assertThat(
-                dialogModel.get(ModalDialogProperties.MESSAGE_PARAGRAPH_1),
-                is(mContext.getString(R.string.password_manager_outdated_gms_dialog_description)));
-    }
-
-    @Test
     public void testLaunchSafetyCheckOpensSafetyCheckInChromeSettings()
             throws PendingIntent.CanceledException {
         when(mMockSyncService.getSelectedTypes()).thenReturn(Set.of(UserSelectableType.PASSWORDS));
-        when(mMockPasswordManagerUtilBridgeJni.shouldUseUpmWiring(mMockSyncService, mPrefService))
-                .thenReturn(true);
 
         PasswordCheckupLauncher.launchSafetyCheck(mMockWindowAndroid);
 
@@ -277,8 +200,6 @@ public class PasswordCheckupLauncherTest {
     public void testLaunchSafetyHupOpensSafetyHubInChromeSettings()
             throws PendingIntent.CanceledException {
         when(mMockSyncService.getSelectedTypes()).thenReturn(Set.of(UserSelectableType.PASSWORDS));
-        when(mMockPasswordManagerUtilBridgeJni.shouldUseUpmWiring(mMockSyncService, mPrefService))
-                .thenReturn(true);
 
         PasswordCheckupLauncher.launchSafetyHub(mMockWindowAndroid);
 

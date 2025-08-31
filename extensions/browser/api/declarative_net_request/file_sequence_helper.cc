@@ -299,7 +299,7 @@ bool UpdateAndIndexDynamicRules(const FileBackedRulesetSource& source,
 
   // Treat rules which exceed the regex memory limit as errors if these are new
   // rules. Just surface an error for the first such rule.
-  for (auto warning : info.rule_ignored_warnings()) {
+  for (const auto& warning : info.rule_ignored_warnings()) {
     if (!base::Contains(rule_ids_to_add, warning.rule_id)) {
       // Any rule added earlier which is ignored now (say due to exceeding the
       // regex memory limit), will be silently ignored.
@@ -393,7 +393,8 @@ LoadRequestData::LoadRequestData(ExtensionId extension_id,
                                  LoadRulesetRequestSource request_source)
     : extension_id(std::move(extension_id)),
       extension_version(std::move(extension_version)),
-      request_source(request_source) {}
+      request_source(request_source),
+      load_request_id(base::Token::CreateRandom()) {}
 LoadRequestData::~LoadRequestData() = default;
 LoadRequestData::LoadRequestData(LoadRequestData&&) = default;
 LoadRequestData& LoadRequestData::operator=(LoadRequestData&&) = default;

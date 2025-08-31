@@ -22,6 +22,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/frame_data.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/gl/gl_display.h"
 #include "ui/ozone/platform/wayland/common/wayland_util.h"
 #include "ui/ozone/platform/wayland/mojom/wayland_buffer_manager.mojom.h"
 #include "ui/ozone/public/drm_modifiers_filter.h"
@@ -102,6 +103,8 @@ class WaylandBufferManagerGpu : public ozone::mojom::WaylandBufferManagerGpu {
                                const std::vector<uint64_t>& modifiers,
                                uint32_t current_format,
                                uint32_t planes_count,
+                               const gfx::ColorSpace& color_space,
+                               const gfx::HDRMetadata& hdr_metadata,
                                uint32_t buffer_id);
 
   // Asks Wayland to create a shared memory based wl_buffer.
@@ -150,6 +153,7 @@ class WaylandBufferManagerGpu : public ozone::mojom::WaylandBufferManagerGpu {
   // Returns a gbm_device based on a DRM render node.
   GbmDevice* GetGbmDevice();
 #endif
+  gl::EGLDisplayPlatform GetNativeDisplay();
 
   bool supports_acquire_fence() const { return supports_acquire_fence_; }
   bool supports_viewporter() const { return supports_viewporter_; }
@@ -226,6 +230,8 @@ class WaylandBufferManagerGpu : public ozone::mojom::WaylandBufferManagerGpu {
                                    const std::vector<uint64_t>& modifiers,
                                    uint32_t current_format,
                                    uint32_t planes_count,
+                                   const gfx::ColorSpace& color_space,
+                                   const gfx::HDRMetadata& hdr_metadata,
                                    uint32_t buffer_id);
   void CreateShmBasedBufferTask(base::ScopedFD shm_fd,
                                 size_t length,
@@ -242,6 +248,9 @@ class WaylandBufferManagerGpu : public ozone::mojom::WaylandBufferManagerGpu {
   // Uses |drm_node_path| to open the handle and store it into
   // |drm_render_node_fd|.
   void OpenAndStoreDrmRenderNodeFd(const base::FilePath& drm_node_path);
+  // Creates `gbm_device_` from the `drm_render_node_fd_`, also a
+  // `gl::EGLDisplayPlatform` with it.
+  void MaybeCreateGbmDevice();
   // Used by the gbm_device for self creation.
   base::ScopedFD drm_render_node_fd_;
   // A DRM render node based gbm device.
@@ -251,6 +260,9 @@ class WaylandBufferManagerGpu : public ozone::mojom::WaylandBufferManagerGpu {
   // CreateSurfaceCheckGbm for example.
   bool use_fake_gbm_device_for_test_ = false;
 #endif
+  // Used to initialize GL display.
+  gl::EGLDisplayPlatform native_display_;
+
   // Whether Wayland server allows buffer submission with acquire fence.
   bool supports_acquire_fence_ = false;
 

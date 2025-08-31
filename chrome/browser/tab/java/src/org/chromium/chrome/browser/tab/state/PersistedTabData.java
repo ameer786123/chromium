@@ -18,7 +18,6 @@ import org.chromium.base.UserData;
 import org.chromium.base.UserDataHost;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.build.annotations.NullMarked;
@@ -33,13 +32,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
- * PersistedTabData is Tab data persisted across restarts
- * A constructor of taking a Tab, a PersistedTabDataStorage and
- * PersistedTabDataID (identifier for {@link PersistedTabData}
- * in storage) is required as reflection is used to build
- * the object after acquiring the serialized object from storage.
+ * PersistedTabData is Tab data persisted across restarts A constructor of taking a Tab, a
+ * PersistedTabDataStorage and PersistedTabDataID (identifier for {@link PersistedTabData} in
+ * storage) is required as reflection is used to build the object after acquiring the serialized
+ * object from storage.
  */
 @NullMarked
 public abstract class PersistedTabData implements UserData {
@@ -47,15 +46,14 @@ public abstract class PersistedTabData implements UserData {
     private static final Map<String, List<Callback>> sCachedCallbacks = new HashMap<>();
     private static final long NEEDS_UPDATE_DISABLED = Long.MAX_VALUE;
     private static final long LAST_UPDATE_UNKNOWN = 0;
-    private static Set<Class<? extends PersistedTabData>> sSupportedMaintenanceClasses =
+    private static final Set<Class<? extends PersistedTabData>> sSupportedMaintenanceClasses =
             new HashSet<>();
     protected final Tab mTab;
     private final PersistedTabDataStorage mPersistedTabDataStorage;
     private final String mPersistedTabDataId;
     private long mLastUpdatedMs = LAST_UPDATE_UNKNOWN;
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-    public @Nullable ObservableSupplierImpl<Boolean> mIsTabSaveEnabledSupplier;
+    @VisibleForTesting public @Nullable ObservableSupplierImpl<Boolean> mIsTabSaveEnabledSupplier;
 
     private @Nullable Callback<Boolean> mTabSaveEnabledToggleCallback;
     private boolean mFirstSaveDone;
@@ -407,7 +405,7 @@ public abstract class PersistedTabData implements UserData {
     @VisibleForTesting
     protected Serializer<ByteBuffer> getOomAndMetricsWrapper() {
         final Serializer<ByteBuffer> serializer = getSerializerWithOomSoftFallback();
-        return new Serializer<ByteBuffer>() {
+        return new Serializer<>() {
             @Override
             public @Nullable ByteBuffer get() {
                 if (serializer == null) return null;

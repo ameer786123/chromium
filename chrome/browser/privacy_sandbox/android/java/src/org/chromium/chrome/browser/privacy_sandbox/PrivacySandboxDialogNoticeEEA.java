@@ -12,26 +12,28 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
 import org.chromium.components.browser_ui.widget.ChromeDialog;
 import org.chromium.ui.widget.ButtonCompat;
 import org.chromium.ui.widget.CheckableImageView;
 
 /** Dialog in the form of a notice shown for the Privacy Sandbox. */
+@NullMarked
 public class PrivacySandboxDialogNoticeEEA extends ChromeDialog
         implements DialogInterface.OnShowListener {
     private final PrivacySandboxBridge mPrivacySandboxBridge;
-    private View mContentView;
+    private final View mContentView;
 
-    private ButtonCompat mMoreButton;
-    private LinearLayout mActionButtons;
-    private ScrollView mScrollView;
-    private LinearLayout mDropdownElement;
+    private final ButtonCompat mMoreButton;
+    private final LinearLayout mActionButtons;
+    private final ScrollView mScrollView;
+    private final LinearLayout mDropdownElement;
 
     private final CheckableImageView mExpandArrowView;
-    private LinearLayout mDropdownContainer;
-    private @SurfaceType int mSurfaceType;
-    private View.OnClickListener mOnClickListener;
+    private final LinearLayout mDropdownContainer;
+    private final @SurfaceType int mSurfaceType;
+    private final View.OnClickListener mOnClickListener;
 
     public PrivacySandboxDialogNoticeEEA(
             Activity activity,

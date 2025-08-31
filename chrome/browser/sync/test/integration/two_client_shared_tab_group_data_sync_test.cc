@@ -31,9 +31,7 @@ class TwoClientSharedTabGroupDataSyncTest : public SyncTest {
  public:
   TwoClientSharedTabGroupDataSyncTest() : SyncTest(TWO_CLIENT) {
     feature_overrides_.InitWithFeatures(
-        {data_sharing::features::kDataSharingFeature,
-         tab_groups::kTabGroupSyncServiceDesktopMigration},
-        {});
+        {data_sharing::features::kDataSharingFeature}, {});
   }
 
   ~TwoClientSharedTabGroupDataSyncTest() override = default;
@@ -102,7 +100,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientSharedTabGroupDataSyncTest,
 
   // Add the user to the collaboration before making any changes (to prevent
   // filtration of local entities on GetUpdates).
-  GetFakeServer()->AddCollaboration(kCollaborationId.value());
+  GetFakeServer()->AddCollaboration(kCollaborationId);
 
   ASSERT_TRUE(SetupSync());
   FakeCollaborationAvailable(0, kCollaborationId);
@@ -135,7 +133,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientSharedTabGroupDataSyncTest,
 
   // Add the user to the collaboration before making any changes (to prevent
   // filtration of local entities on GetUpdates).
-  GetFakeServer()->AddCollaboration(kCollaborationId.value());
+  GetFakeServer()->AddCollaboration(kCollaborationId);
 
   ASSERT_TRUE(SetupSync());
   FakeCollaborationAvailable(0, kCollaborationId);

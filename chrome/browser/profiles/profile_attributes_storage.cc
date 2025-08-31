@@ -22,6 +22,8 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/observer_list.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
@@ -606,7 +608,7 @@ ProfileAttributesStorage::GetAllProfilesAttributesSortedForDisplay() const {
 
 std::vector<ProfileAttributesEntry*> ProfileAttributesStorage::
     GetAllProfilesAttributesSortedByLocalProfileNameWithCheck() const {
-  if (base::FeatureList::IsEnabled(kProfilesReordering)) {
+  if (base::FeatureList::IsEnabled(switches::kProfilesReordering)) {
     return GetAllProfilesAttributesSortedForDisplay();
   }
   return GetAllProfilesAttributesSortedByLocalProfileName();
@@ -615,7 +617,7 @@ std::vector<ProfileAttributesEntry*> ProfileAttributesStorage::
 std::vector<ProfileAttributesEntry*>
 ProfileAttributesStorage::GetAllProfilesAttributesSortedByNameWithCheck()
     const {
-  if (base::FeatureList::IsEnabled(kProfilesReordering)) {
+  if (base::FeatureList::IsEnabled(switches::kProfilesReordering)) {
     return GetAllProfilesAttributesSortedForDisplay();
   }
   return GetAllProfilesAttributesSortedByName();
@@ -820,6 +822,15 @@ void ProfileAttributesStorage::RecordProfilesState() {
                          profile_metrics::StateSuffix::kAllUnmanagedDevice);
     }
 
+    if (entry->UserAcceptedAccountManagement()) {
+      RecordProfileState(
+          entry, profile_metrics::StateSuffix::kManagementDisclaimerAccepted);
+    } else {
+      RecordProfileState(
+          entry,
+          profile_metrics::StateSuffix::kManagementDisclaimerNotAccepted);
+    }
+
     switch (type) {
       case MultiProfileUserType::kSingleProfile:
         RecordProfileState(entry, profile_metrics::StateSuffix::kSingleProfile);
@@ -895,6 +906,13 @@ void ProfileAttributesStorage::NotifyProfileHostedDomainChanged(
     const base::FilePath& profile_path) const {
   for (auto& observer : observer_list_)
     observer.OnProfileHostedDomainChanged(profile_path);
+}
+
+void ProfileAttributesStorage::NotifyProfileIsManagedChanged(
+    const base::FilePath& profile_path) const {
+  for (auto& observer : observer_list_) {
+    observer.OnProfileIsManagedChanged(profile_path);
+  }
 }
 
 void ProfileAttributesStorage::NotifyOnProfileHighResAvatarLoaded(

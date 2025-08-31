@@ -14,10 +14,12 @@
 #include "base/path_service.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/test_future.h"
 #include "base/test/test_switches.h"
 #include "base/test/values_test_util.h"
 #include "base/threading/thread_restrictions.h"
@@ -40,6 +42,7 @@
 #include "chrome/browser/tpcd/metadata/manager_factory.h"
 #include "chrome/browser/tpcd/support/trial_test_utils.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
@@ -63,6 +66,7 @@
 #include "content/public/test/btm_service_test_utils.h"
 #include "content/public/test/preloading_test_util.h"
 #include "content/public/test/prerender_test_util.h"
+#include "content/public/test/url_loader_interceptor.h"
 #include "net/base/ip_address.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/ssl/ssl_cipher_suite_names.h"
@@ -70,7 +74,9 @@
 #include "net/ssl/ssl_connection_status_flags.h"
 #include "net/ssl/ssl_server_config.h"
 #include "printing/buildflags/buildflags.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/network_switches.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
@@ -89,7 +95,6 @@
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
@@ -97,6 +102,7 @@
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/test_extension_registry_observer.h"
@@ -256,9 +262,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
   content::WebContents* other_web_contents =
       chrome_test_utils::GetActiveWebContents(this);
-  EXPECT_TRUE(
-      content::EvalJs(target_web_contents, setup_logging).error.empty());
-  EXPECT_TRUE(content::EvalJs(other_web_contents, setup_logging).error.empty());
+  EXPECT_TRUE(content::EvalJs(target_web_contents, setup_logging).is_ok());
+  EXPECT_TRUE(content::EvalJs(other_web_contents, setup_logging).is_ok());
 
   base::Value::Dict params;
   params.Set("button", "left");
@@ -445,7 +450,7 @@ IN_PROC_BROWSER_TEST_F(
     document.body.appendChild(specrules);
   )";
 
-  EXPECT_TRUE(content::EvalJs(web_contents(), add_specrules).error.empty());
+  EXPECT_TRUE(content::EvalJs(web_contents(), add_specrules).is_ok());
 
   {
     base::Value::Dict result;
@@ -538,25 +543,17 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, SetRPHRegistrationMode) {
   EXPECT_EQ(custom_handlers::RphRegistrationMode::kNone,
             registry->registration_mode());
 
-  // Set a value not defined in AutoResponseMode enum
-  base::Value::Dict params_invalid_enum;
-  params_invalid_enum.Set("mode", "accept");
-  SendCommandAsync("Page.setRPHRegistrationMode",
-                   std::move(params_invalid_enum));
-  EXPECT_EQ(custom_handlers::RphRegistrationMode::kNone,
-            registry->registration_mode());
-
-  // Set a invalid value, but defined in the AutoResponseMode enum
+  // Set a invalid value
   base::Value::Dict params_invalid;
-  params_invalid.Set("mode", "autoOptOut");
-  SendCommandAsync("Page.setRPHRegistrationMode", std::move(params_invalid));
+  params_invalid.Set("mode", "accept");
+  SendCommand("Page.setRPHRegistrationMode", std::move(params_invalid));
   EXPECT_EQ(custom_handlers::RphRegistrationMode::kNone,
             registry->registration_mode());
 
   // Set a valid value
   base::Value::Dict params;
   params.Set("mode", "autoAccept");
-  SendCommandAsync("Page.setRPHRegistrationMode", std::move(params));
+  SendCommand("Page.setRPHRegistrationMode", std::move(params));
   EXPECT_EQ(custom_handlers::RphRegistrationMode::kAutoAccept,
             registry->registration_mode());
 }
@@ -567,8 +564,7 @@ class DevToolsProtocolTest_BounceTrackingMitigations
   void SetUp() override {
     scoped_feature_list_.InitWithFeaturesAndParameters(
         /*enabled_features=*/{{features::kBtm,
-                               {{"delete", "true"},
-                                {"triggering_action", "stateful_bounce"}}}},
+                               {{"triggering_action", "stateful_bounce"}}}},
         /*disabled_features=*/{});
 
     DevToolsProtocolTest::SetUp();
@@ -591,10 +587,10 @@ class DevToolsProtocolTest_BounceTrackingMitigations
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-testing::AssertionResult SimulateDipsBounce(content::WebContents* web_contents,
-                                            const GURL& initial_url,
-                                            const GURL& bounce_url,
-                                            const GURL& final_url) {
+testing::AssertionResult SimulateBtmBounce(content::WebContents* web_contents,
+                                           const GURL& initial_url,
+                                           const GURL& bounce_url,
+                                           const GURL& final_url) {
   web_contents = web_contents->OpenURL(
       content::OpenURLParams(initial_url, content::Referrer(),
                              WindowOpenDisposition::NEW_FOREGROUND_TAB,
@@ -609,7 +605,7 @@ testing::AssertionResult SimulateDipsBounce(content::WebContents* web_contents,
     return testing::AssertionFailure() << "Failed to wait for loading to stop";
   }
 
-  content::BtmService* dips_service =
+  content::BtmService* btm_service =
       content::BtmService::Get(web_contents->GetBrowserContext());
   if (!content::NavigateToURLFromRenderer(web_contents, bounce_url)) {
     return testing::AssertionFailure()
@@ -626,7 +622,7 @@ testing::AssertionResult SimulateDipsBounce(content::WebContents* web_contents,
   }
   cookie_observer.Wait();
 
-  content::DipsRedirectChainObserver final_observer(dips_service, final_url);
+  content::BtmRedirectChainObserver final_observer(btm_service, final_url);
   if (!content::NavigateToURLFromRendererWithoutUserGesture(web_contents,
                                                             final_url)) {
     return testing::AssertionFailure() << "Failed to navigate to " << final_url;
@@ -647,10 +643,9 @@ testing::AssertionResult SimulateDipsBounce(content::WebContents* web_contents,
   }
 
   const content::BtmRedirectInfo& redirect = *final_observer.redirects()->at(0);
-  if (redirect.redirecting_url.url != bounce_url) {
-    return testing::AssertionFailure()
-           << "Expected redirect at " << bounce_url << "; found "
-           << redirect.redirecting_url.url;
+  if (redirect.redirector_url != bounce_url) {
+    return testing::AssertionFailure() << "Expected redirect at " << bounce_url
+                                       << "; found " << redirect.redirector_url;
   }
 
   if (redirect.access_type != content::BtmDataAccessType::kWrite &&
@@ -675,7 +670,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest_BounceTrackingMitigations,
       embedded_test_server()->GetURL("example.test", "/title1.html"));
 
   // Record a stateful bounce for `bouncer`.
-  ASSERT_TRUE(SimulateDipsBounce(
+  ASSERT_TRUE(SimulateBtmBounce(
       web_contents(), embedded_test_server()->GetURL("a.test", "/empty.html"),
       bouncer, embedded_test_server()->GetURL("b.test", "/empty.html")));
 
@@ -695,26 +690,22 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest_BounceTrackingMitigations,
 
 class BtmStatusDevToolsProtocolTest
     : public DevToolsProtocolTest,
-      public testing::WithParamInterface<std::tuple<bool, bool, std::string>> {
+      public testing::WithParamInterface<std::tuple<bool, std::string>> {
   // The fields of `GetParam()` indicate/control the following:
   //   `std::get<0>(GetParam())` => `features::kBtm`
-  //   `std::get<1>(GetParam())` => `features::kBtmDeletionEnabled`
-  //   `std::get<2>(GetParam())` => `features::kBtmTriggeringAction`
+  //   `std::get<1>(GetParam())` => `features::kBtmTriggeringAction`
   //
   // In order for Bounce Tracking Mitigations to take effect, `features::kBtm`
-  // must be true/enabled, `kDeletionEnabled` must be true, and
-  // `kTriggeringAction` must NOT be `none`.
+  // must be enabled, and `features::kTriggeringAction` must NOT be none.
   //
   // Note: Bounce Tracking Mitigations issues only report sites that would
-  // be affected when `kTriggeringAction` is set to 'stateful_bounce'.
+  // be affected when `features::kTriggeringAction` is set to stateful_bounce.
 
  protected:
   void SetUp() override {
     if (std::get<0>(GetParam())) {
       scoped_feature_list_.InitAndEnableFeatureWithParameters(
-          features::kBtm,
-          {{"delete", base::ToString((std::get<1>(GetParam())))},
-           {"triggering_action", std::get<2>(GetParam())}});
+          features::kBtm, {{"triggering_action", std::get<1>(GetParam())}});
     } else {
       scoped_feature_list_.InitAndDisableFeature(features::kBtm);
     }
@@ -723,8 +714,7 @@ class BtmStatusDevToolsProtocolTest
   }
 
   bool ShouldBeEnabled() {
-    return (std::get<0>(GetParam()) && std::get<1>(GetParam()) &&
-            (std::get<2>(GetParam()) != "none"));
+    return (std::get<0>(GetParam()) && (std::get<1>(GetParam()) != "none"));
   }
 
  private:
@@ -735,10 +725,10 @@ IN_PROC_BROWSER_TEST_P(BtmStatusDevToolsProtocolTest,
                        TrueWhenEnabledAndDeleting) {
   AttachToBrowserTarget();
 
-  base::Value::Dict paramsDIPS;
-  paramsDIPS.Set("featureState", "DIPS");
+  base::Value::Dict btm_params;
+  btm_params.Set("featureState", "DIPS");
 
-  SendCommand("SystemInfo.getFeatureState", std::move(paramsDIPS));
+  SendCommand("SystemInfo.getFeatureState", std::move(btm_params));
   EXPECT_EQ(result()->FindBool("featureEnabled"), ShouldBeEnabled());
 }
 
@@ -746,7 +736,6 @@ INSTANTIATE_TEST_SUITE_P(
     All,
     BtmStatusDevToolsProtocolTest,
     ::testing::Combine(
-        ::testing::Bool(),
         ::testing::Bool(),
         ::testing::Values("none", "storage", "bounce", "stateful_bounce")));
 
@@ -1085,8 +1074,7 @@ class ExtensionProtocolTest : public DevToolsProtocolTest {
   void SetUpOnMainThread() override {
     DevToolsProtocolTest::SetUpOnMainThread();
     Profile* profile = chrome_test_utils::GetProfile(this);
-    extension_service_ =
-        extensions::ExtensionSystem::Get(profile)->extension_service();
+    extension_registrar_ = extensions::ExtensionRegistrar::Get(profile);
     extension_registry_ = extensions::ExtensionRegistry::Get(profile);
   }
 
@@ -1097,7 +1085,7 @@ class ExtensionProtocolTest : public DevToolsProtocolTest {
   const extensions::Extension* LoadExtensionOrApp(
       const base::FilePath& extension_path) {
     extensions::TestExtensionRegistryObserver observer(extension_registry_);
-    extensions::UnpackedInstaller::Create(extension_service_)
+    extensions::UnpackedInstaller::Create(chrome_test_utils::GetProfile(this))
         ->Load(extension_path);
     observer.WaitForExtensionLoaded();
     const extensions::Extension* extension = nullptr;
@@ -1144,12 +1132,13 @@ class ExtensionProtocolTest : public DevToolsProtocolTest {
 
   void ReloadExtension(const std::string& extension_id) {
     extensions::TestExtensionRegistryObserver observer(extension_registry_);
-    extension_service_->ReloadExtension(extension_id);
+    extension_registrar_->ReloadExtension(extension_id);
     observer.WaitForExtensionLoaded();
   }
 
  private:
-  raw_ptr<extensions::ExtensionService, DanglingUntriaged> extension_service_;
+  raw_ptr<extensions::ExtensionRegistrar, DanglingUntriaged>
+      extension_registrar_;
   raw_ptr<extensions::ExtensionRegistry, DanglingUntriaged> extension_registry_;
   raw_ptr<content::WebContents, DanglingUntriaged> background_web_contents_;
 #if BUILDFLAG(IS_WIN)
@@ -1198,7 +1187,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionProtocolTest,
   AttachToBrowserTarget();
   const base::Value::Dict* result = SendCommandSync("Target.getTargets");
 
-  std::string target_id;
   base::Value::Dict ext_target;
   for (const auto& target : *result->FindList("targetInfos")) {
     if (*target.GetDict().FindString("type") == "service_worker") {
@@ -1620,12 +1608,12 @@ IN_PROC_BROWSER_TEST_F(PrivacySandboxAttestationsOverrideTest,
                        PrivacySandboxEnrollmentOverride) {
   Attach();
 
-  base::Value::Dict paramsDIPS;
+  base::Value::Dict btm_params;
   const std::string attestation_url = "https://google.com";
-  paramsDIPS.Set("url", attestation_url);
+  btm_params.Set("url", attestation_url);
 
   SendCommand("Browser.addPrivacySandboxEnrollmentOverride",
-              std::move(paramsDIPS));
+              std::move(btm_params));
 
   EXPECT_TRUE(
       privacy_sandbox::PrivacySandboxAttestations::GetInstance()->IsOverridden(
@@ -1636,12 +1624,12 @@ IN_PROC_BROWSER_TEST_F(PrivacySandboxAttestationsOverrideTest,
                        PrivacySandboxEnrollmentOverrideInvalidUrl) {
   Attach();
 
-  base::Value::Dict paramsDIPS;
+  base::Value::Dict btm_params;
   const std::string attestation_url = "this is a bad url";
-  paramsDIPS.Set("url", attestation_url);
+  btm_params.Set("url", attestation_url);
 
   SendCommand("Browser.addPrivacySandboxEnrollmentOverride",
-              std::move(paramsDIPS));
+              std::move(btm_params));
 
   EXPECT_TRUE(error());
   EXPECT_FALSE(
@@ -1959,6 +1947,428 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest,
   // CDP `Target.getTargets` result should contain the new target.
   SendCommandSync("Target.getTargets");
   EXPECT_EQ(2u, result()->FindList("targetInfos")->size());
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+class DevToolsProtocolTest_IPProtection : public DevToolsProtocolTest {
+ public:
+  DevToolsProtocolTest_IPProtection() {
+    scoped_feature_list_.InitWithFeaturesAndParameters(
+        {{net::features::kEnableIpProtectionProxy,
+          {{"IpPrivacyEnableIppInDevTools", "true"}}},
+         {network::features::kMaskedDomainList,
+          {{"MaskedDomainListExperimentalVersion", "2025-05.dog.01"}}}},
+        {});
+  }
+
+  base::Value::Dict WaitForResponseNotificationWithUrl(GURL url) {
+    base::Value::Dict params = WaitForMatchingNotification(
+        "Network.responseReceived",
+        base::BindLambdaForTesting([url](const base::Value::Dict& params) {
+          return *(params.FindDict("response")->FindString("url")) ==
+                 url.spec();
+        }));
+
+    return std::move(*(params.FindDict("response")));
+  }
+
+ protected:
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+    embedded_test_server()->SetCertHostnames({"a.test", "b.test"});
+
+    DevToolsProtocolTest::SetUpOnMainThread();
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+bool MockIppRequests(bool cached,
+                     std::optional<std::string_view> host_to_intercept,
+                     content::URLLoaderInterceptor::RequestParams* params) {
+  if (host_to_intercept.has_value() &&
+      host_to_intercept.value() != params->url_request.url.host_piece()) {
+    return false;
+  }
+  // Create the mocked URLResponseHead to represent a proxied request.
+  network::mojom::URLResponseHeadPtr response =
+      network::mojom::URLResponseHead::New();
+  response->mime_type = "text/html";
+  response->headers =
+      net::HttpResponseHeaders::TryToCreate("HTTP/1.1 200 OK\n\n");
+  CHECK_NE(response->headers.get(), nullptr);
+
+  // Mark the response as proxied. Cached responses may contain proxy_chain
+  // information of the original request, including if it was sent through an IP
+  // Protection proxy.
+  response->proxy_chain = net::ProxyChain::ForIpProtection({});
+
+  // Set cache state if needed.
+  if (cached) {
+    response->load_timing.request_start_time = base::Time::Now();
+  }
+
+  // Write the response back to the client.
+  mojo::ScopedDataPipeConsumerHandle consumer_handle;
+  mojo::ScopedDataPipeProducerHandle producer_handle;
+
+  EXPECT_EQ(mojo::CreateDataPipe(nullptr, producer_handle, consumer_handle),
+            MOJO_RESULT_OK);
+
+  params->client->OnReceiveResponse(std::move(response),
+                                    std::move(consumer_handle), std::nullopt);
+  params->client->OnComplete(network::URLLoaderCompletionStatus());
+
+  return true;
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest_IPProtection,
+                       IsIpProtectionUsedSetInProtocol) {
+  // Start the test server
+  ASSERT_TRUE(embedded_test_server()->Start());
+  Attach();
+
+  const content::URLLoaderInterceptor interceptor(
+      base::BindRepeating(&MockIppRequests, /*cached=*/false, "a.test"));
+
+  SendCommandSync("Network.enable");
+
+  GURL url = embedded_test_server()->GetURL("a.test", "/empty.html");
+
+  // Navigate to the test site.
+  ASSERT_TRUE(content::NavigateToURL(web_contents(), url));
+
+  // Set observer for Network.responseReceived and store the response.
+  base::Value::Dict response = WaitForResponseNotificationWithUrl(url);
+
+  // Then, check that "isIpProtectionUsed" is set to true within
+  // Network.Response.isIpProtectionUsed.
+  EXPECT_THAT(response.FindBool("isIpProtectionUsed"), testing::Optional(true));
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest_IPProtection,
+                       CachedResponseSetsIsIpProtectionUsedToFalse) {
+  // Start the test server
+  ASSERT_TRUE(embedded_test_server()->Start());
+  Attach();
+
+  const content::URLLoaderInterceptor interceptor(
+      base::BindRepeating(&MockIppRequests, /*cached=*/true, "a.test"));
+
+  SendCommandSync("Network.enable");
+
+  GURL url = embedded_test_server()->GetURL("a.test", "/empty.html");
+
+  // Navigate to the test site.
+  ASSERT_TRUE(content::NavigateToURL(web_contents(), url));
+
+  // Set observer for Network.responseReceived and store the response.
+  base::Value::Dict response = WaitForResponseNotificationWithUrl(url);
+
+  // Since this is a cached response, we expect that "isIpProtectionUsed" is
+  // set to false.
+  EXPECT_THAT(response.FindBool("isIpProtectionUsed"),
+              testing::Optional(false));
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest_IPProtection,
+                       ProxiedThirdPartyRequestsMarkedInProtocol) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  Attach();
+
+  SendCommandSync("Network.enable");
+
+  const content::URLLoaderInterceptor interceptor(
+      base::BindRepeating(&MockIppRequests, /*cached=*/false, "b.test"));
+
+  GURL first_party_url =
+      embedded_test_server()->GetURL("a.test", "/empty.html");
+
+  // // Navigate to the test site.
+  ASSERT_TRUE(content::NavigateToURL(web_contents(), first_party_url));
+
+  // Set observer for Network.responseReceived and store the response.
+  base::Value::Dict first_party_response =
+      WaitForResponseNotificationWithUrl(first_party_url);
+
+  // Ensure that the first party request is not marked as proxied.
+  EXPECT_THAT(first_party_response.FindBool("isIpProtectionUsed"),
+              testing::Optional(false));
+
+  GURL third_party_url =
+      embedded_test_server()->GetURL("b.test", "/empty.html");
+
+  std::string fetch_script = content::JsReplace(
+      "(fetch($1, { mode: 'no-cors' }).then(resp => resp.ok))",
+      third_party_url.spec());
+
+  EXPECT_EQ(true, content::EvalJs(web_contents(), fetch_script));
+
+  // Do the same for the third party request, but this time it should be
+  // marked as proxied.
+  base::Value::Dict third_party_response =
+      WaitForResponseNotificationWithUrl(third_party_url);
+
+  EXPECT_THAT(third_party_response.FindBool("isIpProtectionUsed"),
+              testing::Optional(true));
+}
+
+// TODO(crbug.com/440167934): add browser test for IP Proxy Status Available
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest_IPProtection,
+                       GetIpProxyStatus_MdlNotPopulated) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  Attach();
+
+  const content::URLLoaderInterceptor interceptor(
+      base::BindRepeating(&MockIppRequests, /*cached=*/false, "a.test"));
+
+  SendCommandSync("Network.enable");
+
+  const base::Value::Dict* result =
+      SendCommandSync("Network.getIPProtectionProxyStatus");
+
+  const std::string* status_string = result->FindString("status");
+
+  ASSERT_TRUE(status_string);
+  // Expect MaskedDomainListNotPopulated since flags are on
+  EXPECT_EQ(*status_string, "MaskedDomainListNotPopulated");
+}
+class DevToolsProtocolTest_IPProtectionDisabled
+    : public DevToolsProtocolTest_IPProtection {
+ public:
+  DevToolsProtocolTest_IPProtectionDisabled() {
+    scoped_feature_list_.InitWithFeaturesAndParameters(
+        {{net::features::kEnableIpProtectionProxy,
+          {{"IpPrivacyEnableIppInDevTools", "false"}}}},
+        {});
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(
+    DevToolsProtocolTest_IPProtectionDisabled,
+    DevToolsIPPIntegrationNotEnabled_BrowserInitiatedRequest) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  Attach();
+
+  SendCommandSync("Network.enable");
+
+  GURL url = embedded_test_server()->GetURL("a.test", "/empty.html");
+
+  // Navigate to the test site.
+  ASSERT_TRUE(content::NavigateToURL(web_contents(), url));
+
+  // Set observer for Network.responseReceived and store the response.
+  base::Value::Dict network_params =
+      WaitForNotification("Network.responseReceived", true);
+
+  base::Value::Dict* network_response = network_params.FindDict("response");
+  ASSERT_TRUE(network_response);
+
+  // Ensure that this request doesn't set isIpProtectionUsed.
+  EXPECT_THAT(network_response->FindBool("isIpProtectionUsed"), std::nullopt);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    DevToolsProtocolTest_IPProtectionDisabled,
+    DevToolsIPPIntegrationNotEnabled_RendererInitiatedRequest) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  Attach();
+
+  SendCommandSync("Network.enable");
+
+  content::URLLoaderInterceptor interceptor(
+      base::BindRepeating(&MockIppRequests, /*cached=*/false, "b.test"));
+
+  GURL first_party_url =
+      embedded_test_server()->GetURL("a.test", "/empty.html");
+
+  // Navigate to the test site.
+  ASSERT_TRUE(content::NavigateToURL(web_contents(), first_party_url));
+
+  // Set observer for Network.responseReceived and store the response.
+  base::Value::Dict first_party_response =
+      WaitForResponseNotificationWithUrl(first_party_url);
+
+  // Ensure that the first party request is not marked as proxied.
+  EXPECT_THAT(first_party_response.FindBool("isIpProtectionUsed"),
+              std::nullopt);
+
+  GURL third_party_url =
+      embedded_test_server()->GetURL("b.test", "/empty.html");
+
+  std::string fetch_script = content::JsReplace(
+      "(fetch($1, { mode: 'no-cors' }).then(resp => resp.ok))",
+      third_party_url.spec());
+
+  EXPECT_EQ(true, content::EvalJs(web_contents(), fetch_script));
+
+  // Do the same for the third party request, which should also not be set.
+  base::Value::Dict third_party_response =
+      WaitForResponseNotificationWithUrl(third_party_url);
+
+  EXPECT_THAT(third_party_response.FindBool("isIpProtectionUsed"),
+              std::nullopt);
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest_IPProtectionDisabled,
+                       GetIpProxyStatus_IPProtectionDisabled) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  Attach();
+
+  const content::URLLoaderInterceptor interceptor(
+      base::BindRepeating(&MockIppRequests, /*cached=*/false, "a.test"));
+
+  SendCommandSync("Network.enable");
+
+  const base::Value::Dict* result =
+      SendCommandSync("Network.getIPProtectionProxyStatus");
+
+  const std::string* status_string = result->FindString("status");
+
+  ASSERT_TRUE(status_string);
+  // Expect FeatureNotEnabled since IPProtectionDisabled
+  EXPECT_EQ(*status_string, "FeatureNotEnabled");
+}
+
+#if !BUILDFLAG(IS_ANDROID)
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest,
+                       OpensDevTools_FailsForNonBrowserTarget) {
+  AttachToTabTarget(web_contents());
+
+  const base::Value::Dict* result = SendCommandSync("Target.getTargets");
+  const base::Value::List* list = result->FindList("targetInfos");
+  ASSERT_TRUE(list->size() == 1);
+  const std::string targetId = *list->front().GetDict().FindString("targetId");
+
+  base::Value::Dict params;
+  params.Set("targetId", targetId);
+  result = SendCommandSync("Target.openDevTools", std::move(params));
+
+  EXPECT_EQ(*error()->FindString("message"), "Not allowed");
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, OpensDevTools_OpensForPageTarget) {
+  AttachToBrowserTarget();
+
+  const base::Value::Dict* result = SendCommandSync("Target.getTargets");
+  const base::Value::List* list = result->FindList("targetInfos");
+  ASSERT_TRUE(list->size() == 1);
+  const std::string targetId = *list->front().GetDict().FindString("targetId");
+
+  base::Value::Dict params;
+  params.Set("targetId", targetId);
+  result = SendCommandSync("Target.openDevTools", std::move(params));
+
+  const std::string devtools_target_id(*result->FindString("targetId"));
+
+  // CDP `Target.getTargets` result should contain the new DevTools target.
+  result = SendCommandSync("Target.getTargets");
+
+  base::Value::Dict devtools_target;
+  for (const auto& target : *result->FindList("targetInfos")) {
+    if (*target.GetDict().FindString("type") == "other") {
+      devtools_target = target.Clone().TakeDict();
+      break;
+    }
+  }
+
+  EXPECT_EQ(2u, result->FindList("targetInfos")->size());
+  EXPECT_EQ(devtools_target_id, *devtools_target.FindString("targetId"));
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, OpensDevTools_OpensForTabTarget) {
+  AttachToBrowserTarget();
+
+  base::Value::Dict tabFilter = base::Value::Dict();
+  tabFilter.Set("type", "tab");
+  tabFilter.Set("exclude", false);
+  base::Value::List targetFilter =
+      base::Value::List().Append(std::move(tabFilter));
+  base::Value::Dict getTargetParams = base::Value::Dict();
+  getTargetParams.Set("filter", std::move(targetFilter));
+
+  const base::Value::Dict* result =
+      SendCommandSync("Target.getTargets", std::move(getTargetParams));
+  base::Value::Dict tab_target;
+  for (const auto& target : *result->FindList("targetInfos")) {
+    if (*target.GetDict().FindString("type") == "tab") {
+      tab_target = target.Clone().TakeDict();
+      break;
+    }
+  }
+
+  base::Value::Dict params;
+  params.Set("targetId", *tab_target.FindString("targetId"));
+  result = SendCommandSync("Target.openDevTools", std::move(params));
+
+  const std::string devtools_target_id(*result->FindString("targetId"));
+
+  // CDP `Target.getTargets` result should contain the new DevTools target.
+  result = SendCommandSync("Target.getTargets");
+
+  base::Value::Dict devtools_target;
+  for (const auto& target : *result->FindList("targetInfos")) {
+    if (*target.GetDict().FindString("type") == "other") {
+      devtools_target = target.Clone().TakeDict();
+      break;
+    }
+  }
+
+  EXPECT_EQ(2u, result->FindList("targetInfos")->size());
+  EXPECT_EQ(devtools_target_id, *devtools_target.FindString("targetId"));
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, OpensDevTools_OpensUndocked) {
+  set_agent_host_can_close();
+
+  base::Value::Dict prefs;
+  prefs.Set("isUnderTest", "true");
+  prefs.Set("currentDockState", "undocked");
+  browser()->profile()->GetPrefs()->SetDict(prefs::kDevToolsPreferences,
+                                            std::move(prefs));
+  AttachToBrowserTarget();
+
+  base::Value::Dict tabFilter = base::Value::Dict();
+  tabFilter.Set("type", "tab");
+  tabFilter.Set("exclude", false);
+  base::Value::List targetFilter =
+      base::Value::List().Append(std::move(tabFilter));
+  base::Value::Dict getTargetParams = base::Value::Dict();
+  getTargetParams.Set("filter", std::move(targetFilter));
+
+  const base::Value::Dict* result =
+      SendCommandSync("Target.getTargets", std::move(getTargetParams));
+  base::Value::Dict tab_target;
+  for (const auto& target : *result->FindList("targetInfos")) {
+    if (*target.GetDict().FindString("type") == "tab") {
+      tab_target = target.Clone().TakeDict();
+      break;
+    }
+  }
+
+  base::Value::Dict params;
+  params.Set("targetId", *tab_target.FindString("targetId"));
+  result = SendCommandSync("Target.openDevTools", std::move(params));
+
+  const std::string devtools_target_id(*result->FindString("targetId"));
+
+  // CDP `Target.getTargets` result should contain the new DevTools target.
+  result = SendCommandSync("Target.getTargets");
+
+  base::Value::Dict devtools_target;
+  for (const auto& target : *result->FindList("targetInfos")) {
+    if (*target.GetDict().FindString("type") == "other") {
+      devtools_target = target.Clone().TakeDict();
+      break;
+    }
+  }
+
+  EXPECT_EQ(2u, result->FindList("targetInfos")->size());
+  EXPECT_EQ(devtools_target_id, *devtools_target.FindString("targetId"));
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 

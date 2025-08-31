@@ -123,10 +123,10 @@ NSString* const kSharingStatusFooterId = @"SharingStatusViewFooter";
 @property(nonatomic, strong) UILabel* titleLabel;
 
 // Subtitle string that will be displayed when the sharing is succesful.
-@property(nonatomic, strong) NSString* subtitleString;
+@property(nonatomic, copy) NSString* subtitleString;
 
 // Footer string that will be displayed when the sharing is succesful.
-@property(nonatomic, strong) NSString* footerString;
+@property(nonatomic, copy) NSString* footerString;
 
 // The button that cancels the sharing process.
 @property(nonatomic, strong) UIButton* cancelButton;
@@ -231,11 +231,11 @@ NSString* const kSharingStatusFooterId = @"SharingStatusViewFooter";
 }
 
 - (void)setSubtitleString:(NSString*)subtitleString {
-  _subtitleString = subtitleString;
+  _subtitleString = [subtitleString copy];
 }
 
 - (void)setFooterString:(NSString*)footerString {
-  _footerString = footerString;
+  _footerString = [footerString copy];
 }
 
 - (void)setURL:(const GURL&)URL {
@@ -244,19 +244,9 @@ NSString* const kSharingStatusFooterId = @"SharingStatusViewFooter";
 
 #pragma mark - UITextViewDelegate
 
-#if __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (BOOL)textView:(UITextView*)textView
-    shouldInteractWithURL:(NSURL*)URL
-                  inRange:(NSRange)characterRange
-              interaction:(UITextItemInteraction)interaction {
-  [self.delegate changePasswordLinkWasTapped];
-  return NO;
-}
-#endif
-
 - (UIAction*)textView:(UITextView*)textView
     primaryActionForTextItem:(UITextItem*)textItem
-               defaultAction:(UIAction*)defaultAction API_AVAILABLE(ios(17.0)) {
+               defaultAction:(UIAction*)defaultAction {
   __weak __typeof(self) weakSelf = self;
   return [UIAction actionWithHandler:^(UIAction* action) {
     [weakSelf.delegate changePasswordLinkWasTapped];
@@ -692,7 +682,7 @@ NSString* const kSharingStatusFooterId = @"SharingStatusViewFooter";
 
 // Helper for creating the done button.
 - (UIButton*)createDoneButton {
-  UIButton* doneButton = PrimaryActionButton(YES);
+  UIButton* doneButton = PrimaryActionButton();
   [doneButton addTarget:self
                  action:@selector(doneButtonTapped)
        forControlEvents:UIControlEventTouchUpInside];

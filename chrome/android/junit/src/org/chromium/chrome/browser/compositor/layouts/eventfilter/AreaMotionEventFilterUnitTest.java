@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.compositor.layouts.eventfilter;
 
+import static org.mockito.ArgumentMatchers.anyFloat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import android.content.Context;
@@ -30,7 +32,7 @@ import org.chromium.base.test.BaseRobolectricTestRunner;
 @Config(manifest = Config.NONE)
 public class AreaMotionEventFilterUnitTest {
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Mock private MotionEventHandler mHandler;
+    @Mock private AreaMotionEventHandler mHandler;
 
     private AreaMotionEventFilter mEventFilter;
     private RectF mTriggerRect;
@@ -116,6 +118,21 @@ public class AreaMotionEventFilterUnitTest {
     }
 
     @Test
+    public void testHoverExitInFilterArea() {
+        // Simulate an ACTION_HOVER_ENTER into the filter area.
+        mEventFilter.onInterceptHoverEvent(mHoverEnterEvent);
+        mEventFilter.onHoverEvent(mHoverEnterEvent);
+
+        // Intercept an ACTION_HOVER_EXIT inside the filter area.
+        mHoverExitEvent.setLocation(10.f, 10.f);
+        mEventFilter.onInterceptHoverEvent(mHoverExitEvent);
+
+        // Handle the hover exit event.
+        mEventFilter.onHoverEvent(mHoverExitEvent);
+        verify(mHandler).onHoverExit(/* inArea= */ true);
+    }
+
+    @Test
     public void testHoverExitFromFilterArea_OnActionExit() {
         // Simulate an ACTION_HOVER_ENTER into the filter area.
         mEventFilter.onInterceptHoverEvent(mHoverEnterEvent);
@@ -126,7 +143,7 @@ public class AreaMotionEventFilterUnitTest {
 
         // Handle the hover exit event.
         mEventFilter.onHoverEvent(mHoverExitEvent);
-        verify(mHandler).onHoverExit();
+        verify(mHandler).onHoverExit(/* inArea= */ false);
     }
 
     @Test
@@ -143,11 +160,11 @@ public class AreaMotionEventFilterUnitTest {
         mEventFilter.onHoverEvent(mHoverMoveEvent);
         // Moving outside the filter area will be considered an ACTION_HOVER_EXIT for further
         // handling.
-        verify(mHandler).onHoverExit();
+        verify(mHandler).onHoverExit(/* inArea= */ false);
     }
 
     @Test
-    public void testGenericMotionEvent() {
+    public void testGenericMotionEvent_interceptActionGeneratingEvents() {
         verifyGenericMotionEvent(
                 MotionEvent.ACTION_BUTTON_RELEASE,
                 MotionEvent.TOOL_TYPE_MOUSE,
@@ -156,21 +173,33 @@ public class AreaMotionEventFilterUnitTest {
                 MotionEvent.ACTION_BUTTON_PRESS,
                 MotionEvent.TOOL_TYPE_MOUSE,
                 InputDevice.SOURCE_CLASS_POINTER);
+
+        verifyGenericMotionEvent(
+                MotionEvent.ACTION_BUTTON_RELEASE,
+                MotionEvent.TOOL_TYPE_FINGER,
+                InputDevice.SOURCE_MOUSE);
+        verifyGenericMotionEvent(
+                MotionEvent.ACTION_BUTTON_PRESS,
+                MotionEvent.TOOL_TYPE_FINGER,
+                InputDevice.SOURCE_MOUSE);
+
+        verify(mHandler, never()).onScroll(anyFloat(), anyFloat());
+    }
+
+    @Test
+    public void testGenericMotionEvent_handleMouseScroll() {
         verifyGenericMotionEvent(
                 MotionEvent.ACTION_SCROLL,
                 MotionEvent.TOOL_TYPE_MOUSE,
                 InputDevice.SOURCE_CLASS_POINTER);
+        verify(mHandler).onScroll(anyFloat(), anyFloat());
+    }
 
-        verifyGenericMotionEvent(
-                MotionEvent.ACTION_BUTTON_RELEASE,
-                MotionEvent.TOOL_TYPE_FINGER,
-                InputDevice.SOURCE_MOUSE);
-        verifyGenericMotionEvent(
-                MotionEvent.ACTION_BUTTON_PRESS,
-                MotionEvent.TOOL_TYPE_FINGER,
-                InputDevice.SOURCE_MOUSE);
+    @Test
+    public void testGenericMotionEvent_handleTrackpadScroll() {
         verifyGenericMotionEvent(
                 MotionEvent.ACTION_SCROLL, MotionEvent.TOOL_TYPE_FINGER, InputDevice.SOURCE_MOUSE);
+        verify(mHandler).onScroll(anyFloat(), anyFloat());
     }
 
     private void verifyGenericMotionEvent(int action, int toolType, int source) {

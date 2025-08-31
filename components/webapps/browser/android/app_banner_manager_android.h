@@ -111,8 +111,7 @@ class AppBannerManagerAndroid
       const base::android::JavaParamRef<jobject>& java_web_contents);
 
   // Returns true if the banner pipeline is currently running.
-  bool IsRunningForTesting(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>& jobj);
+  bool IsRunningForTesting(JNIEnv* env);
 
   // Returns the state of the processing pipeline for testing purposes.
   int GetPipelineStatusForTesting(JNIEnv* env);
@@ -123,7 +122,6 @@ class AppBannerManagerAndroid
   // Returns |false| if an icon fetch couldn't be kicked off.
   void OnAppDetailsRetrieved(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       int request_id,
       const base::android::JavaParamRef<jobject>& japp_data,
       const base::android::JavaParamRef<jstring>& japp_title,
@@ -187,6 +185,7 @@ class AppBannerManagerAndroid
   base::WeakPtr<AppBannerManager> GetWeakPtrForThisNavigation() override;
   void InvalidateWeakPtrsForThisNavigation() override;
   void ResetCurrentPageData() override;
+  void InstallableWebAppStatusUpdate() override;
 
   // Use as a callback to notify |this| after an install event such as a dialog
   // being cancelled or an app being installed has occurred.

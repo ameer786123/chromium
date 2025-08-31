@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/script/classic_pending_script.h"
 
 #include "base/feature_list.h"
+#include "base/system/sys_info.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/loader/lcp_critical_path_predictor_util.h"
 #include "third_party/blink/public/mojom/script/script_type.mojom-blink-forward.h"
@@ -63,10 +64,10 @@ ClassicPendingScript* ClassicPendingScript::Fetch(
     Document& element_document,
     const ScriptFetchOptions& options,
     CrossOriginAttributeValue cross_origin,
-    const WTF::TextEncoding& encoding,
+    const TextEncoding& encoding,
     ScriptElementBase* element,
     FetchParameters::DeferOption defer,
-    scheduler::TaskAttributionInfo* parent_task) {
+    scheduler::TaskAttributionInfo* task_state) {
   ExecutionContext* context = element_document.GetExecutionContext();
   FetchParameters params(options.CreateFetchParameters(
       url, context->GetSecurityOrigin(), context->GetCurrentWorld(),
@@ -76,7 +77,7 @@ ClassicPendingScript* ClassicPendingScript::Fetch(
       MakeGarbageCollected<ClassicPendingScript>(
           element, TextPosition::MinimumPosition(), KURL(), KURL(), String(),
           ScriptSourceLocationType::kExternalFile, options,
-          /*is_external=*/true, parent_task);
+          /*is_external=*/true, task_state);
 
   // [Intervention]
   // For users on slow connections, we want to avoid blocking the parser in
@@ -121,11 +122,11 @@ ClassicPendingScript* ClassicPendingScript::CreateInline(
     const String& source_text,
     ScriptSourceLocationType source_location_type,
     const ScriptFetchOptions& options,
-    scheduler::TaskAttributionInfo* parent_task) {
+    scheduler::TaskAttributionInfo* task_state) {
   ClassicPendingScript* pending_script =
       MakeGarbageCollected<ClassicPendingScript>(
           element, starting_position, source_url, base_url, source_text,
-          source_location_type, options, /*is_external=*/false, parent_task);
+          source_location_type, options, /*is_external=*/false, task_state);
   pending_script->CheckState();
   return pending_script;
 }
@@ -139,8 +140,8 @@ ClassicPendingScript::ClassicPendingScript(
     ScriptSourceLocationType source_location_type,
     const ScriptFetchOptions& options,
     bool is_external,
-    scheduler::TaskAttributionInfo* parent_task)
-    : PendingScript(element, starting_position, parent_task),
+    scheduler::TaskAttributionInfo* task_state)
+    : PendingScript(element, starting_position, task_state),
       options_(options),
       source_url_for_inline_script_(source_url_for_inline_script),
       base_url_for_inline_script_(base_url_for_inline_script),
@@ -248,7 +249,12 @@ bool ClassicPendingScript::IsEligibleForLowPriorityAsyncScriptExecution()
   DCHECK_EQ(GetSchedulingType(), ScriptSchedulingType::kAsync);
 
   static const bool feature_enabled =
-      base::FeatureList::IsEnabled(features::kLowPriorityAsyncScriptExecution);
+      base::FeatureList::IsEnabled(
+          features::kLowPriorityAsyncScriptExecution) &&
+      !base::SysInfo::IsLowEndDevice() &&
+      (base::SysInfo::AmountOfPhysicalMemory().InGiBF() >=
+       features::kMinimumPhysicalMemoryForLowPriorityAsyncScriptExecution
+           .Get());
   if (!feature_enabled) {
     return false;
   }

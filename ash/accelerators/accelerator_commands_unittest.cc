@@ -9,6 +9,7 @@
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
+#include "base/strings/stringprintf.h"
 #include "chromeos/ash/components/audio/cras_audio_handler.h"
 #include "chromeos/ash/components/dbus/audio/audio_node.h"
 #include "chromeos/ash/components/dbus/audio/fake_cras_audio_client.h"
@@ -97,15 +98,15 @@ TEST_F(AcceleratorCommandsTest, CycleSwapPrimaryDisplay) {
       display_manager()->GetConnectedDisplayIdList();
 
   ShiftPrimaryDisplay();
-  int64_t primary_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t primary_id = display::Screen::Get()->GetPrimaryDisplay().id();
   EXPECT_EQ(id_list[1], primary_id);
 
   ShiftPrimaryDisplay();
-  primary_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  primary_id = display::Screen::Get()->GetPrimaryDisplay().id();
   EXPECT_EQ(id_list[2], primary_id);
 
   ShiftPrimaryDisplay();
-  primary_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  primary_id = display::Screen::Get()->GetPrimaryDisplay().id();
   EXPECT_EQ(id_list[0], primary_id);
 }
 
@@ -129,15 +130,15 @@ TEST_F(AcceleratorCommandsTest, CycleMixedMirrorModeSwapPrimaryDisplay) {
   EXPECT_EQ(2U, display_manager()->GetNumDisplays());
 
   ShiftPrimaryDisplay();
-  int64_t primary_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t primary_id = display::Screen::Get()->GetPrimaryDisplay().id();
   EXPECT_EQ(id_list[2], primary_id);
 
   ShiftPrimaryDisplay();
-  primary_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  primary_id = display::Screen::Get()->GetPrimaryDisplay().id();
   EXPECT_EQ(id_list[0], primary_id);
 
   ShiftPrimaryDisplay();
-  primary_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  primary_id = display::Screen::Get()->GetPrimaryDisplay().id();
   EXPECT_EQ(id_list[2], primary_id);
 }
 

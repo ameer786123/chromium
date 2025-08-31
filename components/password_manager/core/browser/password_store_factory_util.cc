@@ -15,6 +15,7 @@
 #include "components/password_manager/core/browser/http_credentials_cleaner.h"
 #include "components/password_manager/core/browser/old_google_credentials_cleaner.h"
 #include "components/password_manager/core/browser/os_crypt_async_migrator.h"
+#include "components/password_manager/core/browser/password_change_backup_password_cleaner.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
 #include "components/password_manager/core/browser/password_store/login_database.h"
 #include "components/password_manager/core/browser/password_store/password_store_backend.h"
@@ -90,6 +91,10 @@ void SanitizeAndMigrateCredentials(
           store, is_account_store, prefs));
 #endif
 
+  cleaning_tasks_runner->MaybeAddCleaningTask(
+      std::make_unique<password_manager::PasswordChangeBackupPasswordCleaner>(
+          is_account_store, store, prefs));
+
   if (cleaning_tasks_runner->HasPendingTasks()) {
     // The runner will delete itself once the clearing tasks are done, thus we
     // are releasing ownership here.
@@ -104,29 +109,13 @@ void SanitizeAndMigrateCredentials(
 
 void IntermediateCallbackForSettingPrefs(
     base::WeakPtr<PasswordStoreBackend> backend,
-    base::RepeatingCallback<void(LoginDatabase::LoginDatabaseEmptinessState)>
-        set_prefs_callback,
-    LoginDatabase::LoginDatabaseEmptinessState value) {
+    LoginDatabase::IsEmptyCallback set_prefs_callback,
+    bool value) {
   // When a `PasswordStoreBackend` is shut down, the weak pointers are
   // invalidated.
   if (backend) {
     set_prefs_callback.Run(value);
   }
-}
-
-void SetEmptyStorePref(PrefService* prefs,
-                       const std::string& pref,
-                       LoginDatabase::LoginDatabaseEmptinessState value) {
-  CHECK(prefs);
-  prefs->SetBoolean(pref, value.no_login_found);
-}
-
-void SetAutofillableCredentialsStorePref(
-    PrefService* prefs,
-    const std::string& pref,
-    LoginDatabase::LoginDatabaseEmptinessState value) {
-  CHECK(prefs);
-  prefs->SetBoolean(pref, value.autofillable_credentials_exist);
 }
 
 }  // namespace password_manager

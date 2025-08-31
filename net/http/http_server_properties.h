@@ -66,13 +66,8 @@ struct NET_EXPORT SupportsQuic {
 struct NET_EXPORT ServerNetworkStats {
   ServerNetworkStats() : bandwidth_estimate(quic::QuicBandwidth::Zero()) {}
 
-  bool operator==(const ServerNetworkStats& other) const {
-    return srtt == other.srtt && bandwidth_estimate == other.bandwidth_estimate;
-  }
-
-  bool operator!=(const ServerNetworkStats& other) const {
-    return !this->operator==(other);
-  }
+  friend bool operator==(const ServerNetworkStats&,
+                         const ServerNetworkStats&) = default;
 
   base::TimeDelta srtt;
   quic::QuicBandwidth bandwidth_estimate;
@@ -279,22 +274,16 @@ class NET_EXPORT HttpServerProperties
 
   // Returns true if |server| has required HTTP/1.1 via HTTP/2 error code, in
   // the context of |network_anonymization_key|.
-  //
-  // Any relevant HostMappingRules must already have been applied to `server`.
   bool RequiresHTTP11(const url::SchemeHostPort& server,
                       const NetworkAnonymizationKey& network_anonymization_key);
 
   // Require HTTP/1.1 on subsequent connections, in the context of
   // |network_anonymization_key|.  Not persisted.
-  //
-  // Any relevant HostMappingRules must already have been applied to `server`.
   void SetHTTP11Required(
       const url::SchemeHostPort& server,
       const NetworkAnonymizationKey& network_anonymization_key);
 
   // Modify SSLConfig to force HTTP/1.1 if necessary.
-  //
-  // Any relevant HostMappingRules must already have been applied to `server`.
   void MaybeForceHTTP11(
       const url::SchemeHostPort& server,
       const NetworkAnonymizationKey& network_anonymization_key,

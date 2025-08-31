@@ -8,7 +8,6 @@
 
 #include "ash/constants/ash_switches.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ash/login/existing_user_controller.h"
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
 #include "chrome/browser/ash/login/test/session_manager_state_waiter.h"
@@ -19,14 +18,13 @@
 #include "chrome/browser/ash/policy/test_support/embedded_policy_test_server_mixin.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part_ash.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/test/base/fake_gaia_mixin.h"
 #include "chromeos/ash/components/dbus/session_manager/fake_session_manager_client.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "components/metrics/metrics_service.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_store.h"
 #include "components/policy/core/common/cloud/test/policy_builder.h"
-#include "components/policy/core/common/device_local_account_type.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "content/public/test/browser_test.h"
 
@@ -98,10 +96,6 @@ class K12AgeClassificationMetricsProviderTest
     : public policy::DevicePolicyCrosBrowserTest,
       public testing::WithParamInterface<TestCase> {
  protected:
-  K12AgeClassificationMetricsProviderTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kK12AgeClassificationMetricsProvider);
-  }
   void SetUpInProcessBrowserTestFixture() override {
     policy::DevicePolicyCrosBrowserTest::SetUpInProcessBrowserTestFixture();
     InitializePolicy();
@@ -142,7 +136,6 @@ class K12AgeClassificationMetricsProviderTest
   }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
   ash::LoggedInUserMixin logged_in_user_mixin_{
       &mixin_host_, /*test_base=*/this, embedded_test_server(),
       ash::LoggedInUserMixin::LogInType::kManaged};

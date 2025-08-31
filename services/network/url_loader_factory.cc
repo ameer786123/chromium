@@ -49,7 +49,7 @@ namespace {
 // TrustedParams based on a member pointer, or using a fallback pointer.
 template <typename T>
 ObserverWrapper<T> CreateObserverWrapper(
-    const std::optional<ResourceRequest::TrustedParams> trusted_params,
+    const std::optional<ResourceRequest::TrustedParams>& trusted_params,
     mojo::PendingRemote<T> ResourceRequest::TrustedParams::* remote_member_ptr,
     T* fallback_ptr) {
   mojo::PendingRemote<T> remote_to_pass;
@@ -68,7 +68,7 @@ ObserverWrapper<T> CreateObserverWrapper(
 // for the fallback, simplifying calls where the fallback is held in a Remote.
 template <typename T>
 ObserverWrapper<T> CreateObserverWrapper(
-    const std::optional<ResourceRequest::TrustedParams> trusted_params,
+    const std::optional<ResourceRequest::TrustedParams>& trusted_params,
     mojo::PendingRemote<T> ResourceRequest::TrustedParams::* remote_member_ptr,
     mojo::Remote<T>& remote_for_fallback_ptr) {
   return CreateObserverWrapper<T>(
@@ -384,7 +384,11 @@ void URLLoaderFactory::CreateLoaderAndStartWithSyncClient(
       std::move(trust_token_observer), std::move(url_loader_network_observer),
       std::move(devtools_observer), std::move(device_bound_session_observer),
       std::move(accept_ch_frame_observer),
-      resource_request.shared_storage_writable_eligible);
+      resource_request.shared_storage_writable_eligible,
+      *context_->GetSharedResourceChecker(),
+      context_->MaybeCreateDurableMessage(
+          resource_request.throttling_profile_id,
+          resource_request.devtools_request_id));
 
   cors_url_loader_factory_->OnURLLoaderCreated(std::move(loader));
 }

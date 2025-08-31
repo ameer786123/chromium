@@ -11,12 +11,12 @@
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
 #include "chrome/browser/ash/login/test/login_manager_mixin.h"
 #include "chrome/browser/ash/login/test/session_manager_state_waiter.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
 #include "chrome/browser/ash/policy/core/device_policy_cros_test_helper.h"
 #include "chrome/browser/ash/policy/test_support/embedded_policy_test_server_mixin.h"
 #include "chrome/browser/ash/policy/test_support/remote_commands_service_mixin.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "chromeos/ash/components/login/login_state/login_state.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
 #include "chromeos/dbus/power/fake_power_manager_client.h"
 #include "components/policy/core/common/remote_commands/test_support/remote_command_builders.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
@@ -66,6 +66,13 @@ class DeviceCommandRebootJobKioskBrowserTest
     : public DeviceCommandRebootBaseTest<MixinBasedInProcessBrowserTest>,
       public testing::WithParamInterface<ash::KioskMixin::Config> {
  public:
+  DeviceCommandRebootJobKioskBrowserTest() {
+    // Force allow Chrome Apps in Kiosk, since they are default disabled since
+    // M138.
+    scoped_feature_list_.InitFromCommandLine("AllowChromeAppsInKioskSessions",
+                                             "");
+  }
+
   void SetUpOnMainThread() override {
     DeviceCommandRebootBaseTest<
         MixinBasedInProcessBrowserTest>::SetUpOnMainThread();
@@ -82,6 +89,7 @@ class DeviceCommandRebootJobKioskBrowserTest
 
   ash::KioskMixin kiosk_{&mixin_host_,
                          /*cached_configuration=*/GetParam()};
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_P(DeviceCommandRebootJobKioskBrowserTest,
@@ -129,7 +137,7 @@ class DeviceCommandRebootJobAutoLaunchManagedGuestSessionBrowserTest
 
     // Set up MGS auto-launch mode.
     em::ChromeDeviceSettingsProto& proto(device_policy()->payload());
-    ash::AppendAutoLaunchManagedGuestSessionAccount(&proto);
+    ash::test::AppendAutoLaunchManagedGuestSessionAccount(&proto);
 
     policy_helper()->RefreshDevicePolicy();
   }

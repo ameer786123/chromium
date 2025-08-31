@@ -84,7 +84,8 @@ enum class AngleContextVirtualizationGroup {
   kDefault = -1,
   kDrDc = 1,
   kGLImageProcessor = 2,
-  kWebViewRenderThread = 3
+  kWebViewRenderThread = 3,
+  kAndroidVideoEncoder = 4,
 };
 
 struct GL_EXPORT GLContextAttribs {
@@ -97,7 +98,6 @@ struct GL_EXPORT GLContextAttribs {
   GLContextAttribs& operator=(GLContextAttribs&& other);
 
   GpuPreference gpu_preference = GpuPreference::kLowPower;
-  bool bind_generates_resource = true;
   bool webgl_compatibility_context = false;
   bool global_texture_share_group = false;
   bool global_semaphore_share_group = false;

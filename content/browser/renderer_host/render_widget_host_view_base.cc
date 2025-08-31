@@ -11,7 +11,9 @@
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/observer_list.h"
+#include "base/time/time.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "components/input/event_with_latency_info.h"
@@ -256,11 +258,11 @@ void RenderWidgetHostViewBase::CopyFromExactSurface(
 }
 
 #if BUILDFLAG(IS_ANDROID)
-void RenderWidgetHostViewBase::CopyFromExactSurfaceWithIpcPriority(
+void RenderWidgetHostViewBase::CopyFromExactSurfaceWithIpcDelay(
     const gfx::Rect& src_rect,
     const gfx::Size& output_size,
     base::OnceCallback<void(const SkBitmap&)> callback,
-    CopyOutputIpcPriority ipc_priority) {
+    base::TimeDelta ipc_delay) {
   NOTIMPLEMENTED_LOG_ONCE();
   std::move(callback).Run(SkBitmap());
 }
@@ -414,7 +416,7 @@ bool RenderWidgetHostViewBase::ShouldInitiateStylusWriting() {
   return false;
 }
 
-bool RenderWidgetHostViewBase::RequestRepaintForTesting() {
+bool RenderWidgetHostViewBase::RequestRepaintOnNewSurface() {
   return false;
 }
 
@@ -476,7 +478,7 @@ void RenderWidgetHostViewBase::UpdateScreenInfo() {
           ->GetPlatformRuntimeProperties()
           .supports_per_window_scaling) {
     const float window_scale =
-        display::Screen::GetScreen()
+        display::Screen::Get()
             ->GetPreferredScaleFactorForView(GetNativeView())
             .value_or(1.0f);
     auto& screen = new_screen_infos.mutable_current();
@@ -807,7 +809,7 @@ display::ScreenInfos RenderWidgetHostViewBase::GetNewScreenInfosForUpdate() {
 
   display::ScreenInfos screen_infos;
 
-  if (auto* screen = display::Screen::GetScreen()) {
+  if (auto* screen = display::Screen::Get()) {
     gfx::NativeView native_view = GetNativeView();
     const auto& display = native_view
                               ? screen->GetDisplayNearestView(native_view)

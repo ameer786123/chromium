@@ -9,12 +9,11 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/site_isolation_policy.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/isolated_world_ids.h"
@@ -24,9 +23,14 @@
 #include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
+
+#if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN)
+#include "content/public/common/url_constants.h"
+#endif  // !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN)
 
 namespace extensions {
 
@@ -54,16 +58,6 @@ class DisableExtensionBrowserTest : public ExtensionBrowserTest {
     ExtensionBrowserTest::TearDownOnMainThread();
   }
 
-  // We always navigate in a new tab because when we disable the extension, it
-  // closes all tabs for that extension. If we only opened in the current tab,
-  // this would result in the only open tab being closed, and the test
-  // quitting.
-  void NavigateToUrlInNewTab(const GURL& url) {
-    ui_test_utils::NavigateToURLWithDisposition(
-        browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
-        ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
-  }
-
   scoped_refptr<const Extension> extension_;
   ExtensionId extension_id_;
   GURL extension_resource_url_;
@@ -77,8 +71,8 @@ IN_PROC_BROWSER_TEST_F(
     DisableExtensionBrowserTest,
     PromptToReEnableExtensionsOnNavigation_PermissionsIncrease) {
   // Disable the extension due to a permissions increase.
-  extension_service()->DisableExtension(
-      extension_id_, disable_reason::DISABLE_PERMISSIONS_INCREASE);
+  extension_registrar()->DisableExtension(
+      extension_id_, {disable_reason::DISABLE_PERMISSIONS_INCREASE});
   EXPECT_TRUE(registry_->disabled_extensions().Contains(extension_id_));
 
   EXPECT_THAT(prefs_->GetDisableReasons(extension_id_),
@@ -87,9 +81,12 @@ IN_PROC_BROWSER_TEST_F(
 
   {
     // Visit an associated url and deny the prompt. The extension should remain
-    // disabled.
+    // disabled. We always navigate in a new tab because when we disable the
+    // extension, it closes all tabs for that extension. If we only opened in
+    // the current tab, this would result in the only open tab being closed,
+    // and the test quitting.
     ScopedTestDialogAutoConfirm auto_deny(ScopedTestDialogAutoConfirm::CANCEL);
-    NavigateToUrlInNewTab(extension_resource_url_);
+    NavigateToURLInNewTab(extension_resource_url_);
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(registry_->disabled_extensions().Contains(extension_id_));
     EXPECT_THAT(prefs_->GetDisableReasons(extension_id_),
@@ -102,7 +99,7 @@ IN_PROC_BROWSER_TEST_F(
     // re-enabled.
     ScopedTestDialogAutoConfirm auto_accept(
         ScopedTestDialogAutoConfirm::ACCEPT);
-    NavigateToUrlInNewTab(extension_resource_url_);
+    NavigateToURLInNewTab(extension_resource_url_);
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(registry_->enabled_extensions().Contains(extension_id_));
     EXPECT_TRUE(prefs_->GetDisableReasons(extension_id_).empty());
@@ -114,8 +111,8 @@ IN_PROC_BROWSER_TEST_F(
 IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
                        PromptToReEnableExtensionsOnNavigation_UserAction) {
   // Disable the extension for something other than a permissions increase.
-  extension_service()->DisableExtension(extension_id_,
-                                        disable_reason::DISABLE_USER_ACTION);
+  extension_registrar()->DisableExtension(
+      extension_id_, {disable_reason::DISABLE_USER_ACTION});
   EXPECT_TRUE(registry_->disabled_extensions().Contains(extension_id_));
   EXPECT_THAT(
       prefs_->GetDisableReasons(extension_id_),
@@ -126,7 +123,7 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
     // As such, the extension should stay disabled.
     ScopedTestDialogAutoConfirm auto_accept(
         ScopedTestDialogAutoConfirm::ACCEPT);
-    NavigateToUrlInNewTab(extension_resource_url_);
+    NavigateToURLInNewTab(extension_resource_url_);
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(registry_->disabled_extensions().Contains(extension_id_));
     EXPECT_THAT(
@@ -148,8 +145,8 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
   EXPECT_EQ(hosted_app, registry_->enabled_extensions().GetExtensionOrAppByURL(
                             kHostedAppUrl));
 
-  extension_service()->DisableExtension(
-      kHostedAppId, disable_reason::DISABLE_PERMISSIONS_INCREASE);
+  extension_registrar()->DisableExtension(
+      kHostedAppId, {disable_reason::DISABLE_PERMISSIONS_INCREASE});
   EXPECT_TRUE(registry_->disabled_extensions().Contains(kHostedAppId));
   EXPECT_THAT(prefs_->GetDisableReasons(kHostedAppId),
               testing::UnorderedElementsAre(
@@ -162,7 +159,7 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
     // See crbug.com/678631.
     ScopedTestDialogAutoConfirm auto_accept(
         ScopedTestDialogAutoConfirm::ACCEPT);
-    NavigateToUrlInNewTab(kHostedAppUrl);
+    NavigateToURLInNewTab(kHostedAppUrl);
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(registry_->disabled_extensions().Contains(kHostedAppId));
     EXPECT_THAT(prefs_->GetDisableReasons(kHostedAppId),
@@ -180,9 +177,8 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
 
   // Navigate to a page with a subframe.
   GURL main_url = embedded_test_server()->GetURL("/iframe.html");
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), main_url));
-  content::WebContents* web_contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
+  auto* web_contents = GetActiveWebContents();
+  ASSERT_TRUE(NavigateToURL(web_contents, main_url));
   EXPECT_EQ(web_contents->GetPrimaryMainFrame()->GetLastCommittedURL(),
             main_url);
 
@@ -211,8 +207,8 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
   EXPECT_TRUE(subframe->GetProcess()->IsProcessLockedToSiteForTesting());
 
   // Disable the extension.
-  extension_service()->DisableExtension(extension->id(),
-                                        disable_reason::DISABLE_USER_ACTION);
+  extension_registrar()->DisableExtension(
+      extension->id(), {disable_reason::DISABLE_USER_ACTION});
   EXPECT_TRUE(registry_->disabled_extensions().Contains(extension->id()));
 
   // Go back and then forward.  This should go back to the original URL in the
@@ -255,7 +251,7 @@ IN_PROC_BROWSER_TEST_F(DisableExtensionBrowserTest,
 #endif  // !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN)
 
   // Re-enable the extension.
-  extension_service()->EnableExtension(extension->id());
+  extension_registrar()->EnableExtension(extension->id());
   EXPECT_TRUE(registry_->enabled_extensions().Contains(extension->id()));
 
   // Navigate the subframe to the extension URL again.  This shouldn't
@@ -276,7 +272,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, NoExtensionsInRefererHeader) {
           test_data_dir_.AppendASCII("simple_with_file"));
   ASSERT_TRUE(extension);
   GURL page_url = extension->GetResourceURL("file.html");
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), page_url));
+  auto* web_contents = GetActiveWebContents();
+  ASSERT_TRUE(NavigateToURL(web_contents, page_url));
 
   // Click a link in the extension.
   GURL target_url = embedded_test_server()->GetURL("/echoheader?referer");
@@ -286,8 +283,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, NoExtensionsInRefererHeader) {
       document.body.appendChild(a);
       a.click();
   )";
-  content::WebContents* web_contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
   content::TestNavigationObserver nav_observer(web_contents, 1);
   ExecuteScriptAsync(web_contents,
                      content::JsReplace(kScriptTemplate, target_url));

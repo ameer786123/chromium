@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/page_action/page_action_model.h"
 
 #include "base/types/pass_key.h"
+#include "chrome/browser/ui/views/page_action/page_action_controller.h"
 #include "chrome/browser/ui/views/page_action/page_action_model_observer.h"
 #include "ui/actions/actions.h"
 
@@ -14,7 +15,8 @@ namespace {
 using ::actions::ActionItem;
 }  // namespace
 
-PageActionModel::PageActionModel() = default;
+PageActionModel::PageActionModel(bool is_ephemeral)
+    : is_ephemeral_(is_ephemeral) {}
 
 PageActionModel::~PageActionModel() {
   observer_list_.Notify(
@@ -30,21 +32,25 @@ void PageActionModel::SetShowRequested(base::PassKey<PageActionController>,
   NotifyChange();
 }
 
-void PageActionModel::SetShowSuggestionChip(base::PassKey<PageActionController>,
-                                            bool show) {
-  if (show_suggestion_chip_ == show) {
+void PageActionModel::SetShouldShowSuggestionChip(
+    base::PassKey<PageActionController>,
+    bool show) {
+  if (should_show_suggestion_chip_ == show) {
     return;
   }
-  show_suggestion_chip_ = show;
+  should_show_suggestion_chip_ = show;
   NotifyChange();
 }
 
-void PageActionModel::SetShouldAnimateChip(base::PassKey<PageActionController>,
-                                           bool animate) {
-  if (should_animate_ == animate) {
+void PageActionModel::SetSuggestionChipConfig(
+    base::PassKey<PageActionController>,
+    const SuggestionChipConfig& config) {
+  if (should_animate_ == config.should_animate &&
+      should_announce_chip_ == config.should_announce_chip) {
     return;
   }
-  should_animate_ = animate;
+  should_animate_ = config.should_animate;
+  should_announce_chip_ = config.should_announce_chip;
   NotifyChange();
 }
 
@@ -110,12 +116,20 @@ bool PageActionModel::GetVisible() const {
          show_requested_ && !has_pinned_icon_;
 }
 
-bool PageActionModel::GetShowSuggestionChip() const {
-  return show_suggestion_chip_;
+bool PageActionModel::IsChipShowing() const {
+  return is_chip_showing_;
+}
+
+bool PageActionModel::ShouldShowSuggestionChip() const {
+  return should_show_suggestion_chip_;
 }
 
 bool PageActionModel::GetShouldAnimateChip() const {
   return should_animate_;
+}
+
+bool PageActionModel::GetShouldAnnounceChip() const {
+  return should_announce_chip_;
 }
 
 const ui::ImageModel& PageActionModel::GetImage() const {
@@ -139,6 +153,10 @@ const std::u16string& PageActionModel::GetTooltipText() const {
 
 bool PageActionModel::GetActionItemIsShowingBubble() const {
   return action_item_is_showing_bubble_;
+}
+
+bool PageActionModel::GetActionActive() const {
+  return action_active_;
 }
 
 void PageActionModel::SetOverrideText(
@@ -192,6 +210,26 @@ void PageActionModel::SetShouldHidePageAction(
   NotifyChange();
 }
 
+void PageActionModel::SetIsChipShowing(base::PassKey<PageActionController>,
+                                       bool is_chip_showing) {
+  if (is_chip_showing_ == is_chip_showing) {
+    return;
+  }
+
+  is_chip_showing_ = is_chip_showing;
+  NotifyChange();
+}
+
+void PageActionModel::SetActionActive(base::PassKey<PageActionController>,
+                                      bool is_active) {
+  if (action_active_ == is_active) {
+    return;
+  }
+
+  action_active_ = is_active;
+  NotifyChange();
+}
+
 void PageActionModel::AddObserver(PageActionModelObserver* observer) {
   observer_list_.AddObserver(observer);
 }
@@ -206,6 +244,10 @@ void PageActionModel::NotifyChange() {
   base::AutoReset<bool> auto_reset(&is_notifying_observers_, true);
   observer_list_.Notify(&PageActionModelObserver::OnPageActionModelChanged,
                         *this);
+}
+
+bool PageActionModel::IsEphemeral() const {
+  return is_ephemeral_;
 }
 
 }  // namespace page_actions

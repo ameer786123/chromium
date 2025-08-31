@@ -5,14 +5,15 @@
 package org.chromium.components.signin.identitymanager;
 
 import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.signin.base.AccountInfo;
-import org.chromium.components.signin.base.CoreAccountId;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.components.signin.metrics.SignoutReason;
+import org.chromium.google_apis.gaia.CoreAccountId;
 
 import java.util.List;
 
@@ -83,20 +84,19 @@ public class IdentityMutator {
 
     @NativeMethods
     interface Natives {
-        public @PrimaryAccountError int setPrimaryAccount(
+        @PrimaryAccountError
+        int setPrimaryAccount(
                 long nativeJniIdentityMutator,
-                CoreAccountId accountId,
+                @JniType("CoreAccountId") CoreAccountId accountId,
                 @ConsentLevel int consentLevel,
                 @SigninAccessPoint int accessPoint,
                 Runnable prefsSavedCallback);
 
-        public boolean clearPrimaryAccount(
-                long nativeJniIdentityMutator, @SignoutReason int sourceMetric);
+        boolean clearPrimaryAccount(long nativeJniIdentityMutator, @SignoutReason int sourceMetric);
 
-        public void revokeSyncConsent(
-                long nativeJniIdentityMutator, @SignoutReason int sourceMetric);
+        void revokeSyncConsent(long nativeJniIdentityMutator, @SignoutReason int sourceMetric);
 
-        public void seedAccountsThenReloadAllAccountsWithPrimaryAccount(
+        void seedAccountsThenReloadAllAccountsWithPrimaryAccount(
                 long nativeJniIdentityMutator,
                 AccountInfo[] accounts,
                 @Nullable CoreAccountId primaryAccountId);

@@ -38,7 +38,7 @@ import org.robolectric.shadows.ShadowDialog;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.components.browser_ui.settings.SettingsCustomTabLauncher;
-import org.chromium.components.browser_ui.test.BrowserUiDummyFragmentActivity;
+import org.chromium.components.browser_ui.test.BrowserUiTestFragmentActivity;
 import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.widget.TextViewWithClickableSpans;
@@ -63,7 +63,7 @@ public class PasswordCsvDownloadDialogTest {
     @Before
     public void setUp() {
         mActivity =
-                Robolectric.buildActivity(BrowserUiDummyFragmentActivity.class)
+                Robolectric.buildActivity(BrowserUiTestFragmentActivity.class)
                         .create()
                         .start()
                         .resume()
@@ -76,7 +76,12 @@ public class PasswordCsvDownloadDialogTest {
     public void testDialogContentsWithGms() {
         mController =
                 new PasswordCsvDownloadDialogController(
-                        mActivity, true, () -> {}, () -> {}, mSettingsCustomTabLauncher);
+                        mActivity,
+                        true,
+                        () -> {},
+                        () -> {},
+                        mSettingsCustomTabLauncher,
+                        (Uri uri) -> {});
         mController.showDialog();
         mActivity.getSupportFragmentManager().executePendingTransactions();
 
@@ -112,7 +117,12 @@ public class PasswordCsvDownloadDialogTest {
     public void testDialogContentsNoGms() {
         mController =
                 new PasswordCsvDownloadDialogController(
-                        mActivity, false, () -> {}, () -> {}, mSettingsCustomTabLauncher);
+                        mActivity,
+                        false,
+                        () -> {},
+                        () -> {},
+                        mSettingsCustomTabLauncher,
+                        (Uri uri) -> {});
         mController.showDialog();
         mActivity.getSupportFragmentManager().executePendingTransactions();
 
@@ -145,7 +155,8 @@ public class PasswordCsvDownloadDialogTest {
                         false,
                         positiveButtonCalback,
                         () -> {},
-                        mSettingsCustomTabLauncher);
+                        mSettingsCustomTabLauncher,
+                        (Uri uri) -> {});
         mController.showDialog();
         mActivity.getSupportFragmentManager().executePendingTransactions();
 
@@ -163,7 +174,8 @@ public class PasswordCsvDownloadDialogTest {
                         false,
                         () -> {},
                         negativeButtonCalback,
-                        mSettingsCustomTabLauncher);
+                        mSettingsCustomTabLauncher,
+                        (Uri uri) -> {});
         mController.showDialog();
         mActivity.getSupportFragmentManager().executePendingTransactions();
 
@@ -176,7 +188,12 @@ public class PasswordCsvDownloadDialogTest {
     public void testHelpLinkClick() {
         mController =
                 new PasswordCsvDownloadDialogController(
-                        mActivity, true, () -> {}, () -> {}, mSettingsCustomTabLauncher);
+                        mActivity,
+                        true,
+                        () -> {},
+                        () -> {},
+                        mSettingsCustomTabLauncher,
+                        (Uri uri) -> {});
         mController.showDialog();
         mActivity.getSupportFragmentManager().executePendingTransactions();
 
@@ -190,17 +207,21 @@ public class PasswordCsvDownloadDialogTest {
 
     @Test
     public void testOpensDocumentCreationAndReturnsUri() {
+        final AtomicReference<Uri> uri = new AtomicReference<>();
         mController =
                 new PasswordCsvDownloadDialogController(
-                        mActivity, false, () -> {}, () -> {}, mSettingsCustomTabLauncher);
+                        mActivity,
+                        false,
+                        () -> {},
+                        () -> {},
+                        mSettingsCustomTabLauncher,
+                        (destinationUri) -> {
+                            uri.set(destinationUri);
+                        });
         mController.showDialog();
         mActivity.getSupportFragmentManager().executePendingTransactions();
 
-        final AtomicReference<Uri> uri = new AtomicReference<>();
-        mController.askForDownloadLocation(
-                (destinationUri) -> {
-                    uri.set(destinationUri);
-                });
+        mController.askForDownloadLocation();
 
         ShadowActivity shadowActivity = shadowOf(mActivity);
         Intent startedIntent = shadowActivity.getNextStartedActivityForResult().intent;

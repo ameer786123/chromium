@@ -9,6 +9,7 @@
 #include "components/enterprise/buildflags/buildflags.h"
 #include "components/enterprise/common/files_scan_data.h"
 #include "content/public/browser/content_browser_client.h"
+#include "ui/base/clipboard/clipboard_metadata.h"
 
 namespace enterprise_data_protection {
 
@@ -27,7 +28,7 @@ namespace enterprise_data_protection {
 void PasteIfAllowedByPolicy(
     const content::ClipboardEndpoint& source,
     const content::ClipboardEndpoint& destination,
-    const content::ClipboardMetadata& metadata,
+    const ui::ClipboardMetadata& metadata,
     content::ClipboardPasteData clipboard_paste_data,
     content::ContentBrowserClient::IsClipboardPasteAllowedCallback callback);
 
@@ -40,9 +41,35 @@ void PasteIfAllowedByPolicy(
 // that should instead be put into the OS clipboard.
 void IsClipboardCopyAllowedByPolicy(
     const content::ClipboardEndpoint& source,
-    const content::ClipboardMetadata& metadata,
+    const ui::ClipboardMetadata& metadata,
     const content::ClipboardPasteData& data,
     content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback);
+
+#if BUILDFLAG(IS_ANDROID)
+// This function checks if data being shared from a browser tab is allowed to
+// be written to the OS clipboard according to the following policies:
+// - DataControlsRules
+//
+// If the copy would not be allowed, `callback` is called with a replacement
+// string that should instead be put into the OS clipboard.
+void IsClipboardShareAllowedByPolicy(
+    const content::ClipboardEndpoint& source,
+    const ui::ClipboardMetadata& metadata,
+    const content::ClipboardPasteData& data,
+    content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback);
+
+// This function checks if the generic action is allowed to continue according
+// to the following policies:
+// - DataControlsRules
+//
+// If the copy would not be allowed, `callback` is called with a replacement
+// string that should instead be put into the OS clipboard.
+void IsClipboardGenericCopyActionAllowedByPolicy(
+    const content::ClipboardEndpoint& source,
+    const ui::ClipboardMetadata& metadata,
+    const content::ClipboardPasteData& data,
+    content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback);
+#endif  //  BUILDFLAG(IS_ANDROID)
 
 // This function replaces sub-fields in `data` depending internally tracked
 // clipboard data that's been replaced due to the "DataControlsRules" policy.

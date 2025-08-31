@@ -10,10 +10,12 @@
 #import "base/notreached.h"
 #import "base/time/default_clock.h"
 #import "base/time/default_tick_clock.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/network_time/network_time_tracker.h"
 #import "components/os_crypt/async/browser/test_utils.h"
 #import "components/variations/service/variations_service.h"
 #import "ios/chrome/browser/download/model/auto_deletion/auto_deletion_service.h"
+#import "ios/chrome/browser/optimization_guide/model/optimization_guide_global_state.h"
 #import "ios/chrome/browser/policy/model/browser_policy_connector_ios.h"
 #import "ios/chrome/browser/policy/model/configuration_policy_handler_list_factory.h"
 #import "ios/chrome/browser/profile/model/ios_chrome_io_thread.h"
@@ -31,18 +33,18 @@
 #import "services/network/test/test_url_loader_factory.h"
 
 TestingApplicationContext::TestingApplicationContext()
-    : application_locale_("en-US"),
-      application_country_("us"),
+    : application_country_("us"),
       local_state_(nullptr),
       profile_manager_(nullptr),
       was_last_shutdown_clean_(false),
-      test_url_loader_factory_(
-          std::make_unique<network::TestURLLoaderFactory>()),
       test_network_connection_tracker_(
           network::TestNetworkConnectionTracker::CreateInstance()),
-      variations_service_(nullptr) {
+      variations_service_(nullptr),
+      application_locale_storage_(
+          std::make_unique<ApplicationLocaleStorage>()) {
   DCHECK(!GetApplicationContext());
   SetApplicationContext(this);
+  application_locale_storage_->Set("en-US");
 }
 
 TestingApplicationContext::~TestingApplicationContext() {
@@ -109,6 +111,12 @@ void TestingApplicationContext::SetIOSChromeIOThread(
   ios_chrome_io_thread_ = ios_chrome_io_thread;
 }
 
+void TestingApplicationContext::SetSharedURLLoaderFactory(
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  test_url_loader_factory_ = std::move(url_loader_factory);
+}
+
 void TestingApplicationContext::OnAppEnterForeground() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
@@ -144,7 +152,7 @@ TestingApplicationContext::GetSystemURLRequestContext() {
 scoped_refptr<network::SharedURLLoaderFactory>
 TestingApplicationContext::GetSharedURLLoaderFactory() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return test_url_loader_factory_->GetSafeWeakWrapper();
+  return test_url_loader_factory_;
 }
 
 network::mojom::NetworkContext*
@@ -153,10 +161,11 @@ TestingApplicationContext::GetSystemNetworkContext() {
   NOTREACHED();
 }
 
-const std::string& TestingApplicationContext::GetApplicationLocale() {
+ApplicationLocaleStorage*
+TestingApplicationContext::GetApplicationLocaleStorage() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(!application_locale_.empty());
-  return application_locale_;
+  CHECK(application_locale_storage_);
+  return application_locale_storage_.get();
 }
 
 const std::string& TestingApplicationContext::GetApplicationCountry() {
@@ -290,7 +299,8 @@ AccountProfileMapper* TestingApplicationContext::GetAccountProfileMapper() {
   }
   if (!default_account_profile_mapper_) {
     default_account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-        GetSystemIdentityManager(), /*profile_manager=*/nullptr);
+        GetSystemIdentityManager(), /*profile_manager=*/nullptr,
+        /*local_state=*/nullptr);
   }
   return default_account_profile_mapper_.get();
 }
@@ -338,11 +348,11 @@ TestingApplicationContext::GetAutoDeletionService() {
   return auto_deletion_service_.get();
 }
 
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-optimization_guide::OnDeviceModelServiceController*
-TestingApplicationContext::GetOnDeviceModelServiceController(
-    base::WeakPtr<optimization_guide::OnDeviceModelComponentStateManager>
-        on_device_component_manager) {
-  return nullptr;
+optimization_guide::OptimizationGuideGlobalState*
+TestingApplicationContext::GetOptimizationGuideGlobalState() {
+  if (!optimization_guide_global_state_) {
+    optimization_guide_global_state_ =
+        std::make_unique<optimization_guide::OptimizationGuideGlobalState>();
+  }
+  return optimization_guide_global_state_.get();
 }
-#endif  // BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE

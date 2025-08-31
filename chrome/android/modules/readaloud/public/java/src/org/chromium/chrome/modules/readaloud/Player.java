@@ -16,7 +16,10 @@ import org.chromium.chrome.browser.layouts.LayoutManager;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.user_education.UserEducationHelper;
+import org.chromium.chrome.modules.readaloud.Feedback.FeedbackType;
+import org.chromium.chrome.modules.readaloud.Feedback.NegativeFeedbackReason;
 import org.chromium.chrome.modules.readaloud.PlaybackArgs.PlaybackMode;
+import org.chromium.chrome.modules.readaloud.PlaybackArgs.PlaybackModeSelectionEnablementStatus;
 import org.chromium.chrome.modules.readaloud.PlaybackArgs.PlaybackVoice;
 import org.chromium.chrome.modules.readaloud.contentjs.Highlighter;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
@@ -33,7 +36,7 @@ public interface Player {
         BottomSheetController getBottomSheetController();
 
         /** Returns true if highlighting is supported. */
-        boolean isHighlightingSupported();
+        boolean isHighlightingSupported(PlaybackMode playbackMode);
 
         /** Set highlighter mode. */
         void setHighlighterMode(@Highlighter.Mode int mode);
@@ -48,7 +51,7 @@ public interface Player {
         ObservableSupplier<String> getVoiceIdSupplier();
 
         /** Whether the mode selection is enabled. */
-        ObservableSupplier<Boolean> getPlaybackModeSelectionEnabled();
+        ObservableSupplier<PlaybackModeSelectionEnablementStatus> getPlaybackModeSelectionEnabled();
 
         /**
          * Called when the user selects a voice in the voice settings menu. Saves the new choice for
@@ -90,7 +93,7 @@ public interface Player {
          * in place of the mini player layout during browser controls resizing when showing and
          * hiding.
          */
-        LayoutManager getLayoutManager();
+        @Nullable LayoutManager getLayoutManager();
 
         /**
          * Return {@link ActivityLifecycleDispatcher} that can be used to register for configuration
@@ -103,6 +106,18 @@ public interface Player {
 
         /** Return {@link UserEducationHelper} for requesting in-product-help. */
         UserEducationHelper getUserEducationHelper();
+
+        /** Positive feedback was triggered by the user. */
+        void onPositiveFeedback();
+
+        /** Negative feedback was triggered by the user. */
+        void onNegativeFeedback(NegativeFeedbackReason negativeFeedbackReason);
+
+        ObservableSupplier<FeedbackType> getFeedbackTypeSupplier();
+
+        void moveToPrevious();
+
+        void moveToNext();
     }
 
     /** Observer interface to provide updates about player UI. */
@@ -138,12 +153,12 @@ public interface Player {
     default void destroy() {}
 
     /** Show the mini player, called when playback is requested. */
-    default void playTabRequested() {}
+    default void playTabRequested(PlaybackMode playbackMode) {}
 
     /**
      * Update players when playback is ready.
      *
-     * @param playback             New Playback object.
+     * @param playback New Playback object.
      * @param currentPlaybackState Playback state.
      */
     default void playbackReady(
@@ -153,7 +168,7 @@ public interface Player {
     default void playbackFailed() {}
 
     /** Show mini player. Assumes the playback is running. */
-    default void restoreMiniPlayer() {}
+    default void restoreMiniPlayer(boolean animate) {}
 
     /** Only called after playback is released and no more events are coming. */
     default void recordPlaybackDuration() {}

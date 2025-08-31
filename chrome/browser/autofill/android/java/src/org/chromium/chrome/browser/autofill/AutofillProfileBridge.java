@@ -10,6 +10,7 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.components.autofill.AutofillAddressEditorUiInfo;
 import org.chromium.components.autofill.DropdownKeyValue;
 
@@ -24,6 +25,7 @@ import java.util.Locale;
  * Static methods to fetch information needed to create the address fields for the autofill profile
  * form.
  */
+@NullMarked
 @JNINamespace("autofill")
 public final class AutofillProfileBridge {
     /**
@@ -45,7 +47,7 @@ public final class AutofillProfileBridge {
         collator.setStrength(Collator.PRIMARY);
         Collections.sort(
                 countries,
-                new Comparator<DropdownKeyValue>() {
+                new Comparator<>() {
                     @Override
                     public int compare(DropdownKeyValue lhs, DropdownKeyValue rhs) {
                         int result = collator.compare(lhs.getValue(), rhs.getValue());
@@ -71,7 +73,7 @@ public final class AutofillProfileBridge {
         collator.setStrength(Collator.PRIMARY);
         Collections.sort(
                 adminAreas,
-                new Comparator<DropdownKeyValue>() {
+                new Comparator<>() {
                     @Override
                     public int compare(DropdownKeyValue lhs, DropdownKeyValue rhs) {
                         // Sorted according to the admin area values, such as Quebec,

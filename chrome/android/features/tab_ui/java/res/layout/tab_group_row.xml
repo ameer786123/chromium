@@ -8,7 +8,8 @@ found in the LICENSE file.
   xmlns:app="http://schemas.android.com/apk/res-auto"
   xmlns:tools="http://schemas.android.com/tools"
   android:layout_width="match_parent"
-  android:layout_height="@dimen/tab_group_row_height"
+  android:layout_height="wrap_content"
+  android:minHeight="@dimen/tab_group_row_height"
   android:gravity="center_vertical"
   android:orientation="horizontal"
   tools:ignore="UnusedResources">
@@ -16,7 +17,7 @@ found in the LICENSE file.
   <include layout="@layout/tab_group_favicon_cluster" />
 
   <Space
-    android:layout_width="@dimen/tab_group_list_first_element_left_right_margin"
+    android:layout_width="@dimen/tab_group_list_first_element_horizontal_margin"
     android:layout_height="match_parent" />
 
   <LinearLayout
@@ -53,8 +54,11 @@ found in the LICENSE file.
     </LinearLayout>
 
     <Space
+      android:id="@+id/tab_group_text_space"
       android:layout_width="match_parent"
-      android:layout_height="8dp" />
+      android:layout_height="8dp"
+      android:visibility="gone"
+      tools:visibility="visible"/>
 
     <TextView
       android:id="@+id/tab_group_subtitle"
@@ -63,7 +67,9 @@ found in the LICENSE file.
       android:ellipsize="end"
       android:maxLines="1"
       android:scrollHorizontally="true"
-      android:textAppearance="@style/TextAppearance.TextMedium.Secondary" />
+      android:textAppearance="@style/TextAppearance.TextMedium.Secondary"
+      android:visibility="gone"
+      tools:visibility="visible"/>
 
   </LinearLayout>
 
@@ -83,12 +89,12 @@ found in the LICENSE file.
   </FrameLayout>
 
   <org.chromium.ui.listmenu.ListMenuButton
-      android:id="@+id/tab_group_menu"
-      android:layout_width="@dimen/min_touch_target_size"
-      android:layout_height="match_parent"
-      android:background="@null"
-      android:src="@drawable/ic_more_vert_24dp"
-      app:tint="@color/default_icon_color_tint_list"
-      android:visibility="gone"/>
+    android:id="@+id/tab_group_menu"
+    android:layout_width="@dimen/min_touch_target_size"
+    android:layout_height="match_parent"
+    android:background="@drawable/small_icon_background"
+    android:src="@drawable/ic_more_vert_24dp"
+    app:tint="@color/default_icon_color_tint_list"
+    android:visibility="gone" />
 
 </org.chromium.chrome.browser.tasks.tab_management.TabGroupRowView>

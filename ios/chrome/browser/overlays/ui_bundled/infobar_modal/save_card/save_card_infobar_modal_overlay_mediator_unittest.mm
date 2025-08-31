@@ -53,6 +53,8 @@ NSString* kValidExpirationMonth =
 NSString* kValidExpirationYear =
     base::SysUTF8ToNSString(autofill::test::NextYear());
 
+constexpr NSString* kCardCvc = @"123";
+
 constexpr char kSaveCreditCardPromptResultHistogramStringForLocalSave[] =
     "Autofill.SaveCreditCardPromptResult.IOS.Local.Modal.NumStrikes.0."
     "NoFixFlow";
@@ -159,7 +161,8 @@ class SaveCardInfobarModalOverlayMediatorTest : public PlatformTest {
   void SaveCard() {
     [mediator_ saveCardWithCardholderName:kCardHolderName
                           expirationMonth:kValidExpirationMonth
-                           expirationYear:kValidExpirationYear];
+                           expirationYear:kValidExpirationYear
+                                  cardCvc:kCardCvc];
   }
 
  protected:
@@ -331,7 +334,8 @@ TEST_F(SaveCardInfobarModalOverlayMediatorTest,
   ON_CALL(*delegate_,
           UpdateAndAccept(base::SysNSStringToUTF16(kCardHolderName),
                           base::SysNSStringToUTF16(kValidExpirationMonth),
-                          base::SysNSStringToUTF16(kValidExpirationYear)))
+                          base::SysNSStringToUTF16(kValidExpirationYear),
+                          base::SysNSStringToUTF16(kCardCvc)))
       .WillByDefault(Return(true));
   SaveCard();
   histogramTester.ExpectBucketCount(
@@ -404,7 +408,8 @@ TEST_F(SaveCardInfobarModalOverlayMediatorWithLocalSave,
   EXPECT_CALL(*delegate_,
               UpdateAndAccept(base::SysNSStringToUTF16(kCardHolderName),
                               base::SysNSStringToUTF16(kValidExpirationMonth),
-                              base::SysNSStringToUTF16(kValidExpirationYear)));
+                              base::SysNSStringToUTF16(kValidExpirationYear),
+                              base::SysNSStringToUTF16(kCardCvc)));
   SaveCard();
 
   EXPECT_FALSE(consumer.inLoadingState);
@@ -424,7 +429,8 @@ TEST_F(SaveCardInfobarModalOverlayMediatorTest, OnSaveShowLoading) {
   EXPECT_CALL(*delegate_,
               UpdateAndAccept(base::SysNSStringToUTF16(kCardHolderName),
                               base::SysNSStringToUTF16(kValidExpirationMonth),
-                              base::SysNSStringToUTF16(kValidExpirationYear)));
+                              base::SysNSStringToUTF16(kValidExpirationYear),
+                              base::SysNSStringToUTF16(kCardCvc)));
   SaveCard();
 
   EXPECT_TRUE(consumer.inLoadingState);
@@ -552,7 +558,7 @@ TEST_F(SaveCardInfobarModalOverlayMediatorTest,
 
   histogramTester.ExpectUniqueSample(
       "Autofill.CreditCardUpload.LoadingResult",
-      autofill::autofill_metrics::SaveCardPromptResult::kClosed, 1);
+      autofill::autofill_metrics::LegacySaveCardPromptResult::kClosed, 1);
 }
 
 // Tests metrics for loading view shown and dismissed on receiving result from
@@ -574,10 +580,11 @@ TEST_F(SaveCardInfobarModalOverlayMediatorTest,
 
   histogramTester.ExpectUniqueSample(
       "Autofill.CreditCardUpload.LoadingResult",
-      autofill::autofill_metrics::SaveCardPromptResult::kNotInteracted, 1);
+      autofill::autofill_metrics::LegacySaveCardPromptResult::kNotInteracted,
+      1);
   histogramTester.ExpectBucketCount(
       "Autofill.CreditCardUpload.LoadingResult",
-      autofill::autofill_metrics::SaveCardPromptResult::kClosed, 0);
+      autofill::autofill_metrics::LegacySaveCardPromptResult::kClosed, 0);
 }
 
 // Tests metrics for confirmation view shown and dismissed by user.
@@ -602,10 +609,11 @@ TEST_F(SaveCardInfobarModalOverlayMediatorTest,
 
   histogramTester.ExpectUniqueSample(
       "Autofill.CreditCardUpload.ConfirmationResult.CardUploaded",
-      autofill::autofill_metrics::SaveCardPromptResult::kClosed, 1);
+      autofill::autofill_metrics::LegacySaveCardPromptResult::kClosed, 1);
   histogramTester.ExpectBucketCount(
       "Autofill.CreditCardUpload.ConfirmationResult.CardUploaded",
-      autofill::autofill_metrics::SaveCardPromptResult::kNotInteracted, 0);
+      autofill::autofill_metrics::LegacySaveCardPromptResult::kNotInteracted,
+      0);
 }
 
 // Tests metrics for confirmation view shown and auto-closed on
@@ -629,8 +637,27 @@ TEST_F(SaveCardInfobarModalOverlayMediatorTest,
 
   histogramTester.ExpectUniqueSample(
       "Autofill.CreditCardUpload.ConfirmationResult.CardUploaded",
-      autofill::autofill_metrics::SaveCardPromptResult::kNotInteracted, 1);
+      autofill::autofill_metrics::LegacySaveCardPromptResult::kNotInteracted,
+      1);
   histogramTester.ExpectBucketCount(
       "Autofill.CreditCardUpload.ConfirmationResult.CardUploaded",
-      autofill::autofill_metrics::SaveCardPromptResult::kClosed, 0);
+      autofill::autofill_metrics::LegacySaveCardPromptResult::kClosed, 0);
+}
+
+// Tests that the mediator correctly handles an empty CVC when the user saves.
+TEST_F(SaveCardInfobarModalOverlayMediatorTest, OnSaveWithEmptyCVC) {
+  // Expect that the delegate's UpdateAndAccept method is called with an empty
+  // string for the CVC.
+  EXPECT_CALL(*delegate_,
+              UpdateAndAccept(base::SysNSStringToUTF16(kCardHolderName),
+                              base::SysNSStringToUTF16(kValidExpirationMonth),
+                              base::SysNSStringToUTF16(kValidExpirationYear),
+                              testing::IsEmpty()));
+
+  // Call the mediator's save method directly, passing an empty NSString for the
+  // CVC.
+  [mediator_ saveCardWithCardholderName:kCardHolderName
+                        expirationMonth:kValidExpirationMonth
+                         expirationYear:kValidExpirationYear
+                                cardCvc:@""];
 }

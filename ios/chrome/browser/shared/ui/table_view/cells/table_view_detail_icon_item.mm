@@ -161,6 +161,7 @@ NewFeatureBadgeView* NewIPHBadgeView() {
   self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
   if (self) {
     _detailTextNumberOfLines = kDefaultDetailTextNumberOfLines;
+    _textLabelSpacing = kDefaultTextLabelSpacing;
     _iconCenteredVertically = YES;
 
     self.isAccessibilityElement = YES;
@@ -189,7 +190,7 @@ NewFeatureBadgeView* NewIPHBadgeView() {
     _textStackView =
         [[UIStackView alloc] initWithArrangedSubviews:@[ _textLabel ]];
     _textStackView.translatesAutoresizingMaskIntoConstraints = NO;
-    _textStackView.spacing = kDefaultTextLabelSpacing;
+    _textStackView.spacing = _textLabelSpacing;
     [contentView addSubview:_textStackView];
 
     // Set up the constraints for when the icon is visible and hidden. One of
@@ -286,6 +287,12 @@ NewFeatureBadgeView* NewIPHBadgeView() {
   _textTopAlignment.active = YES;
   [self.textLabel setNeedsUpdateConstraints];
   [self.textStackView setNeedsLayout];
+}
+
+- (void)setTextLabelSpacing:(CGFloat)spacing {
+  _textLabelSpacing = spacing;
+  _textStackView.spacing = _textLabelSpacing;
+  [self.contentView setNeedsLayout];
 }
 
 - (void)setIconImage:(UIImage*)image
@@ -564,6 +571,22 @@ NewFeatureBadgeView* NewIPHBadgeView() {
   _detailTextLabel.font = [UIFont preferredFontForTextStyle:preferredFont];
 }
 
+// Updates the cell's UI when device's content size category is an accessibility
+// category.
+- (void)updateUIOnTraitChange:(UITraitCollection*)previousTraitCollection {
+  BOOL isCurrentCategoryAccessibility =
+      UIContentSizeCategoryIsAccessibilityCategory(
+          self.traitCollection.preferredContentSizeCategory);
+  if (isCurrentCategoryAccessibility !=
+      UIContentSizeCategoryIsAccessibilityCategory(
+          previousTraitCollection.preferredContentSizeCategory)) {
+    [self updateCellForAccessibilityContentSizeCategory:
+              isCurrentCategoryAccessibility];
+  }
+}
+
+#pragma mark - UIAccessibility
+
 - (NSString*)accessibilityLabel {
   if (self.customAccessibilityLabel) {
     return self.customAccessibilityLabel;
@@ -615,20 +638,6 @@ NewFeatureBadgeView* NewIPHBadgeView() {
     }
   }
   return @[ self.textLabel.text ];
-}
-
-// Updates the cell's UI when device's content size category is an accessibility
-// category.
-- (void)updateUIOnTraitChange:(UITraitCollection*)previousTraitCollection {
-  BOOL isCurrentCategoryAccessibility =
-      UIContentSizeCategoryIsAccessibilityCategory(
-          self.traitCollection.preferredContentSizeCategory);
-  if (isCurrentCategoryAccessibility !=
-      UIContentSizeCategoryIsAccessibilityCategory(
-          previousTraitCollection.preferredContentSizeCategory)) {
-    [self updateCellForAccessibilityContentSizeCategory:
-              isCurrentCategoryAccessibility];
-  }
 }
 
 @end

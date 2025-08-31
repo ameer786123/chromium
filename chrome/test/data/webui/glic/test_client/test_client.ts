@@ -10,6 +10,10 @@ import './sections/sizing.js';
 import './sections/permissions.js';
 import './sections/file.js';
 import './sections/action.js';
+import './sections/apc.js';
+import './sections/multi_tab.js';
+import './sections/page_metadata.js';
+import './sections/view.js';
 
 import type {OpenSettingsOptions} from '/glic/glic_api/glic_api.js';
 import {SettingsPageField, WebClientMode} from '/glic/glic_api/glic_api.js';
@@ -106,12 +110,11 @@ $.contextAccessIndicator.addEventListener('click', () => {
   getBrowser()!.setContextAccessIndicator!($.contextAccessIndicator.checked);
 });
 
-$.contextAccessIndicatorV2.addEventListener('click', () => {
-  getBrowser()!.setContextAccessIndicator!($.contextAccessIndicatorV2.checked);
-});
-
 $.closebn.addEventListener('click', () => {
   getBrowser()!.closePanel!();
+});
+$.shutdownbn.addEventListener('click', () => {
+  getBrowser()!.closePanelAndShutdown!();
 });
 $.attachpanelbn.addEventListener('click', () => {
   getBrowser()!.attachPanel!();
@@ -138,18 +141,62 @@ $.audioDuckingOff.addEventListener('click', () => {
 
 // Hang web client for <workTimeMs> amount of time.
 function busyWork(workTimeMs: number) {
+  if (workTimeMs < 0) {
+    return;
+  }
+
   const end = performance.now() + workTimeMs;
   while (performance.now() < end) {
     // mock busy work to test the web client unresponsive handling.
   }
 }
 
-$.busyWork5s.addEventListener('click', () => {
-  busyWork(5000);
+$.hang.addEventListener('click', () => {
+  const durationString = $.hangDuration.value;
+  const duration = parseFloat(durationString);
+
+  // Validate the input
+  if (isNaN(duration)) {
+    alert('Invalid number entered for duration.');
+    return;
+  }
+  if (duration < 0) {
+    alert('Duration cannot be negative.');
+    return;
+  }
+
+  const durationMs = duration * 1000;
+  busyWork(durationMs);
 });
 
-$.busyWork11s.addEventListener('click', () => {
-  busyWork(11000);
+$.setClosedCaptioningTrue.addEventListener('click', async () => {
+  logMessage('Setting closed captioning to true');
+  try {
+    await getBrowser()?.setClosedCaptioningSetting?.(true);
+    logMessage('Set closed captioning true done.');
+  } catch (e) {
+    logMessage(`Error setting closed captioning true: ${e}`);
+  }
+});
+
+$.setClosedCaptioningFalse.addEventListener('click', async () => {
+  logMessage('Setting closed captioning to false');
+  try {
+    await getBrowser()?.setClosedCaptioningSetting?.(false);
+    logMessage('Set closed captioning false done.');
+  } catch (e) {
+    logMessage(`Error setting closed captioning false: ${e}`);
+  }
+});
+
+$.maybeRefreshUserStatusBn.addEventListener('click', async () => {
+  logMessage('Calling maybeRefreshUserStatus...');
+  try {
+    await getBrowser()!.maybeRefreshUserStatus!();
+    logMessage('maybeRefreshUserStatus done.');
+  } catch (e) {
+    logMessage(`maybeRefreshUserStatus failed: ${e}`);
+  }
 });
 
 window.addEventListener('load', () => {
@@ -170,6 +217,31 @@ window.addEventListener('load', () => {
       $.desktopScreenshotErrorReason!.innerText = `Caught error: ${error}`;
     }
   });
+  $.panelScreenshot.addEventListener('click', async () => {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        height: 200,
+        width: 200,
+      },
+      audio: false,
+      preferCurrentTab: true,
+    } as any);
+    const track = stream.getVideoTracks()[0] as MediaStreamVideoTrack;
+    const capture = new (window as any).ImageCapture(track);
+    capture.grabFrame().then((bitmap: any) => {
+      track.stop();
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
+      canvas.toBlob(blob => {
+        if (blob) {
+          $.desktopScreenshotImg.src = URL.createObjectURL(blob);
+        }
+      });
+    });
+  });
+
   $.setExperiment.addEventListener('click', async () => {
     const trialName = $.trialName.value;
     const groupName = $.groupName.value;
@@ -187,3 +259,47 @@ $.failInitializationCheckbox.addEventListener('click', () => {
     localStorage.removeItem('test-init-failure');
   }
 });
+
+$.screenWakeLockSwitch.addEventListener('click', async () => {
+  if ($.screenWakeLockSwitch.checked) {
+    await acquireScreenWakeLock();
+  } else {
+    await releaseScreenWakeLock();
+  }
+});
+
+let screenWakeLock: WakeLockSentinel|null = null;
+async function acquireScreenWakeLock(): Promise<void> {
+  if (screenWakeLock) {
+    console.warn('Screen wake lock was not released before! Releasing...');
+    await screenWakeLock.release();
+  }
+  try {
+    screenWakeLock = await navigator.wakeLock.request('screen');
+    screenWakeLock.onrelease = () => {
+      if (screenWakeLock) {
+        $.screenWakeLockStatus.setAttribute('lockStatus', 'unexpectedRelease');
+        $.screenWakeLockSwitch.checked = false;
+        screenWakeLock = null;
+        console.warn('Unexpected screen wake lock release.');
+      }
+    };
+    $.screenWakeLockStatus.setAttribute('lockStatus', 'acquired');
+  } catch (err) {
+    $.screenWakeLockStatus.setAttribute('lockStatus', 'error');
+    $.screenWakeLockSwitch.checked = false;
+    screenWakeLock = null;
+    console.error('Failed to acquire screen wake lock', err);
+  }
+}
+async function releaseScreenWakeLock(): Promise<void> {
+  const wakeLock = screenWakeLock;
+  if (!wakeLock) {
+    return;
+  }
+  screenWakeLock = null;
+  if (!wakeLock.released) {
+    await wakeLock.release();
+    $.screenWakeLockStatus.setAttribute('lockStatus', 'released');
+  }
+}

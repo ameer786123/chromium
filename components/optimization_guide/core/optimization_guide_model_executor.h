@@ -48,7 +48,8 @@ struct StreamingResponse {
   // True if streaming has finished.
   bool is_complete = false;
 
-  // The number of tokens in this response's input.
+  // The number of tokens in this response's input. Note this only includes
+  // tokens input to the Execute() call, and not the total context tokens.
   size_t input_token_count = 0;
   // The number of tokens in this response.
   size_t output_token_count = 0;
@@ -167,6 +168,12 @@ enum class OnDeviceModelEligibilityReason {
   // On-device model execution for this feature was not enabled.
   kFeatureExecutionNotEnabled = 11,
   // On-device model adaptation was required but not available.
+  //
+  // Since model adaptations are bundled with feature configs, for general
+  // error cases when server cannot provide model adaptation,
+  // `kConfigNotAvailableForFeature` is returned instead.
+  // `kModelAdaptationNotAvailable` is only emitted in certain special cases
+  // (e.g. if the requested capability will never be supported by the device).
   kModelAdaptationNotAvailable = 12,
   // Validation has not completed for the model yet.
   kValidationPending = 13,
@@ -242,9 +249,6 @@ class OptimizationGuideModelExecutor {
    public:
     virtual ~Session() = default;
 
-    // TODO(crbug.com/385173789): Remove hacky multimodal prototype workarounds.
-    virtual on_device_model::mojom::Session& GetSession() = 0;
-
     virtual const TokenLimits& GetTokenLimits() const = 0;
 
     // Sets the input context for this session, replacing any previous context.
@@ -253,8 +257,12 @@ class OptimizationGuideModelExecutor {
     // be merged with data provided to an ExecuteModel() call and be available
     // for use in later prompt templates based on the request. Calling this will
     // cancel any ongoing executions and invoke their 'callback' methods with
-    // the 'kCancelled' error.
-    virtual void SetInput(MultimodalMessage request) = 0;
+    // the 'kCancelled' error. `callback` will be called with either the number
+    // of tokens processed from `request` or an error.
+    using SetInputCallback = base::OnceCallback<void(
+        base::expected<size_t, OptimizationGuideModelExecutionError>)>;
+    virtual void SetInput(MultimodalMessage request,
+                          SetInputCallback callback) = 0;
 
     // Adds context to this session. This will be saved for future Execute()
     // calls. Calling multiple times will replace previous calls to
@@ -280,11 +288,11 @@ class OptimizationGuideModelExecutor {
         const google::protobuf::MessageLite& request_metadata,
         OptimizationGuideModelExecutionResultStreamingCallback callback) = 0;
 
-    // A JSON schema is provided to define structured output requirements for
+    // A consstraint is provided to define structured output requirements for
     // the response.
-    virtual void ExecuteModelWithResponseJsonSchema(
+    virtual void ExecuteModelWithResponseConstraint(
         const google::protobuf::MessageLite& request_metadata,
-        const std::optional<std::string>& response_json_schema,
+        on_device_model::mojom::ResponseConstraintPtr constraint,
         OptimizationGuideModelExecutionResultStreamingCallback callback) = 0;
 
     // Call `GetSizeInTokens()` from the model to get the size of the given text

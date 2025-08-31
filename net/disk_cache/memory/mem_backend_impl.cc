@@ -47,6 +47,7 @@ MemBackendImpl::MemBackendImpl(net::NetLog* net_log)
       net_log_(net_log),
       memory_pressure_listener_(
           FROM_HERE,
+          base::MemoryPressureListenerTag::kMemBackend,
           base::BindRepeating(&MemBackendImpl::OnMemoryPressure,
                               base::Unretained(this))) {}
 
@@ -76,7 +77,7 @@ bool MemBackendImpl::Init() {
   if (max_size_)
     return true;
 
-  uint64_t total_memory = base::SysInfo::AmountOfPhysicalMemory();
+  uint64_t total_memory = base::SysInfo::AmountOfPhysicalMemory().InBytes();
 
   if (total_memory == 0) {
     max_size_ = kDefaultInMemoryCacheSize;
@@ -154,7 +155,8 @@ void MemBackendImpl::SetClockForTesting(base::Clock* clock) {
   custom_clock_for_testing_ = clock;
 }
 
-int32_t MemBackendImpl::GetEntryCount() const {
+int32_t MemBackendImpl::GetEntryCount(
+    net::Int32CompletionOnceCallback callback) const {
   return static_cast<int32_t>(entries_.size());
 }
 

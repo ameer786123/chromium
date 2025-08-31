@@ -23,9 +23,9 @@ import {ToolbarEvent} from './common.js';
 import {getCss} from './language_menu.css.js';
 import {getHtml} from './language_menu.html.js';
 import type {LanguageToastElement} from './language_toast.js';
-import {AVAILABLE_GOOGLE_TTS_LOCALES, getVoicePackConvertedLangIfExists, NotificationType} from './voice_language_util.js';
-import type {VoiceNotificationListener} from './voice_notification_manager.js';
-import {VoiceNotificationManager} from './voice_notification_manager.js';
+import {AVAILABLE_GOOGLE_TTS_LOCALES, getVoicePackConvertedLangIfExists, NotificationType} from './read_aloud/voice_language_conversions.js';
+import type {VoiceNotificationListener} from './read_aloud/voice_notification_manager.js';
+import {VoiceNotificationManager} from './read_aloud/voice_notification_manager.js';
 
 export interface LanguageMenuElement {
   $: {
@@ -160,6 +160,11 @@ export class LanguageMenuElement extends LanguageMenuElementBase implements
     return this.localeToDisplayName[langLower] || langLower;
   }
 
+  private getNormalizedDisplayName(lang: string) {
+    const displayName = this.getDisplayName(lang);
+    return displayName.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  }
+
   private getSupportedNaturalVoiceDownloadLocales(): Set<string> {
     return AVAILABLE_GOOGLE_TTS_LOCALES;
   }
@@ -184,15 +189,7 @@ export class LanguageMenuElement extends LanguageMenuElementBase implements
 
     return availableLangs
         .filter(
-            // Check whether the search term matches the readable lang (e.g.
-            // 'ras' will match 'Portugues (Brasil)'), and also if it matches
-            // the language code (e.g. 'pt-br' matches 'Portugues (Brasil)')
-            lang => isSubstring(
-                        /* value= */ this.getDisplayName(lang),
-                        /* substring= */ this.languageSearchValue_) ||
-                isSubstring(
-                        /* value= */ lang,
-                        /* substring= */ this.languageSearchValue_))
+            lang => this.isLanguageSearchMatch(lang, this.languageSearchValue_))
         .map(lang => ({
                readableLanguage: this.getDisplayName(lang),
                checked: this.enabledLangs.includes(lang),
@@ -201,6 +198,29 @@ export class LanguageMenuElement extends LanguageMenuElementBase implements
                disabled: this.enabledLangs.includes(lang) &&
                    (lang.toLowerCase() === selectedLangLowerCase),
              }));
+  }
+
+  // Check whether the search term matches the readable lang (e.g.
+  // 'ras' will match 'Portugues (Brasil)'), if it matches
+  // the language code (e.g. 'pt-br' matches 'Portugues (Brasil)'), or if it
+  // matches without accents (e.g. 'portugues' matches 'portugués').
+  private isLanguageSearchMatch(lang: string, languageSearchValue: string):
+      boolean {
+    const isDisplayNameMatch = isSubstring(
+        /* value= */ this.getDisplayName(lang),
+        /* substring= */ languageSearchValue);
+    const isLanguageCodeMatch = isSubstring(
+        /* value= */ lang,
+        /* substring= */ languageSearchValue);
+
+    // Compare the search term to the language name without
+    // accents.
+    const isNormalizedDisplayNameMatch = isSubstring(
+        /* value= */ this.getNormalizedDisplayName(lang),
+        /* substring= */ languageSearchValue);
+
+    return isDisplayNameMatch || isLanguageCodeMatch ||
+        isNormalizedDisplayNameMatch;
   }
 
   private getNotificationFor(lang: string): Notification {
@@ -242,6 +262,10 @@ export class LanguageMenuElement extends LanguageMenuElementBase implements
 
   protected onLanguageSearchValueChanged_(e: CustomEvent<{value: string}>) {
     this.languageSearchValue_ = e.detail.value;
+  }
+
+  protected onKeyDown_(e: KeyboardEvent) {
+    e.stopPropagation();
   }
 }
 

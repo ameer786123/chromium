@@ -73,6 +73,8 @@ import org.chromium.payments.mojom.PaymentShippingOption;
 import org.chromium.payments.mojom.PaymentValidationErrors;
 import org.chromium.url.GURL;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -106,6 +108,7 @@ public class PaymentUiService
         PaymentRequestAddressEditorMode.EDIT_EXISTING_ADDRESS,
         PaymentRequestAddressEditorMode.COUNT,
     })
+    @Retention(RetentionPolicy.SOURCE)
     private @interface PaymentRequestAddressEditorMode {
         int ADD_NEW_ADDRESS = 0;
         int EDIT_EXISTING_ADDRESS = 1;
@@ -174,12 +177,13 @@ public class PaymentUiService
          *     spinner is hidden in that case. Other payment apps typically show a spinner.
          */
         boolean invokePaymentApp(
-                EditableOption selectedShippingAddress,
-                EditableOption selectedShippingOption,
-                PaymentApp selectedPaymentApp);
+                @Nullable EditableOption selectedShippingAddress,
+                @Nullable EditableOption selectedShippingOption,
+                @Nullable PaymentApp selectedPaymentApp);
 
         /**
          * Invoked when the UI service has been aborted.
+         *
          * @param reason The reason for the aborting, as defined by {@link AbortReason}.
          * @param debugMessage The debug message for the aborting.
          */
@@ -343,7 +347,7 @@ public class PaymentUiService
      * @param context The activity context.
      */
     public void createShippingSectionIfNeeded(Context context) {
-        if (!shouldShowShippingSection()) return;
+        if (!shouldShowShippingSection() || mShippingAddressesSection != null) return;
         createShippingSectionForPaymentRequestUi(context);
     }
 
@@ -487,9 +491,7 @@ public class PaymentUiService
                 PersonalDataManagerFactory.getForProfile(Profile.fromWebContents(mWebContents));
         if (PaymentOptionsUtils.requestAnyInformation(mParams.getPaymentOptions())) {
             mAutofillProfiles =
-                    Collections.unmodifiableList(
-                            personalDataManager.getProfilesToSuggest(
-                                    /* includeNameInLabel= */ false));
+                    Collections.unmodifiableList(personalDataManager.getProfilesToSuggest());
         }
 
         PaymentOptions options = mParams.getPaymentOptions();
@@ -928,11 +930,11 @@ public class PaymentUiService
      * @param toEdit The information to edit, allowed to be null.
      */
     private void editContactOnPaymentRequestUi(@Nullable final AutofillContact toEdit) {
-        mContactEditor.edit(
+        mContactEditor.showEditPrompt(
                 toEdit,
-                new Callback<AutofillContact>() {
+                new Callback<>() {
                     @Override
-                    public void onResult(AutofillContact editedContact) {
+                    public void onResult(@Nullable AutofillContact editedContact) {
                         if (mPaymentRequestUi == null) return;
 
                         if (editedContact != null) {
@@ -971,12 +973,13 @@ public class PaymentUiService
 
     /**
      * Edit the address on the PaymentRequest UI.
+     *
      * @param toEdit The address to be updated with, allowed to be null.
      */
     private void editAddress(@Nullable final AutofillAddress toEdit) {
-        mAddressEditor.edit(
+        mAddressEditor.showEditPrompt(
                 toEdit,
-                new Callback<AutofillAddress>() {
+                new Callback<>() {
                     @Override
                     public void onResult(AutofillAddress editedAddress) {
                         if (mPaymentRequestUi == null) return;
@@ -1131,6 +1134,8 @@ public class PaymentUiService
             mLayoutStateProvider.addObserver(this);
         }
 
+        createShippingSectionIfNeeded(activity);
+
         if (shouldShowContactSection()) {
             mContactSection =
                     new ContactDetailsSection(
@@ -1187,6 +1192,11 @@ public class PaymentUiService
                 PersonalDataManagerFactory.getForProfile(Profile.fromWebContents(mWebContents));
         for (int i = 0; i < mAutofillProfiles.size(); i++) {
             AutofillProfile profile = mAutofillProfiles.get(i);
+            // We intentionally hide Home, Work and Name+Email profiles to prevent their potential
+            // editing.
+            if (profile.isHomeOrWorkProfile() || profile.isNameEmailProfile()) {
+                continue;
+            }
             mAddressEditor.addPhoneNumberIfValid(
                     profile.getInfo(FieldType.PHONE_HOME_WHOLE_NUMBER));
 

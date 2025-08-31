@@ -8,11 +8,11 @@
 
 #include "base/functional/callback_forward.h"
 #include "chrome/browser/extensions/chrome_extension_system_factory.h"
-#include "chrome/browser/extensions/delayed_install_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/storage_partition.h"
+#include "extensions/browser/delayed_install_manager.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -72,27 +72,6 @@ ExtensionsManager::GetIsolatedStoragePaths() {
     }
   }
   return allowlist;
-}
-
-bool ExtensionsManager::ShouldGarbageCollectStoragePartitions() {
-  // `ExtensionPrefs` can be created lazily, so we don't need to wait on
-  // extension service.
-  extensions::ExtensionPrefs* extension_prefs =
-      extensions::ExtensionPrefs::Get(profile_);
-  return extension_prefs && extension_prefs->NeedsStorageGarbageCollection();
-}
-
-void ExtensionsManager::ResetStorageGarbageCollectPref(
-    base::OnceClosure callback) {
-  // `ExtensionPrefs` can be created lazily, so we don't need to wait on
-  // extension service.
-  extensions::ExtensionPrefs* extension_prefs =
-      extensions::ExtensionPrefs::Get(profile_);
-  if (extension_prefs) {
-    extension_prefs->pref_service()->SetBoolean(
-        extensions::pref_names::kStorageGarbageCollect, false);
-    extension_prefs->pref_service()->CommitPendingWrite(std::move(callback));
-  }
 }
 
 std::unique_ptr<ExtensionInstallGate>

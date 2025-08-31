@@ -11,9 +11,14 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 
+import org.chromium.base.AndroidInfo;
+import org.chromium.base.ApkInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.Log;
 import org.chromium.base.TraceEvent;
+import org.chromium.base.library_loader.IRelroLibInfo;
+import org.chromium.base.version_info.VersionConstants;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.build.annotations.RequiresNonNull;
@@ -57,14 +62,16 @@ public class ChildProcessLauncher {
 
         /**
          * Called before setup is called on the connection.
-         * @param connectionBundle the bundle passed to the {@link ChildProcessService} in the
-         * setup call. Clients can add their own extras to the bundle.
+         *
+         * @param childProcessArgs the aidl parcelable passed to the {@link ChildProcessService} in
+         *     the setup call.
          */
-        public void onBeforeConnectionSetup(Bundle connectionBundle) {}
+        public void onBeforeConnectionSetup(IChildProcessArgs childProcessArgs) {}
 
         /**
          * Called when the connection was successfully established, meaning the setup call on the
          * service was successful.
+         *
          * @param connection the connection over which the setup call was made.
          */
         public void onConnectionEstablished(ChildProcessConnection connection) {}
@@ -72,18 +79,27 @@ public class ChildProcessLauncher {
         /**
          * Called as part of establishing the connection. Saves the bundle for transferring to other
          * processes that did not inherit from the App Zygote.
+         *
          * @param connection the new connection
-         * @param relroBundle the bundle potentially containing useful information for relocation
-         * sharing across processes.
+         * @param relroInfo the IRelroLibInfo potentially containing useful information for
+         *     relocation sharing across processes.
          */
-        public void onReceivedZygoteInfo(ChildProcessConnection connection, Bundle relroBundle) {}
+        public void onReceivedZygoteInfo(
+                ChildProcessConnection connection, @Nullable IRelroLibInfo relroInfo) {}
 
         /**
          * Called when a connection has been disconnected. Only invoked if onConnectionEstablished
          * was called, meaning the connection was already established.
+         *
          * @param connection the connection that got disconnected.
          */
         public void onConnectionLost(ChildProcessConnection connection) {}
+
+        /**
+         * Gives us which process type we have, so we know which delegate to use when initializing
+         * the child process.
+         */
+        public abstract int getLibraryProcessType();
     }
 
     // Represents an invalid process handle; same as base/process/process.h kNullProcessHandle.
@@ -95,16 +111,13 @@ public class ChildProcessLauncher {
     private final Delegate mDelegate;
 
     private final String[] mCommandLine;
-    private final FileDescriptorInfo[] mFilesToBeMapped;
+    private final IFileDescriptorInfo[] mFilesToBeMapped;
 
     // The allocator used to create the connection.
     private final ChildConnectionAllocator mConnectionAllocator;
 
     // The IBinder interfaces provided to the created service.
     private final @Nullable List<IBinder> mClientInterfaces;
-
-    // A binder box which can be used by the child to unpack additional binders.
-    private final @Nullable IBinder mBinderBox;
 
     // The actual service connection. Set once we have connected to the service. Volatile as it is
     // accessed from threads other than the Launcher thread.
@@ -120,16 +133,14 @@ public class ChildProcessLauncher {
      * @param connectionAllocator the allocator used to create connections to the service.
      * @param clientInterfaces the interfaces that should be passed to the started process so it can
      *     communicate with the parent process.
-     * @param binderBox an optional binder box the child can use to unpack additional binders
      */
     public ChildProcessLauncher(
             Handler launcherHandler,
             Delegate delegate,
             String[] commandLine,
-            FileDescriptorInfo[] filesToBeMapped,
+            IFileDescriptorInfo[] filesToBeMapped,
             ChildConnectionAllocator connectionAllocator,
-            @Nullable List<IBinder> clientInterfaces,
-            @Nullable IBinder binderBox) {
+            @Nullable List<IBinder> clientInterfaces) {
         assert connectionAllocator != null;
         mLauncherHandler = launcherHandler;
         isRunningOnLauncherThread();
@@ -138,7 +149,6 @@ public class ChildProcessLauncher {
         mDelegate = delegate;
         mFilesToBeMapped = filesToBeMapped;
         mClientInterfaces = clientInterfaces;
-        mBinderBox = binderBox;
     }
 
     /**
@@ -247,8 +257,8 @@ public class ChildProcessLauncher {
                 new ChildProcessConnection.ZygoteInfoCallback() {
                     @Override
                     public void onReceivedZygoteInfo(
-                            ChildProcessConnection connection, Bundle relroBundle) {
-                        mDelegate.onReceivedZygoteInfo(connection, relroBundle);
+                            ChildProcessConnection connection, @Nullable IRelroLibInfo relroInfo) {
+                        mDelegate.onReceivedZygoteInfo(connection, relroInfo);
                     }
                 };
         ChildProcessConnection.ConnectionCallback connectionCallback =
@@ -258,14 +268,10 @@ public class ChildProcessLauncher {
                         onServiceConnected(connection);
                     }
                 };
-        Bundle connectionBundle = createConnectionBundle();
-        mDelegate.onBeforeConnectionSetup(connectionBundle);
+        IChildProcessArgs connectionArgs = createConnectionArgs();
+        mDelegate.onBeforeConnectionSetup(connectionArgs);
         mConnection.setupConnection(
-                connectionBundle,
-                getClientInterfaces(),
-                getBinderBox(),
-                connectionCallback,
-                zygoteInfoCallback);
+                connectionArgs, getClientInterfaces(), connectionCallback, zygoteInfoCallback);
     }
 
     private void onServiceConnected(@Nullable ChildProcessConnection connection) {
@@ -280,7 +286,7 @@ public class ChildProcessLauncher {
 
         // Proactively close the FDs rather than waiting for the GC to do it.
         try {
-            for (FileDescriptorInfo fileInfo : mFilesToBeMapped) {
+            for (IFileDescriptorInfo fileInfo : mFilesToBeMapped) {
                 fileInfo.fd.close();
             }
         } catch (IOException ioe) {
@@ -298,19 +304,20 @@ public class ChildProcessLauncher {
         return mClientInterfaces;
     }
 
-    public @Nullable IBinder getBinderBox() {
-        return mBinderBox;
-    }
-
     private boolean isRunningOnLauncherThread() {
         return mLauncherHandler.getLooper() == Looper.myLooper();
     }
 
-    private Bundle createConnectionBundle() {
-        Bundle bundle = new Bundle();
-        bundle.putStringArray(ChildProcessConstants.EXTRA_COMMAND_LINE, mCommandLine);
-        bundle.putParcelableArray(ChildProcessConstants.EXTRA_FILES, mFilesToBeMapped);
-        return bundle;
+    private IChildProcessArgs createConnectionArgs() {
+        IChildProcessArgs args = new IChildProcessArgs();
+        args.commandLine = mCommandLine;
+        args.fileDescriptorInfos = mFilesToBeMapped;
+        args.apkInfo = ApkInfo.getAidlInfo();
+        args.androidInfo = AndroidInfo.getAidlInfo();
+        args.deviceInfo = DeviceInfo.getAidlInfo();
+        args.channel = VersionConstants.CHANNEL;
+        args.libraryProcessType = mDelegate.getLibraryProcessType();
+        return args;
     }
 
     private void onChildProcessDied() {

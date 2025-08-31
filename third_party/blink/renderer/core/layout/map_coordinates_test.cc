@@ -787,10 +787,10 @@ TEST_F(MapCoordinatesTest, MulticolWithText) {
   ASSERT_TRUE(target->IsText());
 
   PhysicalOffset mapped_point =
-      MapLocalToAncestor(target, multicol, PhysicalOffset(10, 70));
+      MapLocalToAncestor(target, multicol, PhysicalOffset(220, 20));
   EXPECT_EQ(PhysicalOffset(225, 25), mapped_point);
   mapped_point = MapAncestorToLocal(target, multicol, mapped_point);
-  EXPECT_EQ(PhysicalOffset(10, 70), mapped_point);
+  EXPECT_EQ(PhysicalOffset(220, 20), mapped_point);
 }
 
 TEST_F(MapCoordinatesTest, MulticolWithInline) {
@@ -806,10 +806,10 @@ TEST_F(MapCoordinatesTest, MulticolWithInline) {
   LayoutObject* target = GetLayoutObjectByElementId("target");
 
   PhysicalOffset mapped_point =
-      MapLocalToAncestor(target, multicol, PhysicalOffset(10, 70));
+      MapLocalToAncestor(target, multicol, PhysicalOffset(220, 20));
   EXPECT_EQ(PhysicalOffset(225, 25), mapped_point);
   mapped_point = MapAncestorToLocal(target, multicol, mapped_point);
-  EXPECT_EQ(PhysicalOffset(10, 70), mapped_point);
+  EXPECT_EQ(PhysicalOffset(220, 20), mapped_point);
 }
 
 TEST_F(MapCoordinatesTest, MulticolWithBlock) {
@@ -877,16 +877,16 @@ TEST_F(MapCoordinatesTest, NestedMulticolWithBlock) {
 
   // Walk each ancestor in the chain separately, to verify each step on the way.
   mapped_point = MapLocalToAncestor(target, inner_multicol, PhysicalOffset());
-  EXPECT_EQ(PhysicalOffset(140, 305), mapped_point);
+  EXPECT_EQ(PhysicalOffset(420, 90), mapped_point);
   mapped_point = MapAncestorToLocal(target, inner_multicol, mapped_point);
   EXPECT_EQ(PhysicalOffset(), mapped_point);
 
   mapped_point = MapLocalToAncestor(inner_multicol, outer_multicol,
-                                    PhysicalOffset(140, 305));
+                                    PhysicalOffset(420, 90));
   EXPECT_EQ(PhysicalOffset(435, 115), mapped_point);
   mapped_point =
       MapAncestorToLocal(inner_multicol, outer_multicol, mapped_point);
-  EXPECT_EQ(PhysicalOffset(140, 305), mapped_point);
+  EXPECT_EQ(PhysicalOffset(420, 90), mapped_point);
 }
 
 TEST_F(MapCoordinatesTest, MulticolWithAbsPosInRelPos) {

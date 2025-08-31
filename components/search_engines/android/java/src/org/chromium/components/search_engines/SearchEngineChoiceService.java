@@ -13,10 +13,9 @@ import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ServiceLoaderUtil;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.TransitiveObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.components.search_engines.SearchEngineCountryDelegate.DefaultBrowserPromoSuppressionDelayType;
 import org.chromium.components.search_engines.SearchEngineCountryDelegate.DeviceChoiceEventType;
 
 import java.lang.annotation.Retention;
@@ -79,8 +78,7 @@ public class SearchEngineChoiceService {
         ThreadUtils.checkUiThread();
         if (sInstance == null) {
             SearchEngineCountryDelegate delegate;
-            if (SearchEnginesFeatures.isEnabled(SearchEnginesFeatures.CLAY_BLOCKING)
-                    && SearchEnginesFeatureUtils.clayBlockingUseFakeBackend()) {
+            if (SearchEnginesFeatureUtils.getInstance().isChoiceApisFakeBackendEnabled()) {
                 delegate = new FakeSearchEngineCountryDelegate(/* enableLogging= */ true);
             } else {
                 delegate = ServiceLoaderUtil.maybeCreate(SearchEngineCountryDelegate.class);
@@ -138,7 +136,7 @@ public class SearchEngineChoiceService {
         mDeviceCountryPromise = mDelegate.getDeviceCountry();
         mDeviceCountryPromise.andFinally(this::maybeDestroyDelegate);
 
-        mIsDeviceChoiceRequiredSupplier = createIsDeviceChoiceRequiredSupplier(mDelegate);
+        mIsDeviceChoiceRequiredSupplier = delegate.getIsDeviceChoiceRequiredSupplier();
     }
 
     /**
@@ -170,12 +168,11 @@ public class SearchEngineChoiceService {
     /**
      * Returns a promise that will resolve to a CLDR country code, see
      * https://www.unicode.org/cldr/charts/45/supplemental/territory_containment_un_m_49.html.
-     * Fulfilled promises are guaranteed to return a non-nullable string, but rejected ones also
-     * need to be handled, indicating some error in obtaining the device country.
+     * Fulfilled promises are guaranteed to return a non-nullable string. No rejection will be
+     * propagated in case of error in obtaining the device country, the promise will be kept pending
+     * instead.
      *
-     * <p>If {@link SearchEnginesFeatures#CLAY_BLOCKING} is enabled, no rejection will be
-     * propagated, the promise will be kept pending instead. Implement some timeout if that's
-     * needed.
+     * <p>Implement some timeout if that's needed.
      *
      * <p>TODO(b/328040066): Ensure this is ACL'ed.
      */
@@ -210,7 +207,6 @@ public class SearchEngineChoiceService {
     @MainThread
     public boolean isDeviceChoiceDialogEligible() {
         ThreadUtils.checkUiThread();
-        if (!SearchEnginesFeatures.isEnabled(SearchEnginesFeatures.CLAY_BLOCKING)) return false;
         // We can free up the delegate only if we already established ineligibility.
         if (mDelegate == null) return false;
 
@@ -258,14 +254,9 @@ public class SearchEngineChoiceService {
     @MainThread
     public void launchDeviceChoiceScreens() {
         ThreadUtils.checkUiThread();
-        if (!SearchEnginesFeatures.isEnabled(SearchEnginesFeatures.CLAY_BLOCKING)) {
-            return;
-        }
 
-        assert !SearchEnginesFeatureUtils.clayBlockingIsDarkLaunch();
         assert mDelegate != null;
-        if (SearchEnginesFeatureUtils.clayBlockingEnableVerboseLogging()) {
-            // TODO(b/355186707): Temporary log to be removed after e2e validation.
+        if (SearchEnginesFeatureUtils.getInstance().isChoiceApisDebugEnabled()) {
             Log.i(TAG, "launchChoiceScreens()");
         }
         mDelegate.launchDeviceChoiceScreens();
@@ -292,63 +283,51 @@ public class SearchEngineChoiceService {
     @MainThread
     private void notifyDeviceChoiceEvent(@DeviceChoiceEventType int eventType) {
         ThreadUtils.checkUiThread();
-        if (!SearchEnginesFeatures.isEnabled(SearchEnginesFeatures.CLAY_BLOCKING)) {
-            return;
-        }
 
         assert mDelegate != null;
-        if (SearchEnginesFeatureUtils.clayBlockingEnableVerboseLogging()) {
-            // TODO(b/355186707): Temporary log to be removed after e2e validation.
+        if (SearchEnginesFeatureUtils.getInstance().isChoiceApisDebugEnabled()) {
             Log.i(TAG, "notifyDeviceChoiceEvent(%d)", eventType);
         }
         mDelegate.notifyDeviceChoiceEvent(eventType);
     }
 
-    private static ObservableSupplier<Boolean> createIsDeviceChoiceRequiredSupplier(
-            SearchEngineCountryDelegate delegate) {
-        var alwaysFalseSupplier = new ObservableSupplierImpl<>(false);
-
-        if (!SearchEnginesFeatures.isEnabled(SearchEnginesFeatures.CLAY_BLOCKING)) {
-            return alwaysFalseSupplier;
-        }
-
-        var supplier = delegate.getIsDeviceChoiceRequiredSupplier();
-        return SearchEnginesFeatureUtils.clayBlockingIsDarkLaunch()
-                // We want to call into the backend to be able to verify it's working,
-                // but we intercept its returned values to prevent it from affecting the
-                // user experience.
-                ? new TransitiveObservableSupplier<>(
-                        supplier,
-                        isDeviceChoiceRequired -> {
-                            if (SearchEnginesFeatureUtils.clayBlockingEnableVerboseLogging()) {
-                                // TODO(b/355186707): Temp log to be removed after e2e validation.
-                                Log.i(
-                                        TAG,
-                                        "[DarkLaunch] delegate event (isDeviceChoiceRequired=%s)"
-                                                + " suppressed",
-                                        isDeviceChoiceRequired);
-                            }
-                            return alwaysFalseSupplier;
-                        })
-                : supplier;
-    }
-
     private boolean isDefaultBrowserPromoSuppressedInternal() {
-        if (!SearchEnginesFeatures.isEnabled(SearchEnginesFeatures.CLAY_BLOCKING)) return false;
-
-        long suppressionPeriodMillis =
-                SearchEnginesFeatureUtils.clayBlockingDialogDefaultBrowserPromoSuppressedMillis();
-        if (suppressionPeriodMillis <= 0) return false;
-
         if (mDelegate == null) return false;
+
         Instant deviceBrowserSelectedTimestamp = mDelegate.getDeviceBrowserSelectedTimestamp();
         if (deviceBrowserSelectedTimestamp == null) return false;
+
+        long suppressionPeriodMillis;
+        if (SearchEnginesFeatures.isEnabled(
+                SearchEnginesFeatures.SUPPRESS_DEFAULT_BROWSER_PROMO_IF_CHOICE_SET)) {
+            // TODO(crbug.com/394235956): Go through the regional_capabilities component instead to
+            // get the delay type based on the program. This would require some refactoring to
+            // access the current profile or some other rearchitecturing to expose both
+            // application-scoped and profile-scoped APIs.
+            switch (mDelegate.getDefaultBrowserPromoSuppressionDelayType()) {
+                case DefaultBrowserPromoSuppressionDelayType.STANDARD:
+                    suppressionPeriodMillis =
+                            SearchEnginesFeatureUtils
+                                    .CHOICE_DIALOG_DEFAULT_BROWSER_PROMO_SUPPRESSED_MILLIS;
+                    break;
+                case DefaultBrowserPromoSuppressionDelayType.MAX:
+                    // There is no "infinite" long, so bypass comparison to the actual timestamp and
+                    // just always suppress the promo.
+                    return true;
+                default:
+                    assert false;
+                    return true;
+            }
+        } else {
+            suppressionPeriodMillis =
+                    SearchEnginesFeatureUtils.CHOICE_DIALOG_DEFAULT_BROWSER_PROMO_SUPPRESSED_MILLIS;
+        }
 
         try {
             return Instant.now()
                     .isBefore(deviceBrowserSelectedTimestamp.plusMillis(suppressionPeriodMillis));
-        } catch (DateTimeException e) {
-            return false;
+        } catch (DateTimeException | ArithmeticException e) {
+            return true;
         }
     }
 }

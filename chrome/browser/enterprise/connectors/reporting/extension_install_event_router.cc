@@ -34,7 +34,7 @@ constexpr char kKeyName[] = "name";
 constexpr char kKeyDescription[] = "description";
 constexpr char kKeyExtensionAction[] = "extension_action_type";
 constexpr char kKeyVersion[] = "extension_version";
-constexpr char kKeySource[] = "extension_source";
+constexpr char kKeyExtensionSource[] = "extension_source";
 
 // Extension action types
 constexpr char kInstallAction[] = "INSTALL";
@@ -44,6 +44,7 @@ constexpr char kUninstallAction[] = "UNINSTALL";
 // Extension sources
 constexpr char kChromeWebstoreSource[] = "CHROME_WEBSTORE";
 constexpr char kExternalSource[] = "EXTERNAL";
+constexpr char kComponentSource[] = "COMPONENT";
 
 }  // namespace
 
@@ -86,12 +87,7 @@ void ExtensionInstallEventRouter::ReportExtensionInstallEvent(
   extension_event->set_description(extension->description());
   extension_event->set_extension_action_type(extension_action);
   extension_event->set_extension_version(extension->GetVersionForDisplay());
-  extension_event->set_extension_source(
-      extension->from_webstore()
-          ? BrowserExtensionInstallEvent::ExtensionSource::
-                BrowserExtensionInstallEvent_ExtensionSource_CHROME_WEBSTORE
-          : BrowserExtensionInstallEvent::ExtensionSource::
-                BrowserExtensionInstallEvent_ExtensionSource_EXTERNAL);
+  extension_event->set_extension_source(GetExtensionSource(extension));
 
   reporting_client_->ReportEvent(std::move(event), std::move(settings.value()));
 }
@@ -112,8 +108,18 @@ void ExtensionInstallEventRouter::ReportExtensionInstallEvent(
   event.Set(kKeyDescription, extension->description());
   event.Set(kKeyExtensionAction, extension_action);
   event.Set(kKeyVersion, extension->GetVersionForDisplay());
-  event.Set(kKeySource, extension->from_webstore() ? kChromeWebstoreSource
-                                                   : kExternalSource);
+
+  // Set the source from which an extension was loaded from.
+  // TODO(crbug.com/410552409): Add other sources and refactor into helper
+  // function.
+  if (extension->location() ==
+      extensions::mojom::ManifestLocation::kComponent) {
+    event.Set(kKeyExtensionSource, kComponentSource);
+  } else if (extension->from_webstore()) {
+    event.Set(kKeyExtensionSource, kChromeWebstoreSource);
+  } else {
+    event.Set(kKeyExtensionSource, kExternalSource);
+  }
 
   reporting_client_->ReportRealtimeEvent(
       kExtensionInstallEvent, std::move(settings.value()), std::move(event));
@@ -152,6 +158,22 @@ void ExtensionInstallEventRouter::OnExtensionUninstalled(
 }
 
 // static
+BrowserExtensionInstallEvent::ExtensionSource
+ExtensionInstallEventRouter::GetExtensionSource(
+    const extensions::Extension* extension) {
+  if (extension->location() ==
+      extensions::mojom::ManifestLocation::kComponent) {
+    return BrowserExtensionInstallEvent::ExtensionSource::
+        BrowserExtensionInstallEvent_ExtensionSource_COMPONENT;
+  } else if (extension->from_webstore()) {
+    return BrowserExtensionInstallEvent::ExtensionSource::
+        BrowserExtensionInstallEvent_ExtensionSource_CHROME_WEBSTORE;
+  } else {
+    return BrowserExtensionInstallEvent::ExtensionSource::
+        BrowserExtensionInstallEvent_ExtensionSource_EXTERNAL;
+  }
+}
+
 ExtensionInstallEventRouterFactory*
 ExtensionInstallEventRouterFactory::GetInstance() {
   return base::Singleton<ExtensionInstallEventRouterFactory>::get();

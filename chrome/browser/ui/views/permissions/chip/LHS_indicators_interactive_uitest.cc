@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/permissions/quiet_notification_permission_ui_config.h"
@@ -9,6 +10,7 @@
 #include "chrome/browser/permissions/system/system_permission_settings.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/test/test_browser_ui.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
@@ -128,7 +130,7 @@ class LHSIndicatorsInteractiveUITest : public UiBrowserTest {
         new TestLocationBarModel;
     std::unique_ptr<LocationBarModel> location_bar_model(
         test_location_bar_model_);
-    browser()->swap_location_bar_models(&location_bar_model);
+    browser()->GetFeatures().swap_location_bar_models(&location_bar_model);
 
     test_location_bar_model_->set_formatted_full_url(text);
 

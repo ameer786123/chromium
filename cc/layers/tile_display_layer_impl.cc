@@ -11,12 +11,12 @@
 #include <variant>
 
 #include "base/check.h"
-#include "base/functional/overloaded.h"
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "cc/layers/append_quads_data.h"
 #include "cc/tiles/tiling_set_coverage_iterator.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "components/viz/client/client_resource_provider.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
 
@@ -34,10 +34,11 @@ class TilingOrder {
 
 }  // namespace
 
-TileDisplayLayerImpl::TileResource::TileResource(
-    const viz::TransferableResource& resource,
-    bool is_checkered)
-    : resource(resource),
+TileDisplayLayerImpl::TileResource::TileResource(viz::ResourceId resource_id,
+                                                 gfx::Size resource_size,
+                                                 bool is_checkered)
+    : resource_id(resource_id),
+      resource_size(resource_size),
       is_checkered(is_checkered) {}
 
 TileDisplayLayerImpl::TileResource::TileResource(const TileResource&) = default;
@@ -47,19 +48,17 @@ TileDisplayLayerImpl::TileResource::operator=(const TileResource&) = default;
 
 TileDisplayLayerImpl::TileResource::~TileResource() = default;
 
-TileDisplayLayerImpl::Tile::Tile() = default;
-
-TileDisplayLayerImpl::Tile::Tile(const TileContents& contents)
-    : contents_(contents) {
-  DCHECK(!std::holds_alternative<NoContents>(contents_));
-}
+TileDisplayLayerImpl::Tile::Tile(TileDisplayLayerImpl& layer,
+                                 const TileContents& contents)
+    : layer_(layer), contents_(contents) {}
 
 TileDisplayLayerImpl::Tile::Tile(Tile&&) = default;
 
-TileDisplayLayerImpl::Tile& TileDisplayLayerImpl::Tile::operator=(Tile&&) =
-    default;
-
-TileDisplayLayerImpl::Tile::~Tile() = default;
+TileDisplayLayerImpl::Tile::~Tile() {
+  if (auto* resource = std::get_if<TileResource>(&contents_)) {
+    layer_->DiscardResource(resource->resource_id);
+  }
+}
 
 TileDisplayLayerImpl::Tiling::Tiling(TileDisplayLayerImpl& layer,
                                      float scale_key)
@@ -88,7 +87,6 @@ void TileDisplayLayerImpl::Tiling::SetTileSize(const gfx::Size& size) {
   }
 
   tiling_data_.SetMaxTextureSize(size);
-  tiles_.clear();
 }
 
 void TileDisplayLayerImpl::Tiling::SetTilingRect(const gfx::Rect& rect) {
@@ -97,13 +95,12 @@ void TileDisplayLayerImpl::Tiling::SetTilingRect(const gfx::Rect& rect) {
   }
 
   tiling_data_.SetTilingRect(rect);
-  tiles_.clear();
 }
 
 void TileDisplayLayerImpl::Tiling::SetTileContents(const TileIndex& key,
                                                    const TileContents& contents,
-                                                   bool is_incremental_update) {
-  if (is_incremental_update) {
+                                                   bool update_damage) {
+  if (update_damage) {
     // Full tree updates receive damage as part of the LayerImpl::update_rect.
     // For incremental tile updates on an Active tree, we need to record the
     // damage caused by each tile change.
@@ -116,26 +113,16 @@ void TileDisplayLayerImpl::Tiling::SetTileContents(const TileIndex& key,
 
   std::unique_ptr<Tile> old_tile;
   if (std::holds_alternative<NoContents>(contents)) {
-    auto it = tiles_.find(key);
-    if (it != tiles_.end()) {
-      old_tile = std::move(it->second);
-      tiles_.erase(it);
+    const auto& no_contents = std::get<NoContents>(contents);
+    if (no_contents.reason == mojom::MissingTileReason::kTileDeleted) {
+      tiles_.erase(key);
+    } else {
+      old_tile =
+          std::exchange(tiles_[key], std::make_unique<Tile>(*layer_, contents));
     }
   } else {
-    // If there is a valid TileResource, import it in order to track its usage.
-    if (auto* resource = std::get_if<TileResource>(&contents)) {
-      layer_->ImportResource(resource->resource);
-    }
-    old_tile = std::exchange(tiles_[key], std::make_unique<Tile>(contents));
-  }
-
-  if (old_tile) {
-    if (auto* resource = std::get_if<TileResource>(&old_tile->contents())) {
-      // As of now, this will mark only one resource discarded at a time.
-      // TODO(vikassoni): Optimize to discard resources in batch. This will
-      // eventually trigger less IPCs back to the Renderer.
-      layer_->DiscardResource(resource->resource.id);
-    }
+    old_tile =
+        std::exchange(tiles_[key], std::make_unique<Tile>(*layer_, contents));
   }
 }
 
@@ -145,10 +132,8 @@ TileDisplayLayerImpl::Tiling::Cover(const gfx::Rect& coverage_rect,
   return DisplayTilingCoverageIterator(this, coverage_scale, coverage_rect);
 }
 
-TileDisplayLayerImpl::TileDisplayLayerImpl(Client& client,
-                                           LayerTreeImpl& tree,
-                                           int id)
-    : LayerImpl(&tree, id), client_(client) {}
+TileDisplayLayerImpl::TileDisplayLayerImpl(LayerTreeImpl& tree, int id)
+    : LayerImpl(&tree, id) {}
 
 TileDisplayLayerImpl::~TileDisplayLayerImpl() = default;
 
@@ -166,6 +151,25 @@ TileDisplayLayerImpl::GetOrCreateTilingFromScaleKey(float scale_key) {
   Tiling& tiling = *tilings_.back();
   std::sort(tilings_.begin(), tilings_.end(), TilingOrder());
   return tiling;
+}
+
+void TileDisplayLayerImpl::RemoveTiling(float scale_key) {
+  auto it = std::find_if(tilings_.begin(), tilings_.end(),
+                         [scale_key](const auto& tiling) {
+                           return tiling->contents_scale_key() == scale_key;
+                         });
+  if (it != tilings_.end()) {
+    tilings_.erase(it);
+  }
+}
+
+const TileDisplayLayerImpl::Tiling* TileDisplayLayerImpl::GetTilingForTesting(
+    float scale_key) const {
+  auto it = std::find_if(tilings_.begin(), tilings_.end(),
+                         [scale_key](const auto& tiling) {
+                           return tiling->contents_scale_key() == scale_key;
+                         });
+  return it != tilings_.end() ? it->get() : nullptr;
 }
 
 mojom::LayerType TileDisplayLayerImpl::GetLayerType() const {
@@ -194,8 +198,7 @@ void TileDisplayLayerImpl::AppendQuads(const AppendQuadsContext& context,
     return;
   }
 
-  const float max_contents_scale =
-      tilings_.empty() ? 1.0f : tilings_.back()->contents_scale_key();
+  const float max_contents_scale = tilings_.front()->contents_scale_key();
 
   // If this layer is used as a backdrop filter, don't create and append a quad
   // as that will be done in RenderSurfaceImpl::AppendQuads.
@@ -207,6 +210,32 @@ void TileDisplayLayerImpl::AppendQuads(const AppendQuadsContext& context,
       render_pass->CreateAndAppendSharedQuadState();
   PopulateScaledSharedQuadState(shared_quad_state, max_contents_scale,
                                 contents_opaque());
+
+  if (is_directly_composited_image_) {
+    // Directly composited images should be clipped to the layer's content rect.
+    // When a PictureLayerTiling is created for a directly composited image, the
+    // layer bounds are multiplied by the raster scale in order to compute the
+    // tile size. If the aspect ratio of the layer doesn't match that of the
+    // image, it's possible that one of the dimensions of the resulting size
+    // (layer bounds * raster scale) is a fractional number, as raster scale
+    // does not scale x and y independently.
+    // When this happens, the ToEnclosingRect() operation in
+    // |PictureLayerTiling::EnclosingContentsRectFromLayer()| will
+    // create a tiling that, when scaled by |max_contents_scale| above, is
+    // larger than the layer bounds by a fraction of a pixel.
+    gfx::Rect bounds_in_target_space = MathUtil::MapEnclosingClippedRect(
+        draw_properties().target_space_transform, gfx::Rect(bounds()));
+    if (is_clipped()) {
+      bounds_in_target_space.Intersect(draw_properties().clip_rect);
+    }
+
+    if (shared_quad_state->clip_rect) {
+      bounds_in_target_space.Intersect(*shared_quad_state->clip_rect);
+    }
+
+    shared_quad_state->clip_rect = bounds_in_target_space;
+  }
+
   const Occlusion scaled_occlusion =
       draw_properties()
           .occlusion_in_content_space.GetOcclusionWithGivenDrawTransform(
@@ -240,7 +269,6 @@ void TileDisplayLayerImpl::AppendQuads(const AppendQuadsContext& context,
     }
   }
 
-  std::vector<viz::TransferableResource> used_resources;
   const auto ideal_scale = GetIdealContentsScale();
   const float ideal_scale_key = std::max(ideal_scale.x(), ideal_scale.y());
 
@@ -271,11 +299,8 @@ void TileDisplayLayerImpl::AppendQuads(const AppendQuadsContext& context,
         auto* quad = render_pass->CreateAndAppendDrawQuad<viz::TileDrawQuad>();
         quad->SetNew(shared_quad_state, offset_geometry_rect,
                      offset_visible_geometry_rect, needs_blending,
-                     resource->resource.id, texture_rect,
-                     iter.CurrentTiling()->tile_size(),
-                     /*nearest_neighbor=*/false,
-                     /*enable_edge_aa=*/false);
-        used_resources.push_back(resource->resource);
+                     resource->resource_id, texture_rect, nearest_neighbor_,
+                     !layer_tree_impl()->settings().enable_edge_anti_aliasing);
         has_draw_quad = true;
       } else if (auto color = iter->solid_color()) {
         has_draw_quad = true;
@@ -283,9 +308,10 @@ void TileDisplayLayerImpl::AppendQuads(const AppendQuadsContext& context,
         if (alpha >= std::numeric_limits<float>::epsilon()) {
           auto* quad =
               render_pass->CreateAndAppendDrawQuad<viz::SolidColorDrawQuad>();
-          quad->SetNew(shared_quad_state, offset_geometry_rect,
-                       offset_visible_geometry_rect, *color,
-                       /*enable_edge_aa=*/false);
+          quad->SetNew(
+              shared_quad_state, offset_geometry_rect,
+              offset_visible_geometry_rect, *color,
+              !layer_tree_impl()->settings().enable_edge_anti_aliasing);
         }
       }
     }
@@ -310,11 +336,19 @@ void TileDisplayLayerImpl::GetContentsResourceId(
     viz::ResourceId* resource_id,
     gfx::Size* resource_size,
     gfx::SizeF* resource_uv_size) const {
-  CHECK(is_backdrop_filter_mask_);
-  CHECK_EQ(tilings_.size(), 1u);
+  *resource_id = viz::kInvalidResourceId;
 
-  const float max_contents_scale =
-      tilings_.empty() ? 1.0f : tilings_.back()->contents_scale_key();
+  // We need contents resource for backdrop filter masks only.
+  if (!is_backdrop_filter_mask_) {
+    return;
+  }
+
+  // Masks are only supported if they fit on exactly one tile.
+  if (tilings_.size() != 1u) {
+    return;
+  }
+
+  const float max_contents_scale = tilings_.front()->contents_scale_key();
   gfx::Rect content_rect =
       gfx::ScaleToEnclosingRect(gfx::Rect(bounds()), max_contents_scale);
   const auto ideal_scale = GetIdealContentsScale();
@@ -322,17 +356,23 @@ void TileDisplayLayerImpl::GetContentsResourceId(
 
   auto iter = TilingSetCoverageIterator<Tiling>(
       tilings_, content_rect, max_contents_scale, ideal_scale_key);
-  CHECK(iter->resource());
-  *resource_id = iter->resource()->resource.id;
-  *resource_size = iter->resource()->resource.size;
+
+  // We cannot do anything if the mask resource was not provided.
+  if (!iter || !*iter || !iter->resource()) {
+    return;
+  }
+
+  DCHECK(iter.geometry_rect() == content_rect)
+      << "iter rect " << iter.geometry_rect().ToString() << " content rect "
+      << content_rect.ToString();
+
+  *resource_id = iter->resource()->resource_id;
+  *resource_size = iter->resource()->resource_size;
   gfx::SizeF requested_tile_size =
       gfx::SizeF(iter.CurrentTiling()->tile_size());
   *resource_uv_size =
       gfx::SizeF(requested_tile_size.width() / resource_size->width(),
                  requested_tile_size.height() / resource_size->height());
-
-  std::vector<viz::TransferableResource> used_resources;
-  used_resources.push_back(iter->resource()->resource);
 }
 
 gfx::Rect TileDisplayLayerImpl::GetDamageRect() const {
@@ -349,11 +389,8 @@ void TileDisplayLayerImpl::RecordDamage(const gfx::Rect& damage_rect) {
 }
 
 void TileDisplayLayerImpl::DiscardResource(viz::ResourceId resource) {
-  client_->DiscardResource(std::move(resource));
-}
-
-void TileDisplayLayerImpl::ImportResource(viz::TransferableResource resource) {
-  client_->ImportResource(std::move(resource));
+  layer_tree_impl()->host_impl()->resource_provider()->RemoveImportedResource(
+      std::move(resource));
 }
 
 }  // namespace cc

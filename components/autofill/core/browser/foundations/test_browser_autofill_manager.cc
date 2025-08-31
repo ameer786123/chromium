@@ -36,12 +36,12 @@ TestBrowserAutofillManager::~TestBrowserAutofillManager() = default;
 testing::NiceMock<MockBnplManager>*
 TestBrowserAutofillManager::GetPaymentsBnplManager() {
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS)
+    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   return &mock_bnpl_manager_;
 #else
   return nullptr;
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
-        // BUILDFLAG(IS_CHROMEOS)
+        // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
 }
 
 void TestBrowserAutofillManager::OnLanguageDetermined(
@@ -91,9 +91,11 @@ void TestBrowserAutofillManager::OnAskForValuesToFill(
     const FormData& form,
     const FieldGlobalId& field_id,
     const gfx::Rect& caret_bounds,
-    AutofillSuggestionTriggerSource trigger_source) {
+    AutofillSuggestionTriggerSource trigger_source,
+    std::optional<PasswordSuggestionRequest> password_request) {
   AutofillManager::OnAskForValuesToFill(form, field_id, caret_bounds,
-                                        trigger_source);
+                                        trigger_source,
+                                        std::move(password_request));
   ASSERT_TRUE(waiter_.Wait(0));
 }
 
@@ -180,12 +182,14 @@ void TestBrowserAutofillManager::ClearFormStructures() {
 void TestBrowserAutofillManager::OnAskForValuesToFillTest(
     const FormData& form,
     const FieldGlobalId& field_id,
-    AutofillSuggestionTriggerSource trigger_source) {
+    AutofillSuggestionTriggerSource trigger_source,
+    std::optional<PasswordSuggestionRequest> password_request) {
   gfx::PointF p =
       CHECK_DEREF(form.FindFieldByGlobalId(field_id)).bounds().origin();
   gfx::Rect caret_bounds(gfx::Point(p.x(), p.y()), gfx::Size(0, 10));
   BrowserAutofillManager::OnAskForValuesToFill(form, field_id, caret_bounds,
-                                               trigger_source);
+                                               trigger_source,
+                                               std::move(password_request));
   ASSERT_TRUE(waiter_.Wait(0));
 }
 

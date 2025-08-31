@@ -6,15 +6,19 @@
  * @fileoverview Class to handle access to the clipboard data.
  */
 import {Msgs} from '../../common/msgs.js';
+import {OffscreenBridge} from '../../common/offscreen_bridge.js';
+import type {ClipboardData} from '../../common/offscreen_bridge_constants.js';
 import {QueueMode} from '../../common/tts_types.js';
-
 import {ChromeVox} from '../chromevox.js';
 import {ChromeVoxRange} from '../chromevox_range.js';
 
-
 /** Handles accessing and tracking access to the clipboard. */
 export class ClipboardHandler {
-  private lastClipboardEvent_?: string;
+  // When forceReadNextClipboardEvent_ is true, copied data is spoken after a
+  // chrome.clipboard.onClipboardDataChanged regardless of whether a DOM-based
+  // clipboard 'copy' event recently occurred. See OffscreenClipboardHandler's
+  // onClipboardDataChanged_.
+  private forceReadNextClipboardEvent_ = false;
   static instance: ClipboardHandler;
 
   static init(): void {
@@ -22,41 +26,22 @@ export class ClipboardHandler {
 
     chrome.clipboard.onClipboardDataChanged.addListener(
         () => ClipboardHandler.instance.onClipboardDataChanged_());
-
-    document.addEventListener(
-        'copy',
-        event => ClipboardHandler.instance.onClipboardCopyEvent_(event));
   }
 
-  /** Processes the copy clipboard event. */
-  private onClipboardCopyEvent_(evt: ClipboardEvent): void {
-    // This should always be 'copy', but is still important to set for the below
-    // extension event.
-    this.lastClipboardEvent_ = evt.type;
-  }
-
-  private onClipboardDataChanged_(): void {
-    // A DOM-based clipboard event always comes before this Chrome extension
-    // clipboard event. We only care about 'copy' events, which gets set above.
-    if (!this.lastClipboardEvent_) {
+  private async onClipboardDataChanged_(): Promise<void> {
+    const data: ClipboardData = await OffscreenBridge.onClipboardDataChanged(
+        this.forceReadNextClipboardEvent_);
+    if (data.eventType === undefined) {
       return;
     }
-
-    const eventType = this.lastClipboardEvent_;
-    this.lastClipboardEvent_ = undefined;
-
-    const textarea = document.createElement('textarea');
-    document.body.appendChild(textarea);
-    textarea.focus();
-    document.execCommand('paste');
-    const clipboardContent = textarea.value;
-    textarea.remove();
     ChromeVox.tts.speak(
-        Msgs.getMsg(eventType, [clipboardContent]), QueueMode.FLUSH);
+        Msgs.getMsg(data.eventType, [data.clipboardContent || '']),
+        QueueMode.FLUSH);
     ChromeVoxRange.clearSelection();
+    this.forceReadNextClipboardEvent_ = false;
   }
 
   readNextClipboardDataChange(): void {
-    this.lastClipboardEvent_ = 'copy';
+    this.forceReadNextClipboardEvent_ = true;
   }
 }

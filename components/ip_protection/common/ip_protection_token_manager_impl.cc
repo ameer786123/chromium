@@ -10,6 +10,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,6 +24,7 @@
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "components/ip_protection/common/ip_protection_core.h"
+#include "components/ip_protection/common/ip_protection_core_host_remote.h"
 #include "components/ip_protection/common/ip_protection_data_types.h"
 #include "components/ip_protection/common/ip_protection_telemetry.h"
 #include "components/ip_protection/common/ip_protection_token_fetcher.h"
@@ -50,6 +52,7 @@ constexpr base::TimeDelta kTokenLimitExceededDelay = base::Minutes(10);
 
 IpProtectionTokenManagerImpl::IpProtectionTokenManagerImpl(
     IpProtectionCore* core,
+    scoped_refptr<IpProtectionCoreHostRemote> core_host_remote,
     std::unique_ptr<IpProtectionTokenFetcher> fetcher,
     ProxyLayer proxy_layer,
     bool disable_cache_management_for_testing)
@@ -59,6 +62,7 @@ IpProtectionTokenManagerImpl::IpProtectionTokenManagerImpl(
       fetcher_(std::move(fetcher)),
       proxy_layer_(proxy_layer),
       ip_protection_core_(core),
+      core_host_remote_(std::move(core_host_remote)),
       disable_cache_management_for_testing_(
           disable_cache_management_for_testing) {
   last_token_rate_measurement_ = base::TimeTicks::Now();
@@ -73,7 +77,21 @@ IpProtectionTokenManagerImpl::IpProtectionTokenManagerImpl(
   }
 }
 
-IpProtectionTokenManagerImpl::~IpProtectionTokenManagerImpl() = default;
+IpProtectionTokenManagerImpl::~IpProtectionTokenManagerImpl() {
+  // Record orphaned (unspent, unexpired) tokens.
+  RemoveExpiredTokens();
+  std::vector<BlindSignedAuthToken> tokens;
+  for (auto& [geo_id, cache] : cache_by_geo_) {
+    Telemetry().RecordTokenCountEvent(
+        proxy_layer_, IpProtectionTokenCountEvent::kOrphaned, cache.size());
+    std::ranges::move(cache, std::back_inserter(tokens));
+  }
+  if (!tokens.empty()) {
+    CHECK(core_host_remote_);
+    core_host_remote_->core_host()->RecycleTokens(proxy_layer_,
+                                                  std::move(tokens));
+  }
+}
 
 bool IpProtectionTokenManagerImpl::IsAuthTokenAvailable() {
   return IsAuthTokenAvailable(current_geo_id_);
@@ -273,7 +291,7 @@ void IpProtectionTokenManagerImpl::OnGotAuthTokens(
 
   // Randomize the expiration time of the tokens, applying the same "fuzz" to
   // all tokens in the batch.
-  if (enable_token_expiration_fuzzing_for_testing_) {
+  if (enable_token_expiration_fuzzing_) {
     base::TimeDelta fuzz_limit = net::features::kIpPrivacyExpirationFuzz.Get();
     base::TimeDelta fuzz =
         base::RandTimeDelta(kMinimumFuzzInterval, fuzz_limit);
@@ -303,6 +321,10 @@ void IpProtectionTokenManagerImpl::OnGotAuthTokens(
   }
 
   std::deque<BlindSignedAuthToken>& cache = cache_by_geo_[geo_id_from_token];
+
+  // Log the number of tokens successfully fetched.
+  Telemetry().RecordTokenCountEvent(
+      proxy_layer_, IpProtectionTokenCountEvent::kIssued, tokens->size());
 
   cache.insert(cache.end(), std::make_move_iterator(tokens->begin()),
                std::make_move_iterator(tokens->end()));
@@ -366,6 +388,8 @@ std::optional<BlindSignedAuthToken> IpProtectionTokenManagerImpl::GetAuthToken(
     result.emplace(std::move(it->second.front()));
     it->second.pop_front();
     tokens_spent_++;
+    Telemetry().RecordTokenCountEvent(proxy_layer_,
+                                      IpProtectionTokenCountEvent::kSpent, 1);
   }
 
   Telemetry().GetAuthTokenResultForGeo(
@@ -384,9 +408,18 @@ void IpProtectionTokenManagerImpl::RemoveExpiredTokens() {
     std::deque<BlindSignedAuthToken>& tokens = it->second;
     // Remove expired tokens from each geo. Tokens are sorted and sooner
     // expirations are toward the front of the deque.
+    int64_t intial_tokens_expired = tokens_expired_;
     while (!tokens.empty() && tokens.front().expiration <= fresh_after) {
       tokens.pop_front();
       tokens_expired_++;
+    }
+
+    // Only emit expired token metric if tokens actually expired.
+    int64_t tokens_expired_delta = tokens_expired_ - intial_tokens_expired;
+    if (tokens_expired_delta > 0) {
+      Telemetry().RecordTokenCountEvent(proxy_layer_,
+                                        IpProtectionTokenCountEvent::kExpired,
+                                        tokens_expired_delta);
     }
 
     // A map entry should be removed if the entry contains no tokens and the
@@ -449,7 +482,7 @@ void IpProtectionTokenManagerImpl::DisableCacheManagementForTesting(
 
 void IpProtectionTokenManagerImpl::EnableTokenExpirationFuzzingForTesting(
     bool enable) {
-  enable_token_expiration_fuzzing_for_testing_ = enable;
+  enable_token_expiration_fuzzing_ = enable;
 }
 
 // Call `TryGetAuthTokens()`, which will call

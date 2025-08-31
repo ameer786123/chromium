@@ -21,8 +21,11 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/permissions_manager.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
 #include "ui/base/window_open_disposition.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 class Profile;
 class TemplateURL;
@@ -213,7 +216,7 @@ class OmniboxSetDefaultSuggestionFunction : public ExtensionFunction {
 };
 
 // If the extension has set a custom default suggestion via
-// omnibox.setDefaultSuggestion, apply that to |match|. Otherwise, do nothing.
+// omnibox.setDefaultSuggestion, apply that to `match`. Otherwise, do nothing.
 void ApplyDefaultSuggestionForExtensionKeyword(
     Profile* profile,
     const TemplateURL* keyword,

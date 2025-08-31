@@ -8,6 +8,7 @@
 
 #import "base/strings/sys_string_conversions.h"
 #import "components/collaboration/public/collaboration_flow_entry_point.h"
+#import "components/collaboration/public/collaboration_flow_type.h"
 #import "components/collaboration/public/collaboration_service.h"
 #import "components/feature_engagement/public/feature_constants.h"
 #import "components/feature_engagement/public/tracker.h"
@@ -17,7 +18,8 @@
 #import "ios/chrome/browser/collaboration/model/ios_collaboration_controller_delegate.h"
 #import "ios/chrome/browser/data_sharing/model/data_sharing_service_factory.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
-#import "ios/chrome/browser/saved_tab_groups/model/tab_group_service_factory.h"
+#import "ios/chrome/browser/saved_tab_groups/coordinator/face_pile_configuration.h"
+#import "ios/chrome/browser/saved_tab_groups/coordinator/face_pile_coordinator.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_service_factory.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
@@ -30,7 +32,6 @@
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/public/commands/tab_grid_commands.h"
 #import "ios/chrome/browser/shared/public/commands/tab_groups_commands.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/snackbar_util.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/create_or_edit_tab_group_coordinator_delegate.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/create_tab_group_coordinator.h"
@@ -44,10 +45,25 @@
 #import "ui/base/l10n/l10n_util.h"
 
 using collaboration::CollaborationServiceShareOrManageEntryPoint;
+using ResultCallback =
+    collaboration::CollaborationControllerDelegate::ResultCallback;
+using collaboration::CollaborationControllerDelegate;
+using collaboration::FlowType;
+using collaboration::IOSCollaborationControllerDelegate;
+
+namespace {
+// The preferred size in points for the avatar icons.
+constexpr CGFloat kFacePileAvatarSize = 20;
+}  // namespace
 
 @interface TabGroupIndicatorCoordinator () <
     CreateOrEditTabGroupCoordinatorDelegate,
     TabGroupIndicatorMediatorDelegate>
+
+// Callback invoked upon confirming leaving or deleting a shared group.
+@property(nonatomic, copy) void (^leaveOrDeleteCompletion)
+    (CollaborationControllerDelegate::Outcome);
+
 @end
 
 @implementation TabGroupIndicatorCoordinator {
@@ -62,7 +78,6 @@ using collaboration::CollaborationServiceShareOrManageEntryPoint;
 #pragma mark - ChromeCoordinator
 
 - (void)start {
-  CHECK(IsTabGroupInGridEnabled());
   Browser* browser = self.browser;
   BOOL incognito = browser->GetProfile()->IsOffTheRecord();
   _view = [[TabGroupIndicatorView alloc] init];
@@ -98,10 +113,17 @@ using collaboration::CollaborationServiceShareOrManageEntryPoint;
 }
 
 - (void)stop {
+  [self clearLeaveOrDeleteCompletion];
   [self stopCreateTabGroupCoordinator];
   [self stopTabGroupConfirmationCoordinator];
   [_mediator disconnect];
   _mediator = nil;
+}
+
+#pragma mark - Getters/setters
+
+- (BOOL)viewVisible {
+  return !_view.hidden;
 }
 
 #pragma mark - TabGroupIndicatorMediatorDelegate
@@ -140,6 +162,7 @@ using collaboration::CollaborationServiceShareOrManageEntryPoint;
                       actionType:actionType
                       sourceView:_view];
   __weak TabGroupIndicatorMediator* weakMediator = _mediator;
+  __weak __typeof(self) weakSelf = self;
   _tabGroupConfirmationCoordinator.primaryAction = ^{
     switch (actionType) {
       case TabGroupActionType::kUngroupTabGroup:
@@ -149,19 +172,73 @@ using collaboration::CollaborationServiceShareOrManageEntryPoint;
         [weakMediator deleteGroupWithConfirmation:NO];
         break;
       case TabGroupActionType::kLeaveSharedTabGroup:
-        [weakMediator leaveSharedGroupWithConfirmation:NO];
-        break;
       case TabGroupActionType::kDeleteSharedTabGroup:
-        [weakMediator deleteSharedGroupWithConfirmation:NO];
+        [weakSelf runLeaveOrDeleteCompletion];
         break;
       case TabGroupActionType::kLeaveOrKeepSharedTabGroup:
       case TabGroupActionType::kDeleteOrKeepSharedTabGroup:
+      case TabGroupActionType::kCloseLastTabUnknownRole:
         NOTREACHED();
     }
+  };
+  _tabGroupConfirmationCoordinator.dismissAction = ^{
+    [weakSelf clearLeaveOrDeleteCompletion];
   };
   _tabGroupConfirmationCoordinator.tabGroupName = tabGroup->GetTitle();
 
   [_tabGroupConfirmationCoordinator start];
+}
+
+- (void)startLeaveOrDeleteSharedGroup:(base::WeakPtr<const TabGroup>)tabGroup
+                            forAction:(TabGroupActionType)actionType
+                     withConfirmation:(BOOL)confirmation {
+  [self stopTabGroupConfirmationCoordinator];
+
+  __weak __typeof(self) weakSelf = self;
+  base::OnceCallback<void(ResultCallback)> completionCallback =
+      base::BindOnce(^(ResultCallback resultCallback) {
+        TabGroupIndicatorCoordinator* strongSelf = weakSelf;
+        if (!strongSelf) {
+          std::move(resultCallback)
+              .Run(CollaborationControllerDelegate::Outcome::kCancel);
+          return;
+        }
+        if (!confirmation) {
+          std::move(resultCallback)
+              .Run(CollaborationControllerDelegate::Outcome::kSuccess);
+          return;
+        }
+        auto completionBlock = base::CallbackToBlock(std::move(resultCallback));
+        strongSelf.leaveOrDeleteCompletion =
+            ^(CollaborationControllerDelegate::Outcome outcome) {
+              completionBlock(outcome);
+            };
+
+        [strongSelf showTabGroupIndicatorConfirmationForAction:actionType
+                                                         group:tabGroup];
+      });
+
+  Browser* browser = self.browser;
+  collaboration::CollaborationService* collaborationService =
+      collaboration::CollaborationServiceFactory::GetForProfile(
+          browser->GetProfile());
+
+  const TabGroup* group = tabGroup.get();
+  if (!group || !collaborationService) {
+    return;
+  }
+
+  std::unique_ptr<IOSCollaborationControllerDelegate> delegate =
+      std::make_unique<IOSCollaborationControllerDelegate>(
+          browser,
+          CreateControllerDelegateParamsFromProfile(
+              self.profile, self.baseViewController, FlowType::kLeaveOrDelete));
+  delegate->SetLeaveOrDeleteConfirmationCallback(std::move(completionCallback));
+
+  collaboration::CollaborationServiceLeaveOrDeleteEntryPoint entryPoint =
+      collaboration::CollaborationServiceLeaveOrDeleteEntryPoint::kUnknown;
+  collaborationService->StartLeaveOrDeleteFlow(
+      std::move(delegate), group->tab_group_id(), entryPoint);
 }
 
 - (void)showTabGroupIndicatorSnackbarAfterClosingGroup {
@@ -212,6 +289,7 @@ using collaboration::CollaborationServiceShareOrManageEntryPoint;
              arrowDirection:BubbleArrowDirectionUp
                   alignment:BubbleAlignmentCenter
                  bubbleType:BubbleViewTypeDefault
+            pageControlPage:BubblePageControlPageNone
           dismissalCallback:^(IPHDismissalReasonType reason) {
             [weakSelf sharedTabGroupForegroundIPHDismissed];
           }];
@@ -244,12 +322,28 @@ using collaboration::CollaborationServiceShareOrManageEntryPoint;
     return;
   }
 
-  std::unique_ptr<collaboration::CollaborationControllerDelegate> delegate =
+  std::unique_ptr<CollaborationControllerDelegate> delegate =
       std::make_unique<collaboration::IOSCollaborationControllerDelegate>(
-          browser, self.baseViewController,
-          TabGroupServiceFactory::GetForProfile(self.profile));
+          browser,
+          CreateControllerDelegateParamsFromProfile(
+              self.profile, self.baseViewController, FlowType::kShareOrManage));
   collaborationService->StartShareOrManageFlow(
       std::move(delegate), tabGroup->tab_group_id(), entryPoint);
+}
+
+- (id<FacePileProviding>)facePileProviderForGroupID:
+    (const std::string&)groupID {
+  // Configure the face pile.
+  FacePileConfiguration* config = [[FacePileConfiguration alloc] init];
+  config.groupID = data_sharing::GroupId(groupID);
+  config.avatarSize = kFacePileAvatarSize;
+
+  FacePileCoordinator* facePileCoordinator =
+      [[FacePileCoordinator alloc] initWithFacePileConfiguration:config
+                                                         browser:self.browser];
+  [facePileCoordinator start];
+
+  return facePileCoordinator;
 }
 
 #pragma mark - CreateOrEditTabGroupCoordinatorDelegate
@@ -285,6 +379,24 @@ using collaboration::CollaborationServiceShareOrManageEntryPoint;
 - (void)stopTabGroupConfirmationCoordinator {
   [_tabGroupConfirmationCoordinator stop];
   _tabGroupConfirmationCoordinator = nil;
+}
+
+// Clears `leaveOrDeleteCompletion`. If not nil, calls it with `kCancel`.
+- (void)clearLeaveOrDeleteCompletion {
+  if (self.leaveOrDeleteCompletion) {
+    self.leaveOrDeleteCompletion(
+        CollaborationControllerDelegate::Outcome::kCancel);
+  }
+  self.leaveOrDeleteCompletion = nil;
+}
+
+// Runs `leaveOrDeleteCompletion`. If not nil, calls it with `kSuccess`.
+- (void)runLeaveOrDeleteCompletion {
+  if (self.leaveOrDeleteCompletion) {
+    self.leaveOrDeleteCompletion(
+        CollaborationControllerDelegate::Outcome::kSuccess);
+  }
+  self.leaveOrDeleteCompletion = nil;
 }
 
 @end

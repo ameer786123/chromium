@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chrome/browser/metrics/chrome_browser_main_extra_parts_metrics.h"
 
 #include <algorithm>
@@ -18,6 +13,7 @@
 
 #include "base/allocator/partition_alloc_support.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/cpu.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -26,6 +22,7 @@
 #include "base/power_monitor/power_monitor_buildflags.h"
 #include "base/rand_util.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -43,6 +40,7 @@
 #include "chrome/browser/google/google_brand.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/metrics/process_memory_metrics_emitter.h"
+#include "chrome/browser/metrics/tab_stats/tab_stats_tracker.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/performance_controls/performance_controls_metrics.h"
@@ -74,14 +72,13 @@
 #include "chrome/browser/metrics/power/battery_discharge_reporter.h"
 #include "chrome/browser/metrics/power/power_metrics_reporter.h"
 #include "chrome/browser/metrics/power/process_monitor.h"
-#include "chrome/browser/metrics/tab_stats/tab_stats_tracker.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_ANDROID)
+#include "base/android/apk_info.h"
 #if defined(__arm__)
 #include <cpu-features.h>
 #endif
-#include "base/android/build_info.h"
 #include "chrome/browser/flags/android/chrome_session_state.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -670,7 +667,8 @@ void RecordLinuxDistro() {
   std::string trimmed = TrimLinuxDistro(base::ToLowerASCII(distro));
   auto* it = std::upper_bound(kDistroPrefixes, std::end(kDistroPrefixes),
                               trimmed, Compare());
-  if (it != kDistroPrefixes && base::StartsWith(trimmed, (--it)->first)) {
+  if (it != kDistroPrefixes &&
+      base::StartsWith(trimmed, (UNSAFE_TODO(--it))->first)) {
     base::UmaHistogramEnumeration("Linux.Distro3", it->second);
   } else {
     base::UmaHistogramEnumeration("Linux.Distro3", UmaLinuxDistro::kOther);
@@ -803,11 +801,12 @@ void MaybeRecordOneDriveSyncMetrics() {
   cloud_synced_folder_checker::CloudSyncStatus status =
       cloud_synced_folder_checker::EvaluateOneDriveSyncStatus();
 
-  base::UmaHistogramBoolean("Windows.OneDriveSyncState.Synced", status.synced);
+  base::UmaHistogramBoolean("Windows.OneDriveSyncState.Synced",
+                            status.synced());
   base::UmaHistogramBoolean("Windows.OneDriveSyncState.DesktopSynced",
-                            status.desktop_synced);
+                            status.desktop_synced());
   base::UmaHistogramBoolean("Windows.OneDriveSyncState.DocumentsSynced",
-                            status.documents_synced);
+                            status.documents_synced());
 }
 
 #endif  // BUILDFLAG(IS_WIN)
@@ -816,6 +815,31 @@ void RecordDisplayHDRStatus(const display::Display& display) {
   base::UmaHistogramBoolean("Hardware.Display.SupportsHDR",
                             display.GetColorSpaces().SupportsHDR());
 }
+
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+// Records whether Chrome is the default PDF viewer.
+void RecordDefaultPdfViewerState() {
+#if BUILDFLAG(IS_MAC)
+  auto is_default_callback = base::BindOnce(
+      &shell_integration::IsDefaultHandlerForUTType, "com.adobe.pdf");
+#elif BUILDFLAG(IS_WIN)
+  auto is_default_callback = base::BindOnce(
+      &shell_integration::IsDefaultHandlerForFileExtension, ".pdf");
+#else
+#error Unsupported platform
+#endif
+  auto record_default_state_callback =
+      std::move(is_default_callback)
+          .Then(base::BindOnce(
+              [](shell_integration::DefaultWebClientState default_state) {
+                base::UmaHistogramEnumeration(
+                    "PDF.DefaultState", default_state,
+                    shell_integration::NUM_DEFAULT_STATES);
+              }));
+  base::ThreadPool::PostTask(FROM_HERE, {base::MayBlock()},
+                             std::move(record_default_state_callback));
+}
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 
 // Called on a background thread, with low priority to avoid slowing down
 // startup with metrics that aren't trivial to compute.
@@ -880,6 +904,11 @@ void RecordStartupMetrics() {
                                 shell_integration::NUM_DEFAULT_STATES);
 #endif  // !BUILDFLAG(IS_LINUX)
 
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  // Record whether Chrome is the default PDF viewer.
+  RecordDefaultPdfViewerState();
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+
 #if BUILDFLAG(IS_MAC)
   base::mac::ProcessRequirement::MaybeGatherMetrics();
 #endif
@@ -939,7 +968,6 @@ ChromeBrowserMainExtraPartsMetrics::~ChromeBrowserMainExtraPartsMetrics() =
     default;
 
 void ChromeBrowserMainExtraPartsMetrics::PreCreateThreads() {
-#if !BUILDFLAG(IS_ANDROID)
   // Initialize the TabStatsTracker singleton instance. Must be initialized
   // before `responsiveness::Watcher`, which happens in
   // BrowserMainLoop::PreMainMessageLoopRun(), thus the decision to use
@@ -952,7 +980,6 @@ void ChromeBrowserMainExtraPartsMetrics::PreCreateThreads() {
         std::make_unique<metrics::TabStatsTracker>(
             g_browser_process->local_state()));
   }
-#endif
 }
 
 void ChromeBrowserMainExtraPartsMetrics::PostCreateMainMessageLoop() {
@@ -1021,16 +1048,16 @@ void ChromeBrowserMainExtraPartsMetrics::PreBrowserStart() {
   //    filter out).
   // 3) Mixed 32-/64-bit devices, as non-mixed devices are forced to use
   //    a particular bitness, thus don't participate in the experiment.
-  size_t ram_mb = base::SysInfo::AmountOfPhysicalMemoryMB();
+  base::ByteCount ram = base::SysInfo::AmountOfPhysicalMemory();
   auto cpu_abi_bitness_support =
       metrics::AndroidMetricsHelper::GetInstance()->cpu_abi_bitness_support();
   bool is_device_of_interest =
-      (3.2 * 1024 < ram_mb && ram_mb < 6.5 * 1024) &&
+      (3.2 < ram.InGiBF() && ram.InGiBF() < 6.5) &&
       (chrome::android::GetMultipleUserProfilesState() ==
        chrome::android::MultipleUserProfilesState::kSingleProfile) &&
       (cpu_abi_bitness_support == metrics::CpuAbiBitnessSupport::k32And64bit) &&
       IsBundleForMixedDeviceAccordingToVersionCode(
-          base::android::BuildInfo::GetInstance()->package_version_code());
+          base::android::apk_info::package_version_code());
   if (is_device_of_interest) {
     std::vector<std::string> gws_experiment_ids;
     std::string trial_group;
@@ -1128,7 +1155,7 @@ void ChromeBrowserMainExtraPartsMetrics::PostBrowserStart() {
   }
 #endif  // BUILDFLAG(IS_WIN)
 
-  auto* screen = display::Screen::GetScreen();
+  auto* screen = display::Screen::Get();
   display_count_ = screen->GetNumDisplays();
   base::UmaHistogramCounts100("Hardware.Display.Count.OnStartup",
                               display_count_);
@@ -1209,7 +1236,6 @@ void ChromeBrowserMainExtraPartsMetrics::PreMainMessageLoopRun() {
 }
 
 void ChromeBrowserMainExtraPartsMetrics::PostDestroyThreads() {
-#if !BUILDFLAG(IS_ANDROID)
   if (metrics::TabStatsTracker::HasInstance()) {
     // responsiveness::Watcher currently outlives TabStatsTracker and
     // RemoveObserver is never called (see UsageScenarioTracker). This should be
@@ -1219,6 +1245,7 @@ void ChromeBrowserMainExtraPartsMetrics::PostDestroyThreads() {
     metrics::TabStatsTracker::ClearInstance();
   }
 
+#if !BUILDFLAG(IS_ANDROID)
   // Reset the pointer to `performance_intervention_metrics_reporter_` to ensure
   // that PrefService outlives the metrics reporter to prevent the reporter from
   // holding a dangling pointer.
@@ -1305,7 +1332,7 @@ void ChromeBrowserMainExtraPartsMetrics::OnDisplayMetricsChanged(
 }
 
 void ChromeBrowserMainExtraPartsMetrics::EmitDisplaysChangedMetric() {
-  int display_count = display::Screen::GetScreen()->GetNumDisplays();
+  int display_count = display::Screen::Get()->GetNumDisplays();
   if (display_count != display_count_) {
     display_count_ = display_count;
     base::UmaHistogramCounts100("Hardware.Display.Count.OnChange",

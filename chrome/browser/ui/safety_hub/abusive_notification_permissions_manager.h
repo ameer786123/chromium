@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_SAFETY_HUB_ABUSIVE_NOTIFICATION_PERMISSIONS_MANAGER_H_
 #define CHROME_BROWSER_UI_SAFETY_HUB_ABUSIVE_NOTIFICATION_PERMISSIONS_MANAGER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_constants.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -17,7 +18,7 @@ namespace {
 // Maximum time in milliseconds to wait for the Safe Browsing service reputation
 // check. After this amount of time the outstanding check will be aborted, and
 // the resource will be treated as if it were safe.
-const int kCheckUrlTimeoutMs = 5000;
+inline constexpr int kCheckUrlTimeoutMs = 5000;
 }  // namespace
 
 namespace safe_browsing {
@@ -32,7 +33,8 @@ class AbusiveNotificationPermissionsManager {
   explicit AbusiveNotificationPermissionsManager(
       scoped_refptr<safe_browsing::SafeBrowsingDatabaseManager>
           database_manager,
-      scoped_refptr<HostContentSettingsMap> hcsm);
+      scoped_refptr<HostContentSettingsMap> hcsm,
+      PrefService* pref_service);
 
   AbusiveNotificationPermissionsManager(
       const AbusiveNotificationPermissionsManager&) = delete;
@@ -40,6 +42,14 @@ class AbusiveNotificationPermissionsManager {
       const AbusiveNotificationPermissionsManager&) = delete;
 
   ~AbusiveNotificationPermissionsManager();
+
+  // Handles the auto-revocation of abusive notification permissions for both
+  // social engineering blocklist and manual enforcement. This includes updating
+  // the settings with the correct expiration, and logging metrics.
+  static void ExecuteAbusiveNotificationAutoRevocation(
+      HostContentSettingsMap* hcsm,
+      GURL url,
+      const raw_ptr<const base::Clock> clock);
 
   // Calls `PerformSafeBrowsingChecks` on URLs which have notifications
   // enabled and haven't been marked as a URL to be ignored.
@@ -70,6 +80,13 @@ class AbusiveNotificationPermissionsManager {
   void DeletePatternFromRevokedAbusiveNotificationList(
       const ContentSettingsPattern& primary_pattern,
       const ContentSettingsPattern& secondary_pattern);
+
+  // Restores REVOKED_ABUSIVE_NOTIFICATION_PERMISSIONS entry for the
+  // primary_pattern after it was deleted after user
+  // has accepted the revocation (via `ClearRevokedPermissionsList()`).
+  void RestoreDeletedRevokedPermission(
+      const ContentSettingsPattern& primary_pattern,
+      content_settings::ContentSettingConstraints constraints);
 
   // If there's a clock for testing, return that. Otherwise, return an instance
   // of a default clock.
@@ -123,6 +140,7 @@ class AbusiveNotificationPermissionsManager {
                          std::unique_ptr<SafeBrowsingCheckClient>>>
             safe_browsing_request_clients,
         raw_ptr<HostContentSettingsMap> hcsm,
+        PrefService* pref_service,
         GURL url,
         int safe_browsing_check_delay,
         const base::Clock* clock);
@@ -155,6 +173,10 @@ class AbusiveNotificationPermissionsManager {
 
     // A pointer to the `hcsm_` of the `AbusiveNotificationPermissionsManager`.
     raw_ptr<HostContentSettingsMap> hcsm_;
+
+    // A pointer to the `pref_service_` of the
+    // `AbusiveNotificationPermissionsManager`.
+    raw_ptr<PrefService> pref_service_;
 
     // The URL that is being checked against the Safe Browsing blocklist.
     GURL url_;
@@ -196,6 +218,9 @@ class AbusiveNotificationPermissionsManager {
 
   // Object that allows us to manage site permissions.
   scoped_refptr<HostContentSettingsMap> hcsm_;
+
+  // Used for updating prefs after performing blocklist checks.
+  raw_ptr<PrefService> pref_service_;
 
   // Safe Browsing blocklist check clients. Each object is responsible for a
   // single Safe Browsing check, given a URL. Stored this way so that the object

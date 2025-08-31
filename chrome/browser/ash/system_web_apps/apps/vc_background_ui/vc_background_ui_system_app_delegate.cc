@@ -18,7 +18,6 @@
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chromeos/ash/experiences/system_web_apps/types/system_web_app_delegate.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
-#include "components/manta/features.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom-shared.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/display/screen.h"
@@ -71,16 +70,15 @@ gfx::Size VcBackgroundUISystemAppDelegate::GetMinimumWindowSize() const {
 }
 
 gfx::Rect VcBackgroundUISystemAppDelegate::GetDefaultBounds(
-    Browser* browser) const {
+    BrowserDelegate*) const {
   gfx::Rect bounds =
-      display::Screen::GetScreen()->GetDisplayForNewWindows().work_area();
+      display::Screen::Get()->GetDisplayForNewWindows().work_area();
   bounds.ClampToCenteredSize({826, 608});
   return bounds;
 }
 
 bool VcBackgroundUISystemAppDelegate::IsAppEnabled() const {
   return ::ash::features::IsVcBackgroundReplaceEnabled() &&
-         manta::features::IsMantaServiceEnabled() &&
          personalization_app::IsAllowedToInstallSeaPen(profile());
 }
 

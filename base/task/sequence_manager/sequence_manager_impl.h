@@ -5,6 +5,7 @@
 #ifndef BASE_TASK_SEQUENCE_MANAGER_SEQUENCE_MANAGER_IMPL_H_
 #define BASE_TASK_SEQUENCE_MANAGER_SEQUENCE_MANAGER_IMPL_H_
 
+#include <array>
 #include <atomic>
 #include <deque>
 #include <map>
@@ -164,7 +165,7 @@ class BASE_EXPORT SequenceManagerImpl
   scoped_refptr<SingleThreadTaskRunner> GetTaskRunner();
 
   bool IsBoundToCurrentThread() const;
-  MessagePump* GetMessagePump() const;
+  MessagePump* GetMessagePump() const override;
   bool IsType(MessagePumpType type) const;
   void SetAddQueueTimeToTasks(bool enable);
   void SetTaskExecutionAllowedInNativeNestedLoop(bool allowed);

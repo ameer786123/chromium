@@ -28,11 +28,10 @@ std::optional<base::FilePath> GetApplicationSupportDirectory(
     UpdaterScope scope);
 
 // Returns the user Application Support directories associated with the given
-// scope. These directories are located under
-// /Users/<user>/Library/Application\ Support. Returns a vector of all users'
-// directories for all users in the system case, or the logged in user's
-// otherwise.
-std::vector<base::FilePath> GetApplicationSupportDirectoriesForUsers(
+// scope. For system installations this is "/Library/Application Support" and
+// the local application support directory for all users. For the user scope,
+// this is only "~/Library/Application Support/".
+std::vector<base::FilePath> GetApplicationSupportDirectoriesForScope(
     UpdaterScope scope);
 
 // Returns the path to Keystone's root directory.
@@ -55,6 +54,9 @@ bool RemoveWakeJobFromLaunchd(UpdaterScope scope);
 // steps fail, this continues to run the rest anyway, preparing the bundle to
 // run as best as it can. Returns whether every applicable prep step succeeded.
 bool PrepareToRunBundle(const base::FilePath& bundle_path);
+
+// Recursively remove quarantine attributes on `path`. Returns false on error.
+bool RemoveQuarantineAttributes(const base::FilePath& path);
 
 std::string GetDomain(UpdaterScope scope);
 

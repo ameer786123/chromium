@@ -62,7 +62,7 @@
 <translation id="3220661731597678625">الخطوة الحالية</translation>
 <translation id="3329013043687509092">تشبع اللون</translation>
 <translation id="3486220673238053218">تعريف</translation>
-<translation id="3557673793733683882">عنوان <ph name="HEADING_LEVEL" /></translation>
+<translation id="3557673793733683882"><ph name="HEADING_LEVEL" />Heading</translation>
 <translation id="3670698553867754311">منتقي الأسبوع</translation>
 <translation id="3706100364254443312">تبديل</translation>
 <translation id="3808586225841795776">عبارة</translation>
@@ -129,7 +129,7 @@
 <translation id="576709008726043716">مقدمة</translation>
 <translation id="5786442179789148008">إظهار قائمة سرعات التشغيل</translation>
 <translation id="5787939484346677755">موسّع، خيارات إكمال تلقائي متوفّرة.</translation>
-<translation id="5860033963881614850">غير مفعّلة</translation>
+<translation id="5860033963881614850">غير مفعّل</translation>
 <translation id="591047860372322273">مربع البحث</translation>
 <translation id="5916664084637901428">مفعّل</translation>
 <translation id="5966707198760109579">الأسبوع</translation>
@@ -164,7 +164,7 @@
 <translation id="6820615603175220800">مرجع قائمة مراجع</translation>
 <translation id="6831465880655513317">يمكنك استخدام مجموعة خيارات الألوان المتاحة من خلال شريط تمرير ثنائي الأبعاد لاختيار تشبُّع اللون والإضاءة.</translation>
 <translation id="6843725295806269523">كتم الصوت</translation>
-<translation id="6845533974506654842">اضغط</translation>
+<translation id="6845533974506654842">الضغط</translation>
 <translation id="6885760532393684712">الدليل</translation>
 <translation id="689129560213475294">إشارة ناشر</translation>
 <translation id="6919089238568236262">إظهار قائمة اختيار مقطع الفيديو</translation>

@@ -100,6 +100,7 @@ const std::optional<std::string> RestrictionToWarnProceededUMASuffix(
     case DlpRulesManager::Restriction::kClipboard:
     case DlpRulesManager::Restriction::kPrivacyScreen:
     case DlpRulesManager::Restriction::kFiles:
+    case DlpRulesManager::Restriction::kFileDownload:
       NOTREACHED();
   }
 }
@@ -289,11 +290,6 @@ void DlpContentManager::ScreenShareInfo::UpdateAfterSourceChange(
 bool DlpContentManager::ScreenShareInfo::operator==(
     const DlpContentManager::ScreenShareInfo& other) const {
   return label_ == other.label_ && media_id_ == other.media_id_;
-}
-
-bool DlpContentManager::ScreenShareInfo::operator!=(
-    const DlpContentManager::ScreenShareInfo& other) const {
-  return !(*this == other);
 }
 
 const content::DesktopMediaID& DlpContentManager::ScreenShareInfo::media_id()

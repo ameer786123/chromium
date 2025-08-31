@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.tab_ui;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import static java.lang.Math.min;
 
 import android.content.Context;
@@ -87,14 +89,14 @@ public class TabContentManager {
     private static final String UMA_THUMBNAIL_CAPTURE_DURATION_FORMAT =
             "Android.TabContentManager.CaptureThumbnail.%s.Duration";
 
-    private float mThumbnailScale;
+    private final float mThumbnailScale;
 
     /**
      * The limit on the number of fullsized or ETC1 compressed thumbnails in the in-memory cache.
      * If in future there is a need for more bitmaps to be visible on the screen at once this value
      * can be increased.
      */
-    private int mFullResThumbnailsMaxSize;
+    private final int mFullResThumbnailsMaxSize;
 
     private final BrowserControlsStateProvider mBrowserControlsStateProvider;
     private long mNativeTabContentManager;
@@ -116,7 +118,7 @@ public class TabContentManager {
 
     /** The interface to get a {@link Tab} from a tab ID. */
     public interface TabFinder {
-        Tab getTabById(int id);
+        @Nullable Tab getTabById(int id);
     }
 
     /**
@@ -188,7 +190,7 @@ public class TabContentManager {
         mNativeTabContentManager =
                 TabContentManagerJni.get()
                         .init(
-                                TabContentManager.this,
+                                this,
                                 mFullResThumbnailsMaxSize,
                                 compressionQueueMaxSize,
                                 writeQueueMaxSize,
@@ -239,6 +241,7 @@ public class TabContentManager {
         if (nativePage == null && !isNativeViewShowing) {
             return null;
         }
+        assumeNonNull(nativePage);
 
         View viewToDraw = null;
         if (isNativeViewShowing) {
@@ -613,7 +616,7 @@ public class TabContentManager {
                 return;
             }
             Callback<@Nullable Bitmap> wrappedCallback =
-                    (Bitmap bitmap) -> {
+                    (@Nullable Bitmap bitmap) -> {
                         if (bitmap != null) {
                             long durationMs = SystemClock.elapsedRealtime() - startTime;
                             RecordHistogram.recordTimesHistogram(
@@ -707,7 +710,7 @@ public class TabContentManager {
     interface Natives {
         // Class Object Methods
         long init(
-                TabContentManager caller,
+                TabContentManager self,
                 int defaultCacheSize,
                 int compressionQueueMaxSize,
                 int writeQueueMaxSize,

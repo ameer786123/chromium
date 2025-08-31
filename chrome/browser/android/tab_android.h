@@ -8,7 +8,9 @@
 #include <jni.h>
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
@@ -16,6 +18,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/supports_user_data.h"
+#include "base/types/pass_key.h"
 #include "chrome/browser/android/tab_android_data_provider.h"
 #include "chrome/browser/sync/glue/synced_tab_delegate_android.h"
 #include "chrome/browser/tab/web_contents_state.h"
@@ -25,7 +28,7 @@
 #include "components/tab_groups/token_id.h"
 #include "components/tabs/public/split_tab_id.h"
 #include "components/tabs/public/tab_interface.h"
-#include "tab_android_data_provider.h"
+#include "ui/base/unowned_user_data/unowned_user_data_host.h"
 
 class GURL;
 class Profile;
@@ -44,6 +47,7 @@ class WebContents;
 }  // namespace content
 
 namespace tabs {
+class TabCollection;
 class TabFeatures;
 }  // namespace tabs
 
@@ -60,6 +64,10 @@ class TabAndroid : public tabs::TabInterface,
   // Convenience method to retrieve the Tab associated with the passed
   // WebContents.  Can return NULL.
   static TabAndroid* FromWebContents(const content::WebContents* web_contents);
+
+  // Returns the native TabAndroid associated with the given `handle`.
+  // Returns nullptr if the `handle` is not associated with a TabAndroid.
+  static TabAndroid* FromTabHandle(tabs::TabHandle handle);
 
   // Returns the native TabAndroid stored in the Java Tab represented by
   // |obj|.
@@ -97,6 +105,7 @@ class TabAndroid : public tabs::TabInterface,
       override;
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
+  base::android::ScopedJavaLocalRef<jobject> GetJavaObject() const;
 
   // Return the WebContents, if any, currently owned by this TabAndroid.
   content::WebContents* web_contents() const { return web_contents_.get(); }
@@ -141,9 +150,6 @@ class TabAndroid : public tabs::TabInterface,
 
   // Returns the parent tab identifier for the tab.
   int GetParentId() const;
-
-  // Returns the tab group ID of the Tab or null if not part of a group.
-  std::optional<base::Token> GetTabGroupId() const;
 
   // Delete navigation entries matching predicate from frozen state.
   void DeleteFrozenNavigationEntries(
@@ -197,9 +203,11 @@ class TabAndroid : public tabs::TabInterface,
   void SetActiveNavigationEntryTitleForUrl(JNIEnv* env,
                                            std::string& jurl,
                                            std::u16string& jtitle);
-
   void LoadOriginalImage(JNIEnv* env);
   void OnShow(JNIEnv* env);
+  void NotifyPinnedStateChanged(JNIEnv* env, jboolean is_pinned);
+  void NotifyTabGroupChanged(JNIEnv* env,
+                             std::optional<base::Token> tab_group_id);
 
   scoped_refptr<content::DevToolsAgentHost> GetDevToolsAgentHost();
 
@@ -210,6 +218,11 @@ class TabAndroid : public tabs::TabInterface,
   // TabInterface overrides:
   base::WeakPtr<tabs::TabInterface> GetWeakPtr() override;
   content::WebContents* GetContents() const override;
+  // This implementation of close immediately closes the tab without undo
+  // support and without a warning dialog when closing the last tab in a tab
+  // group. For more granualar control it is strongly recommended to close tabs
+  // from Java instead. This operation may fail if the TabModel for this tab is
+  // not found for some reason.
   void Close() override;
   base::CallbackListSubscription RegisterWillDiscardContents(
       WillDiscardContentsCallback callback) override;
@@ -219,6 +232,7 @@ class TabAndroid : public tabs::TabInterface,
   base::CallbackListSubscription RegisterWillDeactivate(
       WillDeactivateCallback callback) override;
   bool IsVisible() const override;
+  bool IsSelected() const override;
   base::CallbackListSubscription RegisterDidBecomeVisible(
       DidBecomeVisibleCallback callback) override;
   base::CallbackListSubscription RegisterWillBecomeHidden(
@@ -237,15 +251,30 @@ class TabAndroid : public tabs::TabInterface,
       TabInterfaceCallback callback) override;
   bool IsInNormalWindow() const override;
   tabs::TabFeatures* GetTabFeatures() override;
+  const tabs::TabFeatures* GetTabFeatures() const override;
   bool IsPinned() const override;
   bool IsSplit() const override;
   std::optional<tab_groups::TabGroupId> GetGroup() const override;
   std::optional<split_tabs::SplitTabId> GetSplit() const override;
+  tabs::TabCollection* GetParentCollection(
+      base::PassKey<tabs::TabCollection>) const override;
+  const tabs::TabCollection* GetParentCollection() const override;
+
+  void OnReparented(tabs::TabCollection* parent,
+                    base::PassKey<tabs::TabCollection>) override;
+  void OnAncestorChanged(base::PassKey<tabs::TabCollection>) override;
+
+  ui::UnownedUserDataHost& GetUnownedUserDataHost() override;
+  const ui::UnownedUserDataHost& GetUnownedUserDataHost() const override;
 
  private:
   // This constructor bypassing JVM setup is for CreateForTesting only.
   TabAndroid(Profile* profile, int tab_id);
   JavaObjectWeakGlobalRef weak_java_tab_;
+
+  void UpdateProperties();
+  void SetIsPinned(bool pinned);
+  void SetTabGroupId(std::optional<tab_groups::TabGroupId> tab_group_id);
 
   int tab_id_;
 
@@ -263,10 +292,34 @@ class TabAndroid : public tabs::TabInterface,
   // Holds tab-scoped state. Constructed after tab_helpers.
   std::unique_ptr<tabs::TabFeatures> tab_features_;
 
+  raw_ptr<tabs::TabCollection> parent_collection_ = nullptr;
+
   base::ObserverList<Observer> observers_;
 
+  base::RepeatingCallbackList<void(TabInterface*, bool)>
+      pinned_state_changed_callback_list_;
+
+  base::RepeatingCallbackList<void(TabInterface*,
+                                   std::optional<tab_groups::TabGroupId>)>
+      group_changed_callback_list_;
+
   const base::WeakPtr<Profile> profile_;
+  ui::UnownedUserDataHost unowned_user_data_host_;
   base::WeakPtrFactory<TabAndroid> weak_ptr_factory_{this};
 };
+
+namespace jni_zero {
+template <>
+inline TabAndroid* FromJniType<TabAndroid*>(JNIEnv* env,
+                                            const JavaRef<jobject>& j_object) {
+  return j_object.is_null() ? nullptr : TabAndroid::GetNativeTab(env, j_object);
+}
+template <>
+inline ScopedJavaLocalRef<jobject> ToJniType<TabAndroid>(
+    JNIEnv* env,
+    const TabAndroid& tab) {
+  return tab.GetJavaObject();
+}
+}  // namespace jni_zero
 
 #endif  // CHROME_BROWSER_ANDROID_TAB_ANDROID_H_

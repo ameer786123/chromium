@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "base/test/scoped_feature_list.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/enterprise/signals/user_permission_service_factory.h"
 #include "chrome/browser/policy/policy_test_utils.h"
@@ -74,7 +75,7 @@ IN_PROC_BROWSER_TEST_P(ManagedBrowserUtilsBrowserTest, LocalState) {
 }
 
 #if !BUILDFLAG(IS_CHROMEOS)
-class EnterpriseBadgingTest
+class EnterpriseProfileBadgingTest
     : public InProcessBrowserTest,
       public testing::WithParamInterface<std::tuple<bool, bool, bool, bool>> {
  public:
@@ -130,7 +131,7 @@ class EnterpriseBadgingTest
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-IN_PROC_BROWSER_TEST_P(EnterpriseBadgingTest, CanShowEnterpriseBadging) {
+IN_PROC_BROWSER_TEST_P(EnterpriseProfileBadgingTest, CanShowEnterpriseBadging) {
   Profile* profile = browser()->profile();
   // When no custom policy is set, the visibility of each of the the avatar
   // badging and profile menu badging depends on whether the profile is managed
@@ -153,7 +154,7 @@ IN_PROC_BROWSER_TEST_P(EnterpriseBadgingTest, CanShowEnterpriseBadging) {
              managed_profile()));
 }
 
-IN_PROC_BROWSER_TEST_P(EnterpriseBadgingTest,
+IN_PROC_BROWSER_TEST_P(EnterpriseProfileBadgingTest,
                        CanNotShowEnterpriseBadgingForPrimaryOTRProfile) {
   Browser* incognito_browser = Browser::Create(Browser::CreateParams(
       browser()->profile()->GetPrimaryOTRProfile(/*create_if_needed=*/true),
@@ -163,7 +164,7 @@ IN_PROC_BROWSER_TEST_P(EnterpriseBadgingTest,
   EXPECT_FALSE(CanShowEnterpriseBadgingForMenu(incognito_browser->profile()));
 }
 
-IN_PROC_BROWSER_TEST_P(EnterpriseBadgingTest,
+IN_PROC_BROWSER_TEST_P(EnterpriseProfileBadgingTest,
                        CanNotShowEnterpriseBadgingForNonPrimaryOTRProfile) {
   browser()->profile()->GetPrimaryOTRProfile(/*create_if_needed=*/true);
   Profile* secondary_incognito = browser()->profile()->GetOffTheRecordProfile(
@@ -175,30 +176,172 @@ IN_PROC_BROWSER_TEST_P(EnterpriseBadgingTest,
 }
 
 INSTANTIATE_TEST_SUITE_P(,
-                         EnterpriseBadgingTest,
+                         EnterpriseProfileBadgingTest,
                          testing::Combine(testing::Bool(),
                                           testing::Bool(),
                                           testing::Bool(),
                                           testing::Bool()));
-#endif  // !BUILDFLAG(IS_CHROMEOS)
 
-class ManagedBrowserUtilsDeviceSignalsBrowserTest
+class EnterpriseBrowserBadgingTest
     : public InProcessBrowserTest,
-      public testing::WithParamInterface<bool> {
+      public testing::WithParamInterface<std::tuple<bool, bool, bool>> {
  public:
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatureState(
-        features::kEnterpriseUpdatedProfileCreationScreen, GetParam());
+    std::vector<base::test::FeatureRef> enabled_features;
+    std::vector<base::test::FeatureRef> disabled_features;
+    if (footer_management_notice_feature_enabled()) {
+      enabled_features.emplace_back(features::kEnterpriseBadgingForNtpFooter);
+    } else {
+      disabled_features.emplace_back(features::kEnterpriseBadgingForNtpFooter);
+    }
+    if (policies_feature_enabled()) {
+      enabled_features.emplace_back(features::kNTPFooterBadgingPolicies);
+    } else {
+      disabled_features.emplace_back(features::kNTPFooterBadgingPolicies);
+    }
+    scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
     InProcessBrowserTest::SetUp();
   }
 
-  bool EnterpriseUpdatedProfileCreationScreenEnabled() { return GetParam(); }
+  void SetUpOnMainThread() override {
+    if (managed_browser()) {
+      scoped_browser_management_ =
+          std::make_unique<policy::ScopedManagementServiceOverrideForTesting>(
+              policy::ManagementServiceFactory::GetForProfile(
+                  browser()->profile()),
+              policy::EnterpriseManagementAuthority::CLOUD_DOMAIN);
+    } else {
+      scoped_browser_management_ =
+          std::make_unique<policy::ScopedManagementServiceOverrideForTesting>(
+              policy::ManagementServiceFactory::GetForProfile(
+                  browser()->profile()),
+              policy::EnterpriseManagementAuthority::NONE);
+    }
+    InProcessBrowserTest::SetUpOnMainThread();
+  }
 
- protected:
+  void TearDownOnMainThread() override { scoped_browser_management_.reset(); }
+
+  bool footer_management_notice_feature_enabled() {
+    return std::get<0>(GetParam());
+  }
+  bool policies_feature_enabled() { return std::get<1>(GetParam()); }
+  bool managed_browser() { return std::get<2>(GetParam()); }
+
+ private:
+  std::unique_ptr<policy::ScopedManagementServiceOverrideForTesting>
+      scoped_browser_management_;
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-IN_PROC_BROWSER_TEST_P(ManagedBrowserUtilsDeviceSignalsBrowserTest,
+IN_PROC_BROWSER_TEST_P(EnterpriseBrowserBadgingTest,
+                       CanShowEnterpriseBadgingForNTPFooter) {
+  Profile* profile = browser()->profile();
+  // When no custom policy is set, the visibility of the management notice in
+  // the NTP footer depends on whether the browser is managed and
+  // if the feature controlling the default behaviour is enabled.
+  EXPECT_EQ(CanShowEnterpriseBadgingForNTPFooter(profile),
+            footer_management_notice_feature_enabled() && managed_browser());
+
+  g_browser_process->local_state()->SetString(
+      prefs::kEnterpriseCustomLabelForBrowser, "some_label");
+  EXPECT_EQ(CanShowEnterpriseBadgingForNTPFooter(profile),
+            (footer_management_notice_feature_enabled() ||
+             policies_feature_enabled()) &&
+                managed_browser());
+
+  g_browser_process->local_state()->SetString(
+      prefs::kEnterpriseCustomLabelForBrowser, "");
+  g_browser_process->local_state()->SetString(
+      prefs::kEnterpriseLogoUrlForBrowser, "some_url");
+  EXPECT_EQ(CanShowEnterpriseBadgingForNTPFooter(profile),
+            ((footer_management_notice_feature_enabled() ||
+              policies_feature_enabled()) &&
+             managed_browser()));
+}
+
+IN_PROC_BROWSER_TEST_P(EnterpriseBrowserBadgingTest,
+                       GetManagementNoticeStateForNTPFooter) {
+  Profile* profile = browser()->profile();
+
+  if (!managed_browser()) {
+    EXPECT_EQ(GetManagementNoticeStateForNTPFooter(profile),
+              BrowserManagementNoticeState::kNotApplicable);
+    return;
+  }
+
+  // Default state: no policy or user setting is specified yet.
+  BrowserManagementNoticeState expected_state;
+  expected_state = footer_management_notice_feature_enabled()
+                       ? BrowserManagementNoticeState::kEnabled
+                       : BrowserManagementNoticeState::kNotApplicable;
+  EXPECT_EQ(GetManagementNoticeStateForNTPFooter(profile), expected_state);
+
+  // Notice is disabled by policy.
+  g_browser_process->local_state()->SetBoolean(
+      prefs::kNTPFooterManagementNoticeEnabled, false);
+  EXPECT_EQ(GetManagementNoticeStateForNTPFooter(profile),
+            BrowserManagementNoticeState::kNotApplicable);
+  g_browser_process->local_state()->SetBoolean(
+      prefs::kNTPFooterManagementNoticeEnabled, true);
+
+  // Footer is disabled by user pref.
+  profile->GetPrefs()->SetBoolean(prefs::kNtpFooterVisible, false);
+  expected_state = footer_management_notice_feature_enabled()
+                       ? BrowserManagementNoticeState::kDisabled
+                       : BrowserManagementNoticeState::kNotApplicable;
+  EXPECT_EQ(GetManagementNoticeStateForNTPFooter(profile), expected_state);
+  profile->GetPrefs()->SetBoolean(prefs::kNtpFooterVisible, true);
+
+  // Footer has a custom label.
+  g_browser_process->local_state()->SetString(
+      prefs::kEnterpriseCustomLabelForBrowser, "some_label");
+  if (policies_feature_enabled()) {
+    expected_state = BrowserManagementNoticeState::kEnabledByPolicy;
+  } else {
+    expected_state = footer_management_notice_feature_enabled()
+                         ? BrowserManagementNoticeState::kEnabled
+                         : BrowserManagementNoticeState::kNotApplicable;
+  }
+  EXPECT_EQ(GetManagementNoticeStateForNTPFooter(profile), expected_state);
+
+  // Footer with custom policy and footer hidden by user pref.
+  profile->GetPrefs()->SetBoolean(prefs::kNtpFooterVisible, false);
+  if (policies_feature_enabled()) {
+    expected_state = BrowserManagementNoticeState::kEnabledByPolicy;
+  } else {
+    expected_state = footer_management_notice_feature_enabled()
+                         ? BrowserManagementNoticeState::kDisabled
+                         : BrowserManagementNoticeState::kNotApplicable;
+  }
+  EXPECT_EQ(GetManagementNoticeStateForNTPFooter(profile), expected_state);
+  profile->GetPrefs()->SetBoolean(prefs::kNtpFooterVisible, true);
+  g_browser_process->local_state()->SetString(
+      prefs::kEnterpriseCustomLabelForBrowser, "");
+
+  // Footer with custom policy and footer enabled by user pref.
+  g_browser_process->local_state()->SetString(
+      prefs::kEnterpriseLogoUrlForBrowser, "some_url");
+  if (policies_feature_enabled()) {
+    expected_state = BrowserManagementNoticeState::kEnabledByPolicy;
+  } else {
+    expected_state = footer_management_notice_feature_enabled()
+                         ? BrowserManagementNoticeState::kEnabled
+                         : BrowserManagementNoticeState::kNotApplicable;
+  }
+  EXPECT_EQ(GetManagementNoticeStateForNTPFooter(profile), expected_state);
+}
+
+INSTANTIATE_TEST_SUITE_P(,
+                         EnterpriseBrowserBadgingTest,
+                         testing::Combine(testing::Bool(),
+                                          testing::Bool(),
+                                          testing::Bool()));
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+
+using ManagedBrowserUtilsDeviceSignalsBrowserTest = InProcessBrowserTest;
+
+IN_PROC_BROWSER_TEST_F(ManagedBrowserUtilsDeviceSignalsBrowserTest,
                        UserAcceptedAccountManagementSharesDeviceSignals) {
   Profile* profile = browser()->profile();
   auto* user_permission_service =
@@ -215,12 +358,6 @@ IN_PROC_BROWSER_TEST_P(ManagedBrowserUtilsDeviceSignalsBrowserTest,
   // User has consented to sharing signals for the lifetime of the profile.
   SetUserAcceptedAccountManagement(profile, true);
   ASSERT_TRUE(UserAcceptedAccountManagement(profile));
-  ASSERT_EQ(user_permission_service->HasUserConsented(),
-            EnterpriseUpdatedProfileCreationScreenEnabled());
+  ASSERT_EQ(user_permission_service->HasUserConsented(), true);
 }
-
-INSTANTIATE_TEST_SUITE_P(,
-                         ManagedBrowserUtilsDeviceSignalsBrowserTest,
-                         testing::Bool());
 }  // namespace enterprise_util
-

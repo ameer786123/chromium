@@ -16,6 +16,7 @@
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
@@ -82,7 +83,11 @@ Matcher GetHeaderMatcher(
 
 Matcher GetUpdaterUserAgentMatcher(const base::Version& updater_version) {
   return GetHeaderMatcher(
-      {{"User-Agent", GetUpdaterUserAgent(updater_version)}});
+      {{"User-Agent",
+        base::StrCat({GetUpdaterUserAgent(updater_version), "|",
+                      PRODUCT_FULLNAME_STRING, "_test/",
+                      base::NumberToString(updater_version.components()[2]),
+                      ".*"})}});
 }
 
 Matcher GetTargetURLMatcher(GURL target_url) {
@@ -229,7 +234,7 @@ Matcher GetMultipartContentMatcher(
     const std::vector<FormExpectations>& form_expections) {
   return base::BindLambdaForTesting([form_expections](
                                         const HttpRequest& request) {
-    constexpr char kMultifpartBoundaryPrefix[] =
+    static constexpr char kMultifpartBoundaryPrefix[] =
         "multipart/form-data; boundary=";
     if (!request.headers.contains("Content-Type")) {
       ADD_FAILURE() << "Content-Type header not found, which is expected "

@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "ash/public/cpp/token_handle_store.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/functional/callback.h"
@@ -27,7 +28,6 @@
 #include "chrome/browser/ash/child_accounts/child_policy_observer.h"
 #include "chrome/browser/ash/hats/hats_notification_controller.h"
 #include "chrome/browser/ash/login/signin/oauth2_login_manager.h"
-#include "chrome/browser/ash/login/signin/token_handle_util.h"
 #include "chrome/browser/ash/net/xdr_manager.h"
 #include "chrome/browser/ash/release_notes/release_notes_notification.h"
 #include "chrome/browser/ash/system_web_apps/apps/help_app/help_app_notification_controller.h"
@@ -58,10 +58,11 @@ namespace ash {
 class AuthStatusConsumer;
 class OnboardingUserActivityCounter;
 class AuthenticatorBuilder;
-class TokenHandleFetcher;
+class LegacyTokenHandleFetcher;
 class EolNotification;
 class InputEventsBlocker;
 class U2FNotification;
+class TokenHandleService;
 
 namespace test {
 class UserSessionManagerTestApi;
@@ -478,7 +479,7 @@ class UserSessionManager
   // Returns `true` if token handles should be used on this device.
   bool TokenHandlesEnabled();
 
-  void CreateTokenUtilIfMissing();
+  void CreateTokenHandleStoreIfMissing();
 
   // Update token handle if the existing token handle is missing/invalid.
   void UpdateTokenHandleIfRequired(Profile* const profile,
@@ -516,6 +517,16 @@ class UserSessionManager
   // doesn't exist.
   HelpAppNotificationController* GetHelpAppNotificationController(
       Profile* profile);
+
+  void MaybeFetchTokenHandleForExistingUser(
+      TokenHandleService* token_handle_service);
+
+  void MaybeFetchTokenHandleForExistingUserIfInvalidOrEmpty(
+      const user_manager::User* user,
+      TokenHandleService* token_handle_service);
+
+  void FetchTokenHandleLegacy(Profile* profile, const user_manager::User* user);
+  void FetchTokenHandle(Profile* profile, const user_manager::User* user);
 
   base::WeakPtr<UserSessionManagerDelegate> delegate_;
 
@@ -582,8 +593,8 @@ class UserSessionManager
   // Whether should fetch token handles, tests may override this value.
   bool should_obtain_handles_;
 
-  std::unique_ptr<TokenHandleUtil> token_handle_util_;
-  std::unique_ptr<TokenHandleFetcher> token_handle_fetcher_;
+  raw_ptr<TokenHandleStore> token_handle_store_;
+  std::unique_ptr<LegacyTokenHandleFetcher> token_handle_fetcher_;
   std::map<Profile*, std::unique_ptr<DeviceAccountGaiaTokenObserver>>
       token_observers_;
 

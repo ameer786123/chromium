@@ -41,8 +41,9 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
+#include "net/test/embedded_test_server/install_default_websocket_handlers.h"
+#include "net/test/embedded_test_server/register_basic_auth_handler.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
 
 #if BUILDFLAG(ENABLE_PLATFORM_APPS)
 #include "chrome/browser/apps/app_service/app_launch_params.h"
@@ -64,14 +65,14 @@ const char kEmbeddedTestServerPort[] = "testServer.port";
 }  // namespace
 
 ExtensionApiTest::ExtensionApiTest(ContextType context_type)
-    : ExtensionApiTestBase(context_type), platform_delegate_(*this) {
+    : ExtensionBrowserTest(context_type) {
   net::test_server::RegisterDefaultHandlers(embedded_test_server());
 }
 
 ExtensionApiTest::~ExtensionApiTest() = default;
 
 void ExtensionApiTest::SetUpOnMainThread() {
-  ExtensionApiTestBase::SetUpOnMainThread();
+  ExtensionBrowserTest::SetUpOnMainThread();
 
 #if BUILDFLAG(IS_ANDROID)
   // See comment in SetUpTestDataDir().
@@ -94,7 +95,7 @@ void ExtensionApiTest::SetUpOnMainThread() {
 }
 
 void ExtensionApiTest::TearDownOnMainThread() {
-  ExtensionApiTestBase::TearDownOnMainThread();
+  ExtensionBrowserTest::TearDownOnMainThread();
   TestGetConfigFunction::set_test_config_state(nullptr);
   test_config_.reset();
 }
@@ -127,7 +128,7 @@ bool ExtensionApiTest::RunExtensionTest(const base::FilePath& extension_path,
       << "'extension_url' and 'page_url' are mutually exclusive.";
   CHECK(!run_options.open_in_incognito || run_options.page_url ||
         run_options.extension_url)
-      << "'open_in_incognito' is only allowed if specifiying 'page_url'";
+      << "'open_in_incognito' is only allowed if specifying 'page_url'";
   CHECK(!(run_options.launch_as_platform_app && run_options.page_url))
       << "'launch_as_platform_app' and 'page_url' are mutually exclusive.";
 
@@ -150,11 +151,20 @@ bool ExtensionApiTest::RunExtensionTest(const base::FilePath& extension_path,
     // extension.
     // TODO(crbug.com/40210201): Update callers passing relative paths
     // for page URLs to instead use extension_url.
-    if (!url_to_open.is_valid())
+    if (!url_to_open.is_valid()) {
       url_to_open = extension->GetResourceURL(run_options.page_url);
+      if (!url_to_open.is_valid()) {
+        message_ = "Invalid page URL.";
+        return false;
+      }
+    }
   } else if (run_options.extension_url) {
     DCHECK(!url_to_open.has_scheme() && !url_to_open.has_host());
     url_to_open = extension->GetResourceURL(run_options.extension_url);
+    if (!url_to_open.is_valid()) {
+      message_ = "Invalid extension URL.";
+      return false;
+    }
   }
 
   // If there is a page_url to load, navigate it.
@@ -194,7 +204,7 @@ bool ExtensionApiTest::RunExtensionTest(const base::FilePath& extension_path,
 }
 
 void ExtensionApiTest::OpenURL(const GURL& url, bool open_in_incognito) {
-  platform_delegate_.OpenURL(url, open_in_incognito);
+  platform_delegate().OpenURL(url, open_in_incognito);
 }
 
 bool ExtensionApiTest::OpenTestURL(const GURL& url, bool open_in_incognito) {
@@ -246,18 +256,30 @@ void ExtensionApiTest::EmbeddedTestServerAcceptConnections() {
   embedded_test_server()->StartAcceptingConnections();
 }
 
+net::EmbeddedTestServer& ExtensionApiTest::GetWebSocketServer() {
+  if (!websocket_server_) {
+    websocket_server_ = std::make_unique<net::test_server::EmbeddedTestServer>(
+        net::test_server::EmbeddedTestServer::Type::TYPE_HTTP);
+    net::test_server::InstallDefaultWebSocketHandlers(websocket_server_.get());
+  }
+  return *websocket_server_;
+}
+
 bool ExtensionApiTest::StartWebSocketServer(
-    const base::FilePath& root_directory,
     bool enable_basic_auth) {
-  websocket_server_ = std::make_unique<net::SpawnedTestServer>(
-      net::SpawnedTestServer::TYPE_WS, root_directory);
-  websocket_server_->set_websocket_basic_auth(enable_basic_auth);
+  // Initialize `websocket_server_`, if needed.
+  GetWebSocketServer();
+
+  if (enable_basic_auth) {
+    net::test_server::RegisterBasicAuthHandler(*websocket_server_,
+                                               /*username=*/"foo",
+                                               /*password=*/"bar");
+  }
 
   if (!websocket_server_->Start())
     return false;
 
-  test_config_->Set(kTestWebSocketPort,
-                    websocket_server_->host_port_pair().port());
+  test_config_->Set(kTestWebSocketPort, websocket_server_->port());
 
   return true;
 }
@@ -267,7 +289,7 @@ void ExtensionApiTest::SetCustomArg(std::string_view custom_arg) {
 }
 
 void ExtensionApiTest::SetUpCommandLine(base::CommandLine* command_line) {
-  ExtensionApiTestBase::SetUpCommandLine(command_line);
+  ExtensionBrowserTest::SetUpCommandLine(command_line);
 
 #if !BUILDFLAG(IS_ANDROID)
   // On Android this is handled later.
@@ -281,14 +303,6 @@ void ExtensionApiTest::SetUpCommandLine(base::CommandLine* command_line) {
   // tests to take more time to complete. Disable backgrounding so that the
   // tests don't time out.
   command_line->AppendSwitch(::switches::kDisableRendererBackgrounding);
-}
-
-void ExtensionApiTest::UseHttpsTestServer() {
-  https_test_server_ = std::make_unique<net::EmbeddedTestServer>(
-      net::EmbeddedTestServer::TYPE_HTTPS);
-  https_test_server_.get()->AddDefaultHandlers(GetChromeTestDataDir());
-  https_test_server_.get()->SetSSLConfig(
-      net::EmbeddedTestServer::CERT_TEST_NAMES);
 }
 
 void ExtensionApiTest::SetUpTestDataDir() {

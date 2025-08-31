@@ -10,7 +10,6 @@
 
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
-#include "base/not_fatal_until.h"
 #include "build/build_config.h"
 #include "components/viz/service/display/resource_fence.h"
 #include "gpu/command_buffer/service/scheduler_sequence.h"
@@ -142,7 +141,7 @@ DisplayResourceProviderSkia::LockSetForExternalUse::LockResource(
     bool maybe_concurrent_reads,
     bool raw_draw_is_possible) {
   auto it = resource_provider_->resources_.find(id);
-  CHECK(it != resource_provider_->resources_.end(), base::NotFatalUntil::M130);
+  CHECK(it != resource_provider_->resources_.end());
 
   ChildResource& resource = it->second;
   DCHECK(resource.is_gpu_resource_type());
@@ -152,10 +151,12 @@ DisplayResourceProviderSkia::LockSetForExternalUse::LockResource(
     resources_.emplace_back(id, &resource);
 
     if (!resource.image_context) {
+      uint32_t client_id =
+          resource_provider_->GetSurfaceId(id).frame_sink_id().client_id();
       resource.image_context =
           resource_provider_->external_use_client_->CreateImageContext(
               resource.transferable, maybe_concurrent_reads,
-              raw_draw_is_possible);
+              raw_draw_is_possible, client_id);
     }
     resource.locked_for_external_use = true;
 

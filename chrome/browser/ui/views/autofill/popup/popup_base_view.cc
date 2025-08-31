@@ -16,6 +16,7 @@
 #include "base/location.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/themes/theme_service.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/views/autofill/popup/custom_cursor_suppressor.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_view_utils.h"
@@ -77,7 +78,8 @@ std::unique_ptr<views::Border> CreateBorder() {
   auto border = std::make_unique<views::BubbleBorder>(
       views::BubbleBorder::NONE, views::BubbleBorder::STANDARD_SHADOW);
   border->SetColor(ui::kColorDropdownBackground);
-  border->SetCornerRadius(PopupBaseView::GetCornerRadius());
+  border->set_rounded_corners(
+      gfx::RoundedCornersF(PopupBaseView::GetCornerRadius()));
   border->set_md_shadow_elevation(
       ChromeLayoutProvider::Get()->GetShadowElevationMetric(
           base::FeatureList::IsEnabled(features::kAutofillMoreProminentPopup)
@@ -197,7 +199,7 @@ class PopupBaseView::Widget : public views::Widget {
       // Save the synthesized event position to use it for the exit event
       // later.
       last_synthesized_parent_mouse_move_position_ =
-          display::Screen::GetScreen()->GetCursorScreenPoint();
+          display::Screen::Get()->GetCursorScreenPoint();
     } else if (!parent_content_view->IsMouseHovered() &&
                last_synthesized_parent_mouse_move_position_.has_value()) {
       // Generate the exit event after a set of move events as there is no one
@@ -297,7 +299,7 @@ bool PopupBaseView::DoShow() {
   // immediate hiding of the popup). Only start observing after shown.
   if (initialize_widget) {
     CHECK(!focus_observation_.IsObserving());
-    focus_observation_.Observe(views::WidgetFocusManager::GetInstance());
+    focus_observation_.Observe(views::NativeViewFocusManager::GetInstance());
   }
 
   return true;
@@ -508,10 +510,12 @@ bool PopupBaseView::DoUpdateBoundsAndRedrawPopup() {
 
   gfx::Rect element_bounds = gfx::ToEnclosingRect(delegate_->element_bounds());
 
-  // An element that is contained by the `content_area_bounds` (even if empty,
-  // which means either the height or the width is 0) is never outside the
-  // content area. An empty element case can happen with caret bounds, which
-  // sometimes has 0 width.
+  // An element is never outside the content area if it is contained by the
+  // `content_area_bounds`. This also applies if the element is empty,
+  // which means that either the height or the width is 0. An element can be
+  // empty in case the popup is anchored to a caret, which has a 0 width.
+  // TODO(crbug.com/430555440) - We want the element also to intersect with
+  // the screen bounds.
   if (!content_area_bounds.Contains(element_bounds)) {
     // If the element exceeds the content area, ensure that the popup is still
     // visually attached to the input element.

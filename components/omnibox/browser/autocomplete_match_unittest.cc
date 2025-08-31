@@ -29,6 +29,7 @@
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "third_party/metrics_proto/omnibox_scoring_signals.pb.h"
 #include "third_party/omnibox_proto/entity_info.pb.h"
+#include "third_party/omnibox_proto/suggest_template_info.pb.h"
 #include "ui/gfx/vector_icon_types.h"
 #include "url/gurl.h"
 
@@ -394,6 +395,67 @@ TEST_F(AutocompleteMatchTest, SupportsDeletion) {
   m.duplicate_matches.push_back(AutocompleteMatch(
       nullptr, 0, true, AutocompleteMatchType::URL_WHAT_YOU_TYPED));
   EXPECT_TRUE(m.SupportsDeletion());
+}
+
+TEST_F(AutocompleteMatchTest, GURLToStrippedGURL) {
+  struct {
+    const char* url1;
+    const char* url2;
+    const char* input;
+    bool equal;
+  } test_cases[] = {
+      // Sanity check cases.
+      {"http://google.com", "http://google.com", "", true},
+      {"http://google.com", "http://www.google.com", "", true},
+      {"http://google.com", "http://facebook.com", "", false},
+      {"http://google.com", "https://google.com", "", true},
+      // Because we provided scheme, must match in scheme.
+      {"http://google.com", "https://google.com", "http://google.com", false},
+      {"https://www.apple.com/", "http://www.apple.com/",
+       "https://www.apple.com/", false},
+      {"https://www.apple.com/", "https://www.apple.com/",
+       "https://www.apple.com/", true},
+      // Ignore ref if not in input.
+      {"http://drive.google.com/doc/blablabla#page=10",
+       "http://drive.google.com/doc/blablabla#page=111", "", true},
+      {"http://drive.google.com/doc/blablabla#page=10",
+       "http://drive.google.com/doc/blablabla#page=111",
+       "http://drive.google.com/doc/blablabla", true},
+      {"file:///usr/local/bin/tuxpenguin#ref1",
+       "file:///usr/local/bin/tuxpenguin#ref2", "", true},
+      {"file:///usr/local/bin/tuxpenguin#ref1",
+       "file:///usr/local/bin/tuxpenguin#ref2",
+       "file:///usr/local/bin/tuxpenguin", true},
+      // Do not ignore ref if in input.
+      {"http://drive.google.com/doc/blablabla#page=10",
+       "http://drive.google.com/doc/blablabla#page=111",
+       "http://drive.google.com/doc/blablabla#p", false},
+      {"file:///usr/local/bin/tuxpenguin#ref1",
+       "file:///usr/local/bin/tuxpenguin#ref2",
+       "file:///usr/local/bin/tuxpenguin#r", false}};
+
+  for (const auto& test_case : test_cases) {
+    SCOPED_TRACE(std::string(test_case.url1) + " vs " + test_case.url2 +
+                 ", input '" + test_case.input + "'");
+    AutocompleteInput input(base::ASCIIToUTF16(test_case.input),
+                            test_case.input[0]
+                                ? metrics::OmniboxEventProto::OTHER
+                                : metrics::OmniboxEventProto::BLANK,
+                            TestSchemeClassifier());
+    const auto stripped_url1 = AutocompleteMatch::GURLToStrippedGURL(
+        /*url=*/GURL(test_case.url1),
+        /*input=*/input,
+        /*template_url=*/nullptr,
+        /*search_terms=*/std::u16string(),
+        /*keep_search_intent_params=*/false);
+    const auto stripped_url2 = AutocompleteMatch::GURLToStrippedGURL(
+        /*url=*/GURL(test_case.url2),
+        /*input=*/input,
+        /*template_url=*/nullptr,
+        /*search_terms=*/std::u16string(),
+        /*keep_search_intent_params=*/false);
+    EXPECT_EQ(test_case.equal, stripped_url1 == stripped_url2);
+  }
 }
 
 // Structure containing URL pairs for deduping-related tests.
@@ -979,10 +1041,13 @@ TEST_F(AutocompleteMatchTest, RearrangeActionsInSuggest) {
       new FakeAutocompleteProvider(AutocompleteProvider::Type::TYPE_SEARCH);
   const OmniboxAction::LabelStrings dummy_labels(u"", u"", u"", u"");
 
-  using ActionType = omnibox::ActionInfo::ActionType;
-  constexpr auto CALL = omnibox::ActionInfo_ActionType_CALL;
-  constexpr auto NAV = omnibox::ActionInfo_ActionType_DIRECTIONS;
-  constexpr auto REVS = omnibox::ActionInfo_ActionType_REVIEWS;
+  using ActionType = omnibox::SuggestTemplateInfo::TemplateAction::ActionType;
+  constexpr auto CALL =
+      omnibox::SuggestTemplateInfo_TemplateAction_ActionType_CALL;
+  constexpr auto NAV =
+      omnibox::SuggestTemplateInfo_TemplateAction_ActionType_DIRECTIONS;
+  constexpr auto REVS =
+      omnibox::SuggestTemplateInfo_TemplateAction_ActionType_REVIEWS;
 
   struct FilterOmniboxActionsTestData {
     std::string test_name;
@@ -1014,10 +1079,10 @@ TEST_F(AutocompleteMatchTest, RearrangeActionsInSuggest) {
 
     // Populate match with requested actions.
     for (auto& action_type : test_case.types_to_add) {
-      omnibox::ActionInfo info;
-      info.set_action_type(action_type);
+      omnibox::SuggestTemplateInfo::TemplateAction action;
+      action.set_action_type(action_type);
       match.actions.push_back(base::MakeRefCounted<OmniboxActionInSuggest>(
-          std::move(info), std::nullopt));
+          std::move(action), std::nullopt));
     }
 
     match.FilterAndSortActionsInSuggest();
@@ -1052,8 +1117,8 @@ TEST_F(AutocompleteMatchTest, ValidateGetVectorIcons) {
 
     if (match.type == AutocompleteMatchType::STARTER_PACK) {
       // All STARTER_PACK suggestions should have non-empty vector icons.
-      for (int starter_pack_id = TemplateURLStarterPackData::kBookmarks;
-           starter_pack_id != TemplateURLStarterPackData::kMaxStarterPackID;
+      for (int starter_pack_id = template_url_starter_pack_data::kBookmarks;
+           starter_pack_id != template_url_starter_pack_data::kMaxStarterPackId;
            starter_pack_id++) {
         TemplateURLData turl_data;
         turl_data.starter_pack_id = starter_pack_id;
@@ -1064,7 +1129,7 @@ TEST_F(AutocompleteMatchTest, ValidateGetVectorIcons) {
     } else if (match.type == AutocompleteMatchType::SEARCH_SUGGEST_TAIL ||
                match.type == AutocompleteMatchType::HISTORY_EMBEDDINGS_ANSWER ||
                (match.type == AutocompleteMatchType::NULL_RESULT_MESSAGE &&
-                !match.IsIPHSuggestion())) {
+                !match.IsIphSuggestion())) {
       // SEARCH_SUGGEST_TAIL and non-IPH NULL_RESULT_MESSAGE suggestions use an
       // empty vector icon.
       EXPECT_TRUE(match.GetVectorIcon(/*is_bookmark=*/false).is_empty());
@@ -1072,6 +1137,16 @@ TEST_F(AutocompleteMatchTest, ValidateGetVectorIcons) {
       // All other suggestion types should result in non-empty vector icons.
       EXPECT_FALSE(match.GetVectorIcon(/*is_bookmark=*/false).is_empty());
     }
+  }
+
+  // When the match has a SuggestTemplateInfo, its icon should be set.
+  // This checks the full range to ensure any new additions get mapped.
+  match.suggest_template = omnibox::SuggestTemplateInfo();
+  for (int i = omnibox::SuggestTemplateInfo::IconType_MIN;
+       i <= omnibox::SuggestTemplateInfo::IconType_MAX; i++) {
+    match.suggest_template->set_type_icon(
+        static_cast<omnibox::SuggestTemplateInfo::IconType>(i));
+    EXPECT_FALSE(match.GetVectorIcon(false).is_empty());
   }
 }
 #endif
@@ -1086,4 +1161,22 @@ TEST_F(AutocompleteMatchTest, IsClipboardType) {
         AutocompleteMatch::IsClipboardType((AutocompleteMatchType::Type)type),
         clipboard_types.contains(type));
   }
+}
+
+TEST_F(AutocompleteMatchTest, HasLensSearchAction) {
+  AutocompleteMatch match;
+  EXPECT_FALSE(match.HasLensSearchAction());
+
+  match.suggest_template = omnibox::SuggestTemplateInfo();
+  EXPECT_FALSE(match.HasLensSearchAction());
+
+  auto* action = match.suggest_template->add_action_suggestions();
+  action->set_action_type(
+      omnibox::SuggestTemplateInfo_TemplateAction_ActionType_DIRECTIONS);
+  EXPECT_FALSE(match.HasLensSearchAction());
+
+  action = match.suggest_template->add_action_suggestions();
+  action->set_action_type(
+      omnibox::SuggestTemplateInfo_TemplateAction_ActionType_CHROME_LENS);
+  EXPECT_TRUE(match.HasLensSearchAction());
 }

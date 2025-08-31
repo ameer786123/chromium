@@ -23,10 +23,10 @@ import org.chromium.android_webview.AwBrowserContext;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContents.DependencyFactory;
 import org.chromium.android_webview.AwContents.InternalAccessDelegate;
-import org.chromium.android_webview.AwContents.NativeDrawFunctorFactory;
 import org.chromium.android_webview.AwContentsClient;
 import org.chromium.android_webview.AwRenderProcessGoneDetail;
 import org.chromium.android_webview.AwSettings;
+import org.chromium.android_webview.gfx.AwDrawFnImpl;
 import org.chromium.android_webview.test.AwActivityTestRule;
 import org.chromium.android_webview.test.AwJUnit4ClassRunnerWithParameters;
 import org.chromium.android_webview.test.AwParameterizedTest;
@@ -67,14 +67,14 @@ public class VisualStateCallbackTest extends AwParameterizedTest {
     }
 
     private static class VisualStateCallbackTestAwContents extends TestAwContents {
-        private VisualStateCallbackHelper mVisualStateCallbackHelper;
+        private final VisualStateCallbackHelper mVisualStateCallbackHelper;
 
         public VisualStateCallbackTestAwContents(
                 AwBrowserContext browserContext,
                 ViewGroup containerView,
                 Context context,
                 InternalAccessDelegate internalAccessAdapter,
-                NativeDrawFunctorFactory nativeDrawFunctorFactory,
+                AwDrawFnImpl.DrawFnAccess drawFnAccess,
                 AwContentsClient contentsClient,
                 AwSettings settings,
                 DependencyFactory dependencyFactory) {
@@ -83,7 +83,7 @@ public class VisualStateCallbackTest extends AwParameterizedTest {
                     containerView,
                     context,
                     internalAccessAdapter,
-                    nativeDrawFunctorFactory,
+                    drawFnAccess,
                     contentsClient,
                     settings,
                     dependencyFactory);
@@ -105,7 +105,7 @@ public class VisualStateCallbackTest extends AwParameterizedTest {
                 ViewGroup containerView,
                 Context context,
                 InternalAccessDelegate internalAccessAdapter,
-                NativeDrawFunctorFactory nativeDrawFunctorFactory,
+                AwDrawFnImpl.DrawFnAccess drawFnAccess,
                 AwContentsClient contentsClient,
                 AwSettings settings,
                 DependencyFactory dependencyFactory) {
@@ -114,7 +114,7 @@ public class VisualStateCallbackTest extends AwParameterizedTest {
                     containerView,
                     context,
                     internalAccessAdapter,
-                    nativeDrawFunctorFactory,
+                    drawFnAccess,
                     contentsClient,
                     settings,
                     dependencyFactory);

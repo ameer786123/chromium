@@ -4,49 +4,33 @@
 
 #include "chrome/browser/ui/tabs/saved_tab_groups/collaboration_messaging_observer.h"
 
+#include <set>
+
+#include "base/uuid.h"
+#include "chrome/browser/collaboration/collaboration_service_factory.h"
 #include "chrome/browser/collaboration/messaging/messaging_backend_service_factory.h"
 #include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/collaboration_messaging_tab_data.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_metrics.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_action_context_desktop.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/views/data_sharing/collaboration_controller_delegate_desktop.h"
 #include "chrome/browser/ui/views/data_sharing/data_sharing_bubble_controller.h"
-#include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/tabs/tab_strip.h"
+#include "components/collaboration/public/collaboration_flow_entry_point.h"
+#include "components/collaboration/public/collaboration_service.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/saved_tab_groups/public/types.h"
+#include "components/tabs/public/tab_group.h"
 
 using collaboration::messaging::MessagingBackendServiceFactory;
 
 namespace tab_groups {
 namespace {
-
-// Get the TabStrip that contains this group ID.
-TabStrip* GetTabStripWithGroup(LocalTabGroupID local_tab_group_id) {
-  const Browser* const browser_with_local_group_id =
-      SavedTabGroupUtils::GetBrowserWithTabGroupId(local_tab_group_id);
-  if (!browser_with_local_group_id) {
-    return nullptr;
-  }
-
-  auto* browser_view =
-      BrowserView::GetBrowserViewForBrowser(browser_with_local_group_id);
-  if (!browser_view) {
-    return nullptr;
-  }
-
-  auto* tab_strip = browser_view->tabstrip();
-  if (!tab_strip) {
-    return nullptr;
-  }
-
-  return tab_strip;
-}
 
 // Returns the local tab group ID from the PersistentMessage.
 std::optional<LocalTabGroupID> UnwrapTabGroupID(PersistentMessage message) {
@@ -137,8 +121,9 @@ void CollaborationMessagingObserver::HandleDirtyTabGroup(
     return;
   }
 
-  if (TabStrip* tabstrip = GetTabStripWithGroup(local_tab_group_id.value())) {
-    tabstrip->SetTabGroupNeedsAttention(
+  if (Browser* browser = SavedTabGroupUtils::GetBrowserWithTabGroupId(
+          local_tab_group_id.value())) {
+    browser->tab_strip_model()->SetTabGroupNeedsAttention(
         local_tab_group_id.value(), display == MessageDisplayStatus::kDisplay);
   }
 }
@@ -152,9 +137,10 @@ void CollaborationMessagingObserver::HandleDirtyTab(
     return;
   }
 
-  if (TabStrip* tabstrip = GetTabStripWithGroup(tab_info->local_tab_group_id)) {
-    tabstrip->SetTabNeedsAttention(tab_info->tabstrip_index,
-                                   display == MessageDisplayStatus::kDisplay);
+  if (Browser* browser = SavedTabGroupUtils::GetBrowserWithTabGroupId(
+          tab_info->local_tab_group_id)) {
+    browser->tab_strip_model()->SetTabNeedsAttentionAt(
+        tab_info->tabstrip_index, display == MessageDisplayStatus::kDisplay);
   }
 }
 
@@ -201,22 +187,29 @@ void CollaborationMessagingObserver::DispatchMessage(
 }
 
 CollaborationMessagingObserver::CollaborationMessagingObserver(Profile* profile)
-    : profile_(profile),
-      instant_message_queue_processor_(profile),
-      service_(MessagingBackendServiceFactory::GetForProfile(profile_)) {
+    : profile_(profile), instant_message_queue_processor_(profile) {
+  // This observer is disabled when Shared Tab Groups is not supported.
+  if (!tab_groups::SavedTabGroupUtils::SupportsSharedTabGroups()) {
+    return;
+  }
+
+  service_ = MessagingBackendServiceFactory::GetForProfile(profile_);
   CHECK(service_);
+
   persistent_message_service_observation_.Observe(service_);
   service_->SetInstantMessageDelegate(this);
 }
 
 CollaborationMessagingObserver::~CollaborationMessagingObserver() {
-  service_->SetInstantMessageDelegate(nullptr);
+  if (service_) {
+    service_->SetInstantMessageDelegate(nullptr);
+  }
 }
 
 void CollaborationMessagingObserver::OnMessagingBackendServiceInitialized() {
   CHECK(service_);
   auto messages = service_->GetMessages(std::nullopt);
-  for (auto message : messages) {
+  for (const auto& message : messages) {
     DispatchMessage(message, MessageDisplayStatus::kDisplay);
   }
 }
@@ -244,6 +237,11 @@ void CollaborationMessagingObserver::DisplayInstantaneousMessage(
     InstantMessageSuccessCallback success_callback) {
   instant_message_queue_processor_.Enqueue(message,
                                            std::move(success_callback));
+}
+
+void CollaborationMessagingObserver::HideInstantaneousMessage(
+    const std::set<base::Uuid>& message_ids) {
+  // TODO(crbug.com/416265338): Implement this.
 }
 
 void CollaborationMessagingObserver::ReopenTabForCurrentInstantMessage() {
@@ -321,8 +319,15 @@ void CollaborationMessagingObserver::ManageSharingForCurrentInstantMessage(
 
     data_sharing::RequestInfo request_info(group_id.value(),
                                            data_sharing::FlowType::kManage);
-    DataSharingBubbleController::GetOrCreateForBrowser(browser)->Show(
-        request_info);
+    collaboration::CollaborationService* service =
+        collaboration::CollaborationServiceFactory::GetForProfile(
+            browser->profile());
+    std::unique_ptr<CollaborationControllerDelegateDesktop> delegate =
+        std::make_unique<CollaborationControllerDelegateDesktop>(browser);
+    service->StartShareOrManageFlow(
+        std::move(delegate), group_id.value(),
+        collaboration::CollaborationServiceShareOrManageEntryPoint::
+            kDesktopNotification);
   }
 }
 

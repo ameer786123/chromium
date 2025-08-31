@@ -8,8 +8,10 @@ import type {ChromeUrlsAppElement} from 'chrome://chrome-urls/app.js';
 import {INTERNAL_DEBUG_PAGES_HASH} from 'chrome://chrome-urls/app.js';
 import {BrowserProxyImpl} from 'chrome://chrome-urls/browser_proxy.js';
 import type {WebuiUrlInfo} from 'chrome://chrome-urls/chrome_urls.mojom-webui.js';
+import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
 import type {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
 import {assertEquals, assertFalse, assertGT, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import {TestOpenWindowProxy} from 'chrome://webui-test/test_open_window_proxy.js';
 import {microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {TestChromeUrlsBrowserProxy} from './test_chrome_urls_browser_proxy.js';
@@ -20,10 +22,15 @@ suite('ChromeUrlsAppTest', function() {
 
   let app: ChromeUrlsAppElement;
   let browserProxy: TestChromeUrlsBrowserProxy;
+  let openWindowProxy: TestOpenWindowProxy;
 
   async function finishSetup(
       webuiUrls: WebuiUrlInfo[], internalDebuggingUisEnabled: boolean = false) {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
+
+    openWindowProxy = new TestOpenWindowProxy();
+    OpenWindowProxyImpl.setInstance(openWindowProxy);
+
     browserProxy = new TestChromeUrlsBrowserProxy();
     browserProxy.handler.setTestData(
         {webuiUrls, commandUrls, internalDebuggingUisEnabled});
@@ -35,18 +42,25 @@ suite('ChromeUrlsAppTest', function() {
   }
 
   function assertWebUiItems(webuiItems: NodeListOf<HTMLElement>) {
-    assertEquals(2, webuiItems.length);
+    assertEquals(3, webuiItems.length);
 
     // Enabled URLs should be linked.
-    const link = webuiItems[0]!.querySelector('a');
+    // Special case for chrome://chrome-urls, see crbug.com/411626175
+    const chromeUrlsLink = webuiItems[0]!.querySelector('a');
+    assertTrue(!!chromeUrlsLink);
+    const location = window.location.href;
+    assertEquals(`${location}#`, chromeUrlsLink.href);
+    assertEquals('chrome://chrome-urls', chromeUrlsLink.textContent);
+
+    const link = webuiItems[1]!.querySelector('a');
     assertTrue(!!link);
     assertEquals('chrome://settings/', link.href);
     assertEquals('chrome://settings', link.textContent);
 
     // Disabled URLs are not linked, but still display the address.
-    const noLink = webuiItems[1]!.querySelector('a');
+    const noLink = webuiItems[2]!.querySelector('a');
     assertFalse(!!noLink);
-    assertEquals('chrome://bookmarks', webuiItems[1]!.textContent);
+    assertEquals('chrome://bookmarks', webuiItems[2]!.textContent);
   }
 
   function assertHeadings(internalsSection: boolean) {
@@ -63,6 +77,7 @@ suite('ChromeUrlsAppTest', function() {
 
   test('Fetches and displays URL list', async () => {
     const webuiUrls: WebuiUrlInfo[] = [
+      {url: {url: 'chrome://chrome-urls/'}, enabled: true, internal: false},
       {url: {url: 'chrome://settings/'}, enabled: true, internal: false},
       {url: {url: 'chrome://bookmarks/'}, enabled: false, internal: false},
     ];
@@ -87,6 +102,7 @@ suite('ChromeUrlsAppTest', function() {
 
   test('Correctly displays internal URLs when disabled', async () => {
     const webuiUrls: WebuiUrlInfo[] = [
+      {url: {url: 'chrome://chrome-urls/'}, enabled: true, internal: false},
       {url: {url: 'chrome://settings/'}, enabled: true, internal: false},
       {url: {url: 'chrome://bookmarks/'}, enabled: false, internal: false},
       {url: {url: 'chrome://webui-gallery/'}, enabled: true, internal: true},
@@ -114,6 +130,7 @@ suite('ChromeUrlsAppTest', function() {
 
   test('Correctly displays internal URLs when enabled', async () => {
     const webuiUrls: WebuiUrlInfo[] = [
+      {url: {url: 'chrome://chrome-urls/'}, enabled: true, internal: false},
       {url: {url: 'chrome://settings/'}, enabled: true, internal: false},
       {url: {url: 'chrome://bookmarks/'}, enabled: false, internal: false},
       {url: {url: 'chrome://webui-gallery/'}, enabled: true, internal: true},
@@ -192,6 +209,48 @@ suite('ChromeUrlsAppTest', function() {
     internalItems = lists[1]!.querySelectorAll('li');
     assertEquals(1, internalItems.length);
     assertFalse(!!internalItems[0]!.querySelector('a'));
+  });
+
+  test('Enable debug UI redirects', async () => {
+    const webuiUrls: WebuiUrlInfo[] = [
+      {url: {url: 'chrome://webui-gallery/'}, enabled: false, internal: true},
+    ];
+    await finishSetup(webuiUrls);
+
+    const host = 'chrome://webui-gallery/foo/?param=bar';
+    window.history.replaceState(
+        {}, '', `/?host=${host}#${INTERNAL_DEBUG_PAGES_HASH}`);
+    const button = app.shadowRoot.querySelector('cr-button');
+    assertTrue(!!button);
+
+    // Test that enabling debug UIs redirects to host.
+    button.click();
+    const enabled =
+        await browserProxy.handler.whenCalled('setDebugPagesEnabled');
+    assertTrue(enabled);
+
+    assertEquals(host, await openWindowProxy.whenCalled('openUrl'));
+  });
+
+  test('Enable debug UI bad host', async () => {
+    const webuiUrls: WebuiUrlInfo[] = [
+      {url: {url: 'chrome://webui-gallery/'}, enabled: false, internal: true},
+    ];
+    await finishSetup(webuiUrls);
+
+    window.history.replaceState(
+        {}, '', `/?host=chrome://bad-host.com#${INTERNAL_DEBUG_PAGES_HASH}`);
+    const button = app.shadowRoot.querySelector('cr-button');
+    assertTrue(!!button);
+
+    // Test that enabling debug UIs doesn't redirect to bad host.
+    button.click();
+    const enabled =
+        await browserProxy.handler.whenCalled('setDebugPagesEnabled');
+    assertTrue(enabled);
+
+    await microtasksFinished();
+    assertEquals(0, openWindowProxy.getCallCount('openUrl'));
   });
 
   test('Navigate to debug UI headings', async () => {

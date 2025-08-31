@@ -4,25 +4,29 @@
 
 package org.chromium.chrome.browser.feed;
 
-import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.feed.FeedListContentManager.FeedContent;
 import org.chromium.chrome.browser.xsurface.HybridListRenderer;
 import org.chromium.chrome.browser.xsurface.feed.FeedSurfaceScope;
 import org.chromium.chrome.browser.xsurface.feed.FeedUserInteractionReliabilityLogger.ClosedReason;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /** Interface used for interacting with the Stream library in order to render a stream of cards. */
+@NullMarked
 public interface Stream {
     /** The mediator of multiple Streams. */
-    public interface StreamsMediator {
+    interface StreamsMediator {
         /**
          * Allows the switching to another Stream.
+         *
          * @param streamKind The {@link StreamKind} of the stream to switch to.
          */
         default void switchToStreamKind(@StreamKind int streamKind) {}
@@ -106,8 +110,8 @@ public interface Stream {
     void bind(
             RecyclerView view,
             FeedListContentManager manager,
-            FeedScrollState savedInstanceState,
-            FeedSurfaceScope surfaceScope,
+            @Nullable FeedScrollState savedInstanceState,
+            @Nullable FeedSurfaceScope surfaceScope,
             HybridListRenderer renderer,
             @Nullable FeedReliabilityLogger reliabilityLogger,
             int headerCount);
@@ -150,5 +154,10 @@ public interface Stream {
     /** Returns a reason to describe how the stream is closed. */
     default @ClosedReason int getClosedReason() {
         return ClosedReason.LEAVE_FEED;
+    }
+
+    /** Returns a list of feed article urls. */
+    default List<String> getFeedUrls() {
+        return new ArrayList<String>();
     }
 }

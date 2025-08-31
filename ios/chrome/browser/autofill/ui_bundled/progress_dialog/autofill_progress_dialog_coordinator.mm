@@ -38,18 +38,15 @@
                                    browser:(Browser*)browser {
   self = [super initWithBaseViewController:viewController browser:browser];
   if (self) {
-    // TODO(crbug.com/40714201): Use AutofillClientIOS::FromWebState() so that
-    // tests can easily inject their AutofillClient.
     autofill::ChromeAutofillClientIOS* client =
-        AutofillTabHelper::FromWebState(
-            browser->GetWebStateList()->GetActiveWebState())
-            ->autofill_client();
+        autofill::ChromeAutofillClientIOS::FromWebState(
+            browser->GetWebStateList()->GetActiveWebState());
     CHECK(client);
     auto* paymentsClient = client->GetPaymentsAutofillClient();
     CHECK(paymentsClient);
     _modelController = paymentsClient->GetProgressDialogModel();
     _mediator = std::make_unique<AutofillProgressDialogMediator>(
-        _modelController->GetImplWeakPtr(), self);
+        _modelController.get(), self);
   }
   return self;
 }
@@ -60,6 +57,8 @@
   AlertViewController* alertViewController = [[AlertViewController alloc] init];
   alertViewController.modalPresentationStyle =
       UIModalPresentationOverFullScreen;
+  alertViewController.modalTransitionStyle =
+      UIModalTransitionStyleCrossDissolve;
   _alertViewController = alertViewController;
   _mediator->SetConsumer(alertViewController);
   [self.baseViewController presentViewController:alertViewController

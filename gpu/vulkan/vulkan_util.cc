@@ -21,13 +21,14 @@
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "gpu/config/gpu_info.h"  //nogncheck
-#include "gpu/config/vulkan_info.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
+#include "gpu/vulkan/vulkan_info.h"
 #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "ui/gl/gl_switches.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
+#include "base/android/device_info.h"
 #include "build/android_buildflags.h"
 #endif
 
@@ -65,18 +66,18 @@ bool IsDeviceBlocked(std::string_view field, std::string_view block_list) {
 }
 
 int GetEMUIVersion() {
-  const auto* build_info = base::android::BuildInfo::GetInstance();
-  std::string_view manufacturer(build_info->manufacturer());
-
   // TODO(crbug.com/40136096): check Honor devices as well.
-  if (manufacturer != "HUAWEI")
+  if (base::android::android_info::manufacturer() != "HUAWEI") {
     return -1;
+  }
 
   // Huawei puts EMUI version in the build version incremental.
   // Example: 11.0.0.130C00
   int version = 0;
-  if (sscanf(build_info->version_incremental(), "%d.", &version) != 1)
+  if (sscanf(base::android::android_info::version_incremental().c_str(), "%d.",
+             &version) != 1) {
     return -1;
+  }
 
   return version;
 }
@@ -88,30 +89,31 @@ bool IsBlockedByBuildInfo() {
   const char* kBlockListByBoard =
       "RM67*|RM68*|k68*|mt6*|oppo67*|oppo68*|QM215|rk30sdk";
 
-  const auto* build_info = base::android::BuildInfo::GetInstance();
-  if (IsDeviceBlocked(build_info->hardware(), kBlockListByHardware)) {
+  if (IsDeviceBlocked(base::android::android_info::hardware(),
+                      kBlockListByHardware)) {
     return true;
   }
-  if (IsDeviceBlocked(build_info->brand(), kBlockListByBrand)) {
+  if (IsDeviceBlocked(base::android::android_info::brand(),
+                      kBlockListByBrand)) {
     return true;
   }
-  if (IsDeviceBlocked(build_info->device(), kBlockListByDevice)) {
+  if (IsDeviceBlocked(base::android::android_info::device(),
+                      kBlockListByDevice)) {
     return true;
   }
-  if (IsDeviceBlocked(build_info->board(), kBlockListByBoard)) {
+  if (IsDeviceBlocked(base::android::android_info::board(),
+                      kBlockListByBoard)) {
     return true;
   }
 
   return false;
 }
 
-BASE_FEATURE(kVulkanV2, "VulkanV2", base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kVulkanV3, "VulkanV3", base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(VulkanV2, base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(VulkanV3, base::FEATURE_DISABLED_BY_DEFAULT);
 
 bool IsDeviceBlockedByFeatureParams(const GPUInfo& gpu_info,
                                     const base::Feature* feature) {
-  const auto* build_info = base::android::BuildInfo::GetInstance();
-
   const base::FeatureParam<std::string> kBlockListByHardware{
       feature, "BlockListByHardware", ""};
 
@@ -143,30 +145,35 @@ bool IsDeviceBlockedByFeatureParams(const GPUInfo& gpu_info,
       feature, "BlockListByGLRenderer", ""};
 
   // Check block list against build info.
-  if (IsDeviceBlocked(build_info->hardware(), kBlockListByHardware.Get())) {
+  if (IsDeviceBlocked(base::android::android_info::hardware(),
+                      kBlockListByHardware.Get())) {
     return true;
   }
-  if (IsDeviceBlocked(build_info->brand(), kBlockListByBrand.Get())) {
+  if (IsDeviceBlocked(base::android::android_info::brand(),
+                      kBlockListByBrand.Get())) {
     return true;
   }
-  if (IsDeviceBlocked(build_info->device(), kBlockListByDevice.Get())) {
+  if (IsDeviceBlocked(base::android::android_info::device(),
+                      kBlockListByDevice.Get())) {
     return true;
   }
-  if (IsDeviceBlocked(build_info->android_build_id(),
+  if (IsDeviceBlocked(base::android::android_info::android_build_id(),
                       kBlockListByAndroidBuildId.Get())) {
     return true;
   }
-  if (IsDeviceBlocked(build_info->manufacturer(),
+  if (IsDeviceBlocked(base::android::android_info::manufacturer(),
                       kBlockListByManufacturer.Get())) {
     return true;
   }
-  if (IsDeviceBlocked(build_info->model(), kBlockListByModel.Get())) {
+  if (IsDeviceBlocked(base::android::android_info::model(),
+                      kBlockListByModel.Get())) {
     return true;
   }
-  if (IsDeviceBlocked(build_info->board(), kBlockListByBoard.Get())) {
+  if (IsDeviceBlocked(base::android::android_info::board(),
+                      kBlockListByBoard.Get())) {
     return true;
   }
-  if (IsDeviceBlocked(build_info->android_build_fp(),
+  if (IsDeviceBlocked(base::android::android_info::android_build_fp(),
                       kBlockListByAndroidBuildFP.Get())) {
     return true;
   }
@@ -184,10 +191,9 @@ bool IsDeviceBlockedByFeatureParams(const GPUInfo& gpu_info,
 }
 
 bool IsVulkanV2Allowed() {
-  const auto* build_info = base::android::BuildInfo::GetInstance();
   // We require at least android T deqp test to pass for v2.
   constexpr int32_t kVulkanDEQPAndroidT = 0x07E60301;
-  if (build_info->vulkan_deqp_level() < kVulkanDEQPAndroidT) {
+  if (base::android::device_info::vulkan_deqp_level() < kVulkanDEQPAndroidT) {
     return false;
   }
 
@@ -237,7 +243,15 @@ bool IsVulkanV1EnabledForMali(const GPUInfo& gpu_info) {
 }
 
 // Everything that passed 2022 deQP tests.
-bool IsVulkanV2EnabledForMali(const GPUInfo& gpu_info) {
+bool IsVulkanV2EnabledForMali(
+    const GPUInfo& gpu_info,
+    const VulkanPhysicalDeviceProperties& device_properties) {
+  // Mali-G57 have problems initializing Vulkan even with 2022 deQP tests
+  // passed, devices that init successfully show performance regression.
+  if (base::StartsWith(device_properties.device_name, "Mali-G57")) {
+    return false;
+  }
+
   // For V2 we MediaTek is allowed.
   return ShouldBypassMediatekBlock(gpu_info);
 }
@@ -523,7 +537,7 @@ bool CheckVulkanCompatibilities(
     }
 
     return IsVulkanV1EnabledForMali(gpu_info) ||
-           IsVulkanV2EnabledForMali(gpu_info);
+           IsVulkanV2EnabledForMali(gpu_info, device_properties);
   }
 
   if (device_properties.vendor_id == kVendorQualcomm) {
@@ -546,6 +560,12 @@ bool CheckVulkanCompatibilities(
   // because of performance, and stability (crbug.com/1479335).
   if (device_properties.vendor_id == kVendorGoogle &&
       device_properties.device_id == kDeviceSwiftShader) {
+    return false;
+  }
+
+  // Some android x86 devices (e.g older gpu on auto devices) don't report
+  // format support correctly. See crbug.com/379205391
+  if (device_properties.vendor_id == kVendorIntel) {
     return false;
   }
 

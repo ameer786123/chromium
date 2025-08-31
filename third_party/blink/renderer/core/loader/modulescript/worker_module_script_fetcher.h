@@ -33,7 +33,8 @@ class CORE_EXPORT WorkerModuleScriptFetcher final
              ModuleType,
              ResourceFetcher*,
              ModuleGraphLevel,
-             ModuleScriptFetcher::Client*) override;
+             ModuleScriptFetcher::Client*,
+             ModuleImportPhase import_phase) override;
 
   // Implements WorkerMainScriptLoaderClient, and these will be called for
   // dedicated workers and shared workers.
@@ -50,11 +51,14 @@ class CORE_EXPORT WorkerModuleScriptFetcher final
   void NotifyFinished(Resource*) override;
   String DebugName() const override { return "WorkerModuleScriptFetcher"; }
 
-  void NotifyClient(const KURL& request_url,
-                    ModuleType module_type,
-                    const ParkableString& source_text,
-                    const ResourceResponse& response,
-                    CachedMetadataHandler* cache_handler);
+  // `base::HeapArray<uint8_t>` is stored when `module_type` is
+  // `ResolvedModuleType::kWasm`, and `ParkableString` otherwise.
+  void NotifyClient(
+      const KURL& request_url,
+      ResolvedModuleType module_type,
+      std::variant<ParkableString, base::HeapArray<uint8_t>>&& source,
+      const ResourceResponse& response,
+      CachedMetadataHandler* cache_handler);
 
   const Member<WorkerGlobalScope> global_scope_;
 
@@ -67,6 +71,7 @@ class CORE_EXPORT WorkerModuleScriptFetcher final
   Member<Client> client_;
   ModuleGraphLevel level_;
   ModuleType expected_module_type_;
+  ModuleImportPhase import_phase_;
 };
 
 }  // namespace blink

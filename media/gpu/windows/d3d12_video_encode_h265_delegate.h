@@ -10,6 +10,7 @@
 
 #include <wrl.h>
 
+#include <array>
 #include <vector>
 
 #include "media/base/encoder_status.h"
@@ -24,12 +25,20 @@
 
 namespace media {
 
-class D3D12VideoEncodeH265ReferenceFrameManager {
+class MEDIA_GPU_EXPORT D3D12VideoEncodeH265ReferenceFrameManager
+    : public D3D12VideoEncodeDecodedPictureBuffers<kMaxDpbSize> {
  public:
-  explicit D3D12VideoEncodeH265ReferenceFrameManager(size_t max_num_ref_frames);
-  ~D3D12VideoEncodeH265ReferenceFrameManager();
+  D3D12VideoEncodeH265ReferenceFrameManager();
+  ~D3D12VideoEncodeH265ReferenceFrameManager() override;
 
-  void EndFrame(uint32_t pic_order_count, uint32_t temporal_layer_id);
+  // Get the index in the descriptors of the frame with |picture_order_count|.
+  std::optional<uint32_t> GetReferenceFrameId(uint8_t buffer_id) const;
+
+  void MarkCurrentFrameReferenced(uint32_t pic_order_count,
+                                  uint8_t buffer_id,
+                                  bool long_term_reference);
+
+  void MarkFrameUnreferenced(uint8_t buffer_id);
 
   // Write the reference picture descriptors to |pic_params| according to the
   // ListxReferenceFrames variables.
@@ -38,10 +47,13 @@ class D3D12VideoEncodeH265ReferenceFrameManager {
       base::span<uint32_t> list0_reference_frames);
 
  private:
-  size_t max_num_ref_frames_ = 0;
+  using D3D12VideoEncodeDecodedPictureBuffers::InsertCurrentFrame;
+  using D3D12VideoEncodeDecodedPictureBuffers::ReplaceWithCurrentFrame;
+
   absl::InlinedVector<D3D12_VIDEO_ENCODER_REFERENCE_PICTURE_DESCRIPTOR_HEVC,
                       kMaxDpbSize>
       descriptors_;
+  absl::InlinedVector<uint8_t, kMaxDpbSize> buffer_ids_;
 };
 
 class MEDIA_GPU_EXPORT D3D12VideoEncodeH265Delegate
@@ -56,16 +68,17 @@ class MEDIA_GPU_EXPORT D3D12VideoEncodeH265Delegate
   ~D3D12VideoEncodeH265Delegate() override;
 
   size_t GetMaxNumOfRefFrames() const override;
+  size_t GetMaxNumOfManualRefBuffers() const override;
   bool ReportsAverageQp() const override;
 
   bool UpdateRateControl(const Bitrate& bitrate, uint32_t framerate) override;
 
   bool SupportsRateControlReconfiguration() const override;
 
-  EncoderStatus::Or<BitstreamBufferMetadata> EncodeImpl(
-      ID3D12Resource* input_frame,
-      UINT input_frame_subresource,
-      const VideoEncoder::EncodeOptions& options) override;
+  EncoderStatus EncodeImpl(ID3D12Resource* input_frame,
+                           UINT input_frame_subresource,
+                           const VideoEncoder::EncodeOptions& options,
+                           const gfx::ColorSpace& input_color_space) override;
 
  private:
   EncoderStatus InitializeVideoEncoder(
@@ -78,6 +91,8 @@ class MEDIA_GPU_EXPORT D3D12VideoEncodeH265Delegate
   H265VPS ToVPS() const;
   H265SPS ToSPS(const H265VPS& vps) const;
   H265PPS ToPPS(const H265SPS& sps) const;
+
+  uint32_t max_num_ref_frames_ = 0;
 
   D3D12_VIDEO_ENCODER_SUPPORT_FLAGS encoder_support_flags_{};
 
@@ -103,15 +118,10 @@ class MEDIA_GPU_EXPORT D3D12VideoEncodeH265Delegate
   D3D12_VIDEO_ENCODER_ENCODEFRAME_INPUT_ARGUMENTS input_arguments_{};
   std::array<UINT, 16> list0_reference_frames_{};
 
-  std::optional<D3D12VideoEncodeDecodedPictureBuffers<kMaxDpbSize>> dpb_;
-  std::optional<D3D12VideoEncodeH265ReferenceFrameManager>
-      reference_frame_manager_;
+  D3D12VideoEncodeH265ReferenceFrameManager reference_frame_manager_;
 
   H26xAnnexBBitstreamBuilder packed_header_{
       /*insert_emulation_prevention_bytes=*/true};
-
-  // The metadata of the bitstream buffer for the last encode request.
-  BitstreamBufferMetadata metadata_;
 };
 
 }  // namespace media

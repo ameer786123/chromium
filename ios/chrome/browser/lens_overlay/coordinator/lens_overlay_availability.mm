@@ -32,7 +32,8 @@ bool IsLensOverlayAvailable(const PrefService* prefs) {
 }
 
 bool IsLensOverlaySameTabNavigationEnabled(const PrefService* prefs) {
-  return IsLensOverlayAvailable(prefs) &&
+  bool isIPhone = ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_PHONE;
+  return isIPhone && IsLensOverlayAvailable(prefs) &&
          base::FeatureList::IsEnabled(kLensOverlayEnableSameTabNavigation);
 }
 
@@ -47,21 +48,10 @@ bool IsLensOverlayLandscapeOrientationEnabled(const PrefService* prefs) {
 }
 
 bool IsLVFEscapeHatchEnabled(const PrefService* prefs) {
+  BOOL isTablet = ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET;
+  if (isTablet) {
+    return NO;
+  }
   return IsLensOverlayAvailable(prefs) &&
          base::FeatureList::IsEnabled(kLensOverlayEnableLVFEscapeHatch);
-}
-
-LensOverlayOnboardingTreatment GetLensOverlayOnboardingTreatment() {
-  std::string featureParam = base::GetFieldTrialParamValueByFeature(
-      kLensOverlayAlternativeOnboarding, kLensOverlayOnboardingParam);
-  if (featureParam == kLensOverlayOnboardingParamSpeedbumpMenu) {
-    return LensOverlayOnboardingTreatment::kSpeedbumpMenu;
-  } else if (featureParam == kLensOverlayOnboardingParamUpdatedStrings) {
-    return LensOverlayOnboardingTreatment::kUpdatedOnboardingStrings;
-  } else if (featureParam ==
-             kLensOverlayOnboardingParamUpdatedStringsAndVisuals) {
-    return LensOverlayOnboardingTreatment::kUpdatedOnboardingStringsAndVisuals;
-  } else {
-    return LensOverlayOnboardingTreatment::kDefaultOnboardingExperience;
-  }
 }

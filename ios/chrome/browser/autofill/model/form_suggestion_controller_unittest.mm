@@ -18,7 +18,7 @@
 #import "components/autofill/ios/form_util/form_activity_params.h"
 #import "components/autofill/ios/form_util/test_form_activity_tab_helper.h"
 #import "components/feature_engagement/public/feature_constants.h"
-#import "components/plus_addresses/features.h"
+#import "components/plus_addresses/core/common/features.h"
 #import "ios/chrome/app/application_delegate/app_state.h"
 #import "ios/chrome/browser/autofill/model/features.h"
 #import "ios/chrome/browser/autofill/ui_bundled/form_input_accessory/form_input_accessory_consumer.h"
@@ -431,29 +431,12 @@ TEST_P(FormSuggestionControllerTest,
   NSUInteger initial_suggestion_count = received_suggestions_.count;
   EXPECT_TRUE(initial_suggestion_count);
 
-  {
-    base::test::ScopedFeatureList feature_list(
-        kSkipKeyboardAccessoryResetForSameDocumentNavigation);
-
     // Trigger another navigation, but within the same document. The suggestions
     // should still be present.
     web::FakeNavigationContext navigation_context;
     navigation_context.SetIsSameDocument(true);
     fake_web_state_.OnNavigationFinished(&navigation_context);
     EXPECT_EQ(received_suggestions_.count, initial_suggestion_count);
-  }
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndDisableFeature(
-        kSkipKeyboardAccessoryResetForSameDocumentNavigation);
-
-    // Trigger another navigation, but within the same document. The suggestions
-    // should be reset.
-    web::FakeNavigationContext navigation_context;
-    navigation_context.SetIsSameDocument(true);
-    fake_web_state_.OnNavigationFinished(&navigation_context);
-    EXPECT_FALSE(received_suggestions_.count);
-  }
 }
 
 // TODO(crbug.com/396159046): Move this test to another test module as it

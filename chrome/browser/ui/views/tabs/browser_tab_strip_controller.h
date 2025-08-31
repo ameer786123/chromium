@@ -129,7 +129,7 @@ class BrowserTabStripController : public TabStripController,
   std::u16string GetAccessibleTabName(const Tab* tab) const override;
   Profile* GetProfile() const override;
   BrowserWindowInterface* GetBrowserWindowInterface() override;
-  const Browser* GetBrowser() const override;
+  Browser* GetBrowser() override;
 #if BUILDFLAG(IS_CHROMEOS)
   bool IsLockedForOnTask() override;
 #endif
@@ -156,15 +156,10 @@ class BrowserTabStripController : public TabStripController,
                               tabs::TabInterface* tab,
                               int index) override;
   void SetTabNeedsAttentionAt(int index, bool attention) override;
+  void SetTabGroupNeedsAttention(const tab_groups::TabGroupId& group,
+                                 bool attention) override;
   bool IsFrameButtonsRightAligned() const override;
-
-  void OnSplitTabCreated(std::vector<std::pair<tabs::TabInterface*, int>> tabs,
-                         split_tabs::SplitTabId split_id,
-                         SplitTabAddReason reason,
-                         tabs::SplitTabLayout tab_layout) override;
-  void OnSplitTabRemoved(std::vector<std::pair<tabs::TabInterface*, int>> tabs,
-                         split_tabs::SplitTabId split_id,
-                         SplitTabRemoveReason reason) override;
+  void OnSplitTabChanged(const SplitTabChange& change) override;
 
   const Browser* browser() const { return browser_view_->browser(); }
 
@@ -185,10 +180,6 @@ class BrowserTabStripController : public TabStripController,
       std::vector<std::pair<content::WebContents*, int>> contents_list);
 
   void OnDiscardRingTreatmentEnabledChanged();
-
-  // Returns the index of the most recently focused tab in the split that
-  // contains `model_index`.
-  int GetIndexOfLastFocusedTabInSplit(int model_index);
 
   raw_ptr<TabStripModel> model_;
 

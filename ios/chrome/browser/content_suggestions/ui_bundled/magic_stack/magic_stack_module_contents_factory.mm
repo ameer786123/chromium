@@ -53,7 +53,6 @@
           static_cast<MostVisitedTilesConfig*>(config);
       return [[MostVisitedTilesStackView alloc]
                initWithConfig:mvtConfig
-          contentViewDelegate:contentViewDelegate
                       spacing:ContentSuggestionsTilesHorizontalSpacing(
                                   traitCollection)];
     }
@@ -69,9 +68,6 @@
           static_cast<TabResumptionItem*>(config);
       return [self tabResumptionViewForConfig:tabResumptionItem];
     }
-    case ContentSuggestionsModuleType::kParcelTracking:
-      // TODO(crbug.com/391002352): Remove kParcelTracking entirely.
-      NOTREACHED();
     case ContentSuggestionsModuleType::kSafetyCheck: {
       SafetyCheckState* safetyCheckConfig =
           static_cast<SafetyCheckState*>(config);
@@ -91,11 +87,8 @@
       SendTabPromoItem* item = static_cast<SendTabPromoItem*>(config);
       return [self sendTabPromoViewForConfig:item];
     }
-    case ContentSuggestionsModuleType::kSetUpListSync:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
-    case ContentSuggestionsModuleType::kSetUpListDocking:
-    case ContentSuggestionsModuleType::kSetUpListAddressBar:
     case ContentSuggestionsModuleType::kCompactedSetUpList:
     case ContentSuggestionsModuleType::kSetUpListAllSet:
     case ContentSuggestionsModuleType::kSetUpListNotifications: {

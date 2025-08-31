@@ -400,9 +400,12 @@ void SessionControllerImpl::SetClient(SessionControllerClient* client) {
 void SessionControllerImpl::SetSessionInfo(const SessionInfo& info) {
   can_lock_ = info.can_lock_screen;
   should_lock_screen_automatically_ = info.should_lock_screen_automatically;
-  is_running_in_app_mode_ = info.is_running_in_app_mode;
-  if (info.is_demo_session)
+  if (info.is_running_in_app_mode) {
+    SetIsRunningInAppMode();
+  }
+  if (info.is_demo_session) {
     SetIsDemoSession();
+  }
   add_user_session_policy_ = info.add_user_session_policy;
   SetSessionState(info.state);
 }
@@ -574,6 +577,17 @@ void SessionControllerImpl::ClearUserSessionsForTest() {
   primary_session_id_ = 0u;
 }
 
+void SessionControllerImpl::SetIsRunningInAppMode() {
+  if (is_running_in_app_mode_) {
+    return;
+  }
+  is_running_in_app_mode_ = true;
+
+  for (auto& observer : observers_) {
+    observer.OnAppModeSessionStarted();
+  }
+}
+
 void SessionControllerImpl::SetIsDemoSession() {
   if (is_demo_session_)
     return;
@@ -683,9 +697,10 @@ LoginStatus SessionControllerImpl::CalculateLoginStatusForActiveSession()
       return LoginStatus::PUBLIC;
     case user_manager::UserType::kChild:
       return LoginStatus::CHILD;
-    case user_manager::UserType::kKioskApp:
-    case user_manager::UserType::kWebKioskApp:
+    case user_manager::UserType::kKioskChromeApp:
+    case user_manager::UserType::kKioskWebApp:
     case user_manager::UserType::kKioskIWA:
+    case user_manager::UserType::kKioskArcvmApp:
       return LoginStatus::KIOSK_APP;
   }
   NOTREACHED();

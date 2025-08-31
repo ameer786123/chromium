@@ -39,8 +39,10 @@
 
 - (NSArray<id<Credential>>*)credentials {
   __block NSArray<id<Credential>>* credentials;
+  __weak __typeof(self) weakSelf = self;
   dispatch_sync(self.workingQueue, ^{
-    credentials = [self.memoryStorage allValues];
+    __typeof(self) strongSelf = weakSelf;
+    credentials = [strongSelf allMemoryStorageValues];
   });
   return credentials;
 }
@@ -48,8 +50,10 @@
 - (void)getCredentialsWithCompletion:
     (void (^)(NSArray<id<Credential>>*))completion {
   CHECK(completion);
+  __weak __typeof(self) weakSelf = self;
   dispatch_async(self.workingQueue, ^{
-    completion([self.memoryStorage allValues]);
+    __typeof(self) strongSelf = weakSelf;
+    completion([strongSelf allMemoryStorageValues]);
   });
 }
 
@@ -61,16 +65,20 @@
 }
 
 - (void)removeAllCredentials {
+  __weak __typeof(self) weakSelf = self;
   dispatch_barrier_async(self.workingQueue, ^{
-    [self.memoryStorage removeAllObjects];
+    __typeof(self) strongSelf = weakSelf;
+    [strongSelf.memoryStorage removeAllObjects];
   });
 }
 
 - (void)addCredential:(id<Credential>)credential {
   DCHECK(credential.recordIdentifier)
       << "credential must have a record identifier";
+  __weak __typeof(self) weakSelf = self;
   dispatch_barrier_async(self.workingQueue, ^{
-    self.memoryStorage[credential.recordIdentifier] =
+    __typeof(self) strongSelf = weakSelf;
+    strongSelf.memoryStorage[credential.recordIdentifier] =
         base::apple::ObjCCastStrict<ArchivableCredential>(credential);
   });
 }
@@ -82,16 +90,20 @@
 
 - (void)removeCredentialWithRecordIdentifier:(NSString*)recordIdentifier {
   DCHECK(recordIdentifier.length) << "Invalid `recordIdentifier` was passed.";
+  __weak __typeof(self) weakSelf = self;
   dispatch_barrier_async(self.workingQueue, ^{
-    self.memoryStorage[recordIdentifier] = nil;
+    __typeof(self) strongSelf = weakSelf;
+    strongSelf.memoryStorage[recordIdentifier] = nil;
   });
 }
 
 - (id<Credential>)credentialWithRecordIdentifier:(NSString*)recordIdentifier {
   DCHECK(recordIdentifier.length);
   __block id<Credential> credential;
+  __weak __typeof(self) weakSelf = self;
   dispatch_sync(self.workingQueue, ^{
-    credential = self.memoryStorage[recordIdentifier];
+    __typeof(self) strongSelf = weakSelf;
+    credential = strongSelf.memoryStorage[recordIdentifier];
   });
   return credential;
 }
@@ -113,6 +125,13 @@
 // Loads the store from disk.
 - (NSMutableDictionary<NSString*, ArchivableCredential*>*)loadStorage {
   return [[NSMutableDictionary alloc] init];
+}
+
+#pragma mark - Private
+
+// Returns all values from the `memoryStorage` dictionary.
+- (NSArray<ArchivableCredential*>*)allMemoryStorageValues {
+  return [self.memoryStorage allValues];
 }
 
 @end

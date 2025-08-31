@@ -14,6 +14,7 @@
 #include "base/i18n/number_formatting.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -321,13 +322,12 @@ void DriveService::GetDriveFilesInternal() {
   }
 
   token_fetcher_ = std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
-      "ntp_drive_module", identity_manager_,
-      signin::ScopeSet({GaiaConstants::kDriveReadOnlyOAuth2Scope}),
+      signin::OAuthConsumerId::kNtpDriveService, identity_manager_,
       base::BindOnce(&DriveService::OnTokenReceived,
                      weak_factory_.GetWeakPtr()),
       signin::PrimaryAccountAccessTokenFetcher::Mode::kImmediate,
       base::FeatureList::IsEnabled(
-          ntp_features::kNtpDriveModuleNoSyncRequirement)
+          ntp_features::kNtpDriveModuleHistorySyncRequirement)
           ? signin::ConsentLevel::kSignin
           : signin::ConsentLevel::kSync);
 }
@@ -499,6 +499,7 @@ void DriveService::OnJsonParsed(
     mojo_drive_doc->justification_text = justification_text;
     mojo_drive_doc->id = *id;
     mojo_drive_doc->item_url = GURL(*item_url);
+    mojo_drive_doc->recommendation_type = std::nullopt;
     document_list.push_back(std::move(mojo_drive_doc));
   }
   base::UmaHistogramEnumeration("NewTabPage.Drive.ItemSuggestRequestResult",

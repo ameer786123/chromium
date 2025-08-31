@@ -79,6 +79,7 @@
 #include "absl/base/optimization.h"
 #include "absl/crc/internal/crc_cord_state.h"
 #include "absl/functional/function_ref.h"
+#include "absl/hash/internal/weakly_mixed_integer.h"
 #include "absl/meta/type_traits.h"
 #include "absl/strings/cord_analysis.h"
 #include "absl/strings/cord_buffer.h"
@@ -754,7 +755,7 @@ class Cord {
   // NOTE: This routine is reasonably efficient. It is roughly
   // logarithmic based on the number of chunks that make up the cord. Still,
   // if you need to iterate over the contents of a cord, you should
-  // use a CharIterator/ChunkIterator rather than call operator[] or Get()
+  // use a CharIterator/ChunkIterator rather than call operator[]
   // repeatedly in a loop.
   char operator[](size_t i) const;
 
@@ -1097,7 +1098,7 @@ class Cord {
       hash_state = combiner.add_buffer(std::move(hash_state), chunk.data(),
                                        chunk.size());
     });
-    return H::combine(combiner.finalize(std::move(hash_state)), size());
+    return combiner.finalize(std::move(hash_state));
   }
 
   friend class CrcCord;

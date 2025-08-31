@@ -25,6 +25,7 @@ import org.chromium.base.IntentUtils;
 import org.chromium.base.Log;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.base.SplitCompatIntentService;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.components.browser_ui.notifications.NotificationMetadata;
 import org.chromium.components.browser_ui.notifications.PendingIntentProvider;
@@ -85,7 +86,7 @@ public class NotificationIntentInterceptor {
         }
     }
 
-    public static final class ServiceImpl extends NotificationIntentInterceptorService.Impl {
+    public static final class ServiceImpl extends SplitCompatIntentService.Impl {
         @Override
         protected void onHandleIntent(@Nullable Intent intent) {
             processIntent(assertNonNull(intent));
@@ -204,6 +205,7 @@ public class NotificationIntentInterceptor {
      * @param metadata The metadata including notification id, tag, type, etc.
      * @param pendingIntentProvider Provides the {@link PendingIntent} to launch Chrome.
      */
+    @SuppressWarnings("WrongConstant") // Triggers for |flags| on PendingIntent.getService().
     public static PendingIntent createInterceptPendingIntent(
             @IntentType int intentType,
             @NotificationUmaTracker.ActionType int actionType,
@@ -230,7 +232,14 @@ public class NotificationIntentInterceptor {
                                 == NotificationUmaTracker.ActionType.COMMIT_UNSUBSCRIBE_EXPLICIT
                         || actionType
                                 == NotificationUmaTracker.ActionType.SHOW_ORIGINAL_NOTIFICATION
-                        || actionType == NotificationUmaTracker.ActionType.ALWAYS_ALLOW;
+                        || actionType == NotificationUmaTracker.ActionType.ALWAYS_ALLOW
+                        || actionType == NotificationUmaTracker.ActionType.REPORT_AS_SAFE
+                        || actionType
+                                == NotificationUmaTracker.ActionType
+                                        .REPORT_WARNED_NOTIFICATION_AS_SPAM
+                        || actionType
+                                == NotificationUmaTracker.ActionType
+                                        .REPORT_UNWARNED_NOTIFICATION_AS_SPAM;
 
         Context applicationContext = ContextUtils.getApplicationContext();
         Intent intent = null;

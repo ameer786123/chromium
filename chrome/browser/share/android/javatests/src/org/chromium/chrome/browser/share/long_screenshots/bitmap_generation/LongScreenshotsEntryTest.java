@@ -10,7 +10,6 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.when;
 
-import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 
@@ -33,7 +32,6 @@ import org.chromium.chrome.browser.tab.Tab;
 @Config(manifest = Config.NONE)
 public class LongScreenshotsEntryTest {
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Mock private Context mContext;
 
     @Mock private Tab mTab;
 
@@ -43,7 +41,7 @@ public class LongScreenshotsEntryTest {
 
     @Mock private ScreenshotBoundsManager mBoundsManager;
 
-    private Bitmap mTestBitmap = Bitmap.createBitmap(512, 1024, Bitmap.Config.ARGB_8888);
+    private final Bitmap mTestBitmap = Bitmap.createBitmap(512, 1024, Bitmap.Config.ARGB_8888);
 
     static class TestEntryListener implements LongScreenshotsEntry.EntryListener {
         @EntryStatus int mReturnedStatus;
@@ -95,7 +93,7 @@ public class LongScreenshotsEntryTest {
                 new LongScreenshotsEntry(
                         testGenerator,
                         new Rect(0, 1000, 0, 2000),
-                        new Callback<Integer>() {
+                        new Callback<>() {
                             @Override
                             public void onResult(Integer result) {
                                 assertEquals(2097152, (int) result);
@@ -119,7 +117,7 @@ public class LongScreenshotsEntryTest {
                 new LongScreenshotsEntry(
                         testGenerator,
                         new Rect(0, 1000, 0, 2000),
-                        new Callback<Integer>() {
+                        new Callback<>() {
                             @Override
                             public void onResult(Integer result) {
                                 fail("MemoryUsage should not be called");

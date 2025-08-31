@@ -12,11 +12,13 @@
 #include "base/memory/scoped_refptr.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/dom/quota_exceeded_error.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_key.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_request.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_request_loader.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_value.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_value_wrapping.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -37,7 +39,7 @@ class IDBDatabaseGetAllResultSinkImpl
 
   bool IsWaiting() const { return active_; }
 
-  void ReceiveResults(WTF::Vector<mojom::blink::IDBRecordPtr> results,
+  void ReceiveResults(Vector<mojom::blink::IDBRecordPtr> results,
                       bool done) override {
     CHECK(active_);
     CHECK_LE(results.size(),
@@ -88,9 +90,18 @@ class IDBDatabaseGetAllResultSinkImpl
 
   void OnError(mojom::blink::IDBErrorPtr error) override {
     DCHECK(active_);
+    DOMException* dom_exception;
+    if (error->error_code == mojom::blink::IDBException::kQuotaError &&
+        RuntimeEnabledFeatures::QuotaExceededErrorUpdateEnabled()) {
+      dom_exception =
+          MakeGarbageCollected<QuotaExceededError>(error->error_message);
+    } else {
+      dom_exception = MakeGarbageCollected<DOMException>(
+          static_cast<DOMExceptionCode>(error->error_code),
+          error->error_message);
+    }
     owner_->response_type_ = IDBRequestQueueItem::kError;
-    owner_->error_ = MakeGarbageCollected<DOMException>(
-        static_cast<DOMExceptionCode>(error->error_code), error->error_message);
+    owner_->error_ = dom_exception;
     active_ = false;
     owner_->OnResultReady();
   }
@@ -253,8 +264,8 @@ bool IDBRequestQueueItem::MaybeCreateLoader() {
   if (IDBValueUnwrapper::IsWrapped(records_.values)) {
     loader_ = MakeGarbageCollected<IDBRequestLoader>(
         std::move(records_.values), request_->GetExecutionContext(),
-        WTF::BindOnce(&IDBRequestQueueItem::OnLoadComplete,
-                      weak_factory_.GetWeakPtr()));
+        blink::BindOnce(&IDBRequestQueueItem::OnLoadComplete,
+                        weak_factory_.GetWeakPtr()));
     return true;
   }
   return false;

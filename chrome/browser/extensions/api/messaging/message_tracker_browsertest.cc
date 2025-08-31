@@ -4,14 +4,16 @@
 
 #include "extensions/browser/message_tracker.h"
 
+#include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/with_feature_override.h"
 #include "chrome/browser/extensions/browsertest_util.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/browser/service_worker/service_worker_test_utils.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/test_extension_dir.h"
 #include "net/dns/mock_host_resolver.h"
@@ -30,7 +32,7 @@ class MessageTrackerMessagingTest : public ExtensionApiTest {
   void SetUpOnMainThread() override {
     ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
-    message_tracker_ = MessageTracker::Get(browser()->profile());
+    message_tracker_ = MessageTracker::Get(profile());
   }
 
   void TearDownOnMainThread() override {
@@ -44,9 +46,23 @@ class MessageTrackerMessagingTest : public ExtensionApiTest {
   raw_ptr<MessageTracker> message_tracker_;
 };
 
+class MessageTrackerMessagingTestWithOptimizeServiceWorkerStart
+    : public MessageTrackerMessagingTest,
+      public base::test::WithFeatureOverride {
+ public:
+  MessageTrackerMessagingTestWithOptimizeServiceWorkerStart()
+      : WithFeatureOverride(
+            extensions_features::kOptimizeServiceWorkerStartRequests) {}
+};
+
 // Tests the tracking of messages when sent from a tab to a SW extension
 // background context.
-IN_PROC_BROWSER_TEST_F(MessageTrackerMessagingTest, SendMessageToWorker) {
+IN_PROC_BROWSER_TEST_P(
+    MessageTrackerMessagingTestWithOptimizeServiceWorkerStart,
+    SendMessageToWorker) {
+  const bool wakeup_optimization_enabled = IsParamFeatureEnabled();
+  const int kExpectedWakeUps = wakeup_optimization_enabled ? 0 : 1;
+
   ExtensionTestMessageListener worker_listener("WORKER_RUNNING");
   const Extension* extension = LoadExtension(test_data_dir_.AppendASCII(
       "service_worker/messaging/send_message_tab_to_worker"));
@@ -87,7 +103,7 @@ IN_PROC_BROWSER_TEST_F(MessageTrackerMessagingTest, SendMessageToWorker) {
   histogram_tester.ExpectTotalCount(
       "Extensions.MessagePipeline.OpenChannelWorkerWakeUpStatus."
       "SendMessageChannel",
-      /*expected_count=*/1);
+      /*expected_count=*/kExpectedWakeUps);
   // Per connect IPC dispatch metrics expectations.
   histogram_tester.ExpectTotalCount(
       "Extensions.MessagePipeline.OpenChannelDispatchOnConnectStatus.ForWorker",
@@ -124,7 +140,7 @@ IN_PROC_BROWSER_TEST_F(MessageTrackerMessagingTest, SendMessageToWorker) {
       "SendMessageChannel",
       /*sample=*/
       MessageTracker::OpenChannelMessagePipelineResult::kWorkerStarted,
-      /*expected_count=*/1);
+      /*expected_count=*/kExpectedWakeUps);
   // Per connect IPC dispatch metrics expectations.
   histogram_tester.ExpectBucketCount(
       "Extensions.MessagePipeline.OpenChannelDispatchOnConnectStatus.ForWorker",
@@ -290,7 +306,12 @@ INSTANTIATE_TEST_SUITE_P(PersistentBackgroundPage,
 
 // Tests the tracking of messages when sent from a tab content script to a
 // extension background page context and an extension tab script.
-IN_PROC_BROWSER_TEST_F(MessageTrackerMessagingTest, SendMessageToTabAndWorker) {
+IN_PROC_BROWSER_TEST_P(
+    MessageTrackerMessagingTestWithOptimizeServiceWorkerStart,
+    SendMessageToTabAndWorker) {
+  const bool wakeup_optimization_enabled = IsParamFeatureEnabled();
+  const int kExpectedWakeUps = wakeup_optimization_enabled ? 0 : 1;
+
   constexpr char kManifest[] =
       R"(
         {
@@ -371,10 +392,9 @@ IN_PROC_BROWSER_TEST_F(MessageTrackerMessagingTest, SendMessageToTabAndWorker) {
 
     // Load the extension tab (and it's script).
     GURL ext_url = extension->GetResourceURL("test_ext_tab.html");
-    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(ext_url)));
-    content::WebContents* new_ext_tab_web_contents =
-        browser()->tab_strip_model()->GetActiveWebContents();
+    content::WebContents* new_ext_tab_web_contents = GetActiveWebContents();
     ASSERT_TRUE(new_ext_tab_web_contents);
+    ASSERT_TRUE(NavigateToURL(new_ext_tab_web_contents, GURL(ext_url)));
 
     // Must load the tab content script second since it's loading sends a
     // message to the extension tab.
@@ -406,7 +426,7 @@ IN_PROC_BROWSER_TEST_F(MessageTrackerMessagingTest, SendMessageToTabAndWorker) {
   histogram_tester.ExpectTotalCount(
       "Extensions.MessagePipeline.OpenChannelWorkerWakeUpStatus."
       "SendMessageChannel",
-      /*expected_count=*/1);
+      /*expected_count=*/kExpectedWakeUps);
   // Per connect IPC dispatch metrics expectations.
   histogram_tester.ExpectTotalCount(
       "Extensions.MessagePipeline.OpenChannelDispatchOnConnectStatus.ForWorker",
@@ -443,7 +463,7 @@ IN_PROC_BROWSER_TEST_F(MessageTrackerMessagingTest, SendMessageToTabAndWorker) {
       "SendMessageChannel",
       /*sample=*/
       MessageTracker::OpenChannelMessagePipelineResult::kWorkerStarted,
-      /*expected_count=*/1);
+      /*expected_count=*/kExpectedWakeUps);
   // Per connect IPC dispatch metrics expectations cannot be specified in this
   // test because the channel will be closed by the first port responder to the
   // IPC and that will can change the value emitted for the other port.
@@ -451,5 +471,9 @@ IN_PROC_BROWSER_TEST_F(MessageTrackerMessagingTest, SendMessageToTabAndWorker) {
 
 // TODO(crbug.com/371011217): Once we start tracking message dispatch metrics
 // add a test case for a worker that never responds to the message.
+
+// Toggle `extensions_features::OptimizeServiceWorkerStartRequests`.
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(
+    MessageTrackerMessagingTestWithOptimizeServiceWorkerStart);
 
 }  // namespace extensions

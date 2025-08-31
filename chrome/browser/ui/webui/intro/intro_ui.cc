@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/webui/intro/intro_ui.h"
 
 #include "base/feature_list.h"
+#include "base/logging.h"
 #include "base/notreached.h"
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -19,6 +20,7 @@
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/strings/grit/components_branded_strings.h"
+#include "components/sync/base/features.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/webui/webui_util.h"
@@ -32,7 +34,6 @@ IntroUI::IntroUI(content::WebUI* web_ui) : content::WebUIController(web_ui) {
   webui::SetupWebUIDataSource(source, kIntroResources, IDR_INTRO_INTRO_HTML);
 
   int title_id = IDS_FRE_SIGN_IN_TITLE_0;
-  int backupCardDescription = IDS_UNO_FRE_BACKUP_CARD_DESCRIPTION;
 
   // Setting the title here instead of relying on the one provided from the
   // page itself makes it available much earlier, and avoids having to fallback
@@ -48,7 +49,10 @@ IntroUI::IntroUI(content::WebUI* web_ui) : content::WebUIController(web_ui) {
       {"securityCardTitle", IDS_FRE_SECURITY_CARD_TITLE},
       {"securityCardDescription", IDS_FRE_SECURITY_CARD_DESCRIPTION},
       {"backupCardTitle", IDS_FRE_BACKUP_CARD_TITLE},
-      {"backupCardDescription", backupCardDescription},
+      {"backupCardDescription",
+       base::FeatureList::IsEnabled(syncer::kReplaceSyncPromosWithSignInPromos)
+           ? IDS_UNO_FRE_BACKUP_CARD_DESCRIPTION_WITH_PASSWORDS
+           : IDS_UNO_FRE_BACKUP_CARD_DESCRIPTION},
       {"declineSignInButtonTitle", IDS_FRE_DECLINE_SIGN_IN_BUTTON_TITLE},
       {"acceptSignInButtonTitle", IDS_FRE_ACCEPT_SIGN_IN_BUTTON_TITLE},
       {"productLogoAltText", IDS_SHORT_PRODUCT_LOGO_ALT_TEXT},
@@ -95,7 +99,7 @@ IntroUI::IntroUI(content::WebUI* web_ui) : content::WebUIController(web_ui) {
       base::BindRepeating(&IntroUI::HandleSigninChoice, base::Unretained(this)),
       base::BindOnce(&IntroUI::HandleDefaultBrowserChoice,
                      base::Unretained(this)),
-      is_device_managed);
+      is_device_managed, chrome::kChromeUIIntroHost);
   intro_handler_ = intro_handler.get();
   web_ui->AddMessageHandler(std::move(intro_handler));
 }
@@ -137,6 +141,10 @@ void IntroUI::HandleDefaultBrowserChoice(DefaultBrowserChoice choice) {
   } else {
     std::move(default_browser_callback_.value()).Run(choice);
   }
+}
+
+void IntroUI::SetCanPinToTaskbar(bool can_pin) {
+  intro_handler_->SetCanPinToTaskbar(can_pin);
 }
 
 WEB_UI_CONTROLLER_TYPE_IMPL(IntroUI)

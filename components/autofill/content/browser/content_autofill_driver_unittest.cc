@@ -80,7 +80,6 @@ using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Field;
 using ::testing::Gt;
-using ::testing::Invoke;
 using ::testing::IsEmpty;
 using ::testing::IsNull;
 using ::testing::Optional;
@@ -329,7 +328,8 @@ class MockBrowserAutofillManager : public BrowserAutofillManager {
               (const FormData&,
                const FieldGlobalId&,
                const gfx::Rect&,
-               AutofillSuggestionTriggerSource),
+               AutofillSuggestionTriggerSource,
+               std::optional<PasswordSuggestionRequest>),
               (override));
   MOCK_METHOD(void,
               OnFormsSeen,
@@ -546,9 +546,6 @@ class ContentAutofillDriverWithMultiFrameCreditCardForm
 };
 
 TEST_F(ContentAutofillDriverTest, Lift_Form) {
-  base::test::ScopedFeatureList features;
-  features.InitAndDisableFeature(features::kAutofillIncludeUrlInCrowdsourcing);
-
   NavigateAndCommit(GURL("https://username:password@a.test/path?query#hash"));
   FormData form;
   test_api(form).Append(FormFieldData());
@@ -556,27 +553,13 @@ TEST_F(ContentAutofillDriverTest, Lift_Form) {
 
   EXPECT_EQ(form.host_frame(), frame_token());
   EXPECT_EQ(form.url(), GURL("https://a.test/path"));
-  EXPECT_EQ(form.full_url(), GURL());
+  EXPECT_EQ(form.full_url(), GURL("https://a.test/path?query#hash"));
   EXPECT_EQ(form.main_frame_origin(),
             web_contents()->GetPrimaryMainFrame()->GetLastCommittedOrigin());
   EXPECT_EQ(form.main_frame_origin(),
             url::Origin::CreateFromNormalizedTuple("https", "a.test", 443));
   ASSERT_EQ(form.fields().size(), 1u);
   EXPECT_EQ(form.fields().front().host_frame(), frame_token());
-}
-
-// Tests that if `kAutofillIncludeUrlInCrowdsourcing` is enabled, the
-// FormData::full_url() returns the current URL stripped of auth parameters.
-TEST_F(ContentAutofillDriverTest, Lift_Form_WithUrlCrowdsourcing) {
-  base::test::ScopedFeatureList features{
-      features::kAutofillIncludeUrlInCrowdsourcing};
-
-  NavigateAndCommit(GURL("https://username:password@a.test/path?query#hash"));
-  FormData form;
-  test_api(form).Append(FormFieldData());
-  test_api(driver()).LiftForTest(form);
-
-  EXPECT_EQ(form.full_url(), GURL("https://a.test/path?query#hash"));
 }
 
 // Test that forms in "about:" without parents have an empty FormData::url.
@@ -704,7 +687,7 @@ TEST_F(ContentAutofillDriverTestWithAddressForm,
   agent().SetQuitLoopClosure(run_loop.QuitClosure());
   driver().browser_events().ApplyFormAction(
       mojom::FormActionType::kFill, mojom::ActionPersistence::kFill,
-      address_form().fields(), triggered_origin, {});
+      address_form().fields(), triggered_origin, {}, Section());
 
   run_loop.RunUntilIdle();
 
@@ -730,7 +713,7 @@ TEST_F(ContentAutofillDriverTestWithAddressForm,
   agent().SetQuitLoopClosure(run_loop.QuitClosure());
   driver().browser_events().ApplyFormAction(
       mojom::FormActionType::kFill, mojom::ActionPersistence::kPreview,
-      address_form().fields(), triggered_origin, {});
+      address_form().fields(), triggered_origin, {}, Section());
 
   run_loop.RunUntilIdle();
 
@@ -903,7 +886,7 @@ TEST_F(ContentAutofillDriverTest, GetFourDigitCombinationsFromDom_NoMatches) {
         std::move(callback).Run(matches);
       };
   EXPECT_CALL(agent(), GetPotentialLastFourCombinationsForStandaloneCvc)
-      .WillOnce(WithArg<0>(Invoke(cb)));
+      .WillOnce(WithArg<0>(cb));
 
   std::vector<std::string> matches = {"dummy data"};
   driver().browser_events().GetFourDigitCombinationsFromDom(
@@ -924,7 +907,7 @@ TEST_F(ContentAutofillDriverTest,
         std::move(callback).Run(matches);
       };
   EXPECT_CALL(agent(), GetPotentialLastFourCombinationsForStandaloneCvc)
-      .WillOnce(WithArg<0>(Invoke(cb)));
+      .WillOnce(WithArg<0>(cb));
   std::vector<std::string> matches;
   driver().browser_events().GetFourDigitCombinationsFromDom(
       base::BindLambdaForTesting([&](const std::vector<std::string>& result) {
@@ -945,7 +928,8 @@ TEST_F(ContentAutofillDriverTest, AskForValuesToFillChecksTriggerSource) {
                   "trigger source in the renderer"));
   driver().renderer_events().AskForValuesToFill(
       FormData(), FieldRendererId(), gfx::Rect(),
-      AutofillSuggestionTriggerSource::kPlusAddressUpdatedInBrowserProcess);
+      AutofillSuggestionTriggerSource::kPlusAddressUpdatedInBrowserProcess,
+      std::nullopt);
 }
 
 // Test that the inactive render frame does not trigger the DOM search and
@@ -1035,7 +1019,8 @@ TEST_F(ContentAutofillDriverTest, BadMessageIfFieldWithoutForm) {
   FormData form = test::CreateTestAddressFormData();
   FieldRendererId field = test::MakeFieldRendererId();
   driver().renderer_events().AskForValuesToFill(
-      form, field, gfx::Rect(), AutofillSuggestionTriggerSource::kUnspecified);
+      form, field, gfx::Rect(), AutofillSuggestionTriggerSource::kUnspecified,
+      std::nullopt);
 }
 
 }  // namespace

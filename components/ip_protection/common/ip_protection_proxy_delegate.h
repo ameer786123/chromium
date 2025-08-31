@@ -6,12 +6,12 @@
 #define COMPONENTS_IP_PROTECTION_COMMON_IP_PROTECTION_PROXY_DELEGATE_H_
 
 #include <cstddef>
-#include <deque>
 #include <string>
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
+#include "base/types/expected.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/proxy_chain.h"
@@ -57,10 +57,10 @@ class IpProtectionProxyDelegate : public net::ProxyDelegate {
   void OnSuccessfulRequestAfterFailures(
       const net::ProxyRetryInfoMap& proxy_retry_info) override;
   void OnFallback(const net::ProxyChain& bad_chain, int net_error) override;
-  net::Error OnBeforeTunnelRequest(
+  base::expected<net::HttpRequestHeaders, net::Error> OnBeforeTunnelRequest(
       const net::ProxyChain& proxy_chain,
       size_t chain_index,
-      net::HttpRequestHeaders* extra_headers) override;
+      OnBeforeTunnelRequestCallback callback) override;
   net::Error OnTunnelHeadersReceived(
       const net::ProxyChain& proxy_chain,
       size_t chain_index,
@@ -91,6 +91,12 @@ class IpProtectionProxyDelegate : public net::ProxyDelegate {
   static net::ProxyList MergeProxyRules(
       const net::ProxyList& existing_proxy_list,
       const net::ProxyList& custom_proxy_list);
+
+  // Returns PRT header value (for Sec-Probabilistic-Reveal-Token) if
+  // successful. Returns nullopt in case of failure.
+  std::optional<std::string> GetPRTHeaderValue(
+      const GURL& url,
+      const net::SchemefulSite& top_frame_site) const;
 
   const raw_ref<IpProtectionCore> ip_protection_core_;
 

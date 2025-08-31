@@ -65,6 +65,7 @@ bool DocumentFragment::ChildTypeAllowed(NodeType type) const {
 Node* DocumentFragment::Clone(Document& factory,
                               NodeCloningData& data,
                               ContainerNode* append_to,
+                              CustomElementRegistry* fallback_registry,
                               ExceptionState&) const {
   DCHECK_EQ(append_to, nullptr)
       << "DocumentFragment::Clone() doesn't support append_to";
@@ -79,7 +80,7 @@ Node* DocumentFragment::Clone(Document& factory,
     PartRoot::CloneParts(*this, *clone, data);
   }
   if (data.Has(CloneOption::kIncludeDescendants)) {
-    clone->CloneChildNodesFrom(*this, data);
+    clone->CloneChildNodesFrom(*this, data, fallback_registry);
   }
   DCHECK(!part_root || &data.CurrentPartRoot() == part_root);
   return clone;
@@ -113,7 +114,7 @@ void DocumentFragment::ForgetChildren() {
   Node* next_child = firstChild();
   do {
     Node* child = next_child;
-    child->SetParentOrShadowHostNode(nullptr);
+    child->SetParentNode(nullptr);
     child->SetPreviousSibling(nullptr);
     next_child = child->nextSibling();
     child->SetNextSibling(nullptr);

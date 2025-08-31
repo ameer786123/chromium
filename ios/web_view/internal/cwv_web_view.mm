@@ -461,7 +461,8 @@ class WebViewHolder : public web::WebStateUserData<WebViewHolder> {
     return;
   }
 
-  CHECK([[CWVGlobalState sharedInstance] isStarted]);
+  DCHECK([[CWVGlobalState sharedInstance] isStarted]);
+  [[CWVGlobalState sharedInstance] start];
 }
 
 + (BOOL)chromeContextMenuEnabled {
@@ -552,6 +553,21 @@ class WebViewHolder : public web::WebStateUserData<WebViewHolder> {
   }
   _webState->GetWebViewProxy().allowsBackForwardNavigationGestures =
       allowsBackForwardNavigationGestures;
+}
+
+- (BOOL)allowsLinkPreview {
+  if (![self isWebStateSafeToUse]) {
+    return NO;
+  }
+
+  return _webState->GetWebViewProxy().allowsLinkPreview;
+}
+
+- (void)setAllowsLinkPreview:(BOOL)allowsLinkPreview {
+  if (![self isWebStateSafeToUse]) {
+    return;
+  }
+  _webState->GetWebViewProxy().allowsLinkPreview = allowsLinkPreview;
 }
 
 - (void)dealloc {
@@ -1088,6 +1104,7 @@ class WebViewHolder : public web::WebStateUserData<WebViewHolder> {
 
   BOOL allowsBackForwardNavigationGestures =
       self.allowsBackForwardNavigationGestures;
+  BOOL allowsLinkPreview = self.allowsLinkPreview;
 
   // CWVWebView does not support unrealized WebState, so ignore the
   // over-realization check (this simply reset the recent realization
@@ -1148,6 +1165,7 @@ class WebViewHolder : public web::WebStateUserData<WebViewHolder> {
 
   _webState->GetWebViewProxy().allowsBackForwardNavigationGestures =
       allowsBackForwardNavigationGestures;
+  _webState->GetWebViewProxy().allowsLinkPreview = allowsLinkPreview;
 
   if (_translationController) {
     id<CWVTranslationControllerDelegate> delegate =
@@ -1209,11 +1227,11 @@ class WebViewHolder : public web::WebStateUserData<WebViewHolder> {
   if (![self isWebStateSafeToUse]) {
     return;
   }
+  self.backForwardList.navigationManager = _webState->GetNavigationManager();
+
   self.canGoBack = _webState && _webState->GetNavigationManager()->CanGoBack();
   self.canGoForward =
       _webState && _webState->GetNavigationManager()->CanGoForward();
-
-  self.backForwardList.navigationManager = _webState->GetNavigationManager();
 }
 
 - (void)updateCurrentURLs {

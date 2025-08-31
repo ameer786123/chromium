@@ -9,10 +9,11 @@
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/run_loop.h"
+#include "base/test/mock_callback.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
-#include "chrome/browser/ui/tabs/test/mock_tab_interface.h"
 #include "chrome/browser/ui/toolbar/pinned_toolbar/pinned_toolbar_actions_model.h"
 #include "chrome/browser/ui/views/location_bar/icon_label_bubble_view.h"
 #include "chrome/browser/ui/views/page_action/page_action_controller.h"
@@ -25,21 +26,27 @@
 #include "chrome/browser/ui/views/page_action/test_support/test_page_action_properties_provider.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/views/chrome_views_test_base.h"
+#include "components/tabs/public/mock_tab_interface.h"
 #include "components/vector_icons/vector_icons.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/test/test_web_contents_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/actions/actions.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/interaction/interaction_test_util.h"
+#include "ui/events/base_event_utils.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/events/test/test_event.h"
 #include "ui/gfx/animation/animation.h"
 #include "ui/gfx/animation/animation_test_api.h"
 #include "ui/views/actions/action_view_controller.h"
+#include "ui/views/animation/ink_drop.h"
 #include "ui/views/background.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/interaction/interaction_test_util_views.h"
+#include "ui/views/test/ax_event_counter.h"
 #include "ui/views/view_class_properties.h"
 
 namespace page_actions {
@@ -58,7 +65,6 @@ static const PageActionPropertiesMap kTestProperties = PageActionPropertiesMap{
         kTestPageActionId,
         PageActionProperties{
             .histogram_name = "Test",
-            .is_ephemeral = true,
         },
     },
 };
@@ -114,7 +120,6 @@ class PageActionViewWithControllerTest : public ChromeViewsTestBase {
 
   void TearDown() override {
     ChromeViewsTestBase::TearDown();
-    page_action_view_.reset();
     action_item_ = nullptr;
     actions::ActionManager::Get().ResetActions();
     pinned_actions_model_.reset();
@@ -122,10 +127,10 @@ class PageActionViewWithControllerTest : public ChromeViewsTestBase {
 
   std::unique_ptr<PageActionController> NewPageActionController(
       tabs::TabInterface& tab) const {
-    auto controller = std::make_unique<PageActionController>(
-        TestPageActionPropertiesProvider(kTestProperties),
-        pinned_actions_model_.get());
-    controller->Initialize(tab, {action_item_->GetActionId().value()});
+    auto controller =
+        std::make_unique<PageActionControllerImpl>(pinned_actions_model_.get());
+    controller->Initialize(tab, {action_item_->GetActionId().value()},
+                           TestPageActionPropertiesProvider(kTestProperties));
     return controller;
   }
 
@@ -136,7 +141,6 @@ class PageActionViewWithControllerTest : public ChromeViewsTestBase {
   TestingProfile profile_;
 
  private:
-  std::unique_ptr<PageActionView> page_action_view_;
   std::unique_ptr<PageActionView> test_page_action_view_;
   raw_ptr<actions::ActionItem> action_item_;
 
@@ -175,7 +179,8 @@ class PageActionViewTest : public ChromeViewsTestBase {
         base::Seconds(0));
 
     ON_CALL(mock_model_, GetVisible()).WillByDefault(Return(false));
-    ON_CALL(mock_model_, GetShowSuggestionChip()).WillByDefault(Return(false));
+    ON_CALL(mock_model_, ShouldShowSuggestionChip())
+        .WillByDefault(Return(false));
     ON_CALL(mock_model_, GetShouldAnimateChip()).WillByDefault(Return(false));
     ON_CALL(mock_model_, GetText()).WillByDefault(ReturnRef(mock_string_));
     ON_CALL(mock_model_, GetAccessibleName())
@@ -306,13 +311,15 @@ TEST_F(PageActionViewTest, LabelVisibility) {
   EXPECT_FALSE(page_action_view()->GetVisible());
 
   EXPECT_CALL(*model(), GetVisible()).WillRepeatedly(Return(true));
-  EXPECT_CALL(*model(), GetShowSuggestionChip()).WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
   EXPECT_CALL(*model(), GetText()).WillRepeatedly(ReturnRef(kTestText));
   page_action_view()->OnPageActionModelChanged(*model());
   EXPECT_TRUE(page_action_view()->GetVisible());
   EXPECT_TRUE(page_action_view()->IsChipVisible());
 
-  EXPECT_CALL(*model(), GetShowSuggestionChip()).WillRepeatedly(Return(false));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(false));
   page_action_view()->OnPageActionModelChanged(*model());
   EXPECT_TRUE(page_action_view()->GetVisible());
   EXPECT_FALSE(page_action_view()->IsChipVisible());
@@ -320,7 +327,8 @@ TEST_F(PageActionViewTest, LabelVisibility) {
 
 TEST_F(PageActionViewTest, ChipStateUpdatesBackgroundColor) {
   EXPECT_CALL(*model(), GetVisible()).WillRepeatedly(Return(true));
-  EXPECT_CALL(*model(), GetShowSuggestionChip()).WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
   EXPECT_CALL(*model(), GetText()).WillRepeatedly(ReturnRef(kTestText));
   page_action_view()->OnPageActionModelChanged(*model());
 
@@ -329,7 +337,8 @@ TEST_F(PageActionViewTest, ChipStateUpdatesBackgroundColor) {
             page_action_view()->GetColorProvider()->GetColor(
                 kColorOmniboxIconBackgroundTonal));
 
-  EXPECT_CALL(*model(), GetShowSuggestionChip()).WillRepeatedly(Return(false));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(false));
   page_action_view()->OnPageActionModelChanged(*model());
 
   EXPECT_EQ(page_action_view()->GetBackground(), nullptr);
@@ -337,7 +346,8 @@ TEST_F(PageActionViewTest, ChipStateUpdatesBackgroundColor) {
 
 TEST_F(PageActionViewTest, ChipStateUpdatesForegroundColor) {
   EXPECT_CALL(*model(), GetVisible()).WillRepeatedly(Return(true));
-  EXPECT_CALL(*model(), GetShowSuggestionChip()).WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
   EXPECT_CALL(*model(), GetText()).WillRepeatedly(ReturnRef(kTestText));
   page_action_view()->OnPageActionModelChanged(*model());
 
@@ -360,6 +370,38 @@ TEST_F(PageActionViewTest, TooltipText) {
   EXPECT_CALL(*model(), GetTooltipText()).WillRepeatedly(ReturnRef(kTestText));
   page_action_view()->OnPageActionModelChanged(*model());
   EXPECT_EQ(page_action_view()->GetTooltipText(), kTestText);
+}
+
+TEST_F(PageActionViewTest, Highlight) {
+  auto scoped_mode = gfx::AnimationTestApi::SetRichAnimationRenderMode(
+      gfx::Animation::RichAnimationRenderMode::FORCE_DISABLED);
+
+  views::InkDropHost* const ink_drop =
+      views::InkDrop::Get(page_action_view()->ink_drop_view());
+
+  EXPECT_CALL(*model(), GetVisible()).WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), GetActionActive()).WillRepeatedly(Return(true));
+  page_action_view()->OnPageActionModelChanged(*model());
+  EXPECT_TRUE(ink_drop->GetHighlighted());
+
+  EXPECT_CALL(*model(), GetActionActive()).WillRepeatedly(Return(false));
+  page_action_view()->OnPageActionModelChanged(*model());
+  EXPECT_FALSE(ink_drop->GetHighlighted());
+}
+
+// Regression test to ensure proper clean up when the view is destroyed while
+// highlighted.
+TEST_F(PageActionViewTest, HandleDestructionWhileHighlighted) {
+  auto scoped_mode = gfx::AnimationTestApi::SetRichAnimationRenderMode(
+      gfx::Animation::RichAnimationRenderMode::FORCE_DISABLED);
+
+  views::InkDropHost* const ink_drop =
+      views::InkDrop::Get(page_action_view()->ink_drop_view());
+
+  EXPECT_CALL(*model(), GetVisible()).WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), GetActionActive()).WillRepeatedly(Return(true));
+  page_action_view()->OnPageActionModelChanged(*model());
+  EXPECT_TRUE(ink_drop->GetHighlighted());
 }
 
 // Test that OnThemeChanged updates the icon image correctly.
@@ -407,6 +449,104 @@ TEST_F(PageActionViewTest, UpdateIconImageHandlesDifferentImageTypes) {
   EXPECT_FALSE(page_action_view()
                    ->GetImageModel(views::Button::STATE_NORMAL)
                    ->IsVectorIcon());
+}
+
+// Test that the corner radii are consistent for chips, regardless of whether
+// the icon is a vector or bitmap.
+TEST_F(PageActionViewTest, ChipCornerRadiiConsistentForVectorAndBitmapIcons) {
+  SkBitmap bitmap;
+  bitmap.allocN32Pixels(kDefaultIconSize, kDefaultIconSize);
+  const ui::ImageModel bitmap_image =
+      ui::ImageModel::FromImage(gfx::Image::CreateFrom1xBitmap(bitmap));
+
+  const ui::ImageModel vector_image = ui::ImageModel::FromVectorIcon(
+      vector_icons::kBackArrowIcon, ui::kColorSysPrimary, kDefaultIconSize);
+
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), GetVisible()).WillRepeatedly(Return(true));
+
+  EXPECT_CALL(*model(), GetImage()).WillRepeatedly(ReturnRef(bitmap_image));
+  page_action_view()->OnPageActionModelChanged(*model());
+  gfx::RoundedCornersF bitmap_radii = page_action_view()->GetCornerRadii();
+  EXPECT_FALSE(bitmap_radii.IsEmpty());
+
+  EXPECT_CALL(*model(), GetImage()).WillRepeatedly(ReturnRef(vector_image));
+  page_action_view()->OnPageActionModelChanged(*model());
+  gfx::RoundedCornersF vector_radii = page_action_view()->GetCornerRadii();
+  EXPECT_FALSE(vector_radii.IsEmpty());
+
+  EXPECT_EQ(bitmap_radii, vector_radii);
+}
+
+// TODO(crbug.com/411078148): Re-enable on Mac.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_ChipAnnouncements DISABLED_ChipAnnouncements
+#else
+#define MAYBE_ChipAnnouncements ChipAnnouncements
+#endif
+TEST_F(PageActionViewTest, MAYBE_ChipAnnouncements) {
+  views::test::AXEventCounter counter(views::AXUpdateNotifier::Get());
+  ASSERT_EQ(0, counter.GetCount(ax::mojom::Event::kAlert));
+
+  // Initialize the page action so that the chip is showing, but announcements
+  // are disabled.
+  EXPECT_CALL(*model(), GetVisible()).WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), GetShouldAnnounceChip()).WillRepeatedly(Return(false));
+  page_action_view()->OnPageActionModelChanged(*model());
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kAlert));
+
+  // Enabling the announcements now shouldn't trigger anything, since the chip
+  // is already showing.
+  EXPECT_CALL(*model(), GetShouldAnnounceChip()).WillRepeatedly(Return(true));
+  page_action_view()->OnPageActionModelChanged(*model());
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kAlert));
+
+  // Hide the suggestion chip, then re-show it. This should trigger an
+  // announcement.
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(false));
+  page_action_view()->OnPageActionModelChanged(*model());
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kAlert));
+
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
+  page_action_view()->OnPageActionModelChanged(*model());
+  EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kAlert));
+}
+
+TEST_F(PageActionViewTest, ChipExpandedCallbackNoAnimation) {
+  base::MockCallback<PageActionView::IsChipShowingChangedCallback>
+      mock_callback;
+  page_action_view()->SetIsChipShowingChangedCallback(mock_callback.Get());
+
+  base::RunLoop first_loop;
+  EXPECT_CALL(mock_callback, Run(/*is_chip_showing=*/true))
+      .WillOnce([&first_loop](bool) { first_loop.Quit(); });
+
+  EXPECT_CALL(*model(), GetVisible()).WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), GetShouldAnimateChip()).WillRepeatedly(Return(false));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), GetText()).WillRepeatedly(ReturnRef(kTestText));
+  EXPECT_CALL(*model(), GetAccessibleName())
+      .WillRepeatedly(ReturnRef(kTestText));
+
+  page_action_view()->OnPageActionModelChanged(*model());
+  first_loop.Run();
+  testing::Mock::VerifyAndClearExpectations(&mock_callback);
+
+  base::RunLoop second_loop;
+  EXPECT_CALL(mock_callback, Run(/*is_chip_showing=*/false))
+      .WillOnce([&second_loop](bool) { second_loop.Quit(); });
+
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(false));
+
+  page_action_view()->OnPageActionModelChanged(*model());
+  second_loop.Run();
 }
 
 class PageActionViewTriggerTest : public PageActionViewTest {
@@ -470,6 +610,14 @@ TEST_F(PageActionViewTriggerTest, PageActionGestureTriggerPropagation) {
   EXPECT_EQ(1, TotalTriggerCount());
 }
 
+TEST_F(PageActionViewTriggerTest, PageActionTriggersOnKeyboardClick) {
+  EXPECT_CALL(*model(), GetActionItemIsShowingBubble())
+      .WillRepeatedly(Return(false));
+  views::test::InteractionTestUtilSimulatorViews::PressButton(
+      page_action_view(), ui::test::InteractionTestUtil::InputType::kKeyboard);
+  EXPECT_EQ(1, TotalTriggerCount());
+}
+
 TEST_F(PageActionViewTriggerTest, PageActionTriggersOnMouseClick) {
   EXPECT_CALL(*model(), GetActionItemIsShowingBubble())
       .WillRepeatedly(Return(false));
@@ -478,8 +626,22 @@ TEST_F(PageActionViewTriggerTest, PageActionTriggersOnMouseClick) {
   EXPECT_EQ(1, TotalTriggerCount());
 }
 
+TEST_F(PageActionViewTriggerTest, PageActionMouseRightClickIgnored) {
+  ui::MouseEvent mouse_press(ui::EventType::kMousePressed, gfx::Point(),
+                             gfx::Point(), ui::EventTimeForNow(),
+                             ui::EF_RIGHT_MOUSE_BUTTON,
+                             ui::EF_RIGHT_MOUSE_BUTTON);
+  ui::MouseEvent mouse_release(ui::EventType::kMouseReleased, gfx::Point(),
+                               gfx::Point(), ui::EventTimeForNow(),
+                               ui::EF_RIGHT_MOUSE_BUTTON,
+                               ui::EF_RIGHT_MOUSE_BUTTON);
+  page_action_view()->OnMouseEvent(&mouse_press);
+  page_action_view()->OnMouseEvent(&mouse_release);
+  EXPECT_EQ(0, TotalTriggerCount());
+}
+
 // Action invocations are suppressed when the ActionItem is displaying UI.
-TEST_F(PageActionViewTriggerTest, PageActionDoesNotTriggersIfBubbleShowing) {
+TEST_F(PageActionViewTriggerTest, PageActionDoesNotTriggerIfBubbleShowing) {
   EXPECT_CALL(*model(), GetActionItemIsShowingBubble())
       .WillRepeatedly(Return(true));
   views::test::InteractionTestUtilSimulatorViews::PressButton(
@@ -506,7 +668,7 @@ class PageActionViewAnimationTest : public PageActionViewTest {
     // Make the visibility change instant.
     page_action_view()->GetSlideAnimationForTesting().SetSlideDuration(
         base::Seconds(0));
-    EXPECT_CALL(*model(), GetShowSuggestionChip())
+    EXPECT_CALL(*model(), ShouldShowSuggestionChip())
         .WillRepeatedly(Return(showing));
     EXPECT_CALL(*model(), GetVisible()).WillRepeatedly(Return(true));
     EXPECT_CALL(*model(), GetText()).WillRepeatedly(ReturnRef(kTestText));
@@ -545,7 +707,8 @@ TEST_F(PageActionViewAnimationTest, ChipStateDuringAnimateOut) {
   SetInitialChipVisibility(true);
   ExtendAnimations();
 
-  EXPECT_CALL(*model(), GetShowSuggestionChip()).WillRepeatedly(Return(false));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(false));
   page_action_view()->OnPageActionModelChanged(*model());
 
   // The page action should be in the middle of animating and its chip should
@@ -569,7 +732,8 @@ TEST_F(PageActionViewAnimationTest, ChipStateDuringAnimateIn) {
   SetInitialChipVisibility(false);
   ExtendAnimations();
 
-  EXPECT_CALL(*model(), GetShowSuggestionChip()).WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
   page_action_view()->OnPageActionModelChanged(*model());
 
   // The page action should be in the middle of animating and its chip should
@@ -595,18 +759,150 @@ TEST_F(PageActionViewAnimationTest, AnimationsDisabled) {
 
   ExtendAnimations();
   EXPECT_CALL(*model(), GetShouldAnimateChip()).WillRepeatedly(Return(false));
-  EXPECT_CALL(*model(), GetShowSuggestionChip()).WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
   page_action_view()->OnPageActionModelChanged(*model());
 
   EXPECT_FALSE(page_action_view()->is_animating_label());
   EXPECT_TRUE(page_action_view()->IsChipVisible());
 
-  EXPECT_CALL(*model(), GetShowSuggestionChip()).WillRepeatedly(Return(false));
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(false));
   page_action_view()->OnPageActionModelChanged(*model());
 
   EXPECT_FALSE(page_action_view()->is_animating_label());
   EXPECT_FALSE(page_action_view()->IsChipVisible());
 }
+
+TEST_F(PageActionViewAnimationTest, ChipExpandedCallbackAnimateIn) {
+  base::RunLoop run_loop;
+  base::MockCallback<PageActionView::IsChipShowingChangedCallback>
+      mock_callback;
+
+  // 1)  Start with the chip completely hidden (no animation).
+  SetInitialChipVisibility(false);
+
+  // 2)  Register the observer *after* the initial setup so we only count
+  //     the animate-in completion.
+  page_action_view()->SetIsChipShowingChangedCallback(mock_callback.Get());
+
+  // One call when the chip is fully expanded – quit the loop so the test waits
+  // for the async PostTask fired by the view.
+  EXPECT_CALL(mock_callback, Run(/*is_chip_showing=*/true))
+      .WillOnce([&run_loop](bool) { run_loop.Quit(); });
+
+  // 3)  Animate-in path.
+  EXPECT_CALL(*model(), GetShouldAnimateChip()).WillRepeatedly(Return(true));
+  ExtendAnimations();
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
+  page_action_view()->OnPageActionModelChanged(*model());
+
+  // 4)  Fast-forward to the end → AnimationEnded() → callback fires.
+  FastForwardAnimation();
+  run_loop.Run();
+}
+
+TEST_F(PageActionViewAnimationTest, ChipExpandedCallbackAnimateOut) {
+  base::RunLoop run_loop;
+  base::MockCallback<PageActionView::IsChipShowingChangedCallback>
+      mock_callback;
+
+  // Register *before* the initial setup; we expect one "expanded" callback.
+  page_action_view()->SetIsChipShowingChangedCallback(mock_callback.Get());
+
+  // 1)  Start with the chip fully visible.
+  SetInitialChipVisibility(/*showing=*/true);
+  testing::Mock::VerifyAndClearExpectations(&mock_callback);
+
+  // 2)  Expect a second call after collapse.
+  {
+    testing::InSequence seq;
+
+    // (a) Still showing when the animation starts.
+    EXPECT_CALL(mock_callback, Run(/*is_chip_showing=*/true));
+
+    // (b) Hidden once the animation ends → quit the loop.
+    EXPECT_CALL(mock_callback, Run(/*is_chip_showing=*/false))
+        .WillOnce([&run_loop](bool) { run_loop.Quit(); });
+  }
+
+  // 3)  Animate-out path.
+  EXPECT_CALL(*model(), GetShouldAnimateChip()).WillRepeatedly(Return(true));
+  ExtendAnimations();
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(false));
+  page_action_view()->OnPageActionModelChanged(*model());
+
+  // 4)  Fast-forward to the end → AnimationEnded() → callback fires again.
+  FastForwardAnimation();
+  run_loop.Run();
+}
+
+struct PageActionViewNonVectorImagePaddingTestParams {
+  int image_size_delta;
+};
+
+class PageActionViewNonVectorImagePaddingTest
+    : public PageActionViewTest,
+      public ::testing::WithParamInterface<
+          PageActionViewNonVectorImagePaddingTestParams> {};
+
+// Test that UpdateBorder() applies correct padding to image against different
+// sizes.
+TEST_P(PageActionViewNonVectorImagePaddingTest,
+       UpdateBorderUsesChipPaddingForBitmapIcon) {
+  const int image_size = kDefaultIconSize - GetParam().image_size_delta;
+
+  SkBitmap bitmap;
+  bitmap.allocN32Pixels(image_size, image_size);
+  const ui::ImageModel bitmap_image =
+      ui::ImageModel::FromImage(gfx::Image::CreateFrom1xBitmap(bitmap));
+  EXPECT_CALL(*model(), GetImage()).WillRepeatedly(ReturnRef(bitmap_image));
+  ASSERT_FALSE(bitmap_image.IsVectorIcon());
+
+  EXPECT_CALL(*model(), ShouldShowSuggestionChip())
+      .WillRepeatedly(Return(true));
+  EXPECT_CALL(*model(), GetVisible()).WillRepeatedly(Return(true));
+
+  page_action_view()->OnPageActionModelChanged(*model());
+  page_action_view()->UpdateBorder();
+
+  const int padding = (kDefaultIconSize - image_size) / 2;
+  const gfx::Insets expected_insets = gfx::Insets(padding);
+
+  EXPECT_EQ(page_action_view()->GetInsets(), expected_insets);
+  EXPECT_EQ(page_action_view()->GetMinimumSize(),
+            page_action_view()->GetImageContainerView()->GetPreferredSize() +
+                expected_insets.size());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    PageActionViewNonVectorImagePaddingTest,
+    ::testing::Values(
+        PageActionViewNonVectorImagePaddingTestParams{
+            .image_size_delta = 4,
+        },
+        PageActionViewNonVectorImagePaddingTestParams{
+            .image_size_delta = 2,
+        },
+        PageActionViewNonVectorImagePaddingTestParams{
+            .image_size_delta = 0,
+        }),
+    [](const ::testing::TestParamInfo<
+        PageActionViewNonVectorImagePaddingTest::ParamType>& info) {
+      switch (info.param.image_size_delta) {
+        case 4:
+          return "VerySmallImage";
+        case 2:
+          return "SmallImage";
+        case 0:
+          return "SimilarImage";
+        default:
+          NOTREACHED();
+      }
+    });
 
 }  // namespace
 }  // namespace page_actions

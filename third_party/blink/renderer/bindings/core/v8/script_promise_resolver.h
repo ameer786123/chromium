@@ -220,7 +220,7 @@ class CORE_EXPORT ScriptPromiseResolverBase
   Member<ScriptState> script_state_;
   TraceWrapperV8Reference<v8::Value> value_;
   const ExceptionContext exception_context_;
-  std::unique_ptr<SourceLocation> source_location_;
+  Member<SourceLocation> source_location_;
 
 #if DCHECK_IS_ON()
   bool suppress_detach_check_ = false;
@@ -340,7 +340,7 @@ class ScriptPromiseResolver final : public ScriptPromiseResolverBase {
   base::OnceCallback<void(Args...)> WrapCallbackInScriptScope(
       base::OnceCallback<void(ScriptPromiseResolver<IDLResolvedType>*, Args...)>
           callback) {
-    return WTF::BindOnce(
+    return blink::BindOnce(
         [](ScriptPromiseResolver<IDLResolvedType>* resolver,
            base::OnceCallback<void(ScriptPromiseResolver<IDLResolvedType>*,
                                    Args...)> callback,

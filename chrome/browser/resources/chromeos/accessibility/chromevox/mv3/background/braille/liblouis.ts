@@ -5,7 +5,11 @@
 /**
  * @fileoverview JavaScript shim for the liblouis Web Assembly wrapper.
  */
+import {BridgeHelper} from '/common/bridge_helper.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
+
+import {BridgeConstants} from '../../common/bridge_constants.js';
+import {OffscreenBridge} from '../../common/offscreen_bridge.js';
 
 type LoadCallback = (instance: LibLouis) => void;
 type MessageCallback = (message: Object) => void;
@@ -13,6 +17,9 @@ type MessageCallback = (message: Object) => void;
 interface Dictionary {
   [key: string]: any;
 }
+
+const TARGET = BridgeConstants.LibLouis.TARGET;
+const Action = BridgeConstants.LibLouis.Action;
 
 /** Encapsulates a liblouis Web Assembly instance in the page. */
 export class LibLouis {
@@ -25,8 +32,6 @@ export class LibLouis {
   /** Next message ID to be used. Incremented with each sent message. */
   private nextMessageId_ = 1;
 
-  worker?: Worker;
-
   /**
    * @param wasmPath Path to .wasm file for the module.
    * @param tablesDir Path to tables directory.
@@ -35,17 +40,16 @@ export class LibLouis {
       wasmPath: string, _tablesDir?: string, loadCallback?: LoadCallback) {
     this.wasmPath_ = wasmPath;
 
+    BridgeHelper.registerHandler(
+        TARGET, Action.MESSAGE,
+        (data: string) => this.onInstanceMessage_(data));
+    BridgeHelper.registerHandler(
+        TARGET, Action.ERROR,
+        (message: string) => this.onInstanceError_(message));
+
     this.loadOrReload_(loadCallback);
   }
 
-  /**
-   * Convenience method to wait for the constructor to resolve its callback.
-   * @param wasmPath Path to .wasm file for the module.
-   * @param tablesDir Path to tables directory.
-   */
-  static async create(wasmPath: string, tablesDir?: string): Promise<LibLouis> {
-    return new Promise(resolve => new LibLouis(wasmPath, tablesDir, resolve));
-  }
 
   isLoaded(): boolean {
     return this.isLoaded_;
@@ -86,10 +90,8 @@ export class LibLouis {
    * @param message JSONable message to be sent.
    * @param callback Callback to receive the reply.
    */
-  rpc(command: string, message: Dictionary, callback: MessageCallback): void {
-    if (!this.worker) {
-      throw Error('Cannot send RPC: liblouis instance not loaded');
-    }
+  async rpc(command: string, message: Dictionary, callback: MessageCallback):
+      Promise<void> {
     const messageId = '' + this.nextMessageId_++;
     message['message_id'] = messageId;
     message['command'] = command;
@@ -97,25 +99,29 @@ export class LibLouis {
     if (LibLouis.DEBUG) {
       globalThis.console.debug('RPC -> ' + json);
     }
-    this.worker.postMessage(json);
     this.pendingRpcCallbacks_[messageId] = callback;
+
+    const error = await OffscreenBridge.libLouisRPC(json);
+    if (error.message) {
+      throw Error(error.message);
+    }
   }
 
   /** Invoked when the Web Assembly instance successfully loads. */
   private onInstanceLoad_(): void {}
 
   /** Invoked when the Web Assembly instance fails to load. */
-  private onInstanceError_(e: ErrorEvent): void {
-    globalThis.console.error('Error in liblouis ' + e.message);
+  private onInstanceError_(message: string): void {
+    globalThis.console.error('Error in liblouis ' + message);
     this.loadOrReload_();
   }
 
   /** Invoked when the Web Assembly instance posts a message. */
-  private onInstanceMessage_(e: MessageEvent): void {
+  private onInstanceMessage_(data: string): void {
     if (LibLouis.DEBUG) {
-      globalThis.console.debug('RPC <- ' + e.data);
+      globalThis.console.debug('RPC <- ' + data);
     }
-    const message = /** @type {!Object} */ (JSON.parse(e.data));
+    const message = /** @type {!Object} */ (JSON.parse(data));
     const messageId = message['in_reply_to'];
     if (messageId === undefined) {
       globalThis.console.warn(
@@ -133,11 +139,8 @@ export class LibLouis {
   }
 
   private loadOrReload_(loadCallback?: LoadCallback): void {
-    this.worker = new Worker(this.wasmPath_);
-    this.worker.addEventListener(
-        'message', e => this.onInstanceMessage_(e), false /* useCapture */);
-    this.worker.addEventListener(
-        'error', e => this.onInstanceError_(e), false /* useCapture */);
+    OffscreenBridge.libLouisStartWorker(this.wasmPath_);
+
     this.rpc('load', {}, () => {
       this.isLoaded_ = true;
       loadCallback && loadCallback(this);
@@ -193,7 +196,7 @@ export namespace LibLouis {
     translate(
         text: string, formTypeMap: number[]|number,
         callback: TranslateCallback): void {
-      if (!this.instance_.worker) {
+      if (!this.instance_.isLoaded()) {
         callback(
             null /*cells*/, null /*textToBraille*/, null /*brailleToText*/);
         return;
@@ -236,7 +239,7 @@ export namespace LibLouis {
      * @param callback Callback for result.
      */
     backTranslate(cells: ArrayBuffer, callback: BackTranslateCallback): void {
-      if (!this.instance_.worker) {
+      if (!this.instance_.isLoaded()) {
         callback(null /*text*/);
         return;
       }

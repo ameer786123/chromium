@@ -16,6 +16,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
@@ -47,6 +48,7 @@
 #include "components/download/public/common/mock_download_item.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/enterprise/connectors/core/connectors_prefs.h"
+#include "components/enterprise/connectors/core/reporting_constants.h"
 #include "components/policy/core/common/cloud/dm_token.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
 #include "components/policy/core/common/policy_pref_names.h"
@@ -235,6 +237,9 @@ class FakeDownloadProtectionService : public DownloadProtectionService {
 class DeepScanningRequestTest : public testing::Test {
  public:
   void SetUp() override {
+    SetFeatures(
+        /*enabled=*/{safe_browsing::kEnhancedFieldsForSecOps},
+        /*disabled=*/{});
     profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
     EXPECT_TRUE(profile_manager_->SetUp());
@@ -368,7 +373,7 @@ class DeepScanningRequestTest : public testing::Test {
         write_item->full_path = download_path_;
         write_item->frame_url = download_url_;
         write_item->browser_context = profile_;
-        write_item->web_contents = web_contents_.get();
+        write_item->web_contents = web_contents_->GetWeakPtr();
         write_item->size = item_.GetTotalBytes();
         write_item->sha256_hash = download_hash_;
         write_item->has_user_gesture = false;
@@ -783,7 +788,13 @@ class DeepScanningReportingSourceTypeTest
   MetadataSourceType GetMetadataSourceType() { return GetParam(); }
 };
 
-TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
+// TODO(crbug.com/433865922): Disable this test on Windows because of flakiness.
+#if BUILDFLAG(IS_WIN)
+  #define MAYBE_ProcessesResponseCorrectly DISABLED_ProcessesResponseCorrectly
+#else
+  #define MAYBE_ProcessesResponseCorrectly ProcessesResponseCorrectly
+#endif
+TEST_P(DeepScanningReportingSourceTypeTest, MAYBE_ProcessesResponseCorrectly) {
   {
     base::RunLoop run_loop;
     DeepScanningRequest request(
@@ -830,6 +841,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
             enterprise_connectors::ContentAnalysisAcknowledgement::WARN);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectDangerousDeepScanningResultAndSensitiveDataEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -842,7 +855,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*threat_type*/ "DANGEROUS",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*dlp_verdict*/ *dlp_result,
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
@@ -857,6 +870,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::DANGEROUS, last_result_);
   }
@@ -907,6 +921,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
             enterprise_connectors::ContentAnalysisAcknowledgement::WARN);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectDangerousDeepScanningResultAndSensitiveDataEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -919,7 +935,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*threat_type*/ "POTENTIALLY_UNWANTED",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*dlp_verdict*/ *dlp_result,
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
@@ -934,6 +950,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::POTENTIALLY_UNWANTED, last_result_);
   }
@@ -976,6 +993,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
             enterprise_connectors::ContentAnalysisAcknowledgement::BLOCK);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectSensitiveDataEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -986,7 +1005,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
         /*sha256*/
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*dlp_verdict*/ *dlp_result,
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
@@ -1001,6 +1020,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::SENSITIVE_CONTENT_BLOCK, last_result_);
   }
@@ -1043,6 +1063,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
             enterprise_connectors::ContentAnalysisAcknowledgement::WARN);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectSensitiveDataEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -1053,7 +1075,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
         /*sha256*/
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*dlp_verdict*/ *dlp_result,
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
@@ -1068,6 +1090,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::SENSITIVE_CONTENT_WARNING, last_result_);
   }
@@ -1114,6 +1137,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
             enterprise_connectors::ContentAnalysisAcknowledgement::BLOCK);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectSensitiveDataEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -1124,7 +1149,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
         /*sha256*/
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*dlp_verdict*/ *dlp_result,
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
@@ -1139,6 +1164,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::SENSITIVE_CONTENT_BLOCK, last_result_);
   }
@@ -1176,6 +1202,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
             enterprise_connectors::ContentAnalysisAcknowledgement::ALLOW);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectUnscannedFileEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -1186,7 +1214,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
         /*sha256*/
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*reason*/ "DLP_SCAN_FAILED",
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
@@ -1200,6 +1228,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::SAFE, last_result_);
   }
@@ -1237,6 +1266,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
             enterprise_connectors::ContentAnalysisAcknowledgement::ALLOW);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectUnscannedFileEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -1247,7 +1278,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
         /*sha256*/
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*reason*/ "MALWARE_SCAN_FAILED",
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
@@ -1261,6 +1292,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::SAFE, last_result_);
   }
@@ -1308,6 +1340,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
                                // always ALLOW
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectUnscannedFileEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -1318,7 +1352,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
         /*sha256*/
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*reason*/ "MALWARE_SCAN_FAILED",
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
@@ -1336,6 +1370,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, ProcessesResponseCorrectly) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::DANGEROUS, last_result_);
   }
@@ -1594,6 +1629,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, MultipleFiles) {
             enterprise_connectors::ContentAnalysisAcknowledgement::ALLOW);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectUnscannedFileEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -1604,7 +1641,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, MultipleFiles) {
         /*sha256*/
         "DDAB29FF2C393EE52855D21A240EB05F775DF88E3CE347DF759F0C4B80356C35",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*reason*/ "MALWARE_SCAN_FAILED",
         /*mimetypes*/ TxtMimeTypes(),
         /*size*/ std::string("foo.exe").size(),
@@ -1617,6 +1654,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, MultipleFiles) {
 
     request.Start();
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::SAFE, last_result_);
     EXPECT_EQ(4u, download_protection_service_.GetFakeBinaryUploadService()
@@ -1694,6 +1732,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, MultipleFiles) {
             enterprise_connectors::ContentAnalysisAcknowledgement::BLOCK);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectSensitiveDataEvents(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -1710,7 +1750,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, MultipleFiles) {
             "08BD2D247CC7AA38B8C4B7FD20EE7EDAD0B593C3DEBCE92F595C9D016DA40BAE",
         },
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         expected_dlp_verdicts,
         /*mimetypes*/ TxtMimeTypes(),
         /*size*/ std::string("foo.exe").size(),
@@ -1733,6 +1773,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, MultipleFiles) {
 
     request.Start();
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::SENSITIVE_CONTENT_BLOCK, last_result_);
     EXPECT_EQ(4u, download_protection_service_.GetFakeBinaryUploadService()
@@ -1767,6 +1808,8 @@ TEST_P(DeepScanningReportingSourceTypeTest, Timeout) {
       enterprise_connectors::ContentAnalysisResponse());
 
   enterprise_connectors::test::EventReportValidator validator(client_.get());
+  base::RunLoop validator_run_loop;
+  validator.SetDoneClosure(validator_run_loop.QuitClosure());
   validator.ExpectUnscannedFileEvent(
       /*url*/ "https://example.com/download.exe",
       /*tab_url*/ "https://example.com/",
@@ -1777,7 +1820,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, Timeout) {
       /*sha256*/
       "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
       /*trigger*/
-      extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+      enterprise_connectors::kFileDownloadDataTransferEventTrigger,
       /*reason*/ "TIMEOUT",
       /*mimetypes*/ ExeMimeTypes(),
       /*size*/ std::string("download contents").size(),
@@ -1791,6 +1834,7 @@ TEST_P(DeepScanningReportingSourceTypeTest, Timeout) {
   request.Start();
 
   run_loop.Run();
+  validator_run_loop.Run();
 
   EXPECT_EQ(DownloadCheckResult::SAFE, last_result_);
 }
@@ -1981,6 +2025,8 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
         ->SetExpectedFinalAction(expected_final_action());
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectDangerousDeepScanningResult(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -1993,7 +2039,7 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*threat_type*/ "DANGEROUS",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
         /*result*/
@@ -2006,6 +2052,7 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::DANGEROUS, last_result_);
   }
@@ -2047,6 +2094,8 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
             enterprise_connectors::ContentAnalysisAcknowledgement::WARN);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectDangerousDeepScanningResult(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -2059,7 +2108,7 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*threat_type*/ "POTENTIALLY_UNWANTED",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
         /*result*/
@@ -2072,6 +2121,7 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::POTENTIALLY_UNWANTED, last_result_);
   }
@@ -2105,6 +2155,8 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
             enterprise_connectors::ContentAnalysisAcknowledgement::BLOCK);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectUnscannedFileEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -2115,7 +2167,7 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
         /*sha256*/
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*reason*/ "FILE_TOO_LARGE",
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
@@ -2129,6 +2181,7 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::SAFE, last_result_);
   }
@@ -2168,6 +2221,8 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
             enterprise_connectors::ContentAnalysisAcknowledgement::BLOCK);
 
     enterprise_connectors::test::EventReportValidator validator(client_.get());
+    base::RunLoop validator_run_loop;
+    validator.SetDoneClosure(validator_run_loop.QuitClosure());
     validator.ExpectUnscannedFileEvent(
         /*url*/ "https://example.com/download.exe",
         /*tab_url*/ "https://example.com/",
@@ -2178,7 +2233,7 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
         /*sha256*/
         "76E00EB33811F5778A5EE557512C30D9341D4FEB07646BCE3E4DB13F9428573C",
         /*trigger*/
-        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileDownload,
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
         /*reason*/ "FILE_TOO_LARGE",
         /*mimetypes*/ ExeMimeTypes(),
         /*size*/ std::string("download contents").size(),
@@ -2192,6 +2247,7 @@ TEST_P(DeepScanningDownloadRestrictionsTest, GeneratesCorrectReport) {
     request.Start();
 
     run_loop.Run();
+    validator_run_loop.Run();
 
     EXPECT_EQ(DownloadCheckResult::DANGEROUS, last_result_);
   }

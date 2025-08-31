@@ -371,6 +371,10 @@ class TestingProfile : public Profile {
 
   TestingProfile* AsTestingProfile() override;
 
+  base::WeakPtr<TestingProfile> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
+
   // Profile
   std::string GetProfileUserName() const override;
 
@@ -484,10 +488,6 @@ class TestingProfile : public Profile {
   // Creates a TestingPrefService and associates it with the TestingProfile.
   void CreateTestingPrefService();
 
-  // Creates a pref service that uses SupervisedUserPrefStore and associates
-  // it with the TestingProfile.
-  void CreatePrefServiceForSupervisedUser();
-
   // Initializes |prefs_| for an incognito profile, derived from
   // |original_profile_|.
   void CreateIncognitoPrefService();
@@ -560,9 +560,9 @@ class TestingProfile : public Profile {
 
   std::unique_ptr<policy::PolicyService> policy_service_;
 
-  scoped_refptr<TestingPrefStore> supervised_user_pref_store_ = nullptr;
-
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
+
+  base::WeakPtrFactory<TestingProfile> weak_factory_{this};
 };
 
 #endif  // CHROME_TEST_BASE_TESTING_PROFILE_H_

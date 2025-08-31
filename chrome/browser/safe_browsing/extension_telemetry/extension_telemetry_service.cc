@@ -41,11 +41,14 @@
 #include "chrome/browser/safe_browsing/extension_telemetry/extension_telemetry_uploader.h"
 #include "chrome/browser/safe_browsing/extension_telemetry/potential_password_theft_signal_processor.h"
 #include "chrome/browser/safe_browsing/extension_telemetry/remote_host_contacted_signal_processor.h"
+#include "chrome/browser/safe_browsing/extension_telemetry/search_hijacking_detector.h"
 #include "chrome/browser/safe_browsing/extension_telemetry/tabs_api_signal_processor.h"
 #include "chrome/browser/safe_browsing/extension_telemetry/tabs_execute_script_signal_processor.h"
+#include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/common/pref_names.h"
 #include "components/enterprise/buildflags/buildflags.h"
+#include "components/omnibox/browser/autocomplete_match.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/safe_browsing/core/browser/sync/safe_browsing_primary_account_token_fetcher.h"
@@ -53,6 +56,7 @@
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
+#include "components/search_engines/template_url_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/blocklist_extension_prefs.h"
 #include "extensions/browser/blocklist_state.h"
@@ -84,6 +88,8 @@ using ExtensionInfo =
     ::safe_browsing::ExtensionTelemetryReportRequest_ExtensionInfo;
 using OffstoreExtensionVerdict =
     ::safe_browsing::ExtensionTelemetryReportResponse_OffstoreExtensionVerdict;
+using SearchHijackingSignal =
+    ::safe_browsing::ExtensionTelemetryReportRequest_SearchHijackingSignal;
 
 // The ExtensionTelemetryService saves offstore extensions file data such as
 // filenames and hashes in Prefs. This information is stored in the following
@@ -143,6 +149,12 @@ base::TimeDelta kOffstoreFileDataCollectionStartupDelaySeconds =
 // Limit the off-store file data collection duration.
 base::TimeDelta kOffstoreFileDataCollectionDurationLimitSeconds =
     base::Seconds(60);
+
+#if BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
+// Interval for generating and send extension telemetry for enterprise
+base::TimeDelta kExtensionTelemetryEnterpriseReportingIntervalSeconds =
+    base::Seconds(300);
+#endif
 
 void RecordWhenFileWasPersisted(bool persisted_at_write_interval) {
   base::UmaHistogramBoolean(
@@ -468,7 +480,6 @@ ExtensionTelemetryService::ExtensionTelemetryService(
   SetEnabledForESB(IsEnhancedProtectionEnabled(*pref_service_));
 
 #if BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
-  if (base::FeatureList::IsEnabled(kExtensionTelemetryForEnterprise)) {
     // Register for enterprise policy changes.
     auto* connector_service =
         enterprise_connectors::ConnectorsServiceFactory::GetForBrowserContext(
@@ -480,7 +491,6 @@ ExtensionTelemetryService::ExtensionTelemetryService(
     // Set initial enable/disable state for enterprise.
     SetEnabledForEnterprise(
         GetExtensionTelemetryEventRouter(profile_)->IsPolicyEnabled());
-  }
 #endif  // BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
 }
 
@@ -515,6 +525,7 @@ void ExtensionTelemetryService::OnEnterprisePolicyChanged() {
 
 // Telemetry features for ESB include:
 // - ESB signals
+// - Search hijacking signal
 // - Off-store data collection
 // - Command line extensions file data
 // - Telemetry Configuration
@@ -529,6 +540,19 @@ void ExtensionTelemetryService::SetEnabledForESB(bool enable) {
   if (esb_enabled_) {
     SetUpSignalProcessorsAndSubscribersForESB();
     SetUpOffstoreFileDataCollection();
+
+    if (base::FeatureList::IsEnabled(
+            kExtensionTelemetrySearchHijackingSignal)) {
+      auto* template_url_service =
+          TemplateURLServiceFactory::GetForProfile(profile_);
+      search_hijacking_detector_ = std::make_unique<SearchHijackingDetector>(
+          pref_service_, template_url_service);
+      search_hijacking_detector_->SetHeuristicCheckInterval(base::Seconds(
+          kExtensionTelemetrySearchHijackingSignalHeuristicCheckIntervalSeconds
+              .Get()));
+      search_hijacking_detector_->SetHeuristicThreshold(
+          kExtensionTelemetrySearchHijackingSignalHeuristicThreshold.Get());
+    }
 
     // File data for Command Line extensions.
     if (base::FeatureList::IsEnabled(
@@ -586,6 +610,12 @@ void ExtensionTelemetryService::SetEnabledForESB(bool enable) {
     signal_subscribers_.clear();
     // Destruct signal processors.
     signal_processors_.clear();
+    // Destruct search hijacking detector.
+    if (search_hijacking_detector_) {
+      // Clear all persisted data.
+      search_hijacking_detector_->ClearAllDataFromPrefs();
+      search_hijacking_detector_.reset();
+    }
     // Delete persisted files.
     if (!persister_.is_null()) {
       persister_.AsyncCall(&ExtensionTelemetryPersister::ClearPersistedFiles);
@@ -609,10 +639,8 @@ void ExtensionTelemetryService::SetEnabledForEnterprise(bool enable) {
     SetUpOffstoreFileDataCollection();
 
     enterprise_timer_.Start(
-        FROM_HERE,
-        base::Seconds(
-            kExtensionTelemetryEnterpriseReportingIntervalSeconds.Get()),
-        this, &ExtensionTelemetryService::CreateAndSendEnterpriseReport);
+        FROM_HERE, kExtensionTelemetryEnterpriseReportingIntervalSeconds, this,
+        &ExtensionTelemetryService::CreateAndSendEnterpriseReport);
   } else {
     // Stop enterprise timer for periodic telemetry reports.
     enterprise_timer_.Stop();
@@ -675,6 +703,13 @@ void ExtensionTelemetryService::AddSignal(
   }
 }
 
+void ExtensionTelemetryService::OnOmniboxSearch(
+    const AutocompleteMatch& match) {
+  if (search_hijacking_detector_) {
+    search_hijacking_detector_->OnOmniboxSearch(match);
+  }
+}
+
 void ExtensionTelemetryService::AddSignalHelper(
     const ExtensionSignal& signal,
     ExtensionStore& store,
@@ -716,6 +751,15 @@ ExtensionTelemetryService::CreateReportWithCommonFieldsPopulated() {
       profile_->GetPrefs()->GetBoolean(prefs::kExtensionsUIDeveloperMode));
   telemetry_report_pb->set_creation_timestamp_msec(
       base::Time::Now().InMillisecondsSinceUnixEpoch());
+
+  if (search_hijacking_detector_) {
+    std::unique_ptr<SearchHijackingSignal> signal =
+        search_hijacking_detector_->GetSignalForReport();
+    if (signal) {
+      telemetry_report_pb->set_allocated_search_hijacking_signal(
+          signal.release());
+    }
+  }
 
   // Only collect if `is_shutdown_` is false, since BrowserContextHelper can be
   // destroyed already and cause a crash on ChromeOS.
@@ -858,6 +902,9 @@ void ExtensionTelemetryService::StartUploadCheck() {
 }
 
 void ExtensionTelemetryService::PersistOrUploadData() {
+  if (search_hijacking_detector_) {
+    search_hijacking_detector_->MaybeCheckForHeuristicMatch();
+  }
   if (GetLastUploadTimeForExtensionTelemetry(*pref_service_) +
           current_reporting_interval_ <=
       base::Time::Now()) {
@@ -1770,6 +1817,12 @@ ExtensionTelemetryService::GetOffstoreFileDataCollectionStartupDelaySeconds() {
 base::TimeDelta
 ExtensionTelemetryService::GetOffstoreFileDataCollectionIntervalSeconds() {
   return kOffstoreFileDataCollectionIntervalSeconds;
+}
+
+void ExtensionTelemetryService::OnDseSerpLoaded() {
+  if (search_hijacking_detector_) {
+    search_hijacking_detector_->OnDseSerpLoaded();
+  }
 }
 
 }  // namespace safe_browsing

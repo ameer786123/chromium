@@ -9,6 +9,7 @@
 #include <string>
 
 #include "chrome/browser/ai/ai_context_bound_object.h"
+#include "chrome/browser/ai/ai_on_device_session.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "components/optimization_guide/proto/features/writing_assistance_api.pb.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -36,6 +37,9 @@ class AIWriter : public AIContextBoundObject, public blink::mojom::AIWriter {
   static std::unique_ptr<optimization_guide::proto::WritingAssistanceApiOptions>
   ToProtoOptions(const blink::mojom::AIWriterCreateOptionsPtr& options);
 
+  // Returns a set of BCP 47 base language codes that are supported and enabled.
+  static base::flat_set<std::string_view> GetSupportedLanguageBaseCodes();
+
   // `blink::mojom::AIWriter` implementation.
   void Write(const std::string& input,
              const std::optional<std::string>& context,
@@ -51,7 +55,7 @@ class AIWriter : public AIContextBoundObject, public blink::mojom::AIWriter {
  private:
   void DidGetExecutionInputSizeForWrite(
       mojo::RemoteSetElementId responder_id,
-      optimization_guide::proto::WritingAssistanceApiRequest request,
+      const optimization_guide::proto::WritingAssistanceApiRequest& request,
       std::optional<uint32_t> result);
 
   void DidGetExecutionInputSizeInTokensForMeasure(
@@ -67,10 +71,10 @@ class AIWriter : public AIContextBoundObject, public blink::mojom::AIWriter {
       const std::string& input,
       const std::string& context);
 
-  // The underlying session provided by optimization guide component.
-  std::unique_ptr<optimization_guide::OptimizationGuideModelExecutor::Session>
-      session_;
+  AIOnDeviceSession session_wrapper_;
+
   const blink::mojom::AIWriterCreateOptionsPtr options_;
+
   // The `RemoteSet` storing all the responders, each of them corresponds to one
   // `Execute()` call.
   mojo::RemoteSet<blink::mojom::ModelStreamingResponder> responder_set_;

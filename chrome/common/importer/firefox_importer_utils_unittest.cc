@@ -2,16 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <array>
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/common/importer/firefox_importer_utils.h"
 
 #include <stddef.h>
+
+#include <array>
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"

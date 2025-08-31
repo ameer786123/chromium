@@ -5,9 +5,9 @@
 #define COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_EXECUTION_SAFETY_CLIENT_H_
 
 #include "base/types/optional_ref.h"
+#include "components/optimization_guide/core/delivery/model_info.h"
 #include "components/optimization_guide/core/model_execution/safety_checker.h"
 #include "components/optimization_guide/core/model_execution/safety_model_info.h"
-#include "components/optimization_guide/core/model_info.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "services/on_device_model/public/cpp/service_client.h"
 #include "services/on_device_model/public/cpp/text_safety_assets.h"
@@ -29,7 +29,8 @@ class SafetyClient final : public TextSafetyClient {
   void SetLanguageDetectionModel(
       base::optional_ref<const ModelInfo> model_info);
   // Updates the safety model, possibly interrupting ongoing executions.
-  void MaybeUpdateSafetyModel(base::optional_ref<const ModelInfo> model_info);
+  void MaybeUpdateSafetyModel(
+      std::unique_ptr<SafetyModelInfo> safety_model_info);
 
   SafetyModelInfo* safety_model_info() const {
     return safety_model_info_.get();

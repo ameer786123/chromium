@@ -32,10 +32,10 @@
 #include "chromeos/ash/experiences/arc/test/arc_util_test_support.h"
 #include "chromeos/ash/experiences/arc/test/fake_arc_session.h"
 #include "components/consent_auditor/fake_consent_auditor.h"
+#include "components/session_manager/core/fake_session_manager_delegate.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
-#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/browser_task_environment.h"
@@ -99,9 +99,6 @@ class ArcPlayStoreEnabledPreferenceHandlerTest : public testing::Test {
     identity_test_env_profile_adaptor_->identity_test_env()
         ->MakePrimaryAccountAvailable(kTestEmail,
                                       signin::ConsentLevel::kSignin);
-
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&pref_service_);
-    user_manager::KnownUser::RegisterPrefs(pref_service_.registry());
   }
 
   void TearDown() override {
@@ -109,7 +106,6 @@ class ArcPlayStoreEnabledPreferenceHandlerTest : public testing::Test {
     arc_session_manager_.reset();
     identity_test_env_profile_adaptor_.reset();
     profile_.reset();
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
     ash::UpstartClient::Shutdown();
     ash::SessionManagerClient::Shutdown();
     ash::ConciergeClient::Shutdown();
@@ -128,13 +124,13 @@ class ArcPlayStoreEnabledPreferenceHandlerTest : public testing::Test {
         ConsentAuditorFactory::GetForProfile(profile()));
   }
 
-  CoreAccountId GetAccountId() const {
+  GaiaId GetGaiaId() const {
     auto* identity_manager =
         identity_test_env_profile_adaptor_->identity_test_env()
             ->identity_manager();
     return identity_manager
         ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
-        .account_id;
+        .gaia;
   }
 
  protected:
@@ -146,7 +142,8 @@ class ArcPlayStoreEnabledPreferenceHandlerTest : public testing::Test {
   content::BrowserTaskEnvironment task_environment_;
   user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
       fake_user_manager_;
-  session_manager::SessionManager session_manager_;
+  session_manager::SessionManager session_manager_{
+      std::make_unique<session_manager::FakeSessionManagerDelegate>()};
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
       identity_test_env_profile_adaptor_;
@@ -154,7 +151,6 @@ class ArcPlayStoreEnabledPreferenceHandlerTest : public testing::Test {
   std::unique_ptr<ArcSessionManager> arc_session_manager_;
   std::unique_ptr<ash::FakeLoginDisplayHost> fake_login_display_host_;
   std::unique_ptr<ArcPlayStoreEnabledPreferenceHandler> preference_handler_;
-  TestingPrefServiceSimple pref_service_;
 };
 
 TEST_F(ArcPlayStoreEnabledPreferenceHandlerTest, PrefChangeTriggersService) {
@@ -217,7 +213,7 @@ TEST_F(ArcPlayStoreEnabledPreferenceHandlerTest, PrefChangeRevokesConsent) {
   play_consent.set_consent_flow(
       UserConsentTypes::ArcPlayTermsOfServiceConsent::SETTING_CHANGE);
   EXPECT_CALL(*auditor, RecordArcPlayConsent(
-                            GetAccountId(),
+                            GetGaiaId(),
                             consent_auditor::ArcPlayConsentEq(play_consent)));
 
   ASSERT_FALSE(IsArcPlayStoreEnabledForProfile(profile()));

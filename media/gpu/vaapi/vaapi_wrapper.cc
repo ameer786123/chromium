@@ -22,6 +22,7 @@
 #include <xf86drm.h>
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -40,6 +41,7 @@
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
@@ -62,6 +64,8 @@
 #include "media/gpu/chromeos/frame_resource.h"
 #include "media/gpu/macros.h"
 // Auto-generated for dlopen libva libraries
+#include "components/viz/common/resources/shared_image_format.h"
+#include "components/viz/common/resources/shared_image_format_utils.h"
 #include "media/gpu/vaapi/va_stubs.h"
 #include "media/media_buildflags.h"
 #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
@@ -351,25 +355,30 @@ class VADisplayStateSingleton {
 
 namespace {
 
-uint32_t BufferFormatToVAFourCC(gfx::BufferFormat fmt) {
-  switch (fmt) {
-    case gfx::BufferFormat::BGRX_8888:
-      return VA_FOURCC_BGRX;
-    case gfx::BufferFormat::BGRA_8888:
-      return VA_FOURCC_BGRA;
-    case gfx::BufferFormat::RGBX_8888:
-      return VA_FOURCC_RGBX;
-    case gfx::BufferFormat::RGBA_8888:
-      return VA_FOURCC_RGBA;
-    case gfx::BufferFormat::YVU_420:
-      return VA_FOURCC_YV12;
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      return VA_FOURCC_NV12;
-    case gfx::BufferFormat::P010:
-      return VA_FOURCC_P010;
-    default:
-      NOTREACHED() << gfx::BufferFormatToString(fmt);
+uint32_t SharedImageFormatToVAFourCC(viz::SharedImageFormat format) {
+  if (format == viz::SinglePlaneFormat::kBGRX_8888) {
+    return VA_FOURCC_BGRX;
   }
+  if (format == viz::SinglePlaneFormat::kBGRA_8888) {
+    return VA_FOURCC_BGRA;
+  }
+  if (format == viz::SinglePlaneFormat::kRGBX_8888) {
+    return VA_FOURCC_RGBX;
+  }
+  if (format == viz::SinglePlaneFormat::kRGBA_8888) {
+    return VA_FOURCC_RGBA;
+  }
+  if (format == viz::MultiPlaneFormat::kYV12) {
+    return VA_FOURCC_YV12;
+  }
+  if (format == viz::MultiPlaneFormat::kNV12) {
+    return VA_FOURCC_NV12;
+  }
+  if (format == viz::MultiPlaneFormat::kP010) {
+    return VA_FOURCC_P010;
+  }
+
+  NOTREACHED() << "Unsupported format: " << format.ToString();
 }
 
 media::VAImplementation VendorStringToImplementationType(
@@ -414,13 +423,15 @@ bool FillVADRMPRIMESurfaceDescriptor(const gfx::NativePixmap& pixmap,
                                      VADRMPRIMESurfaceDescriptor& descriptor) {
   memset(&descriptor, 0, sizeof(VADRMPRIMESurfaceDescriptor));
 
-  const gfx::BufferFormat buffer_format = pixmap.GetBufferFormat();
-  const uint32_t va_fourcc = BufferFormatToVAFourCC(buffer_format);
+  auto shared_image_format =
+      viz::GetSharedImageFormat(pixmap.GetBufferFormat());
+  const uint32_t va_fourcc = SharedImageFormatToVAFourCC(shared_image_format);
   DCHECK(va_fourcc);
 
   const gfx::Size size = pixmap.GetBufferSize();
   const size_t num_planes = pixmap.GetNumberOfPlanes();
-  const int drm_fourcc = ui::GetFourCCFormatFromBufferFormat(buffer_format);
+  const int drm_fourcc =
+      ui::GetFourCCFormatFromSharedImageFormat(shared_image_format);
   if (drm_fourcc == DRM_FORMAT_INVALID) {
     LOG(ERROR) << "Failed to get the DRM format from the buffer format";
     return false;
@@ -500,7 +511,9 @@ bool FillVASurfaceAttribExternalBuffers(
   memset(&va_attrib_extbuf_and_fd, 0,
          sizeof(VASurfaceAttribExternalBuffersAndFD));
 
-  const uint32_t va_fourcc = BufferFormatToVAFourCC(pixmap.GetBufferFormat());
+  auto shared_image_format =
+      viz::GetSharedImageFormat(pixmap.GetBufferFormat());
+  const uint32_t va_fourcc = SharedImageFormatToVAFourCC(shared_image_format);
   DCHECK(va_fourcc);
 
   const gfx::Size size = pixmap.GetBufferSize();
@@ -813,23 +826,7 @@ bool IsBlockedDriver(VaapiWrapper::CodecMode mode,
                      VAProfile va_profile,
                      const std::string& va_vendor_string) {
   if (!IsModeEncoding(mode)) {
-    return va_profile == VAProfileAV1Profile0 &&
-           !base::FeatureList::IsEnabled(kChromeOSHWAV1Decoder);
-  }
-
-  if (va_profile == VAProfileVP8Version0_3 &&
-      !base::FeatureList::IsEnabled(kVaapiVP8Encoder)) {
-    return true;
-  }
-
-  if (va_profile == VAProfileVP9Profile0 &&
-      !base::FeatureList::IsEnabled(kVaapiVP9Encoder)) {
-    return true;
-  }
-
-  if (va_profile == VAProfileAV1Profile0 &&
-      !base::FeatureList::IsEnabled(kVaapiAV1Encoder)) {
-    return true;
+    return false;
   }
 
   if (mode == VaapiWrapper::CodecMode::kEncodeVariableBitrate) {
@@ -901,7 +898,7 @@ std::vector<VAEntrypoint> GetEntryPointsForProfile(const base::Lock* va_lock,
   }
   va_entrypoints.resize(num_va_entrypoints);
 
-  const std::vector<VAEntrypoint> kAllowedEntryPoints[] = {
+  const auto kAllowedEntryPoints = std::to_array<std::vector<VAEntrypoint>>({
       {VAEntrypointVLD},  // kDecode.
 #if BUILDFLAG(IS_CHROMEOS)
       {VAEntrypointVLD, VAEntrypointProtectedContent},  // kDecodeProtected.
@@ -913,7 +910,8 @@ std::vector<VAEntrypoint> GetEntryPointsForProfile(const base::Lock* va_lock,
       {VAEntrypointEncSlice,
        VAEntrypointEncSliceLP},  // kEncodeVariableBitrate.
       {VAEntrypointVideoProc}    // kVideoProcess.
-  };
+      ,
+  });
   static_assert(std::size(kAllowedEntryPoints) == VaapiWrapper::kCodecModeMax,
                 "");
 
@@ -1813,17 +1811,13 @@ std::vector<SVCScalabilityMode> VaapiWrapper::GetSupportedScalabilityModes(
   }
 
   if (media_profile >= VP8PROFILE_MIN && media_profile <= VP8PROFILE_MAX) {
-    if (base::FeatureList::IsEnabled(kVaapiVp8TemporalLayerHWEncoding)) {
-      scalability_modes.push_back(SVCScalabilityMode::kL1T2);
-      scalability_modes.push_back(SVCScalabilityMode::kL1T3);
-    }
+    scalability_modes.push_back(SVCScalabilityMode::kL1T2);
+    scalability_modes.push_back(SVCScalabilityMode::kL1T3);
   }
 
   if (media_profile >= H264PROFILE_MIN && media_profile <= H264PROFILE_MAX) {
-    if (base::FeatureList::IsEnabled(kVaapiH264TemporalLayerHWEncoding)) {
-      scalability_modes.push_back(SVCScalabilityMode::kL1T2);
-      scalability_modes.push_back(SVCScalabilityMode::kL1T3);
-    }
+    scalability_modes.push_back(SVCScalabilityMode::kL1T2);
+    scalability_modes.push_back(SVCScalabilityMode::kL1T3);
   }
 
   if (base::FeatureList::IsEnabled(kVaapiAV1TemporalLayerHWEncoding)) {
@@ -2126,21 +2120,22 @@ VAEntrypoint VaapiWrapper::GetDefaultVaEntryPoint(CodecMode mode,
 }
 
 // static
-uint32_t VaapiWrapper::BufferFormatToVARTFormat(gfx::BufferFormat fmt) {
-  switch (fmt) {
-    case gfx::BufferFormat::BGRX_8888:
-    case gfx::BufferFormat::BGRA_8888:
-    case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::RGBA_8888:
-      return VA_RT_FORMAT_RGB32;
-    case gfx::BufferFormat::YVU_420:
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      return VA_RT_FORMAT_YUV420;
-    case gfx::BufferFormat::P010:
-      return VA_RT_FORMAT_YUV420_10BPP;
-    default:
-      NOTREACHED() << gfx::BufferFormatToString(fmt);
+uint32_t VaapiWrapper::SharedImageFormatToVARTFormat(
+    viz::SharedImageFormat format) {
+  if (format == viz::SinglePlaneFormat::kBGRX_8888 ||
+      format == viz::SinglePlaneFormat::kBGRA_8888 ||
+      format == viz::SinglePlaneFormat::kRGBX_8888 ||
+      format == viz::SinglePlaneFormat::kRGBA_8888) {
+    return VA_RT_FORMAT_RGB32;
   }
+  if (format == viz::MultiPlaneFormat::kYV12 ||
+      format == viz::MultiPlaneFormat::kNV12) {
+    return VA_RT_FORMAT_YUV420;
+  }
+  if (format == viz::MultiPlaneFormat::kP010) {
+    return VA_RT_FORMAT_YUV420_10BPP;
+  }
+  NOTREACHED() << "Unsupported format: " << format.ToString();
 }
 
 bool VaapiWrapper::CreateContextAndSurfaces(
@@ -2392,25 +2387,6 @@ bool VaapiWrapper::CreateContext(const gfx::Size& size) {
   // vpp, just passing 0x0.
   const int flag = mode_ != kVideoProcess ? VA_PROGRESSIVE : 0x0;
   const gfx::Size picture_size = mode_ != kVideoProcess ? size : gfx::Size();
-  if (base::FeatureList::IsEnabled(kVaapiEnforceVideoMinMaxResolution) &&
-      mode_ != kVideoProcess) {
-    const VASupportedProfiles::ProfileInfo* profile_info =
-        VASupportedProfiles::Get().IsProfileSupported(mode_, va_profile_,
-                                                      va_entrypoint_);
-    DCHECK(profile_info);
-    const bool is_picture_within_bounds =
-        gfx::Rect(picture_size)
-            .Contains(gfx::Rect(profile_info->min_resolution)) &&
-        gfx::Rect(profile_info->max_resolution)
-            .Contains(gfx::Rect(picture_size));
-    if (!is_picture_within_bounds) {
-      VLOG(2) << "Requested resolution=" << picture_size.ToString()
-              << " is not within bounds ["
-              << profile_info->min_resolution.ToString() << ", "
-              << profile_info->max_resolution.ToString() << "]";
-      return false;
-    }
-  }
 
   VAStatus va_res = vaCreateContext(
       va_display_, va_config_id_, picture_size.width(), picture_size.height(),
@@ -2448,8 +2424,9 @@ std::unique_ptr<ScopedVASurface> VaapiWrapper::CreateVASurfaceForPixmap(
     scoped_refptr<const gfx::NativePixmap> pixmap,
     bool protected_content) {
   VAAPI_CHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  const gfx::BufferFormat buffer_format = pixmap->GetBufferFormat();
-  if (!BufferFormatToVAFourCC(buffer_format)) {
+  auto shared_image_format =
+      viz::GetSharedImageFormat(pixmap->GetBufferFormat());
+  if (!SharedImageFormatToVAFourCC(shared_image_format)) {
     LOG(ERROR) << "Failed to get the VA fourcc from the buffer format";
     return nullptr;
   }
@@ -2480,8 +2457,8 @@ std::unique_ptr<ScopedVASurface> VaapiWrapper::CreateVASurfaceForPixmap(
       return nullptr;
   }
 
-  unsigned int va_format =
-      base::strict_cast<unsigned int>(BufferFormatToVARTFormat(buffer_format));
+  unsigned int va_format = base::strict_cast<unsigned int>(
+      SharedImageFormatToVARTFormat(shared_image_format));
   if (!va_format) {
     LOG(ERROR) << "Failed to get the VA RT format from the buffer format";
     return nullptr;

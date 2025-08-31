@@ -27,9 +27,7 @@ namespace {
 // Enables premapping of GMBs if the consumer wants mapped frames.
 // This helps with webrtc encode time measurements reducing unnecessary
 // adaptations.
-BASE_FEATURE(kWebrtcVideoTrackSourcePremap,
-             "WebrtcVideoTrackSourcePremap",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(WebrtcVideoTrackSourcePremap, base::FEATURE_ENABLED_BY_DEFAULT);
 
 constexpr int kMaxPendingFrames = 5;
 
@@ -125,11 +123,10 @@ WebRtcVideoTrackSource::WebRtcVideoTrackSource(
     media::GpuVideoAcceleratorFactories* gpu_factories,
     scoped_refptr<WebRtcVideoFrameAdapter::SharedResources> shared_resources)
     : AdaptedVideoTrackSource(/*required_alignment=*/1),
-      adapter_resources_(
-          shared_resources
-              ? shared_resources
-              : base::MakeRefCounted<WebRtcVideoFrameAdapter::SharedResources>(
-                    gpu_factories)),
+      adapter_resources_(shared_resources
+                             ? shared_resources
+                             : WebRtcVideoFrameAdapter::SharedResources::Create(
+                                   gpu_factories)),
       is_screencast_(is_screencast),
       needs_denoising_(needs_denoising),
       feedback_callback_(std::move(feedback_callback)),
@@ -147,7 +144,7 @@ void WebRtcVideoTrackSource::SetCustomFrameAdaptationParamsForTesting(
 }
 
 void WebRtcVideoTrackSource::SetSinkWantsForTesting(
-    const rtc::VideoSinkWants& sink_wants) {
+    const webrtc::VideoSinkWants& sink_wants) {
   video_adapter()->OnSinkWants(sink_wants);
 }
 
@@ -206,7 +203,7 @@ void WebRtcVideoTrackSource::OnFrameCaptured(
     return;
   }
   pending_frames_.push_back(PendingFrame{.frame = std::move(frame),
-                                         .time_posted_us = rtc::TimeMicros(),
+                                         .time_posted_us = webrtc::TimeMicros(),
                                          .id = next_frame_id_++,
                                          .can_be_delivered = false});
   auto& current_frame = pending_frames_.back().frame;
@@ -249,7 +246,7 @@ void WebRtcVideoTrackSource::ComputeMetadataAndDeliverFrame(
     int64_t time_posted_us) {
   // Compute what rectangular region has changed since the last frame
   // that we successfully delivered to the base class method
-  // rtc::AdaptedVideoTrackSource::OnFrame(). This region is going to be
+  // webrtc::AdaptedVideoTrackSource::OnFrame(). This region is going to be
   // relative to the coded frame data, i.e.
   // [0, 0, frame->coded_size().width(), frame->coded_size().height()].
   std::optional<int> capture_counter = frame->metadata().capture_counter;
@@ -422,7 +419,7 @@ void WebRtcVideoTrackSource::ProcessMappedFrame(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   TRACE_EVENT("webrtc", "WebRtcVideoTrackSource::ProcessMappedFrame");
 
-  WTF::Deque<PendingFrame>::iterator it;
+  Deque<PendingFrame>::iterator it;
   for (it = pending_frames_.begin(); it != pending_frames_.end(); ++it) {
     if (it->id == id) {
       break;
@@ -482,7 +479,7 @@ void WebRtcVideoTrackSource::DeliverFrame(
     update_rect = std::nullopt;
   }
 
-  rtc::scoped_refptr<webrtc::VideoFrameBuffer> frame_adapter(
+  webrtc::scoped_refptr<webrtc::VideoFrameBuffer> frame_adapter(
       new webrtc::RefCountedObject<WebRtcVideoFrameAdapter>(
           frame, adapter_resources_));
 
@@ -499,7 +496,8 @@ void WebRtcVideoTrackSource::DeliverFrame(
         update_rect->height()});
   }
 
-  if (ShouldSetColorSpace(frame->ColorSpace())) {
+  if (frame->ColorSpace().IsValid() &&
+      base::FeatureList::IsEnabled(media::kWebRTCColorAccuracy)) {
     frame_builder.set_color_space(GfxToWebRtcColorSpace(frame->ColorSpace()));
   }
   OnFrame(frame_builder.build());
@@ -508,17 +506,6 @@ void WebRtcVideoTrackSource::DeliverFrame(
   accumulated_update_rect_ = gfx::Rect();
 }
 
-bool WebRtcVideoTrackSource::ShouldSetColorSpace(
-    const gfx::ColorSpace& color_space) {
-  if (!base::FeatureList::IsEnabled(media::kWebRTCColorAccuracy)) {
-    return false;
-  }
-
-  // The remote end will assume REC709 if not instructed otherwise, so there's
-  // no need to pass this information on the wire.
-  return color_space.IsValid() &&
-         color_space != gfx::ColorSpace::CreateREC709();
-}
 
 void WebRtcVideoTrackSource::Dispose() {
   callback_proxy_->Reset();

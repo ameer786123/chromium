@@ -5,6 +5,8 @@
 #include "chrome/test/base/testing_profile.h"
 
 #include <memory>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 
@@ -50,11 +52,13 @@
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ssl/stateful_ssl_host_state_delegate_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service_factory.h"
+#include "chrome/browser/supervised_user/supervised_user_content_filters_service_factory.h"
 #include "chrome/browser/transition_manager/full_browser_transition_manager.h"
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_paths_internal.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -84,6 +88,7 @@
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/supervised_user/core/browser/supervised_user_settings_service.h"
+#include "components/supervised_user/core/browser/supervised_user_test_environment.h"
 #include "components/supervised_user/core/common/pref_names.h"
 #include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "components/sync/base/features.h"
@@ -109,23 +114,23 @@
 #include "testing/gmock/include/gmock/gmock.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
-#include "chrome/browser/extensions/extension_special_storage_policy.h"
-#endif
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/chrome_extension_system_factory.h"
-#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_special_storage_policy.h"
 #include "chrome/browser/extensions/test_extension_system.h"
-#include "chrome/browser/web_applications/test/fake_web_app_provider.h"
-#include "chrome/browser/web_applications/web_app_provider_factory.h"
-#include "components/guest_view/browser/guest_view_manager.h"
 #include "extensions/browser/extension_pref_value_map.h"
 #include "extensions/browser/extension_pref_value_map_factory.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_prefs_factory.h"
 #include "extensions/browser/extension_prefs_observer.h"
-#include "extensions/browser/extension_system.h"
 #include "extensions/common/switches.h"
+#endif
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/web_applications/test/fake_web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_provider_factory.h"
+#include "components/guest_view/browser/guest_view_manager.h"
+#include "extensions/browser/extension_system.h"
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -140,11 +145,13 @@
 #include "components/account_manager_core/chromeos/account_manager.h"
 #endif
 
+namespace {
 using base::Time;
 using content::BrowserThread;
 using content::DownloadManagerDelegate;
 using testing::NiceMock;
 using testing::Return;
+}  // namespace
 
 TestingProfile::TestingFactory::TestingFactory(
     BrowserContextKeyedServiceFactory* service_factory,
@@ -289,7 +296,8 @@ TestingProfile::TestingProfile(
 
   // If no profile path was supplied, create one.
   if (profile_path_.empty()) {
-    profile_path_ = base::CreateUniqueTempDirectoryScopedToTest();
+    profile_path_ = base::CreateUniqueTempDirectoryScopedToTestInDir(
+        base::PathService::CheckedGet(chrome::DIR_USER_DATA));
   }
 
   // Set any testing factories prior to initializing the services.
@@ -346,7 +354,7 @@ void TestingProfile::Init(bool is_supervised_profile, CreateMode create_mode) {
   }
 
 #if BUILDFLAG(IS_ANDROID)
-  signin::SetUpMockAccountManagerFacade();
+  signin::SetUpFakeAccountManagerFacade();
 #endif
 
   // Normally this would happen during browser startup, but for tests
@@ -355,26 +363,17 @@ void TestingProfile::Init(bool is_supervised_profile, CreateMode create_mode) {
       EnsureBrowserContextKeyedServiceFactoriesBuilt();
 
   if (!IsOffTheRecord()) {
-    supervised_user::SupervisedUserSettingsService* settings_service =
-        SupervisedUserSettingsServiceFactory::GetForKey(key_.get());
-    supervised_user_pref_store_ = base::MakeRefCounted<TestingPrefStore>();
-    settings_service->Init(supervised_user_pref_store_.get());
-    settings_service->MergeDataAndStartSyncing(
-        syncer::SUPERVISED_USER_SETTINGS, syncer::SyncDataList(),
-        std::unique_ptr<syncer::SyncChangeProcessor>(
-            new syncer::FakeSyncChangeProcessor));
-
-    supervised_user_pref_store_->SetInitializationCompleted();
+    supervised_user::InitializeSettingsServiceForTesting(
+        SupervisedUserSettingsServiceFactory::GetForKey(key_.get()));
   }
 
-  if (prefs_.get())
+  if (prefs_.get()) {
     user_prefs::UserPrefs::Set(this, prefs_.get());
-  else if (IsOffTheRecord())
+  } else if (IsOffTheRecord()) {
     CreateIncognitoPrefService();
-  else if (is_supervised_profile)
-    CreatePrefServiceForSupervisedUser();
-  else
+  } else {
     CreateTestingPrefService();
+  }
 
   if (is_supervised_profile)
     SetIsSupervisedProfile();
@@ -417,7 +416,7 @@ void TestingProfile::Init(bool is_supervised_profile, CreateMode create_mode) {
 
     extensions_path_ = profile_path_.AppendASCII("Extensions");
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
     // Note that the GetPrefs() creates a TestingPrefService, therefore
     // the extension controlled pref values set in ExtensionPrefs
     // are not reflected in the pref service. One would need to
@@ -436,7 +435,9 @@ void TestingProfile::Init(bool is_supervised_profile, CreateMode create_mode) {
 
     extensions::ChromeExtensionSystemFactory::GetInstance()->SetTestingFactory(
         this, base::BindRepeating(&extensions::TestExtensionSystem::Build));
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS_CORE)
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     web_app::WebAppProviderFactory::GetInstance()->SetTestingFactory(
         this, base::BindRepeating(&web_app::FakeWebAppProvider::BuildDefault));
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
@@ -694,16 +695,14 @@ const Profile* TestingProfile::GetOriginalProfile() const {
 
 void TestingProfile::SetIsSupervisedProfile(bool is_supervised_profile) {
   if (is_supervised_profile) {
-    GetPrefs()->SetString(prefs::kSupervisedUserId,
-                          supervised_user::kChildAccountSUID);
+    supervised_user::EnableParentalControls(*GetPrefs());
   } else {
-    GetPrefs()->ClearPref(prefs::kSupervisedUserId);
+    supervised_user::DisableParentalControls(*GetPrefs());
   }
 }
 
 bool TestingProfile::IsChild() const {
-  return GetPrefs()->GetString(prefs::kSupervisedUserId) ==
-         supervised_user::kChildAccountSUID;
+  return supervised_user::IsSubjectToParentalControls(*GetPrefs());
 }
 
 bool TestingProfile::AllowsBrowserWindows() const {
@@ -734,19 +733,14 @@ TestingProfile::GetExtensionSpecialStoragePolicy() {
 
 void TestingProfile::CreateTestingPrefService() {
   DCHECK(!prefs_.get());
-  testing_prefs_ = new sync_preferences::TestingPrefServiceSyncable();
-  prefs_.reset(testing_prefs_);
-  user_prefs::UserPrefs::Set(this, prefs_.get());
-  RegisterUserProfilePrefs(testing_prefs_->registry());
-}
-
-void TestingProfile::CreatePrefServiceForSupervisedUser() {
-  DCHECK(!prefs_.get());
 
   // Construct testing_prefs_ by hand to add the supervised user pref store.
   testing_prefs_ = new sync_preferences::TestingPrefServiceSyncable(
       /*managed_prefs=*/base::MakeRefCounted<TestingPrefStore>(),
-      supervised_user_pref_store_,
+      /*supervised_user_prefs=*/
+      supervised_user::CreateTestingPrefStore(
+          SupervisedUserSettingsServiceFactory::GetForKey(key_.get()),
+          SupervisedUserContentFiltersServiceFactory::GetForKey(key_.get())),
       /*extension_prefs=*/base::MakeRefCounted<TestingPrefStore>(),
       /*user_prefs=*/base::MakeRefCounted<TestingPrefStore>(),
       /*recommended_prefs=*/base::MakeRefCounted<TestingPrefStore>(),

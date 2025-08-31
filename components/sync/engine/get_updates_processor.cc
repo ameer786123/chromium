@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "base/not_fatal_until.h"
 #include "base/trace_event/trace_event.h"
 #include "components/sync/base/data_type.h"
 #include "components/sync/engine/cycle/status_controller.h"
@@ -204,7 +203,7 @@ void GetUpdatesProcessor::PrepareGetUpdates(
 
   for (DataType type : gu_types) {
     auto handler_it = update_handler_map_->find(type);
-    CHECK(handler_it != update_handler_map_->end(), base::NotFatalUntil::M130)
+    CHECK(handler_it != update_handler_map_->end())
         << "Failed to look up handler for " << DataTypeToDebugString(type);
     sync_pb::DataTypeProgressMarker* progress_marker =
         get_updates->add_from_progress_marker();
@@ -327,16 +326,17 @@ SyncerError GetUpdatesProcessor::ProcessResponse(
   TypeToIndexMap context_by_type;
   PartitionContextMutationsByType(gu_response, gu_types, &context_by_type);
 
-  // Iterate over these maps in parallel, processing updates for each type.
-  auto progress_marker_iter = progress_index_by_type.begin();
-  auto updates_iter = updates_by_type.begin();
-  for (; (progress_marker_iter != progress_index_by_type.end() &&
-          updates_iter != updates_by_type.end());
-       ++progress_marker_iter, ++updates_iter) {
-    DCHECK_EQ(progress_marker_iter->first, updates_iter->first);
-    DataType type = progress_marker_iter->first;
+  // Iterate over the updates for each type.
+  for (const auto& [type, updates] : updates_by_type) {
+    auto progress_marker_iter = progress_index_by_type.find(type);
+    CHECK(progress_marker_iter != progress_index_by_type.end());
 
     auto update_handler_iter = update_handler_map_->find(type);
+    if (update_handler_iter == update_handler_map_->end()) {
+      DLOG(WARNING) << "Ignoring received updates of a type we can't handle.  "
+                    << "Type is: " << DataTypeToDebugString(type);
+      continue;
+    }
 
     sync_pb::DataTypeContext context;
     auto context_iter = context_by_type.find(type);
@@ -344,18 +344,10 @@ SyncerError GetUpdatesProcessor::ProcessResponse(
       context.CopyFrom(gu_response.context_mutations(context_iter->second));
     }
 
-    if (update_handler_iter != update_handler_map_->end()) {
-      update_handler_iter->second->ProcessGetUpdatesResponse(
-          gu_response.new_progress_marker(progress_marker_iter->second),
-          context, updates_iter->second, status_controller);
-    } else {
-      DLOG(WARNING) << "Ignoring received updates of a type we can't handle.  "
-                    << "Type is: " << DataTypeToDebugString(type);
-      continue;
-    }
+    update_handler_iter->second->ProcessGetUpdatesResponse(
+        gu_response.new_progress_marker(progress_marker_iter->second), context,
+        updates, status_controller);
   }
-  DCHECK(progress_marker_iter == progress_index_by_type.end() &&
-         updates_iter == updates_by_type.end());
 
   has_more_updates_to_download_ = gu_response.changes_remaining() != 0;
   return SyncerError::Success();

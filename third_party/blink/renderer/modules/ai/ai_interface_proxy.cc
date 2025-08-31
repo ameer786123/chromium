@@ -4,6 +4,10 @@
 
 #include "third_party/blink/renderer/modules/ai/ai_interface_proxy.h"
 
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/task_type.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
+
 namespace blink {
 
 const char AIInterfaceProxy::kSupplementName[] = "AIInterfaceProxy";
@@ -101,7 +105,7 @@ void AIInterfaceProxy::GetLanguageDetectionModelImpl(
     ExecutionContext* execution_context,
     GetLanguageDetectionModelCallback callback) {
   GetLanguageDetectionDriverRemote(execution_context)
-      ->GetLanguageDetectionModel(WTF::BindOnce(
+      ->GetLanguageDetectionModel(blink::BindOnce(
           [](LanguageDetectionModel* language_detection_model,
              GetLanguageDetectionModelCallback callback, base::File model) {
             language_detection_model->LoadModelFile(std::move(model),

@@ -136,8 +136,9 @@ void WaitForEmpyOmnibox() {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_replaceText(@"foo")];
 
-  id<GREYMatcher> cancelButton =
-      grey_accessibilityID(kToolbarCancelOmniboxEditButtonIdentifier);
+  id<GREYMatcher> cancelButton = grey_allOf(
+      grey_accessibilityID(kToolbarCancelOmniboxEditButtonIdentifier),
+      grey_sufficientlyVisible(), nil);
   [[EarlGrey selectElementWithMatcher:cancelButton] performAction:grey_tap()];
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
@@ -178,8 +179,7 @@ void WaitForEmpyOmnibox() {
 // Tests whether input mode in an omnibox can be canceled via tapping the typing
 // shield and asserts it doesn't commit the omnibox contents if the input is
 // canceled.
-// TODO(crbug.com/392545268): Deflake test.
-- (void)FLAKY_testToolbarOmniboxTypingShield {
+- (void)testToolbarOmniboxTypingShield {
   // Tablet only (handset keyboard does not have "hide keyboard" button).
   if (![ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"There is no typing shield on iPhone, skip.");
@@ -194,7 +194,10 @@ void WaitForEmpyOmnibox() {
   [ChromeEarlGreyUI focusOmniboxAndReplaceText:@"foo"];
 
   id<GREYMatcher> typingShield = grey_accessibilityID(@"Typing Shield");
-  [[EarlGrey selectElementWithMatcher:typingShield] performAction:grey_tap()];
+  // Tap on the side to dismiss it. Tapping in the middle might tap on the
+  // suggestions.
+  [[EarlGrey selectElementWithMatcher:typingShield]
+      performAction:grey_tapAtPoint(CGPointMake(30, 200))];
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       assertWithMatcher:chrome_test_util::OmniboxText(URL.GetContent())];
@@ -282,9 +285,11 @@ void WaitForEmpyOmnibox() {
   } else {
     // Typing shield might be unavailable if there are any suggestions
     // displayed in the popup.
+    id<GREYMatcher> cancelButton =
+        grey_accessibilityID(kToolbarCancelOmniboxEditButtonIdentifier);
     [[EarlGrey
-        selectElementWithMatcher:grey_accessibilityID(
-                                     kToolbarCancelOmniboxEditButtonIdentifier)]
+        selectElementWithMatcher:grey_allOf(cancelButton,
+                                            grey_sufficientlyVisible(), nil)]
         performAction:grey_tap()];
   }
 
@@ -323,8 +328,8 @@ void WaitForEmpyOmnibox() {
 }
 
 // Types JavaScript into Omnibox and verify that an alert is displayed.
-// TODO(crbug.com/362621166): Test is flaky.
-- (void)DISABLED_testTypeJavaScriptIntoOmnibox {
+- (void)testTypeJavaScriptIntoOmnibox {
+  [ChromeEarlGrey openNewTab];
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/echo")];
 
   [ChromeEarlGreyUI
@@ -333,18 +338,12 @@ void WaitForEmpyOmnibox() {
   // replaceText can properly handle \n.
   [ChromeEarlGrey simulatePhysicalKeyboardEvent:@"\n" flags:0];
 
-  ConditionBlock condition = ^{
-    NSError* error = nil;
-    [[EarlGrey
-        selectElementWithMatcher:grey_accessibilityLabel(@"JS Alert Text")]
-        assertWithMatcher:grey_sufficientlyVisible()
-                    error:&error];
-    return error == nil;
-  };
+  [ChromeEarlGrey
+      waitForSufficientlyVisibleElementWithMatcher:grey_accessibilityLabel(
+                                                       @"JS Alert Text")];
 
-  bool alertVisible = base::test::ios::WaitUntilConditionOrTimeout(
-      base::test::ios::kWaitForUIElementTimeout, condition);
-  GREYAssertTrue(alertVisible, @"JavaScript alert didn't appear");
+  // Close the opened tab to remove the javascript alert.
+  [ChromeEarlGrey closeCurrentTab];
 }
 
 // Loads WebUI page, types JavaScript into Omnibox and verifies that alert is
@@ -361,9 +360,7 @@ void WaitForEmpyOmnibox() {
 }
 
 // Tests typing in the omnibox.
-// TODO(crbug.com/365987488): Re-enable when the flakiness is understood and
-// addressed.
-- (void)FLAKY_testToolbarOmniboxTyping {
+- (void)testToolbarOmniboxTyping {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       performAction:grey_tap()];
 
@@ -409,7 +406,7 @@ void WaitForEmpyOmnibox() {
 // Tests typing in the omnibox using the keyboard accessory view.
 - (void)testToolbarOmniboxKeyboardAccessoryView {
   // Select the omnibox to get the keyboard up.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabPageOmnibox()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       performAction:grey_tap()];
   [ChromeEarlGrey
       waitForSufficientlyVisibleElementWithMatcher:chrome_test_util::Omnibox()];

@@ -8,6 +8,7 @@
 #include "ash/shell.h"
 #include "ash/wm/desks/desks_util.h"
 #include "ash/wm/overview/overview_utils.h"
+#include "ash/wm/scoped_windows_mover.h"
 #include "ash/wm/snap_group/snap_group_controller.h"
 #include "ash/wm/snap_group/snap_group_metrics.h"
 #include "ash/wm/splitview/split_view_constants.h"
@@ -112,7 +113,7 @@ SnapGroup::SnapGroup(aura::Window* window1,
 
   // We manually add ourselves as a display observer so we can early remove
   // ourselves in `Shutdown()`.
-  display::Screen::GetScreen()->AddObserver(this);
+  display::Screen::Get()->AddObserver(this);
   Shell::Get()->activation_client()->AddObserver(this);
 }
 
@@ -128,7 +129,7 @@ void SnapGroup::Shutdown() {
   window_to_target_snap_position_map_.clear();
 
   Shell::Get()->activation_client()->RemoveObserver(this);
-  display::Screen::GetScreen()->RemoveObserver(this);
+  display::Screen::Get()->RemoveObserver(this);
 
   // Restore the snapped window bounds that were adjusted to make room for
   // divider when snap group was created.
@@ -213,39 +214,6 @@ bool SnapGroup::IsSnapGroupLayoutHorizontal() const {
   return IsLayoutHorizontal(GetRootWindow());
 }
 
-void SnapGroup::OnLocatedEvent(ui::LocatedEvent* event) {
-  if (is_shutting_down_) {
-    return;
-  }
-
-  // `ToplevelWindowEventHandler` continues to process drag events in Overview
-  // mode, potentially leading to group removal and crashes in
-  // `OverviewGrid::RemoveItem()`. To prevent groups from being removed in
-  // Overview (forwarded from `ToplevelWindowEventHandler::HandleDrag()`) and
-  // subsequent crashes, early return here.
-  if (IsInOverviewSession()) {
-    return;
-  }
-
-  CHECK(event->type() == ui::EventType::kMouseDragged ||
-        event->type() == ui::EventType::kTouchMoved ||
-        event->type() == ui::EventType::kGestureScrollUpdate);
-
-  aura::Window* target = static_cast<aura::Window*>(event->target());
-  const int client_component =
-      window_util::GetNonClientComponent(target, event->location());
-  if (client_component != HTCAPTION && client_component != HTCLIENT) {
-    return;
-  }
-
-  // When the window is dragged via the caption bar to unsnap, we early break
-  // the group to avoid re-stacking the divider on top of the dragged window.
-  if (window1_->Contains(target) || window2_->Contains(target)) {
-    SnapGroupController::Get()->RemoveSnapGroup(
-        this, SnapGroupExitPoint::kDragWindowOut);
-  }
-}
-
 aura::Window* SnapGroup::GetTopMostWindowInGroup() const {
   // Two windows can be on different roots during the process of being moved to
   // another display, return the one on the same root as the current cursor
@@ -254,7 +222,7 @@ aura::Window* SnapGroup::GetTopMostWindowInGroup() const {
   aura::Window* window2_root_window = window2_->GetRootWindow();
   if (window1_root_window != window2_root_window) {
     aura::Window* cursor_root_window = window_util::GetRootWindowAt(
-        display::Screen::GetScreen()->GetCursorScreenPoint());
+        display::Screen::Get()->GetCursorScreenPoint());
     return window1_root_window == cursor_root_window ? window1_root_window
                                                      : window2_root_window;
   }
@@ -331,13 +299,17 @@ void SnapGroup::OnWindowParentChanged(aura::Window* window,
 
   aura::Window* to_be_moved_window = window == window1_ ? window2_ : window1_;
   bool did_parent_change = false;
+  bool did_ungroup = false;
+  ScopedWindowsMover mover(
+      display::Screen::Get()->GetDisplayNearestWindow(parent).id());
   if (window->GetRootWindow() != to_be_moved_window->GetRootWindow()) {
     base::RecordAction(
         base::UserMetricsAction("SnapGroups_MoveSnapGroupToDisplay"));
-    window_util::MoveWindowToDisplay(
-        to_be_moved_window,
-        display::Screen::GetScreen()->GetDisplayNearestWindow(parent).id());
+    SnapGroupController::Get()->RemoveSnapGroup(
+        this, SnapGroupExitPoint::kMoveToAnotherDisplay);
+    mover.add_window(to_be_moved_window);
     did_parent_change = true;
+    did_ungroup = true;
   } else if (parent != to_be_moved_window->parent()) {
     base::RecordAction(
         base::UserMetricsAction("SnapGroups_MoveSnapGroupToDesk"));
@@ -352,14 +324,18 @@ void SnapGroup::OnWindowParentChanged(aura::Window* window,
   // asynchronous.
   if (did_parent_change && desks_util::IsDeskContainer(parent) &&
       !desks_util::IsWindowVisibleOnAllWorkspaces(to_be_moved_window)) {
-    window_util::FixWindowStackingAccordingToGlobalMru(to_be_moved_window);
+    mover.set_callback(
+        base::BindOnce(&window_util::FixWindowStackingAccordingToGlobalMru,
+                       to_be_moved_window));
   }
 
-  // Restore the divider visibility after both windows are moved to the target
-  // parent container.
-  snap_group_divider_.SetVisible(cached_divider_visibility);
+  if (!did_ungroup) {
+    // Restore the divider visibility after both windows are moved to the target
+    // parent container.
+    snap_group_divider_.SetVisible(cached_divider_visibility);
 
-  RefreshSnapGroup();
+    RefreshSnapGroup();
+  }
 }
 
 void SnapGroup::OnPreWindowStateTypeChange(WindowState* window_state,

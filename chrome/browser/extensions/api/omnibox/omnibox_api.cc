@@ -19,7 +19,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/extensions/tab_helper.h"
+#include "chrome/browser/extensions/permissions/active_tab_permission_granter.h"
 #include "chrome/browser/omnibox/omnibox_input_watcher_factory.h"
 #include "chrome/browser/omnibox/omnibox_suggestions_watcher_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -31,9 +31,9 @@
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
 #include "extensions/browser/event_router.h"
-#include "extensions/browser/extension_action.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_prefs_factory.h"
+#include "extensions/browser/icon_util.h"
 #include "extensions/browser/install_prefs_helper.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/extension_id.h"
@@ -157,8 +157,8 @@ void ExtensionOmniboxEventRouter::OnInputEntered(
       ExtensionRegistry::Get(profile)->enabled_extensions().GetByID(
           extension_id);
   CHECK(extension);
-  extensions::TabHelper::FromWebContents(web_contents)->
-      active_tab_permission_granter()->GrantIfRequested(extension);
+  extensions::ActiveTabPermissionGranter::FromWebContents(web_contents)
+      ->GrantIfRequested(extension);
 
   base::Value::List args;
   args.Append(input);
@@ -381,9 +381,9 @@ ExtensionFunction::ResponseAction OmniboxSendSuggestionsFunction::Run() {
             CHECK(!image_data.empty());
             // TODO(crbug.com/408069174): Move ParseIconFromCanvasDictionary
             // outside `ExtensionAction` into a common file.
-            if (ExtensionAction::ParseIconFromCanvasDictionary(image_data,
-                                                               &image_skia) !=
-                ExtensionAction::IconParseResult::kSuccess) {
+            if (extensions::ParseIconFromCanvasDictionary(image_data,
+                                                          &image_skia) !=
+                extensions::IconParseResult::kSuccess) {
               return RespondNow(Error(base::StringPrintf(
                   ExtensionOmniboxEventRouter::kActionIconError,
                   suggestion.description, action.name)));

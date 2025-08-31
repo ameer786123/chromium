@@ -6,7 +6,6 @@ package org.chromium.components.messages;
 
 import android.animation.Animator;
 import android.content.res.Resources;
-import android.provider.Settings;
 import android.view.View;
 import android.view.accessibility.AccessibilityEvent;
 
@@ -14,8 +13,6 @@ import androidx.annotation.VisibleForTesting;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.accessibility.AccessibilityEventCompat;
 
-import org.chromium.base.supplier.Supplier;
-import org.chromium.build.annotations.MockedInTests;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.messages.MessageStateHandler.Position;
@@ -25,8 +22,9 @@ import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 import org.chromium.ui.util.RunnableTimer;
 
+import java.util.function.Supplier;
+
 /** Coordinator responsible for creating a message banner. */
-@MockedInTests
 @NullMarked
 class MessageBannerCoordinator {
     private final MessageBannerMediator mMediator;
@@ -190,12 +188,7 @@ class MessageBannerCoordinator {
         // Skip animation if animation has been globally disabled.
         // Otherwise, child animator's listener's onEnd will be called immediately after onStart,
         // even before parent animatorSet's listener's onStart.
-        var isAnimationDisabled =
-                Settings.Global.getFloat(
-                                mView.getContext().getContentResolver(),
-                                Settings.Global.ANIMATOR_DURATION_SCALE,
-                                1f)
-                        == 0;
+        var isAnimationDisabled = AccessibilityState.prefersReducedMotion();
         return mMediator.hide(
                 fromIndex,
                 toIndex,
@@ -244,7 +237,6 @@ class MessageBannerCoordinator {
      */
     @SuppressWarnings("WrongConstant")
     private void sendPaneChangeAccessibilityEvent(boolean isShowing) {
-        if (!AccessibilityState.isAnyAccessibilityServiceEnabled()) return;
         AccessibilityEvent event =
                 AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
         if (isShowing) {
@@ -253,7 +245,7 @@ class MessageBannerCoordinator {
             event.setContentChangeTypes(
                     AccessibilityEventCompat.CONTENT_CHANGE_TYPE_PANE_DISAPPEARED);
         }
-        mView.requestSendAccessibilityEvent(mView, event);
+        AccessibilityState.sendAccessibilityEvent(event);
     }
 
     private void setOnTitleChanged(@Nullable Runnable runnable) {

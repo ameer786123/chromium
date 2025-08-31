@@ -67,9 +67,10 @@ bool SanitizeSystemAppDelegate::ShouldShowInSearchAndShelf() const {
   return false;
 }
 
-gfx::Rect SanitizeSystemAppDelegate::GetDefaultBounds(Browser* browser) const {
+gfx::Rect SanitizeSystemAppDelegate::GetDefaultBounds(
+    ash::BrowserDelegate*) const {
   gfx::Rect bounds =
-      display::Screen::GetScreen()->GetDisplayForNewWindows().work_area();
+      display::Screen::Get()->GetDisplayForNewWindows().work_area();
   bounds.ClampToCenteredSize({kSanitizeWindowWidth, kSanitizeWindowHeight});
   return bounds;
 }

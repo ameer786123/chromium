@@ -6,8 +6,9 @@
 #define CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_VIEW_LAYOUT_DELEGATE_H_
 
 #include "chrome/browser/ui/browser.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 
+class ImmersiveModeController;
 class ExclusiveAccessBubbleViews;
 
 namespace gfx {
@@ -24,23 +25,17 @@ class BrowserViewLayoutDelegate {
   virtual bool GetBorderlessModeEnabled() const = 0;
   virtual gfx::Rect GetBoundsForTabStripRegionInBrowserView() const = 0;
   virtual gfx::Rect GetBoundsForWebAppFrameToolbarInBrowserView() const = 0;
-  virtual void LayoutWebAppWindowTitle(
-      const gfx::Rect& available_space,
-      views::Label& window_title_label) const = 0;
   virtual int GetTopInsetInBrowserView() const = 0;
   virtual bool IsToolbarVisible() const = 0;
   virtual bool IsBookmarkBarVisible() const = 0;
   virtual bool IsContentsSeparatorEnabled() const = 0;
+  virtual bool IsActiveTabSplit() const = 0;
+  virtual const ImmersiveModeController* GetImmersiveModeController() const = 0;
   virtual ExclusiveAccessBubbleViews* GetExclusiveAccessBubble() const = 0;
   virtual bool IsTopControlsSlideBehaviorEnabled() const = 0;
   virtual float GetTopControlsSlideBehaviorShownRatio() const = 0;
   virtual bool SupportsWindowFeature(Browser::WindowFeature feature) const = 0;
-  virtual gfx::NativeView GetHostView() const = 0;
   virtual gfx::NativeView GetHostViewForAnchoring() const = 0;
-  virtual bool BrowserIsSystemWebApp() const = 0;
-  virtual bool BrowserIsWebApp() const = 0;
-  virtual bool BrowserIsTypeApp() const = 0;
-  virtual bool BrowserIsTypeNormal() const = 0;
   virtual bool HasFindBarController() const = 0;
   virtual void MoveWindowForFindBarIfNecessary() const = 0;
   virtual bool IsWindowControlsOverlayEnabled() const = 0;

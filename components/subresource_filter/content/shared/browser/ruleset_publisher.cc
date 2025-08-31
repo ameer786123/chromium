@@ -12,7 +12,6 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/not_fatal_until.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -23,7 +22,6 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
-#include "ipc/ipc_channel_proxy.h"
 
 namespace subresource_filter {
 
@@ -37,8 +35,7 @@ RulesetPublisher::RulesetPublisher(
           ruleset_config)) {
   best_effort_task_runner_ =
       content::GetUIThreadTaskRunner({base::TaskPriority::BEST_EFFORT});
-  CHECK(best_effort_task_runner_->BelongsToCurrentThread(),
-        base::NotFatalUntil::M129);
+  CHECK(best_effort_task_runner_->BelongsToCurrentThread());
 }
 
 RulesetPublisher::~RulesetPublisher() = default;
@@ -57,8 +54,8 @@ void RulesetPublisher::TryOpenAndSetRulesetFile(
 }
 
 void RulesetPublisher::PublishNewRulesetVersion(RulesetFilePtr ruleset_data) {
-  CHECK(ruleset_data, base::NotFatalUntil::M129);
-  CHECK(ruleset_data->IsValid(), base::NotFatalUntil::M129);
+  CHECK(ruleset_data);
+  CHECK(ruleset_data->IsValid());
   ruleset_data_.reset();
 
   // If Ad Tagging is running, then every request does a lookup and it's
@@ -91,7 +88,7 @@ VerifiedRulesetDealer::Handle* RulesetPublisher::GetRulesetDealer() {
 
 void RulesetPublisher::IndexAndStoreAndPublishRulesetIfNeeded(
     const UnindexedRulesetInfo& unindexed_ruleset_info) {
-  CHECK(ruleset_service_, base::NotFatalUntil::M129);
+  CHECK(ruleset_service_);
   ruleset_service_->IndexAndStoreAndPublishRulesetIfNeeded(
       unindexed_ruleset_info);
 }

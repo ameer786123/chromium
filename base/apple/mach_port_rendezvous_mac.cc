@@ -31,14 +31,12 @@
 namespace base {
 
 // Whether any peer process requirements should be validated.
-BASE_FEATURE(kMachPortRendezvousValidatePeerRequirements,
-             "MachPortRendezvousValidatePeerRequirements",
+BASE_FEATURE(MachPortRendezvousValidatePeerRequirements,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Whether a failure to validate a peer process against a requirement
 // should result in aborting the rendezvous.
-BASE_FEATURE(kMachPortRendezvousEnforcePeerRequirements,
-             "MachPortRendezvousEnforcePeerRequirements",
+BASE_FEATURE(MachPortRendezvousEnforcePeerRequirements,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
@@ -376,10 +374,10 @@ GetPeerValidationPolicyFromEnvironment() {
   static MachPortRendezvousPeerValidationPolicy policy = [] {
     std::unique_ptr<Environment> environment = Environment::Create();
     int policy_int = INT_MAX;
-    std::string policy_str;
-    if (environment->GetVar(kPeerValidationPolicyEnvironmentVariable,
-                            &policy_str)) {
-      if (!StringToInt(policy_str, &policy_int)) {
+    std::optional<std::string> policy_str =
+        environment->GetVar(kPeerValidationPolicyEnvironmentVariable);
+    if (policy_str.has_value()) {
+      if (!StringToInt(policy_str.value(), &policy_int)) {
         // StringToInt modifies the output value even on failure.
         policy_int = INT_MAX;
       }

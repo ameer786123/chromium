@@ -11,9 +11,8 @@ import static org.chromium.chrome.browser.browserservices.ui.TrustedWebActivityM
 
 import android.content.res.Resources;
 
-import androidx.annotation.Nullable;
-
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browserservices.ui.TrustedWebActivityModel;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
@@ -23,11 +22,14 @@ import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyObservable;
 
+import java.util.function.Supplier;
+
 /**
  * Shows the Trusted Web Activity disclosure when appropriate and notifies of its acceptance.
  *
  * <p>Thread safety: All methods on this class should be called on the UI thread.
  */
+@NullMarked
 public class DisclosureInfobar
         implements PropertyObservable.PropertyObserver<PropertyKey>, StartStopWithNativeObserver {
     private final Resources mResources;
@@ -45,7 +47,7 @@ public class DisclosureInfobar
             new SnackbarManager.SnackbarController() {
                 /** To be called when the user accepts the Running in Chrome disclosure. */
                 @Override
-                public void onAction(Object actionData) {
+                public void onAction(@Nullable Object actionData) {
                     mModel.get(DISCLOSURE_EVENTS_CALLBACK).onDisclosureAccepted();
                 }
             };

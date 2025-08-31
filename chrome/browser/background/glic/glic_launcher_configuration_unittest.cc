@@ -33,21 +33,13 @@ class GlicLauncherConfigurationTest : public testing::Test {
   GlicLauncherConfigurationTest() = default;
   ~GlicLauncherConfigurationTest() override = default;
 
-  void SetUp() override {
-    prefs::RegisterLocalStatePrefs(local_state_.registry());
-    TestingBrowserProcess::GetGlobal()->SetLocalState(local_state());
+  PrefService* local_state() {
+    return TestingBrowserProcess::GetGlobal()->local_state();
   }
-
-  void TearDown() override {
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
-  }
-
-  PrefService* local_state() { return &local_state_; }
 
  private:
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::MainThreadType::UI};
-  TestingPrefServiceSimple local_state_;
 };
 
 TEST_F(GlicLauncherConfigurationTest, IsEnabled) {

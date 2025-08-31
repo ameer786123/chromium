@@ -22,6 +22,7 @@
 #import "base/task/thread_pool.h"
 #import "base/time/default_clock.h"
 #import "base/time/default_tick_clock.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/breadcrumbs/core/breadcrumbs_status.h"
 #import "components/breadcrumbs/core/crash_reporter_breadcrumb_observer.h"
 #import "components/component_updater/component_updater_service.h"
@@ -55,6 +56,7 @@
 #import "ios/chrome/browser/gcm/model/ios_chrome_gcm_profile_service_factory.h"
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/metrics/model/ios_chrome_metrics_services_manager_client.h"
+#import "ios/chrome/browser/optimization_guide/model/optimization_guide_global_state.h"
 #import "ios/chrome/browser/policy/model/browser_policy_connector_ios.h"
 #import "ios/chrome/browser/policy/model/configuration_policy_handler_list_factory.h"
 #import "ios/chrome/browser/prefs/model/ios_chrome_pref_service_factory.h"
@@ -90,25 +92,24 @@
 #import "services/network/public/mojom/network_service.mojom.h"
 #import "ui/base/resource/resource_bundle.h"
 
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-#import "components/optimization_guide/core/model_execution/on_device_model_component.h"  // nogncheck
-#import "ios/chrome/browser/optimization_guide/model/on_device_model_service_controller_ios.h"
-#endif  // BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE
-
 ApplicationContextImpl::ApplicationContextImpl(
     base::SequencedTaskRunner* local_state_task_runner,
     const base::CommandLine& command_line,
     const std::string& locale,
     const std::string& country)
-    : local_state_task_runner_(local_state_task_runner) {
+    : application_locale_storage_(std::make_unique<ApplicationLocaleStorage>()),
+      local_state_task_runner_(local_state_task_runner) {
   DCHECK(!GetApplicationContext());
   SetApplicationContext(this);
 
-  SetApplicationLocale(locale);
+  application_locale_storage_->Set(locale);
   application_country_ = country;
 
   update_client::UpdateQueryParams::SetDelegate(
       IOSChromeUpdateQueryParamsDelegate::GetInstance());
+
+  translate::TranslateDownloadManager::GetInstance()->set_application_locale(
+      locale);
 }
 
 ApplicationContextImpl::~ApplicationContextImpl() {
@@ -129,7 +130,7 @@ void ApplicationContextImpl::PostCreateThreads() {
                             std::unique_ptr<os_crypt_async::KeyProvider>>>());
 
   // Trigger an instance grab on a background thread if necessary.
-  std::ignore = os_crypt_async_->GetInstance(base::DoNothing());
+  os_crypt_async_->GetInstance(base::DoNothing());
 
   web::GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&IOSChromeIOThread::InitOnIO,
@@ -186,15 +187,14 @@ void ApplicationContextImpl::StartTearDown() {
     safe_browsing_service_->ShutDown();
   }
 
-  // Need to clear profiles before the IO thread. In detail:
-  // - First unload the profiles (which deallocate them), including their
-  // keyed services, which may depend on the AccountProfileMapper.
-  // - Then destroy the AccountProfileMapper, which depends on the
-  //   ProfileManagerIOS.
-  // - Finally destroy the ProfileManagerIOS.
-  if (profile_manager_) {
-    profile_manager_->UnloadAllProfiles();
-  }
+  // Ensure that the profiles have all be unloaded. This is required because
+  // the profiles' KeyedService may use the AccountProfileMapper, and thus
+  // they have to be destroyed before the ProfileManagerIOS. However since
+  // the AccountProfileMapper depends on the ProfileManagerIOS, it must be
+  // destroyed before.
+  profile_manager_->PrepareForDestruction();
+  CHECK_EQ(profile_manager_->GetLoadedProfiles().size(), 0u);
+
   account_profile_mapper_.reset();
   profile_manager_.reset();
 
@@ -302,10 +302,11 @@ ApplicationContextImpl::GetSystemNetworkContext() {
   return ios_chrome_io_thread_->GetSystemNetworkContext();
 }
 
-const std::string& ApplicationContextImpl::GetApplicationLocale() {
+ApplicationLocaleStorage*
+ApplicationContextImpl::GetApplicationLocaleStorage() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(!application_locale_.empty());
-  return application_locale_;
+  CHECK(application_locale_storage_);
+  return application_locale_storage_.get();
 }
 
 const std::string& ApplicationContextImpl::GetApplicationCountry() {
@@ -522,7 +523,7 @@ AccountProfileMapper* ApplicationContextImpl::GetAccountProfileMapper() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!account_profile_mapper_) {
     account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-        GetSystemIdentityManager(), GetProfileManager());
+        GetSystemIdentityManager(), GetProfileManager(), GetLocalState());
   }
   return account_profile_mapper_.get();
 }
@@ -565,21 +566,14 @@ ApplicationContextImpl::GetAutoDeletionService() {
   return auto_deletion_service_.get();
 }
 
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-optimization_guide::OnDeviceModelServiceController*
-ApplicationContextImpl::GetOnDeviceModelServiceController(
-    base::WeakPtr<optimization_guide::OnDeviceModelComponentStateManager>
-        on_device_component_manager) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!on_device_model_service_controller_) {
-    on_device_model_service_controller_ = base::MakeRefCounted<
-        optimization_guide::OnDeviceModelServiceControllerIOS>(
-        std::move(on_device_component_manager));
-    on_device_model_service_controller_->Init();
+optimization_guide::OptimizationGuideGlobalState*
+ApplicationContextImpl::GetOptimizationGuideGlobalState() {
+  if (!optimization_guide_global_state_) {
+    optimization_guide_global_state_ =
+        std::make_unique<optimization_guide::OptimizationGuideGlobalState>();
   }
-  return on_device_model_service_controller_.get();
+  return optimization_guide_global_state_.get();
 }
-#endif  // BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE
 
 os_crypt_async::OSCryptAsync* ApplicationContextImpl::GetOSCryptAsync() {
   return os_crypt_async_.get();
@@ -683,13 +677,6 @@ void ApplicationContextImpl::OnAppEnterState(AppState app_state) {
 
   // Persisting to disk is protected by a critical task, so no other special
   // handling is necessary on iOS.
-}
-
-void ApplicationContextImpl::SetApplicationLocale(const std::string& locale) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  application_locale_ = locale;
-  translate::TranslateDownloadManager::GetInstance()->set_application_locale(
-      application_locale_);
 }
 
 void ApplicationContextImpl::CreateLocalState() {

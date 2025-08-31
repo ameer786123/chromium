@@ -5,8 +5,6 @@
 source_set("modals") {
   sources = [
     "infobar_modal_delegate.h",
-    "infobar_modal_view_controller.h",
-    "infobar_modal_view_controller.mm",
     "infobar_password_modal_consumer.h",
     "infobar_password_modal_delegate.h",
     "infobar_password_table_view_controller.h",
@@ -57,6 +55,8 @@ source_set("public") {
     "infobar_address_profile_modal_constants.mm",
     "infobar_modal_constants.h",
     "infobar_modal_constants.mm",
+    "infobar_save_card_modal_constants.h",
+    "infobar_save_card_modal_constants.mm",
     "infobar_translate_modal_constants.h",
     "infobar_translate_modal_constants.mm",
   ]

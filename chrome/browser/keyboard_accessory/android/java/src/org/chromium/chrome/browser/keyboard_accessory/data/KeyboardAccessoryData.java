@@ -140,7 +140,7 @@ public class KeyboardAccessoryData {
     public static final class Action {
         private final Callback<Action> mActionCallback;
         private final @Nullable Callback<Action> mLongPressCallback;
-        private @AccessoryAction int mType;
+        private final @AccessoryAction int mType;
 
         public Action(@AccessoryAction int type, Callback<Action> actionCallback) {
             this(type, actionCallback, null);
@@ -182,6 +182,9 @@ public class KeyboardAccessoryData {
                     break;
                 case AccessoryAction.CREDMAN_CONDITIONAL_UI_REENTRY:
                     typeName = "CREDMAN_CONDITIONAL_UI_REENTRY";
+                    break;
+                case AccessoryAction.RETRIEVE_TRUSTED_VAULT_KEY:
+                    typeName = "RETRIEVE_TRUSTED_VAULT_KEY";
                     break;
             }
             return typeName;
@@ -302,15 +305,21 @@ public class KeyboardAccessoryData {
         private final @Nullable GURL mIconUrl;
         private final List<UserInfoField> mFields = new ArrayList<>();
         private final boolean mIsExactMatch;
+        private final boolean mIsBackupCredential;
 
         public UserInfo(String origin, boolean isExactMatch) {
-            this(origin, isExactMatch, null);
+            this(origin, isExactMatch, null, false);
         }
 
-        public UserInfo(String origin, boolean isExactMatch, @Nullable GURL iconUrl) {
+        public UserInfo(
+                String origin,
+                boolean isExactMatch,
+                @Nullable GURL iconUrl,
+                boolean isBackupCredential) {
             mOrigin = origin;
             mIsExactMatch = isExactMatch;
             mIconUrl = iconUrl;
+            mIsBackupCredential = isBackupCredential;
         }
 
         /**
@@ -351,6 +360,16 @@ public class KeyboardAccessoryData {
          */
         public @Nullable GURL getIconUrl() {
             return mIconUrl;
+        }
+
+        /**
+         * A backup credential can be offered for filling, but should be marked with a special label
+         * and icon.
+         *
+         * @return True if this is a backup credential
+         */
+        public boolean isBackupCredential() {
+            return mIsBackupCredential;
         }
     }
 
@@ -413,6 +432,32 @@ public class KeyboardAccessoryData {
         }
     }
 
+    /** Represents a Google Wallet loyalty card to be shown on the manual fallback UI. */
+    public static final class LoyaltyCardInfo {
+        private final String mMerchantName;
+        private final GURL mProgramLogoUrl;
+        private final UserInfoField mLoyaltyCardNumber;
+
+        public LoyaltyCardInfo(
+                String merchantName, GURL programLogoUrl, UserInfoField loyaltyCardNumber) {
+            mMerchantName = merchantName;
+            mProgramLogoUrl = programLogoUrl;
+            mLoyaltyCardNumber = loyaltyCardNumber;
+        }
+
+        public String getMerchantName() {
+            return mMerchantName;
+        }
+
+        public GURL getProgramLogoUrl() {
+            return mProgramLogoUrl;
+        }
+
+        public UserInfoField getLoyaltyCardNumber() {
+            return mLoyaltyCardNumber;
+        }
+    }
+
     /** Represents a command below the suggestions, such as "Manage password...". */
     public static final class FooterCommand {
         private final String mDisplayText;
@@ -456,6 +501,7 @@ public class KeyboardAccessoryData {
         private final List<PasskeySection> mPasskeySectionList = new ArrayList<>();
         private final List<PromoCodeInfo> mPromoCodeInfoList = new ArrayList<>();
         private final List<IbanInfo> mIbanInfoList = new ArrayList<>();
+        private final List<LoyaltyCardInfo> mLoyaltyCardInfoList = new ArrayList<>();
         private final List<FooterCommand> mFooterCommands = new ArrayList<>();
 
         /**
@@ -539,6 +585,11 @@ public class KeyboardAccessoryData {
         /** Returns the list of {@link IbanInfo} to be shown on the accessory sheet. */
         public List<IbanInfo> getIbanInfoList() {
             return mIbanInfoList;
+        }
+
+        /** Returns the list of {@link LoyaltyCardInfo} to be shown on the accessory sheet. */
+        public List<LoyaltyCardInfo> getLoyaltyCardInfoList() {
+            return mLoyaltyCardInfoList;
         }
 
         /** Returns the list of {@link FooterCommand} to be shown on the accessory sheet. */

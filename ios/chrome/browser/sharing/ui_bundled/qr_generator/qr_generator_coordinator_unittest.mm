@@ -5,7 +5,6 @@
 #import "ios/chrome/browser/sharing/ui_bundled/qr_generator/qr_generator_coordinator.h"
 
 #import "base/apple/foundation_util.h"
-#import "base/test/task_environment.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/bookmarks_commands.h"
@@ -16,6 +15,7 @@
 #import "ios/chrome/common/ui/confirmation_alert/confirmation_alert_action_handler.h"
 #import "ios/chrome/common/ui/elements/popover_label_view_controller.h"
 #import "ios/chrome/test/scoped_key_window.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "net/base/apple/url_conversions.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -51,7 +51,18 @@ class QRGeneratorCoordinatorTest : public PlatformTest {
                                        mock_qr_generation_commands_handler_];
   }
 
-  base::test::TaskEnvironment task_environment_;
+  QRGeneratorViewController* GetQRGeneratorViewController() {
+    UINavigationController* nav_controller =
+        base::apple::ObjCCastStrict<UINavigationController>(
+            base_view_controller_.presentedViewController);
+
+    QRGeneratorViewController* view_controller =
+        base::apple::ObjCCastStrict<QRGeneratorViewController>(
+            nav_controller.topViewController);
+    return view_controller;
+  }
+
+  web::WebTaskEnvironment task_environment_;
   std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<TestBrowser> browser_;
   id mock_qr_generation_commands_handler_;
@@ -72,13 +83,10 @@ TEST_F(QRGeneratorCoordinatorTest, Done_DispatchesCommand) {
 
   [coordinator_ start];
 
-  ASSERT_TRUE(base_view_controller_.presentedViewController);
   ASSERT_TRUE([base_view_controller_.presentedViewController
-      isKindOfClass:[QRGeneratorViewController class]]);
+      isKindOfClass:[UINavigationController class]]);
 
-  QRGeneratorViewController* viewController =
-      base::apple::ObjCCastStrict<QRGeneratorViewController>(
-          base_view_controller_.presentedViewController);
+  QRGeneratorViewController* viewController = GetQRGeneratorViewController();
 
   // Mimick click on done button.
   [viewController.actionHandler confirmationAlertDismissAction];
@@ -102,9 +110,7 @@ TEST_F(QRGeneratorCoordinatorTest, Done_DispatchesCommand) {
 TEST_F(QRGeneratorCoordinatorTest, ShareAction) {
   [coordinator_ start];
 
-  QRGeneratorViewController* viewController =
-      base::apple::ObjCCastStrict<QRGeneratorViewController>(
-          base_view_controller_.presentedViewController);
+  QRGeneratorViewController* viewController = GetQRGeneratorViewController();
 
   id vcPartialMock = OCMPartialMock(viewController);
   [[vcPartialMock expect]
@@ -126,9 +132,7 @@ TEST_F(QRGeneratorCoordinatorTest, ShareAction) {
 TEST_F(QRGeneratorCoordinatorTest, LearnMore) {
   [coordinator_ start];
 
-  QRGeneratorViewController* viewController =
-      base::apple::ObjCCastStrict<QRGeneratorViewController>(
-          base_view_controller_.presentedViewController);
+  QRGeneratorViewController* viewController = GetQRGeneratorViewController();
 
   __block PopoverLabelViewController* popoverViewController;
   id vcPartialMock = OCMPartialMock(viewController);

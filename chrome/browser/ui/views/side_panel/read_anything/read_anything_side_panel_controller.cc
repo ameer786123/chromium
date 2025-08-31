@@ -5,7 +5,9 @@
 #include "chrome/browser/ui/views/side_panel/read_anything/read_anything_side_panel_controller.h"
 
 #include <algorithm>
+#include <climits>
 #include <memory>
+#include <optional>
 
 #include "base/check_is_test.h"
 #include "chrome/app/vector_icons/vector_icons.h"
@@ -22,12 +24,18 @@
 #include "chrome/browser/ui/webui/side_panel/read_anything/read_anything_prefs.h"
 #include "chrome/browser/ui/webui/side_panel/read_anything/read_anything_untrusted_page_handler.h"
 #include "chrome/browser/ui/webui/side_panel/read_anything/read_anything_untrusted_ui.h"
+#include "chrome/browser/ui/webui_browser/webui_browser.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/accessibility/reading/distillable_pages.h"
 #include "components/language/core/browser/language_model.h"
 #include "components/language/core/browser/language_model_manager.h"
 #include "components/language/core/common/locale_util.h"
 #include "components/user_education/common/feature_promo/feature_promo_controller.h"
+#include "content/public/browser/render_frame_host.h"
+#include "read_anything_side_panel_controller.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_types.h"
@@ -54,9 +62,12 @@ ReadAnythingSidePanelController::ReadAnythingSidePanelController(
       SidePanelEntry::Key(SidePanelEntry::Id::kReadAnything)));
 
   auto side_panel_entry = std::make_unique<SidePanelEntry>(
-      SidePanelEntry::Id::kReadAnything,
+      SidePanelEntry::Key(SidePanelEntry::Id::kReadAnything),
       base::BindRepeating(&ReadAnythingSidePanelController::CreateContainerView,
-                          base::Unretained(this)));
+                          base::Unretained(this)),
+      base::BindRepeating(
+          &ReadAnythingSidePanelController::GetPreferredDefaultWidth,
+          base::Unretained(this)));
   side_panel_entry->AddObserver(this);
   side_panel_registry_->Register(std::move(side_panel_entry));
 
@@ -115,14 +126,35 @@ void ReadAnythingSidePanelController::RemoveObserver(
 
 void ReadAnythingSidePanelController::OnEntryShown(SidePanelEntry* entry) {
   CHECK_EQ(entry->key().id(), SidePanelEntry::Id::kReadAnything);
+
   auto* service =
       ReadAnythingService::Get(tab_->GetBrowserWindowInterface()->GetProfile());
-  // At the moment, services are created for normal and incognito profiles but
-  // not unusual profile types. On the other hand,
+  // At the moment, services are created for normal, incognito, and guest
+  // profiles but not unusual profile types. On the other hand,
   // ReadAnythingSidePanelController is created for all tabs. Thus we need a
   // nullptr check.
   if (service) {
     service->OnReadAnythingSidePanelEntryShown();
+  }
+
+  // Build and record UKM record for SidePanelShown to true on the current
+  // source Id
+  if (auto* contents = tab_->GetContents()) {
+    if (content::RenderFrameHost* main_frame =
+            contents->GetPrimaryMainFrame()) {
+      ukm::SourceId source_id = main_frame->GetPageUkmSourceId();
+      ukm::builders::Accessibility_ReadAnything_SidePanel builder(source_id);
+      builder.SetShown(true);
+
+      // Get the trigger from the entry object
+      std::optional<SidePanelOpenTrigger> open_trigger =
+          entry->last_open_trigger();
+
+      if (open_trigger.has_value()) {
+        builder.SetEntryPoint(static_cast<int64_t>(open_trigger.value()));
+      }
+      builder.Record(ukm::UkmRecorder::Get());
+    }
   }
 
   observers_.Notify(&ReadAnythingSidePanelController::Observer::Activate, true);
@@ -130,10 +162,26 @@ void ReadAnythingSidePanelController::OnEntryShown(SidePanelEntry* entry) {
 
 void ReadAnythingSidePanelController::OnEntryHidden(SidePanelEntry* entry) {
   CHECK_EQ(entry->key().id(), SidePanelEntry::Id::kReadAnything);
+
+  // Get the object that represents the content of the current tab
+  content::WebContents* web_contents = tab_->GetContents();
+
+  // Build and record UKM record for SidePanelClosed to true on the current
+  // source id
+  if (web_contents) {
+    if (content::RenderFrameHost* main_frame =
+            web_contents->GetPrimaryMainFrame()) {
+      ukm::SourceId source_id = main_frame->GetPageUkmSourceId();
+      ukm::builders::Accessibility_ReadAnything_SidePanel(source_id)
+          .SetClosed(true)
+          .Record(ukm::UkmRecorder::Get());
+    }
+  }
+
   auto* service =
       ReadAnythingService::Get(tab_->GetBrowserWindowInterface()->GetProfile());
-  // At the moment, services are created for normal and incognito profiles but
-  // not unusual profile types. On the other hand,
+  // At the moment, services are created for normal, guest, and incognito
+  // profiles but not unusual profile types. On the other hand,
   // ReadAnythingSidePanelController is created for all tabs. Thus we need a
   // nullptr check.
   if (service) {
@@ -159,6 +207,15 @@ ReadAnythingSidePanelController::CreateContainerView(
       web_view->contents_wrapper()->web_contents(), this);
   web_view_ = web_view->GetWeakPtr();
   return std::move(web_view);
+}
+
+int ReadAnythingSidePanelController::GetPreferredDefaultWidth() {
+  // Use 50% of the current WebView width
+  return tab_->GetBrowserWindowInterface()
+             ->GetWebView()
+             ->GetContentsBounds()
+             .width() /
+         2;
 }
 
 bool ReadAnythingSidePanelController::IsActivePageDistillable() const {
@@ -193,7 +250,11 @@ void ReadAnythingSidePanelController::TabWillDetach(
   // not create a SidePanelCoordinator. This block will be unnecessary once that
   // changes.
   if (!coordinator) {
-    CHECK_IS_TEST();
+    // TODO(webium): create a SidePanelCoordinator for WebUIBrowser.
+    // This is a temporary solution to avoid a crash.
+    if (!webui_browser::IsWebUIBrowserEnabled()) {
+      CHECK_IS_TEST();
+    }
     return;  // IN-TEST
   }
   if (coordinator->IsSidePanelEntryShowing(
@@ -225,7 +286,7 @@ void ReadAnythingSidePanelController::UpdateIphVisibility() {
 
   // Promo controller does not exist for incognito windows.
   auto* const user_ed =
-      tab_->GetBrowserWindowInterface()->GetUserEducationInterface();
+      BrowserUserEducationInterface::From(tab_->GetBrowserWindowInterface());
 
   if (should_show_iph) {
     user_ed->MaybeShowFeaturePromo(

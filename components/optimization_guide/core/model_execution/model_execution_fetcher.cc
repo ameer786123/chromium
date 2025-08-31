@@ -5,6 +5,7 @@
 #include "components/optimization_guide/core/model_execution/model_execution_fetcher.h"
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "components/optimization_guide/core/access_token_helper.h"
@@ -138,98 +139,129 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
     case ModelBasedCapabilityKey::kTextSafety:
       // TODO: b/330346344 - Add traffic annotation.
     case ModelBasedCapabilityKey::kPasswordChangeSubmission:
-      // TODO: b/380116258 - Add traffic annotation.
-      return MISSING_TRAFFIC_ANNOTATION;
+      return net::DefineNetworkTrafficAnnotation(
+          "password_change_submission_model_execution", R"(
+        semantics {
+          sender: "Automated Password Change"
+          description:
+            "Analyze page content to find elements that open and submit"
+            " password change forms for Chrome actuation."
+            " Lastly identities if the password change was successful."
+          trigger:
+            "User logged-in with a compromised credential and accepted "
+            "an option from the dialog to change password automatically."
+          destination: GOOGLE_OWNED_SERVICE
+          data:
+            "Title, URL, and content of the page, which may "
+            "potentially contain user input."
+          internal {
+            contacts {
+              email: "chrome-intelligence-core@google.com"
+            }
+          }
+          user_data {
+            type: ACCESS_TOKEN
+            type: SENSITIVE_URL
+            type: WEB_CONTENT
+          }
+          last_reviewed: "2026-07-03"
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "There is no dedicated setting for this feature."
+            "Users are free to choose whether to use the feature "
+            "or not when it's offered."
+          chrome_policy {
+            AutomatedPasswordChangeSettings {
+              AutomatedPasswordChangeSettings: 2
+            }
+          }
+        })");
     case ModelBasedCapabilityKey::kTest:
     case ModelBasedCapabilityKey::kBlingPrototyping:
       // Used for testing purposes. No real features use this.
       return MISSING_TRAFFIC_ANNOTATION;
-    case ModelBasedCapabilityKey::kFormsAnnotations:
-      return net::DefineNetworkTrafficAnnotation(
-          "forms_annotations_model_execution", R"(
-        semantics {
-          sender: "Autofill Predictions - Forms Annotations"
-          description:
-            "Autofill sends the filled form fields to model execution to "
-            "determine the field types and store them for subsequent "
-            "autofilling of forms."
-          trigger: "User submits a web form."
-          destination: GOOGLE_OWNED_SERVICE
-          data:
-            "User filled form data, title, URL, content of the page, and "
-            "previously saved form entries."
-          internal {
-            contacts {
-              email: "chrome-intelligence-core@google.com"
-            }
-          }
-          user_data {
-            type: ACCESS_TOKEN
-            type: SENSITIVE_URL
-            type: WEB_CONTENT
-            type: USER_CONTENT
-          }
-          last_reviewed: "2024-10-10"
-        }
-        policy {
-          cookies_allowed: NO
-          setting:
-            "Users can control this by signing-in to Chrome, and via the "
-            "'Autofill with AI' setting in the 'Autofill and passwords' "
-            "section."
-          chrome_policy {
-            AutofillPredictionSettings {
-              AutofillPredictionSettings: 2
-            }
-          }
-        })");
-    case ModelBasedCapabilityKey::kFormsPredictions:
-      return net::DefineNetworkTrafficAnnotation(
-          "forms_predictions_model_execution", R"(
-        semantics {
-          sender: "Autofill Predictions - Forms Predictions"
-          description:
-            "Autofill sends the filled form fields, and previously saved form "
-            "entries to model execution to predict and prefill the form "
-            "fields."
-          trigger: "User submits a web form."
-          destination: GOOGLE_OWNED_SERVICE
-          data:
-            "User filled form data, title, URL, content of the page, and "
-            "previously saved form entries"
-          internal {
-            contacts {
-              email: "chrome-intelligence-core@google.com"
-            }
-          }
-          user_data {
-            type: ACCESS_TOKEN
-            type: SENSITIVE_URL
-            type: WEB_CONTENT
-            type: USER_CONTENT
-          }
-          last_reviewed: "2024-10-10"
-        }
-        policy {
-          cookies_allowed: NO
-          setting:
-            "Users can control this by signing-in to Chrome, and via the "
-            "'Autofill with AI' setting in the 'Autofill and passwords' "
-            "section."
-          chrome_policy {
-            AutofillPredictionSettings {
-              AutofillPredictionSettings: 2
-            }
-          }
-        })");
     case ModelBasedCapabilityKey::kFormsClassifications:
-      // TODO(crbug.com/389631477) - Add traffic annotation.
-      return MISSING_TRAFFIC_ANNOTATION;
+      return net::DefineNetworkTrafficAnnotation(
+          "forms_classifications_model_execution", R"(
+    semantics {
+      sender: "AutofillAI - Forms Classifications"
+      description:
+        "Analyze page content to classify the types of form fields and store "
+        "those classifications for subsequent autofilling of forms."
+      trigger: "User encounters a web form on page load and the Autofill "
+               "server has selected the form as relevant for model execution."
+      destination: GOOGLE_OWNED_SERVICE
+      data: "Title, URL, and content of the page."
+      internal {
+        contacts {
+          email: "chrome-intelligence-core@google.com"
+        }
+      }
+      user_data {
+        type: ACCESS_TOKEN
+        type: SENSITIVE_URL
+        type: WEB_CONTENT
+        type: USER_CONTENT
+      }
+      last_reviewed: "2025-04-23"
+    }
+    policy {
+      cookies_allowed: NO
+      setting:
+        "Users can control this by signing-in to Chrome, and via the "
+        "'Autofill with AI' setting in the 'Autofill and passwords' "
+        "section."
+      chrome_policy {
+        AutofillPredictionSettings {
+          AutofillPredictionSettings: 2
+        }
+      }
+    })");
     case ModelBasedCapabilityKey::kEnhancedCalendar:
       // TODO(crbug.com/398296762): Add network traffic annotation.
       return MISSING_TRAFFIC_ANNOTATION;
     case ModelBasedCapabilityKey::kZeroStateSuggestions:
-      // TODO(crbug.com/403003789): Add network traffic annotation.
+      return net::DefineNetworkTrafficAnnotation(
+          "zero_state_suggestions_model_execution", R"(
+    semantics {
+      sender: "Gemini in Chrome - Zero State Suggestions"
+      description:
+        "Generates contextual suggestions about the current page when Gemini "
+        "in Chrome does not have a query."
+      trigger:
+        "User opens Gemini in Chrome via browser entrypoint, OS entrypoint, or"
+        " hot key."
+      destination: GOOGLE_OWNED_SERVICE
+      data:
+        "Title, URL, and content of the page, which may potentially contain "
+        "user input. The access token is also sent to verify user is of "
+        "sufficient age to use Gemini in Chrome."
+      internal {
+        contacts {
+          email: "chrome-intelligence-core@google.com"
+        }
+      }
+      user_data {
+        type: ACCESS_TOKEN
+        type: SENSITIVE_URL
+        type: WEB_CONTENT
+      }
+      last_reviewed: "2025-05-21"
+    }
+    policy {
+      cookies_allowed: NO
+      setting:
+        "This feature can be disabled via GeminiSettings."
+      chrome_policy {
+        GeminiSettings {
+          GeminiSettings: 1
+        }
+      }
+    })");
+    case ModelBasedCapabilityKey::kWalletablePassExtraction:
+      // TODO(crbug.com/441680019): Add network traffic annotation.
       return MISSING_TRAFFIC_ANNOTATION;
     case ModelBasedCapabilityKey::kHistorySearch:
     case ModelBasedCapabilityKey::kHistoryQueryIntent:
@@ -238,6 +270,7 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
     case ModelBasedCapabilityKey::kPermissionsAi:
     case ModelBasedCapabilityKey::kSummarize:
     case ModelBasedCapabilityKey::kWritingAssistanceApi:
+    case ModelBasedCapabilityKey::kProofreaderApi:
       // On-device only feature.
       NOTREACHED();
   }
@@ -259,6 +292,34 @@ void AppendHeadersIfNeeded(network::ResourceRequest& request) {
   }
   request.headers.SetHeaderIfMissing(
       kOptimizationGuideModelExecutionDebugLogsHeaderKey, "");
+}
+
+// Returns whether model executions for the `feature` require an access token.
+bool IsAccessTokenRequiredForFeature(ModelBasedCapabilityKey feature) {
+  switch (feature) {
+    case ModelBasedCapabilityKey::kCompose:
+    case ModelBasedCapabilityKey::kTabOrganization:
+    case ModelBasedCapabilityKey::kWallpaperSearch:
+    case ModelBasedCapabilityKey::kTest:
+    case ModelBasedCapabilityKey::kTextSafety:
+    case ModelBasedCapabilityKey::kPromptApi:
+    case ModelBasedCapabilityKey::kHistorySearch:
+    case ModelBasedCapabilityKey::kSummarize:
+    case ModelBasedCapabilityKey::kHistoryQueryIntent:
+    case ModelBasedCapabilityKey::kBlingPrototyping:
+    case ModelBasedCapabilityKey::kPasswordChangeSubmission:
+    case ModelBasedCapabilityKey::kScamDetection:
+    case ModelBasedCapabilityKey::kPermissionsAi:
+    case ModelBasedCapabilityKey::kProofreaderApi:
+    case ModelBasedCapabilityKey::kWritingAssistanceApi:
+    case ModelBasedCapabilityKey::kEnhancedCalendar:
+    case ModelBasedCapabilityKey::kZeroStateSuggestions:
+    case ModelBasedCapabilityKey::kWalletablePassExtraction:
+      return true;
+    case ModelBasedCapabilityKey::kFormsClassifications:
+      return !base::FeatureList::IsEnabled(
+          features::kOptimizationGuideBypassFormsClassificationAuth);
+  }
 }
 
 }  // namespace
@@ -319,19 +380,20 @@ void ModelExecutionFetcher::ExecuteModel(
   std::string serialized_request;
   execute_request.SerializeToString(&serialized_request);
 
-  RequestAccessToken(
-      identity_manager,
-      {GaiaConstants::kOptimizationGuideServiceModelExecutionOAuth2Scope},
+  HandleTokenRequestFlow(
+      IsAccessTokenRequiredForFeature(feature), identity_manager,
+      signin::OAuthConsumerId::kOptimizationGuideModelExecution,
       base::BindOnce(&ModelExecutionFetcher::OnAccessTokenReceived,
-                     weak_ptr_factory_.GetWeakPtr(), serialized_request,
-                     timeout));
+                     weak_ptr_factory_.GetWeakPtr(), feature,
+                     serialized_request, timeout));
 }
 
 void ModelExecutionFetcher::OnAccessTokenReceived(
+    ModelBasedCapabilityKey feature,
     const std::string& serialized_request,
     std::optional<base::TimeDelta> timeout,
     const std::string& access_token) {
-  if (access_token.empty()) {
+  if (IsAccessTokenRequiredForFeature(feature) && access_token.empty()) {
     RecordRequestStatusHistogram(*model_execution_feature_,
                                  FetcherRequestStatus::kUserNotSignedIn);
     std::move(model_execution_callback_)

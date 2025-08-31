@@ -118,6 +118,9 @@ class CORE_EXPORT EditContext final : public EventTarget,
   // EventTarget overrides
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;
+  void AddedEventListener(
+      const AtomicString& event_type,
+      RegisteredEventListener& registered_listener) override;
 
   void SetExecutionContext(ExecutionContext* context);
 
@@ -201,6 +204,7 @@ class CORE_EXPORT EditContext final : public EventTarget,
   // page that the selection has changed.
   void SetSelection(int start,
                     int end,
+                    bool sync_selection = true,
                     bool dispatch_text_update_event = false);
 
   // Sets rect_in_viewport to the surrounding rect, in physical pixels,

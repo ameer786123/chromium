@@ -288,7 +288,7 @@ static void PadToSameLength(InterpolationValue& value,
       std::move(new_non_interpolable_values));
 }
 
-static bool InterpolableListsAreCompatible(
+bool ListInterpolationFunctions::InterpolableListsAreCompatible(
     const InterpolableList& a,
     const InterpolableList& b,
     wtf_size_t length,
@@ -340,7 +340,7 @@ bool ListInterpolationFunctions::VerifyNoNonInterpolableValues(
 void ListInterpolationFunctions::Composite(
     UnderlyingValueOwner& underlying_value_owner,
     double underlying_fraction,
-    const InterpolationType& type,
+    const InterpolationType* type,
     const InterpolationValue& value,
     LengthMatchingStrategy length_matching_strategy,
     InterpolableValuesAreCompatibleCallback interpolable_values_are_compatible,

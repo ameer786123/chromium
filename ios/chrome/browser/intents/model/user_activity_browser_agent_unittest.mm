@@ -132,7 +132,10 @@ class UserActivityBrowserAgentTest : public PlatformTest {
     connection_information_ = scene_state_.controller;
   }
 
-  ~UserActivityBrowserAgentTest() override {}
+  ~UserActivityBrowserAgentTest() override {
+    [scene_state_ shutdown];
+    scene_state_ = nil;
+  }
 
  protected:
   // Mock & stub a NSUserActivity object with an arbitrary `interaction`
@@ -675,7 +678,7 @@ TEST_F(UserActivityBrowserAgentTest, HandleStartupParamsWithExternalFile) {
 // Tests that performActionForShortcutItem set startupParameters accordingly
 // to the shortcut used
 // TODO(crbug.com/40166681): The test fails on device.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_PerformActionForShortcutItemWithRealShortcut \
   PerformActionForShortcutItemWithRealShortcut
 #else

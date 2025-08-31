@@ -7,8 +7,11 @@
 #import "base/test/metrics/histogram_tester.h"
 #import "components/ukm/ios/ukm_url_recorder.h"
 #import "components/ukm/test_ukm_recorder.h"
+#import "ios/chrome/browser/dom_distiller/model/distiller_service_factory.h"
 #import "ios/chrome/browser/reader_mode/model/constants.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_tab_helper.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/chrome/browser/snapshots/model/snapshot_source_tab_helper.h"
 #import "ios/web/public/js_messaging/script_message.h"
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
@@ -17,15 +20,17 @@
 #import "services/metrics/public/cpp/ukm_builders.h"
 #import "testing/platform_test.h"
 
-using IOS_ReaderMode_Heuristic_Latency =
-    ukm::builders::IOS_ReaderMode_Heuristic_Latency;
 using IOS_ReaderMode_Heuristic_Result =
     ukm::builders::IOS_ReaderMode_Heuristic_Result;
 
 class ReaderModeJavaScriptFeatureTest : public PlatformTest {
  public:
   ReaderModeJavaScriptFeatureTest() : valid_url_(GURL("https://example.com")) {
-    ReaderModeTabHelper::CreateForWebState(web_state());
+    profile_ = TestProfileIOS::Builder().Build();
+
+    ReaderModeTabHelper::CreateForWebState(
+        web_state(), DistillerServiceFactory::GetForProfile(profile_.get()));
+    SnapshotSourceTabHelper::CreateForWebState(web_state());
     ukm::InitializeSourceUrlRecorderForWebState(web_state());
   }
 
@@ -57,15 +62,6 @@ class ReaderModeJavaScriptFeatureTest : public PlatformTest {
     web_state()->OnNavigationFinished(&navigation_context);
   }
 
-  // Expects the recorded heuristic latency UKM event entries to have
-  // `expected_count` elements.
-  void ExpectHeuristicLatencyEntriesCount(size_t expected_count) {
-    EXPECT_EQ(
-        expected_count,
-        test_ukm_recorder_
-            .GetEntriesByName(IOS_ReaderMode_Heuristic_Latency::kEntryName)
-            .size());
-  }
   // Expects the recorded heuristic result UKM event entries to have
   // `expected_count` elements.
   void ExpectHeuristicResultEntriesCount(size_t expected_count) {
@@ -75,17 +71,6 @@ class ReaderModeJavaScriptFeatureTest : public PlatformTest {
                   .size());
   }
 
-  // Asserts that a unique heuristic latency event was recorded with the latency
-  // value equal to `latency`.
-  void AssertHeuristicLatencyUniqueUKM(base::TimeDelta latency) {
-    const auto entries = test_ukm_recorder_.GetEntriesByName(
-        IOS_ReaderMode_Heuristic_Latency::kEntryName);
-    ASSERT_EQ(1u, entries.size());
-    const ukm::mojom::UkmEntry* entry = entries[0];
-    ukm::TestUkmRecorder::ExpectEntryMetric(
-        entry, IOS_ReaderMode_Heuristic_Latency::kLatencyName,
-        latency.InMilliseconds());
-  }
   // Asserts that a unique heuristic result event was recorded with the result
   // value equal to `result`.
   void AssertHeuristicResultUniqueUKM(ReaderModeHeuristicResult result) {
@@ -111,10 +96,13 @@ class ReaderModeJavaScriptFeatureTest : public PlatformTest {
   }
 
   web::WebTaskEnvironment task_environment_;
-  web::FakeWebState web_state_;
   base::HistogramTester histogram_tester_;
   GURL valid_url_;
   ukm::TestAutoSetUkmRecorder test_ukm_recorder_;
+  std::unique_ptr<TestProfileIOS> profile_;
+  // Ensure that `web_state_` is declared after `profile_` so that the correct
+  // shutdown order is enforced.
+  web::FakeWebState web_state_;
 };
 
 // Tests that an empty url is not eligible for Reader Mode heuristics.
@@ -123,8 +111,6 @@ TEST_F(ReaderModeJavaScriptFeatureTest, EmptyUrlNotEligible) {
       web_state(), ScriptMessageForInvalidUrl());
   histogram_tester_.ExpectTotalCount(kReaderModeHeuristicResultHistogram, 0);
   ExpectHeuristicResultEntriesCount(0u);
-  histogram_tester_.ExpectTotalCount(kReaderModeHeuristicLatencyHistogram, 0);
-  ExpectHeuristicLatencyEntriesCount(0u);
 }
 
 // Tests that a Chrome scheme is not eligible for Reader Mode heuristics.
@@ -133,8 +119,6 @@ TEST_F(ReaderModeJavaScriptFeatureTest, ChromeUrlNotEligible) {
       web_state(), ScriptMessageForUrl(GURL("chrome://internals")));
   histogram_tester_.ExpectTotalCount(kReaderModeHeuristicResultHistogram, 0);
   ExpectHeuristicResultEntriesCount(0u);
-  histogram_tester_.ExpectTotalCount(kReaderModeHeuristicLatencyHistogram, 0);
-  ExpectHeuristicLatencyEntriesCount(0u);
 }
 
 // Tests that the about:blank url is not eligible for Reader Mode heuristics.
@@ -143,8 +127,6 @@ TEST_F(ReaderModeJavaScriptFeatureTest, AboutUrlNotEligible) {
       web_state(), ScriptMessageForUrl(GURL("about:blank")));
   histogram_tester_.ExpectTotalCount(kReaderModeHeuristicResultHistogram, 0);
   ExpectHeuristicResultEntriesCount(0u);
-  histogram_tester_.ExpectTotalCount(kReaderModeHeuristicLatencyHistogram, 0);
-  ExpectHeuristicLatencyEntriesCount(0u);
 }
 
 // Tests that a JavaScript response with an incorrect data type records
@@ -166,10 +148,6 @@ TEST_F(ReaderModeJavaScriptFeatureTest, MalformedResponseNotDict) {
           base::Bucket(ReaderModeHeuristicResult::kMalformedResponse, 1)));
   // Test heuristic result UKM.
   AssertHeuristicResultUniqueUKM(ReaderModeHeuristicResult::kMalformedResponse);
-  // Test heuristic latency histogram.
-  histogram_tester_.ExpectTotalCount(kReaderModeHeuristicLatencyHistogram, 0);
-  // Test heuristic latency UKM.
-  ExpectHeuristicLatencyEntriesCount(0u);
 }
 
 // Tests that a JavaScript response with missing features records malformed
@@ -191,10 +169,6 @@ TEST_F(ReaderModeJavaScriptFeatureTest, MalformedResponseMissingFeatures) {
           base::Bucket(ReaderModeHeuristicResult::kMalformedResponse, 1)));
   // Test heuristic result UKM.
   AssertHeuristicResultUniqueUKM(ReaderModeHeuristicResult::kMalformedResponse);
-  // Test heuristic latency histogram.
-  histogram_tester_.ExpectTotalCount(kReaderModeHeuristicLatencyHistogram, 0);
-  // Test heuristic latency UKM.
-  ExpectHeuristicLatencyEntriesCount(0u);
 }
 
 // Tests that a set of valid derived features records reader mode eligibility.
@@ -208,13 +182,4 @@ TEST_F(ReaderModeJavaScriptFeatureTest, ValidDerivedFeatures) {
       base::BucketsAre(base::Bucket(
           ReaderModeHeuristicResult::kReaderModeNotEligibleContentAndLength,
           1)));
-  // Test heuristic result UKM.
-  AssertHeuristicResultUniqueUKM(
-      ReaderModeHeuristicResult::kReaderModeNotEligibleContentAndLength);
-  // Test heuristic latency histogram.
-  histogram_tester_.ExpectTotalCount(kReaderModeHeuristicLatencyHistogram, 1);
-  histogram_tester_.ExpectUniqueTimeSample(kReaderModeHeuristicLatencyHistogram,
-                                           base::Milliseconds(10), 1);
-  // Test heuristic latency UKM.
-  AssertHeuristicLatencyUniqueUKM(base::Milliseconds(10));
 }

@@ -10,6 +10,7 @@ import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileKey;
 import org.chromium.chrome.browser.profiles.ProfileKeyUtil;
@@ -23,6 +24,7 @@ import org.chromium.content_public.browser.BrowserStartupController;
  * Entry point for the background tasks scheduled through the native interface. This class acts as a
  * proxy, loads native, creates the task and forwards the method calls.
  */
+@NullMarked
 public final class ProxyNativeTask extends NativeBackgroundTask {
     private long mNativeProxyNativeTask;
 
@@ -44,26 +46,18 @@ public final class ProxyNativeTask extends NativeBackgroundTask {
 
         mNativeProxyNativeTask =
                 ProxyNativeTaskJni.get()
-                        .init(
-                                ProxyNativeTask.this,
-                                taskParameters.getTaskId(),
-                                extras,
-                                wrappedCallback);
+                        .init(this, taskParameters.getTaskId(), extras, wrappedCallback);
 
         boolean isFullBrowserStarted =
                 BrowserStartupController.getInstance().isFullBrowserStarted();
         if (isFullBrowserStarted) {
             ProxyNativeTaskJni.get()
                     .startBackgroundTaskWithFullBrowser(
-                            mNativeProxyNativeTask,
-                            ProxyNativeTask.this,
-                            ProfileManager.getLastUsedRegularProfile());
+                            mNativeProxyNativeTask, ProfileManager.getLastUsedRegularProfile());
         } else {
             ProxyNativeTaskJni.get()
                     .startBackgroundTaskInReducedMode(
-                            mNativeProxyNativeTask,
-                            ProxyNativeTask.this,
-                            ProfileKeyUtil.getLastUsedRegularProfileKey());
+                            mNativeProxyNativeTask, ProfileKeyUtil.getLastUsedRegularProfileKey());
             BrowserStartupController.getInstance()
                     .addStartupCompletedObserver(
                             new BrowserStartupController.StartupCallback() {
@@ -73,7 +67,6 @@ public final class ProxyNativeTask extends NativeBackgroundTask {
                                     ProxyNativeTaskJni.get()
                                             .onFullBrowserLoaded(
                                                     mNativeProxyNativeTask,
-                                                    ProxyNativeTask.this,
                                                     ProfileManager.getLastUsedRegularProfile());
                                 }
 
@@ -92,8 +85,7 @@ public final class ProxyNativeTask extends NativeBackgroundTask {
     protected boolean onStopTaskWithNative(Context context, TaskParameters taskParameters) {
         if (mNativeProxyNativeTask == 0) return false;
         boolean taskNeedsReschedule =
-                ProxyNativeTaskJni.get()
-                        .stopBackgroundTask(mNativeProxyNativeTask, ProxyNativeTask.this);
+                ProxyNativeTaskJni.get().stopBackgroundTask(mNativeProxyNativeTask);
         destroy();
         return taskNeedsReschedule;
     }
@@ -106,33 +98,27 @@ public final class ProxyNativeTask extends NativeBackgroundTask {
 
     private void destroy() {
         if (mNativeProxyNativeTask == 0) return;
-        ProxyNativeTaskJni.get().destroy(mNativeProxyNativeTask, ProxyNativeTask.this);
+        ProxyNativeTaskJni.get().destroy(mNativeProxyNativeTask);
         mNativeProxyNativeTask = 0;
     }
 
     @NativeMethods
     interface Natives {
         long init(
-                ProxyNativeTask caller,
+                ProxyNativeTask self,
                 int taskType,
                 @JniType("std::string") String extras,
                 Callback<Boolean> callback);
 
-        void startBackgroundTaskInReducedMode(
-                long nativeProxyNativeTask, ProxyNativeTask caller, ProfileKey key);
+        void startBackgroundTaskInReducedMode(long nativeProxyNativeTask, ProfileKey key);
 
         void startBackgroundTaskWithFullBrowser(
-                long nativeProxyNativeTask,
-                ProxyNativeTask caller,
-                @JniType("Profile*") Profile profile);
+                long nativeProxyNativeTask, @JniType("Profile*") Profile profile);
 
-        void onFullBrowserLoaded(
-                long nativeProxyNativeTask,
-                ProxyNativeTask caller,
-                @JniType("Profile*") Profile profile);
+        void onFullBrowserLoaded(long nativeProxyNativeTask, @JniType("Profile*") Profile profile);
 
-        boolean stopBackgroundTask(long nativeProxyNativeTask, ProxyNativeTask caller);
+        boolean stopBackgroundTask(long nativeProxyNativeTask);
 
-        void destroy(long nativeProxyNativeTask, ProxyNativeTask caller);
+        void destroy(long nativeProxyNativeTask);
     }
 }

@@ -87,7 +87,8 @@ bool SnapGroupController::OnWindowSnapped(
       CanSnapActionSourceStartFasterSplitView(snap_action_source) ||
       snap_action_source ==
           WindowSnapActionSource::kSnapByClamshellTabletTransition ||
-      snap_action_source == WindowSnapActionSource::kAutoSnapInSplitView;
+      snap_action_source == WindowSnapActionSource::kAutoSnapInSplitView ||
+      snap_action_source == WindowSnapActionSource::kKeyboardShortcutToSnap;
   if (!can_group_or_replace) {
     return false;
   }
@@ -117,7 +118,6 @@ bool SnapGroupController::OnWindowSnapped(
     aura::Window* target_window = nullptr;
     switch (snap_action_source) {
       case WindowSnapActionSource::kSnapByWindowLayoutMenu:
-      case WindowSnapActionSource::kLacrosSnapButtonOrWindowLayoutMenu:
       case WindowSnapActionSource::kSnapByClamshellTabletTransition:
         // If the window was snapped via the layout menu, respect its
         // requested snap ratio. We also refresh the bounds for tablet
@@ -128,9 +128,11 @@ bool SnapGroupController::OnWindowSnapped(
       case WindowSnapActionSource::kLongPressCaptionButtonToSnap:
       case WindowSnapActionSource::kDragOrSelectOverviewWindowToSnap:
       case WindowSnapActionSource::kAutoSnapInSplitView:
-        // Else if using a drag to snap or auto-snap action source, respect the
-        // opposite window's snap ratio. This is to give the impression of
-        // filling the layout and feels more intuitive to the user.
+      case WindowSnapActionSource::kKeyboardShortcutToSnap:
+        // Else, e.g. if using a drag to snap or auto-snap action source,
+        // respect the opposite window's snap ratio. This is to give the
+        // impression of filling the layout and feels more intuitive to the
+        // user.
         target_window = opposite;
         break;
       default:
@@ -287,7 +289,8 @@ SnapGroup* SnapGroupController::GetSnapGroupForGivenWindow(
 }
 
 SnapGroup* SnapGroupController::GetTopmostVisibleSnapGroup(
-    const aura::Window* target_root) const {
+    const aura::Window* target_root,
+    bool topwindow_only) const {
   for (const aura::Window* top_window : GetActiveDeskAppWindowsInZOrder(
            const_cast<aura::Window*>(target_root))) {
     // Skip to the topmost window on `target_root`, ignoring occlusion-exempt
@@ -302,7 +305,17 @@ SnapGroup* SnapGroupController::GetTopmostVisibleSnapGroup(
       return snap_group;
     }
     // Else if `top_window` does not belong to a snap group, we are done.
-    break;
+    if (topwindow_only) {
+      break;
+    }
+  }
+  return nullptr;
+}
+
+SplitViewDivider* SnapGroupController::GetSnapGroupDividerForWindow(
+    const aura::Window* window) {
+  if (SnapGroup* snap_group = GetSnapGroupForGivenWindow(window)) {
+    return snap_group->snap_group_divider();
   }
   return nullptr;
 }
@@ -330,7 +343,7 @@ SnapGroupController::GetWindowPairForSnapToReplaceWithKeyboardShortcut() {
   }
 
   aura::Window* root_window = window_util::GetRootWindowAt(
-      display::Screen::GetScreen()->GetCursorScreenPoint());
+      display::Screen::Get()->GetCursorScreenPoint());
   aura::Window::Windows windows = GetActiveDeskAppWindowsInZOrder(root_window);
   for (size_t i = 0; i < windows.size(); i++) {
     aura::Window* window = windows[i];
@@ -415,7 +428,7 @@ void SnapGroupController::OnFloatUnfloatCompleted(aura::Window* window) {
 }
 
 void SnapGroupController::OnOverviewModeStarting() {
-  if (display::Screen::GetScreen()->InTabletMode()) {
+  if (display::Screen::Get()->InTabletMode()) {
     return;
   }
 
@@ -426,7 +439,7 @@ void SnapGroupController::OnOverviewModeStarting() {
 
 void SnapGroupController::OnOverviewModeEnding(
     OverviewSession* overview_session) {
-  if (display::Screen::GetScreen()->InTabletMode()) {
+  if (display::Screen::Get()->InTabletMode()) {
     return;
   }
 
@@ -443,7 +456,7 @@ void SnapGroupController::OnOverviewModeEnding(
 }
 
 void SnapGroupController::OnOverviewModeEndingAnimationComplete(bool canceled) {
-  if (display::Screen::GetScreen()->InTabletMode()) {
+  if (display::Screen::Get()->InTabletMode()) {
     return;
   }
 
@@ -478,7 +491,7 @@ bool SnapGroupController::MaybeSnapToReplace(
   // 1. In tablet mode;
   // 2. `to_be_snapped_window` belongs to a snap group, this can happen when
   // moving a snap group to another desk with snap groups.
-  if (display::Screen::GetScreen()->InTabletMode() ||
+  if (display::Screen::Get()->InTabletMode() ||
       GetSnapGroupForGivenWindow(to_be_snapped_window)) {
     return false;
   }

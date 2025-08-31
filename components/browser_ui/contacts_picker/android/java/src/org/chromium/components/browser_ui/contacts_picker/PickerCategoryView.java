@@ -71,49 +71,49 @@ public class PickerCategoryView extends OptimizedFrameLayout
     private ContactsPickerDialog mDialog;
 
     // The view containing the RecyclerView and the toolbar, etc.
-    private SelectableListLayout<ContactDetails> mSelectableListLayout;
+    private final SelectableListLayout<ContactDetails> mSelectableListLayout;
 
     // The window for the main Activity.
-    private WindowAndroid mWindowAndroid;
+    private final WindowAndroid mWindowAndroid;
 
     // The callback to notify the listener of decisions reached in the picker.
     private ContactsPickerListener mListener;
 
     // The toolbar located at the top of the dialog.
-    private ContactsPickerToolbar mToolbar;
+    private final ContactsPickerToolbar mToolbar;
 
     // The RecyclerView showing the images.
-    private RecyclerView mRecyclerView;
+    private final RecyclerView mRecyclerView;
 
     // The view at the top (showing the explanation and Select All checkbox).
     private @Nullable TopView mTopView;
 
     // The {@link PickerAdapter} for the RecyclerView.
-    private PickerAdapter mPickerAdapter;
+    private final PickerAdapter mPickerAdapter;
 
     // The layout manager for the RecyclerView.
-    private LinearLayoutManager mLayoutManager;
+    private final LinearLayoutManager mLayoutManager;
 
     // A helper class to draw the icon for each contact.
-    private RoundedIconGenerator mIconGenerator;
+    private final RoundedIconGenerator mIconGenerator;
 
     // The {@link SelectionDelegate} keeping track of which contacts are selected.
-    private SelectionDelegate<ContactDetails> mSelectionDelegate;
+    private final SelectionDelegate<ContactDetails> mSelectionDelegate;
 
     // A cache for contact images, lazily created.
-    private ContactsBitmapCache mBitmapCache;
+    private final ContactsBitmapCache mBitmapCache;
 
     // The search icon.
-    private ImageView mSearchButton;
+    private final ImageView mSearchButton;
 
     // Keeps track of the set of last selected contacts in the UI.
     @Nullable Set<ContactDetails> mPreviousSelection;
 
     // The Done text button that confirms the selection choice.
-    private Button mDoneButton;
+    private final Button mDoneButton;
 
     // Whether the picker is in multi-selection mode.
-    private boolean mMultiSelectionAllowed;
+    private final boolean mMultiSelectionAllowed;
 
     // Whether the site is requesting names.
     private final boolean mSiteWantsNames;
@@ -168,7 +168,7 @@ public class PickerCategoryView extends OptimizedFrameLayout
         mSiteWantsAddresses = shouldIncludeAddresses;
         mSiteWantsIcons = shouldIncludeIcons;
 
-        mSelectionDelegate = new SelectionDelegate<ContactDetails>();
+        mSelectionDelegate = new SelectionDelegate<>();
         if (!multiSelectionAllowed) mSelectionDelegate.setSingleSelectionMode();
         mSelectionDelegate.addObserver(this);
 
@@ -217,9 +217,9 @@ public class PickerCategoryView extends OptimizedFrameLayout
                 });
         mSelectableListLayout.configureWideDisplayStyle();
 
-        mSearchButton = (ImageView) mToolbar.findViewById(R.id.search);
+        mSearchButton = mToolbar.findViewById(R.id.search);
         mSearchButton.setOnClickListener(this);
-        mDoneButton = (Button) mToolbar.findViewById(R.id.done);
+        mDoneButton = mToolbar.findViewById(R.id.done);
         mDoneButton.setOnClickListener(this);
 
         mLayoutManager = new LinearLayoutManager(context);
@@ -275,7 +275,7 @@ public class PickerCategoryView extends OptimizedFrameLayout
 
         // Showing the search clears current selection. Save it, so we can restore it after the
         // search has completed.
-        mPreviousSelection = new HashSet<ContactDetails>(mSelectionDelegate.getSelectedItems());
+        mPreviousSelection = new HashSet<>(mSelectionDelegate.getSelectedItems());
         mSearchButton.setVisibility(GONE);
         mPickerAdapter.setSearchMode(true);
         mToolbar.showSearchView(true);
@@ -343,8 +343,7 @@ public class PickerCategoryView extends OptimizedFrameLayout
     public void onSelectAllToggled(boolean allSelected) {
         if (allSelected) {
             mPreviousSelection = mSelectionDelegate.getSelectedItems();
-            mSelectionDelegate.setSelectedItems(
-                    new HashSet<ContactDetails>(mPickerAdapter.getAllContacts()));
+            mSelectionDelegate.setSelectedItems(new HashSet<>(mPickerAdapter.getAllContacts()));
             mListener.onContactsPickerUserAction(
                     ContactsPickerListener.ContactsPickerAction.SELECT_ALL,
                     /* contacts= */ null,
@@ -352,7 +351,7 @@ public class PickerCategoryView extends OptimizedFrameLayout
                     /* propertiesSiteRequested= */ 0,
                     /* propertiesUserRejected= */ 0);
         } else {
-            mSelectionDelegate.setSelectedItems(new HashSet<ContactDetails>());
+            mSelectionDelegate.setSelectedItems(new HashSet<>());
             mPreviousSelection = null;
             mListener.onContactsPickerUserAction(
                     ContactsPickerListener.ContactsPickerAction.UNDO_SELECT_ALL,
@@ -445,7 +444,7 @@ public class PickerCategoryView extends OptimizedFrameLayout
 
         if (!isEnabled) {
             // The user doesn't want to share this property, so return an empty array.
-            return new ArrayList<T>();
+            return new ArrayList<>();
         }
 
         // Share whatever was selected.

@@ -17,6 +17,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
@@ -32,6 +33,7 @@
 #include "chrome/updater/win/setup/setup_util.h"
 #include "chrome/updater/win/test/test_executables.h"
 #include "chrome/updater/win/test/test_strings.h"
+#include "components/update_client/update_client.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -58,6 +60,7 @@ class LegacyAppCommandWebImplTest : public testing::Test {
 
   void TearDown() override {
     DeleteAppClientKey(GetUpdaterScopeForTesting(), kAppId1);
+    DeleteAppClientStateKey(GetUpdaterScopeForTesting(), kAppId1);
   }
 
   [[nodiscard]] HRESULT CreateAppCommandWeb(
@@ -111,7 +114,8 @@ TEST_F(LegacyAppCommandWebImplTest, Execute) {
       base::BindLambdaForTesting(
           [&ping_sent](UpdaterScope scope, const std::string& app_id,
                        const std::string& command_id,
-                       LegacyAppCommandWebImpl::ErrorParams error_params) {
+                       LegacyAppCommandWebImpl::ErrorParams error_params,
+                       update_client::Callback callback) {
             ping_sent = true;
             EXPECT_EQ(GetUpdaterScopeForTesting(), scope);
             EXPECT_EQ(app_id, base::WideToUTF8(kAppId1));
@@ -156,7 +160,8 @@ TEST_F(LegacyAppCommandWebImplTest, ExecuteParameterizedCommand) {
       base::BindLambdaForTesting(
           [&ping_sent](UpdaterScope scope, const std::string& app_id,
                        const std::string& command_id,
-                       LegacyAppCommandWebImpl::ErrorParams error_params) {
+                       LegacyAppCommandWebImpl::ErrorParams error_params,
+                       update_client::Callback callback) {
             ping_sent = true;
             EXPECT_EQ(GetUpdaterScopeForTesting(), scope);
             EXPECT_EQ(app_id, base::WideToUTF8(kAppId1));
@@ -192,7 +197,8 @@ TEST_F(LegacyAppCommandWebImplTest, FailedToLaunchStatus) {
       base::BindLambdaForTesting(
           [&ping_sent](UpdaterScope scope, const std::string& app_id,
                        const std::string& command_id,
-                       LegacyAppCommandWebImpl::ErrorParams error_params) {
+                       LegacyAppCommandWebImpl::ErrorParams error_params,
+                       update_client::Callback callback) {
             ping_sent = true;
             EXPECT_EQ(GetUpdaterScopeForTesting(), scope);
             EXPECT_EQ(app_id, base::WideToUTF8(kAppId1));
@@ -238,7 +244,8 @@ TEST_F(LegacyAppCommandWebImplTest, CommandRunningStatus) {
       base::BindLambdaForTesting(
           [&ping_sent](UpdaterScope scope, const std::string& app_id,
                        const std::string& command_id,
-                       LegacyAppCommandWebImpl::ErrorParams error_params) {
+                       LegacyAppCommandWebImpl::ErrorParams error_params,
+                       update_client::Callback callback) {
             ping_sent = true;
             EXPECT_EQ(GetUpdaterScopeForTesting(), scope);
             EXPECT_EQ(app_id, base::WideToUTF8(kAppId1));
@@ -292,6 +299,42 @@ TEST_F(LegacyAppCommandWebImplTest, CheckLegacyTypeLibAndInterfaceExist) {
       << " Could not load type info for legacy interface IAppCommandWeb, "
          "IID_IAppCommand: "
       << StringFromGuid(__uuidof(IAppCommandWeb));
+}
+
+TEST_F(LegacyAppCommandWebImplTest, SkipsPingSmokeTest) {
+  base::win::RegKey app1_client_state_key =
+      CreateAppClientStateKey(GetUpdaterScopeForTesting(), kAppId1);
+  ASSERT_EQ(app1_client_state_key.WriteValue(L"usagestats", DWORD{0}),
+            ERROR_SUCCESS);
+  CreateAppCommandRegistry(
+      GetUpdaterScopeForTesting(), kAppId1, kCmdId1,
+      base::StrCat(
+          {cmd_exe_command_line_.GetCommandLineString(), L" /c \"exit 7\""}));
+  Microsoft::WRL::ComPtr<LegacyAppCommandWebImpl> app_command_web;
+  ASSERT_HRESULT_SUCCEEDED(MakeAndInitializeComObject<LegacyAppCommandWebImpl>(
+      app_command_web, GetUpdaterScopeForTesting(), kAppId1, kCmdId1));
+  UINT status = 0;
+  EXPECT_HRESULT_SUCCEEDED(app_command_web->get_status(&status));
+  EXPECT_EQ(status, COMMAND_STATUS_INIT);
+  DWORD exit_code = 0;
+  EXPECT_EQ(app_command_web->get_exitCode(&exit_code), S_FALSE);
+  ASSERT_HRESULT_SUCCEEDED(
+      app_command_web->execute(base::win::ScopedVariant::kEmptyVariant,
+                               base::win::ScopedVariant::kEmptyVariant,
+                               base::win::ScopedVariant::kEmptyVariant,
+                               base::win::ScopedVariant::kEmptyVariant,
+                               base::win::ScopedVariant::kEmptyVariant,
+                               base::win::ScopedVariant::kEmptyVariant,
+                               base::win::ScopedVariant::kEmptyVariant,
+                               base::win::ScopedVariant::kEmptyVariant,
+                               base::win::ScopedVariant::kEmptyVariant));
+
+  WaitForUpdateCompletion(app_command_web);
+
+  EXPECT_HRESULT_SUCCEEDED(app_command_web->get_status(&status));
+  EXPECT_EQ(status, COMMAND_STATUS_COMPLETE);
+  EXPECT_HRESULT_SUCCEEDED(app_command_web->get_exitCode(&exit_code));
+  EXPECT_EQ(exit_code, 7U);
 }
 
 TEST(LegacyCOMClassesTest, CheckLegacyInterfaceIDs) {

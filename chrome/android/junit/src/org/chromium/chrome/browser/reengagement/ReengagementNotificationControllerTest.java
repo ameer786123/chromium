@@ -34,6 +34,7 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.notifications.NotificationUmaTracker;
@@ -60,7 +61,7 @@ public class ReengagementNotificationControllerTest {
 
     private class TestingReengagementNotificationController
             extends ReengagementNotificationController {
-        private DefaultBrowserInfo.DefaultInfo mInfo;
+        private final DefaultBrowserInfo.DefaultInfo mInfo;
 
         TestingReengagementNotificationController(DefaultBrowserInfo.DefaultInfo info) {
             super(mContext, mTracker, Activity.class);
@@ -68,7 +69,8 @@ public class ReengagementNotificationControllerTest {
         }
 
         @Override
-        protected void getDefaultBrowserInfo(Callback<DefaultBrowserInfo.DefaultInfo> callback) {
+        protected void getDefaultBrowserInfo(
+                Callback<DefaultBrowserInfo.@Nullable DefaultInfo> callback) {
             new Handler().post(() -> callback.onResult(mInfo));
         }
     }

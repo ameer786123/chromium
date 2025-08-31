@@ -12,12 +12,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_bookmarks_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_bookmarks_eg2tests_module iPad Air (5th generation) 17.5",
         "resultdb": {
           "enable": true,
@@ -28,12 +30,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -42,7 +44,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -64,12 +66,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_bookmarks_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_bookmarks_eg2tests_module iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -80,12 +84,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -94,7 +98,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -118,12 +122,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_integration_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_integration_eg2tests_module iPad Air (5th generation) 17.5",
         "resultdb": {
           "enable": true,
@@ -134,12 +140,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -148,12 +154,12 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com",
-          "shards": 8
+          "shards": 9
         },
         "test": "ios_chrome_integration_eg2tests_module",
         "test_id_prefix": "ninja://ios/chrome/test/earl_grey2:ios_chrome_integration_eg2tests_module/",
@@ -172,12 +178,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_integration_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_integration_eg2tests_module iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -188,12 +196,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -202,12 +210,12 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com",
-          "shards": 8
+          "shards": 9
         },
         "test": "ios_chrome_integration_eg2tests_module",
         "test_id_prefix": "ninja://ios/chrome/test/earl_grey2:ios_chrome_integration_eg2tests_module/",
@@ -226,12 +234,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_settings_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_settings_eg2tests_module iPad Air (5th generation) 17.5",
         "resultdb": {
           "enable": true,
@@ -242,12 +252,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -256,7 +266,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -280,12 +290,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_settings_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_settings_eg2tests_module iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -296,12 +308,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -310,7 +322,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -332,12 +344,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_signin_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_signin_eg2tests_module iPad Air (5th generation) 17.5",
         "resultdb": {
           "enable": true,
@@ -348,12 +362,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -362,7 +376,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -384,12 +398,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_signin_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_signin_eg2tests_module iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -400,12 +416,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -414,7 +430,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -436,12 +452,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_smoke_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_smoke_eg2tests_module iPad Air (5th generation) 17.5",
         "resultdb": {
           "enable": true,
@@ -452,12 +470,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -466,7 +484,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -487,12 +505,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_smoke_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_smoke_eg2tests_module iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -503,12 +523,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -517,7 +537,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -540,12 +560,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_ui_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_ui_eg2tests_module iPad Air (5th generation) 17.5",
         "resultdb": {
           "enable": true,
@@ -556,12 +578,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -570,7 +592,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -594,12 +616,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_ui_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_ui_eg2tests_module iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -610,12 +634,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -624,7 +648,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -646,12 +670,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_web_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_web_eg2tests_module iPad Air (5th generation) 17.5",
         "resultdb": {
           "enable": true,
@@ -662,12 +688,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -676,7 +702,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -698,12 +724,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/chrome/test/earl_grey2:ios_chrome_web_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_chrome_web_eg2tests_module iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -714,12 +742,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -728,7 +756,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -750,12 +778,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/web/shell/test:ios_web_shell_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_web_shell_eg2tests_module iPad Air (5th generation) 17.5",
         "resultdb": {
           "enable": true,
@@ -766,12 +796,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -780,7 +810,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],
@@ -801,12 +831,14 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16c5032a",
+          "17a5305f",
           "--xctest"
         ],
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//ios/web/shell/test:ios_web_shell_eg2tests_module/",
+        "module_scheme": "xctest",
         "name": "ios_web_shell_eg2tests_module iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -817,12 +849,12 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "dimensions": {
             "cpu": "arm64",
-            "os": "Mac-14",
+            "os": "Mac-15",
             "pool": "chromium.tests.finch"
           },
           "named_caches": [
@@ -831,7 +863,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16c5032a",
+              "name": "xcode_ios_17a5305f",
               "path": "Xcode.app"
             }
           ],

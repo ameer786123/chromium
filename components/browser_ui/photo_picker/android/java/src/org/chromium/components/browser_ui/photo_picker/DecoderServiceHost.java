@@ -27,7 +27,6 @@ import org.chromium.base.StreamUtil;
 import org.chromium.base.StrictModeContext;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.AsyncTask;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
@@ -40,6 +39,7 @@ import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.PriorityQueue;
+import java.util.function.Supplier;
 
 /** A class to communicate with the {@link DecoderService}. */
 @NullMarked
@@ -52,7 +52,7 @@ public class DecoderServiceHost extends IDecoderServiceCallback.Stub
     private final Context mContext;
 
     // A content resolver for providing file descriptors for the images.
-    private ContentResolver mContentResolver;
+    private final ContentResolver mContentResolver;
 
     // The number of successful image decodes (not video), per batch.
     private int mSuccessfulImageDecodes;
@@ -85,7 +85,7 @@ public class DecoderServiceHost extends IDecoderServiceCallback.Stub
     private @Nullable DecoderServiceParams mProcessingRequest;
 
     // The callbacks used to notify the clients when the service is ready.
-    private final List<DecoderStatusCallback> mCallbacks = new ArrayList<DecoderStatusCallback>();
+    private final List<DecoderStatusCallback> mCallbacks = new ArrayList<>();
 
     // Keeps track of the last decoding ordinal issued.
     static int sLastDecodingOrdinal = 0;
@@ -111,7 +111,7 @@ public class DecoderServiceHost extends IDecoderServiceCallback.Stub
     // indicates that {@link unbindService()} should be called.
     private boolean mBindServiceCalled;
     @Nullable IDecoderService mIRemoteService;
-    private ServiceConnection mConnection =
+    private final ServiceConnection mConnection =
             new ServiceConnection() {
                 @Override
                 public void onServiceConnected(ComponentName className, IBinder service) {
@@ -178,7 +178,7 @@ public class DecoderServiceHost extends IDecoderServiceCallback.Stub
 
         // An ordinal used to enforce FIFO decoding, in the case where all other things are equal
         // (when it comes to determining which record to decode first).
-        private int mRequestOrdinal;
+        private final int mRequestOrdinal;
 
         // The callback to use to communicate the results of the decoding.
         final ImagesDecodedCallback mCallback;

@@ -69,11 +69,11 @@ void DispatchToMethodImpl(ObjT* obj,
 // The following function is for async IPCs which have a dispatcher with an
 // extra parameter specified using IPC_BEGIN_MESSAGE_MAP_WITH_PARAM.
 template <typename ObjT, typename P, typename... Args, typename Tuple>
-std::enable_if_t<sizeof...(Args) == std::tuple_size<std::decay_t<Tuple>>::value>
-DispatchToMethod(ObjT* obj,
-                 void (ObjT::*method)(P*, Args...),
-                 P* parameter,
-                 Tuple&& tuple) {
+  requires(sizeof...(Args) == std::tuple_size_v<std::decay_t<Tuple>>)
+void DispatchToMethod(ObjT* obj,
+                      void (ObjT::*method)(P*, Args...),
+                      P* parameter,
+                      Tuple&& tuple) {
   constexpr size_t size = std::tuple_size<std::decay_t<Tuple>>::value;
   DispatchToMethodImpl(obj, method, parameter, std::forward<Tuple>(tuple),
                        std::make_index_sequence<size>());
@@ -195,7 +195,6 @@ class MessageT<Meta, std::tuple<Ins...>, std::tuple<Outs...>>
     ReplyParam reply_params;
     base::DispatchToMethod(obj, func, std::move(send_params), &reply_params);
     WriteParam(reply, reply_params);
-    LogReplyParamsToMessage(reply_params, msg);
     sender->Send(reply);
     return true;
   }
@@ -214,7 +213,6 @@ class MessageT<Meta, std::tuple<Ins...>, std::tuple<Outs...>>
     }
 
     std::tuple<Message&> t = std::tie(*reply);
-    ConnectMessageAndReply(msg, reply);
     base::DispatchToMethod(obj, func, std::move(send_params), &t);
     return true;
   }
@@ -233,7 +231,6 @@ class MessageT<Meta, std::tuple<Ins...>, std::tuple<Outs...>>
     }
 
     std::tuple<Message&> t = std::tie(*reply);
-    ConnectMessageAndReply(msg, reply);
     std::tuple<P*> parameter_tuple(parameter);
     base::DispatchToMethod(
         obj, func,

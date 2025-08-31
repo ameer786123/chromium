@@ -14,7 +14,6 @@
 #include <memory>
 #include <utility>
 
-#include "base/android/build_info.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_bytebuffer.h"
@@ -164,10 +163,10 @@ bool GetCodecSpecificDataForAudio(const AudioDecoderConfig& config,
       break;
     }
     case AudioCodec::kAAC: {
-      if (config.aac_extra_data().empty()) {
+      if (config.extra_data().empty()) {
         return false;
       }
-      *output_csd0 = config.aac_extra_data();
+      *output_csd0 = config.extra_data();
       *output_frame_has_adts_header =
           config.profile() != AudioCodecProfile::kXHE_AAC;
       break;
@@ -773,7 +772,7 @@ MediaCodecResult MediaCodecBridgeImpl::QueueSecureInputBuffer(
     if (!data.empty()) {
       ScopedJavaLocalRef<jobject> j_buffer =
           Java_ObtainBlockResult_buffer(env, j_result);
-      base::android::JavaByteBufferToMutableSpan(env, j_buffer.obj())
+      base::android::JavaByteBufferToMutableSpan(env, j_buffer)
           .first(data.size())
           .copy_from_nonoverlapping(data);
     }
@@ -921,7 +920,7 @@ base::span<uint8_t> MediaCodecBridgeImpl::GetInputBuffer(
       Java_MediaCodecBridge_getInputBuffer(env, j_bridge_, input_buffer_index));
   return j_buffer.is_null()
              ? base::span<uint8_t>()
-             : base::android::JavaByteBufferToMutableSpan(env, j_buffer.obj());
+             : base::android::JavaByteBufferToMutableSpan(env, j_buffer);
 }
 
 MediaCodecResult MediaCodecBridgeImpl::CopyFromOutputBuffer(
@@ -934,14 +933,12 @@ MediaCodecResult MediaCodecBridgeImpl::CopyFromOutputBuffer(
   if (j_buffer.is_null()) {
     return {MediaCodecResult::Codes::kError, "Unable to get output buffer."};
   }
-  auto src_span = base::android::JavaByteBufferToSpan(env, j_buffer.obj());
+  auto src_span = base::android::JavaByteBufferToSpan(env, j_buffer);
   dst.copy_from_nonoverlapping(src_span.subspan(offset, dst.size()));
   return OkStatus();
 }
 
-void MediaCodecBridgeImpl::OnBuffersAvailable(
-    JNIEnv* /* env */,
-    const base::android::JavaParamRef<jobject>& /* obj */) {
+void MediaCodecBridgeImpl::OnBuffersAvailable(JNIEnv* /* env */) {
   on_buffers_available_cb_.Run();
 }
 
@@ -1018,7 +1015,7 @@ MediaCodecResult MediaCodecBridgeImpl::QueueInputBlock(
 
   if (!data.empty()) {
     auto j_buffer = Java_ObtainBlockResult_buffer(env, j_result);
-    base::android::JavaByteBufferToMutableSpan(env, j_buffer.obj())
+    base::android::JavaByteBufferToMutableSpan(env, j_buffer)
         .first(data.size())
         .copy_from_nonoverlapping(data);
   }

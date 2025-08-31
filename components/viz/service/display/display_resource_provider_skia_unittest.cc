@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/viz/service/display/display_resource_provider_skia.h"
 
 #include <stddef.h>
@@ -20,6 +15,7 @@
 #include <vector>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/ref_counted.h"
@@ -30,6 +26,7 @@
 #include "components/viz/common/resources/returned_resource.h"
 #include "components/viz/common/resources/transferable_resource.h"
 #include "components/viz/test/test_context_provider.h"
+#include "gpu/command_buffer/client/client_shared_image.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/khronos/GLES2/gl2.h"
@@ -68,11 +65,12 @@ class MockExternalUseClient : public ExternalUseClient {
   MOCK_METHOD1(ReleaseImageContexts,
                gpu::SyncToken(
                    std::vector<std::unique_ptr<ImageContext>> image_contexts));
-  MOCK_METHOD3(
+  MOCK_METHOD4(
       CreateImageContext,
       std::unique_ptr<ImageContext>(const TransferableResource& resource,
                                     bool,
-                                    bool));
+                                    bool,
+                                    uint32_t));
 };
 
 class DisplayResourceProviderSkiaTest : public testing::Test {
@@ -103,15 +101,12 @@ class DisplayResourceProviderSkiaTest : public testing::Test {
   }
 
   TransferableResource CreateResource() {
-    constexpr gfx::Size size(64, 64);
-    gpu::Mailbox gpu_mailbox = gpu::Mailbox::Generate();
     gpu::SyncToken sync_token = GenSyncToken();
     EXPECT_TRUE(sync_token.HasData());
 
-    TransferableResource gl_resource = TransferableResource::MakeGpu(
-        gpu_mailbox, GL_TEXTURE_2D, sync_token, size,
-        SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
-    return gl_resource;
+    return TransferableResource::Make(
+        gpu::ClientSharedImage::CreateForTesting(),
+        TransferableResource::ResourceSource::kTest, sync_token);
   }
 
   gpu::SyncToken GenSyncToken() {
@@ -132,14 +127,7 @@ class DisplayResourceProviderSkiaTest : public testing::Test {
 };
 
 TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUse) {
-  gpu::SyncToken sync_token1(gpu::CommandBufferNamespace::GPU_IO,
-                             gpu::CommandBufferId::FromUnsafeValue(0x123),
-                             0x42);
-  auto mailbox = gpu::Mailbox::Generate();
-  constexpr gfx::Size size(64, 64);
-  TransferableResource gl_resource = TransferableResource::MakeGpu(
-      mailbox, GL_TEXTURE_2D, sync_token1, size, SinglePlaneFormat::kRGBA_8888,
-      false /* is_overlay_candidate */);
+  auto gl_resource = CreateResource();
   ResourceId id1 =
       child_resource_provider_->ImportResource(gl_resource, base::DoNothing());
   std::vector<ReturnedResource> returned_to_child;
@@ -162,23 +150,18 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUse) {
 
   ResourceId parent_id = resource_map[list.front().id];
 
-  auto format = SinglePlaneFormat::kRGBA_8888;
-  auto owned_image_context = std::make_unique<ExternalUseClient::ImageContext>(
-      mailbox, sync_token1, GL_TEXTURE_2D, size, format,
-      /*color_space=*/nullptr, kTopLeft_GrSurfaceOrigin);
-  auto* image_context = owned_image_context.get();
-
-  TransferableResource resource_out;
-  EXPECT_CALL(client_, CreateImageContext(_, _, _))
-      .WillOnce(DoAll(SaveArg<0>(&resource_out),
-                      Return(ByMove(std::move(owned_image_context)))));
+  EXPECT_CALL(client_, CreateImageContext(_, _, _, _))
+      .WillOnce([&](const TransferableResource& resource,
+                    bool maybe_concurrent_reads, bool raw_draw_if_possible,
+                    uint32_t client_id) {
+        return std::make_unique<ExternalUseClient::ImageContext>(resource);
+      });
 
   ExternalUseClient::ImageContext* locked_image_context =
       lock_set_->LockResource(parent_id, /*maybe_concurrent_reads=*/true,
                               /*is_video_plane=*/false);
-  EXPECT_EQ(image_context, locked_image_context);
-  ASSERT_EQ(resource_out.mailbox(), mailbox);
-  ASSERT_TRUE(resource_out.sync_token().HasData());
+  ASSERT_EQ(locked_image_context->mailbox(), gl_resource.mailbox());
+  ASSERT_EQ(locked_image_context->sync_token(), gl_resource.sync_token());
 
   // Don't release while locked.
   EXPECT_CALL(client_, ReleaseImageContexts(_)).Times(0);
@@ -188,15 +171,8 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUse) {
   // The resource should not be returned due to the external use lock.
   EXPECT_EQ(0u, returned_to_child.size());
 
-  gpu::SyncToken sync_token2(gpu::CommandBufferNamespace::GPU_IO,
-                             gpu::CommandBufferId::FromUnsafeValue(0x234),
-                             0x456);
-  sync_token2.SetVerifyFlush();
-
-  gpu::SyncToken sync_token3(gpu::CommandBufferNamespace::GPU_IO,
-                             gpu::CommandBufferId::FromUnsafeValue(0x234),
-                             0x567);
-  sync_token3.SetVerifyFlush();
+  gpu::SyncToken sync_token2 = GenSyncToken();
+  gpu::SyncToken sync_token3 = GenSyncToken();
   // We will get a second release of |parent_id| now that we've released our
   // external lock.
   EXPECT_CALL(client_, ReleaseImageContexts(
@@ -213,14 +189,7 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUse) {
 }
 
 TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUseWebView) {
-  gpu::SyncToken sync_token1(gpu::CommandBufferNamespace::GPU_IO,
-                             gpu::CommandBufferId::FromUnsafeValue(0x123),
-                             0x42);
-  auto mailbox = gpu::Mailbox::Generate();
-  constexpr gfx::Size size(64, 64);
-  TransferableResource gl_resource = TransferableResource::MakeGpu(
-      mailbox, GL_TEXTURE_2D, sync_token1, size, SinglePlaneFormat::kRGBA_8888,
-      false /* is_overlay_candidate */);
+  auto gl_resource = CreateResource();
   ResourceId id1 =
       child_resource_provider_->ImportResource(gl_resource, base::DoNothing());
   std::vector<ReturnedResource> returned_to_child;
@@ -243,23 +212,18 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUseWebView) {
 
   ResourceId parent_id = resource_map[list.front().id];
 
-  auto format = SinglePlaneFormat::kRGBA_8888;
-  auto owned_image_context = std::make_unique<ExternalUseClient::ImageContext>(
-      mailbox, sync_token1, GL_TEXTURE_2D, size, format,
-      /*color_space=*/nullptr, kTopLeft_GrSurfaceOrigin);
-  auto* image_context = owned_image_context.get();
-
-  TransferableResource resource_out;
-  EXPECT_CALL(client_, CreateImageContext(_, _, _))
-      .WillOnce(DoAll(SaveArg<0>(&resource_out),
-                      Return(ByMove(std::move(owned_image_context)))));
+  EXPECT_CALL(client_, CreateImageContext(_, _, _, _))
+      .WillOnce([&](const TransferableResource& resource,
+                    bool maybe_concurrent_reads, bool raw_draw_if_possible,
+                    uint32_t client_id) {
+        return std::make_unique<ExternalUseClient::ImageContext>(resource);
+      });
 
   ExternalUseClient::ImageContext* locked_image_context =
       lock_set_->LockResource(parent_id, /*maybe_concurrent_reads=*/true,
                               /*is_video_plane=*/false);
-  EXPECT_EQ(image_context, locked_image_context);
-  ASSERT_EQ(resource_out.mailbox(), mailbox);
-  ASSERT_TRUE(resource_out.sync_token().HasData());
+  ASSERT_EQ(gl_resource.mailbox(), locked_image_context->mailbox());
+  ASSERT_EQ(gl_resource.sync_token(), locked_image_context->sync_token());
 
   // Don't release while locked.
   EXPECT_CALL(client_, ReleaseImageContexts(_)).Times(0);
@@ -272,15 +236,8 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUseWebView) {
   // Disable access to gpu thread.
   resource_provider_->SetAllowAccessToGPUThread(false);
 
-  gpu::SyncToken sync_token2(gpu::CommandBufferNamespace::GPU_IO,
-                             gpu::CommandBufferId::FromUnsafeValue(0x234),
-                             0x456);
-  sync_token2.SetVerifyFlush();
-
-  gpu::SyncToken sync_token3(gpu::CommandBufferNamespace::GPU_IO,
-                             gpu::CommandBufferId::FromUnsafeValue(0x234),
-                             0x567);
-  sync_token3.SetVerifyFlush();
+  gpu::SyncToken sync_token2 = GenSyncToken();
+  gpu::SyncToken sync_token3 = GenSyncToken();
 
   // Without GPU thread access no ReleaseImageContexts() should happen
   EXPECT_CALL(client_, ReleaseImageContexts(_)).Times(0);
@@ -663,7 +620,8 @@ TEST_F(DisplayResourceProviderSkiaTest,
         tran, base::BindOnce(&MockReleaseCallback::Released,
                              base::Unretained(&release)));
   }
-  std::vector<ResourceId> resource_ids_to_transfer(ids, ids + kTotalResources);
+  std::vector<ResourceId> resource_ids_to_transfer(
+      ids, UNSAFE_TODO(ids + kTotalResources));
 
   std::vector<TransferableResource> list;
   child_resource_provider_->PrepareSendToParent(
@@ -682,7 +640,7 @@ TEST_F(DisplayResourceProviderSkiaTest,
       std::unique_ptr<DisplayResourceProvider::ScopedReadLockSharedImage>>
       read_locks;
   for (size_t i = 0; i < kLockedResources; i++) {
-    ResourceId mapped_resource_id = resource_map[ids[i]];
+    ResourceId mapped_resource_id = resource_map[UNSAFE_TODO(ids[i])];
     lock_set_->LockResource(mapped_resource_id, /*maybe_concurrent_reads=*/true,
                             /*is_video_plane=*/false);
   }
@@ -693,7 +651,7 @@ TEST_F(DisplayResourceProviderSkiaTest,
     DisplayResourceProvider::ScopedBatchReturnResources returner(
         resource_provider_.get());
     resource_provider_->DeclareUsedResourcesFromChild(
-        child_id, ResourceIdSet(ids, ids + kUsedResources));
+        child_id, ResourceIdSet(ids, UNSAFE_TODO(ids + kUsedResources)));
     EXPECT_EQ(0u, returned_to_child.size());
   }
   EXPECT_EQ(1u, returned_to_child.size());
@@ -706,12 +664,14 @@ TEST_F(DisplayResourceProviderSkiaTest,
     DisplayResourceProvider::ScopedBatchReturnResources returner(
         resource_provider_.get());
     resource_provider_->DeclareUsedResourcesFromChild(
-        child_id, ResourceIdSet(ids + kLockedResources, ids + kUsedResources));
+        child_id, ResourceIdSet(UNSAFE_TODO(ids + kLockedResources),
+                                UNSAFE_TODO(ids + kUsedResources)));
     // Can be called multiple times while batching is enabled.  This happens in
     // practice when the same surface is visited using different paths during
     // surface aggregation.
     resource_provider_->DeclareUsedResourcesFromChild(
-        child_id, ResourceIdSet(ids + kLockedResources, ids + kUsedResources));
+        child_id, ResourceIdSet(UNSAFE_TODO(ids + kLockedResources),
+                                UNSAFE_TODO(ids + kUsedResources)));
     lock_set_->UnlockResources(GenSyncToken());
     EXPECT_EQ(0u, returned_to_child.size());
   }

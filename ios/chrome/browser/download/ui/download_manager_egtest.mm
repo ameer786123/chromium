@@ -5,6 +5,8 @@
 #import "base/functional/bind.h"
 #import "base/path_service.h"
 #import "base/test/ios/wait_util.h"
+#import "ios/chrome/browser/download/model/download_app_interface.h"
+#import "ios/chrome/browser/download/ui/download_egtest_util.h"
 #import "ios/chrome/browser/download/ui/download_manager_constants.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
@@ -28,86 +30,15 @@
 using chrome_test_util::ButtonWithAccessibilityLabelId;
 using chrome_test_util::OpenLinkInNewTabButton;
 using chrome_test_util::WebViewMatcher;
+using download::DownloadButton;
+using download::WaitForDownloadButton;
+using download::WaitForOpenInButton;
+using download::WaitForOpenPDFButton;
 
 namespace {
 
-// Matcher for "Download" button on Download Manager UI.
-id<GREYMatcher> DownloadButton() {
-  return grey_accessibilityID(kDownloadManagerDownloadAccessibilityIdentifier);
-}
-
-// Provides downloads landing page with download link.
-std::unique_ptr<net::test_server::HttpResponse> GetResponse(
-    const net::test_server::HttpRequest& request) {
-  auto result = std::make_unique<net::test_server::BasicHttpResponse>();
-  result->set_code(net::HTTP_OK);
-  result->set_content(
-      "<a id='download' href='/download-example?50000'>Download</a>");
-  return result;
-}
-
-// Provides test page for new page downloads with content disposition.
-std::unique_ptr<net::test_server::HttpResponse>
-GetLinkToContentDispositionResponse(
-    const net::test_server::HttpRequest& request) {
-  auto result = std::make_unique<net::test_server::BasicHttpResponse>();
-  result->set_code(net::HTTP_OK);
-  result->set_content(
-      "<a id='pdf' download href='/content-disposition'>PDF</a><br/><a "
-      "id='pdf_new_window' target='_blank' href='/content-disposition'>PDF in "
-      "new tab</a>");
-  return result;
-}
-
-// Provides test page for downloads with content disposition.
-std::unique_ptr<net::test_server::HttpResponse>
-GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
-  auto result = std::make_unique<net::test_server::BasicHttpResponse>();
-  result->set_code(net::HTTP_OK);
-  result->set_content("fakePDFData");
-  result->AddCustomHeader("Content-Type", "application/pdf");
-  result->AddCustomHeader("Content-Disposition",
-                          "attachment; filename=filename.pdf");
-  return result;
-}
-
-// Waits until Open in... button is shown.
-[[nodiscard]] bool WaitForOpenInButton() {
-  // These downloads usually take longer and need a longer timeout.
-  constexpr base::TimeDelta kLongDownloadTimeout = base::Minutes(1);
-  return base::test::ios::WaitUntilConditionOrTimeout(kLongDownloadTimeout, ^{
-    NSError* error = nil;
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::OpenInButton()]
-        assertWithMatcher:grey_interactable()
-                    error:&error];
-    return (error == nil);
-  });
-}
-
-// Waits until `OPEN` button is shown.
-[[nodiscard]] bool WaitForOpenPDFButton() {
-  // These downloads usually take longer and need a longer timeout.
-  constexpr base::TimeDelta kLongDownloadTimeout = base::Minutes(1);
-  return base::test::ios::WaitUntilConditionOrTimeout(kLongDownloadTimeout, ^{
-    NSError* error = nil;
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::OpenPDFButton()]
-        assertWithMatcher:grey_interactable()
-                    error:&error];
-    return (error == nil);
-  });
-}
-
-// Waits until Download button is shown.
-[[nodiscard]] bool WaitForDownloadButton() {
-  return base::test::ios::WaitUntilConditionOrTimeout(
-      base::test::ios::kWaitForPageLoadTimeout, ^{
-        NSError* error = nil;
-        [[EarlGrey selectElementWithMatcher:DownloadButton()]
-            assertWithMatcher:grey_interactable()
-                        error:&error];
-        return (error == nil);
-      });
-}
+// Accessibility ID of the Activity menu.
+NSString* kActivityMenuIdentifier = @"ActivityListView";
 
 }  // namespace
 
@@ -124,15 +55,15 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
 - (void)setUp {
   self.testServer->RegisterRequestHandler(
       base::BindRepeating(&net::test_server::HandlePrefixedRequest, "/",
-                          base::BindRepeating(&GetResponse)));
+                          base::BindRepeating(&download::GetResponse)));
 
   self.testServer->RegisterRequestHandler(base::BindRepeating(
       &net::test_server::HandlePrefixedRequest, "/link-to-content-disposition",
-      base::BindRepeating(&GetLinkToContentDispositionResponse)));
+      base::BindRepeating(&download::GetLinkToContentDispositionResponse)));
 
   self.testServer->RegisterRequestHandler(base::BindRepeating(
       &net::test_server::HandlePrefixedRequest, "/content-disposition",
-      base::BindRepeating(&GetContentDispositionPDFResponse)));
+      base::BindRepeating(&download::GetContentDispositionPDFResponse)));
 
   self.testServer->RegisterRequestHandler(base::BindRepeating(
       &net::test_server::HandlePrefixedRequest, "/download-example",
@@ -153,7 +84,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey waitForWebStateContainingText:"Download"];
   [ChromeEarlGrey tapWebStateElementWithID:@"download"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
 
@@ -169,7 +101,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey waitForWebStateContainingText:"Download"];
   [ChromeEarlGrey tapWebStateElementWithID:@"download"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
 
@@ -182,7 +115,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey waitForWebStateContainingText:"Download"];
   [ChromeEarlGrey tapWebStateElementWithID:@"download"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       assertWithMatcher:grey_notNil()];
 
@@ -205,7 +139,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey waitForWebStateContainingText:"Download"];
   [ChromeEarlGrey tapWebStateElementWithID:@"download"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
 
@@ -245,7 +180,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   // Wait until the new tab is open and switch to that tab.
   [ChromeEarlGrey waitForMainTabCount:2];
   [ChromeEarlGrey selectTabAtIndex:1U];
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ false),
+             @"Download button did not show up");
 
   // Proceed with download.
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
@@ -259,7 +195,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey waitForWebStateContainingText:"Download"];
   [ChromeEarlGrey tapWebStateElementWithID:@"download"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       assertWithMatcher:grey_notNil()];
 
@@ -267,12 +204,19 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
 }
 
 // Tests accessibility on Download Manager UI when download is complete.
+// TODO(crbug.com/438749917): Flaky on iPhone simulators.
 - (void)testAccessibilityOnCompletedDownloadToolbar {
+#if TARGET_IPHONE_SIMULATOR
+  if (![ChromeEarlGrey isIPadIdiom]) {
+    EARL_GREY_TEST_DISABLED(@"Failing on iPhone simulator, crbug.com/438749917");
+  }
+#endif
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/")];
   [ChromeEarlGrey waitForWebStateContainingText:"Download"];
   [ChromeEarlGrey tapWebStateElementWithID:@"download"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
 
@@ -282,7 +226,13 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
 }
 
 // Tests that filename label and "Open in Downloads" button are showing.
+// TODO(crbug.com/438749917): Flaky on iPhone simulators.
 - (void)testVisibleFileNameAndOpenInDownloads {
+#if TARGET_IPHONE_SIMULATOR
+  if (![ChromeEarlGrey isIPadIdiom]) {
+    EARL_GREY_TEST_DISABLED(@"Failing on iPhone simulator, crbug.com/438749917");
+  }
+#endif
   // Apple is hiding UIActivityViewController's contents from the host app on
   // iPad.
   if ([ChromeEarlGrey isIPadIdiom]) {
@@ -293,7 +243,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey waitForWebStateContainingText:"Download"];
   [ChromeEarlGrey tapWebStateElementWithID:@"download"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
 
@@ -305,34 +256,51 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
       verifyTextVisibleInActivitySheetWithID:l10n_util::GetNSString(
                                                  IDS_IOS_OPEN_IN_DOWNLOADS)];
 
-  // Tests filename label.
-  [[EarlGrey
-      selectElementWithMatcher:grey_allOf(grey_text(@"download-example"),
-                                          grey_sufficientlyVisible(), nil)]
-      assertWithMatcher:grey_notNil()];
+  // Scroll up to find the text if necessary. Verify that the filename label is
+  // visible.
+  [[[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kActivityMenuIdentifier)]
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionUp, 100)
+      onElementWithMatcher:grey_text(@"download-example")]
+      assertWithMatcher:grey_sufficientlyVisible()];
 }
 
 // Tests that "Open in..." works if the download ended while waiting in a
 // different tab which also contains a download task.
+// TODO(crbug.com/438749917): Flaky on iPhone simulators.
 - (void)testSwitchTabsAndOpenInDownloads {
+#if TARGET_IPHONE_SIMULATOR
+  if (![ChromeEarlGrey isIPadIdiom]) {
+    EARL_GREY_TEST_DISABLED(@"Failing on iPhone simulator, crbug.com/438749917");
+  }
+#endif
+
   // Apple is hiding UIActivityViewController's contents from the host app on
   // iPad.
   if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Test skipped on iPad.");
   }
 
+  // Clear the already downloaded file in downloads directory.
+  [DownloadAppInterface
+      deleteDownloadsDirectoryFileWithName:@"download-example"];
+  base::test::ios::SpinRunLoopWithMinDelay(
+      base::test::ios::kWaitForFileOperationTimeout);
+
   // Create a download A task in one tab.
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/")];
   [ChromeEarlGrey waitForWebStateContainingText:"Download"];
   [ChromeEarlGrey tapWebStateElementWithID:@"download"];
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
 
   // Go to a second tab and start a download B.
   [ChromeEarlGrey openNewTab];
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/")];
   [ChromeEarlGrey waitForWebStateContainingText:"Download"];
   [ChromeEarlGrey tapWebStateElementWithID:@"download"];
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
 
@@ -349,11 +317,14 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey
       verifyTextVisibleInActivitySheetWithID:l10n_util::GetNSString(
                                                  IDS_IOS_OPEN_IN_DOWNLOADS)];
-  // Tests filename label.
-  [[EarlGrey
-      selectElementWithMatcher:grey_allOf(grey_text(@"download-example"),
-                                          grey_sufficientlyVisible(), nil)]
-      assertWithMatcher:grey_notNil()];
+
+  // Scroll up to find the text if necessary. Verify that the filename label is
+  // visible.
+  [[[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kActivityMenuIdentifier)]
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionUp, 100)
+      onElementWithMatcher:grey_text(@"download-example")]
+      assertWithMatcher:grey_sufficientlyVisible()];
 }
 
 // Tests successful blob download. This also checks that a file can be
@@ -363,7 +334,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey waitForWebStateContainingText:"BlobURL"];
   [ChromeEarlGrey tapWebStateElementWithID:@"blob"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
 
@@ -379,7 +351,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey waitForWebStateContainingText:"PDF"];
   [ChromeEarlGrey tapWebStateElementWithID:@"pdf"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
   if (shouldOpen) {
@@ -398,7 +371,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey waitForWebStateContainingText:"PDF"];
   [ChromeEarlGrey tapWebStateElementWithID:@"pdf"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
   if (shouldOpen) {
@@ -415,7 +389,8 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [ChromeEarlGrey waitForWebStateContainingText:"PDF"];
   [ChromeEarlGrey tapWebStateElementWithID:@"pdf_new_window"];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
 
@@ -441,7 +416,9 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
 
 - (AppLaunchConfiguration)appConfigurationForTestCase {
   AppLaunchConfiguration configuration;
-  configuration.features_enabled.push_back(kDownloadedPDFOpening);
+  // TODO(crbug.com/6602213): Fix the test suite for when Auto-deletion is enabled.
+  configuration.features_disabled.push_back(
+      kDownloadAutoDeletionFeatureEnabled);
   return configuration;
 }
 
@@ -461,7 +438,7 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
 // Tests successful download up to the point where "Open in..." button is
 // presented. EarlGrey does not allow testing "Open in..." dialog, because it
 // is run in a separate process. Performs download in Incognito.
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 // TODO(crbug.com/40678419): Test consistently failing on device.
 #define MAYBE_testSuccessfulDownloadInIncognito \
   DISABLED_testSuccessfulDownloadInIncognito
@@ -527,11 +504,12 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
 
 // Tests that a pdf that is displayed in the web view can be downloaded.
 // Only valid with "Save to drive" enabled.
-// TDOO(crbug.com/343971371): Enable after fixing flakiness.
+// TODO(crbug.com/416603589): Fix and re-enable this test.
 - (void)FLAKY_testDownloadDisplayedPDF {
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/two_pages.pdf")];
   [ChromeEarlGrey waitForPageToFinishLoading];
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  GREYAssert(WaitForDownloadButton(/*loading*/ true),
+             @"Download button did not show up");
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:grey_scrollInDirection(kGREYDirectionDown, 150)];
 
@@ -549,7 +527,15 @@ GetContentDispositionPDFResponse(const net::test_server::HttpRequest& request) {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:grey_scrollToContentEdge(kGREYContentEdgeTop)];
 
-  GREYAssert(WaitForDownloadButton(), @"Download button did not show up");
+  BOOL barAppeared = WaitForDownloadButton(/*loading*/ false);
+  if (!barAppeared) {
+    // Scrolling to top is sometimes not wnough to exit fullscreen. Give a
+    // second swipe to the bottom.
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+        performAction:GREYSwipeFastInDirection(kGREYDirectionDown)];
+    GREYAssert(WaitForDownloadButton(/*loading*/ false),
+               @"Download button did not show up");
+  }
   [[EarlGrey selectElementWithMatcher:DownloadButton()]
       performAction:grey_tap()];
 

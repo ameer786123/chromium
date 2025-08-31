@@ -18,7 +18,6 @@
 #import "components/autofill/ios/browser/autofill_java_script_feature.h"
 #import "components/autofill/ios/browser/fake_autofill_agent.h"
 #import "components/autofill/ios/browser/form_suggestion.h"
-#import "components/autofill/ios/browser/test_autofill_client_ios.h"
 #import "components/autofill/ios/form_util/form_activity_params.h"
 #import "components/autofill/ios/form_util/form_activity_tab_helper.h"
 #import "components/autofill/ios/form_util/test_form_activity_tab_helper.h"
@@ -37,10 +36,10 @@
 #import "ios/web/public/test/fakes/fake_web_frames_manager.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
 #import "ios/web/public/test/web_test.h"
-#import "ios/web_view/internal/autofill/cwv_autofill_controller+testing.h"
 #import "ios/web_view/internal/autofill/cwv_autofill_controller_internal.h"
 #import "ios/web_view/internal/autofill/cwv_autofill_profile_internal.h"
 #import "ios/web_view/internal/autofill/cwv_autofill_suggestion_internal.h"
+#import "ios/web_view/internal/autofill/cwv_credit_card_internal.h"
 #import "ios/web_view/internal/autofill/web_view_autofill_client_ios.h"
 #import "ios/web_view/internal/passwords/web_view_password_manager_client.h"
 #import "ios/web_view/internal/web_view_browser_state.h"
@@ -107,14 +106,14 @@ class CWVAutofillControllerTest : public web::WebTest {
         &web_state_, password_controller_, password_manager.get());
     password_manager_client_ = password_manager_client.get();
 
-    auto autofill_client = std::make_unique<
-        autofill::WithFakedFromWebState<autofill::WebViewAutofillClientIOS>>(
-        &pref_service_, &personal_data_manager_, &autocomplete_history_manager_,
-        &web_state_, /*bridge=*/nil, /*identity_manager=*/nullptr,
-        &strike_database_, &sync_service_, /*log_router=*/nullptr);
+    // Attach a custom WebViewAutofillClientIOS instance.
+    autofill::WebViewAutofillClientIOS::CreateForWebState(
+        &web_state_, /*bridge=*/nil, &pref_service_, &personal_data_manager_,
+        &autocomplete_history_manager_,
+        /*identity_manager=*/nullptr, &strike_database_, &sync_service_,
+        /*log_router=*/nullptr);
     autofill_controller_ = [[CWVAutofillController alloc]
              initWithWebState:&web_state_
-        autofillClientForTest:std::move(autofill_client)
                 autofillAgent:autofill_agent_
               passwordManager:std::move(password_manager)
         passwordManagerClient:std::move(password_manager_client)
@@ -190,10 +189,10 @@ TEST_F(CWVAutofillControllerTest, FetchProfileSuggestions) {
                                                 frameID:frame_id_
                                       completionHandler:fetch_completion];
 
-  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForActionTimeout, ^bool {
-    base::RunLoop().RunUntilIdle();
-    return fetch_completion_was_called;
-  }));
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForActionTimeout,
+                                          /*run_message_loop=*/true, ^bool {
+                                            return fetch_completion_was_called;
+                                          }));
 
   EXPECT_OCMOCK_VERIFY(password_controller_);
 }
@@ -240,10 +239,10 @@ TEST_F(CWVAutofillControllerTest, FetchPasswordSuggestions) {
                                                 frameID:frame_id_
                                       completionHandler:fetch_completion];
 
-  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForActionTimeout, ^bool {
-    base::RunLoop().RunUntilIdle();
-    return fetch_completion_was_called;
-  }));
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForActionTimeout,
+                                          /*run_message_loop=*/true, ^bool {
+                                            return fetch_completion_was_called;
+                                          }));
 
   EXPECT_OCMOCK_VERIFY(password_controller_);
 }
@@ -270,15 +269,34 @@ TEST_F(CWVAutofillControllerTest, AcceptSuggestion) {
                          accept_completion_was_called = YES;
                        }];
 
-  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForActionTimeout, ^bool {
-    base::RunLoop().RunUntilIdle();
-    return accept_completion_was_called;
-  }));
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForActionTimeout,
+                                          /*run_message_loop=*/true, ^bool {
+                                            return accept_completion_was_called;
+                                          }));
   EXPECT_NSEQ(
       form_suggestion,
       [autofill_agent_ selectedSuggestionForFormName:kTestFormName
                                      fieldIdentifier:kTestFieldIdentifier
                                              frameID:frame_id_]);
+}
+
+// Tests CWVAutofillController accepts credit card as suggestion.
+TEST_F(CWVAutofillControllerTest, AcceptCreditCardAsSuggestion) {
+  autofill::CreditCard credit_card = autofill::test::GetCreditCard();
+  CWVCreditCard* cwv_credit_card =
+      [[CWVCreditCard alloc] initWithCreditCard:credit_card];
+
+  __block BOOL accept_completion_was_called = NO;
+  [autofill_controller_ acceptCreditCardAsSuggestion:cwv_credit_card
+                                             atIndex:0
+                                   completionHandler:^{
+                                     accept_completion_was_called = YES;
+                                   }];
+
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForActionTimeout,
+                                          /*run_message_loop=*/true, ^bool {
+                                            return accept_completion_was_called;
+                                          }));
 }
 
 // Tests CWVAutofillController delegate focus callback is invoked.
@@ -393,24 +411,28 @@ TEST_F(CWVAutofillControllerTest, SubmitCallback) {
   [[delegate expect] autofillController:autofill_controller_
                   didSubmitFormWithName:kTestFormName
                                 frameID:frame_id_
-                          userInitiated:YES];
+                          userInitiated:YES
+                         perfectFilling:YES];
   auto frame = web::FakeWebFrame::CreateMainWebFrame(GURL());
   autofill::FormData test_form_data;
   test_form_data.set_name(base::SysNSStringToUTF16(kTestFormName));
 
   form_activity_tab_helper_->DocumentSubmitted(
       /*sender_frame*/ frame.get(), /*form_data=*/test_form_data,
-      /*user_initiated=*/true);
+      /*user_initiated=*/true,
+      /*perfect_filling=*/true);
 
   [[delegate expect] autofillController:autofill_controller_
                   didSubmitFormWithName:kTestFormName
                                 frameID:frame_id_
-                          userInitiated:NO];
+                          userInitiated:NO
+                         perfectFilling:NO];
 
   form_activity_tab_helper_->DocumentSubmitted(
       /*sender_frame*/ frame.get(),
       /*form_data=*/test_form_data,
-      /*user_initiated=*/false);
+      /*user_initiated=*/false,
+      /*perfect_filling=*/false);
 
   [delegate verify];
 }

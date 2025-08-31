@@ -9,8 +9,11 @@ import static android.view.KeyEvent.META_ALT_ON;
 import static android.view.KeyEvent.META_CTRL_ON;
 import static android.view.KeyEvent.META_SHIFT_ON;
 
+import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
+import static androidx.test.espresso.matcher.RootMatchers.isPlatformPopup;
 import static androidx.test.espresso.matcher.ViewMatchers.hasDescendant;
 import static androidx.test.espresso.matcher.ViewMatchers.isDescendantOfA;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
@@ -38,6 +41,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.test.espresso.UiController;
 import androidx.test.espresso.ViewAction;
+import androidx.test.espresso.ViewInteraction;
 import androidx.test.espresso.action.EspressoKey;
 import androidx.test.filters.MediumTest;
 
@@ -53,7 +57,6 @@ import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.R;
@@ -82,9 +85,10 @@ import java.util.stream.IntStream;
 @Batch(Batch.PER_CLASS)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @EnableFeatures(ChromeFeatureList.ANDROID_BOOKMARK_BAR)
-@Restriction({DeviceFormFactor.TABLET, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
+@Restriction({DeviceFormFactor.TABLET_OR_DESKTOP, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
 @RunWith(ChromeJUnit4ClassRunner.class)
 public class BookmarkBarTest {
+
     @Rule
     public AutoResetCtaTransitTestRule mCtaTestRule =
             ChromeTransitTestRules.autoResetCtaActivityRule();
@@ -97,7 +101,7 @@ public class BookmarkBarTest {
     public void setUp() {
         mCtaTestRule.startOnBlankPage();
 
-        BookmarkBarUtils.setFeatureAllowedForTesting(true);
+        BookmarkBarUtils.setActivityStateBookmarkBarCompatibleForTesting(true);
         ThreadUtils.runOnUiThreadBlocking(() -> setBookmarkBarSetting(/* enabled= */ true));
         waitForBookmarkBarVisibility(/* visible= */ true);
         BookmarkTestUtil.waitForBookmarkModelLoaded();
@@ -120,10 +124,9 @@ public class BookmarkBarTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "Flaky, crbug.com/409610521")
     public void testOnAllBookmarksButtonClick() {
-        onViewWaiting(bookmarkBarItemWithText("All Bookmarks")).perform(click());
-        onViewWaiting(bookmarkManagerToolbarWithText("Bookmarks")).check(matches(isDisplayed()));
+        onViewDisplayed(bookmarkBarItemWithText("All Bookmarks")).perform(click());
+        onViewDisplayed(bookmarkManagerToolbarWithText("Bookmarks"));
     }
 
     @Test
@@ -150,7 +153,7 @@ public class BookmarkBarTest {
         waitForBookmarkBarVisibility(/* visible= */ false);
 
         // Case: Toggle w/ feature disallowed.
-        BookmarkBarUtils.setFeatureAllowedForTesting(false);
+        BookmarkBarUtils.setActivityStateBookmarkBarCompatibleForTesting(false);
         ThreadUtils.runOnUiThreadBlocking(() -> activity.onKeyDown(evt.getKeyCode(), evt));
         waitForBookmarkBarVisibility(/* visible= */ false);
     }
@@ -161,7 +164,18 @@ public class BookmarkBarTest {
         final String title = "Folder";
         mItemIds = List.of(addFolder(title));
         onViewWaiting(bookmarkBarItemWithText(title)).perform(click());
-        onViewWaiting(bookmarkManagerToolbarWithText(title)).check(matches(isDisplayed()));
+
+        // Check that the Bookmark Manager toolbar does not appear anymore when the folder is
+        // clicked.
+        onView(withClassName(endsWith("BookmarkToolbar"))).check(doesNotExist());
+
+        // When the folder is empty, the list should not be displayed.
+        onView(withId(R.id.menu_list)).inRoot(isPlatformPopup()).check(matches(not(isDisplayed())));
+
+        // The empty view should be displayed.
+        onView(withText(R.string.bookmarks_bar_empty_message))
+                .inRoot(isPlatformPopup())
+                .check(matches(isDisplayed()));
     }
 
     @Test
@@ -232,12 +246,12 @@ public class BookmarkBarTest {
         waitForBookmarkBarVisibility(/* visible= */ true);
 
         // Case: Configuration changed to disallow feature.
-        BookmarkBarUtils.setFeatureAllowedForTesting(false);
+        BookmarkBarUtils.setActivityStateBookmarkBarCompatibleForTesting(false);
         ThreadUtils.runOnUiThreadBlocking(this::notifyConfigurationChanged);
         waitForBookmarkBarVisibility(/* visible= */ false);
 
         // Case: Configuration changed to allow feature.
-        BookmarkBarUtils.setFeatureAllowedForTesting(true);
+        BookmarkBarUtils.setActivityStateBookmarkBarCompatibleForTesting(true);
         ThreadUtils.runOnUiThreadBlocking(this::notifyConfigurationChanged);
         waitForBookmarkBarVisibility(/* visible= */ true);
     }
@@ -252,8 +266,10 @@ public class BookmarkBarTest {
                         .map(Optional::get)
                         .collect(Collectors.toList());
         onViewWaiting(bookmarkBarOverflowButton()).check(matches(isDisplayed())).perform(click());
-        onViewWaiting(bookmarkManagerToolbarWithText("Bookmarks bar"))
-                .check(matches(isDisplayed()));
+        // The full-screen Bookmark Manager should not appear.
+        onView(bookmarkManagerToolbarWithText("Bookmarks bar")).check(doesNotExist());
+        // Check that a popup menu list is displayed.
+        onView(withId(R.id.menu_list)).inRoot(isPlatformPopup()).check(matches(isDisplayed()));
     }
 
     private @Nullable BookmarkId addBookmark(int index, @NonNull String title, @NonNull GURL url)
@@ -335,12 +351,12 @@ public class BookmarkBarTest {
     }
 
     private @Nullable Tab getCurrentTab() {
-        return mCtaTestRule.getActivity().getActivityTab();
+        return mCtaTestRule.getActivityTab();
     }
 
     private @Nullable Tab getLastTab() {
         final var tabModel = mCtaTestRule.getActivity().getCurrentTabModel();
-        return tabModel.getTabAt(tabModel.getCount() - 1);
+        return ThreadUtils.runOnUiThreadBlocking(() -> tabModel.getTabAt(tabModel.getCount() - 1));
     }
 
     private @NonNull GURL getTestServerUrl(@NonNull String relativeUrl) {
@@ -351,6 +367,10 @@ public class BookmarkBarTest {
         final var activity = mCtaTestRule.getActivity();
         final var newConfig = new Configuration(activity.getSavedConfigurationForTesting());
         activity.onConfigurationChanged(newConfig);
+    }
+
+    private ViewInteraction onViewDisplayed(@NonNull Matcher<View> viewMatcher) {
+        return onViewWaiting(allOf(viewMatcher, isDisplayed()));
     }
 
     private <T> @NonNull Optional<T> optionalOfThrowable(@NonNull Callable<T> callable) {
@@ -381,7 +401,7 @@ public class BookmarkBarTest {
     private void setBookmarkBarSetting(boolean enabled) {
         final var activity = mCtaTestRule.getActivity();
         final var profile = activity.getProfileProviderSupplier().get().getOriginalProfile();
-        BookmarkBarUtils.setSettingEnabled(profile, enabled);
+        BookmarkBarUtils.setUserPrefsShowBookmarksBar(profile, enabled);
     }
 
     private void waitForBookmarkBarVisibility(boolean visible) {
@@ -396,8 +416,15 @@ public class BookmarkBarTest {
                         Criteria.checkThat(view.isLaidOut(), is(true));
                         Criteria.checkThat(viewStub, is(nullValue()));
                     } else {
-                        Criteria.checkThat(view, is(nullValue()));
-                        Criteria.checkThat(viewStub, is(notNullValue()));
+                        // When the BookmarkBar is not visible, it can be that it has not been
+                        // constructed a first time, or it was constructed and is now hidden.
+                        if (viewStub == null) {
+                            // A null viewStub should mean the view is non-null but GONE.
+                            Criteria.checkThat(view, is(notNullValue()));
+                            Criteria.checkThat(view.getVisibility(), is(View.GONE));
+                        } else {
+                            Criteria.checkThat(view, is(nullValue()));
+                        }
                     }
                 });
     }

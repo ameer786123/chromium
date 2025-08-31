@@ -4,6 +4,8 @@
 
 package org.chromium.components.payments;
 
+import org.chromium.components.payments.MockPackageManagerDelegate.PackageInfoState;
+
 /**
  * A mock Android payment app, used for testing, together with {@link MockPaymentAppInstaller}. See
  * the {@link MockPaymentAppInstaller} class comment to see how this mock app can be installed.
@@ -17,6 +19,7 @@ package org.chromium.components.payments;
  *           .setMethod("https://payments.test/web-pay")
  *           .setSignature("AABBCCDDEEFF001122334455")
  *           .setSha256CertificateFingerprint("79:5C:8E:4D:57:7B:76:49:3A:0A:0B:93:B9:BE")
+ *           .setPackageInfoState(PackageInfoState.ONE_VALID_SIGNATURE)
  *           .setHandlesShippingAddress()
  *           .setHandlesContactInformation();
  * </pre>
@@ -27,8 +30,10 @@ public class MockPaymentApp {
     private String mMethod;
     private String mSignature;
     private String mSha256CertificateFingerprint;
+    private PackageInfoState mPackageInfoState = PackageInfoState.ONE_VALID_SIGNATURE;
     private boolean mHandlesShippingAddress;
     private boolean mHandlesContactInformation;
+    private boolean mHasReadyToPayService;
 
     /**
      * @param label The app's user visible label, e.g., "Test Payments App". Must be non-empty for
@@ -84,6 +89,15 @@ public class MockPaymentApp {
     }
 
     /**
+     * @param packageInfostate The state of the package info and the signature in it.
+     * @return A reference to this {@link MockPaymentApp} instance.
+     */
+    public MockPaymentApp setPackageInfoState(PackageInfoState packageInfoState) {
+        mPackageInfoState = packageInfoState;
+        return this;
+    }
+
+    /**
      * Enables this mock payment app to provide a shipping address.
      *
      * @return A reference to this {@link MockPaymentApp} instance.
@@ -100,6 +114,15 @@ public class MockPaymentApp {
      */
     public MockPaymentApp setHandlesContactInformation() {
         mHandlesContactInformation = true;
+        return this;
+    }
+
+    /**
+     * @param hasReadyToPayService Whether this mock payment app has an IS_READY_TO_PAY service.
+     * @return A reference to this {@link MockPaymentApp} instance.
+     */
+    public MockPaymentApp setHasReadyToPayService(boolean hasReadyToPayService) {
+        mHasReadyToPayService = hasReadyToPayService;
         return this;
     }
 
@@ -139,6 +162,13 @@ public class MockPaymentApp {
     }
 
     /**
+     * @return The state of the package info and the signature in it.
+     */
+    public PackageInfoState getPackageInfoState() {
+        return mPackageInfoState;
+    }
+
+    /**
      * @return Whether this mock payment app can provide a shipping address.
      */
     public boolean getHandlesShippingAddress() {
@@ -150,5 +180,12 @@ public class MockPaymentApp {
      */
     public boolean getHandlesContactInformation() {
         return mHandlesContactInformation;
+    }
+
+    /**
+     * @return Whether this mock payment app has an IS_READY_TO_PAY service.
+     */
+    public boolean hasReadyToPayService() {
+        return mHasReadyToPayService;
     }
 }

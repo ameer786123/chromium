@@ -26,7 +26,6 @@
    "file_handler_approval_state": "kRequiresPrompt",
    "file_handlers": [  ],
    "first_install_time": "1601-01-01 00:00:00.000000 UTC",
-   "generated_icon_fix": null,
    "install_state": "2",
    "is_diy_app": false,
    "is_from_sync_and_pending_installation": false,
@@ -58,13 +57,17 @@
    "shortcuts_menu_item_infos": [  ],
    "sources": [  ],
    "start_url": "",
+   "stored_trusted_icon_sizes": {
+      "ANY": [  ],
+      "MASKABLE": [  ]
+   },
    "supported_links_offer_dismiss_count": 0,
    "supported_links_offer_ignore_count": 0,
    "sync_proto": {
    },
    "tab_strip": null,
    "theme_color": "none",
-   "update_token": null,
+   "trusted_icons": [  ],
    "user_link_capturing_preference": "0",
    "was_shortcut_app": false,
    "window_controls_overlay_enabled": false

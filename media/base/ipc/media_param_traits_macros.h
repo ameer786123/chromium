@@ -5,11 +5,10 @@
 #ifndef MEDIA_BASE_IPC_MEDIA_PARAM_TRAITS_MACROS_H_
 #define MEDIA_BASE_IPC_MEDIA_PARAM_TRAITS_MACROS_H_
 
-#include "ipc/ipc_message_macros.h"
+#include "ipc/param_traits_macros.h"
 #include "media/base/audio_codecs.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/buffering_state.h"
-#include "media/base/cdm_config.h"
 #include "media/base/cdm_promise.h"
 #include "media/base/channel_layout.h"
 #include "media/base/container_names.h"
@@ -39,6 +38,11 @@
 #if BUILDFLAG(ENABLE_MEDIA_DRM_STORAGE)
 #include "media/base/media_drm_key_type.h"
 #endif  // BUILDFLAG(ENABLE_MEDIA_DRM_STORAGE)
+
+// Note that this file historically used the same value as
+// ipc/ipc_message_macros.h, and not `COMPONENT_EXPORT(MEDIA)`.
+#undef IPC_MESSAGE_EXPORT
+#define IPC_MESSAGE_EXPORT
 
 // Enum traits.
 
@@ -160,13 +164,6 @@ IPC_ENUM_TRAITS_VALIDATE(
             media::VideoColorSpace::GetMatrixID(static_cast<int>(value))))
 
 // Struct traits.
-
-IPC_STRUCT_TRAITS_BEGIN(media::CdmConfig)
-  IPC_STRUCT_TRAITS_MEMBER(key_system)
-  IPC_STRUCT_TRAITS_MEMBER(allow_distinctive_identifier)
-  IPC_STRUCT_TRAITS_MEMBER(allow_persistent_state)
-  IPC_STRUCT_TRAITS_MEMBER(use_hw_secure_codecs)
-IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(media::MediaLogRecord)
   IPC_STRUCT_TRAITS_MEMBER(id)

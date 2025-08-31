@@ -15,7 +15,6 @@ import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.view.DisplayCutout;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.WindowInsets;
 
 import androidx.test.filters.SmallTest;
@@ -58,11 +57,8 @@ public class AwDisplayCutoutControllerTest {
     @Mock private View mView;
     @Mock private View mAnotherView;
 
-    @Mock private ViewGroup mParentView;
-    @Mock private ViewGroup mRootView;
-
     private View.OnApplyWindowInsetsListener mListener;
-    private int[] mLocationOnScreen = {0, 0};
+    private final int[] mLocationOnScreen = {0, 0};
     private int mViewWidth;
     private int mViewHeight;
 
@@ -150,6 +146,9 @@ public class AwDisplayCutoutControllerTest {
 
         // Note that DIP of 2.0 is applied, so the values are halved.
         mInOrder.verify(mDelegate).setDisplayCutoutSafeArea(eq(new Insets(10, 20, 30, 40)));
+        // Every time the display cutout safe area is changed, we should notify that IME insets have
+        // changed.
+        mInOrder.verify(mDelegate).bottomImeInsetChanged();
     }
 
     @Test
@@ -164,6 +163,9 @@ public class AwDisplayCutoutControllerTest {
 
         // Note that DIP of 2.0 is applied, so the values are halved.
         mInOrder.verify(mDelegate).setDisplayCutoutSafeArea(eq(new Insets(10, 20, 30, 40)));
+        // Every time the display cutout safe area is changed, we should notify that IME insets have
+        // changed.
+        mInOrder.verify(mDelegate).bottomImeInsetChanged();
     }
 
     @Test
@@ -178,6 +180,9 @@ public class AwDisplayCutoutControllerTest {
 
         // Note that DIP of 2.0 is applied, so the values are halved.
         mInOrder.verify(mDelegate).setDisplayCutoutSafeArea(eq(new Insets(10, 20, 30, 40)));
+        // Every time the display cutout safe area is changed, we should notify that IME insets have
+        // changed.
+        mInOrder.verify(mDelegate).bottomImeInsetChanged();
     }
 
     @Test

@@ -15,13 +15,13 @@
 #include "base/trace_event/trace_event.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_glitch_info.h"
+#include "media/base/audio_sample_types.h"
 #include "third_party/blink/public/platform/modules/webrtc/webrtc_logging.h"
 
 namespace blink {
 
-BASE_FEATURE(kPropagateEnabledEventForWebRtcAudioTrack,
-             "PropagateEnabledEventForWebRtcAudioTrack",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(PropagateEnabledEventForWebRtcAudioTrack,
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 namespace {
 // Used as an identifier for the down-casters.

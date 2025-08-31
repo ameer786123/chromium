@@ -44,8 +44,8 @@ class Cursor : public blink::mojom::IDBCursor {
   // blink::mojom::IDBCursor implementation
   void Advance(uint32_t count,
                blink::mojom::IDBCursor::AdvanceCallback callback) override;
-  void Continue(const blink::IndexedDBKey& key,
-                const blink::IndexedDBKey& primary_key,
+  void Continue(blink::IndexedDBKey key,
+                blink::IndexedDBKey primary_key,
                 blink::mojom::IDBCursor::ContinueCallback callback) override;
   void Prefetch(int32_t count,
                 blink::mojom::IDBCursor::PrefetchCallback callback) override;
@@ -69,8 +69,8 @@ class Cursor : public blink::mojom::IDBCursor {
          blink::mojom::IDBTaskType task_type,
          base::WeakPtr<Transaction> transaction);
 
-  Status ContinueOperation(std::unique_ptr<blink::IndexedDBKey> key,
-                           std::unique_ptr<blink::IndexedDBKey> primary_key,
+  Status ContinueOperation(blink::IndexedDBKey key,
+                           blink::IndexedDBKey primary_key,
                            blink::mojom::IDBCursor::ContinueCallback callback,
                            Transaction* transaction);
   Status AdvanceOperation(uint32_t count,
@@ -90,8 +90,12 @@ class Cursor : public blink::mojom::IDBCursor {
 
   // Must be destroyed before transaction_.
   std::unique_ptr<BackingStore::Cursor> cursor_;
-  // Must be destroyed before transaction_.
-  std::unique_ptr<BackingStore::Cursor> saved_cursor_;
+
+  // Normally, `cursor_` is immediately destroyed when it reaches the end of its
+  // range since it cannot be used any more. But if this happens during a
+  // prefetch operation, it can be reset to its last-saved position, making it
+  // usable again. Hence, use a flag to keep track of this only during prefetch.
+  bool reached_end_during_prefetch_ = false;
 
   bool closed_ = false;
 

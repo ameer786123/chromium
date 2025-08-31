@@ -64,7 +64,7 @@ import java.util.List;
 @Batch(Batch.PER_CLASS)
 public class BookmarkFolderPickerRenderTest {
     @ClassParameter
-    private static List<ParameterSet> sClassParams =
+    private static final List<ParameterSet> sClassParams =
             Arrays.asList(
                     new ParameterSet().value(true, true).name("VisualRow_NightModeEnabled"),
                     new ParameterSet().value(true, false).name("VisualRow_NightModeDisabled"),
@@ -80,7 +80,7 @@ public class BookmarkFolderPickerRenderTest {
     @Rule
     public final ChromeRenderTestRule mRenderTestRule =
             ChromeRenderTestRule.Builder.withPublicCorpus()
-                    .setRevision(10)
+                    .setRevision(11)
                     .setBugComponent(ChromeRenderTestRule.Component.UI_BROWSER_BOOKMARKS)
                     .build();
 

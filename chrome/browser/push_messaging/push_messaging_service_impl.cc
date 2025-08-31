@@ -31,13 +31,11 @@
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/push_messaging/push_messaging_app_identifier.h"
-#include "chrome/browser/push_messaging/push_messaging_constants.h"
-#include "chrome/browser/push_messaging/push_messaging_features.h"
 #include "chrome/browser/push_messaging/push_messaging_service_factory.h"
 #include "chrome/browser/push_messaging/push_messaging_unsubscribed_entry.h"
-#include "chrome/browser/push_messaging/push_messaging_utils.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/common/buildflags.h"
+#include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -53,6 +51,9 @@
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+#include "components/push_messaging/push_messaging_constants.h"
+#include "components/push_messaging/push_messaging_features.h"
+#include "components/push_messaging/push_messaging_utils.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/child_process_host.h"
 #include "content/public/browser/devtools_background_services_context.h"
@@ -188,6 +189,10 @@ PendingMessage::PendingMessage(PendingMessage&& other) = default;
 PendingMessage& PendingMessage::operator=(PendingMessage&& other) = default;
 PendingMessage::~PendingMessage() = default;
 
+GURL CreateEndpointFromChromeChannel(const std::string& subscription_id) {
+  return push_messaging::CreateEndpoint(chrome::GetChannel(), subscription_id);
+}
+
 }  // namespace
 
 // static
@@ -260,11 +265,14 @@ void PushMessagingServiceImpl::UnexpectedChange(
   }
 }
 
-PushMessagingServiceImpl::PushMessagingServiceImpl(Profile* profile)
+PushMessagingServiceImpl::PushMessagingServiceImpl(
+    Profile* profile,
+    scoped_refptr<safe_browsing::SafeBrowsingDatabaseManager> database_manager)
     : profile_(profile),
       push_subscription_count_(0),
       pending_push_subscription_count_(0),
-      notification_manager_(profile) {
+      notification_manager_(profile),
+      database_manager_(database_manager) {
   DCHECK(profile);
   HostContentSettingsMapFactory::GetForProfile(profile_)->AddObserver(this);
 
@@ -524,11 +532,35 @@ void PushMessagingServiceImpl::
         std::move(deliver_message_callback));
     return;
   }
+  if (database_manager_) {
+    database_manager_->CheckUrlForHighConfidenceAllowlist(
+        origin,
+        base::BindOnce(
+            &PushMessagingServiceImpl::DidCheckHighConfidenceAllowlist,
+            weak_factory_.GetWeakPtr(), origin, service_worker_registration_id,
+            message.message_id, payload, std::move(deliver_message_callback)));
+  } else {
+    // Dispatch the message to the appropriate Service Worker.
+    profile_->DeliverPushMessage(origin, service_worker_registration_id,
+                                 message.message_id, payload,
+                                 /* record_network_requests= */ false,
+                                 std::move(deliver_message_callback));
+  }
+}
 
-  // Dispatch the message to the appropriate Service Worker.
-  profile_->DeliverPushMessage(origin, service_worker_registration_id,
-                               message.message_id, payload,
-                               std::move(deliver_message_callback));
+void PushMessagingServiceImpl::DidCheckHighConfidenceAllowlist(
+    const GURL& origin,
+    int64_t service_worker_registration_id,
+    const std::string& message_id,
+    std::optional<std::string> payload,
+    base::OnceCallback<void(blink::mojom::PushEventStatus)> callback,
+    bool allowlisted,
+    std::optional<safe_browsing::SafeBrowsingDatabaseManager::
+                      HighConfidenceAllowlistCheckLoggingDetails>
+        logging_details) {
+  profile_->DeliverPushMessage(
+      origin, service_worker_registration_id, message_id, payload,
+      /*record_network_requests=*/!allowlisted, std::move(callback));
 }
 
 void PushMessagingServiceImpl::DeliverMessageCallback(
@@ -832,12 +864,21 @@ void PushMessagingServiceImpl::SubscribeFromDocument(
                      render_frame_id));
 }
 
+void PushMessagingServiceImpl::SetSubscribeFromWorkerCallback(
+    base::RepeatingCallback<void(int64_t)> callback) {
+  subscribe_from_worker_callback_ = callback;
+}
+
 void PushMessagingServiceImpl::SubscribeFromWorker(
     const GURL& requesting_origin,
     int64_t service_worker_registration_id,
     int render_process_id,
     blink::mojom::PushSubscriptionOptionsPtr options,
     RegisterCallback register_callback) {
+  if (subscribe_from_worker_callback_) {
+    subscribe_from_worker_callback_->Run(service_worker_registration_id);
+  }
+
   render_process_id_ = render_process_id;
   PushMessagingAppIdentifier app_identifier =
       PushMessagingAppIdentifier::FindByServiceWorker(
@@ -869,10 +910,12 @@ void PushMessagingServiceImpl::SubscribeFromWorker(
         app_identifier.origin());
   }
 
-  DoSubscribe(std::move(app_identifier), std::move(options),
-              std::move(register_callback),
-              /* render_process_id= */ -1, /* render_frame_id= */ -1,
-              blink::mojom::PermissionStatus::GRANTED);
+  DoSubscribe(
+      std::move(app_identifier), std::move(options),
+      std::move(register_callback),
+      /* render_process_id= */ -1, /* render_frame_id= */ -1,
+      content::PermissionResult(blink::mojom::PermissionStatus::GRANTED,
+                                content::PermissionStatusSource::UNSPECIFIED));
 }
 
 blink::mojom::PermissionStatus PushMessagingServiceImpl::GetPermissionStatus(
@@ -986,8 +1029,8 @@ void PushMessagingServiceImpl::DoSubscribe(
     RegisterCallback register_callback,
     int render_process_id,
     int render_frame_id,
-    blink::mojom::PermissionStatus permission_status) {
-  if (permission_status != blink::mojom::PermissionStatus::GRANTED) {
+    content::PermissionResult permission_result) {
+  if (permission_result.status != blink::mojom::PermissionStatus::GRANTED) {
     SubscribeEndWithError(
         std::move(register_callback),
         blink::mojom::PushRegistrationStatus::PERMISSION_DENIED);
@@ -1080,7 +1123,7 @@ void PushMessagingServiceImpl::DidSubscribe(
 
   switch (result) {
     case InstanceID::SUCCESS: {
-      const GURL endpoint = push_messaging::CreateEndpoint(subscription_id);
+      const GURL endpoint = CreateEndpointFromChromeChannel(subscription_id);
 
       // Make sure that this subscription has associated encryption keys prior
       // to returning it to the developer - they'll need this information in
@@ -1158,7 +1201,7 @@ void PushMessagingServiceImpl::GetSubscriptionInfo(
     return;
   }
 
-  const GURL endpoint = push_messaging::CreateEndpoint(subscription_id);
+  const GURL endpoint = CreateEndpointFromChromeChannel(subscription_id);
   const std::string& app_id = app_identifier.app_id();
   std::optional<base::Time> expiration_time = app_identifier.expiration_time();
 
@@ -1473,7 +1516,10 @@ void PushMessagingServiceImpl::OnContentSettingChanged(
 
   std::vector<PushMessagingUnsubscribedEntry> unsubscribed_entries;
   if (base::FeatureList::IsEnabled(
-          features::kPushSubscriptionChangeEventOnResubscribe)) {
+          features::kPushSubscriptionChangeEventOnResubscribe) &&
+      // We don't want to trigger the event to possibly multiple service workers
+      // and origins if the user changed a wildcard setting.
+      primary_pattern.MatchesSingleOrigin()) {
     unsubscribed_entries = PushMessagingUnsubscribedEntry::GetAll(profile_);
   }
   base::RepeatingClosure barrier_closure = base::BarrierClosure(
@@ -1511,6 +1557,7 @@ void PushMessagingServiceImpl::OnContentSettingChanged(
   base::UmaHistogramCounts1000("PushMessaging.NumUnsubscribedEntries",
                                unsubscribed_entries.size());
 
+  int num_fired = 0;
   for (const PushMessagingUnsubscribedEntry& unsubscribed_entry :
        unsubscribed_entries) {
     if (!primary_pattern.Matches(unsubscribed_entry.origin())) {
@@ -1526,11 +1573,18 @@ void PushMessagingServiceImpl::OnContentSettingChanged(
       barrier_closure.Run();
       continue;
     }
+
     FirePushSubscriptionChange(
         unsubscribed_entry.origin(),
         unsubscribed_entry.service_worker_registration_id(), barrier_closure,
         nullptr, nullptr);
+    ++num_fired;
   }
+
+  base::UmaHistogramCounts100(
+      "PushMessaging."
+      "PushSubscriptionChangeForNotificationPermissionChangeFired",
+      num_fired);
 }
 
 void PushMessagingServiceImpl::UnexpectedUnsubscribe(
@@ -1777,9 +1831,11 @@ void PushMessagingServiceImpl::UpdateSubscription(
   }
   // Subscribe using the new subscription information, this will overwrite
   // the expiration time of |app_identifier|
-  DoSubscribe(app_identifier, std::move(options), std::move(register_callback),
-              -1 /* render_process_id */, -1 /* render_frame_id */,
-              permission_status);
+  DoSubscribe(
+      app_identifier, std::move(options), std::move(register_callback),
+      -1 /* render_process_id */, -1 /* render_frame_id */,
+      content::PermissionResult(permission_status,
+                                content::PermissionStatusSource::UNSPECIFIED));
 }
 
 void PushMessagingServiceImpl::DidUpdateSubscription(

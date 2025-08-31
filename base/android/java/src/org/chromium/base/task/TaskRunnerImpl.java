@@ -46,7 +46,7 @@ public class TaskRunnerImpl implements TaskRunner {
     // Track tasks in java to prevent overflowing the JNI global ref table (crbug.com/369845089).
     // Table which ideally covers most immediate posted tasks so they don't have to do map
     // operations.
-    private static Object sPendingTaskLock = new Object();
+    private static final Object sPendingTaskLock = new Object();
 
     @GuardedBy("sPendingTaskLock")
     private static final @Nullable Runnable[] sPendingTaskTable = new Runnable[50];
@@ -62,7 +62,7 @@ public class TaskRunnerImpl implements TaskRunner {
     @GuardedBy("sCleaners")
     private static final Set<TaskRunnerCleaner> sCleaners = new HashSet<>();
 
-    private final @TaskTraits int mTaskTraits;
+    protected final @TaskTraits int mTaskTraits;
     private final String mTraceEvent;
     private final @TaskRunnerType int mTaskRunnerType;
     // Volatile is sufficient for synchronization here since we never need to read-write and

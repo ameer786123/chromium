@@ -8,6 +8,7 @@
 #import "base/functional/callback.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/strings/string_number_conversions.h"
+#import "base/strings/string_util.h"
 #import "base/task/sequenced_task_runner.h"
 #import "ios/chrome/browser/download/model/document_download_tab_helper_metrics.h"
 #import "ios/chrome/browser/download/model/download_manager_tab_helper.h"
@@ -140,9 +141,13 @@ void DocumentDownloadTabHelper::DidStartNavigation(
           observed_task_ = nullptr;
         }
         active_task->Cancel();
+        // Only clear task_uuid_ when we actually cancel the task.
+        task_uuid_ = nil;
       }
+    } else {
+      // If no active task matches our UUID, clear it.
+      task_uuid_ = nil;
     }
-    task_uuid_ = nil;
   }
 }
 

@@ -7,7 +7,7 @@
 #include <utility>
 #include <variant>
 
-#include "base/functional/overloaded.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/mojom/webauthn/authenticator.mojom-shared.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -40,7 +40,6 @@ constexpr char kPublicKeyCredentialType[] = "public-key";
 
 // This is the subset of client capabilities computed by the renderer. See also
 // //content/browser/webauth/authenticator_common_impl.h
-constexpr char kConditionalCreateCapability[] = "conditionalCreate";
 constexpr char kSignalAllAcceptedCredentials[] = "signalAllAcceptedCredentials";
 constexpr char kSignalCurrentUserDetails[] = "signalCurrentUserDetails";
 constexpr char kSignalUnknownCredential[] = "signalUnknownCredential";
@@ -69,9 +68,6 @@ void OnGetClientCapabilitiesComplete(
   for (const auto& capability : capabilities) {
     results.emplace_back(std::move(capability->name), capability->supported);
   }
-  results.emplace_back(
-      kConditionalCreateCapability,
-      RuntimeEnabledFeatures::WebAuthenticationConditionalCreateEnabled());
 
   const bool report_enabled =
       RuntimeEnabledFeatures::CredentialManagerReportEnabled();
@@ -109,6 +105,18 @@ void OnGetClientCapabilitiesComplete(
       [](const std::pair<String, bool>& a, const std::pair<String, bool>& b) {
         return CodeUnitCompare(a.first, b.first) < 0;
       });
+
+  // TODO(crbug.com/393055190): Remove this when the feature is graduated from
+  // origin trials.
+  if (!RuntimeEnabledFeatures::WebAuthenticationImmediateGetEnabled(
+          resolver->GetExecutionContext())) {
+    for (wtf_size_t i = 0; i < results.size(); ++i) {
+      if (results[i].first == "immediateGet") {
+        results.EraseAt(i);
+        break;
+      }
+    }
+  }
   resolver->Resolve(std::move(results));
 }
 
@@ -163,8 +171,8 @@ PublicKeyCredential::getClientCapabilities(ScriptState* script_state) {
 
   auto* authenticator =
       CredentialManagerProxy::From(script_state)->Authenticator();
-  authenticator->GetClientCapabilities(WTF::BindOnce(
-      &OnGetClientCapabilitiesComplete, WrapPersistent(resolver)));
+  authenticator->GetClientCapabilities(
+      BindOnce(&OnGetClientCapabilitiesComplete, WrapPersistent(resolver)));
   return promise;
 }
 
@@ -193,7 +201,7 @@ PublicKeyCredential::isUserVerifyingPlatformAuthenticatorAvailable(
   auto* authenticator =
       CredentialManagerProxy::From(script_state)->Authenticator();
   authenticator->IsUserVerifyingPlatformAuthenticatorAvailable(
-      WTF::BindOnce(&OnIsUserVerifyingComplete, WrapPersistent(resolver)));
+      BindOnce(&OnIsUserVerifyingComplete, WrapPersistent(resolver)));
   return promise;
 }
 
@@ -223,9 +231,9 @@ ScriptPromise<IDLBoolean> PublicKeyCredential::isConditionalMediationAvailable(
   auto* authenticator =
       CredentialManagerProxy::From(script_state)->Authenticator();
   authenticator->IsConditionalMediationAvailable(
-      WTF::BindOnce([](ScriptPromiseResolver<IDLBoolean>* resolver,
-                       bool available) { resolver->Resolve(available); },
-                    WrapPersistent(resolver)));
+      BindOnce([](ScriptPromiseResolver<IDLBoolean>* resolver,
+                  bool available) { resolver->Resolve(available); },
+               WrapPersistent(resolver)));
   return promise;
 }
 
@@ -243,7 +251,7 @@ v8::Local<v8::Object> PublicKeyCredential::toJSON(
 
   v8::Local<v8::Value> result;
   std::visit(
-      base::Overloaded{
+      absl::Overload{
           [&](AuthenticatorAttestationResponseJSON* attestation_response) {
             auto* registration_response = RegistrationResponseJSON::Create();
             registration_response->setId(id());
@@ -314,7 +322,7 @@ ScriptPromise<IDLUndefined> PublicKeyCredential::signalUnknownCredential(
   auto promise = resolver->Promise();
 
   Vector<uint8_t> decoded_cred_id;
-  if (!WTF::Base64UnpaddedURLDecode(options->credentialId(), decoded_cred_id)) {
+  if (!Base64UnpaddedURLDecode(options->credentialId(), decoded_cred_id)) {
     resolver->RejectWithTypeError("Invalid base64url string for credentialId.");
     return promise;
   }
@@ -324,8 +332,8 @@ ScriptPromise<IDLUndefined> PublicKeyCredential::signalUnknownCredential(
       CredentialManagerProxy::From(script_state)->Authenticator();
   authenticator->Report(
       std::move(mojo_options),
-      WTF::BindOnce(&OnSignalReportComplete,
-                    std::make_unique<ScopedPromiseResolver>(resolver)));
+      BindOnce(&OnSignalReportComplete,
+               std::make_unique<ScopedPromiseResolver>(resolver)));
   return promise;
 }
 
@@ -344,16 +352,16 @@ ScriptPromise<IDLUndefined> PublicKeyCredential::signalAllAcceptedCredentials(
       script_state, exception_state.GetContext());
   auto promise = resolver->Promise();
 
-  for (WTF::String credential_id : options->allAcceptedCredentialIds()) {
+  for (String credential_id : options->allAcceptedCredentialIds()) {
     Vector<uint8_t> decoded_cred_id;
-    if (!WTF::Base64UnpaddedURLDecode(credential_id, decoded_cred_id)) {
+    if (!Base64UnpaddedURLDecode(credential_id, decoded_cred_id)) {
       resolver->RejectWithTypeError(
           "Invalid base64url string for allAcceptedCredentialIds.");
       return promise;
     }
   }
   Vector<uint8_t> decoded_user_id;
-  if (!WTF::Base64UnpaddedURLDecode(options->userId(), decoded_user_id)) {
+  if (!Base64UnpaddedURLDecode(options->userId(), decoded_user_id)) {
     resolver->RejectWithTypeError("Invalid base64url string for userId.");
     return promise;
   }
@@ -363,8 +371,8 @@ ScriptPromise<IDLUndefined> PublicKeyCredential::signalAllAcceptedCredentials(
       CredentialManagerProxy::From(script_state)->Authenticator();
   authenticator->Report(
       std::move(mojo_options),
-      WTF::BindOnce(&OnSignalReportComplete,
-                    std::make_unique<ScopedPromiseResolver>(resolver)));
+      BindOnce(&OnSignalReportComplete,
+               std::make_unique<ScopedPromiseResolver>(resolver)));
   return promise;
 }
 
@@ -384,7 +392,7 @@ ScriptPromise<IDLUndefined> PublicKeyCredential::signalCurrentUserDetails(
   auto promise = resolver->Promise();
 
   Vector<uint8_t> decoded_user_id;
-  if (!WTF::Base64UnpaddedURLDecode(options->userId(), decoded_user_id)) {
+  if (!Base64UnpaddedURLDecode(options->userId(), decoded_user_id)) {
     resolver->RejectWithTypeError("Invalid base64url string for userId.");
     return promise;
   }
@@ -394,8 +402,8 @@ ScriptPromise<IDLUndefined> PublicKeyCredential::signalCurrentUserDetails(
       CredentialManagerProxy::From(script_state)->Authenticator();
   authenticator->Report(
       std::move(mojo_options),
-      WTF::BindOnce(&OnSignalReportComplete,
-                    std::make_unique<ScopedPromiseResolver>(resolver)));
+      BindOnce(&OnSignalReportComplete,
+               std::make_unique<ScopedPromiseResolver>(resolver)));
   return promise;
 }
 

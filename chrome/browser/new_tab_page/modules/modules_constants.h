@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_NEW_TAB_PAGE_MODULES_MODULES_CONSTANTS_H_
 #define CHROME_BROWSER_NEW_TAB_PAGE_MODULES_MODULES_CONSTANTS_H_
 
+#include <array>
+
 namespace ntp_modules {
 
 inline constexpr char kDriveModuleId[] = "drive";
@@ -16,6 +18,7 @@ inline constexpr char kMicrosoftAuthenticationModuleId[] =
     "microsoft_authentication";
 inline constexpr char kOutlookCalendarModuleId[] = "outlook_calendar";
 inline constexpr char kMicrosoftFilesModuleId[] = "microsoft_files";
+inline constexpr char kTabGroupsModuleId[] = "tab_groups";
 
 // All modules that require successful Microsoft authentication before being
 // loaded.

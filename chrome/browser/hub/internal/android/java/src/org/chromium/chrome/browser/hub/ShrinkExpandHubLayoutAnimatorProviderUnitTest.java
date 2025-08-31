@@ -137,19 +137,20 @@ public class ShrinkExpandHubLayoutAnimatorProviderUnitTest {
         Rect finalRect = new Rect(50, 10, 70, 95);
         int initialTopCorner = 0;
         int initialBottomCorner = 0;
-        int finalTopCorner = 30;
-        int finalBottomCorner = 40;
+        int finalTopCornerUnscaled = 30;
+        int finalBottomCornerUnscaled = 40;
         ShrinkExpandAnimationData data =
                 ShrinkExpandAnimationData.createHubShrinkExpandAnimationData(
                         initialRect,
                         finalRect,
                         initialTopCorner,
                         initialBottomCorner,
-                        finalTopCorner,
-                        finalBottomCorner,
+                        finalTopCornerUnscaled,
+                        finalBottomCornerUnscaled,
                         thumbnailSize,
                         /* isTopToolbar= */ true,
                         /* useFallbackAnimation= */ false);
+        int[] finalCornerRadius = data.getFinalCornerRadii();
 
         HubLayoutAnimationRunner runner =
                 HubLayoutAnimationRunnerFactory.createHubLayoutAnimationRunner(animatorProvider);
@@ -164,10 +165,10 @@ public class ShrinkExpandHubLayoutAnimatorProviderUnitTest {
         runner.addListener(mListener);
         runner.runWithWaitForAnimatorTimeout(HUB_LAYOUT_TIMEOUT_MS);
 
-        thumbnailCallback.onResult(mBitmap);
         mAnimationDataSupplier.set(data);
+        thumbnailCallback.onResult(mBitmap);
 
-        ShadowLooper.runUiThreadTasks();
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
 
         verify(imageView, atLeastOnce())
                 .setRoundedCorners(
@@ -177,7 +178,10 @@ public class ShrinkExpandHubLayoutAnimatorProviderUnitTest {
                         initialBottomCorner);
         verify(imageView, atLeastOnce())
                 .setRoundedCorners(
-                        finalTopCorner, finalTopCorner, finalBottomCorner, finalBottomCorner);
+                        finalCornerRadius[0],
+                        finalCornerRadius[1],
+                        finalCornerRadius[2],
+                        finalCornerRadius[3]);
         verifyFinalState(animatorProvider, /* wasForcedToFinish= */ false);
         watcher.assertExpected();
     }
@@ -663,19 +667,20 @@ public class ShrinkExpandHubLayoutAnimatorProviderUnitTest {
         Rect finalRect = new Rect(50, 10, 70, 95);
         int initialTopCorner = 0;
         int initialBottomCorner = 0;
-        int finalTopCorner = 30;
-        int finalBottomCorner = 40;
+        int finalTopCornerUnscaled = 30;
+        int finalBottomCornerUnscaled = 40;
         ShrinkExpandAnimationData data =
                 ShrinkExpandAnimationData.createHubShrinkExpandAnimationData(
                         initialRect,
                         finalRect,
                         initialTopCorner,
                         initialBottomCorner,
-                        finalTopCorner,
-                        finalBottomCorner,
+                        finalTopCornerUnscaled,
+                        finalBottomCornerUnscaled,
                         thumbnailSize,
                         /* isTopToolbar= */ false,
                         /* useFallbackAnimation= */ false);
+        int[] finalCornerRadius = data.getFinalCornerRadii();
 
         HubLayoutAnimationRunner runner =
                 HubLayoutAnimationRunnerFactory.createHubLayoutAnimationRunner(animatorProvider);
@@ -690,10 +695,10 @@ public class ShrinkExpandHubLayoutAnimatorProviderUnitTest {
         runner.addListener(mListener);
         runner.runWithWaitForAnimatorTimeout(HUB_LAYOUT_TIMEOUT_MS);
 
-        thumbnailCallback.onResult(mBitmap);
         mAnimationDataSupplier.set(data);
+        thumbnailCallback.onResult(mBitmap);
 
-        ShadowLooper.runUiThreadTasks();
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
 
         verify(imageView, atLeastOnce())
                 .setRoundedCorners(
@@ -703,7 +708,10 @@ public class ShrinkExpandHubLayoutAnimatorProviderUnitTest {
                         initialBottomCorner);
         verify(imageView, atLeastOnce())
                 .setRoundedCorners(
-                        finalTopCorner, finalTopCorner, finalBottomCorner, finalBottomCorner);
+                        finalCornerRadius[0],
+                        finalCornerRadius[1],
+                        finalCornerRadius[2],
+                        finalCornerRadius[3]);
         verifyFinalState(animatorProvider, /* wasForcedToFinish= */ false);
         watcher.assertExpected();
     }

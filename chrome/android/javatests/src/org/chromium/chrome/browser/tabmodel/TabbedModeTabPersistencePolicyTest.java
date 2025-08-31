@@ -9,8 +9,11 @@ import static androidx.test.espresso.matcher.ViewMatchers.assertThat;
 import static org.junit.Assert.assertNotNull;
 import static org.mockito.Mockito.when;
 
+import static org.chromium.base.test.util.Batch.UNIT_TESTS;
+
 import android.app.Activity;
 import android.content.Context;
+import android.util.Pair;
 
 import androidx.test.filters.MediumTest;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -28,9 +31,11 @@ import org.mockito.junit.MockitoRule;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.lifetime.Destroyable;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.util.AdvancedMockContext;
+import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
@@ -40,6 +45,7 @@ import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
+import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
 import org.chromium.chrome.browser.price_tracking.PriceTrackingFeatures;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
@@ -50,9 +56,11 @@ import org.chromium.chrome.browser.tab.TabStateExtractor;
 import org.chromium.chrome.browser.tab.WebContentsState;
 import org.chromium.chrome.browser.tabmodel.NextTabPolicy.NextTabPolicySupplier;
 import org.chromium.chrome.browser.tabmodel.TabPersistenceFileInfo.TabStateFileInfo;
-import org.chromium.chrome.browser.tabmodel.TabPersistentStore.TabModelSelectorMetadata;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore.TabPersistentStoreObserver;
+import org.chromium.chrome.browser.tabpersistence.TabMetadataFileManager.TabModelSelectorMetadata;
 import org.chromium.chrome.browser.tabpersistence.TabStateDirectory;
+import org.chromium.chrome.browser.tabwindow.TabModelSelectorFactory;
+import org.chromium.chrome.browser.tabwindow.WindowId;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModelSelector;
@@ -62,9 +70,10 @@ import org.chromium.url.GURL;
 import java.nio.ByteBuffer;
 
 /**
- * Tests for the tabbed-mode persisitence policy. TODO: Consider turning this into a unit test after
+ * Tests for the tabbed-mode persistence policy. TODO: Consider turning this into a unit test after
  * resolving the task involving disk I/O.
  */
+@Batch(UNIT_TESTS)
 @RunWith(ChromeJUnit4ClassRunner.class)
 public class TabbedModeTabPersistencePolicyTest {
     private static final WebContentsState WEB_CONTENTS_STATE =
@@ -80,7 +89,6 @@ public class TabbedModeTabPersistencePolicyTest {
     @Mock MismatchedIndicesHandler mMismatchedIndicesHandler;
 
     private TestTabModelDirectory mMockDirectory;
-    private AdvancedMockContext mAppContext;
     private CipherFactory mCipherFactory;
 
     @Before
@@ -88,25 +96,32 @@ public class TabbedModeTabPersistencePolicyTest {
         TabWindowManagerSingleton.setTabModelSelectorFactoryForTesting(
                 new TabModelSelectorFactory() {
                     @Override
-                    public TabModelSelector buildSelector(
+                    public TabModelSelector buildTabbedSelector(
                             Context context,
                             ModalDialogManager modalDialogManager,
                             OneshotSupplier<ProfileProvider> profileProviderSupplier,
                             TabCreatorManager tabCreatorManager,
-                            NextTabPolicySupplier nextTabPolicySupplier) {
+                            NextTabPolicySupplier nextTabPolicySupplier,
+                            MultiInstanceManager multiInstanceManager) {
                         return new MockTabModelSelector(mProfile, mIncognitoProfile, 0, 0, null);
                     }
+
+                    @Override
+                    public Pair<TabModelSelector, Destroyable> buildHeadlessSelector(
+                            @WindowId int windowId, Profile profile) {
+                        return Pair.create(null, null);
+                    }
                 });
-        mAppContext =
+        AdvancedMockContext appContext =
                 new AdvancedMockContext(
                         InstrumentationRegistry.getInstrumentation()
                                 .getTargetContext()
                                 .getApplicationContext());
-        ContextUtils.initApplicationContextForTests(mAppContext);
+        ContextUtils.initApplicationContextForTests(appContext);
 
         mMockDirectory =
                 new TestTabModelDirectory(
-                        mAppContext,
+                        appContext,
                         "TabbedModeTabPersistencePolicyTest",
                         TabStateDirectory.TABBED_MODE_DIRECTORY);
         TabStateDirectory.setBaseStateDirectoryForTests(mMockDirectory.getBaseDirectory());
@@ -146,7 +161,8 @@ public class TabbedModeTabPersistencePolicyTest {
                                         return new GURL("https://www.google.com");
                                     }
                                 };
-                        tab.initialize(null, null, null, null, null, null, false, null, false);
+                        tab.initialize(
+                                null, null, null, null, null, null, false, null, false, false);
                         return tab;
                     }
                 };
@@ -170,6 +186,7 @@ public class TabbedModeTabPersistencePolicyTest {
                                     new ChromeTabbedActivity(),
                                     mModalDialogManager,
                                     profileProviderSupplier,
+                                    null,
                                     null,
                                     null,
                                     mMismatchedIndicesHandler,

@@ -16,7 +16,7 @@
 #include "build/build_config.h"
 #include "components/os_crypt/async/common/encryptor.h"
 #include "components/password_manager/core/browser/password_form.h"
-#include "components/password_manager/core/browser/password_store/encrypt_decrypt_intrface.h"
+#include "components/password_manager/core/browser/password_store/encrypt_decrypt_interface.h"
 #include "components/password_manager/core/browser/password_store/insecure_credentials_table.h"
 #include "components/password_manager/core/browser/password_store/password_notes_table.h"
 #include "components/password_manager/core/browser/password_store/password_store.h"
@@ -50,21 +50,7 @@ extern const int kCompatibleVersionNumber;
 // the login information.
 class LoginDatabase : public EncryptDecryptInterface {
  public:
-  struct LoginDatabaseEmptinessState {
-    // True if the login database has 0 passwords stored.
-    bool no_login_found = true;
-    // True if the database has autofillable credentials. Used to decide whether
-    // password suggestions can be displayed via manual fallbacks. Not
-    // autofillable entries are: blocklisted entries, federated credentials and
-    // username-only credentials.
-    bool autofillable_credentials_exist = false;
-
-    friend bool operator==(const LoginDatabaseEmptinessState&,
-                           const LoginDatabaseEmptinessState&) = default;
-  };
-
-  using IsEmptyCallback =
-      base::RepeatingCallback<void(LoginDatabaseEmptinessState)>;
+  using IsEmptyCallback = base::RepeatingCallback<void(bool)>;
   using DeletingUndecryptablePasswordsEnabled =
       base::StrongAlias<class DeletingUndecryptablePasswordsEnabledTag, bool>;
   using OnUndecryptablePasswordsRemoved =
@@ -181,7 +167,7 @@ class LoginDatabase : public EncryptDecryptInterface {
   // whether further use of this login database will succeed is unspecified.
   bool DeleteAndRecreateDatabaseFile();
 
-  LoginDatabaseEmptinessState IsEmpty();
+  bool IsEmpty();
 
   // On MacOS, it deletes all logins from the database that cannot be decrypted
   // when encryption key from Keychain is available. If the Keychain is locked,

@@ -91,15 +91,15 @@ export class PrivacySandboxDialogConsentStepElement extends
   }
 
   private onConsentLearnMoreExpanded_(newValue: boolean, oldValue: boolean) {
+    this.loadPrivacyPolicyOnExpand(newValue, oldValue);
     this.onConsentLearnMoreExpandedChanged(newValue, oldValue);
   }
 
   private onBackButtonClicked_() {
     this.hideConsentNoticePage_ = false;
-    const privacyPolicyLinkId = this.shouldShowV2() ?
-        (this.shouldShowAdTopicsContentParity_ ? '#privacyPolicyLinkV3' :
-                                                 '#privacyPolicyLinkV2') :
-        '#privacyPolicyLink';
+    const privacyPolicyLinkId = this.shouldShowAdTopicsContentParity_ ?
+        '#privacyPolicyLinkV3' :
+        '#privacyPolicyLinkV2';
     // Send focus back to privacy policy link for a11y screen reader.
     this.shadowRoot!.querySelector<HTMLElement>(privacyPolicyLinkId)!.focus();
   }

@@ -100,9 +100,6 @@ class DownloadToolbarUIControllerBrowserTest : public DownloadTestBase {
   WebAppFrameToolbarTestHelper web_app_frame_toolbar_helper_;
 };
 
-// DownloadToolbarUIController and downloads toolbar button do not exist for
-// ChromeOS. See https://crbug.com/1323505.
-#if !BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(DownloadToolbarUIControllerBrowserTest, ShowHide) {
   EXPECT_EQ(toolbar_button(browser()), nullptr);
   controller(browser())->Show();
@@ -420,4 +417,19 @@ IN_PROC_BROWSER_TEST_F(DownloadToolbarUIControllerBrowserTest,
     item->Cancel(true);
   }
 }
-#endif
+
+// Asserts that when a browser is closed with an open download bubble the
+// browser does not crash.
+IN_PROC_BROWSER_TEST_F(DownloadToolbarUIControllerBrowserTest,
+                       ClosingBrowserWithOpenBubbleDoesNotCrash) {
+  ui_test_utils::DownloadURL(
+      browser(), ui_test_utils::GetTestUrl(
+                     base::FilePath().AppendASCII("downloads"),
+                     base::FilePath().AppendASCII("a_zip_file.zip")));
+  views::test::WaitForAnimatingLayoutManager(toolbar_container(browser()));
+  controller(browser())->ShowDetails();
+  controller(browser())->OpenPrimaryDialog();
+  EXPECT_EQ(controller(browser())->bubble_contents_for_testing()->VisiblePage(),
+            DownloadBubbleContentsView::Page::kPrimary);
+  CloseBrowserSynchronously(browser());
+}

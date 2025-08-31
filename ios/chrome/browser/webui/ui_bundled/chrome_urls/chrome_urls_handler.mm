@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/chrome/browser/webui/ui_bundled/chrome_urls/chrome_urls_handler.h"
 
 #import <vector>
@@ -51,7 +56,7 @@ void ChromeUrlsHandler::GetUrls(GetUrlsCallback callback) {
     chrome_urls::mojom::WebuiUrlInfoPtr url_info(
         chrome_urls::mojom::WebuiUrlInfo::New());
     url_info->url = url;
-    url_info->enabled = true;
+    url_info->enabled = host != kChromeUINewTabHost;
     url_info->internal = IsWebUIInternal(host);
     webui_urls.push_back(std::move(url_info));
   }

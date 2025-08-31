@@ -30,6 +30,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/time/time.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_co_mem.h"
@@ -454,11 +455,19 @@ class TaskSchedulerV2 final : public TaskScheduler {
       return false;
     }
 
-    hr = is_system ? principal->put_RunLevel(TASK_RUNLEVEL_HIGHEST)
-                   : principal->put_LogonType(TASK_LOGON_INTERACTIVE_TOKEN);
+    hr = principal->put_RunLevel(is_system ? TASK_RUNLEVEL_HIGHEST
+                                           : TASK_RUNLEVEL_LUA);
     if (FAILED(hr)) {
-      PLOG(ERROR) << "Can't put run level or logon type. " << std::hex << hr;
+      PLOG(ERROR) << "Can't put run level. " << std::hex << hr;
       return false;
+    }
+
+    if (!is_system) {
+      hr = principal->put_LogonType(TASK_LOGON_INTERACTIVE_TOKEN);
+      if (FAILED(hr)) {
+        PLOG(ERROR) << "Can't put logon type. " << std::hex << hr;
+        return false;
+      }
     }
 
     Microsoft::WRL::ComPtr<IRegistrationInfo> registration_info;
@@ -838,6 +847,9 @@ class TaskSchedulerV2 final : public TaskScheduler {
   };
 
   [[nodiscard]] Microsoft::WRL::ComPtr<ITaskService> GetTaskService() const {
+    base::ScopedBlockingCall scoped_blocking_call(
+        FROM_HERE, base::BlockingType::WILL_BLOCK);
+
     Microsoft::WRL::ComPtr<ITaskService> task_service;
     HRESULT hr =
         ::CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
@@ -847,6 +859,14 @@ class TaskSchedulerV2 final : public TaskScheduler {
                   << std::hex << hr;
       return nullptr;
     }
+
+    // TODO(crbug.com/434269515) : remove logging when the bug is closed.
+    VLOG(2) << "Current user: " << [] {
+      base::win::ScopedBstr user_name;
+      return GetCurrentUser(user_name) ? std::wstring(user_name.Get())
+                                       : std::wstring();
+    }();
+
     hr = task_service->Connect(base::win::ScopedVariant::kEmptyVariant,
                                base::win::ScopedVariant::kEmptyVariant,
                                base::win::ScopedVariant::kEmptyVariant,
@@ -1308,7 +1328,8 @@ class TaskSchedulerV2 final : public TaskScheduler {
     hr = root_task_folder->DeleteFolder(
         base::win::ScopedBstr(folder_name).Get(), 0);
     if (FAILED(hr)) {
-      LOG(ERROR) << "Failed get delete the sub folder. " << std::hex << hr;
+      LOG(ERROR) << "Failed to delete the sub folder: " << folder_name
+                 << ", error: " << std::hex << hr;
       return false;
     }
 

@@ -10,8 +10,10 @@
 #include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/files/memory_mapped_file.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/thread_pool.h"
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_features.h"
 #include "chrome/browser/file_util_service.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/binary_upload_service.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
@@ -33,6 +35,7 @@ namespace safe_browsing {
 namespace {
 
 constexpr size_t kReadFileChunkSize = 4096;
+constexpr size_t kMaxUploadSizeMetricsKB = 500 * 1024;
 
 std::string GetFileMimeType(const base::FilePath& path,
                             std::string_view first_bytes) {
@@ -139,7 +142,18 @@ GetFileDataBlocking(const base::FilePath& path,
     }
   }
 
-  return {file_data.size <= BinaryUploadService::kMaxUploadSizeBytes
+  // Create a histogram to track the size of files being scanned up to 500MB.
+  base::UmaHistogramCustomCounts(
+      "Enterprise.FileAnalysisRequest.FileSize", file_data.size / 1024, 1,
+      kMaxUploadSizeMetricsKB, 50);
+
+  size_t max_file_size_bytes = BinaryUploadService::kMaxUploadSizeBytes;
+  if (base::FeatureList::IsEnabled(
+          enterprise_connectors::kEnableNewUploadSizeLimit)) {
+    max_file_size_bytes =
+        1024 * 1024 * enterprise_connectors::kMaxContentAnalysisFileSizeMB.Get();
+  }
+  return {file_data.size <= max_file_size_bytes
               ? BinaryUploadService::Result::SUCCESS
               : BinaryUploadService::Result::FILE_TOO_LARGE,
           std::move(file_data)};

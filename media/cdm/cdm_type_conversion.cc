@@ -500,16 +500,10 @@ cdm::VideoFormat ToCdmVideoFormat(VideoPixelFormat format) {
       return cdm::kYv12;
     case PIXEL_FORMAT_I420:
       return cdm::kI420;
-    case PIXEL_FORMAT_YUV420P9:
-      return cdm::kYUV420P9;
     case PIXEL_FORMAT_YUV420P10:
       return cdm::kYUV420P10;
-    case PIXEL_FORMAT_YUV422P9:
-      return cdm::kYUV422P9;
     case PIXEL_FORMAT_YUV422P10:
       return cdm::kYUV422P10;
-    case PIXEL_FORMAT_YUV444P9:
-      return cdm::kYUV444P9;
     case PIXEL_FORMAT_YUV444P10:
       return cdm::kYUV444P10;
     case PIXEL_FORMAT_YUV420P12:
@@ -530,16 +524,10 @@ VideoPixelFormat ToMediaVideoFormat(cdm::VideoFormat format) {
       return PIXEL_FORMAT_YV12;
     case cdm::kI420:
       return PIXEL_FORMAT_I420;
-    case cdm::kYUV420P9:
-      return PIXEL_FORMAT_YUV420P9;
     case cdm::kYUV420P10:
       return PIXEL_FORMAT_YUV420P10;
-    case cdm::kYUV422P9:
-      return PIXEL_FORMAT_YUV422P9;
     case cdm::kYUV422P10:
       return PIXEL_FORMAT_YUV422P10;
-    case cdm::kYUV444P9:
-      return PIXEL_FORMAT_YUV444P9;
     case cdm::kYUV444P10:
       return PIXEL_FORMAT_YUV444P10;
     case cdm::kYUV420P12:
@@ -605,7 +593,7 @@ void ToCdmInputBuffer(const DecoderBuffer& encrypted_buffer,
                       std::vector<cdm::SubsampleEntry>* subsamples,
                       cdm::InputBuffer_2* input_buffer) {
   // End of stream buffers are represented as empty resources.
-  CHECK(!input_buffer->data, base::NotFatalUntil::M140);
+  CHECK(!input_buffer->data);
   if (encrypted_buffer.end_of_stream())
     return;
 
@@ -627,7 +615,7 @@ void ToCdmInputBuffer(const DecoderBuffer& encrypted_buffer,
       reinterpret_cast<const uint8_t*>(decrypt_config->iv().data());
   input_buffer->iv_size = decrypt_config->iv().size();
 
-  CHECK(subsamples->empty(), base::NotFatalUntil::M140);
+  CHECK(subsamples->empty());
   size_t num_subsamples = decrypt_config->subsamples().size();
   if (num_subsamples > 0) {
     subsamples->reserve(num_subsamples);

@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_GLIC_WIDGET_GLIC_WINDOW_RESIZE_ANIMATION_H_
 
 #include "base/callback_list.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "ui/gfx/animation/animation_delegate.h"
@@ -14,7 +15,7 @@
 
 namespace glic {
 
-class GlicWindowController;
+class GlicWidget;
 class GlicWindowAnimator;
 
 // This class controls the animation of the glic window from one size to
@@ -24,10 +25,12 @@ class GlicWindowAnimator;
 // * Callbacks are posted when this object is destroyed and must remain valid
 // until they run. This class will generally override any other changes to
 // window size.
+// This class deals exclusively with the widget bounds, which may be different
+// than the content bounds on Windows.
 class GlicWindowResizeAnimation : public gfx::LinearAnimation,
                                   public gfx::AnimationDelegate {
  public:
-  GlicWindowResizeAnimation(GlicWindowController* window_controller,
+  GlicWindowResizeAnimation(base::WeakPtr<GlicWidget> widget,
                             GlicWindowAnimator* window_animator,
                             const gfx::Rect& target_bounds,
                             base::TimeDelta duration,
@@ -52,7 +55,7 @@ class GlicWindowResizeAnimation : public gfx::LinearAnimation,
  private:
   // GlicWindowAnimator owns GlicWindowResizeAnimation
   // and will outlive it
-  const raw_ptr<GlicWindowController> window_controller_;
+  base::WeakPtr<GlicWidget> widget_;
   const raw_ptr<GlicWindowAnimator> glic_window_animator_;
   const gfx::Rect initial_bounds_;
   gfx::Rect new_bounds_;

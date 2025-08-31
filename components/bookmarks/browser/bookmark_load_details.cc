@@ -55,11 +55,24 @@ BookmarkLoadDetails::BookmarkLoadDetails()
   // loaded from disk or new/default values are allocated in
   // `PopulateNodeIdsForLocalOrSyncablePermanentNodes()`.
   bb_node_ = static_cast<BookmarkPermanentNode*>(
-      root_node_->Add(BookmarkPermanentNode::CreateBookmarkBar(/*id=*/0)));
+      root_node_->Add(BookmarkPermanentNode::CreateBookmarkBar(
+          /*id=*/0, /*is_account_node=*/false)));
   other_folder_node_ = static_cast<BookmarkPermanentNode*>(
-      root_node_->Add(BookmarkPermanentNode::CreateOtherBookmarks(/*id=*/0)));
+      root_node_->Add(BookmarkPermanentNode::CreateOtherBookmarks(
+          /*id=*/0, /*is_account_node=*/false)));
   mobile_folder_node_ = static_cast<BookmarkPermanentNode*>(
-      root_node_->Add(BookmarkPermanentNode::CreateMobileBookmarks(/*id=*/0)));
+      root_node_->Add(BookmarkPermanentNode::CreateMobileBookmarks(
+          /*id=*/0, /*is_account_node=*/false)));
+
+  // Set the nodes' `date_added` to the same time so that there is no inherent
+  // hierarchy in terms of their added time between them. This is relevant for
+  // deciding which folder should be the default parent for new nodes.
+  // Note that these timestamps will likely be overridden by `BookmarkCodec`
+  // with the values loaded from disk, if the JSON file exists.
+  const base::Time current_timestamp = base::Time::Now();
+  bb_node_->set_date_added(current_timestamp);
+  other_folder_node_->set_date_added(current_timestamp);
+  mobile_folder_node_->set_date_added(current_timestamp);
 
   CHECK_EQ(kNumDefaultTopLevelPermanentFolders, root_node_->children().size());
 }
@@ -162,6 +175,13 @@ UserFolderLoadStats BookmarkLoadDetails::ComputeUserFolderStats() const {
     // Look for user-generated folders under permanent nodes.
     if (!root_child->is_permanent_node()) {
       continue;
+    }
+
+    // We want to track the number of bookmarks at the top level of the
+    // Bookmark Bar.
+    if (root_child->is_folder() &&
+        root_child->type() == BookmarkNode::BOOKMARK_BAR) {
+      stats.bookmark_bar_top_level_items = root_child->children().size();
     }
 
     for (const auto& child : root_child->children()) {

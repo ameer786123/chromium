@@ -35,13 +35,12 @@ import org.mockito.junit.MockitoRule;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DoNotBatch;
-import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.PayloadCallbackHelper;
 import org.chromium.base.test.util.Restriction;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.password_manager.CredentialManagerLauncherFactory;
 import org.chromium.chrome.browser.password_manager.FakeCredentialManagerLauncherFactoryImpl;
+import org.chromium.chrome.browser.safety_check.SafetyCheckSettingsFragment;
 import org.chromium.chrome.browser.settings.MainSettings;
 import org.chromium.chrome.browser.settings.SettingsActivityTestRule;
 import org.chromium.chrome.browser.sync.SyncTestRule;
@@ -70,7 +69,11 @@ public class CredentialManagerIntegrationTest {
     public SettingsActivityTestRule<MainSettings> mSettingsActivityTestRule =
             new SettingsActivityTestRule<>(MainSettings.class);
 
-    private FakeCredentialManagerLauncherFactoryImpl mFakeLauncherFactory =
+    @Rule
+    public SettingsActivityTestRule<SafetyCheckSettingsFragment> mSafetyCheckActivityTestRule =
+            new SettingsActivityTestRule<>(SafetyCheckSettingsFragment.class);
+
+    private final FakeCredentialManagerLauncherFactoryImpl mFakeLauncherFactory =
             new FakeCredentialManagerLauncherFactoryImpl();
 
     final PayloadCallbackHelper<PendingIntent> mSuccessCallbackHelper =
@@ -121,12 +124,9 @@ public class CredentialManagerIntegrationTest {
         DeviceRestriction.RESTRICTION_TYPE_NON_AUTO,
         GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_24W15
     })
-    @DisableIf.Device(DeviceFormFactor.TABLET) // https://crbug.com/339278945
-    @DisableFeatures(ChromeFeatureList.SAFETY_HUB)
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // https://crbug.com/339278945
     public void testUseCredentialManagerFromSafetyCheckForLocal() {
-        mSettingsActivityTestRule.startSettingsActivity();
-        scrollToSetting(withText(R.string.prefs_safety_check));
-        onView(withText(R.string.prefs_safety_check)).perform(click());
+        mSafetyCheckActivityTestRule.startSettingsActivity();
         onViewWaiting(withText(R.string.safety_check_passwords_local_title)).perform(click());
 
         // Verify that success callback was called.
@@ -141,12 +141,9 @@ public class CredentialManagerIntegrationTest {
         DeviceRestriction.RESTRICTION_TYPE_NON_AUTO,
         GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_24W15
     })
-    @DisableIf.Device(DeviceFormFactor.TABLET) // https://crbug.com/339278945
-    @DisableFeatures(ChromeFeatureList.SAFETY_HUB)
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // https://crbug.com/339278945
     public void testUseCredentialManagerFromSafetyCheckForAccount() {
-        mSettingsActivityTestRule.startSettingsActivity();
-        scrollToSetting(withText(R.string.prefs_safety_check));
-        onView(withText(R.string.prefs_safety_check)).perform(click());
+        mSafetyCheckActivityTestRule.startSettingsActivity();
         String checkForAccountText =
                 ApplicationProvider.getApplicationContext()
                         .getString(R.string.safety_check_passwords_account_title)

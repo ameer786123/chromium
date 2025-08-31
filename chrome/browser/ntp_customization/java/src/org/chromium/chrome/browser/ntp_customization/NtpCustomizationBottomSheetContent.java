@@ -8,25 +8,32 @@ import android.content.Context;
 import android.content.res.Resources;
 import android.view.View;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 
+import java.util.function.Supplier;
+
 /** Bottom sheet content of the NTP customization. */
+@NullMarked
 public class NtpCustomizationBottomSheetContent implements BottomSheetContent {
     private final View mContentView;
     private final Runnable mBackPressRunnable;
     private final Runnable mOnDestroyRunnable;
     private ObservableSupplierImpl<Boolean> mBackPressStateChangedSupplier;
+    private Supplier<Integer> mCurrentBottomSheetTypeSupplier;
 
     NtpCustomizationBottomSheetContent(
-            View contentView, Runnable backPressRunnable, Runnable onDestroy) {
+            View contentView,
+            Runnable backPressRunnable,
+            Runnable onDestroy,
+            Supplier<Integer> currentBottomSheetTypeSupplier) {
         mContentView = contentView;
         mBackPressRunnable = backPressRunnable;
         mBackPressStateChangedSupplier = new ObservableSupplierImpl<>();
         mOnDestroyRunnable = onDestroy;
+        mCurrentBottomSheetTypeSupplier = currentBottomSheetTypeSupplier;
     }
 
     @Override
@@ -41,7 +48,7 @@ public class NtpCustomizationBottomSheetContent implements BottomSheetContent {
 
     @Override
     public int getVerticalScrollOffset() {
-        return 0;
+        return mContentView.findViewById(R.id.bottom_sheet_container).getScrollY();
     }
 
     @Override
@@ -57,11 +64,6 @@ public class NtpCustomizationBottomSheetContent implements BottomSheetContent {
     @Override
     public boolean swipeToDismissEnabled() {
         return false;
-    }
-
-    @Override
-    public int getPeekHeight() {
-        return BottomSheetContent.HeightMode.DISABLED;
     }
 
     @Override
@@ -86,8 +88,10 @@ public class NtpCustomizationBottomSheetContent implements BottomSheetContent {
     }
 
     @Override
-    public String getSheetContentDescription(@NonNull Context context) {
-        return context.getString(R.string.ntp_customization_main_bottom_sheet_content_description);
+    public @Nullable String getSheetContentDescription(Context context) {
+        return context.getString(
+                NtpCustomizationUtils.getSheetContentDescription(
+                        mCurrentBottomSheetTypeSupplier.get()));
     }
 
     @Override
@@ -99,7 +103,8 @@ public class NtpCustomizationBottomSheetContent implements BottomSheetContent {
 
     @Override
     public int getSheetFullHeightAccessibilityStringId() {
-        return R.string.ntp_customization_main_bottom_sheet_opened_full;
+        return NtpCustomizationUtils.getSheetFullHeightAccessibilityStringId(
+                mCurrentBottomSheetTypeSupplier.get());
     }
 
     @Override
@@ -123,5 +128,9 @@ public class NtpCustomizationBottomSheetContent implements BottomSheetContent {
 
     void setBackPressStateChangedSupplierForTesting(ObservableSupplierImpl<Boolean> supplier) {
         mBackPressStateChangedSupplier = supplier;
+    }
+
+    void setCurrentBottomSheetTypeSupplierForTesting(Supplier<Integer> supplier) {
+        mCurrentBottomSheetTypeSupplier = supplier;
     }
 }

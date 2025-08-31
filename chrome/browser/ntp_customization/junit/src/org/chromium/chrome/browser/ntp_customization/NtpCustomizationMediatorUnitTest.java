@@ -21,15 +21,16 @@ import static org.mockito.Mockito.when;
 
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.FEED;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.MAIN;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.MVT;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.NTP_CARDS;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LAYOUT_TO_DISPLAY;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LIST_CONTAINER_VIEW_DELEGATE;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE;
 
 import android.content.Context;
 import android.view.View;
 
 import androidx.test.core.app.ApplicationProvider;
-import androidx.test.filters.SmallTest;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -39,16 +40,16 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
-import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.feed.FeedFeatures;
 import org.chromium.chrome.browser.feed.FeedServiceBridge;
 import org.chromium.chrome.browser.feed.FeedServiceBridgeJni;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetObserver;
@@ -57,6 +58,7 @@ import org.chromium.ui.modelutil.PropertyModel;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /** Unit tests for {@link NtpCustomizationMediator} */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -70,31 +72,32 @@ public class NtpCustomizationMediatorUnitTest {
     @Mock private PrefService mPrefService;
     @Mock private FeedServiceBridge.Natives mFeedServiceBridgeJniMock;
     @Mock private Profile mProfile;
-    @Mock private ProfileProvider mProfileProvider;
 
     private NtpCustomizationMediator mMediator;
     private Map<Integer, Integer> mViewFlipperMap;
     private ListContainerViewDelegate mListDelegate;
     private Context mContext;
-    private OneshotSupplierImpl<ProfileProvider> mSupplier;
+    private Supplier<Profile> mProfileSupplier;
 
     @Before
     public void setUp() {
         mContext = ApplicationProvider.getApplicationContext();
-        mSupplier = new OneshotSupplierImpl<>();
+        mProfileSupplier = () -> mProfile;
+        NtpCustomizationMediator.setPrefForTesting(mPrefService);
+        FeedServiceBridgeJni.setInstanceForTesting(mFeedServiceBridgeJniMock);
+        FeedFeatures.setFakePrefsForTest(mPrefService);
         mMediator =
                 new NtpCustomizationMediator(
                         mBottomSheetController,
                         mBottomSheetContent,
                         mViewFlipperPropertyModel,
                         mContainerPropertyModel,
-                        mSupplier);
+                        mProfileSupplier);
         mViewFlipperMap = mMediator.getViewFlipperMapForTesting();
         mListDelegate = mMediator.createListDelegate();
     }
 
     @Test
-    @SmallTest
     public void testMaybeAddOneBottomSheetLayout() {
         // Verifies that the value and the key added to mViewFlipperMap are correct when adding
         // the key to mViewFlipperMap at the first time.
@@ -112,7 +115,6 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testMaybeAddTwoBottomSheetLayout() {
         // Verifies that the value and the key added to mViewFlipperMap are correct when first
         // adding the key.
@@ -137,7 +139,6 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testRequestShowContentCalledOnlyOnce() {
         // Verifies that requestShowContent() is called only when showBottomSheet() is called at the
         // first time.
@@ -155,7 +156,6 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testShowBottomSheet() {
         // Verifies that setDisplayChild() is called and mCurrentBottomSheet is set correctly.
         @BottomSheetType int bottomSheetType = NTP_CARDS;
@@ -165,11 +165,10 @@ public class NtpCustomizationMediatorUnitTest {
         mMediator.showBottomSheet(bottomSheetType);
 
         verify(mViewFlipperPropertyModel).set(eq(LAYOUT_TO_DISPLAY), eq(viewFlipperIndex));
-        assertEquals(bottomSheetType, (int) mMediator.getCurrentBottomSheetForTesting());
+        assertEquals(bottomSheetType, (int) mMediator.getCurrentBottomSheetType());
     }
 
     @Test
-    @SmallTest
     public void testMetricsInShowBottomSheet() {
         String histogramName = "NewTabPage.Customization.BottomSheet.Shown";
         @BottomSheetType int[] bottomSheetTypes = new int[] {NTP_CARDS, MAIN};
@@ -187,7 +186,6 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testShowBottomSheetAssertionError() {
         // Verifies that AssertionError will be raised if maybeAddBottomSheetLayout() is not
         // called before calling showBottomSheet()
@@ -197,7 +195,6 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testBackPressNotInitialized() {
         // Verifies that backPressOnCurrentBottomSheet() will do nothing if mCurrentBottomSheet is
         // not initialized.
@@ -209,7 +206,6 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testBackPressOnMainBottomSheet() {
         mMediator.setCurrentBottomSheetForTesting(BottomSheetType.MAIN);
 
@@ -217,30 +213,39 @@ public class NtpCustomizationMediatorUnitTest {
 
         // Verifies that hideContent() is called and mCurrentBottomSheet is set to null.
         verify(mBottomSheetController).hideContent(eq(mBottomSheetContent), eq(true));
-        assertNull(mMediator.getCurrentBottomSheetForTesting());
+        assertNull(mMediator.getCurrentBottomSheetType());
 
         // Verifies that showBottomSheet() is not called.
         verify(mViewFlipperPropertyModel, never()).set(eq(LAYOUT_TO_DISPLAY), anyInt());
     }
 
     @Test
-    @SmallTest
     public void testBackPressOnNtpCardsBottomSheet() {
         mViewFlipperMap.put(BottomSheetType.MAIN, 10);
         mMediator.setCurrentBottomSheetForTesting(BottomSheetType.NTP_CARDS);
 
+        when(mPrefService.getBoolean(Pref.ARTICLES_LIST_VISIBLE)).thenReturn(true);
         mMediator.backPressOnCurrentBottomSheet();
 
         // Verifies that hideContent() is not called and showBottomSheet() is called to change the
         // value of mCurrentBottomSheet and to set the value of mPropertyModel.
         verify(mBottomSheetController, never())
                 .hideContent(any(BottomSheetContent.class), anyBoolean());
-        assertEquals(BottomSheetType.MAIN, (int) mMediator.getCurrentBottomSheetForTesting());
+        assertEquals(BottomSheetType.MAIN, (int) mMediator.getCurrentBottomSheetType());
         verify(mViewFlipperPropertyModel).set(eq(LAYOUT_TO_DISPLAY), eq(10));
+
+        // Verifies that the subtitle of the feed item in the main bottom sheet is updated properly.
+        verify(mContainerPropertyModel)
+                .set(eq(MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE), eq(R.string.text_on));
+
+        mMediator.setCurrentBottomSheetForTesting(BottomSheetType.NTP_CARDS);
+        when(mPrefService.getBoolean(Pref.ARTICLES_LIST_VISIBLE)).thenReturn(false);
+        mMediator.backPressOnCurrentBottomSheet();
+        verify(mContainerPropertyModel)
+                .set(eq(MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE), eq(R.string.text_off));
     }
 
     @Test
-    @SmallTest
     public void testDestroy() {
         // Verifies mViewFlipperMap is cleared.
         mViewFlipperMap.put(BottomSheetType.NTP_CARDS, 9);
@@ -260,7 +265,6 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testBottomSheetObserver() {
         // Verifies the supplier is set to true when the sheet opens.
         BottomSheetObserver observer = mMediator.getBottomSheetObserverForTesting();
@@ -280,10 +284,12 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testListContainerViewDelegate() {
         // Verifies the subtitle of the "feeds" list item is "On" and is null for other list item.
+        when(mPrefService.getBoolean(Pref.ARTICLES_LIST_VISIBLE)).thenReturn(true);
         assertEquals("On", mListDelegate.getListItemSubtitle(FEED, mContext));
+        when(mPrefService.getBoolean(Pref.ARTICLES_LIST_VISIBLE)).thenReturn(false);
+        assertEquals("Off", mListDelegate.getListItemSubtitle(FEED, mContext));
         assertNull(mListDelegate.getListItemSubtitle(MAIN, mContext));
 
         // Verifies the listener returned from the delegate is in mTypeToListeners map.
@@ -298,7 +304,6 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testRegisterClickListener() {
         View.OnClickListener listener = mock(View.OnClickListener.class);
         mMediator.registerClickListener(10, listener);
@@ -306,7 +311,6 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testRenderContent() {
         mMediator.renderListContent();
         verify(mContainerPropertyModel)
@@ -314,22 +318,37 @@ public class NtpCustomizationMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testBuildListContentWhenProfileIsNotReady() {
+        List<Integer> listContent = mMediator.buildListContent();
+        assertEquals(List.of(MVT, NTP_CARDS), listContent);
+    }
+
+    @Test
+    @Features.DisableFeatures(ChromeFeatureList.NEW_TAB_PAGE_CUSTOMIZATION_FOR_MVT)
+    public void testBuildListContentWhenProfileIsNotReadyAsNtpCustomizationForMvtFeatureDisabled() {
         List<Integer> listContent = mMediator.buildListContent();
         assertEquals(List.of(NTP_CARDS), listContent);
     }
 
     @Test
-    @SmallTest
     public void testBuildListContent() {
-        // Verifies that "FEED" misses from the result list if and if only isFeedEnabled()
-        // is false;
-        FeedServiceBridgeJni.setInstanceForTesting(mFeedServiceBridgeJniMock);
-        mSupplier.set(mProfileProvider);
-        when(mProfileProvider.getOriginalProfile()).thenReturn(mProfile);
-        FeedFeatures.setFakePrefsForTest(mPrefService);
+        // Mock dependencies to enable FeedFeatures.isFeedEnabled(profile) to return true.
+        when(mPrefService.getBoolean(Pref.ENABLE_SNIPPETS_BY_DSE)).thenReturn(true);
+        when(mFeedServiceBridgeJniMock.isEnabled()).thenReturn(true);
 
+        assertTrue(FeedFeatures.isFeedEnabled(mProfile));
+        assertEquals(List.of(MVT, NTP_CARDS, FEED), mMediator.buildListContent());
+
+        // Mock dependencies to enable FeedFeatures.isFeedEnabled(profile) to return false.
+        when(mPrefService.getBoolean(Pref.ENABLE_SNIPPETS_BY_DSE)).thenReturn(false);
+
+        assertFalse(FeedFeatures.isFeedEnabled(mProfile));
+        assertEquals(List.of(MVT, NTP_CARDS), mMediator.buildListContent());
+    }
+
+    @Test
+    @Features.DisableFeatures(ChromeFeatureList.NEW_TAB_PAGE_CUSTOMIZATION_FOR_MVT)
+    public void testBuildListContentWithNtpCustomizationForMvtFeatureDisabled() {
         // Mock dependencies to enable FeedFeatures.isFeedEnabled(profile) to return true.
         when(mPrefService.getBoolean(Pref.ENABLE_SNIPPETS_BY_DSE)).thenReturn(true);
         when(mFeedServiceBridgeJniMock.isEnabled()).thenReturn(true);
@@ -342,5 +361,15 @@ public class NtpCustomizationMediatorUnitTest {
 
         assertFalse(FeedFeatures.isFeedEnabled(mProfile));
         assertEquals(List.of(NTP_CARDS), mMediator.buildListContent());
+    }
+
+    @Test
+    public void testUpdateFeedSectionSubtitle() {
+        mMediator.updateFeedSectionSubtitle(/* isFeedVisible= */ true);
+        verify(mContainerPropertyModel)
+                .set(eq(MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE), eq(R.string.text_on));
+        mMediator.updateFeedSectionSubtitle(/* isFeedVisible= */ false);
+        verify(mContainerPropertyModel)
+                .set(eq(MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE), eq(R.string.text_off));
     }
 }

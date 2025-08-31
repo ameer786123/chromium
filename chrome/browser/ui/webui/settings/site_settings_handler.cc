@@ -17,10 +17,10 @@
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/to_value_list.h"
+#include "base/debug/crash_logging.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/functional/overloaded.h"
 #include "base/i18n/message_formatter.h"
 #include "base/i18n/number_formatting.h"
 #include "base/json/values_util.h"
@@ -28,6 +28,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/no_destructor.h"
+#include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -70,6 +71,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/browsing_data/content/browsing_data_model.h"
 #include "components/browsing_topics/browsing_topics_service.h"
+#include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/browser/content_settings_uma_util.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/browser/website_settings_info.h"
@@ -107,6 +109,7 @@
 #include "extensions/common/permissions/permissions_data.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "storage/common/file_system/file_system_util.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -368,10 +371,11 @@ bool IsPatternValidForType(const std::string& pattern_string,
   // WebUI permissions are controlled by ContentSettingsRegistry
   // AllowlistedSchemes and WebUIAllowlist. Users shouldn't be able to grant
   // extra permissions or revoke existing permissions.
-  if (pattern.GetScheme() == ContentSettingsPattern::SCHEME_CHROME ||
-      pattern.GetScheme() == ContentSettingsPattern::SCHEME_CHROMEUNTRUSTED ||
-      pattern.GetScheme() == ContentSettingsPattern::SCHEME_DEVTOOLS ||
-      pattern.GetScheme() == ContentSettingsPattern::SCHEME_CHROMESEARCH) {
+  if (pattern.GetSchemeType() == ContentSettingsPattern::SCHEME_CHROME ||
+      pattern.GetSchemeType() ==
+          ContentSettingsPattern::SCHEME_CHROMEUNTRUSTED ||
+      pattern.GetSchemeType() == ContentSettingsPattern::SCHEME_DEVTOOLS ||
+      pattern.GetSchemeType() == ContentSettingsPattern::SCHEME_CHROMESEARCH) {
     *out_error = l10n_util::GetStringUTF8(IDS_SETTINGS_NOT_VALID_WEB_ADDRESS);
     return false;
   }
@@ -460,9 +464,9 @@ std::map<std::string, std::pair<std::string, int>> GetRwsMap(
 
   // site eTLD+1 : {owner site eTLD+1, # of sites in that related website set}
   std::map<std::string, std::pair<std::string, int>> rws_map;
-  for (auto rws : rws_owner_to_members) {
+  for (const auto& rws : rws_owner_to_members) {
     // Set rws owner and count of members for each eTLD+1
-    for (auto member : rws.second) {
+    for (const auto& member : rws.second) {
       rws_map[member] = {rws.first, rws.second.size()};
     }
   }
@@ -611,14 +615,13 @@ GroupingKey& GroupingKey::operator=(const GroupingKey& other) = default;
 GroupingKey::~GroupingKey() = default;
 
 std::string GroupingKey::Serialize() const {
-  return std::visit(base::Overloaded{[](const std::string& etld_plus1) {
-                                       return kGroupingKeyEtldPrefix +
-                                              etld_plus1;
-                                     },
-                                     [](const url::Origin& origin) {
-                                       return kGroupingKeyOriginPrefix +
-                                              origin.GetURL().spec();
-                                     }},
+  return std::visit(absl::Overload{[](const std::string& etld_plus1) {
+                                     return kGroupingKeyEtldPrefix + etld_plus1;
+                                   },
+                                   [](const url::Origin& origin) {
+                                     return kGroupingKeyOriginPrefix +
+                                            origin.GetURL().spec();
+                                   }},
                     value_);
 }
 
@@ -638,11 +641,11 @@ std::optional<url::Origin> GroupingKey::GetOrigin() const {
 
 url::Origin GroupingKey::ToOrigin() const {
   return std::visit(
-      base::Overloaded{[](const std::string& etld_plus1) {
-                         return ConvertEtldToOrigin(etld_plus1,
-                                                    /*secure=*/false);
-                       },
-                       [](const url::Origin& origin) { return origin; }},
+      absl::Overload{[](const std::string& etld_plus1) {
+                       return ConvertEtldToOrigin(etld_plus1,
+                                                  /*secure=*/false);
+                     },
+                     [](const url::Origin& origin) { return origin; }},
       value_);
 }
 
@@ -884,7 +887,7 @@ void SiteSettingsHandler::OnGetUsageInfo() {
   }
 
   if (size > 0) {
-    usage_string = base::UTF16ToUTF8(ui::FormatBytes(size));
+    usage_string = base::UTF16ToUTF8(ui::FormatBytes(base::ByteCount(size)));
   }
 
   auto* privacy_sandbox_service =
@@ -1002,9 +1005,9 @@ void SiteSettingsHandler::HandleGetRwsMembershipLabel(
   AllowJavascript();
   CHECK_EQ(3U, args.size());
 
-  std::string callback_id = args[0].GetString();
+  const std::string& callback_id = args[0].GetString();
   int num_members = args[1].GetInt();
-  std::string rws_owner = args[2].GetString();
+  const std::string& rws_owner = args[2].GetString();
 
   const std::string label =
       base::UTF16ToUTF8(base::i18n::MessageFormatter::FormatWithNamedArgs(
@@ -1127,6 +1130,18 @@ void SiteSettingsHandler::HandleGetDefaultValueForContentType(
       site_settings::ContentSettingsTypeFromGroupName(type);
   HostContentSettingsMap* map =
       HostContentSettingsMapFactory::GetForProfile(profile_);
+  if (!content_settings::ContentSettingsRegistry::GetInstance()->Get(
+          content_type)) {
+    static auto* const type_key = base::debug::AllocateCrashKeyString(
+        "site_settings-handler_type", base::debug::CrashKeySize::Size256);
+    base::debug::SetCrashKeyString(type_key, type);
+    static auto* const url_key = base::debug::AllocateCrashKeyString(
+        "site_settings-handler_url", base::debug::CrashKeySize::Size256);
+    base::debug::SetCrashKeyString(url_key,
+                                   web_ui()->GetWebContents()->GetURL().spec());
+    // Please notify https://crbug.com/435597217 if you see this crash.
+    NOTREACHED() << type << " is not a content setting";
+  }
 
   base::Value::Dict category;
   site_settings::GetContentCategorySetting(map, content_type, &category);
@@ -1137,7 +1152,7 @@ void SiteSettingsHandler::HandleGetAllSites(const base::Value::List& args) {
   AllowJavascript();
 
   CHECK_EQ(1U, args.size());
-  std::string callback_id = args[0].GetString();
+  const std::string& callback_id = args[0].GetString();
 
   all_sites_map_.clear();
   origin_permission_set_.clear();
@@ -1241,7 +1256,7 @@ void SiteSettingsHandler::HandleGetCategoryList(const base::Value::List& args) {
   AllowJavascript();
 
   CHECK_EQ(2U, args.size());
-  std::string callback_id = args[0].GetString();
+  const std::string& callback_id = args[0].GetString();
   const std::string& origin_string = args[1].GetString();
 
   base::Value::List result;
@@ -1258,7 +1273,7 @@ void SiteSettingsHandler::HandleGetRecentSitePermissions(
   AllowJavascript();
 
   CHECK_EQ(2U, args.size());
-  std::string callback_id = args[0].GetString();
+  const std::string& callback_id = args[0].GetString();
   size_t max_sources = base::checked_cast<size_t>(args[1].GetInt());
 
   const std::vector<ContentSettingsType>& content_types =
@@ -1366,7 +1381,7 @@ void SiteSettingsHandler::HandleGetFormattedBytes(
     const base::Value::List& args) {
   AllowJavascript();
   CHECK_EQ(2U, args.size());
-  int64_t num_bytes = static_cast<int64_t>(args[1].GetDouble());
+  base::ByteCount num_bytes = base::ByteCount(args[1].GetDouble());
   ResolveJavascriptCallback(/*callback_id=*/args[0],
                             base::Value(ui::FormatBytes(num_bytes)));
 }
@@ -1455,7 +1470,7 @@ void SiteSettingsHandler::HandleGetOriginPermissions(
 
   CHECK_EQ(3U, args.size());
   const base::Value& callback_id = args[0];
-  std::string origin = args[1].GetString();
+  const std::string& origin = args[1].GetString();
   const base::Value::List& types = args[2].GetList();
 
   // Note: Invalid URLs will just result in default settings being shown.
@@ -1565,7 +1580,7 @@ void SiteSettingsHandler::HandleSetOriginPermissions(
   CHECK_EQ(3U, args.size());
   const std::string& origin_string = args[0].GetString();
   const std::string* type_string = args[1].GetIfString();
-  std::string value = args[2].GetString();
+  const std::string& value = args[2].GetString();
 
   const GURL origin(origin_string);
   if (!origin.is_valid()) {
@@ -1784,17 +1799,6 @@ void SiteSettingsHandler::HandleResetCategoryPermissionForPattern(
   if (content_type == ContentSettingsType::COOKIES &&
       primary_pattern.MatchesAllHosts() &&
       !secondary_pattern.MatchesAllHosts()) {
-    // Remove TP exceptions along with 3PC exceptions if we are not showing
-    // them explicitly in settings but are supporting adding/removing via UB.
-    // TODO(https://b/333527273): Remove post-3PCD launch.
-    if (base::FeatureList::IsEnabled(
-            privacy_sandbox::kTrackingProtectionContentSettingUbControl) &&
-        !base::FeatureList::IsEnabled(
-            privacy_sandbox::kTrackingProtectionContentSettingInSettings)) {
-      map->SetContentSettingCustomScope(
-          ContentSettingsPattern::Wildcard(), secondary_pattern,
-          ContentSettingsType::TRACKING_PROTECTION, CONTENT_SETTING_DEFAULT);
-    }
     base::RecordAction(base::UserMetricsAction(
         "ThirdPartyCookies.SettingsSiteException.Removed"));
   }
@@ -2070,7 +2074,7 @@ void SiteSettingsHandler::SendZoomLevels() {
 void SiteSettingsHandler::HandleRemoveZoomLevel(const base::Value::List& args) {
   CHECK_EQ(1U, args.size());
 
-  std::string host_or_spec = args[0].GetString();
+  const std::string& host_or_spec = args[0].GetString();
 
   GURL url(host_or_spec);
   if (url.is_valid() && url.scheme() == chrome::kIsolatedAppScheme) {

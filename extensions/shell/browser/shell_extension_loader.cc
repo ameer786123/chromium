@@ -24,8 +24,6 @@
 
 namespace extensions {
 
-using LoadErrorBehavior = ExtensionRegistrar::LoadErrorBehavior;
-
 namespace {
 
 scoped_refptr<const Extension> LoadUnpacked(
@@ -100,8 +98,7 @@ void ShellExtensionLoader::ReloadExtension(ExtensionId extension_id) {
   // the reload so that the first step, disabling the extension, doesn't release
   // the last remaining keep-alive and shut down the application.
   keep_alive_requester_.StartTrackingReload(extension);
-  extension_registrar_->ReloadExtension(extension_id,
-                                        LoadErrorBehavior::kQuiet);
+  extension_registrar_->ReloadExtensionWithQuietFailure(extension_id);
   if (did_schedule_reload_)
     return;
 
@@ -156,13 +153,9 @@ void ShellExtensionLoader::PostUninstallExtension(
     scoped_refptr<const Extension> extension,
     base::OnceClosure done_callback) {}
 
-void ShellExtensionLoader::PostNotifyUninstallExtension(
-    scoped_refptr<const Extension> extension) {}
-
-void ShellExtensionLoader::LoadExtensionForReload(
+void ShellExtensionLoader::DoLoadExtensionForReload(
     const ExtensionId& extension_id,
-    const base::FilePath& path,
-    LoadErrorBehavior load_error_behavior) {
+    const base::FilePath& path) {
   CHECK(!path.empty());
 
   GetExtensionFileTaskRunner()->PostTaskAndReplyWithResult(
@@ -172,11 +165,21 @@ void ShellExtensionLoader::LoadExtensionForReload(
   did_schedule_reload_ = true;
 }
 
+void ShellExtensionLoader::LoadExtensionForReload(
+    const ExtensionId& extension_id,
+    const base::FilePath& path) {
+  DoLoadExtensionForReload(extension_id, path);
+}
+
+void ShellExtensionLoader::LoadExtensionForReloadWithQuietFailure(
+    const ExtensionId& extension_id,
+    const base::FilePath& path) {
+  DoLoadExtensionForReload(extension_id, path);
+}
+
 void ShellExtensionLoader::ShowExtensionDisabledError(
     const Extension* extension,
     bool is_remote_install) {}
-
-void ShellExtensionLoader::FinishDelayedInstallationsIfAny() {}
 
 bool ShellExtensionLoader::CanEnableExtension(const Extension* extension) {
   return true;

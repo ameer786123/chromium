@@ -43,7 +43,7 @@ public class AutofillSaveCardBottomSheetCoordinator {
     private final Context mContext;
     private final AutofillSaveCardBottomSheetView mView;
     private final AutofillSaveCardBottomSheetMediator mMediator;
-    private PropertyModel mModel;
+    private final PropertyModel mModel;
 
     /**
      * Creates the coordinator.
@@ -79,6 +79,9 @@ public class AutofillSaveCardBottomSheetCoordinator {
                         .with(
                                 AutofillSaveCardBottomSheetProperties.LOGO_ICON,
                                 uiInfo.isForUpload() ? uiInfo.getLogoIcon() : 0)
+                        .with(
+                                AutofillSaveCardBottomSheetProperties.LOGO_ICON_DESCRIPTION,
+                                uiInfo.getLogoIconDescription())
                         .with(
                                 AutofillSaveCardBottomSheetProperties.CARD_DESCRIPTION,
                                 uiInfo.getCardDescription())

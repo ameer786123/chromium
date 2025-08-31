@@ -98,11 +98,7 @@ public class SaveUpdateAddressProfilePromptTest {
                         });
     }
 
-    private void createAndShowPrompt(boolean isUpdate) {
-        createAndShowPrompt(isUpdate, NO_MIGRATION);
-    }
-
-    private void createAndShowPrompt(boolean isUpdate, boolean isMigrationToAccount) {
+    private void createAndShowPrompt(@SaveUpdateAddressProfilePromptMode int promptMode) {
         AutofillProfile dummyProfile = AutofillProfile.builder().build();
         mModalDialogManager = new FakeModalDialogManager(ModalDialogType.APP);
         mPrompt =
@@ -112,8 +108,7 @@ public class SaveUpdateAddressProfilePromptTest {
                         mActivity,
                         mProfile,
                         dummyProfile,
-                        isUpdate,
-                        isMigrationToAccount);
+                        promptMode);
         mPrompt.setAddressEditorForTesting(mAddressEditor);
         mPrompt.show();
     }
@@ -126,54 +121,54 @@ public class SaveUpdateAddressProfilePromptTest {
     @Test
     @SmallTest
     public void dialogShown() {
-        createAndShowPrompt(false);
+        createAndShowPrompt(SaveUpdateAddressProfilePromptMode.SAVE_NEW_PROFILE);
         assertNotNull(mModalDialogManager.getShownDialogModel());
     }
 
     @Test
     @SmallTest
     public void positiveButtonPressed() {
-        createAndShowPrompt(false);
+        createAndShowPrompt(SaveUpdateAddressProfilePromptMode.SAVE_NEW_PROFILE);
         assertNotNull(mModalDialogManager.getShownDialogModel());
         mModalDialogManager.clickPositiveButton();
         assertNull(mModalDialogManager.getShownDialogModel());
         verify(mPromptControllerJni, times(1))
-                .onUserAccepted(eq(NATIVE_SAVE_UPDATE_ADDRESS_PROFILE_PROMPT_CONTROLLER), any());
+                .onUserAccepted(eq(NATIVE_SAVE_UPDATE_ADDRESS_PROFILE_PROMPT_CONTROLLER));
         verify(mPromptControllerJni, times(1))
-                .onPromptDismissed(eq(NATIVE_SAVE_UPDATE_ADDRESS_PROFILE_PROMPT_CONTROLLER), any());
+                .onPromptDismissed(eq(NATIVE_SAVE_UPDATE_ADDRESS_PROFILE_PROMPT_CONTROLLER));
     }
 
     @Test
     @SmallTest
     public void negativeButtonPressed() {
-        createAndShowPrompt(false);
+        createAndShowPrompt(SaveUpdateAddressProfilePromptMode.SAVE_NEW_PROFILE);
 
         assertNotNull(mModalDialogManager.getShownDialogModel());
         mModalDialogManager.clickNegativeButton();
         assertNull(mModalDialogManager.getShownDialogModel());
         verify(mPromptControllerJni, times(1))
-                .onUserDeclined(eq(NATIVE_SAVE_UPDATE_ADDRESS_PROFILE_PROMPT_CONTROLLER), any());
+                .onUserDeclined(eq(NATIVE_SAVE_UPDATE_ADDRESS_PROFILE_PROMPT_CONTROLLER));
         verify(mPromptControllerJni, times(1))
-                .onPromptDismissed(eq(NATIVE_SAVE_UPDATE_ADDRESS_PROFILE_PROMPT_CONTROLLER), any());
+                .onPromptDismissed(eq(NATIVE_SAVE_UPDATE_ADDRESS_PROFILE_PROMPT_CONTROLLER));
     }
 
     @Test
     @SmallTest
     public void dialogDismissed() {
-        createAndShowPrompt(false);
+        createAndShowPrompt(SaveUpdateAddressProfilePromptMode.SAVE_NEW_PROFILE);
         assertNotNull(mModalDialogManager.getShownDialogModel());
         // Simulate dialog dismissal by native.
         mPrompt.dismiss();
         assertNull(mModalDialogManager.getShownDialogModel());
         // Check that callback was still called when the dialog is dismissed.
         verify(mPromptControllerJni, times(1))
-                .onPromptDismissed(eq(NATIVE_SAVE_UPDATE_ADDRESS_PROFILE_PROMPT_CONTROLLER), any());
+                .onPromptDismissed(eq(NATIVE_SAVE_UPDATE_ADDRESS_PROFILE_PROMPT_CONTROLLER));
     }
 
     @Test
     @SmallTest
     public void dialogStrings() {
-        createAndShowPrompt(false);
+        createAndShowPrompt(SaveUpdateAddressProfilePromptMode.SAVE_NEW_PROFILE);
 
         PropertyModel propertyModel = mModalDialogManager.getShownDialogModel();
 
@@ -190,7 +185,7 @@ public class SaveUpdateAddressProfilePromptTest {
     @Test
     @SmallTest
     public void dialogStrings_RecordTypeNotice() {
-        createAndShowPrompt(false, true);
+        createAndShowPrompt(SaveUpdateAddressProfilePromptMode.MIGRATE_PROFILE);
         View dialog = mPrompt.getDialogViewForTesting();
 
         mPrompt.setRecordTypeNotice(null);
@@ -218,7 +213,7 @@ public class SaveUpdateAddressProfilePromptTest {
     @Test
     @SmallTest
     public void dialogStrings_SaveAddress() {
-        createAndShowPrompt(false);
+        createAndShowPrompt(SaveUpdateAddressProfilePromptMode.SAVE_NEW_PROFILE);
 
         View dialog = mPrompt.getDialogViewForTesting();
 
@@ -231,7 +226,7 @@ public class SaveUpdateAddressProfilePromptTest {
     @Test
     @SmallTest
     public void dialogStrings_UpdateAddress() {
-        createAndShowPrompt(true);
+        createAndShowPrompt(SaveUpdateAddressProfilePromptMode.UPDATE_PROFILE);
 
         View dialog = mPrompt.getDialogViewForTesting();
 
@@ -244,7 +239,7 @@ public class SaveUpdateAddressProfilePromptTest {
     @Test
     @SmallTest
     public void showHeaders() {
-        createAndShowPrompt(true);
+        createAndShowPrompt(SaveUpdateAddressProfilePromptMode.UPDATE_PROFILE);
 
         View dialog = mPrompt.getDialogViewForTesting();
 
@@ -262,7 +257,7 @@ public class SaveUpdateAddressProfilePromptTest {
     @Test
     @SmallTest
     public void clickEditButton() {
-        createAndShowPrompt(true);
+        createAndShowPrompt(SaveUpdateAddressProfilePromptMode.UPDATE_PROFILE);
         View dialog = mPrompt.getDialogViewForTesting();
         ImageButton editButton = dialog.findViewById(R.id.edit_button);
         editButton.performClick();

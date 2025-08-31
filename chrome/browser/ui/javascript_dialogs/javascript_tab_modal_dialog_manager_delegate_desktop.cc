@@ -4,11 +4,12 @@
 
 #include "chrome/browser/ui/javascript_dialogs/javascript_tab_modal_dialog_manager_delegate_desktop.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tab_modal_confirm_dialog.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "components/javascript_dialogs/app_modal_dialog_manager.h"
@@ -53,6 +54,15 @@ void JavaScriptTabModalDialogManagerDelegateDesktop::WillRunDialog() {
     observer->OnJavaScriptDialog();
   }
 #endif
+
+  // If the tab triggering the dialog is in a split but not active, activate the
+  // tab triggering the dialog.
+  tabs::TabInterface* tab = tabs::TabInterface::GetFromContents(web_contents_);
+  BrowserWindowInterface* browser = tab->GetBrowserWindowInterface();
+  if (browser && tab->IsSplit() && !tab->IsActivated()) {
+    browser->GetTabStripModel()->ActivateTabAt(
+        browser->GetTabStripModel()->GetIndexOfTab(tab));
+  }
 }
 
 void JavaScriptTabModalDialogManagerDelegateDesktop::DidCloseDialog() {
@@ -61,14 +71,15 @@ void JavaScriptTabModalDialogManagerDelegateDesktop::DidCloseDialog() {
 
 void JavaScriptTabModalDialogManagerDelegateDesktop::SetTabNeedsAttention(
     bool attention) {
-  Browser* browser = chrome::FindBrowserWithTab(web_contents_);
+  tabs::TabInterface* tab = tabs::TabInterface::GetFromContents(web_contents_);
+  BrowserWindowInterface* browser = tab->GetBrowserWindowInterface();
   if (!browser) {
     // It's possible that the WebContents is no longer in the tab strip. If so,
     // just give up. https://crbug.com/786178
     return;
   }
 
-  TabStripModel* tab_strip_model = browser->tab_strip_model();
+  TabStripModel* tab_strip_model = browser->GetTabStripModel();
   SetTabNeedsAttentionImpl(
       attention, tab_strip_model,
       tab_strip_model->GetIndexOfWebContents(web_contents_));
@@ -83,12 +94,22 @@ bool JavaScriptTabModalDialogManagerDelegateDesktop::IsWebContentsForemost() {
     return false;
   }
 
-  return browser->tab_strip_model()->GetActiveWebContents() == web_contents_;
+  // A dialog can be shown on the inactive tab of a split. In that case the
+  // inactive tab will be made active.
+  std::vector<tabs::TabInterface*> tabs =
+      browser->tab_strip_model()->GetForegroundTabs();
+  return std::any_of(tabs.begin(), tabs.end(),
+                     [this](const tabs::TabInterface* tab) {
+                       return tab->GetContents() == web_contents_;
+                     });
 }
 
 bool JavaScriptTabModalDialogManagerDelegateDesktop::IsApp() {
-  Browser* browser = chrome::FindBrowserWithTab(web_contents_);
-  return browser && (browser->is_type_app() || browser->is_type_app_popup());
+  tabs::TabInterface* tab = tabs::TabInterface::GetFromContents(web_contents_);
+  BrowserWindowInterface* browser = tab->GetBrowserWindowInterface();
+  return browser &&
+         (browser->GetType() == BrowserWindowInterface::Type::TYPE_APP ||
+          browser->GetType() == BrowserWindowInterface::Type::TYPE_APP_POPUP);
 }
 
 bool JavaScriptTabModalDialogManagerDelegateDesktop::CanShowModalUI() {

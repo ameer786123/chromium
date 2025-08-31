@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/command_line.h"
 #include "base/memory/raw_ptr.h"
 #include "base/task/current_thread.h"
 #include "base/test/mock_callback.h"
@@ -15,8 +16,12 @@
 #include "chrome/browser/optimization_guide/mock_optimization_guide_keyed_service.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/optimization_guide/core/mock_optimization_guide_model_executor.h"
+#include "components/optimization_guide/core/model_execution/test/fake_model_broker.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
+#include "components/policy/core/common/policy_pref_names.h"
+#include "components/prefs/pref_service.h"
+#include "content/public/browser/web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/mojom/ai/ai_common.mojom-forward.h"
@@ -31,16 +36,43 @@
 using optimization_guide::MockSession;
 using testing::_;
 using testing::AtMost;
-using testing::Invoke;
 using testing::NiceMock;
+
+namespace {
+
+std::vector<blink::mojom::AILanguageCodePtr> MakeLanguageCodeVector(
+    const std::vector<std::string>& languages) {
+  std::vector<blink::mojom::AILanguageCodePtr> result;
+  for (const auto& language : languages) {
+    result.push_back(blink::mojom::AILanguageCode::New(language));
+  }
+  return result;
+}
 
 class AIManagerTest : public AITestUtils::AITestBase {
  protected:
+  AIManagerTest()
+      : fake_broker_(optimization_guide::FakeAdaptationAsset({
+            .config =
+                [] {
+                  optimization_guide::proto::OnDeviceModelExecutionFeatureConfig
+                      config;
+                  config.set_can_skip_text_safety(true);
+                  config.set_feature(
+                      optimization_guide::proto::ModelExecutionFeature::
+                          MODEL_EXECUTION_FEATURE_PROMPT_API);
+                  return config;
+                }(),
+        })) {}
+
   void SetUp() override {
     AITestUtils::AITestBase::SetUp();
-    ai_manager_ = std::make_unique<AIManager>(main_rfh()->GetBrowserContext(),
-                                              main_rfh());
+    SetupMockOptimizationGuideKeyedService();
+    ai_manager_ =
+        std::make_unique<AIManager>(main_rfh()->GetBrowserContext(),
+                                    &component_update_service_, main_rfh());
   }
+
   void TearDown() override {
     ai_manager_.reset();
     AITestUtils::AITestBase::TearDown();
@@ -54,7 +86,7 @@ class AIManagerTest : public AITestUtils::AITestBase {
             [&] { return std::make_unique<NiceMock<MockSession>>(&session_); });
     ON_CALL(session_, GetTokenLimits())
         .WillByDefault(AITestUtils::GetFakeTokenLimits);
-    ON_CALL(session_, GetContextSizeInTokens(_, _))
+    ON_CALL(session_, GetExecutionInputSizeInTokens(_, _))
         .WillByDefault(
             [&](optimization_guide::MultimodalMessageReadView request_metadata,
                 optimization_guide::OptimizationGuideModelSizeInTokenCallback
@@ -70,20 +102,27 @@ class AIManagerTest : public AITestUtils::AITestBase {
             GetOnDeviceModelEligibility(_))
         .WillByDefault(testing::Return(
             optimization_guide::OnDeviceModelEligibilityReason::kSuccess));
+    ON_CALL(*mock_optimization_guide_keyed_service_, CreateModelBrokerClient())
+        .WillByDefault([&]() {
+          return std::make_unique<optimization_guide::ModelBrokerClient>(
+              fake_broker_.BindAndPassRemote(),
+              optimization_guide::CreateSessionArgs(nullptr, {}));
+        });
   }
 
- protected:
-  std::unique_ptr<AIManager> ai_manager_;
+  void SetBuildInAIAPIsEnterprisePolicy(bool value) {
+    profile()->GetPrefs()->SetBoolean(
+        policy::policy_prefs::kBuiltInAIAPIsEnabled, value);
+  }
 
  private:
   testing::NiceMock<MockSession> session_;
+  optimization_guide::FakeModelBroker fake_broker_;
 };
 
 // Tests that involve invalid on-device model file paths should not crash when
 // the associated RFH is destroyed.
 TEST_F(AIManagerTest, NoUAFWithInvalidOnDeviceModelPath) {
-  SetupMockOptimizationGuideKeyedService();
-
   auto* command_line = base::CommandLine::ForCurrentProcess();
   command_line->AppendSwitchASCII(
       optimization_guide::switches::kOnDeviceModelExecutionOverride,
@@ -104,20 +143,18 @@ TEST_F(AIManagerTest, NoUAFWithInvalidOnDeviceModelPath) {
 // Tests the `AIUserDataSet`'s behavior of managing the lifetime of
 // `AILanguageModel`s.
 TEST_F(AIManagerTest, AIContextBoundObjectSet) {
-  SetupMockOptimizationGuideKeyedService();
-
   mojo::Remote<blink::mojom::AILanguageModel> mock_session;
   AITestUtils::MockCreateLanguageModelClient mock_create_language_model_client;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_create_language_model_client, OnResult(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](mojo::PendingRemote<blink::mojom::AILanguageModel> language_model,
               blink::mojom::AILanguageModelInstanceInfoPtr info) {
             EXPECT_TRUE(language_model);
             mock_session = mojo::Remote<blink::mojom::AILanguageModel>(
                 std::move(language_model));
             run_loop.Quit();
-          }));
+          });
 
   mojo::Remote<blink::mojom::AIManager> mock_remote = GetAIManagerRemote();
   // Initially the `AIContextBoundObjectSet` is empty.
@@ -129,10 +166,10 @@ TEST_F(AIManagerTest, AIContextBoundObjectSet) {
       mock_create_language_model_client.BindNewPipeAndPassRemote(),
       blink::mojom::AILanguageModelCreateOptions::New(
           /*sampling_params=*/nullptr,
-          /*system_prompt=*/std::nullopt,
           /*initial_prompts=*/
           std::vector<blink::mojom::AILanguageModelPromptPtr>(),
-          /*expected_inputs=*/std::nullopt));
+          /*expected_inputs=*/std::nullopt,
+          /*expected_outputs=*/std::nullopt));
   run_loop.Run();
   ASSERT_EQ(1u, GetAIManagerContextBoundObjectSetSize());
 
@@ -144,7 +181,6 @@ TEST_F(AIManagerTest, AIContextBoundObjectSet) {
 }
 
 TEST_F(AIManagerTest, CanCreate) {
-  SetupMockOptimizationGuideKeyedService();
   base::MockCallback<
       base::OnceCallback<void(blink::mojom::ModelAvailabilityCheckResult)>>
       callback;
@@ -159,13 +195,14 @@ TEST_F(AIManagerTest, CanCreate) {
 }
 
 TEST_F(AIManagerTest, CanCreateNotEnabled) {
-  SetupMockOptimizationGuideKeyedService();
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
-              GetOnDeviceModelEligibility(_))
+              GetOnDeviceModelEligibilityAsync(_, _, _))
       .Times(4)
-      .WillRepeatedly(
-          testing::Return(optimization_guide::OnDeviceModelEligibilityReason::
-                              kFeatureNotEnabled));
+      .WillRepeatedly([](auto feature, auto capabilities, auto callback) {
+        std::move(callback).Run(
+            optimization_guide::OnDeviceModelEligibilityReason::
+                kFeatureNotEnabled);
+      });
   base::MockCallback<
       base::OnceCallback<void(blink::mojom::ModelAvailabilityCheckResult)>>
       callback;
@@ -180,7 +217,6 @@ TEST_F(AIManagerTest, CanCreateNotEnabled) {
 }
 
 TEST_F(AIManagerTest, CanCreateSessionWithTextInputCapabilities) {
-  SetupMockOptimizationGuideKeyedService();
   base::MockCallback<blink::mojom::AIManager::CanCreateLanguageModelCallback>
       callback;
   optimization_guide::ModelBasedCapabilityKey key =
@@ -203,7 +239,6 @@ TEST_F(AIManagerTest, CanCreateSessionWithTextInputCapabilities) {
 TEST_F(AIManagerTest, CanCreateSessionWithImageAndAudioInputCapabilities) {
   base::test::ScopedFeatureList scoped_feature_list(
       blink::features::kAIPromptAPIMultimodalInput);
-  SetupMockOptimizationGuideKeyedService();
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               GetOnDeviceCapabilities())
       .Times(2)
@@ -225,52 +260,108 @@ TEST_F(AIManagerTest, CanCreateSessionWithImageAndAudioInputCapabilities) {
   ai_manager_->CanCreateSession(key, capabilities, callback.Get());
 }
 
-class AIManagerIsLanguagesSupportedTest : public AITestUtils::AITestBase {
- protected:
-  static constexpr char kValidLanguageCode[] = "en";
-  static constexpr char kInvalidLanguageCode[] = "ja";
+TEST_F(AIManagerTest, CanCreateEnterprisePolicyDisabled) {
+  SetBuildInAIAPIsEnterprisePolicy(false);
+  base::MockCallback<
+      base::OnceCallback<void(blink::mojom::ModelAvailabilityCheckResult)>>
+      callback;
+  EXPECT_CALL(callback, Run(blink::mojom::ModelAvailabilityCheckResult::
+                                kUnavailableEnterprisePolicyDisabled))
+      .Times(4);
 
-  std::vector<blink::mojom::AILanguageCodePtr> valid_language_codes() {
-    std::vector<blink::mojom::AILanguageCodePtr> languages;
-    languages.emplace_back(
-        blink::mojom::AILanguageCode::New(kValidLanguageCode));
-    return languages;
-  }
-
-  std::vector<blink::mojom::AILanguageCodePtr> invalid_language_codes() {
-    std::vector<blink::mojom::AILanguageCodePtr> languages;
-    languages.emplace_back(
-        blink::mojom::AILanguageCode::New(kInvalidLanguageCode));
-    return languages;
-  }
-
-  std::vector<blink::mojom::AILanguageCodePtr> mixed_language_codes() {
-    std::vector<blink::mojom::AILanguageCodePtr> languages;
-    languages.emplace_back(
-        blink::mojom::AILanguageCode::New(kValidLanguageCode));
-    languages.emplace_back(
-        blink::mojom::AILanguageCode::New(kInvalidLanguageCode));
-    return languages;
-  }
-};
-
-TEST_F(AIManagerIsLanguagesSupportedTest, OneVector) {
-  EXPECT_TRUE(AIManager::IsLanguagesSupported(valid_language_codes()));
-  EXPECT_FALSE(AIManager::IsLanguagesSupported(invalid_language_codes()));
-  EXPECT_FALSE(AIManager::IsLanguagesSupported(mixed_language_codes()));
+  ai_manager_->CanCreateLanguageModel(/*options=*/{}, callback.Get());
+  ai_manager_->CanCreateWriter(/*options=*/{}, callback.Get());
+  ai_manager_->CanCreateSummarizer(/*options=*/{}, callback.Get());
+  ai_manager_->CanCreateRewriter(/*options=*/{}, callback.Get());
+  SetBuildInAIAPIsEnterprisePolicy(true);
 }
 
-TEST_F(AIManagerIsLanguagesSupportedTest, TwoVectorsAndOneCode) {
-  EXPECT_TRUE(AIManager::IsLanguagesSupported(
-      valid_language_codes(), valid_language_codes(),
-      blink::mojom::AILanguageCode::New(kValidLanguageCode)));
-  EXPECT_FALSE(AIManager::IsLanguagesSupported(
-      valid_language_codes(), invalid_language_codes(),
-      blink::mojom::AILanguageCode::New(kValidLanguageCode)));
-  EXPECT_FALSE(AIManager::IsLanguagesSupported(
-      invalid_language_codes(), mixed_language_codes(),
-      blink::mojom::AILanguageCode::New(kValidLanguageCode)));
-  EXPECT_FALSE(AIManager::IsLanguagesSupported(
-      valid_language_codes(), valid_language_codes(),
-      blink::mojom::AILanguageCode::New(kInvalidLanguageCode)));
+// Test CheckAndFixLanguages templates for LanguageModel.
+TEST_F(AIManagerTest, CheckAndFixLanguagesLanguageModel) {
+  base::flat_set<std::string_view> supported = {"en", "es", "ja"};
+  auto make_expected = [](const base::flat_set<std::string>& languages) {
+    auto expected = blink::mojom::AILanguageModelExpected::New();
+    expected->languages.emplace();
+    for (const auto& language : languages) {
+      expected->languages->push_back(
+          blink::mojom::AILanguageCode::New(language));
+    }
+    return expected;
+  };
+
+  auto make_options = [&](const base::flat_set<std::string>& inputs,
+                          const base::flat_set<std::string>& outputs) {
+    auto options = blink::mojom::AILanguageModelCreateOptions::New();
+    options->expected_inputs.emplace();
+    options->expected_inputs->push_back(make_expected(inputs));
+    options->expected_outputs.emplace();
+    options->expected_outputs->push_back(make_expected(outputs));
+    return options;
+  };
+
+  auto options = blink::mojom::AILanguageModelCreateOptions::New();
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  options = make_options({"en", "es-MX"}, {});
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  options = make_options({}, {"en-UK", "es-SP", "ja-JP"});
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  options = make_options({"en", "fr"}, {});
+  EXPECT_FALSE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  options = make_options({"en"}, {"hi"});
+  EXPECT_FALSE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
 }
+
+// Test CheckAndFixLanguages templates for Summarizer, Writer, and Rewriter.
+TEST_F(AIManagerTest, CheckAndFixLanguagesWritingAssistance) {
+  base::flat_set<std::string_view> supported = {"en", "es", "ja"};
+  auto make_options = [](const std::vector<std::string>& input,
+                         const std::vector<std::string>& context,
+                         const std::string& output) {
+    auto options = blink::mojom::AISummarizerCreateOptions::New();
+    options->expected_input_languages = MakeLanguageCodeVector(input);
+    options->expected_context_languages = MakeLanguageCodeVector(context);
+    options->output_language = blink::mojom::AILanguageCode::New(output);
+    return options;
+  };
+
+  auto options = blink::mojom::AISummarizerCreateOptions::New();
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  options = make_options({}, {}, "");
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  EXPECT_TRUE(options->output_language->code.empty());
+  options = make_options({"en", "es-MX"}, {"ja"}, "en-US");
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  options = make_options({"en-UK", "en-US"}, {"en"}, "");
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  EXPECT_EQ(options->output_language->code, "en-UK");
+  options = make_options({"en", "fr"}, {}, "hi");
+  EXPECT_FALSE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+}
+
+// Test CheckAndFixLanguages templates for Proofreader.
+TEST_F(AIManagerTest, CheckAndFixLanguagesProofreader) {
+  base::flat_set<std::string_view> supported = {"en", "es", "ja"};
+  auto make_options = [](const std::vector<std::string>& input,
+                         const std::string& correction_explanation) {
+    auto options = blink::mojom::AIProofreaderCreateOptions::New();
+    options->expected_input_languages = MakeLanguageCodeVector(input);
+    options->correction_explanation_language =
+        blink::mojom::AILanguageCode::New(correction_explanation);
+    return options;
+  };
+
+  auto options = blink::mojom::AIProofreaderCreateOptions::New();
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  options = make_options({}, "");
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  EXPECT_TRUE(options->correction_explanation_language->code.empty());
+  options = make_options({"en", "es-MX", "ja"}, "en-US");
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  options = make_options({"en-UK", "en-US", "en"}, "");
+  EXPECT_TRUE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+  EXPECT_EQ(options->correction_explanation_language->code, "en-UK");
+  options = make_options({"en", "fr"}, "hi");
+  EXPECT_FALSE(ai_manager_->CheckAndFixLanguages(options, "API", supported));
+}
+
+}  // namespace

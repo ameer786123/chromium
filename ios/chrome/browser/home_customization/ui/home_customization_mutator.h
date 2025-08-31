@@ -5,8 +5,10 @@
 #ifndef IOS_CHROME_BROWSER_HOME_CUSTOMIZATION_UI_HOME_CUSTOMIZATION_MUTATOR_H_
 #define IOS_CHROME_BROWSER_HOME_CUSTOMIZATION_UI_HOME_CUSTOMIZATION_MUTATOR_H_
 
-#import "ios/chrome/browser/home_customization/model/background_customization_configuration.h"
 #import "ios/chrome/browser/home_customization/utils/home_customization_constants.h"
+
+@protocol BackgroundCustomizationConfiguration;
+class GURL;
 
 // Mutator protocol for the UI layer to communicate to the
 // HomeCustomizationMediator.
@@ -28,8 +30,27 @@
 // Applies the given background configuration to the NTP.
 // This method updates the background based on the provided configuration.
 - (void)applyBackgroundForConfiguration:
-    (BackgroundCustomizationConfiguration*)backgroundConfiguration;
+    (id<BackgroundCustomizationConfiguration>)backgroundConfiguration;
 
+// Removes the given background configuration from the recently used list.
+- (void)deleteBackgroundFromRecentlyUsed:
+    (id<BackgroundCustomizationConfiguration>)backgroundConfiguration;
+
+// Downloads and returns a thumbnail image from the given GURL. The image is
+// returned asynchronously through the `completion` block. The method is
+// intended to be used for background customization thumbnails, such as loading
+// preview images for a collection view cell when it becomes visible.
+- (void)fetchBackgroundCustomizationThumbnailURLImage:(GURL)thumbnailURL
+                                           completion:
+                                               (void (^)(UIImage*))completion;
+
+// Loads and returns (asynchronously via `completion`) the user-uploaded
+// image at the given `imagePath`. The method is intended to be used for
+// background customization thumbnails, such as loading preview images for a
+// collection view cell when it becomes visible.
+- (void)fetchBackgroundCustomizationUserUploadedImage:(NSString*)imagePath
+                                           completion:
+                                               (void (^)(UIImage*))completion;
 @end
 
 #endif  // IOS_CHROME_BROWSER_HOME_CUSTOMIZATION_UI_HOME_CUSTOMIZATION_MUTATOR_H_

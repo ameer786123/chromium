@@ -12,6 +12,9 @@
 #import "base/memory/raw_ref.h"
 #import "base/memory/weak_ptr.h"
 #import "components/autofill/core/browser/autofill_progress_dialog_type.h"
+#import "components/autofill/core/browser/payments/autofill_save_card_delegate.h"
+#import "components/autofill/core/browser/payments/autofill_save_card_ui_info.h"
+#include "components/autofill/core/browser/payments/multiple_request_payments_network_interface.h"
 #import "components/autofill/core/browser/payments/payments_autofill_client.h"
 #import "components/autofill/core/browser/ui/payments/autofill_progress_dialog_controller_impl.h"
 #include "components/autofill/core/browser/ui/payments/card_expiration_date_fix_flow_controller_impl.h"
@@ -86,12 +89,15 @@ class IOSChromePaymentsAutofillClient : public PaymentsAutofillClient {
       base::OnceClosure decline_virtual_card_callback) override;
   void VirtualCardEnrollCompleted(PaymentsRpcResult result) override;
   void ShowCardUnmaskOtpInputDialog(
+      CreditCard::RecordType card_type,
       const CardUnmaskChallengeOption& challenge_option,
       base::WeakPtr<OtpUnmaskDelegate> delegate) override;
   void OnUnmaskOtpVerificationResult(OtpUnmaskResult unmask_result) override;
   void ShowAutofillErrorDialog(
       AutofillErrorDialogContext error_context) override;
   PaymentsNetworkInterface* GetPaymentsNetworkInterface() override;
+  MultipleRequestPaymentsNetworkInterface*
+  GetMultipleRequestPaymentsNetworkInterface() override;
   void ShowAutofillProgressDialog(
       AutofillProgressDialogType autofill_progress_dialog_type,
       base::OnceClosure cancel_callback) override;
@@ -140,11 +146,18 @@ class IOSChromePaymentsAutofillClient : public PaymentsAutofillClient {
   }
 
  private:
+  // Shows save card UI offering upload or local save.
+  void ShowSaveCreditCard(
+      AutofillSaveCardUiInfo ui_info,
+      std::unique_ptr<AutofillSaveCardDelegate> save_card_delegate);
+
   const raw_ref<autofill::ChromeAutofillClientIOS> client_;
 
   const raw_ref<infobars::InfoBarManager> infobar_manager_;
 
   std::unique_ptr<PaymentsNetworkInterface> payments_network_interface_;
+  std::unique_ptr<MultipleRequestPaymentsNetworkInterface>
+      multiple_request_payments_network_interface_;
 
   // TODO(crbug.com/40937065): Make these member variables as const raw_refs.
   const raw_ptr<PrefService> pref_service_;
@@ -187,6 +200,12 @@ class IOSChromePaymentsAutofillClient : public PaymentsAutofillClient {
   std::unique_ptr<payments::MandatoryReauthManager> payments_reauth_manager_;
 
   base::WeakPtr<SaveCardBottomSheetModel> save_card_bottom_sheet_model_;
+
+  // Indicates whether the save card bottom sheet should be presented instead of
+  // the infobar for uploading the card to server.
+  bool show_save_card_bottom_sheet_for_upload_;
+
+  bool IsRiskBasedAuthEffectivelyAvailable() const override;
 };
 
 }  // namespace payments

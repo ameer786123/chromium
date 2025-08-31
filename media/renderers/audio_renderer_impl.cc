@@ -39,6 +39,7 @@
 #include "media/base/timestamp_constants.h"
 #include "media/filters/audio_clock.h"
 #include "media/filters/decrypting_demuxer_stream.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 namespace media {
 
@@ -201,6 +202,10 @@ void AudioRendererImpl::SetMediaTime(base::TimeDelta time) {
   first_packet_timestamp_ = kNoTimestamp;
   audio_clock_ =
       std::make_unique<AudioClock>(time, audio_parameters_.sample_rate());
+
+#if !BUILDFLAG(IS_ANDROID)
+  send_pts_for_transcription_ = true;
+#endif
 }
 
 base::TimeDelta AudioRendererImpl::CurrentMediaTime() {
@@ -285,8 +290,8 @@ TimeSource* AudioRendererImpl::GetTimeSource() {
 void AudioRendererImpl::Flush(base::OnceClosure callback) {
   DVLOG(1) << __func__;
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("media", "AudioRendererImpl::Flush",
-                                    TRACE_ID_LOCAL(this));
+  TRACE_EVENT_BEGIN("media", "AudioRendererImpl::Flush",
+                    perfetto::Track::FromPointer(this));
 
   // Flush |sink_| now.  |sink_| must only be accessed on |task_runner_| and not
   // be called under |lock_|.
@@ -371,8 +376,8 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
   DCHECK(init_cb);
   DCHECK(state_ == kUninitialized || state_ == kFlushed);
   DCHECK(sink_);
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("media", "AudioRendererImpl::Initialize",
-                                    TRACE_ID_LOCAL(this));
+  TRACE_EVENT_BEGIN("media", "AudioRendererImpl::Initialize",
+                    perfetto::Track::FromPointer(this));
 
   // If we are re-initializing playback (e.g. switching media tracks), stop the
   // sink first.
@@ -735,16 +740,15 @@ void AudioRendererImpl::OnAudioDecoderStreamInitialized(bool success) {
 
 void AudioRendererImpl::FinishInitialization(PipelineStatus status) {
   DCHECK(init_cb_);
-  TRACE_EVENT_NESTABLE_ASYNC_END1("media", "AudioRendererImpl::Initialize",
-                                  TRACE_ID_LOCAL(this), "status",
-                                  PipelineStatusToString(status));
+  TRACE_EVENT_END("media", perfetto::Track::FromPointer(this), "status",
+                  PipelineStatusToString(status));
   std::move(init_cb_).Run(status);
 }
 
 void AudioRendererImpl::FinishFlush() {
   DCHECK(flush_cb_);
-  TRACE_EVENT_NESTABLE_ASYNC_END0("media", "AudioRendererImpl::Flush",
-                                  TRACE_ID_LOCAL(this));
+  TRACE_EVENT_END("media", /*"AudioRendererImpl::Flush"*/
+                  perfetto::Track::FromPointer(this));
   // The |flush_cb_| must always post in order to avoid deadlocking, as some of
   // the functions which may be bound here are re-entrant into lock-acquiring
   // methods of AudioRendererImpl, and FinishFlush may be called while holding
@@ -1527,6 +1531,7 @@ void AudioRendererImpl::ConfigureChannelMask() {
 void AudioRendererImpl::EnableSpeechRecognition() {
 #if !BUILDFLAG(IS_ANDROID)
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
+  MEDIA_LOG(INFO, media_log_) << "Enabling transcription.";
   transcribe_audio_callback_ = base::BindRepeating(
       &AudioRendererImpl::TranscribeAudio, weak_factory_.GetWeakPtr());
 #endif
@@ -1536,8 +1541,16 @@ void AudioRendererImpl::TranscribeAudio(
     scoped_refptr<media::AudioBuffer> buffer) {
 #if !BUILDFLAG(IS_ANDROID)
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
-  if (speech_recognition_client_)
-    speech_recognition_client_->AddAudio(std::move(buffer));
+  if (speech_recognition_client_) {
+    // TODO(crbug.com/413823334): Resend a `new_timestamp` when large
+    // discontinuities are detected in the media's timestamps (due to muxing).
+    auto new_timestamp = send_pts_for_transcription_
+                             ? std::optional(buffer->timestamp())
+                             : std::nullopt;
+    send_pts_for_transcription_ = false;
+    speech_recognition_client_->AddAudio(std::move(buffer),
+                                         std::move(new_timestamp));
+  }
 #endif
 }
 

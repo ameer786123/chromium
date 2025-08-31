@@ -71,11 +71,11 @@ namespace {
 // Returns the key that we use to identify the brekpoint in
 // event_listener_breakpoints_. |target_name| may be "", in which case
 // we'll match any target.
-WTF::String EventListenerBreakpointKey(const WTF::String& event_name,
-                                       const WTF::String& target_name) {
+String EventListenerBreakpointKey(const String& event_name,
+                                  const String& target_name) {
   if (target_name.empty() || target_name == "*")
-    return event_name + "$$" + "*";
-  return event_name + "$$" + target_name.LowerASCII();
+    return StrCat({event_name, "$$*"});
+  return StrCat({event_name, "$$", target_name.LowerASCII()});
 }
 }  // namespace
 
@@ -176,9 +176,9 @@ void InspectorDOMDebuggerAgent::EventListenersInfoForTarget(
     if (depth < 0)
       depth = INT_MAX;
     HeapVector<Member<Node>> nodes;
-    InspectorDOMAgent::CollectNodes(
-        node, depth, pierce, include_whitespace,
-        WTF::BindRepeating(&FilterNodesWithListeners), &nodes);
+    InspectorDOMAgent::CollectNodes(node, depth, pierce, include_whitespace,
+                                    BindRepeating(&FilterNodesWithListeners),
+                                    &nodes);
     for (Node* n : nodes) {
       // We are only interested in listeners from the current context.
       CollectEventListeners(isolate, n, v8::Local<v8::Value>(), n, pierce,
@@ -315,7 +315,7 @@ static protocol::Response DomTypeForName(const String& type_string, int& type) {
     return protocol::Response::Success();
   }
   return protocol::Response::ServerError(
-      String("Unknown DOM breakpoint type: " + type_string).Utf8());
+      StrCat({"Unknown DOM breakpoint type: ", type_string}).Utf8());
 }
 
 static String DomTypeName(int type) {
@@ -329,7 +329,7 @@ static String DomTypeName(int type) {
     default:
       break;
   }
-  return WTF::g_empty_string;
+  return g_empty_string;
 }
 
 bool IsValidViolationType(const String& violationString) {
@@ -445,7 +445,7 @@ protocol::Response InspectorDOMDebuggerAgent::getEventListeners(
   v8::Context::Scope scope(context);
   V8EventListenerInfoList event_information;
   InspectorDOMDebuggerAgent::EventListenersInfoForTarget(
-      context->GetIsolate(), object, depth.value_or(1), pierce.value_or(false),
+      isolate_, object, depth.value_or(1), pierce.value_or(false),
       dom_agent_->IncludeWhitespace(), &event_information);
   *listeners_array = BuildObjectsForEventListeners(event_information, context,
                                                    object_group->string());
@@ -643,7 +643,8 @@ InspectorDOMDebuggerAgent::PreparePauseOnNativeEventData(
   if (!match)
     return nullptr;
 
-  const String full_event_name = kListenerEventCategoryType + event_name;
+  const String full_event_name =
+      StrCat({kListenerEventCategoryType, event_name});
   auto event_data = protocol::DictionaryValue::create();
   event_data->setString("eventName", full_event_name);
   event_data->setString("targetName", target_name);
@@ -691,15 +692,15 @@ protocol::Response InspectorDOMDebuggerAgent::removeXHRBreakpoint(
   return protocol::Response::Success();
 }
 
-// Returns the breakpoint url if a match is found, or WTF::String().
+// Returns the breakpoint url if a match is found, or blink::String().
 String InspectorDOMDebuggerAgent::MatchXHRBreakpoints(const String& url) const {
   if (pause_on_all_xhrs_.Get())
-    return WTF::g_empty_string;
-  for (const WTF::String& breakpoint : xhr_breakpoints_.Keys()) {
+    return g_empty_string;
+  for (const String& breakpoint : xhr_breakpoints_.Keys()) {
     if (url.Contains(breakpoint))
       return breakpoint;
   }
-  return WTF::String();
+  return String();
 }
 
 void InspectorDOMDebuggerAgent::WillSendXMLHttpOrFetchNetworkRequest(
@@ -769,7 +770,7 @@ String ViolationTypeToString(const ContentSecurityPolicyViolationType type) {
       return protocol::DOMDebugger::CSPViolationTypeEnum::
           TrustedtypePolicyViolation;
     default:
-      return WTF::g_empty_string;
+      return g_empty_string;
   }
 }
 

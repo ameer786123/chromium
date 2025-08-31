@@ -8,6 +8,9 @@
 #import "base/run_loop.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
+#import "components/affiliations/core/browser/affiliation_service.h"
+#import "components/affiliations/core/browser/fake_affiliation_service.h"
+#import "components/affiliations/core/browser/mock_affiliation_service.h"
 #import "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
 #import "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #import "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
@@ -20,6 +23,7 @@
 #import "ios/web_view/internal/autofill/cwv_autofill_data_manager_internal.h"
 #import "ios/web_view/internal/autofill/cwv_autofill_profile_internal.h"
 #import "ios/web_view/internal/autofill/cwv_credit_card_internal.h"
+#import "ios/web_view/internal/autofill/cwv_password_affiliation.h"
 #import "ios/web_view/internal/passwords/cwv_password_internal.h"
 #import "ios/web_view/public/cwv_autofill_data_manager_observer.h"
 #import "ios/web_view/public/cwv_credential_provider_extension_utils.h"
@@ -63,9 +67,13 @@ class CWVAutofillDataManagerTest : public PlatformTest {
     password_store_->Init(/*prefs=*/nullptr,
                           /*affiliated_match_helper=*/nullptr);
 
+    affiliations::MockAffiliationService affiliationsService;
+
     autofill_data_manager_ = [[CWVAutofillDataManager alloc]
-        initWithPersonalDataManager:personal_data_manager_.get()
-                      passwordStore:password_store_.get()];
+         initWithPersonalDataManager:personal_data_manager_.get()
+                       passwordStore:password_store_.get()
+                 affiliationsService:&affiliationsService
+        isPasswordAffiliationEnabled:NO];
   }
 
   // Fetches profiles from |autofill_data_manager_| and returns them in
@@ -236,10 +244,11 @@ TEST_F(CWVAutofillDataManagerTest, UpdatePasswordNilArguments) {
   NSArray<CWVPassword*>* passwords = FetchPasswords();
   ASSERT_EQ(1ul, passwords.count);
   CWVPassword* old_password = passwords.firstObject;
-
+  NSDate* now = [NSDate date];
   [autofill_data_manager_ updatePassword:old_password
                              newUsername:nil
-                             newPassword:nil];
+                             newPassword:nil
+                               timestamp:now];
 
   passwords = FetchPasswords();
   ASSERT_EQ(1ul, passwords.count);
@@ -257,10 +266,11 @@ TEST_F(CWVAutofillDataManagerTest, UpdateUsernameOnly) {
   CWVPassword* password = passwords.firstObject;
   NSString* old_password_value = password.password;
   EXPECT_NSNE(@"new-username", password.username);
-
+  NSDate* now = [NSDate date];
   [autofill_data_manager_ updatePassword:password
                              newUsername:@"new-username"
-                             newPassword:nil];
+                             newPassword:nil
+                               timestamp:now];
   EXPECT_NSEQ(@"new-username", password.username);
   EXPECT_NSEQ(old_password_value, password.password);
 
@@ -280,10 +290,12 @@ TEST_F(CWVAutofillDataManagerTest, UpdatePasswordOnly) {
   CWVPassword* password = passwords.firstObject;
   NSString* old_username_value = password.username;
   EXPECT_NSNE(@"new-password", password.password);
+  NSDate* now = [NSDate date];
 
   [autofill_data_manager_ updatePassword:password
                              newUsername:nil
-                             newPassword:@"new-password"];
+                             newPassword:@"new-password"
+                               timestamp:now];
   EXPECT_NSEQ(old_username_value, password.username);
   EXPECT_NSEQ(@"new-password", password.password);
 
@@ -303,10 +315,12 @@ TEST_F(CWVAutofillDataManagerTest, UpdateUsernameAndPassword) {
   CWVPassword* password = passwords.firstObject;
   EXPECT_NSNE(@"new-username", password.username);
   EXPECT_NSNE(@"new-password", password.password);
+  NSDate* now = [NSDate date];
 
   [autofill_data_manager_ updatePassword:password
                              newUsername:@"new-username"
-                             newPassword:@"new-password"];
+                             newPassword:@"new-password"
+                               timestamp:now];
   EXPECT_NSEQ(@"new-username", password.username);
   EXPECT_NSEQ(@"new-password", password.password);
 
@@ -331,11 +345,12 @@ TEST_F(CWVAutofillDataManagerTest, DeletePassword) {
 TEST_F(CWVAutofillDataManagerTest, AddNewPassword) {
   NSArray<CWVPassword*>* passwords = FetchPasswords();
   ASSERT_EQ(0ul, passwords.count);
+  NSDate* now = [NSDate date];
 
-  [autofill_data_manager_
-      addNewPasswordForUsername:@"new-username"
-                       password:@"new-password"
-                           site:@"https://www.chromium.org/"];
+  [autofill_data_manager_ addNewPasswordForUsername:@"new-username"
+                                           password:@"new-password"
+                                               site:@"https://www.chromium.org/"
+                                          timestamp:now];
   passwords = FetchPasswords();
   ASSERT_EQ(1ul, passwords.count);
 
@@ -350,15 +365,16 @@ TEST_F(CWVAutofillDataManagerTest, AddNewPassword) {
 TEST_F(CWVAutofillDataManagerTest, AddNewPasswordWithConflictingPrimaryKey) {
   NSArray<CWVPassword*>* passwords = FetchPasswords();
   ASSERT_EQ(0ul, passwords.count);
+  NSDate* now = [NSDate date];
 
-  [autofill_data_manager_
-      addNewPasswordForUsername:@"some-username"
-                       password:@"some-password"
-                           site:@"https://www.chromium.org/"];
-  [autofill_data_manager_
-      addNewPasswordForUsername:@"some-username"
-                       password:@"different-password"
-                           site:@"https://www.chromium.org/"];
+  [autofill_data_manager_ addNewPasswordForUsername:@"some-username"
+                                           password:@"some-password"
+                                               site:@"https://www.chromium.org/"
+                                          timestamp:now];
+  [autofill_data_manager_ addNewPasswordForUsername:@"some-username"
+                                           password:@"different-password"
+                                               site:@"https://www.chromium.org/"
+                                          timestamp:now];
   passwords = FetchPasswords();
   ASSERT_EQ(1ul, passwords.count);
 
@@ -405,9 +421,11 @@ TEST_F(CWVAutofillDataManagerTest,
   [CWVCredentialProviderExtensionUtils
       storePasswordForKeychainIdentifier:keychain_identifier
                                 password:@"testpassword"];
+  NSDate* now = [NSDate date];
   [autofill_data_manager_ addNewPasswordForUsername:@"testusername"
                                   serviceIdentifier:@"https://www.chromium.org/"
-                                 keychainIdentifier:keychain_identifier];
+                                 keychainIdentifier:keychain_identifier
+                                          timestamp:now];
 
   NSArray<CWVPassword*>* passwords = FetchPasswords();
   ASSERT_EQ(1ul, passwords.count);

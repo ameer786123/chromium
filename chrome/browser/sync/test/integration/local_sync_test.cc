@@ -12,6 +12,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/send_tab_to_self/send_tab_to_self_util.h"
 #include "chrome/browser/sync/sync_service_factory.h"
+#include "chrome/browser/sync/test/integration/encryption_helper.h"
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -24,11 +25,15 @@
 #include "components/sync/base/features.h"
 #include "components/sync/service/sync_service_impl.h"
 #include "content/public/test/browser_test.h"
-#include "crypto/ec_private_key.h"
+
+// The local sync backend is currently only supported on Windows, Mac, Linux.
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
 namespace {
 
 using syncer::SyncServiceImpl;
+
+constexpr char kTestPassphrase[] = "hunter2";
 
 class SyncTransportActiveChecker : public SingleClientStatusChangeChecker {
  public:
@@ -73,8 +78,6 @@ class LocalSyncTest : public InProcessBrowserTest {
   base::ScopedTempDir local_sync_backend_dir_;
 };
 
-// The local sync backend is currently only supported on Windows, Mac, Linux.
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 IN_PROC_BROWSER_TEST_F(LocalSyncTest, ShouldStart) {
   SyncServiceImpl* service =
       SyncServiceFactory::GetAsSyncServiceImplForProfileForTesting(
@@ -121,10 +124,6 @@ IN_PROC_BROWSER_TEST_F(LocalSyncTest, ShouldStart) {
     expected_active_data_types.Put(syncer::AUTOFILL_WALLET_CREDENTIAL);
   }
 
-  if (base::FeatureList::IsEnabled(commerce::kProductSpecifications)) {
-    expected_active_data_types.Put(syncer::PRODUCT_COMPARISON);
-  }
-
   // The dictionary is currently only synced on Windows and Linux.
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
   expected_active_data_types.Put(syncer::DICTIONARY);
@@ -140,6 +139,47 @@ IN_PROC_BROWSER_TEST_F(LocalSyncTest, ShouldStart) {
   EXPECT_FALSE(service->GetActiveDataTypes().Has(syncer::SEND_TAB_TO_SELF));
   EXPECT_FALSE(service->GetActiveDataTypes().Has(syncer::HISTORY));
 }
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
+IN_PROC_BROWSER_TEST_F(LocalSyncTest, ShouldHonorSelectedTypes) {
+  SyncServiceImpl* service =
+      SyncServiceFactory::GetAsSyncServiceImplForProfileForTesting(
+          browser()->profile());
+
+  // Wait until the first sync cycle is completed.
+  ASSERT_TRUE(SyncTransportActiveChecker(service).Wait());
+
+  ASSERT_TRUE(service->IsLocalSyncEnabled());
+  ASSERT_FALSE(service->IsSyncFeatureEnabled());
+  ASSERT_TRUE(service->GetActiveDataTypes().Has(syncer::BOOKMARKS));
+  ASSERT_TRUE(service->GetActiveDataTypes().Has(syncer::PASSWORDS));
+
+  service->GetUserSettings()->SetSelectedTypes(
+      /*sync_everything=*/false, {syncer::UserSelectableType::kPasswords});
+
+  ASSERT_TRUE(SyncTransportActiveChecker(service).Wait());
+
+  EXPECT_TRUE(service->GetActiveDataTypes().Has(syncer::PASSWORDS));
+  EXPECT_FALSE(service->GetActiveDataTypes().Has(syncer::BOOKMARKS));
+}
+
+// Setting up a custom passphrase is arguably meaningless for local sync, but it
+// has been allowed historically.
+IN_PROC_BROWSER_TEST_F(LocalSyncTest, ShouldSupportCustomPassphrase) {
+  SyncServiceImpl* service =
+      SyncServiceFactory::GetAsSyncServiceImplForProfileForTesting(
+          browser()->profile());
+
+  // Wait until the first sync cycle is completed.
+  ASSERT_TRUE(SyncTransportActiveChecker(service).Wait());
+
+  ASSERT_TRUE(service->IsLocalSyncEnabled());
+  ASSERT_FALSE(service->IsSyncFeatureEnabled());
+
+  service->GetUserSettings()->SetEncryptionPassphrase(kTestPassphrase);
+
+  EXPECT_TRUE(PassphraseAcceptedChecker(service).Wait());
+}
 
 }  // namespace
+
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)

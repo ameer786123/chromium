@@ -32,5 +32,14 @@ public class PermissionDialogCustomViewProperties {
     public static final PropertyModel.ReadableObjectPropertyKey<List<Pair<Integer, Integer>>>
             BOLDED_RANGES = new PropertyModel.ReadableObjectPropertyKey();
 
-    public static final PropertyKey[] ALL_KEYS = {ICON, ICON_TINT, MESSAGE_TEXT, BOLDED_RANGES};
+    public static final PropertyModel.WritableObjectPropertyKey<Runnable> CLOSE_BUTTON_CALLBACK =
+            new PropertyModel.WritableObjectPropertyKey();
+
+    public static final PropertyKey[] ALL_KEYS = {
+        ICON,
+        ICON_TINT,
+        MESSAGE_TEXT,
+        BOLDED_RANGES,
+        CLOSE_BUTTON_CALLBACK
+    };
 }

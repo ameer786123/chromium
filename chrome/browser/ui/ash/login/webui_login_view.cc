@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/ui/ash/login/webui_login_view.h"
 
@@ -23,6 +19,7 @@
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "chrome/browser/ash/app_mode/kiosk_chrome_app_manager.h"
+#include "chrome/browser/ash/browser_delegate/browser_controller.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/lifetime/termination_notification.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
@@ -32,7 +29,6 @@
 #include "chrome/browser/ui/ash/login/login_display_host_webui.h"
 #include "chrome/browser/ui/ash/login/login_screen_client_impl.h"
 #include "chrome/browser/ui/ash/system/system_tray_client_impl.h"
-#include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/browser/ui/webui/ash/login/oobe_ui.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
@@ -85,7 +81,8 @@ void InitializeWebView(views::WebView* web_view) {
   CreateSessionServiceTabHelper(web_contents);
 
   // Create the password manager that is needed for the proxy.
-  autofill::ChromeAutofillClient::CreateForWebContents(web_contents);
+  BrowserController::GetInstance()->CreateAutofillClientForWebContents(
+      web_contents);
   ChromePasswordManagerClient::CreateForWebContents(web_contents);
 
 #if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
@@ -171,10 +168,12 @@ void WebUILoginView::Init() {
 
 void WebUILoginView::RequestFocus() {
   web_view_->RequestFocus();
+  web_view_->web_contents()->SetInitialFocus();
 }
 
 web_modal::WebContentsModalDialogHost*
-WebUILoginView::GetWebContentsModalDialogHost() {
+WebUILoginView::GetWebContentsModalDialogHost(
+    content::WebContents* web_contents) {
   return this;
 }
 
@@ -358,7 +357,8 @@ bool WebUILoginView::PreHandleGestureEvent(
 }
 
 void WebUILoginView::OnFocusLeavingSystemTray(bool reverse) {
-  AboutToRequestFocusFromTabTraversal(reverse);
+  web_view_->RequestFocus();
+  web_view_->web_contents()->FocusThroughTabTraversal(reverse);
 }
 
 void WebUILoginView::OnSystemTrayBubbleShown() {}

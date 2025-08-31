@@ -6,8 +6,12 @@
 
 #import <WebKit/WebKit.h>
 
-#import "base/memory/ptr_util.h"
+#import <vector>
+
 #import "base/strings/sys_string_conversions.h"
+#import "base/test/bind.h"
+#import "base/test/task_environment.h"
+#import "base/test/test_future.h"
 #import "base/uuid.h"
 #import "ios/web/public/js_messaging/content_world.h"
 #import "ios/web/public/js_messaging/java_script_feature.h"
@@ -15,12 +19,16 @@
 #import "ios/web/public/test/fakes/fake_web_client.h"
 #import "ios/web/public/test/scoped_testing_web_client.h"
 #import "ios/web/public/web_client.h"
+#import "ios/web/web_state/ui/wk_content_rule_list_provider.h"
+#import "ios/web/web_state/ui/wk_content_rule_list_util.h"
+#import "testing/gmock/include/gmock/gmock.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 
+using base::test::TestFuture;
+
 namespace web {
-namespace {
 
 class WKWebViewConfigurationProviderTest : public PlatformTest {
  public:
@@ -28,6 +36,17 @@ class WKWebViewConfigurationProviderTest : public PlatformTest {
       : web_client_(std::make_unique<FakeWebClient>()) {}
 
  protected:
+  // Helper to create a WKWebViewConfigurationProvider with a mock rule list
+  // provider for testing. This can call the private constructor because
+  // WKWebViewConfigurationProvider declares this test class as a friend.
+  std::unique_ptr<WKWebViewConfigurationProvider>
+  CreateProviderWithMockRuleListProvider(
+      BrowserState* browser_state,
+      std::unique_ptr<WKContentRuleListProvider> rule_list_provider) {
+    return base::WrapUnique(new WKWebViewConfigurationProvider(
+        browser_state, std::move(rule_list_provider)));
+  }
+
   // Returns WKWebViewConfigurationProvider associated with `browser_state_`.
   WKWebViewConfigurationProvider& GetProvider() {
     return GetProvider(&browser_state_);
@@ -42,36 +61,17 @@ class WKWebViewConfigurationProviderTest : public PlatformTest {
     return static_cast<FakeWebClient*>(web_client_.Get());
   }
 
-  // BrowserState required for WKWebViewConfigurationProvider creation.
   web::ScopedTestingWebClient web_client_;
   FakeBrowserState browser_state_;
+  base::test::TaskEnvironment task_environment_;
 };
 
-// Tests that each WKWebViewConfigurationProvider has own, non-nil
-// configuration and configurations returned by the same provider will always
-// have the same process pool.
-TEST_F(WKWebViewConfigurationProviderTest, ConfigurationOwnerhip) {
-  // Configuration is not nil.
-  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
-  ASSERT_TRUE(provider.GetWebViewConfiguration());
-
-  // Same non-nil WKProcessPool for the same provider.
-  ASSERT_TRUE(provider.GetWebViewConfiguration().processPool);
-  EXPECT_EQ(provider.GetWebViewConfiguration().processPool,
-            provider.GetWebViewConfiguration().processPool);
-
-  // Different WKProcessPools for different providers.
-  FakeBrowserState other_browser_state;
-  WKWebViewConfigurationProvider& other_provider =
-      GetProvider(&other_browser_state);
-  EXPECT_NE(provider.GetWebViewConfiguration().processPool,
-            other_provider.GetWebViewConfiguration().processPool);
-}
+namespace {
 
 // Tests Non-OffTheRecord configuration.
 TEST_F(WKWebViewConfigurationProviderTest, NoneOffTheRecordConfiguration) {
   browser_state_.SetOffTheRecord(false);
-  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
+  WKWebViewConfigurationProvider& provider = GetProvider();
   EXPECT_TRUE(provider.GetWebViewConfiguration().websiteDataStore.persistent);
 }
 
@@ -86,9 +86,8 @@ TEST_F(WKWebViewConfigurationProviderTest, OffTheRecordConfiguration) {
 
 // Tests that internal configuration object can not be changed by clients.
 TEST_F(WKWebViewConfigurationProviderTest, ConfigurationProtection) {
-  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
+  WKWebViewConfigurationProvider& provider = GetProvider();
   WKWebViewConfiguration* config = provider.GetWebViewConfiguration();
-  WKProcessPool* pool = [config processPool];
   WKPreferences* prefs = [config preferences];
   WKUserContentController* userContentController =
       [config userContentController];
@@ -98,14 +97,11 @@ TEST_F(WKWebViewConfigurationProviderTest, ConfigurationProtection) {
   WKWebViewConfiguration* other_wk_web_view_configuration =
       GetProvider(&other_browser_state).GetWebViewConfiguration();
   ASSERT_TRUE(other_wk_web_view_configuration);
-  config.processPool = other_wk_web_view_configuration.processPool;
   config.preferences = other_wk_web_view_configuration.preferences;
   config.userContentController =
       other_wk_web_view_configuration.userContentController;
 
   // Make sure that the properties of internal configuration were not changed.
-  EXPECT_TRUE(provider.GetWebViewConfiguration().processPool);
-  EXPECT_EQ(pool, provider.GetWebViewConfiguration().processPool);
   EXPECT_TRUE(provider.GetWebViewConfiguration().preferences);
   EXPECT_EQ(prefs, provider.GetWebViewConfiguration().preferences);
   EXPECT_TRUE(provider.GetWebViewConfiguration().userContentController);
@@ -127,6 +123,38 @@ TEST_F(WKWebViewConfigurationProviderTest, Purge) {
   EXPECT_FALSE(config);
 }
 
+class MockWKContentRuleListProvider : public WKContentRuleListProvider {
+ public:
+  MockWKContentRuleListProvider() = default;
+  ~MockWKContentRuleListProvider() override = default;
+
+  MOCK_METHOD(void,
+              UpdateRuleList,
+              (RuleListKey key,
+               std::string json_rules,
+               OperationCallback callback),
+              (override));
+  MOCK_METHOD(void,
+              RemoveRuleList,
+              (RuleListKey key, OperationCallback callback),
+              (override));
+};
+
+// Tests that the static content rule lists are created on initialization.
+TEST_F(WKWebViewConfigurationProviderTest, StaticContentRuleListsAreCreated) {
+  auto rule_list_provider =
+      std::make_unique<testing::StrictMock<MockWKContentRuleListProvider>>();
+  EXPECT_CALL(
+      *rule_list_provider,
+      UpdateRuleList(kBlockLocalResourcesRuleListKey, testing::_, testing::_));
+  EXPECT_CALL(
+      *rule_list_provider,
+      UpdateRuleList(kMixedContentUpgradeRuleListKey, testing::_, testing::_));
+
+  auto provider = CreateProviderWithMockRuleListProvider(
+      &browser_state_, std::move(rule_list_provider));
+}
+
 // Tests that configuration's userContentController has additional scripts
 // injected for JavaScriptFeatures configured through the WebClient.
 TEST_F(WKWebViewConfigurationProviderTest, JavaScriptFeatureInjection) {
@@ -134,6 +162,8 @@ TEST_F(WKWebViewConfigurationProviderTest, JavaScriptFeatureInjection) {
 
   WKUserContentController* user_content_controller =
       GetProvider().GetWebViewConfiguration().userContentController;
+  ASSERT_NE(nil, user_content_controller)
+      << "UserContentController should not be nil initially.";
   unsigned long original_script_count =
       [user_content_controller.userScripts count];
 
@@ -150,18 +180,25 @@ TEST_F(WKWebViewConfigurationProviderTest, JavaScriptFeatureInjection) {
   client->SetJavaScriptFeatures({feature.get()});
   GetProvider().UpdateScripts();
 
+  // Re-fetch userContentController to ensure we're checking the updated state.
+  user_content_controller =
+      GetProvider().GetWebViewConfiguration().userContentController;
+  ASSERT_NE(nil, user_content_controller)
+      << "UserContentController should not be nil after update.";
   EXPECT_GT([user_content_controller.userScripts count], original_script_count);
 }
 
 // Tests that observers methods are correctly triggered when observing the
 // WKWebViewConfigurationProvider
 TEST_F(WKWebViewConfigurationProviderTest, Observers) {
+  // Use a separate browser_state for this test to avoid interference if
+  // GetProvider() has side effects
   auto browser_state = std::make_unique<FakeBrowserState>();
   WKWebViewConfigurationProvider* provider = &GetProvider(browser_state.get());
 
   // Register a callback to be notified when website data store is
   // updated and check that it is not invoked as part of the registration.
-  __block WKWebsiteDataStore* recorded_data_store;
+  __block WKWebsiteDataStore* recorded_data_store = nil;
   base::CallbackListSubscription subscription =
       provider->RegisterWebSiteDataStoreUpdatedCallback(
           base::BindRepeating(^(WKWebsiteDataStore* new_data_store) {
@@ -287,7 +324,7 @@ TEST_F(WKWebViewConfigurationProviderTest, SameDataStoreForSameID) {
 TEST_F(WKWebViewConfigurationProviderTest,
        GetWebSiteDataStore_NoneOffTheRecord) {
   browser_state_.SetOffTheRecord(false);
-  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
+  WKWebViewConfigurationProvider& provider = GetProvider();
   WKWebsiteDataStore* data_store = provider.GetWebsiteDataStore();
   EXPECT_TRUE(data_store.isPersistent);
   // Default data store shares same pointer.
@@ -297,7 +334,7 @@ TEST_F(WKWebViewConfigurationProviderTest,
 // Tests `GetWebSiteDataStore()` for OffTheRecord browser.
 TEST_F(WKWebViewConfigurationProviderTest, GetWebSiteDataStore_OffTheRecord) {
   browser_state_.SetOffTheRecord(true);
-  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
+  WKWebViewConfigurationProvider& provider = GetProvider();
   WKWebsiteDataStore* data_store = provider.GetWebsiteDataStore();
   ASSERT_TRUE(data_store);
   EXPECT_FALSE(data_store.isPersistent);
@@ -370,7 +407,7 @@ TEST_F(WKWebViewConfigurationProviderTest,
 // configuration used.
 TEST_F(WKWebViewConfigurationProviderTest,
        GetWebSiteDataStore_SameConfigurationDataStore) {
-  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
+  WKWebViewConfigurationProvider& provider = GetProvider();
 
   WKWebsiteDataStore* data_store = provider.GetWebsiteDataStore();
   EXPECT_TRUE(data_store.isPersistent);
@@ -384,7 +421,7 @@ TEST_F(WKWebViewConfigurationProviderTest,
 // Tests data store is reset correctly when configuration is reset.
 TEST_F(WKWebViewConfigurationProviderTest,
        GetWebSiteDataStore_ResetConfiguration) {
-  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
+  WKWebViewConfigurationProvider& provider = GetProvider();
 
   WKWebsiteDataStore* data_store = provider.GetWebsiteDataStore();
   EXPECT_TRUE(data_store.isPersistent);

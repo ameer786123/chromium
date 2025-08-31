@@ -18,7 +18,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "ui/accessibility/platform/ax_mode_observer.h"
 #include "ui/accessibility/platform/ax_platform.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/controls/webview/webview_export.h"
 #include "ui/views/metadata/view_factory.h"
@@ -59,6 +59,8 @@ class WEBVIEW_EXPORT WebView : public View,
   };
 
   using WebContentsAttachedCallback = base::RepeatingCallback<void(WebView*)>;
+  using WebContentsDetachedCallback = base::RepeatingCallback<void(WebView*)>;
+  using WebContentsFocusedCallback = base::RepeatingCallback<void(WebView*)>;
 
   explicit WebView(content::BrowserContext* browser_context = nullptr);
 
@@ -77,7 +79,7 @@ class WEBVIEW_EXPORT WebView : public View,
 
   // WebView does not assume ownership of WebContents set via this method, only
   // those it implicitly creates via GetWebContents() above.
-  void SetWebContents(content::WebContents* web_contents);
+  virtual void SetWebContents(content::WebContents* web_contents);
 
   content::BrowserContext* GetBrowserContext();
   void SetBrowserContext(content::BrowserContext* browser_context);
@@ -101,6 +103,7 @@ class WEBVIEW_EXPORT WebView : public View,
   //         a continuous size operation completes. This allows for smoother
   //         resizing performance during interactive resizes and animations.
   void SetFastResize(bool fast_resize);
+  bool GetFastResize() const;
 
   // If enabled, this will make the WebView's preferred size dependent on the
   // WebContents' size.
@@ -119,6 +122,14 @@ class WEBVIEW_EXPORT WebView : public View,
   // Adds a callback for when a WebContents is attached to this WebView.
   base::CallbackListSubscription AddWebContentsAttachedCallback(
       WebContentsAttachedCallback callback);
+
+  // Adds a callback for when a WebContents is detached from this WebView.
+  base::CallbackListSubscription AddWebContentsDetachedCallback(
+      WebContentsDetachedCallback callback);
+
+  // Adds a callback for when the attached WebContents is focused.
+  base::CallbackListSubscription AddWebContentsFocusedCallback(
+      WebContentsFocusedCallback callback);
 
   // Sets whether this is the primary web contents for the window.
   void set_is_primary_web_contents_for_window(bool is_primary) {
@@ -245,6 +256,13 @@ class WEBVIEW_EXPORT WebView : public View,
   // List of subscriptions listening for new WebContents being attached to this
   // WebView.
   base::RepeatingCallbackList<void(WebView*)> web_contents_attached_callbacks_;
+
+  // List of subscriptions listening for the WebContents being detached from
+  // this WebView.
+  base::RepeatingCallbackList<void(WebView*)> web_contents_detached_callbacks_;
+
+  // List of subscriptions listening for attached WebContents being focused.
+  base::RepeatingCallbackList<void(WebView*)> web_contents_focused_callbacks_;
 };
 
 BEGIN_VIEW_BUILDER(WEBVIEW_EXPORT, WebView, View)

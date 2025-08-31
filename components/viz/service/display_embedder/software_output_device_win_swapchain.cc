@@ -9,6 +9,7 @@
 #include "base/debug/alias.h"
 #include "base/logging.h"
 #include "base/strings/strcat.h"
+#include "base/strings/stringprintf.h"
 #include "components/viz/service/gl/exit_code.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "skia/ext/platform_canvas.h"
@@ -68,13 +69,19 @@ SoftwareOutputDeviceWinSwapChain::~SoftwareOutputDeviceWinSwapChain() {
   }
 }
 
+bool SoftwareOutputDeviceWinSwapChain::UpdateWindowSize(
+    const gfx::Size& viewport_pixel_size) {
+  // Update the size of the child window.
+  return SetWindowPos(child_window_.window(), nullptr, 0, 0,
+                      viewport_pixel_size.width(), viewport_pixel_size.height(),
+                      SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOCOPYBITS |
+                          SWP_NOOWNERZORDER | SWP_NOZORDER);
+}
+
 bool SoftwareOutputDeviceWinSwapChain::ResizeDelegated(
     const gfx::Size& viewport_pixel_size) {
   // Update window size.
-  if (!SetWindowPos(child_window_.window(), nullptr, 0, 0,
-                    viewport_pixel_size.width(), viewport_pixel_size.height(),
-                    SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOCOPYBITS |
-                        SWP_NOOWNERZORDER | SWP_NOZORDER)) {
+  if (!UpdateWindowSize(viewport_pixel_size)) {
     return false;
   }
 
@@ -107,7 +114,14 @@ bool SoftwareOutputDeviceWinSwapChain::ResizeDelegated(
     Microsoft::WRL::ComPtr<IDCompositionDevice> dcomp_device;
     HRESULT hr = output_backing_->GetOrCreateDXObjects(
         &d3d11_device, &dxgi_factory, &dcomp_device);
-    CHECK_EQ(hr, S_OK);
+    if (FAILED(hr)) {
+      // If the error code is E_ACCESSDENIED, it indicates that the browser is
+      // running in session 0, which is non-interactive. There would be no
+      // rendering in this case, and there is no need to terminate the GPU
+      // process.
+      CHECK_EQ(hr, E_ACCESSDENIED);
+      return false;
+    }
 
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d11_device_context;
     d3d11_device->GetImmediateContext(&d3d11_device_context);

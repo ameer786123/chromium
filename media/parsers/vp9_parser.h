@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <array>
 #include <memory>
 
 #include "base/containers/circular_deque.h"
@@ -98,10 +99,10 @@ struct MEDIA_EXPORT Vp9SegmentationParams {
   bool update_data;
   bool abs_or_delta_update;
   bool feature_enabled[kNumSegments][SEG_LVL_MAX];
-  int16_t feature_data[kNumSegments][SEG_LVL_MAX];
+  std::array<std::array<int16_t, SEG_LVL_MAX>, kNumSegments> feature_data;
 
-  int16_t y_dequant[kNumSegments][2];
-  int16_t uv_dequant[kNumSegments][2];
+  std::array<std::array<int16_t, 2>, kNumSegments> y_dequant;
+  std::array<std::array<int16_t, 2>, kNumSegments> uv_dequant;
 
   bool FeatureEnabled(size_t seg_id, SegmentLevelFeature feature) const {
     return feature_enabled[seg_id][feature];
@@ -120,9 +121,9 @@ struct MEDIA_EXPORT Vp9LoopFilterParams {
 
   bool delta_enabled;
   bool delta_update;
-  bool update_ref_deltas[VP9_FRAME_MAX];
-  int8_t ref_deltas[VP9_FRAME_MAX];
-  bool update_mode_deltas[kNumModeDeltas];
+  std::array<bool, VP9_FRAME_MAX> update_ref_deltas;
+  std::array<int8_t, VP9_FRAME_MAX> ref_deltas;
+  std::array<bool, kNumModeDeltas> update_mode_deltas;
   int8_t mode_deltas[kNumModeDeltas];
 
   // Calculated from above fields.
@@ -176,20 +177,6 @@ struct MEDIA_EXPORT Vp9FrameContext {
   Vp9Prob mv_hp_prob[2];
 };
 
-struct MEDIA_EXPORT Vp9CompressedHeader {
-  enum Vp9TxMode {
-    ONLY_4X4 = 0,
-    ALLOW_8X8 = 1,
-    ALLOW_16X16 = 2,
-    ALLOW_32X32 = 3,
-    TX_MODE_SELECT = 4,
-    TX_MODES = 5,
-  };
-
-  Vp9TxMode tx_mode;
-  Vp9ReferenceMode reference_mode;
-};
-
 // VP9 frame header.
 struct MEDIA_EXPORT Vp9FrameHeader {
   enum FrameType {
@@ -236,7 +223,7 @@ struct MEDIA_EXPORT Vp9FrameHeader {
   bool intra_only = false;
   uint8_t reset_frame_context = 0;
   uint8_t refresh_frame_flags = 0;
-  uint8_t ref_frame_idx[kVp9NumRefsPerFrame] = {};
+  std::array<uint8_t, kVp9NumRefsPerFrame> ref_frame_idx = {};
   bool ref_frame_sign_bias[Vp9RefType::VP9_FRAME_MAX] = {false};
   bool allow_high_precision_mv = false;
   Vp9InterpolationFilter interpolation_filter{Vp9InterpolationFilter::EIGHTTAP};
@@ -264,8 +251,6 @@ struct MEDIA_EXPORT Vp9FrameHeader {
 
   // Size of uncompressed header in bytes.
   size_t uncompressed_header_size = 0;
-
-  Vp9CompressedHeader compressed_header = {};
 
   // Current frame entropy context after header parsing.
   Vp9FrameContext frame_context = {};
@@ -358,8 +343,7 @@ class MEDIA_EXPORT Vp9Parser {
     std::unique_ptr<DecryptConfig> decrypt_config;
   };
 
-  // See homonymous member variable for information on the parameter.
-  explicit Vp9Parser(bool parsing_compressed_header);
+  Vp9Parser();
 
   Vp9Parser(const Vp9Parser&) = delete;
   Vp9Parser& operator=(const Vp9Parser&) = delete;
@@ -429,17 +413,11 @@ class MEDIA_EXPORT Vp9Parser {
 
   // Returns true and populates |result| with the parsing result if parsing of
   // current frame is finished (possibly unsuccessfully). |fhdr| will only be
-  // populated and valid if |result| is kOk. Otherwise return false, indicating
-  // that the compressed header must be parsed next.
+  // populated and valid if |result| is kOk.
   bool ParseUncompressedHeader(const FrameInfo& frame_info,
                                Vp9FrameHeader* fhdr,
                                Result* result,
                                Vp9Parser::Context* context);
-
-  // Returns true if parsing of current frame is finished and |result| will be
-  // populated with value of parsing result. Otherwise, needs to continue setup
-  // current frame.
-  bool ParseCompressedHeader(const FrameInfo& frame_info, Result* result);
 
   int64_t GetQIndex(const Vp9QuantizationParams& quant, size_t segid) const;
   // Returns true if the setup to |context_| succeeded.
@@ -453,10 +431,6 @@ class MEDIA_EXPORT Vp9Parser {
 
   // Remaining bytes in stream_.
   off_t bytes_left_;
-
-  // Set on ctor if the client needs VP9Parser to also parse compressed headers,
-  // otherwise they'll be skipped.
-  const bool parsing_compressed_header_;
 
   // FrameInfo for the remaining frames in the current superframe to be parsed.
   base::circular_deque<FrameInfo> frames_;

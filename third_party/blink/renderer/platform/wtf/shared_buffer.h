@@ -48,7 +48,7 @@
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_export.h"
 
-namespace WTF {
+namespace blink {
 
 // This class is designed to store and manage large amounts of data that may be
 // split into multiple segments.
@@ -141,7 +141,7 @@ class WTF_EXPORT SegmentedBuffer {
 
   // Copies the segmented data into a contiguous buffer.  Use GetSomeData() or
   // iterators if a copy is not required, as they are cheaper.
-  // Supported Ts: WTF::Vector<char>, std::vector<char>.
+  // Supported Ts: blink::Vector<char>, std::vector<char>.
   template <typename T>
   T CopyAs() const;
 
@@ -284,6 +284,6 @@ class WTF_EXPORT SharedBuffer : public SegmentedBuffer,
   explicit SharedBuffer(SegmentedBuffer&&);
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_SHARED_BUFFER_H_

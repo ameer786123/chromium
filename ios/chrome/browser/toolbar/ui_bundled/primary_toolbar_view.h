@@ -9,6 +9,7 @@
 
 #import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_ui_element.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/adaptive_toolbar_view.h"
+#import "ios/chrome/browser/toolbar/ui_bundled/tab_groups/ui/tab_group_indicator_view.h"
 
 @class BannerPromoView;
 @class TabGroupIndicatorView;
@@ -16,8 +17,9 @@
 
 // View for the primary toolbar. In an adaptive toolbar paradigm, this is the
 // toolbar always displayed.
-@interface PrimaryToolbarView
-    : UIView <AdaptiveToolbarView, FullscreenUIElement>
+@interface PrimaryToolbarView : UIView <AdaptiveToolbarView,
+                                        FullscreenUIElement,
+                                        TabGroupIndicatorViewDelegate>
 
 // Initialize this View with the button `factory`. To finish the initialization
 // of the view, a call to `setUp` is needed.
@@ -38,9 +40,6 @@
 // StackView containing the trailing buttons (relative to the location bar).
 // It should only contain ToolbarButtons.
 @property(nonatomic, strong, readonly) UIStackView* trailingStackView;
-
-// Button to cancel the edit of the location bar.
-@property(nonatomic, strong, readonly) UIButton* cancelButton;
 
 // Constraints to be activated when the location bar is expanded and positioned
 // relatively to the cancel button.

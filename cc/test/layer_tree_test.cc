@@ -44,6 +44,7 @@
 #include "cc/trees/proxy_main.h"
 #include "cc/trees/single_thread_proxy.h"
 #include "components/ukm/test_ukm_recorder.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/frame_timing_details.h"
 #include "components/viz/service/display/display_compositor_memory_and_task_controller.h"
 #include "components/viz/service/display/skia_output_surface.h"
@@ -128,8 +129,11 @@ class SynchronousLayerTreeFrameSink : public TestLayerTreeFrameSink {
 
  private:
   void InvalidateIfPossible() {
-    if (!frame_request_pending_ || frame_ack_pending_)
+    if (!frame_request_pending_ ||
+        (frame_ack_pending_ &&
+         !base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks))) {
       return;
+    }
     compositor_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&SynchronousLayerTreeFrameSink::DispatchInvalidation,
@@ -224,12 +228,10 @@ class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
         this, reason, scroll_and_viewport_changes_synced);
   }
 
-  void ReadyToCommit(const viz::BeginFrameArgs& commit_args,
-                     bool scroll_and_viewport_changes_synced,
+  void ReadyToCommit(bool scroll_and_viewport_changes_synced,
                      const BeginMainFrameMetrics* begin_main_frame_metrics,
                      bool commit_timeout) override {
-    LayerTreeHostImpl::ReadyToCommit(commit_args,
-                                     scroll_and_viewport_changes_synced,
+    LayerTreeHostImpl::ReadyToCommit(scroll_and_viewport_changes_synced,
                                      begin_main_frame_metrics, commit_timeout);
     test_hooks_->ReadyToCommitOnThread(this);
   }
@@ -253,6 +255,14 @@ class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
 
   DrawResult PrepareToDraw(FrameData* frame) override {
     test_hooks_->WillPrepareToDrawOnThread(this);
+
+    if (!active_tree()->local_surface_id_from_parent().is_valid()) {
+      // Make sure the active tree always has a valid LocalSurfaceId.
+      active_tree()->SetLocalSurfaceIdFromParent(viz::LocalSurfaceId(
+          1, base::UnguessableToken::CreateForTesting(2u, 3u)));
+      UpdateChildLocalSurfaceId();
+    }
+
     DrawResult draw_result = LayerTreeHostImpl::PrepareToDraw(frame);
     return test_hooks_->PrepareToDrawOnThread(this, frame, draw_result);
   }
@@ -353,9 +363,12 @@ class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
     test_hooks_->UpdateAnimationState(this, has_unfinished_animation);
   }
 
-  void NotifyTileStateChanged(const Tile* tile) override {
-    LayerTreeHostImpl::NotifyTileStateChanged(tile);
-    test_hooks_->NotifyTileStateChangedOnThread(this, tile);
+  void NotifyTileStateChanged(const Tile* tile,
+                              bool update_damage,
+                              bool set_needs_redraw) override {
+    LayerTreeHostImpl::NotifyTileStateChanged(tile, update_damage,
+                                              set_needs_redraw);
+    test_hooks_->NotifyTileStateChangedOnThread(this, tile, update_damage);
   }
 
   void InvalidateContentOnImplSide() override {
@@ -669,8 +682,7 @@ class LayerTreeTestLayerTreeFrameSinkClient
 
  private:
   raw_ptr<TestHooks> hooks_;
-  raw_ptr<TaskRunnerProvider, AcrossTasksDanglingUntriaged>
-      task_runner_provider_;
+  raw_ptr<TaskRunnerProvider> task_runner_provider_;
 };
 
 LayerTreeTest::LayerTreeTest(viz::RendererType renderer_type)
@@ -1187,7 +1199,7 @@ void LayerTreeTest::RunTest(CompositorMode mode) {
   base::RunLoop loop;
   quit_closure_ = loop.QuitWhenIdleClosure();
   loop.Run();
-  CleanupBeforeDestroy();
+  AfterTest();
   DestroyLayerTreeHost();
 
   timeout_.Cancel();
@@ -1197,7 +1209,6 @@ void LayerTreeTest::RunTest(CompositorMode mode) {
   if (timed_out_) {
     FAIL() << "Test timed out";
   }
-  AfterTest();
 }
 
 void LayerTreeTest::RequestNewLayerTreeFrameSink() {
@@ -1291,6 +1302,22 @@ size_t LayerTreeTest::NumCallsToWaitForProtectedSequenceCompletion() const {
 }
 
 void LayerTreeTest::DestroyLayerTreeHost() {
+  // The `LayerTreeFrameSink` must be released before the LayerTreeHost as some
+  // subclasses, such as `TestLayerTreeFrameSink` hold onto pointers to
+  // `LayerTreeTestLayerTreeFrameSinkClient` and other objects, such as
+  // `TestCompositorFrameSinkSupport` (which also references the task runner and
+  // client), which will trigger dangling ptr warnings if destroyed in the wrong
+  // order.
+  if (layer_tree_host_) {
+    // Forcing the LayerTreeHost to be !visible to avoid triggering the DCHECK
+    // in ReleaseLayerTreeFrameSink.
+    layer_tree_host_->SetVisible(false);
+    layer_tree_host_->ReleaseLayerTreeFrameSink();
+  }
+  // References the TaskRunnerProvider owned by LayerTreeHost so must be
+  // cleaned up first to avoid being a dangling ptr.
+  layer_tree_frame_sink_client_ = nullptr;
+
   if (layer_tree_host_ && layer_tree_host_->root_layer())
     layer_tree_host_->root_layer()->SetLayerTreeHost(nullptr);
   layer_tree_host_ = nullptr;

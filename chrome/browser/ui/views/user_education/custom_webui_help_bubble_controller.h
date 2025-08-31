@@ -14,6 +14,7 @@
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/common/url_constants.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "ui/color/color_id.h"
 #include "ui/webui/resources/cr_components/help_bubble/custom_help_bubble.mojom.h"
 
 // Derive your WebUIController from this if you want it to be used as a Custom
@@ -33,8 +34,12 @@ class CustomWebUIHelpBubbleController
                      custom_help_bubble::mojom::CustomHelpBubbleHandlerFactory>
                          pending_receiver);
 
+  // Gets the background, frame, and arrow color for the bubble. Defaults to the
+  // normal help bubble background color.
+  virtual ui::ColorId GetBackgroundAndFrameColor() const;
+
   // This is required for wrapping help bubbles for Top Chrome.
-  static constexpr std::string GetWebUIName() { return "UserEducation"; }
+  static constexpr std::string_view GetWebUIName() { return "UserEducation"; }
 
  private:
   class CustomHelpBubbleHandler;
@@ -58,9 +63,13 @@ class CustomWebUIHelpBubbleController
     ControllerClass##Config()                                                \
         : DefaultTopChromeWebUIConfig(content::kChromeUIScheme, HostName) {} \
     ~ControllerClass##Config() override = default;                           \
-    bool ShouldAutoResizeHost() override {                                   \
-      return true;                                                           \
-    }                                                                        \
+    bool ShouldAutoResizeHost() override;                                    \
+  }
+
+// You need to do this in your custom help bubble WebUI controller `.cc` file.
+#define DEFINE_TOP_CHROME_WEBUI_CONFIG(ControllerClass)  \
+  bool ControllerClass##Config::ShouldAutoResizeHost() { \
+    return true;                                         \
   }
 
 // In order to be considered a controller for a custom help bubble WebUI, a

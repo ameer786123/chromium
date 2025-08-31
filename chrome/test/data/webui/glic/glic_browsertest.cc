@@ -4,6 +4,7 @@
 
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/web_ui_mocha_browser_test.h"
@@ -27,4 +28,12 @@ class GlicWebUIBrowserTest : public WebUIMochaBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(GlicWebUIBrowserTest, UnitTestWebview) {
   RunTest("glic/unit_tests/webview_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(GlicWebUIBrowserTest, UnitTestObservable) {
+  RunTest("glic/unit_tests/observable_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(GlicWebUIBrowserTest, UnitTestGlicApiHost) {
+  RunTest("glic/unit_tests/glic_api_host_test.js", "mocha.run()");
 }

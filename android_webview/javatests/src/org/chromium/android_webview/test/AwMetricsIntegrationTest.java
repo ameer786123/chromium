@@ -28,9 +28,12 @@ import org.chromium.android_webview.AwBrowserProcess;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwWindowCoverageTracker;
 import org.chromium.android_webview.common.PlatformServiceBridge;
+import org.chromium.android_webview.metrics.AndroidMetricsLogConsumer;
+import org.chromium.android_webview.metrics.AndroidMetricsLogUploader;
 import org.chromium.android_webview.metrics.AwMetricsServiceClient;
+import org.chromium.android_webview.metrics.InstallerPackageType;
 import org.chromium.android_webview.metrics.MetricsFilteringDecorator;
-import org.chromium.base.BuildInfo;
+import org.chromium.base.ApkInfo;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
@@ -40,11 +43,7 @@ import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.components.metrics.AndroidMetricsLogConsumer;
-import org.chromium.components.metrics.AndroidMetricsLogUploader;
-import org.chromium.components.metrics.AndroidMetricsServiceClient;
 import org.chromium.components.metrics.ChromeUserMetricsExtensionProtos.ChromeUserMetricsExtension;
-import org.chromium.components.metrics.InstallerPackageType;
 import org.chromium.components.metrics.MetricsSwitches;
 import org.chromium.components.metrics.StabilityEventType;
 import org.chromium.components.metrics.SystemProfileProtos.SystemProfileProto;
@@ -418,7 +417,7 @@ public class AwMetricsIntegrationTest extends AwParameterizedTest {
 
         Assume.assumeTrue(
                 "Build type is userdebug in the test environment, so we expect this to pass.",
-                BuildInfo.isDebugAndroidOrApp());
+                ApkInfo.isDebugAndroidOrApp());
 
         assertEquals(
                 0,
@@ -445,7 +444,7 @@ public class AwMetricsIntegrationTest extends AwParameterizedTest {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     AwBrowserProcess.setWebViewPackageName(appPackageName);
-                    AndroidMetricsServiceClient.setInstallerPackageTypeForTesting(
+                    AwMetricsServiceClient.setInstallerPackageTypeForTesting(
                             InstallerPackageType.GOOGLE_PLAY_STORE);
                 });
 
@@ -580,7 +579,7 @@ public class AwMetricsIntegrationTest extends AwParameterizedTest {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     assertEquals(1, AwWindowCoverageTracker.sWindowCoverageTrackers.size());
-                    mAwContents.onDetachedFromWindow();
+                    mAwContents.getViewMethods().onDetachedFromWindow();
                     assertEquals(0, AwWindowCoverageTracker.sWindowCoverageTrackers.size());
                 });
     }

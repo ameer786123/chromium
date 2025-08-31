@@ -2,15 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "media/base/video_codec_string_parsers.h"
 
+#include <array>
 #include <string_view>
 
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
@@ -37,9 +34,7 @@ namespace media {
 
 // TODO(crbug.com/40232176): Remove after rollout.
 // Allow parsing HEVC range extension codec string.
-BASE_FEATURE(kHEVCRextCodecStringParsing,
-             "HEVCRextCodecStringParsing",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(HEVCRextCodecStringParsing, base::FEATURE_ENABLED_BY_DEFAULT);
 
 std::optional<VideoType> ParseNewStyleVp9CodecID(std::string_view codec_id) {
   // Initialize optional fields to their defaults.
@@ -679,8 +674,10 @@ std::optional<VideoType> ParseHEVCCodecId(std::string_view codec_id) {
     return std::nullopt;
   }
 
-  uint8_t constraint_flags[6];
-  memset(constraint_flags, 0, sizeof(constraint_flags));
+  std::array<uint8_t, 6> constraint_flags;
+  UNSAFE_TODO(memset(constraint_flags.data(), 0,
+                     (constraint_flags.size() *
+                      sizeof(decltype(constraint_flags)::value_type))));
 
   if (elem.size() > 10) {
     DVLOG(4) << __func__ << ": unexpected number of trailing bytes in HEVC "
@@ -764,10 +761,16 @@ std::optional<VideoType> ParseHEVCCodecId(std::string_view codec_id) {
   // it is only for range extension that we further check platform support on
   // specific bit depth and chroma subsampling formats for decode/encode; and we
   // don't support general_profile_idc > 4 with hardware encoders/decoders.
+  // TODO(crbug.com/413659852) HEVC has color space information that should be
+  // parsed. It's specified in the ISO 14496-15:2024 spec.
   VideoType result = {
       .codec = VideoCodec::kHEVC,
       .profile = out_profile,
       .level = general_level_idc,
+      .color_space = VideoColorSpace(VideoColorSpace::PrimaryID::UNSPECIFIED,
+                                     VideoColorSpace::TransferID::UNSPECIFIED,
+                                     VideoColorSpace::MatrixID::UNSPECIFIED,
+                                     gfx::ColorSpace::RangeID::DERIVED),
       .subsampling = subsampling,
       .bit_depth = bit_depth,
   };

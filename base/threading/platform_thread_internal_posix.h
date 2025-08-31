@@ -15,20 +15,10 @@ namespace base {
 
 namespace internal {
 
-struct ThreadTypeToNiceValuePair {
-  ThreadType thread_type;
-  int nice_value;
-};
-
 struct ThreadPriorityToNiceValuePairForTest {
   ThreadPriorityForTest priority;
   int nice_value;
 };
-
-// The elements must be listed in the order of increasing priority (lowest
-// priority first), that is, in the order of decreasing nice values (highest
-// nice value first).
-extern const ThreadTypeToNiceValuePair kThreadTypeToNiceValueMap[7];
 
 // The elements must be listed in the order of decreasing priority (highest
 // priority first), that is, in the order of increasing nice values (lowest nice
@@ -68,6 +58,7 @@ std::optional<ThreadPriorityForTest>
 GetCurrentThreadPriorityForPlatformForTest();
 
 int GetCurrentThreadNiceValue();
+int GetThreadNiceValue(PlatformThreadId id);
 
 }  // namespace internal
 

@@ -15,7 +15,6 @@
 #include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/not_fatal_until.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "content/browser/fenced_frame/fenced_frame_reporter.h"
@@ -38,17 +37,13 @@ int AdSizeToPixels(double size, blink::AdSize::LengthUnit unit) {
     case blink::AdSize::LengthUnit::kPixels:
       return static_cast<int>(size);
     case blink::AdSize::LengthUnit::kScreenWidth: {
-      double screen_width = display::Screen::GetScreen()
-                                ->GetPrimaryDisplay()
-                                .GetSizeInPixel()
-                                .width();
+      double screen_width =
+          display::Screen::Get()->GetPrimaryDisplay().GetSizeInPixel().width();
       return static_cast<int>(size / 100.0 * screen_width);
     }
     case blink::AdSize::LengthUnit::kScreenHeight: {
-      double screen_height = display::Screen::GetScreen()
-                                 ->GetPrimaryDisplay()
-                                 .GetSizeInPixel()
-                                 .height();
+      double screen_height =
+          display::Screen::Get()->GetPrimaryDisplay().GetSizeInPixel().height();
       return static_cast<int>(size / 100.0 * screen_height);
     }
     case blink::AdSize::LengthUnit::kInvalid:
@@ -416,8 +411,7 @@ FencedFrameURLMapping::OnSharedStorageURNMappingResultDetermined(
     const GURL& urn_uuid,
     const SharedStorageURNMappingResult& mapping_result) {
   auto pending_it = pending_urn_uuid_to_url_map_.find(urn_uuid);
-  CHECK(pending_it != pending_urn_uuid_to_url_map_.end(),
-        base::NotFatalUntil::M130);
+  CHECK(pending_it != pending_urn_uuid_to_url_map_.end());
 
   DCHECK(!IsMapped(urn_uuid));
 
@@ -462,7 +456,7 @@ SharedStorageBudgetMetadata*
 FencedFrameURLMapping::GetSharedStorageBudgetMetadataForTesting(
     const GURL& urn_uuid) {
   auto it = urn_uuid_to_url_map_.find(urn_uuid);
-  CHECK(it != urn_uuid_to_url_map_.end(), base::NotFatalUntil::M130);
+  CHECK(it != urn_uuid_to_url_map_.end());
 
   if (!it->second.shared_storage_budget_metadata_) {
     return nullptr;

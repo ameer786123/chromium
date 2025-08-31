@@ -101,10 +101,7 @@ export function setThirdPartyCookieBlockingSetting(
 export function shouldShowCookiesCard(page: SettingsPrivacyGuidePageElement):
     boolean {
   return page.getPref('generated.cookie_default_content_setting').value !==
-      ContentSetting.BLOCK &&
-      (page.getPref('profile.cookie_controls_mode').value !==
-           CookieControlsMode.OFF ||
-       loadTimeData.getBoolean('isAlwaysBlock3pcsIncognitoEnabled'));
+      ContentSetting.BLOCK;
 }
 
 // Set the safe browsing setting for the privacy guide.
@@ -188,10 +185,10 @@ export function setParametersForSafeBrowsingStep(
 
 export function setParametersForCookiesStep(
     page: SettingsPrivacyGuidePageElement, isEligible: boolean): void {
-  page.setPrefValue(
-      'profile.cookie_controls_mode',
-      isEligible ? CookieControlsMode.BLOCK_THIRD_PARTY :
-                   CookieControlsMode.OFF);
+  setThirdPartyCookieSetting(page, CookieControlsMode.BLOCK_THIRD_PARTY);
+  if (!isEligible) {
+    setFirstPartyCookieSetting(page, ContentSetting.BLOCK);
+  }
   assertEquals(
       isEligible, shouldShowCookiesCard(page),
       'Parameters for Cookies are set incorrectly.');

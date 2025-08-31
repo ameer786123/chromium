@@ -4,6 +4,7 @@
 
 #include "media/base/picture_in_picture_events_info.h"
 
+#include <array>
 #include <string>
 
 #include "base/notreached.h"
@@ -36,7 +37,7 @@ std::string PictureInPictureEventsInfo::AutoPipInfoToString(
     AutoPipInfo auto_pip_info) {
   constexpr std::array<std::string, 2> bool_to_string{"false", "true"};
   return base::StringPrintf(
-      "{Reason: %s, has audio focus: %s, is_playing: %s, was recently audible: "
+      "{reason: %s, has audio focus: %s, is_playing: %s, was recently audible: "
       "%s, has safe url: %s, meets media engagement conditions: %s, blocked "
       "due to content setting: %s}",
       AutoPipReasonToString(auto_pip_info.auto_pip_reason),

@@ -23,6 +23,10 @@
 #include "base/posix/global_descriptors.h"
 #endif
 
+#if BUILDFLAG(IS_WIN)
+#include <shlobj.h>
+#endif
+
 namespace base {
 namespace {
 
@@ -78,13 +82,8 @@ TEST(HistogramSharedMemoryTest, PassOnCommandLineIsEnabled) {
 
   EXPECT_TRUE(
       HistogramSharedMemory::PassOnCommandLineIsEnabled(PROCESS_TYPE_RENDERER));
-#if BUILDFLAG(IS_CHROMEOS)
-  EXPECT_FALSE(
-      HistogramSharedMemory::PassOnCommandLineIsEnabled(PROCESS_TYPE_GPU));
-#else   // !BUILDFLAG(IS_CHROMEOS)
   EXPECT_TRUE(
       HistogramSharedMemory::PassOnCommandLineIsEnabled(PROCESS_TYPE_GPU));
-#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_ANDROID)
   EXPECT_FALSE(
@@ -149,6 +148,9 @@ TEST_P(HistogramSharedMemoryTest, PassSharedMemoryRegion_Enabled) {
 #if BUILDFLAG(IS_WIN)
   launch_options.start_hidden = true;
   launch_options.elevated = GetParam();
+  if (launch_options.elevated && !::IsUserAnAdmin()) {
+    GTEST_SKIP() << "This test must be run by an admin user";
+  }
 #elif BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_APPLE)
   ScopedFD descriptor_to_share;
 #endif

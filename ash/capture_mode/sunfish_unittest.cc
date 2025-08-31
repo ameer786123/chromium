@@ -770,7 +770,8 @@ TEST_F(SunfishTest, CaptureLabelView) {
   // select a capture region phase.
   EXPECT_FALSE(capture_button->GetVisible());
   EXPECT_TRUE(capture_label->GetVisible());
-  EXPECT_EQ(u"Drag to select an area to search", capture_label->GetText());
+  EXPECT_EQ(u"Drag or press Space to select an area to search",
+            capture_label->GetText());
 
   // Tests it can drag and select a region.
   auto* event_generator = GetEventGenerator();
@@ -868,7 +869,8 @@ TEST_F(SunfishTest, ResetCaptureRegion) {
   CaptureModeSessionTestApi test_api(controller->capture_mode_session());
   auto* capture_label = test_api.GetCaptureLabelInternalView();
   EXPECT_TRUE(capture_label->GetVisible());
-  EXPECT_EQ(u"Drag to select an area to search", capture_label->GetText());
+  EXPECT_EQ(u"Drag or press Space to select an area to search",
+            capture_label->GetText());
 }
 
 // Tests the sunfish capture mode bar view.
@@ -913,10 +915,11 @@ TEST_F(SunfishTest, DragSearchResultsPanel) {
 
   // The results panel can be dragged by points outside the search results view
   // and searchbox textfield.
-  const gfx::Point draggable_point(search_results_panel->search_results_view()
-                                       ->GetBoundsInScreen()
-                                       .origin() +
-                                   gfx::Vector2d(0, -3));
+  const gfx::Point draggable_point(
+      search_results_panel->animation_view_for_test()
+          ->GetBoundsInScreen()
+          .origin() +
+      gfx::Vector2d(0, -3));
   event_generator->MoveMouseTo(draggable_point);
 
   // Test that dragging the panel to arbitrary points repositions the panel.
@@ -943,7 +946,7 @@ TEST_F(SunfishTest, DragPanelInSession) {
 
   // Start dragging the panel.
   const gfx::Point draggable_point(
-      panel->search_results_view()->GetBoundsInScreen().origin() +
+      panel->animation_view_for_test()->GetBoundsInScreen().origin() +
       gfx::Vector2d(0, -3));
   event_generator->MoveMouseTo(draggable_point);
   event_generator->PressLeftButton();
@@ -1131,7 +1134,8 @@ TEST_F(SunfishTest, StartRecordingThenStartSunfish) {
   auto* capture_label = test_api.GetCaptureLabelInternalView();
   EXPECT_FALSE(capture_button->GetVisible());
   EXPECT_TRUE(capture_label->GetVisible());
-  EXPECT_EQ(u"Drag to select an area to search", capture_label->GetText());
+  EXPECT_EQ(u"Drag or press Space to select an area to search",
+            capture_label->GetText());
 
   // Test we can select a region and show the search results panel.
   SelectCaptureModeRegion(GetEventGenerator(), gfx::Rect(100, 100, 600, 500),
@@ -1660,7 +1664,8 @@ TEST_F(SunfishTest, SendMultimodalSearch) {
   // Mock getting a new response from the server. Test the panel is updated.
   EXPECT_CALL(*search_results_panel, Navigate(testing::_));
 
-  controller->ShowSearchResultsPanel(gfx::ImageSkia(), GURL("kTestUrl2"));
+  controller->ShowSearchResultsPanel();
+  controller->NavigateSearchResultsPanel(GURL("kTestUrl2"));
 }
 
 // Tests that the search results panel is closed when starting a new session.
@@ -2740,50 +2745,15 @@ TEST_F(SunfishTest, PanelCreationWithMenuObserved) {
   LeftClickOn(search_button);
 }
 
-// TODO: crbug.com/398259275 - Remove this class and remove or integrate each
-// test when the Lens Web API implementation is enabled by default.
-class SunfishLensWebTest : public SunfishTestBase {
- public:
-  SunfishLensWebTest() {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kSunfishFeature,
-                              features::kSunfishLensWeb},
-        /*disabled_features=*/{{}});
-  }
-  SunfishLensWebTest(const SunfishLensWebTest&) = delete;
-  SunfishLensWebTest& operator=(const SunfishLensWebTest&) = delete;
-  ~SunfishLensWebTest() override = default;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-// Tests that the native search box is removed from the search results panel
-// when the Lens Web API implementation is enabled.
-TEST_F(SunfishLensWebTest, NoNativeSearchBox) {
-  views::Widget::InitParams params(
-      views::Widget::InitParams::CLIENT_OWNS_WIDGET,
-      views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-  params.bounds = gfx::Rect{capture_mode::kSearchResultsPanelTotalWidth,
-                            capture_mode::kSearchResultsPanelTotalHeight};
-  params.parent =
-      Shell::GetContainer(Shell::GetPrimaryRootWindow(),
-                          kShellWindowId_CaptureModeSearchResultsPanel);
-  auto widget = std::make_unique<views::Widget>(std::move(params));
-  auto* search_results_panel =
-      widget->SetContentsView(std::make_unique<SearchResultsPanel>());
-  EXPECT_FALSE(search_results_panel->GetSearchBoxTextfield());
-}
-
 using SunfishDisplayMetricsTest = SunfishTest;
 
-// TODO(crbug.com/388564694): Enable after resolving flakiness.
-TEST_F(SunfishDisplayMetricsTest, DISABLED_RefreshPanelBoundsInDefaultMode) {
+TEST_F(SunfishDisplayMetricsTest, RefreshPanelBoundsInDefaultMode) {
   // Start default mode, select a region and press "Search" to show the panel.
   auto* controller =
       StartCaptureSession(CaptureModeSource::kRegion, CaptureModeType::kImage);
   SelectCaptureModeRegion(GetEventGenerator(), gfx::Rect(0, 0, 50, 200),
                           /*release_mouse=*/true, /*verify_region=*/true);
+  WaitForCaptureModeWidgetsVisible();
   CaptureModeSessionTestApi session_test_api(
       controller->capture_mode_session());
   auto* search_button = session_test_api.GetActionButtonByViewId(
@@ -2797,7 +2767,7 @@ TEST_F(SunfishDisplayMetricsTest, DISABLED_RefreshPanelBoundsInDefaultMode) {
   const gfx::Rect initial_panel_bounds(panel->GetBoundsInScreen());
 
   // Zoom in until the panel is cropped to fit within the work area.
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   do {
     PressAndReleaseKey(ui::VKEY_OEM_PLUS,
                        ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
@@ -2828,7 +2798,7 @@ TEST_F(SunfishDisplayMetricsTest, RefreshPanelBoundsInSunfishMode) {
   const gfx::Rect initial_panel_bounds(panel->GetBoundsInScreen());
 
   // Zoom in until the panel is cropped to fit within the work area.
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   do {
     PressAndReleaseKey(ui::VKEY_OEM_PLUS,
                        ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
@@ -2848,7 +2818,10 @@ class ScannerTest : public AshTestBase {
  public:
   ScannerTest()
       : AshTestBase(
-            base::test::SingleThreadTaskEnvironment::TimeSource::MOCK_TIME) {}
+            base::test::SingleThreadTaskEnvironment::TimeSource::MOCK_TIME) {
+    scoped_feature_list_.InitWithFeatures({features::kScannerUpdate},
+                                          {features::kSunfishFeature});
+  }
   ScannerTest(const ScannerTest&) = delete;
   ScannerTest& operator=(const ScannerTest&) = delete;
   ~ScannerTest() override = default;
@@ -2895,7 +2868,7 @@ class ScannerTest : public AshTestBase {
   MockNewWindowDelegate& new_window_delegate() { return new_window_delegate_; }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_{features::kScannerUpdate};
+  base::test::ScopedFeatureList scoped_feature_list_;
   MockNewWindowDelegate new_window_delegate_;
 };
 

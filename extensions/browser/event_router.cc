@@ -21,7 +21,6 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/observer_list.h"
 #include "base/strings/string_util.h"
 #include "components/crx_file/id_util.h"
 #include "content/public/browser/browser_context.h"
@@ -34,10 +33,9 @@
 #include "extensions/browser/bad_message.h"
 #include "extensions/browser/browser_process_context_data.h"
 #include "extensions/browser/event_router_factory.h"
-#include "extensions/browser/events/lazy_event_dispatcher.h"
+#include "extensions/browser/events/event_dispatch_helper.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_prefs.h"
-#include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/process_manager.h"
@@ -50,7 +48,6 @@
 #include "extensions/common/features/feature.h"
 #include "extensions/common/features/feature_provider.h"
 #include "extensions/common/manifest_handlers/background_info.h"
-#include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/mojom/context_type.mojom.h"
 #include "extensions/common/mojom/event_dispatcher.mojom.h"
 #include "extensions/common/permissions/permissions_data.h"
@@ -122,38 +119,6 @@ void NotifyEventDispatched(content::BrowserContext* browser_context,
   // Notify the ApiActivityMonitor about the event dispatch.
   activity_monitor::OnApiEventDispatched(browser_context, extension_id,
                                          event_name, args);
-}
-
-// Browser context is required for lazy context id. Before adding browser
-// context member to EventListener, callers must pass in the browser context as
-// a parameter.
-// TODO(richardzh): Once browser context is added as a member to EventListener,
-//                  update this method to get browser_context from listener
-//                  instead of parameter.
-LazyContextId LazyContextIdForListener(const EventListener* listener,
-                                       BrowserContext* browser_context) {
-  auto* registry = ExtensionRegistry::Get(browser_context);
-  DCHECK(registry);
-
-  const Extension* extension =
-      registry->enabled_extensions().GetByID(listener->extension_id());
-  const bool is_service_worker_based_extension =
-      extension && BackgroundInfo::IsServiceWorkerBased(extension);
-  // Note: It is possible that the prefs' listener->is_for_service_worker() and
-  // its extension background type do not agree. This happens when one changes
-  // extension's manifest, typically during unpacked extension development.
-  // Fallback to non-Service worker based LazyContextId to avoid surprising
-  // ServiceWorkerTaskQueue (and crashing), see https://crbug.com/1239752 for
-  // details.
-  // TODO(lazyboy): Clean these inconsistencies across different types of event
-  // listener and their corresponding background types.
-  if (is_service_worker_based_extension && listener->is_for_service_worker()) {
-    return LazyContextId::ForServiceWorker(browser_context,
-                                           listener->extension_id());
-  }
-
-  return LazyContextId::ForBackgroundPage(browser_context,
-                                          listener->extension_id());
 }
 
 // A global identifier used to distinguish extension events.
@@ -383,7 +348,6 @@ void EventRouter::BindForRenderer(
 
 void EventRouter::SwapReceiverForTesting(int render_process_id,
                                          mojom::EventRouter* new_impl) {
-  CHECK_IS_TEST();
   std::map<mojo::ReceiverId, int*> receiver_contexts =
       receivers_.GetAllContexts();
 
@@ -426,38 +390,10 @@ EventRouter::GetRenderProcessHostForCurrentReceiver() {
   auto* process = RenderProcessHost::FromID(receivers_.current_context());
 
   // process might be nullptr when IPC race with RenderProcessHost destruction.
-  // This may only happen in scenarios that are already inherently racey, so
+  // This may only happen in scenarios that are already inherently racy, so
   // returning nullptr (and dropping the IPC) is okay and won't lead to any
   // additional risk of data loss.
   return process;
-}
-
-BrowserContext* EventRouter::GetIncognitoContextIfAccessible(
-    const ExtensionId& extension_id) {
-  DCHECK(!extension_id.empty());
-  const Extension* extension = ExtensionRegistry::Get(browser_context_)
-                                   ->enabled_extensions()
-                                   .GetByID(extension_id);
-  if (!extension) {
-    return nullptr;
-  }
-  if (!IncognitoInfo::IsSplitMode(extension)) {
-    return nullptr;
-  }
-  if (!util::IsIncognitoEnabled(extension_id, browser_context_)) {
-    return nullptr;
-  }
-
-  return GetIncognitoContext();
-}
-
-BrowserContext* EventRouter::GetIncognitoContext() {
-  ExtensionsBrowserClient* browser_client = ExtensionsBrowserClient::Get();
-  if (!browser_client->HasOffTheRecordContext(browser_context_)) {
-    return nullptr;
-  }
-
-  return browser_client->GetOffTheRecordContext(browser_context_);
 }
 
 void EventRouter::AddListenerForMainThread(
@@ -1077,79 +1013,13 @@ void EventRouter::DispatchEventImpl(const std::string& restrict_to_extension_id,
   for (TestObserver& observer : test_observers_)
     observer.OnWillDispatchEvent(*event);
 
-  std::set<const EventListener*> listeners(
-      listeners_.GetEventListeners(*event));
-
-  LazyEventDispatcher lazy_event_dispatcher(
-      browser_context_, base::BindRepeating(&EventRouter::DispatchPendingEvent,
-                                            weak_factory_.GetWeakPtr()));
-
-  // We dispatch events for lazy background pages first because attempting to do
-  // so will cause those that are being suspended to cancel that suspension.
-  // As canceling a suspension entails sending an event to the affected
-  // background page, and as that event needs to be delivered before we dispatch
-  // the event we are dispatching here, we dispatch to the lazy listeners here
-  // first.
-  for (const EventListener* listener : listeners) {
-    if (!restrict_to_extension_id.empty() &&
-        restrict_to_extension_id != listener->extension_id()) {
-      continue;
-    }
-    if (!restrict_to_url.is_empty() &&
-        !url::IsSameOriginWith(restrict_to_url, listener->listener_url())) {
-      continue;
-    }
-    if (!listener->IsLazy()) {
-      continue;
-    }
-
-    // TODO(richardzh): Move cross browser context check (by calling
-    // EventRouter::CanDispatchEventToBrowserContext) from
-    // LazyEventDispatcher to here. So the check happens before instead of
-    // during the dispatch.
-
-    // Lazy listeners don't have a process, take the stored browser context
-    // for lazy context.
-    lazy_event_dispatcher.Dispatch(
-        *event, LazyContextIdForListener(listener, browser_context_),
-        listener->filter());
-
-    // Dispatch to lazy listener in the incognito context.
-    // We need to use the incognito context in the case of split-mode
-    // extensions.
-    BrowserContext* incognito_context =
-        GetIncognitoContextIfAccessible(listener->extension_id());
-    if (incognito_context) {
-      lazy_event_dispatcher.Dispatch(
-          *event, LazyContextIdForListener(listener, incognito_context),
-          listener->filter());
-    }
-  }
-
-  for (const EventListener* listener : listeners) {
-    if (!restrict_to_extension_id.empty() &&
-        restrict_to_extension_id != listener->extension_id()) {
-      continue;
-    }
-    if (!restrict_to_url.is_empty() &&
-        !url::IsSameOriginWith(restrict_to_url, listener->listener_url())) {
-      continue;
-    }
-    if (listener->IsLazy()) {
-      continue;
-    }
-    // Non-lazy listeners take the process browser context for
-    // lazy context
-    if (lazy_event_dispatcher.HasAlreadyDispatched(LazyContextIdForListener(
-            listener, listener->process()->GetBrowserContext()))) {
-      continue;
-    }
-
-    DispatchEventToProcess(
-        listener->extension_id(), listener->listener_url(), listener->process(),
-        listener->service_worker_version_id(), listener->worker_thread_id(),
-        *event, listener->filter(), false /* did_enqueue */);
-  }
+  EventDispatchHelper::DispatchEvent(
+      *browser_context_, listeners_,
+      base::BindRepeating(&EventRouter::DispatchPendingEvent,
+                          weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&EventRouter::DispatchEventToProcess,
+                          weak_factory_.GetWeakPtr()),
+      restrict_to_extension_id, restrict_to_url, std::move(event));
 }
 
 void EventRouter::DispatchEventToProcess(
@@ -1211,7 +1081,7 @@ void EventRouter::DispatchEventToProcess(
   mojom::ContextType target_context = process_map->GetMostLikelyContextType(
       extension, process->GetDeprecatedID(), url);
 
-  // Don't dispach an event when target context doesn't match the restricted
+  // Don't dispatch an event when target context doesn't match the restricted
   // context type.
   if (event.restrict_to_context_type.has_value() &&
       event.restrict_to_context_type.value() != target_context) {
@@ -1612,8 +1482,7 @@ void EventRouter::OnStoppedTrackingServiceWorkerInstance(
     const WorkerId& worker_id) {
   // Remove any active listeners since they are no longer guaranteed to be ready
   // to receive events.
-  listeners_.RemoveActiveServiceWorkerListenersForExtension(
-      worker_id.extension_id);
+  listeners_.RemoveActiveServiceWorkerListenersForExtension(worker_id);
 }
 
 void EventRouter::AddLazyEventListenerImpl(

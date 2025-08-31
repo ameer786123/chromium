@@ -11,7 +11,6 @@ import static androidx.test.espresso.action.ViewActions.swipeUp;
 import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.PreferenceMatchers.withKey;
-import static androidx.test.espresso.matcher.RootMatchers.isDialog;
 import static androidx.test.espresso.matcher.RootMatchers.withDecorView;
 import static androidx.test.espresso.matcher.ViewMatchers.assertThat;
 import static androidx.test.espresso.matcher.ViewMatchers.hasDescendant;
@@ -24,7 +23,6 @@ import static androidx.test.espresso.matcher.ViewMatchers.withContentDescription
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
-import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.emptyIterable;
@@ -38,6 +36,7 @@ import static org.mockito.ArgumentMatchers.refEq;
 import static org.chromium.components.browser_ui.site_settings.AutoDarkMetrics.AutoDarkSettingsChangeSource.SITE_SETTINGS_GLOBAL;
 import static org.chromium.components.content_settings.PrefNames.COOKIE_CONTROLS_MODE;
 import static org.chromium.components.content_settings.PrefNames.DESKTOP_SITE_WINDOW_SETTING_ENABLED;
+import static org.chromium.components.permissions.PermissionUtil.getGeolocationType;
 import static org.chromium.ui.test.util.ViewUtils.VIEW_GONE;
 import static org.chromium.ui.test.util.ViewUtils.VIEW_INVISIBLE;
 import static org.chromium.ui.test.util.ViewUtils.VIEW_NULL;
@@ -46,7 +45,6 @@ import static org.chromium.ui.test.util.ViewUtils.waitForViewCheckingState;
 
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 
@@ -76,18 +74,22 @@ import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import org.chromium.base.BaseSwitches;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.ApplicationTestUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.Criteria;
+import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
+import org.chromium.base.test.util.PayloadCallbackHelper;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.UserActionTester;
 import org.chromium.chrome.browser.FederatedIdentityTestUtils;
@@ -96,7 +98,6 @@ import org.chromium.chrome.browser.browsing_data.BrowsingDataType;
 import org.chromium.chrome.browser.browsing_data.TimePeriod;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
-import org.chromium.chrome.browser.incognito.IncognitoUtils;
 import org.chromium.chrome.browser.notifications.channels.ChromeChannelDefinitions;
 import org.chromium.chrome.browser.notifications.channels.SiteChannelsManager;
 import org.chromium.chrome.browser.permissions.PermissionTestRule;
@@ -121,6 +122,7 @@ import org.chromium.components.browser_ui.settings.SettingsNavigation;
 import org.chromium.components.browser_ui.site_settings.BinaryStatePermissionPreference;
 import org.chromium.components.browser_ui.site_settings.ContentSettingException;
 import org.chromium.components.browser_ui.site_settings.ContentSettingsResources;
+import org.chromium.components.browser_ui.site_settings.GeolocationSetting;
 import org.chromium.components.browser_ui.site_settings.GroupedWebsitesSettings;
 import org.chromium.components.browser_ui.site_settings.RwsCookieInfo;
 import org.chromium.components.browser_ui.site_settings.RwsCookieSettings;
@@ -143,15 +145,16 @@ import org.chromium.components.content_settings.CookieControlsMode;
 import org.chromium.components.content_settings.ProviderType;
 import org.chromium.components.embedder_support.util.Origin;
 import org.chromium.components.location.LocationUtils;
+import org.chromium.components.permissions.PermissionsAndroidFeatureList;
 import org.chromium.components.permissions.nfc.NfcSystemLevelSetting;
 import org.chromium.components.policy.test.annotations.Policies;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.content_public.browser.BrowserContextHandle;
 import org.chromium.content_public.common.ContentSwitches;
-import org.chromium.device.DeviceFeatureList;
 import org.chromium.device.geolocation.LocationProviderOverrider;
 import org.chromium.device.geolocation.MockLocationProvider;
+import org.chromium.media.MediaFeatures;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.test.util.DeviceRestriction;
 import org.chromium.ui.test.util.RenderTestRule;
@@ -171,18 +174,12 @@ import java.util.concurrent.TimeoutException;
     ContentSwitches.HOST_RESOLVER_RULES + "=MAP * 127.0.0.1",
     "ignore-certificate-errors"
 })
-@EnableFeatures({
-    ChromeFeatureList.PRIVACY_SANDBOX_RELATED_WEBSITE_SETS_UI,
-    DeviceFeatureList.BLUETOOTH_RFCOMM_ANDROID
-})
-// TODO(crbug.com/370008370): Update individual tests after launch.
+@EnableFeatures(ChromeFeatureList.DISPLAY_WILDCARD_CONTENT_SETTINGS)
 @DisableFeatures({
-    ChromeFeatureList.ALWAYS_BLOCK_3PCS_INCOGNITO,
-    ChromeFeatureList.EDGE_TO_EDGE_EVERYWHERE
+    ChromeFeatureList.EDGE_TO_EDGE_EVERYWHERE,
 })
 // TODO(crbug.com/344672098): Failing when batched, batch this again.
 public class SiteSettingsTest {
-    public static final String SITE_SETTINGS_BATCH_NAME = "site_settings";
 
     @ClassRule public static PermissionTestRule mPermissionRule = new PermissionTestRule(true);
 
@@ -219,6 +216,17 @@ public class SiteSettingsTest {
             new String[] {"binary_toggle", "add_exception"};
     private static final String[] BINARY_TOGGLE_WITH_OS_WARNING_EXTRA =
             new String[] {"binary_toggle", "os_permissions_warning_extra"};
+    private static final String[] BINARY_RADIO_BUTTON_AND_INFO_TEXT =
+            new String[] {"info_text", "binary_radio_button"};
+    private static final String[] BINARY_RADIO_BUTTON = new String[] {"binary_radio_button"};
+    private static final String[] BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT =
+            new String[] {"info_text", "binary_radio_button", "add_exception"};
+    private static final String[] BINARY_RADIO_BUTTON_WITH_EXCEPTION =
+            new String[] {"binary_radio_button", "add_exception"};
+    private static final String[] BINARY_RADIO_BUTTON_WITH_OS_WARNING_EXTRA =
+            new String[] {"binary_radio_button", "os_permissions_warning_extra"};
+    private static final String[] BINARY_RADIO_BUTTON_WITH_OS_WARNING_EXTRA_AND_INFO_TEXT =
+            new String[] {"info_text", "binary_radio_button", "os_permissions_warning_extra"};
     private static final String[] CLEAR_BROWSING_DATA_LINK =
             new String[] {"clear_browsing_data_link", "clear_browsing_divider"};
     private static final String[] ANTI_ABUSE_PREF_KEYS = {
@@ -239,6 +247,9 @@ public class SiteSettingsTest {
         "anti_abuse_things_to_consider_section_one"
     };
 
+    private static final String PRIMARY_PATTERN_WITH_WILDCARD = "http://[*.]primary.com";
+    private static final String SECONDARY_PATTERN_WITH_WILDCARD = "http://[*.]secondary.com";
+
     @Before
     public void setUp() throws TimeoutException {
         // Clean up cookies and permissions to ensure tests run in a clean environment.
@@ -251,15 +262,15 @@ public class SiteSettingsTest {
             ThreadUtils.runOnUiThreadBlocking(
                     () -> {
                         mPermissionRule
-                                .getActivity()
                                 .getActivityTab()
                                 .removeObserver(mPermissionUpdateWaiter);
                     });
         }
 
-        // Clean up default content setting and system settings.
+        CallbackHelper helper = new CallbackHelper();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
+                    // Clean up default content setting and system settings.
                     for (int t = 0; t < SiteSettingsCategory.Type.NUM_ENTRIES; t++) {
                         if (SiteSettingsCategory.contentSettingsType(t) >= 0) {
                             WebsitePreferenceBridge.setDefaultContentSetting(
@@ -268,7 +279,15 @@ public class SiteSettingsTest {
                                     ContentSettingValues.DEFAULT);
                         }
                     }
+                    // Clean up content setting exceptions.
+                    BrowsingDataBridge.getForProfile(ProfileManager.getLastUsedRegularProfile())
+                            .clearBrowsingData(
+                                    helper::notifyCalled,
+                                    new int[] {BrowsingDataType.SITE_SETTINGS},
+                                    TimePeriod.ALL_TIME);
                 });
+        helper.waitForCallback(0);
+
         LocationUtils.setFactory(null);
         LocationProviderOverrider.setLocationProviderImpl(null);
         ContextUtils.getAppSharedPreferences()
@@ -293,12 +312,11 @@ public class SiteSettingsTest {
             ThreadUtils.runOnUiThreadBlocking(
                     () -> {
                         mPermissionRule
-                                .getActivity()
                                 .getActivityTab()
                                 .removeObserver(mPermissionUpdateWaiter);
                     });
         }
-        Tab tab = mPermissionRule.getActivity().getActivityTab();
+        Tab tab = mPermissionRule.getActivityTab();
 
         mPermissionUpdateWaiter =
                 new PermissionUpdateWaiter(
@@ -362,6 +380,24 @@ public class SiteSettingsTest {
                             getBrowserContextHandle(),
                             ContentSettingsType.COOKIES,
                             "primary.com",
+                            "*",
+                            ContentSettingValues.ALLOW);
+                });
+    }
+
+    private void createCookieExceptionsWithWildcards() {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    WebsitePreferenceBridge.setContentSettingCustomScope(
+                            getBrowserContextHandle(),
+                            ContentSettingsType.COOKIES,
+                            "*",
+                            SECONDARY_PATTERN_WITH_WILDCARD,
+                            ContentSettingValues.ALLOW);
+                    WebsitePreferenceBridge.setContentSettingCustomScope(
+                            getBrowserContextHandle(),
+                            ContentSettingsType.COOKIES,
+                            PRIMARY_PATTERN_WITH_WILDCARD,
                             "*",
                             ContentSettingValues.ALLOW);
                 });
@@ -436,18 +472,40 @@ public class SiteSettingsTest {
         return new WebsiteGroup(origin1.getAddress().getOrigin(), Arrays.asList(origin1, origin2));
     }
 
-    private Website getRwsOwnerSiteForUrls(String url1, String url2) {
-        Website origin1 = new Website(WebsiteAddress.create(url1), null);
-        Website origin2 = new Website(WebsiteAddress.create(url2), null);
-        createAndSetRwsCookieInfo(origin1, List.of(origin1, origin2));
-        return origin1;
-    }
+    /** Sets Allow Location Enabled to be true and make sure it is set correctly. */
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures({
+        ChromeFeatureList.PERMISSION_DEDICATED_CPSS_SETTING_ANDROID,
+        ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON
+    })
+    public void testSetAllowLocationEnabledWithToggle() throws Exception {
+        LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
+        LocationProviderOverrider.setLocationProviderImpl(new MockLocationProvider());
+        new TwoStatePermissionTestCaseWithToggle(
+                        "Location",
+                        SiteSettingsCategory.Type.DEVICE_LOCATION,
+                        getGeolocationType(),
+                        true)
+                .run();
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        Assert.assertTrue(
+                                "Location should be allowed.",
+                                WebsitePreferenceBridge.areAllLocationSettingsEnabled(
+                                        getBrowserContextHandle())));
 
-    private WebsiteGroup getRwsSiteGroupForUrls(String url1, String url2) {
-        Website origin1 = new Website(WebsiteAddress.create(url1), null);
-        Website origin2 = new Website(WebsiteAddress.create(url2), null);
-        createAndSetRwsCookieInfo(origin1, List.of(origin1, origin2));
-        return new WebsiteGroup(origin1.getAddress().getOrigin(), Arrays.asList(origin1, origin2));
+        initializeUpdateWaiter(/* expectGranted= */ true);
+
+        // Launch a page that uses geolocation and make sure a permission prompt shows up.
+        mPermissionRule.runAllowTest(
+                mPermissionUpdateWaiter,
+                "/chrome/test/data/geolocation/geolocation_on_load.html",
+                "",
+                0,
+                false,
+                true);
     }
 
     /** Sets Allow Location Enabled to be true and make sure it is set correctly. */
@@ -455,14 +513,16 @@ public class SiteSettingsTest {
     @SmallTest
     @Feature({"Preferences"})
     @DisableFeatures(ChromeFeatureList.PERMISSION_DEDICATED_CPSS_SETTING_ANDROID)
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testSetAllowLocationEnabled() throws Exception {
         LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
         LocationProviderOverrider.setLocationProviderImpl(new MockLocationProvider());
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Location",
                         SiteSettingsCategory.Type.DEVICE_LOCATION,
-                        ContentSettingsType.GEOLOCATION,
+                        getGeolocationType(),
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
@@ -487,14 +547,48 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testSetAllowLocationNotEnabledWithToggle() throws Exception {
+        LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
+        LocationProviderOverrider.setLocationProviderImpl(new MockLocationProvider());
+        new TwoStatePermissionTestCaseWithToggle(
+                        "Location",
+                        SiteSettingsCategory.Type.DEVICE_LOCATION,
+                        getGeolocationType(),
+                        false)
+                .run();
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        Assert.assertFalse(
+                                "Location should be blocked.",
+                                WebsitePreferenceBridge.areAllLocationSettingsEnabled(
+                                        getBrowserContextHandle())));
+
+        // Launch a page that uses geolocation. No permission prompt is expected.
+        initializeUpdateWaiter(/* expectGranted= */ false);
+        mPermissionRule.runNoPromptTest(
+                mPermissionUpdateWaiter,
+                "/chrome/test/data/geolocation/geolocation_on_load.html",
+                "",
+                0,
+                false,
+                true);
+    }
+
+    /** Sets Allow Location Enabled to be false and make sure it is set correctly. */
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testSetAllowLocationNotEnabled() throws Exception {
         LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
         LocationProviderOverrider.setLocationProviderImpl(new MockLocationProvider());
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Location",
                         SiteSettingsCategory.Type.DEVICE_LOCATION,
-                        ContentSettingsType.GEOLOCATION,
+                        getGeolocationType(),
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
@@ -528,7 +622,7 @@ public class SiteSettingsTest {
                         websitePreferences.onPreferenceChange(
                                 cookies,
                                 enabled
-                                        ? CookieControlsMode.OFF
+                                        ? CookieControlsMode.INCOGNITO_ONLY
                                         : CookieControlsMode.BLOCK_THIRD_PARTY);
                         Assert.assertEquals(
                                 "Cookies should be " + (enabled ? "allowed" : "blocked"),
@@ -539,7 +633,7 @@ public class SiteSettingsTest {
                     private boolean doesAcceptCookies() {
                         return UserPrefs.get(ProfileManager.getLastUsedRegularProfile())
                                         .getInteger(COOKIE_CONTROLS_MODE)
-                                == CookieControlsMode.OFF;
+                                == CookieControlsMode.INCOGNITO_ONLY;
                     }
                 });
     }
@@ -615,8 +709,16 @@ public class SiteSettingsTest {
                         preferences.onPreferenceChange(
                                 preference,
                                 enabled
-                                        ? CookieControlsMode.OFF
+                                        ? CookieControlsMode.INCOGNITO_ONLY
                                         : CookieControlsMode.BLOCK_THIRD_PARTY);
+                    } else if (ChromeFeatureList.isEnabled(
+                                    ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+                            && type != SiteSettingsCategory.Type.ANTI_ABUSE) {
+                        BinaryStatePermissionPreference radioButton =
+                                preferences.findPreference(
+                                        SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
+
+                        preferences.onPreferenceChange(radioButton, enabled);
                     } else {
                         ChromeSwitchPreference toggle =
                                 preferences.findPreference(
@@ -647,23 +749,6 @@ public class SiteSettingsTest {
                     TriStateSiteSettingsPreference triStateToggle =
                             preferences.findPreference(SingleCategorySettings.TRI_STATE_TOGGLE_KEY);
                     preferences.onPreferenceChange(triStateToggle, newValue);
-                });
-        settingsActivity.finish();
-    }
-
-    private void setTriStateCookieToggle(@CookieControlsMode int newState) {
-        final SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startSiteSettingsCategory(
-                        SiteSettingsCategory.Type.THIRD_PARTY_COOKIES);
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    SingleCategorySettings preferences =
-                            (SingleCategorySettings) settingsActivity.getMainFragment();
-                    TriStateCookieSettingsPreference triStateCookieToggle =
-                            preferences.findPreference(
-                                    SingleCategorySettings.TRI_STATE_COOKIE_TOGGLE);
-                    preferences.onPreferenceChange(triStateCookieToggle, newState);
                 });
         settingsActivity.finish();
     }
@@ -941,106 +1026,6 @@ public class SiteSettingsTest {
         Assert.assertEquals("\"\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
     }
 
-    /** Tests clearing cookies for the RWS group from SingleWebsiteSettings. */
-    @Test
-    @SmallTest
-    @Feature({"Preferences"})
-    public void clearCookiesForRwsOwner() throws Exception {
-        final String url1 =
-                mPermissionRule.getURLWithHostName(
-                        "one.example.com", "/chrome/test/data/android/cookie.html");
-        final String url2 =
-                mPermissionRule.getURLWithHostName(
-                        "two.example.com", "/chrome/test/data/android/cookie.html");
-        Website rwsOwner = getRwsOwnerSiteForUrls(url1, url2);
-
-        mPermissionRule.loadUrl(url1);
-        Assert.assertEquals("\"\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-        mPermissionRule.runJavaScriptCodeInCurrentTab("setCookie(\".example.com\")");
-        mPermissionRule.runJavaScriptCodeInCurrentTab("setCookie(\".one.example.com\")");
-        Assert.assertEquals(
-                "\"Foo=Bar; Foo=Bar\"",
-                mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-
-        mPermissionRule.loadUrl(url2);
-        Assert.assertEquals(
-                "\"Foo=Bar\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-        mPermissionRule.runJavaScriptCodeInCurrentTab("setCookie(\".two.example.com\")");
-        Assert.assertEquals(
-                "\"Foo=Bar; Foo=Bar\"",
-                mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-
-        HistogramWatcher histogramExpectation =
-                HistogramWatcher.newSingleRecordWatcher(
-                        "Privacy.DeleteBrowsingData.Action",
-                        DeleteBrowsingDataAction.RWS_DELETE_ALL_DATA);
-
-        resetRwsGroupOnSingleWebsiteSettings(rwsOwner);
-
-        // Load the page again and ensure the cookie is gone.
-        mPermissionRule.loadUrl(url1);
-        Assert.assertEquals("\"\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-        mPermissionRule.loadUrl(url2);
-        Assert.assertEquals("\"\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-        histogramExpectation.assertExpected();
-    }
-
-    /** Tests clearing cookies for the RWS group from GroupedWebsiteSettings. */
-    @Test
-    @SmallTest
-    @Feature({"Preferences"})
-    public void clearCookiesForRwsGroup() throws Exception {
-        final String url1 =
-                mPermissionRule.getURLWithHostName(
-                        "one.example.com", "/chrome/test/data/android/cookie.html");
-        final String url2 =
-                mPermissionRule.getURLWithHostName(
-                        "two.example.com", "/chrome/test/data/android/cookie.html");
-        final String url3 =
-                mPermissionRule.getURLWithHostName(
-                        "foo.com", "/chrome/test/data/android/cookie.html");
-        WebsiteGroup rwsGroup = getRwsSiteGroupForUrls(url1, url2);
-
-        mPermissionRule.loadUrl(url1);
-        Assert.assertEquals("\"\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-        mPermissionRule.runJavaScriptCodeInCurrentTab("setCookie(\".example.com\")");
-        mPermissionRule.runJavaScriptCodeInCurrentTab("setCookie(\".one.example.com\")");
-        Assert.assertEquals(
-                "\"Foo=Bar; Foo=Bar\"",
-                mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-
-        mPermissionRule.loadUrl(url2);
-        Assert.assertEquals(
-                "\"Foo=Bar\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-        mPermissionRule.runJavaScriptCodeInCurrentTab("setCookie(\".two.example.com\")");
-        Assert.assertEquals(
-                "\"Foo=Bar; Foo=Bar\"",
-                mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-
-        mPermissionRule.loadUrl(url3);
-        Assert.assertEquals("\"\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-        mPermissionRule.runJavaScriptCodeInCurrentTab("setCookie(\".foo.com\")");
-        Assert.assertEquals(
-                "\"Foo=Bar\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-
-        HistogramWatcher histogramExpectation =
-                HistogramWatcher.newSingleRecordWatcher(
-                        "Privacy.DeleteBrowsingData.Action",
-                        DeleteBrowsingDataAction.RWS_DELETE_ALL_DATA);
-
-        resetRwsGroupOnGroupedWebsiteSettings(rwsGroup);
-
-        // 1 and 2 got cleared; 3 stays intact.
-        mPermissionRule.loadUrl(url1);
-        Assert.assertEquals("\"\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-        mPermissionRule.loadUrl(url2);
-        Assert.assertEquals("\"\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-        mPermissionRule.loadUrl(url3);
-        Assert.assertEquals(
-                "\"Foo=Bar\"", mPermissionRule.runJavaScriptCodeInCurrentTab("getCookie()"));
-        histogramExpectation.assertExpected();
-    }
-
     /**
      * Set the cookie content setting to allow through policy and ensure the correct radio buttons
      * are enabled.
@@ -1058,47 +1043,9 @@ public class SiteSettingsTest {
                 SiteSettingsTestUtils.startSiteSettingsCategory(
                         SiteSettingsCategory.Type.THIRD_PARTY_COOKIES);
         checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.OFF, ToggleButtonState.EnabledUnchecked);
-        checkTriStateCookieToggleButtonState(
                 settingsActivity,
                 CookieControlsMode.INCOGNITO_ONLY,
                 ToggleButtonState.EnabledChecked);
-        checkTriStateCookieToggleButtonState(
-                settingsActivity,
-                CookieControlsMode.BLOCK_THIRD_PARTY,
-                ToggleButtonState.EnabledUnchecked);
-        // TODO(crbug.com/40064993): fix this assertion.
-        // onView(getManagedViewMatcher(/* activeView= */ true)).check(matches(isDisplayed()));
-        onView(getManagedViewMatcher(/* activeView= */ false)).check(matches(not(isDisplayed())));
-        settingsActivity.finish();
-    }
-
-    /**
-     * Set the cookie content setting to allow through policy, disable incognito mode and ensure the
-     * correct radio buttons are enabled.
-     */
-    @Test
-    @SmallTest
-    @Feature({"Preferences"})
-    @Policies.Add({@Policies.Item(key = "DefaultCookiesSetting", string = "1")})
-    @DisabledTest(message = "https://crbug.com/373414947")
-    public void testDefaultCookiesSettingManagedAllowWithIncognitoDisabled() throws Exception {
-        IncognitoUtils.setEnabledForTesting(false);
-        setTriStateCookieToggle(CookieControlsMode.INCOGNITO_ONLY);
-
-        checkDefaultCookiesSettingManaged(true);
-        checkThirdPartyCookieBlockingManaged(false);
-        // The ContentSetting is managed (and set to ALLOW) while ThirdPartyCookieBlocking managed.
-        // Cookie toggle is set to block third party incognito but since
-        // incognito is disabled the button should be disabled and the allow
-        // toggle should be checked.
-        SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startSiteSettingsCategory(
-                        SiteSettingsCategory.Type.THIRD_PARTY_COOKIES);
-        checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.OFF, ToggleButtonState.EnabledChecked);
-        checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.INCOGNITO_ONLY, ToggleButtonState.Disabled);
         checkTriStateCookieToggleButtonState(
                 settingsActivity,
                 CookieControlsMode.BLOCK_THIRD_PARTY,
@@ -1127,8 +1074,6 @@ public class SiteSettingsTest {
                 SiteSettingsTestUtils.startSiteSettingsCategory(
                         SiteSettingsCategory.Type.THIRD_PARTY_COOKIES);
         checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.OFF, ToggleButtonState.Disabled);
-        checkTriStateCookieToggleButtonState(
                 settingsActivity, CookieControlsMode.INCOGNITO_ONLY, ToggleButtonState.Disabled);
         checkTriStateCookieToggleButtonState(
                 settingsActivity,
@@ -1136,6 +1081,13 @@ public class SiteSettingsTest {
                 ToggleButtonState.EnabledChecked);
         onView(getManagedViewMatcher(/* activeView= */ true)).check(matches(isDisplayed()));
         onView(getManagedViewMatcher(/* activeView= */ false)).check(matches(not(isDisplayed())));
+
+        SingleCategorySettings singleCategorySettings =
+                (SingleCategorySettings) settingsActivity.getMainFragment();
+        Preference addExceptionPreference =
+                singleCategorySettings.findPreference(SingleCategorySettings.ADD_EXCEPTION_KEY);
+        Assert.assertTrue(addExceptionPreference.isEnabled());
+
         settingsActivity.finish();
     }
 
@@ -1157,9 +1109,9 @@ public class SiteSettingsTest {
                 SiteSettingsTestUtils.startSiteSettingsCategory(
                         SiteSettingsCategory.Type.THIRD_PARTY_COOKIES);
         checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.OFF, ToggleButtonState.EnabledChecked);
-        checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.INCOGNITO_ONLY, ToggleButtonState.Disabled);
+                settingsActivity,
+                CookieControlsMode.INCOGNITO_ONLY,
+                ToggleButtonState.EnabledChecked);
         checkTriStateCookieToggleButtonState(
                 settingsActivity, CookieControlsMode.BLOCK_THIRD_PARTY, ToggleButtonState.Disabled);
         onView(getManagedViewMatcher(/* activeView= */ true)).check(matches(isDisplayed()));
@@ -1188,9 +1140,9 @@ public class SiteSettingsTest {
                 SiteSettingsTestUtils.startSiteSettingsCategory(
                         SiteSettingsCategory.Type.THIRD_PARTY_COOKIES);
         checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.OFF, ToggleButtonState.EnabledChecked);
-        checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.INCOGNITO_ONLY, ToggleButtonState.Disabled);
+                settingsActivity,
+                CookieControlsMode.INCOGNITO_ONLY,
+                ToggleButtonState.EnabledChecked);
         checkTriStateCookieToggleButtonState(
                 settingsActivity, CookieControlsMode.BLOCK_THIRD_PARTY, ToggleButtonState.Disabled);
         onView(getManagedViewMatcher(/* activeView= */ true)).check(matches(isDisplayed()));
@@ -1211,8 +1163,6 @@ public class SiteSettingsTest {
                 SiteSettingsTestUtils.startSiteSettingsCategory(
                         SiteSettingsCategory.Type.THIRD_PARTY_COOKIES);
         checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.OFF, ToggleButtonState.EnabledUnchecked);
-        checkTriStateCookieToggleButtonState(
                 settingsActivity,
                 CookieControlsMode.INCOGNITO_ONLY,
                 ToggleButtonState.EnabledChecked);
@@ -1225,12 +1175,11 @@ public class SiteSettingsTest {
         settingsActivity.finish();
     }
 
-    /** Ensure correct radio buttons are shown and enabled when AlwaysBlock3pcsIncognito is on. */
+    /** Ensure correct radio buttons are shown. */
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    @EnableFeatures({ChromeFeatureList.ALWAYS_BLOCK_3PCS_INCOGNITO})
-    public void testAlwaysBlock3pcsIncognitoHidesCookiesOffOption() throws Exception {
+    public void blockAndAllowThirdPartyCookieOptionsShown() throws Exception {
         checkDefaultCookiesSettingManaged(false);
         checkThirdPartyCookieBlockingManaged(false);
 
@@ -1241,37 +1190,6 @@ public class SiteSettingsTest {
                 settingsActivity,
                 CookieControlsMode.INCOGNITO_ONLY,
                 ToggleButtonState.EnabledChecked);
-        checkTriStateCookieToggleButtonState(
-                settingsActivity,
-                CookieControlsMode.BLOCK_THIRD_PARTY,
-                ToggleButtonState.EnabledUnchecked);
-        SingleCategorySettings preferences =
-                (SingleCategorySettings) settingsActivity.getMainFragment();
-        TriStateCookieSettingsPreference triStateCookieToggle =
-                preferences.findPreference(SingleCategorySettings.TRI_STATE_COOKIE_TOGGLE);
-        Assert.assertFalse(triStateCookieToggle.isButtonVisibleForTesting(CookieControlsMode.OFF));
-        onView(getManagedViewMatcher(/* activeView= */ true)).check(matches(not(isDisplayed())));
-        onView(getManagedViewMatcher(/* activeView= */ false)).check(matches(not(isDisplayed())));
-        settingsActivity.finish();
-    }
-
-    /** Ensure no radio buttons are enforced when cookie settings are unmanaged. */
-    @Test
-    @SmallTest
-    @Feature({"Preferences"})
-    public void testNoCookieSettingsManagedWithIncognitoDisabled() throws Exception {
-        IncognitoUtils.setEnabledForTesting(false);
-        checkDefaultCookiesSettingManaged(false);
-        checkThirdPartyCookieBlockingManaged(false);
-        // The ContentSetting and ThirdPartyCookieBlocking are unmanaged. This means all buttons
-        // should be enabled.
-        SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startSiteSettingsCategory(
-                        SiteSettingsCategory.Type.THIRD_PARTY_COOKIES);
-        checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.OFF, ToggleButtonState.EnabledChecked);
-        checkTriStateCookieToggleButtonState(
-                settingsActivity, CookieControlsMode.INCOGNITO_ONLY, ToggleButtonState.Disabled);
         checkTriStateCookieToggleButtonState(
                 settingsActivity,
                 CookieControlsMode.BLOCK_THIRD_PARTY,
@@ -1312,36 +1230,13 @@ public class SiteSettingsTest {
         settingsActivity.finish();
     }
 
-    private void resetRwsGroupOnSingleWebsiteSettings(Website website) {
-        final SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startSingleWebsitePreferences(website);
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    SingleWebsiteSettings websitePreferences =
-                            (SingleWebsiteSettings) settingsActivity.getMainFragment();
-                    websitePreferences.resetRwsData();
-                });
-        settingsActivity.finish();
-    }
-
-    private void resetRwsGroupOnGroupedWebsiteSettings(WebsiteGroup group) {
-        final SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startGroupedWebsitesPreferences(group);
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    GroupedWebsitesSettings websitePreferences =
-                            (GroupedWebsitesSettings) settingsActivity.getMainFragment();
-                    websitePreferences.resetRwsData();
-                });
-        settingsActivity.finish();
-    }
-
     /** Sets Allow Popups Enabled to be false and make sure it is set correctly. */
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testPopupsBlocked() throws TimeoutException {
-        new TwoStatePermissionTestCase(
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testPopupsBlockedWithToggle() throws TimeoutException {
+        new TwoStatePermissionTestCaseWithToggle(
                         "Popups",
                         SiteSettingsCategory.Type.POPUPS,
                         ContentSettingsType.POPUPS,
@@ -1356,16 +1251,40 @@ public class SiteSettingsTest {
         Assert.assertEquals(1, getTabCount());
     }
 
+    /** Sets Allow Popups Enabled to be false and make sure it is set correctly. */
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testPopupsBlocked() throws TimeoutException {
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "Popups",
+                        SiteSettingsCategory.Type.POPUPS,
+                        ContentSettingsType.POPUPS,
+                        false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
+                .run();
+
+        // Test that the popup doesn't open.
+        mPermissionRule.setUpUrl("/chrome/test/data/android/popup.html");
+        mPermissionRule.runJavaScriptCodeInCurrentTab("openPopup();");
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+        Assert.assertEquals(1, getTabCount());
+    }
+
     /** Sets Allow Popups Enabled to be true and make sure it is set correctly. */
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testPopupsNotBlocked() throws TimeoutException {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Popups",
                         SiteSettingsCategory.Type.POPUPS,
                         ContentSettingsType.POPUPS,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
 
         // Test that a popup opens.
@@ -1441,7 +1360,7 @@ public class SiteSettingsTest {
     public void testOnlyExpectedPreferencesShown() {
         // If you add a category in the SiteSettings UI, please update this total AND add a test for
         // it below, named "testOnlyExpectedPreferences<Category>".
-        Assert.assertEquals(35, SiteSettingsCategory.Type.NUM_ENTRIES);
+        Assert.assertEquals(38, SiteSettingsCategory.Type.NUM_ENTRIES);
     }
 
     @Test
@@ -1461,8 +1380,20 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesAds() {
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesAdsWithToggle() {
         testExpectedPreferences(SiteSettingsCategory.Type.ADS, BINARY_TOGGLE, BINARY_TOGGLE);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesAds() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.ADS,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
     }
 
     @Test
@@ -1478,7 +1409,8 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesAugmentedReality() {
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesAugmentedRealityWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.AUGMENTED_REALITY, BINARY_TOGGLE, BINARY_TOGGLE);
     }
@@ -1486,7 +1418,19 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesAutoDarkWebContent() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesAugmentedReality() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.AUGMENTED_REALITY,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesAutoDarkWebContentWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.AUTO_DARK_WEB_CONTENT,
                 BINARY_TOGGLE,
@@ -1496,7 +1440,43 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesAutomaticDownloads() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesAutoDarkWebContent() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.AUTO_DARK_WEB_CONTENT,
+                BINARY_RADIO_BUTTON,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(MediaFeatures.AUTO_PICTURE_IN_PICTURE_ANDROID)
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesAutoPictureInPictureWithToggle() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.WINDOW_MANAGEMENT, BINARY_TOGGLE, BINARY_TOGGLE);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures({
+        MediaFeatures.AUTO_PICTURE_IN_PICTURE_ANDROID,
+        ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON
+    })
+    public void testOnlyExpectedPreferencesAutoPictureInPicture() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.AUTO_PICTURE_IN_PICTURE,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesAutomaticDownloadsWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.AUTOMATIC_DOWNLOADS,
                 BINARY_TOGGLE_WITH_EXCEPTION,
@@ -1506,7 +1486,19 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesBackgroundSync() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesAutomaticDownloads() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.AUTOMATIC_DOWNLOADS,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesBackgroundSyncWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.BACKGROUND_SYNC,
                 BINARY_TOGGLE_WITH_EXCEPTION,
@@ -1516,14 +1508,36 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesBluetooth() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesBackgroundSync() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.BACKGROUND_SYNC,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesBluetoothWithToggle() {
         testExpectedPreferences(SiteSettingsCategory.Type.BLUETOOTH, BINARY_TOGGLE, BINARY_TOGGLE);
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesBluetoothScanning() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesBluetooth() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.BLUETOOTH, BINARY_RADIO_BUTTON, BINARY_RADIO_BUTTON);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesBluetoothScanningWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.BLUETOOTH_SCANNING, BINARY_TOGGLE, BINARY_TOGGLE);
     }
@@ -1531,22 +1545,67 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesCamera() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesBluetoothScanning() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.BLUETOOTH_SCANNING,
+                BINARY_RADIO_BUTTON,
+                BINARY_RADIO_BUTTON);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesCameraWithToggle() {
         testExpectedPreferences(SiteSettingsCategory.Type.CAMERA, BINARY_TOGGLE, BINARY_TOGGLE);
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesClipboard() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesCamera() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.CAMERA,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesClipboardWithToggle() {
         testExpectedPreferences(SiteSettingsCategory.Type.CLIPBOARD, BINARY_TOGGLE, BINARY_TOGGLE);
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesFileEditing() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesClipboard() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.CLIPBOARD,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesFileEditingWithToggle() {
         checkPreferencesForCategory(SiteSettingsCategory.Type.FILE_EDITING, BINARY_TOGGLE);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesFileEditing() {
+        checkPreferencesForCategory(
+                SiteSettingsCategory.Type.FILE_EDITING, BINARY_RADIO_BUTTON_AND_INFO_TEXT);
     }
 
     @Test
@@ -1556,17 +1615,29 @@ public class SiteSettingsTest {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.THIRD_PARTY_COOKIES,
                 new String[] {"info_text", "tri_state_cookie_toggle", "add_exception"},
-                new String[] {"info_text", "tri_state_cookie_toggle"});
+                new String[] {"info_text", "tri_state_cookie_toggle", "add_exception"});
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesSiteData() {
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesSiteDataWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.SITE_DATA,
                 BINARY_TOGGLE_WITH_EXCEPTION_AND_INFO_TEXT,
                 BINARY_TOGGLE_WITH_EXCEPTION_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesSiteData() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.SITE_DATA,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT);
     }
 
     @Test
@@ -1595,11 +1666,46 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesStorageAccess() {
+    public void shouldShowWildcardsInExceptionsOnThirdPartyCookiesPage() {
+        createCookieExceptionsWithWildcards();
+        SiteSettingsTestUtils.startSiteSettingsCategory(
+                SiteSettingsCategory.Type.THIRD_PARTY_COOKIES);
+
+        onView(withText(PRIMARY_PATTERN_WITH_WILDCARD)).check(doesNotExist());
+        onView(withText(SECONDARY_PATTERN_WITH_WILDCARD)).check(matches(isDisplayed()));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    public void shouldShowWildcardsInExceptionsOnSiteDataPage() {
+        createCookieExceptionsWithWildcards();
+        SiteSettingsTestUtils.startSiteSettingsCategory(SiteSettingsCategory.Type.SITE_DATA);
+
+        onView(withText(PRIMARY_PATTERN_WITH_WILDCARD)).check(matches(isDisplayed()));
+        onView(withText(SECONDARY_PATTERN_WITH_WILDCARD)).check(doesNotExist());
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesStorageAccessWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.STORAGE_ACCESS,
                 BINARY_TOGGLE_AND_INFO_TEXT,
                 BINARY_TOGGLE_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesStorageAccess() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.STORAGE_ACCESS,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
     }
 
     @Test
@@ -1784,7 +1890,6 @@ public class SiteSettingsTest {
                             preferences.findPreference(
                                     SingleCategorySettings.TRI_STATE_COOKIE_TOGGLE);
 
-                    clickButtonAndVerifyItsChecked(cookieToggle, CookieControlsMode.OFF);
                     clickButtonAndVerifyItsChecked(cookieToggle, CookieControlsMode.INCOGNITO_ONLY);
                     clickButtonAndVerifyItsChecked(
                             cookieToggle, CookieControlsMode.BLOCK_THIRD_PARTY);
@@ -1809,7 +1914,6 @@ public class SiteSettingsTest {
                             preferences.findPreference(
                                     SingleCategorySettings.TRI_STATE_COOKIE_TOGGLE);
 
-                    clickButtonAndVerifyItsChecked(threeStateCookieToggle, CookieControlsMode.OFF);
                     clickButtonAndVerifyItsChecked(
                             threeStateCookieToggle, CookieControlsMode.INCOGNITO_ONLY);
                     clickButtonAndVerifyItsChecked(
@@ -1881,8 +1985,11 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    @DisableFeatures(ChromeFeatureList.PERMISSION_DEDICATED_CPSS_SETTING_ANDROID)
-    public void testOnlyExpectedPreferencesDeviceLocation() {
+    @DisableFeatures({
+        ChromeFeatureList.PERMISSION_DEDICATED_CPSS_SETTING_ANDROID,
+        ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON
+    })
+    public void testOnlyExpectedPreferencesDeviceLocationWithToggle() {
         LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
 
         testExpectedPreferences(
@@ -1898,7 +2005,29 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesFederatedIdentityApi() {
+    @DisableFeatures(ChromeFeatureList.PERMISSION_DEDICATED_CPSS_SETTING_ANDROID)
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesDeviceLocation() {
+        LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
+
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.DEVICE_LOCATION,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+
+        // Disable system location setting and check for the right preferences.
+        LocationSettingsTestUtil.setSystemLocationSettingEnabled(false);
+        checkPreferencesForCategory(
+                SiteSettingsCategory.Type.DEVICE_LOCATION,
+                BINARY_RADIO_BUTTON_WITH_OS_WARNING_EXTRA_AND_INFO_TEXT);
+        LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesFederatedIdentityApiWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.FEDERATED_IDENTITY_API,
                 BINARY_TOGGLE_WITH_EXCEPTION,
@@ -1908,7 +2037,19 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpctedPreferencesJavascriptOptimizer() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesFederatedIdentityApi() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.FEDERATED_IDENTITY_API,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesJavascriptOptimizerWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.JAVASCRIPT_OPTIMIZER,
                 BINARY_TOGGLE_WITH_EXCEPTION_AND_INFO_TEXT,
@@ -1918,7 +2059,19 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesHandTracking() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesJavascriptOptimizer() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.JAVASCRIPT_OPTIMIZER,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesHandTrackingWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.HAND_TRACKING, BINARY_TOGGLE, BINARY_TOGGLE);
     }
@@ -1926,7 +2079,17 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesIdleDetection() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesHandTracking() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.HAND_TRACKING, BINARY_RADIO_BUTTON, BINARY_RADIO_BUTTON);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesIdleDetectionWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.IDLE_DETECTION, BINARY_TOGGLE, BINARY_TOGGLE);
     }
@@ -1934,7 +2097,59 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesJavascript() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesIdleDetection() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.IDLE_DETECTION,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesLocalNetworkAccessWithToggle() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.LOCAL_NETWORK_ACCESS, BINARY_TOGGLE, BINARY_TOGGLE);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesLocalNetworkAccess() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.LOCAL_NETWORK_ACCESS,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesWindowManagementWithToggle() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.WINDOW_MANAGEMENT, BINARY_TOGGLE, BINARY_TOGGLE);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesWindowManagement() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.WINDOW_MANAGEMENT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesJavascriptWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.JAVASCRIPT,
                 BINARY_TOGGLE_WITH_EXCEPTION,
@@ -1944,14 +2159,38 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesMicrophone() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesJavascript() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.JAVASCRIPT,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesMicrophoneWithToggle() {
         testExpectedPreferences(SiteSettingsCategory.Type.MICROPHONE, BINARY_TOGGLE, BINARY_TOGGLE);
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesNfc() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesMicrophone() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.MICROPHONE,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesNfcWithToggle() {
         NfcSystemLevelSetting.setNfcSettingForTesting(true);
 
         testExpectedPreferences(SiteSettingsCategory.Type.NFC, BINARY_TOGGLE, BINARY_TOGGLE);
@@ -1965,23 +2204,33 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesNfc() {
+        NfcSystemLevelSetting.setNfcSettingForTesting(true);
+
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.NFC,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+
+        // Disable system nfc setting and check for the right preferences.
+        NfcSystemLevelSetting.setNfcSettingForTesting(false);
+        checkPreferencesForCategory(
+                SiteSettingsCategory.Type.NFC,
+                BINARY_RADIO_BUTTON_WITH_OS_WARNING_EXTRA_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
     @EnableFeatures("QuietNotificationPrompts")
-    @DisableFeatures(ChromeFeatureList.PERMISSION_DEDICATED_CPSS_SETTING_ANDROID)
-    public void testOnlyExpectedPreferencesNotifications() {
-        String[] notifications_enabled;
-        String[] notifications_disabled;
-        // The "notifications_vibrate" option has been removed in Android O but is present in
-        // earlier versions.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            notifications_enabled =
-                    new String[] {
-                        "binary_toggle", "notifications_quiet_ui", "notifications_vibrate"
-                    };
-            notifications_disabled = new String[] {"binary_toggle", "notifications_vibrate"};
-        } else {
-            notifications_enabled = new String[] {"binary_toggle", "notifications_quiet_ui"};
-            notifications_disabled = BINARY_TOGGLE;
-        }
+    @DisableFeatures({
+        ChromeFeatureList.PERMISSION_DEDICATED_CPSS_SETTING_ANDROID,
+        ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON
+    })
+    public void testOnlyExpectedPreferencesNotificationsWithToggle() {
+        String[] notifications_enabled = new String[] {"binary_toggle", "notifications_quiet_ui"};
+        String[] notifications_disabled = BINARY_TOGGLE;
 
         testExpectedPreferences(
                 SiteSettingsCategory.Type.NOTIFICATIONS,
@@ -1992,14 +2241,46 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesPopups() {
+    @EnableFeatures({
+        "QuietNotificationPrompts",
+        ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON
+    })
+    @DisableFeatures(ChromeFeatureList.PERMISSION_DEDICATED_CPSS_SETTING_ANDROID)
+    public void testOnlyExpectedPreferencesNotifications() {
+        String[] notifications_enabled =
+                new String[] {"info_text", "binary_radio_button", "notifications_quiet_ui"};
+        String[] notifications_disabled = BINARY_RADIO_BUTTON_AND_INFO_TEXT;
+
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.NOTIFICATIONS,
+                notifications_disabled,
+                notifications_enabled);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesPopupsWithToggle() {
         testExpectedPreferences(SiteSettingsCategory.Type.POPUPS, BINARY_TOGGLE, BINARY_TOGGLE);
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesProtectedMedia() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesPopups() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.POPUPS,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesProtectedMediaWithToggle() {
         String[] protectedMedia = new String[] {"tri_state_toggle", "protected_content_learn_more"};
         setGlobalTriStateToggleForCategory(
                 SiteSettingsCategory.Type.PROTECTED_MEDIA, ContentSettingValues.ALLOW);
@@ -2015,7 +2296,25 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesRequestDesktopSite() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesProtectedMedia() {
+        String[] protectedMedia = new String[] {"info_text", "tri_state_toggle"};
+        setGlobalTriStateToggleForCategory(
+                SiteSettingsCategory.Type.PROTECTED_MEDIA, ContentSettingValues.ALLOW);
+        checkPreferencesForCategory(SiteSettingsCategory.Type.PROTECTED_MEDIA, protectedMedia);
+        setGlobalTriStateToggleForCategory(
+                SiteSettingsCategory.Type.PROTECTED_MEDIA, ContentSettingValues.ASK);
+        checkPreferencesForCategory(SiteSettingsCategory.Type.PROTECTED_MEDIA, protectedMedia);
+        setGlobalTriStateToggleForCategory(
+                SiteSettingsCategory.Type.PROTECTED_MEDIA, ContentSettingValues.BLOCK);
+        checkPreferencesForCategory(SiteSettingsCategory.Type.PROTECTED_MEDIA, protectedMedia);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesRequestDesktopSiteWithToggle() {
         String[] rdsEnabled = {"binary_toggle", "desktop_site_window", "add_exception"};
         testExpectedPreferences(
                 SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE,
@@ -2033,14 +2332,48 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesSensors() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesRequestDesktopSite() {
+        String[] rdsEnabled = {
+            "info_text", "binary_radio_button", "desktop_site_window", "add_exception"
+        };
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT,
+                rdsEnabled);
+        Assert.assertTrue(
+                "SharedPreference USER_ENABLED_DESKTOP_SITE_GLOBAL_SETTING_PREFERENCE_KEY should be"
+                        + " updated.",
+                ContextUtils.getAppSharedPreferences()
+                        .contains(
+                                SingleCategorySettingsConstants
+                                        .USER_ENABLED_DESKTOP_SITE_GLOBAL_SETTING_PREFERENCE_KEY));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesSensorsWithToggle() {
         testExpectedPreferences(SiteSettingsCategory.Type.SENSORS, BINARY_TOGGLE, BINARY_TOGGLE);
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesSound() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesSensors() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.SENSORS,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesSoundWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.SOUND,
                 BINARY_TOGGLE_WITH_EXCEPTION,
@@ -2050,16 +2383,51 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesUsb() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesSound() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.SOUND,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_WITH_EXCEPTION_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesUsbWithToggle() {
         testExpectedPreferences(SiteSettingsCategory.Type.USB, BINARY_TOGGLE, BINARY_TOGGLE);
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesSerialPort() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesUsb() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.USB,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesSerialPortWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.SERIAL_PORT, BINARY_TOGGLE, BINARY_TOGGLE);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesSerialPort() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.SERIAL_PORT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
     }
 
     @Test
@@ -2072,20 +2440,34 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOnlyExpectedPreferencesVirtualReality() {
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesVirtualRealityWithToggle() {
         testExpectedPreferences(
                 SiteSettingsCategory.Type.VIRTUAL_REALITY, BINARY_TOGGLE, BINARY_TOGGLE);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOnlyExpectedPreferencesVirtualReality() {
+        testExpectedPreferences(
+                SiteSettingsCategory.Type.VIRTUAL_REALITY,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT,
+                BINARY_RADIO_BUTTON_AND_INFO_TEXT);
     }
 
     /** Tests system NFC support in Preferences. */
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testSystemNfcSupport() {
         // Disable system nfc support and check for the right preferences.
         NfcSystemLevelSetting.setNfcSupportForTesting(false);
         checkPreferencesForCategory(
-                SiteSettingsCategory.Type.NFC, BINARY_TOGGLE_WITH_OS_WARNING_EXTRA);
+                SiteSettingsCategory.Type.NFC,
+                BINARY_RADIO_BUTTON_WITH_OS_WARNING_EXTRA_AND_INFO_TEXT);
     }
 
     /**
@@ -2104,14 +2486,16 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     @CommandLineFlags.Add(ContentSwitches.USE_FAKE_DEVICE_FOR_MEDIA_STREAM)
-    @DisableIf.Device(DeviceFormFactor.TABLET) // crbug.com/41490094
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // crbug.com/41490094
     public void testCameraBlocked() throws Exception {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Camera",
                         SiteSettingsCategory.Type.CAMERA,
                         ContentSettingsType.MEDIASTREAM_CAMERA,
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
 
         // Test that the camera permission doesn't get requested.
@@ -2129,14 +2513,16 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     @CommandLineFlags.Add({ContentSwitches.USE_FAKE_DEVICE_FOR_MEDIA_STREAM})
-    @DisableIf.Device(DeviceFormFactor.TABLET) // crbug.com/41490094
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // crbug.com/41490094
     public void testCameraNotBlocked() throws Exception {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Camera",
                         SiteSettingsCategory.Type.CAMERA,
                         ContentSettingsType.MEDIASTREAM_CAMERA,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
 
         initializeUpdateWaiter(/* expectGranted= */ true);
@@ -2153,13 +2539,15 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     @CommandLineFlags.Add({ContentSwitches.USE_FAKE_DEVICE_FOR_MEDIA_STREAM})
     public void testMicBlocked() throws Exception {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Mic",
                         SiteSettingsCategory.Type.MICROPHONE,
                         ContentSettingsType.MEDIASTREAM_MIC,
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
 
         // Test that the microphone permission doesn't get requested.
@@ -2177,14 +2565,16 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     @CommandLineFlags.Add({ContentSwitches.USE_FAKE_DEVICE_FOR_MEDIA_STREAM})
-    @DisableIf.Device(DeviceFormFactor.TABLET) // crbug.com/41490094
+    @DisabledTest(message = "crbug.com/41490094 && crbug.com/425926397")
     public void testMicNotBlocked() throws Exception {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Mic",
                         SiteSettingsCategory.Type.MICROPHONE,
                         ContentSettingsType.MEDIASTREAM_MIC,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
 
         // Launch a page that uses the microphone and make sure a permission prompt shows up.
@@ -2201,25 +2591,29 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowBackgroundSync() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "BackgroundSync",
                         SiteSettingsCategory.Type.BACKGROUND_SYNC,
                         ContentSettingsType.BACKGROUND_SYNC,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockBackgroundSync() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "BackgroundSync",
                         SiteSettingsCategory.Type.BACKGROUND_SYNC,
                         ContentSettingsType.BACKGROUND_SYNC,
                         false)
                 .withExpectedPrefKeys(SingleCategorySettings.ADD_EXCEPTION_KEY)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
@@ -2228,12 +2622,13 @@ public class SiteSettingsTest {
     @Feature({"Preferences"})
     @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowNotifications() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Notifications",
                         SiteSettingsCategory.Type.NOTIFICATIONS,
                         ContentSettingsType.NOTIFICATIONS,
                         true)
                 .withExpectedPrefKeys(SingleCategorySettings.NOTIFICATIONS_TRI_STATE_PREF_KEY)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
@@ -2242,11 +2637,12 @@ public class SiteSettingsTest {
     @Feature({"Preferences"})
     @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockNotifications() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Notifications",
                         SiteSettingsCategory.Type.NOTIFICATIONS,
                         ContentSettingsType.NOTIFICATIONS,
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
@@ -2256,12 +2652,13 @@ public class SiteSettingsTest {
     @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowGeolocation() {
         LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Geolocation",
                         SiteSettingsCategory.Type.DEVICE_LOCATION,
-                        ContentSettingsType.GEOLOCATION,
+                        getGeolocationType(),
                         true)
                 .withExpectedPrefKeys(SingleCategorySettings.LOCATION_TRI_STATE_PREF_KEY)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
@@ -2270,86 +2667,217 @@ public class SiteSettingsTest {
     @Feature({"Preferences"})
     @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockGeolocation() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "Geolocation",
                         SiteSettingsCategory.Type.DEVICE_LOCATION,
-                        ContentSettingsType.GEOLOCATION,
+                        getGeolocationType(),
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
+    }
+
+    void setGeolocationSetting(String url, GeolocationSetting setting) {
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        WebsitePreferenceBridgeJni.get()
+                                .setGeolocationSettingForOrigin(
+                                        getBrowserContextHandle(),
+                                        ContentSettingsType.GEOLOCATION_WITH_OPTIONS,
+                                        url,
+                                        "*",
+                                        setting.mApproximate,
+                                        setting.mPrecise));
+    }
+
+    GeolocationSetting getGeolocationSetting(String url) {
+        return ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        WebsitePreferenceBridgeJni.get()
+                                .getGeolocationSettingForOrigin(
+                                        getBrowserContextHandle(),
+                                        ContentSettingsType.GEOLOCATION_WITH_OPTIONS,
+                                        url,
+                                        "https://example.com"));
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures({
+        ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON,
+        PermissionsAndroidFeatureList.APPROXIMATE_GEOLOCATION_PERMISSION
+    })
+    public void testRemoveGeolocationWithOptions() {
+        String url = "https://example.com";
+        LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
+        var allowSetting =
+                new GeolocationSetting(ContentSettingValues.ALLOW, ContentSettingValues.ALLOW);
+        setGeolocationSetting(url, allowSetting);
+        SiteSettingsTestUtils.startSiteSettingsCategory(SiteSettingsCategory.Type.DEVICE_LOCATION);
+        assertEquals(allowSetting, getGeolocationSetting(url));
+
+        onView(withId(R.id.recycler_view)).perform(RecyclerViewActions.scrollToLastPosition());
+        onView(withText(url)).check(matches(isDisplayed())).perform(click());
+        onView(withText("Remove")).perform(click());
+        assertEquals(
+                new GeolocationSetting(ContentSettingValues.ASK, ContentSettingValues.ASK),
+                getGeolocationSetting(url));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures({
+        ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON,
+        PermissionsAndroidFeatureList.APPROXIMATE_GEOLOCATION_PERMISSION
+    })
+    public void testChangeGeolocationWithOptions() {
+        String url = "https://example.com";
+        LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
+        var allowSetting =
+                new GeolocationSetting(ContentSettingValues.ALLOW, ContentSettingValues.ALLOW);
+        setGeolocationSetting(url, allowSetting);
+        SiteSettingsTestUtils.startSiteSettingsCategory(SiteSettingsCategory.Type.DEVICE_LOCATION);
+        assertEquals(allowSetting, getGeolocationSetting(url));
+
+        onView(withId(R.id.recycler_view)).perform(RecyclerViewActions.scrollToLastPosition());
+        onView(withText(url)).check(matches(isDisplayed())).perform(click());
+        onView(withText("Approximate")).perform(click());
+        assertEquals(
+                new GeolocationSetting(ContentSettingValues.ALLOW, ContentSettingValues.BLOCK),
+                getGeolocationSetting(url));
+
+        onView(withText("Block")).perform(click());
+        assertEquals(
+                new GeolocationSetting(ContentSettingValues.BLOCK, ContentSettingValues.BLOCK),
+                getGeolocationSetting(url));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures({
+        ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON,
+        PermissionsAndroidFeatureList.APPROXIMATE_GEOLOCATION_PERMISSION
+    })
+    public void testEmbargoedGeolocationWithOptions() throws TimeoutException {
+        LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
+        final String url = mPermissionRule.getURL("/chrome/test/data/geolocation/simple.html");
+        final String origin = Origin.create(url).toString();
+        triggerEmbargoForOrigin(url);
+        assertEquals(
+                new GeolocationSetting(ContentSettingValues.BLOCK, ContentSettingValues.BLOCK),
+                getGeolocationSetting(url));
+
+        SiteSettingsTestUtils.startSiteSettingsCategory(SiteSettingsCategory.Type.DEVICE_LOCATION);
+
+        onView(withId(R.id.recycler_view)).perform(RecyclerViewActions.scrollToLastPosition());
+        onView(withText("Automatically blocked")).check(matches(isDisplayed()));
+        onView(withText(origin)).perform(click());
+        onView(withText("Allow")).perform(click());
+        assertEquals(
+                new GeolocationSetting(ContentSettingValues.ALLOW, ContentSettingValues.ALLOW),
+                getGeolocationSetting(url));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowUsb() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "USB", SiteSettingsCategory.Type.USB, ContentSettingsType.USB_GUARD, true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockUsb() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "USB", SiteSettingsCategory.Type.USB, ContentSettingsType.USB_GUARD, false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowSerialPort() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "SerialPort",
                         SiteSettingsCategory.Type.SERIAL_PORT,
                         ContentSettingsType.SERIAL_GUARD,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockSerialPort() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "SerialPort",
                         SiteSettingsCategory.Type.SERIAL_PORT,
                         ContentSettingsType.SERIAL_GUARD,
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowAutomaticDownloads() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "AutomaticDownloads",
                         SiteSettingsCategory.Type.AUTOMATIC_DOWNLOADS,
                         ContentSettingsType.AUTOMATIC_DOWNLOADS,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockAutomaticDownloads() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "AutomaticDownloads",
                         SiteSettingsCategory.Type.AUTOMATIC_DOWNLOADS,
                         ContentSettingsType.AUTOMATIC_DOWNLOADS,
                         false)
                 .withExpectedPrefKeys(SingleCategorySettings.ADD_EXCEPTION_KEY)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testAllowBluetoothScanningWithToggle() {
+        new TwoStatePermissionTestCaseWithToggle(
+                        "BluetoothScanning",
+                        SiteSettingsCategory.Type.BLUETOOTH_SCANNING,
+                        ContentSettingsType.BLUETOOTH_SCANNING,
+                        true)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowBluetoothScanning() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "BluetoothScanning",
                         SiteSettingsCategory.Type.BLUETOOTH_SCANNING,
                         ContentSettingsType.BLUETOOTH_SCANNING,
@@ -2360,8 +2888,22 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testBlockBluetoothScanningWithToggle() {
+        new TwoStatePermissionTestCaseWithToggle(
+                        "BluetoothScanning",
+                        SiteSettingsCategory.Type.BLUETOOTH_SCANNING,
+                        ContentSettingsType.BLUETOOTH_SCANNING,
+                        false)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockBluetoothScanning() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "BluetoothScanning",
                         SiteSettingsCategory.Type.BLUETOOTH_SCANNING,
                         ContentSettingsType.BLUETOOTH_SCANNING,
@@ -2372,8 +2914,9 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testAllowBluetoothGuard() {
-        new TwoStatePermissionTestCase(
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testAllowBluetoothGuardWithToggle() {
+        new TwoStatePermissionTestCaseWithToggle(
                         "BluetoothGuard",
                         SiteSettingsCategory.Type.BLUETOOTH,
                         ContentSettingsType.BLUETOOTH_GUARD,
@@ -2384,8 +2927,22 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testBlockBluetoothGuard() {
-        new TwoStatePermissionTestCase(
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testAllowBluetoothGuard() {
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "BluetoothGuard",
+                        SiteSettingsCategory.Type.BLUETOOTH,
+                        ContentSettingsType.BLUETOOTH_GUARD,
+                        true)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testBlockBluetoothGuardWithToggle() {
+        new TwoStatePermissionTestCaseWithToggle(
                         "BluetoothGuard",
                         SiteSettingsCategory.Type.BLUETOOTH,
                         ContentSettingsType.BLUETOOTH_GUARD,
@@ -2396,20 +2953,37 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testBlockBluetoothGuard() {
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "BluetoothGuard",
+                        SiteSettingsCategory.Type.BLUETOOTH,
+                        ContentSettingsType.BLUETOOTH_GUARD,
+                        false)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowNfc() {
         NfcSystemLevelSetting.setNfcSettingForTesting(true);
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "NFC", SiteSettingsCategory.Type.NFC, ContentSettingsType.NFC, true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockNfc() {
         NfcSystemLevelSetting.setNfcSettingForTesting(true);
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "NFC", SiteSettingsCategory.Type.NFC, ContentSettingsType.NFC, false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
@@ -2417,7 +2991,7 @@ public class SiteSettingsTest {
     @SmallTest
     @Feature({"Preferences"})
     public void testAllowAntiAbuse() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithToggle(
                         "AntiAbuse",
                         SiteSettingsCategory.Type.ANTI_ABUSE,
                         ContentSettingsType.ANTI_ABUSE,
@@ -2430,7 +3004,7 @@ public class SiteSettingsTest {
     @SmallTest
     @Feature({"Preferences"})
     public void testBlockAntiAbuse() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithToggle(
                         "AntiAbuse",
                         SiteSettingsCategory.Type.ANTI_ABUSE,
                         ContentSettingsType.ANTI_ABUSE,
@@ -2442,56 +3016,65 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowAr() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "AR",
                         SiteSettingsCategory.Type.AUGMENTED_REALITY,
                         ContentSettingsType.AR,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockAr() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "AR",
                         SiteSettingsCategory.Type.AUGMENTED_REALITY,
                         ContentSettingsType.AR,
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowVr() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "VR",
                         SiteSettingsCategory.Type.VIRTUAL_REALITY,
                         ContentSettingsType.VR,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockVr() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "VR",
                         SiteSettingsCategory.Type.VIRTUAL_REALITY,
                         ContentSettingsType.VR,
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowHandTracking() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "HandTracking",
                         SiteSettingsCategory.Type.HAND_TRACKING,
                         ContentSettingsType.HAND_TRACKING,
@@ -2502,8 +3085,22 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testBlockHandTrackingWithToggle() {
+        new TwoStatePermissionTestCaseWithToggle(
+                        "HandTracking",
+                        SiteSettingsCategory.Type.HAND_TRACKING,
+                        ContentSettingsType.HAND_TRACKING,
+                        false)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockHandTracking() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "HandTracking",
                         SiteSettingsCategory.Type.HAND_TRACKING,
                         ContentSettingsType.HAND_TRACKING,
@@ -2514,36 +3111,142 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowIdleDetection() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "IdleDetection",
                         SiteSettingsCategory.Type.IDLE_DETECTION,
                         ContentSettingsType.IDLE_DETECTION,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockIdleDetection() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "IdleDetection",
                         SiteSettingsCategory.Type.IDLE_DETECTION,
                         ContentSettingsType.IDLE_DETECTION,
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .run();
     }
 
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testAllowAutoDark() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testAllowLocalNetworkAccess() {
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "LocalNetworkAccess",
+                        SiteSettingsCategory.Type.LOCAL_NETWORK_ACCESS,
+                        ContentSettingsType.LOCAL_NETWORK_ACCESS,
+                        true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testBlockLocalNetworkAccess() {
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "LocalNetworkAccess",
+                        SiteSettingsCategory.Type.LOCAL_NETWORK_ACCESS,
+                        ContentSettingsType.LOCAL_NETWORK_ACCESS,
+                        false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testAllowWindowManager() {
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "WindowManagement",
+                        SiteSettingsCategory.Type.WINDOW_MANAGEMENT,
+                        ContentSettingsType.WINDOW_MANAGEMENT,
+                        true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testBlockWindowManager() {
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "WindowManagement",
+                        SiteSettingsCategory.Type.WINDOW_MANAGEMENT,
+                        ContentSettingsType.WINDOW_MANAGEMENT,
+                        false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures({
+        MediaFeatures.AUTO_PICTURE_IN_PICTURE_ANDROID,
+        ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON
+    })
+    public void testAllowAutoPictureInPicture() {
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "AutoPictureInPicture",
+                        SiteSettingsCategory.Type.AUTO_PICTURE_IN_PICTURE,
+                        ContentSettingsType.AUTO_PICTURE_IN_PICTURE,
+                        true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures({
+        MediaFeatures.AUTO_PICTURE_IN_PICTURE_ANDROID,
+        ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON
+    })
+    public void testBlockAutoPictureInPicture() {
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "AutoPictureInPicture",
+                        SiteSettingsCategory.Type.AUTO_PICTURE_IN_PICTURE,
+                        ContentSettingsType.AUTO_PICTURE_IN_PICTURE,
+                        false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
+                .run();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(MediaFeatures.AUTO_PICTURE_IN_PICTURE_ANDROID)
+    public void testAutoPiPPermissionNotVisibleWhenDisabled() {
+        final SettingsActivity settingsActivity = SiteSettingsTestUtils.startSiteSettingsMenu("");
+        SiteSettings websitePreferences = (SiteSettings) settingsActivity.getMainFragment();
+        assertNull(websitePreferences.findPreference("auto_picture_in_picture"));
+        settingsActivity.finish();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testAllowAutoDarkWithToggle() {
         final String histogramName = "Android.DarkTheme.AutoDarkMode.SettingsChangeSource.Enabled";
         final int preTestCount =
                 RecordHistogram.getHistogramValueCountForTesting(
                         histogramName, SITE_SETTINGS_GLOBAL);
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithToggle(
                         "AutoDarkWebContent",
                         SiteSettingsCategory.Type.AUTO_DARK_WEB_CONTENT,
                         ContentSettingsType.AUTO_DARK_WEB_CONTENT,
@@ -2560,12 +3263,36 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testBlockAutoDark() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testAllowAutoDark() {
+        final String histogramName = "Android.DarkTheme.AutoDarkMode.SettingsChangeSource.Enabled";
+        final int preTestCount =
+                RecordHistogram.getHistogramValueCountForTesting(
+                        histogramName, SITE_SETTINGS_GLOBAL);
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "AutoDarkWebContent",
+                        SiteSettingsCategory.Type.AUTO_DARK_WEB_CONTENT,
+                        ContentSettingsType.AUTO_DARK_WEB_CONTENT,
+                        true)
+                .withExpectedPrefKeys(SingleCategorySettings.ADD_EXCEPTION_KEY)
+                .run();
+        Assert.assertEquals(
+                "<" + histogramName + "> should be recorded for SITE_SETTINGS_GLOBAL.",
+                preTestCount + 1,
+                RecordHistogram.getHistogramValueCountForTesting(
+                        histogramName, SITE_SETTINGS_GLOBAL));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testBlockAutoDarkWithToggle() {
         final String histogramName = "Android.DarkTheme.AutoDarkMode.SettingsChangeSource.Disabled";
         final int preTestCount =
                 RecordHistogram.getHistogramValueCountForTesting(
                         histogramName, SITE_SETTINGS_GLOBAL);
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithToggle(
                         "AutoDarkWebContent",
                         SiteSettingsCategory.Type.AUTO_DARK_WEB_CONTENT,
                         ContentSettingsType.AUTO_DARK_WEB_CONTENT,
@@ -2581,12 +3308,36 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testBlockAutoDark() {
+        final String histogramName = "Android.DarkTheme.AutoDarkMode.SettingsChangeSource.Disabled";
+        final int preTestCount =
+                RecordHistogram.getHistogramValueCountForTesting(
+                        histogramName, SITE_SETTINGS_GLOBAL);
+        new TwoStatePermissionTestCaseWithRadioButton(
+                        "AutoDarkWebContent",
+                        SiteSettingsCategory.Type.AUTO_DARK_WEB_CONTENT,
+                        ContentSettingsType.AUTO_DARK_WEB_CONTENT,
+                        false)
+                .run();
+        Assert.assertEquals(
+                "<" + histogramName + "> should be recorded for SITE_SETTINGS_GLOBAL.",
+                preTestCount + 1,
+                RecordHistogram.getHistogramValueCountForTesting(
+                        histogramName, SITE_SETTINGS_GLOBAL));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowRequestDesktopSite() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "RequestDesktopSite",
                         SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE,
                         ContentSettingsType.REQUEST_DESKTOP_SITE,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .withExpectedPrefKeys(SingleCategorySettings.DESKTOP_SITE_WINDOW_TOGGLE_KEY)
                 .withExpectedPrefKeys(SingleCategorySettings.ADD_EXCEPTION_KEY)
                 .run();
@@ -2595,12 +3346,14 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockRequestDesktopSite() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "RequestDesktopSite",
                         SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE,
                         ContentSettingsType.REQUEST_DESKTOP_SITE,
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .withExpectedPrefKeys(SingleCategorySettings.ADD_EXCEPTION_KEY)
                 .run();
     }
@@ -2608,12 +3361,14 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowFederatedIdentityApi() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "FederatedIdentityApi",
                         SiteSettingsCategory.Type.FEDERATED_IDENTITY_API,
                         ContentSettingsType.FEDERATED_IDENTITY_API,
                         true)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .withExpectedPrefKeys(SingleCategorySettings.ADD_EXCEPTION_KEY)
                 .run();
     }
@@ -2621,12 +3376,14 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockFederatedIdentityApi() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "FederatedIdentityApi",
                         SiteSettingsCategory.Type.FEDERATED_IDENTITY_API,
                         ContentSettingsType.FEDERATED_IDENTITY_API,
                         false)
+                .withExpectedPrefKeysAtStart(SingleCategorySettings.INFO_TEXT_KEY)
                 .withExpectedPrefKeys(SingleCategorySettings.ADD_EXCEPTION_KEY)
                 .run();
     }
@@ -2634,8 +3391,9 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllowJavascriptOptimizer() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "JavascriptOptimizer",
                         SiteSettingsCategory.Type.JAVASCRIPT_OPTIMIZER,
                         ContentSettingsType.JAVASCRIPT_OPTIMIZER,
@@ -2648,8 +3406,9 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testBlockJavascriptOptimizer() {
-        new TwoStatePermissionTestCase(
+        new TwoStatePermissionTestCaseWithRadioButton(
                         "JavascriptOptimizer",
                         SiteSettingsCategory.Type.JAVASCRIPT_OPTIMIZER,
                         ContentSettingsType.JAVASCRIPT_OPTIMIZER,
@@ -2662,7 +3421,20 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testOsBlocksJavascriptOptimizer() {
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOsBlocksJavascriptOptimizerWithToggle() {
+        String pageOrigin = mPermissionRule.getOrigin();
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    WebsitePreferenceBridge.setContentSettingDefaultScope(
+                            getBrowserContextHandle(),
+                            ContentSettingsType.JAVASCRIPT_OPTIMIZER,
+                            new GURL(pageOrigin),
+                            new GURL(pageOrigin),
+                            ContentSettingValues.ALLOW);
+                });
+
         mAdvancedProtectionRule.setIsAdvancedProtectionRequestedByOs(true);
 
         final SettingsActivity settingsActivity =
@@ -2679,7 +3451,9 @@ public class SiteSettingsTest {
                             new String[] {
                                 SingleCategorySettings.INFO_TEXT_KEY,
                                 SingleCategorySettings.BINARY_TOGGLE_KEY,
-                                SingleWebsiteSettings.PREF_OS_PERMISSIONS_WARNING_EXTRA
+                                SingleCategorySettings.TOGGLE_DISABLE_REASON_KEY,
+                                SingleCategorySettings.ALLOWED_GROUP,
+                                SingleCategorySettings.ADD_EXCEPTION_KEY,
                             });
 
                     ChromeSwitchPreference binaryToggle =
@@ -2689,26 +3463,34 @@ public class SiteSettingsTest {
                     Assert.assertFalse(binaryToggle.isChecked());
                     Assert.assertFalse(binaryToggle.isEnabled());
 
-                    Preference osWarningPreference =
+                    Preference toggleDisableReason =
                             singleCategorySettings.findPreference(
-                                    SingleWebsiteSettings.PREF_OS_PERMISSIONS_WARNING_EXTRA);
+                                    SingleCategorySettings.TOGGLE_DISABLE_REASON_KEY);
                     Assert.assertEquals(
                             AdvancedProtectionTestRule.TEST_JAVASCRIPT_OPTIMIZER_MESSAGE,
-                            osWarningPreference.getTitle());
+                            toggleDisableReason.getTitle());
 
                     settingsActivity.finish();
                 });
     }
 
-    /**
-     * Test that if the Javascript-optimizer is enabled by enterprise policy but disabled by the
-     * Android OS setting that the enterprise policy is given precedence.
-     */
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    @Policies.Add({@Policies.Item(key = "DefaultJavaScriptOptimizerSetting", string = "1")})
-    public void testPolicyHigherPriorityThanOsBlockingJavascriptOptimizer() {
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testOsBlocksJavascriptOptimizer() {
+        String pageOrigin = mPermissionRule.getOrigin();
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    WebsitePreferenceBridge.setContentSettingDefaultScope(
+                            getBrowserContextHandle(),
+                            ContentSettingsType.JAVASCRIPT_OPTIMIZER,
+                            new GURL(pageOrigin),
+                            new GURL(pageOrigin),
+                            ContentSettingValues.ALLOW);
+                });
+
         mAdvancedProtectionRule.setIsAdvancedProtectionRequestedByOs(true);
 
         final SettingsActivity settingsActivity =
@@ -2720,7 +3502,98 @@ public class SiteSettingsTest {
                     SingleCategorySettings singleCategorySettings =
                             (SingleCategorySettings) settingsActivity.getMainFragment();
 
-                    // TODO(crbug.com/399933929) Do not show "Add Exception" button.
+                    checkPreferencesForSettingsActivity(
+                            settingsActivity,
+                            new String[] {
+                                SingleCategorySettings.INFO_TEXT_KEY,
+                                SingleCategorySettings.BINARY_RADIO_BUTTON_KEY,
+                                SingleCategorySettings.TOGGLE_DISABLE_REASON_KEY,
+                                SingleCategorySettings.ALLOWED_GROUP,
+                                SingleCategorySettings.ADD_EXCEPTION_KEY,
+                            });
+
+                    BinaryStatePermissionPreference binaryRadioButton =
+                            (BinaryStatePermissionPreference)
+                                    singleCategorySettings.findPreference(
+                                            SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
+                    Assert.assertFalse(binaryRadioButton.isChecked());
+                    Assert.assertFalse(binaryRadioButton.isEnabled());
+
+                    Preference radioButtonDisableReason =
+                            singleCategorySettings.findPreference(
+                                    SingleCategorySettings.TOGGLE_DISABLE_REASON_KEY);
+                    Assert.assertEquals(
+                            AdvancedProtectionTestRule.TEST_JAVASCRIPT_OPTIMIZER_MESSAGE,
+                            radioButtonDisableReason.getTitle());
+
+                    settingsActivity.finish();
+                });
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @CommandLineFlags.Add(BaseSwitches.ENABLE_LOW_END_DEVICE_MODE)
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testAddingJavascriptOptimizerExceptionsBlockedIfNotEnoughRam() {
+        final SettingsActivity settingsActivity =
+                SiteSettingsTestUtils.startSiteSettingsCategory(
+                        SiteSettingsCategory.Type.JAVASCRIPT_OPTIMIZER);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    SingleCategorySettings singleCategorySettings =
+                            (SingleCategorySettings) settingsActivity.getMainFragment();
+
+                    checkPreferencesForSettingsActivity(
+                            settingsActivity,
+                            new String[] {
+                                SingleCategorySettings.INFO_TEXT_KEY,
+                                SingleCategorySettings.BINARY_RADIO_BUTTON_KEY,
+                                SingleCategorySettings.ADD_EXCEPTION_KEY,
+                                SingleCategorySettings.ADD_EXCEPTION_DISABLED_REASON_KEY,
+                            });
+
+                    Preference addExceptionButton =
+                            singleCategorySettings.findPreference(
+                                    SingleCategorySettings.ADD_EXCEPTION_KEY);
+                    Assert.assertFalse(addExceptionButton.isEnabled());
+
+                    Preference addExceptionButtonDisabledReason =
+                            singleCategorySettings.findPreference(
+                                    SingleCategorySettings.ADD_EXCEPTION_DISABLED_REASON_KEY);
+                    Context context = ApplicationProvider.getApplicationContext();
+                    int expectedReasonId =
+                            R.string.website_settings_js_opt_add_exceptions_disabled_reason;
+                    Assert.assertEquals(
+                            context.getString(expectedReasonId),
+                            addExceptionButtonDisabledReason.getTitle());
+
+                    settingsActivity.finish();
+                });
+    }
+
+    /**
+     * Test that if the Javascript-optimizer is enabled by enterprise policy but disabled by the OS
+     * advanced-portection-mode setting that the enterprise policy is given precedence.
+     */
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    @Policies.Add({@Policies.Item(key = "DefaultJavaScriptOptimizerSetting", string = "1")})
+    public void testPolicyHigherPriorityThanOsBlockingJavascriptOptimizerWithToggle() {
+        mAdvancedProtectionRule.setIsAdvancedProtectionRequestedByOs(true);
+
+        final SettingsActivity settingsActivity =
+                SiteSettingsTestUtils.startSiteSettingsCategory(
+                        SiteSettingsCategory.Type.JAVASCRIPT_OPTIMIZER);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    SingleCategorySettings singleCategorySettings =
+                            (SingleCategorySettings) settingsActivity.getMainFragment();
+
                     checkPreferencesForSettingsActivity(
                             settingsActivity,
                             new String[] {
@@ -2736,6 +3609,11 @@ public class SiteSettingsTest {
                     Assert.assertTrue(binaryToggle.isChecked());
                     Assert.assertFalse(binaryToggle.isEnabled());
 
+                    Preference addExceptionPreference =
+                            singleCategorySettings.findPreference(
+                                    SingleCategorySettings.ADD_EXCEPTION_KEY);
+                    Assert.assertFalse(addExceptionPreference.isEnabled());
+
                     onData(withKey(SingleCategorySettings.ALLOWED_GROUP))
                             .inAdapterView(
                                     allOf(
@@ -2749,9 +3627,63 @@ public class SiteSettingsTest {
     }
 
     /**
-     * Test that when: - Javascript-optimizer permission toggle is present on the {@link
-     * SingleWebsiteSettings} screen AND - Javascript-optimizer permission is denied by the
-     * operating system THAT the toggle is disabled.
+     * Test that if the Javascript-optimizer is enabled by enterprise policy but disabled by the OS
+     * advanced-portection-mode setting that the enterprise policy is given precedence.
+     */
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    @Policies.Add({@Policies.Item(key = "DefaultJavaScriptOptimizerSetting", string = "1")})
+    public void testPolicyHigherPriorityThanOsBlockingJavascriptOptimizer() {
+        mAdvancedProtectionRule.setIsAdvancedProtectionRequestedByOs(true);
+
+        final SettingsActivity settingsActivity =
+                SiteSettingsTestUtils.startSiteSettingsCategory(
+                        SiteSettingsCategory.Type.JAVASCRIPT_OPTIMIZER);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    SingleCategorySettings singleCategorySettings =
+                            (SingleCategorySettings) settingsActivity.getMainFragment();
+
+                    checkPreferencesForSettingsActivity(
+                            settingsActivity,
+                            new String[] {
+                                SingleCategorySettings.INFO_TEXT_KEY,
+                                SingleCategorySettings.BINARY_RADIO_BUTTON_KEY,
+                                SingleCategorySettings.ADD_EXCEPTION_KEY
+                            });
+
+                    BinaryStatePermissionPreference binaryRadioButton =
+                            (BinaryStatePermissionPreference)
+                                    singleCategorySettings.findPreference(
+                                            SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
+                    Assert.assertTrue(binaryRadioButton.isChecked());
+                    Assert.assertFalse(binaryRadioButton.isEnabled());
+
+                    Preference addExceptionPreference =
+                            singleCategorySettings.findPreference(
+                                    SingleCategorySettings.ADD_EXCEPTION_KEY);
+                    Assert.assertFalse(addExceptionPreference.isEnabled());
+
+                    onData(withKey(SingleCategorySettings.ALLOWED_GROUP))
+                            .inAdapterView(
+                                    allOf(
+                                            withContentDescription(
+                                                    R.string.managed_by_your_organization),
+                                            withText(R.string.managed_by_your_organization),
+                                            isDisplayed()));
+
+                    settingsActivity.finish();
+                });
+    }
+
+    /**
+     * Test that when: (1) Javascript-optimizer permission toggle is present on the {@link
+     * SingleWebsiteSettings} screen AND (2) Advanced protection is requested by the operating
+     * system THAT the toggle is still enabled because explicit Javascript-optimizer content
+     * settings have priority over advanced-protection-mode.
      */
     @Test
     @SmallTest
@@ -2790,7 +3722,7 @@ public class SiteSettingsTest {
                             (SingleWebsiteSettings) settingsActivity.getMainFragment();
                     Preference javascriptOptimizerPreference =
                             websitePreferences.findPreference("javascript_optimizer");
-                    Assert.assertFalse(javascriptOptimizerPreference.isEnabled());
+                    Assert.assertTrue(javascriptOptimizerPreference.isEnabled());
                 });
         settingsActivity.finish();
     }
@@ -2798,9 +3730,6 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    @DisableIf.Build(
-            message = "Flaky, see crbug.com/1170671",
-            sdk_is_less_than = Build.VERSION_CODES.Q)
     // Auto does not have actions to handle ACTION_CHANNEL_NOTIFICATION_SETTINGS
     @Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
     public void testEmbargoedNotificationSiteSettings() throws Exception {
@@ -2833,16 +3762,17 @@ public class SiteSettingsTest {
                     Assert.assertEquals(
                             context.getString(R.string.automatically_blocked),
                             notificationPreference.getSummary());
-
                     websitePreferences.launchOsChannelSettingsFromPreference(
                             notificationPreference);
-
-                    // Ensure that a proper separate channel has indeed been created to allow the
-                    // user to alter the setting.
-                    Assert.assertNotEquals(
-                            ChromeChannelDefinitions.ChannelId.SITES,
-                            SiteChannelsManager.getInstance()
-                                    .getChannelIdForOrigin(Origin.createOrThrow(url).toString()));
+                });
+        // There are lots of native posted tasks since start up. So we need to wait for
+        // all tasks to settle.
+        CriteriaHelper.pollInstrumentationThread(
+                () -> {
+                    Criteria.checkThat(
+                            "Channel was not found",
+                            getChannelId(url),
+                            not(ChromeChannelDefinitions.ChannelId.SITES));
                 });
         // Close the OS notification settings UI.
         UiAutomatorUtils.getInstance().pressBack();
@@ -2854,7 +3784,6 @@ public class SiteSettingsTest {
     @Feature({"Preferences"})
     @DisabledTest(message = "https://crbug.com/1094934")
     public void testEmbargoedNotificationCategorySiteSettings() throws Exception {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         final String urlToEmbargo =
                 mPermissionRule.getURLWithHostName(
                         "example.com", "/chrome/test/data/notifications/notification_tester.html");
@@ -2967,10 +3896,6 @@ public class SiteSettingsTest {
     @Test
     @MediumTest
     @Feature({"Preferences"})
-    @DisableIf.Build(
-            message = "https://crbug.com/1414569",
-            sdk_is_greater_than = Build.VERSION_CODES.N_MR1,
-            sdk_is_less_than = Build.VERSION_CODES.P)
     public void testProtectedContentDefaultOption() throws Exception {
         initializeUpdateWaiter(/* expectGranted= */ true);
         mPermissionRule.runNoPromptTest(
@@ -2985,10 +3910,6 @@ public class SiteSettingsTest {
     @Test
     @MediumTest
     @Feature({"Preferences"})
-    @DisableIf.Build(
-            message = "https://crbug.com/1414569",
-            sdk_is_greater_than = Build.VERSION_CODES.N_MR1,
-            sdk_is_less_than = Build.VERSION_CODES.P)
     public void testProtectedContentAskAllow() throws Exception {
         setGlobalTriStateToggleForCategory(
                 SiteSettingsCategory.Type.PROTECTED_MEDIA, ContentSettingValues.ASK);
@@ -3006,10 +3927,6 @@ public class SiteSettingsTest {
     @Test
     @MediumTest
     @Feature({"Preferences"})
-    @DisableIf.Build(
-            message = "https://crbug.com/1414569",
-            sdk_is_greater_than = Build.VERSION_CODES.N_MR1,
-            sdk_is_less_than = Build.VERSION_CODES.P)
     public void testProtectedContentAskBlocked() throws Exception {
         setGlobalTriStateToggleForCategory(
                 SiteSettingsCategory.Type.PROTECTED_MEDIA, ContentSettingValues.ASK);
@@ -3027,10 +3944,6 @@ public class SiteSettingsTest {
     @Test
     @MediumTest
     @Feature({"Preferences"})
-    @DisableIf.Build(
-            message = "https://crbug.com/1414569",
-            sdk_is_greater_than = Build.VERSION_CODES.N_MR1,
-            sdk_is_less_than = Build.VERSION_CODES.P)
     public void testProtectedContentBlocked() throws Exception {
         setGlobalTriStateToggleForCategory(
                 SiteSettingsCategory.Type.PROTECTED_MEDIA, ContentSettingValues.BLOCK);
@@ -3048,10 +3961,7 @@ public class SiteSettingsTest {
     @Test
     @MediumTest
     @Feature({"Preferences"})
-    @DisableIf.Build(
-            message = "https://crbug.com/1269556,https://crbug.com/1414569",
-            sdk_is_greater_than = Build.VERSION_CODES.N_MR1)
-    @DisableIf.Device(DeviceFormFactor.TABLET) // https://crbug.com/1234530
+    @DisabledTest(message = "https://crbug.com/1269556,https://crbug.com/1414569,crbug.com/1234530")
     public void testProtectedContentAllowThenBlock() throws Exception {
         initializeUpdateWaiter(/* expectGranted= */ true);
         mPermissionRule.runNoPromptTest(
@@ -3078,7 +3988,8 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    public void testDesktopSiteWindowSettings() {
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testDesktopSiteWindowSettingsWithToggle() {
         final SettingsActivity settingsActivity =
                 SiteSettingsTestUtils.startSiteSettingsCategory(
                         SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE);
@@ -3116,7 +4027,47 @@ public class SiteSettingsTest {
     @Test
     @SmallTest
     @Feature({"Preferences"})
-    @EnableFeatures(ChromeFeatureList.SAFETY_HUB)
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testDesktopSiteWindowSettings() {
+        final SettingsActivity settingsActivity =
+                SiteSettingsTestUtils.startSiteSettingsCategory(
+                        SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    HistogramWatcher histogramExpectation =
+                            HistogramWatcher.newSingleRecordWatcher(
+                                    "Android.RequestDesktopSite.WindowSettingChanged", true);
+                    SingleCategorySettings preferences =
+                            (SingleCategorySettings) settingsActivity.getMainFragment();
+                    // Window setting is only available when the Global Setting is ON.
+                    BinaryStatePermissionPreference binaryRadioButton =
+                            (BinaryStatePermissionPreference)
+                                    preferences.findPreference(
+                                            SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
+                    preferences.onPreferenceChange(binaryRadioButton, true);
+
+                    ChromeBaseCheckBoxPreference windowSettingPref =
+                            preferences.findPreference(
+                                    SingleCategorySettings.DESKTOP_SITE_WINDOW_TOGGLE_KEY);
+                    PrefService prefService = UserPrefs.get(getBrowserContextHandle());
+                    preferences.onPreferenceChange(windowSettingPref, true);
+                    Assert.assertTrue(
+                            "Window setting should be ON.",
+                            prefService.getBoolean(DESKTOP_SITE_WINDOW_SETTING_ENABLED));
+                    histogramExpectation.assertExpected();
+
+                    preferences.onPreferenceChange(windowSettingPref, false);
+                    Assert.assertFalse(
+                            "Window setting should be OFF.",
+                            prefService.getBoolean(DESKTOP_SITE_WINDOW_SETTING_ENABLED));
+                });
+        settingsActivity.finish();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
     public void testAutorevokePermissionsSwitch() {
         HistogramWatcher histogramExpectation =
                 HistogramWatcher.newSingleRecordWatcher(
@@ -3154,19 +4105,6 @@ public class SiteSettingsTest {
         settingsActivity.finish();
     }
 
-    @Test
-    @SmallTest
-    @Feature({"Preferences"})
-    @DisableFeatures(ChromeFeatureList.SAFETY_HUB)
-    public void testAutorevokePermissionsSwitchNotDisplayed() {
-        final SettingsActivity settingsActivity = SiteSettingsTestUtils.startSiteSettingsMenu("");
-        final SiteSettings siteSettingsFragment = (SiteSettings) settingsActivity.getMainFragment();
-        // Verify that the preference does not exist.
-        assertNull(
-                siteSettingsFragment.findPreference(SiteSettings.PERMISSION_AUTOREVOCATION_PREF));
-        settingsActivity.finish();
-    }
-
     private void renderSettingsPage(SettingsActivity settingsActivity, String name)
             throws IOException {
         View view = settingsActivity.findViewById(android.R.id.content).getRootView();
@@ -3179,24 +4117,6 @@ public class SiteSettingsTest {
             throws IOException {
         var settingsActivity = SiteSettingsTestUtils.startSiteSettingsCategory(category);
         renderSettingsPage(settingsActivity, name);
-    }
-
-    private void renderClearDataDialogView(SettingsActivity settingsActivity, String name)
-            throws IOException {
-        onView(withId(R.id.clear_reset_dialog))
-                .inRoot(isDialog())
-                .check(
-                        (view, noMatchException) -> {
-                            if (noMatchException != null) throw noMatchException;
-                            try {
-                                ChromeRenderTestRule.sanitize(view);
-                                mRenderTestRule.render(view, name);
-                            } catch (IOException e) {
-                                assert false : "Render test failed due to " + e;
-                            }
-                        });
-        onView(withText(R.string.cancel)).inRoot(isDialog()).perform(click());
-        settingsActivity.finish();
     }
 
     @Test
@@ -3235,174 +4155,7 @@ public class SiteSettingsTest {
         createStorageAccessExceptions();
         final SettingsActivity settingsActivity =
                 SiteSettingsTestUtils.startGroupedWebsitesPreferences(getRwsSiteGroup());
-        renderSettingsPage(settingsActivity, "site_settings_rws_grouped_website_settings");
-    }
-
-    @Test
-    @SmallTest
-    @Feature({"RenderTest"})
-    public void renderRwsSingleWebsiteSettingsDeleteAllDataDialog() throws Exception {
-        final SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startSingleWebsitePreferences(getRwsOwnerSite());
-
-        onView(withText(R.string.site_settings_rws_delete_button_label))
-                .check(matches(isDisplayed()))
-                .perform(click());
-        onView(withText(R.string.site_settings_delete_rws_storage_dialog_title))
-                .inRoot(isDialog())
-                .check(matches(isDisplayed()));
-        onView(withText(R.string.site_settings_delete_rws_storage_sign_out))
-                .inRoot(isDialog())
-                .check(matches(isDisplayed()));
-        onView(withText(R.string.webstorage_delete_data_dialog_offline_message))
-                .inRoot(isDialog())
-                .check(matches(isDisplayed()));
-        onView(withText(R.string.storage_delete_dialog_clear_storage_option))
-                .inRoot(isDialog())
-                .check(matches(isDisplayed()));
-
-        renderClearDataDialogView(
-                settingsActivity, "site_settings_rws_single_website_delete_dialog");
-    }
-
-    @Test
-    @SmallTest
-    @Feature({"RenderTest"})
-    public void renderRwsGroupedWebsiteSettingsDeleteAllDataDialog() throws Exception {
-        final SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startGroupedWebsitesPreferences(getRwsSiteGroup());
-
-        onView(withText(R.string.site_settings_rws_delete_button_label))
-                .check(matches(isDisplayed()))
-                .perform(click());
-        onView(withText(R.string.site_settings_delete_rws_storage_dialog_title))
-                .check(matches(isDisplayed()));
-        onView(withText(R.string.site_settings_delete_rws_storage_sign_out))
-                .inRoot(isDialog())
-                .check(matches(isDisplayed()));
-        onView(withText(R.string.webstorage_delete_data_dialog_offline_message))
-                .inRoot(isDialog())
-                .check(matches(isDisplayed()));
-        onView(withText(R.string.storage_delete_dialog_clear_storage_option))
-                .inRoot(isDialog())
-                .check(matches(isDisplayed()));
-
-        renderClearDataDialogView(
-                settingsActivity, "site_settings_rws_grouped_website_settings_delete_dialog");
-    }
-
-    @Test
-    @SmallTest
-    public void deleteSingleSiteDataRemovesRowSingleWebsiteSettings() throws Exception {
-        final String currentSiteUrl = "one-test.com";
-        final String rwsMemberUrl = "two-test.com";
-        final SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startSingleWebsitePreferences(
-                        getRwsOwnerSiteForUrls(currentSiteUrl, rwsMemberUrl));
-
-        onView(
-                        allOf(
-                                withText(currentSiteUrl),
-                                isDescendantOfA(withId(SingleWebsiteSettings.RWS_ROW_ID))))
-                .check(matches(isDisplayed()));
-        onView(
-                        allOf(
-                                withText(rwsMemberUrl),
-                                isDescendantOfA(withId(SingleWebsiteSettings.RWS_ROW_ID))))
-                .check(matches(isDisplayed()));
-
-        onView(
-                        allOf(
-                                withId(R.id.image_view_widget),
-                                withContentDescription(containsString(rwsMemberUrl))))
-                .check(matches(isDisplayed()))
-                .perform(click());
-        onView(withText(R.string.website_reset_confirmation)).check(matches(isDisplayed()));
-        onView(withText(R.string.website_reset))
-                .inRoot(isDialog())
-                .check(matches(isDisplayed()))
-                .perform(click());
-        onView(
-                        allOf(
-                                withText(rwsMemberUrl),
-                                isDescendantOfA(withId(SingleWebsiteSettings.RWS_ROW_ID))))
-                .check(doesNotExist());
-        onView(
-                        allOf(
-                                withText(currentSiteUrl),
-                                isDescendantOfA(withId(SingleWebsiteSettings.RWS_ROW_ID))))
-                .check(matches(isDisplayed()));
-    }
-
-    @Test
-    @SmallTest
-    public void deleteSingleSiteDataRemovesRowGroupedWebsiteSettings() throws Exception {
-        final String currentSiteUrl = "one-test.com";
-        final String rwsMemberUrl = "two-test.com";
-
-        final SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startGroupedWebsitesPreferences(
-                        getRwsSiteGroupForUrls(currentSiteUrl, rwsMemberUrl));
-
-        // RWS row and "Sites under" row will have equivalent views in the view hierarchy.
-        // The RWS row is higher up on the page and therefore be the first matched.
-        onView(
-                        allOf(
-                                withText(currentSiteUrl),
-                                isDescendantOfA(withId(GroupedWebsitesSettings.RWS_ROW_ID))))
-                .check(matches(isDisplayed()));
-        onView(
-                        allOf(
-                                withText(rwsMemberUrl),
-                                isDescendantOfA(withId(GroupedWebsitesSettings.RWS_ROW_ID))))
-                .check(matches(isDisplayed()));
-
-        onView(
-                        allOf(
-                                withId(R.id.image_view_widget),
-                                withContentDescription(containsString(rwsMemberUrl))))
-                .check(matches(isDisplayed()))
-                .perform(click());
-        onView(withText(R.string.website_reset_confirmation)).check(matches(isDisplayed()));
-        onView(withText(R.string.website_reset))
-                .inRoot(isDialog())
-                .check(matches(isDisplayed()))
-                .perform(click());
-        onView(
-                        allOf(
-                                withText(rwsMemberUrl),
-                                isDescendantOfA(withId(GroupedWebsitesSettings.RWS_ROW_ID))))
-                .check(doesNotExist());
-        onView(
-                        allOf(
-                                withText(currentSiteUrl),
-                                isDescendantOfA(withId(GroupedWebsitesSettings.RWS_ROW_ID))))
-                .check(matches(isDisplayed()));
-    }
-
-    // TODO(crbug.com/396463421): Remove once RWS UI V2 launched.
-    @Test
-    @SmallTest
-    @Feature({"RenderTest"})
-    @DisableFeatures(ChromeFeatureList.PRIVACY_SANDBOX_RELATED_WEBSITE_SETS_UI)
-    public void renderRwsSingleWebsiteSettingsRwsV2UiDisabled() throws Exception {
-        createStorageAccessExceptions();
-        final SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startSingleWebsitePreferences(getRwsOwnerSite());
-        renderSettingsPage(settingsActivity, "site_settings_rws_single_website_v2_disabled");
-    }
-
-    // TODO(crbug.com/396463421): Remove once RWS UI V2 launched.
-    @Test
-    @SmallTest
-    @Feature({"RenderTest"})
-    @DisableFeatures(ChromeFeatureList.PRIVACY_SANDBOX_RELATED_WEBSITE_SETS_UI)
-    public void renderRwsGroupedWebsiteSettingsRwsV2UiDisabled() throws Exception {
-        createStorageAccessExceptions();
-        final SettingsActivity settingsActivity =
-                SiteSettingsTestUtils.startGroupedWebsitesPreferences(getRwsSiteGroup());
-        renderSettingsPage(
-                settingsActivity, "site_settings_rws_grouped_website_settings_v2_disabled");
+        renderSettingsPage(settingsActivity, "site_settings_rws_grouped_website");
     }
 
     @Test
@@ -3421,6 +4174,26 @@ public class SiteSettingsTest {
         renderCategoryPage(
                 SiteSettingsCategory.Type.THIRD_PARTY_COOKIES,
                 "site_settings_third_party_cookies_page_fps");
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"RenderTest"})
+    @Policies.Add({@Policies.Item(key = "BlockThirdPartyCookies", string = "true")})
+    public void renderThirdPartyCookiesPageManagedBlocked() throws Exception {
+        renderCategoryPage(
+                SiteSettingsCategory.Type.THIRD_PARTY_COOKIES,
+                "site_settings_third_party_cookies_page_managed_blocked");
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"RenderTest"})
+    @Policies.Add({@Policies.Item(key = "BlockThirdPartyCookies", string = "false")})
+    public void renderThirdPartyCookiesPageManagedAllowed() throws Exception {
+        renderCategoryPage(
+                SiteSettingsCategory.Type.THIRD_PARTY_COOKIES,
+                "site_settings_third_party_cookies_page_managed_allowed");
     }
 
     @Test
@@ -3461,14 +4234,34 @@ public class SiteSettingsTest {
         @Policies.Item(key = "DefaultGeolocationSetting", string = "2"),
         @Policies.Item(key = "DefaultJavaScriptOptimizerSetting", string = "2")
     })
+    @DisableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+    public void testAllTwoStateToggleDisabledByPolicyWithToggle() {
+        testTwoStateToggleDisabledByPolicy(SiteSettingsCategory.Type.JAVASCRIPT);
+        testTwoStateToggleDisabledByPolicy(SiteSettingsCategory.Type.POPUPS);
+        testTwoStateToggleDisabledByPolicy(SiteSettingsCategory.Type.DEVICE_LOCATION);
+        testTwoStateToggleDisabledByPolicy(SiteSettingsCategory.Type.JAVASCRIPT_OPTIMIZER);
+        // TODO(crbug.com/40879457): add a test for sensors once crash in the sensors settings page
+        // is resolved.
+    }
+
+    /** Test case for checking that settings with binary toggles are disabled by policy. */
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @Policies.Add({
+        @Policies.Item(key = "DefaultJavaScriptSetting", string = "2"),
+        @Policies.Item(key = "DefaultPopupsSetting", string = "2"),
+        @Policies.Item(key = "DefaultGeolocationSetting", string = "2"),
+        @Policies.Item(key = "DefaultJavaScriptOptimizerSetting", string = "2")
+    })
+    @EnableFeatures(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
     public void testAllTwoStateToggleDisabledByPolicy() {
         testTwoStateToggleDisabledByPolicy(SiteSettingsCategory.Type.JAVASCRIPT);
         testTwoStateToggleDisabledByPolicy(SiteSettingsCategory.Type.POPUPS);
         testTwoStateToggleDisabledByPolicy(SiteSettingsCategory.Type.DEVICE_LOCATION);
         testTwoStateToggleDisabledByPolicy(SiteSettingsCategory.Type.JAVASCRIPT_OPTIMIZER);
         // TODO(crbug.com/40879457): add a test for sensors once crash in the sensors settings page
-        // is
-        // resolved.
+        // is resolved.
     }
 
     private void testTwoStateToggleDisabledByPolicy(@SiteSettingsCategory.Type int type) {
@@ -3476,12 +4269,20 @@ public class SiteSettingsTest {
                 SiteSettingsTestUtils.startSiteSettingsCategory(type);
         SingleCategorySettings singleCategorySettings =
                 (SingleCategorySettings) settingsActivity.getMainFragment();
-        ChromeSwitchPreference binaryToggle =
-                (ChromeSwitchPreference)
-                        singleCategorySettings.findPreference(
-                                SingleCategorySettings.BINARY_TOGGLE_KEY);
 
-        Assert.assertFalse(binaryToggle.isEnabled());
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
+                && type != SiteSettingsCategory.Type.ANTI_ABUSE) {
+            BinaryStatePermissionPreference binaryRadioButton =
+                    singleCategorySettings.findPreference(
+                            SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
+
+            Assert.assertFalse(binaryRadioButton.isEnabled());
+        } else {
+            ChromeSwitchPreference binaryToggle =
+                    singleCategorySettings.findPreference(SingleCategorySettings.BINARY_TOGGLE_KEY);
+
+            Assert.assertFalse(binaryToggle.isEnabled());
+        }
 
         ApplicationTestUtils.finishActivity(settingsActivity);
     }
@@ -3628,18 +4429,11 @@ public class SiteSettingsTest {
     }
 
     /** Test case for site settings with a global toggle. */
-    static class TwoStatePermissionTestCase extends PermissionTestCase {
-        TwoStatePermissionTestCase(
+    static class TwoStatePermissionTestCaseWithToggle extends PermissionTestCase {
+        TwoStatePermissionTestCaseWithToggle(
                 String testName, int siteSettingsType, int contentSettingsType, boolean enabled) {
             super(testName, siteSettingsType, contentSettingsType, enabled);
-
-            if (ChromeFeatureList.isEnabled(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)
-                    && siteSettingsType != SiteSettingsCategory.Type.ANTI_ABUSE) {
-                mExpectedPreferenceKeys.add(SingleCategorySettings.INFO_TEXT_KEY);
-                mExpectedPreferenceKeys.add(SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
-            } else {
-                mExpectedPreferenceKeys.add(SingleCategorySettings.BINARY_TOGGLE_KEY);
-            }
+            mExpectedPreferenceKeys.add(SingleCategorySettings.BINARY_TOGGLE_KEY);
         }
 
         @Override
@@ -3664,86 +4458,123 @@ public class SiteSettingsTest {
                             + mSiteSettingsType
                             + ">.";
 
-            if (ChromeFeatureList.isEnabled(
-                    ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)) {
-                BinaryStatePermissionPreference radioButton =
-                        singleCategorySettings.findPreference(
-                                SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
-                assertNotNull("Toggle should not be null.", radioButton);
+            ChromeSwitchPreference toggle =
+                    singleCategorySettings.findPreference(SingleCategorySettings.BINARY_TOGGLE_KEY);
+            assertNotNull("Toggle should not be null.", toggle);
 
-                singleCategorySettings.onPreferenceChange(radioButton, mIsCategoryEnabled);
-                Assert.assertEquals(
-                        exceptionString,
-                        mIsCategoryEnabled,
-                        WebsitePreferenceBridge.isCategoryEnabled(
-                                getBrowserContextHandle(), mContentSettingsType));
-            } else {
-                ChromeSwitchPreference toggle =
-                        singleCategorySettings.findPreference(
-                                SingleCategorySettings.BINARY_TOGGLE_KEY);
-                assertNotNull("Toggle should not be null.", toggle);
-
-                singleCategorySettings.onPreferenceChange(toggle, mIsCategoryEnabled);
-                Assert.assertEquals(
-                        exceptionString,
-                        mIsCategoryEnabled,
-                        WebsitePreferenceBridge.isCategoryEnabled(
-                                getBrowserContextHandle(), mContentSettingsType));
-            }
+            singleCategorySettings.onPreferenceChange(toggle, mIsCategoryEnabled);
+            Assert.assertEquals(
+                    exceptionString,
+                    mIsCategoryEnabled,
+                    WebsitePreferenceBridge.isCategoryEnabled(
+                            getBrowserContextHandle(), mContentSettingsType));
         }
 
-        /** Verfiy {@link ContentSettingsResources} is set correctly. */
+        /** Verify {@link ContentSettingsResources} is set correctly. */
         private void assertToggleTitleAndSummary(SingleCategorySettings singleCategorySettings) {
-            if (ChromeFeatureList.isEnabled(
-                    ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON)) {
-                BinaryStatePermissionPreference radio_button =
-                        singleCategorySettings.findPreference(
-                                SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
-                assert radio_button != null;
+            ChromeSwitchPreference toggle =
+                    singleCategorySettings.findPreference(SingleCategorySettings.BINARY_TOGGLE_KEY);
+            assert toggle != null;
 
-                Assert.assertEquals(
-                        "Preference text is not set correctly.",
-                        ContentSettingsResources.getBinaryStateSettingResourceIDs(
-                                mContentSettingsType)[0],
-                        radio_button.getDescriptionIds()[0]);
-                Assert.assertEquals(
-                        "Preference text is not set correctly.",
-                        ContentSettingsResources.getBinaryStateSettingResourceIDs(
-                                mContentSettingsType)[1],
-                        radio_button.getDescriptionIds()[1]);
-            } else {
-                ChromeSwitchPreference toggle =
-                        singleCategorySettings.findPreference(
-                                SingleCategorySettings.BINARY_TOGGLE_KEY);
-                assert toggle != null;
+            Assert.assertEquals(
+                    "Preference title is not set correctly.",
+                    singleCategorySettings
+                            .getResources()
+                            .getString(ContentSettingsResources.getTitle(mContentSettingsType)),
+                    toggle.getTitle());
+            assertNotNull("Enabled summary text should not be null.", toggle.getSummaryOn());
+            assertNotNull("Disabled summary text should not be null.", toggle.getSummaryOff());
 
-                Assert.assertEquals(
-                        "Preference title is not set correctly.",
-                        singleCategorySettings
-                                .getResources()
-                                .getString(ContentSettingsResources.getTitle(mContentSettingsType)),
-                        toggle.getTitle());
-                assertNotNull("Enabled summary text should not be null.", toggle.getSummaryOn());
-                assertNotNull("Disabled summary text should not be null.", toggle.getSummaryOff());
-
-                String summary =
-                        mIsCategoryEnabled
-                                ? toggle.getSummaryOn().toString()
-                                : toggle.getSummaryOff().toString();
-                String expected =
-                        singleCategorySettings
-                                .getResources()
-                                .getString(
-                                        mIsCategoryEnabled
-                                                ? ContentSettingsResources.getEnabledSummary(
-                                                        mContentSettingsType)
-                                                : ContentSettingsResources.getDisabledSummary(
-                                                        mContentSettingsType));
-                Assert.assertEquals(
-                        "Summary text in state <" + mIsCategoryEnabled + "> does not match.",
-                        expected,
-                        summary);
-            }
+            String summary =
+                    mIsCategoryEnabled
+                            ? toggle.getSummaryOn().toString()
+                            : toggle.getSummaryOff().toString();
+            String expected =
+                    singleCategorySettings
+                            .getResources()
+                            .getString(
+                                    mIsCategoryEnabled
+                                            ? ContentSettingsResources.getEnabledSummary(
+                                                    mContentSettingsType)
+                                            : ContentSettingsResources.getDisabledSummary(
+                                                    mContentSettingsType));
+            Assert.assertEquals(
+                    "Summary text in state <" + mIsCategoryEnabled + "> does not match.",
+                    expected,
+                    summary);
         }
+    }
+
+    /** Test case for site settings with a global radio button group. */
+    static class TwoStatePermissionTestCaseWithRadioButton extends PermissionTestCase {
+        TwoStatePermissionTestCaseWithRadioButton(
+                String testName, int siteSettingsType, int contentSettingsType, boolean enabled) {
+            super(testName, siteSettingsType, contentSettingsType, enabled);
+            mExpectedPreferenceKeys.add(SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
+        }
+
+        @Override
+        public void doTest(SingleCategorySettings singleCategorySettings) {
+            // Verify toggle related checks first as they may affect the preferences on the screen.
+            assertRadioButtonTitleAndSummary(singleCategorySettings);
+            assertGlobalRadioButtonGroupForCategory(singleCategorySettings);
+
+            super.doTest(singleCategorySettings);
+        }
+
+        /** Verify {@link SingleCategorySettings} is wired correctly. */
+        private void assertGlobalRadioButtonGroupForCategory(
+                SingleCategorySettings singleCategorySettings) {
+            final String exceptionString =
+                    "Test <"
+                            + mTestName
+                            + ">: Content setting category <"
+                            + mContentSettingsType
+                            + "> should be "
+                            + (mIsCategoryEnabled ? "enabled" : "disabled")
+                            + " with Site Settings <"
+                            + mSiteSettingsType
+                            + ">.";
+
+            BinaryStatePermissionPreference radioButton =
+                    singleCategorySettings.findPreference(
+                            SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
+            assertNotNull("Radio Button should not be null.", radioButton);
+
+            singleCategorySettings.onPreferenceChange(radioButton, mIsCategoryEnabled);
+            Assert.assertEquals(
+                    exceptionString,
+                    mIsCategoryEnabled,
+                    WebsitePreferenceBridge.isCategoryEnabled(
+                            getBrowserContextHandle(), mContentSettingsType));
+        }
+
+        /** Verify {@link ContentSettingsResources} is set correctly. */
+        private void assertRadioButtonTitleAndSummary(
+                SingleCategorySettings singleCategorySettings) {
+            BinaryStatePermissionPreference radio_button =
+                    singleCategorySettings.findPreference(
+                            SingleCategorySettings.BINARY_RADIO_BUTTON_KEY);
+            assert radio_button != null;
+
+            Assert.assertEquals(
+                    "Preference text is not set correctly.",
+                    ContentSettingsResources.getBinaryStateSettingResourceIDs(mContentSettingsType)[
+                            0],
+                    radio_button.getDescriptionIds()[0]);
+            Assert.assertEquals(
+                    "Preference text is not set correctly.",
+                    ContentSettingsResources.getBinaryStateSettingResourceIDs(mContentSettingsType)[
+                            1],
+                    radio_button.getDescriptionIds()[1]);
+        }
+    }
+
+    private static String getChannelId(String url) {
+        PayloadCallbackHelper<String> helper = new PayloadCallbackHelper();
+        SiteChannelsManager.getInstance()
+                .getChannelIdForOriginAsync(
+                        Origin.createOrThrow(url).toString(), helper::notifyCalled);
+        return helper.getOnlyPayloadBlocking();
     }
 }

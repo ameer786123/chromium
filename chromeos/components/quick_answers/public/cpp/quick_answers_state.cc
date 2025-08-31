@@ -186,15 +186,9 @@ void QuickAnswersState::RemoveObserver(QuickAnswersStateObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void QuickAnswersState::OnMagicBoostEnabledUpdated(bool enabled) {
-  // MagicBoost's availability check includes an async operation. It can return
-  // false for a short period even if a user/device is eligible.
-  // `MagicBoostState` does not have an interface to allow clients to listen
-  // availability change. As a workaround, we are currently using
-  // `OnMagicBoostEnabled` as a signal. See
-  // `SearchSection::OnMagicBoostEnabledUpdated` as an example.
-  // TODO(b/383612536): allow clients to observe MagicBoostState availability
-  // change
+void QuickAnswersState::OnUserEligibleForGenAIFeaturesUpdated(bool eligible) {
+  // Gen-AI features' eligibility check includes an async operation. It can
+  // return false for a short period even if a user/device is eligible.
   MaybeNotifyFeatureTypeChanged();
 }
 
@@ -244,7 +238,7 @@ bool QuickAnswersState::ShouldUseQuickAnswersTextAnnotator() {
          use_text_annotator_for_testing_;
 }
 
-bool QuickAnswersState::IsSupportedLanguage(const std::string& language) const {
+bool QuickAnswersState::IsSupportedLanguage(std::string_view language) const {
   return kSupportedLanguages.contains(language);
 }
 
@@ -257,9 +251,24 @@ QuickAnswersState::GetFeatureTypeExpected() const {
     return base::unexpected(QuickAnswersState::Error::kUninitialized);
   }
 
-  return magic_boost_state->IsMagicBoostAvailable()
-             ? QuickAnswersState::FeatureType::kHmr
-             : QuickAnswersState::FeatureType::kQuickAnswers;
+  return magic_boost_state->is_user_eligible_for_genai_features()
+      .transform([](bool available) {
+        if (available) {
+          return QuickAnswersState::FeatureType::kHmr;
+        } else {
+          return QuickAnswersState::FeatureType::kQuickAnswers;
+        }
+      })
+      .transform_error([](chromeos::MagicBoostState::Error error) {
+        // Use `switch` statement as it gets a compile error when
+        // `MagicBoostState::Error` enum class value added.
+        switch (error) {
+          case chromeos::MagicBoostState::Error::kUninitialized:
+            return QuickAnswersState::Error::kUninitialized;
+        }
+        CHECK(false)
+            << "Unknown MagicBoostState::Error enum class value provided.";
+      });
 }
 
 base::expected<bool, QuickAnswersState::Error>

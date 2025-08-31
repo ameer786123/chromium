@@ -104,7 +104,7 @@ MaybeLocal<Module> ResolveModuleCallback(
   V8Environment* v8_env = V8Environment::GetFromContext(context);
   CHECK(v8_env);
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   std::optional<std::string> referrer_identifier =
       v8_env->GetIdentifierFromModule(v8::Global<Module>(isolate, referrer));
   CHECK(referrer_identifier.has_value());
@@ -168,6 +168,7 @@ V8Environment::~V8Environment() {
 
   {
     v8::Isolate::Scope isolate_scope(isolate_holder_->isolate());
+    v8::HandleScope handle_scope(isolate_holder_->isolate());
     NotifyIsolateWillDestroy();
     isolate_holder_->isolate()->TerminateExecution();
 
@@ -540,9 +541,8 @@ void V8Environment::AddV8Bindings() {
 
   // Create a template for the "Mojo" object in the context scope.
   Context::Scope context_scope(context);
-  gin::Handle<Mojo> mojo = Mojo::Create(context);
-  global_proxy->Set(context, gin::StringToV8(isolate, "Mojo"), mojo.ToV8())
-      .Check();
+  v8::Local<v8::Object> mojo = Mojo::Create(isolate);
+  global_proxy->Set(context, gin::StringToV8(isolate, "Mojo"), mojo).Check();
 
   // Initialize self as the global template. This will allow mojo to work with
   // modules without a shim.

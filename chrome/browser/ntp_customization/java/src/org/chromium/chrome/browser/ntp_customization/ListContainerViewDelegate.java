@@ -6,20 +6,33 @@ package org.chromium.chrome.browser.ntp_customization;
 
 import android.content.Context;
 import android.support.annotation.DrawableRes;
-import android.support.annotation.Nullable;
+import android.support.annotation.StringRes;
 import android.view.View;
+
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 import java.util.List;
 
 /**
  * This delegate provides list content and event handlers to {@link BottomSheetListContainerView}.
  */
+@NullMarked
 public interface ListContainerViewDelegate {
     /**
      * Returns the types of items to be added to the container view. The size of the returned list
      * should be the same as the number of the list items to be displayed.
      */
     List<Integer> getListItems();
+
+    /**
+     * Returns the view id to be assigned to the list item for the given type.
+     *
+     * @param type The type of the list item.
+     */
+    default int getListItemId(int type) {
+        return View.NO_ID;
+    }
 
     /**
      * Returns the title to be displayed in the the list item for the given type.
@@ -41,8 +54,7 @@ public interface ListContainerViewDelegate {
      *
      * @param type The type of the list item.
      */
-    @Nullable
-    View.OnClickListener getListener(int type);
+    View.@Nullable OnClickListener getListener(int type);
 
     /**
      * Returns the resource id of the trailing icon in the list item for the given type.
@@ -52,4 +64,14 @@ public interface ListContainerViewDelegate {
     @Nullable
     @DrawableRes
     Integer getTrailingIcon(int type);
+
+    /**
+     * Returns the resource id for the content description of the list item's trailing icon for the
+     * given type.
+     *
+     * @param type The type of the list item.
+     */
+    @Nullable
+    @StringRes
+    Integer getTrailingIconDescriptionResId(int type);
 }

@@ -23,6 +23,7 @@
 #include "components/compose/buildflags.h"
 #include "components/custom_handlers/protocol_handler_registry.h"
 #include "components/lens/buildflags.h"
+#include "components/lens/lens_overlay_invocation_source.h"
 #include "components/renderer_context_menu/context_menu_content_type.h"
 #include "components/renderer_context_menu/render_view_context_menu_base.h"
 #include "components/renderer_context_menu/render_view_context_menu_observer.h"
@@ -30,23 +31,15 @@
 #include "components/search_engines/template_url.h"
 #include "components/supervised_user/core/browser/supervised_user_url_filter.h"
 #include "content/public/browser/context_menu_params.h"
+#include "content/public/common/buildflags.h"
 #include "extensions/buildflags/buildflags.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom-forward.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/menus/simple_menu_model.h"
-
-#if BUILDFLAG(ENABLE_COMPOSE)
-#include "chrome/browser/compose/chrome_compose_client.h"
-#endif
-
-#if BUILDFLAG(ENABLE_LENS_DESKTOP_GOOGLE_BRANDED_FEATURES)
-#include "chrome/browser/lens/region_search/lens_region_search_controller.h"
-#endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/context_menu_matcher.h"
@@ -55,6 +48,9 @@
 
 class AccessibilityLabelsMenuObserver;
 class Browser;
+#if BUILDFLAG(ENABLE_COMPOSE)
+class ChromeComposeClient;
+#endif
 class ClickToCallContextMenuObserver;
 class LinkToTextMenuObserver;
 class PrintPreviewContextMenuObserver;
@@ -71,7 +67,6 @@ class WebContents;
 
 namespace extensions {
 class Extension;
-class MenuItem;
 }  // namespace extensions
 
 namespace gfx {
@@ -110,6 +105,7 @@ class RenderViewContextMenu
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kComposeMenuItem);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kGlicCloseMenuItem);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kGlicReloadMenuItem);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kOpenLinkInSplitMenuItem);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kRegionSearchItem);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kSearchForImageItem);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kSearchForVideoFrameItem);
@@ -149,11 +145,9 @@ class RenderViewContextMenu
       base::OnceCallback<void(content::RenderFrameHost*,
                               blink::mojom::PluginActionType)> cb);
 
-#if BUILDFLAG(ENABLE_LENS_DESKTOP_GOOGLE_BRANDED_FEATURES)
-  lens::LensRegionSearchController* GetLensRegionSearchControllerForTesting() {
-    return lens_region_search_controller_.get();
+  bool lens_region_search_controller_started_for_testing() const {
+    return lens_region_search_controller_started_for_testing_;
   }
-#endif
 
   void AddObserverForTesting(RenderViewContextMenuObserver* observer);
   void RemoveObserverForTesting(RenderViewContextMenuObserver* observer);
@@ -231,14 +225,6 @@ class RenderViewContextMenu
   friend class FormatUrlForClipboardTest;
 
   static bool IsDevToolsURL(const GURL& url);
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  static bool ExtensionContextAndPatternMatch(
-      const content::ContextMenuParams& params,
-      const extensions::MenuItem::ContextList& contexts,
-      const extensions::URLPatternSet& target_url_patterns);
-  static bool MenuItemMatchesParams(const content::ContextMenuParams& params,
-                                    const extensions::MenuItem* item);
-#endif
 
   // Returns true if the command id is gated by fenced frame untrusted network
   // status.
@@ -250,8 +236,8 @@ class RenderViewContextMenu
   // clipboard. |url| must be valid and non-empty.
   static std::u16string FormatURLForClipboard(const GURL& url);
 
-  // Writes the specified text/url to the system clipboard.
-  void WriteURLToClipboard(const GURL& url);
+  // Writes the specified url to the system clipboard.
+  void WriteURLToClipboard(const GURL& url, int id);
 
   // Issues a preconnection request to the given url.
   void IssuePreconnectionToUrl(const std::string& anonymization_key_url,
@@ -264,6 +250,20 @@ class RenderViewContextMenu
   void HandleAuthorizeAllPlugins() override;
 #endif
   void NotifyMenuShown() override;
+
+  // Returns whether the feature is new and should be shown with a "new" badge.
+  //
+  // When generating context menu items, we want to show a "new" badge next to
+  // the item if the feature is new. Some of these items are generated
+  // by this base class, and there we don't have direct access to the user
+  // education service. Instead, we need to delegate to the platform-specific
+  // implementation of this method to determine if the item should be marked
+  // as "new".
+  // This method accepts the feature name, and not the base::Feature.
+  // The reason is that in DevTools, we don't have access to base::Features
+  // directly, so features are stored by name and will be mapped accordingly.
+  ui::IsNewFeatureAtValue GetIsNewFeatureAtValue(
+      const std::string& feature_name) const override;
 
   // Gets the extension (if any) associated with the WebContents that we're in.
   const extensions::Extension* GetExtension() const;
@@ -313,7 +313,6 @@ class RenderViewContextMenu
   bool AppendAccessibilityLabelsItems();
   void AppendSearchProvider();
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  void AppendAllExtensionItems();
   void AppendCurrentExtensionItems();
 #endif
   void AppendPrintPreviewItems();
@@ -343,6 +342,11 @@ class RenderViewContextMenu
   // status. For context menu commands that are gated on fenced frame untrusted
   // network status, this check should be applied.
   bool IsUntrustedNetworkDisabled() const;
+
+  // Helper function for checking if text query should be opened in Lens. Checks
+  // whether Lens is available and whether the text selection entrypoint flag is
+  // enabled.
+  bool ShouldOpenTextQueryInLens() const;
 
   // Command enabled query functions.
   bool IsReloadEnabled() const;
@@ -410,6 +414,7 @@ class RenderViewContextMenu
                            const gfx::Rect& region_bounds);
   void PluginActionAt(const gfx::Point& location,
                       blink::mojom::PluginActionType plugin_action);
+  void OpenTextQueryInLens();
 
   // Returns a list of registered ProtocolHandlers that can handle the clicked
   // on URL.
@@ -445,6 +450,7 @@ class RenderViewContextMenu
   void OpenLensOverlayWithPreselectedRegion(
       mojo::AssociatedRemote<chrome::mojom::ChromeRenderFrame>
           chrome_render_frame,
+      lens::LensOverlayInvocationSource invocation_source,
       const gfx::Rect& tab_bounds,
       const gfx::Rect& view_bounds,
       float device_scale_factor,
@@ -456,6 +462,14 @@ class RenderViewContextMenu
   // event that caused the menu to show.
   void ShowClipboardHistoryMenu(int event_flags);
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if !BUILDFLAG(IS_ANDROID)
+  // Opens the link in a new split view so that the linked page will be visible
+  // next to the active tab. If the active tab is already in the split view,
+  // then the tab that wasn't the source of the link will be navigated to the
+  // link instead.
+  void OpenLinkInSplitView();
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   // The destination URL to use if the user tries to search for or navigate to
   // a text selection.
@@ -539,16 +553,9 @@ class RenderViewContextMenu
   // executed from a given render frame.
   ExecutePluginActionCallback execute_plugin_action_callback_;
 
-#if BUILDFLAG(ENABLE_LENS_DESKTOP_GOOGLE_BRANDED_FEATURES)
-  // Controller for Lens Region Search feature. This controller will be
-  // destroyed as soon as the RenderViewContextMenu object is destroyed. The
-  // RenderViewContextMenu is reset every time it is shown, but persists between
-  // uses so that it doesn't go out of scope before finishing work. This means
-  // that when another context menu opens, the Lens Region Search feature will
-  // close if active.
-  std::unique_ptr<lens::LensRegionSearchController>
-      lens_region_search_controller_;
-#endif
+  // Used in testing to determine whether the lens region search controller has
+  // started due to interaction with the region search entrypoint in the menu.
+  bool lens_region_search_controller_started_for_testing_ = false;
 
   // Responsible for handling autofill related context menu items.
   autofill::AutofillContextMenuManager autofill_context_menu_manager_;
@@ -577,6 +584,7 @@ class RenderViewContextMenu
            IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW,
            IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD,
            IDC_OPEN_LINK_IN_PROFILE_FIRST, IDC_OPEN_LINK_IN_PROFILE_LAST,
+           IDC_CONTENT_CONTEXT_OPENLINKSPLITVIEW,
 
            // Open link commands that appear in certain scenarios.
            IDC_CONTENT_CONTEXT_OPENLINKBOOKMARKAPP,

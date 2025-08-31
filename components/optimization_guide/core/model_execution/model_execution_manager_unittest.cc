@@ -10,20 +10,23 @@
 #include "base/functional/callback_helpers.h"
 #include "base/strings/strcat.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/protobuf_matchers.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test.pb.h"
 #include "base/test/test_future.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/test_optimization_guide_model_provider.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_access_controller.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_service_controller.h"
+#include "components/optimization_guide/core/model_execution/test/fake_model_broker.h"
 #include "components/optimization_guide/core/model_execution/test/request_builder.h"
 #include "components/optimization_guide/core/model_execution/test/response_holder.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_logger.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
-#include "components/optimization_guide/core/test_optimization_guide_model_provider.h"
+#include "components/optimization_guide/proto/features/forms_classifications.pb.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
@@ -39,6 +42,7 @@ namespace optimization_guide {
 
 namespace {
 
+using ::base::test::EqualsProto;
 using ::base::test::TestMessage;
 using ::testing::HasSubstr;
 
@@ -65,11 +69,10 @@ class ModelExecutionManagerTest : public testing::Test {
     url_loader_factory_ =
         base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
             &test_url_loader_factory_);
-    service_controller_ = base::MakeRefCounted<OnDeviceModelServiceController>(
-        nullptr, nullptr, base::DoNothing());
     model_execution_manager_ = std::make_unique<ModelExecutionManager>(
         url_loader_factory_, identity_test_env_.identity_manager(),
-        service_controller_, &optimization_guide_logger_, nullptr);
+        fake_model_broker_.controller().GetWeakPtr(),
+        &optimization_guide_logger_, nullptr);
   }
 
   bool SimulateResponse(const std::string& content,
@@ -102,7 +105,7 @@ class ModelExecutionManagerTest : public testing::Test {
   }
 
   OnDeviceModelServiceController* service_controller() {
-    return service_controller_.get();
+    return &fake_model_broker_.controller();
   }
 
   void CheckPendingRequestMessage(const std::string& message) {
@@ -122,13 +125,15 @@ class ModelExecutionManagerTest : public testing::Test {
  private:
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
-  base::test::ScopedFeatureList scoped_feature_list_;
   signin::IdentityTestEnvironment identity_test_env_;
   variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
   network::TestURLLoaderFactory test_url_loader_factory_;
-  scoped_refptr<OnDeviceModelServiceController> service_controller_;
+  FakeAdaptationAsset fake_adaptation_asset_{{
+      .config = SimpleComposeConfig(),
+  }};
+  FakeModelBroker fake_model_broker_{fake_adaptation_asset_};
   OptimizationGuideLogger optimization_guide_logger_;
   std::unique_ptr<ModelExecutionManager> model_execution_manager_;
 };
@@ -161,7 +166,8 @@ TEST_F(ModelExecutionManagerTest, ExecuteModelWithUserSignIn) {
       /*log_ai_data_request=*/nullptr, response_holder.GetCallback());
   EXPECT_TRUE(SimulateSuccessfulResponse());
   EXPECT_TRUE(response_holder.GetFinalStatus());
-  EXPECT_EQ("foo response", response_holder.GetComposeOutput());
+  EXPECT_EQ("foo response",
+            response_holder.GetOutput<proto::ComposeResponse>().output());
   EXPECT_NE(response_holder.log_entry(), nullptr);
   EXPECT_EQ(response_holder.log_entry()
                 ->log_ai_data_request()
@@ -435,7 +441,11 @@ TEST_F(ModelExecutionManagerTest,
   EXPECT_TRUE(response_holder.GetFinalStatus());
 }
 
-TEST_F(ModelExecutionManagerTest, TestMultipleParallelRequests) {
+// Tests that when a new request is issued and the total number of active
+// requests would exceed the maximum for this feature, the oldest request is
+// cancelled.
+// Note that kCompose is limited to 1 active request at a time.
+TEST_F(ModelExecutionManagerTest, MultipleParallelRequestsLimit) {
   base::HistogramTester histogram_tester;
   RemoteResponseHolder response_holder1, response_holder2;
 
@@ -456,7 +466,8 @@ TEST_F(ModelExecutionManagerTest, TestMultipleParallelRequests) {
   EXPECT_TRUE(SimulateSuccessfulResponse());
 
   EXPECT_TRUE(response_holder2.GetFinalStatus());
-  EXPECT_EQ("foo response", response_holder2.GetComposeOutput());
+  EXPECT_EQ("foo response",
+            response_holder2.GetOutput<proto::ComposeResponse>().output());
   EXPECT_NE(response_holder2.log_entry(), nullptr);
   EXPECT_EQ(response_holder2.log_entry()
                 ->log_ai_data_request()
@@ -474,6 +485,43 @@ TEST_F(ModelExecutionManagerTest, TestMultipleParallelRequests) {
       "OptimizationGuide.ModelExecution.Result.Compose", true, 1);
   histogram_tester.ExpectBucketCount(
       "OptimizationGuide.ModelExecution.Result.Compose", false, 1);
+}
+
+// Tests that multiple parallel model executions are possible for features that
+// support it (like kFormsClassification).
+TEST_F(ModelExecutionManagerTest, MultipleParallelRequests) {
+  RemoteResponseHolder response_holder1, response_holder2;
+  SetAutomaticIssueOfAccessTokens();
+
+  // Trigger two parallel model executions.
+  proto::AutofillAiTypeRequest request;
+  model_execution_manager()->ExecuteModel(
+      ModelBasedCapabilityKey::kFormsClassifications, request,
+      /*timeout=*/std::nullopt,
+      /*log_ai_data_request=*/nullptr, response_holder1.GetCallback());
+  model_execution_manager()->ExecuteModel(
+      ModelBasedCapabilityKey::kFormsClassifications, request,
+      /*timeout=*/std::nullopt,
+      /*log_ai_data_request=*/nullptr, response_holder2.GetCallback());
+
+  // Simulate a successful response for both executions.
+  proto::AutofillAiTypeResponse response;
+  proto::ExecuteResponse execute_response;
+  proto::Any* any_metadata = execute_response.mutable_response_metadata();
+  any_metadata->set_type_url("type.googleapis.com/AutofillAiTypeResponse");
+  response.SerializeToString(any_metadata->mutable_value());
+  std::string serialized_response;
+  execute_response.SerializeToString(&serialized_response);
+  ASSERT_TRUE(SimulateResponse(serialized_response, net::HTTP_OK));
+  ASSERT_TRUE(SimulateResponse(serialized_response, net::HTTP_OK));
+
+  // Expect that both model executions succeeded.
+  ASSERT_TRUE(response_holder1.GetFinalStatus());
+  EXPECT_THAT(response_holder1.GetOutput<proto::AutofillAiTypeResponse>(),
+              EqualsProto(response));
+  ASSERT_TRUE(response_holder2.GetFinalStatus());
+  EXPECT_THAT(response_holder2.GetOutput<proto::AutofillAiTypeResponse>(),
+              EqualsProto(response));
 }
 
 }  // namespace

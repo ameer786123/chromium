@@ -141,9 +141,6 @@ class ArcAppInstallEventLogCollectorTest : public testing::Test {
   ~ArcAppInstallEventLogCollectorTest() override = default;
 
   void SetUp() override {
-    RegisterLocalState(pref_service_.registry());
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&pref_service_);
-
     chromeos::PowerManagerClient::InitializeFake();
     profile_ = std::make_unique<TestingProfile>();
     arc_app_test_.SetUp(profile_.get());
@@ -165,7 +162,6 @@ class ArcAppInstallEventLogCollectorTest : public testing::Test {
 
     profile_.reset();
     chromeos::PowerManagerClient::Shutdown();
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
   }
 
   void SetNetworkState(
@@ -207,7 +203,6 @@ class ArcAppInstallEventLogCollectorTest : public testing::Test {
   std::unique_ptr<ash::NetworkHandlerTestHelper> network_handler_test_helper_;
   std::unique_ptr<TestingProfile> profile_;
   FakeAppInstallEventLogCollectorDelegate delegate_;
-  TestingPrefServiceSimple pref_service_;
   ArcAppTest arc_app_test_;
 };
 

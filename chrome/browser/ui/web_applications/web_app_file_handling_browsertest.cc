@@ -383,7 +383,7 @@ IN_PROC_BROWSER_TEST_F(WebAppFileHandlingBrowserTest,
     auto result = content::EvalJs(web_contents_.get(),
                                   "window.history.replaceState(null, '', "
                                   "window.location.href + '#foo');");
-    EXPECT_TRUE(result.error.empty());
+    EXPECT_TRUE(result.is_ok());
     navigation_observer.Wait();
   }
 
@@ -456,7 +456,7 @@ IN_PROC_BROWSER_TEST_F(WebAppFileHandlingBrowserTest,
   const GURL origin = GetSecureAppURL().DeprecatedGetOriginAsURL();
 
   EXPECT_EQ(ApiApprovalState::kRequiresPrompt,
-            registrar().GetAppFileHandlerApprovalState(app_id()));
+            registrar().GetAppFileHandlerUserApprovalState(app_id()));
   provider()->sync_bridge_unsafe().SetAppFileHandlerApprovalState(
       app_id(), ApiApprovalState::kAllowed);
 

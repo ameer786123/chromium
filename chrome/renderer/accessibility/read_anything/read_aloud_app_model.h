@@ -12,6 +12,8 @@
 #include "chrome/renderer/accessibility/read_anything/read_aloud_traversal_utils.h"
 #include "ui/accessibility/ax_node_position.h"
 
+class ReadAnythingReadAloudAppModelTest;
+
 // A class that holds state related to Read Aloud for the
 // ReadAnythingAppController for the Read Anything WebUI app.
 class ReadAloudAppModel {
@@ -41,14 +43,21 @@ class ReadAloudAppModel {
 
   static constexpr char kSpeechStopSourceHistogramName[] =
       "Accessibility.ReadAnything.SpeechStopSource";
+  static constexpr char kAudioStartTimeFailureHistogramName[] =
+      "Accessibility.ReadAnything.AudioStartTime.Failure";
+  static constexpr char kAudioStartTimeSuccessHistogramName[] =
+      "Accessibility.ReadAnything.AudioStartTime.Success";
 
   ReadAloudAppModel();
   ~ReadAloudAppModel();
   ReadAloudAppModel(const ReadAloudAppModel& other) = delete;
   ReadAloudAppModel& operator=(const ReadAloudAppModel&) = delete;
 
+  bool speech_tree_initialized() { return speech_tree_initialized_; }
   bool speech_playing() { return speech_playing_; }
-  void set_speech_playing(bool is_playing) { speech_playing_ = is_playing; }
+  void SetSpeechPlaying(bool is_playing);
+  bool audio_currently_playing() { return audio_currently_playing_; }
+  void SetAudioCurrentlyPlaying(bool is_playing);
   double speech_rate() const { return speech_rate_; }
   void set_speech_rate(double rate) { speech_rate_ = rate; }
   const base::Value::List& languages_enabled_in_pref() const {
@@ -88,20 +97,18 @@ class ReadAloudAppModel {
   // Inits the AXPosition with a starting node.
   // TODO(crbug.com/40927698): We should be able to use AXPosition in a way
   // where this isn't needed.
-  void InitAXPositionWithNode(ui::AXNode* ax_node);
+  void InitAXPositionWithNode(ui::AXNode* ax_node,
+                              const ui::AXTreeID& active_tree_id);
 
   void ResetGranularityIndex();
 
-  // Returns a list of AXNodeIds representing the next nodes that should be
-  // spoken and highlighted with Read Aloud.
+  // Returns a list of ReadAloudCurrentGranularitys representing the next nodes
+  // that should be spoken and highlighted with Read Aloud.
   // This defaults to returning the first granularity until
   // MovePositionTo<Next,Previous>Granularity() moves the position.
   // If the the current processed_granularity_index_ has not been calculated
   // yet, GetNextNodes() is called which updates the AXPosition.
-  // GetCurrentTextStartIndex and GetCurrentTextEndIndex called with an AXNodeID
-  // return by GetCurrentText will return the starting text and ending text
-  // indices for specific text that should be referenced within the node.
-  std::vector<ui::AXNodeID> GetCurrentText(
+  a11y::ReadAloudCurrentGranularity GetCurrentText(
       bool is_pdf,
       bool is_docs,
       const std::set<ui::AXNodeID>* current_nodes);
@@ -125,12 +132,6 @@ class ReadAloudAppModel {
   // decremented less than 0.
   void MovePositionToPreviousGranularity();
 
-  // Helper method for GetCurrentText.
-  a11y::ReadAloudCurrentGranularity GetNextNodes(
-      bool is_pdf,
-      bool is_docs,
-      const std::set<ui::AXNodeID>* current_nodes);
-
   // Returns the Read Aloud starting text index for a node. For example,
   // if the entire text of the node should be read by Read Aloud at a particular
   // moment, this will return 0. Returns -1 if the node isn't in the current
@@ -144,6 +145,18 @@ class ReadAloudAppModel {
   int GetCurrentTextEndIndex(const ui::AXNodeID& node_id);
 
   void ResetReadAloudState();
+
+  // Returns a list of segments representing the next nodes and ranges
+  // that should be spoken and highlighted with Read Aloud. The text ranges
+  // consist of start and end offsets within each node. This defaults to
+  // returning the first granularity until
+  // MovePositionTo<Next,Previous>Granularity() moves the position.
+  // If the the current processed_granularity_index_ has not been calculated
+  // yet, GetNextNodes() is called which updates the AXPosition.
+  std::vector<ReadAloudTextSegment> GetCurrentTextSegments(
+      bool is_pdf,
+      bool is_docs,
+      const std::set<ui::AXNodeID>* current_nodes);
 
   // Given a text index for the current granularity, return the nodes and the
   // corresponding text ranges for that part of the text. The text ranges
@@ -172,6 +185,16 @@ class ReadAloudAppModel {
   void LogSpeechStop(ReadAloudStopSource source);
 
  private:
+  friend ReadAnythingReadAloudAppModelTest;
+
+  void LogAudioDelay(bool success);
+
+  // Helper method for GetCurrentText.
+  a11y::ReadAloudCurrentGranularity GetNextNodes(
+      bool is_pdf,
+      bool is_docs,
+      const std::set<ui::AXNodeID>* current_nodes);
+
   // Returns true if the node was previously spoken or we expect to speak it
   // to be spoken once the current run of #GetCurrentText which called
   // #NodeBeenOrWillBeSpoken finishes executing. Because AXPosition
@@ -203,8 +226,8 @@ class ReadAloudAppModel {
       int start_index,
       int end_index,
       a11y::ReadAloudCurrentGranularity& current_granularity,
-      bool is_docs,
-      bool is_pdf);
+      bool is_pdf,
+      bool is_docs);
 
   // Returns if we should end text traversal from the current position, due
   // to reaching the end of content or reaching a point, such as a paragraph,
@@ -258,8 +281,6 @@ class ReadAloudAppModel {
       bool is_docs,
       const std::set<ui::AXNodeID>* current_nodes);
 
-  ui::AXNodePosition::AXPositionInstance GetNextSentencePosition() const;
-
   // Helper for GetNextNodes.
   // Returns true if the node at the current AXPosition has no more text
   // remaining.
@@ -285,8 +306,11 @@ class ReadAloudAppModel {
   // Initiate phrase calculation from the first sentence.
   void StartPhraseCalculation();
 
-  // Whether Read Aloud speech is currently playing or not.
+  // Whether Read Aloud speech was initiated. Audio may or may not have actually
+  // started output.
   bool speech_playing_ = false;
+  // Whether audio for Read aloud is actually playing.
+  bool audio_currently_playing_ = false;
 
   // The current speech rate for reading aloud.
   double speech_rate_ = 1.0;
@@ -322,9 +346,18 @@ class ReadAloudAppModel {
   std::map<std::string, std::unique_ptr<base::SingleSampleMetric>>
       metric_to_single_sample_;
 
+  // The time when the speech becomes active.
+  base::TimeTicks speech_active_time_ms_;
+
   // Traversal state
 
   ui::AXNodePosition::AXPositionInstance ax_position_;
+
+  // If ax_position_ has been initialized. Since preprocessing nodes
+  // can result in the AXPosition being set to the null position, reading mode
+  // can't rely on AXPosition->IsNullPosition() to check whether or not the
+  // speech tree has been initialized.
+  bool speech_tree_initialized_ = false;
 
   // Our current index within processed_granularities_on_current_page_.
   size_t processed_granularity_index_ = 0;
@@ -347,7 +380,7 @@ class ReadAloudAppModel {
   std::vector<a11y::ReadAloudCurrentGranularity>
       processed_granularities_on_current_page_;
 
-  const ui::AXMovementOptions sentence_movement_options_;
+  ui::AXTreeID active_tree_id_ = ui::AXTreeIDUnknown();
 
   base::WeakPtrFactory<ReadAloudAppModel> weak_ptr_factory_{this};
 };

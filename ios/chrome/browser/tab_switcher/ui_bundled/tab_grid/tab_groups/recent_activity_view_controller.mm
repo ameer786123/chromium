@@ -5,12 +5,16 @@
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/recent_activity_view_controller.h"
 
 #import "base/check.h"
+#import "components/data_sharing/public/features.h"
 #import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_avatar_primitive.h"
+#import "ios/chrome/browser/shared/public/commands/application_commands.h"
+#import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_text_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_favicon_data_source.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_utils.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/recent_activity_constants.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/recent_activity_log_cell.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/recent_activity_log_item.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/recent_activity_mutator.h"
@@ -22,8 +26,7 @@
 
 namespace {
 
-// The size of the close button.
-const CGFloat kCloseButtonSize = 28;
+const CGFloat kButtonImageSize = 18;
 
 typedef NSDiffableDataSourceSnapshot<NSString*, RecentActivityLogItem*>
     ActivityLogSnapshot;
@@ -64,18 +67,30 @@ NSString* RecentActivityLogCellAccessibilityIdentifier(NSUInteger index) {
 
   self.view.accessibilityIdentifier = kTabGroupRecentActivityIdentifier;
 
-  // Configure a close button.
-  UIImage* buttonImage = SymbolWithPalette(
-      DefaultSymbolWithPointSize(kXMarkCircleFillSymbol, kCloseButtonSize), @[
-        [UIColor colorNamed:kCloseButtonColor],
-        [UIColor colorNamed:kSecondaryBackgroundColor]
-      ]);
-  UIBarButtonItem* closeButton =
-      [[UIBarButtonItem alloc] initWithImage:buttonImage
-                                       style:UIBarButtonItemStylePlain
-                                      target:self
-                                      action:@selector(didTapCloseButton)];
-  self.navigationItem.rightBarButtonItem = closeButton;
+  __weak __typeof(self) weakSelf = self;
+
+  UIAction* showAllActivity =
+      [UIAction actionWithTitle:l10n_util::GetNSString(
+                                    IDS_IOS_SHARE_KIT_MANAGE_ACTIVITY_LOG_TITLE)
+                          image:nil
+                     identifier:nil
+                        handler:^(UIAction* action) {
+                          [weakSelf showFullActivity];
+                        }];
+  UIMenu* menu = [UIMenu menuWithChildren:@[ showAllActivity ]];
+
+  self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemClose
+                           target:self
+                           action:@selector(didTapCloseButton)];
+  self.navigationItem.rightBarButtonItem.accessibilityIdentifier =
+      kRecentActivityLogCloseButtonIdentifier;
+
+  self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc]
+      initWithImage:DefaultSymbolWithPointSize(kMenuSymbol, kButtonImageSize)
+               menu:menu];
+  self.navigationItem.leftBarButtonItem.accessibilityIdentifier =
+      kRecentActivityLogMenuButtonIdentifier;
 
   // Configure a table view.
   UITableView* tableView = self.tableView;
@@ -84,41 +99,26 @@ NSString* RecentActivityLogCellAccessibilityIdentifier(NSUInteger index) {
   tableView.scrollEnabled = YES;
 
   RegisterTableViewCell<RecentActivityLogCell>(tableView);
-  RegisterTableViewCell<TableViewTextCell>(tableView);
 }
 
 #pragma mark - RecentActivityConsumer
 
 - (void)populateItems:(NSArray<RecentActivityLogItem*>*)items {
+  BOOL empty = items.count == 0;
+  self.tableView.backgroundView = empty ? [self emptyStateLabel] : nil;
+  if (empty) {
+    return;
+  }
+
   ActivityLogSnapshot* snapshot = [[ActivityLogSnapshot alloc] init];
   [snapshot
       appendSectionsWithIdentifiers:@[ kRecentActivitySectionIdentifier ]];
-  if (items.count == 0) {
-    RecentActivityLogItem* emptyItem = [[RecentActivityLogItem alloc] init];
-    emptyItem.emptyItem = YES;
-    [snapshot appendItemsWithIdentifiers:@[ emptyItem ]];
-  } else {
-    [snapshot appendItemsWithIdentifiers:items];
-  }
+  [snapshot appendItemsWithIdentifiers:items];
 
   [self.dataSource applySnapshot:snapshot animatingDifferences:NO];
 }
 
 #pragma mark - UITableViewDelegate
-
-- (BOOL)tableView:(UITableView*)tableView
-    shouldHighlightRowAtIndexPath:(NSIndexPath*)indexPath {
-  RecentActivityLogItem* item =
-      [_dataSource itemIdentifierForIndexPath:indexPath];
-  return !item.emptyItem;
-}
-
-- (BOOL)tableView:(UITableView*)tableView
-    canPerformPrimaryActionForRowAtIndexPath:(NSIndexPath*)indexPath {
-  RecentActivityLogItem* item =
-      [_dataSource itemIdentifierForIndexPath:indexPath];
-  return !item.emptyItem;
-}
 
 - (void)tableView:(UITableView*)tableView
     performPrimaryActionForRowAtIndexPath:(NSIndexPath*)indexPath {
@@ -132,6 +132,20 @@ NSString* RecentActivityLogCellAccessibilityIdentifier(NSUInteger index) {
 }
 
 #pragma mark - Private
+
+// Returns an empty state label.
+- (UILabel*)emptyStateLabel {
+  UILabel* emptyStateLabel = [[UILabel alloc] init];
+  emptyStateLabel.text = l10n_util::GetNSString(
+      IDS_IOS_TAB_GROUP_RECENT_ACTIVITY_SHEET_EMPTY_MESSAGE);
+  emptyStateLabel.textAlignment = NSTextAlignmentCenter;
+  emptyStateLabel.numberOfLines = 0;
+  emptyStateLabel.textColor = [UIColor colorNamed:kTextSecondaryColor];
+  emptyStateLabel.adjustsFontForContentSizeCategory = YES;
+  emptyStateLabel.font =
+      [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+  return emptyStateLabel;
+}
 
 // Overrides the getter to the data store to allow the lazy initialization.
 - (ActivityLogDiffableDataSource*)dataSource {
@@ -157,19 +171,20 @@ NSString* RecentActivityLogCellAccessibilityIdentifier(NSUInteger index) {
                                                     completion:nil];
 }
 
+// This is called when the user wants to see the activity log.
+- (void)showFullActivity {
+  [self.presentingViewController dismissViewControllerAnimated:YES
+                                                    completion:nil];
+  GURL activityLogsURL = GURL(data_sharing::features::kActivityLogsURL.Get());
+  OpenNewTabCommand* command =
+      [OpenNewTabCommand commandWithURLFromChrome:activityLogsURL];
+  [self.applicationHandler closePresentedViewsAndOpenURL:command];
+}
+
 // Configures and returns a cell.
 - (UITableViewCell*)cellForTableView:(UITableView*)tableView
                            indexPath:(NSIndexPath*)indexPath
                       itemIdentifier:(RecentActivityLogItem*)itemIdentifier {
-  if (itemIdentifier.emptyItem) {
-    TableViewTextCell* cell =
-        DequeueTableViewCell<TableViewTextCell>(tableView);
-
-    cell.textLabel.text = l10n_util::GetNSString(
-        IDS_IOS_TAB_GROUP_RECENT_ACTIVITY_SHEET_EMPTY_MESSAGE);
-    return cell;
-  }
-
   RecentActivityLogCell* cell =
       DequeueTableViewCell<RecentActivityLogCell>(tableView);
   cell.titleLabel.text = itemIdentifier.title;

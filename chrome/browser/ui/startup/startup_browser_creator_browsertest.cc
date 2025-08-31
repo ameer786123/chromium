@@ -17,6 +17,7 @@
 #include "base/json/json_writer.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -24,6 +25,7 @@
 #include "base/test/mock_log.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
+#include "base/version_info/version_info.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -57,12 +59,15 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/profiles/profile_ui_test_utils.h"
 #include "chrome/browser/ui/search/ntp_test_utils.h"
 #include "chrome/browser/ui/startup/launch_mode_recorder.h"
 #include "chrome/browser/ui/startup/startup_browser_creator_impl.h"
 #include "chrome/browser/ui/startup/startup_types.h"
 #include "chrome/browser/ui/startup/web_app_startup_utils.h"
+#include "chrome/browser/ui/toasts/toast_controller.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/web_applications/test/web_app_browsertest_util.h"
 #include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_test_observers.h"
@@ -75,6 +80,7 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/chrome_version.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -178,13 +184,17 @@ Browser* FindOneOtherBrowser(Browser* browser) {
 
 void DisableWhatsNewPage() {
   PrefService* pref_service = g_browser_process->local_state();
-  pref_service->SetInteger(prefs::kLastWhatsNewVersion, CHROME_VERSION_MAJOR);
+  pref_service->SetInteger(prefs::kLastWhatsNewVersion,
+                           version_info::GetMajorVersionNumberAsInt());
 }
 
-Browser* OpenNewBrowser(Profile* profile) {
+Browser* OpenNewBrowser(Profile* profile,
+                        const std::optional<std::string>&
+                            version_string_for_testing = std::nullopt) {
   base::CommandLine dummy(base::CommandLine::NO_PROGRAM);
   StartupBrowserCreatorImpl creator(base::FilePath(), dummy,
                                     chrome::startup::IsFirstRun::kYes);
+  creator.SetCurrentChromeVersionStringForTesting(version_string_for_testing);
   ui_test_utils::BrowserChangeObserver new_browser_observer(
       nullptr, ui_test_utils::BrowserChangeObserver::ChangeType::kAdded);
   creator.Launch(profile, chrome::startup::IsProcessStartup::kNo,
@@ -247,7 +257,10 @@ void AllBrowsersClosedWaiter::OnBrowserRemoved(Browser* browser) {
 
 class StartupBrowserCreatorTest : public extensions::ExtensionBrowserTest {
  protected:
-  StartupBrowserCreatorTest() = default;
+  StartupBrowserCreatorTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kNonMilestoneUpdateToast);
+  }
 
   bool SetUpUserDataDirectory() override {
     return extensions::ExtensionBrowserTest::SetUpUserDataDirectory();
@@ -301,6 +314,9 @@ class StartupBrowserCreatorTest : public extensions::ExtensionBrowserTest {
     EXPECT_EQ(1U, infobar_manager->infobars().size());
 #endif  // BUILDFLAG(IS_MAC)
   }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 class OpenURLsPopupObserver : public BrowserListObserver {
@@ -599,6 +615,35 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
   EXPECT_TRUE(browser_shutdown_complete.Wait());
   EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsOriginRegistered(
       KeepAliveOrigin::WEB_APP_INTENT_PICKER));
+}
+
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, ShowNonMilestoneUpdateToast) {
+  // Set pref to current Chrome version.
+  PrefService* pref_service = g_browser_process->local_state();
+  pref_service->SetString(
+      prefs::kNonMilestoneUpdateToastVersion,
+      base::StringPrintf("%d.%d.%d.%d", CHROME_VERSION_MAJOR,
+                         CHROME_VERSION_MINOR, CHROME_VERSION_BUILD,
+                         CHROME_VERSION_PATCH));
+
+  // Set current chrome version to next non milestone update version.
+  std::string chrome_version_string_for_testing = base::StringPrintf(
+      "%d.%d.%d.%d", CHROME_VERSION_MAJOR, CHROME_VERSION_MINOR,
+      CHROME_VERSION_BUILD, CHROME_VERSION_PATCH + 1);
+
+  // Open a new browser and verify the toast is shown.
+  Browser* new_browser =
+      OpenNewBrowser(browser()->profile(), chrome_version_string_for_testing);
+  ASSERT_TRUE(new_browser);
+  ASSERT_TRUE(
+      new_browser->GetFeatures().toast_controller()->GetToastViewForTesting());
+
+  // Open another new browser and verify the toast is not shown.
+  Browser* new_browser2 =
+      OpenNewBrowser(browser()->profile(), chrome_version_string_for_testing);
+  ASSERT_TRUE(new_browser2);
+  ASSERT_FALSE(
+      new_browser2->GetFeatures().toast_controller()->GetToastViewForTesting());
 }
 
 namespace {
@@ -1647,7 +1692,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, RestoreWithNoStartupWindow) {
   testing::SessionsRestoredWaiter restore_waiter(run_loop.QuitClosure(), 2);
 
   StartupBrowserCreator::ProcessCommandLineAlreadyRunning(
-      empty, {}, {dest_path1, StartupProfileModeReason::kWasRestarted});
+      empty, {}, {dest_path1, StartupProfileMode::kBrowserWindow});
   run_loop.Run();
 
   // profile1 and profile2 browser windows should be opened.
@@ -3869,6 +3914,16 @@ INSTANTIATE_TEST_SUITE_P(
         ProfilePickerSetup{/*expected_to_show=*/true,
                            /*switch_name=*/switches::kProfileEmail,
                            /*switch_value_ascii=*/"unknown@gmail.com"},
+        // Show the create new profile dialog if the profile is not found even
+        // when a URL is provided.
+        ProfilePickerSetup{
+            /*expected_to_show=*/true,
+            /*switch_name=*/switches::kProfileEmail,
+            /*switch_value_ascii=*/"unknown@gmail.com",
+            /*url_arg=*/GURL("https://www.foo.com/"),
+            /*shutdown_type=*/ProfilePickerSetup::ShutdownType::kNormal,
+            /*extra_switch_name=*/
+            switches::kCreateProfileEmailIfNotExists},
         // Skip the picker when a URL is provided on command-line (used by the
         // OS when Chrome is the default web browser) and use the last used
         // profile, instead.
@@ -3961,8 +4016,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorPickerNoParamsTest,
   StartupProfilePathInfo startup_profile_path_info =
       GetStartupProfilePath(current_dir, command_line,
                             /*ignore_profile_picker=*/false);
-  EXPECT_EQ(startup_profile_path_info.reason,
-            StartupProfileModeReason::kMultipleProfiles);
+  EXPECT_EQ(startup_profile_path_info.mode, StartupProfileMode::kProfilePicker);
   StartupBrowserCreator::ProcessCommandLineAlreadyRunning(
       command_line, current_dir, startup_profile_path_info);
 
@@ -4004,8 +4058,7 @@ IN_PROC_BROWSER_TEST_F(SearchQueryStartupBrowserCreatorPickerTest,
   StartupProfilePathInfo startup_profile_path_info =
       GetStartupProfilePath(current_dir, command_line,
                             /*ignore_profile_picker=*/false);
-  EXPECT_EQ(startup_profile_path_info.reason,
-            StartupProfileModeReason::kCommandLineTabs);
+  EXPECT_EQ(startup_profile_path_info.mode, StartupProfileMode::kBrowserWindow);
 }
 
 class StartupBrowserCreatorPickerInfobarTest

@@ -4,7 +4,6 @@
 
 #include "third_party/blink/renderer/core/layout/inline/fragment_items_builder.h"
 
-#include "base/not_fatal_until.h"
 #include "third_party/blink/renderer/core/layout/box_fragment_builder.h"
 #include "third_party/blink/renderer/core/layout/geometry/writing_mode_converter.h"
 #include "third_party/blink/renderer/core/layout/inline/fragment_items.h"
@@ -402,7 +401,7 @@ void FragmentItemsBuilder::ConvertToPhysical(const PhysicalSize& outer_size) {
         line_converter.SetOuterSize(line_box_bounds.size);
         while (--descendants_count) {
           ++i;
-          CHECK_NE(i, items_.size(), base::NotFatalUntil::M130);
+          CHECK_NE(i, items_.size());
           ItemWithOffset& descendant_item_with_offset = items_[i];
           item = &descendant_item_with_offset.item;
           item->SetOffset(
@@ -417,18 +416,27 @@ void FragmentItemsBuilder::ConvertToPhysical(const PhysicalSize& outer_size) {
   is_converted_to_physical_ = true;
 }
 
-void FragmentItemsBuilder::MoveChildrenInBlockDirection(LayoutUnit delta) {
+void FragmentItemsBuilder::MoveChildrenInDirection(LayoutUnit offset,
+                                                   bool is_block_direction) {
   DCHECK(!is_converted_to_physical_);
   for (wtf_size_t i = 0; i < items_.size(); ++i) {
     ItemWithOffset& item_with_offset = items_[i];
     FragmentItem* item = &item_with_offset.item;
     if (item->Type() == FragmentItem::kLine) {
-      item_with_offset.offset.block_offset += delta;
+      if (is_block_direction) {
+        item_with_offset.offset.block_offset += offset;
+      } else {
+        item_with_offset.offset.inline_offset += offset;
+      }
       i += item->DescendantsCount() - 1;
       DCHECK_LE(i, items_.size());
       continue;
     }
-    item_with_offset.offset.block_offset += delta;
+    if (is_block_direction) {
+      item_with_offset.offset.block_offset += offset;
+    } else {
+      item_with_offset.offset.inline_offset += offset;
+    }
   }
 }
 

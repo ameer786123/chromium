@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <array>
 #include <optional>
 #include <ostream>
 
@@ -106,14 +107,14 @@ static std::string AnnexBToString(
   std::stringstream ss;
 
   H264Parser parser;
-  parser.SetEncryptedStream(&buffer[0], buffer.size(), subsamples);
+  parser.SetEncryptedStream(buffer, subsamples);
 
   H264NALU nalu;
   bool first = true;
   size_t current_subsample_index = 0;
   while (parser.AdvanceToNextNALU(&nalu) == H264Parser::kOk) {
-    size_t subsample_index = AVC::FindSubsampleIndex(buffer, &subsamples,
-                                                     nalu.data);
+    size_t subsample_index =
+        AVC::FindSubsampleIndex(buffer, &subsamples, nalu.data.data());
     if (!first) {
       ss << (subsample_index == current_subsample_index ? "," : " ");
     } else {
@@ -294,10 +295,11 @@ TEST_F(AVCConversionTest, StringConversionFunctions) {
 }
 
 TEST_F(AVCConversionTest, ValidAnnexBConstructs) {
-  struct {
+  struct TestCases {
     const char* case_string;
     const bool is_keyframe;
-  } test_cases[] = {
+  };
+  auto test_cases = std::to_array<TestCases>({
       {"I", true},
       {"I I I I", true},
       {"AUD I", true},
@@ -324,12 +326,12 @@ TEST_F(AVCConversionTest, ValidAnnexBConstructs) {
       {"SDA I", false},
       {"SDB I", false},
       {"SDC I", false},
-  };
+  });
 
   for (size_t i = 0; i < std::size(test_cases); ++i) {
     std::vector<uint8_t> buf;
     std::vector<SubsampleEntry> subsamples;
-    AvcStringToAnnexB(test_cases[i].case_string, &buf, NULL);
+    AvcStringToAnnexB(test_cases[i].case_string, &buf, nullptr);
 
     BitstreamConverter::AnalysisResult expected;
     expected.is_conformant = true;
@@ -350,10 +352,11 @@ TEST_F(AVCConversionTest, EmptyBuffer) {
 }
 
 TEST_F(AVCConversionTest, InvalidAnnexBConstructs) {
-  struct {
+  struct TestCases {
     const char* case_string;
     const std::optional<bool> is_keyframe;
-  } test_cases[] = {
+  };
+  auto test_cases = std::to_array<TestCases>({
       // For these cases, lack of conformance is determined before detecting any
       // IDR or non-IDR slices, so the non-conformant frames' keyframe analysis
       // reports std::nullopt (which means undetermined analysis result).
@@ -377,7 +380,7 @@ TEST_F(AVCConversionTest, InvalidAnnexBConstructs) {
       // failure, so the non-conformant frame is reported as a non-keyframe.
       {"P SPS P",
        false},  // SPS after first VCL would indicate a new access unit.
-  };
+  });
 
   BitstreamConverter::AnalysisResult expected;
   expected.is_conformant = false;
@@ -385,7 +388,7 @@ TEST_F(AVCConversionTest, InvalidAnnexBConstructs) {
   for (size_t i = 0; i < std::size(test_cases); ++i) {
     std::vector<uint8_t> buf;
     std::vector<SubsampleEntry> subsamples;
-    AvcStringToAnnexB(test_cases[i].case_string, &buf, NULL);
+    AvcStringToAnnexB(test_cases[i].case_string, &buf, nullptr);
     expected.is_keyframe = test_cases[i].is_keyframe;
     EXPECT_PRED2(AnalysesMatch,
                  AVC::AnalyzeAnnexB(buf.data(), buf.size(), subsamples),
@@ -430,20 +433,20 @@ TEST_F(AVCConversionTest, InsertParamSetsAnnexB) {
   expected.is_conformant = true;
   expected.is_keyframe = true;
 
-  for (size_t i = 0; i < std::size(test_cases); ++i) {
+  for (auto test_case : test_cases) {
     std::vector<uint8_t> buf;
     std::vector<SubsampleEntry> subsamples;
 
-    AvcStringToAnnexB(test_cases[i].input, &buf, &subsamples);
+    AvcStringToAnnexB(test_case.input, &buf, &subsamples);
 
     EXPECT_TRUE(AVC::InsertParamSetsAnnexB(avc_config, &buf, &subsamples))
-        << "'" << test_cases[i].input << "' insert failed.";
+        << "'" << test_case.input << "' insert failed.";
     EXPECT_PRED2(AnalysesMatch,
                  AVC::AnalyzeAnnexB(buf.data(), buf.size(), subsamples),
                  expected)
-        << "'" << test_cases[i].input << "' created invalid AnnexB.";
-    EXPECT_EQ(test_cases[i].expected, AnnexBToString(buf, subsamples))
-        << "'" << test_cases[i].input << "' generated unexpected output.";
+        << "'" << test_case.input << "' created invalid AnnexB.";
+    EXPECT_EQ(test_case.expected, AnnexBToString(buf, subsamples))
+        << "'" << test_case.input << "' generated unexpected output.";
   }
 }
 

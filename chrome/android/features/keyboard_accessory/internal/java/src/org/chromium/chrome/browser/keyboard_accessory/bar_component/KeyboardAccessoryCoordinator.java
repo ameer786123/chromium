@@ -5,21 +5,27 @@
 package org.chromium.chrome.browser.keyboard_accessory.bar_component;
 
 import static org.chromium.chrome.browser.autofill.AutofillUiUtils.getCardIcon;
+import static org.chromium.chrome.browser.autofill.AutofillUiUtils.getValuableIcon;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.SKIP_CLOSING_ANIMATION;
 import static org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.VISIBLE;
 
 import android.content.Context;
+import android.graphics.drawable.Drawable;
+import android.view.View;
 
 import androidx.annotation.Nullable;
-import androidx.annotation.Px;
 import androidx.annotation.VisibleForTesting;
 import androidx.viewpager.widget.ViewPager;
 
+import org.chromium.base.Callback;
 import org.chromium.base.TraceEvent;
+import org.chromium.base.lifetime.Destroyable;
+import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.chrome.browser.autofill.AutofillImageFetcher;
 import org.chromium.chrome.browser.autofill.AutofillImageFetcherFactory;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.keyboard_accessory.AccessoryTabType;
+import org.chromium.chrome.browser.keyboard_accessory.KeyboardAccessoryVisualStateProvider;
 import org.chromium.chrome.browser.keyboard_accessory.R;
 import org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryProperties.BarItem;
 import org.chromium.chrome.browser.keyboard_accessory.bar_component.KeyboardAccessoryViewBinder.BarItemViewHolder;
@@ -28,29 +34,37 @@ import org.chromium.chrome.browser.keyboard_accessory.data.KeyboardAccessoryData
 import org.chromium.chrome.browser.keyboard_accessory.data.Provider;
 import org.chromium.chrome.browser.keyboard_accessory.sheet_component.AccessorySheetCoordinator;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
 import org.chromium.components.autofill.AutofillDelegate;
 import org.chromium.components.autofill.AutofillSuggestion;
 import org.chromium.components.autofill.ImageSize;
+import org.chromium.components.autofill.SuggestionType;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.ui.AsyncViewProvider;
 import org.chromium.ui.AsyncViewStub;
 import org.chromium.ui.ViewProvider;
+import org.chromium.ui.edge_to_edge.EdgeToEdgeSupplier;
+import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.modelutil.LazyConstructionPropertyMcp;
 import org.chromium.ui.modelutil.ListModel;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.RecyclerViewAdapter;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Creates and owns all elements which are part of the keyboard accessory component. It's part of
  * the controller but will mainly forward events (like adding a tab, or showing the accessory) to
  * the {@link KeyboardAccessoryMediator}.
  */
-public class KeyboardAccessoryCoordinator {
+public class KeyboardAccessoryCoordinator implements KeyboardAccessoryVisualStateProvider {
     private final KeyboardAccessoryMediator mMediator;
     private final KeyboardAccessoryButtonGroupCoordinator mButtonGroup;
     private final PropertyModel mModel;
     private KeyboardAccessoryView mView;
+    private final ObservableSupplier<EdgeToEdgeController> mEdgeToEdgeControllerSupplier;
+    private EdgeToEdgePadObserver mEdgeToEdgePadObserver;
 
     /**
      * The interface to notify consumers about keyboard accessories visibility. E.g: the animation
@@ -122,20 +136,33 @@ public class KeyboardAccessoryCoordinator {
      *     visibility changes.
      * @param sheetVisibilityDelegate A {@link AccessorySheetCoordinator.SheetVisibilityDelegate}
      *     for delegating the sheet visibility changes.
+     * @param edgeToEdgeControllerSupplier A {@link Supplier<EdgeToEdgeController>}.
+     * @param insetObserver An {@link InsetObserver}.
      * @param barStub A {@link AsyncViewStub} for the accessory bar layout.
+     * @param isLargeFormFactorSupplier A {@link Supplier} that checks whether the device is in
+     *     Large Form Factor mode.
+     * @param dismissRunnable A {@link Runnable} used to dismiss the Keyboard Accessory bar.
      */
     public KeyboardAccessoryCoordinator(
             Profile profile,
             BarVisibilityDelegate barVisibilityDelegate,
             AccessorySheetCoordinator.SheetVisibilityDelegate sheetVisibilityDelegate,
-            AsyncViewStub barStub) {
+            ObservableSupplier<EdgeToEdgeController> edgeToEdgeControllerSupplier,
+            InsetObserver insetObserver,
+            AsyncViewStub barStub,
+            Supplier<Boolean> isLargeFormFactorSupplier,
+            Runnable dismissRunnable) {
         this(
                 barStub.getContext(),
                 profile,
                 new KeyboardAccessoryButtonGroupCoordinator(),
                 barVisibilityDelegate,
                 sheetVisibilityDelegate,
-                AsyncViewProvider.of(barStub, R.id.keyboard_accessory));
+                edgeToEdgeControllerSupplier,
+                insetObserver,
+                AsyncViewProvider.of(barStub, R.id.keyboard_accessory),
+                isLargeFormFactorSupplier,
+                dismissRunnable);
     }
 
     /**
@@ -144,6 +171,11 @@ public class KeyboardAccessoryCoordinator {
      * @param context The {@link Context} associated with the current UI context.
      * @param profile The {@link Profile} associated with the data.
      * @param viewProvider A provider for the accessory.
+     * @param edgeToEdgeControllerSupplier A {@link Supplier<EdgeToEdgeController>}.
+     * @param insetObserver An {@link InsetObserver}.
+     * @param isLargeFormFactorSupplier A {@link Supplier} that checks whether the device is in
+     *     Large Form Factor mode.
+     * @param dismissRunnable A {@link Runnable} used to dismiss the Keyboard Accessory bar.
      */
     @VisibleForTesting
     public KeyboardAccessoryCoordinator(
@@ -152,17 +184,26 @@ public class KeyboardAccessoryCoordinator {
             KeyboardAccessoryButtonGroupCoordinator buttonGroup,
             BarVisibilityDelegate barVisibilityDelegate,
             AccessorySheetCoordinator.SheetVisibilityDelegate sheetVisibilityDelegate,
-            ViewProvider<KeyboardAccessoryView> viewProvider) {
+            ObservableSupplier<EdgeToEdgeController> edgeToEdgeControllerSupplier,
+            InsetObserver insetObserver,
+            ViewProvider<KeyboardAccessoryView> viewProvider,
+            Supplier<Boolean> isLargeFormFactorSupplier,
+            Runnable dismissRunnable) {
         mButtonGroup = buttonGroup;
         mModel = KeyboardAccessoryProperties.defaultModelBuilder().build();
+        mEdgeToEdgeControllerSupplier = edgeToEdgeControllerSupplier;
 
         mMediator =
                 new KeyboardAccessoryMediator(
                         mModel,
+                        profile,
                         barVisibilityDelegate,
                         sheetVisibilityDelegate,
                         mButtonGroup.getTabSwitchingDelegate(),
-                        mButtonGroup.getSheetOpenerCallbacks());
+                        mButtonGroup.getSheetOpenerCallbacks(),
+                        () -> SemanticColorUtils.getDefaultBgColor(context),
+                        isLargeFormFactorSupplier,
+                        dismissRunnable);
         viewProvider.whenLoaded(
                 view -> {
                     mView = view;
@@ -174,6 +215,11 @@ public class KeyboardAccessoryCoordinator {
                                             context,
                                             AutofillImageFetcherFactory.getForProfile(profile))));
                     mView.setFeatureEngagementTracker(TrackerFactory.getTrackerForProfile(profile));
+                    mEdgeToEdgePadObserver =
+                            new EdgeToEdgePadObserver(
+                                    mView,
+                                    mEdgeToEdgeControllerSupplier,
+                                    insetObserver.getSupplierForKeyboardInset());
                 });
 
         mButtonGroup.setTabObserver(mMediator);
@@ -182,21 +228,44 @@ public class KeyboardAccessoryCoordinator {
         KeyboardAccessoryMetricsRecorder.registerKeyboardAccessoryModelMetricsObserver(mModel);
     }
 
+    @SuppressWarnings("NullAway")
+    public void destroy() {
+        if (mEdgeToEdgePadObserver != null) {
+            mEdgeToEdgePadObserver.destroy();
+            mEdgeToEdgePadObserver = null;
+        }
+    }
+
     @VisibleForTesting
     static KeyboardAccessoryViewBinder.UiConfiguration createUiConfiguration(
             Context context, AutofillImageFetcher imageFetcher) {
         KeyboardAccessoryViewBinder.UiConfiguration uiConfiguration =
                 new KeyboardAccessoryViewBinder.UiConfiguration();
         uiConfiguration.suggestionDrawableFunction =
-                (suggestion) ->
-                        getCardIcon(
-                                context,
-                                imageFetcher,
-                                suggestion.getCustomIconUrl(),
-                                suggestion.getIconId(),
-                                ImageSize.SMALL,
-                                /* showCustomIcon= */ true);
+                (suggestion) -> getSuggestionIcon(context, imageFetcher, suggestion);
+
         return uiConfiguration;
+    }
+
+    private static @Nullable Drawable getSuggestionIcon(
+            Context context, AutofillImageFetcher imageFetcher, AutofillSuggestion suggestion) {
+        if (suggestion.getSuggestionType() == SuggestionType.LOYALTY_CARD_ENTRY) {
+            return getValuableIcon(
+                    context,
+                    imageFetcher,
+                    suggestion.getCustomIconUrl(),
+                    ImageSize.SMALL,
+                    suggestion.getSublabel());
+        }
+        // TODO: crbug.com/404437211 - Figure out all suggestion types that have icons on Android
+        // and return icons in a switch.
+        return getCardIcon(
+                context,
+                imageFetcher,
+                suggestion.getCustomIconUrl(),
+                suggestion.getIconId(),
+                ImageSize.SMALL,
+                /* showCustomIcon= */ true);
     }
 
     /**
@@ -269,12 +338,23 @@ public class KeyboardAccessoryCoordinator {
     }
 
     /**
-     * Sets the offset to the end of the activity - which is usually 0, the height of the keyboard
-     * or the height of a bottom sheet.
-     * @param bottomOffset The offset in pixels.
+     * Applies a new style to the keyboard accessory component.
+     *
+     * <p>The style object encapsulates visual properties for the component, such as its vertical
+     * offset or maximum width.
+     *
+     * @param style The {@link KeyboardAccessoryStyle} containing the visual attributes to apply.
      */
-    public void setBottomOffset(@Px int bottomOffset) {
-        mMediator.setBottomOffset(bottomOffset);
+    public void setStyle(KeyboardAccessoryStyle style) {
+        mMediator.setStyle(style);
+    }
+
+    /**
+     * Defines whether the last item in the Keyboard Accessory bar should be aligned to the end of
+     * the bar.
+     */
+    public void setHasStickyLastItem(boolean hasStickyLastItem) {
+        mMediator.setHasStickyLastItem(hasStickyLastItem);
     }
 
     /** Triggers the accessory to be shown. */
@@ -329,5 +409,99 @@ public class KeyboardAccessoryCoordinator {
 
     public KeyboardAccessoryMediator getMediatorForTesting() {
         return mMediator;
+    }
+
+    // KeyboardAccessoryVisualStateProvider
+
+    @Override
+    public void addObserver(KeyboardAccessoryVisualStateProvider.Observer observer) {
+        mMediator.addObserver(observer);
+    }
+
+    @Override
+    public void removeObserver(KeyboardAccessoryVisualStateProvider.Observer observer) {
+        mMediator.removeObserver(observer);
+    }
+
+    /**
+     * This provides an alternative to the SimpleEdgeToEdgePadAdjuster that doesn't clear the bottom
+     * inset / bottom padding when the browser controls are showing, which is needed for bottom
+     * components that aren't part of the bottom browser controls.
+     */
+    // TODO(crbug.com/435453719): Clean up after use cases are no longer needed.
+    private static class EdgeToEdgePadObserver
+            implements EdgeToEdgeSupplier.ChangeObserver, Destroyable {
+        private final View mViewToPad;
+        private final int mDefaultBottomPadding;
+        private final ObservableSupplier<EdgeToEdgeController> mEdgeToEdgeControllerSupplier;
+        private final ObservableSupplier<Integer> mKeyboardInsetSupplier;
+        private @Nullable EdgeToEdgeController mEdgeToEdgeController;
+        private final Callback<EdgeToEdgeController> mControllerChangedCallback =
+                this::updateEdgeToEdgeController;
+        private final Callback<Integer> mKeyboardInsetChangedCallback =
+                this::onKeyboardInsetChanged;
+
+        private boolean mIsDrawingToEdge;
+
+        EdgeToEdgePadObserver(
+                View view,
+                ObservableSupplier<EdgeToEdgeController> edgeToEdgeControllerSupplier,
+                ObservableSupplier<Integer> keyboardInsetSupplier) {
+            mViewToPad = view;
+            mDefaultBottomPadding = mViewToPad.getPaddingBottom();
+            mEdgeToEdgeControllerSupplier = edgeToEdgeControllerSupplier;
+            mEdgeToEdgeControllerSupplier.addObserver(mControllerChangedCallback);
+            mKeyboardInsetSupplier = keyboardInsetSupplier;
+            mKeyboardInsetSupplier.addObserver(mKeyboardInsetChangedCallback);
+        }
+
+        @Override
+        public void onToEdgeChange(
+                int bottomInset, boolean isDrawingToEdge, boolean isPageOptInToEdge) {
+            mIsDrawingToEdge = isDrawingToEdge;
+            overrideBottomInset(bottomInset);
+        }
+
+        private void onKeyboardInsetChanged(int keyboardInset) {
+            overrideBottomInset(
+                    mEdgeToEdgeController != null ? mEdgeToEdgeController.getBottomInsetPx() : 0);
+        }
+
+        private void overrideBottomInset(int bottomInset) {
+            // Set bottom padding to 0 if not drawing to edge, or if the keyboard is showing.
+            int additionalBottomPadding =
+                    (!mIsDrawingToEdge || mKeyboardInsetSupplier.get() > 0) ? 0 : bottomInset;
+            mViewToPad.setPadding(
+                    mViewToPad.getPaddingLeft(),
+                    mViewToPad.getPaddingTop(),
+                    mViewToPad.getPaddingRight(),
+                    mDefaultBottomPadding + additionalBottomPadding);
+        }
+
+        @Override
+        public void destroy() {
+            // Reset the bottom insets for the view.
+            overrideBottomInset(0);
+
+            updateEdgeToEdgeController(null);
+            if (mEdgeToEdgeControllerSupplier != null) {
+                mEdgeToEdgeControllerSupplier.removeObserver(mControllerChangedCallback);
+            }
+            mKeyboardInsetSupplier.removeObserver(mKeyboardInsetChangedCallback);
+        }
+
+        private void updateEdgeToEdgeController(@Nullable EdgeToEdgeController newController) {
+            if (mEdgeToEdgeController != null) {
+                mEdgeToEdgeController.unregisterObserver(this);
+            }
+            mEdgeToEdgeController = newController;
+            if (mEdgeToEdgeController != null) {
+                mEdgeToEdgeController.registerObserver(this);
+                onToEdgeChange(
+                        mEdgeToEdgeController.getBottomInsetPx(),
+                        mEdgeToEdgeController.isDrawingToEdge(),
+                        mEdgeToEdgeController.isPageOptedIntoEdgeToEdge());
+            }
+        }
     }
 }

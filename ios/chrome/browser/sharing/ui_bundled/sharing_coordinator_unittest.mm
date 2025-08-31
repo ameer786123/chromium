@@ -30,6 +30,7 @@
 #import "ios/chrome/browser/sharing/ui_bundled/activity_services/canonical_url_retriever.h"
 #import "ios/chrome/browser/sharing/ui_bundled/sharing_params.h"
 #import "ios/chrome/browser/sharing/ui_bundled/sharing_positioner.h"
+#import "ios/chrome/browser/snapshots/model/snapshot_source_tab_helper.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_tab_helper.h"
 #import "ios/chrome/test/scoped_key_window.h"
 #import "ios/web/public/test/fakes/fake_navigation_manager.h"
@@ -102,6 +103,7 @@ TEST_F(SharingCoordinatorTest, Start_ShareCurrentPage) {
   test_web_state->SetBrowserState(browser_->GetProfile());
   DownloadManagerTabHelper::CreateForWebState(test_web_state.get());
   SnapshotTabHelper::CreateForWebState(test_web_state.get());
+  SnapshotSourceTabHelper::CreateForWebState(test_web_state.get());
 
   auto frames_manager = std::make_unique<web::FakeWebFramesManager>();
   web::FakeWebFramesManager* frames_manager_ptr = frames_manager.get();
@@ -170,10 +172,19 @@ TEST_F(SharingCoordinatorTest, GenerateQRCode) {
                           params:params
                       originView:fake_origin_view_];
 
+  __block UIViewController* presented_view_controller;
+
   id vc_partial_mock = OCMPartialMock(base_view_controller_);
-  [[vc_partial_mock expect] presentViewController:[OCMArg any]
-                                         animated:YES
-                                       completion:nil];
+  [[vc_partial_mock expect]
+      presentViewController:[OCMArg checkWithBlock:^BOOL(id arg) {
+        if (![arg isKindOfClass:UIViewController.class]) {
+          return false;
+        }
+        presented_view_controller = arg;
+        return true;
+      }]
+                   animated:YES
+                 completion:nil];
 
   auto handler = static_cast<id<QRGenerationCommands>>(coordinator);
   [handler showQRCode:[[GenerateQRCodeCommand alloc]
@@ -181,6 +192,10 @@ TEST_F(SharingCoordinatorTest, GenerateQRCode) {
                                 title:@"Some Title"]];
 
   EXPECT_OCMOCK_VERIFY(vc_partial_mock);
+
+  id presented_partial_mock = OCMPartialMock(presented_view_controller);
+  OCMStub([presented_partial_mock presentingViewController])
+      .andReturn(base_view_controller_);
 
   [[vc_partial_mock expect] dismissViewControllerAnimated:YES completion:nil];
 

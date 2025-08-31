@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/views/tabs/dragging/tab_drag_controller.h"
 
 #include <algorithm>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -18,40 +17,34 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "base/i18n/rtl.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_auto_reset.h"
-#include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/sad_tab_helper.h"
 #include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/organization/metrics.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
+#include "chrome/browser/ui/tabs/split_tab_util.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 #include "chrome/browser/ui/ui_features.h"
-#include "chrome/browser/ui/views/chrome_widget_sublevel.h"
-#include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/tab_strip_view_interface.h"
 #include "chrome/browser/ui/views/tabs/dragging/drag_session_data.h"
+#include "chrome/browser/ui/views/tabs/dragging/tab_drag_context.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/browser/ui/views/tabs/tab_slot_view.h"
-#include "chrome/browser/ui/views/tabs/tab_strip.h"
-#include "chrome/browser/ui/views/tabs/tab_strip_layout_helper.h"
-#include "chrome/browser/ui/views/tabs/tab_style_views.h"
 #include "chrome/browser/ui/views/tabs/window_finder.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/web_applications/web_app_launch_utils.h"
@@ -59,9 +52,9 @@
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
-#include "chrome/common/chrome_features.h"
-#include "chrome/grit/chrome_unscaled_resources.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "components/tabs/public/tab_group.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/clipboard/clipboard_constants.h"
@@ -73,15 +66,15 @@
 #include "ui/display/screen.h"
 #include "ui/events/gestures/gesture_recognizer.h"
 #include "ui/events/types/event_type.h"
-#include "ui/gfx/geometry/point_conversions.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/image/image_skia_operations.h"
-#include "ui/views/controls/scroll_view.h"
+#include "ui/gfx/range/range.h"
 #include "ui/views/drag_utils.h"
 #include "ui/views/event_monitor.h"
 #include "ui/views/interaction/element_tracker_views.h"
+#include "ui/views/view.h"
 #include "ui/views/view_tracker.h"
-#include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -101,10 +94,6 @@
 #include "ui/aura/env.h"                            // nogncheck
 #include "ui/aura/window.h"                         // nogncheck
 #include "ui/wm/core/window_modality_controller.h"  // nogncheck
-#endif
-
-#if BUILDFLAG(IS_OZONE)
-#include "ui/ozone/public/ozone_platform.h"
 #endif
 
 using content::OpenURLParams;
@@ -199,6 +188,27 @@ void UpdateSystemDnDDragImage(TabDragContext* attached_context,
         ->UpdateDragImage(image, {image.width() / 2, image.height() / 2});
   }
 #endif  // BUILDFLAG(IS_LINUX)
+}
+
+class DefaultTabDragPointResolver : public TabDragPointResolver {
+ public:
+  DefaultTabDragPointResolver() = default;
+  ~DefaultTabDragPointResolver() override = default;
+
+  TabDragDelegate* GetDragTarget(BrowserView& browser_view,
+                                 const gfx::Point& point_in_screen) override {
+    return browser_view.GetTabDragDelegate(point_in_screen);
+  }
+};
+
+TabDragPointResolver* g_tab_drag_point_resolver_ = nullptr;
+
+TabDragPointResolver* GetTabDragPointResolver() {
+  if (!g_tab_drag_point_resolver_) {
+    static DefaultTabDragPointResolver resolver;
+    g_tab_drag_point_resolver_ = &resolver;
+  }
+  return g_tab_drag_point_resolver_;
 }
 
 }  // namespace
@@ -436,12 +446,12 @@ TabDragController::Liveness TabDragController::Init(
     const tab_groups::TabGroupId group_id = source_view->group().value();
     const std::optional<tab_groups::TabGroupId> active_group_id =
         tab_strip_model->GetActiveTab()->GetGroup();
-    const std::optional<int> group_starting_index =
-        tab_strip_model->group_model()->GetTabGroup(group_id)->GetFirstTab();
+    gfx::Range group_range =
+        tab_strip_model->group_model()->GetTabGroup(group_id)->ListTabs();
     const int active_tab_index_within_group =
         (active_group_id.has_value() && active_group_id.value() == group_id &&
-         group_starting_index.has_value())
-            ? tab_strip_model->active_index() - group_starting_index.value()
+         !group_range.is_empty())
+            ? tab_strip_model->active_index() - group_range.GetMin()
             : 0;
     ref->drag_data_.group_drag_data_ = std::make_optional<GroupDragData>(
         group_id, active_tab_index_within_group);
@@ -677,10 +687,18 @@ void TabDragController::EndDrag(EndDragReason reason) {
   // Some drags need to react to the model being mutated before the model can
   // change its state.
   if (reason == END_DRAG_MODEL_ADDED_TAB) {
-    // if the drag is not a header drag, ignore this signal. We must place the
+    // If a group is being dragged, we must place the
     // drag at the current position in the tabstrip or else we will be
     // re-entering into tabstrip mutation code.
-    if (drag_data_.group_drag_data_.has_value()) {
+    bool group_dragged = false;
+
+    for (const TabDragData& tab_drag_datum : drag_data_.tab_drag_data_) {
+      if (tab_drag_datum.view_type == TabSlotView::ViewType::kTabGroupHeader) {
+        group_dragged = true;
+      }
+    }
+
+    if (group_dragged) {
       EndDragImpl(source_context_ == attached_context_ ? CANCELED : NORMAL);
     }
     return;
@@ -716,6 +734,12 @@ void TabDragController::SetDragLoopDoneCallbackForTesting(
   drag_loop_done_callback_ = std::move(callback);
 }
 
+// static
+void TabDragController::SetTabDragPointResolver(
+    TabDragPointResolver& resolver) {
+  g_tab_drag_point_resolver_ = &resolver;
+}
+
 void TabDragController::OnWidgetBoundsChanged(views::Widget* widget,
                                               const gfx::Rect& new_bounds) {
   TRACE_EVENT1("views", "TabDragController::OnWidgetBoundsChanged",
@@ -738,6 +762,37 @@ void TabDragController::OnWidgetBoundsChanged(views::Widget* widget,
 
 void TabDragController::OnWidgetDestroyed(views::Widget* widget) {
   widget_observation_.Reset();
+}
+
+std::unique_ptr<tabs::TabModel> TabDragController::DetachTabAtForInsertion(
+    int drag_idx) {
+  CHECK_EQ(current_state_, DragState::kStopped)
+      << "Detaching is only supported after the drag is stopped";
+  CHECK(attached_context_);
+
+  TabDragData& tab_data = drag_data_.tab_drag_data_[drag_idx];
+  // We can't move the tab if `contents` was destroyed during the drag, or if
+  // this is a group header.
+  CHECK(tab_data.contents);
+  tab_data.attached_view->set_detached();
+  tab_data.attached_view = nullptr;
+
+  const int from_idx =
+      attached_context_->GetTabStripModel()->GetIndexOfWebContents(
+          tab_data.contents);
+  CHECK_NE(from_idx, TabStripModel::kNoTab);
+
+  base::AutoReset<bool> setter(&is_mutating_, true);
+  base::AutoReset<bool> is_removing_last_tab_setter(&is_moving_last_tab_, true);
+  std::unique_ptr<tabs::TabModel> detached_tab =
+      attached_context_->GetTabStripModel()->DetachTabAtForInsertion(from_idx);
+  attached_context_->DraggedTabsDetached();
+
+  return detached_tab;
+}
+
+const DragSessionData& TabDragController::GetSessionData() const {
+  return drag_data_;
 }
 
 void TabDragController::OnSourceTabStripEmpty() {
@@ -824,11 +879,15 @@ TabDragController::Liveness TabDragController::ContinueDragging(
 
   TabDragContext* target_context = source_context_;
   if (detach_behavior_ == DETACHABLE) {
-    auto [alive, context] = GetTargetTabStripForPoint(point_in_screen);
+    auto [alive, context, drop_target] = GetDragTargetForPoint(point_in_screen);
     if (alive == Liveness::DELETED) {
       return Liveness::DELETED;
     }
     target_context = context;
+    UpdateDragTarget(drop_target);
+    if (current_drag_delegate_) {
+      current_drag_delegate_->OnTabDragUpdated(*this, point_in_screen);
+    }
   }
 
   if (target_context != attached_context_) {
@@ -849,6 +908,23 @@ TabDragController::Liveness TabDragController::ContinueDragging(
     dragging_tabs_session_->MoveAttached(point_in_screen);
   }
   return Liveness::ALIVE;
+}
+
+void TabDragController::UpdateDragTarget(TabDragDelegate* new_target) {
+  if (current_drag_delegate_ && current_drag_delegate_ != new_target) {
+    current_drag_delegate_->OnTabDragExited();
+  }
+  current_drag_delegate_ = new_target;
+  if (current_drag_delegate_) {
+    current_drag_delegate_->OnTabDragEntered();
+    drag_delegate_destroyed_subscription_ =
+        current_drag_delegate_->RegisterWillDestroyCallback(base::BindOnce(
+            &TabDragController::ResetDragTarget, base::Unretained(this)));
+  }
+}
+
+void TabDragController::ResetDragTarget() {
+  current_drag_delegate_ = nullptr;
 }
 
 TabDragController::Liveness TabDragController::DragBrowserToNewTabStrip(
@@ -954,18 +1030,11 @@ bool TabDragController::ShouldDragWindowUsingSystemDnD() {
 }
 
 void TabDragController::RequestTabThumbnail() {
-  VLOG(1) << __func__;
-  WebContents* contents;
-  if (drag_data_.group_drag_data_.has_value()) {
-    contents = source_context_->GetTabStripModel()->GetActiveWebContents();
-    // If the group header was dragged while a tab not belonging to the
-    // group was active, we request a thumbnail of the group's first tab.
-    if (!IsDraggingTab(contents)) {
-      contents = drag_data_.tab_drag_data_[first_tab_index()].contents;
-    }
-  } else {
-    contents = drag_data_.source_view_drag_data()->contents.get();
-  }
+  WebContents* contents =
+      source_context_->GetTabStripModel()->GetActiveWebContents();
+  CHECK(contents);
+  CHECK(IsDraggingTab(contents));
+
   content::RenderWidgetHostView* rwhv = contents->GetRenderWidgetHostView();
   if (rwhv) {
     float scale = rwhv->GetDeviceScaleFactor();
@@ -1113,8 +1182,8 @@ void TabDragController::DetachAndAttachToNewContext(
   AttachToNewContext(target_context, std::move(me), std::move(owned_tabs));
 }
 
-std::tuple<TabDragController::Liveness, TabDragContext*>
-TabDragController::GetTargetTabStripForPoint(gfx::Point point_in_screen) {
+std::tuple<TabDragController::Liveness, TabDragContext*, TabDragDelegate*>
+TabDragController::GetDragTargetForPoint(gfx::Point point_in_screen) {
   TRACE_EVENT1("views", "TabDragController::GetTargetTabStripForPoint",
                "point_in_screen", point_in_screen.ToString());
 
@@ -1123,24 +1192,34 @@ TabDragController::GetTargetTabStripForPoint(gfx::Point point_in_screen) {
       point_in_screen, current_state_ == DragState::kDraggingWindow,
       &local_window);
   if (state == Liveness::DELETED) {
-    return std::tuple(Liveness::DELETED, nullptr);
+    return std::tuple(Liveness::DELETED, nullptr, nullptr);
   }
 
   if (local_window && CanAttachTo(local_window)) {
+    BrowserView* browser_view =
+        BrowserView::GetBrowserViewForNativeWindow(local_window);
     TabDragContext* destination_tab_strip =
-        BrowserView::GetBrowserViewForNativeWindow(local_window)
-            ->tabstrip()
-            ->GetDragContext();
-    if (destination_tab_strip &&
-        DoesTabStripContain(destination_tab_strip, point_in_screen)) {
-      return std::tuple(Liveness::ALIVE, destination_tab_strip);
+        browser_view->tab_strip_view()->GetDragContext();
+    if (destination_tab_strip) {
+      if (DoesTabStripContain(destination_tab_strip, point_in_screen)) {
+        return std::tuple(Liveness::ALIVE, destination_tab_strip, nullptr);
+      } else if (TabDragDelegate* candidate =
+                     GetTabDragPointResolver()->GetDragTarget(
+                         *browser_view, point_in_screen)) {
+        return std::tuple(Liveness::ALIVE,
+                          current_state_ == DragState::kDraggingWindow
+                              ? attached_context_.get()
+                              : nullptr,
+                          candidate);
+      }
     }
   }
 
   return std::tuple(Liveness::ALIVE,
                     current_state_ == DragState::kDraggingWindow
                         ? attached_context_.get()
-                        : nullptr);
+                        : nullptr,
+                    nullptr);
 }
 
 bool TabDragController::DoesTabStripContain(
@@ -1160,25 +1239,24 @@ void TabDragController::StartDrag() {
   // `source_context_` already owns `this` (it created us, even), so no need
   // to hand off ownership.
   CHECK_EQ(source_context_->GetDragController(), this);
+  CHECK(!current_drag_delegate_);
   attached_context_ = source_context_;
 
+  AttachImpl();
+
   // Request a thumbnail to use as drag image if we'll use fallback tab
-  // dragging. Do this before calling AttachImpl() to minimize the delay between
-  // detaching the tabs and showing the drag icon, as capturing the tab
-  // thumbnail is asynchronous.
+  // dragging.
   if (ShouldDragWindowUsingSystemDnD()) {
     RequestTabThumbnail();
   }
-
-  AttachImpl();
 }
 
 void TabDragController::AttachToNewContext(
     TabDragContext* attached_context,
     std::unique_ptr<TabDragController> controller,
     std::vector<std::variant<std::unique_ptr<tabs::TabModel>,
-                             std::unique_ptr<DetachedTabGroup>>>
-        owned_tabs_and_groups) {
+                             std::unique_ptr<DetachedTabCollection>>>
+        owned_tabs_and_collections) {
   // We should already have detached by the time we get here.
   CHECK(!attached_context_);
   attached_context_ = attached_context;
@@ -1212,14 +1290,17 @@ void TabDragController::AttachToNewContext(
       },
       attached_context_->GetTabStripModel());
 
-  for (auto& tab_or_group : owned_tabs_and_groups) {
+  for (auto& tab_or_collection : owned_tabs_and_collections) {
     if (auto* tab =
-            std::get_if<std::unique_ptr<tabs::TabModel>>(&tab_or_group)) {
+            std::get_if<std::unique_ptr<tabs::TabModel>>(&tab_or_collection)) {
+      const tabs::TabInterface* tab_ptr = tab->get();
       // If it's a tab - we add it to the tabstrip.
       int add_types = AddTabTypes::ADD_NONE;
       TabDragData& tab_data = *std::find_if(
           drag_data_.tab_drag_data_.begin(), drag_data_.tab_drag_data_.end(),
-          [](TabDragData& tab_data) { return true; });
+          [tab_ptr](TabDragData& tab_data) {
+            return tab_ptr->GetContents() == tab_data.contents;
+          });
       if (tab_data.pinned) {
         add_types |= AddTabTypes::ADD_PINNED;
       }
@@ -1231,19 +1312,29 @@ void TabDragController::AttachToNewContext(
       update_sad_tab.Run(index);
       index++;
     } else {
-      auto group = std::move(
-          *std::get_if<std::unique_ptr<DetachedTabGroup>>(&tab_or_group));
-      // If it's a group - we add it to the tabstrip. This will add all the
-      // tabs.
-      const gfx::Range group_indices =
-          attached_context_->GetTabStripModel()->InsertDetachedTabGroupAt(
-              std::move(group), index);
+      gfx::Range collection_indices;
+      auto* detached_tab_collection =
+          std::get_if<std::unique_ptr<DetachedTabCollection>>(
+              &tab_or_collection);
 
-      CHECK_EQ(group_indices.start(), index);
-      index += group_indices.length();
+      const bool pinned = detached_tab_collection->get()->pinned_;
 
-      for (size_t sad_index = group_indices.start();
-           sad_index < group_indices.end(); sad_index++) {
+      if (std::holds_alternative<std::unique_ptr<tabs::TabGroupTabCollection>>(
+              detached_tab_collection->get()->collection_)) {
+        collection_indices =
+            attached_context_->GetTabStripModel()->InsertDetachedTabGroupAt(
+                std::move(*detached_tab_collection), index);
+      } else {
+        collection_indices =
+            attached_context_->GetTabStripModel()->InsertDetachedSplitTabAt(
+                std::move(*detached_tab_collection), index, pinned);
+      }
+
+      CHECK_EQ(collection_indices.start(), index);
+      index += collection_indices.length();
+
+      for (size_t sad_index = collection_indices.start();
+           sad_index < collection_indices.end(); sad_index++) {
         update_sad_tab.Run(sad_index);
       }
     }
@@ -1284,7 +1375,7 @@ void TabDragController::AttachImpl() {
 
 std::tuple<std::unique_ptr<TabDragController>,
            std::vector<std::variant<std::unique_ptr<tabs::TabModel>,
-                                    std::unique_ptr<DetachedTabGroup>>>>
+                                    std::unique_ptr<DetachedTabCollection>>>>
 TabDragController::Detach(ReleaseCapture release_capture) {
   TRACE_EVENT1("views", "TabDragController::Detach", "release_capture",
                release_capture);
@@ -1331,8 +1422,8 @@ TabDragController::Detach(ReleaseCapture release_capture) {
       attached_model->GetGroupsDestroyedFromRemovingIndices(dragged_indices);
 
   std::vector<std::variant<std::unique_ptr<tabs::TabModel>,
-                           std::unique_ptr<DetachedTabGroup>>>
-      owned_tabs_and_groups;
+                           std::unique_ptr<DetachedTabCollection>>>
+      owned_tabs_and_collections;
   for (TabDragData& tab_drag_datum : drag_data_.tab_drag_data_) {
     const int index =
         attached_model->GetIndexOfWebContents(tab_drag_datum.contents);
@@ -1347,16 +1438,16 @@ TabDragController::Detach(ReleaseCapture release_capture) {
         attached_model->GetTabGroupForTab(index);
     if (std::find(groups_to_move.begin(), groups_to_move.end(), group) !=
         groups_to_move.end()) {
-      owned_tabs_and_groups.emplace_back(
+      owned_tabs_and_collections.emplace_back(
           attached_model->DetachTabGroupForInsertion(group.value()));
+    } else if (attached_model->GetTabAtIndex(index)->IsSplit()) {
+      owned_tabs_and_collections.emplace_back(
+          attached_model->DetachSplitTabForInsertion(
+              attached_model->GetTabAtIndex(index)->GetSplit().value()));
     } else {
-      owned_tabs_and_groups.emplace_back(
+      owned_tabs_and_collections.emplace_back(
           attached_model->DetachTabAtForInsertion(index));
     }
-  }
-  if (drag_data_.group_drag_data_.has_value()) {
-    drag_data_.tab_drag_data_[drag_data_.source_view_index_].attached_view =
-        nullptr;
   }
 
   // If we've removed the last Tab from the TabDragContext, hide the
@@ -1367,7 +1458,7 @@ TabDragController::Detach(ReleaseCapture release_capture) {
         selection_model_before_attach_.active().value() <
             static_cast<size_t>(attached_model->count())) {
       // Restore the selection.
-      attached_model->SetSelectionFromModel(selection_model_before_attach_);
+      UpdateSelectionModel(attached_model, selection_model_before_attach_);
     } else if (attached_context_ == source_context_ &&
                !initial_selection_model_.empty()) {
       RestoreInitialSelection();
@@ -1377,7 +1468,7 @@ TabDragController::Detach(ReleaseCapture release_capture) {
   attached_context_->DraggedTabsDetached();
   attached_context_ = nullptr;
 
-  return std::make_tuple(std::move(me), std::move(owned_tabs_and_groups));
+  return std::make_tuple(std::move(me), std::move(owned_tabs_and_collections));
 }
 
 TabDragController::Liveness
@@ -1459,7 +1550,8 @@ TabDragController::DetachIntoNewBrowserAndRunMoveLoop(
       can_release_capture_ ? RELEASE_CAPTURE : DONT_RELEASE_CAPTURE;
 #endif
   DetachAndAttachToNewContext(
-      release_capture, dragged_browser_view->tabstrip()->GetDragContext());
+      release_capture,
+      dragged_browser_view->tab_strip_view()->GetDragContext());
 
   if (ShouldDragWindowUsingSystemDnD()) {
     // Keep the new window hidden and start a system DnD session.
@@ -1468,7 +1560,6 @@ TabDragController::DetachIntoNewBrowserAndRunMoveLoop(
     // attached to is hidden and thus can't start the drag session.
     return StartSystemDnDSessionIfNecessary(source_context_, point_in_screen);
   }
-
   AdjustTabBoundsForDrag(previous_tab_area_width, first_tab_leading_x,
                          drag_bounds);
 
@@ -1478,6 +1569,8 @@ TabDragController::DetachIntoNewBrowserAndRunMoveLoop(
   // Windows. See https://crbug.com/394529650
   dragged_widget->SetBounds(
       gfx::Rect(point_in_screen - drag_offset, dragged_widget->GetSize()));
+#else
+  const gfx::Size widget_size = dragged_widget->GetSize();
 #endif
 
   dragged_widget->SetVisibilityChangedAnimationsEnabled(false);
@@ -1487,8 +1580,8 @@ TabDragController::DetachIntoNewBrowserAndRunMoveLoop(
 #if BUILDFLAG(IS_MAC)
   // Set the window origin after making it visible, to avoid child windows (such
   // as the find bar) being misplaced on Mac. See https://crbug.com/403129048
-  dragged_widget->SetBounds(
-      gfx::Rect(point_in_screen - drag_offset, dragged_widget->GetSize()));
+  dragged_widget->SetBoundsConstrained(
+      gfx::Rect(point_in_screen - drag_offset, widget_size));
 #endif
 
   // Activate may trigger a focus loss, destroying us.
@@ -1594,18 +1687,26 @@ std::vector<TabSlotView*> TabDragController::GetViewsMatchingDraggedContents(
     TabDragContext* context) {
   const TabStripModel* const model = context->GetTabStripModel();
   std::vector<TabSlotView*> views;
-  for (size_t i = first_tab_index(); i < drag_data_.tab_drag_data_.size();
-       ++i) {
-    const int model_index =
-        model->GetIndexOfWebContents(drag_data_.tab_drag_data_[i].contents);
-    if (model_index == TabStripModel::kNoTab) {
-      return std::vector<TabSlotView*>();
+  for (const TabDragData& tab_drag_datum : drag_data_.tab_drag_data_) {
+    if (tab_drag_datum.view_type == TabSlotView::ViewType::kTab) {
+      const int model_index =
+          model->GetIndexOfWebContents(tab_drag_datum.contents);
+      if (model_index == TabStripModel::kNoTab) {
+        return {};
+      }
+      views.push_back(context->GetTabAt(model_index));
+    } else {
+      // Return empty vector if the group is not present in the model.
+      if (!model->group_model()->ContainsTabGroup(
+              tab_drag_datum.tab_group_data->group_id)) {
+        return {};
+      }
+
+      TabGroupHeader* header =
+          context->GetTabGroupHeader(tab_drag_datum.tab_group_data->group_id);
+      CHECK(header);
+      views.push_back(header);
     }
-    views.push_back(context->GetTabAt(model_index));
-  }
-  if (drag_data_.group_drag_data_.has_value()) {
-    views.insert(views.begin(), context->GetTabGroupHeader(
-                                    drag_data_.group_drag_data_.value().group));
   }
   return views;
 }
@@ -1672,6 +1773,10 @@ void TabDragController::EndDragImpl(EndDragType type) {
 
   // Clear out drag data so we don't attempt to do anything with it.
   drag_data_.tab_drag_data_.clear();
+  if (current_drag_delegate_) {
+    current_drag_delegate_->OnTabDragEnded();
+    ResetDragTarget();
+  }
 
   TabDragContext* owning_context =
       attached_context_ ? attached_context_.get() : source_context_.get();
@@ -1687,8 +1792,7 @@ void TabDragController::RevertDrag() {
   MaybePauseTrackingSavedTabGroup();
 
   base::AutoReset<bool> is_mutating_setter(&is_mutating_, true);
-  base::AutoReset<bool> is_removing_last_tab_setter(
-      &is_removing_last_tab_for_revert_, true);
+  base::AutoReset<bool> is_removing_last_tab_setter(&is_moving_last_tab_, true);
 
   if (attached_context_ != source_context_) {
     for (TabDragData& tab_datum : drag_data_.tab_drag_data_) {
@@ -1697,14 +1801,11 @@ void TabDragController::RevertDrag() {
     }
   }
 
-  // Revert each tab and group. N.B. we manually increment `i` because each
-  // group has multiple entries in `tab_drag_data_`.
+  // Revert each tab, split and group. We manually increment `i` because
+  // each group or split has multiple entries in `tab_drag_data_`.
   for (size_t i = 0; i < drag_data_.tab_drag_data_.size();) {
     const TabDragData tab_data = drag_data_.tab_drag_data_[i];
-    if (tab_data.view_type == TabSlotView::ViewType::kTab) {
-      RevertTabAt(i);
-      i++;
-    } else {
+    if (tab_data.view_type == TabSlotView::ViewType::kTabGroupHeader) {
       RevertGroupAt(i);
       // Skip all the tabs in the group too.
       i += source_context_->GetTabStripModel()
@@ -1712,6 +1813,23 @@ void TabDragController::RevertDrag() {
                ->GetTabGroup(tab_data.tab_group_data->group_id)
                ->tab_count() +
            1;
+    } else {
+      CHECK(tab_data.contents);
+
+      const tabs::TabInterface* tab =
+          tabs::TabInterface::GetFromContents(tab_data.contents);
+
+      if (tab->IsSplit()) {
+        split_tabs::SplitTabId split_id = tab->GetSplit().value();
+        RevertSplitAt(i);
+        i += source_context_->GetTabStripModel()
+                 ->GetSplitData(split_id)
+                 ->ListTabs()
+                 .size();
+      } else {
+        RevertTabAt(i);
+        i++;
+      }
     }
   }
   MaybeResumeTrackingSavedTabGroup();
@@ -1738,8 +1856,8 @@ void TabDragController::RevertDrag() {
   if (initial_selection_model_.empty()) {
     ResetSelection(source_context_->GetTabStripModel());
   } else {
-    source_context_->GetTabStripModel()->SetSelectionFromModel(
-        initial_selection_model_);
+    UpdateSelectionModel(source_context_->GetTabStripModel(),
+                         initial_selection_model_);
   }
 
   source_context_->GetWidget()->Activate();
@@ -1756,10 +1874,14 @@ void TabDragController::ResetSelection(TabStripModel* model) {
           model->GetIndexOfWebContents(drag_data_.tab_drag_data_[i].contents);
       DCHECK_GE(index, 0);
       selection_model.AddIndexToSelection(static_cast<size_t>(index));
+      // Set this tab as active if:
+      // a) we don't have an active tab yet
+      // b) this was the source view for the drag
+      // c) we're in a header drag, and this tab was active before the drag
       if (!has_one_valid_tab || i == drag_data_.source_view_index_ ||
           (drag_data_.group_drag_data_.has_value() &&
            (drag_data_.group_drag_data_.value().active_tab_index_within_group +
-            first_tab_index()) == static_cast<int>(i))) {
+            1) == static_cast<int>(i))) {
         // Reset the active/lead to the first tab. If the source tab is still
         // valid we'll reset these again later on.
         selection_model.set_active(static_cast<size_t>(index));
@@ -1772,7 +1894,7 @@ void TabDragController::ResetSelection(TabStripModel* model) {
     return;
   }
 
-  model->SetSelectionFromModel(selection_model);
+  UpdateSelectionModel(model, selection_model);
 }
 
 void TabDragController::RestoreInitialSelection() {
@@ -1808,7 +1930,7 @@ void TabDragController::RestoreInitialSelection() {
   if (!selection_model.active().has_value()) {
     selection_model.set_active(*selection_model.selected_indices().begin());
   }
-  source_context_->GetTabStripModel()->SetSelectionFromModel(selection_model);
+  UpdateSelectionModel(source_context_->GetTabStripModel(), selection_model);
 }
 
 void TabDragController::RevertGroupAt(size_t drag_index) {
@@ -1822,10 +1944,8 @@ void TabDragController::RevertGroupAt(size_t drag_index) {
         attached_context_->GetTabStripModel()->DetachTabGroupForInsertion(
             group_id),
         target_index);
-    source_context_->GetTabStripModel()
-        ->group_model()
-        ->GetTabGroup(group_id)
-        ->SetVisualData(first_tab_in_group.tab_group_data->group_visual_data);
+    source_context_->GetTabStripModel()->ChangeTabGroupVisuals(
+        group_id, first_tab_in_group.tab_group_data->group_visual_data);
     return;
   }
 
@@ -1856,6 +1976,71 @@ void TabDragController::RevertGroupAt(size_t drag_index) {
       first_tab_in_group.tab_group_data->group_id, target_index);
 }
 
+void TabDragController::RevertSplitAt(size_t drag_index) {
+  CHECK_NE(current_state_, DragState::kNotStarted);
+  CHECK(attached_context_);
+  CHECK(source_context_);
+  // We can't revert if `contents` was destroyed during the drag, or if this is
+  // a group header.
+  CHECK(drag_data_.tab_drag_data_[drag_index].contents);
+
+  const TabDragData tab_data = drag_data_.tab_drag_data_[drag_index];
+  const tabs::TabInterface* tab =
+      tabs::TabInterface::GetFromContents(tab_data.contents);
+  split_tabs::SplitTabId split_id = tab->GetSplit().value();
+
+  // The split will be reverted into its original group.
+  const std::optional<tab_groups::TabGroupId> existing_group =
+      tab_data.tab_group_data.has_value()
+          ? std::make_optional(tab_data.tab_group_data->group_id)
+          : std::nullopt;
+
+  const int from_index =
+      attached_context_->GetTabStripModel()->GetIndexOfWebContents(
+          tab_data.contents);
+  CHECK_NE(from_index, TabStripModel::kNoTab);
+  int target_index = tab_data.source_model_index.value();
+
+  if (attached_context_ != source_context_) {
+    // The Split was inserted into another TabDragContext. We need to
+    // put it back into the original one.
+    std::unique_ptr<DetachedTabCollection> detached_split =
+        attached_context_->GetTabStripModel()->DetachSplitTabForInsertion(
+            split_id);
+    source_context_->GetTabStripModel()->InsertDetachedSplitTabAt(
+        std::move(detached_split), target_index, tab_data.pinned,
+        existing_group);
+  } else {
+    if (target_index > from_index) {
+      for (size_t i = drag_index + 1; i < drag_data_.tab_drag_data_.size();
+           ++i) {
+        const TabDragData other_tab = drag_data_.tab_drag_data_[i];
+
+        // Ignore group headers, they don't have model indices to skip over.
+        if (other_tab.view_type != TabSlotView::ViewType::kTab) {
+          continue;
+        }
+
+        tabs::TabInterface* other_tab_interface =
+            tabs::TabInterface::GetFromContents(other_tab.contents);
+
+        CHECK(other_tab_interface);
+
+        // Ignore other tabs in this split, they will get moved along with us
+        // so we won't skip over them.
+        if (other_tab_interface->GetSplit() == split_id) {
+          continue;
+        }
+
+        ++target_index;
+      }
+    }
+
+    source_context_->GetTabStripModel()->MoveSplitTo(
+        split_id, target_index, tab_data.pinned, existing_group);
+  }
+}
+
 void TabDragController::RevertTabAt(size_t drag_index) {
   CHECK_NE(current_state_, DragState::kNotStarted);
   CHECK(attached_context_);
@@ -1866,12 +2051,9 @@ void TabDragController::RevertTabAt(size_t drag_index) {
 
   const TabDragData tab_data = drag_data_.tab_drag_data_[drag_index];
 
-  // The tab can be reverted into its original group if it still exists.
+  // The tab will be reverted into its original group.
   const std::optional<tab_groups::TabGroupId> existing_group =
-      tab_data.tab_group_data.has_value() &&
-              source_context_->GetTabStripModel()
-                  ->group_model()
-                  ->ContainsTabGroup(tab_data.tab_group_data->group_id)
+      tab_data.tab_group_data.has_value()
           ? std::make_optional(tab_data.tab_group_data->group_id)
           : std::nullopt;
 
@@ -1916,6 +2098,19 @@ void TabDragController::CompleteDrag() {
   CHECK_NE(current_state_, DragState::kNotStarted);
   CHECK(attached_context_);
 
+  if (current_drag_delegate_ && current_drag_delegate_->CanDropTab()) {
+    current_drag_delegate_->HandleTabDrop(*this);
+    attached_context_->StoppedDragging();
+
+    // The delegate is expected to handle all tab dragging finalization, and
+    // therefore we return here.
+    // The logic below is specific for dragging to a tabstrip, most of which
+    // should be moved to tabstrip's `TabDragDelegate` implementation. Some
+    // functionality, such as restoring tab model selection, may be shared as
+    // part of the `TabDragDelegate::DragController` interface.
+    return;
+  }
+
   if (is_dragging_new_browser_ || did_restore_window_) {
     if (IsSnapped(attached_context_)) {
       was_source_maximized_ = false;
@@ -1957,16 +2152,16 @@ void TabDragController::CompleteDrag() {
 
   if (drag_data_.group_drag_data_.has_value()) {
     // Manually reset the selection to just the active tab in the group.
-    // Otherwise, it's easy to accidentally delete the fully-selected group
-    // by dragging on any of its still-selected members.
+    // For multi tab select keep the selection model as the user used it as the
+    // original selection.
     TabStripModel* model = attached_context_
                                ? attached_context_->GetTabStripModel()
                                : source_context_->GetTabStripModel();
     ui::ListSelectionModel selection;
+    // Offset by 1 to account for the group header.
     const int drag_data_index =
-        first_tab_index() +
-        drag_data_.group_drag_data_.value().active_tab_index_within_group;
-    int index = model->GetIndexOfWebContents(
+        1 + drag_data_.group_drag_data_.value().active_tab_index_within_group;
+    const int index = model->GetIndexOfWebContents(
         drag_data_.tab_drag_data_[drag_data_index].contents);
 
     // The tabs in the group may have been closed during the drag.
@@ -1975,7 +2170,7 @@ void TabDragController::CompleteDrag() {
       selection.AddIndexToSelection(static_cast<size_t>(index));
       selection.set_active(static_cast<size_t>(index));
       selection.set_anchor(static_cast<size_t>(index));
-      model->SetSelectionFromModel(selection);
+      UpdateSelectionModel(model, selection);
     }
   }
 
@@ -2115,7 +2310,7 @@ gfx::Size TabDragController::CalculateDraggedWindowSize(
 
   // Limit the window size to the current display's size, less some insets.
   const gfx::Size work_area =
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->GetDisplayNearestPoint(last_point_in_screen_)
           .work_area()
           .size();
@@ -2262,9 +2457,8 @@ Browser* TabDragController::CreateBrowserForDrag(TabDragContext* source,
   create_params.restore_id = Browser::kDefaultRestoreId;
 
   // Open the window in the same display.
-  display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(
-          source->GetWidget()->GetNativeWindow());
+  display::Display display = display::Screen::Get()->GetDisplayNearestWindow(
+      source->GetWidget()->GetNativeWindow());
   create_params.display_id = display.id();
 #endif
   // Do not copy attached window's show state as the attached window might be a
@@ -2309,7 +2503,7 @@ gfx::Point TabDragController::GetCursorScreenPoint() {
   return aura::Env::GetInstance()->GetLastPointerPoint(
       event_source_, widget_window, /*fallback=*/last_point_in_screen_);
 #else
-  return display::Screen::GetScreen()->GetCursorScreenPoint();
+  return display::Screen::Get()->GetCursorScreenPoint();
 #endif
 }
 
@@ -2455,17 +2649,16 @@ void TabDragController::NotifyEventIfTabAddedToGroup() {
   }
 
   const TabStripModel* source_model = source_context_->GetTabStripModel();
-  for (size_t i = first_tab_index(); i < drag_data_.tab_drag_data_.size();
-       ++i) {
+  for (const TabDragData& tab_drag_datum : drag_data_.tab_drag_data_) {
     // If the tab already had a group, skip it.
-    if (drag_data_.tab_drag_data_[i].tab_group_data.has_value()) {
+    if (tab_drag_datum.tab_group_data.has_value()) {
       continue;
     }
 
     // Get the tab group from the source model.
     std::optional<tab_groups::TabGroupId> group_id =
-        source_model->GetTabGroupForTab(source_model->GetIndexOfWebContents(
-            drag_data_.tab_drag_data_[i].contents));
+        source_model->GetTabGroupForTab(
+            source_model->GetIndexOfWebContents(tab_drag_datum.contents));
 
     // If there was a tab group for that tab, then send the custom event for
     // adding a tab to a group.
@@ -2473,16 +2666,10 @@ void TabDragController::NotifyEventIfTabAddedToGroup() {
       continue;
     }
 
-    ui::TrackedElement* element =
-        views::ElementTrackerViews::GetInstance()->GetElementForView(
-            drag_data_.tab_drag_data_[i].attached_view);
-    if (!element) {
-      continue;
+    if (views::ElementTrackerViews::GetInstance()->NotifyCustomEvent(
+            kTabGroupedCustomEventId, tab_drag_datum.attached_view)) {
+      break;
     }
-
-    ui::ElementTracker::GetFrameworkDelegate()->NotifyCustomEvent(
-        element, kTabGroupedCustomEventId);
-    break;
   }
 }
 
@@ -2497,7 +2684,7 @@ void TabDragController::MaybePauseTrackingSavedTabGroup() {
           ->browser();
 
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(browser->profile());
 
   if (!tab_group_service ||
       !tab_group_service->GetGroup(drag_data_.group_drag_data_.value().group)) {
@@ -2518,13 +2705,37 @@ void TabDragController::MaybeResumeTrackingSavedTabGroup() {
           ->browser();
 
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(browser->profile());
 
   if (!tab_group_service) {
     return;
   }
 
   observation_pauser_.reset();
+}
+
+void TabDragController::UpdateSelectionModel(
+    TabStripModel* tab_strip_model,
+    ui::ListSelectionModel selection_model) {
+  if (selection_model.active().has_value()) {
+    std::optional<split_tabs::SplitTabId> split_id =
+        tab_strip_model->GetSplitForTab(selection_model.active().value());
+    if (split_id.has_value()) {
+      selection_model.set_active(split_tabs::GetIndexOfLastActiveTab(
+          tab_strip_model, split_id.value()));
+    }
+  }
+
+  if (selection_model.anchor().has_value()) {
+    std::optional<split_tabs::SplitTabId> split_id =
+        tab_strip_model->GetSplitForTab(selection_model.anchor().value());
+    if (split_id.has_value()) {
+      selection_model.set_anchor(split_tabs::GetIndexOfLastActiveTab(
+          tab_strip_model, split_id.value()));
+    }
+  }
+
+  tab_strip_model->SetSelectionFromModel(selection_model);
 }
 
 void TabDragController::StartDraggingTabsSession(

@@ -14,6 +14,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
@@ -77,7 +78,7 @@ class BtmDatabaseTest : public testing::Test {
       db_ = std::make_unique<TestDatabase>(std::nullopt);
     } else {
       ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-      db_path_ = temp_dir_.GetPath().AppendASCII("DIPS.db");
+      db_path_ = temp_dir_.GetPath().AppendASCII("BTM.db");
       db_ = std::make_unique<TestDatabase>(db_path_);
     }
 
@@ -378,12 +379,12 @@ TEST_P(BtmDatabaseAllColumnTest, ReadBounce) {
   EXPECT_TRUE(WriteToVariableColumn(site, bounce));
   EXPECT_EQ(ReadValueForVariableColumn(db_->Read(site)), bounce);
 
-  // Query a site that never had DIPS State, verifying that is has no entry.
+  // Query a site that never had BTM State, verifying that is has no entry.
   EXPECT_FALSE(
       db_->Read(GetSiteForBtm(GURL("https://www.not-in-db.com/"))).has_value());
 }
 
-// Verifies actions on the `popups` table of the DIPS database.
+// Verifies actions on the `popups` table of the BTM database.
 class BtmDatabasePopupsTest : public BtmDatabaseTest,
                               public testing::WithParamInterface<bool> {
  public:
@@ -764,16 +765,50 @@ TEST_P(BtmDatabaseInteractionTest, ClearExpiredRowsFromPopupsTable) {
               testing::IsEmpty());
 }
 
+TEST_P(BtmDatabaseInteractionTest, FilterSites) {
+  LoadDatabase();
+
+  const std::set<std::string> sites_to_filter = {
+      "doesnotexist.test", "case1.test", "case2.test", "case3.test",
+      "case4.test",        "case5.test", "case6.test"};
+
+  EXPECT_THAT(db_->FilterSites(/*sites=*/{},
+                               BtmDatabase::BounceFilterType::kProtectiveEvent),
+              testing::IsEmpty());
+  EXPECT_THAT(
+      db_->FilterSites(sites_to_filter,
+                       BtmDatabase::BounceFilterType::kProtectiveEvent),
+      testing::UnorderedElementsAre("case1.test", "case2.test", "case3.test",
+                                    "case4.test", "case5.test"));
+
+  EXPECT_THAT(db_->FilterSites(/*sites=*/{},
+                               BtmDatabase::BounceFilterType::kUserActivation),
+              testing::IsEmpty());
+  EXPECT_THAT(db_->FilterSites(sites_to_filter,
+                               BtmDatabase::BounceFilterType::kUserActivation),
+              testing::UnorderedElementsAre("case1.test", "case2.test",
+                                            "case3.test", "case4.test"));
+
+  EXPECT_THAT(
+      db_->FilterSites(/*sites=*/{},
+                       BtmDatabase::BounceFilterType::kWebAuthnAssertion),
+      testing::IsEmpty());
+  EXPECT_THAT(
+      db_->FilterSites(sites_to_filter,
+                       BtmDatabase::BounceFilterType::kWebAuthnAssertion),
+      testing::UnorderedElementsAre("case1.test", "case2.test", "case3.test",
+                                    "case5.test"));
+}
+
 INSTANTIATE_TEST_SUITE_P(All, BtmDatabaseInteractionTest, ::testing::Bool());
 
 // A test class that verifies the behavior of the methods used to query the
-// BtmDatabase to find all sites which should have their state cleared by DIPS.
+// BtmDatabase to find all sites which should have their state cleared by BTM.
 class BtmDatabaseQueryTest : public BtmDatabaseTest,
-                             public testing::WithParamInterface<
-                                 std::tuple<bool, BtmTriggeringAction>> {
+                             public testing::WithParamInterface<bool> {
  public:
   using QueryMethod = base::RepeatingCallback<std::vector<std::string>(void)>;
-  BtmDatabaseQueryTest() : BtmDatabaseTest(std::get<0>(GetParam())) {
+  BtmDatabaseQueryTest() : BtmDatabaseTest(/*in_memory=*/GetParam()) {
     // Test with the prod feature's parameter to ensure the tested scenarios are
     // also valid/respected within prod env.
     features_.InitWithFeatures({features::kBtmTtl, features::kBtm}, {});
@@ -785,52 +820,18 @@ class BtmDatabaseQueryTest : public BtmDatabaseTest,
     interaction_ttl = features::kBtmInteractionTtl.Get();
   }
 
-  // Returns the DIPS-triggering action we're testing.
-  BtmTriggeringAction CurrentAction() { return std::get<1>(GetParam()); }
-
-  // Returns a callback for the respective querying method we want to test,
-  // based on `features::kBtmTriggeringAction`. This is equivalent to that
-  // used by `BtmStorage::GetSitesToClear` when the DIPS Timer fires.
-  QueryMethod GetQueryMethodUnderTest() {
-    switch (CurrentAction()) {
-      case BtmTriggeringAction::kNone:
-        return base::BindLambdaForTesting(
-            [&]() { return std::vector<std::string>{}; });
-      case BtmTriggeringAction::kBounce:
-        return base::BindLambdaForTesting(
-            [&]() { return db_->GetSitesThatBounced(grace_period); });
-      case BtmTriggeringAction::kStorage:
-        return base::BindLambdaForTesting(
-            [&]() { return db_->GetSitesThatUsedStorage(grace_period); });
-      case BtmTriggeringAction::kStatefulBounce:
-        return base::BindLambdaForTesting(
-            [&]() { return db_->GetSitesThatBouncedWithState(grace_period); });
-    }
+  QueryMethod GetSitesToClearQuery() {
+    return base::BindLambdaForTesting(
+        [&]() { return db_->GetSitesThatBounced(grace_period); });
   }
 
   void WriteForCurrentAction(const std::string& site,
                              TimestampRange event_times,
                              TimestampRange interaction_times,
                              TimestampRange waa_times) {
-    switch (CurrentAction()) {
-      case BtmTriggeringAction::kNone:
-        break;
-      case BtmTriggeringAction::kBounce:
-        db_->Write(site, /*storage_times=*/{}, interaction_times,
-                   /*stateful_bounce_times=*/{},
-                   /*bounce_times=*/event_times, waa_times);
-        break;
-      case BtmTriggeringAction::kStorage:
-        db_->Write(site, /*storage_times=*/event_times, interaction_times,
-                   /*stateful_bounce_times=*/{}, /*bounce_times=*/{},
-                   waa_times);
-        break;
-      case BtmTriggeringAction::kStatefulBounce:
-        db_->Write(site, /*storage_times=*/{}, interaction_times,
-                   /*stateful_bounce_times=*/event_times,
-                   /*bounce_times=*/event_times, waa_times);
-        break;
-    }
+    db_->Write(site, /*storage_times=*/{}, interaction_times,
+               /*stateful_bounce_times=*/{},
+               /*bounce_times=*/event_times, waa_times);
   }
 
  protected:
@@ -840,8 +841,8 @@ class BtmDatabaseQueryTest : public BtmDatabaseTest,
 
 TEST_P(BtmDatabaseQueryTest, ProtectedDuringGracePeriod) {
   // The result of running `query` shouldn't include sites which are currently
-  // in their grace period after first performing a DIPS-triggering event.
-  QueryMethod query = GetQueryMethodUnderTest();
+  // in their grace period after first performing a BTM-triggering event.
+  QueryMethod query = GetSitesToClearQuery();
 
   base::Time event = Time::FromSecondsSinceUnixEpoch(1);
   TimestampRange event_times = {{event, event}};
@@ -867,8 +868,8 @@ TEST_P(BtmDatabaseQueryTest, ProtectedDuringGracePeriod) {
 
 TEST_P(BtmDatabaseQueryTest, ProtectedByInteractionBeforeGracePeriod) {
   // The result of running `query` shouldn't include sites who've received
-  // interactions from the user before performing a DIPS-triggering event.
-  QueryMethod query = GetQueryMethodUnderTest();
+  // interactions from the user before performing a BTM-triggering event.
+  QueryMethod query = GetSitesToClearQuery();
 
   base::Time interaction = Time::FromSecondsSinceUnixEpoch(1);
   TimestampRange interaction_times = {{interaction, interaction}};
@@ -886,8 +887,8 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByInteractionBeforeGracePeriod) {
   AdvanceTimeTo(interaction + interaction_ttl - tiny_delta);
   EXPECT_THAT(query.Run(), testing::IsEmpty());
 
-  // Once `interaction` expires, "site.test" restarts the DIPS-procedure and
-  // `interaction` no longer protects it from DIPS clearing.
+  // Once `interaction` expires, "site.test" restarts the BTM-procedure and
+  // `interaction` no longer protects it from BTM clearing.
   AdvanceTimeTo(interaction + interaction_ttl + tiny_delta);
   EXPECT_THAT(query.Run(), testing::IsEmpty());
 
@@ -905,10 +906,10 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByInteractionBeforeGracePeriod) {
 }
 
 // The results of running `query` shouldn't include `site` with existing
-// (expired or unexpired) WAAs (performed by the user before a DIPS-triggering
+// (expired or unexpired) WAAs (performed by the user before a BTM-triggering
 // event occurred).
 TEST_P(BtmDatabaseQueryTest, ProtectedByWaaBeforeGracePeriod) {
-  const QueryMethod query = GetQueryMethodUnderTest();
+  const QueryMethod query = GetSitesToClearQuery();
   const std::string site = "site.test";
 
   // Set up an event that happens after the WAA.
@@ -948,7 +949,7 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByWaaBeforeGracePeriod) {
     EXPECT_THAT(query.Run(), testing::IsEmpty());
 
     // The `site`'s new entry is no longer protected by WAAs after the
-    // `grace_period` and will be acted-upon by DIPS:
+    // `grace_period` and will be acted-upon by BTM:
     AdvanceTimeTo(event_time + grace_period + tiny_delta);
     EXPECT_THAT(query.Run(), testing::ElementsAre(site));
     EXPECT_TRUE(db_->Read(site).has_value());
@@ -957,8 +958,8 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByWaaBeforeGracePeriod) {
 
 TEST_P(BtmDatabaseQueryTest, ProtectedByInteractionDuringGracePeriod) {
   // The result of running `query` shouldn't include sites who've received
-  // interactions during the grace period following a DIPS-triggering event.
-  QueryMethod query = GetQueryMethodUnderTest();
+  // interactions during the grace period following a BTM-triggering event.
+  QueryMethod query = GetSitesToClearQuery();
 
   // Set up an interaction that happens during the event's grace period.
   base::Time event = Time::FromSecondsSinceUnixEpoch(1);
@@ -978,8 +979,8 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByInteractionDuringGracePeriod) {
   AdvanceTimeTo(interaction + interaction_ttl - tiny_delta);
   EXPECT_THAT(query.Run(), testing::IsEmpty());
 
-  // Once `interaction` expires, "site.test" restarts the DIPS-procedure and
-  // `interaction` no longer protects it from DIPS clearing.
+  // Once `interaction` expires, "site.test" restarts the BTM-procedure and
+  // `interaction` no longer protects it from BTM clearing.
   AdvanceTimeTo(interaction + interaction_ttl + tiny_delta);
   EXPECT_THAT(query.Run(), testing::IsEmpty());
 
@@ -997,10 +998,10 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByInteractionDuringGracePeriod) {
 }
 
 // The results of running `query` shouldn't include `site` with existing
-// (expired or unexpired) WAAs (performed by the user after a DIPS-triggering
+// (expired or unexpired) WAAs (performed by the user after a BTM-triggering
 // event occurred).
 TEST_P(BtmDatabaseQueryTest, ProtectedByWaaDuringGracePeriod) {
-  const QueryMethod query = GetQueryMethodUnderTest();
+  const QueryMethod query = GetSitesToClearQuery();
   const std::string site = "site.test";
 
   // Set up an event with a WAA happening before the end of the event's
@@ -1041,7 +1042,7 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByWaaDuringGracePeriod) {
     EXPECT_THAT(query.Run(), testing::IsEmpty());
 
     // The `site`'s new entry is no longer protected by WAAs after the
-    // `grace_period` and will be acted-upon by DIPS.
+    // `grace_period` and will be acted-upon by BTM.
     AdvanceTimeTo(event_time + grace_period + tiny_delta);
     EXPECT_THAT(query.Run(), testing::ElementsAre(site));
     EXPECT_TRUE(db_->Read(site).has_value());
@@ -1051,9 +1052,9 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByWaaDuringGracePeriod) {
 TEST_P(BtmDatabaseQueryTest, SiteWithoutInteractionsAreUnprotected) {
   // The result of running `query` should include sites who've never received
   // interaction from the user before, or during the grace period after,
-  // performing a DIPS-triggering event.
+  // performing a BTM-triggering event.
   base::RepeatingCallback<std::vector<std::string>(void)> query =
-      GetQueryMethodUnderTest();
+      GetSitesToClearQuery();
 
   // Set up an event with no corresponding interaction.
   base::Time event = Time::FromSecondsSinceUnixEpoch(2);
@@ -1069,11 +1070,11 @@ TEST_P(BtmDatabaseQueryTest, SiteWithoutInteractionsAreUnprotected) {
 // This is an edge-case and the current accepted behavior is as expressed by
 // this test coverage.
 TEST_P(BtmDatabaseQueryTest, ProtectedByWaaAfterGracePeriod) {
-  const QueryMethod query = GetQueryMethodUnderTest();
+  const QueryMethod query = GetSitesToClearQuery();
   const std::string site = "site.test";
 
   // Sets up an event with a WAA happening after the end of the event's
-  // `grace_period` but before the subsequent DIPS-trigger:
+  // `grace_period` but before the subsequent BTM-trigger:
   auto event_time = Time::FromSecondsSinceUnixEpoch(100);
   auto waa_time = event_time + grace_period + tiny_delta;
   WriteForCurrentAction(site, {{event_time, event_time}}, {},
@@ -1097,7 +1098,7 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByWaaAfterGracePeriod) {
 }
 
 TEST_P(BtmDatabaseQueryTest, ProtectedByInteractionThenWaa) {
-  const QueryMethod query = GetQueryMethodUnderTest();
+  const QueryMethod query = GetSitesToClearQuery();
   const std::string site = "site.test";
 
   // Sets up an event with a interaction happening before the end of the event's
@@ -1127,7 +1128,7 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByInteractionThenWaa) {
 }
 
 TEST_P(BtmDatabaseQueryTest, ProtectedByWaaThenInteraction) {
-  const QueryMethod query = GetQueryMethodUnderTest();
+  const QueryMethod query = GetSitesToClearQuery();
   const std::string site = "site.test";
 
   // Sets up an event with a WAA happening before the end of the event's
@@ -1156,14 +1157,7 @@ TEST_P(BtmDatabaseQueryTest, ProtectedByWaaThenInteraction) {
   EXPECT_EQ(db_->Read(site), std::nullopt);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    BtmDatabaseQueryTest,
-    ::testing::Combine(
-        ::testing::Bool(),
-        ::testing::Values(BtmTriggeringAction::kBounce,
-                          BtmTriggeringAction::kStorage,
-                          BtmTriggeringAction::kStatefulBounce)));
+INSTANTIATE_TEST_SUITE_P(All, BtmDatabaseQueryTest, ::testing::Bool());
 
 // A test class that verifies BtmDatabase garbage collection behavior for both
 // tables.
@@ -1471,7 +1465,6 @@ TEST_F(BtmDatabaseHistogramTest, HealthMetrics) {
 
   // Write an entry to the db.
   db_->Write("url1.test", {},
-             /*interaction_times=*/
              {{Time::FromSecondsSinceUnixEpoch(1),
                Time::FromSecondsSinceUnixEpoch(1)}},
              {}, {}, {});
@@ -1499,7 +1492,6 @@ TEST_F(BtmDatabaseHistogramTest, ErrorMetrics) {
 
   // Write an entry to the db.
   db_->Write("url1.test", {},
-             /*interaction_times=*/
              {{Time::FromSecondsSinceUnixEpoch(1),
                Time::FromSecondsSinceUnixEpoch(1)}},
              {}, {}, {});
@@ -1535,7 +1527,6 @@ TEST_F(BtmDatabaseHistogramTest, PerformanceMetrics) {
 
   // Write an entry to the db.
   db_->Write("url.test", {},
-             /*interaction_times=*/
              {{Time::FromSecondsSinceUnixEpoch(1),
                Time::FromSecondsSinceUnixEpoch(1)}},
              {}, {}, {});
@@ -1629,7 +1620,7 @@ class BtmDatabaseInitializationTest : public testing::Test {
   // Test setup.
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    db_path_ = temp_dir_.GetPath().AppendASCII("DIPS.db");
+    db_path_ = temp_dir_.GetPath().AppendASCII("BTM.db");
   }
 
   void TearDown() override {
@@ -1776,7 +1767,7 @@ TEST_F(BtmDatabaseInitializationTest, MigrateOldSchemaToLatestVersion) {
   }
 }
 
-// Verifies actions on the `config` table of the DIPS database.
+// Verifies actions on the `config` table of the BTM database.
 class BtmDatabaseConfigTest : public BtmDatabaseTest {
  public:
   BtmDatabaseConfigTest() : BtmDatabaseTest(/*in_memory=*/true) {}

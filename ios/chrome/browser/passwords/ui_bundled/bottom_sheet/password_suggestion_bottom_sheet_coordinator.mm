@@ -6,15 +6,15 @@
 
 #import <optional>
 
-#import "base/feature_list.h"
 #import "base/not_fatal_until.h"
 #import "components/keyed_service/core/service_access_type.h"
-#import "components/password_manager/core/browser/features/password_features.h"
 #import "components/password_manager/core/browser/ui/credential_ui_entry.h"
 #import "components/password_manager/core/browser/ui/saved_passwords_presenter.h"
 #import "components/segmentation_platform/embedder/home_modules/tips_manager/signal_constants.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
+#import "ios/chrome/browser/first_run/public/best_features_item.h"
+#import "ios/chrome/browser/first_run/public/features.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_account_password_store_factory.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_profile_password_store_factory.h"
 #import "ios/chrome/browser/passwords/model/password_controller_delegate.h"
@@ -239,6 +239,12 @@ using PasswordSuggestionBottomSheetExitReason::kUsePasswordSuggestion;
     tipsManager->NotifySignal(
         segmentation_platform::tips_manager::signals::kUsedPasswordAutofill);
   }
+
+  // Notify Welcome Back to remove Save and Autofill Passwords from the eligible
+  // features.
+  if (IsWelcomeBackInFirstRunEnabled()) {
+    MarkWelcomeBackFeatureUsed(BestFeaturesItemType::kSaveAndAutofillPasswords);
+  }
 }
 
 - (void)secondaryButtonTapped {
@@ -255,14 +261,11 @@ using PasswordSuggestionBottomSheetExitReason::kUsePasswordSuggestion;
 
   // Terminate dismissal if the entrypoint that dismissed the bottom sheet
   // wasn't handled yet (e.g. when swipped away).
-  if (base::FeatureList::IsEnabled(
-          password_manager::features::kIOSPasswordBottomSheetV2)) {
-    // Explicitly refocus the field if the sheet is dismissed without using any
-    // of its features. This is only required for V2 where the listeners are
-    // detached as soon as the sheet is presented which requires another means
-    // to refocus the blurred field once the sheet is dismissed.
-    [self.mediator refocus];
-  }
+  // Explicitly refocus the field if the sheet is dismissed without using any
+  // of its features. The listeners are detached as soon as the sheet is
+  // presented which requires another means to refocus the blurred field once
+  // the sheet is dismissed.
+  [self.mediator refocus];
 
   [self.mediator logExitReason:kDismissal];
   [self.mediator onDismissWithoutAnyPasswordAction];
@@ -310,7 +313,7 @@ using PasswordSuggestionBottomSheetExitReason::kUsePasswordSuggestion;
 - (void)dismissSoftKeyboard {
   web::WebState* activeWebState =
       self.browser->GetWebStateList()->GetActiveWebState();
-  CHECK(activeWebState, base::NotFatalUntil::M135);
+  CHECK(activeWebState);
   if (activeWebState) {
     [activeWebState->GetView() endEditing:NO];
   }

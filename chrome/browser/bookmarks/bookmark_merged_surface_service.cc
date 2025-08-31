@@ -9,7 +9,7 @@
 
 #include "base/auto_reset.h"
 #include "base/check_is_test.h"
-#include "base/containers/to_vector.h"
+#include "base/containers/flat_set.h"
 #include "base/files/file_path.h"
 #include "base/notreached.h"
 #include "base/uuid.h"
@@ -238,6 +238,8 @@ BookmarkMergedSurfaceService::GetDefaultParentForNewNodes(
     const BookmarkParentFolder& folder) const {
   CHECK(loaded());
   if (folder.HoldsNonPermanentFolder()) {
+    const bookmarks::BookmarkNode* node = folder.as_non_permanent_folder();
+    CHECK(!IsNodeManaged(node));
     return folder.as_non_permanent_folder();
   }
 
@@ -245,6 +247,20 @@ BookmarkMergedSurfaceService::GetDefaultParentForNewNodes(
   CHECK(!IsPermanentManagedFolder(folder));
   return GetPermanentFolderOrderingTracker(*folder.as_permanent_folder())
       .GetDefaultParentForNewNodes();
+}
+
+const bookmarks::BookmarkNode*
+BookmarkMergedSurfaceService::GetParentForManagedNode(
+    const BookmarkParentFolder& folder) const {
+  CHECK(loaded());
+  if (folder.HoldsNonPermanentFolder()) {
+    const bookmarks::BookmarkNode* node = folder.as_non_permanent_folder();
+    CHECK(IsNodeManaged(node));
+    return node;
+  }
+
+  CHECK(IsPermanentManagedFolder(folder));
+  return managed_permanent_node();
 }
 
 void BookmarkMergedSurfaceService::Move(const bookmarks::BookmarkNode* node,
@@ -543,9 +559,10 @@ void BookmarkMergedSurfaceService::BookmarkNodeRemoved(
     BookmarkParentFolder parent_folder =
         BookmarkParentFolder::FromFolderNode(node);
     base::flat_set<const BookmarkNode*> removed_nodes =
-        base::MakeFlatSet<const BookmarkNode*>(base::ToVector(
+        base::MakeFlatSet<const BookmarkNode*>(
             node->children(),
-            [](const auto& bookmark_node) { return bookmark_node.get(); }));
+            /*comp=*/{},
+            [](const auto& bookmark_node) { return bookmark_node.get(); });
     for (auto& observer : observers_) {
       observer.BookmarkNodesRemoved(parent_folder, removed_nodes);
     }
@@ -589,5 +606,17 @@ void BookmarkMergedSurfaceService::BookmarkAllUserNodesRemoved(
     const base::Location& location) {
   for (auto& observer : observers_) {
     observer.BookmarkAllUserNodesRemoved();
+  }
+}
+
+void BookmarkMergedSurfaceService::ExtensiveBookmarkChangesBeginning() {
+  for (auto& observer : observers_) {
+    observer.ExtensiveBookmarkChangesBeginning();
+  }
+}
+
+void BookmarkMergedSurfaceService::ExtensiveBookmarkChangesEnded() {
+  for (auto& observer : observers_) {
+    observer.ExtensiveBookmarkChangesEnded();
   }
 }

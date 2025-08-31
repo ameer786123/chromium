@@ -13,7 +13,6 @@
               "project": "chromium"
             },
             "builder_spec": {
-              "build_gs_bucket": "chromium-fyi-archive",
               "builder_group": "chromium.coverage",
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_chromium_config": {
@@ -82,5 +81,5 @@
   },
   "builder_group": "chromium.coverage",
   "recipe": "chromium",
-  "xcode_build_version": "16c5032a"
+  "xcode_build_version": "17a5305f"
 }

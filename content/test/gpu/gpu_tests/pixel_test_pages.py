@@ -6,24 +6,23 @@
 # pylint: disable=too-many-lines
 
 from collections.abc import Callable
+from datetime import date
+from enum import Enum
 import json
 import logging
 import os
 import posixpath
 import time
 
-from enum import Enum
+from telemetry.internal.browser import browser as browser_module
 
+import gpu_path_util
 from gpu_tests import common_browser_args as cba
 from gpu_tests import crop_actions as ca
 from gpu_tests import overlay_support
 from gpu_tests import skia_gold_heartbeat_integration_test_base as sghitb
 from gpu_tests import skia_gold_matching_algorithms as algo
 from gpu_tests.util import websocket_server as wss
-
-import gpu_path_util
-
-from telemetry.internal.browser import browser as browser_module
 
 CRASH_TYPE_BROWSER = 'browser'
 CRASH_TYPE_GPU = 'gpu-process'
@@ -55,6 +54,14 @@ ROUNDING_ERROR_ALGO = algo.FuzzyMatchingAlgorithm(
     max_different_pixels=100000000, pixel_per_channel_delta_threshold=1)
 
 BrowserArgType = list[str]
+
+
+def DoNotCaptureFullScreenshot(_) -> bool:
+  return False
+
+
+def DoNotRequireFullscreenOsScreenshot() -> bool:
+  return False
 
 
 class PixelTestPage(sghitb.SkiaGoldHeartbeatTestCase):
@@ -103,14 +110,15 @@ class PixelTestPage(sghitb.SkiaGoldHeartbeatTestCase):
     # that is more representative of what is shown to a user, but some tests
     # require capturing the entire web contents for some reason.
     if should_capture_full_screenshot_func is None:
-      should_capture_full_screenshot_func = lambda _: False
+      should_capture_full_screenshot_func = DoNotCaptureFullScreenshot
     self.ShouldCaptureFullScreenshot = should_capture_full_screenshot_func
     # Some tests may require to capture a full OS screenshot to exercise
     # end-to-end integration. That is, such browsers as LaCros do delegated
     # compositing and they are interested in comparing the result produced
     # by the OS compositor rather than Chromium's one.
     if requires_fullscreen_os_screenshot_func is None:
-      requires_fullscreen_os_screenshot_func = lambda: False
+      requires_fullscreen_os_screenshot_func = (
+          DoNotRequireFullscreenOsScreenshot)
     self.RequiresFullScreenOSScreenshot = requires_fullscreen_os_screenshot_func
 
 # pytype: disable=signature-mismatch
@@ -619,6 +627,60 @@ class PixelTestPages():
             crop_action=ca.NonWhiteContentCropAction(
                 initial_crop=ca.FixedRectCropAction(0, 0, 500, 300)),
         ),
+
+        # The following tests are a subset of the above, only that they
+        # run in TreesInViz mode, to make sure basic graphics features render
+        # correctly in this mode. They should be deleted once TreesInViz is
+        # turned on by default on GPU bots.
+        PixelTestPage('pixel_canvas2d.html',
+            base_name + '_Canvas2DRedBox' + '_TreesInViz',
+            crop_action=standard_crop,
+            matching_algorithm=algo.FuzzyMatchingAlgorithm(
+                max_different_pixels=130,
+                pixel_per_channel_delta_threshold=2),
+            browser_args=['--enable-features=TreesInViz']),
+        PixelTestPage('pixel_css3d.html',
+            base_name + '_CSS3DBlueBox' + '_TreesInViz',
+            crop_action=standard_crop,
+            matching_algorithm=algo.SobelMatchingAlgorithm(
+                max_different_pixels=0,
+                pixel_delta_threshold=0,
+                edge_threshold=90),
+            browser_args=['--enable-features=TreesInViz']),
+        PixelTestPage('pixel_webgl_aa_alpha.html',
+            base_name + '_WebGLGreenTriangle_AA_Alpha' + '_TreesInViz',
+            crop_action=standard_crop,
+            browser_args=['--enable-features=TreesInViz']),
+        PixelTestPage(
+            'pixel_video_mp4.html?width=240&height=135&use_timer=1',
+            base_name + '_Video_MP4' + '_TreesInViz',
+            crop_action=standard_crop,
+            # Most images are actually very similar, but Pixel 2
+            # tends to produce images with all colors shifted by a
+            # small amount.
+            matching_algorithm=GENERAL_MP4_ALGO,
+            browser_args=['--enable-features=TreesInViz']),
+        PixelTestPage('pixel_view_transitions_capture.html',
+            base_name + '_ViewTransitionsCapture' + '_TreesInViz',
+            crop_action=standard_crop,
+            matching_algorithm=algo.SobelMatchingAlgorithm(
+                max_different_pixels=0,
+                pixel_delta_threshold=0,
+                edge_threshold=90),
+            browser_args=['--enable-features=TreesInViz']),
+        PixelTestPage('pixel_background.html',
+            base_name + '_SolidColorBackground' + '_TreesInViz',
+            crop_action=ca.FixedRectCropAction(500, 500, 600, 600),
+            # Small Fuchsia screens result in an incomplete capture
+            # without this.
+            should_capture_full_screenshot_func=CaptureFullScreenshotOnFuchsia,
+            browser_args=['--enable-features=TreesInViz']),
+        PixelTestPage('pixel_render_passes.html',
+            base_name + '_RenderPasses' + '_TreesInViz',
+            crop_action=ca.FixedRectCropAction(3, 90, 485, 245),
+            requires_fullscreen_os_screenshot_func=\
+            RequiresFullScreenOSScreenshot,
+            browser_args=['--enable-features=TreesInViz']),
     ]
 
   @staticmethod
@@ -656,6 +718,10 @@ class PixelTestPages():
       # we're effectively just making sure the color is correct.
       fixed_crop = ca.FixedRectCropAction(0, 0, 300, 300)
 
+      # For testing VideoFrame with HDR color space.
+      hdr_params = '?sourceType=hdr_canvas'
+      hdr_args = ['--enable-blink-features=CanvasHDR,WebCodecsHBDFormats']
+
       return [
           PixelTestPage('pixel_webgpu_import_video_frame.html' +
                         video_frame_query_params,
@@ -679,6 +745,10 @@ class PixelTestPages():
               base_name + '_WebGPUImportVideoFrameUnacceleratedOffscreenCanvas',
               crop_action=standard_crop,
               browser_args=webgpu_args + [cba.DISABLE_ACCELERATED_2D_CANVAS]),
+          PixelTestPage('pixel_webgpu_import_video_frame_hdr.html' + hdr_params,
+                        base_name + '_WebGPUImportVideoFrameHDR',
+                        crop_action=standard_crop,
+                        browser_args=webgpu_args + hdr_args),
           PixelTestPage('pixel_webgpu_webgl_teximage2d.html',
                         base_name + '_WebGPUWebGLTexImage2D',
                         crop_action=standard_crop,
@@ -1750,4 +1820,46 @@ class PixelTestPages():
             base_name + '_VP8_1Frame',
             crop_action=ca.NoOpCropAction(),
         ),
+    ]
+
+  @staticmethod
+  def MeetEffectsPages(base_name: str) -> list[PixelTestPage]:
+    video_path = os.path.join(gpu_path_util.MEET_EFFECTS_VIDEO_DIR,
+                              'effects-normal-light.y4m')
+    video_args = [
+        '--auto-accept-camera-and-microphone-capture',
+        '--use-fake-device-for-media-stream',
+        f'--use-file-for-fake-video-capture={video_path}'
+    ]
+    meet_sample_area_matching = algo.SampleAreaMatchingAlgorithm(
+        sample_area_width=5,
+        max_different_pixels_per_area=2,
+        sample_area_channel_delta_threshold=5,
+        combine_inexact_matches=True)
+    # The video is rather large on the page, which can cause a horizontal
+    # scrollbar to appear along the bottom. So, crop that first.
+    standard_crop = ca.NonWhiteContentCropAction(
+        ca.FixedRectCropAction(0, 60, None, -20))
+    # Run the tests on CI for a while to see how stable they are with
+    # fuzzy matching enabled.
+    grace_period_end = date(2025, 10, 1)
+    return [
+        PixelTestPage('meet_effects/meet-gpu-tests/index.html?effectId=359',
+                      f'{base_name}_MeetEffectsCatOnHead',
+                      crop_action=standard_crop,
+                      browser_args=video_args,
+                      matching_algorithm=meet_sample_area_matching,
+                      grace_period_end=grace_period_end),
+        PixelTestPage('meet_effects/meet-gpu-tests/index.html?effectId=539',
+                      f'{base_name}_MeetEffectsRainbowWig',
+                      crop_action=standard_crop,
+                      browser_args=video_args,
+                      matching_algorithm=meet_sample_area_matching,
+                      grace_period_end=grace_period_end),
+        PixelTestPage('meet_effects/meet-gpu-tests/index.html?effectId=530',
+                      f'{base_name}_MeetEffectsTruckerHat',
+                      crop_action=standard_crop,
+                      browser_args=video_args,
+                      matching_algorithm=meet_sample_area_matching,
+                      grace_period_end=grace_period_end),
     ]

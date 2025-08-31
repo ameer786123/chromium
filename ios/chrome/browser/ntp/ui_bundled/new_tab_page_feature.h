@@ -17,6 +17,23 @@ enum class FeedSwipeIPHVariation {
   kAnimated,
 };
 
+// Represents the possible onboarding treatments of Lens Overlay.
+enum class NTPMIAEntrypointVariation {
+  // The default experience.
+  kDisabled = 0,
+  // The entrypoint is shown in the omnibox as a single button.
+  kOmniboxContainedSingleButton = 1,
+  // The entrypoint is shown in the omnibox as a button inline with Lens and
+  // Voice.
+  kOmniboxContainedInline = 2,
+  // The entrypoint is shown inside the enlarged fake omnibox.
+  kOmniboxContainedEnlargedFakebox = 3,
+  // The entrypoint is shown inside the enlarged fake omnibox without incognito
+  // shortcut.
+  kEnlargedFakeboxNoIncognito = 4,
+  kMaxValue = kEnlargedFakeboxNoIncognito,
+};
+
 #pragma mark - Feature declarations
 
 // Feature flag to enable static resource serving for the Discover feed.
@@ -54,6 +71,10 @@ BASE_DECLARE_FEATURE(kIdentityDiscAccountMenu);
 
 // Feature flag to enable in-product help for swipe action on the Feed.
 BASE_DECLARE_FEATURE(kFeedSwipeInProductHelp);
+
+// Feature flag to handle feed eligibility and state in the new Discover
+// eligibility service instead of the new tab page mediator.
+BASE_DECLARE_FEATURE(kUseFeedEligibilityService);
 
 #pragma mark - Feature parameters
 
@@ -97,11 +118,6 @@ extern const char kDeprecateFeedHeaderParameterSearchFieldTopMargin[];
 extern const char kDeprecateFeedHeaderParameterSpaceBetweenModules[];
 extern const char kDeprecateFeedHeaderParameterHeaderBottomPadding[];
 
-// Parameter to remove the three-dot menu from the account menu.
-extern const char kDisableAccountMenuEllipsisParam[];
-// Parameter to show the settings button in the account menu.
-extern const char kShowSettingsInAccountMenuParam[];
-
 // Parameter to indicate which arm of feature kFeedSwipeInProductHelp is
 // enabled.
 extern const char kFeedSwipeInProductHelpArmParam[];
@@ -136,13 +152,23 @@ double GetDeprecateFeedHeaderParameterValueAsDouble(
     const std::string& param_name,
     double default_value);
 
-// YES if the account menu is enabled without the three-dot menu.
-bool IdentityDiscAccountMenuEnabledWithoutEllipsis();
-
-// YES if the account menu is enabled with the settings button.
-bool IdentityDiscAccountMenuEnabledWithSettings();
-
 // Returns the enabled variation of feature kFeedSwipeInProductHelp.
 FeedSwipeIPHVariation GetFeedSwipeIPHVariation();
+
+// YES if the feed visibility is handled by the eligibility service instead of
+// the new tab page mediator.
+bool UseFeedEligibilityService();
+
+// Returns the enabled variation of feature kNTPMIAEntrypoint;
+NTPMIAEntrypointVariation GetNTPMIAEntrypointVariation();
+
+// Whether to show only the MIA button in the fakebox.
+bool ShowOnlyMIAEntrypointInNTPFakebox();
+
+// Whether the quick actions row should be displayed.
+bool ShouldShowQuickActionsRow();
+
+// Whether a MIA variation should increase the size of the fakebox.
+bool ShouldEnlargeNTPFakeboxForMIA();
 
 #endif  // IOS_CHROME_BROWSER_NTP_UI_BUNDLED_NEW_TAB_PAGE_FEATURE_H_

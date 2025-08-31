@@ -14,6 +14,8 @@
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "base/rand_util.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/bind_post_task.h"
@@ -29,20 +31,21 @@
 #include "chrome/browser/ui/lens/lens_overlay_image_helper.h"
 #include "chrome/browser/ui/lens/lens_overlay_proto_converter.h"
 #include "chrome/browser/ui/lens/lens_overlay_url_builder.h"
-#include "chrome/browser/ui/lens/ref_counted_lens_overlay_client_logs.h"
+#include "chrome/browser/ui/lens/lens_search_feature_flag_utils.h"
 #include "chrome/common/channel_info.h"
 #include "components/base32/base32.h"
 #include "components/endpoint_fetcher/endpoint_fetcher.h"
 #include "components/lens/lens_features.h"
 #include "components/lens/lens_overlay_mime_type.h"
+#include "components/lens/lens_payload_construction.h"
+#include "components/lens/lens_request_construction.h"
+#include "components/lens/lens_url_utils.h"
 #include "components/lens/proto/server/lens_overlay_response.pb.h"
+#include "components/lens/ref_counted_lens_overlay_client_logs.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
-#include "components/variations/variations.mojom.h"
-#include "components/variations/variations_client.h"
-#include "components/variations/variations_ids_provider.h"
 #include "components/version_info/channel.h"
 #include "google_apis/common/api_error_codes.h"
 #include "google_apis/gaia/gaia_constants.h"
@@ -66,8 +69,13 @@
 #include "third_party/lens_server_proto/lens_overlay_service_deps.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_surface.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_visual_search_interaction_data.pb.h"
-#include "third_party/zstd/src/lib/zstd.h"
 #include "ui/gfx/geometry/rect.h"
+
+using endpoint_fetcher::CredentialsMode;
+using endpoint_fetcher::EndpointFetcher;
+using endpoint_fetcher::EndpointFetcherCallback;
+using endpoint_fetcher::EndpointResponse;
+using endpoint_fetcher::HttpMethod;
 
 namespace lens {
 
@@ -76,23 +84,12 @@ using LatencyType = LensOverlayGen204Controller::LatencyType;
 namespace {
 
 // The name string for the header for variations information.
-constexpr char kClientDataHeader[] = "X-Client-Data";
 constexpr char kContentTypeKey[] = "Content-Type";
 constexpr char kContentType[] = "application/x-protobuf";
-constexpr char kDeveloperKey[] = "X-Developer-Key";
 constexpr char kSessionIdQueryParameterKey[] = "gsessionid";
-constexpr char kOAuthConsumerName[] = "LensOverlayQueryController";
-constexpr char kStartTimeQueryParameter[] = "qsubts";
 constexpr char kGen204IdentifierQueryParameter[] = "plla";
 constexpr char kVisualSearchInteractionDataQueryParameterKey[] = "vsint";
-constexpr char kPdfMimeType[] = "application/pdf";
-constexpr char kPlainTextMimeType[] = "text/plain";
-constexpr char kHtmlMimeType[] = "text/html";
 constexpr char kVisualInputTypeQueryParameterKey[] = "vit";
-constexpr char kPdfVisualInputTypeQueryParameterValue[] = "pdf";
-constexpr char kWebpageVisualInputTypeQueryParameterValue[] = "wp";
-constexpr char kImageVisualInputTypeQueryParameterValue[] = "img";
-constexpr char kContextualVisualInputTypeQueryParameterValue[] = "video";
 
 constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotationTag =
     net::DefineNetworkTrafficAnnotation("lens_overlay", R"(
@@ -132,8 +129,8 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotationTag =
             "nothing without explicit user action, so there is no setting to "
             "disable the feature."
           chrome_policy {
-            GenAiLensOverlaySettings {
-              GenAiLensOverlaySettings: 1
+            LensOverlaySettings {
+              LensOverlaySettings: 1
             }
           }
         }
@@ -173,134 +170,26 @@ lens::CenterRotatedBox ConvertToServerCenterRotatedBox(
   return out_box;
 }
 
-std::vector<std::string> CreateOAuthHeader(
-    GoogleServiceAuthError error,
-    signin::AccessTokenInfo access_token_info) {
-  std::vector<std::string> headers;
-  if (error.state() == GoogleServiceAuthError::NONE) {
-    headers.push_back(kDeveloperKey);
-    headers.push_back(GaiaUrls::GetInstance()->oauth2_chrome_client_id());
-    headers.push_back(net::HttpRequestHeaders::kAuthorization);
-    headers.push_back(
-        base::StringPrintf("Bearer %s", access_token_info.token.c_str()));
-  }
-  return headers;
-}
-
-std::vector<std::string> CreateVariationsHeaders(
-    variations::VariationsClient* variations_client) {
-  std::vector<std::string> headers;
-  variations::mojom::VariationsHeadersPtr variations =
-      variations_client->GetVariationsHeaders();
-  if (variations_client->IsOffTheRecord() || variations.is_null()) {
-    return headers;
-  }
-
-  headers.push_back(kClientDataHeader);
-  // The endpoint is always a Google property.
-  headers.push_back(variations->headers_map.at(
-      variations::mojom::GoogleWebVisibility::FIRST_PARTY));
-
-  return headers;
-}
-
-std::map<std::string, std::string> AddStartTimeQueryParam(
-    std::map<std::string, std::string> additional_search_query_params) {
-  auto it = additional_search_query_params.find(kStartTimeQueryParameter);
-  if (it != additional_search_query_params.end()) {
-    // If the start time is already set, do not override it.
-    return additional_search_query_params;
-  }
-
-  int64_t current_time_ms = base::Time::Now().InMillisecondsSinceUnixEpoch();
-  additional_search_query_params.insert(
-      {kStartTimeQueryParameter, base::NumberToString(current_time_ms)});
-  return additional_search_query_params;
-}
-
-std::string VitQueryParamValueForMimeType(lens::MimeType mime_type) {
-  // Default contextual visual input type.
-  std::string vitValue = kContextualVisualInputTypeQueryParameterValue;
-  switch (mime_type) {
-    case lens::MimeType::kPdf:
-      if (lens::features::UsePdfVitParam()) {
-        vitValue = kPdfVisualInputTypeQueryParameterValue;
-      }
-      break;
-    case lens::MimeType::kHtml:
-    case lens::MimeType::kPlainText:
-      if (lens::features::UseWebpageVitParam()) {
-        vitValue = kWebpageVisualInputTypeQueryParameterValue;
-      }
-      break;
-    case lens::MimeType::kUnknown:
-      break;
-    case lens::MimeType::kAnnotatedPageContent:
-      // APC is not used as a primary content type; the primary content type
-      // should be kHtml when APC is sent. If this path is hit, it's a mistake.
-      NOTREACHED() << "Apc should not be uploaded by itself.";
-    case lens::MimeType::kImage:
-    case lens::MimeType::kVideo:
-    case lens::MimeType::kAudio:
-    case lens::MimeType::kJson:
-      // These content types are not supported for the page content upload flow.
-      NOTREACHED() << "Unsupported option in page content upload";
-  }
-  return vitValue;
-}
-
 std::map<std::string, std::string> AddVisualInputTypeQueryParam(
     std::map<std::string, std::string> additional_search_query_params,
     lens::MimeType content_type) {
-  std::string vitValue = VitQueryParamValueForMimeType(content_type);
+  std::string vitValue = lens::VitQueryParamValueForMimeType(content_type);
   additional_search_query_params.insert(
       {kVisualInputTypeQueryParameterKey, vitValue});
   return additional_search_query_params;
-}
-
-std::string ContentTypeToString(lens::MimeType content_type) {
-  switch (content_type) {
-    case lens::MimeType::kPdf:
-      return kPdfMimeType;
-    case lens::MimeType::kHtml:
-      return kHtmlMimeType;
-    case lens::MimeType::kPlainText:
-      return kPlainTextMimeType;
-    case lens::MimeType::kUnknown:
-      return "";
-    case lens::MimeType::kAnnotatedPageContent:
-      // Upload annotated page content should only be done in the new request
-      // flow which does not use string for content type.
-      NOTREACHED() << "APC not supported in this flow";
-    case lens::MimeType::kImage:
-    case lens::MimeType::kVideo:
-    case lens::MimeType::kAudio:
-    case lens::MimeType::kJson:
-      // These content types are not supported for the page content upload flow.
-      NOTREACHED() << "Unsupported option in page content upload";
-  }
 }
 
 lens::LensOverlayInteractionRequestMetadata::Type ContentTypeToInteractionType(
     lens::MimeType content_type) {
   switch (content_type) {
     case lens::MimeType::kPdf:
-      if (lens::features::UsePdfInteractionType()) {
-        return lens::LensOverlayInteractionRequestMetadata::PDF_QUERY;
-      }
-      break;
+      return lens::LensOverlayInteractionRequestMetadata::PDF_QUERY;
     case lens::MimeType::kHtml:
     case lens::MimeType::kPlainText:
-      if (lens::features::UseWebpageInteractionType()) {
-        return lens::LensOverlayInteractionRequestMetadata::WEBPAGE_QUERY;
-      }
-      break;
+    case lens::MimeType::kAnnotatedPageContent:
+      return lens::LensOverlayInteractionRequestMetadata::WEBPAGE_QUERY;
     case lens::MimeType::kUnknown:
       break;
-    case lens::MimeType::kAnnotatedPageContent:
-      // APC is not used as a primary content type; the primary content type
-      // should be kHtml when APC is sent. If this path is hit, it's a mistake.
-      NOTREACHED() << "Apc should not be uploaded by itself.";
     case lens::MimeType::kImage:
     case lens::MimeType::kVideo:
     case lens::MimeType::kAudio:
@@ -309,28 +198,6 @@ lens::LensOverlayInteractionRequestMetadata::Type ContentTypeToInteractionType(
       NOTREACHED() << "Unsupported option in page content upload";
   }
   return lens::LensOverlayInteractionRequestMetadata::CONTEXTUAL_SEARCH_QUERY;
-}
-
-lens::ContentData::ContentType MimeTypeToContentType(
-    lens::MimeType content_type) {
-  switch (content_type) {
-    case lens::MimeType::kPdf:
-      return lens::ContentData::CONTENT_TYPE_PDF;
-    case lens::MimeType::kHtml:
-      return lens::ContentData::CONTENT_TYPE_INNER_HTML;
-    case lens::MimeType::kPlainText:
-      return lens::ContentData::CONTENT_TYPE_INNER_TEXT;
-    case lens::MimeType::kUnknown:
-      return lens::ContentData::CONTENT_TYPE_UNSPECIFIED;
-    case lens::MimeType::kAnnotatedPageContent:
-      return lens::ContentData::CONTENT_TYPE_ANNOTATED_PAGE_CONTENT;
-    case lens::MimeType::kImage:
-    case lens::MimeType::kVideo:
-    case lens::MimeType::kAudio:
-    case lens::MimeType::kJson:
-      // These content types are not supported for the page content upload flow.
-      NOTREACHED() << "Unsupported option in page content upload";
-  }
 }
 
 lens::LensOverlayClientLogs::LensOverlayEntryPoint
@@ -343,8 +210,18 @@ LenOverlayEntryPointFromInvocationSource(
       return lens::LensOverlayClientLogs::PAGE_CONTEXT_MENU;
     case lens::LensOverlayInvocationSource::kContentAreaContextMenuImage:
       return lens::LensOverlayClientLogs::IMAGE_CONTEXT_MENU;
+    case lens::LensOverlayInvocationSource::kContentAreaContextMenuText:
+      return lens::LensOverlayClientLogs::TEXT_CONTEXT_MENU;
+    case lens::LensOverlayInvocationSource::kContentAreaContextMenuVideo:
+      return lens::LensOverlayClientLogs::VIDEO_CONTEXT_MENU;
     case lens::LensOverlayInvocationSource::kOmnibox:
       return lens::LensOverlayClientLogs::OMNIBOX_BUTTON;
+    case lens::LensOverlayInvocationSource::kOmniboxContextualSuggestion:
+      return lens::LensOverlayClientLogs::OMNIBOX_CONTEXTUAL_SUGGESTION;
+    case lens::LensOverlayInvocationSource::kOmniboxPageAction:
+      return lens::LensOverlayClientLogs::OMNIBOX_PAGE_ACTION;
+    case lens::LensOverlayInvocationSource::kHomeworkActionChip:
+      return lens::LensOverlayClientLogs::HOMEWORK_ACTION_CHIP;
     case lens::LensOverlayInvocationSource::kToolbar:
       return lens::LensOverlayClientLogs::TOOLBAR_BUTTON;
     case lens::LensOverlayInvocationSource::kFindInPage:
@@ -352,34 +229,11 @@ LenOverlayEntryPointFromInvocationSource(
     case lens::LensOverlayInvocationSource::kLVFShutterButton:
     case lens::LensOverlayInvocationSource::kLVFGallery:
     case lens::LensOverlayInvocationSource::kContextMenu:
+    case lens::LensOverlayInvocationSource::kAIHub:
+    case lens::LensOverlayInvocationSource::kFREPromo:
       NOTREACHED() << "Invocation source not supported.";
   }
   return lens::LensOverlayClientLogs::UNKNOWN_ENTRY_POINT;
-}
-
-// Compresses the given bytes using Zstd and store them into `dst_bytes`.
-// Returns true if the compression is successful.
-bool ZstdCompressBytes(base::span<const uint8_t> src_bytes,
-                       std::string* dst_bytes) {
-  CHECK(dst_bytes);
-  size_t uncompressed_size = src_bytes.size();
-  size_t buffer_bounds = ZSTD_compressBound(uncompressed_size);
-
-  // Resize the output buffer to the upper bound of the compressed size.
-  dst_bytes->resize(buffer_bounds);
-
-  // Do the compression.
-  const size_t compressed_size = ZSTD_compress(
-      dst_bytes->data(), buffer_bounds, src_bytes.data(), uncompressed_size,
-      lens::features::GetZstdCompressionLevel());
-
-  if (ZSTD_isError(compressed_size)) {
-    return false;
-  }
-
-  // Resize the output vector to the actual compressed size.
-  dst_bytes->resize(compressed_size);
-  return true;
 }
 
 // Divides the content_bytes into small chunks, which are then compressed.
@@ -394,7 +248,7 @@ std::vector<std::string> MakeChunks(base::span<const uint8_t> content_bytes) {
     CHECK(current_chunk.has_value());
 
     std::string chunk;
-    const bool success = ZstdCompressBytes(current_chunk.value(), &chunk);
+    const bool success = lens::ZstdCompressBytes(current_chunk.value(), &chunk);
     if (!success) {
       // If any of the chunks fail to compress, then the request should fail.
       return std::vector<std::string>();
@@ -407,25 +261,13 @@ std::vector<std::string> MakeChunks(base::span<const uint8_t> content_bytes) {
 
 // Creates the lens::LensOverlayUploadChunkRequest for the given chunk.
 lens::LensOverlayUploadChunkRequest CreateUploadChunkRequest(
-    lens::LensOverlayRequestId request_id,
     int64_t chunk_id,
     int64_t total_chunks,
     std::string chunk,
     lens::LensOverlayRequestContext request_context) {
   lens::LensOverlayUploadChunkRequest request;
   request.mutable_request_context()->CopyFrom(request_context);
-
-  if (lens::features::IsLensOverlayUploadChunkingUseDebugOptionsEnabled()) {
-    // Only the first chunk should have this value set.
-    if (chunk_id == 0) {
-      request.mutable_debug_options()->set_total_chunks(total_chunks);
-    }
-    // Only the last chunk should set query chunks.
-    if (chunk_id == (total_chunks - 1)) {
-      request.mutable_debug_options()->set_query_chunks(true);
-    }
-  }
-
+  request.mutable_debug_options()->set_total_chunks(total_chunks);
   request.set_chunk_id(chunk_id);
   request.mutable_chunk_bytes()->assign(chunk.begin(), chunk.end());
   return request;
@@ -433,7 +275,7 @@ lens::LensOverlayUploadChunkRequest CreateUploadChunkRequest(
 
 // Returns the lens::Payload to be sent after uploading chunked data using the
 // repeated Content field instead of the deprecated payload fields.
-lens::Payload CreatePageContentPayloadWithUpdatedContentFieldsForChunks(
+lens::Payload CreatePageContentPayloadForChunks(
     base::span<const lens::PageContent> page_content,
     lens::MimeType primary_content_type,
     GURL page_url,
@@ -442,17 +284,16 @@ lens::Payload CreatePageContentPayloadWithUpdatedContentFieldsForChunks(
   lens::Payload payload;
   auto* content = payload.mutable_content();
 
-  if (!page_url.is_empty() &&
-      lens::features::SendPageUrlForContextualization()) {
+  if (!page_url.is_empty()) {
     content->set_webpage_url(page_url.spec());
   }
-  if (page_title.has_value() && !page_title.value().empty() &&
-      lens::features::SendPageTitleForContextualization()) {
+  if (page_title.has_value() && !page_title.value().empty()) {
     content->set_webpage_title(page_title.value());
   }
 
   auto* content_data = content->add_content_data();
-  content_data->set_content_type(MimeTypeToContentType(primary_content_type));
+  content_data->set_content_type(
+      lens::MimeTypeToContentType(primary_content_type));
   content_data->mutable_stored_chunk_options()->set_read_stored_chunks(true);
   content_data->mutable_stored_chunk_options()->set_total_stored_chunks(
       total_stored_chunks);
@@ -460,47 +301,19 @@ lens::Payload CreatePageContentPayloadWithUpdatedContentFieldsForChunks(
   return payload;
 }
 
-// Returns the lens::Payload to be sent after uploading chunked data.
-lens::Payload CreatePageContentPayloadForChunks(
-    base::span<const lens::PageContent> page_content,
-    lens::MimeType primary_content_type,
-    GURL page_url,
-    std::optional<std::string> page_title,
-    int64_t total_stored_chunks) {
-  if (lens::features::UseUpdatedContextFields()) {
-    return CreatePageContentPayloadWithUpdatedContentFieldsForChunks(
-        page_content, primary_content_type, page_url, page_title,
-        total_stored_chunks);
-  }
-
-  lens::Payload payload;
-  payload.set_content_type(ContentTypeToString(primary_content_type));
-  if (!page_url.is_empty() &&
-      lens::features::SendPageUrlForContextualization()) {
-    payload.set_page_url(page_url.spec());
-  }
-  payload.mutable_stored_chunk_options()->set_read_stored_chunks(true);
-  payload.mutable_stored_chunk_options()->set_total_stored_chunks(
-      total_stored_chunks);
-  payload.set_compression_type(lens::CompressionType::ZSTD);
-  return payload;
-}
-
 // Returns the lens::Payload using the repeated Content field instead of the
 // deprecated payload fields.
-lens::Payload CreatePageContentPayloadWithUpdatedContentFields(
+lens::Payload CreatePageContentPayload(
     base::span<const lens::PageContent> page_contents,
     GURL page_url,
     std::optional<std::string> page_title) {
   lens::Payload payload;
   auto* content = payload.mutable_content();
 
-  if (!page_url.is_empty() &&
-      lens::features::SendPageUrlForContextualization()) {
+  if (!page_url.is_empty()) {
     content->set_webpage_url(page_url.spec());
   }
-  if (page_title.has_value() && !page_title.value().empty() &&
-      lens::features::SendPageTitleForContextualization()) {
+  if (page_title.has_value() && !page_title.value().empty()) {
     content->set_webpage_title(page_title.value());
   }
 
@@ -509,12 +322,12 @@ lens::Payload CreatePageContentPayloadWithUpdatedContentFields(
     content_data->set_content_type(
         MimeTypeToContentType(page_content.content_type_));
 
-    if (page_content.content_type_ == lens::MimeType::kPdf &&
-        lens::features::ShouldZstdCompressPdfBytes()) {
+    // Compress PDF bytes.
+    if (page_content.content_type_ == lens::MimeType::kPdf) {
       // If compression is successful, set the compression type and return.
       // Otherwise, fall back to the original bytes.
-      if (ZstdCompressBytes(page_content.bytes_,
-                            content_data->mutable_data())) {
+      if (lens::ZstdCompressBytes(page_content.bytes_,
+                                  content_data->mutable_data())) {
         content_data->set_compression_type(lens::CompressionType::ZSTD);
         continue;
       }
@@ -526,45 +339,6 @@ lens::Payload CreatePageContentPayloadWithUpdatedContentFields(
                                          page_content.bytes_.end());
   }
 
-  return payload;
-}
-
-lens::Payload CreatePageContentPayload(
-    base::span<const lens::PageContent> page_content,
-    lens::MimeType primary_content_type,
-    GURL page_url,
-    std::optional<std::string> page_title) {
-  if (lens::features::UseUpdatedContextFields()) {
-    return CreatePageContentPayloadWithUpdatedContentFields(
-        page_content, page_url, page_title);
-  }
-
-  CHECK_EQ(page_content.size(), 1u);
-  auto content_type = page_content.front().content_type_;
-  auto content_bytes = page_content.front().bytes_;
-  CHECK_EQ(content_type, primary_content_type);
-
-  lens::Payload payload;
-  payload.set_content_type(ContentTypeToString(content_type));
-  if (!page_url.is_empty() &&
-      lens::features::SendPageUrlForContextualization()) {
-    payload.set_page_url(page_url.spec());
-  }
-
-  // Compress the PDF bytes if the feature flag is enabled and the bytes are for
-  // a PDF.
-  if (content_type == lens::MimeType::kPdf &&
-      lens::features::ShouldZstdCompressPdfBytes()) {
-    // If compression is successful, set the compression type and return.
-    // Otherwise, fall back to the original bytes.
-    if (ZstdCompressBytes(content_bytes, payload.mutable_content_data())) {
-      payload.set_compression_type(lens::CompressionType::ZSTD);
-      return payload;
-    }
-  }
-
-  payload.mutable_content_data()->assign(content_bytes.begin(),
-                                         content_bytes.end());
   return payload;
 }
 
@@ -644,7 +418,7 @@ void LensOverlayQueryController::StartQueryFlow(
 
   if (primary_content_type_ != lens::MimeType::kUnknown) {
     suggest_inputs_.set_contextual_visual_input_type(
-        VitQueryParamValueForMimeType(primary_content_type_));
+        lens::VitQueryParamValueForMimeType(primary_content_type_));
     RunSuggestInputsCallback();
   }
 
@@ -759,6 +533,7 @@ void LensOverlayQueryController::SendPartialPageContentRequest(
 }
 
 void LensOverlayQueryController::SendRegionSearch(
+    base::Time query_start_time,
     lens::mojom::CenterRotatedBoxPtr region,
     lens::LensOverlaySelectionType lens_selection_type,
     std::map<std::string, std::string> additional_search_query_params,
@@ -766,19 +541,21 @@ void LensOverlayQueryController::SendRegionSearch(
   CHECK(query_controller_state_ != QueryControllerState::kOff)
       << "SendRegionSearch called when query controller is off";
 
-  SendInteraction(/*region=*/std::move(region), /*query_text=*/std::nullopt,
+  SendInteraction(query_start_time, /*region=*/std::move(region),
+                  /*query_text=*/std::nullopt,
                   /*object_id=*/std::nullopt, lens_selection_type,
                   additional_search_query_params, region_bytes);
 }
 
 void LensOverlayQueryController::SendContextualTextQuery(
+    base::Time query_start_time,
     const std::string& query_text,
     lens::LensOverlaySelectionType lens_selection_type,
     std::map<std::string, std::string> additional_search_query_params) {
   CHECK(query_controller_state_ != QueryControllerState::kOff)
       << "SendContextualTextQuery called when query controller is off";
   if (underlying_page_contents_.empty()) {
-    SendTextOnlyQuery(query_text, lens_selection_type,
+    SendTextOnlyQuery(query_start_time, query_text, lens_selection_type,
                       additional_search_query_params);
     return;
   }
@@ -787,10 +564,10 @@ void LensOverlayQueryController::SendContextualTextQuery(
   // full page content upload is finished and/or the full image query for an
   // updated screenshot is finished.
   if (!ShouldSendContextualSearchQuery()) {
-    pending_contextual_query_callback_ =
-        base::BindOnce(&LensOverlayQueryController::SendContextualTextQuery,
-                       weak_ptr_factory_.GetWeakPtr(), query_text,
-                       lens_selection_type, additional_search_query_params);
+    pending_contextual_query_callback_ = base::BindOnce(
+        &LensOverlayQueryController::SendContextualTextQuery,
+        weak_ptr_factory_.GetWeakPtr(), query_start_time, query_text,
+        lens_selection_type, additional_search_query_params);
     return;
   }
 
@@ -798,12 +575,13 @@ void LensOverlayQueryController::SendContextualTextQuery(
   additional_search_query_params = AddVisualInputTypeQueryParam(
       additional_search_query_params, primary_content_type_);
 
-  SendInteraction(/*region=*/nullptr, query_text,
+  SendInteraction(query_start_time, /*region=*/nullptr, query_text,
                   /*object_id=*/std::nullopt, lens_selection_type,
                   additional_search_query_params, std::nullopt);
 }
 
 void LensOverlayQueryController::SendTextOnlyQuery(
+    base::Time query_start_time,
     const std::string& query_text,
     lens::LensOverlaySelectionType lens_selection_type,
     std::map<std::string, std::string> additional_search_query_params) {
@@ -816,11 +594,6 @@ void LensOverlayQueryController::SendTextOnlyQuery(
   latest_interaction_request_data_ = std::make_unique<LensServerFetchRequest>(
       CreateInvalidRequestId(),
       /*query_start_time_ms=*/base::TimeTicks::Now());
-
-  // Add the start time to the query params now, so that any additional
-  // client processing time is included.
-  additional_search_query_params =
-      AddStartTimeQueryParam(additional_search_query_params);
 
   // The visual search interaction log data should be added as late as possible,
   // so that is_parent_query can be accurately set if the user issues multiple
@@ -841,15 +614,18 @@ void LensOverlayQueryController::SendTextOnlyQuery(
 
   lens::proto::LensOverlayUrlResponse lens_overlay_url_response;
   lens_overlay_url_response.set_url(
-      lens::BuildTextOnlySearchURL(
-          query_text, page_url_, page_title_, additional_search_query_params,
-          invocation_source_, lens_selection_type, use_dark_mode_)
+      lens::BuildTextOnlySearchURL(query_start_time, query_text, page_url_,
+                                   page_title_, additional_search_query_params,
+                                   invocation_source_, lens_selection_type,
+                                   use_dark_mode_)
           .spec());
+  lens_overlay_url_response.set_page_url(page_url_.spec());
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(url_callback_, lens_overlay_url_response));
 }
 
 void LensOverlayQueryController::SendMultimodalRequest(
+    base::Time query_start_time,
     lens::mojom::CenterRotatedBoxPtr region,
     const std::string& query_text,
     lens::LensOverlaySelectionType multimodal_selection_type,
@@ -861,7 +637,7 @@ void LensOverlayQueryController::SendMultimodalRequest(
   if (base::TrimWhitespaceASCII(query_text, base::TRIM_ALL).empty()) {
     return;
   }
-  SendInteraction(/*region=*/std::move(region), query_text,
+  SendInteraction(query_start_time, /*region=*/std::move(region), query_text,
                   /*object_id=*/std::nullopt, multimodal_selection_type,
                   additional_search_query_params, region_bytes);
 }
@@ -881,6 +657,35 @@ void LensOverlayQueryController::SendSemanticEventGen204IfEnabled(
   SendSemanticEventGen204IfEnabled(event, request_id);
 }
 
+std::unique_ptr<lens::LensOverlayRequestId>
+LensOverlayQueryController::GetNextRequestId(RequestIdUpdateMode update_mode) {
+  std::unique_ptr<lens::LensOverlayRequestId> request_id =
+      request_id_generator_->GetNextRequestId(update_mode);
+  latest_request_id_ = *request_id.get();
+  latest_encoded_analytics_id_ =
+      request_id_generator_->GetBase32EncodedAnalyticsId();
+  std::string encoded_request_id = Base64EncodeRequestId(*request_id);
+  suggest_inputs_.set_encoded_request_id(encoded_request_id);
+  RunSuggestInputsCallback();
+  return request_id;
+}
+
+void LensOverlayQueryController::RunSuggestInputsCallback() {
+  suggest_inputs_.set_send_gsession_vsrid_for_contextual_suggest(true);
+  suggest_inputs_.set_send_gsession_vsrid_vit_for_lens_suggest(
+      lens::features::GetLensOverlaySendLensInputsForLensSuggest());
+  suggest_inputs_.set_send_vsint_for_lens_suggest(
+      lens::features::
+          GetLensOverlaySendLensVisualInteractionDataForLensSuggest());
+  if (cluster_info_.has_value()) {
+    suggest_inputs_.set_search_session_id(cluster_info_->search_session_id());
+  } else {
+    suggest_inputs_.clear_search_session_id();
+  }
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(suggest_inputs_callback_, suggest_inputs_));
+}
+
 void LensOverlayQueryController::ResetRequestClusterInfoStateForTesting() {
   ResetRequestClusterInfoState();
 }
@@ -889,11 +694,11 @@ std::unique_ptr<EndpointFetcher>
 LensOverlayQueryController::CreateEndpointFetcher(
     std::string request_string,
     const GURL& fetch_url,
-    const HttpMethod& http_method,
-    const base::TimeDelta& timeout,
+    HttpMethod http_method,
+    base::TimeDelta timeout,
     const std::vector<std::string>& request_headers,
     const std::vector<std::string>& cors_exempt_headers,
-    const UploadProgressCallback upload_progress_callback) {
+    UploadProgressCallback upload_progress_callback) {
   return std::make_unique<EndpointFetcher>(
       /*url_loader_factory=*/profile_
           ? profile_->GetURLLoaderFactory().get()
@@ -901,7 +706,7 @@ LensOverlayQueryController::CreateEndpointFetcher(
       /*url=*/fetch_url,
       /*content_type=*/kContentType,
       /*timeout=*/timeout,
-      /*post_data=*/request_string,
+      /*post_data=*/std::move(request_string),
       /*headers=*/request_headers,
       /*cors_exempt_headers=*/cors_exempt_headers, chrome::GetChannel(),
       /*request_params=*/
@@ -909,7 +714,7 @@ LensOverlayQueryController::CreateEndpointFetcher(
                                               kTrafficAnnotationTag)
           .SetCredentialsMode(CredentialsMode::kInclude)
           .SetSetSiteForCookies(true)
-          .SetUploadProgressCallback(upload_progress_callback)
+          .SetUploadProgressCallback(std::move(upload_progress_callback))
           .Build());
 }
 
@@ -951,31 +756,7 @@ std::string LensOverlayQueryController::GetVsridForNewTab() {
   std::unique_ptr<lens::LensOverlayRequestId> request_id =
       request_id_generator_->GetNextRequestId(
           RequestIdUpdateMode::kOpenInNewTab);
-  std::string serialized_request_id;
-  CHECK(request_id->SerializeToString(&serialized_request_id));
-  std::string encoded_request_id;
-  base::Base64UrlEncode(serialized_request_id,
-                        base::Base64UrlEncodePolicy::OMIT_PADDING,
-                        &encoded_request_id);
-  return encoded_request_id;
-}
-
-std::unique_ptr<lens::LensOverlayRequestId>
-LensOverlayQueryController::GetNextRequestId(RequestIdUpdateMode update_mode) {
-  std::unique_ptr<lens::LensOverlayRequestId> request_id =
-      request_id_generator_->GetNextRequestId(update_mode);
-  latest_request_id_ = *request_id.get();
-  latest_encoded_analytics_id_ =
-      request_id_generator_->GetBase32EncodedAnalyticsId();
-  std::string serialized_request_id;
-  CHECK(request_id->SerializeToString(&serialized_request_id));
-  std::string encoded_request_id;
-  base::Base64UrlEncode(serialized_request_id,
-                        base::Base64UrlEncodePolicy::OMIT_PADDING,
-                        &encoded_request_id);
-  suggest_inputs_.set_encoded_request_id(encoded_request_id);
-  RunSuggestInputsCallback();
-  return request_id;
+  return Base64EncodeRequestId(*request_id);
 }
 
 void LensOverlayQueryController::FetchClusterInfoRequest() {
@@ -1006,11 +787,25 @@ void LensOverlayQueryController::PerformClusterInfoFetchRequest(
   // Generate the URL to fetch.
   GURL fetch_url = GURL(lens::features::GetLensOverlayClusterInfoEndpointUrl());
 
+  HttpMethod request_method;
+  std::string request_string;
+  request_method = HttpMethod::kPost;
+
+  // Create the client context to include in the request.
+  lens::LensOverlayClientContext client_context = CreateClientContext();
+  lens::LensOverlayServerClusterInfoRequest request;
+  request.set_enable_search_session_id(true);
+  request.set_surface(client_context.surface());
+  request.set_platform(client_context.platform());
+  request.mutable_rendering_context()->CopyFrom(
+      client_context.rendering_context());
+  CHECK(request.SerializeToString(&request_string));
+
   // Create the EndpointFetcher, responsible for making the request using our
   // given params. Store in class variable to keep endpoint fetcher alive until
   // the request is made.
   cluster_info_endpoint_fetcher_ = CreateEndpointFetcher(
-      /*request_string=*/std::string(), fetch_url, HttpMethod::kGet,
+      std::move(request_string), fetch_url, request_method,
       base::Milliseconds(lens::features::GetLensOverlayServerRequestTimeout()),
       request_headers, cors_exempt_headers, base::DoNothing());
 
@@ -1056,16 +851,18 @@ void LensOverlayQueryController::ClusterInfoFetchResponseHandler(
   cluster_info_->set_server_session_id(server_response.server_session_id());
   cluster_info_->set_search_session_id(server_response.search_session_id());
 
-  // Update the suggest inputs with the cluster info's search session id.
-  RunSuggestInputsCallback();
-
   // If routing info is enabled, store the routing info to be included in
   // followup requests.
   if (lens::features::IsLensOverlayRoutingInfoEnabled() &&
       server_response.has_routing_info() &&
       !request_id_generator_->HasRoutingInfo()) {
-    request_id_generator_->SetRoutingInfo(server_response.routing_info());
+    std::unique_ptr<lens::LensOverlayRequestId> request_id =
+        request_id_generator_->SetRoutingInfo(server_response.routing_info());
+    suggest_inputs_.set_encoded_request_id(Base64EncodeRequestId(*request_id));
   }
+
+  // Update the suggest inputs with the cluster info's search session id.
+  RunSuggestInputsCallback();
 
   // Clear the cluster info after its lifetime expires.
   base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
@@ -1100,8 +897,13 @@ void LensOverlayQueryController::PrepareAndFetchFullImageRequest() {
   // cluster info handshake.
   if (!cluster_info_ &&
       (lens::features::IsLensOverlayClusterInfoOptimizationEnabled() ||
-       lens::features::IsLensOverlayContextualSearchboxEnabled())) {
+       lens::IsLensOverlayContextualSearchboxEnabled())) {
     FetchClusterInfoRequest();
+    return;
+  }
+
+  // If the screenshot draws nothing, return.
+  if (original_screenshot_.drawsNothing()) {
     return;
   }
 
@@ -1340,7 +1142,10 @@ void LensOverlayQueryController::FullImageFetchResponseHandler(
     if (lens::features::IsLensOverlayRoutingInfoEnabled() &&
         cluster_info_->has_routing_info() &&
         !request_id_generator_->HasRoutingInfo()) {
-      request_id_generator_->SetRoutingInfo(cluster_info_->routing_info());
+      std::unique_ptr<lens::LensOverlayRequestId> new_request_id =
+          request_id_generator_->SetRoutingInfo(cluster_info_->routing_info());
+      suggest_inputs_.set_encoded_request_id(
+          Base64EncodeRequestId(*new_request_id));
     }
   }
 
@@ -1398,11 +1203,21 @@ void LensOverlayQueryController::PrepareAndFetchPageContentRequest() {
   compression_task_tracker_->TryCancelAll();
   page_contents_request_start_time_ = base::TimeTicks::Now();
   page_content_request_in_progress_ = true;
+  chunk_upload_in_progress_ = false;
+  remaining_upload_chunk_responses_ = 0;
+  remaining_chunk_retries = lens::features::GetLensOverlayUploadChunkRetries();
 
   // The initial request id should be set by the time we get here. If not, call
   // below will crash.
   CHECK(initial_request_id_);
-  if (lens::features::IsLensOverlayUploadChunkingEnabled()) {
+
+  // Send a chunk request if the upload is a PDF larger than the chunk size.
+  // If not, send a normal page content request.
+  if (lens::features::IsLensOverlayUploadChunkingEnabled() &&
+      primary_content_type_ == lens::MimeType::kPdf &&
+      underlying_page_contents_.front().bytes_.size() >
+          lens::features::GetLensOverlayChunkSizeBytes()) {
+    chunk_upload_in_progress_ = true;
     // Post MakeChunks to a task off the main thread so compression does not
     // throttle the main thread.
     compression_task_tracker_->PostTaskAndReplyWithResult(
@@ -1413,7 +1228,7 @@ void LensOverlayQueryController::PrepareAndFetchPageContentRequest() {
             weak_ptr_factory_.GetWeakPtr(),
             is_first_page_contents_request_
                 ? *initial_request_id_
-                : *request_id_generator_->GetNextRequestId(
+                : *GetNextRequestId(
                       lens::RequestIdUpdateMode::kPageContentRequest)));
   } else {
     // Post CreatePageContentPayload to a task off the main thread so
@@ -1421,13 +1236,13 @@ void LensOverlayQueryController::PrepareAndFetchPageContentRequest() {
     compression_task_tracker_->PostTaskAndReplyWithResult(
         compression_task_runner_.get(), FROM_HERE,
         base::BindOnce(&CreatePageContentPayload, underlying_page_contents_,
-                       primary_content_type_, page_url_, page_title_),
+                       page_url_, page_title_),
         base::BindOnce(
             &LensOverlayQueryController::PrepareAndFetchPageContentRequestPart2,
             weak_ptr_factory_.GetWeakPtr(),
             is_first_page_contents_request_
                 ? *initial_request_id_
-                : *request_id_generator_->GetNextRequestId(
+                : *GetNextRequestId(
                       lens::RequestIdUpdateMode::kPageContentRequest)));
   }
 
@@ -1446,16 +1261,22 @@ void LensOverlayQueryController::PrepareAndFetchUploadChunkRequests(
   if (!chunks.size()) {
     return;
   }
+  chunk_progress = std::vector<size_t>(chunks.size());
+  total_chunk_progress_ = 0;
+  total_chunk_upload_size_ = 0;
+
   lens::LensOverlayRequestContext request_context;
   request_context.mutable_request_id()->CopyFrom(request_id);
   request_context.mutable_client_context()->CopyFrom(CreateClientContext());
 
   std::vector<lens::LensOverlayUploadChunkRequest> requests;
   for (size_t i = 0; i < chunks.size(); i++) {
-    requests.push_back(CreateUploadChunkRequest(request_id, i, chunks.size(),
-                                                chunks[i], request_context));
+    total_chunk_upload_size_ += chunks[i].size();
+    requests.push_back(
+        CreateUploadChunkRequest(i, chunks.size(), chunks[i], request_context));
   }
   pending_upload_chunk_requests_ = requests;
+  upload_chunk_sequence_id = request_id.sequence_id();
 
   chunk_upload_access_token_fetcher_ =
       CreateOAuthHeadersAndContinue(base::BindOnce(
@@ -1467,6 +1288,7 @@ void LensOverlayQueryController::PrepareAndFetchUploadChunkRequestsPart2(
     std::vector<std::string> headers) {
   chunk_upload_access_token_fetcher_.reset();
   pending_upload_chunk_headers_ = headers;
+  remaining_upload_chunk_responses_ = pending_upload_chunk_requests_.size();
   for (size_t i = 0; i < pending_upload_chunk_requests_.size(); i++) {
     FetchUploadChunkRequest(i);
   }
@@ -1478,23 +1300,21 @@ void LensOverlayQueryController::FetchUploadChunkRequest(
   std::string request_string;
   CHECK(request.SerializeToString(&request_string));
 
-  EndpointFetcherCallback response_received_callback = base::DoNothing();
-  if (chunk_request_index == pending_upload_chunk_requests_.size() - 1) {
-    response_received_callback = base::BindOnce(
-        &LensOverlayQueryController::UploadChunkResponseHandler,
-        weak_ptr_factory_.GetWeakPtr(), request.request_context().request_id(),
-        pending_upload_chunk_requests_.size());
-  }
-
   PerformFetchRequest(
-      request_string, &pending_upload_chunk_headers_,
+      std::move(request_string), &pending_upload_chunk_headers_,
       base::Milliseconds(
           lens::features::GetLensOverlayUploadChunkRequestTimeoutMs()),
       base::BindOnce(
           &LensOverlayQueryController::OnChunkUploadEndpointFetcherCreated,
           weak_ptr_factory_.GetWeakPtr(),
           request.request_context().request_id()),
-      std::move(response_received_callback), base::NullCallback(),
+      base::BindOnce(&LensOverlayQueryController::UploadChunkResponseHandler,
+                     weak_ptr_factory_.GetWeakPtr(),
+                     request.request_context().request_id(),
+                     pending_upload_chunk_requests_.size()),
+      base::BindRepeating(
+          &LensOverlayQueryController::UploadChunkProgressHandler,
+          weak_ptr_factory_.GetWeakPtr(), chunk_request_index),
       GURL(lens::features::GetLensOverlayUploadChunkEndpointURL()));
 }
 
@@ -1502,15 +1322,25 @@ void LensOverlayQueryController::UploadChunkResponseHandler(
     lens::LensOverlayRequestId request_id,
     size_t total_chunks,
     std::unique_ptr<EndpointResponse> response) {
-  chunk_upload_endpoint_fetchers_.clear();
-  base::SequencedTaskRunner::GetCurrentDefault()->PostTaskAndReplyWithResult(
-      FROM_HERE,
-      base::BindOnce(&CreatePageContentPayloadForChunks,
-                     underlying_page_contents_, primary_content_type_,
-                     page_url_, page_title_, total_chunks),
-      base::BindOnce(
-          &LensOverlayQueryController::PrepareAndFetchPageContentRequestPart2,
-          weak_ptr_factory_.GetWeakPtr(), request_id));
+  // If there is a newer sequence id, a new request has been initiated before
+  // this one has completed. Do nothing and return.
+  if (request_id.sequence_id() != upload_chunk_sequence_id) {
+    return;
+  }
+
+  remaining_upload_chunk_responses_--;
+  // If this is the last chunk to receive a response, perform the page content
+  // request.
+  if (remaining_upload_chunk_responses_ == 0) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTaskAndReplyWithResult(
+        FROM_HERE,
+        base::BindOnce(&CreatePageContentPayloadForChunks,
+                       underlying_page_contents_, primary_content_type_,
+                       page_url_, page_title_, total_chunks),
+        base::BindOnce(
+            &LensOverlayQueryController::PrepareAndFetchPageContentRequestPart2,
+            weak_ptr_factory_.GetWeakPtr(), request_id));
+  }
 }
 
 void LensOverlayQueryController::PrepareAndFetchPageContentRequestPart2(
@@ -1526,6 +1356,9 @@ void LensOverlayQueryController::PrepareAndFetchPageContentRequestPart2(
       request_context);
 
   request.mutable_objects_request()->mutable_payload()->CopyFrom(payload);
+
+  // Save the request in case it needs to be resent.
+  pending_page_content_request_.CopyFrom(request);
 
   page_content_access_token_fetcher_ = CreateOAuthHeadersAndContinue(
       base::BindOnce(&LensOverlayQueryController::PerformPageContentRequest,
@@ -1548,9 +1381,14 @@ void LensOverlayQueryController::PerformPageContentRequest(
       base::BindOnce(&LensOverlayQueryController::PageContentResponseHandler,
                      weak_ptr_factory_.GetWeakPtr(),
                      request.objects_request().request_context().request_id()),
-      base::BindRepeating(
-          &LensOverlayQueryController::PageContentUploadProgressHandler,
-          weak_ptr_factory_.GetWeakPtr()));
+      // If this is a chunked upload, upload progress will have already been
+      // reported by the chunk uploads, so skip passing in the upload progress
+      // handler here.
+      chunk_upload_in_progress_
+          ? base::NullCallback()
+          : base::BindRepeating(
+                &LensOverlayQueryController::PageContentUploadProgressHandler,
+                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void LensOverlayQueryController::PageContentResponseHandler(
@@ -1558,17 +1396,86 @@ void LensOverlayQueryController::PageContentResponseHandler(
     std::unique_ptr<EndpointResponse> response) {
   page_content_endpoint_fetcher_.reset();
 
+  // Ensure the page content upload doesn't need to be retried.
+  // If it does, exit early.
+  if (MaybeRetryPageContentUpload(std::move(response))) {
+    return;
+  }
+
   // The upload progress handler is not guaranteed to execute, so if a response
   // is received, mark the request as no longer in progress to allow the
   // interaction request to be sent.
   PageContentUploadFinished();
 
-  SendLatencyGen204IfEnabled(
-      LatencyType::kPageContentUploadLatency, page_contents_request_start_time_,
-      VitQueryParamValueForMimeType(primary_content_type_),
-      /*cluster_info_latency=*/std::nullopt,
-      /*encoded_analytics_id=*/std::nullopt,
-      std::make_optional<lens::LensOverlayRequestId>(request_id));
+  // If the chunk uploads have already completed, or if upload chunking was not
+  // done, this will send the gen204 ping and clear the endpoint fetchers.
+  MaybeSendPageContentUploadLatencyGen204(request_id);
+}
+
+bool LensOverlayQueryController::MaybeRetryPageContentUpload(
+    std::unique_ptr<EndpointResponse> response) {
+  // Check if the server response contains missing chunk errors to handle.
+  // Proceed without handling if out of retries.
+  if (remaining_chunk_retries > 0) {
+    remaining_chunk_retries--;
+    lens::LensOverlayServerResponse server_response;
+    const std::string response_string = response->response;
+    bool parse_successful = server_response.ParseFromArray(
+        response_string.data(), response_string.size());
+    if (parse_successful &&
+        server_response.error().error_type() ==
+            LensOverlayServerError_ErrorType::
+                LensOverlayServerError_ErrorType_MISSING_CHUNKS) {
+      auto missing_chunks_metadata =
+          server_response.error().missing_chunks_metadata();
+      if (!missing_chunks_metadata.has_chunk_metadata()) {
+        // Interaction request likely misrouted. Resend it.
+        page_content_access_token_fetcher_ =
+            CreateOAuthHeadersAndContinue(base::BindOnce(
+                &LensOverlayQueryController::PerformPageContentRequest,
+                weak_ptr_factory_.GetWeakPtr(), pending_page_content_request_));
+        return true;
+      }
+      if (missing_chunks_metadata.missing_chunk_ids_size() > 0) {
+        // Missing chunks. Resend the missing chunks.
+        chunk_upload_access_token_fetcher_ =
+            CreateOAuthHeadersAndContinue(base::BindOnce(
+                &LensOverlayQueryController::RetryUploadChunkRequests,
+                weak_ptr_factory_.GetWeakPtr(),
+                server_response.error()
+                    .missing_chunks_metadata()
+                    .missing_chunk_ids()));
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void LensOverlayQueryController::RetryUploadChunkRequests(
+    const google::protobuf::RepeatedField<int64_t>& chunk_ids,
+    std::vector<std::string> headers) {
+  chunk_upload_access_token_fetcher_.reset();
+  pending_upload_chunk_headers_ = headers;
+  remaining_upload_chunk_responses_ = chunk_ids.size();
+  for (int64_t chunk_id : chunk_ids) {
+    FetchUploadChunkRequest(chunk_id);
+  }
+}
+
+void LensOverlayQueryController::MaybeSendPageContentUploadLatencyGen204(
+    lens::LensOverlayRequestId request_id) {
+  if (!page_content_request_in_progress_ &&
+      remaining_upload_chunk_responses_ == 0) {
+    chunk_upload_endpoint_fetchers_.clear();
+    SendLatencyGen204IfEnabled(
+        LatencyType::kPageContentUploadLatency,
+        page_contents_request_start_time_,
+        VitQueryParamValueForMimeType(primary_content_type_),
+        /*cluster_info_latency=*/std::nullopt,
+        /*encoded_analytics_id=*/std::nullopt,
+        std::make_optional<lens::LensOverlayRequestId>(request_id));
+  }
 }
 
 void LensOverlayQueryController::PageContentUploadProgressHandler(
@@ -1577,17 +1484,38 @@ void LensOverlayQueryController::PageContentUploadProgressHandler(
   if (page_content_upload_progress_callback_) {
     page_content_upload_progress_callback_.Run(position, total);
   }
+}
 
-  if (lens::features::ShouldHoldContextualQueriesUntilAck()) {
-    return;
+void LensOverlayQueryController::UploadChunkProgressHandler(
+    size_t chunk_request_index,
+    uint64_t position,
+    uint64_t total) {
+  // Caller of this callback should be sequenced.
+
+  // Save the reported position of each chunk to the chunk_progress vector.
+  // Instead of repeatedly summing over the entire vector, increment the total
+  // chunk progress by the difference between the currently reported position
+  // and the last reported position of the chunk.
+  total_chunk_progress_ += position - chunk_progress[chunk_request_index];
+  chunk_progress[chunk_request_index] = position;
+
+  // Overhead causes the total progress to be very slightly above the total
+  // upload size (by about 0.01%). Cap to avoid reporting progress > 100%.
+  if (total_chunk_progress_ > total_chunk_upload_size_) {
+    total_chunk_progress_ = total_chunk_upload_size_;
   }
-  if (position == total) {
-    PageContentUploadFinished();
+
+  if (page_content_upload_progress_callback_) {
+    page_content_upload_progress_callback_.Run(total_chunk_progress_,
+                                               total_chunk_upload_size_);
   }
 }
 
 void LensOverlayQueryController::PageContentUploadFinished() {
+  pending_page_content_request_.Clear();
   page_content_request_in_progress_ = false;
+  chunk_upload_in_progress_ = false;
+  chunk_progress.clear();
   if (pending_contextual_query_callback_) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, std::move(pending_contextual_query_callback_));
@@ -1614,9 +1542,8 @@ void LensOverlayQueryController::PrepareAndFetchPartialPageContentRequest() {
     CHECK(initial_request_id_);
     request_context.mutable_request_id()->CopyFrom(*initial_request_id_);
   } else {
-    request_context.mutable_request_id()->CopyFrom(
-        *request_id_generator_->GetNextRequestId(
-            lens::RequestIdUpdateMode::kPartialPageContentRequest));
+    request_context.mutable_request_id()->CopyFrom(*GetNextRequestId(
+        lens::RequestIdUpdateMode::kPartialPageContentRequest));
   }
   request_context.mutable_client_context()->CopyFrom(CreateClientContext());
   request.mutable_objects_request()->mutable_request_context()->CopyFrom(
@@ -1635,30 +1562,18 @@ void LensOverlayQueryController::PrepareAndFetchPartialPageContentRequest() {
     page->add_text_segments(base::UTF16ToUTF8(page_text));
   }
 
-  if (lens::features::UseUpdatedContextFields()) {
-    auto* content = payload.mutable_content();
-    auto* content_data = content->add_content_data();
-    content_data->set_content_type(
-        lens::ContentData::CONTENT_TYPE_EARLY_PARTIAL_PDF);
-    partial_pdf_document.SerializeToString(content_data->mutable_data());
+  auto* content = payload.mutable_content();
+  auto* content_data = content->add_content_data();
+  content_data->set_content_type(
+      lens::ContentData::CONTENT_TYPE_EARLY_PARTIAL_PDF);
+  partial_pdf_document.SerializeToString(content_data->mutable_data());
 
-    // Add the page url to the payload if it is available.
-    if (!page_url_.is_empty() &&
-        lens::features::SendPageUrlForContextualization()) {
-      content->set_webpage_url(page_url_.spec());
-    }
-    if (page_title_.has_value() && !page_title_.value().empty() &&
-        lens::features::SendPageTitleForContextualization()) {
-      content->set_webpage_title(page_title_.value());
-    }
-  } else {
-    payload.mutable_partial_pdf_document()->CopyFrom(partial_pdf_document);
-
-    // Add the page url to the payload if it is available.
-    if (!page_url_.is_empty() &&
-        lens::features::SendPageUrlForContextualization()) {
-      payload.set_page_url(page_url_.spec());
-    }
+  // Add the page url to the payload if it is available.
+  if (!page_url_.is_empty()) {
+    content->set_webpage_url(page_url_.spec());
+  }
+  if (page_title_.has_value() && !page_title_.value().empty()) {
+    content->set_webpage_title(page_title_.value());
   }
 
   request.mutable_objects_request()->mutable_payload()->CopyFrom(payload);
@@ -1705,6 +1620,7 @@ void LensOverlayQueryController::PartialPageContentResponseHandler(
 }
 
 void LensOverlayQueryController::SendInteraction(
+    base::Time query_start_time,
     lens::mojom::CenterRotatedBoxPtr region,
     std::optional<std::string> query_text,
     std::optional<std::string> object_id,
@@ -1717,18 +1633,13 @@ void LensOverlayQueryController::SendInteraction(
   // image request / response handlers.
   pending_interaction_callback_.Reset();
 
-  // Add the start time to the query params now, so that any additional
-  // client processing time is included.
-  additional_search_query_params =
-      AddStartTimeQueryParam(additional_search_query_params);
-
   // If the cluster info is missing add the interaction to the pending callback
   // to be sent once the cluster info is available.
   if (!cluster_info_.has_value()) {
     pending_interaction_callback_ =
         base::BindOnce(&LensOverlayQueryController::SendInteraction,
-                       weak_ptr_factory_.GetWeakPtr(), std::move(region),
-                       query_text, object_id, selection_type,
+                       weak_ptr_factory_.GetWeakPtr(), query_start_time,
+                       std::move(region), query_text, object_id, selection_type,
                        additional_search_query_params, region_bytes);
 
     // If the cluster info is expired, restart a new query flow so the pending
@@ -1745,8 +1656,8 @@ void LensOverlayQueryController::SendInteraction(
     // the full image request id sequence has been incremented.
     pending_interaction_callback_ =
         base::BindOnce(&LensOverlayQueryController::SendInteraction,
-                       weak_ptr_factory_.GetWeakPtr(), std::move(region),
-                       query_text, object_id, selection_type,
+                       weak_ptr_factory_.GetWeakPtr(), query_start_time,
+                       std::move(region), query_text, object_id, selection_type,
                        additional_search_query_params, region_bytes);
     return;
   }
@@ -1772,7 +1683,7 @@ void LensOverlayQueryController::SendInteraction(
   // Add the create URL callback to be run after the request is sent.
   latest_interaction_request_data_->request_sent_callback_ = base::BindOnce(
       &LensOverlayQueryController::CreateSearchUrlAndSendToCallback,
-      weak_ptr_factory_.GetWeakPtr(), query_text,
+      weak_ptr_factory_.GetWeakPtr(), query_start_time, query_text,
       additional_search_query_params, selection_type,
       GetNextRequestId(RequestIdUpdateMode::kSearchUrl));
 
@@ -1807,21 +1718,28 @@ void LensOverlayQueryController::
         std::optional<std::string> query_text,
         std::optional<std::string> object_id,
         scoped_refptr<lens::RefCountedLensOverlayClientLogs> ref_counted_logs,
-        std::optional<lens::ImageCrop> image_crop) {
+        std::optional<lens::ImageCropAndBitmap> image_crop_and_bitmap) {
   // The request index should match our counter after encoding finishes.
   CHECK(sequence_id == latest_interaction_request_data_->sequence_id());
 
-  // Pass the image crop for this request to the thumbnail created callback.
-  if (image_crop.has_value()) {
+  // Pass the image crop and region bitmap for this request to the thumbnail
+  // created callback.
+  if (image_crop_and_bitmap.has_value()) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(thumbnail_created_callback_,
-                                  image_crop->image().image_content()));
+        FROM_HERE,
+        base::BindOnce(
+            thumbnail_created_callback_,
+            image_crop_and_bitmap->image_crop.image().image_content(),
+            image_crop_and_bitmap->region_bitmap));
   }
 
   // Create the interaction request.
-  lens::LensOverlayServerRequest server_request =
-      CreateInteractionRequest(std::move(region), query_text, object_id,
-                               image_crop, ref_counted_logs->client_logs());
+  lens::LensOverlayServerRequest server_request = CreateInteractionRequest(
+      std::move(region), query_text, object_id,
+      image_crop_and_bitmap
+          ? std::make_optional(image_crop_and_bitmap->image_crop)
+          : std::nullopt,
+      ref_counted_logs->client_logs());
 
   // Continue the async process.
   InteractionRequestDataReady(sequence_id, std::move(server_request));
@@ -1933,6 +1851,7 @@ void LensOverlayQueryController::PerformInteractionRequest() {
 }
 
 void LensOverlayQueryController::CreateSearchUrlAndSendToCallback(
+    base::Time query_start_time,
     std::optional<std::string> query_text,
     std::map<std::string, std::string> additional_search_query_params,
     lens::LensOverlaySelectionType selection_type,
@@ -1957,11 +1876,12 @@ void LensOverlayQueryController::CreateSearchUrlAndSendToCallback(
   // Generate and send the Lens search url.
   lens::proto::LensOverlayUrlResponse lens_overlay_url_response;
   lens_overlay_url_response.set_url(
-      lens::BuildLensSearchURL(query_text, page_url_, page_title_,
-                               std::move(request_id), cluster_info_.value(),
-                               additional_search_query_params,
-                               invocation_source_, use_dark_mode_)
+      lens::BuildLensSearchURL(
+          query_start_time, query_text, page_url_, page_title_,
+          std::move(request_id), cluster_info_.value(),
+          additional_search_query_params, invocation_source_, use_dark_mode_)
           .spec());
+  lens_overlay_url_response.set_page_url(page_url_.spec());
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(url_callback_, lens_overlay_url_response));
 }
@@ -2010,12 +1930,13 @@ void LensOverlayQueryController::InteractionFetchResponseHandler(
       std::make_optional(encoded_analytics_id),
       *latest_interaction_request_data_->request_id_.get());
 
-  if (!(lens::features::IsLensOverlayContextualSearchboxEnabled() &&
+  if (!(lens::IsLensOverlayContextualSearchboxEnabled() &&
         !lens::features::GetLensOverlaySendImageSignalsForLensSuggest())) {
     // Always include the image signals unless the contextual searchbox is
     // enabled and the image signals feature flag is disabled.
     suggest_inputs_.set_encoded_image_signals(
         server_response.interaction_response().encoded_response());
+    RunSuggestInputsCallback();
   }
 
   if (lens::features::IsSimplifiedSelectionEnabled() &&
@@ -2077,29 +1998,29 @@ void LensOverlayQueryController::SendInitialLatencyGen204IfNotAlreadySent(
 void LensOverlayQueryController::PerformFetchRequest(
     lens::LensOverlayServerRequest* request,
     std::vector<std::string>* request_headers,
-    const base::TimeDelta& timeout,
+    base::TimeDelta timeout,
     base::OnceCallback<void(std::unique_ptr<EndpointFetcher>)>
         fetcher_created_callback,
     EndpointFetcherCallback response_received_callback,
-    const UploadProgressCallback upload_progress_callback) {
+    UploadProgressCallback upload_progress_callback) {
   CHECK(request);
   std::string request_string;
   CHECK(request->SerializeToString(&request_string));
   GURL fetch_url = GURL(lens::features::GetLensOverlayEndpointURL());
-  PerformFetchRequest(request_string, request_headers, timeout,
+  PerformFetchRequest(std::move(request_string), request_headers, timeout,
                       std::move(fetcher_created_callback),
                       std::move(response_received_callback),
-                      upload_progress_callback, fetch_url);
+                      std::move(upload_progress_callback), fetch_url);
 }
 
 void LensOverlayQueryController::PerformFetchRequest(
     std::string request_string,
     std::vector<std::string>* request_headers,
-    const base::TimeDelta& timeout,
+    base::TimeDelta timeout,
     base::OnceCallback<void(std::unique_ptr<EndpointFetcher>)>
         fetcher_created_callback,
     EndpointFetcherCallback response_received_callback,
-    const UploadProgressCallback upload_progress_callback,
+    UploadProgressCallback upload_progress_callback,
     GURL fetch_url) {
   CHECK(request_headers);
 
@@ -2119,8 +2040,9 @@ void LensOverlayQueryController::PerformFetchRequest(
   // Create the EndpointFetcher, responsible for making the request using our
   // given params.
   std::unique_ptr<EndpointFetcher> endpoint_fetcher = CreateEndpointFetcher(
-      request_string, fetch_url, HttpMethod::kPost, timeout, *request_headers,
-      cors_exempt_headers, upload_progress_callback);
+      std::move(request_string), fetch_url, HttpMethod::kPost, timeout,
+      *request_headers, cors_exempt_headers,
+      std::move(upload_progress_callback));
   EndpointFetcher* fetcher = endpoint_fetcher.get();
 
   // Run callback that the fetcher was created. This is used to keep the
@@ -2189,13 +2111,11 @@ LensOverlayQueryController::CreateOAuthHeadersAndContinue(
       identity_manager_->HasPrimaryAccount(signin::ConsentLevel::kSignin)) {
     signin::AccessTokenFetcher::TokenCallback token_callback =
         base::BindOnce(&lens::CreateOAuthHeader).Then(std::move(callback));
-    signin::ScopeSet oauth_scopes;
-    oauth_scopes.insert(GaiaConstants::kLensOAuth2Scope);
 
     // If an access token fetcher is already in flight, it is intentionally
     // replaced by this newer one.
     return std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
-        kOAuthConsumerName, identity_manager_, oauth_scopes,
+        signin::OAuthConsumerId::kLensOverlayQueryController, identity_manager_,
         std::move(token_callback),
         signin::PrimaryAccountAccessTokenFetcher::Mode::kWaitUntilAvailable,
         signin::ConsentLevel::kSignin);
@@ -2333,26 +2253,11 @@ void LensOverlayQueryController::ResetRequestClusterInfoState() {
   cluster_info_.reset();
   query_controller_state_ = QueryControllerState::kClusterInfoExpired;
   request_id_generator_->ResetRequestId();
+  suggest_inputs_.Clear();
+  RunSuggestInputsCallback();
   parent_query_sent_ = false;
   is_first_page_contents_request_ = true;
   is_first_partial_page_contents_request_ = true;
-}
-
-void LensOverlayQueryController::RunSuggestInputsCallback() {
-  suggest_inputs_.set_send_gsession_vsrid_for_contextual_suggest(
-      lens::features::GetLensOverlaySendLensInputsForContextualSuggest());
-  suggest_inputs_.set_send_gsession_vsrid_vit_for_lens_suggest(
-      lens::features::GetLensOverlaySendLensInputsForLensSuggest());
-  suggest_inputs_.set_send_vsint_for_lens_suggest(
-      lens::features::
-          GetLensOverlaySendLensVisualInteractionDataForLensSuggest());
-  if (cluster_info_.has_value()) {
-    suggest_inputs_.set_search_session_id(cluster_info_->search_session_id());
-  } else {
-    suggest_inputs_.clear_search_session_id();
-  }
-  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE, base::BindOnce(suggest_inputs_callback_, suggest_inputs_));
 }
 
 void LensOverlayQueryController::OnFullImageEndpointFetcherCreated(

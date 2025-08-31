@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "base/functional/bind.h"
+#include "base/hash/md5.h"
 #include "base/memory/raw_ptr.h"
 #include "base/pickle.h"
 #include "base/run_loop.h"
@@ -35,6 +36,7 @@
 #include "components/security_interstitials/core/unsafe_resource_locator.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/global_routing_id.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -430,9 +432,10 @@ class ThreatDetailsTest : public ChromeRenderViewHostTestHarness {
     // The last item of the redirect chain has to be the final url when adding
     // to history backend.
     redirects->push_back(url);
-    history_service()->AddPage(url, base::Time::Now(), 1, 0, GURL(), *redirects,
-                               ui::PAGE_TRANSITION_TYPED,
-                               history::SOURCE_BROWSED, false);
+    history_service()->AddPage(
+        url, base::Time::Now(), 1, 0, GURL(), *redirects,
+        ui::PAGE_TRANSITION_TYPED, history::SOURCE_BROWSED,
+        history::VisitResponseCodeCategory::kNot404, false);
   }
 
   void WriteCacheEntry(const std::string& url,

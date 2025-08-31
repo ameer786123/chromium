@@ -4,9 +4,11 @@
 
 #include "chrome/browser/data_sharing/desktop/data_sharing_sdk_delegate_desktop.h"
 
+#include "base/notimplemented.h"
 #include "chrome/browser/data_sharing/desktop/data_sharing_conversion_utils.h"
 #include "chrome/browser/ui/webui/data_sharing/data_sharing_page_handler.h"
 #include "chrome/common/webui_url_constants.h"
+#include "content/public/browser/navigation_controller.h"
 
 namespace data_sharing {
 
@@ -46,7 +48,7 @@ void DataSharingSDKDelegateDesktop::ReadGroups(
                 ->page_handler();
         CHECK(handler);
         auto mojom_params = data_sharing::mojom::ReadGroupsParams::New();
-        for (auto group_param : params.group_params()) {
+        for (const auto& group_param : params.group_params()) {
           auto param = data_sharing::mojom::ReadGroupParams::New();
           param->group_id = group_param.group_id();
           param->consistency_token = group_param.consistency_token();

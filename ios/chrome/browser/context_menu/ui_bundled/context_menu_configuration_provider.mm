@@ -30,6 +30,7 @@
 #import "ios/chrome/browser/photos/model/photos_availability.h"
 #import "ios/chrome/browser/photos/model/photos_metrics.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
+#import "ios/chrome/browser/reader_mode/model/reader_mode_tab_helper.h"
 #import "ios/chrome/browser/reading_list/model/reading_list_browser_agent.h"
 #import "ios/chrome/browser/search_engines/model/search_engines_util.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
@@ -67,6 +68,7 @@
 #import "ios/public/provider/chrome/browser/lens/lens_api.h"
 #import "ios/web/common/features.h"
 #import "ios/web/common/url_scheme_util.h"
+#import "ios/web/public/js_image_transcoder/java_script_image_transcoder.h"
 #import "ios/web/public/ui/context_menu_params.h"
 #import "ios/web/public/web_state.h"
 #import "net/base/apple/url_conversions.h"
@@ -110,6 +112,9 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
 
   // Whether the context menu is presented in the lens overlay.
   BOOL _isLensOverlay;
+
+  // Image transcoder to locally re-encode images to search.
+  std::unique_ptr<web::JavaScriptImageTranscoder> _imageTranscoder;
 }
 
 - (instancetype)initWithBrowser:(Browser*)browser
@@ -143,6 +148,7 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
   _imageSaver = nil;
   [_imageCopier stop];
   _imageCopier = nil;
+  _imageTranscoder = nullptr;
   _baseWebState = nullptr;
 }
 
@@ -174,8 +180,22 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
   if (base::FeatureList::IsEnabled(kEnableLensOverlay) && _baseWebState) {
     return _baseWebState.get();
   }
-  return self.browser ? self.browser->GetWebStateList()->GetActiveWebState()
-                      : nullptr;
+  web::WebState* activeWebState =
+      self.browser ? self.browser->GetWebStateList()->GetActiveWebState()
+                   : nullptr;
+  if (activeWebState) {
+    // Check if there is an alternate webState.
+    ReaderModeTabHelper* readerModeTabHelper =
+        ReaderModeTabHelper::FromWebState(activeWebState);
+    if (readerModeTabHelper) {
+      web::WebState* readerModeWebState =
+          readerModeTabHelper->GetReaderModeWebState();
+      if (readerModeWebState) {
+        return readerModeWebState;
+      }
+    }
+  }
+  return activeWebState;
 }
 
 #pragma mark - Private
@@ -373,16 +393,14 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
     }];
     [linkOpeningElements addObject:openNewTab];
 
-    if (IsTabGroupInGridEnabled()) {
-      // Open in Tab Group.
-      UIMenuElement* openLinkInGroupMenu =
-          [self openLinkInGroupMenuElement:linkURL
-                                  scenario:scenario
-                                  referrer:referrer
-                            isOffTheRecord:isOffTheRecord
-                                    params:params];
-      [linkOpeningElements addObject:openLinkInGroupMenu];
-    }
+    // Open in Tab Group.
+    UIMenuElement* openLinkInGroupMenu =
+        [self openLinkInGroupMenuElement:linkURL
+                                scenario:scenario
+                                referrer:referrer
+                          isOffTheRecord:isOffTheRecord
+                                  params:params];
+    [linkOpeningElements addObject:openLinkInGroupMenu];
 
     if (!isOffTheRecord) {
       // Open in Incognito Tab.
@@ -540,14 +558,38 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
   ImageFetchTabHelper* imageFetcher =
       ImageFetchTabHelper::FromWebState(self.webState);
   DCHECK(imageFetcher);
+
   __weak ContextMenuConfigurationProvider* weakSelf = self;
-  imageFetcher->GetImageData(imageURL, referrer, ^(NSData* data) {
-    if (usingLens) {
-      [weakSelf searchImageUsingLensWithData:data];
-    } else {
-      [weakSelf searchByImageData:data imageURL:imageURL];
-    }
+  imageFetcher->GetImageData(imageURL, referrer, ^(NSData* rawData) {
+    // Arbitrary web image data requires sanitization before use.
+    [weakSelf sanitizeImageData:rawData
+                     completion:^(NSData* transcodedData) {
+                       if (usingLens) {
+                         [weakSelf searchImageUsingLensWithData:transcodedData];
+                       } else {
+                         [weakSelf searchByImageData:transcodedData
+                                            imageURL:imageURL];
+                       }
+                     }];
   });
+}
+
+// Sanitizes a web image data before use by passing it through the transcoder.
+- (void)sanitizeImageData:(NSData*)imageData
+               completion:(void (^)(NSData*))completion {
+  if (!_imageTranscoder) {
+    _imageTranscoder = std::make_unique<web::JavaScriptImageTranscoder>();
+  }
+  _imageTranscoder->TranscodeImage(
+      imageData, @"image/jpeg", nil, nil, nil,
+      base::BindOnce(^(NSData* result, NSError* error) {
+        if (error) {
+          completion(nil);
+          return;
+        }
+
+        completion(result);
+      }));
 }
 
 // Starts a reverse image search based on `imageData` and `imageURL` in a new
@@ -665,7 +707,7 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
 
   // Check if the URL was a valid link to avoid having the `Open in Tab Group`
   // option twice.
-  if (!IsTabGroupInGridEnabled() || isLink) {
+  if (isLink) {
     [imageOpeningMenuElements addObject:openImageInNewTab];
   } else {
     // Array for the actions/menus used to open an image in a new tab.
@@ -761,7 +803,7 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
     [imageSavingElements addObject:saveImageToPhotosAction];
   }
 
-  if (IsSaveToPhotosActionImprovementEnabled() && saveToPhotosAvailable) {
+  if (saveToPhotosAvailable) {
     UIImage* image;
     if (@available(iOS 17, *)) {
       image = DefaultSymbolWithPointSize(kPhotoBadgeArrowDownSymbol,

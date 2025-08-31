@@ -7,18 +7,21 @@
 
 #import <UIKit/UIKit.h>
 
-#import <map>
+#include <map>
+#include <set>
+#include <string>
 
 #import "base/functional/callback.h"
 #import "base/observer_list.h"
 #import "base/observer_list_types.h"
 #import "base/scoped_observation.h"
 #import "google_apis/gaia/gaia_id.h"
-#import "ios/chrome/browser/signin/model/account_widget_updater.h"
+#import "ios/chrome/browser/signin/model/system_account_updater.h"
 #import "ios/chrome/browser/signin/model/system_identity_manager.h"
 
 @protocol ChangeProfileCommands;
 class GaiaId;
+class PrefService;
 class ProfileManagerIOS;
 @protocol SystemIdentity;
 
@@ -53,7 +56,8 @@ class AccountProfileMapper {
     // `error` is an opaque type containing information about the error.
     virtual void OnIdentityAccessTokenRefreshFailed(
         id<SystemIdentity> identity,
-        id<RefreshAccessTokenError> error) {}
+        id<RefreshAccessTokenError> error,
+        const std::set<std::string>& scopes) {}
   };
 
   // Value returned by IdentityIteratorCallback.
@@ -69,7 +73,8 @@ class AccountProfileMapper {
       base::RepeatingCallback<IteratorResult(id<SystemIdentity>)>;
 
   AccountProfileMapper(SystemIdentityManager* system_identity_manager,
-                       ProfileManagerIOS* profile_manager);
+                       ProfileManagerIOS* profile_manager,
+                       PrefService* local_pref_service);
 
   AccountProfileMapper(const AccountProfileMapper&) = delete;
   AccountProfileMapper& operator=(const AccountProfileMapper&) = delete;
@@ -154,7 +159,8 @@ class AccountProfileMapper {
   void IdentityUpdated(id<SystemIdentity> identity);
   void IdentityRefreshTokenUpdated(id<SystemIdentity> identity);
   void IdentityAccessTokenRefreshFailed(id<SystemIdentity> identity,
-                                        id<RefreshAccessTokenError> error);
+                                        id<RefreshAccessTokenError> error,
+                                        const std::set<std::string>& scopes);
 
   // Invokes `OnIdentityListChanged(...)` for all observers in
   // `profile_names_to_notify`. If `kSeparateProfilesForManagedAccounts` is
@@ -179,7 +185,8 @@ class AccountProfileMapper {
   void NotifyAccessTokenRefreshFailed(
       id<SystemIdentity> identity,
       id<RefreshAccessTokenError> error,
-      const std::optional<std::string>& profile_name);
+      const std::optional<std::string>& profile_name,
+      const std::set<std::string>& scopes);
 
   // The AccountProfileMapper is sequence-affine.
   SEQUENCE_CHECKER(sequence_checker_);
@@ -188,7 +195,7 @@ class AccountProfileMapper {
 
   raw_ptr<ProfileManagerIOS> profile_manager_;
 
-  std::unique_ptr<AccountWidgetUpdater> widget_updater_;
+  std::unique_ptr<SystemAccountUpdater> system_account_updater_;
 
   std::unique_ptr<Assigner> assigner_;
 

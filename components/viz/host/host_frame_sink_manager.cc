@@ -10,13 +10,15 @@
 #include <vector>
 
 #include "base/containers/contains.h"
+#include "base/debug/crash_logging.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/not_fatal_until.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/observer_list.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
+#include "components/input/utils.h"
 #include "components/viz/common/performance_hint_utils.h"
 #include "components/viz/common/surfaces/surface_info.h"
 #include "components/viz/host/renderer_settings_creation.h"
@@ -51,6 +53,11 @@ void HostFrameSinkManager::BindAndSetManager(
 
   frame_sink_manager_remote_.set_disconnect_handler(base::BindOnce(
       &HostFrameSinkManager::OnConnectionLost, base::Unretained(this)));
+
+  if (input::InputUtils::IsTransferInputToVizSupported()) {
+    frame_sink_manager_->SetupRendererInputRouterDelegateRegistry(
+        rir_delegate_registry_.BindNewPipeAndPassReceiver());
+  }
 
   if (connection_was_lost_) {
     RegisterAfterConnectionLoss();
@@ -96,7 +103,8 @@ bool HostFrameSinkManager::IsFrameSinkIdRegistered(
 
 void HostFrameSinkManager::InvalidateFrameSinkId(
     const FrameSinkId& frame_sink_id,
-    HostFrameSinkClient* client) {
+    HostFrameSinkClient* client,
+    base::OnceClosure callback) {
   DCHECK(frame_sink_id.is_valid());
 
   FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
@@ -120,6 +128,10 @@ void HostFrameSinkManager::InvalidateFrameSinkId(
     // the platform window (eg. XWindow or HWND) get destroyed before the
     // platform window is destroyed.
     mojo::SyncCallRestrictions::ScopedAllowSyncCall allow_sync_call;
+#if BUILDFLAG(IS_ANDROID)
+    SCOPED_UMA_HISTOGRAM_TIMER(
+        "Viz.SyncDestroyCompositorFrameSink.ExecutionTime");
+#endif
     frame_sink_manager_->DestroyCompositorFrameSink(frame_sink_id);
 
     // Other synchronous IPCs continue to get processed while
@@ -128,7 +140,23 @@ void HostFrameSinkManager::InvalidateFrameSinkId(
     // reference at this point.
   }
 
-  frame_sink_manager_->InvalidateFrameSinkId(frame_sink_id);
+  base::OnceClosure invalidate_callback;
+  if (callback) {
+    DCHECK(!frame_sink_invalidate_callbacks_.contains(frame_sink_id));
+    frame_sink_invalidate_callbacks_.emplace(frame_sink_id,
+                                             std::move(callback));
+    invalidate_callback =
+        base::BindOnce(&HostFrameSinkManager::InvalidateFrameSinkCallback,
+                       base::Unretained(this), frame_sink_id);
+  }
+
+  frame_sink_manager_->InvalidateFrameSinkId(frame_sink_id,
+                                             std::move(invalidate_callback));
+}
+
+void HostFrameSinkManager::InvalidateFrameSinkCallback(
+    const FrameSinkId& frame_sink_id) {
+  frame_sink_invalidate_callbacks_.erase(frame_sink_id);
 }
 
 void HostFrameSinkManager::SetFrameSinkDebugLabel(
@@ -236,8 +264,11 @@ void HostFrameSinkManager::OnFrameTokenChanged(
     return;
 
   const FrameSinkData& data = iter->second;
-  if (data.client)
+  if (data.client) {
+    // TODO(crbug.com/431761865): Remove after the bug is fixed.
+    SCOPED_CRASH_KEY_STRING32("content", "debug_label", data.debug_label);
     data.client->OnFrameTokenChanged(frame_token, activation_time);
+  }
 }
 
 bool HostFrameSinkManager::RegisterFrameSinkHierarchy(
@@ -310,13 +341,15 @@ void HostFrameSinkManager::RequestCopyOfOutput(
 }
 
 void HostFrameSinkManager::SetupRenderInputRouterDelegateConnection(
-    base::UnguessableToken grouping_id,
-    mojo::PendingRemote<input::mojom::RenderInputRouterDelegateClient>
+    const FrameSinkId& frame_sink_id,
+    mojo::PendingAssociatedRemote<input::mojom::RenderInputRouterDelegateClient>
         rir_delegate_client_remote,
-    mojo::PendingReceiver<input::mojom::RenderInputRouterDelegate>
+    mojo::PendingAssociatedReceiver<input::mojom::RenderInputRouterDelegate>
         rir_delegate_receiver) {
-  frame_sink_manager_->SetupRenderInputRouterDelegateConnection(
-      grouping_id, std::move(rir_delegate_client_remote),
+  CHECK(input::InputUtils::IsTransferInputToVizSupported());
+
+  rir_delegate_registry_->SetupRenderInputRouterDelegateConnection(
+      frame_sink_id, std::move(rir_delegate_client_remote),
       std::move(rir_delegate_receiver));
 }
 
@@ -388,6 +421,7 @@ void HostFrameSinkManager::OnConnectionLost() {
   // frame_sink_manager_remote_.reset() to avoid dangling ptr.
   frame_sink_manager_ = nullptr;
   frame_sink_manager_remote_.reset();
+  rir_delegate_registry_.reset();
 
   metrics_recorder_remote_.reset();
 
@@ -403,6 +437,8 @@ void HostFrameSinkManager::OnConnectionLost() {
     map_entry.second.has_created_compositor_frame_sink = false;
     map_entry.second.wait_on_destruction = false;
   }
+
+  frame_sink_invalidate_callbacks_.clear();
 
   if (!connection_lost_callback_.is_null())
     connection_lost_callback_.Run();
@@ -495,7 +531,7 @@ void HostFrameSinkManager::OnScreenshotCaptured(
 uint32_t HostFrameSinkManager::CacheBackBufferForRootSink(
     const FrameSinkId& root_sink_id) {
   auto it = frame_sink_data_map_.find(root_sink_id);
-  CHECK(it != frame_sink_data_map_.end(), base::NotFatalUntil::M130);
+  CHECK(it != frame_sink_data_map_.end());
   DCHECK(it->second.is_root);
   DCHECK(it->second.IsFrameSinkRegistered());
   DCHECK(frame_sink_manager_remote_);

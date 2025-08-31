@@ -4,9 +4,10 @@
 
 package org.chromium.ui.display;
 
-import static org.chromium.build.NullUtil.assumeNonNull;
-
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Configuration;
 import android.graphics.Insets;
 import android.graphics.Rect;
@@ -17,12 +18,15 @@ import android.os.Build.VERSION_CODES;
 import android.util.DisplayMetrics;
 import android.util.Pair;
 import android.util.TypedValue;
+import android.view.Display;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 
-import org.chromium.base.BuildInfo;
+import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.Log;
+import org.chromium.base.ResettersForTesting;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.util.XrUtils;
@@ -34,13 +38,22 @@ import org.chromium.ui.util.XrUtils;
 @NullMarked
 public abstract class DisplayUtil {
     private static final String TAG = "DisplayUtil";
+    // CaRMA phase 1 has version 1 and 2. Version 1 includes car-ready mobile app identification
+    // logic, opaque blocking activity, and safe app area. Version 2 includes all v1 features plus
+    // DPI Scaling.
+    private static final String CARMA_PHASE_1_COMPLIANCE =
+            "com.google.android.automotive.software.car_ready_mobile_apps";
+    private static final String CARMA_DISPLAY_COMPAT_APP_META_DATA =
+            "android.software.car.display_compatibility";
+    private static @Nullable Boolean sCarmaPhase1Version2ComplianceForTesting;
+    private static @Nullable Boolean sIsDisplayCompatAppForTesting;
     private static @Nullable Float sUiScalingFactorForAutomotiveOverride;
     // For XR environment.
     private static @Nullable Float sUiScalingFactorForXrOverride;
 
     /** Returns true if the device requires UI scaling. */
     public static boolean isUiScaled() {
-        return BuildInfo.getInstance().isAutomotive || XrUtils.isXrDevice();
+        return DeviceInfo.isAutomotive() || XrUtils.isXrDevice();
     }
 
     /** Change the UI scaling factor on automotive devices for testing. */
@@ -54,25 +67,48 @@ public abstract class DisplayUtil {
     }
 
     /**
-     * Retrieves the UI scaling factor on automotive devices.
-     * TODO: Remove this method and replace usages with getUiDensityForAutomotive.
+     * Returns the target scaling factor for automotive devices. The final effective scaling factor
+     * is tweaked and may differ from this target. Note that this value can be overlaid by device
+     * manufacturers.
      */
-    @Deprecated
-    public static float getUiScalingFactorForAutomotive() {
-        return assumeNonNull(sUiScalingFactorForAutomotiveOverride);
-    }
-
-    public static int getUiDensityForAutomotive(Context context, int baseDensity) {
+    public static float getTargetScalingFactorForAutomotive(Context context) {
         TypedValue automotiveUiScaleFactor = new TypedValue();
         context.getResources()
                 .getValue(
                         org.chromium.ui.R.dimen.automotive_ui_scale_factor,
                         automotiveUiScaleFactor,
                         true);
+        if (CommandLine.getInstance().hasSwitch(DisplaySwitches.CLAMP_AUTOMOTIVE_SCALE_UP)) {
+            String maxAutomotiveScalingString =
+                    CommandLine.getInstance()
+                            .getSwitchValue(DisplaySwitches.CLAMP_AUTOMOTIVE_SCALE_UP);
+            float maxAutomotiveScaling;
+            try {
+                maxAutomotiveScaling = Float.parseFloat(maxAutomotiveScalingString);
+                if (maxAutomotiveScaling < automotiveUiScaleFactor.getFloat()) {
+                    return maxAutomotiveScaling;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return automotiveUiScaleFactor.getFloat();
+    }
+
+    /**
+     * Returns the UI density that has been adjusted for automotive displays. This density has been
+     * adjusted by a scaling factor, which can be customized by device manufacturers, and rounded to
+     * align with defined {@link DisplayMetrics} densities.
+     */
+    public static int getUiDensityForAutomotive(Context context, int baseDensity) {
+        // Opt out of Clank's internal scaling if we have opted in to display compatibility for
+        // CaRMA.
+        if (doesDeviceHaveCarmaPhase1Version2Compliance(context) && isDisplayCompatApp(context)) {
+            return baseDensity;
+        }
         float uiScalingFactor =
                 sUiScalingFactorForAutomotiveOverride != null
                         ? sUiScalingFactorForAutomotiveOverride
-                        : automotiveUiScaleFactor.getFloat();
+                        : getTargetScalingFactorForAutomotive(context);
         int rawScaledDensity = (int) (baseDensity * uiScalingFactor);
         // Round up to the nearest 20 to align with DisplayMetrics defined densities.
         return ((int) Math.ceil(rawScaledDensity / 20.0f)) * 20;
@@ -87,14 +123,12 @@ public abstract class DisplayUtil {
 
     /** Returns the given value converted from px to dp. */
     public static int pxToDp(DisplayAndroid display, int value) {
-        // Adding .5 is what Android does when doing this conversion.
-        return (int) (value / display.getDipScale() + 0.5f);
+        return Math.round(value / display.getDipScale());
     }
 
     /** Returns the given value converted from dp to px. */
     public static int dpToPx(DisplayAndroid display, int value) {
-        // Adding .5 is what Android does when doing this conversion.
-        return (int) (value * display.getDipScale() + 0.5f);
+        return Math.round(value * display.getDipScale());
     }
 
     /**
@@ -274,6 +308,19 @@ public abstract class DisplayUtil {
         return xrUiScaleFactor.getFloat();
     }
 
+    /** Returns the scaling factor for the current device. */
+    public static float getCurrentUiScalingFactor(Context context) {
+        if (!isUiScaled()) return 1;
+        if (DeviceInfo.isAutomotive()) {
+            return sUiScalingFactorForAutomotiveOverride != null
+                    ? sUiScalingFactorForAutomotiveOverride
+                    : getTargetScalingFactorForAutomotive(context);
+        }
+        return sUiScalingFactorForXrOverride != null
+                ? sUiScalingFactorForXrOverride
+                : getUiScalingFactorForXrFromResource(context);
+    }
+
     /** Get the density base on the UI scaling factor on XR devices. */
     public static int getUiDensityForXr(Context context, int baseDensity) {
         float uiScalingFactor =
@@ -338,14 +385,85 @@ public abstract class DisplayUtil {
      */
     public static Pair<Integer, Rect> getLocalCoordinatesPx(
             RectF globalCoordinatesDp, DisplayAndroid targetDisplay) {
-        float displayDensity = targetDisplay.getDipScale();
-        int targetDisplayId = targetDisplay.getDisplayId();
+        return Pair.create(
+                targetDisplay.getDisplayId(),
+                convertDipToPixelDisplayCoordinates(
+                        globalCoordinatesDp, targetDisplay.getDipScale()));
+    }
 
-        int leftPx = Math.round(globalCoordinatesDp.left * displayDensity);
-        int topPx = Math.round(globalCoordinatesDp.top * displayDensity);
-        int rightPx = Math.round(globalCoordinatesDp.right * displayDensity);
-        int bottomPx = Math.round(globalCoordinatesDp.bottom * displayDensity);
+    /**
+     * Convert DIP display coordinates to pixel coordinates.
+     *
+     * @param dipDisplayCoordinates Display coordinates in DIP.
+     * @param displayDensity Display density.
+     * @return Display coordinates in pixels.
+     */
+    public static Rect convertDipToPixelDisplayCoordinates(
+            RectF dipDisplayCoordinates, float displayDensity) {
+        int leftPx = Math.round(dipDisplayCoordinates.left * displayDensity);
+        int topPx = Math.round(dipDisplayCoordinates.top * displayDensity);
+        int rightPx = Math.round(dipDisplayCoordinates.right * displayDensity);
+        int bottomPx = Math.round(dipDisplayCoordinates.bottom * displayDensity);
 
-        return Pair.create(targetDisplayId, new Rect(leftPx, topPx, rightPx, bottomPx));
+        return new Rect(leftPx, topPx, rightPx, bottomPx);
+    }
+
+    /**
+     * Determine whether the given context is associated with the default display.
+     *
+     * @param context The context to determine display state.
+     * @return {@code true} if the context is associated with the default display, {@code false}
+     *     otherwise.
+     */
+    public static boolean isContextInDefaultDisplay(Context context) {
+        Display display = DisplayAndroidManager.getDefaultDisplayForContext(context);
+        return display.getDisplayId() == Display.DEFAULT_DISPLAY;
+    }
+
+    /**
+     * Checks if the device OS supports CaRMA Phase 1 version 2.
+     *
+     * @param context The context used to access the PackageManager.
+     * @return {@code true} if the device supports the required feature phase and version, {@code
+     *     false} otherwise.
+     */
+    public static boolean doesDeviceHaveCarmaPhase1Version2Compliance(Context context) {
+        if (sCarmaPhase1Version2ComplianceForTesting != null) {
+            return sCarmaPhase1Version2ComplianceForTesting;
+        }
+        return context.getPackageManager().hasSystemFeature(CARMA_PHASE_1_COMPLIANCE, 2);
+    }
+
+    /** Checks if the app has opted in to Display Compatibility via its manifest metadata. */
+    public static boolean isDisplayCompatApp(Context context) {
+        if (sIsDisplayCompatAppForTesting != null) {
+            return sIsDisplayCompatAppForTesting;
+        }
+
+        try {
+            ApplicationInfo applicationInfo =
+                    context.getPackageManager()
+                            .getApplicationInfo(
+                                    context.getPackageName(), PackageManager.GET_META_DATA);
+
+            if (applicationInfo.metaData == null) {
+                return false;
+            }
+            return applicationInfo.metaData.getBoolean(CARMA_DISPLAY_COMPAT_APP_META_DATA);
+
+        } catch (NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    public static void setCarmaPhase1Version2ComplianceForTesting(
+            boolean carmaPhase1Version2ComplianceForTesting) {
+        sCarmaPhase1Version2ComplianceForTesting = carmaPhase1Version2ComplianceForTesting;
+        ResettersForTesting.register(() -> sCarmaPhase1Version2ComplianceForTesting = null);
+    }
+
+    public static void setIsDisplayCompatAppForTesting(boolean isDisplayCompatAppForTesting) {
+        sIsDisplayCompatAppForTesting = isDisplayCompatAppForTesting;
+        ResettersForTesting.register(() -> sIsDisplayCompatAppForTesting = null);
     }
 }

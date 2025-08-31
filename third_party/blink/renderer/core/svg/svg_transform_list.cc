@@ -197,7 +197,7 @@ SVGTransformList::SVGTransformList(SVGTransformType transform_type,
     return;
   TransformArguments arguments;
   bool success =
-      WTF::VisitCharacters(value, [&](auto chars) {
+      VisitCharacters(value, [&](auto chars) {
         const auto* ptr = chars.data();
         const auto* end = ptr + chars.size();
         SVGParseStatus status =
@@ -324,21 +324,27 @@ SVGTransformType ParseAndSkipTransformType(const CharType*& ptr,
     return SVGTransformType::kUnknown;
 
   if (*ptr == 's') {
-    if (SkipToken(ptr, end, "skewX"))
+    if (UNSAFE_TODO(SkipToken(ptr, end, "skewX"))) {
       return SVGTransformType::kSkewx;
-    if (SkipToken(ptr, end, "skewY"))
+    }
+    if (UNSAFE_TODO(SkipToken(ptr, end, "skewY"))) {
       return SVGTransformType::kSkewy;
-    if (SkipToken(ptr, end, "scale"))
+    }
+    if (UNSAFE_TODO(SkipToken(ptr, end, "scale"))) {
       return SVGTransformType::kScale;
+    }
 
     return SVGTransformType::kUnknown;
   }
-  if (SkipToken(ptr, end, "translate"))
+  if (UNSAFE_TODO(SkipToken(ptr, end, "translate"))) {
     return SVGTransformType::kTranslate;
-  if (SkipToken(ptr, end, "rotate"))
+  }
+  if (UNSAFE_TODO(SkipToken(ptr, end, "rotate"))) {
     return SVGTransformType::kRotate;
-  if (SkipToken(ptr, end, "matrix"))
+  }
+  if (UNSAFE_TODO(SkipToken(ptr, end, "matrix"))) {
     return SVGTransformType::kMatrix;
+  }
 
   return SVGTransformType::kUnknown;
 }
@@ -406,7 +412,7 @@ bool SVGTransformList::Parse(const LChar*& ptr, const LChar* end) {
 SVGTransformType ParseTransformType(const String& string) {
   if (string.empty())
     return SVGTransformType::kUnknown;
-  return WTF::VisitCharacters(string, [&](auto chars) {
+  return VisitCharacters(string, [&](auto chars) {
     const auto* start = chars.data();
     return ParseAndSkipTransformType(start, start + chars.size());
   });
@@ -417,7 +423,7 @@ SVGParsingError SVGTransformList::SetValueAsString(const String& value) {
     Clear();
     return SVGParseStatus::kNoError;
   }
-  SVGParsingError parse_error = WTF::VisitCharacters(value, [&](auto chars) {
+  SVGParsingError parse_error = VisitCharacters(value, [&](auto chars) {
     const auto* start = chars.data();
     return ParseInternal(start, start + chars.size());
   });

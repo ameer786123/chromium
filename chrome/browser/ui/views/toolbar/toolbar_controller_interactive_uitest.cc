@@ -6,7 +6,6 @@
 #include <sstream>
 #include <variant>
 
-#include "base/functional/overloaded.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
 #include "base/test/metrics/user_action_tester.h"
@@ -19,6 +18,7 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/toolbar/pinned_toolbar/pinned_toolbar_actions_model.h"
 #include "chrome/browser/ui/toolbar_controller_util.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_container.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
@@ -39,6 +39,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/test/test_extension_dir.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/views/layout/animating_layout_manager_test_util.h"
@@ -55,7 +56,7 @@ class ToolbarControllerUiTest : public InteractiveFeaturePromoTest {
  public:
   ToolbarControllerUiTest()
       : InteractiveFeaturePromoTest(UseDefaultTrackerAllowingPromos(
-            {feature_engagement::kIPHTabSearchFeature})) {
+            {feature_engagement::kIPHMemorySaverModeFeature})) {
     ToolbarControllerUtil::SetPreventOverflowForTesting(false);
   }
 
@@ -67,6 +68,9 @@ class ToolbarControllerUiTest : public InteractiveFeaturePromoTest {
     PinnedToolbarActionsModel* const actions_model =
         PinnedToolbarActionsModel::Get(browser()->profile());
     actions_model->UpdatePinnedState(kActionShowChromeLabs, false);
+    if (features::HasTabSearchToolbarButton()) {
+      actions_model->UpdatePinnedState(kActionTabSearch, false);
+    }
     views::test::WaitForAnimatingLayoutManager(
         browser_view_->toolbar()->pinned_toolbar_actions_container());
     toolbar_controller_ = const_cast<ToolbarController*>(
@@ -257,7 +261,7 @@ class ToolbarControllerUiTest : public InteractiveFeaturePromoTest {
       for (size_t i = 0; i < responsive_elements.size(); ++i) {
         const auto& overflow_id = responsive_elements[i].overflow_id;
         std::visit(
-            base::Overloaded(
+            absl::Overload(
                 [&](ToolbarController::ElementIdInfo overflow_id) {
                   if (std::holds_alternative<ui::ElementIdentifier>(id) &&
                       overflow_id.overflow_identifier ==
@@ -495,7 +499,6 @@ IN_PROC_BROWSER_TEST_F(ToolbarControllerUiTest, MenuMatchesOverflowedElements) {
       Do([this]() { SetBrowserWidth(overflow_threshold_width() - 1); }),
       WaitForShow(kToolbarOverflowButtonElementId),
       PressButton(kToolbarOverflowButtonElementId),
-      WaitForActivate(kToolbarOverflowButtonElementId),
       CheckMenuMatchesOverflowedElements());
 }
 
@@ -620,7 +623,7 @@ IN_PROC_BROWSER_TEST_F(ToolbarControllerUiTest,
                        EveryElementHasActionMetricName) {
   for (auto& it : ToolbarController::GetDefaultResponsiveElements(browser())) {
     std::visit(
-        base::Overloaded(
+        absl::Overload(
             [](actions::ActionId id) {
               EXPECT_NE(
                   ToolbarController::GetActionNameFromElementIdentifier(id), "")
@@ -680,9 +683,9 @@ IN_PROC_BROWSER_TEST_F(ToolbarControllerUiTest,
                        MAYBE_DoNotShowIphWhenOverflowed) {
   RunTestSequence(
       ResizeRelativeToOverflow(-1),
-      MaybeShowPromo(feature_engagement::kIPHTabSearchFeature,
+      MaybeShowPromo(feature_engagement::kIPHMemorySaverModeFeature,
                      user_education::FeaturePromoResult::kWindowTooSmall),
       ResizeRelativeToOverflow(1),
-      MaybeShowPromo(feature_engagement::kIPHTabSearchFeature),
+      MaybeShowPromo(feature_engagement::kIPHMemorySaverModeFeature),
       PressClosePromoButton());
 }

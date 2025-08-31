@@ -17,7 +17,7 @@
 
 #include "base/functional/callback.h"
 #include "ui/base/mojom/window_show_state.mojom-forward.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/views/buildflags.h"
 #include "ui/views/views_export.h"
 #include "ui/views/widget/widget.h"
@@ -148,8 +148,10 @@ class VIEWS_EXPORT ViewsDelegate {
 #endif
 
   // Creates a default NonClientFrameView to be used for windows that don't
-  // specify their own. If this function returns NULL, the
-  // views::CustomFrameView type will be used.
+  // specify their own and where no platform frame view is specified.
+  //
+  // Defaults to `DefaultFrameView`. This method should never return null, as a
+  // fallback is needed on all platforms.
   virtual std::unique_ptr<NonClientFrameView> CreateDefaultNonClientFrameView(
       Widget* widget);
 

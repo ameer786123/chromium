@@ -15,8 +15,11 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::ops::Range;
+use icu_casemap::provider::CaseMapV1;
+use icu_casemap::CaseMapper;
 use icu_collections::codepointinvlist::CodePointInversionList;
 use icu_collections::codepointinvliststringlist::CodePointInversionListAndStringList;
+use icu_locale::LanguageIdentifier;
 use icu_locale_core::Locale;
 use icu_normalizer::provider::*;
 use icu_normalizer::{ComposingNormalizer, DecomposingNormalizer};
@@ -45,85 +48,13 @@ pub trait CustomTransliterator: Debug {
 }
 
 #[derive(Debug)]
-struct ComposingTransliterator(ComposingNormalizer);
-
-impl ComposingTransliterator {
-    fn try_nfc<P>(provider: &P) -> Result<Self, DataError>
-    where
-        P: DataProvider<NormalizerNfdDataV1>
-            + DataProvider<NormalizerNfdTablesV1>
-            + DataProvider<NormalizerNfcV1>
-            + ?Sized,
-    {
-        let inner = ComposingNormalizer::try_new_nfc_unstable(provider)
-            .map_err(|e| DataError::custom("failed to load NFC").with_debug_context(&e))?;
-        Ok(Self(inner))
-    }
-
-    fn try_nfkc<P>(provider: &P) -> Result<Self, DataError>
-    where
-        P: DataProvider<NormalizerNfkdDataV1>
-            + DataProvider<NormalizerNfdTablesV1>
-            + DataProvider<NormalizerNfkdTablesV1>
-            + DataProvider<NormalizerNfcV1>
-            + ?Sized,
-    {
-        let inner = ComposingNormalizer::try_new_nfkc_unstable(provider)
-            .map_err(|e| DataError::custom("failed to load NFKC").with_debug_context(&e))?;
-        Ok(Self(inner))
-    }
-
-    fn transliterate(&self, mut rep: Replaceable, _env: &Env) {
-        // would be cool to use `normalize_to` and pass Insertable, but we need to know the
-        // input string, which gets replaced by the normalized string.
-
-        if let Cow::Owned(buf) = self.0.as_borrowed().normalize(rep.as_str_modifiable()) {
-            rep.replace_modifiable_with_str(&buf);
-        } // else the input was already normalized, so no need to modify `rep`
-    }
-}
-
-#[derive(Debug)]
-struct DecomposingTransliterator(DecomposingNormalizer);
-
-impl DecomposingTransliterator {
-    fn try_nfd<P>(provider: &P) -> Result<Self, DataError>
-    where
-        P: DataProvider<NormalizerNfdDataV1> + DataProvider<NormalizerNfdTablesV1> + ?Sized,
-    {
-        let inner = DecomposingNormalizer::try_new_nfd_unstable(provider)
-            .map_err(|e| DataError::custom("failed to load NFD").with_debug_context(&e))?;
-        Ok(Self(inner))
-    }
-
-    fn try_nfkd<P>(provider: &P) -> Result<Self, DataError>
-    where
-        P: DataProvider<NormalizerNfkdDataV1>
-            + DataProvider<NormalizerNfdTablesV1>
-            + DataProvider<NormalizerNfkdTablesV1>
-            + ?Sized,
-    {
-        let inner = DecomposingNormalizer::try_new_nfkd_unstable(provider)
-            .map_err(|e| DataError::custom("failed to load NFKD").with_debug_context(&e))?;
-        Ok(Self(inner))
-    }
-
-    fn transliterate(&self, mut rep: Replaceable, _env: &Env) {
-        // would be cool to use `normalize_to` and pass Insertable, but we need to know the
-        // input string, which gets replaced by the normalized string.
-
-        if let Cow::Owned(buf) = self.0.as_borrowed().normalize(rep.as_str_modifiable()) {
-            rep.replace_modifiable_with_str(&buf);
-        } // else the input was already normalized, so no need to modify `rep`
-    }
-}
-
-#[derive(Debug)]
 enum InternalTransliterator {
     RuleBased(DataPayload<TransliteratorRulesV1>),
-    Composing(ComposingTransliterator),
-    Decomposing(DecomposingTransliterator),
+    Composing(ComposingNormalizer),
+    Decomposing(DecomposingNormalizer),
     Hex(hardcoded::HexTransliterator),
+    Lower(CaseMapper),
+    Upper(CaseMapper),
     Null,
     Remove,
     Dyn(Box<dyn CustomTransliterator>),
@@ -134,8 +65,34 @@ impl InternalTransliterator {
         match self {
             Self::RuleBased(rbt) => rbt.get().transliterate(rep, env),
             // TODO(#3910): internal hardcoded transliterators
-            Self::Composing(t) => t.transliterate(rep, env),
-            Self::Decomposing(t) => t.transliterate(rep, env),
+            Self::Composing(normalizer) => {
+                if let Cow::Owned(buf) = normalizer.as_borrowed().normalize(rep.as_str_modifiable())
+                {
+                    rep.replace_modifiable_with_str(&buf);
+                }
+            }
+            Self::Decomposing(normalizer) => {
+                if let Cow::Owned(buf) = normalizer.as_borrowed().normalize(rep.as_str_modifiable())
+                {
+                    rep.replace_modifiable_with_str(&buf);
+                }
+            }
+            Self::Lower(casemap) => {
+                if let Cow::Owned(buf) = casemap
+                    .as_borrowed()
+                    .lowercase_to_string(rep.as_str_modifiable(), &LanguageIdentifier::UNKNOWN)
+                {
+                    rep.replace_modifiable_with_str(&buf);
+                }
+            }
+            Self::Upper(casemap) => {
+                if let Cow::Owned(buf) = casemap
+                    .as_borrowed()
+                    .uppercase_to_string(rep.as_str_modifiable(), &LanguageIdentifier::UNKNOWN)
+                {
+                    rep.replace_modifiable_with_str(&buf);
+                }
+            }
             Self::Hex(t) => t.transliterate(rep),
             Self::Null => (),
             Self::Remove => rep.replace_modifiable_with_str(""),
@@ -204,6 +161,7 @@ type Env = LiteMap<String, InternalTransliterator>;
 /// let t = Transliterator::try_new_with_override_unstable(
 ///     &provider,
 ///     &provider,
+///     &provider,
 ///     &"und-t-und-x0-custom".parse().unwrap(),
 ///     |locale| locale.normalizing_eq("und-t-und-x0-dep2").then_some(Ok(Box::new(AsciiUpperTransliterator))),
 /// )
@@ -220,6 +178,304 @@ type Env = LiteMap<String, InternalTransliterator>;
 pub struct Transliterator {
     transliterator: DataPayload<TransliteratorRulesV1>,
     env: Env,
+}
+
+/// Builder type for [`Transliterator`]
+#[derive(Debug)]
+#[cfg(feature = "compiled_data")]
+pub struct TransliteratorBuilder {
+    env: Env,
+    transliterator: DataPayload<TransliteratorRulesV1>,
+}
+
+#[cfg(feature = "compiled_data")]
+impl Default for TransliteratorBuilder {
+    fn default() -> Self {
+        Self {
+            env: LiteMap::from_iter([
+                ("any-remove".into(), InternalTransliterator::Remove),
+                ("any-null".into(), InternalTransliterator::Null),
+            ]),
+            transliterator: DataPayload::from_owned(RuleBasedTransliterator {
+                visibility: false,
+                variable_table: Default::default(),
+                filter: CodePointInversionList::all(),
+                id_group_list: Default::default(),
+                rule_group_list: Default::default(),
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "compiled_data")]
+impl TransliteratorBuilder {
+    /// Creates a [`TransliteratorBuilder`] from a baked data struct.
+    ///
+    /// This method can be used to statically construct a [`Transliterator`] without including
+    /// all transliterators (which [`Transliterator::try_new`] does).
+    ///
+    /// Warning: adding additional rules after using this constructor will allocate `rules`.
+    /// If you need to add more rules, prefer using [`TransliteratorBuilder::default()`] and
+    /// [`TransliteratorBuilder::call`].
+    pub fn from_rules(rules: &'static RuleBasedTransliterator<'static>) -> Self {
+        Self {
+            transliterator: DataPayload::from_static_ref(rules),
+            ..Default::default()
+        }
+    }
+
+    /// Adds a replacement rule, replacing all strings in `matcher` by `replacer`.
+    pub fn replace(
+        mut self,
+        matcher: CodePointInversionListAndStringList<'static>,
+        replacer: String,
+    ) -> Self {
+        if matcher.size() == 0 {
+            return self;
+        }
+        self.transliterator.with_mut(move |r| {
+            let rule_group_list = r.rule_group_list.make_mut();
+
+            let mut group = if rule_group_list.is_empty() {
+                Default::default()
+            } else {
+                let g = rule_group_list
+                    .get(rule_group_list.len() - 1)
+                    .unwrap()
+                    .as_varzerovec()
+                    .into_owned();
+                rule_group_list.remove(rule_group_list.len() - 1);
+                g
+            };
+            group.make_mut().push(&Rule {
+                key: Cow::Owned(String::from(
+                    // We can just use the index in the unicode_sets list because that's the only
+                    // part of the variable table we use. If we used any of the other fields,
+                    // we'd have to update all rules that use those indices on every insertion,
+                    // as an insertion pushes the following indices up by one.
+                    char::from_u32(
+                        VarTable::BASE as u32 + r.variable_table.unicode_sets.len() as u32,
+                    )
+                    .unwrap(),
+                )),
+                replacer: Cow::Owned(replacer),
+                ante: Cow::Borrowed(""),
+                post: Cow::Borrowed(""),
+            });
+            rule_group_list.push(&group);
+
+            r.variable_table.unicode_sets.make_mut().push(&matcher);
+        });
+
+        self
+    }
+
+    /// Adds a `::NFC` rule
+    pub fn nfc(mut self, filter: CodePointInversionList<'static>) -> Self {
+        if filter.is_empty() {
+            return self;
+        }
+        self.chain(filter, Cow::Borrowed("any-nfc"));
+        self.load_nfc()
+    }
+
+    /// Adds a `::NFKC` rule
+    pub fn nfkc(mut self, filter: CodePointInversionList<'static>) -> Self {
+        if filter.is_empty() {
+            return self;
+        }
+        self.chain(filter, Cow::Borrowed("any-nfkc"));
+        self.load_nfkc()
+    }
+
+    /// Adds a `::NFD` rule
+    pub fn nfd(mut self, filter: CodePointInversionList<'static>) -> Self {
+        if filter.is_empty() {
+            return self;
+        }
+        self.chain(filter, Cow::Borrowed("any-nfd"));
+        self.load_nfd()
+    }
+
+    /// Adds a `::NFKD` rule
+    pub fn nfkd(mut self, filter: CodePointInversionList<'static>) -> Self {
+        if filter.is_empty() {
+            return self;
+        }
+        self.chain(filter, Cow::Borrowed("any-nfkd"));
+        self.load_nfkd()
+    }
+
+    /// Adds a `::Lower` rule
+    pub fn lower(mut self, filter: CodePointInversionList<'static>) -> Self {
+        if filter.is_empty() {
+            return self;
+        }
+        self.chain(filter, Cow::Borrowed("any-lower"));
+        self.load_casing()
+    }
+
+    /// Adds a `::Upper` rule
+    pub fn upper(mut self, filter: CodePointInversionList<'static>) -> Self {
+        if filter.is_empty() {
+            return self;
+        }
+        self.chain(filter, Cow::Borrowed("any-upper"));
+        self.load_casing()
+    }
+
+    /// Adds a `::Remove` rule
+    pub fn remove(mut self, filter: CodePointInversionList<'static>) -> Self {
+        if filter.is_empty() {
+            return self;
+        }
+        self.chain(filter, Cow::Borrowed("any-remove"));
+        self
+    }
+
+    /// Adds a `::Null` rule
+    pub fn null(mut self) -> Self {
+        self.transliterator.with_mut(|r| {
+            r.id_group_list
+                .make_mut()
+                .push::<&[SimpleId]>(&[].as_slice());
+
+            r.rule_group_list.make_mut().push::<&[Rule]>(&[].as_slice());
+        });
+
+        self
+    }
+
+    /// Adds a call to another transliterator
+    pub fn call(
+        mut self,
+        rules: &'static RuleBasedTransliterator<'static>,
+        filter: CodePointInversionList<'static>,
+    ) -> Self {
+        if filter.is_empty() {
+            return self;
+        }
+        let id = self.env.len().to_string();
+
+        self.env.insert(
+            id.clone(),
+            InternalTransliterator::RuleBased(DataPayload::from_static_ref(rules)),
+        );
+
+        self.chain(filter, Cow::Owned(id));
+
+        self
+    }
+
+    fn chain(&mut self, filter: CodePointInversionList<'static>, id: Cow<'static, str>) {
+        self.transliterator.with_mut(|r| {
+            r.id_group_list
+                .make_mut()
+                .push(&[SimpleId { filter, id }].as_slice());
+
+            r.rule_group_list.make_mut().push::<&[Rule]>(&[].as_slice());
+        });
+    }
+
+    /// Builds the transliterator.
+    ///
+    /// This method fails if a recursive dependency has not been loaded. Methods that add rules, such as
+    /// [`Self::nfc`] load NFC data implicitly, but if this builder was constructed with [`Self::from_rules`] or
+    /// calls a transliterator using [`Self::call`], all dependencies for the recursive transliterator need to
+    /// have been loaded.
+    pub fn build(self) -> Result<Transliterator, DataError> {
+        for dep in self.transliterator.get().deps() {
+            if !self.env.contains_key(&*dep) {
+                return Err(DataError::custom("dependency not loaded").with_display_context(&dep));
+            }
+        }
+
+        for (_, dep) in &self.env {
+            if let InternalTransliterator::RuleBased(rbt) = dep {
+                for dep in rbt.get().deps() {
+                    if !self.env.contains_key(&*dep) {
+                        return Err(
+                            DataError::custom("dependency not loaded").with_display_context(&dep)
+                        );
+                    }
+                }
+            }
+        }
+        Ok(Transliterator {
+            transliterator: self.transliterator,
+            env: self.env,
+        })
+    }
+
+    /// Loads NFC data. Call this if you load rules that use `::NFC`.
+    pub fn load_nfc(mut self) -> Self {
+        if !self.env.contains_key("any-nfc") {
+            self.env.insert(
+                String::from("any-nfc"),
+                InternalTransliterator::Composing(ComposingNormalizer::new_nfc().static_to_owned()),
+            );
+        }
+
+        self
+    }
+
+    /// Loads NFKC data. Call this if you load rules that use `::NFKC`.
+    pub fn load_nfkc(mut self) -> Self {
+        if !self.env.contains_key("any-nfkc") {
+            self.env.insert(
+                String::from("any-nfkc"),
+                InternalTransliterator::Composing(
+                    ComposingNormalizer::new_nfkc().static_to_owned(),
+                ),
+            );
+        }
+
+        self
+    }
+
+    /// Loads NFD data. Call this if you load rules that use `::NFD`.
+    pub fn load_nfd(mut self) -> Self {
+        if !self.env.contains_key("any-nfd") {
+            self.env.insert(
+                String::from("any-nfd"),
+                InternalTransliterator::Decomposing(
+                    DecomposingNormalizer::new_nfd().static_to_owned(),
+                ),
+            );
+        }
+
+        self
+    }
+
+    /// Loads NFKD data. Call this if you load rules that use `::NFKD`.
+    pub fn load_nfkd(mut self) -> Self {
+        if !self.env.contains_key("any-nfkd") {
+            self.env.insert(
+                String::from("any-nfkd"),
+                InternalTransliterator::Decomposing(
+                    DecomposingNormalizer::new_nfkd().static_to_owned(),
+                ),
+            );
+        }
+
+        self
+    }
+
+    /// Loads casing data. Call this if you load rules that use `::Lower` or `::Upper`.
+    pub fn load_casing(mut self) -> Self {
+        if !self.env.contains_key("any-lower") {
+            self.env.insert(
+                String::from("any-lower"),
+                InternalTransliterator::Lower(CaseMapper::new().static_to_owned()),
+            );
+            self.env.insert(
+                String::from("any-upper"),
+                InternalTransliterator::Upper(CaseMapper::new().static_to_owned()),
+            );
+        }
+
+        self
+    }
 }
 
 impl Transliterator {
@@ -240,6 +496,7 @@ impl Transliterator {
         Self::try_new_unstable(
             &crate::provider::Baked,
             &icu_normalizer::provider::Baked,
+            &icu_casemap::provider::Baked,
             locale,
         )
     }
@@ -253,18 +510,21 @@ impl Transliterator {
         Self::try_new_unstable(
             &provider.as_deserializing(),
             &provider.as_deserializing(),
+            &provider.as_deserializing(),
             locale,
         )
     }
 
     #[doc = icu_provider::gen_buffer_unstable_docs!(UNSTABLE, Self::try_new)]
-    pub fn try_new_unstable<PT, PN>(
+    pub fn try_new_unstable<PT, PN, PC>(
         transliterator_provider: &PT,
         normalizer_provider: &PN,
+        casemap_provider: &PC,
         locale: &Locale,
     ) -> Result<Self, DataError>
     where
         PT: DataProvider<TransliteratorRulesV1> + ?Sized,
+        PC: DataProvider<CaseMapV1> + ?Sized,
         PN: DataProvider<NormalizerNfdDataV1>
             + DataProvider<NormalizerNfkdDataV1>
             + DataProvider<NormalizerNfdTablesV1>
@@ -277,6 +537,7 @@ impl Transliterator {
             None::<&fn(&Locale) -> Option<Result<Box<dyn CustomTransliterator>, DataError>>>,
             transliterator_provider,
             normalizer_provider,
+            casemap_provider,
         )
     }
 
@@ -329,6 +590,7 @@ impl Transliterator {
         Self::try_new_with_override_unstable(
             &crate::provider::Baked,
             &icu_normalizer::provider::Baked,
+            &icu_casemap::provider::Baked,
             locale,
             lookup,
         )
@@ -347,20 +609,23 @@ impl Transliterator {
         Self::try_new_with_override_unstable(
             &provider.as_deserializing(),
             &provider.as_deserializing(),
+            &provider.as_deserializing(),
             locale,
             lookup,
         )
     }
 
     #[doc = icu_provider::gen_buffer_unstable_docs!(UNSTABLE, Self::try_new_with_override)]
-    pub fn try_new_with_override_unstable<PT, PN, F>(
+    pub fn try_new_with_override_unstable<PT, PN, PC, F>(
         transliterator_provider: &PT,
         normalizer_provider: &PN,
+        casemap_provider: &PC,
         locale: &Locale,
         lookup: F,
     ) -> Result<Transliterator, DataError>
     where
         PT: DataProvider<TransliteratorRulesV1> + ?Sized,
+        PC: DataProvider<CaseMapV1> + ?Sized,
         PN: DataProvider<NormalizerNfdDataV1>
             + DataProvider<NormalizerNfkdDataV1>
             + DataProvider<NormalizerNfdTablesV1>
@@ -374,17 +639,20 @@ impl Transliterator {
             Some(&lookup),
             transliterator_provider,
             normalizer_provider,
+            casemap_provider,
         )
     }
 
-    fn internal_try_new_with_override_unstable<PN, PT, F>(
+    fn internal_try_new_with_override_unstable<PN, PT, PC, F>(
         locale: &Locale,
         lookup: Option<&F>,
         transliterator_provider: &PT,
         normalizer_provider: &PN,
+        casemap_provider: &PC,
     ) -> Result<Transliterator, DataError>
     where
         PT: DataProvider<TransliteratorRulesV1> + ?Sized,
+        PC: DataProvider<CaseMapV1> + ?Sized,
         PN: DataProvider<NormalizerNfdDataV1>
             + DataProvider<NormalizerNfkdDataV1>
             + DataProvider<NormalizerNfdTablesV1>
@@ -401,6 +669,7 @@ impl Transliterator {
             lookup,
             transliterator_provider,
             normalizer_provider,
+            casemap_provider,
             false,
             &mut env,
         )?;
@@ -411,16 +680,18 @@ impl Transliterator {
         })
     }
 
-    fn load_rbt<PT, PN, F>(
+    fn load_rbt<PT, PN, PC, F>(
         marker_attributes: &DataMarkerAttributes,
         lookup: Option<&F>,
         transliterator_provider: &PT,
         normalizer_provider: &PN,
+        casemap_provider: &PC,
         allow_internal: bool,
         env: &mut LiteMap<String, InternalTransliterator>,
     ) -> Result<DataPayload<TransliteratorRulesV1>, DataError>
     where
         PT: DataProvider<TransliteratorRulesV1> + ?Sized,
+        PC: DataProvider<CaseMapV1> + ?Sized,
         PN: DataProvider<NormalizerNfdDataV1>
             + DataProvider<NormalizerNfkdDataV1>
             + DataProvider<NormalizerNfdTablesV1>
@@ -444,7 +715,7 @@ impl Transliterator {
                 // Load the transliterator, by checking
                 let internal_t =
                     // a) hardcoded specials
-                    Transliterator::load_special(&dep, normalizer_provider)
+                    Transliterator::load_special(&dep, normalizer_provider, casemap_provider)
                     // b) the user-provided override
                     .or_else(|| Some(lookup?(&dep.parse().ok()?)?.map(InternalTransliterator::Dyn)))
                     // c) the data
@@ -455,6 +726,7 @@ impl Transliterator {
                             lookup,
                             transliterator_provider,
                             normalizer_provider,
+                            casemap_provider,
                             true,
                             env,
                         ).map(InternalTransliterator::RuleBased)
@@ -465,42 +737,48 @@ impl Transliterator {
         Ok(transliterator)
     }
 
-    fn load_special<P>(
+    fn load_special<PN, PD>(
         special: &str,
-        normalizer_provider: &P,
+        normalizer_provider: &PN,
+        casemapper_provider: &PD,
     ) -> Option<Result<InternalTransliterator, DataError>>
     where
-        P: DataProvider<NormalizerNfdDataV1>
+        PN: ?Sized
+            + DataProvider<NormalizerNfdDataV1>
             + DataProvider<NormalizerNfkdDataV1>
             + DataProvider<NormalizerNfdTablesV1>
             + DataProvider<NormalizerNfkdTablesV1>
-            + DataProvider<NormalizerNfcV1>
-            + ?Sized,
+            + DataProvider<NormalizerNfcV1>,
+        PD: ?Sized + DataProvider<CaseMapV1>,
     {
         // TODO(#3909, #3910): add more
         match special {
             "any-nfc" => Some(
-                ComposingTransliterator::try_nfc(normalizer_provider)
+                ComposingNormalizer::try_new_nfc_unstable(normalizer_provider)
                     .map(InternalTransliterator::Composing),
             ),
             "any-nfkc" => Some(
-                ComposingTransliterator::try_nfkc(normalizer_provider)
+                ComposingNormalizer::try_new_nfkc_unstable(normalizer_provider)
                     .map(InternalTransliterator::Composing),
             ),
             "any-nfd" => Some(
-                DecomposingTransliterator::try_nfd(normalizer_provider)
+                DecomposingNormalizer::try_new_nfd_unstable(normalizer_provider)
                     .map(InternalTransliterator::Decomposing),
             ),
             "any-nfkd" => Some(
-                DecomposingTransliterator::try_nfkd(normalizer_provider)
+                DecomposingNormalizer::try_new_nfkd_unstable(normalizer_provider)
                     .map(InternalTransliterator::Decomposing),
+            ),
+            "any-lower" => Some(
+                CaseMapper::try_new_unstable(casemapper_provider)
+                    .map(InternalTransliterator::Lower),
+            ),
+            "any-upper" => Some(
+                CaseMapper::try_new_unstable(casemapper_provider)
+                    .map(InternalTransliterator::Upper),
             ),
             "any-null" => Some(Ok(InternalTransliterator::Null)),
             "any-remove" => Some(Ok(InternalTransliterator::Remove)),
-            // Comment out any-lower to allow adding any-lower
-            // "any-lower" => Some(Err(DataError::custom("any-lower not implemented"))),
-            "any-upper" => Some(Err(DataError::custom("any-upper not implemented"))),
-            "any-title" => Some(Err(DataError::custom("any-title not implemented"))),
             "any-hex/unicode" => Some(Ok(InternalTransliterator::Hex(
                 hardcoded::HexTransliterator::new("U+", "", 4, Case::Upper),
             ))),
@@ -536,9 +814,9 @@ impl Transliterator {
 
 impl RuleBasedTransliterator<'_> {
     /// Transliteration using rules works as follows:
-    ///  1. Split the input modifiable range of the Replaceable according into runs according to self.filter
-    ///  2. Transliterate each run in sequence
-    ///      i. Transliterate the first id_group, then the first rule_group, then the second id_group, etc.
+    /// 1. Split the input modifiable range of the Replaceable according into runs according to self.filter
+    /// 2. Transliterate each run in sequence
+    ///     1. Transliterate the first id_group, then the first rule_group, then the second id_group, etc.
     fn transliterate(&self, mut rep: Replaceable, env: &Env) {
         // assumes the cursor is at the right position.
 
@@ -1381,6 +1659,7 @@ mod tests {
         let t = Transliterator::try_new_unstable(
             &collection.as_provider(),
             &icu_normalizer::provider::Baked,
+            &icu_casemap::provider::Baked,
             &"und-x-test".parse().unwrap(),
         )
         .unwrap();
@@ -1411,6 +1690,7 @@ mod tests {
         let t = Transliterator::try_new_unstable(
             &collection.as_provider(),
             &icu_normalizer::provider::Baked,
+            &icu_casemap::provider::Baked,
             &"und-x-root".parse().unwrap(),
         )
         .unwrap();
@@ -1433,6 +1713,7 @@ mod tests {
         let t = Transliterator::try_new_unstable(
             &collection.as_provider(),
             &icu_normalizer::provider::Baked,
+            &icu_casemap::provider::Baked,
             &"und-x-test".parse().unwrap(),
         )
         .unwrap();
@@ -1455,6 +1736,7 @@ mod tests {
         let t = Transliterator::try_new_unstable(
             &collection.as_provider(),
             &icu_normalizer::provider::Baked,
+            &icu_casemap::provider::Baked,
             &"und-x-test".parse().unwrap(),
         )
         .unwrap();
@@ -1520,6 +1802,7 @@ mod tests {
         let t = Transliterator::try_new_unstable(
             &collection.as_provider(),
             &icu_normalizer::provider::Baked,
+            &icu_casemap::provider::Baked,
             &"und-x-test".parse().unwrap(),
         )
         .unwrap();
@@ -1541,11 +1824,20 @@ mod tests {
         let t = Transliterator::try_new_unstable(
             &collection.as_provider(),
             &icu_normalizer::provider::Baked,
+            &icu_casemap::provider::Baked,
             &"und-x-test".parse().unwrap(),
         )
         .unwrap();
         let input = "\0äa\u{10FFFF}❤!";
         let output = "U+0000U+00E4U+0061U+10FFFFU+2764U+0021";
+        assert_eq!(t.transliterate(input.to_string()), output);
+    }
+
+    #[test]
+    fn test_katakana_hiragana() {
+        let t = Transliterator::try_new(&"und-Hira-t-und-kana".parse().unwrap()).unwrap();
+        let input = "ウィキペディアへようこそ";
+        let output = "うぃきぺでぃあへようこそ";
         assert_eq!(t.transliterate(input.to_string()), output);
     }
 }

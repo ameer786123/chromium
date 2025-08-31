@@ -4,16 +4,17 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import org.chromium.base.CallbackController;
-import org.chromium.base.Token;
 import org.chromium.base.lifetime.Destroyable;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.collaboration.CollaborationServiceFactory;
 import org.chromium.chrome.browser.collaboration.messaging.MessagingBackendServiceFactory;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -21,6 +22,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tab_ui.TabModelDotInfo;
+import org.chromium.chrome.browser.tabmodel.TabClosingSource;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilterObserver;
 import org.chromium.chrome.browser.tabmodel.TabGroupTitleUtils;
@@ -39,6 +41,7 @@ import java.util.List;
 import java.util.Optional;
 
 /** Pushes whether a notification dot should be shown for a tab model. */
+@NullMarked
 public class TabModelNotificationDotManager implements Destroyable {
     private final PersistentMessageObserver mPersistentMessageObserver =
             new PersistentMessageObserver() {
@@ -52,7 +55,8 @@ public class TabModelNotificationDotManager implements Destroyable {
                 public void displayPersistentMessage(PersistentMessage message) {
                     if (message.type != PersistentNotificationType.DIRTY_TAB) return;
 
-                    if (Boolean.TRUE.equals(mNotificationDotObservableSupplier.get().showDot)) {
+                    if (Boolean.TRUE.equals(
+                            assumeNonNull(mNotificationDotObservableSupplier.get()).showDot)) {
                         return;
                     }
 
@@ -63,7 +67,8 @@ public class TabModelNotificationDotManager implements Destroyable {
                 public void hidePersistentMessage(PersistentMessage message) {
                     if (message.type != PersistentNotificationType.DIRTY_TAB) return;
 
-                    if (Boolean.FALSE.equals(mNotificationDotObservableSupplier.get().showDot)) {
+                    if (Boolean.FALSE.equals(
+                            assumeNonNull(mNotificationDotObservableSupplier.get()).showDot)) {
                         return;
                     }
 
@@ -76,7 +81,7 @@ public class TabModelNotificationDotManager implements Destroyable {
     private final TabGroupModelFilterObserver mTabGroupModelFilterObserver =
             new TabGroupModelFilterObserver() {
                 @Override
-                public void didMergeTabToGroup(Tab movedTab) {
+                public void didMergeTabToGroup(Tab movedTab, boolean isDestinationTab) {
                     maybeUpdateForTab(movedTab, /* mayAddDot= */ true);
                 }
             };
@@ -92,7 +97,7 @@ public class TabModelNotificationDotManager implements Destroyable {
                 }
 
                 @Override
-                public void onFinishingTabClosure(Tab tab) {
+                public void onFinishingTabClosure(Tab tab, @TabClosingSource int closingSource) {
                     maybeUpdateForTab(tab, /* mayAddDot= */ false);
                 }
 
@@ -121,7 +126,7 @@ public class TabModelNotificationDotManager implements Destroyable {
     private final CallbackController mCallbackController = new CallbackController();
     private final Context mContext;
     private @Nullable MessagingBackendService mMessagingBackendService;
-    private @Nullable TabGroupModelFilter mTabGroupModelFilter;
+    private @MonotonicNonNull TabGroupModelFilter mTabGroupModelFilter;
     private boolean mTabModelSelectorInitialized;
     private boolean mMessagingBackendServiceInitialized;
 
@@ -140,12 +145,13 @@ public class TabModelNotificationDotManager implements Destroyable {
      */
     public void initWithNative(TabModelSelector tabModelSelector) {
         mTabGroupModelFilter =
-                tabModelSelector
-                        .getTabGroupModelFilterProvider()
-                        .getTabGroupModelFilter(/* isIncognito= */ false);
+                assumeNonNull(
+                        tabModelSelector
+                                .getTabGroupModelFilterProvider()
+                                .getTabGroupModelFilter(/* isIncognito= */ false));
         assert mTabGroupModelFilter != null : "TabModel & native should be initialized.";
 
-        Profile profile = mTabGroupModelFilter.getTabModel().getProfile();
+        Profile profile = assumeNonNull(mTabGroupModelFilter.getTabModel().getProfile());
         CollaborationService collaborationService =
                 CollaborationServiceFactory.getForProfile(profile);
         if (!collaborationService.getServiceStatus().isAllowedToJoin()) return;
@@ -168,7 +174,7 @@ public class TabModelNotificationDotManager implements Destroyable {
      * Returns an {@link ObservableSupplier} that contains true when the notification dot should be
      * shown.
      */
-    public @NonNull ObservableSupplier<TabModelDotInfo> getNotificationDotObservableSupplier() {
+    public ObservableSupplier<TabModelDotInfo> getNotificationDotObservableSupplier() {
         return mNotificationDotObservableSupplier;
     }
 
@@ -185,7 +191,7 @@ public class TabModelNotificationDotManager implements Destroyable {
     }
 
     private void maybeUpdateForTab(Tab tab, boolean mayAddDot) {
-        TabModelDotInfo info = mNotificationDotObservableSupplier.get();
+        TabModelDotInfo info = assumeNonNull(mNotificationDotObservableSupplier.get());
         boolean stateWillBeUnchanged = info.showDot == mayAddDot;
         if (tab.getTabGroupId() == null || stateWillBeUnchanged) {
             return;
@@ -212,10 +218,9 @@ public class TabModelNotificationDotManager implements Destroyable {
 
             @Nullable Tab tab = tabModel.getTabById(tabId);
             if (tab != null && !tab.isClosing()) {
-                Token groupId = mTabGroupModelFilter.getTabGroupIdFromRootId(tab.getRootId());
                 String title =
                         TabGroupTitleUtils.getDisplayableTitle(
-                                mContext, mTabGroupModelFilter, groupId);
+                                mContext, mTabGroupModelFilter, tab.getTabGroupId());
                 return new TabModelDotInfo(true, title);
             }
         }

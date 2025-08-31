@@ -5,7 +5,7 @@
 import("//extensions/buildflags/buildflags.gni")
 
 assert(enable_extensions_core,
-       "Cannot depend on extensions because enable_extensions=false.")
+       "Cannot depend on extensions because enable_extensions_core=false.")
 
 source_set("messaging") {
   sources = [
@@ -40,6 +40,7 @@ source_set("messaging") {
   deps = [
     "//components/back_forward_cache",
     "//content/public/common",
+    "//extensions/browser/api:extensions_api_client",
     "//extensions/common:common_constants",
     "//extensions/common:mojom_shared",
     "//extensions/common:mojom_shared_cpp_sources",

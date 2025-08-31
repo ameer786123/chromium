@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.compositor.overlays.strip;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.compositor.layouts.Layout;
 import org.chromium.ui.base.LocalizationUtils;
 
@@ -12,6 +13,7 @@ import org.chromium.ui.base.LocalizationUtils;
  * components customize how the {@link StripLayoutHelper} functions and how other {@link Layout}s
  * visually order tabs.
  */
+@NullMarked
 public abstract class StripStacker {
     /**
      * Computes the X offset for the new tab button.
@@ -55,7 +57,7 @@ public abstract class StripStacker {
             float stripWidth) {
         float rightEdge = stripLeftMargin;
         for (StripLayoutTab tab : indexOrderedTabs) {
-            if (tab.isDying() || tab.isDraggedOffStrip()) continue;
+            if (StripLayoutUtils.skipTabEdgePositionCalculation(tab)) continue;
             float layoutWidth = (tab.getWidth() - tabOverlapWidth) * tab.getWidthWeight();
             rightEdge = Math.max(tab.getDrawX() + layoutWidth, rightEdge);
         }
@@ -72,7 +74,7 @@ public abstract class StripStacker {
             float newTabButtonWidth) {
         float leftEdge = stripWidth - stripRightMargin;
         for (StripLayoutTab tab : indexOrderedTabs) {
-            if (tab.isDying() || tab.isDraggedOffStrip()) continue;
+            if (StripLayoutUtils.skipTabEdgePositionCalculation(tab)) continue;
             leftEdge = Math.min(tab.getDrawX(), leftEdge);
         }
 
@@ -88,13 +90,7 @@ public abstract class StripStacker {
      * @param indexOrderedViews A list of views ordered by index.
      * @param xOffset The xOffset for the start of the strip.
      * @param visibleWidth The width of the visible space on the tab strip.
-     * @param tabClosing Whether a tab is being closed.
-     * @param cachedTabWidth Whether The ideal tab width.
      */
     public abstract void pushDrawPropertiesToViews(
-            StripLayoutView[] indexOrderedViews,
-            float xOffset,
-            float visibleWidth,
-            boolean tabClosing,
-            float cachedTabWidth);
+            StripLayoutView[] indexOrderedViews, float xOffset, float visibleWidth);
 }

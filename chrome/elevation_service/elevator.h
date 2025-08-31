@@ -24,7 +24,7 @@ struct EncryptFlags {
   bool use_latest_key = false;
 };
 
-constexpr IID kTestElevatorClsid = {
+inline constexpr IID kTestElevatorClsid = {
     0x416C51AC,
     0x4DEF,
     0x43CA,
@@ -32,17 +32,18 @@ constexpr IID kTestElevatorClsid = {
      0x57}};  // Elevator Test CLSID. {416C51AC-4DEF-43CA-96E8-E735210AB257}
 
 namespace switches {
-constexpr char kElevatorClsIdForTestingSwitch[] = "elevator-clsid-for-testing";
-constexpr char kFakeReencryptForTestingSwitch[] =
+inline constexpr char kElevatorClsIdForTestingSwitch[] =
+    "elevator-clsid-for-testing";
+inline constexpr char kFakeReencryptForTestingSwitch[] =
     "elevator-fake-reencrypt-for-testing";
 }  // namespace switches
 
 namespace internal {
 
-constexpr uint32_t kFlagUseLatestKey = 1 << 23;
+inline constexpr uint32_t kFlagUseLatestKey = 1 << 23;
 
 // Update this each time a new flag is added.
-constexpr uint32_t kMaxFlag = kFlagUseLatestKey;
+inline constexpr uint32_t kMaxFlag = kFlagUseLatestKey;
 
 // A static assert verifies the flags can always fit into 24 bits.
 static_assert((kMaxFlag & 0xFFFFFF) == kMaxFlag);
@@ -85,7 +86,8 @@ class Elevator
           IElevatorChrome,
           IElevatorChromeBeta,
           IElevatorChromeDev,
-          IElevatorChromeCanary> {
+          IElevatorChromeCanary,
+          IFastRundown> {
  public:
   // Failure codes.
   static constexpr HRESULT kErrorCouldNotObtainCallingProcess =
@@ -108,6 +110,8 @@ class Elevator
       MAKE_HRESULT(SEVERITY_ERROR, FACILITY_ITF, 0xA009);
   static constexpr HRESULT kErrorUnsupportedProtectionLevel =
       MAKE_HRESULT(SEVERITY_ERROR, FACILITY_ITF, 0xA00A);
+  static constexpr HRESULT kErrorInvalidValidationData =
+      MAKE_HRESULT(SEVERITY_ERROR, FACILITY_ITF, 0xA00B);
 
   // Success codes.
   static constexpr HRESULT kSuccessShouldReencrypt =

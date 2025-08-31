@@ -56,7 +56,6 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/skia_conversions.h"
-#include "ui/native_theme/common_theme.h"
 #include "ui/native_theme/native_theme.h"
 
 // This was removed from Winvers.h but is still used.
@@ -211,11 +210,6 @@ NativeTheme* NativeTheme::GetInstanceForNativeUi() {
   return s_native_theme.get();
 }
 
-NativeTheme* NativeTheme::GetInstanceForDarkUI() {
-  static base::NoDestructor<NativeThemeWin> s_dark_native_theme(false, true);
-  return s_dark_native_theme.get();
-}
-
 // static
 bool NativeTheme::SystemDarkModeSupported() {
   static bool system_supports_dark_mode =
@@ -297,9 +291,8 @@ void NativeThemeWin::Paint(cc::PaintCanvas* canvas,
       PaintMenuBackground(canvas, color_provider, rect);
       return;
     case kMenuItemBackground:
-      CommonThemePaintMenuItemBackground(this, color_provider, canvas, state,
-                                         rect,
-                                         std::get<MenuItemExtraParams>(extra));
+      PaintMenuItemBackground(canvas, color_provider, state, rect,
+                              std::get<MenuItemExtraParams>(extra));
       return;
     default:
       PaintIndirect(canvas, part, state, rect, extra);
@@ -758,11 +751,6 @@ NativeTheme::PreferredContrast NativeThemeWin::CalculatePreferredContrast()
   }
   return contrast_ratio <= 2.5 ? NativeTheme::PreferredContrast::kLess
                                : NativeTheme::PreferredContrast::kCustom;
-}
-
-NativeTheme::ColorScheme NativeThemeWin::GetDefaultSystemColorScheme() const {
-  return InForcedColorsMode() ? ColorScheme::kPlatformHighContrast
-                              : NativeTheme::GetDefaultSystemColorScheme();
 }
 
 void NativeThemeWin::PaintIndirect(cc::PaintCanvas* destination_canvas,
@@ -1689,20 +1677,13 @@ void NativeThemeWin::RegisterColorFilteringRegkeyObserver() {
 
 void NativeThemeWin::UpdateDarkModeStatus() {
   bool dark_mode_enabled = false;
-  bool system_dark_mode_enabled = false;
   if (hkcu_themes_regkey_.Valid()) {
     DWORD apps_use_light_theme = 1;
     hkcu_themes_regkey_.ReadValueDW(L"AppsUseLightTheme",
                                     &apps_use_light_theme);
     dark_mode_enabled = (apps_use_light_theme == 0);
-
-    DWORD system_uses_light_theme = 1;
-    hkcu_themes_regkey_.ReadValueDW(L"SystemUsesLightTheme",
-                                    &system_uses_light_theme);
-    system_dark_mode_enabled = (system_uses_light_theme == 0);
   }
   set_use_dark_colors(dark_mode_enabled);
-  set_use_dark_colors_for_system_integrated_ui(system_dark_mode_enabled);
   set_preferred_color_scheme(CalculatePreferredColorScheme());
   CloseHandlesInternal();
   NotifyOnNativeThemeUpdated();

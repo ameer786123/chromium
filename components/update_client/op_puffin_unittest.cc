@@ -18,6 +18,7 @@
 #include "components/services/patch/in_process_file_patcher.h"
 #include "components/update_client/crx_cache.h"
 #include "components/update_client/patch/patch_impl.h"
+#include "components/update_client/protocol_definition.h"
 #include "components/update_client/test_utils.h"
 #include "components/update_client/update_client_errors.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -48,6 +49,13 @@ class PuffOperationTest : public testing::Test {
         [&](base::Value::Dict ping) { pings_.push_back(std::move(ping)); });
   }
 
+  base::RepeatingCallback<void(update_client::ComponentState)>
+  MakeStateCallback() {
+    return base::BindRepeating([](update_client::ComponentState state) {
+      ASSERT_EQ(state, update_client::ComponentState::kPatching);
+    });
+  }
+
   SEQUENCE_CHECKER(sequence_checker_);
   base::RunLoop loop_;
   std::vector<base::Value::Dict> pings_;
@@ -63,7 +71,7 @@ TEST_F(PuffOperationTest, Success) {
   base::FilePath patch_file =
       CopyToTemp("puffin_patch_test/puffin_app_v1_to_v2.puff");
 
-  // CrxCache::Put will move the v1 file, so copy it into the temp dir.
+  // Since CrxCache::Put moves the v1 file, make a copy in the temp dir.
   base::FilePath old_file = CopyToTemp("puffin_patch_test/puffin_app_v1.crx3");
 
   cache->Put(
@@ -76,7 +84,9 @@ TEST_F(PuffOperationTest, Success) {
             base::MakeRefCounted<PatchChromiumFactory>(
                 base::BindRepeating(&patch::LaunchInProcessFilePatcher))
                 ->Create(),
-            MakePingCallback(), "appid", "hash1", patch_file,
+            MakePingCallback(), MakeStateCallback(), "hash1",
+            "c7f9a9230b82c8b3670e539d8034e5386f17bfa1bdcd4a2cc385844f9252052f",
+            patch_file,
             base::BindLambdaForTesting(
                 [&](base::expected<base::FilePath, CategorizedError> result) {
                   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -90,8 +100,9 @@ TEST_F(PuffOperationTest, Success) {
   loop_.Run();
   EXPECT_FALSE(base::PathExists(patch_file));
   ASSERT_EQ(pings_.size(), 1u);
-  EXPECT_EQ(pings_[0].FindInt("eventtype"), 62);
-  EXPECT_EQ(pings_[0].FindInt("eventresult"), 1);
+  EXPECT_EQ(pings_[0].FindInt("eventtype"), protocol_request::kEventPuff);
+  EXPECT_EQ(pings_[0].FindInt("eventresult"),
+            protocol_request::kEventResultSuccess);
   EXPECT_EQ(pings_[0].Find("errorcat"), nullptr);
   EXPECT_EQ(pings_[0].Find("errorcode"), nullptr);
   EXPECT_EQ(pings_[0].Find("extracode1"), nullptr);
@@ -100,12 +111,13 @@ TEST_F(PuffOperationTest, Success) {
 TEST_F(PuffOperationTest, BadPatch) {
   auto cache = base::MakeRefCounted<CrxCache>(TempPath("cache"));
 
-  // PuffOperation deletes the patch file, so copy it to the temp dir. For this
-  // test, use an malformed puff file - a copy of v2.crx is good enough.
+  // Since PuffOperation deletes the patch file, make a copy in the temp dir.
+  // For this test, use an malformed puff file - a copy of v2.crx is good
+  // enough.
   base::FilePath patch_file =
       CopyToTemp("puffin_patch_test/puffin_app_v2.crx3");
 
-  // CrxCache::Put will move the v1 file, so copy it into the temp dir.
+  // Since CrxCache::Put moves the v1 file, make a copy in the temp dir.
   base::FilePath old_file = CopyToTemp("puffin_patch_test/puffin_app_v1.crx3");
 
   cache->Put(
@@ -118,25 +130,31 @@ TEST_F(PuffOperationTest, BadPatch) {
             base::MakeRefCounted<PatchChromiumFactory>(
                 base::BindRepeating(&patch::LaunchInProcessFilePatcher))
                 ->Create(),
-            MakePingCallback(), "appid", "hash1", patch_file,
+            MakePingCallback(), MakeStateCallback(), "hash1",
+            "c7f9a9230b82c8b3670e539d8034e5386f17bfa1bdcd4a2cc385844f9252052f",
+            patch_file,
             base::BindLambdaForTesting(
                 [&](base::expected<base::FilePath, CategorizedError> result) {
                   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
                   loop_.Quit();
                   ASSERT_FALSE(result.has_value());
                   EXPECT_EQ(
-                      result.error().code_,
+                      result.error().code,
                       static_cast<int>(UnpackerError::kDeltaOperationFailure));
                 }));
       }));
   loop_.Run();
   EXPECT_FALSE(base::PathExists(patch_file));
   ASSERT_EQ(pings_.size(), 1u);
-  EXPECT_EQ(pings_[0].FindInt("eventtype"), 62);
-  EXPECT_EQ(pings_[0].FindInt("eventresult"), 0);
-  EXPECT_EQ(pings_[0].FindInt("errorcat"), 2);
-  EXPECT_EQ(pings_[0].FindInt("errorcode"), 14);
-  EXPECT_EQ(pings_[0].FindInt("extracode1"), 7);
+  EXPECT_EQ(pings_[0].FindInt("eventtype"), protocol_request::kEventPuff);
+  EXPECT_EQ(pings_[0].FindInt("eventresult"),
+            protocol_request::kEventResultError);
+  EXPECT_EQ(pings_[0].FindInt("errorcat"),
+            static_cast<int>(ErrorCategory::kUnpack));
+  EXPECT_EQ(pings_[0].FindInt("errorcode"),
+            static_cast<int>(UnpackerError::kDeltaOperationFailure));
+  EXPECT_EQ(pings_[0].FindInt("extracode1"),
+            static_cast<int>(Error::INVALID_ARGUMENT));
 }
 
 TEST_F(PuffOperationTest, NotInCache) {
@@ -151,22 +169,27 @@ TEST_F(PuffOperationTest, NotInCache) {
       base::MakeRefCounted<PatchChromiumFactory>(
           base::BindRepeating(&patch::LaunchInProcessFilePatcher))
           ->Create(),
-      MakePingCallback(), "appid", "prev_fp", patch_file,
+      MakePingCallback(), MakeStateCallback(), "prev_fp",
+      "c7f9a9230b82c8b3670e539d8034e5386f17bfa1bdcd4a2cc385844f9252052f",
+      patch_file,
       base::BindLambdaForTesting(
           [&](base::expected<base::FilePath, CategorizedError> result) {
             DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
             loop_.Quit();
             ASSERT_FALSE(result.has_value());
-            EXPECT_EQ(result.error().code_,
+            EXPECT_EQ(result.error().code,
                       static_cast<int>(UnpackerError::kCrxCacheFileNotCached));
           }));
   loop_.Run();
   EXPECT_FALSE(base::PathExists(patch_file));
   ASSERT_EQ(pings_.size(), 1u);
-  EXPECT_EQ(pings_[0].FindInt("eventtype"), 62);
-  EXPECT_EQ(pings_[0].FindInt("eventresult"), 0);
-  EXPECT_EQ(pings_[0].FindInt("errorcat"), 2);
-  EXPECT_EQ(pings_[0].FindInt("errorcode"), 23);
+  EXPECT_EQ(pings_[0].FindInt("eventtype"), protocol_request::kEventPuff);
+  EXPECT_EQ(pings_[0].FindInt("eventresult"),
+            protocol_request::kEventResultError);
+  EXPECT_EQ(pings_[0].FindInt("errorcat"),
+            static_cast<int>(ErrorCategory::kUnpack));
+  EXPECT_EQ(pings_[0].FindInt("errorcode"),
+            static_cast<int>(UnpackerError::kCrxCacheFileNotCached));
   EXPECT_EQ(pings_[0].Find("extracode1"), nullptr);
 }
 
@@ -180,22 +203,72 @@ TEST_F(PuffOperationTest, NoCache) {
       base::MakeRefCounted<PatchChromiumFactory>(
           base::BindRepeating(&patch::LaunchInProcessFilePatcher))
           ->Create(),
-      MakePingCallback(), "appid", "prev_fp", patch_file,
+      MakePingCallback(), MakeStateCallback(), "prev_fp",
+      "c7f9a9230b82c8b3670e539d8034e5386f17bfa1bdcd4a2cc385844f9252052f",
+      patch_file,
       base::BindLambdaForTesting(
           [&](base::expected<base::FilePath, CategorizedError> result) {
             DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
             loop_.Quit();
             ASSERT_FALSE(result.has_value());
-            EXPECT_EQ(result.error().code_,
+            EXPECT_EQ(result.error().code,
                       static_cast<int>(UnpackerError::kCrxCacheNotProvided));
           }));
   loop_.Run();
   EXPECT_FALSE(base::PathExists(patch_file));
   ASSERT_EQ(pings_.size(), 1u);
-  EXPECT_EQ(pings_[0].FindInt("eventtype"), 62);
-  EXPECT_EQ(pings_[0].FindInt("eventresult"), 0);
-  EXPECT_EQ(pings_[0].FindInt("errorcat"), 2);
-  EXPECT_EQ(pings_[0].FindInt("errorcode"), 21);
+  EXPECT_EQ(pings_[0].FindInt("eventtype"), protocol_request::kEventPuff);
+  EXPECT_EQ(pings_[0].FindInt("eventresult"),
+            protocol_request::kEventResultError);
+  EXPECT_EQ(pings_[0].FindInt("errorcat"),
+            static_cast<int>(ErrorCategory::kUnpack));
+  EXPECT_EQ(pings_[0].FindInt("errorcode"),
+            static_cast<int>(UnpackerError::kCrxCacheNotProvided));
+  EXPECT_EQ(pings_[0].Find("extracode1"), nullptr);
+}
+
+TEST_F(PuffOperationTest, OutHashMismatch) {
+  auto cache = base::MakeRefCounted<CrxCache>(TempPath("cache"));
+
+  // PuffOperation deletes the patch file, so copying it to the temp dir.
+  base::FilePath patch_file =
+      CopyToTemp("puffin_patch_test/puffin_app_v1_to_v2.puff");
+
+  // Since CrxCache::Put moves the v1 file, make a copy in the temp dir.
+  base::FilePath old_file = CopyToTemp("puffin_patch_test/puffin_app_v1.crx3");
+
+  cache->Put(
+      old_file, "appid", "hash1", "prev_fp",
+      base::BindLambdaForTesting([&](base::expected<base::FilePath,
+                                                    UnpackerError> r) {
+        ASSERT_TRUE(r.has_value());
+        PuffOperation(
+            cache,
+            base::MakeRefCounted<PatchChromiumFactory>(
+                base::BindRepeating(&patch::LaunchInProcessFilePatcher))
+                ->Create(),
+            MakePingCallback(), MakeStateCallback(), "hash1", "incorrecthash",
+            patch_file,
+            base::BindLambdaForTesting(
+                [&](base::expected<base::FilePath, CategorizedError> result) {
+                  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+                  loop_.Quit();
+                  ASSERT_FALSE(result.has_value());
+                  EXPECT_EQ(
+                      result.error().code,
+                      static_cast<int>(UnpackerError::kPatchOutHashMismatch));
+                }));
+      }));
+  loop_.Run();
+  EXPECT_FALSE(base::PathExists(patch_file));
+  ASSERT_EQ(pings_.size(), 1u);
+  EXPECT_EQ(pings_[0].FindInt("eventtype"), protocol_request::kEventPuff);
+  EXPECT_EQ(pings_[0].FindInt("eventresult"),
+            protocol_request::kEventResultError);
+  EXPECT_EQ(pings_[0].FindInt("errorcat"),
+            static_cast<int>(ErrorCategory::kUnpack));
+  EXPECT_EQ(pings_[0].FindInt("errorcode"),
+            static_cast<int>(UnpackerError::kPatchOutHashMismatch));
   EXPECT_EQ(pings_[0].Find("extracode1"), nullptr);
 }
 

@@ -39,6 +39,10 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+#include "chrome/browser/enterprise/util/managed_browser_utils.h"
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
 namespace {
 
 using autofill::AutofillProfile;
@@ -59,14 +63,19 @@ class SelectTypeAndMigrateLocalDataItemsWhenActiveTest : public SyncTest {
  public:
   SelectTypeAndMigrateLocalDataItemsWhenActiveTest()
       : SyncTest(SINGLE_CLIENT),
-        address_(autofill::test::GetFullProfile()),
         password_(CreateTestPasswordForm(0)) {
     feature_list_.InitWithFeatures(
         /*enabled_features=*/
-        {switches::kImprovedSigninUIOnDesktop,
-         switches::kSyncEnableBookmarksInTransportMode},
+        {switches::kSyncEnableBookmarksInTransportMode,
+         autofill::features::kAutofillSupportLastNamePrefix,
+         autofill::features::kAutofillSupportSplitZipCode},
         /*disabled_features=*/{
             syncer::kSyncEnableContactInfoDataTypeForCustomPassphraseUsers});
+
+    // Ensure profile creation occurs after flag initialization to guarantee
+    // their effectiveness within the profile's constructor.
+    address_ =
+        std::make_unique<AutofillProfile>(autofill::test::GetFullProfile());
   }
 
   // In SINGLE_CLIENT tests, there's only a single PersonalDataManager.
@@ -74,13 +83,12 @@ class SelectTypeAndMigrateLocalDataItemsWhenActiveTest : public SyncTest {
     return contact_info_helper::GetPersonalDataManager(GetProfile(0));
   }
 
-  const AutofillProfile& address() { return address_; }
+  const AutofillProfile& address() { return *address_; }
   const PasswordForm& password() { return password_; }
 
   // Sign in with `signin::ConsentLevel::kSignin`.
   void SignIn() {
-    ASSERT_TRUE(
-        GetClient(0)->SignInPrimaryAccount(signin::ConsentLevel::kSignin));
+    ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
     // Enable account storage for bookmarks.
     SigninPrefs(*GetProfile(0)->GetPrefs())
         .SetBookmarksExplicitBrowserSignin(
@@ -89,10 +97,10 @@ class SelectTypeAndMigrateLocalDataItemsWhenActiveTest : public SyncTest {
   }
 
   void SaveLocalAddress() {
-    GetPersonalDataManager()->address_data_manager().AddProfile(address_);
+    GetPersonalDataManager()->address_data_manager().AddProfile(*address_);
     EXPECT_TRUE(AddressDataManagerProfileChecker(
                     &GetPersonalDataManager()->address_data_manager(),
-                    UnorderedElementsAre(address_))
+                    UnorderedElementsAre(*address_))
                     .Wait());
   }
 
@@ -121,7 +129,7 @@ class SelectTypeAndMigrateLocalDataItemsWhenActiveTest : public SyncTest {
 
  private:
   base::test::ScopedFeatureList feature_list_;
-  AutofillProfile address_;
+  std::unique_ptr<AutofillProfile> address_;
   PasswordForm password_;
 };
 
@@ -471,16 +479,12 @@ class
     SelectTypeAndMigrateLocalDataItemsWhenActiveWithContactInfoForCustomPassphraseUsersTest
     : public SelectTypeAndMigrateLocalDataItemsWhenActiveTest {
  public:
-  SelectTypeAndMigrateLocalDataItemsWhenActiveWithContactInfoForCustomPassphraseUsersTest() {
-    feature_list_.InitWithFeatures(
-        /*enabled_features=*/
-        {switches::kImprovedSigninUIOnDesktop,
-         syncer::kSyncEnableContactInfoDataTypeForCustomPassphraseUsers},
-        /*disabled_features=*/{});
-  }
+  SelectTypeAndMigrateLocalDataItemsWhenActiveWithContactInfoForCustomPassphraseUsersTest() =
+      default;
 
  private:
-  base::test::ScopedFeatureList feature_list_;
+  base::test::ScopedFeatureList feature_list_{
+      syncer::kSyncEnableContactInfoDataTypeForCustomPassphraseUsers};
 };
 
 IN_PROC_BROWSER_TEST_F(
@@ -511,45 +515,23 @@ IN_PROC_BROWSER_TEST_F(
   EXPECT_EQ(0u, GetLocalAddresses().size());
 }
 
-// Overwrite the Sync test account with a non-gmail account. This treats it as
-// a Dasher account.
-class SelectTypeAndMigrateLocalDataItemsWhenActiveWithManagedAccountTest
-    : public SelectTypeAndMigrateLocalDataItemsWhenActiveTest {
- public:
-  SelectTypeAndMigrateLocalDataItemsWhenActiveWithManagedAccountTest() {
-    // This can't be done in `SetUpCommandLine()` because `SyncTest::SetUp()`
-    // already consumes the parameter.
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kSyncUserForTest, "user@managed-domain.com");
-  }
-
-  void SignIn(const std::string& hosted_domain) {
-    ASSERT_TRUE(
-        GetClient(0)->SignInPrimaryAccount(signin::ConsentLevel::kSignin));
-
-    signin::IdentityManager* identity_manager =
-        IdentityManagerFactory::GetForProfile(GetProfile(0));
-    CoreAccountInfo account =
-        identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
-
-    signin::SimulateSuccessfulFetchOfAccountInfo(
-        identity_manager, account.account_id, account.email, account.gaia,
-        hosted_domain, "Full Name", "Given Name", "en-US", "");
-
-    ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(
-    SelectTypeAndMigrateLocalDataItemsWhenActiveWithManagedAccountTest,
-    ShouldNotUploadAddressWithManagedAccount) {
+IN_PROC_BROWSER_TEST_F(SelectTypeAndMigrateLocalDataItemsWhenActiveTest,
+                       ShouldNotUploadAddressToManagedAccount) {
   ASSERT_TRUE(SetupClients());
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  auto enable_disclaimer_on_primary_account_change_resetter =
+      enterprise_util::DisableAutomaticManagementDisclaimerUntilReset(
+          GetProfile(0));
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
   SaveLocalAddress();
   ASSERT_EQ(1u, GetLocalAddresses().size());
 
   // Sign in with a managed account.
-  SignIn(/*hosted_domain=*/"managed-domain.com");
+  ASSERT_TRUE(
+      GetClient(0)->SignInPrimaryAccount(SyncTestAccount::kEnterpriseAccount1));
+  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
 
   // This should not turn on account storage. The address will stay local.
   GetSyncService(0)->SelectTypeAndMigrateLocalDataItemsWhenActive(
@@ -568,26 +550,18 @@ IN_PROC_BROWSER_TEST_F(
             GetSyncService(0)->GetQueuedLocalDataMigrationItemCountForTest());
 }
 
-// Overwrite the Sync test account with an @google.com managed account.
-class SelectTypeAndMigrateLocalDataItemsWhenActiveWithGoogleManagedAccountTest
-    : public SelectTypeAndMigrateLocalDataItemsWhenActiveWithManagedAccountTest {
- public:
-  SelectTypeAndMigrateLocalDataItemsWhenActiveWithGoogleManagedAccountTest() {
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kSyncUserForTest, "user@google.com");
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(
-    SelectTypeAndMigrateLocalDataItemsWhenActiveWithGoogleManagedAccountTest,
-    ShouldUploadAddressWithGoogleManagedAccount) {
+IN_PROC_BROWSER_TEST_F(SelectTypeAndMigrateLocalDataItemsWhenActiveTest,
+                       ShouldUploadAddressToManagedGoogleDotComAccount) {
   ASSERT_TRUE(SetupClients());
 
   SaveLocalAddress();
   ASSERT_EQ(1u, GetLocalAddresses().size());
 
   // Sign in with a Google managed account.
-  SignIn(/*hosted_domain=*/"google.com");
+  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount(
+      SyncTestAccount::kGoogleDotComAccount1));
+  enterprise_util::SetUserAcceptedAccountManagement(GetProfile(0), true);
+  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
   ASSERT_EQ(
       0u, fake_server_->GetSyncEntitiesByDataType(syncer::CONTACT_INFO).size());
 

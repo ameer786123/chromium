@@ -11,7 +11,6 @@
 #include "base/functional/callback.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
-#include "base/threading/thread_checker.h"
 #include "base/types/pass_key.h"
 #include "services/metrics/public/cpp/metrics_export.h"
 #include "services/metrics/public/cpp/ukm_source.h"
@@ -22,10 +21,16 @@
 class ChromePermissionsClient;
 class PermissionUmaUtil;
 class PlatformNotificationServiceImpl;
+class PersistentNotificationHandler;
+class NonPersistentNotificationHandler;
 
 namespace apps {
 class WebsiteMetrics;
 }  // namespace apps
+
+namespace login_detection {
+class IdentityProviderMetrics;
+}  // namespace login_detection
 
 namespace metrics {
 class UkmRecorderInterface;
@@ -34,7 +39,9 @@ class UkmRecorderInterface;
 namespace content {
 class BtmNavigationHandle;
 class BtmServiceImpl;
-class FedCmMetrics;
+namespace webid {
+class Metrics;
+}  // namespace webid
 class PaymentAppProviderUtil;
 class RenderFrameHostImpl;
 }  // namespace content
@@ -44,8 +51,8 @@ class ExtensionMessagePort;
 class ManifestV2ExperimentManager;
 }
 
-namespace weblayer {
-class BackgroundSyncDelegateImpl;
+namespace safe_browsing {
+class NotificationContentDetectionUkmUtil;
 }
 
 namespace ukm {
@@ -118,7 +125,11 @@ class METRICS_EXPORT UkmRecorder {
   // from the identity provider. This method should only be called in the
   // FedCmMetrics class.
   static SourceId GetSourceIdForWebIdentityFromScope(
-      base::PassKey<content::FedCmMetrics>,
+      base::PassKey<content::webid::Metrics>,
+      const GURL& provider_url);
+
+  static SourceId GetSourceIdForWebIdentityFromScope(
+      base::PassKey<login_detection::IdentityProviderMetrics>,
       const GURL& provider_url);
 
   // Gets a new SourceId of REDIRECT_ID type and updates the source URL
@@ -152,16 +163,34 @@ class METRICS_EXPORT UkmRecorder {
 
   // Gets a new SourceId of NOTIFICATION_ID type. This should only be
   // used for recording Permission UKM events related to persistent and
-  // nonpersistent notifications. `origin` is the domain that uses the Push API.
+  // nonpersistent notifications. `url` is the domain that uses the Push API.
   static SourceId GetSourceIdForNotificationPermission(
       base::PassKey<ChromePermissionsClient>,
-      const GURL& origin);
+      const GURL& url);
 
   // Gets a new SourceId of NOTIFICATION_ID type. This should only be used
   // for recording persistent and nonpersistent notification UKM events.
   static SourceId GetSourceIdForNotificationEvent(
       base::PassKey<PlatformNotificationServiceImpl>,
-      const GURL& origin);
+      const GURL& url);
+
+  // Gets a new SourceId of NOTIFICATION_ID type. This should only be used
+  // for recording persistent notification UKM events.
+  static SourceId GetSourceIdForNotificationEvent(
+      base::PassKey<PersistentNotificationHandler>,
+      const GURL& url);
+
+  // Gets a new SourceId of NOTIFICATION_ID type. This should only be used
+  // for recording nonpersistent notification UKM events.
+  static SourceId GetSourceIdForNotificationEvent(
+      base::PassKey<NonPersistentNotificationHandler>,
+      const GURL& url);
+
+  // Gets a new SourceId of NOTIFICATION_ID type. This should only be used
+  // for recording suspicious notification interaction UKM events.
+  static SourceId GetSourceIdForNotificationEvent(
+      base::PassKey<safe_browsing::NotificationContentDetectionUkmUtil>,
+      const GURL& url);
 
   // This method should be called when the system is about to shutdown, but
   // `UkmRecorder` is still available to record metrics.
@@ -201,7 +230,6 @@ class METRICS_EXPORT UkmRecorder {
                                            SourceIdType type);
 
  private:
-  friend weblayer::BackgroundSyncDelegateImpl;
   friend DelegatingUkmRecorder;
   friend TestRecordingHelper;
   friend UkmBackgroundRecorderService;

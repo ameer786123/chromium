@@ -27,6 +27,7 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
+#include "chrome/browser/browser_features.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/extensions/extension_management.h"
@@ -35,6 +36,7 @@
 #include "chrome/browser/extensions/external_policy_loader.h"
 #include "chrome/browser/extensions/external_pref_loader.h"
 #include "chrome/browser/extensions/forced_extensions/install_stage_tracker.h"
+#include "chrome/browser/extensions/initial_external_extension_loader.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
@@ -54,7 +56,8 @@
 #include "extensions/common/manifest.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/extensions/preinstalled_apps.h"
 #include "chrome/browser/web_applications/preinstalled_app_install_features.h"
 #endif
 
@@ -73,8 +76,7 @@
 #include "chromeos/components/kiosk/kiosk_utils.h"
 #include "chromeos/components/mgs/managed_guest_session_utils.h"
 #else
-#include "chrome/browser/extensions/preinstalled_apps.h"
-#include "components/policy/core/common/device_local_account_type.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -338,9 +340,8 @@ void ExternalProviderImpl::RetrieveExtensionsFromPrefs(
     const base::Value::List* supported_locales =
         extension_dict.FindList(kSupportedLocales);
     if (supported_locales) {
-      std::vector<std::string> browser_locales;
-      l10n_util::GetParentLocales(g_browser_process->GetApplicationLocale(),
-                                  &browser_locales);
+      std::vector<std::string> browser_locales = l10n_util::GetParentLocales(
+          g_browser_process->GetApplicationLocale());
 
       bool locale_supported = false;
       for (const base::Value& locale : *supported_locales) {
@@ -869,7 +870,7 @@ void ExternalProviderImpl::CreateExternalProviders(
 #endif
   }
 
-#if !BUILDFLAG(IS_CHROMEOS)
+#if !BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(ENABLE_EXTENSIONS)
   // The pre-installed apps are installed as INTERNAL but use the external
   // extension installer codeflow.
   provider_list->push_back(std::make_unique<preinstalled_apps::Provider>(
@@ -896,6 +897,21 @@ void ExternalProviderImpl::CreateExternalProviders(
       service, base::MakeRefCounted<ExternalComponentLoader>(profile), profile,
       ManifestLocation::kInvalidLocation, ManifestLocation::kExternalComponent,
       Extension::FROM_WEBSTORE | Extension::WAS_INSTALLED_BY_DEFAULT));
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  if (base::FeatureList::IsEnabled(features::kInitialExternalExtensions)) {
+    auto initial_external_extensions_provider =
+        std::make_unique<ExternalProviderImpl>(
+            service,
+            base::MakeRefCounted<InitialExternalExtensionLoader>(
+                *profile->GetPrefs()),
+            profile, ManifestLocation::kExternalPref,
+            ManifestLocation::kExternalPrefDownload, Extension::FROM_WEBSTORE);
+    initial_external_extensions_provider->set_allow_updates(true);
+    initial_external_extensions_provider->set_auto_acknowledge(false);
+    provider_list->push_back(std::move(initial_external_extensions_provider));
+  }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 }
 
 }  // namespace extensions

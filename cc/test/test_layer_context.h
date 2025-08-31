@@ -16,15 +16,18 @@ class TestLayerContext : public LayerContext {
 
   void SetVisible(bool visible) override;
 
-  void UpdateDisplayTreeFrom(LayerTreeImpl& tree,
-                             viz::ClientResourceProvider& resource_provider,
-                             viz::RasterContextProvider& context_provider,
-                             const gfx::Rect& viewport_damage_rect) override;
+  base::TimeTicks UpdateDisplayTreeFrom(
+      LayerTreeImpl& tree,
+      viz::ClientResourceProvider& resource_provider,
+      viz::RasterContextProvider& context_provider,
+      const gfx::Rect& viewport_damage_rect,
+      const viz::LocalSurfaceId& target_local_surface_id) override;
 
   void UpdateDisplayTile(PictureLayerImpl& layer,
                          const Tile& tile,
                          viz::ClientResourceProvider& resource_provider,
-                         viz::RasterContextProvider& context_provider) override;
+                         viz::RasterContextProvider& context_provider,
+                         bool update_damage) override;
 };
 
 }  // namespace cc

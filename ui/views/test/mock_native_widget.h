@@ -46,6 +46,7 @@ class MockNativeWidget : public internal::NativeWidgetPrivate {
   MOCK_METHOD(const ui::Layer*, GetLayer, (), (const override));
   MOCK_METHOD(void, ReorderNativeViews, (), (override));
   MOCK_METHOD(void, ViewRemoved, (View * view), (override));
+  MOCK_METHOD(void, ClientDestroyedWidget, (), (override));
   MOCK_METHOD(void,
               SetNativeWindowProperty,
               (const char* name, void* value),
@@ -76,7 +77,7 @@ class MockNativeWidget : public internal::NativeWidgetPrivate {
               (override));
   MOCK_METHOD(void,
               OnWidgetThemeChanged,
-              (ui::ColorProviderKey::ColorMode),
+              (ui::ColorProviderKey::ColorMode, std::optional<SkColor>),
               (override));
   MOCK_METHOD(gfx::Rect, GetWindowBoundsInScreen, (), (const override));
   MOCK_METHOD(gfx::Rect, GetClientAreaBoundsInScreen, (), (const override));
@@ -104,6 +105,7 @@ class MockNativeWidget : public internal::NativeWidgetPrivate {
               (override));
   MOCK_METHOD(void, Hide, (), (override));
   MOCK_METHOD(bool, IsVisible, (), (const override));
+  MOCK_METHOD(bool, IsVisibleOnScreen, (), (const override));
   MOCK_METHOD(void, Activate, (), (override));
   MOCK_METHOD(void, Deactivate, (), (override));
   MOCK_METHOD(bool, IsActive, (), (const override));
@@ -182,11 +184,12 @@ class MockNativeWidget : public internal::NativeWidgetPrivate {
   MOCK_METHOD(bool, SetAllowScreenshots, (bool allow), (override));
   MOCK_METHOD(bool, AreScreenshotsAllowed, (), (override));
   MOCK_METHOD(std::string, GetName, (), (const override));
+  MOCK_METHOD(bool, IsDesktopNativeWidget, (), (const override));
 
   base::WeakPtr<NativeWidgetPrivate> GetWeakPtr() override;
 
  private:
-  raw_ptr<Widget> widget_;
+  base::WeakPtr<Widget> widget_;
   base::WeakPtrFactory<MockNativeWidget> weak_factory_{this};
 };
 

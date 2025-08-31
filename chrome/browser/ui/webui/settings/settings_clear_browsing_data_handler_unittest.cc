@@ -16,7 +16,9 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/test_browser_window.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "components/browsing_data/core/browsing_data_utils.h"
 #include "components/browsing_data/core/counters/browsing_data_counter.h"
 #include "components/browsing_data/core/pref_names.h"
@@ -106,8 +108,8 @@ class ClearBrowsingDataHandlerUnitTest : public testing::Test {
 
  protected:
   content::BrowserTaskEnvironment browser_task_environment_;
-  std::unique_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
+  std::unique_ptr<TestingProfileManager> testing_profile_manager;
   std::unique_ptr<TestingProfile> profile_;
   std::unique_ptr<content::WebContents> web_contents_;
   content::TestWebUI test_web_ui_;
@@ -124,9 +126,11 @@ class ClearBrowsingDataHandlerUnitTest : public testing::Test {
 };
 
 void ClearBrowsingDataHandlerUnitTest::SetUp() {
-  feature_list_.InitWithFeatures({toast_features::kToastFramework,
-                                  toast_features::kClearBrowsingDataToast},
-                                 {});
+  feature_list_.InitWithFeatures({toast_features::kClearBrowsingDataToast}, {});
+
+  testing_profile_manager = std::make_unique<TestingProfileManager>(
+      TestingBrowserProcess::GetGlobal());
+  ASSERT_TRUE(testing_profile_manager->SetUp());
 
   TestingProfile::Builder builder;
   profile_ = builder.Build();
@@ -134,11 +138,11 @@ void ClearBrowsingDataHandlerUnitTest::SetUp() {
   profile_->GetTestingPrefService()->registry()->RegisterBooleanPref(
       kTestingDatatypePref, true);
 
-  browser_window_ = std::make_unique<TestBrowserWindow>();
+  auto browser_window = std::make_unique<TestBrowserWindow>();
   Browser::CreateParams params(profile_.get(), /*user_gesture*/ true);
   params.type = Browser::TYPE_NORMAL;
-  params.window = browser_window_.get();
-  browser_.reset(Browser::Create(params));
+  params.window = browser_window.release();
+  browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
 
   std::unique_ptr<tabs::TabModel> tab_model = std::make_unique<tabs::TabModel>(
       content::WebContents::Create(
@@ -169,7 +173,6 @@ void ClearBrowsingDataHandlerUnitTest::TearDown() {
   dse_factory_util_.reset();
   browser_->tab_strip_model()->CloseAllTabs();
   browser_ = nullptr;
-  browser_window_ = nullptr;
 }
 
 void ClearBrowsingDataHandlerUnitTest::VerifySearchHistoryWebUIUpdate(

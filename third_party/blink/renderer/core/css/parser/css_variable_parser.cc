@@ -111,9 +111,23 @@ static bool ConsumeVariableReference(CSSParserTokenStream& stream,
                                      const CSSParserContext& context) {
   CSSParserTokenStream::BlockGuard guard(stream);
   stream.ConsumeWhitespace();
-  if (stream.Peek().GetType() != kIdentToken ||
-      !CSSVariableParser::IsValidVariableName(
-          stream.ConsumeIncludingWhitespace())) {
+  if (stream.Peek().GetType() == kIdentToken) {
+    if (!CSSVariableParser::IsValidVariableName(
+            stream.ConsumeIncludingWhitespace())) {
+      return false;
+    }
+  } else if (stream.Peek().GetType() == kFunctionToken &&
+             RuntimeEnabledFeatures::CSSIdentFunctionEnabled()) {
+    if (!css_parsing_utils::ConsumeIdentFunction(stream, context)) {
+      // It's a bit wasteful to create a CSSCustomIdentValue just to discard it,
+      // but with the new "argument grammar" parsing approach described in
+      // Issue 11500 we will eventually end up accepting any
+      // <declaration-value>, so it should not be for long.
+      //
+      // https://github.com/w3c/csswg-drafts/issues/11500
+      return false;
+    }
+  } else {
     return false;
   }
   if (stream.AtEnd()) {
@@ -491,9 +505,6 @@ static bool ConsumeUnparsedValue(CSSParserTokenStream& stream,
           has_references = true;
           continue;
         case CSSValueID::kAttr:
-          if (!RuntimeEnabledFeatures::CSSAdvancedAttrFunctionEnabled()) {
-            break;
-          }
           if (!ConsumeAttributeReference(
                   stream, has_references, has_font_units, has_root_font_units,
                   has_line_height_units, has_dashed_functions, context)) {
@@ -522,7 +533,7 @@ static bool ConsumeUnparsedValue(CSSParserTokenStream& stream,
             error = true;
           }
           if (!error) {
-            context.Count(WebDXFeature::kDRAFT_CssIf);
+            context.Count(WebDXFeature::kIf);
           }
           has_references = true;
           continue;

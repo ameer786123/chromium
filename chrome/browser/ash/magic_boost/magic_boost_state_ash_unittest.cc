@@ -4,14 +4,18 @@
 
 #include "chrome/browser/ash/magic_boost/magic_boost_state_ash.h"
 
+#include <memory>
+
 #include "ash/constants/ash_pref_names.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
-#include "ash/test/ash_test_base.h"
+#include "base/functional/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "base/values.h"
 #include "chrome/browser/ash/magic_boost/mock_editor_panel_manager.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/test/base/chrome_ash_test_base.h"
 #include "chromeos/components/magic_boost/public/cpp/magic_boost_state.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
@@ -58,7 +62,7 @@ class TestMagicBoostStateObserver : public MagicBoostState::Observer {
 
 }  // namespace
 
-class MagicBoostStateAshTest : public AshTestBase {
+class MagicBoostStateAshTest : public ChromeAshTestBase {
  protected:
   MagicBoostStateAshTest() = default;
   MagicBoostStateAshTest(const MagicBoostStateAshTest&) = delete;
@@ -67,12 +71,13 @@ class MagicBoostStateAshTest : public AshTestBase {
 
   // ChromeAshTestBase:
   void SetUp() override {
-    AshTestBase::SetUp();
+    ChromeAshTestBase::SetUp();
 
     prefs_ = static_cast<TestingPrefServiceSimple*>(
         ash::Shell::Get()->session_controller()->GetPrimaryUserPrefService());
 
-    magic_boost_state_ = std::make_unique<MagicBoostStateAsh>();
+    magic_boost_state_ = std::make_unique<MagicBoostStateAsh>(
+        base::BindRepeating([]() { return static_cast<Profile*>(nullptr); }));
     magic_boost_state_->set_editor_panel_manager_for_test(
         &mock_editor_manager_);
 
@@ -83,7 +88,7 @@ class MagicBoostStateAshTest : public AshTestBase {
     observer_.reset();
     magic_boost_state_.reset();
     prefs_ = nullptr;
-    AshTestBase::TearDown();
+    ChromeAshTestBase::TearDown();
   }
 
   TestingPrefServiceSimple* prefs() { return prefs_; }

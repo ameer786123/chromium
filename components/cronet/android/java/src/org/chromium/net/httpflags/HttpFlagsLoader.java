@@ -10,11 +10,11 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.os.Build;
+import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.Log;
 import org.chromium.base.metrics.ScopedSysTraceEvent;
 import org.chromium.net.impl.CronetManifest;
 
@@ -78,21 +78,28 @@ public final class HttpFlagsLoader {
             if (providerApplicationInfo == null) return null;
             Log.d(
                     TAG,
-                    "Found application exporting HTTP flags: %s",
-                    providerApplicationInfo.packageName);
+                    String.format(
+                            "Found application exporting HTTP flags: %s",
+                            providerApplicationInfo.packageName));
 
             File flagsFile = getFlagsFileFromProvider(providerApplicationInfo);
-            Log.d(TAG, "HTTP flags file path: %s", flagsFile.getAbsolutePath());
+            Log.d(TAG, String.format("HTTP flags file path: %s", flagsFile.getAbsolutePath()));
 
             Flags flags = loadFlagsFile(flagsFile);
             if (flags == null) return null;
-            Log.d(TAG, "Successfully loaded HTTP flags: %s", flags);
+            Log.d(TAG, String.format("Successfully loaded HTTP flags: %s", flags));
 
             return flags;
         } catch (RuntimeException exception) {
             Log.i(TAG, "Unable to load HTTP flags file", exception);
             return null;
         }
+    }
+
+    @VisibleForTesting
+    public static void flushHttpFlags() {
+        sHttpFlags = null;
+        sVersion = null;
     }
 
     /**
@@ -104,7 +111,7 @@ public final class HttpFlagsLoader {
      * then it will be cached indefinitely.
      */
     public static ResolvedFlags getHttpFlags(
-            Context context, String version, boolean isLoadedFromApi) {
+            Context context, String version, boolean isLoadedFromApi, boolean isTelemetryEnabled) {
         synchronized (sLock) {
             assert (sHttpFlags == null) == (sVersion == null);
             if (sVersion != null && !version.equals(sVersion)) {
@@ -126,14 +133,15 @@ public final class HttpFlagsLoader {
                         ResolvedFlags.resolve(
                                 flags != null ? flags : Flags.newBuilder().build(),
                                 context.getPackageName(),
-                                version);
+                                version,
+                                isTelemetryEnabled);
                 ResolvedFlags.Value logMe = sHttpFlags.flags().get(LOG_FLAG_NAME);
                 if (logMe != null) {
                     Log.i(
                             TAG,
-                            "HTTP flags log line (%s): %s",
-                            isLoadedFromApi ? "API" : "Impl",
-                            logMe.getStringValue());
+                            String.format(
+                                    "HTTP flags log line (%s): %s",
+                                    isLoadedFromApi ? "API" : "Impl", logMe.getStringValue()));
                 }
                 return sHttpFlags;
             }
@@ -184,9 +192,10 @@ public final class HttpFlagsLoader {
             } catch (FileNotFoundException exception) {
                 Log.i(
                         TAG,
-                        "HTTP flags file `%s` is missing. This is expected if HTTP flags"
-                                + " functionality is currently disabled in the host system.",
-                        file.getPath());
+                        String.format(
+                                "HTTP flags file `%s` is missing. This is expected if HTTP flags"
+                                    + " functionality is currently disabled in the host system.",
+                                file.getPath()));
                 return null;
             } catch (IOException exception) {
                 throw new RuntimeException("Unable to read HTTP flags file", exception);

@@ -158,7 +158,7 @@ public class ChromeShareExtras {
 
     /**
      * Whether the content being shared is an image based on the {@link #getDetailedContentType()}.
-     * */
+     */
     public boolean isImage() {
         return mDetailedContentType == DetailedContentType.IMAGE
                 || mDetailedContentType == DetailedContentType.GIF
@@ -184,7 +184,7 @@ public class ChromeShareExtras {
         }
 
         /** Sets {@link RenderFrameHost} that opened the context menu for sharing. */
-        public Builder setRenderFrameHost(RenderFrameHost renderFrameHost) {
+        public Builder setRenderFrameHost(@Nullable RenderFrameHost renderFrameHost) {
             mRenderFrameHost = renderFrameHost;
             return this;
         }

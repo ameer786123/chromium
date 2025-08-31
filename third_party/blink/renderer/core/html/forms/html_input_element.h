@@ -121,6 +121,7 @@ class CORE_EXPORT HTMLInputElement
   // autofill classified the field as password by predictions, so that its value
   // can be protected from memorization by autofill or keyboards.
   bool HasBeenPasswordField() const;
+  void MaybeSetHasBeenPasswordField();
 
   bool IsCheckable() const;
   bool checkedForBinding() const { return Checked(); }
@@ -148,7 +149,7 @@ class CORE_EXPORT HTMLInputElement
   RadioButtonGroupScope* GetRadioButtonGroupScope() const;
 
   unsigned size() const;
-  bool SizeShouldIncludeDecoration(int& preferred_size) const;
+  bool GetSizeWithDecoration(int& preferred_size) const;
 
   void setType(const AtomicString&);
 
@@ -365,8 +366,6 @@ class CORE_EXPORT HTMLInputElement
 
   LayoutBox* GetLayoutBoxForScrolling() const final;
 
-  void SetHasBeenPasswordField() { has_been_password_field_ = true; }
-
   bool IsDraggedSlider() const;
 
   mojom::blink::FormControlType FormControlType() const final;
@@ -383,6 +382,8 @@ class CORE_EXPORT HTMLInputElement
                              CommandEventType command) override;
 
   void SetFocused(bool is_focused, mojom::blink::FocusType) override;
+  bool IsKeyboardFocusableSlow(UpdateBehavior update_behavior =
+                                   UpdateBehavior::kStyleAndLayout) const final;
 
  protected:
   void DefaultEventHandler(Event&) override;
@@ -399,8 +400,6 @@ class CORE_EXPORT HTMLInputElement
   bool HasActivationBehavior() const override;
 
   bool HasCustomFocusLogic() const final;
-  bool IsKeyboardFocusableSlow(UpdateBehavior update_behavior =
-                                   UpdateBehavior::kStyleAndLayout) const final;
   bool MayTriggerVirtualKeyboard() const final;
   bool ShouldHaveFocusAppearance() const final;
   bool IsEnumeratable() const final;
@@ -471,6 +470,8 @@ class CORE_EXPORT HTMLInputElement
 
   void InitializeTypeInParsing();
   void UpdateType(const AtomicString&);
+
+  void UpdateHasBeenPasswordField(const AtomicString& new_type_name);
 
   void SubtreeHasChanged() final;
 

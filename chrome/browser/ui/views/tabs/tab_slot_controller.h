@@ -254,11 +254,7 @@ class TabSlotController {
   // Attempts to move the specified group to the right.
   virtual void ShiftGroupRight(const tab_groups::TabGroupId& group) = 0;
 
-  virtual const Browser* GetBrowser() const = 0;
-
-  // Returns the current width of inactive tabs. An individual inactive tab may
-  // differ from this width slightly due to rounding.
-  virtual int GetInactiveTabWidth() const = 0;
+  virtual Browser* GetBrowser() = 0;
 
   // See BrowserNonClientFrameView::IsFrameCondensed().
   virtual bool IsFrameCondensed() const = 0;

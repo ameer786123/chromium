@@ -18,6 +18,7 @@
 #include "base/functional/callback.h"
 #include "base/functional/callback_forward.h"
 #include "base/i18n/rtl.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/scoped_observation.h"
 #include "build/build_config.h"
@@ -27,13 +28,17 @@
 #include "components/autofill/core/browser/crowdsourcing/test_votes_uploader.h"
 #include "components/autofill/core/browser/data_manager/autofill_ai/entity_data_manager.h"
 #include "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
+#include "components/autofill/core/browser/data_manager/valuables/test_valuables_data_manager.h"
 #include "components/autofill/core/browser/data_manager/valuables/valuables_data_manager.h"
 #include "components/autofill/core/browser/data_quality/addresses/test_address_normalizer.h"
 #include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "components/autofill/core/browser/foundations/autofill_driver_factory.h"
-#include "components/autofill/core/browser/integrators/autofill_ai/mock_autofill_ai_delegate.h"
+#include "components/autofill/core/browser/integrators/autofill_ai/mock_autofill_ai_manager.h"
 #include "components/autofill/core/browser/integrators/fast_checkout/mock_fast_checkout_client.h"
-#include "components/autofill/core/browser/integrators/optimization_guide/mock_autofill_optimization_guide.h"
+#include "components/autofill/core/browser/integrators/identity_credential/identity_credential_delegate.h"
+#include "components/autofill/core/browser/integrators/optimization_guide/mock_autofill_optimization_guide_decider.h"
+#include "components/autofill/core/browser/integrators/password_manager/otp_delegate.h"
+#include "components/autofill/core/browser/integrators/password_manager/password_manager_delegate.h"
 #include "components/autofill/core/browser/integrators/plus_addresses/autofill_plus_address_delegate.h"
 #include "components/autofill/core/browser/logging/log_manager.h"
 #include "components/autofill/core/browser/logging/log_router.h"
@@ -73,9 +78,6 @@
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
-#endif
 
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
 #include "components/autofill/core/browser/ml_model/field_classification_model_handler.h"
@@ -144,8 +146,11 @@ class TestAutofillClientTemplate : public T {
     return *test_personal_data_manager_.get();
   }
 
-  ValuablesDataManager& GetValuablesDataManager() override {
-    return *valuables_data_manager_.get();
+  ValuablesDataManager* GetValuablesDataManager() override {
+    if (!valuables_data_manager_) {
+      valuables_data_manager_ = std::make_unique<TestValuablesDataManager>();
+    }
+    return valuables_data_manager_.get();
   }
 
   EntityDataManager* GetEntityDataManager() override {
@@ -154,15 +159,16 @@ class TestAutofillClientTemplate : public T {
                : entity_data_manager_.get();
   }
 
-  MockAutofillOptimizationGuide* GetAutofillOptimizationGuide() const override {
-    return mock_autofill_optimization_guide_.get();
+  MockAutofillOptimizationGuideDecider* GetAutofillOptimizationGuideDecider()
+      const override {
+    return mock_autofill_optimization_guide_decider_.get();
   }
 
-  void ResetAutofillOptimizationGuide() {
-    mock_autofill_optimization_guide_.reset();
+  void ResetAutofillOptimizationGuideDecider() {
+    mock_autofill_optimization_guide_decider_.reset();
   }
 
-  MockAutofillAiDelegate* GetAutofillAiDelegate() override {
+  MockAutofillAiManager* GetAutofillAiManager() override {
     return mock_autofill_ai_delegate_.get();
   }
 
@@ -176,13 +182,24 @@ class TestAutofillClientTemplate : public T {
     return *single_field_fill_router_;
   }
 
-  MockAutocompleteHistoryManager* GetAutocompleteHistoryManager() override {
+  AutocompleteHistoryManager* GetAutocompleteHistoryManager() override {
     return &mock_autocomplete_history_manager_;
   }
 
   AutofillPlusAddressDelegate* GetPlusAddressDelegate() override {
     return plus_address_delegate_.get();
   }
+
+  IdentityCredentialDelegate* GetIdentityCredentialDelegate() override {
+    return identity_credential_delegate_.get();
+  }
+
+  PasswordManagerDelegate* GetPasswordManagerDelegate(
+      const autofill::FieldGlobalId& field_id) override {
+    return password_manager_delegate_.get();
+  }
+
+  OtpDelegate* GetOtpDelegate() override { return otp_delegate_.get(); }
 
   test::AutofillTestingPrefService* GetPrefs() override {
     if (!prefs_) {
@@ -373,6 +390,10 @@ class TestAutofillClientTemplate : public T {
     return last_committed_primary_main_frame_url_.SchemeIs("https");
   }
 
+  bool IsCvcSavingSupported() const override {
+    return is_cvc_saving_supported_;
+  }
+
   LogManager* GetCurrentLogManager() override { return log_manager_.get(); }
 
   autofill_metrics::FormInteractionsUkmLogger& GetFormInteractionsUkmLogger()
@@ -381,8 +402,9 @@ class TestAutofillClientTemplate : public T {
   }
 
   const AutofillAblationStudy& GetAblationStudy() const override {
-    static const AutofillAblationStudy default_ablation_study("seed");
-    return default_ablation_study;
+    static const base::NoDestructor<AutofillAblationStudy>
+        default_ablation_study("seed");
+    return *default_ablation_study;
   }
 
   bool ShouldFormatForLargeKeyboardAccessory() const override {
@@ -475,7 +497,7 @@ class TestAutofillClientTemplate : public T {
         "foo@gmail.com", signin::ConsentLevel::kSignin);
     SetCanUseModelExecutionFeatures(true);
     SetVariationConfigCountryCode(GeoIpCountryCode("US"));
-    return SetAutofillAiOptInStatus(*this, true);
+    return SetAutofillAiOptInStatus(*this, AutofillAiOptInStatus::kOptedIn);
   }
 
   // Updates whether the currently signed in primary account can use model
@@ -562,6 +584,10 @@ class TestAutofillClientTemplate : public T {
     is_off_the_record_ = is_off_the_record;
   }
 
+  void set_is_cvc_saving_supported(bool is_cvc_saving_supported) {
+    is_cvc_saving_supported_ = is_cvc_saving_supported;
+  }
+
   void set_crowdsourcing_manager(
       std::unique_ptr<AutofillCrowdsourcingManager> crowdsourcing_manager) {
     crowdsourcing_manager_ = std::move(crowdsourcing_manager);
@@ -575,6 +601,21 @@ class TestAutofillClientTemplate : public T {
   void set_plus_address_delegate(
       std::unique_ptr<AutofillPlusAddressDelegate> plus_address_delegate) {
     plus_address_delegate_ = std::move(plus_address_delegate);
+  }
+
+  void set_identity_credential_delegate(
+      std::unique_ptr<IdentityCredentialDelegate>
+          identity_credential_delegate) {
+    identity_credential_delegate_ = std::move(identity_credential_delegate);
+  }
+
+  void set_password_manager_delegate(
+      std::unique_ptr<PasswordManagerDelegate> password_manager_delegate) {
+    password_manager_delegate_ = std::move(password_manager_delegate);
+  }
+
+  void set_otp_delegate(std::unique_ptr<OtpDelegate> otp_delegate) {
+    otp_delegate_ = std::move(otp_delegate);
   }
 
   void set_suggestion_ui_session_id(
@@ -596,13 +637,18 @@ class TestAutofillClientTemplate : public T {
   signin::IdentityTestEnvironment identity_test_env_;
   raw_ptr<syncer::SyncService> test_sync_service_ = nullptr;
   std::unique_ptr<AutofillPlusAddressDelegate> plus_address_delegate_;
+  std::unique_ptr<IdentityCredentialDelegate> identity_credential_delegate_;
+  std::unique_ptr<PasswordManagerDelegate> password_manager_delegate_;
+  std::unique_ptr<OtpDelegate> otp_delegate_;
   TestAddressNormalizer test_address_normalizer_;
-  std::unique_ptr<::testing::NiceMock<MockAutofillOptimizationGuide>>
-      mock_autofill_optimization_guide_ =
-          std::make_unique<testing::NiceMock<MockAutofillOptimizationGuide>>();
-  std::unique_ptr<::testing::NiceMock<MockAutofillAiDelegate>>
+  std::unique_ptr<::testing::NiceMock<MockAutofillOptimizationGuideDecider>>
+      mock_autofill_optimization_guide_decider_ = std::make_unique<
+          testing::NiceMock<MockAutofillOptimizationGuideDecider>>();
+  std::unique_ptr<::testing::NiceMock<MockAutofillAiManager>>
       mock_autofill_ai_delegate_ =
-          std::make_unique<testing::NiceMock<MockAutofillAiDelegate>>();
+          std::make_unique<testing::NiceMock<MockAutofillAiManager>>(
+              this,
+              /*strike_database=*/nullptr);
   ::testing::NiceMock<MockAutocompleteHistoryManager>
       mock_autocomplete_history_manager_;
   ::testing::NiceMock<MockFastCheckoutClient> mock_fast_checkout_client_;
@@ -650,6 +696,8 @@ class TestAutofillClientTemplate : public T {
   bool is_off_the_record_ = false;
 
   bool is_showing_popup_ = false;
+
+  bool is_cvc_saving_supported_ = true;
 
   SuggestionHidingReason popup_hidden_reason_;
 

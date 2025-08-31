@@ -16,8 +16,10 @@
 #include <vector>
 
 #include "absl/container/btree_set.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/compiler/code_generator.h"
@@ -33,6 +35,7 @@
 #include "google/protobuf/compiler/java/shared_code_generator.h"
 #include "google/protobuf/compiler/retention.h"
 #include "google/protobuf/compiler/versions.h"
+#include "google/protobuf/descriptor.h"
 #include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/descriptor_visitor.h"
 #include "google/protobuf/dynamic_message.h"
@@ -102,6 +105,15 @@ bool CollectExtensions(const Message& message, FieldDescriptorSet* extensions) {
   return true;
 }
 
+void CollectPublicDependencies(
+    const FileDescriptor* file,
+    absl::flat_hash_set<const FileDescriptor*>* dependencies) {
+  if (file == nullptr || !dependencies->insert(file).second) return;
+  for (int i = 0; file != nullptr && i < file->public_dependency_count(); i++) {
+    CollectPublicDependencies(file->public_dependency(i), dependencies);
+  }
+}
+
 // Finds all extensions for custom options in the given file descriptor with the
 // builder pool which resolves Java features instead of the generated pool.
 void CollectExtensions(const FileDescriptor& file,
@@ -113,7 +125,7 @@ void CollectExtensions(const FileDescriptor& file,
       file_proto.GetDescriptor()->full_name());
 
   // descriptor.proto is not found in the builder pool, meaning there are no
-  // custom options.
+  // custom options or they are option imported and not reachable.
   if (file_proto_desc == nullptr) return;
 
   DynamicMessageFactory factory;
@@ -122,14 +134,24 @@ void CollectExtensions(const FileDescriptor& file,
   ABSL_CHECK(dynamic_file_proto.get() != nullptr);
   ABSL_CHECK(dynamic_file_proto->ParseFromString(file_data));
 
-  // Collect the extensions again from the dynamic message.
+  // Collect the extensions from the dynamic message.
   extensions->clear();
-  ABSL_CHECK(CollectExtensions(*dynamic_file_proto, extensions))
-      << "Found unknown fields in FileDescriptorProto when building "
-      << file_proto.name()
-      << ". It's likely that those fields are custom options, however, "
-         "those options cannot be recognized in the builder pool. "
-         "This normally should not happen. Please report a bug.";
+  // Unknown extensions are ok and expected in the case of option imports.
+  CollectExtensions(*dynamic_file_proto, extensions);
+
+  // TODO: Remove descriptor pool pollution from protoc full.
+  // Check against dependencies to handle option dependencies polluting pool
+  // from using protoc_full with built-in generators instead of plugins.
+  // Option dependencies and transitive dependencies are not allowed, except in
+  // the case of import public.
+  absl::flat_hash_set<const FileDescriptor*> dependencies;
+  dependencies.insert(&file);
+  for (int i = 0; i < file.dependency_count(); i++) {
+    CollectPublicDependencies(file.dependency(i), &dependencies);
+  }
+  absl::erase_if(*extensions, [&](const FieldDescriptor* fieldDescriptor) {
+    return !dependencies.contains(fieldDescriptor->file());
+  });
 }
 
 // Our static initialization methods can become very, very large.
@@ -252,6 +274,26 @@ bool FileGenerator::Validate(std::string* error) {
            "https://github.com/protocolbuffers/protobuf/blob/main/java/"
            "lite.md";
   }
+  google::protobuf::internal::VisitDescriptors(*file_, [&](const EnumDescriptor& enm) {
+    if (CheckLargeEnum(&enm) && enm.is_closed()) {
+      absl::StrAppend(
+          error, enm.full_name(),
+          " is a closed enum and can not be used with the large_enum feature.  "
+          "Please migrate to an open enum first, which is a better fit for "
+          "extremely large enums.\n");
+    }
+    absl::Status status = ValidateNestInFileClassFeature(enm);
+    if (!status.ok()) {
+      absl::StrAppend(error, status.message());
+    }
+  });
+
+  google::protobuf::internal::VisitDescriptors(*file_, [&](const Descriptor& message) {
+    absl::Status status = ValidateNestInFileClassFeature(message);
+    if (!status.ok()) {
+      absl::StrAppend(error, status.message());
+    }
+  });
 
   return error->empty();
 }
@@ -338,17 +380,21 @@ void FileGenerator::Generate(io::Printer* printer) {
 
   // -----------------------------------------------------------------
 
-  if (!MultipleJavaFiles(file_, immutable_api_)) {
-    for (int i = 0; i < file_->enum_type_count(); i++) {
+  for (int i = 0; i < file_->enum_type_count(); i++) {
+    if (NestedInFileClass(*file_->enum_type(i), immutable_api_)) {
       generator_factory_->NewEnumGenerator(file_->enum_type(i))
           ->Generate(printer);
     }
-    for (int i = 0; i < file_->message_type_count(); i++) {
+  }
+  for (int i = 0; i < file_->message_type_count(); i++) {
+    if (NestedInFileClass(*file_->message_type(i), immutable_api_)) {
       message_generators_[i]->GenerateInterface(printer);
       message_generators_[i]->Generate(printer);
     }
-    if (HasGenericServices(file_, context_->EnforceLite())) {
-      for (int i = 0; i < file_->service_count(); i++) {
+  }
+  if (HasGenericServices(file_, context_->EnforceLite())) {
+    for (int i = 0; i < file_->service_count(); i++) {
+      if (NestedInFileClass(*file_->service(i), immutable_api_)) {
         std::unique_ptr<ServiceGenerator> generator(
             generator_factory_->NewServiceGenerator(file_->service(i)));
         generator->Generate(printer);
@@ -564,38 +610,39 @@ void FileGenerator::GenerateSiblings(
     const std::string& package_dir, GeneratorContext* context,
     std::vector<std::string>* file_list,
     std::vector<std::string>* annotation_list) {
-  if (MultipleJavaFiles(file_, immutable_api_)) {
-    for (int i = 0; i < file_->enum_type_count(); i++) {
-      std::unique_ptr<EnumGenerator> generator(
-          generator_factory_->NewEnumGenerator(file_->enum_type(i)));
-      GenerateSibling<EnumGenerator>(
-          package_dir, java_package_, file_->enum_type(i), context, file_list,
-          options_.annotate_code, annotation_list, "", generator.get(),
-          options_.opensource_runtime, &EnumGenerator::Generate);
-    }
-    for (int i = 0; i < file_->message_type_count(); i++) {
-      if (immutable_api_) {
-        GenerateSibling<MessageGenerator>(
-            package_dir, java_package_, file_->message_type(i), context,
-            file_list, options_.annotate_code, annotation_list, "OrBuilder",
-            message_generators_[i].get(), options_.opensource_runtime,
-            &MessageGenerator::GenerateInterface);
-      }
+  for (int i = 0; i < file_->enum_type_count(); i++) {
+    if (NestedInFileClass(*file_->enum_type(i), immutable_api_)) continue;
+    std::unique_ptr<EnumGenerator> generator(
+        generator_factory_->NewEnumGenerator(file_->enum_type(i)));
+    GenerateSibling<EnumGenerator>(
+        package_dir, java_package_, file_->enum_type(i), context, file_list,
+        options_.annotate_code, annotation_list, "", generator.get(),
+        options_.opensource_runtime, &EnumGenerator::Generate);
+  }
+  for (int i = 0; i < file_->message_type_count(); i++) {
+    if (NestedInFileClass(*file_->message_type(i), immutable_api_)) continue;
+    if (immutable_api_) {
       GenerateSibling<MessageGenerator>(
           package_dir, java_package_, file_->message_type(i), context,
-          file_list, options_.annotate_code, annotation_list, "",
+          file_list, options_.annotate_code, annotation_list, "OrBuilder",
           message_generators_[i].get(), options_.opensource_runtime,
-          &MessageGenerator::Generate);
+          &MessageGenerator::GenerateInterface);
     }
-    if (HasGenericServices(file_, context_->EnforceLite())) {
-      for (int i = 0; i < file_->service_count(); i++) {
-        std::unique_ptr<ServiceGenerator> generator(
-            generator_factory_->NewServiceGenerator(file_->service(i)));
-        GenerateSibling<ServiceGenerator>(
-            package_dir, java_package_, file_->service(i), context, file_list,
-            options_.annotate_code, annotation_list, "", generator.get(),
-            options_.opensource_runtime, &ServiceGenerator::Generate);
-      }
+    GenerateSibling<MessageGenerator>(
+        package_dir, java_package_, file_->message_type(i), context, file_list,
+        options_.annotate_code, annotation_list, "",
+        message_generators_[i].get(), options_.opensource_runtime,
+        &MessageGenerator::Generate);
+  }
+  if (HasGenericServices(file_, context_->EnforceLite())) {
+    for (int i = 0; i < file_->service_count(); i++) {
+      if (NestedInFileClass(*file_->service(i), immutable_api_)) continue;
+      std::unique_ptr<ServiceGenerator> generator(
+          generator_factory_->NewServiceGenerator(file_->service(i)));
+      GenerateSibling<ServiceGenerator>(
+          package_dir, java_package_, file_->service(i), context, file_list,
+          options_.annotate_code, annotation_list, "", generator.get(),
+          options_.opensource_runtime, &ServiceGenerator::Generate);
     }
   }
 }

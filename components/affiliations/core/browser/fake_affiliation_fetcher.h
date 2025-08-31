@@ -6,6 +6,7 @@
 #define COMPONENTS_AFFILIATIONS_CORE_BROWSER_FAKE_AFFILIATION_FETCHER_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/containers/queue.h"
 #include "base/functional/callback.h"
@@ -37,9 +38,11 @@ class FakeAffiliationFetcher : public AffiliationFetcherInterface {
       RequestInfo request_info,
       base::OnceCallback<void(FetchResult)> result_callback) override;
   const std::vector<FacetURI>& GetRequestedFacetURIs() const override;
+  const RequestInfo& GetRequestInfo() const;
 
  private:
   std::vector<FacetURI> facets_;
+  RequestInfo request_info_;
   base::OnceCallback<void(FetchResult)> result_callback_;
 };
 
@@ -69,6 +72,7 @@ class FakeAffiliationFetcherFactory : public AffiliationFetcherFactory {
   std::unique_ptr<AffiliationFetcherInterface> CreateInstance(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
       override;
+  bool CanCreateFetcher() const override;
 
  private:
   // Fakes created by this factory.

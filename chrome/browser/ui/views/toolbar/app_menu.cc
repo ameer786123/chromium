@@ -19,7 +19,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
-#include "base/not_fatal_until.h"
 #include "base/scoped_observation.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/branding_buildflags.h"
@@ -42,13 +41,13 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
 #include "chrome/browser/ui/hats/trust_safety_sentiment_service_factory.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/profiles/profile_view_utils.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_hats_service.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_hats_service_factory.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_service_factory.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -60,6 +59,7 @@
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "components/prefs/pref_service.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/identity_manager/account_info.h"
@@ -441,6 +441,13 @@ void AddSignedInChipToProfileMenuItem(
   item->AddChildView(std::move(profile_chip));
   item->AddChildView(std::move(profile_chip_edge_spacing_view));
   item->SetHighlightWhenSelectedWithChildViews(true);
+  // MenuItemView only delegates accessible names when its title is empty with a
+  // single container view. The Profile MenuItemView has a title and multiple
+  // views. As a result, the accessible name must be manually computed to
+  // account for the profile chip.
+  item->GetViewAccessibility().SetName(
+      views::MenuItemView::GetAccessibleNameForMenuItem(
+          item->title(), GetSigninStatusChipString(profile), false));
 }
 
 // AppMenuView is a view that can contain label buttons.
@@ -661,7 +668,8 @@ class AppMenu::ZoomView : public AppMenuView, public views::WidgetObserver {
                 base::BindRepeating(&AppMenu::ZoomView::OnZoomLevelChanged,
                                     base::Unretained(this)));
     // Disable full screen button when window is not resizable
-    views::Widget* widget = menu->browser_->GetBrowserView().GetWidget();
+    views::Widget* widget = views::Widget::GetWidgetForNativeWindow(
+        menu->browser_->window()->GetNativeWindow());
     if (widget) {
       widget_observation_.Observe(widget);
     }
@@ -837,8 +845,11 @@ class AppMenu::ZoomView : public AppMenuView, public views::WidgetObserver {
   }
 
   void UpdateFullScreenButton() {
-    bool can_fullscreen =
-        menu()->browser_->GetBrowserView().CanUserEnterFullscreen();
+    bool can_fullscreen = menu()
+                              ->browser_->browser_window_features()
+                              ->exclusive_access_manager()
+                              ->context()
+                              ->CanUserEnterFullscreen();
     const int accname_string_id = can_fullscreen
                                       ? IDS_ACCNAME_FULLSCREEN
                                       : IDS_ACCNAME_FULLSCREEN_DISABLED;
@@ -1042,6 +1053,19 @@ void AppMenu::RunMenu(views::MenuButtonController* host) {
   menu_runner_->RunMenuAt(
       host->button()->GetWidget(), host,
       host->button()->GetAnchorBoundsInScreen(),
+      views::MenuAnchorPosition::kTopRight, ui::mojom::MenuSourceType::kNone,
+      /*native_view_for_gestures=*/gfx::NativeView(), /*corners=*/std::nullopt,
+      "Chrome.AppMenu.MenuHostInitToNextFramePresented");
+}
+
+void AppMenu::RunMenu(views::Widget* parent,
+                      const gfx::Rect& anchor_screen_bounds) {
+  base::RecordAction(UserMetricsAction("ShowAppMenu"));
+  UMA_HISTOGRAM_ENUMERATION("WrenchMenu.MenuAction", MENU_ACTION_MENU_OPENED,
+                            LIMIT_MENU_ACTION);
+
+  menu_runner_->RunMenuAt(
+      parent, nullptr, anchor_screen_bounds,
       views::MenuAnchorPosition::kTopRight, ui::mojom::MenuSourceType::kNone,
       /*native_view_for_gestures=*/gfx::NativeView(), /*corners=*/std::nullopt,
       "Chrome.AppMenu.MenuHostInitToNextFramePresented");
@@ -1263,8 +1287,15 @@ bool AppMenu::GetAccelerator(int command_id,
     return false;
   }
 
-  if (command_id == IDC_CREATE_NEW_TAB_GROUP ||
-      IsTabGroupsCommand(command_id)) {
+  if (command_id == IDC_CREATE_NEW_TAB_GROUP) {
+    if (stg_everything_menu_) {
+      return stg_everything_menu_->GetAccelerator(command_id, accelerator);
+    }
+
+    return false;
+  }
+
+  if (IsTabGroupsCommand(command_id)) {
     return false;
   }
 
@@ -1350,8 +1381,12 @@ void AppMenu::OnMenuClosed(views::MenuItemView* menu) {
     }
   }
 
-  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser_);
-  browser_view->toolbar_button_provider()->GetAppMenuButton()->OnMenuClosed();
+  // This can be called if the app menu was open during browser destruction, at
+  // which point BrowserView may be in the process of being torn down.
+  // Null-check BrowserView to guard against such cases.
+  if (auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser_)) {
+    browser_view->toolbar_button_provider()->GetAppMenuButton()->OnMenuClosed();
+  }
 
   if (bookmark_menu_delegate_.get()) {
     BookmarkMergedSurfaceService* service =
@@ -1523,6 +1558,10 @@ void AppMenu::PopulateMenu(MenuItemView* parent, MenuModel* model) {
         }
         break;
       }
+      case IDC_WEB_APP_UPGRADE_DIALOG: {
+        add_menu_row_background(12, ui::kColorAppMenuUpgradeRowBackground);
+        break;
+      }
       case IDC_SET_BROWSER_AS_DEFAULT: {
         // Only highlight the default browser item when it is first in the
         // AppMenu.
@@ -1658,7 +1697,7 @@ void AppMenu::CreateBookmarkMenu() {
 
 size_t AppMenu::ModelIndexFromCommandId(int command_id) const {
   auto ix = command_id_to_entry_.find(command_id);
-  CHECK(ix != command_id_to_entry_.end(), base::NotFatalUntil::M130);
+  CHECK(ix != command_id_to_entry_.end());
   return ix->second.second;
 }
 

@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.omnibox;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -33,8 +35,6 @@ import android.view.textclassifier.TextClassifier;
 import android.widget.TextView;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.Px;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.text.BidiFormatter;
@@ -52,12 +52,14 @@ import org.chromium.base.metrics.TimingMetric;
 import org.chromium.base.version_info.VersionInfo;
 import org.chromium.build.BuildConfig;
 import org.chromium.build.annotations.CheckDiscard;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.util.KeyNavigationUtil;
 import org.chromium.components.browser_ui.share.ShareHelper;
 import org.chromium.components.browser_ui.util.FirstDrawDetector;
 import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.ui.KeyboardVisibilityDelegate;
+import org.chromium.ui.base.KeyNavigationUtil;
 import org.chromium.ui.display.DisplayAndroid;
 import org.chromium.ui.display.DisplayUtil;
 
@@ -66,6 +68,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.Optional;
 
 /** The URL text entry view for the Omnibox. */
+@NullMarked
 public class UrlBar extends AutocompleteEditText {
     private static final String TAG = "UrlBar";
     @VisibleForTesting static final float LINE_HEIGHT_FACTOR = 1.15f;
@@ -89,18 +92,20 @@ public class UrlBar extends AutocompleteEditText {
     // check for text equality, instead of worrying about partial equality with truncated text.
     static final int MIN_LENGTH_FOR_TRUNCATION = 100;
 
+    private static final int MULTILINE_EDIT_MAX_LINES = 5;
+
     /**
      * The text direction of the URL or query: LAYOUT_DIRECTION_LOCALE, LAYOUT_DIRECTION_LTR, or
      * LAYOUT_DIRECTION_RTL.
      */
     private int mUrlDirection;
 
-    private UrlBarDelegate mUrlBarDelegate;
-    private Optional<Callback<String>> mTextChangeListener;
-    private @NonNull Optional<Runnable> mTypingStartedListener = Optional.empty();
-    private Optional<OnKeyListener> mKeyDownListener;
-    private UrlBarTextContextMenuDelegate mTextContextMenuDelegate;
-    private Callback<Integer> mUrlDirectionListener;
+    private @Nullable UrlBarDelegate mUrlBarDelegate;
+    private Optional<Callback<String>> mTextChangeListener = Optional.empty();
+    private Optional<Runnable> mTypingStartedListener = Optional.empty();
+    private Optional<OnKeyListener> mKeyDownListener = Optional.empty();
+    private @Nullable UrlBarTextContextMenuDelegate mTextContextMenuDelegate;
+    private @Nullable Callback<Integer> mUrlDirectionListener;
 
     private final Rect mClipBounds = new Rect();
     @VisibleForTesting final Runnable mEnforceMaxTextHeight = this::enforceMaxTextHeight;
@@ -118,13 +123,13 @@ public class UrlBar extends AutocompleteEditText {
     @ScrollType private int mCurrentScrollType;
     // Captures previously calculated text scroll type.
     @ScrollType private int mPreviousScrollType;
-    private String mPreviousScrollText;
+    private @Nullable String mPreviousScrollText;
     private int mPreviousScrollViewWidth;
     private int mPreviousScrollResultXPosition;
     private int mPreviousScrollOriginEndIndex;
     private float mPreviousScrollFontSize;
     private boolean mPreviousScrollWasRtl;
-    private CharSequence mVisibleTextPrefixHint;
+    private @Nullable CharSequence mVisibleTextPrefixHint;
 
     // Used as a hint to indicate the text may contain an ellipsize span.  This will be true if an
     // ellipsize span was applied the last time the text changed. A true value here does not
@@ -138,7 +143,9 @@ public class UrlBar extends AutocompleteEditText {
      */
     private int mOriginEndIndex;
 
-    /** What scrolling action should be taken after the URL bar text changes. * */
+    private boolean mUseSmallTextHeight;
+
+    /** What scrolling action should be taken after the URL bar text changes. */
     @IntDef({ScrollType.NO_SCROLL, ScrollType.SCROLL_TO_TLD, ScrollType.SCROLL_TO_BEGINNING})
     @Retention(RetentionPolicy.SOURCE)
     public @interface ScrollType {
@@ -152,7 +159,7 @@ public class UrlBar extends AutocompleteEditText {
      * particularly important for auto-fill applications, such as password managers, that rely on
      * AccessibilityNodeInfo data to apply related form-fill data.
      */
-    private CharSequence mTextForAutofillServices;
+    private @Nullable CharSequence mTextForAutofillServices;
 
     protected boolean mRequestingAutofillStructure;
 
@@ -161,8 +168,7 @@ public class UrlBar extends AutocompleteEditText {
         /**
          * @return The view to be focused on a backward focus traversal.
          */
-        @Nullable
-        View getViewForUrlBackFocus();
+        @Nullable View getViewForUrlBackFocus();
 
         /**
          * @return Whether the keyboard should be allowed to learn from the user input.
@@ -184,8 +190,7 @@ public class UrlBar extends AutocompleteEditText {
         /**
          * @return The text to be pasted into the UrlBar.
          */
-        @NonNull
-        String getTextToPaste();
+        @Nullable String getTextToPaste();
 
         /**
          * Gets potential replacement text to be used instead of the current selected text for
@@ -196,8 +201,8 @@ public class UrlBar extends AutocompleteEditText {
          * @param selectionEnd The selection end in the display text.
          * @return The text to be cut/copied instead of the currently selected text.
          */
-        @Nullable
-        String getReplacementCutCopyText(String currentText, int selectionStart, int selectionEnd);
+        @Nullable String getReplacementCutCopyText(
+                String currentText, int selectionStart, int selectionEnd);
     }
 
     public UrlBar(Context context, AttributeSet attrs) {
@@ -214,11 +219,7 @@ public class UrlBar extends AutocompleteEditText {
         setFocusableInTouchMode(false);
         setHorizontalFadingEdgeEnabled(true);
         setVerticalScrollBarEnabled(false);
-        // Disable elegant text height for now. We calculate font size at runtime, and try to
-        // respect the user's need to increase the font size.
-        // Enabling elegant text for UrlBar will likely produce smaller font when users ask for a
-        // larger one.
-        setElegantTextHeight(OmniboxFeatures.sElegantTextHeight.isEnabled());
+        setElegantTextHeight(true);
         // Use a global draw instead of View#onDraw in case this View is not visible.
         FirstDrawDetector.waitForFirstDraw(
                 this,
@@ -328,6 +329,8 @@ public class UrlBar extends AutocompleteEditText {
         if (!mFocused) mFocusEventEmitted = false;
         super.onFocusChanged(focused, direction, previouslyFocusedRect);
 
+        setSingleLine(true);
+        setMaxLines(1);
         setHorizontalFadingEdgeEnabled(!focused);
 
         if (focused) {
@@ -428,27 +431,48 @@ public class UrlBar extends AutocompleteEditText {
 
     @Override
     protected void onTextChanged(CharSequence text, int start, int lengthBefore, int lengthAfter) {
-        super.onTextChanged(text, start, lengthBefore, lengthAfter);
-
         if (mShouldSendTypingStartedEvent && lengthAfter > 0) {
             mTypingStartedListener.ifPresent(Runnable::run);
             mShouldSendTypingStartedEvent = false;
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Due to crbug.com/1103555, Autofill had to be disabled on the UrlBar to work around
-            // an issue on Android Q+. With Autofill disabled, the Autofill compat mode no longer
-            // learns of changes to the UrlBar, which prevents it from cancelling the session if
-            // the domain changes. We restore this behavior by mimicking the relevant part of
-            // TextView.notifyListeningManagersAfterTextChanged().
-            // https://cs.android.com/android/platform/superproject/+/5d123b67756dffcfdebdb936ab2de2b29c799321:frameworks/base/core/java/android/widget/TextView.java;l=10618;drc=master;bpv=0
-            final AutofillManager afm = getContext().getSystemService(AutofillManager.class);
-            if (afm != null) {
-                afm.notifyValueChanged(this);
-            }
+        // Do not move this to the top of the method!
+        // Make sure to emit the "TypingStarted" signal ahead of "onTextChanged", to allow the
+        // Autocomplete session to begin.
+        // This is particularly important on large form factor devices with physical keyboard and
+        // precision pointer devices attached, where the UrlBar comes prefocused on NTP, but the
+        // session remains inactive until typing begins.
+        // See crbug.com/410642190
+        super.onTextChanged(text, start, lengthBefore, lengthAfter);
+
+        // Due to crbug.com/1103555, Autofill had to be disabled on the UrlBar to work around
+        // an issue on Android Q+. With Autofill disabled, the Autofill compat mode no longer
+        // learns of changes to the UrlBar, which prevents it from cancelling the session if
+        // the domain changes. We restore this behavior by mimicking the relevant part of
+        // TextView.notifyListeningManagersAfterTextChanged().
+        // https://cs.android.com/android/platform/superproject/+/5d123b67756dffcfdebdb936ab2de2b29c799321:frameworks/base/core/java/android/widget/TextView.java;l=10618;drc=master;bpv=0
+        final AutofillManager afm = getContext().getSystemService(AutofillManager.class);
+        if (afm != null) {
+            afm.notifyValueChanged(this);
         }
 
         limitDisplayableLength();
+
+        if (OmniboxFeatures.allowMultilineEditField()) {
+            // Observe the user input alone, to prevent autocompletion from taking over the input.
+            boolean isMultilineEligible = TextUtils.indexOf(getTextWithoutAutocomplete(), ' ') >= 0;
+            boolean wasMultilineEligible = !isSingleLine();
+            if (isMultilineEligible != wasMultilineEligible) {
+                // Toggling between single- and multi-line edit fields appears to make the EditText
+                // restart and reposition the cursor.
+                // TODO(crbug.com/432311666): verify if selection restart is caused by our own
+                // logic. If it is, see if this can be fixed and remove selection management below.
+                int cursor = getSelectionStart();
+                setSingleLine(!isMultilineEligible);
+                setMaxLines(isMultilineEligible ? MULTILINE_EDIT_MAX_LINES : 1);
+                setSelection(cursor);
+            }
+        }
     }
 
     @Override
@@ -463,8 +487,8 @@ public class UrlBar extends AutocompleteEditText {
             if (imm.isActive() && !imm.isActive(this)) {
                 Log.e("b:384508488", "IMM appears to be handling a different view");
                 if (VersionInfo.isCanaryBuild() || VersionInfo.isLocalBuild()) {
-                    var activityContext = ContextUtils.activityFromContext(getContext());
-                    var focusedView = activityContext.getCurrentFocus();
+                    var activity = ContextUtils.activityFromContext(getContext());
+                    var focusedView = activity == null ? null : activity.getCurrentFocus();
                     if (focusedView != this) {
                         Log.e(
                                 "b:384508488",
@@ -872,19 +896,20 @@ public class UrlBar extends AutocompleteEditText {
 
         Editable text = getText();
         float scrollPos = 0f;
+        Layout layout = assumeNonNull(getLayout());
         if (TextUtils.isEmpty(text)) {
             if (getLayoutDirection() == LAYOUT_DIRECTION_RTL
                     && BidiFormatter.getInstance().isRtl(getHint())) {
                 // Compared to below that uses getPrimaryHorizontal(1) due to 0 returning an
                 // invalid value, if the text is empty, getPrimaryHorizontal(0) returns the actual
                 // max scroll amount.
-                scrollPos = (int) getLayout().getPrimaryHorizontal(0) - getMeasuredWidth();
+                scrollPos = (int) layout.getPrimaryHorizontal(0) - getMeasuredWidth();
             }
         } else if (BidiFormatter.getInstance().isRtl(text)) {
             // RTL.
-            float endPointX = getLayout().getPrimaryHorizontal(text.length());
+            float endPointX = layout.getPrimaryHorizontal(text.length());
             int measuredWidth = getMeasuredWidth();
-            float width = getLayout().getPaint().measureText(text.toString());
+            float width = layout.getPaint().measureText(text.toString());
             scrollPos = Math.max(0, endPointX - measuredWidth + width);
         }
         scrollTo((int) scrollPos, getScrollY());
@@ -900,13 +925,13 @@ public class UrlBar extends AutocompleteEditText {
      * @return A prefix of getText(), up to and including the last visible character.
      */
     @VisibleForTesting
-    CharSequence calculateVisibleHint() {
+    @Nullable CharSequence calculateVisibleHint() {
         try (TimingMetric t = TimingMetric.shortUptime("Omnibox.CalculateVisibleHint.Duration")) {
             Editable url = getText();
             int measuredWidth = getVisibleMeasuredViewportWidth();
             int urlTextLength = url.length();
 
-            Layout textLayout = getLayout();
+            Layout textLayout = assumeNonNull(getLayout());
 
             int finalVisibleCharIndex =
                     textLayout
@@ -923,7 +948,7 @@ public class UrlBar extends AutocompleteEditText {
             if (visibleUrlContainsRtl) {
                 // getOffsetForAdvance does not calculate the correct index if there is RTL
                 // text before finalVisibleCharIndex, so clear the visible text hint. If RTL
-                // or Bi-Di URLs become more prevalant, update this to correctly calculate
+                // or Bi-Di URLs become more prevalent, update this to correctly calculate
                 // the hint.
                 return null;
             } else {
@@ -958,7 +983,7 @@ public class UrlBar extends AutocompleteEditText {
         int measuredWidth = getVisibleMeasuredViewportWidth();
         int urlTextLength = url.length();
 
-        Layout textLayout = getLayout();
+        Layout textLayout = assumeNonNull(getLayout());
         assert getLayout().getLineCount() == 1;
         final int originEndIndex = Math.min(mOriginEndIndex, urlTextLength);
         if (mOriginEndIndex > urlTextLength) {
@@ -1033,7 +1058,7 @@ public class UrlBar extends AutocompleteEditText {
         } else {
             // RTL
             // Clear the visible text hint due to the complexities of Bi-Di text handling. If
-            // RTL or Bi-Di URLs become more prevalant, update this to correctly calculate the
+            // RTL or Bi-Di URLs become more prevalent, update this to correctly calculate the
             // hint.
             mVisibleTextPrefixHint = null;
 
@@ -1098,13 +1123,13 @@ public class UrlBar extends AutocompleteEditText {
         // TextView internally attempts to keep the selection visible, but in the unfocused state
         // this class ensures that the TLD is visible.
         if (!mFocused) return false;
-        assert !mPendingScroll;
+        assert !mPendingScroll || hasFocus();
 
         return super.bringPointIntoView(offset);
     }
 
     @Override
-    public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
+    public @Nullable InputConnection onCreateInputConnection(EditorInfo outAttrs) {
         InputConnection connection = super.onCreateInputConnection(outAttrs);
         if (mUrlBarDelegate == null || !mUrlBarDelegate.allowKeyboardLearning()) {
             outAttrs.imeOptions |= EditorInfoCompat.IME_FLAG_NO_PERSONALIZED_LEARNING;
@@ -1192,7 +1217,8 @@ public class UrlBar extends AutocompleteEditText {
             return new SpannableStringBuilder(
                     mTextForAutofillServices != null ? mTextForAutofillServices : "");
         }
-        return super.getText();
+        Editable superText = super.getText();
+        return superText == null ? new SpannableStringBuilder("") : superText;
     }
 
     @Override
@@ -1227,6 +1253,15 @@ public class UrlBar extends AutocompleteEditText {
 
     @VisibleForTesting
     void enforceMaxTextHeight() {
+        if (mUseSmallTextHeight) return;
+        // Our viewHeight calculation may not be correct if layout is requested, e.g. if our padding
+        // and height change simultaneously. The padding change will be reflected immediately, but
+        // the height change requires a layout cycle to be reflected.
+        if (isLayoutRequested()) {
+            post(mEnforceMaxTextHeight);
+            return;
+        }
+
         int viewHeight = getHeight() - getPaddingTop() - getPaddingBottom();
         // Don't touch the text size if the view has not measured and shown yet, or if it's a
         // subject to custom layout constraints (e.g. CCT) that might result with font size being
@@ -1235,22 +1270,19 @@ public class UrlBar extends AutocompleteEditText {
 
         float effectiveFontHeightPx = getMaxHeightOfFont();
 
-        if (getPaint().isElegantTextHeight()) {
-            // http://go/ui-font-deprecation: when enabled, line height will be increased by up to
-            // 60%.
-            effectiveFontHeightPx *= getLineHeight() / getTextSize();
-        } else {
-            // Otherwise, scale the font down a little bit so it doesn't extend edge to edge.
-            // This ensures we present the user with properly rendered UI and that we respect their
-            // choice to use larger font (within the bounds permitted by url bar height).
-            effectiveFontHeightPx *= LINE_HEIGHT_FACTOR;
-        }
+        // http://go/ui-font-deprecation: when enabled, line height will be increased by up to
+        // 60%.
+        effectiveFontHeightPx *= getLineHeight() / getTextSize();
 
         if (effectiveFontHeightPx > viewHeight) {
             // we need to shrink the text to fit in the text field.
             var scaleRatio = viewHeight / effectiveFontHeightPx;
             setTextSize(TypedValue.COMPLEX_UNIT_PX, getTextSize() * scaleRatio);
         }
+    }
+
+    void setUseSmallTextHeight(boolean useSmallTextHeight) {
+        mUseSmallTextHeight = useSmallTextHeight;
     }
 
     @VisibleForTesting
@@ -1275,7 +1307,11 @@ public class UrlBar extends AutocompleteEditText {
 
         @Override
         public int getSize(
-                Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
+                Paint paint,
+                CharSequence text,
+                int start,
+                int end,
+                Paint.@Nullable FontMetricsInt fm) {
             return (int) paint.measureText(ELLIPSIS);
         }
 

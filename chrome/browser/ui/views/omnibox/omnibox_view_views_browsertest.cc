@@ -13,6 +13,7 @@
 
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -25,23 +26,33 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/hats/hats_service.h"
+#include "chrome/browser/ui/hats/hats_service_factory.h"
+#include "chrome/browser/ui/hats/mock_hats_service.h"
+#include "chrome/browser/ui/hats/survey_config.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_view_views.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
+#include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_controller.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_triggered_feature_service.h"
 #include "components/omnibox/browser/test_scheme_classifier.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/security_interstitials/core/omnibox_https_upgrade_metrics.h"
+#include "components/unified_consent/pref_names.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test.h"
@@ -49,6 +60,7 @@
 #include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/url_loader_interceptor.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/common/chrome_debug_urls.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/ax_action_data.h"
@@ -62,6 +74,7 @@
 #include "ui/base/ime/text_edit_commands.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/test/ui_controls.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/display/display_switches.h"
 #include "ui/events/event_processor.h"
@@ -71,6 +84,10 @@
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/textfield/textfield_test_api.h"
 #include "ui/views/views_features.h"
+
+#if BUILDFLAG(IS_OZONE)
+#include "ui/ozone/public/ozone_platform.h"
+#endif
 
 #if defined(USE_AURA)
 #include "ui/aura/window.h"
@@ -87,6 +104,9 @@
 #include "ui/views/win/hwnd_util.h"
 #endif
 
+using ::testing::_;
+using ::testing::Return;
+
 namespace {
 
 void SetClipboardText(ui::ClipboardBuffer buffer, const std::u16string& text) {
@@ -101,8 +121,17 @@ class OmniboxViewViewsTest : public InProcessBrowserTest {
   OmniboxViewViewsTest& operator=(const OmniboxViewViewsTest&) = delete;
 
  protected:
-  OmniboxViewViewsTest() = default;
+  OmniboxViewViewsTest() {
+    scoped_feature_list_.InitAndDisableFeature(
+        omnibox::kAiModeOmniboxEntryPoint);
+  }
   ~OmniboxViewViewsTest() override = default;
+
+  void SetUpOnMainThread() override {
+    ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
+    chrome::FocusLocationBar(browser());
+    ASSERT_TRUE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_OMNIBOX));
+  }
 
   OmniboxTriggeredFeatureService* triggered_feature_service() {
     return &triggered_feature_service_;
@@ -136,11 +165,14 @@ class OmniboxViewViewsTest : public InProcessBrowserTest {
   void Click(ui_controls::MouseButton button,
              const gfx::Point& press_location,
              const gfx::Point& release_location) {
-    ASSERT_TRUE(ui_test_utils::SendMouseMoveSync(press_location));
+    auto browser_window = browser()->window()->GetNativeWindow();
+    ASSERT_TRUE(
+        ui_test_utils::SendMouseMoveSync(press_location, browser_window));
     ASSERT_TRUE(ui_test_utils::SendMouseEventsSync(button, ui_controls::DOWN));
 
     if (press_location != release_location) {
-      ASSERT_TRUE(ui_test_utils::SendMouseMoveSync(release_location));
+      ASSERT_TRUE(
+          ui_test_utils::SendMouseMoveSync(release_location, browser_window));
     }
     ASSERT_TRUE(ui_test_utils::SendMouseEventsSync(button, ui_controls::UP));
   }
@@ -178,12 +210,6 @@ class OmniboxViewViewsTest : public InProcessBrowserTest {
     command_line->AppendSwitchASCII(::switches::kForceDeviceScaleFactor, "1");
   }
 
-  void SetUpOnMainThread() override {
-    ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
-    chrome::FocusLocationBar(browser());
-    ASSERT_TRUE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_OMNIBOX));
-  }
-
   gfx::NativeWindow GetRootWindow() const {
     gfx::NativeWindow native_window = browser()->window()->GetNativeWindow();
 #if defined(USE_AURA)
@@ -192,6 +218,7 @@ class OmniboxViewViewsTest : public InProcessBrowserTest {
     return native_window;
   }
 
+  base::test::ScopedFeatureList scoped_feature_list_;
   OmniboxTriggeredFeatureService triggered_feature_service_;
 };
 
@@ -373,6 +400,15 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, DISABLED_SelectionClipboard) {
 #if !BUILDFLAG(IS_MAC) || defined(USE_AURA)
 
 IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, SelectAllOnTap) {
+#if BUILDFLAG(IS_OZONE)
+  if (ui::OzonePlatform::GetPlatformNameForTest() == "wayland" &&
+      base::FeatureList::IsEnabled(features::kOzoneBubblesUsePlatformWidgets)) {
+    GTEST_SKIP()
+        << "This test expects the window to be focused on sending a tap "
+           "event directly to omnibox. This is not possisble in wayland "
+           "if omnibox uses a separate platform widget.";
+  }
+#endif
   OmniboxView* omnibox_view = nullptr;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxViewForBrowser(browser(), &omnibox_view));
   omnibox_view->SetUserText(u"http://www.google.com/");
@@ -453,7 +489,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, SelectAllOnTabToFocus) {
   OmniboxView* omnibox_view = nullptr;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxViewForBrowser(browser(), &omnibox_view));
   ASSERT_TRUE(
-      ui_test_utils::NavigateToURL(browser(), GURL("http://www.google.com/")));
+      ui_test_utils::NavigateToURL(browser(), GURL("https://www.google.com/")));
   // RevertAll after navigation to invalidate the selection range saved on blur.
   omnibox_view->RevertAll();
   EXPECT_FALSE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_OMNIBOX));
@@ -530,7 +566,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, CloseOmniboxPopupOnTextDrag) {
   results.AppendMatches(matches);
   results.SortAndCull(
       input, TemplateURLServiceFactory::GetForProfile(browser()->profile()),
-      triggered_feature_service());
+      triggered_feature_service(), /*is_lens_active=*/false,
+      /*can_show_contextual_suggestions=*/false, /*mia_enabled=*/false);
 
   // The omnibox popup should open with suggestions displayed.
   autocomplete_controller->NotifyChanged();
@@ -578,7 +615,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, MaintainCursorAfterFocusCycle) {
   results.AppendMatches(matches);
   results.SortAndCull(
       input, TemplateURLServiceFactory::GetForProfile(browser()->profile()),
-      triggered_feature_service());
+      triggered_feature_service(), /*is_lens_active=*/false,
+      /*can_show_contextual_suggestions=*/false, /*mia_enabled=*/false);
 
   // The omnibox popup should open with suggestions displayed.
   autocomplete_controller->NotifyChanged();
@@ -683,7 +721,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, FriendlyAccessibleLabel) {
   results.AppendMatches(matches);
   results.SortAndCull(
       input, TemplateURLServiceFactory::GetForProfile(browser()->profile()),
-      triggered_feature_service());
+      triggered_feature_service(), /*is_lens_active=*/false,
+      /*can_show_contextual_suggestions=*/false, /*mia_enabled=*/false);
 
   // The omnibox popup should open with suggestions displayed.
   chrome::FocusLocationBar(browser());
@@ -783,7 +822,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, AccessiblePopup) {
   results.AppendMatches(matches);
   results.SortAndCull(
       input, TemplateURLServiceFactory::GetForProfile(browser()->profile()),
-      triggered_feature_service());
+      triggered_feature_service(), /*is_lens_active=*/false,
+      /*can_show_contextual_suggestions=*/false, /*mia_enabled=*/false);
 
   // The omnibox popup should open with suggestions displayed.
   autocomplete_controller->NotifyChanged();
@@ -825,7 +865,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, DISABLED_ReloadAfterKill) {
   // Verify the omnibox contents, URL and icon.
   EXPECT_EQ(u"", omnibox_view_views->GetText());
   EXPECT_EQ(GURL(url::kAboutBlankURL),
-            browser()->location_bar_model()->GetURL());
+            browser()->GetFeatures().location_bar_model()->GetURL());
 }
 
 // Omnibox un-elides and elides URL appropriately according to the Always Show
@@ -941,7 +981,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsUIATest, AccessibleOmnibox) {
   results.AppendMatches(matches);
   results.SortAndCull(
       input, TemplateURLServiceFactory::GetForProfile(browser()->profile()),
-      triggered_feature_service());
+      triggered_feature_service(), /*is_lens_active=*/false,
+      /*can_show_contextual_suggestions=*/false, /*mia_enabled=*/false);
 
   // The omnibox popup should open with suggestions displayed.
   autocomplete_controller->NotifyChanged();
@@ -1271,4 +1312,100 @@ IN_PROC_BROWSER_TEST_F(
   PressEnterAndWaitForNavigations(1);
   histograms.ExpectTotalCount(
       security_interstitials::omnibox_https_upgrades::kEventHistogram, 0);
+}
+
+class OmniboxViewViewsOnFocusZpsTest : public OmniboxViewViewsTest {
+ public:
+  OmniboxViewViewsOnFocusZpsTest() = default;
+
+  // OmniboxViewViewsTest:
+  void SetUp() override {
+    omnibox_feature_configs::ScopedConfigForTesting<
+        omnibox_feature_configs::HappinessTrackingSurveyForOmniboxOnFocusZps>
+        survey_config;
+    survey_config.Get().enabled = true;
+    survey_config.Get().survey_delay = 0;
+
+    omnibox_feature_configs::ScopedConfigForTesting<
+        omnibox_feature_configs::OmniboxUrlSuggestionsOnFocus>
+        suggest_config;
+    suggest_config.Get().enabled = true;
+
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.InitAndEnableFeature(
+        omnibox::kFocusTriggersWebAndSRPZeroSuggest);
+
+    InProcessBrowserTest::SetUp();
+  }
+
+  void SetUpOnMainThread() override {
+    OmniboxViewViewsTest::SetUpOnMainThread();
+    mock_hats_service_ = static_cast<MockHatsService*>(
+        HatsServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+            browser()->profile(), base::BindRepeating(&BuildMockHatsService)));
+    ON_CALL(*mock_hats_service_, CanShowAnySurvey(_))
+        .WillByDefault(Return(true));
+    browser()->profile()->GetPrefs()->SetBoolean(
+        unified_consent::prefs::kUrlKeyedAnonymizedDataCollectionEnabled, true);
+    browser()->profile()->GetPrefs()->SetBoolean(prefs::kSearchSuggestEnabled,
+                                                 true);
+  }
+
+  void TearDownOnMainThread() override { mock_hats_service_ = nullptr; }
+
+ protected:
+  MockHatsService* mock_hats_service() { return mock_hats_service_.get(); }
+
+ private:
+  raw_ptr<MockHatsService> mock_hats_service_;
+};
+
+IN_PROC_BROWSER_TEST_F(OmniboxViewViewsOnFocusZpsTest, ShowHatsSurvey) {
+  EXPECT_CALL(*mock_hats_service(), LaunchSurvey(_, _, _, _, _, _, _))
+      .Times(1)
+      .WillOnce(testing::Invoke(
+          [](const std::string& trigger, base::OnceClosure success_callback,
+             base::OnceClosure failure_callback,
+             const SurveyBitsData& product_specific_bits_data,
+             const SurveyStringData& product_specific_string_data,
+             const std::optional<std::string>& supplied_trigger_id,
+             const HatsService::SurveyOptions& survey_options) -> void {
+            EXPECT_TRUE(
+                trigger == kHatsSurveyTriggerOnFocusZpsSuggestionsHappiness ||
+                trigger == kHatsSurveyTriggerOnFocusZpsSuggestionsUtility);
+          }));
+
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(browser(), GURL("https://test.com/")));
+
+  auto* location_bar = BrowserView::GetBrowserViewForBrowser(browser())
+                           ->toolbar()
+                           ->location_bar();
+
+  // After 5 focuses of the omnibox, the HaTS survey should show if the omnibox
+  // isn't still focused after the survey delay.
+  for (int i = 0; i < 5; i++) {
+    location_bar->omnibox_view()->RequestFocus();
+    location_bar->GetFocusManager()->ClearFocus();
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(OmniboxViewViewsOnFocusZpsTest,
+                       DontShowHatsSurveyIfOmniboxFocused) {
+  EXPECT_CALL(*mock_hats_service(), LaunchSurvey(_, _, _, _, _, _, _)).Times(0);
+
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(browser(), GURL("https://test.com/")));
+
+  auto* location_bar = BrowserView::GetBrowserViewForBrowser(browser())
+                           ->toolbar()
+                           ->location_bar();
+
+  for (int i = 0; i < 4; i++) {
+    location_bar->omnibox_view()->RequestFocus();
+    location_bar->GetFocusManager()->ClearFocus();
+  }
+  // On the fifth focus of the omnibox, the HaTS survey should not show since
+  // the omnibox is still focused.
+  location_bar->omnibox_view()->RequestFocus();
 }

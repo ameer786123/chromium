@@ -15,10 +15,18 @@
 
 @protocol ManagedProfileCreationCoordinatorDelegate <NSObject>
 
+// Called when the user accepted to continue to sign-in with a managed account.
+// `accepted` is YES when the user confirmed or NO if the user canceled.
+// If `browsingDataSeparate` is `YES`, the managed account gets signed in to
+// a new empty work profile. This must only be specified if
+// AreSeparateProfilesForManagedAccountsEnabled() is true.
+// If `browsingDataSeparate` is `NO`, the account gets signed in to the
+// current profile. If AreSeparateProfilesForManagedAccountsEnabled() is true,
+// this involves converting the current profile into a work profile.
 - (void)managedProfileCreationCoordinator:
             (ManagedProfileCreationCoordinator*)coordinator
                                 didAccept:(BOOL)didAccept
-                 keepBrowsingDataSeparate:(BOOL)keepBrowsingDataSeparate;
+                     browsingDataSeparate:(BOOL)browsingDataSeparate;
 
 @end
 
@@ -29,6 +37,8 @@
 // in `viewController`. UIViewController::presentViewController will be used
 // to show the ViewController created and owned by
 // ManagedProfileCreationCoordinator.
+// `multiProfileForceMigration` indicates if the UI shows to the user after
+// multi-profile force migration.
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
                                   identity:(id<SystemIdentity>)identity
                               hostedDomain:(NSString*)hostedDomain
@@ -36,7 +46,9 @@
                  skipBrowsingDataMigration:(BOOL)skipBrowsingDataMigration
                 mergeBrowsingDataByDefault:(BOOL)mergeBrowsingDataByDefault
      browsingDataMigrationDisabledByPolicy:
-         (BOOL)browsingDataMigrationDisabledByPolicy NS_DESIGNATED_INITIALIZER;
+         (BOOL)browsingDataMigrationDisabledByPolicy
+                multiProfileForceMigration:(BOOL)multiProfileForceMigration
+    NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
                                    browser:(Browser*)browser NS_UNAVAILABLE;

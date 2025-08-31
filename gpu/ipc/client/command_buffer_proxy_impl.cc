@@ -21,7 +21,6 @@
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/client/gpu_control_client.h"
-#include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
 #include "gpu/command_buffer/common/cmd_buffer_common.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
 #include "gpu/command_buffer/common/command_buffer_shared.h"
@@ -31,10 +30,12 @@
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "gpu/ipc/common/command_buffer_id.h"
 #include "gpu/ipc/common/gpu_channel.mojom.h"
+#include "ipc/constants.mojom.h"
 #include "ipc/ipc_mojo_bootstrap.h"
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 #include "mojo/public/cpp/system/buffer.h"
 #include "mojo/public/cpp/system/platform_handle.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_fence.h"
@@ -81,7 +82,7 @@ ContextResult CommandBufferProxyImpl::Initialize(
 
   auto params = mojom::CreateCommandBufferParams::New();
   params->share_group_id =
-      share_group ? share_group->route_id_ : MSG_ROUTING_NONE;
+      share_group ? share_group->route_id_ : IPC::mojom::kRoutingIdNone;
   params->stream_id = stream_id_;
   params->stream_priority = stream_priority;
   params->attribs = attribs;
@@ -436,13 +437,13 @@ void CommandBufferProxyImpl::EnsureWorkVisible() {
 
   const base::ElapsedTimer elapsed_timer;
 
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("gpu,login", kEnsureWorkVisible,
-                                    TRACE_ID_LOCAL(kEnsureWorkVisible));
+  TRACE_EVENT_BEGIN("gpu,login", kEnsureWorkVisible,
+                    perfetto::NamedTrack(kEnsureWorkVisible));
 
   channel_->VerifyFlush(UINT32_MAX);
 
-  TRACE_EVENT_NESTABLE_ASYNC_END0("gpu,login", kEnsureWorkVisible,
-                                  TRACE_ID_LOCAL(kEnsureWorkVisible));
+  TRACE_EVENT_END("gpu,login", /*kEnsureWorkVisible*/
+                  perfetto::NamedTrack(kEnsureWorkVisible));
 
   if (base::ShouldRecordSubsampledMetric(0.001)) {
     GetUMAHistogramEnsureWorkVisibleDuration()->Add(
@@ -583,30 +584,6 @@ void CommandBufferProxyImpl::OnReturnData(const std::vector<uint8_t>& data) {
   if (gpu_control_client_) {
     gpu_control_client_->OnGpuControlReturnData(data);
   }
-}
-
-void CommandBufferProxyImpl::SetDefaultFramebufferSharedImage(
-    const gpu::Mailbox& mailbox,
-    const gpu::SyncToken& sync_token,
-    int samples_count,
-    bool preserve,
-    bool needs_depth,
-    bool needs_stencil) {
-  CheckLock();
-  base::AutoLock lock(last_state_lock_);
-  if (last_state_.error != gpu::error::kNoError)
-    return;
-
-  last_flush_id_ = channel_->EnqueueDeferredMessage(
-      mojom::DeferredRequestParams::NewCommandBufferRequest(
-          mojom::DeferredCommandBufferRequest::New(
-              route_id_,
-              mojom::DeferredCommandBufferRequestParams::
-                  NewSetDefaultFramebufferSharedImage(
-                      mojom::SetDefaultFramebufferSharedImageParams::New(
-                          mailbox, samples_count, preserve, needs_depth,
-                          needs_stencil)))),
-      {sync_token}, /*release_count=*/0);
 }
 
 std::pair<base::UnsafeSharedMemoryRegion, base::WritableSharedMemoryMapping>

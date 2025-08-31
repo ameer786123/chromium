@@ -19,6 +19,7 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.Window;
+import android.view.accessibility.AccessibilityEvent;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
@@ -171,6 +172,7 @@ public class SelectableListToolbar<E> extends Toolbar
 
     // current view type that SelectableListToolbar is showing
     private int mViewType;
+    private boolean mIsLargeScreenWithKeyboard;
 
     /** Constructor for inflating from XML. */
     public SelectableListToolbar(Context context, AttributeSet attrs) {
@@ -281,10 +283,12 @@ public class SelectableListToolbar<E> extends Toolbar
                         getContext(),
                         R.drawable.ic_arrow_back_white_24dp,
                         R.color.default_icon_color_tint_list);
+        mNavigationIconDrawable.setAutoMirrored(true);
 
         mShowInfoIcon = true;
         mShowInfoStringId = R.string.show_info;
         mHideInfoStringId = R.string.hide_info;
+        mIsLargeScreenWithKeyboard = false;
 
         if (showBackInNormalView) {
             mShowBackInNormalView = true;
@@ -327,7 +331,11 @@ public class SelectableListToolbar<E> extends Toolbar
                 });
 
         mClearTextButton = findViewById(R.id.clear_text_button);
-        mClearTextButton.setOnClickListener(v -> mSearchEditText.setText(""));
+        mClearTextButton.setOnClickListener(
+                v -> {
+                    mSearchEditText.setText("");
+                    mSearchEditText.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_FOCUSED);
+                });
     }
 
     @Override
@@ -440,7 +448,7 @@ public class SelectableListToolbar<E> extends Toolbar
      * search view will be hidden.
      */
     public void onSearchNavigationBack() {
-        if (!mHasSearchView || !isSearching()) return;
+        if (!mHasSearchView || !isSearching() || mIsLargeScreenWithKeyboard) return;
 
         hideSearchView();
     }
@@ -467,6 +475,7 @@ public class SelectableListToolbar<E> extends Toolbar
             case NavigationButton.NONE:
                 break;
             case NavigationButton.SEARCH_BACK:
+                if (mIsLargeScreenWithKeyboard) break;
                 // Create a LayerDrawable to hold the search box icon highlight background as well
                 // as the navigation icon drawable.
                 var navigationBackgroundDrawable =
@@ -518,12 +527,14 @@ public class SelectableListToolbar<E> extends Toolbar
 
         showSearchViewInternal();
 
-        mSearchEditText.requestFocus();
-        if (showKeyboard) {
-            KeyboardVisibilityDelegate.getInstance().showKeyboard(mSearchEditText);
-        }
-
         setTitle(null);
+        mSearchEditText.post(
+                () -> {
+                    mSearchEditText.requestFocus();
+                    if (showKeyboard) {
+                        KeyboardVisibilityDelegate.getInstance().showKeyboard(mSearchEditText);
+                    }
+                });
     }
 
     /** Hides the search edit text box and related views. Notifies delegate of the change. */
@@ -574,7 +585,7 @@ public class SelectableListToolbar<E> extends Toolbar
         if (mIsDestroyed) return;
 
         if (mSelectionDelegate != null) mSelectionDelegate.clearSelection();
-        if (isSearching()) hideSearchView();
+        if (isSearching() && !mIsLargeScreenWithKeyboard) hideSearchView();
     }
 
     /**
@@ -830,5 +841,13 @@ public class SelectableListToolbar<E> extends Toolbar
     @VisibleForTesting
     public @ViewType int getCurrentViewType() {
         return mViewType;
+    }
+
+    public void setIsLargeScreenWithKeyboard(boolean isLargeScreenWithKeyboard) {
+        mIsLargeScreenWithKeyboard = isLargeScreenWithKeyboard;
+    }
+
+    public boolean isLargeScreenWithKeyboard() {
+        return mIsLargeScreenWithKeyboard;
     }
 }

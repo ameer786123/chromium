@@ -27,6 +27,7 @@
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
+#import "ios/chrome/browser/shared/model/browser/browser_list_utils.h"
 #import "ios/chrome/browser/shared/model/browser/browser_provider.h"
 #import "ios/chrome/browser/shared/model/browser/browser_provider_interface.h"
 #import "ios/chrome/browser/shared/model/web_state_list/tab_group.h"
@@ -75,6 +76,11 @@ ScopedLocalObservationPauserImpl::~ScopedLocalObservationPauserImpl() {
 
 }  // namespace
 
+IOSTabGroupSyncDelegate::IOSScopedBatchOperation::IOSScopedBatchOperation(
+    std::vector<std::unique_ptr<WebStateList::ScopedBatchOperation>>
+        web_state_list_batches)
+    : web_state_list_batches_(std::move(web_state_list_batches)) {}
+
 IOSTabGroupSyncDelegate::IOSTabGroupSyncDelegate(
     BrowserList* browser_list,
     TabGroupSyncService* sync_service,
@@ -85,7 +91,25 @@ IOSTabGroupSyncDelegate::IOSTabGroupSyncDelegate(
   CHECK(local_update_observer_);
 }
 
+IOSTabGroupSyncDelegate::IOSScopedBatchOperation::~IOSScopedBatchOperation() {}
+
 IOSTabGroupSyncDelegate::~IOSTabGroupSyncDelegate() {}
+
+IOSTabGroupSyncDelegate::IOSScopedBatchOperation::IOSScopedBatchOperation(
+    IOSScopedBatchOperation&& other)
+    : web_state_list_batches_(std::move(other.web_state_list_batches_)) {}
+
+std::unique_ptr<TabGroupSyncDelegate::ScopedBatchOperation>
+IOSTabGroupSyncDelegate::StartBatchOperation() {
+  std::vector<std::unique_ptr<WebStateList::ScopedBatchOperation>> batches;
+  for (Browser* browser :
+       browser_list_->BrowsersOfType(BrowserList::BrowserType::kRegular)) {
+    batches.push_back(std::make_unique<WebStateList::ScopedBatchOperation>(
+        browser->GetWebStateList()->StartBatchOperation()));
+  }
+
+  return std::make_unique<IOSScopedBatchOperation>(std::move(batches));
+}
 
 std::optional<LocalTabGroupID>
 IOSTabGroupSyncDelegate::HandleOpenTabGroupRequest(
@@ -219,7 +243,7 @@ void IOSTabGroupSyncDelegate::CloseLocalTabGroup(
 
   CloseAllWebStatesInGroup(*tab_group_info.web_state_list,
                            tab_group_info.tab_group,
-                           WebStateList::CLOSE_NO_FLAGS);
+                           WebStateList::ClosingReason::kDefault);
 }
 
 void IOSTabGroupSyncDelegate::ConnectLocalTabGroup(
@@ -247,8 +271,13 @@ void IOSTabGroupSyncDelegate::UpdateLocalTabGroup(
   WebStateList* web_state_list = tab_group_info.web_state_list;
 
   // Start a batch operation.
-  WebStateList::ScopedBatchOperation observer_lock =
-      web_state_list->StartBatchOperation();
+  std::unique_ptr<WebStateList::ScopedBatchOperation> observer;
+  if (!web_state_list->IsBatchInProgress()) {
+    // The `UpdateLocalTabGroup` can be part of a batch operation, in which case
+    // the WebStateList is already in batch operation.
+    observer = std::make_unique<WebStateList::ScopedBatchOperation>(
+        web_state_list->StartBatchOperation());
+  }
 
   // Update the visual data.
   UpdateLocalGroupVisualData(tab_group_info, saved_tab_group);
@@ -323,7 +352,7 @@ void IOSTabGroupSyncDelegate::UpdateLocalTabGroup(
   CHECK(tabs_to_delete >= 0);
   for (int count = 0; count < tabs_to_delete; count++) {
     web_state_list->CloseWebStateAt(tab_group_range.range_end() - 1,
-                                    WebStateList::CLOSE_NO_FLAGS);
+                                    WebStateList::ClosingReason::kDefault);
   }
 }
 
@@ -430,27 +459,6 @@ IOSTabGroupSyncDelegate::CreateSavedTabGroupFromLocalGroup(
       /*position=*/std::nullopt, saved_tab_group_id, tab_group->tab_group_id());
 }
 
-Browser* IOSTabGroupSyncDelegate::GetMostActiveSceneBrowser() {
-  std::set<Browser*> all_browsers =
-      browser_list_->BrowsersOfType(BrowserList::BrowserType::kRegular);
-
-  Browser* browser = nullptr;
-  for (Browser* browser_to_check : all_browsers) {
-    // The pointer to the scene state is weak, so it could be nil. In that case,
-    // the activation level will be 0 (lowest).
-    if (browser && browser->GetSceneState().activationLevel >=
-                       browser_to_check->GetSceneState().activationLevel) {
-      continue;
-    }
-    browser = browser_to_check;
-    if (browser_to_check->GetSceneState().activationLevel ==
-        SceneActivationLevelForegroundActive) {
-      break;
-    }
-  }
-  return browser;
-}
-
 web::WebState* IOSTabGroupSyncDelegate::InsertDistantTab(
     const SavedTabGroupTab& tab,
     TabInsertionBrowserAgent* tab_insertion_browser_agent,
@@ -518,7 +526,7 @@ void IOSTabGroupSyncDelegate::UpdateLocalWebState(
       InsertDistantTab(saved_tab, tab_insertion_browser_agent, web_state_index,
                        tab_group_info.tab_group);
   web_state_list->CloseWebStateAt(web_state_index + 1,
-                                  WebStateList::CLOSE_NO_FLAGS);
+                                  WebStateList::ClosingReason::kDefault);
 
   // Do the association on the server.
   UpdateLocalTabId(local_web_state, tab_group_info.tab_group, saved_tab);
@@ -560,7 +568,9 @@ std::optional<LocalTabGroupID> IOSTabGroupSyncDelegate::CreateLocalTabGroupImpl(
   }
 
   // If no browser was passed, get the most active one.
-  browser = browser ? browser : GetMostActiveSceneBrowser();
+  browser = browser
+                ? browser
+                : browser_list_utils::GetMostActiveSceneBrowser(browser_list_);
 
   if (!browser) {
     return std::nullopt;

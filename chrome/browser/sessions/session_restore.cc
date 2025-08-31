@@ -51,6 +51,7 @@
 #include "chrome/browser/sessions/session_service_log.h"
 #include "chrome/browser/sessions/session_service_lookup.h"
 #include "chrome/browser/sessions/session_service_utils.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -64,7 +65,6 @@
 #include "chrome/browser/ui/startup/startup_tab.h"
 #include "chrome/browser/ui/startup/startup_types.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_user_gesture_details.h"
@@ -81,6 +81,7 @@
 #include "components/saved_tab_groups/public/types.h"
 #include "components/sessions/core/session_types.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "components/tabs/public/tab_group.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/dom_storage_context.h"
 #include "content/public/browser/navigation_controller.h"
@@ -345,9 +346,9 @@ class SessionRestoreImpl : public BrowserListObserver {
       // Restore and show the browser.
       const int initial_tab_count = 0;
       bool did_show_browser = false;
-      RestoreTabsToBrowser(*(*i), browser, /*is_active_browser=*/false,
-                           initial_tab_count, restored_tabs, &new_group_ids,
-                           did_show_browser);
+      RestoreTabsToBrowser(*(*i), browser, initial_tab_count,
+                           /*is_active_browser=*/false, restored_tabs,
+                           &new_group_ids, did_show_browser);
       NotifySessionServiceOfRestoredTabs(browser, initial_tab_count);
     }
 
@@ -759,12 +760,12 @@ class SessionRestoreImpl : public BrowserListObserver {
         browser->SetWindowUserTitle(window->user_title);
       }
 
-      // Track TYPE_APP browsers.
+      // 3. Track TYPE_APP browsers.
       if (window->type == sessions::SessionWindow::TYPE_APP) {
         last_app_browser = browser;
       }
 
-      // 3. Determine whether the currently active tab should be closed.
+      // 4. Determine whether the currently active tab should be closed.
       WebContents* active_tab =
           browser->tab_strip_model()->GetActiveWebContents();
       int initial_tab_count = browser->tab_strip_model()->count();
@@ -786,6 +787,7 @@ class SessionRestoreImpl : public BrowserListObserver {
       // but unminimized.
       base::flat_map<tab_groups::TabGroupId, tab_groups::TabGroupId>
           new_group_ids;
+
       bool did_show_browser = false;
       RestoreTabsToBrowser(*window, browser, initial_tab_count,
                            browser == browser_to_activate, restored_tabs,
@@ -799,18 +801,22 @@ class SessionRestoreImpl : public BrowserListObserver {
       (*tab_count) += (browser->tab_strip_model()->count() - initial_tab_count);
 
       // 6. Tabs will be grouped appropriately in RestoreTabsToBrowser. Now
+      // restore the visual data.
+      RestoreSplitTabVisualData(browser, window->split_tabs);
+
+      // 7. Tabs will be grouped appropriately in RestoreTabsToBrowser. Now
       //    restore the groups' visual data.
       //    Note, this may delete some of the WebContents created earlier.
       RestoreTabGroupMetadata(browser, new_group_ids, window->tab_groups);
 
-      // 7. Notify SessionService of restored tabs, so they can be saved to the
+      // 8. Notify SessionService of restored tabs, so they can be saved to the
       //    current session.
       // TODO(fdoray): This seems redundant with the call to
       // SessionService::TabRestored() at the end of chrome::AddRestoredTab().
       // Consider removing it.
       NotifySessionServiceOfRestoredTabs(browser, initial_tab_count);
 
-      // 8. Close the tab that was active in the window prior to session
+      // 9. Close the tab that was active in the window prior to session
       //    restore, if needed.
       if (close_active_tab) {
         chrome::CloseWebContents(browser, active_tab, true);
@@ -899,6 +905,10 @@ class SessionRestoreImpl : public BrowserListObserver {
     const int selected_tab_index = std::clamp(
         window.selected_tab_index, 0, static_cast<int>(window.tabs.size() - 1));
 
+    // Capture all the splits and all tabs to split.
+    std::map<split_tabs::SplitTabId, std::vector<tabs::TabInterface*>>
+        tabs_by_split_id;
+
     const base::Time epoch_time = base::Time::UnixEpoch();
     const base::TimeTicks epoch_time_ticks = base::TimeTicks::UnixEpoch();
     for (int i = 0; i < static_cast<int>(window.tabs.size()); ++i) {
@@ -918,8 +928,28 @@ class SessionRestoreImpl : public BrowserListObserver {
       // windows or when launching a hosted app from the app launcher.
       int tab_index = i + initial_tab_count;
       RestoreTab(tab, browser, is_active_browser, restored_tabs, new_group_ids,
-                 tab_index, is_selected_tab, last_active_time_ticks,
-                 tab.last_active_time, did_show_browser);
+                 &tabs_by_split_id, tab_index, is_selected_tab,
+                 last_active_time_ticks, tab.last_active_time,
+                 did_show_browser);
+    }
+
+    if (features::IsRestoringSplitViewEnabled()) {
+      for (const auto& pair : tabs_by_split_id) {
+        const split_tabs::SplitTabId split_id = pair.first;
+        const std::vector<tabs::TabInterface*> tab_contents_list = pair.second;
+        std::vector<int> tab_index_list;
+        for (auto* tab : tab_contents_list) {
+          tab_index_list.push_back(
+              browser->GetTabStripModel()->GetIndexOfTab(tab));
+        }
+
+        // The number of supported split tabs is 2. Do not attempt to restore
+        // more than this to future proof it.
+        if (tab_contents_list.size() == 2) {
+          browser->tab_strip_model()->RestoreSplit(
+              split_id, tab_index_list, split_tabs::SplitTabVisualData());
+        }
+      }
     }
   }
 
@@ -933,6 +963,8 @@ class SessionRestoreImpl : public BrowserListObserver {
                   std::vector<RestoredTab>& restored_tabs,
                   base::flat_map<tab_groups::TabGroupId,
                                  tab_groups::TabGroupId>* new_group_ids,
+                  std::map<split_tabs::SplitTabId,
+                           std::vector<tabs::TabInterface*>>* tabs_by_split_id,
                   const int tab_index,
                   bool is_selected_tab,
                   base::TimeTicks last_active_time_ticks,
@@ -982,8 +1014,16 @@ class SessionRestoreImpl : public BrowserListObserver {
 
     RestoredTab restored_tab(web_contents, is_selected_tab,
                              tab.extension_app_id.empty(), tab.pinned,
-                             new_group);
+                             new_group, tab.split_id);
     restored_tabs.push_back(restored_tab);
+
+    if (features::IsRestoringSplitViewEnabled() && tab.split_id) {
+      // add tab to tabs_by_split_id.
+      tabs::TabInterface* tab_interface =
+          browser->GetTabStripModel()->GetTabForWebContents(
+              restored_tab.contents());
+      (*tabs_by_split_id)[*tab.split_id].push_back(tab_interface);
+    }
 
     // If this isn't the selected tab, there's nothing else to do.
     if (!is_selected_tab) {
@@ -995,6 +1035,31 @@ class SessionRestoreImpl : public BrowserListObserver {
     }
     ShowBrowser(browser, browser->tab_strip_model()->GetIndexOfWebContents(
                              web_contents));
+  }
+
+  void RestoreSplitTabVisualData(
+      const Browser* browser,
+      const std::vector<std::unique_ptr<sessions::SessionSplitTab>>&
+          split_tabs) {
+    if (!features::IsRestoringSplitViewEnabled()) {
+      return;
+    }
+
+    for (const std::unique_ptr<sessions::SessionSplitTab>& session_split_tab :
+         split_tabs) {
+      if (!browser->tab_strip_model()->ListSplits().contains(
+              session_split_tab->id_)) {
+        continue;
+      }
+
+      CHECK(browser->tab_strip_model()->GetSplitData(session_split_tab->id_));
+      browser->tab_strip_model()->UpdateSplitLayout(
+          session_split_tab->id_,
+          session_split_tab->split_visual_data_.split_layout());
+      browser->tab_strip_model()->UpdateSplitRatio(
+          session_split_tab->id_,
+          session_split_tab->split_visual_data_.split_ratio());
+    }
   }
 
   void RestoreTabGroupMetadata(
@@ -1016,10 +1081,10 @@ class SessionRestoreImpl : public BrowserListObserver {
       const tab_groups::TabGroupId& new_tab_group_id =
           new_group_ids.at(session_tab_group->id);
       if (session_tab_group->saved_guid) {
-        // We add this mapping to ensure the call to TabGroup::SetVisualData
-        // results in writing the saved guid to disk. This ensures we do not
-        // duplicate saved tab groups if there is a crash prior to or during
-        // model initialization.
+        // We add this mapping to ensure the call to
+        // TabStripModel::ChangeTabGroupVisuals results in writing the saved
+        // guid to disk. This ensures we do not duplicate saved tab groups if
+        // there is a crash prior to or during model initialization.
         session_service->AddSavedTabGroupsMapping(
             new_tab_group_id, session_tab_group->saved_guid.value());
       }
@@ -1028,7 +1093,8 @@ class SessionRestoreImpl : public BrowserListObserver {
           browser->tab_strip_model()->group_model()->GetTabGroup(
               new_tab_group_id);
       CHECK(model_tab_group);
-      model_tab_group->SetVisualData(session_tab_group->visual_data);
+      browser->tab_strip_model()->ChangeTabGroupVisuals(
+          new_tab_group_id, session_tab_group->visual_data);
 
       ProcessSavedGroup(browser->profile(), new_tab_group_id,
                         session_tab_group->saved_guid);
@@ -1039,7 +1105,7 @@ class SessionRestoreImpl : public BrowserListObserver {
                          const tab_groups::LocalTabGroupID& local_id,
                          std::optional<std::string> sync_id) {
     tab_groups::TabGroupSyncService* service =
-        tab_groups::SavedTabGroupUtils::GetServiceForProfile(profile);
+        tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile);
     if (!service) {
       return;
     }
@@ -1441,13 +1507,6 @@ void SessionRestore::NotifySessionRestoreStartedLoadingTabs() {
   session_restore_started_ = true;
   for (auto& observer : *observers()) {
     observer.OnSessionRestoreStartedLoadingTabs();
-  }
-}
-
-// static
-void SessionRestore::OnWillRestoreTab(content::WebContents* web_contents) {
-  for (auto& observer : *observers()) {
-    observer.OnWillRestoreTab(web_contents);
   }
 }
 

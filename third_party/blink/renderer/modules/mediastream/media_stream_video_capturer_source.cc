@@ -104,23 +104,29 @@ void MediaStreamVideoCapturerSource::OnCapturingLinkSecured(bool is_secure) {
 }
 
 void MediaStreamVideoCapturerSource::StartSourceImpl(
-    VideoCaptureDeliverFrameCB frame_callback,
-    EncodedVideoFrameCB encoded_frame_callback,
-    VideoCaptureSubCaptureTargetVersionCB sub_capture_target_version_callback,
-    VideoCaptureNotifyFrameDroppedCB frame_dropped_callback) {
+    MediaStreamVideoSourceCallbacks media_stream_callbacks) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   state_ = kStarting;
-  frame_callback_ = std::move(frame_callback);
-  sub_capture_target_version_callback_ =
-      std::move(sub_capture_target_version_callback);
-  frame_dropped_callback_ = std::move(frame_dropped_callback);
 
+  frame_callback_ = media_stream_callbacks.deliver_frame_cb;
+  sub_capture_target_version_callback_ =
+      media_stream_callbacks.sub_capture_target_version_cb;
+  frame_dropped_callback_ = media_stream_callbacks.frame_dropped_cb;
+
+  VideoCaptureCallbacks video_capture_callbacks;
+  video_capture_callbacks.deliver_frame_cb =
+      std::move(media_stream_callbacks.deliver_frame_cb);
+  video_capture_callbacks.sub_capture_target_version_cb =
+      std::move(media_stream_callbacks.sub_capture_target_version_cb);
+  video_capture_callbacks.frame_dropped_cb =
+      std::move(media_stream_callbacks.frame_dropped_cb);
+  video_capture_callbacks.state_update_cb =
+      std::move(media_stream_callbacks.state_update_cb);
   source_->StartCapture(
-      capture_params_, frame_callback_, sub_capture_target_version_callback_,
-      frame_dropped_callback_,
-      WTF::BindRepeating(&MediaStreamVideoCapturerSource::OnRunStateChanged,
-                         weak_factory_.GetWeakPtr(), capture_params_));
+      capture_params_, std::move(video_capture_callbacks),
+      blink::BindRepeating(&MediaStreamVideoCapturerSource::OnRunStateChanged,
+                           weak_factory_.GetWeakPtr(), capture_params_));
 }
 
 media::VideoCaptureFeedbackCB
@@ -145,7 +151,7 @@ void MediaStreamVideoCapturerSource::StopSourceForRestartImpl() {
   // Force state update for nondevice sources, since they do not
   // automatically update state after StopCapture().
   if (device().type == mojom::blink::MediaStreamType::NO_SERVICE)
-    OnRunStateChanged(capture_params_, RunState::kStopped);
+    OnRunStateChanged(capture_params_, VideoCaptureRunState::kStopped);
 }
 
 void MediaStreamVideoCapturerSource::RestartSourceImpl(
@@ -154,11 +160,17 @@ void MediaStreamVideoCapturerSource::RestartSourceImpl(
   media::VideoCaptureParams new_capture_params = capture_params_;
   new_capture_params.requested_format = new_format;
   state_ = kRestarting;
+
+  VideoCaptureCallbacks video_capture_callbacks;
+  video_capture_callbacks.deliver_frame_cb = frame_callback_;
+  video_capture_callbacks.sub_capture_target_version_cb =
+      sub_capture_target_version_callback_;
+  video_capture_callbacks.frame_dropped_cb = frame_dropped_callback_;
+
   source_->StartCapture(
-      new_capture_params, frame_callback_, sub_capture_target_version_callback_,
-      frame_dropped_callback_,
-      WTF::BindRepeating(&MediaStreamVideoCapturerSource::OnRunStateChanged,
-                         weak_factory_.GetWeakPtr(), new_capture_params));
+      new_capture_params, std::move(video_capture_callbacks),
+      blink::BindRepeating(&MediaStreamVideoCapturerSource::OnRunStateChanged,
+                           weak_factory_.GetWeakPtr(), new_capture_params));
 }
 
 std::optional<media::VideoCaptureFormat>
@@ -185,14 +197,18 @@ void MediaStreamVideoCapturerSource::ChangeSourceImpl(
   }
   SetDevice(new_device);
   source_ = device_capturer_factory_callback_.Run(new_device.session_id());
+
+  VideoCaptureCallbacks video_capture_callbacks;
+  video_capture_callbacks.deliver_frame_cb = frame_callback_;
+  video_capture_callbacks.sub_capture_target_version_cb =
+      sub_capture_target_version_callback_;
+  video_capture_callbacks.frame_dropped_cb = frame_dropped_callback_;
   source_->StartCapture(
-      capture_params_, frame_callback_, sub_capture_target_version_callback_,
-      frame_dropped_callback_,
-      WTF::BindRepeating(&MediaStreamVideoCapturerSource::OnRunStateChanged,
-                         weak_factory_.GetWeakPtr(), capture_params_));
+      capture_params_, std::move(video_capture_callbacks),
+      blink::BindRepeating(&MediaStreamVideoCapturerSource::OnRunStateChanged,
+                           weak_factory_.GetWeakPtr(), capture_params_));
 }
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 void MediaStreamVideoCapturerSource::ApplySubCaptureTarget(
     media::mojom::blink::SubCaptureTargetType type,
     const base::Token& sub_capture_target,
@@ -219,7 +235,6 @@ MediaStreamVideoCapturerSource::GetNextSubCaptureTargetVersion() {
   }
   return ++current_sub_capture_target_version_;
 }
-#endif
 
 uint32_t MediaStreamVideoCapturerSource::GetSubCaptureTargetVersion() const {
   return current_sub_capture_target_version_;
@@ -232,9 +247,9 @@ MediaStreamVideoCapturerSource::GetWeakPtr() {
 
 void MediaStreamVideoCapturerSource::OnRunStateChanged(
     const media::VideoCaptureParams& new_capture_params,
-    RunState run_state) {
+    VideoCaptureRunState run_state) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  bool is_running = (run_state == RunState::kRunning);
+  bool is_running = (run_state == VideoCaptureRunState::kRunning);
   switch (state_) {
     case kStarting:
       source_->OnLog("MediaStreamVideoCapturerSource sending OnStartDone");
@@ -246,13 +261,13 @@ void MediaStreamVideoCapturerSource::OnRunStateChanged(
         state_ = kStopped;
         MediaStreamRequestResult result;
         switch (run_state) {
-          case RunState::kSystemPermissionsError:
-            result = MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED;
+          case VideoCaptureRunState::kSystemPermissionsError:
+            result = MediaStreamRequestResult::PERMISSION_DENIED_BY_SYSTEM;
             break;
-          case RunState::kCameraBusyError:
+          case VideoCaptureRunState::kCameraBusyError:
             result = MediaStreamRequestResult::DEVICE_IN_USE;
             break;
-          case RunState::kStartTimeoutError:
+          case VideoCaptureRunState::kStartTimeoutError:
             result = MediaStreamRequestResult::START_TIMEOUT;
             break;
           default:

@@ -19,6 +19,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//third_party/angle/src/tests:angle_end2end_tests/",
+        "module_scheme": "gtest",
         "name": "angle_end2end_tests iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -29,7 +31,7 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "containment_type": "AUTO",
@@ -62,7 +64,7 @@
           "--platform",
           "iPhone 14",
           "--version",
-          "18.0",
+          "18.2",
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
@@ -73,7 +75,9 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
-        "name": "angle_end2end_tests iPhone 14 18.0",
+        "module_name": "//third_party/angle/src/tests:angle_end2end_tests/",
+        "module_scheme": "gtest",
+        "name": "angle_end2end_tests iPhone 14 18.2",
         "resultdb": {
           "enable": true,
           "has_native_resultdb_integration": true
@@ -83,7 +87,7 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "containment_type": "AUTO",
@@ -95,8 +99,8 @@
           },
           "named_caches": [
             {
-              "name": "runtime_ios_18_0",
-              "path": "Runtime-ios-18.0"
+              "name": "runtime_ios_18_2",
+              "path": "Runtime-ios-18.2"
             },
             {
               "name": "xcode_ios_16c5032a",
@@ -108,7 +112,7 @@
         "test": "angle_end2end_tests",
         "test_id_prefix": "ninja://third_party/angle/src/tests:angle_end2end_tests/",
         "use_isolated_scripts_api": true,
-        "variant_id": "iPhone 14 18.0"
+        "variant_id": "iPhone 14 18.2"
       },
       {
         "args": [
@@ -127,6 +131,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//third_party/angle/src/tests:angle_white_box_tests/",
+        "module_scheme": "gtest",
         "name": "angle_white_box_tests iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -137,7 +143,7 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "containment_type": "AUTO",
@@ -170,7 +176,7 @@
           "--platform",
           "iPhone 14",
           "--version",
-          "18.0",
+          "18.2",
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
@@ -181,7 +187,9 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
-        "name": "angle_white_box_tests iPhone 14 18.0",
+        "module_name": "//third_party/angle/src/tests:angle_white_box_tests/",
+        "module_scheme": "gtest",
+        "name": "angle_white_box_tests iPhone 14 18.2",
         "resultdb": {
           "enable": true,
           "has_native_resultdb_integration": true
@@ -191,7 +199,7 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "containment_type": "AUTO",
@@ -203,8 +211,8 @@
           },
           "named_caches": [
             {
-              "name": "runtime_ios_18_0",
-              "path": "Runtime-ios-18.0"
+              "name": "runtime_ios_18_2",
+              "path": "Runtime-ios-18.2"
             },
             {
               "name": "xcode_ios_16c5032a",
@@ -216,7 +224,7 @@
         "test": "angle_white_box_tests",
         "test_id_prefix": "ninja://third_party/angle/src/tests:angle_white_box_tests/",
         "use_isolated_scripts_api": true,
-        "variant_id": "iPhone 14 18.0"
+        "variant_id": "iPhone 14 18.2"
       }
     ]
   }

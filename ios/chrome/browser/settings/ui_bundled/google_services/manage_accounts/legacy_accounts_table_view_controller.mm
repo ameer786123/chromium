@@ -19,8 +19,11 @@
 #import "ios/chrome/app/application_delegate/app_state.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_ui_util.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/table_view_account_item.h"
+#import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/enterprise/enterprise_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signout_action_sheet/signout_action_sheet_coordinator.h"
 #import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/settings/model/sync/utils/sync_util.h"
@@ -115,6 +118,7 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
   // for a sign-out reason. The parent coordinator is responsible to dismiss
   // this coordinator when a sign-out happens.
   BOOL _signoutDismissalByParentCoordinator;
+  SigninCoordinator* _signinCoordinator;
 }
 
 // Modal alert to choose between remove an identity and show MyGoogle UI.
@@ -159,6 +163,12 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
   return self;
 }
 
+- (void)dealloc {
+  DUMP_WILL_BE_CHECK(_isBeingDismissed);
+}
+
+#pragma mark - UIViewController
+
 - (void)viewDidLoad {
   [super viewDidLoad];
   self.tableView.accessibilityIdentifier = kSettingsLegacyAccountsTableViewId;
@@ -188,6 +198,7 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
   [self.signoutCoordinator stop];
   self.signoutCoordinator = nil;
   [self dismissRemoveAccountCoordinator];
+  [self stopSigninCoordinator];
   _browser = nullptr;
 
   _isBeingDismissed = YES;
@@ -427,29 +438,39 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
 #pragma mark - Authentication operations
 
 - (void)showAddAccount {
+  if (_signinCoordinator.viewWillPersist) {
+    return;
+  }
+  if (@available(iOS 26, *)) {
+    [self preventUserInteraction];
+  }
   DCHECK(!self.removeOrMyGoogleChooserAlertCoordinator);
   _authenticationOperationInProgress = YES;
-
-  // TODO(crbug.com/40229802): Remove the following line when todo bug will be
-  // fixed.
-  [self preventUserInteraction];
   __weak __typeof(self) weakSelf = self;
-  ShowSigninCommand* command = [[ShowSigninCommand alloc]
-      initWithOperation:AuthenticationOperation::kAddAccount
-               identity:nil
-            accessPoint:AccessPoint::kSettings
-            promoAction:PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO
-             completion:^(SigninCoordinatorResult result,
-                          id<SystemIdentity> completionIdentity) {
-               [weakSelf handleDidAddAccount:result];
-             }];
-  [_applicationHandler showSignin:command baseViewController:self];
+  SigninContextStyle contextStyle = SigninContextStyle::kDefault;
+  AccessPoint accessPoint = AccessPoint::kSettings;
+  _signinCoordinator = [SigninCoordinator
+      addAccountCoordinatorWithBaseViewController:self
+                                          browser:_browser
+                                     contextStyle:contextStyle
+                                      accessPoint:accessPoint
+                                   prefilledEmail:nil
+                             continuationProvider:
+                                 DoNothingContinuationProvider()];
+  _signinCoordinator.signinCompletion =
+      ^(SigninCoordinatorResult result, id<SystemIdentity> completionIdentity) {
+        [weakSelf handleDidAddAccount:result];
+      };
+  [_signinCoordinator start];
 }
 
 - (void)handleDidAddAccount:(SigninCoordinatorResult)result {
   // TODO(crbug.com/40229802): Remove the following line when todo bug will be
   // fixed.
-  [self allowUserInteraction];
+  if (@available(iOS 26, *)) {
+    [self allowUserInteraction];
+  }
+  [self stopSigninCoordinator];
   [self handleAuthenticationOperationDidFinish];
   if (result == SigninCoordinatorResult::SigninCoordinatorResultSuccess &&
       _closeSettingsOnAddAccount) {
@@ -734,6 +755,11 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
 }
 
 #pragma mark - Private methods
+
+- (void)stopSigninCoordinator {
+  [_signinCoordinator stop];
+  _signinCoordinator = nil;
+}
 
 - (void)dismissRemoveOrMyGoogleChooserAlert {
   [self.removeOrMyGoogleChooserAlertCoordinator stop];

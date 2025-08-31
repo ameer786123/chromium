@@ -4,33 +4,26 @@
 
 package org.chromium.chrome.browser.ui.edge_to_edge;
 
-import static org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils.hasTappableNavigationBar;
-import static org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils.isEdgeToEdgeBottomChinEnabled;
-
 import android.app.Activity;
 import android.os.Build;
 import android.os.Build.VERSION_CODES;
 import android.view.View;
 
-import androidx.annotation.VisibleForTesting;
-
-import org.chromium.base.BuildInfo;
-import org.chromium.base.ResettersForTesting;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.NullUnmarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.layouts.LayoutManager;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeManager;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgePadAdjuster;
-import org.chromium.components.browser_ui.edge_to_edge.SystemBarColorHelper;
-import org.chromium.ui.InsetObserver;
 import org.chromium.ui.KeyboardVisibilityDelegate;
-import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.edge_to_edge.EdgeToEdgeManager;
+import org.chromium.ui.edge_to_edge.EdgeToEdgePadAdjuster;
+import org.chromium.ui.edge_to_edge.SystemBarColorHelper;
+import org.chromium.ui.insets.InsetObserver;
 
 /**
  * Creates an {@link EdgeToEdgeController} used to control drawing using the Android Edge to Edge
@@ -38,7 +31,6 @@ import org.chromium.ui.base.WindowAndroid;
  */
 @NullMarked
 public class EdgeToEdgeControllerFactory {
-    private static boolean sHas3ButtonNavBarForTesting;
 
     /**
      * Creates an {@link EdgeToEdgeController} instance using the given activity and {@link
@@ -48,8 +40,8 @@ public class EdgeToEdgeControllerFactory {
      * @param windowAndroid The current {@link WindowAndroid} to allow drawing under System Bars.
      * @param tabObservableSupplier Supplies an {@Link Observer} that is notified whenever the Tab
      *     changes.
-     * @param edgeToEdgeStateProvider Provides the edge-to-edge state and allows for requests to
-     *     draw edge-to-edge.
+     * @param edgeToEdgeManager Provides the edge-to-edge state and allows for requests to draw
+     *     edge-to-edge.
      * @param browserControlsStateProvider Provides the state of the BrowserControls so we can tell
      *     if the Toolbar is changing.
      * @param layoutManagerSupplier The supplier of {@link LayoutManager} for checking the active
@@ -57,6 +49,7 @@ public class EdgeToEdgeControllerFactory {
      * @return An EdgeToEdgeController to control drawing under System Bars, or {@code null} if this
      *     version of Android does not support the APIs needed.
      */
+    @NullUnmarked // create_stripped_java_factory.py does not support annotations in generics
     public static @Nullable EdgeToEdgeController create(
             Activity activity,
             WindowAndroid windowAndroid,
@@ -66,7 +59,7 @@ public class EdgeToEdgeControllerFactory {
             ObservableSupplier<LayoutManager> layoutManagerSupplier,
             FullscreenManager fullscreenManager) {
         if (Build.VERSION.SDK_INT < VERSION_CODES.R) return null;
-        assert isSupportedConfiguration(activity);
+        assert EdgeToEdgeUtils.isEdgeToEdgeBottomChinEnabled(activity);
         return new EdgeToEdgeControllerImpl(
                 activity,
                 windowAndroid,
@@ -92,6 +85,7 @@ public class EdgeToEdgeControllerFactory {
      * @param bottomControlsStacker The {@link BottomControlsStacker} for observing and changing
      *     browser controls heights.
      * @param fullscreenManager The {@link FullscreenManager} for provide the fullscreen state.
+     * @param defaultVisibility Whether the bottom chin is visible by default.
      */
     public static SystemBarColorHelper createBottomChin(
             View androidView,
@@ -101,8 +95,9 @@ public class EdgeToEdgeControllerFactory {
             Runnable requestRenderRunnable,
             EdgeToEdgeController edgeToEdgeController,
             BottomControlsStacker bottomControlsStacker,
-            FullscreenManager fullscreenManager) {
-        assert isEdgeToEdgeBottomChinEnabled();
+            FullscreenManager fullscreenManager,
+            boolean defaultVisibility) {
+        assert EdgeToEdgeUtils.isBottomChinFeatureEnabled();
         return new EdgeToEdgeBottomChinCoordinator(
                 androidView,
                 keyboardVisibilityDelegate,
@@ -111,7 +106,8 @@ public class EdgeToEdgeControllerFactory {
                 requestRenderRunnable,
                 edgeToEdgeController,
                 bottomControlsStacker,
-                fullscreenManager);
+                fullscreenManager,
+                defaultVisibility);
     }
 
     /**
@@ -123,6 +119,20 @@ public class EdgeToEdgeControllerFactory {
     public static EdgeToEdgePadAdjuster createForView(View view) {
         return new SimpleEdgeToEdgePadAdjuster(
                 view, EdgeToEdgeUtils.isDrawKeyNativePageToEdgeEnabled());
+    }
+
+    /**
+     * Creates an adjuster for padding to the view to account for edge-to-edge, relying on the
+     * EdgeToEdgeController for the bottom inset.
+     *
+     * @param view The view to be adjusted.
+     * @param edgeToEdgeController The {@link EdgeToEdgeController} for providing the appropriate
+     *     bottom inset.
+     */
+    public static EdgeToEdgePadAdjuster createForView(
+            View view, EdgeToEdgeController edgeToEdgeController) {
+        return new SimpleEdgeToEdgePadAdjuster(
+                view, edgeToEdgeController, EdgeToEdgeUtils.isDrawKeyNativePageToEdgeEnabled());
     }
 
     /**
@@ -139,39 +149,5 @@ public class EdgeToEdgeControllerFactory {
                 view,
                 edgeToEdgeControllerSupplier,
                 EdgeToEdgeUtils.isDrawKeyNativePageToEdgeEnabled());
-    }
-
-    /**
-     * Returns whether the configuration of the device should allow Edge To Edge. Note the results
-     * are false-positive, if the method is called before the |activity|'s decor view being attached
-     * to the window.
-     */
-    public static boolean isSupportedConfiguration(Activity activity) {
-        // Make sure we test SDK version before checking the Feature so Field Trials only collect
-        // from qualifying devices.
-        if (!EdgeToEdgeFieldTrial.getBottomChinOverrides().isEnabledForManufacturerVersion()) {
-            return false;
-        }
-
-        // The root view's window insets is needed to determine if we are in gesture nav mode.
-        if (activity == null
-                || activity.getWindow() == null
-                || activity.getWindow().getDecorView().getRootWindowInsets() == null) {
-            return false;
-        }
-
-        return EdgeToEdgeUtils.isEdgeToEdgeBottomChinEnabled()
-                && !DeviceFormFactor.isNonMultiDisplayContextOnTablet(activity)
-                && !BuildInfo.getInstance().isAutomotive
-                // TODO(https://crbug.com/325356134) Look into using UiUtils#isGestureNavigationMode
-                // instead.
-                && !hasTappableNavigationBar(activity.getWindow())
-                && !sHas3ButtonNavBarForTesting;
-    }
-
-    @VisibleForTesting
-    public static void setHas3ButtonNavBar(boolean has3ButtonNavBar) {
-        sHas3ButtonNavBarForTesting = has3ButtonNavBar;
-        ResettersForTesting.register(() -> sHas3ButtonNavBarForTesting = false);
     }
 }

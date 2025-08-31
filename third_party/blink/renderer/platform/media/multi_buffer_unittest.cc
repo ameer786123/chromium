@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/platform/media/multi_buffer.h"
 
 #include <stddef.h>
@@ -17,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/circular_deque.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
@@ -126,10 +122,6 @@ class FakeMultiBufferDataProvider : public MultiBuffer::DataProvider {
     return ret;
   }
 
-  bool IsStale() const final { return false; }
-
-  void Invalidate() final { NOTREACHED(); }
-
  private:
   base::circular_deque<scoped_refptr<media::DataBuffer>> fifo_;
   MultiBufferBlockId pos_;
@@ -163,10 +155,10 @@ class TestMultiBuffer : public MultiBuffer {
   void CheckPresentState() {
     IntervalMap<MultiBufferBlockId, int32_t> tmp;
     for (auto i = data_.begin(); i != data_.end(); ++i) {
-      CHECK(i->second);  // Null poineters are not allowed in data_
-      CHECK_NE(!!pinned_[i->first], lru_->Contains(this, i->first))
-          << " i->first = " << i->first;
-      tmp.IncrementInterval(i->first, i->first + 1, 1);
+      CHECK(i->value);  // Null pointers are not allowed in data_.
+      CHECK_NE(!!pinned_[i->key], lru_->Contains(this, i->key))
+          << " i->key = " << i->key;
+      tmp.IncrementInterval(i->key, i->key + 1, 1);
     }
     IntervalMap<MultiBufferBlockId, int32_t>::const_iterator tmp_iterator =
         tmp.begin();
@@ -186,10 +178,10 @@ class TestMultiBuffer : public MultiBuffer {
 
   void CheckLRUState() {
     for (auto i = data_.begin(); i != data_.end(); ++i) {
-      CHECK(i->second);  // Null poineters are not allowed in data_
-      CHECK_NE(!!pinned_[i->first], lru_->Contains(this, i->first))
-          << " i->first = " << i->first;
-      CHECK_EQ(1, present_[i->first]) << " i->first = " << i->first;
+      CHECK(i->value);  // Null pointers are not allowed in data_.
+      CHECK_NE(!!pinned_[i->key], lru_->Contains(this, i->key))
+          << " i->key = " << i->key;
+      CHECK_EQ(1, present_[i->key]) << " i->key = " << i->key;
     }
   }
 
@@ -295,7 +287,7 @@ TEST_F(MultiBufferTest, ReadAll) {
       EXPECT_EQ(buffer[17], 17);
       for (int64_t i = 0; i < bytes_read; i++) {
         uint8_t expected = static_cast<uint8_t>((pos * 15485863) >> 16);
-        EXPECT_EQ(expected, buffer[i]) << " pos = " << pos;
+        UNSAFE_TODO(EXPECT_EQ(expected, buffer[i])) << " pos = " << pos;
         pos++;
       }
     } else {
@@ -326,7 +318,7 @@ TEST_F(MultiBufferTest, ReadAllAdvanceFirst) {
     EXPECT_EQ(buffer[17], 17);
     for (int64_t i = 0; i < bytes; i++) {
       uint8_t expected = static_cast<uint8_t>((pos * 15485863) >> 16);
-      EXPECT_EQ(expected, buffer[i]) << " pos = " << pos;
+      UNSAFE_TODO(EXPECT_EQ(expected, buffer[i])) << " pos = " << pos;
       pos++;
     }
   }
@@ -357,7 +349,7 @@ TEST_F(MultiBufferTest, ReadAllAdvanceFirst_NeverDefer) {
     EXPECT_EQ(buffer[17], 17);
     for (int64_t i = 0; i < bytes; i++) {
       uint8_t expected = static_cast<uint8_t>((pos * 15485863) >> 16);
-      EXPECT_EQ(expected, buffer[i]) << " pos = " << pos;
+      UNSAFE_TODO(EXPECT_EQ(expected, buffer[i])) << " pos = " << pos;
       pos++;
     }
   }
@@ -389,7 +381,7 @@ TEST_F(MultiBufferTest, ReadAllAdvanceFirst_NeverDefer2) {
     EXPECT_EQ(buffer[17], 17);
     for (int64_t i = 0; i < bytes; i++) {
       uint8_t expected = static_cast<uint8_t>((pos * 15485863) >> 16);
-      EXPECT_EQ(expected, buffer[i]) << " pos = " << pos;
+      UNSAFE_TODO(EXPECT_EQ(expected, buffer[i])) << " pos = " << pos;
       pos++;
     }
   }
@@ -533,7 +525,7 @@ class ReadHelper {
     if (bytes_read) {
       for (int64_t i = 0; i < bytes_read; i++) {
         unsigned char expected = (pos_ * 15485863) >> 16;
-        EXPECT_EQ(expected, buffer[i]) << " pos = " << pos_;
+        UNSAFE_TODO(EXPECT_EQ(expected, buffer[i])) << " pos = " << pos_;
         pos_++;
       }
       CHECK_EQ(pos_, reader_.Tell());
@@ -546,8 +538,7 @@ class ReadHelper {
     CHECK_EQ(pos_, reader_.Tell());
     read_size_ = std::min(1 + rnd_->Rand() % (max_read_size_ - 1), end_ - pos_);
     if (!Read()) {
-      reader_.Wait(read_size_,
-                   WTF::BindOnce(&ReadHelper::WaitCB, WTF::Unretained(this)));
+      reader_.Wait(read_size_, BindOnce(&ReadHelper::WaitCB, Unretained(this)));
     }
   }
 

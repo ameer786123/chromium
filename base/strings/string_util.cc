@@ -15,6 +15,7 @@
 #include <wchar.h>
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -286,6 +287,46 @@ bool EndsWith(std::u16string_view str,
   return internal::EndsWithT(str, search_for, case_sensitivity);
 }
 
+std::optional<std::string_view> RemovePrefix(std::string_view string,
+                                             std::string_view prefix,
+                                             CompareCase case_sensitivity) {
+  if (!StartsWith(string, prefix, case_sensitivity)) {
+    return std::nullopt;
+  }
+  string.remove_prefix(prefix.size());
+  return string;
+}
+
+std::optional<std::u16string_view> RemovePrefix(std::u16string_view string,
+                                                std::u16string_view prefix,
+                                                CompareCase case_sensitivity) {
+  if (!StartsWith(string, prefix, case_sensitivity)) {
+    return std::nullopt;
+  }
+  string.remove_prefix(prefix.size());
+  return string;
+}
+
+std::optional<std::string_view> RemoveSuffix(std::string_view string,
+                                             std::string_view suffix,
+                                             CompareCase case_sensitivity) {
+  if (!EndsWith(string, suffix, case_sensitivity)) {
+    return std::nullopt;
+  }
+  string.remove_suffix(suffix.size());
+  return string;
+}
+
+std::optional<std::u16string_view> RemoveSuffix(std::u16string_view string,
+                                                std::u16string_view suffix,
+                                                CompareCase case_sensitivity) {
+  if (!EndsWith(string, suffix, case_sensitivity)) {
+    return std::nullopt;
+  }
+  string.remove_suffix(suffix.size());
+  return string;
+}
+
 char HexDigitToInt(char c) {
   DCHECK(IsHexDigit(c));
   if (c >= '0' && c <= '9') {
@@ -293,31 +334,6 @@ char HexDigitToInt(char c) {
   }
   return (c >= 'A' && c <= 'F') ? static_cast<char>(c - 'A' + 10)
                                 : static_cast<char>(c - 'a' + 10);
-}
-
-static const char* const kByteStringsUnlocalized[] = {" B",  " kB", " MB",
-                                                      " GB", " TB", " PB"};
-
-std::u16string FormatBytesUnlocalized(int64_t bytes) {
-  double unit_amount = static_cast<double>(bytes);
-  size_t dimension = 0;
-  const int kKilo = 1024;
-  while (unit_amount >= kKilo &&
-         dimension < std::size(kByteStringsUnlocalized) - 1) {
-    unit_amount /= kKilo;
-    dimension++;
-  }
-
-  char buf[64];
-  if (bytes != 0 && dimension > 0 && unit_amount < 100) {
-    UNSAFE_TODO(base::snprintf(buf, std::size(buf), "%.1lf%s", unit_amount,
-                               kByteStringsUnlocalized[dimension]));
-  } else {
-    UNSAFE_TODO(base::snprintf(buf, std::size(buf), "%.0lf%s", unit_amount,
-                               kByteStringsUnlocalized[dimension]));
-  }
-
-  return ASCIIToUTF16(buf);
 }
 
 void ReplaceFirstSubstringAfterOffset(std::u16string* str,

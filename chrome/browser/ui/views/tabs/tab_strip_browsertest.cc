@@ -8,28 +8,39 @@
 #include <string>
 #include <vector>
 
+#include "base/byte_count.h"
 #include "base/strings/string_util.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/performance_controls/tab_resource_usage_tab_helper.h"
+#include "chrome/browser/ui/tabs/alert/tab_alert.h"
+#include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
+#include "chrome/browser/ui/tabs/split_tab_metrics.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_renderer_data.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "components/data_sharing/public/features.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "components/tabs/public/tab_group.h"
+#include "components/ukm/test_ukm_recorder.h"
 #include "content/public/test/browser_test.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/text/bytes_formatting.h"
+#include "ui/events/base_event_utils.h"
+#include "ui/events/event_constants.h"
 #include "ui/views/test/ax_event_counter.h"
 #include "url/gurl.h"
 
@@ -43,10 +54,19 @@ ui::MouseEvent GetDummyEvent() {
 // Integration tests for interactions between TabStripModel and TabStrip.
 class TabStripBrowsertest : public InProcessBrowserTest {
  public:
+  TabStripBrowsertest() {
+    // The TabStrip is not used in Vertical Tabs. Ensure this suite is not run
+    // which would end up testing behavior that is not part of the browser.
+    feature_list_.InitAndDisableFeature(tabs::kVerticalTabs);
+  }
+
   TabStripModel* tab_strip_model() { return browser()->tab_strip_model(); }
 
   TabStrip* tab_strip() {
-    return BrowserView::GetBrowserViewForBrowser(browser())->tabstrip();
+    return static_cast<TabStripRegionView*>(
+               BrowserView::GetBrowserViewForBrowser(browser())
+                   ->tab_strip_region_view())
+        ->tab_strip();
   }
 
   void AppendTab() { chrome::AddTabAt(browser(), GURL(), -1, true); }
@@ -90,6 +110,9 @@ class TabStripBrowsertest : public InProcessBrowserTest {
 
     return collapsed_state;
   }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
 };
 
 // Regression test for crbug.com/983961.
@@ -128,7 +151,7 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest, DetachAndReInsertGroup) {
 
   tab_groups::TabGroupId group = tab_strip_model()->AddToNewGroup({0, 1});
 
-  std::unique_ptr<DetachedTabGroup> detached_group =
+  std::unique_ptr<DetachedTabCollection> detached_group =
       tab_strip_model()->DetachTabGroupForInsertion(group);
 
   EXPECT_EQ(tab_strip()->GetTabCount(), 1);
@@ -998,7 +1021,7 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest, AccessibleName) {
   // AccessibleName update with alert on tab
   tab_renderer_data = tab_strip()->tab_at(new_index)->data();
   tab_renderer_data.network_state = TabNetworkState::kLoading;
-  tab_renderer_data.alert_state.push_back(TabAlertState::AUDIO_PLAYING);
+  tab_renderer_data.alert_state.push_back(tabs::TabAlert::AUDIO_PLAYING);
   tab_strip()->tab_at(new_index)->SetData(tab_renderer_data);
   data = ui::AXNodeData();
   tab_strip()->tab_at(new_index)->GetViewAccessibility().GetAccessibleNodeData(
@@ -1010,7 +1033,7 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest, AccessibleName) {
   // AccessibleName update with tab resource usage update
   tab_renderer_data = tab_strip()->tab_at(new_index)->data();
   auto tab_resource_usage = base::MakeRefCounted<TabResourceUsage>();
-  tab_resource_usage->SetMemoryUsageInBytes(100);
+  tab_resource_usage->SetMemoryUsage(base::ByteCount(100));
   tab_renderer_data.tab_resource_usage = std::move(tab_resource_usage);
   tab_strip()->tab_at(new_index)->SetData(tab_renderer_data);
   data = ui::AXNodeData();
@@ -1020,7 +1043,7 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest, AccessibleName) {
                 IDS_TAB_AX_MEMORY_USAGE,
                 l10n_util::GetStringFUTF16(
                     IDS_TAB_AX_LABEL_AUDIO_PLAYING_FORMAT, title),
-                ui::FormatBytes(100)),
+                ui::FormatBytes(base::ByteCount(100))),
             data.GetString16Attribute(ax::mojom::StringAttribute::kName));
 }
 
@@ -1033,9 +1056,9 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest,
 
   tab_groups::TabGroupId group = AddTabToNewGroup(1);
   tab_strip()->tab_at(1)->SetGroup(group);
-  tab_strip_model()->group_model()->GetTabGroup(group)->SetVisualData(
-      tab_groups::TabGroupVisualData(u"Test title",
-                                     tab_groups::TabGroupColorId::kBlue));
+  tab_strip_model()->ChangeTabGroupVisuals(
+      group, tab_groups::TabGroupVisualData(
+                 u"Test title", tab_groups::TabGroupColorId::kBlue));
 
   auto* group_header = tab_strip()->group_header(group);
   std::u16string group_title = tab_strip_model()
@@ -1056,7 +1079,8 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest,
 
   // Validating tab_group name update & collapsed state change should update the
   // accessible name.
-  tab_strip_model()->group_model()->GetTabGroup(group)->SetVisualData(
+  tab_strip_model()->ChangeTabGroupVisuals(
+      group,
       tab_groups::TabGroupVisualData(u"", tab_groups::TabGroupColorId::kBlue));
   group_title = tab_strip_model()
                     ->group_model()
@@ -1073,9 +1097,9 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest,
             l10n_util::GetStringFUTF16(IDS_GROUP_AX_LABEL_UNNAMED_GROUP_FORMAT,
                                        u"\"New Tab\"", collapsed_state));
 
-  tab_strip_model()->group_model()->GetTabGroup(group)->SetVisualData(
-      tab_groups::TabGroupVisualData(u"New test title",
-                                     tab_groups::TabGroupColorId::kBlue));
+  tab_strip_model()->ChangeTabGroupVisuals(
+      group, tab_groups::TabGroupVisualData(
+                 u"New test title", tab_groups::TabGroupColorId::kBlue));
   collapsed_state = GetCollapsedState(group);
   EXPECT_FALSE(tab_strip()->IsGroupCollapsed(group));
   group_title = tab_strip_model()
@@ -1235,9 +1259,9 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest, TabGroupHeaderTooltipText) {
 
   tab_groups::TabGroupId group = AddTabToNewGroup(1);
   tab_strip()->tab_at(1)->SetGroup(group);
-  tab_strip_model()->group_model()->GetTabGroup(group)->SetVisualData(
-      tab_groups::TabGroupVisualData(u"Non empty title text",
-                                     tab_groups::TabGroupColorId::kBlue));
+  tab_strip_model()->ChangeTabGroupVisuals(
+      group, tab_groups::TabGroupVisualData(
+                 u"Non empty title text", tab_groups::TabGroupColorId::kBlue));
 
   auto* group_header = tab_strip()->group_header(group);
   std::u16string group_title = tab_strip_model()
@@ -1254,9 +1278,9 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest, TabGroupHeaderTooltipText) {
           std::u16string(group_header->GetTitleTextForTesting()),
           tab_strip()->GetGroupContentString(group_header->group().value())));
 
-  tab_strip_model()->group_model()->GetTabGroup(group)->SetVisualData(
-      tab_groups::TabGroupVisualData(std::u16string(),
-                                     tab_groups::TabGroupColorId::kBlue));
+  tab_strip_model()->ChangeTabGroupVisuals(
+      group, tab_groups::TabGroupVisualData(
+                 std::u16string(), tab_groups::TabGroupColorId::kBlue));
 
   EXPECT_EQ(group_header->GetRenderedTooltipText(gfx::Point()),
             l10n_util::GetStringFUTF16(IDS_TAB_GROUPS_UNNAMED_GROUP_TOOLTIP,
@@ -1273,9 +1297,9 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest,
 
   tab_groups::TabGroupId group = AddTabToNewGroup(1);
   tab_strip()->tab_at(1)->SetGroup(group);
-  tab_strip_model()->group_model()->GetTabGroup(group)->SetVisualData(
-      tab_groups::TabGroupVisualData(u"Non empty title text",
-                                     tab_groups::TabGroupColorId::kBlue));
+  tab_strip_model()->ChangeTabGroupVisuals(
+      group, tab_groups::TabGroupVisualData(
+                 u"Non empty title text", tab_groups::TabGroupColorId::kBlue));
 
   auto* group_header = tab_strip()->group_header(group);
   std::u16string group_title = tab_strip_model()
@@ -1423,6 +1447,151 @@ IN_PROC_BROWSER_TEST_F(TabStripBrowsertest, TabGroupHeaderAccessibleState) {
   ui::AXNodeData data;
   group_header->GetViewAccessibility().GetAccessibleNodeData(&data);
   EXPECT_TRUE(data.HasState(ax::mojom::State::kEditable));
+}
+
+IN_PROC_BROWSER_TEST_F(TabStripBrowsertest, ToggleTabSelection) {
+  AppendTab();
+  AppendTab();
+  tab_strip()->SelectTab(tab_strip()->tab_at(0), GetDummyEvent());
+
+  const ui::EventFlags modifier =
+#if BUILDFLAG(IS_MAC)
+      ui::EF_COMMAND_DOWN;
+#else
+      ui::EF_CONTROL_DOWN;
+#endif
+  ui::MouseEvent click(ui::EventType::kMousePressed, gfx::Point(0, 0),
+                       gfx::Point(0, 0), ui::EventTimeForNow(),
+                       ui::EF_LEFT_MOUSE_BUTTON | modifier,
+                       ui::EF_LEFT_MOUSE_BUTTON);
+  tab_strip()->tab_at(1)->OnMousePressed(click);
+  EXPECT_TRUE(tab_strip()->IsTabSelected(tab_strip()->tab_at(0)));
+  EXPECT_TRUE(tab_strip()->IsTabSelected(tab_strip()->tab_at(1)));
+}
+
+IN_PROC_BROWSER_TEST_F(TabStripBrowsertest, ExtendTabSelection) {
+  AppendTab();
+  AppendTab();
+  AppendTab();
+  AppendTab();
+  tab_strip()->SelectTab(tab_strip()->tab_at(1), GetDummyEvent());
+
+  ui::MouseEvent click(ui::EventType::kMousePressed, gfx::Point(0, 0),
+                       gfx::Point(0, 0), ui::EventTimeForNow(),
+                       ui::EF_LEFT_MOUSE_BUTTON | ui::EF_SHIFT_DOWN,
+                       ui::EF_LEFT_MOUSE_BUTTON);
+  tab_strip()->tab_at(3)->OnMousePressed(click);
+  EXPECT_FALSE(tab_strip()->IsTabSelected(tab_strip()->tab_at(0)));
+  EXPECT_TRUE(tab_strip()->IsTabSelected(tab_strip()->tab_at(1)));
+  EXPECT_TRUE(tab_strip()->IsTabSelected(tab_strip()->tab_at(2)));
+  EXPECT_TRUE(tab_strip()->IsTabSelected(tab_strip()->tab_at(3)));
+}
+
+class TabStripSplitViewBrowsertest : public TabStripBrowsertest {
+ public:
+  TabStripSplitViewBrowsertest() {
+    scoped_feature_list_.InitWithFeatures({features::kSideBySide}, {});
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(TabStripSplitViewBrowsertest, CreateSplitUKMLogged) {
+  std::unique_ptr<ukm::TestAutoSetUkmRecorder> ukm_recorder_ =
+      std::make_unique<ukm::TestAutoSetUkmRecorder>();
+
+  // Create two tabs with the first two being split.
+  GURL a_url = GURL("https://a.com");
+  GURL b_url = GURL("https://b.com");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), a_url));
+  AppendTab();
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), b_url));
+  tab_strip_model()->ActivateTabAt(0);
+  tab_strip_model()->AddToNewSplit(
+      {1}, split_tabs::SplitTabVisualData(),
+      split_tabs::SplitTabCreatedSource::kTabContextMenu);
+
+  // Ensure UKM is recorded.
+  auto entries = ukm_recorder_->GetEntriesByName(
+      ukm::builders::SplitView_Created::kEntryName);
+  EXPECT_EQ(2u, entries.size());
+  ukm_recorder_->ExpectEntrySourceHasUrl(entries[0], a_url);
+  ukm_recorder_->ExpectEntrySourceHasUrl(entries[1], b_url);
+  EXPECT_EQ(
+      *ukm_recorder_->GetEntryMetric(
+          entries[0], ukm::builders::SplitView_Created::kSplitEventIdName),
+      *ukm_recorder_->GetEntryMetric(
+          entries[1], ukm::builders::SplitView_Created::kSplitEventIdName));
+}
+
+IN_PROC_BROWSER_TEST_F(TabStripSplitViewBrowsertest,
+                       SwapTabIntoSplitUKMLogged) {
+  std::unique_ptr<ukm::TestAutoSetUkmRecorder> ukm_recorder_ =
+      std::make_unique<ukm::TestAutoSetUkmRecorder>();
+
+  // Create three tabs with the first two being split.
+  GURL a_url = GURL("https://a.com");
+  GURL b_url = GURL("https://b.com");
+  GURL c_url = GURL("https://c.com");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), a_url));
+  AppendTab();
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), b_url));
+  AppendTab();
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), c_url));
+  tab_strip_model()->ActivateTabAt(0);
+  tab_strip_model()->AddToNewSplit(
+      {1}, split_tabs::SplitTabVisualData(),
+      split_tabs::SplitTabCreatedSource::kTabContextMenu);
+
+  // Swap the first tab with the last.
+  tab_strip_model()->UpdateTabInSplit(tab_strip_model()->GetTabAtIndex(0), 2,
+                                      TabStripModel::SplitUpdateType::kSwap);
+
+  // Ensure UKM is recorded.
+  auto entries = ukm_recorder_->GetEntriesByName(
+      ukm::builders::SplitView_Updated::kEntryName);
+  EXPECT_EQ(2u, entries.size());
+  ukm_recorder_->ExpectEntrySourceHasUrl(entries[0], c_url);
+  ukm_recorder_->ExpectEntrySourceHasUrl(entries[1], b_url);
+  EXPECT_EQ(
+      *ukm_recorder_->GetEntryMetric(
+          entries[0], ukm::builders::SplitView_Updated::kSplitEventIdName),
+      *ukm_recorder_->GetEntryMetric(
+          entries[1], ukm::builders::SplitView_Updated::kSplitEventIdName));
+}
+
+IN_PROC_BROWSER_TEST_F(TabStripSplitViewBrowsertest,
+                       NavigateSplitTabUKMLogged) {
+  std::unique_ptr<ukm::TestAutoSetUkmRecorder> ukm_recorder_ =
+      std::make_unique<ukm::TestAutoSetUkmRecorder>();
+
+  // Create three tabs with the first two being split.
+  GURL a_url = GURL("https://a.com");
+  GURL b_url = GURL("https://b.com");
+  GURL c_url = GURL("https://c.com");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), a_url));
+  AppendTab();
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), b_url));
+  tab_strip_model()->ActivateTabAt(0);
+  tab_strip_model()->AddToNewSplit(
+      {1}, split_tabs::SplitTabVisualData(),
+      split_tabs::SplitTabCreatedSource::kTabContextMenu);
+
+  // Navigate the first tab to a new URL.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), c_url));
+
+  // Ensure UKM is recorded.
+  auto entries = ukm_recorder_->GetEntriesByName(
+      ukm::builders::SplitView_Updated::kEntryName);
+  EXPECT_EQ(2u, entries.size());
+  ukm_recorder_->ExpectEntrySourceHasUrl(entries[0], c_url);
+  ukm_recorder_->ExpectEntrySourceHasUrl(entries[1], b_url);
+  EXPECT_EQ(
+      *ukm_recorder_->GetEntryMetric(
+          entries[0], ukm::builders::SplitView_Updated::kSplitEventIdName),
+      *ukm_recorder_->GetEntryMetric(
+          entries[1], ukm::builders::SplitView_Updated::kSplitEventIdName));
 }
 
 class TabStripSaveBrowsertest : public TabStripBrowsertest {

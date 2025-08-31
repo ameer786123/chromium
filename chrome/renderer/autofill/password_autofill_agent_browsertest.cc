@@ -2,10 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
+#include <string>
 
 #include "components/autofill/content/renderer/password_autofill_agent.h"
 
@@ -47,7 +44,6 @@
 #include "components/password_manager/core/common/password_manager_constants.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/safe_browsing/buildflags.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/test/browser_test_utils.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
@@ -275,6 +271,41 @@ const char kPasswordChangeFormHTML[] =
     "  <INPUT type='password' id='newpassword'/>"
     "  <INPUT type='password' id='confirmpassword'/>"
     "  <INPUT type='submit' value='Login'/>"
+    "</FORM>";
+
+const char kPasswordChangeWithoutFormHTML[] =
+    "<DIV>"
+    "  <INPUT type='text' id='username'/>"
+    "  <INPUT type='password' id='password'/>"
+    "  <INPUT type='password' id='newpassword'/>"
+    "  <INPUT type='password' id='confirmpassword'/>"
+    "  <INPUT type='submit' value='Change pwd'/>"
+    "</DIV>";
+
+const char kPasswordChangeFormWithoutSubmitHTML[] =
+    "<FORM name='ChangeWithUsernameForm' action='http://www.bidule.com'>"
+    "  <INPUT type='text' id='username'/>"
+    "  <INPUT type='password' id='password'/>"
+    "  <INPUT type='password' id='newpassword'/>"
+    "  <INPUT type='password' id='confirmpassword'/>"
+    "</FORM>";
+
+const char kPasswordChangeFormSubmitDisabledHTML[] =
+    "<FORM name='ChangeWithUsernameForm' action='http://www.bidule.com'>"
+    "  <INPUT type='text' id='username'/>"
+    "  <INPUT type='password' id='password'/>"
+    "  <INPUT type='password' id='newpassword'/>"
+    "  <INPUT type='password' id='confirmpassword'/>"
+    "  <INPUT type='submit' value='Change pwd' disabled/>"
+    "</FORM>";
+
+const char kPasswordChangeFormWithoutActionHTML[] =
+    "<FORM name='ChangeWithUsernameForm'>"
+    "  <INPUT type='text' id='username'/>"
+    "  <INPUT type='password' id='password'/>"
+    "  <INPUT type='password' id='newpassword'/>"
+    "  <INPUT type='password' id='confirmpassword'/>"
+    "  <INPUT type='submit' value='Change pwd'/>"
     "</FORM>";
 
 const char kCreditCardFormHTML[] =
@@ -2196,9 +2227,12 @@ TEST_F(PasswordAutofillAgentTest, FillIntoReadonlyTextField) {
 
   // If the field is readonly, it should not be affected.
   SetElementReadOnly(username_element_, true);
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(false));
   password_autofill_agent_->FillField(
       form_util::GetFieldRendererId(username_element_), kAliceUsername16,
-      AutofillSuggestionTriggerSource::kUnspecified);
+      autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger,
+      mock_reply.Get());
   CheckTextFieldsDOMState(
       /*username=*/std::string(), /*username_autofilled=*/false,
       /*password=*/std::string(), /*password_autofilled=*/false);
@@ -2211,9 +2245,12 @@ TEST_F(PasswordAutofillAgentTest, FillIntoUsernameField) {
       /*username=*/std::string(), /*username_autofilled=*/false,
       /*password=*/std::string(), /*password_autofilled=*/false);
 
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(true));
   password_autofill_agent_->FillField(
       form_util::GetFieldRendererId(username_element_), kAliceUsername16,
-      AutofillSuggestionTriggerSource::kUnspecified);
+      autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger,
+      mock_reply.Get());
   CheckTextFieldsDOMState(
       /*username=*/kAliceUsername, /*username_autofilled=*/true,
       /*password=*/std::string(), /*password_autofilled=*/false);
@@ -2226,9 +2263,12 @@ TEST_F(PasswordAutofillAgentTest, FillIntoPasswordField) {
       /*username=*/std::string(), /*username_autofilled=*/false,
       /*password=*/std::string(), /*password_autofilled=*/false);
 
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(true));
   password_autofill_agent_->FillField(
       form_util::GetFieldRendererId(password_element_), kAlicePassword16,
-      AutofillSuggestionTriggerSource::kUnspecified);
+      autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger,
+      mock_reply.Get());
   CheckTextFieldsDOMState(
       /*username=*/std::string(), /*username_autofilled=*/false,
       /*password=*/kAlicePassword, /*password_autofilled=*/true);
@@ -2241,9 +2281,12 @@ TEST_F(PasswordAutofillAgentTest, FillIntoRandomField) {
   // The field should not be autocompleted.
   EXPECT_EQ(std::string(), random_element.Value().Utf8());
 
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(true));
   password_autofill_agent_->FillField(
       form_util::GetFieldRendererId(random_element), kAliceUsername16,
-      AutofillSuggestionTriggerSource::kUnspecified);
+      autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger,
+      mock_reply.Get());
   EXPECT_EQ(kAliceUsername, random_element.Value().Utf8());
 }
 
@@ -2257,9 +2300,12 @@ TEST_F(PasswordAutofillAgentTest, FillIntoNonExistingField) {
       /*password=*/std::string(), /*password_autofilled=*/false);
   EXPECT_EQ(std::string(), random_element.Value().Utf8());
 
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(false));
   password_autofill_agent_->FillField(
       FieldRendererId(), kAliceUsername16,
-      AutofillSuggestionTriggerSource::kUnspecified);
+      autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger,
+      mock_reply.Get());
   // Neither field should be autocompleted.
   CheckTextFieldsDOMState(
       /*username=*/std::string(), /*username_autofilled=*/false,
@@ -2407,45 +2453,12 @@ TEST_F(PasswordAutofillAgentTest,
       AutofillSuggestionTriggerSource::kManualFallbackPasswords);
 }
 
-TEST_F(PasswordAutofillAgentTest,
-       NoPopupOnPasswordFieldWithoutSuggestionsByDefault) {
-  scoped_feature_list_.InitAndDisableFeature(
-      ::switches::kEnablePendingModePasswordsPromo);
-
-  ClearUsernameAndPasswordFieldValues();
-  UpdateRendererIDsInFillData();
-
-  ASSERT_TRUE(SimulateElementClick(kPasswordName));
-
-  CheckSuggestionsNotShown();
-}
-
-// Passwords fields should never trigger the popup on password passwords fields
-// without suggestions since it would not be helpful.
-TEST_F(PasswordAutofillAgentTest, NoPopupOnPasswordFieldWithoutSuggestions) {
-  scoped_feature_list_.InitAndDisableFeature(
-      ::switches::kEnablePendingModePasswordsPromo);
-
-  ClearUsernameAndPasswordFieldValues();
-  UpdateRendererIDsInFillData();
-
-  password_autofill_agent_->InformNoSavedCredentials(
-      /*should_show_popup_without_passwords=*/false);
-
-  ASSERT_TRUE(SimulateElementClick(kPasswordName));
-
-  CheckSuggestionsNotShown();
-}
-
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
-// when kEnablePendingModePasswordsPromo is enabled users in pending state will
-// be shown a suggestion to "verify it's you" even when there are no passwords
+// Users in pending state are shown a suggestion to "verify it's you" even when
+// there are no passwords.
 TEST_F(
     PasswordAutofillAgentTest,
     NoPopupOnPasswordFieldWithoutSuggestionsByDefaultWhenNotEligibleForPromo) {
-  scoped_feature_list_.InitAndEnableFeature(
-      ::switches::kEnablePendingModePasswordsPromo);
-
   ClearUsernameAndPasswordFieldValues();
   UpdateRendererIDsInFillData();
 
@@ -2458,9 +2471,6 @@ TEST_F(
 
 TEST_F(PasswordAutofillAgentTest,
        PopupOnPasswordFieldWithoutSuggestionsWhenEligibleForPromo) {
-  scoped_feature_list_.InitAndEnableFeature(
-      ::switches::kEnablePendingModePasswordsPromo);
-
   ClearUsernameAndPasswordFieldValues();
   UpdateRendererIDsInFillData();
 
@@ -5134,31 +5144,85 @@ TEST_F(PasswordAutofillAgentTest, NoFillingFallbackForBannedFields) {
   password_autofill_agent_->ApplyFillDataOnParsingCompletion(form_data);
 
   // Expect filling suggestion on credential forms.
-  EXPECT_TRUE(password_autofill_agent_->ShowSuggestions(
-      username_field,
-      AutofillSuggestionTriggerSource::kFormControlElementClicked,
-      /*form_cache=*/{}));
-  EXPECT_TRUE(password_autofill_agent_->ShowSuggestions(
-      password_field,
-      AutofillSuggestionTriggerSource::kFormControlElementClicked,
-      /*form_cache=*/{}));
+  EXPECT_TRUE(
+      password_autofill_agent_
+          ->CreateRequestForDomain(
+              username_field,
+              AutofillSuggestionTriggerSource::kFormControlElementClicked,
+              /*form_cache=*/{})
+          .has_value());
+  EXPECT_TRUE(
+      password_autofill_agent_
+          ->CreateRequestForDomain(
+              password_field,
+              AutofillSuggestionTriggerSource::kFormControlElementClicked,
+              /*form_cache=*/{})
+          .has_value());
   // Expect no filling suggestion on credit card forms.
-  EXPECT_FALSE(password_autofill_agent_->ShowSuggestions(
-      credit_card_full_name_field,
-      AutofillSuggestionTriggerSource::kFormControlElementClicked,
-      /*form_cache=*/{}));
-  EXPECT_FALSE(password_autofill_agent_->ShowSuggestions(
-      credit_card_number_field,
-      AutofillSuggestionTriggerSource::kFormControlElementClicked,
-      /*form_cache=*/{}));
-  EXPECT_FALSE(password_autofill_agent_->ShowSuggestions(
-      credit_card_cvc_field,
-      AutofillSuggestionTriggerSource::kFormControlElementClicked,
-      /*form_cache=*/{}));
+  EXPECT_FALSE(
+      password_autofill_agent_
+          ->CreateRequestForDomain(
+              credit_card_full_name_field,
+              AutofillSuggestionTriggerSource::kFormControlElementClicked,
+              /*form_cache=*/{})
+          .has_value());
+  EXPECT_FALSE(
+      password_autofill_agent_
+          ->CreateRequestForDomain(
+              credit_card_number_field,
+              AutofillSuggestionTriggerSource::kFormControlElementClicked,
+              /*form_cache=*/{})
+          .has_value());
+  EXPECT_FALSE(
+      password_autofill_agent_
+          ->CreateRequestForDomain(
+              credit_card_cvc_field,
+              AutofillSuggestionTriggerSource::kFormControlElementClicked,
+              /*form_cache=*/{})
+          .has_value());
 }
 
-// Tests that `SubmitChangePasswordForm` fills and submits change password form.
-TEST_F(PasswordAutofillAgentTest, SubmitChangePasswordForm) {
+// Tests that `FillChangePasswordForm` fills change password form.
+TEST_F(PasswordAutofillAgentTest, FillChangePasswordForm) {
+  std::vector<std::string> htms_to_test = {kPasswordChangeFormHTML,
+                                           kPasswordChangeWithoutFormHTML};
+  for (const std::string& html : htms_to_test) {
+    SCOPED_TRACE(testing::Message() << "Running for the page: " << html);
+    LoadHTML(html);
+    UpdateUrlForHTML(html);
+
+    WebInputElement password = GetInputElementByID("password"),
+                    new_password = GetInputElementByID("newpassword"),
+                    confirmation_password =
+                        GetInputElementByID("confirmpassword");
+    auto password_id = autofill::form_util::GetFieldRendererId(password),
+         new_password_id =
+             autofill::form_util::GetFieldRendererId(new_password),
+         password_confirmation =
+             autofill::form_util::GetFieldRendererId(confirmation_password);
+
+    const std::vector<autofill::FormData>& parsed_form_data =
+        fake_driver_.form_data_parsed().value();
+    EXPECT_EQ(1u, parsed_form_data.size());
+
+    base::MockCallback<
+        base::OnceCallback<void(const std::optional<autofill::FormData>&)>>
+        mock_reply;
+    EXPECT_CALL(mock_reply, Run(testing::Optional(parsed_form_data[0])));
+
+    password_autofill_agent_->FillChangePasswordForm(
+        password_id, new_password_id, password_confirmation, u"qwerty",
+        u"Pa$sw0rD", mock_reply.Get());
+
+    EXPECT_EQ(u"qwerty", password.Value().Utf16());
+    EXPECT_EQ(u"Pa$sw0rD", new_password.Value().Utf16());
+    EXPECT_EQ(u"Pa$sw0rD", confirmation_password.Value().Utf16());
+  }
+}
+
+// Tests that `FillChangePasswordForm` invokes callback with std::nullopt when
+// form wasn't filled.
+TEST_F(PasswordAutofillAgentTest, FillChangePasswordFormFailed) {
   LoadHTML(kPasswordChangeFormHTML);
   UpdateUrlForHTML(kPasswordChangeFormHTML);
 
@@ -5166,29 +5230,110 @@ TEST_F(PasswordAutofillAgentTest, SubmitChangePasswordForm) {
                   new_password = GetInputElementByID("newpassword"),
                   confirmation_password =
                       GetInputElementByID("confirmpassword");
-  auto password_id = autofill::form_util::GetFieldRendererId(password),
-       new_password_id = autofill::form_util::GetFieldRendererId(new_password),
-       password_confirmation =
-           autofill::form_util::GetFieldRendererId(confirmation_password);
 
-  const std::vector<autofill::FormData>& parsed_form_data =
-      fake_driver_.form_data_parsed().value();
-  EXPECT_EQ(1u, parsed_form_data.size());
-
-  base::MockCallback<base::OnceCallback<void(const autofill::FormData&)>>
+  base::MockCallback<
+      base::OnceCallback<void(const std::optional<autofill::FormData>&)>>
       mock_reply;
-  EXPECT_CALL(mock_reply, Run(parsed_form_data[0]));
+  EXPECT_CALL(mock_reply, Run(Eq(std::nullopt)));
 
-  password_autofill_agent_->SubmitChangePasswordForm(
-      password_id, new_password_id, password_confirmation, u"qwerty",
-      u"Pa$sw0rD", mock_reply.Get());
+  password_autofill_agent_->FillChangePasswordForm(
+      autofill::FieldRendererId(0), autofill::FieldRendererId(0),
+      autofill::FieldRendererId(0), u"qwerty", u"Pa$sw0rD", mock_reply.Get());
+
+  EXPECT_EQ(u"", password.Value().Utf16());
+  EXPECT_EQ(u"", new_password.Value().Utf16());
+  EXPECT_EQ(u"", confirmation_password.Value().Utf16());
+}
+
+TEST_F(PasswordAutofillAgentTest, SubmitChangePassword) {
+  LoadHTML(kPasswordChangeFormHTML);
+  UpdateUrlForHTML(kPasswordChangeFormHTML);
+
+  WebInputElement password = GetInputElementByID("password");
+
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(true));
+  ASSERT_FALSE(fake_driver_.called_password_form_submitted());
+  password_autofill_agent_->SubmitFormWithEnter(
+      autofill::form_util::GetFieldRendererId(password), mock_reply.Get());
+
   // Wait for submission event.
   EXPECT_TRUE(base::test::RunUntil(
       [&]() { return fake_driver_.called_password_form_submitted(); }));
+}
 
-  EXPECT_EQ(u"qwerty", password.Value().Utf16());
-  EXPECT_EQ(u"Pa$sw0rD", new_password.Value().Utf16());
-  EXPECT_EQ(u"Pa$sw0rD", confirmation_password.Value().Utf16());
+TEST_F(PasswordAutofillAgentTest,
+       SubmitChangePasswordFailedWhenNoElementFound) {
+  LoadHTML(kPasswordChangeFormHTML);
+  UpdateUrlForHTML(kPasswordChangeFormHTML);
+
+  WebInputElement password = GetInputElementByID("password");
+
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(false));
+  ASSERT_FALSE(fake_driver_.called_password_form_submitted());
+  password_autofill_agent_->SubmitFormWithEnter(autofill::FieldRendererId(0),
+                                                mock_reply.Get());
+  EXPECT_FALSE(fake_driver_.called_password_form_submitted());
+}
+
+TEST_F(PasswordAutofillAgentTest, SubmitChangePasswordFailedWhenNoFormTag) {
+  LoadHTML(kPasswordChangeWithoutFormHTML);
+  UpdateUrlForHTML(kPasswordChangeWithoutFormHTML);
+
+  WebInputElement password = GetInputElementByID("password");
+
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(false));
+  ASSERT_FALSE(fake_driver_.called_password_form_submitted());
+  password_autofill_agent_->SubmitFormWithEnter(
+      autofill::form_util::GetFieldRendererId(password), mock_reply.Get());
+  EXPECT_FALSE(fake_driver_.called_password_form_submitted());
+}
+
+TEST_F(PasswordAutofillAgentTest,
+       SubmitChangePasswordFailedWhenNoSubmitElement) {
+  LoadHTML(kPasswordChangeFormWithoutSubmitHTML);
+  UpdateUrlForHTML(kPasswordChangeFormWithoutSubmitHTML);
+
+  WebInputElement password = GetInputElementByID("password");
+
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(false));
+  ASSERT_FALSE(fake_driver_.called_password_form_submitted());
+  password_autofill_agent_->SubmitFormWithEnter(
+      autofill::form_util::GetFieldRendererId(password), mock_reply.Get());
+  EXPECT_FALSE(fake_driver_.called_password_form_submitted());
+}
+
+TEST_F(PasswordAutofillAgentTest,
+       SubmitChangePasswordFailedWhenSubmitElementDisabled) {
+  LoadHTML(kPasswordChangeFormSubmitDisabledHTML);
+  UpdateUrlForHTML(kPasswordChangeFormSubmitDisabledHTML);
+
+  WebInputElement password = GetInputElementByID("password");
+
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(false));
+  ASSERT_FALSE(fake_driver_.called_password_form_submitted());
+  password_autofill_agent_->SubmitFormWithEnter(
+      autofill::form_util::GetFieldRendererId(password), mock_reply.Get());
+  EXPECT_FALSE(fake_driver_.called_password_form_submitted());
+}
+
+TEST_F(PasswordAutofillAgentTest,
+       SubmitChangePasswordFailedWhenFormHasNoAction) {
+  LoadHTML(kPasswordChangeFormWithoutActionHTML);
+  UpdateUrlForHTML(kPasswordChangeFormWithoutActionHTML);
+
+  WebInputElement password = GetInputElementByID("password");
+
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(false));
+  ASSERT_FALSE(fake_driver_.called_password_form_submitted());
+  password_autofill_agent_->SubmitFormWithEnter(
+      autofill::form_util::GetFieldRendererId(password), mock_reply.Get());
+  EXPECT_FALSE(fake_driver_.called_password_form_submitted());
 }
 
 // Check that a dynamic form submission can be detected after the form is

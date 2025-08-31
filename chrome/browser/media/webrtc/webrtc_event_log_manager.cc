@@ -11,6 +11,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
+#include "build/android_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -58,6 +59,31 @@ class PeerConnectionTrackerProxyImpl
             key));
   }
 
+  void EnableWebRtcDataChannelLogging(
+      const WebRtcEventLogPeerConnectionKey& key) override {
+    auto enable_logging = [](const WebRtcEventLogPeerConnectionKey& key) {
+      if (auto* host = RenderFrameHost::FromID(key.render_process_id,
+                                               key.render_frame_id)) {
+        host->EnableWebRtcDataChannelLogOutput(key.lid);
+      }
+    };
+
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(enable_logging, key));
+  }
+
+  void DisableWebRtcDataChannelLogging(
+      const WebRtcEventLogPeerConnectionKey& key) override {
+    auto disable_logging = [](const WebRtcEventLogPeerConnectionKey& key) {
+      if (auto* host = RenderFrameHost::FromID(key.render_process_id,
+                                               key.render_frame_id)) {
+        host->DisableWebRtcDataChannelLogOutput(key.lid);
+      }
+    };
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(disable_logging, key));
+  }
+
  private:
   static void EnableWebRtcEventLoggingInternal(
       WebRtcEventLogPeerConnectionKey key,
@@ -87,7 +113,7 @@ class PeerConnectionTrackerProxyImpl
 // necessarily for any given user profile.
 // Certain platforms (mobile) are blocked from remote-bound logging.
 bool IsRemoteLoggingFeatureEnabled() {
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_DESKTOP_ANDROID)
   bool enabled = false;
 #else
   bool enabled = true;
@@ -294,9 +320,9 @@ void WebRtcEventLogManager::StartRemoteLogging(
   const char* error = nullptr;
 
   if (!browser_context) {
-    // RPH died before processing of this notification.
-    UmaRecordWebRtcEventLoggingApi(WebRtcEventLoggingApiUma::kDeadRph);
-    error = kStartRemoteLoggingFailureDeadRenderProcessHost;
+    UmaRecordWebRtcEventLoggingApi(
+        WebRtcEventLoggingApiUma::kBrowserContextNotFound);
+    error = kBrowserContextNotFound;
   } else if (!IsRemoteLoggingAllowedForBrowserContext(browser_context)) {
     UmaRecordWebRtcEventLoggingApi(WebRtcEventLoggingApiUma::kFeatureDisabled);
     error = kStartRemoteLoggingFailureFeatureDisabled;
@@ -438,7 +464,7 @@ WebRtcEventLogManager::CreateRemoteLogFileWriterFactory() {
   if (remote_log_file_writer_factory_for_testing_) {
     return std::move(remote_log_file_writer_factory_for_testing_);
   } else {
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_DESKTOP_ANDROID)
     return std::make_unique<GzippedLogFileWriterFactory>(
         std::make_unique<GzipLogCompressorFactory>(
             std::make_unique<DefaultGzippedSizeEstimator::Factory>()));
@@ -647,6 +673,13 @@ void WebRtcEventLogManager::DisableLocalLogging(
 void WebRtcEventLogManager::OnWebRtcDataChannelLogWrite(
     content::GlobalRenderFrameHostId frame_id,
     int lid,
+    const std::string& message) {
+  OnWebRtcDataChannelLogWrite(frame_id, lid, message, base::NullCallback());
+}
+
+void WebRtcEventLogManager::OnWebRtcDataChannelLogWrite(
+    content::GlobalRenderFrameHostId frame_id,
+    int lid,
     const std::string& message,
     base::OnceCallback<void(bool)> reply) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -728,6 +761,8 @@ void WebRtcEventLogManager::OnLocalDataChannelLogStarted(
     const base::FilePath& file_path) {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
+  pc_tracker_proxy_->EnableWebRtcDataChannelLogging(peer_connection);
+
   if (local_logs_observer_) {
     local_logs_observer_->OnLocalDataChannelLogStarted(peer_connection,
                                                        file_path);
@@ -737,6 +772,8 @@ void WebRtcEventLogManager::OnLocalDataChannelLogStarted(
 void WebRtcEventLogManager::OnLocalDataChannelLogStopped(
     PeerConnectionKey peer_connection) {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
+
+  pc_tracker_proxy_->DisableWebRtcDataChannelLogging(peer_connection);
 
   if (local_logs_observer_) {
     local_logs_observer_->OnLocalDataChannelLogStopped(peer_connection);

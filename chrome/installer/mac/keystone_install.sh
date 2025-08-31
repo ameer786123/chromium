@@ -19,6 +19,9 @@
 #   When set to a non-empty value, the product at this path will be updated.
 #   ksadmin will not be consulted to locate the installed product, nor will it
 #   be called to update any tickets.
+# GOOGLE_CHROME_UPDATER_TEST_ENROLLMENT_PATH
+#   When set to a non-empty value, the installer will search for an enrollment
+#   ticket at this path. Otherwise, the default path will be used.
 #
 # Exit codes:
 #  0  Happiness
@@ -76,6 +79,7 @@ readonly KS_CHANNEL_KEY="KSChannelID"
 # system /bin/sh with a newer bash, probably all before SIP became a thing.)
 : ${GOOGLE_CHROME_UPDATER_DEBUG:=}
 : ${GOOGLE_CHROME_UPDATER_TEST_PATH:=}
+: ${GOOGLE_CHROME_UPDATER_TEST_ENROLLMENT_PATH:=}
 
 err() {
   local error="${1}"
@@ -302,8 +306,9 @@ is_version_ge() {
   local right="${2}"
 
   local -a left_array right_array
-  IFS=. left_array=(${left})
-  IFS=. right_array=(${right})
+  local IFS=.
+  left_array=(${left})
+  right_array=(${right})
 
   local left_count=${#left_array[@]}
   local right_count=${#right_array[@]}
@@ -367,7 +372,7 @@ ksadmin_version() {
       # This isn't very special, it's just what happens to be current as this is
       # written. It's new enough that all of the feature checks
       # (ksadmin_supports_*) pass.
-      g_ksadmin_version="1.2.13.41"
+      g_ksadmin_version="137.0.7106.0"
     else
       g_ksadmin_version="$(ksadmin --ksadmin-version || true)"
     fi
@@ -432,6 +437,11 @@ ksadmin_supports_versionpath_versionkey() {
 
   # The return value of is_ksadmin_version_ge is used as this function's
   # return value.
+}
+
+# Returns 0 (true) if ksadmin supports --print_xattr_tag_brand.
+ksadmin_supports_print_xattr_tag_brand() {
+  is_ksadmin_version_ge 137.0.7106.0
 }
 
 # Runs "defaults read" to obtain the value of a key in a property list. As
@@ -920,10 +930,20 @@ framework_${update_version_app_old}_${update_version_app}.dirpatch"
   local old_ks_plist="${installed_app_plist}"
   note "old_ks_plist = ${old_ks_plist}"
   local old_brand
-  old_brand="$(infoplist_read "${old_ks_plist}" \
-                              "${KS_BRAND_KEY}" 2> /dev/null ||
-               true)"
-  note "old_brand (from app) = ${old_brand}"
+  if ksadmin_supports_print_xattr_tag_brand; then
+    old_brand="$(ksadmin --print-xattr-tag-brand "${KS_TICKET_XC_PATH}" \
+                         2> /dev/null ||
+                 true)"
+    if [[ -n "${old_brand}" ]] ; then
+      note "old_brand (from extended attribute tag) = ${old_brand}"
+    fi
+  fi
+  if [[ -z "${old_brand}" ]] ; then
+    old_brand="$(infoplist_read "${old_ks_plist}" \
+                                "${KS_BRAND_KEY}" 2> /dev/null ||
+                true)"
+    note "old_brand (from app Info.plist) = ${old_brand}"
+  fi
 
   local update_versioned_dir=
   if [[ -z "${is_patch}" ]]; then
@@ -1238,23 +1258,32 @@ framework_${update_version_app_old}_${update_version_app}.dirpatch"
   # running for a system or user ticket.
   note "handling brand code"
 
+  local cbcm_path
+  if [[ -n "${GOOGLE_CHROME_UPDATER_TEST_ENROLLMENT_PATH}" ]]; then
+    cbcm_path="${GOOGLE_CHROME_UPDATER_TEST_ENROLLMENT_PATH}"
+  else
+    if [[ -n "${system_ticket}" ]]; then
+      cbcm_path="/Library/Application Support/Google/CloudManagement"
+    else
+      cbcm_path=~/"Library/Application Support/Google/Chrome/Cloud Enrollment"
+    fi
+  fi
+
   local set_brand_file_access=
   local brand_plist
-  local cbcm_path
   if [[ -n "${system_ticket}" ]]; then
     # System ticket.
     set_brand_file_access="y"
     brand_plist="/${UNROOTED_BRAND_PLIST}"
-    cbcm_path="/Library/Application Support/Google/CloudManagement"
   else
     # User ticket.
     brand_plist=~/"${UNROOTED_BRAND_PLIST}"
-    cbcm_path=~"/Library/Application Support/Google/Chrome/Cloud Enrollment"
   fi
   local brand_plist_path="${brand_plist}.plist"
   note "set_brand_file_access = ${set_brand_file_access}"
   note "brand_plist = ${brand_plist}"
   note "brand_plist_path = ${brand_plist_path}"
+  note "cbcm_path = ${cbcm_path}"
 
   # If there is no brand plist in the old browser installation, read the brand
   # from the keystone file.
@@ -1264,17 +1293,19 @@ framework_${update_version_app_old}_${update_version_app}.dirpatch"
   fi
 
   # Rewrite the brand code according to CBCM enrollment.
-  local new_brand
-  if [[ "${old_brand}" == "GCEA" && -e "${cbcm_path}" ]]; then
-    new_brand="GCCA"
-  elif [[ "${old_brand}" == "GCCA" && ! -e "${cbcm_path}" ]]; then
-    new_brand="GCEA"
-  elif [[ "${old_brand}" == "GCEM" && -e "${cbcm_path}" ]]; then
-    new_brand="GCCM"
-  elif [[ "${old_brand}" == "GCCM" && ! -e "${cbcm_path}" ]]; then
-    new_brand="GCEM"
+  local new_brand="${old_brand}"
+  if [[ -e "$cbcm_path" ]]; then
+    if [[ "${old_brand}" == GCE? ]]; then
+      new_brand="GCC${old_brand:3}"
+    elif [[ "${old_brand}" == FPA? ]]; then
+      new_brand="FPJ${old_brand:3}"
+    fi
   else
-    new_brand="${old_brand}"
+    if [[ "${old_brand}" == GCC? ]]; then
+      new_brand="GCE${old_brand:3}"
+    elif [[ "${old_brand}" == FPJ? ]]; then
+      new_brand="FPA${old_brand:3}"
+    fi
   fi
   note "new_brand = ${new_brand}"
 
@@ -1556,19 +1587,6 @@ framework_${update_version_app_old}_${update_version_app}.dirpatch"
   note "lifting quarantine"
 
   xattr -d -r "${QUARANTINE_ATTR}" "${installed_app}" 2> /dev/null
-
-  # macOS 14+ allows forcing an immediate Gatekeeper check (and caching the
-  # result) with gktool. Use it if available. Suppress both stdout and stderr as
-  # gktool is noisy.
-  #
-  # Do this as the very last step to reduce the chance that subsequent actions
-  # taken will invalidate the cached Gatekeeper result.
-  if [[ -x "/usr/bin/gktool" ]]; then
-    note "using gktool to force ahead-of-time Gatekeeper check"
-    /usr/bin/gktool scan "${installed_app}" >& /dev/null
-  else
-    note "gktool not available; skipping ahead-of-time Gatekeeper check"
-  fi
 
   # Great success!
   note "done!"

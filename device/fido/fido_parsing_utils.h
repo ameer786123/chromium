@@ -19,7 +19,6 @@
 #include "base/component_export.h"
 #include "base/containers/span.h"
 #include "components/cbor/values.h"
-#include "crypto/sha2.h"
 
 namespace device {
 namespace fido_parsing_utils {
@@ -38,14 +37,6 @@ struct RangeLess {
 
   using is_transparent = void;
 };
-
-// U2FResponse offsets. The format of a U2F response is defined in
-// https://fidoalliance.org/specs/fido-u2f-v1.2-ps-20170411/fido-u2f-raw-message-formats-v1.2-ps-20170411.html#registration-response-message-success
-COMPONENT_EXPORT(DEVICE_FIDO)
-extern const uint32_t kU2fResponseKeyHandleLengthPos;
-COMPONENT_EXPORT(DEVICE_FIDO)
-extern const uint32_t kU2fResponseKeyHandleStartPos;
-COMPONENT_EXPORT(DEVICE_FIDO) extern const char kEs256[];
 
 // Returns a materialized copy of |span|, that is, a vector with the same
 // elements.
@@ -110,10 +101,6 @@ bool ExtractArray(base::span<const uint8_t> span,
 COMPONENT_EXPORT(DEVICE_FIDO)
 std::vector<base::span<const uint8_t>> SplitSpan(base::span<const uint8_t> span,
                                                  size_t max_chunk_size);
-
-COMPONENT_EXPORT(DEVICE_FIDO)
-std::array<uint8_t, crypto::kSHA256Length> CreateSHA256Hash(
-    std::string_view data);
 
 // Convert byte array into GUID formatted string as defined by RFC 4122.
 // As we are converting 128 bit UUID, |bytes| must be have length of 16.

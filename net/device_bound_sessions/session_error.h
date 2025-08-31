@@ -6,6 +6,7 @@
 #define NET_DEVICE_BOUND_SESSIONS_SESSION_ERROR_H_
 
 #include "net/base/schemeful_site.h"
+#include "net/device_bound_sessions/deletion_reason.h"
 
 namespace net::device_bound_sessions {
 
@@ -33,13 +34,20 @@ struct NET_EXPORT SessionError {
     kScopeOriginSameSiteMismatch = 15,
     kRefreshUrlSameSiteMismatch = 16,
     kInvalidScopeOrigin = 17,
-    kMaxValue = kInvalidScopeOrigin
+    kMismatchedSessionId = 18,
+    kInvalidRefreshInitiators = 19,
+    kInvalidScopeRule = 20,
+    kMissingScope = 21,
+    kNoCredentials = 22,
+    kInvalidScopeIncludeSite = 23,
+    kWellKnownUnavailable = 24,
+    kSubdomainRegistrationUnauthorized = 25,
+    kWellKnownMalformed = 26,
+    kMaxValue = kWellKnownMalformed,
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/net/enums.xml:DeviceBoundSessionError)
 
-  SessionError(ErrorType type,
-               net::SchemefulSite site,
-               std::optional<std::string> session_id);
+  explicit SessionError(ErrorType type);
   ~SessionError();
 
   SessionError(const SessionError&) = delete;
@@ -48,11 +56,14 @@ struct NET_EXPORT SessionError {
   SessionError(SessionError&&) noexcept;
   SessionError& operator=(SessionError&&) noexcept;
 
-  bool IsFatal() const;
+  // If the error is non-fatal, returns `std::nullopt`. Otherwise
+  // returns the reason for deleting the session.
+  std::optional<DeletionReason> GetDeletionReason() const;
+
+  // Whether the error is due to server-side behavior.
+  bool IsServerError() const;
 
   ErrorType type;
-  net::SchemefulSite site;
-  std::optional<std::string> session_id;
 };
 
 }  // namespace net::device_bound_sessions

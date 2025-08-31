@@ -169,7 +169,7 @@ public class MockWebContents implements WebContents, WebContentsObserver.Observa
     public void stop() {}
 
     @Override
-    public void setPrimaryMainFrameImportance(int importance) {}
+    public void setPrimaryPageImportance(int mainFrameImportance, int subframeImportance) {}
 
     @Override
     public void suspendAllMediaPlayers() {}
@@ -351,7 +351,7 @@ public class MockWebContents implements WebContents, WebContentsObserver.Observa
     public void setDisplayCutoutSafeArea(Rect insets) {}
 
     @Override
-    public void setContextMenuInsets(Rect insets) {}
+    public void showInterestInElement(int nodeID) {}
 
     @Override
     public void notifyRendererPreferenceUpdate() {}
@@ -382,11 +382,29 @@ public class MockWebContents implements WebContents, WebContentsObserver.Observa
     public void setLongPressLinkSelectText(boolean enabled) {}
 
     @Override
+    public void setCanAcceptLoadDrops(boolean enabled) {}
+
+    @Override
+    public boolean getCanAcceptLoadDropsForTesting() {
+        return true;
+    }
+
+    @Override
     public void updateOffsetTagDefinitions(
             BrowserControlsOffsetTagDefinitions offsetTagDefinitions) {}
 
     @Override
     public void setSupportsForwardTransitionAnimation(boolean supports) {}
+
+    @Override
+    public boolean hasOpener() {
+        return false;
+    }
+
+    @Override
+    public int getOriginalWindowOpenDisposition() {
+        return 0;
+    }
 
     @Override
     public <T extends UserData> @Nullable T getOrSetUserData(

@@ -6,12 +6,14 @@
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/metrics/user_action_tester.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engine_choice/search_engine_choice_dialog_service_factory.h"
 #include "chrome/browser/search_engine_choice/search_engine_choice_service_factory.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/dialog_test_browser_window.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -24,6 +26,7 @@
 #include "components/search_engines/search_engine_utils.h"
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/search_engines/search_engines_switches.h"
+#include "components/search_engines/search_engines_test_util.h"
 #include "components/search_engines/template_url_prepopulate_data.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/signin/public/base/signin_switches.h"
@@ -34,6 +37,7 @@
 #include "ui/gfx/native_widget_types.h"
 
 using ::country_codes::CountryId;
+using ::search_engines::SearchEngineChoiceScreenConditions;
 
 namespace {
 
@@ -213,6 +217,36 @@ INSTANTIATE_TEST_SUITE_P(,
                          testing::ValuesIn(kTestParams),
                          &ParamToTestSuffix);
 
+TEST_F(SearchEngineChoiceDialogServiceTest,
+       ProfileEligibility_DesktopTypeChecks) {
+  auto ComputeProfileEligibility = [](Profile* profile) {
+    // TemplateURLService absence causes the profile to be unsupported.
+    TemplateURLServiceFactory::GetInstance()->SetTestingFactory(
+        profile,
+        base::BindRepeating(&TemplateURLServiceFactory::BuildInstanceFor));
+    return SearchEngineChoiceDialogServiceFactory::
+        ComputeProfileEligibilityForTesting(*profile);
+  };
+
+  TestingProfile* parent_guest = profile_manager()->CreateGuestProfile();
+  EXPECT_EQ(ComputeProfileEligibility(parent_guest),
+            SearchEngineChoiceScreenConditions::kEligible);
+
+  Profile* child_guest = parent_guest->GetOffTheRecordProfile(
+      Profile::OTRProfileID::PrimaryID(), /*create_if_needed=*/true);
+  EXPECT_EQ(ComputeProfileEligibility(child_guest),
+            SearchEngineChoiceScreenConditions::kEligible);
+
+  Profile* regular_profile = profile_manager()->CreateTestingProfile("Reg");
+  EXPECT_EQ(ComputeProfileEligibility(regular_profile),
+            SearchEngineChoiceScreenConditions::kEligible);
+
+  Profile* incognito_profile = regular_profile->GetOffTheRecordProfile(
+      Profile::OTRProfileID::PrimaryID(), /*create_if_needed=*/true);
+  EXPECT_EQ(ComputeProfileEligibility(incognito_profile),
+            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType);
+}
+
 TEST_F(SearchEngineChoiceDialogServiceTest, NotifyLearnMoreLinkClicked) {
   SearchEngineChoiceDialogService* search_engine_choice_dialog_service =
       GetSearchEngineChoiceDialogService();
@@ -276,8 +310,7 @@ TEST_F(SearchEngineChoiceDialogServiceTest,
       ->set_max_dialog_size(gfx::Size(1, 1));
   EXPECT_EQ(
       search_engine_choice_dialog_service->ComputeDialogConditions(*browser()),
-      search_engines::SearchEngineChoiceScreenConditions::
-          kBrowserWindowTooSmall);
+      SearchEngineChoiceScreenConditions::kBrowserWindowTooSmall);
 }
 
 TEST_F(SearchEngineChoiceDialogServiceTest, RegisterDialog) {
@@ -349,9 +382,6 @@ TEST_F(SearchEngineChoiceDialogServiceTest, NotifyChoiceMade_ProfileCreation) {
 
 TEST_F(SearchEngineChoiceDialogServiceTest,
        NotifyChoiceMade_Guest_SaveSelection) {
-  base::test::ScopedFeatureList feature_list{
-      switches::kSearchEngineChoiceGuestExperience};
-
   EXPECT_FALSE(g_browser_process->local_state()->HasPrefPath(
       prefs::kDefaultSearchProviderGuestModePrepopulatedId));
 
@@ -380,9 +410,6 @@ TEST_F(SearchEngineChoiceDialogServiceTest,
 
 TEST_F(SearchEngineChoiceDialogServiceTest,
        NotifyChoiceMade_Guest_DontSaveSelection) {
-  base::test::ScopedFeatureList feature_list{
-      switches::kSearchEngineChoiceGuestExperience};
-
   EXPECT_FALSE(g_browser_process->local_state()->HasPrefPath(
       prefs::kDefaultSearchProviderGuestModePrepopulatedId));
 
@@ -407,47 +434,8 @@ TEST_F(SearchEngineChoiceDialogServiceTest,
   EXPECT_FALSE(g_browser_process->local_state()->HasPrefPath(
       prefs::kDefaultSearchProviderGuestModePrepopulatedId));
 
-  histogram_tester().ExpectUniqueSample("Search.SaveGuestModeEligible", true,
-                                        1);
   histogram_tester().ExpectUniqueSample("Search.SaveGuestModeSelection", false,
                                         1);
-}
-
-TEST_F(SearchEngineChoiceDialogServiceTest,
-       NotifyChoiceMade_Guest_SavingNotAvailable) {
-  base::test::ScopedFeatureList feature_list{
-      switches::kSearchEngineChoiceGuestExperience};
-
-  EXPECT_FALSE(g_browser_process->local_state()->HasPrefPath(
-      prefs::kDefaultSearchProviderGuestModePrepopulatedId));
-
-  TestingProfile* parent_guest = profile_manager()->CreateGuestProfile();
-  Profile* child_guest = parent_guest->GetOffTheRecordProfile(
-      Profile::OTRProfileID::PrimaryID(), false);
-
-  TemplateURLServiceFactory::GetInstance()->SetTestingFactory(
-      parent_guest,
-      base::BindRepeating(&TemplateURLServiceFactory::BuildInstanceFor));
-
-  search_engines::SearchEngineChoiceServiceFactory::GetForProfile(child_guest)
-      ->SetIsProfileEligibleForDseGuestPropagationForTesting(false);
-
-  SearchEngineChoiceDialogService* search_engine_choice_dialog_service =
-      SearchEngineChoiceDialogServiceFactory::GetForProfile(child_guest);
-  const int kPrepopulatedId =
-      search_engine_choice_dialog_service->GetSearchEngines()
-          .at(0)
-          ->prepopulate_id();
-
-  search_engine_choice_dialog_service->NotifyChoiceMade(
-      kPrepopulatedId, /*save_guest_mode_selection=*/false,
-      SearchEngineChoiceDialogService::EntryPoint::kDialog);
-  EXPECT_FALSE(g_browser_process->local_state()->HasPrefPath(
-      prefs::kDefaultSearchProviderGuestModePrepopulatedId));
-
-  histogram_tester().ExpectUniqueSample("Search.SaveGuestModeEligible", false,
-                                        1);
-  histogram_tester().ExpectTotalCount("Search.SaveGuestModeSelection", 0);
 }
 
 TEST_F(SearchEngineChoiceDialogServiceTest,
@@ -461,7 +449,7 @@ TEST_F(SearchEngineChoiceDialogServiceTest,
       /*created_by_policy=*/true);
   EXPECT_EQ(
       search_engine_choice_dialog_service->ComputeDialogConditions(*browser()),
-      search_engines::SearchEngineChoiceScreenConditions::kControlledByPolicy);
+      SearchEngineChoiceScreenConditions::kControlledByPolicy);
 }
 
 TEST_F(SearchEngineChoiceDialogServiceTest, DoNotCreateServiceIfPolicyIsSet) {

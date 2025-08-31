@@ -10,7 +10,7 @@
 #include "base/check.h"
 #include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "ui/display/display.h"
@@ -33,6 +33,11 @@ Screen::~Screen() = default;
 
 // static
 Screen* Screen::GetScreen() {
+  return g_screen;
+}
+
+// static
+Screen* Screen::Get() {
   return g_screen;
 }
 

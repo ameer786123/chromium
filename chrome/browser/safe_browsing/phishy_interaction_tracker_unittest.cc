@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "base/metrics/statistics_recorder.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
@@ -82,6 +83,7 @@ class PhishyInteractionTrackerTest : public ChromeRenderViewHostTestHarness {
 
   void SetUp() override {
     browser_process_ = TestingBrowserProcess::GetGlobal();
+
     sb_service_ =
         base::MakeRefCounted<safe_browsing::TestSafeBrowsingService>();
     sb_service_->SetUseTestUrlLoaderFactory(true);
@@ -96,12 +98,6 @@ class PhishyInteractionTrackerTest : public ChromeRenderViewHostTestHarness {
         base::WrapUnique(new PhishyInteractionTracker(web_contents()));
     phishy_interaction_tracker_->SetUIManagerForTesting(ui_manager_.get());
     phishy_interaction_tracker_->HandlePageChanged();
-
-#if BUILDFLAG(IS_CHROMEOS)
-    // Local state is needed to construct ProxyConfigService, which is a
-    // dependency of PingManager on ChromeOS.
-    TestingBrowserProcess::GetGlobal()->SetLocalState(profile()->GetPrefs());
-#endif
   }
 
   void TearDown() override {
@@ -109,14 +105,8 @@ class PhishyInteractionTrackerTest : public ChromeRenderViewHostTestHarness {
     // Delete the tracker object on the UI thread and release the
     // SafeBrowsingService.
     sb_service_.reset();
-    content::GetUIThreadTaskRunner({})->DeleteSoon(
-        FROM_HERE, phishy_interaction_tracker_.release());
     ui_manager_.reset();
     phishy_interaction_tracker_.reset();
-#if BUILDFLAG(IS_CHROMEOS)
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
-#endif
-    base::RunLoop().RunUntilIdle();
     ChromeRenderViewHostTestHarness::TearDown();
   }
 
@@ -211,6 +201,7 @@ class PhishyInteractionTrackerTest : public ChromeRenderViewHostTestHarness {
 
  protected:
   raw_ptr<TestingBrowserProcess> browser_process_;
+
   scoped_refptr<safe_browsing::TestSafeBrowsingService> sb_service_;
   std::unique_ptr<PhishyInteractionTracker> phishy_interaction_tracker_;
   scoped_refptr<MockSafeBrowsingUIManager> ui_manager_;
@@ -248,7 +239,10 @@ TEST_F(PhishyInteractionTrackerTest, CheckHistogramCountsOnPhishyUserEvents) {
   SetNullDelayForTest();
   TriggerPasteEvent();
 
-  base::RunLoop().RunUntilIdle();
+  base::RunLoop run_loop;
+  base::StatisticsRecorder::ScopedHistogramSampleObserver observer(
+      "SafeBrowsing.PhishySite.PasteEventCount", run_loop.QuitClosure());
+  run_loop.Run();
 
   histogram_tester_.ExpectUniqueSample(
       phishy_interaction_histogram + "ClickEventCount",
@@ -269,6 +263,7 @@ TEST_F(PhishyInteractionTrackerTest, CheckPhishyUserInteractionClientReport) {
   auto* ping_manager =
       safe_browsing::ChromePingManagerFactory::GetForBrowserContext(profile());
   network::TestURLLoaderFactory test_url_loader_factory;
+  base::RunLoop run_loop;
   test_url_loader_factory.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
         std::unique_ptr<safe_browsing::ClientSafeBrowsingReportRequest>
@@ -276,6 +271,7 @@ TEST_F(PhishyInteractionTrackerTest, CheckPhishyUserInteractionClientReport) {
         VerifyPhishyInteractionReport(
             *actual_request.get(), kExpectedClickEventCount,
             kExpectedKeyEventCount, kExpectedPasteEventCount);
+        run_loop.Quit();
       }));
   ping_manager->SetURLLoaderFactoryForTesting(
       base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
@@ -298,5 +294,5 @@ TEST_F(PhishyInteractionTrackerTest, CheckPhishyUserInteractionClientReport) {
   SetNullDelayForTest();
   TriggerPasteEvent();
 
-  base::RunLoop().RunUntilIdle();
+  run_loop.Run();
 }

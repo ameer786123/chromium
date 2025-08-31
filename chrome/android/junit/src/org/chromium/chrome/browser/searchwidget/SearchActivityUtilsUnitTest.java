@@ -49,6 +49,7 @@ import org.chromium.ui.base.PageTransition;
 import org.chromium.url.GURL;
 
 import java.util.List;
+import java.util.Map;
 
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(
@@ -69,8 +70,8 @@ public class SearchActivityUtilsUnitTest {
     private static final ComponentName COMPONENT_UNTRUSTED =
             new ComponentName("com.some.package", "com.some.package.test.Activity");
 
-    private Activity mActivity = Robolectric.buildActivity(TestActivity.class).setup().get();
-    private SearchActivityClientImpl mClient =
+    private final Activity mActivity = Robolectric.buildActivity(TestActivity.class).setup().get();
+    private final SearchActivityClientImpl mClient =
             new SearchActivityClientImpl(mActivity, IntentOrigin.CUSTOM_TAB);
 
     // UrlFormatter call intercepting mock.
@@ -529,7 +530,11 @@ public class SearchActivityUtilsUnitTest {
 
     @Test
     public void createLoadUrlIntent_paramsWithNullPostData() {
-        var params = getLoadUrlParamsBuilder().setpostDataAndType(null, "abc").build();
+        var params =
+                getLoadUrlParamsBuilder()
+                        .setPostData(null)
+                        .setExtraHeaders(Map.of("Content-Type", "abc"))
+                        .build();
         Intent intent = SearchActivityUtils.createLoadUrlIntent(COMPONENT_TRUSTED, params);
         assertNotNull(intent);
 
@@ -543,7 +548,11 @@ public class SearchActivityUtilsUnitTest {
 
     @Test
     public void createLoadUrlIntent_paramsWithEmptyPostData() {
-        var params = getLoadUrlParamsBuilder().setpostDataAndType(new byte[] {}, "abc").build();
+        var params =
+                getLoadUrlParamsBuilder()
+                        .setPostData(new byte[] {})
+                        .setExtraHeaders(Map.of("Content-Type", "abc"))
+                        .build();
         Intent intent = SearchActivityUtils.createLoadUrlIntent(COMPONENT_TRUSTED, params);
         assertNotNull(intent);
 
@@ -558,7 +567,10 @@ public class SearchActivityUtilsUnitTest {
     @Test
     public void createLoadUrlIntent_paramsWithNullPostDataType() {
         var params =
-                getLoadUrlParamsBuilder().setpostDataAndType(new byte[] {1, 2, 3}, null).build();
+                getLoadUrlParamsBuilder()
+                        .setPostData(new byte[] {1, 2, 3})
+                        .setExtraHeaders(Map.of())
+                        .build();
         Intent intent = SearchActivityUtils.createLoadUrlIntent(COMPONENT_TRUSTED, params);
         assertNotNull(intent);
 
@@ -572,7 +584,11 @@ public class SearchActivityUtilsUnitTest {
 
     @Test
     public void createLoadUrlIntent_paramsWithEmptyPostDataType() {
-        var params = getLoadUrlParamsBuilder().setpostDataAndType(new byte[] {1, 2, 3}, "").build();
+        var params =
+                getLoadUrlParamsBuilder()
+                        .setPostData(new byte[] {1, 2, 3})
+                        .setExtraHeaders(Map.of("Content-Type", ""))
+                        .build();
         Intent intent = SearchActivityUtils.createLoadUrlIntent(COMPONENT_TRUSTED, params);
         assertNotNull(intent);
 
@@ -587,7 +603,10 @@ public class SearchActivityUtilsUnitTest {
     @Test
     public void createLoadUrlIntent_paramsWithValidPostDataType() {
         var params =
-                getLoadUrlParamsBuilder().setpostDataAndType(new byte[] {1, 2, 3}, "test").build();
+                getLoadUrlParamsBuilder()
+                        .setPostData(new byte[] {1, 2, 3})
+                        .setExtraHeaders(Map.of("Content-Type", "test"))
+                        .build();
         Intent intent = SearchActivityUtils.createLoadUrlIntent(COMPONENT_TRUSTED, params);
         assertNotNull(intent);
 

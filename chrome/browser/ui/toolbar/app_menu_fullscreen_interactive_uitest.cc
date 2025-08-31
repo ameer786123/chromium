@@ -10,6 +10,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
@@ -101,8 +102,9 @@ class AppMenuFullscreenInteractiveTest : public InteractiveBrowserTest {
             [](std::unique_ptr<ui_test_utils::FullscreenWaiter>& waiter,
                bool is_fullscreen, Browser* browser,
                views::View* browser_view) {
-              auto* fullscreen_controller =
-                  browser->exclusive_access_manager()->fullscreen_controller();
+              auto* fullscreen_controller = browser->GetFeatures()
+                                                .exclusive_access_manager()
+                                                ->fullscreen_controller();
 
               // Wait for fullscreen transition complete.
               // Fullscreen transition is an async process on Mac, which
@@ -126,7 +128,7 @@ class AppMenuFullscreenInteractiveTest : public InteractiveBrowserTest {
               if (is_fullscreen) {
                 do {
                   auto display =
-                      display::Screen::GetScreen()->GetDisplayNearestWindow(
+                      display::Screen::Get()->GetDisplayNearestWindow(
                           browser->window()->GetNativeWindow());
                   auto display_size = display.bounds().size();
                   auto workarea_size = display.work_area().size();

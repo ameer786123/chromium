@@ -12,7 +12,7 @@ import org.chromium.ui.base.WindowAndroid;
 /** A class which manages communication with the Lens SDK. */
 @NullMarked
 public class LensController {
-    private static LensController sInstance = new LensController();
+    private static final LensController sInstance = new LensController();
 
     private final LensControllerDelegate mDelegate;
 
@@ -52,9 +52,9 @@ public class LensController {
     /**
      * Classify an image and once complete trigger a callback with a LensQueryResult on whether that
      * image supports a lens action.
-     * @param LensQueryParams A wrapper object which contains params for the Lens image query.
-     * @param queryCallback A callback to trigger once classification is complete.
      *
+     * @param lensQueryParams A wrapper object which contains params for the Lens image query.
+     * @param queryCallback A callback to trigger once classification is complete.
      */
     public void queryImage(
             LensQueryParams lensQueryParams, Callback<LensQueryResult> queryCallback) {

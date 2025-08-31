@@ -7,17 +7,20 @@
 #include "base/check.h"
 #include "base/feature_list.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/content_settings/core/common/pref_names.h"
+#include "components/policy/core/common/management/platform_management_service.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/privacy_sandbox/privacy_sandbox_prefs.h"
 #include "components/privacy_sandbox/tracking_protection_prefs.h"
 #include "components/privacy_sandbox/tracking_protection_settings_observer.h"
+#include "net/base/features.h"
 #include "url/gurl.h"
 
 namespace privacy_sandbox {
@@ -25,12 +28,15 @@ namespace privacy_sandbox {
 TrackingProtectionSettings::TrackingProtectionSettings(
     PrefService* pref_service,
     HostContentSettingsMap* host_content_settings_map,
+    policy::ManagementService* management_service,
     bool is_incognito)
     : pref_service_(pref_service),
       host_content_settings_map_(host_content_settings_map),
+      management_service_(management_service),
       is_incognito_(is_incognito) {
   CHECK(pref_service_);
   CHECK(host_content_settings_map_);
+  content_settings_observation_.Observe(host_content_settings_map_.get());
 
   pref_change_registrar_.Init(pref_service_);
   pref_change_registrar_.Add(
@@ -70,8 +76,12 @@ TrackingProtectionSettings::TrackingProtectionSettings(
           &TrackingProtectionSettings::OnEnterpriseControlForPrefsChanged,
           base::Unretained(this)));
 
+// This call is not applicable to iOS because it accesses prefs not registered
+// on iOS.
+#if !BUILDFLAG(IS_IOS)
   // It's possible enterprise status changed while profile was shut down.
   OnEnterpriseControlForPrefsChanged();
+#endif
 }
 
 TrackingProtectionSettings::~TrackingProtectionSettings() = default;
@@ -79,8 +89,18 @@ TrackingProtectionSettings::~TrackingProtectionSettings() = default;
 void TrackingProtectionSettings::Shutdown() {
   observers_.Clear();
   host_content_settings_map_ = nullptr;
+  management_service_ = nullptr;
   pref_change_registrar_.Reset();
   pref_service_ = nullptr;
+}
+
+void TrackingProtectionSettings::OnContentSettingChanged(
+    const ContentSettingsPattern& primary_pattern,
+    const ContentSettingsPattern& secondary_pattern,
+    ContentSettingsTypeSet content_type_set) {
+  if (content_type_set.Contains(ContentSettingsType::TRACKING_PROTECTION)) {
+    OnTrackingProtectionExceptionsChanged();
+  }
 }
 
 bool TrackingProtectionSettings::IsTrackingProtection3pcdEnabled() const {
@@ -103,8 +123,8 @@ bool TrackingProtectionSettings::IsIpProtectionEnabled() const {
 
 bool TrackingProtectionSettings::IsFpProtectionEnabled() const {
   return pref_service_->GetBoolean(prefs::kFingerprintingProtectionEnabled) &&
-         base::FeatureList::IsEnabled(kFingerprintingProtectionUx) &&
-         is_incognito_;
+         is_incognito_ &&
+         base::FeatureList::IsEnabled(kFingerprintingProtectionUx);
 }
 
 bool TrackingProtectionSettings::IsDoNotTrackEnabled() const {
@@ -142,6 +162,33 @@ bool TrackingProtectionSettings::HasTrackingProtectionException(
   return host_content_settings_map_->GetContentSetting(
              GURL(), first_party_url, ContentSettingsType::TRACKING_PROTECTION,
              info) == CONTENT_SETTING_ALLOW;
+}
+
+ContentSettingsForOneType
+TrackingProtectionSettings::GetTrackingProtectionExceptions() const {
+  ContentSettingsForOneType all_settings =
+      host_content_settings_map_->GetSettingsForOneType(
+          ContentSettingsType::TRACKING_PROTECTION);
+  ContentSettingsForOneType exceptions;
+  for (const auto& setting : all_settings) {
+    if (setting.GetContentSetting() == CONTENT_SETTING_ALLOW) {
+      exceptions.push_back(setting);
+    }
+  }
+  return exceptions;
+}
+
+bool TrackingProtectionSettings::IsIpProtectionDisabledForEnterprise() {
+  if (pref_service_->IsManagedPreference(prefs::kIpProtectionEnabled)) {
+    return !pref_service_->GetBoolean(prefs::kIpProtectionEnabled);
+  }
+  if (net::features::kIpPrivacyDisableForEnterpriseByDefault.Get()) {
+    // Disable IP Protection for managed profiles and managed devices when the
+    // admins haven't explicitly opted in to it via enterprise policy.
+    return management_service_->IsManaged() ||
+           policy::PlatformManagementService::GetInstance()->IsManaged();
+  }
+  return false;
 }
 
 // TODO(https://b/333527273): Delete with Mode B cleanup
@@ -186,6 +233,12 @@ void TrackingProtectionSettings::OnTrackingProtection3pcdPrefChanged() {
     observer.OnTrackingProtection3pcdChanged();
     // 3PC blocking may change as a result of entering/leaving the experiment.
     observer.OnBlockAllThirdPartyCookiesChanged();
+  }
+}
+
+void TrackingProtectionSettings::OnTrackingProtectionExceptionsChanged() {
+  for (auto& observer : observers_) {
+    observer.OnTrackingProtectionExceptionsChanged();
   }
 }
 

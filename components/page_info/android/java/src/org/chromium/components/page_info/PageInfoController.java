@@ -31,7 +31,6 @@ import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
-import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.components.embedder_support.util.UrlUtilities;
@@ -47,6 +46,7 @@ import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.ui.base.Clipboard;
 import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.base.ViewAndroidDelegate;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
@@ -86,7 +86,7 @@ public class PageInfoController
     @ContentSettingsType.EnumType
     public static final int NO_HIGHLIGHTED_PERMISSION = ContentSettingsType.DEFAULT;
 
-    private Context mContext;
+    private final Context mContext;
     private final WindowAndroid mWindowAndroid;
     private final WebContents mWebContents;
     private final PageInfoControllerDelegate mDelegate;
@@ -95,27 +95,27 @@ public class PageInfoController
     private long mNativePageInfoController;
 
     // The main PageInfo view.
-    private PageInfoView mView;
+    private final PageInfoView mView;
 
     // The view inside the popup.
-    private PageInfoContainer mContainer;
+    private final PageInfoContainer mContainer;
 
     // The dialog the view is placed in.
     private @Nullable PageInfoDialog mDialog;
 
     // The full URL from the URL bar, which is copied to the user's clipboard when they select 'Copy
     // URL'.
-    private GURL mFullUrl;
+    private final GURL mFullUrl;
 
     // Whether or not this page is an internal chrome page (e.g. the
     // chrome://settings page).
-    private boolean mIsInternalPage;
+    private final boolean mIsInternalPage;
 
     // The security level of the page (a valid ConnectionSecurityLevel).
-    private @ConnectionSecurityLevel int mSecurityLevel;
+    private final @ConnectionSecurityLevel int mSecurityLevel;
 
     // Observer for dismissing dialog if web contents get destroyed, navigate etc.
-    private WebContentsObserver mWebContentsObserver;
+    private final WebContentsObserver mWebContentsObserver;
 
     // A task that should be run once the page info popup is animated out and dismissed. Null if no
     // task is pending.
@@ -131,20 +131,17 @@ public class PageInfoController
     private @Nullable PageInfoSubpageController mCurrentSubpageController;
 
     // The controller for the connection section of the page info.
-    private PageInfoConnectionController mConnectionController;
+    private final PageInfoConnectionController mConnectionController;
+    private final PageInfoConnectionSecurityController mConnectionSecurityController;
 
     // The controller for the permissions section of the page info.
-    private PageInfoPermissionsController mPermissionsController;
+    private final PageInfoPermissionsController mPermissionsController;
 
     // The controller for the cookies section of the page info.
-    private @Nullable PageInfoCookiesController mCookiesController;
-
-    // The controller for the tracking protection section for the 100% 3PCD launch UI.
-    private @Nullable PageInfoTrackingProtectionLaunchController
-            mTrackingProtectionLaunchController;
+    private final @Nullable PageInfoCookiesController mCookiesController;
 
     // All subpage controllers.
-    private Collection<PageInfoSubpageController> mSubpageControllers;
+    private final Collection<PageInfoSubpageController> mSubpageControllers;
 
     /**
      * Creates the PageInfoController, but does not display it. Also initializes the corresponding
@@ -162,7 +159,7 @@ public class PageInfoController
     public PageInfoController(
             WebContents webContents,
             @ConnectionSecurityLevel int securityLevel,
-            String publisher,
+            @Nullable String publisher,
             PageInfoControllerDelegate delegate,
             PageInfoHighlight pageInfoHighlight,
             @OpenedFromSource int source,
@@ -274,6 +271,13 @@ public class PageInfoController
                         publisher,
                         mIsInternalPage);
         mSubpageControllers.add(mConnectionController);
+        mConnectionSecurityController =
+                new PageInfoConnectionSecurityController(
+                        this,
+                        mView.getConnectionSecurityView(),
+                        mView.getConnectionRowView(),
+                        mWebContents);
+        mSubpageControllers.add(mConnectionSecurityController);
         mPermissionsController =
                 new PageInfoPermissionsController(
                         this,
@@ -281,27 +285,10 @@ public class PageInfoController
                         mDelegate,
                         pageInfoHighlight.getHighlightedPermission());
         mSubpageControllers.add(mPermissionsController);
-        if (mDelegate.showTrackingProtectionActFeaturesUi()) {
-            mTrackingProtectionLaunchController =
-                    new PageInfoTrackingProtectionLaunchController(
-                            this, mView.getCookiesRowView(), mDelegate);
-            mSubpageControllers.add(mTrackingProtectionLaunchController);
-        } else {
-            mCookiesController =
-                    new PageInfoCookiesController(this, mView.getCookiesRowView(), mDelegate);
-            mSubpageControllers.add(mCookiesController);
-        }
-
-        if (source == OpenedFromSource.WEBAPK_SNACKBAR
-                && mDelegate.showTrackingProtectionActFeaturesUi()) {
-            assumeNonNull(mTrackingProtectionLaunchController);
-            mContainer.showPage(
-                    mTrackingProtectionLaunchController.createViewForSubpage(mContainer),
-                    null,
-                    null);
-        } else {
-            mContainer.showPage(mView, null, null);
-        }
+        mCookiesController =
+                new PageInfoCookiesController(this, mView.getCookiesRowView(), mDelegate);
+        mSubpageControllers.add(mCookiesController);
+        mContainer.showPage(mView, null, null);
 
         // TODO(crbug.com/40746014): Setup forget this site button after history delete is
         // implemented.
@@ -312,11 +299,13 @@ public class PageInfoController
         mPermissionParamsListBuilder = new PermissionParamsListBuilder(mContext, mWindowAndroid);
         mNativePageInfoController = PageInfoControllerJni.get().init(this, mWebContents);
 
+        ViewAndroidDelegate viewAndroidDelegte =
+                assumeNonNull(webContents.getViewAndroidDelegate());
         PageInfoDialog dialog =
                 new PageInfoDialog(
                         mContext,
                         mContainer,
-                        assumeNonNull(webContents.getViewAndroidDelegate()).getContainerView(),
+                        assumeNonNull(viewAndroidDelegte.getContainerView()),
                         isSheet(),
                         delegate.getModalDialogManager(),
                         this,
@@ -370,8 +359,8 @@ public class PageInfoController
         if (mCookiesController != null) {
             mCookiesController.destroy();
         }
-        if (mTrackingProtectionLaunchController != null) {
-            mTrackingProtectionLaunchController.destroy();
+        if (mConnectionSecurityController != null) {
+            mConnectionSecurityController.destroy();
         }
     }
 
@@ -380,18 +369,14 @@ public class PageInfoController
      *
      * @param name The title of the permission to display to the user.
      * @param nameMidSentence The title of the permission to display to the user when used
-     *         mid-sentence.
+     *     mid-sentence.
      * @param type The ContentSettingsType of the permission.
-     * @param currentSettingValue The ContentSetting value of the currently selected setting.
+     * @param allowed Whether the permission is allowed.
      */
     @CalledByNative
     private void addPermissionSection(
-            String name,
-            String nameMidSentence,
-            int type,
-            @ContentSettingValues int currentSettingValue) {
-        mPermissionParamsListBuilder.addPermissionEntry(
-                name, nameMidSentence, type, currentSettingValue);
+            String name, String nameMidSentence, int type, boolean allowed) {
+        mPermissionParamsListBuilder.addPermissionEntry(name, nameMidSentence, type, allowed);
     }
 
     /** Update the permissions view based on the contents of mDisplayedPermissions. */
@@ -410,6 +395,22 @@ public class PageInfoController
     @CalledByNative
     private void setSecurityDescription(String summary, String details) {
         mConnectionController.setSecurityDescription(summary, details);
+    }
+
+    /**
+     * Creates a button in the PageInfo UI that displays only a summary line about connection
+     * security; when tapped the button opens a subpage that displays the full connection security
+     * info.
+     */
+    @CalledByNative
+    private void showOpenSecurityPageButton(String summary) {
+        mConnectionSecurityController.showSecurityPageButton(summary);
+    }
+
+    /** Displays the full connection security info in the PageInfo UI. */
+    @CalledByNative
+    private void showConnectionSecurityInfo() {
+        mConnectionSecurityController.showSecurityInfo();
     }
 
     /** Updates the Topic view if present. */
@@ -445,8 +446,10 @@ public class PageInfoController
                 });
     }
 
-    /** Dismiss the popup, and then run a task after the animation has completed (if there is one). */
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    /**
+     * Dismiss the popup, and then run a task after the animation has completed (if there is one).
+     */
+    @VisibleForTesting
     public void runAfterDismiss(Runnable task) {
         assert mPendingRunAfterDismissTask == null;
         mPendingRunAfterDismissTask = task;
@@ -466,7 +469,7 @@ public class PageInfoController
 
         destroy();
 
-        PageInfoControllerJni.get().destroy(mNativePageInfoController, PageInfoController.this);
+        PageInfoControllerJni.get().destroy(mNativePageInfoController);
         mNativePageInfoController = 0;
         if (mPendingRunAfterDismissTask != null) {
             mPendingRunAfterDismissTask.run();
@@ -477,9 +480,7 @@ public class PageInfoController
     public void recordAction(@PageInfoAction int action) {
         assert mNativePageInfoController != 0;
         if (mNativePageInfoController != 0) {
-            PageInfoControllerJni.get()
-                    .recordPageInfoAction(
-                            mNativePageInfoController, PageInfoController.this, action);
+            PageInfoControllerJni.get().recordPageInfoAction(mNativePageInfoController, action);
         }
     }
 
@@ -487,8 +488,7 @@ public class PageInfoController
     public void refreshPermissions() {
         mPermissionParamsListBuilder.clearPermissionEntries();
         if (mNativePageInfoController != 0) {
-            PageInfoControllerJni.get()
-                    .updatePermissions(mNativePageInfoController, PageInfoController.this);
+            PageInfoControllerJni.get().updatePermissions(mNativePageInfoController);
         }
     }
 
@@ -501,23 +501,17 @@ public class PageInfoController
         return !DeviceFormFactor.isNonMultiDisplayContextOnTablet(mContext);
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public View getPageInfoView() {
         return mContainer;
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public @Nullable PageInfoCookiesController getCookiesController() {
         return mCookiesController;
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-    public @Nullable
-            PageInfoTrackingProtectionLaunchController getTrackingProtectionLaunchController() {
-        return mTrackingProtectionLaunchController;
-    }
-
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public boolean isDialogShowing() {
         return mDialog != null;
     }
@@ -537,7 +531,7 @@ public class PageInfoController
     public static void show(
             final Activity activity,
             WebContents webContents,
-            final String contentPublisher,
+            final @Nullable String contentPublisher,
             @OpenedFromSource int source,
             PageInfoControllerDelegate delegate,
             PageInfoHighlight pageInfoHighlight,
@@ -574,7 +568,7 @@ public class PageInfoController
                                 dialogPosition));
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public static @Nullable PageInfoController getLastPageInfoController() {
         return sLastPageInfoControllerForTesting != null
                 ? sLastPageInfoControllerForTesting.get()
@@ -585,12 +579,11 @@ public class PageInfoController
     interface Natives {
         long init(PageInfoController controller, WebContents webContents);
 
-        void destroy(long nativePageInfoControllerAndroid, PageInfoController caller);
+        void destroy(long nativePageInfoControllerAndroid);
 
-        void recordPageInfoAction(
-                long nativePageInfoControllerAndroid, PageInfoController caller, int action);
+        void recordPageInfoAction(long nativePageInfoControllerAndroid, int action);
 
-        void updatePermissions(long nativePageInfoControllerAndroid, PageInfoController caller);
+        void updatePermissions(long nativePageInfoControllerAndroid);
     }
 
     @Override
@@ -598,7 +591,7 @@ public class PageInfoController
         return mDelegate.getBrowserContext();
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public PageInfoControllerDelegate getPageInfoControllerDelegate() {
         return mDelegate;
     }
@@ -633,8 +626,8 @@ public class PageInfoController
     }
 
     @Override
-    public @Nullable Activity getActivity() {
-        return mWindowAndroid.getActivity().get();
+    public Activity getActivity() {
+        return assertNonNull(mWindowAndroid.getActivity().get());
     }
 
     @Override

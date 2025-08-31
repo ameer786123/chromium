@@ -93,7 +93,7 @@ public abstract class XrTestFramework {
         int FAILED = 2;
     }
 
-    private ChromeActivityTestRule mRule;
+    private final ChromeActivityTestRule mRule;
 
     static final int getShortPollTimeout() {
         return getPollTimeout(1000);
@@ -408,7 +408,7 @@ public abstract class XrTestFramework {
                         runJavaScriptOrFail("testPassed", POLL_TIMEOUT_SHORT_MS, webContents));
         if (testPassed) {
             return TestStatus.PASSED;
-        } else if (!testPassed && resultString.equals("\"\"")) {
+        } else if (resultString.equals("\"\"")) {
             return TestStatus.RUNNING;
         } else {
             // !testPassed && !resultString.equals("\"\"")
@@ -465,7 +465,7 @@ public abstract class XrTestFramework {
                                         WebContentsUtils.getFocusedFrame(webContents)));
         Assert.assertTrue("Did not get a focused frame", rfh != null);
         final CountDownLatch latch = new CountDownLatch(1);
-        final AtomicReference<String> result = new AtomicReference<String>();
+        final AtomicReference<String> result = new AtomicReference<>();
         // The JS execution needs to be started on the UI thread to avoid hitting a DCHECK.
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -664,7 +664,7 @@ public abstract class XrTestFramework {
     }
 
     public View getCurrentContentView() {
-        return mRule.getActivity().getActivityTab().getContentView();
+        return mRule.getActivityTab().getContentView();
     }
 
     public WebContents getCurrentWebContents() {
@@ -676,7 +676,7 @@ public abstract class XrTestFramework {
     }
 
     public void simulateRendererKilled() {
-        final Tab tab = getRule().getActivity().getActivityTab();
+        final Tab tab = getRule().getActivityTab();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> ChromeTabUtils.simulateRendererKilledForTesting(tab));
 

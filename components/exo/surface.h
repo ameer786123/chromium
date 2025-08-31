@@ -29,7 +29,7 @@
 #include "ui/gfx/geometry/rrect_f.h"
 #include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/geometry/transform.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 
 class SkPath;
 
@@ -514,7 +514,6 @@ class Surface final : public ui::PropertyHandler {
     ~State();
 
     bool operator==(const State& other) const;
-    bool operator!=(const State& other) const { return !(*this == other); }
 
     cc::Region opaque_region;
     std::optional<cc::Region> input_region;
@@ -762,7 +761,7 @@ class Surface final : public ui::PropertyHandler {
   SubSurfaceEntryList render_layers_;
 
   // The last resource that was sent to a surface.
-  viz::TransferableResource current_resource_;
+  std::optional<viz::TransferableResource> current_resource_;
 
   // Whether the last resource that was sent to a surface has an alpha channel.
   bool current_resource_has_alpha_ = false;

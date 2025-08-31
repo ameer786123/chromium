@@ -11,7 +11,6 @@ import './screens/common/add_child.js';
 import './screens/common/ai_intro.js';
 import './screens/common/app_downloading.js';
 import './screens/common/app_launch_splash.js';
-import './screens/common/assistant_optin.js';
 import './screens/common/categories_selection.js';
 import './screens/common/choobe.js';
 import './screens/common/consolidated_consent.js';
@@ -78,6 +77,8 @@ import './screens/oobe/demo_preferences.js';
 import './screens/oobe/demo_setup.js';
 import './screens/oobe/enable_debugging.js';
 import './screens/oobe/enterprise_enrollment.js';
+import './screens/oobe/fjord_station_setup.js';
+import './screens/oobe/fjord_touch_controller.js';
 import './screens/oobe/hid_detection.js';
 import './screens/oobe/oobe_network.js';
 import './screens/oobe/packaged_license.js';
@@ -98,11 +99,6 @@ export const commonScreensList: OobeTypes.ScreensList = [
   },
   {tag: 'app-downloading-element', id: 'app-downloading'},
   {tag: 'app-launch-splash-element', id: 'app-launch-splash'},
-  {
-    tag: 'assistant-optin-element',
-    id: 'assistant-optin-flow',
-    condition: 'isOobeAssistantEnabled',
-  },
   {
     tag: 'apply-online-password-element',
     id: 'apply-online-password',
@@ -138,11 +134,7 @@ export const commonScreensList: OobeTypes.ScreensList = [
   {tag: 'error-message-element', id: 'error-message'},
   {tag: 'family-link-notice-element', id: 'family-link-notice'},
   {tag: 'fingerprint-setup-element', id: 'fingerprint-setup'},
-  {
-    tag: 'gaia-info-element',
-    id: 'gaia-info',
-    condition: 'isOobeGaiaInfoScreenEnabled',
-  },
+  {tag: 'gaia-info-element', id: 'gaia-info'},
   {tag: 'gaia-signin-element', id: 'gaia-signin'},
   {tag: 'gemini-intro-element', id: 'gemini-intro'},
   {tag: 'gesture-navigation-element', id: 'gesture-navigation'},
@@ -193,8 +185,7 @@ export const commonScreensList: OobeTypes.ScreensList = [
   {tag: 'recommend-apps-element', id: 'recommend-apps'},
   {
     tag: 'remote-activity-notification-element',
-    id: 'remote-activity-notification',
-    condition: 'isRemoteActivityNotificationEnabled',
+    id: 'remote-activity-notification'
   },
   {tag: 'saml-confirm-password-element', id: 'saml-confirm-password'},
   {tag: 'signin-fatal-error-element', id: 'signin-fatal-error'},
@@ -262,6 +253,16 @@ export const oobeScreensList: OobeTypes.ScreensList = [
   {tag: 'demo-setup-element', id: 'demo-setup'},
   {tag: 'enable-debugging-element', id: 'debugging'},
   {tag: 'enterprise-enrollment-element', id: 'enterprise-enrollment'},
+  {
+    tag: 'fjord-station-setup-element',
+    id: 'fjord-station-setup',
+    condition: 'isFjordOobeEnabled',
+  },
+  {
+    tag: 'fjord-touch-controller-element',
+    id: 'fjord-touch-controller',
+    condition: 'isFjordOobeEnabled',
+  },
   {tag: 'hid-detection-element', id: 'hid-detection'},
   {tag: 'oobe-network-element', id: 'network-selection'},
   {tag: 'packaged-license-element', id: 'packaged-license'},

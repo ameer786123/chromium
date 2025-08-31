@@ -17,11 +17,12 @@ import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.widget.TextViewWithClickableSpans;
 
 /**
- * A preference wrapper for {@link TextViewWithClickableSpans}, which makes the
- * {@link TextMessagePreference} with one or more ClickableSpans accessible.
+ * A preference wrapper for {@link TextViewWithClickableSpans}, which makes the {@link
+ * TextMessagePreference} with one or more ClickableSpans accessible.
  */
 @NullMarked
-public class ClickableSpansTextMessagePreference extends ChromeBasePreference {
+public class ClickableSpansTextMessagePreference extends ChromeBasePreference
+        implements CustomStyledPreference {
     private @Nullable CharSequence mTitle;
     private @Nullable CharSequence mSummary;
 
@@ -32,7 +33,7 @@ public class ClickableSpansTextMessagePreference extends ChromeBasePreference {
     private TextViewWithClickableSpans mSummaryView;
 
     /** Constructor for inflating from XML. */
-    public ClickableSpansTextMessagePreference(Context context, AttributeSet attrs) {
+    public ClickableSpansTextMessagePreference(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
         setLayoutResource(R.layout.clickable_spans_text_message_preference_layout);
         setSelectable(false);
@@ -86,5 +87,10 @@ public class ClickableSpansTextMessagePreference extends ChromeBasePreference {
     @Override
     public void setSummary(int summaryResId) {
         setSummary(getContext().getString(summaryResId));
+    }
+
+    @Override
+    public int getCustomBackgroundStyle() {
+        return BackgroundStyle.NONE;
     }
 }

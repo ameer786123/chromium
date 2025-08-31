@@ -55,7 +55,7 @@ class ChromePageInfoDelegate : public PageInfoDelegate {
 #if !BUILDFLAG(IS_ANDROID)
   std::optional<std::u16string> GetRwsOwner(const GURL& site_url) override;
   bool IsRwsManaged(const GURL& site_url) override;
-  bool CreateInfoBarDelegate() override;
+  bool CreateInfoBarDelegate(content::ReloadType reload_type) override;
   std::unique_ptr<content_settings::CookieControlsController>
   CreateCookieControlsController() override;
   bool IsIsolatedWebApp() override;
@@ -63,6 +63,7 @@ class ChromePageInfoDelegate : public PageInfoDelegate {
   // page, depending on context.
   void ShowSiteSettings(const GURL& site_url) override;
   void ShowCookiesSettings() override;
+  void ShowIncognitoSettings() override;
   void ShowAllSitesSettingsFilteredByRwsOwner(
       const std::u16string& rws_owner) override;
   void ShowSyncSettings() override;

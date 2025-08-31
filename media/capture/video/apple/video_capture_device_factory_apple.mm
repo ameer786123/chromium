@@ -33,12 +33,12 @@
 #import "media/capture/video/mac/video_capture_metrics_mac.h"
 #endif
 
-BASE_FEATURE(kVideoCaptureDeviceFactoryAppleLogging,
-             "VideoCaptureDeviceFactoryAppleLogging",
+BASE_FEATURE(VideoCaptureDeviceFactoryAppleLogging,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
 
+#if BUILDFLAG(IS_MAC)
 void EnsureRunsOnCFRunLoopEnabledThread() {
   static bool has_checked_cfrunloop_for_video_capture = false;
   if (!has_checked_cfrunloop_for_video_capture) {
@@ -50,6 +50,7 @@ void EnsureRunsOnCFRunLoopEnabledThread() {
     has_checked_cfrunloop_for_video_capture = true;
   }
 }
+#endif
 
 media::VideoCaptureFormats GetDeviceSupportedFormats(AVCaptureDevice* device) {
   media::VideoCaptureFormats formats;
@@ -111,7 +112,10 @@ VideoCaptureErrorOrDevice VideoCaptureDeviceFactoryApple::CreateDevice(
     const VideoCaptureDeviceDescriptor& descriptor) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_NE(descriptor.capture_api, VideoCaptureApi::UNKNOWN);
+
+#if BUILDFLAG(IS_MAC)
   EnsureRunsOnCFRunLoopEnabledThread();
+#endif
 
   std::unique_ptr<VideoCaptureDevice> capture_device;
   if (descriptor.capture_api != VideoCaptureApi::MACOSX_DECKLINK) {
@@ -144,7 +148,10 @@ VideoCaptureErrorOrDevice VideoCaptureDeviceFactoryApple::CreateDevice(
 void VideoCaptureDeviceFactoryApple::GetDevicesInfo(
     GetDevicesInfoCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
+
+#if BUILDFLAG(IS_MAC)
   EnsureRunsOnCFRunLoopEnabledThread();
+#endif
 
   NSArray<AVCaptureDevice*>* devices = media::GetVideoCaptureDevices();
 
@@ -155,6 +162,9 @@ void VideoCaptureDeviceFactoryApple::GetDevicesInfo(
   const bool debug_logging_enabled =
       base::FeatureList::IsEnabled(kVideoCaptureDeviceFactoryAppleLogging);
 
+#if BUILDFLAG(IS_IOS)
+  bool default_set = false;
+#endif
   for (AVCaptureDevice* device in devices) {
     if ([device hasMediaType:AVMediaTypeVideo] ||
         [device hasMediaType:AVMediaTypeMuxed]) {
@@ -199,13 +209,24 @@ void VideoCaptureDeviceFactoryApple::GetDevicesInfo(
         }
         continue;
       }
-      devices_info.emplace_back(descriptor);
 
+      VideoCaptureDeviceInfo device_info(descriptor);
       // Get supported formats
-      devices_info.back().supported_formats = GetDeviceSupportedFormats(device);
+      device_info.supported_formats = GetDeviceSupportedFormats(device);
       if (debug_logging_enabled) {
         LOG(ERROR) << "supported formats: "
-                   << devices_info.back().supported_formats.size();
+                   << device_info.supported_formats.size();
+      }
+
+#if BUILDFLAG(IS_IOS)
+      // Always place the first front facing camera as the default.
+      if (!default_set && [device position] == AVCaptureDevicePositionFront) {
+        devices_info.insert(devices_info.begin(), std::move(device_info));
+        default_set = true;
+      } else
+#endif
+      {
+        devices_info.push_back(std::move(device_info));
       }
     }
   }

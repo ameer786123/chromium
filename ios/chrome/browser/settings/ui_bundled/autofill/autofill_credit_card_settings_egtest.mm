@@ -145,6 +145,24 @@ id<GREYMatcher> BottomToolbar() {
       performAction:grey_tap()];
 }
 
+// Asserts that the toolbar is visible. On iOS26 assert that buttons in the
+// toolbar are visible.
+- (void)assertToolbarIsVisible {
+  if (!iOS26_OR_ABOVE()) {
+    [[EarlGrey selectElementWithMatcher:BottomToolbar()]
+        assertWithMatcher:grey_sufficientlyVisible()];
+  } else {
+    // accessibilityIdentifier of toolbars is not working on iOS26, check
+    // instead that buttons in the toolbar are visible.
+    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                            kSettingsToolbarEditDoneButtonId)]
+        assertWithMatcher:grey_sufficientlyVisible()];
+    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                            kSettingsToolbarDeleteButtonId)]
+        assertWithMatcher:grey_sufficientlyVisible()];
+  }
+}
+
 // Close the settings.
 - (void)exitSettingsMenu {
   [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton(0)]
@@ -509,19 +527,17 @@ id<GREYMatcher> BottomToolbar() {
   [AutofillAppInterface mockReauthenticationModuleExpectedResult:
                             ReauthenticationResult::kSuccess];
   [self openCreditCardListInEditMode];
+  [self assertToolbarIsVisible];
 
-  [[EarlGrey selectElementWithMatcher:BottomToolbar()]
-      assertWithMatcher:grey_sufficientlyVisible()];
   [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(
                                           [self creditCardLabel:lastDigits])]
       performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:BottomToolbar()]
-      assertWithMatcher:grey_sufficientlyVisible()];
+  [self assertToolbarIsVisible];
+
   [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(
                                           [self creditCardLabel:lastDigits])]
       performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:BottomToolbar()]
-      assertWithMatcher:grey_sufficientlyVisible()];
+  [self assertToolbarIsVisible];
 }
 
 // Checks the 'Delete' button is always visible.
@@ -550,8 +566,9 @@ id<GREYMatcher> BottomToolbar() {
       assertWithMatcher:grey_not(grey_enabled())];
 }
 
-// Checks that deleting a card exits from edit mode.
-- (void)testDeletingCreditCard {
+// Checks that deleting a card from the secondary edit card table works
+// correctly.
+- (void)testDeletingCreditCardInEditMode {
   NSString* lastDigits = [AutofillAppInterface saveLocalCreditCard];
   [AutofillAppInterface mockReauthenticationModuleExpectedResult:
                             ReauthenticationResult::kSuccess];
@@ -570,6 +587,44 @@ id<GREYMatcher> BottomToolbar() {
   // mode.
   [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       assertWithMatcher:grey_sufficientlyVisible()];
+}
+
+// Checks that deleting a local card via table row editing (swiping left) does
+// not delete the card eventually if the reauth attempt failed.
+- (void)testDeletingCreditCardViaTableRowEditingReauthFailed {
+  NSString* lastDigits = [AutofillAppInterface saveLocalCreditCard];
+  [AutofillAppInterface mockReauthenticationModuleExpectedResult:
+                            ReauthenticationResult::kFailure];
+
+  [self openCreditCardsSettings];
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(
+                                          [self creditCardLabel:lastDigits])]
+      performAction:grey_swipeSlowInDirectionWithStartPoint(kGREYDirectionLeft,
+                                                            0.9, 0.5)];
+
+  // Reauth failed, then the local card should still exist.
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(
+                                          [self creditCardLabel:lastDigits])]
+      assertWithMatcher:grey_sufficientlyVisible()];
+}
+
+// Checks that deleting a local card via table row editing (swiping left)
+// succeeded if the reauth attempt succeeded.
+- (void)testDeletingCreditCardViaTableRowEditingReauthSucceeded {
+  NSString* lastDigits = [AutofillAppInterface saveLocalCreditCard];
+  [AutofillAppInterface mockReauthenticationModuleExpectedResult:
+                            ReauthenticationResult::kSuccess];
+
+  [self openCreditCardsSettings];
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(
+                                          [self creditCardLabel:lastDigits])]
+      performAction:grey_swipeSlowInDirectionWithStartPoint(kGREYDirectionLeft,
+                                                            0.9, 0.5)];
+
+  // Reauth succeeded, then the local card should be removed.
+  [ChromeEarlGrey
+      waitForNotSufficientlyVisibleElementWithMatcher:
+          grey_accessibilityLabel([self creditCardLabel:lastDigits])];
 }
 
 // Checks that switching the mandatory reauth toggle triggers the reauth. If

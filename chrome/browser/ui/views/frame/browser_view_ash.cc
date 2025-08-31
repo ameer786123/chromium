@@ -9,6 +9,8 @@
 #include "base/check.h"
 #include "chrome/browser/ui/sad_tab_helper.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/contents_container_view.h"
+#include "chrome/browser/ui/views/frame/scrim_view.h"
 #include "chrome/browser/ui/views/sad_tab_view.h"
 #include "chrome/browser/ui/views/side_panel/side_panel.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
@@ -32,7 +34,8 @@ void BrowserViewAsh::Layout(PassKey) {
   GetWidget()->non_client_view()->frame_view()->UpdateWindowRoundedCorners();
 }
 
-void BrowserViewAsh::UpdateWindowRoundedCorners(int corner_radius) {
+void BrowserViewAsh::UpdateWindowRoundedCorners(
+    const gfx::RoundedCornersF& window_radii) {
   SidePanel* side_panel = unified_side_panel();
   const bool right_aligned_side_panel_showing =
       side_panel->GetVisible() && side_panel->IsRightAligned();
@@ -42,14 +45,15 @@ void BrowserViewAsh::UpdateWindowRoundedCorners(int corner_radius) {
   // If side panel is visible, round one of the bottom two corners of the side
   // panel based on its alignment w.r.t to web contents.
   const gfx::RoundedCornersF side_panel_radii(
-      0, 0, right_aligned_side_panel_showing ? corner_radius : 0,
-      left_aligned_side_panel_showing ? corner_radius : 0);
+      0, 0, right_aligned_side_panel_showing ? window_radii.lower_right() : 0,
+      left_aligned_side_panel_showing ? window_radii.lower_left() : 0);
 
   if (side_panel_radii != side_panel->background_radii()) {
     side_panel->SetBackgroundRadii(side_panel_radii);
   }
 
-  views::WebView* devtools_webview = devtools_web_view();
+  views::WebView *devtools_webview =
+      GetActiveContentsContainerView()->devtools_web_view();
   CHECK(devtools_webview);
   CHECK(devtools_webview->holder());
 
@@ -59,17 +63,18 @@ void BrowserViewAsh::UpdateWindowRoundedCorners(int corner_radius) {
   // panel is not visible, we have to round the bottom two corners of side panel
   // irrespective of its docked placement.
   const gfx::RoundedCornersF devtools_webview_radii(
-      0, 0, right_aligned_side_panel_showing ? 0 : corner_radius,
-      left_aligned_side_panel_showing ? 0 : corner_radius);
+      0, 0, right_aligned_side_panel_showing ? 0 : window_radii.lower_right(),
+      left_aligned_side_panel_showing ? 0 : window_radii.lower_left());
 
-  if (devtools_webview_radii_ != devtools_webview_radii) {
+  if (!IsInSplitView() && devtools_webview_radii_ != devtools_webview_radii) {
     devtools_webview_radii_ = devtools_webview_radii;
     devtools_webview->holder()->SetCornerRadii(devtools_webview_radii_);
   }
 
-  const DevToolsDockedPlacement devtools_placement =
-      devtools_docked_placement();
-  CHECK_NE(devtools_placement, DevToolsDockedPlacement::kUnknown);
+  const ContentsContainerView::DevToolsDockedPlacement devtools_placement =
+      GetActiveContentsContainerView()->devtools_docked_placement();
+  CHECK_NE(devtools_placement,
+           ContentsContainerView::DevToolsDockedPlacement::kUnknown);
 
   // Rounded the contents webview.
   std::vector<ContentsWebView*> contents_views =
@@ -92,18 +97,20 @@ void BrowserViewAsh::UpdateWindowRoundedCorners(int corner_radius) {
       IsWindowControlsOverlayEnabled();
 
   const gfx::RoundedCornersF contents_webview_radii(
-      round_content_webview_top_corner ? corner_radius : 0,
-      round_content_webview_top_corner ? corner_radius : 0,
+      round_content_webview_top_corner ? window_radii.upper_left() : 0,
+      round_content_webview_top_corner ? window_radii.upper_right() : 0,
       right_aligned_side_panel_showing ||
               (devtools_showing &&
-               devtools_placement != DevToolsDockedPlacement::kLeft)
+               devtools_placement !=
+                   ContentsContainerView::DevToolsDockedPlacement::kLeft)
           ? 0
-          : corner_radius,
+          : window_radii.lower_right(),
       left_aligned_side_panel_showing ||
               (devtools_showing &&
-               devtools_placement != DevToolsDockedPlacement::kRight)
+               devtools_placement !=
+                   ContentsContainerView::DevToolsDockedPlacement::kRight)
           ? 0
-          : corner_radius);
+          : window_radii.lower_left());
 
   CHECK(contents_webview);
   CHECK(contents_webview->holder());
@@ -133,4 +140,11 @@ void BrowserViewAsh::UpdateWindowRoundedCorners(int corner_radius) {
   if (contents_webview->GetBackgroundRadii() != contents_webview_radii) {
     contents_webview->SetBackgroundRadii(contents_webview_radii);
   }
+
+  // Ensure that browser scrims are rounded as well.
+  window_scrim_view()->SetRoundedCorners(window_radii);
+  GetActiveContentsContainerView()->contents_scrim_view()->SetRoundedCorners(
+      contents_webview_radii);
+  GetActiveContentsContainerView()->devtools_scrim_view()->SetRoundedCorners(
+      devtools_webview_radii);
 }

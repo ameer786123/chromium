@@ -25,18 +25,22 @@
 #include "cc/paint/paint_flags.h"
 #include "cc/paint/paint_recorder.h"
 #include "cc/paint/paint_shader.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
-#include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
+#include "chrome/browser/ui/tabs/alert/tab_alert.h"
+#include "chrome/browser/ui/tabs/alert/tab_alert_controller.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/collaboration_messaging_tab_data.h"
 #include "chrome/browser/ui/tabs/tab_style.h"
 #include "chrome/browser/ui/tabs/tab_utils.h"
 #include "chrome/browser/ui/thumbnails/thumbnail_image.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/event_utils.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/tabs/alert_indicator_button.h"
 #include "chrome/browser/ui/views/tabs/browser_tab_strip_controller.h"
@@ -53,6 +57,7 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "components/collaboration/public/messaging/message.h"
 #include "components/grit/components_scaled_resources.h"
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_visual_data.h"
@@ -98,6 +103,10 @@
 
 #if defined(USE_AURA)
 #include "ui/aura/env.h"
+#endif
+
+#if BUILDFLAG(ENABLE_GLIC)
+#include "chrome/browser/glic/browser_ui/glic_tab_underline_view.h"
 #endif
 
 using base::UserMetricsAction;
@@ -247,6 +256,23 @@ Tab::Tab(TabSlotController* controller)
   alert_indicator_button_ =
       AddChildView(std::make_unique<AlertIndicatorButton>(this));
 
+#if BUILDFLAG(ENABLE_GLIC)
+  if (base::FeatureList::IsEnabled(features::kGlicMultitabUnderlines) &&
+      glic::GlicEnabling::IsProfileEligible(
+          controller_->GetBrowser()->GetProfile())) {
+    glic_tab_underline_view_ = AddChildView(
+        views::Builder<glic::GlicTabUnderlineView>(
+            glic::GlicTabUnderlineView::Factory::Create(
+                controller->GetBrowser(), this))
+            // Needed so that expectations of visibility that
+            // inform underline updates are correct on first show.
+            .SetVisible(false)
+            // `glic_tab_underline_view_` should never receive input events.
+            .SetCanProcessEventsWithinSubtree(false)
+            .Build());
+  }
+#endif
+
   // Unretained is safe here because this class outlives its close button, and
   // the controller outlives this Tab.
   close_button_ = AddChildView(std::make_unique<TabCloseButton>(
@@ -328,6 +354,13 @@ void Tab::Layout(PassKey) {
 
   const int start = contents_rect.x();
 
+#if BUILDFLAG(ENABLE_GLIC)
+  if (glic_tab_underline_view_) {
+    gfx::Rect glic_bounds = contents_rect + gfx::Vector2d(0, 9);
+    glic_tab_underline_view_->SetBoundsRect(glic_bounds);
+  }
+#endif
+
   // The bounds for the favicon will include extra width for the attention
   // indicator, but visually it will be smaller at kFaviconSize wide.
   gfx::Rect favicon_bounds(start, contents_rect.y(), 0, 0);
@@ -340,8 +373,7 @@ void Tab::Layout(PassKey) {
       MaybeAdjustLeftForPinnedTab(&favicon_bounds, gfx::kFaviconSize);
     }
     icon_->EnlargeDiscardIndicatorRadius(
-        controller()->GetInactiveTabWidth() -
-                    2 * tab_style()->GetBottomCornerRadius() >=
+        width() - 2 * tab_style()->GetBottomCornerRadius() >=
                 gfx::kFaviconSize + 2 * kIncreasedDiscardIndicatorRadiusDp
             ? kIncreasedDiscardIndicatorRadiusDp
             : 0);
@@ -467,36 +499,33 @@ bool Tab::OnKeyPressed(const ui::KeyEvent& event) {
     return true;
   }
 
-  constexpr int kModifiedFlag =
-#if BUILDFLAG(IS_MAC)
-      ui::EF_COMMAND_DOWN;
-#else
-      ui::EF_CONTROL_DOWN;
-#endif
+  std::optional<event_utils::ReorderDirection> reorder_direction =
+      event_utils::GetReorderCommandForKeyboardEvent(event);
+  if (!reorder_direction) {
+    return false;
+  }
 
-  if (event.type() == ui::EventType::kKeyPressed &&
-      (event.flags() & kModifiedFlag)) {
-    const bool is_right = event.key_code() == ui::VKEY_RIGHT;
-    const bool is_left = event.key_code() == ui::VKEY_LEFT;
-    if (is_right || is_left) {
-      const bool is_rtl = base::i18n::IsRTL();
-      const bool is_next = (is_right && !is_rtl) || (is_left && is_rtl);
-      if (event.flags() & ui::EF_SHIFT_DOWN) {
-        if (is_next) {
-          controller()->MoveTabLast(this);
-        } else {
-          controller()->MoveTabFirst(this);
-        }
-      } else if (is_next) {
-        controller()->ShiftTabNext(this);
+  bool move_to_end = event.flags() & ui::EF_SHIFT_DOWN;
+  switch (*reorder_direction) {
+    case event_utils::ReorderDirection::kPrevious: {
+      if (move_to_end) {
+        controller()->MoveTabFirst(this);
       } else {
         controller()->ShiftTabPrevious(this);
       }
-      return true;
+      break;
+    }
+    case event_utils::ReorderDirection::kNext: {
+      if (move_to_end) {
+        controller()->MoveTabLast(this);
+      } else {
+        controller()->ShiftTabNext(this);
+      }
+      break;
     }
   }
 
-  return false;
+  return true;
 }
 
 bool Tab::OnKeyReleased(const ui::KeyEvent& event) {
@@ -757,6 +786,11 @@ void Tab::SetGroup(std::optional<tab_groups::TabGroupId> group) {
   UpdateAccessibleName();
 }
 
+void Tab::SetSplit(std::optional<split_tabs::SplitTabId> split) {
+  TabSlotView::SetSplit(split);
+  UpdateAccessibleName();
+}
+
 gfx::Size Tab::CalculatePreferredSize(
     const views::SizeBounds& available_size) const {
   return gfx::Size(GetTabSizeInfo().standard_width,
@@ -816,10 +850,10 @@ TabSlotView::ViewType Tab::GetTabSlotViewType() const {
 }
 
 TabSizeInfo Tab::GetTabSizeInfo() const {
-  return {tab_style()->GetPinnedWidth(), tab_style()->GetMinimumActiveWidth(),
+  return {tab_style()->GetPinnedWidth(split().has_value()),
+          tab_style()->GetMinimumActiveWidth(split().has_value()),
           tab_style()->GetMinimumInactiveWidth(),
-          split().has_value() ? tab_style()->GetStandardSplitWidth()
-                              : tab_style()->GetStandardWidth()};
+          tab_style()->GetStandardWidth(split().has_value())};
 }
 
 void Tab::SetClosing(bool closing) {
@@ -842,55 +876,6 @@ std::optional<SkColor> Tab::GetGroupColor() const {
 
   return controller_->GetPaintedGroupColor(
       controller_->GetGroupColorId(group().value()));
-}
-
-ui::ColorId Tab::GetAlertIndicatorColor(TabAlertState state) const {
-  const ui::ColorProvider* color_provider = GetColorProvider();
-  if (!color_provider) {
-    return gfx::kPlaceholderColor;
-  }
-
-  int group;
-  switch (state) {
-    case TabAlertState::MEDIA_RECORDING:
-    case TabAlertState::AUDIO_RECORDING:
-    case TabAlertState::VIDEO_RECORDING:
-    case TabAlertState::DESKTOP_CAPTURING:
-      group = 0;
-      break;
-    case TabAlertState::TAB_CAPTURING:
-    case TabAlertState::PIP_PLAYING:
-    case TabAlertState::GLIC_ACCESSING:
-      group = 1;
-      break;
-    case TabAlertState::AUDIO_PLAYING:
-    case TabAlertState::AUDIO_MUTING:
-    case TabAlertState::BLUETOOTH_CONNECTED:
-    case TabAlertState::BLUETOOTH_SCAN_ACTIVE:
-    case TabAlertState::USB_CONNECTED:
-    case TabAlertState::HID_CONNECTED:
-    case TabAlertState::SERIAL_CONNECTED:
-    case TabAlertState::VR_PRESENTING_IN_HEADSET:
-      group = 2;
-      break;
-  }
-
-  static constexpr std::array<std::array<std::array<ui::ColorId, 2>, 2>, 3>
-      color_ids{{{{{kColorTabAlertMediaRecordingInactiveFrameInactive,
-                    kColorTabAlertMediaRecordingInactiveFrameActive},
-                   {kColorTabAlertMediaRecordingActiveFrameInactive,
-                    kColorTabAlertMediaRecordingActiveFrameActive}}},
-                 {{{kColorTabAlertPipPlayingInactiveFrameInactive,
-                    kColorTabAlertPipPlayingInactiveFrameActive},
-                   {kColorTabAlertPipPlayingActiveFrameInactive,
-                    kColorTabAlertPipPlayingActiveFrameActive}}},
-                 {{{kColorTabAlertAudioPlayingInactiveFrameInactive,
-                    kColorTabAlertAudioPlayingInactiveFrameActive},
-                   {kColorTabAlertAudioPlayingActiveFrameInactive,
-                    kColorTabAlertAudioPlayingActiveFrameActive}}}}};
-  return color_ids[group][tab_style_views()->GetApparentActiveState() ==
-                          TabActive::kActive]
-                  [GetWidget()->ShouldPaintAsActive()];
 }
 
 bool Tab::IsActive() const {
@@ -944,16 +929,30 @@ bool Tab::HasThumbnail() const {
 // consistency.
 bool Tab::ShouldUpdateAccessibleName(TabRendererData& old_data,
                                      TabRendererData& new_data) {
+  bool has_old_message = old_data.collaboration_messaging &&
+                         old_data.collaboration_messaging->HasMessage();
+  bool has_new_message = new_data.collaboration_messaging &&
+                         new_data.collaboration_messaging->HasMessage();
+  bool collaboration_message_changed = has_old_message != has_new_message;
+  if (!collaboration_message_changed && has_old_message) {
+    // Old and new data have both have messages, so compare the contents.
+    collaboration_message_changed =
+        (old_data.collaboration_messaging->given_name() !=
+         new_data.collaboration_messaging->given_name()) ||
+        (old_data.collaboration_messaging->collaboration_event() !=
+         new_data.collaboration_messaging->collaboration_event());
+  }
+
   return ((old_data.network_state != new_data.network_state) ||
           old_data.crashed_status != new_data.crashed_status ||
           old_data.alert_state != new_data.alert_state ||
           old_data.should_show_discard_status !=
               new_data.should_show_discard_status ||
-          old_data.discarded_memory_savings_in_bytes !=
-              new_data.discarded_memory_savings_in_bytes ||
+          old_data.discarded_memory_savings !=
+              new_data.discarded_memory_savings ||
           old_data.tab_resource_usage != new_data.tab_resource_usage ||
           old_data.pinned != new_data.pinned ||
-          old_data.title != new_data.title);
+          old_data.title != new_data.title || collaboration_message_changed);
 }
 
 void Tab::SetData(TabRendererData data) {
@@ -1039,7 +1038,7 @@ void Tab::ReleaseFreezingVote() {
 
 // static
 std::u16string Tab::GetTooltipText(const std::u16string& title,
-                                   std::optional<TabAlertState> alert_state) {
+                                   std::optional<tabs::TabAlert> alert_state) {
   if (!alert_state) {
     return title;
   }
@@ -1048,13 +1047,14 @@ std::u16string Tab::GetTooltipText(const std::u16string& title,
   if (!result.empty()) {
     result.append(1, '\n');
   }
-  result.append(GetTabAlertStateText(alert_state.value()));
+  result.append(
+      tabs::TabAlertController::GetTabAlertStateText(alert_state.value()));
   return result;
 }
 
 // static
-std::optional<TabAlertState> Tab::GetAlertStateToShow(
-    const std::vector<TabAlertState>& alert_states) {
+std::optional<tabs::TabAlert> Tab::GetAlertStateToShow(
+    const std::vector<tabs::TabAlert>& alert_states) {
   if (alert_states.empty()) {
     return std::nullopt;
   }
@@ -1066,16 +1066,18 @@ void Tab::SetShouldShowDiscardIndicator(bool enabled) {
   icon_->SetShouldShowDiscardIndicator(enabled);
 }
 
+void Tab::UpdateInsets() {
+  SetBorder(views::CreateEmptyBorder(tab_style_views()->GetContentsInsets()));
+}
+
 void Tab::MaybeAdjustLeftForPinnedTab(gfx::Rect* bounds,
                                       int visual_width) const {
   if (ShouldRenderAsNormalTab()) {
     return;
   }
-  const int pinned_width = tab_style()->GetPinnedWidth();
+  const int pinned_width = GetTabSizeInfo().pinned_tab_width;
   const int ideal_delta = width() - pinned_width;
   const int ideal_x = (pinned_width - visual_width) / 2;
-  // TODO(crbug.com/40436434): This code is broken when the current width is
-  // less than the pinned width.
   bounds->set_x(
       bounds->x() +
       base::ClampRound(
@@ -1104,10 +1106,22 @@ void Tab::UpdateIconVisibility() {
   }
 
   const bool has_favicon = data().show_icon;
-  const bool has_alert_icon =
+  bool has_alert_icon =
       (alert_indicator_button_ ? alert_indicator_button_->showing_alert_state()
                                : GetAlertStateToShow(data().alert_state))
           .has_value();
+#if BUILDFLAG(ENABLE_GLIC)
+  std::optional<tabs::TabAlert> current_alert_state =
+      alert_indicator_button_->showing_alert_state();
+  if (glic_tab_underline_view_ &&
+      (current_alert_state == tabs::TabAlert::GLIC_ACCESSING ||
+       current_alert_state == tabs::TabAlert::GLIC_SHARING)) {
+    // Tab underlines for glic multitab replace `alert_indicator_button` as the
+    // UI indicator for sharing. In this case, ensure the alert indicator is
+    // hidden.
+    has_alert_icon = false;
+  }
+#endif
 
   is_animating_from_pinned_ &= animating();
 
@@ -1201,7 +1215,7 @@ void Tab::UpdateIconVisibility() {
 }
 
 bool Tab::ShouldRenderAsNormalTab() const {
-  return !data().pinned || (width() >= (tab_style()->GetPinnedWidth() +
+  return !data().pinned || (width() >= (GetTabSizeInfo().pinned_tab_width +
                                         kPinnedTabExtraWidthToRenderAsNormal));
 }
 
@@ -1246,10 +1260,18 @@ void Tab::CloseButtonPressed(const ui::Event& event) {
   if (!alert_indicator_button_ || !alert_indicator_button_->GetVisible()) {
     base::RecordAction(UserMetricsAction("CloseTab_NoAlertIndicator"));
   } else if (GetAlertStateToShow(data_.alert_state) ==
-             TabAlertState::AUDIO_PLAYING) {
+             tabs::TabAlert::AUDIO_PLAYING) {
     base::RecordAction(UserMetricsAction("CloseTab_AudioIndicator"));
   } else {
     base::RecordAction(UserMetricsAction("CloseTab_RecordingIndicator"));
+  }
+
+  const std::vector<Tab*>& tabs_in_split = controller()->GetTabsInSplit(this);
+  if (tabs_in_split.size() > 0) {
+    CHECK(tabs_in_split.size() == 2);
+    base::RecordAction(UserMetricsAction(this == tabs_in_split[0]
+                                             ? "CloseTab_StartTabInSplit"
+                                             : "CloseTab_EndTabInSplit"));
   }
 
   const bool from_mouse = event.type() == ui::EventType::kMouseReleased &&

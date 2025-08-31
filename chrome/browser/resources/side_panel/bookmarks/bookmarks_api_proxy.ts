@@ -19,6 +19,7 @@ export interface BookmarksApiProxy {
   showUi(): void;
   getAllBookmarks(): Promise<{nodes: BookmarksTreeNode[]}>;
   getActiveUrl(): Promise<string|undefined>;
+  isActiveTabInSplit(): Promise<boolean>;
 
   // Side Panel display choices.
   setSortOrder(sortOrder: SortOrder): void;
@@ -27,10 +28,11 @@ export interface BookmarksApiProxy {
   // Side Panel operations.
   bookmarkCurrentTabInFolder(folderId: string): void;
   createFolder(parentId: string, title: string): Promise<{newFolderId: string}>;
+  deleteBookmarks(ids: string[]): Promise<void>;
+  dropBookmarks(parentId: string): Promise<void>;
   editBookmarks(
       ids: string[], newTitle: string|undefined, newUrl: string|undefined,
       newParentId: string|undefined): void;
-  deleteBookmarks(ids: string[]): Promise<void>;
   undo(): void;
   renameBookmark(id: string, title: string): void;
   openBookmark(
@@ -45,6 +47,7 @@ export interface BookmarksApiProxy {
       void;
   contextMenuOpenBookmarkInNewTabGroup(ids: string[], source: ActionSource):
       void;
+  contextMenuOpenBookmarkInSplitView(ids: string[], source: ActionSource): void;
   contextMenuEdit(ids: string[], source: ActionSource): void;
   contextMenuMove(ids: string[], source: ActionSource): void;
   contextMenuAddToBookmarksBar(id: string, source: ActionSource): void;
@@ -78,22 +81,24 @@ export class BookmarksApiProxyImpl implements BookmarksApiProxy {
   }
 
   contextMenuOpenBookmarkInNewTab(ids: string[], source: ActionSource) {
-    this.handler.executeOpenInNewTabCommand(ids.map(id => BigInt(id)), source);
+    this.handler.executeOpenInNewTabCommand(ids, source);
   }
 
   contextMenuOpenBookmarkInNewWindow(ids: string[], source: ActionSource) {
-    this.handler.executeOpenInNewWindowCommand(
-        ids.map(id => BigInt(id)), source);
+    this.handler.executeOpenInNewWindowCommand(ids, source);
   }
 
   contextMenuOpenBookmarkInIncognitoWindow(
       ids: string[], source: ActionSource) {
-    this.handler.executeOpenInIncognitoWindowCommand(
-        ids.map(id => BigInt(id)), source);
+    this.handler.executeOpenInIncognitoWindowCommand(ids, source);
   }
 
   contextMenuOpenBookmarkInNewTabGroup(ids: string[], source: ActionSource) {
-    this.handler.executeOpenInNewTabGroupCommand(
+    this.handler.executeOpenInNewTabGroupCommand(ids, source);
+  }
+
+  contextMenuOpenBookmarkInSplitView(ids: string[], source: ActionSource) {
+    this.handler.executeOpenInSplitViewCommand(
         ids.map(id => BigInt(id)), source);
   }
 
@@ -121,6 +126,14 @@ export class BookmarksApiProxyImpl implements BookmarksApiProxy {
     return this.handler.createFolder(parentId, title);
   }
 
+  deleteBookmarks(ids: string[]) {
+    return this.handler.removeBookmarks(ids.map(id => BigInt(id)));
+  }
+
+  dropBookmarks(parentId: string) {
+    return this.handler.dropBookmarks(parentId);
+  }
+
   editBookmarks(
       ids: string[], newTitle: string|undefined, newUrl: string|undefined,
       newParentId: string|undefined) {
@@ -141,10 +154,6 @@ export class BookmarksApiProxyImpl implements BookmarksApiProxy {
     }
   }
 
-  deleteBookmarks(ids: string[]) {
-    return this.handler.removeBookmarks(ids.map(id => BigInt(id)));
-  }
-
   getActiveUrl() {
     return chrome.tabs.query({active: true, currentWindow: true}).then(tabs => {
       if (tabs[0]) {
@@ -152,6 +161,12 @@ export class BookmarksApiProxyImpl implements BookmarksApiProxy {
       }
       return undefined;
     });
+  }
+
+  // TODO(crbug.com/406794014): Use the extensions API for this once
+  // implemented.
+  isActiveTabInSplit() {
+    return chrome.bookmarkManagerPrivate.isActiveTabInSplit();
   }
 
   openBookmark(

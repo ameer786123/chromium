@@ -65,7 +65,6 @@
 #include "chromecast/external_mojo/public/cpp/common.h"
 #include "chromecast/graphics/cast_window_manager.h"
 #include "chromecast/media/base/key_systems_common.h"
-#include "chromecast/media/base/video_plane_controller.h"
 #include "chromecast/media/common/media_pipeline_backend_manager.h"
 #include "chromecast/media/common/media_resource_tracker.h"
 #include "chromecast/metrics/cast_metrics_service_client.h"
@@ -129,7 +128,6 @@
 #include "chromecast/browser/devtools/cast_ui_devtools.h"
 #include "chromecast/graphics/cast_screen.h"
 #include "chromecast/graphics/cast_window_manager_aura.h"
-#include "chromecast/media/service/cast_renderer.h"  // nogncheck
 #if !BUILDFLAG(IS_FUCHSIA)
 #include "components/ui_devtools/devtools_server.h"  // nogncheck
 #include "components/ui_devtools/switches.h"         // nogncheck
@@ -159,10 +157,18 @@ int kSignalsToRunClosure[] = {
 // Closure to run on SIGTERM and SIGINT.
 base::OnceClosure* g_signal_closure = nullptr;
 base::PlatformThreadId g_main_thread_id;
+pthread_t g_main_pthread;
 
 void RunClosureOnSignal(int signum) {
   if (base::PlatformThread::CurrentId() != g_main_thread_id) {
     RAW_LOG(INFO, "Received signal on non-main thread\n");
+
+    // Resend the signal to the main thread to avoid concurrency issues when
+    // accessing g_signal_closure. pthread_kill is required to be
+    // async-signal-safe by POSIX.1 (see "man 7 signal-safety").
+    if (pthread_kill(g_main_pthread, signum) != 0) {
+      RAW_LOG(ERROR, "Failed to send signal to main thread\n");
+    }
     return;
   }
 
@@ -184,6 +190,7 @@ void RegisterClosureOnSignal(base::OnceClosure closure) {
   // process exit.
   g_signal_closure = new base::OnceClosure(std::move(closure));
   g_main_thread_id = base::PlatformThread::CurrentId();
+  g_main_pthread = pthread_self();
 
   struct sigaction sa_new;
   memset(&sa_new, 0, sizeof(sa_new));
@@ -277,8 +284,7 @@ class CastViewsDelegate : public views::ViewsDelegate {
 
 base::FilePath GetApplicationFontsDir() {
   std::unique_ptr<base::Environment> env(base::Environment::Create());
-  std::string fontconfig_sysroot;
-  if (env->GetVar("FONTCONFIG_SYSROOT", &fontconfig_sysroot)) {
+  if (env->HasVar("FONTCONFIG_SYSROOT")) {
     // Running with hermetic fontconfig; using the full path will not work.
     // Assume the root is base::DIR_ASSETS as set by
     // test_fonts::SetUpFontconfig().
@@ -602,20 +608,6 @@ int CastBrowserMainParts::PreMainMessageLoopRun() {
           cast_browser_process_->browser_client()
               ->EnableRemoteDebuggingImmediately()));
 
-#if defined(USE_AURA) && !BUILDFLAG(IS_CAST_AUDIO_ONLY)
-  // TODO(halliwell) move audio builds to use ozone_platform_cast, then can
-  // simplify this by removing IS_CAST_AUDIO_ONLY condition.  Should then also
-  // assert(ozone_platform_cast) in BUILD.gn where it depends on //ui/ozone.
-  gfx::Size display_size =
-      display::Screen::GetScreen()->GetPrimaryDisplay().GetSizeInPixel();
-  video_plane_controller_.reset(new media::VideoPlaneController(
-      Size(display_size.width(), display_size.height()),
-      cast_content_browser_client_->GetMediaTaskRunner()));
-  media::CastRenderer::SetOverlayCompositedCallback(BindToCurrentThread(
-      base::BindRepeating(&media::VideoPlaneController::SetGeometry,
-                          base::Unretained(video_plane_controller_.get()))));
-#endif
-
 #if defined(USE_AURA)
 
 #if !BUILDFLAG(IS_FUCHSIA)
@@ -676,9 +668,8 @@ int CastBrowserMainParts::PreMainMessageLoopRun() {
   cast_browser_process_->SetCastService(
       cast_browser_process_->browser_client()->CreateCastService(
           cast_browser_process_->browser_context(), nullptr,
-          cast_browser_process_->pref_service(), video_plane_controller_.get(),
-          window_manager_.get(), web_service_.get(),
-          display_settings_manager_.get()));
+          cast_browser_process_->pref_service(), window_manager_.get(),
+          web_service_.get(), display_settings_manager_.get()));
   cast_browser_process_->cast_service()->Initialize();
 
   // Initializing metrics service and network delegates must happen after cast

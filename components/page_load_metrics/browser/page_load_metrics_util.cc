@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <string_view>
 
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "components/page_load_metrics/browser/features.h"
 #include "components/page_load_metrics/common/page_load_timing.h"
 #include "components/page_load_metrics/common/page_visit_final_status.h"
@@ -235,8 +237,8 @@ base::TimeDelta CorrectEventAsNavigationOrActivationOrigined(
       return zero;
     case PrerenderingState::kActivated: {
       base::TimeDelta corrected = event - delegate.GetActivationStart().value();
-      CHECK_GE(corrected, zero);
-      return corrected;
+      // If the event occurred before activation, return 0.
+      return std::max(corrected, zero);
     }
   }
 }
@@ -357,6 +359,13 @@ std::optional<uint32_t> GetCategoryIdFromUrl(const GURL& url) {
     return GetCategoryId(category);
   }
   return std::nullopt;
+}
+
+bool IsServiceWorkerControlled(
+    const PageLoadMetricsObserverDelegate& delegate) {
+  return (delegate.GetMainFrameMetadata().behavior_flags &
+          blink::LoadingBehaviorFlag::
+              kLoadingBehaviorServiceWorkerControlled) != 0;
 }
 
 }  // namespace page_load_metrics

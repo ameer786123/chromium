@@ -54,14 +54,16 @@ struct SearchWidgetEntryView: View {
 
   var body: some View {
     // The account to display was deleted (entry.deleted can only be true if
-    // IOS_ENABLE_WIDGETS_FOR_MIM is enabled).
+    // IOS_ENABLE_WIDGETS_FOR_MIM is true).
     if entry.deleted && !entry.isPreview {
       SmallWidgetDeletedAccountView()
     } else {
       SearchWidgetEntryViewTemplate(
         destinationURL: destinationURL(url: WidgetConstants.SearchWidget.url, gaia: entry.gaiaID),
         imageName: "widget_chrome_logo",
-        title: "IDS_IOS_WIDGET_KIT_EXTENSION_SEARCH_TITLE",
+        title: entry.avatar != nil
+          ? "IDS_IOS_WIDGET_KIT_EXTENSION_SEARCH_AVATAR_TITLE"
+          : "IDS_IOS_WIDGET_KIT_EXTENSION_SEARCH_TITLE",
         accessibilityLabel: "IDS_IOS_WIDGET_KIT_EXTENSION_SEARCH_A11Y_LABEL", entry: entry)
     }
   }
@@ -121,23 +123,25 @@ struct SearchWidgetEntryViewTemplate: View {
   }
 }
 
-struct AvatarForSearch: View {
-  var entry: ConfigureWidgetEntry
-  var body: some View {
-    if entry.isPreview {
-      Circle()
-        .foregroundColor(Color("widget_text_color"))
-        .opacity(0.2)
-        .frame(width: 25, height: 25)
-        .padding([.bottom, .trailing], 16)
-    } else if let avatar = entry.avatar {
-      avatar
-        .resizable()
-        .clipShape(Circle())
-        .unredacted()
-        .scaledToFill()
-        .frame(width: 25, height: 25)
-        .padding([.bottom, .trailing], 16)
+#if IOS_ENABLE_WIDGETS_FOR_MIM
+  struct AvatarForSearch: View {
+    var entry: ConfigureWidgetEntry
+    var body: some View {
+      if entry.isPreview {
+        Circle()
+          .foregroundColor(Color("widget_text_color"))
+          .opacity(0.2)
+          .frame(width: 25, height: 25)
+          .padding([.bottom, .trailing], 16)
+      } else if let avatar = entry.avatar {
+        avatar
+          .resizable()
+          .clipShape(Circle())
+          .unredacted()
+          .scaledToFill()
+          .frame(width: 25, height: 25)
+          .padding([.bottom, .trailing], 16)
+      }
     }
   }
-}
+#endif

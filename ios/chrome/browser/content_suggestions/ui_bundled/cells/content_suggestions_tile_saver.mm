@@ -43,6 +43,9 @@ void WriteToDiskIfComplete(NSDictionary<NSURL*, NTPTile*>* tiles,
 // Gets a name for the favicon file.
 NSString* GetFaviconFileName(const GURL& url);
 
+// Decodes data.
+NSDictionary* DecodeData(NSData* data);
+
 // If the sites currently saved include one with `tile`'s url, replace it by
 // `tile`.
 void WriteSingleUpdatedTileToDisk(NTPTile* tile);
@@ -103,6 +106,20 @@ NSString* GetFaviconFileName(const GURL& url) {
       stringByAppendingString:@".png"];
 }
 
+NSDictionary* DecodeData(NSData* data) {
+  NSError* error = nil;
+  NSKeyedUnarchiver* unarchiver =
+      [[NSKeyedUnarchiver alloc] initForReadingFromData:data error:&error];
+  if (!unarchiver || error) {
+    DLOG(WARNING) << "Error creating unarchiver for most visited: "
+                  << base::SysNSStringToUTF8([error description]);
+    return [[NSMutableDictionary alloc] init];
+  }
+
+  unarchiver.requiresSecureCoding = NO;
+  return [unarchiver decodeObjectForKey:NSKeyedArchiveRootObjectKey];
+}
+
 void GetFaviconsAndSave(
     const ntp_tiles::NTPTilesVector& most_visited_data,
     __strong FaviconAttributesProvider* favicon_provider,
@@ -123,15 +140,29 @@ void GetFaviconsAndSave(
 
 void ClearOutdatedIcons(const ntp_tiles::NTPTilesVector& most_visited_data,
                         NSURL* favicons_directory) {
-  // TODO(crbug.com/410336678): The following code is deleting shortcuts needed
-  // for other profiles, update this code to keep data needed from other
-  // profiles.
   NSMutableSet<NSString*>* allowed_files_name = [[NSMutableSet alloc] init];
+
+#if BUILDFLAG(ENABLE_WIDGETS_FOR_MIM)
+  // Add in `allowed_files_name` information about all profiles.
+  NSUserDefaults* shared_defaults = app_group::GetGroupUserDefaults();
+  NSDictionary* suggested_items =
+      [shared_defaults objectForKey:app_group::kSuggestedItemsForMultiprofile];
+  NSArray<NSData*>* all_data = [suggested_items allValues];
+  for (NSData* data_for_account in all_data) {
+    NSArray<NTPTile*>* tiles = [DecodeData(data_for_account) allValues];
+    // Add urls to the set of allowed_files_name.
+    for (NTPTile* tile in tiles) {
+      [allowed_files_name addObject:tile.faviconFileName];
+    }
+  }
+#else
   for (size_t i = 0; i < most_visited_data.size(); i++) {
     const ntp_tiles::NTPTile& ntp_tile = most_visited_data[i];
     NSString* favicon_file_name = GetFaviconFileName(ntp_tile.url);
     [allowed_files_name addObject:favicon_file_name];
   }
+#endif
+
   [[NSFileManager defaultManager] createDirectoryAtURL:favicons_directory
                            withIntermediateDirectories:YES
                                             attributes:nil
@@ -203,8 +234,8 @@ void WriteSavedMostVisited(
 
   NSUserDefaults* sharedDefaults = app_group::GetGroupUserDefaults();
 
-  // TODO(crbug.com/387971524): To be removed once ios_enable_widgets_for_mim is
-  // enabled by default.
+  // TODO(crbug.com/387971524): To be removed once
+  // ios_enable_widgets_for_mim is enabled by default.
   [sharedDefaults setObject:data forKey:app_group::kSuggestedItems];
   [sharedDefaults setObject:last_modification_date
                      forKey:app_group::kSuggestedItemsLastModificationDate];
@@ -229,12 +260,17 @@ void WriteSavedMostVisited(
                                         ->GetPersonalProfileName();
 
   if (profileName == personalProfileName) {
-    // If we are in personal profile, data is saved also to "Default". This will
-    // be used to retrieve data for a widget with no signed-in account.
-    [suggested_items setObject:data forKey:app_group::kDefaultAccount];
+    // If we are in personal profile, data is saved also to "No account". This
+    // will be used to retrieve data for a widget with no signed-in account.
+    [suggested_items setObject:data forKey:app_group::kNoAccount];
     [last_modification_dates setObject:last_modification_date
-                                forKey:app_group::kDefaultAccount];
+                                forKey:app_group::kNoAccount];
   }
+
+  // Always update last modification date for "Default" scenario.
+  [suggested_items setObject:data forKey:app_group::kDefault];
+  [last_modification_dates setObject:last_modification_date
+                              forKey:app_group::kDefault];
 
   // Update stored info for all identities in the current profile.
   for (id<SystemIdentity> identity in account_manager_service
@@ -256,19 +292,9 @@ void WriteSavedMostVisited(
 
 NSDictionary* ReadSavedMostVisited() {
   NSUserDefaults* sharedDefaults = app_group::GetGroupUserDefaults();
-  NSError* error = nil;
-  NSKeyedUnarchiver* unarchiver = [[NSKeyedUnarchiver alloc]
-      initForReadingFromData:[sharedDefaults
-                                 objectForKey:app_group::kSuggestedItems]
-                       error:&error];
-  if (!unarchiver || error) {
-    DLOG(WARNING) << "Error creating unarchiver for most visited: "
-                  << base::SysNSStringToUTF8([error description]);
-    return [[NSMutableDictionary alloc] init];
-  }
-
-  unarchiver.requiresSecureCoding = NO;
-  return [unarchiver decodeObjectForKey:NSKeyedArchiveRootObjectKey];
+  NSDictionary* data =
+      DecodeData([sharedDefaults objectForKey:app_group::kSuggestedItems]);
+  return data;
 }
 
 void UpdateSingleFavicon(const GURL& site_url,

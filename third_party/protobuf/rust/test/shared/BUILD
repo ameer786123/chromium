@@ -320,6 +320,7 @@ rust_test(
     },
     deps = [
         "//rust:protobuf_cpp_export",
+        "//rust/test:map_unittest_cpp_rust_proto",
         "//rust/test:nested_cpp_rust_proto",
         "@crate_index//:googletest",
     ],
@@ -333,6 +334,7 @@ rust_test(
     },
     deps = [
         "//rust:protobuf_upb_export",
+        "//rust/test:map_unittest_upb_rust_proto",
         "//rust/test:nested_upb_rust_proto",
         "@crate_index//:googletest",
     ],
@@ -429,8 +431,8 @@ rust_test(
 )
 
 rust_test(
-    name = "merge_from_cpp_test",
-    srcs = ["merge_from_test.rs"],
+    name = "message_copy_merge_cpp_test",
+    srcs = ["message_copy_merge_test.rs"],
     aliases = {
         "//rust:protobuf_cpp": "protobuf",
     },
@@ -442,8 +444,8 @@ rust_test(
 )
 
 rust_test(
-    name = "merge_from_upb_test",
-    srcs = ["merge_from_test.rs"],
+    name = "message_copy_merge_upb_test",
+    srcs = ["message_copy_merge_test.rs"],
     aliases = {
         "//rust:protobuf_upb": "protobuf",
     },

@@ -4,30 +4,29 @@
 
 package org.chromium.chrome.browser.ntp_customization.feed;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationUtils.launchUriActivity;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.BACK_PRESS_HANDLER;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.FEED_SWITCH_ON_CHECKED_CHANGE_LISTENER;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.IS_FEED_LIST_ITEMS_TITLE_VISIBLE;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.IS_FEED_SWITCH_CHECKED;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LEARN_MORE_BUTTON_CLICK_LISTENER;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LIST_CONTAINER_VIEW_DELEGATE;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.SET_FEED_SWITCH_CONTENT_DESCRIPTION_RES_ID;
 import static org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsCoordinator.FeedSettingsBottomSheetSection.ACTIVITY;
 import static org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsCoordinator.FeedSettingsBottomSheetSection.FOLLOWING;
 import static org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsCoordinator.FeedSettingsBottomSheetSection.HIDDEN;
 import static org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsCoordinator.FeedSettingsBottomSheetSection.INTERESTS;
 
-import android.app.PendingIntent;
-import android.content.ComponentName;
 import android.content.Context;
-import android.content.Intent;
 import android.content.res.Resources;
-import android.net.Uri;
-import android.provider.Browser;
 import android.support.annotation.VisibleForTesting;
 import android.view.View;
 import android.view.View.OnClickListener;
 
-import androidx.annotation.Nullable;
-import androidx.browser.customtabs.CustomTabsIntent;
-
 import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.feed.FeedServiceBridge;
 import org.chromium.chrome.browser.feed.FeedUma;
 import org.chromium.chrome.browser.feed.v2.FeedUserActionType;
@@ -39,6 +38,7 @@ import org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsCoordinato
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.preferences.PrefServiceUtil;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.util.BrowserUiUtils;
 import org.chromium.components.prefs.PrefChangeRegistrar;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.user_prefs.UserPrefs;
@@ -48,8 +48,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Mediator for the feed settings bottom sheet in the NTP customization. */
+@NullMarked
 public class FeedSettingsMediator {
-    private static final String TRUSTED_APPLICATION_CODE_EXTRA = "trusted_application_code_extra";
     private static final String ACTIVITY_CLICK_URL =
             "https://myactivity.google.com/myactivity?product=50";
     private static final String FOLLOWING_CLICK_URL =
@@ -58,13 +58,17 @@ public class FeedSettingsMediator {
             "https://www.google.com/preferences/interests/hidden?sh=n";
     private static final String INTERESTS_CLICK_URL =
             "https://www.google.com/preferences/interests";
+    private static final String LEARN_MORE_CLICK_URL =
+            "https://support.google.com/chrome/?p=new_tab";
     private final PropertyModel mContainerPropertyModel;
     private final PropertyModel mBottomSheetPropertyModel;
     private final PropertyModel mFeedSettingsPropertyModel;
+    private final BottomSheetDelegate mBottomSheetDelegate;
     private final Profile mProfile;
     private final PrefChangeRegistrar mPrefChangeRegistrar;
-    private static PrefService sPrefServiceForTest;
-    private static PrefChangeRegistrar sPrefChangeRegistarForTest;
+    private static @Nullable PrefService sPrefServiceForTest;
+    private static @Nullable PrefChangeRegistrar sPrefChangeRegistarForTest;
+    private List<Integer> mListItemsContent;
 
     public FeedSettingsMediator(
             PropertyModel containerPropertyModel,
@@ -75,15 +79,31 @@ public class FeedSettingsMediator {
         mContainerPropertyModel = containerPropertyModel;
         mBottomSheetPropertyModel = bottomSheetPropertyModel;
         mFeedSettingsPropertyModel = feedSettingsPropertyModel;
+        mBottomSheetDelegate = delegate;
         mProfile = profile;
 
+        mListItemsContent = buildFeedListContent();
         mContainerPropertyModel.set(LIST_CONTAINER_VIEW_DELEGATE, createListDelegate());
+
+        // Hides the back button when the feed settings bottom sheet is displayed standalone.
         mBottomSheetPropertyModel.set(
-                BACK_PRESS_HANDLER, v -> delegate.backPressOnCurrentBottomSheet());
+                BACK_PRESS_HANDLER,
+                delegate.shouldShowAlone()
+                        ? null
+                        : v -> mBottomSheetDelegate.backPressOnCurrentBottomSheet());
+
+        if (mListItemsContent.isEmpty()) {
+            mFeedSettingsPropertyModel.set(IS_FEED_LIST_ITEMS_TITLE_VISIBLE, false);
+        }
         mFeedSettingsPropertyModel.set(IS_FEED_SWITCH_CHECKED, isFeedTurnedOn());
         mFeedSettingsPropertyModel.set(
                 FEED_SWITCH_ON_CHECKED_CHANGE_LISTENER,
                 (compoundButton, isChecked) -> onFeedSwitchToggled(isChecked));
+        mFeedSettingsPropertyModel.set(
+                SET_FEED_SWITCH_CONTENT_DESCRIPTION_RES_ID,
+                R.string.ntp_customization_turn_on_feed_settings);
+        mFeedSettingsPropertyModel.set(
+                LEARN_MORE_BUTTON_CLICK_LISTENER, FeedSettingsMediator::handleLearnMoreClick);
 
         if (sPrefChangeRegistarForTest != null) {
             mPrefChangeRegistrar = sPrefChangeRegistarForTest;
@@ -98,6 +118,7 @@ public class FeedSettingsMediator {
         mBottomSheetPropertyModel.set(BACK_PRESS_HANDLER, null);
         mContainerPropertyModel.set(LIST_CONTAINER_VIEW_DELEGATE, null);
         mFeedSettingsPropertyModel.set(FEED_SWITCH_ON_CHECKED_CHANGE_LISTENER, null);
+        mFeedSettingsPropertyModel.set(LEARN_MORE_BUTTON_CLICK_LISTENER, null);
     }
 
     /**
@@ -118,7 +139,8 @@ public class FeedSettingsMediator {
      */
     @VisibleForTesting
     void updateFeedSwitch() {
-        mFeedSettingsPropertyModel.set(IS_FEED_SWITCH_CHECKED, isFeedTurnedOn());
+        boolean isFeedTurnedOn = isFeedTurnedOn();
+        mFeedSettingsPropertyModel.set(IS_FEED_SWITCH_CHECKED, isFeedTurnedOn);
     }
 
     /**
@@ -130,18 +152,7 @@ public class FeedSettingsMediator {
         return new ListContainerViewDelegate() {
             @Override
             public List<Integer> getListItems() {
-                List<Integer> content = new ArrayList<>();
-                if (FeedServiceBridge.isSignedIn()) {
-                    if (WebFeedBridge.isWebFeedEnabled()) {
-                        content.add(ACTIVITY);
-                        content.add(FOLLOWING);
-                        content.add(HIDDEN);
-                    } else {
-                        content.add(ACTIVITY);
-                        content.add(INTERESTS);
-                    }
-                }
-                return content;
+                return mListItemsContent;
             }
 
             @Override
@@ -160,10 +171,32 @@ public class FeedSettingsMediator {
             }
 
             @Override
-            public Integer getTrailingIcon(int type) {
+            public @Nullable Integer getTrailingIcon(int type) {
+                return null;
+            }
+
+            @Override
+            public @Nullable Integer getTrailingIconDescriptionResId(int type) {
                 return null;
             }
         };
+    }
+
+    /** Returns the content of the list displayed in the feed setting bottom sheet. */
+    @VisibleForTesting
+    List<Integer> buildFeedListContent() {
+        List<Integer> content = new ArrayList<>();
+        if (FeedServiceBridge.isSignedIn()) {
+            if (WebFeedBridge.isWebFeedEnabled()) {
+                content.add(ACTIVITY);
+                content.add(FOLLOWING);
+                content.add(HIDDEN);
+            } else {
+                content.add(ACTIVITY);
+                content.add(INTERESTS);
+            }
+        }
+        return content;
     }
 
     /**
@@ -184,7 +217,7 @@ public class FeedSettingsMediator {
                 return resources.getString(R.string.feed_manage_interests);
             default:
                 assert false : "Section type not supported!";
-                return null;
+                return assumeNonNull(null);
         }
     }
 
@@ -203,10 +236,10 @@ public class FeedSettingsMediator {
             case HIDDEN:
                 return resources.getString(R.string.feed_manage_hidden_description);
             case INTERESTS:
-                return resources.getString(R.string.feed_manage_following_description);
+                return resources.getString(R.string.feed_manage_interests_description);
             default:
                 assert false : "Section type not supported!";
-                return null;
+                return assumeNonNull(null);
         }
     }
 
@@ -214,7 +247,7 @@ public class FeedSettingsMediator {
      * @param sectionType Type of the feed bottom sheet section.
      * @return The on click listener for the feed bottom sheet section type.
      */
-    private static OnClickListener getListenerForSectionType(
+    private static @Nullable OnClickListener getListenerForSectionType(
             @FeedSettingsBottomSheetSection int sectionType) {
         switch (sectionType) {
             case ACTIVITY:
@@ -251,29 +284,11 @@ public class FeedSettingsMediator {
         launchUriActivity(view.getContext(), INTERESTS_CLICK_URL);
     }
 
-    // Launch a new activity in the same task with the given uri as a CCT.
-    private static void launchUriActivity(Context context, String uri) {
-        CustomTabsIntent.Builder builder = new CustomTabsIntent.Builder();
-        builder.setShowTitle(true);
-        builder.setShareState(CustomTabsIntent.SHARE_STATE_ON);
-        Intent intent = builder.build().intent;
-        intent.setPackage(context.getPackageName());
-        // Adding trusted extras lets us know that the intent came from Chrome.
-        intent.putExtra(TRUSTED_APPLICATION_CODE_EXTRA, getAuthenticationToken(context));
-        intent.setData(Uri.parse(uri));
-        intent.setAction(Intent.ACTION_VIEW);
-        intent.setClassName(context, "org.chromium.chrome.browser.customtabs.CustomTabActivity");
-        intent.putExtra(Browser.EXTRA_APPLICATION_ID, context.getPackageName());
-        context.startActivity(intent);
-    }
-
-    // Copied from IntentHandler, which is in chrome_java, so we can't call it directly.
-    private static PendingIntent getAuthenticationToken(Context context) {
-        Intent fakeIntent = new Intent();
-        ComponentName fakeComponentName = new ComponentName(context.getPackageName(), "FakeClass");
-        fakeIntent.setComponent(fakeComponentName);
-        int mutabililtyFlag = PendingIntent.FLAG_IMMUTABLE;
-        return PendingIntent.getActivity(context, 0, fakeIntent, mutabililtyFlag);
+    @VisibleForTesting
+    static void handleLearnMoreClick(View view) {
+        launchUriActivity(view.getContext(), LEARN_MORE_CLICK_URL);
+        BrowserUiUtils.recordModuleClickHistogram(BrowserUiUtils.ModuleTypeOnStartAndNtp.FEED);
+        FeedUma.recordFeedBottomSheetItemsClicked(FeedUserActionType.TAPPED_LEARN_MORE);
     }
 
     /** Returns whether the feed articles are turned on and visible to the user. */
@@ -290,6 +305,14 @@ public class FeedSettingsMediator {
             PrefChangeRegistrar prefChangeRegistrar, PrefService prefService) {
         sPrefChangeRegistarForTest = prefChangeRegistrar;
         sPrefServiceForTest = prefService;
-        ResettersForTesting.register(() -> sPrefServiceForTest = null);
+        ResettersForTesting.register(
+                () -> {
+                    sPrefServiceForTest = null;
+                    sPrefChangeRegistarForTest = null;
+                });
+    }
+
+    void setListItemsContentForTesting(List<Integer> listItemsContent) {
+        mListItemsContent = listItemsContent;
     }
 }

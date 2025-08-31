@@ -107,3 +107,15 @@ SmartCardConnectSettings:
   policies:
   - SmartCardConnectAllowedForUrls
   - SmartCardConnectBlockedForUrls
+  - DefaultSmartCardConnectSetting
+LegacyCookieScopeSettings:
+  caption: Legacy Cookie Scope settings
+  policies:
+  - LegacyCookieScopeEnabled
+  - LegacyCookieScopeEnabledForDomainList
+DeviceAttributesSettings:
+  caption: Device Attributes settings
+  policies:
+  - DefaultDeviceAttributesSetting
+  - DeviceAttributesAllowedForOrigins
+  - DeviceAttributesBlockedForOrigins

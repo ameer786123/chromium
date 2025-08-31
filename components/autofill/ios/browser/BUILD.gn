@@ -13,6 +13,7 @@ source_set("browser") {
     "autofill_client_ios.h",
     "autofill_client_ios.mm",
     "autofill_client_ios_bridge.h",
+    "autofill_client_ios_mixin.h",
     "autofill_driver_ios.h",
     "autofill_driver_ios.mm",
     "autofill_driver_ios_bridge.h",
@@ -59,7 +60,7 @@ source_set("browser") {
     "//components/feature_engagement/public",
     "//components/plus_addresses",
     "//components/plus_addresses/resources/strings",
-    "//components/prefs:prefs",
+    "//components/prefs",
     "//components/prefs/ios",
     "//components/resources:components_resources_grit",
     "//components/ukm/ios:ukm_url_recorder",
@@ -102,7 +103,6 @@ optimize_js("autofill_js") {
   deps = [
     "//components/autofill/ios/form_util:fill_js_dependencies",
     "//components/autofill/ios/form_util:fill_js_namespace",
-    "//ios/web/public/js_messaging:frame_id",
     "//ios/web/public/js_messaging:gcrweb",
     "//ios/web/public/js_messaging:util_scripts",
   ]
@@ -128,8 +128,6 @@ source_set("test_support") {
     "mock_password_autofill_agent_delegate.mm",
     "new_frame_catcher.h",
     "new_frame_catcher.mm",
-    "test_autofill_client_ios.h",
-    "test_autofill_client_ios.mm",
     "test_autofill_java_script_feature_container.h",
     "test_autofill_java_script_feature_container.mm",
     "test_autofill_manager_injector.h",
@@ -144,9 +142,32 @@ source_set("test_support") {
     "//components/autofill/ios/form_util:form_handler_feature",
     "//components/autofill/ios/form_util:form_util_feature",
     "//components/autofill/ios/form_util:frame_registration_feature",
-    "//components/leveldb_proto:leveldb_proto",
+    "//components/leveldb_proto",
     "//ios/web/public",
     "//ios/web/public/js_messaging",
+  ]
+}
+
+source_set("test_support_internal") {
+  testonly = true
+  sources = [ "test_autofill_client_ios.h" ]
+  deps = [
+    ":browser",
+    "//base",
+    "//base/test:test_support",
+    "//components/autofill/core/browser",
+    "//components/autofill/core/browser:test_support",
+    "//components/autofill/ios/form_util:autofill_renderer_id_feature",
+    "//components/autofill/ios/form_util:form_handler_feature",
+    "//components/autofill/ios/form_util:form_util_feature",
+    "//components/autofill/ios/form_util:frame_registration_feature",
+    "//components/leveldb_proto",
+    "//ios/web/public",
+    "//ios/web/public/js_messaging",
+  ]
+  visibility = [
+    "//components/autofill/ios/browser:unit_tests",
+    "//components/password_manager/ios:unit_tests",
   ]
 }
 
@@ -165,6 +186,7 @@ source_set("unit_tests") {
   deps = [
     ":browser",
     ":test_support",
+    ":test_support_internal",
     ":util",
     "//base",
     "//base/test:test_support",

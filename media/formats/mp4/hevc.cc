@@ -17,7 +17,6 @@
 
 #include "base/containers/span.h"
 #include "base/containers/span_writer.h"
-#include "base/functional/overloaded.h"
 #include "base/logging.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/media_util.h"
@@ -25,6 +24,7 @@
 #include "media/formats/mp4/avc.h"
 #include "media/formats/mp4/box_definitions.h"
 #include "media/formats/mp4/box_reader.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
 #include "media/parsers/h265_parser.h"
 #else
@@ -239,7 +239,7 @@ bool HEVCDecoderConfigurationRecord::ParseInternal(BufferReader* reader,
   }
   H265Parser parser;
   H265NALU nalu;
-  parser.SetStream(param_sets.data(), param_sets.size());
+  parser.SetStream(param_sets);
   while (true) {
     H265Parser::Result result = parser.AdvanceToNextNALU(&nalu);
     if (result != H265Parser::kOk) {
@@ -286,7 +286,7 @@ bool HEVCDecoderConfigurationRecord::ParseInternal(BufferReader* reader,
           break;
         }
         for (const auto& sei_msg : sei.msgs) {
-          std::visit(base::Overloaded{
+          std::visit(absl::Overload{
                          [](const H265SEIAlphaChannelInfo& info) {},
                          [&](const H265SEIContentLightLevelInfo& info) {
                            hdr_metadata.cta_861_3 = info.ToGfx();
@@ -367,7 +367,7 @@ bool HEVC::InsertParamSetsAnnexB(
 
   std::unique_ptr<H265NaluParser> parser(new H265NaluParser());
   const uint8_t* start = buffer->data();
-  parser->SetEncryptedStream(start, buffer->size(), *subsamples);
+  parser->SetEncryptedStream(*buffer, *subsamples);
 
   H265NALU nalu;
   if (parser->AdvanceToNextNALU(&nalu) != H265NaluParser::kOk)
@@ -377,14 +377,13 @@ bool HEVC::InsertParamSetsAnnexB(
 
   if (nalu.nal_unit_type == H265NALU::AUD_NUT) {
     // Move insert point to just after the AUD.
-    config_insert_point +=
-        (nalu.data + base::checked_cast<size_t>(nalu.size)) - start;
+    config_insert_point += base::to_address(nalu.data.end()) - start;
   }
 
   // Clear |parser| and |start| since they aren't needed anymore and
   // will hold stale pointers once the insert happens.
   parser.reset();
-  start = NULL;
+  start = nullptr;
 
   std::vector<uint8_t> param_sets;
   HEVC::ConvertConfigToAnnexB(hevc_config, &param_sets);
@@ -395,7 +394,8 @@ bool HEVC::InsertParamSetsAnnexB(
   if (subsamples && !subsamples->empty()) {
     int subsample_index = AVC::FindSubsampleIndex(*buffer, subsamples,
                                                   &(*config_insert_point));
-    // Update the size of the subsample where VPS/SPS/PPS is to be inserted.
+    // Update the size of the subsample where VPS/SPS/PPS and SEI messages are
+    // to be inserted.
     (*subsamples)[subsample_index].clear_bytes += param_sets.size();
   }
 
@@ -443,7 +443,7 @@ BitstreamConverter::AnalysisResult HEVC::AnalyzeAnnexB(
   }
 
   H265NaluParser parser;
-  parser.SetEncryptedStream(buffer, size, subsamples);
+  parser.SetEncryptedStream(base::span(buffer, size), subsamples);
 
   enum NALUOrderState {
     kAUDAllowed,

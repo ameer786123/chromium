@@ -14,6 +14,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/toolbar/browser_app_menu_button.h"
@@ -46,13 +47,14 @@
 
 // static
 views::Widget* RelaunchRecommendedBubbleView::ShowBubble(
-    Browser* browser,
+    BrowserWindowInterface* browser,
     base::Time detection_time,
     base::RepeatingClosure on_accept) {
   DCHECK(browser);
 
   // Anchor the popup to the browser's app menu.
-  auto* anchor_button = BrowserView::GetBrowserViewForBrowser(browser)
+  auto* anchor_button = BrowserView::GetBrowserViewForBrowser(
+                            browser->GetBrowserForMigrationOnly())
                             ->toolbar_button_provider()
                             ->GetAppMenuButton();
   auto* bubble_view = new RelaunchRecommendedBubbleView(
@@ -105,7 +107,8 @@ void RelaunchRecommendedBubbleView::Init() {
 
   // Align the body label with the left edge of the bubble's title.
   // TODO(bsep): Remove this when fixing https://crbug.com/810970.
-  // Note: BubleFrameView applies INSETS_DIALOG_TITLE either side of the icon.
+  // Note: BubbleDialogDelegate applies INSETS_DIALOG_TITLE either side of the
+  // icon.
   const int title_offset = 2 * views::LayoutProvider::Get()
                                    ->GetInsetsMetric(views::INSETS_DIALOG_TITLE)
                                    .left() +

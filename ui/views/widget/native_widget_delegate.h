@@ -7,7 +7,7 @@
 
 #include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/events/event_constants.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/views/views_export.h"
 
 class SkPath;
@@ -64,8 +64,13 @@ class VIEWS_EXPORT NativeWidgetDelegate {
   virtual void OnNativeFocus() = 0;
   virtual void OnNativeBlur() = 0;
 
-  // Called when the window is shown/hidden.
+  // Called when the window is shown/hidden. A visible widget might be
+  // physically invisible on screen, for example, if it is shown on an hidden
+  // virtual desktop.
   virtual void OnNativeWidgetVisibilityChanged(bool visible) = 0;
+
+  // Called when the window's visibility on screen changes.
+  virtual void OnNativeWidgetVisibilityOnScreenChanged(bool visible) = 0;
 
   // Called when the native widget is created.
   virtual void OnNativeWidgetCreated() = 0;

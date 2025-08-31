@@ -127,6 +127,9 @@ struct PasswordNote {
                          const PasswordNote& rhs) = default;
   friend auto operator<=>(const PasswordNote&, const PasswordNote&) = default;
 
+  static constexpr char16_t kPasswordChangeBackupNoteName[] =
+      u"PasswordChangeBackup";
+
   // The name displayed in the UI labeling this note. Currently unused and added
   // for future compatibility.
   std::u16string unique_display_name;
@@ -164,12 +167,13 @@ struct PasswordForm {
   // Enum to differentiate between HTML form based authentication, and dialogs
   // using basic or digest schemes. Default is kHtml. Only PasswordForms of the
   // same Scheme will be matched/autofilled against each other.
+  // This is persisted to disk, do not renumber entries.
   enum class Scheme {
-    kHtml,
-    kBasic,
-    kDigest,
-    kOther,
-    kUsernameOnly,
+    kHtml = 0,
+    kBasic = 1,
+    kDigest = 2,
+    kOther = 3,
+    kUsernameOnly = 4,
     kMinValue = kHtml,
     kMaxValue = kUsernameOnly,
   };
@@ -281,6 +285,12 @@ struct PasswordForm {
   // no prior call to this method, the URL is empty.
   GURL app_icon_url;
 
+  // The change password URL for a website on which this password is saved. The
+  // field is filled out when the PasswordStore injects affiliation and branding
+  // information, i.e. in InjectAffiliationAndBrandingInformation. If there was
+  // no prior call to this method, the URL is empty.
+  GURL change_password_url;
+
   // The name of the submit button used. Optional; only used in scoring
   // of PasswordForm results from the database to make matches as tight as
   // possible.
@@ -352,13 +362,20 @@ struct PasswordForm {
   // The new password. Optional, and not persisted.
   std::u16string new_password_value;
 
-  // When the login was last used by the user to login to the site. Defaults to
-  // |date_created|, except for passwords that were migrated from the now
-  // deprecated |preferred| flag. Their default is set when migrating the login
-  // database to have the "date_last_used" column.
+  // When the login was last used by the user to login to the site (updated
+  // after a successful form submission). Defaults to |date_created|, except for
+  // passwords that were migrated from the now deprecated |preferred| flag.
+  // Their default is set when migrating the login database to have the
+  // "date_last_used" column.
   //
   // When parsing an HTML form, this is not used.
   base::Time date_last_used;
+
+  // When the login was filled into a site (regardless of whether the form was
+  // submitted successfully.)
+  //
+  // When parsing an HTML form, this is not used.
+  base::Time date_last_filled;
 
   // When the password value was last changed. The date can be unset on the old
   // credentials because the passwords wasn't modified yet. The code must keep
@@ -544,12 +561,31 @@ struct PasswordForm {
   // Returns true when |password_value| or |new_password_value| are non-empty.
   bool HasNonEmptyPasswordValue() const;
 
-  // Returns the value of the note with an empty `unique_display_name`, returns
-  // an empty string if none exists.
+  // Returns the value of the note with an empty `unique_display_name`,
+  // returns an empty string if none exists.
   std::u16string GetNoteWithEmptyUniqueDisplayName() const;
 
   // Updates the note with an empty `unique_display_name`.
   void SetNoteWithEmptyUniqueDisplayName(const std::u16string& new_note_value);
+
+  // Returns the value of the note with a password change backup specific
+  // `unique_display_name` if it exists and is not empty.
+  std::optional<std::u16string> GetPasswordBackup() const;
+
+  // Returns the date_created of the note with a password change backup specific
+  // `unique_display_name` if it exists and is not empty.
+  // This method returns a non-empty optional iff `GetPasswordBackup` also
+  // returns a non-empty optional.
+  std::optional<base::Time> GetPasswordBackupDateCreated() const;
+
+  // Updates the note with a password change backup specific
+  // `unique_display_name`.
+  void SetPasswordBackupNote(const std::u16string& new_note_value);
+
+  // Deletes the backup note from the password, it uses a specific
+  // `unique_display_name` that indicates this was a backup
+  // saved through the password change flow.
+  void DeletePasswordBackupNote();
 
   PasswordForm();
   PasswordForm(const PasswordForm& other);
@@ -563,8 +599,6 @@ struct PasswordForm {
   // An exact equality comparison of all the fields is only useful for tests.
   // Production code should be using `ArePasswordFormUniqueKeysEqual` instead.
   friend bool operator==(const PasswordForm&, const PasswordForm&) = default;
-  friend bool operator!=(const PasswordForm& lhs,
-                         const PasswordForm& rhs) = default;
 #endif
 };
 

@@ -48,15 +48,6 @@ void TestURLLoaderNetworkObserver::OnAuthRequired(
     mojo::PendingRemote<mojom::AuthChallengeResponder>
         auth_challenge_responder) {}
 
-void TestURLLoaderNetworkObserver::OnPrivateNetworkAccessPermissionRequired(
-    const GURL& url,
-    const net::IPAddress& ip_address,
-    const std::optional<std::string>& private_network_device_id,
-    const std::optional<std::string>& private_network_device_name,
-    OnPrivateNetworkAccessPermissionRequiredCallback callback) {
-  std::move(callback).Run(false);
-}
-
 void TestURLLoaderNetworkObserver::OnLocalNetworkAccessPermissionRequired(
     OnLocalNetworkAccessPermissionRequiredCallback callback) {
   std::move(callback).Run(false);
@@ -93,7 +84,8 @@ void TestURLLoaderNetworkObserver::OnSharedStorageHeaderReceived(
 }
 
 void TestURLLoaderNetworkObserver::OnAdAuctionEventRecordHeaderReceived(
-    network::AdAuctionEventRecord event_record) {}
+    network::AdAuctionEventRecord event_record,
+    const std::optional<url::Origin>& top_frame_origin) {}
 
 void TestURLLoaderNetworkObserver::Clone(
     mojo::PendingReceiver<URLLoaderNetworkServiceObserver> observer) {

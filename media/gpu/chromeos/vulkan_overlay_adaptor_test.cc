@@ -27,6 +27,7 @@
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "components/viz/common/resources/shared_image_format.h"
+#include "gpu/command_buffer/client/test_shared_image_interface.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
@@ -121,6 +122,17 @@ const base::FilePath::CharType* kMT2TImage =
     FILE_PATH_LITERAL("crowd_run_1080x512.mt2t");
 
 constexpr int kLibYUVSuccess = 0;
+
+base::span<const uint32_t> ConvertBytesSpanToUint32Span(
+    base::span<const uint8_t> bytes) {
+  CHECK_EQ(bytes.size() % sizeof(uint32_t), 0u);
+  // SAFETY: The above CHECK_EQ() ensures that the size of `bytes` is divisible
+  // by sizeof(uint32_t), and thus the range bytes.data() + size is valid for
+  // uint32_t once you divide by sizeof(uint32_t).
+  return UNSAFE_BUFFERS(
+      base::span(reinterpret_cast<const uint32_t*>(bytes.data()),
+                 bytes.size() / sizeof(uint32_t)));
+}
 
 scoped_refptr<VideoFrame> ConvMM21ToI420(const VideoFrame& in_frame) {
   CHECK_EQ(in_frame.format(), VideoPixelFormat::PIXEL_FORMAT_NV12);
@@ -631,6 +643,7 @@ class VulkanOverlayAdaptorTest
   scoped_refptr<gl::GLShareGroup> share_group_;
   scoped_refptr<gl::GLSurface> surface_;
   scoped_refptr<gl::GLContext> context_;
+  scoped_refptr<gpu::TestSharedImageInterface> test_sii_;
   scoped_refptr<gpu::SharedContextState> context_state_;
   gpu::SharedImageManager shared_image_manager_;
   gpu::GpuPreferences gpu_preferences_;
@@ -645,7 +658,8 @@ VulkanOverlayAdaptorTest::VulkanOverlayAdaptorTest()
                                                   gfx::Size())),
       context_(gl::init::CreateGLContext(share_group_.get(),
                                          surface_.get(),
-                                         gl::GLContextAttribs())) {
+                                         gl::GLContextAttribs())),
+      test_sii_(base::MakeRefCounted<gpu::TestSharedImageInterface>()) {
   context_->MakeCurrent(surface_.get());
   context_state_ = base::MakeRefCounted<gpu::SharedContextState>(
       share_group_, surface_, context_, false, base::DoNothing(),
@@ -702,9 +716,10 @@ scoped_refptr<VideoFrame> VulkanOverlayAdaptorTest::CreateVideoFrame(
                           kMM21TileHeight) *
           bpp_numerator / bpp_denom);
 
-  scoped_refptr<VideoFrame> frame = CreateGpuMemoryBufferVideoFrame(
+  scoped_refptr<VideoFrame> frame = CreateMappableVideoFrame(
       VideoPixelFormat::PIXEL_FORMAT_NV12, alloc_size, visible_rect, alloc_size,
-      kNullTimestamp, gfx::BufferUsage::SCANOUT_CPU_READ_WRITE);
+      kNullTimestamp, gfx::BufferUsage::SCANOUT_CPU_READ_WRITE,
+      test_sii_.get());
 
   std::unique_ptr<VideoFrameMapper> frame_mapper =
       VideoFrameMapperFactory::CreateMapper(
@@ -742,11 +757,11 @@ scoped_refptr<VideoFrame> VulkanOverlayAdaptorTest::CreateFramebuffer(
     bool is_10bit) {
   constexpr base::TimeDelta kNullTimestamp;
 
-  scoped_refptr<VideoFrame> frame = CreateGpuMemoryBufferVideoFrame(
+  scoped_refptr<VideoFrame> frame = CreateMappableVideoFrame(
       is_10bit ? VideoPixelFormat::PIXEL_FORMAT_XR30
                : VideoPixelFormat::PIXEL_FORMAT_ARGB,
       coded_size, gfx::Rect(coded_size), coded_size, kNullTimestamp,
-      gfx::BufferUsage::SCANOUT_CPU_READ_WRITE);
+      gfx::BufferUsage::SCANOUT_CPU_READ_WRITE, test_sii_.get());
 
   auto gmb = CreateGpuMemoryBufferHandle(frame.get());
   shared_image_factory_->CreateSharedImage(
@@ -832,19 +847,21 @@ TEST_P(VulkanOverlayAdaptorTest, Correctness) {
   // raw, packed image data.
   auto packed_in_frame = VideoFrame::WrapExternalData(
       VideoPixelFormat::PIXEL_FORMAT_NV12, in_frame->coded_size(),
-      in_frame->visible_rect(), in_frame->coded_size(), image.Data(),
-      in_frame->coded_size().GetArea() * 3 / 2, base::TimeDelta());
+      in_frame->visible_rect(), in_frame->coded_size(),
+      base::span(image.Data(),
+                 static_cast<size_t>(in_frame->coded_size().GetArea() * 3 / 2)),
+      base::TimeDelta());
 
   auto libyuv_out_frame =
       ProcessFrameLibyuv(packed_in_frame, in_fourcc, image.Size(), out_fourcc,
                          output_size, transform);
   if (is_10bit) {
     psnr = test::ComputeAR30PSNR(
-        reinterpret_cast<const uint32_t*>(
-            out_frame->visible_data(VideoFrame::Plane::kARGB)),
+        ConvertBytesSpanToUint32Span(
+            out_frame->GetVisiblePlaneData(VideoFrame::Plane::kARGB)),
         out_frame->stride(VideoFrame::Plane::kARGB) / 4,
-        reinterpret_cast<const uint32_t*>(
-            libyuv_out_frame->visible_data(VideoFrame::Plane::kARGB)),
+        ConvertBytesSpanToUint32Span(
+            libyuv_out_frame->GetVisiblePlaneData(VideoFrame::Plane::kARGB)),
         libyuv_out_frame->stride(VideoFrame::Plane::kARGB) / 4,
         output_size.width(), output_size.height());
   } else {

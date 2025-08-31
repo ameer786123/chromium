@@ -4,6 +4,7 @@
 
 //! GN build file generation.
 
+use crate::condition::Condition;
 use crate::config::BuildConfig;
 use crate::crates::CrateFiles;
 use crate::crates::{Epoch, NormalizedName, VendoredCrate, Visibility};
@@ -74,9 +75,10 @@ pub struct RuleDetail {
     pub cargo_pkg_authors: Option<String>,
     pub cargo_pkg_name: String,
     pub cargo_pkg_description: Option<String>,
+    pub cargo_pkg_repository: Option<String>,
     pub deps: Vec<DepGroup>,
     pub build_deps: Vec<DepGroup>,
-    pub aliased_deps: Vec<(String, String)>,
+    pub aliased_deps: Vec<(String, PackageId)>,
     pub features: Vec<String>,
     pub build_root: Option<String>,
     pub build_script_sources: Vec<String>,
@@ -88,6 +90,9 @@ pub struct RuleDetail {
     /// Whether this rule depends on the main lib target in its group (e.g. a
     /// bin target alongside a lib inside a package).
     pub dep_on_lib: bool,
+    /// `if` condition for GN, or `None` for unconditional packages that can be
+    /// built on any Chromium platform.
+    pub cond: Option<String>,
 }
 
 /// Set of rule dependencies with a shared condition.
@@ -175,15 +180,35 @@ pub fn build_rule_from_dep(
         _ => dep.is_toplevel_dep,
     };
 
+    let cond = dep
+        .dependency_kinds
+        .values()
+        .map(|per_kind_info| per_kind_info.condition.clone())
+        .reduce(Condition::or)
+        .expect("Each package should have at least one item in `dependency_kinds`")
+        .to_handlebars_value()?;
     let mut detail_template = RuleDetail {
         edition: dep.edition.clone(),
         cargo_pkg_version: dep.version.to_string(),
         cargo_pkg_authors,
         cargo_pkg_name: dep.package_name.to_string(),
         cargo_pkg_description: dep.description.as_ref().map(|s| s.trim_end().to_string()),
+        cargo_pkg_repository: dep.repository.as_ref().map(|s| s.trim_end().to_string()),
 
+        cond,
         extra_kv,
         ..Default::default()
+    };
+
+    // Lambda for translating `DepOfDep` into a `PackageId`.
+    let create_package_id = |dep: &DepOfDep| {
+        let name = NormalizedName::from_crate_name(&dep.package_name).to_string();
+        let epoch = match name_lib_style {
+            // TODO(danakj): Separate this choice to another parameter option.
+            NameLibStyle::LibLiteral => Some(Epoch::from_version(&dep.version).to_string()),
+            NameLibStyle::PackageName => None,
+        };
+        PackageId { name, epoch }
     };
 
     // Add only normal and build dependencies: we don't run unit tests.
@@ -202,7 +227,7 @@ pub fn build_rule_from_dep(
         for dep in &normal_deps {
             let target_name = NormalizedName::from_crate_name(&dep.package_name).to_string();
             if target_name != dep.use_name {
-                aliases.push((dep.use_name.clone(), format!(":{target_name}")));
+                aliases.push((dep.use_name.clone(), create_package_id(dep)));
             }
         }
         aliases.sort_unstable();
@@ -215,24 +240,10 @@ pub fn build_rule_from_dep(
 
     // Group the dependencies by condition, where the unconditional deps come
     // first.
-    detail_template.deps = group_deps(&normal_deps, |d| PackageId {
-        name: NormalizedName::from_crate_name(&d.package_name).to_string(),
-        epoch: match name_lib_style {
-            // TODO(danakj): Separate this choice to another parameter option.
-            NameLibStyle::LibLiteral => Some(Epoch::from_version(&d.version).to_string()),
-            NameLibStyle::PackageName => None,
-        },
-    })
-    .with_context(|| format!("Error processing dependencies of {}", dep.package_name))?;
-    detail_template.build_deps = group_deps(&build_deps, |d| PackageId {
-        name: NormalizedName::from_crate_name(&d.package_name).to_string(),
-        epoch: match name_lib_style {
-            // TODO(danakj): Separate this choice to another parameter option.
-            NameLibStyle::LibLiteral => Some(Epoch::from_version(&d.version).to_string()),
-            NameLibStyle::PackageName => None,
-        },
-    })
-    .with_context(|| format!("Error processing build dependencies of {}", dep.package_name))?;
+    detail_template.deps = group_deps(&normal_deps, create_package_id)
+        .with_context(|| format!("Error processing dependencies of {}", dep.package_name))?;
+    detail_template.build_deps = group_deps(&build_deps, create_package_id)
+        .with_context(|| format!("Error processing build dependencies of {}", dep.package_name))?;
     detail_template.aliased_deps = aliased_normal_deps;
 
     detail_template.sources =

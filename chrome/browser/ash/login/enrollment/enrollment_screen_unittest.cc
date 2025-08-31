@@ -43,6 +43,7 @@
 #include "chromeos/ash/components/network/portal_detector/mock_network_portal_detector.h"
 #include "chromeos/ash/components/system/fake_statistics_provider.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
 #include "google_apis/gaia/gaia_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -97,15 +98,11 @@ class EnrollmentScreenBaseTest : public testing::Test {
  protected:
   EnrollmentScreenBaseTest()
       : mock_error_screen_(mock_error_view_.AsWeakPtr()) {
-    RegisterLocalState(fake_local_state_.registry());
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&fake_local_state_);
-
     policy::EnrollmentRequisitionManager::Initialize();
   }
 
   ~EnrollmentScreenBaseTest() override {
     TestingBrowserProcess::GetGlobal()->SetShuttingDown(true);
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
   }
 
   // Creates the EnrollmentScreen and sets required parameters.
@@ -329,7 +326,9 @@ class EnrollmentScreenBaseTest : public testing::Test {
     return CHECK_DEREF(fake_login_display_host_.GetWizardContext());
   }
 
-  TestingPrefServiceSimple& local_state() { return fake_local_state_; }
+  TestingPrefServiceSimple& local_state() {
+    return *TestingBrowserProcess::GetGlobal()->GetTestingLocalState();
+  }
 
   MockEnrollmentLauncher& mock_enrollment_launcher() {
     return mock_enrollment_launcher_;
@@ -377,9 +376,6 @@ class EnrollmentScreenBaseTest : public testing::Test {
 
   // Used by `enrollment_screen_`.
   ScopedStubInstallAttributes test_install_attributes_;
-
-  // Used by `EnrollmentRequisitionManager` and `StartupUtils`.
-  TestingPrefServiceSimple fake_local_state_;
 
   // Used by `EnrollmentRequisitionManager`.
   system::ScopedFakeStatisticsProvider fake_statistics_provider_;

@@ -13,7 +13,7 @@ import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener
 import {assert} from 'chrome://resources/js/assert.js';
 import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
 import type {DomRepeatEvent} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import {microTask, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {BaseMixin} from '../base_mixin.js';
 import type {FocusConfig} from '../focus_config.js';
@@ -68,9 +68,9 @@ class SettingsSiteSettingsListElement extends
     return {
       categoryList: Array,
 
-      focusConfig: {
-        type: Object,
-        observer: 'focusConfigChanged_',
+      categoryMap_: {
+        type: Map,
+        computed: 'computeCategoryMap(categoryList)',
       },
     };
   }
@@ -88,26 +88,28 @@ class SettingsSiteSettingsListElement extends
   }
 
   declare categoryList: CategoryListItem[];
-  declare focusConfig: FocusConfig;
+  declare private categoryMap_: Map<ContentSettingsTypes, number>;
   private browserProxy_: SiteSettingsPrefsBrowserProxy =
       SiteSettingsPrefsBrowserProxyImpl.getInstance();
 
-  private focusConfigChanged_(_newConfig: FocusConfig, oldConfig: FocusConfig) {
-    // focusConfig is set only once on the parent, so this observer should
-    // only fire once.
-    assert(!oldConfig);
-
-    // Populate the |focusConfig| map of the parent <settings-animated-pages>
-    // element, with additional entries that correspond to subpage trigger
-    // elements residing in this element's Shadow DOM.
+  getFocusConfig(): FocusConfig {
+    const focusConfig: FocusConfig = new Map();
+    // Populate the |focusConfig| map with entries that correspond to subpage
+    // trigger elements residing in this element's Shadow DOM.
     for (const item of this.categoryList) {
-      this.focusConfig.set(item.route.path, () => microTask.run(() => {
+      focusConfig.set(item.route.path, () => {
         const toFocus =
             this.shadowRoot!.querySelector<HTMLElement>(`#${item.id}`);
         assert(!!toFocus);
         focusWithoutInk(toFocus);
-      }));
+      });
     }
+    return focusConfig;
+  }
+
+  private computeCategoryMap(categoryList: CategoryListItem[]):
+      Map<ContentSettingsTypes, number> {
+    return new Map(categoryList.map((e, index) => [e.id, index]));
   }
 
   override ready() {
@@ -125,9 +127,8 @@ class SettingsSiteSettingsListElement extends
         (category: ContentSettingsTypes) =>
             this.refreshDefaultValueLabel_(category));
 
-    const hasProtocolHandlers = this.categoryList.some(item => {
-      return item.id === ContentSettingsTypes.PROTOCOL_HANDLERS;
-    });
+    const hasProtocolHandlers =
+        this.categoryMap_.has(ContentSettingsTypes.PROTOCOL_HANDLERS);
 
     if (hasProtocolHandlers) {
       // The protocol handlers have a separate enabled/disabled notifier.
@@ -166,11 +167,14 @@ class SettingsSiteSettingsListElement extends
     }
 
     if (category === ContentSettingsTypes.PERFORMANCE) {
-      const index = this.categoryList.map(e => e.id).indexOf(
-          ContentSettingsTypes.PERFORMANCE);
+      const index = this.categoryMap_.get(ContentSettingsTypes.PERFORMANCE);
       this.set(
           `categoryList.${index}.subLabel`,
           this.i18n('siteSettingsPerformanceSublabel'));
+      return Promise.resolve();
+    }
+
+    if (!this.categoryMap_.has(category)) {
       return Promise.resolve();
     }
 
@@ -220,8 +224,7 @@ class SettingsSiteSettingsListElement extends
    */
   private updateLocationLabel_() {
     const state = this.getPref('generated.geolocation').value;
-    const index = this.categoryList.map(e => e.id).indexOf(
-        ContentSettingsTypes.GEOLOCATION);
+    const index = this.categoryMap_.get(ContentSettingsTypes.GEOLOCATION);
 
     // The location row might not be part of the current site-settings-list
     // but the class always observes the preference.
@@ -247,8 +250,7 @@ class SettingsSiteSettingsListElement extends
    */
   private updateNotificationsLabel_() {
     const state = this.getPref('generated.notification').value;
-    const index = this.categoryList.map(e => e.id).indexOf(
-        ContentSettingsTypes.NOTIFICATIONS);
+    const index = this.categoryMap_.get(ContentSettingsTypes.NOTIFICATIONS);
 
     // The notification row might not be part of the current site-settings-list
     // but the class always observes the preference.
@@ -274,8 +276,7 @@ class SettingsSiteSettingsListElement extends
   private updateSiteDataLabel_() {
     const state =
         this.getPref('generated.cookie_default_content_setting').value;
-    const index = this.categoryList.map(e => e.id).indexOf(
-        ContentSettingsTypes.SITE_DATA);
+    const index = this.categoryMap_.get(ContentSettingsTypes.SITE_DATA);
 
     // The site data row might not be part of the current site-settings-list
     // but the class always observes the preference.
@@ -299,8 +300,7 @@ class SettingsSiteSettingsListElement extends
    * Update the third-party cookies link row label when the pref changes.
    */
   private updateThirdPartyCookiesLabel_() {
-    const index =
-        this.categoryList.map(e => e.id).indexOf(ContentSettingsTypes.COOKIES);
+    const index = this.categoryMap_.get(ContentSettingsTypes.COOKIES);
     // The third-party cookies might not be part of the current
     // site-settings-list but the class always observes the preference.
     if (index === -1) {
@@ -317,12 +317,9 @@ class SettingsSiteSettingsListElement extends
       }
     } else {
       const state = this.getPref('profile.cookie_controls_mode').value;
-      if (state === CookieControlsMode.OFF) {
+      if (state === CookieControlsMode.OFF ||
+          state === CookieControlsMode.INCOGNITO_ONLY) {
         label = 'thirdPartyCookiesLinkRowSublabelEnabled';
-      } else if (state === CookieControlsMode.INCOGNITO_ONLY) {
-        label = loadTimeData.getBoolean('isAlwaysBlock3pcsIncognitoEnabled') ?
-            'thirdPartyCookiesLinkRowSublabelEnabled' :
-            'thirdPartyCookiesLinkRowSublabelDisabledIncognito';
       } else if (state === CookieControlsMode.BLOCK_THIRD_PARTY) {
         label = 'thirdPartyCookiesLinkRowSublabelDisabled';
       }
@@ -338,8 +335,8 @@ class SettingsSiteSettingsListElement extends
     }
 
     const enabled = this.getPref('compose.proactive_nudge_enabled').value;
-    const index = this.categoryList.map(e => e.id).indexOf(
-        ContentSettingsTypes.OFFER_WRITING_HELP);
+    const index =
+        this.categoryMap_.get(ContentSettingsTypes.OFFER_WRITING_HELP);
 
     // The writing help data row might not be part of the current
     // site-settings-list but the class always observes the preference.
@@ -354,6 +351,12 @@ class SettingsSiteSettingsListElement extends
 
   private onClick_(event: DomRepeatEvent<CategoryListItem>) {
     Router.getInstance().navigateTo(this.categoryList[event.model.index].route);
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'settings-site-settings-list': SettingsSiteSettingsListElement;
   }
 }
 

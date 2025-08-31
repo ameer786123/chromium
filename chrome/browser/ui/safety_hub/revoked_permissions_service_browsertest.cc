@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/safety_hub/revoked_permissions_service.h"
 
+#include "base/json/values_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
@@ -11,14 +12,22 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/engagement/site_engagement_service_factory.h"
+#include "chrome/browser/notifications/notification_display_service_tester.h"
+#include "chrome/browser/notifications/platform_notification_service_factory.h"
+#include "chrome/browser/notifications/platform_notification_service_impl.h"
 #include "chrome/browser/permissions/notifications_engagement_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/safety_hub/disruptive_notification_permissions_manager.h"
 #include "chrome/browser/ui/safety_hub/mock_safe_browsing_database_manager.h"
 #include "chrome/browser/ui/safety_hub/revoked_permissions_service_factory.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_result.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_test_util.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_util.h"
+#include "chrome/browser/ui/safety_hub/unused_site_permissions_manager.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -33,9 +42,16 @@
 #include "components/permissions/features.h"
 #include "components/permissions/notifications_engagement_service.h"
 #include "components/safe_browsing/core/common/features.h"
+#include "components/ukm/test_ukm_recorder.h"
 #include "content/public/test/browser_test.h"
+#include "third_party/blink/public/common/notifications/platform_notification_data.h"
 
 namespace {
+
+using testing::Eq;
+using testing::Field;
+using testing::Not;
+using testing::Optional;
 
 const char histogram_name[] =
     "Settings.SafetyHub.UnusedSitePermissionsModule.AutoRevoked2";
@@ -44,6 +60,13 @@ const char histogram_name[] =
 
 class RevokedPermissionsServiceBrowserTest : public InProcessBrowserTest {
  public:
+  using DisruptiveNotificationRevocationEntry =
+      DisruptiveNotificationPermissionsManager::RevocationEntry;
+  using DisruptiveNotificationContentSettingHelper =
+      DisruptiveNotificationPermissionsManager::ContentSettingHelper;
+  using DisruptiveNotificationRevocationState =
+      DisruptiveNotificationPermissionsManager::RevocationState;
+
   RevokedPermissionsServiceBrowserTest() {
     feature_list.InitWithFeatures(
         /*enabled_features=*/
@@ -109,7 +132,6 @@ IN_PROC_BROWSER_TEST_F(RevokedPermissionsServiceBrowserTest,
   EXPECT_LE(info.metadata.last_visited(), now);
 
   map->SetClockForTesting(base::DefaultClock::GetInstance());
-  service->SetClockForTesting(base::DefaultClock::GetInstance());
 }
 
 // Test that navigations work fine in incognito mode.
@@ -159,9 +181,6 @@ IN_PROC_BROWSER_TEST_F(RevokedPermissionsServiceBrowserTest,
   ASSERT_EQ(GetRevokedUnusedPermissions(map).size(), 1u);
   EXPECT_EQ(CONTENT_SETTING_ASK,
             map->GetContentSetting(url, url, ContentSettingsType::GEOLOCATION));
-
-  map->SetClockForTesting(base::DefaultClock::GetInstance());
-  service->SetClockForTesting(base::DefaultClock::GetInstance());
 }
 
 // Test that revocation happens correctly for all content setting types.
@@ -251,7 +270,7 @@ IN_PROC_BROWSER_TEST_F(RevokedPermissionsServiceBrowserTest,
 
   for (int i = 0; i < (int)revoked_permission_types.size(); i++) {
     ContentSettingsType revoked_permission_type =
-        RevokedPermissionsService::ConvertKeyToContentSettingsType(
+        UnusedSitePermissionsManager::ConvertKeyToContentSettingsType(
             revoked_permission_types[i].GetString());
     EXPECT_EQ(allowed_permission_types[i], revoked_permission_type);
   }
@@ -278,8 +297,7 @@ class AbusiveNotificationPermissionsRevocationBrowserTest
         std::make_unique<safe_browsing::TestSafeBrowsingServiceFactory>();
     feature_list_.InitWithFeatures(
         /*enabled_features=*/
-        {safe_browsing::kSafetyHubAbusiveNotificationRevocation,
-         content_settings::features::kSafetyCheckUnusedSitePermissions},
+        {content_settings::features::kSafetyCheckUnusedSitePermissions},
         /*disabled_features=*/{});
   }
 
@@ -413,9 +431,6 @@ IN_PROC_BROWSER_TEST_F(AbusiveNotificationPermissionsRevocationBrowserTest,
     EXPECT_EQ(CONTENT_SETTING_ASK,
               map->GetContentSetting(abusive_url, abusive_url,
                                      ContentSettingsType::NOTIFICATIONS));
-
-    map->SetClockForTesting(base::DefaultClock::GetInstance());
-    service->SetClockForTesting(base::DefaultClock::GetInstance());
   }
 }
 
@@ -502,77 +517,28 @@ IN_PROC_BROWSER_TEST_F(AbusiveNotificationPermissionsRevocationBrowserTest,
     EXPECT_EQ(CONTENT_SETTING_ASK,
               map->GetContentSetting(abusive_url, abusive_url,
                                      ContentSettingsType::NOTIFICATIONS));
-
-    map->SetClockForTesting(base::DefaultClock::GetInstance());
-    service->SetClockForTesting(base::DefaultClock::GetInstance());
   }
 }
 
-class AbusiveNotificationPermissionsRevocationDisabledBrowserTest
-    : public AbusiveNotificationPermissionsRevocationBrowserTest {
- public:
-  AbusiveNotificationPermissionsRevocationDisabledBrowserTest() {
-    safe_browsing_factory_ =
-        std::make_unique<safe_browsing::TestSafeBrowsingServiceFactory>();
-    feature_list_.InitWithFeatures(
-        /*enabled_features=*/
-        {content_settings::features::kSafetyCheckUnusedSitePermissions},
-        /*disabled_features=*/
-        {safe_browsing::kSafetyHubAbusiveNotificationRevocation});
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-  std::unique_ptr<safe_browsing::TestSafeBrowsingServiceFactory>
-      safe_browsing_factory_;
-};
-
-// Test that revocation is happen correctly when auto-revoke is on.
-IN_PROC_BROWSER_TEST_F(
-    AbusiveNotificationPermissionsRevocationDisabledBrowserTest,
-    TestNoRevokeAbusiveNotificationPermissions) {
-  auto* map =
-      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
-  auto* service =
-      RevokedPermissionsServiceFactory::GetForProfile(browser()->profile());
-  const GURL url("https://example1.com");
-  AddDangerousUrl(url);
-
-  // Create granted abusive notification permission.
-  map->SetContentSettingDefaultScope(
-      url, url, ContentSettingsType::NOTIFICATIONS, CONTENT_SETTING_ALLOW);
-  ASSERT_EQ(
-      safety_hub_util::GetRevokedAbusiveNotificationPermissions(map).size(),
-      0u);
-
-  // Check if the content setting is still ALLOW and that auto-revocation does
-  // not happen.
-  safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service);
-  ASSERT_EQ(
-      safety_hub_util::GetRevokedAbusiveNotificationPermissions(map).size(),
-      0u);
-  EXPECT_EQ(
-      CONTENT_SETTING_ALLOW,
-      map->GetContentSetting(url, url, ContentSettingsType::NOTIFICATIONS));
-}
-
-class DisruptiveNotificationPermissionsRevocationBrowserTest
+class DisruptiveNotificationPermissionsRevocationShadowRunBrowserTest
     : public RevokedPermissionsServiceBrowserTest {
  public:
-  DisruptiveNotificationPermissionsRevocationBrowserTest() {
-    feature_list_.InitWithFeatures(
-        /*enabled_features=*/
-        {safe_browsing::kSafetyHubDisruptiveNotificationRevocation},
-        /*disabled_features=*/{});
+  DisruptiveNotificationPermissionsRevocationShadowRunBrowserTest() {
+    feature_list_.InitAndEnableFeatureWithParameters(
+        features::kSafetyHubDisruptiveNotificationRevocation,
+        {
+            {features::kSafetyHubDisruptiveNotificationRevocationShadowRun.name,
+             "true"},
+        });
   }
 
  private:
   base::test::ScopedFeatureList feature_list_;
 };
 
-// Test that revocation is happening correctly when auto-revoke is on.
-IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
-                       TestRevokeDisruptiveNotificationPermissions) {
+IN_PROC_BROWSER_TEST_F(
+    DisruptiveNotificationPermissionsRevocationShadowRunBrowserTest,
+    TestProposeRevokeDisruptiveNotificationPermissions) {
   auto* hcsm =
       HostContentSettingsMapFactory::GetForProfile(browser()->profile());
   auto* service =
@@ -590,11 +556,369 @@ IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service);
 
   // The url was stored in the disruptive notification content setting.
-  base::Value stored_value = hcsm->GetWebsiteSetting(
-      url, url,
-      ContentSettingsType::REVOKED_DISRUPTIVE_NOTIFICATION_PERMISSIONS);
-  EXPECT_FALSE(stored_value.is_none());
+  EXPECT_THAT(
+      DisruptiveNotificationContentSettingHelper(*hcsm).GetRevocationEntry(url),
+      Not(Eq(std::nullopt)));
 
-  // TODO(crbug.com/397363276): Check |GetRevokedUnusedPermissions| and whether
-  // the notification permission was revoked.
+  safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service);
+  std::optional<DisruptiveNotificationRevocationEntry> revocation_entry =
+      DisruptiveNotificationContentSettingHelper(*hcsm).GetRevocationEntry(url);
+  EXPECT_THAT(
+      revocation_entry,
+      Optional(Field(&DisruptiveNotificationRevocationEntry::revocation_state,
+                     DisruptiveNotificationRevocationState::kProposed)));
+  ASSERT_EQ(GetRevokedUnusedPermissions(hcsm).size(), 0u);
+  std::optional<std::unique_ptr<SafetyHubResult>> opt_result =
+      service->GetCachedResult();
+  ASSERT_TRUE(opt_result.has_value());
+  auto* result =
+      static_cast<RevokedPermissionsResult*>(opt_result.value().get());
+  EXPECT_EQ(result->GetRevokedPermissions().size(), 0u);
+  EXPECT_EQ(
+      CONTENT_SETTING_ALLOW,
+      hcsm->GetContentSetting(url, url, ContentSettingsType::NOTIFICATIONS));
+}
+
+class DisruptiveNotificationPermissionsRevocationBrowserTest
+    : public RevokedPermissionsServiceBrowserTest {
+ public:
+  DisruptiveNotificationPermissionsRevocationBrowserTest() {
+#if BUILDFLAG(IS_ANDROID)
+    feature_list_.InitAndEnableFeatureWithParameters(
+        features::kSafetyHubDisruptiveNotificationRevocation,
+        {{features::kSafetyHubDisruptiveNotificationRevocationShadowRun.name,
+          "false"},
+         {features::
+              kSafetyHubDisruptiveNotificationRevocationWaitingForMetricsDays
+                  .name,
+          "7"}});
+#else
+    feature_list_.InitWithFeaturesAndParameters(
+        /*enabled_features=*/
+        {{features::kSafetyHubDisruptiveNotificationRevocation,
+          {{features::kSafetyHubDisruptiveNotificationRevocationShadowRun.name,
+            "false"},
+           {features::
+                kSafetyHubDisruptiveNotificationRevocationWaitingForMetricsDays
+                    .name,
+            "7"}}}},
+        /*disabled_features=*/{
+            safe_browsing::kShowWarningsForSuspiciousNotifications});
+#endif
+  }
+
+  void SetUpOnMainThread() override {
+    RevokedPermissionsServiceBrowserTest::SetUpOnMainThread();
+    recorder_ = std::make_unique<ukm::TestAutoSetUkmRecorder>();
+  }
+
+  site_engagement::SiteEngagementService* site_engagement_service() {
+    return site_engagement::SiteEngagementServiceFactory::GetForProfile(
+        browser()->profile());
+  }
+
+  std::unique_ptr<ukm::TestAutoSetUkmRecorder> recorder_;
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+// Test that revocation is happening correctly when auto-revoke is on.
+IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
+                       TestRevokeDisruptiveNotificationPermissions) {
+  auto* hcsm =
+      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+  auto* service =
+      RevokedPermissionsServiceFactory::GetForProfile(browser()->profile());
+  GURL url = embedded_test_server()->GetURL("/title1.html");
+
+  base::SimpleTestClock clock;
+  hcsm->SetClockForTesting(&clock);
+  service->SetClockForTesting(&clock);
+  clock.SetNow(base::Time::Now());
+
+  // Force for the initial safety check to be complete before setting up a
+  // disruptive notification. Otherwise, sometimes the check is finished before
+  // and sometimes after the setup which causes flakes.
+  safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service);
+
+  // Set up a disruptive notification permission.
+  hcsm->SetContentSettingDefaultScope(
+      url, GURL(), ContentSettingsType::NOTIFICATIONS, CONTENT_SETTING_ALLOW);
+  auto* notifications_engagement_service =
+      NotificationsEngagementServiceFactory::GetForProfile(
+          browser()->profile());
+  notifications_engagement_service->RecordNotificationDisplayed(url, 50);
+
+  safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service);
+
+  // The url was stored in the disruptive notification content setting.
+  std::optional<DisruptiveNotificationRevocationEntry> revocation_entry =
+      DisruptiveNotificationContentSettingHelper(*hcsm).GetRevocationEntry(url);
+  EXPECT_THAT(
+      revocation_entry,
+      Optional(Field(&DisruptiveNotificationRevocationEntry::revocation_state,
+                     DisruptiveNotificationRevocationState::kProposed)));
+
+  // Wait for the disruptive metrics cooldown to expire.
+  clock.Advance(base::Days(8));
+
+  safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service);
+  revocation_entry =
+      DisruptiveNotificationContentSettingHelper(*hcsm).GetRevocationEntry(url);
+  EXPECT_THAT(
+      revocation_entry,
+      Optional(Field(&DisruptiveNotificationRevocationEntry::revocation_state,
+                     DisruptiveNotificationRevocationState::kRevoked)));
+
+  std::optional<std::unique_ptr<SafetyHubResult>> opt_result =
+      service->GetCachedResult();
+  ASSERT_TRUE(opt_result.has_value());
+  auto* result =
+      static_cast<RevokedPermissionsResult*>(opt_result.value().get());
+  EXPECT_EQ(result->GetRevokedPermissions().size(), 1u);
+  EXPECT_EQ(
+      CONTENT_SETTING_ASK,
+      hcsm->GetContentSetting(url, url, ContentSettingsType::NOTIFICATIONS));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    DisruptiveNotificationPermissionsRevocationBrowserTest,
+    TestRevokeFirstUnusedThenDisruptiveNotificationPermissions) {
+  auto* hcsm =
+      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+  auto* service =
+      RevokedPermissionsServiceFactory::GetForProfile(browser()->profile());
+  GURL url = embedded_test_server()->GetURL("/title1.html");
+
+  hcsm->SetContentSettingDefaultScope(
+      url, GURL(), ContentSettingsType::NOTIFICATIONS, CONTENT_SETTING_ALLOW);
+
+  // Create content setting 20 days in the past.
+  base::Time now(base::Time::Now());
+  base::Time past(now - base::Days(20));
+  base::SimpleTestClock clock;
+  clock.SetNow(past);
+  hcsm->SetClockForTesting(&clock);
+  service->SetClockForTesting(&clock);
+  content_settings::ContentSettingConstraints constraints;
+  constraints.set_track_last_visit_for_autoexpiration(true);
+  hcsm->SetContentSettingDefaultScope(url, url,
+                                      ContentSettingsType::GEOLOCATION,
+                                      CONTENT_SETTING_ALLOW, constraints);
+  clock.SetNow(now);
+
+  safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service);
+
+  // Travel through time for 40 days.
+  clock.Advance(base::Days(40));
+
+  // Set up a disruptive notification permission.
+  auto* notifications_engagement_service =
+      NotificationsEngagementServiceFactory::GetForProfile(
+          browser()->profile());
+  notifications_engagement_service->RecordNotificationDisplayed(url, 50);
+
+  // Check if the content setting turn to ASK, when auto-revocation happens.
+  safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service);
+  ASSERT_EQ(GetRevokedUnusedPermissions(hcsm).size(), 1u);
+  EXPECT_EQ(
+      CONTENT_SETTING_ASK,
+      hcsm->GetContentSetting(url, url, ContentSettingsType::GEOLOCATION));
+
+  // The url was stored in the disruptive notification content setting as
+  // proposed revocation.
+  std::optional<DisruptiveNotificationRevocationEntry> revocation_entry =
+      DisruptiveNotificationContentSettingHelper(*hcsm).GetRevocationEntry(url);
+  EXPECT_THAT(
+      revocation_entry,
+      Optional(Field(&DisruptiveNotificationRevocationEntry::revocation_state,
+                     DisruptiveNotificationRevocationState::kProposed)));
+
+  // Wait for the disruptive metrics cooldown to expire.
+  clock.Advance(base::Days(8));
+
+  safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service);
+  // Both disruptive notifications and unused permissions were revoked for the
+  // URL.
+  std::optional<std::unique_ptr<SafetyHubResult>> opt_result =
+      service->GetCachedResult();
+  ASSERT_TRUE(opt_result.has_value());
+  auto* result =
+      static_cast<RevokedPermissionsResult*>(opt_result.value().get());
+  EXPECT_EQ(result->GetRevokedPermissions().size(), 1u);
+
+  revocation_entry =
+      DisruptiveNotificationContentSettingHelper(*hcsm).GetRevocationEntry(url);
+  EXPECT_THAT(
+      revocation_entry,
+      Optional(Field(&DisruptiveNotificationRevocationEntry::revocation_state,
+                     DisruptiveNotificationRevocationState::kRevoked)));
+
+  EXPECT_EQ(result->GetRevokedPermissions().size(), 1u);
+  EXPECT_EQ(result->GetRevokedPermissions().front().permission_types.size(),
+            2u);
+  EXPECT_TRUE(result->GetRevokedPermissions().front().permission_types.contains(
+      ContentSettingsType::GEOLOCATION));
+  EXPECT_TRUE(result->GetRevokedPermissions().front().permission_types.contains(
+      ContentSettingsType::NOTIFICATIONS));
+
+  EXPECT_EQ(
+      CONTENT_SETTING_ASK,
+      hcsm->GetContentSetting(url, url, ContentSettingsType::NOTIFICATIONS));
+  EXPECT_EQ(
+      CONTENT_SETTING_ASK,
+      hcsm->GetContentSetting(url, url, ContentSettingsType::GEOLOCATION));
+}
+
+IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
+                       TestProposedFalsePositiveOnPageVisit) {
+  auto* hcsm =
+      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+  GURL url = embedded_test_server()->GetURL("/title1.html");
+
+  // Set up a proposed revoked notification.
+  DisruptiveNotificationRevocationEntry revoked_entry(
+      /*revocation_state=*/DisruptiveNotificationRevocationState::kProposed,
+      /*site_engagement=*/0.0,
+      /*daily_notification_count=*/5,
+      /*timestamp=*/base::Time::Now() - base::Days(3));
+  DisruptiveNotificationContentSettingHelper(*hcsm).PersistRevocationEntry(
+      url, revoked_entry);
+
+  // Visit the site.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+
+  auto interaction_entries = recorder_->GetEntriesByName(
+      "SafetyHub.DisruptiveNotificationRevocations.FalsePositiveInteraction");
+  ASSERT_EQ(1u, interaction_entries.size());
+  auto* interaction_entry = interaction_entries[0].get();
+  recorder_->ExpectEntryMetric(interaction_entry, "DaysSinceRevocation", 3);
+  recorder_->ExpectEntryMetric(
+      interaction_entry, "Reason",
+      static_cast<int>(DisruptiveNotificationPermissionsManager::
+                           FalsePositiveReason::kPageVisit));
+  // Site engagement hasn't been updated yet.
+  recorder_->ExpectEntryMetric(interaction_entry, "NewSiteEngagement", 0.0);
+  recorder_->ExpectEntryMetric(interaction_entry, "OldSiteEngagement", 0.0);
+  recorder_->ExpectEntryMetric(interaction_entry, "DailyAverageVolume", 5);
+}
+
+IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
+                       TestRevokedFalsePositiveOnPageVisit) {
+  auto* hcsm =
+      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+  GURL url = embedded_test_server()->GetURL("/title1.html");
+
+  // Set up a revoked notification.
+  DisruptiveNotificationRevocationEntry proposed_entry(
+      /*revocation_state=*/DisruptiveNotificationRevocationState::kRevoked,
+      /*site_engagement=*/0.0,
+      /*daily_notification_count=*/5,
+      /*timestamp=*/base::Time::Now() - base::Days(3));
+
+  DisruptiveNotificationContentSettingHelper(*hcsm).PersistRevocationEntry(
+      url, proposed_entry);
+
+  // Visit the page.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+
+  auto interaction_entries = recorder_->GetEntriesByName(
+      "SafetyHub.DisruptiveNotificationRevocations.FalsePositiveInteraction");
+  ASSERT_EQ(1u, interaction_entries.size());
+  auto* interaction_entry = interaction_entries[0].get();
+  recorder_->ExpectEntryMetric(interaction_entry, "DaysSinceRevocation", 3);
+  recorder_->ExpectEntryMetric(
+      interaction_entry, "Reason",
+      static_cast<int>(DisruptiveNotificationPermissionsManager::
+                           FalsePositiveReason::kPageVisit));
+  // Site engagement hasn't been updated yet.
+  recorder_->ExpectEntryMetric(interaction_entry, "NewSiteEngagement", 0.0);
+  recorder_->ExpectEntryMetric(interaction_entry, "OldSiteEngagement", 0.0);
+  recorder_->ExpectEntryMetric(interaction_entry, "DailyAverageVolume", 5);
+
+  auto revocation_entries = recorder_->GetEntriesByName(
+      "SafetyHub.DisruptiveNotificationRevocations.FalsePositiveRevocation");
+  ASSERT_EQ(1u, revocation_entries.size());
+  auto* revocation_entry = revocation_entries[0].get();
+  recorder_->ExpectEntryMetric(revocation_entry, "DaysSinceRevocation", 3);
+  recorder_->ExpectEntryMetric(revocation_entry, "PageVisitCount", 1);
+  recorder_->ExpectEntryMetric(revocation_entry, "NotificationClickCount", 0);
+  recorder_->ExpectEntryMetric(revocation_entry, "NewSiteEngagement", 0.0);
+  recorder_->ExpectEntryMetric(revocation_entry, "OldSiteEngagement", 0.0);
+  recorder_->ExpectEntryMetric(revocation_entry, "DailyAverageVolume", 5);
+
+  // Switch to a different site.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(),
+                                           GURL("https://www.another.site")));
+
+  // Visit the page again, the revocation has already reported so it won't be
+  // reported again.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+  EXPECT_EQ(
+      2u, recorder_
+              ->GetEntriesByName("SafetyHub.DisruptiveNotificationRevocations."
+                                 "FalsePositiveInteraction")
+              .size());
+  EXPECT_EQ(
+      1u, recorder_
+              ->GetEntriesByName("SafetyHub.DisruptiveNotificationRevocations."
+                                 "FalsePositiveRevocation")
+              .size());
+}
+
+// TODO(crbug.com/406472515): Add a test for non persistent notification click.
+IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
+                       TestProposedFalsePositiveOnPersistentNotificationClick) {
+  auto* hcsm =
+      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+  auto display_service_tester =
+      std::make_unique<NotificationDisplayServiceTester>(browser()->profile());
+  auto* notifications_service =
+      PlatformNotificationServiceFactory::GetForProfile(browser()->profile());
+
+  GURL url = embedded_test_server()->GetURL("/title1.html");
+  const char kNotificationId[] = "my-notification-id";
+
+  // Set up a proposed revoked disruptive notification. The notification are not
+  // yet revoked.
+  hcsm->SetContentSettingDefaultScope(
+      url, GURL(), ContentSettingsType::NOTIFICATIONS, CONTENT_SETTING_ALLOW);
+
+  DisruptiveNotificationRevocationEntry proposed_entry(
+      /*revocation_state=*/DisruptiveNotificationRevocationState::kProposed,
+      /*site_engagement=*/0.0,
+      /*daily_notification_count=*/5,
+      /*timestamp=*/base::Time::Now() - base::Days(3));
+  DisruptiveNotificationContentSettingHelper(*hcsm).PersistRevocationEntry(
+      url, proposed_entry);
+
+  // Show a notification.
+  blink::PlatformNotificationData data;
+  data.title = u"My notification's title";
+  data.body = u"Hello, world!";
+  notifications_service->DisplayPersistentNotification(
+      kNotificationId, url, url, data, blink::NotificationResources());
+
+  // Click on the notification.
+  display_service_tester->SimulateClick(
+      NotificationHandler::Type::WEB_PERSISTENT, kNotificationId,
+      0 /*action_index*/, std::nullopt);
+
+  auto interaction_entries = recorder_->GetEntriesByName(
+      "SafetyHub.DisruptiveNotificationRevocations.FalsePositiveInteraction");
+  ASSERT_EQ(1u, interaction_entries.size());
+  auto* interaction_entry = interaction_entries[0].get();
+  recorder_->ExpectEntryMetric(interaction_entry, "DaysSinceRevocation", 3);
+  recorder_->ExpectEntryMetric(
+      interaction_entry, "Reason",
+      static_cast<int>(DisruptiveNotificationPermissionsManager::
+                           FalsePositiveReason::kPersistentNotificationClick));
+  recorder_->ExpectEntryMetric(interaction_entry, "NewSiteEngagement", 2.0);
+  recorder_->ExpectEntryMetric(interaction_entry, "OldSiteEngagement", 0.0);
+  recorder_->ExpectEntryMetric(interaction_entry, "DailyAverageVolume", 5);
+
+  auto revocation_entries = recorder_->GetEntriesByName(
+      "SafetyHub.DisruptiveNotificationRevocations.FalsePositiveRevocation");
+  ASSERT_EQ(0u, revocation_entries.size());
 }

@@ -14,11 +14,8 @@
 // MLOperand log(MLOperand input);
 
 
-const getLogPrecisionTolerance = (graphResources) => {
-  const toleranceValueDict = {float32: 1 / 1024, float16: 1 / 1024};
-  const expectedDataType =
-      getExpectedDataTypeOfSingleOutput(graphResources.expectedOutputs);
-  return {metricType: 'ATOL', value: toleranceValueDict[expectedDataType]};
+const getLogPrecisionTolerance = () => {
+  return {metricType: 'ULP', value: 8};
 };
 
 const logTests = [
@@ -513,7 +510,7 @@ const logTests = [
 ];
 
 if (navigator.ml) {
-  logTests.forEach((test) => {
+  logTests.filter(isTargetTest).forEach((test) => {
     webnn_conformance_test(
         buildAndExecuteGraph, getLogPrecisionTolerance, test);
   });

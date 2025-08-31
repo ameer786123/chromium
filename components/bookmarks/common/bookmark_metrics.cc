@@ -184,6 +184,10 @@ void RecordUserFolderLoadStatsOnProfileLoad(const UserFolderLoadStats& stats) {
   base::UmaHistogramCustomCounts("Bookmarks.UserFolder.OnProfileLoad.Count",
                                  stats.total_folders, /*min=*/1,
                                  /*exclusive_max=*/300, /*buckets=*/100);
+
+  base::UmaHistogramCounts100(
+      "Bookmarks.UserFolder.OnProfileLoad.BookmarkBarTopLevelItems",
+      stats.bookmark_bar_top_level_items);
 }
 
 void RecordCloneBookmarkNode(int num_cloned) {
@@ -200,6 +204,16 @@ void RecordIdsReassignedOnProfileLoad(StorageFileForUma storage_file,
       base::StrCat({"Bookmarks.IdsReassigned.OnProfileLoad",
                     GetStorageFileSuffixForMetrics(storage_file)}),
       ids_reassigned);
+}
+
+void RecordBookmarksExistInStorageType(
+    bool bookmark_bar_only,
+    BookmarksExistInStorageType storage_type) {
+  base::UmaHistogramEnumeration(
+      base::StrCat({"Bookmarks.BookmarksExistInStorageType.",
+                    bookmark_bar_only ? "UnderBookmarksBar"
+                                      : "ConsideringAllBookmarks"}),
+      storage_type);
 }
 
 }  // namespace bookmarks::metrics

@@ -25,6 +25,8 @@ import android.util.Pair;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.webkit.JavascriptInterface;
 
 import androidx.test.InstrumentationRegistry;
@@ -57,6 +59,7 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.TimeUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
@@ -105,7 +108,7 @@ public class AwContentsTest extends AwParameterizedTest {
 
     @Rule public FakeTimeTestRule mFakeTimeTestRule = new FakeTimeTestRule();
 
-    private TestAwContentsClient mContentsClient = new TestAwContentsClient();
+    private final TestAwContentsClient mContentsClient = new TestAwContentsClient();
 
     @Test
     @SmallTest
@@ -209,21 +212,22 @@ public class AwContentsTest extends AwParameterizedTest {
                     awContents.invokeZoomPicker();
                     awContents.onResume();
                     awContents.stopLoading();
-                    awContents.onWindowVisibilityChanged(View.VISIBLE);
-                    awContents.requestFocus();
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.VISIBLE);
+                    awContents.getViewMethods().requestFocus();
                     awContents.isMultiTouchZoomSupported();
                     awContents.setOverScrollMode(View.OVER_SCROLL_NEVER);
                     awContents.pauseTimers();
-                    awContents.onContainerViewScrollChanged(200, 200, 100, 100);
-                    awContents.computeScroll();
-                    awContents.onMeasure(100, 100);
-                    awContents.onDraw(new Canvas());
+                    awContents.getViewMethods().onContainerViewScrollChanged(200, 200, 100, 100);
+                    awContents.getViewMethods().computeScroll();
+                    awContents.getViewMethods().onMeasure(100, 100);
+                    Canvas canvas = new Canvas();
+                    awContents.getViewMethods().onDraw(canvas);
                     awContents.getMostRecentProgress();
-                    Assert.assertEquals(0, awContents.computeHorizontalScrollOffset());
+                    Assert.assertEquals(
+                            0, awContents.getViewMethods().computeHorizontalScrollOffset());
                     Assert.assertEquals(0, awContents.getContentWidthCss());
-                    awContents.onKeyUp(
-                            KeyEvent.KEYCODE_BACK,
-                            new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU));
+                    KeyEvent event = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU);
+                    awContents.getViewMethods().onKeyUp(KeyEvent.KEYCODE_BACK, event);
                 });
     }
 
@@ -571,7 +575,7 @@ public class AwContentsTest extends AwParameterizedTest {
 
     static class JavaScriptObject {
 
-        private CallbackHelper mCallbackHelper;
+        private final CallbackHelper mCallbackHelper;
 
         public JavaScriptObject(CallbackHelper callbackHelper) {
             mCallbackHelper = callbackHelper;
@@ -1123,7 +1127,6 @@ public class AwContentsTest extends AwParameterizedTest {
     @Test
     @Feature({"AndroidWebView"})
     @MediumTest
-    @MinAndroidSdkLevel(Build.VERSION_CODES.P)
     public void testHardwareRenderingSmokeTestVulkanWhereSupported() throws Throwable {
         // Manually curated list.
         final String[] supportedModels = {
@@ -1660,7 +1663,7 @@ public class AwContentsTest extends AwParameterizedTest {
             return mTasks.size();
         }
 
-        private List<Pair<Runnable, Long>> mTasks = new ArrayList<Pair<Runnable, Long>>();
+        private final List<Pair<Runnable, Long>> mTasks = new ArrayList<Pair<Runnable, Long>>();
     }
 
     @Test
@@ -1682,7 +1685,7 @@ public class AwContentsTest extends AwParameterizedTest {
                 () -> {
                     var postTask = new FakePostDelayedTask();
                     awContents.setPostDelayedTaskForTesting(postTask);
-                    awContents.onWindowVisibilityChanged(View.INVISIBLE);
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.INVISIBLE);
 
                     // Delayed release task.
                     Assert.assertEquals(1, postTask.getPendingTasksCount());
@@ -1692,7 +1695,7 @@ public class AwContentsTest extends AwParameterizedTest {
                     Assert.assertEquals(1, postTask.getPendingTasksCount());
                     Assert.assertFalse(awContents.hasDrawFunctor());
 
-                    awContents.onWindowVisibilityChanged(View.VISIBLE);
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.VISIBLE);
                     Assert.assertFalse(awContents.hasDrawFunctor());
 
                     // Metrics task will not report histograms because we went back to foreground in
@@ -1734,13 +1737,13 @@ public class AwContentsTest extends AwParameterizedTest {
                 () -> {
                     var postTask = new FakePostDelayedTask();
                     awContents.setPostDelayedTaskForTesting(postTask);
-                    awContents.onWindowVisibilityChanged(View.INVISIBLE);
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.INVISIBLE);
 
                     Assert.assertEquals(1, postTask.getPendingTasksCount());
 
                     postTask.fastForwardBy(AwContents.FUNCTOR_RECLAIM_DELAY_MS / 2);
-                    awContents.onWindowVisibilityChanged(View.VISIBLE);
-                    awContents.onWindowVisibilityChanged(View.INVISIBLE);
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.VISIBLE);
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.INVISIBLE);
                     Assert.assertEquals(1, postTask.getPendingTasksCount());
                     postTask.fastForwardBy(AwContents.FUNCTOR_RECLAIM_DELAY_MS / 2);
 
@@ -1750,8 +1753,8 @@ public class AwContentsTest extends AwParameterizedTest {
                     Assert.assertEquals(1, postTask.getPendingTasksCount());
 
                     // Multiple transitions do not post multiple tasks.
-                    awContents.onWindowVisibilityChanged(View.VISIBLE);
-                    awContents.onWindowVisibilityChanged(View.INVISIBLE);
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.VISIBLE);
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.INVISIBLE);
                     Assert.assertEquals(1, postTask.getPendingTasksCount());
 
                     // Functor is reclaimed after enough continuous time in background.
@@ -1796,7 +1799,7 @@ public class AwContentsTest extends AwParameterizedTest {
 
                     // Not required to happen in background, but this is how the notification is
                     // dispatched in real code.
-                    awContents.onWindowVisibilityChanged(View.INVISIBLE);
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.INVISIBLE);
                     Assert.assertTrue(awContents.hasDrawFunctor());
                     Assert.assertEquals(1, postTask.getPendingTasksCount());
 
@@ -1814,7 +1817,7 @@ public class AwContentsTest extends AwParameterizedTest {
                     Assert.assertEquals(1, postTask.getPendingTasksCount());
                     histograms.assertExpected();
 
-                    awContents.onWindowVisibilityChanged(View.VISIBLE);
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.VISIBLE);
                     Assert.assertFalse(awContents.hasDrawFunctor());
                 });
 
@@ -1845,7 +1848,7 @@ public class AwContentsTest extends AwParameterizedTest {
         // Frame metrics listener is detached when AwContents becomes invisible.
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    awContents.onWindowVisibilityChanged(View.INVISIBLE);
+                    awContents.getViewMethods().onWindowVisibilityChanged(View.INVISIBLE);
                 });
 
         Assert.assertFalse(testView.isBackedByHardwareView());
@@ -1884,7 +1887,38 @@ public class AwContentsTest extends AwParameterizedTest {
                         0);
         HistogramWatcher watcher =
                 HistogramWatcher.newSingleRecordWatcher("Input.ToolType.Android", 20);
-        Assert.assertFalse(awContents.onTouchEvent(event));
+        Assert.assertFalse(awContents.getViewMethods().onTouchEvent(event));
         watcher.assertExpected();
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
+    @MinAndroidSdkLevel(Build.VERSION_CODES.R)
+    public void testBottomInsets() throws Exception {
+        mActivityTestRule.startBrowserProcess();
+        AwTestContainerView containerView =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
+        AwContents awContents = containerView.getAwContents();
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        mActivityTestRule.loadDataSync(
+                awContents,
+                mContentsClient.getOnPageFinishedHelper(),
+                "<html><body><input id='in' /></body></html>",
+                "text/html",
+                false);
+
+        Assert.assertEquals(
+                0, awContents.getViewAndroidDelegateForTesting().getViewportInsetBottom());
+        mActivityTestRule.executeJavaScriptAndWaitForResult(
+                awContents, mContentsClient, "document.getElementById('in').focus()");
+        // Element is focused but the keyboard won't show without user interaction. Force show it
+        // using the WindowInsetsController.
+        WindowInsetsController controller = containerView.getRootView().getWindowInsetsController();
+        Assert.assertNotNull(controller);
+        controller.show(WindowInsets.Type.ime());
+        CriteriaHelper.pollUiThread(
+                () -> awContents.getViewAndroidDelegateForTesting().getViewportInsetBottom() > 0,
+                "Viewport bottom inset was not updated after the soft keyboard was displayed.");
     }
 }

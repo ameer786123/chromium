@@ -46,6 +46,13 @@ class XzOperationTest : public testing::Test {
         [&](base::Value::Dict ping) { pings_.push_back(std::move(ping)); });
   }
 
+  base::RepeatingCallback<void(update_client::ComponentState)>
+  MakeStateCallback() {
+    return base::BindRepeating([](update_client::ComponentState state) {
+      ASSERT_EQ(state, update_client::ComponentState::kDecompressing);
+    });
+  }
+
   SEQUENCE_CHECKER(sequence_checker_);
   base::RunLoop loop_;
   std::vector<base::Value::Dict> pings_;
@@ -56,8 +63,10 @@ class XzOperationTest : public testing::Test {
 
 TEST_F(XzOperationTest, Success) {
   base::FilePath in_file = CopyToTemp("file1.xz");
-  XzOperation(base::MakeRefCounted<InProcessUnzipperFactory>()->Create(),
-              MakePingCallback(), in_file,
+  XzOperation(base::MakeRefCounted<InProcessUnzipperFactory>(
+                  InProcessUnzipperFactory::SymlinkOption::DONT_PRESERVE)
+                  ->Create(),
+              MakePingCallback(), MakeStateCallback(), in_file,
               base::BindLambdaForTesting(
                   [&](base::expected<base::FilePath, CategorizedError> result) {
                     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -75,8 +84,10 @@ TEST_F(XzOperationTest, Success) {
 
 TEST_F(XzOperationTest, BadPatch) {
   base::FilePath in_file = CopyToTemp("file1");
-  XzOperation(base::MakeRefCounted<InProcessUnzipperFactory>()->Create(),
-              MakePingCallback(), in_file,
+  XzOperation(base::MakeRefCounted<InProcessUnzipperFactory>(
+                  InProcessUnzipperFactory::SymlinkOption::DONT_PRESERVE)
+                  ->Create(),
+              MakePingCallback(), MakeStateCallback(), in_file,
               base::BindLambdaForTesting(
                   [&](base::expected<base::FilePath, CategorizedError> result) {
                     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);

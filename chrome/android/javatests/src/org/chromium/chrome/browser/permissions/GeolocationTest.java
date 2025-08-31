@@ -50,7 +50,7 @@ public class GeolocationTest {
 
     private void runTest(String javascript, int nUpdates, boolean withGesture, boolean isDialog)
             throws Exception {
-        Tab tab = mPermissionRule.getActivity().getActivityTab();
+        Tab tab = mPermissionRule.getActivityTab();
         PermissionUpdateWaiter updateWaiter =
                 new PermissionUpdateWaiter("Count:", mPermissionRule.getActivity());
         ThreadUtils.runOnUiThreadBlocking(() -> tab.addObserver(updateWaiter));
@@ -63,7 +63,7 @@ public class GeolocationTest {
     @Test
     @MediumTest
     @Feature({"Location", "Main"})
-    @DisableIf.Device(DeviceFormFactor.TABLET) // crbug.com/41486136
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // crbug.com/41486136
     public void testGeolocationPlumbingAllowedDialog() throws Exception {
         runTest("initiate_getCurrentPosition()", 1, true, true);
     }

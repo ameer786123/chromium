@@ -31,9 +31,14 @@ DesktopBrowserFrameAuraLinux::DesktopBrowserFrameAuraLinux(
 
 DesktopBrowserFrameAuraLinux::~DesktopBrowserFrameAuraLinux() = default;
 
-views::Widget::InitParams DesktopBrowserFrameAuraLinux::GetWidgetParams() {
-  views::Widget::InitParams params(
-      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
+void DesktopBrowserFrameAuraLinux::OnHostClosed() {
+  host_ = nullptr;
+  DesktopBrowserFrameAura::OnHostClosed();
+}
+
+views::Widget::InitParams DesktopBrowserFrameAuraLinux::GetWidgetParams(
+    views::Widget::InitParams::Ownership ownership) {
+  views::Widget::InitParams params(ownership);
   params.native_widget = this;
 
   // Set up a custom WM_CLASS for some sorts of window types. This allows
@@ -68,6 +73,10 @@ views::Widget::InitParams DesktopBrowserFrameAuraLinux::GetWidgetParams() {
 }
 
 bool DesktopBrowserFrameAuraLinux::UseCustomFrame() const {
+  if (!browser_view()) {
+    return false;
+  }
+
   // If the platform does not support server side decorations, ignore the user
   // preference and return true.
   if (!ui::OzonePlatform::GetInstance()
@@ -92,11 +101,20 @@ void DesktopBrowserFrameAuraLinux::TabDraggingKindChanged(
   host_->TabDraggingKindChanged(tab_drag_kind);
 }
 
+void DesktopBrowserFrameAuraLinux::ClientDestroyedWidget() {
+  use_custom_frame_pref_.Destroy();
+  DesktopBrowserFrameAura::ClientDestroyedWidget();
+}
+
 bool DesktopBrowserFrameAuraLinux::ShouldDrawRestoredFrameShadow() const {
   return host_->SupportsClientFrameShadow() && UseCustomFrame();
 }
 
 void DesktopBrowserFrameAuraLinux::OnUseCustomChromeFrameChanged() {
+  if (!browser_frame()) {
+    return;
+  }
+
   // Tell the window manager to add or remove system borders.
   browser_frame()->set_frame_type(UseCustomFrame()
                                       ? views::Widget::FrameType::kForceCustom

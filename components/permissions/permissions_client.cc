@@ -6,6 +6,7 @@
 
 #include "base/functional/callback.h"
 #include "build/build_config.h"
+#include "components/content_settings/core/common/content_settings.h"
 #include "components/permissions/permission_request_enums.h"
 #include "components/permissions/permission_uma_util.h"
 #include "content/public/browser/web_contents.h"
@@ -43,8 +44,9 @@ double PermissionsClient::GetSiteEngagementScore(
 void PermissionsClient::AreSitesImportant(
     content::BrowserContext* browser_context,
     std::vector<std::pair<url::Origin, bool>>* origins) {
-  for (auto& entry : *origins)
+  for (auto& entry : *origins) {
     entry.second = false;
+  }
 }
 
 bool PermissionsClient::IsCookieDeletionDisabled(
@@ -88,15 +90,15 @@ void PermissionsClient::TriggerPromptHatsSurveyIfEnabled(
     std::optional<permissions::feature_params::PermissionElementPromptPosition>
         pepc_prompt_position,
     ContentSetting initial_permission_status,
-    base::OnceCallback<void()> hats_shown_callback_) {}
+    base::OnceCallback<void()> hats_shown_callback,
+    std::optional<PermissionHatsTriggerHelper::PreviewParametersForHats>
+        preview_parameters) {}
 
 void PermissionsClient::OnPromptResolved(
-    RequestType request_type,
+    const PermissionRequest* request,
     PermissionAction action,
-    const GURL& origin,
     PermissionPromptDisposition prompt_disposition,
     PermissionPromptDispositionReason prompt_disposition_reason,
-    PermissionRequestGestureType gesture_type,
     std::optional<QuietUiReason> quiet_ui_reason,
     base::TimeDelta prompt_display_duration,
     std::optional<permissions::feature_params::PermissionElementPromptPosition>
@@ -156,18 +158,6 @@ bool PermissionsClient::IsDseOrigin(content::BrowserContext* browser_context,
   return false;
 }
 
-infobars::InfoBarManager* PermissionsClient::GetInfoBarManager(
-    content::WebContents* web_contents) {
-  return nullptr;
-}
-
-infobars::InfoBar* PermissionsClient::MaybeCreateInfoBar(
-    content::WebContents* web_contents,
-    ContentSettingsType type,
-    base::WeakPtr<PermissionPromptAndroid> prompt) {
-  return nullptr;
-}
-
 std::unique_ptr<PermissionsClient::PermissionMessageDelegate>
 PermissionsClient::MaybeCreateMessageUI(
     content::WebContents* web_contents,
@@ -208,7 +198,7 @@ bool PermissionsClient::CanRequestDevicePermission(
 
 bool PermissionsClient::IsPermissionAllowedByDevicePolicy(
     content::WebContents* web_contents,
-    ContentSetting setting,
+    PermissionSetting setting,
     const content_settings::SettingInfo& info,
     ContentSettingsType type) const {
   return false;
@@ -216,7 +206,7 @@ bool PermissionsClient::IsPermissionAllowedByDevicePolicy(
 
 bool PermissionsClient::IsPermissionBlockedByDevicePolicy(
     content::WebContents* web_contents,
-    ContentSetting setting,
+    PermissionSetting setting,
     const content_settings::SettingInfo& info,
     ContentSettingsType type) const {
   return false;
@@ -228,6 +218,11 @@ bool PermissionsClient::IsSystemDenied(ContentSettingsType type) const {
 
 bool PermissionsClient::CanPromptSystemPermission(
     ContentSettingsType type) const {
+  return false;
+}
+
+bool PermissionsClient::IsActorOperatingOnWebContents(
+    content::WebContents* web_contents) const {
   return false;
 }
 

@@ -12,12 +12,12 @@
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
-#include "chrome/browser/extensions/pending_extension_manager.h"
 #include "components/crx_file/id_util.h"
 #include "components/sync/model/string_ordinal.h"
 #include "components/version_info/version_info.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/install_flag.h"
+#include "extensions/browser/pending_extension_manager.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/features/feature_channel.h"
@@ -156,8 +156,8 @@ TEST_F(SharedModuleServiceUnitTest, PruneSharedModulesOnUninstall) {
 
   // Uninstall the extension that imports our module.
   std::u16string error;
-  service()->UninstallExtension(importing_extension->id(),
-                                UNINSTALL_REASON_FOR_TESTING, &error);
+  registrar()->UninstallExtension(importing_extension->id(),
+                                  UNINSTALL_REASON_FOR_TESTING, &error);
   EXPECT_TRUE(error.empty());
 
   // Since the module was only referenced by that single extension, it should
@@ -202,7 +202,7 @@ TEST_F(SharedModuleServiceUnitTest, PruneSharedModulesOnUpdate) {
           "1.1");
   EXPECT_TRUE(InstallExtension(importing_extension_2.get(), true));
 
-  // Since the extension v1.1 depends the module 2 insteand module 1.
+  // Since the extension v1.1 depends the module 2 instead module 1.
   // So the module 1 should be uninstalled.
   EXPECT_FALSE(registry()->GetExtensionById(shared_module_1->id(),
                                             ExtensionRegistry::EVERYTHING));
@@ -287,8 +287,8 @@ TEST_F(SharedModuleServiceUnitTest, PruneMultipleSharedModules) {
 
   // Uninstall the extension that imports our modules.
   std::u16string error;
-  service()->UninstallExtension(importing_extension->id(),
-                                UNINSTALL_REASON_FOR_TESTING, &error);
+  registrar()->UninstallExtension(importing_extension->id(),
+                                  UNINSTALL_REASON_FOR_TESTING, &error);
   EXPECT_TRUE(error.empty());
 
   // Since the modules were only referenced by that single extension, they

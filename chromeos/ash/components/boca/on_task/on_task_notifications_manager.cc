@@ -14,6 +14,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/sequence_checker.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/timer/timer.h"
 #include "chromeos/ash/components/boca/on_task/notification_constants.h"
@@ -227,9 +228,8 @@ void OnTaskNotificationsManager::CreateNotificationInternal(
       // When the countdown finishes, immediately clear the last countdown
       // notification.
       ClearNotification(params.id);
-    } else {
-      StopProcessingNotification(params.id);
     }
+    StopProcessingNotification(params.id);
     return;
   }
 
@@ -250,6 +250,11 @@ void OnTaskNotificationsManager::CreateNotificationInternal(
       /*origin_url=*/GURL(), params.notifier_id,
       message_center::RichNotificationData(),
       /*delegate=*/nullptr, icon, SystemNotificationWarningLevel::NORMAL);
+
+  // Ensure notification is visible over fullscreen windows (for example, locked
+  // quiz).
+  notification->set_fullscreen_visibility(
+      message_center::FullscreenVisibility::OVER_USER);
   delegate_->ShowNotification(std::move(notification));
 }
 

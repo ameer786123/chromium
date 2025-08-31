@@ -21,7 +21,7 @@
 #include "components/omnibox/browser/omnibox_suggestions_watcher.h"
 #include "extensions/buildflags/buildflags.h"
 
-#if !BUILDFLAG(ENABLE_EXTENSIONS)
+#if !BUILDFLAG(ENABLE_EXTENSIONS_CORE)
 #error "Should not be included when extensions are disabled"
 #endif
 
@@ -65,9 +65,7 @@ class KeywordExtensionsDelegateImpl
   void OnOmniboxDefaultSuggestionChanged() override;
 
   ACMatches* matches() { return &provider_->matches_; }
-  void set_done(bool done) {
-    provider_->done_ = done;
-  }
+  void set_done(bool done) { provider_->done_ = done; }
 
   // Notifies the KeywordProvider about asynchronous updates from the extension.
   void OnProviderUpdate(bool updated_matches);

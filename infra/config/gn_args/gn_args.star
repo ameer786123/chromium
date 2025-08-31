@@ -4,7 +4,7 @@
 
 # Execute this file to set up some common GN arg configs for Chromium builders.
 
-load("//lib/gn_args.star", "gn_args")
+load("@chromium-luci//gn_args.star", "gn_args")
 
 gn_args.config(
     name = "afl",
@@ -281,6 +281,11 @@ gn_args.config(
 )
 
 gn_args.config(
+    name = "cast_receiver_perf_optimized",
+    args_file = "//build/config/fuchsia/perf_optimized_cast_receiver_args.gn",
+)
+
+gn_args.config(
     name = "cast_receiver_size_optimized",
     args_file = "//build/config/fuchsia/size_optimized_cast_receiver_args.gn",
 )
@@ -405,6 +410,24 @@ gn_args.config(
         "clang",
     ],
 )
+
+gn_args.config(
+    name = "rust_tot",
+    args = {
+        "rust_force_head_revision": True,
+    },
+    configs = [
+        "clang",
+    ],
+)
+
+gn_args.config(
+    name = "no_treat_warnings_as_errors",
+    args = {
+        "treat_warnings_as_errors": False,
+    },
+)
+
 gn_args.config(
     name = "codesearch_builder",
     args = {
@@ -574,13 +597,6 @@ gn_args.config(
     name = "enable_rust_mojom_bindings",
     args = {
         "enable_rust_mojom_bindings": True,
-    },
-)
-
-gn_args.config(
-    name = "enable_rust_png",
-    args = {
-        "enable_rust_png": True,
     },
 )
 
@@ -779,6 +795,13 @@ gn_args.config(
 )
 
 gn_args.config(
+    name = "hwasan",
+    args = {
+        "is_hwasan": True,
+    },
+)
+
+gn_args.config(
     name = "reclient",
     args = {
         "use_reclient": True,
@@ -849,6 +872,11 @@ gn_args.config(
 )
 
 gn_args.config(
+    name = "tvos_platform",
+    args = {"target_platform": "tvos"},
+)
+
+gn_args.config(
     name = "is_skylab",
     args = {
         "is_skylab": True,
@@ -869,9 +897,9 @@ gn_args.config(
 
 # Do not use this for non-FYI builders.
 gn_args.config(
-    name = "libcxx_modules",
+    name = "clang_modules",
     args = {
-        "use_libcxx_modules": True,
+        "use_clang_modules": True,
     },
 )
 
@@ -1191,6 +1219,14 @@ gn_args.config(
         "try_builder",
         "no_symbols",
     ],
+)
+
+gn_args.config(
+    name = "release_with_dchecks",
+    args = {
+        "is_debug": False,
+        "dcheck_always_on": True,
+    },
 )
 
 gn_args.config(

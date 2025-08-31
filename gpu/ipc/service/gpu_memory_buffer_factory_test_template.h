@@ -11,6 +11,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
+#include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "gpu/ipc/service/gpu_memory_buffer_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -53,11 +54,6 @@ class GpuMemoryBufferFactoryTest : public testing::Test {
 TYPED_TEST_SUITE_P(GpuMemoryBufferFactoryTest);
 
 TYPED_TEST_P(GpuMemoryBufferFactoryTest, CreateGpuMemoryBuffer) {
-  const gfx::GpuMemoryBufferId kBufferId(1);
-  const int kClientId = 1;
-
-  gfx::Size buffer_size(2, 2);
-
   for (auto format : gfx::GetBufferFormatsForTesting()) {
     gfx::BufferUsage usages[] = {
         gfx::BufferUsage::GPU_READ,
@@ -75,16 +71,15 @@ TYPED_TEST_P(GpuMemoryBufferFactoryTest, CreateGpuMemoryBuffer) {
     };
     for (auto usage : usages) {
       if (!gpu::GpuMemoryBufferSupport::
-              IsNativeGpuMemoryBufferConfigurationSupported(format, usage)) {
+              IsNativeGpuMemoryBufferConfigurationSupportedForTesting(format,
+                                                                      usage)) {
         continue;
       }
 
       gfx::GpuMemoryBufferHandle handle =
-          TestFixture::factory_.CreateGpuMemoryBuffer(
-              kBufferId, buffer_size, /*framebuffer_size=*/buffer_size, format,
-              usage, kClientId, gpu::kNullSurfaceHandle);
+          TestFixture::factory_.CreateNativeGmbHandle(
+              gfx::Size(2, 2), viz::GetSharedImageFormat(format), usage);
       EXPECT_NE(handle.type, gfx::EMPTY_BUFFER);
-      TestFixture::factory_.DestroyGpuMemoryBuffer(kBufferId, kClientId);
     }
   }
 }

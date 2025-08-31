@@ -258,6 +258,18 @@
       <message name="IDS_QUICK_ANSWERS_USER_CONSENT_TITLE_UNIT_CONVERSION_INTENT" desc="Title text of the dialog that opens up to seek user-consent for the Quick Answers feature when the supported intent is generated from the query.">
         Convert "<ph name="query">$1<ex>1kg</ex></ph>"
       </message>
+      <message name="IDS_QUICK_ANSWERS_MAGIC_BOOST_USER_NOTICE_VIEW_A11Y_INFO_DESC_TEXT" desc="A11y description text for the Quick Answers Magic Boost user notice view.">
+        Right-click or press and hold to get definitions, translations, or unit conversions. Use Left or Right arrow keys to manage this feature.
+      </message>
+      <message name="IDS_QUICK_ANSWERS_MAGIC_BOOST_USER_CONSENT_DEFINITION_INTENT_LABEL_BUTTON" desc="Button label for Dictionary intent in the magic boost user consent view which leads to the magic boost disclaimer UI when clicked upon.">
+        Define "<ph name="query">$1<ex>unfathomable</ex></ph>"
+      </message>
+      <message name="IDS_QUICK_ANSWERS_MAGIC_BOOST_USER_CONSENT_TRANSLATION_INTENT_LABEL_BUTTON" desc="Button label for Translation intent in the magic boost user consent view which leads to the magic boost disclaimer UI when clicked upon.">
+        Translate "<ph name="query">$1<ex>信息</ex></ph>"
+      </message>
+      <message name="IDS_QUICK_ANSWERS_MAGIC_BOOST_USER_CONSENT_UNIT_CONVERSION_INTENT_LABEL_BUTTON" desc="Button label for Unit Conversion intent in the magic boost user consent view which leads to the magic boost disclaimer UI when clicked upon.">
+        Convert "<ph name="query">$1<ex>1kg</ex></ph>"
+      </message>
       <message name="IDS_QUICK_ANSWERS_USER_CONSENT_VIEW_TITLE_TEXT_WITH_INTENT" desc="Title text of the dialog that opens up to seek user-consent for the Quick Answers feature when supported intent is generated.">
         Get the <ph name="intent">$1<ex>definition</ex></ph> for "<ph name="query">$2<ex>unfathomable</ex></ph>" and more
       </message>
@@ -595,7 +607,7 @@
       <message name="IDS_ARC_SDK_VERSION_UNKNOWN" desc="Message displayed when the Android SDK Version can not be found">
         Unknown
       </message>
-      <if expr="chromeos_ash">
+      <if expr="is_chromeos">
         <part file="recorder_strings.grdp" />
 
         <!-- The following strings are located here for accessibility from both //ash and //chrome -->
@@ -3740,7 +3752,7 @@
           a cat playing a flying v while riding a unicorn, with a lightning bolt in the background
         </message>
         <message name="IDS_SEA_PEN_FREEFORM_SAMPLE_ANIMATED_FLOWERS" desc="An example prompt that can be used to generate an image">
-          a close up of several white and yellow flowers against a purple background, a still from an animated film, a delicate pale pink flower with long petals and a green stem placed between two large yellow tulips against a blue sky with no leaves or foliage in pastel colors, a cinematic still shot with high resolution and very detailed intricate details, octane render with beautiful lighting, volumetric light and moody light.
+          a close up of several white and yellow flowers, a still from an animated film, a delicate pale pink flower with long petals and a green stem placed between two large yellow tulips against a blue sky with no leaves or foliage, in pastel colors, a cinematic still shot with high resolution and very detailed intricate details, octane render with beautiful lighting, volumetric light and moody light.
         </message>
         <message name="IDS_SEA_PEN_FREEFORM_SAMPLE_LILY_IN_RAIN" desc="An example prompt that can be used to generate an image">
           a closeup of an intricate, dew-covered pond lily in the rain. The focus is on the delicate petals and light-reflecting water droplets, capturing their soft pastel colors against a blue background. Shot from eye level using natural light
@@ -3785,7 +3797,7 @@
           anime path overlooking the ocean with falling cherry blossom leaves
         </message>
         <message name="IDS_SEA_PEN_FREEFORM_SAMPLE_PAPAVER_RHEA_STEMS" desc="An example prompt that can be used to generate an image">
-          minimal still life of a few Papaver rhea stems in a glass vase on a black background
+          minimal still life of a few Papaver rhea flowers in a glass vase on a black background
         </message>
         <message name="IDS_SEA_PEN_FREEFORM_SAMPLE_METEOR_SHOWER" desc="An example prompt that can be used to generate an image">
           photo of a night sky with a meteor shower and a few trees in the foreground, with purple and pink hues
@@ -5492,6 +5504,9 @@
         <message name="IDS_SHIMLESS_RMA_VALIDATED_COMPONENTS_FAIL" translateable="false" desc="Validation check found that device components are NOT approved for this device.">
           <ph name="LINK_BEGIN">&lt;a id="unqualifiedComponentsLink"&gt;</ph>Unqualified components<ph name="LINK_END">&lt;/a&gt;</ph> detected. If you choose to confirm this has been installed, please do so now.
         </message>
+        <message name="IDS_SHIMLESS_RMA_VALIDATED_COMPONENTS_SKIP" translateable="false" desc="Validation check is skipped.">
+          Component validation has been skipped.
+        </message>
         <message name="IDS_SHIMLESS_RMA_GET_STARTED_BUTTON_LABEL" translateable="false" desc="The label for the button to start the RMA process.">
           Get started
         </message>
@@ -7172,13 +7187,13 @@
         Class Tools
       </message>
       <message name="IDS_ON_TASK_ENTER_LOCKED_MODE_COUNTDOWN_NOTIFICATION_MESSAGE" desc="Message signaling the countdown before the teachers lock students' screen.">
-        Your teacher will lock your screen in <ph name="NUM_SECONDS">$1<ex>5</ex></ph> seconds
+        You will only be able to use Class Tools in <ph name="NUM_SECONDS">$1<ex>5</ex></ph> seconds
       </message>
       <message name="IDS_ON_TASK_ENTER_LOCKED_MODE_NOTIFICATION_MESSAGE" desc="Notification message telling students that their teachers have locked their screen.">
-        Your teacher has locked your screen
+        You're now only able to use Class Tools
       </message>
       <message name="IDS_ON_TASK_SESSION_END_NOTIFICATION_MESSAGE" desc="Notification message telling students that their class session ended.">
-        You’ve been removed from this class
+        Class Tools session has ended for you
       </message>
       <message name="IDS_ON_TASK_URL_BLOCKED_NOTIFICATION_MESSAGE" desc="Toast message telling students that the url is blocked.">
         Access isn’t allowed for this link. Check with your teacher if you need access.
@@ -7220,6 +7235,12 @@
       <message name="IDS_CLASS_TOOLS_TITLE" desc="Title of the Class Tools App">
         Class Tools
       </message>
+      <message name="IDS_CLASS_TOOLS_HOME_PAGE" desc="Title of the Class Tools Home">
+        Class Tools Home
+      </message>
+      <message name="IDS_NOT_IN_CLASS_TOOLS" desc="Title to show when not in Class Tools">
+        Not in Class Tools
+      </message>
 
       <!-- Strings for Class Hub notifications -->
       <message name="IDS_BOCA_CONNECTED_TO_CLASS_NOTIFICATION_MESSAGE" desc="Message of the notification telling users that they're currently connected to a class tools session.">
@@ -7234,8 +7255,21 @@
       <message name="IDS_BOCA_NOTIFICATION_TITLE" desc="Title of the class tools notification">
         Class Tools
       </message>
+
+      <!-- Strings for Spotlight notifications -->
       <message name="IDS_BOCA_SPOTLIGHT_NOTIFICATION_MESSAGE" desc="Message signaling the countdown before the start of a Spotlight session in the Boca app.">
         Your teacher will view your screen in <ph name="NUM_SECONDS">$1<ex>3</ex></ph> seconds
+      </message>
+      <message name="IDS_BOCA_SPOTLIGHT_PERSISTENT_NOTIFICATION_MESSAGE" desc="Message of the notiification telling users their screen is currently being viewed.">
+       <ph name="TEACHER_NAME">$1<ex>John Doe</ex></ph> is viewing your screen
+      </message>
+
+      <!-- Strings for Class Tools caption bubble -->
+      <message name="IDS_BOCA_CAPTIONS_TRANSLATION_AVAILABLE_BUTTON_TEXT" desc="Text for the button to start captions translation.">
+        Translation available
+      </message>
+      <message name="IDS_BOCA_CAPTIONS_STOP_TRANSLATING_BUTTON_TEXT" desc="Text for the button to stop captions translation.">
+        Stop translating
       </message>
     </messages>
   </release>

@@ -4,23 +4,28 @@
 
 package org.chromium.chrome.browser.ui.hats;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.content.SharedPreferences;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ResettersForTesting;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+
+import java.util.function.Supplier;
 
 /**
  * Helper class that holds the information for certain survey triggerId. Internally, this class
  * reads/ writes information into a {@link SharedPreferences}.
  */
+@NullMarked
 class SurveyMetadata {
     /** Shared preferences name that stored survey metadata. */
     private static final String SHARED_PREF_FILENAME = "pref_survey_meta_data";
@@ -42,7 +47,7 @@ class SurveyMetadata {
             "Chrome.Survey.Date.LastPromptWithCooldownOverrideDisplayedDate";
 
     private static final int INVALID_DATE = -1;
-    private static Integer sDateForTesting;
+    private static @Nullable Integer sDateForTesting;
 
     /** Helper class used as a LazyHolder to the shared preference storage. */
     private static class Holder {
@@ -97,8 +102,8 @@ class SurveyMetadata {
     private final String mPrefKeyPromptDisplayedDate;
     private final String mPrefKeyDiceRolledDate;
     private final Supplier<Integer> mCurrentDateSupplier;
-    private Integer mLastDiceRolledDate;
-    private Integer mLastPromptDisplayedDate;
+    private @MonotonicNonNull Integer mLastDiceRolledDate;
+    private @MonotonicNonNull Integer mLastPromptDisplayedDate;
 
     /**
      * Internal class used by SurveyThrottler presenting survey metadata.
@@ -106,9 +111,11 @@ class SurveyMetadata {
      * @param triggerId TriggerId for a certain survey. See {@link SurveyConfig}.
      * @param encodedDateSupplier The supplier that gives an encoded date.
      */
-    SurveyMetadata(String triggerId, @NonNull Supplier<Integer> encodedDateSupplier) {
+    SurveyMetadata(String triggerId, Supplier<Integer> encodedDateSupplier) {
         mCurrentDateSupplier =
-                sDateForTesting == null ? encodedDateSupplier : () -> sDateForTesting;
+                sDateForTesting == null
+                        ? encodedDateSupplier
+                        : () -> assumeNonNull(sDateForTesting);
         mPrefKeyPromptDisplayedDate = KEY_PREFIX_DATE_PROMPT_DISPLAYED + triggerId;
         mPrefKeyDiceRolledDate = KEY_PREFIX_DATE_DICE_ROLLED + triggerId;
     }
@@ -143,7 +150,7 @@ class SurveyMetadata {
     }
 
     void setDiceRolled() {
-        if (mLastDiceRolledDate == getCurrentDate()) return;
+        if (mLastDiceRolledDate != null && mLastDiceRolledDate == getCurrentDate()) return;
 
         mLastDiceRolledDate = getCurrentDate();
         Holder.setIntegerPref(mPrefKeyDiceRolledDate, mLastDiceRolledDate);

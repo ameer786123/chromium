@@ -5,11 +5,12 @@
 package org.chromium.chrome.browser.hub;
 
 import static org.chromium.chrome.browser.hub.HubColorMixer.COLOR_MIXER;
-import static org.chromium.chrome.browser.hub.HubToolbarProperties.ACTION_BUTTON_DATA;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.APPLY_DELAY_FOR_SEARCH_BOX_ANIMATION;
+import static org.chromium.chrome.browser.hub.HubToolbarProperties.BACK_BUTTON_ENABLED;
+import static org.chromium.chrome.browser.hub.HubToolbarProperties.BACK_BUTTON_LISTENER;
+import static org.chromium.chrome.browser.hub.HubToolbarProperties.BACK_BUTTON_VISIBLE;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.HUB_SEARCH_ENABLED_STATE;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.IS_INCOGNITO;
-import static org.chromium.chrome.browser.hub.HubToolbarProperties.MENU_BUTTON_ENTER_PRESSED_RUNNABLE;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.MENU_BUTTON_VISIBLE;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.PANE_BUTTON_LOOKUP_CALLBACK;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.PANE_SWITCHER_BUTTON_DATA;
@@ -18,16 +19,16 @@ import static org.chromium.chrome.browser.hub.HubToolbarProperties.SEARCH_BOX_VI
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.SEARCH_LISTENER;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.SEARCH_LOUPE_VISIBLE;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Applies properties to the view that holds one pane at a time. */
+@NullMarked
 public class HubToolbarViewBinder {
     /** Stateless propagation of properties. */
     public static void bind(PropertyModel model, HubToolbarView view, PropertyKey key) {
-        if (key == ACTION_BUTTON_DATA) {
-            view.setActionButton(model.get(ACTION_BUTTON_DATA));
-        } else if (key == PANE_SWITCHER_BUTTON_DATA) {
+        if (key == PANE_SWITCHER_BUTTON_DATA) {
             view.setPaneSwitcherButtonData(
                     model.get(PANE_SWITCHER_BUTTON_DATA), model.get(PANE_SWITCHER_INDEX));
         } else if (key == PANE_SWITCHER_INDEX) {
@@ -51,8 +52,12 @@ public class HubToolbarViewBinder {
                     model.get(APPLY_DELAY_FOR_SEARCH_BOX_ANIMATION));
         } else if (key == HUB_SEARCH_ENABLED_STATE) {
             view.setHubSearchEnabledState(model.get(HUB_SEARCH_ENABLED_STATE));
-        } else if (key == MENU_BUTTON_ENTER_PRESSED_RUNNABLE) {
-            view.setMenuButtonEnterPressedRunnable(model.get(MENU_BUTTON_ENTER_PRESSED_RUNNABLE));
+        } else if (key == BACK_BUTTON_VISIBLE) {
+            view.setBackButtonVisible(model.get(BACK_BUTTON_VISIBLE));
+        } else if (key == BACK_BUTTON_ENABLED) {
+            view.setBackButtonEnabled(model.get(BACK_BUTTON_ENABLED));
+        } else if (key == BACK_BUTTON_LISTENER) {
+            view.setBackButtonListener(model.get(BACK_BUTTON_LISTENER));
         }
     }
 }

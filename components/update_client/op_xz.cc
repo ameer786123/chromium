@@ -17,6 +17,7 @@
 #include "components/update_client/op_zucchini.h"
 #include "components/update_client/protocol_definition.h"
 #include "components/update_client/unzipper.h"
+#include "components/update_client/update_client.h"
 #include "components/update_client/update_client_errors.h"
 #include "components/zucchini/zucchini.h"
 
@@ -44,8 +45,8 @@ void Done(base::OnceCallback<
               return out_file;
             }
             return base::unexpected<CategorizedError>(
-                {.category_ = ErrorCategory::kUnpack,
-                 .code_ = static_cast<int>(UnpackerError::kXzFailed)});
+                {.category = ErrorCategory::kUnpack,
+                 .code = static_cast<int>(UnpackerError::kXzFailed)});
           }()));
 }
 
@@ -54,9 +55,11 @@ void Done(base::OnceCallback<
 base::OnceClosure XzOperation(
     std::unique_ptr<Unzipper> unzipper,
     base::RepeatingCallback<void(base::Value::Dict)> event_adder,
+    base::RepeatingCallback<void(ComponentState)> state_tracker,
     const base::FilePath& in_file,
     base::OnceCallback<void(base::expected<base::FilePath, CategorizedError>)>
         callback) {
+  state_tracker.Run(ComponentState::kDecompressing);
   base::FilePath dest_file = in_file.DirName().AppendUTF8("decoded_xz");
   Unzipper* unzipper_raw = unzipper.get();
   return unzipper_raw->DecodeXz(

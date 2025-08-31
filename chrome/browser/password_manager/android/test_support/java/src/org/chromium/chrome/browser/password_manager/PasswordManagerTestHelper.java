@@ -47,6 +47,10 @@ public class PasswordManagerTestHelper {
                 new FakePasswordManagerBackendSupportHelper();
         fakePasswordManagerBackend.setBackendPresent(true);
         PasswordManagerBackendSupportHelper.setInstanceForTesting(fakePasswordManagerBackend);
+        CredentialManagerLauncherFactory.setFactoryForTesting(
+                new FakeCredentialManagerLauncherFactoryImpl());
+        PasswordCheckupClientHelperFactory.setFactoryForTesting(
+                new FakePasswordCheckupClientHelperFactoryImpl());
         PasswordStoreAndroidBackendFactory.setFactoryInstanceForTesting(
                 new FakePasswordStoreAndroidBackendFactoryImpl());
         PasswordSyncControllerDelegateFactory.setFactoryInstanceForTesting(
@@ -68,7 +72,7 @@ public class PasswordManagerTestHelper {
                     ((FakePasswordStoreAndroidBackend)
                                     PasswordStoreAndroidBackendFactory.getInstance()
                                             .createBackend())
-                            .setSyncingAccount(AccountUtils.createAccountFromName(email));
+                            .setSyncingAccount(AccountUtils.createAccountFromEmail(email));
                 });
     }
 }

@@ -12,7 +12,8 @@ import androidx.appcompat.content.res.AppCompatResources;
 
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.bookmarks.BookmarkModel;
 import org.chromium.chrome.browser.bookmarks.PowerBookmarkUtils;
@@ -32,11 +33,13 @@ import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * Responsible for providing UI resources for showing price tracking action on optional toolbar
  * button.
  */
+@NullMarked
 public class PriceTrackingButtonController extends BaseButtonDataProvider {
 
     private final SnackbarManager mSnackbarManager;
@@ -54,7 +57,7 @@ public class PriceTrackingButtonController extends BaseButtonDataProvider {
     /** Constructor. */
     public PriceTrackingButtonController(
             Context context,
-            ObservableSupplier<Tab> tabSupplier,
+            ObservableSupplier<@Nullable Tab> tabSupplier,
             ModalDialogManager modalDialogManager,
             BottomSheetController bottomSheetController,
             SnackbarManager snackbarManager,
@@ -71,8 +74,7 @@ public class PriceTrackingButtonController extends BaseButtonDataProvider {
                 /* supportsTinting= */ true,
                 /* iphCommandBuilder= */ null,
                 AdaptiveToolbarButtonVariant.PRICE_TRACKING,
-                /* tooltipTextResId= */ Resources.ID_NULL,
-                /* showBackgroundHighlight= */ false);
+                /* tooltipTextResId= */ Resources.ID_NULL);
         mSnackbarManager = snackbarManager;
         mTabBookmarkerSupplier = tabBookmarkerSupplier;
         mBottomSheetController = bottomSheetController;
@@ -96,8 +98,8 @@ public class PriceTrackingButtonController extends BaseButtonDataProvider {
                         /* buttonVariant= */ AdaptiveToolbarButtonVariant.PRICE_TRACKING,
                         /* actionChipLabelResId= */ Resources.ID_NULL,
                         /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false,
-                        /* hasErrorBadge= */ false);
+                        /* hasErrorBadge= */ false,
+                        /* isChecked= */ true);
 
         mBottomSheetObserver =
                 new EmptyBottomSheetObserver() {

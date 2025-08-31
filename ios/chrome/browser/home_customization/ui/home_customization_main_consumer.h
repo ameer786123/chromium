@@ -9,8 +9,9 @@
 
 #include <map>
 
-#import "ios/chrome/browser/home_customization/model/background_customization_configuration.h"
 #import "ios/chrome/browser/home_customization/utils/home_customization_constants.h"
+
+@class BackgroundCollectionConfiguration;
 
 // Consumer protocol for the HomeCustomizationMediator to provide data to the
 // main page's view controller.
@@ -20,14 +21,11 @@
 // type is enabled, then updates the snapshot.
 - (void)populateToggles:(std::map<CustomizationToggleType, BOOL>)toggleMap;
 
-// Populates the background customization cells with a map of options, then
-// update the snapshot.
+// Populates the background collection configuration data.
 - (void)
-    populateBackgroundCustomizationConfigurations:
-        (NSMutableDictionary<NSString*, BackgroundCustomizationConfiguration*>*)
-            BackgroundCustomizationConfigurationMap
-                             selectedBackgroundId:
-                                 (NSString*)selectedBackgroundId;
+    populateBackgroundCollectionConfiguration:
+        (BackgroundCollectionConfiguration*)backgroundCollectionConfiguration
+                         selectedBackgroundId:(NSString*)selectedBackgroundId;
 
 @end
 

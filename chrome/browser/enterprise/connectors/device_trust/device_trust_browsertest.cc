@@ -28,12 +28,13 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/mock_navigation_handle.h"
+#include "content/public/test/mock_navigation_throttle_registry.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/connectors/device_trust/test/device_trust_test_environment_win.h"
-#include "chrome/browser/enterprise/connectors/test/test_constants.h"
+#include "chrome/browser/enterprise/test/test_constants.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "components/enterprise/browser/controller/chrome_browser_cloud_management_controller.h"
 #endif  // #if BUILDFLAG(IS_WIN)
@@ -51,6 +52,7 @@
 #include "components/device_signals/core/browser/pref_names.h"
 #include "components/device_signals/core/common/signals_features.h"
 #include "components/enterprise/browser/device_trust/device_trust_key_manager.h"
+#include "components/prefs/pref_service.h"
 #include "ui/base/interaction/element_identifier.h"
 #endif
 
@@ -137,8 +139,10 @@ class DeviceTrustDesktopBrowserTest : public test::DeviceTrustBrowserTestBase {
     test::DeviceTrustBrowserTestBase::SetUpInProcessBrowserTestFixture();
 #if BUILDFLAG(IS_WIN)
     device_trust_test_environment_win_.emplace();
-    device_trust_test_environment_win_->SetExpectedDMToken(kBrowserDmToken);
-    device_trust_test_environment_win_->SetExpectedClientID(kBrowserClientId);
+    device_trust_test_environment_win_->SetExpectedDMToken(
+        enterprise::test::kBrowserDmToken);
+    device_trust_test_environment_win_->SetExpectedClientID(
+        enterprise::test::kBrowserClientId);
 
     // This will set up a key before DeviceTrustKeyManager initializes.
     // DTKM should just try to load this key instead of creating one itself.
@@ -212,10 +216,14 @@ IN_PROC_BROWSER_TEST_F(DeviceTrustBrowserTest,
   auto* incognito_browser = CreateIncognitoBrowser(browser()->profile());
   content::MockNavigationHandle mock_nav_handle(
       web_contents(incognito_browser));
+  content::MockNavigationThrottleRegistry registry(
+      &mock_nav_handle,
+      content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
 
   // Try to create the device trust navigation throttle.
-  EXPECT_FALSE(enterprise_connectors::DeviceTrustNavigationThrottle::
-                   MaybeCreateThrottleFor(&mock_nav_handle));
+  enterprise_connectors::DeviceTrustNavigationThrottle::
+                   MaybeCreateAndAdd(registry);
+  EXPECT_EQ(registry.throttles().size(), 0u);
 }
 
 class DeviceTrustDelayedManagementBrowserTest

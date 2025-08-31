@@ -21,7 +21,7 @@ class SelectType : public GarbageCollected<SelectType> {
   // Creates an instance of a SelectType subclass depending on the current mode
   // of |select|.
   static SelectType* Create(HTMLSelectElement& select);
-  void WillBeDestroyed();
+  virtual void WillBeDestroyed();
   virtual void Trace(Visitor* visitor) const;
 
   // Returns true if the event is handled.
@@ -64,9 +64,10 @@ class SelectType : public GarbageCollected<SelectType> {
   virtual void CreateShadowSubtree(ShadowRoot& root) = 0;
   virtual void ManuallyAssignSlots() = 0;
   virtual HTMLButtonElement* SlottedButton() const = 0;
-  virtual HTMLElement* PopoverForAppearanceBase() const = 0;
-  virtual bool IsAppearanceBaseButton() const = 0;
+  virtual HTMLElement* PopoverPickerElement() const = 0;
+  virtual bool IsAppearanceBase() const = 0;
   virtual bool IsAppearanceBasePicker() const = 0;
+  virtual bool PickerIsPopover() const = 0;
   virtual void SetIsAppearanceBasePickerForDisplayNone(bool) = 0;
   virtual HTMLSelectElement::SelectAutofillPreviewElement*
   GetAutofillPreviewElement() const = 0;

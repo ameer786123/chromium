@@ -41,6 +41,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/task_traits.h"
@@ -318,7 +319,7 @@ void CheckInstallation(UpdaterScope scope,
               ADD_FAILURE() << "Unexpected service found: " << service_name;
             }
           });
-      EXPECT_EQ(count_entries, is_installed);
+      EXPECT_EQ(count_entries > 0, is_installed);
     }
   }
 
@@ -532,6 +533,8 @@ bool BuildTestAppInstaller(const base::FilePath& installer_script,
 void RunOfflineInstallWithManifest(UpdaterScope scope,
                                    bool is_legacy_install,
                                    bool is_silent_install,
+                                   int installer_result,
+                                   int installer_error,
                                    base::cstring_view platform,
                                    int string_resource_id_to_find,
                                    const std::string& language,
@@ -586,23 +589,30 @@ void RunOfflineInstallWithManifest(UpdaterScope scope,
         IsElevatedWithUACOn() ? kTestEventToSignalIfMediumIntegrity
                               : kTestEventToSignal,
         event_holder.name);
-    std::vector<std::string> commands;
-    const struct {
+
+    struct RegItems {
       const std::string subkey;
       const char* value_name;
       const char* type;
       const std::string value;
-    } reg_items[] = {
-        {base::WideToUTF8(app_clients_key), "pv", "REG_SZ",
-         kTestPV.GetString()},
-        {app_client_state_key_utf8, "InstallerResult", "REG_DWORD", "0"},
-        {app_client_state_key_utf8, "InstallerError", "REG_DWORD", "0"},
+    };
+    std::vector<RegItems> reg_items = {
+        {app_client_state_key_utf8, "InstallerResult", "REG_DWORD",
+         base::ToString(installer_result)},
+        {app_client_state_key_utf8, "InstallerError", "REG_DWORD",
+         base::ToString(installer_error)},
         {app_client_state_key_utf8, "InstallerExtraCode1", "REG_DWORD", "0"},
         {app_client_state_key_utf8, "InstallerResultUIString", "REG_SZ",
          "CoolApp"},
         {app_client_state_key_utf8, "InstallerSuccessLaunchCmdLine", "REG_SZ",
          base::WideToUTF8(post_install_cmd.GetCommandLineString())},
     };
+    if (expect_success) {
+      reg_items.push_back({base::WideToUTF8(app_clients_key), "pv", "REG_SZ",
+                           kTestPV.GetString()});
+    }
+
+    std::vector<std::string> commands;
     for (const auto& reg_item : reg_items) {
       commands.push_back(base::StringPrintf(
           "REG.exe ADD \"%s\\%s\" /v %s /t %s /d %s /f /reg:32",
@@ -675,21 +685,18 @@ void RunOfflineInstallWithManifest(UpdaterScope scope,
                                           nullptr)
           ->GetProductVersion(base::WideToUTF8(kTestAppID));
 
-  base::win::RegKey key;
-  LONG registry_result =
-      key.Open(root, app_client_state_key.c_str(), Wow6432(KEY_QUERY_VALUE));
-
+  EXPECT_EQ(expect_success, pv.IsValid() && pv > base::Version(kNullVersion));
   if (!expect_success) {
-    EXPECT_EQ(registry_result, ERROR_FILE_NOT_FOUND);
-    EXPECT_FALSE(pv.IsValid());
     return;
   }
 
-  EXPECT_EQ(registry_result, ERROR_SUCCESS);
-
   // Updater should have written "pv".
-  ASSERT_TRUE(pv.IsValid());
   EXPECT_EQ(pv, kTestPV);
+
+  base::win::RegKey key;
+  EXPECT_EQ(
+      key.Open(root, app_client_state_key.c_str(), Wow6432(KEY_QUERY_VALUE)),
+      ERROR_SUCCESS);
 
   // Check for expected installer result API reg values.
   base::win::RegKey updater_key(root, UPDATER_KEY, Wow6432(KEY_QUERY_VALUE));
@@ -711,6 +718,30 @@ void RunOfflineInstallWithManifest(UpdaterScope scope,
   }
 
   EXPECT_TRUE(DeleteRegKey(root, app_client_state_key));
+}
+
+bool BuildMockOfflineMetaInstaller(const std::string& appid,
+                                   const base::FilePath& installer_path,
+                                   const base::FilePath& offline_manifest,
+                                   const base::FilePath& output_metainstaller) {
+  base::FilePath exe_path;
+  if (!base::PathService::Get(base::DIR_EXE, &exe_path)) {
+    return false;
+  }
+  const base::FilePath tools_dir = exe_path.Append(L"test_installer");
+  base::CommandLine create_meta_installer(tools_dir.Append(L"sign.py"));
+  create_meta_installer.AppendSwitchPath(
+      "--in_file", exe_path.Append(L"UpdaterSetup_test.exe"));
+  create_meta_installer.AppendSwitchPath("--installer_path", installer_path);
+  create_meta_installer.AppendSwitchUTF8("--appid", appid);
+  create_meta_installer.AppendSwitchPath("--manifest_path", offline_manifest);
+  create_meta_installer.AppendSwitchPath("--lzma_7z",
+                                         tools_dir.Append(L"7za.exe"));
+  create_meta_installer.AppendSwitch("--disable_tag_and_sign");
+  create_meta_installer.AppendSwitchPath("--out_file", output_metainstaller);
+
+  VLOG(0) << "Running " << create_meta_installer.GetCommandLineString();
+  return RunVPythonCommand(create_meta_installer) == 0;
 }
 
 }  // namespace
@@ -2050,7 +2081,7 @@ void InstallApp(UpdaterScope scope,
             ERROR_SUCCESS);
   RegistrationRequest registration;
   registration.app_id = app_id;
-  registration.version = version;
+  registration.version = version.GetString();
   RegisterApp(scope, registration);
 }
 
@@ -2065,10 +2096,13 @@ void UninstallApp(UpdaterScope scope, const std::string& app_id) {
 
 void RunOfflineInstall(UpdaterScope scope,
                        bool is_legacy_install,
-                       bool is_silent_install) {
+                       bool is_silent_install,
+                       int installer_result,
+                       int installer_error) {
   RunOfflineInstallWithManifest(scope, is_legacy_install, is_silent_install,
-                                "win", IDS_BUNDLE_INSTALLED_SUCCESSFULLY_BASE,
-                                "en", true);
+                                installer_result, installer_error, "win",
+                                IDS_BUNDLE_INSTALLED_SUCCESSFULLY_BASE, "en",
+                                !installer_result);
 }
 
 void RunOfflineInstallOsNotSupported(UpdaterScope scope,
@@ -2076,8 +2110,68 @@ void RunOfflineInstallOsNotSupported(UpdaterScope scope,
                                      bool is_silent_install,
                                      const std::string& language) {
   RunOfflineInstallWithManifest(scope, is_legacy_install, is_silent_install,
+                                /*installer_result=*/0, /*installer_error=*/0,
                                 "minix", IDS_UPDATER_OS_NOT_SUPPORTED_BASE,
                                 language, false);
+}
+
+void RunMockOfflineMetaInstall(UpdaterScope scope,
+                               const std::string& app_id,
+                               const base::Version& version,
+                               const std::string& tag,
+                               const base::FilePath& installer_path,
+                               const std::string& arguments,
+                               bool is_silent_install,
+                               const std::string& platform,
+                               const std::string& installer_text,
+                               const bool always_launch_cmd,
+                               const int expected_exit_code,
+                               bool expect_success) {
+  if (installer_path.MatchesExtension(L".msi")) {
+    ASSERT_EQ(scope, UpdaterScope::kSystem);
+  }
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  const base::FilePath manifest_path =
+      temp_dir.GetPath().Append(L"OfflineManifest.gup");
+  ASSERT_TRUE(base::WriteFile(
+      manifest_path, base::StringPrintf(
+                         R"(<?xml version="1.0" encoding="UTF-8"?>
+<response protocol="3.0">
+  <systemrequirements platform="%s"/>
+  <app appid="${APP_ID}" status="ok">
+    <updatecheck status="ok">
+      <manifest version="%s">
+        <packages>
+          <package name="${INSTALLER_FILENAME}"
+                   hash_sha256="${INSTALLER_HASH_SHA256}"
+                   size="${INSTALLER_SIZE}"
+                   required="true"/>
+        </packages>
+        <actions>
+          <action event="install"
+                  run="${INSTALLER_FILENAME}"
+                  arguments="%s" />
+        </actions>
+      </manifest>
+    </updatecheck>
+  </app>
+</response>)",
+                         platform.c_str(), version.GetString(), arguments)));
+
+  const base::FilePath output_metainstaller =
+      temp_dir.GetPath().Append(L"StandaloneInstaller.exe");
+  ASSERT_TRUE(BuildMockOfflineMetaInstaller(
+      app_id, installer_path, manifest_path, output_metainstaller));
+
+  // Trigger offline install.
+  ASSERT_NO_FATAL_FAILURE(
+      InstallUpdaterAndApp(scope, app_id, is_silent_install,
+                           /*tag=*/tag, installer_text, always_launch_cmd,
+                           /*verify_app_logo_loaded=*/false, expect_success,
+                           /*wait_for_the_installer=*/true, expected_exit_code,
+                           /*additional_switches=*/{}, output_metainstaller));
+  ASSERT_TRUE(WaitForUpdaterExit());
 }
 
 base::CommandLine MakeElevated(base::CommandLine command_line) {
@@ -2124,6 +2218,58 @@ void ExpectAppVersion(UpdaterScope scope,
                         GetAppClientStateKey(app_id).c_str(), Wow6432(KEY_READ))
           .ReadValue(kRegValuePV, &pv));
   EXPECT_EQ(base::SysUTF8ToWide(version.GetString()), pv);
+}
+
+void SetAppAllowsUsageStats(UpdaterScope scope,
+                            const std::string& identifier,
+                            bool allowed) {
+  base::win::RegKey key;
+  ASSERT_EQ(
+      key.Create(UpdaterScopeToHKeyRoot(scope),
+                 GetAppClientStateKey(identifier).c_str(), Wow6432(KEY_WRITE)),
+      ERROR_SUCCESS);
+  EXPECT_EQ(key.WriteValue(L"usagestats", static_cast<DWORD>(allowed)),
+            ERROR_SUCCESS);
+}
+
+void ClearAppAllowsUsageStats(UpdaterScope scope,
+                              const std::string& identifier) {
+  ASSERT_TRUE(DeleteRegKey(UpdaterScopeToHKeyRoot(scope),
+                           GetAppClientStateKey(identifier).c_str()));
+}
+
+void InstallScheduledTask(UpdaterScope scope,
+                          const std::string& task_name,
+                          bool use_task_subfolders) {
+  scoped_refptr<TaskScheduler> task_scheduler =
+      TaskScheduler::CreateInstance(scope, use_task_subfolders);
+  ASSERT_TRUE(task_scheduler);
+
+  EXPECT_TRUE(task_scheduler->RegisterTask(
+      base::UTF8ToWide(task_name), base::UTF8ToWide(task_name),
+      base::CommandLine::FromString(L"C:\\temp\\temp.exe"),
+      TaskScheduler::TriggerType::TRIGGER_TYPE_HOURLY, false));
+}
+
+void IsScheduledTaskRegisteredFromMedium(UpdaterScope scope,
+                                         const std::string& task_name,
+                                         bool use_task_subfolders) {
+  scoped_refptr<TaskScheduler> task_scheduler =
+      TaskScheduler::CreateInstance(scope, use_task_subfolders);
+  ASSERT_TRUE(task_scheduler);
+
+  EXPECT_EQ(task_scheduler->IsTaskRegistered(base::UTF8ToWide(task_name)),
+            !IsSystemInstall(scope) || ::IsUserAnAdmin());
+}
+
+void DeleteScheduledTask(UpdaterScope scope,
+                         const std::string& task_name,
+                         bool use_task_subfolders) {
+  scoped_refptr<TaskScheduler> task_scheduler =
+      TaskScheduler::CreateInstance(scope, use_task_subfolders);
+  ASSERT_TRUE(task_scheduler);
+
+  EXPECT_TRUE(task_scheduler->DeleteTask(base::UTF8ToWide(task_name)));
 }
 
 }  // namespace updater::test

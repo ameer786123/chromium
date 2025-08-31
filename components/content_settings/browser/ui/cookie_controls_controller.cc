@@ -24,10 +24,10 @@
 #include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/content_settings/core/common/cookie_blocking_3pcd_status.h"
 #include "components/content_settings/core/common/cookie_controls_enforcement.h"
+#include "components/content_settings/core/common/cookie_controls_state.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/content_settings/core/common/third_party_site_data_access_type.h"
-#include "components/content_settings/core/common/tracking_protection_feature.h"
 #include "components/fingerprinting_protection_filter/browser/fingerprinting_protection_web_contents_helper.h"
 #include "components/ip_protection/common/ip_protection_status.h"
 #include "components/ip_protection/common/ip_protection_status_observer.h"
@@ -38,6 +38,7 @@
 #include "components/strings/grit/privacy_sandbox_strings.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/reload_type.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
@@ -50,10 +51,7 @@
 namespace {
 
 using ::base::UserMetricsAction;
-using ::content_settings::TrackingProtectionFeature;
 using ::site_engagement::SiteEngagementService;
-using BlockingStatus = ::content_settings::TrackingProtectionBlockingStatus;
-using FeatureType = ::content_settings::TrackingProtectionFeatureType;
 
 constexpr char kEntryPointAnimatedKey[] = "entry_point_animated";
 constexpr char kLastExpirationKey[] = "last_expiration";
@@ -131,21 +129,19 @@ CookieControlsController::CookieControlsController(
   CHECK(cookie_settings_);
   CHECK(tracking_protection_settings_);
   cookie_observation_.Observe(cookie_settings_.get());
+  tracking_protection_settings_observation_.Observe(
+      tracking_protection_settings);
 }
 
 CookieControlsController::Status::Status(
-    bool controls_visible,
-    bool protections_on,
+    CookieControlsState controls_state,
     CookieControlsEnforcement enforcement,
     CookieBlocking3pcdStatus blocking_status,
-    base::Time expiration,
-    std::vector<TrackingProtectionFeature> features)
-    : controls_visible(controls_visible),
-      protections_on(protections_on),
+    base::Time expiration)
+    : controls_state(controls_state),
       enforcement(enforcement),
       blocking_status(blocking_status),
-      expiration(expiration),
-      features(features) {}
+      expiration(expiration) {}
 CookieControlsController::Status::~Status() = default;
 
 CookieControlsController::~CookieControlsController() = default;
@@ -153,7 +149,10 @@ CookieControlsController::~CookieControlsController() = default;
 void CookieControlsController::OnUiClosing() {
   auto* web_contents = GetWebContents();
   if (should_reload_ && web_contents && !web_contents->IsBeingDestroyed()) {
-    web_contents->GetController().Reload(content::ReloadType::NORMAL, true);
+    web_contents->GetController().Reload(
+        ShowActFeatures() ? content::ReloadType::BYPASSING_CACHE
+                          : content::ReloadType::NORMAL,
+        true);
   }
   should_reload_ = false;
 }
@@ -162,22 +161,22 @@ void CookieControlsController::Update(content::WebContents* web_contents) {
   DCHECK(web_contents);
   if (!tab_observer_ || GetWebContents() != web_contents) {
     tab_observer_ = std::make_unique<TabObserver>(this, web_contents);
-    SetUserChangedCookieBlockingForSite(false);
+    SetStateChangedViaBypass(false);
+    show_icon_as_confirmation_ = false;
   }
   if (observers_.empty()) {
     return;
   }
   auto status = GetStatus(web_contents);
-  const bool icon_visible = ShouldUserBypassIconBeVisible(
-      status.features, status.protections_on, status.controls_visible);
+  const bool icon_visible =
+      ShouldUserBypassIconBeVisible(status.controls_state);
   const bool should_highlight =
-      ShouldHighlightUserBypass(status.protections_on);
+      ShouldHighlightUserBypass(status.controls_state);
   for (auto& observer : observers_) {
-    observer.OnStatusChanged(status.controls_visible, status.protections_on,
-                             status.enforcement, status.blocking_status,
-                             status.expiration, status.features);
+    observer.OnStatusChanged(status.controls_state, status.enforcement,
+                             status.blocking_status, status.expiration);
     observer.OnCookieControlsIconStatusChanged(
-        icon_visible, status.protections_on, status.blocking_status,
+        icon_visible, status.controls_state, status.blocking_status,
         should_highlight);
   }
 }
@@ -195,29 +194,17 @@ void CookieControlsController::OnFirstSubresourceProxiedOnCurrentPrimaryPage() {
 CookieControlsController::Status CookieControlsController::GetStatus(
     content::WebContents* web_contents) {
   if (!cookie_settings_->ShouldBlockThirdPartyCookies()) {
-    return {/*controls_visible=*/false,
-            /*protections_on=*/false,
+    return {CookieControlsState::kHidden,
             CookieControlsEnforcement::kNoEnforcement,
-            CookieBlocking3pcdStatus::kNotIn3pcd,
-            base::Time(),
-            CreateTrackingProtectionFeatureList(
-                CookieControlsEnforcement::kNoEnforcement,
-                /*cookies_allowed=*/true,
-                /*act_exception=*/true)};
+            CookieBlocking3pcdStatus::kNotIn3pcd, base::Time()};
   }
 
   const GURL& url = web_contents->GetLastCommittedURL();
   if (url.SchemeIs(content::kChromeUIScheme) ||
       url.SchemeIs(kExtensionScheme)) {
-    return {/*controls_visible=*/false,
-            /*protections_on=*/false,
+    return {CookieControlsState::kHidden,
             CookieControlsEnforcement::kNoEnforcement,
-            CookieBlocking3pcdStatus::kNotIn3pcd,
-            base::Time(),
-            CreateTrackingProtectionFeatureList(
-                CookieControlsEnforcement::kNoEnforcement,
-                /*cookies_allowed=*/true,
-                /*act_exception=*/true)};
+            CookieBlocking3pcdStatus::kNotIn3pcd, base::Time()};
   }
 
   auto blocking_status = CookieBlocking3pcdStatus::kNotIn3pcd;
@@ -234,86 +221,44 @@ CookieControlsController::Status CookieControlsController::GetStatus(
       GetEnforcementForThirdPartyCookieBlocking(blocking_status, url, info,
                                                 cookies_allowed);
 
-  // If 3PC blocking is the only protection controllable on a site, reflect
-  // that state. If ACT features are controllable, reflect ACT state.
-  bool protections_disabled =
-      ShowActFeatures()
-          ? tracking_protection_settings_->HasTrackingProtectionException(url,
-                                                                          &info)
-          : cookies_allowed;
+  CookieControlsState controls_state;
+  if (enforcement == CookieControlsEnforcement::kEnforcedByTpcdGrant) {
+    controls_state = CookieControlsState::kHidden;
+  } else if (ShowActFeatures()) {
+    controls_state =
+        tracking_protection_settings_->HasTrackingProtectionException(url,
+                                                                      &info)
+            ? CookieControlsState::kPausedTp
+            : CookieControlsState::kActiveTp;
+  } else {
+    controls_state = cookies_allowed ? CookieControlsState::kAllowed3pc
+                                     : CookieControlsState::kBlocked3pc;
+  }
 
-  std::vector<TrackingProtectionFeature> features =
-      CreateTrackingProtectionFeatureList(
-          enforcement, cookies_allowed,
-          tracking_protection_settings_->HasTrackingProtectionException(url));
-  return {// Hide controls if the exception is from a metadata grant.
-          enforcement != CookieControlsEnforcement::kEnforcedByTpcdGrant,
-          /*protections_on=*/!protections_disabled,
-          enforcement,
-          blocking_status,
-          info.metadata.expiration(),
-          features};
+  return {controls_state, enforcement, blocking_status,
+          info.metadata.expiration()};
 }
 
-void CookieControlsController::RecordActMetrics(bool protections_on) {
+void CookieControlsController::RecordActMetrics(bool enable_protections) {
   if (GetIsSubresourceBlocked()) {
     base::RecordAction(UserMetricsAction(
-        protections_on
+        enable_protections
             ? "TrackingProtections.Bubble.FppActive.EnableProtections"
             : "TrackingProtections.Bubble.FppActive.DisableProtections"));
   }
   if (GetIsSubresourceProxied()) {
     base::RecordAction(UserMetricsAction(
-        protections_on
+        enable_protections
             ? "TrackingProtections.Bubble.IppActive.EnableProtections"
             : "TrackingProtections.Bubble.IppActive.DisableProtections"));
   }
 }
 
 bool CookieControlsController::ShowActFeatures() {
-  return base::FeatureList::IsEnabled(privacy_sandbox::kActUserBypassUx) &&
-         ShouldUpdateTpContentSetting() &&
+  return is_incognito_profile_ &&
          (tracking_protection_settings_->IsIpProtectionEnabled() ||
-          tracking_protection_settings_->IsFpProtectionEnabled());
-}
-
-bool CookieControlsController::ShouldUpdateTpContentSetting() {
-  return base::FeatureList::IsEnabled(
-             privacy_sandbox::kTrackingProtectionContentSettingUbControl) &&
-         is_incognito_profile_;
-}
-
-std::vector<TrackingProtectionFeature>
-CookieControlsController::CreateTrackingProtectionFeatureList(
-    CookieControlsEnforcement enforcement,
-    bool cookies_allowed,
-    bool act_exception) {
-  auto status_label = BlockingStatus::kBlocked;
-  if (cookies_allowed) {
-    status_label = BlockingStatus::kAllowed;
-  } else if (cookie_settings_->AreThirdPartyCookiesLimited()) {
-    status_label = BlockingStatus::kLimited;
-  }
-
-  std::vector<TrackingProtectionFeature> features = {
-      {FeatureType::kThirdPartyCookies, enforcement, status_label}};
-  if (ShowActFeatures()) {
-    if (tracking_protection_settings_->IsIpProtectionEnabled()) {
-      features.push_back({FeatureType::kIpProtection,
-                          CookieControlsEnforcement::kNoEnforcement,
-                          act_exception
-                              ? TrackingProtectionBlockingStatus::kVisible
-                              : TrackingProtectionBlockingStatus::kHidden});
-    }
-    if (tracking_protection_settings_->IsFpProtectionEnabled()) {
-      features.push_back({FeatureType::kFingerprintingProtection,
-                          CookieControlsEnforcement::kNoEnforcement,
-                          act_exception
-                              ? TrackingProtectionBlockingStatus::kAllowed
-                              : TrackingProtectionBlockingStatus::kLimited});
-    }
-  }
-  return features;
+          tracking_protection_settings_->IsFpProtectionEnabled()) &&
+         base::FeatureList::IsEnabled(privacy_sandbox::kActUserBypassUx);
 }
 
 CookieControlsEnforcement
@@ -377,29 +322,43 @@ bool CookieControlsController::HasOriginSandboxedTopLevelDocument() const {
   return rfh->IsSandboxed(network::mojom::WebSandboxFlags::kOrigin);
 }
 
+void CookieControlsController::OnTrackingProtectionsChangedForSite() {
+  const GURL& url = GetWebContents()->GetLastCommittedURL();
+  bool reenable_protections =
+      tracking_protection_settings_->HasTrackingProtectionException(url);
+  if (reenable_protections) {
+    tracking_protection_settings_->RemoveTrackingProtectionException(url);
+  } else {
+    tracking_protection_settings_->AddTrackingProtectionException(url);
+  }
+  OnCookieBlockingEnabledForSite(
+      /*block_third_party_cookies=*/reenable_protections);
+  RecordActMetrics(reenable_protections);
+}
+
 void CookieControlsController::OnCookieBlockingEnabledForSite(
     bool block_third_party_cookies) {
   const GURL& url = GetWebContents()->GetLastCommittedURL();
   should_reload_ = true;
+  // TODO(crbug.com/430893360): Clean up TP exception logic after IPP experiment
+  // ends.
+  if (is_incognito_profile_ &&
+      base::FeatureList::IsEnabled(
+          privacy_sandbox::kTrackingProtectionContentSettingIn3pcUx)) {
+    if (block_third_party_cookies) {
+      tracking_protection_settings_->RemoveTrackingProtectionException(url);
+    } else {
+      tracking_protection_settings_->AddTrackingProtectionException(url);
+    }
+  }
   if (block_third_party_cookies) {
     base::RecordAction(UserMetricsAction("CookieControls.Bubble.TurnOn"));
-    // Update TRACKING_PROTECTION content setting first since the COOKIES
-    // content setting observer updates the UI for both settings.
-    if (ShouldUpdateTpContentSetting()) {
-      tracking_protection_settings_->RemoveTrackingProtectionException(url);
-      RecordActMetrics(block_third_party_cookies);
-    }
     cookie_settings_->ResetThirdPartyCookieSetting(url);
-
     return;
   }
 
   CHECK(!block_third_party_cookies);
   base::RecordAction(UserMetricsAction("CookieControls.Bubble.TurnOff"));
-  if (ShouldUpdateTpContentSetting()) {
-    tracking_protection_settings_->AddTrackingProtectionException(url);
-    RecordActMetrics(block_third_party_cookies);
-  }
   cookie_settings_->SetCookieSettingForUserBypass(url);
   // Record expiration metadata for the newly created exception, and increased
   // the activation count.
@@ -425,14 +384,13 @@ void CookieControlsController::OnEntryPointAnimated() {
   ApplyMetadataChanges(settings_map_, url, std::move(metadata));
 }
 
-bool CookieControlsController::HasUserChangedCookieBlockingForSite() {
-  return user_changed_cookie_blocking_;
+bool CookieControlsController::StateChangedViaBypass() {
+  return user_changed_ub_state_;
 }
 
-void CookieControlsController::SetUserChangedCookieBlockingForSite(
-    bool changed) {
+void CookieControlsController::SetStateChangedViaBypass(bool changed) {
   // Avoid a toggle back and forth being marked as "changed".
-  user_changed_cookie_blocking_ = changed && !user_changed_cookie_blocking_;
+  user_changed_ub_state_ = changed && !user_changed_ub_state_;
 }
 
 int CookieControlsController::GetAllowedThirdPartyCookiesSitesCount() const {
@@ -500,13 +458,13 @@ void CookieControlsController::UpdateUserBypass() {
     return;
   }
   auto status = GetStatus(GetWebContents());
-  const bool icon_visible = ShouldUserBypassIconBeVisible(
-      status.features, status.protections_on, status.controls_visible);
+  const bool icon_visible =
+      ShouldUserBypassIconBeVisible(status.controls_state);
   const bool should_highlight =
-      ShouldHighlightUserBypass(status.protections_on);
+      ShouldHighlightUserBypass(status.controls_state);
   for (auto& observer : observers_) {
     observer.OnCookieControlsIconStatusChanged(
-        icon_visible, status.protections_on, status.blocking_status,
+        icon_visible, status.controls_state, status.blocking_status,
         should_highlight);
   }
 }
@@ -522,7 +480,7 @@ void CookieControlsController::UpdateLastVisitedSitesMap() {
   // exception, update the last visited time, otherwise clear it.
   base::Value::Dict metadata = GetMetadata(settings_map_, url);
   auto status = GetStatus(GetWebContents());
-  if (status.controls_visible && !status.protections_on) {
+  if (status.controls_state == CookieControlsState::kAllowed3pc) {
     metadata.Set(kLastVisitedActiveException,
                  base::TimeToValue(base::Time::Now()));
   } else {
@@ -533,10 +491,13 @@ void CookieControlsController::UpdateLastVisitedSitesMap() {
 
 void CookieControlsController::UpdatePageReloadStatus(
     int recent_reloads_count) {
-  if (HasUserChangedCookieBlockingForSite() && recent_reloads_count > 0) {
+  if (StateChangedViaBypass() && recent_reloads_count > 0) {
     waiting_for_page_load_finish_ = true;
+    show_icon_as_confirmation_ = true;
+  } else {
+    show_icon_as_confirmation_ = false;
   }
-  SetUserChangedCookieBlockingForSite(false);
+  SetStateChangedViaBypass(false);
   recent_reloads_count_ = recent_reloads_count;
 
   if (recent_reloads_count_ >= features::kUserBypassUIReloadCount.Get()) {
@@ -546,12 +507,21 @@ void CookieControlsController::UpdatePageReloadStatus(
   }
 }
 
+void CookieControlsController::OnBubbleCloseTriggered() {
+  for (auto& observer : observers_) {
+    observer.OnBubbleCloseTriggered();
+  }
+}
+
 void CookieControlsController::OnPageFinishedLoading() {
   if (!waiting_for_page_load_finish_) {
     return;
   }
   waiting_for_page_load_finish_ = false;
 
+  // Ensure the bubble is closed before subsequent calls are made to update the
+  // UI.
+  OnBubbleCloseTriggered();
   for (auto& observer : observers_) {
     observer.OnFinishedPageReloadWithChangedSettings();
   }
@@ -567,6 +537,20 @@ void CookieControlsController::OnThirdPartyCookieBlockingChanged(
 void CookieControlsController::OnCookieSettingChanged() {
   if (GetWebContents()) {
     Update(GetWebContents());
+  }
+}
+
+void CookieControlsController::OnIpProtectionEnabledChanged() {
+  // TODO(crbug.com/434953880): Add tests for this logic.
+  if (GetWebContents()) {
+    UpdateUserBypass();
+  }
+}
+
+void CookieControlsController::OnFpProtectionEnabledChanged() {
+  // TODO(crbug.com/434953880): Add tests for this logic.
+  if (GetWebContents()) {
+    UpdateUserBypass();
   }
 }
 
@@ -595,7 +579,6 @@ void CookieControlsController::RecordActivationMetrics() {
   const GURL& url = GetWebContents()->GetLastCommittedURL();
 
   // Metrics, related to confidence signals:
-  // TODO(crbug.com/40064612): Add CookieControlsActivated.FedCmInitiated
   base::UmaHistogramBoolean(
       "Privacy.CookieControlsActivated.SaaRequested",
       cookie_settings_->HasAnyFrameRequestedStorageAccess(url));
@@ -614,7 +597,6 @@ void CookieControlsController::RecordActivationMetrics() {
       site_data_access_type);
 
   // Record activation UKM.
-  // TODO(crbug.com/40064612): Include FedCM information.
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   auto ukm_source_id =
       GetWebContents()->GetPrimaryMainFrame()->GetPageUkmSourceId();
@@ -631,13 +613,14 @@ void CookieControlsController::RecordActivationMetrics() {
       .SetThirdPartySiteDataAccessType(
           static_cast<uint64_t>(site_data_access_type))
       .Record(ukm::UkmRecorder::Get());
-
-  // TODO(crbug.com/40064612): Add metrics, related to repeated activations.
 }
 
-bool CookieControlsController::ShouldHighlightUserBypass(bool protections_on) {
-  // Only highlight if 3PCs are blocked on the site.
-  if (!protections_on) {
+bool CookieControlsController::ShouldHighlightUserBypass(
+    CookieControlsState controls_state) {
+  // Highlighting is meant to draw attention to bypassing, so just return if
+  // bypass has already happened.
+  if (controls_state == CookieControlsState::kHidden ||
+      controls_state == CookieControlsState::kAllowed3pc) {
     return false;
   }
 
@@ -649,7 +632,6 @@ bool CookieControlsController::ShouldHighlightUserBypass(bool protections_on) {
     return false;
   }
 
-  // TODO(crbug.com/40064612): Check if FedCM was requested.
   const GURL& url = web_contents->GetLastCommittedURL();
   if (cookie_settings_->HasAnyFrameRequestedStorageAccess(url)) {
     return false;
@@ -682,18 +664,19 @@ bool CookieControlsController::ShouldHighlightUserBypass(bool protections_on) {
 }
 
 bool CookieControlsController::ShouldUserBypassIconBeVisible(
-    std::vector<TrackingProtectionFeature> features,
-    bool protections_on,
-    bool controls_visible) {
-  if (!controls_visible) {
+    CookieControlsState controls_state) {
+  if (controls_state == CookieControlsState::kHidden) {
     return false;
   }
-  // 3PCD prevents SameSite=None cookies from being sent when the top-level
-  // document is sandboxed without `allow-origin`. For instance when loaded
-  // with: `Content-Security-Policy: sandbox`. In that case, we render the UI to
-  // allow the user to opt into sending SameSite=None cookies again in those
-  // contexts.
-  return HasOriginSandboxedTopLevelDocument() || !protections_on ||
+  return show_icon_as_confirmation_ ||
+         // 3PC blocking prevents SameSite=None cookies from being sent when the
+         // top-level document is sandboxed without `allow-origin`. For instance
+         // when loaded with: `Content-Security-Policy: sandbox`. In that case,
+         // we render the UI to allow the user to opt into sending SameSite=None
+         // cookies again in those contexts.
+         HasOriginSandboxedTopLevelDocument() ||
+         controls_state == CookieControlsState::kAllowed3pc ||
+         controls_state == CookieControlsState::kPausedTp ||
          // If no 3P sites have attempted to access site data, nor were any
          // stateful bounces recorded, the icon should not be displayed. Take
          // into account both allow and blocked counts, since the breakage might
@@ -735,6 +718,7 @@ CookieControlsController::TabObserver::~TabObserver() = default;
 void CookieControlsController::TabObserver::WebContentsDestroyed() {
   fpf_observation_.Reset();
   ip_protection_observation_.Reset();
+  cookie_controls_->tracking_protection_settings_observation_.Reset();
 }
 
 void CookieControlsController::TabObserver::OnSiteDataAccessed(
@@ -802,6 +786,10 @@ void CookieControlsController::TabObserver::PrimaryPageChanged(
 
 void CookieControlsController::TabObserver::DidStopLoading() {
   cookie_controls_->OnPageFinishedLoading();
+}
+
+void CookieControlsController::TabObserver::BeforeFormRepostWarningShow() {
+  cookie_controls_->OnBubbleCloseTriggered();
 }
 
 void CookieControlsController::TabObserver::ResetReloadCounter() {

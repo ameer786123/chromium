@@ -55,7 +55,6 @@ import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.embedder_support.util.Origin;
-import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.test.util.PrefetchTestUtil;
 import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer.OnEvaluateJavaScriptResultHelper;
 import org.chromium.content_public.browser.test.util.WebContentsUtils;
@@ -102,8 +101,6 @@ public class CustomTabsConnectionTest {
     @After
     public void tearDown() {
         CustomTabsTestUtils.cleanupSessions();
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> WarmupManager.getInstance().destroySpareWebContents());
         ThreadUtils.runOnUiThreadBlocking(() -> WarmupManager.getInstance().destroySpareTab());
     }
 
@@ -148,7 +145,7 @@ public class CustomTabsConnectionTest {
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     public void testCreateSpareRenderer() throws Exception {
         CustomTabsTestUtils.warmUpAndWait();
-        ThreadUtils.runOnUiThreadBlocking(this::assertSpareWebContentsNotNullAndDestroy);
+        ThreadUtils.runOnUiThreadBlocking(this::assertSpareTabNotNullAndDestroy);
     }
 
     @Test
@@ -157,12 +154,14 @@ public class CustomTabsConnectionTest {
     public void testDoNotCreateSpareRendererOnLowEnd() throws Exception {
         CustomTabsTestUtils.warmUpAndWait();
         // On UI thread because:
-        // 1. takeSpareWebContents needs to be called from the UI thread.
+        // 1. hasSpareTab needs to be called from the UI thread.
         // 2. warmup() is non-blocking and posts tasks to the UI thread, it ensures proper ordering.
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     WarmupManager warmupManager = WarmupManager.getInstance();
-                    Assert.assertFalse(warmupManager.hasSpareWebContents());
+                    Assert.assertFalse(
+                            warmupManager.hasSpareTab(
+                                    ProfileManager.getLastUsedRegularProfile(), false));
                 });
     }
 
@@ -173,11 +172,14 @@ public class CustomTabsConnectionTest {
         CustomTabsTestUtils.warmUpAndWait();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    assertSpareWebContentsNotNullAndDestroy();
-                    Assert.assertFalse(WarmupManager.getInstance().hasSpareWebContents());
+                    assertSpareTabNotNullAndDestroy();
+                    Assert.assertFalse(
+                            WarmupManager.getInstance()
+                                    .hasSpareTab(
+                                            ProfileManager.getLastUsedRegularProfile(), false));
                 });
         CustomTabsTestUtils.warmUpAndWait();
-        ThreadUtils.runOnUiThreadBlocking(this::assertSpareWebContentsNotNullAndDestroy);
+        ThreadUtils.runOnUiThreadBlocking(this::assertSpareTabNotNullAndDestroy);
     }
 
     @Test
@@ -192,7 +194,10 @@ public class CustomTabsConnectionTest {
         assertWarmupAndMayLaunchUrl(token, URL, true);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    Assert.assertFalse(WarmupManager.getInstance().hasSpareWebContents());
+                    Assert.assertFalse(
+                            WarmupManager.getInstance()
+                                    .hasSpareTab(
+                                            ProfileManager.getLastUsedRegularProfile(), false));
                 });
     }
 
@@ -225,7 +230,7 @@ public class CustomTabsConnectionTest {
         mCustomTabsConnection.setCanUseHiddenTabForSession(sessionHolder, false);
         Assert.assertTrue(mCustomTabsConnection.mayLaunchUrl(token, Uri.parse(URL), null, null));
 
-        ThreadUtils.runOnUiThreadBlocking(() -> assertSpareWebContentsNotNullAndDestroy());
+        ThreadUtils.runOnUiThreadBlocking(() -> assertSpareTabNotNullAndDestroy());
     }
 
     @Test
@@ -242,7 +247,7 @@ public class CustomTabsConnectionTest {
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
     public void testOnlyOneHiddenTab() throws Exception {
-        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup(0));
+        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup());
         CustomTabsSessionToken token = CustomTabsSessionToken.createMockSessionTokenForTesting();
         var sessionHolder = new SessionHolder<>(token);
         Assert.assertTrue("Failed newSession()", mCustomTabsConnection.newSession(token));
@@ -301,7 +306,7 @@ public class CustomTabsConnectionTest {
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
     public void testKillHiddenTabRenderer() throws Exception {
-        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup(0));
+        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup());
         CustomTabsSessionToken token = CustomTabsSessionToken.createMockSessionTokenForTesting();
         var sessionHolder = new SessionHolder<>(token);
         Assert.assertTrue("Failed newSession()", mCustomTabsConnection.newSession(token));
@@ -343,7 +348,7 @@ public class CustomTabsConnectionTest {
         urls.add(urlBundle);
         mCustomTabsConnection.mayLaunchUrl(token, null, null, urls);
 
-        ThreadUtils.runOnUiThreadBlocking(this::assertSpareWebContentsNotNullAndDestroy);
+        ThreadUtils.runOnUiThreadBlocking(this::assertSpareTabNotNullAndDestroy);
     }
 
     @Test
@@ -406,11 +411,10 @@ public class CustomTabsConnectionTest {
         mCustomTabsConnection.mayLaunchUrl(token, Uri.parse(URL), null, urls);
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
-                        Assert.assertNull(
+                        Assert.assertFalse(
                                 WarmupManager.getInstance()
-                                        .takeSpareWebContents(
-                                                /* incognito= */ false,
-                                                /* initiallyHidden= */ false,
+                                        .hasSpareTab(
+                                                ProfileManager.getLastUsedRegularProfile(),
                                                 /* targetsNetwork= */ false)));
     }
 
@@ -436,12 +440,12 @@ public class CustomTabsConnectionTest {
         prepareEmbeddedTestServer();
         Context context = ApplicationProvider.getApplicationContext();
 
-        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup(0));
+        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup());
 
         final OnEvaluateJavaScriptResultHelper JsHelper = new OnEvaluateJavaScriptResultHelper();
 
         // Launch a custom tab and load the url.
-        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup(0));
+        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup());
         Intent intent =
                 CustomTabsIntentTestUtils.createMinimalCustomTabIntent(context, mTestPageUrl);
         mCustomTabActivityTestRule.startCustomTabActivityWithIntent(intent);
@@ -469,7 +473,7 @@ public class CustomTabsConnectionTest {
 
         // Launch the first hidden tab. This tab should use a separate storage partition and
         // therefore shouldn't see the first cookie.
-        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup(0));
+        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup());
         Intent intent2 =
                 CustomTabsIntentTestUtils.createMinimalCustomTabIntent(context, mTestPageUrl);
         var sessionHolder = SessionHolder.getSessionHolderFromIntent(intent2);
@@ -571,7 +575,7 @@ public class CustomTabsConnectionTest {
 
         // Finally, launch a third custom tab. Because there isn't an associated mayLaunchUrl this
         // custom tab will use the default storage partition and will access the first cookie.
-        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup(0));
+        Assert.assertTrue("Failed warmup()", mCustomTabsConnection.warmup());
         Intent intent3 =
                 CustomTabsIntentTestUtils.createMinimalCustomTabIntent(context, mTestPageUrl);
         mCustomTabActivityTestRule.startCustomTabActivityWithIntent(intent3);
@@ -594,24 +598,13 @@ public class CustomTabsConnectionTest {
         Assert.assertEquals("\"foo=bar\"", JsHelper.getJsonResultAndClear());
     }
 
-    private void assertSpareWebContentsNotNullAndDestroy() {
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_PREWARM_TAB)) {
-            Assert.assertTrue(
-                    WarmupManager.getInstance()
-                            .hasSpareTab(
-                                    ProfileManager.getLastUsedRegularProfile(),
-                                    /* targetsNetwork= */ false));
-            WarmupManager.getInstance().destroySpareTab();
-        } else {
-            WebContents webContents =
-                    WarmupManager.getInstance()
-                            .takeSpareWebContents(
-                                    /* incognito= */ false,
-                                    /* initiallyHidden= */ false,
-                                    /* targetsNetwork= */ false);
-            Assert.assertNotNull(webContents);
-            webContents.destroy();
-        }
+    private void assertSpareTabNotNullAndDestroy() {
+        Assert.assertTrue(
+                WarmupManager.getInstance()
+                        .hasSpareTab(
+                                ProfileManager.getLastUsedRegularProfile(),
+                                /* targetsNetwork= */ false));
+        WarmupManager.getInstance().destroySpareTab();
     }
 
     /**
@@ -760,7 +753,7 @@ public class CustomTabsConnectionTest {
         Assert.assertTrue(mCustomTabsConnection.newSession(token));
 
         Assert.assertTrue(mCustomTabsConnection.mayLaunchUrl(token, Uri.parse(URL), null, null));
-        ThreadUtils.runOnUiThreadBlocking(this::assertSpareWebContentsNotNullAndDestroy);
+        ThreadUtils.runOnUiThreadBlocking(this::assertSpareTabNotNullAndDestroy);
     }
 
     @Test
@@ -777,11 +770,10 @@ public class CustomTabsConnectionTest {
         Assert.assertTrue(mCustomTabsConnection.mayLaunchUrl(token, Uri.parse(URL), null, null));
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
-                        Assert.assertNull(
+                        Assert.assertFalse(
                                 WarmupManager.getInstance()
-                                        .takeSpareWebContents(
-                                                /* incognito= */ false,
-                                                /* initiallyHidden= */ false,
+                                        .hasSpareTab(
+                                                ProfileManager.getLastUsedRegularProfile(),
                                                 /* targetsNetwork= */ false)));
     }
 
@@ -811,7 +803,7 @@ public class CustomTabsConnectionTest {
         try {
             Assert.assertTrue(
                     mCustomTabsConnection.mayLaunchUrl(token, Uri.parse(URL), null, null));
-            ThreadUtils.runOnUiThreadBlocking(this::assertSpareWebContentsNotNullAndDestroy);
+            ThreadUtils.runOnUiThreadBlocking(this::assertSpareTabNotNullAndDestroy);
         } finally {
             ThreadUtils.runOnUiThreadBlocking(
                     () ->
@@ -829,31 +821,21 @@ public class CustomTabsConnectionTest {
         Assert.assertTrue(mCustomTabsConnection.newSession(token));
         mCustomTabsConnection.setShouldSpeculateLoadOnCellularForSession(sessionHolder, true);
         CustomTabsTestUtils.warmUpAndWait();
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_PREWARM_TAB)) {
-            ThreadUtils.runOnUiThreadBlocking(
-                    () ->
-                            Assert.assertTrue(
-                                    WarmupManager.getInstance()
-                                            .hasSpareTab(
-                                                    ProfileManager.getLastUsedRegularProfile(),
-                                                    /* targetsNetwork= */ false)));
-        } else {
-            ThreadUtils.runOnUiThreadBlocking(
-                    () -> Assert.assertTrue(WarmupManager.getInstance().hasSpareWebContents()));
-        }
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        Assert.assertTrue(
+                                WarmupManager.getInstance()
+                                        .hasSpareTab(
+                                                ProfileManager.getLastUsedRegularProfile(),
+                                                /* targetsNetwork= */ false)));
         Assert.assertTrue(mCustomTabsConnection.mayLaunchUrl(token, Uri.parse(URL), null, null));
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_PREWARM_TAB)) {
-            ThreadUtils.runOnUiThreadBlocking(
-                    () ->
-                            Assert.assertFalse(
-                                    WarmupManager.getInstance()
-                                            .hasSpareTab(
-                                                    ProfileManager.getLastUsedRegularProfile(),
-                                                    /* targetsNetwork= */ false)));
-        } else {
-            ThreadUtils.runOnUiThreadBlocking(
-                    () -> Assert.assertFalse(WarmupManager.getInstance().hasSpareWebContents()));
-        }
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        Assert.assertFalse(
+                                WarmupManager.getInstance()
+                                        .hasSpareTab(
+                                                ProfileManager.getLastUsedRegularProfile(),
+                                                /* targetsNetwork= */ false)));
     }
 
     @Test
@@ -882,11 +864,11 @@ public class CustomTabsConnectionTest {
         newSessionWithWarmupWaiter(client, warmupWaiter);
 
         // Both sessions should be notified.
-        Assert.assertTrue(mCustomTabsConnection.warmup(0));
+        Assert.assertTrue(mCustomTabsConnection.warmup());
         warmupWaiter.waitForCallback(0, 2, 20, TimeUnit.SECONDS);
 
         // Notifications should be sent even if warmup() has already been called.
-        Assert.assertTrue(mCustomTabsConnection.warmup(0));
+        Assert.assertTrue(mCustomTabsConnection.warmup());
         warmupWaiter.waitForCallback(2, 2);
     }
 
@@ -906,10 +888,7 @@ public class CustomTabsConnectionTest {
     /** Tests that prefetch() with valid Uri and default PrefetchOptions succeeds. */
     @Test
     @SmallTest
-    @EnableFeatures({
-        ChromeFeatureList.PREFETCH_BROWSER_INITIATED_TRIGGERS,
-        ChromeFeatureList.CCT_NAVIGATIONAL_PREFETCH
-    })
+    @EnableFeatures({ChromeFeatureList.CCT_NAVIGATIONAL_PREFETCH})
     public void testPrefetch() throws Exception {
         prepareEmbeddedTestServer();
         CustomTabsSessionToken token = CustomTabsSessionToken.createMockSessionTokenForTesting();
@@ -928,14 +907,11 @@ public class CustomTabsConnectionTest {
     /** Tests that prefetch() also succeeds if we run warmup beforehand */
     @Test
     @SmallTest
-    @EnableFeatures({
-        ChromeFeatureList.PREFETCH_BROWSER_INITIATED_TRIGGERS,
-        ChromeFeatureList.CCT_NAVIGATIONAL_PREFETCH
-    })
+    @EnableFeatures({ChromeFeatureList.CCT_NAVIGATIONAL_PREFETCH})
     public void testPrefetchWithWarmup() throws Exception {
         prepareEmbeddedTestServer();
         CustomTabsSessionToken token = CustomTabsSessionToken.createMockSessionTokenForTesting();
-        Assert.assertTrue(mCustomTabsConnection.warmup(0));
+        Assert.assertTrue(mCustomTabsConnection.warmup());
         Assert.assertTrue(mCustomTabsConnection.newSession(token));
 
         HistogramWatcher histogramWatcher =
@@ -951,10 +927,7 @@ public class CustomTabsConnectionTest {
     /** Tests that prefetch() with invalid Uri fails. */
     @Test
     @SmallTest
-    @EnableFeatures({
-        ChromeFeatureList.PREFETCH_BROWSER_INITIATED_TRIGGERS,
-        ChromeFeatureList.CCT_NAVIGATIONAL_PREFETCH
-    })
+    @EnableFeatures({ChromeFeatureList.CCT_NAVIGATIONAL_PREFETCH})
     public void testPrefetchWithInvalidUri() throws Exception {
         prepareEmbeddedTestServer();
         CustomTabsSessionToken token = CustomTabsSessionToken.createMockSessionTokenForTesting();
@@ -1016,10 +989,7 @@ public class CustomTabsConnectionTest {
      */
     @Test
     @SmallTest
-    @EnableFeatures({
-        ChromeFeatureList.PREFETCH_BROWSER_INITIATED_TRIGGERS,
-        ChromeFeatureList.CCT_NAVIGATIONAL_PREFETCH
-    })
+    @EnableFeatures({ChromeFeatureList.CCT_NAVIGATIONAL_PREFETCH})
     public void testPrefetchWithValidSourceOriginUri() throws Exception {
         String sourceOrigin = URL;
         String prefetchUrl = URL2;
@@ -1048,10 +1018,7 @@ public class CustomTabsConnectionTest {
      */
     @Test
     @SmallTest
-    @EnableFeatures({
-        ChromeFeatureList.PREFETCH_BROWSER_INITIATED_TRIGGERS,
-        ChromeFeatureList.CCT_NAVIGATIONAL_PREFETCH
-    })
+    @EnableFeatures({ChromeFeatureList.CCT_NAVIGATIONAL_PREFETCH})
     public void testPrefetchWithInvalidSourceOriginUri() throws Exception {
         String invalidSourceOrigin = URL;
         String prefetchUrl = URL2;

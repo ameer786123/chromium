@@ -4,17 +4,24 @@
 
 #include "chrome/browser/new_tab_page/new_tab_page_util.h"
 
+#include "base/command_line.h"
 #include "base/strings/strcat.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/new_tab_page/modules/modules_switches.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/common/pref_names.h"
 #include "components/optimization_guide/core/optimization_guide_logger.h"
+#include "components/page_content_annotations/core/page_content_annotations_features.h"
 #include "components/prefs/pref_service.h"
 #include "components/search/ntp_features.h"
+#include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/sync/base/user_selectable_type.h"
 #include "components/sync/service/sync_service.h"
+#include "components/sync/service/sync_user_settings.h"
 #include "components/variations/service/variations_service.h"
 
 namespace {
@@ -69,9 +76,22 @@ bool IsDriveModuleEnabledForProfile(bool is_managed_profile, Profile* profile) {
     return false;
   }
 
-  if (!base::FeatureList::IsEnabled(
-          ntp_features::kNtpDriveModuleNoSyncRequirement)) {
-    auto* sync_service = SyncServiceFactory::GetForProfile(profile);
+  if (!IsProfileSignedIn(profile)) {
+    LogModuleEnablement(ntp_features::kNtpDriveModule, false, "not signed in");
+    return false;
+  }
+
+  auto* sync_service = SyncServiceFactory::GetForProfile(profile);
+  if (base::FeatureList::IsEnabled(
+          ntp_features::kNtpDriveModuleHistorySyncRequirement)) {
+    if (!sync_service ||
+        !sync_service->GetUserSettings()->GetSelectedTypes().Has(
+            syncer::UserSelectableType::kHistory)) {
+      LogModuleEnablement(ntp_features::kNtpDriveModule, false,
+                          "no history sync");
+      return false;
+    }
+  } else {
     if (!sync_service || !sync_service->IsSyncFeatureEnabled()) {
       LogModuleEnablement(ntp_features::kNtpDriveModule, false, "no sync");
       return false;
@@ -113,7 +133,13 @@ bool IsFeatureForceEnabled(const base::Feature& feature) {
   return force_enabled;
 }
 
-bool IsGoogleCalendarModuleEnabled(bool is_managed_profile) {
+bool IsGoogleCalendarModuleEnabled(bool is_managed_profile, Profile* profile) {
+  if (!IsProfileSignedIn(profile)) {
+    LogModuleEnablement(ntp_features::kNtpCalendarModule, false,
+                        "not signed in");
+    return false;
+  }
+
   if (!is_managed_profile) {
     LogModuleEnablement(ntp_features::kNtpCalendarModule, false,
                         "account not managed");
@@ -129,6 +155,21 @@ bool IsGoogleCalendarModuleEnabled(bool is_managed_profile) {
   }
 
   return IsFeatureEnabled(ntp_features::kNtpCalendarModule);
+}
+
+bool IsMostRelevantTabResumeModuleEnabled(Profile* profile) {
+  if (!IsProfileSignedIn(profile)) {
+    LogModuleEnablement(ntp_features::kNtpMostRelevantTabResumptionModule,
+                        false, "not signed in");
+    return false;
+  }
+
+  return g_browser_process &&
+         page_content_annotations::features::
+             ShouldExecutePageVisibilityModelOnPageContent(
+                 g_browser_process->GetApplicationLocale()) &&
+         base::FeatureList::IsEnabled(
+             ntp_features::kNtpMostRelevantTabResumptionModule);
 }
 
 bool IsMicrosoftFilesModuleEnabledForProfile(Profile* profile) {
@@ -160,6 +201,15 @@ bool IsOutlookCalendarModuleEnabledForProfile(Profile* profile) {
 bool IsMicrosoftModuleEnabledForProfile(Profile* profile) {
   return IsMicrosoftFilesModuleEnabledForProfile(profile) ||
          IsOutlookCalendarModuleEnabledForProfile(profile);
+}
+
+bool IsProfileSignedIn(Profile* profile) {
+  auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
+  return !base::FeatureList::IsEnabled(
+             ntp_features::kNtpModuleSignInRequirement) ||
+         (identity_manager && identity_manager->GetAccountsInCookieJar()
+                                      .GetPotentiallyInvalidSignedInAccounts()
+                                      .size() > 0);
 }
 
 std::string GetVariationsServiceCountryCode(

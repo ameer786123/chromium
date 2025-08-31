@@ -13,6 +13,7 @@
 #include "base/files/file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -37,6 +38,7 @@
 #include "chromeos/ash/components/disks/disk.h"
 #include "chromeos/ash/components/disks/fake_disk_mount_manager.h"
 #include "chromeos/ash/experiences/arc/arc_prefs.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/browser_task_environment.h"
 #include "storage/browser/file_system/file_system_url.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
@@ -654,7 +656,7 @@ constexpr char kDeviceFailNotificationId[] = "swa-device-fail-id";
 // In the notification generation logic there is a distinction
 // between parent and child volumes found by the volume is_parent()
 // method. Both parent and child unknown volume filesystems generate
-// the same nofication.
+// the same notification.
 TEST_F(SystemNotificationManagerTest, DeviceUnsupportedDefault) {
   base::HistogramTester histogram_tester;
   std::unique_ptr<Volume> volume(Volume::CreateForTesting(

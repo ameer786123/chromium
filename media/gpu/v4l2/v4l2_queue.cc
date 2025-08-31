@@ -27,13 +27,14 @@
 #include "media/gpu/chromeos/native_pixmap_frame_resource.h"
 #include "media/gpu/chromeos/platform_video_frame_utils.h"
 #include "media/gpu/macros.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 namespace media {
 
 namespace {
 
 // TODO(jkardatzke): Remove this when it is in linux/videodev2.h.
-#define V4L2_MEMORY_FLAG_SECURE 0x2
+#define V4L2_MEMORY_FLAG_RESTRICTED 0x2
 
 // Maximum number of requests that can be created.
 constexpr size_t kMaxNumRequests = 32;
@@ -111,14 +112,12 @@ void V4L2ProcessingTrace(const struct v4l2_buffer* v4l2_buffer, bool start) {
   }
 
   if (start && v4l2_buffer->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(kTracingCategory, kVideoDecoding,
-                                      TRACE_ID_LOCAL(timestamp), "timestamp",
-                                      timestamp);
+    TRACE_EVENT_BEGIN(kTracingCategory, kVideoDecoding,
+                      perfetto::Track(timestamp), "timestamp", timestamp);
   } else if (!start &&
              v4l2_buffer->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-    TRACE_EVENT_NESTABLE_ASYNC_END1(kTracingCategory, kVideoDecoding,
-                                    TRACE_ID_LOCAL(timestamp), "timestamp",
-                                    timestamp);
+    TRACE_EVENT_END(kTracingCategory, perfetto::Track(timestamp), "timestamp",
+                    timestamp);
   }
 }
 
@@ -752,7 +751,7 @@ bool V4L2WritableBufferRef::QueueDMABuf(scoped_refptr<FrameResource> frame,
     return false;
   }
   const std::vector<gfx::NativePixmapPlane>& planes =
-      gmb_handle.native_pixmap_handle.planes;
+      gmb_handle.native_pixmap_handle().planes;
 
   if (!self.buffer_data_->CheckNumFDsForFormat(planes.size())) {
     return false;
@@ -1194,7 +1193,7 @@ size_t V4L2Queue::AllocateBuffers(size_t count,
 
   __u8 flags = incoherent ? V4L2_MEMORY_FLAG_NON_COHERENT : 0;
   if (allocate_secure_cb_) {
-    flags |= V4L2_MEMORY_FLAG_SECURE;
+    flags |= V4L2_MEMORY_FLAG_RESTRICTED;
   }
   struct v4l2_requestbuffers reqbufs = {
       .count = base::checked_cast<decltype(v4l2_requestbuffers::count)>(count),
@@ -1270,7 +1269,7 @@ bool V4L2Queue::DeallocateBuffers() {
   // Free all buffers.
   __u8 flags = incoherent_ ? V4L2_MEMORY_FLAG_NON_COHERENT : 0;
   if (allocate_secure_cb_) {
-    flags |= V4L2_MEMORY_FLAG_SECURE;
+    flags |= V4L2_MEMORY_FLAG_RESTRICTED;
   }
   struct v4l2_requestbuffers reqbufs = {
       .count = 0, .type = type_, .memory = memory_, .flags = flags};

@@ -49,6 +49,8 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/process_allocation_context.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/common/buildflags.h"
+#include "media/gpu/buildflags.h"
 #include "media/mojo/mojom/interface_factory.mojom-forward.h"
 #include "media/mojo/mojom/video_decode_perf_history.mojom-forward.h"
 #include "media/mojo/mojom/video_encoder_metrics_provider.mojom-forward.h"
@@ -64,7 +66,6 @@
 #include "mojo/public/cpp/bindings/unique_receiver_set.h"
 #include "mojo/public/cpp/system/invitation.h"
 #include "net/base/network_isolation_key.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "services/network/public/mojom/p2p.mojom-forward.h"
 #include "services/network/public/mojom/url_loader_factory.mojom-forward.h"
 #include "services/resource_coordinator/public/mojom/memory_instrumentation/memory_instrumentation.mojom.h"
@@ -84,10 +85,8 @@
 #include "third_party/blink/public/mojom/loader/code_cache.mojom-forward.h"
 #include "third_party/blink/public/mojom/plugins/plugin_registry.mojom-forward.h"
 #include "third_party/blink/public/mojom/push_messaging/push_messaging.mojom-forward.h"
-#include "third_party/blink/public/mojom/webdatabase/web_database.mojom-forward.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_proto.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/memory/memory_pressure_listener.h"
@@ -152,7 +151,6 @@ class InProcessChildThreadParams;
 class IsolationContext;
 class MediaStreamTrackMetricsHost;
 class P2PSocketDispatcherHost;
-class PepperRendererConnection;
 class PermissionServiceContext;
 class PluginRegistryImpl;
 class ProcessLock;
@@ -287,9 +285,6 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void SetSuddenTerminationAllowed(bool enabled) override;
   bool SuddenTerminationAllowed() override;
   IPC::ChannelProxy* GetChannel() override;
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  void AddFilter(BrowserMessageFilter* filter) override;
-#endif
   bool FastShutdownStarted() override;
   base::TimeDelta GetChildProcessIdleTime() override;
   viz::GpuClient* GetGpuClient();
@@ -396,6 +391,9 @@ class CONTENT_EXPORT RenderProcessHostImpl
 
   void InterruptJavaScriptIsolateAndCollectCallStack();
 
+  // Helper method to safely collect JavaScript call stack on a delay.
+  void CollectDelayedJavaScriptCallStack();
+
   // HistogramChildProcess implementation:
   void BindChildHistogramFetcherFactory(
       mojo::PendingReceiver<metrics::mojom::ChildHistogramFetcherFactory>
@@ -470,9 +468,20 @@ class CONTENT_EXPORT RenderProcessHostImpl
                                    bool empty_allowed,
                                    GURL* url);
 
-  // Returns the current count of renderer processes. For the count used when
-  // comparing against the process limit, see `GetProcessCountForLimit`.
-  static size_t GetProcessCount();
+  // Returns the current count of RenderProcessHost instances. Note that this is
+  // *not* the count of renderer processes, as a (potentially large) fraction of
+  // those can be either not initialized, or dead. For instance, on Android
+  // processes are frequently killed by the OS, and after session restore, not
+  // all tabs (and thus RenderProcessHost instances) are loaded (and thus the
+  // instances are not initialized).  To get the count of renderer processes,
+  // use `GetLiveCount()`. For the count used when comparing against the process
+  // limit, see `GetProcessCountForLimit`.
+  static size_t GetCount();
+
+  // Returns the current count of RPHs that have an "initialized and not dead"
+  // process. See the function comment for `GetCount()` to understand the
+  // difference.
+  static size_t GetLiveCount();
 
   // Returns the current process count for comparisons against
   // GetMaxRendererProcessCount, taking into account any processes the embedder
@@ -565,9 +574,12 @@ class CONTENT_EXPORT RenderProcessHostImpl
     kSpareTaken = 4,
     kRefusedBySiteInstance = 5,
     kRefusedForPdfContent = 6,
-    kMaxValue = kRefusedForPdfContent
+    kRefusedForJitMismatch = 7,
+    kRefusedForV8OptimizationMismatch = 8,
+    kRefusedNonNavigation = 9,
+    kMaxValue = kRefusedNonNavigation
   };
-  // LINT.ThenChange(tools/metrics/histograms/metadata/browser/histograms.xml:SpareProcessMaybeTakeAction)
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/browser/histograms.xml:SpareProcessMaybeTakeAction)
 
   // Please keep in sync with "RenderProcessHostDelayShutdownReason" in
   // tools/metrics/histograms/metadata/browser/enums.xml. These values should
@@ -606,6 +618,10 @@ class CONTENT_EXPORT RenderProcessHostImpl
 #if !BUILDFLAG(IS_ANDROID)
   // Gets the platform-specific limit. Used by GetMaxRendererProcessCount().
   static size_t GetPlatformMaxRendererProcessCount();
+
+  // Returns whether the current platform has no known process limit, in which
+  // case `GetPlatformMaxRendererProcessCount()` will use a fallback value.
+  static bool IsPlatformProcessLimitUnknownForTesting();
 #endif
 
   // This forces a renderer that is running "in process" to shut down.
@@ -828,16 +844,6 @@ class CONTENT_EXPORT RenderProcessHostImpl
       mojo::PendingReceiver<blink::mojom::NotificationService> receiver)
       override;
 
-  // Used for shared workers and service workers to create a websocket.
-  // In other cases, RenderFrameHostImpl for documents or DedicatedWorkerHost
-  // for dedicated workers handles interface requests in order to associate
-  // websockets with a frame. Shared workers and service workers don't have to
-  // do it because they don't have a frame.
-  void CreateWebSocketConnector(
-      const blink::StorageKey& storage_key,
-      mojo::PendingReceiver<blink::mojom::WebSocketConnector> receiver)
-      override;
-
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
   void CreateOOPVideoDecoder(
       mojo::PendingReceiver<media::mojom::VideoDecoder> receiver) override;
@@ -852,12 +858,6 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void SetIpcSendWatcherForTesting(IpcSendWatcher watcher) {
     ipc_send_watcher_for_testing_ = std::move(watcher);
   }
-
-#if BUILDFLAG(ENABLE_PPAPI)
-  PepperRendererConnection* pepper_renderer_connection() {
-    return pepper_renderer_connection_.get();
-  }
-#endif
 
 #if BUILDFLAG(IS_ANDROID)
   // Notifies the renderer process of memory pressure level.
@@ -878,6 +878,10 @@ class CONTENT_EXPORT RenderProcessHostImpl
   using VideoDecoderEventCB = base::RepeatingCallback<void(VideoDecoderEvent)>;
   static void SetVideoDecoderEventCBForTesting(VideoDecoderEventCB cb);
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
+
+  // Returns whether the process is only hosting RFHs in prerendered pages
+  // or no RFHs at all.
+  bool IsOnlyHostingPrerenderedFramesOrEmpty();
 
   void GetBoundInterfacesForTesting(std::vector<std::string>& out);
 
@@ -986,11 +990,13 @@ class CONTENT_EXPORT RenderProcessHostImpl
     std::unique_ptr<service_manager::BinderRegistry> binders_;
     mojo::Receiver<mojom::ChildProcessHost> receiver_{this};
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
     mojo::Remote<media::mojom::VideoEncodeAcceleratorProviderFactory>
         video_encode_accelerator_factory_remote_;
+#endif
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
     ChildThreadTypeSwitcher child_thread_type_switcher_;
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#endif
   };
 
   // Use CreateRenderProcessHost() instead of calling this constructor
@@ -1048,10 +1054,6 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void BindVideoEncoderMetricsProvider(
       mojo::PendingReceiver<media::mojom::VideoEncoderMetricsProvider>
           receiver);
-#if BUILDFLAG(IS_ANDROID)
-  void BindWebDatabaseHostImpl(
-      mojo::PendingReceiver<blink::mojom::WebDatabaseHost> receiver);
-#endif  // BUILDFLAG(IS_ANDROID)
   void BindAecDumpManager(
       mojo::PendingReceiver<blink::mojom::AecDumpManager> receiver);
   void CreateMediaLogRecordHost(
@@ -1258,6 +1260,13 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void ResetVideoDecoderFactory();
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 
+  // The callback for handling the prerender state change of each
+  // RFH in the process. The prerender state of all the RFHs in
+  // the process is tracked to determine IsOnlyHostingPrerenderedFramesOrEmpty.
+  void OnRenderFrameHostPrerenderStateChanged(
+      const GlobalRenderFrameHostId& render_frame_host_id,
+      bool is_prerendering);
+
   mojo::OutgoingInvitation mojo_invitation_;
 
   // These cover mutually-exclusive cases. While keep-alive is time-based,
@@ -1309,6 +1318,9 @@ class CONTENT_EXPORT RenderProcessHostImpl
   // processes of same visibility. It indicates process has frames that
   // intersect with the viewport.
   bool intersects_viewport_ = false;
+  // |is_discarding_| is whether the renderer process is executing discard
+  // logic. This is effective only when WebContentsDiscard feature is enabled.
+  bool is_discarding_ = false;
 #if BUILDFLAG(IS_ANDROID)
   // Highest importance of all clients that contribute priority.
   ChildProcessImportance effective_importance_ = ChildProcessImportance::NORMAL;
@@ -1372,6 +1384,8 @@ class CONTENT_EXPORT RenderProcessHostImpl
 
   std::set<GlobalRenderFrameHostId> render_frame_host_id_set_;
 
+  std::set<GlobalRenderFrameHostId> prerendering_frame_host_id_set_;
+
   // The observers watching our lifetime.
   base::ObserverList<RenderProcessHostObserver> observers_;
 
@@ -1396,6 +1410,9 @@ class CONTENT_EXPORT RenderProcessHostImpl
   // Records the last time we regarded the child process active.
   base::TimeTicks child_process_activity_time_;
 
+  // The time that a shutdown of the renderer process was requested.
+  base::TimeTicks shutdown_start_time_;
+
   std::string unresponsive_document_javascript_call_stack_;
   blink::LocalFrameToken unresponsive_document_token_;
 
@@ -1414,6 +1431,10 @@ class CONTENT_EXPORT RenderProcessHostImpl
   // Indicates whether RenderProcessHostImpl::ProcessDied is currently iterating
   // and calling through RenderProcessHostObserver::RenderProcessExited.
   bool within_process_died_observer_ = false;
+
+  // Indicates whether OnRendererProcessLockedStateUpdated() has been called for
+  // the renderer process.
+  bool did_update_renderer_locked_state_ = false;
 
   std::unique_ptr<P2PSocketDispatcherHost> p2p_socket_dispatcher_host_;
 
@@ -1547,10 +1568,6 @@ class CONTENT_EXPORT RenderProcessHostImpl
 #if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
   // For the render process to connect to the system tracing service.
   std::unique_ptr<tracing::SystemTracingService> system_tracing_service_;
-#endif
-
-#if BUILDFLAG(ENABLE_PPAPI)
-  scoped_refptr<PepperRendererConnection> pepper_renderer_connection_;
 #endif
 
   // The memory size that the renderer has allocated. On Android

@@ -107,8 +107,10 @@ void DragItemToPoint(OverviewItemBase* item,
                      bool drop) {
   DCHECK(item);
 
-  const gfx::Point item_center =
+  gfx::Point item_center =
       gfx::ToRoundedPoint(item->target_bounds().CenterPoint());
+  // Move slightly to right bottom as the center may have a gap for dividier.
+  item_center.Offset(10, 10);
   event_generator->set_current_screen_location(item_center);
   if (by_touch_gestures) {
     event_generator->PressTouch();
@@ -121,7 +123,7 @@ void DragItemToPoint(OverviewItemBase* item,
   } else {
     event_generator->PressLeftButton();
     Shell::Get()->cursor_manager()->SetDisplay(
-        display::Screen::GetScreen()->GetDisplayNearestPoint(screen_location));
+        display::Screen::Get()->GetDisplayNearestPoint(screen_location));
     event_generator->MoveMouseTo(screen_location);
     if (drop)
       event_generator->ReleaseLeftButton();

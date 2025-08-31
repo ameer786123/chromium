@@ -124,7 +124,7 @@ ReferrerChainData::ReferrerChainData(
 
 ReferrerChainData::~ReferrerChainData() = default;
 
-ReferrerChain* ReferrerChainData::GetReferrerChain() {
+ReferrerChain* ReferrerChainData::GetReferrerChain() const {
   return referrer_chain_.get();
 }
 

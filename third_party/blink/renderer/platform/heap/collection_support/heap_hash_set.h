@@ -60,11 +60,11 @@ class BasicHeapHashSet final
  private:
   struct TypeConstraints {
     constexpr TypeConstraints() {
-      static_assert(WTF::IsMemberOrWeakMemberType<ValueArg>::value,
+      static_assert(IsMemberOrWeakMemberType<ValueArg>::value,
                     "BasicHeapHashSet supports only Member and WeakMember.");
       static_assert(std::is_trivially_destructible_v<BasicHeapHashSet>,
                     "BasicHeapHashSet must be trivially destructible.");
-      static_assert(WTF::IsTraceable<ValueArg>::value,
+      static_assert(IsTraceableV<ValueArg>,
                     "For hash sets without traceable elements, use HashSet<> "
                     "instead of BasicHeapHashSet<>.");
     }
@@ -72,21 +72,21 @@ class BasicHeapHashSet final
   NO_UNIQUE_ADDRESS TypeConstraints type_constraints_;
 };
 
-// On-stack for in-field version of WTF::HashSet for referring to
+// On-stack for in-field version of HashSet for referring to
 // GarbageCollected objects.
 template <typename T, typename Traits = HashTraits<T>>
 using HeapHashSet =
     BasicHeapHashSet<internal::HeapCollectionType::kDisallowNew, T, Traits>;
 
-static_assert(WTF::IsDisallowNew<HeapHashSet<int>>);
+static_assert(IsDisallowNew<HeapHashSet<int>>);
 ASSERT_SIZE(HashSet<int>, HeapHashSet<int>);
 
-// GCed version of WTF::HashSet for referring to GarbageCollected objects.
+// GCed version of HashSet for referring to GarbageCollected objects.
 template <typename T, typename Traits = HashTraits<T>>
 using GCedHeapHashSet =
     BasicHeapHashSet<internal::HeapCollectionType::kGCed, T, Traits>;
 
-static_assert(!WTF::IsDisallowNew<GCedHeapHashSet<int>>);
+static_assert(!IsDisallowNew<GCedHeapHashSet<int>>);
 ASSERT_SIZE(HashSet<int>, GCedHeapHashSet<int>);
 
 }  // namespace blink

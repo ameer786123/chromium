@@ -2,33 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import '../settings_page/settings_animated_pages.js';
-import '../settings_page/settings_subpage.js';
+import '../settings_page/settings_section.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {BaseMixin} from '../base_mixin.js';
-import type {FocusConfig} from '../focus_config.js';
 import {loadTimeData} from '../i18n_setup.js';
 import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
 import {AiPageInteractions, MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
 import {routes} from '../route.js';
 import {Router} from '../router.js';
+import {SettingsViewMixin} from '../settings_page/settings_view_mixin.js';
 
 import {getTemplate} from './ai_page.html.js';
 import {FeatureOptInState, SettingsAiPageFeaturePrefName} from './constants.js';
 
-export interface SettingsAiPageElement {
-  $: {
-    historySearchRow: HTMLElement,
-  };
-}
-
-// BaseMixin is needed to populate the associatedControl field for search in
-// subpages, see crbug.com/378927854.
-const SettingsAiPageElementBase = PrefsMixin(BaseMixin(PolymerElement));
+const SettingsAiPageElementBase = SettingsViewMixin(PrefsMixin(PolymerElement));
 export class SettingsAiPageElement extends SettingsAiPageElementBase {
   static get is() {
     return 'settings-ai-page';
@@ -40,16 +31,6 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
 
   static get properties() {
     return {
-      enableAiSettingsPageRefresh_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('enableAiSettingsPageRefresh'),
-      },
-
-      showAutofillAiControl_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('showAutofillAiControl'),
-      },
-
       showComposeControl_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('showComposeControl'),
@@ -74,57 +55,14 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
         type: Boolean,
         value: () => loadTimeData.getBoolean('showPasswordChangeControl'),
       },
-
-      focusConfig_: {
-        type: Object,
-        value() {
-          const map = new Map();
-
-          if (routes.HISTORY_SEARCH) {
-            map.set(routes.HISTORY_SEARCH.path, '#historySearchRowV2');
-          }
-
-          if (routes.COMPARE) {
-            map.set(routes.COMPARE.path, '#compareRowV2');
-          }
-
-          if (routes.OFFER_WRITING_HELP) {
-            map.set(routes.OFFER_WRITING_HELP.path, '#composeRowV2');
-          }
-
-          if (routes.AI_TAB_ORGANIZATION) {
-            map.set(routes.AI_TAB_ORGANIZATION.path, '#tabOrganizationRowV2');
-          }
-
-          if (routes.AUTOFILL_AI) {
-            map.set(routes.AUTOFILL_AI.path, '#autofillAiRowV2');
-          }
-
-          return map;
-        },
-      },
-
-      historySearchRowSublabel_: {
-        type: String,
-        value: () => {
-          return loadTimeData.getBoolean(
-                     'historyEmbeddingsAnswersFeatureEnabled') ?
-              loadTimeData.getString('historySearchAnswersSettingSublabel') :
-              loadTimeData.getString('historySearchSettingSublabel');
-        },
-      },
     };
   }
 
-  declare private enableAiSettingsPageRefresh_: boolean;
-  declare private showAutofillAiControl_: boolean;
   declare private showComposeControl_: boolean;
   declare private showCompareControl_: boolean;
   declare private showHistorySearchControl_: boolean;
   declare private showTabOrganizationControl_: boolean;
   declare private showPasswordChangeControl_: boolean;
-  declare private focusConfig_: FocusConfig;
-  declare private historySearchRowSublabel_: string;
   private shouldRecordMetrics_: boolean = true;
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
@@ -136,15 +74,12 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
 
   private maybeLogVisibilityMetrics_() {
     // Only record metrics when the user first navigates to the main AI page.
-    if (!this.shouldRecordMetrics_ || !this.enableAiSettingsPageRefresh_ ||
+    if (!this.shouldRecordMetrics_ ||
         Router.getInstance().getCurrentRoute() !== routes.AI) {
       return;
     }
     this.shouldRecordMetrics_ = false;
 
-    this.metricsBrowserProxy_.recordBooleanHistogram(
-        'Settings.AiPage.ElementVisibility.AutofillAI',
-        this.showAutofillAiControl_);
     this.metricsBrowserProxy_.recordBooleanHistogram(
         'Settings.AiPage.ElementVisibility.HistorySearch',
         this.showHistorySearchControl_);
@@ -161,23 +96,12 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
   }
 
   private onHistorySearchRowClick_() {
-    if (this.enableAiSettingsPageRefresh_) {
-      this.recordInteractionMetrics_(
-          AiPageInteractions.HISTORY_SEARCH_CLICK,
-          'Settings.AiPage.HistorySearchEntryPointClick');
-    }
+    this.recordInteractionMetrics_(
+        AiPageInteractions.HISTORY_SEARCH_CLICK,
+        'Settings.AiPage.HistorySearchEntryPointClick');
 
     const router = Router.getInstance();
     router.navigateTo(router.getRoutes().HISTORY_SEARCH);
-  }
-
-  private onAutofillAiRowClick_() {
-    this.recordInteractionMetrics_(
-        AiPageInteractions.AUTOFILL_AI_CLICK,
-        'Settings.AiPage.AutofillAIEntryPointClick');
-
-    const router = Router.getInstance();
-    router.navigateTo(router.getRoutes().AUTOFILL_AI);
   }
 
   private onCompareRowClick_() {
@@ -234,6 +158,67 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
     return isAnswersEnabled ?
         loadTimeData.getString('historySearchWithAnswersSublabelOff') :
         loadTimeData.getString('historySearchSublabelOff');
+  }
+
+  // SettingsViewMixin implementation.
+  override getFocusConfig() {
+    const map = new Map();
+
+    if (routes.HISTORY_SEARCH) {
+      map.set(routes.HISTORY_SEARCH.path, '#historySearchRowV2');
+    }
+
+    if (routes.COMPARE) {
+      map.set(routes.COMPARE.path, '#compareRowV2');
+    }
+
+    if (routes.OFFER_WRITING_HELP) {
+      map.set(routes.OFFER_WRITING_HELP.path, '#composeRowV2');
+    }
+
+    if (routes.AI_TAB_ORGANIZATION) {
+      map.set(routes.AI_TAB_ORGANIZATION.path, '#tabOrganizationRowV2');
+    }
+
+    return map;
+  }
+
+  // SettingsViewMixin implementation.
+  override getAssociatedControlFor(childViewId: string): HTMLElement {
+    const ids = [
+      'compare',
+      'compose',
+      'historySearch',
+      'tabOrganization',
+    ];
+    assert(ids.includes(childViewId));
+
+    let triggerId: string|null = null;
+    switch (childViewId) {
+      case 'compare':
+        assert(this.showCompareControl_);
+        triggerId = 'compareRowV2';
+        break;
+      case 'compose':
+        assert(this.showComposeControl_);
+        triggerId = 'composeRowV2';
+        break;
+      case 'historySearch':
+        assert(this.showHistorySearchControl_);
+        triggerId = 'historySearchRowV2';
+        break;
+      case 'tabOrganization':
+        assert(this.showTabOrganizationControl_);
+        triggerId = 'tabOrganizationRowV2';
+        break;
+    }
+
+    assert(triggerId);
+
+    const control =
+        this.shadowRoot!.querySelector<HTMLElement>(`#${triggerId}`);
+    assert(control);
+    return control;
   }
 }
 

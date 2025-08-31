@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.ntp_customization;
 import android.content.Context;
 import android.support.annotation.DrawableRes;
 import android.support.annotation.Nullable;
+import android.support.annotation.StringRes;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.ImageView;
@@ -14,9 +15,11 @@ import android.widget.LinearLayout;
 
 import androidx.appcompat.content.res.AppCompatResources;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.widget.TextViewWithLeading;
 
 /** The list item view within a {@link BottomSheetListContainerView} of a bottom sheet. */
+@NullMarked
 public class BottomSheetListItemView extends LinearLayout {
     private TextViewWithLeading mTitleView;
     private TextViewWithLeading mSubtitleView;
@@ -66,5 +69,10 @@ public class BottomSheetListItemView extends LinearLayout {
             return;
         }
         mTrailingIcon.setImageResource(resId);
+    }
+
+    /** Sets the content description of the trailing icon besides the title and the subtitle. */
+    void setTrailingIconContentDescriptionResId(@StringRes int contentDescription) {
+        mTrailingIcon.setContentDescription(getResources().getString(contentDescription));
     }
 }

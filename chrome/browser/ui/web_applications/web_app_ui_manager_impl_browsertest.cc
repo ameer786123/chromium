@@ -68,7 +68,7 @@ IN_PROC_BROWSER_TEST_F(WebAppUiManagerImplBrowserTest,
   // Zero apps on start:
   EXPECT_EQ(0u, ui_manager().GetNumWindowsForApp(webapps::AppId()));
 
-  webapps::AppId foo_app_id = InstallWebApp(GURL("https://foo.example"));
+  webapps::AppId foo_app_id = InstallWebApp(GURL("https://example.com"));
   LaunchWebApp(foo_app_id);
   EXPECT_EQ(1u, ui_manager().GetNumWindowsForApp(foo_app_id));
 
@@ -80,7 +80,7 @@ IN_PROC_BROWSER_TEST_F(WebAppUiManagerImplBrowserTest,
                        UninstallDuringLastBrowserWindow) {
   // Zero apps on start:
   EXPECT_EQ(0u, ui_manager().GetNumWindowsForApp(webapps::AppId()));
-  webapps::AppId foo_app_id = InstallWebApp(GURL("https://foo.example"));
+  webapps::AppId foo_app_id = InstallWebApp(GURL("https://example.com"));
   LaunchWebApp(foo_app_id);
   EXPECT_EQ(1u, ui_manager().GetNumWindowsForApp(foo_app_id));
   // It has 2 browser window object.
@@ -99,11 +99,11 @@ IN_PROC_BROWSER_TEST_F(WebAppUiManagerImplBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(WebAppUiManagerImplBrowserTest,
                        GetNumWindowsForApp_AppWindowsRemoved) {
-  webapps::AppId foo_app_id = InstallWebApp(GURL("https://foo.example"));
+  webapps::AppId foo_app_id = InstallWebApp(GURL("https://example.com"));
   auto* foo_window1 = LaunchWebApp(foo_app_id);
   auto* foo_window2 = LaunchWebApp(foo_app_id);
 
-  webapps::AppId bar_app_id = InstallWebApp(GURL("https://bar.example"));
+  webapps::AppId bar_app_id = InstallWebApp(GURL("https://example2.com"));
   LaunchWebApp(bar_app_id);
 
   EXPECT_EQ(2u, ui_manager().GetNumWindowsForApp(foo_app_id));
@@ -122,8 +122,8 @@ IN_PROC_BROWSER_TEST_F(WebAppUiManagerImplBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(WebAppUiManagerImplBrowserTest,
                        NotifyOnAllAppWindowsClosed_NoOpenedWindows) {
-  webapps::AppId foo_app_id = InstallWebApp(GURL("https://foo.example"));
-  webapps::AppId bar_app_id = InstallWebApp(GURL("https://bar.example"));
+  webapps::AppId foo_app_id = InstallWebApp(GURL("https://example.com"));
+  webapps::AppId bar_app_id = InstallWebApp(GURL("https://example2.com"));
   LaunchWebApp(bar_app_id);
 
   base::RunLoop run_loop;
@@ -134,10 +134,19 @@ IN_PROC_BROWSER_TEST_F(WebAppUiManagerImplBrowserTest,
 
 // Tests that the callback is correctly called when there is more than one
 // app window.
-IN_PROC_BROWSER_TEST_F(WebAppUiManagerImplBrowserTest,
-                       NotifyOnAllAppWindowsClosed_MultipleOpenedWindows) {
-  webapps::AppId foo_app_id = InstallWebApp(GURL("https://foo.example"));
-  webapps::AppId bar_app_id = InstallWebApp(GURL("https://bar.example"));
+// TODO(crbug.com/430477111): flaky on Mac13 Tests builder.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_NotifyOnAllAppWindowsClosed_MultipleOpenedWindows \
+  DISABLED_NotifyOnAllAppWindowsClosed_MultipleOpenedWindows
+#else
+#define MAYBE_NotifyOnAllAppWindowsClosed_MultipleOpenedWindows \
+  NotifyOnAllAppWindowsClosed_MultipleOpenedWindows
+#endif
+IN_PROC_BROWSER_TEST_F(
+    WebAppUiManagerImplBrowserTest,
+    MAYBE_NotifyOnAllAppWindowsClosed_MultipleOpenedWindows) {
+  webapps::AppId foo_app_id = InstallWebApp(GURL("https://example.com"));
+  webapps::AppId bar_app_id = InstallWebApp(GURL("https://example2.com"));
 
   // Test that NotifyOnAllAppWindowsClosed can be called more than once for
   // the same app.

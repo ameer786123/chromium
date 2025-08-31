@@ -128,7 +128,7 @@ class CustomTabsOpenTimeRecorder implements StartStopWithNativeObserver {
         mOnStartTimestampMs = 0;
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     String getPackageName(boolean isPartial) {
         boolean isEmpty = TextUtils.isEmpty(mCachedPackageName);
         if (isPartial && isEmpty) {
@@ -145,7 +145,8 @@ class CustomTabsOpenTimeRecorder implements StartStopWithNativeObserver {
         @FinishReason int finishReason = mNavigationController.getFinishReason();
         if (finishReason == FinishReason.USER_NAVIGATION
                 || finishReason == FinishReason.REPARENTING
-                || finishReason == FinishReason.OPEN_IN_BROWSER) {
+                || finishReason == FinishReason.OPEN_IN_BROWSER
+                || finishReason == FinishReason.HANDLED_BY_OS) {
             mCloseCause = CloseCause.USER_ACTION_CHROME;
         }
     }

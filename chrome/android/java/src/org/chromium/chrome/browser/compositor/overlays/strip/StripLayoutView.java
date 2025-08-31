@@ -8,9 +8,15 @@ import android.content.Context;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.FloatProperty;
+import android.view.MotionEvent;
+
+import androidx.annotation.ColorInt;
 
 import org.chromium.base.MathUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.layouts.components.VirtualView;
+import org.chromium.components.browser_ui.styles.ChromeColors;
 
 import java.util.List;
 
@@ -19,6 +25,7 @@ import java.util.List;
  * a particular item on the tab strip (e.g. tab, group indicator, etc.) so it can draw itself onto
  * the GL canvas.
  */
+@NullMarked
 public abstract class StripLayoutView implements VirtualView {
 
     /** Handler for click actions on VirtualViews. */
@@ -28,8 +35,23 @@ public abstract class StripLayoutView implements VirtualView {
          *
          * @param time The time of the click action.
          * @param view View that received the click.
+         * @param motionEventButtonState {@link MotionEvent#getButtonState()} at the moment of the
+         *     click if the click is detected via motion events; otherwise, this parameter is {@link
+         *     org.chromium.ui.util.MotionEventUtils#MOTION_EVENT_BUTTON_NONE}.
+         * @param modifiers State of all Meta/Modifier keys that are pressed.
          */
-        void onClick(long time, StripLayoutView view);
+        void onClick(long time, StripLayoutView view, int motionEventButtonState, int modifiers);
+    }
+
+    /** Handler for keyboard focus on VirtualViews. */
+    public interface StripLayoutViewOnKeyboardFocusHandler {
+        /**
+         * Handles keyboard focus change on this {@param view}.
+         *
+         * @param isFocused Whether {@param view} is now focused.
+         * @param view The {@link StripLayoutView} in question.
+         */
+        void onKeyboardFocus(boolean isFocused, StripLayoutView view);
     }
 
     /** A property for animations to use for changing the drawX of the view. */
@@ -92,10 +114,12 @@ public abstract class StripLayoutView implements VirtualView {
 
     // State variables.
     private boolean mVisible = true;
+    private boolean mKeyboardFocused;
     private boolean mCollapsed;
     private boolean mIsIncognito;
     private boolean mIsForegrounded;
     private boolean mIsDraggedOffStrip;
+    private boolean mIsNonDragReordering;
     private boolean mWillClose;
 
     // A11y variables.
@@ -103,6 +127,7 @@ public abstract class StripLayoutView implements VirtualView {
 
     // Event handlers.
     private final StripLayoutViewOnClickHandler mOnClickHandler;
+    private final StripLayoutViewOnKeyboardFocusHandler mOnKeyboardFocusHandler;
 
     // Tab group share properties.
     private boolean mShowNotificationBubble;
@@ -113,12 +138,17 @@ public abstract class StripLayoutView implements VirtualView {
     /**
      * @param incognito The incognito state of the view.
      * @param clickHandler StripLayoutViewOnClickHandler for this view.
+     * @param keyboardFocusHandler Handles keyboard focus gain/loss for this view.
      * @param context The context for the view.
      */
     protected StripLayoutView(
-            boolean incognito, StripLayoutViewOnClickHandler clickHandler, Context context) {
+            boolean incognito,
+            StripLayoutViewOnClickHandler clickHandler,
+            StripLayoutViewOnKeyboardFocusHandler keyboardFocusHandler,
+            Context context) {
         mIsIncognito = incognito;
         mOnClickHandler = clickHandler;
+        mOnKeyboardFocusHandler = keyboardFocusHandler;
         mContext = context;
     }
 
@@ -330,6 +360,16 @@ public abstract class StripLayoutView implements VirtualView {
         return mIsDraggedOffStrip;
     }
 
+    /** Sets if the view is reordering for a non-drag operation. */
+    public void setIsNonDragReordering(boolean isNonDragReordering) {
+        mIsNonDragReordering = isNonDragReordering;
+    }
+
+    /** Gets whether or not the view is reordering for a non-drag operation. */
+    public boolean getIsNonDragReordering() {
+        return mIsNonDragReordering;
+    }
+
     /** Marks that the view will be closed due to an incoming TabModel update. */
     public void setWillClose() {
         mWillClose = true;
@@ -371,8 +411,8 @@ public abstract class StripLayoutView implements VirtualView {
     }
 
     @Override
-    public void handleClick(long time) {
-        mOnClickHandler.onClick(time, this);
+    public void handleClick(long time, int motionEventButtonState, int modifiers) {
+        mOnClickHandler.onClick(time, this, motionEventButtonState, modifiers);
     }
 
     /** Returns cached touch target bounds. */
@@ -388,7 +428,11 @@ public abstract class StripLayoutView implements VirtualView {
      * @param right Right inset to apply to touch target.
      * @param bottom Bottom inset to apply to touch target.
      */
-    public void setTouchTargetInsets(Float left, Float top, Float right, Float bottom) {
+    public void setTouchTargetInsets(
+            @Nullable Float left,
+            @Nullable Float top,
+            @Nullable Float right,
+            @Nullable Float bottom) {
         if (left != null) mTouchTargetInsetLeft = left;
         if (right != null) mTouchTargetInsetRight = right;
         if (top != null) mTouchTargetInsetTop = top;
@@ -421,5 +465,21 @@ public abstract class StripLayoutView implements VirtualView {
         outTarget.right -= mTouchTargetInsetRight;
         outTarget.top += mTouchTargetInsetTop;
         outTarget.bottom -= mTouchTargetInsetBottom;
+    }
+
+    @Override
+    public void setKeyboardFocused(boolean keyboardFocused) {
+        mKeyboardFocused = keyboardFocused;
+        mOnKeyboardFocusHandler.onKeyboardFocus(keyboardFocused, this);
+    }
+
+    @Override
+    public boolean isKeyboardFocused() {
+        return mKeyboardFocused;
+    }
+
+    /** {@return The {@link ColorInt} of the keyboard focus ring color} */
+    public @ColorInt int getKeyboardFocusRingColor() {
+        return ChromeColors.getKeyboardFocusRingColor(mContext, isIncognito());
     }
 }

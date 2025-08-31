@@ -17,7 +17,7 @@ source_set("common") {
   deps = [
     "//base",
     "//base:i18n",
-    "//components/url_formatter:url_formatter",
+    "//components/url_formatter",
     "//ui/base:features",
     "//url",
   ]
@@ -41,7 +41,7 @@ if (is_android) {
   java_cpp_features("java_features_srcjar") {
     visibility = [ ":*" ]
     sources = [ "//components/omnibox/common/omnibox_features.cc" ]
-    template = "//components/omnibox/common/java_templates/OmniboxFeatureList.java.tmpl"
+    class_name = "org.chromium.components.omnibox.OmniboxFeatureList"
   }
 
   android_library("features_java") {
@@ -77,4 +77,15 @@ if (is_android) {
       "//ui/android:ui_java",
     ]
   }
+}
+
+source_set("unit_tests") {
+  testonly = true
+  sources = [ "string_cleaning_unittest.cc" ]
+  deps = [
+    ":common",
+    "//base/test:test_support",
+    "//testing/gtest",
+    "//url",
+  ]
 }

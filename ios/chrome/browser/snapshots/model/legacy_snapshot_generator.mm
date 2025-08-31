@@ -11,6 +11,7 @@
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
 #import "ios/chrome/browser/snapshots/model/model_swift.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_scale.h"
+#import "ios/chrome/browser/snapshots/model/snapshot_source_tab_helper.h"
 #import "ios/chrome/browser/snapshots/model/web_state_snapshot_info.h"
 #import "ios/web/public/thread/web_thread.h"
 #import "ios/web/public/web_client.h"
@@ -42,7 +43,9 @@ struct SnapshotInfo {
 
 - (void)generateSnapshotWithCompletion:(void (^)(UIImage*))completion {
   bool isNTP = _webState->GetLastCommittedURL() == kChromeUINewTabURL;
-  if (!isNTP && _webState->CanTakeSnapshot()) {
+  SnapshotSourceTabHelper* snapshotSource =
+      SnapshotSourceTabHelper::FromWebState(_webState.get());
+  if (!isNTP && snapshotSource->CanTakeSnapshot()) {
     // Take the snapshot using the optimized WKWebView snapshotting API for
     // pages loaded in the web view when the WebState snapshot API is available.
     [self generateWKWebViewSnapshotWithCompletion:completion];
@@ -106,7 +109,9 @@ struct SnapshotInfo {
     }
     return;
   }
-  CHECK(_webState->CanTakeSnapshot());
+  SnapshotSourceTabHelper* snapshotSource =
+      SnapshotSourceTabHelper::FromWebState(_webState.get());
+  CHECK(snapshotSource->CanTakeSnapshot());
 
   [_delegate
       willUpdateSnapshotWithWebStateInfo:[[WebStateSnapshotInfo alloc]
@@ -131,8 +136,9 @@ struct SnapshotInfo {
   };
 
   __weak LegacySnapshotGenerator* weakSelf = self;
-  _webState->TakeSnapshot(snapshotInfo.value().snapshotFrameInBaseView,
-                          base::BindRepeating(wrappedCompletion, weakSelf));
+  snapshotSource->TakeSnapshot(
+      snapshotInfo.value().snapshotFrameInBaseView,
+      base::BindRepeating(wrappedCompletion, weakSelf));
 }
 
 // Adjusts a snapshot taken by WebKit API if necessary.
@@ -215,17 +221,20 @@ struct SnapshotInfo {
   __block BOOL snapshotSuccess = YES;
   UIImage* image =
       [renderer imageWithActions:^(UIGraphicsImageRendererContext* UIContext) {
-        // Render the view's layer via `-renderInContext:`.
+        // Take animations into account by rendering the presentation layer.
+        // Fallback to the rendering the layer if not possible.
+        CALayer* layerToRender =
+            baseView.layer.presentationLayer ?: baseView.layer;
         // To mitigate against crashes like crbug.com/1429512, ensure that
         // the layer's position is valid. If not, mark the snapshotting as
         // failed.
-        CALayer* layer = baseView.layer;
-        CGPoint pos = layer.position;
+        CGPoint pos = layerToRender.position;
         if (isnan(pos.x) || isnan(pos.y)) {
           snapshotSuccess = NO;
-        } else {
-          [layer renderInContext:UIContext.CGContext];
+          return;
         }
+
+        [layerToRender renderInContext:UIContext.CGContext];
       }];
 
   if (!snapshotSuccess) {

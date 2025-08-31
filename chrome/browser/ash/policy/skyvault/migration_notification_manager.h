@@ -14,6 +14,7 @@
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/thread_annotations.h"
@@ -33,7 +34,7 @@ class BrowserContext;
 
 namespace policy::local_user_files {
 
-constexpr char kSkyVaultMigrationNotificationId[] = "skyvault-migration";
+inline constexpr char kSkyVaultMigrationNotificationId[] = "skyvault-migration";
 
 // Shows notifications and dialogs related to SkyVault migration status.
 class MigrationNotificationManager : public KeyedService {

@@ -146,6 +146,14 @@ const char kGoogleMyAccountURL[] =
 const char kGoogleMyAccountDeviceActivityURL[] =
     "https://myaccount.google.com/device-activity?utm_source=chrome";
 
+const char kGoogleMyAccountHomeAddressURL[] =
+    "https://myaccount.google.com/address/"
+    "home?utm_source=chrome&utm_campaign=manage_addresses";
+
+const char kGoogleMyAccountWorkAddressURL[] =
+    "https://myaccount.google.com/address/"
+    "work?utm_source=chrome&utm_campaign=manage_addresses";
+
 const char kReadingListReferrerURL[] =
     "chrome://do_not_consider_for_most_visited/reading_list";
 
@@ -161,3 +169,12 @@ const char kMyActivityURL[] = "https://myactivity.google.com/myactivity";
 
 const char kLearnMoreLensURL[] =
     "https://support.google.com/chrome/?p=google_lens_ios";
+
+const char kBWGAppActivityURL[] =
+    "https://myactivity.google.com/product/gemini?utm_source=gemini&pli=1";
+
+const char kBWGPreciseLocationURL[] =
+    "http://support.google.com/gemini?p=gcr_location_info";
+
+const char kBWGPageContentSharingURL[] =
+    "https://support.google.com/gemini?p=chrome_PH#topic=15280100";

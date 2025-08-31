@@ -14,18 +14,15 @@ import com.google.android.play.core.splitinstall.SplitInstallRequest;
 import com.google.android.play.core.splitinstall.SplitInstallStateUpdatedListener;
 import com.google.android.play.core.splitinstall.model.SplitInstallSessionStatus;
 
-import org.chromium.base.BundleUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
-import org.chromium.ui.base.ResourceBundle;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 
@@ -71,7 +68,7 @@ public class LanguageSplitInstaller {
 
     private final SplitInstallStateUpdatedListener mStateUpdateListener = getStatusUpdateListener();
     private @Nullable InstallListener mInstallListener;
-    private SplitInstallManager mSplitInstallManager;
+    private final SplitInstallManager mSplitInstallManager;
     private int mInstallSessionId;
     private boolean mIsLanguageSplitInstalled;
 
@@ -86,10 +83,6 @@ public class LanguageSplitInstaller {
      * @return Set<String> of installed languages code strings.
      */
     public Set<String> getInstalledLanguages() {
-        // On non-bundle builds return all packaged locales.
-        if (!BundleUtils.isBundle()) {
-            return new HashSet<String>(Arrays.asList(ResourceBundle.getAvailableLocales()));
-        }
         return mSplitInstallManager.getInstalledLanguages();
     }
 
@@ -105,12 +98,13 @@ public class LanguageSplitInstaller {
     }
 
     /**
-     * Start the install of a language split for |languageName| and use |listener| as a callback
-     * for when the install is completed or has failed. Note: The API instantly considers the
-     * request as completed if it detects the language is already installed and the Play Store
-     * will automatically update the language split in the background.
+     * Start the install of a language split for |languageName| and use |listener| as a callback for
+     * when the install is completed or has failed. Note: The API instantly considers the request as
+     * completed if it detects the language is already installed and the Play Store will
+     * automatically update the language split in the background.
+     *
      * @param languageName String BCP-47 code for language to be installed.
-     * @param InstallListener Callback to handle install success or failure.
+     * @param listener Callback to handle install success or failure.
      */
     public void installLanguage(String languageName, InstallListener listener) {
         if (mInstallListener != null) {

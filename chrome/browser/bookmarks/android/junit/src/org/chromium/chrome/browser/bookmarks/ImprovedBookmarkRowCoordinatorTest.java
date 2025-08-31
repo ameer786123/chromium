@@ -73,12 +73,10 @@ public class ImprovedBookmarkRowCoordinatorTest {
     @Mock private BookmarkModel mBookmarkModel;
     @Mock private Drawable mDrawable;
     @Mock private Drawable mFavicon;
-    @Mock private Runnable mClickListener;
     @Mock private BookmarkUiPrefs mBookmarkUiPrefs;
     @Mock private ShoppingService mShoppingService;
     @Mock private CommerceFeatureUtils.Natives mCommerceFeatureUtilsJniMock;
     @Mock private CurrencyFormatter.Natives mCurrencyFormatterJniMock;
-    @Mock private ImprovedBookmarkRow mImprovedBookmarkRow;
 
     private Activity mActivity;
     private PropertyModel mModel;
@@ -272,7 +270,7 @@ public class ImprovedBookmarkRowCoordinatorTest {
         assertEquals(0, model.get(ImprovedBookmarkRowProperties.FOLDER_CHILD_COUNT));
         assertNotNull(model.get(ImprovedBookmarkRowProperties.FOLDER_START_ICON_DRAWABLE));
         assertEquals(
-                new Pair<Drawable, Drawable>(null, null),
+                new Pair<>(null, null),
                 model.get(ImprovedBookmarkRowProperties.FOLDER_START_IMAGE_FOLDER_DRAWABLES).get());
     }
 

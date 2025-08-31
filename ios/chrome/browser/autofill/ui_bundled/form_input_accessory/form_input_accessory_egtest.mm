@@ -10,6 +10,7 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "base/time/time.h"
+#import "components/autofill/core/browser/field_types.h"
 #import "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #import "components/autofill/core/common/autofill_features.h"
 #import "components/autofill/ios/common/features.h"
@@ -26,6 +27,7 @@
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/browser/passwords/model/password_manager_app_interface.h"
 #import "ios/chrome/browser/passwords/ui_bundled/bottom_sheet/password_suggestion_bottom_sheet_app_interface.h"
+#import "ios/chrome/browser/passwords/ui_bundled/password_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/common/ui/elements/form_input_accessory_view.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -33,6 +35,7 @@
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/web_http_server_chrome_test_case.h"
+#import "ios/chrome/test/scoped_eg_synchronization_disabler.h"
 #import "ios/testing/earl_grey/earl_grey_test.h"
 #import "ios/testing/earl_grey/matchers.h"
 #import "net/base/apple/url_conversions.h"
@@ -60,18 +63,16 @@ constexpr char kFormState[] = "form_state";
 constexpr char kFormZip[] = "form_zip";
 
 constexpr NSString* kExampleUsername = @"user";
+constexpr NSString* kExamplePassword = @"password";
+constexpr NSString* kExampleBackupPassword = @"backup password";
 
 // Matcher for the autofill password suggestion chip in the keyboard accessory.
-id<GREYMatcher> KeyboardAccessoryPasswordSuggestion(
-    net::EmbeddedTestServer* test_server) {
+id<GREYMatcher> KeyboardAccessoryPasswordSuggestion(NSString* realm) {
   if ([AutofillAppInterface isKeyboardAccessoryUpgradeEnabled]) {
     NSString* chip_text = kExampleUsername;
     if ([ChromeEarlGrey isIPadIdiom]) {
       // On iPad, the suggestion text is an attributed string containing the
       // signon realm on the 2nd line.
-      NSString* realm =
-          base::SysUTF8ToNSString(password_manager::GetShownOrigin(
-              url::Origin::Create(test_server->base_url())));
       chip_text = [NSString stringWithFormat:@"%@\n%@", chip_text, realm];
     }
     return grey_allOf(grey_text(chip_text),
@@ -82,6 +83,21 @@ id<GREYMatcher> KeyboardAccessoryPasswordSuggestion(
 
   return grey_accessibilityLabel(
       [NSString stringWithFormat:@"%@ ••••••••", kExampleUsername]);
+}
+
+// Matcher for the autofill backup password suggestion chip in the keyboard
+// accessory.
+id<GREYMatcher> KeyboardAccessoryBackupPasswordSuggestion(NSString* realm) {
+  id<GREYMatcher> accessibility_label_matcher = grey_accessibilityLabel([NSString
+      stringWithFormat:
+          @"%@, %@, %@", kExampleUsername, realm,
+          l10n_util::GetNSString(
+              IDS_IOS_KEYBOARD_ACCESSORY_RECOVERY_PASSWORD_ACCESSIBILITY_LABEL)]);
+  id<GREYMatcher> backup_icon = grey_accessibilityID(
+      kRecoveryPasswordSuggestionIconAccessibilityIdentifier);
+  return grey_allOf(accessibility_label_matcher,
+                    grey_descendant(KeyboardAccessoryPasswordSuggestion(realm)),
+                    grey_descendant(backup_icon), nullptr);
 }
 
 // Matcher for the credit card suggestion chip.
@@ -103,10 +119,10 @@ id<GREYMatcher> KeyboardAccessoryCreditCardSuggestion() {
 }
 
 // Matcher for the address suggestion chip.
-id<GREYMatcher> KeyboardAccessoryAddressSuggestion() {
+id<GREYMatcher> KeyboardAccessoryAddressSuggestion(
+    autofill::FieldType field_type) {
   autofill::AutofillProfile profile = autofill::test::GetFullProfile();
-  NSString* ZIP_code =
-      base::SysUTF16ToNSString(profile.GetRawInfo(autofill::ADDRESS_HOME_ZIP));
+  NSString* value = base::SysUTF16ToNSString(profile.GetRawInfo(field_type));
   if ([AutofillAppInterface isKeyboardAccessoryUpgradeEnabled] &&
       [ChromeEarlGrey isIPadIdiom]) {
     // On iPad, the suggestion text is an attributed string containing the
@@ -114,9 +130,9 @@ id<GREYMatcher> KeyboardAccessoryAddressSuggestion() {
     NSString* street_address = base::SysUTF16ToNSString(
         profile.GetRawInfo(autofill::ADDRESS_HOME_LINE1));
     return grey_text(
-        [NSString stringWithFormat:@"%@\n%@", ZIP_code, street_address]);
+        [NSString stringWithFormat:@"%@\n%@", value, street_address]);
   } else {
-    return grey_text(ZIP_code);
+    return grey_text(value);
   }
 }
 
@@ -258,7 +274,9 @@ void SlowlyTypeText(NSString* text) {
       autofill::features::test::kAutofillServerCommunication);
   config.features_enabled.push_back(kIOSKeyboardAccessoryUpgradeForIPad);
   if ([self isRunningTest:@selector(testFillXframeCreditCardForm)] ||
-      [self isRunningTest:@selector(testFillXframeCreditCardFormThrottled)]) {
+      [self isRunningTest:@selector(testFillXframeCreditCardFormThrottled)] ||
+      [self isRunningTest:@selector
+            (testFillXframeCreditCardForm_WithPaymentSheetFix)]) {
     config.features_enabled.push_back(
         autofill::features::kAutofillAcrossIframesIos);
   }
@@ -279,15 +297,38 @@ void SlowlyTypeText(NSString* text) {
     config.iph_feature_enabled =
         feature_engagement::kIPHAutofillHomeWorkProfileSuggestionFeature.name;
   }
+
+  if ([self isRunningTest:@selector(testReFillAddressFieldsOnForm)]) {
+    config.features_enabled.push_back(kAutofillRefillForFormsIos);
+    config.features_enabled.push_back(
+        autofill::features::kAutofillAcrossIframesIos);
+  }
+
+  if ([self isRunningTest:@selector(testUseBackupPassword)]) {
+    config.features_enabled.push_back(
+        password_manager::features::kIOSFillRecoveryPassword);
+  }
+
   return config;
 }
 
 #pragma mark - Helper methods
 
+// Returns the signon realm.
+- (NSString*)realm {
+  return base::SysUTF8ToNSString(password_manager::GetShownOrigin(
+      url::Origin::Create(self.testServer->base_url())));
+}
+
+// Returns the GURL for the simple login page.
+- (GURL)loginPageURL {
+  return self.testServer->GetURL("/simple_login_form.html");
+}
+
 // Loads simple login page on localhost.
 - (void)loadLoginPage {
   // Loads simple page.
-  [ChromeEarlGrey loadURL:self.testServer->GetURL("/simple_login_form.html")];
+  [ChromeEarlGrey loadURL:[self loginPageURL]];
   [ChromeEarlGrey waitForWebStateContainingText:"Login form."];
 }
 
@@ -457,18 +498,16 @@ id<GREYMatcher> PaymentsBottomSheetUseKeyboardButton() {
                                       ReauthenticationResult::kSuccess];
 
   NSString* username = kExampleUsername;
-  NSString* password = @"password";
+  NSString* password = kExamplePassword;
   [PasswordManagerAppInterface
       storeCredentialWithUsername:username
                          password:password
-                              URL:net::NSURLWithGURL(self.testServer->GetURL(
-                                      "/simple_login_form.html"))];
+                              URL:net::NSURLWithGURL([self loginPageURL])];
   [self loadLoginPage];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:chrome_test_util::TapWebElementWithId(kFormPassword)];
 
-  id<GREYMatcher> user_chip =
-      KeyboardAccessoryPasswordSuggestion(self.testServer);
+  id<GREYMatcher> user_chip = KeyboardAccessoryPasswordSuggestion([self realm]);
 
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:user_chip];
 
@@ -495,7 +534,7 @@ id<GREYMatcher> PaymentsBottomSheetUseKeyboardButton() {
                                       ReauthenticationResult::kSuccess];
 
   NSString* username = kExampleUsername;
-  NSString* password = @"password";
+  NSString* password = kExamplePassword;
   [PasswordManagerAppInterface
       storeCredentialWithUsername:username
                          password:password
@@ -506,8 +545,7 @@ id<GREYMatcher> PaymentsBottomSheetUseKeyboardButton() {
       performAction:chrome_test_util::TapWebElementWithId(
                         kSigninUffFormUsername)];
 
-  id<GREYMatcher> user_chip =
-      KeyboardAccessoryPasswordSuggestion(self.testServer);
+  id<GREYMatcher> user_chip = KeyboardAccessoryPasswordSuggestion([self realm]);
 
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:user_chip];
 
@@ -529,7 +567,7 @@ id<GREYMatcher> PaymentsBottomSheetUseKeyboardButton() {
                                       ReauthenticationResult::kSuccess];
 
   NSString* username = kExampleUsername;
-  NSString* password = @"password";
+  NSString* password = kExamplePassword;
   [PasswordManagerAppInterface
       storeCredentialWithUsername:username
                          password:password
@@ -540,8 +578,7 @@ id<GREYMatcher> PaymentsBottomSheetUseKeyboardButton() {
       performAction:chrome_test_util::TapWebElementWithId(
                         kSigninUffFormPassword)];
 
-  id<GREYMatcher> user_chip =
-      KeyboardAccessoryPasswordSuggestion(self.testServer);
+  id<GREYMatcher> user_chip = KeyboardAccessoryPasswordSuggestion([self realm]);
 
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:user_chip];
 
@@ -776,6 +813,94 @@ id<GREYMatcher> PaymentsBottomSheetUseKeyboardButton() {
   [AutofillAppInterface clearMockReauthenticationModule];
 }
 
+// Tests that the bottom sheet cohabitates well with other non-credit card forms
+// when the fix for the payment sheet across iframes is enabled. This makes sure
+// that crbug.com/417449733 doesn't occur.
+- (void)testFillXframeCreditCardForm_WithPaymentSheetFix {
+// TODO(crbug.com/435607096): Re-enable the test on iOS26.
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (iOS26_OR_ABOVE()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
+#endif
+
+  // Mock reauth so it allows filling sensitive information without the need for
+  // real authentication.
+  [AutofillAppInterface setUpMockReauthenticationModule];
+  [AutofillAppInterface mockReauthenticationModuleCanAttempt:YES];
+  [AutofillAppInterface mockReauthenticationModuleExpectedResult:
+                            ReauthenticationResult::kSuccess];
+
+  // Load the xframe payment page.
+  [self loadXframePaymentPage];
+
+  // Give time for the page to settle even if at this point we could read
+  // content in the DOM. This is to prevent flakes.
+  base::test::ios::SpinRunLoopWithMinDelay(base::Seconds(1));
+
+  // Tap on the first address field and verify that the keyboard pops up and
+  // offers address suggestions. name_address
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId("name_address")];
+  id<GREYMatcher> name_chip =
+      KeyboardAccessoryAddressSuggestion(autofill::NAME_FULL);
+  [ChromeEarlGrey waitForUIElementToAppearWithMatcher:name_chip];
+
+  // Tap on another address field, below the first address field, and verify
+  // that the keyboard pops up and offers address suggestions.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId("city")];
+  id<GREYMatcher> address_chip =
+      KeyboardAccessoryAddressSuggestion(autofill::ADDRESS_HOME_CITY);
+  [ChromeEarlGrey waitForUIElementToAppearWithMatcher:address_chip];
+
+  // Verify that the payment bottom sheet is still displayed when tapping on
+  // credit card fields.
+
+  // Tap a credit card field to open the bottom sheet.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId(kFormCardName)];
+  id<GREYMatcher> useKeyboardButton = PaymentsBottomSheetUseKeyboardButton();
+  [ChromeEarlGrey waitForUIElementToAppearWithMatcher:useKeyboardButton];
+
+  // Dismiss the bottom sheet and open the keyboard.
+  [[EarlGrey selectElementWithMatcher:useKeyboardButton]
+      performAction:grey_tap()];
+
+  // Verify that filling the payment form still works correctly.
+
+  // Tap on the credit card chip.
+  id<GREYMatcher> cc_chip = KeyboardAccessoryCreditCardSuggestion();
+  [ChromeEarlGrey waitForUIElementToAppearWithMatcher:cc_chip];
+  [[EarlGrey selectElementWithMatcher:cc_chip] performAction:grey_tap()];
+
+  // Verify that the credit card fields were filled correctly across frames.
+  std::string locale = l10n_util::GetLocaleOverride();
+  std::vector<std::tuple<autofill::FieldType, std::string, std::string>>
+      fields_to_verify = {
+          std::make_tuple(autofill::CREDIT_CARD_NAME_FULL, "", kFormCardName),
+          std::make_tuple(autofill::CREDIT_CARD_NUMBER, "cc-number-frame",
+                          kFormCardNumber),
+          std::make_tuple(autofill::CREDIT_CARD_EXP_MONTH, "cc-exp-frame",
+                          kFormCardExpirationMonth),
+          std::make_tuple(autofill::CREDIT_CARD_EXP_4_DIGIT_YEAR,
+                          "cc-exp-frame", kFormCardExpirationYear),
+  };
+
+  autofill::CreditCard card = autofill::test::GetCreditCard();
+  for (const auto& [field_type, frame_id_attr, field_id_attr] :
+       fields_to_verify) {
+    NSString* value =
+        base::SysUTF16ToNSString(card.GetInfo(field_type, locale));
+    [self verifyFieldWithIdHasBeenFilled:field_id_attr
+                                iframeId:frame_id_attr
+                                   value:value];
+  }
+
+  // Cleanup.
+  [AutofillAppInterface clearMockReauthenticationModule];
+}
+
 // Tests that tapping on an address related field opens the keyboard
 // accessory with the proper suggestion visible and that tapping on that
 // suggestion properly fills the related fields on the form.
@@ -785,7 +910,8 @@ id<GREYMatcher> PaymentsBottomSheetUseKeyboardButton() {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:chrome_test_util::TapWebElementWithId(kFormZip)];
 
-  id<GREYMatcher> address_chip = KeyboardAccessoryAddressSuggestion();
+  id<GREYMatcher> address_chip =
+      KeyboardAccessoryAddressSuggestion(autofill::ADDRESS_HOME_ZIP);
 
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:address_chip];
 
@@ -825,9 +951,17 @@ id<GREYMatcher> PaymentsBottomSheetUseKeyboardButton() {
   // Delete the profile that is added on `-setUp`.
   [AutofillAppInterface clearProfilesStore];
   // Store one address.
-  [AutofillAppInterface saveExampleHomeWorkAccountProfile];
+  [AutofillAppInterface saveExampleHomeAndWorkAccountProfile];
 
   [self loadAddressPage];
+
+#if TARGET_OS_SIMULATOR
+  // Synchronization off because the tap on element 'kFormZip' completes only
+  // after the IPH has already disappeared. This leads to a subsequent error
+  // when trying to verify that the IPH appeared.
+  ScopedSynchronizationDisabler disabler;
+#endif
+
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:chrome_test_util::TapWebElementWithId(kFormZip)];
 
@@ -873,6 +1007,12 @@ id<GREYMatcher> PaymentsBottomSheetUseKeyboardButton() {
         @"Skipped for iPhone (the manual fill button has no title on iPhone) "
         @"or when the Keyboard Accessory Upgrade feature is disabled.");
   }
+  if (@available(iOS 19.0, *)) {
+    // TODO(crbug.com/427699033): Re-enable test on iOS 26.
+    // Fails because it assumes a window will be compact after creating a new
+    // window.
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
 
   [self loadAddressPage];
 
@@ -906,6 +1046,44 @@ id<GREYMatcher> PaymentsBottomSheetUseKeyboardButton() {
   // Exit split screen.
   [ChromeEarlGrey closeWindowWithNumber:1];
   [ChromeEarlGrey waitForForegroundWindowCount:1];
+}
+
+// Tests that a backup password appears as expected in the keyboard accessory
+// and that it can be used to fill the form.
+- (void)testUseBackupPassword {
+  // Disable the password bottom sheet.
+  [PasswordSuggestionBottomSheetAppInterface disableBottomSheet];
+
+  // Set up the reauthentication module.
+  [FormInputAccessoryAppInterface setUpMockReauthenticationModule];
+  [FormInputAccessoryAppInterface mockReauthenticationModuleExpectedResult:
+                                      ReauthenticationResult::kSuccess];
+
+  // Save a credential with a backup password.
+  NSString* username = kExampleUsername;
+  NSString* backupPassword = kExampleBackupPassword;
+  [PasswordManagerAppInterface
+      storeCredentialWithUsername:username
+                         password:kExamplePassword
+                              URL:net::NSURLWithGURL([self loginPageURL])
+                           shared:NO
+                   backupPassword:kExampleBackupPassword];
+
+  // Load the page and tap on a field to trigger the keyboard accessory.
+  [self loadLoginPage];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId(kFormPassword)];
+
+  // Tap on the backup password suggestion once visible.
+  id<GREYMatcher> backup_password_suggestion =
+      KeyboardAccessoryBackupPasswordSuggestion([self realm]);
+  [ChromeEarlGrey
+      waitForUIElementToAppearWithMatcher:backup_password_suggestion];
+  [[EarlGrey selectElementWithMatcher:backup_password_suggestion]
+      performAction:grey_tap()];
+
+  [self verifyFieldsHaveBeenFilledWithUsername:username
+                                      password:backupPassword];
 }
 
 @end

@@ -9,12 +9,12 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/ref_counted.h"
 #include "skia/ext/skcolorspace_primaries.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/color_space_export.h"
-#include "ui/gfx/hdr_static_metadata.h"
 
 namespace mojo {
 template <class T, class U>
@@ -96,20 +96,24 @@ class COLOR_SPACE_EXPORT DisplayColorSpaces {
     return hdr_max_luminance_relative_;
   }
 
+  // Returns log2 of GetHDRMaxLuminanceRelative.
+  float GetHdrHeadroom() const;
+
   // TODO(crbug.com/40144904): These helper functions exist temporarily
   // to handle the transition of display::ScreenInfo off of ColorSpace. All
   // calls to these functions are to be eliminated.
   ColorSpace GetScreenInfoColorSpace() const;
 
-  // Return the color space that should be used for rasterization.
-  // TODO: This will eventually need to take a ContentColorUsage.
-  gfx::ColorSpace GetRasterColorSpace() const;
-
-  // Return the color space in which compositing (and, in particular, blending,
-  // should be performed). This space may not (on Windows) be suitable for
-  // output.
-  gfx::ColorSpace GetCompositingColorSpace(bool needs_alpha,
-                                           ContentColorUsage color_usage) const;
+  // Return the color space in which blending for rasterization and compositing
+  // should be done.
+  // * If rasterization and compositing are done in different spaces, then
+  //   content will appear different between the two paths. See
+  //   https://crbug.com/40277679
+  // * On platforms that do delegated compositing (e.g, macOS), this color space
+  //   must also match the color space in which the operating system will do
+  //   blending.
+  gfx::ColorSpace GetRasterAndCompositeColorSpace(
+      ContentColorUsage color_usage) const;
 
   // Return true if the HDR color spaces are, indeed, HDR.
   bool SupportsHDR() const;
@@ -128,7 +132,6 @@ class COLOR_SPACE_EXPORT DisplayColorSpaces {
                  std::vector<gfx::BufferFormat>* out_buffer_formats) const;
 
   bool operator==(const DisplayColorSpaces& other) const;
-  bool operator!=(const DisplayColorSpaces& other) const;
 
   // Return true if the two parameters are equal except for their
   // `hdr_max_luminance_relative_` member.
@@ -146,6 +149,24 @@ class COLOR_SPACE_EXPORT DisplayColorSpaces {
   SkColorSpacePrimaries primaries_ = SkNamedPrimariesExt::kSRGB;
   float sdr_max_luminance_nits_ = ColorSpace::kDefaultSDRWhiteLevel;
   float hdr_max_luminance_relative_ = 1.f;
+};
+
+// A ref counted object to avoid copying DisplayColorSpaces.
+class COLOR_SPACE_EXPORT DisplayColorSpacesRef
+    : public base::RefCountedThreadSafe<DisplayColorSpacesRef> {
+ public:
+  DisplayColorSpacesRef();
+  explicit DisplayColorSpacesRef(const gfx::DisplayColorSpaces& color_spaces);
+  DisplayColorSpacesRef(const DisplayColorSpacesRef& color_spaces) = delete;
+  const DisplayColorSpacesRef& operator=(const DisplayColorSpacesRef) = delete;
+
+  const gfx::DisplayColorSpaces& color_spaces() const { return color_spaces_; }
+
+ private:
+  friend class base::RefCountedThreadSafe<DisplayColorSpacesRef>;
+
+  ~DisplayColorSpacesRef() = default;
+  const gfx::DisplayColorSpaces color_spaces_;
 };
 
 }  // namespace gfx

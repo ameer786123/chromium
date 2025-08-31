@@ -18,6 +18,7 @@
 
 #include <aclapi.h>
 #include <cfgmgr32.h>
+#include <delayimp.h>
 #include <inspectable.h>
 #include <lm.h>
 #include <mdmregistration.h>
@@ -724,6 +725,20 @@ bool UserAccountControlIsEnabled() {
   return (uac_enabled != 0);
 }
 
+bool UserAccountIsUnnecessarilyElevated() {
+  // Check the process token to tell us that it's:
+  // * Elevated
+  // * UAC is enabled
+  // * It's not an account that always runs elevated even with UAC enabled
+  // The last bullet happens on built-in Admin *without* the "run BA filtered"
+  // policy set.
+  DWORD size;
+  TOKEN_ELEVATION_TYPE elevation_type;
+  return GetTokenInformation(GetCurrentProcessToken(), TokenElevationType,
+                             &elevation_type, sizeof(elevation_type), &size) &&
+         elevation_type == TokenElevationTypeFull;
+}
+
 bool SetBooleanValueForPropertyStore(IPropertyStore* property_store,
                                      const PROPERTYKEY& property_key,
                                      bool property_bool_value) {
@@ -1035,6 +1050,33 @@ bool PinUser32(NativeLibraryLoadError* error) {
   return PinUser32Internal(error) != nullptr;
 }
 
+base::expected<bool, HRESULT> LoadAllImportsForDll(
+    base::cstring_view dll_name) {
+  HRESULT hr = E_FAIL;
+  __try {
+    hr = ::__HrLoadAllImportsForDll(dll_name.c_str());
+
+    if (hr == HRESULT_FROM_WIN32(ERROR_MOD_NOT_FOUND)) {
+      // __HrLoadAllImportsForDll returns this exact value (FACILITY_WIN32)
+      // if the module is not found in the calling module's list of delay
+      // imports. This may be the case in the component build or in tests,
+      // where the module may be delayloaded by some module other than
+      // chrome.dll or the test binary.
+      return base::ok(false);
+    }
+  } __except (HRESULT_FACILITY(::GetExceptionCode()) == FACILITY_VISUALCPP
+                  ? EXCEPTION_EXECUTE_HANDLER
+                  : EXCEPTION_CONTINUE_SEARCH) {
+    // Resolution of all imports failed; possibly because the module failed
+    // to load or because one or more imports was not found.
+    hr = HRESULT_FROM_WIN32(::GetExceptionCode());
+  }
+  if (FAILED(hr)) {
+    return base::unexpected(hr);
+  }
+  return base::ok(true);
+}
+
 void* GetUser32FunctionPointer(const char* function_name,
                                NativeLibraryLoadError* error) {
   NativeLibrary user32_module = PinUser32Internal(error);
@@ -1237,6 +1279,17 @@ ScopedDomainStateForTesting::ScopedDomainStateForTesting(bool state)
 
 ScopedDomainStateForTesting::~ScopedDomainStateForTesting() {
   *GetDomainEnrollmentStateStorage() = initial_state_;
+}
+
+ScopedDeviceRegisteredWithManagementForTesting::
+    ScopedDeviceRegisteredWithManagementForTesting(bool state)
+    : initial_state_(IsDeviceRegisteredWithManagement()) {
+  *GetRegisteredWithManagementStateStorage() = state;
+}
+
+ScopedDeviceRegisteredWithManagementForTesting::
+    ~ScopedDeviceRegisteredWithManagementForTesting() {
+  *GetRegisteredWithManagementStateStorage() = initial_state_;
 }
 
 ScopedAzureADJoinStateForTesting::ScopedAzureADJoinStateForTesting(bool state)

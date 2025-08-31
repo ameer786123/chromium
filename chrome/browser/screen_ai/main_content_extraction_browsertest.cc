@@ -24,6 +24,7 @@
 #include "services/screen_ai/public/mojom/screen_ai_service.mojom.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/ax_features.mojom-features.h"
+#include "ui/accessibility/ax_mode.h"
 
 namespace {
 
@@ -121,7 +122,7 @@ class MainContentExtractionTest : public InProcessBrowserTest {
 
     base::test::TestFuture<ui::AXTreeUpdate&> future;
     web_contents->RequestAXTreeSnapshot(
-        future.GetCallback(), ui::kAXModeComplete,
+        future.GetCallback(), ui::kAXModeDefaultForTests,
         /* max_nodes= */ 0,
         /* timeout= */ {}, content::WebContents::AXTreeSnapshotPolicy::kAll);
     EXPECT_TRUE(future.Wait());

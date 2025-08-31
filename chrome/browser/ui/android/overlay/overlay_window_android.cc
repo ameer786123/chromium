@@ -16,6 +16,7 @@
 #include "content/public/browser/overlay_window.h"
 #include "content/public/browser/video_picture_in_picture_window_controller.h"
 #include "content/public/browser/web_contents.h"
+#include "media/base/media_switches.h"
 #include "ui/android/window_android_compositor.h"
 
 using WindowMap = base::flat_map<base::UnguessableToken, OverlayWindowAndroid*>;
@@ -79,8 +80,15 @@ OverlayWindowAndroid::OverlayWindowAndroid(
                            unscaled_content_bounds.width() * dip_scale,
                            unscaled_content_bounds.height() * dip_scale);
   const bool out_of_bounds = !content_bounds.Contains(smaller_source_bounds);
+  // Use the new source location based transition when the source is not out of
+  // bound and the AllowEnhancedPipTransition feature is enabled.
+  // TODO(crbug.com/440384447): remove AllowEnhancedPipTransition check once the
+  // new transition works properly on desktop Android.
+  const bool use_source_hint_transition =
+      !out_of_bounds &&
+      base::FeatureList::IsEnabled(media::kAllowEnhancedPipTransition);
 
-  if (!out_of_bounds) {
+  if (use_source_hint_transition) {
     // Use the newer transition, if available.
     // Convert to screen space.  Since the comparison was with the inset source
     // bounds, clamp the real source bounds to the container.
@@ -134,9 +142,9 @@ static jlong JNI_PictureInPictureActivity_OnActivityStart(
 
 void OverlayWindowAndroid::Initialize(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj,
+    const base::android::JavaParamRef<jobject>& self,
     const base::android::JavaParamRef<jobject>& jwindow_android) {
-  java_ref_ = JavaObjectWeakGlobalRef(env, obj);
+  java_ref_ = JavaObjectWeakGlobalRef(env, self);
   window_android_ = ui::WindowAndroid::FromJavaWindowAndroid(jwindow_android);
   window_android_->AddObserver(this);
 

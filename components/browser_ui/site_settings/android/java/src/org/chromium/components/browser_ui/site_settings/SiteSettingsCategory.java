@@ -6,6 +6,7 @@ package org.chromium.components.browser_ui.site_settings;
 
 import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.components.content_settings.PrefNames.COOKIE_CONTROLS_MODE;
+import static org.chromium.components.permissions.PermissionUtil.getGeolocationType;
 
 import android.content.Context;
 import android.content.Intent;
@@ -78,6 +79,9 @@ public class SiteSettingsCategory {
         Type.FILE_EDITING,
         Type.JAVASCRIPT_OPTIMIZER,
         Type.SERIAL_PORT,
+        Type.LOCAL_NETWORK_ACCESS,
+        Type.WINDOW_MANAGEMENT,
+        Type.AUTO_PICTURE_IN_PICTURE,
         Type.NUM_ENTRIES
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -119,19 +123,22 @@ public class SiteSettingsCategory {
         int FILE_EDITING = 32;
         int JAVASCRIPT_OPTIMIZER = 33;
         int SERIAL_PORT = 34;
+        int LOCAL_NETWORK_ACCESS = 35;
+        int WINDOW_MANAGEMENT = 36;
+        int AUTO_PICTURE_IN_PICTURE = 37;
 
         /** Number of handled categories used for calculating array sizes. */
-        int NUM_ENTRIES = 35;
+        int NUM_ENTRIES = 38;
     }
 
     private final BrowserContextHandle mBrowserContextHandle;
 
     // The id of this category.
-    private @Type int mCategory;
+    private final @Type int mCategory;
 
     // The id of a permission in Android M that governs this category. Can be blank if Android has
     // no equivalent permission for the category.
-    private String mAndroidPermission;
+    private final String mAndroidPermission;
 
     /**
      * Construct a SiteSettingsCategory.
@@ -211,6 +218,8 @@ public class SiteSettingsCategory {
                 return ContentSettingsType.AR;
             case Type.AUTO_DARK_WEB_CONTENT:
                 return ContentSettingsType.AUTO_DARK_WEB_CONTENT;
+            case Type.AUTO_PICTURE_IN_PICTURE:
+                return ContentSettingsType.AUTO_PICTURE_IN_PICTURE;
             case Type.AUTOMATIC_DOWNLOADS:
                 return ContentSettingsType.AUTOMATIC_DOWNLOADS;
             case Type.BACKGROUND_SYNC:
@@ -229,7 +238,7 @@ public class SiteSettingsCategory {
             case Type.REQUEST_DESKTOP_SITE:
                 return ContentSettingsType.REQUEST_DESKTOP_SITE;
             case Type.DEVICE_LOCATION:
-                return ContentSettingsType.GEOLOCATION;
+                return getGeolocationType();
             case Type.FILE_EDITING:
                 return ContentSettingsType.FILE_SYSTEM_WRITE_GUARD;
             case Type.FEDERATED_IDENTITY_API:
@@ -242,6 +251,8 @@ public class SiteSettingsCategory {
                 return ContentSettingsType.JAVASCRIPT;
             case Type.JAVASCRIPT_OPTIMIZER:
                 return ContentSettingsType.JAVASCRIPT_OPTIMIZER;
+            case Type.LOCAL_NETWORK_ACCESS:
+                return ContentSettingsType.LOCAL_NETWORK_ACCESS;
             case Type.MICROPHONE:
                 return ContentSettingsType.MEDIASTREAM_MIC;
             case Type.NFC:
@@ -264,6 +275,8 @@ public class SiteSettingsCategory {
                 return ContentSettingsType.USB_GUARD;
             case Type.VIRTUAL_REALITY:
                 return ContentSettingsType.VR;
+            case Type.WINDOW_MANAGEMENT:
+                return ContentSettingsType.WINDOW_MANAGEMENT;
             case Type.ALL_SITES:
             case Type.USE_STORAGE:
             case Type.ZOOM:
@@ -303,6 +316,8 @@ public class SiteSettingsCategory {
                 return "augmented_reality";
             case Type.AUTO_DARK_WEB_CONTENT:
                 return "auto_dark_web_content";
+            case Type.AUTO_PICTURE_IN_PICTURE:
+                return "auto_picture_in_picture";
             case Type.ALL_SITES:
                 return "all_sites";
             case Type.AUTOMATIC_DOWNLOADS:
@@ -333,6 +348,8 @@ public class SiteSettingsCategory {
                 return "javascript";
             case Type.JAVASCRIPT_OPTIMIZER:
                 return "javascript_optimizer";
+            case Type.LOCAL_NETWORK_ACCESS:
+                return "local_network_access";
             case Type.MICROPHONE:
                 return "microphone";
             case Type.NFC:
@@ -363,6 +380,8 @@ public class SiteSettingsCategory {
                 return "third_party_cookies";
             case Type.TRACKING_PROTECTION:
                 return "tracking_protection";
+            case Type.WINDOW_MANAGEMENT:
+                return "window_management";
             case Type.ZOOM:
                 return "zoom";
             default:
@@ -500,9 +519,6 @@ public class SiteSettingsCategory {
                     osWarningExtra.setIcon(transparent);
                 }
             }
-        } else if (globalMessage != null) {
-            osWarningExtra.setTitle(globalMessage);
-            osWarningExtra.setIcon(getDisabledInAndroidIcon(context));
         }
     }
 
@@ -559,13 +575,16 @@ public class SiteSettingsCategory {
     }
 
     /** Returns whether to disable the category toggle. */
-    protected boolean isToggleDisabled() {
+    protected boolean shouldDisableToggle() {
         return false;
     }
 
-    /** Returns whether to show a warning message when the category is blocked. */
-    protected boolean shouldShowWarningWhenBlocked() {
-        return false;
+    /**
+     * Returns resource id for message about why adding exceptions is blocked. 0 should be returned
+     * if no message should be shown.
+     */
+    protected int getBlockAddingExceptionsReasonResourceId() {
+        return 0;
     }
 
     /**
@@ -624,6 +643,14 @@ public class SiteSettingsCategory {
 
     /** Returns the message to display when per-app permission is blocked. */
     protected @Nullable String getMessageForEnablingOsGlobalPermission(Context context) {
+        return null;
+    }
+
+    /**
+     * Returns the message to display to explain why the settings toggle is disabled. Returns null
+     * if no message should be displayed.
+     */
+    protected @Nullable String getMessageWhyToggleIsDisabled(Context context) {
         return null;
     }
 

@@ -18,12 +18,12 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isA;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -106,6 +106,7 @@ import org.chromium.ui.modelutil.PropertyModel;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /** Tests for {@link TabGroupUiMediator}. */
@@ -203,10 +204,6 @@ public class TabGroupUiMediatorUnitTest {
         Tab newTab = prepareTab(TAB4_ID, TAB4_ID);
         List<Tab> tabs = new ArrayList<>(Arrays.asList(newTab));
         doReturn(tabs).when(mTabGroupModelFilter).getRelatedTabList(TAB4_ID);
-        TabModel incognitoTabModel = spy(TabModel.class);
-        doReturn(newTab).when(incognitoTabModel).getTabAt(POSITION1);
-        doReturn(true).when(incognitoTabModel).isIncognito();
-        doReturn(1).when(incognitoTabModel).getCount();
     }
 
     private void verifyNeverReset() {
@@ -218,11 +215,15 @@ public class TabGroupUiMediatorUnitTest {
 
     private void verifyResetStrip(boolean isVisible, @Nullable List<Tab> tabs) {
         mResetHandlerInOrder.verify(mResetHandler).resetStripWithListOfTabs(tabs);
+        if (mDialogControllerSupplier.hasValue()) {
+            verify(mTabGridDialogController, atLeastOnce()).hideDialog(false);
+        }
         mVisibilityControllerInOrder
                 .verify(mVisibilityController)
                 .setBottomControlsVisible(isVisible);
     }
 
+    @SuppressWarnings("DirectInvocationOnMock")
     private void initAndAssertProperties(@Nullable Tab currentTab) {
         doReturn(true).when(mTabModelSelector).isTabStateInitialized();
         if (currentTab == null) {
@@ -230,6 +231,7 @@ public class TabGroupUiMediatorUnitTest {
             doReturn(0).when(mTabModel).getCount();
             doReturn(0).when(mTabGroupModelFilter).getIndividualTabAndGroupCount();
             doReturn(null).when(mTabModelSelector).getCurrentTab();
+            when(mTabModel.iterator()).thenAnswer(inv -> Collections.emptyList().iterator());
         } else {
             doReturn(mTabModel.indexOf(currentTab)).when(mTabModel).index();
             doReturn(currentTab).when(mTabModelSelector).getCurrentTab();
@@ -319,6 +321,7 @@ public class TabGroupUiMediatorUnitTest {
         doReturn(false).when(mTabModel).isIncognito();
         doReturn(mTabModel).when(mTabModelSelector).getModel(false);
         doReturn(3).when(mTabModel).getCount();
+        when(mTabModel.iterator()).thenAnswer(inv -> List.of(mTab1, mTab2, mTab3).iterator());
         doReturn(0).when(mTabModel).index();
         doReturn(mTab1).when(mTabModel).getTabAt(0);
         doReturn(mTab2).when(mTabModel).getTabAt(1);
@@ -394,7 +397,7 @@ public class TabGroupUiMediatorUnitTest {
         mModel = new PropertyModel(TabGroupUiProperties.ALL_KEYS);
     }
 
-    /*********************** Tab group related tests *************************/
+    // *********************** Tab group related tests *************************
 
     @Test
     public void verifyInitialization_NoTab_TabGroup() {
@@ -499,6 +502,7 @@ public class TabGroupUiMediatorUnitTest {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void tabSelection_NotSameGroup_SingleTabToGroup() {
         initAndAssertProperties(mTab1);
 
@@ -548,6 +552,7 @@ public class TabGroupUiMediatorUnitTest {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void tabSelection_ScrollToSelectedIndex() {
         initAndAssertProperties(mTab1);
         assertThat(mModel.get(TabGroupUiProperties.INITIAL_SCROLL_INDEX), equalTo(null));
@@ -709,6 +714,7 @@ public class TabGroupUiMediatorUnitTest {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void tabAddition_TabGroup_ScrollToTheLast() {
         initAndAssertProperties(mTab2);
         assertThat(mModel.get(TabGroupUiProperties.INITIAL_SCROLL_INDEX), equalTo(0));
@@ -899,8 +905,10 @@ public class TabGroupUiMediatorUnitTest {
     @Test
     public void layoutStateChange_TabGroup() {
         initAndAssertProperties(mTab2);
+        mDialogControllerSupplier.get();
 
         mLayoutStateObserverCaptor.getValue().onStartedShowing(LayoutType.TAB_SWITCHER);
+        verify(mTabGridDialogController, atLeastOnce()).hideDialog(false);
         verifyResetStrip(false, null);
 
         mLayoutStateObserverCaptor.getValue().onFinishedHiding(LayoutType.TAB_SWITCHER);
@@ -958,7 +966,9 @@ public class TabGroupUiMediatorUnitTest {
         doReturn(tabs).when(mTabGroupModelFilter).getRelatedTabList(TAB1_ID);
         doReturn(true).when(mTabGroupModelFilter).isTabInTabGroup(mTab1);
         doReturn(new Token(1L, TAB2_ROOT_ID)).when(mTab1).getTabGroupId();
-        mTabGroupModelFilterObserverArgumentCaptor.getValue().didMergeTabToGroup(mTab1);
+        mTabGroupModelFilterObserverArgumentCaptor
+                .getValue()
+                .didMergeTabToGroup(mTab1, /* isDestinationTab= */ true);
 
         verifyResetStrip(true, tabs);
     }
@@ -967,7 +977,9 @@ public class TabGroupUiMediatorUnitTest {
     public void uiNotVisibleAfterMergeNonCurrentTabToGroup() {
         initAndAssertProperties(mTab1);
 
-        mTabGroupModelFilterObserverArgumentCaptor.getValue().didMergeTabToGroup(mTab3);
+        mTabGroupModelFilterObserverArgumentCaptor
+                .getValue()
+                .didMergeTabToGroup(mTab3, /* isDestinationTab= */ false);
 
         verify(mResetHandler, never()).resetGridWithListOfTabs(any());
     }
@@ -980,7 +992,7 @@ public class TabGroupUiMediatorUnitTest {
         mTabGridDialogBackPressSupplier.set(true);
 
         var groupUiBackPressSupplier = mTabGroupUiMediator.getHandleBackPressChangedSupplier();
-        Assert.assertEquals(Boolean.TRUE, groupUiBackPressSupplier.get());
+        Assert.assertEquals(true, groupUiBackPressSupplier.get());
 
         assertThat(mTabGroupUiMediator.onBackPressed(), equalTo(true));
         verify(mTabGridDialogController).handleBackPressed();
@@ -994,7 +1006,7 @@ public class TabGroupUiMediatorUnitTest {
         mTabGridDialogBackPressSupplier.set(false);
         var groupUiBackPressSupplier = mTabGroupUiMediator.getHandleBackPressChangedSupplier();
 
-        assertNotEquals(Boolean.TRUE, groupUiBackPressSupplier.get());
+        assertNotEquals(true, groupUiBackPressSupplier.get());
         assertThat(mTabGroupUiMediator.onBackPressed(), equalTo(false));
         verify(mTabGridDialogController).handleBackPressed();
     }
@@ -1006,7 +1018,7 @@ public class TabGroupUiMediatorUnitTest {
         var groupUiBackPressSupplier = mTabGroupUiMediator.getHandleBackPressChangedSupplier();
 
         // Not initialized yet.
-        assertNotEquals(Boolean.TRUE, groupUiBackPressSupplier.get());
+        assertNotEquals(true, groupUiBackPressSupplier.get());
 
         // Late init.
         mDialogControllerSupplier.get();
@@ -1131,19 +1143,6 @@ public class TabGroupUiMediatorUnitTest {
     }
 
     @Test
-    public void testImageTiles_1Member() {
-        setupSyncedGroup(/* isShared= */ true);
-        when(mCollaborationService.getGroupData(COLLABORATION_ID1))
-                .thenReturn(SharedGroupTestHelper.newGroupData(COLLABORATION_ID1, GROUP_MEMBER1));
-        initAndAssertProperties(mTab2);
-
-        assertTrue(mModel.get(TabGroupUiProperties.SHOW_GROUP_DIALOG_BUTTON_VISIBLE));
-        assertFalse(mModel.get(TabGroupUiProperties.IMAGE_TILES_CONTAINER_VISIBLE));
-        verify(mSharedImageTilesCoordinator)
-                .onGroupMembersChanged(COLLABORATION_ID1, List.of(GROUP_MEMBER1));
-    }
-
-    @Test
     public void testImageTiles_NoCollaborationId() {
         setupSyncedGroup(/* isShared= */ false);
 
@@ -1198,7 +1197,6 @@ public class TabGroupUiMediatorUnitTest {
         doReturn(Color.RED).when(mThemeColorProvider).getThemeColor();
         initAndAssertProperties(mTab1);
         verify(mSharedImageTilesConfigBuilder).setBorderColor(Color.RED);
-        verify(mSharedImageTilesConfigBuilder).setBackgroundColor(Color.RED);
         verify(mSharedImageTilesCoordinator).updateConfig(any());
 
         doReturn(Color.BLUE).when(mThemeColorProvider).getThemeColor();
@@ -1207,7 +1205,6 @@ public class TabGroupUiMediatorUnitTest {
                 .getValue()
                 .onThemeColorChanged(Color.BLUE, /* shouldAnimate= */ false);
         verify(mSharedImageTilesConfigBuilder).setBorderColor(Color.BLUE);
-        verify(mSharedImageTilesConfigBuilder).setBackgroundColor(Color.BLUE);
         verify(mSharedImageTilesCoordinator, times(2)).updateConfig(any());
     }
 

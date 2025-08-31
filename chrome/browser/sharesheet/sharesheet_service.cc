@@ -16,7 +16,10 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/launch_utils.h"
+#include "chrome/browser/sharesheet/share_action/example_action.h"
 #include "chrome/browser/sharesheet/share_action/share_action.h"
+#include "chrome/browser/sharesheet/share_action/share_action_cache.h"
+#include "chrome/browser/sharesheet/sharesheet_controller.h"
 #include "chrome/browser/sharesheet/sharesheet_service_delegator.h"
 #include "chrome/browser/sharesheet/sharesheet_types.h"
 #include "chrome/grit/generated_resources.h"
@@ -130,6 +133,10 @@ void SharesheetService::ShowNearbyShareBubbleForArc(
       std::move(intent), std::move(delivered_callback),
       std::move(close_callback));
 }
+
+void SharesheetService::AddShareActionForTest(ShareActionType type) {
+  share_action_cache_->AddShareActionForTest(type);  // IN-TEST
+}
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 // Cleanup delegator when bubble closes.
@@ -222,11 +229,11 @@ void SharesheetService::ShowBubbleForTesting(
     LaunchSource source,
     DeliveredCallback delivered_callback,
     CloseCallback close_callback,
-    int num_actions_to_add) {
+    std::vector<::sharesheet::ShareActionType> actions) {
   CHECK(views::Widget::GetWidgetForNativeWindow(native_window));
   SharesheetMetrics::RecordSharesheetLaunchSource(source);
-  for (int i = 0; i < num_actions_to_add; ++i) {
-    share_action_cache_->AddShareActionForTesting();  // IN-TEST
+  for (auto action : actions) {
+    share_action_cache_->AddShareActionForTest(action);  // IN-TEST
   }
   auto targets = GetActionsForIntent(intent);
   OnReadyToShowBubble(native_window, std::move(intent),

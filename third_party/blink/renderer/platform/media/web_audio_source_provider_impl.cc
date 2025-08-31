@@ -8,9 +8,11 @@
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/task/bind_post_task.h"
@@ -22,6 +24,10 @@
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
+
+// TODO(crbug.com/420150619): Re-enable this feature.
+BASE_FEATURE(DelayStopForMediaElementSourceNode,
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // TeeFilter is a RenderCallback implementation that allows for a client to get
 // a copy of the data being rendered by the |renderer_| on Render(). This class
@@ -137,19 +143,21 @@ void WebAudioSourceProviderImpl::SetClient(
 
   base::AutoLock auto_lock(sink_lock_);
   if (client) {
-    // Detach the audio renderer from normal playback.
-    if (sink_) {
-      sink_->Stop();
+    if (!base::FeatureList::IsEnabled(kDelayStopForMediaElementSourceNode)) {
+      // Detach the audio renderer from normal playback.
+      if (sink_) {
+        sink_->Stop();
 
-      // It's not possible to resume an element after disconnection, so just
-      // drop the sink entirely for now.
-      sink_ = nullptr;
+        // It's not possible to resume an element after disconnection, so just
+        // drop the sink entirely for now.
+        sink_ = nullptr;
+      }
     }
 
     // The client will now take control by calling provideInput() periodically.
     client_ = client;
 
-    set_format_cb_ = base::BindPostTaskToCurrentDefault(WTF::BindRepeating(
+    set_format_cb_ = base::BindPostTaskToCurrentDefault(blink::BindRepeating(
         &WebAudioSourceProviderImpl::OnSetFormat, weak_factory_.GetWeakPtr()));
 
     // If |tee_filter_| is Initialize()d - then run |set_format_cb_| to send
@@ -229,6 +237,30 @@ void WebAudioSourceProviderImpl::ProvideInput(
   bus_wrapper_->Scale(volume_);
 }
 
+void WebAudioSourceProviderImpl::ConnectToDestinationReady() {
+  if (!base::FeatureList::IsEnabled(kDelayStopForMediaElementSourceNode)) {
+    return;
+  }
+
+  if (!client_) {
+    return;
+  }
+
+  base::AutoLock auto_lock(sink_lock_);
+  if (!sink_) {
+    return;
+  }
+
+  // If client is set and sink is playing, then we finally stop the sink at this
+  // time. It is expected that the newly connected node, which is calling this
+  // method, will start the audio output.
+  sink_->Stop();
+
+  // It's not possible to resume an element after disconnection, so just
+  // drop the sink entirely for now.
+  sink_ = nullptr;
+}
+
 void WebAudioSourceProviderImpl::Initialize(
     const media::AudioParameters& params,
     RenderCallback* renderer) {
@@ -306,8 +338,8 @@ void WebAudioSourceProviderImpl::GetOutputDeviceInfoAsync(
   // underlying audio renderer will prefer the media parameters. See
   // IsOptimizedForHardwareParameters() for more details.
   base::BindPostTaskToCurrentDefault(
-      WTF::BindOnce(std::move(info_cb),
-                    media::OutputDeviceInfo(media::OUTPUT_DEVICE_STATUS_OK)))
+      blink::BindOnce(std::move(info_cb),
+                      media::OutputDeviceInfo(media::OUTPUT_DEVICE_STATUS_OK)))
       .Run();
 }
 

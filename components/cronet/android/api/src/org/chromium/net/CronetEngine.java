@@ -10,6 +10,7 @@ import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.json.JSONObject;
@@ -506,6 +507,40 @@ public abstract class CronetEngine {
             return setConnectionMigrationOptions(connectionMigrationOptionsBuilder.build());
         }
 
+        /**
+         * Configures proxying behavior for connection establishment. This affects all connections
+         * established by a {@link CronetEngine} as a consequence of {@link UrlRequest} being
+         * started. For more details, see the documentation of {@link ProxyOptions}.
+         *
+         * <p>Warning: DO NOT USE without reaching out to Cronet maintainers first. This is
+         * experimental and subject to change.
+         *
+         * <p>Note: The Android OS can already define a "system" proxy configurations. This config
+         * might have been obtained by the user, from some enterprise profile configuration, or
+         * (most likely) from some network autoconfiguration (e.g., Web Proxy Auto-Discovery
+         * Protocol). Proxy configurations configured via this API and system ones are mutually
+         * exclusive. When specifying {@link ProxyOptions} you are overriding the system
+         * configuration, this can cause connectivity problems (e.g., the internet might no longer
+         * be reachable). TODO(https://crbug.com/421341930): Have better support for system proxies.
+         * This could be done: either, by chaining them to the ones provided by the app; or, by
+         * using them in place of a DIRECT fallback, if that has been specified by the app.
+         *
+         * @param proxyOptions ProxyOptions to be used for connections established by the {@link
+         *     CronetEngine} created by this builder.
+         * @return the builder to facilitate chaining.
+         */
+        @ProxyOptions.Experimental
+        public Builder setProxyOptions(@Nullable ProxyOptions proxyOptions) {
+            if (!mBuilderDelegate
+                    .getSupportedConfigOptions()
+                    .contains(ICronetEngineBuilder.PROXY_OPTIONS)) {
+                throw new UnsupportedOperationException(
+                        "This Cronet implementation does not support ProxyOptions");
+            }
+            mBuilderDelegate.setProxyOptions(proxyOptions);
+            return this;
+        }
+
         protected ExperimentalCronetEngine buildExperimental() {
             int implLevel = getImplApiLevel(mBuilderDelegate);
             if (implLevel != -1 && implLevel < getMaximumApiLevel()) {
@@ -788,25 +823,10 @@ public abstract class CronetEngine {
     public abstract void stopNetLog();
 
     /**
-     * Returns differences in metrics collected by Cronet since the last call to this method.
-     *
-     * <p>Cronet collects these metrics globally. This means deltas returned by {@code
-     * getGlobalMetricsDeltas()} will include measurements of requests processed by other {@link
-     * CronetEngine} instances. Since this function returns differences in metrics collected since
-     * the last call, and these metrics are collected globally, a call to any {@code CronetEngine}
-     * instance's {@code getGlobalMetricsDeltas()} method will affect the deltas returned by any
-     * other
-     * {@code CronetEngine} instance's {@code getGlobalMetricsDeltas()}.
-     *
-     * <p>Cronet starts collecting these metrics after the first call to {@code
-     * getGlobalMetricsDeltras()}, so the first call returns no useful data as no metrics have yet
-     * been collected.
-     *
-     * @return differences in metrics collected by Cronet, since the last call to {@code
-     * getGlobalMetricsDeltas()}, serialized as a <a
-     * href=https://developers.google.com/protocol-buffers>protobuf
-     * </a>.
+     * @deprecated In modern versions of Cronet, this will always return an empty array. In older
+     * versions, this used to return a serialized protobuf containing metrics data.
      */
+    @Deprecated
     public abstract byte[] getGlobalMetricsDeltas();
 
     /**

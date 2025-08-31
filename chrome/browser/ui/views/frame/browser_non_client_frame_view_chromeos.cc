@@ -4,29 +4,36 @@
 
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view_chromeos.h"
 
-#include <algorithm>
+#include <memory>
+#include <optional>
 
+#include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
+#include "ash/wm/wm_highlight_border_overlay_delegate.h"
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
 #include "chrome/browser/ui/ash/session/session_util.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/views/frame/browser_frame.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
-#include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+#include "chrome/browser/ui/views/frame/tab_strip_view_interface.h"
 #include "chrome/browser/ui/views/frame/top_container_view.h"
 #include "chrome/browser/ui/views/profiles/profile_indicator_icon.h"
 #include "chrome/browser/ui/views/side_panel/side_panel.h"
@@ -125,6 +132,44 @@ bool UsePackagedAppHeaderStyle(const Browser* browser) {
 }
 
 }  // namespace
+
+class BrowserNonClientFrameViewChromeOS::ProfileChangeObserver
+    : public ProfileAttributesStorage::Observer {
+ public:
+  explicit ProfileChangeObserver(BrowserNonClientFrameViewChromeOS& frame)
+      : frame_(frame) {
+    if (g_browser_process->profile_manager()) {
+      profile_observation_.Observe(
+          &g_browser_process->profile_manager()->GetProfileAttributesStorage());
+    } else {
+      CHECK_IS_TEST();
+    }
+  }
+
+  ~ProfileChangeObserver() override = default;
+
+  // ProfileAttributesStorage::Observer:
+  void OnProfileAdded(const base::FilePath& profile_path) override {
+    frame_->UpdateProfileIcons();
+  }
+  void OnProfileWasRemoved(const base::FilePath& profile_path,
+                           const std::u16string& profile_name) override {
+    frame_->UpdateProfileIcons();
+  }
+  void OnProfileAvatarChanged(const base::FilePath& profile_path) override {
+    frame_->UpdateProfileIcons();
+  }
+  void OnProfileHighResAvatarLoaded(
+      const base::FilePath& profile_path) override {
+    frame_->UpdateProfileIcons();
+  }
+
+ private:
+  raw_ref<BrowserNonClientFrameViewChromeOS> frame_;
+  base::ScopedObservation<ProfileAttributesStorage,
+                          ProfileAttributesStorage::Observer>
+      profile_observation_{this};
+};
 
 BrowserNonClientFrameViewChromeOS::BrowserNonClientFrameViewChromeOS(
     BrowserFrame* frame,
@@ -235,13 +280,6 @@ gfx::Rect BrowserNonClientFrameViewChromeOS::GetBoundsForWebAppFrameToolbar(
   return gfx::Rect(x, 0, std::max(0, available_width), painted_height);
 }
 
-void BrowserNonClientFrameViewChromeOS::LayoutWebAppWindowTitle(
-    const gfx::Rect& available_space,
-    views::Label& window_title_label) const {
-  // No window titles on Chrome OS, so just hide the window title.
-  window_title_label.SetVisible(false);
-}
-
 int BrowserNonClientFrameViewChromeOS::GetTopInset(bool restored) const {
   // TODO(estade): why do callsites in this class hardcode false for |restored|?
 
@@ -303,7 +341,7 @@ SkColor BrowserNonClientFrameViewChromeOS::GetCaptionColor(
   const SkColor active_caption_color =
       views::FrameCaptionButton::GetButtonColor(frame_color);
 
-  if (ShouldPaintAsActive(active_state)) {
+  if (ShouldPaintAsActiveForState(active_state)) {
     return active_caption_color;
   }
 
@@ -372,8 +410,7 @@ int BrowserNonClientFrameViewChromeOS::NonClientHitTest(
   // large click target above the tabs to drag the window, so redirect clicks in
   // the tab's shadow to caption.
   if (hit_test == HTCLIENT && !frame()->IsMaximized() &&
-      !frame()->IsFullscreen() &&
-      !display::Screen::GetScreen()->InTabletMode()) {
+      !frame()->IsFullscreen() && !display::Screen::Get()->InTabletMode()) {
     // TODO(crbug.com/40768579): Tab Strip hit calculation and bounds logic
     // should reside in the TabStrip class.
     gfx::Point client_point(point);
@@ -504,7 +541,7 @@ gfx::Size BrowserNonClientFrameViewChromeOS::GetMinimumSize() const {
     // Ensure that the minimum width is enough to hold a minimum width tab strip
     // at its usual insets.
     const int min_tabstrip_width =
-        browser_view()->tab_strip_region_view()->GetMinimumSize().width();
+        browser_view()->tab_strip_view()->GetMinimumSize().width();
     min_width =
         std::max(min_width, min_tabstrip_width + GetTabStripLeftInset() +
                                 GetTabStripRightInset());
@@ -518,13 +555,13 @@ gfx::Size BrowserNonClientFrameViewChromeOS::GetMinimumSize() const {
     min_height = min_height + caption_button_container_->size().height();
   }
 
-  const int window_corner_radius = frame()->GetNativeWindow()->GetProperty(
-      aura::client::kWindowCornerRadiusKey);
-  if (chromeos::features::IsRoundedWindowsEnabled() &&
-      window_corner_radius > 0) {
-    // Include bottom rounded corners region. See b/294588040.
-    min_height = min_height + window_corner_radius;
-  }
+  // Include bottom rounded corners region. See b:294588040.
+  aura::Window* window = GetWidget()->GetNativeWindow();
+  const gfx::RoundedCornersF window_radii =
+      ash::WindowState::Get(window)->GetWindowRoundedCorners();
+  CHECK_EQ(window_radii.lower_left(), window_radii.lower_right());
+
+  min_height = min_height + window_radii.lower_left();
 
   return gfx::Size(min_width, min_height);
 }
@@ -639,29 +676,15 @@ void BrowserNonClientFrameViewChromeOS::OnTabletModeToggled(bool enabled) {
 
   ImmersiveModeController* immersive_mode_controller =
       browser_view()->immersive_mode_controller();
-  ExclusiveAccessManager* exclusive_access_manager =
-      browser_view()->browser()->exclusive_access_manager();
-
   const bool was_immersive = immersive_mode_controller->IsEnabled();
-  const bool was_fullscreen =
-      exclusive_access_manager->context()->IsFullscreen();
 
-  // If fullscreen mode is not what it should be, toggle fullscreen mode.
-  if (ShouldEnableFullscreenMode(enabled) != was_fullscreen) {
-    exclusive_access_manager->fullscreen_controller()
-        ->ToggleBrowserFullscreenMode(/*user_initiated=*/false);
-  }
+  // Set the immersive mode to what it should be because an immersive mode may
+  // be used in non fullscreen state in tablet mode.
+  immersive_mode_controller->SetEnabled(ShouldEnableImmersiveModeController());
 
-  // Set immersive mode to what it should be. Note that we need to call this
-  // after updating fullscreen mode since it may override immersive mode to not
-  // wanted state (e.g. Non TabStrip frame with tablet mode enabled).
-  immersive_mode_controller->SetEnabled(
-      ShouldEnableImmersiveModeController(enabled));
-
-  // Do not relayout if neither of immersive mode nor fullscreen mode has
-  // changed because the non client frame area will not change.
-  if (was_immersive == immersive_mode_controller->IsEnabled() &&
-      was_fullscreen == exclusive_access_manager->context()->IsFullscreen()) {
+  // Do not relayout if immersive mode hasn't changed because the non client
+  // frame area will not change.
+  if (was_immersive == immersive_mode_controller->IsEnabled()) {
     return;
   }
 
@@ -704,10 +727,10 @@ void BrowserNonClientFrameViewChromeOS::OnWindowPropertyChanged(
     aura::Window* window,
     const void* key,
     intptr_t old) {
-  // ChromeOS has rounded windows for certain window states. If these
-  // states changes, we need to update the rounded corners accordingly. See
-  // `chromeos::GetWindowCornerRadius()` for more details.
-  if (chromeos::CanPropertyEffectWindowRadius(key)) {
+  // ChromeOS has rounded windows for certain window states. If these states
+  // changes, we need to update the rounded corners of the frame associate with
+  // the `window`accordingly.
+  if (key == chromeos::kWindowHasRoundedCornersKey) {
     UpdateWindowRoundedCorners();
   }
 
@@ -738,25 +761,26 @@ void BrowserNonClientFrameViewChromeOS::OnWindowPropertyChanged(
     ResetWindowControls();
 
     // Update the window controls if we are entering or exiting float state.
-    const bool enter_floated = IsFloated();
-    const bool exit_floated = static_cast<chromeos::WindowStateType>(old) ==
-                              chromeos::WindowStateType::kFloated;
-    if (!enter_floated && !exit_floated) {
-      return;
-    }
+    const bool is_floated = IsFloated();
+    const bool was_floated = static_cast<chromeos::WindowStateType>(old) ==
+                             chromeos::WindowStateType::kFloated;
 
-    if (frame_header_) {
+    if (frame_header_ && (is_floated != was_floated)) {
       frame_header_->OnFloatStateChanged();
     }
 
-    if (!display::Screen::GetScreen()->InTabletMode()) {
-      return;
+    const bool is_fullscreen = frame()->IsFullscreen();
+    const bool was_fullscreen = chromeos::IsFullscreenOrPinnedWindowStateType(
+        static_cast<chromeos::WindowStateType>(old));
+    // Additionally updates immersive mode when the state is transitioning
+    // between non fullscreen states such as maximzied, snapped or float. When
+    // switching to or from the fullscreen states, or the state change between
+    // fullscreen states (fullscreen <> pinneed), the immersive mode is updated
+    // in `BrowserView::FullscreenStateChanged`.
+    if (!is_fullscreen && !was_fullscreen) {
+      browser_view()->immersive_mode_controller()->SetEnabled(
+          ShouldEnableImmersiveModeController());
     }
-
-    // Additionally updates immersive mode for PWA/SWA so that we show the title
-    // bar when floated, and hide the title bar otherwise.
-    browser_view()->immersive_mode_controller()->SetEnabled(
-        ShouldEnableImmersiveModeController(false));
 
     return;
   }
@@ -828,6 +852,40 @@ void BrowserNonClientFrameViewChromeOS::OnAppRegistryCacheWillBeDestroyed(
   app_registry_cache_observation_.Reset();
 }
 
+bool BrowserNonClientFrameViewChromeOS::ShouldEnableImmersiveModeController()
+    const {
+  // Do not support immersive mode in kiosk.
+  if (chromeos::IsKioskSession()) {
+    return false;
+  }
+
+  if (IsTrustedPinned() &&
+      !GetFrameWindow()->GetProperty(chromeos::kUseImmersiveInTrustedPinned)) {
+    return false;
+  }
+  if (display::Screen::Get()->InTabletMode() &&
+      (IsSnapped() || frame()->IsMaximized())) {
+    // Snapped or maximized browser windows that doesn't have tabstrip uses
+    // immersive frame to hide frame in tablet mode.
+    return !browser_view()->GetSupportsTabStrip();
+  }
+
+  const auto* fullscreen_controller = browser_view()
+                                          ->browser()
+                                          ->GetFeatures()
+                                          .exclusive_access_manager()
+                                          ->fullscreen_controller();
+  // For other scnarios, use immersive if the browser is in fullscreen, and it
+  // is NOT requested via extension or HTML API `requestFullscreen()`.
+  return frame()->IsFullscreen() &&
+         !fullscreen_controller->IsExtensionFullscreenOrPending() &&
+         fullscreen_controller->IsFullscreenForBrowser();
+}
+
+bool BrowserNonClientFrameViewChromeOS::IsTrustedPinned() const {
+  return ash::WindowState::Get(frame()->GetNativeWindow())->IsTrustedPinned();
+}
+
 void BrowserNonClientFrameViewChromeOS::PaintAsActiveChanged() {
   BrowserNonClientFrameView::PaintAsActiveChanged();
 
@@ -838,12 +896,6 @@ void BrowserNonClientFrameViewChromeOS::PaintAsActiveChanged() {
   }
 }
 
-void BrowserNonClientFrameViewChromeOS::OnProfileAvatarChanged(
-    const base::FilePath& profile_path) {
-  BrowserNonClientFrameView::OnProfileAvatarChanged(profile_path);
-  UpdateProfileIcons();
-}
-
 void BrowserNonClientFrameViewChromeOS::AddedToWidget() {
   if (highlight_border_overlay_ ||
       !GetWidget()->GetNativeWindow()->GetProperty(
@@ -851,8 +903,8 @@ void BrowserNonClientFrameViewChromeOS::AddedToWidget() {
     return;
   }
 
-  highlight_border_overlay_ =
-      std::make_unique<HighlightBorderOverlay>(GetWidget());
+  highlight_border_overlay_ = std::make_unique<HighlightBorderOverlay>(
+      GetWidget(), std::make_unique<ash::WmHighlightBorderOverlayDelegate>());
 }
 
 bool BrowserNonClientFrameViewChromeOS::GetShowCaptionButtons() const {
@@ -865,6 +917,15 @@ bool BrowserNonClientFrameViewChromeOS::GetShowCaptionButtons() const {
 
 bool BrowserNonClientFrameViewChromeOS::GetShowCaptionButtonsWhenNotInOverview()
     const {
+  // Show the caption buttons if an immersive mode is enabled for trusted pined
+  // state. This is to show the three dot menu which is a part of caption button
+  // container, rather than showing buttons. Only relevant for non-web browser
+  // scenarios.
+  if (IsTrustedPinned() &&
+      GetFrameWindow()->GetProperty(chromeos::kUseImmersiveInTrustedPinned)) {
+    return true;
+  }
+
   if (GetHideCaptionButtonsForFullscreen()) {
     return false;
   }
@@ -876,7 +937,7 @@ bool BrowserNonClientFrameViewChromeOS::GetShowCaptionButtonsWhenNotInOverview()
 
   // Browsers in tablet mode still show their caption buttons in float state,
   // even with the webUI tab strip.
-  if (display::Screen::GetScreen()->InTabletMode()) {
+  if (display::Screen::Get()->InTabletMode()) {
     return IsFloated();
   }
 
@@ -1027,12 +1088,20 @@ void BrowserNonClientFrameViewChromeOS::UpdateWindowRoundedCorners() {
   DCHECK(GetWidget());
 
   aura::Window* window = GetWidget()->GetNativeWindow();
+  auto* window_state = ash::WindowState::Get(window);
 
-  const int corner_radius = chromeos::GetWindowCornerRadius(window);
-  window->SetProperty(aura::client::kWindowCornerRadiusKey, corner_radius);
+  // For certain windows, we do not window state associated with them. (See
+  // `ash::WindowState::Get()` for details)
+  if (!window_state) {
+    return;
+  }
+
+  const gfx::RoundedCornersF window_radii =
+      window_state->GetWindowRoundedCorners();
 
   if (frame_header_) {
-    frame_header_->SetHeaderCornerRadius(corner_radius);
+    CHECK_EQ(window_radii.upper_left(), window_radii.upper_right());
+    frame_header_->SetHeaderCornerRadius(window_radii.upper_left());
   }
 
   if (browser_view()->IsWindowControlsOverlayEnabled()) {
@@ -1040,13 +1109,11 @@ void BrowserNonClientFrameViewChromeOS::UpdateWindowRoundedCorners() {
     // drawn above the client view. The container has a background that extends
     // over the curvature of the top-right corner, requiring its rounding.
     caption_button_container_->layer()->SetRoundedCornerRadius(
-        gfx::RoundedCornersF(0, corner_radius, 0, 0));
+        gfx::RoundedCornersF(0, window_radii.upper_right(), 0, 0));
     caption_button_container_->layer()->SetIsFastRoundedCorner(/*enable=*/true);
   }
 
-  if (chromeos::features::IsRoundedWindowsEnabled()) {
-    GetWidget()->client_view()->UpdateWindowRoundedCorners(corner_radius);
-  }
+  GetWidget()->client_view()->UpdateWindowRoundedCorners(window_radii);
 }
 
 void BrowserNonClientFrameViewChromeOS::LayoutProfileIndicator() {
@@ -1100,9 +1167,6 @@ void BrowserNonClientFrameViewChromeOS::MaybeAnimateThemeChanged() {
   }
 
   Browser* browser = browser_view()->browser();
-  if (!browser) {
-    return;
-  }
 
   // Theme change events are only animated for system web apps which explicitly
   // request the behavior.
@@ -1168,70 +1232,11 @@ void BrowserNonClientFrameViewChromeOS::MaybeAnimateThemeChanged() {
 }
 
 bool BrowserNonClientFrameViewChromeOS::IsFloated() const {
-  return GetFrameWindow()->GetProperty(chromeos::kWindowStateTypeKey) ==
-         chromeos::WindowStateType::kFloated;
+  return ash::WindowState::Get(frame()->GetNativeWindow())->IsFloated();
 }
 
-bool BrowserNonClientFrameViewChromeOS::ShouldEnableImmersiveModeController(
-    bool on_tablet_enabled) const {
-  // Do not support immersive mode in kiosk.
-  if (chromeos::IsKioskSession()) {
-    return false;
-  }
-
-  // Disable immersive mode controller in locked fullscreen mode to prevent
-  // users from exiting this mode. One exception for this is when the browsing
-  // instance is locked for OnTask. Only applicable for non-web browser
-  // scenarios.
-  bool is_locked_for_on_task = browser_view()->browser()->IsLockedForOnTask();
-  if (!CanUserExitFullscreen() && !is_locked_for_on_task) {
-    return false;
-  }
-
-  // If tablet mode is just enabled and not locked for OnTask, we should exit
-  // immersive mode for TabStrip. Note that we can still enter immersive mode if
-  // it's toggled after entering tablet mode.
-  if (on_tablet_enabled && !is_locked_for_on_task &&
-      browser_view()->GetSupportsTabStrip()) {
-    return false;
-  }
-
-  if (display::Screen::GetScreen()->InTabletMode()) {
-    // No immersive mode for minimized windows as they aren't visible, and
-    // floated windows need a permanent header to drag.
-    if (frame()->IsMinimized() || IsFloated()) {
-      return false;
-    }
-
-    return true;
-  }
-
-  // In clamshell mode, we want immersive mode if fullscreen.
-  return frame()->IsFullscreen();
-}
-
-bool BrowserNonClientFrameViewChromeOS::ShouldEnableFullscreenMode(
-    bool on_tablet_enabled) const {
-  // In kiosk mode, we always want to be fullscreen.
-  if (chromeos::IsKioskSession()) {
-    return true;
-  }
-
-  // If user cannot exit fullscreen, we always want to be fullscreen. This must
-  // comes before the tablet mode condition since there is a case where the user
-  // is not allowed to exit fullscreen while tablet mode (LockedFullscreen).
-  if (!CanUserExitFullscreen()) {
-    return true;
-  }
-
-  // If tablet mode is just enabled, we should exit fullscreen mode for
-  // TabStrip. Note that we can still enter immersive mode if it's toggled after
-  // entering tablet mode.
-  if (on_tablet_enabled && browser_view()->GetSupportsTabStrip()) {
-    return false;
-  }
-
-  return frame()->IsFullscreen();
+bool BrowserNonClientFrameViewChromeOS::IsSnapped() const {
+  return ash::WindowState::Get(frame()->GetNativeWindow())->IsSnapped();
 }
 
 bool BrowserNonClientFrameViewChromeOS::UseWebUITabStrip() const {

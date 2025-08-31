@@ -8,7 +8,6 @@ import android.app.Notification;
 import android.text.format.DateUtils;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationManagerCompat;
 
 import org.chromium.base.Callback;
@@ -85,7 +84,8 @@ public class NotificationUmaTracker {
         SystemNotificationType.DATA_SHARING,
         SystemNotificationType.UPM_ACCESS_LOSS_WARNING,
         SystemNotificationType.TRACING,
-        SystemNotificationType.SERIAL
+        SystemNotificationType.SERIAL,
+        SystemNotificationType.SAFETY_HUB_UNSUBSCRIBED_NOTIFICATIONS,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface SystemNotificationType {
@@ -133,8 +133,9 @@ public class NotificationUmaTracker {
         int UPM_ACCESS_LOSS_WARNING = 40;
         int TRACING = 41;
         int SERIAL = 42;
+        int SAFETY_HUB_UNSUBSCRIBED_NOTIFICATIONS = 43;
 
-        int NUM_ENTRIES = 43;
+        int NUM_ENTRIES = 44;
     }
 
     /*
@@ -168,7 +169,13 @@ public class NotificationUmaTracker {
         ActionType.COMMIT_UNSUBSCRIBE_IMPLICIT,
         ActionType.COMMIT_UNSUBSCRIBE_EXPLICIT,
         ActionType.SHOW_ORIGINAL_NOTIFICATION,
-        ActionType.ALWAYS_ALLOW
+        ActionType.ALWAYS_ALLOW,
+        ActionType.SAFETY_HUB_UNSUBSCRIBED_NOTIFICATIONS_ACK,
+        ActionType.SAFETY_HUB_UNSUBSCRIBED_NOTIFICATIONS_REVIEW,
+        ActionType.REPORT_AS_SAFE,
+        ActionType.REPORT_WARNED_NOTIFICATION_AS_SPAM,
+        ActionType.REPORT_UNWARNED_NOTIFICATION_AS_SPAM,
+        ActionType.DOWNLOAD_DELETE_FROM_HISTORY
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ActionType {
@@ -252,8 +259,27 @@ public class NotificationUmaTracker {
         // The "Always allow" button, used for allowing suspicious web notifications from an origin.
         int ALWAYS_ALLOW = 35;
 
+        // The "Got it" button on Safety Hub notification about unsubscribed notifications.
+        int SAFETY_HUB_UNSUBSCRIBED_NOTIFICATIONS_ACK = 36;
+
+        // The "Review" button on Safety Hub notification about unsubscribed notifications.
+        int SAFETY_HUB_UNSUBSCRIBED_NOTIFICATIONS_REVIEW = 37;
+
+        // The "Report as safe" button, used for sending non-suspicious notification contents to
+        // Google.
+        int REPORT_AS_SAFE = 38;
+        // The "Report as spam" button, used for sending suspicious notification contents to Google
+        // after the user unsubscribed from notifications when they received a warning.
+        int REPORT_WARNED_NOTIFICATION_AS_SPAM = 39;
+        // The "Report as spam" button, used for sending suspicious notification contents to Google
+        // after the user unsubscribed from notifications when they did not receive a warning.
+        int REPORT_UNWARNED_NOTIFICATION_AS_SPAM = 40;
+
+        // Delete from history button on user download notification.
+        int DOWNLOAD_DELETE_FROM_HISTORY = 41;
+
         // Number of real entries, excluding `UNKNOWN`.
-        int NUM_ENTRIES = 36;
+        int NUM_ENTRIES = 41;
     }
 
     /**
@@ -658,6 +684,34 @@ public class NotificationUmaTracker {
                 count);
     }
 
+    /**
+     * Records the number of suspicious notifications from an origin, when the user taps to show the
+     * original contents of the suspicious notifications. This number is displayed on the suspicious
+     * notification warning.
+     *
+     * @param count The suspicious notification count.
+     */
+    public static void recordSuspiciousNotificationCountOnShowOriginals(int count) {
+        RecordHistogram.recordCount100Histogram(
+                "SafeBrowsing.SuspiciousNotificationWarning."
+                        + "ShowOriginalNotifications.SuspiciousNotificationCount",
+                count);
+    }
+
+    /**
+     * Records the number of suspicious notifications that were unexpectedly not delivered to the
+     * user, when they tap to show the originals. Note: if all suspicious notifications are
+     * delivered as expected, then 0 will be logged.
+     *
+     * @param count The actual number of notifications that were not properly delivered.
+     */
+    public static void recordSuspiciousNotificationsDroppedCountOnShowOriginals(int count) {
+        RecordHistogram.recordCount100Histogram(
+                "SafeBrowsing.SuspiciousNotificationWarning."
+                        + "ShowOriginalNotifications.SuspiciousNotificationsDroppedCount",
+                count);
+    }
+
     private void logNotificationShown(
             @SystemNotificationType int type,
             @ChromeChannelDefinitions.ChannelId String channelId) {
@@ -684,7 +738,6 @@ public class NotificationUmaTracker {
                 });
     }
 
-    @RequiresApi(26)
     private void isChannelBlocked(
             @ChromeChannelDefinitions.ChannelId String channelId, Callback<Boolean> callback) {
         mNotificationManager.getNotificationChannel(

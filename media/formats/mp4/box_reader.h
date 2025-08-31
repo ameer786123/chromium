@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <limits>
 #include <map>
 #include <memory>
@@ -33,7 +34,7 @@ enum DisplayMatrixSize {
   kDisplayMatrixDimension = kDisplayMatrixHeight * kDisplayMatrixWidth
 };
 
-using DisplayMatrix = int32_t[kDisplayMatrixDimension];
+using DisplayMatrix = std::array<int32_t, kDisplayMatrixDimension>;
 
 class BoxReader;
 
@@ -109,8 +110,7 @@ class MEDIA_EXPORT BoxReader : public BufferReader {
   //
   // |buf| is retained but not owned, and must outlive the BoxReader instance.
   [[nodiscard]] static ParseResult ReadTopLevelBox(
-      const uint8_t* buf,
-      const size_t buf_size,
+      base::span<const uint8_t> buf,
       MediaLog* media_log,
       std::unique_ptr<BoxReader>* out_reader);
 
@@ -119,11 +119,11 @@ class MEDIA_EXPORT BoxReader : public BufferReader {
   // box header is complete.
   //
   // |buf| is not retained.
-  [[nodiscard]] static ParseResult StartTopLevelBox(const uint8_t* buf,
-                                                    const size_t buf_size,
-                                                    MediaLog* media_log,
-                                                    FourCC* out_type,
-                                                    size_t* out_box_size);
+  [[nodiscard]] static ParseResult StartTopLevelBox(
+      base::span<const uint8_t> buf,
+      MediaLog* media_log,
+      FourCC* out_type,
+      size_t* out_box_size);
 
   // Create a BoxReader from a buffer. |buf| must be the complete buffer, as
   // errors are returned when sufficient data is not available. |buf| can start
@@ -156,7 +156,7 @@ class MEDIA_EXPORT BoxReader : public BufferReader {
 
   // ISO-BMFF streams files use a 3x3 matrix consisting of 6 16.16 fixed point
   // decimals and 3 2.30 fixed point decimals.
-  bool ReadDisplayMatrix(DisplayMatrix matrix);
+  bool ReadDisplayMatrix(DisplayMatrix& matrix);
 
   // Read at least one child. False means error or no such child present.
   template <typename T>

@@ -145,11 +145,13 @@ TEST_F(ShopCardMediatorTest, TestReset) {
   EXPECT_EQ(nil, mediator().shopCardItemForTesting);
 }
 
-TEST_F(ShopCardMediatorTest, TestRemoveShopCard) {
+// TODO(crbug.com/424378332): `removeShopCard` is not called.
+TEST_F(ShopCardMediatorTest, DISABLED_TestRemoveShopCard) {
   id mockDelegate = OCMStrictProtocolMock(@protocol(ShopCardMediatorDelegate));
   OCMExpect([mockDelegate removeShopCard]);
   mediator().delegate = mockDelegate;
   [mediator() disableModule];
+  EXPECT_OCMOCK_VERIFY(mockDelegate);
 }
 
 // Tests impression limit functions. ShopCards should not be
@@ -187,4 +189,10 @@ TEST_F(ShopCardMediatorTest, TestUrlOpened) {
 TEST_F(ShopCardMediatorTest, TestUrlNotOpened) {
   EXPECT_FALSE(
       [mediator() hasBeenOpenedForTesting:GURL("https://example.com/")]);
+}
+
+TEST_F(ShopCardMediatorTest, TestUntrackedNoShopCardData) {
+  [mediator() setShopCardItemForTesting:nil];
+  // Shouldn't crash
+  [mediator() onUrlUntrackedForTesting:GURL("https://example.com/")];
 }

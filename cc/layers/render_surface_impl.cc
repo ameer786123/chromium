@@ -221,7 +221,7 @@ gfx::Rect RenderSurfaceImpl::CalculateExpandedClipForFilters(
     const gfx::Transform& target_to_surface) {
   gfx::Rect clip_in_surface_space =
       MathUtil::ProjectEnclosingClippedRect(target_to_surface, clip_rect());
-  gfx::Rect expanded_clip_in_surface_space = Filters().MapRect(
+  gfx::Rect expanded_clip_in_surface_space = Filters().ExpandRect(
       clip_in_surface_space, gfx::TransformToFlattenedSkMatrix(SurfaceScale()));
   gfx::Rect expanded_clip_in_target_space = MathUtil::MapEnclosingClippedRect(
       draw_transform(), expanded_clip_in_surface_space);
@@ -546,7 +546,10 @@ void RenderSurfaceImpl::AppendQuads(const AppendQuadsContext& context,
                               : content_rect();
   gfx::Rect unoccluded_output_rect =
       occlusion_in_content_space().GetUnoccludedContentRect(output_rect);
-  if (unoccluded_output_rect.IsEmpty()) {
+  // Contributions to the output rect from a reference filter are not included
+  // in the unoccluded_output_rect, so do not skip the quad or the target
+  // surface will be missing the reference filter content.
+  if (unoccluded_output_rect.IsEmpty() && !Filters().HasReferenceFilter()) {
     return;
   }
 

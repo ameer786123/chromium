@@ -5,10 +5,13 @@
 #ifndef COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_EXECUTION_TEST_RESPONSE_HOLDER_H_
 #define COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_EXECUTION_TEST_RESPONSE_HOLDER_H_
 
+#include <vector>
+
 #include "base/memory/weak_ptr.h"
 #include "base/test/test_future.h"
 #include "components/optimization_guide/core/model_quality/model_quality_log_entry.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
+#include "components/optimization_guide/core/optimization_guide_util.h"
 
 namespace optimization_guide {
 
@@ -21,9 +24,12 @@ class RemoteResponseHolder {
 
   bool GetFinalStatus() { return future_.Get(); }
 
-  std::string GetComposeOutput();
+  template <typename T>
+  T GetOutput() const {
+    return *ParsedAnyMetadata<T>(result_->response.value());
+  }
 
-  OptimizationGuideModelExecutionError::ModelExecutionError error() {
+  OptimizationGuideModelExecutionError::ModelExecutionError error() const {
     return result_->response.error().error();
   }
 
@@ -66,6 +72,10 @@ class ResponseHolder {
     return model_execution_info_received_.get();
   }
 
+  size_t input_token_count() const { return input_token_count_; }
+
+  size_t output_token_count() const { return output_token_count_; }
+
  private:
   void OnStreamingResponse(
       OptimizationGuideModelStreamingExecutionResult result);
@@ -77,6 +87,8 @@ class ResponseHolder {
   std::unique_ptr<proto::ModelExecutionInfo> model_execution_info_received_;
   std::optional<OptimizationGuideModelExecutionError::ModelExecutionError>
       response_error_;
+  size_t input_token_count_ = 0;
+  size_t output_token_count_ = 0;
   base::WeakPtrFactory<ResponseHolder> weak_ptr_factory_;
 };
 

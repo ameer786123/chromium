@@ -18,6 +18,7 @@
 #include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "components/history/content/browser/history_context_helper.h"
+#include "components/history/core/browser/features.h"
 #include "components/history/core/browser/history_constants.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_types.h"
@@ -25,8 +26,10 @@
 #include "components/no_state_prefetch/browser/no_state_prefetch_manager.h"
 #include "components/sessions/content/navigation_task_id.h"
 #include "components/sessions/content/session_tab_helper.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/page.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "net/http/http_response_headers.h"
@@ -50,12 +53,12 @@
 #include "chrome/browser/ui/browser_finder.h"
 #endif
 
-
 namespace {
 
 using content::NavigationEntry;
 using content::WebContents;
 #if BUILDFLAG(IS_ANDROID)
+using base::android::ConvertUTF8ToJavaString;
 using chrome::android::BackgroundTabManager;
 #endif
 
@@ -187,7 +190,11 @@ HistoryTabHelper::HistoryTabHelper(WebContents* web_contents)
   }
 }
 
-HistoryTabHelper::~HistoryTabHelper() = default;
+HistoryTabHelper::~HistoryTabHelper() {
+  if (history_service_) {
+    history_service_->RemoveObserver(this);
+  }
+}
 
 void HistoryTabHelper::UpdateHistoryForNavigation(
     const history::HistoryAddPageArgs& add_page_args) {
@@ -217,6 +224,8 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
     content::NavigationHandle* navigation_handle) {
   const ui::PageTransition page_transition =
       navigation_handle->GetPageTransition();
+  // Response headers can be null for navigations that don't commit or that
+  // bypass the network (e.g., about:blank).
   int http_response_code =
       navigation_handle->GetResponseHeaders()
           ? navigation_handle->GetResponseHeaders()->response_code()
@@ -269,11 +278,8 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
 
   context_annotations.response_code = http_response_code;
 
-  ChromeNavigationUIData* chrome_ui_data =
-      navigation_handle->GetNavigationUIData() == nullptr
-          ? nullptr
-          : static_cast<ChromeNavigationUIData*>(
-                navigation_handle->GetNavigationUIData());
+  ChromeNavigationUIData* chrome_ui_data = static_cast<ChromeNavigationUIData*>(
+      navigation_handle->GetNavigationUIData());
 
   // (crbug.com/365922169) When generating the HistoryAddPageArgs below,
   // we must calculate the value for its member `is_ephemeral`. This
@@ -282,7 +288,7 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
   // information to avoid storing ephemeral navigations from
   // credentialless iframes in the history backend. Currently, this is
   // behavior which will be tested behind the partitioned :visited links
-  // experiments flags (PartitionVisitedLinkDatabase and
+  // experiments flag (
   // PartitionVisitedLinkDatabaseWithSelfLinks). HOWEVER, due to layering
   // constraints, we do not have the ability to check these blink::feature
   // flags in any code found in components/history/core/ (which is where
@@ -295,8 +301,6 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
   // credentialless iframe.
   const bool are_partitioned_visited_links_enabled =
       base::FeatureList::IsEnabled(
-          blink::features::kPartitionVisitedLinkDatabase) ||
-      base::FeatureList::IsEnabled(
           blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks);
   const bool is_ephemeral = are_partitioned_visited_links_enabled &&
                                     navigation_handle->GetRenderFrameHost()
@@ -305,6 +309,17 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
                                       .nonce()
                                       .has_value()
                                 : false;
+
+  // If `history::kVisitedLinksOn404` is enabled, visits to reachable URLs that
+  // result in a 404 response will be saved to history. We don't want to count
+  // 404 navigations as visits when calculating the Most Visited, so we filter
+  // them out here.
+  const bool status_code_qualifies_for_ntp_most_visited =
+      !(base::FeatureList::IsEnabled(history::kVisitedLinksOn404) &&
+        http_response_code == 404);
+  const bool should_consider_for_ntp_most_visited =
+      status_code_qualifies_for_ntp_most_visited &&
+      ShouldConsiderForNtpMostVisited(*web_contents(), navigation_handle);
 
   // Reloads do not result in calling TitleWasSet() (which normally sets
   // the title), so a reload needs to set the title. This is
@@ -362,16 +377,48 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
     }
   }
 
+  // Frame URL is used to calculate the triple-key for partitioned :visited
+  // links. When a navigation occurs, this value is typically the initiator
+  // URL, obtained from the `initiator_origin` member of CommonNavigationParams.
+  // However, there are some cases where initiator origin is not provided.
+  // In those cases, we will fallback on the referrer URL, if present.
+  std::optional<GURL> frame_url;
+  if (navigation_handle->GetInitiatorOrigin().has_value()) {
+    // The VisitedLinkDatabase stores the triple keys via URL to be efficient.
+    // However, in practice, the triple-partiton key is only concerned about
+    // frame origin. So while we persist keys across sessions via URL, we do not
+    // care about persisting the entire URL path. Therefore, it is okay to use
+    // url::Origin::GetURL() here.
+    frame_url = navigation_handle->GetInitiatorOrigin()->GetURL();
+  }
+  if (!frame_url.has_value() || !frame_url->is_valid()) {
+    // If valid, use referrer URL to replace an invalid initiator frame URL.
+    if (referrer_url.is_valid()) {
+      frame_url = referrer_url;
+    }
+  }
+  bool has_actor_task_id = chrome_ui_data && chrome_ui_data->actor_task_id();
+  const history::VisitResponseCodeCategory response_code_category =
+      http_response_code == 404 ? history::VisitResponseCodeCategory::k404
+                                : history::VisitResponseCodeCategory::kNot404;
+
+  // TODO(crbug.com/434976953): Move TaskId to be accessible by
+  // HistoryAddPageArgs, so we can pass actor_task_id() directly without getting
+  // int32 value.
   history::HistoryAddPageArgs add_page_args(
       navigation_handle->GetURL(), timestamp,
       history::ContextIDForWebContents(web_contents()), nav_entry_id,
       navigation_handle->GetNavigationId(), referrer_url,
       navigation_handle->GetRedirectChain(), page_transition, hidden,
-      history::SOURCE_BROWSED, navigation_handle->DidReplaceEntry(),
-      ShouldConsiderForNtpMostVisited(*web_contents(), navigation_handle),
-      is_ephemeral, title, top_level_url, opener,
+      has_actor_task_id ? history::SOURCE_ACTOR : history::SOURCE_BROWSED,
+      response_code_category, navigation_handle->DidReplaceEntry(),
+      should_consider_for_ntp_most_visited, is_ephemeral, title, top_level_url,
+      frame_url, opener,
       chrome_ui_data == nullptr ? std::nullopt : chrome_ui_data->bookmark_id(),
-      app_id_, std::move(context_annotations));
+      app_id_, std::move(context_annotations),
+      has_actor_task_id
+          ? std::make_optional(chrome_ui_data->actor_task_id().value())
+          : std::nullopt);
 
   if (ui::PageTransitionIsMainFrame(page_transition) &&
       virtual_url != navigation_handle->GetURL()) {
@@ -386,6 +433,15 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
       add_page_args.redirects.back() = virtual_url;
   }
   return add_page_args;
+}
+
+void HistoryTabHelper::OnURLVisited(history::HistoryService* history_service,
+                                    const history::URLRow& url_row,
+                                    const history::VisitRow& new_visit) {
+  if (clear_app_id_after_first_commit_) {
+    app_id_ = std::nullopt;
+  }
+  history_service->RemoveObserver(this);
 }
 
 void HistoryTabHelper::OnPasswordStateUpdated(
@@ -467,6 +523,13 @@ void HistoryTabHelper::DidFinishNavigation(
     return;
 
   UpdateHistoryForNavigation(add_page_args);
+
+  if (add_page_args.response_code_category ==
+      history::VisitResponseCodeCategory::k404) {
+    // Don't notify `HistoryClusters` and `HistoryEmbeddings` for 404 visits,
+    // since 404s aren't relevant for those features.
+    return;
+  }
 
   if (HistoryClustersTabHelper* clusters_tab_helper =
           HistoryClustersTabHelper::FromWebContents(web_contents())) {
@@ -602,13 +665,41 @@ bool HistoryTabHelper::IsEligibleTab(
 }
 
 #if BUILDFLAG(IS_ANDROID)
+void HistoryTabHelper::SetClearAppIdAfterFirstCommit() {
+  history::HistoryService* history_service = GetHistoryService();
+  if (!history_service) {
+    return;
+  }
+  clear_app_id_after_first_commit_ = true;
+  history_service->AddObserver(this);
+  history_service_ = history_service;
+}
+
 static void JNI_HistoryTabHelper_SetAppIdNative(
     JNIEnv* env,
-    std::string& app_id,
+    std::optional<std::string>& app_id,
     const base::android::JavaParamRef<jobject>& jweb_contents) {
   auto* web_contents = content::WebContents::FromJavaWebContents(jweb_contents);
   auto* history_tab_helper = HistoryTabHelper::FromWebContents(web_contents);
   history_tab_helper->SetAppId(app_id);
+}
+static void JNI_HistoryTabHelper_SetAppIdForViewIntentNative(
+    JNIEnv* env,
+    std::optional<std::string>& app_id,
+    const base::android::JavaParamRef<jobject>& jweb_contents) {
+  auto* web_contents = content::WebContents::FromJavaWebContents(jweb_contents);
+  auto* history_tab_helper = HistoryTabHelper::FromWebContents(web_contents);
+  history_tab_helper->SetClearAppIdAfterFirstCommit();
+  history_tab_helper->SetAppId(app_id);
+}
+static base::android::ScopedJavaLocalRef<jstring>
+JNI_HistoryTabHelper_GetAppIdForTestingNative(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& jweb_contents) {
+  auto* web_contents = content::WebContents::FromJavaWebContents(jweb_contents);
+  auto* history_tab_helper = HistoryTabHelper::FromWebContents(web_contents);
+  auto appId = history_tab_helper->GetAppId();
+  return appId ? ConvertUTF8ToJavaString(env, *appId) : nullptr;
 }
 #endif
 WEB_CONTENTS_USER_DATA_KEY_IMPL(HistoryTabHelper);

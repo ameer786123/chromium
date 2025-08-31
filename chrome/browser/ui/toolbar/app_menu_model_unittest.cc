@@ -11,6 +11,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/with_feature_override.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -41,11 +42,12 @@
 #include "chrome/test/base/menu_model_test.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/optimization_guide/core/model_execution/model_execution_features.h"
-#include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/password_manager/core/browser/password_store/test_password_store.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/sync/base/features.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -101,6 +103,13 @@ class AppMenuModelTest : public BrowserWithTestWindowTest,
                          public ui::AcceleratorProvider {
  public:
   AppMenuModelTest() = default;
+
+  void SetUp() override {
+    BrowserWithTestWindowTest::SetUp();
+    safety_hub_test_util::CreateRevokedPermissionsService(browser()->profile());
+    safety_hub_test_util::CreateNotificationPermissionsReviewService(
+        browser()->profile());
+  }
 
   AppMenuModelTest(const AppMenuModelTest&) = delete;
   AppMenuModelTest& operator=(const AppMenuModelTest&) = delete;
@@ -303,22 +312,6 @@ TEST_F(AppMenuModelTest, CustomizeChromeLogMetrics) {
   EXPECT_EQ(1, model.log_metrics_count_);
 }
 
-TEST_F(AppMenuModelTest, TabSearchItem) {
-  feature_list_.Reset();
-  feature_list_.InitWithFeaturesAndParameters(
-      /*enabled_features=*/
-      {{features::kTabstripComboButton,
-        {{"tab_search_toolbar_button", "true"}}}},
-      /*disabled_features=*/{});
-
-  AppMenuModel model(this, browser());
-  model.Init();
-  ToolsMenuModel toolModel(&model, browser());
-  size_t tab_search_index =
-      toolModel.GetIndexOfCommandId(IDC_TAB_SEARCH).value();
-  EXPECT_TRUE(toolModel.IsEnabledAt(tab_search_index));
-}
-
 TEST_F(AppMenuModelTest, OrganizeTabsItem) {
   feature_list_.Reset();
   feature_list_.InitWithFeatures(
@@ -351,7 +344,8 @@ TEST_F(AppMenuModelTest, DeclutterTabsItem) {
 TEST_F(AppMenuModelTest, GlicItem) {
   feature_list_.Reset();
   feature_list_.InitWithFeatures(
-      {features::kGlic, features::kTabstripComboButton}, {});
+      {features::kGlic, features::kTabstripComboButton, features::kGlicRollout},
+      {});
 
   TestLogMetricsAppMenuModel model(this, browser());
   model.Init();
@@ -482,6 +476,7 @@ INSTANTIATE_TEST_SUITE_P(
                     IDC_SHOW_SIGNIN_WHEN_PAUSED,
                     IDC_SHOW_SYNC_SETTINGS,
                     IDC_TURN_ON_SYNC,
+                    IDC_SHOW_SIGNIN,
                     IDC_OPEN_GUEST_PROFILE,
                     IDC_ADD_NEW_PROFILE,
                     IDC_MANAGE_CHROME_PROFILES,
@@ -509,7 +504,48 @@ TEST_F(AppMenuModelTest, ProfileSyncOnTest) {
   EXPECT_TRUE(profile_menu->IsEnabledAt(sync_settings_index));
 }
 
-#endif
+class AppMenuModelSigninPromoTest : public base::test::WithFeatureOverride,
+                                    public AppMenuModelTest {
+ public:
+  AppMenuModelSigninPromoTest()
+      : WithFeatureOverride(syncer::kReplaceSyncPromosWithSignInPromos) {}
+  ~AppMenuModelSigninPromoTest() override = default;
+};
+
+TEST_P(AppMenuModelSigninPromoTest, SignedIn) {
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(browser()->profile());
+  signin::MakePrimaryAccountAvailable(identity_manager, "user@example.com",
+                                      signin::ConsentLevel::kSignin);
+  AppMenuModel model(this, browser());
+  model.Init();
+  const size_t profile_menu_index =
+      model.GetIndexOfCommandId(IDC_PROFILE_MENU_IN_APP_MENU).value();
+  ui::SimpleMenuModel* profile_menu = static_cast<ui::SimpleMenuModel*>(
+      model.GetSubmenuModelAt(profile_menu_index));
+
+  EXPECT_EQ(!IsParamFeatureEnabled(),
+            profile_menu->GetIndexOfCommandId(IDC_TURN_ON_SYNC).has_value());
+  EXPECT_FALSE(profile_menu->GetIndexOfCommandId(IDC_SHOW_SIGNIN).has_value());
+}
+
+TEST_P(AppMenuModelSigninPromoTest, SignedOut) {
+  AppMenuModel model(this, browser());
+  model.Init();
+  const size_t profile_menu_index =
+      model.GetIndexOfCommandId(IDC_PROFILE_MENU_IN_APP_MENU).value();
+  ui::SimpleMenuModel* profile_menu = static_cast<ui::SimpleMenuModel*>(
+      model.GetSubmenuModelAt(profile_menu_index));
+
+  EXPECT_EQ(!IsParamFeatureEnabled(),
+            profile_menu->GetIndexOfCommandId(IDC_TURN_ON_SYNC).has_value());
+  EXPECT_EQ(IsParamFeatureEnabled(),
+            profile_menu->GetIndexOfCommandId(IDC_SHOW_SIGNIN).has_value());
+}
+
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(AppMenuModelSigninPromoTest);
+
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_CHROMEOS)
 // Tests settings menu items is disabled in the app menu when
@@ -567,8 +603,7 @@ class TestAppMenuModelSafetyHubTest : public AppMenuModelTest {
  public:
   TestAppMenuModelSafetyHubTest() {
     feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kSafetyHub,
-                              features::kSafetyHubHaTSOneOffSurvey},
+        /*enabled_features=*/{features::kSafetyHubHaTSOneOffSurvey},
         /*disabled_features=*/{});
   }
 
@@ -578,7 +613,8 @@ class TestAppMenuModelSafetyHubTest : public AppMenuModelTest {
 
     // Let PasswordStatusCheckService run until it fetches the latest data.
     PasswordStatusCheckService* password_service =
-        PasswordStatusCheckServiceFactory::GetForProfile(profile());
+        safety_hub_test_util::CreateAndUsePasswordStatusService(profile());
+
     safety_hub_test_util::UpdatePasswordCheckServiceAsync(password_service);
     EXPECT_EQ(password_service->compromised_credential_count(), 0UL);
 
@@ -644,4 +680,31 @@ TEST_F(TestAppMenuModelSafetyHubTest, HaTSControlTrigger) {
       ->GetNotificationToShow();
   AppMenuModel new_model(this, browser());
   new_model.Init();
+}
+
+class TabSearchMenuModelTest : public AppMenuModelTest {
+ public:
+  TabSearchMenuModelTest() = default;
+  ~TabSearchMenuModelTest() override = default;
+
+  void SetUp() override {
+    scoped_feature_list_.InitWithFeaturesAndParameters(
+        /*enabled_features=*/
+        {{features::kTabstripComboButton,
+          {{"tab_search_toolbar_button", "true"}}}},
+        /*disabled_features=*/{});
+    AppMenuModelTest::SetUp();
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+TEST_F(TabSearchMenuModelTest, TabSearchItem) {
+  AppMenuModel model(this, browser());
+  model.Init();
+  ToolsMenuModel toolModel(&model, browser());
+  size_t tab_search_index =
+      toolModel.GetIndexOfCommandId(IDC_TAB_SEARCH).value();
+  EXPECT_TRUE(toolModel.IsEnabledAt(tab_search_index));
 }

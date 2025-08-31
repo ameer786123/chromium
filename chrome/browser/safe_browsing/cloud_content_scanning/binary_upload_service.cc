@@ -38,10 +38,11 @@ std::optional<GURL> GetUrlOverride() {
   if (command_line->HasSwitch(switches::kCloudBinaryUploadServiceUrlFlag)) {
     GURL url = GURL(command_line->GetSwitchValueASCII(
         switches::kCloudBinaryUploadServiceUrlFlag));
-    if (url.is_valid())
+    if (url.is_valid()) {
       return url;
-    else
+    } else {
       LOG(ERROR) << "--binary-upload-service-url is set to an invalid URL";
+    }
   }
 
   return std::nullopt;
@@ -148,8 +149,9 @@ void BinaryUploadService::Request::set_digest(const std::string& digest) {
 void BinaryUploadService::Request::clear_dlp_scan_request() {
   auto* tags = content_analysis_request_.mutable_tags();
   auto it = std::ranges::find(*tags, "dlp");
-  if (it != tags->end())
+  if (it != tags->end()) {
     tags->erase(it);
+  }
 }
 
 void BinaryUploadService::Request::set_analysis_connector(
@@ -157,8 +159,8 @@ void BinaryUploadService::Request::set_analysis_connector(
   content_analysis_request_.set_analysis_connector(connector);
 }
 
-void BinaryUploadService::Request::set_url(const std::string& url) {
-  content_analysis_request_.mutable_request_data()->set_url(url);
+void BinaryUploadService::Request::set_url(const GURL& url) {
+  content_analysis_request_.mutable_request_data()->set_url(url.spec());
 }
 
 void BinaryUploadService::Request::set_source(const std::string& source) {
@@ -258,6 +260,11 @@ void BinaryUploadService::Request::set_require_metadata_verdict(
       require_metadata_verdict);
 }
 
+void BinaryUploadService::Request::set_is_content_encrypted(
+    bool is_content_encrypted) {
+  content_analysis_request_.set_is_content_encrypted(is_content_encrypted);
+}
+
 void BinaryUploadService::Request::set_blocking(bool blocking) {
   content_analysis_request_.set_blocking(blocking);
 }
@@ -265,6 +272,31 @@ void BinaryUploadService::Request::set_blocking(bool blocking) {
 void BinaryUploadService::Request::add_local_ips(
     const std::string& ip_address) {
   content_analysis_request_.add_local_ips(ip_address);
+}
+
+void BinaryUploadService::Request::set_referrer_chain(
+    const google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>
+        referrer_chain) {
+  *content_analysis_request_.mutable_request_data()->mutable_referrer_chain() =
+      std::move(referrer_chain);
+}
+
+void BinaryUploadService::Request::set_content_area_account_email(
+    const std::string& email) {
+  content_analysis_request_.mutable_request_data()
+      ->set_content_area_account_email(email);
+}
+
+void BinaryUploadService::Request::set_source_content_area_account_email(
+    const std::string& email) {
+  content_analysis_request_.mutable_request_data()
+      ->set_source_content_area_account_email(email);
+}
+
+void BinaryUploadService::Request::set_frame_url_chain(
+    const google::protobuf::RepeatedPtrField<std::string> frame_url_chain) {
+  *content_analysis_request_.mutable_request_data()->mutable_frame_url_chain() =
+      std::move(frame_url_chain);
 }
 
 std::string BinaryUploadService::Request::SetRandomRequestToken() {

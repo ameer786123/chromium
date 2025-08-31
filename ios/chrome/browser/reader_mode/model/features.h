@@ -8,26 +8,52 @@
 #import "base/feature_list.h"
 #import "base/metrics/field_trial_params.h"
 
-// Feature to enable Reader Mode page distillation heuristic that tracks
-// an approximation of when the Reader Mode UI will be available.
-BASE_DECLARE_FEATURE(kEnableReaderModeDistillerHeuristic);
+// Feature to enable Reader Mode UI and entry points.
+BASE_DECLARE_FEATURE(kEnableReaderMode);
 
-// Feature to enable Reader Mode page distillation.
-BASE_DECLARE_FEATURE(kEnableReaderModeDistiller);
+// Feature to enable Reader Mode translation.
+BASE_DECLARE_FEATURE(kEnableReaderModeTranslation);
 
-// Name to configure the page load probability.
-extern const char kReaderModeDistillerPageLoadProbabilityName[];
-// Configurable rate from (0, 1] at which to trigger the distiller heuristic.
-extern const base::FeatureParam<double> kReaderModeDistillerPageLoadProbability;
+// Feature to enable page eligibility heuristic to determine whether the Tools
+// menu Reader Mode entry point should be shown for the web page.
+BASE_DECLARE_FEATURE(kEnableReaderModePageEligibilityForToolsMenu);
 
-// Name to configure the duration string for page load delay. See
+// Feature to enable debugging information for Reader Mode UI.
+BASE_DECLARE_FEATURE(kEnableReaderModeDebugInfo);
+
+// Feature to enable Readability heuristic for page triggering eligibility.
+BASE_DECLARE_FEATURE(kEnableReadabilityHeuristic);
+
+// Feature to enable the default browser promo with Reading mode eligibility
+// criteria.
+BASE_DECLARE_FEATURE(kEnableReaderModeDefaultBrowserPromo);
+
+// Name to configure the duration string for heuristic page load delay. See
 // `base::TimeDeltaFromString` for valid duration string configurations.
-extern const char kReaderModeDistillerPageLoadDelayDurationStringName[];
+extern const char kReaderModeHeuristicPageLoadDelayDurationStringName[];
 
-// Returns the delay time before triggering Reader Mode on page load.
-const base::TimeDelta ReaderModeDistillerPageLoadDelay();
+// Name to configure the duration string for distillation timeout. See
+// `base::TimeDeltaFromString` for valid duration string configurations.
+extern const char kReaderModeDistillationTimeoutDurationStringName[];
+
+// Returns the timeout for distilling Reader Mode.
+const base::TimeDelta ReaderModeDistillationTimeout();
+
+// Returns the delay time before triggering Reader Mode heuristic on page load.
+const base::TimeDelta ReaderModeHeuristicPageLoadDelay();
 
 // Returns whether the Reader Mode feature is available.
 bool IsReaderModeAvailable();
+
+// Returns whether the Reader Mode snackbar is enabled.
+bool IsReaderModeSnackbarEnabled();
+
+// Returns the number of days a user must be active to display the default
+// browser promo.
+int ReaderModeDefaultBrowserActiveDaysCriteria();
+
+// Returns the number of days to span to determine the Reading Mode default
+// browser eligibility criteria.
+int ReaderModeDefaultBrowserNumDaysCriteria();
 
 #endif  // IOS_CHROME_BROWSER_READER_MODE_MODEL_FEATURES_H_

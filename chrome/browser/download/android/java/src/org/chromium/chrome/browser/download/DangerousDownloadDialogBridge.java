@@ -10,6 +10,7 @@ import org.jni_zero.CalledByNative;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.download.dialogs.DangerousDownloadDialog;
 import org.chromium.chrome.browser.download.interstitial.NewDownloadTab;
 import org.chromium.ui.base.WindowAndroid;
@@ -19,6 +20,7 @@ import org.chromium.ui.modaldialog.ModalDialogManagerHolder;
  * Glues dangerous download dialogs UI code and handles the communication to download native
  * backend.
  */
+@NullMarked
 public class DangerousDownloadDialogBridge {
     private long mNativeDangerousDownloadDialogBridge;
 
@@ -43,6 +45,7 @@ public class DangerousDownloadDialogBridge {
      * @param guid GUID of the download.
      * @param fileName Name of the download file.
      * @param totalBytes Total bytes of the file.
+     * @param downloadDomain Domain name to associate with the downloaded file.
      * @param iconId The icon resource for the warning dialog.
      */
     @CalledByNative
@@ -51,6 +54,7 @@ public class DangerousDownloadDialogBridge {
             @JniType("std::string") String guid,
             @JniType("std::u16string") String fileName,
             long totalBytes,
+            String downloadDomain,
             int iconId) {
         Activity activity = windowAndroid.getActivity().get();
         if (activity == null) {
@@ -64,6 +68,7 @@ public class DangerousDownloadDialogBridge {
                         ((ModalDialogManagerHolder) activity).getModalDialogManager(),
                         fileName,
                         totalBytes,
+                        downloadDomain,
                         iconId,
                         (accepted) -> {
                             if (accepted) {

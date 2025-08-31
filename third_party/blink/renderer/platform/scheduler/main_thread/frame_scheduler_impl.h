@@ -116,7 +116,7 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
                                 DidCommitProvisionalLoadParams params = {
                                     base::TimeDelta()}) override;
   WebScopedVirtualTimePauser CreateWebScopedVirtualTimePauser(
-      const WTF::String& name,
+      const String& name,
       WebScopedVirtualTimePauser::VirtualTaskDuration duration) override;
   scoped_refptr<base::SingleThreadTaskRunner> CompositorTaskRunner() override;
 
@@ -150,12 +150,11 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
   void OnStartedUsingNonStickyFeature(
       SchedulingPolicy::Feature feature,
       const SchedulingPolicy& policy,
-      std::unique_ptr<SourceLocation> source_location,
+      SourceLocation* source_location,
       SchedulingAffectingFeatureHandle* handle) override;
-  void OnStartedUsingStickyFeature(
-      SchedulingPolicy::Feature feature,
-      const SchedulingPolicy& policy,
-      std::unique_ptr<SourceLocation> source_location) override;
+  void OnStartedUsingStickyFeature(SchedulingPolicy::Feature feature,
+                                   const SchedulingPolicy& policy,
+                                   SourceLocation* source_location) override;
   void OnStoppedUsingNonStickyFeature(
       SchedulingAffectingFeatureHandle* handle) override;
 
@@ -196,7 +195,7 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
 
   // Returns the list of active features which currently tracked by the
   // scheduler for back-forward cache metrics.
-  WTF::HashSet<SchedulingPolicy::Feature>
+  HashSet<SchedulingPolicy::Feature>
   GetActiveFeaturesTrackedForBackForwardCacheMetrics() override;
 
   std::unique_ptr<WebSchedulingTaskQueue> CreateWebSchedulingTaskQueue(
@@ -390,10 +389,6 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
   BackForwardCacheDisablingFeatureTracker
       back_forward_cache_disabling_feature_tracker_;
 
-  TaskPriority default_loading_task_priority_ = TaskPriority::kNormalPriority;
-
-  TaskPriority low_priority_async_script_task_priority_;
-
   // These are the states of the Page.
   // They should be accessed via GetPageScheduler()->SetPageState().
   // they are here because we don't support page-level tracing yet.
@@ -409,7 +404,7 @@ class PLATFORM_EXPORT FrameSchedulerImpl : public FrameScheduler,
   base::TimeTicks first_meaningful_paint_timestamp_;
 
   using TaskRunnerMap =
-      WTF::HashMap<TaskType, scoped_refptr<base::SingleThreadTaskRunner>>;
+      HashMap<TaskType, scoped_refptr<base::SingleThreadTaskRunner>>;
 
   // Map of all TaskRunners, indexed by TaskType.
   TaskRunnerMap task_runners_;

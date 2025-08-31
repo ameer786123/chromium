@@ -5,6 +5,7 @@
 #include "extensions/browser/api/system_display/display_info_provider.h"
 
 #include "base/functional/bind.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -123,7 +124,7 @@ void DisplayInfoProvider::GetAllDisplaysInfo(
     bool /* single_unified*/,
     base::OnceCallback<void(DisplayUnitInfoList result)> callback) {
   const display::Screen* screen =
-      provided_screen_ ? provided_screen_.get() : display::Screen::GetScreen();
+      provided_screen_ ? provided_screen_.get() : display::Screen::Get();
   int64_t primary_id = screen->GetPrimaryDisplay().id();
   std::vector<display::Display> displays = screen->GetAllDisplays();
   base::ThreadPool::PostTaskAndReplyWithResult(

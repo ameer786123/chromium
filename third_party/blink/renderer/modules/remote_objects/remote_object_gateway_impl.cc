@@ -4,7 +4,6 @@
 
 #include "third_party/blink/renderer/modules/remote_objects/remote_object_gateway_impl.h"
 
-#include "base/not_fatal_until.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -25,7 +24,7 @@ RemoteObjectGatewayImpl* RemoteObjectGatewayImpl::From(LocalFrame& frame) {
   return Supplement<LocalFrame>::From<RemoteObjectGatewayImpl>(frame);
 }
 
-void RemoteObjectGatewayImpl::InjectNamed(const WTF::String& object_name,
+void RemoteObjectGatewayImpl::InjectNamed(const String& object_name,
                                           int32_t object_id) {
   ScriptState* script_state = ToScriptStateForMainWorld(GetSupplementable());
   ScriptState::Scope scope(script_state);
@@ -96,18 +95,17 @@ void RemoteObjectGatewayImpl::Trace(Visitor* visitor) const {
   Supplement<LocalFrame>::Trace(visitor);
 }
 
-void RemoteObjectGatewayImpl::AddNamedObject(const WTF::String& name,
-                                             int32_t id) {
+void RemoteObjectGatewayImpl::AddNamedObject(const String& name, int32_t id) {
   // Added objects only become available after page reload, so here they
   // are only added into the internal map.
   named_objects_.insert(name, id);
 }
 
-void RemoteObjectGatewayImpl::RemoveNamedObject(const WTF::String& name) {
+void RemoteObjectGatewayImpl::RemoveNamedObject(const String& name) {
   // Removal becomes in effect on next reload. We simply remove the entry
   // from the map here.
   auto iter = named_objects_.find(name);
-  CHECK(iter != named_objects_.end(), base::NotFatalUntil::M130);
+  CHECK(iter != named_objects_.end());
   named_objects_.erase(iter);
 }
 
@@ -120,7 +118,7 @@ void RemoteObjectGatewayImpl::BindRemoteObjectReceiver(
 void RemoteObjectGatewayImpl::ReleaseObject(int32_t object_id,
                                             RemoteObject* remote_object) {
   auto iter = remote_objects_.find(object_id);
-  CHECK(iter != remote_objects_.end(), base::NotFatalUntil::M130);
+  CHECK(iter != remote_objects_.end());
   if (iter->value == remote_object)
     remote_objects_.erase(iter);
   object_host_->ReleaseObject(object_id);
@@ -136,7 +134,7 @@ RemoteObject* RemoteObjectGatewayImpl::GetRemoteObject(v8::Isolate* isolate,
     return iter->value;
   }
 
-  auto* remote_object = new RemoteObject(isolate, this, object_id);
+  auto* remote_object = new RemoteObject(this, object_id);
   remote_objects_.insert(object_id, remote_object);
   return remote_object;
 }

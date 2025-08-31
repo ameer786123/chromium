@@ -74,11 +74,9 @@ class MockDataSharingService : public DataSharingService {
                     base::OnceCallback<void(PeopleGroupActionOutcome)>));
   MOCK_METHOD1(IsLeavingOrDeletingGroup, bool(const GroupId&));
   MOCK_METHOD0(GetGroupEventsSinceStartup, std::vector<GroupEvent>());
-  MOCK_METHOD1(ShouldInterceptNavigationForShareURL, bool(const GURL&));
   MOCK_METHOD2(HandleShareURLNavigationIntercepted,
                void(const GURL&, std::unique_ptr<ShareURLInterceptionContext>));
   MOCK_METHOD1(GetDataSharingUrl, std::unique_ptr<GURL>(const GroupData&));
-  MOCK_METHOD1(ParseDataSharingUrl, ParseUrlResult(const GURL&));
   MOCK_METHOD2(
       EnsureGroupVisibility,
       void(const GroupId&,
@@ -94,6 +92,7 @@ class MockDataSharingService : public DataSharingService {
                base::OnceCallback<void(const gfx::Image&)>,
                image_fetcher::ImageFetcher*));
   MOCK_METHOD1(SetSDKDelegate, void(std::unique_ptr<DataSharingSDKDelegate>));
+  MOCK_METHOD0(GetSDKDelegate, DataSharingSDKDelegate*());
   MOCK_METHOD1(SetUIDelegate, void(std::unique_ptr<DataSharingUIDelegate>));
   MOCK_METHOD0(GetUiDelegate, DataSharingUIDelegate*());
   MOCK_METHOD0(GetLogger, Logger*());

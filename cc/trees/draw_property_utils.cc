@@ -188,7 +188,7 @@ bool ExpandClipForPixelMovingFilter(const PropertyTrees* property_trees,
   SkMatrix filter_draw_matrix =
       SkMatrix::Scale(filter_node->surface_contents_scale.x(),
                       filter_node->surface_contents_scale.y());
-  gfx::RectF mapped_clip_in_mapping_space(filter_node->filters.MapRect(
+  gfx::RectF mapped_clip_in_mapping_space(filter_node->filters.ExpandRect(
       ToEnclosingClipRect(clip_rect_in_mapping_space), filter_draw_matrix));
 
   // Put the expanded clip back into the original target space.
@@ -510,8 +510,19 @@ bool LayerNeedsUpdate(LayerType* layer,
   if (!layer_is_drawn)
     return false;
 
-  if (!layer->draws_content() || layer->bounds().IsEmpty())
+  if (!layer->draws_content()) {
     return false;
+  }
+
+  if (layer->bounds().IsEmpty()) {
+    // Reference filters can contribute to visual output even if the layer has
+    // no other content.
+    if (!property_trees->effect_tree()
+             .Node(layer->effect_tree_index())
+             ->filters.HasReferenceFilter()) {
+      return false;
+    }
+  }
 
   // The layer should not be drawn if (1) it is not double-sided and (2) the
   // back of the layer is known to be facing the screen.
@@ -663,23 +674,20 @@ void SetSurfaceDrawTransform(const PropertyTrees* property_trees,
   ConcatInverseSurfaceContentsScale(effect_node, &render_surface_transform);
 
   gfx::Vector2dF pixel_alignment_offset;
-  if (base::FeatureList::IsEnabled(features::kRenderSurfacePixelAlignment)) {
-    // Adjust render_surface_transform by applying the render target's pixel
-    // alignment before the transform, and de-applying this render surface's
-    // pixel alignment to align it to screen pixels.
-    render_surface_transform.PostTranslate(
-        render_surface->render_target()->pixel_alignment_offset());
-    if (effect_node->render_surface_reason !=
-            RenderSurfaceReason::k2DScaleTransformWithCompositedDescendants &&
-        (base::FeatureList::IsEnabled(
-             features::kViewTransitionFloorTransform) ||
-         !effect_node->view_transition_element_resource_id.IsValid())) {
-      if (auto offset = draw_property_utils::PixelAlignmentOffset(
-              render_surface->screen_space_transform(),
-              render_surface_transform)) {
-        pixel_alignment_offset = *offset;
-        render_surface_transform.Translate(-pixel_alignment_offset);
-      }
+  // Adjust render_surface_transform by applying the render target's pixel
+  // alignment before the transform, and de-applying this render surface's
+  // pixel alignment to align it to screen pixels.
+  render_surface_transform.PostTranslate(
+      render_surface->render_target()->pixel_alignment_offset());
+  if (effect_node->render_surface_reason !=
+          RenderSurfaceReason::k2DScaleTransformWithCompositedDescendants &&
+      (base::FeatureList::IsEnabled(features::kViewTransitionFloorTransform) ||
+       !effect_node->view_transition_element_resource_id.IsValid())) {
+    if (auto offset = draw_property_utils::PixelAlignmentOffset(
+            render_surface->screen_space_transform(),
+            render_surface_transform)) {
+      pixel_alignment_offset = *offset;
+      render_surface_transform.Translate(-pixel_alignment_offset);
     }
   }
   render_surface->SetDrawTransform(render_surface_transform,
@@ -798,9 +806,18 @@ std::pair<gfx::MaskFilterInfo, bool> GetMaskFilterInfoPair(
   if (!node || !found_mask_filter_info)
     return kEmptyMaskFilterInfoPair;
 
+  int transform_id = node->transform_id;
+  std::optional<int> clip_id = node->mask_filter_info.clip_id();
+  if (clip_id) {
+    const ClipTree* clip_tree = &property_trees->clip_tree();
+    const ClipNode* clip_node = clip_tree->Node(clip_id.value());
+    transform_id = clip_node->transform_id;
+  }
+
   gfx::Transform to_target;
-  if (!property_trees->GetToTarget(node->transform_id, target_id, &to_target))
+  if (!property_trees->GetToTarget(transform_id, target_id, &to_target)) {
     return kEmptyMaskFilterInfoPair;
+  }
 
   auto result =
       std::make_pair(node->mask_filter_info, node->is_fast_rounded_corner);
@@ -1022,9 +1039,9 @@ void AddSurfaceToRenderSurfaceList(
   const bool allow_skipping_render_pass = base::FeatureList::IsEnabled(
       features::kAllowUndamagedNonrootRenderPassToSkip);
   const FilterOperations& filters = render_surface->Filters();
-  bool is_occlusion_immune =
-      render_surface->CopyOfOutputRequired() || filters.HasReferenceFilter() ||
-      filters.HasFilterThatMovesPixels() || allow_skipping_render_pass;
+  bool is_occlusion_immune = render_surface->CopyOfOutputRequired() ||
+                             filters.HasFilterThatMovesPixels() ||
+                             allow_skipping_render_pass;
 
   // Setting |is_occlusion_immune| leads to an empty
   // |occlusion_from_outside_target| for a non-root render_surface. It does not
@@ -1121,8 +1138,6 @@ void AdjustLayerDrawPropertiesForPixelAlignmentOffset(
   if (offset.IsZero()) {
     return;
   }
-
-  DCHECK(base::FeatureList::IsEnabled(features::kRenderSurfacePixelAlignment));
 
   // Apply the pixel alignment offset to all draw properties that are relative
   // to the render target's space.
@@ -1348,7 +1363,8 @@ void ComputeListOfNonEmptySurfaces(LayerTreeImpl* layer_tree_impl,
   for (RenderSurfaceImpl* surface : *initial_surface_list) {
     bool is_root = surface->EffectTreeIndex() == kContentsRootPropertyNodeId;
     RenderSurfaceImpl* target_surface = surface->render_target();
-    if (!is_root && (surface->content_rect().IsEmpty() ||
+    if (!is_root && ((surface->content_rect().IsEmpty() &&
+                      !surface->Filters().HasReferenceFilter()) ||
                      (!target_surface->is_render_surface_list_member() &&
                       !surface->CopyOfOutputRequired()))) {
       surface->set_is_render_surface_list_member(false);
@@ -1761,10 +1777,15 @@ void CalculateDrawProperties(
   UpdatePageScaleFactor(property_trees,
                         layer_tree_impl->PageScaleTransformNode(),
                         layer_tree_impl->current_page_scale_factor());
+  const ScrollNode* scroll_node = layer_tree_impl->InnerViewportScrollNode();
+  gfx::Vector2dF elastic_overscroll;
+  if (scroll_node) {
+    elastic_overscroll =
+        property_trees->scroll_tree().GetElasticOverscroll(*scroll_node);
+  }
   UpdateElasticOverscroll(property_trees,
                           layer_tree_impl->OverscrollElasticityTransformNode(),
-                          layer_tree_impl->current_elastic_overscroll(),
-                          layer_tree_impl->InnerViewportScrollNode());
+                          elastic_overscroll, scroll_node);
   // Similarly, the device viewport and device transform are shared
   // by both trees.
   property_trees->clip_tree_mutable().SetViewportClip(

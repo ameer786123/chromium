@@ -15,8 +15,6 @@
 
 namespace autofill_address_profile_infobar_overlays {
 
-OVERLAY_USER_DATA_SETUP_IMPL(SaveAddressProfileModalRequestConfig);
-
 SaveAddressProfileModalRequestConfig::SaveAddressProfileModalRequestConfig(
     InfoBarIOS* infobar)
     : infobar_(infobar) {
@@ -34,6 +32,8 @@ SaveAddressProfileModalRequestConfig::SaveAddressProfileModalRequestConfig(
   if (IsUpdateModal()) {
     StoreProfileDiff(delegate->GetProfileDiff());
     update_modal_description_ = delegate->GetSubtitle();
+    is_profile_a_home_profile_ = delegate->IsOriginalProfileHomeProfile();
+    is_profile_a_work_profile_ = delegate->IsOriginalProfileWorkProfile();
   }
 
   current_address_profile_saved_ = infobar->accepted();

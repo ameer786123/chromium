@@ -5,19 +5,20 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_GRAPHITE_SHARED_CONTEXT_H_
 #define GPU_COMMAND_BUFFER_SERVICE_GRAPHITE_SHARED_CONTEXT_H_
 
-#include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include <atomic>
+
+#include "base/functional/callback.h"
+#include "base/synchronization/lock.h"
 #include "gpu/gpu_gles2_export.h"
 #include "third_party/skia/include/core/SkImage.h"
+#include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/gpu/graphite/GraphiteTypes.h"
 #include "third_party/skia/include/gpu/graphite/Recorder.h"
 
-class SkSurface;
 class SkTraceMemoryDump;
 
 namespace skgpu ::graphite {
 class BackendTexture;
-class Context;
 struct InsertRecordingInfo;
 class PrecompileContext;
 class Recorder;
@@ -26,23 +27,36 @@ struct RecorderOptions;
 
 namespace gpu {
 
+class GpuProcessShmCount;
+
 // This is a thread safe wrapper class to skgpu::graphite::Context. In order to
 // support multi-threading, locks are used to ensure thread safety in
 // skgpu::graphite::Context. All clients need to call the wrapper functions in
 // GraphiteSharedContext. Only GraphiteSharedContext can communicate with
 // skgpu::graphite::Context directly. If |is_thread_safe| is false, the locks
 // are equivalent to no-op.
-class GPU_GLES2_EXPORT GraphiteSharedContext
-    : public base::RefCountedThreadSafe<GraphiteSharedContext> {
+class GPU_GLES2_EXPORT GraphiteSharedContext {
  public:
+  using SkImageReadPixelsCallback = base::OnceCallback<
+      void(void* ctx, std::unique_ptr<const SkSurface::AsyncReadResult>)>;
+
+  using FlushCallback = base::RepeatingCallback<void()>;
+
   GraphiteSharedContext(
       std::unique_ptr<skgpu::graphite::Context> graphite_context,
-      bool is_thread_safe);
+      GpuProcessShmCount* use_shader_cache_shm_count,
+      bool is_thread_safe,
+      size_t max_pending_recordings,
+      FlushCallback backend_flush_callback = FlushCallback());
 
   GraphiteSharedContext(const GraphiteSharedContext&) = delete;
   GraphiteSharedContext(GraphiteSharedContext&&) = delete;
   GraphiteSharedContext& operator=(const GraphiteSharedContext&) = delete;
   GraphiteSharedContext& operator=(GraphiteSharedContext&&) = delete;
+
+  ~GraphiteSharedContext();
+
+  bool IsThreadSafe() const { return !!lock_; }
 
   // Wrapper function implementations for skgpu::graphite:Context
   skgpu::BackendApi backend() const;
@@ -52,8 +66,16 @@ class GPU_GLES2_EXPORT GraphiteSharedContext
 
   std::unique_ptr<skgpu::graphite::PrecompileContext> makePrecompileContext();
 
-  bool insertRecording(const skgpu::graphite::InsertRecordingInfo&);
-  bool submit(skgpu::graphite::SyncToCpu = skgpu::graphite::SyncToCpu::kNo);
+  bool insertRecording(const skgpu::graphite::InsertRecordingInfo& info);
+  void submit(skgpu::graphite::SyncToCpu = skgpu::graphite::SyncToCpu::kNo);
+
+  // The difference between this and submit() is that it will trigger the
+  // provided backend_flush_callback in addition to calling submit(). This is
+  // needed because on some backend such as D3D11 we could enable a delayed
+  // flush toggle. In that case, submit() won't send the commands to the GPU
+  // immediately and require an explicit flush.
+  void submitAndFlushBackend(
+      skgpu::graphite::SyncToCpu = skgpu::graphite::SyncToCpu::kNo);
 
   bool hasUnfinishedGpuWork() const;
 
@@ -62,15 +84,30 @@ class GPU_GLES2_EXPORT GraphiteSharedContext
                                  const SkIRect& srcRect,
                                  SkImage::RescaleGamma rescaleGamma,
                                  SkImage::RescaleMode rescaleMode,
-                                 SkImage::ReadPixelsCallback callback,
+                                 SkImageReadPixelsCallback callback,
                                  SkImage::ReadPixelsContext context);
   void asyncRescaleAndReadPixels(const SkSurface* src,
                                  const SkImageInfo& dstImageInfo,
                                  const SkIRect& srcRect,
                                  SkImage::RescaleGamma rescaleGamma,
                                  SkImage::RescaleMode rescaleMode,
-                                 SkImage::ReadPixelsCallback callback,
+                                 SkImageReadPixelsCallback callback,
                                  SkImage::ReadPixelsContext context);
+
+  bool asyncRescaleAndReadPixelsAndSubmit(const SkImage* src,
+                                          const SkImageInfo& dstImageInfo,
+                                          const SkIRect& srcRect,
+                                          SkImage::RescaleGamma rescaleGamma,
+                                          SkImage::RescaleMode rescaleMode,
+                                          SkImageReadPixelsCallback callback,
+                                          SkImage::ReadPixelsContext context);
+  bool asyncRescaleAndReadPixelsAndSubmit(const SkSurface* src,
+                                          const SkImageInfo& dstImageInfo,
+                                          const SkIRect& srcRect,
+                                          SkImage::RescaleGamma rescaleGamma,
+                                          SkImage::RescaleMode rescaleMode,
+                                          SkImageReadPixelsCallback callback,
+                                          SkImage::ReadPixelsContext context);
 
   void asyncRescaleAndReadPixelsYUV420(const SkImage* src,
                                        SkYUVColorSpace yuvColorSpace,
@@ -79,7 +116,7 @@ class GPU_GLES2_EXPORT GraphiteSharedContext
                                        const SkISize& dstSize,
                                        SkImage::RescaleGamma rescaleGamma,
                                        SkImage::RescaleMode rescaleMode,
-                                       SkImage::ReadPixelsCallback callback,
+                                       SkImageReadPixelsCallback callback,
                                        SkImage::ReadPixelsContext context);
   void asyncRescaleAndReadPixelsYUV420(const SkSurface* src,
                                        SkYUVColorSpace yuvColorSpace,
@@ -88,7 +125,7 @@ class GPU_GLES2_EXPORT GraphiteSharedContext
                                        const SkISize& dstSize,
                                        SkImage::RescaleGamma rescaleGamma,
                                        SkImage::RescaleMode rescaleMode,
-                                       SkImage::ReadPixelsCallback callback,
+                                       SkImageReadPixelsCallback callback,
                                        SkImage::ReadPixelsContext context);
 
   void asyncRescaleAndReadPixelsYUVA420(const SkImage* src,
@@ -98,7 +135,7 @@ class GPU_GLES2_EXPORT GraphiteSharedContext
                                         const SkISize& dstSize,
                                         SkImage::RescaleGamma rescaleGamma,
                                         SkImage::RescaleMode rescaleMode,
-                                        SkImage::ReadPixelsCallback callback,
+                                        SkImageReadPixelsCallback callback,
                                         SkImage::ReadPixelsContext context);
   void asyncRescaleAndReadPixelsYUVA420(const SkSurface* src,
                                         SkYUVColorSpace yuvColorSpace,
@@ -107,7 +144,7 @@ class GPU_GLES2_EXPORT GraphiteSharedContext
                                         const SkISize& dstSize,
                                         SkImage::RescaleGamma rescaleGamma,
                                         SkImage::RescaleMode rescaleMode,
-                                        SkImage::ReadPixelsCallback callback,
+                                        SkImageReadPixelsCallback callback,
                                         SkImage::ReadPixelsContext context);
 
   void checkAsyncWorkCompletion();
@@ -140,16 +177,30 @@ class GPU_GLES2_EXPORT GraphiteSharedContext
   skgpu::GpuStatsFlags supportedGpuStats() const;
 
  private:
-  friend class base::RefCountedThreadSafe<GraphiteSharedContext>;
-  ~GraphiteSharedContext();
-
   class AutoLock;
+
+  bool InsertRecordingImpl(const skgpu::graphite::InsertRecordingInfo&);
+  bool SubmitImpl(skgpu::graphite::SyncToCpu);
+  void SubmitAndFlushBackendImpl(skgpu::graphite::SyncToCpu);
 
   // The lock for protecting skgpu::graphite::Context.
   // Valid only when |is_thread_safe| is set to true in Ctor.
   mutable std::optional<base::Lock> lock_;
 
+  // This is the id of the thread where |lock_| is acquired, used for detecting
+  // recursive lock. |locked_thread_id_| is set to kInvalidThreadId when
+  // is_thread_safe is not enabled or when |lock_| is released.
+  mutable std::atomic<base::PlatformThreadId> locked_thread_id_{
+      base::kInvalidThreadId};
+
   const std::unique_ptr<skgpu::graphite::Context> graphite_context_;
+
+  raw_ptr<GpuProcessShmCount> use_shader_cache_shm_count_ = nullptr;
+
+  const size_t max_pending_recordings_;
+  size_t num_pending_recordings_ = 0;
+
+  FlushCallback backend_flush_callback_;
 };
 
 }  // namespace gpu

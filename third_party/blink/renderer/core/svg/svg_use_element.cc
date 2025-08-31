@@ -83,12 +83,14 @@ SVGUseElement::SVGUseElement(Document& document)
           this,
           svg_names::kWidthAttr,
           SVGLengthMode::kWidth,
-          SVGLength::Initial::kUnitlessZero)),
+          SVGLength::Initial::kUnitlessZero,
+          CSSPropertyID::kWidth)),
       height_(MakeGarbageCollected<SVGAnimatedLength>(
           this,
           svg_names::kHeightAttr,
           SVGLengthMode::kHeight,
-          SVGLength::Initial::kUnitlessZero)),
+          SVGLength::Initial::kUnitlessZero,
+          CSSPropertyID::kHeight)),
       element_url_is_local_(true),
       needs_shadow_tree_recreation_(false) {
   DCHECK(HasCustomStyleCallbacks());
@@ -250,7 +252,9 @@ void SVGUseElement::SvgAttributeChanged(
   if (attr_name == svg_names::kXAttr || attr_name == svg_names::kYAttr ||
       attr_name == svg_names::kWidthAttr ||
       attr_name == svg_names::kHeightAttr) {
-    if (attr_name == svg_names::kXAttr || attr_name == svg_names::kYAttr) {
+    if (attr_name == svg_names::kXAttr || attr_name == svg_names::kYAttr ||
+        RuntimeEnabledFeatures::
+            WidthAndHeightStylePropertiesOnUseAndSymbolEnabled()) {
       UpdatePresentationAttributeStyle(params.property);
     }
 
@@ -318,26 +322,14 @@ void SVGUseElement::ClearResourceReference() {
 }
 
 Element* SVGUseElement::ResolveTargetElement() {
-  if (!element_url_.HasFragmentIdentifier()) {
-    // TODO(dmangal): Cleanup the below code to integrate more with the rest of
-    // the logic in this function
-    if (RuntimeEnabledFeatures::
-            AllowSvgUseToReferenceExternalDocumentRootEnabled() &&
-        IsStructurallyExternal() && document_content_) {
-      // Take the root SVG element from the external document
-      external_resource_target_ = document_content_->GetResourceTargetForRoot();
-
-      return external_resource_target_ ? external_resource_target_->target
-                                       : nullptr;
-    }
-
-    return nullptr;
-  }
-
   AtomicString element_identifier(DecodeURLEscapeSequences(
       element_url_.FragmentIdentifier(), DecodeURLMode::kUTF8OrIsomorphic));
 
   if (!IsStructurallyExternal()) {
+    if (!element_url_.HasFragmentIdentifier()) {
+      return nullptr;
+    }
+
     // Only create observers for non-instance use elements.
     // Instances will be updated by their corresponding elements.
     if (InUseShadowTree()) {
@@ -473,7 +465,8 @@ static void MoveChildrenToReplacementElement(ContainerNode& source_root,
 SVGElement* SVGUseElement::CreateInstanceTree(SVGElement& target_root) const {
   NodeCloningData data{CloneOption::kIncludeDescendants};
   SVGElement* instance_root = &To<SVGElement>(target_root.CloneWithChildren(
-      data, /*document*/ nullptr, /*append_to*/ nullptr));
+      data, /*document*/ nullptr, /*append_to*/ nullptr,
+      /*fallback_registry*/ nullptr));
   if (IsA<SVGSymbolElement>(target_root)) {
     // Spec: The referenced 'symbol' and its contents are deep-cloned into
     // the generated tree, with the exception that the 'symbol' is replaced
@@ -532,7 +525,7 @@ void SVGUseElement::AttachShadowTree(SVGElement& target) {
 void SVGUseElement::DetachShadowTree() {
   ShadowRoot& shadow_root = UseShadowRoot();
   // FIXME: We should try to optimize this, to at least allow partial reclones.
-  shadow_root.RemoveChildren(kOmitSubtreeModifiedEvent);
+  shadow_root.RemoveChildren();
 }
 
 LayoutObject* SVGUseElement::CreateLayoutObject(const ComputedStyle&) {
@@ -698,8 +691,8 @@ void SVGUseElement::SynchronizeAllSVGAttributes() const {
 
 void SVGUseElement::CollectExtraStyleForPresentationAttribute(
     HeapVector<CSSPropertyValue, 8>& style) {
-  auto pres_attrs =
-      std::to_array<const SVGAnimatedPropertyBase*>({x_.Get(), y_.Get()});
+  auto pres_attrs = std::to_array<const SVGAnimatedPropertyBase*>(
+      {x_.Get(), y_.Get(), width_.Get(), height_.Get()});
   AddAnimatedPropertiesToPresentationAttributeStyle(pres_attrs, style);
   SVGGraphicsElement::CollectExtraStyleForPresentationAttribute(style);
 }

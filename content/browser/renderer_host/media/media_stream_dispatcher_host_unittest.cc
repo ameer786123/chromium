@@ -21,6 +21,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/system/system_monitor.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
@@ -29,6 +30,7 @@
 #include "base/test/test_future.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
+#include "content/browser/bad_message.h"
 #include "content/browser/media/media_devices_util.h"
 #include "content/browser/renderer_host/media/audio_input_device_manager.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
@@ -66,9 +68,9 @@
 #endif
 
 using ::blink::mojom::CapturedSurfaceControlResult;
+using ::blink::mojom::MediaStreamType;
 using ::testing::_;
 using ::testing::InSequence;
-using ::testing::Invoke;
 using ::testing::InvokeWithoutArgs;
 using ::testing::Return;
 
@@ -355,7 +357,7 @@ class MediaStreamDispatcherHostTest : public testing::Test {
     stub_video_device_ids_.emplace_back(kRegularVideoDeviceId1);
     stub_video_device_ids_.emplace_back(kDepthVideoDeviceId);
     ON_CALL(*mock_video_capture_provider_, GetDeviceInfosAsync(_))
-        .WillByDefault(Invoke(
+        .WillByDefault(
             [this](
                 VideoCaptureProvider::GetDeviceInfosCallback result_callback) {
               std::vector<media::VideoCaptureDeviceInfo> result;
@@ -367,7 +369,7 @@ class MediaStreamDispatcherHostTest : public testing::Test {
               }
               std::move(result_callback)
                   .Run(media::mojom::DeviceEnumerationResult::kSuccess, result);
-            }));
+            });
 
     base::RunLoop run_loop;
     MediaDevicesManager::BoolDeviceTypes devices_to_enumerate;
@@ -599,7 +601,6 @@ TEST_F(MediaStreamDispatcherHostTest, GenerateStreamWithAudioOnly) {
 
 TEST_F(MediaStreamDispatcherHostTest,
        BadMessageIfAudioNotRequestedAndSuppressLocalAudioPlayback) {
-  using blink::mojom::MediaStreamType;
 
   blink::StreamControls controls;
   controls.audio.stream_type = MediaStreamType::NO_SERVICE;
@@ -620,8 +621,6 @@ TEST_F(MediaStreamDispatcherHostTest,
 
 TEST_F(MediaStreamDispatcherHostTest,
        BadMessageIfAudioNotRequestedAndHotwordEnabled) {
-  using blink::mojom::MediaStreamType;
-
   blink::StreamControls controls;
   controls.audio.stream_type = MediaStreamType::NO_SERVICE;
   controls.video.stream_type = MediaStreamType::DISPLAY_VIDEO_CAPTURE;
@@ -639,8 +638,6 @@ TEST_F(MediaStreamDispatcherHostTest,
 
 TEST_F(MediaStreamDispatcherHostTest,
        BadMessageIfAudioNotRequestedAndDisableLocalEcho) {
-  using blink::mojom::MediaStreamType;
-
   blink::StreamControls controls;
   controls.audio.stream_type = MediaStreamType::NO_SERVICE;
   controls.video.stream_type = MediaStreamType::DISPLAY_VIDEO_CAPTURE;
@@ -653,6 +650,22 @@ TEST_F(MediaStreamDispatcherHostTest,
                   kRenderFrameHostId.child_id,
                   bad_message::MSDH_DISABLE_LOCAL_ECHO_BUT_AUDIO_NOT_REQUESTED))
       .Times(1);
+  host_->OnGenerateStreams(kPageRequestId, controls);
+}
+
+TEST_F(MediaStreamDispatcherHostTest,
+       BadMessageIfRestrictOwnAudioWhenNotSupported) {
+  blink::StreamControls controls;
+  controls.audio.stream_type = MediaStreamType::DISPLAY_AUDIO_CAPTURE;
+  controls.video.stream_type = MediaStreamType::DISPLAY_VIDEO_CAPTURE;
+  controls.restrict_own_audio = true;
+  SetupFakeUI(/*expect_started=*/true);
+
+  EXPECT_CALL(*this,
+              MockOnBadMessage(
+                  kRenderFrameHostId.child_id,
+                  bad_message::MSDH_RESTRICT_OWN_AUDIO_IS_SET_WHEN_UNSUPPORTED))
+      .Times(media::IsRestrictOwnAudioSupported() ? 0 : 1);
   host_->OnGenerateStreams(kPageRequestId, controls);
 }
 
@@ -1415,10 +1428,9 @@ INSTANTIATE_TEST_SUITE_P(
 
 class MockContentBrowserClient : public ContentBrowserClient {
  public:
-  MOCK_METHOD(void,
-              CheckGetAllScreensMediaAllowed,
-              (content::RenderFrameHost * render_frame_host,
-               base::OnceCallback<void(bool)> callback),
+  MOCK_METHOD(bool,
+              IsMultiCaptureAllowed,
+              (content::RenderFrameHost * render_frame_host),
               (override));
 };
 
@@ -1471,11 +1483,9 @@ TEST_F(MediaStreamDispatcherHostMultiCaptureTest,
   GlobalRenderFrameHostId main_rfh_global_id = global_rfh_id();
   int main_render_process_id = main_rfh_global_id.child_id;
   int render_frame_id = main_rfh_global_id.frame_routing_id;
-  EXPECT_CALL(content_browser_client_, CheckGetAllScreensMediaAllowed(_, _))
-      .WillOnce(testing::Invoke([](content::RenderFrameHost* render_frame_host,
-                                   base::OnceCallback<void(bool)> callback) {
-        std::move(callback).Run(false);
-      }));
+  EXPECT_CALL(content_browser_client_, IsMultiCaptureAllowed(_))
+      .Times(1)
+      .WillOnce(Return(false));
 
   base::test::TestFuture<
       MediaStreamDispatcherHost::GenerateStreamsUIThreadCheckResult>
@@ -1499,11 +1509,9 @@ TEST_F(MediaStreamDispatcherHostMultiCaptureTest,
   GlobalRenderFrameHostId main_rfh_global_id = global_rfh_id();
   int main_render_process_id = main_rfh_global_id.child_id;
   int render_frame_id = main_rfh_global_id.frame_routing_id;
-  EXPECT_CALL(content_browser_client_, CheckGetAllScreensMediaAllowed(_, _))
-      .WillOnce(testing::Invoke([](content::RenderFrameHost* render_frame_host,
-                                   base::OnceCallback<void(bool)> callback) {
-        std::move(callback).Run(true);
-      }));
+  EXPECT_CALL(content_browser_client_, IsMultiCaptureAllowed(_))
+      .Times(1)
+      .WillOnce(Return(true));
 
   base::test::TestFuture<
       MediaStreamDispatcherHost::GenerateStreamsUIThreadCheckResult>

@@ -9,9 +9,12 @@ import("//build/util/process_version.gni")
 import("//chrome/enterprise_companion/branding.gni")
 import("//chrome/updater/apply_updater_branding.gni")
 import("//chrome/updater/branding.gni")
-import("//chrome/updater/zip.gni")
 import("//components/crx_file/crx3.gni")
 import("//testing/test.gni")
+
+if (is_win) {
+  import("//third_party/icu/config.gni")
+}
 
 # Run 'gn check out\Default --check-generated //chrome/updater/*' every time
 # dependencies are modified until a presubmit is written to automatically
@@ -38,9 +41,7 @@ group("updater") {
 
   # These packages have problematic license files that we need to avoid for
   # updater redistribution.
-  if (!is_component_build) {
-    assert_no_deps = [ "//third_party/libaom" ]
-  }
+  assert_no_deps = [ "//third_party/libaom" ]
 }
 
 group("all") {
@@ -111,8 +112,12 @@ if (is_win || is_mac || is_linux) {
       "app/app_uninstall.h",
       "app/app_uninstall_self.cc",
       "app/app_uninstall_self.h",
+      "app/app_unzip_worker.cc",
+      "app/app_unzip_worker.h",
       "app/app_update.cc",
       "app/app_update.h",
+      "app/app_update_apps.cc",
+      "app/app_update_apps.h",
       "app/app_utils.cc",
       "app/app_utils.h",
       "app/app_wake.cc",
@@ -133,12 +138,8 @@ if (is_win || is_mac || is_linux) {
       "crash_reporter.cc",
       "crash_reporter.h",
       "crx_downloader_factory.h",
-      "device_management/dm_client.cc",
-      "device_management/dm_client.h",
-      "device_management/dm_message.cc",
-      "device_management/dm_message.h",
-      "device_management/dm_response_validator.cc",
-      "device_management/dm_response_validator.h",
+      "event_logger.cc",
+      "event_logger.h",
       "handle_inconsistent_apps_task.cc",
       "handle_inconsistent_apps_task.h",
       "installer.cc",
@@ -150,6 +151,8 @@ if (is_win || is_mac || is_linux) {
       "net/fallback_net_fetcher.cc",
       "net/fallback_net_fetcher.h",
       "net/network.h",
+      "out_of_process_unzipper.cc",
+      "out_of_process_unzipper.h",
       "persisted_data.cc",
       "persisted_data.h",
       "ping_configurator.cc",
@@ -173,7 +176,6 @@ if (is_win || is_mac || is_linux) {
       "prefs_impl.h",
       "remove_uninstalled_apps_task.cc",
       "remove_uninstalled_apps_task.h",
-      "setup.cc",
       "setup.h",
       "update_block_check.cc",
       "update_block_check.h",
@@ -190,10 +192,9 @@ if (is_win || is_mac || is_linux) {
       "update_service_internal_impl_inactive.h",
       "update_service_internal_impl_qualifying.cc",
       "update_service_internal_impl_qualifying.h",
-      "update_usage_stats_task.cc",
-      "update_usage_stats_task.h",
       "updater.cc",
       "updater.h",
+      "usage_stats_permissions.h",
     ]
 
     deps = [
@@ -209,13 +210,19 @@ if (is_win || is_mac || is_linux) {
       "//chrome/enterprise_companion:installer_paths",
       "//chrome/enterprise_companion/device_management_storage",
       "//chrome/enterprise_companion/mojom",
+      "//chrome/enterprise_companion/telemetry_logger",
+      "//chrome/enterprise_companion/telemetry_logger/proto",
+      "//chrome/updater/mojom",
       "//chrome/updater/protos:omaha_proto",
       "//components/crash/core/common",
       "//components/crx_file",
       "//components/named_system_lock",
       "//components/policy/core/common:common_constants",
+      "//components/policy/core/common:util",
       "//components/policy/proto",
       "//components/prefs",
+      "//components/services/unzip:lib",
+      "//components/services/unzip/public/mojom",
       "//components/update_client",
       "//components/update_client:in_process_patcher",
       "//components/update_client:in_process_unzipper",
@@ -225,17 +232,9 @@ if (is_win || is_mac || is_linux) {
       "//third_party/boringssl",
       "//third_party/crashpad/crashpad/client",
       "//third_party/crashpad/crashpad/handler",
+      "//third_party/zlib/google:compression_utils",
       "//url",
     ]
-
-    if (is_component_build) {
-      deps += [ "//components/policy/core/common" ]
-    } else {
-      deps += [
-        "//components/policy/core/common:common_constants",
-        "//components/policy/core/common:util",
-      ]
-    }
 
     public_deps = [
       ":base_app",
@@ -250,7 +249,6 @@ if (is_win || is_mac || is_linux) {
         "app/app_net_worker.cc",
         "app/app_net_worker.h",
         "app/app_server_posix_mac.cc",
-        "cleanup_task_mac.mm",
         "installer_mac.cc",
         "ipc/ipc_security_mac.cc",
         "mac/install_from_archive.h",
@@ -267,12 +265,13 @@ if (is_win || is_mac || is_linux) {
         "policy/mac/managed_preference_policy_manager_impl.mm",
         "setup_mac.mm",
         "update_service_internal_impl_qualifying_mac.cc",
-        "update_usage_stats_task_mac.mm",
+        "usage_stats_permissions_mac.mm",
       ]
 
       deps += [
         ":ks_ticket",
         "//chrome/updater/net/mac/mojom",
+        "//components/services/unzip/public/mojom",
         "//mojo/public/cpp/platform",
         "//net",
       ]
@@ -318,7 +317,7 @@ if (is_win || is_mac || is_linux) {
         "setup_win.cc",
         "update_block_check_win.cc",
         "update_service_internal_impl_qualifying_win.cc",
-        "update_usage_stats_task_win.cc",
+        "usage_stats_permissions_win.cc",
         "util/progress_sampler.cc",
         "util/progress_sampler.h",
         "win/action_handler.cc",
@@ -349,7 +348,6 @@ if (is_win || is_mac || is_linux) {
         "win/ui/progress_wnd.h",
         "win/ui/ui.cc",
         "win/ui/ui.h",
-        "win/ui/ui_constants.cc",
         "win/ui/ui_constants.h",
         "win/ui/ui_ctls.h",
         "win/ui/ui_util.cc",
@@ -406,10 +404,7 @@ if (is_win || is_mac || is_linux) {
         "remove_uninstalled_apps_task_posix.cc",
       ]
 
-      deps += [
-        "//chrome/updater/mojom",
-        "//components/named_mojo_ipc_server",
-      ]
+      deps += [ "//components/named_mojo_ipc_server" ]
     }
 
     if (is_linux) {
@@ -424,7 +419,7 @@ if (is_win || is_mac || is_linux) {
         "net/network_fetcher_linux.cc",
         "setup_linux.cc",
         "update_service_internal_impl_qualifying_linux.cc",
-        "update_usage_stats_task_linux.cc",
+        "usage_stats_permissions_linux.cc",
       ]
 
       libs = [
@@ -432,6 +427,10 @@ if (is_win || is_mac || is_linux) {
         "systemd",
       ]
     }
+
+    # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+    # enable the diagnostic by removing this line.
+    configs += [ "//build/config/compiler:no_exit_time_destructors" ]
   }
 
   if (is_mac) {
@@ -479,6 +478,7 @@ if (is_win || is_mac || is_linux) {
       ":branding_header",
       ":constants_header",
       "//base",
+      "//build:branding_buildflags",
       "//components/crx_file",
       "//url",
     ]
@@ -534,7 +534,10 @@ if (is_win || is_mac || is_linux) {
       "constants_prod.cc",
     ]
 
-    public_deps = [ ":public_sources" ]
+    public_deps = [
+      ":public_sources",
+      ":tagging",
+    ]
     deps = [ ":constants_header" ]
 
     visibility = [
@@ -569,7 +572,6 @@ if (is_win || is_mac || is_linux) {
       "ipc/ipc_support.h",
       "ipc/update_service_proxy.cc",
       "ipc/update_service_proxy.h",
-      "registration_data.cc",
       "registration_data.h",
       "service_proxy_factory.h",
       "update_service.cc",
@@ -586,6 +588,7 @@ if (is_win || is_mac || is_linux) {
       ":version_header",
       "//base",
       "//chrome/enterprise_companion:installer_paths",
+      "//chrome/updater/mojom",
       "//components/policy/core/common:common_constants",
       "//components/update_client",
       "//mojo/core/embedder",
@@ -604,7 +607,6 @@ if (is_win || is_mac || is_linux) {
         "win/task_scheduler.h",
         "win/user_info.cc",
         "win/user_info.h",
-        "win/win_constants.cc",
         "win/win_constants.h",
       ]
 
@@ -666,10 +668,7 @@ if (is_win || is_mac || is_linux) {
         "util/posix_util.h",
       ]
 
-      deps += [
-        "//chrome/updater/mojom",
-        "//components/named_mojo_ipc_server",
-      ]
+      deps += [ "//components/named_mojo_ipc_server" ]
     }
   }
 
@@ -782,27 +781,6 @@ if (is_win || is_mac || is_linux) {
           deps = [ "//chrome/enterprise_companion/mac:enterprise_companion_bundle_test" ]
         }
       }
-      zip("enterprise_companion_test_crx_contents_zip") {
-        inputs = get_target_outputs(
-                     ":enterprise_companion_test_crx_install_script") +
-                 get_target_outputs(":enterprise_companion_test_crx_exe") +
-                 get_target_outputs(":enterprise_companion_test_crx_pkginfo") +
-                 get_target_outputs(":enterprise_companion_test_crx_plist")
-        base_dir = "$target_gen_dir/enterprise_companion_test_crx_contents/"
-        output = "$target_gen_dir/enterprise_companion_test.zip"
-        deps = [
-          ":enterprise_companion_test_crx_exe",
-          ":enterprise_companion_test_crx_install_script",
-          ":enterprise_companion_test_crx_pkginfo",
-          ":enterprise_companion_test_crx_plist",
-        ]
-
-        if (is_asan) {
-          inputs +=
-              get_target_outputs(":enterprise_companion_test_crx_asan_dylib")
-          deps += [ ":enterprise_companion_test_crx_asan_dylib" ]
-        }
-      }
     }
 
     crx3("enterprise_companion_test_crx") {
@@ -811,12 +789,28 @@ if (is_win || is_mac || is_linux) {
         inputs = [ "$root_build_dir/enterprise_companion_test" ]
         deps = [ "//chrome/enterprise_companion:enterprise_companion_test" ]
       } else if (is_mac) {
-        inputs =
-            get_target_outputs(":enterprise_companion_test_crx_contents_zip")
-        deps = [ ":enterprise_companion_test_crx_contents_zip" ]
-        base_dir = "$target_gen_dir"
+        inputs = get_target_outputs(
+                     ":enterprise_companion_test_crx_install_script") +
+                 get_target_outputs(":enterprise_companion_test_crx_exe") +
+                 get_target_outputs(":enterprise_companion_test_crx_pkginfo") +
+                 get_target_outputs(":enterprise_companion_test_crx_plist")
+        deps = [
+          ":enterprise_companion_test_crx_exe",
+          ":enterprise_companion_test_crx_install_script",
+          ":enterprise_companion_test_crx_pkginfo",
+          ":enterprise_companion_test_crx_plist",
+        ]
+        base_dir = "$target_gen_dir/enterprise_companion_test_crx_contents/"
+        if (is_asan) {
+          inputs +=
+              get_target_outputs(":enterprise_companion_test_crx_asan_dylib")
+          deps += [ ":enterprise_companion_test_crx_asan_dylib" ]
+        }
       } else if (is_win) {
         inputs = [ "$root_build_dir/enterprise_companion_test.exe" ]
+        if (icu_use_data_file) {
+          inputs += [ "$root_out_dir/icudtl.dat" ]
+        }
         deps = [ "//chrome/enterprise_companion:enterprise_companion_test" ]
       }
       key = "//chrome/updater/test/data/selfupdate_test_key.der"
@@ -860,12 +854,8 @@ if (is_win || is_mac || is_linux) {
       "branded_constants_unittest.cc",
       "certificate_tag_unittest.cc",
       "cleanup_task_unittest.cc",
-      "device_management/dm_client_unittest.cc",
-      "device_management/dm_message_unittest.cc",
-      "device_management/dm_policy_builder_for_testing.cc",
-      "device_management/dm_policy_builder_for_testing.h",
-      "device_management/dm_response_validator_unittest.cc",
       "enum_traits_unittest.cc",
+      "event_logger_unittest.cc",
       "external_constants_builder.cc",
       "external_constants_builder.h",
       "external_constants_builder_unittest.cc",
@@ -880,6 +870,8 @@ if (is_win || is_mac || is_linux) {
       "policy/service_unittest.cc",
       "prefs_unittest.cc",
       "tag_unittest.cc",
+      "test/dm_policy_builder.cc",
+      "test/dm_policy_builder.h",
       "test/http_request.cc",
       "test/http_request.h",
       "test/integration_test_commands.h",
@@ -895,9 +887,9 @@ if (is_win || is_mac || is_linux) {
       "update_service_impl_impl_unittest.cc",
       "update_service_impl_inactive_unittest.cc",
       "update_service_unittest.cc",
-      "update_usage_stats_task_unittest.cc",
       "updater_scope_unittest.cc",
       "updater_unittest.cc",
+      "usage_stats_permissions_unittest.cc",
       "util/util_unittest.cc",
     ]
     if (!is_component_build) {
@@ -919,6 +911,8 @@ if (is_win || is_mac || is_linux) {
       "//chrome/enterprise_companion:installer_paths",
       "//chrome/enterprise_companion:version_header",
       "//chrome/enterprise_companion/device_management_storage",
+      "//chrome/enterprise_companion/telemetry_logger/proto",
+      "//chrome/updater/mojom",
       "//chrome/updater/protos:omaha_proto",
       "//components/crx_file",
       "//components/policy/core/common:common_constants",
@@ -999,9 +993,9 @@ if (is_win || is_mac || is_linux) {
         "app/server/win:updater_idl",
         "app/server/win:updater_internal_idl",
         "app/server/win:updater_legacy_idl",
-        "test/qualification_app:qualification_app",
+        "test/qualification_app",
         "win:updater_test",
-        "win/installer:installer",
+        "win/installer",
         "win/installer:installer_test",
         "win/installer:lib",
         "win/installer:msi_custom_action",
@@ -1024,6 +1018,7 @@ if (is_win || is_mac || is_linux) {
         "test/data/ProcmonConfiguration.pmc",
         "//chrome/test/data/updater/OfflineManifest.gup",
         "//chrome/test/data/updater/updater_qualification_app_exe.crx",
+        "//chrome/test/data/updater/updater_qualification_app_exe.crx.xz",
       ]
 
       if (target_cpu == "arm64") {
@@ -1072,7 +1067,6 @@ if (is_win || is_mac || is_linux) {
     if (is_mac) {
       sources += [
         "app/app_net_worker_unittest.cc",
-        "cleanup_task_mac_unittest.mm",
         "mac/keystone/ksadmin_unittest.cc",
         "mac/privileged_helper/privileged_helper_unittests.mm",
         "mac/setup/keystone_unittest.mm",
@@ -1122,6 +1116,7 @@ if (is_win || is_mac || is_linux) {
         "//chrome/test/data/updater/setup_test_envcheck/.install",
         "//chrome/test/data/updater/setup_test_envcheck/marker.app",
         "//chrome/test/data/updater/updater_qualification_app_dmg.crx",
+        "//chrome/test/data/updater/updater_qualification_app_dmg.crx.xz",
         "//third_party/updater/chrome_mac_universal/cipd/GoogleUpdater_test.app/Contents/MacOS/GoogleUpdater_test",
         "//third_party/updater/chrome_mac_universal/cipd/GoogleUpdater_test.app/Contents/Info.plist",
         "//third_party/updater/chrome_mac_universal/cipd/GoogleUpdater_test.app/Contents/Helpers/GoogleSoftwareUpdate.bundle/Contents/MacOS/GoogleSoftwareUpdate",
@@ -1183,7 +1178,10 @@ if (is_win || is_mac || is_linux) {
     if (is_linux) {
       sources += [ "test/integration_tests_linux.cc" ]
 
-      data += [ "//chrome/test/data/updater/updater_qualification_app.crx" ]
+      data += [
+        "//chrome/test/data/updater/updater_qualification_app.crx",
+        "//chrome/test/data/updater/updater_qualification_app.crx.xz",
+      ]
       data_deps += [
         "//chrome/enterprise_companion:enterprise_companion_test",
         "//chrome/updater/linux:updater_test",
@@ -1193,7 +1191,7 @@ if (is_win || is_mac || is_linux) {
 
     if (is_posix) {
       sources += [
-        "app/server/posix/ipc_unittests.cc",
+        "app/server/posix/ipc_unittest.cc",
         "util/posix_util_unittest.cc",
       ]
 
@@ -1329,6 +1327,7 @@ if (is_win || is_mac || is_linux) {
       ":updater_test_sources",
       "//base",
       "//base/test:test_support",
+      "//build/win:default_exe_manifest",
       "//chrome/common:constants",
       "//testing/gtest",
       "//url",

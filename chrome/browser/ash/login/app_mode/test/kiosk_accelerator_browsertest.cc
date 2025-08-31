@@ -7,24 +7,25 @@
 #include "chrome/browser/app_mode/test/accelerator_helpers.h"
 #include "chrome/browser/ash/app_mode/kiosk_controller.h"
 #include "chrome/browser/ash/app_mode/kiosk_system_session.h"
+#include "chrome/browser/ash/app_mode/test/kiosk_mixin.h"
+#include "chrome/browser/ash/app_mode/test/kiosk_test_utils.h"
 #include "chrome/browser/ash/login/app_mode/test/ash_accelerator_helpers.h"
-#include "chrome/browser/ash/login/app_mode/test/web_kiosk_base_test.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/test/test_browser_closed_waiter.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
-#include "content/public/test/test_navigation_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/accelerators/accelerator.h"
 
 namespace ash {
 
-namespace {
+using kiosk::test::WaitKioskLaunched;
 
-void WaitForPageLoaded(content::WebContents* web_contents) {
-  content::TestNavigationObserver(web_contents).WaitForNavigationFinished();
-}
+namespace {
 
 int WindowWidth(content::WebContents* web_contents) {
   return content::EvalJs(web_contents, "window.innerWidth").ExtractInt();
@@ -45,10 +46,24 @@ int WindowWidthAfterChange(content::WebContents* web_contents,
 }  // anonymous namespace
 
 // Verifies accelerator behavior in Kiosk sessions in Ash.
-class WebKioskAcceleratorTest : public WebKioskBaseTest {};
+class WebKioskAcceleratorTest : public MixinBasedInProcessBrowserTest {
+ public:
+  WebKioskAcceleratorTest() = default;
+
+  void SetUpOnMainThread() override {
+    MixinBasedInProcessBrowserTest::SetUpOnMainThread();
+    ASSERT_TRUE(WaitKioskLaunched());
+  }
+
+  KioskMixin kiosk_{
+      &mixin_host_,
+      KioskMixin::Config{/*name=*/{},
+                         KioskMixin::AutoLaunchAccount{
+                             KioskMixin::SimpleWebAppOption().account_id},
+                         {KioskMixin::SimpleWebAppOption()}}};
+};
 
 IN_PROC_BROWSER_TEST_F(WebKioskAcceleratorTest, AcceleratorsDontCloseSession) {
-  InitializeRegularOnlineKiosk();
   SelectFirstBrowser();
   ASSERT_EQ(BrowserList::GetInstance()->size(), 1u);
   ASSERT_FALSE(PressCloseTabAccelerator(browser()));
@@ -62,7 +77,6 @@ IN_PROC_BROWSER_TEST_F(WebKioskAcceleratorTest, AcceleratorsDontCloseSession) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebKioskAcceleratorTest, ZoomAccelerators) {
-  InitializeRegularOnlineKiosk();
   SelectFirstBrowser();
 
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
@@ -71,7 +85,7 @@ IN_PROC_BROWSER_TEST_F(WebKioskAcceleratorTest, ZoomAccelerators) {
   ASSERT_NE(web_contents, nullptr);
 
   // Await page load so accelerators are processed. Prevents a race condition.
-  WaitForPageLoaded(web_contents);
+  ASSERT_TRUE(WaitForLoadStop(web_contents));
 
   int initial_width = WindowWidthAfterChange(web_contents, 0);
   ASSERT_GT(initial_width, 0);

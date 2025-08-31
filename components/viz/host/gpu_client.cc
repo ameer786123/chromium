@@ -11,12 +11,8 @@
 #include "base/numerics/checked_math.h"
 #include "base/task/single_thread_task_runner.h"
 #include "components/viz/host/gpu_host_impl.h"
-#include "components/viz/host/host_gpu_memory_buffer_manager.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
-#include "gpu/ipc/common/gpu_memory_buffer_impl.h"
-#include "gpu/ipc/common/gpu_memory_buffer_impl_shared_memory.h"
-#include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "services/viz/privileged/mojom/gl/gpu_service.mojom.h"
 
 namespace viz {
@@ -122,6 +118,11 @@ void GpuClient::OnEstablishGpuChannel(
   gpu_channel_requested_ = false;
   EstablishGpuChannelCallback callback = std::move(callback_);
 
+  if (callback_for_testing_) {
+    std::move(callback_for_testing_)
+        .Run(status == GpuHostImpl::EstablishChannelStatus::kSuccess);
+  }
+
   if (status == GpuHostImpl::EstablishChannelStatus::kGpuHostInvalid) {
     // GPU process may have crashed or been killed. Try again.
     EstablishGpuChannel(std::move(callback));
@@ -189,6 +190,11 @@ void GpuClient::EstablishGpuChannel(EstablishGpuChannelCallback callback) {
       client_id_, client_tracing_id_, is_gpu_host, false,
       base::BindOnce(&GpuClient::OnEstablishGpuChannel,
                      weak_factory_.GetWeakPtr()));
+}
+
+void GpuClient::SetEstablishGpuChannelCallbackForTesting(
+    base::OnceCallback<void(bool)> callback) {
+  callback_for_testing_ = std::move(callback);
 }
 
 #if BUILDFLAG(IS_CHROMEOS)

@@ -18,7 +18,7 @@ if (is_chromeos_device) {
       "//chrome/common",
       "//chrome/test:ash_integration_test_support",
       "//testing/gtest",
-      "//ui/base",
+      "//ui/base/interaction",
     ]
   }
 }
@@ -79,6 +79,7 @@ source_set("unit_tests") {
   sources = [ "accelerator_metadata_unittest.cc" ]
 
   deps = [
+    "//ash:test_support",
     "//ash/webui/shortcut_customization_ui/backend",
     "//base",
     "//build:branding_buildflags",

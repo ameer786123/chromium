@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 from collections.abc import Mapping
+import dataclasses
 import enum
 import fnmatch
 import json
@@ -11,17 +12,15 @@ import os
 import re
 import time
 
-import dataclasses  # Built-in, but pylint gives an ordering false positive.
+from typ import expectations_parser
 
+import gpu_path_util
 from gpu_tests import common_browser_args as cba
 from gpu_tests import common_typing as ct
 from gpu_tests import gpu_integration_test
 from gpu_tests.util import host_information
 from gpu_tests.util import websocket_server as wss
 from gpu_tests.util import websocket_utils as wsu
-from typ import expectations_parser
-
-import gpu_path_util
 
 SLOW_TESTS_FILE = os.path.join(gpu_path_util.CHROMIUM_SRC_DIR, 'third_party',
                                'dawn', 'webgpu-cts', 'slow_tests.txt')
@@ -146,7 +145,7 @@ class WebGpuCtsIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
   @classmethod
   def _GetSlowTests(cls) -> expectations_parser.TestExpectations:
     if cls._slow_tests is None:
-      with open(SLOW_TESTS_FILE, 'r') as f:
+      with open(SLOW_TESTS_FILE, 'r', encoding='utf-8') as f:
         expectations = expectations_parser.TestExpectations()
         expectations.parse_tagged_list(f.read(), f.name)
         cls._slow_tests = expectations
@@ -219,8 +218,6 @@ class WebGpuCtsIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
         disable_dawn_features.append('use_dxc')
       else:
         enable_dawn_features.append('use_dxc')
-      # TODO(crbug.com/377296327): Remove once Tint IR is launched on Windows.
-      enable_dawn_features.append('use_tint_ir')
 
     if enable_dawn_features:
       browser_args.append(
@@ -323,12 +320,12 @@ class WebGpuCtsIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
     cls._SetClassVariablesFromOptions(options)
 
     if cls._test_list is None:
-      with open(TEST_LIST_FILE) as f:
+      with open(TEST_LIST_FILE, encoding='utf-8') as f:
         cls._test_list = [l for l in f.read().splitlines() if l]
 
     if cls._worker_type != WorkerType.NONE:
       if cls._worker_test_globs is None:
-        with open(WORKER_TEST_GLOB_FILE) as f:
+        with open(WORKER_TEST_GLOB_FILE, encoding='utf-8') as f:
           contents = f.read()
         cls._worker_test_globs = [l for l in contents.splitlines() if l]
 

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <bitset>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -32,10 +33,10 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
+#include "chrome/browser/web_applications/mojom/user_display_mode.mojom-data-view.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom-shared.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
-#include "chrome/browser/web_applications/proto/proto_helpers.h"
 #include "chrome/browser/web_applications/proto/web_app.pb.h"
 #include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/proto/web_app_os_integration_state.pb.h"
@@ -43,6 +44,7 @@
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
+#include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_install_utils.h"
 #include "chrome/browser/web_applications/web_app_management_type.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
@@ -50,6 +52,7 @@
 #include "chrome/browser/web_applications/web_app_translation_manager.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/pref_names.h"
 #include "components/webapps/common/web_app_id.h"
 #include "content/public/browser/isolated_web_apps_policy.h"
 #include "content/public/browser/storage_partition_config.h"
@@ -137,6 +140,99 @@ bool IsAppCapturingSettingForcedOff(const webapps::AppId& app_id) {
   return false;
 }
 
+// Note: This can never return kBrowser. This is because the user has
+// specified that the web app should be displayed in a window, and thus
+// the lowest fallback that we can go to is kMinimalUi.
+DisplayMode ResolveAppDisplayModeForStandaloneLaunchContainer(
+    DisplayMode app_display_mode) {
+  switch (app_display_mode) {
+    case DisplayMode::kBrowser:
+    case DisplayMode::kMinimalUi:
+      return DisplayMode::kMinimalUi;
+    case DisplayMode::kUndefined:
+    case DisplayMode::kPictureInPicture:
+      NOTREACHED();
+    case DisplayMode::kStandalone:
+    case DisplayMode::kFullscreen:
+      return DisplayMode::kStandalone;
+    case DisplayMode::kWindowControlsOverlay:
+      return DisplayMode::kWindowControlsOverlay;
+    case DisplayMode::kTabbed:
+      if (base::FeatureList::IsEnabled(blink::features::kDesktopPWAsTabStrip)) {
+        return DisplayMode::kTabbed;
+      } else {
+        return DisplayMode::kStandalone;
+      }
+    case DisplayMode::kBorderless:
+      return DisplayMode::kBorderless;
+  }
+}
+
+// Resolve the final display mode based on the user display mode first, then the
+// DisplayMode overrides if any. If that doesn't end up happening, fallback to
+// using the manifest provided value to resolve the final display mode.
+DisplayMode ResolveNonIsolatedEffectiveDisplayMode(
+    DisplayMode app_display_mode,
+    const std::vector<DisplayMode>& display_mode_overrides,
+    mojom::UserDisplayMode user_display_mode) {
+  // First, try to resolve the DisplayMode based on the user choice of opening
+  // in a tab. Fall through to the next logic if that does not work. At that
+  // point, it is guaranteed to open in a standalone container.
+  if (user_display_mode == mojom::UserDisplayMode::kBrowser) {
+    return DisplayMode::kBrowser;
+  }
+
+  if (user_display_mode == mojom::UserDisplayMode::kTabbed &&
+      base::FeatureList::IsEnabled(features::kDesktopPWAsTabStripSettings)) {
+    return DisplayMode::kTabbed;
+  }
+
+  // Second, try to resolve the DisplayMode based on the `DisplayMode`
+  // overrides.
+  for (DisplayMode override_display_mode : display_mode_overrides) {
+    DisplayMode resolved_display_mode =
+        ResolveAppDisplayModeForStandaloneLaunchContainer(
+            override_display_mode);
+    if (override_display_mode == resolved_display_mode) {
+      return resolved_display_mode;
+    }
+  }
+
+  // If the `DisplayMode` has still not been resolved, fallback to using the
+  // manifest provided display mode, except for certain use-cases. Please look
+  // at the comment above `ResolveAppDisplayModeForStandaloneLaunchContainer()`
+  // to understand more about it.
+  return ResolveAppDisplayModeForStandaloneLaunchContainer(app_display_mode);
+}
+
+// When user_display_mode indicates a user preference for opening in
+// a browser tab, we open in a browser tab. If the developer has specified
+// the app should utilize more advanced display modes and/or fallback chain,
+// attempt honor those preferences. Otherwise, we open in a standalone
+// window (for app_display_mode 'standalone' or 'fullscreen'), or a minimal-ui
+// window (for app_display_mode 'browser' or 'minimal-ui').
+//
+// |is_isolated| overrides browser display mode for Isolated Web Apps because
+// they can't be open as a tab.
+DisplayMode ResolveEffectiveDisplayMode(
+    DisplayMode app_display_mode,
+    const std::vector<DisplayMode>& app_display_mode_overrides,
+    mojom::UserDisplayMode user_display_mode,
+    bool is_isolated) {
+  const DisplayMode resolved_display_mode =
+      ResolveNonIsolatedEffectiveDisplayMode(
+          app_display_mode, app_display_mode_overrides, user_display_mode);
+  // TODO(https://crbug.com/389919693): Remove this if display mode restrictions
+  // are added to the WebAppProvider system.
+  if (is_isolated && (resolved_display_mode == DisplayMode::kMinimalUi ||
+                      resolved_display_mode == DisplayMode::kTabbed)) {
+    return DisplayMode::kStandalone;
+  }
+  CHECK(!(is_isolated && resolved_display_mode == DisplayMode::kBrowser));
+
+  return resolved_display_mode;
+}
+
 }  // namespace
 
 BASE_FEATURE(kPreinstalledBrowserTabWebAppsCaptureOnDefault,
@@ -186,8 +282,9 @@ bool WebAppRegistrar::IsPlaceholderApp(
     const webapps::AppId& app_id,
     const WebAppManagement::Type source_type) const {
   const WebApp* web_app = GetAppById(app_id);
-  if (!web_app)
+  if (!web_app) {
     return false;
+  }
 
   const WebApp::ExternalConfigMap& config_map =
       web_app->management_to_external_config_map();
@@ -234,10 +331,11 @@ void WebAppRegistrar::RemoveObserver(WebAppRegistrarObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void WebAppRegistrar::NotifyWebAppProtocolSettingsChanged() {
+void WebAppRegistrar::NotifyWebAppProtocolSettingsChanged(
+    const webapps::AppId& app_id) {
   DVLOG(1) << "NotifyWebAppProtocolSettingsChanged";
   for (WebAppRegistrarObserver& observer : observers_) {
-    observer.OnWebAppProtocolSettingsChanged();
+    observer.OnWebAppProtocolSettingsChanged(app_id);
   }
 }
 
@@ -350,8 +448,9 @@ WebAppRegistrar::GetExternallyInstalledApps(
     const WebApp::ExternalConfigMap& config_map =
         web_app.management_to_external_config_map();
     auto it = config_map.find(management_source);
-    if (it != config_map.end() && !it->second.install_urls.empty())
+    if (it != config_map.end() && !it->second.install_urls.empty()) {
       installed_apps[web_app.app_id()] = it->second.install_urls;
+    }
   }
   return installed_apps;
 }
@@ -359,8 +458,9 @@ WebAppRegistrar::GetExternallyInstalledApps(
 std::optional<webapps::AppId> WebAppRegistrar::LookupExternalAppId(
     const GURL& install_url) const {
   std::optional<webapps::AppId> app_id = LookUpAppIdByInstallUrl(install_url);
-  if (app_id.has_value())
+  if (app_id.has_value()) {
     return app_id;
+  }
 
   return std::nullopt;
 }
@@ -398,8 +498,9 @@ bool WebAppRegistrar::HasExternalAppWithInstallSource(
 GURL WebAppRegistrar::GetAppLaunchUrl(const webapps::AppId& app_id) const {
   const GURL& start_url = GetAppStartUrl(app_id);
   const std::string* launch_query_params = GetAppLaunchQueryParams(app_id);
-  if (!start_url.is_valid() || !launch_query_params)
+  if (!start_url.is_valid() || !launch_query_params) {
     return start_url;
+  }
 
   GURL::Replacements replacements;
   if (start_url.query_piece().empty()) {
@@ -419,8 +520,9 @@ GURL WebAppRegistrar::GetAppLaunchUrl(const webapps::AppId& app_id) const {
 
 GURL WebAppRegistrar::GetAppScope(const webapps::AppId& app_id) const {
   std::optional<GURL> scope = GetAppScopeInternal(app_id);
-  if (scope)
+  if (scope) {
     return *scope;
+  }
   return GetAppStartUrl(app_id).GetWithoutFilename();
 }
 
@@ -490,8 +592,9 @@ int WebAppRegistrar::GetUrlInAppScopeScore(const std::string& url_spec,
   std::string app_scope = GetAppScope(app_id).spec();
 
   // The app may have been uninstalled.
-  if (app_scope.empty())
+  if (app_scope.empty()) {
     return 0;
+  }
 
   int score =
       base::StartsWith(url_spec, app_scope, base::CompareCase::SENSITIVE)
@@ -546,8 +649,9 @@ DisplayMode WebAppRegistrar::GetEffectiveDisplayModeFromManifest(
   std::vector<DisplayMode> display_mode_overrides =
       GetAppDisplayModeOverride(app_id);
 
-  if (!display_mode_overrides.empty())
+  if (!display_mode_overrides.empty()) {
     return display_mode_overrides[0];
+  }
 
   return GetAppDisplayMode(app_id);
 }
@@ -566,17 +670,20 @@ bool WebAppRegistrar::IsTabbedWindowModeEnabled(
   return GetAppEffectiveDisplayMode(app_id) == DisplayMode::kTabbed;
 }
 
-GURL WebAppRegistrar::GetAppNewTabUrl(const webapps::AppId& app_id) const {
+const GURL& WebAppRegistrar::GetAppNewTabUrl(
+    const webapps::AppId& app_id) const {
   if (IsTabbedWindowModeEnabled(app_id)) {
     auto* web_app = GetAppById(app_id);
     if (!web_app) {
-      return GURL();
+      return GURL::EmptyGURL();
     }
 
     if (web_app->tab_strip()) {
-      std::optional<GURL> url = web_app->tab_strip().value().new_tab_button.url;
-      if (url.has_value())
+      const std::optional<GURL>& url =
+          web_app->tab_strip().value().new_tab_button.url;
+      if (url.has_value()) {
         return url.value();
+      }
     }
   }
   // Apps that don't set a new_tab_button.url will use the start URL.
@@ -587,8 +694,9 @@ std::optional<GURL> WebAppRegistrar::GetAppPinnedHomeTabUrl(
     const webapps::AppId& app_id) const {
   if (IsTabbedWindowModeEnabled(app_id)) {
     const WebApp* web_app = GetAppById(app_id);
-    if (!web_app)
+    if (!web_app) {
       return std::nullopt;
+    }
 
     if (web_app->tab_strip() &&
         std::holds_alternative<blink::Manifest::HomeTabParams>(
@@ -638,8 +746,9 @@ std::optional<proto::os_state::WebAppOsIntegration>
 WebAppRegistrar::GetAppCurrentOsIntegrationState(
     const webapps::AppId& app_id) const {
   const WebApp* web_app = GetAppById(app_id);
-  if (!web_app)
+  if (!web_app) {
     return std::nullopt;
+  }
 
   return web_app->current_os_integration_states();
 }
@@ -659,6 +768,56 @@ void WebAppRegistrar::NotifyAlwaysShowToolbarInFullscreenChanged(
   }
 }
 #endif
+
+std::vector<apps::IconInfo> WebAppRegistrar::GetTrustedAppIconsMetadata(
+    const webapps::AppId& app_id) const {
+  std::vector<apps::IconInfo> trusted_app_icons;
+  auto* web_app = GetAppById(app_id);
+  if (!web_app) {
+    return trusted_app_icons;
+  }
+
+  return web_app->trusted_icons().empty() ? web_app->manifest_icons()
+                                          : web_app->trusted_icons();
+}
+
+std::optional<apps::IconInfo>
+WebAppRegistrar::GetSingleTrustedAppIconForSecuritySurfaces(
+    const webapps::AppId& app_id,
+    const SquareSizePx input_size) {
+  auto trusted_app_icons = GetTrustedAppIconsMetadata(app_id);
+  if (trusted_app_icons.empty()) {
+    return std::nullopt;
+  }
+
+  // This is the ideal case, where there is a single trusted icon to be used by
+  // the system, so return that information and exit early.
+  if (trusted_app_icons.size() == 1) {
+    return trusted_app_icons.at(0);
+  }
+
+  // First, choose the icon that is closest to `input_size` but larger, to
+  // prefer downscaling a larger icon instead of upscaling a smaller one if
+  // required.
+  std::map<SquareSizePx, apps::IconInfo> size_to_info;
+  for (const auto& icon : trusted_app_icons) {
+    if (!icon.square_size_px.has_value()) {
+      continue;
+    }
+    size_to_info.emplace(icon.square_size_px.value(), icon);
+  }
+  auto icon_size_greater_or_equal = size_to_info.lower_bound(input_size);
+  if (icon_size_greater_or_equal != size_to_info.end()) {
+    return icon_size_greater_or_equal->second;
+  }
+
+  // If no icons are found, choose the one that has a size closest to
+  // `input_size` but smaller.
+  CHECK(icon_size_greater_or_equal != size_to_info.begin());
+  auto less_than_required_icon_size = icon_size_greater_or_equal;
+  --less_than_required_icon_size;
+  return less_than_required_icon_size->second;
+}
 
 const WebApp* WebAppRegistrar::GetAppById(const webapps::AppId& app_id) const {
   return base::FindPtrOrNull(registry_, app_id);
@@ -680,8 +839,9 @@ WebAppRegistrar::GetAppsFromSyncAndPendingInstallation() const {
   });
 
   std::vector<webapps::AppId> app_ids;
-  for (const WebApp& app : apps_in_sync_install)
+  for (const WebApp& app : apps_in_sync_install) {
     app_ids.push_back(app.app_id());
+  }
 
   return app_ids;
 }
@@ -702,8 +862,9 @@ std::vector<webapps::AppId> WebAppRegistrar::GetAppsPendingUninstall() const {
 
 bool WebAppRegistrar::AppsExistWithExternalConfigData() const {
   for (const WebApp& web_app : GetApps()) {
-    if (web_app.management_to_external_config_map().size() > 0)
+    if (web_app.management_to_external_config_map().size() > 0) {
       return true;
+    }
   }
   return false;
 }
@@ -740,6 +901,14 @@ void WebAppRegistrar::Start() {
         num_non_locally_installed);
   }
 
+  auto app_icons_count = CountAppsHavingTrustedIcons();
+  base::UmaHistogramCounts1000(
+      "WebApp.InstalledCount.HasTrustedIcons",
+      std::get<AppsHavingTrustedIconsCount>(app_icons_count).value());
+  base::UmaHistogramCounts1000(
+      "WebApp.InstalledCount.HasNoTrustedIcons",
+      std::get<AppsHavingNoTrustedIconsCount>(app_icons_count).value());
+
 #if BUILDFLAG(IS_MAC)
   auto multi_profile_app_ids =
       AppShimRegistry::Get()->GetAppsInstalledInMultipleProfiles();
@@ -763,7 +932,7 @@ base::WeakPtr<WebAppRegistrar> WebAppRegistrar::AsWeakPtr() {
 std::optional<webapps::AppId> WebAppRegistrar::LookUpAppIdByInstallUrl(
     const GURL& install_url) const {
   for (const WebApp& web_app : GetApps()) {
-    for (auto it : web_app.management_to_external_config_map()) {
+    for (const auto& it : web_app.management_to_external_config_map()) {
       if (base::Contains(it.second.install_urls, install_url)) {
         return web_app.app_id();
       }
@@ -857,8 +1026,18 @@ bool WebAppRegistrar::AppMatches(const webapps::AppId& app_id,
     return IsIsolated(app_id);
   }
 
+  if (filter.is_policy_installed_iwa) {
+    return IsIsolated(app_id) && IsInstalledByPolicy(app_id);
+  }
+
   if (filter.is_crafted_app_) {
     return !IsDiyApp(app_id);
+  }
+
+  if (filter.is_diy_with_os_shortcut_) {
+    const WebApp* app = GetAppById(app_id);
+    return app && app->is_diy_app() &&
+           install_state == proto::INSTALLED_WITH_OS_INTEGRATION;
   }
 
   if (filter.displays_badge_on_os_ || filter.supports_os_notifications_) {
@@ -872,6 +1051,12 @@ bool WebAppRegistrar::AppMatches(const webapps::AppId& app_id,
 
   if (filter.installed_in_os_) {
     return install_state == proto::INSTALLED_WITH_OS_INTEGRATION;
+  }
+
+  if (filter.launchable_from_install_api_) {
+    const WebApp* app = GetAppById(app_id);
+    return (app && app->WasInstalledByUser()) ||
+           GetAppEffectiveDisplayMode(app_id) != DisplayMode::kBrowser;
   }
 
   return false;
@@ -1046,8 +1231,9 @@ bool WebAppRegistrar::IsRegisteredLaunchProtocol(
     const webapps::AppId& app_id,
     const std::string& protocol_scheme) const {
   const WebApp* web_app = GetAppById(app_id);
-  if (!web_app)
+  if (!web_app) {
     return false;
+  }
 
   return base::Contains(web_app->protocol_handlers(), protocol_scheme,
                         [](const auto& info) { return info.protocol; });
@@ -1514,24 +1700,93 @@ const apps::FileHandlers* WebAppRegistrar::GetAppFileHandlers(
 bool WebAppRegistrar::IsAppFileHandlerPermissionBlocked(
     const webapps::AppId& app_id) const {
   auto* web_app = GetAppById(app_id);
-  if (!web_app)
+  if (!web_app) {
     return false;
+  }
 
-  return web_app->file_handler_approval_state() ==
-         ApiApprovalState::kDisallowed;
+  const bool user_disallowed =
+      web_app->file_handler_approval_state() == ApiApprovalState::kDisallowed;
+
+  // DefaultHandlersForFileExtensions policy can define file
+  // handlers for apps. Its value takes precedence over user
+  // choice.
+  const bool policy_forced =
+      provider_->registrar_unsafe()
+          .IsAppSetAsPolicyDefinedFileHandlerForAnyFileExtension(app_id);
+  return user_disallowed && !policy_forced;
 }
 
 ApiApprovalState WebAppRegistrar::GetAppFileHandlerApprovalState(
+    const webapps::AppId& app_id,
+    std::optional<std::string> file_extension) const {
+  if (file_extension && IsAppPolicyDefinedHandlerForFileExtension(
+                            app_id, file_extension.value())) {
+    return ApiApprovalState::kAllowed;
+  }
+  return GetAppFileHandlerUserApprovalState(app_id);
+}
+
+bool WebAppRegistrar::IsAppPolicyDefinedHandlerForFileExtension(
+    const webapps::AppId& app_id,
+    const std::string file_extension) const {
+#if BUILDFLAG(IS_CHROMEOS)
+  const std::string* file_extension_policy_id =
+      profile_->GetPrefs()
+          ->GetDict(prefs::kDefaultHandlersForFileExtensions)
+          .FindString(file_extension);
+  if (!file_extension_policy_id) {
+    return false;
+  }
+
+  const WebApp* web_app = GetAppById(app_id);
+  if (!web_app) {
+    return false;
+  }
+
+  std::optional<std::vector<std::string>> app_policy_ids =
+      WebAppPolicyManager::GetPolicyIds(profile(), *web_app);
+
+  if (!app_policy_ids->empty()) {
+    return base::Contains(app_policy_ids.value(), *file_extension_policy_id);
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  return false;
+}
+
+bool WebAppRegistrar::IsAppSetAsPolicyDefinedFileHandlerForAnyFileExtension(
+    const webapps::AppId& app_id) const {
+#if BUILDFLAG(IS_CHROMEOS)
+  const base::Value::Dict& default_handlers =
+      profile_->GetPrefs()->GetDict(prefs::kDefaultHandlersForFileExtensions);
+
+  const WebApp* web_app = GetAppById(app_id);
+  if (!web_app) {
+    return false;
+  }
+
+  std::optional<std::vector<std::string>> app_policy_ids =
+      WebAppPolicyManager::GetPolicyIds(profile(), *web_app);
+
+  if (!app_policy_ids->empty()) {
+    return std::ranges::any_of(default_handlers, [&](const auto& handler) {
+      return base::Contains(*app_policy_ids, handler.second.GetString());
+    });
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  return false;
+}
+
+ApiApprovalState WebAppRegistrar::GetAppFileHandlerUserApprovalState(
     const webapps::AppId& app_id) const {
   const WebApp* web_app = GetAppById(app_id);
-  if (!web_app)
+  if (!web_app) {
     return ApiApprovalState::kDisallowed;
+  }
 
-  if (web_app->IsSystemApp())
+  if (web_app->IsSystemApp()) {
     return ApiApprovalState::kAllowed;
+  }
 
-  // TODO(estade): also consult the policy manager when File Handler policies
-  // exist.
   return web_app->file_handler_approval_state();
 }
 
@@ -1548,8 +1803,9 @@ bool WebAppRegistrar::ExpectThatFileHandlersAreRegisteredWithOs(
 std::optional<GURL> WebAppRegistrar::GetAppScopeInternal(
     const webapps::AppId& app_id) const {
   auto* web_app = GetAppById(app_id);
-  if (!web_app)
+  if (!web_app) {
     return std::nullopt;
+  }
 
   if (!web_app->scope().is_valid()) {
     return std::nullopt;
@@ -1631,8 +1887,9 @@ base::Time WebAppRegistrar::GetAppLatestInstallTime(
 std::optional<webapps::WebappInstallSource>
 WebAppRegistrar::GetLatestAppInstallSource(const webapps::AppId& app_id) const {
   const WebApp* web_app = GetAppById(app_id);
-  if (!web_app)
+  if (!web_app) {
     return std::nullopt;
+  }
 
   return web_app->latest_install_source();
 }
@@ -1643,11 +1900,25 @@ std::vector<apps::IconInfo> WebAppRegistrar::GetAppIconInfos(
   return web_app ? web_app->manifest_icons() : std::vector<apps::IconInfo>();
 }
 
-SortedSizesPx WebAppRegistrar::GetAppDownloadedIconSizesAny(
+SortedSizesPx WebAppRegistrar::GetAppTrustedIconSizesFallbackToUntrusted(
     const webapps::AppId& app_id) const {
   auto* web_app = GetAppById(app_id);
-  return web_app ? web_app->downloaded_icon_sizes(IconPurpose::ANY)
-                 : SortedSizesPx();
+  if (!web_app) {
+    return SortedSizesPx();
+  }
+
+  SortedSizesPx sorted_sizes;
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS)
+  if (!web_app->stored_trusted_icon_sizes(IconPurpose::MASKABLE).empty()) {
+    return web_app->stored_trusted_icon_sizes(IconPurpose::MASKABLE);
+  }
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS)
+
+  if (!web_app->stored_trusted_icon_sizes(IconPurpose::ANY).empty()) {
+    return web_app->stored_trusted_icon_sizes(IconPurpose::ANY);
+  }
+
+  return web_app->downloaded_icon_sizes(IconPurpose::ANY);
 }
 
 std::vector<WebAppShortcutsMenuItemInfo>
@@ -1905,8 +2176,9 @@ std::vector<webapps::AppId> WebAppRegistrar::GetAppIdsForAppSet(
     const AppSet& app_set) const {
   std::vector<webapps::AppId> app_ids;
 
-  for (const WebApp& app : app_set)
+  for (const WebApp& app : app_set) {
     app_ids.push_back(app.app_id());
+  }
 
   return app_ids;
 }
@@ -1943,6 +2215,26 @@ WebAppRegistrar::CountTotalUserInstalledAppsIncludingDiy() const {
   }
   return std::make_tuple(num_diy_apps_user_installed, num_user_installed,
                          num_non_syncing_user_installed);
+}
+
+std::tuple<AppsHavingNoTrustedIconsCount, AppsHavingTrustedIconsCount>
+WebAppRegistrar::CountAppsHavingTrustedIcons() const {
+  AppsHavingNoTrustedIconsCount num_apps_no_trusted_icons(0);
+  AppsHavingTrustedIconsCount num_apps_trusted_icons(0);
+  for (const WebApp& app : GetApps()) {
+    if (app.trusted_icons().empty()) {
+      ++num_apps_no_trusted_icons.value();
+    } else {
+      ++num_apps_trusted_icons.value();
+    }
+  }
+  return std::make_tuple(num_apps_no_trusted_icons, num_apps_trusted_icons);
+}
+
+bool WebAppRegistrar::IsDiyAppIconsMarkedMaskedOnMac(
+    const webapps::AppId& app_id) const {
+  const WebApp* app = GetAppById(app_id);
+  return app && app->is_diy_app() && app->diy_app_icons_masked_on_mac();
 }
 
 }  // namespace web_app

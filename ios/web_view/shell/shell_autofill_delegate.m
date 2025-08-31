@@ -119,7 +119,8 @@
 - (void)autofillController:(CWVAutofillController*)autofillController
      didSubmitFormWithName:(NSString*)formName
                    frameID:(NSString*)frameID
-             userInitiated:(BOOL)userInitiated {
+             userInitiated:(BOOL)userInitiated
+            perfectFilling:(BOOL)perfectFilling {
   // Not implemented.
 }
 
@@ -360,6 +361,11 @@
   [[self anyKeyWindow].rootViewController presentViewController:alertController
                                                        animated:YES
                                                      completion:nil];
+}
+
+- (void)autofillControllerDidLoginWithExistingPassword:
+    (CWVAutofillController*)autofillController {
+  NSLog(@"User logged in with an existing password");
 }
 
 #pragma mark - Private Methods

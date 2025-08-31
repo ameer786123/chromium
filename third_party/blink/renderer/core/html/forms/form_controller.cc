@@ -159,7 +159,7 @@ std::unique_ptr<SavedFormState> SavedFormState::Deserialize(
   if (!item_count)
     return nullptr;
   std::unique_ptr<SavedFormState> saved_form_state =
-      base::WrapUnique(new SavedFormState);
+      std::make_unique<SavedFormState>();
   while (item_count--) {
     if (index + 1 >= state_vector.size())
       return nullptr;
@@ -376,7 +376,7 @@ static String FormStateSignature() {
 Vector<String> DocumentState::ToStateVector() {
   auto* key_generator = MakeGarbageCollected<FormKeyGenerator>();
   std::unique_ptr<SavedFormStateMap> state_map =
-      base::WrapUnique(new SavedFormStateMap);
+      std::make_unique<SavedFormStateMap>();
   for (auto& control : GetControlList()) {
     DCHECK(control->ToHTMLElement().isConnected());
     if (!control->ShouldSaveAndRestoreFormControlState())
@@ -529,10 +529,9 @@ void FormController::RestoreControlStateOnUpgrade(ListedElement& control) {
 
 void FormController::ScheduleRestore() {
   document_->GetTaskRunner(TaskType::kInternalLoading)
-      ->PostTask(
-          FROM_HERE,
-          WTF::BindOnce(&FormController::RestoreAllControlsInDocumentOrder,
-                        WrapPersistent(this)));
+      ->PostTask(FROM_HERE,
+                 BindOnce(&FormController::RestoreAllControlsInDocumentOrder,
+                          WrapPersistent(this)));
 }
 
 void FormController::RestoreImmediately() {

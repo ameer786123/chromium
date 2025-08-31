@@ -4,8 +4,6 @@
 
 package org.chromium.content_public.browser;
 
-import androidx.annotation.VisibleForTesting;
-
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.content.browser.HostZoomMapImpl;
 
@@ -83,7 +81,7 @@ public class HostZoomMap {
         // system level setting. Here we need to do the reverse operation of the above, effectively
         // divide rather than multiply, so we will pass the reciprocal of |sSystemFontScale|.
         return HostZoomMapImpl.adjustZoomLevel(
-                HostZoomMapImpl.getZoomLevel(webContents), (float) 1 / sSystemFontScale);
+                HostZoomMapImpl.getZoomLevel(webContents), 1.0f / sSystemFontScale);
     }
 
     /**
@@ -136,12 +134,10 @@ public class HostZoomMap {
         return HostZoomMapImpl.getDefaultZoomLevel(context);
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     public static void setSystemFontScaleForTesting(float systemFontScale) {
         HostZoomMapImpl.setSystemFontScaleForTesting(systemFontScale);
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     public static void setShouldAdjustForOSLevelForTesting(boolean shouldAdjustForOSLevel) {
         HostZoomMapImpl.setShouldAdjustForOSLevelForTesting(shouldAdjustForOSLevel);
     }

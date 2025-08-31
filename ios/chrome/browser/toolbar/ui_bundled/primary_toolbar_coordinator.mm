@@ -13,16 +13,16 @@
 #import "ios/chrome/browser/banner_promo/model/default_browser_banner_promo_app_agent.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_controller.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_ui_updater.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/omnibox_text_field_ios.h"
+#import "ios/chrome/browser/omnibox/ui/omnibox_text_field_ios.h"
 #import "ios/chrome/browser/shared/coordinator/layout_guide/layout_guide_util.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/guided_tour_commands.h"
 #import "ios/chrome/browser/shared/public/commands/omnibox_commands.h"
 #import "ios/chrome/browser/shared/public/commands/popup_menu_commands.h"
 #import "ios/chrome/browser/shared/public/commands/settings_commands.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/adaptive_toolbar_coordinator+subclassing.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/primary_toolbar_mediator.h"
@@ -59,7 +59,7 @@
 
   CommandDispatcher* dispatcher = self.browser->GetCommandDispatcher();
 
-  BOOL isOffTheRecord = self.profile->IsOffTheRecord();
+  BOOL isOffTheRecord = self.isOffTheRecord;
 
   self.viewController = [[PrimaryToolbarViewController alloc] init];
   self.viewController.shouldHideOmniboxOnNTP = !isOffTheRecord;
@@ -94,18 +94,16 @@
   [super start];
   self.started = YES;
 
-  if (IsTabGroupInGridEnabled()) {
-    // The `_tabGroupIndicatorCoordinator` should be configured after the
-    // `AdaptiveToolbarCoordinator` to gain access to the `PrimaryToolbarView`.
-    _tabGroupIndicatorCoordinator = [[TabGroupIndicatorCoordinator alloc]
-        initWithBaseViewController:self.baseViewController
-                           browser:self.browser];
-    _tabGroupIndicatorCoordinator.toolbarHeightDelegate =
-        self.toolbarHeightDelegate;
-    [_tabGroupIndicatorCoordinator start];
-    [self.viewController
-        setTabGroupIndicatorView:_tabGroupIndicatorCoordinator.view];
-  }
+  // The `_tabGroupIndicatorCoordinator` should be configured after the
+  // `AdaptiveToolbarCoordinator` to gain access to the `PrimaryToolbarView`.
+  _tabGroupIndicatorCoordinator = [[TabGroupIndicatorCoordinator alloc]
+      initWithBaseViewController:self.baseViewController
+                         browser:self.browser];
+  _tabGroupIndicatorCoordinator.toolbarHeightDelegate =
+      self.toolbarHeightDelegate;
+  [_tabGroupIndicatorCoordinator start];
+  [self.viewController
+      setTabGroupIndicatorView:_tabGroupIndicatorCoordinator.view];
 }
 
 - (void)stop {
@@ -133,17 +131,28 @@
   return self.viewController;
 }
 
+#pragma mark - Subclassing
+
+- (BOOL)hasTabGridButton {
+  return !IsSplitToolbarMode(self.viewController);
+}
+
+- (BOOL)shouldPointArrowDownForTabGridIPH {
+  return NO;
+}
+
 #pragma mark - Private
 
 // Returns whether the banner promo is supported given the current view
 // controller state.
 - (BOOL)viewControllerSupportsBannerPromo {
-  return !self.viewController.locationBarIsExpanded;
+  return !self.viewController.locationBarIsExpanded &&
+         !_tabGroupIndicatorCoordinator.viewVisible;
 }
 
 // Returns the active banner promo app agent if it is available currently.
 - (DefaultBrowserBannerPromoAppAgent*)activeBannerPromoAppAgent {
-  if (self.profile->IsOffTheRecord()) {
+  if (self.isOffTheRecord) {
     return nil;
   }
 
@@ -151,10 +160,28 @@
       agentFromApp:self.browser->GetSceneState().profileState.appState];
 }
 
+#pragma mark - GuidedTourCommands
+
+- (void)highlightViewInStep:(GuidedTourStep)step {
+  if ([self hasTabGridButton] && step == GuidedTourStep::kNTP) {
+    [self.viewController IPHHighlightTabGridButton:YES];
+  }
+}
+
+- (void)stepCompleted:(GuidedTourStep)step {
+  if ([self hasTabGridButton] && step == GuidedTourStep::kNTP) {
+    [self.viewController IPHHighlightTabGridButton:NO];
+  }
+}
+
 #pragma mark - ToolbarCommands
 
 - (void)triggerToolbarSlideInAnimation {
   [self.viewController triggerToolbarSlideInAnimationFromBelow:NO];
+}
+
+- (void)indicateLensOverlayVisible:(BOOL)lensOverlayVisible {
+  // NO-OP
 }
 
 #pragma mark - PrimaryToolbarViewControllerDelegate
@@ -186,6 +213,12 @@
   [self.viewControllerDelegate
       locationBarContractedInViewController:viewController];
 
+  [self activeBannerPromoAppAgent].UICurrentlySupportsPromo =
+      [self viewControllerSupportsBannerPromo];
+}
+
+- (void)viewController:(PrimaryToolbarViewController*)viewController
+    tabGroupIndicatorVisibilityUpdated:(BOOL)visible {
   [self activeBannerPromoAppAgent].UICurrentlySupportsPromo =
       [self viewControllerSupportsBannerPromo];
 }

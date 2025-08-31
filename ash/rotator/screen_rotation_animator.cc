@@ -187,7 +187,7 @@ void ScreenRotationAnimator::StartRotationAnimation(
     RequestCopyScreenRotationContainerLayer(
         std::make_unique<viz::CopyOutputRequest>(
             viz::CopyOutputRequest::ResultFormat::RGBA,
-            viz::CopyOutputRequest::ResultDestination::kNativeTextures,
+            viz::CopyOutputRequest::ResultDestination::kSharedImage,
             CreateAfterCopyCallbackBeforeRotation(
                 std::move(rotation_request))));
     screen_rotation_state_ = COPY_REQUESTED;
@@ -323,7 +323,7 @@ void ScreenRotationAnimator::OnScreenRotationContainerLayerCopiedBeforeRotation(
   RequestCopyScreenRotationContainerLayer(
       std::make_unique<viz::CopyOutputRequest>(
           viz::CopyOutputRequest::ResultFormat::RGBA,
-          viz::CopyOutputRequest::ResultDestination::kNativeTextures,
+          viz::CopyOutputRequest::ResultDestination::kSharedImage,
           CreateAfterCopyCallbackAfterRotation(std::move(rotation_request))));
 }
 
@@ -480,7 +480,7 @@ void ScreenRotationAnimator::Rotate(
   // determine the stale status.
   rotation_request_id_++;
   const int64_t display_id =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(root_window_).id();
+      display::Screen::Get()->GetDisplayNearestWindow(root_window_).id();
   std::unique_ptr<ScreenRotationRequest> rotation_request =
       std::make_unique<ScreenRotationRequest>(rotation_request_id_, display_id,
                                               new_rotation, source, mode);

@@ -35,7 +35,6 @@
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "services/viz/privileged/mojom/compositing/begin_frame_observer.mojom.h"
 #include "services/viz/privileged/mojom/compositing/display_private.mojom.h"
-#include "services/viz/public/cpp/gpu/context_provider_command_buffer.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/android/resources/ui_resource_provider.h"
@@ -50,9 +49,15 @@ namespace cc::slim {
 class Layer;
 }  // namespace cc::slim
 
+namespace gpu {
+class GpuChannelHost;
+}  // namespace gpu
+
 namespace viz {
+class ContextProviderCommandBuffer;
 class FrameSinkId;
 class HostDisplayClient;
+class RasterContextProvider;
 }  // namespace viz
 
 namespace content {
@@ -100,6 +105,8 @@ class CONTENT_EXPORT CompositorImpl : public Compositor,
   void AddFrameSubmissionObserver(FrameSubmissionObserver* observer) override;
   void RemoveFrameSubmissionObserver(
       FrameSubmissionObserver* observer) override;
+
+  scoped_refptr<viz::RasterContextProvider> GetRasterContextProvider();
 
  private:
   class AndroidHostDisplayClient;
@@ -149,7 +156,6 @@ class CONTENT_EXPORT CompositorImpl : public Compositor,
   void AddChildFrameSink(const viz::FrameSinkId& frame_sink_id) override;
   void RemoveChildFrameSink(const viz::FrameSinkId& frame_sink_id) override;
   bool IsDrawingFirstVisibleFrame() const override;
-  void SetVSyncPaused(bool paused) override;
   void OnUpdateRefreshRate(float refresh_rate) override;
   void OnUpdateSupportedRefreshRates(
       const std::vector<float>& supported_refresh_rates) override;
@@ -218,6 +224,8 @@ class CONTENT_EXPORT CompositorImpl : public Compositor,
   // is the one attached by the compositor client.
   scoped_refptr<cc::slim::Layer> subroot_layer_;
 
+  scoped_refptr<viz::RasterContextProvider> raster_context_provider_;
+
   // Destruction order matters here:
   std::unique_ptr<cc::slim::LayerTree> host_;
   ui::ResourceManagerImpl resource_manager_;
@@ -255,7 +263,6 @@ class CONTENT_EXPORT CompositorImpl : public Compositor,
   // Viz-specific members for communicating with the display.
   mojo::AssociatedRemote<viz::mojom::DisplayPrivate> display_private_;
   std::unique_ptr<viz::HostDisplayClient> display_client_;
-  bool vsync_paused_ = false;
 
   viz::ParentLocalSurfaceIdAllocator local_surface_id_allocator_;
 

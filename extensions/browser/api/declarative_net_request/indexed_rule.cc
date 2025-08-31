@@ -151,8 +151,8 @@ uint8_t GetOptionsMask(const dnr_api::Rule& parsed_rule) {
     mask |= flat_rule::OptionFlag_IS_ALLOWLIST;
   }
 
-  if (!IsCaseSensitive(parsed_rule)) {
-    mask |= flat_rule::OptionFlag_IS_CASE_INSENSITIVE;
+  if (IsCaseSensitive(parsed_rule)) {
+    mask |= flat_rule::OptionFlag_IS_MATCH_CASE;
   }
 
   switch (parsed_rule.condition.domain_type) {
@@ -703,6 +703,11 @@ ParseResult IndexedRule::CreateIndexedRule(dnr_api::Rule parsed_rule,
     return ParseResult::ERROR_EMPTY_REQUEST_DOMAINS_LIST;
   }
 
+  if (parsed_rule.condition.top_domains &&
+      parsed_rule.condition.top_domains->empty()) {
+    return ParseResult::ERROR_EMPTY_TOP_DOMAINS_LIST;
+  }
+
   if (parsed_rule.condition.resource_types &&
       parsed_rule.condition.resource_types->empty()) {
     return ParseResult::ERROR_EMPTY_RESOURCE_TYPES_LIST;
@@ -819,6 +824,17 @@ ParseResult IndexedRule::CreateIndexedRule(dnr_api::Rule parsed_rule,
     return ParseResult::ERROR_NON_ASCII_EXCLUDED_REQUEST_DOMAIN;
   }
 
+  if (!CanonicalizeDomains(std::move(parsed_rule.condition.top_domains),
+                           &indexed_rule->top_domains)) {
+    return ParseResult::ERROR_NON_ASCII_TOP_DOMAIN;
+  }
+
+  if (!CanonicalizeDomains(
+          std::move(parsed_rule.condition.excluded_top_domains),
+          &indexed_rule->excluded_top_domains)) {
+    return ParseResult::ERROR_NON_ASCII_EXCLUDED_TOP_DOMAIN;
+  }
+
   {
     ParseTabIds(base::OptionalToPtr(parsed_rule.condition.tab_ids),
                 indexed_rule->tab_ids);
@@ -887,7 +903,7 @@ ParseResult IndexedRule::CreateIndexedRule(dnr_api::Rule parsed_rule,
   }
 
   // Lower-case case-insensitive patterns as required by url pattern index.
-  if (indexed_rule->options & flat_rule::OptionFlag_IS_CASE_INSENSITIVE) {
+  if (!(indexed_rule->options & flat_rule::OptionFlag_IS_MATCH_CASE)) {
     indexed_rule->url_pattern = base::ToLowerASCII(indexed_rule->url_pattern);
   }
 

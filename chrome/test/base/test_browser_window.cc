@@ -11,15 +11,13 @@
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "components/sharing_message/sharing_dialog_data.h"
-#include "components/user_education/common/feature_promo/feature_promo_controller.h"
-#include "components/user_education/common/feature_promo/feature_promo_handle.h"
-#include "components/user_education/common/feature_promo/feature_promo_result.h"
 #include "components/user_education/common/new_badge/new_badge_controller.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
-#include "ui/base/interaction/element_identifier.h"
+#include "content/public/browser/web_contents.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/color/color_provider_key.h"
 #include "ui/color/color_provider_manager.h"
@@ -31,18 +29,16 @@ std::unique_ptr<Browser> CreateBrowserWithTestWindowForParams(
     Browser::CreateParams params) {
   DCHECK(!params.window);
   auto window = std::make_unique<TestBrowserWindow>();
-  auto* window_ptr = window.get();
-  new TestBrowserWindowOwner(std::move(window));
-  params.window = window_ptr;
-  window_ptr->set_is_minimized(params.initial_show_state ==
-                               ui::mojom::WindowShowState::kMinimized);
+  window->set_is_minimized(params.initial_show_state ==
+                           ui::mojom::WindowShowState::kMinimized);
   // Tests generally expect TestBrowserWindows not to be active.
-  window_ptr->set_is_active(
+  window->set_is_active(
       params.initial_show_state != ui::mojom::WindowShowState::kInactive &&
       params.initial_show_state != ui::mojom::WindowShowState::kDefault &&
       params.initial_show_state != ui::mojom::WindowShowState::kMinimized);
+  params.window = window.release();
 
-  return std::unique_ptr<Browser>(Browser::Create(params));
+  return Browser::DeprecatedCreateOwnedForTesting(params);
 }
 
 // TestBrowserWindow::TestLocationBar -----------------------------------------
@@ -66,9 +62,21 @@ content::WebContents* TestBrowserWindow::TestLocationBar::GetWebContents() {
 
 // TestBrowserWindow ----------------------------------------------------------
 
-TestBrowserWindow::TestBrowserWindow() = default;
+TestBrowserWindow::TestBrowserWindow() {
+  // TestBrowserWindow will always be instantiated before its Browser.
+  // TODO(crbug.com/413168662): This can be removed once Browser is updated to
+  // always own its BrowserWindow.
+  browser_list_observer_.Observe(BrowserList::GetInstance());
+}
 
-TestBrowserWindow::~TestBrowserWindow() = default;
+TestBrowserWindow::~TestBrowserWindow() {
+  if (browser_) {
+    // BrowserWindow implementations are expected to call
+    // TearDownPreBrowserWindowDestruction() before destruction.
+    browser_->GetFeatures().TearDownPreBrowserWindowDestruction();
+    browser_ = nullptr;
+  }
+}
 
 void TestBrowserWindow::Close() {
   if (close_callback_) {
@@ -93,6 +101,10 @@ bool TestBrowserWindow::IsOnCurrentWorkspace() const {
   return true;
 }
 
+bool TestBrowserWindow::IsVisibleOnScreen() const {
+  return true;
+}
+
 void TestBrowserWindow::SetTopControlsShownRatio(
     content::WebContents* web_contents,
     float ratio) {}
@@ -113,10 +125,6 @@ const ui::ThemeProvider* TestBrowserWindow::GetThemeProvider() const {
 const ui::ColorProvider* TestBrowserWindow::GetColorProvider() const {
   return ui::ColorProviderManager::Get().GetColorProviderFor(
       ui::ColorProviderKey());
-}
-
-ui::ElementContext TestBrowserWindow::GetElementContext() {
-  return element_context_;
 }
 
 int TestBrowserWindow::GetTopControlsHeight() const {
@@ -200,10 +208,6 @@ ExtensionsContainer* TestBrowserWindow::GetExtensionsContainer() {
   return nullptr;
 }
 
-bool TestBrowserWindow::PreHandleMouseEvent(const blink::WebMouseEvent& event) {
-  return false;
-}
-
 content::KeyboardEventProcessingResult
 TestBrowserWindow::PreHandleKeyboardEvent(
     const input::NativeWebKeyboardEvent& event) {
@@ -227,8 +231,8 @@ bool TestBrowserWindow::IsTabStripEditable() const {
   return is_tab_strip_editable_;
 }
 
-void TestBrowserWindow::SetIsTabStripEditable(bool is_editable) {
-  is_tab_strip_editable_ = is_editable;
+void TestBrowserWindow::SetTabStripNotEditableForTesting() {
+  is_tab_strip_editable_ = false;
 }
 
 bool TestBrowserWindow::IsToolbarVisible() const {
@@ -304,9 +308,6 @@ TestBrowserWindow::ShowSendTabToSelfPromoBubble(content::WebContents* contents,
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
-views::Button* TestBrowserWindow::GetSharingHubIconButton() {
-  return nullptr;
-}
 void TestBrowserWindow::ToggleMultitaskMenu() const {
   return;
 }
@@ -317,13 +318,6 @@ sharing_hub::SharingHubBubbleView* TestBrowserWindow::ShowSharingHubBubble(
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-bool TestBrowserWindow::IsDownloadShelfVisible() const {
-  return false;
-}
-
-DownloadShelf* TestBrowserWindow::GetDownloadShelf() {
-  return &download_shelf_;
-}
 views::View* TestBrowserWindow::GetTopContainer() {
   return nullptr;
 }
@@ -342,6 +336,12 @@ std::unique_ptr<FindBar> TestBrowserWindow::CreateFindBar() {
 
 web_modal::WebContentsModalDialogHost*
     TestBrowserWindow::GetWebContentsModalDialogHost() {
+  return nullptr;
+}
+
+web_modal::WebContentsModalDialogHost*
+TestBrowserWindow::GetWebContentsModalDialogHostFor(
+    content::WebContents* web_contents) {
   return nullptr;
 }
 
@@ -371,118 +371,18 @@ void TestBrowserWindow::SetCloseCallback(base::OnceClosure close_callback) {
   close_callback_ = std::move(close_callback);
 }
 
-user_education::FeaturePromoController*
-TestBrowserWindow::GetFeaturePromoControllerImpl() {
-  return feature_promo_controller_.get();
+bool TestBrowserWindow::IsTabModalPopupDeprecated() const {
+  return is_tab_modal_popup_deprecated_;
 }
 
-bool TestBrowserWindow::IsFeaturePromoQueued(
-    const base::Feature& iph_feature) const {
-  return feature_promo_controller_ &&
-         feature_promo_controller_->GetPromoStatus(iph_feature) ==
-             user_education::FeaturePromoStatus::kQueued;
+void TestBrowserWindow::SetIsTabModalPopupDeprecated(
+    bool is_tab_modal_popup_deprecated) {
+  is_tab_modal_popup_deprecated_ = is_tab_modal_popup_deprecated;
 }
 
-bool TestBrowserWindow::IsFeaturePromoActive(
-    const base::Feature& iph_feature) const {
-  return feature_promo_controller_ &&
-         feature_promo_controller_->IsPromoActive(
-             iph_feature, user_education::FeaturePromoStatus::kContinued);
-}
-
-user_education::FeaturePromoResult TestBrowserWindow::CanShowFeaturePromo(
-    const base::Feature& iph_feature) const {
-  if (!feature_promo_controller_) {
-    return user_education::FeaturePromoResult::kBlockedByContext;
+void TestBrowserWindow::OnBrowserAdded(Browser* browser) {
+  if (browser->create_params().window == this) {
+    browser_ = browser;
+    browser_list_observer_.Reset();
   }
-  return feature_promo_controller_->CanShowPromo(iph_feature);
-}
-
-void TestBrowserWindow::MaybeShowFeaturePromo(
-    user_education::FeaturePromoParams params) {
-  if (!feature_promo_controller_) {
-    user_education::FeaturePromoController::PostShowPromoResult(
-        std::move(params.show_promo_result_callback),
-        user_education::FeaturePromoResult::kBlockedByContext);
-    return;
-  }
-
-  feature_promo_controller_->MaybeShowPromo(std::move(params));
-}
-
-void TestBrowserWindow::MaybeShowStartupFeaturePromo(
-    user_education::FeaturePromoParams params) {
-  if (feature_promo_controller_) {
-    feature_promo_controller_->MaybeShowStartupPromo(std::move(params));
-  }
-}
-
-bool TestBrowserWindow::AbortFeaturePromo(const base::Feature& iph_feature) {
-  return feature_promo_controller_ &&
-         feature_promo_controller_->EndPromo(
-             iph_feature, user_education::EndFeaturePromoReason::kAbortPromo);
-}
-
-user_education::FeaturePromoHandle
-TestBrowserWindow::CloseFeaturePromoAndContinue(
-    const base::Feature& iph_feature) {
-  return feature_promo_controller_
-             ? feature_promo_controller_->CloseBubbleAndContinuePromo(
-                   iph_feature)
-             : user_education::FeaturePromoHandle();
-}
-
-bool TestBrowserWindow::NotifyFeaturePromoFeatureUsed(
-    const base::Feature& feature,
-    FeaturePromoFeatureUsedAction action) {
-  if (feature_promo_controller_ &&
-      action == FeaturePromoFeatureUsedAction::kClosePromoIfPresent) {
-    return feature_promo_controller_->EndPromo(
-        feature, user_education::EndFeaturePromoReason::kFeatureEngaged);
-  }
-  return false;
-}
-
-void TestBrowserWindow::NotifyAdditionalConditionEvent(const char* event_name) {
-}
-
-user_education::DisplayNewBadge TestBrowserWindow::MaybeShowNewBadgeFor(
-    const base::Feature& new_badge_feature) {
-  return user_education::DisplayNewBadge();
-}
-
-void TestBrowserWindow::NotifyNewBadgeFeatureUsed(
-    const base::Feature& feature) {}
-
-bool TestBrowserWindow::IsTabModalPopup() const {
-  return is_tab_modal_popup_;
-}
-
-void TestBrowserWindow::SetIsTabModalPopup(bool is_tab_modal_popup) {
-  is_tab_modal_popup_ = is_tab_modal_popup;
-}
-
-user_education::FeaturePromoController*
-TestBrowserWindow::SetFeaturePromoController(
-    std::unique_ptr<user_education::FeaturePromoController>
-        feature_promo_controller) {
-  feature_promo_controller_ = std::move(feature_promo_controller);
-  return feature_promo_controller_.get();
-}
-
-// TestBrowserWindowOwner -----------------------------------------------------
-
-TestBrowserWindowOwner::TestBrowserWindowOwner(
-    std::unique_ptr<TestBrowserWindow> window)
-    : window_(std::move(window)) {
-  BrowserList::AddObserver(this);
-}
-
-TestBrowserWindowOwner::~TestBrowserWindowOwner() {
-  BrowserList::RemoveObserver(this);
-}
-
-void TestBrowserWindowOwner::OnBrowserRemoved(Browser* browser) {
-  if (browser->window() == window_.get())
-    delete this;
 }

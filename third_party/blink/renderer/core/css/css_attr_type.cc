@@ -50,10 +50,7 @@ std::optional<CSSPrimitiveValue::UnitType> ConsumeDimensionUnitType(
 
 std::optional<CSSAttrType> CSSAttrType::Consume(CSSParserTokenStream& stream) {
   if (stream.Peek().GetType() == kIdentToken &&
-      ((RuntimeEnabledFeatures::CSSAttrRawStringEnabled() &&
-        stream.Peek().Value() == "raw-string") ||
-       (!RuntimeEnabledFeatures::CSSAttrRawStringEnabled() &&
-        stream.Peek().Value() == "string"))) {
+      stream.Peek().Value() == "raw-string") {
     stream.Consume();
     return CSSAttrType();
   }
@@ -89,7 +86,7 @@ const CSSValue* CSSAttrType::Parse(StringView text,
     if (CSSNumericLiteralValue* literal =
             DynamicTo<CSSNumericLiteralValue>(number_value)) {
       return MakeGarbageCollected<CSSNumericLiteralValue>(
-          literal->GetDoubleValue(), *dimension_unit_);
+          literal->ClampedDoubleValue(), *dimension_unit_);
     }
     return nullptr;
   }

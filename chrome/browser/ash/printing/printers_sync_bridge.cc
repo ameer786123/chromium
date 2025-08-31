@@ -143,7 +143,8 @@ class PrintersSyncBridge::StoreProxy {
 
     if (parse_error) {
       owner_->change_processor()->ReportError(
-          {FROM_HERE, "Failed to deserialize all specifics."});
+          {FROM_HERE,
+           syncer::ModelError::Type::kPrintersFailedToDeserializeSpecifics});
       return;
     }
 
@@ -311,12 +312,14 @@ PrintersSyncBridge::GetAllDataForDebugging() {
   return batch;
 }
 
-std::string PrintersSyncBridge::GetClientTag(const EntityData& entity_data) {
+std::string PrintersSyncBridge::GetClientTag(
+    const EntityData& entity_data) const {
   // Printers were never synced prior to USS so this can match GetStorageKey.
   return GetStorageKey(entity_data);
 }
 
-std::string PrintersSyncBridge::GetStorageKey(const EntityData& entity_data) {
+std::string PrintersSyncBridge::GetStorageKey(
+    const EntityData& entity_data) const {
   DCHECK(entity_data.specifics.has_printer());
   return entity_data.specifics.printer().id();
 }

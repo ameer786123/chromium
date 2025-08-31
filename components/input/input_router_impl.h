@@ -8,7 +8,6 @@
 #include <stdint.h>
 
 #include <memory>
-#include <queue>
 
 #include "base/containers/flat_map.h"
 #include "base/gtest_prod_util.h"
@@ -278,6 +277,13 @@ class COMPONENT_EXPORT(INPUT) InputRouterImpl
   // The host receiver associated with the widget input handler from
   // the widget.
   mojo::Receiver<blink::mojom::WidgetInputHandlerHost> host_receiver_{this};
+
+  // The last touch move event that was received. If the
+  // kSendEmptyGestureScrollUpdate flag is enabled, `last_touch_move_event_` is
+  // stored until a gesture scroll update event is received and the two are sent
+  // to the renderer together. Otherwise, this is not used.
+  std::optional<std::unique_ptr<blink::WebCoalescedInputEvent>>
+      last_touch_move_event_;
 
   base::WeakPtr<InputRouterImpl> weak_this_;
   base::WeakPtrFactory<InputRouterImpl> weak_ptr_factory_{this};

@@ -10,7 +10,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.offlinepages.OfflinePageUtils;
 import org.chromium.chrome.browser.price_tracking.PriceDropNotificationManager;
@@ -22,6 +21,7 @@ import org.chromium.components.bookmarks.BookmarkType;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * Helper class for managing the UI flow for bookmarking the active tab and kicking off the backend.
@@ -90,7 +90,7 @@ public class TabBookmarker {
      *
      * @param currentTab The tab being currently shown.
      */
-    public void startOrModifyPriceTracking(Tab currentTab) {
+    public void startOrModifyPriceTracking(@Nullable Tab currentTab) {
         BookmarkId bookmarkId = mBookmarkModelSupplier.get().getUserBookmarkIdForTab(currentTab);
         if (bookmarkId == null) {
             addOrEditBookmark(currentTab, BookmarkType.NORMAL, /* fromExplicitTrackUi= */ true);
@@ -112,8 +112,10 @@ public class TabBookmarker {
     }
 
     private void addOrEditBookmark(
-            final Tab tabToBookmark, @BookmarkType int bookmarkType, boolean fromExplicitTrackUi) {
-        if (tabToBookmark == null || tabToBookmark.isFrozen()) {
+            final @Nullable Tab tabToBookmark,
+            @BookmarkType int bookmarkType,
+            boolean fromExplicitTrackUi) {
+        if (tabToBookmark == null) {
             return;
         }
 

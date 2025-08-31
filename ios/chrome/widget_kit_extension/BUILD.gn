@@ -41,10 +41,12 @@ swift_source_set("widget_kit_extension_swift") {
     "quick_actions_widget.swift",
     "search_passwords_widget.swift",
     "search_widget.swift",
+    "select_profile_intent.swift",
     "shortcuts_widget.swift",
     "timeline_provider_util.swift",
     "widget_urls.swift",
   ]
+  generate_intents = true
   bridge_header = "widget_kit_swift_bridge.h"
 
   deps = [
@@ -53,7 +55,7 @@ swift_source_set("widget_kit_extension_swift") {
     "//ios/chrome/common/app_group:helper",
     "//ios/chrome/common/ntp_tile",
     "//ios/chrome/widget_kit_extension/resources",
-    "//ui/base:base",
+    "//ui/base",
   ]
 
   # Swift does not have the equivalent of __IPHONE_16_0, so use a
@@ -68,14 +70,13 @@ swift_source_set("widget_kit_extension_swift") {
 
   if (ios_enable_widgets_for_mim) {
     configs += [ ":ios_enable_widgets_for_mim" ]
-    generate_intents = true
-    sources += [ "select_profile_intent.swift" ]
   }
 
   frameworks = [
     "WidgetKit.framework",
     "Foundation.framework",
     "SwiftUI.framework",
+    "AppIntents.framework",
   ]
 }
 

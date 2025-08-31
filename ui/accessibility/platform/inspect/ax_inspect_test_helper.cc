@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "ui/accessibility/platform/inspect/ax_inspect_test_helper.h"
 
 #include <string>
@@ -380,18 +375,6 @@ FilePath::StringType AXInspectTestHelper::GetVersionSpecificExpectedFileSuffix(
     if (!expectations_qualifier.empty())
       suffix = FILE_PATH_LITERAL("-") + expectations_qualifier;
     return suffix + FILE_PATH_LITERAL("-expected-blink-cros.txt");
-  }
-#endif
-#if BUILDFLAG(IS_MAC)
-  // When running tests in a platform specific test directory (such as
-  // content/test/data/accessibility/mac/) the expectation_type_ == content.
-  if ((expectation_type_ == "mac" || expectation_type_ == "content") &&
-      base::mac::MacOSMajorVersion() < 11) {
-    FilePath::StringType suffix;
-    if (!expectations_qualifier.empty()) {
-      suffix = FILE_PATH_LITERAL("-") + expectations_qualifier;
-    }
-    return suffix + FILE_PATH_LITERAL("-expected-mac-before-11.txt");
   }
 #endif
   return FILE_PATH_LITERAL("");

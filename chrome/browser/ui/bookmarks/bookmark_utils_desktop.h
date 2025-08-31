@@ -14,21 +14,30 @@
 #include "components/page_load_metrics/browser/navigation_handle_user_data.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "ui/base/window_open_disposition.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 
 class Browser;
 struct NavigateParams;
-
-namespace bookmarks {
-class BookmarkNode;
-}
+class TabGroup;
 
 namespace content {
 class BrowserContext;
 class NavigationHandle;
 }  // namespace content
 
-namespace chrome {
+namespace tab_groups {
+class TabGroupSyncService;
+}  // namespace tab_groups
+
+namespace bookmarks {
+class BookmarkNode;
+
+enum OpenAllBookmarksContext {
+  kNone = 0,     // Open all bookmarks as separate tabs.
+  kInGroup = 1,  // Open all bookmarks in a tab group.
+  kInSplit = 2,  // Open all bookmarks in a split tab.
+  kMaxValue = kInSplit,
+};
 
 // Wraps bookmark navigations to support view testing.
 class BookmarkNavigationWrapper {
@@ -42,6 +51,9 @@ class BookmarkNavigationWrapper {
   // Provide an instance for use in testing.
   static void SetInstanceForTesting(BookmarkNavigationWrapper* instance);
 };
+
+// Set whether to override connected group to skip UI for testing.
+void SetOverrideConnectedGroupForTesting(bool value);
 
 using TabGroupData =
     std::pair<std::optional<tab_groups::TabGroupId>, std::u16string>;
@@ -57,7 +69,8 @@ extern size_t kNumBookmarkUrlsBeforePrompting;
 // the user first. Returns immediately, opening the bookmarks
 // asynchronously if prompting the user. `browser` is the browser from
 // which the bookmarks were opened. Its window is used as the anchor for
-// the dialog (if shown).
+// the dialog (if shown). `context` can optionally open the bookmarks into a
+// tab group or split view.
 // `launch_action` represents the location and time of the bookmark launch
 // action for callsites that support it.
 // TODO(crbug.com/40914589): This should be made non-optional once all callsites
@@ -67,7 +80,8 @@ void OpenAllIfAllowed(
     const std::vector<
         raw_ptr<const bookmarks::BookmarkNode, VectorExperimental>>& nodes,
     WindowOpenDisposition initial_disposition,
-    bool add_to_group,
+    bookmarks::OpenAllBookmarksContext context =
+        bookmarks::OpenAllBookmarksContext::kNone,
     page_load_metrics::NavigationHandleUserData::InitiatorLocation
         navigation_type = page_load_metrics::NavigationHandleUserData::
             InitiatorLocation::kOther,
@@ -93,6 +107,13 @@ bool ConfirmDeleteBookmarkNode(gfx::NativeWindow window,
 // Shows the bookmark all tabs dialog.
 void ShowBookmarkAllTabsDialog(Browser* browser);
 
+// Shows the bookmark tab group dialog.
+void ShowBookmarkTabGroupDialog(
+    Browser* browser,
+    const TabGroup& tab_group,
+    base::OnceCallback<void(Browser*, const tab_groups::TabGroupId&)>
+        on_save_callback = base::DoNothing());
+
 // Returns true if OpenAll() can open at least one bookmark of type url
 // in |selection|.
 bool HasBookmarkURLs(const std::vector<raw_ptr<const bookmarks::BookmarkNode,
@@ -111,6 +132,17 @@ void GetURLsAndFoldersForTabEntries(
     std::vector<std::pair<GURL, std::u16string>> tab_entries,
     base::flat_map<int, TabGroupData> groups_by_index);
 
-}  // namespace chrome
+// Populates |folder_data| with all tabs from the tab group.
+void GetURLsAndFoldersForTabGroup(
+    const Browser* browser,
+    const TabGroup& tab_group,
+    std::vector<BookmarkEditor::EditDetails::BookmarkData>* folder_data);
+
+// Suggest a unique name for tab group based on the bookmark folder's name.
+std::u16string SuggestUniqueTabGroupName(
+    std::u16string folder_title,
+    const tab_groups::TabGroupSyncService* tab_group_sync_service);
+
+}  // namespace bookmarks
 
 #endif  // CHROME_BROWSER_UI_BOOKMARKS_BOOKMARK_UTILS_DESKTOP_H_

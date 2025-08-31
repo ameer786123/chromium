@@ -33,9 +33,7 @@ namespace {
 // When enabled, the host timezone id is evaluated only when needed.
 // TODO(crbug.com/40287434): Cleanup the feature after running the experiment,
 // no later than January 2025.
-BASE_FEATURE(kLazyBlinkTimezoneInit,
-             "LazyBlinkTimezoneInit",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(LazyBlinkTimezoneInit, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Notify V8 that the date/time configuration of the system might have changed.
 void NotifyTimezoneChangeToV8(v8::Isolate* isolate) {
@@ -56,7 +54,7 @@ void NotifyTimezoneChangeOnWorkerThread(WorkerThread* worker_thread) {
 String GetTimezoneId(const icu::TimeZone& timezone) {
   icu::UnicodeString unicode_timezone_id;
   timezone.getID(unicode_timezone_id);
-  return String(WTF::unicode::ToSpan(unicode_timezone_id));
+  return String(unicode::ToSpan(unicode_timezone_id));
 }
 
 String GetCurrentTimezoneId() {
@@ -95,8 +93,7 @@ bool SetIcuTimeZoneAndNotifyV8(const String& timezone_id) {
   Thread::MainThread()
       ->Scheduler()
       ->ToMainThreadScheduler()
-      ->ForEachMainThreadIsolate(WTF::BindRepeating(
-          [](v8::Isolate* isolate) { NotifyTimezoneChangeToV8(isolate); }));
+      ->ForEachMainThreadIsolate(&NotifyTimezoneChangeToV8);
   WorkerThread::CallOnAllWorkerThreads(&NotifyTimezoneChangeOnWorkerThread,
                                        TaskType::kInternalDefault);
   DispatchTimeZoneChangeEventToFrames();

@@ -126,6 +126,12 @@ class WebIdlSchemaTest(unittest.TestCase):
     self.assertEqual('testWebIdl', loaded[0]['namespace'])
     self.idl_basics = loaded[0]
 
+  def testFunctionBasics(self):
+    function = getFunction(self.idl_basics, 'returnsUndefined')
+    self.assertEqual('returnsUndefined', function.get('name'))
+    self.assertEqual([], function.get('parameters'))
+    self.assertEqual('function', function.get('type'))
+
   def testFunctionReturnTypes(self):
     schema = self.idl_basics
     # Test basic types.
@@ -165,39 +171,78 @@ class WebIdlSchemaTest(unittest.TestCase):
         'name': 'returnsCustomType',
         '$ref': 'ExampleType'
     }, getFunctionReturn(schema, 'returnsCustomType'))
+    self.assertEqual(
+        {
+            'name': 'returnsDOMStringSequence',
+            'type': 'array',
+            'items': {
+                'type': 'string'
+            }
+        }, getFunctionReturn(schema, 'returnsDOMStringSequence'))
+    self.assertEqual(
+        {
+            'name': 'returnsCustomTypeSequence',
+            'type': 'array',
+            'items': {
+                '$ref': 'ExampleType'
+            }
+        }, getFunctionReturn(schema, 'returnsCustomTypeSequence'))
 
   def testPromiseBasedReturn(self):
     schema = self.idl_basics
     self.assertEqual(
         {
             'name': 'callback',
+            'optional': True,
             'parameters': [{
                 'type': 'string'
             }],
-            'type': 'promise'
         }, getFunctionAsyncReturn(schema, 'stringPromiseReturn'))
     self.assertEqual(
         {
             'name': 'callback',
+            'optional': True,
             'parameters': [{
                 'optional': True,
                 'type': 'string'
             }],
-            'type': 'promise'
         }, getFunctionAsyncReturn(schema, 'nullablePromiseReturn'))
     self.assertEqual(
         {
             'name': 'callback',
+            'optional': True,
             'parameters': [{
                 '$ref': 'ExampleType'
             }],
-            'type': 'promise'
         }, getFunctionAsyncReturn(schema, 'customTypePromiseReturn'))
-    self.assertEqual({
-        'name': 'callback',
-        'parameters': [],
-        'type': 'promise'
-    }, getFunctionAsyncReturn(schema, 'undefinedPromiseReturn'))
+    self.assertEqual(
+        {
+            'name': 'callback',
+            'optional': True,
+            'parameters': [],
+        }, getFunctionAsyncReturn(schema, 'undefinedPromiseReturn'))
+    self.assertEqual(
+        {
+            'name': 'callback',
+            'optional': True,
+            'parameters': [{
+                'type': 'array',
+                'items': {
+                    'type': 'integer'
+                }
+            }],
+        }, getFunctionAsyncReturn(schema, 'longSequencePromiseReturn'))
+    self.assertEqual(
+        {
+            'name': 'callback',
+            'optional': True,
+            'parameters': [{
+                'type': 'array',
+                'items': {
+                    '$ref': 'ExampleType'
+                }
+            }],
+        }, getFunctionAsyncReturn(schema, 'customTypeSequencePromiseReturn'))
 
   # Tests function parameters are processed as expected.
   def testFunctionParameters(self):
@@ -234,6 +279,21 @@ class WebIdlSchemaTest(unittest.TestCase):
         'type': 'string'
     }], getFunctionParameters(schema, 'takesOptionalInnerArgument'))
     self.assertEqual([{
+        'name': 'sequenceArgument',
+        'type': 'array',
+        'items': {
+            'type': 'boolean'
+        }
+    }], getFunctionParameters(schema, 'takesSequenceArgument'))
+    self.assertEqual([{
+        'name': 'optionalSequenceArgument',
+        'type': 'array',
+        'optional': True,
+        'items': {
+            'type': 'boolean'
+        }
+    }], getFunctionParameters(schema, 'takesOptionalSequenceArgument'))
+    self.assertEqual([{
         'name': 'customTypeArgument',
         '$ref': 'ExampleType'
     }], getFunctionParameters(schema, 'takesCustomType'))
@@ -242,15 +302,18 @@ class WebIdlSchemaTest(unittest.TestCase):
         'optional': True,
         '$ref': 'ExampleType'
     }], getFunctionParameters(schema, 'takesOptionalCustomType'))
+    self.assertEqual([{
+        'name': 'enumArgument',
+        '$ref': 'EnumType'
+    }], getFunctionParameters(schema, 'takesEnum'))
 
   # Tests function descriptions are processed as expected.
-  # TODO(crbug.com/379052294): Add testcases for function return descriptions
-  # once support for those are added to the processor.
   def testFunctionDescriptions(self):
     schema = self.idl_basics
     # A function without a preceding comment has no 'description' key.
     self.assertTrue('description' not in getFunction(schema, 'noDescription'))
 
+    # Basic single and multi-line function comments.
     self.assertEqual(
         'One line description.',
         getFunction(schema, 'oneLineDescription').get('description'))
@@ -262,10 +325,12 @@ class WebIdlSchemaTest(unittest.TestCase):
         ' paragraph tags.</p>',
         getFunction(schema, 'paragraphedDescription').get('description'))
 
+    # Function with parameter comments.
     function = getFunction(schema, 'parameterComments')
     self.assertEqual('This function has parameter comments.',
                      function.get('description'))
     function_parameters = getFunctionParameters(schema, 'parameterComments')
+    self.assertEqual(2, len(function_parameters))
     self.assertEqual(
         {
             'description':
@@ -285,9 +350,69 @@ class WebIdlSchemaTest(unittest.TestCase):
             '$ref': 'ExampleType'
         }, function_parameters[1])
 
+    # Basic descriptions on a promise returning async function.
+    promise_function = getFunction(schema, 'describedPromiseReturn')
+    self.assertEqual(
+        ('Promise returning function, with a comment that provides the name and'
+         ' description of the value the promise resolves to.'),
+        promise_function.get('description'))
+    promise_function_parameters = getFunctionParameters(
+        schema, 'describedPromiseReturn')
+    self.assertEqual(1, len(promise_function_parameters))
+    self.assertEqual(
+        {
+            'description': 'This is a normal argument comment.',
+            'name': 'arg1',
+            'type': 'boolean',
+        },
+        promise_function_parameters[0],
+    )
+    promise_function_async_return = getFunctionAsyncReturn(
+        schema, 'describedPromiseReturn')
+    self.assertEqual(
+        {
+            'name':
+            'callback',
+            'optional':
+            True,
+            'description':
+            'General description for the promise return.',
+            'parameters': [{
+                '$ref':
+                'ExampleType',
+                'name':
+                'returnValueName',
+                'description':
+                ('A description for the value the promise resolves to: with'
+                 ' an extra colon for good measure.'),
+            }],
+        }, promise_function_async_return)
+
+    # Promise returning function with just a name for the promise value and no
+    # further description.
+    named_promise_function_async_return = getFunctionAsyncReturn(
+        schema, 'namedPromiseReturn')
+    self.assertEqual(
+        {
+            'name': 'callback',
+            'optional': True,
+            'parameters': [{
+                'type': 'boolean',
+                'name': 'justAName'
+            }],
+        }, named_promise_function_async_return)
+
+    # Function with a return and simple comment describing it.
+    return_function = getFunction(schema, 'describedReturnFunction')
+    self.assertEqual(
+        'General function description for the describedReturnFunction.',
+        return_function.get('description'))
+    return_function_returns_value = getFunctionReturn(
+        schema, 'describedReturnFunction')
+    self.assertEqual('Description for the returns object itself.',
+                     return_function_returns_value.get('description'))
+
   # Tests that API events are processed as expected.
-  # TODO(crbug.com/379052294): Add description testing when it is added to the
-  # processor.
   def testEvents(self):
     schema = self.idl_basics
 
@@ -296,68 +421,91 @@ class WebIdlSchemaTest(unittest.TestCase):
     # the object and raises a KeyError if it is not found.
     self.assertEqual('onTestOne', event_one.get('name'))
     self.assertEqual('function', event_one.get('type'))
-    self.assertEqual([{
-        'name': 'argument1',
-        'type': 'string'
-    }, {
-        'name': 'argument2',
-        'optional': True,
-        'type': 'number'
-    }], event_one['parameters'])
+    self.assertEqual(
+        'Comment that acts as a description for onTestOne. Parameter specific'
+        ' comments are down below before the associated callback definition.',
+        event_one.get('description'))
+    self.assertEqual(
+        [{
+            'name': 'argument1',
+            'type': 'string',
+            'description': 'Parameter description for argument1.'
+        }, {
+            'name': 'argument2',
+            'optional': True,
+            'type': 'number',
+            'description': 'Another description, this time for argment2.'
+        }], event_one['parameters'])
 
     event_two = getEvent(schema, 'onTestTwo')
     self.assertEqual('onTestTwo', event_two.get('name'))
     self.assertEqual('function', event_two.get('type'))
-    self.assertEqual([{
-        'name': 'customType',
-        '$ref': 'ExampleType'
-    }], event_two['parameters'])
+    self.assertEqual('Comment for onTestTwo.', event_two.get('description'))
+    self.assertEqual(
+        [{
+            'name': 'customType',
+            '$ref': 'ExampleType',
+            'description': 'An ExampleType passed to the event listener.'
+        }], event_two['parameters'])
 
-  # Tests that Dictionaries defined on the top level of the IDL file are
-  # processed into types on the resulting namespace.
+  # Tests that Dictionaries and Enums defined on the top level of the IDL file
+  # are processed into types on the resulting namespace.
   def testApiTypesOnNamespace(self):
     schema = self.idl_basics
+    custom_type = getType(schema, 'ExampleType')
+    self.assertEqual('ExampleType', custom_type['id'])
+    self.assertEqual('object', custom_type['type'])
     self.assertEqual(
         {
-            'id': 'ExampleType',
-            'properties': {
-                'someString': {
-                    'name':
-                    'someString',
-                    'type':
-                    'string',
-                    'description':
-                    ('Attribute comment attached to ExampleType.someString.'),
-                },
-                'someNumber': {
-                    'name':
-                    'someNumber',
-                    'type':
-                    'number',
-                    'description':
-                    ('Comment where <var>someNumber</var> has some markup.'),
-                },
-                # TODO(crbug.com/379052294): using HTML comments like this is a
-                # bit of a hack to allow us to add comments in IDL files (e.g.
-                # for TODOs) and to not have them end up on the documentation
-                # site. We should probably just filter them out during
-                # compilation.
-                'optionalBoolean': {
-                    'name':
-                    'optionalBoolean',
-                    'type':
-                    'boolean',
-                    'optional':
-                    True,
-                    'description':
-                    ('Comment with HTML comment. <!-- Which should get'
-                     ' through -->'),
-                },
+            'name': 'someString',
+            'type': 'string',
+            'description':
+            'Attribute comment attached to ExampleType.someString.'
+        }, custom_type['properties']['someString'])
+    self.assertEqual(
+        {
+            'name': 'someNumber',
+            'type': 'number',
+            'description':
+            'Comment where <var>someNumber</var> has some markup.'
+        }, custom_type['properties']['someNumber'])
+    # TODO(crbug.com/379052294): using HTML comments like this is a bit of a
+    # hack to allow us to add comments in IDL files (e.g. for TODOs) and to not
+    # have them end up on the documentation site. We should probably just filter
+    # them out during compilation.
+    self.assertEqual(
+        {
+            'name':
+            'optionalBoolean',
+            'type':
+            'boolean',
+            'optional':
+            True,
+            'description':
+            'Comment with HTML comment. <!-- Which should get through -->'
+        }, custom_type['properties']['optionalBoolean'])
+    self.assertEqual(
+        {
+            'name': 'booleanSequence',
+            'type': 'array',
+            'items': {
+                'type': 'boolean'
             },
-            'type': 'object',
-        },
-        getType(schema, 'ExampleType'),
-    )
+            'description': 'Comment on sequence type.',
+        }, custom_type['properties']['booleanSequence'])
+
+    enum_expected = {
+        'enum': [{
+            'name': 'name1',
+            'description': 'Comment1.'
+        }, {
+            'name': 'name2'
+        }],
+        'description': 'Enum description.',
+        'type': 'string',
+        'id': 'EnumType'
+    }
+    self.assertEqual(enum_expected, getType(schema, 'EnumType'))
 
   # Tests that a top level API comment is processed into a description
   # attribute, with HTML paragraph nodes added due to the blank commented line.
@@ -442,6 +590,53 @@ class WebIdlSchemaTest(unittest.TestCase):
         'test/web_idl/missing_event_interface.idl',
     )
 
+  # Various tests that ensure validation on event interface definitions.
+  # Specifically checks that not defining any of the required add/remove/has
+  # Operations or forgetting the ExtensionEvent inheritance will throw an error.
+  def testMissingEventInheritance(self):
+    expected_error_regex = (
+        r'.* Error processing node Interface\(OnMissingInheritanceEvent\):'
+        r' Event Interface missing ExtensionEvent Inheritance.')
+    self.assertRaisesRegex(
+        SchemaCompilerError,
+        expected_error_regex,
+        web_idl_schema.Load,
+        'test/web_idl/missing_event_inheritance.idl',
+    )
+
+  def testMissingEventAddListener(self):
+    expected_error_regex = (
+        r'.* Error processing node Interface\(OnMissingAddListenerEvent\):'
+        r' Event Interface missing addListener Operation definition.')
+    self.assertRaisesRegex(
+        SchemaCompilerError,
+        expected_error_regex,
+        web_idl_schema.Load,
+        'test/web_idl/missing_event_add_listener.idl',
+    )
+
+  def testMissingEventRemoveListener(self):
+    expected_error_regex = (
+        r'.* Error processing node Interface\(OnMissingRemoveListenerEvent\):'
+        r' Event Interface missing removeListener Operation definition.')
+    self.assertRaisesRegex(
+        SchemaCompilerError,
+        expected_error_regex,
+        web_idl_schema.Load,
+        'test/web_idl/missing_event_remove_listener.idl',
+    )
+
+  def testMissingEventHasListener(self):
+    expected_error_regex = (
+        r'.* Error processing node Interface\(OnMissingHasListenerEvent\):'
+        r' Event Interface missing hasListener Operation definition.')
+    self.assertRaisesRegex(
+        SchemaCompilerError,
+        expected_error_regex,
+        web_idl_schema.Load,
+        'test/web_idl/missing_event_has_listener.idl',
+    )
+
   # Tests that if description parsing from file comments reaches the top of the
   # file, a schema compiler error is thrown (as the top of the file should
   # always be copyright lines and not part of the description).
@@ -498,10 +693,52 @@ class WebIdlSchemaTest(unittest.TestCase):
         schema['description'],
     )
 
+  # Tests that an enum that uses the nodoc extended attribute has the related
+  # nodoc attribute set to true after processing.
+  def testNoDocOnEnum(self):
+    schema = self.idl_basics
+    nodoc_enum = getType(schema, 'EnumTypeWithNoDoc')
+    self.assertEqual(True, nodoc_enum['nodoc'])
+    # An enum without the extended attribute will not have a nodoc attribute.
+    no_nodoc_enum = getType(schema, 'EnumType')
+    self.assertFalse(hasattr(no_nodoc_enum, 'nodoc'))
+
+  # Tests that an enum with the deprecated extended attribute has the related
+  # deprecated attribute set to the provided string value after processing.
+  # TODO(crbug.com/340297705): expand this out to the other various places
+  # deprecated can be specified.
+  def testDeprecatedExtendedAttribute(self):
+    idl = web_idl_schema.Load('test/web_idl/deprecated.idl')
+    self.assertEqual(1, len(idl))
+    schema = idl[0]
+    deprecated_enum = getType(schema, 'DeprecatedEnum')
+    self.assertEqual('This enum is deprecated', deprecated_enum['deprecated'])
+
+  # Tests that a function defined with the requiredCallback extended attribute
+  # does not have the returns_async field marked as optional after processing.
+  # Note: These are only relevant to contexts which don't support promise based
+  # calls, or for specific functions which still do not support promises.
+  def testRequiredCallbackFunction(self):
+    idl = web_idl_schema.Load('test/web_idl/required_callback_function.idl')
+    self.assertEqual(1, len(idl))
+    self.assertEqual(
+        {
+            'name': 'callback',
+            'parameters': [{
+                'type': 'string'
+            }],
+        }, getFunctionAsyncReturn(idl[0], 'requiredCallbackFunction'))
+    self.assertEqual(
+        {
+            'name': 'callback',
+            'optional': True,
+            'parameters': [{
+                'type': 'string'
+            }],
+        }, getFunctionAsyncReturn(idl[0], 'notRequiredCallbackFunction'))
+
   # Tests that extended attributes being listed on the the line previous to a
   # node come through correctly and don't throw off and associated descriptions.
-  # TODO(crbug.com/340297705): Add checks for functions here once support for
-  # processing their descriptions is complete.
   def testPreviousLineExtendedAttributes(self):
     idl = web_idl_schema.Load('test/web_idl/preceding_extended_attributes.idl')
     self.assertEqual(1, len(idl))
@@ -513,6 +750,15 @@ class WebIdlSchemaTest(unittest.TestCase):
         schema['description'],
     )
 
+    function = getFunction(schema, 'functionExample')
+    self.assertEqual('Description on a function.', function.get('description'))
+    async_return = getFunctionAsyncReturn(schema, 'functionExample')
+    # The extended attribute on the function causes 'optional': True to not be
+    # present on the async return.
+    self.assertNotIn('optional', async_return)
+    self.assertEqual('Promise return description.',
+                     async_return.get('description'))
+
   # Tests that an API interface with the platforms extended attribute has these
   # values in a platforms attribute after processing.
   def testAllPlatformsOnNamespace(self):
@@ -520,7 +766,7 @@ class WebIdlSchemaTest(unittest.TestCase):
         'test/web_idl/all_platforms_on_namespace.idl')
     self.assertEqual(1, len(platforms_schema))
     self.assertEqual('allPlatformsAPI', platforms_schema[0]['namespace'])
-    expected = ['chromeos', 'fuchsia', 'linux', 'mac', 'win']
+    expected = ['chromeos', 'desktop_android', 'linux', 'mac', 'win']
     self.assertEqual(expected, platforms_schema[0]['platforms'])
 
   # Tests that an API interface with just chromeos listed in the platforms
@@ -533,12 +779,37 @@ class WebIdlSchemaTest(unittest.TestCase):
     expected = ['chromeos']
     self.assertEqual(expected, platforms_schema[0]['platforms'])
 
-  # Tests that the platforms attribute is None if not specified on in the
-  # extended attributes of a namespace.
-  def testNonSpecifiedPlatformsOnNamespace(self):
-    basic_schema = self.idl_basics
-    expected = None
-    self.assertEqual(expected, basic_schema['platforms'])
+  # Tests a variety of default values that are set on an API namespace when they
+  # are not specified in the source IDL file.
+  def testNonSpecifiedDefaultValues(self):
+    defaults_schema = web_idl_schema.Load('test/web_idl/defaults.idl')[0]
+    self.assertEqual(
+        {
+            'compiler_options': {},
+            'deprecated': None,
+            'description': '',
+            'events': [],
+            'functions': [],
+            'manifest_keys': None,
+            'namespace': 'defaultsOnlyWebIdl',
+            'nodoc': False,
+            'platforms': None,
+            'properties': {},
+            'types': [],
+        }, defaults_schema)
+
+  # Tests that Enum and Dictionary types defined in a schema file retain their
+  # ordering in the resulting processed API object.
+  def testEnumAndTypeOrdering(self):
+    idl = web_idl_schema.Load('test/web_idl/enum_and_type_ordering.idl')
+    self.assertEqual(1, len(idl))
+    schema = idl[0]
+    # Types are interleaved in the schema.
+    types = schema['types']
+    self.assertEqual('ExampleDictOne', types[0]['id'])
+    self.assertEqual('EnumTypeOne', types[1]['id'])
+    self.assertEqual('ExampleDictTwo', types[2]['id'])
+    self.assertEqual('EnumTypeTwo', types[3]['id'])
 
 
 if __name__ == '__main__':

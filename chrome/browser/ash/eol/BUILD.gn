@@ -8,8 +8,6 @@ assert(is_chromeos)
 
 static_library("eol") {
   sources = [
-    "eol_incentive_util.cc",
-    "eol_incentive_util.h",
     "eol_notification.cc",
     "eol_notification.h",
   ]
@@ -26,6 +24,7 @@ static_library("eol") {
     "//chrome/browser/ash/extended_updates",
     "//chrome/browser/ash/login/session",
     "//chrome/browser/ash/policy/core",
+    "//chrome/browser/notifications",
     "//chrome/browser/profiles:profile",
     "//chrome/common",
     "//chromeos/ash/components/browser_context_helper",

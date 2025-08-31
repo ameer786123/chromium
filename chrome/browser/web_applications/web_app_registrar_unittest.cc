@@ -27,7 +27,6 @@
 #include "chrome/browser/apps/link_capturing/link_capturing_feature_test_support.h"
 #include "chrome/browser/web_applications/commands/run_on_os_login_command.h"
 #include "chrome/browser/web_applications/commands/web_app_uninstall_command.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
@@ -44,6 +43,7 @@
 #include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
+#include "chrome/browser/web_applications/web_app_icon_generator.h"
 #include "chrome/browser/web_applications/web_app_install_finalizer.h"
 #include "chrome/browser/web_applications/web_app_install_manager.h"
 #include "chrome/browser/web_applications/web_app_management_type.h"
@@ -54,6 +54,7 @@
 #include "components/sync/test/mock_data_type_local_change_processor.h"
 #include "components/webapps/browser/uninstall_result_code.h"
 #include "components/webapps/common/web_app_id.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
 #include "content/public/browser/storage_partition_config.h"
 #include "content/public/common/content_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -114,6 +115,7 @@ int CountApps(const WebAppRegistrar::AppSet& app_set) {
 }  // namespace
 
 using ::testing::ElementsAre;
+using ::testing::IsEmpty;
 using ::testing::Pair;
 
 // TODO(dmurph): Make this test run from the default FakeWebAppProvider like all
@@ -962,7 +964,7 @@ TEST_F(WebAppRegistrarTest, GetAllIsolatedWebAppStoragePartitionConfigs) {
   isolated_web_app->SetIsolationData(
       IsolationData::Builder(
           IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
-          base::Version("1.0.0"))
+          *IwaVersion::Create("1.0.0"))
           .Build());
   RegisterAppUnsafe(std::move(isolated_web_app));
 
@@ -992,7 +994,7 @@ TEST_F(
   isolated_web_app->SetIsolationData(
       IsolationData::Builder(
           IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
-          base::Version("1.0.0"))
+          *IwaVersion::Create("1.0.0"))
           .Build());
   isolated_web_app->SetInstallState(
       proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE);
@@ -1023,7 +1025,7 @@ TEST_F(WebAppRegistrarTest, SaveAndGetInMemoryControlledFramePartitionConfig) {
   isolated_web_app->SetIsolationData(
       IsolationData::Builder(
           IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
-          base::Version("1.0.0"))
+          *IwaVersion::Create("1.0.0"))
           .Build());
   RegisterAppUnsafe(std::move(isolated_web_app));
 
@@ -1096,13 +1098,20 @@ TEST_F(WebAppRegistrarTest, NotLocallyInstalledAppGetsDisplayModeBrowser) {
 
 TEST_F(WebAppRegistrarTest,
        NotLocallyInstalledAppGetsDisplayModeBrowserEvenForIsolatedWebApps) {
+  base::test::ScopedFeatureList scoped_feature_list(features::kIsolatedWebApps);
   StartWebAppProvider();
 
-  auto web_app = test::CreateWebApp();
+  std::unique_ptr<WebApp> web_app =
+      test::CreateWebApp(GURL("isolated-app://random_name"));
   const webapps::AppId app_id = web_app->app_id();
   web_app->SetDisplayMode(DisplayMode::kStandalone);
   web_app->SetUserDisplayMode(mojom::UserDisplayMode::kStandalone);
   web_app->SetInstallState(proto::SUGGESTED_FROM_ANOTHER_DEVICE);
+  web_app->SetIsolationData(
+      IsolationData::Builder(
+          IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
+          *IwaVersion::Create("1.0.0"))
+          .Build());
 
   RegisterAppUnsafe(std::move(web_app));
 
@@ -1115,7 +1124,8 @@ TEST_F(WebAppRegistrarTest,
   base::test::ScopedFeatureList scoped_feature_list(features::kIsolatedWebApps);
   StartWebAppProvider();
 
-  std::unique_ptr<WebApp> web_app = test::CreateWebApp();
+  std::unique_ptr<WebApp> web_app =
+      test::CreateWebApp(GURL("isolated-app://random_name"));
   const webapps::AppId app_id = web_app->app_id();
 
   // Valid manifest must have standalone display mode
@@ -1125,7 +1135,7 @@ TEST_F(WebAppRegistrarTest,
   web_app->SetIsolationData(
       IsolationData::Builder(
           IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
-          base::Version("1.0.0"))
+          *IwaVersion::Create("1.0.0"))
           .Build());
 
   RegisterAppUnsafe(std::move(web_app));
@@ -1139,7 +1149,8 @@ TEST_F(WebAppRegistrarTest,
   base::test::ScopedFeatureList scoped_feature_list(features::kIsolatedWebApps);
   StartWebAppProvider();
 
-  std::unique_ptr<WebApp> web_app = test::CreateWebApp();
+  std::unique_ptr<WebApp> web_app =
+      test::CreateWebApp(GURL("isolated-app://random_name"));
   const webapps::AppId app_id = web_app->app_id();
 
   web_app->SetDisplayMode(DisplayMode::kBorderless);
@@ -1148,7 +1159,7 @@ TEST_F(WebAppRegistrarTest,
   web_app->SetIsolationData(
       IsolationData::Builder(
           IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
-          base::Version("1.0.0"))
+          *IwaVersion::Create("1.0.0"))
           .Build());
 
   RegisterAppUnsafe(std::move(web_app));
@@ -1514,6 +1525,213 @@ TEST_F(WebAppRegistrarTest, InnerAndOuterScopeIntentPicker) {
                           Pair(outer_app_id, "ABC_Outer")));
 }
 
+TEST_F(WebAppRegistrarTest, GetTrustedIconsIfPopulatedSingleNoSize) {
+  StartWebAppProvider();
+  auto web_app = test::CreateWebApp(GURL("https://abc.com"),
+                                    WebAppManagement::kUserInstalled);
+  web_app->SetName("ABC");
+  web_app->SetScope(GURL("https://abc.com/"));
+  web_app->SetInstallState(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
+
+  apps::IconInfo trusted_icon;
+  trusted_icon.purpose = apps::IconInfo::Purpose::kAny;
+  trusted_icon.square_size_px = 128;
+  trusted_icon.url = GURL("https://abc.com/icon.jpg");
+  web_app->SetTrustedIcons({trusted_icon});
+  const webapps::AppId app_id = web_app->app_id();
+  RegisterAppUnsafe(std::move(web_app));
+
+  EXPECT_THAT(registrar().GetTrustedAppIconsMetadata(app_id),
+              ElementsAre(trusted_icon));
+  EXPECT_EQ(trusted_icon,
+            registrar().GetSingleTrustedAppIconForSecuritySurfaces(
+                app_id, /*input_size=*/512));
+}
+
+TEST_F(WebAppRegistrarTest, EmptyTrustedOrManifestIcons) {
+  StartWebAppProvider();
+  auto web_app = test::CreateWebApp(GURL("https://abc.com"),
+                                    WebAppManagement::kUserInstalled);
+  web_app->SetName("ABC");
+  web_app->SetScope(GURL("https://abc.com/"));
+  web_app->SetInstallState(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
+
+  // Explicitly ensure that there are no manifest or trusted icons.
+  web_app->SetManifestIcons({});
+  web_app->SetTrustedIcons({});
+  const webapps::AppId app_id = web_app->app_id();
+  RegisterAppUnsafe(std::move(web_app));
+
+  EXPECT_THAT(registrar().GetTrustedAppIconsMetadata(app_id), IsEmpty());
+  EXPECT_EQ(std::nullopt,
+            registrar().GetSingleTrustedAppIconForSecuritySurfaces(
+                app_id, /*input_size=*/128));
+}
+
+TEST_F(WebAppRegistrarTest, NoTrustedIconsFallbackToManifest) {
+  StartWebAppProvider();
+  auto web_app = test::CreateWebApp(GURL("https://abc.com"),
+                                    WebAppManagement::kUserInstalled);
+  web_app->SetName("ABC");
+  web_app->SetScope(GURL("https://abc.com/"));
+  web_app->SetInstallState(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
+
+  // Explicitly ensure that there are no trusted icons, but manifest icons are
+  // populated.
+  web_app->SetTrustedIcons({});
+
+  apps::IconInfo manifest_icon;
+  manifest_icon.purpose = apps::IconInfo::Purpose::kAny;
+  manifest_icon.square_size_px = 128;
+  manifest_icon.url = GURL("https://abc.com/icon.jpg");
+  web_app->SetManifestIcons({manifest_icon});
+
+  const webapps::AppId app_id = web_app->app_id();
+  RegisterAppUnsafe(std::move(web_app));
+
+  // There are no trusted app icons, but `manifest_icon` is used as the
+  // fallback.
+  EXPECT_THAT(registrar().GetTrustedAppIconsMetadata(app_id),
+              ElementsAre(manifest_icon));
+  EXPECT_EQ(manifest_icon,
+            registrar().GetSingleTrustedAppIconForSecuritySurfaces(
+                app_id, /*input_size=*/64));
+}
+
+TEST_F(WebAppRegistrarTest, NoTrustedIconsFallbackToManifestMultipleIcons) {
+  StartWebAppProvider();
+  auto web_app = test::CreateWebApp(GURL("https://abc.com"),
+                                    WebAppManagement::kUserInstalled);
+  web_app->SetName("ABC");
+  web_app->SetScope(GURL("https://abc.com/"));
+  web_app->SetInstallState(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
+
+  // Explicitly ensure that there are no trusted icons, but manifest icons are
+  // populated.
+  web_app->SetTrustedIcons({});
+
+  apps::IconInfo manifest_icon1;
+  manifest_icon1.purpose = apps::IconInfo::Purpose::kAny;
+  manifest_icon1.square_size_px = 128;
+  manifest_icon1.url = GURL("https://abc.com/icon.jpg");
+  apps::IconInfo manifest_icon2;
+  manifest_icon2.purpose = apps::IconInfo::Purpose::kMaskable;
+  manifest_icon2.square_size_px = 256;
+  manifest_icon2.url = GURL("https://abc.com/icon2.jpg");
+
+  web_app->SetManifestIcons({manifest_icon1, manifest_icon2});
+
+  const webapps::AppId app_id = web_app->app_id();
+  RegisterAppUnsafe(std::move(web_app));
+
+  // There are no trusted app icons, but `manifest_icon2` is used as the
+  // fallback, since that is closest to the input_size.
+  EXPECT_THAT(registrar().GetTrustedAppIconsMetadata(app_id),
+              ElementsAre(manifest_icon1, manifest_icon2));
+  EXPECT_EQ(manifest_icon2,
+            registrar().GetSingleTrustedAppIconForSecuritySurfaces(
+                app_id, /*input_size=*/512));
+}
+
+TEST_F(WebAppRegistrarTest, MultipleTrustedIconsUseBiggestClosestToSize) {
+  StartWebAppProvider();
+  auto web_app = test::CreateWebApp(GURL("https://abc.com"),
+                                    WebAppManagement::kUserInstalled);
+  web_app->SetName("ABC");
+  web_app->SetScope(GURL("https://abc.com/"));
+  web_app->SetInstallState(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
+  web_app->SetManifestIcons({});
+
+  apps::IconInfo trusted_icon1;
+  trusted_icon1.purpose = apps::IconInfo::Purpose::kAny;
+  trusted_icon1.square_size_px = 256;
+  trusted_icon1.url = GURL("https://abc.com/icon.jpg");
+  apps::IconInfo trusted_icon2;
+  trusted_icon2.purpose = apps::IconInfo::Purpose::kMaskable;
+  trusted_icon2.square_size_px = 512;
+  trusted_icon2.url = GURL("https://abc.com/icon2.jpg");
+  apps::IconInfo trusted_icon3;
+  trusted_icon3.purpose = apps::IconInfo::Purpose::kAny;
+  trusted_icon3.square_size_px = 96;
+  trusted_icon3.url = GURL("https://abc.com/icon3.jpg");
+  web_app->SetTrustedIcons({trusted_icon1, trusted_icon2, trusted_icon3});
+
+  const webapps::AppId app_id = web_app->app_id();
+  RegisterAppUnsafe(std::move(web_app));
+
+  EXPECT_THAT(registrar().GetTrustedAppIconsMetadata(app_id),
+              ElementsAre(trusted_icon1, trusted_icon2, trusted_icon3));
+  // `trusted_icon1` is used, since it is the biggest icon with size closer to
+  // the input size.
+  EXPECT_EQ(trusted_icon1,
+            registrar().GetSingleTrustedAppIconForSecuritySurfaces(
+                app_id, /*input_size=*/128));
+}
+
+TEST_F(WebAppRegistrarTest, MultipleTrustedIconsUseSmallerCloserToSize) {
+  StartWebAppProvider();
+  auto web_app = test::CreateWebApp(GURL("https://abc.com"),
+                                    WebAppManagement::kUserInstalled);
+  web_app->SetName("ABC");
+  web_app->SetScope(GURL("https://abc.com/"));
+  web_app->SetInstallState(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
+  web_app->SetManifestIcons({});
+
+  apps::IconInfo trusted_icon1;
+  trusted_icon1.purpose = apps::IconInfo::Purpose::kAny;
+  trusted_icon1.square_size_px = 128;
+  trusted_icon1.url = GURL("https://abc.com/icon.jpg");
+  apps::IconInfo trusted_icon2;
+  trusted_icon2.purpose = apps::IconInfo::Purpose::kMaskable;
+  trusted_icon2.square_size_px = 256;
+  trusted_icon2.url = GURL("https://abc.com/icon2.jpg");
+  apps::IconInfo trusted_icon3;
+  trusted_icon3.purpose = apps::IconInfo::Purpose::kAny;
+  trusted_icon3.square_size_px = 96;
+  trusted_icon3.url = GURL("https://abc.com/icon3.jpg");
+  web_app->SetTrustedIcons({trusted_icon1, trusted_icon2, trusted_icon3});
+
+  const webapps::AppId app_id = web_app->app_id();
+  RegisterAppUnsafe(std::move(web_app));
+
+  EXPECT_THAT(registrar().GetTrustedAppIconsMetadata(app_id),
+              ElementsAre(trusted_icon1, trusted_icon2, trusted_icon3));
+  // `trusted_icon2` is used, since it is the largest icon with size closer to
+  // the input size but smaller than the input size.
+  EXPECT_EQ(trusted_icon2,
+            registrar().GetSingleTrustedAppIconForSecuritySurfaces(
+                app_id, /*input_size=*/512));
+}
+
+TEST_F(WebAppRegistrarTest, TrustedIconMetrics) {
+  base::HistogramTester histogram_tester;
+
+  // Set up the registry with 10 apps, and set trusted icons on 5 of them.
+  Registry test_registry =
+      CreateRegistryForTesting("https://example.com/path", 10);
+  int i = 0;
+  apps::IconInfo icon_info(GURL("https://www.example.com/icon.png"),
+                           icon_size::k48);
+  for (auto& apps : test_registry) {
+    if (i % 2 == 0) {
+      apps.second->SetTrustedIcons({icon_info});
+    }
+    i++;
+  }
+
+  PopulateRegistry(std::move(test_registry));
+  StartWebAppProvider();
+
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("WebApp.InstalledCount.HasTrustedIcons"),
+      base::BucketsAre(base::Bucket(/*min=*/5,
+                                    /*count=*/1)));
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("WebApp.InstalledCount.HasNoTrustedIcons"),
+      base::BucketsAre(base::Bucket(/*min=*/5,
+                                    /*count=*/1)));
+}
+
 #if BUILDFLAG(IS_CHROMEOS)
 
 class WebAppRegistrarAshTest : public WebAppTest {
@@ -1598,7 +1816,211 @@ TEST_F(WebAppRegistrarAshTest, SourceSupported) {
   EXPECT_FALSE(base::Contains(registrar.GetAppIds(), uninstalling_id));
 }
 
-#endif
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+class WebAppRegistrarDisplayModeTest
+    : public WebAppRegistrarTest,
+      public testing::WithParamInterface<DisplayMode> {
+ public:
+  const webapps::AppId CreateAppInRegistryWithUserDisplayModeAndOverrides(
+      mojom::UserDisplayMode user_display_mode,
+      std::vector<DisplayMode> display_mode_overrides,
+      bool is_isolated = false) {
+    GURL start_url = GURL("https://example.com/start");
+    if (is_isolated) {
+      constexpr char kIwaHostname[] =
+          "berugqztij5biqquuk3mfwpsaibuegaqcitgfchwuosuofdjabzqaaic";
+      start_url =
+          GURL(base::StrCat({chrome::kIsolatedAppScheme,
+                             url::kStandardSchemeSeparator, kIwaHostname}));
+    }
+    auto web_app = test::CreateWebApp(start_url);
+    const webapps::AppId app_id = web_app->app_id();
+
+    // Get the display mode from the parameterized inputs.
+    web_app->SetDisplayMode(GetParam());
+    web_app->SetUserDisplayMode(user_display_mode);
+    web_app->SetInstallState(proto::INSTALLED_WITH_OS_INTEGRATION);
+    web_app->SetDisplayModeOverride(std::move(display_mode_overrides));
+
+    if (is_isolated) {
+      web_app->SetIsolationData(
+          IsolationData::Builder(
+              IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
+              *IwaVersion::Create("1.0.0"))
+              .Build());
+    }
+
+    RegisterAppUnsafe(std::move(web_app));
+    return app_id;
+  }
+
+  // When user_display_mode indicates a user preference for opening in
+  // a standalone window, we open in a minimal-ui window (for app_display_mode
+  // 'browser' or 'minimal-ui') or a standalone window (for app_display_mode
+  // 'standalone' or 'fullscreen'). For all other display modes, keep the
+  // display modes as they're specified.
+  DisplayMode GetResolvedDisplayModeForStandaloneUDM() {
+    switch (GetParam()) {
+      case DisplayMode::kBrowser:
+      case DisplayMode::kMinimalUi:
+        return DisplayMode::kMinimalUi;
+      case DisplayMode::kStandalone:
+      case DisplayMode::kFullscreen:
+        return DisplayMode::kStandalone;
+      case DisplayMode::kBorderless:
+        return DisplayMode::kBorderless;
+      case DisplayMode::kWindowControlsOverlay:
+        return DisplayMode::kWindowControlsOverlay;
+      case DisplayMode::kTabbed:
+        return DisplayMode::kTabbed;
+      case DisplayMode::kUndefined:
+      case DisplayMode::kPictureInPicture:
+        NOTREACHED();
+    }
+  }
+
+  // Same as `GetResolvedDisplayModeForStandaloneUDM()`, except minimal-ui does
+  // not exist for IWAs.
+  DisplayMode GetResolvedDisplayModeForStandaloneUDMIsolated() {
+    switch (GetParam()) {
+      case DisplayMode::kBrowser:
+      case DisplayMode::kMinimalUi:
+      case DisplayMode::kStandalone:
+      case DisplayMode::kFullscreen:
+      case DisplayMode::kTabbed:
+        return DisplayMode::kStandalone;
+      case DisplayMode::kBorderless:
+        return DisplayMode::kBorderless;
+      case DisplayMode::kWindowControlsOverlay:
+        return DisplayMode::kWindowControlsOverlay;
+      case DisplayMode::kUndefined:
+      case DisplayMode::kPictureInPicture:
+        NOTREACHED();
+    }
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_{features::kIsolatedWebApps};
+};
+
+// When user_display_mode indicates a user preference for opening in a browser
+// tab, we open in a browser tab.
+TEST_P(WebAppRegistrarDisplayModeTest, UserWantsBrowser) {
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kBrowser, {});
+  EXPECT_EQ(DisplayMode::kBrowser,
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+TEST_P(WebAppRegistrarDisplayModeTest, UserWantsStandalone) {
+  if (GetParam() == DisplayMode::kPictureInPicture) {
+    GTEST_SKIP()
+        << "PictureInPicture not supported for standalone display modes";
+  }
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kStandalone, {});
+  EXPECT_EQ(GetResolvedDisplayModeForStandaloneUDM(),
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+// When user_display_mode indicates a user preference for opening in a browser
+// tab, we open in a browser tab, even if display_overrides are specified.
+TEST_P(WebAppRegistrarDisplayModeTest, UserWantsBrowserStandaloneOverride) {
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kBrowser, {DisplayMode::kStandalone});
+  EXPECT_EQ(DisplayMode::kBrowser,
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+// When user_display_mode indicates a user preference for opening in
+// a standalone window, and the only display modes provided for
+// display_overrides contain only 'fullscreen' or 'browser',  open in a
+// minimal-ui window (for app_display_mode 'browser' or 'minimal-ui') or a
+// standalone window (for app_display_mode 'standalone' or 'fullscreen').
+TEST_P(WebAppRegistrarDisplayModeTest, UserWantsStandaloneFullScreenOverride) {
+  if (GetParam() == DisplayMode::kPictureInPicture) {
+    GTEST_SKIP()
+        << "PictureInPicture not supported for standalone display modes";
+  }
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kStandalone, {DisplayMode::kFullscreen});
+  EXPECT_EQ(GetResolvedDisplayModeForStandaloneUDM(),
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+// When user_display_mode indicates a user preference for opening in
+// a standalone window, and return the first entry that is either
+// 'standalone' or 'minimal-ui' in display_override.
+TEST_P(WebAppRegistrarDisplayModeTest, UserWantsStandaloneMultipleOverrides) {
+  if (GetParam() == DisplayMode::kPictureInPicture) {
+    GTEST_SKIP()
+        << "PictureInPicture not supported for standalone display modes";
+  }
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kStandalone,
+          {DisplayMode::kFullscreen, DisplayMode::kBrowser,
+           DisplayMode::kStandalone});
+  EXPECT_EQ(DisplayMode::kStandalone,
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+TEST_P(WebAppRegistrarDisplayModeTest, UserStandaloneNoOverrideIsolated) {
+  if (GetParam() == DisplayMode::kPictureInPicture) {
+    GTEST_SKIP()
+        << "PictureInPicture not supported for standalone display modes";
+  }
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kStandalone, {}, /*is_isolated=*/true);
+  EXPECT_EQ(GetResolvedDisplayModeForStandaloneUDMIsolated(),
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         WebAppRegistrarDisplayModeTest,
+                         testing::Values(DisplayMode::kBrowser,
+                                         DisplayMode::kMinimalUi,
+                                         DisplayMode::kStandalone,
+                                         DisplayMode::kFullscreen,
+                                         DisplayMode::kBorderless,
+                                         DisplayMode::kPictureInPicture,
+                                         DisplayMode::kWindowControlsOverlay,
+                                         DisplayMode::kTabbed),
+                         [](const testing::TestParamInfo<DisplayMode>& info) {
+                           switch (info.param) {
+                             case DisplayMode::kBrowser:
+                               return "Browser";
+                             case DisplayMode::kMinimalUi:
+                               return "MinimalUi";
+                             case DisplayMode::kStandalone:
+                               return "Standalone";
+                             case DisplayMode::kFullscreen:
+                               return "Fullscreen";
+                             case DisplayMode::kBorderless:
+                               return "Borderless";
+                             case DisplayMode::kPictureInPicture:
+                               return "PictureInPicture";
+                             case DisplayMode::kWindowControlsOverlay:
+                               return "WindowControlsOverlay";
+                             case DisplayMode::kTabbed:
+                               return "Tabbed";
+                             case DisplayMode::kUndefined:
+                               NOTREACHED();
+                           }
+                         });
+
 
 class WebAppRegistrarParameterizedTest
     : public WebAppRegistrarTest,
@@ -1709,7 +2131,7 @@ TEST_P(WebAppRegistrarParameterizedTest, Filter_IsIsolatedApp) {
   isolated_web_app->SetIsolationData(
       IsolationData::Builder(
           IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
-          base::Version("1.0.0"))
+          *IwaVersion::Create("1.0.0"))
           .Build());
   isolated_web_app->SetDisplayMode(DisplayMode::kBrowser);
   isolated_web_app->SetUserDisplayMode(mojom::UserDisplayMode::kBrowser);

@@ -20,7 +20,6 @@
 #include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
 #include "chrome/browser/sessions/session_tab_helper_factory.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
@@ -89,7 +88,6 @@ class SafeBrowsingPrivateApiUnitTest : public ExtensionServiceTestBase {
   void SetUp() override;
   void TearDown() override;
 
-  std::unique_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
 };
 
@@ -97,11 +95,11 @@ void SafeBrowsingPrivateApiUnitTest::SetUp() {
   ExtensionServiceTestBase::SetUp();
   InitializeEmptyExtensionService();
 
-  browser_window_ = std::make_unique<TestBrowserWindow>();
+  auto browser_window = std::make_unique<TestBrowserWindow>();
   Browser::CreateParams params(profile(), true);
   params.type = Browser::TYPE_NORMAL;
-  params.window = browser_window_.get();
-  browser_ = std::unique_ptr<Browser>(Browser::Create(params));
+  params.window = browser_window.release();
+  browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
 
   ProfilePasswordStoreFactory::GetInstance()->SetTestingFactoryAndUse(
       profile(),
@@ -127,9 +125,10 @@ void SafeBrowsingPrivateApiUnitTest::SetUp() {
 }
 
 void SafeBrowsingPrivateApiUnitTest::TearDown() {
-  while (!browser()->tab_strip_model()->empty())
+  while (!browser()->tab_strip_model()->empty()) {
     browser()->tab_strip_model()->DetachAndDeleteWebContentsAt(0);
-  browser_window_.reset();
+  }
+  browser_.reset();
 
   // Make sure the NetworkContext owned by SafeBrowsingService is destructed
   // before the NetworkService object..
@@ -167,8 +166,7 @@ TEST_F(SafeBrowsingPrivateApiUnitTest, GetReferrerChain) {
 
 TEST_F(SafeBrowsingPrivateApiUnitTest, GetReferrerChainForNonSafeBrowsingUser) {
   // Disable Safe Browsing.
-  browser()->profile()->GetPrefs()->SetBoolean(prefs::kSafeBrowsingEnabled,
-                                               false);
+  profile()->GetPrefs()->SetBoolean(prefs::kSafeBrowsingEnabled, false);
 
   const std::vector<GURL> urls = {GURL("http://www.foo.test"),
                                   GURL("http://www.bar.test")};

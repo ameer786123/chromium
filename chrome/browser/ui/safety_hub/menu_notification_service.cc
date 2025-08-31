@@ -18,10 +18,12 @@
 #include "chrome/browser/ui/safety_hub/safe_browsing_result.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_constants.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_prefs.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_result.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_service.h"
 #include "chrome/common/chrome_features.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
+#include "components/safety_check/features.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/ui/safety_hub/password_status_check_result_android.h"
@@ -35,8 +37,7 @@ SafetyHubModuleInfoElement::~SafetyHubModuleInfoElement() = default;
 SafetyHubModuleInfoElement::SafetyHubModuleInfoElement(
     MenuNotificationPriority priority,
     base::TimeDelta interval,
-    base::RepeatingCallback<
-        std::optional<std::unique_ptr<SafetyHubService::Result>>()>
+    base::RepeatingCallback<std::optional<std::unique_ptr<SafetyHubResult>>()>
         result_getter,
     std::unique_ptr<SafetyHubMenuNotification> notification)
     : priority(priority),
@@ -64,35 +65,40 @@ SafetyHubMenuNotificationService::SafetyHubMenuNotificationService(
   pref_dict_key_map_ = {
       {safety_hub::SafetyHubModuleType::UNUSED_SITE_PERMISSIONS,
        "unused-site-permissions"},
-      {safety_hub::SafetyHubModuleType::NOTIFICATION_PERMISSIONS,
-       "notification-permissions"},
       {safety_hub::SafetyHubModuleType::SAFE_BROWSING, "safe-browsing"},
   };
 
-  // TODO(crbug.com/40267370): Make the interval for each service finch
-  // configurable.
   // The Safety Hub services will be available whenever the |GetCachedResult|
   // method is called, so it is safe to use |base::Unretained| here.
   SetInfoElement(
       safety_hub::SafetyHubModuleType::UNUSED_SITE_PERMISSIONS,
       MenuNotificationPriority::LOW,
-      features::kRevokedPermissionsNotificationInterval.Get(),
+      safety_check::features::kRevokedPermissionsNotificationInterval.Get(),
       base::BindRepeating(&SafetyHubService::GetCachedResult,
                           base::Unretained(revoked_permissions_service)),
       stored_notifications);
+  if (!base::FeatureList::IsEnabled(
+          features::kSafetyHubDisruptiveNotificationRevocation) ||
+      features::kSafetyHubDisruptiveNotificationRevocationShadowRun.Get()) {
+    pref_dict_key_map_
+        [safety_hub::SafetyHubModuleType::NOTIFICATION_PERMISSIONS] =
+            "notification-permissions";
+    SetInfoElement(
+        safety_hub::SafetyHubModuleType::NOTIFICATION_PERMISSIONS,
+        MenuNotificationPriority::LOW,
+        safety_check::features::kNotificationPermissionsNotificationInterval
+            .Get(),
+        base::BindRepeating(&SafetyHubService::GetCachedResult,
+                            base::Unretained(notification_permissions_service)),
+        stored_notifications);
+  }
   SetInfoElement(
-      safety_hub::SafetyHubModuleType::NOTIFICATION_PERMISSIONS,
-      MenuNotificationPriority::LOW,
-      features::kNotificationPermissionsNotificationInterval.Get(),
-      base::BindRepeating(&SafetyHubService::GetCachedResult,
-                          base::Unretained(notification_permissions_service)),
+      safety_hub::SafetyHubModuleType::SAFE_BROWSING,
+      MenuNotificationPriority::MEDIUM,
+      safety_check::features::kSafeBrowsingNotificationInterval.Get(),
+      base::BindRepeating(&SafetyHubSafeBrowsingResult::GetResult,
+                          base::Unretained(pref_service)),
       stored_notifications);
-  SetInfoElement(safety_hub::SafetyHubModuleType::SAFE_BROWSING,
-                 MenuNotificationPriority::MEDIUM,
-                 features::kSafeBrowsingNotificationInterval.Get(),
-                 base::BindRepeating(&SafetyHubSafeBrowsingResult::GetResult,
-                                     base::Unretained(pref_service)),
-                 stored_notifications);
 
 // Extensions are not available on Android, so we cannot fetch any information
 // about them. Passwords are handled by GMS Core on Android and our
@@ -114,20 +120,19 @@ SafetyHubMenuNotificationService::SafetyHubMenuNotificationService(
     SetInfoElement(
         safety_hub::SafetyHubModuleType::PASSWORDS,
         MenuNotificationPriority::HIGH,
-        features::kPasswordCheckNotificationInterval.Get(),
+        safety_check::features::kPasswordCheckNotificationInterval.Get(),
         base::BindRepeating(&PasswordStatusCheckService::GetCachedResult,
                             base::Unretained(password_check_service)),
         stored_notifications);
   }
 #else   // !BUILDFLAG(IS_ANDROID)
-  if (base::FeatureList::IsEnabled(features::kSafetyHub) &&
-      base::FeatureList::IsEnabled(features::kSafetyHubFollowup)) {
+  if (base::FeatureList::IsEnabled(features::kSafetyHubFollowup)) {
     pref_dict_key_map_.emplace(safety_hub::SafetyHubModuleType::PASSWORDS,
                                "passwords");
     SetInfoElement(
         safety_hub::SafetyHubModuleType::PASSWORDS,
         MenuNotificationPriority::HIGH,
-        features::kPasswordCheckNotificationInterval.Get(),
+        safety_check::features::kPasswordCheckNotificationInterval.Get(),
         base::BindRepeating(&PasswordStatusCheckResultAndroid::GetResult,
                             base::Unretained(pref_service)),
         stored_notifications);
@@ -146,8 +151,7 @@ SafetyHubMenuNotificationService::SafetyHubMenuNotificationService(
 
 void SafetyHubMenuNotificationService::UpdateResultGetterForTesting(
     safety_hub::SafetyHubModuleType type,
-    base::RepeatingCallback<
-        std::optional<std::unique_ptr<SafetyHubService::Result>>()>
+    base::RepeatingCallback<std::optional<std::unique_ptr<SafetyHubResult>>()>
         result_getter) {
   module_info_map_[type]->result_getter = result_getter;
 }
@@ -231,7 +235,7 @@ SafetyHubMenuNotificationService::GetResultsFromAllModules() {
   ResultMap result_map;
   for (auto const& item : module_info_map_) {
     CHECK(item.second->result_getter);
-    std::optional<std::unique_ptr<SafetyHubService::Result>> result =
+    std::optional<std::unique_ptr<SafetyHubResult>> result =
         item.second->result_getter.Run();
     // If one of the cached results is unavailable, no notification is shown.
     if (!result.has_value()) {
@@ -275,8 +279,7 @@ void SafetyHubMenuNotificationService::SetInfoElement(
     safety_hub::SafetyHubModuleType type,
     MenuNotificationPriority priority,
     base::TimeDelta interval,
-    base::RepeatingCallback<
-        std::optional<std::unique_ptr<SafetyHubService::Result>>()>
+    base::RepeatingCallback<std::optional<std::unique_ptr<SafetyHubResult>>()>
         result_getter,
     const base::Value::Dict& stored_notifications) {
   module_info_map_[type] = std::make_unique<SafetyHubModuleInfoElement>(

@@ -6,9 +6,13 @@
 
 #include <optional>
 #include <ostream>
+#include <string_view>
 
+#include "base/containers/fixed_flat_map.h"
+#include "base/feature_list.h"
 #include "base/notreached.h"
 #include "components/sync/base/data_type.h"
+#include "components/sync/base/features.h"
 
 namespace syncer {
 
@@ -38,8 +42,12 @@ constexpr char kPaymentsTypeName[] = "payments";
 constexpr char kProductComparisonTypeName[] = "productComparison";
 constexpr char kCookiesTypeName[] = "cookies";
 
-UserSelectableTypeInfo GetUserSelectableTypeInfo(UserSelectableType type) {
-  static_assert(55 == syncer::GetNumDataTypes(),
+UserSelectableTypeInfo GetUserSelectableTypeInfo(
+    UserSelectableType type,
+    // TODO(crbug.com/412602018): Remove this parameter once the feature is
+    // launched.
+    bool skip_feature_checks_if_early = false) {
+  static_assert(56 == syncer::GetNumDataTypes(),
                 "Almost always when adding a new Data, you must tie it to "
                 "a UserSelectableType below (new or existing) so the user can "
                 "disable syncing of that data. Today you must also update the "
@@ -50,10 +58,21 @@ UserSelectableTypeInfo GetUserSelectableTypeInfo(UserSelectableType type) {
   switch (type) {
     case UserSelectableType::kBookmarks:
       return {kBookmarksTypeName, BOOKMARKS, {BOOKMARKS, POWER_BOOKMARK}};
-    case UserSelectableType::kPreferences:
-      return {kPreferencesTypeName,
-              PREFERENCES,
-              {PREFERENCES, DICTIONARY, PRIORITY_PREFERENCES, SEARCH_ENGINES}};
+    case UserSelectableType::kPreferences: {
+      DataTypeSet types = {PREFERENCES, DICTIONARY, SEARCH_ENGINES};
+      // `skip_feature_checks_if_early` is used to avoid checking the feature
+      // state during early startup phase, which can happen when setting
+      // policies during pref service initialization. It is only set to true
+      // when called from `GetUserSelectableTypeName()` and thus, is not
+      // affected by the feature flag anyway.
+      // See crbug.com/415305009 for more context.
+      if ((!skip_feature_checks_if_early || base::FeatureList::GetInstance()) &&
+          !base::FeatureList::IsEnabled(
+              kSyncSupportAlwaysSyncingPriorityPreferences)) {
+        types.Put(PRIORITY_PREFERENCES);
+      }
+      return {kPreferencesTypeName, PREFERENCES, types};
+    }
     case UserSelectableType::kPasswords:
       return {
           kPasswordsTypeName,
@@ -84,12 +103,13 @@ UserSelectableTypeInfo GetUserSelectableTypeInfo(UserSelectableType type) {
       return {kReadingListTypeName, READING_LIST, {READING_LIST}};
     case UserSelectableType::kTabs:
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
-      return {kTabsTypeName,
-              SESSIONS,
-              {SESSIONS, SAVED_TAB_GROUP, SHARED_TAB_GROUP_DATA,
-               COLLABORATION_GROUP, SHARED_TAB_GROUP_ACCOUNT_DATA}};
+      return {
+          kTabsTypeName,
+          SESSIONS,
+          {SESSIONS, SAVED_TAB_GROUP, SHARED_COMMENT, SHARED_TAB_GROUP_DATA,
+           COLLABORATION_GROUP, SHARED_TAB_GROUP_ACCOUNT_DATA, WORKSPACE_DESK}};
 #else
-      return {kTabsTypeName, SESSIONS, {SESSIONS}};
+      return {kTabsTypeName, SESSIONS, {SESSIONS, WORKSPACE_DESK}};
 #endif
     case UserSelectableType::kSavedTabGroups:
       // Note: Tab groups is presented as a separate type only on desktop.
@@ -98,8 +118,8 @@ UserSelectableTypeInfo GetUserSelectableTypeInfo(UserSelectableType type) {
       // together with open tabs same as mobile.
       return {kSavedTabGroupsTypeName,
               SAVED_TAB_GROUP,
-              {SAVED_TAB_GROUP, SHARED_TAB_GROUP_DATA, COLLABORATION_GROUP,
-               SHARED_TAB_GROUP_ACCOUNT_DATA}};
+              {SAVED_TAB_GROUP, SHARED_COMMENT, SHARED_TAB_GROUP_DATA,
+               COLLABORATION_GROUP, SHARED_TAB_GROUP_ACCOUNT_DATA}};
     case UserSelectableType::kPayments:
       return {kPaymentsTypeName,
               AUTOFILL_WALLET_DATA,
@@ -133,7 +153,7 @@ UserSelectableTypeInfo GetUserSelectableOsTypeInfo(UserSelectableOsType type) {
       return {kOsPreferencesTypeName,
               OS_PREFERENCES,
               {OS_PREFERENCES, OS_PRIORITY_PREFERENCES, PRINTERS,
-               PRINTERS_AUTHORIZATION_SERVERS, WORKSPACE_DESK}};
+               PRINTERS_AUTHORIZATION_SERVERS}};
     case UserSelectableOsType::kOsWifiConfigurations:
       return {kOsWifiConfigurationsTypeName,
               WIFI_CONFIGURATIONS,
@@ -145,49 +165,30 @@ UserSelectableTypeInfo GetUserSelectableOsTypeInfo(UserSelectableOsType type) {
 }  // namespace
 
 const char* GetUserSelectableTypeName(UserSelectableType type) {
-  return GetUserSelectableTypeInfo(type).type_name;
+  return GetUserSelectableTypeInfo(type, /*skip_feature_checks_if_early=*/true)
+      .type_name;
 }
 
 std::optional<UserSelectableType> GetUserSelectableTypeFromString(
     const std::string& type) {
-  if (type == kBookmarksTypeName) {
-    return UserSelectableType::kBookmarks;
-  }
-  if (type == kPreferencesTypeName) {
-    return UserSelectableType::kPreferences;
-  }
-  if (type == kPasswordsTypeName) {
-    return UserSelectableType::kPasswords;
-  }
-  if (type == kAutofillTypeName) {
-    return UserSelectableType::kAutofill;
-  }
-  if (type == kThemesTypeName) {
-    return UserSelectableType::kThemes;
-  }
-  if (type == kHistoryTypeName) {
-    return UserSelectableType::kHistory;
-  }
-  if (type == kExtensionsTypeName) {
-    return UserSelectableType::kExtensions;
-  }
-  if (type == kAppsTypeName) {
-    return UserSelectableType::kApps;
-  }
-  if (type == kReadingListTypeName) {
-    return UserSelectableType::kReadingList;
-  }
-  if (type == kTabsTypeName) {
-    return UserSelectableType::kTabs;
-  }
-  if (type == kSavedTabGroupsTypeName) {
-    return UserSelectableType::kSavedTabGroups;
-  }
-  if (type == kProductComparisonTypeName) {
-    return UserSelectableType::kProductComparison;
-  }
-  if (type == kCookiesTypeName) {
-    return UserSelectableType::kCookies;
+  constexpr auto kTypeMap =
+      base::MakeFixedFlatMap<std::string_view, UserSelectableType>({
+          {kBookmarksTypeName, UserSelectableType::kBookmarks},
+          {kPreferencesTypeName, UserSelectableType::kPreferences},
+          {kPasswordsTypeName, UserSelectableType::kPasswords},
+          {kAutofillTypeName, UserSelectableType::kAutofill},
+          {kThemesTypeName, UserSelectableType::kThemes},
+          {kHistoryTypeName, UserSelectableType::kHistory},
+          {kExtensionsTypeName, UserSelectableType::kExtensions},
+          {kAppsTypeName, UserSelectableType::kApps},
+          {kReadingListTypeName, UserSelectableType::kReadingList},
+          {kTabsTypeName, UserSelectableType::kTabs},
+          {kSavedTabGroupsTypeName, UserSelectableType::kSavedTabGroups},
+          {kProductComparisonTypeName, UserSelectableType::kProductComparison},
+          {kCookiesTypeName, UserSelectableType::kCookies},
+      });
+  if (auto it = kTypeMap.find(type); it != kTypeMap.end()) {
+    return it->second;
   }
   return std::nullopt;
 }
@@ -205,6 +206,32 @@ std::string UserSelectableTypeSetToString(UserSelectableTypeSet types) {
 
 DataTypeSet UserSelectableTypeToAllDataTypes(UserSelectableType type) {
   return GetUserSelectableTypeInfo(type).data_type_group;
+}
+
+base::Value::List UserSelectableTypeSetToValueList(
+    syncer::UserSelectableTypeSet user_selected_types) {
+  base::Value::List value_list;
+  for (syncer::UserSelectableType type : user_selected_types) {
+    if (const char* name = syncer::GetUserSelectableTypeName(type)) {
+      value_list.Append(name);
+    }
+  }
+  return value_list;
+}
+
+syncer::UserSelectableTypeSet ValueListToUserSelectableTypeSet(
+    const base::Value::List& value_list) {
+  syncer::UserSelectableTypeSet user_selected_types;
+  for (const base::Value& value : value_list) {
+    if (!value.is_string()) {
+      continue;
+    }
+    if (std::optional<syncer::UserSelectableType> type =
+            syncer::GetUserSelectableTypeFromString(value.GetString())) {
+      user_selected_types.Put(type.value());
+    }
+  }
+  return user_selected_types;
 }
 
 DataType UserSelectableTypeToCanonicalDataType(UserSelectableType type) {
@@ -245,30 +272,25 @@ std::string UserSelectableOsTypeSetToString(UserSelectableOsTypeSet types) {
 
 std::optional<UserSelectableOsType> GetUserSelectableOsTypeFromString(
     const std::string& type) {
-  if (type == kOsAppsTypeName) {
-    return UserSelectableOsType::kOsApps;
-  }
-  if (type == kOsPreferencesTypeName) {
-    return UserSelectableOsType::kOsPreferences;
-  }
-  if (type == kOsWifiConfigurationsTypeName) {
-    return UserSelectableOsType::kOsWifiConfigurations;
-  }
-
-  // Some pref types migrated from browser prefs to OS prefs. Map the browser
-  // type name to the OS type so that enterprise policy SyncTypesListDisabled
-  // still applies to the migrated names.
-  // TODO(crbug.com/40678410): Rename "osApps" to "apps" and
-  // "osWifiConfigurations" to "wifiConfigurations", and remove the mapping for
-  // "preferences".
-  if (type == kAppsTypeName) {
-    return UserSelectableOsType::kOsApps;
-  }
-  if (type == kWifiConfigurationsTypeName) {
-    return UserSelectableOsType::kOsWifiConfigurations;
-  }
-  if (type == kPreferencesTypeName) {
-    return UserSelectableOsType::kOsPreferences;
+  constexpr auto kTypeMap =
+      base::MakeFixedFlatMap<std::string_view, UserSelectableOsType>({
+          {kOsAppsTypeName, UserSelectableOsType::kOsApps},
+          {kOsPreferencesTypeName, UserSelectableOsType::kOsPreferences},
+          {kOsWifiConfigurationsTypeName,
+           UserSelectableOsType::kOsWifiConfigurations},
+          // Some pref types migrated from browser prefs to OS prefs. Map the
+          // browser type name to the OS type so that enterprise policy
+          // SyncTypesListDisabled still applies to the migrated names.
+          // TODO(crbug.com/40678410): Rename "osApps" to "apps" and
+          // "osWifiConfigurations" to "wifiConfigurations", and remove the
+          // mapping for "preferences".
+          {kAppsTypeName, UserSelectableOsType::kOsApps},
+          {kWifiConfigurationsTypeName,
+           UserSelectableOsType::kOsWifiConfigurations},
+          {kPreferencesTypeName, UserSelectableOsType::kOsPreferences},
+      });
+  if (auto it = kTypeMap.find(type); it != kTypeMap.end()) {
+    return it->second;
   }
   return std::nullopt;
 }

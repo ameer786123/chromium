@@ -23,23 +23,28 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/app/chrome_command_ids.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/collaboration/collaboration_service_factory.h"
 #include "chrome/browser/data_sharing/data_sharing_service_factory.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/tab_group_sync/feature_utils.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
+#include "chrome/browser/ui/bookmarks/bookmark_utils_desktop.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_metrics.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_pref_names.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_deletion_dialog_controller.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -52,6 +57,7 @@
 #include "chrome/browser/ui/views/data_sharing/collaboration_controller_delegate_desktop.h"
 #include "chrome/browser/ui/views/data_sharing/data_sharing_bubble_controller.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/tab_strip_view_interface.h"
 #include "chrome/browser/ui/views/global_media_controls/media_item_ui_helper.h"
 #include "chrome/browser/ui/views/tabs/color_picker_view.h"
 #include "chrome/browser/ui/views/tabs/groups/avatar_container_view.h"
@@ -62,6 +68,7 @@
 #include "chrome/browser/user_education/tutorial_identifiers.h"
 #include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/browser/user_education/user_education_service_factory.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/collaboration/public/collaboration_service.h"
 #include "components/data_sharing/public/features.h"
@@ -69,12 +76,15 @@
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/saved_tab_groups/public/saved_tab_group.h"
+#include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/saved_tab_groups/public/types.h"
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tab_groups/tab_group_visual_data.h"
+#include "components/tabs/public/tab_group.h"
 #include "tab_group_editor_bubble_view.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/base/accelerators/accelerator.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -118,6 +128,13 @@ namespace {
 // The amount of vertical padding in dips the separator should have to
 // prevent menu items from being visually too close to each other.
 constexpr int kSeparatorPadding = 8;
+// The width of the tab group editor bubble.
+constexpr int kDialogWidth = 240;
+// The default size of icons that are displayed in the tab group editor bubble.
+static constexpr int kDefaultIconSize = 20;
+// The maximum number of times we will show the footer section with the learn
+// more link.
+constexpr int kFooterDisplayLimit = 5;
 
 int GetHorizontalSpacing() {
   return ChromeLayoutProvider::Get()->GetDistanceMetric(
@@ -138,25 +155,34 @@ gfx::Insets GetControlInsets() {
              : gfx::Insets::VH(vertical_spacing, horizontal_spacing);
 }
 
-constexpr int kDialogWidth = 240;
-static constexpr int kDefaultIconSize = 20;
-// The maximum number of times we will show the footer section with the learn
-// more link.
-constexpr int kFooterDisplayLimit = 5;
-
 std::unique_ptr<views::LabelButton> CreateMenuItem(
     int button_id,
     const std::u16string& name,
     views::Button::PressedCallback callback,
-    const ui::ImageModel& icon = ui::ImageModel()) {
+    const ui::ImageModel& icon = ui::ImageModel(),
+    const std::u16string& accelerator_text = std::u16string()) {
   const gfx::Insets control_insets = GetControlInsets();
-
-  auto button =
-      CreateBubbleMenuItem(button_id, name, std::move(callback), icon);
+  auto button = CreateBubbleMenuItem(button_id, name, std::move(callback), icon,
+                                     accelerator_text);
   button->SetBorder(views::CreateEmptyBorder(control_insets));
   button->SetLabelStyle(views::style::STYLE_BODY_3_EMPHASIS);
 
   return button;
+}
+
+std::u16string GetAcceleratorText(int command_id, const Browser* browser) {
+  if (!browser || !tabs::AreTabGroupShortcutsEnabled()) {
+    return std::u16string();
+  }
+
+  ui::Accelerator accelerator;
+  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
+  if (!browser_view ||
+      !browser_view->GetAccelerator(command_id, &accelerator)) {
+    return std::u16string();
+  }
+
+  return accelerator.GetShortcutText();
 }
 
 }  // namespace
@@ -164,22 +190,23 @@ std::unique_ptr<views::LabelButton> CreateMenuItem(
 namespace saved_tab_group_prefs = tab_groups::saved_tab_groups::prefs;
 namespace shared_tab_group_metrics = tab_groups::saved_tab_groups::metrics;
 
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(TabGroupEditorBubbleView,
+                                      kTabGroupEditorBubbleViewId);
+
 // static
 views::Widget* TabGroupEditorBubbleView::Show(
-    const Browser* browser,
+    Browser* browser,
     const tab_groups::TabGroupId& group,
-    TabGroupHeader* header_view,
-    std::optional<gfx::Rect> anchor_rect,
     views::View* anchor_view,
+    std::optional<gfx::Rect> anchor_rect,
     bool stop_context_menu_propagation) {
   feature_engagement::TrackerFactory::GetForBrowserContext(browser->profile())
       ->NotifyEvent("tab_group_editor_shown");
 
   // If `header_view` is not null, use `header_view` as the `anchor_view`.
   TabGroupEditorBubbleView* tab_group_editor_bubble_view =
-      new TabGroupEditorBubbleView(browser, group,
-                                   header_view ? header_view : anchor_view,
-                                   anchor_rect, stop_context_menu_propagation);
+      new TabGroupEditorBubbleView(browser, group, anchor_view, anchor_rect,
+                                   stop_context_menu_propagation);
   views::Widget* const widget =
       BubbleDialogDelegateView::CreateBubble(tab_group_editor_bubble_view);
   tab_group_editor_bubble_view->set_adjust_if_offscreen(true);
@@ -252,7 +279,7 @@ void TabGroupEditorBubbleView::AddedToWidget() {
 }
 
 TabGroupEditorBubbleView::TabGroupEditorBubbleView(
-    const Browser* browser,
+    Browser* browser,
     const tab_groups::TabGroupId& group,
     views::View* anchor_view,
     std::optional<gfx::Rect> anchor_rect,
@@ -284,11 +311,12 @@ TabGroupEditorBubbleView::TabGroupEditorBubbleView(
   SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   SetCloseCallback(base::BindOnce(&TabGroupEditorBubbleView::OnBubbleClose,
                                   base::Unretained(this)));
+  SetProperty(views::kElementIdentifierKey, kTabGroupEditorBubbleViewId);
 
   RebuildMenuContents();
 
   // Add a separator for the delete menu item and footer v2 enabled.
-  if (IsGroupSaved() && ShouldShowSavedFooter()) {
+  if (CanSaveGroups() && ShouldShowSavedFooter()) {
     PrefService* pref_service = browser_->profile()->GetPrefs();
     saved_tab_group_prefs::IncrementLearnMoreFooterShownCountPref(pref_service);
   }
@@ -322,7 +350,6 @@ void TabGroupEditorBubbleView::RebuildMenuContents() {
   }
   manage_shared_group_button_ = nullptr;
   color_selector_ = nullptr;
-  save_group_toggle_ = nullptr;
   save_group_icon_ = nullptr;
   save_group_label_ = nullptr;
   footer_ = nullptr;
@@ -340,7 +367,7 @@ void TabGroupEditorBubbleView::RebuildMenuContents() {
         AddChildView(BuildMoveGroupToNewWindowButton()));
     AddChildView(BuildSeparator());
     simple_menu_items_.push_back(AddChildView(BuildUngroupButton()));
-    simple_menu_items_.push_back(AddChildView(BuildHideGroupButton()));
+    simple_menu_items_.push_back(AddChildView(BuildCloseGroupButton()));
   } else {
     simple_menu_items_.push_back(AddChildView(BuildNewTabInGroupButton()));
     simple_menu_items_.push_back(
@@ -361,7 +388,7 @@ void TabGroupEditorBubbleView::RebuildMenuContents() {
       simple_menu_items_.push_back(AddChildView(BuildRecentActivityButton()));
     }
 
-    simple_menu_items_.push_back(AddChildView(BuildHideGroupButton()));
+    simple_menu_items_.push_back(AddChildView(BuildCloseGroupButton()));
     AddChildView(BuildSeparator());
 
     if (!IsGroupShared()) {
@@ -369,6 +396,11 @@ void TabGroupEditorBubbleView::RebuildMenuContents() {
     }
 
     if (OwnsGroup()) {
+      // Convert to bookmark is only avaialable to saved group, not shared.
+      if (features::IsBookmarkTabGroupConversionEnabled() && !IsGroupShared()) {
+        simple_menu_items_.push_back(
+            AddChildView(BuildConvertToBookmarkButton()));
+      }
       simple_menu_items_.push_back(AddChildView(BuildDeleteGroupButton()));
     } else {
       simple_menu_items_.push_back(AddChildView(BuildLeaveGroupButton()));
@@ -470,13 +502,18 @@ std::u16string TabGroupEditorBubbleView::GetGroupTitle() {
 
 std::unique_ptr<views::LabelButton>
 TabGroupEditorBubbleView::BuildNewTabInGroupButton() {
-  return CreateMenuItem(
+  std::unique_ptr<views::LabelButton> menu_item = CreateMenuItem(
       TAB_GROUP_HEADER_CXMENU_NEW_TAB_IN_GROUP,
       l10n_util::GetStringUTF16(IDS_TAB_GROUP_HEADER_CXMENU_NEW_TAB_IN_GROUP),
       base::BindRepeating(&TabGroupEditorBubbleView::NewTabInGroupPressed,
                           base::Unretained(this)),
       ui::ImageModel::FromVectorIcon(kNewTabInGroupRefreshIcon,
-                                     ui::kColorMenuIcon, kDefaultIconSize));
+                                     ui::kColorMenuIcon, kDefaultIconSize),
+      GetAcceleratorText(IDC_ADD_NEW_TAB_TO_GROUP, browser_));
+
+  menu_item->SetProperty(views::kElementIdentifierKey,
+                         kTabGroupEditorBubbleNewTabInGroupButtonId);
+  return menu_item;
 }
 
 std::unique_ptr<views::LabelButton>
@@ -490,17 +527,35 @@ TabGroupEditorBubbleView::BuildUngroupButton() {
 }
 
 std::unique_ptr<views::LabelButton>
-TabGroupEditorBubbleView::BuildHideGroupButton() {
+TabGroupEditorBubbleView::BuildCloseGroupButton() {
   std::unique_ptr<views::LabelButton> menu_item = CreateMenuItem(
       TAB_GROUP_HEADER_CXMENU_CLOSE_GROUP, GetTextForCloseButton(),
-      base::BindRepeating(&TabGroupEditorBubbleView::HideGroupPressed,
+      base::BindRepeating(&TabGroupEditorBubbleView::CloseGroupPressed,
                           base::Unretained(this)),
       ui::ImageModel::FromVectorIcon(kCloseGroupRefreshIcon, ui::kColorMenuIcon,
-                                     kDefaultIconSize));
+                                     kDefaultIconSize),
+      GetAcceleratorText(IDC_CLOSE_TAB_GROUP, browser_));
 
   menu_item->SetProperty(views::kElementIdentifierKey,
                          kTabGroupEditorBubbleCloseGroupButtonId);
   return menu_item;
+}
+
+std::unique_ptr<views::LabelButton>
+TabGroupEditorBubbleView::BuildConvertToBookmarkButton() {
+  std::unique_ptr<views::LabelButton> bookmark_group_menu_item = CreateMenuItem(
+      TAB_GROUP_HEADER_CXMENU_CONVERT_TO_BOOKMARK,
+      l10n_util::GetStringUTF16(
+          IDS_TAB_GROUP_HEADER_CXMENU_CONVERT_GROUP_TO_BOOKMARK_FOLDER),
+      base::BindRepeating(&TabGroupEditorBubbleView::ConvertToBookmarkPressed,
+                          base::Unretained(this)),
+      ui::ImageModel::FromVectorIcon(kBookmarkAllTabsChromeRefreshIcon,
+                                     ui::kColorMenuIcon, kDefaultIconSize));
+
+  bookmark_group_menu_item->SetProperty(
+      views::kElementIdentifierKey,
+      kTabGroupEditorBubbleConvertToBookmarkButtonId);
+  return bookmark_group_menu_item;
 }
 
 std::unique_ptr<views::LabelButton>
@@ -545,7 +600,7 @@ TabGroupEditorBubbleView::BuildLeaveGroupButton() {
 
 std::unique_ptr<views::LabelButton>
 TabGroupEditorBubbleView::BuildMoveGroupToNewWindowButton() {
-  return CreateMenuItem(
+  std::unique_ptr<views::LabelButton> menu_item = CreateMenuItem(
       TAB_GROUP_HEADER_CXMENU_MOVE_GROUP_TO_NEW_WINDOW,
       l10n_util::GetStringUTF16(
           IDS_TAB_GROUP_HEADER_CXMENU_MOVE_GROUP_TO_NEW_WINDOW),
@@ -554,6 +609,11 @@ TabGroupEditorBubbleView::BuildMoveGroupToNewWindowButton() {
           base::Unretained(this)),
       ui::ImageModel::FromVectorIcon(kMoveGroupToNewWindowRefreshIcon,
                                      ui::kColorMenuIcon, kDefaultIconSize));
+
+  menu_item->SetProperty(views::kElementIdentifierKey,
+                         kTabGroupEditorBubbleMoveGroupToNewWindowButtonId);
+
+  return menu_item;
 }
 
 std::unique_ptr<views::LabelButton>
@@ -661,12 +721,14 @@ void TabGroupEditorBubbleView::UpdateGroup() {
   tab_groups::TabGroupVisualData new_data(
       std::u16string(title_field_->GetText()), updated_color,
       current_visual_data->is_collapsed());
-  tab_group->SetVisualData(new_data, tab_group->IsCustomized());
+  browser_->tab_strip_model()->ChangeTabGroupVisuals(group_, new_data,
+                                                     tab_group->IsCustomized());
 }
 
-const std::u16string TabGroupEditorBubbleView::GetTextForCloseButton() const {
+std::u16string TabGroupEditorBubbleView::GetTextForCloseButton() const {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser_->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+          browser_->profile());
 
   if (!tab_group_service) {
     return l10n_util::GetStringUTF16(IDS_TAB_GROUP_HEADER_CXMENU_DELETE_GROUP);
@@ -677,16 +739,9 @@ const std::u16string TabGroupEditorBubbleView::GetTextForCloseButton() const {
   return l10n_util::GetStringUTF16(IDS_TAB_GROUP_HEADER_CXMENU_CLOSE_GROUP);
 }
 
-const std::u16string TabGroupEditorBubbleView::GetSaveToggleAccessibleName()
-    const {
-  return l10n_util::GetStringUTF16(
-      save_group_toggle_->GetIsOn() ? IDS_TAB_GROUP_HEADER_CXMENU_UNSAVE_GROUP
-                                    : IDS_TAB_GROUP_HEADER_CXMENU_SAVE_GROUP);
-}
-
 bool TabGroupEditorBubbleView::CanSaveGroups() const {
   return browser_->profile()->IsRegularProfile() &&
-         tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+         tab_groups::TabGroupSyncServiceFactory::GetForProfile(
              browser_->profile());
 }
 
@@ -704,7 +759,8 @@ bool TabGroupEditorBubbleView::IsAllowedToCreateSharedGroup() const {
 
 bool TabGroupEditorBubbleView::OwnsGroup() const {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser_->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+          browser_->profile());
   if (!tab_group_service) {
     return true;
   }
@@ -721,7 +777,8 @@ bool TabGroupEditorBubbleView::OwnsGroup() const {
 
 bool TabGroupEditorBubbleView::IsGroupSaved() const {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser_->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+          browser_->profile());
 
   if (!tab_group_service) {
     return false;
@@ -738,7 +795,8 @@ bool TabGroupEditorBubbleView::IsGroupSaved() const {
 
 bool TabGroupEditorBubbleView::IsGroupShared() const {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser_->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+          browser_->profile());
 
   if (!tab_group_service) {
     return false;
@@ -775,7 +833,8 @@ void TabGroupEditorBubbleView::UngroupPressed() {
   base::RecordAction(
       base::UserMetricsAction("TabGroups_TabGroupBubble_Ungroup"));
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser_->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+          browser_->profile());
 
   if (tab_group_service) {
     const std::optional<tab_groups::SavedTabGroup> saved_group =
@@ -796,11 +855,12 @@ void TabGroupEditorBubbleView::ShareOrManagePressed() {
   collaboration::CollaborationService* service =
       collaboration::CollaborationServiceFactory::GetForProfile(
           browser_->profile());
-  auto delegate = std::make_unique<CollaborationControllerDelegateDesktop>(
-      const_cast<Browser*>(browser_.get()));
+  auto delegate =
+      std::make_unique<CollaborationControllerDelegateDesktop>(browser_);
   service->StartShareOrManageFlow(
       std::move(delegate), group_,
-      collaboration::CollaborationServiceShareOrManageEntryPoint::kUnknown);
+      collaboration::CollaborationServiceShareOrManageEntryPoint::
+          kDesktopGroupEditorShareOrManageButton);
 
   bool is_group_shared = IsGroupShared();
   if (!is_group_shared) {
@@ -814,16 +874,19 @@ void TabGroupEditorBubbleView::ShareOrManagePressed() {
 }
 
 void TabGroupEditorBubbleView::RecentActivityPressed() {
-  auto* tab_group_header =
-      BrowserView::GetBrowserViewForBrowser(browser_)->tabstrip()->group_header(
-          group_);
+  views::View* tab_group_header =
+      BrowserView::GetBrowserViewForBrowser(browser_)
+          ->tab_strip_view()
+          ->GetTabGroupAnchorView(group_);
 
-  RecentActivityBubbleCoordinator bubble_coordinator;
-  bubble_coordinator.Show(tab_group_header,
-                          browser_->tab_strip_model()->GetActiveWebContents(),
-                          tab_groups::SavedTabGroupUtils::GetRecentActivity(
-                              browser_->profile(), group_),
-                          browser_->profile());
+  auto* bubble_coordinator = RecentActivityBubbleCoordinator::From(browser_);
+  CHECK(bubble_coordinator);
+
+  bubble_coordinator->Show(tab_group_header,
+                           browser_->tab_strip_model()->GetActiveWebContents(),
+                           tab_groups::SavedTabGroupUtils::GetRecentActivity(
+                               browser_->profile(), group_),
+                           browser_->profile());
 }
 
 // static
@@ -842,7 +905,7 @@ void TabGroupEditorBubbleView::Ungroup(const Browser* browser,
   model->RemoveFromGroup(tabs);
 }
 
-void TabGroupEditorBubbleView::HideGroupPressed() {
+void TabGroupEditorBubbleView::CloseGroupPressed() {
   base::RecordAction(
       base::UserMetricsAction("TabGroups_TabGroupBubble_CloseGroup"));
 
@@ -857,19 +920,49 @@ void TabGroupEditorBubbleView::HideGroupPressed() {
   }
 }
 
+void TabGroupEditorBubbleView::ConvertToBookmarkPressed() {
+  TabGroup* tab_group =
+      browser_->tab_strip_model()->group_model()->GetTabGroup(group_);
+  if (tab_group) {
+    bookmarks::ShowBookmarkTabGroupDialog(
+        browser_, *tab_group,
+        base::BindOnce(
+            [](Browser* browser, const tab_groups::TabGroupId& group) {
+              tab_groups::TabGroupSyncService* tab_group_service =
+                  tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+                      browser->profile());
+              if (!tab_group_service) {
+                return;
+              }
+
+              std::optional<tab_groups::SavedTabGroup> saved_group =
+                  tab_group_service->GetGroup(group);
+              if (!saved_group) {
+                return;
+              }
+
+              tab_groups::SavedTabGroupUtils::DeleteSavedGroup(
+                  browser, saved_group->saved_guid());
+            }));
+  }
+
+  GetWidget()->Close();
+}
+
 void TabGroupEditorBubbleView::DeleteGroupPressed() {
   base::RecordAction(
       base::UserMetricsAction("TabGroups_TabGroupBubble_DeleteGroup"));
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser_->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+          browser_->profile());
   if (!tab_group_service) {
-    return HideGroupPressed();
+    return CloseGroupPressed();
   }
 
   std::optional<tab_groups::SavedTabGroup> saved_group =
       tab_group_service->GetGroup(group_);
   if (!saved_group) {
-    return HideGroupPressed();
+    return CloseGroupPressed();
   }
 
   bool is_group_shared = saved_group->is_shared_tab_group();
@@ -886,7 +979,8 @@ void TabGroupEditorBubbleView::DeleteGroupPressed() {
 
 void TabGroupEditorBubbleView::LeaveGroupPressed() {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser_->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+          browser_->profile());
   if (!tab_group_service) {
     return;
   }
@@ -930,7 +1024,8 @@ bool TabGroupEditorBubbleView::CanMoveGroupToNewWindow() {
 std::unique_ptr<ManageSharingRow>
 TabGroupEditorBubbleView::BuildManageSharingButton() {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser_->profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+          browser_->profile());
 
   std::optional<tab_groups::SavedTabGroup> saved_group =
       tab_group_service->GetGroup(group_);

@@ -4,6 +4,8 @@
 
 #include "components/enterprise/connectors/core/realtime_reporting_client_base.h"
 
+#include <ctime>
+
 #include "base/containers/contains.h"
 #include "base/containers/to_value_list.h"
 #include "base/i18n/time_formatting.h"
@@ -186,9 +188,7 @@ void RealtimeReportingClientBase::ReportEvent(
 
   // If the timestamp is not set, it's a realtime event so use current time.
   if (!event.has_time()) {
-    int64_t timestamp_millis = base::Time::Now().InMillisecondsSinceUnixEpoch();
-    event.mutable_time()->set_seconds(timestamp_millis / 1000);
-    event.mutable_time()->set_nanos((timestamp_millis % 1000) * 1000000);
+    *event.mutable_time() = ToProtoTimestamp(base::Time::Now());
   }
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
@@ -285,9 +285,9 @@ void RealtimeReportingClientBase::FinishUploadSecurityEvent(
       CreateUploadEventsRequest();
   request.add_events()->Swap(&event);
 
-  auto upload_callback =
-      base::BindOnce(&RealtimeReportingClientBase::UploadCallback, AsWeakPtr(),
-                     request, settings.per_profile, client, event_type);
+  auto upload_callback = base::BindOnce(
+      &RealtimeReportingClientBase::UploadCallback, AsWeakPtr(), request,
+      settings.per_profile, client, event_type, base::TimeTicks::Now());
 
   client->UploadSecurityEvent(ShouldIncludeDeviceInfo(settings.per_profile),
                               std::move(request), std::move(upload_callback));
@@ -314,7 +314,7 @@ void RealtimeReportingClientBase::UploadSecurityEventReportDeprecated(
     return;
   }
   FinishUploadSecurityEventReportDeprecated(std::move(event_wrapper), client,
-                                            name, settings, time);
+                                            name, settings);
 }
 
 void RealtimeReportingClientBase::OnIpAddressesFetchedDeprecated(
@@ -326,15 +326,14 @@ void RealtimeReportingClientBase::OnIpAddressesFetchedDeprecated(
     std::vector<std::string> ip_addresses) {
   event_wrapper.Set("localIps", base::ToValueList(ip_addresses));
   FinishUploadSecurityEventReportDeprecated(std::move(event_wrapper), client,
-                                            name, settings, time);
+                                            name, settings);
 }
 
 void RealtimeReportingClientBase::FinishUploadSecurityEventReportDeprecated(
     base::Value::Dict event_wrapper,
     policy::CloudPolicyClient* client,
     std::string name,
-    const ReportingSettings& settings,
-    base::Time time) {
+    const ReportingSettings& settings) {
   DVLOG(1) << "enterprise.connectors: security event: "
            << event_wrapper.DebugString();
 
@@ -345,7 +344,8 @@ void RealtimeReportingClientBase::FinishUploadSecurityEventReportDeprecated(
   auto upload_callback =
       base::BindOnce(&RealtimeReportingClientBase::UploadCallbackDeprecated,
                      AsWeakPtr(), report.Clone(), settings.per_profile, client,
-                     enterprise_connectors::GetUmaEnumFromEventName(name));
+                     enterprise_connectors::GetUmaEnumFromEventName(name),
+                     base::TimeTicks::Now());
 
   client->UploadSecurityEventReport(
       ShouldIncludeDeviceInfo(settings.per_profile), std::move(report),

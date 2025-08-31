@@ -151,7 +151,7 @@ scoped_refptr<StaticBitmapImage> CreateImageFromVideoFrame(
       dest_rect.IsEmpty() && transform == media::kNoTransformation &&
       CanUseZeroCopyImages(*frame)) {
     // Hold a ref by storing it in the release callback.
-    auto release_callback = WTF::BindOnce(
+    auto release_callback = blink::BindOnce(
         [](scoped_refptr<media::VideoFrame> frame,
            base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider,
            const gpu::SyncToken& sync_token, bool is_lost) {
@@ -165,8 +165,7 @@ scoped_refptr<StaticBitmapImage> CreateImageFromVideoFrame(
 
     return AcceleratedStaticBitmapImage::CreateFromCanvasSharedImage(
         frame->shared_image(), frame->acquire_sync_token(), 0u,
-        frame->coded_size(), GetN32FormatForCanvas(), kUnpremul_SkAlphaType,
-        frame_color_space,
+        frame->shared_image()->alpha_type(),
         // Pass nullptr for |context_provider_wrapper|, because we don't
         // know which context the mailbox came from. It is used only to
         // detect when the mailbox is invalid due to context loss, and is

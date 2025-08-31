@@ -36,7 +36,7 @@
 #include "ui/events/event_processor.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/textfield/textfield_test_api.h"
@@ -1085,8 +1085,8 @@ TEST_F(WidgetTestInteractive, FullscreenMaximizedWindowBounds) {
 // Tests whether the focused window is set correctly when a modal window is
 // created and destroyed. When it is destroyed it should focus the owner window.
 TEST_F(DesktopWidgetTestInteractive, WindowModalWindowDestroyedActivationTest) {
-  TestWidgetFocusChangeListener focus_listener;
-  WidgetFocusManager::GetInstance()->AddFocusChangeListener(&focus_listener);
+  TestNativeViewFocusChangeListener focus_listener;
+  NativeViewFocusManager::GetInstance()->AddFocusChangeListener(&focus_listener);
   const std::vector<gfx::NativeView>& focus_changes =
       focus_listener.focus_changes();
 
@@ -1140,7 +1140,7 @@ TEST_F(DesktopWidgetTestInteractive, WindowModalWindowDestroyedActivationTest) {
   EXPECT_EQ(top_level_native_view, focus_changes[4]);
 
   top_level_widget->Close();
-  WidgetFocusManager::GetInstance()->RemoveFocusChangeListener(&focus_listener);
+  NativeViewFocusManager::GetInstance()->RemoveFocusChangeListener(&focus_listener);
 }
 #endif
 
@@ -1692,6 +1692,16 @@ TEST_F(DesktopWidgetTestInteractive,
 #endif  // (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) &&
         // BUILDFLAG(ENABLE_DESKTOP_AURA)
 
+// Asserts the Widget's NativeView remains valid after the Widget has been
+// closed but before the Widget is destroyed.
+TEST_F(WidgetTestInteractive, NativeViewRemainsValidPostClose) {
+  WidgetAutoclosePtr toplevel(CreateTopLevelPlatformWidget());
+  EXPECT_TRUE(toplevel->GetNativeView());
+  toplevel->Close();
+  EXPECT_TRUE(toplevel->IsClosed());
+  EXPECT_TRUE(toplevel->GetNativeView());
+}
+
 namespace {
 
 // Helper class for CaptureLostTrackingWidget to store whether
@@ -2111,8 +2121,8 @@ TEST_F(WidgetCaptureTest, GrabUngrab) {
 
 // Test that when opening a system-modal window, capture is released.
 TEST_F(WidgetCaptureTest, MAYBE_SystemModalWindowReleasesCapture) {
-  TestWidgetFocusChangeListener focus_listener;
-  WidgetFocusManager::GetInstance()->AddFocusChangeListener(&focus_listener);
+  TestNativeViewFocusChangeListener focus_listener;
+  NativeViewFocusManager::GetInstance()->AddFocusChangeListener(&focus_listener);
 
   // Create a top level widget.
   auto top_level_widget = std::make_unique<Widget>();
@@ -2144,7 +2154,7 @@ TEST_F(WidgetCaptureTest, MAYBE_SystemModalWindowReleasesCapture) {
   ShowSync(modal_dialog_widget);
 
   EXPECT_FALSE(top_level_widget->HasCapture());
-  WidgetFocusManager::GetInstance()->RemoveFocusChangeListener(&focus_listener);
+  NativeViewFocusManager::GetInstance()->RemoveFocusChangeListener(&focus_listener);
 }
 
 // Regression test for http://crbug.com/382421 (Linux-Aura issue).

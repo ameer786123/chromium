@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_AUTOFILL_AUTOFILL_CONTEXT_MENU_MANAGER_H_
 #define CHROME_BROWSER_UI_AUTOFILL_AUTOFILL_CONTEXT_MENU_MANAGER_H_
 
+#include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/types/strong_alias.h"
 #include "components/autofill/core/common/unique_ids.h"
@@ -94,7 +95,8 @@ class AutofillContextMenuManager : public RenderViewContextMenuObserver {
   // Not all 4 entries have to be displayed. If an entry does not meet its
   // criterion to be displayed, the entry will be skipped.
   void AddPasswordsManualFallbackItems(
-      password_manager::ContentPasswordManagerDriver& password_manager_driver);
+      password_manager::ContentPasswordManagerDriver& password_manager_driver,
+      bool add_select_password_option);
 
   // Out of all password entries, this method is only interested in the "select
   // password" entry, because the rest of them don't trigger suggestions and are

@@ -168,6 +168,11 @@ IN_PROC_BROWSER_TEST_F(CrComponentsMostVisitedTest, DragAndDrop) {
           "runMochaSuite('DragAndDrop');");
 }
 
+IN_PROC_BROWSER_TEST_F(CrComponentsMostVisitedTest, EnterpriseShortcuts) {
+  RunTest("cr_components/most_visited_test.js",
+          "runMochaSuite('EnterpriseShortcuts');");
+}
+
 IN_PROC_BROWSER_TEST_F(CrComponentsMostVisitedTest, Theming) {
   RunTest("cr_components/most_visited_test.js", "runMochaSuite('Theming');");
 }
@@ -201,10 +206,7 @@ class CrComponentsPrerenderTest : public CrComponentsMostVisitedTest {
  protected:
   CrComponentsPrerenderTest() {
     const std::map<std::string, std::string> params = {
-        {"prerender_start_delay_on_mouse_hover_ms", "0"},
-        {"preconnect_start_delay_on_mouse_hover_ms", "0"},
-        {"prerender_new_tab_page_on_mouse_pressed_trigger", "true"},
-        {"prerender_new_tab_page_on_mouse_hover_trigger", "true"}};
+        {"preconnect_start_delay_on_mouse_hover_ms", "0"}};
     scoped_feature_list_.InitAndEnableFeatureWithParameters(
         features::kNewTabPageTriggerForPrerender2, params);
   }

@@ -134,7 +134,7 @@ public class MerchantTrustSignalsCoordinatorTest {
     private static final String DIFFERENT_HOST = "different_host";
     private static final String FAKE_URL = "fake_url";
 
-    private MerchantInfo mDummyMerchantTrustSignals =
+    private final MerchantInfo mDummyMerchantTrustSignals =
             new MerchantInfo(4.5f, 100, null, false, 0f, false, false);
     private MerchantTrustSignalsCoordinator mCoordinator;
     private String mSerializedTimestamps;
@@ -161,7 +161,6 @@ public class MerchantTrustSignalsCoordinatorTest {
         doReturn(mMockProfile).when(mMockProfileSupplier).get();
         doReturn(false).when(mMockProfile).isOffTheRecord();
         doReturn(FAKE_HOST).when(mMockGurl).getSpec();
-        doReturn(true).when(mMockTabProvider).hasValue();
         doReturn(mMockTab).when(mMockTabProvider).get();
         doReturn(mMockWebContents).when(mMockTab).getWebContents();
         doAnswer((Answer<String>) invocation -> mSerializedTimestamps)
@@ -604,7 +603,7 @@ public class MerchantTrustSignalsCoordinatorTest {
 
     private void setMockTrustSignalsData(MerchantInfo merchantInfo) {
         doAnswer(
-                        new Answer<Void>() {
+                        new Answer<>() {
                             @Override
                             public Void answer(InvocationOnMock invocation) {
                                 Callback callback = (Callback) invocation.getArguments()[2];
@@ -618,7 +617,7 @@ public class MerchantTrustSignalsCoordinatorTest {
 
     private void setMockTrustSignalsEventData(String hostname, MerchantTrustSignalsEvent event) {
         doAnswer(
-                        new Answer<Void>() {
+                        new Answer<>() {
                             @Override
                             public Void answer(InvocationOnMock invocation) {
                                 Callback callback = (Callback) invocation.getArguments()[1];

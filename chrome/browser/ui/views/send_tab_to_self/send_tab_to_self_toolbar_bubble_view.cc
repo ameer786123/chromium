@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/send_tab_to_self/send_tab_to_self_toolbar_bubble_view.h"
 
 #include "base/feature_list.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/send_tab_to_self/send_tab_to_self_client_service.h"
 #include "chrome/browser/send_tab_to_self/send_tab_to_self_client_service_factory.h"
@@ -13,10 +14,12 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_toolbar_icon_controller.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions_container.h"
+#include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions_controller.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/send_tab_to_self/features.h"
@@ -36,7 +39,7 @@ namespace send_tab_to_self {
 
 // static
 SendTabToSelfToolbarBubbleView* SendTabToSelfToolbarBubbleView::CreateBubble(
-    const Browser* browser,
+    BrowserWindowInterface& browser,
     View* parent,
     const SendTabToSelfEntry& entry,
     base::OnceCallback<void(NavigateParams*)> navigate_callback) {
@@ -53,7 +56,7 @@ SendTabToSelfToolbarBubbleView* SendTabToSelfToolbarBubbleView::CreateBubble(
 SendTabToSelfToolbarBubbleView::~SendTabToSelfToolbarBubbleView() = default;
 
 SendTabToSelfToolbarBubbleView::SendTabToSelfToolbarBubbleView(
-    const Browser* browser,
+    BrowserWindowInterface& browser,
     View* parent,
     const SendTabToSelfEntry& entry,
     base::OnceCallback<void(NavigateParams*)> navigate_callback)
@@ -133,7 +136,7 @@ SendTabToSelfToolbarBubbleView::SendTabToSelfToolbarBubbleView(
 
 void SendTabToSelfToolbarBubbleView::OpenInNewTab() {
   opened_ = true;
-  NavigateParams params(browser_->profile(), url_, ui::PAGE_TRANSITION_LINK);
+  NavigateParams params(browser_->GetProfile(), url_, ui::PAGE_TRANSITION_LINK);
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   params.window_action = NavigateParams::SHOW_WINDOW;
   std::move(navigate_callback_).Run(&params);
@@ -151,19 +154,18 @@ void SendTabToSelfToolbarBubbleView::Hide() {
   if (!opened_) {
     send_tab_to_self::RecordNotificationDismissed();
   }
-  SendTabToSelfClientServiceFactory::GetForProfile(browser_->profile())
+  SendTabToSelfClientServiceFactory::GetForProfile(browser_->GetProfile())
       ->GetReceivingUiHandler()
       ->DismissEntries(std::vector<std::string>({guid_}));
-  auto* container = BrowserView::GetBrowserViewForBrowser(browser_)
-                        ->toolbar()
-                        ->pinned_toolbar_actions_container();
-  container->ShowActionEphemerallyInToolbar(kActionSendTabToSelf, false);
+  PinnedToolbarActionsController* controller =
+      browser_->GetFeatures().pinned_toolbar_actions_controller();
+  controller->ShowActionEphemerallyInToolbar(kActionSendTabToSelf, false);
 }
 
 void SendTabToSelfToolbarBubbleView::ReplaceEntry(
     const SendTabToSelfEntry& new_entry) {
   auto* model =
-      SendTabToSelfSyncServiceFactory::GetForProfile(browser_->profile())
+      SendTabToSelfSyncServiceFactory::GetForProfile(browser_->GetProfile())
           ->GetSendTabToSelfModel();
   model->DismissEntry(guid_);
 

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/time/time.h"
@@ -252,6 +253,8 @@ void WebAppBrowserTestBase::TearDownOnMainThread() {
 }
 
 void WebAppBrowserTestBase::SetUpCommandLine(base::CommandLine* command_line) {
+  WebAppBrowserTestBaseParent::SetUpCommandLine(command_line);
+
   // Browser will both run and display insecure content.
   command_line->AppendSwitch(switches::kAllowRunningInsecureContent);
   cert_verifier_.SetUpCommandLine(command_line);

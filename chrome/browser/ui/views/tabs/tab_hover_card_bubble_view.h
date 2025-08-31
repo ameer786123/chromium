@@ -15,7 +15,6 @@
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
-#include "chrome/browser/ui/tabs/tab_utils.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/tabs/fade_footer_view.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -29,6 +28,10 @@
 
 namespace gfx {
 class ImageSkia;
+}
+
+namespace tabs {
+enum class TabAlert;
 }
 
 class Tab;
@@ -104,7 +107,7 @@ class TabHoverCardBubbleView : public views::BubbleDialogDelegateView {
   raw_ptr<FadeLabelView> domain_label_ = nullptr;
   raw_ptr<ThumbnailView> thumbnail_view_ = nullptr;
   raw_ptr<FooterView> footer_view_ = nullptr;
-  std::optional<TabAlertState> alert_state_;
+  std::optional<tabs::TabAlert> alert_state_;
   const raw_ptr<const TabStyle> tab_style_;
 
   const InitParams bubble_params_;

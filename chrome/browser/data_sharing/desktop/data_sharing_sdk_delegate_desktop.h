@@ -7,6 +7,7 @@
 
 #include "base/callback_list.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/ui/webui/data_sharing/data_sharing_ui.h"
 #include "components/data_sharing/public/data_sharing_sdk_delegate.h"
@@ -86,6 +87,10 @@ class DataSharingSDKDelegateDesktop : public DataSharingSDKDelegate,
   void OnGroupAction(
       data_sharing::mojom::GroupAction action,
       data_sharing::mojom::GroupActionProgress progress) override;
+
+  content::WebContents* web_contents_for_testing() {
+    return web_contents_.get();
+  }
 
   void AddAccessToken(
       const data_sharing_pb::AddAccessTokenParams& params,

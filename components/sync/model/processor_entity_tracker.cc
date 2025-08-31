@@ -4,9 +4,13 @@
 
 #include "components/sync/model/processor_entity_tracker.h"
 
+#include <algorithm>
 #include <utility>
 
+#include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "base/trace_event/memory_usage_estimator.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/model/processor_entity.h"
 #include "components/sync/protocol/data_type_state_helper.h"
 #include "components/sync/protocol/entity_metadata.pb.h"
@@ -16,15 +20,22 @@
 namespace syncer {
 
 ProcessorEntityTracker::ProcessorEntityTracker(
+    DataType type,
     const sync_pb::DataTypeState& data_type_state,
     std::map<std::string, std::unique_ptr<sync_pb::EntityMetadata>>
         metadata_map)
     : data_type_state_(data_type_state) {
   DCHECK(
       IsInitialSyncAtLeastPartiallyDone(data_type_state.initial_sync_state()));
+  size_t invalid_entities = 0;
   for (auto& [storage_key, metadata] : metadata_map) {
     std::unique_ptr<ProcessorEntity> entity =
         ProcessorEntity::CreateFromMetadata(storage_key, std::move(*metadata));
+    if (!entity) {
+      // The persisted metadata was invalid. This should be very rare.
+      ++invalid_entities;
+      continue;
+    }
     const ClientTagHash client_tag_hash =
         ClientTagHash::FromHashed(entity->metadata().client_tag_hash());
 
@@ -34,6 +45,13 @@ ProcessorEntityTracker::ProcessorEntityTracker(
     storage_key_to_tag_hash_[entity->storage_key()] = client_tag_hash;
     entities_[client_tag_hash] = std::move(entity);
   }
+  std::string suffix = DataTypeToHistogramSuffix(type);
+  base::UmaHistogramCounts1000(
+      base::StrCat({"Sync.EntityTracker.InvalidEntitiesOnLoad.", suffix}),
+      invalid_entities);
+  base::UmaHistogramCounts1000(
+      base::StrCat({"Sync.EntityTracker.TotalEntitiesOnLoad.", suffix}),
+      metadata_map.size());
 }
 
 ProcessorEntityTracker::~ProcessorEntityTracker() = default;
@@ -138,8 +156,8 @@ std::vector<std::string> ProcessorEntityTracker::RemoveInactiveCollaborations(
   CHECK(
       IsInitialSyncAtLeastPartiallyDone(data_type_state_.initial_sync_state()));
   std::vector<std::string> removed_storage_keys;
-  std::erase_if(entities_, [&removed_storage_keys,
-                            &active_collaborations](const auto& item) {
+  absl::erase_if(entities_, [&removed_storage_keys,
+                             &active_collaborations](const auto& item) {
     const std::unique_ptr<ProcessorEntity>& entity = item.second;
     if (!active_collaborations.contains(
             entity->metadata().collaboration().collaboration_id())) {
@@ -217,6 +235,15 @@ ProcessorEntityTracker::GetAllEntitiesIncludingTombstones() const {
   return entities;
 }
 
+std::vector<std::string> ProcessorEntityTracker::GetAllStorageKeys() const {
+  std::vector<std::string> storage_keys;
+  storage_keys.reserve(storage_key_to_tag_hash_.size());
+  for (const auto& [storage_key, client_tag_hash] : storage_key_to_tag_hash_) {
+    storage_keys.push_back(storage_key);
+  }
+  return storage_keys;
+}
+
 std::vector<ProcessorEntity*>
 ProcessorEntityTracker::GetEntitiesWithLocalChanges(size_t max_entries) {
   std::vector<ProcessorEntity*> entities;
@@ -240,13 +267,9 @@ bool ProcessorEntityTracker::HasLocalChanges() const {
   return false;
 }
 
-bool ProcessorEntityTracker::HasUnsyncedChanges() const {
-  for (const auto& [client_tag_hash, entity] : entities_) {
-    if (entity->IsUnsynced()) {
-      return true;
-    }
-  }
-  return false;
+size_t ProcessorEntityTracker::GetUnsyncedDataCount() const {
+  return std::ranges::count_if(
+      entities_, [](const auto& pair) { return pair.second->IsUnsynced(); });
 }
 
 size_t ProcessorEntityTracker::size() const {

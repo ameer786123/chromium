@@ -23,18 +23,20 @@
 #include "chrome/browser/new_tab_page/promos/promo_service.h"
 #include "chrome/browser/new_tab_page/promos/promo_service_observer.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
-#include "chrome/browser/search/background/ntp_background_service_observer.h"
 #include "chrome/browser/search/background/ntp_custom_background_service.h"
 #include "chrome/browser/search/background/ntp_custom_background_service_observer.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_observer.h"
 #include "chrome/browser/ui/search/ntp_user_data_logger.h"
+#include "chrome/browser/ui/views/new_tab_footer/footer_controller_observer.h"
 #include "chrome/browser/ui/webui/new_tab_page/new_tab_page.mojom.h"
 #include "chrome/common/search/ntp_logging_events.h"
+#include "components/ntp_tiles/tile_type.h"
 #include "components/optimization_guide/core/model_execution/settings_enabled_observer.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/search_provider_logos/logo_common.h"
 #include "components/segmentation_platform/public/result.h"
+#include "components/themes/ntp_background_service_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -42,10 +44,8 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/native_theme/native_theme_observer.h"
-#include "ui/shell_dialogs/select_file_dialog.h"
 
 class GURL;
-class NtpBackgroundService;
 class Profile;
 class MicrosoftAuthService;
 class NTPUserDataLogger;
@@ -55,9 +55,9 @@ namespace content {
 class WebContents;
 }  // namespace content
 
-namespace customize_chrome {
-class SidePanelController;
-}  // namespace customize_chrome
+namespace new_tab_footer {
+class NewTabFooterController;
+}
 
 namespace search_provider_logos {
 class LogoService;
@@ -75,15 +75,15 @@ namespace ui {
 class ThemeProvider;
 }  // namespace ui
 
-class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
-                          public ui::NativeThemeObserver,
-                          public ThemeServiceObserver,
-                          public NtpCustomBackgroundServiceObserver,
-                          public NtpBackgroundServiceObserver,
-                          public ui::SelectFileDialog::Listener,
-                          public PromoServiceObserver,
-                          public optimization_guide::SettingsEnabledObserver,
-                          public MicrosoftAuthServiceObserver {
+class NewTabPageHandler
+    : public new_tab_page::mojom::PageHandler,
+      public ui::NativeThemeObserver,
+      public ThemeServiceObserver,
+      public NtpCustomBackgroundServiceObserver,
+      public PromoServiceObserver,
+      public optimization_guide::SettingsEnabledObserver,
+      public MicrosoftAuthServiceObserver,
+      public new_tab_footer::NewTabFooterControllerObserver {
  public:
   NewTabPageHandler(mojo::PendingReceiver<new_tab_page::mojom::PageHandler>
                         pending_page_handler,
@@ -122,25 +122,9 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
           child_untrusted_document_remote);
 
   // new_tab_page::mojom::PageHandler:
-  void SetMostVisitedSettings(bool custom_links_enabled, bool visible) override;
+  void SetMostVisitedSettings(ntp_tiles::TileType type, bool visible) override;
   void GetMostVisitedSettings(GetMostVisitedSettingsCallback callback) override;
-  void SetBackgroundImage(const std::string& attribution_1,
-                          const std::string& attribution_2,
-                          const GURL& attribution_url,
-                          const GURL& image_url,
-                          const GURL& thumbnail_ur,
-                          const std::string& collection_id) override;
-  void SetDailyRefreshCollectionId(const std::string& collection_id) override;
-  void SetNoBackgroundImage() override;
-  void RevertBackgroundChanges() override;
-  void ConfirmBackgroundChanges() override;
-  void GetBackgroundCollections(
-      GetBackgroundCollectionsCallback callback) override;
-  void GetBackgroundImages(const std::string& collection_id,
-                           GetBackgroundImagesCallback callback) override;
   void GetDoodle(GetDoodleCallback callback) override;
-  void ChooseLocalCustomBackground(
-      ChooseLocalCustomBackgroundCallback callback) override;
   void UpdatePromoData() override;
   void BlocklistPromo(const std::string& promo_id) override;
   void UndoBlocklistPromo(const std::string& promo_id) override;
@@ -149,6 +133,7 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
   void SetModulesVisible(bool visible) override;
   void SetModuleDisabled(const std::string& module_id, bool disabled) override;
   void UpdateDisabledModules() override;
+  void UpdateFooterVisibility() override;
   void OnModulesLoadedWithData(
       const std::vector<std::string>& module_ids) override;
   void OnModuleUsed(const std::string& module_id) override;
@@ -156,17 +141,8 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
   void SetModulesOrder(const std::vector<std::string>& module_ids) override;
   void GetModulesOrder(GetModulesOrderCallback callback) override;
   void UpdateModulesLoadable() override;
-  void SetCustomizeChromeSidePanelVisible(
-      bool visible,
-      new_tab_page::mojom::CustomizeChromeSection section) override;
-  void IncrementCustomizeChromeButtonOpenCount() override;
-  void GetMobilePromoQrCode(GetMobilePromoQrCodeCallback callback) override;
-  void OnMobilePromoShown() override;
-  void OnDismissMobilePromo() override;
-  void OnUndoDismissMobilePromo() override;
   void MaybeShowFeaturePromo(
       new_tab_page::mojom::IphFeature iph_feature) override;
-  void IncrementWallpaperSearchButtonShownCount() override;
   void OnAppRendered(double time) override;
   void OnOneGoogleBarRendered(double time) override;
   void OnPromoRendered(double time,
@@ -183,9 +159,7 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
                       const std::string& doodle_id,
                       const std::optional<std::string>& share_id) override;
   void OnPromoLinkClicked() override;
-
-  void SetCustomizeChromeSidePanelControllerForTesting(
-      customize_chrome::SidePanelController* side_panel_controller);
+  void IncrementComposeButtonShownCount() override;
 
  private:
   // ui::NativeThemeObserver:
@@ -197,12 +171,6 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
   // NtpCustomBackgroundServiceObserver:
   void OnCustomBackgroundImageUpdated() override;
 
-  // NtpBackgroundServiceObserver:
-  void OnCollectionInfoAvailable() override;
-  void OnCollectionImagesAvailable() override;
-  void OnNextCollectionImageAvailable() override;
-  void OnNtpBackgroundServiceShuttingDown() override;
-
   // PromoServiceObserver:
   void OnPromoDataUpdated() override;
   void OnPromoServiceShuttingDown() override;
@@ -213,19 +181,16 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
   // MicrosoftAuthServiceObserver:
   void OnAuthStateUpdated() override;
 
-  // SelectFileDialog::Listener:
-  void FileSelected(const ui::SelectedFileInfo& file, int index) override;
-  void FileSelectionCanceled() override;
-
-  // Called when the embedding TabInterface has changed.
-  // TODO(crbug.com/378475391): This can be removed once the NTP has been
-  // restricted from loading in app windows.
-  void OnTabInterfaceChanged();
+  // new_tab_footer::NewTabFooterControllerObserver:
+  void OnFooterVisibilityUpdated(bool visible) override;
 
   void OnLogoAvailable(
       GetDoodleCallback callback,
       search_provider_logos::LogoCallbackReason type,
       const std::optional<search_provider_logos::EncodedLogo>& logo);
+
+  // Called when the embedding BrowserWindowInterface has changed.
+  void OnBrowserWindowInterfaceChanged();
 
   void LogEvent(NTPLoggingEventType event);
 
@@ -240,9 +205,8 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
                         bool success,
                         std::unique_ptr<std::string> body);
 
-  bool IsCustomLinksEnabled() const;
+  ntp_tiles::TileType GetTileType() const;
   bool IsShortcutsVisible() const;
-  void NotifyCustomizeChromeSidePanelVisibilityChanged(bool is_open);
   void MaybeLaunchInteractionSurvey(std::string_view interaction,
                                     const std::string& module_id,
                                     int delay_time_ms = 0);
@@ -259,18 +223,6 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
       std::string_view interaction,
       const std::string& module_id);
 
-  // Check if user is eligible to see a mobile promo generated locally. The
-  // callback is a mojo callback that must be called in all cases.
-  void CheckIfUserEligibleForMobilePromo(GetMobilePromoQrCodeCallback callback);
-  // Handle the response from the segmentation platform querying mobile promo
-  // status. The callback is a mojo callback that must be called in all cases.
-  void HandleMobilePromoSegmentationResponse(
-      GetMobilePromoQrCodeCallback callback,
-      base::Time request_start_time,
-      const segmentation_platform::ClassificationResult& result);
-
-  void SetCustomizeChromeSidePanelController(
-      customize_chrome::SidePanelController* side_panel_controller);
   void SetModuleHidden(const std::string& module_id, bool hidden);
 
   // Synchronizes Microsoft module enablement with their current authentication
@@ -278,8 +230,6 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
   // loadable.
   bool SyncMicrosoftModulesWithAuth();
 
-  ChooseLocalCustomBackgroundCallback choose_local_custom_background_callback_;
-  raw_ptr<NtpBackgroundService> ntp_background_service_;
   raw_ptr<NtpCustomBackgroundService> ntp_custom_background_service_;
   raw_ptr<search_provider_logos::LogoService> logo_service_;
   raw_ptr<const ui::ThemeProvider> theme_provider_;
@@ -288,14 +238,8 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
   raw_ptr<segmentation_platform::SegmentationPlatformService>
       segmentation_platform_service_;
   GURL last_blocklisted_;
-  GetBackgroundCollectionsCallback background_collections_callback_;
-  base::TimeTicks background_collections_request_start_time_;
-  std::string images_request_collection_id_;
-  GetBackgroundImagesCallback background_images_callback_;
-  base::TimeTicks background_images_request_start_time_;
   std::optional<base::TimeTicks> one_google_bar_load_start_time_;
   raw_ptr<Profile> profile_;
-  scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
   raw_ptr<content::WebContents> web_contents_;
   std::unique_ptr<NewTabPageFeaturePromoHelper> feature_promo_helper_;
   base::Time ntp_navigation_start_time_;
@@ -305,6 +249,7 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
                      std::unique_ptr<network::SimpleURLLoader>>
       loader_map_;
   PrefChangeRegistrar pref_change_registrar_;
+  PrefChangeRegistrar local_state_pref_change_registrar_;
   raw_ptr<PromoService> promo_service_;
   raw_ptr<MicrosoftAuthService> microsoft_auth_service_;
   raw_ptr<OptimizationGuideKeyedService> optimization_guide_keyed_service_;
@@ -319,15 +264,13 @@ class NewTabPageHandler : public new_tab_page::mojom::PageHandler,
       promo_service_observation_{this};
   base::ScopedObservation<MicrosoftAuthService, MicrosoftAuthServiceObserver>
       microsoft_auth_service_observation_{this};
+  base::ScopedObservation<new_tab_footer::NewTabFooterController,
+                          new_tab_footer::NewTabFooterControllerObserver>
+      footer_controller_observation_{this};
   std::optional<base::TimeTicks> promo_load_start_time_;
   base::Value::Dict interaction_module_id_trigger_dict_;
-
-  // TODO(crbug.com/378475391): Make this const once the TabModel is guaranteed
-  // to be present during load and fixed for the NTP's lifetime.
-  raw_ptr<customize_chrome::SidePanelController>
-      customize_chrome_side_panel_controller_;
-
-  base::CallbackListSubscription tab_changed_subscription_;
+  // Notifies this when the browser window context changes.
+  base::CallbackListSubscription browser_window_changed_subscription_;
 
   // These are located at the end of the list of member variables to ensure the
   // WebUI page is disconnected before other members are destroyed.

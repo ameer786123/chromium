@@ -1075,7 +1075,7 @@ TEST_F(AcceleratorControllerTestWithClamshellSplitView,
 }
 
 TEST_F(AcceleratorControllerTest, RotateScreen) {
-  display::Display display = display::Screen::GetScreen()->GetPrimaryDisplay();
+  display::Display display = display::Screen::Get()->GetPrimaryDisplay();
   display::Display::Rotation initial_rotation =
       GetActiveDisplayRotation(display.id());
   AccessibilityController* accessibility_controller =
@@ -1239,7 +1239,7 @@ TEST_F(AcceleratorControllerTest, RotateScreenWithWindowLockingOrientation) {
   // those that requested window rotation locks.
   TabletModeControllerTestApi().AttachExternalMouse();
   EXPECT_TRUE(tablet_mode_controller->is_in_tablet_physical_state());
-  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_FALSE(display::Screen::Get()->InTabletMode());
 
   wm::ActivateWindow(win0.get());
   EXPECT_TRUE(screen_orientation_controller->rotation_locked());
@@ -1978,9 +1978,7 @@ INSTANTIATE_TEST_SUITE_P(
 TEST_F(AcceleratorControllerTest, PressAndReleasePowerButtonWithFunctionKey) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
-      {features::kModifierSplit, features::kPeripheralCustomization,
-       features::kInputDeviceSettingsSplit},
-      {});
+      {features::kModifierSplit, features::kPeripheralCustomization}, {});
 
   const int kKeyboardDeviceIdWithFunction = 123;
   const int kKeyboardDeviceId = 456;
@@ -2048,7 +2046,7 @@ TEST_F(AcceleratorControllerTest, ToggleCapsLockAcceleratorsWithFunctionKey) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
       {features::kModifierSplit, features::kShortcutStateMachines,
-       features::kPeripheralCustomization, features::kInputDeviceSettingsSplit},
+       features::kPeripheralCustomization},
       {});
 
   AnchoredNudgeManagerImpl* nudge_manager =

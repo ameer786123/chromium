@@ -72,9 +72,11 @@ bool TooNarrowForBanner(UIView* view) {
   UISwitch* _contentToggle;
   UISwitch* _tipsToggle;
   UISwitch* _priceTrackingToggle;
+  UISwitch* _safetyCheckToggle;
   BOOL _contentNotificationsEnabled;
   BOOL _tipsNotificationsEnabled;
   BOOL _priceTrackingNotificationsEnabled;
+  BOOL _safetyCheckNotificationsEnabled;
 }
 
 - (void)viewDidLoad {
@@ -104,7 +106,6 @@ bool TooNarrowForBanner(UIView* view) {
                                               .bottomAnchor],
   ]];
   [self loadModel];
-  [self setPrimaryButtonConfiguration];
   [self updatePrimaryButtonState];
   [super viewDidLoad];
 
@@ -175,6 +176,11 @@ bool TooNarrowForBanner(UIView* view) {
     @(NotificationsOptInItemIdentifier::kTips),
     @(NotificationsOptInItemIdentifier::kPriceTracking)
   ]];
+  if (IsSafetyCheckNotificationsEnabled()) {
+    [snapshot appendItemsWithIdentifiers:@[
+      @(NotificationsOptInItemIdentifier::kSafetyCheck),
+    ]];
+  }
   [_dataSource applySnapshot:snapshot animatingDifferences:NO];
 }
 
@@ -208,6 +214,12 @@ bool TooNarrowForBanner(UIView* view) {
         _priceTrackingToggle.on = enabled;
       }
       _priceTrackingNotificationsEnabled = enabled;
+      break;
+    case kSafetyCheck:
+      if (_safetyCheckToggle) {
+        _safetyCheckToggle.on = enabled;
+      }
+      _safetyCheckNotificationsEnabled = enabled;
       break;
   }
 }
@@ -250,6 +262,10 @@ bool TooNarrowForBanner(UIView* view) {
       return {IDS_IOS_NOTIFICATIONS_OPT_IN_PRICE_TRACKING_TOGGLE_TITLE,
               IDS_IOS_NOTIFICATIONS_OPT_IN_PRICE_TRACKING_TOGGLE_MESSAGE,
               _priceTrackingNotificationsEnabled, YES};
+    case kSafetyCheck:
+      return {IDS_IOS_SAFETY_CHECK_TITLE,
+              IDS_IOS_SAFETY_CHECK_DESCRIPTION_DEFAULT,
+              _safetyCheckNotificationsEnabled, YES};
   }
 }
 
@@ -277,7 +293,11 @@ bool TooNarrowForBanner(UIView* view) {
     case kPriceTracking:
       _priceTrackingToggle = cell.switchView;
       break;
+    case kSafetyCheck:
+      _safetyCheckToggle = cell.switchView;
+      break;
   }
+
   cell.switchView.tag = itemIdentifier;
 
   // Make the separator invisible on the last row.
@@ -311,39 +331,12 @@ bool TooNarrowForBanner(UIView* view) {
   _tableViewHeightConstraint.constant = _tableView.contentSize.height;
 }
 
-// Sets the configurationUpdateHandler for the primaryActionButton to handle the
-// button's state changes. The button is blue when enabled, and grayed out when
-// disabled.
-- (void)setPrimaryButtonConfiguration {
-  self.updateHandler = ^(UIButton* incomingButton) {
-    UIButtonConfiguration* updatedConfig = incomingButton.configuration;
-    switch (incomingButton.state) {
-      case UIControlStateDisabled: {
-        updatedConfig.background.backgroundColor =
-            [UIColor colorNamed:kUpdatedTertiaryBackgroundColor];
-        updatedConfig.baseForegroundColor =
-            [UIColor colorNamed:kTextTertiaryColor];
-        break;
-      }
-      case UIControlStateNormal: {
-        updatedConfig.background.backgroundColor =
-            [UIColor colorNamed:kBlueColor];
-        updatedConfig.baseForegroundColor =
-            [UIColor colorNamed:kBackgroundColor];
-        break;
-      }
-      default:
-        break;
-    }
-    incomingButton.configuration = updatedConfig;
-  };
-}
-
 // Enables the primary action button if any one of the toggles are on. Disables
 // otherwise.
 - (void)updatePrimaryButtonState {
-  self.primaryButtonEnabled =
-      _contentToggle.isOn || _tipsToggle.isOn || _priceTrackingToggle.isOn;
+  self.primaryButtonEnabled = _contentToggle.isOn || _tipsToggle.isOn ||
+                              _priceTrackingToggle.isOn ||
+                              _safetyCheckToggle.isOn;
 }
 
 // Configures the banner based on the view's size.

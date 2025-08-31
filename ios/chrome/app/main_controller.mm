@@ -24,7 +24,9 @@
 #import "base/task/bind_post_task.h"
 #import "base/task/sequenced_task_runner.h"
 #import "base/timer/timer.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/component_updater/component_updater_service.h"
+#import "components/component_updater/installer_policies/afp_content_rule_list_component_installer.h"
 #import "components/component_updater/installer_policies/autofill_states_component_installer.h"
 #import "components/component_updater/installer_policies/on_device_head_suggest_component_installer.h"
 #import "components/component_updater/installer_policies/optimization_hints_component_installer.h"
@@ -35,6 +37,7 @@
 #import "components/metrics/metrics_service.h"
 #import "components/password_manager/core/common/password_manager_features.h"
 #import "components/password_manager/core/common/passwords_directory_util_ios.h"
+#import "components/policy/core/common/management/management_service.h"
 #import "components/prefs/ios/pref_observer_bridge.h"
 #import "components/prefs/pref_change_registrar.h"
 #import "components/prefs/scoped_user_pref_update.h"
@@ -82,6 +85,8 @@
 #import "ios/chrome/browser/crash_report/model/crash_loop_detection_util.h"
 #import "ios/chrome/browser/crash_report/model/crash_report_helper.h"
 #import "ios/chrome/browser/credential_provider/model/credential_provider_buildflags.h"
+#import "ios/chrome/browser/default_browser/model/features.h"
+#import "ios/chrome/browser/default_browser/model/install_attribution/install_attribution_helper.h"
 #import "ios/chrome/browser/default_browser/model/utils.h"
 #import "ios/chrome/browser/device_orientation/ui_bundled/scoped_force_portrait_orientation.h"
 #import "ios/chrome/browser/discover_feed/model/discover_feed_app_agent.h"
@@ -97,12 +102,14 @@
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
 #import "ios/chrome/browser/omaha/model/omaha_service.h"
 #import "ios/chrome/browser/passwords/model/password_manager_util_ios.h"
+#import "ios/chrome/browser/policy/model/management_service_ios_factory.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/screenshot/model/screenshot_metrics_recorder.h"
 #import "ios/chrome/browser/search_engines/model/search_engines_util.h"
 #import "ios/chrome/browser/sessions/model/session_restoration_service.h"
 #import "ios/chrome/browser/sessions/model/session_restoration_service_factory.h"
 #import "ios/chrome/browser/sessions/model/session_util.h"
+#import "ios/chrome/browser/share_extension/model/share_extension_controller.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_delegate.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
@@ -130,6 +137,7 @@
 #import "ios/chrome/browser/web/model/choose_file/choose_file_file_utils.h"
 #import "ios/chrome/browser/web_state_list/model/web_usage_enabler/web_usage_enabler_browser_agent.h"
 #import "ios/chrome/browser/webui/ui_bundled/chrome_web_ui_ios_controller_factory.h"
+#import "ios/chrome/browser/window_activities/model/window_activity_helpers.h"
 #import "ios/chrome/common/app_group/app_group_constants.h"
 #import "ios/chrome/common/app_group/app_group_field_trial_version.h"
 #import "ios/chrome/common/app_group/app_group_utils.h"
@@ -169,9 +177,7 @@ namespace {
 
 #if BUILDFLAG(FAST_APP_TERMINATE_ENABLED)
 // Skip chromeMain.reset() on shutdown, see crbug.com/1328891 for details.
-BASE_FEATURE(kFastApplicationWillTerminate,
-             "FastApplicationWillTerminate",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(FastApplicationWillTerminate, base::FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(FAST_APP_TERMINATE_ENABLED)
 
 // Constants for deferring memory debugging tools startup.
@@ -220,18 +226,31 @@ NSString* const kAutoDeletionFileRemoval = @"AutoDeletionFileRemoval";
 // Constant for deferred default browser status API check.
 NSString* const kDefaultBrowserStatusCheck = @"DefaultBrowserStatusCheck";
 
+// Constant for deferred logging of install attribution data from shared user
+// defaults.
+NSString* const kLogInstallAttribution = @"LogInstallAttribution";
+
+// Constant for enabling share extension for multi-profile.
+NSString* const kShareExtensionForMultiprofileKey =
+    @"ShareExtensionForMultiprofileKey";
+
+// Constant for enabling  multi-profile.
+NSString* const kMultiprofileKey = @"MultiprofileKey";
+
 // Adapted from chrome/browser/ui/browser_init.cc.
 void RegisterComponentsForUpdate() {
   component_updater::ComponentUpdateService* cus =
       GetApplicationContext()->GetComponentUpdateService();
   DCHECK(cus);
   RegisterOnDeviceHeadSuggestComponent(
-      cus, GetApplicationContext()->GetApplicationLocale());
+      cus, GetApplicationContext()->GetApplicationLocaleStorage()->Get());
   RegisterSafetyTipsComponent(cus);
   RegisterAutofillStatesComponent(cus,
                                   GetApplicationContext()->GetLocalState());
   RegisterOptimizationHintsComponent(cus);
   RegisterPlusAddressBlocklistComponent(cus);
+  component_updater::AntiFingerprintingContentRuleListComponentInstallerPolicy::
+      Register(cus);
 }
 
 // The delay before beginning memory experimentation.
@@ -326,6 +345,7 @@ void RecordDiscardSceneStillConnected(NSSet<UISceneSession*>* scene_sessions,
 // Possible choices for which profile to use for a scene.
 enum class ProfileChoice {
   kProfileForScene,
+  kProfileFromActivity,
   kLastUsedProfile,
   kPersonalProfile,
   kNewProfile,
@@ -335,15 +355,15 @@ enum class ProfileChoice {
 base::span<const ProfileChoice> GetProfileChoices() {
   if (AreSeparateProfilesForManagedAccountsEnabled()) {
     static constexpr ProfileChoice kProfileChoicesWithSeparateAccounts[] = {
-        ProfileChoice::kProfileForScene,
-        ProfileChoice::kLastUsedProfile,
-        ProfileChoice::kPersonalProfile,
+        ProfileChoice::kProfileForScene, ProfileChoice::kProfileFromActivity,
+        ProfileChoice::kLastUsedProfile, ProfileChoice::kPersonalProfile,
         ProfileChoice::kNewProfile,
     };
     return kProfileChoicesWithSeparateAccounts;
   }
 
   static constexpr ProfileChoice kProfileChoices[] = {
+      ProfileChoice::kProfileFromActivity,
       ProfileChoice::kPersonalProfile,
       ProfileChoice::kNewProfile,
   };
@@ -353,13 +373,23 @@ base::span<const ProfileChoice> GetProfileChoices() {
 // Returns the name of the profile for `choice`. May be empty in some cases,
 // e.g. when a corresponding pref isn't set yet.
 std::string GetProfileNameForChoice(ProfileChoice choice,
-                                    std::string_view scene_id,
+                                    SceneState* scene_state,
                                     ProfileManagerIOS* manager,
                                     ProfileAttributesStorageIOS* storage,
                                     PrefService* local_state) {
   switch (choice) {
+    case ProfileChoice::kProfileFromActivity: {
+      for (NSUserActivity* activity in scene_state.connectionOptions
+               .userActivities) {
+        std::string profile_name = GetProfileNameFromActivity(activity);
+        if (!profile_name.empty()) {
+          return profile_name;
+        }
+      }
+      return std::string();
+    }
     case ProfileChoice::kProfileForScene:
-      return storage->GetProfileNameForSceneID(scene_id);
+      return storage->GetProfileNameForSceneID(scene_state.sceneSessionID);
     case ProfileChoice::kLastUsedProfile:
       return local_state->GetString(prefs::kLastUsedProfile);
     case ProfileChoice::kPersonalProfile:
@@ -417,6 +447,9 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
 // Schedules the removal of files that were scheduled for automatic deletion and
 // were downloaded more than 30 days ago.
 - (void)scheduleAutoDeletionFileRemoval;
+// Schedules the processing of the share extension files in
+// `app_group::ShareExtensionItemsFolder()`.
+- (void)scheduleProcessingShareExtensionFiles;
 // Crashes the application if requested.
 - (void)crashIfRequested;
 // Initializes the application to the minimum initialization needed in all
@@ -494,6 +527,21 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
   // run loop (to avoid unloading a profile and destroying all objects in
   // an observer method as this can be dangerous if it destroy the sender).
   base::OneShotTimer _timer;
+
+#if BUILDFLAG(ENABLE_RLZ)
+  // Record whether the RLZTracker has been initialized or not. Calling
+  // any methods of RLZTracker including RLZTracker::CleanupRlz() will
+  // cause the singleton object to be allocated. Creating the singleton
+  // during the application shutdown is problematic (as it will attempt
+  // to create a TaskRunner which is forbidden by this point).
+  //
+  // See https://crbug.com/397149258 for example of failure creating the
+  // singleton during the shutdown creates.
+  BOOL _rlzTrackerInitialized;
+#endif
+
+  // The controller that will process the share extension files.
+  ShareExtensionController* _shareExtensionController;
 }
 
 // Defined by public protocols.
@@ -543,8 +591,8 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
 
 - (void)startUpBrowserBackgroundInitialization {
   NSBundle* baseBundle = base::apple::OuterBundle();
-  base::apple::SetBaseBundleID(
-      base::SysNSStringToUTF8([baseBundle bundleIdentifier]).c_str());
+  base::apple::SetBaseBundleIDOverride(
+      base::SysNSStringToUTF8(baseBundle.bundleIdentifier));
 
   // Register default values for experimental settings (Application Preferences)
   // and set the "Version" key in the UserDefaults.
@@ -707,6 +755,9 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
     ProfileController* controller = pair.second;
     [controller applicationWillResignActive:application];
   }
+  if (IsShareExtensionForMultiprofileEnabled()) {
+    [_shareExtensionController applicationWillResignActive];
+  }
 }
 
 - (void)applicationWillTerminate:(UIApplication*)application {
@@ -720,6 +771,9 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
   }
 
   [_appState.appCommandDispatcher prepareForShutdown];
+
+  [_shareExtensionController shutdown];
+  _shareExtensionController = nil;
 
   // Cancel any in-flight distribution notification.
   ios::provider::CancelAppDistributionNotifications();
@@ -800,6 +854,7 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
     // The application has been launched in background and the initialization
     // is not complete.
     [self initializeUIPreSafeMode];
+
     return;
   }
 
@@ -838,6 +893,10 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
 
   // This will be a no-op if upload already started.
   crash_helper::UploadCrashReports();
+
+  if (IsShareExtensionForMultiprofileEnabled()) {
+    [_shareExtensionController applicationDidBecomeActive];
+  }
 }
 
 - (void)application:(UIApplication*)application
@@ -980,7 +1039,7 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
 - (void)profileState:(ProfileState*)profileState
     sceneDisconnected:(SceneState*)sceneState {
   if (profileState.connectedScenes.count == 0) {
-    [self scheduleUnloadUnusedProfiles];
+    [self scheduleDropUnusedProfileControllers];
   }
 }
 
@@ -1257,7 +1316,10 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
 #endif  // BUILDFLAG(FAST_APP_TERMINATE_ENABLED)
 
 #if BUILDFLAG(ENABLE_RLZ)
-  rlz::RLZTracker::CleanupRlz();
+  if (_rlzTrackerInitialized) {
+    _rlzTrackerInitialized = NO;
+    rlz::RLZTracker::CleanupRlz();
+  }
 #endif
 
   _chromeMain.reset();
@@ -1390,6 +1452,10 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
   [capabilities setObject:supportsShowDefaultBrowserPromo
                    forKey:app_group::kChromeShowDefaultBrowserPromoCapability];
 
+  [capabilities
+      setObject:@(IsShareDefaultBrowserStatusEnabled())
+         forKey:app_group::kChromeSupportShareDefaultBrowserStatusCapability];
+
   if (base::FeatureList::IsEnabled(kYoutubeIncognito) &&
       base::FeatureList::IsEnabled(kChromeStartupParametersAsync)) {
     [capabilities
@@ -1425,6 +1491,14 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
           boolForKey:kWidgetKitRefreshFiveMinutes]),
       kFieldTrialVersionKey : @1,
     },
+    kShareExtensionForMultiprofileKey : @{
+      kFieldTrialValueKey : @(IsShareExtensionForMultiprofileEnabled()),
+      kFieldTrialVersionKey : @1,
+    },
+    kMultiprofileKey : @{
+      kFieldTrialValueKey : @(AreSeparateProfilesForManagedAccountsEnabled()),
+      kFieldTrialVersionKey : @1,
+    },
   };
   [sharedDefaults setObject:fieldTrialValues
                      forKey:app_group::kChromeExtensionFieldTrialPreference];
@@ -1442,11 +1516,9 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
 }
 
 - (void)logIfEnterpriseManagedDevice {
-  NSString* managedKey = @"com.apple.configuration.managed";
-  BOOL isManagedDevice = [[NSUserDefaults standardUserDefaults]
-                             dictionaryForKey:managedKey] != nil;
-
-  base::UmaHistogramBoolean("EnterpriseCheck.IsManaged2", isManagedDevice);
+  base::UmaHistogramBoolean(
+      "EnterpriseCheck.IsManaged2",
+      policy::ManagementServiceIOSFactory::GetForPlatform()->IsManaged());
 }
 
 - (void)startFreeMemoryMonitoring {
@@ -1473,9 +1545,14 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
   [self scheduleMemoryExperimentation];
   [self scheduleAutoDeletionFileRemoval];
   [self scheduleDefaultBrowserStatusCheck];
+  [self scheduleLogInstallAttribution];
 #if BUILDFLAG(IOS_ENABLE_SANDBOX_DUMP)
   [self scheduleDumpDocumentsStatistics];
 #endif  // BUILDFLAG(IOS_ENABLE_SANDBOX_DUMP)
+
+  if (IsShareExtensionForMultiprofileEnabled()) {
+    [self scheduleProcessingShareExtensionFiles];
+  }
 }
 
 - (void)scheduleDeleteTempDownloadsDirectory {
@@ -1535,6 +1612,14 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
 #endif  // !BUILDFLAG(IS_IOS_MACCATALYST)
 }
 
+- (void)scheduleLogInstallAttribution {
+  [_appState.deferredRunner
+      enqueueBlockNamed:kLogInstallAttribution
+                  block:^{
+                    install_attribution::LogInstallAttribution();
+                  }];
+}
+
 #if BUILDFLAG(IOS_ENABLE_SANDBOX_DUMP)
 - (void)scheduleDumpDocumentsStatistics {
   if ([[NSUserDefaults standardUserDefaults]
@@ -1548,6 +1633,12 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
   }
 }
 #endif  // BUILDFLAG(IOS_ENABLE_SANDBOX_DUMP)
+
+- (void)scheduleProcessingShareExtensionFiles {
+  CHECK(IsShareExtensionForMultiprofileEnabled());
+  _shareExtensionController = [[ShareExtensionController alloc] init];
+  [_shareExtensionController startFilesProcessing];
+}
 
 - (void)expireFirstUserActionRecorder {
   // Clear out any scheduled calls to this method. For example, the app may have
@@ -1601,6 +1692,9 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
 // will record the installation event.
 - (void)scheduleRLZInitWithProfile:(ProfileIOS*)profile {
 #if BUILDFLAG(ENABLE_RLZ)
+  CHECK(!_rlzTrackerInitialized, base::NotFatalUntil::M160);
+  _rlzTrackerInitialized = YES;
+
   DCHECK(profile);
   PrefService* prefs = profile->GetPrefs();
 
@@ -1660,12 +1754,15 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
 
 - (void)changeProfile:(std::string_view)profileName
              forScene:(SceneState*)sceneState
+               reason:(ChangeProfileReason)reason
          continuation:(ChangeProfileContinuation)continuation {
   CHECK(AreSeparateProfilesForManagedAccountsEnabled());
   CHECK_EQ(self.appState.initStage, AppInitStage::kFinal);
 
   CHECK(sceneState);
   CHECK([self.appState.connectedScenes containsObject:sceneState]);
+
+  base::UmaHistogramEnumeration("Signin.IOSChangeProfileReason", reason);
 
   ProfileManagerIOS* manager = GetApplicationContext()->GetProfileManager();
   CHECK(manager->HasProfileWithName(profileName));
@@ -1720,7 +1817,7 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
 
   // Wait for the profile to complete its initialisation.
   [animator waitForSceneState:sceneState
-             toReachInitStage:ProfileInitStage::kUIReady
+             toReachInitStage:ProfileInitStage::kNormalUI
                  continuation:std::move(continuation)];
 }
 
@@ -1733,12 +1830,12 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
       manager->GetProfileAttributesStorage()->GetPersonalProfileName();
   DCHECK_GT(personalProfile.size(), 0u);
 
-  // Mark the profile for deletion, and then if there is no UI elements
-  // attached, immediately request it to be unloaded.
+  // Mark the profile for deletion. If there is no UI attached for the
+  // profile, there is nothing else to do (it may be loaded by another
+  // part of the code, and will be unloaded when no longer used).
   manager->MarkProfileForDeletion(profileName);
   auto iter = _profileControllers.find(profileName);
   if (iter == _profileControllers.end()) {
-    manager->UnloadProfile(profileName);
     return;
   }
 
@@ -1746,11 +1843,11 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
   NSArray<SceneState*>* scenes = controller.state.connectedScenes;
 
   // If there are no connected scenes, then there is no need to change
-  // the profile for the scene. Do not immediately unload the profile,
-  // as there may still be objects that are shutting down. Schedule a
-  // call to -unloadUnusedProfiles to unload it at the next run loop.
+  // the profile for the scene. Do not immediately drop the profile as
+  // there may still be objects that are shutting down. Schedules a
+  // call to -dropUnusedProfileControllers to drop it in the next loop.
   if (scenes.count == 0) {
-    [self scheduleUnloadUnusedProfiles];
+    [self scheduleDropUnusedProfileControllers];
     return;
   }
 
@@ -1765,6 +1862,7 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
   for (SceneState* scene in scenes) {
     [self changeProfile:personalProfile
                forScene:scene
+                 reason:ChangeProfileReason::kProfileDeleted
            continuation:continuation];
   }
 }
@@ -1799,8 +1897,8 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
   // profile, the personal profile, or as a last resort a new profile.
   std::string profileName;
   for (ProfileChoice choice : GetProfileChoices()) {
-    profileName =
-        GetProfileNameForChoice(choice, sceneID, manager, storage, localState);
+    profileName = GetProfileNameForChoice(choice, sceneState, manager, storage,
+                                          localState);
 
     // Pick the first valid profile name found.
     if (storage->HasProfileWithName(profileName)) {
@@ -1849,8 +1947,9 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
   [sceneState.controller setProfileState:state];
 }
 
-// Unload all unused profiles.
-- (void)unloadUnusedProfiles {
+// Drops all unused profile controllers. This will cause the corresponding
+// Profile to be unloaded unless another code keep them alive.
+- (void)dropUnusedProfileControllers {
   std::vector<std::string> profilesToUnload;
   for (const auto& [name, controller] : _profileControllers) {
     if (controller.state.connectedScenes.count == 0) {
@@ -1862,8 +1961,6 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
     return;
   }
 
-  ProfileManagerIOS* manager = GetApplicationContext()->GetProfileManager();
-
   for (const auto& name : profilesToUnload) {
     auto iter = _profileControllers.find(name);
     CHECK(iter != _profileControllers.end());
@@ -1872,10 +1969,10 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
     CHECK_EQ(controller.state.connectedScenes.count, 0u);
     [controller.state removeObserver:self];
 
-    // Call -shutdown before deleting the object.
+    // Call -shutdown before deleting the object. This will unload the
+    // profile if the keep alive refcount reaches zero.
     [controller shutdown];
     _profileControllers.erase(iter);
-    manager->UnloadProfile(name);
   }
 
   [self updateLastUsedProfilePref];
@@ -1909,12 +2006,12 @@ std::string GetProfileNameForChoice(ProfileChoice choice,
   }
 }
 
-// Schedule a call to -unloadUnusedProfiles at the next run loop iteration.
-- (void)scheduleUnloadUnusedProfiles {
+// Schedule a call to -dropUnusedProfileControllers at the next run loop.
+- (void)scheduleDropUnusedProfileControllers {
   if (!_timer.IsRunning()) {
     __weak __typeof(self) weakSelf = self;
     _timer.Start(FROM_HERE, base::Seconds(0), base::BindOnce(^{
-                   [weakSelf unloadUnusedProfiles];
+                   [weakSelf dropUnusedProfileControllers];
                  }));
   }
 }

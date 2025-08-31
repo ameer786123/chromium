@@ -88,8 +88,16 @@ public interface NativePage {
      */
     boolean needsToolbarShadow();
 
-    /** Whether the native page supports drawing edge to edge. */
+    /** Whether the native page supports drawing edge to edge into the bottom system bar insets. */
     default boolean supportsEdgeToEdge() {
+        return false;
+    }
+
+    /**
+     * Whether the native page supports drawing edge to edge into the top system bar insets e.g.
+     * status bar.
+     */
+    default boolean supportsEdgeToEdgeOnTop() {
         return false;
     }
 
@@ -158,7 +166,7 @@ public interface NativePage {
         NativePageType.PDF
     })
     @Retention(RetentionPolicy.SOURCE)
-    public @interface NativePageType {
+    @interface NativePageType {
         int NONE = 0;
         int CANDIDATE = 1;
         int NTP = 2;
@@ -201,7 +209,10 @@ public interface NativePage {
      */
     // TODO(crbug.com/40549331) - Convert to using GURL.
     static @NativePageType int nativePageType(
-            String url, NativePage candidatePage, boolean isIncognito, boolean hasPdfDownload) {
+            String url,
+            @Nullable NativePage candidatePage,
+            boolean isIncognito,
+            boolean hasPdfDownload) {
         if (url == null) return NativePageType.NONE;
 
         GURL gurl = new GURL(url);

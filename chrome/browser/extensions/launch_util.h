@@ -8,7 +8,10 @@
 #include <string>
 
 #include "components/services/app_service/public/cpp/app_launch_util.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace content {
 class BrowserContext;
@@ -25,7 +28,7 @@ void SetLaunchType(content::BrowserContext* context,
                    LaunchType launch_type);
 
 // Finds the right launch container based on the launch type.
-// If |extension|'s prefs do not have a launch type set, then the default
+// If `extension`'s prefs do not have a launch type set, then the default
 // value from GetLaunchType() is used to choose the launch container.
 apps::LaunchContainer GetLaunchContainer(const ExtensionPrefs* prefs,
                                          const Extension* extension);

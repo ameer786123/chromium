@@ -16,6 +16,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/numerics/checked_math.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -33,6 +34,7 @@
 #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "third_party/skia/include/core/SkYUVAInfo.h"
 #include "third_party/skia/include/core/SkYUVAPixmaps.h"
 #include "third_party/skia/include/gpu/ganesh/GrBackendSemaphore.h"
@@ -494,7 +496,7 @@ error::Error GLES2DecoderPassthroughImpl::DoBindFramebuffer(
 
   // Update tracking of the bound framebuffer
   switch (target) {
-    case GL_FRAMEBUFFER_EXT:
+    case GL_FRAMEBUFFER:
       bound_draw_framebuffer_ = framebuffer;
       bound_read_framebuffer_ = framebuffer;
       break;
@@ -2883,7 +2885,7 @@ error::Error GLES2DecoderPassthroughImpl::DoReadPixelsAsync(
   pending_read_pixels.result_shm_offset = result_shm_offset;
 
   api()->glGenBuffersARBFn(1, &pending_read_pixels.buffer_service_id);
-  api()->glBindBufferFn(GL_PIXEL_PACK_BUFFER_ARB,
+  api()->glBindBufferFn(GL_PIXEL_PACK_BUFFER,
                         pending_read_pixels.buffer_service_id);
 
   // GL_STREAM_READ is not available until ES3.
@@ -2908,15 +2910,15 @@ error::Error GLES2DecoderPassthroughImpl::DoReadPixelsAsync(
     return error::kOutOfBounds;
   }
 
-  api()->glBufferDataFn(GL_PIXEL_PACK_BUFFER_ARB,
-                        pending_read_pixels.pixels_size, nullptr, usage_hint);
+  api()->glBufferDataFn(GL_PIXEL_PACK_BUFFER, pending_read_pixels.pixels_size,
+                        nullptr, usage_hint);
 
   // No need to worry about ES3 pixel pack parameters, because no
   // PIXEL_PACK_BUFFER is bound, and all these settings haven't been
   // sent to GL.
   api()->glReadPixelsFn(x, y, width, height, format, type, nullptr);
 
-  api()->glBindBufferFn(GL_PIXEL_PACK_BUFFER_ARB, 0);
+  api()->glBindBufferFn(GL_PIXEL_PACK_BUFFER, 0);
 
   // Test for errors now before creating a fence
   if (CheckErrorCallbackState()) {
@@ -4835,9 +4837,9 @@ error::Error GLES2DecoderPassthroughImpl::DoDescheduleUntilFinishedCHROMIUM() {
     return error::kNoError;
   }
 
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
-      "cc", "GLES2DecoderPassthroughImpl::DescheduleUntilFinished",
-      TRACE_ID_LOCAL(this));
+  TRACE_EVENT_BEGIN("cc",
+                    "GLES2DecoderPassthroughImpl::DescheduleUntilFinished",
+                    perfetto::Track::FromPointer(this));
   client()->OnDescheduleUntilFinished();
   return error::kDeferLaterCommands;
 }
@@ -5153,7 +5155,7 @@ error::Error GLES2DecoderPassthroughImpl::DoCopySharedImageToTextureINTERNAL(
   ui::ScopedMakeCurrent smc(lazy_context_->shared_context_state()->context(),
                             lazy_context_->shared_context_state()->surface());
 
-  if (target != GL_TEXTURE_2D && target != GL_TEXTURE_RECTANGLE) {
+  if (target != GL_TEXTURE_2D && target != GL_TEXTURE_RECTANGLE_ANGLE) {
     InsertError(GL_INVALID_VALUE, "Invalid texture target");
     return error::kNoError;
   }

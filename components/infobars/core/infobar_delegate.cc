@@ -54,6 +54,10 @@ GURL InfoBarDelegate::GetLinkURL() const {
   return GURL();
 }
 
+std::optional<std::u16string> InfoBarDelegate::GetLinkAccessibleText() const {
+  return std::nullopt;
+}
+
 bool InfoBarDelegate::EqualsDelegate(InfoBarDelegate* delegate) const {
   return false;
 }
@@ -84,7 +88,17 @@ bool InfoBarDelegate::ShouldAnimate() const {
   return true;
 }
 
+bool InfoBarDelegate::ShouldHideInFullscreen() const {
+  return false;
+}
+
 ConfirmInfoBarDelegate* InfoBarDelegate::AsConfirmInfoBarDelegate() {
+  return const_cast<ConfirmInfoBarDelegate*>(
+      static_cast<const InfoBarDelegate*>(this)->AsConfirmInfoBarDelegate());
+}
+
+const ConfirmInfoBarDelegate* InfoBarDelegate::AsConfirmInfoBarDelegate()
+    const {
   return nullptr;
 }
 

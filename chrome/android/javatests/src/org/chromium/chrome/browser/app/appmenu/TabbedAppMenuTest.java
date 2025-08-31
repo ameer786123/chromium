@@ -5,8 +5,9 @@
 package org.chromium.chrome.browser.app.appmenu;
 
 import static org.junit.Assert.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+
+import static org.chromium.base.test.util.Batch.PER_CLASS;
+import static org.chromium.chrome.browser.ui.appmenu.AppMenuHandler.AppMenuItemType.DIVIDER;
 
 import android.view.KeyEvent;
 import android.view.View;
@@ -23,24 +24,25 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.browser.bookmarks.PowerBookmarkUtils;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.layouts.animation.CompositorAnimationHandler;
-import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridge;
-import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridgeJni;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.sync.FakeSyncServiceImpl;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
@@ -61,13 +63,18 @@ import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.signin.test.util.TestAccounts;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.modelutil.PropertyModel;
+import org.chromium.ui.test.util.GmsCoreVersionRestriction;
 
 import java.io.IOException;
 import java.util.concurrent.Callable;
 
 /** Tests tabbed mode app menu popup. */
+@Batch(PER_CLASS)
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
+// Prevents the sync UI from exposing an error due to outdated GmsCore
+// (UserActionableError.NEEDS_UPM_BACKEND_UPGRADE).
+@Restriction(GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_24W15)
 public class TabbedAppMenuTest {
     private static final int RENDER_TEST_REVISION = 2;
 
@@ -92,17 +99,10 @@ public class TabbedAppMenuTest {
                     .setBugComponent(ChromeRenderTestRule.Component.UI_BROWSER_MOBILE_APP_MENU)
                     .build();
 
-    @Mock private PasswordManagerUtilBridge.Natives mPasswordManagerUtilBridgeJniMock;
-
     private AppMenuHandler mAppMenuHandler;
 
     @Before
     public void setUp() {
-        // Prevent "GmsCore outdated" error from being exposed in bots with old version.
-        PasswordManagerUtilBridgeJni.setInstanceForTesting(mPasswordManagerUtilBridgeJniMock);
-        when(mPasswordManagerUtilBridgeJniMock.isGmsCoreUpdateRequired(any(), any()))
-                .thenReturn(false);
-
         PowerBookmarkUtils.setPriceTrackingEligibleForTesting(true);
 
         // We need list selection; ensure we are not in touch mode.
@@ -201,6 +201,7 @@ public class TabbedAppMenuTest {
     @SmallTest
     @Feature({"Browser", "Main", "Bookmark", "RenderTest"})
     @Restriction(DeviceFormFactor.PHONE)
+    @DisableFeatures({ChromeFeatureList.ANDROID_THEME_MODULE})
     public void testBookmarkMenuItem() throws IOException {
         PropertyModel bookmarkStarPropertyModel =
                 AppMenuTestSupport.getMenuItemPropertyModel(
@@ -238,15 +239,14 @@ public class TabbedAppMenuTest {
     @Feature({"Browser", "Main", "RenderTest"})
     @Restriction(DeviceFormFactor.PHONE)
     public void testRequestDesktopSiteMenuItem_checkbox() throws IOException {
-        Tab tab = mActivityTestRule.getActivity().getTabModelSelector().getCurrentTab();
+        Tab tab = mActivityTestRule.getActivityTab();
         boolean isRequestDesktopSite =
                 tab.getWebContents().getNavigationController().getUseDesktopUserAgent();
         Assert.assertFalse("Default to request mobile site.", isRequestDesktopSite);
 
         int requestDesktopSiteIndex =
                 AppMenuTestSupport.findIndexOfMenuItemById(
-                        mActivityTestRule.getAppMenuCoordinator(),
-                        R.id.request_desktop_site_row_menu_id);
+                        mActivityTestRule.getAppMenuCoordinator(), R.id.request_desktop_site_id);
         Assert.assertNotEquals("No request desktop site row found.", -1, requestDesktopSiteIndex);
 
         Callable<Boolean> isVisible =
@@ -310,6 +310,7 @@ public class TabbedAppMenuTest {
     @Test
     @LargeTest
     @Feature({"Browser", "Main", "RenderTest"})
+    @DisabledTest(message = "crbug.com/432304126")
     public void testSettingsMenuItem_BadgeShownForSignedInUsersOnIdentityError()
             throws IOException {
         ThreadUtils.runOnUiThreadBlocking(() -> mAppMenuHandler.hideAppMenu());
@@ -338,6 +339,7 @@ public class TabbedAppMenuTest {
     @Test
     @LargeTest
     @Feature({"Browser", "Main", "RenderTest"})
+    @DisabledTest(message = "crbug.com/432304126")
     public void testSettingsMenuItem_NoBadgeShownForSignedInUsersIfNoError() throws IOException {
         ThreadUtils.runOnUiThreadBlocking(() -> mAppMenuHandler.hideAppMenu());
         // Sign in and wait for sync machinery to be active.
@@ -357,11 +359,12 @@ public class TabbedAppMenuTest {
                     Assert.assertTrue(mAppMenuHandler.isAppMenuShowing());
                 });
 
+        pressKey(KeyEvent.KEYCODE_DPAD_DOWN);
+
         // Make sure the menu is ready to be selected.
         CriteriaHelper.pollUiThread(
                 () -> {
-                    getListView().setSelection(0);
-                    Criteria.checkThat(getCurrentFocusedRow(), Matchers.is(0));
+                    Criteria.checkThat(getCurrentFocusedRow(), Matchers.not(-1));
                 });
     }
 
@@ -376,9 +379,15 @@ public class TabbedAppMenuTest {
         // Move to the boundary.
         final int end = towardsTop ? 0 : getCount() - 1;
         int increment = towardsTop ? -1 : 1;
-        for (int index = getCurrentFocusedRow(); index != end; index += increment) {
+        ListView listView = getListView();
+        int index = getCurrentFocusedRow();
+        while (index != end) {
             pressKey(towardsTop ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN);
-            final int expectedPosition = index + increment;
+            do {
+                index += increment;
+            } while (listView.getAdapter().getItemViewType(index) == DIVIDER);
+
+            final int expectedPosition = index;
             CriteriaHelper.pollInstrumentationThread(
                     () -> {
                         Criteria.checkThat(getCurrentFocusedRow(), Matchers.is(expectedPosition));

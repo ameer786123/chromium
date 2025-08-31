@@ -76,13 +76,15 @@ class StartSurfaceSceneAgentTest : public PlatformTest {
     // Close all WebState to make sure no Objective-C object reference the
     // ProfileIOS after its destruction (as the SceneState destruction may
     // be delayed).
-    CloseAllWebStates(*GetWebStateList(), WebStateList::CLOSE_NO_FLAGS);
+    CloseAllWebStates(*GetWebStateList(),
+                      WebStateList::ClosingReason::kDefault);
 
     // Drop the references to the Objective-C objects. This is a best-effort
     // try to have them being deallocated during TearDown().
     startup_information_ = nil;
     app_state_ = nil;
     profile_state_ = nil;
+    [scene_state_ shutdown];
     scene_state_ = nil;
     agent_ = nil;
 

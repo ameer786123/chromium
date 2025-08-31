@@ -6,14 +6,15 @@ package org.chromium.chrome.browser.browserservices.ui.view;
 
 import android.content.res.Resources;
 
-import androidx.annotation.Nullable;
-
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browserservices.ui.TrustedWebActivityModel;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
+
+import java.util.function.Supplier;
 
 /**
  * Implements the new "Running in Chrome" Snackbar behavior, taking over from {@link
@@ -25,6 +26,7 @@ import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
  *
  * <p>Thread safety: All methods should be called on the UI thread.
  */
+@NullMarked
 public class DisclosureSnackbar extends DisclosureInfobar {
     // TODO(crbug.com/40125323): Once this feature is enabled by default, remove
     // TrustedWebActivityDisclosureView and simplify this class.

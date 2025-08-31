@@ -38,6 +38,7 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request.h"
 #include "services/network/ad_auction/event_record_request_helper.h"
+#include "services/network/devtools_durable_msg.h"
 #include "services/network/keepalive_statistics_recorder.h"
 #include "services/network/network_service.h"
 #include "services/network/observer_wrapper.h"
@@ -104,6 +105,7 @@ class KeepaliveStatisticsRecorder;
 class NetToMojoPendingBuffer;
 class ScopedThrottlingToken;
 class SharedDictionaryManager;
+class SharedResourceChecker;
 class SlopBucket;
 class TrustTokenUrlLoaderInterceptor;
 
@@ -180,7 +182,9 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
           device_bound_session_observer,
       mojo::PendingRemote<mojom::AcceptCHFrameObserver>
           accept_ch_frame_observer,
-      bool shared_storage_writable_eligible);
+      bool shared_storage_writable_eligible,
+      SharedResourceChecker& shared_resource_checker,
+      base::WeakPtr<DevtoolsDurableMessage> devtools_durable_message);
 
   URLLoader(const URLLoader&) = delete;
   URLLoader& operator=(const URLLoader&) = delete;
@@ -286,8 +290,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   SharedStorageRequestHelper* shared_storage_request_helper() const {
     return shared_storage_request_helper_.get();
   }
-
-  void SetEnableReportingRawHeaders(bool enable);
 
   void set_partial_decoder_decoding_buffer_size_for_testing(
       int partial_decoder_decoding_buffer_size) {
@@ -438,35 +440,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   // concluding the request's Trust Tokens, Attribution, and/or Shared Storage
   // operations.
   void ContinueOnResponseStarted();
-  // Invoked either by the pipe creation success callback, or by
-  // `ContinueOnResponseStarted` when no mojo pipe is needed (thus no need to
-  // use to wait on it).
-  void ContinueOnResponseStartedImmediately();
 
   void ScheduleStart();
-
-  using PrepareDataPipeSuccessCallback =
-      base::OnceCallback<void(mojo::ScopedDataPipeProducerHandle,
-                              mojo::ScopedDataPipeConsumerHandle)>;
-  // Prepares the mojo data pipe that will be used to send the body data to the
-  // URLLoaderClient. Can be invoked on any sequence.
-  static void PrepareDataPipe(PrepareDataPipeSuccessCallback success_cb,
-                              base::OnceClosure error_cb);
-  // Invoked by `PrepareDataPipe`. Should run on the sequence where `this`
-  // lives.
-  void OnPrepareDataPipeSuccess(
-      mojo::ScopedDataPipeProducerHandle producer_handle,
-      mojo::ScopedDataPipeConsumerHandle consumer_handle);
-  // Invoked by `PrepareDataPipe`. Should run on the sequence where `this`
-  // lives.
-  void OnPrepareDataPipeError();
-  // Sets up this object's pipe handles. Invoked from `OnPrepareDataPipeSuccess`
-  // or `ContinueOnResponseStarted`, whichever comes last.
-  void SetupPipeHandlesAndWatchers(
-      mojo::ScopedDataPipeProducerHandle producer_handle,
-      mojo::ScopedDataPipeConsumerHandle consumer_handle);
-
   void ReadMore();
+  void ReadMoreAsync();
   void DidRead(int num_bytes,
                bool completed_synchronously,
                bool into_slop_bucket);
@@ -484,7 +461,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   bool IsSharedDictionaryReadAllowed();
   void DispatchOnRawRequest(
       std::vector<network::mojom::HttpRawHeaderPairPtr> headers);
-  bool DispatchOnRawResponse();
+  void DispatchOnRawResponse();
   void SendUploadProgress(const net::UploadProgress& progress);
   void OnUploadProgressACK();
   void OnSSLCertificateErrorResponse(const net::SSLInfo& ssl_info,
@@ -561,6 +538,15 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   // value from the request (if present), the URLLoaderFactoryParams, or null.
   const mojom::ClientSecurityState* GetClientSecurityState();
 
+  // Resets raw headers retrieved from underlying net::URLRequest before
+  // starting another network transaction (such as following a redirect).
+  void ResetRawHeadersForRedirect();
+
+  // If Devtools Durable Message collection is enabled, copies the response
+  // chunks into `devtools_durable_message_`. If `num_bytes` <= 0, marks the
+  // message as complete.
+  void MaybeCollectDurableMessage(size_t new_data_offset, int num_bytes);
+
   const raw_ptr<net::URLRequestContext> url_request_context_;
 
   const raw_ptr<mojom::NetworkContextClient> network_context_client_;
@@ -603,8 +589,19 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
 
   scoped_refptr<net::IOBufferWithSize> discard_buffer_;
 
-  // True if there's a URLRequest::Read() call in progress.
-  bool read_in_progress_ = false;
+  // State checker between URLRequest::Read() and `response_body_stream_`.
+  enum class URLReadState {
+    // While waiting for `response_body_stream_` to be writable.
+    // TODO(yoichio): Since ReadMore() is called both when mojo pipe is ready
+    // to read and we want to write to the pipe.
+    // Consider spliting this into kNotReading and kWaitMojoPipeWritable.
+    kWaitMojoPipeWritable,
+    // While async URLRequest::ReadMore() task is posted.
+    kReadMoreTaskPosted,
+    // While there's a URLRequest::Read() call in progress.
+    kURLReadInProgress
+  };
+  URLReadState url_read_state_ = URLReadState::kWaitMojoPipeWritable;
 
   // Stores any CORS error encountered while processing |url_request_|.
   std::optional<CorsErrorStatus> cors_error_status_;
@@ -625,11 +622,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   std::unique_ptr<ResourceScheduler::ScheduledResourceRequest>
       resource_scheduler_request_handle_;
 
-  bool enable_reporting_raw_headers_ = false;
-  bool seen_raw_request_headers_ = false;
-  // Used for metrics.
-  size_t raw_request_line_size_ = 0;
-  size_t raw_request_headers_size_ = 0;
   scoped_refptr<const net::HttpResponseHeaders> raw_response_headers_;
 
   std::unique_ptr<UploadProgressTracker> upload_progress_tracker_;
@@ -661,7 +653,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   const mojom::RequestDestination request_destination_ =
       mojom::RequestDestination::kEmpty;
 
-  const std::vector<std::string> expected_public_keys_;
+  const std::vector<std::vector<uint8_t>> expected_public_keys_;
 
   scoped_refptr<ResourceSchedulerClient> resource_scheduler_client_;
 
@@ -727,8 +719,20 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   // body.
   const bool has_fetch_streaming_upload_body_;
 
+  // Whether DevToolsObserver::OnRaw{Request,Response} should be emitted
+  // (i.e. the request being loaded is monitored by DevTools).
+  bool enable_reporting_raw_headers_ = false;
+
+  // Whether DevToolsObserver::OnRaw{Request,Response} have been emitted for
+  // the current redirect hop. This assures we report raw request/response
+  // not more than once per redirect and that we only either report both
+  // or neither request and response.
   bool emitted_devtools_raw_request_ = false;
   bool emitted_devtools_raw_response_ = false;
+
+  // Used for metrics.
+  size_t raw_request_line_size_ = 0;
+  size_t raw_request_headers_size_ = 0;
 
   // Handles processing of the ACCEPT_CH frame during connection, if enabled
   // and an observer exists. May be nullptr.
@@ -755,6 +759,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   // because it is full.
   std::unique_ptr<SlopBucket> slop_bucket_;
 
+  // Internal counters to record UMA for SlopBucket.
+  int mojo_begin_write_count_for_uma_ = 0;
+  int mojo_blocked_write_count_for_uma_ = 0;
+
   // For decoding a small part of the response body to check its type (for ORB
   // and MIME sniffing) when the response might be compressed and client-side
   // content decoding is enabled.
@@ -769,25 +777,14 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) URLLoader
   // Keeps the result of IsSharedDictionaryReadAllowed(). Used only for metrics.
   bool shared_dictionary_allowed_check_passed_ = false;
 
-  // True if the async data pipe creation experiment is enabled.
-  bool create_data_pipe_async_ = false;
-
-  // Set to `true` once ContinueAndResponseStarted() is called. If
-  // OnPrepareDataPipeSuccess() finds that
-  // `was_continue_and_response_started_called_` is true it will call
-  // SetupPipeHandleAndWatchers() and ContinueOnResponseStartedImmediately().
-  bool was_continue_and_response_started_called_ = false;
-
-  // Stores the `consumer_handle` and the `produced_handle` if they become
-  // available while `was_continue_and_response_started_called_` is still
-  // false. If ContinueAndResponseStarted() finds that `pending_pipe_handles_`
-  // is set it will call SetupPipeHandlesAndWatches().
-  std::optional<std::pair<mojo::ScopedDataPipeProducerHandle,
-                          mojo::ScopedDataPipeConsumerHandle>>
-      pending_pipe_handles_;
-
   // Permissions policy of the request.
   const std::optional<network::PermissionsPolicy> permissions_policy_;
+
+  // DevTools Durable Message instance, if enabled.
+  base::WeakPtr<DevtoolsDurableMessage> devtools_durable_message_;
+
+  // Keeps track of raw body sizes transmitted to DevTools.
+  int64_t devtools_durable_message_raw_size_ = 0;
 
   base::WeakPtrFactory<URLLoader> weak_ptr_factory_{this};
 };

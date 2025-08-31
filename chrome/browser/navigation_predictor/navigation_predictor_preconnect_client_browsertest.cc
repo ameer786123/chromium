@@ -19,7 +19,7 @@
 #include "chrome/browser/navigation_predictor/search_engine_preconnector_keyed_service_factory.h"
 #include "chrome/browser/predictors/loading_predictor.h"
 #include "chrome/browser/predictors/loading_predictor_factory.h"
-#include "chrome/browser/predictors/preconnect_manager.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/subresource_filter/subresource_filter_browser_test_harness.h"
 #include "chrome/browser/ui/browser.h"
@@ -28,6 +28,7 @@
 #include "chrome/test/base/search_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/search_engines/template_url_service.h"
+#include "content/public/browser/preconnect_manager.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/fenced_frame_test_util.h"
@@ -40,7 +41,7 @@ namespace {
 
 class NavigationPredictorPreconnectClientBrowserTest
     : public subresource_filter::SubresourceFilterBrowserTest,
-      public predictors::PreconnectManager::Observer {
+      public content::PreconnectManager::Observer {
  public:
   NavigationPredictorPreconnectClientBrowserTest()
       : subresource_filter::SubresourceFilterBrowserTest() {
@@ -104,12 +105,17 @@ class NavigationPredictorPreconnectClientBrowserTest
   void OnPreresolveFinished(
       const GURL& url,
       const net::NetworkAnonymizationKey& network_anonymization_key,
+      mojo::PendingRemote<network::mojom::ConnectionChangeObserverClient>&
+          observer,
       bool success) override {
     // The tests do not care about preresolves to non-test server (e.g., hard
     // coded preconnects to google.com).
     if (url::Origin::Create(url) !=
         url::Origin::Create(https_server_->base_url())) {
       return;
+    }
+    if (observer.is_valid()) {
+      observer_.Bind(std::move(observer));
     }
     EXPECT_TRUE(success);
     preresolve_done_count_++;
@@ -128,8 +134,13 @@ class NavigationPredictorPreconnectClientBrowserTest
  protected:
   int preresolve_done_count_ = 0;
   std::unique_ptr<net::EmbeddedTestServer> https_server_;
+  mojo::Remote<network::mojom::ConnectionChangeObserverClient> observer_;
 
  private:
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList scoped_prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
   base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<base::RunLoop> run_loop_;
 };
@@ -335,9 +346,14 @@ IN_PROC_BROWSER_TEST_F(NavigationPredictorPreconnectClientBrowserTestWithSearch,
 
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   // Now there should be an onload preconnect as well as a navigation
-  // preconnect.
-  WaitForPreresolveCount(3);
-  EXPECT_EQ(3, preresolve_done_count_);
+  // preconnect. If `SearchEnginePreconnect2` is enabled, we will have one
+  // additional preresolve count because navigating to a URL will start a
+  // preconnect due to a change in web visibility (i.e. the app is foregrounded)
+  // for the first navigation.
+  int preresolve_count =
+      SearchEnginePreconnector::SearchEnginePreconnect2Enabled() ? 4 : 3;
+  WaitForPreresolveCount(preresolve_count);
+  EXPECT_EQ(preresolve_count, preresolve_done_count_);
 }
 
 class NavigationPredictorPreconnectClientLocalURLBrowserTest

@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_AI_EXCEPTION_HELPERS_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_AI_EXCEPTION_HELPERS_H_
 
+#include "third_party/blink/public/mojom/ai/ai_common.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/ai/ai_manager.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/ai/model_streaming_responder.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -24,10 +25,11 @@ extern const char kExceptionMessageUnableToCloneSession[];
 extern const char kExceptionMessageUnableToCalculateUsage[];
 extern const char kExceptionMessageInputTooLarge[];
 extern const char kExceptionMessageRequestAborted[];
-extern const char kExceptionMessageSystemPromptIsDefinedMultipleTimes[];
-extern const char kExceptionMessageSystemPromptIsNotTheFirst[];
+extern const char kExceptionMessagePromptWithSystemRoleIsNotTheFirst[];
 extern const char kExceptionMessageUnsupportedLanguages[];
 extern const char kExceptionMessageInvalidResponseJsonSchema[];
+extern const char kExceptionMessagePermissionPolicy[];
+extern const char kExceptionMessageUserActivationRequired[];
 
 void ThrowInvalidContextException(ExceptionState& exception_state);
 void ThrowDocumentNotActiveException(ExceptionState& exception_state);
@@ -37,11 +39,13 @@ void ThrowAbortedException(ExceptionState& exception_state);
 void RejectPromiseWithInternalError(ScriptPromiseResolverBase* resolver);
 
 DOMException* CreateInternalErrorException();
+DOMException* CreateSessionDestroyedException();
 
 DOMException* ConvertModelStreamingResponseErrorToDOMException(
-    ModelStreamingResponseStatus error);
+    ModelStreamingResponseStatus error,
+    mojom::blink::QuotaErrorInfoPtr quota_error_info);
 
-WTF::String ConvertModelAvailabilityCheckResultToDebugString(
+String ConvertModelAvailabilityCheckResultToDebugString(
     mojom::blink::ModelAvailabilityCheckResult result);
 
 // Throw the reason of the AbortSignal if it's aborted. If the reason is empty,
@@ -51,13 +55,14 @@ bool HandleAbortSignal(AbortSignal* signal,
                        ScriptState* script_state,
                        ExceptionState& exception_state);
 
-// Return true if fully active window. Otherwise throw an InvalidStateError and
-// return false.
+// Return true if fully active window or if service workers are permitted.
+// Otherwise, throw an InvalidStateError and return false.
 bool ValidateScriptState(ScriptState* script_state,
-                         ExceptionState& exception_state);
+                         ExceptionState& exception_state,
+                         bool permit_workers);
 
-// Validates and stringifies the responseJSONSchema option if provided.
-// Throws an exception if an unsupported schema is detected.
+// Validates and stringifies the responseConstraint JSON schema option if
+// provided. Throws an exception if an unsupported schema is detected.
 String ValidateAndStringifyObject(const ScriptValue& input,
                                   ScriptState* script_state,
                                   ExceptionState& exception_state);

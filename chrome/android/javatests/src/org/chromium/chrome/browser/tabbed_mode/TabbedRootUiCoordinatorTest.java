@@ -10,6 +10,7 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -32,10 +33,14 @@ import org.mockito.junit.MockitoRule;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeTabbedActivity;
+import org.chromium.chrome.browser.bookmarks.bar.BookmarkBarSceneLayer;
+import org.chromium.chrome.browser.bookmarks.bar.BookmarkBarSceneLayerJni;
 import org.chromium.chrome.browser.bookmarks.bar.BookmarkBarUtils;
 import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -43,10 +48,16 @@ import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.fullscreen.BrowserControlsManagerSupplier;
 import org.chromium.chrome.browser.privacy_sandbox.ActivityTypeMapper;
 import org.chromium.chrome.browser.privacy_sandbox.PrivacySandboxBridgeJni;
+import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper;
 import org.chromium.chrome.test.ChromeBrowserTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
+import org.chromium.chrome.test.transit.testhtmls.NavigatePageStations;
 import org.chromium.components.search_engines.SearchEngineChoiceService;
+import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.base.DeviceFormFactor;
 
 /** Tests for {@link TabbedRootUiCoordinator}. */
@@ -57,18 +68,22 @@ public class TabbedRootUiCoordinatorTest {
     @Rule public ChromeBrowserTestRule mBrowserTestRule = new ChromeBrowserTestRule();
 
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule public MockitoRule mockito = MockitoJUnit.rule();
 
+    private WebPageStation mPage;
     private TabbedRootUiCoordinator mTabbedRootUiCoordinator;
 
     @Mock private PrivacySandboxBridgeJni mPrivacySandboxBridgeJni;
+    @Mock private BookmarkBarSceneLayer.Natives mBookmarkBarSceneLayerJni;
     @Mock private SearchEngineChoiceService mSearchEngineChoiceService;
 
     @Before
     public void setUp() {
         PrivacySandboxBridgeJni.setInstanceForTesting(mPrivacySandboxBridgeJni);
+        BookmarkBarSceneLayerJni.setInstanceForTesting(mBookmarkBarSceneLayerJni);
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -76,12 +91,11 @@ public class TabbedRootUiCoordinatorTest {
                     doReturn(false).when(mSearchEngineChoiceService).isDeviceChoiceDialogEligible();
                 });
 
-        BookmarkBarUtils.setFeatureVisibleForTesting(true);
+        BookmarkBarUtils.setBookmarkBarVisibleForTesting(true);
         TabbedRootUiCoordinator.setDisableTopControlsAnimationsForTesting(true);
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mPage = mActivityTestRule.startOnBlankPage();
         mTabbedRootUiCoordinator =
-                (TabbedRootUiCoordinator)
-                        mActivityTestRule.getActivity().getRootUiCoordinatorForTesting();
+                (TabbedRootUiCoordinator) mPage.getActivity().getRootUiCoordinatorForTesting();
     }
 
     // TODO(crbug.com/40112282): Enable for tablets once we support them.
@@ -120,7 +134,7 @@ public class TabbedRootUiCoordinatorTest {
     @MediumTest
     @UiThreadTest
     @DisableFeatures(ChromeFeatureList.ANDROID_BOOKMARK_BAR)
-    @Restriction({DeviceFormFactor.TABLET})
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testTopControlsHeightWithBookmarkBarWhenFlagIsDisabledOnTablet() {
         testTopControlsHeightWithBookmarkBar(/* expectBookmarkBar= */ false);
     }
@@ -138,7 +152,7 @@ public class TabbedRootUiCoordinatorTest {
     @MediumTest
     @UiThreadTest
     @EnableFeatures(ChromeFeatureList.ANDROID_BOOKMARK_BAR)
-    @Restriction({DeviceFormFactor.TABLET})
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testTopControlsHeightWithBookmarkBarWhenFlagIsEnabledOnTablet() {
         testTopControlsHeightWithBookmarkBar(/* expectBookmarkBar= */ true);
     }
@@ -168,5 +182,39 @@ public class TabbedRootUiCoordinatorTest {
                 "Verify top controls height.",
                 tabStripHeight + toolbarHeight + bookmarkBarHeight,
                 browserControlsManager.getTopControlsHeight());
+    }
+
+    @Test
+    @MediumTest
+    public void testActivityTitle() {
+        final ChromeTabbedActivity activity = mActivityTestRule.getActivity();
+        EmbeddedTestServer testServer = mActivityTestRule.getTestServer();
+
+        Tab tab1 =
+                mActivityTestRule.loadUrlInNewTab(testServer.getURL(NavigatePageStations.PATH_ONE));
+        CriteriaHelper.pollUiThread(() -> tab1.getTitle().equals("One"));
+        assertTrue(
+                "Activity title should contain tab title.",
+                activity.getTitle().toString().contains("One"));
+
+        Tab tab2 =
+                mActivityTestRule.loadUrlInNewTab(testServer.getURL(NavigatePageStations.PATH_TWO));
+        CriteriaHelper.pollUiThread(() -> tab2.getTitle().equals("Two"));
+        assertTrue(
+                "Activity title should contain tab title.",
+                activity.getTitle().toString().contains("Two"));
+
+        mActivityTestRule.loadUrl(testServer.getURL(NavigatePageStations.PATH_THREE));
+        CriteriaHelper.pollUiThread(() -> tab2.getTitle().equals("Three"));
+        assertTrue(
+                "Activity title should contain tab title.",
+                activity.getTitle().toString().contains("Three"));
+
+        String tabSwitcherLabel =
+                activity.getResources().getString(R.string.accessibility_tab_switcher_title);
+        TabUiTestHelper.enterTabSwitcher(activity);
+        assertTrue(
+                "Activity title should contain GTS label.",
+                activity.getTitle().toString().contains(tabSwitcherLabel));
     }
 }

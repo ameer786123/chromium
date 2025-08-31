@@ -6,13 +6,20 @@ package org.chromium.chrome.browser.toolbar.reload_button;
 
 import android.animation.ObjectAnimator;
 import android.content.res.ColorStateList;
+import android.graphics.Rect;
 import android.view.View;
 import android.widget.ImageButton;
 
+import androidx.core.graphics.Insets;
+
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.IncognitoStateProvider;
 import org.chromium.chrome.browser.theme.ThemeColorProvider;
+import org.chromium.chrome.browser.toolbar.top.ToolbarChildButton;
+import org.chromium.chrome.browser.toolbar.top.ToolbarUtils;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 import org.chromium.ui.widget.Toast;
@@ -23,7 +30,7 @@ import org.chromium.ui.widget.Toast;
  * changes.
  */
 @NullMarked
-public class ReloadButtonCoordinator {
+public class ReloadButtonCoordinator extends ToolbarChildButton {
     /** An interface that allows parent components to control tab reload logic. */
     public interface Delegate {
         /**
@@ -35,6 +42,7 @@ public class ReloadButtonCoordinator {
     }
 
     private final ReloadButtonMediator mMediator;
+    private final ImageButton mView;
 
     /**
      * Creates an instance of {@link ReloadButtonCoordinator}
@@ -45,29 +53,36 @@ public class ReloadButtonCoordinator {
      * @param ntpLoadingSupplier a supplier that provides loading state of content inside NTP, e.g
      *     feed, this is not a reload state of the whole tab.
      * @param themeColorProvider a provider that notifies about theme changes and focus tint.
+     * @param incognitoStateProvider a provider that notifies about incognito state changes.
      */
     public ReloadButtonCoordinator(
             ImageButton view,
             ReloadButtonCoordinator.Delegate delegate,
-            ObservableSupplier<Tab> tabSupplier,
+            ObservableSupplier<@Nullable Tab> tabSupplier,
             ObservableSupplier<Boolean> ntpLoadingSupplier,
-            ThemeColorProvider themeColorProvider) {
+            ObservableSupplier<Boolean> enabledSupplier,
+            ThemeColorProvider themeColorProvider,
+            IncognitoStateProvider incognitoStateProvider,
+            boolean isWebApp) {
+        super(view.getContext(), themeColorProvider, incognitoStateProvider);
+        mView = view;
+
         // ThemeColorProvider might not be updated by this time. Keep existing color list.
         final ColorStateList tint =
                 themeColorProvider.getActivityFocusTint() == null
-                        ? view.getImageTintList()
+                        ? mView.getImageTintList()
                         : themeColorProvider.getActivityFocusTint();
         final var model =
                 new PropertyModel.Builder(ReloadButtonProperties.ALL_KEYS)
-                        .with(ReloadButtonProperties.ALPHA, view.getAlpha())
+                        .with(ReloadButtonProperties.ALPHA, mView.getAlpha())
                         .with(
                                 ReloadButtonProperties.IS_VISIBLE,
-                                view.getVisibility() == View.VISIBLE)
+                                mView.getVisibility() == View.VISIBLE)
                         .with(
                                 ReloadButtonProperties.CONTENT_DESCRIPTION,
-                                view.getContentDescription())
+                                mView.getContentDescription())
                         .with(ReloadButtonProperties.TINT_LIST, tint)
-                        .with(ReloadButtonProperties.DRAWABLE_LEVEL, view.getDrawable().getLevel())
+                        .with(ReloadButtonProperties.DRAWABLE_LEVEL, mView.getDrawable().getLevel())
                         .build();
         mMediator =
                 new ReloadButtonMediator(
@@ -76,25 +91,24 @@ public class ReloadButtonCoordinator {
                         themeColorProvider,
                         tabSupplier,
                         ntpLoadingSupplier,
-                        (text) -> Toast.showAnchoredToast(view.getContext(), view, text),
-                        view.getResources());
-        PropertyModelChangeProcessor.create(model, view, ReloadButtonViewBinder::bind);
+                        enabledSupplier,
+                        (text) -> Toast.showAnchoredToast(mView.getContext(), mView, text),
+                        mView.getResources(),
+                        mView.getContext(),
+                        isWebApp);
+        PropertyModelChangeProcessor.create(model, mView, ReloadButtonViewBinder::bind);
     }
 
-    /**
-     * Changes reload button enabled state.
-     *
-     * @param isEnabled indicates whether the button should be enabled or disabled.
-     */
-    public void setEnabled(boolean isEnabled) {
-        mMediator.setEnabled(isEnabled);
+    @Override
+    public void onTintChanged(
+            @Nullable ColorStateList tint,
+            @Nullable ColorStateList activityFocusTint,
+            int brandedColorScheme) {
+        super.onTintChanged(tint, activityFocusTint, brandedColorScheme);
+        mMediator.onTintChanged(tint, activityFocusTint, brandedColorScheme);
     }
 
-    /**
-     * Sets reload button visibility.
-     *
-     * @param isVisible indicated whether view should be visible or gone.
-     */
+    @Override
     public void setVisibility(boolean isVisible) {
         mMediator.setVisibility(isVisible);
     }
@@ -108,6 +122,10 @@ public class ReloadButtonCoordinator {
         mMediator.setOnKeyListener(listener);
     }
 
+    public void setBackgroundInsets(Insets insets) {
+        mMediator.setBackgroundInsets(insets);
+    }
+
     /**
      * Prepares the view for fade animation and returns an alpha animator.
      *
@@ -115,11 +133,36 @@ public class ReloadButtonCoordinator {
      * @return {@link ObjectAnimator} that animates view's alpha.
      */
     public ObjectAnimator getFadeAnimator(boolean shouldShow) {
-        return mMediator.getFadeAnimator(shouldShow);
+        ObjectAnimator fadeAnimator = mMediator.getFadeAnimator(shouldShow);
+        return shouldShow
+                ? ToolbarUtils.asFadeInAnimation(fadeAnimator)
+                : ToolbarUtils.asFadeOutAnimation(fadeAnimator);
+    }
+
+    /**
+     * Gets an area of the button that are touchable/clickable.
+     *
+     * @return a {@link Rect} that contains touchable/clickable area.
+     */
+    public Rect getHitRect() {
+        final var rect = new Rect();
+        mView.getHitRect(rect);
+        return rect;
+    }
+
+    /**
+     * Gets visibility.
+     *
+     * @return a Boolean indicating whether view is visible or not.
+     */
+    public boolean isVisibile() {
+        return mMediator.isVisible();
     }
 
     /** Destroys current object instance. It can't be used after this call. */
+    @Override
     public void destroy() {
+        super.destroy();
         mMediator.destroy();
     }
 }

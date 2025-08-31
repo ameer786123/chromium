@@ -8,7 +8,6 @@
 
 #include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
-#include "base/not_fatal_until.h"
 #include "cc/animation/animation.h"
 #include "cc/animation/animation_events.h"
 #include "cc/animation/animation_id_provider.h"
@@ -206,7 +205,7 @@ void TestHostClient::UnregisterElementId(ElementId element_id,
                                              ? layers_in_active_tree_
                                              : layers_in_pending_tree_;
   auto kv = layers_in_tree.find(element_id);
-  CHECK(kv != layers_in_tree.end(), base::NotFatalUntil::M130);
+  CHECK(kv != layers_in_tree.end());
   layers_in_tree.erase(kv);
 }
 
@@ -502,7 +501,7 @@ void AnimationTimelinesTest::TickAnimationsTransferEvents(
   host_impl_->UpdateAnimationState(true, events.get());
 
   auto* animation_events = static_cast<const AnimationEvents*>(events.get());
-  EXPECT_EQ(expect_events, animation_events->events_.size());
+  EXPECT_EQ(expect_events, animation_events->events().size());
 
   host_->TickAnimations(time, scroll_tree, true);
   host_->UpdateAnimationState(true, nullptr);

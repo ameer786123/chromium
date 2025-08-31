@@ -5,25 +5,34 @@
 package org.chromium.chrome.browser.bookmarks.bar;
 
 import android.graphics.drawable.Drawable;
+import android.view.View;
 
 import org.chromium.base.supplier.LazyOneshotSupplier;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
-
-import java.util.function.IntConsumer;
+import org.chromium.ui.util.ClickWithMetaStateCallback;
 
 /**
  * Properties for a button in the bookmark bar which provides users with bookmark access from top
  * chrome.
  */
+@NullMarked
 class BookmarkBarButtonProperties {
 
     /**
      * The callback to notify of bookmark bar button click events. The callback is provided the meta
      * state of the most recent key/touch event.
      */
-    public static final WritableObjectPropertyKey<IntConsumer> CLICK_CALLBACK =
+    public static final WritableObjectPropertyKey<ClickWithMetaStateCallback> CLICK_CALLBACK =
+            new WritableObjectPropertyKey<>();
+
+    /**
+     * The callback to notify of keyboard events on the button. Used to handle key presses like
+     * Enter for navigation and actions.
+     */
+    public static final WritableObjectPropertyKey<View.OnKeyListener> KEY_LISTENER =
             new WritableObjectPropertyKey<>();
 
     /** The supplier for the icon to render in the bookmark bar button. */
@@ -40,5 +49,7 @@ class BookmarkBarButtonProperties {
     public static final WritableObjectPropertyKey<String> TITLE = new WritableObjectPropertyKey<>();
 
     public static final PropertyKey[] ALL_KEYS =
-            new PropertyKey[] {CLICK_CALLBACK, ICON_SUPPLIER, ICON_TINT_LIST_ID, TITLE};
+            new PropertyKey[] {
+                CLICK_CALLBACK, KEY_LISTENER, ICON_SUPPLIER, ICON_TINT_LIST_ID, TITLE
+            };
 }

@@ -13,7 +13,6 @@
 #import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_constants.h"
 #import "ios/chrome/browser/ntp/shared/metrics/feed_refresh_state_tracker.h"
 
-@protocol FeedControlDelegate;
 @protocol NewTabPageFollowDelegate;
 @protocol NewTabPageActionsDelegate;
 @class NewTabPageState;
@@ -65,14 +64,6 @@ class PrefService;
 
 // Record metrics for when the user has tapped on the feed preview.
 - (void)recordDiscoverFeedPreviewTapped;
-
-// Record metrics for when the user selects the 'Manage' item in the feed header
-// menu.
-- (void)recordHeaderMenuManageTapped;
-
-// Record metrics for when the user selects the 'Following' item in the feed
-// header menu.
-- (void)recordHeaderMenuManageFollowingTapped;
 
 // Records metrics for when a user opens an article in the same tab.
 - (void)recordOpenURLInSameTab;

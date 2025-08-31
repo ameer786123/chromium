@@ -89,10 +89,18 @@ CookiePartitionKey::CookiePartitionKey(
     const SchemefulSite& site,
     std::optional<base::UnguessableToken> nonce,
     AncestorChainBit ancestor_chain_bit)
-    : site_(site), nonce_(nonce), ancestor_chain_bit_(ancestor_chain_bit) {}
+    : site_(site), nonce_(nonce), ancestor_chain_bit_(ancestor_chain_bit) {
+#if BUILDFLAG(IS_ANDROID)
+  g_constructor_called_ = true;
+#endif  // BUILDFLAG(IS_ANDROID)
+}
 
 CookiePartitionKey::CookiePartitionKey(bool from_script)
-    : from_script_(from_script) {}
+    : from_script_(from_script) {
+#if BUILDFLAG(IS_ANDROID)
+  g_constructor_called_ = true;
+#endif  // BUILDFLAG(IS_ANDROID)
+}
 
 CookiePartitionKey::CookiePartitionKey(const CookiePartitionKey& other) =
     default;
@@ -113,6 +121,9 @@ bool CookiePartitionKey::operator==(const CookiePartitionKey& other) const {
 
 std::strong_ordering CookiePartitionKey::operator<=>(
     const CookiePartitionKey& other) const {
+  if (from_script_ || other.from_script_) {
+    return from_script_ <=> other.from_script_;
+  }
   AncestorChainBit this_bit = GetAncestorChainBit();
   AncestorChainBit other_bit = other.GetAncestorChainBit();
   return std::tie(site_, nonce_, this_bit) <=>
@@ -272,6 +283,9 @@ std::ostream& operator<<(std::ostream& os, const CookiePartitionKey& cpk) {
     os << ",nonced";
   }
   os << (cpk.IsThirdParty() ? ",cross_site" : ",same_site");
+  if (cpk.from_script()) {
+    os << ",from_script";
+  }
   return os;
 }
 

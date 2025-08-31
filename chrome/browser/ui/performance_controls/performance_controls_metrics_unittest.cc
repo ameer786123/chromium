@@ -34,20 +34,13 @@ class PerformanceControlsMetricsTest
       : RenderViewHostTestHarness(
             base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
 
-  void SetUp() override {
-    content::RenderViewHostTestHarness::SetUp();
-    PerformanceInterventionMetricsReporter::RegisterLocalStatePrefs(
-        prefs()->registry());
-  }
-
   std::unique_ptr<content::BrowserContext> CreateBrowserContext() override {
     return std::make_unique<TestingProfile>();
   }
 
-  TestingPrefServiceSimple* prefs() { return &prefs_; }
-
- private:
-  TestingPrefServiceSimple prefs_;
+  TestingPrefServiceSimple* prefs() {
+    return TestingBrowserProcess::GetGlobal()->GetTestingLocalState();
+  }
 };
 
 TEST_F(PerformanceControlsMetricsTest, DailyMetricsResets) {
@@ -143,14 +136,6 @@ class PerformanceControlsNotificationTest
             kPerformanceInterventionNotificationImprovements);
 
     PerformanceControlsMetricsTest::SetUp();
-    performance_manager::user_tuning::prefs::RegisterLocalStatePrefs(
-        prefs()->registry());
-    TestingBrowserProcess::GetGlobal()->SetLocalState(prefs());
-  }
-
-  void TearDown() override {
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
-    PerformanceControlsMetricsTest::TearDown();
   }
 
  private:

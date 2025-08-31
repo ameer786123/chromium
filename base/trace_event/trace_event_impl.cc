@@ -2,17 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "base/trace_event/trace_event_impl.h"
 
 #include <stddef.h>
 
 #include <sstream>
 
+#include "base/compiler_specific.h"
 #include "base/format_macros.h"
 #include "base/json/string_escape.h"
 #include "base/memory/ptr_util.h"
@@ -64,6 +60,9 @@ void WriteDebugAnnotation(protos::pbzero::DebugAnnotation* annotation,
 }  // namespace perfetto
 
 namespace base::trace_event {
+namespace {
+bool g_perfetto_initialized_for_testing = false;
+}
 
 bool ConvertableToTraceFormat::AppendToProto(ProtoAppender* appender) const {
   return false;
@@ -169,7 +168,7 @@ void TraceEvent::AppendAsJSON(
     thread_id = thread_id_;
   }
   const char* category_group_name =
-      TraceLog::GetCategoryGroupName(category_group_enabled_);
+      TRACE_EVENT_API_GET_CATEGORY_GROUP_NAME(category_group_enabled_.get());
 
   // The thread id might be an int64, however int64 values are not
   // representable in JS and JSON (cf. crbug.com/40228085) since JS
@@ -185,7 +184,7 @@ void TraceEvent::AppendAsJSON(
       thread_id ? thread_id->truncate_to_int32_for_display_only() : -1;
 
   // Category group checked at category creation time.
-  DCHECK(!strchr(name_, '"'));
+  UNSAFE_TODO(DCHECK(!strchr(name_, '"')));
   StringAppendF(out,
                 "{\"pid\":%i,\"tid\":%i,\"ts\":%" PRId64
                 ",\"ph\":\"%c\",\"cat\":\"%s\",\"name\":",
@@ -323,7 +322,8 @@ void TraceEvent::AppendAsJSON(
 
 void TraceEvent::AppendPrettyPrinted(std::ostringstream* out) const {
   *out << name_ << "[";
-  *out << TraceLog::GetCategoryGroupName(category_group_enabled_);
+  *out << TRACE_EVENT_API_GET_CATEGORY_GROUP_NAME(
+      category_group_enabled_.get());
   *out << "]";
   if (arg_size() > 0 && arg_name(0)) {
     *out << ", {";
@@ -338,6 +338,25 @@ void TraceEvent::AppendPrettyPrinted(std::ostringstream* out) const {
     }
     *out << "}";
   }
+}
+
+void SetPerfettoInitializedForTesting() {
+  g_perfetto_initialized_for_testing = true;
+}
+
+bool IsPerfettoInitializedForTesting() {
+  return g_perfetto_initialized_for_testing;
+}
+
+void InitializeInProcessPerfettoBackend() {
+  perfetto::TracingInitArgs init_args;
+  init_args.backends = perfetto::BackendType::kInProcessBackend;
+  init_args.shmem_batch_commits_duration_ms = 1000;
+  init_args.shmem_size_hint_kb = 4 * 1024;
+  init_args.shmem_direct_patching_enabled = true;
+  init_args.disallow_merging_with_system_tracks = true;
+  perfetto::Tracing::Initialize(init_args);
+  TrackEvent::Register();
 }
 
 }  // namespace base::trace_event

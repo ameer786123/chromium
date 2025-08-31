@@ -35,6 +35,7 @@
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/dbus/constants/dbus_switches.h"
 #include "components/account_id/account_id.h"
 #include "components/policy/core/common/policy_switches.h"
@@ -55,6 +56,7 @@
 #include "sandbox/policy/switches.h"
 #include "third_party/blink/public/common/switches.h"
 #include "third_party/cros_system_api/switches/chrome_switches.h"
+#include "ui/accessibility/accessibility_features.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/display/display_features.h"
 #include "ui/display/display_switches.h"
@@ -93,6 +95,7 @@ void DeriveCommandLine(const GURL& start_url,
 
   static const char* const kForwardSwitches[] = {
       sandbox::policy::switches::kDisableGpuSandbox,
+      sandbox::policy::switches::kDisableLandlockSandbox,
       sandbox::policy::switches::kDisableSeccompFilterSandbox,
       sandbox::policy::switches::kDisableSetuidSandbox,
       sandbox::policy::switches::kGpuSandboxAllowSysVShm,
@@ -113,7 +116,6 @@ void DeriveCommandLine(const GURL& start_url,
       ::switches::kDisableGpuCompositing,
       ::switches::kDisableGpuRasterization,
       ::switches::kDisableMojoBroker,
-      ::switches::kDisableTouchDragDrop,
       ::switches::kDisableVideoCaptureUseGpuMemoryBuffer,
       ::switches::kDisableYUVImageDecoding,
       ::switches::kEnableBlinkFeatures,
@@ -122,24 +124,20 @@ void DeriveCommandLine(const GURL& start_url,
       ::switches::kEnableLogging,
       ::switches::kEnableMicrophoneMuteSwitchDeviceSwitch,
       ::switches::kEnableNativeGpuMemoryBuffers,
-      ::switches::kEnableTouchDragDrop,
       ::switches::kEnableUnifiedDesktop,
       ::switches::kEnableViewport,
       ::switches::kEnableHardwareOverlays,
       ::switches::kEdgeTouchFiltering,
       ::switches::kHostWindowBounds,
       ::switches::kForceDeviceScaleFactor,
-      ::switches::kForceGpuMemAvailableMb,
       ::switches::kGpuStartupDialog,
       ::switches::kGpuSandboxStartEarly,
-      ::switches::kPpapiInProcess,
       ::switches::kRemoteDebuggingPort,
       ::switches::kRendererStartupDialog,
       ::switches::kSchedulerBoostUrgent,
       ::switches::kTouchDevices,
       ::switches::kTouchEventFeatureDetection,
       ::switches::kTopChromeTouchUi,
-      ::switches::kTraceToConsole,
       ::switches::kUIDisablePartialSwap,
 #if BUILDFLAG(USE_CRAS)
       ::switches::kUseCras,
@@ -174,16 +172,15 @@ void DeriveCommandLine(const GURL& start_url,
       switches::kShowTaps,
       blink::switches::kBlinkSettings,
       blink::switches::kDarkModeSettings,
-      blink::switches::kDisableLowResTiling,
       blink::switches::kDisablePartialRaster,
       blink::switches::kDisablePreferCompositingToLCDText,
       blink::switches::kDisableRGBA4444Textures,
       blink::switches::kDisableZeroCopy,
-      blink::switches::kEnableLowResTiling,
       blink::switches::kEnablePreferCompositingToLCDText,
       blink::switches::kEnableRGBA4444Textures,
       blink::switches::kEnableRasterSideDarkModeForImages,
       blink::switches::kEnableZeroCopy,
+      blink::switches::kForceGpuMemAvailableMb,
       blink::switches::kGpuRasterizationMSAASampleCount,
       switches::kAshPowerButtonPosition,
       switches::kAshSideVolumeButtonPosition,
@@ -247,7 +244,10 @@ void DeriveCommandLine(const GURL& start_url,
 // current session.
 void DeriveFeatures(base::CommandLine* out_command_line) {
   auto kForwardFeatures = {
+      &::features::kAccessibilityManifestV3EspeakNGTts,
+      &::features::kAccessibilityManifestV3GoogleTts,
       &features::kAutoNightLight,
+      &chromeos::features::kFeatureManagementRoundedWindows,
       &ash::features::kSeamlessRefreshRateSwitching,
       &::features::kPluginVm,
       &display::features::kCtmColorManagement,

@@ -5,13 +5,14 @@
 import '/common/testing/test_import_manager.js';
 
 import {Flags} from '/common/flags.js';
-import {InstanceChecker} from '/common/mv2/instance_checker.js';
+import {InstanceChecker} from '/common/mv3/instance_checker.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
 
 import {Autoclick} from './autoclick/autoclick.js';
 import {Dictation} from './dictation/dictation.js';
 import {FaceGaze} from './facegaze/facegaze.js';
 import {Magnifier} from './magnifier/magnifier.js';
+import {Messenger} from './messenger.js';
 
 declare global {
   var accessibilityCommon: AccessibilityCommon;
@@ -37,7 +38,6 @@ export class AccessibilityCommon {
 
   static readonly FACEGAZE_PREF_NAME = 'settings.a11y.face_gaze.enabled';
 
-
   constructor() {
     this.init_();
   }
@@ -45,6 +45,7 @@ export class AccessibilityCommon {
   static async init(): Promise<void> {
     await Flags.init();
     globalThis.accessibilityCommon = new AccessibilityCommon();
+    return Messenger.init(Messenger.Context.SERVICE_WORKER);
   }
 
   getAutoclickForTest(): Autoclick|null {
@@ -62,7 +63,7 @@ export class AccessibilityCommon {
   /**
    * Initializes the AccessibilityCommon extension.
    */
-  private init_(): void {
+  private async init_(): Promise<void> {
     chrome.accessibilityFeatures.autoclick.get(
         {}, details => this.onAutoclickUpdated_(details));
     chrome.accessibilityFeatures.autoclick.onChange.addListener(
@@ -87,25 +88,18 @@ export class AccessibilityCommon {
     chrome.accessibilityFeatures.dictation.onChange.addListener(
         details => this.onDictationUpdated_(details));
 
-    const faceGazeFeature =
-        chrome.accessibilityPrivate.AccessibilityFeature.FACE_GAZE;
-    chrome.accessibilityPrivate.isFeatureEnabled(faceGazeFeature, enabled => {
-      if (!enabled) {
-        return;
-      }
-      // TODO(b/309121742): Add FaceGaze pref to the accessibilityFeatures
-      // extension API.
-      chrome.settingsPrivate.getPref(
-          AccessibilityCommon.FACEGAZE_PREF_NAME,
-          pref => this.onFaceGazeUpdated_(pref));
-      chrome.settingsPrivate.onPrefsChanged.addListener(prefs => {
-        for (const pref of prefs) {
-          if (pref.key === AccessibilityCommon.FACEGAZE_PREF_NAME) {
-            this.onFaceGazeUpdated_(pref);
-            break;
-          }
+    // TODO(b/309121742): Add FaceGaze pref to the accessibilityFeatures
+    // extension API.
+    chrome.settingsPrivate.getPref(
+        AccessibilityCommon.FACEGAZE_PREF_NAME,
+        pref => this.onFaceGazeUpdated_(pref));
+    chrome.settingsPrivate.onPrefsChanged.addListener(prefs => {
+      for (const pref of prefs) {
+        if (pref.key === AccessibilityCommon.FACEGAZE_PREF_NAME) {
+          this.onFaceGazeUpdated_(pref);
+          break;
         }
-      });
+      }
     });
 
     // AccessibilityCommon is an IME so it shows in the input methods list

@@ -23,6 +23,7 @@
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/test_future.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
@@ -57,6 +58,7 @@
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 #include "net/base/features.h"
 #include "net/cookies/cookie_util.h"
+#include "net/disk_cache/backend_experiment.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_response_headers.h"
@@ -75,9 +77,7 @@
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
 #include "services/network/public/mojom/network_service_test.mojom.h"
-#include "services/network/test/udp_socket_test_util.h"
 #include "sql/database.h"
-#include "sql/sql_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -184,7 +184,7 @@ class NetworkServiceBrowserTest : public ContentBrowserTest {
         url, !synchronous);
 
     EvalJsResult result = EvalJs(shell(), script);
-    if (!result.error.empty()) {
+    if (!result.is_ok()) {
       return false;
     }
     return result.ExtractBool();
@@ -309,8 +309,23 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
 }
 
 #if BUILDFLAG(IS_ANDROID)
-IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
+class NetworkServiceBrowserSimpleCacheTest : public NetworkServiceBrowserTest {
+ public:
+  NetworkServiceBrowserSimpleCacheTest() {
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        net::features::kDiskCacheBackendExperiment, {{"backend", "simple"}});
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// `HttpCacheWrittenToDiskOnApplicationStateChange` test tests the behavior
+// specific to SimpleCache, so it is extracted to a dedicated test class that
+// enables DiskCacheBackendExperiment with simple backend.
+IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserSimpleCacheTest,
                        HttpCacheWrittenToDiskOnApplicationStateChange) {
+  ASSERT_TRUE(disk_cache::InSimpleBackendExperimentGroup());
   base::ScopedAllowBlockingForTesting allow_blocking;
 
   // Create network context with cache pointing to the temp cache dir.
@@ -355,49 +370,6 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest,
             directory_size);
 }
 #endif  // BUILDFLAG(IS_ANDROID)
-
-#if BUILDFLAG(IS_WIN)
-class NetworkServiceSkipGrantAccessBrowserTest
-    : public NetworkServiceBrowserTest {
- private:
-  base::test::ScopedFeatureList scoped_feature_list_{
-      features::kSkipGrantAccessToDataPathIfAlreadySet};
-};
-
-IN_PROC_BROWSER_TEST_F(NetworkServiceSkipGrantAccessBrowserTest,
-                       HttpCacheWrittenToDisk) {
-  base::ScopedAllowBlockingForTesting allow_blocking;
-
-  // Create network context with cache pointing to the temp cache dir.
-  mojo::Remote<network::mojom::NetworkContext> network_context;
-  network::mojom::NetworkContextParamsPtr context_params =
-      network::mojom::NetworkContextParams::New();
-  context_params->cert_verifier_params = GetCertVerifierParams(
-      cert_verifier::mojom::CertVerifierCreationParams::New());
-  context_params->file_paths = network::mojom::NetworkContextFilePaths::New();
-  context_params->file_paths->http_cache_directory = GetCacheDirectory();
-  CreateNetworkContextInNetworkService(
-      network_context.BindNewPipeAndPassReceiver(), std::move(context_params));
-
-  network::mojom::URLLoaderFactoryParamsPtr params =
-      network::mojom::URLLoaderFactoryParams::New();
-  params->process_id = network::mojom::kBrowserProcessId;
-  params->automatically_assign_isolation_info = true;
-  params->is_orb_enabled = false;
-  params->is_trusted = true;
-  mojo::Remote<network::mojom::URLLoaderFactory> loader_factory;
-  network_context->CreateURLLoaderFactory(
-      loader_factory.BindNewPipeAndPassReceiver(), std::move(params));
-
-  // Load a URL and check the cache index size.
-  LoadURL(embedded_test_server()->GetURL("/cachetime"), loader_factory.get());
-
-  FlushNetworkServiceInstanceForTesting();
-  disk_cache::FlushCacheThreadForTesting();
-
-  EXPECT_GT(base::ComputeDirectorySize(GetCacheIndexDirectory()), 0);
-}
-#endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
 class NetworkConnectionObserver
@@ -650,9 +622,8 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserTest, FactoryOverride) {
   EXPECT_TRUE(test_loader_factory->has_received_request());
 }
 
-// Android doesn't support PRE_ tests.
-// TODO(wfh): Enable this test when https://crbug.com/1257820 is fixed.
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_FUCHSIA)
+// Cache data migration is not used for Fuchsia.
+#if !BUILDFLAG(IS_FUCHSIA)
 class NetworkServiceBrowserCacheResetTest : public NetworkServiceBrowserTest {
  public:
   NetworkServiceBrowserCacheResetTest() = default;
@@ -700,7 +671,8 @@ class NetworkServiceBrowserCacheResetTest : public NetworkServiceBrowserTest {
   // listening on it if `load_only_from_cache` is true.
   int MakeNetworkContentAndLoadUrl(bool reset_cache,
                                    bool load_only_from_cache,
-                                   const GURL& url) {
+                                   const GURL& url,
+                                   bool expect_cache_reset_failure) {
     auto file_paths = network::mojom::NetworkContextFilePaths::New();
     base::FilePath context_path = GetNetworkContextPath();
     file_paths->data_directory = context_path.Append(FILE_PATH_LITERAL("Data"));
@@ -756,17 +728,19 @@ class NetworkServiceBrowserCacheResetTest : public NetworkServiceBrowserTest {
               loop.Quit();
             }));
     loop.Run();
-    return loader->NetError();
-  }
 
-  void GetCacheFileInfo(base::File::Info& info) {
-    base::FilePath ceontxt_path = GetNetworkContextPath();
-    base::FileEnumerator cache_files(GetNetworkContextCachePath(), true,
-                                     base::FileEnumerator::FILES);
-    // Cache entries created.
-    auto file_path = cache_files.Next();
-    ASSERT_FALSE(file_path.empty());
-    ASSERT_TRUE(base::GetFileInfo(file_path, &info));
+    base::test::TestFuture<bool, int64_t> future;
+    network_context->ComputeHttpCacheSize(base::Time(), base::Time::Max(),
+                                          future.GetCallback());
+    const auto [_, size_or_error] = future.Take();
+
+    if (reset_cache) {
+      EXPECT_EQ(size_or_error,
+                expect_cache_reset_failure ? net::ERR_FAILED : 0);
+    } else {
+      EXPECT_GT(size_or_error, 0);
+    }
+    return loader->NetError();
   }
 };
 
@@ -781,7 +755,8 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserCacheResetTest,
   ASSERT_NO_FATAL_FAILURE(StoreUrl(url));
 
   EXPECT_THAT(MakeNetworkContentAndLoadUrl(
-                  /*reset_cache=*/false, /*load_only_from_cache=*/false, url),
+                  /*reset_cache=*/false, /*load_only_from_cache=*/false, url,
+                  /*expect_cache_reset_failure=*/false),
               net::test::IsOk());
 }
 
@@ -792,9 +767,11 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserCacheResetTest,
   GURL url;
   ASSERT_NO_FATAL_FAILURE(RetrieveUrl(url));
 
-  EXPECT_THAT(MakeNetworkContentAndLoadUrl(/*reset_cache=*/false,
-                                           /*load_only_from_cache=*/true, url),
-              net::test::IsOk());
+  EXPECT_THAT(
+      MakeNetworkContentAndLoadUrl(/*reset_cache=*/false,
+                                   /*load_only_from_cache=*/true, url,
+                                   /*expect_cache_reset_failure=*/false),
+      net::test::IsOk());
 }
 
 // Using the same network context, reset the cache backend and verify that cache
@@ -803,9 +780,11 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserCacheResetTest, CacheResetTest) {
   GURL url;
   ASSERT_NO_FATAL_FAILURE(RetrieveUrl(url));
 
-  EXPECT_THAT(MakeNetworkContentAndLoadUrl(/*reset_cache=*/true,
-                                           /*load_only_from_cache=*/true, url),
-              net::test::IsError(net::ERR_CACHE_MISS));
+  EXPECT_THAT(
+      MakeNetworkContentAndLoadUrl(/*reset_cache=*/true,
+                                   /*load_only_from_cache=*/true, url,
+                                   /*expect_cache_reset_failure=*/false),
+      net::test::IsError(net::ERR_CACHE_MISS));
 }
 
 #if BUILDFLAG(IS_POSIX)
@@ -821,14 +800,11 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceBrowserCacheResetTest, CacheResetFailure) {
   ASSERT_TRUE(base::SetPosixFilePermissions(path, /*mode=*/0));
 
   EXPECT_THAT(MakeNetworkContentAndLoadUrl(/*reset_cache=*/true,
-                                           /*load_only_from_cache=*/true, url),
+                                           /*load_only_from_cache=*/true, url,
+                                           /*expect_cache_reset_failure=*/true),
               net::test::IsError(net::ERR_CACHE_MISS));
 }
 #endif  // BUILDFLAG(IS_POSIX)
-#endif  // BUILDFLAG(IS_ANDROID)
-
-// Cache data migration is not used for Fuchsia.
-#if !BUILDFLAG(IS_FUCHSIA)
 
 const base::FilePath::CharType kCheckpointFileName[] =
     FILE_PATH_LITERAL("NetworkDataMigrated");
@@ -980,11 +956,6 @@ static const base::FilePath::CharType kNetworkSubpath[] =
 class MAYBE_NetworkServiceDataMigrationBrowserTest : public ContentBrowserTest {
  public:
   MAYBE_NetworkServiceDataMigrationBrowserTest() {
-    // Migration only supports non-WAL sqlite databases. If this feature is
-    // switched on by default before migration has been completed then the code
-    // in MaybeGrantSandboxAccessToNetworkContextData will need to be updated.
-    EXPECT_FALSE(
-        base::FeatureList::IsEnabled(sql::features::kEnableWALModeByDefault));
 #if BUILDFLAG(IS_WIN)
     // On Windows, the network sandbox needs to be disabled. This is because the
     // code that performs the migration on Windows DCHECKs if network sandbox is
@@ -1675,94 +1646,6 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceInvalidLogBrowserTest, Basic) {
             LoadBasicRequest(partition->GetNetworkContext(), test_url));
 }
 
-// Test fixture for using a NetworkService that has a non-default limit on the
-// number of allowed open UDP sockets.
-class NetworkServiceWithUDPSocketLimit : public NetworkServiceBrowserTest {
- public:
-  NetworkServiceWithUDPSocketLimit() {
-    base::FieldTrialParams params;
-    params[net::features::kLimitOpenUDPSocketsMax.name] =
-        base::NumberToString(kMaxUDPSockets);
-    scoped_feature_list_.InitAndEnableFeatureWithParameters(
-        net::features::kLimitOpenUDPSockets, params);
-  }
-
- protected:
-  static constexpr int kMaxUDPSockets = 4;
-
-  // Creates and synchronously connects a UDPSocket using |network_context|.
-  // Returns the network error for Connect().
-  int ConnectUDPSocketSync(
-      mojo::Remote<network::mojom::NetworkContext>* network_context,
-      mojo::Remote<network::mojom::UDPSocket>* socket) {
-    network_context->get()->CreateUDPSocket(
-        socket->BindNewPipeAndPassReceiver(), mojo::NullRemote());
-
-    // The address of this endpoint doesn't matter, since Connect() will not
-    // actually send any datagrams, and is only being called to verify the
-    // socket limit enforcement.
-    net::IPEndPoint remote_addr(net::IPAddress(127, 0, 0, 1), 8080);
-
-    network::mojom::UDPSocketOptionsPtr options =
-        network::mojom::UDPSocketOptions::New();
-
-    net::IPEndPoint local_addr;
-    network::test::UDPSocketTestHelper helper(socket);
-    return helper.ConnectSync(remote_addr, std::move(options), &local_addr);
-  }
-
-  // Creates a NetworkContext using default parameters.
-  mojo::Remote<network::mojom::NetworkContext> CreateNetworkContext() {
-    mojo::Remote<network::mojom::NetworkContext> network_context;
-    network::mojom::NetworkContextParamsPtr context_params =
-        network::mojom::NetworkContextParams::New();
-    context_params->cert_verifier_params = GetCertVerifierParams(
-        cert_verifier::mojom::CertVerifierCreationParams::New());
-    CreateNetworkContextInNetworkService(
-        network_context.BindNewPipeAndPassReceiver(),
-        std::move(context_params));
-    return network_context;
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-// Tests calling Connect() on |kMaxUDPSockets + 4| sockets. The first
-// kMaxUDPSockets should succeed, whereas the last 4 should fail with
-// ERR_INSUFFICIENT_RESOURCES due to having exceeding the global bound.
-IN_PROC_BROWSER_TEST_F(NetworkServiceWithUDPSocketLimit,
-                       UDPSocketBoundEnforced) {
-  auto network_contexts =
-      std::to_array<mojo::Remote<network::mojom::NetworkContext>>({
-          CreateNetworkContext(),
-          CreateNetworkContext(),
-      });
-
-  std::array<mojo::Remote<network::mojom::UDPSocket>, kMaxUDPSockets> sockets;
-
-  // Try to connect the maximum number of UDP sockets (|kMaxUDPSockets|),
-  // spread evenly between 2 NetworkContexts. These should succeed as the
-  // global limit has not been reached yet. This assumes there are no
-  // other consumers of UDP sockets in the browser yet.
-  for (size_t i = 0; i < kMaxUDPSockets; ++i) {
-    auto* network_context = &network_contexts[i % network_contexts.size()];
-    EXPECT_EQ(net::OK, ConnectUDPSocketSync(network_context, &sockets[i]));
-  }
-
-  // Try to connect an additional 4 sockets, alternating between each of the
-  // NetworkContexts. These should all fail with ERR_INSUFFICIENT_RESOURCES as
-  // the limit has already been reached. Spreading across NetworkContext
-  // is done to ensure the socket limit is global and not per
-  // NetworkContext.
-  for (size_t i = 0; i < 4; ++i) {
-    auto* network_context = &network_contexts[i % network_contexts.size()];
-    mojo::Remote<network::mojom::UDPSocket> socket;
-    EXPECT_EQ(net::ERR_INSUFFICIENT_RESOURCES,
-              ConnectUDPSocketSync(network_context, &socket));
-  }
-}
-
 class NetworkServiceNetLogBrowserTest : public ContentBrowserTest {
  public:
   NetworkServiceNetLogBrowserTest() {
@@ -1978,11 +1861,12 @@ IN_PROC_BROWSER_TEST_F(NetworkServiceCookieEncryptionBrowserTest,
   EXPECT_CALL(provider, GetEncryptor)
       .WillOnce([&os_crypt_async](network::mojom::CookieEncryptionProvider::
                                       GetEncryptorCallback callback) {
-        std::ignore = os_crypt_async.GetInstance(base::BindOnce(
+        os_crypt_async.GetInstance(base::BindOnce(
             [](network::mojom::CookieEncryptionProvider::GetEncryptorCallback
                    callback,
-               os_crypt_async::Encryptor encryptor,
-               bool result) { std::move(callback).Run(std::move(encryptor)); },
+               os_crypt_async::Encryptor encryptor) {
+              std::move(callback).Run(std::move(encryptor));
+            },
             std::move(callback)));
       });
 

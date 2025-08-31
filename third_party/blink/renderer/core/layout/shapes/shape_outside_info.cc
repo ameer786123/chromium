@@ -32,6 +32,7 @@
 #include <memory>
 
 #include "base/auto_reset.h"
+#include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_rect.h"
@@ -232,9 +233,12 @@ std::unique_ptr<Shape> ShapeOutsideInfo::CreateShapeForImage(
   gfx::Rect image_rect =
       ToPixelSnappedLogicalRect(converter.ToLogical(image_physical_rect));
 
-  scoped_refptr<Image> image =
-      style_image->GetImage(*layout_box_, layout_box_->GetDocument(),
-                            layout_box_->StyleRef(), image_size);
+  const Node* node = layout_box_->GetNode();
+  if (!node) {
+    node = &layout_box_->GetDocument();
+  }
+  scoped_refptr<Image> image = style_image->GetImage(
+      *layout_box_, *node, layout_box_->StyleRef(), image_size);
 
   return Shape::CreateRasterShape(
       image.get(), shape_image_threshold,
@@ -255,17 +259,9 @@ const Shape& ShapeOutsideInfo::ComputedShape() const {
   const ComputedStyle& containing_block_style = containing_block.StyleRef();
 
   WritingMode writing_mode = containing_block_style.GetWritingMode();
-  // Make sure contentWidth is not negative. This can happen when containing
-  // block has a vertical scrollbar and its content is smaller than the
-  // scrollbar width.
-  LayoutUnit percentage_resolution_inline_size =
-      containing_block.IsLayoutNGObject()
-          ? percentage_resolution_inline_size_
-          : std::max(LayoutUnit(), containing_block.ContentWidth());
-
   float margin =
       FloatValueForLength(layout_box_->StyleRef().ShapeMargin(),
-                          percentage_resolution_inline_size.ToFloat());
+                          percentage_resolution_inline_size_.ToFloat());
 
   float shape_image_threshold = style.ShapeImageThreshold();
   DCHECK(style.ShapeOutside());
@@ -286,11 +282,10 @@ const Shape& ShapeOutsideInfo::ComputedShape() const {
                                    shape_image_threshold, writing_mode, margin);
       break;
     case ShapeValue::kBox: {
-      // TODO(crbug.com/402437726) support corner-shape in shape-outside
       shape_ = Shape::CreateLayoutBoxShape(
           ContouredBorderGeometry::ContouredBorder(
-              style, PhysicalRect(PhysicalOffset(), ReferenceBoxPhysicalSize()))
-              .AsRoundedRect(),
+              style,
+              PhysicalRect(PhysicalOffset(), ReferenceBoxPhysicalSize())),
           writing_mode, margin);
       break;
     }

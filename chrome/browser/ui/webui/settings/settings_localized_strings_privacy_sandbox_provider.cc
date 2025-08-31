@@ -219,7 +219,6 @@ void AddPrivacySandboxStrings(content::WebUIDataSource* html_source,
       {"unblockTopicToastBody", IDS_SETTINGS_UNBLOCK_TOPIC_TOAST_BODY},
       {"unblockTopicToastButtonText",
        IDS_SETTINGS_UNBLOCK_TOPIC_TOAST_BUTTON_TEXT},
-      {"fledgePageExplanation", IDS_SETTINGS_FLEDGE_PAGE_EXPLANATION},
       {"unblockTopicButtonTextV2", IDS_SETTINGS_UNBLOCK_TOPIC_BUTTON_TEXT_V2},
       {"privacyGuideAdTopicsHeading",
        IDS_SETTINGS_PRIVACY_GUIDE_AD_TOPICS_HEADING},
@@ -271,16 +270,6 @@ void AddPrivacySandboxStrings(content::WebUIDataSource* html_source,
        IDS_SETTINGS_ALLOW_THIRD_PARTY_COOKIES_EXPAND_A11Y_LABEL},
       {"blockThirdPartyCookiesExpandA11yLabel",
        IDS_SETTINGS_BLOCK_THIRD_PARTY_COOKIES_EXPAND_A11Y_LABEL},
-      // All sites RWS
-      {"allSitesRwsFilterViewTitle", IDS_ALL_SITES_RWS_FILTER_VIEW_TITLE},
-      {"allSitesRwsFilterViewStorageDescription",
-       IDS_ALL_SITES_RWS_FILTER_VIEW_STORAGE_DESCRIPTION},
-      {"allSitesShowRwsButton", IDS_ALL_SITES_SHOW_RWS_BUTTON},
-      {"allSitesRwsMembershipLabel", IDS_ALL_SITES_RWS_LABEL},
-      {"allSitesRwsDeleteDataButtonLabel",
-       IDS_ALL_SITES_RWS_DELETE_DATA_BUTTON_LABEL},
-      {"allSitesRwsDeleteDataDialogTitle",
-       IDS_ALL_SITES_RWS_DELETE_DATA_DIALOG_TITLE},
       // Ad Topics Content Parity - Ad Topics Settings
       {"adTopicsPageToggleSubLabel",
        IDS_SETTINGS_AD_TOPICS_PAGE_TOGGLE_SUB_LABEL},
@@ -288,7 +277,39 @@ void AddPrivacySandboxStrings(content::WebUIDataSource* html_source,
        IDS_SETTINGS_AD_TOPICS_PAGE_ACTIVE_TOPICS_DESCRIPTION},
       // Incognito tracking protections
       {"incognitoTrackingProtectionsPageTitle",
-       IDS_INCOGNITO_TRACKING_PROTECTIONS_PAGE_TITLE}};
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_PAGE_TITLE},
+      {"incognitoTrackingProtectionsPageEntrypointLabel",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_LINK_ROW_LABEL},
+      {"incognitoTrackingProtectionsPageEntrypointSublabel",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_LINK_ROW_SUBLABEL},
+      {"incognitoTrackingProtectionsPageDescription",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_PAGE_DESCRIPTION},
+      {"incognitoTrackingProtectionsHeader",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_HEADER},
+      {"incognitoTrackingProtectionsBlock3pcsToggleLabel",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_BLOCK_3PCS_TOGGLE_LABEL},
+      {"incognitoTrackingProtectionsBlock3pcsToggleSublabel",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_BLOCK_3PCS_TOGGLE_SUBLABEL},
+      {"incognitoTrackingProtectionsIpProtectionToggleLabel",
+       IDS_IP_PROTECTION_TOGGLE_LABEL},
+      {"incognitoTrackingProtectionsIpProtectionToggleSublabel",
+       IDS_IP_PROTECTION_TOGGLE_SUBLABEL},
+      {"incognitoTrackingProtectionsFingerprintingProtectionToggleLabel",
+       IDS_FINGERPRINTING_PROTECTION_TOGGLE_LABEL},
+      {"incognitoTrackingProtectionsFingerprintingProtectionToggleSublabel",
+       IDS_FINGERPRINTING_PROTECTION_TOGGLE_SUBLABEL},
+      {"incognitoTrackingProtectionsIpProtectionWhenOn",
+       IDS_IP_PROTECTION_WHEN_ON},
+      {"incognitoTrackingProtectionsIpProtectionThingsToConsiderBulletOne",
+       IDS_IP_PROTECTION_THINGS_TO_CONSIDER_BULLET_ONE},
+      {"incognitoTrackingProtectionsIpProtectionThingsToConsiderBulletTwo",
+       IDS_IP_PROTECTION_THINGS_TO_CONSIDER_BULLET_TWO_DESKTOP},
+      {"incognitoTrackingProtectionsIpProtectionThingsToConsiderBulletThree",
+       IDS_IP_PROTECTION_THINGS_TO_CONSIDER_BULLET_THREE},
+      {"incognitoTrackingProtectionsFingerprintingProtectionWhenOn",
+       IDS_FINGERPRINTING_PROTECTION_WHEN_ON},
+      {"incognitoTrackingProtectionsFingerprintingProtectionThingsToConsider",
+       IDS_FINGERPRINTING_PROTECTION_THINGS_TO_CONSIDER}};
   html_source->AddLocalizedStrings(kLocalizedStrings);
 
   html_source->AddString("adPrivacyLearnMoreURL",
@@ -426,13 +447,14 @@ void AddPrivacySandboxStrings(content::WebUIDataSource* html_source,
           l10n_util::GetStringUTF16(
               IDS_SETTINGS_SITE_SUGGESTED_ADS_PAGE_DISCLAIMER_LINK_ARIA_DESCRIPTION),
           kPrivacyPolicyFunc, kPrivacyPolicyId));
-  // RWS description
-  const char* rws_learn_more_url = chrome::kRelatedWebsiteSetsLearnMoreURL;
+  // Incognito tracking protections description
+  const char* incognito_tracking_protections_learn_more_url =
+      chrome::kIncognitoTrackingProtectionsLearnMoreUrl;
   html_source->AddString(
-      "allSitesRwsFilterViewDescription",
+      "incognitoTrackingProtectionsDescription",
       l10n_util::GetStringFUTF16(
-          IDS_ALL_SITES_RWS_FILTER_VIEW_DESCRIPTION,
-          base::ASCIIToUTF16(rws_learn_more_url),
+          IDS_INCOGNITO_TRACKING_PROTECTIONS_DESCRIPTION_DESKTOP,
+          base::ASCIIToUTF16(incognito_tracking_protections_learn_more_url),
           l10n_util::GetStringUTF16(IDS_SETTINGS_OPENS_IN_NEW_TAB)));
 }
 

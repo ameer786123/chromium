@@ -20,7 +20,7 @@ import org.chromium.content_public.browser.WebContents;
 @JNINamespace("android_webview")
 @NullMarked
 public class AwDarkMode {
-    private Context mContext;
+    private final Context mContext;
     private long mNativeAwDarkMode;
 
     private static boolean sEnableSimplifiedDarkMode;
@@ -36,7 +36,7 @@ public class AwDarkMode {
 
     public void setWebContents(@Nullable WebContents webContents) {
         if (mNativeAwDarkMode != 0) {
-            AwDarkModeJni.get().detachFromJavaObject(mNativeAwDarkMode, this);
+            AwDarkModeJni.get().detachFromJavaObject(mNativeAwDarkMode);
             mNativeAwDarkMode = 0;
         }
         if (webContents != null) {
@@ -67,8 +67,8 @@ public class AwDarkMode {
     interface Natives {
         void enableSimplifiedDarkMode();
 
-        long init(AwDarkMode caller, WebContents webContents);
+        long init(AwDarkMode self, WebContents webContents);
 
-        void detachFromJavaObject(long nativeAwDarkMode, AwDarkMode caller);
+        void detachFromJavaObject(long nativeAwDarkMode);
     }
 }

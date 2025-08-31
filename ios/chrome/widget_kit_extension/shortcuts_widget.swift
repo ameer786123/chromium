@@ -238,6 +238,7 @@ func loadMostVisitedSitesEntry(
 
   // A constant to get the number of seconds of the last modification date of the installed widget.
   let numberOfSecondsSinceLastModification = Date.now.timeIntervalSince(lastModificationDate)
+
   // A constant to get the number of seconds to refresh the widget after it has been closed.
   let numberOfSecondsFromLastModificationToExpiration =
     fiveMinutestoRefreshTestValue ? Constants.secondsInFiveMinutes : Constants.secondsInFourWeeks
@@ -249,6 +250,7 @@ func loadMostVisitedSitesEntry(
   if numberOfSecondsFromLastModificationToExpiration < numberOfSecondsSinceLastModification {
     return expiredEntry
   }
+
   #if IOS_ENABLE_WIDGETS_FOR_MIM
     guard let data = sharedDefaults.object(forKey: "SuggestedItemsForMIM") as? [String: Data]
     else { return emptyEntry }
@@ -443,7 +445,7 @@ struct ShortcutsWidgetEntryView: View {
 
   var body: some View {
     // The account to display was deleted (entry.deleted can only be true if
-    // IOS_ENABLE_WIDGETS_FOR_MIM is enabled).
+    // IOS_ENABLE_WIDGETS_FOR_MIM is true).
     if entry.deleted && !entry.isPreview {
       MediumWidgetDeletedAccountView()
     } else {

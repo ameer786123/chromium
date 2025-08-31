@@ -21,6 +21,7 @@
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
@@ -30,6 +31,7 @@
 #include "media/base/media_switches.h"
 #include "media/gpu/chromeos/video_frame_resource.h"
 #include "media/gpu/macros.h"
+#include "media/gpu/v4l2/v4l2_device.h"
 #include "media/gpu/v4l2/v4l2_framerate_control.h"
 #include "media/gpu/v4l2/v4l2_queue.h"
 #include "media/gpu/v4l2/v4l2_utils.h"
@@ -234,7 +236,7 @@ class H264FrameReassembler {
     // whole frame.
     bool is_start_of_new_frame;
     // Size in bytes of the NALU under analysis.
-    off_t nalu_size;
+    size_t nalu_size;
   };
   // Parses |data| and returns either std::nullopt, if parsing |data| fails, or
   // a FrameBoundaryInfo describing the first |nalu_size| bytes of |data|.
@@ -314,9 +316,7 @@ void V4L2StatefulVideoDecoder::Initialize(const VideoDecoderConfig& config,
   }
 
   if (!device_fd_.is_valid()) {
-    constexpr char kVideoDeviceDriverPath[] = "/dev/video-dec0";
-    device_fd_.reset(HANDLE_EINTR(
-        open(kVideoDeviceDriverPath, O_RDWR | O_NONBLOCK | O_CLOEXEC)));
+    device_fd_ = V4L2Device::OpenFDForType(V4L2Device::Type::kDecoder);
     if (!device_fd_.is_valid()) {
       std::move(init_cb).Run(DecoderStatus::Codes::kFailedToCreateDecoder);
       return;
@@ -561,6 +561,12 @@ void V4L2StatefulVideoDecoder::Reset(base::OnceClosure closure) {
   weak_ptr_factory_for_events_.InvalidateWeakPtrs();
   weak_ptr_factory_for_CAPTURE_availability_.InvalidateWeakPtrs();
   cancelable_task_tracker_.TryCancelAll();
+
+  if (wake_event_.is_valid()) {
+    const uint64_t buf = 1;
+    const auto res = HANDLE_EINTR(write(wake_event_.get(), &buf, sizeof(buf)));
+    PLOG_IF(ERROR, res < 0) << "Error writing to |wake_event_|";
+  }
 
   if (h264_frame_reassembler_) {
     h264_frame_reassembler_ = std::make_unique<H264FrameReassembler>();
@@ -1195,9 +1201,7 @@ int V4L2StatefulVideoDecoder::GetMaxNumDecoderInstances() {
   if (!base::FeatureList::IsEnabled(media::kLimitConcurrentDecoderInstances)) {
     return std::numeric_limits<int>::max();
   }
-  constexpr char kVideoDeviceDriverPath[] = "/dev/video-dec0";
-  base::ScopedFD device_fd(HANDLE_EINTR(
-      open(kVideoDeviceDriverPath, O_RDWR | O_NONBLOCK | O_CLOEXEC)));
+  auto device_fd = V4L2Device::OpenFDForType(V4L2Device::Type::kDecoder);
   if (!device_fd.is_valid()) {
     return std::numeric_limits<int>::max();
   }
@@ -1290,7 +1294,7 @@ H264FrameReassembler::FindH264FrameBoundary(const uint8_t* const data,
       // found a new NALU boundary. Pretend it's a frame boundary and move on.
       return FrameBoundaryInfo{.is_whole_frame = true,
                                .is_start_of_new_frame = true,
-                               .nalu_size = nalu.size};
+                               .nalu_size = nalu.data.size()};
     }
     DCHECK_EQ(result, H264Parser::kOk);
 
@@ -1309,12 +1313,12 @@ H264FrameReassembler::FindH264FrameBoundary(const uint8_t* const data,
       return std::nullopt;
     }
 
-    CHECK_GE(nalu.data, data);
-    CHECK_LE(nalu.data, data + data_size);
-    const auto nalu_size = nalu.data - data + nalu.size;
+    CHECK_GE(nalu.data.data(), data);
+    CHECK_LE(nalu.data.data(), data + data_size);
+    const auto nalu_size = nalu.data.data() - data + nalu.data.size();
     VLOGF(4) << "H264NALU type " << kKnownNALUNames[nalu.nal_unit_type]
              << ", NALU size=" << nalu_size
-             << " bytes, payload size=" << nalu.size << " bytes";
+             << " bytes, payload size=" << nalu.data.size() << " bytes";
 
     switch (nalu.nal_unit_type) {
       case H264NALU::kSPS:

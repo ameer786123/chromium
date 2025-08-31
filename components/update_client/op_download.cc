@@ -30,7 +30,9 @@
 #include "components/update_client/protocol_definition.h"
 #include "components/update_client/task_traits.h"
 #include "components/update_client/update_client_errors.h"
+#include "components/update_client/update_client_metrics.h"
 #include "components/update_client/update_engine.h"
+#include "components/update_client/utils.h"
 #include "url/gurl.h"
 
 namespace update_client {
@@ -95,6 +97,7 @@ base::Value::Dict MakeEvent(const CrxDownloader::DownloadMetrics& dm) {
 }
 
 void DownloadComplete(
+    const std::string& id,
     scoped_refptr<CrxDownloader> crx_downloader,
     scoped_refptr<Cancellation> cancellation,
     base::RepeatingCallback<void(base::Value::Dict)> event_adder,
@@ -105,6 +108,10 @@ void DownloadComplete(
 
   for (const auto& metric : crx_downloader->download_metrics()) {
     event_adder.Run(MakeEvent(metric));
+    if (metric.error == 0) {
+      metrics::RecordCRXDownloadTime(
+          base::Milliseconds(metric.download_time_ms), id);
+    }
   }
 
   if (cancellation->IsCancelled()) {
@@ -113,20 +120,19 @@ void DownloadComplete(
         base::BindOnce(
             std::move(callback),
             base::unexpected<CategorizedError>(
-                {.category_ = ErrorCategory::kService,
-                 .code_ = static_cast<int>(ServiceError::CANCELLED)})));
+                {.category = ErrorCategory::kService,
+                 .code = static_cast<int>(ServiceError::CANCELLED)})));
     return;
   }
 
   if (download_result.error) {
     CHECK(download_result.response.empty());
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE,
-        base::BindOnce(std::move(callback),
-                       base::unexpected<CategorizedError>(
-                           {.category_ = ErrorCategory::kDownload,
-                            .code_ = download_result.error,
-                            .extra_ = download_result.extra_code1})));
+        FROM_HERE, base::BindOnce(std::move(callback),
+                                  base::unexpected<CategorizedError>(
+                                      {.category = ErrorCategory::kDownload,
+                                       .code = download_result.error,
+                                       .extra = download_result.extra_code1})));
     return;
   }
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
@@ -135,6 +141,7 @@ void DownloadComplete(
 
 void HandleAvailableSpace(
     scoped_refptr<Configurator> config,
+    const std::string& id,
     scoped_refptr<Cancellation> cancellation,
     bool is_foreground,
     const std::vector<GURL>& urls,
@@ -153,8 +160,8 @@ void HandleAvailableSpace(
         base::BindOnce(
             std::move(callback),
             base::unexpected<CategorizedError>(
-                {.category_ = ErrorCategory::kDownload,
-                 .code_ = static_cast<int>(CrxDownloaderError::DISK_FULL)})));
+                {.category = ErrorCategory::kDownload,
+                 .code = static_cast<int>(CrxDownloaderError::DISK_FULL)})));
     return;
   }
   scoped_refptr<CrxDownloader> crx_downloader =
@@ -164,7 +171,7 @@ void HandleAvailableSpace(
   crx_downloader->set_progress_callback(progress_callback);
   cancellation->OnCancel(crx_downloader->StartDownload(
       urls, hash,
-      base::BindOnce(&DownloadComplete, crx_downloader, cancellation,
+      base::BindOnce(&DownloadComplete, id, crx_downloader, cancellation,
                      event_adder, std::move(callback))));
 }
 
@@ -172,6 +179,7 @@ void HandleAvailableSpace(
 
 base::OnceClosure DownloadOperation(
     scoped_refptr<Configurator> config,
+    const std::string& id,
     base::RepeatingCallback<int64_t(const base::FilePath&)> get_available_space,
     bool is_foreground,
     const std::vector<GURL>& urls,
@@ -192,14 +200,14 @@ base::OnceClosure DownloadOperation(
           [](base::RepeatingCallback<int64_t(const base::FilePath&)>
                  get_available_space) {
             base::ScopedTempDir temp_dir;
-            return temp_dir.CreateUniqueTempDir()
+            return CreateScopedTempDirectory(temp_dir)
                        ? get_available_space.Run(temp_dir.GetPath())
                        : int64_t{0};
           },
           get_available_space),
-      base::BindOnce(&HandleAvailableSpace, config, cancellation, is_foreground,
-                     urls, size, hash, progress_callback, event_adder,
-                     std::move(callback)));
+      base::BindOnce(&HandleAvailableSpace, config, id, cancellation,
+                     is_foreground, urls, size, hash, progress_callback,
+                     event_adder, std::move(callback)));
   return base::BindOnce(&Cancellation::Cancel, cancellation);
 }
 

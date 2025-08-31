@@ -10,6 +10,7 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
 #import "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #import "components/autofill/core/browser/data_manager/personal_data_manager.h"
@@ -26,6 +27,7 @@
 #import "components/autofill/ios/browser/autofill_driver_ios.h"
 #import "components/autofill/ios/browser/autofill_java_script_feature.h"
 #import "components/autofill/ios/browser/credit_card_save_manager_test_observer_bridge.h"
+#import "components/autofill/ios/browser/credit_card_util.h"
 #import "components/autofill/ios/browser/ios_test_event_waiter.h"
 #import "components/autofill/ios/common/features.h"
 #import "components/keyed_service/core/service_access_type.h"
@@ -51,6 +53,7 @@ namespace {
 
 const char16_t kExampleUsername[] = u"concrete username";
 const char16_t kExamplePassword[] = u"concrete password";
+const char16_t kExampleBackupPassword[] = u"backup password";
 
 // Gets the current profile password store.
 scoped_refptr<password_manager::PasswordStoreInterface>
@@ -134,24 +137,36 @@ void SaveToPasswordProfileStore(const password_manager::PasswordForm& form) {
   }
 }
 
+// Creates an example form for the passed URL.
+password_manager::PasswordForm CreateExamplePasswordForm(
+    const GURL& url = GURL("https://example.com/")) {
+  password_manager::PasswordForm password_form;
+  password_form.username_value = kExampleUsername;
+  password_form.password_value = kExamplePassword;
+  password_form.url = url;
+  password_form.signon_realm =
+      password_manager_util::GetSignonRealm(password_form.url);
+  return password_form;
+}
+
 // Saves an example form in the profile store.
 void SaveExamplePasswordFormInProfileStore() {
-  password_manager::PasswordForm example;
-  example.username_value = kExampleUsername;
-  example.password_value = kExamplePassword;
-  example.url = GURL("https://example.com/");
-  example.signon_realm = password_manager_util::GetSignonRealm(example.url);
-  SaveToPasswordProfileStore(example);
+  password_manager::PasswordForm example = CreateExamplePasswordForm();
+  SaveToPasswordProfileStore(std::move(example));
 }
 
 // Saves an example form in the profile store for the passed URL.
 void SaveLocalPasswordForm(const GURL& url) {
-  password_manager::PasswordForm localForm;
-  localForm.username_value = kExampleUsername;
-  localForm.password_value = kExamplePassword;
-  localForm.url = url;
-  localForm.signon_realm = password_manager_util::GetSignonRealm(localForm.url);
-  SaveToPasswordProfileStore(localForm);
+  password_manager::PasswordForm local_form = CreateExamplePasswordForm(url);
+  SaveToPasswordProfileStore(std::move(local_form));
+}
+
+// Saves an example form with a backup password in the profile store for the
+// passed URL.
+void SavePasswordFormWithBackup(const GURL& url) {
+  password_manager::PasswordForm password_form = CreateExamplePasswordForm(url);
+  password_form.SetPasswordBackupNote(kExampleBackupPassword);
+  SaveToPasswordProfileStore(std::move(password_form));
 }
 
 // Removes all credentials from the profile store.
@@ -388,6 +403,10 @@ static std::unique_ptr<ScopedAutofillPaymentReauthModuleOverride>
   SaveLocalPasswordForm(GURL(base::SysNSStringToUTF8(URLSpec)));
 }
 
++ (void)savePasswordFormWithBackupForURLSpec:(NSString*)URLSpec {
+  SavePasswordFormWithBackup(GURL(base::SysNSStringToUTF8(URLSpec)));
+}
+
 + (NSInteger)profilesCount {
   autofill::PersonalDataManager* personalDataManager =
       [self personalDataManager];
@@ -432,16 +451,16 @@ static std::unique_ptr<ScopedAutofillPaymentReauthModuleOverride>
                      autofill::AutofillProfile::RecordType::kAccount);
 }
 
-+ (void)saveExampleHomeWorkAccountProfile {
++ (void)saveExampleHomeAndWorkAccountProfile {
   AddAutofillProfile([self personalDataManager],
                      autofill::AutofillProfile::RecordType::kAccountHome);
 }
 
 + (NSString*)exampleProfileName {
   autofill::AutofillProfile profile = autofill::test::GetFullProfile();
-  std::u16string name =
-      profile.GetInfo(autofill::AutofillType(autofill::NAME_FULL),
-                      GetApplicationContext()->GetApplicationLocale());
+  std::u16string name = profile.GetInfo(
+      autofill::AutofillType(autofill::NAME_FULL),
+      GetApplicationContext()->GetApplicationLocaleStorage()->Get());
   return base::SysUTF16ToNSString(name);
 }
 
@@ -482,11 +501,40 @@ static std::unique_ptr<ScopedAutofillPaymentReauthModuleOverride>
   return base::SysUTF16ToNSString(card.NetworkAndLastFourDigits());
 }
 
++ (NSString*)saveLocalCreditCardWithCvc {
+  autofill::PersonalDataManager* personalDataManager =
+      [self personalDataManager];
+  autofill::CreditCard card =
+      autofill::test::WithCvc(autofill::test::GetCreditCard());
+  size_t card_count =
+      personalDataManager->payments_data_manager().GetCreditCards().size();
+  personalDataManager->payments_data_manager().AddCreditCard(card);
+  ConditionBlock conditionBlock = ^bool {
+    return card_count <
+           personalDataManager->payments_data_manager().GetCreditCards().size();
+  };
+  CHECK(base::test::ios::WaitUntilConditionOrTimeout(
+      base::test::ios::kWaitForFileOperationTimeout, conditionBlock));
+  personalDataManager->NotifyPersonalDataObserver();
+  return base::SysUTF16ToNSString(card.NetworkAndLastFourDigits());
+}
+
 + (NSInteger)localCreditCount {
   return [self personalDataManager]
       ->payments_data_manager()
       .GetCreditCards()
       .size();
+}
+
++ (NSString*)firstLocalCreditCardCvc {
+  autofill::PaymentsDataManager& paymentsDataManager =
+      [self personalDataManager]->payments_data_manager();
+  const std::vector<const autofill::CreditCard*>& cards =
+      paymentsDataManager.GetLocalCreditCards();
+  if (cards.empty()) {
+    return nil;
+  }
+  return autofill::GetCreditCardCvcString(*cards[0]);
 }
 
 + (NSString*)saveMaskedCreditCard {
@@ -520,6 +568,20 @@ static std::unique_ptr<ScopedAutofillPaymentReauthModuleOverride>
                     .GetCreditCards()
                     .size() == card_count + 1);
       }));
+
+  personalDataManager->NotifyPersonalDataObserver();
+  return base::SysUTF16ToNSString(card.NetworkAndLastFourDigits());
+}
+
++ (NSString*)saveMaskedCreditCardEnrolledInCardInfoRetrieval {
+  autofill::PersonalDataManager* personalDataManager =
+      [self personalDataManager];
+  autofill::CreditCard card =
+      autofill::test::GetMaskedServerCardEnrolledIntoRuntimeRetrieval();
+  CHECK_NE(card.record_type(), autofill::CreditCard::RecordType::kLocalCard);
+
+  personalDataManager->payments_data_manager().AddServerCreditCardForTest(
+      std::make_unique<autofill::CreditCard>(card));
 
   personalDataManager->NotifyPersonalDataObserver();
   return base::SysUTF16ToNSString(card.NetworkAndLastFourDigits());
@@ -630,6 +692,13 @@ static std::unique_ptr<ScopedAutofillPaymentReauthModuleOverride>
       [self personalDataManager];
   personalDataManager->payments_data_manager()
       .SetPaymentMethodsMandatoryReauthEnabled(enabled);
+}
+
++ (void)setPaymentCvcStorageEnabled:(BOOL)enabled {
+  autofill::PersonalDataManager* personalDataManager =
+      [self personalDataManager];
+  personalDataManager->payments_data_manager().SetPaymentsCvcStorageEnabled(
+      enabled);
 }
 
 + (BOOL)isKeyboardAccessoryUpgradeEnabled {

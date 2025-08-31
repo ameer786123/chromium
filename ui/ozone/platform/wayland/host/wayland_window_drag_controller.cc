@@ -157,7 +157,9 @@ WaylandWindowDragController::WaylandWindowDragController(
   DCHECK(keyboard_delegate_);
 }
 
-WaylandWindowDragController::~WaylandWindowDragController() = default;
+WaylandWindowDragController::~WaylandWindowDragController() {
+  data_device_manager_->GetDevice()->ResetDragDelegate();
+}
 
 bool WaylandWindowDragController::StartDragSession(
     WaylandToplevelWindow* origin,
@@ -268,6 +270,12 @@ void WaylandWindowDragController::StopDragging() {
 
 bool WaylandWindowDragController::IsDragInProgress() const {
   return state_ != State::kIdle;
+}
+
+bool WaylandWindowDragController::IsDraggingWindow(
+    WaylandToplevelWindow* window) const {
+  CHECK(window);
+  return IsDragInProgress() && dragged_window_ == window;
 }
 
 void WaylandWindowDragController::CancelDragSession() {
@@ -500,6 +508,7 @@ void WaylandWindowDragController::HandleDragEnd(bool completed,
   xdg_toplevel_drag_.reset();
   origin_surface_.reset();
   origin_window_ = nullptr;
+  drag_target_window_ = nullptr;
   has_received_enter_ = false;
 
   // Transition to |kDropped| state and determine the next action to take. If
@@ -666,6 +675,7 @@ void WaylandWindowDragController::HandleDropAndResetState(
   events_grabber_ = nullptr;
   state_ = State::kIdle;
   drag_source_.reset();
+  data_source_.reset();
 }
 
 void WaylandWindowDragController::RunLoop() {

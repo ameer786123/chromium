@@ -283,7 +283,8 @@ export class SettingsClearBrowsingDataDialogElement extends
     this.addWebUiListener(
         'update-sync-state', this.updateSyncState_.bind(this));
     this.addWebUiListener(
-        'update-counter-text', this.updateCounterText_.bind(this));
+        'browsing-data-counter-text-update',
+        this.updateCounterText_.bind(this));
 
     this.addEventListener(
         'settings-boolean-control-change', this.updateClearButtonState_);
@@ -701,7 +702,8 @@ export class SettingsClearBrowsingDataDialogElement extends
 
     const timePeriodValue = this.getPref(timePeriodPref).value;
 
-    if (!(timePeriodValue in TimePeriod)) {
+    if (!this.clearFromOptions_.find(
+            timePeriodOption => timePeriodOption.value === timePeriodValue)) {
       // If the synced time period is not supported, default to "Last hour".
       this.setPrefValue(timePeriodPref, TimePeriod.LAST_HOUR);
     }

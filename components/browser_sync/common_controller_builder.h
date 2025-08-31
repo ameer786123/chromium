@@ -32,6 +32,10 @@ namespace bookmarks {
 class BookmarkModel;
 }  // namespace bookmarks
 
+namespace collaboration {
+class CollaborationService;
+}  // namespace collaboration
+
 namespace commerce {
 class ProductSpecificationsService;
 }  // namespace commerce
@@ -43,6 +47,10 @@ class ConsentAuditor;
 namespace data_sharing {
 class DataSharingService;
 }  // namespace data_sharing
+
+namespace data_sharing::personal_collaboration_data {
+class PersonalCollaborationDataService;
+}  // namespace data_sharing::personal_collaboration_data
 
 namespace favicon {
 class FaviconService;
@@ -145,6 +153,12 @@ class CommonControllerBuilder {
           local_or_syncable_bookmark_sync_service,
       sync_bookmarks::BookmarkSyncService* account_bookmark_sync_service);
   void SetConsentAuditor(consent_auditor::ConsentAuditor* consent_auditor);
+  void SetCollaborationService(
+      collaboration::CollaborationService* collaboration_service);
+  void SetPersonalCollaborationDataService(
+      data_sharing::personal_collaboration_data::
+          PersonalCollaborationDataService*
+              personal_collaboration_data_service);
   void SetDataSharingService(
       data_sharing::DataSharingService* data_sharing_service);
   void SetDeviceInfoSyncService(
@@ -296,6 +310,11 @@ class CommonControllerBuilder {
       plus_address_webdata_service_;
   SafeOptional<raw_ptr<commerce::ProductSpecificationsService>>
       product_specifications_service_;
+  SafeOptional<raw_ptr<collaboration::CollaborationService>>
+      collaboration_service_;
+  SafeOptional<raw_ptr<data_sharing::personal_collaboration_data::
+                           PersonalCollaborationDataService>>
+      personal_collaboration_data_service_;
   SafeOptional<raw_ptr<data_sharing::DataSharingService>> data_sharing_service_;
   SafeOptional<raw_ptr<SharingMessageBridge>> sharing_message_bridge_;
   SafeOptional<raw_ptr<tab_groups::TabGroupSyncService>>

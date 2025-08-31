@@ -21,8 +21,8 @@ import java.util.List;
 @NullMarked
 public class FragmentElement<FragmentT extends Fragment, ActivityT extends FragmentActivity>
         extends Element<FragmentT> {
-    private ActivityElement<ActivityT> mActivityElement;
-    private Class<FragmentT> mFragmentClass;
+    private final ActivityElement<ActivityT> mActivityElement;
+    private final Class<FragmentT> mFragmentClass;
 
     /**
      * Constructor.
@@ -38,7 +38,7 @@ public class FragmentElement<FragmentT extends Fragment, ActivityT extends Fragm
     }
 
     @Override
-    public ConditionWithResult<FragmentT> createEnterCondition() {
+    public @Nullable ConditionWithResult<FragmentT> createEnterCondition() {
         return new FragmentExistsCondition();
     }
 
@@ -51,6 +51,7 @@ public class FragmentElement<FragmentT extends Fragment, ActivityT extends Fragm
     private class FragmentExistsCondition extends ConditionWithResult<FragmentT> {
         public FragmentExistsCondition() {
             super(/* isRunOnUiThread= */ false);
+            dependOnSupplier(mActivityElement, "Activity");
         }
 
         @Override
@@ -60,8 +61,7 @@ public class FragmentElement<FragmentT extends Fragment, ActivityT extends Fragm
 
         @Override
         protected ConditionStatusWithResult<FragmentT> resolveWithSuppliers() throws Exception {
-            ActivityT activity = mActivityElement.get();
-            if (activity == null) return awaiting("No activity found").withoutResult();
+            ActivityT activity = mActivityElement.value();
             List<Fragment> fragments = activity.getSupportFragmentManager().getFragments();
             FragmentT candidate = null;
             for (Fragment fragment : fragments) {
@@ -91,7 +91,7 @@ public class FragmentElement<FragmentT extends Fragment, ActivityT extends Fragm
 
         @Override
         protected ConditionStatus checkWithSuppliers() throws Exception {
-            ActivityT activity = mActivityElement.get();
+            ActivityT activity = mActivityElement.value();
             if (activity == null) return fulfilled("Fragment's owning activity is destroyed");
             List<Fragment> fragments = activity.getSupportFragmentManager().getFragments();
             for (Fragment fragment : fragments) {

@@ -25,9 +25,26 @@
 
 namespace {
 
+using syncer::IsEmptyLocalDataDescription;
 using syncer::MatchesDeletionOrigin;
+using syncer::MatchesLocalDataDescription;
+using syncer::MatchesLocalDataItemModel;
 using testing::ElementsAre;
 using testing::Eq;
+using testing::IsEmpty;
+
+std::set<GURL> GetReadingListURLsFromFakeServer(
+    fake_server::FakeServer* fake_server) {
+  std::vector<sync_pb::SyncEntity> entities =
+      fake_server->GetSyncEntitiesByDataType(syncer::READING_LIST);
+  std::set<GURL> urls;
+  std::transform(entities.begin(), entities.end(),
+                 std::inserter(urls, urls.begin()),
+                 [](const sync_pb::SyncEntity& entity) {
+                   return GURL(entity.specifics().reading_list().url());
+                 });
+  return urls;
+}
 
 // Checker used to block until the reading list URLs on the server match a
 // given set of expected reading list URLs.
@@ -41,13 +58,8 @@ class ServerReadingListURLsEqualityChecker
   bool IsExitConditionSatisfied(std::ostream* os) override {
     *os << "Waiting for server-side reading list URLs to match expected.";
 
-    std::vector<sync_pb::SyncEntity> entities =
-        fake_server()->GetSyncEntitiesByDataType(syncer::READING_LIST);
-
-    std::set<GURL> actual_urls;
-    for (const sync_pb::SyncEntity& entity : entities) {
-      actual_urls.insert(GURL(entity.specifics().reading_list().url()));
-    }
+    const std::set<GURL> actual_urls =
+        GetReadingListURLsFromFakeServer(fake_server());
 
     testing::StringMatchResultListener result_listener;
     const bool matches = ExplainMatchResult(
@@ -242,7 +254,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
   const GURL kLocalUrl("http://local_url.com/");
   model()->AddOrReplaceEntry(kLocalUrl, "local_title",
                              reading_list::ADDED_VIA_CURRENT_APP,
-                             /*estimated_read_time=*/base::TimeDelta());
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
 
   ASSERT_THAT(model()->size(), Eq(1ul));
 
@@ -252,7 +265,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
   const GURL kAccountUrl("http://account_url.com/");
   model()->AddOrReplaceEntry(kAccountUrl, "account_title",
                              reading_list::ADDED_VIA_CURRENT_APP,
-                             /*estimated_read_time=*/base::TimeDelta());
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
 
   ASSERT_THAT(model()->size(), Eq(2ul));
 
@@ -346,11 +360,13 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
 
   model()->AddOrReplaceEntry(kCommonUrl, "common_title",
                              reading_list::ADDED_VIA_CURRENT_APP,
-                             /*estimated_read_time=*/base::TimeDelta());
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
   const GURL kLocalUrl("http://local_url.com/");
   model()->AddOrReplaceEntry(kLocalUrl, "local_title",
                              reading_list::ADDED_VIA_CURRENT_APP,
-                             /*estimated_read_time=*/base::TimeDelta());
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
 
   ASSERT_THAT(model()->size(), Eq(2ul));
 
@@ -398,25 +414,28 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
 
 IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
                        ShouldUploadAllEntriesToTheSyncServer) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
+  ASSERT_TRUE(SetupClients());
   ASSERT_THAT(model()->size(), Eq(0ul));
 
   const GURL kUrlA("http://url_a.com/");
   model()->AddOrReplaceEntry(kUrlA, "title_a",
                              reading_list::ADDED_VIA_CURRENT_APP,
-                             /*estimated_read_time=*/base::TimeDelta());
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
 
   const GURL kUrlB("http://url_b.com/");
   model()->AddOrReplaceEntry(kUrlB, "title_b",
                              reading_list::ADDED_VIA_CURRENT_APP,
-                             /*estimated_read_time=*/base::TimeDelta());
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
 
-  ASSERT_THAT(model()->size(), Eq(2ul));
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
 
   SignInAndWaitForReadingListActive();
 
-  ASSERT_THAT(model()->size(), Eq(2ul));
-  ASSERT_TRUE(ServerReadingListURLsEqualityChecker({}).Wait());
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+  ASSERT_THAT(GetReadingListURLsFromFakeServer(SyncTest::GetFakeServer()),
+              IsEmpty());
 
   model()->MarkAllForUploadToSyncServerIfNeeded();
 
@@ -723,6 +742,115 @@ IN_PROC_BROWSER_TEST_F(
   EXPECT_THAT(model()->size(), Eq(2ul));
   EXPECT_THAT(model()->GetEntryByURL(kEntryWithCorruptRemoteUpdateUrl)->Title(),
               Eq("entry_title"));
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
+                       ShouldReturnLocalDataDescriptions) {
+  ASSERT_TRUE(SetupClients());
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kUrlA("http://url_a.com/");
+  model()->AddOrReplaceEntry(kUrlA, "title_a",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
+
+  const GURL kUrlB("http://url_b.com/");
+  model()->AddOrReplaceEntry(kUrlB, "title_b",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+  ASSERT_THAT(GetReadingListURLsFromFakeServer(SyncTest::GetFakeServer()),
+              IsEmpty());
+
+  EXPECT_THAT(
+      GetClient(0)->GetLocalDataDescriptionAndWait(syncer::READING_LIST),
+      // Items should be sorted by syncer::LocalDataItemModel::DataId.
+      MatchesLocalDataDescription(
+          syncer::DataType::READING_LIST,
+          ElementsAre(MatchesLocalDataItemModel(
+                          kUrlA, syncer::LocalDataItemModel::PageUrlIcon(kUrlA),
+                          /*title=*/"title_a", /*subtitle=*/IsEmpty()),
+                      MatchesLocalDataItemModel(
+                          kUrlB, syncer::LocalDataItemModel::PageUrlIcon(kUrlB),
+                          /*title=*/"title_b", /*subtitle=*/IsEmpty())),
+          /*item_count=*/2u, /*domains=*/ElementsAre("url_a.com", "url_b.com"),
+          /*domain_count=*/2u));
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
+                       ShouldBatchUploadAllEntries) {
+  ASSERT_TRUE(SetupClients());
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kUrlA("http://url_a.com/");
+  model()->AddOrReplaceEntry(kUrlA, "title_a",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
+
+  const GURL kUrlB("http://url_b.com/");
+  model()->AddOrReplaceEntry(kUrlB, "title_b",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+  ASSERT_THAT(GetReadingListURLsFromFakeServer(SyncTest::GetFakeServer()),
+              IsEmpty());
+
+  GetSyncService(0)->TriggerLocalDataMigration({syncer::READING_LIST});
+
+  EXPECT_TRUE(ServerReadingListURLsEqualityChecker({kUrlA, kUrlB}).Wait());
+  EXPECT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+
+  GetClient(0)->SignOutPrimaryAccount();
+  EXPECT_THAT(model()->GetKeys(), ElementsAre());
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
+                       ShouldBatchUploadSomeEntries) {
+  ASSERT_TRUE(SetupClients());
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kUrlA("http://url_a.com/");
+  model()->AddOrReplaceEntry(kUrlA, "title_a",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
+
+  const GURL kUrlB("http://url_b.com/");
+  model()->AddOrReplaceEntry(kUrlB, "title_b",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/std::nullopt,
+                             /*creation_time=*/std::nullopt);
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+  ASSERT_THAT(GetReadingListURLsFromFakeServer(SyncTest::GetFakeServer()),
+              IsEmpty());
+
+  GetSyncService(0)->TriggerLocalDataMigrationForItems(
+      {{syncer::DataType::READING_LIST, {kUrlA}}});
+
+  EXPECT_TRUE(ServerReadingListURLsEqualityChecker({kUrlA}).Wait());
+  EXPECT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+
+  GetClient(0)->SignOutPrimaryAccount();
+  EXPECT_THAT(model()->GetKeys(), ElementsAre(kUrlB));
 }
 
 #endif  // !BUILDFLAG(IS_CHROMEOS)

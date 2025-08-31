@@ -38,6 +38,7 @@
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile.h"
@@ -58,6 +59,7 @@
 #include "chrome/browser/sessions/tab_loader_delegate.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
 #include "chrome/browser/tab_contents/web_contents_collection.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -68,10 +70,8 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/startup/startup_tab.h"
 #include "chrome/browser/ui/startup/startup_types.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_service_factory.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
+#include "chrome/browser/ui/tabs/split_tab_metrics.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -97,6 +97,7 @@
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/memory_pressure/fake_memory_pressure_monitor.h"
+#include "components/prefs/pref_service.h"
 #include "components/saved_tab_groups/internal/saved_tab_group_model.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/saved_tab_groups/public/saved_tab_group.h"
@@ -111,6 +112,8 @@
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tab_groups/tab_group_visual_data.h"
+#include "components/tabs/public/split_tab_data.h"
+#include "components/tabs/public/tab_group.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
@@ -389,6 +392,10 @@ class SessionRestoreTest : public InProcessBrowserTest {
   raw_ptr<const BrowserList> active_browser_list_ = nullptr;
 
  private:
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList scoped_prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
 #if !BUILDFLAG(GOOGLE_CHROME_BRANDING)
   base::test::ScopedFeatureList scoped_feature_list_;
 #endif  // !BUILDFLAG(GOOGLE_CHROME_BRANDING)
@@ -1061,8 +1068,7 @@ std::vector<std::optional<tab_groups::TabGroupId>> GetTabGroups(
 // different code paths. So, create a parametrized test fixture to run each test
 // with and without a command reset. The bool test parameter determines whether
 // to do a command reset when quitting and restoring.
-class SessionRestoreTabGroupsTest : public SessionRestoreTest,
-                                    public testing::WithParamInterface<bool> {
+class SessionRestoreTabGroupsTest : public SessionRestoreTest {
  public:
   SessionRestoreTabGroupsTest() = default;
 
@@ -1071,11 +1077,9 @@ class SessionRestoreTabGroupsTest : public SessionRestoreTest,
 
   Browser* QuitBrowserAndRestore(Browser* browser) {
     // The test parameter determines whether to do a command reset.
-    if (GetParam()) {
-      SessionService* const session_service =
-          SessionServiceFactory::GetForProfile(browser->profile());
-      session_service->ResetFromCurrentBrowsers();
-    }
+    SessionService* const session_service =
+        SessionServiceFactory::GetForProfile(browser->profile());
+    session_service->ResetFromCurrentBrowsers();
 
     return SessionRestoreTest::QuitBrowserAndRestore(browser);
   }
@@ -1086,7 +1090,7 @@ class SessionRestoreTabGroupsTest : public SessionRestoreTest,
 
 }  // namespace
 
-IN_PROC_BROWSER_TEST_P(SessionRestoreTabGroupsTest, TabsWithGroups) {
+IN_PROC_BROWSER_TEST_F(SessionRestoreTabGroupsTest, TabsWithGroups) {
   ASSERT_TRUE(browser()->tab_strip_model()->SupportsTabGroups());
 
   constexpr int kNumTabs = 6;
@@ -1113,7 +1117,7 @@ IN_PROC_BROWSER_TEST_P(SessionRestoreTabGroupsTest, TabsWithGroups) {
       CheckTabGrouping(new_browser->tab_strip_model(), group_spec));
 }
 
-IN_PROC_BROWSER_TEST_P(SessionRestoreTabGroupsTest, GroupMetadataRestored) {
+IN_PROC_BROWSER_TEST_F(SessionRestoreTabGroupsTest, GroupMetadataRestored) {
   ASSERT_TRUE(browser()->tab_strip_model()->SupportsTabGroups());
 
   // Open up 4 more tabs, making 5 including the initial tab.
@@ -1137,7 +1141,7 @@ IN_PROC_BROWSER_TEST_P(SessionRestoreTabGroupsTest, GroupMetadataRestored) {
       *tsm->group_model()->GetTabGroup(group1)->visual_data();
   const tab_groups::TabGroupVisualData group2_data(
       u"Foo", tab_groups::TabGroupColorId::kBlue, true);
-  tsm->group_model()->GetTabGroup(group2)->SetVisualData(group2_data);
+  tsm->ChangeTabGroupVisuals(group2, group2_data);
 
   Browser* const new_browser = QuitBrowserAndRestore(browser());
   TabStripModel* const new_tsm = new_browser->tab_strip_model();
@@ -1165,7 +1169,7 @@ IN_PROC_BROWSER_TEST_P(SessionRestoreTabGroupsTest, GroupMetadataRestored) {
   EXPECT_EQ(group2_data.is_collapsed(), group2_restored_data->is_collapsed());
 }
 
-IN_PROC_BROWSER_TEST_P(SessionRestoreTabGroupsTest,
+IN_PROC_BROWSER_TEST_F(SessionRestoreTabGroupsTest,
                        TabGroupIDsRelabeledOnRestore) {
   ASSERT_TRUE(browser()->tab_strip_model()->SupportsTabGroups());
 
@@ -1204,7 +1208,7 @@ IN_PROC_BROWSER_TEST_P(SessionRestoreTabGroupsTest,
 #else
 #define MAYBE_RecentlyClosedGroup RecentlyClosedGroup
 #endif
-IN_PROC_BROWSER_TEST_P(SessionRestoreTabGroupsTest, MAYBE_RecentlyClosedGroup) {
+IN_PROC_BROWSER_TEST_F(SessionRestoreTabGroupsTest, MAYBE_RecentlyClosedGroup) {
   ASSERT_TRUE(browser()->tab_strip_model()->SupportsTabGroups());
 
   constexpr int kNumTabs = 2;
@@ -1259,10 +1263,6 @@ IN_PROC_BROWSER_TEST_P(SessionRestoreTabGroupsTest, MAYBE_RecentlyClosedGroup) {
   ASSERT_EQ(new_group_entry->tabs.size(), 2u);
 }
 
-INSTANTIATE_TEST_SUITE_P(WithAndWithoutReset,
-                         SessionRestoreTabGroupsTest,
-                         testing::Values(false, true));
-
 IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreAfterDelete) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GetUrl1()));
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GetUrl2()));
@@ -1288,6 +1288,203 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreAfterDelete) {
   GoBack(new_browser);
   ASSERT_EQ(GetUrl1(),
             new_browser->tab_strip_model()->GetActiveWebContents()->GetURL());
+}
+
+class SplitTabSessionRestoreTest : public SessionRestoreTest {
+ public:
+  SplitTabSessionRestoreTest() {
+    feature_list_.InitWithFeatures(
+        {features::kSideBySide, features::kSideBySideSessionRestore}, {});
+  }
+  SplitTabSessionRestoreTest(const SplitTabSessionRestoreTest&) = delete;
+  SplitTabSessionRestoreTest& operator=(const SplitTabSessionRestoreTest&) =
+      delete;
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(SplitTabSessionRestoreTest, TabsWithSplits) {
+  constexpr int kNumTabs = 8;
+
+  // Open |kNumTabs| tabs.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GetUrl1()));
+  for (int i = 1; i < kNumTabs; ++i) {
+    ui_test_utils::NavigateToURLWithDisposition(
+        browser(), GetUrl1(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
+        ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  }
+
+  ASSERT_EQ(kNumTabs, browser()->tab_strip_model()->count());
+
+  // Pin the first two tabs.
+  browser()->tab_strip_model()->SetTabPinned(0, true);
+  browser()->tab_strip_model()->SetTabPinned(1, true);
+
+  // Group the next two tabs.
+  browser()->tab_strip_model()->AddToNewGroup({2, 3});
+
+  // Create three splits for pinned, group, unpinned.
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kOther));
+  split_tabs::SplitTabId split_pinned =
+      browser()->tab_strip_model()->AddToNewSplit(
+          {1}, split_tabs::SplitTabVisualData(),
+          split_tabs::SplitTabCreatedSource::kTabContextMenu);
+
+  browser()->tab_strip_model()->ActivateTabAt(
+      2, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kOther));
+  split_tabs::SplitTabId split_group =
+      browser()->tab_strip_model()->AddToNewSplit(
+          {3}, split_tabs::SplitTabVisualData(),
+          split_tabs::SplitTabCreatedSource::kTabContextMenu);
+
+  browser()->tab_strip_model()->ActivateTabAt(
+      4, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kOther));
+  split_tabs::SplitTabId split_unpinned =
+      browser()->tab_strip_model()->AddToNewSplit(
+          {5}, split_tabs::SplitTabVisualData(),
+          split_tabs::SplitTabCreatedSource::kTabContextMenu);
+
+  const auto groups = GetTabGroups(browser()->tab_strip_model());
+
+  Browser* new_browser = QuitBrowserAndRestore(browser());
+  EXPECT_EQ(kNumTabs, new_browser->tab_strip_model()->count());
+  EXPECT_EQ(new_browser->tab_strip_model()->IndexOfFirstNonPinnedTab(), 2);
+  EXPECT_EQ(
+      new_browser->tab_strip_model()
+          ->group_model()
+          ->GetTabGroup(
+              new_browser->tab_strip_model()->GetTabGroupForTab(2).value())
+          ->ListTabs()
+          .length(),
+      2);
+  EXPECT_EQ(new_browser->tab_strip_model()->ListSplits(),
+            std::set<split_tabs::SplitTabId>(
+                {split_pinned, split_group, split_unpinned}));
+  EXPECT_EQ(new_browser->tab_strip_model()
+                ->GetSplitData(split_pinned)
+                ->ListTabs()
+                .size(),
+            2u);
+  EXPECT_EQ(new_browser->tab_strip_model()
+                ->GetSplitData(split_group)
+                ->ListTabs()
+                .size(),
+            2u);
+  EXPECT_EQ(new_browser->tab_strip_model()
+                ->GetSplitData(split_unpinned)
+                ->ListTabs()
+                .size(),
+            2u);
+}
+
+IN_PROC_BROWSER_TEST_F(SplitTabSessionRestoreTest, SplitVisualDataRestored) {
+  constexpr int kNumTabs = 8;
+
+  // Open |kNumTabs| tabs.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GetUrl1()));
+  for (int i = 1; i < kNumTabs; ++i) {
+    ui_test_utils::NavigateToURLWithDisposition(
+        browser(), GetUrl1(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
+        ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  }
+
+  ASSERT_EQ(kNumTabs, browser()->tab_strip_model()->count());
+
+  // Pin the first two tabs.
+  browser()->tab_strip_model()->SetTabPinned(0, true);
+  browser()->tab_strip_model()->SetTabPinned(1, true);
+
+  // Group the next two tabs.
+  browser()->tab_strip_model()->AddToNewGroup({2, 3});
+
+  // Create three splits for pinned, group, unpinned.
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kOther));
+  split_tabs::SplitTabId split_pinned =
+      browser()->tab_strip_model()->AddToNewSplit(
+          {1},
+          split_tabs::SplitTabVisualData(split_tabs::SplitTabLayout::kVertical,
+                                         0.5),
+          split_tabs::SplitTabCreatedSource::kTabContextMenu);
+
+  browser()->tab_strip_model()->ActivateTabAt(
+      2, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kOther));
+  split_tabs::SplitTabId split_group =
+      browser()->tab_strip_model()->AddToNewSplit(
+          {3},
+          split_tabs::SplitTabVisualData(
+              split_tabs::SplitTabLayout::kHorizontal, 0.7),
+          split_tabs::SplitTabCreatedSource::kTabContextMenu);
+
+  browser()->tab_strip_model()->ActivateTabAt(
+      4, TabStripUserGestureDetails(
+             TabStripUserGestureDetails::GestureType::kOther));
+  split_tabs::SplitTabId split_unpinned =
+      browser()->tab_strip_model()->AddToNewSplit(
+          {5},
+          split_tabs::SplitTabVisualData(split_tabs::SplitTabLayout::kVertical,
+                                         0.3),
+          split_tabs::SplitTabCreatedSource::kTabContextMenu);
+
+  const auto groups = GetTabGroups(browser()->tab_strip_model());
+
+  // Update a some of the split visual data.
+  browser()->tab_strip_model()->UpdateSplitLayout(
+      split_unpinned, split_tabs::SplitTabLayout::kHorizontal);
+
+  Browser* new_browser = QuitBrowserAndRestore(browser());
+  EXPECT_EQ(kNumTabs, new_browser->tab_strip_model()->count());
+  EXPECT_EQ(new_browser->tab_strip_model()->IndexOfFirstNonPinnedTab(), 2);
+  EXPECT_EQ(
+      new_browser->tab_strip_model()
+          ->group_model()
+          ->GetTabGroup(
+              new_browser->tab_strip_model()->GetTabGroupForTab(2).value())
+          ->ListTabs()
+          .length(),
+      2);
+  EXPECT_EQ(new_browser->tab_strip_model()->ListSplits(),
+            std::set<split_tabs::SplitTabId>(
+                {split_pinned, split_group, split_unpinned}));
+
+  EXPECT_EQ(new_browser->tab_strip_model()
+                ->GetSplitData(split_pinned)
+                ->ListTabs()
+                .size(),
+            2u);
+  EXPECT_EQ(*new_browser->tab_strip_model()
+                 ->GetSplitData(split_pinned)
+                 ->visual_data(),
+            split_tabs::SplitTabVisualData(
+                split_tabs::SplitTabLayout::kVertical, 0.5));
+
+  EXPECT_EQ(new_browser->tab_strip_model()
+                ->GetSplitData(split_group)
+                ->ListTabs()
+                .size(),
+            2u);
+  EXPECT_EQ(
+      *new_browser->tab_strip_model()->GetSplitData(split_group)->visual_data(),
+      split_tabs::SplitTabVisualData(split_tabs::SplitTabLayout::kHorizontal,
+                                     0.7));
+
+  EXPECT_EQ(new_browser->tab_strip_model()
+                ->GetSplitData(split_unpinned)
+                ->ListTabs()
+                .size(),
+            2u);
+  EXPECT_EQ(*new_browser->tab_strip_model()
+                 ->GetSplitData(split_unpinned)
+                 ->visual_data(),
+            split_tabs::SplitTabVisualData(
+                split_tabs::SplitTabLayout::kHorizontal, 0.3));
 }
 
 IN_PROC_BROWSER_TEST_F(SessionRestoreTest, StartupPagesWithOnlyNtp) {
@@ -1889,7 +2086,8 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestorePinnedSelectedTab) {
   ASSERT_EQ(2, new_browser->tab_strip_model()->count());
   ASSERT_EQ(0, new_browser->tab_strip_model()->active_index());
   // Close the pinned tab.
-  chrome::CloseTab(new_browser);
+  new_browser->tab_strip_model()->CloseSelectedTabs();
+
   ASSERT_EQ(1, new_browser->tab_strip_model()->count());
   ASSERT_EQ(0, new_browser->tab_strip_model()->active_index());
   // Use the existing tab to navigate away, so that we can verify it was really
@@ -2966,55 +3164,6 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest,
   EXPECT_EQ(histogram_tester.GetAllSamples(kTimeSinceWindowClosedUntilRestored)
                 .size(),
             0U);
-}
-
-IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreWithTabRemovedFromGroup) {
-  if (tab_groups::IsTabGroupSyncServiceDesktopMigrationEnabled()) {
-    // Cannot simulate sync removal of tab using TabGroupSyncService API. This
-    // causes this test to fail when the migration flag is enabled.
-    // TODO(crbug.com/365152362): Skip for now and reassess if this test is
-    // still necessary.
-    GTEST_SKIP();
-  }
-
-  // Add two more tabs.
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(url::kAboutBlankURL),
-      WindowOpenDisposition::NEW_FOREGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(url::kAboutBlankURL),
-      WindowOpenDisposition::NEW_BACKGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
-
-  auto tab_group_id = browser()->tab_strip_model()->AddToNewGroup({0, 1, 2});
-
-  auto* saved_tab_group_keyed_service =
-      tab_groups::SavedTabGroupServiceFactory::GetForProfile(
-          browser()->profile());
-  ASSERT_NE(saved_tab_group_keyed_service, nullptr);
-
-  ASSERT_TRUE(saved_tab_group_keyed_service);
-
-  auto* saved_tab_group =
-      saved_tab_group_keyed_service->model()->Get(tab_group_id);
-  ASSERT_TRUE(saved_tab_group);
-  auto saved_group_id = saved_tab_group->saved_guid();
-
-  // This ensures SessionService knows about the savedtabgroup. It shouldn't be
-  // necessary.
-  browser()
-      ->tab_strip_model()
-      ->group_model()
-      ->GetTabGroup(tab_group_id)
-      ->SetVisualData(tab_groups::TabGroupVisualData(
-          u"x", tab_groups::TabGroupColorId::kGrey));
-
-  QuitBrowserAndRestore(
-      browser(), GURL(), true, base::BindLambdaForTesting([&]() {
-        saved_tab_group_keyed_service->model()->RemoveTabFromGroupLocally(
-            saved_group_id, saved_tab_group->saved_tabs()[0].saved_tab_guid());
-      }));
 }
 
 // This class and tests are to verify reading a file with an error in it results
@@ -4337,9 +4486,7 @@ IN_PROC_BROWSER_TEST_F(TabbedAppSessionRestoreTest, RestorePinnedAppTab) {
       EXPECT_TRUE(browser->tab_strip_model()->IsTabPinned(0));
       EXPECT_FALSE(browser->tab_strip_model()->IsTabPinned(1));
 
-      EXPECT_TRUE(web_app::WebAppTabHelper::FromWebContents(
-                      browser->tab_strip_model()->GetWebContentsAt(0))
-                      ->is_pinned_home_tab());
+      EXPECT_TRUE(browser->app_controller()->GetPinnedHomeTab());
       app_checked = true;
     }
   }
@@ -4460,24 +4607,8 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreStaleSessionCookieDeletionTest,
   EXPECT_FALSE(HasCookie(new_browser, "other_page_session_stale_cookie"));
 }
 
-class SavedTabGroupSessionRestoreTest
-    : public SessionRestoreTest,
-      public ::testing::WithParamInterface<bool> {
+class SavedTabGroupSessionRestoreTest : public SessionRestoreTest {
  public:
-  SavedTabGroupSessionRestoreTest() {
-    if (GetParam()) {
-      feature_list_.InitWithFeatures(
-          {tab_groups::kTabGroupSyncServiceDesktopMigration}, {});
-    } else {
-      feature_list_.InitWithFeatures(
-          {}, {tab_groups::kTabGroupSyncServiceDesktopMigration});
-    }
-  }
-  SavedTabGroupSessionRestoreTest(const SavedTabGroupSessionRestoreTest&) =
-      delete;
-  SavedTabGroupSessionRestoreTest& operator=(
-      const SavedTabGroupSessionRestoreTest&) = delete;
-
   void WaitForPostedTasks() {
     // Post a dummy task in the current thread and wait for its completion so
     // that any already posted tasks are completed.
@@ -4486,15 +4617,12 @@ class SavedTabGroupSessionRestoreTest
         FROM_HERE, run_loop.QuitClosure());
     run_loop.Run();
   }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
 // This test simulates migrating from V1 of SavedTabGroups to V2. A user may
 // have unsaved groups at the time they update the browser. We must ensure all
 // groups are saved by default correctly. See crbug.com/344016224.
-IN_PROC_BROWSER_TEST_P(SavedTabGroupSessionRestoreTest,
+IN_PROC_BROWSER_TEST_F(SavedTabGroupSessionRestoreTest,
                        UnsavedGroupDefaultSavedAfterBrowserRestart) {
   // Add a second tab.
   ui_test_utils::NavigateToURLWithDisposition(
@@ -4512,7 +4640,7 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupSessionRestoreTest,
 
   // Expect no groups have been saved at this point.
   tab_groups::TabGroupSyncService* service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
           browser()->profile());
   ASSERT_TRUE(service);
 
@@ -4536,7 +4664,7 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupSessionRestoreTest,
 // This test simulates creating a default group (using the default group color
 // and no title). Ensure on restart there was no duplicated groups and that the
 // restored group is connected to the saved group.
-IN_PROC_BROWSER_TEST_P(SavedTabGroupSessionRestoreTest,
+IN_PROC_BROWSER_TEST_F(SavedTabGroupSessionRestoreTest,
                        NoDuplicatesOfDefaultSavedGroupAfterBrowserRestart) {
   // Add a second tab.
   ui_test_utils::NavigateToURLWithDisposition(
@@ -4546,7 +4674,7 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupSessionRestoreTest,
 
   // Expect no groups have been saved at this point.
   tab_groups::TabGroupSyncService* service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
           browser()->profile());
   ASSERT_TRUE(service);
 
@@ -4572,7 +4700,7 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupSessionRestoreTest,
 
 // This test simulates creating multiple groups with different visual data
 // and ensuring on restart they are restored with the same information.
-IN_PROC_BROWSER_TEST_P(SavedTabGroupSessionRestoreTest,
+IN_PROC_BROWSER_TEST_F(SavedTabGroupSessionRestoreTest,
                        MultipleSavedGroupsAfterBrowserRestart) {
   // Add a second tab.
   ui_test_utils::NavigateToURLWithDisposition(
@@ -4588,7 +4716,7 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupSessionRestoreTest,
 
   // Expect no groups have been saved at this point.
   tab_groups::TabGroupSyncService* service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(
           browser()->profile());
   ASSERT_TRUE(service);
   service->SetIsInitializedForTesting(true);
@@ -4604,21 +4732,17 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupSessionRestoreTest,
   EXPECT_EQ(2u, service->GetAllGroups().size());
 
   // Update the visual data of the new groups.
-  browser()
-      ->tab_strip_model()
-      ->group_model()
-      ->GetTabGroup(group1)
-      ->SetVisualData(tab_groups::TabGroupVisualData(
-                          u"Group1", tab_groups::TabGroupColorId::kGrey),
-                      true);
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(
+      group1,
+      tab_groups::TabGroupVisualData(u"Group1",
+                                     tab_groups::TabGroupColorId::kGrey),
+      true);
 
-  browser()
-      ->tab_strip_model()
-      ->group_model()
-      ->GetTabGroup(group2)
-      ->SetVisualData(tab_groups::TabGroupVisualData(
-                          u"Group2", tab_groups::TabGroupColorId::kBlue),
-                      true);
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(
+      group2,
+      tab_groups::TabGroupVisualData(u"Group2",
+                                     tab_groups::TabGroupColorId::kBlue),
+      true);
 
   // Close the browser and restore the last session
   Browser* restored = QuitBrowserAndRestore(browser());
@@ -4649,7 +4773,3 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupSessionRestoreTest,
   EXPECT_EQ(tab_groups::TabGroupColorId::kBlue,
             local_group2->visual_data()->color());
 }
-
-INSTANTIATE_TEST_SUITE_P(SessionRestore,
-                         SavedTabGroupSessionRestoreTest,
-                         testing::Bool());

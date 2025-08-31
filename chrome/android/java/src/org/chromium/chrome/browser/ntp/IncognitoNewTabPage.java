@@ -12,11 +12,11 @@ import androidx.core.view.ViewCompat;
 
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncherImpl;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ntp.IncognitoNewTabPageView.IncognitoNewTabPageManager;
-import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab_ui.InvalidationAwareThumbnailProvider;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
@@ -24,29 +24,26 @@ import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeControllerFactory;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
 import org.chromium.chrome.browser.ui.native_page.BasicNativePage;
 import org.chromium.chrome.browser.ui.native_page.NativePageHost;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgePadAdjuster;
-import org.chromium.components.content_settings.CookieControlsEnforcement;
 import org.chromium.components.embedder_support.util.UrlConstants;
-import org.chromium.components.user_prefs.UserPrefs;
+import org.chromium.ui.edge_to_edge.EdgeToEdgePadAdjuster;
 
 /** Provides functionality when the user interacts with the Incognito NTP. */
+@NullMarked
 public class IncognitoNewTabPage extends BasicNativePage
         implements InvalidationAwareThumbnailProvider {
 
-    private static IncognitoNewTabPageManager sIncognitoNtpManagerForTesting;
+    private static @Nullable IncognitoNewTabPageManager sIncognitoNtpManagerForTesting;
     private final Activity mActivity;
     private final Profile mProfile;
     private final int mIncognitoNtpBackgroundColor;
 
-    private String mTitle;
+    private final String mTitle;
     protected IncognitoNewTabPageView mIncognitoNewTabPageView;
 
     private boolean mIsLoaded;
 
-    private IncognitoNewTabPageManager mIncognitoNewTabPageManager;
-    private IncognitoCookieControlsManager mCookieControlsManager;
-    private IncognitoCookieControlsManager.Observer mCookieControlsObserver;
-    private EdgeToEdgePadAdjuster mEdgeToEdgePadAdjuster;
+    private final IncognitoNewTabPageManager mIncognitoNewTabPageManager;
+    private @Nullable EdgeToEdgePadAdjuster mEdgeToEdgePadAdjuster;
 
     private void showIncognitoLearnMore() {
         HelpAndFeedbackLauncherImpl.getForProfile(mProfile)
@@ -113,10 +110,10 @@ public class IncognitoNewTabPage extends BasicNativePage
     // NativePage overrides
 
     @Override
+    @SuppressWarnings("NullAway")
     public void destroy() {
         assert !ViewCompat.isAttachedToWindow(getView())
                 : "Destroy called before removed from window";
-        mIncognitoNewTabPageManager.destroy();
 
         if (mEdgeToEdgePadAdjuster != null) {
             mEdgeToEdgePadAdjuster.destroy();
@@ -156,7 +153,7 @@ public class IncognitoNewTabPage extends BasicNativePage
 
     @Override
     public boolean supportsEdgeToEdge() {
-        return !ChromeFeatureList.sDrawKeyNativeEdgeToEdgeDisableIncognitoNtpE2e.getValue();
+        return true;
     }
 
     // InvalidationAwareThumbnailProvider
@@ -181,50 +178,6 @@ public class IncognitoNewTabPage extends BasicNativePage
             }
 
             @Override
-            public void initCookieControlsManager() {
-                mCookieControlsManager = new IncognitoCookieControlsManager();
-                mCookieControlsManager.initialize(mProfile);
-                mCookieControlsObserver =
-                        new IncognitoCookieControlsManager.Observer() {
-                            @Override
-                            public void onUpdate(
-                                    boolean checked, @CookieControlsEnforcement int enforcement) {
-                                mIncognitoNewTabPageView
-                                        .setIncognitoCookieControlsToggleEnforcement(enforcement);
-                                mIncognitoNewTabPageView.setIncognitoCookieControlsToggleChecked(
-                                        checked);
-                            }
-                        };
-                mCookieControlsManager.addObserver(mCookieControlsObserver);
-                mIncognitoNewTabPageView.setIncognitoCookieControlsToggleCheckedListener(
-                        mCookieControlsManager);
-                mIncognitoNewTabPageView.setIncognitoCookieControlsIconOnclickListener(
-                        mCookieControlsManager);
-                mCookieControlsManager.updateIfNecessary();
-            }
-
-            @Override
-            public boolean shouldCaptureThumbnail() {
-                return mCookieControlsManager.shouldCaptureThumbnail();
-            }
-
-            @Override
-            public boolean shouldShowTrackingProtectionNtp() {
-                return UserPrefs.get(mProfile).getBoolean(Pref.TRACKING_PROTECTION3PCD_ENABLED)
-                        || ChromeFeatureList.isEnabled(ChromeFeatureList.TRACKING_PROTECTION_3PCD)
-                        || ChromeFeatureList.isEnabled(
-                                ChromeFeatureList.ALWAYS_BLOCK_3PCS_INCOGNITO);
-            }
-
-            @Override
-            public void destroy() {
-                if (mCookieControlsManager != null) {
-                    mCookieControlsManager.removeObserver(mCookieControlsObserver);
-                    mCookieControlsManager.destroy();
-                }
-            }
-
-            @Override
             public void onLoadingComplete() {
                 mIsLoaded = true;
             }
@@ -232,7 +185,8 @@ public class IncognitoNewTabPage extends BasicNativePage
     }
 
     /** Set a stubbed {@link IncognitoNewTabPageManager} for testing. */
-    public static void setIncognitoNtpManagerForTesting(IncognitoNewTabPageManager manager) {
+    public static void setIncognitoNtpManagerForTesting(
+            @Nullable IncognitoNewTabPageManager manager) {
         sIncognitoNtpManagerForTesting = manager;
         ResettersForTesting.register(() -> sIncognitoNtpManagerForTesting = null);
     }

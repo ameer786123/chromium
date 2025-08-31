@@ -7,7 +7,6 @@
 
 #include <stddef.h>
 
-#include <deque>
 #include <memory>
 #include <optional>
 #include <set>
@@ -25,12 +24,14 @@
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/form_parsing/field_candidates.h"
 #include "components/autofill/core/browser/form_types.h"
+#include "components/autofill/core/browser/heuristic_source.h"
 #include "components/autofill/core/browser/proto/api_v1.pb.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/dense_set.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/language_code.h"
 #include "components/autofill/core/common/mojom/autofill_types.mojom.h"
+#include "components/autofill/core/common/signatures.h"
 #include "components/autofill/core/common/unique_ids.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -67,9 +68,9 @@ class FormStructure {
 
   // Runs several heuristics against the form fields to determine their possible
   // types.
-  void DetermineHeuristicTypes(
-      const GeoIpCountryCode& client_country,
-      LogManager* log_manager);
+  void DetermineHeuristicTypes(const GeoIpCountryCode& client_country,
+                               const LanguageCode& current_page_language,
+                               LogManager* log_manager);
 
   // Runs rationalization and sectioning. This is to be run after the field
   // types change.
@@ -79,7 +80,9 @@ class FormStructure {
   // predictions (or `legacy_order` is true), parts of the rationalization
   // happens before sectioning.
   // TODO(crbug.com/408497919): Make the order consistent.
-  void RationalizeAndAssignSections(LogManager* log_manager,
+  void RationalizeAndAssignSections(const GeoIpCountryCode& client_country,
+                                    const LanguageCode& current_page_language,
+                                    LogManager* log_manager,
                                     bool legacy_order = false);
 
   // Returns predictions that can be sent to the renderer process for debugging.
@@ -211,8 +214,8 @@ class FormStructure {
     //
     // TODO: crbug.com/40227496 - When kAutofillFixValueSemantics is launched,
     // kFormImport behaves identical to kFormCacheUpdateWithoutParsing. Consider
-    // renaming the
-    // enum constants or, better yet, removing the entire enum then.
+    // renaming the enum constants or, better yet, removing the entire enum
+    // then.
     kFormImport,
   };
 
@@ -231,7 +234,9 @@ class FormStructure {
 
   // Rationalize the form's autocomplete attributes, repeated fields and field
   // type predictions.
-  void RationalizeFormStructure(LogManager* log_manager);
+  void RationalizeFormStructure(const GeoIpCountryCode& client_country,
+                                const LanguageCode& current_page_language,
+                                LogManager* log_manager);
 
   // Returns the FieldGlobalIds of the |fields_| that are eligible for manual
   // filling on form interaction.
@@ -308,6 +313,14 @@ class FormStructure {
     alternative_form_signature_ = signature;
   }
 
+  FormSignature structural_form_signature() const {
+    return structural_form_signature_;
+  }
+
+  void set_structural_form_signature(FormSignature signature) {
+    structural_form_signature_ = signature;
+  }
+
   // Returns a FormData containing the data this form structure knows about.
   FormData ToFormData() const;
 
@@ -325,19 +338,9 @@ class FormStructure {
     return developer_engagement_metrics_;
   }
 
-  const LanguageCode& current_page_language() const {
-    return current_page_language_;
-  }
-
-  void set_current_page_language(LanguageCode language) {
-    current_page_language_ = std::move(language);
-  }
-
   FormGlobalId global_id() const { return {host_frame_, renderer_id_}; }
 
   FormVersion version() const { return version_; }
-
-  const GeoIpCountryCode& client_country() const { return client_country_; }
 
   // The signatures of forms recently submitted on the same origin within a
   // small period of time.
@@ -396,18 +399,6 @@ class FormStructure {
   // Extracts the parseable field name by removing a common affix.
   void ExtractParseableFieldNames();
 
-  // Extract parseable field labels by potentially splitting labels between
-  // adjacent fields.
-  void ExtractParseableFieldLabels();
-
-  // The country where the user is currently located. Used to introduce biases
-  // in form parsing and understanding according to the user's location.
-  GeoIpCountryCode client_country_;
-
-  // The language detected for this form's page, before any translations
-  // performed by Chrome.
-  LanguageCode current_page_language_;
-
   // The id attribute of the form.
   std::u16string id_attribute_;
 
@@ -450,10 +441,25 @@ class FormStructure {
 
   // The alternative signature for this form which is more stable/generic than
   // `form_signature_`, used when signature is random/unstable at each reload.
-  // It is composed of the target url domain, the fields' form control types,
-  // and for forms with 1-2 fields, one of the following non-empty elements
-  // ordered by preference: path, reference, or query in a 64-bit hash.
+  // It is a 64-bit hash of the target url domain, the fields' form control
+  // types, and for forms with 1-2 fields, the first non-empty element of the
+  // following: [path, reference, query].
+  //
+  // TODO(crbug.com/430889664): Update the comment once deprecated.
+  // The alternative signature is currently only sent to server as part of Query
+  // requests and is used for overrides by password manager.
   FormSignature alternative_form_signature_;
+
+  // This form signature is equivalent to `alternative_form_signature_` for
+  // forms with more than 2 fields. For forms with 2 fields or less, it is more
+  // stable as doesn't depend on url path, reference, or query.
+  //
+  // TODO(crbug.com/427418538): Update the comment once the feature is launched.
+  // This signature is currently sent to server as part of Upload requests and
+  // will eventually be used together with three-bit hashes to fetch server
+  // predictions. See go/autofill-stable-form-signature and
+  // go/autofill-signatures-more-data for more details.
+  FormSignature structural_form_signature_;
 
   // The timestamp (not wallclock time) when this form was initially parsed.
   base::TimeTicks form_parsed_timestamp_;

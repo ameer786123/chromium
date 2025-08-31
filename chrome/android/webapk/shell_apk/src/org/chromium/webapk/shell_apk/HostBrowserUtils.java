@@ -35,8 +35,8 @@ public class HostBrowserUtils {
             "com.google.android.apps.chrome.webapps.WebappManager.ACTION_START_WEBAPP";
 
     /** The package names of the browsers that support WebAPK notification delegation. */
-    private static Set<String> sBrowsersSupportingNotificationDelegation =
-            new HashSet<String>(
+    private static final Set<String> sBrowsersSupportingNotificationDelegation =
+            new HashSet<>(
                     Arrays.asList(
                             "com.google.android.apps.chrome",
                             "com.android.chrome",
@@ -73,8 +73,8 @@ public class HostBrowserUtils {
      * unbound or effectively unbound.
      */
     public static class PackageNameAndComponentName {
-        private String mPackageName;
-        private @Nullable ComponentName mComponentName;
+        private final String mPackageName;
+        private final @Nullable ComponentName mComponentName;
 
         public PackageNameAndComponentName(String packageName) {
             mPackageName = packageName;

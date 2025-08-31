@@ -6,6 +6,7 @@
 
 import collections
 from collections.abc import Generator, Iterable
+import dataclasses
 import datetime
 import fnmatch
 import functools
@@ -20,8 +21,6 @@ import types
 from typing import Any, Type
 import unittest
 
-import dataclasses  # Built-in, but pylint gives an ordering false positive.
-
 from telemetry.internal.browser import browser_options as bo
 from telemetry.internal.platform import gpu_info as telemetry_gpu_info
 from telemetry.internal.platform import system_info as si_module
@@ -32,14 +31,13 @@ from telemetry.util import screenshot
 from typ import json_results
 
 import gpu_path_util
-import validate_tag_consistency
-
 from gpu_tests import common_browser_args as cba
 from gpu_tests import common_typing as ct
 from gpu_tests import constants
 from gpu_tests import gpu_helper
 from gpu_tests import overlay_support
 from gpu_tests.util import host_information
+import validate_tag_consistency
 
 TEST_WAS_SLOW = 'test_was_slow'
 
@@ -296,6 +294,13 @@ class GpuIntegrationTest(
         # RenderDocument is not the culprit or it is and the root cause of
         # flakiness is fixed.
         '--disable-features=RenderDocument',
+        # In-Product Help (IPH) is a constantly-updating collection of prompts
+        # designed to help users understand the browser better. Because
+        # different experiences are rolled out all the time and some can happen
+        # at or near startup, disable IPH to prevent any interference with test
+        # results. (Note that this argument takes a list of IPH that will be
+        # allowed; specifying none disables all IPH.)
+        '--propagate-iph-for-testing',
     ]
     if cls._SuiteSupportsParallelTests():
       # When running tests in parallel, windows can be treated as occluded if a
@@ -1197,6 +1202,8 @@ class GpuIntegrationTest(
       return cls._cached_platform_tags
 
     tags = super(GpuIntegrationTest, cls).GetPlatformTags(browser)
+    AddMemoryTags(tags)
+    AddArchitectureTags(tags)
     system_info = browser.GetSystemInfo()
     if system_info:
       gpu_tags = []
@@ -1258,7 +1265,9 @@ class GpuIntegrationTest(
                             system_info: si_module.SystemInfo) -> list[str]:
     gpu_info = system_info.gpu
     tags = []
-    if gpu_helper.EXPECTATIONS_DRIVER_TAGS and gpu_info:
+    relevant_tags = gpu_helper.GetExpectationFileDriverTagsForOs(
+        browser.platform.GetOSName())
+    if relevant_tags and gpu_info:
       driver_vendor = gpu_helper.GetGpuDriverVendor(gpu_info)
       driver_version = gpu_helper.GetGpuDriverVersion(gpu_info)
       if driver_vendor and driver_version:
@@ -1277,7 +1286,7 @@ class GpuIntegrationTest(
         if match:
           driver_vendor = match.group(1)
 
-        for tag in gpu_helper.EXPECTATIONS_DRIVER_TAGS:
+        for tag in relevant_tags:
           match = gpu_helper.MatchDriverTag(tag)
           assert match
           if (driver_vendor == match.group(1)
@@ -1344,7 +1353,6 @@ class GpuIntegrationTest(
         # device name is clearer.
         'arm-mali-g52-mc2',  # android-sm-a137f
         'arm-mali-t860',  # chromeos-board-kevin
-        'qualcomm-adreno-(tm)-418',  # android-nexus-5x
         'qualcomm-adreno-(tm)-540',  # android-pixel-2
         'qualcomm-adreno-(tm)-610',  # android-sm-a236b
         'qualcomm-adreno-(tm)-640',  # android-pixel-4
@@ -1384,6 +1392,13 @@ class GpuIntegrationTest(
         'android-12',  # Android S
         'android-13',  # Android T
         'android-a',  # Android 14+ releases in 2024
+        # Produced by Chrome when running on the DirectX software renderer.
+        'amd64',
+        # These are automatically added by Telemetry in mac_platform_backend's
+        # GetTypExpectationsTags(), but GPU produces non-OS-specific
+        # architecture tags.
+        'mac-arm64',
+        'mac-x86_64',
     ]
 
   @classmethod
@@ -1394,6 +1409,47 @@ class GpuIntegrationTest(
     expectation file lives in a third party repo.
     """
     return gpu_path_util.CHROMIUM_SRC_DIR
+
+
+def AddMemoryTags(tags: list[str]) -> None:
+  """Adds typ tags related to system memory.
+
+  Args:
+    tags: A list of existing tags. Will be modified in place.
+  """
+  # We only add memory tags for non-remote platforms.
+  if not any(t in tags for t in ('linux', 'mac', 'win')):
+    return
+
+  systemMemory = host_information.GetSystemMemoryBytes()
+  gigabyte = 1_000_000_000
+  if systemMemory >= 16 * gigabyte:
+    tags.append('memory_ge_16gb')
+  else:
+    tags.append('memory_lt_16gb')
+
+
+def AddArchitectureTags(tags: list[str]) -> None:
+  """Adds typ tags related to CPU architecture.
+
+  Args:
+    tags: A list of existing tags. Will be modified in place.
+  """
+  # We only add architecture tags for non-remote platforms.
+  if not any(t in tags for t in ('linux', 'mac', 'win')):
+    return
+  # We manually list out architectures instead of relying on platform.machine()
+  # since that can give incorrect information on arm platforms running x86
+  # Python via emulation. It also is not consistent across platforms, e.g. it
+  # can return both x86_64 and AMD64.
+  arch = None
+  if host_information.IsArmCpu():
+    arch = 'arm64'
+  elif host_information.Isx86Cpu():
+    arch = 'x86_64'
+  else:
+    raise RuntimeError('Unsupported architecture')
+  tags.append(f'arch-{arch}')
 
 
 def _PreemptArguments(browser_options: bo.BrowserOptions,

@@ -10,6 +10,7 @@ import static org.hamcrest.Matchers.isEmptyString;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -22,9 +23,12 @@ import static org.chromium.chrome.browser.autofill.editors.EditorProperties.Fiel
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.IS_REQUIRED;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.LABEL;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.VALUE;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ItemType.NOTICE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ItemType.TEXT_INPUT;
-import static org.chromium.chrome.browser.autofill.editors.EditorProperties.SHOW_REQUIRED_INDICATOR;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.NoticeProperties.IMPORTANT_FOR_ACCESSIBILITY;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.NoticeProperties.NOTICE_TEXT;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.TextFieldProperties.TEXT_FIELD_TYPE;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.isEditable;
 
 import android.app.Activity;
 
@@ -45,7 +49,7 @@ import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.editors.EditorDialogView;
-import org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldItem;
+import org.chromium.chrome.browser.autofill.editors.EditorProperties.EditorItem;
 import org.chromium.components.autofill.AutofillProfile;
 import org.chromium.components.autofill.FieldType;
 import org.chromium.payments.mojom.PayerErrors;
@@ -86,44 +90,39 @@ public class ContactEditorTest {
     }
 
     private static void validateTextField(
-            FieldItem fieldItem, String value, int textFieldType, String label) {
-        assertEquals(TEXT_INPUT, fieldItem.type);
-        assertTrue(fieldItem.isFullLine);
+            EditorItem item, String value, int textFieldType, String label) {
+        assertEquals(TEXT_INPUT, item.type);
+        assertTrue(item.isFullLine);
 
-        PropertyModel field = fieldItem.model;
+        PropertyModel field = item.model;
         assertEquals(value, field.get(VALUE));
         assertEquals(textFieldType, field.get(TEXT_FIELD_TYPE));
         assertEquals(label, field.get(LABEL));
         assertTrue(field.get(IS_REQUIRED));
     }
 
+    private void validateRequiredNotice(EditorItem requiredNoticeItem) {
+        assertEquals(NOTICE, requiredNoticeItem.type);
+        assertTrue(requiredNoticeItem.isFullLine);
+
+        PropertyModel requiredNotice = requiredNoticeItem.model;
+        assertEquals(
+                mActivity.getString(R.string.payments_required_field_message),
+                requiredNotice.get(NOTICE_TEXT));
+        assertEquals(false, requiredNotice.get(IMPORTANT_FOR_ACCESSIBILITY));
+    }
+
     private void validateErrorMessages(PropertyModel editorModel, boolean errorsPresent) {
         assertNotNull(editorModel);
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(3, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(4, editorFields.size());
 
         Matcher<String> requiredFieldMatcher =
                 errorsPresent ? not(isEmptyString()) : anyOf(nullValue(), isEmptyString());
         assertThat(editorFields.get(0).model.get(ERROR_MESSAGE), requiredFieldMatcher);
         assertThat(editorFields.get(1).model.get(ERROR_MESSAGE), requiredFieldMatcher);
         assertThat(editorFields.get(2).model.get(ERROR_MESSAGE), requiredFieldMatcher);
-    }
-
-    @Test
-    @SmallTest
-    public void validateRequiredFieldIndicator() {
-        ContactEditor editor =
-                new ContactEditor(
-                        /* requestPayerName= */ true,
-                        /* requestPayerPhone= */ false,
-                        /* requestPayerEmail= */ false,
-                        /* saveToDisk= */ false,
-                        mPersonalDataManager);
-        editor.setEditorDialog(mEditorDialog);
-        editor.edit(null, unused -> {});
-
-        assertNotNull(editor.getEditorModelForTesting());
-        assertTrue(editor.getEditorModelForTesting().get(SHOW_REQUIRED_INDICATOR));
+        assertFalse(isEditable(editorFields.get(3)));
     }
 
     @Test
@@ -137,18 +136,19 @@ public class ContactEditorTest {
                         /* saveToDisk= */ false,
                         mPersonalDataManager);
         editor.setEditorDialog(mEditorDialog);
-        editor.edit(null, unused -> {});
+        editor.showEditPrompt(null, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         validateTextField(
                 editorFields.get(0),
                 null,
                 FieldType.NAME_FULL,
                 mActivity.getString(R.string.payments_name_field_in_contact_details));
+        validateRequiredNotice(editorFields.get(1));
     }
 
     @Test
@@ -162,18 +162,19 @@ public class ContactEditorTest {
                         /* saveToDisk= */ false,
                         mPersonalDataManager);
         editor.setEditorDialog(mEditorDialog);
-        editor.edit(null, unused -> {});
+        editor.showEditPrompt(null, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         validateTextField(
                 editorFields.get(0),
                 null,
                 FieldType.PHONE_HOME_WHOLE_NUMBER,
                 mActivity.getString(R.string.autofill_profile_editor_phone_number));
+        validateRequiredNotice(editorFields.get(1));
     }
 
     @Test
@@ -187,18 +188,19 @@ public class ContactEditorTest {
                         /* saveToDisk= */ false,
                         mPersonalDataManager);
         editor.setEditorDialog(mEditorDialog);
-        editor.edit(null, unused -> {});
+        editor.showEditPrompt(null, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         validateTextField(
                 editorFields.get(0),
                 null,
                 FieldType.EMAIL_ADDRESS,
                 mActivity.getString(R.string.autofill_profile_editor_email_address));
+        validateRequiredNotice(editorFields.get(1));
     }
 
     @Test
@@ -212,13 +214,13 @@ public class ContactEditorTest {
                         /* saveToDisk= */ false,
                         mPersonalDataManager);
         editor.setEditorDialog(mEditorDialog);
-        editor.edit(null, unused -> {});
+        editor.showEditPrompt(null, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(3, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(4, editorFields.size());
         validateTextField(
                 editorFields.get(0),
                 null,
@@ -234,6 +236,7 @@ public class ContactEditorTest {
                 null,
                 FieldType.EMAIL_ADDRESS,
                 mActivity.getString(R.string.autofill_profile_editor_email_address));
+        validateRequiredNotice(editorFields.get(3));
     }
 
     @Test
@@ -258,18 +261,19 @@ public class ContactEditorTest {
                         true,
                         false,
                         false);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         validateTextField(
                 editorFields.get(0),
                 "Payer name",
                 FieldType.NAME_FULL,
                 mActivity.getString(R.string.payments_name_field_in_contact_details));
+        validateRequiredNotice(editorFields.get(1));
     }
 
     @Test
@@ -294,18 +298,19 @@ public class ContactEditorTest {
                         false,
                         true,
                         false);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         validateTextField(
                 editorFields.get(0),
                 "Payer phone",
                 FieldType.PHONE_HOME_WHOLE_NUMBER,
                 mActivity.getString(R.string.autofill_profile_editor_phone_number));
+        validateRequiredNotice(editorFields.get(1));
     }
 
     @Test
@@ -330,18 +335,19 @@ public class ContactEditorTest {
                         false,
                         false,
                         true);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         validateTextField(
                 editorFields.get(0),
                 "Payer email",
                 FieldType.EMAIL_ADDRESS,
                 mActivity.getString(R.string.autofill_profile_editor_email_address));
+        validateRequiredNotice(editorFields.get(1));
     }
 
     @Test
@@ -366,13 +372,13 @@ public class ContactEditorTest {
                         true,
                         true,
                         true);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(3, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(4, editorFields.size());
         validateTextField(
                 editorFields.get(0),
                 "Payer name",
@@ -388,6 +394,7 @@ public class ContactEditorTest {
                 "Payer email",
                 FieldType.EMAIL_ADDRESS,
                 mActivity.getString(R.string.autofill_profile_editor_email_address));
+        validateRequiredNotice(editorFields.get(3));
     }
 
     @Test
@@ -412,13 +419,13 @@ public class ContactEditorTest {
                         true,
                         false,
                         false);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         editorFields.get(0).model.set(VALUE, "Modified name");
         editorModel.get(CANCEL_RUNNABLE).run();
 
@@ -452,13 +459,13 @@ public class ContactEditorTest {
                         false,
                         true,
                         false);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         editorFields.get(0).model.set(VALUE, "Modified phone");
         editorModel.get(CANCEL_RUNNABLE).run();
 
@@ -492,13 +499,13 @@ public class ContactEditorTest {
                         false,
                         false,
                         true);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         editorFields.get(0).model.set(VALUE, "Modified email");
         editorModel.get(CANCEL_RUNNABLE).run();
 
@@ -532,13 +539,13 @@ public class ContactEditorTest {
                         true,
                         false,
                         false);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         editorFields.get(0).model.set(VALUE, "Modified name");
         editorModel.get(DONE_RUNNABLE).run();
 
@@ -570,13 +577,13 @@ public class ContactEditorTest {
                         false,
                         true,
                         false);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         editorFields.get(0).model.set(VALUE, "+490111111111");
         editorModel.get(DONE_RUNNABLE).run();
 
@@ -609,13 +616,13 @@ public class ContactEditorTest {
                         false,
                         false,
                         true);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(1, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(2, editorFields.size());
         editorFields.get(0).model.set(VALUE, "modified@gmail.com");
         editorModel.get(DONE_RUNNABLE).run();
 
@@ -647,13 +654,13 @@ public class ContactEditorTest {
                         true,
                         true,
                         true);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(3, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(4, editorFields.size());
         editorFields.get(0).model.set(VALUE, "Modified name");
         editorFields.get(1).model.set(VALUE, "+490111111111");
         editorFields.get(2).model.set(VALUE, "modified@gmail.com");
@@ -670,7 +677,7 @@ public class ContactEditorTest {
 
     @Test
     @SmallTest
-    public void edit_CorrectContactInfo_NoErrors() {
+    public void showEditPrompt_CorrectContactInfo_NoErrors() {
         ContactEditor editor =
                 new ContactEditor(
                         /* requestPayerName= */ true,
@@ -690,14 +697,14 @@ public class ContactEditorTest {
                         true,
                         true,
                         true);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         validateErrorMessages(editor.getEditorModelForTesting(), /* errorsPresent= */ false);
     }
 
     @Test
     @SmallTest
-    public void edit_EditorErrorsSet_ErrorMessagesShown() {
+    public void showEditPrompt_EditorErrorsSet_ErrorMessagesShown() {
         ContactEditor editor =
                 new ContactEditor(
                         /* requestPayerName= */ true,
@@ -722,14 +729,14 @@ public class ContactEditorTest {
                         true,
                         true,
                         true);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         validateErrorMessages(editor.getEditorModelForTesting(), /* errorsPresent= */ true);
     }
 
     @Test
     @SmallTest
-    public void edit_FieldsAreEmpty_ErrorMessagesShown() {
+    public void showEditPrompt_FieldsAreEmpty_ErrorMessagesShown() {
         ContactEditor editor =
                 new ContactEditor(
                         /* requestPayerName= */ true,
@@ -749,14 +756,14 @@ public class ContactEditorTest {
                         true,
                         true,
                         true);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         validateErrorMessages(editor.getEditorModelForTesting(), /* errorsPresent= */ true);
     }
 
     @Test
     @SmallTest
-    public void edit_EmptyInputToFields_ErrorMessagesShown() {
+    public void showEditPrompt_EmptyInputToFields_ErrorMessagesShown() {
         ContactEditor editor =
                 new ContactEditor(
                         /* requestPayerName= */ true,
@@ -776,13 +783,13 @@ public class ContactEditorTest {
                         true,
                         true,
                         true);
-        editor.edit(contact, unused -> {});
+        editor.showEditPrompt(contact, unused -> {});
 
         PropertyModel editorModel = editor.getEditorModelForTesting();
         assertNotNull(editorModel);
 
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(3, editorFields.size());
+        ListModel<EditorItem> editorFields = editorModel.get(EDITOR_FIELDS);
+        assertEquals(4, editorFields.size());
         editorFields.get(0).model.set(VALUE, "");
         editorFields.get(1).model.set(VALUE, "");
         editorFields.get(2).model.set(VALUE, "");

@@ -2,16 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/platform/p2p/ipc_socket_factory.h"
 
 #include <stddef.h>
 
 #include <algorithm>
+#include <array>
 #include <list>
 #include <memory>
 
@@ -134,7 +130,7 @@ class IpcPacketSocket : public webrtc::AsyncPacketSocket,
       uint16_t min_port,
       uint16_t max_port,
       const webrtc::SocketAddress& remote_address,
-      WTF::CrossThreadFunction<void(
+      CrossThreadFunction<void(
           base::OnceCallback<void(std::optional<base::UnguessableToken>)>)>&
           devtools_token);
 
@@ -243,7 +239,7 @@ class IpcPacketSocket : public webrtc::AsyncPacketSocket,
 
   // Current error code. Valid when state_ == IS_ERROR.
   int error_;
-  int options_[network::P2P_SOCKET_OPT_MAX];
+  std::array<int, network::P2P_SOCKET_OPT_MAX> options_;
 
   // Track the maximum and current consecutive bytes discarded due to not enough
   // send_bytes_available_.
@@ -298,7 +294,7 @@ IpcPacketSocket::IpcPacketSocket()
       max_discard_bytes_sequence_(0),
       current_discard_bytes_sequence_(0) {
   static_assert(kDefaultMaximumInFlightBytes > 0, "would send at zero rate");
-  std::fill_n(options_, static_cast<int>(network::P2P_SOCKET_OPT_MAX),
+  std::fill_n(options_.data(), static_cast<int>(network::P2P_SOCKET_OPT_MAX),
               kDefaultNonSetOptionValue);
 }
 
@@ -332,7 +328,7 @@ bool IpcPacketSocket::Init(
     uint16_t min_port,
     uint16_t max_port,
     const webrtc::SocketAddress& remote_address,
-    WTF::CrossThreadFunction<
+    CrossThreadFunction<
         void(base::OnceCallback<void(std::optional<base::UnguessableToken>)>)>&
         devtools_token_getter) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
@@ -370,7 +366,7 @@ bool IpcPacketSocket::Init(
   network::P2PHostAndIPEndPoint remote_info(remote_address.hostname(),
                                             remote_endpoint);
 
-  devtools_token_getter.Run(base::BindPostTaskToCurrentDefault(WTF::BindOnce(
+  devtools_token_getter.Run(base::BindPostTaskToCurrentDefault(blink::BindOnce(
       &IpcPacketSocket::DoCreateSocket, type_,
       WrapCrossThreadPersistent(dispatcher), local_endpoint, min_port, max_port,
       remote_info, traffic_annotation, client_->CreatePendingRemote(),
@@ -493,7 +489,8 @@ int IpcPacketSocket::SendToInternal(
   send_bytes_available_ -= data_size;
 
   uint64_t packet_id = client_->Send(
-      address_chrome, base::span(static_cast<const uint8_t*>(data), data_size),
+      address_chrome,
+      UNSAFE_TODO(base::span(static_cast<const uint8_t*>(data), data_size)),
       options);
 
   // Ensure packet_id is not 0. It can't be the case according to
@@ -735,8 +732,8 @@ void AsyncDnsAddressResolverImpl::Start(const webrtc::SocketAddress& addr,
 
   resolver_->Start(
       addr, /*address_family=*/std::nullopt,
-      WTF::BindOnce(&AsyncDnsAddressResolverImpl::OnAddressResolved,
-                    weak_factory_.GetWeakPtr()));
+      blink::BindOnce(&AsyncDnsAddressResolverImpl::OnAddressResolved,
+                      weak_factory_.GetWeakPtr()));
 }
 
 void AsyncDnsAddressResolverImpl::Start(const webrtc::SocketAddress& addr,
@@ -751,8 +748,8 @@ void AsyncDnsAddressResolverImpl::Start(const webrtc::SocketAddress& addr,
   callback_ = std::move(callback);
   resolver_->Start(
       addr, std::make_optional(address_family),
-      WTF::BindOnce(&AsyncDnsAddressResolverImpl::OnAddressResolved,
-                    weak_factory_.GetWeakPtr()));
+      blink::BindOnce(&AsyncDnsAddressResolverImpl::OnAddressResolved,
+                      weak_factory_.GetWeakPtr()));
 }
 
 bool AsyncDnsAddressResolverImpl::GetResolvedAddress(
@@ -792,7 +789,7 @@ void AsyncDnsAddressResolverImpl::OnAddressResolved(
 }  // namespace
 
 IpcPacketSocketFactory::IpcPacketSocketFactory(
-    WTF::CrossThreadFunction<
+    CrossThreadFunction<
         void(base::OnceCallback<void(std::optional<base::UnguessableToken>)>)>
         devtools_token_getter,
     P2PSocketDispatcher* socket_dispatcher,

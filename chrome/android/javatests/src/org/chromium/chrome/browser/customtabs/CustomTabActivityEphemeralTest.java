@@ -6,12 +6,13 @@ package org.chromium.chrome.browser.customtabs;
 
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_ENABLE_EPHEMERAL_BROWSING;
 import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
-import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.allOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -49,7 +50,6 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.IntentHandler;
@@ -65,15 +65,15 @@ import org.chromium.chrome.browser.lifecycle.StartStopWithNativeObserver;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
+import org.chromium.chrome.browser.theme.SurfaceColorUpdateUtils;
 import org.chromium.chrome.browser.toolbar.ToolbarDataProvider;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuCoordinator;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuHandler;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuTestSupport;
-import org.chromium.chrome.test.AutomotiveContextWrapperTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.OverrideContextWrapperTestRule;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.util.ChromeTabUtils;
-import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.net.test.EmbeddedTestServerRule;
 
@@ -82,7 +82,6 @@ import java.util.concurrent.TimeoutException;
 /** Instrumentation tests for {@link CustomTabActivity} launched in ephemeral mode. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@EnableFeatures(ChromeFeatureList.CCT_EPHEMERAL_MODE)
 @Batch(Batch.PER_CLASS)
 public class CustomTabActivityEphemeralTest {
     private static final String HISTOGRAM_NAME = "CustomTabs.IncognitoCctCallerId";
@@ -96,8 +95,7 @@ public class CustomTabActivityEphemeralTest {
     @Rule public EmbeddedTestServerRule mEmbeddedTestServerRule = new EmbeddedTestServerRule();
 
     @Rule
-    public AutomotiveContextWrapperTestRule mAutomotiveRule =
-            new AutomotiveContextWrapperTestRule();
+    public OverrideContextWrapperTestRule mAutomotiveRule = new OverrideContextWrapperTestRule();
 
     @Before
     public void setUp() throws TimeoutException {
@@ -134,7 +132,7 @@ public class CustomTabActivityEphemeralTest {
 
     private static int getThemeColor(CustomTabActivity activity) {
         return ThreadUtils.runOnUiThreadBlocking(
-                () -> ChromeColors.getDefaultThemeColor(activity, false));
+                () -> SurfaceColorUpdateUtils.getDefaultThemeColor(activity, false));
     }
 
     private static int getToolbarColor(CustomTabActivity activity) {
@@ -196,20 +194,10 @@ public class CustomTabActivityEphemeralTest {
 
     @Test
     @MediumTest
-    @Features.DisableFeatures(ChromeFeatureList.CCT_EPHEMERAL_MODE)
-    public void testEphemeralTabLaunchesInRegularProfileWhenDisabled() {
-        CustomTabActivity activity = launchEphemeralCustomTabActivity();
-        Profile profile = activity.getActivityTab().getProfile();
-        assertFalse(profile.isOffTheRecord());
-        assertFalse(profile.isIncognitoBranded());
-        assertFalse(profile.isPrimaryOtrProfile());
-    }
-
-    @Test
-    @MediumTest
     public void testToolbarDoesNotHaveIncognitoLogo() {
         launchEphemeralCustomTabActivity();
-        onView(withId(R.id.incognito_cct_logo_image_view)).check(matches(not(isDisplayed())));
+        onView(allOf(withId(R.id.incognito_cct_logo_image_view), isDisplayed()))
+                .check(doesNotExist());
     }
 
     @Test

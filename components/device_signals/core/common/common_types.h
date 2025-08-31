@@ -24,6 +24,11 @@ enum class SettingValue {
   ENABLED,
 };
 
+enum class Agents {
+  kCrowdStrikeFalcon = 0,
+  kMaxValue = 0,
+};
+
 struct ExecutableMetadata {
   ExecutableMetadata();
 
@@ -101,6 +106,9 @@ struct GetFileSystemInfoOptions {
 struct CrowdStrikeSignals {
   std::string customer_id{};
   std::string agent_id{};
+
+  // Returns true if all properties are empty.
+  bool IsEmpty() const;
 
   // Returns a Value with the non-empty values. Returns std::nullopt if neither
   // values are set.

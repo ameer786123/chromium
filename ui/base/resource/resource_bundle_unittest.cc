@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ui/base/resource/resource_bundle.h"
 
 #include <stddef.h>
@@ -21,14 +16,17 @@
 
 #include "base/base_paths.h"
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/numerics/byte_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "skia/buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -67,22 +65,59 @@ const unsigned char kPngScaleChunk[12] = { 0x00, 0x00, 0x00, 0x00,
                                            'c', 's', 'C', 'l',
                                            0xc1, 0x30, 0x60, 0x4d };
 
+#if BUILDFLAG(SKIA_SUPPORT_SKOTTIE) && BUILDFLAG(USE_BLINK)
+// The width and height attributes values in the lottie asset.
+constexpr int kLottieWidth = 200;
+constexpr int kLottieHeight = 200;
 // A string with the "LOTTIE" prefix that GRIT adds to Lottie assets.
-constexpr char kLottieData[] = "LOTTIEtest";
+constexpr std::string_view kLottieData =
+    R"(LOTTIE{
+    "v": "5.5.2",
+    "fr": 1,
+    "ip": 0,
+    "op": 1,
+    "w": 200,
+    "h": 200,
+    "ddd": 0,
+    "assets": [],
+    "layers": [
+        {
+        "ty": 1,
+        "ip": 0,
+        "op": 1,
+        "st": 0,
+        "ks": {},
+        "sc": "#ff0000",
+        "sh": 200,
+        "sw": 200
+        }
+    ]
+    })";
 // The contents after the prefix has been removed.
-constexpr uint8_t kLottieExpected[] = {'t', 'e', 's', 't'};
-
-#if BUILDFLAG(IS_CHROMEOS)
-// Mock of |lottie::ParseLottieAsStillImage|. Checks that |kLottieData| is
-// properly stripped of the "LOTTIE" prefix.
-gfx::ImageSkia ParseLottieAsStillImageForTesting(std::vector<uint8_t> data) {
-  CHECK(std::ranges::equal(data, kLottieExpected));
-
-  constexpr int kDimension = 16;
-  return gfx::ImageSkia(
-      gfx::ImageSkiaRep(gfx::Size(kDimension, kDimension), 0.f));
-}
-#endif
+constexpr std::string_view kLottieExpected =
+    R"({
+    "v": "5.5.2",
+    "fr": 1,
+    "ip": 0,
+    "op": 1,
+    "w": 200,
+    "h": 200,
+    "ddd": 0,
+    "assets": [],
+    "layers": [
+        {
+        "ty": 1,
+        "ip": 0,
+        "op": 1,
+        "st": 0,
+        "ks": {},
+        "sc": "#ff0000",
+        "sh": 200,
+        "sw": 200
+        }
+    ]
+    })";
+#endif  // BUILDFLAG(SKIA_SUPPORT_SKOTTIE) && BUILDFLAG(USE_BLINK)
 
 // Returns |bitmap_data| with |custom_chunk| inserted after the IHDR chunk.
 void AddCustomChunk(std::string_view custom_chunk,
@@ -183,34 +218,6 @@ TEST_F(ResourceBundleTest, DelegateGetPathForResourcePack) {
   resource_bundle->AddDataPackFromPath(pack_path, pack_scale_factor);
 }
 
-TEST_F(ResourceBundleTest, DelegateGetPathForLocalePack) {
-  ResourceBundle* orig_instance =
-      ResourceBundle::SwapSharedInstanceForTesting(nullptr);
-  ResourceBundle::InitSharedInstance(&delegate_);
-
-  std::string locale = "en-US";
-
-  // Cancel the load.
-  EXPECT_CALL(delegate_, GetPathForLocalePack(_, _))
-      .WillRepeatedly(Return(base::FilePath()))
-      .RetiresOnSaturation();
-
-  EXPECT_FALSE(ResourceBundle::LocaleDataPakExists(locale));
-  EXPECT_EQ("", ResourceBundle::GetSharedInstance().LoadLocaleResources(
-                    locale, /*crash_on_failure=*/false));
-
-  // Allow the load to proceed.
-  EXPECT_CALL(delegate_, GetPathForLocalePack(_, _))
-      .WillRepeatedly(ReturnArg<0>());
-
-  EXPECT_TRUE(ResourceBundle::LocaleDataPakExists(locale));
-  EXPECT_EQ(locale, ResourceBundle::GetSharedInstance().LoadLocaleResources(
-                        locale, /*crash_on_failure=*/false));
-
-  ResourceBundle::CleanupSharedInstance();
-  ResourceBundle::SwapSharedInstanceForTesting(orig_instance);
-}
-
 TEST_F(ResourceBundleTest, DelegateGetImageNamed) {
   ResourceBundle* resource_bundle = CreateResourceBundle(&delegate_);
   gfx::Image empty_image = resource_bundle->GetEmptyImage();
@@ -298,8 +305,8 @@ TEST_F(ResourceBundleTest, IsGzipped) {
   base::FilePath data_path =
       temp_dir_.GetPath().Append(FILE_PATH_LITERAL("sample.pak"));
   // Dump contents into a pak file and load it.
-  ASSERT_TRUE(base::WriteFile(
-      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5}));
+  UNSAFE_TODO(ASSERT_TRUE(base::WriteFile(
+      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5})));
   ResourceBundle* resource_bundle = CreateResourceBundle(nullptr);
   resource_bundle->AddDataPackFromPath(data_path, k100Percent);
 
@@ -316,8 +323,8 @@ TEST_F(ResourceBundleTest, IsBrotli) {
   base::FilePath data_path =
       temp_dir_.GetPath().Append(FILE_PATH_LITERAL("sample.pak"));
   // Dump contents into a pak file and load it.
-  ASSERT_TRUE(base::WriteFile(
-      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5}));
+  UNSAFE_TODO(ASSERT_TRUE(base::WriteFile(
+      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5})));
   ResourceBundle* resource_bundle = CreateResourceBundle(nullptr);
   resource_bundle->AddDataPackFromPath(data_path, k100Percent);
 
@@ -389,8 +396,10 @@ TEST_F(ResourceBundleTest, DelegateGetLocalizedStringWithOverride) {
 
 TEST_F(ResourceBundleTest, LocaleDataPakExists) {
   // Check that ResourceBundle::LocaleDataPakExists returns the correct results.
-  EXPECT_TRUE(ResourceBundle::LocaleDataPakExists("en-US"));
-  EXPECT_FALSE(ResourceBundle::LocaleDataPakExists("not_a_real_locale"));
+  EXPECT_TRUE(ResourceBundle::LocaleDataPakExists(
+      "en-US", ResourceBundle::Gender::kDefault));
+  EXPECT_FALSE(ResourceBundle::LocaleDataPakExists(
+      "not_a_real_locale", ResourceBundle::Gender::kDefault));
 }
 
 class ResourceBundleImageTest : public ResourceBundleTest {
@@ -413,8 +422,8 @@ class ResourceBundleImageTest : public ResourceBundleTest {
     // Write an empty data pak for locale data.
     const base::FilePath& locale_path = dir_path().Append(
         FILE_PATH_LITERAL("locale.pak"));
-    EXPECT_TRUE(
-        base::WriteFile(locale_path, {kEmptyPakContents, kEmptyPakSize}));
+    UNSAFE_TODO(EXPECT_TRUE(
+        base::WriteFile(locale_path, {kEmptyPakContents, kEmptyPakSize})));
 
     ui::ResourceBundle* resource_bundle = CreateResourceBundle(nullptr);
 
@@ -440,8 +449,8 @@ TEST_F(ResourceBundleImageTest, HasDataResource) {
   base::FilePath data_path = dir_path().Append(FILE_PATH_LITERAL("sample.pak"));
 
   // Dump content into pak file.
-  ASSERT_TRUE(base::WriteFile(
-      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5}));
+  UNSAFE_TODO(ASSERT_TRUE(base::WriteFile(
+      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5})));
 
   // Load pak file.
   ResourceBundle* resource_bundle = CreateResourceBundleWithEmptyLocalePak();
@@ -458,8 +467,8 @@ TEST_F(ResourceBundleImageTest, LoadDataResourceBytes) {
   base::FilePath data_path = dir_path().Append(FILE_PATH_LITERAL("sample.pak"));
 
   // Dump contents into the pak files.
-  ASSERT_TRUE(base::WriteFile(
-      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5}));
+  UNSAFE_TODO(ASSERT_TRUE(base::WriteFile(
+      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5})));
 
   // Load pak file.
   ResourceBundle* resource_bundle = CreateResourceBundleWithEmptyLocalePak();
@@ -487,7 +496,8 @@ TEST_F(ResourceBundleImageTest, LoadDataResourceBytesNotFound) {
   base::FilePath data_path = dir_path().Append(FILE_PATH_LITERAL("sample.pak"));
 
   // Dump contents into the pak files.
-  ASSERT_TRUE(base::WriteFile(data_path, {kEmptyPakContents, kEmptyPakSize}));
+  UNSAFE_TODO(ASSERT_TRUE(
+      base::WriteFile(data_path, {kEmptyPakContents, kEmptyPakSize})));
 
   // Create a resource bundle from the file.
   ResourceBundle* resource_bundle = CreateResourceBundleWithEmptyLocalePak();
@@ -511,10 +521,11 @@ TEST_F(ResourceBundleImageTest, LoadDataResourceStringForScale) {
       dir_path().Append(FILE_PATH_LITERAL("sample_2x.pak"));
 
   // Dump content into pak files.
-  ASSERT_TRUE(base::WriteFile(
-      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5}));
-  ASSERT_TRUE(base::WriteFile(data_2x_path, {kSampleCompressScaledPakContents,
-                                             kSampleCompressScaledPakSize}));
+  UNSAFE_TODO(ASSERT_TRUE(base::WriteFile(
+      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5})));
+  UNSAFE_TODO(ASSERT_TRUE(base::WriteFile(
+      data_2x_path,
+      {kSampleCompressScaledPakContents, kSampleCompressScaledPakSize})));
 
   // Load pak files.
   ResourceBundle* resource_bundle = CreateResourceBundleWithEmptyLocalePak();
@@ -532,8 +543,8 @@ TEST_F(ResourceBundleImageTest, LoadDataResourceStringForScale) {
 TEST_F(ResourceBundleImageTest, LoadLocalizedResourceString) {
   base::FilePath data_path = dir_path().Append(FILE_PATH_LITERAL("sample.pak"));
   // Dump content into pak file.
-  ASSERT_TRUE(base::WriteFile(
-      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5}));
+  UNSAFE_TODO(ASSERT_TRUE(base::WriteFile(
+      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5})));
   // Load pak file.
   ResourceBundle* resource_bundle = CreateResourceBundleWithEmptyLocalePak();
   resource_bundle->AddDataPackFromPath(data_path, kScaleFactorNone);
@@ -546,8 +557,8 @@ TEST_F(ResourceBundleImageTest, LoadLocalizedResourceString) {
 TEST_F(ResourceBundleImageTest, LoadDataResourceString) {
   base::FilePath data_path = dir_path().Append(FILE_PATH_LITERAL("sample.pak"));
   // Dump content into pak file.
-  ASSERT_TRUE(base::WriteFile(
-      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5}));
+  UNSAFE_TODO(ASSERT_TRUE(base::WriteFile(
+      data_path, {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5})));
   // Load pak file.
   ResourceBundle* resource_bundle = CreateResourceBundleWithEmptyLocalePak();
   resource_bundle->AddDataPackFromPath(data_path, kScaleFactorNone);
@@ -568,10 +579,10 @@ TEST_F(ResourceBundleImageTest, GetRawDataResource) {
       dir_path().Append(FILE_PATH_LITERAL("sample_2x.pak"));
 
   // Dump contents into the pak files.
-  ASSERT_TRUE(
-      base::WriteFile(data_path, {kSamplePakContentsV4, kSamplePakSizeV4}));
-  ASSERT_TRUE(
-      base::WriteFile(data_2x_path, {kSamplePakContents2x, kSamplePakSize2x}));
+  UNSAFE_TODO(ASSERT_TRUE(
+      base::WriteFile(data_path, {kSamplePakContentsV4, kSamplePakSizeV4})));
+  UNSAFE_TODO(ASSERT_TRUE(
+      base::WriteFile(data_2x_path, {kSamplePakContents2x, kSamplePakSize2x})));
 
   // Load the regular and 2x pak files.
   ResourceBundle* resource_bundle = CreateResourceBundleWithEmptyLocalePak();
@@ -706,6 +717,7 @@ TEST_F(ResourceBundleImageTest, FallbackToNone) {
                                  image_skia->image_reps()[0].scale()));
 }
 
+#if BUILDFLAG(SKIA_SUPPORT_SKOTTIE) && BUILDFLAG(USE_BLINK)
 TEST_F(ResourceBundleImageTest, Lottie) {
   // Create the pak files.
   const base::FilePath data_unscaled_path =
@@ -722,10 +734,6 @@ TEST_F(ResourceBundleImageTest, Lottie) {
   ASSERT_TRUE(data.has_value());
   EXPECT_TRUE(std::ranges::equal(*data, kLottieExpected));
 
-#if BUILDFLAG(IS_CHROMEOS)
-  ui::ResourceBundle::SetLottieParsingFunctions(
-      &ParseLottieAsStillImageForTesting,
-      /*parse_lottie_as_themed_still_image=*/nullptr);
   test::ScopedSetSupportedResourceScaleFactors scoped_supported(
       {k100Percent, k200Percent});
 
@@ -736,9 +744,12 @@ TEST_F(ResourceBundleImageTest, Lottie) {
   EXPECT_EQ(1.f, image_skia->GetRepresentation(1.f).scale());
   EXPECT_EQ(1.f, image_skia->GetRepresentation(1.4f).scale());
 
+  EXPECT_EQ(kLottieWidth, image_skia->width());
+  EXPECT_EQ(kLottieHeight, image_skia->height());
+
   // Lottie resource should be 'unscaled'.
   EXPECT_TRUE(image_skia->image_reps()[0].unscaled());
-#endif
 }
+#endif  // BUILDFLAG(SKIA_SUPPORT_SKOTTIE) && BUILDFLAG(USE_BLINK)
 
 }  // namespace ui

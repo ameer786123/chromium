@@ -17,6 +17,7 @@
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -29,6 +30,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
+#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/discardable_memory/service/discardable_shared_memory_manager.h"
@@ -43,7 +45,6 @@
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/gpu/gpu_disk_cache_factory.h"
 #include "content/browser/gpu/gpu_main_thread_factory.h"
-#include "content/browser/gpu/gpu_memory_buffer_manager_singleton.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/service_worker/service_worker_host.h"
 #include "content/browser/storage_partition_impl.h"
@@ -93,7 +94,6 @@
 #include "ui/gfx/switches.h"
 #include "ui/gl/gl_features.h"
 #include "ui/gl/gl_switches.h"
-#include "ui/latency/janky_duration_tracker.h"
 #include "ui/latency/latency_info.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -242,6 +242,7 @@ static const char* const kSwitchNames[] = {
     sandbox::policy::switches::kGpuSandboxAllowSysVShm,
     sandbox::policy::switches::kGpuSandboxFailuresFatal,
     sandbox::policy::switches::kDisableGpuSandbox,
+    sandbox::policy::switches::kDisableLandlockSandbox,
     sandbox::policy::switches::kNoSandbox,
 #if BUILDFLAG(IS_WIN)
     sandbox::policy::switches::kAllowThirdPartyModules,
@@ -254,6 +255,7 @@ static const char* const kSwitchNames[] = {
     switches::kRaiseTimerFrequency,
     switches::kUseRedistributableDirectML,
 #endif  // BUILDFLAG(IS_WIN)
+    switches::kBackgroundThreadPoolFieldTrial,
     switches::kEnableANGLEFeatures,
     switches::kDelegatedInkRenderer,
     switches::kDisableANGLEFeatures,
@@ -264,7 +266,6 @@ static const char* const kSwitchNames[] = {
     switches::kDisableShaderNameHashing,
     switches::kDisableSkiaRuntimeOpts,
     switches::kDRMVirtualConnectorIsExternal,
-    switches::kEnableBackgroundThreadPool,
     switches::kEnableGpuMainTimeKeeperMetrics,
     switches::kEnableGpuRasterization,
     switches::kEnableSkiaGraphite,
@@ -283,18 +284,15 @@ static const char* const kSwitchNames[] = {
     switches::kSkiaGraphiteBackend,
     switches::kSkiaResourceCacheLimitMb,
     switches::kTestGLLib,
-    switches::kTraceToConsole,
     switches::kUseAdapterLuid,
     switches::kUseFakeMjpegDecodeAccelerator,
     switches::kUseGpuInTests,
-    switches::kWatchDirForScrollJankReport,
     switches::kWebViewDrawFunctorUsesVulkan,
     switches::kSuppressPerformanceLogs,
 #if BUILDFLAG(IS_MAC)
     sandbox::policy::switches::kEnableSandboxLogging,
     sandbox::policy::switches::kDisableMetalShaderCache,
     switches::kShowMacOverlayBorders,
-    switches::kWebNNCoreMlDumpModel,
 #endif
 #if BUILDFLAG(IS_OZONE)
     switches::kOzonePlatform,
@@ -321,11 +319,8 @@ static const char* const kSwitchNames[] = {
     ash::switches::kRevenBranding,
     switches::kSchedulerBoostUrgent,
 #endif
-#if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
     switches::kHardwareVideoDecodeFrameRate,
-#endif
-#if BUILDFLAG(WEBNN_USE_TFLITE)
-    switches::kWebNNTfliteDumpModel,
 #endif
 };
 
@@ -718,8 +713,9 @@ GpuProcessHost::GpuProcessHost(int host_id, GpuProcessKind kind)
 #if !BUILDFLAG(IS_ANDROID)
   if (!in_process_ && kind != GPU_PROCESS_KIND_INFO_COLLECTION) {
     memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
-        FROM_HERE, base::BindRepeating(&GpuProcessHost::OnMemoryPressure,
-                                       base::Unretained(this)));
+        FROM_HERE, base::MemoryPressureListenerTag::kGpuProcessHost,
+        base::BindRepeating(&GpuProcessHost::OnMemoryPressure,
+                            base::Unretained(this)));
   }
 #endif
 
@@ -729,14 +725,29 @@ GpuProcessHost::GpuProcessHost(int host_id, GpuProcessKind kind)
 
   g_gpu_process_hosts[kind] = this;
 
-  process_ = std::make_unique<BrowserChildProcessHostImpl>(
-      PROCESS_TYPE_GPU, this, ChildProcessHost::IpcMode::kNormal);
+  process_ =
+      std::make_unique<BrowserChildProcessHostImpl>(PROCESS_TYPE_GPU, this);
 }
 
 GpuProcessHost::~GpuProcessHost() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (in_process_gpu_thread_)
     DCHECK(process_);
+
+  if (!process_start_time_.is_null()) {
+    base::TimeDelta process_lifetime =
+        base::TimeTicks::Now() - process_start_time_;
+
+    // Use 2 weeks as the max bucket for GPU process lifetime since Chrome is
+    // updated roughly once a week and it's unlikely to run for more than 2
+    // weeks without restart. This histogram isn't using
+    // UmaHistogramCustomTimes() because that records in milliseconds which are
+    // too small when max is in weeks.
+    constexpr int kLifetimeMax = 60 * 60 * 24 * 14;
+    base::UmaHistogramCustomCounts("GPU.ProcessLifetime",
+                                   process_lifetime.InSeconds(), 1,
+                                   kLifetimeMax, 50);
+  }
 
   SendOutstandingReplies();
 
@@ -769,7 +780,7 @@ GpuProcessHost::~GpuProcessHost() {
               static_cast<int>(content::RESULT_CODE_GPU_DEAD_ON_ARRIVAL)) {
         // Add a sample to Stability.Counts2's GPU crash bucket.
         //
-        // On Android Chrome and Android WebLayer, GPU crashes are logged via
+        // On Android Chrome, GPU crashes are logged via
         // ContentStabilityMetricsProvider::OnCrashDumpProcessed() and
         // StabilityMetricsHelper::IncreaseGpuCrashCount().
         metrics::StabilityMetricsHelper::RecordStabilityEvent(
@@ -800,7 +811,8 @@ GpuProcessHost::~GpuProcessHost() {
         message += "exited normally. Everything is okay.";
         break;
       case base::TERMINATION_STATUS_ABNORMAL_TERMINATION:
-        message += base::StringPrintf("exited with code %d.", info.exit_code);
+        message +=
+            "exited with code " + CrashExitCodeToString(info.exit_code) + ".";
         unexpected_exit = true;
         break;
       case base::TERMINATION_STATUS_PROCESS_WAS_KILLED:
@@ -810,7 +822,9 @@ GpuProcessHost::~GpuProcessHost() {
         message += "was killed by you! Why?";
         break;
       case base::TERMINATION_STATUS_PROCESS_CRASHED:
-        message += "crashed!";
+        message +=
+            "crashed! Exit code: " + CrashExitCodeToString(info.exit_code) +
+            ".";
         unexpected_exit = true;
         break;
       case base::TERMINATION_STATUS_STILL_RUNNING:
@@ -924,8 +938,9 @@ bool GpuProcessHost::Init() {
 }
 
 void GpuProcessHost::OnProcessLaunched() {
+  process_start_time_ = base::TimeTicks::Now();
   UMA_HISTOGRAM_TIMES("GPU.GPUProcessLaunchTime",
-                      base::TimeTicks::Now() - init_start_time_);
+                      process_start_time_ - init_start_time_);
   DCHECK(gpu_host_);
   if (in_process_) {
     // Don't set |process_id_| as it is publicly available through process_id().
@@ -1295,10 +1310,11 @@ bool GpuProcessHost::LaunchGpuProcess() {
   // If you want a browser command-line switch passed to the GPU process
   // you need to add it to |kSwitchNames| at the beginning of this file.
   cmd_line->CopySwitchesFrom(browser_command_line, kSwitchNames);
+  cmd_line->CopySwitchesFrom(browser_command_line,
+                             switches::kGLSwitchesCopiedFromGpuProcessHost);
   cmd_line->CopySwitchesFrom(
       browser_command_line,
-      UNSAFE_TODO({switches::kGLSwitchesCopiedFromGpuProcessHost,
-                   switches::kGLSwitchesCopiedFromGpuProcessHostNumSwitches}));
+      switches::GetWebNNSwitchesCopiedFromGpuProcessHost());
 
   if (browser_command_line.HasSwitch(switches::kDisableFrameRateLimit))
     cmd_line->AppendSwitch(switches::kDisableGpuVsync);

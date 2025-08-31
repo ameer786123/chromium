@@ -49,8 +49,8 @@ import androidx.core.graphics.Insets;
 import androidx.core.graphics.drawable.DrawableCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.Log;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -82,11 +82,12 @@ public class UiUtils {
 
     /**
      * Gets the set of locales supported by the current enabled Input Methods.
+     *
      * @param context A {@link Context} instance.
      * @return A possibly-empty {@link Set} of locale strings.
      */
     public static Set<String> getIMELocales(Context context) {
-        LinkedHashSet<String> locales = new LinkedHashSet<String>();
+        LinkedHashSet<String> locales = new LinkedHashSet<>();
         InputMethodManager imManager =
                 (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
         List<InputMethodInfo> enabledMethods = imManager.getEnabledInputMethodList();
@@ -394,7 +395,7 @@ public class UiUtils {
         }
         // The status bar should always be black in automotive devices to match the black back
         // button toolbar.
-        if (BuildInfo.getInstance().isAutomotive) {
+        if (DeviceInfo.isAutomotive()) {
             window.setStatusBarColor(Color.BLACK);
         } else {
             window.setStatusBarColor(statusBarColor);
@@ -420,7 +421,7 @@ public class UiUtils {
         int systemUiVisibility = rootView.getSystemUiVisibility();
         // The status bar should always be black in automotive devices to match the black back
         // button toolbar, so we should not use dark icons.
-        if (lightStatusBar && !BuildInfo.getInstance().isAutomotive) {
+        if (lightStatusBar && !DeviceInfo.isAutomotive()) {
             systemUiVisibility |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
         } else {
             systemUiVisibility &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
@@ -529,5 +530,19 @@ public class UiUtils {
                 }
             }
         }
+    }
+
+    /**
+     * Creates a single color bitmap of the given size.
+     *
+     * @param size The height and width.
+     * @param color The color the fill the bitmap with.
+     * @return The new bitmap.
+     */
+    public static Bitmap createBitmap(int size, @ColorInt int color) {
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        canvas.drawColor(color);
+        return bitmap;
     }
 }

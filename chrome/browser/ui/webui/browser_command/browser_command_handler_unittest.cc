@@ -24,6 +24,7 @@
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/interaction/element_identifier.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/base/window_open_disposition_utils.h"
 #include "ui/webui/resources/js/browser_command/browser_command.mojom.h"
@@ -52,9 +53,9 @@ std::vector<Command> supported_commands = {
     Command::kOpenSafetyCheckFromWhatsNew,
     Command::kOpenPaymentsSettings,
     Command::kOpenGlic,
+    Command::kOpenGlicSettings,
+    Command::kPrewarmGlicFre,
 };
-
-const ui::ElementContext kTestContext1(1);
 
 class TestCommandHandler : public BrowserCommandHandler {
  public:
@@ -219,6 +220,10 @@ class MockCommandHandler : public TestCommandHandler {
   MOCK_METHOD(void, ShowCustomizeChromeToolbar, ());
 
   MOCK_METHOD(void, OpenGlic, ());
+
+  MOCK_METHOD(void, OpenGlicSettings, ());
+
+  MOCK_METHOD(void, PrewarmGlicFre, ());
 };
 
 class MockCommandUpdater : public CommandUpdaterImpl {
@@ -679,4 +684,25 @@ TEST_F(BrowserCommandHandlerTest, OpenGlicCommand) {
   // The OpenGlic command opens glic.
   EXPECT_CALL(*command_handler_, OpenGlic());
   EXPECT_TRUE(ExecuteCommand(Command::kOpenGlic, std::move(info)));
+}
+
+TEST_F(BrowserCommandHandlerTest, OpenGlicSettingsCommand) {
+  // The OpenGlicSettings command opens a new settings window
+  // with the Glic settings sub page, and the correct disposition.
+  EXPECT_TRUE(CanExecuteCommand(Command::kOpenGlicSettings));
+  ClickInfoPtr info = ClickInfo::New();
+  info->middle_button = true;
+  info->meta_key = true;
+  EXPECT_CALL(*command_handler_, OpenGlicSettings());
+  EXPECT_TRUE(ExecuteCommand(Command::kOpenGlicSettings, std::move(info)));
+}
+
+TEST_F(BrowserCommandHandlerTest, PrewarmGlicFreCommand) {
+  // The PrewarmGlicFre command prewarms the Glic FRE.
+  EXPECT_TRUE(CanExecuteCommand(Command::kPrewarmGlicFre));
+  ClickInfoPtr info = ClickInfo::New();
+  info->middle_button = true;
+  info->meta_key = true;
+  EXPECT_CALL(*command_handler_, PrewarmGlicFre());
+  EXPECT_TRUE(ExecuteCommand(Command::kPrewarmGlicFre, std::move(info)));
 }

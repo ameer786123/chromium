@@ -23,7 +23,6 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
-#include "base/functional/overloaded.h"
 #include "base/strings/strcat.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
@@ -35,15 +34,10 @@
 #include "chrome/browser/ui/web_applications/test/isolated_web_app_test_utils.h"
 #include "chrome/browser/web_applications/isolated_web_apps/commands/isolated_web_app_install_command_helper.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_install_source.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_response_reader_factory.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_source.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_trust_checker.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_validator.h"
 #include "chrome/browser/web_applications/isolated_web_apps/pending_install_info.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
-#include "chrome/browser/web_applications/isolated_web_apps/test/test_signed_web_bundle_builder.h"
 #include "chrome/browser/web_applications/locks/lock.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
 #include "chrome/browser/web_applications/test/fake_web_contents_manager.h"
@@ -67,12 +61,19 @@
 #include "components/webapps/browser/installable/installable_logging.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
 #include "components/webapps/browser/web_contents/web_app_url_loader.h"
+#include "components/webapps/isolated_web_apps/reading/response_reader_factory.h"
+#include "components/webapps/isolated_web_apps/reading/validator.h"
+#include "components/webapps/isolated_web_apps/test_support/signing_keys.h"
+#include "components/webapps/isolated_web_apps/test_support/test_signed_web_bundle_builder.h"
+#include "components/webapps/isolated_web_apps/types/source.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "net/http/http_status_code.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-shared.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "url/gurl.h"
@@ -198,7 +199,7 @@ class InstallIsolatedWebAppCommandTest : public WebAppTest {
   struct Parameters {
     IsolatedWebAppUrlInfo url_info;
     std::optional<IsolatedWebAppInstallSource> install_source;
-    std::optional<base::Version> expected_version;
+    std::optional<IwaVersion> expected_version;
   };
 
   base::expected<InstallIsolatedWebAppCommandSuccess,
@@ -369,8 +370,9 @@ TEST_F(InstallIsolatedWebAppCommandTest,
   SetUpPageAndIconStates(url_info);
 
   EXPECT_THAT(
-      ExecuteCommand(Parameters{.url_info = url_info,
-                                .expected_version = base::Version("99.99.99")}),
+      ExecuteCommand(
+          Parameters{.url_info = url_info,
+                     .expected_version = *IwaVersion::Create("99.99.99")}),
       ErrorIs(Field(
           &InstallIsolatedWebAppCommandError::message,
           HasSubstr("does not match the version provided in the manifest"))));
@@ -618,7 +620,7 @@ TEST_F(InstallIsolatedWebAppCommandManifestIconsTest,
       ExecuteCommand(Parameters{.url_info = url_info}),
       ErrorIs(Field(
           &InstallIsolatedWebAppCommandError::message,
-          HasSubstr("Error during icon downloading: AbortedDueToFailure"))));
+          HasSubstr("Error during icon downloading, stopping installation."))));
 
   EXPECT_THAT(histogram_tester_.GetAllSamples("WebApp.Isolated.InstallSuccess"),
               BucketsAre(base::Bucket(false, 1)));
@@ -838,22 +840,22 @@ TEST_P(InstallIsolatedWebAppCommandBundleTest, InstallsWhenThereIsNoError) {
   if (bundle_info_.want_success) {
     EXPECT_THAT(result, HasValue());
     std::visit(
-        base::Overloaded{[&iwa_root_dir](const IwaStorageOwnedBundle& bundle) {
-                           EXPECT_TRUE(DirectoryExists(iwa_root_dir));
-                           EXPECT_TRUE(PathExists(iwa_root_dir.AppendASCII(
-                               bundle.dir_name_ascii())));
-                         },
-                         [&iwa_root_dir](const IwaStorageUnownedBundle&) {
-                           EXPECT_FALSE(DirectoryExists(iwa_root_dir));
-                         },
-                         [](const IwaStorageProxy&) { FAIL(); }},
+        absl::Overload{[&iwa_root_dir](const IwaStorageOwnedBundle& bundle) {
+                         EXPECT_TRUE(DirectoryExists(iwa_root_dir));
+                         EXPECT_TRUE(PathExists(iwa_root_dir.AppendASCII(
+                             bundle.dir_name_ascii())));
+                       },
+                       [&iwa_root_dir](const IwaStorageUnownedBundle&) {
+                         EXPECT_FALSE(DirectoryExists(iwa_root_dir));
+                       },
+                       [](const IwaStorageProxy&) { FAIL(); }},
         result->location.variant());
   } else {
     EXPECT_THAT(result, Not(HasValue()));
     // Wait till IWA directory is removed.
     task_environment()->RunUntilIdle();
     std::visit(
-        base::Overloaded{
+        absl::Overload{
             [&iwa_root_dir](const IwaSourceBundleWithModeAndFileOp& source) {
               switch (source.mode_and_file_op()) {
                 case IwaSourceBundleModeAndFileOp::kDevModeCopy:

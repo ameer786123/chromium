@@ -8,9 +8,6 @@ import 'chrome://resources/cr_elements/cr_page_selector/cr_page_selector.js';
 // </if>
 import 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
 import './elements/viewer_error_dialog.js';
-// <if expr="enable_ink">
-import './elements/viewer_ink_host.js';
-// </if>
 import './elements/viewer_password_dialog.js';
 // <if expr="enable_pdf_ink2">
 import './elements/ink_text_box.js';
@@ -21,6 +18,9 @@ import './elements/viewer_text_side_panel.js';
 // </if>
 import './elements/viewer_pdf_sidenav.js';
 import './elements/viewer_properties_dialog.js';
+// <if expr="enable_pdf_save_to_drive">
+import './elements/viewer_save_to_drive_bubble.js';
+// </if> enable_pdf_save_to_drive
 import './elements/viewer_toolbar.js';
 
 import type {CrToastElement} from 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
@@ -30,40 +30,41 @@ import type {LoadTimeDataRaw} from 'chrome://resources/js/load_time_data.js';
 import {listenOnce} from 'chrome://resources/js/util.js';
 import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
-// <if expr="enable_ink or enable_pdf_ink2">
+// <if expr="enable_pdf_ink2">
 import {BeforeUnloadProxyImpl} from './before_unload_proxy.js';
 // </if>
 import type {Bookmark} from './bookmark_type.js';
 import type {BrowserApi} from './browser_api.js';
 import type {Attachment, DocumentMetadata, ExtendedKeyEvent, Point} from './constants.js';
-// <if expr="enable_ink or enable_pdf_ink2">
+// <if expr="enable_pdf_ink2">
 import {AnnotationMode} from './constants.js';
 // </if>
-import {FittingType, FormFieldFocusType, SaveRequestType} from './constants.js';
+import {FittingType, FormFieldFocusType} from './constants.js';
+// <if expr="enable_pdf_save_to_drive">
+import type {SaveToDriveBubbleRequestType} from './constants.js';
+import {SaveToDriveState} from './constants.js';
+// </if> enable_pdf_save_to_drive
 import type {MessageData} from './controller.js';
 import {PluginController} from './controller.js';
 // <if expr="enable_pdf_ink2">
 import {PluginControllerEventType} from './controller.js';
 // </if>
-// <if expr="enable_ink">
-import type {ContentController} from './controller.js';
+// <if expr="enable_pdf_ink2">
+import {TextBoxState} from './elements/ink_text_box.js';
 // </if>
 import type {ChangePageAndXyDetail, ChangePageDetail, NavigateDetail} from './elements/viewer_bookmark.js';
 import {ChangePageOrigin} from './elements/viewer_bookmark.js';
 import type {ViewerErrorDialogElement} from './elements/viewer_error_dialog.js';
 import type {ViewerPasswordDialogElement} from './elements/viewer_password_dialog.js';
-// <if expr="enable_ink">
-import type {ViewerPdfSidenavElement} from './elements/viewer_pdf_sidenav.js';
-//</if>
+// <if expr="enable_pdf_save_to_drive">
+import type {ViewerSaveToDriveBubbleElement} from './elements/viewer_save_to_drive_bubble.js';
+// </if> enable_pdf_save_to_drive
 // <if expr="enable_pdf_ink2">
 import type {Ink2ThumbnailData} from './elements/viewer_thumbnail_bar.js';
 //</if>
 import type {ViewerToolbarElement} from './elements/viewer_toolbar.js';
 // <if expr="enable_pdf_ink2">
 import {Ink2Manager} from './ink2_manager.js';
-//</if>
-// <if expr="enable_ink">
-import {InkController, InkControllerEventType} from './ink_controller.js';
 //</if>
 import {LocalStorageProxyImpl} from './local_storage_proxy.js';
 import {convertDocumentDimensionsMessage, convertFormFocusChangeMessage, convertLoadProgressMessage} from './message_converter.js';
@@ -76,8 +77,16 @@ import type {KeyEventData} from './pdf_viewer_base.js';
 import {PdfViewerBaseElement} from './pdf_viewer_base.js';
 import {PdfViewerPrivateProxyImpl} from './pdf_viewer_private_proxy.js';
 import type {DocumentDimensionsMessageData} from './pdf_viewer_utils.js';
-import {hasCtrlModifier, hasCtrlModifierOnly, shouldIgnoreKeyEvents} from './pdf_viewer_utils.js';
+import {hasCtrlModifier, hasCtrlModifierOnly, shouldIgnoreKeyEvents, verifyPdfHeader} from './pdf_viewer_utils.js';
 // clang-format on
+
+// <if expr="enable_pdf_save_to_drive">
+const SaveToDriveErrorType = chrome.pdfViewerPrivate.SaveToDriveErrorType;
+const SaveToDriveStatus = chrome.pdfViewerPrivate.SaveToDriveStatus;
+type SaveToDriveProgress = chrome.pdfViewerPrivate.SaveToDriveProgress;
+// </if> enable_pdf_save_to_drive
+const SaveRequestType = chrome.pdfViewerPrivate.SaveRequestType;
+type SaveRequestType = chrome.pdfViewerPrivate.SaveRequestType;
 
 /**
  * Keep in sync with the values for enum PDFPostMessageDataType in
@@ -148,9 +157,36 @@ const LOCAL_STORAGE_SIDENAV_COLLAPSED_KEY: string = 'sidenavCollapsed';
  * The background color used for the regular viewer.
  */
 // LINT.IfChange(PdfBackgroundColor)
-const BACKGROUND_COLOR: number = 0xff525659;
-const CR23_BACKGROUND_COLOR: number = 0xff282828;
-// LINT.ThenChange(//components/pdf/common/pdf_util.cc:PdfBackgroundColor)
+const BACKGROUND_COLOR: number = 0xff282828;
+// clang-format off
+// LINT.ThenChange(//chrome/browser/resources/pdf/pdf_embedder.css:PdfBackgroundColor, //components/pdf/common/pdf_util.cc:PdfBackgroundColor)
+// clang-format on
+
+// <if expr="enable_pdf_save_to_drive">
+function convertSaveToDriveProgressToSaveToDriveState(
+    progress: SaveToDriveProgress): SaveToDriveState {
+  switch (progress.errorType) {
+    case SaveToDriveErrorType.NO_ERROR:
+      if (progress.status === SaveToDriveStatus.INITIATED ||
+          progress.status === SaveToDriveStatus.UPLOAD_IN_PROGRESS) {
+        return SaveToDriveState.UPLOADING;
+      }
+      return SaveToDriveState.UNINITIALIZED;
+    case SaveToDriveErrorType.UNKNOWN_ERROR:
+      return SaveToDriveState.UNKNOWN_ERROR;
+    case SaveToDriveErrorType.QUOTA_EXCEEDED:
+      return SaveToDriveState.STORAGE_FULL_ERROR;
+    case SaveToDriveErrorType.OFFLINE:
+    case SaveToDriveErrorType.OAUTH_ERROR:
+      return SaveToDriveState.SESSION_TIMEOUT_ERROR;
+    case SaveToDriveErrorType.ACCOUNT_CHOOSER_CANCELED:
+    case SaveToDriveErrorType.PARENT_FOLDER_SELECTION_FAILED:
+      return SaveToDriveState.UNKNOWN_ERROR;
+    default:
+      assertNotReached();
+  }
+}
+// </if> enable_pdf_save_to_drive
 
 export interface PdfViewerElement {
   $: {
@@ -178,11 +214,12 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   static override get properties() {
     return {
       // from PdfViewerBaseElement
-      pdfCr23Enabled: {type: Boolean},
       showErrorDialog: {type: Boolean},
       strings: {type: Object},
 
+      // <if expr="enable_pdf_ink2">
       annotationMode_: {type: String},
+      // </if>
       attachments_: {type: Array},
       bookmarks_: {type: Array},
       canSerializeDocument_: {type: Boolean},
@@ -198,10 +235,9 @@ export class PdfViewerElement extends PdfViewerBaseElement {
       fileName_: {type: String},
       hadPassword_: {type: Boolean},
       hasEdits_: {type: Boolean},
-      hasEnteredAnnotationMode_: {type: Boolean},
 
       // <if expr="enable_pdf_ink2">
-      hasInk2Edits_: {type: Boolean},
+      hasCommittedInk2Edits_: {type: Boolean},
       // </if>
 
       formFieldFocus_: {type: String},
@@ -216,10 +252,21 @@ export class PdfViewerElement extends PdfViewerBaseElement {
       pdfInk2Enabled_: {type: Boolean},
       // </if>
 
-      pdfUseShowSaveFilePicker_: {type: Boolean},
+      // <if expr="enable_pdf_save_to_drive">
+      pdfSaveToDriveEnabled_: {type: Boolean},
+      saveToDriveFileSizeBytes_: {type: Number},
+      saveToDriveState_: {type: String},
+      saveToDriveUploadedBytes_: {type: Number},
+      // </if>
+
       showPasswordDialog_: {type: Boolean},
       showPropertiesDialog_: {type: Boolean},
       sidenavCollapsed_: {type: Boolean},
+
+      // <if expr="enable_pdf_ink2">
+      textboxState_: {type: Number},
+      // </if>
+
       title_: {type: String},
       twoUpViewEnabled_: {type: Boolean},
 
@@ -233,10 +280,13 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   }
 
   beepCount: number = 0;
+  // <if expr="enable_pdf_ink2">
   protected accessor annotationMode_: AnnotationMode = AnnotationMode.OFF;
+  // </if>
   protected accessor attachments_: Attachment[] = [];
   protected accessor bookmarks_: Bookmark[] = [];
   private accessor canSerializeDocument_: boolean = false;
+  private caretBrowsingEnabled_: boolean = false;
   protected accessor clockwiseRotations_: number = 0;
   protected accessor docLength_: number = 0;
   protected accessor documentHasFocus_: boolean = false;
@@ -259,9 +309,8 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   protected accessor fileName_: string = '';
   private accessor hadPassword_: boolean = false;
   protected accessor hasEdits_: boolean = false;
-  protected accessor hasEnteredAnnotationMode_: boolean = false;
   // <if expr="enable_pdf_ink2">
-  protected accessor hasInk2Edits_: boolean = false;
+  protected accessor hasCommittedInk2Edits_: boolean = false;
   private hasSavedEdits_: boolean = false;
   // </if>
   protected accessor formFieldFocus_: FormFieldFocusType =
@@ -269,29 +318,31 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   protected accessor loadProgress_: number = 0;
   private navigator_: PdfNavigator|null = null;
   protected accessor pageNo_: number = 0;
+  private pdfGetSaveDataInBlocks_: boolean = false;
   // <if expr="enable_pdf_ink2">
   protected accessor pdfInk2Enabled_: boolean = false;
   // </if>
-  private accessor pdfUseShowSaveFilePicker_: boolean = false;
+  // <if expr="enable_pdf_save_to_drive">
+  protected accessor pdfSaveToDriveEnabled_: boolean = false;
+  protected accessor saveToDriveFileSizeBytes_: number = 0;
+  protected accessor saveToDriveState_: SaveToDriveState =
+      SaveToDriveState.UNINITIALIZED;
+  protected accessor saveToDriveUploadedBytes_: number = 0;
+  // </if>
+  private pdfSearchifySaveEnabled_: boolean = false;
+  private pdfUseShowSaveFilePicker_: boolean = false;
   private pluginController_: PluginController = PluginController.getInstance();
   // <if expr="enable_pdf_ink2">
   private restoreAnnotationMode_: AnnotationMode = AnnotationMode.OFF;
-  // </if>
-  // <if expr="enable_ink or enable_pdf_ink2">
   private showBeforeUnloadDialog_: boolean = false;
   // </if>
   protected accessor showPasswordDialog_: boolean = false;
   protected accessor showPropertiesDialog_: boolean = false;
   protected accessor sidenavCollapsed_: boolean;
 
-  // <if expr="enable_ink">
-  /**
-   * The state to which to restore `sidenavCollapsed_` after exiting annotation
-   * mode.
-   */
-  private sidenavRestoreState_: boolean = false;
+  // <if expr="enable_pdf_ink2">
+  protected accessor textboxState_: TextBoxState = TextBoxState.INACTIVE;
   // </if>
-
   protected accessor title_: string = '';
   protected toolbarEnabled_: boolean = false;
   protected accessor twoUpViewEnabled_: boolean = false;
@@ -301,10 +352,6 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   protected accessor viewportZoom_: number = 1;
   protected accessor zoomBounds_: ZoomBounds = {min: 0, max: 0};
   private hasSearchifyText_: boolean = false;
-
-  // <if expr="enable_ink">
-  private inkController_: InkController = InkController.getInstance();
-  // </if>
 
   constructor() {
     super();
@@ -316,6 +363,20 @@ export class PdfViewerElement extends PdfViewerBaseElement {
         10));
   }
 
+  // <if expr="enable_pdf_ink2">
+  override willUpdate(changedProperties: PropertyValues<this>) {
+    super.willUpdate(changedProperties);
+
+    const changedPrivateProperties =
+        changedProperties as Map<PropertyKey, unknown>;
+    if (changedPrivateProperties.has('pdfInk2Enabled_') &&
+        this.pdfInk2Enabled_) {
+      // Set the viewport when PdfInk2 is enabled, if this happens after init().
+      Ink2Manager.getInstance().setViewport(this.viewport);
+    }
+  }
+  // </if>
+
   override updated(changedProperties: PropertyValues<this>) {
     super.updated(changedProperties);
 
@@ -324,11 +385,10 @@ export class PdfViewerElement extends PdfViewerBaseElement {
     }
   }
 
-  // <if expr="enable_ink or enable_pdf_ink2">
+  // <if expr="enable_pdf_ink2">
   override connectedCallback() {
     super.connectedCallback();
     this.tracker.add(window, 'beforeunload', this.onBeforeUnload_.bind(this));
-    // <if expr="enable_pdf_ink2">
     const mediaQuery = window.matchMedia('(min-width: 960px)');
     this.useSidePanelForInk_ = mediaQuery.matches;
     this.tracker.add(mediaQuery, 'change', () => {
@@ -341,17 +401,16 @@ export class PdfViewerElement extends PdfViewerBaseElement {
                                        UserAction.OPEN_INK2_BOTTOM_TOOLBAR);
       }
     });
-    // </if> enable_pdf_ink2
   }
 
   override disconnectedCallback() {
     this.tracker.removeAll();
     super.disconnectedCallback();
   }
-  // </if> enable_ink or enable_pdf_ink2
+  // </if> enable_pdf_ink2
 
   getBackgroundColor(): number {
-    return this.pdfCr23Enabled ? CR23_BACKGROUND_COLOR : BACKGROUND_COLOR;
+    return BACKGROUND_COLOR;
   }
 
   setPluginSrc(plugin: HTMLEmbedElement) {
@@ -361,15 +420,6 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   init(browserApi: BrowserApi) {
     this.initInternal(
         browserApi, this.$.scroller, this.$.sizer, this.$.content);
-
-    // <if expr="enable_ink">
-    this.inkController_.init(this.viewport);
-    this.tracker.add(
-        this.inkController_.getEventTarget(),
-        InkControllerEventType.HAS_UNSAVED_CHANGES, () => {
-          this.setShowBeforeUnloadDialog_(true);
-        });
-    // </if>
 
     this.fileName_ = getFilenameFromURL(this.originalUrl);
     this.title_ = this.fileName_;
@@ -399,6 +449,11 @@ export class PdfViewerElement extends PdfViewerBaseElement {
     chrome.pdfViewerPrivate.onShouldUpdateViewport.addListener(
         this.handleMaybeUpdateViewport_.bind(this));
 
+    // <if expr="enable_pdf_save_to_drive">
+    PdfViewerPrivateProxyImpl.getInstance().onSaveToDriveProgress.addListener(
+        this.handleSaveToDriveProgress_.bind(this));
+    // </if>
+
     this.embedded_ = this.browserApi!.getStreamInfo().embedded;
 
     if (this.pdfOopifEnabled && !this.embedded_) {
@@ -415,7 +470,8 @@ export class PdfViewerElement extends PdfViewerBaseElement {
 
     // Let the viewport handle directional key events.
     if (this.viewport.handleDirectionalKeyEvent(
-            e, this.formFieldFocus_ !== FormFieldFocusType.NONE)) {
+            e, this.formFieldFocus_ !== FormFieldFocusType.NONE,
+            this.caretBrowsingEnabled_)) {
       return;
     }
 
@@ -441,6 +497,13 @@ export class PdfViewerElement extends PdfViewerBaseElement {
           e.preventDefault();
         }
         return;
+      // <if expr="enable_pdf_ink2">
+      case 'Enter':
+        if ((e as ExtendedKeyEvent).fromPlugin &&
+            this.isInTextAnnotationMode_()) {
+          this.maybeCreateTextAnnotation_();
+        }
+        // </if>
     }
 
     // Handle toolbar related key events.
@@ -476,65 +539,43 @@ export class PdfViewerElement extends PdfViewerBaseElement {
         return;
       // <if expr="enable_pdf_ink2">
       case 'z':
+        // <if expr="is_macosx">
+        if (e.metaKey && !e.ctrlKey && !e.altKey) {
+          if (e.shiftKey) {
+            this.$.toolbar.redo();
+          } else {
+            this.$.toolbar.undo();
+          }
+        }
+        // </if>  is_macosx
+        // <if expr="not is_macosx">
         if (hasCtrlModifierOnly(e)) {
           this.$.toolbar.undo();
         }
+        // </if>  not is_macosx
         return;
+      // <if expr="not is_macosx">
       case 'y':
         if (hasCtrlModifierOnly(e)) {
           this.$.toolbar.redo();
         }
         return;
-      // </if>
+      // </if>  not is_macosx
+      // </if>  enable_pdf_ink2
     }
   }
-
-  // <if expr="enable_ink">
-  protected onResetView_() {
-    if (this.twoUpViewEnabled_) {
-      assert(this.currentController);
-      this.currentController.setTwoUpView(false);
-    }
-
-    const rotations = this.viewport.getClockwiseRotations();
-    switch (rotations) {
-      case 0:
-        break;
-      case 1:
-        this.rotateCounterclockwise();
-        break;
-      case 2:
-        this.rotateCounterclockwise();
-        this.rotateCounterclockwise();
-        break;
-      case 3:
-        this.rotateClockwise();
-        break;
-      default:
-        assertNotReached('Invalid rotations count: ' + rotations);
-    }
-  }
-
-  /** @return Resolves when the sidenav animation is complete. */
-  private waitForSidenavTransition_(): Promise<void> {
-    return eventToPromise(
-        'transitionend',
-        this.shadowRoot.querySelector<ViewerPdfSidenavElement>(
-            '#sidenav-container')!);
-  }
-
-  /**
-   * @return Resolves when the sidenav is restored to `sidenavRestoreState_`,
-   *     after having been closed for annotation mode.
-   */
-  private restoreSidenav_(): Promise<void> {
-    this.sidenavCollapsed_ = this.sidenavRestoreState_;
-    return this.sidenavCollapsed_ ? Promise.resolve() :
-                                    this.waitForSidenavTransition_();
-  }
-  // </if>
 
   // <if expr="enable_pdf_ink2">
+  private maybeCreateTextAnnotation_(location?: Point) {
+    const created =
+        Ink2Manager.getInstance().initializeTextAnnotation(location);
+    if (!created && this.textboxState_ !== TextBoxState.INACTIVE) {
+      const textbox = this.shadowRoot.querySelector('ink-text-box');
+      assert(textbox);
+      textbox.commitTextAnnotation();
+    }
+  }
+
   private recordEnterExitAnnotationModeMetrics_(
       newAnnotationMode: AnnotationMode) {
     // Record exit metrics if annotation mode is being changed from one of
@@ -568,101 +609,36 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   }
   // </if>
 
-  // <if expr="enable_ink or enable_pdf_ink2">
+  // <if expr="enable_pdf_ink2">
   // Handles the annotation mode being updated from the toolbar buttons.
   protected async onAnnotationModeUpdated_(e: CustomEvent<AnnotationMode>) {
+    assert(this.pdfInk2Enabled_);
+
     const newAnnotationMode = e.detail;
     if (newAnnotationMode === this.annotationMode_) {
       return;
     }
 
-    // <if expr="enable_pdf_ink2">
-    if (this.pdfInk2Enabled_) {
-      if (this.annotationMode_ === AnnotationMode.OFF) {
-        record(
-            this.useSidePanelForInk_ ? UserAction.OPEN_INK2_SIDE_PANEL :
-                                       UserAction.OPEN_INK2_BOTTOM_TOOLBAR);
-      }
-      if (this.restoreAnnotationMode_ === AnnotationMode.OFF) {
-        this.recordEnterExitAnnotationModeMetrics_(newAnnotationMode);
-      }
-      this.pluginController_.setAnnotationMode(newAnnotationMode);
-      if (newAnnotationMode === AnnotationMode.DRAW &&
-          !Ink2Manager.getInstance().isInitializationStarted()) {
-        await Ink2Manager.getInstance().initializeBrush();
-      }
-      this.annotationMode_ = newAnnotationMode;
-      return;
+    if (this.annotationMode_ === AnnotationMode.OFF) {
+      record(
+          this.useSidePanelForInk_ ? UserAction.OPEN_INK2_SIDE_PANEL :
+                                     UserAction.OPEN_INK2_BOTTOM_TOOLBAR);
     }
-    // </if> enable_pdf_ink2
-
-    // <if expr="enable_ink">
-    if (newAnnotationMode === AnnotationMode.DRAW) {
-      // Enter annotation mode.
-      assert(this.pluginController_.isActive);
-      assert(!this.inkController_.isActive);
-      // TODO(dstockwell): set plugin read-only, begin transition
-      this.updateProgress(0);
-
-      this.sidenavRestoreState_ = this.sidenavCollapsed_;
-      this.sidenavCollapsed_ = true;
-      if (!this.sidenavRestoreState_) {
-        // Wait for the animation before proceeding.
-        await this.waitForSidenavTransition_();
-      }
-
-      // TODO(dstockwell): handle save failure
-      const result =
-          await this.pluginController_.save(SaveRequestType.ANNOTATION);
-      // Data always exists when save is called with requestType = ANNOTATION.
-      assert(result);
-
-      record(UserAction.ENTER_ANNOTATION_MODE);
-      this.annotationMode_ = AnnotationMode.DRAW;
-      this.hasEnteredAnnotationMode_ = true;
-      // TODO(dstockwell): feed real progress data from the Ink component
-      this.updateProgress(50);
-      await this.inkController_.load(result.fileName, result.dataToSave);
-      this.currentController = this.inkController_;
-      this.pluginController_.unload();
-      this.updateProgress(100);
-    } else {
-      // Exit annotation mode.
-      record(UserAction.EXIT_ANNOTATION_MODE);
-      assert(!this.pluginController_.isActive);
-      assert(this.inkController_.isActive);
-      assert(this.currentController === this.inkController_);
-      // TODO(dstockwell): set ink read-only, begin transition
-      this.updateProgress(0);
-      this.annotationMode_ = AnnotationMode.OFF;
-      // This runs separately to allow other consumers of `loaded` to queue
-      // up after this task.
-      this.loaded!.then(() => {
-        this.inkController_.unload();
-      });
-      // TODO(dstockwell): handle save failure
-      const result = await this.inkController_.save(SaveRequestType.ANNOTATION);
-      // Data always exists when save is called with requestType = ANNOTATION.
-      await this.restoreSidenav_();
-      this.currentController = this.pluginController_;
-      await this.pluginController_.load(result.fileName, result.dataToSave);
+    if (this.restoreAnnotationMode_ === AnnotationMode.OFF) {
+      this.recordEnterExitAnnotationModeMetrics_(newAnnotationMode);
     }
-    // </if> enable_ink
+    this.pluginController_.setAnnotationMode(newAnnotationMode);
+    if (newAnnotationMode === AnnotationMode.DRAW &&
+        !Ink2Manager.getInstance().isInitializationStarted()) {
+      await Ink2Manager.getInstance().initializeBrush();
+    }
+    if (newAnnotationMode === AnnotationMode.TEXT &&
+        !Ink2Manager.getInstance().isTextInitializationComplete()) {
+      await Ink2Manager.getInstance().initializeTextAnnotations();
+    }
+    this.annotationMode_ = newAnnotationMode;
   }
-  // </if> enable_ink or enable_pdf_ink2
-
-  // <if expr="enable_ink">
-  /** Exits annotation mode if active. */
-  private async exitAnnotationMode_(): Promise<void> {
-    if (this.$.toolbar.annotationMode === AnnotationMode.OFF) {
-      return;
-    }
-    this.$.toolbar.setAnnotationMode(AnnotationMode.OFF);
-    this.annotationMode_ = AnnotationMode.OFF;
-    await this.restoreSidenav_();
-    await this.loaded;
-  }
-  // </if> enable_ink
+  // </if> enable_pdf_ink2
 
   protected onDisplayAnnotationsChanged_(e: CustomEvent<boolean>) {
     assert(this.currentController);
@@ -733,7 +709,6 @@ export class PdfViewerElement extends PdfViewerBaseElement {
 
     this.exitPresentationMode_();
   }
-
 
   protected onPropertiesClick_() {
     assert(!this.showPropertiesDialog_);
@@ -847,14 +822,34 @@ export class PdfViewerElement extends PdfViewerBaseElement {
 
     assert(this.currentController);
     this.currentController.viewportChanged();
+    // <if expr="enable_pdf_ink2">
+    if (this.pdfInk2Enabled_) {
+      const hasScrollbars = this.viewport.documentHasScrollbars();
+      const scrollbarWidthStyle = `${this.viewport.scrollbarWidth}px`;
+      this.style.setProperty(
+          '--vertical-scrollbar-width',
+          hasScrollbars.vertical ? scrollbarWidthStyle : '0px');
+      this.style.setProperty(
+          '--horizontal-scrollbar-width',
+          hasScrollbars.horizontal ? scrollbarWidthStyle : '0px');
+      Ink2Manager.getInstance().viewportChanged();
+    }
+    // </if>
   }
 
   override handleStrings(strings: LoadTimeDataRaw) {
     super.handleStrings(strings);
 
+    this.pdfGetSaveDataInBlocks_ =
+        loadTimeData.getBoolean('pdfGetSaveDataInBlocks');
     // <if expr="enable_pdf_ink2">
     this.pdfInk2Enabled_ = loadTimeData.getBoolean('pdfInk2Enabled');
     // </if>
+    // <if expr="enable_pdf_save_to_drive">
+    this.pdfSaveToDriveEnabled_ = loadTimeData.getBoolean('pdfSaveToDrive');
+    // </if>
+    this.pdfSearchifySaveEnabled_ =
+        loadTimeData.getBoolean('pdfSearchifySaveEnabled');
     this.pdfUseShowSaveFilePicker_ =
         loadTimeData.getBoolean('pdfUseShowSaveFilePicker');
     const presetZoomFactors = this.viewport.presetZoomFactors;
@@ -948,7 +943,8 @@ export class PdfViewerElement extends PdfViewerBaseElement {
             'Unknown executedEditCommand data received: ' + editCommand);
       // <if expr="enable_pdf_ink2">
       case 'finishInkStroke':
-        this.handleFinishInkStroke_();
+        const modifiedData = data as unknown as {modified: boolean};
+        this.handleFinishInkStroke_(modifiedData.modified);
         return;
       // </if>
       case 'formFocusChange':
@@ -967,14 +963,15 @@ export class PdfViewerElement extends PdfViewerBaseElement {
             data as unknown as {metadataData: DocumentMetadata};
         this.setDocumentMetadata_(metadataData.metadataData);
         return;
-      // <if expr="enable_pdf_ink2">
-      case 'contentFocused':
-        this.handleContentFocused_();
-        return;
-      // </if>
       case 'navigate':
         const navigateData = data as unknown as NavigateMessageData;
         this.handleNavigate_(navigateData.url, navigateData.disposition);
+        return;
+      case 'rendererPreferencesUpdated':
+        const caretBrowsingEnabledData =
+            data as unknown as {caretBrowsingEnabled: boolean};
+        this.caretBrowsingEnabled_ =
+            caretBrowsingEnabledData.caretBrowsingEnabled;
         return;
       case 'sendKeyEvent':
         const keyEventData = data as unknown as KeyEventData;
@@ -999,6 +996,11 @@ export class PdfViewerElement extends PdfViewerBaseElement {
           this.$.searchifyProgress.hide();
         }
         return;
+      // <if expr="enable_pdf_ink2">
+      case 'startInkStroke':
+        this.handleStartInkStroke_();
+        return;
+      // </if>
       case 'startedFindInPage':
         record(UserAction.FIND_IN_PAGE);
         if (this.hasSearchifyText_) {
@@ -1018,8 +1020,20 @@ export class PdfViewerElement extends PdfViewerBaseElement {
                 PluginControllerEventType.UPDATE_INK_THUMBNAIL,
                 {detail: thumbnailData}));
         return;
-      case 'updateTextAnnotTextBoxRect':
-        // Handled by Ink2Manager.
+      case 'sendClickEvent':
+        // Ignore click events outside of text annotation mode.
+        if (this.annotationMode_ !== AnnotationMode.TEXT) {
+          return;
+        }
+        const location = data as unknown as Point;
+        // Clicks on a scrollbar should allow the plugin to take focus.
+        if (this.viewport.isPointOnScrollbar(location)) {
+          const textbox = this.shadowRoot.querySelector('ink-text-box');
+          assert(textbox);
+          textbox.blur();
+        } else {
+          this.maybeCreateTextAnnotation_(data as unknown as Point);
+        }
         return;
         // </if>
     }
@@ -1075,6 +1089,20 @@ export class PdfViewerElement extends PdfViewerBaseElement {
     this.navigator_!.navigate(url, disposition);
   }
 
+
+  // <if expr="enable_pdf_save_to_drive">
+  private handleSaveToDriveProgress_(
+      streamUrl: string, progress: SaveToDriveProgress) {
+    if (streamUrl !== this.browserApi!.getStreamInfo().streamUrl) {
+      return;
+    }
+    this.saveToDriveUploadedBytes_ = progress.uploadedBytes ?? 0;
+    this.saveToDriveFileSizeBytes_ = progress.fileSizeBytes ?? 0;
+    this.saveToDriveState_ =
+        convertSaveToDriveProgressToSaveToDriveState(progress);
+  }
+  // </if>
+
   /** Handles updating viewport params based on the `newUrl` provided. */
   private handleMaybeUpdateViewport_(newUrl: string) {
     assert(this.paramsParser);
@@ -1084,18 +1112,20 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   }
 
   // <if expr="enable_pdf_ink2">
-  /** Handles a new ink stroke in annotation mode. */
-  private handleFinishInkStroke_() {
-    this.hasInk2Edits_ = true;
+  /** Handles the start of a new ink stroke in annotation mode. */
+  private handleStartInkStroke_() {
     this.pluginController_.getEventTarget().dispatchEvent(
-        new CustomEvent(PluginControllerEventType.FINISH_INK_STROKE));
-    this.setShowBeforeUnloadDialog_(true);
+        new CustomEvent(PluginControllerEventType.START_INK_STROKE));
   }
 
-  /** Handles a 'contentFocused' event in the PDF content. */
-  private handleContentFocused_() {
-    this.pluginController_.getEventTarget().dispatchEvent(
-        new CustomEvent(PluginControllerEventType.CONTENT_FOCUSED));
+  /** Handles a new ink stroke in annotation mode. */
+  private handleFinishInkStroke_(modified: boolean) {
+    if (modified) {
+      this.hasCommittedInk2Edits_ = true;
+      this.setShowBeforeUnloadDialog_(true);
+    }
+    this.pluginController_.getEventTarget().dispatchEvent(new CustomEvent(
+        PluginControllerEventType.FINISH_INK_STROKE, {detail: modified}));
   }
   // </if>
 
@@ -1208,10 +1238,11 @@ export class PdfViewerElement extends PdfViewerBaseElement {
       return;
     }
 
-    let shouldSaveWithAnnotation = this.hasEnteredAnnotationMode_;
+    let shouldSaveWithAnnotation = false;
     // <if expr="enable_pdf_ink2">
     if (this.pdfInk2Enabled_) {
-      shouldSaveWithAnnotation = this.hasInk2Edits_;
+      shouldSaveWithAnnotation = this.hasCommittedInk2Edits_ ||
+          this.textboxState_ === TextBoxState.EDITED;
     }
     // </if>
 
@@ -1220,7 +1251,7 @@ export class PdfViewerElement extends PdfViewerBaseElement {
       saveMode = SaveRequestType.ANNOTATION;
     } else if (this.hasEdits_) {
       saveMode = SaveRequestType.EDITED;
-    } else if (this.hasSearchifyText_) {
+    } else if (this.hasSearchifyText_ && this.pdfSearchifySaveEnabled_) {
       saveMode = SaveRequestType.SEARCHIFIED;
     } else {
       saveMode = SaveRequestType.ORIGINAL;
@@ -1232,6 +1263,53 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   protected onToolbarSave_(e: CustomEvent<SaveRequestType>) {
     this.save_(e.detail);
   }
+
+  // <if expr="enable_pdf_save_to_drive">
+  getStreamUrlForTesting(): string {
+    return this.browserApi!.getStreamInfo().streamUrl;
+  }
+
+  setOnSaveToDriveProgressListenerForTesting() {
+    PdfViewerPrivateProxyImpl.getInstance().onSaveToDriveProgress.addListener(
+        this.handleSaveToDriveProgress_.bind(this));
+  }
+
+  // Calculates the save to Drive progress in percentage. Returns 0 if the PDF
+  // is not uploading to Drive.
+  protected getSaveToDriveProgress_(): number {
+    if (!this.isSaveToDriveUploading_()) {
+      return 0;
+    }
+    assert(
+        this.saveToDriveFileSizeBytes_ > 0,
+        'Invalid file size for save to Drive');
+    return Math.round(
+        (this.saveToDriveUploadedBytes_ / this.saveToDriveFileSizeBytes_) *
+        100);
+  }
+
+  protected isSaveToDriveUploading_(): boolean {
+    return this.saveToDriveState_ === SaveToDriveState.UPLOADING;
+  }
+
+  protected onSaveToDrive_(e: CustomEvent<SaveRequestType>) {
+    PdfViewerPrivateProxyImpl.getInstance().saveToDrive(e.detail);
+    if (this.saveToDriveState_ === SaveToDriveState.UNINITIALIZED) {
+      return;
+    }
+    const bubble =
+        this.shadowRoot.querySelector<ViewerSaveToDriveBubbleElement>(
+            'viewer-save-to-drive-bubble');
+    assert(bubble);
+    bubble.showAt(this.$.toolbar.getSaveToDriveBubbleAnchor());
+  }
+
+  protected onSaveToDriveBubbleAction_(
+      e: CustomEvent<SaveToDriveBubbleRequestType>) {
+    // TODO(crbug.com/427449996): Implement the save PDF to drive logics.
+    console.warn('Saving to Drive bubble action is not implemented yet.' + e);
+  }
+  // </if> enable_pdf_save_to_drive
 
   protected onChangePage_(e: CustomEvent<ChangePageDetail>) {
     this.viewport.goToPage(e.detail.page);
@@ -1271,17 +1349,18 @@ export class PdfViewerElement extends PdfViewerBaseElement {
 
     LocalStorageProxyImpl.getInstance().setItem(
         LOCAL_STORAGE_SIDENAV_COLLAPSED_KEY,
-        (this.sidenavCollapsed_ ? 1 : 0).toString());
+        this.sidenavCollapsed_ ? '1' : '0');
   }
 
   // <if expr="enable_pdf_ink2">
   protected onStrokesUpdated_(e: CustomEvent<number>) {
-    this.hasInk2Edits_ = e.detail > 0;
+    this.hasCommittedInk2Edits_ = e.detail > 0;
 
     // If the user already saved, always show the beforeunload dialog if the
     // strokes have updated. If the user hasn't saved, only show the
     // beforeunload dialog if there's edits.
-    this.setShowBeforeUnloadDialog_(this.hasSavedEdits_ || this.hasInk2Edits_);
+    this.setShowBeforeUnloadDialog_(
+        this.hasSavedEdits_ || this.hasCommittedInk2Edits_);
   }
   // </if>
 
@@ -1298,16 +1377,27 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   }
 
   /**
+   * Shows save file picker and returns a writable.
+   * @param: suggestedName The default value for the filename.
+   * @returns A Writable if successful, otherwise throws an exception.
+   */
+  private async selectFileAndGetWritable_(suggestedName: string) {
+    const fileHandle = await window.showSaveFilePicker({
+      suggestedName: suggestedName,
+      types: [{
+        description: 'PDF Files',
+        accept: {'application/pdf': ['.pdf']},
+      }],
+    });
+
+    return fileHandle.createWritable();
+  }
+
+  /**
    * Saves the current PDF document to disk.
    */
   private async save_(requestType: SaveRequestType) {
     this.recordSaveMetrics_(requestType);
-
-    // TODO(crbug.com/382610226): Update for `SaveRequestType.SEARCHIFIED` to
-    // allow users to select saving original PDF or text extracted one.
-    // To do so, the save type should be asked first, and then content would be
-    // fetched based on the selected type.
-
     // If we have entered annotation mode we must require the local
     // contents to ensure annotations are saved, unless the user specifically
     // requested the original document. Otherwise we would save the cached
@@ -1318,25 +1408,20 @@ export class PdfViewerElement extends PdfViewerBaseElement {
     // TODO(dstockwell): Report an error to user if this fails.
     assert(this.currentController);
 
-    // <if expr="enable_ink">
-    // For Ink, request type original in annotation mode --> need to exit
-    // annotation mode before saving. See https://crbug.com/919364.
-    let shouldExitAnnotationMode =
-        this.annotationMode_ !== AnnotationMode.OFF &&
-        requestType === SaveRequestType.ORIGINAL;
-
-    // Ink2 overrides Ink, and Ink2 does not need to exit annotation mode.
-    // Only exit annotation mode if Ink2 is disabled.
     // <if expr="enable_pdf_ink2">
-    shouldExitAnnotationMode =
-        shouldExitAnnotationMode && !this.pdfInk2Enabled_;
-    // </if> enable_pdf_ink2
-
-    if (shouldExitAnnotationMode) {
-      await this.exitAnnotationMode_();
-      assert(this.annotationMode_ === AnnotationMode.OFF);
+    // If there is an open textbox, call commitTextAnnotation(). This will fire
+    // a message to the plugin with the annotation, if it has been edited.
+    if (this.textboxState_ !== TextBoxState.INACTIVE) {
+      const textbox = this.shadowRoot.querySelector('ink-text-box');
+      assert(textbox);
+      textbox.commitTextAnnotation();
     }
-    // </if> enable_ink
+    // </if>
+
+    if (this.pdfGetSaveDataInBlocks_) {
+      this.saveInBlocks_(requestType);
+      return;
+    }
 
     const result = await this.currentController.save(requestType);
     if (result === null) {
@@ -1350,28 +1435,17 @@ export class PdfViewerElement extends PdfViewerBaseElement {
       fileName = fileName + '.pdf';
     }
 
+    // <if expr="enable_pdf_ink2">
+    if (result.bypassSaveFileForTesting) {
+      // Only set by the mock plugin.
+      this.onSaveSuccessful_(requestType);
+      return;
+    }
+    // </if>
+
     // Create blob before callback to avoid race condition.
     const blob = new Blob([result.dataToSave], {type: 'application/pdf'});
-    if (this.pdfUseShowSaveFilePicker_) {
-      try {
-        const fileHandle = await window.showSaveFilePicker({
-          suggestedName: fileName,
-          types: [{
-            description: 'PDF Files',
-            accept: {'application/pdf': ['.pdf']},
-          }],
-        });
-
-        const writable = await fileHandle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        this.onSaveSuccessful_(requestType);
-      } catch (error: any) {
-        if (error.name !== 'AbortError') {
-          console.error('window.showSaveFilePicker failed: ' + error);
-        }
-      }
-    } else {
+    if (!this.pdfUseShowSaveFilePicker_) {
       chrome.fileSystem.chooseEntry(
           {
             type: 'saveFile',
@@ -1392,31 +1466,95 @@ export class PdfViewerElement extends PdfViewerBaseElement {
               this.onSaveSuccessful_(requestType);
             });
           });
-    }
-
-    // <if expr="enable_pdf_ink2">
-    // Ink2 doesn't need to exit annotation mode after save.
-    if (this.pdfInk2Enabled_) {
       return;
     }
-    // </if>
 
-    // <if expr="enable_ink">
-    // Saving in Annotation mode is destructive: crbug.com/919364
-    this.exitAnnotationMode_();
-    // </if>
+    try {
+      const writable = await this.selectFileAndGetWritable_(fileName);
+      await writable.write(blob);
+      await writable.close();
+      this.onSaveSuccessful_(requestType);
+    } catch (error: any) {
+      if (error.name !== 'AbortError') {
+        console.error('window.showSaveFilePicker failed: ' + error);
+      }
+    }
+  }
+
+  /**
+   * Saves the current PDF document to disk in blocks.
+   *
+   * This function does not perform pre/post steps of saving and should be
+   * called by `save_`.
+   */
+  private async saveInBlocks_(requestType: SaveRequestType) {
+    // TODO(crbug.com/382610226): Update for `SaveRequestType.SEARCHIFIED` to
+    // allow users to select saving original PDF or text extracted one.
+    // To do so, the save type should be asked first, and then content would be
+    // fetched based on the selected type.
+    assert(this.pluginController_.isActive);
+
+    const nameResult = await this.pluginController_.getSuggestedFileName();
+
+    // Make sure file extension is .pdf, avoids dangerous extensions.
+    let fileName = nameResult.fileName;
+    if (!fileName.toLowerCase().endsWith('.pdf')) {
+      fileName = fileName + '.pdf';
+    }
+
+    assert(this.pdfUseShowSaveFilePicker_);
+    try {
+      const writable = await this.selectFileAndGetWritable_(fileName);
+
+      // Total file size is updated after the first results are received.
+      let totalFileSize = 0;
+      let offset = 0;
+      do {
+        // Get save data from plugin in maximum 16 MB blocks.
+        // LINT.IfChange(MaxSaveBufferSize)
+        const MAX_SAVE_BUFFER_SIZE = 16 * 1000 * 1000;
+        // LINT.ThenChange(//pdf/pdf_view_web_plugin.cc:MaxSaveBufferSize)
+
+        // `blockSize` will be 0 on the first call, since the total file size
+        // is not known yet.
+        const blockSize =
+            Math.min(totalFileSize - offset, MAX_SAVE_BUFFER_SIZE);
+
+        const result = await this.pluginController_.getSaveDataBlock(
+            requestType, offset, blockSize);
+        if (offset === 0) {
+          // Update `totalFileSize` after the first block of data is received.
+          totalFileSize = result.totalFileSize;
+          if (totalFileSize === 0) {
+            // File could not be saved.
+            throw new Error('File size is zero.');
+          }
+          verifyPdfHeader(result.dataToSave);
+          assert(result.dataToSave.byteLength !== 0);
+        } else {
+          assert(result.dataToSave.byteLength === blockSize);
+        }
+        offset += result.dataToSave.byteLength;
+        await writable.write(result.dataToSave);
+      } while (offset < totalFileSize);
+      await writable.close();
+      this.onSaveSuccessful_(requestType);
+    } catch (error: any) {
+      this.pluginController_.releaseSaveInBlockBuffers();
+      if (error.name !== 'AbortError') {
+        console.error('window.showSaveFilePicker failed: ' + error);
+      }
+    }
   }
 
   /**
    * Performs required tasks after a successful save.
    */
   private onSaveSuccessful_(requestType: SaveRequestType) {
-    // <if expr="enable_ink or enable_pdf_ink2">
+    // <if expr="enable_pdf_ink2">
     // Unblock closing the window now that the user has saved
     // successfully.
     this.setShowBeforeUnloadDialog_(false);
-    // </if>
-    // <if expr="enable_pdf_ink2">
     this.hasSavedEdits_ =
         this.hasSavedEdits_ || requestType === SaveRequestType.EDITED;
     // </if>
@@ -1438,7 +1576,7 @@ export class PdfViewerElement extends PdfViewerBaseElement {
         break;
       case SaveRequestType.ORIGINAL:
         // <if expr="enable_pdf_ink2">
-        if (this.hasInk2Edits_) {
+        if (this.hasCommittedInk2Edits_) {
           record(UserAction.SAVE_ORIGINAL);
           break;
         }
@@ -1459,22 +1597,11 @@ export class PdfViewerElement extends PdfViewerBaseElement {
     }
   }
 
-  // <if expr="enable_ink">
-  protected async onPrint_() {
-    record(UserAction.PRINT);
-    await this.exitAnnotationMode_();
-    assert(this.currentController);
-    this.currentController.print();
-  }
-  // </if>
-
-  // <if expr="not enable_ink">
   protected onPrint_() {
     record(UserAction.PRINT);
     assert(this.currentController);
     this.currentController.print();
   }
-  // </if>
 
   /**
    * Updates the toolbar's annotation available flag depending on current
@@ -1491,6 +1618,14 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   }
 
   // <if expr="enable_pdf_ink2">
+  protected isTextboxActive_(): boolean {
+    return this.textboxState_ !== TextBoxState.INACTIVE;
+  }
+
+  protected isInTextAnnotationMode_(): boolean {
+    return this.annotationMode_ === AnnotationMode.TEXT;
+  }
+
   /**
    * @return Whether the Ink bottom toolbar should be shown. It should never be
    *     shown if the Ink side panel is shown.
@@ -1508,6 +1643,18 @@ export class PdfViewerElement extends PdfViewerBaseElement {
     return this.inInk2AnnotationMode_() && this.useSidePanelForInk_;
   }
 
+  protected hasInk2AnnotationEdits_(): boolean {
+    return this.textboxState_ === TextBoxState.EDITED ||
+        this.hasCommittedInk2Edits_;
+  }
+
+  protected onTextBoxStateChanged_(e: CustomEvent<TextBoxState>) {
+    this.textboxState_ = e.detail;
+    if (e.detail === TextBoxState.EDITED) {
+      this.setShowBeforeUnloadDialog_(true);
+    }
+  }
+
   /**
    * @returns Whether the PDF viewer has Ink2 enabled and is in annotation mode.
    */
@@ -1516,7 +1663,7 @@ export class PdfViewerElement extends PdfViewerBaseElement {
   }
   // </if>
 
-  // <if expr="enable_ink or enable_pdf_ink2">
+  // <if expr="enable_pdf_ink2">
   /**
    * Handles the `BeforeUnloadEvent` event.
    * @param event The `BeforeUnloadEvent` object representing the event.
@@ -1544,12 +1691,6 @@ export class PdfViewerElement extends PdfViewerBaseElement {
     if (!this.pdfOopifEnabled) {
       chrome.mimeHandlerPrivate.setShowBeforeUnloadDialog(showDialog);
     }
-  }
-  // </if>
-
-  // <if expr="enable_ink">
-  getCurrentControllerForTesting(): ContentController|null {
-    return this.currentController;
   }
   // </if>
 }

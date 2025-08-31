@@ -116,16 +116,10 @@ EnumTraits<media::mojom::VideoCapturePixelFormat,
       return media::mojom::VideoCapturePixelFormat::RGB24;
     case media::VideoPixelFormat::PIXEL_FORMAT_MJPEG:
       return media::mojom::VideoCapturePixelFormat::MJPEG;
-    case media::VideoPixelFormat::PIXEL_FORMAT_YUV420P9:
-      return media::mojom::VideoCapturePixelFormat::YUV420P9;
     case media::VideoPixelFormat::PIXEL_FORMAT_YUV420P10:
       return media::mojom::VideoCapturePixelFormat::YUV420P10;
-    case media::VideoPixelFormat::PIXEL_FORMAT_YUV422P9:
-      return media::mojom::VideoCapturePixelFormat::YUV422P9;
     case media::VideoPixelFormat::PIXEL_FORMAT_YUV422P10:
       return media::mojom::VideoCapturePixelFormat::YUV422P10;
-    case media::VideoPixelFormat::PIXEL_FORMAT_YUV444P9:
-      return media::mojom::VideoCapturePixelFormat::YUV444P9;
     case media::VideoPixelFormat::PIXEL_FORMAT_YUV444P10:
       return media::mojom::VideoCapturePixelFormat::YUV444P10;
     case media::VideoPixelFormat::PIXEL_FORMAT_YUV420P12:
@@ -220,21 +214,18 @@ bool EnumTraits<media::mojom::VideoCapturePixelFormat,
     case media::mojom::VideoCapturePixelFormat::MJPEG:
       *output = media::PIXEL_FORMAT_MJPEG;
       return true;
-    case media::mojom::VideoCapturePixelFormat::YUV420P9:
-      *output = media::PIXEL_FORMAT_YUV420P9;
-      return true;
+    case media::mojom::VideoCapturePixelFormat::YUV420P9_DEPRECATED:
+      return false;
     case media::mojom::VideoCapturePixelFormat::YUV420P10:
       *output = media::PIXEL_FORMAT_YUV420P10;
       return true;
-    case media::mojom::VideoCapturePixelFormat::YUV422P9:
-      *output = media::PIXEL_FORMAT_YUV422P9;
-      return true;
+    case media::mojom::VideoCapturePixelFormat::YUV422P9_DEPRECATED:
+      return false;
     case media::mojom::VideoCapturePixelFormat::YUV422P10:
       *output = media::PIXEL_FORMAT_YUV422P10;
       return true;
-    case media::mojom::VideoCapturePixelFormat::YUV444P9:
-      *output = media::PIXEL_FORMAT_YUV444P9;
-      return true;
+    case media::mojom::VideoCapturePixelFormat::YUV444P9_DEPRECATED:
+      return false;
     case media::mojom::VideoCapturePixelFormat::YUV444P10:
       *output = media::PIXEL_FORMAT_YUV444P10;
       return true;
@@ -302,7 +293,7 @@ bool EnumTraits<media::mojom::VideoCapturePixelFormat,
       *output = media::PIXEL_FORMAT_P410LE;
       return true;
   }
-  NOTREACHED();
+  return false;
 }
 
 // static
@@ -1597,6 +1588,18 @@ EnumTraits<media::mojom::VideoCaptureFrameDropReason,
           kSubCaptureTargetVersionNotCurrent;
     case media::VideoCaptureFrameDropReason::kPostProcessingFailed:
       return media::mojom::VideoCaptureFrameDropReason::kPostProcessingFailed;
+    case media::VideoCaptureFrameDropReason::
+        kResolutionAdapterFrameIsNotMappable:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterFrameIsNotMappable;
+    case media::VideoCaptureFrameDropReason::
+        kResolutionAdapterCannotCreateConvertFrame:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterCannotCreateConvertFrame;
+    case media::VideoCaptureFrameDropReason::
+        kResolutionAdapterConvertAndScaleFailed:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterConvertAndScaleFailed;
   }
   NOTREACHED();
 }
@@ -1744,6 +1747,21 @@ bool EnumTraits<media::mojom::VideoCaptureFrameDropReason,
       return true;
     case media::mojom::VideoCaptureFrameDropReason::kPostProcessingFailed:
       *output = media::VideoCaptureFrameDropReason::kPostProcessingFailed;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterFrameIsNotMappable:
+      *output = media::VideoCaptureFrameDropReason::
+          kResolutionAdapterFrameIsNotMappable;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterCannotCreateConvertFrame:
+      *output = media::VideoCaptureFrameDropReason::
+          kResolutionAdapterCannotCreateConvertFrame;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterConvertAndScaleFailed:
+      *output = media::VideoCaptureFrameDropReason::
+          kResolutionAdapterConvertAndScaleFailed;
       return true;
   }
   NOTREACHED();

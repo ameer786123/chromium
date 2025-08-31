@@ -16,6 +16,7 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/ash/file_manager/file_tasks.h"
 #include "chrome/browser/ash/file_manager/virtual_file_tasks.h"
@@ -459,8 +460,7 @@ bool IsQuickOfficeInstalled(Profile* profile) {
   if (!proxy) {
     return false;
   }
-  // The AppRegistryCache will contain the QuickOffice extension whether on Ash
-  // or Lacros.
+  // The AppRegistryCache will contain the QuickOffice extension on Ash.
   bool installed = false;
   proxy->AppRegistryCache().ForOneApp(
       extension_misc::kQuickOfficeComponentExtensionId,

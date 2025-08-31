@@ -143,8 +143,7 @@ void EncoderBase<Traits>::encode(InputType* input,
 
   // This will fail if |input| is already closed.
   // Remove exceptions relating to cloning closed input.
-  auto* internal_input =
-      input->clone(IgnoreException(script_state_->GetIsolate()));
+  auto* internal_input = input->clone(IGNORE_EXCEPTION);
 
   if (!internal_input) {
     exception_state.ThrowTypeError("Cannot encode closed input.");
@@ -253,8 +252,8 @@ void EncoderBase<Traits>::ResetInternal(DOMException* ex) {
 template <typename Traits>
 void EncoderBase<Traits>::QueueHandleError(DOMException* ex) {
   callback_runner_->PostTask(
-      FROM_HERE, WTF::BindOnce(&EncoderBase<Traits>::HandleError,
-                               WrapWeakPersistent(this), WrapPersistent(ex)));
+      FROM_HERE, BindOnce(&EncoderBase<Traits>::HandleError,
+                          WrapWeakPersistent(this), WrapPersistent(ex)));
 }
 
 template <typename Traits>
@@ -424,9 +423,8 @@ void EncoderBase<Traits>::ScheduleDequeueEvent() {
   event->async_task_context()->Schedule(GetExecutionContext(), event->type());
 
   callback_runner_->PostTask(
-      FROM_HERE,
-      WTF::BindOnce(&EncoderBase<Traits>::DispatchDequeueEvent,
-                    WrapWeakPersistent(this), WrapPersistent(event)));
+      FROM_HERE, BindOnce(&EncoderBase<Traits>::DispatchDequeueEvent,
+                          WrapWeakPersistent(this), WrapPersistent(event)));
 }
 
 template <typename Traits>

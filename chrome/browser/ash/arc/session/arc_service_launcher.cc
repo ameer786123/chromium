@@ -27,7 +27,6 @@
 #include "chrome/browser/ash/arc/auth/arc_auth_service.h"
 #include "chrome/browser/ash/arc/bluetooth/arc_bluetooth_bridge.h"
 #include "chrome/browser/ash/arc/boot_phase_monitor/arc_boot_phase_monitor_bridge.h"
-#include "chrome/browser/ash/arc/dlc_installer/arc_dlc_notification_manager_factory_impl.h"
 #include "chrome/browser/ash/arc/enterprise/arc_enterprise_reporting_service.h"
 #include "chrome/browser/ash/arc/enterprise/cert_store/cert_store_service_factory.h"
 #include "chrome/browser/ash/arc/error_notification/arc_error_notification_bridge.h"
@@ -72,8 +71,8 @@
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
-#include "chrome/common/channel_info.h"
 #include "chromeos/ash/components/browser_context_helper/annotated_account_id.h"
+#include "chromeos/ash/components/channel/channel_info.h"
 #include "chromeos/ash/components/memory/swap_configuration.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/experiences/arc/app/arc_app_launch_notifier.h"
@@ -182,11 +181,10 @@ ArcServiceLauncher::ArcServiceLauncher(
     : arc_service_manager_(std::make_unique<ArcServiceManager>()),
       arc_session_manager_(
           CreateArcSessionManager(arc_service_manager_->arc_bridge_service(),
-                                  chrome::GetChannel(),
+                                  ash::GetChannel(),
                                   scheduler_configuration_manager)),
       scheduler_configuration_manager_(scheduler_configuration_manager),
       arc_dlc_installer_(std::make_unique<ArcDlcInstaller>(
-          std::make_unique<ArcDlcNotificationManagerFactoryImpl>(),
           std::make_unique<ArcDlcInstallHardwareChecker>(),
           ash::CrosSettings::Get())) {
   DCHECK(g_arc_service_launcher == nullptr);
@@ -299,16 +297,6 @@ void ArcServiceLauncher::OnPrimaryUserProfilePrepared(Profile* profile) {
 
   std::string user_id_hash =
       ash::ProfileHelper::GetUserIdHashFromProfile(profile);
-
-  const AccountId* account_id = ash::AnnotatedAccountId::Get(profile);
-
-  // Profile set up for the test is no properly initialized, so AccountId is not
-  // annotated.
-  if (account_id) {
-    arc_dlc_installer_->OnPrimaryUserSessionStarted(*account_id);
-  } else {
-    CHECK_IS_TEST();
-  }
 
   // Instantiate ARC related BrowserContextKeyedService classes which need
   // to be running at the beginning of the container run.
@@ -457,13 +445,12 @@ void ArcServiceLauncher::ResetForTesting() {
   // may be referred from existing KeyedService, so destoying it would cause
   // unexpected behavior, specifically on test teardown.
   arc_session_manager_ = CreateArcSessionManager(
-      arc_service_manager_->arc_bridge_service(), chrome::GetChannel(),
+      arc_service_manager_->arc_bridge_service(), ash::GetChannel(),
       scheduler_configuration_manager_);
 
   // Recreate arc_dlc_installer_ after shutdown because browser_test will run
   // ResetForTesting and then do the OnPrimaryUserProfilePrepared.
   arc_dlc_installer_ = std::make_unique<ArcDlcInstaller>(
-      std::make_unique<ArcDlcNotificationManagerFactoryImpl>(),
       std::make_unique<ArcDlcInstallHardwareChecker>(),
       ash::CrosSettings::Get());
 }

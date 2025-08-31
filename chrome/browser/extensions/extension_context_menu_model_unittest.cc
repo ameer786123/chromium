@@ -11,6 +11,7 @@
 #include "base/json/json_reader.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -191,9 +192,9 @@ class MenuBuilder {
   int cur_id_;
 };
 
-// Returns the number of extension menu items that show up in |model|.
+// Returns the number of extension menu items that show up in `model`.
 // For this test, all the extension items have same label
-// |kTestExtensionItemLabel|.
+// `kTestExtensionItemLabel`.
 int CountExtensionItems(const ExtensionContextMenuModel& model) {
   std::u16string expected_label = base::ASCIIToUTF16(kTestExtensionItemLabel);
   int num_items_found = 0;
@@ -203,9 +204,9 @@ int CountExtensionItems(const ExtensionContextMenuModel& model) {
     int command_id = model.GetCommandIdAt(i);
     // If the command id is not visible, it should not be counted.
     if (model.IsCommandIdVisible(command_id)) {
-      // The last character of |expected_label| can be the item number (e.g
+      // The last character of `expected_label` can be the item number (e.g
       // "test-ext-item" -> "test-ext-item1"). In checking that extensions items
-      // have the same label |kTestExtensionItemLabel|, the specific item number
+      // have the same label `kTestExtensionItemLabel`, the specific item number
       // is ignored, [0, expected_label.size).
       if (base::StartsWith(actual_label, expected_label,
                            base::CompareCase::SENSITIVE))
@@ -221,7 +222,7 @@ int CountExtensionItems(const ExtensionContextMenuModel& model) {
 }
 
 // Checks that the model has the extension items in the exact order specified by
-// |item_number|.
+// `item_number`.
 void VerifyItems(const ExtensionContextMenuModel& model,
                  std::vector<std::string> item_number) {
   size_t j = 0;
@@ -255,7 +256,7 @@ class ExtensionContextMenuModelTest : public ExtensionServiceTestBase {
       const ExtensionContextMenuModelTest&) = delete;
 
   // Build an extension to pass to the menu constructor, with the action
-  // specified by |action_key|.
+  // specified by `action_key`.
   const Extension* AddExtension(const std::string& name,
                                 const char* action_key,
                                 ManifestLocation location);
@@ -271,7 +272,7 @@ class ExtensionContextMenuModelTest : public ExtensionServiceTestBase {
 
   MenuManager* CreateMenuManager();
 
-  // Adds a new tab with |url| to the tab strip, and returns the WebContents
+  // Adds a new tab with `url` to the tab strip, and returns the WebContents
   // associated with it.
   content::WebContents* AddTab(const GURL& url);
 
@@ -279,14 +280,14 @@ class ExtensionContextMenuModelTest : public ExtensionServiceTestBase {
   CommandState GetCommandState(const ExtensionContextMenuModel& menu,
                                int command) const;
 
-  // Returns the current state for the specified page access |command|.
+  // Returns the current state for the specified page access `command`.
   CommandState GetPageAccessCommandState(const ExtensionContextMenuModel& menu,
                                          int command) const;
 
-  // Returns true if the |menu| has the page access submenu at all.
+  // Returns true if the `menu` has the page access submenu at all.
   bool HasPageAccessSubmenu(const ExtensionContextMenuModel& menu) const;
 
-  // Returns true if the |menu| has a valid entry for the "can't access page"
+  // Returns true if the `menu` has a valid entry for the "can't access page"
   // item.
   bool HasCantAccessPageEntry(const ExtensionContextMenuModel& menu) const;
 
@@ -294,7 +295,6 @@ class ExtensionContextMenuModelTest : public ExtensionServiceTestBase {
   void TearDown() override;
 
  private:
-  std::unique_ptr<TestBrowserWindow> test_window_;
   std::unique_ptr<Browser> browser_;
   display::test::TestScreen test_screen_;
 };
@@ -346,9 +346,9 @@ void ExtensionContextMenuModelTest::InitializeAndAddExtension(
 Browser* ExtensionContextMenuModelTest::GetBrowser() {
   if (!browser_) {
     Browser::CreateParams params(profile(), true);
-    test_window_ = std::make_unique<TestBrowserWindow>();
-    params.window = test_window_.get();
-    browser_.reset(Browser::Create(params));
+    auto test_window = std::make_unique<TestBrowserWindow>();
+    params.window = test_window.release();
+    browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
   }
   return browser_.get();
 }
@@ -499,7 +499,7 @@ TEST_F(ExtensionContextMenuModelTest, RequiredInstallationsDisablesItems) {
     EXPECT_EQ(GetCommandState(menu, kPolicyInstalled), CommandState::kDisabled);
   }
 
-  // Don't leave |policy_provider| dangling.
+  // Don't leave `policy_provider` dangling.
   system->management_policy()->UnregisterProvider(&policy_provider);
 }
 
@@ -647,9 +647,9 @@ TEST_F(ExtensionContextMenuModelTest,
   }
 }
 
-TEST_F(ExtensionContextMenuModelTest,
-       ExtensionContextMenuOptionsEntryVisibility) {
+TEST_F(ExtensionContextMenuModelTest, ExtensionContextMenuOptionsEntry) {
   InitializeEmptyExtensionService();
+  AddTab(GURL("about:blank"));
 
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("Extension")
@@ -684,6 +684,16 @@ TEST_F(ExtensionContextMenuModelTest,
                                    ContextMenuSource::kToolbarAction);
     EXPECT_EQ(GetCommandState(menu, ExtensionContextMenuModel::OPTIONS),
               CommandState::kEnabled);
+
+    // Verify the option page is opened when the command is executed.
+    menu.ExecuteCommand(ExtensionContextMenuModel::OPTIONS, 0);
+    // Test web contents need a poke to commit.
+    content::WebContents* web_contents =
+        GetBrowser()->tab_strip_model()->GetActiveWebContents();
+    content::NavigationController& controller = web_contents->GetController();
+    content::RenderFrameHostTester::CommitPendingLoad(&controller);
+    EXPECT_EQ(OptionsPageInfo::GetOptionsPage(extension_with_options.get()),
+              web_contents->GetLastCommittedURL());
   }
 }
 
@@ -1034,7 +1044,8 @@ TEST_F(ExtensionContextMenuModelTest, PageAccess_CustomizeByExtension_Submenu) {
 
     // Change extension to run "on click". Since we are revoking permissions, we
     // need to automatically accept the reload page bubble.
-    action_runner->accept_bubble_for_testing(true);
+    auto reload_page_dialog_reset =
+        ReloadPageDialogController::AcceptDialogForTesting(true);
     PermissionsManagerWaiter waiter(permissions_manager);
     menu.ExecuteCommand(kOnClick, 0);
     waiter.WaitForExtensionPermissionsUpdate();
@@ -1315,7 +1326,7 @@ TEST_F(ExtensionContextMenuModelTest,
 
     // Uninstall the extension so as not to conflict with more additions.
     std::u16string error;
-    EXPECT_TRUE(service()->UninstallExtension(
+    EXPECT_TRUE(registrar()->UninstallExtension(
         extension->id(), UNINSTALL_REASON_FOR_TESTING, &error));
     EXPECT_TRUE(error.empty()) << error;
     EXPECT_EQ(nullptr, registry()->GetInstalledExtension(extension->id()));
@@ -1421,7 +1432,7 @@ TEST_F(ExtensionContextMenuModelTest,
 
   // Navigate to a url that should have "customize by extension" site
   // permissions by default (which allows us to test the page access submenu).
-  content::WebContents* web_contents = AddTab(kActiveUrl);
+  AddTab(kActiveUrl);
   EXPECT_EQ(
       permissions_manager->GetUserSiteSetting(url::Origin::Create(kActiveUrl)),
       PermissionsManager::UserSiteSetting::kCustomizeByExtension);
@@ -1445,8 +1456,8 @@ TEST_F(ExtensionContextMenuModelTest,
 
   // Change extension to run "on click". Since we are revoking permissions, we
   // need to automatically accept the reload page bubble.
-  ExtensionActionRunner::GetForWebContents(web_contents)
-      ->accept_bubble_for_testing(true);
+  auto reload_page_dialog_reset =
+      ReloadPageDialogController::AcceptDialogForTesting(true);
   PermissionsManagerWaiter waiter(permissions_manager);
   menu.ExecuteCommand(kOnClick, 0);
   waiter.WaitForExtensionPermissionsUpdate();
@@ -1644,9 +1655,8 @@ TEST_F(ExtensionContextMenuModelTest,
 
     // Set the extension to run "on click". Since we are revoking b.com
     // permissions, we need to automatically accept the reload page bubble.
-    menu.ExecuteCommand(kOnClick, 0);
-    ExtensionActionRunner::GetForWebContents(web_contents)
-        ->accept_bubble_for_testing(true);
+    auto reload_page_dialog_reset =
+        ReloadPageDialogController::AcceptDialogForTesting(true);
     PermissionsManagerWaiter waiter(permissions_manager);
     menu.ExecuteCommand(kOnClick, 0);
     waiter.WaitForExtensionPermissionsUpdate();
@@ -1683,7 +1693,7 @@ TEST_F(ExtensionContextMenuModelTest,
   EXPECT_FALSE(permissions_manager->HasWithheldHostPermissions(*extension));
 
   const GURL a_com("https://a.com");
-  content::WebContents* web_contents = AddTab(a_com);
+  AddTab(a_com);
 
   ExtensionContextMenuModel menu(extension.get(), GetBrowser(),
                                  /*is_pinned=*/true, nullptr, true,
@@ -1700,8 +1710,8 @@ TEST_F(ExtensionContextMenuModelTest,
   // Withhold access on a.com by setting the extension to run "on click". Since
   // we are revoking permissions, we need to automatically accept the reload
   // page bubble.
-  ExtensionActionRunner::GetForWebContents(web_contents)
-      ->accept_bubble_for_testing(true);
+  auto reload_page_dialog_reset =
+      ReloadPageDialogController::AcceptDialogForTesting(true);
   PermissionsManagerWaiter waiter(permissions_manager);
   menu.ExecuteCommand(kOnClick, 0);
   waiter.WaitForExtensionPermissionsUpdate();

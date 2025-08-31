@@ -52,6 +52,8 @@
 #include "third_party/blink/renderer/core/loader/render_blocking_resource_manager.h"
 #include "third_party/blink/renderer/core/loader/url_matcher.h"
 #include "third_party/blink/renderer/core/loader/web_bundle/script_web_bundle.h"
+#include "third_party/blink/renderer/core/route_matching/route_map.h"
+#include "third_party/blink/renderer/core/scheduler/task_attribution_util.h"
 #include "third_party/blink/renderer/core/script/classic_pending_script.h"
 #include "third_party/blink/renderer/core/script/classic_script.h"
 #include "third_party/blink/renderer/core/script/import_map.h"
@@ -87,19 +89,6 @@
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 
 namespace blink {
-
-namespace {
-
-scheduler::TaskAttributionInfo* GetRunningTask(ScriptState* script_state) {
-  auto* tracker =
-      scheduler::TaskAttributionTracker::From(script_state->GetIsolate());
-  if (!script_state || !script_state->World().IsMainWorld() || !tracker) {
-    return nullptr;
-  }
-  return tracker->RunningTask();
-}
-
-}  // namespace
 
 ScriptLoader::ScriptLoader(ScriptElementBase* element,
                            const CreateElementFlags flags)
@@ -327,12 +316,6 @@ bool IsEligibleCommon(const Document& element_document) {
   return true;
 }
 
-// [Intervention, ForceInOrderScript, crbug.com/1344772]
-bool IsEligibleForForceInOrder(const Document& element_document) {
-  return base::FeatureList::IsEnabled(features::kForceInOrderScript) &&
-         IsEligibleCommon(element_document);
-}
-
 // [Intervention, DelayAsyncScriptExecution, crbug.com/1340837]
 bool IsEligibleForDelay(const Resource& resource,
                         const Document& element_document,
@@ -349,6 +332,15 @@ bool IsEligibleForDelay(const Resource& resource,
 
   if (element.IsPotentiallyRenderBlocking()) {
     return false;
+  }
+
+  static const bool delay_async_script_execution_cross_site_only =
+      features::kDelayAsyncScriptExecutionCrossSiteOnlyParam.Get();
+  if (delay_async_script_execution_cross_site_only) {
+    // Cross-site scripts only.
+    if (IsSameSite(resource.Url(), element_document)) {
+      return false;
+    }
   }
 
   // We don't delay async scripts that have matched a resource in the preload
@@ -431,46 +423,7 @@ bool IsEligibleForDelay(const Resource& resource,
       break;
   }
 
-  const features::DelayAsyncScriptTarget delay_async_script_target =
-      features::kDelayAsyncScriptTargetParam.Get();
-  switch (delay_async_script_target) {
-    case features::DelayAsyncScriptTarget::kAll:
-      return true;
-    case features::DelayAsyncScriptTarget::kCrossSiteOnly:
-      return !IsSameSite(resource.Url(), element_document);
-    case features::DelayAsyncScriptTarget::kCrossSiteWithAllowList:
-    case features::DelayAsyncScriptTarget::kCrossSiteWithAllowListReportOnly:
-      if (IsSameSite(resource.Url(), element_document)) {
-        return false;
-      }
-      DEFINE_STATIC_LOCAL(
-          UrlMatcher, url_matcher,
-          (UrlMatcher(GetFieldTrialParamByFeatureAsString(
-              features::kDelayAsyncScriptExecution, "delay_async_exec_allow_list", ""))));
-      return url_matcher.Match(resource.Url());
-  }
-}
-
-// [Intervention, SelectiveInOrderScript, crbug.com/1356396]
-bool IsEligibleForSelectiveInOrder(const Resource& resource,
-                                   const Document& element_document) {
-  // The feature flag is checked separately.
-
-  if (!IsEligibleCommon(element_document)) {
-    return false;
-  }
-
-  // Cross-site scripts only: 1st party scripts are out of scope of the
-  // intervention.
-  if (IsSameSite(resource.Url(), element_document)) {
-    return false;
-  }
-
-  // Only script request URLs in the allowlist.
-  DEFINE_STATIC_LOCAL(
-      UrlMatcher, url_matcher,
-      (UrlMatcher(features::kSelectiveInOrderScriptAllowList.Get())));
-  return url_matcher.Match(resource.Url());
+  return true;
 }
 
 ScriptRunner::DelayReasons DetermineDelayReasonsToWait(
@@ -481,6 +434,12 @@ ScriptRunner::DelayReasons DetermineDelayReasonsToWait(
 
   DelayReasons reasons = static_cast<DelayReasons>(DelayReason::kLoad);
 
+  if (script_runner->IsActive(DelayReason::kPausedForPrerender)) {
+    reasons |= static_cast<DelayReasons>(DelayReason::kPausedForPrerender);
+  }
+  // TODO(https://crbug.com/428500219): is_eligible_for_delay may not be a
+  // proper name as all elements are eligible for delay in terms of
+  // DelayReason::kLoad.
   if (is_eligible_for_delay &&
       script_runner->IsActive(DelayReason::kMilestone)) {
     reasons |= static_cast<DelayReasons>(DelayReason::kMilestone);
@@ -509,6 +468,11 @@ ScriptLoader::ScriptTypeAtPrepare ScriptLoader::GetScriptTypeAtPrepare(
 
   if (EqualIgnoringASCIICase(type, script_type_names::kImportmap)) {
     return ScriptTypeAtPrepare::kImportMap;
+  }
+
+  if (EqualIgnoringASCIICase(type, script_type_names::kRoutemap) &&
+      RuntimeEnabledFeatures::RouteMatchingEnabled()) {
+    return ScriptTypeAtPrepare::kRouteMap;
   }
 
   if (EqualIgnoringASCIICase(type, script_type_names::kSpeculationrules)) {
@@ -610,6 +574,7 @@ PendingScript* ScriptLoader::PrepareScript(
     case ScriptTypeAtPrepare::kClassic:
     case ScriptTypeAtPrepare::kModule:
     case ScriptTypeAtPrepare::kImportMap:
+    case ScriptTypeAtPrepare::kRouteMap:
       break;
   }
 
@@ -660,6 +625,22 @@ PendingScript* ScriptLoader::PrepareScript(
   // Reset line numbering for nested writes.
   TextPosition position = is_in_document_write ? TextPosition::MinimumPosition()
                                                : script_start_position;
+
+  // Measure the pages on which a `<script>` element without a `src` attribute
+  // has a non-empty `integrity` attribute to see whether inline integrity
+  // checks might run into compat challenges.
+  //
+  // https://github.com/mikewest/inline-integrity/issues/6
+  if (!element_->HasSourceAttribute() &&
+      !element_->IntegrityAttributeValue().empty()) {
+    IntegrityMetadataSet metadata;
+    SubresourceIntegrity::ParseIntegrityAttribute(
+        element_->IntegrityAttributeValue(), metadata, context_window);
+    if (!metadata.empty()) {
+      UseCounter::Count(*context_window,
+                        WebFeature::kSRIIntegrityAttributeOnInlineScript);
+    }
+  }
 
   // <spec step="18">If el does not have a src content attribute, and the Should
   // element's inline behavior be blocked by Content Security Policy? algorithm
@@ -751,8 +732,7 @@ PendingScript* ScriptLoader::PrepareScript(
   // credentials mode, and referrer policy is referrer policy.</spec>
   ScriptFetchOptions options(nonce, integrity_metadata, integrity_attr,
                              parser_state, credentials_mode, referrer_policy,
-                             fetch_priority_hint, render_blocking_behavior,
-                             RejectCoepUnsafeNone(false));
+                             fetch_priority_hint, render_blocking_behavior);
 
   // <spec step="30">Let settings object be el's node document's relevant
   // settings object.</spec>
@@ -766,7 +746,6 @@ PendingScript* ScriptLoader::PrepareScript(
       ToScriptStateForMainWorld(context_window->GetFrame());
 
   bool is_eligible_for_delay = false;
-  bool is_eligible_for_selective_in_order = false;
 
   // <spec step="31">If el has a src content attribute, then:</spec>
   if (element_->HasSourceAttribute()) {
@@ -776,10 +755,21 @@ PendingScript* ScriptLoader::PrepareScript(
     if (GetScriptType() == ScriptTypeAtPrepare::kImportMap) {
       element_document.GetTaskRunner(TaskType::kDOMManipulation)
           ->PostTask(FROM_HERE,
-                     WTF::BindOnce(&ScriptElementBase::DispatchErrorEvent,
-                                   WrapPersistent(element_.Get())));
+                     blink::BindOnce(&ScriptElementBase::DispatchErrorEvent,
+                                     WrapPersistent(element_.Get())));
       return nullptr;
     }
+
+    // TODO(crbug.com/436805487): Should the `src` attribute be supported for
+    // routemap?
+    if (GetScriptType() == ScriptTypeAtPrepare::kRouteMap) {
+      element_document.GetTaskRunner(TaskType::kDOMManipulation)
+          ->PostTask(FROM_HERE,
+                     blink::BindOnce(&ScriptElementBase::DispatchErrorEvent,
+                                     WrapPersistent(element_.Get())));
+      return nullptr;
+    }
+
     // <spec step="31.2">Let src be the value of el's src attribute.</spec>
     String src =
         StripLeadingAndTrailingHTMLSpaces(element_->SourceAttributeValue());
@@ -789,8 +779,8 @@ PendingScript* ScriptLoader::PrepareScript(
     if (src.empty()) {
       element_document.GetTaskRunner(TaskType::kDOMManipulation)
           ->PostTask(FROM_HERE,
-                     WTF::BindOnce(&ScriptElementBase::DispatchErrorEvent,
-                                   WrapPersistent(element_.Get())));
+                     blink::BindOnce(&ScriptElementBase::DispatchErrorEvent,
+                                     WrapPersistent(element_.Get())));
       return nullptr;
     }
 
@@ -807,8 +797,8 @@ PendingScript* ScriptLoader::PrepareScript(
     if (!url.IsValid()) {
       element_document.GetTaskRunner(TaskType::kDOMManipulation)
           ->PostTask(FROM_HERE,
-                     WTF::BindOnce(&ScriptElementBase::DispatchErrorEvent,
-                                   WrapPersistent(element_.Get())));
+                     blink::BindOnce(&ScriptElementBase::DispatchErrorEvent,
+                                     WrapPersistent(element_.Get())));
       return nullptr;
     }
 
@@ -842,6 +832,7 @@ PendingScript* ScriptLoader::PrepareScript(
     switch (GetScriptType()) {
       case ScriptTypeAtPrepare::kInvalid:
       case ScriptTypeAtPrepare::kImportMap:
+      case ScriptTypeAtPrepare::kRouteMap:
         NOTREACHED();
 
       case ScriptTypeAtPrepare::kSpeculationRules:
@@ -850,6 +841,10 @@ PendingScript* ScriptLoader::PrepareScript(
             mojom::blink::ConsoleMessageSource::kJavaScript,
             mojom::blink::ConsoleMessageLevel::kError,
             "External speculation rules are not yet supported."));
+        element_document.GetTaskRunner(TaskType::kDOMManipulation)
+            ->PostTask(FROM_HERE,
+                       blink::BindOnce(&ScriptElementBase::DispatchErrorEvent,
+                                       WrapPersistent(element_.Get())));
         return nullptr;
 
       case ScriptTypeAtPrepare::kWebBundle:
@@ -859,8 +854,8 @@ PendingScript* ScriptLoader::PrepareScript(
             "External webbundle is not yet supported."));
         element_document.GetTaskRunner(TaskType::kDOMManipulation)
             ->PostTask(FROM_HERE,
-                       WTF::BindOnce(&ScriptElementBase::DispatchErrorEvent,
-                                     WrapPersistent(element_.Get())));
+                       blink::BindOnce(&ScriptElementBase::DispatchErrorEvent,
+                                       WrapPersistent(element_.Get())));
         return nullptr;
 
       case ScriptTypeAtPrepare::kClassic: {
@@ -873,9 +868,9 @@ PendingScript* ScriptLoader::PrepareScript(
         // encoding.</spec>
         //
         // TODO(hiroshige): Should we handle failure in getting an encoding?
-        WTF::TextEncoding encoding;
+        TextEncoding encoding;
         if (!element_->CharsetAttributeValue().empty()) {
-          encoding = WTF::TextEncoding(element_->CharsetAttributeValue());
+          encoding = TextEncoding(element_->CharsetAttributeValue());
         } else {
           encoding = element_document.Encoding();
         }
@@ -891,15 +886,13 @@ PendingScript* ScriptLoader::PrepareScript(
         }
         ClassicPendingScript* pending_script = ClassicPendingScript::Fetch(
             url, element_document, options, cross_origin, encoding, element_,
-            defer, GetRunningTask(script_state));
+            defer, CaptureCurrentTaskStateIfMainWorld(script_state));
         prepared_pending_script_ = pending_script;
         Resource* resource = pending_script->GetResource();
         resource_keep_alive_ = resource;
         is_eligible_for_delay =
             IsEligibleForDelay(*resource, element_document, *element_,
                                parser_inserted_, is_in_document_write);
-        is_eligible_for_selective_in_order =
-            IsEligibleForSelectiveInOrder(*resource, element_document);
         break;
       }
       case ScriptTypeAtPrepare::kModule: {
@@ -952,43 +945,6 @@ PendingScript* ScriptLoader::PrepareScript(
 
       // <spec step="32.2.C">"importmap"</spec>
       case ScriptTypeAtPrepare::kImportMap: {
-        if (!RuntimeEnabledFeatures::MultipleImportMapsEnabled()) {
-          // TODO(crbug.com/365578430): Remove this logic once the
-          // MultipleImportMaps flag is removed.
-          //
-          // <spec step="32.2.C.1">If el's relevant global object's import maps
-          // allowed is false, then queue an element task on the DOM
-          // manipulation task source given el to fire an event named error at
-          // el, and return.</spec>
-          Modulator* modulator = Modulator::From(script_state);
-          auto acquiring_state = modulator->GetAcquiringImportMapsState();
-          switch (acquiring_state) {
-            case Modulator::AcquiringImportMapsState::kAfterModuleScriptLoad:
-            case Modulator::AcquiringImportMapsState::kMultipleImportMaps:
-              element_document.AddConsoleMessage(MakeGarbageCollected<
-                                                 ConsoleMessage>(
-                  mojom::blink::ConsoleMessageSource::kJavaScript,
-                  mojom::blink::ConsoleMessageLevel::kError,
-                  acquiring_state == Modulator::AcquiringImportMapsState::
-                                         kAfterModuleScriptLoad
-                      ? "An import map is added after module script load was "
-                        "triggered."
-                      : "Multiple import maps are not yet supported. "
-                        "https://crbug.com/927119"));
-              element_document.GetTaskRunner(TaskType::kDOMManipulation)
-                  ->PostTask(
-                      FROM_HERE,
-                      WTF::BindOnce(&ScriptElementBase::DispatchErrorEvent,
-                                    WrapPersistent(element_.Get())));
-              return nullptr;
-
-            case Modulator::AcquiringImportMapsState::kAcquiring:
-              modulator->SetAcquiringImportMapsState(
-                  Modulator::AcquiringImportMapsState::kMultipleImportMaps);
-
-              break;
-          }
-        }
         UseCounter::Count(*context_window, WebFeature::kImportMap);
 
         // <spec step="32.2.C.3">Let result be the result of creating an import
@@ -1003,6 +959,29 @@ PendingScript* ScriptLoader::PrepareScript(
         // https://html.spec.whatwg.org/C#execute-the-script-element step 6.C
         pending_import_map->RegisterImportMap();
 
+        return nullptr;
+      }
+      case ScriptTypeAtPrepare::kRouteMap: {
+        RouteMap::ParseResult result =
+            RouteMap::Ensure(element_document).ParseAndApplyRoutes(source_text);
+        if (script_state->ContextIsValid()) {
+          ScriptState::Scope scope(script_state);
+          v8::Isolate* isolate = script_state->GetIsolate();
+          switch (result.status) {
+            case RouteMap::ParseResult::kSuccess:
+              break;
+            case RouteMap::ParseResult::kSyntaxError:
+              V8ScriptRunner::ReportException(
+                  isolate,
+                  V8ThrowException::CreateSyntaxError(isolate, result.message));
+              break;
+            case RouteMap::ParseResult::kTypeError:
+              V8ScriptRunner::ReportException(
+                  isolate,
+                  V8ThrowException::CreateTypeError(isolate, result.message));
+              break;
+          }
+        }
         return nullptr;
       }
       case ScriptTypeAtPrepare::kWebBundle: {
@@ -1062,7 +1041,8 @@ PendingScript* ScriptLoader::PrepareScript(
 
         prepared_pending_script_ = ClassicPendingScript::CreateInline(
             element_, position, source_url, base_url, source_text,
-            script_location_type, options, GetRunningTask(script_state));
+            script_location_type, options,
+            CaptureCurrentTaskStateIfMainWorld(script_state));
 
         // <spec step="30.2.A.2">Mark as ready el given script.</spec>
         //
@@ -1093,8 +1073,9 @@ PendingScript* ScriptLoader::PrepareScript(
         // text, settings object, base URL, and options.</spec>
         ModuleScriptCreationParams params(
             source_url, base_url, ScriptSourceLocationType::kInline,
-            ModuleType::kJavaScript, ParkableString(source_text.Impl()),
-            nullptr, network::mojom::ReferrerPolicy::kDefault);
+            ResolvedModuleType::kJavaScript, ParkableString(source_text.Impl()),
+            nullptr, network::mojom::ReferrerPolicy::kDefault,
+            /*source_map_url=*/String());
         ModuleScript* module_script =
             JSModuleScript::Create(params, modulator, options, position);
 
@@ -1106,15 +1087,10 @@ PendingScript* ScriptLoader::PrepareScript(
           return nullptr;
         }
 
-        if (RuntimeEnabledFeatures::RenderBlockingInlineModuleScriptEnabled() &&
-            potentially_render_blocking &&
+        if (potentially_render_blocking &&
             element_document.GetRenderBlockingResourceManager()) {
-          // TODO(crbug.com/364904756) - This spec step does not exist. The PR
-          // below has landed, but doesn't contain it. After
-          // https://github.com/whatwg/html/pull/10035: <spec
-          // label="fetch-an-inline-module-script-graph" step="?">If el is
-          // potentially render-blocking, then block rendering on el and set
-          // options's  render-blocking  to true.</spec>
+          // <spec label="script-processing-model" step="31.7">
+          // If el is potentially render-blocking, then block rendering on el.
           element_document.GetRenderBlockingResourceManager()->AddPendingScript(
               *element_);
         }
@@ -1132,7 +1108,7 @@ PendingScript* ScriptLoader::PrepareScript(
             network::mojom::RequestDestination::kScript, module_tree_client);
         prepared_pending_script_ = MakeGarbageCollected<ModulePendingScript>(
             element_, module_tree_client, is_external_script_,
-            GetRunningTask(script_state));
+            CaptureCurrentTaskStateIfMainWorld(script_state));
         break;
       }
     }
@@ -1143,58 +1119,6 @@ PendingScript* ScriptLoader::PrepareScript(
 
   ScriptSchedulingType script_scheduling_type = GetScriptSchedulingTypePerSpec(
       element_document, parser_blocking_inline_option);
-
-  // [Intervention, SelectiveInOrderScript, crbug.com/1356396]
-  // Check for external script that
-  // should be in-order. This simply marks the parser blocking scripts as
-  // kInOrder if it's eligible. We use ScriptSchedulingType::kInOrder
-  // rather than kForceInOrder here since we don't preserve evaluation order
-  // between intervened scripts and ordinary parser-blocking/inline scripts.
-  if (is_eligible_for_selective_in_order) {
-    switch (script_scheduling_type) {
-      case ScriptSchedulingType::kParserBlocking:
-        UseCounter::Count(context_window->document()->TopDocument(),
-                          WebFeature::kSelectiveInOrderScript);
-        if (base::FeatureList::IsEnabled(features::kSelectiveInOrderScript)) {
-          script_scheduling_type = ScriptSchedulingType::kInOrder;
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  // [Intervention, ForceInOrderScript, crbug.com/1344772]
-  // Check for external script that
-  // should be force in-order. Not only the pending scripts that would be marked
-  // (without the intervention) as ScriptSchedulingType::kParserBlocking or
-  // kInOrder, but also the scripts that would be marked as kAsync are put into
-  // the force in-order queue in ScriptRunner because we have to guarantee the
-  // execution order of the scripts.
-  if (IsEligibleForForceInOrder(element_document)) {
-    switch (script_scheduling_type) {
-      case ScriptSchedulingType::kAsync:
-      case ScriptSchedulingType::kInOrder:
-      case ScriptSchedulingType::kParserBlocking:
-        script_scheduling_type = ScriptSchedulingType::kForceInOrder;
-        break;
-      default:
-        break;
-    }
-  }
-
-  // [Intervention, ForceInOrderScript, crbug.com/1344772]
-  // If ScriptRunner still has
-  // ForceInOrder scripts not executed yet, attempt to mark the inline script as
-  // parser blocking so that the inline script is evaluated after the
-  // ForceInOrder scripts are evaluated.
-  if (script_scheduling_type == ScriptSchedulingType::kImmediate &&
-      parser_inserted_ &&
-      parser_blocking_inline_option == ParserBlockingInlineOption::kAllow &&
-      context_window->document()->GetScriptRunner()->HasForceInOrderScripts()) {
-    DCHECK(base::FeatureList::IsEnabled(features::kForceInOrderScript));
-    script_scheduling_type = ScriptSchedulingType::kParserBlockingInline;
-  }
 
   // <spec step="31">If el's type is "classic" and el has a src attribute, or
   // el's type is "module":</spec>
@@ -1209,26 +1133,8 @@ PendingScript* ScriptLoader::PrepareScript(
       // list of scripts that will execute in order as soon as possible.</spec>
       //
       // <spec step="31.3.2">Append el to scripts.</spec>
-    case ScriptSchedulingType::kForceInOrder:
-      // [intervention, https://crbug.com/1344772] Append el to el's
-      // preparation-time document's list of force-in-order scripts.
 
       {
-        // [Intervention, DelayAsyncScriptExecution, crbug.com/1340837]
-        // If the target is kCrossSiteWithAllowList or
-        // kCrossSiteWithAllowListReportOnly, record the metrics and override
-        // is_eligible_for_delay to be always false when
-        // kCrossSiteWithAllowListReportOnly.
-        if (is_eligible_for_delay &&
-            script_scheduling_type == ScriptSchedulingType::kAsync) {
-          const features::DelayAsyncScriptTarget delay_async_script_target =
-              features::kDelayAsyncScriptTargetParam.Get();
-          if (delay_async_script_target ==
-              features::DelayAsyncScriptTarget::
-                  kCrossSiteWithAllowListReportOnly) {
-            is_eligible_for_delay = false;
-          }
-        }
         // TODO(hiroshige): Here the context document is used as "node document"
         // while Step 14 uses |elementDocument| as "node document". Fix this.
         ScriptRunner* script_runner =
@@ -1335,14 +1241,15 @@ void ScriptLoader::FetchModuleScriptTree(
     const ScriptFetchOptions& options) {
   auto* module_tree_client =
       MakeGarbageCollected<ModulePendingScriptTreeClient>();
-  modulator->FetchTree(url, ModuleType::kJavaScript,
+  modulator->FetchTree(url, ModuleType::kJavaScriptOrWasm,
                        fetch_client_settings_object_fetcher,
                        mojom::blink::RequestContextType::SCRIPT,
                        network::mojom::RequestDestination::kScript, options,
-                       ModuleScriptCustomFetchType::kNone, module_tree_client);
+                       ModuleScriptCustomFetchType::kNone, module_tree_client,
+                       ModuleImportPhase::kEvaluation);
   prepared_pending_script_ = MakeGarbageCollected<ModulePendingScript>(
       element_, module_tree_client, is_external_script_,
-      GetRunningTask(modulator->GetScriptState()));
+      CaptureCurrentTaskStateIfMainWorld(modulator->GetScriptState()));
 }
 
 PendingScript* ScriptLoader::TakePendingScript(
@@ -1462,6 +1369,23 @@ void ScriptLoader::AddSpeculationRuleSet(SpeculationRuleSet::Source* source) {
 
   speculation_rule_set_ = SpeculationRuleSet::Parse(source, context_window);
   CHECK(speculation_rule_set_);
+
+  if (speculation_rule_set_->error_type() ==
+          SpeculationRuleSetErrorType::kSourceIsNotJsonObject ||
+      speculation_rule_set_->error_type() ==
+          SpeculationRuleSetErrorType::kInvalidRulesetLevelTag) {
+    // For a JSON parse error, we fire an error event on the element, and
+    // then report an exception which will bubble to the window.
+    element_->DispatchErrorEvent();
+
+    ScriptState* script_state =
+        ToScriptStateForMainWorld(context_window->GetFrame());
+    ScriptState::Scope scope(script_state);
+    v8::Local<v8::Value> error = v8::Exception::TypeError(V8String(
+        script_state->GetIsolate(), speculation_rule_set_->error_message()));
+    V8ScriptRunner::ReportException(script_state->GetIsolate(), error);
+  }
+
   DocumentSpeculationRules::From(element_document)
       .AddRuleSet(speculation_rule_set_);
   speculation_rule_set_->AddConsoleMessageForValidation(*element_);

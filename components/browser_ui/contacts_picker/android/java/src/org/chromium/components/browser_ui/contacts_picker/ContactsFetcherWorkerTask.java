@@ -43,10 +43,10 @@ class ContactsFetcherWorkerTask extends AsyncTask<@Nullable ArrayList<ContactDet
     }
 
     // The content resolver to use for looking up contacts.
-    private ContentResolver mContentResolver;
+    private final ContentResolver mContentResolver;
 
     // The callback to use to communicate the results.
-    private ContactsRetrievedCallback mCallback;
+    private final ContactsRetrievedCallback mCallback;
 
     // Whether names were requested by the website.
     private final boolean mIncludeNames;
@@ -111,10 +111,10 @@ class ContactsFetcherWorkerTask extends AsyncTask<@Nullable ArrayList<ContactDet
      */
     private Map<String, ArrayList<String>> getDetails(
             Uri source, String idColumn, String dataColumn, String sortOrder) {
-        Map<String, ArrayList<String>> map = new HashMap<String, ArrayList<String>>();
+        Map<String, ArrayList<String>> map = new HashMap<>();
 
         Cursor cursor = mContentResolver.query(source, null, null, null, sortOrder);
-        ArrayList<String> list = new ArrayList<String>();
+        ArrayList<String> list = new ArrayList<>();
         String key = "";
         String value;
         assumeNonNull(cursor);
@@ -130,7 +130,7 @@ class ContactsFetcherWorkerTask extends AsyncTask<@Nullable ArrayList<ContactDet
                     list.add(value);
                 } else {
                     map.put(key, list);
-                    list = new ArrayList<String>();
+                    list = new ArrayList<>();
                     list.add(value);
                     key = id;
                 }
@@ -277,10 +277,10 @@ class ContactsFetcherWorkerTask extends AsyncTask<@Nullable ArrayList<ContactDet
         assumeNonNull(cursor);
         if (!cursor.moveToFirst()) {
             cursor.close();
-            return new ArrayList<ContactDetails>();
+            return new ArrayList<>();
         }
 
-        ArrayList<ContactDetails> contacts = new ArrayList<ContactDetails>(cursor.getCount());
+        ArrayList<ContactDetails> contacts = new ArrayList<>(cursor.getCount());
         do {
             String id =
                     cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID));

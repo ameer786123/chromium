@@ -4,10 +4,12 @@
 
 package org.chromium.chrome.browser.compositor.overlays.strip;
 
+import static org.chromium.chrome.test.util.ChromeTabUtils.getIndexOnUiThread;
+import static org.chromium.chrome.test.util.ChromeTabUtils.getTabCountOnUiThread;
+
 import android.content.pm.ActivityInfo;
 import android.view.MotionEvent;
 import android.view.View;
-import android.widget.FrameLayout;
 
 import androidx.test.filters.LargeTest;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -67,7 +69,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/342984901")
     public void testInitialState() throws Exception {
@@ -81,14 +83,15 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip", "Main"})
     public void testNewTabButtonWithOneTab() throws Exception {
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertEquals(
                 "Expected original tab to be selected",
                 0,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).index());
+                getIndexOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(false)));
 
         ChromeTabUtils.clickNewTabButton(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
@@ -97,12 +100,14 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected two tabs to exist",
                 2,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).getCount());
+                getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(false)));
         compareAllTabStripsWithModel();
         Assert.assertEquals(
                 "Expected second tab to be selected",
                 1,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).index());
+                getIndexOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(false)));
     }
 
     /**
@@ -111,7 +116,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     public void testNewTabButtonWithManyTabs() throws Exception {
         ChromeTabUtils.newTabsFromMenu(
@@ -133,7 +138,8 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected original tab to be selected",
                 0,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).index());
+                getIndexOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(false)));
         compareAllTabStripsWithModel();
 
         ChromeTabUtils.clickNewTabButton(
@@ -143,18 +149,20 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected five tabs to exist",
                 5,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).getCount());
+                getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(false)));
         Assert.assertEquals(
                 "Expected last tab to be selected",
                 4,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).index());
+                getIndexOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(false)));
         compareAllTabStripsWithModel();
     }
 
     /** Tests that creating a new tab from the menu properly updates the TabStrip. */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/342984901")
     public void testNewTabFromMenu() throws Exception {
@@ -166,7 +174,8 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected two tabs to exist",
                 2,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).getCount());
+                getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(false)));
         compareAllTabStripsWithModel();
     }
 
@@ -176,7 +185,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/342984901")
     public void testNewIncognitoTabFromMenuAtNormalStrip() throws Exception {
@@ -193,17 +202,19 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected normal model to have one tab",
                 1,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).getCount());
+                getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(false)));
         Assert.assertEquals(
                 "Expected incognito model to have one tab",
                 1,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).getCount());
+                getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(true)));
     }
 
     /** Tests that selecting a tab properly selects the new tab. */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     public void testSelectWithTwoTabs() throws Exception {
         ChromeTabUtils.newTabFromMenu(
@@ -212,13 +223,21 @@ public class TabStripTest {
         Assert.assertEquals(
                 "The second tab is not selected",
                 1,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
-        selectTab(false, mActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0).getId());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
+        selectTab(
+                false,
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getCurrentTabModel()
+                                        .getTabAt(0)
+                                        .getId()));
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertEquals(
                 "The first tab is not selected",
                 0,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         compareAllTabStripsWithModel();
     }
 
@@ -228,7 +247,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     public void testSelectWithManyTabs() throws Exception {
         ChromeTabUtils.newTabsFromMenu(
@@ -237,16 +256,24 @@ public class TabStripTest {
         Assert.assertEquals(
                 "The last tab is not selected",
                 4,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         compareAllTabStripsWithModel();
         // Note: if the tab is not visible, this will fail. Currently that's not a problem, because
         // the devices we test on are wide enough.
-        selectTab(false, mActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0).getId());
+        selectTab(
+                false,
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getCurrentTabModel()
+                                        .getTabAt(0)
+                                        .getId()));
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertEquals(
                 "The middle tab is not selected",
                 0,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         compareAllTabStripsWithModel();
     }
 
@@ -255,7 +282,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/1348310")
     public void testCloseTabWithTwoTabs() throws Exception {
@@ -265,26 +292,34 @@ public class TabStripTest {
         Assert.assertEquals(
                 "There are not two tabs present",
                 2,
-                mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "The second tab is not selected",
                 1,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
-        int initialSelectedId = mActivityTestRule.getActivity().getActivityTab().getId();
-        closeTab(false, mActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0).getId());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
+        int initialSelectedId = mActivityTestRule.getActivityTab().getId();
+        closeTab(
+                false,
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getCurrentTabModel()
+                                        .getTabAt(0)
+                                        .getId()));
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertEquals(
                 "There is not one tab present",
                 1,
-                mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "The wrong tab index is selected after close",
                 0,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "Same tab not still selected",
                 initialSelectedId,
-                mActivityTestRule.getActivity().getActivityTab().getId());
+                mActivityTestRule.getActivityTab().getId());
         compareAllTabStripsWithModel();
     }
 
@@ -294,7 +329,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/1348310")
     public void testCloseTabWithManyTabs() throws Exception {
@@ -304,28 +339,36 @@ public class TabStripTest {
         Assert.assertEquals(
                 "There are not five tabs present",
                 5,
-                mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "The last tab is not selected",
                 4,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
-        int initialSelectedId = mActivityTestRule.getActivity().getActivityTab().getId();
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
+        int initialSelectedId = mActivityTestRule.getActivityTab().getId();
         // Note: if the tab is not visible, this will fail. Currently that's not a problem, because
         // the devices we test on are wide enough.
-        closeTab(false, mActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0).getId());
+        closeTab(
+                false,
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getCurrentTabModel()
+                                        .getTabAt(0)
+                                        .getId()));
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertEquals(
                 "There are not four tabs present",
                 4,
-                mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "The wrong tab index is selected after close",
                 3,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "Same tab not still selected",
                 initialSelectedId,
-                mActivityTestRule.getActivity().getActivityTab().getId());
+                mActivityTestRule.getActivityTab().getId());
         compareAllTabStripsWithModel();
     }
 
@@ -335,7 +378,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     public void testCloseSelectedTab() throws Exception {
         ChromeTabUtils.newTabFromMenu(
@@ -344,27 +387,39 @@ public class TabStripTest {
         Assert.assertEquals(
                 "There are not two tabs present",
                 2,
-                mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "The second tab is not selected",
                 1,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         int newSelectionId =
-                mActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0).getId();
-        closeTab(false, mActivityTestRule.getActivity().getCurrentTabModel().getTabAt(1).getId());
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getCurrentTabModel()
+                                        .getTabAt(0)
+                                        .getId());
+        closeTab(
+                false,
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getCurrentTabModel()
+                                        .getTabAt(1)
+                                        .getId()));
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertEquals(
                 "There is not one tab present",
                 1,
-                mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "The wrong tab index is selected after close",
                 0,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
-                "New tab not selected",
-                newSelectionId,
-                mActivityTestRule.getActivity().getActivityTab().getId());
+                "New tab not selected", newSelectionId, mActivityTestRule.getActivityTab().getId());
         compareAllTabStripsWithModel();
     }
 
@@ -374,7 +429,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/1348310")
     public void testCloseAllTabsFromTabMenuClosesAllTabs() {
@@ -385,29 +440,35 @@ public class TabStripTest {
         Assert.assertEquals(
                 "There are not two tabs present",
                 2,
-                mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "The second tab is not selected",
                 1,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
 
         // 2. Display "close all tabs" menu on first tab
         int tabSelectionId =
-                mActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0).getId();
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getCurrentTabModel()
+                                        .getTabAt(0)
+                                        .getId());
         longPressCloseTab(false, tabSelectionId);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertEquals(
                 "There are not two tabs present",
                 2,
-                mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "The wrong tab index is selected after long press",
                 0,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
+                getIndexOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
         Assert.assertEquals(
                 "Long pressed tab not selected",
                 tabSelectionId,
-                mActivityTestRule.getActivity().getActivityTab().getId());
+                mActivityTestRule.getActivityTab().getId());
 
         // 3. Invoke "close all tabs" menu action; block until action is completed
         ThreadUtils.runOnUiThreadBlocking(
@@ -421,7 +482,7 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected no tabs to be present",
                 0,
-                mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
     }
 
     /**
@@ -430,7 +491,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction({DeviceFormFactor.TABLET, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
+    @Restriction({DeviceFormFactor.TABLET_OR_DESKTOP, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/342984901")
     public void testTabMenuDismissedOnOrientationChange() {
@@ -442,7 +503,13 @@ public class TabStripTest {
 
         // 2. Open "close all tabs" menu
         int tabSelectionId =
-                mActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0).getId();
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getCurrentTabModel()
+                                        .getTabAt(0)
+                                        .getId());
         longPressCloseTab(false, tabSelectionId);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
@@ -457,7 +524,7 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected 1 tab to be present",
                 1,
-                mActivityTestRule.getActivity().getCurrentTabModel().getCount());
+                getTabCountOnUiThread(mActivityTestRule.getActivity().getCurrentTabModel()));
 
         // 4. Reset orientation
         mActivityTestRule
@@ -472,7 +539,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/342984901")
     public void testToggleIncognitoMode() throws Exception {
@@ -506,7 +573,7 @@ public class TabStripTest {
     @Test
     @LargeTest
     @Feature({"TabStrip"})
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testCloseLastIncognitoTab() {
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertFalse(
@@ -517,14 +584,15 @@ public class TabStripTest {
         Assert.assertTrue(
                 "Expected incognito strip to be selected",
                 mActivityTestRule.getActivity().getTabModelSelector().isIncognitoSelected());
-        closeTab(
-                true,
-                TabModelUtils.getCurrentTab(
-                                mActivityTestRule
-                                        .getActivity()
-                                        .getTabModelSelector()
-                                        .getModel(true))
-                        .getId());
+        Tab currentTab =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                TabModelUtils.getCurrentTab(
+                                        mActivityTestRule
+                                                .getActivity()
+                                                .getTabModelSelector()
+                                                .getModel(true)));
+        closeTab(true, currentTab.getId());
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         Assert.assertFalse(
                 "Expected normal strip to be selected",
@@ -532,7 +600,8 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected incognito strip to have no tabs",
                 0,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(true).getCount());
+                getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(true)));
     }
 
     /**
@@ -542,7 +611,7 @@ public class TabStripTest {
     @Test
     @LargeTest
     @Feature({"TabStrip"})
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testCloseAllIncognitoTabsFromTabMenu() {
         // 1. Create two incognito tabs
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -559,16 +628,19 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected incognito strip to have 2 tabs",
                 2,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(true).getCount());
+                getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(true)));
 
         // 2. Open "close all tabs" menu
         int tabSelectionId =
-                TabModelUtils.getCurrentTab(
-                                mActivityTestRule
-                                        .getActivity()
-                                        .getTabModelSelector()
-                                        .getModel(true))
-                        .getId();
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                TabModelUtils.getCurrentTab(
+                                                mActivityTestRule
+                                                        .getActivity()
+                                                        .getTabModelSelector()
+                                                        .getModel(true))
+                                        .getId());
         longPressCloseTab(true, tabSelectionId);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
@@ -587,11 +659,13 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected normal strip to have 1 tab",
                 1,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).getCount());
+                getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(false)));
         Assert.assertEquals(
                 "Expected incognito strip to have no tabs",
                 0,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(true).getCount());
+                getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(true)));
     }
 
     /**
@@ -600,7 +674,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     public void testTabSelectionViewDoesNotBreakModelSwitch() {
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -628,7 +702,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "https://crbug.com/328302523")
     public void testScrollingStripStackersWithIncognito() throws Exception {
@@ -647,7 +721,9 @@ public class TabStripTest {
         TabModel model = mActivityTestRule.getActivity().getTabModelSelector().getModel(false);
         StripLayoutTab tab =
                 TabStripUtils.findStripLayoutTab(
-                        mActivityTestRule.getActivity(), false, model.getTabAt(20).getId());
+                        mActivityTestRule.getActivity(),
+                        false,
+                        ThreadUtils.runOnUiThreadBlocking(() -> model.getTabAt(20).getId()));
         assertTabVisibility(false, tab);
 
         // Create visibility callback helper.
@@ -674,12 +750,31 @@ public class TabStripTest {
         helper.waitForCallback(0);
     }
 
-    /** This verifies that the strip scrolls correctly when last tab is selected. */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     public void testScrollingStripStackersWithLastTabSelected() throws Exception {
+        testScrollingStripStackersWithLastTabSelected(/* isRtl= */ false);
+    }
+
+    @Test
+    @LargeTest
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
+    @Feature({"TabStrip", "RTL"})
+    public void testScrollingStripStackersWithLastTabSelectedRtl() throws Exception {
+        testScrollingStripStackersWithLastTabSelected(/* isRtl= */ true);
+    }
+
+    /**
+     * This verifies that the strip scrolls correctly when last tab is selected.
+     *
+     * @param isRtl whether to test RTL layouts.
+     */
+    private void testScrollingStripStackersWithLastTabSelected(boolean isRtl)
+            throws ExecutionException {
+        LocalizationUtils.setRtlForTesting(isRtl);
+
         // Open enough regular tabs to cause the strip to scroll
         ChromeTabUtils.newTabsFromMenu(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity(), 20);
@@ -691,7 +786,7 @@ public class TabStripTest {
     /** Verifies that the strip scrolls correctly and the correct index is selected. */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest
     // Disable due to flakiness in scrolling to hide the first tab.
@@ -711,7 +806,13 @@ public class TabStripTest {
                 TabStripUtils.findStripLayoutTab(
                         mActivityTestRule.getActivity(),
                         false,
-                        mActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0).getId());
+                        ThreadUtils.runOnUiThreadBlocking(
+                                () ->
+                                        mActivityTestRule
+                                                .getActivity()
+                                                .getCurrentTabModel()
+                                                .getTabAt(0)
+                                                .getId()));
 
         // Create visibility callback helper.
         final CallbackHelper helper = new CallbackHelper();
@@ -734,7 +835,7 @@ public class TabStripTest {
         assertSetTabStripScrollOffset(
                 (int)
                         TabStripUtils.getActiveStripLayoutHelper(mActivityTestRule.getActivity())
-                                .getMinimumScrollOffsetForTesting());
+                                .getScrollOffsetLimitForTesting());
 
         // Tab should now be hidden.
         helper.waitForCallback(0);
@@ -748,7 +849,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/1348310")
     public void testScrollingStripStackersWithMiddleTabSelected() throws Exception {
@@ -771,7 +872,7 @@ public class TabStripTest {
     @Test
     @LargeTest
     @DisabledTest(message = "https://crbug.com/338966108")
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     public void testScrollingStripStackerFadeOpacity() throws Exception {
         // Check scrolling tab strip
@@ -780,7 +881,7 @@ public class TabStripTest {
         // Open enough regular tabs to cause the strip to scroll.
         StripLayoutHelper tabStrip =
                 TabStripUtils.getStripLayoutHelper(mActivityTestRule.getActivity(), false);
-        while (tabStrip.getMinimumScrollOffsetForTesting() >= 0) {
+        while (tabStrip.getScrollOffsetLimitForTesting() >= 0) {
             ChromeTabUtils.newTabFromMenu(
                     InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
         }
@@ -792,12 +893,12 @@ public class TabStripTest {
         assertTabStripFadeFullyHidden(!isLeft);
         assertTabStripFadeFullyVisible(isLeft);
 
-        // Scroll a little below the minimum scroll offset causing the right fade (in LTR) to be
+        // Scroll a little below the scroll offset limit causing the right fade (in LTR) to be
         // at partial opacity.
         assertSetTabStripScrollOffset(
                 (int)
                         (TabStripUtils.getActiveStripLayoutHelper(mActivityTestRule.getActivity())
-                                        .getMinimumScrollOffsetForTesting()
+                                        .getScrollOffsetLimitForTesting()
                                 + StripLayoutHelper.FADE_FULL_OPACITY_THRESHOLD_DP / 2));
         assertTabStripFadePartiallyVisible(!isLeft);
         assertTabStripFadeFullyVisible(isLeft);
@@ -820,7 +921,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/342984901")
     public void testScrollingStripStackerScrollsToSelectedTab() throws Exception {
@@ -831,7 +932,9 @@ public class TabStripTest {
         TabModel model = mActivityTestRule.getActivity().getTabModelSelector().getModel(false);
         final StripLayoutTab tab =
                 TabStripUtils.findStripLayoutTab(
-                        mActivityTestRule.getActivity(), false, model.getTabAt(0).getId());
+                        mActivityTestRule.getActivity(),
+                        false,
+                        ThreadUtils.runOnUiThreadBlocking(() -> model.getTabAt(0).getId()));
         while (tab.isVisible()) {
             ChromeTabUtils.newTabFromMenu(
                     InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
@@ -867,7 +970,7 @@ public class TabStripTest {
      */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip"})
     @DisabledTest(message = "crbug.com/1348310")
     public void testScrollingStripStackerTabOffsets() throws Exception {
@@ -952,15 +1055,14 @@ public class TabStripTest {
     /** Tests that switching tabs hides keyboard. */
     @Test
     @LargeTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @Feature({"TabStrip", "IME"})
     @DisabledTest(message = "crbug.com/342984901")
     public void testSwitchingTabsHidesKeyboard() throws Throwable {
         mActivityTestRule.loadUrl(
                 "data:text/html;charset=utf-8,<html><head></head><body><form>"
                         + "<input type='text' id='input0'></form></body></html>");
-        DOMUtils.clickNode(
-                mActivityTestRule.getActivity().getActivityTab().getWebContents(), "input0");
+        DOMUtils.clickNode(mActivityTestRule.getWebContents(), "input0");
         assertWaitForKeyboardStatus(true);
 
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -972,7 +1074,8 @@ public class TabStripTest {
         Assert.assertEquals(
                 "Expected two tabs to exist",
                 2,
-                mActivityTestRule.getActivity().getTabModelSelector().getModel(false).getCount());
+                getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(false)));
 
         assertWaitForKeyboardStatus(false);
     }
@@ -984,7 +1087,7 @@ public class TabStripTest {
     @Test
     @LargeTest
     @Feature({"TabStrip"})
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testHoverOnTabStripTabs() throws Exception {
         // Open a few regular tabs.
         ChromeTabUtils.newTabsFromMenu(
@@ -994,10 +1097,14 @@ public class TabStripTest {
         TabModel model = mActivityTestRule.getActivity().getTabModelSelector().getModel(false);
         StripLayoutTab tab1 =
                 TabStripUtils.findStripLayoutTab(
-                        mActivityTestRule.getActivity(), false, model.getTabAt(1).getId());
+                        mActivityTestRule.getActivity(),
+                        false,
+                        ThreadUtils.runOnUiThreadBlocking(() -> model.getTabAt(1).getId()));
         StripLayoutTab tab2 =
                 TabStripUtils.findStripLayoutTab(
-                        mActivityTestRule.getActivity(), false, model.getTabAt(2).getId());
+                        mActivityTestRule.getActivity(),
+                        false,
+                        ThreadUtils.runOnUiThreadBlocking(() -> model.getTabAt(2).getId()));
         assertTabVisibility(true, tab1);
         assertTabVisibility(true, tab2);
 
@@ -1038,7 +1145,7 @@ public class TabStripTest {
         Assert.assertFalse("|mFolioAttached| for tab1 should be false.", tab1.getFolioAttached());
         Assert.assertEquals(
                 "tab1 container bottom margin should match.",
-                StripLayoutUtils.FOLIO_DETACHED_BOTTOM_MARGIN_DP,
+                StripLayoutTabDelegate.FOLIO_DETACHED_BOTTOM_MARGIN_DP,
                 tab1.getBottomMargin(),
                 0.f);
 
@@ -1052,11 +1159,10 @@ public class TabStripTest {
         lastHoveredTab = stripLayoutHelperManager.getActiveStripLayoutHelper().getLastHoveredTab();
         Assert.assertEquals("The last hovered tab is not set correctly.", tab2, lastHoveredTab);
         Assert.assertFalse("|mFolioAttached| for tab2 should be false.", tab2.getFolioAttached());
-        Assert.assertTrue("|mFolioAttached| for tab1 should be true.", tab1.getFolioAttached());
         Assert.assertEquals(
-                "tab1 container bottom margin should match.",
-                StripLayoutUtils.FOLIO_ATTACHED_BOTTOM_MARGIN_DP,
-                tab1.getBottomMargin(),
+                "tab2 container bottom margin should match.",
+                StripLayoutTabDelegate.FOLIO_DETACHED_BOTTOM_MARGIN_DP,
+                tab2.getBottomMargin(),
                 0.f);
 
         // Simulate a subsequent hover outside tab2.
@@ -1068,14 +1174,13 @@ public class TabStripTest {
                                 MotionEvent.ACTION_HOVER_EXIT, xExit, yExit));
         lastHoveredTab = stripLayoutHelperManager.getActiveStripLayoutHelper().getLastHoveredTab();
         Assert.assertNull("The last hovered tab is not set correctly.", lastHoveredTab);
-        Assert.assertTrue("|mFolioAttached| for tab2 should be true.", tab2.getFolioAttached());
     }
 
     /** Tests hover cards shown in standard as well as incognito tab models. */
     @Test
     @LargeTest
     @Feature({"TabStrip"})
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testHoverOnTabStrip_switchTabModel() throws Exception {
         // Open regular tabs.
         ChromeTabUtils.newTabsFromMenu(
@@ -1085,7 +1190,9 @@ public class TabStripTest {
         TabModel model = mActivityTestRule.getActivity().getTabModelSelector().getModel(false);
         StripLayoutTab standardTab =
                 TabStripUtils.findStripLayoutTab(
-                        mActivityTestRule.getActivity(), false, model.getTabAt(1).getId());
+                        mActivityTestRule.getActivity(),
+                        false,
+                        ThreadUtils.runOnUiThreadBlocking(() -> model.getTabAt(1).getId()));
         assertTabVisibility(true, standardTab);
 
         // Simulate a hover into standardTab.
@@ -1150,13 +1257,15 @@ public class TabStripTest {
     @Test
     @LargeTest
     @Feature({"TabStrip"})
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @DisabledTest(message = "crbug.com/342984901")
     public void testTabHoverStateClearedOnActivityPause() throws Exception {
         TabModel model = mActivityTestRule.getActivity().getTabModelSelector().getModel(false);
         StripLayoutTab tab =
                 TabStripUtils.findStripLayoutTab(
-                        mActivityTestRule.getActivity(), false, model.getTabAt(0).getId());
+                        mActivityTestRule.getActivity(),
+                        false,
+                        ThreadUtils.runOnUiThreadBlocking(() -> model.getTabAt(0).getId()));
         assertTabVisibility(true, tab);
 
         // Simulate a hover into the tab.
@@ -1205,115 +1314,6 @@ public class TabStripTest {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mActivityTestRule.getActivity().onResumeWithNative();
-                });
-    }
-
-    /** Tests hover enter/move/exit events associated with the tab strip buttons. */
-    @Test
-    @LargeTest
-    @Feature({"TabStrip"})
-    @Restriction(DeviceFormFactor.TABLET)
-    public void testHoverOnTabStripButtons() throws Exception {
-        StripLayoutHelperManager stripLayoutHelperManager =
-                TabStripUtils.getStripLayoutHelperManager(mActivityTestRule.getActivity());
-
-        // Select NTB.
-        CompositorButton newTabButton = stripLayoutHelperManager.getNewTabButton();
-        Assert.assertNotNull(
-                "Tooltip ViewStub should not be inflated before first hover event.",
-                stripLayoutHelperManager.getTooltipViewStubForTesting().getParent());
-
-        // Simulate a hover into NTB.
-        float xEnter = newTabButton.getDrawX() + newTabButton.getWidth() / 2;
-        float yEnter = newTabButton.getDrawY() + newTabButton.getHeight() / 2;
-        ThreadUtils.runOnUiThreadBlocking(
-                () ->
-                        stripLayoutHelperManager.simulateHoverEventForTesting(
-                                MotionEvent.ACTION_HOVER_ENTER, xEnter, yEnter));
-
-        // Verify that the tooltip is visible as expected.
-        FrameLayout tooltipView =
-                stripLayoutHelperManager.getTooltipManagerForTesting().getTooltipViewForTesting();
-        Assert.assertNotNull("Tooltip view should be set.", tooltipView);
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    Criteria.checkThat(
-                            "Tooltip should be visible.",
-                            tooltipView.getVisibility(),
-                            Matchers.is(View.VISIBLE));
-                });
-
-        // Enter incognito mode.
-        mActivityTestRule.newIncognitoTabFromMenu();
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-
-        // Select MSB.
-        CompositorButton modelSelectorButton = stripLayoutHelperManager.getModelSelectorButton();
-        Assert.assertNotNull(
-                "The modelSelectorButton should be set in StripLayoutHelperManager instance",
-                modelSelectorButton);
-
-        // Simulate a subsequent hover into the MSB.
-        float xMove = modelSelectorButton.getDrawX() + modelSelectorButton.getWidth() / 3;
-        float yMove = modelSelectorButton.getDrawY() + modelSelectorButton.getHeight() / 3;
-        ThreadUtils.runOnUiThreadBlocking(
-                () ->
-                        stripLayoutHelperManager.simulateHoverEventForTesting(
-                                MotionEvent.ACTION_HOVER_MOVE, xMove, yMove));
-        Assert.assertNotNull("Tooltip view should be set.", tooltipView);
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    Criteria.checkThat(
-                            "Tooltip should be visible.",
-                            tooltipView.getVisibility(),
-                            Matchers.is(View.VISIBLE));
-                });
-
-        // Simulate a subsequent hover outside the MSB.
-        float xExit = xMove + modelSelectorButton.getWidth();
-        float yExit = yMove + modelSelectorButton.getHeight();
-        ThreadUtils.runOnUiThreadBlocking(
-                () ->
-                        stripLayoutHelperManager.simulateHoverEventForTesting(
-                                MotionEvent.ACTION_HOVER_EXIT, xExit, yExit));
-        Assert.assertNotNull("Tooltip view should be set.", tooltipView);
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    Criteria.checkThat(
-                            "Tooltip should be gone.",
-                            tooltipView.getVisibility(),
-                            Matchers.is(View.GONE));
-                });
-
-        // Exit incognito mode.
-        clickIncognitoToggleButton();
-
-        // Simulate a subsequent hover into the MSB outside of incognito mode.
-        ThreadUtils.runOnUiThreadBlocking(
-                () ->
-                        stripLayoutHelperManager.simulateHoverEventForTesting(
-                                MotionEvent.ACTION_HOVER_MOVE, xMove, yMove));
-        Assert.assertNotNull("Tooltip view should be set.", tooltipView);
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    Criteria.checkThat(
-                            "Tooltip should be visible.",
-                            tooltipView.getVisibility(),
-                            Matchers.is(View.VISIBLE));
-                });
-
-        // Simulate the final hover outside the MSB.
-        ThreadUtils.runOnUiThreadBlocking(
-                () ->
-                        stripLayoutHelperManager.simulateHoverEventForTesting(
-                                MotionEvent.ACTION_HOVER_EXIT, xExit, yExit));
-        Assert.assertNotNull("Tooltip view should be set.", tooltipView);
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    Criteria.checkThat(
-                            "Tooltip should be gone.",
-                            tooltipView.getVisibility(),
-                            Matchers.is(View.GONE));
                 });
     }
 
@@ -1432,7 +1432,7 @@ public class TabStripTest {
      */
     protected void compareTabViewWithModel(boolean incognito, int id) throws ExecutionException {
         TabModel model = mActivityTestRule.getActivity().getTabModelSelector().getModel(incognito);
-        Tab tab = model.getTabById(id);
+        Tab tab = ThreadUtils.runOnUiThreadBlocking(() -> model.getTabById(id));
         StripLayoutHelper tabStrip =
                 TabStripUtils.getStripLayoutHelper(mActivityTestRule.getActivity(), incognito);
         StripLayoutTab tabView =
@@ -1450,16 +1450,20 @@ public class TabStripTest {
 
         int tabIndexOnStrip =
                 StripLayoutUtils.findIndexForTab(tabStrip.getStripLayoutTabsForTesting(), id);
+        int tabIndexInModel = ThreadUtils.runOnUiThreadBlocking(() -> model.indexOf(tab));
         Assert.assertEquals(
-                "The tab is not in the proper position ", model.indexOf(tab), tabIndexOnStrip);
+                "The tab is not in the proper position ", tabIndexInModel, tabIndexOnStrip);
 
-        if (TabModelUtils.getCurrentTab(model) == tab
+        if (ThreadUtils.runOnUiThreadBlocking(() -> TabModelUtils.getCurrentTab(model)) == tab
                 && mActivityTestRule.getActivity().getTabModelSelector().isIncognitoSelected()
                         == incognito) {
+            int selectedTabIndex = ThreadUtils.runOnUiThreadBlocking(() -> model.indexOf(tab));
+            int selectedStripTabIndex =
+                    ThreadUtils.runOnUiThreadBlocking(() -> tabStrip.getSelectedStripTabIndex());
             Assert.assertEquals(
                     "ChromeTab is not in the proper selection state",
-                    model.indexOf(tab),
-                    tabStrip.getSelectedStripTabIndex());
+                    selectedTabIndex,
+                    selectedStripTabIndex);
         }
 
         // TODO(dtrainor): Compare favicon bitmaps?  Only compare a few pixels.
@@ -1494,15 +1498,19 @@ public class TabStripTest {
             Assert.assertTrue(
                     "Incognito indicator not visible in incognito mode",
                     incognitoIndicator.isVisible());
-        } else if (mActivityTestRule.getActivity().getTabModelSelector().getModel(true).getCount()
+        } else if (getTabCountOnUiThread(
+                        mActivityTestRule.getActivity().getTabModelSelector().getModel(true))
                 == 0) {
             Assert.assertFalse(
                     "Incognito indicator visible in non incognito mode",
                     incognitoIndicator.isVisible());
         }
 
-        for (int i = 0; i < model.getCount(); ++i) {
-            compareTabViewWithModel(incognito, model.getTabAt(i).getId());
+        for (int i = 0; i < getTabCountOnUiThread(model); ++i) {
+            final int index = i;
+            compareTabViewWithModel(
+                    incognito,
+                    ThreadUtils.runOnUiThreadBlocking(() -> model.getTabAt(index).getId()));
         }
     }
 
@@ -1518,7 +1526,7 @@ public class TabStripTest {
     /** Check scrolling tab strip validity and auto-scrolling. */
     private void checkTabStrips() throws ExecutionException {
         TabModel model = mActivityTestRule.getActivity().getCurrentTabModel();
-        int selectedTabIndex = model.index();
+        int selectedTabIndex = getIndexOnUiThread(model);
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -1529,7 +1537,8 @@ public class TabStripTest {
                 });
 
         // Assert that the same tab is still selected.
-        Assert.assertEquals("The correct tab is not selected.", selectedTabIndex, model.index());
+        Assert.assertEquals(
+                "The correct tab is not selected.", selectedTabIndex, getIndexOnUiThread(model));
 
         // Compare all TabStrips with corresponding TabModels.
         compareAllTabStripsWithModel();
@@ -1539,7 +1548,8 @@ public class TabStripTest {
                 TabStripUtils.findStripLayoutTab(
                         mActivityTestRule.getActivity(),
                         model.isIncognito(),
-                        model.getTabAt(selectedTabIndex).getId());
+                        ThreadUtils.runOnUiThreadBlocking(
+                                () -> model.getTabAt(selectedTabIndex).getId()));
         assertTabVisibility(true, selectedLayoutTab);
     }
 
@@ -1644,7 +1654,7 @@ public class TabStripTest {
         // Only tabs that can currently be seen on the screen should be visible.
         Boolean shouldBeVisible =
                 ThreadUtils.runOnUiThreadBlocking(
-                        new Callable<Boolean>() {
+                        new Callable<>() {
                             @Override
                             public Boolean call() {
                                 return (tabView.getDrawX() + tabView.getWidth()) >= 0
@@ -1664,7 +1674,7 @@ public class TabStripTest {
             throws ExecutionException {
         Boolean isVisible =
                 ThreadUtils.runOnUiThreadBlocking(
-                        new Callable<Boolean>() {
+                        new Callable<>() {
                             @Override
                             public Boolean call() {
                                 return tabView.isVisible();
@@ -1688,7 +1698,7 @@ public class TabStripTest {
             throws ExecutionException {
         Float tabDrawX =
                 ThreadUtils.runOnUiThreadBlocking(
-                        new Callable<Float>() {
+                        new Callable<>() {
                             @Override
                             public Float call() {
                                 return tabView.getDrawX();
@@ -1711,11 +1721,7 @@ public class TabStripTest {
                             mActivityTestRule
                                     .getKeyboardDelegate()
                                     .isKeyboardShowing(
-                                            mActivityTestRule.getActivity(),
-                                            mActivityTestRule
-                                                    .getActivity()
-                                                    .getActivityTab()
-                                                    .getView()),
+                                            mActivityTestRule.getActivityTab().getView()),
                             Matchers.is(expectsShown));
                 });
     }

@@ -13,16 +13,16 @@ import android.util.DisplayMetrics;
 import android.view.Display;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.SysUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
-import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.page_info.SiteSettingsHelper;
@@ -57,10 +57,11 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.Locale;
 
 /** Utilities for requesting desktop sites support. */
+@NullMarked
 public class RequestDesktopUtils {
     private static final String SITE_WILDCARD = "*";
     // Global defaults experiment constants.
-    private static DisplayMetrics sDisplayMetrics;
+    private static @Nullable DisplayMetrics sDisplayMetrics;
 
     static final double DEFAULT_GLOBAL_SETTING_DEFAULT_ON_DISPLAY_SIZE_THRESHOLD_INCHES = 10.0;
     static final int DEFAULT_GLOBAL_SETTING_DEFAULT_ON_SMALLEST_SCREEN_WIDTH_THRESHOLD_DP = 600;
@@ -173,33 +174,6 @@ public class RequestDesktopUtils {
     }
 
     /**
-     * Upgrade a non-default tab level RDS setting to a domain level setting when RDS exceptions is
-     * supported. This method is expected to be invoked only once after support is added for domain
-     * level exceptions.
-     * @param tab The {@link Tab} for which the RDS setting will be upgraded.
-     * @param profile The {@link Profile} used to upgrade the RDS setting.
-     * @param tabUserAgent The current {@link TabUserAgent} set for the tab.
-     * @param url The {@link GURL} for which a domain level exception will be added.
-     */
-    public static void maybeUpgradeTabLevelDesktopSiteSetting(
-            Tab tab, Profile profile, @TabUserAgent int tabUserAgent, @Nullable GURL url) {
-        if (url == null) {
-            return;
-        }
-
-        // If the tab UA is UNSET, it represents a state before tab level settings were applied for
-        // the tab, so the domain level setting cannot be upgraded to at this time.
-        if (tabUserAgent == TabUserAgent.UNSET) {
-            return;
-        }
-
-        RequestDesktopUtils.setRequestDesktopSiteContentSettingsForUrl(
-                profile, url, tabUserAgent == TabUserAgent.DESKTOP);
-        // Reset the tab level setting after upgrade.
-        tab.setUserAgent(TabUserAgent.DEFAULT);
-    }
-
-    /**
      * Determines whether the desktop site global setting should be enabled by default.
      *
      * @param displaySizeInInches The device primary display size, in inches.
@@ -208,7 +182,7 @@ public class RequestDesktopUtils {
      */
     static boolean shouldDefaultEnableGlobalSetting(double displaySizeInInches, Context context) {
         // Desktop Android always requests desktop sites.
-        if (BuildConfig.IS_DESKTOP_ANDROID) {
+        if (DeviceInfo.isDesktop()) {
             return true;
         }
 
@@ -287,7 +261,7 @@ public class RequestDesktopUtils {
         boolean isOnExternalDisplay = isOnExternalDisplay(activity);
         if (isOnExternalDisplay
                 || smallestScreenWidthDp < DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP
-                || BuildConfig.IS_DESKTOP_ANDROID) {
+                || DeviceInfo.isDesktop()) {
             return;
         }
         PrefService prefService = UserPrefs.get(profile);
@@ -310,7 +284,7 @@ public class RequestDesktopUtils {
 
         // Desktop devices always request desktop sites so there's no need to show a message to
         // the user.
-        if (BuildConfig.IS_DESKTOP_ANDROID) {
+        if (DeviceInfo.isDesktop()) {
             return false;
         }
 
@@ -386,9 +360,9 @@ public class RequestDesktopUtils {
      * Determine whether RDS window setting should be applied. When returning 'true' the mobile user
      * agent should be used for the current window size.
      */
-    static boolean shouldApplyWindowSetting(Profile profile, GURL url, Context context) {
+    static boolean shouldApplyWindowSetting(Profile profile, @Nullable GURL url, Context context) {
         // Skip window setting on Automotive and revisit if / when they add split screen.
-        if (BuildInfo.getInstance().isAutomotive) {
+        if (DeviceInfo.isAutomotive()) {
             return false;
         }
         PrefService prefService = UserPrefs.get(profile);

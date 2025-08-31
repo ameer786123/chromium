@@ -83,7 +83,7 @@ std::string GetStringHeader(const network::SimpleURLLoader* simple_url_loader,
 }
 
 // Returns the integral value of a header of the server response or -1 if
-// if the header is not available or a conversion error has occured.
+// if the header is not available or a conversion error has occurred.
 int64_t GetInt64Header(const network::SimpleURLLoader* simple_url_loader,
                        const char* header_name) {
   CHECK(simple_url_loader);
@@ -93,7 +93,7 @@ int64_t GetInt64Header(const network::SimpleURLLoader* simple_url_loader,
     return -1;
   }
 
-  return response_info->headers->GetInt64HeaderValue(header_name);
+  return response_info->headers->GetInt64HeaderValue(header_name).value_or(-1);
 }
 
 }  // namespace
@@ -138,18 +138,19 @@ void NetworkFetcherImpl::PostRequest(
   simple_url_loader->SetOnDownloadProgressCallback(base::BindRepeating(
       &NetworkFetcherImpl::OnProgressCallback, weak_ptr_factory_.GetWeakPtr(),
       std::move(progress_callback)));
-  constexpr size_t kMaxResponseSize = 1024 * 1024;
+  static constexpr size_t kMaxResponseSize = 1024 * 1024;
   simple_url_loader->DownloadToString(
       shared_url_network_factory_.get(),
       base::BindOnce(
           [](std::unique_ptr<network::SimpleURLLoader> simple_url_loader,
              PostRequestCompleteCallback post_request_complete_callback,
-             std::unique_ptr<std::string> response_body) {
+             std::optional<std::string> response_body) {
             std::move(post_request_complete_callback)
                 .Run(std::move(response_body), simple_url_loader->NetError(),
                      GetStringHeader(simple_url_loader.get(), kHeaderEtag),
                      GetStringHeader(simple_url_loader.get(),
                                      kHeaderXCupServerProof),
+                     /*header_set_cookie=*/"",
                      GetInt64Header(simple_url_loader.get(),
                                     kHeaderXRetryAfter));
           },

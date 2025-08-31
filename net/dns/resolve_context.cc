@@ -20,6 +20,7 @@
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/observer_list.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/clock.h"
 #include "base/time/tick_clock.h"
@@ -455,7 +456,8 @@ size_t ResolveContext::FirstServerIndex(bool doh_server,
   if (doh_server)
     return 0u;
 
-  size_t index = classic_server_index_;
+  size_t index =
+      classic_server_index_ % current_session_->config().nameservers.size();
   if (current_session_->config().rotate) {
     classic_server_index_ = (classic_server_index_ + 1) %
                             current_session_->config().nameservers.size();

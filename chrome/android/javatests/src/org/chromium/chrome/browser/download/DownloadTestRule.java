@@ -8,7 +8,6 @@ import android.app.DownloadManager;
 import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Environment;
 import android.text.TextUtils;
 
@@ -34,6 +33,8 @@ import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Custom TestRule for tests that need to download a file.
@@ -79,6 +80,32 @@ public class DownloadTestRule extends ChromeTabbedActivityTestRule {
             Assert.fail("IOException when opening file " + fileName);
             return false;
         }
+    }
+
+    /**
+     * Checks if a file matching the regex has downloaded. Is agnostic to the mechanism by which the
+     * file has downloaded.
+     *
+     * @param fileNameRegex Expected regex the file name should match. Files are non-recursively
+     *     searched in the system downloads path.
+     */
+    public boolean hasDownloadedRegex(String fileNameRegex) {
+        List<String> filenames =
+                Stream.of(DOWNLOAD_DIRECTORY.listFiles())
+                        .filter(f -> !f.isDirectory())
+                        .map(f -> f.getName())
+                        .collect(Collectors.toList());
+        for (String name : filenames) {
+            if (name.matches(fileNameRegex)) {
+                return true;
+            }
+        }
+        Log.d(
+                TAG,
+                String.format(
+                        "No file in download directory matches regex %s: %s",
+                        fileNameRegex, String.join(", ", filenames)));
+        return false;
     }
 
     /**
@@ -281,17 +308,7 @@ public class DownloadTestRule extends ChromeTabbedActivityTestRule {
     }
 
     private void deleteFile(String fileName) {
-        // Delete file path on pre Q.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            final File fileToDelete = new File(DOWNLOAD_DIRECTORY, fileName);
-            if (fileToDelete.exists()) {
-                Assert.assertTrue(
-                        "Could not delete file that would block this test", fileToDelete.delete());
-            }
-            return;
-        }
-
-        // Delete content URI starting from Q.
+        // Delete content URI.
         Uri uri = DownloadCollectionBridge.getDownloadUriForFileName(fileName);
         if (uri == null) {
             Log.e(TAG, "Can't find URI of file for deletion: %s on Android P+.", fileName);

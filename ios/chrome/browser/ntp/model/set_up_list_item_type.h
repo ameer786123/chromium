@@ -10,15 +10,15 @@
 //
 // LINT.IfChange
 enum class SetUpListItemType {
-  kSignInSync = 1,
+  // Removed: kSignInSync = 1,
   kDefaultBrowser = 2,
   kAutofill = 3,
   kFollow = 4,
   kAllSet = 5,
   kNotifications = 6,
-  kDocking = 7,
-  kAddressBar = 8,
-  kMaxValue = kAddressBar
+  // Removed: kDocking = 7,
+  // Removed: kAddressBar = 8,
+  kMaxValue = kNotifications
 };
 // LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml)
 

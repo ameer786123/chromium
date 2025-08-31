@@ -11,7 +11,8 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/tab_group_deletion_dialog_controller.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
@@ -24,18 +25,22 @@
 #include "components/data_sharing/public/features.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "components/tabs/public/tab_group.h"
 #include "content/public/test/browser_test.h"
 #include "ui/events/event.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/views/controls/button/button.h"
+#include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/test/button_test_api.h"
+#include "ui/views/view.h"
 
 class TabGroupEditorBubbleViewDialogBrowserTest : public DialogBrowserTest {
  public:
   TabGroupEditorBubbleViewDialogBrowserTest() {
     scoped_feature_list_.InitWithFeatures(
         {}, {data_sharing::features::kDataSharingFeature,
-             data_sharing::features::kDataSharingJoinOnly});
+             data_sharing::features::kDataSharingJoinOnly,
+             tabs::kTabGroupShortcuts});
   }
 
  protected:
@@ -43,11 +48,14 @@ class TabGroupEditorBubbleViewDialogBrowserTest : public DialogBrowserTest {
     group_ = browser()->tab_strip_model()->AddToNewGroup({0});
     browser()->tab_strip_model()->OpenTabGroupEditor(group_.value());
 
-    BrowserView* browser_view = static_cast<BrowserView*>(browser()->window());
-    TabGroupHeader* header =
-        browser_view->tabstrip()->group_header(group_.value());
-    ASSERT_NE(nullptr, header);
-    ASSERT_TRUE(header->editor_bubble_tracker_.is_open());
+    views::ElementTrackerViews::ViewList tab_group_editor_bubble =
+        views::ElementTrackerViews::GetInstance()
+            ->GetAllMatchingViewsInAnyContext(
+                TabGroupEditorBubbleView::kTabGroupEditorBubbleViewId);
+    CHECK_EQ(tab_group_editor_bubble.size(), 1u);
+
+    ASSERT_NE(nullptr, tab_group_editor_bubble[0]);
+    ASSERT_TRUE(tab_group_editor_bubble[0]->GetVisible());
   }
 
   static views::Widget* GetEditorBubbleWidget(const TabGroupHeader* header) {
@@ -105,9 +113,10 @@ IN_PROC_BROWSER_TEST_F(TabGroupEditorBubbleViewDialogBrowserTest, Ungroup) {
   base::HistogramTester histogram_tester;
 
   // Allow the Ungroup command to be immediately performed for saved groups.
-  if (browser()->tab_group_deletion_dialog_controller()) {
+  if (browser()->GetFeatures().tab_group_deletion_dialog_controller()) {
     browser()
-        ->tab_group_deletion_dialog_controller()
+        ->GetFeatures()
+        .tab_group_deletion_dialog_controller()
         ->SetPrefsPreventShowingDialogForTesting(
             /*should_prevent_dialog=*/true);
   }
@@ -290,7 +299,9 @@ IN_PROC_BROWSER_TEST_F(TabGroupEditorBubbleViewDialogBrowserTestWithSavedGroup,
 
   // Make sure the dialog is shown, and fake clicking the button.
   tab_groups::DeletionDialogController* deletion_dialog_controller =
-      browser_view->browser()->tab_group_deletion_dialog_controller();
+      browser_view->browser()
+          ->GetFeatures()
+          .tab_group_deletion_dialog_controller();
   EXPECT_TRUE(deletion_dialog_controller->IsShowingDialog());
 
   // Pull the dialog state and call the OnDialogOk method.
@@ -311,11 +322,12 @@ IN_PROC_BROWSER_TEST_F(TabGroupEditorBubbleViewDialogBrowserTestWithSavedGroup,
   TabStripModel* tsm = browser()->tab_strip_model();
   ASSERT_EQ(3, tsm->count());
   tsm->AddToNewGroup({0});
-  browser_view->tabstrip()->CloseTab(browser_view->tabstrip()->tab_at(0),
-                                     CloseTabSource::kFromMouse);
-
+  tsm->ActivateTabAt(0);
+  tsm->CloseSelectedTabs();
   tab_groups::DeletionDialogController* deletion_dialog_controller =
-      browser_view->browser()->tab_group_deletion_dialog_controller();
+      browser_view->browser()
+          ->GetFeatures()
+          .tab_group_deletion_dialog_controller();
 
   EXPECT_TRUE(deletion_dialog_controller->IsShowingDialog());
 
@@ -332,14 +344,16 @@ IN_PROC_BROWSER_TEST_F(TabGroupEditorBubbleViewDialogBrowserTestWithSavedGroup,
   InProcessBrowserTest::AddBlankTabAndShow(browser());
 
   tab_groups::DeletionDialogController* deletion_dialog_controller =
-      browser_view->browser()->tab_group_deletion_dialog_controller();
+      browser_view->browser()
+          ->GetFeatures()
+          .tab_group_deletion_dialog_controller();
   deletion_dialog_controller->SetPrefsPreventShowingDialogForTesting(true);
 
   TabStripModel* tsm = browser()->tab_strip_model();
   ASSERT_EQ(3, tsm->count());
   tsm->AddToNewGroup({0});
-  browser_view->tabstrip()->CloseTab(browser_view->tabstrip()->tab_at(0),
-                                     CloseTabSource::kFromMouse);
+  tsm->ActivateTabAt(0);
+  tsm->CloseSelectedTabs();
 
   EXPECT_FALSE(deletion_dialog_controller->IsShowingDialog());
   EXPECT_EQ(2, tsm->count());

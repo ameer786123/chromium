@@ -15,6 +15,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_serial_output_signals.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_serial_port_info.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/dom/quota_exceeded_error.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
@@ -93,7 +94,7 @@ SerialPortInfo* SerialPort::getInfo() {
   if (info_->bluetooth_service_class_id) {
     info->setBluetoothServiceClassId(
         MakeGarbageCollected<V8UnionStringOrUnsignedLong>(
-            info_->bluetooth_service_class_id->uuid));
+            info_->bluetooth_service_class_id));
   }
   return info;
 }
@@ -188,8 +189,8 @@ ScriptPromise<IDLUndefined> SerialPort::open(ScriptState* script_state,
   mojo::PendingRemote<device::mojom::blink::SerialPortClient> client;
   open_resolver_ = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
       script_state, exception_state.GetContext());
-  auto callback = WTF::BindOnce(&SerialPort::OnOpen, WrapPersistent(this),
-                                client.InitWithNewPipeAndPassReceiver());
+  auto callback = BindOnce(&SerialPort::OnOpen, WrapPersistent(this),
+                           client.InitWithNewPipeAndPassReceiver());
 
   parent_->OpenPort(info_->token, std::move(mojo_options), std::move(client),
                     std::move(callback));
@@ -208,8 +209,7 @@ ReadableStream* SerialPort::readable(ScriptState* script_state,
   mojo::ScopedDataPipeProducerHandle producer;
   mojo::ScopedDataPipeConsumerHandle consumer;
   if (!CreateDataPipe(&producer, &consumer)) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kQuotaExceededError,
-                                      kResourcesExhaustedReadBuffer);
+    QuotaExceededError::Throw(exception_state, kResourcesExhaustedReadBuffer);
     return nullptr;
   }
 
@@ -234,8 +234,7 @@ WritableStream* SerialPort::writable(ScriptState* script_state,
   mojo::ScopedDataPipeProducerHandle producer;
   mojo::ScopedDataPipeConsumerHandle consumer;
   if (!CreateDataPipe(&producer, &consumer)) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kQuotaExceededError,
-                                      kResourcesExhaustedWriteBuffer);
+    QuotaExceededError::Throw(exception_state, kResourcesExhaustedWriteBuffer);
     return nullptr;
   }
 
@@ -268,7 +267,7 @@ ScriptPromise<SerialInputSignals> SerialPort::getSignals(
           script_state, exception_state.GetContext());
   signal_resolvers_.insert(resolver);
   port_->GetControlSignals(resolver->WrapCallbackInScriptScope(
-      WTF::BindOnce(&SerialPort::OnGetSignals, WrapPersistent(this))));
+      BindOnce(&SerialPort::OnGetSignals, WrapPersistent(this))));
   return resolver->Promise();
 }
 
@@ -326,7 +325,7 @@ ScriptPromise<IDLUndefined> SerialPort::setSignals(
   port_->SetControlSignals(
       std::move(mojo_signals),
       resolver->WrapCallbackInScriptScope(
-          WTF::BindOnce(&SerialPort::OnSetSignals, WrapPersistent(this))));
+          BindOnce(&SerialPort::OnSetSignals, WrapPersistent(this))));
   return resolver->Promise();
 }
 
@@ -389,7 +388,7 @@ ScriptPromise<IDLUndefined> SerialPort::forget(
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
       script_state, exception_state.GetContext());
   parent_->ForgetPort(info_->token,
-                      WTF::BindOnce(
+                      BindOnce(
                           [](ScriptPromiseResolver<IDLUndefined>* resolver) {
                             resolver->Resolve();
                           },
@@ -411,7 +410,7 @@ void SerialPort::StreamsClosed() {
   DCHECK(IsClosing());
 
   port_->Close(/*flush=*/true,
-               WTF::BindOnce(&SerialPort::OnClose, WrapPersistent(this)));
+               BindOnce(&SerialPort::OnClose, WrapPersistent(this)));
 }
 
 void SerialPort::Flush(
@@ -600,7 +599,7 @@ void SerialPort::OnOpen(
   port_.Bind(std::move(port),
              execution_context->GetTaskRunner(TaskType::kMiscPlatformAPI));
   port_.set_disconnect_handler(
-      WTF::BindOnce(&SerialPort::OnConnectionError, WrapWeakPersistent(this)));
+      BindOnce(&SerialPort::OnConnectionError, WrapWeakPersistent(this)));
   client_receiver_.Bind(
       std::move(client_receiver),
       execution_context->GetTaskRunner(TaskType::kMiscPlatformAPI));

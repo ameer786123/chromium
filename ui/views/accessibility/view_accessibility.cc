@@ -10,6 +10,7 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
+#include "base/notimplemented.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/buildflag.h"
 #include "ui/accessibility/accessibility_features.h"
@@ -24,7 +25,6 @@
 #include "ui/views/accessibility/atomic_view_ax_tree_manager.h"
 #include "ui/views/accessibility/ax_update_notifier.h"
 #include "ui/views/accessibility/ax_virtual_view.h"
-#include "ui/views/accessibility/widget_ax_tree_id_map.h"
 #include "ui/views/view.h"
 #include "ui/views/view_utils.h"
 #include "ui/views/widget/root_view.h"
@@ -193,7 +193,8 @@ std::optional<size_t> ViewAccessibility::GetIndexOf(
 }
 
 void ViewAccessibility::GetAccessibleNodeData(ui::AXNodeData* data) const {
-  CHECK(view_);
+  // TODO(crbug.com/40672441): Investigate if we can safely remove this now that
+  // all accessibility attributes are cached directly.
   if (is_widget_closed_) {
     // Views may misbehave if their widget is closed; set "null-like" attributes
     // rather than possibly crashing.
@@ -201,26 +202,7 @@ void ViewAccessibility::GetAccessibleNodeData(ui::AXNodeData* data) const {
     return;
   }
 
-  data->role = data_.role;
-  data->SetNameFrom(GetCachedNameFrom());
-  if (!GetCachedName().empty()) {
-    data->SetName(GetCachedName());
-  }
-
-  DCHECK(!data->HasChildTreeID()) << "Please annotate child tree ids using "
-                                     "ViewAccessibility::SetChildTreeID.";
-
-  // Copy the attributes that are in the cache (`data_`) into the computed
-  // `data` object. This is done after the `data` object was initialized with
-  // the attributes computed by `View::GetAccessibleNodeData` to ensure that the
-  // cached attributes take precedence.
-  views::ViewAccessibilityUtils::Merge(/*source*/ data_, /*destination*/ *data);
-
-  data->relative_bounds.bounds = gfx::RectF(view_->bounds());
-
-  // Nothing should be added beyond this point. Reach out to the Chromium
-  // accessibility team in Slack, or to benjamin.beaudry@microsoft.com if you
-  // absolutely need to add something past this point.
+  *data = data_;
 }
 
 void ViewAccessibility::NotifyEvent(ax::mojom::Event event_type,
@@ -1397,7 +1379,7 @@ void ViewAccessibility::SetChildTreeID(ui::AXTreeID tree_id) {
     data_.AddChildTreeId(tree_id);
 
     const views::Widget* widget = view_->GetWidget();
-    if (widget && widget->GetNativeView() && display::Screen::GetScreen()) {
+    if (widget && widget->GetNativeView() && display::Screen::Get()) {
       // TODO(accessibility): There potentially could be an issue where the
       // device scale factor changes from the time the tree ID is set to the
       // time `GetAccessibleNodeData` is queried. If this ever pops up, a
@@ -1406,7 +1388,7 @@ void ViewAccessibility::SetChildTreeID(ui::AXTreeID tree_id) {
       // display changes, we can update the scale factor in the cache, probably
       // by implementing `OnDisplayMetricsChanged`.
       const float scale_factor =
-          display::Screen::GetScreen()
+          display::Screen::Get()
               ->GetDisplayNearestView(widget->GetNativeView())
               .device_scale_factor();
       SetChildTreeScaleFactor(scale_factor);
@@ -1478,12 +1460,69 @@ ViewAccessibility::GetAtomicViewAXTreeManagerForTesting() const {
   return nullptr;
 }
 
+Widget* ViewAccessibility::GetWidget() const {
+  if (!view_) {
+    return nullptr;
+  }
+  return view_->GetWidget();
+}
+
+ViewAccessibility* ViewAccessibility::GetViewAccessibilityParent() const {
+  if (!view_) {
+    return nullptr;
+  }
+  if (auto* parent = view_->parent()) {
+    return &parent->GetViewAccessibility();
+  }
+  return nullptr;
+}
+
+ViewAccessibility* ViewAccessibility::GetUnignoredParent() const {
+  ViewAccessibility* parent = GetViewAccessibilityParent();
+  while (parent && parent->GetIsIgnored()) {
+    parent = parent->GetViewAccessibilityParent();
+  }
+  return parent;
+}
+
 gfx::NativeViewAccessible ViewAccessibility::GetFocusedDescendant() {
   CHECK(view_);
   if (focused_virtual_child_) {
     return focused_virtual_child_->GetNativeObject();
   }
   return view_->GetNativeViewAccessible();
+}
+
+std::vector<raw_ptr<ViewAccessibility>> ViewAccessibility::GetChildren() const {
+  std::vector<raw_ptr<ViewAccessibility>> out;
+
+  if (IsLeaf()) {
+    return out;
+  }
+
+  // The virtual children always override any real children the view might have.
+  if (!virtual_children_.empty()) {
+    out.reserve(virtual_children_.size());
+    for (auto& v : virtual_children_) {
+      out.push_back(v.get());
+    }
+    return out;
+  }
+
+  if (!view_) {
+    return out;
+  }
+
+  const auto& view_children = view_->children();
+  out.reserve(view_children.size());
+  for (auto child_view : view_children) {
+    out.push_back(&child_view->GetViewAccessibility());
+  }
+  return out;
+}
+
+std::string ViewAccessibility::GetDebugString() const {
+  return std::string(view_ ? view_->GetClassName() : "ViewAccessibility");
 }
 
 void ViewAccessibility::FireNativeEvent(ax::mojom::Event event_type) {
@@ -1538,6 +1577,34 @@ void ViewAccessibility::CompleteCacheInitializationRecursive() {
   }
 }
 
+void ViewAccessibility::OnWidgetUpdatedRecursive(Widget* widget,
+                                                 Widget* old_widget) {
+  CHECK(widget);
+
+  // If we have already marked `is_widget_closed_` as true, then there's a
+  // chance that the view was reparented to a non-closed widget. If so, we must
+  // update `is_widget_closed_` in case the new widget is not closed.
+  is_widget_closed_ = widget->IsClosed();
+
+  // Initialize the AtomicViewAXTreeManager if necessary when the view gets
+  // added to the widget. We must wait for the widget to become available to
+  // get valid data our of GetData().
+  if (needs_ax_tree_manager()) {
+    EnsureAtomicViewAXTreeManager();
+  }
+
+  if (view_) {
+    internal::ScopedChildrenLock lock(view_);
+    for (auto& child : view_->children()) {
+      child->GetViewAccessibility().OnWidgetUpdatedRecursive(widget,
+                                                             old_widget);
+    }
+  }
+  for (auto& child : virtual_children()) {
+    child->OnWidgetUpdatedRecursive(widget, old_widget);
+  }
+}
+
 void ViewAccessibility::OnWidgetClosing(Widget* widget) {
   // The RootView's ViewAccessibility should be the only registered
   // WidgetObserver.
@@ -1567,10 +1634,7 @@ void ViewAccessibility::OnWidgetUpdated(Widget* widget, Widget* old_widget) {
     old_widget->RemoveObserver(this);
   }
 
-  // If we have already marked `is_widget_closed_` as true, then there's a
-  // chance that the view was reparented to a non-closed widget. If so, we must
-  // update `is_widget_closed_` in case the new widget is not closed.
-  SetWidgetClosedRecursive(widget, widget->IsClosed());
+  OnWidgetUpdatedRecursive(widget, old_widget);
 }
 
 void ViewAccessibility::CompleteCacheInitialization() {

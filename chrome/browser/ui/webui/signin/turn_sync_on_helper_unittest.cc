@@ -17,6 +17,7 @@
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_command_line.h"
 #include "base/test/test_file_util.h"
@@ -38,11 +39,11 @@
 #include "chrome/browser/signin/test_signin_client_builder.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/sync/sync_startup_tracker.h"
+#include "chrome/browser/ui/webui/signin/history_sync_optin_helper.h"
 #include "chrome/browser/ui/webui/signin/signin_ui_error.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
 #include "chrome/test/base/fake_profile_manager.h"
 #include "chrome/test/base/profile_waiter.h"
-#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/account_id/account_id.h"
@@ -58,6 +59,7 @@
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/signin_switches.h"
+#include "components/signin/public/identity_manager/account_capabilities_test_mutator.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
@@ -383,7 +385,7 @@ class WeakClosure {
 
 class TurnSyncOnHelperTest : public testing::Test {
  public:
-  TurnSyncOnHelperTest() : local_state_(TestingBrowserProcess::GetGlobal()) {}
+  TurnSyncOnHelperTest() = default;
 
   void SetUp() override {
     const base::FilePath temp_user_data_dir =
@@ -543,6 +545,8 @@ class TurnSyncOnHelperTest : public testing::Test {
         identity_manager()->FindExtendedAccountInfo(core_account_info);
     EXPECT_FALSE(account_info.IsEmpty());
     account_info.hosted_domain = kEnterpriseHostedDomain;
+    AccountCapabilitiesTestMutator(&account_info.capabilities)
+        .set_is_subject_to_enterprise_features(true);
     signin::UpdateAccountInfoForAccount(identity_manager(), account_info);
   }
 
@@ -803,7 +807,6 @@ class TurnSyncOnHelperTest : public testing::Test {
  private:
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
-  ScopedTestingLocalState local_state_;
   CoreAccountId account_id_;
   raw_ptr<TestingProfile, DanglingUntriaged> profile_;
   std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
@@ -1824,8 +1827,9 @@ TEST_F(TurnSyncOnHelperWithMockSigninManagerTest,
                   syncer::SyncFirstSetupCompleteSource::BASIC_FLOW));
   sync_confirmation_result_ = LoginUIService::SyncConfirmationUIClosedResult::
       SYNC_WITH_DEFAULT_SETTINGS;
-  sync_starter->OnSyncStartupStateChanged(
-      SyncStartupTracker::ServiceStartupState::kComplete);
+  sync_starter->GetSyncStartupStateObserverForTesting()
+      ->OnSyncStartupStateChanged(
+          SyncStartupTracker::ServiceStartupState::kComplete);
   EXPECT_EQ(account_id(), identity_manager()->GetPrimaryAccountId(
                               signin::ConsentLevel::kSync));
   CheckDelegateCalls();
@@ -1870,8 +1874,9 @@ TEST_F(TurnSyncOnHelperWithMockSigninManagerTest,
                   syncer::SyncFirstSetupCompleteSource::BASIC_FLOW));
   sync_confirmation_result_ = LoginUIService::SyncConfirmationUIClosedResult::
       SYNC_WITH_DEFAULT_SETTINGS;
-  sync_starter->OnSyncStartupStateChanged(
-      SyncStartupTracker::ServiceStartupState::kComplete);
+  sync_starter->GetSyncStartupStateObserverForTesting()
+      ->OnSyncStartupStateChanged(
+          SyncStartupTracker::ServiceStartupState::kComplete);
   EXPECT_EQ(account_id(), identity_manager()->GetPrimaryAccountId(
                               signin::ConsentLevel::kSync));
   CheckDelegateCalls();
@@ -1918,8 +1923,9 @@ TEST_F(TurnSyncOnHelperWithMockSigninManagerTest,
                   syncer::SyncFirstSetupCompleteSource::BASIC_FLOW));
   sync_confirmation_result_ = LoginUIService::SyncConfirmationUIClosedResult::
       SYNC_WITH_DEFAULT_SETTINGS;
-  sync_starter->OnSyncStartupStateChanged(
-      SyncStartupTracker::ServiceStartupState::kError);
+  sync_starter->GetSyncStartupStateObserverForTesting()
+      ->OnSyncStartupStateChanged(
+          SyncStartupTracker::ServiceStartupState::kError);
   EXPECT_EQ(account_id(), identity_manager()->GetPrimaryAccountId(
                               signin::ConsentLevel::kSignin));
   CheckDelegateCalls();
@@ -1962,8 +1968,9 @@ TEST_F(TurnSyncOnHelperTest,
                   syncer::SyncFirstSetupCompleteSource::BASIC_FLOW));
   sync_confirmation_result_ = LoginUIService::SyncConfirmationUIClosedResult::
       SYNC_WITH_DEFAULT_SETTINGS;
-  sync_starter->OnSyncStartupStateChanged(
-      SyncStartupTracker::ServiceStartupState::kError);
+  sync_starter->GetSyncStartupStateObserverForTesting()
+      ->OnSyncStartupStateChanged(
+          SyncStartupTracker::ServiceStartupState::kError);
   EXPECT_EQ(account_id(), identity_manager()->GetPrimaryAccountId(
                               signin::ConsentLevel::kSync));
   CheckDelegateCalls();

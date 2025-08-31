@@ -9,17 +9,18 @@
 #include "base/containers/fixed_flat_map.h"
 #include "base/logging.h"
 #include "base/notreached.h"
+#include "components/sync/base/features.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 
 namespace syncer {
 
 namespace {
 
-static_assert(55 == syncer::GetNumDataTypes(),
+static_assert(56 == syncer::GetNumDataTypes(),
               "When adding a new type, update enum SyncDataTypes in enums.xml "
               "and suffix SyncDataType in histograms.xml.");
 
-static_assert(55 == syncer::GetNumDataTypes(),
+static_assert(56 == syncer::GetNumDataTypes(),
               "When adding a new type, follow the integration checklist in "
               "https://www.chromium.org/developers/design-documents/sync/"
               "integration-checklist/");
@@ -110,6 +111,7 @@ constexpr kSpecificsFieldNumberToDataTypeMap specifics_field_number2data_type =
          AUTOFILL_VALUABLE},
         {sync_pb::EntitySpecifics::kSharedTabGroupAccountDataFieldNumber,
          SHARED_TAB_GROUP_ACCOUNT_DATA},
+        {sync_pb::EntitySpecifics::kSharedCommentFieldNumber, SHARED_COMMENT},
         // ---- Control Types ----
         {sync_pb::EntitySpecifics::kNigoriFieldNumber, NIGORI},
     });
@@ -283,6 +285,9 @@ void AddDefaultFieldValue(DataType type, sync_pb::EntitySpecifics* specifics) {
     case SHARED_TAB_GROUP_ACCOUNT_DATA:
       specifics->mutable_shared_tab_group_account_data();
       break;
+    case SHARED_COMMENT:
+      specifics->mutable_shared_comment();
+      break;
   }
 }
 
@@ -407,6 +412,8 @@ int GetSpecificsFieldNumberFromDataType(DataType data_type) {
       return sync_pb::EntitySpecifics::kAutofillValuableFieldNumber;
     case SHARED_TAB_GROUP_ACCOUNT_DATA:
       return sync_pb::EntitySpecifics::kSharedTabGroupAccountDataFieldNumber;
+    case SHARED_COMMENT:
+      return sync_pb::EntitySpecifics::kSharedCommentFieldNumber;
     case NIGORI:
       return sync_pb::EntitySpecifics::kNigoriFieldNumber;
   }
@@ -425,7 +432,7 @@ void internal::GetDataTypeSetFromSpecificsFieldNumberListHelper(
 }
 
 DataType GetDataTypeFromSpecifics(const sync_pb::EntitySpecifics& specifics) {
-  static_assert(55 == syncer::GetNumDataTypes(),
+  static_assert(56 == syncer::GetNumDataTypes(),
                 "When adding new protocol types, the following type lookup "
                 "logic must be updated.");
   if (specifics.has_bookmark()) {
@@ -590,14 +597,32 @@ DataType GetDataTypeFromSpecifics(const sync_pb::EntitySpecifics& specifics) {
   if (specifics.has_shared_tab_group_account_data()) {
     return SHARED_TAB_GROUP_ACCOUNT_DATA;
   }
+  if (specifics.has_shared_comment()) {
+    return SHARED_COMMENT;
+  }
 
   // This client version doesn't understand `specifics`.
   DVLOG(1) << "Unknown datatype in sync proto.";
   return UNSPECIFIED;
 }
 
+DataTypeSet AlwaysPreferredUserTypes() {
+  DataTypeSet types = {DEVICE_INFO,          USER_CONSENTS,
+                       PLUS_ADDRESS,         PLUS_ADDRESS_SETTING,
+                       PRIORITY_PREFERENCES, SECURITY_EVENTS,
+                       SEND_TAB_TO_SELF,     SUPERVISED_USER_SETTINGS,
+                       SHARING_MESSAGE};
+  // TODO(crbug.com/412602018): Mark AlwaysPreferredUserTypes() method as
+  // constexpr when removing the feature flag.
+  if (!base::FeatureList::IsEnabled(
+          kSyncSupportAlwaysSyncingPriorityPreferences)) {
+    types.Remove(PRIORITY_PREFERENCES);
+  }
+  return types;
+}
+
 DataTypeSet EncryptableUserTypes() {
-  static_assert(55 == syncer::GetNumDataTypes(),
+  static_assert(56 == syncer::GetNumDataTypes(),
                 "If adding an unencryptable type, remove from "
                 "encryptable_user_types below.");
   DataTypeSet encryptable_user_types = UserTypes();
@@ -625,6 +650,7 @@ DataTypeSet EncryptableUserTypes() {
   encryptable_user_types.Remove(INCOMING_PASSWORD_SHARING_INVITATION);
   encryptable_user_types.Remove(OUTGOING_PASSWORD_SHARING_INVITATION);
   // Never encrypted because consumed server-side.
+  encryptable_user_types.Remove(SHARED_COMMENT);
   encryptable_user_types.Remove(SHARED_TAB_GROUP_DATA);
   // Plus addresses and their settings are never encrypted because they
   // originate from outside Chrome.
@@ -745,6 +771,8 @@ const char* DataTypeToDebugString(DataType data_type) {
       return "Autofill Valuable";
     case SHARED_TAB_GROUP_ACCOUNT_DATA:
       return "Shared Tab Group Account Data";
+    case SHARED_COMMENT:
+      return "SharedComment";
     case NIGORI:
       return "Encryption Keys";
   }
@@ -862,6 +890,8 @@ const char* DataTypeToHistogramSuffix(DataType data_type) {
       return "AUTOFILL_VALUABLE";
     case SHARED_TAB_GROUP_ACCOUNT_DATA:
       return "SHARED_TAB_GROUP_ACCOUNT_DATA";
+    case SHARED_COMMENT:
+      return "SHARED_COMMENT";
     case NIGORI:
       return "NIGORI";
   }
@@ -979,6 +1009,8 @@ DataTypeForHistograms DataTypeHistogramValue(DataType data_type) {
       return DataTypeForHistograms::kAutofillValuable;
     case SHARED_TAB_GROUP_ACCOUNT_DATA:
       return DataTypeForHistograms::kSharedTabGroupAccountData;
+    case SHARED_COMMENT:
+      return DataTypeForHistograms::kSharedComment;
     case NIGORI:
       return DataTypeForHistograms::kNigori;
   }
@@ -1113,12 +1145,18 @@ const char* DataTypeToStableLowerCaseString(DataType data_type) {
       return "autofill_valuable";
     case SHARED_TAB_GROUP_ACCOUNT_DATA:
       return "shared_tab_group_account_data";
+    case SHARED_COMMENT:
+      return "shared_comment";
     case NIGORI:
       return "nigori";
   }
   // WARNING: existing strings must not be changed without migration, they
   // are persisted!
   NOTREACHED();
+}
+
+std::ostream& operator<<(std::ostream& out, DataType data_type) {
+  return out << DataTypeToDebugString(data_type);
 }
 
 std::ostream& operator<<(std::ostream& out, DataTypeSet data_type_set) {

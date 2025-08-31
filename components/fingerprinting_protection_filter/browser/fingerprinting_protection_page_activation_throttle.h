@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_FINGERPRINTING_PROTECTION_FILTER_BROWSER_FINGERPRINTING_PROTECTION_PAGE_ACTIVATION_THROTTLE_H_
 #define COMPONENTS_FINGERPRINTING_PROTECTION_FILTER_BROWSER_FINGERPRINTING_PROTECTION_PAGE_ACTIVATION_THROTTLE_H_
 
+#include <optional>
+
 #include "base/gtest_prod_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
@@ -14,9 +16,13 @@
 
 class PrefService;
 
+namespace content {
+class NavigationThrottleRegistry;
+}  // namespace content
+
 namespace privacy_sandbox {
 class TrackingProtectionSettings;
-}
+}  // namespace privacy_sandbox
 
 namespace subresource_filter {
 enum class ActivationDecision;
@@ -52,7 +58,7 @@ class FingerprintingProtectionPageActivationThrottle
     : public content::NavigationThrottle {
  public:
   FingerprintingProtectionPageActivationThrottle(
-      content::NavigationHandle* handle,
+      content::NavigationThrottleRegistry& registry,
       HostContentSettingsMap* content_settings,
       privacy_sandbox::TrackingProtectionSettings* tracking_protection_settings,
       PrefService* prefs,
@@ -86,16 +92,18 @@ class FingerprintingProtectionPageActivationThrottle
   FRIEND_TEST_ALL_PREFIXES(
       FPFPageActivationThrottleWithTrackingProtectionSettingTest,
       GetActivationComputesLevelAndDecision);
+  FRIEND_TEST_ALL_PREFIXES(
+      FPFPageActivationThrottleWithTrackingProtectionSettingTest,
+      TrackingProtectionSettingsIgnoredOutsideOfIncognitoMode);
 
   // Helper for `GetActivation()`.
   // If feature flags and related settings immediately determine the result of
   // `GetActivation()` (i.e. with further exceptions and considerations being
-  // irrelevant), this returns true and sets `result` to the value that should
-  // be returned. Otherwise, returns false, which in the context of
-  // `GetActivation` means that FPP will be enabled unless there is an
-  // exception.
-  bool IsFpActivationDeterminedByFeatureFlags(
-      GetActivationResult* result) const;
+  // irrelevant), this returns the activation result that should be returned.
+  // Otherwise, returns std::nullopt, which in the context of `GetActivation`
+  // means that FPP will be enabled unless there is an exception.
+  std::optional<GetActivationResult>
+  MaybeGetFpActivationDeterminedByFeatureFlags() const;
 
   // Helper for `GetActivation()`.
   // Checks if the current URL has an exception due to the refresh heuristic.

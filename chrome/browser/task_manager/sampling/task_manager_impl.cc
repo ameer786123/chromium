@@ -12,11 +12,12 @@
 #include <utility>
 #include <vector>
 
+#include "base/byte_count.h"
 #include "base/command_line.h"
 #include "base/containers/adapters.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
-#include "base/not_fatal_until.h"
+#include "base/notimplemented.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -29,7 +30,6 @@
 #include "chrome/browser/task_manager/providers/web_contents/web_contents_task_provider.h"
 #include "chrome/browser/task_manager/providers/worker_task_provider.h"
 #include "chrome/browser/task_manager/sampling/shared_sampler.h"
-#include "components/nacl/common/buildflags.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_host.h"
 #include "content/public/browser/gpu_data_manager.h"
@@ -53,8 +53,7 @@ namespace task_manager {
 
 namespace {
 
-base::LazyInstance<TaskManagerImpl>::Leaky lazy_task_manager_instance =
-    LAZY_INSTANCE_INITIALIZER;
+bool g_instance_created = false;
 
 TaskId ComputeRootTaskId(const Task* task) {
   CHECK(task);
@@ -83,9 +82,7 @@ TaskManagerImpl::TaskManagerImpl()
       blocking_pool_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
-      shared_sampler_(new SharedSampler(blocking_pool_runner_)),
-      is_running_(false),
-      waiting_for_memory_dump_(false) {
+      shared_sampler_(new SharedSampler(blocking_pool_runner_)) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   task_providers_.push_back(std::make_unique<BrowserProcessTaskProvider>());
@@ -113,6 +110,8 @@ TaskManagerImpl::TaskManagerImpl()
   task_providers_.push_back(std::make_unique<VmProcessTaskProvider>());
   arc_shared_sampler_ = std::make_unique<ArcSharedSampler>();
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+  g_instance_created = true;
 }
 
 TaskManagerImpl::~TaskManagerImpl() {
@@ -123,7 +122,8 @@ TaskManagerImpl::~TaskManagerImpl() {
 TaskManagerImpl* TaskManagerImpl::GetInstance() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  return lazy_task_manager_instance.Pointer();
+  static base::NoDestructor<TaskManagerImpl> instance;
+  return instance.get();
 }
 
 bool TaskManagerImpl::IsCreated() {
@@ -131,7 +131,7 @@ bool TaskManagerImpl::IsCreated() {
   if (g_browser_process) {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   }
-  return lazy_task_manager_instance.IsCreated();
+  return g_instance_created;
 }
 
 void TaskManagerImpl::ActivateTask(TaskId task_id) {
@@ -168,20 +168,20 @@ base::TimeDelta TaskManagerImpl::GetCpuTime(TaskId task_id) const {
 #endif
 }
 
-int64_t TaskManagerImpl::GetMemoryFootprintUsage(TaskId task_id) const {
+base::ByteCount TaskManagerImpl::GetMemoryFootprintUsage(TaskId task_id) const {
   return GetTaskGroupByTaskId(task_id)->footprint_bytes();
 }
 
-int64_t TaskManagerImpl::GetSwappedMemoryUsage(TaskId task_id) const {
+base::ByteCount TaskManagerImpl::GetSwappedMemoryUsage(TaskId task_id) const {
 #if BUILDFLAG(IS_CHROMEOS)
   return GetTaskGroupByTaskId(task_id)->swapped_bytes();
 #else
-  return -1;
+  return base::ByteCount(-1);
 #endif
 }
 
-int64_t TaskManagerImpl::GetGpuMemoryUsage(TaskId task_id,
-                                           bool* has_duplicates) const {
+base::ByteCount TaskManagerImpl::GetGpuMemoryUsage(TaskId task_id,
+                                                   bool* has_duplicates) const {
   const TaskGroup* task_group = GetTaskGroupByTaskId(task_id);
   if (has_duplicates)
     *has_duplicates = task_group->gpu_memory_has_duplicates();
@@ -198,14 +198,6 @@ int TaskManagerImpl::GetHardFaultsPerSecond(TaskId task_id) const {
 #else
   return -1;
 #endif
-}
-
-int TaskManagerImpl::GetNaClDebugStubPort(TaskId task_id) const {
-#if BUILDFLAG(ENABLE_NACL)
-  return GetTaskGroupByTaskId(task_id)->nacl_debug_stub_port();
-#else
-  return -2;
-#endif  // BUILDFLAG(ENABLE_NACL)
 }
 
 void TaskManagerImpl::GetGDIHandles(TaskId task_id,
@@ -295,35 +287,38 @@ void TaskManagerImpl::GetTerminationStatus(TaskId task_id,
   GetTaskByTaskId(task_id)->GetTerminationStatus(out_status, out_error_code);
 }
 
-int64_t TaskManagerImpl::GetNetworkUsage(TaskId task_id) const {
+base::ByteCount TaskManagerImpl::GetNetworkUsage(TaskId task_id) const {
   return GetTaskByTaskId(task_id)->GetNetworkUsageRate();
 }
 
-int64_t TaskManagerImpl::GetCumulativeNetworkUsage(TaskId task_id) const {
+base::ByteCount TaskManagerImpl::GetCumulativeNetworkUsage(
+    TaskId task_id) const {
   return GetTaskByTaskId(task_id)->GetCumulativeNetworkUsage();
 }
 
-int64_t TaskManagerImpl::GetProcessTotalNetworkUsage(TaskId task_id) const {
+base::ByteCount TaskManagerImpl::GetProcessTotalNetworkUsage(
+    TaskId task_id) const {
   return GetTaskGroupByTaskId(task_id)->per_process_network_usage_rate();
 }
 
-int64_t TaskManagerImpl::GetCumulativeProcessTotalNetworkUsage(
+base::ByteCount TaskManagerImpl::GetCumulativeProcessTotalNetworkUsage(
     TaskId task_id) const {
   return GetTaskGroupByTaskId(task_id)->cumulative_per_process_network_usage();
 }
 
-int64_t TaskManagerImpl::GetSqliteMemoryUsed(TaskId task_id) const {
+base::ByteCount TaskManagerImpl::GetSqliteMemoryUsed(TaskId task_id) const {
   return GetTaskByTaskId(task_id)->GetSqliteMemoryUsed();
 }
 
 bool TaskManagerImpl::GetV8Memory(TaskId task_id,
-                                  int64_t* allocated,
-                                  int64_t* used) const {
+                                  base::ByteCount* allocated,
+                                  base::ByteCount* used) const {
   const Task* task = GetTaskByTaskId(task_id);
-  const int64_t allocated_memory = task->GetV8MemoryAllocated();
-  const int64_t used_memory = task->GetV8MemoryUsed();
-  if (allocated_memory == -1 || used_memory == -1)
+  const base::ByteCount allocated_memory = task->GetV8MemoryAllocated();
+  const base::ByteCount used_memory = task->GetV8MemoryUsed();
+  if (allocated_memory.is_negative() || used_memory.is_negative()) {
     return false;
+  }
 
   *allocated = allocated_memory;
   *used = used_memory;
@@ -581,8 +576,8 @@ void TaskManagerImpl::TaskIdsListToBeInvalidated() {
 
 void TaskManagerImpl::UpdateAccumulatedStatsNetworkForRoute(
     content::GlobalRenderFrameHostId render_frame_host_id,
-    int64_t recv_bytes,
-    int64_t sent_bytes) {
+    base::ByteCount recv_bytes,
+    base::ByteCount sent_bytes) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (!is_running_)
     return;
@@ -612,14 +607,15 @@ void TaskManagerImpl::OnReceivedMemoryDump(
   // of whether the global dump was successful; usually because of a missing
   // process or OS dumps. There may still be useful information for other
   // processes in the global dump when success is false.
-  if (!dump)
+  if (!dump) {
     return;
+  }
   for (const auto& pmd : dump->process_dumps()) {
     auto it = task_groups_by_proc_id_.find(pmd.pid());
-    if (it == task_groups_by_proc_id_.end())
+    if (it == task_groups_by_proc_id_.end()) {
       continue;
-    it->second->set_footprint_bytes(
-        static_cast<uint64_t>(pmd.os_dump().private_footprint_kb) * 1024);
+    }
+    it->second->set_footprint(base::KiB(pmd.os_dump().private_footprint_kb));
   }
 }
 
@@ -706,7 +702,7 @@ Task* TaskManagerImpl::GetTaskByRoute(
 
 TaskGroup* TaskManagerImpl::GetTaskGroupByTaskId(TaskId task_id) const {
   auto it = task_groups_by_task_id_.find(task_id);
-  CHECK(it != task_groups_by_task_id_.end(), base::NotFatalUntil::M130);
+  CHECK(it != task_groups_by_task_id_.end());
   return it->second;
 }
 

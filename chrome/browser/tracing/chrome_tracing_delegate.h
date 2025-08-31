@@ -23,6 +23,21 @@ namespace tracing {
 class BackgroundTracingStateManager;
 }
 
+// These values are logged to UMA. Entries should not be renumbered and numeric
+// values should never be reused. Please keep in sync with
+// "TracingFinalizationDisallowedReason" in
+// src/tools/metrics/histograms/enums.xml.
+enum class TracingFinalizationDisallowedReason {
+  kIncognitoLaunched = 0,
+  //  kProfileNotLoaded = 1, Obsolete
+  //  kCrashMetricsNotLoaded = 2, Obsolete
+  //  kLastSessionCrashed = 3, Obsolete
+  //  kMetricsReportingDisabled = 4, Obsolete
+  //  kTraceUploadedRecently = 5, Obsolete
+  //  kLastTracingSessionDidNotEnd = 6, Obsolete as of Nov'2024.
+  kMaxValue = kIncognitoLaunched
+};
+
 class ChromeTracingDelegate : public content::TracingDelegate,
 #if BUILDFLAG(IS_ANDROID)
                               public TabModelListObserver
@@ -39,9 +54,14 @@ class ChromeTracingDelegate : public content::TracingDelegate,
   ~ChromeTracingDelegate() override;
 
   // content::TracingDelegate implementation:
-  bool IsRecordingAllowed(bool requires_anonymized_data) const override;
-
+  bool IsRecordingAllowed(bool requires_anonymized_data,
+                          base::TimeTicks session_start) const override;
   bool ShouldSaveUnuploadedTrace() const override;
+  std::unique_ptr<tracing::BackgroundTracingStateManager> CreateStateManager()
+      override;
+  std::string RecordSerializedSystemProfileMetrics() const override;
+  tracing::MetadataDataSource::BundleRecorder
+  CreateSystemProfileMetadataRecorder() const override;
 
 #if BUILDFLAG(IS_WIN)
   void GetSystemTracingState(
@@ -61,11 +81,13 @@ class ChromeTracingDelegate : public content::TracingDelegate,
 #else
   // BrowserListObserver implementation.
   void OnBrowserAdded(Browser* browser) override;
+  void OnBrowserRemoved(Browser* browser) override;
 #endif
 
-  bool incognito_launched_ = false;
-
-  std::unique_ptr<tracing::BackgroundTracingStateManager> state_manager_;
+  // Track the most recent OffTheRecord browser creation time. It's ok to update
+  // to a newer timestamp when there are multiple OffTheRecord browsers, since
+  // the newer timestamp is stricter.
+  base::TimeTicks latest_incognito_launched_;
 };
 
 #endif  // CHROME_BROWSER_TRACING_CHROME_TRACING_DELEGATE_H_

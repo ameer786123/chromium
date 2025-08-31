@@ -6,30 +6,36 @@
 
 #include <errno.h>
 #include <netinet/in.h>
+#include <stdio.h>
 #include <sys/socket.h>
 
 #include <memory>
 #include <utility>
 
+#include "base/debug/alias.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/task/current_thread.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/sockaddr_storage.h"
 #include "net/base/trace_constants.h"
-#include "net/base/tracing.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
 #if BUILDFLAG(IS_FUCHSIA)
 #include <poll.h>
 #include <sys/ioctl.h>
 #endif  // BUILDFLAG(IS_FUCHSIA)
+
+#if BUILDFLAG(IS_APPLE)
+#include "net/socket/socket_apple.h"
+#endif  // BUILDFLAG(IS_APPLE)
 
 namespace net {
 
@@ -515,11 +521,25 @@ void SocketPosix::ReadCompleted() {
 }
 
 int SocketPosix::DoWrite(IOBuffer* buf, int buf_len) {
-  int rv = HANDLE_EINTR(send(socket_fd_, buf->data(), buf_len, MSG_NOSIGNAL));
-  if (rv >= 0) {
-    CHECK_LE(rv, buf_len);
+#if defined(WORK_AROUND_CRBUG_40064248)
+  ssize_t send_rv = HANDLE_EINTR(SendAndDetectBogusReturnValue(
+      socket_fd_, buf->data(), buf_len, MSG_NOSIGNAL));
+  if (send_rv == kSendBogusReturnValueDetected) {
+    // https://crbug.com/40064248 is known to occur as a result of certain
+    // network configuration changes.
+    return ERR_NETWORK_CHANGED;
   }
-  return rv >= 0 ? rv : MapSystemError(errno);
+#else   // WORK_AROUND_CRBUG_40064248
+  ssize_t send_rv =
+      HANDLE_EINTR(send(socket_fd_, buf->data(), buf_len, MSG_NOSIGNAL));
+#endif  // WORK_AROUND_CRBUG_40064248
+
+  if (send_rv < 0) {
+    return MapSystemError(errno);
+  }
+
+  CHECK_LE(send_rv, buf_len);
+  return send_rv;
 }
 
 void SocketPosix::WriteCompleted() {

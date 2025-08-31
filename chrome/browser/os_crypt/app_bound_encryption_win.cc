@@ -20,6 +20,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/win/com_init_util.h"
+#include "base/win/registry.h"
 #include "base/win/scoped_bstr.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_paths_internal.h"
@@ -33,6 +34,8 @@
 namespace os_crypt {
 
 namespace {
+
+AppBoundEncryptionOverridesForTesting* g_overrides_for_testing = nullptr;
 
 ProtectionLevel AddFlags(ProtectionLevel protection_level,
                          elevation_service::EncryptFlags flags) {
@@ -57,10 +60,15 @@ ProtectionLevel AddFlags(ProtectionLevel protection_level,
 namespace features {
 BASE_FEATURE(kAppBoundDataReencrypt,
              "AppBoundDataReencrypt",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             base::FEATURE_DISABLED_BY_DEFAULT);
 }  // namespace features
 
 SupportLevel GetAppBoundEncryptionSupportLevel(PrefService* local_state) {
+  if (g_overrides_for_testing) {
+    return g_overrides_for_testing->GetAppBoundEncryptionSupportLevel(
+        local_state);
+  }
+
   // Must be a system install.
   if (!install_static::IsSystemInstall()) {
     return SupportLevel::kNotSystemLevel;
@@ -100,6 +108,16 @@ SupportLevel GetAppBoundEncryptionSupportLevel(PrefService* local_state) {
     // App-Bound binds the encryption key to the SYSTEM DPAPI key, which does
     // not roam with a roaming profile.
     if (profile_type > 0) {
+      return SupportLevel::kDisabledByRoamingWindowsProfile;
+    }
+  }
+
+  // https://learn.microsoft.com/en-us/fslogix/ is a roaming profile solution
+  // that does not use profile type. Detect it explicitly here.
+  for (const auto access_mask : {KEY_WOW64_32KEY, KEY_WOW64_64KEY}) {
+    if (base::win::RegKey{}.Open(HKEY_LOCAL_MACHINE, L"SOFTWARE\\FSLogix",
+                                 KEY_QUERY_VALUE | access_mask) ==
+        ERROR_SUCCESS) {
       return SupportLevel::kDisabledByRoamingWindowsProfile;
     }
   }
@@ -149,6 +167,11 @@ HRESULT EncryptAppBoundString(ProtectionLevel protection_level,
                               std::string& ciphertext,
                               DWORD& last_error,
                               elevation_service::EncryptFlags* flags) {
+  if (g_overrides_for_testing) {
+    return g_overrides_for_testing->EncryptAppBoundString(
+        protection_level, plaintext, ciphertext, last_error, flags);
+  }
+
   base::win::AssertComInitialized();
   Microsoft::WRL::ComPtr<IElevator> elevator;
   last_error = ERROR_GEN_FAILURE;
@@ -193,6 +216,12 @@ HRESULT DecryptAppBoundString(const std::string& ciphertext,
                               std::optional<std::string>& new_ciphertext,
                               DWORD& last_error,
                               elevation_service::EncryptFlags* flags) {
+  if (g_overrides_for_testing) {
+    return g_overrides_for_testing->DecryptAppBoundString(
+        ciphertext, plaintext, protection_level, new_ciphertext, last_error,
+        flags);
+  }
+
   DCHECK(!ciphertext.empty());
   base::win::AssertComInitialized();
   Microsoft::WRL::ComPtr<IElevator> elevator;
@@ -234,15 +263,10 @@ HRESULT DecryptAppBoundString(const std::string& ciphertext,
     HRESULT encrypt_hr =
         elevator->EncryptData(protection_level, plaintext_data.Get(),
                               reencrypted_data.Receive(), &encrypt_last_error);
-    base::UmaHistogramSparse("OSCrypt.AppBound.ReEncrypt.ResultCode",
-                             encrypt_hr);
     if (SUCCEEDED(encrypt_hr)) {
       new_ciphertext.emplace(
           reinterpret_cast<std::string::value_type*>(reencrypted_data.Get()),
           reencrypted_data.ByteLength());
-    } else {
-      base::UmaHistogramSparse("OSCrypt.AppBound.ReEncrypt.ResultLastError",
-                               encrypt_last_error);
     }
   }
 
@@ -254,6 +278,11 @@ HRESULT DecryptAppBoundString(const std::string& ciphertext,
 
   last_error = ERROR_SUCCESS;
   return S_OK;
+}
+
+void SetOverridesForTesting(AppBoundEncryptionOverridesForTesting* overrides) {
+  CHECK(!g_overrides_for_testing || !overrides);
+  g_overrides_for_testing = overrides;
 }
 
 }  // namespace os_crypt

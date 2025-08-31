@@ -11,32 +11,47 @@
 #include <string>
 
 #include "base/command_line.h"
+#include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/memory/raw_ptr.h"
+#include "base/one_shot_event.h"
 #include "base/path_service.h"
 #include "base/scoped_observation.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/chrome_extension_registrar_delegate.h"
 #include "chrome/browser/extensions/extension_service_user_test_base.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/test/base/testing_browser_process.h"
+#include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/testing_profile_manager.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/test/browser_task_environment.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/unloaded_extension_reason.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_resource.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/display/test/test_screen.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 class ExtensionUnloadedObserver : public ExtensionRegistryObserver {
  public:
-  explicit ExtensionUnloadedObserver(ExtensionRegistry* registry)
-      : unloaded_count_(0) {
+  explicit ExtensionUnloadedObserver(ExtensionRegistry* registry) {
     observation_.Observe(registry);
   }
 
@@ -55,16 +70,26 @@ class ExtensionUnloadedObserver : public ExtensionRegistryObserver {
   }
 
  private:
-  size_t unloaded_count_;
+  size_t unloaded_count_ = 0;
   base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>
       observation_{this};
 };
 
-class ComponentLoaderTest : public ExtensionServiceUserTestBase {
+// TODO(crbug.com/408458901): Use an extensions test base class once we have
+// one that works on desktop Android.
+class ComponentLoaderTest : public testing::Test {
  public:
+  ComponentLoaderTest() = default;
+
   void SetUp() override {
-    ExtensionServiceUserTestBase::InitializeEmptyExtensionService();
-    ExtensionServiceUserTestBase::SetUp();
+    profile_manager_ = std::make_unique<TestingProfileManager>(
+        TestingBrowserProcess::GetGlobal());
+    ASSERT_TRUE(profile_manager_->SetUp());
+    profile_ = profile_manager_->CreateTestingProfile(
+        TestingProfile::kDefaultProfileUserName, /*prefs=*/nullptr,
+        /*user_name=*/std::u16string(),
+        /*avatar_id=*/0, /*testing_factories=*/{});
+
     extension_system_ =
         static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile()));
 
@@ -80,15 +105,52 @@ class ComponentLoaderTest : public ExtensionServiceUserTestBase {
         &manifest_contents_));
 
     component_loader_ = ComponentLoader::Get(profile());
+    component_loader_->set_ignore_allowlist_for_testing(true);
+
+    // Set up ExtensionRegistrar with a delegate.
+    extension_registrar_delegate_ =
+        std::make_unique<ChromeExtensionRegistrarDelegate>(profile_.get());
+    extension_registrar_ = ExtensionRegistrar::Get(profile_.get());
+    extension_registrar_->Init(extension_registrar_delegate_.get(), true,
+                               base::CommandLine::ForCurrentProcess(),
+                               base::FilePath(), base::FilePath());
+    extension_registrar_delegate_->Init(extension_registrar_);
   }
 
   void TearDown() override {
+    extension_registrar_delegate_->Shutdown();
+    extension_registrar_ = nullptr;
     component_loader_ = nullptr;
     extension_system_ = nullptr;
-    ExtensionServiceUserTestBase::TearDown();
+    profile_ = nullptr;
+    profile_manager_.reset();
   }
 
+  base::FilePath GetBasePath() {
+    base::FilePath test_data_dir;
+    base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir);
+    return test_data_dir.AppendASCII("extensions");
+  }
+
+  void UninstallAllExtensions() {
+    auto* registry = ExtensionRegistry::Get(profile());
+    ExtensionSet extensions = registry->GenerateInstalledExtensionsSet();
+    for (const auto& extension : extensions) {
+      extension_registrar_->RemoveExtension(extension->id(),
+                                            UnloadedExtensionReason::UNINSTALL);
+    }
+  }
+
+  TestingProfile* profile() { return profile_; }
+
  protected:
+  content::BrowserTaskEnvironment task_environment_{
+      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
+  std::unique_ptr<TestingProfileManager> profile_manager_;
+  raw_ptr<TestingProfile> profile_ = nullptr;
+  std::unique_ptr<ChromeExtensionRegistrarDelegate>
+      extension_registrar_delegate_;
+  raw_ptr<ExtensionRegistrar> extension_registrar_ = nullptr;
   raw_ptr<TestExtensionSystem> extension_system_ = nullptr;
   raw_ptr<ComponentLoader> component_loader_ = nullptr;
 
@@ -98,25 +160,11 @@ class ComponentLoaderTest : public ExtensionServiceUserTestBase {
   // The contents of the text extension's manifest file.
   std::string manifest_contents_;
 
-  base::FilePath GetBasePath() {
-    base::FilePath test_data_dir;
-    base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir);
-    return test_data_dir.AppendASCII("extensions");
-  }
-
-  // Test that certain histograms are emitted for user and non-user profiles
-  // (users for ChromeOS Ash).
-  void RunEmitUserHistogramsTest(int nonuser_expected_total_count,
-                                 int user_expected_total_count) {
-    component_loader_->set_profile_for_testing(profile());
-    base::HistogramTester histograms;
-    component_loader_->LoadAll();
-    histograms.ExpectTotalCount("Extensions.LoadAllComponentTime", 1);
-    histograms.ExpectTotalCount("Extensions.LoadAllComponentTime.NonUser",
-                                nonuser_expected_total_count);
-    histograms.ExpectTotalCount("Extensions.LoadAllComponentTime.User",
-                                user_expected_total_count);
-  }
+#if BUILDFLAG(IS_ANDROID)
+  // WebContentImpl requires a Screen instance on Android.
+  display::test::TestScreen screen_{/*create_display=*/true,
+                                    /*register_screen=*/true};
+#endif
 };
 
 TEST_F(ComponentLoaderTest, ParseManifest) {
@@ -224,21 +272,46 @@ TEST_F(ComponentLoaderTest, LoadAll) {
   unsigned int default_count = registry->enabled_extensions().size();
 
   // Clear the list of loaded extensions, and reload with one more.
-  extension_system_->extension_service()->UnloadAllExtensionsForTest();
+  UninstallAllExtensions();
   component_loader_->Add(manifest_contents_, extension_path_);
   component_loader_->LoadAll();
 
   EXPECT_EQ(default_count + 1, registry->enabled_extensions().size());
 }
 
-TEST_F(ComponentLoaderTest, LoadAll_EmitUserHistograms) {
+class ComponentLoaderExtensionServiceTest
+    : public ExtensionServiceUserTestBase {
+ public:
+  // testing::Test:
+  void SetUp() override {
+    ExtensionServiceUserTestBase::InitializeEmptyExtensionService();
+    ExtensionServiceUserTestBase::SetUp();
+  }
+
+  // Test that certain histograms are emitted for user and non-user profiles
+  // (users for ChromeOS Ash).
+  void RunEmitUserHistogramsTest(int nonuser_expected_total_count,
+                                 int user_expected_total_count) {
+    auto* component_loader = ComponentLoader::Get(profile());
+    component_loader->set_profile_for_testing(profile());
+    base::HistogramTester histograms;
+    component_loader->LoadAll();
+    histograms.ExpectTotalCount("Extensions.LoadAllComponentTime", 1);
+    histograms.ExpectTotalCount("Extensions.LoadAllComponentTime.NonUser",
+                                nonuser_expected_total_count);
+    histograms.ExpectTotalCount("Extensions.LoadAllComponentTime.User",
+                                user_expected_total_count);
+  }
+};
+
+TEST_F(ComponentLoaderExtensionServiceTest, LoadAll_EmitUserHistograms) {
   ASSERT_NO_FATAL_FAILURE(MaybeSetUpTestUser(/*is_guest=*/false));
 
   RunEmitUserHistogramsTest(/*nonuser_expected_total_count=*/0,
                             /*user_expected_total_count=*/1);
 }
 
-TEST_F(ComponentLoaderTest, LoadAll_NonUserEmitHistograms) {
+TEST_F(ComponentLoaderExtensionServiceTest, LoadAll_NonUserEmitHistograms) {
   ASSERT_NO_FATAL_FAILURE(MaybeSetUpTestUser(/*is_guest=*/true));
 
   RunEmitUserHistogramsTest(/*nonuser_expected_total_count=*/1,
@@ -286,5 +359,60 @@ TEST_F(ComponentLoaderTest, DISABLED_AddOrReplace) {
   std::string extension_id = component_loader_->AddOrReplace(invalid_extension);
   EXPECT_TRUE(extension_id.empty());
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+
+// Tests that component extensions follow symbolic links for its resources.
+TEST_F(ComponentLoaderTest, FollowSymlinks) {
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+
+  const base::FilePath extension_dir =
+      temp_dir.GetPath().AppendASCII("extension");
+  ASSERT_TRUE(base::CreateDirectory(extension_dir));
+
+  constexpr char kKey[] =
+      "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0wsqv0aItfmI5B5"
+      "fTOChbevC1X5Xm/2et2H1TpocRQGSz5oGhVMUPjGgBeYvHemCkBGiuFYQgT"
+      "62aPZLNqQG96dFEG4GGuY/FX7Kq1G9NF1ovZ9H5JMniEj/zfj1W64mCwgFI"
+      "uVN8b3m+vs3ZoCX9OD4s9mEEEiygqltfsxhGBAmPLdDcY6Ze9/FHNJh6Q6s"
+      "Aa6hIhfmmbLSyvX/kL3359J1yVTFuW1SK2/hfDINl+MWkHgd2xV0tkl/bVy"
+      "NlH4XtoK3ZedHe7mrkiEoO65U/PpmN/coLoE07C/xkQwYVqbQWllq2Ij8j2"
+      "XkJdwv3qrcDsOvvB1W498CyMkuGL2UswIDAQAB";
+  constexpr char kManifestTemplate[] =
+      R"({
+        "key": "%s",
+        "version": "1.0",
+        "manifest_version": 3,
+        "name": "Test extension"
+      })";
+  ASSERT_TRUE(base::WriteFile(extension_dir.Append(kManifestFilename),
+                              base::StringPrintf(kManifestTemplate, kKey)));
+
+  const base::FilePath shared_data = temp_dir.GetPath().AppendASCII("data");
+  ASSERT_TRUE(base::WriteFile(shared_data, "shared tests file"));
+
+  const base::FilePath rel_path_in_extension_root(FILE_PATH_LITERAL("link"));
+  base::FilePath link_in_extension_root =
+      extension_dir.Append(rel_path_in_extension_root);
+  ASSERT_TRUE(base::CreateSymbolicLink(shared_data, link_in_extension_root));
+
+  extension_system_->SetReady();
+  const ExtensionId extension_id =
+      component_loader_->AddOrReplace(extension_dir);
+  ASSERT_NE("", extension_id);
+
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
+  const Extension* extension =
+      registry->enabled_extensions().GetByID(extension_id);
+  ASSERT_TRUE(extension);
+
+  const base::FilePath resource_path =
+      extension->GetResource(rel_path_in_extension_root).GetFilePath();
+  EXPECT_EQ(base::MakeAbsoluteFilePath(resource_path),
+            base::MakeAbsoluteFilePath(shared_data));
+}
+
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace extensions

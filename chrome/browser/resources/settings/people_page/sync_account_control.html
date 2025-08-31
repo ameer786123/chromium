@@ -5,6 +5,54 @@
         --sync-icon-size: 16px;
       }
 
+      :host([promo-type_="sync"]) {
+        h3 {
+          font-size: inherit;
+          margin: 0;
+          font-weight: normal;
+        }
+
+        #banner {
+          background: url(chrome://settings/images/sync_banner.svg) no-repeat;
+          background-size: 100% auto;
+          display: none;
+          padding-top: calc(120 / 680 * 100%); /* Keep background ratio. */
+          display: block;
+        }
+
+        @media (prefers-color-scheme: dark) {
+          #banner {
+            background-image:
+                url(chrome://settings/images/sync_banner_dark.svg);
+          }
+        }
+      }
+
+      :host([promo-type_="signin"]) {
+        h3 {
+          margin-top: 4px;
+          margin-bottom: 4px;
+          font-size: 1rem;
+          font-weight: 500;
+          letter-spacing: .25px;
+        }
+
+        #banner {
+          background: url(chrome://settings/images/signin_banner.svg) no-repeat;
+          background-size: 100% auto;
+          display: none;
+          padding-top: calc(120 / 680 * 100%); /* Keep background ratio. */
+          display: block;
+        }
+
+        @media (prefers-color-scheme: dark) {
+          #banner {
+            background-image:
+                url(chrome://settings/images/signin_banner_dark.svg);
+          }
+        }
+      }
+
       .account-icon {
         border-radius: 50%;
         flex-shrink: 0;
@@ -86,12 +134,6 @@
         }
       }
 
-      h3 {
-        font-size: inherit;
-        margin: 0;
-        font-weight: normal;
-      }
-
       #sync-icon-container cr-icon {
         fill: white;  /* Same in light and dark modes. */
         height: 12px;
@@ -101,20 +143,6 @@
 
       #signIn {
         min-width: 100px;
-      }
-
-      #banner {
-        background: url(chrome://settings/images/sync_banner.svg) no-repeat;
-        background-size: 100% auto;
-        display: none;
-        padding-top: calc(120 / 680 * 100%); /* Keep background ratio. */
-        display: block;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        #banner {
-          background-image: url(chrome://settings/images/sync_banner_dark.svg);
-        }
       }
 
     </style>
@@ -136,9 +164,7 @@
                   syncStatus.firstSetupInProgress,
                   prefs.signin.allowed_on_next_startup.value)]]"
           hidden="[[shouldShowAvatarRow_]]">
-        [[getSignInLabel_(
-          '$i18nPolymer{peopleSignIn}',
-          '$i18nPolymer{peopleSignInNoAccountAwareness}')]]
+        $i18n{peopleSignInNoAccountAwareness}
       </cr-button>
     </div>
     <template is="dom-if" if="[[shouldShowAvatarRow_]]">
@@ -202,19 +228,17 @@
         <cr-button id="signout-button" class="cr-button-gap"
             hidden="[[shouldHideSignoutButton_(syncStatus.signedInState)]]"
             on-click="onSignoutClick_">
-            $i18n{signOutOfChrome}
+          $i18n{signOutOfChrome}
         </cr-button>
         <cr-button id="sync-button" class="action-button cr-button-gap"
             hidden="[[shouldHideSyncButton_(syncStatus.signedInState,
                 syncStatus.signinPaused)]]"
             on-click="onSyncButtonClick_"
             disabled="[[shouldDisableSyncButton_(showSetupButtons_,
-                    syncStatus.firstSetupInProgress,
-                    prefs.signin.allowed_on_next_startup.value)]]">
-          [[getTurnOnSyncLabel_(
-                      '$i18nPolymer{peopleSignIn}',
-                      '$i18nPolymer{turnOnSync}')]]
-             </cr-button>
+                syncStatus.firstSetupInProgress,
+                prefs.signin.allowed_on_next_startup.value)]]">
+          $i18nPolymer{turnOnSync}
+        </cr-button>
         <cr-button id="turn-off"
             class="cr-button-gap"
             hidden="[[!shouldShowTurnOffButton_(syncStatus.signedInState,
@@ -258,9 +282,7 @@
               hidden="[[shouldHideRemoveAccountButton_(
                   syncStatus.signedInState)]]"
               on-click="onSignoutClick_">
-            [[getSigninPausedLabel_(
-              '$i18n{peopleSignOut}',
-              '$i18nPolymer{pendingSecondaryButton}')]]
+            $i18n{pendingSecondaryButton}
           </cr-button>
           <cr-button class="action-button cr-button-gap"
               on-click="onSigninClick_">
@@ -286,12 +308,6 @@
                   id="sign-in-item">
             <cr-icon icon="cr:add" class="account-icon small" alt=""></cr-icon>
             <span>$i18n{useAnotherAccount}</span>
-          </button>
-          <button class="dropdown-item" on-click="onSignoutClick_"
-              disabled="[[syncStatus.firstSetupInProgress]]" id="sign-out-item"
-              hidden="[[shouldHideSignoutDropdownButton_()]]">
-            <cr-icon icon="settings:exit-to-app"></cr-icon>
-            <span>$i18n{peopleSignOut}</span>
           </button>
         </cr-action-menu>
       </template>

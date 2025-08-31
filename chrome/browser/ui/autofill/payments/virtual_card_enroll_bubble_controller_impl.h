@@ -42,7 +42,7 @@ class VirtualCardEnrollBubbleControllerImpl
   // Displays both the virtual card enroll bubble and its associated omnibox
   // icon. Sets virtual card enrollment fields as well as the closure for the
   // accept and decline bubble events.
-  void ShowBubble(
+  void SetupAndShowBubble(
       const VirtualCardEnrollmentFields& virtual_card_enrollment_fields,
       base::OnceClosure accept_virtual_card_callback,
       base::OnceClosure decline_virtual_card_callback);
@@ -78,6 +78,10 @@ class VirtualCardEnrollBubbleControllerImpl
   GetConfirmationUiParams() const override;
   bool IsIconVisible() const override;
 
+  // BubbleControllerBase:
+  BubbleType GetBubbleType() const override;
+  base::WeakPtr<BubbleControllerBase> GetBubbleControllerBaseWeakPtr() override;
+
  protected:
   explicit VirtualCardEnrollBubbleControllerImpl(
       content::WebContents* web_contents);
@@ -92,6 +96,13 @@ class VirtualCardEnrollBubbleControllerImpl
 
   friend class content::WebContentsUserData<
       VirtualCardEnrollBubbleControllerImpl>;
+
+  // Initializes the controller for showing the virtual card enrollment bubble.
+  // Sets up the UI model with enrollment fields and stores the callbacks for
+  // user acceptance or declination.
+  void SetupBubble(VirtualCardEnrollmentFields virtual_card_enrollment_fields,
+                   base::OnceClosure accept_virtual_card_callback,
+                   base::OnceClosure decline_virtual_card_callback);
 
   // Contains the UI assets shown in the virtual card enrollment view.
   std::unique_ptr<VirtualCardEnrollUiModel> ui_model_;

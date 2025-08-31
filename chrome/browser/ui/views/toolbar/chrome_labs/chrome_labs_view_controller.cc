@@ -51,10 +51,10 @@ enum class ChromeLabsSelectedLab {
   kUnspecifiedSelected = 0,
   // kReadLaterSelected = 1,
   // kTabSearchSelected = 2,
-  kTabScrollingSelected = 3,
+  // kTabScrollingSelected = 3,
   // kSidePanelSelected = 4,
   // kLensRegionSearchSelected = 5,
-  kWebUITabStripSelected = 6,
+  // kWebUITabStripSelected = 6,
   // kTabSearchMediaTabsSelected = 7,
   // kChromeRefresh2023Selected = 8,
   // kTabGroupsSaveSelected = 9,
@@ -82,15 +82,6 @@ void EmitToHistogram(const std::u16string& selected_lab_state,
   };
 
   const auto get_enum = [](const std::string& internal_name) {
-    if (internal_name == flag_descriptions::kScrollableTabStripFlagId) {
-      return ChromeLabsSelectedLab::kTabScrollingSelected;
-    }
-#if BUILDFLAG(ENABLE_WEBUI_TAB_STRIP) && \
-    (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS))
-    if (internal_name == flag_descriptions::kWebUITabStripFlagId)
-      return ChromeLabsSelectedLab::kWebUITabStripSelected;
-#endif
-
     return ChromeLabsSelectedLab::kUnspecifiedSelected;
   };
 
@@ -109,13 +100,11 @@ uint32_t GetCurrentDay() {
 }  // namespace
 
 ChromeLabsViewController::ChromeLabsViewController(
-    const ChromeLabsModel* model,
     ChromeLabsBubbleView* chrome_labs_bubble_view,
     Browser* browser,
     flags_ui::FlagsState* flags_state,
     flags_ui::FlagsStorage* flags_storage)
-    : model_(model),
-      chrome_labs_bubble_view_(chrome_labs_bubble_view),
+    : chrome_labs_bubble_view_(chrome_labs_bubble_view),
       browser_(browser),
       flags_state_(flags_state),
       flags_storage_(flags_storage) {
@@ -140,7 +129,8 @@ int ChromeLabsViewController::GetIndexOfEnabledLabState(
 
 void ChromeLabsViewController::ParseModelDataAndAddLabs() {
   // Create each lab item.
-  const std::vector<LabInfo>& all_labs = model_->GetLabInfo();
+  const std::vector<LabInfo>& all_labs =
+      ChromeLabsModel::GetInstance()->GetLabInfo();
   for (const auto& lab : all_labs) {
     const flags_ui::FeatureEntry* entry =
         flags_state_->FindFeatureEntryByName(lab.internal_name);
@@ -205,11 +195,6 @@ void ChromeLabsViewController::SetRestartCallback() {
 user_education::DisplayNewBadge ChromeLabsViewController::ShouldLabShowNewBadge(
     Profile* profile,
     const LabInfo& lab) {
-  // This experiment was added before adding the new badge and is not new.
-  if (lab.internal_name == flag_descriptions::kScrollableTabStripFlagId) {
-    return user_education::DisplayNewBadge();
-  }
-
 #if BUILDFLAG(IS_CHROMEOS)
   ScopedDictPrefUpdate update(
       profile->GetPrefs(), chrome_labs_prefs::kChromeLabsNewBadgeDictAshChrome);

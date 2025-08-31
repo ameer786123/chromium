@@ -8,8 +8,10 @@
 
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
+#include "base/strings/strcat.h"
 #include "components/sync/base/data_type.h"
 #include "components/sync/engine/data_type_activation_response.h"
 #include "components/sync/model/data_type_activation_request.h"
@@ -167,9 +169,7 @@ void DataTypeController::LoadModels(
   DataTypeActivationRequest request;
   request.error_handler = base::BindRepeating(
       &DataTypeController::ReportModelError, weak_ptr_factory_.GetWeakPtr());
-  request.authenticated_account_id = configure_context.authenticated_account_id;
-  request.previously_syncing_gaia_id_info =
-      configure_context.previously_syncing_gaia_id_info;
+  request.authenticated_gaia_id = configure_context.authenticated_gaia_id;
   request.cache_guid = configure_context.cache_guid;
   request.sync_mode = configure_context.sync_mode;
   request.configuration_start_time = configure_context.configuration_start_time;
@@ -270,17 +270,17 @@ bool DataTypeController::ShouldRunInTransportOnlyMode() const {
   return delegate_map_.count(SyncMode::kTransportOnly) != 0;
 }
 
-void DataTypeController::HasUnsyncedData(
-    base::OnceCallback<void(bool)> callback) {
+void DataTypeController::GetUnsyncedDataCount(
+    base::OnceCallback<void(size_t)> callback) {
   auto it = delegate_map_.find(SyncMode::kTransportOnly);
   if (it == delegate_map_.end()) {
-    std::move(callback).Run(false);
+    std::move(callback).Run(/*count=*/0);
     return;
   }
   CHECK(it->second);
   // This should only be triggered for transport-only mode.
   CHECK(!delegate_ || delegate_ == it->second.get(), base::NotFatalUntil::M138);
-  it->second->HasUnsyncedData(std::move(callback));
+  it->second->GetUnsyncedDataCount(std::move(callback));
 }
 
 void DataTypeController::GetAllNodesForDebugging(AllNodesCallback callback) {
@@ -331,6 +331,7 @@ DataTypeControllerDelegate* DataTypeController::GetDelegateForTesting(
 
 void DataTypeController::ReportModelError(const ModelError& error) {
   DCHECK(CalledOnValidThread());
+  LogModelErrorToHistogram(error);
 
   switch (state_) {
     case MODEL_LOADED:
@@ -383,6 +384,18 @@ void DataTypeController::RecordRunFailure() const {
   DCHECK(CalledOnValidThread());
   UMA_HISTOGRAM_ENUMERATION("Sync.DataTypeRunFailures2",
                             DataTypeHistogramValue(type()));
+}
+
+void DataTypeController::LogModelErrorToHistogram(
+    const ModelError& model_error) const {
+  DCHECK(CalledOnValidThread());
+  // Log specific error type for all sync data types.
+  base::UmaHistogramSparse("Sync.ModelError",
+                           static_cast<int>(model_error.type()));
+  // Log specific error type for the current sync data type.
+  base::UmaHistogramSparse(
+      base::StrCat({"Sync.ModelError.", DataTypeToHistogramSuffix(type())}),
+      static_cast<int>(model_error.type()));
 }
 
 void DataTypeController::OnDelegateStarted(

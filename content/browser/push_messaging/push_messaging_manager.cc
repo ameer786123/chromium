@@ -16,6 +16,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/child_process_security_policy_impl.h"
@@ -39,13 +40,6 @@
 #include "url/origin.h"
 
 namespace content {
-
-// Service Worker database keys. If a registration ID is stored, the stored
-// sender ID must be the one used to register. Unfortunately, this isn't always
-// true of pre-InstanceID registrations previously stored in the database, but
-// fortunately it's less important for their sender ID to be accurate.
-const char kPushSenderIdServiceWorkerKey[] = "push_sender_id";
-const char kPushRegistrationIdServiceWorkerKey[] = "push_registration_id";
 
 namespace {
 
@@ -383,10 +377,10 @@ void PushMessagingManager::Register(PushMessagingManager::RegisterData data) {
 
 void PushMessagingManager::DidRequestPermissionInIncognito(
     RegisterData data,
-    blink::mojom::PermissionStatus status) {
+    PermissionResult permission_result) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   // Notification permission should always be denied in incognito.
-  DCHECK_EQ(blink::mojom::PermissionStatus::DENIED, status);
+  DCHECK_EQ(blink::mojom::PermissionStatus::DENIED, permission_result.status);
   SendSubscriptionError(
       std::move(data),
       blink::mojom::PushRegistrationStatus::INCOGNITO_PERMISSION_DENIED);

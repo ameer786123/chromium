@@ -12,6 +12,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/byte_count.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
@@ -21,6 +22,7 @@
 #include "base/trace_event/trace_id_helper.h"
 #include "base/tracing/protos/chrome_track_event.pbzero.h"
 #include "components/metrics/metrics_data_validation.h"
+#include "components/page_load_metrics/browser/features.h"
 #include "components/page_load_metrics/browser/observers/core/largest_contentful_paint_handler.h"
 #include "components/page_load_metrics/browser/page_load_metrics_memory_tracker.h"
 #include "components/page_load_metrics/browser/page_load_metrics_util.h"
@@ -79,15 +81,6 @@ std::unique_ptr<base::trace_event::TracedValue> FirstInputDelayTraceData(
       timing.interactive_timing->first_input_timestamp->InMillisecondsF());
   return data;
 }
-
-#define TRACE_WITH_TIMESTAMP0(category_group, name, trace_id, begin_time,   \
-                              end_time)                                     \
-  do {                                                                      \
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(category_group, name,  \
-                                                     trace_id, begin_time); \
-    TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(category_group, name,    \
-                                                   trace_id, end_time);     \
-  } while (0)
 
 }  // namespace
 
@@ -465,16 +458,20 @@ void UmaPageLoadMetricsObserver::OnFirstContentfulPaintInPage(
     // paint.
     if (timing.paint_timing->first_contentful_paint.value() >
         kFirstContentfulPaintTraceThreshold) {
-      auto trace_id = TRACE_ID_WITH_SCOPE(
-          "UmaPageLoadMetricsObserver::OnFirstContentfulPaintInPage_for_"
-          "LongNavigation",
-          TRACE_ID_LOCAL(this));
       base::TimeTicks navigation_start = GetDelegate().GetNavigationStart();
-      TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
-          "latency", "Long Navigation to First Contentful Paint", trace_id,
+      TRACE_EVENT_BEGIN(
+          "latency", "Long Navigation to First Contentful Paint",
+          perfetto::NamedTrack(
+              "UmaPageLoadMetricsObserver::OnFirstContentfulPaintInPage_for_"
+              "LongNavigation",
+              reinterpret_cast<uintptr_t>(this)),
           navigation_start);
-      TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
-          "latency", "Long Navigation to First Contentful Paint", trace_id,
+      TRACE_EVENT_END(
+          "latency", /* Long Navigation to First Contentful Paint */
+          perfetto::NamedTrack(
+              "UmaPageLoadMetricsObserver::OnFirstContentfulPaintInPage_for_"
+              "LongNavigation",
+              reinterpret_cast<uintptr_t>(this)),
           navigation_start +
               timing.paint_timing->first_contentful_paint.value());
     }
@@ -712,8 +709,9 @@ void UmaPageLoadMetricsObserver::OnLoadedResource(
         extra_request_complete_info) {
   const net::LoadTimingInfo& timing_info =
       *extra_request_complete_info.load_timing_info;
-  if (timing_info.receive_headers_end.is_null())
+  if (timing_info.receive_headers_end.is_null()) {
     return;
+  }
 
   std::string_view destination =
       network::RequestDestinationToStringForHistogram(
@@ -741,8 +739,9 @@ void UmaPageLoadMetricsObserver::OnLoadedResource(
   total_subresource_load_time_ += delta;
 
   // Rest of the method only logs metrics for the first subresource load.
-  if (received_first_subresource_load_)
+  if (received_first_subresource_load_) {
     return;
+  }
 
   received_first_subresource_load_ = true;
   PAGE_LOAD_HISTOGRAM(
@@ -756,19 +755,25 @@ void UmaPageLoadMetricsObserver::OnLoadedResource(
         internal::kHistogramCommitSentToFirstSubresourceLoadStart,
         timing_info.request_start - commit_sent_time);
 
-    TRACE_WITH_TIMESTAMP0(
+    TRACE_EVENT_BEGIN(
         "loading", "CommitSentToFirstSubresourceLoadStart",
-        TRACE_ID_WITH_SCOPE("CommitSentToFirstSubresourceLoadStart",
-                            TRACE_ID_LOCAL(this)),
-        commit_sent_time, timing_info.request_start);
+        perfetto::NamedTrack("CommitSentToFirstSubresourceLoadStart",
+                             reinterpret_cast<uintptr_t>(this)),
+        commit_sent_time);
+    TRACE_EVENT_END(
+        "loading", /* CommitSentToFirstSubresourceLoadStart */
+        perfetto::NamedTrack("CommitSentToFirstSubresourceLoadStart",
+                             reinterpret_cast<uintptr_t>(this)),
+        timing_info.request_start);
   }
 }
 
 void UmaPageLoadMetricsObserver::OnUserInput(
     const blink::WebInputEvent& event,
     const page_load_metrics::mojom::PageLoadTiming& timing) {
-  if (first_paint_.is_null())
+  if (first_paint_.is_null()) {
     return;
+  }
 
   // Track clicks after first paint for possible click burst.
   click_tracker_.OnUserInput(event);
@@ -1014,8 +1019,9 @@ void UmaPageLoadMetricsObserver::RecordForegroundDurationHistograms(
   std::optional<base::TimeDelta> foreground_duration =
       page_load_metrics::GetInitialForegroundDuration(GetDelegate(),
                                                       app_background_time);
-  if (!foreground_duration)
+  if (!foreground_duration) {
     return;
+  }
 
   if (GetDelegate().DidCommit()) {
     PAGE_LOAD_LONG_HISTOGRAM(internal::kHistogramPageTimingForegroundDuration,
@@ -1061,8 +1067,8 @@ void UmaPageLoadMetricsObserver::OnCpuTimingUpdate(
 
 void UmaPageLoadMetricsObserver::RecordByteAndResourceHistograms(
     const page_load_metrics::mojom::PageLoadTiming& timing) {
-  DCHECK_GE(network_bytes_, 0);
-  DCHECK_GE(cache_bytes_, 0);
+  DCHECK(!network_bytes_.is_negative());
+  DCHECK(!cache_bytes_.is_negative());
   click_tracker_.RecordClickBurst(GetDelegate().GetPageUkmSourceId());
 }
 
@@ -1096,7 +1102,8 @@ void UmaPageLoadMetricsObserver::OnRestoreFromBackForwardCache(
 
 void UmaPageLoadMetricsObserver::OnV8MemoryChanged(
     const std::vector<page_load_metrics::MemoryUpdate>& memory_updates) {
-  DCHECK(base::FeatureList::IsEnabled(features::kV8PerFrameMemoryMonitoring));
+  DCHECK(base::FeatureList::IsEnabled(
+      page_load_metrics::features::kV8PerFrameMemoryMonitoring));
 
   for (const auto& update : memory_updates) {
     memory_update_received_ = true;
@@ -1104,8 +1111,9 @@ void UmaPageLoadMetricsObserver::OnV8MemoryChanged(
     content::RenderFrameHost* render_frame_host =
         content::RenderFrameHost::FromID(update.routing_id);
 
-    if (!render_frame_host)
+    if (!render_frame_host) {
       continue;
+    }
 
     if (!render_frame_host->GetParentOrOuterDocument()) {
       // |render_frame_host| is the outermost main frame.
@@ -1119,7 +1127,8 @@ void UmaPageLoadMetricsObserver::OnV8MemoryChanged(
 }
 
 void UmaPageLoadMetricsObserver::RecordV8MemoryHistograms() {
-  if (base::FeatureList::IsEnabled(features::kV8PerFrameMemoryMonitoring)) {
+  if (base::FeatureList::IsEnabled(
+          page_load_metrics::features::kV8PerFrameMemoryMonitoring)) {
     PAGE_BYTES_HISTOGRAM(internal::kHistogramMemoryMainframe,
                          main_frame_memory_usage_.max_bytes_used());
     PAGE_BYTES_HISTOGRAM(internal::kHistogramMemorySubframeAggregate,
@@ -1129,7 +1138,8 @@ void UmaPageLoadMetricsObserver::RecordV8MemoryHistograms() {
   }
 }
 
-void UmaPageLoadMetricsObserver::MemoryUsage::UpdateUsage(int64_t delta_bytes) {
+void UmaPageLoadMetricsObserver::MemoryUsage::UpdateUsage(
+    base::ByteCount delta_bytes) {
   current_bytes_used_ += delta_bytes;
   max_bytes_used_ = std::max(max_bytes_used_, current_bytes_used_);
 }

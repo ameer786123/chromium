@@ -28,7 +28,6 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/display/display_features.h"
-#include "ui/display/display_switches.h"
 #include "ui/display/manager/display_layout_store.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/manager/json_converter.h"
@@ -199,7 +198,7 @@ bool UserCanSaveDisplayPreference() {
 
   return *user_type == user_manager::UserType::kRegular ||
          *user_type == user_manager::UserType::kChild ||
-         *user_type == user_manager::UserType::kKioskApp ||
+         *user_type == user_manager::UserType::kKioskChromeApp ||
          (*user_type == user_manager::UserType::kPublicAccount &&
           Shell::Get()->local_state()->GetBoolean(
               prefs::kAllowMGSToStoreDisplayProperties));
@@ -218,7 +217,7 @@ void LoadDisplayLayouts(PrefService* local_state) {
 
     if (base::Contains(it.first, ",")) {
       std::vector<std::string> ids_str = base::SplitString(
-          it.first, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+          it.first, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
       std::vector<int64_t> ids;
       for (std::string id_str : ids_str) {
         int64_t id;
@@ -275,7 +274,25 @@ void LoadDisplayProperties(PrefService* local_state) {
     }
 
     gfx::Insets insets;
-    if (ValueToInsets(*dict_value, &insets)) {
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kOverscanInsetsOverride)) {
+      std::string value =
+          base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+              switches::kOverscanInsetsOverride);
+      auto values = base::SplitString(value, ",",
+                                      base::WhitespaceHandling::TRIM_WHITESPACE,
+                                      base::SplitResult::SPLIT_WANT_ALL);
+      int top, left, bottom, right;
+      if (values.size() == 4 && base::StringToInt(values[0], &top) &&
+          base::StringToInt(values[1], &left) &&
+          base::StringToInt(values[2], &bottom) &&
+          base::StringToInt(values[3], &right)) {
+        insets = gfx::Insets::TLBR(top, left, bottom, right);
+        insets_to_set = &insets;
+      } else {
+        LOG(ERROR) << "Failed to parse overscan insets:" << value;
+      }
+    } else if (ValueToInsets(*dict_value, &insets) && !insets.IsEmpty()) {
       insets_to_set = &insets;
     }
 
@@ -572,7 +589,7 @@ void StoreCurrentDisplayProperties(PrefService* pref_service) {
     // https://crbug.com/733092.
     // But we should keep any original value so that it can be restored when
     // exiting tablet mode.
-    if (display::Screen::GetScreen()->InTabletMode()) {
+    if (display::Screen::Get()->InTabletMode()) {
       const base::Value::Dict* original_property =
           pref_data.FindDict(base::NumberToString(id));
       if (original_property) {
@@ -944,7 +961,7 @@ void DisplayPrefs::MaybeStoreDisplayPrefs() {
   // Don't save certain display properties when in tablet mode, so if
   // the device is rebooted in clamshell mode, it won't have an unexpected
   // mirroring layout. https://crbug.com/733092.
-  if (!display::Screen::GetScreen()->InTabletMode()) {
+  if (!display::Screen::Get()->InTabletMode()) {
     StoreCurrentDisplayLayoutPrefs(local_state_);
     StoreExternalDisplayMirrorInfo(local_state_);
     StoreCurrentDisplayMixedMirrorModeParams(local_state_);

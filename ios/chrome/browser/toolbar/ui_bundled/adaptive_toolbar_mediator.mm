@@ -32,7 +32,6 @@
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/buttons/toolbar_tab_group_state.h"
-#import "ios/chrome/browser/toolbar/ui_bundled/tab_groups/tab_group_indicator_features_utils.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/toolbar_consumer.h"
 #import "ios/chrome/browser/url_loading/model/image_search_param_generator.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
@@ -216,7 +215,7 @@ std::optional<tab_groups::LocalTabGroupID> LocalTabGroupID(
     return;
   }
 
-  [self.consumer updateTabGroupState:[self tabGroupStateToDisplay]];
+  [self updateConsumerTabGroupState];
 
   const int tabCount = [self tabCountToDisplay];
   switch (change.type()) {
@@ -253,7 +252,7 @@ std::optional<tab_groups::LocalTabGroupID> LocalTabGroupID(
 
 - (void)webStateListBatchOperationEnded:(WebStateList*)webStateList {
   DCHECK_EQ(_webStateList, webStateList);
-  [self.consumer updateTabGroupState:[self tabGroupStateToDisplay]];
+  [self updateConsumerTabGroupState];
   [self.consumer setTabCount:[self tabCountToDisplay] addedInBackground:NO];
 }
 
@@ -304,12 +303,18 @@ std::optional<tab_groups::LocalTabGroupID> LocalTabGroupID(
 - (UIMenu*)menuForButtonOfType:(AdaptiveToolbarButtonType)buttonType {
   switch (buttonType) {
     case AdaptiveToolbarButtonTypeBack:
-      return [self menuForNavigationItems:self.webState->GetNavigationManager()
-                                              ->GetBackwardItems()];
+      return self.webState
+                 ? [self menuForNavigationItems:self.webState
+                                                    ->GetNavigationManager()
+                                                    ->GetBackwardItems()]
+                 : nil;
 
     case AdaptiveToolbarButtonTypeForward:
-      return [self menuForNavigationItems:self.webState->GetNavigationManager()
-                                              ->GetForwardItems()];
+      return self.webState
+                 ? [self menuForNavigationItems:self.webState
+                                                    ->GetNavigationManager()
+                                                    ->GetForwardItems()]
+                 : nil;
 
     case AdaptiveToolbarButtonTypeNewTab:
       return [self menuForNewTabButton];
@@ -343,6 +348,8 @@ std::optional<tab_groups::LocalTabGroupID> LocalTabGroupID(
     if (self.consumer) {
       [self updateConsumer];
     }
+
+    [self updateTabGridButtonBlueDot];
   }
 }
 
@@ -404,6 +411,12 @@ std::optional<tab_groups::LocalTabGroupID> LocalTabGroupID(
 }
 
 #pragma mark - Update helper methods
+
+/// Updates the consumer Tab Group state.
+- (void)updateConsumerTabGroupState {
+  [self.consumer updateTabGroupState:[self tabGroupStateToDisplay]];
+  [self updateTabGridButtonBlueDot];
+}
 
 /// Updates the consumer to match the current WebState.
 - (void)updateConsumer {
@@ -630,11 +643,9 @@ std::optional<tab_groups::LocalTabGroupID> LocalTabGroupID(
 
 // Returns the tab group of the active web state, if any.
 - (const TabGroup*)activeWebStateTabGroup {
-  if (IsTabGroupInGridEnabled()) {
-    const int active_index = _webStateList->active_index();
-    if (active_index != WebStateList::kInvalidIndex) {
-      return _webStateList->GetGroupOfWebStateAt(active_index);
-    }
+  const int active_index = _webStateList->active_index();
+  if (active_index != WebStateList::kInvalidIndex) {
+    return _webStateList->GetGroupOfWebStateAt(active_index);
   }
   return nullptr;
 }
@@ -646,9 +657,7 @@ std::optional<tab_groups::LocalTabGroupID> LocalTabGroupID(
     return _webStateList->count();
   }
 
-  return IsTabGroupIndicatorEnabled() && HasTabGroupIndicatorButtonsUpdated()
-             ? activeTabGroup->range().count()
-             : _webStateList->count();
+  return activeTabGroup->range().count();
 }
 
 // Returns the tab group state to display in the Tab Grid button.
@@ -657,9 +666,8 @@ std::optional<tab_groups::LocalTabGroupID> LocalTabGroupID(
   if (activeTabGroup == nullptr) {
     return ToolbarTabGroupState::kNormal;
   }
-  return IsTabGroupIndicatorEnabled() && HasTabGroupIndicatorButtonsUpdated()
-             ? ToolbarTabGroupState::kTabGroup
-             : ToolbarTabGroupState::kNormal;
+
+  return ToolbarTabGroupState::kTabGroup;
 }
 
 // Updates the blue dot in the Tab Grid button depending on the messages and the

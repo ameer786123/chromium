@@ -39,8 +39,9 @@ import org.robolectric.annotation.LooperMode.Mode;
 import org.robolectric.shadows.ShadowSystemClock;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.InflationObserver;
@@ -52,9 +53,11 @@ import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactoryJni;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore.ActiveTabState;
+import org.chromium.components.omnibox.OmniboxFeatureList;
 import org.chromium.components.search_engines.TemplateUrlService;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 /** Unit tests for AppLaunchDrawBlocker behavior. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -68,15 +71,13 @@ public class AppLaunchDrawBlockerUnitTest {
     @Mock private ActivityLifecycleDispatcher mActivityLifecycleDispatcher;
     @Mock private View mView;
     @Mock private ViewTreeObserver mViewTreeObserver;
-    @Mock private Intent mIntent;
     @Mock private Profile mProfile;
     @Mock private TemplateUrlServiceFactory.Natives mTemplateUrlServiceFactory;
     @Mock private TemplateUrlService mTemplateUrlService;
     @Mock private Supplier<Boolean> mShouldIgnoreIntentSupplier;
     @Mock private Supplier<Boolean> mIsTabletSupplier;
-    @Mock private Supplier<Boolean> mShouldShowTabSwitcherOnStartSupplier;
 
-    private ObservableSupplierImpl<Profile> mProfileSupplier = new ObservableSupplierImpl<>();
+    private final ObservableSupplierImpl<Profile> mProfileSupplier = new ObservableSupplierImpl<>();
 
     @Mock
     private IncognitoRestoreAppLaunchDrawBlockerFactory
@@ -88,6 +89,7 @@ public class AppLaunchDrawBlockerUnitTest {
 
     private static final int INITIAL_TIME = 1000;
 
+    private Intent mIntent;
     private final Supplier<View> mViewSupplier = () -> mView;
     private final Supplier<Intent> mIntentSupplier = () -> mIntent;
     private InflationObserver mInflationObserver;
@@ -105,7 +107,6 @@ public class AppLaunchDrawBlockerUnitTest {
 
         when(mShouldIgnoreIntentSupplier.get()).thenReturn(false);
         when(mIsTabletSupplier.get()).thenReturn(false);
-        when(mShouldShowTabSwitcherOnStartSupplier.get()).thenReturn(false);
         when(mIncognitoRestoreAppLaunchDrawBlockerFactoryMock.create(
                         eq(mIntentSupplier),
                         eq(mShouldIgnoreIntentSupplier),
@@ -245,7 +246,8 @@ public class AppLaunchDrawBlockerUnitTest {
     }
 
     @Test
-    public void testLastTabEmpty_phone_noSearchEngineLogo_noIntent() {
+    @DisableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE_V2)
+    public void testLastTabEmpty_phone_noSearchEngineLogo_noIntent_ParityV2Disabled() {
         ChromeSharedPreferences.getInstance()
                 .writeInt(
                         ChromePreferenceKeys.APP_LAUNCH_LAST_KNOWN_ACTIVE_TAB_STATE,
@@ -256,6 +258,30 @@ public class AppLaunchDrawBlockerUnitTest {
         verify(mViewTreeObserver, never())
                 .addOnPreDrawListener(mOnPreDrawListenerArgumentCaptor.capture());
         mAppLaunchDrawBlocker.onActiveTabAvailable();
+    }
+
+    @Test
+    @Features.EnableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE_V2)
+    public void testLastTabEmpty_phone_noSearchEngineLogo_noIntent() {
+        ChromeSharedPreferences.getInstance()
+                .writeInt(
+                        ChromePreferenceKeys.APP_LAUNCH_LAST_KNOWN_ACTIVE_TAB_STATE,
+                        ActiveTabState.EMPTY);
+        setSearchEngineHasLogo(true);
+
+        mInflationObserver.onPostInflationStartup();
+
+        verify(mViewTreeObserver).addOnPreDrawListener(mOnPreDrawListenerArgumentCaptor.capture());
+        assertFalse(
+                "Draw is not blocked.", mOnPreDrawListenerArgumentCaptor.getValue().onPreDraw());
+
+        SystemClock.setCurrentTimeMillis(INITIAL_TIME + 20);
+        mAppLaunchDrawBlocker.onActiveTabAvailable();
+
+        assertTrue(
+                "Draw is still blocked.", mOnPreDrawListenerArgumentCaptor.getValue().onPreDraw());
+        verify(mViewTreeObserver)
+                .removeOnPreDrawListener(mOnPreDrawListenerArgumentCaptor.getValue());
     }
 
     @Test

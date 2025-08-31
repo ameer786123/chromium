@@ -57,6 +57,14 @@ static const char* kInterstitialDetails = "Details";
 @interface SupervisedUserWithParentalControlsTestCase : ChromeTestCase
 @end
 
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testSupervisedUserInterstitialOnBackButton \
+  testSupervisedUserInterstitialOnBackButton
+#else
+#define MAYBE_testSupervisedUserInterstitialOnBackButton \
+  FLAKY_testSupervisedUserInterstitialOnBackButton
+#endif
+
 @implementation SupervisedUserWithParentalControlsTestCase
 
 - (AppLaunchConfiguration)appConfigurationForTestCase {
@@ -79,26 +87,23 @@ static const char* kInterstitialDetails = "Details";
           isRunningTest:@selector
           (testSupervisedUserShowInterstitialDetailsLinkOnClickForNarrowScreen)] ||
       [self isRunningTest:@selector
-            (testSupervisedUserInterstitialOnBackButton)] ||
+            (MAYBE_testSupervisedUserInterstitialOnBackButton)] ||
       [self isRunningTest:@selector
             (testSupervisedUserInterstitialShowBlockReasonAndDetails)]) {
     // Tests that apply only in blocked url interstitial V2.
     config.features_disabled.push_back(
         supervised_user::kSupervisedUserBlockInterstitialV3);
     if ([self isRunningTest:@selector
-              (testSupervisedUserInterstitialOnBackButton)]) {
+              (MAYBE_testSupervisedUserInterstitialOnBackButton)]) {
       config.features_disabled.push_back(supervised_user::kLocalWebApprovals);
     }
   } else {
-      config.features_enabled_and_params.push_back(
-          {supervised_user::kLocalWebApprovals,
-           {{{"LocalWebApprovalBottomSheetLoadTimeoutMs", "5000"}}}});
-      config.features_enabled_and_params.push_back(
-          {supervised_user::kSupervisedUserBlockInterstitialV3, {}});
+    config.features_enabled_and_params.push_back(
+        {supervised_user::kLocalWebApprovals,
+         {{{"LocalWebApprovalBottomSheetLoadTimeoutMs", "5000"}}}});
+    config.features_enabled_and_params.push_back(
+        {supervised_user::kSupervisedUserBlockInterstitialV3, {}});
   }
-
-  // Makes sure the MVT is the top ranking magic stack module.
-  config.additional_args.push_back("--test-ios-module-ranker=mvt");
   return config;
 }
 
@@ -116,14 +121,12 @@ static const char* kInterstitialDetails = "Details";
   [super setUp];
   bool started = self.testServer->Start();
   GREYAssertTrue(started, @"Test server failed to start.");
-  [SupervisedUserSettingsAppInterface setUpTestUrlLoaderFactoryHelper];
 }
 
 - (void)tearDownHelper {
   [ChromeEarlGrey closeCurrentTab];
   [SupervisedUserSettingsAppInterface resetSupervisedUserURLFilterBehavior];
   [SupervisedUserSettingsAppInterface resetManualUrlFiltering];
-  [SupervisedUserSettingsAppInterface tearDownTestUrlLoaderFactoryHelper];
   [super tearDownHelper];
 }
 
@@ -199,14 +202,8 @@ static const char* kInterstitialDetails = "Details";
       performAction:grey_tap()];
 }
 
-#if !TARGET_IPHONE_SIMULATOR
-#define MAYBE_testSupervisedUserSignin DISABLED_testSupervisedUserSignin
-#else
-#define MAYBE_testSupervisedUserSignin testSupervisedUserSignin
-#endif
-// TODO(crbug.com/331644931): Re-enable on device when fixed.
 // Tests that the user is signed in.
-- (void)MAYBE_testSupervisedUserSignin {
+- (void)testSupervisedUserSignin {
   [self signInSupervisedUser];
 
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -227,18 +224,18 @@ static const char* kInterstitialDetails = "Details";
       assertWithMatcher:grey_not(grey_sufficientlyVisible())];
 }
 
-#if !TARGET_IPHONE_SIMULATOR
-#define MAYBE_testSupervisedUserURLFilteringReloadsOnlyRealizedExistingWebStates \
-  DISABLED_testSupervisedUserURLFilteringReloadsOnlyRealizedExistingWebStates
-#else
-#define MAYBE_testSupervisedUserURLFilteringReloadsOnlyRealizedExistingWebStates \
-  testSupervisedUserURLFilteringReloadsOnlyRealizedExistingWebStates
-#endif
-// TODO(crbug.com/331644931): Re-enable on device when fixed.
 // Tests that only realized existing web states will display the interstitial
 // when a filtering for them is triggered. Also tests that the filtering logic
 // on existing tabs does not force-realize unrealized states. This is a
 // regression test for bug: 1486459.
+// TODO(crbug.com/435140688): Reenable this test.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testSupervisedUserURLFilteringReloadsOnlyRealizedExistingWebStates \
+  testSupervisedUserURLFilteringReloadsOnlyRealizedExistingWebStates
+#else
+#define MAYBE_testSupervisedUserURLFilteringReloadsOnlyRealizedExistingWebStates \
+  FLAKY_testSupervisedUserURLFilteringReloadsOnlyRealizedExistingWebStates
+#endif
 - (void)
     MAYBE_testSupervisedUserURLFilteringReloadsOnlyRealizedExistingWebStates {
   // Signing in the user and allow all sites.
@@ -300,17 +297,9 @@ static const char* kInterstitialDetails = "Details";
   }
 }
 
-#if !TARGET_IPHONE_SIMULATOR
-#define MAYBE_testSupervisedUserSignedOutOnPolicyChange \
-  DISABLED_testSupervisedUserSignedOutOnPolicyChange
-#else
-#define MAYBE_testSupervisedUserSignedOutOnPolicyChange \
-  testSupervisedUserSignedOutOnPolicyChange
-#endif
-// TODO(crbug.com/331644931): Re-enable on device when fixed.
 // Tests that the user is correctly signed out after signin is disabled via
 // policy.
-- (void)MAYBE_testSupervisedUserSignedOutOnPolicyChange {
+- (void)testSupervisedUserSignedOutOnPolicyChange {
   [self signInSupervisedUser];
 
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -463,7 +452,16 @@ static const char* kInterstitialDetails = "Details";
 
 // Tests that block-listing a url, results in showing immediately the
 // interstitial if the user has the url open in a tab.
-- (void)testSupervisedUserWithAllowAllFilteringIsBlockedOnURLBlockListing {
+// TODO(crbug.com/435140688): Reenable this test.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testSupervisedUserWithAllowAllFilteringIsBlockedOnURLBlockListing \
+  testSupervisedUserWithAllowAllFilteringIsBlockedOnURLBlockListing
+#else
+#define MAYBE_testSupervisedUserWithAllowAllFilteringIsBlockedOnURLBlockListing \
+  FLAKY_testSupervisedUserWithAllowAllFilteringIsBlockedOnURLBlockListing
+#endif
+- (void)
+    MAYBE_testSupervisedUserWithAllowAllFilteringIsBlockedOnURLBlockListing {
   [self signInSupervisedUser];
   [SupervisedUserSettingsAppInterface setFilteringToAllowAllSites];
 
@@ -480,8 +478,16 @@ static const char* kInterstitialDetails = "Details";
 // Tests that users who have the filtering behaviour changed from "Allow all"
 // to "Allow approved" websites, will be shown the interstitial as soon as
 // the filtering behaviour changes.
+// TODO(crbug.com/435140688): Reenable this test.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testSupervisedUserWithAllowApprovedSitesFilteringIsBlockedOnFilterChange \
+  testSupervisedUserWithAllowApprovedSitesFilteringIsBlockedOnFilterChange
+#else
+#define MAYBE_testSupervisedUserWithAllowApprovedSitesFilteringIsBlockedOnFilterChange \
+  FLAKY_testSupervisedUserWithAllowApprovedSitesFilteringIsBlockedOnFilterChange
+#endif
 - (void)
-    testSupervisedUserWithAllowApprovedSitesFilteringIsBlockedOnFilterChange {
+    MAYBE_testSupervisedUserWithAllowApprovedSitesFilteringIsBlockedOnFilterChange {
   [self signInSupervisedUser];
   GURL safeURL = self.testServer->GetURL(kEchoPath);
   [ChromeEarlGrey loadURL:safeURL];
@@ -498,7 +504,16 @@ static const char* kInterstitialDetails = "Details";
 // Tests that for users who have the filtering behaviour changed from "Allow
 // approved" to "Allow all" websites, a blocked pages will be refreshed and
 // unblocks as soon as the filtering behaviour changes.
-- (void)testSupervisedUserWithAllowAllSitesFilteringIsUnblockedOnFilterChange {
+// TODO(crbug.com/435140688): Reenable this test.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testSupervisedUserWithAllowAllSitesFilteringIsUnblockedOnFilterChange \
+  testSupervisedUserWithAllowAllSitesFilteringIsUnblockedOnFilterChange
+#else
+#define MAYBE_testSupervisedUserWithAllowAllSitesFilteringIsUnblockedOnFilterChange \
+  FLAKY_testSupervisedUserWithAllowAllSitesFilteringIsUnblockedOnFilterChange
+#endif
+- (void)
+    MAYBE_testSupervisedUserWithAllowAllSitesFilteringIsUnblockedOnFilterChange {
   [self signInSupervisedUser];
   [SupervisedUserSettingsAppInterface setFilteringToAllowApprovedSites];
 
@@ -542,7 +557,7 @@ static const char* kInterstitialDetails = "Details";
 
 // Checks the behaviour of the "Details" link on click (expand/shrink details).
 - (void)testSupervisedUserShowInterstitialDetailsLinkOnClickForNarrowScreen {
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
   EARL_GREY_TEST_DISABLED(@"This is an iphone test case only.");
 #endif
   // Compact width only.
@@ -578,7 +593,7 @@ static const char* kInterstitialDetails = "Details";
 // be absernt from the interstitial 'Waiting' screen bor both existing (updated)
 // intersitials and new interstitials for already requested hosts.
 - (void)testSupervisedUserShowInterstitialDetailsLinkForNarrowScreen {
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
   EARL_GREY_TEST_DISABLED(@"This is an iphone test case only.");
 #endif
   // Compact width only.
@@ -648,9 +663,10 @@ static const char* kInterstitialDetails = "Details";
   }
 }
 
-// Test that the when Local Web Approval is disabled, the "Back" button of the interstitial
-// gets us to the previous page.
-- (void)testSupervisedUserInterstitialOnBackButton {
+// Test that the when Local Web Approval is disabled, the "Back" button of the
+// interstitial gets us to the previous page.
+// TODO(crbug.com/435140688): Reenable this test.
+- (void)MAYBE_testSupervisedUserInterstitialOnBackButton {
   [self signInSupervisedUser];
   [SupervisedUserSettingsAppInterface setFakePermissionCreator];
   [SupervisedUserSettingsAppInterface setFilteringToAllowAllSites];
@@ -677,9 +693,18 @@ static const char* kInterstitialDetails = "Details";
   [ChromeEarlGrey waitForWebStateContainingText:kDefaultContent];
 }
 
-// Test that the when Local Web Approval is enabled, users can request a local web
-// approval from the waiting screen.
-- (void)testSupervisedUserInterstitialOnLocalApprovalRequestFromWaitingScreen {
+// Test that the when Local Web Approval is enabled, users can request a local
+// web approval from the waiting screen.
+// TODO(crbug.com/435140688): Reenable this test.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testSupervisedUserInterstitialOnLocalApprovalRequestFromWaitingScreen \
+  testSupervisedUserInterstitialOnLocalApprovalRequestFromWaitingScreen
+#else
+#define MAYBE_testSupervisedUserInterstitialOnLocalApprovalRequestFromWaitingScreen \
+  FLAKY_testSupervisedUserInterstitialOnLocalApprovalRequestFromWaitingScreen
+#endif
+- (void)
+    MAYBE_testSupervisedUserInterstitialOnLocalApprovalRequestFromWaitingScreen {
   [self signInSupervisedUser];
   [SupervisedUserSettingsAppInterface setFakePermissionCreator];
   [SupervisedUserSettingsAppInterface setFilteringToAllowAllSites];
@@ -755,16 +780,22 @@ static const char* kInterstitialDetails = "Details";
   [ChromeEarlGrey loadURL:blockedURL];
   [self checkInterstitalIsShown];
 
-  // Verify the Zoom Text button is available and clickable.
   [ChromeEarlGreyUI openToolsMenu];
-  [[[EarlGrey
-      selectElementWithMatcher:grey_allOf(
-                                   grey_accessibilityID(kToolsMenuTextZoom),
-                                   grey_sufficientlyVisible(), nil)]
+
+  // Verify the Zoom Text button is available and has the correct enabled state.
+  UIAccessibilityTraits trait = [ChromeEarlGrey isIPadIdiom]
+                                    ? UIAccessibilityTraitNotEnabled
+                                    : UIAccessibilityTraitButton;
+  id<GREYMatcher> zoomActionMatcher = grey_allOf(
+      grey_accessibilityID(kToolsMenuTextZoom), grey_accessibilityTrait(trait),
+      grey_sufficientlyVisible(), nil);
+  id<GREYMatcher> tableViewMatcher =
+      [ChromeEarlGrey isNewOverflowMenuEnabled]
+          ? grey_accessibilityID(kPopupMenuToolsMenuActionListId)
+          : grey_accessibilityID(kPopupMenuToolsMenuTableViewId);
+  [[[EarlGrey selectElementWithMatcher:zoomActionMatcher]
          usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, 200)
-      onElementWithMatcher:chrome_test_util::ToolsMenuView()]
-      assertWithMatcher:grey_not(grey_accessibilityTrait(
-                            UIAccessibilityTraitNotEnabled))];
+      onElementWithMatcher:tableViewMatcher] assertWithMatcher:grey_notNil()];
 }
 
 // Tests that users can initiate the local web approval flow.

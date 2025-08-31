@@ -147,16 +147,18 @@ void PressureObserver::Trace(blink::Visitor* visitor) const {
 void PressureObserver::OnUpdate(ExecutionContext* execution_context,
                                 V8PressureSource::Enum source,
                                 V8PressureState::Enum state,
+                                double own_contribution_estimate,
                                 DOMHighResTimeStamp timestamp) {
   if (!PassesRateTest(source, timestamp)) {
     return;
   }
 
-  if (!ShouldDispatch(source, state)) {
+  if (!ShouldDispatch(source, state, own_contribution_estimate)) {
     return;
   }
 
-  auto* record = MakeGarbageCollected<PressureRecord>(source, state, timestamp);
+  auto* record = MakeGarbageCollected<PressureRecord>(
+      source, state, own_contribution_estimate, timestamp);
 
   if (base::FeatureList::IsEnabled(
           features::kComputePressureRateObfuscationMitigation)) {
@@ -179,9 +181,9 @@ void PressureObserver::OnUpdate(ExecutionContext* execution_context,
           PostDelayedCancellableTask(
               *execution_context->GetTaskRunner(TaskType::kMiscPlatformAPI),
               FROM_HERE,
-              WTF::BindOnce(&PressureObserver::QueueAfterPenaltyRecord,
-                            WrapWeakPersistent(this),
-                            WrapWeakPersistent(execution_context), source),
+              BindOnce(&PressureObserver::QueueAfterPenaltyRecord,
+                       WrapWeakPersistent(this),
+                       WrapWeakPersistent(execution_context), source),
               change_rate_monitor_.penalty_duration());
       change_rate_monitor_.ResetChangeCount(source);
       return;
@@ -220,9 +222,8 @@ void PressureObserver::QueuePressureRecord(ExecutionContext* execution_context,
   }
   pending_report_to_callback_ = PostCancellableTask(
       *execution_context->GetTaskRunner(TaskType::kMiscPlatformAPI), FROM_HERE,
-      WTF::BindOnce(&PressureObserver::ReportToCallback,
-                    WrapWeakPersistent(this),
-                    WrapWeakPersistent(execution_context)));
+      BindOnce(&PressureObserver::ReportToCallback, WrapWeakPersistent(this),
+               WrapWeakPersistent(execution_context)));
 }
 
 void PressureObserver::OnBindingSucceeded(V8PressureSource::Enum source) {
@@ -281,7 +282,8 @@ bool PressureObserver::PassesRateTest(
 
 // https://w3c.github.io/compute-pressure/#dfn-should-dispach
 bool PressureObserver::ShouldDispatch(V8PressureSource::Enum source,
-                                      V8PressureState::Enum state) const {
+                                      V8PressureState::Enum state,
+                                      double own_contribution_estimate) const {
   const auto& last_record = last_record_map_[ToSourceIndex(source)];
 
   if (sample_interval_ != 0) {
@@ -292,7 +294,14 @@ bool PressureObserver::ShouldDispatch(V8PressureSource::Enum source,
     return true;
   }
 
-  return last_record->state() != state;
+  // conversion to std::optional for the comparison against last_record.
+  std::optional<double> maybe_estimate = own_contribution_estimate;
+  if (maybe_estimate < 0.0 || maybe_estimate > 1.0) {
+    maybe_estimate = std::nullopt;
+  }
+
+  return last_record->state() != state ||
+         last_record->ownContributionEstimate() != maybe_estimate;
 }
 
 // This function only checks the status of the rate obfuscation test.

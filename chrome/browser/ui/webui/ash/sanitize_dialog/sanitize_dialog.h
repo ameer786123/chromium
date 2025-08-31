@@ -6,14 +6,14 @@
 #define CHROME_BROWSER_UI_WEBUI_ASH_SANITIZE_DIALOG_SANITIZE_DIALOG_H_
 
 #include "chrome/browser/ui/webui/ash/system_web_dialog/system_web_dialog_delegate.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 
 namespace ash {
 
 namespace {
 
 // ID used to check if there are any other instances of the dialog open.
-constexpr char kSanitizeDialogId[] = "sanitize-dialog";
+inline constexpr char kSanitizeDialogId[] = "sanitize-dialog";
 
 }  // namespace
 

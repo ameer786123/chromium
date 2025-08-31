@@ -357,7 +357,7 @@ TEST(WinUtil, StopProcessesUnderPath) {
     EXPECT_FALSE(process.IsRunning()) << process.Pid();
   }
 
-  EXPECT_TRUE(base::DeletePathRecursively(exe_dir));
+  EXPECT_TRUE(WaitFor([&] { return base::DeletePathRecursively(exe_dir); }));
 }
 
 TEST(WinUtil, IsGuid) {
@@ -385,7 +385,7 @@ TEST(WinUtil, IsGuid) {
 }
 
 TEST(WinUtil, ForEachRegistryRunValueWithPrefix) {
-  constexpr int kRunEntries = 6;
+  static constexpr int kRunEntries = 6;
   const std::wstring kRunEntryPrefix(base::UTF8ToWide(test::GetTestName()));
 
   base::win::RegKey key;
@@ -411,7 +411,7 @@ TEST(WinUtil, ForEachRegistryRunValueWithPrefix) {
 }
 
 TEST(WinUtil, DeleteRegValue) {
-  constexpr int kRegValues = 6;
+  static constexpr int kRegValues = 6;
   const std::wstring kRegValuePrefix(base::UTF8ToWide(test::GetTestName()));
 
   base::win::RegKey key;
@@ -436,7 +436,7 @@ TEST(WinUtil, ForEachServiceWithPrefix) {
     return;
   }
 
-  constexpr int kNumServices = 6;
+  static constexpr int kNumServices = 6;
   const std::wstring kServiceNamePrefix(base::UTF8ToWide(test::GetTestName()));
 
   for (int count = 0; count < kNumServices; ++count) {
@@ -462,7 +462,7 @@ TEST(WinUtil, DeleteService) {
     return;
   }
 
-  constexpr int kNumServices = 6;
+  static constexpr int kNumServices = 6;
   const std::wstring kServiceNamePrefix(base::UTF8ToWide(test::GetTestName()));
 
   for (int count = 0; count < kNumServices; ++count) {
@@ -661,6 +661,20 @@ TEST(WinUtil, IsServicePresent_IsServiceEnabled) {
   EXPECT_TRUE(DeleteService(service_name));
   EXPECT_FALSE(IsServicePresent(service_name));
   EXPECT_FALSE(IsServiceEnabled(service_name));
+}
+
+TEST(WinUtil, IsServicePresent_IsServiceEnabled_NonAdmin) {
+  EXPECT_TRUE(IsServicePresent(L"Schedule"));
+  EXPECT_TRUE(IsServiceEnabled(L"Schedule"));
+  EXPECT_FALSE(IsServicePresent(L"ScheduleFooBar"));
+  EXPECT_FALSE(IsServiceEnabled(L"ScheduleFooBar"));
+}
+
+TEST(WinUtil, GetCommandLineForPid) {
+  const HResultOr<std::wstring> cmd_line_for_pid =
+      GetCommandLineForPid(::GetCurrentProcessId());
+  ASSERT_TRUE(cmd_line_for_pid.has_value());
+  EXPECT_STREQ(cmd_line_for_pid->c_str(), ::GetCommandLine());
 }
 
 }  // namespace updater::test

@@ -21,7 +21,6 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -43,16 +42,18 @@ import org.chromium.chrome.browser.layouts.LayoutTestUtils;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
-import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ChromeTabUtils;
+import org.chromium.chrome.test.util.browser.edge_to_edge.TestEdgeToEdgeController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.SheetState;
@@ -61,7 +62,6 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetObserver;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetTestSupport;
 import org.chromium.components.browser_ui.bottomsheet.EmptyBottomSheetObserver;
 import org.chromium.components.browser_ui.bottomsheet.TestBottomSheetContent;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgePadAdjuster;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
 import org.chromium.content_public.browser.LoadUrlParams;
@@ -82,15 +82,12 @@ import java.util.concurrent.TimeoutException;
 @Restriction(DeviceFormFactor.PHONE) // TODO(mdjones): Remove this (crbug.com/837838).
 @Batch(Batch.PER_CLASS)
 public class BottomSheetControllerTest {
-    @ClassRule
-    public static final ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-
     @Rule
-    public final BlankCTATabInitialStateRule mInitialStateRule =
-            new BlankCTATabInitialStateRule(sActivityTestRule, false);
+    public final AutoResetCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.fastAutoResetCtaActivityRule();
 
     private ChromeTabbedActivity mActivity;
+    private WebPageStation mPage;
 
     private BottomSheetController mSheetController;
     private BottomSheetTestSupport mTestSupport;
@@ -105,7 +102,8 @@ public class BottomSheetControllerTest {
 
     @Before
     public void setUp() throws Exception {
-        mActivity = sActivityTestRule.getActivity();
+        mPage = mActivityTestRule.startOnBlankPage();
+        mActivity = mPage.getActivity();
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -173,10 +171,7 @@ public class BottomSheetControllerTest {
                 () -> keyboardDelegate.showKeyboard(mActivity.getTabsView()));
         requestContentInSheet(mLowPriorityContent, true);
         ThreadUtils.runOnUiThreadBlocking(
-                () ->
-                        assertFalse(
-                                keyboardDelegate.isKeyboardShowing(
-                                        mActivity, mActivity.getTabsView())));
+                () -> assertFalse(keyboardDelegate.isKeyboardShowing(mActivity.getTabsView())));
         BottomSheetTestSupport.waitForContentChange(mSheetController, mLowPriorityContent);
         BottomSheetTestSupport.waitForState(mSheetController, SheetState.PEEK);
     }
@@ -286,7 +281,7 @@ public class BottomSheetControllerTest {
                 "The bottom sheet should be expanded.",
                 SheetState.HALF,
                 mSheetController.getSheetState());
-        assertEquals("Back press event should be consumed", Boolean.TRUE, getBackPressState());
+        assertEquals("Back press event should be consumed", true, getBackPressState());
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mTestSupport.handleBackPress();
@@ -308,7 +303,7 @@ public class BottomSheetControllerTest {
                 "The bottom sheet should be expanded.",
                 SheetState.HALF,
                 mSheetController.getSheetState());
-        assertEquals("Back press event should be consumed", Boolean.TRUE, getBackPressState());
+        assertEquals("Back press event should be consumed", true, getBackPressState());
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mTestSupport.handleBackPress();
@@ -361,7 +356,7 @@ public class BottomSheetControllerTest {
                 "Gesture should move sheet",
                 mTestSupport.shouldGestureMoveSheet(initialEvent, currentEvent));
 
-        assertEquals("Back press event should be consumed", Boolean.TRUE, getBackPressState());
+        assertEquals("Back press event should be consumed", true, getBackPressState());
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mTestSupport.handleBackPress();
@@ -533,7 +528,7 @@ public class BottomSheetControllerTest {
                 mActivity
                         .getTabModelSelector()
                         .getCurrentModel()
-                        .indexOf(mActivity.getActivityTab());
+                        .indexOf(mActivityTestRule.getActivityTab());
         requestContentInSheet(mLowPriorityContent, true);
 
         assertEquals(
@@ -588,7 +583,7 @@ public class BottomSheetControllerTest {
 
         // Change URL and wait for PageLoadStarted event.
         CallbackHelper pageLoadStartedHelper = new CallbackHelper();
-        Tab tab = mActivity.getActivityTab();
+        Tab tab = mActivityTestRule.getActivityTab();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     tab.addObserver(
@@ -902,7 +897,7 @@ public class BottomSheetControllerTest {
                 "The bottom sheet should be expanded.",
                 SheetState.HALF,
                 mSheetController.getSheetState());
-        assertEquals("Back press event should be consumed", Boolean.TRUE, getBackPressState());
+        assertEquals("Back press event should be consumed", true, getBackPressState());
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mTestSupport.handleBackPress();
@@ -1072,8 +1067,11 @@ public class BottomSheetControllerTest {
                     tabModel.addObserver(
                             new TabModelObserver() {
                                 @Override
-                                public void didSelectTab(
-                                        Tab tab, @TabSelectionType int type, int lastId) {
+                                public void didAddTab(
+                                        Tab tab,
+                                        @TabLaunchType int type,
+                                        @TabCreationState int creationState,
+                                        boolean markedForSelection) {
                                     tabSelectedHelper.notifyCalled();
                                     tabModel.removeObserver(this);
                                 }
@@ -1103,49 +1101,5 @@ public class BottomSheetControllerTest {
                 .getBottomSheetBackPressHandler()
                 .getHandleBackPressChangedSupplier()
                 .get();
-    }
-
-    private static class TestEdgeToEdgeController implements EdgeToEdgeController {
-        public int bottomInset;
-
-        @Override
-        public void destroy() {}
-
-        @Override
-        public int getBottomInset() {
-            return bottomInset;
-        }
-
-        @Override
-        public int getBottomInsetPx() {
-            return bottomInset;
-        }
-
-        @Override
-        public int getSystemBottomInsetPx() {
-            return bottomInset;
-        }
-
-        @Override
-        public void registerAdjuster(EdgeToEdgePadAdjuster adjuster) {}
-
-        @Override
-        public void unregisterAdjuster(EdgeToEdgePadAdjuster adjuster) {}
-
-        @Override
-        public void registerObserver(ChangeObserver changeObserver) {}
-
-        @Override
-        public void unregisterObserver(ChangeObserver changeObserver) {}
-
-        @Override
-        public boolean isPageOptedIntoEdgeToEdge() {
-            return bottomInset != 0;
-        }
-
-        @Override
-        public boolean isDrawingToEdge() {
-            return bottomInset != 0;
-        }
     }
 }

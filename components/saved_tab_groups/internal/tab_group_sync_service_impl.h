@@ -17,9 +17,11 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
 #include "base/uuid.h"
-#include "components/optimization_guide/core/optimization_guide_decider.h"
+#include "components/data_sharing/public/personal_collaboration_data/personal_collaboration_data_service.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decider.h"
 #include "components/saved_tab_groups/delegate/tab_group_sync_delegate.h"
 #include "components/saved_tab_groups/internal/saved_tab_group_model.h"
 #include "components/saved_tab_groups/internal/saved_tab_group_sync_bridge.h"
@@ -27,11 +29,13 @@
 #include "components/saved_tab_groups/internal/shared_tab_group_data_sync_bridge.h"
 #include "components/saved_tab_groups/internal/tab_group_sync_bridge_mediator.h"
 #include "components/saved_tab_groups/internal/tab_group_sync_coordinator.h"
+#include "components/saved_tab_groups/internal/tab_group_sync_personal_collaboration_data_handler.h"
 #include "components/saved_tab_groups/public/collaboration_finder.h"
 #include "components/saved_tab_groups/public/saved_tab_group.h"
 #include "components/saved_tab_groups/public/tab_group_sync_metrics_logger.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/saved_tab_groups/public/types.h"
+#include "components/saved_tab_groups/public/versioning_message_controller.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/sync/base/collaboration_id.h"
 
@@ -63,6 +67,8 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
       std::unique_ptr<TabGroupSyncMetricsLogger> metrics_logger,
       optimization_guide::OptimizationGuideDecider* optimization_guide_decider,
       signin::IdentityManager* identity_manager,
+      data_sharing::personal_collaboration_data::
+          PersonalCollaborationDataService* personal_collaboration_data_service,
       std::unique_ptr<CollaborationFinder> collaboration_finder,
       data_sharing::Logger* logger);
   ~TabGroupSyncServiceImpl() override;
@@ -83,6 +89,10 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
   void UpdateGroupPosition(const base::Uuid& sync_id,
                            std::optional<bool> is_pinned,
                            std::optional<int> new_index) override;
+
+  void UpdateBookmarkNodeId(
+      const base::Uuid& sync_id,
+      std::optional<base::Uuid> bookmark_node_id) override;
 
   void AddTab(const LocalTabGroupID& group_id,
               const LocalTabID& tab_id,
@@ -111,10 +121,13 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 
   void MakeTabGroupShared(const LocalTabGroupID& local_group_id,
-                          std::string_view collaboration_id,
+                          const syncer::CollaborationId& collaboration_id,
                           TabGroupSharingCallback callback) override;
-  void MakeTabGroupSharedForTesting(const LocalTabGroupID& local_group_id,
-                                    std::string_view collaboration_id) override;
+  void MakeTabGroupSharedForTesting(
+      const LocalTabGroupID& local_group_id,
+      const syncer::CollaborationId& collaboration_id) override;
+  void MakeTabGroupUnsharedForTesting(
+      const LocalTabGroupID& local_group_id) override;
 
   void AboutToUnShareTabGroup(const LocalTabGroupID& local_group_id,
                               base::OnceClosure on_complete_callback) override;
@@ -163,6 +176,10 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
   void UpdateArchivalStatus(const base::Uuid& sync_id,
                             bool archival_status) override;
 
+  void UpdateTabLastSeenTime(const base::Uuid& group_id,
+                             const base::Uuid& tab_id,
+                             TriggerSource source) override;
+
   TabGroupSyncMetricsLogger* GetTabGroupSyncMetricsLogger() override;
 
   base::WeakPtr<syncer::DataTypeControllerDelegate>
@@ -180,6 +197,8 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
 
   std::unique_ptr<std::vector<SavedTabGroup>>
   TakeSharedTabGroupsAvailableAtStartupForMessaging() override;
+  bool HadSharedTabGroupsLastSession(bool open_shared_tab_groups) override;
+  VersioningMessageController* GetVersioningMessageController() override;
   void OnLastTabClosed(const SavedTabGroup& saved_tab_group) override;
 
   void AddObserver(TabGroupSyncService::Observer* observer) override;
@@ -201,7 +220,7 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
   // model UI layer.
   void SetCoordinator(std::unique_ptr<TabGroupSyncCoordinator> coordinator);
 
-  SavedTabGroupModel* GetModelForTesting() { return model_.get(); }
+  SavedTabGroupModel* GetModel() { return model_.get(); }
 
  private:
   struct TabGroupSharingTimeoutInfo {
@@ -235,6 +254,8 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
   void SavedTabGroupModelLoaded() override;
   void OnSyncBridgeUpdateTypeChanged(
       SyncBridgeUpdateType sync_bridge_update_type) override;
+  void TabGroupTransitioningToSavedRemovedFromSync(
+      const base::Uuid& saved_group_id) override;
 
   // Called to notify the observers that service initialization is complete.
   void NotifyServiceInitialized();
@@ -352,6 +373,22 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
   std::optional<SavedTabGroup> FindGroupWithCollaborationId(
       const syncer::CollaborationId& collaboration_id);
 
+  // Updates the last seen time for any focused tab. Invoked for remote updates.
+  // This is because if a tab is updated from remote while being focused, it
+  // should automatically be marked as seen.
+  void UpdateLastSeenTimeForAnyFocusedTabForRemoteUpdates(
+      const SavedTabGroup* group,
+      TriggerSource source);
+
+  // Check if there are any groups that are stuck in the middle of transitioning
+  // to shared and completes the transition.
+  void FinishTransitionToSharedIfNotCompleted();
+
+  // Register PageEntities optimization type if there is a shared tab group.
+  void RegisterPageEntityOptimizationTypeIfNeeded();
+
+  THREAD_CHECKER(thread_checker_);
+
   // The in-memory model representing the currently present saved tab groups.
   std::unique_ptr<SavedTabGroupModel> model_;
 
@@ -377,6 +414,10 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
 
   // The pref service for storing migration status.
   raw_ptr<PrefService> pref_service_ = nullptr;
+
+  // Handles personal collaboration data updates.
+  std::unique_ptr<TabGroupSyncPersonalCollaborationDataHandler>
+      personal_collaboration_data_handler_;
 
   // Whether the initialization has been completed, i.e. all the groups and the
   // ID mappings have been loaded into memory.
@@ -407,6 +448,12 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
   std::unique_ptr<std::vector<SavedTabGroup>>
       shared_tab_groups_available_at_startup_for_messaging_;
 
+  // Whether shared tab groups existed during startup.
+  bool had_shared_tab_groups_on_startup_ = false;
+
+  // Whether open shared tab groups existed during startup.
+  bool had_open_shared_tab_groups_on_startup_ = false;
+
   // Temporary in-memory mapping from collaboration ID to title for tab groups
   // that we/ have previously known about. This is to facilitate displaying of
   // tab group titles in the UI when a user is removed from a tab group.
@@ -436,9 +483,15 @@ class TabGroupSyncServiceImpl : public TabGroupSyncService,
   std::map<base::Uuid, TabGroupSharingTimeoutInfo>
       tab_group_sharing_timeout_info_;
 
+  // The versioning message controller which is responsible for business logic
+  // related to shared tab groups versioning related messages.
+  std::unique_ptr<VersioningMessageController> versioning_message_controller_;
+
   base::ScopedObservation<signin::IdentityManager,
                           signin::IdentityManager::Observer>
       identity_manager_observation_{this};
+
+  bool page_entity_optimization_type_registered_ = false;
 
   base::WeakPtrFactory<TabGroupSyncServiceImpl> weak_ptr_factory_{this};
 };

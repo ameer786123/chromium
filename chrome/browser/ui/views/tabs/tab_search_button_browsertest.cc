@@ -12,6 +12,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -19,8 +20,10 @@
 #include "chrome/browser/ui/views/bubble/webui_bubble_manager.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+#include "chrome/browser/ui/views/interaction/browser_elements_views.h"
 #include "chrome/browser/ui/views/tab_search_bubble_host.h"
 #include "chrome/browser/ui/views/tabs/tab_search_button.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/browser_test.h"
@@ -35,12 +38,20 @@ ui::MouseEvent GetDummyEvent() {
 
 class TabSearchButtonBrowserTest : public InProcessBrowserTest {
  public:
+  TabSearchButtonBrowserTest() {
+    feature_list_.InitWithFeaturesAndParameters(
+        {{features::kTabstripComboButton,
+          {{"tab_search_toolbar_button", "false"}}}},
+        {});
+  }
+
   BrowserView* browser_view() {
     return BrowserView::GetBrowserViewForBrowser(browser());
   }
 
   TabSearchButton* tab_search_button() {
-    return browser_view()->tab_strip_region_view()->GetTabSearchButton();
+    return BrowserElementsViews::From(browser())->GetViewAs<TabSearchButton>(
+        kTabSearchButtonElementId);
   }
 
   TabSearchBubbleHost* tab_search_bubble_host() {
@@ -59,6 +70,9 @@ class TabSearchButtonBrowserTest : public InProcessBrowserTest {
     run_loop.Run();
     ASSERT_EQ(nullptr, bubble_manager()->GetBubbleWidget());
   }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(TabSearchButtonBrowserTest, ButtonClickCreatesBubble) {
@@ -74,20 +88,30 @@ IN_PROC_BROWSER_TEST_F(TabSearchButtonBrowserTest, ButtonClickCreatesBubble) {
 
 class TabSearchButtonBrowserUITest : public DialogBrowserTest {
  public:
+  TabSearchButtonBrowserUITest() {
+    feature_list_.InitWithFeaturesAndParameters(
+        {{features::kTabstripComboButton,
+          {{"tab_search_toolbar_button", "false"}}}},
+        {});
+  }
+
   // DialogBrowserTest:
   void ShowUi(const std::string& name) override {
     AppendTab(chrome::kChromeUISettingsURL);
     AppendTab(chrome::kChromeUIHistoryURL);
     AppendTab(chrome::kChromeUIBookmarksURL);
-    auto* tab_search_button = BrowserView::GetBrowserViewForBrowser(browser())
-                                  ->tab_strip_region_view()
-                                  ->GetTabSearchButton();
+    auto* tab_search_button =
+        BrowserElementsViews::From(browser())->GetViewAs<TabSearchButton>(
+            kTabSearchButtonElementId);
     views::test::ButtonTestApi(tab_search_button).NotifyClick(GetDummyEvent());
   }
 
   void AppendTab(std::string url) {
     chrome::AddTabAt(browser(), GURL(url), -1, true);
   }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
 };
 
 // Invokes a tab search bubble.

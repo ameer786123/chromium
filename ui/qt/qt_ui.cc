@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 // IMPORTANT NOTE: All QtUi members that use `shim_` must be decorated
 // with DISABLE_CFI_VCALL.
 
@@ -25,6 +20,7 @@
 #include "base/notreached.h"
 #include "base/path_service.h"
 #include "base/scoped_environment_variable_override.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -33,6 +29,7 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/ime/linux/linux_input_method_context.h"
 #include "ui/base/ime/text_edit_commands.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/color/color_mixer.h"
 #include "ui/color/color_provider.h"
 #include "ui/color/color_provider_manager.h"
@@ -61,16 +58,15 @@ namespace qt {
 
 namespace {
 
-const char kQtVersionFlag[] = "qt-version";
-
 void* LoadLibrary(const base::FilePath& path) {
   return dlopen(path.value().c_str(), RTLD_NOW | RTLD_GLOBAL);
 }
 
 bool PreferQt6() {
   auto* cmd = base::CommandLine::ForCurrentProcess();
-  if (cmd->HasSwitch(kQtVersionFlag)) {
-    std::string qt_version_string = cmd->GetSwitchValueASCII(kQtVersionFlag);
+  if (cmd->HasSwitch(switches::kQtVersionFlag)) {
+    std::string qt_version_string =
+        cmd->GetSwitchValueASCII(switches::kQtVersionFlag);
     unsigned int qt_version = 0;
     if (base::StringToUint(qt_version_string, &qt_version)) {
       switch (qt_version) {
@@ -103,8 +99,8 @@ int Qt5WeightToCssWeight(int weight) {
 
   weight = std::clamp(weight, 0, 99);
   for (size_t i = 0; i < std::size(kMapping) - 1; i++) {
-    const auto& lo = kMapping[i];
-    const auto& hi = kMapping[i + 1];
+    const auto& lo = UNSAFE_TODO(kMapping[i]);
+    const auto& hi = UNSAFE_TODO(kMapping[i + 1]);
     if (weight <= hi.qt_weight) {
       return (weight - lo.qt_weight) * (hi.css_weight - lo.css_weight) /
                  (hi.qt_weight - lo.qt_weight) +
@@ -395,6 +391,12 @@ QtUi::WindowFrameAction QtUi::GetWindowFrameAction(
   }
 }
 
+std::vector<std::string> QtUi::GetCmdLineFlagsForCopy() const {
+  return {std::string(switches::kUiToolkitFlag) + "=qt",
+          std::string(switches::kQtVersionFlag) + "=" +
+              base::NumberToString(qt_version_)};
+}
+
 DISABLE_CFI_VCALL
 bool QtUi::PreferDarkTheme() const {
   return color_utils::IsDark(
@@ -659,7 +661,7 @@ void QtUi::ScaleFactorMaybeChangedImpl() {
   std::vector<display::DisplayGeometry> ui_monitors;
   ui_monitors.reserve(n_monitors);
   for (size_t i = 0; i < n_monitors; i++) {
-    const qt::MonitorScale& monitor = qt_monitors[i];
+    const qt::MonitorScale& monitor = UNSAFE_TODO(qt_monitors[i]);
     ui_monitors.push_back(display::DisplayGeometry{
         {monitor.x_px, monitor.y_px, monitor.width_px, monitor.height_px},
         monitor.scale});

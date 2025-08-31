@@ -23,6 +23,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
@@ -262,7 +263,7 @@ class TrustedSignalsFetcherTest : public testing::Test {
     std::vector<TrustedSignalsFetcher::BiddingPartition> bidding_partitions;
     bidding_partitions.emplace_back(
         /*partition_id=*/0, &kDefaultInterestGroupNames, &kDefaultKeys,
-        &kDefaultAdditionalParams);
+        &kDefaultAdditionalParams, /*buyer_tkv_signals=*/nullptr);
 
     std::map<int, std::vector<TrustedSignalsFetcher::BiddingPartition>>
         bidding_signals_request;
@@ -277,7 +278,7 @@ class TrustedSignalsFetcherTest : public testing::Test {
     std::vector<TrustedSignalsFetcher::ScoringPartition> scoring_partitions;
     scoring_partitions.emplace_back(
         /*partition_id=*/0, &kDefaultRenderUrl, &kDefaultAdComponentRenderUrls,
-        &kDefaultAdditionalParams);
+        &kDefaultAdditionalParams, /*seller_tkv_signals=*/nullptr);
 
     std::map<int, std::vector<TrustedSignalsFetcher::ScoringPartition>>
         scoring_signals_request;
@@ -637,7 +638,7 @@ class TrustedSignalsFetcherTest : public testing::Test {
 
   // IP address space of the origin
   network::mojom::IPAddressSpace ip_address_space_ =
-      network::mojom::IPAddressSpace::kLocal;
+      network::mojom::IPAddressSpace::kLoopback;
 
   // Whether an OPTIONS request is expected. When true, set to false once an
   // options request is observed.
@@ -1162,7 +1163,8 @@ TEST_F(TrustedSignalsFetcherTest, BiddingSignalsNoZeroIndices) {
   std::vector<TrustedSignalsFetcher::BiddingPartition> bidding_partitions;
   bidding_partitions.emplace_back(/*partition_id=*/7,
                                   &kDefaultInterestGroupNames, &kDefaultKeys,
-                                  &kDefaultAdditionalParams);
+                                  &kDefaultAdditionalParams,
+                                  /*buyer_tkv_signals=*/nullptr);
   std::map<int, std::vector<TrustedSignalsFetcher::BiddingPartition>>
       bidding_signals_request;
   bidding_signals_request.emplace(3, std::move(bidding_partitions));
@@ -1359,7 +1361,7 @@ TEST_F(TrustedSignalsFetcherTest, BiddingSignalsResponseBodyShorterThanHeader) {
 }
 
 TEST_F(TrustedSignalsFetcherTest, BiddingSignalsResponseBodyUnencrypted) {
-  SetResponseBody(DefaultResponseBody(), /*use_plantext=*/true);
+  SetResponseBody(DefaultResponseBody(), /*use_cleartext=*/true);
   auto bidding_signals_request = CreateBasicBiddingSignalsRequest();
   auto result = RequestBiddingSignalsAndWaitForResult(bidding_signals_request);
   ASSERT_FALSE(result.has_value());
@@ -1854,8 +1856,9 @@ TEST_F(TrustedSignalsFetcherTest, BiddingSignalsMultiplePartitions) {
   const std::set<std::string> kKeys2{"key2"};
   base::Value::Dict additional_params2;
   additional_params2.Set("foo", "bar");
-  bidding_partitions->emplace_back(/*partition_id=*/1, &kInterestGroupNames2,
-                                   &kKeys2, &additional_params2);
+  bidding_partitions->emplace_back(
+      /*partition_id=*/1, &kInterestGroupNames2, &kKeys2, &additional_params2,
+      /*buyer_tkv_signals=*/nullptr);
 
   const std::set<std::string> kInterestGroupNames3{"group1", "group2",
                                                    "group3"};
@@ -1863,7 +1866,8 @@ TEST_F(TrustedSignalsFetcherTest, BiddingSignalsMultiplePartitions) {
   base::Value::Dict additional_params3;
   additional_params3.Set("foo2", "bar2");
   bidding_partitions->emplace_back(/*partition_id=*/2, &kInterestGroupNames3,
-                                   &kKeys3, &additional_params3);
+                                   &kKeys3, &additional_params3,
+                                   /*buyer_tkv_signals=*/nullptr);
 
   // Request body as a JSON string. Will be converted to CBOR and have a framing
   // header and padding added before beign compared to actual body.
@@ -1933,18 +1937,18 @@ TEST_F(TrustedSignalsFetcherTest, ScoringSignalsMultiplePartitions) {
       GURL("https://component2.test/")};
   base::Value::Dict additional_params2;
   additional_params2.Set("foo", "bar");
-  scoring_partitions->emplace_back(/*partition_id=*/1, &renderUrl2,
-                                   &kAdComponentRenderUrls2,
-                                   &additional_params2);
+  scoring_partitions->emplace_back(
+      /*partition_id=*/1, &renderUrl2, &kAdComponentRenderUrls2,
+      &additional_params2, /*seller_tkv_signals=*/nullptr);
 
   const GURL renderUrl3("https://render_url3.test/");
   const std::set<GURL> kAdComponentRenderUrls3{
       GURL("https://component3.test/bar"), GURL("https://component3.test/foo")};
   base::Value::Dict additional_params3;
   additional_params3.Set("foo2", "bar2");
-  scoring_partitions->emplace_back(/*partition_id=*/2, &renderUrl3,
-                                   &kAdComponentRenderUrls3,
-                                   &additional_params3);
+  scoring_partitions->emplace_back(
+      /*partition_id=*/2, &renderUrl3, &kAdComponentRenderUrls3,
+      &additional_params3, /*seller_tkv_signals=*/nullptr);
 
   // Request body as a JSON string. Will be converted to CBOR and have a framing
   // header and padding added before beign compared to actual body.
@@ -2040,7 +2044,8 @@ TEST_F(TrustedSignalsFetcherTest, BiddingSignalsMultipleCompressionGroups) {
   additional_params2.Set("foo", "bar");
   std::vector<TrustedSignalsFetcher::BiddingPartition> bidding_partitions2;
   bidding_partitions2.emplace_back(/*partition_id=*/0, &kInterestGroupNames2,
-                                   &kKeys2, &additional_params2);
+                                   &kKeys2, &additional_params2,
+                                   /*buyer_tkv_signals=*/nullptr);
   bidding_signals_request.emplace(1, std::move(bidding_partitions2));
 
   const std::set<std::string> kInterestGroupNames3{"group1", "group2",
@@ -2051,7 +2056,8 @@ TEST_F(TrustedSignalsFetcherTest, BiddingSignalsMultipleCompressionGroups) {
   additional_params3.Set("foo2", "bar2");
   std::vector<TrustedSignalsFetcher::BiddingPartition> bidding_partitions3;
   bidding_partitions3.emplace_back(/*partition_id=*/0, &kInterestGroupNames3,
-                                   &kKeys3, &additional_params3);
+                                   &kKeys3, &additional_params3,
+                                   /*buyer_tkv_signals=*/nullptr);
   bidding_signals_request.emplace(2, std::move(bidding_partitions3));
 
   // Request body as a JSON string. Will be converted to CBOR and have a framing
@@ -2155,9 +2161,9 @@ TEST_F(TrustedSignalsFetcherTest, ScoringSignalsMultipleCompressionGroups) {
   base::Value::Dict additional_params2;
   additional_params2.Set("foo", "bar");
   std::vector<TrustedSignalsFetcher::ScoringPartition> scoring_partitions2;
-  scoring_partitions2.emplace_back(/*partition_id=*/0, &renderUrl2,
-                                   &kAdComponentRenderUrls2,
-                                   &additional_params2);
+  scoring_partitions2.emplace_back(
+      /*partition_id=*/0, &renderUrl2, &kAdComponentRenderUrls2,
+      &additional_params2, /*seller_tkv_signals=*/nullptr);
   scoring_signals_request.emplace(1, std::move(scoring_partitions2));
 
   const GURL renderUrl3("https://render_url3.test/");
@@ -2166,9 +2172,9 @@ TEST_F(TrustedSignalsFetcherTest, ScoringSignalsMultipleCompressionGroups) {
   base::Value::Dict additional_params3;
   additional_params3.Set("foo2", "bar2");
   std::vector<TrustedSignalsFetcher::ScoringPartition> scoring_partitions3;
-  scoring_partitions3.emplace_back(/*partition_id=*/0, &renderUrl3,
-                                   &kAdComponentRenderUrls3,
-                                   &additional_params3);
+  scoring_partitions3.emplace_back(
+      /*partition_id=*/0, &renderUrl3, &kAdComponentRenderUrls3,
+      &additional_params3, /*seller_tkv_signals=*/nullptr);
   scoring_signals_request.emplace(2, std::move(scoring_partitions3));
 
   // Request body as a JSON string. Will be converted to CBOR and have a framing
@@ -2274,7 +2280,8 @@ TEST_F(TrustedSignalsFetcherTest,
   additional_params2.Set("foo", "bar");
   std::vector<TrustedSignalsFetcher::BiddingPartition> bidding_partitions2;
   bidding_partitions2.emplace_back(/*partition_id=*/0, &kInterestGroupNames2,
-                                   &kKeys2, &additional_params2);
+                                   &kKeys2, &additional_params2,
+                                   /*buyer_tkv_signals=*/nullptr);
   bidding_signals_request.emplace(1, std::move(bidding_partitions2));
 
   const std::set<std::string> kInterestGroupNames3{"group1", "group2",
@@ -2284,7 +2291,8 @@ TEST_F(TrustedSignalsFetcherTest,
   additional_params3.Set("foo2", "bar2");
   std::vector<TrustedSignalsFetcher::BiddingPartition> bidding_partitions3;
   bidding_partitions3.emplace_back(/*partition_id=*/0, &kInterestGroupNames3,
-                                   &kKeys3, &additional_params3);
+                                   &kKeys3, &additional_params3,
+                                   /*buyer_tkv_signals=*/nullptr);
   bidding_signals_request.emplace(2, std::move(bidding_partitions3));
 
   // Request body as a JSON string. Will be converted to CBOR and have a framing
@@ -2421,7 +2429,7 @@ TEST_F(TrustedSignalsFetcherTest, BiddingSignalsCrossOriginLNAFailure) {
       })"));
   SetCrossOrigin();
   // Set IP Address space of the origin to be public, making signal requests LNA
-  // requests (as embedded_test_server_ is in IPAddressSpace::kLocal)
+  // requests (as embedded_test_server_ is in IPAddressSpace::kLoopback)
   ip_address_space_ = network::mojom::IPAddressSpace::kPublic;
   // Don't expect signals requests to get handled.
   expect_url_not_requested_ = true;
@@ -2501,7 +2509,7 @@ TEST_F(TrustedSignalsFetcherTest, ScoringSignalsCrossOriginLNAFailure) {
       })"));
   SetCrossOrigin();
   // Set IP Address space of the origin to be public, making signal requests LNA
-  // requests (as embedded_test_server_ is in IPAddressSpace::kLocal)
+  // requests (as embedded_test_server_ is in IPAddressSpace::kLoopback)
   ip_address_space_ = network::mojom::IPAddressSpace::kPublic;
   // Don't expect signals requests to get handled.
   expect_url_not_requested_ = true;
@@ -2560,7 +2568,7 @@ TEST_F(TrustedSignalsFetcherTest, BiddingSignalsIsolationInfo) {
   trusted_signals_fetcher.FetchBiddingSignals(
       data_decoder_manager_, &url_loader_factory, FrameTreeNodeId(),
       kAuctionDevtoolsIds, kDefaultMainFrameOrigin,
-      network::mojom::IPAddressSpace::kLocal, network_partition_nonce_,
+      network::mojom::IPAddressSpace::kLoopback, network_partition_nonce_,
       GetScriptOrigin(), TrustedBiddingSignalsUrl(),
       BiddingAndAuctionServerKey{
           std::string(reinterpret_cast<const char*>(kTestPublicKey),
@@ -2598,7 +2606,7 @@ TEST_F(TrustedSignalsFetcherTest, ScoringSignalsIsolationInfo) {
   trusted_signals_fetcher.FetchScoringSignals(
       data_decoder_manager_, &url_loader_factory, FrameTreeNodeId(),
       kAuctionDevtoolsIds, kDefaultMainFrameOrigin,
-      network::mojom::IPAddressSpace::kLocal, network_partition_nonce_,
+      network::mojom::IPAddressSpace::kLoopback, network_partition_nonce_,
       GetScriptOrigin(), TrustedScoringSignalsUrl(),
       BiddingAndAuctionServerKey{
           std::string(reinterpret_cast<const char*>(kTestPublicKey),
@@ -2621,6 +2629,576 @@ TEST_F(TrustedSignalsFetcherTest, ScoringSignalsIsolationInfo) {
       net::IsolationInfo::RequestType::kOther, kDefaultMainFrameOrigin,
       kDefaultMainFrameOrigin, net::SiteForCookies(),
       network_partition_nonce_)));
+}
+
+// Construct two compression groups with a total of three partitions, each
+// having the same buyerTKVSignals.
+TEST_F(TrustedSignalsFetcherTest, BiddingSignalsIdenticalBuyerTKVSignals) {
+  const std::set<std::string> kKeys;
+  const std::string kBuyerTKVSignals = "signal";
+
+  std::vector<TrustedSignalsFetcher::BiddingPartition> group0_partitions;
+  const std::set<std::string> kInterestGroupNames1{"groupA"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/0, &kInterestGroupNames1, &kKeys,
+      &kDefaultAdditionalParams, &kBuyerTKVSignals);
+  const std::set<std::string> kInterestGroupNames2{"groupB"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/0, &kInterestGroupNames2, &kKeys,
+      &kDefaultAdditionalParams, &kBuyerTKVSignals);
+
+  std::vector<TrustedSignalsFetcher::BiddingPartition> group1_partitions;
+  const std::set<std::string> kInterestGroupNames3{"groupC"};
+  group1_partitions.emplace_back(
+      /*partition_id=*/0, &kInterestGroupNames3, &kKeys,
+      &kDefaultAdditionalParams, &kBuyerTKVSignals);
+
+  std::map<int, std::vector<TrustedSignalsFetcher::BiddingPartition>>
+      bidding_signals_request;
+  bidding_signals_request.emplace(0, std::move(group0_partitions));
+  bidding_signals_request.emplace(1, std::move(group1_partitions));
+
+  // Request body as a JSON string. Will be converted to CBOR and have a framing
+  // header and padding added before beign compared to actual body.
+  const std::string_view kExpectedRequestBodyJson =
+      R"({
+        "acceptCompression": [ "none", "gzip" ],
+        "metadata": { "hostname": "host.test" },
+        "perPartitionMetadata": {
+          "contextualData": [
+            {
+              "value": "signal"
+            }
+          ]
+        },
+        "partitions": [
+          {
+            "id": 0,
+            "arguments": [
+              {
+                "data": [ "groupA" ],
+                "tags": [  "interestGroupNames" ]
+              },
+              {
+                "data": [],
+                "tags": [ "keys" ]
+              }
+            ],
+            "compressionGroupId": 0
+          },
+          {
+            "id": 0,
+            "arguments": [
+              {
+                "data": [ "groupB" ],
+                "tags": [ "interestGroupNames" ]
+              },
+              {
+                "data": [],
+                "tags": [ "keys" ]
+              }
+            ],
+            "compressionGroupId": 0
+          },
+          {
+            "id": 0,
+            "arguments": [
+              {
+                "data": [ "groupC" ],
+                "tags": [ "interestGroupNames" ]
+              },
+              {
+                "data": [],
+                "tags": [ "keys" ]
+              }
+            ],
+            "compressionGroupId": 1
+          }
+        ]
+      })";
+
+  auto result = RequestBiddingSignalsAndWaitForResult(bidding_signals_request);
+  ValidateRequestBodyJson(kExpectedRequestBodyJson);
+}
+
+// Construct compression groups: Group 1 (partitions A, B), Group 2 (partition
+// C). A and C share the same buyerTKVSignals signals; B has none.
+TEST_F(TrustedSignalsFetcherTest,
+       BiddingSignalsPartialIdenticalBuyerTKVSignals) {
+  const std::set<std::string> kKeys;
+  const std::string kBuyerTKVSignals = "signal";
+
+  std::vector<TrustedSignalsFetcher::BiddingPartition> group0_partitions;
+  const std::set<std::string> kInterestGroupNames1{"groupA"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/0, &kInterestGroupNames1, &kKeys,
+      &kDefaultAdditionalParams, &kBuyerTKVSignals);
+  const std::set<std::string> kInterestGroupNames2{"groupB"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/0, &kInterestGroupNames2, &kKeys,
+      &kDefaultAdditionalParams,
+      /*buyer_tkv_signals=*/nullptr);
+
+  std::vector<TrustedSignalsFetcher::BiddingPartition> group1_partitions;
+  const std::set<std::string> kInterestGroupNames3{"groupC"};
+  group1_partitions.emplace_back(
+      /*partition_id=*/0, &kInterestGroupNames3, &kKeys,
+      &kDefaultAdditionalParams, &kBuyerTKVSignals);
+
+  std::map<int, std::vector<TrustedSignalsFetcher::BiddingPartition>>
+      bidding_signals_request;
+  bidding_signals_request.emplace(0, std::move(group0_partitions));
+  bidding_signals_request.emplace(1, std::move(group1_partitions));
+
+  // Request body as a JSON string. Will be converted to CBOR and have a framing
+  // header and padding added before beign compared to actual body.
+  const std::string_view kExpectedRequestBodyJson =
+      R"({
+        "acceptCompression": [ "none", "gzip" ],
+        "metadata": { "hostname": "host.test" },
+        "perPartitionMetadata": {
+          "contextualData": [
+            {
+              "ids": [
+                [0, 0],
+                [1, 0]
+              ],
+              "value": "signal"
+            }
+          ]
+        },
+        "partitions": [
+          {
+            "id": 0,
+            "arguments": [
+              {
+                "data": [ "groupA" ],
+                "tags": [  "interestGroupNames" ]
+              },
+              {
+                "data": [],
+                "tags": [ "keys" ]
+              }
+            ],
+            "compressionGroupId": 0
+          },
+          {
+            "id": 0,
+            "arguments": [
+              {
+                "data": [ "groupB" ],
+                "tags": [ "interestGroupNames" ]
+              },
+              {
+                "data": [],
+                "tags": [ "keys" ]
+              }
+            ],
+            "compressionGroupId": 0
+          },
+          {
+            "id": 0,
+            "arguments": [
+              {
+                "data": [ "groupC" ],
+                "tags": [ "interestGroupNames" ]
+              },
+              {
+                "data": [],
+                "tags": [ "keys" ]
+              }
+            ],
+            "compressionGroupId": 1
+          }
+        ]
+      })";
+
+  auto result = RequestBiddingSignalsAndWaitForResult(bidding_signals_request);
+  ValidateRequestBodyJson(kExpectedRequestBodyJson);
+}
+
+// Construct compression groups: Group 1 (partitions A, B), Group 2 (partition
+// C). A and C have different buyerTKVSignals signals; B has none.
+TEST_F(TrustedSignalsFetcherTest, BiddingSignalsDifferentBuyerTKVSignals) {
+  const std::set<std::string> kKeys;
+
+  std::vector<TrustedSignalsFetcher::BiddingPartition> group0_partitions;
+  const std::set<std::string> kInterestGroupNames1{"groupA"};
+  const std::string kBuyerTKVSignals1 = "signalA";
+  group0_partitions.emplace_back(
+      /*partition_id=*/0, &kInterestGroupNames1, &kKeys,
+      &kDefaultAdditionalParams, &kBuyerTKVSignals1);
+  const std::set<std::string> kInterestGroupNames2{"groupB"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/0, &kInterestGroupNames2, &kKeys,
+      &kDefaultAdditionalParams,
+      /*buyer_tkv_signals=*/nullptr);
+
+  std::vector<TrustedSignalsFetcher::BiddingPartition> group1_partitions;
+  const std::set<std::string> kInterestGroupNames3{"groupC"};
+  const std::string kBuyerTKVSignals3 = "signalC";
+  group1_partitions.emplace_back(
+      /*partition_id=*/0, &kInterestGroupNames3, &kKeys,
+      &kDefaultAdditionalParams, &kBuyerTKVSignals3);
+
+  std::map<int, std::vector<TrustedSignalsFetcher::BiddingPartition>>
+      bidding_signals_request;
+  bidding_signals_request.emplace(0, std::move(group0_partitions));
+  bidding_signals_request.emplace(1, std::move(group1_partitions));
+
+  // Request body as a JSON string. Will be converted to CBOR and have a framing
+  // header and padding added before beign compared to actual body.
+  const std::string_view kExpectedRequestBodyJson =
+      R"({
+        "acceptCompression": [ "none", "gzip" ],
+        "metadata": { "hostname": "host.test" },
+        "perPartitionMetadata": {
+          "contextualData": [
+            {
+              "ids": [
+                [ 0, 0 ]
+              ],
+              "value": "signalA"
+            },
+            {
+              "ids": [
+                [ 1, 0 ]
+              ],
+              "value": "signalC"
+            }
+          ]
+        },
+        "partitions": [
+          {
+            "id": 0,
+            "arguments": [
+              {
+                "data": [ "groupA" ],
+                "tags": [  "interestGroupNames" ]
+              },
+              {
+                "data": [],
+                "tags": [ "keys" ]
+              }
+            ],
+            "compressionGroupId": 0
+          },
+          {
+            "id": 0,
+            "arguments": [
+              {
+                "data": [ "groupB" ],
+                "tags": [ "interestGroupNames" ]
+              },
+              {
+                "data": [],
+                "tags": [ "keys" ]
+              }
+            ],
+            "compressionGroupId": 0
+          },
+          {
+            "id": 0,
+            "arguments": [
+              {
+                "data": [ "groupC" ],
+                "tags": [ "interestGroupNames" ]
+              },
+              {
+                "data": [],
+                "tags": [ "keys" ]
+              }
+            ],
+            "compressionGroupId": 1
+          }
+        ]
+      })";
+
+  auto result = RequestBiddingSignalsAndWaitForResult(bidding_signals_request);
+  ValidateRequestBodyJson(kExpectedRequestBodyJson);
+}
+
+// Construct two compression groups with a total of three partitions, each
+// having the same sellerTKVSignals.
+TEST_F(TrustedSignalsFetcherTest, ScoringSignalsIdenticalSellerTKVSignals) {
+  const std::set<GURL> kAdComponentRenderUrls;
+  const std::string kSellerTKVSignals = "signal";
+
+  std::vector<TrustedSignalsFetcher::ScoringPartition> group0_partitions;
+  const GURL kRenderUrl1{"https://render_urla.test/"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/0, &kRenderUrl1, &kAdComponentRenderUrls,
+      &kDefaultAdditionalParams, &kSellerTKVSignals);
+  const GURL kRenderUrl2{"https://render_urlb.test/"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/1, &kRenderUrl2, &kAdComponentRenderUrls,
+      &kDefaultAdditionalParams, &kSellerTKVSignals);
+
+  std::vector<TrustedSignalsFetcher::ScoringPartition> group1_partitions;
+  const GURL kRenderUrl3{"https://render_urlc.test/"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/0, &kRenderUrl3, &kAdComponentRenderUrls,
+      &kDefaultAdditionalParams, &kSellerTKVSignals);
+
+  std::map<int, std::vector<TrustedSignalsFetcher::ScoringPartition>>
+      scoring_signals_request;
+  scoring_signals_request.emplace(0, std::move(group0_partitions));
+  scoring_signals_request.emplace(1, std::move(group1_partitions));
+
+  // Request body as a JSON string. Will be converted to CBOR and have a framing
+  // header and padding added before beign compared to actual body.
+  const std::string_view kExpectedRequestBodyJson =
+      R"({
+          "acceptCompression": [ "none", "gzip" ],
+          "metadata": { "hostname": "host.test" },
+          "perPartitionMetadata": {
+            "contextualData": [
+              {
+                "value": "signal"
+              }
+            ]
+          },
+          "partitions": [
+            {
+              "id": 0,
+              "arguments": [
+                {
+                  "data": [
+                    "https://render_urla.test/"
+                  ],
+                  "tags": [
+                    "renderURLs"
+                  ]
+                }
+              ],
+              "compressionGroupId": 0
+            },
+            {
+              "id": 1,
+              "arguments": [
+                {
+                  "data": [
+                    "https://render_urlb.test/"
+                  ],
+                  "tags": [
+                    "renderURLs"
+                  ]
+                }
+              ],
+              "compressionGroupId": 0
+            },
+            {
+              "id": 0,
+              "arguments": [
+                {
+                  "data": [
+                    "https://render_urlc.test/"
+                  ],
+                  "tags": [
+                    "renderURLs"
+                  ]
+                }
+              ],
+              "compressionGroupId": 0
+            }
+          ]
+        })";
+
+  auto result = RequestScoringSignalsAndWaitForResult(scoring_signals_request);
+  ValidateRequestBodyJson(kExpectedRequestBodyJson);
+}
+
+// Construct compression groups: Group 1 (partitions A, B), Group 2 (partition
+// C). A and C share the same sellerTKVSignals signals; B has none.
+TEST_F(TrustedSignalsFetcherTest,
+       ScoringSignalsPartialIdenticalSellerTKVSignals) {
+  const std::set<GURL> kAdComponentRenderUrls;
+  const std::string kSellerTKVSignals = "signal";
+
+  std::vector<TrustedSignalsFetcher::ScoringPartition> group0_partitions;
+  const GURL kRenderUrl1{"https://render_urla.test/"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/0, &kRenderUrl1, &kAdComponentRenderUrls,
+      &kDefaultAdditionalParams, &kSellerTKVSignals);
+  const GURL kRenderUrl2{"https://render_urlb.test/"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/1, &kRenderUrl2, &kAdComponentRenderUrls,
+      &kDefaultAdditionalParams, /*seller_tkv_signals=*/nullptr);
+
+  std::vector<TrustedSignalsFetcher::ScoringPartition> group1_partitions;
+  const GURL kRenderUrl3{"https://render_urlc.test/"};
+  group1_partitions.emplace_back(
+      /*partition_id=*/0, &kRenderUrl3, &kAdComponentRenderUrls,
+      &kDefaultAdditionalParams, &kSellerTKVSignals);
+
+  std::map<int, std::vector<TrustedSignalsFetcher::ScoringPartition>>
+      scoring_signals_request;
+  scoring_signals_request.emplace(0, std::move(group0_partitions));
+  scoring_signals_request.emplace(1, std::move(group1_partitions));
+
+  // Request body as a JSON string. Will be converted to CBOR and have a framing
+  // header and padding added before beign compared to actual body.
+  const std::string_view kExpectedRequestBodyJson =
+      R"({
+          "acceptCompression": [ "none", "gzip" ],
+          "metadata": { "hostname": "host.test" },
+          "perPartitionMetadata": {
+            "contextualData": [
+              {
+                "ids": [
+                  [ 0, 0 ],
+                  [ 1, 0 ]
+                ],
+                "value": "signal"
+              }
+            ]
+          },
+          "partitions": [
+            {
+              "id": 0,
+              "arguments": [
+                {
+                  "data": [
+                    "https://render_urla.test/"
+                  ],
+                  "tags": [
+                    "renderURLs"
+                  ]
+                }
+              ],
+              "compressionGroupId": 0
+            },
+            {
+              "id": 1,
+              "arguments": [
+                {
+                  "data": [
+                    "https://render_urlb.test/"
+                  ],
+                  "tags": [
+                    "renderURLs"
+                  ]
+                }
+              ],
+              "compressionGroupId": 0
+            },
+            {
+              "id": 0,
+              "arguments": [
+                {
+                  "data": [
+                    "https://render_urlc.test/"
+                  ],
+                  "tags": [
+                    "renderURLs"
+                  ]
+                }
+              ],
+              "compressionGroupId": 1
+            }
+          ]
+        })";
+
+  auto result = RequestScoringSignalsAndWaitForResult(scoring_signals_request);
+  ValidateRequestBodyJson(kExpectedRequestBodyJson);
+}
+
+// Construct compression groups: Group 1 (partitions A, B), Group 2 (partition
+// C). A and C have different sellerTKVSignals signals; B has none.
+TEST_F(TrustedSignalsFetcherTest, ScoringSignalsDifferentSellerTKVSignals) {
+  const std::set<GURL> kAdComponentRenderUrls;
+
+  std::vector<TrustedSignalsFetcher::ScoringPartition> group0_partitions;
+  const GURL kRenderUrl1{"https://render_urla.test/"};
+  const std::string kSellerTKVSignals1 = "signalA";
+  group0_partitions.emplace_back(
+      /*partition_id=*/0, &kRenderUrl1, &kAdComponentRenderUrls,
+      &kDefaultAdditionalParams, &kSellerTKVSignals1);
+  const GURL kRenderUrl2{"https://render_urlb.test/"};
+  group0_partitions.emplace_back(
+      /*partition_id=*/1, &kRenderUrl2, &kAdComponentRenderUrls,
+      &kDefaultAdditionalParams, /*seller_tkv_signals=*/nullptr);
+
+  std::vector<TrustedSignalsFetcher::ScoringPartition> group1_partitions;
+  const GURL kRenderUrl3{"https://render_urlc.test/"};
+  const std::string kSellerTKVSignals2 = "signalC";
+  group1_partitions.emplace_back(
+      /*partition_id=*/0, &kRenderUrl3, &kAdComponentRenderUrls,
+      &kDefaultAdditionalParams, &kSellerTKVSignals2);
+
+  std::map<int, std::vector<TrustedSignalsFetcher::ScoringPartition>>
+      scoring_signals_request;
+  scoring_signals_request.emplace(0, std::move(group0_partitions));
+  scoring_signals_request.emplace(1, std::move(group1_partitions));
+
+  const std::string_view kExpectedRequestBodyJson =
+      R"({
+          "acceptCompression": [ "none", "gzip" ],
+          "metadata": { "hostname": "host.test" },
+          "perPartitionMetadata": {
+            "contextualData": [
+              {
+                "ids": [
+                  [ 0, 0 ]
+                ],
+                "value": "signalA"
+              },
+              {
+                "ids": [
+                  [ 1, 0 ]
+                ],
+                "value": "signalC"
+              }
+            ]
+          },
+          "partitions": [
+            {
+              "id": 0,
+              "arguments": [
+                {
+                  "data": [
+                    "https://render_urla.test/"
+                  ],
+                  "tags": [
+                    "renderURLs"
+                  ]
+                }
+              ],
+              "compressionGroupId": 0
+            },
+            {
+              "id": 1,
+              "arguments": [
+                {
+                  "data": [
+                    "https://render_urlb.test/"
+                  ],
+                  "tags": [
+                    "renderURLs"
+                  ]
+                }
+              ],
+              "compressionGroupId": 0
+            },
+            {
+              "id": 0,
+              "arguments": [
+                {
+                  "data": [
+                    "https://render_urlc.test/"
+                  ],
+                  "tags": [
+                    "renderURLs"
+                  ]
+                }
+              ],
+              "compressionGroupId": 1
+            }
+          ]
+        })";
+
+  auto result = RequestScoringSignalsAndWaitForResult(scoring_signals_request);
+  ValidateRequestBodyJson(kExpectedRequestBodyJson);
 }
 
 // Test that the request timeout (which should use the value of
@@ -2648,7 +3226,8 @@ TEST(TrustedSignalsFetcherTimeoutTest, BiddingSignalsTimeout) {
   const base::Value::Dict kAdditionalParams;
   std::vector<TrustedSignalsFetcher::BiddingPartition> bidding_partitions;
   bidding_partitions.emplace_back(
-      /*partition_id=*/0, &kInterestGroupNames, &kKeys, &kAdditionalParams);
+      /*partition_id=*/0, &kInterestGroupNames, &kKeys, &kAdditionalParams,
+      /*buyer_tkv_signals=*/nullptr);
   std::map<int, std::vector<TrustedSignalsFetcher::BiddingPartition>>
       bidding_signals_request;
   bidding_signals_request.emplace(0, std::move(bidding_partitions));
@@ -2662,7 +3241,7 @@ TEST(TrustedSignalsFetcherTimeoutTest, BiddingSignalsTimeout) {
       data_decoder_manager, &url_loader_factory, FrameTreeNodeId(),
       {"auction_devtools_id"},
       /*main_frame_origin=*/kSignalsOrigin,
-      network::mojom::IPAddressSpace::kLocal,
+      network::mojom::IPAddressSpace::kLoopback,
       /*network_partition_nonce=*/base::UnguessableToken::Create(),
       kSignalsOrigin, kSignalsUrl,
       BiddingAndAuctionServerKey{

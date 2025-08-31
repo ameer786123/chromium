@@ -79,6 +79,7 @@ void CombinedSelectorRadioButton::SetChecked(bool checked) {
       }
     }
     delegate_->OnRadioButtonChecked(index_);
+    RequestFocus();
   }
   Checkbox::SetChecked(checked);
 }
@@ -98,6 +99,17 @@ void CombinedSelectorRadioButton::GetRadioButtonsInList(int group,
     return;
   }
   list_view->GetViewsInGroup(group, views);
+}
+
+bool CombinedSelectorRadioButton::SkipDefaultKeyEventProcessing(
+    const ui::KeyEvent& event) {
+  // The radio button would show the ink drop on return key press. Since the
+  // radio buttons in the combined selector are tab focusable
+  // (IsGroupFocusTraversable), this is not required. The return key should not
+  // be handled by the radio button.
+  return event.key_code() == ui::VKEY_RETURN
+             ? false
+             : RadioButton::SkipDefaultKeyEventProcessing(event);
 }
 
 BEGIN_METADATA(CombinedSelectorRadioButton)
@@ -134,7 +146,8 @@ CombinedSelectorRowView::CombinedSelectorRowView(
                                      ? ax::mojom::Role::kRadioButton
                                      : ax::mojom::Role::kButton);
   GetViewAccessibility().SetName(base::JoinString(texts, u"\n"));
-  SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(8, 16)));
+  const int horizontal_padding = radio_status == RadioStatus::kNone ? 0 : 16;
+  SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(8, horizontal_padding)));
 
   const int icon_padding = ChromeLayoutProvider::Get()->GetDistanceMetric(
       views::DISTANCE_RELATED_LABEL_HORIZONTAL);
@@ -192,7 +205,6 @@ bool CombinedSelectorRowView::OnMousePressed(const ui::MouseEvent& event) {
         ui::EventType::kMousePressed, center, center, event.time_stamp(),
         event.flags(), event.changed_button_flags());
     radio_button_->OnMousePressed(synthetic_press_event);
-    radio_button_->RequestFocus();
     return true;
   }
   return views::TableLayoutView::OnMousePressed(event);
@@ -205,6 +217,7 @@ void CombinedSelectorRowView::OnMouseReleased(const ui::MouseEvent& event) {
         ui::EventType::kMouseReleased, center, center, event.time_stamp(),
         event.flags(), event.changed_button_flags());
     radio_button_->OnMouseReleased(synthetic_release_event);
+    RequestFocus();
     return;
   }
   views::TableLayoutView::OnMouseReleased(event);  // Default handling.
@@ -223,23 +236,38 @@ CombinedSelectorListView::CombinedSelectorListView(
   wrapper->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(),
       /*between_child_spacing=*/kRowGap));
+  size_t num_mechanisms = model->dialog_model()->mechanisms.size();
 
-  for (size_t i = 0; i < model->dialog_model()->mechanisms.size(); i++) {
+  if (num_mechanisms > 1) {
+    wrapper->AddChildView(std::make_unique<views::Separator>());
+  }
+
+  for (size_t i = 0; i < num_mechanisms; i++) {
+    if (i > 0) {
+      wrapper->AddChildView(std::make_unique<views::Separator>());
+    }
     const auto& mechanism = model->dialog_model()->mechanisms[i];
     auto image_model =
         ui::ImageModel::FromVectorIcon(*mechanism.icon, ui::kColorIcon, 20);
-    wrapper->AddChildView(std::make_unique<views::Separator>());
+    auto texts = mechanism.display_name.empty() ||
+                         (mechanism.display_name == mechanism.name)
+                     ? std::vector<std::u16string_view>{mechanism.name,
+                                                        mechanism.description}
+                     : std::vector<std::u16string_view>{mechanism.display_name,
+                                                        mechanism.name,
+                                                        mechanism.description};
     auto* row = wrapper->AddChildView(std::make_unique<CombinedSelectorRowView>(
-        image_model,
-        std::vector<std::u16string_view>{mechanism.name, mechanism.description},
-        model->GetSelectionStatus(i), !model->dialog_model()->ui_disabled_,
-        delegate, i));
+        image_model, std::move(texts), model->GetSelectionStatus(i),
+        !model->dialog_model()->ui_disabled_, delegate, i));
     if (model->GetSelectionStatus(i) ==
         CombinedSelectorSheetModel::SelectionStatus::kSelected) {
       selected_view_ = row;
     }
   }
-  wrapper->AddChildView(std::make_unique<views::Separator>());
+
+  if (num_mechanisms > 1) {
+    wrapper->AddChildView(std::make_unique<views::Separator>());
+  }
 
   scroll_view->SetContents(std::move(wrapper));
   scroll_view->ClipHeightTo(kMaxRowHeight, 3 * kMaxRowHeight + 2 * kRowGap);

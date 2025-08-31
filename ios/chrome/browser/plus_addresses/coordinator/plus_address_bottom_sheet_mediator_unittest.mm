@@ -8,21 +8,21 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/metrics/user_action_tester.h"
 #import "base/test/scoped_feature_list.h"
-#import "base/test/task_environment.h"
 #import "base/types/expected.h"
+#import "components/plus_addresses/core/browser/metrics/plus_address_metrics.h"
+#import "components/plus_addresses/core/browser/plus_address_types.h"
+#import "components/plus_addresses/core/browser/settings/mock_plus_address_setting_service.h"
+#import "components/plus_addresses/core/common/features.h"
 #import "components/plus_addresses/fake_plus_address_service.h"
-#import "components/plus_addresses/features.h"
-#import "components/plus_addresses/metrics/plus_address_metrics.h"
 #import "components/plus_addresses/plus_address_service.h"
 #import "components/plus_addresses/plus_address_test_utils.h"
-#import "components/plus_addresses/plus_address_types.h"
-#import "components/plus_addresses/settings/mock_plus_address_setting_service.h"
 #import "ios/chrome/browser/plus_addresses/ui/plus_address_bottom_sheet_constants.h"
 #import "ios/chrome/browser/plus_addresses/ui/plus_address_bottom_sheet_consumer.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/url_loading/model/fake_url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_notifier_browser_agent.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "testing/gmock/include/gmock/gmock.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -69,7 +69,7 @@ class PlusAddressBottomSheetMediatorTest : public PlatformTest {
   id consumer_;
 
  private:
-  base::test::TaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_;
   std::unique_ptr<TestProfileIOS> profile_;
   TestBrowser browser_;
   FakePlusAddressService service_;

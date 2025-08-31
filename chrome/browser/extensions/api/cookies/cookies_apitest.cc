@@ -9,6 +9,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_destroyer.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
@@ -173,6 +174,28 @@ IN_PROC_BROWSER_TEST_P(CookiesApiTest, CookiesEventsSpanningAsync) {
       << message_;
 }
 
+IN_PROC_BROWSER_TEST_P(CookiesApiTest, CookiesEventsObservePrimaryOTROnly) {
+  // In addition to above, this test makes sure that CookiesEventRouter
+  // does not observe a non-primary OTR profile, which leads to CHECK
+  // failure (crbug.com/6527130).
+  ExtensionTestMessageListener listener("listening", ReplyBehavior::kWillReply);
+  listener.SetOnSatisfied(
+      base::BindLambdaForTesting([this, &listener](const std::string&) {
+        PlatformOpenURLOffTheRecord(profile(), GURL("chrome://newtab/"));
+        listener.Reply("ok");
+      }));
+
+  ASSERT_TRUE(RunTest("cookies/events_spanning",
+                      /*allow_in_incognito=*/true))
+      << message_;
+  {
+    auto* second_profile = profile()->GetOffTheRecordProfile(
+        Profile::OTRProfileID::CreateUniqueForTesting(),
+        /*create_if_needed=*/true);
+    ProfileDestroyer::DestroyOTRProfileWhenAppropriate(second_profile);
+  }
+}
+
 #if !BUILDFLAG(IS_ANDROID)
 // TODO(crbug.com/371423073): Enable this test on desktop android.
 IN_PROC_BROWSER_TEST_P(CookiesApiTest, CookiesEventsSpanning) {
@@ -195,8 +218,7 @@ IN_PROC_BROWSER_TEST_P(CookiesApiMV3Test, TestGetPartitionKey) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("a.com", default_response)));
 
-  content::WebContents* contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
+  content::WebContents* contents = GetActiveWebContents();
   // Inject two iframes and navigate one to a cross-site with host permissions
   // (b.com) and the other to a cross-site (c.com) with no host permissions.
   const GURL cross_site_url =

@@ -35,9 +35,11 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/app_service_test.h"
+#include "chrome/browser/apps/app_service/chrome_app_deprecation/chrome_app_deprecation.h"
 #include "chrome/browser/apps/app_service/launch_result_type.h"
 #include "chrome/browser/apps/app_service/publishers/app_publisher.h"
 #include "chrome/browser/ash/arc/fileapi/arc_documents_provider_util.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/ash/extensions/file_manager/event_router_factory.h"
 #include "chrome/browser/ash/file_manager/file_manager_browsertest_base.h"
@@ -56,11 +58,11 @@
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
 #include "chrome/browser/ash/policy/dlp/dlp_files_controller_ash.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_rules_manager.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_rules_manager_factory.h"
 #include "chrome/browser/chromeos/policy/dlp/test/mock_dlp_rules_manager.h"
 #include "chrome/browser/chromeos/upload_office_to_cloud/upload_office_to_cloud.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
@@ -82,6 +84,7 @@
 #include "chrome/browser/web_applications/web_app_registry_update.h"
 #include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/extensions/api/file_manager_private.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
@@ -99,6 +102,7 @@
 #include "content/public/test/test_navigation_observer.h"
 #include "extensions/browser/api/file_handlers/mime_util.h"
 #include "extensions/browser/entry_info.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/constants.h"
 #include "net/base/mime_util.h"
@@ -245,12 +249,6 @@ class TestController {
 
   std::string InstallExtension(const char* path) {
     return test::InstallTestingChromeApp(profile(), path)->id();
-  }
-
-  void RemoveComponentExtension(const std::string& extension_id) {
-    extensions::ExtensionSystem::Get(profile())
-        ->extension_service()
-        ->RemoveComponentExtension(extension_id);
   }
 
   std::string ExecuteFileTaskAndWaitForDomMessage(
@@ -651,6 +649,8 @@ IN_PROC_BROWSER_TEST_P(FileTasksBrowserTest, ExecuteChromeApp) {
   }
 
   std::string extension_id = InstallTiffHandlerChromeApp();
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      extension_id);
 
   Profile* const profile = browser()->profile();
   std::vector<storage::FileSystemURL> files =
@@ -727,13 +727,13 @@ IN_PROC_BROWSER_TEST_P(FileTasksBrowserTest, FallbackFailsNoQuickOffice) {
   }
 
   // Uninstall QuickOffice.
-  test_controller()->RemoveComponentExtension(
+  Profile* const profile = browser()->profile();
+  extensions::ExtensionRegistrar::Get(profile)->RemoveComponentExtension(
       extension_misc::kQuickOfficeComponentExtensionId);
 
   // GetUserFallbackChoice() returns `False` because QuickOffice is not
   // installed.
   storage::FileSystemURL test_url;
-  Profile* const profile = browser()->profile();
   const TaskDescriptor task = CreateWebDriveOfficeTask();
   std::vector<FileSystemURL> file_url{test_url};
   ash::office_fallback::FallbackReason fallback_reason =
@@ -1240,7 +1240,7 @@ class DriveTest : public TestAccountBrowserTest {
         std::make_unique<test::FakeSimpleDriveFsHelper>(profile,
                                                         drive_mount_point_);
     return new DriveIntegrationService(
-        profile, "", drive_mount_point_,
+        g_browser_process->local_state(), profile, "", drive_mount_point_,
         fake_drivefs_helpers_[profile]->CreateFakeDriveFsListenerFactory());
   }
 
@@ -1301,6 +1301,7 @@ class DriveTest : public TestAccountBrowserTest {
   }
 
  protected:
+  base::FilePath drive_mount_point_;
   const std::string alternate_url_ =
       "https://docs.google.com/document/d/smalldocxid?rtpof=true&usp=drive_fs";
   const TaskDescriptor web_drive_office_task_ = CreateWebDriveOfficeTask();
@@ -1310,7 +1311,6 @@ class DriveTest : public TestAccountBrowserTest {
 
  private:
   base::ScopedTempDir temp_dir_;
-  base::FilePath drive_mount_point_;
   const std::string test_file_name_ = "text.docx";
   base::FilePath relative_test_file_path;
   base::test::ScopedFeatureList feature_list_;
@@ -1573,6 +1573,37 @@ IN_PROC_BROWSER_TEST_F(DriveTest, FileNotInDriveOpensSetUpDialog) {
   histogram_.ExpectUniqueSample(
       ash::cloud_upload::kOpenInitialCloudProviderMetric,
       ash::cloud_upload::CloudProvider::kGoogleDrive, 1);
+}
+
+// Test that CloudOpenTask::Execute() will fail to open the file when source
+// volume cannot be found.
+IN_PROC_BROWSER_TEST_F(DriveTest, SourceVolumeNotFound) {
+  // Set up DriveFs.
+  SetUpTest(/*disable_set_up=*/false, /*launch_files_app=*/true);
+
+  // Create a test file outside of Drive.
+  FileSystemURL file_outside_drive = CreateOfficeFileSourceURL(profile());
+  std::vector<storage::FileSystemURL> file_urls{file_outside_drive};
+
+  // Remove source volume from the VolumeManager.
+  VolumeManager* volume_manager = VolumeManager::Get(profile());
+  base::WeakPtr<file_manager::Volume> source_volume =
+      volume_manager->FindVolumeFromPath(file_outside_drive.path());
+  volume_manager->RemoveVolumeForTesting(source_volume->volume_id());
+
+  // Ensure that the file cannot be opened.
+  ASSERT_FALSE(ash::cloud_upload::CloudOpenTask::Execute(
+      profile(), file_urls, CreateWebDriveOfficeTask(),
+      ash::cloud_upload::CloudProvider::kGoogleDrive,
+      std::move(cloud_open_metrics_)));
+
+  // The TaskResult should be kCannotGetSourceType and no TransferRequired
+  // metric should be logged.
+  histogram_.ExpectUniqueSample(
+      ash::cloud_upload::kGoogleDriveTaskResultMetricName,
+      ash::cloud_upload::OfficeTaskResult::kCannotGetSourceType, 1);
+  histogram_.ExpectTotalCount(ash::cloud_upload::kDriveTransferRequiredMetric,
+                              0);
 }
 
 // Fake app service web app publisher to test when an app is launched.
@@ -2048,6 +2079,7 @@ IN_PROC_BROWSER_TEST_F(
   // will fail as there is not an equivalent ODFS file path.
   auto task = base::WrapRefCounted(new ash::cloud_upload::CloudOpenTask(
       profile(), {android_onedrive_url}, open_in_office_task_,
+      ash::cloud_upload::SourceType::CLOUD,
       ash::cloud_upload::CloudProvider::kOneDrive,
       std::make_unique<ash::cloud_upload::CloudOpenMetrics>(
           ash::cloud_upload::CloudProvider::kOneDrive, 1)));
@@ -2484,6 +2516,7 @@ IN_PROC_BROWSER_TEST_F(OneDriveTest, OpenFileNotFromODFS) {
   // Triggers Move Confirmation dialog.
   auto task = base::WrapRefCounted(new ash::cloud_upload::CloudOpenTask(
       profile(), file_urls, CreateOpenInOfficeTask(),
+      ash::cloud_upload::SourceType::LOCAL,
       ash::cloud_upload::CloudProvider::kOneDrive,
       std::move(cloud_open_metrics_)));
   task->OpenOrMoveFiles();
@@ -2519,6 +2552,7 @@ IN_PROC_BROWSER_TEST_F(OneDriveTest,
   // Open file directly from ODFS.
   auto task = base::WrapRefCounted(new ash::cloud_upload::CloudOpenTask(
       profile(), file_urls_, open_in_office_task_,
+      ash::cloud_upload::SourceType::CLOUD,
       ash::cloud_upload::CloudProvider::kOneDrive,
       std::move(cloud_open_metrics_)));
   task->OpenOrMoveFiles();
@@ -2566,6 +2600,7 @@ IN_PROC_BROWSER_TEST_F(OneDriveTest, FailToOpenFileFromODFSOtherAccessError) {
   // Open file directly from ODFS.
   auto task = base::WrapRefCounted(new ash::cloud_upload::CloudOpenTask(
       profile(), file_urls_, open_in_office_task_,
+      ash::cloud_upload::SourceType::CLOUD,
       ash::cloud_upload::CloudProvider::kOneDrive,
       std::move(cloud_open_metrics_)));
   task->OpenOrMoveFiles();
@@ -2614,6 +2649,7 @@ IN_PROC_BROWSER_TEST_F(OneDriveTest, OpenFileFromAndroidOneDriveViaODFS) {
   // Open the file indirectly from Android OneDrive (via ODFS).
   auto task = base::WrapRefCounted(new ash::cloud_upload::CloudOpenTask(
       profile(), {android_onedrive_url}, open_in_office_task_,
+      ash::cloud_upload::SourceType::CLOUD,
       ash::cloud_upload::CloudProvider::kOneDrive,
       std::move(cloud_open_metrics_)));
   task->OpenOrMoveFiles();
@@ -2658,6 +2694,7 @@ IN_PROC_BROWSER_TEST_F(OneDriveTest,
   // Open file directly from ODFS.
   auto task = base::WrapRefCounted(new ash::cloud_upload::CloudOpenTask(
       profile(), file_urls_, open_in_office_task_,
+      ash::cloud_upload::SourceType::CLOUD,
       ash::cloud_upload::CloudProvider::kOneDrive,
       std::move(cloud_open_metrics_)));
   task->OpenOrMoveFiles();
@@ -2747,6 +2784,7 @@ IN_PROC_BROWSER_TEST_F(OneDriveTest,
   // Open the file indirectly from Android OneDrive (via ODFS).
   auto task = base::WrapRefCounted(new ash::cloud_upload::CloudOpenTask(
       profile(), {android_onedrive_url}, open_in_office_task_,
+      ash::cloud_upload::SourceType::CLOUD,
       ash::cloud_upload::CloudProvider::kOneDrive,
       std::move(cloud_open_metrics_)));
   task->OpenOrMoveFiles();
@@ -2801,6 +2839,7 @@ IN_PROC_BROWSER_TEST_F(OneDriveTest,
   // will fail as the email accounts don't match.
   auto task = base::WrapRefCounted(new ash::cloud_upload::CloudOpenTask(
       profile(), {android_onedrive_url}, open_in_office_task_,
+      ash::cloud_upload::SourceType::CLOUD,
       ash::cloud_upload::CloudProvider::kOneDrive,
       std::move(cloud_open_metrics_)));
   task->OpenOrMoveFiles();
@@ -2844,6 +2883,7 @@ IN_PROC_BROWSER_TEST_F(OneDriveTest,
   // will fail as there is not an equivalent ODFS file path.
   auto task = base::WrapRefCounted(new ash::cloud_upload::CloudOpenTask(
       profile(), {android_onedrive_url}, open_in_office_task_,
+      ash::cloud_upload::SourceType::CLOUD,
       ash::cloud_upload::CloudProvider::kOneDrive,
       std::move(cloud_open_metrics_)));
   task->OpenOrMoveFiles();

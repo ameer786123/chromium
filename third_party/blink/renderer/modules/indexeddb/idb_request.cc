@@ -33,7 +33,6 @@
 #include <optional>
 #include <utility>
 
-#include "base/debug/stack_trace.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "third_party/blink/public/platform/web_blob_info.h"
@@ -43,6 +42,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_union_idbcursor_idbindex_idbobjectstore.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_union_idbindex_idbobjectstore.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/dom/quota_exceeded_error.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/modules/indexed_db_names.h"
@@ -56,6 +56,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -377,12 +378,12 @@ void IDBRequest::Abort(bool queue_dispatch) {
 
   request_aborted_ = true;
   auto send_exception =
-      WTF::BindOnce(&IDBRequest::SendError, WrapWeakPersistent(this),
-                    WrapPersistent(MakeGarbageCollected<DOMException>(
-                        DOMExceptionCode::kAbortError,
-                        "The transaction was aborted, so the "
-                        "request cannot be fulfilled.")),
-                    /*force=*/true);
+      BindOnce(&IDBRequest::SendError, WrapWeakPersistent(this),
+               WrapPersistent(MakeGarbageCollected<DOMException>(
+                   DOMExceptionCode::kAbortError,
+                   "The transaction was aborted, so the "
+                   "request cannot be fulfilled.")),
+               /*force=*/true);
   if (queue_dispatch) {
     GetExecutionContext()
         ->GetTaskRunner(TaskType::kDatabaseAccess)
@@ -457,29 +458,29 @@ bool IDBRequest::CanStillSendResult() const {
 void IDBRequest::HandleResponse(std::unique_ptr<IDBKey> key) {
   transaction_->EnqueueResult(std::make_unique<IDBRequestQueueItem>(
       this, std::move(key),
-      WTF::BindOnce(&IDBTransaction::OnResultReady,
-                    WrapPersistent(transaction_.Get()))));
+      BindOnce(&IDBTransaction::OnResultReady,
+               WrapPersistent(transaction_.Get()))));
 }
 
 void IDBRequest::HandleResponse(int64_t value) {
   transaction_->EnqueueResult(std::make_unique<IDBRequestQueueItem>(
       this, value,
-      WTF::BindOnce(&IDBTransaction::OnResultReady,
-                    WrapPersistent(transaction_.Get()))));
+      BindOnce(&IDBTransaction::OnResultReady,
+               WrapPersistent(transaction_.Get()))));
 }
 
 void IDBRequest::HandleResponse() {
   transaction_->EnqueueResult(std::make_unique<IDBRequestQueueItem>(
-      this, WTF::BindOnce(&IDBTransaction::OnResultReady,
-                          WrapPersistent(transaction_.Get()))));
+      this, BindOnce(&IDBTransaction::OnResultReady,
+                     WrapPersistent(transaction_.Get()))));
 }
 
 void IDBRequest::HandleResponse(std::unique_ptr<IDBValue> value) {
   value->SetIsolate(GetIsolate());
   transaction_->EnqueueResult(std::make_unique<IDBRequestQueueItem>(
       this, std::move(value),
-      WTF::BindOnce(&IDBTransaction::OnResultReady,
-                    WrapPersistent(transaction_.Get()))));
+      BindOnce(&IDBTransaction::OnResultReady,
+               WrapPersistent(transaction_.Get()))));
 }
 
 void IDBRequest::HandleResponseAdvanceCursor(
@@ -487,14 +488,12 @@ void IDBRequest::HandleResponseAdvanceCursor(
     std::unique_ptr<IDBKey> primary_key,
     std::unique_ptr<IDBValue> optional_value) {
   std::unique_ptr<IDBValue> value =
-      optional_value
-          ? std::move(optional_value)
-          : std::make_unique<IDBValue>(Vector<char>(), Vector<WebBlobInfo>());
+      optional_value ? std::move(optional_value) : std::make_unique<IDBValue>();
   value->SetIsolate(GetIsolate());
   transaction_->EnqueueResult(std::make_unique<IDBRequestQueueItem>(
       this, std::move(key), std::move(primary_key), std::move(value),
-      WTF::BindOnce(&IDBTransaction::OnResultReady,
-                    WrapPersistent(transaction_.Get()))));
+      BindOnce(&IDBTransaction::OnResultReady,
+               WrapPersistent(transaction_.Get()))));
 }
 
 void IDBRequest::OnClear(bool success) {
@@ -513,8 +512,8 @@ void IDBRequest::OnGetAll(
                               "success");
   transaction_->EnqueueResult(std::make_unique<IDBRequestQueueItem>(
       this, result_type, std::move(receiver),
-      WTF::BindOnce(&IDBTransaction::OnResultReady,
-                    WrapPersistent(transaction_.Get()))));
+      BindOnce(&IDBTransaction::OnResultReady,
+               WrapPersistent(transaction_.Get()))));
 }
 
 void IDBRequest::OnDelete(bool success) {
@@ -581,7 +580,7 @@ void IDBRequest::OnOpenCursor(
   if (result->get_value()->value) {
     value = std::move(*result->get_value()->value);
   } else {
-    value = std::make_unique<IDBValue>(Vector<char>(), Vector<WebBlobInfo>());
+    value = std::make_unique<IDBValue>();
   }
 
   value->SetIsolate(GetIsolate());
@@ -590,8 +589,8 @@ void IDBRequest::OnOpenCursor(
       this, std::move(result->get_value()->cursor),
       std::move(result->get_value()->key),
       std::move(result->get_value()->primary_key), std::move(value),
-      WTF::BindOnce(&IDBTransaction::OnResultReady,
-                    WrapPersistent(transaction_.Get()))));
+      BindOnce(&IDBTransaction::OnResultReady,
+               WrapPersistent(transaction_.Get()))));
 }
 
 void IDBRequest::OnAdvanceCursor(mojom::blink::IDBCursorResultPtr result) {
@@ -664,14 +663,21 @@ void IDBRequest::HandleError(mojom::blink::IDBErrorPtr error) {
   }
   probe::AsyncTask async_task(GetExecutionContext(), &async_task_context_,
                               "error");
-  auto* exception = MakeGarbageCollected<DOMException>(
-      static_cast<DOMExceptionCode>(code),
-      error ? error->error_message : "Invalid response");
+
+  DOMException* dom_exception;
+  auto message = error ? error->error_message : "Invalid response";
+  if (code == mojom::blink::IDBException::kQuotaError &&
+      RuntimeEnabledFeatures::QuotaExceededErrorUpdateEnabled()) {
+    dom_exception = MakeGarbageCollected<QuotaExceededError>(message);
+  } else {
+    dom_exception = MakeGarbageCollected<DOMException>(
+        static_cast<DOMExceptionCode>(code), message);
+  }
 
   transaction_->EnqueueResult(std::make_unique<IDBRequestQueueItem>(
-      this, exception,
-      WTF::BindOnce(&IDBTransaction::OnResultReady,
-                    WrapPersistent(transaction_.Get()))));
+      this, dom_exception,
+      BindOnce(&IDBTransaction::OnResultReady,
+               WrapPersistent(transaction_.Get()))));
 }
 
 void IDBRequest::SendResultCursor(
@@ -760,7 +766,7 @@ void IDBRequest::AssignNewMetrics(AsyncTraceState metrics) {
   if (GetExecutionContext()) {
     std::ignore = GetExecutionContext()->GetScheduler()->AddLifecycleObserver(
         FrameOrWorkerScheduler::ObserverType::kWorkerScheduler,
-        WTF::BindRepeating(
+        BindRepeating(
             [](scheduler::SchedulingLifecycleState lifecycle_state) {
               base::UmaHistogramEnumeration(
                   "WebCore.IndexedDB.SchedulingLifecycleState", lifecycle_state,
@@ -786,7 +792,7 @@ void IDBRequest::SendResultValue(std::unique_ptr<IDBValue> value) {
 
   if (pending_cursor_) {
     // Value should be empty, signifying the end of the cursor's range.
-    DCHECK(!value->DataSize());
+    DCHECK(!value->Data().size());
     DCHECK(!value->BlobInfo().size());
     pending_cursor_->Close();
     pending_cursor_.Clear();
@@ -874,7 +880,7 @@ DispatchEventResult IDBRequest::DispatchEventInternal(Event& event) {
     return DispatchEventResult::kCanceledBeforeDispatch;
   DCHECK_EQ(ready_state_, PENDING);
   DCHECK(has_pending_activity_);
-  DCHECK_EQ(event.target(), this);
+  DCHECK_EQ(event.RawTarget(), this);
 
   if (event.type() != event_type_names::kBlocked) {
     ready_state_ = DONE;

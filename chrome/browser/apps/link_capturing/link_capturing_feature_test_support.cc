@@ -9,6 +9,7 @@
 
 #include "base/check_is_test.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_util.h"
 #include "base/test/bind.h"
 #include "base/test/test_future.h"
 #include "base/types/expected.h"
@@ -51,19 +52,15 @@ std::vector<base::test::FeatureRefAndParams> GetFeaturesToEnableLinkCapturingUX(
   CHECK(!override_captures_by_default || !override_captures_by_default.value());
   // TODO(crbug.com/376922620): Create a feature flag to turn off the v1
   // throttle.
-  if (use_v2) {
-    std::vector<base::test::FeatureRefAndParams> features_to_enable = {
-        {::features::kPwaNavigationCapturing,
-         {{::features::kNavigationCapturingDefaultState.name,
-           "reimpl_default_off"}}}};
-    if (capture_existing_frame_navigations) {
-      features_to_enable.push_back(
-          {features::kNavigationCapturingOnExistingFrames, {}});
-    }
-    return features_to_enable;
-  } else {
-    return {{}, {}};
+  std::vector<base::test::FeatureRefAndParams> features_to_enable = {
+      {::features::kPwaNavigationCapturing,
+       {{::features::kNavigationCapturingDefaultState.name,
+         use_v2 ? "reimpl_default_off" : "off_by_default"}}}};
+  if (capture_existing_frame_navigations && use_v2) {
+    features_to_enable.push_back(
+        {features::kNavigationCapturingOnExistingFrames, {}});
   }
+  return features_to_enable;
 #else
   // `capture_existing_frame_navigations` is ChromeOS only for now.
   CHECK(!capture_existing_frame_navigations);
@@ -258,17 +255,16 @@ ResolveWebContentsWaitingForLaunchQueueFlush() {
       base::BindLambdaForTesting([&](content::WebContents& web_contents) {
         content::EvalJsResult has_function = content::EvalJs(
             &web_contents, "typeof resolveLaunchParamsFlush !== 'undefined'");
-        if (!has_function.error.empty() || !has_function.ExtractBool()) {
+        if (!has_function.is_ok() || !has_function.ExtractBool()) {
           // Sometimes the web contents is destroyed while evaluating this
           // javascript. That is fine.
-          DLOG_IF(INFO, !has_function.error.empty())
-              << "Got error: " << has_function.error;
+          DLOG_IF(INFO, !has_function.is_ok()) << "Got error: " << has_function;
           return;
         }
         content::EvalJsResult result =
             content::EvalJs(&web_contents, "resolveLaunchParamsFlush()");
-        if (!result.error.empty()) {
-          errors.push_back(result.error);
+        if (!result.is_ok()) {
+          errors.push_back(result.ExtractError());
         }
       }));
   if (!errors.empty()) {
@@ -325,7 +321,8 @@ std::vector<GURL> GetLaunchParamUrlsInContents(
                       "'" + params_variable_name + "' in window ? " +
                           params_variable_name + " : []");
   EXPECT_THAT(launchParamsResults, content::EvalJsResult::IsOk());
-  base::Value::List launchParamsTargetUrls = launchParamsResults.ExtractList();
+  const base::Value::List& launchParamsTargetUrls =
+      launchParamsResults.ExtractList();
   if (!launchParamsTargetUrls.empty()) {
     for (const base::Value& url : launchParamsTargetUrls) {
       launch_params.emplace_back(url.GetString());

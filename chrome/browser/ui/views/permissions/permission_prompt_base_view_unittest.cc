@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/views/permissions/permission_prompt_base_view.h"
 
+#include <memory>
+
 #include "base/containers/contains.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/picture_in_picture/picture_in_picture_occlusion_tracker.h"
@@ -15,6 +17,7 @@
 #include "chrome/test/views/chrome_views_test_base.h"
 #include "components/permissions/test/mock_permission_request.h"
 #include "media/base/media_switches.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/events/test/test_event.h"
 
 namespace {
@@ -64,13 +67,11 @@ class PermissionPromptBaseViewTest : public ChromeViewsTestBase {
 TEST_F(PermissionPromptBaseViewTest,
        DisablesButtonsWhenOccludedByPictureInPictureWindows) {
   // Set up a permission delegate with a request.
-  permissions::MockPermissionRequest request(
-      permissions::RequestType::kGeolocation);
   TestPermissionBubbleViewDelegate delegate;
-  std::vector<raw_ptr<permissions::PermissionRequest, VectorExperimental>>
-      raw_requests;
-  raw_requests.push_back(&request);
-  delegate.set_requests(raw_requests);
+  std::vector<std::unique_ptr<permissions::PermissionRequest>> raw_requests;
+  raw_requests.push_back(std::make_unique<permissions::MockPermissionRequest>(
+      permissions::RequestType::kGeolocation));
+  delegate.set_requests(std::move(raw_requests));
 
   // Create a widget to parent the bubble.
   std::unique_ptr<views::Widget> parent =
@@ -110,13 +111,11 @@ TEST_F(PermissionPromptBaseViewTest,
 
 TEST_F(PermissionPromptBaseViewTest, IncludedInTrackedPictureInPictureWidgets) {
   // Set up a permission delegate with a request.
-  permissions::MockPermissionRequest request(
-      permissions::RequestType::kGeolocation);
   TestPermissionBubbleViewDelegate delegate;
-  std::vector<raw_ptr<permissions::PermissionRequest, VectorExperimental>>
-      raw_requests;
-  raw_requests.push_back(&request);
-  delegate.set_requests(raw_requests);
+  std::vector<std::unique_ptr<permissions::PermissionRequest>> raw_requests;
+  raw_requests.push_back(std::make_unique<permissions::MockPermissionRequest>(
+      permissions::RequestType::kGeolocation));
+  delegate.set_requests(std::move(raw_requests));
 
   // Create a widget to parent the bubble.
   std::unique_ptr<views::Widget> parent =
@@ -125,12 +124,12 @@ TEST_F(PermissionPromptBaseViewTest, IncludedInTrackedPictureInPictureWidgets) {
 
   // Create a picture-in-picture browser window to request the permission.
   TestingProfile profile;
-  TestBrowserWindow browser_window;
+  auto browser_window = std::make_unique<TestBrowserWindow>();
   std::unique_ptr<Browser> browser;
   Browser::CreateParams params(&profile, /*user_gesture=*/true);
   params.type = Browser::TYPE_PICTURE_IN_PICTURE;
-  params.window = &browser_window;
-  browser.reset(Browser::Create(params));
+  params.window = browser_window.release();
+  browser = Browser::DeprecatedCreateOwnedForTesting(params);
 
   // Create the bubble for a picture-in-picture-window.
   auto prompt_unique = std::make_unique<TestPermissionPromptBaseView>(

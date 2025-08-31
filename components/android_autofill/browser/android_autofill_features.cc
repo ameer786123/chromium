@@ -21,24 +21,39 @@ namespace autofill::features {
 namespace {
 
 const base::Feature* const kFeaturesExposedToJava[] = {
-    &kAndroidAutofillBottomSheetWorkaround,
-    &kAndroidAutofillDeprecateAccessibilityApi};
+    &kAndroidAutofillLazyFrameworkWrapper,
+    &kAutofillVirtualViewStructureAndroidPasskeyLongPress,
+    &kAndroidAutofillForwardIframeOrigin,
+    &kAndroidAutofillUpdateContextForWebContents};
 
 }  // namespace
 
-// If enabled, we send SparseArrayWithWorkaround class as the PrefillHints for
-// the platform API `AutofillManager.notifyViewReady()` as a workaround for the
-// platform bug, see the comment on the class. This works as a kill switch for
-// the workaround in case any unexpected thing goes wrong.
-BASE_FEATURE(kAndroidAutofillBottomSheetWorkaround,
-             "AndroidAutofillBottomSheetWorkaround",
+// If enabled, at least one passkey must be present to forward passkey requests
+// to the Android Credential Manager. Users can then always (re-)trigger the
+// passkey request with a long-press action on webauthn-annotated fields.
+BASE_FEATURE(kAutofillVirtualViewStructureAndroidPasskeyLongPress,
+             "AutofillVirtualViewStructureAndroidPasskeyLongPress",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// If enabled, autofill calls are never falling back to the accessibility APIs.
-// This feature is meant to be enabled after AutofillVirtualViewStructureAndroid
-// which provides alternative paths to handle autofill requests.
-BASE_FEATURE(kAndroidAutofillDeprecateAccessibilityApi,
-             "AndroidAutofillDeprecateAccessibilityApi",
+// If enabled, the AutofillManagerWrapper class will not be initialized when the
+// AutofillProvider Java class is initialized. Some apps do not use Autofill at
+// all, yet they incur the latency cost of initializing the wrapper. This
+// experiment tests whether lazily initializing the wrapper will cause any
+// issues.
+BASE_FEATURE(kAndroidAutofillLazyFrameworkWrapper,
+             "AndroidAutofillLazyFrameworkWrapper",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// If enabled, the origin of a field is forwarded to the Autofill framework if
+// it differs from the origin of the main frame.
+BASE_FEATURE(kAndroidAutofillForwardIframeOrigin,
+             "AndroidAutofillForwardIframeOrigin",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// If enabled, the native autofill provider is updated when the web contents
+// change.
+BASE_FEATURE(kAndroidAutofillUpdateContextForWebContents,
+             "AndroidAutofillUpdateContextForWebContents",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 static jlong JNI_AndroidAutofillFeatures_GetFeature(JNIEnv* env, jint ordinal) {

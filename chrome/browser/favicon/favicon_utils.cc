@@ -8,7 +8,6 @@
 #include "build/build_config.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/monogram_utils.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/platform_locale_settings.h"
@@ -31,6 +30,7 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
+#include "ui/gfx/monogram_utils.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/resources/grit/ui_resources.h"
 
@@ -94,9 +94,11 @@ SkBitmap GenerateMonogramFavicon(GURL url, int icon_size, int circle_size) {
       color_utils::BlendForMinContrast(ComputeBackgroundColorForUrl(url),
                                        kFallbackIconLetterColor)
           .color;
-
-  monogram::DrawMonogramInCanvas(&canvas, icon_size, circle_size, monogram,
-                                 kFallbackIconLetterColor, fallback_color);
+  const std::vector<std::string> font_names = {
+      l10n_util::GetStringUTF8(IDS_NTP_FONT_FAMILY)};
+  gfx::DrawMonogramInCanvas(&canvas, icon_size, circle_size, monogram,
+                            font_names, kFallbackIconLetterColor,
+                            fallback_color);
   return bitmap;
 }
 
@@ -130,14 +132,8 @@ gfx::Image TabFaviconFromWebContents(content::WebContents* contents) {
 }
 
 gfx::Image GetDefaultFavicon() {
-  bool is_dark = false;
-#if !BUILDFLAG(IS_ANDROID)
-  // Android doesn't currently implement NativeTheme::GetInstanceForNativeUi.
-  const ui::NativeTheme* native_theme =
-      ui::NativeTheme::GetInstanceForNativeUi();
-  is_dark = native_theme && native_theme->ShouldUseDarkColors();
-#endif
-  return GetDefaultFaviconForColorScheme(is_dark);
+  return GetDefaultFaviconForColorScheme(
+      ui::NativeTheme::GetInstanceForNativeUi()->ShouldUseDarkColors());
 }
 
 ui::ImageModel GetDefaultFaviconModel(ui::ColorId bg_color) {

@@ -41,8 +41,8 @@ import org.chromium.base.PathUtils;
 import org.chromium.base.RequiredCallback;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.Contract;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.embedder_support.util.UrlConstants;
@@ -81,11 +81,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /**
- * Logic related to the URL overriding/intercepting functionality.
- * This feature supports conversion of certain navigations to Android Intents allowing
- * applications like Youtube to direct users clicking on a http(s) link to their native app.
+ * Logic related to the URL overriding/intercepting functionality. This feature supports conversion
+ * of certain navigations to Android Intents allowing applications like Youtube to direct users
+ * clicking on a http(s) link to their native app.
  */
 @NullMarked
 public class ExternalNavigationHandler {
@@ -159,16 +160,16 @@ public class ExternalNavigationHandler {
     }
 
     // A Supplier that only evaluates when needed then caches the value.
-    protected static class LazySupplier<T> implements Supplier<T> {
+    protected static class LazySupplier<T extends @Nullable Object> implements Supplier<T> {
         private @Nullable T mValue;
         private @Nullable Supplier<T> mInnerSupplier;
 
         public LazySupplier(Supplier<T> innerSupplier) {
-            assert innerSupplier != null : "innerSupplier cannot be null";
             mInnerSupplier = innerSupplier;
         }
 
         @Override
+        @SuppressWarnings("NullAway") // Using mInnerSupplier as condition for mValue.
         public T get() {
             if (mInnerSupplier != null) {
                 mValue = mInnerSupplier.get();
@@ -177,16 +178,11 @@ public class ExternalNavigationHandler {
                 // references it may have held.
                 mInnerSupplier = null;
             }
-            return assumeNonNull(mValue);
-        }
-
-        @Override
-        public boolean hasValue() {
-            return true;
+            return mValue;
         }
     }
 
-    private static class IntentBasedSupplier<T> extends LazySupplier<T> {
+    private static class IntentBasedSupplier<T extends @Nullable Object> extends LazySupplier<T> {
         protected final Intent mIntent;
         private @Nullable Intent mIntentCopy;
 
@@ -358,7 +354,9 @@ public class ExternalNavigationHandler {
         }
     }
 
-    protected static class ResolveActivitySupplier extends IntentBasedSupplier<ResolveInfo> {
+    protected static class ResolveActivitySupplier
+            extends IntentBasedSupplier<@Nullable ResolveInfo> {
+        @SuppressWarnings("NullAway") // https://github.com/uber/NullAway/issues/1209
         public ResolveActivitySupplier(Intent intent) {
             super(
                     intent,
@@ -384,6 +382,7 @@ public class ExternalNavigationHandler {
         OverrideUrlLoadingResultType.OVERRIDE_WITH_ASYNC_ACTION,
         OverrideUrlLoadingResultType.NO_OVERRIDE,
         OverrideUrlLoadingResultType.OVERRIDE_CLOSING_AFTER_AUTH,
+        OverrideUrlLoadingResultType.OVERRIDE_WITH_REPARENT_TO_BROWSER,
         OverrideUrlLoadingResultType.NUM_ENTRIES
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -399,8 +398,10 @@ public class ExternalNavigationHandler {
         int NO_OVERRIDE = 3;
 
         int OVERRIDE_CLOSING_AFTER_AUTH = 4;
+        /* We should move the navigation to a browser window. */
+        int OVERRIDE_WITH_REPARENT_TO_BROWSER = 5;
 
-        int NUM_ENTRIES = 5;
+        int NUM_ENTRIES = 6;
     }
 
     // LINT.ThenChange(:printDebugShouldOverrideUrlLoadingResultType)
@@ -516,6 +517,12 @@ public class ExternalNavigationHandler {
             return new OverrideUrlLoadingResult(
                     OverrideUrlLoadingResultType.OVERRIDE_CLOSING_AFTER_AUTH);
         }
+
+        /** Use this result when the navigation should be moved from a PWA to a browser window. */
+        public static OverrideUrlLoadingResult forReparentToBrowser() {
+            return new OverrideUrlLoadingResult(
+                    OverrideUrlLoadingResultType.OVERRIDE_WITH_REPARENT_TO_BROWSER);
+        }
     }
 
     public static boolean sAllowIntentsToSelfForTesting;
@@ -529,7 +536,8 @@ public class ExternalNavigationHandler {
      */
     public ExternalNavigationHandler(ExternalNavigationDelegate delegate) {
         mDelegate = delegate;
-        mModalDialogManager = assumeNonNull(mDelegate.getWindowAndroid().getModalDialogManager());
+        WindowAndroid windowAndroid = assumeNonNull(mDelegate.getWindowAndroid());
+        mModalDialogManager = assumeNonNull(windowAndroid.getModalDialogManager());
     }
 
     private static boolean debug() {
@@ -662,6 +670,9 @@ public class ExternalNavigationHandler {
             case OverrideUrlLoadingResultType.OVERRIDE_CLOSING_AFTER_AUTH:
                 resultString = "OVERRIDE_CLOSING_AFTER_AUTH";
                 break;
+            case OverrideUrlLoadingResultType.OVERRIDE_WITH_REPARENT_TO_BROWSER:
+                resultString = "OVERRIDE_WITH_REPARENT_TO_BROWSER";
+                break;
             case OverrideUrlLoadingResultType.NO_OVERRIDE: // Fall through.
             default:
                 resultString = "NO_OVERRIDE";
@@ -700,14 +711,15 @@ public class ExternalNavigationHandler {
         return false;
     }
 
-    /** http://crbug.com/441284 : Disallow firing external intent while the app is in the background. */
-    private boolean blockExternalNavWhileBackgrounded(
-            ExternalNavigationParams params, boolean incomingIntentRedirect) {
+    /**
+     * http://crbug.com/441284 : Disallow firing external intent while the app is in the background.
+     */
+    private boolean blockExternalNavWhileBackgrounded(boolean incomingIntentRedirect) {
         // If the redirect is from an intent Chrome could still be transitioning to the foreground.
         // Alternatively, the user may have sent Chrome to the background by this point, but for
         // navigations started by another app that should still be safe.
         if (incomingIntentRedirect) return false;
-        if (params.isApplicationMustBeInForeground() && !mDelegate.isApplicationInForeground()) {
+        if (!mDelegate.isApplicationInForeground()) {
             if (debug()) Log.i(TAG, "App is not in foreground");
             return true;
         }
@@ -805,9 +817,8 @@ public class ExternalNavigationHandler {
                     }
                 };
         if (!mDelegate.hasValidTab()) return;
-        mDelegate
-                .getWindowAndroid()
-                .requestPermissions(new String[] {permissionNeeded}, permissionCallback);
+        WindowAndroid windowAndroid = assumeNonNull(mDelegate.getWindowAndroid());
+        windowAndroid.requestPermissions(new String[] {permissionNeeded}, permissionCallback);
     }
 
     // https://crbug.com/1232514: On Android S, since WebAPKs aren't verified apps they are
@@ -957,7 +968,8 @@ public class ExternalNavigationHandler {
         return false;
     }
 
-    private boolean externalIntentRequestsDisabledForUrl(ExternalNavigationParams params) {
+    private boolean externalIntentRequestsDisabledForUrl(
+            ExternalNavigationParams params, Intent intent) {
         // TODO(changwan): check if we need to handle URL even when external intent is off.
         if (CommandLine.getInstance()
                 .hasSwitch(ExternalIntentsSwitches.DISABLE_EXTERNAL_INTENT_REQUESTS)) {
@@ -965,7 +977,7 @@ public class ExternalNavigationHandler {
             return true;
         }
 
-        if (mDelegate.shouldDisableExternalIntentRequestsForUrl(params.getUrl())) {
+        if (mDelegate.shouldDisableExternalIntentRequestsForUrl(params, intent)) {
             if (debug()) Log.i(TAG, "Delegate disables external intent requests for URL.");
             return true;
         }
@@ -1004,16 +1016,7 @@ public class ExternalNavigationHandler {
             return NavigationChainResult.REQUIRES_PROMPT;
         }
 
-        // TODO(crbug.com/40232652): We only need to check isFromTyping because WebLayer's
-        // implementation of disabling intent processing is broken and doesn't actually disable
-        // intent processing, but to align with current weblayer behavior the first navigation has
-        // to be blocked even if the weblayer delegate tells us not to block embedder initiated
-        // navigations. See
-        // https://source.chromium.org/chromium/chromium/src/+/main:weblayer/browser/navigation_controller_impl.cc;drc=88d7b2e74349cbf8b3e15b61cc0663d65f9d1873;l=220
-        if (!initialState.isRendererInitiated
-                && !initialState.isFromIntent
-                && (mDelegate.shouldEmbedderInitiatedNavigationsStayInBrowser()
-                        || initialState.isFromTyping)) {
+        if (!initialState.isRendererInitiated && !initialState.isFromIntent) {
             if (debug()) Log.i(TAG, "Browser initiated navigation chain.");
             return NavigationChainResult.REQUIRES_PROMPT;
         }
@@ -1090,6 +1093,8 @@ public class ExternalNavigationHandler {
 
         // Redirects off of intents are still allowed to launch apps (eg. URL shorteners).
         if (incomingIntentRedirect) return false;
+
+        if (params.getRedirectHandler().canInitialNavigationLeaveChrome()) return false;
 
         if (debug()) Log.i(TAG, "Initial intent navigation.");
         return true;
@@ -1168,7 +1173,17 @@ public class ExternalNavigationHandler {
      * This is the catch-all path for any intent that the app can handle that doesn't have a
      * specialized external app handling it.
      */
-    private OverrideUrlLoadingResult fallBackToHandlingInApp() {
+    private OverrideUrlLoadingResult fallBackToHandlingInApp(ExternalNavigationParams params) {
+        // The default behavior for Desktop windowing should be to open a browser tab. In case
+        // a new frame navigation starts in a PWA, we should reparent the tab to the browser.
+        if (ExternalIntentsFeatures.REPARENT_TOP_LEVEL_NAVIGATION_FROM_PWA.isEnabled()
+                && params.isInDesktopWindowingMode()
+                && params.isInitialNavigationInFrame()
+                && params.isTabInPWA()
+                && !params.isFromIntent()) {
+            if (debug()) Log.i(TAG, "No specialized handler found, reparent to browser.");
+            return OverrideUrlLoadingResult.forReparentToBrowser();
+        }
         if (debug()) Log.i(TAG, "No specialized handler for URL");
         return OverrideUrlLoadingResult.forNoOverride();
     }
@@ -1189,17 +1204,21 @@ public class ExternalNavigationHandler {
         }
         if (!isExternalProtocol) return false;
         if (!resolveInfoContainsSelf(resolvingInfos.get())) return false;
-        if (resolveActivity.get() == null) return false;
+        ResolveInfo intentResolveInfo = resolveActivity.get();
+        if (intentResolveInfo == null) return false;
 
-        ActivityInfo info = resolveActivity.get().activityInfo;
-        if (info != null && mDelegate.getContext().getPackageName().equals(info.packageName)) {
-            if (debug()) Log.i(TAG, "Navigation to self.");
-            return true;
+        ActivityInfo info = intentResolveInfo.activityInfo;
+        if (info != null) {
+            Context context = mDelegate.getContext();
+            if (context != null && context.getPackageName().equals(info.packageName)) {
+                if (debug()) Log.i(TAG, "Navigation to self.");
+                return true;
+            }
         }
 
         // We don't want the user seeing the chooser and choosing the browser, but resolving to
         // another app is fine.
-        if (resolvesToChooser(resolveActivity.get(), resolvingInfos)) {
+        if (resolvesToChooser(intentResolveInfo, resolvingInfos)) {
             if (debug()) Log.i(TAG, "Navigation to chooser including self.");
             return true;
         }
@@ -1229,7 +1248,7 @@ public class ExternalNavigationHandler {
             return false;
         }
 
-        String selfPackageName = mDelegate.getContext().getPackageName();
+        String selfPackageName = assumeNonNull(mDelegate.getContext()).getPackageName();
         boolean matchesOtherPackage = false;
         for (ResolveInfo resolveInfo : resolveInfos.get()) {
             ActivityInfo info = resolveInfo.activityInfo;
@@ -1254,11 +1273,12 @@ public class ExternalNavigationHandler {
             }
         }
         if (!matchesBrowser) return false;
-        if (resolveActivity.get().activityInfo == null) return false;
+        ResolveInfo intentResolveInfo = resolveActivity.get();
+        if (intentResolveInfo == null || intentResolveInfo.activityInfo == null) return false;
 
         // If the intent resolves to a non-browser even through a browser is included in
         // queryIntentActivities, it's not really targeting a browser.
-        return browserPackages.contains(resolveActivity.get().activityInfo.packageName);
+        return browserPackages.contains(intentResolveInfo.activityInfo.packageName);
     }
 
     private static Set<String> getInstalledBrowserPackages() {
@@ -1317,8 +1337,6 @@ public class ExternalNavigationHandler {
      * performing a navigation when it's actually a background tab doing the navigation.
      */
     private boolean isHiddenCrossFrameRenavigation(ExternalNavigationParams params) {
-        if (!ExternalIntentsFeatures.BLOCK_FRAME_RENAVIGATIONS.isEnabled()) return false;
-
         if (params.getRedirectHandler().navigationChainPerformedHiddenCrossFrameNavigation()) {
             if (debug()) Log.i(TAG, "Navigation chain used cross-frame re-navigation.");
             return true;
@@ -1394,6 +1412,7 @@ public class ExternalNavigationHandler {
             ExternalNavigationParams params, Intent intent, GURL fallbackUrl) {
         Context context = mDelegate.getContext();
         if (!canLaunchIncognitoIntent(intent, context)) return false;
+        assumeNonNull(context);
 
         if (mDelegate.hasCustomLeavingIncognitoDialog()) {
             mDelegate.presentLeavingIncognitoModalDialog(
@@ -1411,7 +1430,7 @@ public class ExternalNavigationHandler {
     }
 
     @VisibleForTesting
-    protected boolean canLaunchIncognitoIntent(Intent intent, Context context) {
+    protected boolean canLaunchIncognitoIntent(Intent intent, @Nullable Context context) {
         if (!mDelegate.hasValidTab()) return false;
         if (ContextUtils.activityFromContext(context) == null) return false;
         return true;
@@ -1532,7 +1551,7 @@ public class ExternalNavigationHandler {
     private boolean shouldBlockAllExternalAppLaunches(
             ExternalNavigationParams params, boolean incomingIntentRedirect) {
         return shouldBlockSubframeAppLaunches(params)
-                || blockExternalNavWhileBackgrounded(params, incomingIntentRedirect)
+                || blockExternalNavWhileBackgrounded(incomingIntentRedirect)
                 || blockExternalNavFromBackgroundTab(params, incomingIntentRedirect)
                 || ignoreBackForwardNav(params);
     }
@@ -1542,6 +1561,7 @@ public class ExternalNavigationHandler {
             Intent targetIntent,
             GURL browserFallbackUrl,
             MutableBoolean canLaunchExternalFallbackResult) {
+
         sanitizeQueryIntentActivitiesIntent(targetIntent);
 
         // Any subsequent navigations should cancel the existing dialog.
@@ -1567,6 +1587,17 @@ public class ExternalNavigationHandler {
                     new GURL(getUrlFromSelfSchemeUrl(selfScheme, intentTargetUrl.getSpec()));
         }
 
+        if (params.isIncognito() && params.getUrl() != null) {
+            // Accessing chrome://extensions in incognito is not allowed, and causes sending an
+            // intent to chrome to open the same page on a regular tab. On non-android desktop, the
+            // same logic is implemented in browser_navigator.cc, but the file is not compiled on
+            // android.
+            Intent intent = mDelegate.createIntentToPreventIncognitoAccess(params.getUrl());
+            if (intent != null) {
+                return startActivity(intent, params);
+            }
+        }
+
         // Needs to be checked first as a failure for this reason is persisted through the
         // navigation chain, and other failures should not cause this check to be skipped.
         if (isHiddenCrossFrameRenavigation(params)) return OverrideUrlLoadingResult.forNoOverride();
@@ -1583,7 +1614,7 @@ public class ExternalNavigationHandler {
 
         // This should come after file intents, but before any returns of
         // OVERRIDE_WITH_EXTERNAL_INTENT.
-        if (externalIntentRequestsDisabledForUrl(params)) {
+        if (externalIntentRequestsDisabledForUrl(params, targetIntent)) {
             return OverrideUrlLoadingResult.forNoOverride();
         }
 
@@ -1632,7 +1663,7 @@ public class ExternalNavigationHandler {
                 navigationChainBlocksExternalNavigation(
                         params, resolvingInfos, isExternalProtocol, shouldReturnAsResult);
 
-        // Short-circuit expensive quertyIntentActivities calls below since we won't prompt anyways
+        // Short-circuit expensive queryIntentActivities calls below since we won't prompt anyways
         // for protocols the browser can handle.
         if (navigationChainResult == NavigationChainResult.REQUIRES_PROMPT && !isExternalProtocol) {
             return OverrideUrlLoadingResult.forNoOverride();
@@ -1674,7 +1705,7 @@ public class ExternalNavigationHandler {
 
         boolean hasSpecializedHandler = countSpecializedHandlers(resolvingInfos.get()) > 0;
         if (!isExternalProtocol && !hasSpecializedHandler && !intentMatchesNonDefaultWebApk) {
-            return fallBackToHandlingInApp();
+            return fallBackToHandlingInApp(params);
         }
 
         if (shouldStayWithinHost(params, resolvingInfos.get(), isExternalProtocol)) {
@@ -1744,14 +1775,13 @@ public class ExternalNavigationHandler {
     private boolean resolvesToNonExportedActivity(List<ResolveInfo> infos) {
         for (ResolveInfo info : infos) {
             // Android will prevent launching non-exported Activities in other packages.
-            if (info.activityInfo != null
-                    && !info.activityInfo.exported
-                    && mDelegate
-                            .getContext()
-                            .getPackageName()
-                            .equals(info.activityInfo.packageName)) {
-                Log.w(TAG, "Web Intent resolves to non-exported Activity.");
-                return true;
+            if (info.activityInfo != null && !info.activityInfo.exported) {
+                Context context = mDelegate.getContext();
+                if (context != null
+                        && context.getPackageName().equals(info.activityInfo.packageName)) {
+                    Log.w(TAG, "Web Intent resolves to non-exported Activity.");
+                    return true;
+                }
             }
         }
 
@@ -1824,12 +1854,6 @@ public class ExternalNavigationHandler {
         // Intent Selectors allow intents to bypass the intent filter and potentially send apps URIs
         // they were not expecting to handle. https://crbug.com/1254422
         intent.setSelector(null);
-
-        // Intent schemes should be normalized to lower case. https://crbug.com/401823929
-        if (ExternalIntentsFeatures.LOWER_CASE_INTENT_SCHEMES.isEnabled()
-                && intent.getData() != null) {
-            intent.setDataAndType(intent.getData().normalizeScheme(), intent.getType());
-        }
     }
 
     /**
@@ -2091,8 +2115,8 @@ public class ExternalNavigationHandler {
      *
      * @param intent The intent we want to send.
      */
-    private void startActivity(Intent intent, ExternalNavigationParams params) {
-        startActivity(intent, params, false, null, null, null, null);
+    private OverrideUrlLoadingResult startActivity(Intent intent, ExternalNavigationParams params) {
+        return startActivity(intent, params, false, null, null, null, null);
     }
 
     /**
@@ -2244,67 +2268,63 @@ public class ExternalNavigationHandler {
 
         // Call startActivityForResult on the PICK_ACTIVITY intent, which will set the component of
         // the data result to the component of the chosen app.
-        mDelegate
-                .getWindowAndroid()
-                .showCancelableIntent(
-                        pickerIntent,
-                        new WindowAndroid.IntentCallback() {
-                            @Override
-                            public void onIntentCompleted(int resultCode, Intent data) {
-                                RequiredCallback<AsyncActionTakenParams> callback =
-                                        params.getRequiredAsyncActionTakenCallback();
-                                assert callback != null;
-                                // If |data| is null, the user backed out of the intent chooser.
-                                if (data == null) {
-                                    callback.onResult(AsyncActionTakenParams.forNoAction());
-                                    return;
-                                }
+        WindowAndroid windowAndroid = assumeNonNull(mDelegate.getWindowAndroid());
+        windowAndroid.showCancelableIntent(
+                pickerIntent,
+                new WindowAndroid.IntentCallback() {
+                    @Override
+                    public void onIntentCompleted(int resultCode, @Nullable Intent data) {
+                        RequiredCallback<AsyncActionTakenParams> callback =
+                                params.getRequiredAsyncActionTakenCallback();
+                        assert callback != null;
+                        // If |data| is null, the user backed out of the intent chooser.
+                        if (data == null) {
+                            callback.onResult(AsyncActionTakenParams.forNoAction());
+                            return;
+                        }
 
-                                // Quirk of how we use the ActivityChooser - if the embedding app is
-                                // chosen we get an intent back with ACTION_CREATE_SHORTCUT.
-                                if (assumeNonNull(data.getAction())
-                                        .equals(Intent.ACTION_CREATE_SHORTCUT)) {
-                                    // Ensure we don't loop asking the user to choose an app, then
-                                    // re-asking when we navigate to the same URL.
-                                    if (params.getRedirectHandler().isOnNavigation()) {
-                                        params.getRedirectHandler()
-                                                .setShouldNotOverrideUrlLoadingOnCurrentRedirectChain();
-                                    }
-
-                                    // It's pretty arbitrary whether to prefer the data URL or the
-                                    // fallback URL here. We could consider preferring the
-                                    // fallback URL, as the URL was probably intending to leave
-                                    // Chrome, but loading the URL the site was trying to load in
-                                    // a browser seems like the better choice
-                                    // and matches what would have happened had the regular
-                                    // chooser dialog shown up and the user selected this app.
-                                    if (UrlUtilities.isAcceptedScheme(intentTargetUrl)) {
-                                        callback.onResult(
-                                                AsyncActionTakenParams.forNavigate(
-                                                        intentTargetUrl, params));
-                                    } else if (!assumeNonNull(browserFallbackUrl).isEmpty()) {
-                                        callback.onResult(
-                                                AsyncActionTakenParams.forNavigate(
-                                                        browserFallbackUrl, params));
-                                    } else {
-                                        callback.onResult(AsyncActionTakenParams.forNoAction());
-                                    }
-                                    return;
-                                }
-
-                                // Set the package for the original intent to the chosen app and
-                                // start it. Note that a selector cannot be set at the same time
-                                // as a package.
-                                intent.setSelector(null);
-                                intent.setPackage(
-                                        assumeNonNull(data.getComponent()).getPackageName());
-                                startActivity(intent, params);
-                                callback.onResult(
-                                        AsyncActionTakenParams.forExternalIntentLaunched(
-                                                true, params));
+                        // Quirk of how we use the ActivityChooser - if the embedding app is
+                        // chosen we get an intent back with ACTION_CREATE_SHORTCUT.
+                        if (assumeNonNull(data.getAction()).equals(Intent.ACTION_CREATE_SHORTCUT)) {
+                            // Ensure we don't loop asking the user to choose an app, then
+                            // re-asking when we navigate to the same URL.
+                            if (params.getRedirectHandler().isOnNavigation()) {
+                                params.getRedirectHandler()
+                                        .setShouldNotOverrideUrlLoadingOnCurrentRedirectChain();
                             }
-                        },
-                        null);
+
+                            // It's pretty arbitrary whether to prefer the data URL or the
+                            // fallback URL here. We could consider preferring the
+                            // fallback URL, as the URL was probably intending to leave
+                            // Chrome, but loading the URL the site was trying to load in
+                            // a browser seems like the better choice
+                            // and matches what would have happened had the regular
+                            // chooser dialog shown up and the user selected this app.
+                            if (UrlUtilities.isAcceptedScheme(intentTargetUrl)) {
+                                callback.onResult(
+                                        AsyncActionTakenParams.forNavigate(
+                                                intentTargetUrl, params));
+                            } else if (!assumeNonNull(browserFallbackUrl).isEmpty()) {
+                                callback.onResult(
+                                        AsyncActionTakenParams.forNavigate(
+                                                browserFallbackUrl, params));
+                            } else {
+                                callback.onResult(AsyncActionTakenParams.forNoAction());
+                            }
+                            return;
+                        }
+
+                        // Set the package for the original intent to the chosen app and
+                        // start it. Note that a selector cannot be set at the same time
+                        // as a package.
+                        intent.setSelector(null);
+                        intent.setPackage(assumeNonNull(data.getComponent()).getPackageName());
+                        startActivity(intent, params);
+                        callback.onResult(
+                                AsyncActionTakenParams.forExternalIntentLaunched(true, params));
+                    }
+                },
+                null);
         return OverrideUrlLoadingResult.forAsyncAction();
     }
 
@@ -2352,8 +2372,8 @@ public class ExternalNavigationHandler {
         }
 
         String packageName = intentResolveInfo.activityInfo.packageName;
-        PackageManager pm = mDelegate.getContext().getPackageManager();
-        ApplicationInfo applicationInfo = null;
+        PackageManager pm = assumeNonNull(mDelegate.getContext()).getPackageManager();
+        ApplicationInfo applicationInfo;
         try {
             applicationInfo = pm.getApplicationInfo(packageName, 0);
         } catch (NameNotFoundException e) {
@@ -2487,7 +2507,8 @@ public class ExternalNavigationHandler {
     }
 
     protected boolean resolveInfoContainsSelf(List<ResolveInfo> resolveInfos) {
-        return resolveInfoContainsPackage(resolveInfos, mDelegate.getContext().getPackageName());
+        return resolveInfoContainsPackage(
+                resolveInfos, assumeNonNull(mDelegate.getContext()).getPackageName());
     }
 
     public static boolean resolveInfoContainsPackage(
@@ -2542,8 +2563,9 @@ public class ExternalNavigationHandler {
         // This is required to prevent permission prompt when uses wants to access offline pages.
         if (url.getPath().startsWith(PathUtils.getDataDirectory())) return false;
 
-        return !mDelegate.getWindowAndroid().hasPermission(permissionNeeded)
-                && mDelegate.getWindowAndroid().canRequestPermission(permissionNeeded);
+        WindowAndroid windowAndroid = assumeNonNull(mDelegate.getWindowAndroid());
+        return !windowAndroid.hasPermission(permissionNeeded)
+                && windowAndroid.canRequestPermission(permissionNeeded);
     }
 
     /** @return whether this navigation is from the search results page. */
@@ -2605,11 +2627,13 @@ public class ExternalNavigationHandler {
 
     /**
      * Parses the scheme out of the URL if possible, trimming and getting rid of unsafe characters.
-     * This is useful for determining if a URL has a sneaky, unsafe scheme, e.g. "java  script" or
+     * This is useful for determining if a URL has a sneaky, unsafe scheme, e.g. "java script" or
      * "j$a$r". See: http://crbug.com/248398
+     *
      * @return The sanitized URL scheme or null if no scheme is specified.
      */
-    public static @Nullable String getSanitizedUrlScheme(String url) {
+    @Contract("null -> null")
+    public static @Nullable String getSanitizedUrlScheme(@Nullable String url) {
         if (url == null) {
             return null;
         }

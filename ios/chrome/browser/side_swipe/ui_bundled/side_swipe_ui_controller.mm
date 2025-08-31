@@ -75,14 +75,19 @@ const CGFloat kIpadTabSwipeDistance = 100;
 
   // The webStateList owned by the current browser.
   raw_ptr<WebStateList> _webStateList;
+
+  // Used to fetch snapshot for tabs.
+  raw_ptr<SnapshotBrowserAgent> _snapshotBrowserAgent;
 }
 
-- (instancetype)initWithFullscreenController:
-                    (FullscreenController*)fullscreenController
-                                webStateList:(WebStateList*)webStateList {
+- (instancetype)
+    initWithFullscreenController:(FullscreenController*)fullscreenController
+                    webStateList:(WebStateList*)webStateList
+            snapshotBrowserAgent:(SnapshotBrowserAgent*)snapshotBrowserAgent {
   self = [super init];
   if (self) {
     _fullscreenController = fullscreenController;
+    _snapshotBrowserAgent = snapshotBrowserAgent;
     _webStateList = webStateList;
   }
   return self;
@@ -90,6 +95,8 @@ const CGFloat kIpadTabSwipeDistance = 100;
 
 - (void)disconnect {
   [_tabSideSwipeView disconnect];
+  [self removeHorizontalGestureRecognizers];
+  _snapshotBrowserAgent = nullptr;
   _fullscreenController = nullptr;
   _webStateList = nullptr;
 }
@@ -112,6 +119,18 @@ const CGFloat kIpadTabSwipeDistance = 100;
   [_panGestureRecognizer setSwipeThreshold:kPanGestureRecognizerThreshold];
   [_panGestureRecognizer setDelegate:self];
   [view addGestureRecognizer:_panGestureRecognizer];
+}
+
+- (void)removeHorizontalGestureRecognizers {
+  if (_swipeGestureRecognizer) {
+    [_swipeGestureRecognizer.view
+        removeGestureRecognizer:_swipeGestureRecognizer];
+    _swipeGestureRecognizer = nil;
+  }
+  if (_panGestureRecognizer) {
+    [_panGestureRecognizer.view removeGestureRecognizer:_panGestureRecognizer];
+    _panGestureRecognizer = nil;
+  }
 }
 
 - (void)animateSwipe:(SwipeType)swipeType
@@ -164,6 +183,7 @@ const CGFloat kIpadTabSwipeDistance = 100;
 }
 
 - (void)setEnabled:(BOOL)enabled {
+  [_panGestureRecognizer setEnabled:enabled];
   [_swipeGestureRecognizer setEnabled:enabled];
 }
 
@@ -456,6 +476,30 @@ const CGFloat kIpadTabSwipeDistance = 100;
   NOTREACHED();
 }
 
+// Handles tab swipe completion following an update to the iPhone snapshot.
+- (void)handleiPhoneSnapshotOnTabSwipe:(SideSwipeGestureRecognizer*)gesture {
+  // Layout tabs with new snapshots in the current orientation.
+  [_tabSideSwipeView updateViewsForDirection:gesture.direction];
+
+  // Insert above the toolbar.
+  [gesture.view addSubview:_tabSideSwipeView];
+
+  __weak SideSwipeUIController* weakSelf = self;
+  [_tabSideSwipeView handleHorizontalPan:gesture
+                   actionBeforeTabSwitch:^(int destinationTabIndex) {
+                     [weakSelf.tabsDelegate
+                         willTabSwitchWithSwipeToTabIndex:destinationTabIndex];
+                   }];
+}
+
+// Handles tab swipe completion following an update to the iPad snapshot.
+- (void)handleiPadSnapshotOnTabSwipe {
+  [[NSNotificationCenter defaultCenter]
+      postNotificationName:kSideSwipeWillStartNotification
+                    object:nil];
+  _startingTabIndex = [self.tabsDelegate activeTabIndex];
+}
+
 // Handles page swipes.
 - (void)handleSwipeToNavigate:(SideSwipeGestureRecognizer*)gesture {
   if (gesture.state == UIGestureRecognizerStateBegan) {
@@ -554,7 +598,8 @@ const CGFloat kIpadTabSwipeDistance = 100;
       _tabSideSwipeView =
           [[CardSideSwipeView alloc] initWithFrame:frame
                                          topMargin:headerHeight
-                                      webStateList:_webStateList];
+                                      webStateList:_webStateList
+                              snapshotBrowserAgent:_snapshotBrowserAgent];
       _tabSideSwipeView.toolbarSnapshotProvider = self.toolbarSnapshotProvider;
 
       [_tabSideSwipeView setAutoresizingMask:UIViewAutoresizingFlexibleWidth |
@@ -564,15 +609,16 @@ const CGFloat kIpadTabSwipeDistance = 100;
     }
 
     // Ensure that there's an up-to-date snapshot of the current tab.
-    [self.tabsDelegate updateActiveTabSnapshot];
-
-    // Layout tabs with new snapshots in the current orientation.
-    [_tabSideSwipeView updateViewsForDirection:gesture.direction];
-
-    // Insert above the toolbar.
-    [gesture.view addSubview:_tabSideSwipeView];
+    __weak SideSwipeUIController* weakSelf = self;
+    [self.tabsDelegate updateActiveTabSnapshot:^() {
+      [weakSelf handleiPhoneSnapshotOnTabSwipe:gesture];
+    }];
+    return;
   }
 
+  CHECK_NE(gesture.state, UIGestureRecognizerStateBegan)
+      << "UI gesture must go through snapshot completion callback to complete "
+         "processing.";
   __weak SideSwipeUIController* weakSelf = self;
   [_tabSideSwipeView handleHorizontalPan:gesture
                    actionBeforeTabSwitch:^(int destinationTabIndex) {
@@ -593,12 +639,11 @@ const CGFloat kIpadTabSwipeDistance = 100;
     // Disable fullscreen while the side swipe gesture is occurring.
     _fullscreenDisabler =
         std::make_unique<ScopedFullscreenDisabler>(self.fullscreenController);
-    [self.tabsDelegate updateActiveTabSnapshot];
-
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:kSideSwipeWillStartNotification
-                      object:nil];
-    _startingTabIndex = [self.tabsDelegate activeTabIndex];
+    __weak SideSwipeUIController* weakSelf = self;
+    [self.tabsDelegate updateActiveTabSnapshot:^() {
+      [weakSelf handleiPadSnapshotOnTabSwipe];
+    }];
+    return;
   } else if (gesture.state == UIGestureRecognizerStateChanged) {
     // Side swipe for iPad involves changing the selected tab as the swipe moves
     // across the width of the view.  The screen is broken up into
@@ -635,11 +680,6 @@ const CGFloat kIpadTabSwipeDistance = 100;
       }
     }
   } else {
-    if (gesture.state == UIGestureRecognizerStateCancelled) {
-      [self.tabsDelegate
-          cancelTabSwitchWithSwipeAndRevertToInitialTabIndex:_startingTabIndex];
-    }
-
     [self.tabsDelegate didCompleteTabSwitchWithSwipe];
 
     // Redisplay the view if it was in overlay preview mode.
@@ -651,6 +691,9 @@ const CGFloat kIpadTabSwipeDistance = 100;
     // Stop disabling fullscreen.
     _fullscreenDisabler = nullptr;
   }
+  CHECK_NE(gesture.state, UIGestureRecognizerStateBegan)
+      << "UI gesture must go through snapshot completion callback to complete "
+         "processing.";
 }
 
 // Determines whether edge navigation is enabled for the specified swipe

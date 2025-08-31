@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "services/device/usb/usb_device_handle_usbfs.h"
 
 #include <linux/usb/ch9.h>
@@ -19,12 +14,12 @@
 #include <utility>
 
 #include "base/cancelable_callback.h"
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/files/file_descriptor_watcher_posix.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/not_fatal_until.h"
 #include "base/numerics/checked_math.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/sequence_checker.h"
@@ -40,6 +35,7 @@
 #endif
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
+#include "base/metrics/histogram_macros.h"
 #include "services/device/public/cpp/device_features.h"
 #include "services/device/usb/usb_interface_detach_allowlist.h"
 #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
@@ -54,6 +50,32 @@ using mojom::UsbTransferStatus;
 using mojom::UsbTransferType;
 
 namespace {
+
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
+// Outcome of detaching a kernel driver before ClaimInterface().
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// LINT.IfChange(DetachKernelDriverOutcome)
+enum class DetachKernelDriverOutcome {
+  // The interface was not attached to any kernel driver
+  kWasNoDriver = 0,
+  // Kernel driver was not detached, because it was not in the allowlist
+  kDetachingForbidden = 1,
+  // Kernel driver detaching was attempted, but failed
+  kDetachingFailed = 2,
+  // Kernel driver was detached, but its name is not enumerated below
+  kDetachedOther = 3,
+  // Kernel driver `cdc_acm` was detached
+  kDetachedCdcAcm = 4,
+  // Kernel driver `usblp` was detached
+  kDetachedUsblp = 5,
+  // Kernel driver `ftdi_sio` was detached
+  kDetachedFtdiSio = 6,
+  kMaxValue = kDetachedFtdiSio
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/others/enums.xml:DetachKernelDriverOutcome)
+#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
 
 uint8_t ConvertEndpointDirection(UsbTransferDirection direction) {
   switch (direction) {
@@ -277,35 +299,43 @@ bool UsbDeviceHandleUsbfs::BlockingTaskRunnerHelper::DetachInterface(
     const CombinedInterfaceInfo& interface_info) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
+  DetachKernelDriverOutcome outcome;
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                 base::BlockingType::MAY_BLOCK);
   std::string driver_name = GetKernelDriver(interface_number);
   if (driver_name.empty()) {
     USB_PLOG(DEBUG) << "Nothing to detach, interface " << interface_number
                     << " can be claimed right away";
-    return true;
-  }
-
-  if (!UsbInterfaceDetachAllowlist::Get().CanDetach(
-          driver_name, *interface_info.alternate)) {
+    outcome = DetachKernelDriverOutcome::kWasNoDriver;
+  } else if (!UsbInterfaceDetachAllowlist::Get().CanDetach(
+                 driver_name, *interface_info.alternate)) {
     USB_PLOG(DEBUG) << "Not allowed to detach interface " << interface_number
                     << " attached to driver " << driver_name;
-    return false;
-  }
+    outcome = DetachKernelDriverOutcome::kDetachingForbidden;
+  } else {
+    struct usbdevfs_ioctl cmd = {};
+    cmd.ifno = interface_number;
+    cmd.ioctl_code = USBDEVFS_DISCONNECT;
 
-  struct usbdevfs_ioctl cmd = {};
-  cmd.ifno = interface_number;
-  cmd.ioctl_code = USBDEVFS_DISCONNECT;
-
-  int rc = HANDLE_EINTR(ioctl(fd_.get(), USBDEVFS_IOCTL, &cmd));
-  // ENODATA is a benign error code which is when the interface isn't
-  // associated with any driver.
-  if (rc < 0 && errno != ENODATA) {
-    USB_PLOG(DEBUG) << "Failed to detach interface " << interface_number;
-    return false;
+    int rc = HANDLE_EINTR(ioctl(fd_.get(), USBDEVFS_IOCTL, &cmd));
+    // ENODATA is a benign error code which is when the interface isn't
+    // associated with any driver.
+    if (rc < 0 && errno != ENODATA) {
+      USB_PLOG(DEBUG) << "Failed to detach interface " << interface_number;
+      outcome = DetachKernelDriverOutcome::kDetachingFailed;
+    } else {
+      detached_interfaces_.insert(interface_number);
+      outcome =
+          driver_name == "cdc_acm" ? DetachKernelDriverOutcome::kDetachedCdcAcm
+          : driver_name == "usblp" ? DetachKernelDriverOutcome::kDetachedUsblp
+          : driver_name == "ftdi_sio"
+              ? DetachKernelDriverOutcome::kDetachedFtdiSio
+              : DetachKernelDriverOutcome::kDetachedOther;
+    }
   }
-  detached_interfaces_.insert(interface_number);
-  return true;
+  UMA_HISTOGRAM_ENUMERATION("WebUsb.DetachKernelDriverOutcome", outcome);
+  return outcome != DetachKernelDriverOutcome::kDetachingForbidden &&
+         outcome != DetachKernelDriverOutcome::kDetachingFailed;
 }
 
 std::string UsbDeviceHandleUsbfs::BlockingTaskRunnerHelper::GetKernelDriver(
@@ -467,8 +497,9 @@ void* UsbDeviceHandleUsbfs::Transfer::operator new(
           .ValueOrDie();
   void* p = ::operator new(total_size);
   Transfer* transfer = static_cast<Transfer*>(p);
-  memset(&transfer->urb, 0,
-         sizeof(urb) + sizeof(urb.iso_frame_desc[0]) * number_of_iso_packets);
+  UNSAFE_TODO(memset(
+      &transfer->urb, 0,
+      sizeof(urb) + sizeof(urb.iso_frame_desc[0]) * number_of_iso_packets));
   transfer->urb.number_of_packets = number_of_iso_packets;
   return p;
 }
@@ -931,7 +962,7 @@ void UsbDeviceHandleUsbfs::ReleaseInterfaceComplete(int interface_number,
   }
 
   auto it = interfaces_.find(interface_number);
-  CHECK(it != interfaces_.end(), base::NotFatalUntil::M130);
+  CHECK(it != interfaces_.end());
   interfaces_.erase(it);
   if (device_) {
     // Only refresh endpoints if a device is still attached.
@@ -987,7 +1018,7 @@ void UsbDeviceHandleUsbfs::IsochronousTransferInternal(
   transfer->urb.buffer_length = total_length;
 
   for (size_t i = 0; i < packet_lengths.size(); ++i) {
-    transfer->urb.iso_frame_desc[i].length = packet_lengths[i];
+    UNSAFE_TODO(transfer->urb.iso_frame_desc[i]).length = packet_lengths[i];
   }
 
   // USBDEVFS_SUBMITURB appears to be non-blocking as completion is reported
@@ -1039,12 +1070,13 @@ void UsbDeviceHandleUsbfs::TransferComplete(
         transfer->urb.number_of_packets);
     for (size_t i = 0; i < packets.size(); ++i) {
       packets[i] = mojom::UsbIsochronousPacket::New();
-      packets[i]->length = transfer->urb.iso_frame_desc[i].length;
+      packets[i]->length = UNSAFE_TODO(transfer->urb.iso_frame_desc[i]).length;
       packets[i]->transferred_length =
-          transfer->urb.iso_frame_desc[i].actual_length;
+          UNSAFE_TODO(transfer->urb.iso_frame_desc[i]).actual_length;
       packets[i]->status = ConvertTransferResult(
-          transfer->urb.status == 0 ? transfer->urb.iso_frame_desc[i].status
-                                    : transfer->urb.status);
+          transfer->urb.status == 0
+              ? UNSAFE_TODO(transfer->urb.iso_frame_desc[i]).status
+              : transfer->urb.status);
     }
 
     transfer->RunIsochronousCallback(std::move(packets));
@@ -1127,7 +1159,7 @@ UsbDeviceHandleUsbfs::RemoveFromTransferList(Transfer* transfer_ptr) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto it = std::ranges::find(transfers_, transfer_ptr,
                               &std::unique_ptr<Transfer>::get);
-  CHECK(it != transfers_.end(), base::NotFatalUntil::M130);
+  CHECK(it != transfers_.end());
   std::unique_ptr<Transfer> transfer = std::move(*it);
   transfers_.erase(it);
   return transfer;
@@ -1160,7 +1192,7 @@ void UsbDeviceHandleUsbfs::CancelTransfer(Transfer* transfer,
         transfer->urb.number_of_packets);
     for (size_t i = 0; i < packets.size(); ++i) {
       packets[i] = mojom::UsbIsochronousPacket::New();
-      packets[i]->length = transfer->urb.iso_frame_desc[i].length;
+      packets[i]->length = UNSAFE_TODO(transfer->urb.iso_frame_desc[i]).length;
       packets[i]->transferred_length = 0;
       packets[i]->status = status;
     }

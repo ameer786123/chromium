@@ -238,8 +238,7 @@ SharedStorageDatabase::SharedStorageDatabase(
     scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy,
     std::unique_ptr<SharedStorageDatabaseOptions> options)
     : db_(sql::DatabaseOptions()
-              .set_preload(base::FeatureList::IsEnabled(
-                  sql::features::kPreOpenPreloadDatabase))
+              .set_preload(true)
               .set_wal_mode(base::FeatureList::IsEnabled(
                   blink::features::kSharedStorageAPIEnableWALForDatabase))
               // Prevent SQLite from trying to use mmap, as SandboxedVfs does
@@ -316,7 +315,7 @@ SharedStorageDatabase::GetResult SharedStorageDatabase::Get(
   sql::Statement statement(db_.GetCachedStatement(SQL_FROM_HERE, kSelectSql));
   std::string origin_str(SerializeOrigin(context_origin));
   statement.BindString(0, origin_str);
-  statement.BindBlob(1, key);
+  statement.BindBlob(1, std::u16string(key));
 
   if (statement.Step()) {
     base::Time last_used_time = statement.ColumnTime(1);
@@ -451,7 +450,7 @@ SharedStorageDatabase::OperationResult SharedStorageDatabase::Delete(
 
   sql::Statement statement(db_.GetCachedStatement(SQL_FROM_HERE, kDeleteSql));
   statement.BindString(0, origin_str);
-  statement.BindBlob(1, key);
+  statement.BindBlob(1, std::u16string(key));
 
   if (!statement.Run())
     return OperationResult::kSqlError;
@@ -1439,9 +1438,6 @@ bool SharedStorageDatabase::OpenDatabase() {
     if (!db_.is_open() && !OpenImpl()) {
       return false;
     }
-    if (!base::FeatureList::IsEnabled(sql::features::kPreOpenPreloadDatabase)) {
-      db_.Preload();
-    }
   } else {
     if (!db_.OpenInMemory())
       return false;
@@ -1687,7 +1683,7 @@ std::optional<std::u16string> SharedStorageDatabase::MaybeGetValueFor(
 
   sql::Statement statement(db_.GetCachedStatement(SQL_FROM_HERE, kSelectSql));
   statement.BindString(0, context_origin);
-  statement.BindBlob(1, key);
+  statement.BindBlob(1, std::u16string(key));
 
   std::u16string value;
   if (statement.Step() && statement.ColumnBlobAsString16(0, &value)) {
@@ -1780,10 +1776,10 @@ bool SharedStorageDatabase::UpdateValuesMappingWithTime(
         "WHERE context_origin=? AND key=?";
 
     sql::Statement statement(db_.GetCachedStatement(SQL_FROM_HERE, kUpdateSql));
-    statement.BindBlob(0, value);
+    statement.BindBlob(0, std::u16string(value));
     statement.BindTime(1, last_used_time);
     statement.BindString(2, context_origin);
-    statement.BindBlob(3, key);
+    statement.BindBlob(3, std::u16string(key));
 
     if (!statement.Run()) {
       return false;
@@ -1805,8 +1801,8 @@ bool SharedStorageDatabase::UpdateValuesMappingWithTime(
 
   sql::Statement statement(db_.GetCachedStatement(SQL_FROM_HERE, kInsertSql));
   statement.BindString(0, context_origin);
-  statement.BindBlob(1, key);
-  statement.BindBlob(2, value);
+  statement.BindBlob(1, std::u16string(key));
+  statement.BindBlob(2, std::u16string(value));
   statement.BindTime(3, last_used_time);
 
   if (!statement.Run())

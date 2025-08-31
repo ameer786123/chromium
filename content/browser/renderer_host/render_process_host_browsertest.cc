@@ -23,10 +23,13 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/mock_callback.h"
+#include "base/test/run_until.h"
+#include "base/test/test_future.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/hang_watcher.h"
 #include "base/timer/elapsed_timer.h"
 #include "build/build_config.h"
+#include "components/viz/host/gpu_client.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_frame_proxy_host.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
@@ -39,6 +42,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/child_process_launcher_utils.h"
+#include "content/public/browser/gpu_utils.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host_creation_observer.h"
 #include "content/public/browser/render_process_host_observer.h"
@@ -68,6 +72,7 @@
 #include "media/base/media_switches.h"
 #include "media/base/test_data_util.h"
 #include "media/mojo/buildflags.h"
+#include "media/mojo/mojom/video_decoder.mojom.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_status_code.h"
@@ -1300,6 +1305,78 @@ IN_PROC_BROWSER_TEST_P(RenderProcessHostTest, ConstructedButNotInitializedYet) {
   process->Cleanup();
 }
 
+class DiscardFrameBrowserTest : public RenderProcessHostTestBase,
+                                public WebContentsObserver {
+ public:
+  void SetUp() override {
+    feature_list_.InitAndEnableFeature(features::kWebContentsDiscard);
+    RenderProcessHostTestBase::SetUp();
+  }
+
+  void SetUpOnMainThread() override {
+    WebContentsObserver::Observe(shell()->web_contents());
+    RenderProcessHostTestBase::SetUpOnMainThread();
+  }
+
+  WebContents& web_contents() { return *shell()->web_contents(); }
+
+  // WebContentsObserver implementation
+  void AboutToBeDiscarded(WebContents* web_contents) override {
+    RenderProcessHost* process =
+        web_contents->GetPrimaryMainFrame()->GetProcess();
+    priority_at_about_to_be_discarded_ = process->GetPriority();
+  }
+
+  void WasDiscarded() override {
+    RenderProcessHost* process =
+        web_contents().GetPrimaryMainFrame()->GetProcess();
+    priority_at_was_discarded_ = process->GetPriority();
+  }
+
+ protected:
+  std::optional<base::Process::Priority> priority_at_about_to_be_discarded_;
+  std::optional<base::Process::Priority> priority_at_was_discarded_;
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(DiscardFrameBrowserTest,
+                       VerifyRenderProcessPriorityBoostedOnDiscard) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL test_url(embedded_test_server()->GetURL("a.com", "/simple_page.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), test_url));
+
+  // Put the tab in the background.
+  web_contents().WasHidden();
+  RenderProcessHost* process =
+      web_contents().GetPrimaryMainFrame()->GetProcess();
+  EXPECT_EQ(process->GetPriority(), base::Process::Priority::kBestEffort);
+
+  // Keep the renderer process alive after discard.
+  EXPECT_TRUE(process->IsInitializedAndNotDead());
+  process->IncrementWorkerRefCount();
+
+  // Discard the page.
+  web_contents().Discard(base::NullCallback());
+
+  ASSERT_TRUE(priority_at_about_to_be_discarded_.has_value());
+  EXPECT_EQ(*priority_at_about_to_be_discarded_,
+            base::Process::Priority::kBestEffort);
+
+  ASSERT_TRUE(priority_at_was_discarded_.has_value());
+  EXPECT_EQ(*priority_at_was_discarded_,
+            base::Process::Priority::kUserBlocking);
+
+  // Now, wait for the discard to complete in the renderer and priority to drop.
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return process->GetPriority() == base::Process::Priority::kBestEffort;
+  }));
+  EXPECT_EQ(process->GetPriority(), base::Process::Priority::kBestEffort);
+
+  process->DecrementWorkerRefCount();
+}
+
 // This test verifies that a fast shutdown is possible for a starting process.
 IN_PROC_BROWSER_TEST_P(RenderProcessHostTest, FastShutdownForStartingProcess) {
   RenderProcessHost* process = RenderProcessHostImpl::CreateRenderProcessHost(
@@ -2001,6 +2078,21 @@ IN_PROC_BROWSER_TEST_P(RenderProcessHostTest,
   }
 }
 
+// This test verifies that a renderer process is correctly sandboxed.
+IN_PROC_BROWSER_TEST_F(RenderProcessHostTestBase, IsSandboxed) {
+  RenderProcessHost* rph = RenderProcessHostImpl::CreateRenderProcessHost(
+      ShellContentBrowserClient::Get()->browser_context(),
+      /*site_instance=*/nullptr);
+  ASSERT_TRUE(rph->Init());
+
+  mojo::Remote<mojom::TestService> service;
+  rph->BindReceiver(service.BindNewPipeAndPassReceiver());
+
+  base::test::TestFuture<bool> future;
+  service->IsProcessSandboxed(future.GetCallback());
+  ASSERT_TRUE(future.Take());
+}
+
 class CreationObserver : public RenderProcessHostCreationObserver {
  public:
   explicit CreationObserver(
@@ -2225,6 +2317,61 @@ IN_PROC_BROWSER_TEST_P(RenderProcessHostTest, ReuseSiteURLChanges) {
             site_instance->GetProcess());
 }
 
+class PreEstablishGpuChannelRenderProcessHostTest
+    : public RenderProcessHostTestBase,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    if (!UseGpuCompositing()) {
+      command_line->AppendSwitch(switches::kDisableGpu);
+    }
+  }
+
+ protected:
+  bool WaitForGpuChannelEstablishment() {
+    auto* rphi = static_cast<RenderProcessHostImpl*>(
+        shell()->web_contents()->GetPrimaryMainFrame()->GetProcess());
+    auto* gpu_client = rphi->GetGpuClient();
+
+    base::test::TestFuture<bool> success_future;
+    gpu_client->SetEstablishGpuChannelCallbackForTesting(
+        success_future.GetCallback());
+    return success_future.Get();
+  }
+
+  bool UseGpuCompositing() const { return GetParam(); }
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    PreEstablishGpuChannelRenderProcessHostTest,
+// ChromeOS and Android don't support software compositing.
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
+    testing::Bool(),
+#else
+    testing::Values(true),
+#endif
+    [](const testing::TestParamInfo<
+        PreEstablishGpuChannelRenderProcessHostTest::ParamType>& info) {
+      return info.param ? "WithGpuCompositing" : "WithoutGpuCompositing";
+    });
+
+IN_PROC_BROWSER_TEST_P(PreEstablishGpuChannelRenderProcessHostTest,
+                       PreEstablishedChannelIsDroppedOnGpuCrash) {
+  // Hide WebContents to prevent renderer from using pre-established gpu channel
+  // right away.
+  shell()->web_contents()->WasHidden();
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL test_url = embedded_test_server()->GetURL("/simple_page.html");
+  shell()->LoadURL(test_url);
+  ASSERT_TRUE(WaitForGpuChannelEstablishment());
+
+  // Kill gpu process and check that gpu channel is re-requested.
+  KillGpuProcess();
+  shell()->web_contents()->WasShown();
+  EXPECT_TRUE(WaitForGpuChannelEstablishment());
+}
+
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 class FakeOOPVideoDecoderFactoryService
     : public media::mojom::InterfaceFactory {
@@ -2285,15 +2432,8 @@ class FakeOOPVideoDecoderFactoryService
         const gfx::ColorSpace& target_color_space) final {}
     void Initialize(const media::VideoDecoderConfig& config,
                     bool low_delay,
-                    const std::optional<base::UnguessableToken>& cdm_id,
+                    media::mojom::CdmPtr cdm,
                     InitializeCallback callback) final {}
-#if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-    void InitializeWithCdmContext(
-        const media::VideoDecoderConfig& config,
-        bool low_delay,
-        mojo::PendingRemote<media::mojom::CdmContextForOOPVD> cdm_context,
-        InitializeWithCdmContextCallback callback) final {}
-#endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
     void Decode(media::mojom::DecoderBufferPtr buffer,
                 DecodeCallback callback) final {}
     void Reset(ResetCallback callback) final {}
@@ -2508,8 +2648,16 @@ IN_PROC_BROWSER_TEST_F(RenderProcessHostTestOOPVideoDecoderTest,
 
 // Asserts RenderProcessHosts are configured to reflect the embedder's policy
 // defined by `ContentBrowserClient::DisallowV8FeatureFlagOverridesForSite()`.
+// TODO(crbug.com/420278695): Flaky on TSan.
+#if defined(THREAD_SANITIZER)
+#define MAYBE_DisallowV8FeatureFlagOverridesAppliedToHosts \
+  DISABLED_DisallowV8FeatureFlagOverridesAppliedToHosts
+#else
+#define MAYBE_DisallowV8FeatureFlagOverridesAppliedToHosts \
+  DisallowV8FeatureFlagOverridesAppliedToHosts
+#endif
 IN_PROC_BROWSER_TEST_P(RenderProcessHostTest,
-                       DisallowV8FeatureFlagOverridesAppliedToHosts) {
+                       MAYBE_DisallowV8FeatureFlagOverridesAppliedToHosts) {
   class DisallowV8FeatureOverridesContentBrowserClient
       : public ContentBrowserTestContentBrowserClient {
    public:

@@ -22,7 +22,7 @@
 #include <array>
 #include <string>
 
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #endif
 
 #if BUILDFLAG(IS_POSIX)
@@ -31,12 +31,6 @@
 #endif
 
 namespace viz {
-
-#if BUILDFLAG(IS_ANDROID)
-bool PreferRGB565ResourcesForDisplay() {
-  return base::SysInfo::AmountOfPhysicalMemoryMB() <= 512;
-}
-#endif
 
 #if BUILDFLAG(IS_ANDROID)
 bool AlwaysUseWideColorGamut() {
@@ -51,13 +45,13 @@ bool AlwaysUseWideColorGamut() {
 
   // As it takes some work to compute this, cache the result.
   static bool is_always_use_wide_color_gamut_enabled = [] {
-    const char* current_model =
-        base::android::BuildInfo::GetInstance()->model();
+    const std::string& current_model = base::android::android_info::model();
     const std::array<std::string, 2> enabled_models = {
         std::string{"Pixel 4"}, std::string{"Pixel 4 XL"}};
     for (const std::string& model : enabled_models) {
-      if (model == current_model)
+      if (model == current_model) {
         return true;
+      }
     }
 
     return false;
@@ -128,22 +122,6 @@ gfx::Rect GetTargetExpandedRectForPixelMovingFilters(
 gfx::Rect GetExpandedRectForPixelMovingFilters(
     const RenderPassDrawQuadInternal& rpdq,
     const cc::FilterOperations& filters) {
-  if (!base::FeatureList::IsEnabled(features::kUseMapRectForPixelMovement)) {
-    // ExpandRectForPixelMovement() has several problems that
-    // GetExpandedRectForPixelMovingFilters() by calling MapRect instead.
-    // 1. ExpandRectForPixelMovement's bounds propagation logic does not
-    //    perfectly match how the underlying SkImageFilters compose together.
-    // 2. It doesn't handle reference image filters, and assumes a fixed outset.
-    // 3. It is unaware of the RPDQ's filters_origin and filters_scale, which
-    //    define the matrix that must be passed into MapRect.
-    //
-    // When the MapRect feature is disabled, this preserves historic behavior
-    // for callsites that used to call ExpandRectForPixelMovement directly, or
-    // for callers of GetExpandedRectWithPixelMovingForegroundFilter (which is
-    // now equivalent to GetTargetExpandedRectForPixelMovingFilters).
-    return filters.ExpandRectForPixelMovement(rpdq.rect);
-  }
-
   SkMatrix local_matrix =
       SkMatrix::Translate(rpdq.filters_origin.x(), rpdq.filters_origin.y());
   local_matrix.postScale(rpdq.filters_scale.x(), rpdq.filters_scale.y());
@@ -195,7 +173,7 @@ bool QuadRoundedCornersBoundsIntersects(const DrawQuad* quad,
   return false;
 }
 
-void SetCopyOutoutRequestResultSize(CopyOutputRequest* request,
+void SetCopyOutputRequestResultSize(CopyOutputRequest* request,
                                     const gfx::Rect& src_rect,
                                     const gfx::Size& output_size,
                                     const gfx::Size& surface_size_in_pixels) {

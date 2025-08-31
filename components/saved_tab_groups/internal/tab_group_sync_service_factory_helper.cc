@@ -7,7 +7,7 @@
 #include "base/version_info/channel.h"
 #include "components/data_sharing/public/features.h"
 #include "components/data_sharing/public/logger.h"
-#include "components/optimization_guide/core/optimization_guide_decider.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decider.h"
 #include "components/saved_tab_groups/delegate/tab_group_sync_delegate.h"
 #include "components/saved_tab_groups/internal/saved_tab_group_model.h"
 #include "components/saved_tab_groups/internal/sync_data_type_configuration.h"
@@ -78,6 +78,8 @@ std::unique_ptr<TabGroupSyncService> CreateTabGroupSyncService(
     syncer::DeviceInfoTracker* device_info_tracker,
     optimization_guide::OptimizationGuideDecider* optimization_guide,
     signin::IdentityManager* identity_manager,
+    data_sharing::personal_collaboration_data::PersonalCollaborationDataService*
+        personal_collaboration_data_service,
     std::unique_ptr<CollaborationFinder> collaboration_finder,
     SyntheticFieldTrialHelper* synthetic_field_trial_helper,
     data_sharing::Logger* logger) {
@@ -94,7 +96,8 @@ std::unique_ptr<TabGroupSyncService> CreateTabGroupSyncService(
       MaybeCreateSharedTabGroupAccountDataTypeConfiguration(
           channel, data_type_store_service),
       pref_service, std::move(metrics_logger), optimization_guide,
-      identity_manager, std::move(collaboration_finder), logger);
+      identity_manager, personal_collaboration_data_service,
+      std::move(collaboration_finder), logger);
   service->SetUserData(kTabGroupTypeObserverKey,
                        std::make_unique<TabGroupTypeObserver>(
                            service.get(), synthetic_field_trial_helper));

@@ -16,11 +16,11 @@
 #import "ios/chrome/browser/authentication/ui_bundled/signin/logging/upgrade_signin_logger.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator+protected.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin/stop_animated_chrome_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/uno_signin_screen_provider.h"
 #import "ios/chrome/browser/first_run/ui_bundled/first_run_util.h"
 #import "ios/chrome/browser/screen/ui_bundled/screen_provider.h"
 #import "ios/chrome/browser/screen/ui_bundled/screen_type.h"
+#import "ios/chrome/browser/shared/coordinator/chrome_coordinator/animated_coordinator.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
@@ -53,6 +53,9 @@ using base::UserMetricsAction;
   UpgradeSigninLogger* _upgradeSigninLogger;
 
   ChangeProfileContinuationProvider _continuationProvider;
+
+  // The current screen type.
+  ScreenType _currentScreenType;
 }
 
 - (instancetype)
@@ -87,6 +90,16 @@ using base::UserMetricsAction;
   return self;
 }
 
+- (void)dealloc {
+  CHECK(!_upgradeSigninLogger, base::NotFatalUntil::M146);
+}
+
+#pragma mark - BuggyAuthenticationViewOwner
+
+- (BOOL)viewWillPersist {
+  return YES;
+}
+
 #pragma mark - ChromeCoordinator
 
 - (void)start {
@@ -101,7 +114,17 @@ using base::UserMetricsAction;
                                                     toolbarClass:nil];
   _navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
 
-  [self presentScreen:[_screenProvider nextScreenType]];
+  // Retain `self` in case `presentScreenIfNeeded` executes the
+  // signinCompletion, which would cause self’s owner to unassign its variable.
+  __typeof(self) strongSelf = self;
+  [self presentScreenIfNeeded:[_screenProvider nextScreenType]];
+
+  // Check if the flow is already completed (kStepsCompleted) to prevent
+  // presenting a nil navigation controller.
+  if (strongSelf->_currentScreenType == kStepsCompleted) {
+    return;
+  }
+
   // Set the presentation delegate after the child coordinator creation to
   // override the default implementation.
   _navigationController.presentationController.delegate = self;
@@ -112,16 +135,19 @@ using base::UserMetricsAction;
                                       completion:nil];
 }
 
-- (void)stop {
-  if (_navigationController) {
-    [self interruptAnimated:NO];
-  }
+#pragma mark - AnimatedCoordinator
+
+- (void)stopAnimated:(BOOL)animated {
+  [_navigationController.presentingViewController
+      dismissViewControllerAnimated:animated
+                         completion:nil];
+  [self finishWithResult:SigninCoordinatorResultInterrupted identity:nil];
   [_upgradeSigninLogger disconnect];
   _upgradeSigninLogger = nil;
   DCHECK(!_navigationController);
   DCHECK(!_childCoordinator);
   DCHECK(!_screenProvider);
-  [super stop];
+  [super stopAnimated:animated];
 }
 
 #pragma mark - Private
@@ -140,18 +166,17 @@ using base::UserMetricsAction;
       AuthenticationServiceFactory::GetForProfile(self.profile);
   id<SystemIdentity> identity =
       authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
-  ProceduralBlock completion = ^{
-    SigninCoordinatorResult result =
-        identity ? SigninCoordinatorResultSuccess
-                 : SigninCoordinatorResultCanceledByUser;
-    [weakSelf finishWithResult:result identity:identity];
-  };
-  [_navigationController dismissViewControllerAnimated:YES
-                                            completion:completion];
+  [_navigationController dismissViewControllerAnimated:YES completion:nil];
+  SigninCoordinatorResult result = identity
+                                       ? SigninCoordinatorResultSuccess
+                                       : SigninCoordinatorResultCanceledByUser;
+  [weakSelf finishWithResult:result identity:identity];
+  [weakSelf runCompletionWithSigninResult:result completionIdentity:identity];
 }
 
 // Presents the screen of certain `type`.
-- (void)presentScreen:(ScreenType)type {
+- (void)presentScreenIfNeeded:(ScreenType)type {
+  _currentScreenType = type;
   // If there are no screens remaining, call delegate to stop presenting
   // screens.
   if (type == kStepsCompleted) {
@@ -188,7 +213,11 @@ using base::UserMetricsAction;
     case kChoice:
     case kDockingPromo:
     case kBestFeatures:
+    case kLensInteractivePromo:
+    case kLensAnimatedPromo:
     case kStepsCompleted:
+    case kGuidedTour:
+    case kSafariImport:
       break;
   }
   NOTREACHED() << static_cast<int>(type);
@@ -209,7 +238,6 @@ using base::UserMetricsAction;
   _navigationController.presentationController.delegate = nil;
   _navigationController = nil;
   _screenProvider = nil;
-  [self runCompletionWithSigninResult:result completionIdentity:identity];
 }
 
 #pragma mark - FirstRunScreenDelegate
@@ -219,29 +247,14 @@ using base::UserMetricsAction;
 - (void)screenWillFinishPresenting {
   CHECK(_childCoordinator) << base::SysNSStringToUTF8([self description]);
   [self stopChildCoordinator];
-  [self presentScreen:[_screenProvider nextScreenType]];
-}
-
-#pragma mark - InterruptibleChromeCoordinator
-
-- (void)interruptAnimated:(BOOL)animated {
-  // Interrupt the child coordinator UI first before dismissing the new
-  // sign-in navigation controller.
-  CHECK(![_childCoordinator
-      conformsToProtocol:@protocol(InterruptibleChromeCoordinator)]);
-  [_childCoordinator stop];
-  [_navigationController.presentingViewController
-      dismissViewControllerAnimated:animated
-                         completion:nil];
-  [self finishWithResult:SigninCoordinatorResultInterrupted identity:nil];
+  [self presentScreenIfNeeded:[_screenProvider nextScreenType]];
 }
 
 #pragma mark - HistorySyncCoordinatorDelegate
 
 // Dismisses the current screen.
-- (void)closeHistorySyncCoordinator:
-            (HistorySyncCoordinator*)historySyncCoordinator
-                     declinedByUser:(BOOL)declined {
+- (void)historySyncCoordinator:(HistorySyncCoordinator*)historySyncCoordinator
+                    withResult:(HistorySyncResult)result {
   [self screenWillFinishPresenting];
 }
 
@@ -250,7 +263,8 @@ using base::UserMetricsAction;
 - (void)presentationControllerDidDismiss:
     (UIPresentationController*)presentationController {
   RecordAction(UserMetricsAction("Signin_TwoScreens_SwipeDismiss"));
-  [self interruptAnimated:NO];
+  [self runCompletionWithSigninResult:SigninCoordinatorResultCanceledByUser
+                   completionIdentity:nil];
 }
 
 #pragma mark - NSObject

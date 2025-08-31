@@ -121,6 +121,7 @@ class LockedSessionWindowTracker : public KeyedService,
   // BrowserListObserver Implementation
   void OnBrowserClosing(Browser* browser) override;
   void OnBrowserAdded(Browser* browser) override;
+  void OnBrowserSetLastActive(Browser* browser) override;
 
   // content::WebContentsObserver Impl
   void DidFinishNavigation(

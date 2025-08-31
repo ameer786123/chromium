@@ -33,6 +33,7 @@
 #include "base/mac/mac_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/process/launch.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
@@ -1057,9 +1058,10 @@ bool WebAppShortcutCreator::UpdateSignature(
   std::vector<uint8_t> cd_hash(cd_hash_span.begin(), cd_hash_span.end());
 
   content::GetUIThreadTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(&AppShimRegistry::SaveCdHashForApp,
-                                base::Unretained(AppShimRegistry::Get()),
-                                info_->app_id, std::move(cd_hash)));
+      FROM_HERE,
+      base::BindOnce(&AppShimRegistry::SaveCdHashForApp,
+                     base::Unretained(AppShimRegistry::Get()), info_->app_id,
+                     std::move(cd_hash), base::DoNothing()));
 
   return true;
 }

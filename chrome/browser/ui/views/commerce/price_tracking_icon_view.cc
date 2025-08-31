@@ -116,7 +116,14 @@ void PriceTrackingIconView::OnExecuting(
   base::RecordAction(
       base::UserMetricsAction("Commerce.PriceTracking.OmniboxChipClicked"));
 
+  bookmarks::BookmarkModel* bookmarkModel =
+      BookmarkModelFactory::GetForBrowserContext(profile_);
+
   if (ShouldShowFirstUseExperienceBubble()) {
+    const bookmarks::BookmarkNode* bookmark =
+        bookmarkModel->GetMostRecentlyAddedUserNodeForURL(
+            GetWebContents()->GetLastCommittedURL());
+
     bubble_coordinator_.Show(
         GetWebContents(), profile_, GetWebContents()->GetLastCommittedURL(),
         ui::ImageModel::FromImage(product_image),
@@ -124,9 +131,16 @@ void PriceTrackingIconView::OnExecuting(
                        weak_ptr_factory_.GetWeakPtr()),
         base::BindOnce(&PriceTrackingIconView::UnpauseAnimation,
                        weak_ptr_factory_.GetWeakPtr()),
-        PriceTrackingBubbleDialogView::Type::TYPE_FIRST_USE_EXPERIENCE);
+        PriceTrackingBubbleDialogView::Type::TYPE_FIRST_USE_EXPERIENCE,
+        bookmark ? std::optional<std::u16string>(bookmark->parent()->GetTitle())
+                 : std::nullopt);
   } else {
     EnablePriceTracking(/*enable=*/true);
+
+    const bookmarks::BookmarkNode* bookmark =
+        bookmarkModel->GetMostRecentlyAddedUserNodeForURL(
+            GetWebContents()->GetLastCommittedURL());
+
     bubble_coordinator_.Show(
         GetWebContents(), profile_, GetWebContents()->GetLastCommittedURL(),
         ui::ImageModel::FromImage(product_image),
@@ -134,7 +148,9 @@ void PriceTrackingIconView::OnExecuting(
                        weak_ptr_factory_.GetWeakPtr()),
         base::BindOnce(&PriceTrackingIconView::UnpauseAnimation,
                        weak_ptr_factory_.GetWeakPtr()),
-        PriceTrackingBubbleDialogView::Type::TYPE_NORMAL);
+        PriceTrackingBubbleDialogView::Type::TYPE_NORMAL,
+        bookmark ? std::optional<std::u16string>(bookmark->parent()->GetTitle())
+                 : std::nullopt);
   }
 }
 
@@ -169,6 +185,7 @@ void PriceTrackingIconView::UpdateImpl() {
     }
     MaybeShowPageActionLabel();
   } else {
+    scoped_window_call_to_action_ptr_.reset();
     HidePageActionLabel();
   }
   SetVisible(should_show);
@@ -306,6 +323,16 @@ void PriceTrackingIconView::MaybeShowPageActionLabel() {
                          PageActionIconType::kPriceTracking)) {
     return;
   }
+  if (!tabs::TabInterface::GetFromContents(GetWebContents())
+           ->GetBrowserWindowInterface()
+           ->CanShowCallToAction()) {
+    return;
+  }
+
+  scoped_window_call_to_action_ptr_ =
+      tabs::TabInterface::GetFromContents(GetWebContents())
+          ->GetBrowserWindowInterface()
+          ->ShowCallToAction();
 
   should_extend_label_shown_duration_ = true;
   AnimateIn(std::nullopt);

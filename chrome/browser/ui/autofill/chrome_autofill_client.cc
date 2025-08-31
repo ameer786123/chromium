@@ -27,16 +27,18 @@
 #include "chrome/browser/autofill/autofill_ai_model_cache_factory.h"
 #include "chrome/browser/autofill/autofill_ai_model_executor_factory.h"
 #include "chrome/browser/autofill/autofill_entity_data_manager_factory.h"
-#include "chrome/browser/autofill/autofill_optimization_guide_factory.h"
+#include "chrome/browser/autofill/autofill_optimization_guide_decider_factory.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/autofill/strike_database_factory.h"
 #include "chrome/browser/autofill/ui/ui_util.h"
 #include "chrome/browser/autofill/valuables_data_manager_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/device_reauth/chrome_device_authenticator_factory.h"
+#include "chrome/browser/global_features.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/keyboard_accessory/android/manual_filling_controller.h"
 #include "chrome/browser/metrics/variations/google_groups_manager_factory.h"
+#include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/password_manager/password_manager_settings_service_factory.h"
 #include "chrome/browser/plus_addresses/plus_address_service_factory.h"
@@ -68,6 +70,7 @@
 #include "chrome/common/channel_info.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/common/webui_url_constants.h"
+#include "components/application_locale_storage/application_locale_storage.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/autofill/content/browser/content_identity_credential_delegate.h"
@@ -80,8 +83,8 @@
 #include "components/autofill/core/browser/form_import/form_data_importer.h"
 #include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "components/autofill/core/browser/foundations/browser_autofill_manager.h"
-#include "components/autofill/core/browser/integrators/identity_credential_delegate.h"
-#include "components/autofill/core/browser/integrators/optimization_guide/autofill_optimization_guide.h"
+#include "components/autofill/core/browser/integrators/identity_credential/identity_credential_delegate.h"
+#include "components/autofill/core/browser/integrators/optimization_guide/autofill_optimization_guide_decider.h"
 #include "components/autofill/core/browser/integrators/plus_addresses/autofill_plus_address_delegate.h"
 #include "components/autofill/core/browser/logging/log_router.h"
 #include "components/autofill/core/browser/payments/payments_network_interface.h"
@@ -111,9 +114,9 @@
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/browser/password_requirements_service.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
-#include "components/plus_addresses/features.h"
-#include "components/plus_addresses/plus_address_hats_utils.h"
-#include "components/plus_addresses/plus_address_types.h"
+#include "components/plus_addresses/core/browser/plus_address_hats_utils.h"
+#include "components/plus_addresses/core/browser/plus_address_types.h"
+#include "components/plus_addresses/core/common/features.h"
 #include "components/prefs/pref_service.h"
 #include "components/profile_metrics/browser_profile_type.h"
 #include "components/security_state/content/security_state_tab_helper.h"
@@ -126,6 +129,7 @@
 #include "components/unified_consent/pref_names.h"
 #include "components/variations/service/google_groups_manager.h"
 #include "components/variations/service/variations_service.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/ssl_status.h"
@@ -154,7 +158,6 @@
 #include "components/messages/android/messages_feature.h"
 #include "components/strings/grit/components_strings.h"
 #else  // !BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/autofill_ai/chrome_autofill_ai_client.h"
 #include "chrome/browser/ui/autofill/autofill_ai/save_or_update_autofill_ai_data_controller.h"
 #include "chrome/browser/ui/autofill/delete_address_profile_dialog_controller_impl.h"
 #include "chrome/browser/ui/autofill/payments/offer_notification_bubble_controller_impl.h"
@@ -169,8 +172,8 @@
 #include "chrome/browser/ui/toasts/toast_controller.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_view_views.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
-#include "components/autofill/core/browser/integrators/autofill_ai/autofill_ai_delegate.h"
-#include "components/autofill_ai/core/browser/autofill_ai_manager.h"  // nogncheck
+#include "components/autofill/core/browser/integrators/autofill_ai/autofill_ai_manager.h"
+#include "components/autofill/core/browser/integrators/autofill_ai/autofill_ai_manager.h"  // nogncheck
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(ENABLE_COMPOSE)
@@ -336,7 +339,7 @@ void LaunchPlusAddressUserPerceptionSurvey(
       /*product_specific_bits_data=*/{},
       /*product_specific_string_data=*/
       delegate->GetPlusAddressHatsData(),
-      /*navigation_behaviour=*/HatsService::NavigationBehaviour::ALLOW_ANY,
+      /*navigation_behavior=*/HatsService::NavigationBehavior::ALLOW_ANY,
       /*success_callback=*/base::DoNothing(),
       /*failure_callback=*/base::DoNothing());
 }
@@ -371,7 +374,7 @@ base::WeakPtr<AutofillClient> ChromeAutofillClient::GetWeakPtr() {
 }
 
 const std::string& ChromeAutofillClient::GetAppLocale() const {
-  return g_browser_process->GetApplicationLocale();
+  return g_browser_process->GetFeatures()->application_locale_storage()->Get();
 }
 
 version_info::Channel ChromeAutofillClient::GetChannel() const {
@@ -404,13 +407,13 @@ VotesUploader& ChromeAutofillClient::GetVotesUploader() {
   return votes_uploader_;
 }
 
-AutofillOptimizationGuide* ChromeAutofillClient::GetAutofillOptimizationGuide()
-    const {
+AutofillOptimizationGuideDecider*
+ChromeAutofillClient::GetAutofillOptimizationGuideDecider() const {
   Profile* profile =
       Profile::FromBrowserContext(web_contents()->GetBrowserContext());
   return profile->ShutdownStarted()
              ? nullptr
-             : AutofillOptimizationGuideFactory::GetForProfile(profile);
+             : AutofillOptimizationGuideDeciderFactory::GetForProfile(profile);
 }
 
 FieldClassificationModelHandler*
@@ -427,13 +430,11 @@ ChromeAutofillClient::GetAutofillFieldClassificationModelHandler() {
 FieldClassificationModelHandler*
 ChromeAutofillClient::GetPasswordManagerFieldClassificationModelHandler() {
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
-  if (base::FeatureList::IsEnabled(
-          password_manager::features::kPasswordFormClientsideClassifier)) {
-    return PasswordFieldClassificationModelHandlerFactory::GetForBrowserContext(
-        web_contents()->GetBrowserContext());
-  }
-#endif
+  return PasswordFieldClassificationModelHandlerFactory::GetForBrowserContext(
+      web_contents()->GetBrowserContext());
+#else
   return nullptr;
+#endif
 }
 
 PersonalDataManager& ChromeAutofillClient::GetPersonalDataManager() {
@@ -441,10 +442,10 @@ PersonalDataManager& ChromeAutofillClient::GetPersonalDataManager() {
       web_contents()->GetBrowserContext()));
 }
 
-ValuablesDataManager& ChromeAutofillClient::GetValuablesDataManager() {
+ValuablesDataManager* ChromeAutofillClient::GetValuablesDataManager() {
   Profile* profile =
       Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  return CHECK_DEREF(ValuablesDataManagerFactory::GetForProfile(profile));
+  return ValuablesDataManagerFactory::GetForProfile(profile);
 }
 
 EntityDataManager* ChromeAutofillClient::GetEntityDataManager() {
@@ -485,10 +486,23 @@ AutofillPlusAddressDelegate* ChromeAutofillClient::GetPlusAddressDelegate() {
       web_contents()->GetBrowserContext());
 }
 
+PasswordManagerDelegate* ChromeAutofillClient::GetPasswordManagerDelegate(
+    const FieldGlobalId& field_id) {
+  ChromePasswordManagerClient* client =
+      ChromePasswordManagerClient::FromWebContents(web_contents());
+  return client ? client->GetAutofillDelegate(field_id) : nullptr;
+}
+
+OtpDelegate* ChromeAutofillClient::GetOtpDelegate() {
+  ChromePasswordManagerClient* client =
+      ChromePasswordManagerClient::FromWebContents(web_contents());
+  return client ? client->GetOtpManager() : nullptr;
+}
+
 void ChromeAutofillClient::GetAiPageContent(GetAiPageContentCallback callback) {
   blink::mojom::AIPageContentOptionsPtr extraction_options =
-      optimization_guide::DefaultAIPageContentOptions();
-  extraction_options->on_critical_path = false;
+      optimization_guide::DefaultAIPageContentOptions(
+          /*on_critical_path =*/false);
   optimization_guide::GetAIPageContent(
       web_contents(), std::move(extraction_options),
       base::BindOnce([](std::optional<optimization_guide::AIPageContentResult>
@@ -503,16 +517,12 @@ void ChromeAutofillClient::GetAiPageContent(GetAiPageContentCallback callback) {
       }).Then(std::move(callback)));
 }
 
-AutofillAiDelegate* ChromeAutofillClient::GetAutofillAiDelegate() {
+AutofillAiManager* ChromeAutofillClient::GetAutofillAiManager() {
 #if !BUILDFLAG(IS_ANDROID)
-  if (tabs::TabInterface* tab = tabs::TabInterface::MaybeGetFromContents(
-          web_contents()->GetOutermostWebContents())) {
-    ChromeAutofillAiClient* client =
-        tab->GetTabFeatures()->chrome_autofill_ai_client();
-    return client ? &client->GetManager() : nullptr;
-  }
-#endif
+  return &autofill_ai_manager_;
+#else
   return nullptr;
+#endif
 }
 
 AutofillAiModelCache* ChromeAutofillClient::GetAutofillAiModelCache() {
@@ -529,7 +539,8 @@ AutofillAiModelExecutor* ChromeAutofillClient::GetAutofillAiModelExecutor() {
 
 IdentityCredentialDelegate*
 ChromeAutofillClient::GetIdentityCredentialDelegate() {
-  if (!base::FeatureList::IsEnabled(::features::kFedCmDelegation)) {
+  if (!(base::FeatureList::IsEnabled(::features::kFedCmDelegation) ||
+        base::FeatureList::IsEnabled(::features::kFedCmAutofill))) {
     return nullptr;
   }
 
@@ -747,6 +758,15 @@ void ChromeAutofillClient::ShowAutofillSettings(
       case SuggestionType::kManageIban:
         chrome::ShowSettingsSubPage(browser, chrome::kPaymentsSubPage);
         return;
+      case SuggestionType::kManageLoyaltyCard:
+        CHECK(base::FeatureList::IsEnabled(
+            features::kAutofillEnableLoyaltyCardsFilling));
+        static constexpr std::string_view kValuableManagementUrl =
+            "https://wallet.google.com/"
+            "wallet?p=loyalty&utm_source=chrome&utm_medium=redirect&utm_"
+            "campaign=loyalty";
+        ShowSingletonTab(browser, GURL(kValuableManagementUrl));
+        return;
       default:
         NOTREACHED();
     }
@@ -766,6 +786,7 @@ void ChromeAutofillClient::ConfirmSaveAddressProfile(
 #else
   AddressBubblesController::SetUpAndShowSaveOrUpdateAddressBubble(
       web_contents(), profile, original_profile, is_migration_to_account,
+      !GetPersonalDataManager().address_data_manager().GetProfiles().empty(),
       std::move(callback));
 #endif
 }
@@ -906,6 +927,19 @@ void ChromeAutofillClient::TriggerUserPerceptionOfAutofillSurvey(
 #endif
 }
 
+void ChromeAutofillClient::TriggerDeclinedSaveAddressReasonSurvey() {
+#if !BUILDFLAG(IS_ANDROID)
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  auto* hats_service =
+      HatsServiceFactory::GetForProfile(profile, /*create_if_necessary=*/true);
+  CHECK(hats_service);
+  hats_service->LaunchDelayedSurveyForWebContents(
+      kHatsSurveyTriggerAutofillAddressUserDeclinedSave, web_contents(),
+      /*timeout_ms=*/5000);
+#endif
+}
+
 bool ChromeAutofillClient::IsAutofillEnabled() const {
   return IsAutofillProfileEnabled() || IsAutofillPaymentMethodsEnabled();
 }
@@ -935,8 +969,7 @@ void ChromeAutofillClient::DidFillForm(AutofillTriggerSource trigger_source,
 #if BUILDFLAG(IS_ANDROID)
   if (trigger_source == AutofillTriggerSource::kTouchToFillCreditCard &&
       !is_refill) {
-    // TODO(crbug.com/40900538): Test that the message was announced.
-    autofill::AnnounceTextForA11y(
+    autofill::AutofillAccessibilityHelper::GetInstance()->AnnounceTextForA11y(
         l10n_util::GetStringUTF16(IDS_AUTOFILL_A11Y_ANNOUNCE_FILLED_FORM));
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -1071,6 +1104,12 @@ void ChromeAutofillClient::NotifyIphFeatureUsed(
 ChromeAutofillClient::ChromeAutofillClient(content::WebContents* web_contents)
     : ContentAutofillClient(web_contents),
       content::WebContentsObserver(web_contents),
+#if !BUILDFLAG(IS_ANDROID)
+      autofill_ai_manager_(
+          this,
+          StrikeDatabaseFactory::GetForProfile(
+              Profile::FromBrowserContext(web_contents->GetBrowserContext()))),
+#endif
       ablation_study_(g_browser_process->local_state()),
       identity_credential_delegate_(web_contents) {
   // Initialize StrikeDatabase so its cache will be loaded and ready to use
@@ -1128,6 +1167,15 @@ std::unique_ptr<AutofillManager> ChromeAutofillClient::CreateManager(
   return std::make_unique<BrowserAutofillManager>(&driver);
 }
 
+credential_management::ContentCredentialManager*
+ChromeAutofillClient::GetContentCredentialManager() {
+  if (auto* chrome_password_manager_client =
+          ChromePasswordManagerClient::FromWebContents(web_contents())) {
+    return chrome_password_manager_client->GetContentCredentialManager();
+  }
+  return nullptr;
+}
+
 void ChromeAutofillClient::set_test_addresses(
     std::vector<AutofillProfile> test_addresses) {
   test_addresses_ = std::move(test_addresses);
@@ -1156,6 +1204,37 @@ void ChromeAutofillClient::TriggerPlusAddressUserPerceptionSurvey(
       HatsServiceFactory::GetForProfile(profile,
                                         /*create_if_necessary=*/true),
       delegate, survey_type);
+}
+
+optimization_guide::ModelQualityLogsUploaderService*
+ChromeAutofillClient::GetMqlsUploadService() {
+#if !BUILDFLAG(IS_ANDROID)
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  OptimizationGuideKeyedService* optimization_guide_keyed_service =
+      OptimizationGuideKeyedServiceFactory::GetForProfile(profile);
+  if (!optimization_guide_keyed_service) {
+    return nullptr;
+  }
+  return optimization_guide_keyed_service->GetModelQualityLogsUploaderService();
+#else
+  return nullptr;
+#endif
+}
+
+void ChromeAutofillClient::ShowEntitySaveOrUpdateBubble(
+    EntityInstance new_entity,
+    std::optional<EntityInstance> old_entity,
+    EntitySaveOrUpdatePromptResultCallback prompt_acceptance_callback) {
+#if !BUILDFLAG(IS_ANDROID)
+  if (auto* controller = SaveOrUpdateAutofillAiDataController::GetOrCreate(
+          &*web_contents(), GetAppLocale())) {
+    controller->ShowPrompt(std::move(new_entity), std::move(old_entity),
+                           std::move(prompt_acceptance_callback));
+    return;
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+  std::move(prompt_acceptance_callback).Run(EntitySaveOrUpdatePromptResult());
 }
 
 }  // namespace autofill

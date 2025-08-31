@@ -103,16 +103,10 @@ GREYElementInteraction* RequestDesktopButton() {
 #define MAYBE_testOpenTabInTabStripBeforePrerenderedTab \
   DISABLED_testOpenTabInTabStripBeforePrerenderedTab
 #else
+// TODO(crbug.com/441756543): Re-enable this test once the flakiness is fixed.
 #define MAYBE_testOpenTabInTabStripBeforePrerenderedTab \
-  testOpenTabInTabStripBeforePrerenderedTab
+  FLAKY_testOpenTabInTabStripBeforePrerenderedTab
 #endif  // defined(OFFICIAL_BUILD)
-
-- (AppLaunchConfiguration)appConfigurationForTestCase {
-  AppLaunchConfiguration config;
-  // Put MVT as the top magic stack module for easier tapping.
-  config.additional_args.push_back("--test-ios-module-ranker=mvt");
-  return config;
-}
 
 - (void)addURLToHistory {
   if (![ChromeTestCase forceRestartAndWipe]) {

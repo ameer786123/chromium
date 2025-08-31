@@ -7,7 +7,6 @@
 #include "ash/constants/web_app_id_constants.h"
 #include "base/check_deref.h"
 #include "base/check_is_test.h"
-#include "base/debug/stack_trace.h"
 #include "base/functional/bind.h"
 #include "base/values.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
@@ -15,7 +14,6 @@
 #include "chrome/browser/chromeos/enterprise/cloud_storage/policy_utils.h"
 #include "chrome/browser/chromeos/extensions/odfs_config_private/odfs_config_private_api.h"
 #include "chrome/browser/chromeos/upload_office_to_cloud/upload_office_to_cloud.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_selections.h"
 #include "chrome/common/extensions/api/odfs_config_private.h"
@@ -29,6 +27,7 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/event_router_factory.h"
 #include "extensions/browser/extension_event_histogram_value.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_factory.h"
 #include "extensions/browser/extension_system.h"
@@ -153,7 +152,7 @@ void OneDrivePrefObserver::MaybeUninstallOdfsExtension(Mount mount) {
            .GetByID(extension_misc::kODFSExtensionId)) {
     return;
   }
-  CHECK_DEREF(extensions::ExtensionSystem::Get(profile_)->extension_service())
+  CHECK_DEREF(extensions::ExtensionRegistrar::Get(profile_))
       .RemoveComponentExtension(extension_misc::kODFSExtensionId);
 }
 

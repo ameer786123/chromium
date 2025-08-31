@@ -75,7 +75,7 @@ static_library("multidevice_setup") {
     "//chromeos/ash/services/secure_channel/public/cpp/client",
     "//chromeos/ash/services/secure_channel/public/mojom",
     "//components/pref_registry",
-    "//components/prefs:prefs",
+    "//components/prefs",
     "//components/session_manager/core",
     "//url",
   ]
@@ -170,8 +170,13 @@ source_set("unit_tests") {
     "//chromeos/ash/services/multidevice_setup/public/mojom",
     "//chromeos/ash/services/secure_channel/public/cpp/client:test_support",
     "//components/session_manager/core",
+    "//components/session_manager/core:test_support",
     "//components/sync_preferences:test_support",
     "//testing/gmock",
     "//testing/gtest",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

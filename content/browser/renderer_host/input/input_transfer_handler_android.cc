@@ -47,7 +47,7 @@ InputTransferHandlerAndroid::InputTransferHandlerAndroid(
       jni_delegate_(std::make_unique<JniDelegateImpl>()),
       input_observer_(*this) {
   CHECK(client_);
-  CHECK(input::IsTransferInputToVizSupported());
+  CHECK(input::InputUtils::IsTransferInputToVizSupported());
 }
 
 InputTransferHandlerAndroid::InputTransferHandlerAndroid()
@@ -73,7 +73,8 @@ void InputTransferHandlerAndroid::EmitTransferResultHistogramAndTraceEvent(
 }
 
 bool InputTransferHandlerAndroid::OnTouchEvent(
-    const ui::MotionEventAndroid& event) {
+    const ui::MotionEventAndroid& event,
+    bool is_ignoring_input_events) {
   if (handler_state_ == HandlerState::kDroppingCurrentSequence) {
     DropCurrentSequence(event);
     return true;
@@ -84,11 +85,28 @@ bool InputTransferHandlerAndroid::OnTouchEvent(
     return true;
   }
 
+  if (handler_state_ == HandlerState::kConsumeSequence) {
+    ConsumeSequence(event);
+    return true;
+  }
+
+  if (event.GetRawDownTime() <= cached_transferred_sequence_down_time_ms_ &&
+      requested_input_back_reason_ ==
+          RequestInputBackReason::kStartDragAndDropGesture) {
+    requested_input_back_reason_ = std::nullopt;
+    handler_state_ = HandlerState::kConsumeSequence;
+    ConsumeSequence(event);
+    return true;
+  }
+
+  requested_input_back_reason_ = std::nullopt;
+
   if (event.GetAction() != ui::MotionEvent::Action::DOWN) {
     return false;
   }
 
-  if (event.GetToolType() != ui::MotionEvent::ToolType::FINGER) {
+  if (event.ui::MotionEvent::GetToolType() !=
+      ui::MotionEvent::ToolType::FINGER) {
     EmitTransferResultHistogramAndTraceEvent(
         TransferInputToVizResult::kNonFingerToolType);
     return false;
@@ -97,14 +115,14 @@ bool InputTransferHandlerAndroid::OnTouchEvent(
   const bool active_touch_sequence_on_viz =
       cached_transferred_sequence_down_time_ms_ > last_seen_touch_end_ts_;
 
-  // GetDownTime is in milliseconds precision, convert delta to milliseconds
+  // GetRawDownTime is in milliseconds precision, convert delta to milliseconds
   // precision as well for accurate comparison.
   const int64_t delta =
-      (event.GetEventTime() - event.GetDownTime()).InMilliseconds();
+      (event.GetEventTime() - event.GetRawDownTime()).InMilliseconds();
   if (delta < 0) {
     // TODO(crbug.com/406485568): Investigate this negative delta and
     // potentially file an Android platform bug.
-    TRACE_EVENT_INSTANT("input", "DownTimeAfterEventTime");
+    TRACE_EVENT_INSTANT("input,input.scrolling", "DownTimeAfterEventTime");
     EmitTransferResultHistogramAndTraceEvent(
         TransferInputToVizResult::kDownTimeAfterEventTime);
     if (active_touch_sequence_on_viz) {
@@ -123,6 +141,23 @@ bool InputTransferHandlerAndroid::OnTouchEvent(
         TransferInputToVizResult::kSequenceTransferredBackFromViz);
     // We don't want to retransfer this sequence which was transferred back from
     // Viz.
+    return false;
+  }
+
+  if (is_ignoring_input_events) {
+    EmitTransferResultHistogramAndTraceEvent(
+        TransferInputToVizResult::kWebContentsIgnoringInputEvents);
+    // Let browser handle this sequence since it might potentially be filtered
+    // out at WebContents level.
+    return false;
+  }
+
+  if (!client_->IsMojoRIRDelegateConnectionSetup()) {
+    EmitTransferResultHistogramAndTraceEvent(
+        TransferInputToVizResult::kRIRDelegateConnectionNotSetup);
+    // Let browser handle this sequence since the input handling interfaces on
+    // VizCompositorThread have not been yet setup for this
+    // RenderWidgetHostViewAndroid.
     return false;
   }
 
@@ -181,12 +216,19 @@ bool InputTransferHandlerAndroid::FilterRedundantDownEvent(
   // `cached_transferred_sequence_down_time_ms_` would have a more recent time
   // than the down time of the whole sequence.
   requested_input_back_ = false;
-  return event.GetDownTime() <= cached_transferred_sequence_down_time_ms_;
+  return event.GetRawDownTime() <= cached_transferred_sequence_down_time_ms_;
 }
 
-void InputTransferHandlerAndroid::RequestInputBack() {
+void InputTransferHandlerAndroid::RequestInputBack(
+    RequestInputBackReason reason) {
   requested_input_back_ = true;
+  requested_input_back_reason_ = reason;
   GetHostFrameSinkManager()->RequestInputBack();
+}
+
+bool InputTransferHandlerAndroid::IsTouchSequencePotentiallyActiveOnViz()
+    const {
+  return cached_transferred_sequence_down_time_ms_ > last_seen_touch_end_ts_;
 }
 
 void InputTransferHandlerAndroid::OnTouchEnd(base::TimeTicks event_time) {
@@ -230,9 +272,12 @@ void InputTransferHandlerAndroid::ConsumeEventsUntilCancel(
   // TODO(crbug.com/383307455): Forward events seen on Browser post transfer
   // over to Viz.
   if (event.GetAction() == ui::MotionEvent::Action::CANCEL) {
-    // Check if this cancel has same downtime as the original down used for
-    // transfer.
-    CHECK(event.GetDownTime() == cached_transferred_sequence_down_time_ms_);
+    if (event.GetRawDownTime() != cached_transferred_sequence_down_time_ms_) {
+      // TODO(crbug.com/411338242): Investigate touch cancel received with
+      // different downtime.
+      TRACE_EVENT_INSTANT("input,input.scrolling",
+                          "CancelWithDifferentDownTime");
+    }
     base::UmaHistogramCustomCounts(
         kTouchMovesSeenHistogram, touch_moves_seen_after_transfer_,
         kTouchMoveCountsMin, kTouchMoveCountsMax, kTouchMoveCountsBuckets);
@@ -248,12 +293,21 @@ void InputTransferHandlerAndroid::ConsumeEventsUntilCancel(
                                 event.GetAction());
 }
 
+void InputTransferHandlerAndroid::ConsumeSequence(
+    const ui::MotionEventAndroid& event) {
+  CHECK_EQ(handler_state_, HandlerState::kConsumeSequence);
+  if (event.GetAction() == ui::MotionEvent::Action::CANCEL ||
+      event.GetAction() == ui::MotionEvent::Action::UP) {
+    handler_state_ = HandlerState::kIdle;
+  }
+}
+
 void InputTransferHandlerAndroid::OnTouchTransferredSuccessfully(
     const ui::MotionEventAndroid& event,
     bool browser_would_have_handled) {
   CHECK_EQ(handler_state_, HandlerState::kIdle);
   handler_state_ = HandlerState::kConsumeEventsUntilCancel;
-  cached_transferred_sequence_down_time_ms_ = event.GetDownTime();
+  cached_transferred_sequence_down_time_ms_ = event.GetRawDownTime();
   client_->SendStateOnTouchTransfer(event, browser_would_have_handled);
 }
 

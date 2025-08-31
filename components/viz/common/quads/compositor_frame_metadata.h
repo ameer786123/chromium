@@ -19,6 +19,7 @@
 #include "components/viz/common/quads/frame_deadline.h"
 #include "components/viz/common/quads/frame_interval_inputs.h"
 #include "components/viz/common/quads/offset_tag.h"
+#include "components/viz/common/quads/trees_in_viz_timing.h"
 #include "components/viz/common/surfaces/region_capture_bounds.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "components/viz/common/surfaces/surface_range.h"
@@ -178,6 +179,9 @@ class VIZ_COMMON_EXPORT CompositorFrameMetadata {
   // applicable to frames of the root surface.
   gfx::OverlayTransform display_transform_hint = gfx::OVERLAY_TRANSFORM_NONE;
 
+  // Please refer RenderFrameMetadata::is_mobile_optimized for detailed comment.
+  bool is_mobile_optimized = false;
+
   // Contains the metadata required for drawing a delegated ink trail onto the
   // end of a rendered ink stroke. This should only be present when two
   // conditions are met:
@@ -225,6 +229,9 @@ class VIZ_COMMON_EXPORT CompositorFrameMetadata {
 
   // Information used to compute overall ideal frame interval.
   FrameIntervalInputs frame_interval_inputs;
+
+  // Timestamps for TreesInViz metric reporting.
+  TreesInVizTiming trees_in_viz_timing_details;
 
  private:
   CompositorFrameMetadata(const CompositorFrameMetadata& other);

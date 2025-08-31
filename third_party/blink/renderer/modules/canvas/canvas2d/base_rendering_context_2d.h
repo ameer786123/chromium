@@ -15,13 +15,13 @@
 #include "base/time/time.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_canvas_fill_rule.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_image_smoothing_quality.h"
-#include "third_party/blink/renderer/core/html/canvas/canvas_2d_color_params.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_2d_recorder_context.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_path.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_rendering_context_2d_state.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/graphics/canvas_2d_color_params.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_deferred_paint_record.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
@@ -97,13 +97,6 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
 
   CanvasRenderingContext2DSettings* getContextAttributes() const;
 
-  // https://github.com/WICG/canvas-place-element
-  void placeElement(Element* element,
-                    double x,
-                    double y,
-                    ExceptionState& exception_state);
-  void OnPlaceElementStateChanged(Element& element);
-
   ImageData* createImageData(ImageData*, ExceptionState&) const;
   ImageData* createImageData(int sw, int sh, ExceptionState&) const;
   ImageData* createImageData(int sw,
@@ -156,7 +149,7 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
   // before `transferToGPUTexture` is first called.
   V8GPUTextureFormat getTextureFormat() const;
 
-  virtual bool CanCreateCanvas2dResourceProvider() const = 0;
+  virtual bool CanCreateCanvas2dResourceProvider() = 0;
 
   String lang() const;
   void setLang(const String&);
@@ -228,9 +221,13 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
   gfx::ColorSpace GetColorSpace() const final {
     return color_params_.GetGfxColorSpace();
   }
+  bool Is2DCanvasAccelerated() const final;
   void PageVisibilityChanged() override {}
   void RestoreCanvasMatrixClipStack(cc::PaintCanvas* c) const final;
   void Reset() override;
+  scoped_refptr<StaticBitmapImage> PaintRenderingResultsToSnapshot(
+      SourceDrawingBuffer source_buffer,
+      FlushReason reason) final;
 
   void SetTryRestoreContextIntervalForTesting(base::TimeDelta delay) {
     try_restore_context_interval_ = delay;
@@ -276,13 +273,9 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
   void TryRestoreContextEvent(TimerBase*);
   void RestoreFromInvalidSizeIfNeeded() override;
 
-  // `CanvasRenderingContext2D` and `OffscreenCanvasRenderingContext2D` do not
-  // create resource providers the same way. Thus, `BaseRenderingContext2D`
-  // needs a dedicated function to create the provider the right way. Returns
-  // `nullptr` while the context is lost.
-  // TODO(crbug.com/346766781): Remove once HTML and Offscreen provider creation
-  // are unified.
-  virtual CanvasResourceProvider* GetOrCreateCanvas2DResourceProvider() = 0;
+  virtual std::unique_ptr<CanvasResourceProvider>
+      ReplaceResourceProviderForCanvas2D(
+          std::unique_ptr<CanvasResourceProvider>) = 0;
 
   static const char kInheritString[];
 
@@ -296,12 +289,8 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
 
   bool context_restorable_{true};
 
-  // TODO(issues.chromium.org/issues/349835587): Add an observer to know if the
-  // element is detached and then remove it.
-  HeapHashMap<WeakMember<Element>, scoped_refptr<CanvasDeferredPaintRecord>>
-      placed_elements_;
-
  private:
+  virtual void EnableAccelerationIfPossible() {}
   void DrawTextInternal(const String& text,
                         double x,
                         double y,
@@ -316,7 +305,6 @@ class MODULES_EXPORT BaseRenderingContext2D : public CanvasRenderingContext,
   void PutByteArray(const SkPixmap& source,
                     const gfx::Rect& source_rect,
                     const gfx::Vector2d& dest_offset);
-  virtual bool IsCanvas2DBufferValid() const { NOTREACHED(); }
 
   void WillUseCurrentFont() const;
 

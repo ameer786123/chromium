@@ -10,11 +10,12 @@
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
+#include "chrome/browser/extensions/extension_ui_util.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
-#include "chrome/browser/ui/views/extensions/extensions_dialogs_utils.h"
+#include "chrome/browser/ui/views/extensions/extension_view_utils.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/common/extension_features.h"
@@ -22,6 +23,7 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/style/typography.h"
@@ -213,9 +215,10 @@ ToolbarActionHoverCardBubbleView::ToolbarActionHoverCardBubbleView(
   GetBubbleFrameView()->SetPreferredArrowAdjustment(
       views::BubbleFrameView::PreferredArrowAdjustment::kOffset);
   GetBubbleFrameView()->set_hit_test_transparent(true);
-  GetBubbleFrameView()->SetCornerRadius(
-      ChromeLayoutProvider::Get()->GetCornerRadiusMetric(
-          views::Emphasis::kHigh));
+
+  const int corner_radius = ChromeLayoutProvider::Get()->GetCornerRadiusMetric(
+      views::Emphasis::kHigh);
+  GetBubbleFrameView()->SetRoundedCorners(gfx::RoundedCornersF(corner_radius));
 
   // Start in the fully "faded-in" position so that whatever text we initially
   // display is visible.
@@ -257,8 +260,9 @@ void ToolbarActionHoverCardBubbleView::UpdateCardContent(
     site_access_title_label_->SetData(
         {GetSiteAccessTitle(state.site_access), /*is_filename=*/false});
     site_access_description_label_->SetData(
-        {GetSiteAccessDescription(state.site_access,
-                                  GetCurrentHost(web_contents)),
+        {GetSiteAccessDescription(
+             state.site_access,
+             extensions::ui_util::GetFormattedHostForDisplay(*web_contents)),
          /*is_filename=*/false});
   }
 

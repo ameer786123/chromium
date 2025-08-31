@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_PAYMENTS_BNPL_MANAGER_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_PAYMENTS_BNPL_MANAGER_H_
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -44,21 +45,21 @@ class BnplManager {
   BnplManager& operator=(const BnplManager& other) = delete;
   virtual ~BnplManager();
 
-  // Retrieve supported BNPL issuers.
-  static const std::array<std::string_view, 2>& GetSupportedBnplIssuerIds();
+  // Returns if `issuer_id` is a supported BNPL issuer.
+  static bool IsBnplIssuerSupported(std::string_view issuer_id);
 
   // Initializes the BNPL flow, which includes UI shown to the user to select an
   // issuer, a possible ToS dialog, and redirecting to the selected issuer's
   // website before filling the form, if the flow succeeds.
   // `final_checkout_amount` is the checkout amount extracted from the page (in
-  // micros). `on_bnpl_vcn_fetched_callback` is the callback that should be run
-  // if the flow is completed successfully, to fill the form with the VCN that
-  // will facilitate the BNPL transaction.
-  //
-  // TODO(crbug.com/409358161): Rename `InitBnplFlow` to
-  // `OnDidAcceptBnplSuggestion`.
-  virtual void InitBnplFlow(
-      uint64_t final_checkout_amount,
+  // micros). It is present if amount extraction completed successfully before
+  // the user accepted the BNPL suggestion, and is empty if the user accepted
+  // the suggestion before amount extraction finished running.
+  // `on_bnpl_vcn_fetched_callback` is the callback that should be run if the
+  // flow is completed successfully, to fill the form with the VCN that will
+  // facilitate the BNPL transaction.
+  virtual void OnDidAcceptBnplSuggestion(
+      std::optional<uint64_t> final_checkout_amount,
       OnBnplVcnFetchedCallback on_bnpl_vcn_fetched_callback);
 
   // Notifies the BNPL manager that suggestion generation has been requested
@@ -80,7 +81,19 @@ class BnplManager {
   // result. This must be called after `NotifyOfSuggestionGeneration()`, so
   // that the manager can update suggestions for buy-now-pay-later.
   virtual void OnAmountExtractionReturned(
-      const std::optional<uint64_t>& extracted_amount);
+      const std::optional<uint64_t>& extracted_amount,
+      bool timeout_reached = false);
+
+  // Determines if autofill BNPL is supported.
+  // Returns true if:
+  // 1. The profile is not off the record.
+  // 2. The client has an `AutofillOptimizationGuideDecider` assigned.
+  // 3. The URL being visited is within the BNPL issuer allowlist.
+  virtual bool IsEligibleForBnpl() const;
+
+  // Returns true if the issuer for the ongoing flow contains the required
+  // action `PaymentInstrument::ActionRequired::kAcceptTos`.
+  bool AcceptTosActionRequired() const;
 
  private:
   friend class BnplManagerTestApi;
@@ -128,8 +141,9 @@ class BnplManager {
     BnplIssuer issuer;
 
     // The final checkout amount on the page (in micros), used for the ongoing
-    // BNPL flow.
-    uint64_t final_checkout_amount;
+    // BNPL flow. It is present if amount extraction has been completed
+    // successfully, and is empty if amount extraction has not finished running.
+    std::optional<uint64_t> final_checkout_amount;
 
     // The callback that will fill the fetched BNPL VCN into the form.
     OnBnplVcnFetchedCallback on_bnpl_vcn_fetched_callback;
@@ -156,18 +170,27 @@ class BnplManager {
   // or terms of services depending on the issuer.
   void OnIssuerSelected(BnplIssuer selected_issuer);
 
+  // This function makes the appropriate server call to retrieve the ToS legal
+  // message for the issuer.
+  void GetLegalMessageFromServer();
+
   // This function makes the appropriate call to the payments server to get info
   // from the server for creating an instrument for the selected issuer.
   void GetDetailsForCreateBnplPaymentInstrument();
 
-  // The callback after
-  // `PaymentsNetworkInterface::GetDetailsForCreateBnplPaymentInstrument` calls.
-  // The callback contains the result of the call as well as `context_token`
-  // for creating the instrument and `legal_message` for user action.
-  void OnDidGetDetailsForCreateBnplPaymentInstrument(
+  // This function makes the appropriate call to the payments server to get info
+  // from the server for updating an instrument for the selected issuer.
+  void GetDetailsForUpdateBnplPaymentInstrument();
+
+  // The callback after the legal message for the ToS flow is received from a
+  // server call. The callback contains the result of the call, `legal_message`
+  // to be displayed to users, and `context_token` for providing information
+  // from this request that is needed by future server calls after ToS
+  // flow completion.
+  void OnDidGetLegalMessageFromServer(
       PaymentsAutofillClient::PaymentsRpcResult result,
       std::string context_token,
-      std::unique_ptr<base::Value::Dict> legal_message);
+      LegalMessageLines legal_message);
 
   // Runs when a linked issuer is selected by the user. Will load risk data
   // if it is not cached, and then call the functions for fetching issuer
@@ -200,7 +223,7 @@ class BnplManager {
 
   // Combines `responses` from suggestion shown event and amount extraction,
   // and try to show card suggestions with buy-now-pay-later suggestion.
-  void MaybeUpdateSuggestionsWithBnpl(
+  void MaybeUpdateDesktopSuggestionsWithBnpl(
       const AutofillSuggestionTriggerSource trigger_source,
       std::vector<std::variant<SuggestionsShownResponse,
                                std::optional<uint64_t>>> responses);
@@ -231,6 +254,15 @@ class BnplManager {
   void OnBnplPaymentInstrumentCreated(
       PaymentsAutofillClient::PaymentsRpcResult result,
       std::string instrument_id);
+
+  // Sends a request to the Payments servers to update a BNPL payment
+  // instrument.
+  void UpdateBnplPaymentInstrument();
+
+  // Callback after attempting to update a BNPL payment instrument. `result`
+  // indicates success/failure; If successful, fetches the redirect URL.
+  void OnBnplPaymentInstrumentUpdated(
+      PaymentsAutofillClient::PaymentsRpcResult result);
 
   // Return all BNPL Issuer contexts including eligibility in order of:
   // eligible + linked, eligible + unlinked, uneligible + linked,

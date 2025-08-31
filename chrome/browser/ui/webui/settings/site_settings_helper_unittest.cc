@@ -8,6 +8,7 @@
 #include "base/containers/to_vector.h"
 #include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
@@ -47,6 +48,7 @@
 #include "content/public/browser/file_system_access_permission_context.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_task_environment.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/device/public/cpp/test/fake_usb_device_manager.h"
@@ -59,7 +61,6 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
@@ -88,8 +89,6 @@ constexpr ContentSettingsType kContentTypeFileSystem =
     ContentSettingsType::FILE_SYSTEM_WRITE_GUARD;
 constexpr ContentSettingsType kContentTypeNotifications =
     ContentSettingsType::NOTIFICATIONS;
-constexpr ContentSettingsType kContentTypeTrackingProtection =
-    ContentSettingsType::TRACKING_PROTECTION;
 }  // namespace
 
 class SiteSettingsHelperTest : public testing::Test {
@@ -701,115 +700,6 @@ TEST_F(SiteSettingsHelperTest, CookieExceptions) {
   EXPECT_THAT(actual, testing::UnorderedElementsAreArray(expected));
 }
 
-TEST_F(SiteSettingsHelperTest,
-       TrackingProtectionExceptionsListIncludes3pcExceptions) {
-  TestingProfile profile;
-  HostContentSettingsMap* map =
-      HostContentSettingsMapFactory::GetForProfile(&profile);
-  // Add Tracking Protection exception
-  map->SetContentSettingCustomScope(
-      ContentSettingsPattern::Wildcard(),
-      ContentSettingsPattern::FromString("some-site.com"),
-      kContentTypeTrackingProtection, CONTENT_SETTING_ALLOW);
-  // Add 3PC exception
-  map->SetContentSettingCustomScope(
-      ContentSettingsPattern::Wildcard(),
-      ContentSettingsPattern::FromString("third-party-cookies.com"),
-      kContentTypeCookies, CONTENT_SETTING_ALLOW);
-  // Add 1PC exception
-  map->SetContentSettingCustomScope(
-      ContentSettingsPattern::FromString("first-party-cookies.com"),
-      ContentSettingsPattern::Wildcard(), kContentTypeCookies,
-      CONTENT_SETTING_ALLOW);
-
-  // Check that cookies list has two exceptions.
-  base::Value::List cookie_exceptions;
-  site_settings::GetExceptionsForContentType(kContentTypeCookies, &profile,
-                                             /*web_ui=*/nullptr,
-                                             /*incognito=*/false,
-                                             &cookie_exceptions);
-  ASSERT_EQ(2U, cookie_exceptions.size());
-
-  // Check that Tracking Protection list has two exceptions.
-  base::Value::List tp_exceptions;
-  site_settings::GetExceptionsForContentType(
-      kContentTypeTrackingProtection, &profile,
-      /*web_ui=*/nullptr,
-      /*incognito=*/false, &tp_exceptions);
-  ASSERT_EQ(2U, tp_exceptions.size());
-
-  // Verify the TP exception
-  ASSERT_TRUE(tp_exceptions[0].GetDict().contains(kType));
-  EXPECT_EQ(ContentSettingsTypeFromGroupName(
-                *tp_exceptions[0].GetDict().FindString(kType)),
-            kContentTypeTrackingProtection);
-  ASSERT_TRUE(tp_exceptions[0].GetDict().contains(kEmbeddingOrigin));
-  EXPECT_EQ(*tp_exceptions[0].GetDict().FindString(kEmbeddingOrigin),
-            "some-site.com");
-  EXPECT_FALSE(tp_exceptions[0].GetDict().contains(kDescription));
-  // Verify the 3PC exception
-  ASSERT_TRUE(tp_exceptions[1].GetDict().contains(kType));
-  EXPECT_EQ(ContentSettingsTypeFromGroupName(
-                *tp_exceptions[1].GetDict().FindString(kType)),
-            kContentTypeCookies);
-  ASSERT_TRUE(tp_exceptions[1].GetDict().contains(kEmbeddingOrigin));
-  EXPECT_EQ(*tp_exceptions[1].GetDict().FindString(kEmbeddingOrigin),
-            "third-party-cookies.com");
-  ASSERT_TRUE(tp_exceptions[1].GetDict().contains(kDescription));
-  EXPECT_EQ(
-      base::UTF8ToUTF16(*tp_exceptions[1].GetDict().FindString(kDescription)),
-      l10n_util::GetStringUTF16(
-          IDS_SETTINGS_THIRD_PARTY_COOKIES_ONLY_EXCEPTION_LABEL));
-}
-
-TEST_F(SiteSettingsHelperTest,
-       TrackingProtectionExceptionsListIncludes3pcExceptionsWithSamePattern) {
-  TestingProfile profile;
-  HostContentSettingsMap* map =
-      HostContentSettingsMapFactory::GetForProfile(&profile);
-  // Add Tracking Protection exception
-  map->SetContentSettingCustomScope(
-      ContentSettingsPattern::Wildcard(),
-      ContentSettingsPattern::FromString("some-site.com"),
-      kContentTypeTrackingProtection, CONTENT_SETTING_ALLOW);
-  // Add 3PC exception for same pattern
-  map->SetContentSettingCustomScope(
-      ContentSettingsPattern::Wildcard(),
-      ContentSettingsPattern::FromString("some-site.com"), kContentTypeCookies,
-      CONTENT_SETTING_ALLOW);
-
-  // Check that Tracking Protection list has two exceptions.
-  base::Value::List tp_exceptions;
-  site_settings::GetExceptionsForContentType(
-      kContentTypeTrackingProtection, &profile,
-      /*web_ui=*/nullptr,
-      /*incognito=*/false, &tp_exceptions);
-  ASSERT_EQ(2U, tp_exceptions.size());
-
-  // Verify the TP exception
-  ASSERT_TRUE(tp_exceptions[0].GetDict().contains(kType));
-  EXPECT_EQ(ContentSettingsTypeFromGroupName(
-                *tp_exceptions[0].GetDict().FindString(kType)),
-            kContentTypeTrackingProtection);
-  ASSERT_TRUE(tp_exceptions[0].GetDict().contains(kEmbeddingOrigin));
-  EXPECT_EQ(*tp_exceptions[0].GetDict().FindString(kEmbeddingOrigin),
-            "some-site.com");
-  EXPECT_FALSE(tp_exceptions[0].GetDict().contains(kDescription));
-  // Verify the 3PC exception, which will have the same embedding origin
-  ASSERT_TRUE(tp_exceptions[1].GetDict().contains(kType));
-  EXPECT_EQ(ContentSettingsTypeFromGroupName(
-                *tp_exceptions[1].GetDict().FindString(kType)),
-            kContentTypeCookies);
-  ASSERT_TRUE(tp_exceptions[1].GetDict().contains(kEmbeddingOrigin));
-  EXPECT_EQ(*tp_exceptions[1].GetDict().FindString(kEmbeddingOrigin),
-            "some-site.com");
-  ASSERT_TRUE(tp_exceptions[1].GetDict().contains(kDescription));
-  EXPECT_EQ(
-      base::UTF8ToUTF16(*tp_exceptions[1].GetDict().FindString(kDescription)),
-      l10n_util::GetStringUTF16(
-          IDS_SETTINGS_THIRD_PARTY_COOKIES_ONLY_EXCEPTION_LABEL));
-}
-
 TEST_F(SiteSettingsHelperTest, GetExpirationDescription) {
   base::subtle::ScopedTimeClockOverrides time_override(
       &SiteSettingsHelperTest::GetReferenceTime,
@@ -1098,8 +988,6 @@ TEST_F(SiteSettingsHelperTest, AutomaticFullscreenVisibility) {
   TestingProfile profile;
   profile.SetPermissionControllerDelegate(
       permissions::GetPermissionControllerDelegate(&profile));
-  base::test::ScopedFeatureList feature_list{
-      features::kAutomaticFullscreenContentSetting};
   const ContentSettingsType type = ContentSettingsType::AUTOMATIC_FULLSCREEN;
 
   // Automatic Fullscreen is visible for non-origin-specific lists.
@@ -1550,10 +1438,7 @@ class SiteSettingsHelperExtensionTest
   }
 
   void UnloadExtension(std::string extension_id) {
-    auto* extension_service =
-        extensions::ExtensionSystem::Get(profile())->extension_service();
-    ASSERT_TRUE(extension_service);
-    extension_service->UnloadExtension(
+    extensions::ExtensionRegistrar::Get(profile())->RemoveExtension(
         extension_id, extensions::UnloadedExtensionReason::DISABLE);
   }
 };
@@ -1717,8 +1602,6 @@ TEST_F(SiteSettingsHelperIsolatedWebAppTest,
 }
 
 TEST_F(SiteSettingsHelperIsolatedWebAppTest, AutomaticFullscreenVisibility) {
-  base::test::ScopedFeatureList feature_list{
-      features::kAutomaticFullscreenContentSetting};
   const ContentSettingsType type = ContentSettingsType::AUTOMATIC_FULLSCREEN;
   web_app::IsolatedWebAppUrlInfo app_url_info = InstallIsolatedWebApp(kAppName);
 

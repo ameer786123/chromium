@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.app.tabmodel;
 import android.content.Context;
 
 import org.chromium.base.supplier.OneshotSupplier;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.flags.ActivityType;
@@ -23,6 +24,7 @@ import org.chromium.chrome.browser.tabmodel.TabPersistentStore;
  * Glue-level class that manages lifetime of root .tabmodel objects: {@link TabPersistentStore} and
  * {@link TabModelSelectorImpl} for custom tabs.
  */
+@NullMarked
 public class CustomTabsTabModelOrchestrator extends TabModelOrchestrator {
     public CustomTabsTabModelOrchestrator() {}
 
@@ -44,6 +46,7 @@ public class CustomTabsTabModelOrchestrator extends TabModelOrchestrator {
                         profileProviderSupplier,
                         tabCreatorManager,
                         nextTabPolicySupplier,
+                        /* multiInstanceManager= */ null,
                         asyncTabParamsManager,
                         false,
                         activityType,

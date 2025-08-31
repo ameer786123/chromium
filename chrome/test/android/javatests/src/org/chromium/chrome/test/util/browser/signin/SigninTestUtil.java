@@ -18,7 +18,7 @@ import androidx.annotation.WorkerThread;
 
 import org.junit.Assert;
 
-import org.chromium.base.BuildInfo;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.chrome.R;
@@ -32,7 +32,6 @@ import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.components.signin.metrics.SignoutReason;
-import org.chromium.components.sync.SyncFirstSetupCompleteSource;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.UserSelectableType;
 import org.chromium.ui.base.WindowAndroid;
@@ -132,14 +131,10 @@ public final class SigninTestUtil {
                 });
     }
 
-    /**
-     * Signs into an account and enables the sync if given a {@link SyncService} object.
-     *
-     * @param syncService Enable the sync with it if it is not null.
-     */
+    /** Signs into an account with the legacy Sync consent level. */
+    // TODO(crbug.com/40066949): Remove once Sync-the-feature is fully removed.
     @WorkerThread
-    static void signinAndEnableSync(CoreAccountInfo coreAccountInfo, SyncService syncService) {
-        assert syncService != null : "SyncService must not be null";
+    static void signinWithConsentLevelSync(CoreAccountInfo coreAccountInfo) {
         signinAndWaitForPrefsCommit(coreAccountInfo);
 
         ThreadUtils.runOnUiThreadBlocking(
@@ -149,9 +144,6 @@ public final class SigninTestUtil {
                                     .getSigninManager(ProfileManager.getLastUsedRegularProfile());
                     signinManager.turnOnSyncForTesting(coreAccountInfo, SigninAccessPoint.UNKNOWN);
                     Assert.assertEquals(coreAccountInfo, getPrimaryAccount(ConsentLevel.SYNC));
-                    syncService.setSyncRequested();
-                    syncService.setInitialSyncFeatureSetupComplete(
-                            SyncFirstSetupCompleteSource.BASIC_FLOW);
                 });
     }
 
@@ -236,7 +228,10 @@ public final class SigninTestUtil {
      */
     // TODO(crbug.com/328117919): Delete this method after deleting sign-in tests for FRE on Auto.
     public static void completeAutoDeviceLockForFirstRunIfNeeded(SigninFirstRunFragment fragment) {
-        if (!ThreadUtils.runOnUiThreadBlocking(() -> BuildInfo.getInstance().isAutomotive)) {
+        if (!ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    return DeviceInfo.isAutomotive();
+                })) {
             return;
         }
 
@@ -248,7 +243,7 @@ public final class SigninTestUtil {
     /** Completes the device lock flow when on automotive devices. */
     public static void completeDeviceLockIfOnAutomotive(
             CustomDeviceLockActivityLauncher deviceLockActivityLauncher) {
-        if (BuildInfo.getInstance().isAutomotive) {
+        if (DeviceInfo.isAutomotive()) {
             completeDeviceLock(deviceLockActivityLauncher, true);
         }
     }
@@ -259,7 +254,7 @@ public final class SigninTestUtil {
     public static void completeDeviceLock(
             CustomDeviceLockActivityLauncher deviceLockActivityLauncher,
             boolean deviceLockCreated) {
-        assertTrue(BuildInfo.getInstance().isAutomotive);
+        assertTrue(DeviceInfo.isAutomotive());
         assertTrue(deviceLockActivityLauncher.isLaunched());
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {

@@ -45,8 +45,6 @@ namespace {
 using testing::Return;
 using testing::_;
 
-using LoadErrorBehavior = ExtensionRegistrar::LoadErrorBehavior;
-
 // Supplies dependencies needed by the tests. Specifically,
 // ExtensionRegistrar::CanBlockExtension() depends on ManagementPolicy.
 class TestExtensionSystem : public MockExtensionSystem {
@@ -91,14 +89,13 @@ class TestExtensionRegistrarDelegate : public ExtensionRegistrar::Delegate {
   MOCK_METHOD2(PostUninstallExtension,
                void(scoped_refptr<const Extension> extension,
                     base::OnceClosure done_callback));
-  MOCK_METHOD1(PostNotifyUninstallExtension,
-               void(scoped_refptr<const Extension> extension));
-  MOCK_METHOD3(LoadExtensionForReload,
+  MOCK_METHOD2(LoadExtensionForReload,
                void(const ExtensionId& extension_id,
-                    const base::FilePath& path,
-                    LoadErrorBehavior load_error_behavior));
+                    const base::FilePath& path));
+  MOCK_METHOD2(LoadExtensionForReloadWithQuietFailure,
+               void(const ExtensionId& extension_id,
+                    const base::FilePath& path));
   MOCK_METHOD2(ShowExtensionDisabledError, void(const Extension*, bool));
-  MOCK_METHOD0(FinishDelayedInstallationsIfAny, void());
   MOCK_METHOD1(CanEnableExtension, bool(const Extension* extension));
   MOCK_METHOD1(CanDisableExtension, bool(const Extension* extension));
   MOCK_METHOD1(ShouldBlockExtension, bool(const Extension* extension));
@@ -306,9 +303,8 @@ class ExtensionRegistrarTest : public ExtensionsTest {
     SCOPED_TRACE("ReloadEnabledExtension");
     EXPECT_CALL(delegate_, PostDeactivateExtension(extension()));
     EXPECT_CALL(delegate_,
-                LoadExtensionForReload(extension()->id(), extension()->path(),
-                                       LoadErrorBehavior::kNoisy));
-    registrar()->ReloadExtension(extension()->id(), LoadErrorBehavior::kNoisy);
+                LoadExtensionForReload(extension()->id(), extension()->path()));
+    registrar()->ReloadExtension(extension()->id());
     VerifyMock();
 
     // ExtensionRegistrar should have disabled the extension in preparation for
@@ -324,9 +320,8 @@ class ExtensionRegistrarTest : public ExtensionsTest {
   void ReloadTerminatedExtension() {
     SCOPED_TRACE("ReloadTerminatedExtension");
     EXPECT_CALL(delegate_,
-                LoadExtensionForReload(extension()->id(), extension()->path(),
-                                       LoadErrorBehavior::kNoisy));
-    registrar()->ReloadExtension(extension()->id(), LoadErrorBehavior::kNoisy);
+                LoadExtensionForReload(extension()->id(), extension()->path()));
+    registrar()->ReloadExtension(extension()->id());
     VerifyMock();
 
     // The extension should remain in the terminated set until the reload
@@ -460,7 +455,7 @@ TEST_F(ExtensionRegistrarTest, AddBlocklisted) {
   registrar()->DisableExtension(extension()->id(),
                                 {disable_reason::DISABLE_USER_ACTION});
   ExpectInSet(ExtensionRegistry::BLOCKLISTED);
-  registrar()->ReloadExtension(extension()->id(), LoadErrorBehavior::kQuiet);
+  registrar()->ReloadExtensionWithQuietFailure(extension()->id());
   ExpectInSet(ExtensionRegistry::BLOCKLISTED);
 
   RemoveBlocklistedExtension();
@@ -528,7 +523,7 @@ TEST_F(ExtensionRegistrarTest, RemoveReloadedExtension) {
   RemoveDisabledExtension();
 
   // Attempting to reload it silently fails.
-  registrar()->ReloadExtension(extension()->id(), LoadErrorBehavior::kQuiet);
+  registrar()->ReloadExtensionWithQuietFailure(extension()->id());
   ExpectInSet(ExtensionRegistry::NONE);
 }
 

@@ -15,7 +15,7 @@
 #include "components/web_modal/web_modal_export.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 
 namespace content {
 enum class Visibility;
@@ -127,8 +127,7 @@ class WEB_MODAL_EXPORT WebContentsModalDialogManager
   void WebContentsDestroyed() override;
 
   // Delegate for notifying our owner about stuff. Not owned by us.
-  raw_ptr<WebContentsModalDialogManagerDelegate, AcrossTasksDanglingUntriaged>
-      delegate_ = nullptr;
+  raw_ptr<WebContentsModalDialogManagerDelegate> delegate_ = nullptr;
 
   // All active dialogs.
   base::circular_deque<DialogState> child_dialogs_;

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <type_traits>
 
 #include "base/check.h"
 #include "base/containers/contains.h"
@@ -33,6 +34,7 @@
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 #include "third_party/openxr/src/include/openxr/openxr.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/quaternion.h"
@@ -41,9 +43,8 @@
 
 #if BUILDFLAG(IS_WIN)
 #include <dxgi1_2.h>
-
-#include "gpu/ipc/common/gpu_memory_buffer_impl_dxgi.h"
 #endif
+
 namespace device {
 
 namespace {
@@ -146,7 +147,6 @@ OpenXrApiWrapper::~OpenXrApiWrapper() {
 
 void OpenXrApiWrapper::Reset() {
   SetXrSessionState(XR_SESSION_STATE_UNKNOWN);
-  anchor_manager_.reset();
   depth_sensor_.reset();
   light_estimator_.reset();
   scene_understanding_manager_.reset();
@@ -220,6 +220,16 @@ bool OpenXrApiWrapper::Initialize(XrInstance instance,
 
 bool OpenXrApiWrapper::IsInitialized() const {
   return HasInstance() && HasSystem();
+}
+
+XrResult OpenXrApiWrapper::ShutdownSession() {
+  if (!HasSession()) {
+    return XR_SUCCESS;
+  }
+
+  XrResult result = xrEndSession(session_);
+  Uninitialize();
+  return result;
 }
 
 void OpenXrApiWrapper::Uninitialize() {
@@ -307,7 +317,8 @@ XrResult OpenXrApiWrapper::InitializeViewConfig(
     OpenXrViewConfiguration& view_config) {
   std::vector<XrViewConfigurationView> view_properties;
   RETURN_IF_XR_FAILED(GetPropertiesForViewConfig(type, view_properties));
-  view_config.Initialize(type, std::move(view_properties));
+  view_config.Initialize(type, std::move(view_properties),
+                         graphics_binding_->GetMaxTextureSize());
 
   return XR_SUCCESS;
 }
@@ -416,16 +427,19 @@ OpenXrApiWrapper::PickEnvironmentBlendModeForSession(
 }
 
 OpenXrAnchorManager* OpenXrApiWrapper::GetAnchorManager() {
-  return anchor_manager_.get();
+  return scene_understanding_manager_
+             ? scene_understanding_manager_->GetAnchorManager()
+             : nullptr;
+}
+
+OpenXrHitTestManager* OpenXrApiWrapper::GetHitTestManager() {
+  return scene_understanding_manager_
+             ? scene_understanding_manager_->GetHitTestManager()
+             : nullptr;
 }
 
 OpenXrLightEstimator* OpenXrApiWrapper::GetLightEstimator() {
   return light_estimator_.get();
-}
-
-OpenXRSceneUnderstandingManager*
-OpenXrApiWrapper::GetSceneUnderstandingManager() {
-  return scene_understanding_manager_.get();
 }
 
 OpenXrDepthSensor* OpenXrApiWrapper::GetDepthSensor() {
@@ -511,10 +525,16 @@ XrResult OpenXrApiWrapper::EnableSupportedFeatures(
         break;
 
       case mojom::XRSessionFeature::HIT_TEST:
-        scene_understanding_manager_ =
-            extension_helper.CreateSceneUnderstandingManager(session_,
-                                                             local_space_);
-        is_enabled = scene_understanding_manager_ != nullptr;
+        if (scene_understanding_manager_ == nullptr) {
+          scene_understanding_manager_ =
+              extension_helper.CreateSceneUnderstandingManager(
+                  this, session_, local_space_,
+                  session_options_->required_features,
+                  session_options_->optional_features);
+        }
+        is_enabled =
+            scene_understanding_manager_ != nullptr &&
+            scene_understanding_manager_->GetHitTestManager() != nullptr;
         break;
 
       case mojom::XRSessionFeature::LIGHT_ESTIMATION:
@@ -524,9 +544,17 @@ XrResult OpenXrApiWrapper::EnableSupportedFeatures(
         break;
 
       case mojom::XRSessionFeature::ANCHORS:
-        anchor_manager_ =
-            extension_helper.CreateAnchorManager(session_, local_space_);
-        is_enabled = anchor_manager_ != nullptr;
+        // Anchors are managed by the scene understanding manager.
+        if (scene_understanding_manager_ == nullptr) {
+          scene_understanding_manager_ =
+              extension_helper.CreateSceneUnderstandingManager(
+                  this, session_, local_space_,
+                  session_options_->required_features,
+                  session_options_->optional_features);
+        }
+        is_enabled =
+            scene_understanding_manager_ != nullptr &&
+            scene_understanding_manager_->GetAnchorManager() != nullptr;
         break;
 
       case mojom::XRSessionFeature::DEPTH:
@@ -606,6 +634,8 @@ XrResult OpenXrApiWrapper::InitSession(
     VisibilityChangedCallback visibility_changed_callback) {
   DCHECK(IsInitialized());
   DCHECK(options);
+
+  extension_helper_ = &extension_helper;
 
   session_options_ = std::move(options);
   on_session_started_callback_ = std::move(on_session_started_callback);
@@ -823,7 +853,7 @@ void OpenXrApiWrapper::OnContextProviderLost() {
   if (context_provider_ && graphics_binding_) {
     // Mark the shared mailboxes as invalid since the underlying GPU process
     // associated with them has gone down.
-    for (SwapChainInfo& info : graphics_binding_->GetSwapChainImages()) {
+    for (OpenXrSwapchainInfo& info : graphics_binding_->GetSwapChainImages()) {
       info.Clear();
     }
     context_provider_ = nullptr;
@@ -1060,7 +1090,8 @@ XrResult OpenXrApiWrapper::UpdateSecondaryViewConfigStates(
         std::vector<XrViewConfigurationView> view_properties;
         RETURN_IF_XR_FAILED(GetPropertiesForViewConfig(
             state.viewConfigurationType, view_properties));
-        view_config.SetProperties(std::move(view_properties));
+        view_config.SetProperties(std::move(view_properties),
+                                  graphics_binding_->GetMaxTextureSize());
       }
     }
   }
@@ -1137,9 +1168,8 @@ bool OpenXrApiWrapper::HasPendingFrame() const {
   return pending_frame_;
 }
 
-XrResult OpenXrApiWrapper::LocateViews(
-    XrReferenceSpaceType space_type,
-    OpenXrViewConfiguration& view_config) const {
+XrResult OpenXrApiWrapper::LocateViews(XrReferenceSpaceType space_type,
+                                       OpenXrViewConfiguration& view_config) {
   DCHECK(HasSession());
 
   XrViewState view_state = {XR_TYPE_VIEW_STATE};
@@ -1177,8 +1207,23 @@ XrResult OpenXrApiWrapper::LocateViews(
   if ((view_state.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) &&
       (view_state.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT)) {
     view_config.SetViews(std::move(new_views));
+    received_initial_valid_primary_views_ = true;
   } else {
     DVLOG(3) << __func__ << " Could not locate views";
+    // Highest available framerate as of this writing appears to be 144 fps,
+    // this is thus 2 seconds that the views have not been locatable on that
+    // device (and longer on most other devices). If we've gone that long
+    // without being able to locate our views, then something is likely pretty
+    // wrong, and we should end the session to make it obvious something is
+    // wrong.
+    constexpr uint64_t kMaxInvalidViewFrames = 288;
+    if (!received_initial_valid_primary_views_ &&
+        frames_before_initial_valid_primary_views_++ >= kMaxInvalidViewFrames) {
+      LOG(ERROR) << "No valid views have been received in "
+                 << kMaxInvalidViewFrames << " frames";
+      ShutdownSession();
+      return XR_ERROR_RUNTIME_FAILURE;
+    }
   }
 
   return XR_SUCCESS;
@@ -1201,9 +1246,11 @@ mojom::XRViewPtr OpenXrApiWrapper::CreateView(
 
   mojom::XRViewPtr view = mojom::XRView::New();
   view->eye = eye;
-  view->mojo_from_view = XrPoseToGfxTransform(xr_view.pose);
 
-  view->field_of_view = XrFovToMojomFov(xr_view.fov);
+  view->geometry = mojom::XRViewGeometry::New();
+  view->geometry->mojo_from_view = XrPoseToGfxTransform(xr_view.pose);
+
+  view->geometry->field_of_view = XrFovToMojomFov(xr_view.fov);
 
   view->viewport =
       gfx::Rect(x_offset, 0, view_config.Properties()[view_index].Width(),
@@ -1270,12 +1317,23 @@ std::vector<mojom::XRViewPtr> OpenXrApiWrapper::GetDefaultViews() const {
     view->eye = GetEyeFromIndex(i);
     view->viewport = gfx::Rect(x_offset, 0, view_properties[i].Width(),
                                view_properties[i].Height());
-    view->field_of_view = mojom::VRFieldOfView::New(45.0f, 45.0f, 45.0f, 45.0f);
+    view->geometry = mojom::XRViewGeometry::New();
+    view->geometry->field_of_view =
+        mojom::VRFieldOfView::New(45.0f, 45.0f, 45.0f, 45.0f);
 
     x_offset += view_properties[i].Width();
   }
 
   return views;
+}
+
+float OpenXrApiWrapper::RecommendedViewportScale() const {
+  float recommended_scale = 1.0f;
+  for (const auto& property : primary_view_config_.Properties()) {
+    recommended_scale =
+        std::min(recommended_scale, property.RecommendedViewportScale());
+  }
+  return recommended_scale;
 }
 
 mojom::VRPosePtr OpenXrApiWrapper::GetViewerPose() const {
@@ -1336,6 +1394,38 @@ std::vector<mojom::XRInputSourceStatePtr> OpenXrApiWrapper::GetInputState() {
   return input_helper_->GetInputState(GetPredictedDisplayTime());
 }
 
+void OpenXrApiWrapper::PollFuture(
+    XrFutureEXT future,
+    base::OnceCallback<void(XrFutureEXT)> on_ready_callback) {
+  pending_futures_.emplace(future, std::move(on_ready_callback));
+}
+
+void OpenXrApiWrapper::ProcessPendingFutures() {
+  if (pending_futures_.empty()) {
+    return;
+  }
+
+  auto it = pending_futures_.begin();
+  while (it != pending_futures_.end()) {
+    XrFuturePollInfoEXT poll_info = {XR_TYPE_FUTURE_POLL_INFO_EXT};
+    poll_info.future = it->first;
+    XrFuturePollResultEXT poll_result = {XR_TYPE_FUTURE_POLL_RESULT_EXT};
+    XrResult result = extension_helper_->ExtensionMethods().xrPollFutureEXT(
+        instance_, &poll_info, &poll_result);
+
+    if (result == XR_SUCCESS &&
+        poll_result.state == XR_FUTURE_STATE_READY_EXT) {
+      std::move(it->second).Run(it->first);
+      pending_futures_.erase(it++);
+    } else if (XR_FAILED(result)) {
+      std::move(it->second).Run(XR_NULL_FUTURE_EXT);
+      pending_futures_.erase(it++);
+    } else {
+      it++;
+    }
+  }
+}
+
 void OpenXrApiWrapper::EnsureEventPolling() {
   // Events are usually processed at the beginning of a frame. When frames
   // aren't being requested, this timer loop ensures OpenXR events are
@@ -1363,12 +1453,12 @@ XrResult OpenXrApiWrapper::ProcessEvents() {
     return XR_ERROR_INSTANCE_LOST;
   }
 
+  ProcessPendingFutures();
+
   // If we've received an exit gesture from any of the input sources, end the
   // session.
   if (input_helper_ && input_helper_->ReceivedExitGesture()) {
-    XrResult xr_result = xrEndSession(session_);
-    Uninitialize();
-    return xr_result;
+    return ShutdownSession();
   }
 
   XrEventDataBuffer event_data{XR_TYPE_EVENT_DATA_BUFFER};
@@ -1387,9 +1477,7 @@ XrResult OpenXrApiWrapper::ProcessEvents() {
           xr_result = BeginSession();
           break;
         case XR_SESSION_STATE_STOPPING:
-          xr_result = xrEndSession(session_);
-          Uninitialize();
-          return xr_result;
+          return ShutdownSession();
         case XR_SESSION_STATE_SYNCHRONIZED:
           visibility_changed_callback_.Run(
               device::mojom::XRVisibilityState::HIDDEN);
@@ -1446,6 +1534,13 @@ XrResult OpenXrApiWrapper::ProcessEvents() {
           reinterpret_cast<XrEventDataInteractionProfileChanged*>(&event_data);
       DCHECK_EQ(interaction_profile_changed->session, session_);
       xr_result = input_helper_->OnInteractionProfileChanged();
+    } else if (event_data.type ==
+               XR_TYPE_EVENT_DATA_SPATIAL_DISCOVERY_RECOMMENDED_EXT) {
+      if (scene_understanding_manager_) {
+        scene_understanding_manager_->OnDiscoveryRecommended(
+            reinterpret_cast<const XrEventDataSpatialDiscoveryRecommendedEXT*>(
+                &event_data));
+      }
     } else {
       DVLOG(1) << __func__ << " Unhandled event type: " << event_data.type;
       TRACE_EVENT_INSTANT1("xr", "UnandledXrEvent", TRACE_EVENT_SCOPE_THREAD,

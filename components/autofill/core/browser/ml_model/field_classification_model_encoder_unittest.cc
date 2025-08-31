@@ -13,6 +13,7 @@
 #include "base/strings/string_split.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/form_structure.h"
+#include "components/autofill/core/browser/ml_model/field_classification_model_encoder_test_api.h"
 #include "components/autofill/core/browser/test_utils/autofill_form_test_utils.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/form_field_data.h"
@@ -146,7 +147,7 @@ TEST_F(FieldClassificationModelEncoderTest, InputConstructedCorrectly) {
 
 TEST_F(FieldClassificationModelEncoderTest, FormEncodedCorrectly_BasicModel) {
   FieldClassificationModelEncoder encoder(CreateBasicEncoder());
-  FormStructure form(test::GetFormData(
+  FormData form = test::GetFormData(
       {.fields = {
            {
                .label = u"Phone 'number",
@@ -158,7 +159,7 @@ TEST_F(FieldClassificationModelEncoderTest, FormEncodedCorrectly_BasicModel) {
                .placeholder = u"City Number Phone Address Card Last Zip ",
                .autocomplete_attribute =
                    "City Number Phone Address Card Last Zip ",
-           }}}));
+           }}});
   EXPECT_THAT(
       encoder.EncodeForm(form),
       ElementsAre(ElementsAre(
@@ -206,7 +207,7 @@ TEST_F(FieldClassificationModelEncoderTest,
       {{u"Submit Telefone",
         mojom::ButtonTitleType::BUTTON_ELEMENT_BUTTON_TYPE}});
   form.set_url(GURL("https://www.example.com/account/form/number"));
-  EXPECT_THAT(encoder.EncodeForm(FormStructure(form)),
+  EXPECT_THAT(encoder.EncodeForm(form),
               ElementsAre(ElementsAre(
                               // CLS
                               kCLS,
@@ -318,7 +319,8 @@ TEST_P(StandardizeStringTest, ReturnsExpectedResult) {
   encoding_parameters.set_remove_chars(test_case.remove_chars);
   FieldClassificationModelEncoder encoder({}, encoding_parameters);
 
-  EXPECT_EQ(encoder.StandardizeString(test_case.input), test_case.expected);
+  EXPECT_EQ(test_api(encoder).StandardizeString(test_case.input),
+            test_case.expected);
 }
 
 }  // namespace autofill

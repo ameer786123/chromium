@@ -9,6 +9,7 @@
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "ui/aura/client/cursor_shape_client.h"
 #include "ui/aura/client/default_capture_client.h"
 #include "ui/aura/env.h"
@@ -132,7 +133,7 @@ AuraTestHelper* AuraTestHelper::GetInstance() {
 }
 
 void AuraTestHelper::SetUp() {
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   gfx::Size host_size(screen ? screen->GetPrimaryDisplay().GetSizeInPixel()
                              : kDefaultHostSize);
   test_screen_.reset(TestScreen::Create(host_size));
@@ -181,7 +182,7 @@ void AuraTestHelper::TearDown() {
   focus_client_.reset();
   host_.reset();
 
-  if (test_screen_ && (display::Screen::GetScreen() == GetTestScreen())) {
+  if (test_screen_ && (display::Screen::Get() == GetTestScreen())) {
     display::Screen::SetScreenInstance(nullptr);
   }
   test_screen_.reset();

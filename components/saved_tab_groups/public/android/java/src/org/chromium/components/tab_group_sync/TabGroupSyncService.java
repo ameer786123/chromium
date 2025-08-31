@@ -140,8 +140,12 @@ public interface TabGroupSyncService {
      *
      * @param tabGroupId The local group ID of the corresponding tab group.
      * @param collaborationId Collaboration ID with which the group is associated.
+     * @param callback Callback to be called when group is converted to shared tab group.
      */
-    void makeTabGroupShared(LocalTabGroupId tabGroupId, String collaborationId);
+    void makeTabGroupShared(
+            LocalTabGroupId tabGroupId,
+            String collaborationId,
+            @Nullable Callback<Boolean> tabGroupSharingCallback);
 
     /**
      * Starts the process of converting a shared tab group to saved tab group.
@@ -291,7 +295,7 @@ public interface TabGroupSyncService {
      * @param syncCacheGuid A sync cache guid. Typically obtained from a tab group or tab
      *     attribution metadata.
      */
-    boolean isRemoteDevice(String syncCacheGuid);
+    boolean isRemoteDevice(@Nullable String syncCacheGuid);
 
     /**
      * Returns whether a tab group with the given `sync_tab_group_id` was previously closed on this
@@ -316,4 +320,18 @@ public interface TabGroupSyncService {
      * @param archivalStatus Whether the tab group should be archived locally or not.
      */
     void updateArchivalStatus(String syncTabGroupId, boolean archivalStatus);
+
+    /**
+     * For testing only. This is needed to test shared tab groups flow without depending on real
+     * people groups from data sharing service backend.
+     *
+     * @param collaborationId Collaboration ID with which the collaboration group is associated.
+     */
+    void setCollaborationAvailableInFinderForTesting(String collaborationId);
+
+    /**
+     * @return The {@link VersioningMessageController} which is responsible for business logic
+     *     related to shared tab groups versioning related messages.
+     */
+    @Nullable VersioningMessageController getVersioningMessageController();
 }

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/extensions/api/runtime/chrome_runtime_api_delegate.h"
 
 #include <memory>
@@ -14,26 +9,24 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
-#include "chrome/browser/devtools/devtools_window.h"
-#include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_navigator.h"
-#include "chrome/browser/ui/browser_navigator_params.h"
 #include "components/update_client/update_query_params.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/delayed_install_manager.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/view_type_utils.h"
 #include "extensions/browser/warning_service.h"
@@ -49,6 +42,22 @@
 #include "chromeos/components/kiosk/kiosk_utils.h"
 #include "chromeos/dbus/power/power_manager_client.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
+#endif
+
+#if BUILDFLAG(IS_WIN)
+#include "base/win/windows_version.h"
+#endif
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/devtools/devtools_window.h"
+#include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_navigator.h"
+#include "chrome/browser/ui/browser_navigator_params.h"
+#else
+#include "chrome/browser/ui/android/tab_model/tab_model.h"
+#include "chrome/browser/ui/android/tab_model/tab_model_list.h"
 #endif
 
 using extensions::Extension;
@@ -192,9 +201,8 @@ void ChromeRuntimeAPIDelegate::ReloadExtension(
                            reload_info.second);
   reload_info.first = now;
 
-  extensions::ExtensionService* service =
-      ExtensionSystem::Get(browser_context_)->extension_service();
-
+  extensions::ExtensionRegistrar* registrar =
+      extensions::ExtensionRegistrar::Get(browser_context_);
   if (reload_info.second >= fast_reload_count) {
     // Unloading an extension clears all warnings, so first terminate the
     // extension, and then add the warning. Since this is called from an
@@ -203,8 +211,8 @@ void ChromeRuntimeAPIDelegate::ReloadExtension(
     // post both tasks.
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
-        base::BindOnce(&extensions::ExtensionService::TerminateExtension,
-                       service->AsExtensionServiceWeakPtr(), extension_id));
+        base::BindOnce(&extensions::ExtensionRegistrar::TerminateExtension,
+                       registrar->GetWeakPtr(), extension_id));
     extensions::WarningSet warnings;
     warnings.insert(
         extensions::Warning::CreateReloadTooFrequentWarning(extension_id));
@@ -221,8 +229,8 @@ void ChromeRuntimeAPIDelegate::ReloadExtension(
     // if the extension has already been reloaded; so instead we post a task.
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
-        base::BindOnce(&extensions::ExtensionService::ReloadExtension,
-                       service->AsExtensionServiceWeakPtr(), extension_id));
+        base::BindOnce(&extensions::ExtensionRegistrar::ReloadExtension,
+                       registrar->GetWeakPtr(), extension_id));
   }
 }
 
@@ -262,6 +270,7 @@ bool ChromeRuntimeAPIDelegate::CheckForUpdates(
 
 void ChromeRuntimeAPIDelegate::OpenURL(const GURL& uninstall_url) {
   Profile* profile = Profile::FromBrowserContext(browser_context_);
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   Browser* browser = chrome::FindLastActiveWithProfile(profile);
   if (!browser) {
     browser = Browser::Create(Browser::CreateParams(profile, false));
@@ -275,55 +284,102 @@ void ChromeRuntimeAPIDelegate::OpenURL(const GURL& uninstall_url) {
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   params.user_gesture = false;
   Navigate(&params);
+#else
+  TabModel* tab_model = nullptr;
+  for (TabModel* model : TabModelList::models()) {
+    if (model->GetProfile() == profile) {
+      tab_model = model;
+      break;
+    }
+  }
+
+  if (!tab_model) {
+    return;
+  }
+
+  std::unique_ptr<content::WebContents> contents = content::WebContents::Create(
+      content::WebContents::CreateParams(browser_context_));
+  content::WebContents* new_web_contents = contents.release();
+  tab_model->CreateTab(nullptr, new_web_contents, /*select=*/true);
+
+  content::NavigationController::LoadURLParams load_params(uninstall_url);
+  load_params.transition_type = ui::PAGE_TRANSITION_FROM_API;
+  base::WeakPtr<content::NavigationHandle> navigation_handle =
+      new_web_contents->GetController().LoadURLWithParams(load_params);
+  // Navigation can fail for any number of reasons at the content layer.
+  // Unfortunately, we can't provide a detailed error message here, because
+  // there are too many possible triggers. At least add a log for diagnostics.
+  if (!navigation_handle) {
+    LOG(ERROR) << "navigation rejected for uninstall_url"
+               << uninstall_url.spec();
+  }
+#endif
+}
+
+// Helper function for GetPlatformInfo(). nacl_arch is deprecated, so
+// please do not add any new values here.
+extensions::api::runtime::PlatformNaclArch GetPlatformInfoNaClArch() {
+#if defined(ARCH_CPU_X86_FAMILY)
+#if defined(ARCH_CPU_X86_64)
+  return extensions::api::runtime::PlatformNaclArch::kX86_64;
+#elif BUILDFLAG(IS_WIN)
+  return base::win::OSInfo::GetInstance()->IsWowX86OnAMD64()
+             ? extensions::api::runtime::PlatformNaclArch::kX86_64
+             : extensions::api::runtime::PlatformNaclArch::kX86_32;
+#else
+  return extensions::api::runtime::PlatformNaclArch::kX86_32;
+#endif
+#elif defined(ARCH_CPU_ARM_FAMILY)
+  return extensions::api::runtime::PlatformNaclArch::kArm;
+#elif defined(ARCH_CPU_MIPSEL)
+  return extensions::api::runtime::PlatformNaclArch::kMips;
+#elif defined(ARCH_CPU_MIPS64EL)
+  return extensions::api::runtime::PlatformNaclArch::kMips64;
+#else
+  // NOTE: Other architectures did not support extensions at the time
+  // of NaCl removal.
+  return extensions::api::runtime::PlatformNaclArch::kNone;
+#endif
 }
 
 bool ChromeRuntimeAPIDelegate::GetPlatformInfo(PlatformInfo* info) {
   const char* os = update_client::UpdateQueryParams::GetOS();
-  if (strcmp(os, "mac") == 0) {
+  if (UNSAFE_TODO(strcmp(os, "mac")) == 0) {
     info->os = extensions::api::runtime::PlatformOs::kMac;
-  } else if (strcmp(os, "win") == 0) {
+  } else if (UNSAFE_TODO(strcmp(os, "win")) == 0) {
     info->os = extensions::api::runtime::PlatformOs::kWin;
-  } else if (strcmp(os, "cros") == 0) {
+  } else if (UNSAFE_TODO(strcmp(os, "cros")) == 0) {
     info->os = extensions::api::runtime::PlatformOs::kCros;
-  } else if (strcmp(os, "linux") == 0) {
+  } else if (UNSAFE_TODO(strcmp(os, "linux")) == 0) {
     info->os = extensions::api::runtime::PlatformOs::kLinux;
-  } else if (strcmp(os, "openbsd") == 0) {
+  } else if (UNSAFE_TODO(strcmp(os, "openbsd")) == 0) {
     info->os = extensions::api::runtime::PlatformOs::kOpenbsd;
+  } else if (UNSAFE_TODO(strcmp(os, "android")) == 0) {
+    info->os = extensions::api::runtime::PlatformOs::kAndroid;
   } else {
     NOTREACHED() << "Platform not supported: " << os;
   }
 
   const char* arch = update_client::UpdateQueryParams::GetArch();
-  if (strcmp(arch, "arm") == 0) {
+  if (UNSAFE_TODO(strcmp(arch, "arm")) == 0) {
     info->arch = extensions::api::runtime::PlatformArch::kArm;
-  } else if (strcmp(arch, "arm64") == 0) {
+  } else if (UNSAFE_TODO(strcmp(arch, "arm64")) == 0) {
     info->arch = extensions::api::runtime::PlatformArch::kArm64;
-  } else if (strcmp(arch, "x86") == 0) {
+  } else if (UNSAFE_TODO(strcmp(arch, "x86")) == 0) {
     info->arch = extensions::api::runtime::PlatformArch::kX86_32;
-  } else if (strcmp(arch, "x64") == 0) {
+  } else if (UNSAFE_TODO(strcmp(arch, "x64")) == 0) {
     info->arch = extensions::api::runtime::PlatformArch::kX86_64;
-  } else if (strcmp(arch, "mipsel") == 0) {
+  } else if (UNSAFE_TODO(strcmp(arch, "mipsel")) == 0) {
     info->arch = extensions::api::runtime::PlatformArch::kMips;
-  } else if (strcmp(arch, "mips64el") == 0) {
+  } else if (UNSAFE_TODO(strcmp(arch, "mips64el")) == 0) {
     info->arch = extensions::api::runtime::PlatformArch::kMips64;
+  } else if (UNSAFE_TODO(strcmp(arch, "riscv64")) == 0) {
+    info->arch = extensions::api::runtime::PlatformArch::kRiscv64;
   } else {
     NOTREACHED();
   }
 
-  const char* nacl_arch = update_client::UpdateQueryParams::GetNaclArch();
-  if (strcmp(nacl_arch, "arm") == 0) {
-    info->nacl_arch = extensions::api::runtime::PlatformNaclArch::kArm;
-  } else if (strcmp(nacl_arch, "x86-32") == 0) {
-    info->nacl_arch = extensions::api::runtime::PlatformNaclArch::kX86_32;
-  } else if (strcmp(nacl_arch, "x86-64") == 0) {
-    info->nacl_arch = extensions::api::runtime::PlatformNaclArch::kX86_64;
-  } else if (strcmp(nacl_arch, "mips32") == 0) {
-    info->nacl_arch = extensions::api::runtime::PlatformNaclArch::kMips;
-  } else if (strcmp(nacl_arch, "mips64") == 0) {
-    info->nacl_arch = extensions::api::runtime::PlatformNaclArch::kMips64;
-  } else {
-    NOTREACHED();
-  }
+  info->nacl_arch = GetPlatformInfoNaClArch();
 
   return true;
 }
@@ -344,12 +400,20 @@ bool ChromeRuntimeAPIDelegate::RestartDevice(std::string* error_message) {
 bool ChromeRuntimeAPIDelegate::OpenOptionsPage(
     const Extension* extension,
     content::BrowserContext* browser_context) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   return extensions::ExtensionTabUtil::OpenOptionsPageFromAPI(extension,
                                                               browser_context);
+#else
+  // TODO(crbug.com/383366125): Implement this when options page for extensions
+  // becomes available for desktop android.
+  NOTIMPLEMENTED_LOG_ONCE();
+  return false;
+#endif
 }
 
 int ChromeRuntimeAPIDelegate::GetDeveloperToolsWindowId(
     content::WebContents* developer_tools_web_contents) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   // For developer tools contexts, first check the docked state. If the
   // developer tools are docked, return the window ID of the inspected web
   // contents. Otherwise, return the window ID of the developer tools window.
@@ -367,6 +431,11 @@ int ChromeRuntimeAPIDelegate::GetDeveloperToolsWindowId(
   content::WebContents* web_contents_to_use =
       is_docked ? inspected_web_contents : developer_tools_web_contents;
   return extensions::ExtensionTabUtil::GetWindowIdOfTab(web_contents_to_use);
+#else
+  // TODO(crbug.com/383366125): Implement this function for desktop android.
+  NOTIMPLEMENTED();
+  return -1;
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 }
 
 void ChromeRuntimeAPIDelegate::OnExtensionUpdateFound(
@@ -395,9 +464,9 @@ void ChromeRuntimeAPIDelegate::OnExtensionInstalled(
 
 void ChromeRuntimeAPIDelegate::UpdateCheckComplete(
     const extensions::ExtensionId& extension_id) {
-  ExtensionSystem* system = ExtensionSystem::Get(browser_context_);
-  extensions::ExtensionService* service = system->extension_service();
-  const Extension* update = service->GetPendingExtensionUpdate(extension_id);
+  const Extension* update =
+      extensions::DelayedInstallManager::Get(browser_context_)
+          ->GetPendingExtensionUpdate(extension_id);
   UpdateCheckInfo& info = update_check_info_[extension_id];
 
   // We always inform the BackoffEntry of a "failure" here, because we only

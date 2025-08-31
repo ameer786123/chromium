@@ -22,6 +22,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/test/bind.h"
 #include "base/test/gtest_util.h"
+#include "base/time/time.h"
 #include "base/threading/simple_thread.h"
 #include "build/build_config.h"
 #include "components/gwp_asan/client/gwp_asan.h"
@@ -30,29 +31,35 @@
 namespace gwp_asan {
 namespace internal {
 
-static constexpr size_t kMaxMetadata = AllocatorState::kMaxMetadata;
-static constexpr size_t kMaxSlots = AllocatorState::kMaxRequestedSlots;
+static constexpr size_t kMaxMetadata = 2048;
+static constexpr size_t kMaxSlots = 8192;
 
 class BaseGpaTest : public testing::Test {
  protected:
   BaseGpaTest(size_t max_allocated_pages,
               size_t max_metadata,
               size_t max_slots,
-              bool is_partition_alloc) {
-    gpa_.Init(
-        AllocatorSettings{
+              bool is_partition_alloc)
+      : is_partition_alloc_(is_partition_alloc),
+        settings_{AllocatorSettings{
             .max_allocated_pages = max_allocated_pages,
             .num_metadata = max_metadata,
             .total_pages = max_slots,
             .sampling_frequency = 0u,
-        },
-        base::BindLambdaForTesting(
-            [&](size_t allocations) { allocator_oom_ = true; }),
-        is_partition_alloc);
+        }} {}
+
+  void SetUp() override {
+    ASSERT_TRUE(gpa_.Init(settings_,
+                          base::BindLambdaForTesting([&](size_t allocations) {
+                            allocator_oom_ = true;
+                          }),
+                          is_partition_alloc_));
   }
 
   void TearDown() override { gpa_.DestructForTesting(); }
 
+  const bool is_partition_alloc_;
+  const AllocatorSettings settings_;
   GuardedPageAllocator gpa_;
   bool allocator_oom_ = false;
 };

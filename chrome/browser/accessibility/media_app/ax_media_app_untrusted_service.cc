@@ -35,24 +35,21 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_action_handler_registry.h"
-#include "ui/accessibility/ax_enum_util.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node.h"
 #include "ui/accessibility/ax_node_data.h"
-#include "ui/accessibility/ax_node_id_forward.h"
 #include "ui/accessibility/ax_node_position.h"
 #include "ui/accessibility/ax_tree.h"
 #include "ui/accessibility/ax_tree_id.h"
 #include "ui/accessibility/ax_tree_manager.h"
 #include "ui/accessibility/ax_tree_serializer.h"
 #include "ui/accessibility/ax_updates_and_events.h"
-#include "ui/accessibility/platform/inspect/ax_inspect.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/display/screen.h"
-#include "ui/events/types/event_type.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/transform.h"
+#include "ui/native_window_tracker/native_window_tracker.h"
 #include "ui/strings/grit/auto_image_annotation_strings.h"
 
 #if defined(USE_AURA)
@@ -88,6 +85,7 @@ AXMediaAppUntrustedService::AXMediaAppUntrustedService(
     mojo::PendingRemote<media_app_ui::mojom::OcrUntrustedPage> page)
     : browser_context_(context),
       native_window_(native_window),
+      native_window_tracker_(ui::NativeWindowTracker::Create(native_window)),
       media_app_page_(std::move(page)) {
   // Unretained is safe because `this` owns the subscription.
   accessibility_status_subscription_ =
@@ -994,9 +992,20 @@ void AXMediaAppUntrustedService::UpdatePageLocation(
 void AXMediaAppUntrustedService::ShowOcrServiceFailedToInitializeMessage() {
   DCHECK_EQ(ocr_status_, OcrStatus::kInitializationFailed);
   ui::AXTreeUpdate document_update;
-  document_update.nodes = CreateStatusNodesWithLandmark();
-  DCHECK_GT(document_update.nodes.size(), 0u);
-  document_update.root_id = document_update.nodes[0].id;
+  ui::AXNodeData& document_root_data = document_update.nodes.emplace_back();
+  document_root_data.id = kDocumentRootNodeId;
+  document_root_data.role = ax::mojom::Role::kPdfRoot;
+  document_update.root_id = document_root_data.id;
+
+  std::vector<ui::AXNodeData> status_nodes;
+  status_nodes = CreateStatusNodesWithLandmark();
+  DCHECK_GE(status_nodes.size(), 1u);
+  document_root_data.child_ids.push_back(status_nodes.at(0).id);
+
+  document_update.nodes.insert(std::end(document_update.nodes),
+                               std::begin(status_nodes),
+                               std::end(status_nodes));
+
   UpdateDocumentTree(document_update);
 }
 
@@ -1467,9 +1476,9 @@ std::unique_ptr<gfx::Transform>
 AXMediaAppUntrustedService::MakeTransformFromOffsetAndScale() const {
   auto transform = std::make_unique<gfx::Transform>();
   float device_pixel_ratio = 1.0f;
-  if (native_window_) {
+  if (native_window_ && !native_window_tracker_->WasNativeWindowDestroyed()) {
     const auto maybe_device_pixel_ratio =
-        display::Screen::GetScreen()->GetPreferredScaleFactorForWindow(
+        display::Screen::Get()->GetPreferredScaleFactorForWindow(
             native_window_);
     device_pixel_ratio = maybe_device_pixel_ratio.value_or(device_pixel_ratio);
   }

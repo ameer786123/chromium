@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/command_line.h"
 #include "base/test/bind.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -27,6 +28,8 @@
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_features.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/prerender_test_util.h"
@@ -321,23 +324,14 @@ std::vector<std::pair<std::string, int>>
 GWSAbandonedPageLoadMetricsObserverBrowserTest::ExpandHistograms(
     std::vector<std::string> histogram_names,
     bool is_incognito) {
-  std::vector<std::string> with_incognito;
+  std::vector<std::pair<std::string, int>> with_incognito;
   for (std::string& histogram_name : histogram_names) {
-    with_incognito.push_back(histogram_name);
+    with_incognito.emplace_back(histogram_name, 1);
     if (is_incognito) {
-      with_incognito.push_back(histogram_name + ".Incognito");
+      with_incognito.emplace_back(histogram_name + ".Incognito", 1);
     }
   }
-  std::vector<std::pair<std::string, int>> histogram_names_expanded;
-  for (std::string& histogram_name : with_incognito) {
-    histogram_names_expanded.emplace_back(histogram_name, 1);
-    histogram_names_expanded.emplace_back(
-        histogram_name +
-            ChromeGWSAbandonedPageLoadMetricsObserver::GetSuffixForRTT(
-                g_browser_process->network_quality_tracker()->GetHttpRTT()),
-        1);
-  }
-  return histogram_names_expanded;
+  return with_incognito;
 }
 
 void GWSAbandonedPageLoadMetricsObserverBrowserTest::TestNavigationAbandonment(
@@ -836,11 +830,6 @@ IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,
   EXPECT_TRUE(WaitForLoadStop(web_contents()));
 
   ExpectTotalCountForAllNavigationMilestones(/*include_redirect=*/false, 2);
-  // Since we made a backward navigation, we will have metrics with
-  // `ResponseFromCache`.
-  ExpectTotalCountForAllNavigationMilestones(
-      /*include_redirect=*/false, 1,
-      std::string(internal::kSuffixResponseFromCache));
   ExpectEmptyNavigationAbandonmentUntilCommit();
 
   // SRP Navigation #3: Go back to SRP, potentially restoring from BFCache.
@@ -860,10 +849,6 @@ IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,
   ExpectTotalCountForAllNavigationMilestones(
       /*include_redirect=*/false,
       content::BackForwardCache::IsBackForwardCacheFeatureEnabled() ? 2 : 3);
-  ExpectTotalCountForAllNavigationMilestones(
-      /*include_redirect=*/false,
-      content::BackForwardCache::IsBackForwardCacheFeatureEnabled() ? 1 : 2,
-      std::string(internal::kSuffixResponseFromCache));
 
   ExpectEmptyNavigationAbandonmentUntilCommit();
 }
@@ -1186,30 +1171,27 @@ IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,
       for (NavigationMilestone milestone : all_throttleable_milestones()) {
         content::TestNavigationThrottleInserter throttle_inserter(
             web_contents(),
-            base::BindLambdaForTesting(
-                [&](content::NavigationHandle* handle)
-                    -> std::unique_ptr<content::NavigationThrottle> {
-                  if (handle->GetURL() != url_srp() &&
-                      handle->GetURL() != url_srp_redirect()) {
-                    return nullptr;
-                  }
-                  content::TestNavigationThrottle::ThrottleMethod method =
-                      content::TestNavigationThrottle::WILL_START_REQUEST;
-                  if (milestone == NavigationMilestone::
-                                       kFirstRedirectResponseLoaderCallback) {
-                    method =
-                        content::TestNavigationThrottle::WILL_REDIRECT_REQUEST;
-                  } else if (milestone ==
-                             NavigationMilestone::
-                                 kNonRedirectResponseLoaderCallback) {
-                    method =
-                        content::TestNavigationThrottle::WILL_PROCESS_RESPONSE;
-                  }
-                  auto throttle =
-                      std::make_unique<content::TestNavigationThrottle>(handle);
-                  throttle->SetResponse(method, synchrony, action);
-                  return throttle;
-                }));
+            base::BindLambdaForTesting([&](content::NavigationThrottleRegistry&
+                                               registry) -> void {
+              auto& handle = registry.GetNavigationHandle();
+              if (handle.GetURL() != url_srp() &&
+                  handle.GetURL() != url_srp_redirect()) {
+                return;
+              }
+              content::TestNavigationThrottle::ThrottleMethod method =
+                  content::TestNavigationThrottle::WILL_START_REQUEST;
+              if (milestone ==
+                  NavigationMilestone::kFirstRedirectResponseLoaderCallback) {
+                method = content::TestNavigationThrottle::WILL_REDIRECT_REQUEST;
+              } else if (milestone == NavigationMilestone::
+                                          kNonRedirectResponseLoaderCallback) {
+                method = content::TestNavigationThrottle::WILL_PROCESS_RESPONSE;
+              }
+              auto throttle =
+                  std::make_unique<content::TestNavigationThrottle>(registry);
+              throttle->SetResponse(method, synchrony, action);
+              registry.AddThrottle(std::move(throttle));
+            }));
         TestNavigationAbandonment(
             AbandonReason::kInternalCancellation, milestone,
             GetTargetURLForMilestone(milestone),
@@ -1235,32 +1217,32 @@ IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,
   for (NavigationMilestone milestone : all_throttleable_milestones()) {
     content::TestNavigationThrottleInserter throttle_inserter(
         web_contents(),
-        base::BindLambdaForTesting(
-            [&](content::NavigationHandle* handle)
-                -> std::unique_ptr<content::NavigationThrottle> {
-              if (handle->GetURL() != url_srp() &&
-                  handle->GetURL() != url_srp_redirect()) {
-                return nullptr;
-              }
-              content::TestNavigationThrottle::ThrottleMethod method =
-                  content::TestNavigationThrottle::WILL_START_REQUEST;
-              if (milestone ==
-                  NavigationMilestone::kFirstRedirectResponseLoaderCallback) {
-                method = content::TestNavigationThrottle::WILL_REDIRECT_REQUEST;
-              } else if (milestone == NavigationMilestone::
-                                          kNonRedirectResponseLoaderCallback) {
-                method = content::TestNavigationThrottle::WILL_PROCESS_RESPONSE;
-              }
-              auto throttle =
-                  std::make_unique<content::TestNavigationThrottle>(handle);
-              throttle->SetResponse(
-                  method, content::TestNavigationThrottle::SYNCHRONOUS,
-                  milestone == NavigationMilestone::
-                                   kNonRedirectResponseLoaderCallback
-                      ? content::NavigationThrottle::BLOCK_RESPONSE
-                      : content::NavigationThrottle::BLOCK_REQUEST);
-              return throttle;
-            }));
+        base::BindLambdaForTesting([&](content::NavigationThrottleRegistry&
+                                           registry) -> void {
+          auto& handle = registry.GetNavigationHandle();
+          if (handle.GetURL() != url_srp() &&
+              handle.GetURL() != url_srp_redirect()) {
+            return;
+          }
+          content::TestNavigationThrottle::ThrottleMethod method =
+              content::TestNavigationThrottle::WILL_START_REQUEST;
+          if (milestone ==
+              NavigationMilestone::kFirstRedirectResponseLoaderCallback) {
+            method = content::TestNavigationThrottle::WILL_REDIRECT_REQUEST;
+          } else if (milestone ==
+                     NavigationMilestone::kNonRedirectResponseLoaderCallback) {
+            method = content::TestNavigationThrottle::WILL_PROCESS_RESPONSE;
+          }
+          auto throttle =
+              std::make_unique<content::TestNavigationThrottle>(registry);
+          throttle->SetResponse(
+              method, content::TestNavigationThrottle::SYNCHRONOUS,
+              milestone ==
+                      NavigationMilestone::kNonRedirectResponseLoaderCallback
+                  ? content::NavigationThrottle::BLOCK_RESPONSE
+                  : content::NavigationThrottle::BLOCK_REQUEST);
+          registry.AddThrottle(std::move(throttle));
+        }));
     TestNavigationAbandonment(
         AbandonReason::kErrorPage, milestone,
         GetTargetURLForMilestone(milestone),
@@ -1324,24 +1306,55 @@ IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,
       GetMilestoneToAbandonHistogramName(NavigationMilestone::kAFTEnd);
   auto abandoned_milesone_name = GetMilestoneToAbandonHistogramName(
       NavigationMilestone::kAFTEnd, AbandonReason::kHidden);
-  EXPECT_THAT(
-      histogram_tester.GetTotalCountsForPrefix(milesone_name),
-      testing::ElementsAre(
-          testing::Pair(abandoned_milesone_name, 1),
-          testing::Pair(
-              abandoned_milesone_name +
-                  ChromeGWSAbandonedPageLoadMetricsObserver::GetSuffixForRTT(
-                      g_browser_process->network_quality_tracker()
-                          ->GetHttpRTT()),
-              1)));
+  EXPECT_THAT(histogram_tester.GetTotalCountsForPrefix(milesone_name),
+              testing::ElementsAre(testing::Pair(abandoned_milesone_name, 1)));
 
   // There should be a new entry for all the navigation and loading milestones
   // metrics achieved before abandonment.
   ExpectTotalCountForAllNavigationMilestones(/*include_redirect=*/false, 1);
 }
 
-IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,
-                       DuplicateNavigation_BrowserInitiated) {
+class GWSAbandonedPageLoadMetricsObserverWithIgnoreDuplicateFlagBrowserTest
+    : public GWSAbandonedPageLoadMetricsObserverBrowserTest,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  GWSAbandonedPageLoadMetricsObserverWithIgnoreDuplicateFlagBrowserTest() =
+      default;
+
+  void SetUp() override {
+    if (IsIgnoreDuplicateNavsEnabled()) {
+      scoped_feature_list_.InitAndEnableFeature(features::kIgnoreDuplicateNavs);
+    } else {
+      scoped_feature_list_.InitAndDisableFeature(
+          features::kIgnoreDuplicateNavs);
+    }
+    GWSAbandonedPageLoadMetricsObserverBrowserTest::SetUp();
+  }
+
+  void SetUpInProcessBrowserTestFixture() override {
+    GWSAbandonedPageLoadMetricsObserverBrowserTest::
+        SetUpInProcessBrowserTestFixture();
+    // By default, IgnoreDuplicateNavs is disabled in tests to prevent
+    // navigations from being unintentionally ignored. This test requires the
+    // feature, so remove the switch.
+    base::CommandLine::ForCurrentProcess()->RemoveSwitch(
+        switches::kDisableIgnoreDuplicateNavsForTesting);
+  }
+
+ protected:
+  bool IsIgnoreDuplicateNavsEnabled() { return GetParam(); }
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    GWSAbandonedPageLoadMetricsObserverWithIgnoreDuplicateFlagBrowserTest,
+    ::testing::Bool());
+
+IN_PROC_BROWSER_TEST_P(
+    GWSAbandonedPageLoadMetricsObserverWithIgnoreDuplicateFlagBrowserTest,
+    DuplicateNavigation_BrowserInitiated) {
+  const bool ignore_duplicate_navs_enabled = IsIgnoreDuplicateNavsEnabled();
   EXPECT_TRUE(content::NavigateToURL(web_contents(), url_non_srp()));
 
   // 1. Start browser-initiated navigation to `url_srp()`
@@ -1352,38 +1365,58 @@ IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,
   EXPECT_TRUE(nav_manager.WaitForRequestStart());
 
   // 2. Navigate again, also to `url_srp()`.
-  web_contents()->GetController().LoadURL(
-      url_srp(), content::Referrer(), ui::PAGE_TRANSITION_LINK, std::string());
+  base::WeakPtr<content::NavigationHandle> nav_handle_for_url =
+      web_contents()->GetController().LoadURL(url_srp(), content::Referrer(),
+                                              ui::PAGE_TRANSITION_LINK,
+                                              std::string());
   // Wait for the first navigation to finish.
   EXPECT_TRUE(nav_manager.WaitForNavigationFinished());
-  // Ensure that the first_navigation didn't commit.
-  EXPECT_FALSE(nav_manager.was_committed());
+  // If duplicate navigations are ignored, the first navigation commits.
+  // Otherwise, it's cancelled by the second.
+  EXPECT_EQ(nav_manager.was_committed(), ignore_duplicate_navs_enabled);
 
   EXPECT_TRUE(content::WaitForLoadStop(web_contents()));
   EXPECT_EQ(url_srp(),
             web_contents()->GetPrimaryMainFrame()->GetLastCommittedURL());
 
-  // Expect that the first navigation didn't get to LoaderStart.
+  // If duplicate navigations are ignored, only the first navigation starts.
+  // Otherwise, both do.
   histogram_tester().ExpectTotalCount(
-      GetMilestoneHistogramName(NavigationMilestone::kNavigationStart), 2);
+      GetMilestoneHistogramName(NavigationMilestone::kNavigationStart),
+      ignore_duplicate_navs_enabled ? 1 : 2);
   histogram_tester().ExpectTotalCount(
       GetMilestoneHistogramName(NavigationMilestone::kLoaderStart), 1);
 
-  // Check that the abandonment reason is set correctly.
-  EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix(
-                  GetAbandonReasonAtMilestoneHistogramName(
-                      NavigationMilestone::kNavigationStart)),
-              testing::UnorderedElementsAreArray(
-                  ExpandHistograms({GetAbandonReasonAtMilestoneHistogramName(
-                      NavigationMilestone::kNavigationStart)})));
-  histogram_tester().ExpectUniqueSample(
-      GetAbandonReasonAtMilestoneHistogramName(
-          NavigationMilestone::kNavigationStart),
-      AbandonReason::kNewDuplicateNavigation, 1);
+  if (ignore_duplicate_navs_enabled) {
+    ExpectTotalCountForAllNavigationMilestones(/*include_redirect=*/false, 1);
+    // Check that no abandonment reason is set for the second navigation. Since
+    // the first navigation was kept and committed, the second one was never
+    // considered "abandoned", but rather ignored.
+    for (auto milestone : all_milestones_with_performance_mark()) {
+      EXPECT_TRUE(histogram_tester()
+                      .GetTotalCountsForPrefix(
+                          GetAbandonReasonAtMilestoneHistogramName(milestone))
+                      .empty());
+    }
+  } else {
+    // Check that the abandonment reason is set correctly.
+    EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix(
+                    GetAbandonReasonAtMilestoneHistogramName(
+                        NavigationMilestone::kNavigationStart)),
+                testing::UnorderedElementsAreArray(
+                    ExpandHistograms({GetAbandonReasonAtMilestoneHistogramName(
+                        NavigationMilestone::kNavigationStart)})));
+    histogram_tester().ExpectUniqueSample(
+        GetAbandonReasonAtMilestoneHistogramName(
+            NavigationMilestone::kNavigationStart),
+        AbandonReason::kNewDuplicateNavigation, 1);
+  }
 }
 
-IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,
-                       DuplicateNavigation_RendererInitiated) {
+IN_PROC_BROWSER_TEST_P(
+    GWSAbandonedPageLoadMetricsObserverWithIgnoreDuplicateFlagBrowserTest,
+    DuplicateNavigation_RendererInitiated) {
+  const bool ignore_duplicate_navs_enabled = IsIgnoreDuplicateNavsEnabled();
   EXPECT_TRUE(content::NavigateToURL(web_contents(), url_non_srp()));
 
   // 1. Start renderer-initiated navigation to `url_srp()`
@@ -1398,30 +1431,46 @@ IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,
                      content::JsReplace("location.href = $1;", url_srp())));
   // Wait for the first navigation to finish.
   EXPECT_TRUE(nav_manager.WaitForNavigationFinished());
-  // Ensure that the first_navigation didn't commit.
-  EXPECT_FALSE(nav_manager.was_committed());
+  // If duplicate navigations are ignored, the first navigation commits.
+  // Otherwise, it's cancelled by the second.
+  EXPECT_EQ(nav_manager.was_committed(), ignore_duplicate_navs_enabled);
 
   EXPECT_TRUE(content::WaitForLoadStop(web_contents()));
   EXPECT_EQ(url_srp(),
             web_contents()->GetPrimaryMainFrame()->GetLastCommittedURL());
 
-  // Expect that the first navigation didn't get to LoaderStart.
+  // If duplicate navigations are ignored, only the first navigation starts.
+  // Otherwise, both do.
   histogram_tester().ExpectTotalCount(
-      GetMilestoneHistogramName(NavigationMilestone::kNavigationStart), 2);
+      GetMilestoneHistogramName(NavigationMilestone::kNavigationStart),
+      ignore_duplicate_navs_enabled ? 1 : 2);
   histogram_tester().ExpectTotalCount(
       GetMilestoneHistogramName(NavigationMilestone::kLoaderStart), 1);
 
-  // Check that the abandonment reason is set correctly.
-  EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix(
-                  GetAbandonReasonAtMilestoneHistogramName(
-                      NavigationMilestone::kNavigationStart)),
-              testing::UnorderedElementsAreArray(
-                  ExpandHistograms({GetAbandonReasonAtMilestoneHistogramName(
-                      NavigationMilestone::kNavigationStart)})));
-  histogram_tester().ExpectUniqueSample(
-      GetAbandonReasonAtMilestoneHistogramName(
-          NavigationMilestone::kNavigationStart),
-      AbandonReason::kNewDuplicateNavigation, 1);
+  if (ignore_duplicate_navs_enabled) {
+    ExpectTotalCountForAllNavigationMilestones(/*include_redirect=*/false, 1);
+    // Check that no abandonment reason is set for the second navigation. Since
+    // the first navigation was kept and committed, the second one was never
+    // considered "abandoned" in the traditional sense, but rather ignored.
+    for (auto milestone : all_milestones_with_performance_mark()) {
+      EXPECT_TRUE(histogram_tester()
+                      .GetTotalCountsForPrefix(
+                          GetAbandonReasonAtMilestoneHistogramName(milestone))
+                      .empty());
+    }
+  } else {
+    // Check that the abandonment reason is set correctly.
+    EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix(
+                    GetAbandonReasonAtMilestoneHistogramName(
+                        NavigationMilestone::kNavigationStart)),
+                testing::UnorderedElementsAreArray(
+                    ExpandHistograms({GetAbandonReasonAtMilestoneHistogramName(
+                        NavigationMilestone::kNavigationStart)})));
+    histogram_tester().ExpectUniqueSample(
+        GetAbandonReasonAtMilestoneHistogramName(
+            NavigationMilestone::kNavigationStart),
+        AbandonReason::kNewDuplicateNavigation, 1);
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,

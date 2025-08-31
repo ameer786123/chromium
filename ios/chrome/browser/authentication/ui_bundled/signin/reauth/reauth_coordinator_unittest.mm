@@ -12,7 +12,8 @@
 #import "base/functional/callback_forward.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/bind.h"
-#import "base/test/task_environment.h"
+#import "base/test/metrics/histogram_tester.h"
+#import "components/signin/public/base/signin_metrics.h"
 #import "components/signin/public/identity_manager/account_info.h"
 #import "components/signin/public/identity_manager/identity_test_utils.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
@@ -25,6 +26,7 @@
 #import "ios/chrome/browser/signin/model/identity_test_environment_browser_state_adaptor.h"
 #import "ios/chrome/browser/signin/model/system_identity_interaction_manager.h"
 #import "ios/web/common/uikit_ui_util.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/gtest_support.h"
@@ -102,7 +104,7 @@ class ReauthCoordinatorTest : public PlatformTest {
   }
 
  protected:
-  base::test::TaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_;
   std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<TestBrowser> browser_;
   OCMockObject<SystemIdentityInteractionManager>* mock_interaction_manager_ =
@@ -112,13 +114,15 @@ class ReauthCoordinatorTest : public PlatformTest {
 };
 
 TEST_F(ReauthCoordinatorTest, ReauthCompletedSuccessfully) {
+  base::HistogramTester histogram_tester;
   id<SystemIdentity> identity = [FakeSystemIdentity fakeIdentity1];
   AccountInfo account = MakeIdentityAvailable(identity);
 
   ReauthCoordinator* reauth_coordinator = [[ReauthCoordinator alloc]
       initWithBaseViewController:GetAnyKeyWindow().rootViewController
                          browser:browser_.get()
-                         account:account];
+                         account:account
+               signinAccessPoint:signin_metrics::AccessPoint::kWebSignin];
   reauth_coordinator.delegate = mock_delegate_;
 
   ArgumentCaptor<SigninCompletionBlock> signin_completion_block_captor;
@@ -134,16 +138,24 @@ TEST_F(ReauthCoordinatorTest, ReauthCompletedSuccessfully) {
   SigninCompletionBlock completion_block = signin_completion_block_captor.Get();
   CHECK(completion_block);
   completion_block(identity, nil);
+  histogram_tester.ExpectUniqueSample("Signin.Reauth.InSigninFlow.Started",
+                                      signin_metrics::AccessPoint::kWebSignin,
+                                      1);
+  histogram_tester.ExpectUniqueSample("Signin.Reauth.InSigninFlow.Completed",
+                                      signin_metrics::AccessPoint::kWebSignin,
+                                      1);
 }
 
 TEST_F(ReauthCoordinatorTest, ReauthCancelledByUser) {
+  base::HistogramTester histogram_tester;
   AccountInfo account =
       MakeIdentityAvailable([FakeSystemIdentity fakeIdentity1]);
 
   ReauthCoordinator* reauth_coordinator = [[ReauthCoordinator alloc]
       initWithBaseViewController:GetAnyKeyWindow().rootViewController
                          browser:browser_.get()
-                         account:account];
+                         account:account
+               signinAccessPoint:signin_metrics::AccessPoint::kWebSignin];
   reauth_coordinator.delegate = mock_delegate_;
 
   ArgumentCaptor<SigninCompletionBlock> signin_completion_block_captor;
@@ -162,16 +174,24 @@ TEST_F(ReauthCoordinatorTest, ReauthCancelledByUser) {
   // When the passed identity is is `nil`, it means that the flow was cancelled
   // by the user.
   completion_block(nil, nil);
+  histogram_tester.ExpectUniqueSample("Signin.Reauth.InSigninFlow.Started",
+                                      signin_metrics::AccessPoint::kWebSignin,
+                                      1);
+  histogram_tester.ExpectUniqueSample("Signin.Reauth.InSigninFlow.Cancelled",
+                                      signin_metrics::AccessPoint::kWebSignin,
+                                      1);
 }
 
 TEST_F(ReauthCoordinatorTest, ReauthInterrupted) {
+  base::HistogramTester histogram_tester;
   AccountInfo account =
       MakeIdentityAvailable([FakeSystemIdentity fakeIdentity1]);
 
   ReauthCoordinator* reauth_coordinator = [[ReauthCoordinator alloc]
       initWithBaseViewController:GetAnyKeyWindow().rootViewController
                          browser:browser_.get()
-                         account:account];
+                         account:account
+               signinAccessPoint:signin_metrics::AccessPoint::kWebSignin];
   reauth_coordinator.delegate = mock_delegate_;
 
   OCMExpect([mock_interaction_manager_
@@ -184,4 +204,44 @@ TEST_F(ReauthCoordinatorTest, ReauthInterrupted) {
       [mock_delegate_ reauthFinishedWithResult:ReauthResult::kInterrupted]);
   OCMExpect([mock_interaction_manager_ cancelAuthActivityAnimated:NO]);
   [reauth_coordinator stop];
+  histogram_tester.ExpectUniqueSample("Signin.Reauth.InSigninFlow.Started",
+                                      signin_metrics::AccessPoint::kWebSignin,
+                                      1);
+  histogram_tester.ExpectUniqueSample("Signin.Reauth.InSigninFlow.Interrupted",
+                                      signin_metrics::AccessPoint::kWebSignin,
+                                      1);
+}
+
+TEST_F(ReauthCoordinatorTest, ReauthCompletedSuccessfullyInExplicitFlow) {
+  base::HistogramTester histogram_tester;
+  id<SystemIdentity> identity = [FakeSystemIdentity fakeIdentity1];
+  AccountInfo account = MakeIdentityAvailable(identity);
+
+  ReauthCoordinator* reauth_coordinator = [[ReauthCoordinator alloc]
+      initWithBaseViewController:GetAnyKeyWindow().rootViewController
+                         browser:browser_.get()
+                         account:account
+               reauthAccessPoint:signin_metrics::ReauthAccessPoint::
+                                     kAccountMenu];
+  reauth_coordinator.delegate = mock_delegate_;
+
+  ArgumentCaptor<SigninCompletionBlock> signin_completion_block_captor;
+  OCMExpect([mock_interaction_manager_
+                startAuthActivityWithViewController:OCMOCK_ANY
+                                          userEmail:base::SysUTF8ToNSString(
+                                                        account.email)
+                                         completion:OCMOCK_ANY])
+      .andDo(signin_completion_block_captor.Capture(/*argumentIndex=*/4));
+  [reauth_coordinator start];
+
+  OCMExpect([mock_delegate_ reauthFinishedWithResult:ReauthResult::kSuccess]);
+  SigninCompletionBlock completion_block = signin_completion_block_captor.Get();
+  CHECK(completion_block);
+  completion_block(identity, nil);
+  histogram_tester.ExpectUniqueSample(
+      "Signin.Reauth.InExplicitFlow.Started",
+      signin_metrics::ReauthAccessPoint::kAccountMenu, 1);
+  histogram_tester.ExpectUniqueSample(
+      "Signin.Reauth.InExplicitFlow.Completed",
+      signin_metrics::ReauthAccessPoint::kAccountMenu, 1);
 }

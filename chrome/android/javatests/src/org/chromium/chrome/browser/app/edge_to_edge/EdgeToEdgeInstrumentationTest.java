@@ -33,6 +33,7 @@ import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
@@ -43,8 +44,8 @@ import org.chromium.chrome.browser.compositor.layouts.Layout.Orientation;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper;
-import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeControllerFactory;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeControllerImpl;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -53,6 +54,7 @@ import org.chromium.chrome.test.transit.ChromeTransitTestRules;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.content_public.browser.test.util.UiUtils;
 import org.chromium.net.test.EmbeddedTestServer;
+import org.chromium.ui.UiSwitches;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.test.util.DeviceRestriction;
 import org.chromium.ui.test.util.RenderTestRule;
@@ -70,9 +72,7 @@ import java.io.IOException;
 @MinAndroidSdkLevel(Build.VERSION_CODES.R)
 @EnableFeatures({
     ChromeFeatureList.DRAW_CUTOUT_EDGE_TO_EDGE,
-    ChromeFeatureList.DRAW_KEY_NATIVE_EDGE_TO_EDGE,
-    ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN,
-    ChromeFeatureList.EDGE_TO_EDGE_WEB_OPT_IN
+    ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN
 })
 public class EdgeToEdgeInstrumentationTest {
     @Rule
@@ -123,7 +123,7 @@ public class EdgeToEdgeInstrumentationTest {
         assertFalse(
                 "Setup error, all tests start not opted into edge-to-edge!",
                 mEdgeToEdgeController.isPageOptedIntoEdgeToEdge());
-        EdgeToEdgeControllerFactory.setHas3ButtonNavBar(false);
+        EdgeToEdgeUtils.setHas3ButtonNavBarForTesting(false);
     }
 
     @After
@@ -254,6 +254,7 @@ public class EdgeToEdgeInstrumentationTest {
 
     @Test
     @MediumTest
+    @DisableFeatures(ChromeFeatureList.FLOATING_SNACKBAR)
     public void testSnackbar() throws InterruptedException {
         activateFeatureToEdge();
         optOutOfToEdge();
@@ -338,7 +339,7 @@ public class EdgeToEdgeInstrumentationTest {
         // Set 3-button mode to simulate switching to a tablet.
         // Using a mocked static EdgeToEdgeControllerFactory#isSupportedConfiguration would be
         // better but they are not supported on Android by Mockito.
-        EdgeToEdgeControllerFactory.setHas3ButtonNavBar(true);
+        EdgeToEdgeUtils.setHas3ButtonNavBarForTesting(true);
 
         // Use an orientation change to trigger new insets.
         int targetOrientation = Configuration.ORIENTATION_LANDSCAPE;
@@ -377,7 +378,7 @@ public class EdgeToEdgeInstrumentationTest {
                         + "opted in.",
                 Color.TRANSPARENT,
                 mActivity.getWindow().getNavigationBarColor());
-        assertNavigationBarColor(mActivity.getActivityTab().getBackgroundColor());
+        assertNavigationBarColor(mActivityTestRule.getActivityTab().getBackgroundColor());
 
         TabUiTestHelper.enterTabSwitcher(mActivity);
         assertEquals(
@@ -390,12 +391,11 @@ public class EdgeToEdgeInstrumentationTest {
                 "Should stay toEdge upon leaving the Tab Switcher.",
                 Color.TRANSPARENT,
                 mActivity.getWindow().getNavigationBarColor());
-        assertNavigationBarColor(mActivity.getActivityTab().getBackgroundColor());
+        assertNavigationBarColor(mActivityTestRule.getActivityTab().getBackgroundColor());
     }
 
     @Test
     @MediumTest
-    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_SAFE_AREA_CONSTRAINT)
     public void testSafeAreaConstraint() {
         loadSafeAreaConstrainPage();
 
@@ -414,7 +414,8 @@ public class EdgeToEdgeInstrumentationTest {
     @Test
     @MediumTest
     @Feature({"RenderTest"})
-    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_EVERYWHERE + ":e2e_everywhere_debug/true")
+    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_EVERYWHERE)
+    @CommandLineFlags.Add(UiSwitches.ENABLE_EDGE_TO_EDGE_DEBUG_LAYERS)
     public void testPadWithEdgeToEdgeLayout() throws IOException {
         goToEdge();
         assertDrawingToEdge();
@@ -452,12 +453,12 @@ public class EdgeToEdgeInstrumentationTest {
     }
 
     private void assertNavigationBarColor(int color) {
-        assertEquals(
-                "Nav bar color is different.",
-                color,
-                mActivity
-                        .getEdgeToEdgeManager()
-                        .getEdgeToEdgeSystemBarColorHelper()
-                        .getNavigationBarColor());
+        CriteriaHelper.pollUiThread(
+                () ->
+                        color
+                                == mActivity
+                                        .getEdgeToEdgeManager()
+                                        .getEdgeToEdgeSystemBarColorHelper()
+                                        .getNavigationBarColor());
     }
 }

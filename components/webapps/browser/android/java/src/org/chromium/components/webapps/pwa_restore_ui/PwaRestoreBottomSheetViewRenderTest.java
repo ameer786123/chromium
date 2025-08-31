@@ -50,7 +50,7 @@ public class PwaRestoreBottomSheetViewRenderTest {
     private static Activity sActivity;
 
     @ClassParameter
-    private static List<ParameterSet> sClassParams =
+    private static final List<ParameterSet> sClassParams =
             new NightModeTestUtils.NightModeParams().getParameters();
 
     @ClassRule
@@ -101,17 +101,10 @@ public class PwaRestoreBottomSheetViewRenderTest {
         appIcons.add(createBitmap(Color.RED));
         appIcons.add(createBitmap(Color.GREEN));
         appIcons.add(createBitmap(Color.BLUE));
-        int[] lastUsedList = new int[] {1, 2, 3};
 
         mCoordinator =
                 new PwaRestoreBottomSheetCoordinator(
-                        appIds,
-                        appNames,
-                        appIcons,
-                        lastUsedList,
-                        sActivity,
-                        null,
-                        R.drawable.ic_arrow_back_24dp);
+                        appIds, appNames, appIcons, sActivity, null, R.drawable.ic_arrow_back_24dp);
         PropertyModel model = mCoordinator.getModelForTesting();
         model.set(PwaRestoreProperties.VIEW_STATE, PwaRestoreProperties.ViewState.PREVIEW);
 

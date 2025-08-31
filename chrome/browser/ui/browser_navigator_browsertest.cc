@@ -2,15 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/ui/browser_navigator_browsertest.h"
 
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -711,12 +707,12 @@ IN_PROC_BROWSER_TEST_F(BrowserNavigatorTest,
 #endif
 
 // This test verifies that navigating with WindowOpenDisposition = NEW_POPUP
-// and is_tab_modal_popup = true results in a new WebContents that is a popup
-// and behaves like a tab modal.
+// and is_tab_modal_popup_deprecated = true results in a new WebContents that is
+// a popup and behaves like a tab modal.
 IN_PROC_BROWSER_TEST_F(BrowserNavigatorTest, Disposition_NewPopupTabModal) {
   NavigateParams params(MakeNavigateParams());
   params.disposition = WindowOpenDisposition::NEW_POPUP;
-  params.is_tab_modal_popup = true;
+  params.is_tab_modal_popup_deprecated = true;
   params.window_features.bounds = gfx::Rect(0, 0, 200, 200);
   // Wait for new popup to load and gain focus.
   ui_test_utils::NavigateToURL(&params);
@@ -737,7 +733,7 @@ IN_PROC_BROWSER_TEST_F(BrowserNavigatorTest, Disposition_NewPopupTabModal) {
   EXPECT_TRUE(params.browser->window()->IsVisible());
 
   // Verify the popup window is set as tab model popup.
-  EXPECT_TRUE(params.browser->window()->IsTabModalPopup());
+  EXPECT_TRUE(params.browser->window()->IsTabModalPopupDeprecated());
 }
 
 // This test verifies that navigating with WindowOpenDisposition = NEW_WINDOW
@@ -1432,22 +1428,32 @@ IN_PROC_BROWSER_TEST_F(BrowserNavigatorTest,
   RunDoNothingIfIncognitoIsForcedTest(GetSettingsURL());
 }
 
-// This test verifies that the bookmarks page isn't opened in the incognito
-// window.
+// This test verifies that the bookmarks page can open in incognito windows.
 IN_PROC_BROWSER_TEST_F(BrowserNavigatorTest,
-                       Disposition_Bookmarks_UseNonIncognitoWindow) {
-  RunUseNonIncognitoWindowTest(
-      GURL(chrome::kChromeUIBookmarksURL),
-      ui::PageTransition::PAGE_TRANSITION_AUTO_BOOKMARK);
-}
+                       Disposition_Bookmarks_UseIncognitoWindow) {
+  Browser* const incognito_browser = CreateIncognitoBrowser();
+  TabStripModel* const incognito_tab_strip_model =
+      incognito_browser->tab_strip_model();
 
-// Bookmark manager is expected to always open in normal mode regardless
-// of whether the user is trying to open it in incognito mode or not.
-// This test verifies that if incognito mode is forced (by policy), bookmark
-// manager doesn't open at all.
-IN_PROC_BROWSER_TEST_F(BrowserNavigatorTest,
-                       Disposition_Bookmarks_DoNothingIfIncognitoIsForced) {
-  RunDoNothingIfIncognitoIsForcedTest(GURL(chrome::kChromeUIBookmarksURL));
+  EXPECT_EQ(2u, chrome::GetTotalBrowserCount());
+  EXPECT_EQ(1, browser()->tab_strip_model()->count());
+  EXPECT_EQ(1, incognito_tab_strip_model->count());
+
+  // Navigate to the page.
+  const GURL bookmarks_page = GURL(chrome::kChromeUIBookmarksURL);
+  NavigateParams params(MakeNavigateParams(incognito_browser));
+  params.disposition = WindowOpenDisposition::SINGLETON_TAB;
+  params.url = bookmarks_page;
+  params.window_action = NavigateParams::SHOW_WINDOW;
+  params.transition = ui::PageTransition::PAGE_TRANSITION_AUTO_BOOKMARK;
+  Navigate(&params);
+
+  // This page should be opened in browser() window.
+  EXPECT_EQ(incognito_browser, params.browser);
+  EXPECT_NE(browser(), params.browser);
+  EXPECT_EQ(2, incognito_tab_strip_model->count());
+  EXPECT_EQ(bookmarks_page,
+            incognito_tab_strip_model->GetActiveWebContents()->GetURL());
 }
 
 // This test makes sure a crashed singleton tab reloads from a new navigation.
@@ -2180,24 +2186,24 @@ IN_PROC_BROWSER_TEST_F(BrowserNavigatorTest, PopinContext) {
   auto result = content::ExecJs(tab_web_contents,
                                 "window.open('" + insecure_url.spec() +
                                     "?popin_policy=*', '_blank', 'popin')");
-  EXPECT_TRUE(strstr(result.message(),
-                     "Partitioned popins must be opened from https URLs."));
+  UNSAFE_TODO(EXPECT_TRUE(strstr(
+      result.message(), "Partitioned popins must be opened from https URLs.")));
 
   // Secure context and insecure popin fails.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), secure_url));
   result = content::ExecJs(tab_web_contents,
                            "window.open('" + insecure_url.spec() +
                                "?popin_policy=*', '_blank', 'popin')");
-  EXPECT_TRUE(
-      strstr(result.message(), "Partitioned popins can only open https URLs."));
+  UNSAFE_TODO(EXPECT_TRUE(strstr(
+      result.message(), "Partitioned popins can only open https URLs.")));
 
   // Insecure context and secure popin fails.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), insecure_url));
   result = content::ExecJs(tab_web_contents,
                            "window.open('" + secure_url.spec() +
                                "?popin_policy=*', '_blank', 'popin')");
-  EXPECT_TRUE(strstr(result.message(),
-                     "Partitioned popins must be opened from https URLs."));
+  UNSAFE_TODO(EXPECT_TRUE(strstr(
+      result.message(), "Partitioned popins must be opened from https URLs.")));
 
   // Secure context and secure popin succeeds.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), secure_url));
@@ -2236,8 +2242,8 @@ IN_PROC_BROWSER_TEST_F(BrowserNavigatorTest, PopinRecursion) {
   const auto& result = content::ExecJs(
       popin_web_contents,
       "window.open('" + url.spec() + "?popin_policy=*', '_blank', 'popin')");
-  EXPECT_TRUE(strstr(result.message(),
-                     "Partitioned popins cannot open their own popin."));
+  UNSAFE_TODO(EXPECT_TRUE(strstr(
+      result.message(), "Partitioned popins cannot open their own popin.")));
 }
 
 // Test only one popin can be opened by a given context.
@@ -2657,7 +2663,7 @@ class MAYBE_BrowserNavigatorTestWithMockScreen : public BrowserNavigatorTest {
     mock_screen_.display_list().AddDisplay(
         {2, gfx::Rect(800, 0, 800, 700)},
         display::DisplayList::Type::NOT_PRIMARY);
-    ASSERT_EQ(2, display::Screen::GetScreen()->GetNumDisplays());
+    ASSERT_EQ(2, display::Screen::Get()->GetNumDisplays());
 #endif  // BUILDFLAG(IS_CHROMEOS)
   }
 
@@ -2667,7 +2673,7 @@ class MAYBE_BrowserNavigatorTestWithMockScreen : public BrowserNavigatorTest {
     // not exist yet.
     display::test::DisplayManagerTestApi(ash::Shell::Get()->display_manager())
         .UpdateDisplay("0+0-800x700,800+0-800x700");
-    ASSERT_EQ(2, display::Screen::GetScreen()->GetNumDisplays());
+    ASSERT_EQ(2, display::Screen::Get()->GetNumDisplays());
 #endif  // BUILDFLAG(IS_CHROMEOS)
   }
 
@@ -2690,9 +2696,9 @@ IN_PROC_BROWSER_TEST_F(MAYBE_BrowserNavigatorTestWithMockScreen,
   web_contents_params.picture_in_picture_options = *pip_options;
 
   // Ensure we have the two displays.
-  ASSERT_EQ(2, display::Screen::GetScreen()->GetNumDisplays());
-  auto display1 = display::Screen::GetScreen()->GetAllDisplays()[0];
-  auto display2 = display::Screen::GetScreen()->GetAllDisplays()[1];
+  ASSERT_EQ(2, display::Screen::Get()->GetNumDisplays());
+  auto display1 = display::Screen::Get()->GetAllDisplays()[0];
+  auto display2 = display::Screen::Get()->GetAllDisplays()[1];
 
   {
 #if BUILDFLAG(IS_CHROMEOS)
@@ -2704,9 +2710,8 @@ IN_PROC_BROWSER_TEST_F(MAYBE_BrowserNavigatorTestWithMockScreen,
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
     // Ensure that the opener is on display 1.
-    const auto opener_display =
-        display::Screen::GetScreen()->GetDisplayNearestWindow(
-            browser()->window()->GetNativeWindow());
+    const auto opener_display = display::Screen::Get()->GetDisplayNearestWindow(
+        browser()->window()->GetNativeWindow());
     ASSERT_EQ(display1.id(), opener_display.id());
 
     // Open the PiP window.
@@ -2739,9 +2744,8 @@ IN_PROC_BROWSER_TEST_F(MAYBE_BrowserNavigatorTestWithMockScreen,
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
     // Ensure that the opener is on display 2.
-    const auto opener_display =
-        display::Screen::GetScreen()->GetDisplayNearestWindow(
-            browser()->window()->GetNativeWindow());
+    const auto opener_display = display::Screen::Get()->GetDisplayNearestWindow(
+        browser()->window()->GetNativeWindow());
     ASSERT_EQ(display2.id(), opener_display.id());
 
     // Open the PiP window.
@@ -2767,7 +2771,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_BrowserNavigatorTestWithMockScreen,
       // Since we cannot get the global coordinates of the window, check
       // if the window is in the correct display without relying on bounds.
       const auto pip_window_display =
-          display::Screen::GetScreen()->GetDisplayNearestWindow(
+          display::Screen::Get()->GetDisplayNearestWindow(
               params.browser->window()->GetNativeWindow());
       ASSERT_EQ(display2.id(), pip_window_display.id());
       return;

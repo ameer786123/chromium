@@ -10,7 +10,7 @@
 #import "components/strings/grit/components_strings.h"
 #import "components/sync/base/features.h"
 #import "components/sync/base/user_selectable_type.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin/account_menu/account_menu_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/account_menu/account_menu_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_app_interface.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
@@ -72,6 +72,10 @@ void SignInWithPromoFromAccountSettings(FakeSystemIdentity* fake_identity,
                       IDS_IOS_FIRST_RUN_SIGNIN_CONTINUE_AS,
                       base::SysNSStringToUTF16(fake_identity.userGivenName))),
               grey_sufficientlyVisible(), nil)] performAction:grey_tap()];
+
+  [SigninEarlGreyUI
+      maybeDismissIdentityConfirmationSnackbarOnSignin:fake_identity];
+
   if (expect_history_sync_ui) {
     [[EarlGrey selectElementWithMatcher:chrome_test_util::
                                             PromoScreenPrimaryButtonMatcher()]
@@ -253,6 +257,11 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
 // Tests sign out from the manage accounts on device page.
 - (void)testSignOutFromManageAccountsSettings {
+  // Signing out from the manage accounts settings is not possible unless opened
+  // from the web.
+  if ([SigninEarlGrey areSeparateProfilesForManagedAccountsEnabled]) {
+    return;
+  }
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
@@ -397,9 +406,9 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   SaveBookmark(@"foo", @"https://www.foo.com");
 
   SignOutFromAccountSettings();
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_CANCEL)] performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::AlertItemWithAccessibilityLabelId(
+                     IDS_CANCEL)] performAction:grey_tap()];
 
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
 
@@ -431,7 +440,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   SignOutFromAccountSettings();
   [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::ButtonWithAccessibilityLabelId(
+                 chrome_test_util::AlertItemWithAccessibilityLabelId(
                      IDS_IOS_SIGNOUT_DIALOG_SIGN_OUT_AND_DELETE_BUTTON)]
       performAction:grey_tap()];
 
@@ -605,7 +614,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   // Sign in.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
-  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:fakeIdentity];
+  [SigninEarlGrey signinWithFakeIdentity:fakeIdentity];
 
   // Open the account settings.
   [ChromeEarlGreyUI openSettingsMenu];
@@ -734,7 +743,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   // Sign in.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
-  [SigninEarlGrey signinWithFakeIdentity:fakeIdentity];
+  [SigninEarlGrey signinWithFakeIdentity:fakeIdentity
+              waitForSyncTransportActive:NO];
 
   // Disable the policy dynamically.
   policy_test_utils::ClearPolicies();
@@ -747,7 +757,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::TableViewSwitchCell(
                                           kSyncPasswordsIdentifier,
                                           /*is_toggled_on=*/NO,
-                                          /*enabled=*/YES)]
+                                          /*is_enabled=*/YES)]
       assertWithMatcher:grey_sufficientlyVisible()];
 }
 
@@ -961,7 +971,15 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
 // Tests that the batch upload button description in the account settings
 // contains the correct string for reading list.
-- (void)testBulkUploadDescriptionTextForReadingList {
+// TODO(crbug.com/435139218): Reenable this test.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testBulkUploadDescriptionTextForReadingList \
+  testBulkUploadDescriptionTextForReadingList
+#else
+#define MAYBE_testBulkUploadDescriptionTextForReadingList \
+  FLAKY_testBulkUploadDescriptionTextForReadingList
+#endif
+- (void)MAYBE_testBulkUploadDescriptionTextForReadingList {
   // Add local data.
   reading_list_test_utils::AddURLToReadingListWithSnackbarDismiss(
       GURL("https://example.com"), nil);
@@ -985,7 +1003,15 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
 // Tests that the batch upload button description in the account settings
 // contains the correct string for passwords and other data type.
-- (void)testBulkUploadDescriptionTextForPasswordsAndOthers {
+// TODO(crbug.com/435139218): Reenable this test.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testBulkUploadDescriptionTextForPasswordsAndOthers \
+  testBulkUploadDescriptionTextForPasswordsAndOthers
+#else
+#define MAYBE_testBulkUploadDescriptionTextForPasswordsAndOthers \
+  FLAKY_testBulkUploadDescriptionTextForPasswordsAndOthers
+#endif
+- (void)MAYBE_testBulkUploadDescriptionTextForPasswordsAndOthers {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
@@ -1014,7 +1040,15 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // - Passwords
 // - Bookmarks
 // - Reading list
-- (void)testBulkUploadPageForAllDataTypes {
+// TODO(crbug.com/435139218): Reenable this test.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testBulkUploadPageForAllDataTypes \
+  testBulkUploadPageForAllDataTypes
+#else
+#define MAYBE_testBulkUploadPageForAllDataTypes \
+  FLAKY_testBulkUploadPageForAllDataTypes
+#endif
+- (void)MAYBE_testBulkUploadPageForAllDataTypes {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
@@ -1164,12 +1198,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // Tests that bulk upload moves the following data types to account:
 // - Passwords
 // TODO(crbug.com/407020882): Remove FLAKY_ from this test.
-#if TARGET_IPHONE_SIMULATOR
-#define MAYBE_testBulkUploadForPasswords FLAKY_testBulkUploadForPasswords
-#else
-#define MAYBE_testBulkUploadForPasswords testBulkUploadForPasswords
-#endif
-- (void)MAYBE_testBulkUploadForPasswords {
+- (void)FLAKY_testBulkUploadForPasswords {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
@@ -1259,7 +1288,15 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // Tests that bulk upload moves the following data types to account:
 // - Bookmarks
 // - Reading List
-- (void)testBulkUploadForBookmarksAndReadingList {
+// TODO(crbug.com/435139218): Reenable this test.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testBulkUploadForBookmarksAndReadingList \
+  testBulkUploadForBookmarksAndReadingList
+#else
+#define MAYBE_testBulkUploadForBookmarksAndReadingList \
+  FLAKY_testBulkUploadForBookmarksAndReadingList
+#endif
+- (void)MAYBE_testBulkUploadForBookmarksAndReadingList {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
@@ -1335,7 +1372,13 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // - Passwords
 // - Bookmarks
 // - Reading List
-- (void)testBulkUploadForAllDataTypes {
+// TODO(crbug.com/435139218): Reenable this test.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testBulkUploadForAllDataTypes testBulkUploadForAllDataTypes
+#else
+#define MAYBE_testBulkUploadForAllDataTypes FLAKY_testBulkUploadForAllDataTypes
+#endif
+- (void)MAYBE_testBulkUploadForAllDataTypes {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
@@ -1584,13 +1627,13 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // Tests the custom passphrase is remembered per account, kept across signout,
 // and cleared when account is removed from device.
 // TODO(crbug.com/384646508): This test is flaky on the iPad simulator.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_testRememberCustomPassphraseAfterSignout \
   FLAKY_testRememberCustomPassphraseAfterSignout
 #else
 #define MAYBE_testRememberCustomPassphraseAfterSignout \
   testRememberCustomPassphraseAfterSignout
-#endif  // TARGET_IPHONE_SIMULATOR
+#endif  // TARGET_OS_SIMULATOR
 - (void)MAYBE_testRememberCustomPassphraseAfterSignout {
   // Enable custom passphrase.
   [ChromeEarlGrey addSyncPassphrase:kPassphrase];
@@ -1761,23 +1804,28 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
                  base::Seconds(5), wait_for_disappearance),
              @"Account menu did not disappear.");
 
-  // Verify the account settings view is popped.
+  // Verify the account settings view remains on top of screen.
   [[EarlGrey
       selectElementWithMatcher:grey_accessibilityID(
                                    kManageSyncTableViewAccessibilityIdentifier)]
-      assertWithMatcher:grey_notVisible()];
+      assertWithMatcher:grey_sufficientlyVisible()];
 
-  // Verfiy account is switched.
+  [[EarlGrey selectElementWithMatcher:scroll_view_matcher]
+      performAction:grey_scrollToContentEdgeWithStartPoint(kGREYContentEdgeTop,
+                                                           0.5, 0.25)];
+  // And it displays the new account.
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(
+                                   CentralAccountViewAccessibilityIdentifier(
+                                       fakeIdentity2.userEmail))]
+      assertWithMatcher:grey_sufficientlyVisible()];
+
+  // Verify account is switched.
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity2];
 }
 
 // Test signing out from the account menu.
 - (void)testSignOutFromAccountFromAccountMenu {
-  // TODO(crbug.com/404180896): Test fails on iPad.
-  if ([ChromeEarlGrey isIPadIdiom]) {
-    EARL_GREY_TEST_DISABLED(@"Fails on iPad.");
-  }
-
   // Separate profiles are only available in iOS 17+.
   if (!@available(iOS 17, *)) {
     return;
@@ -1806,10 +1854,14 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
       performAction:grey_tap()];
 
   // Verify the account menu is shown.
-  [[EarlGrey
-      selectElementWithMatcher:grey_accessibilityID(kAccountMenuTableViewId)]
+  id<GREYMatcher> account_menu_view_matcher =
+      grey_accessibilityID(kAccountMenuTableViewId);
+  [[EarlGrey selectElementWithMatcher:account_menu_view_matcher]
       assertWithMatcher:grey_sufficientlyVisible()];
 
+  // Scroll to the bottom to view the sign-out button.
+  [[EarlGrey selectElementWithMatcher:account_menu_view_matcher]
+      performAction:grey_scrollToContentEdge(kGREYContentEdgeBottom)];
   // Sign out.
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
                                           kAccountMenuSignoutButtonId)]

@@ -55,6 +55,10 @@ TabMetadata::TabOrigin GetTabOriginFromLaunchType(int type) {
     case TabModel::TabLaunchType::FROM_OMNIBOX:
     case TabModel::TabLaunchType::FROM_BOOKMARK_BAR_BACKGROUND:
     case TabModel::TabLaunchType::FROM_RECENT_TABS_FOREGROUND:
+    case TabModel::TabLaunchType::FROM_HISTORY_NAVIGATION_BACKGROUND:
+    case TabModel::TabLaunchType::FROM_HISTORY_NAVIGATION_FOREGROUND:
+    case TabModel::TabLaunchType::FROM_LONGPRESS_FOREGROUND_IN_GROUP:
+    case TabModel::TabLaunchType::FROM_LINK_CREATING_NEW_WINDOW:
       return TabMetadata::TabOrigin::kOpenedByUserAction;
 
     case TabModel::TabLaunchType::FROM_RESTORE:
@@ -67,6 +71,7 @@ TabMetadata::TabOrigin GetTabOriginFromLaunchType(int type) {
     case TabModel::TabLaunchType::FROM_SYNC_BACKGROUND:
     case TabModel::TabLaunchType::FROM_COLLABORATION_BACKGROUND_IN_GROUP:
     case TabModel::TabLaunchType::FROM_REPARENTING_BACKGROUND:
+    case TabModel::TabLaunchType::FROM_TAB_LIST_INTERFACE:
       return TabMetadata::TabOrigin::kOpenedWithoutUserAction;
 
     case TabModel::TabLaunchType::SIZE:
@@ -94,7 +99,26 @@ URLVisitAggregate::Tab MakeAggregateTab(
   tab.tab_metadata.tab_origin =
       GetTabOriginFromLaunchType(tab.tab_metadata.tab_android_launch_type);
   tab.tab_metadata.parent_tab_id = tab_android->GetParentId();
-  tab.tab_metadata.local_tab_group_id = tab_android->GetTabGroupId();
+  std::optional<tab_groups::TabGroupId> tab_group_id = tab_android->GetGroup();
+  // Use optional::transform once C++23 is allowed.
+  tab.tab_metadata.local_tab_group_id =
+      tab_group_id.has_value() ? std::make_optional(tab_group_id->token())
+                               : std::nullopt;
+  auto* web_contents = tab_android->GetContents();
+  if (!web_contents || !web_contents->GetPrimaryMainFrame()) {
+    tab.tab_metadata.ukm_source_id = ukm::kInvalidSourceId;
+  } else {
+    tab.tab_metadata.ukm_source_id =
+        web_contents->GetPrimaryMainFrame()->GetPageUkmSourceId();
+  }
+  for (int i = 0; i < tab_model->GetTabCount(); ++i) {
+    if (tab_model->GetTabAt(i) == tab_android) {
+      tab.tab_metadata.tab_model_index = i;
+      break;
+    }
+  }
+  tab.tab_metadata.is_last_tab_in_tab_model =
+      tab.tab_metadata.tab_model_index == tab_model->GetTabCount() - 1;
   return tab;
 }
 
@@ -158,8 +182,7 @@ void AndroidTabModelURLVisitDataFetcher::FetchURLVisitData(
           std::max(tab_data.last_active, last_show_timestamp);
       // Not applicable to android.
       tab_data.pinned = false;
-      tab_data.in_group =
-          tab_data.in_group || model->IsTabInTabGroup(tab_android);
+      tab_data.in_group = tab_data.in_group || tab_android->GetGroup();
     }
   }
 

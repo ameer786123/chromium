@@ -7,9 +7,14 @@
 #include <optional>
 
 #include "base/functional/callback_helpers.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/metrics/user_metrics.h"
+#include "base/metrics/user_metrics_action.h"
 #include "chrome/browser/glic/fre/glic_fre_controller.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/glic_metrics.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/widget/glic_window_controller.h"
 #include "content/public/browser/web_contents.h"
 
@@ -33,30 +38,42 @@ GlicKeyedService* GlicFrePageHandler::GetGlicService() {
 }
 
 void GlicFrePageHandler::AcceptFre() {
-  GetGlicService()->window_controller().fre_controller()->AcceptFre();
+  GetGlicService()->metrics()->OnFreAccepted();
+  GetGlicService()->fre_controller().AcceptFre();
 }
 
-void GlicFrePageHandler::DismissFre() {
-  GetGlicService()->window_controller().fre_controller()->OnNoThanksClicked();
+void GlicFrePageHandler::DismissFre(mojom::FreWebUiState panel_state) {
+  GetGlicService()->fre_controller().DismissFre(panel_state);
+}
+
+void GlicFrePageHandler::FreReloaded() {
+  base::RecordAction(
+      base::UserMetricsAction("Glic.Fre.ErrorPanelTryAgainClicked"));
 }
 
 void GlicFrePageHandler::PrepareForClient(
     base::OnceCallback<void(bool)> callback) {
-  GetGlicService()->window_controller().fre_controller()->PrepareForClient(
-      std::move(callback));
+  GetGlicService()->fre_controller().PrepareForClient(std::move(callback));
 }
 
 void GlicFrePageHandler::ValidateAndOpenLinkInNewTab(const GURL& url) {
   if (url.DomainIs("google.com")) {
     GetGlicService()->CreateTab(url, /*open_in_background=*/true, std::nullopt,
                                 base::DoNothing());
-    GetGlicService()->window_controller().fre_controller()->OnLinkClicked(url);
+    GetGlicService()->fre_controller().OnLinkClicked(url);
   }
 }
 
 void GlicFrePageHandler::WebUiStateChanged(mojom::FreWebUiState new_state) {
-  GetGlicService()->window_controller().fre_controller()->WebUiStateChanged(
-      new_state);
+  GetGlicService()->fre_controller().WebUiStateChanged(new_state);
+}
+
+void GlicFrePageHandler::ExceededTimeoutError() {
+  GetGlicService()->fre_controller().ExceededTimeoutError();
+}
+
+void GlicFrePageHandler::LogWebUiLoadComplete() {
+  GetGlicService()->fre_controller().LogWebUiLoadComplete();
 }
 
 }  // namespace glic

@@ -3,8 +3,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from __future__ import print_function
-
 import datetime
 from typing import Dict
 import unittest
@@ -13,8 +11,9 @@ from unittest import mock
 # vpython-provided modules.
 from pyfakefs import fake_filesystem_unittest  # pylint: disable=import-error
 
-from unexpected_passes import gpu_expectations
 from unexpected_passes_common import data_types
+
+from unexpected_passes import gpu_expectations
 
 # pylint: disable=protected-access
 
@@ -88,13 +87,6 @@ class ConsolidateKnownOverlappingTagsUnittest(unittest.TestCase):
     tags = frozenset(['mac', 'amd', 'amd-0x6821', 'release'])
     consolidated_tags = self.expectations._ConsolidateKnownOverlappingTags(tags)
     self.assertEqual(consolidated_tags, tags)
-
-  def testMacbookPro2015(self) -> None:
-    """Tests that Macbook Pro 2015 tags are properly consolidated."""
-    tags = frozenset(
-        ['mac', 'amd', 'amd-0x6821', 'release', 'intel', 'intel-0xd26'])
-    consolidated_tags = self.expectations._ConsolidateKnownOverlappingTags(tags)
-    self.assertEqual(consolidated_tags, {'mac', 'amd', 'amd-0x6821', 'release'})
 
   def test15InchMacbookPro2019(self) -> None:
     """Tests that 15" Macbook Pro 2019 tags are properly consolidated."""

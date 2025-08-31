@@ -54,24 +54,22 @@ class COMPONENT_EXPORT(COLOR) ColorVariant {
   // Returns true if this ColorVariant currently holds a semantic color
   // reference (i.e., a ui::ColorId) rather than a physical color value
   // (SkColor). Semantic colors represent theme-based colors that require
-  // resolution using a ui::ColorProvider via ConvertToSkColor().
+  // resolution using a ui::ColorProvider via ResolveToSkColor().
   bool IsSemantic() const;
 
   // Returns true if this ColorVariant currently holds a physical color
   // reference (i.e., a SkColor)
   bool IsPhysical() const;
 
-  // TODO(b:394420459): Make this method private.
-  std::optional<SkColor> GetSkColor() const;
-
   // Resolves the ColorVariant to an SkColor.  If the ColorVariant holds a
   // ColorId, it will be resolved to an SkColor using the provided
   // ColorProvider.
-  SkColor ConvertToSkColor(const ui::ColorProvider* color_provider) const;
+  SkColor ResolveToSkColor(const ui::ColorProvider* color_provider) const;
 
   std::string ToString() const;
 
  private:
+  std::optional<SkColor> GetSkColor() const;
   std::optional<ColorId> GetColorId() const;
 
   std::variant<ColorId, SkColor> color_variant_ = gfx::kPlaceholderColor;

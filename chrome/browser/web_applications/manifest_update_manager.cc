@@ -42,6 +42,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/content_features.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-shared.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -312,10 +313,12 @@ void ManifestUpdateManager::StartCheckAfterPageAndManifestUrlLoad(
   if (load_finished_callback_)
     std::move(load_finished_callback_).Run();
 
+  auto app_window_close_await_callback =
+      base::BindOnce(&ManifestUpdateManager::OnManifestCheckAwaitAppWindowClose,
+                     weak_factory_.GetWeakPtr(), web_contents, url, app_id);
   provider_->scheduler().ScheduleManifestUpdateCheck(
       url, app_id, check_time, web_contents,
-      base::BindOnce(&ManifestUpdateManager::OnManifestCheckAwaitAppWindowClose,
-                     weak_factory_.GetWeakPtr(), web_contents, url, app_id));
+      std::move(app_window_close_await_callback));
 }
 
 void ManifestUpdateManager::OnManifestCheckAwaitAppWindowClose(

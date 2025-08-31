@@ -1260,7 +1260,7 @@ policies:
   1259: ExtensibleEnterpriseSSOBlocklist
   1260: CSSCustomStateDeprecatedSyntaxEnabled
   1261: MemorySaverModeSavings
-  1262: KioskVisionTelemetryEnabled
+  1262: ''
   1263: GenAIWallpaperSettings
   1264: GenAIVcBackgroundSettings
   1265: DynamicCodeSettings
@@ -1313,7 +1313,7 @@ policies:
   1312: NTPSharepointCardVisible
   1313: SharedWorkerBlobURLFixEnabled
   1314: DeviceNativeClientForceAllowed
-  1315: GenAiLensOverlaySettings
+  1315: ''
   1316: PasswordManagerPasskeysEnabled
   1317: FilePickerChooseFromDriveSettings
   1318: LiveTranslateEnabled
@@ -1340,7 +1340,7 @@ policies:
   1339: ClassManagementCaptionsEnabled
   1340: ClassManagementClassroomIntegrationEnabled
   1341: ClassManagementNetworkRestrictionEnabled
-  1342: ClassManagementSendingContentEnabled
+  1342: ''
   1343: ClassManagementViewScreenEnabled
   1344: KioskChromeAppsForceAllowed
   1345: ReduceAcceptLanguageEnabled
@@ -1353,7 +1353,42 @@ policies:
   1352: DeviceLoginScreenFaceGazeEnabled
   1353: EnterpriseLogoUrlForBrowser
   1354: EnterpriseCustomLabelForBrowser
-
+  1355: DefaultSmartCardConnectSetting
+  1356: DeviceUserInitiatedFirmwareUpdatesEnabled
+  1357: BuiltInAIAPIsEnabled
+  1358: TabGroupSharingSettings
+  1359: NTPFooterManagementNoticeEnabled
+  1360: NTPFooterExtensionAttributionEnabled
+  1361: ClearWindowNameForNewBrowsingContextGroup
+  1362: PasswordManagerBlocklist
+  1363: TLS13EarlyDataEnabled
+  1364: LocalNetworkAccessRestrictionsEnabled
+  1365: PrefetchWithServiceWorkerEnabled
+  1366: ''
+  1367: AIModeSettings
+  1368: WatermarkStyle
+  1369: KioskApplicationLogCollectionEnabled
+  1370: EnableUnsafeSwiftShader
+  1371: LocalNetworkAccessAllowedForUrls
+  1372: LocalNetworkAccessBlockedForUrls
+  1373: DeviceBluetoothJustWorksPairingEnabled
+  1374: LiveCaptionEnabled
+  1375: DeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled
+  1376: AutomatedPasswordChangeSettings
+  1377: DefaultDeviceAttributesSetting
+  1378: DeviceAttributesBlockedForOrigins
+  1379: FloatingSsoSessionCookiesIncluded
+  1380: ServiceWorkerAutoPreloadEnabled
+  1381: ProtectedContentIdentifiersAllowed
+  1382: LegacyCookieScopeEnabled
+  1383: LegacyCookieScopeEnabledForDomainList
+  1384: WebRtcPostQuantumKeyAgreement
+  1385: DeviceLoginScreenSecurityKeyPermitAttestation
+  1386: RestrictCoreSharingOnRenderer
+  1387: OriginKeyedProcessesEnabled
+  1388: NTPShortcuts
+  1389: AutoSignOutEnabled
+  1390: ExtensionInstallCloudPolicyChecksEnabled
 atomic_groups:
   1: Homepage
   2: RemoteAccess
@@ -1412,3 +1447,7 @@ atomic_groups:
   55: SmartCardConnectSettings
   56: WebRtc
   57: ControlledFrameSettings
+  58: LocalNetworkAccessSettings
+  59: DeviceAttributesSettings
+  60: ProtectedContent
+  61: LegacyCookieScopeSettings

@@ -5,10 +5,12 @@
 /**
  * @fileoverview Sends Braille commands to the Braille API.
  */
+import {BridgeHelper} from '/common/bridge_helper.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
 
 import type {BrailleDisplayState, BrailleKeyEvent} from '../../common/braille/braille_key_types.js';
 import type {NavBraille} from '../../common/braille/nav_braille.js';
+import {BridgeConstants} from '../../common/bridge_constants.js';
 import {ChromeVoxState} from '../chromevox_state.js';
 import {LogStore} from '../logging/log_store.js';
 
@@ -26,6 +28,11 @@ export class BrailleBackground implements BrailleInterface {
   constructor() {
     BrailleDisplayManager.instance.setCommandListener(
         (evt, content) => this.routeBrailleKeyEvent_(evt, content));
+
+    BridgeHelper.registerHandler(
+        BridgeConstants.BrailleBackground.TARGET,
+        BridgeConstants.BrailleBackground.Action.BRAILLE_ROUTE,
+        (displayPosition: number) => this.route(displayPosition))
   }
 
   static init(): void {

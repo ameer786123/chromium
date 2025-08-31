@@ -12,6 +12,7 @@
 #include "base/trace_event/trace_event.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
+#include "gpu/command_buffer/service/graphite_shared_context.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
@@ -61,18 +62,6 @@ const char* CreateFallbackImageResultToString(
       return "FailedCreateTexture";
   }
 }
-
-// These values are persisted to logs. Entries should not be renumbered and
-// numeric values should never be reused.
-enum class CreatePromiseImageResult {
-  kSuccess = 0,
-  kFailedCreateRepresentation = 1,
-  kFailedMissingDisplayUsage = 2,
-  kFailedSizeMismatch = 3,
-  kFailedBeginReadAccess = 4,
-  kFailedYcbcrMismatch = 5,
-  kMaxValue = kFailedYcbcrMismatch
-};
 
 #if BUILDFLAG(IS_ANDROID) && BUILDFLAG(SKIA_USE_DAWN)
 bool DawnYCbCrVkDescriptorsAreCompatible(const wgpu::YCbCrVkDescriptor& left,
@@ -133,7 +122,8 @@ namespace viz {
 
 ImageContextImpl::ImageContextImpl(const TransferableResource& resource,
                                    bool maybe_concurrent_reads,
-                                   bool raw_draw_if_possible)
+                                   bool raw_draw_if_possible,
+                                   uint32_t client_id)
     : ImageContext(resource),
       maybe_concurrent_reads_(maybe_concurrent_reads),
       raw_draw_if_possible_(raw_draw_if_possible) {}
@@ -222,7 +212,7 @@ void ImageContextImpl::CreateFallbackImage(
     return;
   }
 
-  if (context_state->graphite_context()) {
+  if (context_state->graphite_shared_context()) {
     if (graphite_ycbcr_info_mismatch_) {
       // It is not possible to allocate a fallback texture if the failure was
       // due to a mismatch in YCBCr info between the promise image and the
@@ -294,7 +284,8 @@ void ImageContextImpl::CreateFallbackImage(
       skgpu::graphite::InsertRecordingInfo info = {};
       info.fRecording = recording.get();
       bool insert_success =
-          fallback_context_state_->graphite_context()->insertRecording(info);
+          fallback_context_state_->graphite_shared_context()->insertRecording(
+              info);
       if (!insert_success) {
         DLOG(ERROR) << "Failed to insert recording";
       }
@@ -387,7 +378,8 @@ bool ImageContextImpl::BeginAccessIfNecessaryInternal(
   if (representation_scoped_read_access_) {
     CHECK(owned_promise_image_textures_.empty());
     CHECK(!context_state->gr_context() || !promise_image_textures_.empty());
-    CHECK(!context_state->graphite_context() || !graphite_textures_.empty());
+    CHECK(!context_state->graphite_shared_context() ||
+          !graphite_textures_.empty());
     return true;
   }
 
@@ -404,25 +396,18 @@ bool ImageContextImpl::BeginAccessIfNecessaryInternal(
     return true;
   }
 
-  CreatePromiseImageResult result = CreatePromiseImageResult::kSuccess;
-  absl::Cleanup record_results = [&result] {
-    base::UmaHistogramEnumeration("Viz.CreatePromiseImageResult", result);
-  };
-
   if (!representation_) {
     auto representation =
         representation_factory->ProduceSkia(mailbox(), context_state);
     if (!representation) {
       DLOG(ERROR) << "Failed to fulfill the promise texture - SharedImage "
                      "mailbox not found in SharedImageManager.";
-      result = CreatePromiseImageResult::kFailedCreateRepresentation;
       return false;
     }
 
     if (!(representation->usage().Has(gpu::SHARED_IMAGE_USAGE_DISPLAY_READ))) {
       DLOG(ERROR) << "Failed to fulfill the promise texture - SharedImage "
                      "was not created with DISPLAY_READ usage.";
-      result = CreatePromiseImageResult::kFailedMissingDisplayUsage;
       return false;
     }
 
@@ -431,7 +416,6 @@ bool ImageContextImpl::BeginAccessIfNecessaryInternal(
                      "size does not match TransferableResource size: "
                   << representation->size().ToString() << " vs "
                   << size().ToString();
-      result = CreatePromiseImageResult::kFailedSizeMismatch;
       return false;
     }
 
@@ -444,14 +428,13 @@ bool ImageContextImpl::BeginAccessIfNecessaryInternal(
     representation_ = nullptr;
     DLOG(ERROR) << "Failed to fulfill the promise texture - SharedImage "
                    "begin read access failed..";
-    result = CreatePromiseImageResult::kFailedBeginReadAccess;
     return false;
   }
 
   // Only one promise texture for external sampler case.
   int num_planes =
       format().PrefersExternalSampler() ? 1 : format().NumberOfPlanes();
-  if (context_state->graphite_context()) {
+  if (context_state->graphite_shared_context()) {
 #if BUILDFLAG(IS_ANDROID) && BUILDFLAG(SKIA_USE_DAWN)
     // In the case of video decoding, it is possible for there to be a mismatch
     // between the YCbCr info passed to Viz at the time of creating the promise
@@ -476,7 +459,6 @@ bool ImageContextImpl::BeginAccessIfNecessaryInternal(
                                              fulfillment_texture_ycbcr_desc)) {
       graphite_ycbcr_info_mismatch_ = true;
       representation_scoped_read_access_.reset();
-      result = CreatePromiseImageResult::kFailedYcbcrMismatch;
       return false;
     }
 #endif

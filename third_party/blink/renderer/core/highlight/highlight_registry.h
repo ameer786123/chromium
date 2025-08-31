@@ -26,6 +26,7 @@ namespace blink {
 using HighlightRegistryMap =
     HeapLinkedHashSet<Member<HighlightRegistryMapEntry>>;
 using HighlightRegistryMapIterable = Maplike<HighlightRegistry>;
+class HighlightHitResult;
 class HighlightsFromPointOptions;
 class LocalFrame;
 class Text;
@@ -82,8 +83,7 @@ class CORE_EXPORT HighlightRegistry : public ScriptWrappable,
 
     bool FetchNextItem(ScriptState* script_state,
                        String& key,
-                       Highlight*& value,
-                       ExceptionState& exception_state) override;
+                       Highlight*& value) override;
 
     void Trace(blink::Visitor*) const override;
 
@@ -92,7 +92,7 @@ class CORE_EXPORT HighlightRegistry : public ScriptWrappable,
     HeapVector<Member<HighlightRegistryMapEntry>> highlights_snapshot_;
   };
 
-  HeapVector<Member<Highlight>> highlightsFromPoint(
+  HeapVector<Member<HighlightHitResult>> highlightsFromPoint(
       float x,
       float y,
       const HighlightsFromPointOptions* options);
@@ -119,8 +119,7 @@ class CORE_EXPORT HighlightRegistry : public ScriptWrappable,
 
   bool GetMapEntry(ScriptState*,
                    const String& key,
-                   Highlight*& value,
-                   ExceptionState&) override {
+                   Highlight*& value) override {
     auto iterator = GetMapIterator(AtomicString(key));
     if (iterator == highlights_.end())
       return false;
@@ -130,8 +129,7 @@ class CORE_EXPORT HighlightRegistry : public ScriptWrappable,
   }
 
   HighlightRegistryMapIterable::IterationSource* CreateIterationSource(
-      ScriptState*,
-      ExceptionState&) override;
+      ScriptState*) override;
 };
 
 }  // namespace blink

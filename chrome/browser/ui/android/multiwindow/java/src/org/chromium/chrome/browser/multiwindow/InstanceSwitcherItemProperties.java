@@ -21,6 +21,9 @@ public class InstanceSwitcherItemProperties {
     public static final PropertyModel.WritableBooleanPropertyKey ENABLE_COMMAND =
             new PropertyModel.WritableBooleanPropertyKey();
 
+    public static final PropertyModel.WritableObjectPropertyKey<String> MAX_INFO_TEXT =
+            new PropertyModel.WritableObjectPropertyKey<>();
+
     public static final PropertyModel.WritableObjectPropertyKey<Drawable> FAVICON =
             new PropertyModel.WritableObjectPropertyKey<>();
 
@@ -36,18 +39,38 @@ public class InstanceSwitcherItemProperties {
     public static final PropertyModel.WritableObjectPropertyKey<View.OnClickListener>
             CLICK_LISTENER = new PropertyModel.WritableObjectPropertyKey<>();
 
+    public static final PropertyModel.WritableObjectPropertyKey<View.OnClickListener>
+            CLOSE_BUTTON_CLICK_LISTENER = new PropertyModel.WritableObjectPropertyKey<>();
+    public static final PropertyModel.WritableObjectPropertyKey<String>
+            CLOSE_BUTTON_CONTENT_DESCRIPTION = new PropertyModel.WritableObjectPropertyKey<>();
+
     public static final PropertyModel.WritableObjectPropertyKey<ListMenuDelegate> MORE_MENU =
             new PropertyModel.WritableObjectPropertyKey<>();
+
+    public static final PropertyModel.WritableObjectPropertyKey<String>
+            MORE_MENU_CONTENT_DESCRIPTION = new PropertyModel.WritableObjectPropertyKey<>();
+
+    public static final PropertyModel.WritableObjectPropertyKey<String> LAST_ACCESSED =
+            new PropertyModel.WritableObjectPropertyKey<>();
+
+    public static final PropertyModel.WritableBooleanPropertyKey IS_SELECTED =
+            new PropertyModel.WritableBooleanPropertyKey();
 
     public static final PropertyKey[] ALL_KEYS =
             new PropertyKey[] {
                 CURRENT,
                 ENABLE_COMMAND,
+                MAX_INFO_TEXT,
                 FAVICON,
                 TITLE,
                 DESC,
                 INSTANCE_ID,
                 CLICK_LISTENER,
-                MORE_MENU
+                CLOSE_BUTTON_CLICK_LISTENER,
+                CLOSE_BUTTON_CONTENT_DESCRIPTION,
+                MORE_MENU,
+                MORE_MENU_CONTENT_DESCRIPTION,
+                LAST_ACCESSED,
+                IS_SELECTED
             };
 }

@@ -5,13 +5,11 @@
 package org.chromium.chrome.browser.readaloud;
 
 import static org.mockito.Mockito.anyInt;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -25,7 +23,6 @@ import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.modules.readaloud.Playback;
 import org.chromium.chrome.modules.readaloud.Playback.PlaybackTextPart;
 import org.chromium.chrome.modules.readaloud.Playback.PlaybackTextType;
@@ -43,7 +40,6 @@ import org.chromium.url.JUnitTestGURLs;
 public class TapToSeekHandlerUnitTest {
 
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Mock private Profile mProfile;
     @Mock private Playback mPlayback;
     @Mock private Playback.Metadata mMetadata;
     private static final GURL sTestGURL = JUnitTestGURLs.EXAMPLE_URL;
@@ -51,14 +47,8 @@ public class TapToSeekHandlerUnitTest {
 
     @Before
     public void setUp() {
-        doReturn(false).when(mProfile).isOffTheRecord();
         when(mPlayback.getMetadata()).thenReturn(mMetadata);
         ReadAloudFeaturesJni.setInstanceForTesting(mReadAloudFeaturesNatives);
-    }
-
-    @After
-    public void tearDown() {
-        ReadAloudFeatures.shutdown();
     }
 
     @Test

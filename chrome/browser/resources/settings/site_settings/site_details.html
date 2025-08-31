@@ -306,13 +306,10 @@
             label="$i18n{siteSettingsCapturedSurfaceControl}">
         </site-details-permission>
       </template>
-      <template is="dom-if" if="[[enableAutomaticFullscreenContentSetting_]]">
-        <site-details-permission
-            category="[[contentSettingsTypesEnum_.AUTOMATIC_FULLSCREEN]]"
-            icon="cr:fullscreen"
-            label="$i18n{siteSettingsAutomaticFullscreen}">
-        </site-details-permission>
-      </template>
+      <site-details-permission
+          category="[[contentSettingsTypesEnum_.AUTOMATIC_FULLSCREEN]]"
+          icon="cr:fullscreen" label="$i18n{siteSettingsAutomaticFullscreen}">
+      </site-details-permission>
       <template is="dom-if" if="[[enableKeyboardLockPrompt_]]">
         <site-details-permission
             category="[[contentSettingsTypesEnum_.KEYBOARD_LOCK]]"
@@ -330,7 +327,7 @@
       <template is="dom-if" if="[[enableLocalNetworkAccessSetting_]]">
         <site-details-permission
             category="[[contentSettingsTypesEnum_.LOCAL_NETWORK_ACCESS]]"
-            icon="settings:devices"
+            icon="settings20:router"
             label="$i18n{siteSettingsLocalNetworkAccess}">
         </site-details-permission>
       </template>

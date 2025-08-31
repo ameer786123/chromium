@@ -22,39 +22,31 @@
 
 using base::android::JavaParamRef;
 
-AndroidPrerenderManager::AndroidPrerenderManager(JNIEnv* env, jobject obj) {}
+AndroidPrerenderManager::AndroidPrerenderManager(JNIEnv* env) {}
 
 AndroidPrerenderManager::~AndroidPrerenderManager() = default;
 
 // static
-jlong JNI_AndroidPrerenderManager_Init(JNIEnv* env,
-                                       const JavaParamRef<jobject>& caller) {
-  return reinterpret_cast<intptr_t>(new AndroidPrerenderManager(env, caller));
+jlong JNI_AndroidPrerenderManager_Init(JNIEnv* env) {
+  return reinterpret_cast<intptr_t>(new AndroidPrerenderManager(env));
 }
 
-bool AndroidPrerenderManager::StartPrerendering(
+void AndroidPrerenderManager::StartPrerendering(
     JNIEnv* env,
     const GURL& prerender_url,
     const base::android::JavaParamRef<jobject>& j_web_contents) {
   content::WebContents* const web_contents =
       content::WebContents::FromJavaWebContents(j_web_contents);
-  PrerenderManager::CreateForWebContents(web_contents);
-  auto* prerender_manager = PrerenderManager::FromWebContents(web_contents);
-  CHECK(prerender_manager);
-  prerender_handle_ = prerender_manager->StartPrerenderNewTabPage(
-      prerender_url, chrome_preloading_predictor::kTouchOnNewTabPage);
-  return prerender_handle_ != nullptr;
+  NewTabPagePreloadPipelineManager::GetOrCreateForWebContents(web_contents)
+      ->StartPrerender(prerender_url,
+                       chrome_preloading_predictor::kTouchOnNewTabPage);
 }
 
 void AndroidPrerenderManager::StopPrerendering(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& j_web_contents) {
-  if (prerender_handle_) {
-    content::WebContents* const web_contents =
-        content::WebContents::FromJavaWebContents(j_web_contents);
-    auto* prerender_manager = PrerenderManager::FromWebContents(web_contents);
-    CHECK(prerender_manager);
-    prerender_manager->StopPrerenderNewTabPage(prerender_handle_);
-    prerender_handle_ = nullptr;
-  }
+  content::WebContents* const web_contents =
+      content::WebContents::FromJavaWebContents(j_web_contents);
+  NewTabPagePreloadPipelineManager::GetOrCreateForWebContents(web_contents)
+      ->ResetPrerender();
 }

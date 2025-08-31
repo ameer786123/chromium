@@ -7,6 +7,7 @@
 #import "base/threading/platform_thread.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_matchers.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/new_tab_page_app_interface.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/set_up_list/constants.h"
 #import "ios/chrome/browser/first_run/ui_bundled/first_run_constants.h"
@@ -96,27 +97,17 @@ void MaybeDismissNotification() {
 - (AppLaunchConfiguration)appConfigurationForTestCase {
   AppLaunchConfiguration config;
 
-  std::string triggerTime = "3s";
-
-  if ([self isRunningTest:@selector(testToggleTipsNotificationsMenuItem)]) {
-    triggerTime = "72h";
-  }
-
-  // Enable Tips Notifications with trigger time params.
-  std::string enableFeatures = base::StringPrintf(
-      "--enable-features=%s:%s/%s/%s/%s/%s/%s", kIOSTipsNotifications.name,
-      kIOSTipsNotificationsUnknownTriggerTimeParam, triggerTime.c_str(),
-      kIOSTipsNotificationsLessEngagedTriggerTimeParam, triggerTime.c_str(),
-      kIOSTipsNotificationsActiveSeekerTriggerTimeParam, triggerTime.c_str());
-
   if ([self isRunningTest:@selector(testReactivation)]) {
-    std::string enableReactivation =
-        base::StringPrintf(",%s", kIOSReactivationNotifications.name);
-    enableFeatures.append(enableReactivation);
+    config.features_enabled.push_back(kIOSReactivationNotifications);
   } else {
     config.features_disabled.push_back(kIOSReactivationNotifications);
   }
-  config.additional_args.push_back(enableFeatures);
+
+  if ([self isRunningTest:@selector(testNotificationMIM)]) {
+    config.features_enabled.push_back(kSeparateProfilesForManagedAccounts);
+  }
+
+  config.features_disabled.push_back(kIOSOneTimeDefaultBrowserNotification);
 
   return config;
 }
@@ -135,9 +126,14 @@ void MaybeDismissNotification() {
   [ChromeEarlGrey
       resetDataForLocalStatePref:prefs::kAppLevelPushNotificationPermissions];
   [ChromeEarlGrey openNewTab];
+  if (![self isRunningTest:@selector(testToggleTipsNotificationsMenuItem)]) {
+    [ChromeEarlGrey setUserDefaultsObject:@(3)
+                                   forKey:@"TipsNotificationTrigger"];
+  }
 }
 
 - (void)tearDownHelper {
+  [ChromeEarlGrey removeUserDefaultsObjectForKey:@"TipsNotificationTrigger"];
   [ChromeEarlGrey
       resetDataForLocalStatePref:prefs::kAppLevelPushNotificationPermissions];
   [ChromeEarlGrey removeUserDefaultsObjectForKey:@"edoTestPort"];
@@ -149,9 +145,6 @@ void MaybeDismissNotification() {
 // Opt in to Tips Notications via the SetUpList long-press menu. Mark all
 // Tips Notifications as "sent", except for the ones included in `types`.
 - (void)optInToTipsNotifications:(std::vector<TipsNotificationType>)types {
-  // Ensure that the SetUpList reloads.
-  [ChromeEarlGrey closeCurrentTab];
-  [ChromeEarlGrey openNewTab];
   // Long press the SetUpList module.
   id<GREYMatcher> setUpList =
       grey_accessibilityID(set_up_list::kSetUpListContainerID);
@@ -280,12 +273,12 @@ void MaybeDismissNotification() {
 
   // Verify the signin screen is showing.
   id<GREYMatcher> signinView =
-      grey_accessibilityID(kWebSigninAccessibilityIdentifier);
+      grey_accessibilityID(kConsistencySigninAccessibilityIdentifier);
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:signinView];
 
   // Dismiss Signin.
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::NavigationBarCancelButton()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                          ConsistencySigninSkipButtonMatcher()]
       performAction:grey_tap()];
 }
 
@@ -333,6 +326,12 @@ void MaybeDismissNotification() {
       performAction:grey_tap()];
   MaybeTapAllowOnPopup();
   [ChromeEarlGrey simulatePhysicalKeyboardEvent:@"escape" flags:0];
+}
+
+// Tests that a Tips notification can be triggered and tapped when multiprofile
+// is enabled.
+- (void)testNotificationMIM {
+  [self testLensNotification];
 }
 
 // Tests that the ESB Promo appears when tapping on the ESB notification.
@@ -403,6 +402,24 @@ void MaybeDismissNotification() {
 
   GREYAssert(notificationRequested,
              @"Reactivation notification request was not added.");
+}
+
+// Tests that the CPE Promo appears when tapping on the CPE tip notification.
+- (void)testCPENotification {
+  MaybeDismissNotification();
+  [ChromeEarlGreyUI waitForAppToIdle];
+  [self optInToTipsNotifications:{}];
+
+  // Request the notification and tap it.
+  [ChromeEarlGrey requestTipsNotification:TipsNotificationType::kCPE];
+  TapNotification();
+  [ChromeEarlGrey
+      waitForUIElementToAppearWithMatcher:
+          grey_accessibilityID(@"kCredentialProviderPromoAccessibilityId")];
+  // Close the promo.
+  id<GREYMatcher> noThanksButton = grey_accessibilityID(
+      kConfirmationAlertSecondaryActionAccessibilityIdentifier);
+  [ChromeEarlGrey waitForAndTapButton:noThanksButton];
 }
 
 @end

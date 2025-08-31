@@ -2,24 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/browsing_topics/annotator_impl.h"
 
 #include <algorithm>
 #include <vector>
 
 #include "base/barrier_closure.h"
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/dcheck_is_on.h"
 #include "base/files/file_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
-#include "components/optimization_guide/core/optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/delivery/optimization_guide_model_provider.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "components/optimization_guide/proto/page_topics_model_metadata.pb.h"
 #include "components/optimization_guide/proto/page_topics_override_list.pb.h"
@@ -255,7 +251,7 @@ void AnnotatorImpl::StartBatchAnnotate(BatchAnnotationCallback callback,
   for (size_t i = 0; i < inputs.size(); i++) {
     AnnotateSingleInput(
         /*single_input_done_signal=*/barrier_closure,
-        /*annotation=*/(annotations_ptr->data() + i));
+        /*annotation=*/(UNSAFE_TODO(annotations_ptr->data() + i)));
   }
 }
 

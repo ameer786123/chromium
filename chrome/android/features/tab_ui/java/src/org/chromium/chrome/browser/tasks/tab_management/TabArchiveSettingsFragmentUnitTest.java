@@ -22,11 +22,10 @@ import org.junit.runner.RunWith;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.tab.TabArchiveSettings;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
@@ -80,7 +79,6 @@ public class TabArchiveSettingsFragmentUnitTest {
     }
 
     @Test
-    @EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_ARCHIVE_DUPLICATE_TABS)
     public void testLaunchSettings() {
         mArchiveSettings.setArchiveEnabled(true);
         mArchiveSettings.setArchiveTimeDeltaDays(7);
@@ -95,7 +93,7 @@ public class TabArchiveSettingsFragmentUnitTest {
                                 TabArchiveSettingsFragment.INACTIVE_TIMEDELTA_PREF);
 
         assertEquals(
-                "After 7 days",
+                "After 7 days inactive",
                 archiveTimeDeltaPreference.getCheckedRadioButtonForTesting().getPrimaryText());
         var histogramWatcher =
                 HistogramWatcher.newSingleRecordWatcher(
@@ -151,8 +149,21 @@ public class TabArchiveSettingsFragmentUnitTest {
                 HistogramWatcher.newSingleRecordWatcher(
                         "Tabs.ArchiveSettings.ArchiveDuplicateTabsEnabled", true);
         enableArchiveDuplicateTabs.onClick();
+        histogramWatcher.assertExpected();
         assertTrue(enableArchiveDuplicateTabs.isEnabled());
         assertTrue(mArchiveSettings.isArchiveDuplicateTabsEnabled());
+
+        // Click "Never" radio button to disable archive. The archive duplicate tabs
+        // preference should be disabled.
+        radioButton = archiveTimeDeltaPreference.getRadioButtonForTesting(0);
+        radioButton.onClick(radioButton);
+        // PostTask to ensure the UI is updated after the preference change.
+        PostTask.postTask(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    assertFalse(enableArchiveDuplicateTabs.isEnabled());
+                    assertFalse(enableArchiveDuplicateTabs.isChecked());
+                });
     }
 
     @Test
@@ -171,27 +182,13 @@ public class TabArchiveSettingsFragmentUnitTest {
         assertEquals(
                 "Never", archiveTimeDeltaPreference.getRadioButtonForTesting(0).getPrimaryText());
         assertEquals(
-                "After 7 days",
+                "After 7 days inactive",
                 archiveTimeDeltaPreference.getRadioButtonForTesting(1).getPrimaryText());
         assertEquals(
-                "After 14 days",
+                "After 14 days inactive",
                 archiveTimeDeltaPreference.getRadioButtonForTesting(2).getPrimaryText());
         assertEquals(
-                "After 21 days",
+                "After 21 days inactive",
                 archiveTimeDeltaPreference.getRadioButtonForTesting(3).getPrimaryText());
-    }
-
-    @Test
-    @DisableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_ARCHIVE_DUPLICATE_TABS)
-    public void testArchiveDuplicateTabsSettingDisabled() {
-        mArchiveSettings.setArchiveEnabled(true);
-        TabArchiveSettingsFragment tabArchiveSettingsFragment = launchFragment();
-
-        ChromeSwitchPreference enableArchiveDuplicateTabs =
-                tabArchiveSettingsFragment.findPreference(
-                        TabArchiveSettingsFragment.PREF_TAB_ARCHIVE_INCLUDE_DUPLICATE_TABS);
-        assertFalse(enableArchiveDuplicateTabs.isEnabled());
-        assertFalse(enableArchiveDuplicateTabs.isChecked());
-        assertFalse(mArchiveSettings.isArchiveDuplicateTabsEnabled());
     }
 }

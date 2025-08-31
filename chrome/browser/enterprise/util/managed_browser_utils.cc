@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -35,6 +36,7 @@
 #include "components/image_fetcher/core/request_metadata.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/account_managed_status_finder.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
@@ -45,6 +47,11 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/text_elider.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+#include "chrome/browser/enterprise/signin/profile_management_disclaimer_service.h"
+#include "chrome/browser/enterprise/signin/profile_management_disclaimer_service_factory.h"
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 #if BUILDFLAG(IS_ANDROID)
 #include <jni.h>
@@ -64,7 +71,7 @@
 
 namespace enterprise_util {
 
-// Enterprise custom labels have a limmit of 16 characters, so they will be cut
+// Enterprise custom labels have a limit of 16 characters, so they will be cut
 // at the 17th characters.
 constexpr int kMaximumEnterpriseCustomLabelLengthCutOff = 17;
 
@@ -155,6 +162,86 @@ bool IsManagementWork(Profile* profile) {
          enterprise_util::ManagementEnvironment::kWork;
 }
 
+// Helper function to get the correct annotation based on the policy name.
+net::NetworkTrafficAnnotationTag GetTrafficAnnotationForPolicy(
+    EnterpriseLogoUrlScope url_scope) {
+  switch (url_scope) {
+    case EnterpriseLogoUrlScope::kBrowser: {
+      return net::DefineNetworkTrafficAnnotation("enterprise_logo_fetcher_for_browser",
+                                                 R"(
+        semantics {
+          sender: "Browser Management Service"
+          description:
+            "Retrieves an image set by the admin as the enterprise logo. This "
+            "is used to show the user which organization manages their browser "
+            "in the new tab page footer."
+          trigger:
+            "When the user launches the browser and the "
+            "EnterpriseLogoUrlForBrowser policy is set."
+          data:
+            "An admin-controlled URL for an image in the managed browser "
+            "footer."
+          destination: OTHER
+          internal {
+            contacts {
+              email: "cec-growth@google.com"
+            }
+          }
+          user_data {
+            type: SENSITIVE_URL
+          }
+          last_reviewed: "2025-08-22"
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "There is no setting. This fetch is enabled for any managed browser "
+            "with the EnterpriseLogoUrlForBrowser policy set."
+          chrome_policy {
+            EnterpriseLogoUrlForBrowser {
+              EnterpriseLogoUrlForBrowser: ""
+            }
+          }
+        })");
+    }
+    case EnterpriseLogoUrlScope::kProfile:
+      return net::DefineNetworkTrafficAnnotation("enterprise_logo_fetcher",
+                                                 R"(
+        semantics {
+          sender: "Browser Management Service"
+          description:
+            "Retrieves an image set by the admin as the enterprise logo. This "
+            "is used to show the user which organization manages their browser "
+            "in the profile menu."
+          trigger:
+            "When the user launches the browser and the EnterpriseLogoUrl "
+            "policy is set."
+          data:
+            "An admin-controlled URL for an image on the profile menu."
+          destination: OTHER
+          internal {
+            contacts {
+              email: "cec-growth@google.com"
+            }
+          }
+          user_data {
+            type: SENSITIVE_URL
+          }
+          last_reviewed: "2025-08-22"
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "There is no setting. This fetch is enabled for any managed user "
+            "with the EnterpriseLogoUrl policy set."
+          chrome_policy {
+            EnterpriseLogoUrl {
+              EnterpriseLogoUrl: ""
+            }
+          }
+        })");
+  }
+}
 }  // namespace
 
 bool IsBrowserManaged(Profile* profile) {
@@ -212,11 +299,11 @@ void SetUserAcceptedAccountManagement(Profile* profile, bool accepted) {
     return;
   // The updated consent screen also ask the user for consent to share device
   // signals.
-  if (accepted && base::FeatureList::IsEnabled(
-                      features::kEnterpriseUpdatedProfileCreationScreen)) {
-    profile->GetPrefs()->SetBoolean(
-        device_signals::prefs::kDeviceSignalsPermanentConsentReceived, true);
-  }
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
+  profile->GetPrefs()->SetBoolean(
+      device_signals::prefs::kDeviceSignalsPermanentConsentReceived, accepted);
+#endif
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   ProfileAttributesEntry* entry =
       profile_manager->GetProfileAttributesStorage()
@@ -299,7 +386,7 @@ bool CanShowEnterpriseBadgingForMenu(Profile* profile) {
     return false;
   }
 
-  // The check for supervised users is here as a precacution since the
+  // The check for supervised users is here as a precaution since the
   // kEnterpriseLogoUrlForProfile should be set by policy.
   return !profile->GetPrefs()
               ->GetString(prefs::kEnterpriseLogoUrlForProfile)
@@ -338,6 +425,54 @@ bool CanShowEnterpriseProfileUI(Profile* profile) {
     return false;
   }
   return true;
+}
+
+bool CanShowEnterpriseBadgingForNTPFooter(Profile* profile) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  BrowserManagementNoticeState management_notice_state =
+      GetManagementNoticeStateForNTPFooter(profile);
+  switch (management_notice_state) {
+    case BrowserManagementNoticeState::kNotApplicable:
+      return false;
+    case BrowserManagementNoticeState::kEnabled:
+    case BrowserManagementNoticeState::kDisabled:
+    case BrowserManagementNoticeState::kEnabledByPolicy:
+      return true;
+  }
+#else
+  return false;
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+}
+
+BrowserManagementNoticeState GetManagementNoticeStateForNTPFooter(
+    Profile* profile) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  if (!policy::ManagementServiceFactory::GetForProfile(profile)
+           ->IsBrowserManaged() ||
+      !g_browser_process->local_state()->GetBoolean(
+          prefs::kNTPFooterManagementNoticeEnabled)) {
+    return BrowserManagementNoticeState::kNotApplicable;
+  }
+
+  bool has_custom_badging =
+      !g_browser_process->local_state()
+           ->GetString(prefs::kEnterpriseCustomLabelForBrowser)
+           .empty() ||
+      !g_browser_process->local_state()
+           ->GetString(prefs::kEnterpriseLogoUrlForBrowser)
+           .empty();
+  if (has_custom_badging &&
+      base::FeatureList::IsEnabled(features::kNTPFooterBadgingPolicies)) {
+    return BrowserManagementNoticeState::kEnabledByPolicy;
+  }
+
+  if (base::FeatureList::IsEnabled(features::kEnterpriseBadgingForNtpFooter)) {
+    return profile->GetPrefs()->GetBoolean(prefs::kNtpFooterVisible)
+               ? BrowserManagementNoticeState::kEnabled
+               : BrowserManagementNoticeState::kDisabled;
+  }
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  return BrowserManagementNoticeState::kNotApplicable;
 }
 
 bool IsKnownConsumerDomain(const std::string& email_domain) {
@@ -385,14 +520,6 @@ jboolean JNI_ManagedBrowserUtils_IsOnSecurityEventEnterpriseConnectorEnabled(
     Profile* profile) {
   DCHECK(profile);
 
-  if (!base::FeatureList::IsEnabled(
-          enterprise_connectors::kEnterpriseSecurityEventReportingOnAndroid) &&
-      !base::FeatureList::IsEnabled(
-          enterprise_connectors::
-              kEnterpriseUrlFilteringEventReportingOnAndroid)) {
-    return false;
-  }
-
   auto* service =
       enterprise_connectors::ConnectorsServiceFactory::GetForBrowserContext(
           profile);
@@ -409,11 +536,6 @@ jboolean JNI_ManagedBrowserUtils_IsEnterpriseRealTimeUrlCheckModeEnabled(
     Profile* profile) {
   DCHECK(profile);
 
-  if (!base::FeatureList::IsEnabled(
-           safe_browsing::kEnterpriseRealTimeUrlCheckOnAndroid)) {
-    return false;
-  }
-
   auto* service =
       enterprise_connectors::ConnectorsServiceFactory::GetForBrowserContext(
           profile);
@@ -429,43 +551,10 @@ jboolean JNI_ManagedBrowserUtils_IsEnterpriseRealTimeUrlCheckModeEnabled(
 
 void GetManagementIcon(const GURL& url,
                        Profile* profile,
+                       EnterpriseLogoUrlScope url_scope,
                        base::OnceCallback<void(const gfx::Image&)> callback) {
-  constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
-      net::DefineNetworkTrafficAnnotation("enterprise_logo_fetcher",
-                                          R"(
-        semantics {
-          sender: "Chrome Profiles"
-          description:
-            "Retrieves an image set by the admin as the enterprise logo. This "
-            "is used to show the user which organization manages their browser "
-            "in the profile menu."
-          trigger:
-            "When the user launches the browser and the EnterpriseLogoUrl "
-            "policy is set."
-          data:
-            "An admin-controlled URL for an image on the profile menu."
-          destination: OTHER
-          internal {
-            contacts {
-              email: "cbe-magic@google.com"
-            }
-          }
-          user_data {
-            type: SENSITIVE_URL
-          }
-          last_reviewed: "2024-07-22"
-        }
-        policy {
-          cookies_allowed: NO
-          setting:
-            "There is no setting. This fetch is enabled for any managed user "
-            "with the EnterpriseLogoUrl policy set."
-          chrome_policy {
-            EnterpriseLogoUrl {
-              EnterpriseLogoUrl: ""
-            }
-          }
-        })");
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      GetTrafficAnnotationForPolicy(url_scope);
 
   if (!url.is_valid()) {
     std::move(callback).Run(gfx::Image());
@@ -477,7 +566,7 @@ void GetManagementIcon(const GURL& url,
   fetcher->FetchImage(
       url, base::BindOnce(&OnManagementIconReceived, std::move(callback)),
       image_fetcher::ImageFetcherParams(
-          kTrafficAnnotation,
+          traffic_annotation,
           /*uma_client_name=*/"BrowserManagementMetadata"));
 }
 
@@ -500,5 +589,17 @@ std::u16string GetEnterpriseLabel(Profile* profile, bool truncated) {
     return l10n_util::GetStringUTF16(IDS_AVATAR_BUTTON_SCHOOL);
   }
 }
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+base::ScopedClosureRunner DisableAutomaticManagementDisclaimerUntilReset(
+    Profile* profile) {
+  auto* disclaimer_service =
+      ProfileManagementDisclaimerServiceFactory::GetForProfile(profile);
+  if (!disclaimer_service) {
+    return base::ScopedClosureRunner(base::DoNothing());
+  }
+  return disclaimer_service->DisableManagementDisclaimerUntilReset();
+}
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 }  // namespace enterprise_util

@@ -57,7 +57,6 @@ import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
-import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.night_mode.ChromeNightModeTestUtils;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -68,18 +67,18 @@ import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.sync.FakeSyncServiceImpl;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
-import org.chromium.chrome.browser.sync.settings.SyncSettingsUtils.SyncError;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.toolbar.optional_button.ButtonDataProvider;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ntp.RegularNewTabPageStation;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.NewTabPageTestUtils;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
-import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.AccountInfo;
@@ -87,6 +86,7 @@ import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.signin.identitymanager.PrimaryAccountChangeEvent;
 import org.chromium.components.signin.test.util.TestAccounts;
+import org.chromium.components.sync.UserActionableError;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.ui.test.util.GmsCoreVersionRestriction;
@@ -104,8 +104,8 @@ public class IdentityDiscControllerTest {
     private static final String NAME = "Email Emailson";
     private static final String FULL_NAME = NAME + ".full";
 
-    private final ChromeTabbedActivityTestRule mActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    private final FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private final SigninTestRule mSigninTestRule = new SigninTestRule();
 
@@ -124,6 +124,7 @@ public class IdentityDiscControllerTest {
                     .setBugComponent(ChromeRenderTestRule.Component.SERVICES_SIGN_IN)
                     .build();
 
+    private RegularNewTabPageStation mPage;
     private Tab mTab;
 
     @Mock private IdentityServicesProvider mIdentityServicesProviderMock;
@@ -132,7 +133,6 @@ public class IdentityDiscControllerTest {
     @Mock private ObservableSupplier<Profile> mProfileSupplier;
     @Mock private ButtonDataProvider.ButtonDataObserver mButtonDataObserver;
     @Mock private Tracker mTracker;
-    @Mock private ActivityLifecycleDispatcher mDispatcher;
 
     @BeforeClass
     public static void setUpBeforeActivityLaunched() {
@@ -152,8 +152,8 @@ public class IdentityDiscControllerTest {
 
     @Before
     public void setUp() {
-        mActivityTestRule.startMainActivityWithURL(UrlConstants.NTP_URL);
-        mTab = mActivityTestRule.getActivity().getActivityTab();
+        mPage = mActivityTestRule.startOnNtp();
+        mTab = mPage.getTab();
         NewTabPageTestUtils.waitForNtpLoaded(mTab);
     }
 
@@ -243,9 +243,9 @@ public class IdentityDiscControllerTest {
 
     @Test
     @MediumTest
-    // Specifies the test to run only with the GMS Core version greater than or equal to 22w30 which
-    // is the min version that supports the local UPM backend, to avoid
-    // SyncError.UPM_BACKEND_OUTDATED.
+    // Specifies the test to run only with the GMS Core version greater than or equal to 24w15 which
+    // is the min version that supports split stores UPM backend, to avoid
+    // UserActionableError.NEEDS_UPM_BACKEND_UPGRADE.
     @Restriction(GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_24W15)
     public void testIdentityDiscSignedIn() {
         // Identity Disc should be shown on sign-in state change with a NTP refresh.
@@ -275,9 +275,9 @@ public class IdentityDiscControllerTest {
 
     @Test
     @MediumTest
-    // Specifies the test to run only with the GMS Core version greater than or equal to 22w30 which
-    // is the min version that supports the local UPM backend, to avoid
-    // SyncError.UPM_BACKEND_OUTDATED.
+    // Specifies the test to run only with the GMS Core version greater than or equal to 24w15 which
+    // is the min version that supports split stores UPM backend, to avoid
+    // UserActionableError.NEEDS_UPM_BACKEND_UPGRADE.
     @Restriction(GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_24W15)
     public void testIdentityDiscSignedIn_nonDisplayableEmail() {
         // Identity Disc should be shown on sign-in state change with a NTP refresh.
@@ -415,19 +415,18 @@ public class IdentityDiscControllerTest {
                     mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
 
                     ObservableSupplierImpl<Profile> profileSupplier =
-                            new ObservableSupplierImpl<Profile>();
+                            new ObservableSupplierImpl<>();
                     IdentityDiscController identityDiscController =
                             new IdentityDiscController(
-                                    mActivityTestRule.getActivity(), mDispatcher, profileSupplier);
+                                    mActivityTestRule.getActivity(), profileSupplier);
 
                     Assert.assertEquals(
-                            SyncError.NO_ERROR, identityDiscController.getIdentityError());
+                            UserActionableError.NONE, identityDiscController.getIdentityError());
 
-                    identityDiscController.onFinishNativeInitialization();
                     profileSupplier.set(ProfileManager.getLastUsedRegularProfile());
 
                     Assert.assertEquals(
-                            SyncError.CLIENT_OUT_OF_DATE,
+                            UserActionableError.NEEDS_CLIENT_UPGRADE,
                             identityDiscController.getIdentityError());
                 });
     }
@@ -447,24 +446,10 @@ public class IdentityDiscControllerTest {
 
     @Test
     @MediumTest
-    public void onClick_profileSupplierNotYetInitialized_doesNothing() {
-        TrackerFactory.setTrackerForTests(mTracker);
-        IdentityDiscController identityDiscController =
-                new IdentityDiscController(
-                        mActivityTestRule.getActivity(), mDispatcher, /* profileSupplier= */ null);
-
-        // If the button is tapped before the profile is set, the click shouldn't be recorded.
-        identityDiscController.onClick();
-        verifyNoMoreInteractions(mTracker);
-    }
-
-    @Test
-    @MediumTest
     public void onClick_profileNotYetInitialized_doesNothing() {
         TrackerFactory.setTrackerForTests(mTracker);
         IdentityDiscController identityDiscController =
-                new IdentityDiscController(
-                        mActivityTestRule.getActivity(), mDispatcher, mProfileSupplier);
+                new IdentityDiscController(mActivityTestRule.getActivity(), mProfileSupplier);
 
         // If the button is tapped before the profile is set, the click shouldn't be recorded.
         identityDiscController.onClick();
@@ -485,9 +470,9 @@ public class IdentityDiscControllerTest {
     @MediumTest
     @Feature("RenderTest")
     @UseMethodParameter(NightModeTestUtils.NightModeParams.class)
-    // Specifies the test to run only with the GMS Core version greater than or equal to 22w30 which
-    // is the min version that supports the local UPM backend, to avoid
-    // SyncError.UPM_BACKEND_OUTDATED.
+    // Specifies the test to run only with the GMS Core version greater than or equal to 24w15 which
+    // is the min version that supports split stores UPM backend, to avoid
+    // UserActionableError.NEEDS_UPM_BACKEND_UPGRADE.
     @Restriction(GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_24W15)
     public void testIdentityDisc_signedIn(boolean nightModeEnabled) throws IOException {
         // Sign-in and wait for the user profile image to appear.
@@ -518,9 +503,9 @@ public class IdentityDiscControllerTest {
     @Feature("RenderTest")
     @UseMethodParameter(NightModeTestUtils.NightModeParams.class)
     @EnableFeatures(ChromeFeatureList.UNO_PHASE_2_FOLLOW_UP)
-    // Specifies the test to run only with the GMS Core version greater than or equal to 22w30 which
-    // is the min version that supports the local UPM backend, to avoid
-    // SyncError.UPM_BACKEND_OUTDATED.
+    // Specifies the test to run only with the GMS Core version greater than or equal to 24w15 which
+    // is the min version that supports split stores UPM backend, to avoid
+    // UserActionableError.NEEDS_UPM_BACKEND_UPGRADE.
     @Restriction(GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_24W15)
     public void testIdentityDisc_signedIn_unoPhase2FollowUpEnabled_noIdentityError(
             boolean nightModeEnabled) throws IOException {
@@ -599,8 +584,7 @@ public class IdentityDiscControllerTest {
     private IdentityDiscController buildControllerWithObserver(
             ButtonDataProvider.ButtonDataObserver observer) {
         IdentityDiscController controller =
-                new IdentityDiscController(
-                        mActivityTestRule.getActivity(), mDispatcher, mProfileSupplier);
+                new IdentityDiscController(mActivityTestRule.getActivity(), mProfileSupplier);
         controller.addObserver(observer);
 
         return controller;

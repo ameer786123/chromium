@@ -29,37 +29,30 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/invalidate_type.h"
-#include "content/public/browser/mhtml_generation_result.h"
-#include "content/public/browser/navigation_controller.h"
-#include "content/public/browser/page.h"
 #include "content/public/browser/page_navigator.h"
-#include "content/public/browser/prefetch_handle.h"
-#include "content/public/browser/preload_pipeline_info.h"
+#include "content/public/browser/prefetch_priority.h"
 #include "content/public/browser/preloading.h"
 #include "content/public/browser/preloading_trigger_type.h"
-#include "content/public/browser/prerender_handle.h"
 #include "content/public/browser/save_page_type.h"
+#include "content/public/browser/session_storage_namespace.h"
 #include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents_capability_type.h"
 #include "content/public/common/stop_find_action.h"
+#include "ipc/constants.mojom.h"
 #include "net/base/network_handle.h"
-#include "net/http/http_request_headers.h"
 #include "services/network/public/mojom/web_sandbox_flags.mojom-shared.h"
 #include "third_party/blink/public/mojom/favicon/favicon_url.mojom-forward.h"
 #include "third_party/blink/public/mojom/frame/find_in_page.mojom-forward.h"
 #include "third_party/blink/public/mojom/frame/remote_frame.mojom-forward.h"
-#include "third_party/blink/public/mojom/input/pointer_lock_result.mojom.h"
+#include "third_party/blink/public/mojom/input/pointer_lock_result.mojom-forward.h"
 #include "third_party/blink/public/mojom/media/capture_handle_config.mojom-forward.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom-forward.h"
 #include "third_party/blink/public/mojom/picture_in_picture_window_options/picture_in_picture_window_options.mojom.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/accessibility/ax_enums.mojom-shared.h"
-#include "ui/accessibility/ax_mode.h"
+#include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/accessibility/platform/inspect/ax_api_type.h"
-#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/color/color_provider_key.h"
-#include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_widget_types.h"
@@ -67,6 +60,7 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "content/public/browser/android/child_process_importance.h"
+#include "content/public/browser/android/selection_popup_delegate.h"
 #include "third_party/jni_zero/jni_zero.h"
 #endif
 
@@ -98,6 +92,7 @@ class WakeLockContext;
 
 namespace net {
 class HttpNoVarySearchData;
+class HttpRequestHeaders;
 struct LoadStateWithParam;
 }  // namespace net
 
@@ -108,10 +103,15 @@ class InterfaceProvider;
 namespace ui {
 struct AXPropertyFilter;
 struct AXTreeUpdate;
+class AXMode;
 class AXNode;
 class ColorProvider;
 class ColorProviderSource;
 }  // namespace ui
+
+namespace gfx {
+class PointF;
+}  // namespace gfx
 
 namespace content {
 
@@ -119,16 +119,27 @@ class BackForwardTransitionAnimationManager;
 class BrowserContext;
 class BrowserPluginGuestDelegate;
 class GuestPageHolder;
+class NavigationController;
+class NavigationEntry;
+class Page;
+class PrefetchHandle;
+class PreloadPipelineInfo;
+class PrerenderHandle;
 class RenderFrameHost;
 class RenderViewHost;
+class RenderWidgetHost;
 class RenderWidgetHostView;
 class ScreenOrientationDelegate;
 class SiteInstance;
+class UnownedInnerWebContentsClient;
 class WebContentsDelegate;
 class WebUI;
 struct DropData;
 struct MHTMLGenerationParams;
 class PreloadingAttempt;
+#if BUILDFLAG(IS_ANDROID)
+class SelectionPopupDelegate;
+#endif
 
 // WebContents is the core class in content/. A WebContents renders web content
 // (usually HTML) in a rectangular area.
@@ -181,7 +192,7 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
     int opener_render_process_id = content::ChildProcessHost::kInvalidUniqueID;
 
     // The routing id of the frame initiating the open.
-    int opener_render_frame_id = MSG_ROUTING_NONE;
+    int opener_render_frame_id = IPC::mojom::kRoutingIdNone;
 
     // If the opener is suppressed, then the new WebContents doesn't hold a
     // reference to its opener.
@@ -206,6 +217,14 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
 
     // True if the contents should be initially hidden.
     bool initially_hidden = false;
+
+    // Returns true if the WebContents is never user-visible, thus the renderer
+    // need never produce pixels for display.
+    bool is_never_composited = false;
+
+    // True if newly created WebContents should defer all autofill to the
+    // platform.
+    bool initially_use_platform_autofill = false;
 
     // If non-null then this WebContents will be hosted by a BrowserPlugin.
     raw_ptr<BrowserPluginGuestDelegate> guest_delegate = nullptr;
@@ -428,6 +447,10 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   // Returns a weak pointer.
   virtual base::WeakPtr<WebContents> GetWeakPtr() = 0;
 
+  // Returns true if the WebContents is never user-visible and thus never need
+  // to generate pixels for display.
+  virtual bool IsNeverComposited() = 0;
+
   // Gets the URL that is currently being displayed, if there is one.
   // This method is deprecated. DO NOT USE! Pick either |GetVisibleURL| or
   // |GetLastCommittedURL| as appropriate.
@@ -537,6 +560,10 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   // menus.
   virtual RenderWidgetHostView* GetTopLevelRenderWidgetHostView() = 0;
 
+  // Returns the RenderWidgetHost at the point in web contents coordinate space.
+  // Might be nullptr if nothing hits.
+  virtual RenderWidgetHost* FindWidgetAtPoint(const gfx::PointF& point) = 0;
+
   // This determines which RenderFrameHosts will contribute to the
   // `AXTreeUpdate` generated by the `RequestAXTreeSnapshot` call:
   // - kAll will use all reachable RenderFrameHosts.
@@ -621,13 +648,6 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   // other words, it must be a valid HTTP header value).
   virtual void SetUserAgentOverride(const blink::UserAgentOverride& ua_override,
                                     bool override_in_new_tabs) = 0;
-
-  // Configures the value of is-overriding-user-agent for renderer initiated
-  // navigations. The default is UA_OVERRIDE_INHERIT. This value does not apply
-  // to the first renderer initiated navigation if the tab has no navigations.
-  // See SetUserAgentOverride() for details on that.
-  virtual void SetRendererInitiatedUserAgentOverrideOption(
-      NavigationController::UserAgentOverrideOption option) = 0;
 
   virtual const blink::UserAgentOverride& GetUserAgentOverride() = 0;
 
@@ -746,7 +766,15 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   virtual const std::string& GetEncoding() = 0;
 
   // Discards the RenderFrame. Use is guarded by kWebContentsDiscard.
-  virtual void Discard() = 0;
+  // `on_discarded_cb` will be called immediately after the discard operation
+  // has completed. A discard operation may complete after being successfully
+  // processed in the renderer and acknowledged by the Browser, or if the
+  // discarded WebContents' renderer was proactively terminated.
+  // Discard can fail if attempted on a WebContents with a speculative RFH that
+  // has a navigation waiting to commit.
+  // TODO(crbug.com/433627400): Consider updating `on_discarded_cb` to return a
+  // bool to indicate whether the operation completed successfully.
+  virtual void Discard(base::OnceClosure on_discarded_cb) = 0;
 
   // Indicates that the tab was previously discarded.
   // wasDiscarded is exposed on Document after discard, see:
@@ -871,6 +899,17 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   // directly to determine its aggregate audio state.
   virtual void OnAudioStateChanged() = 0;
 
+  // Signals that the main frame is currently a source of audio.
+  //
+  // Returns a base::ScopedClosureRunner. The WebContents will be considered
+  // audible as long as this ScopedClosureRunner instance is alive.
+  //
+  // When the WebContents is no longer audible, call RunAndReset() on the
+  // returned ScopedClosureRunner. If the WebContents remains audible until it
+  // is destroyed, you can simply let the ScopedClosureRunner go out of scope
+  // when the WebContents is destroyed.
+  [[nodiscard]] virtual base::ScopedClosureRunner MarkAudible() = 0;
+
   // Get/Set the last time ticks that the WebContents was made active (either
   // when it was created or shown with WasShown()). Note: GetLastActiveTimeTicks
   // and GetLastActiveTime can get desynced if the process is suspended or if
@@ -934,6 +973,27 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
       std::unique_ptr<WebContents> inner_web_contents,
       RenderFrameHost* render_frame_host,
       bool is_full_page) = 0;
+
+  // The unowned version of AttachInnerWebContents(). The caller should manage
+  // the lifetime of the inner WebContents.
+  // WARNING: this is for prototyping purposes only. You should not use this in
+  // production. In the long term, the concept of inner WebContents should
+  // probably be removed from the WebContents API.
+  // TODO(crbug.com/416609971): Remove this method once we find a way to attach
+  // inner WebContents without using WebContents trees.
+  virtual void AttachUnownedInnerWebContents(
+      base::PassKey<UnownedInnerWebContentsClient>,
+      WebContents* inner_web_contents,
+      RenderFrameHost* render_frame_host) = 0;
+
+  // Detaches the unowned `inner_web_contents` from this outer WebContents.
+  // WARNING: this is for prototyping purposes only. You should not use this in
+  // production.
+  // TODO(crbug.com/416609971): Remove this method once we find a way to attach
+  // inner WebContents without using WebContents trees.
+  virtual void DetachUnownedInnerWebContents(
+      base::PassKey<UnownedInnerWebContentsClient>,
+      WebContents* inner_web_contents) = 0;
 
   // Attaches `guest_page` to the container frame `outer_render_frame_host`,
   // which must be in a FrameTree for this WebContents. Note:
@@ -1140,18 +1200,9 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   // the callback. See MHTMLGenerationParams for details on generation settings.
   // A resulting |file_size| of -1 represents a failure. Any other value
   // represents the size of the successfully generated file.
-  //
-  // TODO(crbug.com/40606905): GenerateMHTML will eventually be removed
-  // and GenerateMHTMLWithResult will be renamed to GenerateMHTML to replace it.
-  // Both GenerateMHTML and GenerateMHTMLWithResult perform the same operation.
-  // however, GenerateMHTMLWithResult provides a struct as output, that contains
-  // the file size and more.
   virtual void GenerateMHTML(
       const MHTMLGenerationParams& params,
       base::OnceCallback<void(int64_t /* file_size */)> callback) = 0;
-  virtual void GenerateMHTMLWithResult(
-      const MHTMLGenerationParams& params,
-      MHTMLGenerationResult::GenerateMHTMLCallback callback) = 0;
 
   // Returns the MIME type bound to the primary page contents after a primary
   // page navigation.
@@ -1401,7 +1452,7 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   // Sets whether the WebContents is for overlaying content on a page.
   virtual void SetIsOverlayContent(bool is_overlay_content) = 0;
 
-  virtual int GetCurrentlyPlayingVideoCount() = 0;
+  virtual int GetCurrentlyPlayingVideoCount() const = 0;
 
   virtual std::optional<gfx::Size> GetFullscreenVideoSize() = 0;
 
@@ -1448,12 +1499,32 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   // Returns the primary main frame importance. This is for testing only.
   virtual ChildProcessImportance GetPrimaryMainFrameImportanceForTesting() = 0;
 
-  // Set an importance of the page to the primary main frame.
+  // Returns the primary page's subframe importance cached. This is for testing
+  // only.
+  virtual ChildProcessImportance
+  GetPrimaryPageSubframeImportanceForTesting() = 0;
+
+  // Set importance for main frame and subframes of the page in the primary
+  // frame tree.
   //
-  // Note this does not affect importance of subframe processes or main frames
-  // processeses for non-primary pages.
-  virtual void SetPrimaryMainFrameImportance(
-      ChildProcessImportance importance) = 0;
+  // The subframe importance will be set to new subframes in the primary frame
+  // tree when they are created as well. Also the subframe importance will be
+  // set to subframes when they are restored (e.g. from BFCache) to the primary
+  // frame tree.
+  //
+  // SubframePriorityContribution and SubframeImportance features are required
+  // to set subframe importance to other than NORMAL.
+  //
+  // The subframe_importance must be less than or equal to the
+  // main_frame_importance.
+  virtual void SetPrimaryPageImportance(
+      ChildProcessImportance main_frame_importance,
+      ChildProcessImportance subframe_importance) = 0;
+
+  // Set a SelectionPopupDelegate (see documentation of SelectionPopupDelegate
+  // methods).
+  virtual void SetSelectionPopupDelegate(
+      std::unique_ptr<SelectionPopupDelegate> delegate) = 0;
 #endif  // BUILDFLAG(IS_ANDROID)
 
   // Returns true if the WebContents has completed its first meaningful paint
@@ -1472,9 +1543,14 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   // until all tokens have been destroyed.
   // If WebInputEventAuditCallback is given, it can audits WebInputEvent based
   // input events and ignore only events that the callback returns false for the
-  // event. Other kind of events, such as focus event or ui::Events will be
-  // always ignored without asking the callback. The given callback will be
-  // invoked only while the returned ScopedIgnoreInputEvents alives.
+  // event. This however will only start ignoring input events from the next
+  // input sequence, i.e., this will have no impact on the current input
+  // sequence when input is being handled on VizCompositorThread (with
+  // InputVizard). Call ResetGestureDetection explicitly if the current input
+  // sequence needs to be stopped. Other kind of events, such as focus event or
+  // ui::Events will be always ignored without asking the callback. The given
+  // callback will be invoked only while the returned ScopedIgnoreInputEvents
+  // alives.
   using WebInputEventAuditCallback =
       base::RepeatingCallback<bool(const blink::WebInputEvent&)>;
   [[nodiscard]] virtual ScopedIgnoreInputEvents IgnoreInputEvents(
@@ -1562,6 +1638,8 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   // - `prefetch_url` is the url the prefetch will be performed.
   // - If `use_prefetch_proxy` is set to true, private prefetch proxy is used in
   //   this prefetch request.
+  // - `embedder_histogram_suffix` is used for generating internal histogram
+  //   names recorded per trigger.
   // - `referrer` is utilized as a value of Referer HTTP request header in this
   //   prefetch request.
   // - `referring_origin` represents the initiator origin of prefetch request,
@@ -1569,24 +1647,31 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   //   perspectives. Normally it should be nullopt and then the opaque origin is
   //   used internally, but if necessary, custom value from trusted surfaces can
   //   be embedded into it here.
+  // - `priority is an optimization hint of how quickly this prefetch should be
+  //    available. Performs no relevant optimization if passing `std::nullopt`
   // - `preload_pipeline_info` is used to designate what pipeline this prefetch
   //   belongs to.
   // - `attempt` is used to record some metrics associated with this prefetch
   //   request.
   // - `holdback_status_override` is used to override holdback status, if
   //   specified.
-  //  - Returns `PrefetchHandle` to control prefetch resources. This can be
-  //    nullptr when this function can't add `PrefetchContainer` to
-  //    `PrefetchService`.
+  // - `ttl`: TTL; `PrefetchService` holds prefetch in `ttl`. Uses default value
+  // if `std::nullopt`.
+  // - Returns `PrefetchHandle` to control prefetch resources. This can be
+  //   nullptr when this function can't add `PrefetchContainer` to
+  //   `PrefetchService`.
   virtual std::unique_ptr<PrefetchHandle> StartPrefetch(
       const GURL& prefetch_url,
       bool use_prefetch_proxy,
+      const std::string& embedder_histogram_suffix,
       const blink::mojom::Referrer& referrer,
       const std::optional<url::Origin>& referring_origin,
       std::optional<net::HttpNoVarySearchData> no_vary_search_hint,
+      std::optional<PrefetchPriority> priority,
       scoped_refptr<PreloadPipelineInfo> preload_pipeline_info,
       base::WeakPtr<PreloadingAttempt> attempt,
-      std::optional<PreloadingHoldbackStatus> holdback_status_override) = 0;
+      std::optional<PreloadingHoldbackStatus> holdback_status_override,
+      std::optional<base::TimeDelta> ttl) = 0;
 
   // Starts an embedder triggered (browser-initiated) prerendering page and
   // returns the unique_ptr<PrerenderHandle>, which cancels prerendering on its
@@ -1619,7 +1704,8 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
                                    const std::optional<UrlMatchType>&)>
           url_match_predicate,
       base::RepeatingCallback<void(NavigationHandle&)>
-          prerender_navigation_handle_callback) = 0;
+          prerender_navigation_handle_callback,
+      bool allow_reuse) = 0;
 
   // Cancels all prerendering hosted on this WebContents.
   virtual void CancelAllPrerendering() = 0;
@@ -1686,6 +1772,16 @@ class WebContents : public PageNavigator, public base::SupportsUserData {
   // See https://explainers-by-googlers.github.io/partitioned-popins/
   virtual GURL GetPartitionedPopinEmbedderOrigin(
       base::PassKey<StorageAccessGrantPermissionContext>) const = 0;
+
+  // Returns the window open disposition that was originally requested
+  // when this WebContents was created.
+  // This method provides the disposition specified by the opener of this
+  // WebContents, indicating how the content was initially intended to be
+  // displayed (e.g., as a new foreground tab, a background tab, a new window,
+  // a popup, etc.). This value is determined at the point of
+  // creation, such as during a navigation that results in a new WebContents
+  // (e.g., from a link click with `target="_blank"`, `window.open()`).
+  virtual WindowOpenDisposition GetOriginalWindowOpenDisposition() const = 0;
 
  private:
   // This interface should only be implemented inside content.

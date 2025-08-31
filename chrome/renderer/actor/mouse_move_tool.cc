@@ -6,10 +6,13 @@
 
 #include <optional>
 
-#include "base/logging.h"
 #include "base/time/time.h"
+#include "chrome/common/actor.mojom-data-view.h"
+#include "chrome/common/actor/action_result.h"
+#include "chrome/common/actor/actor_logging.h"
 #include "chrome/renderer/actor/tool_utils.h"
 #include "content/public/renderer/render_frame.h"
+#include "third_party/abseil-cpp/absl/strings/str_format.h"
 #include "third_party/blink/public/common/input/web_coalesced_input_event.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
@@ -29,71 +32,68 @@ blink::WebMouseEvent CreateMouseEvent(blink::WebInputEvent::Type event_type,
   // No button for move
   mouse_event.button = blink::WebMouseEvent::Button::kNoButton;
   mouse_event.SetPositionInWidget(position);
-  // TODO(crbug.com/402082828): Set screen position if possible/needed.
   return mouse_event;
 }
 }  // namespace
 
 namespace actor {
 
-MouseMoveTool::MouseMoveTool(mojom::MouseMoveActionPtr action,
-                             base::raw_ref<content::RenderFrame> frame)
-    : frame_(frame), action_(std::move(action)) {}
+MouseMoveTool::MouseMoveTool(content::RenderFrame& frame,
+                             Journal::TaskId task_id,
+                             Journal& journal,
+                             mojom::MouseMoveActionPtr action,
+                             mojom::ToolTargetPtr target,
+                             mojom::ObservedToolTargetPtr observed_target)
+    : ToolBase(frame,
+               task_id,
+               journal,
+               std::move(target),
+               std::move(observed_target)),
+      action_(std::move(action)) {}
 
 MouseMoveTool::~MouseMoveTool() = default;
 
 void MouseMoveTool::Execute(ToolFinishedCallback callback) {
-  blink::WebLocalFrame* web_frame = frame_->GetWebFrame();
-  if (!web_frame || !web_frame->FrameWidget()) {
-    DLOG(ERROR) << "RenderFrame or FrameWidget is invalid.";
-    std::move(callback).Run(false);
+  ValidatedResult validated_result = Validate();
+  if (!validated_result.has_value()) {
+    std::move(callback).Run(std::move(validated_result.error()));
     return;
   }
 
-  mojom::ToolTargetPtr& target = action_->target;
-
-  // Currently only support DOMNodeId as target.
-  int32_t dom_node_id = target->dom_node_id;
-  CHECK(dom_node_id);
-
-  blink::WebNode node = GetNodeFromId(frame_.get(), dom_node_id);
-  if (node.IsNull()) {
-    DLOG(ERROR) << "Cannot find dom node with id " << dom_node_id;
-    std::move(callback).Run(false);
-    return;
-  }
-
-  // Get interaction point for MouseMove
-  std::optional<gfx::PointF> center_point = InteractionPointFromWebNode(node);
-  if (!center_point.has_value()) {
-    DLOG(ERROR) << "Cannot get center interaction point for node id "
-                << dom_node_id;
-    std::move(callback).Run(false);
-    return;
-  }
-
-  if (!IsPointWithinViewport(center_point.value(), frame_.get())) {
-    DLOG(ERROR) << "Target is outside viewport";
-    std::move(callback).Run(false);
-    return;
-  }
+  gfx::PointF move_point = validated_result.value();
 
   // Dispatch MouseMove event
-  blink::WebMouseEvent mouse_move = CreateMouseEvent(
-      blink::WebInputEvent::Type::kMouseMove, center_point.value());
+  blink::WebMouseEvent mouse_move =
+      CreateMouseEvent(blink::WebInputEvent::Type::kMouseMove, move_point);
 
   blink::WebInputEventResult move_result =
-      web_frame->FrameWidget()->HandleInputEvent(
+      frame_->GetWebFrame()->FrameWidget()->HandleInputEvent(
           blink::WebCoalescedInputEvent(mouse_move, ui::LatencyInfo()));
 
+  // Note: KNotHandled probably shouldn't result in an error.
   if (move_result == blink::WebInputEventResult::kNotHandled ||
       move_result == blink::WebInputEventResult::kHandledSuppressed) {
-    DLOG(ERROR) << "MouseMove event was not handled or suppressed for node id "
-                << dom_node_id;
-    std::move(callback).Run(false);
+    std::move(callback).Run(
+        MakeResult(mojom::ActionResultCode::kMouseMoveEventSuppressed));
     return;
   }
-  std::move(callback).Run(true);
+  std::move(callback).Run(MakeOkResult());
+}
+
+std::string MouseMoveTool::DebugString() const {
+  return absl::StrFormat("MouseMoveTool[%s]", ToDebugString(target_));
+}
+
+MouseMoveTool::ValidatedResult MouseMoveTool::Validate() const {
+  CHECK(frame_->GetWebFrame());
+  CHECK(frame_->GetWebFrame()->FrameWidget());
+
+  auto resolved_target = ValidateAndResolveTarget();
+  if (!resolved_target.has_value()) {
+    return base::unexpected(std::move(resolved_target.error()));
+  }
+
+  return resolved_target->point;
 }
 
 }  // namespace actor

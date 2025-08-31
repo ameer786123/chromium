@@ -4,12 +4,13 @@
 
 package org.chromium.chrome.browser.tab;
 
-import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -25,9 +26,7 @@ import org.chromium.base.task.TaskTraits;
 import org.chromium.base.task.test.ShadowPostTask;
 import org.chromium.base.task.test.ShadowPostTask.TestImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tabmodel.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
@@ -36,10 +35,11 @@ import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModelSelector;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 
+import java.util.Collections;
+
 /** Tests for {@link TabArchiveSettings}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(shadows = {ShadowPostTask.class})
-@EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER)
 public class TabArchiverUnitTest {
     public @Rule MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.LENIENT);
 
@@ -90,6 +90,7 @@ public class TabArchiverUnitTest {
         doReturn(mArchivedTabModel).when(mArchivedTabGroupModelFilter).getTabModel();
         mArchivedTab = new MockTab(0, mProfile);
         doReturn(mArchivedTab).when(mArchivedTabCreator).createFrozenTab(any(), anyInt(), anyInt());
+        doAnswer(inv -> Collections.emptyList().iterator()).when(mArchivedTabModel).iterator();
 
         // Setup the regular tab models
         mTabModelSelector =
@@ -116,11 +117,8 @@ public class TabArchiverUnitTest {
     }
 
     @Test
-    @EnableFeatures(
-            ChromeFeatureList.ANDROID_TAB_DECLUTTER
-                    + ":android_tab_declutter_max_simultaneous_archives/20")
     public void testMaxSimultaneousArchives() {
-        assertEquals(20, ChromeFeatureList.sAndroidTabDeclutterMaxSimultaneousArchives.getValue());
+        when(mTabArchiveSettings.getMaxSimultaneousArchives()).thenReturn(20);
 
         HistogramWatcher watcher =
                 HistogramWatcher.newSingleRecordWatcher("Tabs.ArchivedTabs.MaxLimitReachedAt", 20);

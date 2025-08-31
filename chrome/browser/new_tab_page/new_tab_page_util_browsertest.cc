@@ -12,6 +12,7 @@
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/signin/signin_browser_test_base.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/pref_names.h"
@@ -39,9 +40,12 @@ std::unique_ptr<KeyedService> CreateTestSyncService(
   return std::make_unique<syncer::TestSyncService>();
 }
 
+const char kSampleUserEmail[] = "user@gmail.com";
+
 }  // namespace
 
-class NewTabPageUtilBrowserTest : public InProcessBrowserTest {
+class NewTabPageUtilBrowserTest : public SigninBrowserTestBase,
+                                  public testing::WithParamInterface<bool> {
  public:
   void SetUp() override {
     policy_provider_.SetDefaultReturns(
@@ -49,7 +53,26 @@ class NewTabPageUtilBrowserTest : public InProcessBrowserTest {
         /*is_first_policy_load_complete_return=*/true);
     policy::BrowserPolicyConnector::SetPolicyProviderForTesting(
         &policy_provider_);
-    InProcessBrowserTest::SetUp();
+    SigninBrowserTestBase::SetUp();
+  }
+
+  void SetUpOnMainThread() override {
+    SigninBrowserTestBase::SetUpOnMainThread();
+    if (GetParam()) {
+      SetAccountsCookiesAndTokens({kSampleUserEmail});
+    }
+  }
+
+  void SetSync(bool sync_enabled) {
+    GetTestSyncService()->SetSignedIn(sync_enabled
+                                          ? signin::ConsentLevel::kSync
+                                          : signin::ConsentLevel::kSignin);
+  }
+
+  void SetHistorySync(bool sync_enabled) {
+    GetTestSyncService()->SetSignedIn(signin::ConsentLevel::kSignin);
+    GetTestSyncService()->GetUserSettings()->SetSelectedType(
+        syncer::UserSelectableType::kHistory, sync_enabled);
   }
 
   void SetUpCommandLine(base::CommandLine* cmd) override {
@@ -60,8 +83,7 @@ class NewTabPageUtilBrowserTest : public InProcessBrowserTest {
   }
 
   OptimizationGuideKeyedService* GetOptimizationGuideKeyedService() {
-    return OptimizationGuideKeyedServiceFactory::GetForProfile(
-        browser()->profile());
+    return OptimizationGuideKeyedServiceFactory::GetForProfile(GetProfile());
   }
 
   void CheckInternalsLog(std::string_view message) {
@@ -79,6 +101,18 @@ class NewTabPageUtilBrowserTest : public InProcessBrowserTest {
   }
 
  private:
+  void OnWillCreateBrowserContextServices(
+      content::BrowserContext* context) override {
+    SigninBrowserTestBase::OnWillCreateBrowserContextServices(context);
+    SyncServiceFactory::GetInstance()->SetTestingFactory(
+        context, base::BindRepeating(&CreateTestSyncService));
+  }
+
+  syncer::TestSyncService* GetTestSyncService() {
+    return static_cast<syncer::TestSyncService*>(
+        SyncServiceFactory::GetForProfile(GetProfile()));
+  }
+
   base::test::ScopedFeatureList features_;
   testing::NiceMock<policy::MockConfigurationPolicyProvider> policy_provider_;
 };
@@ -91,8 +125,7 @@ class NewTabPageUtilEnableFlagBrowserTest : public NewTabPageUtilBrowserTest {
          ntp_features::kNtpCalendarModule,
          ntp_features::kNtpMicrosoftAuthenticationModule,
          ntp_features::kNtpOutlookCalendarModule,
-         ntp_features::kNtpSharepointModule,
-         ntp_features::kNtpDriveModuleNoSyncRequirement},
+         ntp_features::kNtpSharepointModule},
         {});
   }
 };
@@ -105,12 +138,20 @@ class NewTabPageUtilDisableFlagBrowserTest : public NewTabPageUtilBrowserTest {
              ntp_features::kNtpCalendarModule,
              ntp_features::kNtpMicrosoftAuthenticationModule,
              ntp_features::kNtpOutlookCalendarModule,
-             ntp_features::kNtpSharepointModule,
-             ntp_features::kNtpDriveModuleNoSyncRequirement});
+             ntp_features::kNtpSharepointModule});
   }
 };
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilBrowserTest, EnableCartByToT) {
+class NewTabPageUtilDriveHistorySyncBrowserTest
+    : public NewTabPageUtilBrowserTest {
+ public:
+  NewTabPageUtilDriveHistorySyncBrowserTest() {
+    features().InitWithFeatures(
+        {ntp_features::kNtpDriveModuleHistorySyncRequirement}, {});
+  }
+};
+
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilBrowserTest, EnableCartByToT) {
   auto locale = std::make_unique<ScopedBrowserLocale>("en-US");
   g_browser_process->variations_service()->OverrideStoredPermanentCountry("us");
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
@@ -120,162 +161,216 @@ IN_PROC_BROWSER_TEST_F(NewTabPageUtilBrowserTest, EnableCartByToT) {
 #endif
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilBrowserTest, DisableCartByToT) {
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilBrowserTest, DisableCartByToT) {
   auto locale = std::make_unique<ScopedBrowserLocale>("en-US");
   g_browser_process->variations_service()->OverrideStoredPermanentCountry("ca");
   EXPECT_FALSE(IsCartModuleEnabled());
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilEnableFlagBrowserTest, EnableCartByFlag) {
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilEnableFlagBrowserTest, EnableCartByFlag) {
   EXPECT_TRUE(IsCartModuleEnabled());
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilDisableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilDisableFlagBrowserTest,
                        DisableCartByFlag) {
   auto locale = std::make_unique<ScopedBrowserLocale>("en-US");
   g_browser_process->variations_service()->OverrideStoredPermanentCountry("us");
   EXPECT_FALSE(IsCartModuleEnabled());
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilBrowserTest, EnableDriveByToT) {
-  TestingProfile profile;
-  auto* sync_service = static_cast<syncer::TestSyncService*>(
-      SyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-          &profile, base::BindRepeating(&CreateTestSyncService)));
-  sync_service->SetSignedIn(signin::ConsentLevel::kSync);
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilBrowserTest, EnableDriveByToT) {
+  SetSync(true);
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-  EXPECT_TRUE(
-      IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true, &profile));
+  EXPECT_EQ(
+      IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true, GetProfile()),
+      GetParam());
   CheckInternalsLog(std::string(ntp_features::kNtpDriveModule.name) +
-                    " enabled: default feature flag value");
+                    (GetParam() ? " enabled: default feature flag value"
+                                : " disabled: not signed in"));
 #else
-  EXPECT_FALSE(
-      IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true, &profile));
+  EXPECT_FALSE(IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true,
+                                              GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpDriveModule.name) +
                     " disabled: default feature flag value");
 #endif
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilEnableFlagBrowserTest, EnableDriveByFlag) {
-  EXPECT_TRUE(IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true,
-                                             browser()->profile()));
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilDriveHistorySyncBrowserTest,
+                       DriveHistory_SyncEnabled) {
+  SetHistorySync(true);
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  EXPECT_EQ(
+      IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true, GetProfile()),
+      GetParam());
   CheckInternalsLog(std::string(ntp_features::kNtpDriveModule.name) +
-                    " enabled: feature flag forced on");
+                    (GetParam() ? " enabled: default feature flag value"
+                                : " disabled: not signed in"));
+#else
+  EXPECT_FALSE(IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true,
+                                              GetProfile()));
+  CheckInternalsLog(std::string(ntp_features::kNtpDriveModule.name) +
+                    " disabled: default feature flag value");
+#endif
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilDisableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilDriveHistorySyncBrowserTest,
+                       DriveHistory_SyncDisabled) {
+  SetHistorySync(false);
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  EXPECT_FALSE(IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true,
+                                              GetProfile()));
+  CheckInternalsLog(
+      std::string(ntp_features::kNtpDriveModule.name) +
+      (GetParam() ? " disabled: no history sync" : " disabled: not signed in"));
+#else
+  EXPECT_FALSE(IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true,
+                                              GetProfile()));
+  CheckInternalsLog(std::string(ntp_features::kNtpDriveModule.name) +
+                    " disabled: default feature flag value");
+#endif
+}
+
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilEnableFlagBrowserTest, EnableDriveByFlag) {
+  EXPECT_EQ(
+      IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true, GetProfile()),
+      GetParam());
+  CheckInternalsLog(std::string(ntp_features::kNtpDriveModule.name) +
+                    (GetParam() ? " enabled: feature flag forced on"
+                                : " disabled: not signed in"));
+}
+
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilDisableFlagBrowserTest,
                        DisableDriveByFlag) {
   EXPECT_FALSE(IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true,
-                                              browser()->profile()));
+                                              GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpDriveModule.name) +
                     " disabled: feature flag forced off");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilEnableFlagBrowserTest, DriveIsNotManaged) {
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilEnableFlagBrowserTest, DriveIsNotManaged) {
   EXPECT_FALSE(IsDriveModuleEnabledForProfile(/*is_managed_profile=*/false,
-                                              browser()->profile()));
+                                              GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpDriveModule.name) +
-                    " disabled: account not managed");
+                    (GetParam() ? " disabled: account not managed"
+                                : " disabled: not signed in"));
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilBrowserTest, SyncRequired) {
-  TestingProfile profile;
-  auto* sync_service = static_cast<syncer::TestSyncService*>(
-      SyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-          &profile, base::BindRepeating(&CreateTestSyncService)));
-  sync_service->SetSignedIn(signin::ConsentLevel::kSignin);
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilBrowserTest, SyncRequired) {
+  SetSync(false);
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-  EXPECT_FALSE(
-      IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true, &profile));
-  CheckInternalsLog(std::string(ntp_features::kNtpDriveModule.name) +
-                    " disabled: no sync");
+  EXPECT_FALSE(IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true,
+                                              GetProfile()));
+  CheckInternalsLog(
+      std::string(ntp_features::kNtpDriveModule.name) +
+      (GetParam() ? " disabled: no sync" : " disabled: not signed in"));
 #else
-  EXPECT_FALSE(
-      IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true, &profile));
+  EXPECT_FALSE(IsDriveModuleEnabledForProfile(/*is_managed_profile=*/true,
+                                              GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpDriveModule.name) +
                     " disabled: default feature flag value");
 #endif
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilEnableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilEnableFlagBrowserTest,
                        EnableGoogleCalendarByFlag) {
-  EXPECT_TRUE(IsGoogleCalendarModuleEnabled(true));
+  EXPECT_EQ(
+      IsGoogleCalendarModuleEnabled(/*is_managed_profile=*/true, GetProfile()),
+      GetParam());
   CheckInternalsLog(std::string(ntp_features::kNtpCalendarModule.name) +
-                    " enabled: feature flag forced on");
+                    (GetParam() ? " enabled: feature flag forced on"
+                                : " disabled: not signed in"));
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilDisableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilDisableFlagBrowserTest,
                        DisableGoogleCalendarByFlag) {
-  EXPECT_FALSE(IsGoogleCalendarModuleEnabled(true));
+  EXPECT_FALSE(
+      IsGoogleCalendarModuleEnabled(/*is_managed_profile=*/true, GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpCalendarModule.name) +
-                    " disabled: feature flag forced off");
+                    (GetParam() ? " disabled: feature flag forced off"
+                                : " disabled: not signed in"));
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilEnableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilEnableFlagBrowserTest,
                        GoogleCalendarIsNotManaged) {
-  EXPECT_FALSE(IsGoogleCalendarModuleEnabled(false));
+  EXPECT_FALSE(IsGoogleCalendarModuleEnabled(/*is_managed_profile=*/false,
+                                             GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpCalendarModule.name) +
-                    " disabled: account not managed");
+                    (GetParam() ? " disabled: account not managed"
+                                : " disabled: not signed in"));
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilEnableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilEnableFlagBrowserTest,
                        EnableMicrosoftFilesByFlag) {
   policy::PolicyMap policies;
   policies.Set(policy::key::kNTPSharepointCardVisible,
                policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                policy::POLICY_SOURCE_PLATFORM, base::Value(true), nullptr);
   policy_provider().UpdateChromePolicy(policies);
-  EXPECT_TRUE(IsMicrosoftFilesModuleEnabledForProfile(browser()->profile()));
+  EXPECT_TRUE(IsMicrosoftFilesModuleEnabledForProfile(GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpSharepointModule.name) +
                     " enabled: feature flag forced on");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilDisableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilDisableFlagBrowserTest,
                        DisableMicrosoftFilesByFlag) {
   policy::PolicyMap policies;
   policies.Set(policy::key::kNTPSharepointCardVisible,
                policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                policy::POLICY_SOURCE_PLATFORM, base::Value(true), nullptr);
   policy_provider().UpdateChromePolicy(policies);
-  EXPECT_FALSE(IsMicrosoftFilesModuleEnabledForProfile(browser()->profile()));
+  EXPECT_FALSE(IsMicrosoftFilesModuleEnabledForProfile(GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpSharepointModule.name) +
                     " disabled: feature flag forced off");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilEnableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilEnableFlagBrowserTest,
                        MicrosoftFilesPolicyDisabled) {
-  EXPECT_FALSE(IsMicrosoftFilesModuleEnabledForProfile(browser()->profile()));
+  EXPECT_FALSE(IsMicrosoftFilesModuleEnabledForProfile(GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpSharepointModule.name) +
                     " disabled: disabled by policy");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilEnableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilEnableFlagBrowserTest,
                        EnableOutlookCalendarByFlag) {
   policy::PolicyMap policies;
   policies.Set(policy::key::kNTPOutlookCardVisible,
                policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                policy::POLICY_SOURCE_PLATFORM, base::Value(true), nullptr);
   policy_provider().UpdateChromePolicy(policies);
-  EXPECT_TRUE(IsOutlookCalendarModuleEnabledForProfile(browser()->profile()));
+  EXPECT_TRUE(IsOutlookCalendarModuleEnabledForProfile(GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpOutlookCalendarModule.name) +
                     " enabled: feature flag forced on");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilDisableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilDisableFlagBrowserTest,
                        DisableOutlookCalendarByFlag) {
   policy::PolicyMap policies;
   policies.Set(policy::key::kNTPOutlookCardVisible,
                policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                policy::POLICY_SOURCE_PLATFORM, base::Value(true), nullptr);
   policy_provider().UpdateChromePolicy(policies);
-  EXPECT_FALSE(IsOutlookCalendarModuleEnabledForProfile(browser()->profile()));
+  EXPECT_FALSE(IsOutlookCalendarModuleEnabledForProfile(GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpOutlookCalendarModule.name) +
                     " disabled: feature flag forced off");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageUtilEnableFlagBrowserTest,
+IN_PROC_BROWSER_TEST_P(NewTabPageUtilEnableFlagBrowserTest,
                        OutlookCalendarPolicyDisabled) {
-  EXPECT_FALSE(IsOutlookCalendarModuleEnabledForProfile(browser()->profile()));
+  EXPECT_FALSE(IsOutlookCalendarModuleEnabledForProfile(GetProfile()));
   CheckInternalsLog(std::string(ntp_features::kNtpOutlookCalendarModule.name) +
                     " disabled: disabled by policy");
 }
+
+INSTANTIATE_TEST_SUITE_P(All, NewTabPageUtilBrowserTest, testing::Bool());
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         NewTabPageUtilEnableFlagBrowserTest,
+                         testing::Bool());
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         NewTabPageUtilDisableFlagBrowserTest,
+                         testing::Bool());
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         NewTabPageUtilDriveHistorySyncBrowserTest,
+                         testing::Bool());

@@ -5,8 +5,10 @@
 #include "third_party/blink/renderer/core/annotation/annotation_agent_impl.h"
 
 #include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/typed_macros.h"
+#include "cc/base/features.h"
 #include "third_party/blink/public/mojom/annotation/annotation.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink.h"
@@ -20,17 +22,22 @@
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/markers/document_marker_controller.h"
 #include "third_party/blink/renderer/core/editing/markers/text_fragment_marker.h"
+#include "third_party/blink/renderer/core/editing/position_with_affinity.h"
 #include "third_party/blink/renderer/core/editing/range_in_flat_tree.h"
 #include "third_party/blink/renderer/core/editing/visible_units.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/highlight/highlight_style_utils.h"
 #include "third_party/blink/renderer/core/html/html_details_element.h"
+#include "third_party/blink/renderer/core/layout/geometry/box_strut.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
+#include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/scroll/scroll_alignment.h"
 #include "third_party/blink/renderer/core/scroll/scroll_into_view_util.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
@@ -38,6 +45,8 @@
 #include "third_party/blink/renderer/platform/heap/visitor.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
+#include "ui/display/screen_info.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 
 namespace blink {
 
@@ -46,8 +55,24 @@ bool IsValidRange(const RangeInFlatTree* range) {
   // An attached range may have !IsCollapsed but converting to EphemeralRange
   // results in IsCollapsed. For an example, see
   // AnnotationAgentImplTest.ScrollIntoViewCollapsedRange.
-  return range && range->IsConnected() && !range->IsCollapsed() &&
-         !range->ToEphemeralRange().IsCollapsed();
+  bool is_valid = range && range->IsConnected() && !range->IsCollapsed() &&
+                  !range->ToEphemeralRange().IsCollapsed();
+
+  if (is_valid) {
+    // TODO(crbug.com/410033683): Temporary to work around a crash.
+    // DocumentMarkers work on EphemeralRange (i.e. not FlatTree) so when we try
+    // to add a marker in ProcessAttachmentFinished, a well-ordered range in a
+    // flat tree may become invalid due to slotted elements. DocumentMarkers
+    // should maybe work on FlatTree types but for now just invalidate this
+    // case.
+    Position start = ToPositionInDOMTree(range->StartPosition());
+    Position end = ToPositionInDOMTree(range->EndPosition());
+    if (start > end) {
+      return false;
+    }
+  }
+
+  return is_valid;
 }
 
 // There are several cases where text isn't visible/presented to the user but
@@ -140,6 +165,69 @@ bool ShouldUseIsValidRangeAndMarkable(mojom::blink::AnnotationType type) {
   }
 }
 
+// The maximum scroll distance for which an AnnotationAgent of type kGlic should
+// use a smooth (animated) scroll. For longer distances, the scroll will be
+// instant.
+int GetGlicSmoothScrollThresholdInDIPs() {
+  const base::FeatureParam<int> glic_smooth_scroll_threshold_in_dips{
+      &features::kProgrammaticScrollAnimationOverride,
+      "glic_smooth_scroll_threshold_in_dips", 15000};
+  return glic_smooth_scroll_threshold_in_dips.Get();
+}
+
+std::optional<DocumentMarker::MarkerTypes> GetMarkerTypesForAnnotationType(
+    mojom::blink::AnnotationType annotation_type) {
+  switch (annotation_type) {
+    case mojom::blink::AnnotationType::kSharedHighlight:
+    case mojom::blink::AnnotationType::kUserNote:
+      return DocumentMarker::MarkerTypes::TextFragment();
+    case mojom::blink::AnnotationType::kGlic:
+      return DocumentMarker::MarkerTypes::Glic();
+    case mojom::blink::AnnotationType::kTextFinder:
+      return std::nullopt;
+  }
+}
+
+bool HasMarkerAroundPosition(const HitTestResult& result,
+                             DocumentMarker::MarkerType marker_type) {
+  // Tree should be clean before accessing the position.
+  // |HitTestResult::GetPosition| calls |PositionForPoint()| which requires
+  // |kPrePaintClean|.
+  DCHECK_GE(result.InnerNodeFrame()->GetDocument()->Lifecycle().GetState(),
+            DocumentLifecycle::kPrePaintClean);
+
+  DocumentMarkerController& marker_controller =
+      result.InnerNodeFrame()->GetDocument()->Markers();
+  PositionWithAffinity pos_with_affinity = result.GetPosition();
+  const Position marker_position = pos_with_affinity.GetPosition();
+
+  auto markers = marker_controller.MarkersAroundPosition(
+      ToPositionInFlatTree(marker_position),
+      DocumentMarker::MarkerTypes(marker_type));
+  return !markers.empty();
+}
+
+float CalculateMaxScrollOffsetPx(
+    LocalFrameView* view,
+    const PhysicalRect& bounding_box,
+    const mojom::blink::ScrollIntoViewParams& params) {
+  CHECK(view);
+  CHECK(view->GetScrollableArea());
+  ScrollOffset scroll_offset_px =
+      scroll_into_view_util::GetScrollOffsetToExpose(
+          *view->GetScrollableArea(), bounding_box, PhysicalBoxStrut(),
+          *params.align_x, *params.align_y);
+  // Removes any potential negative offset from the
+  // `ScrollAlignment::CenterAlways()`.
+  scroll_offset_px =
+      view->GetScrollableArea()->ClampScrollOffset(scroll_offset_px);
+  ScrollOffset scroll_distance_px =
+      scroll_offset_px - view->GetScrollableArea()->GetScrollOffset();
+
+  return std::max(std::abs(scroll_distance_px.x()),
+                  std::abs(scroll_distance_px.y()));
+}
+
 }  // namespace
 
 AnnotationAgentImpl::AnnotationAgentImpl(
@@ -182,8 +270,14 @@ void AnnotationAgentImpl::Bind(
 
   // Breaking the mojo connection will cause this agent to remove itself from
   // the container.
-  receiver_.set_disconnect_handler(
-      WTF::BindOnce(&AnnotationAgentImpl::Remove, WrapWeakPersistent(this)));
+  receiver_.set_disconnect_handler(WTF::BindOnce(
+      [](WeakPersistent<AnnotationAgentImpl> agent) {
+        if (!agent || !agent->OwningContainer()) {
+          return;
+        }
+        agent->OwningContainer()->RemoveAgent(*agent);
+      },
+      WrapWeakPersistent(this)));
 }
 
 void AnnotationAgentImpl::Attach(AnnotationAgentContainerImpl::PassKey) {
@@ -240,7 +334,7 @@ bool AnnotationAgentImpl::IsBoundForTesting() const {
   return receiver_.is_bound();
 }
 
-void AnnotationAgentImpl::Remove() {
+void AnnotationAgentImpl::Reset(base::PassKey<AnnotationAgentContainerImpl>) {
   DCHECK(!IsRemoved());
 
   if (IsAttached()) {
@@ -256,8 +350,11 @@ void AnnotationAgentImpl::Remove() {
       frame->GetDocument()->UpdateStyleAndLayout(
           DocumentUpdateReason::kFindInPage);
 
-      document->Markers().RemoveMarkersInRange(
-          dom_range, DocumentMarker::MarkerTypes::TextFragment());
+      std::optional<DocumentMarker::MarkerTypes> marker_types =
+          GetMarkerTypesForAnnotationType(type_);
+      if (marker_types.has_value()) {
+        document->Markers().RemoveMarkersInRange(dom_range, *marker_types);
+      }
     }
   }
 
@@ -266,7 +363,6 @@ void AnnotationAgentImpl::Remove() {
 
   agent_host_.reset();
   receiver_.reset();
-  owning_container_->RemoveAgent(*this, PassKey());
 
   selector_.Clear();
   owning_container_.Clear();
@@ -286,13 +382,20 @@ void AnnotationAgentImpl::ScrollIntoView(bool applies_focus) const {
   document.EnsurePaintLocationDataValidForNode(
       &first_node, DocumentUpdateReason::kFindInPage);
 
+  Node* first_node_with_layout_object = nullptr;
+  for (Node& node : range.Nodes()) {
+    if (node.GetLayoutObject()) {
+      first_node_with_layout_object = &node;
+    }
+  }
+
   // TODO(bokan): Text can be attached without having a LayoutObject since it
   // may be inside an unexpanded <details> element or inside a
   // `content-visibility: auto` subtree. In those cases we should make sure we
   // expand/make-visible the node. This is implemented in TextFragmentAnchor
   // but that doesn't cover all cases we can get here so we should migrate that
   // code here.
-  if (!first_node.GetLayoutObject()) {
+  if (!first_node_with_layout_object) {
     return;
   }
 
@@ -306,16 +409,14 @@ void AnnotationAgentImpl::ScrollIntoView(bool applies_focus) const {
           ScrollAlignment::CenterAlways(), ScrollAlignment::CenterAlways(),
           mojom::blink::ScrollType::kProgrammatic);
   params->cross_origin_boundaries = false;
-  if (type_ == mojom::blink::AnnotationType::kGlic) {
-    params->behavior = mojom::blink::ScrollBehavior::kSmooth;
-  }
+  params->behavior = ComputeScrollIntoViewBehavior(bounding_box, *params);
 
   if (applies_focus) {
     // If the first node accepts keyboard focus, move focus there to aid users
     // relying on keyboard navigation. If the node is not focusable, clear focus
     // so the next "Tab" press will start the search to find the next focusable
     // element from this element.
-    auto* element = first_node.parentElement();
+    auto* element = first_node_with_layout_object->parentElement();
     if (element && element->IsFocusable()) {
       document.SetFocusedElement(
           element, FocusParams(SelectionBehaviorOnFocus::kNone,
@@ -328,10 +429,50 @@ void AnnotationAgentImpl::ScrollIntoView(bool applies_focus) const {
   // Set the sequential focus navigation to the start of selection.
   // Even if this element isn't focusable, "Tab" press will
   // start the search to find the next focusable element from this element.
-  document.SetSequentialFocusNavigationStartingPoint(&first_node);
+  document.SetSequentialFocusNavigationStartingPoint(
+      first_node_with_layout_object);
 
-  scroll_into_view_util::ScrollRectToVisible(*first_node.GetLayoutObject(),
-                                             bounding_box, std::move(params));
+  if (type_ == mojom::blink::AnnotationType::kGlic) {
+    float max_distance_px = CalculateMaxScrollOffsetPx(
+        first_node_with_layout_object->GetLayoutObject()->GetFrameView(),
+        bounding_box, *params);
+    if (max_distance_px <= 1.f) {
+      document.Markers().StartGlicMarkerAnimationIfNeeded();
+    } else {
+      // Scroll is guaranteed to happen. `ScrollableArea::OnScrollFinished()`
+      // will call `StartGlicMarkerAnimation()`. This is a near-term solution
+      // due to the re-arch work in crbug.com/41406914. It means in the nested
+      // multiple scollers case, the first ever `OnScrollFinished()` starts the
+      // animation, regardless if the actual scroll has finished or not.
+      //
+      // TODO(https://crbug.com/41406914): Migrate from `OnScrollFinished()` to
+      // the scroll-promises.
+    }
+  }
+
+  scroll_into_view_util::ScrollRectToVisible(
+      *first_node_with_layout_object->GetLayoutObject(), bounding_box,
+      std::move(params));
+}
+
+std::optional<mojom::blink::AnnotationType>
+AnnotationAgentImpl::IsOverAnnotation(const HitTestResult& result) {
+  if (!result.InnerNode() || !result.InnerNodeFrame()) {
+    return std::nullopt;
+  }
+
+  if (HasMarkerAroundPosition(result, DocumentMarker::MarkerType::kGlic)) {
+    // Note: We could also have a marker of type kTextFragment around the
+    // position as well, but we treat kGlic as topmost.
+    return mojom::blink::AnnotationType::kGlic;
+  }
+
+  if (HasMarkerAroundPosition(result,
+                              DocumentMarker::MarkerType::kTextFragment)) {
+    return mojom::blink::AnnotationType::kSharedHighlight;
+  }
+
+  return std::nullopt;
 }
 
 void AnnotationAgentImpl::DidFinishFindRange(const RangeInFlatTree* range) {
@@ -396,17 +537,15 @@ void AnnotationAgentImpl::PerformPreAttachDOMMutation() {
     DisplayLockUtilities::ActivateFindInPageMatchRangeIfNeeded(
         pending_range_->ToEphemeralRange());
 
-    // If the active match is hidden inside a <details> element, then we should
-    // expand it so we can scroll to it.
-    if (HTMLDetailsElement::ExpandDetailsAncestors(first_node)) {
+    // If the active match is hidden inside a <details> element or a
+    // hidden=until-found element, then we should expand it so we can scroll to
+    // it.
+    if (DisplayLockUtilities::RevealAutoExpandableAncestors(first_node)
+            .revealed_details) {
       UseCounter::Count(
           first_node.GetDocument(),
           WebFeature::kAutoExpandedDetailsForScrollToTextFragment);
     }
-
-    // If the active match is hidden inside a hidden=until-found element, then
-    // we should reveal it so we can scroll to it.
-    DisplayLockUtilities::RevealHiddenUntilFoundAncestors(first_node);
 
     // Ensure we leave clean layout since we'll be applying markers after this.
     first_node.GetDocument().UpdateStyleAndLayout(
@@ -435,12 +574,23 @@ void AnnotationAgentImpl::ProcessAttachmentFinished() {
     Document* document = attached_range_->StartPosition().GetDocument();
     DCHECK(document);
 
-    // TextFinder type is used only to determine whether a given text can be
-    // found in the page, it should have no side-effects.
-    if (type_ != mojom::blink::AnnotationType::kTextFinder) {
-      document->Markers().AddTextFragmentMarker(dom_range);
-      document->Markers().MergeOverlappingMarkers(
-          DocumentMarker::kTextFragment);
+    switch (type_) {
+      case mojom::blink::AnnotationType::kUserNote:
+      case mojom::blink::AnnotationType::kSharedHighlight: {
+        document->Markers().AddTextFragmentMarker(dom_range);
+        document->Markers().MergeOverlappingMarkers(
+            DocumentMarker::kTextFragment);
+        break;
+      }
+      case mojom::blink::AnnotationType::kGlic: {
+        document->Markers().AddGlicMarker(dom_range);
+        break;
+      }
+      case mojom::blink::AnnotationType::kTextFinder: {
+        // TextFinder type is used only to determine whether a given text can be
+        // found in the page, it should have no side-effects.
+        break;
+      }
     }
 
     if (type_ != mojom::blink::AnnotationType::kUserNote) {
@@ -492,6 +642,48 @@ bool AnnotationAgentImpl::IsRemoved() const {
   DCHECK(owning_container_ || !agent_host_.is_bound());
   DCHECK(owning_container_ || !receiver_.is_bound());
   return !owning_container_;
+}
+
+mojom::blink::ScrollBehavior AnnotationAgentImpl::ComputeScrollIntoViewBehavior(
+    const PhysicalRect& bounding_box,
+    const mojom::blink::ScrollIntoViewParams& params) const {
+  using mojom::blink::AnnotationType;
+  using mojom::blink::ScrollBehavior;
+
+  CHECK(owning_container_->GetSupplementable());
+  Document* document = owning_container_->GetSupplementable();
+  if (document->GetSettings() &&
+      document->GetSettings()->GetPrefersReducedMotion()) {
+    return ScrollBehavior::kInstant;
+  }
+
+  switch (type_) {
+    case AnnotationType::kSharedHighlight:
+    case AnnotationType::kTextFinder:
+    case AnnotationType::kUserNote:
+      return ScrollBehavior::kAuto;
+    case AnnotationType::kGlic:
+      // Use kInstant for long scroll distances, kSmooth otherwise.
+      if (LocalFrameView* view = document->GetFrame()->View()) {
+        float max_distance_in_dips =
+            CalculateMaxScrollOffsetPx(view, bounding_box, params);
+        if (ChromeClient* client = view->GetChromeClient()) {
+          // Note: We explicitly don't use `LocalFrame::DevicePixelRatio` or
+          // `LocalFrame::LayoutZoomFactor` as both are affected by browser
+          // zoom, and we don't want to allow longer scrolls (in physical
+          // pixels) when content is zoomed.
+          const float device_scale_factor =
+              client->GetScreenInfo(view->GetFrame()).device_scale_factor;
+          max_distance_in_dips = max_distance_in_dips / device_scale_factor;
+        }
+        base::UmaHistogramCustomCounts("Glic.ScrollTo.ScrollDistance",
+                                       max_distance_in_dips, 1, 500000, 50);
+        if (max_distance_in_dips < GetGlicSmoothScrollThresholdInDIPs()) {
+          return ScrollBehavior::kSmooth;
+        }
+      }
+      return ScrollBehavior::kInstant;
+  }
 }
 
 }  // namespace blink

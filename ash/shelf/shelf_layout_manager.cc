@@ -502,8 +502,7 @@ ShelfLayoutManager::ScopedVisibilityLock::~ScopedVisibilityLock() {
 ShelfLayoutManager::ShelfLayoutManager(ShelfWidget* shelf_widget, Shelf* shelf)
     : shelf_widget_(shelf_widget),
       shelf_(shelf),
-      is_background_blur_enabled_(features::IsBackgroundBlurEnabled() &&
-                                  chromeos::features::IsSystemBlurEnabled()) {
+      is_background_blur_enabled_(chromeos::features::IsSystemBlurEnabled()) {
   DCHECK(shelf_widget_);
   DCHECK(shelf_);
 }
@@ -681,8 +680,8 @@ void ShelfLayoutManager::UpdateDisplayWorkArea() {
 
   UpdateShelfWorkAreaInsets();
 
-  display_ = display::Screen::GetScreen()->GetDisplayNearestWindow(
-      shelf_native_window);
+  display_ =
+      display::Screen::Get()->GetDisplayNearestWindow(shelf_native_window);
   const bool in_overview =
       Shell::Get()->overview_controller()->InOverviewSession();
   const bool in_splitview =
@@ -761,7 +760,7 @@ void ShelfLayoutManager::UpdateAutoHideState() {
       if (!auto_hide_timer_.IsRunning()) {
         mouse_over_shelf_when_auto_hide_timer_started_ =
             shelf_widget_->GetWindowBoundsInScreen().Contains(
-                display::Screen::GetScreen()->GetCursorScreenPoint());
+                display::Screen::Get()->GetCursorScreenPoint());
         drag_over_shelf_when_auto_hide_timer_started_ =
             in_drag_drop_ && shelf_widget_->GetWindowBoundsInScreen().Contains(
                                  last_drag_drop_position_in_screen_);
@@ -791,7 +790,7 @@ void ShelfLayoutManager::UpdateAutoHideForMouseEvent(ui::MouseEvent* event,
   if (event->type() == ui::EventType::kMousePressed ||
       event->type() == ui::EventType::kMouseMoved) {
     if (shelf_->shelf_widget()->GetVisibleShelfBounds().Contains(
-            display::Screen::GetScreen()->GetCursorScreenPoint())) {
+            display::Screen::Get()->GetCursorScreenPoint())) {
       UpdateAutoHideState();
       last_seen_mouse_position_was_over_shelf_ = true;
     } else {
@@ -1049,7 +1048,7 @@ void ShelfLayoutManager::ProcessScrollOffset(int offset,
   }
 
   Shell::Get()->app_list_controller()->ToggleAppList(
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->GetDisplayNearestWindow(shelf_widget_->GetNativeWindow())
           .id(),
       AppListShowSource::kScrollFromShelf, event.time_stamp());
@@ -1097,7 +1096,7 @@ bool ShelfLayoutManager::MaybeHandleShelfFling(
     return false;
 
   Shell::Get()->app_list_controller()->ToggleAppList(
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->GetDisplayNearestWindow(shelf_widget_->GetNativeWindow())
           .id(),
       AppListShowSource::kSwipeFromShelf, event_in_screen.time_stamp());
@@ -1186,7 +1185,8 @@ ShelfBackgroundType ShelfLayoutManager::ComputeShelfBackgroundType() const {
   const bool has_visible_snap_group =
       snap_group_controller &&
       snap_group_controller->GetTopmostVisibleSnapGroup(
-          shelf_native_window->GetRootWindow());
+          shelf_native_window->GetRootWindow(),
+          /*topwindow_only=*/false);
   const bool maximized =
       in_split_view_mode || has_visible_snap_group ||
       state_.window_state == WorkspaceWindowState::kFullscreen ||
@@ -1456,6 +1456,10 @@ void ShelfLayoutManager::OnLockStateEvent(LockStateObserver::EventType event) {
   MaybeUpdateShelfBackground(AnimationChangeType::ANIMATE);
 }
 
+void ShelfLayoutManager::OnAppModeSessionStarted() {
+  UpdateShelfVisibilityAfterLoginUIChange();
+}
+
 void ShelfLayoutManager::OnSessionStateChanged(
     session_manager::SessionState state) {
   // Check transition changes to/from the add user to session and change the
@@ -1482,7 +1486,7 @@ void ShelfLayoutManager::OnSessionStateChanged(
   }
 }
 
-void ShelfLayoutManager::OnLoginStatusChanged(LoginStatus loing_status) {
+void ShelfLayoutManager::OnLoginStatusChanged(LoginStatus login_status) {
   UpdateVisibilityState(/*force_layout=*/false);
 }
 
@@ -1829,7 +1833,7 @@ HotseatState ShelfLayoutManager::CalculateHotseatState(
       const float end_of_drag_in_screen =
           drag_start_point_in_screen_.y() + total_amount_dragged;
       const int screen_bottom =
-          display::Screen::GetScreen()
+          display::Screen::Get()
               ->GetDisplayNearestView(shelf_widget_->GetNativeView())
               .bounds()
               .bottom();
@@ -1872,16 +1876,16 @@ ShelfVisibilityState ShelfLayoutManager::CalculateShelfVisibility() {
     return SHELF_HIDDEN;
   }
 
+  if (Shell::Get()->session_controller()->IsRunningInAppMode()) {
+    return SHELF_HIDDEN;
+  }
+
   if (!state_.IsActiveSessionState()) {
     // Needed to show system tray in non active session state.
     return SHELF_VISIBLE;
   }
 
   if (Shell::Get()->screen_pinning_controller()->IsPinned()) {
-    return SHELF_HIDDEN;
-  }
-
-  if (Shell::Get()->session_controller()->IsRunningInAppMode()) {
     return SHELF_HIDDEN;
   }
 
@@ -2421,7 +2425,7 @@ ShelfLayoutManager::CalculateAutoHideStateBasedOnCursorLocation() const {
   }
 
   gfx::Point cursor_position_in_screen =
-      display::Screen::GetScreen()->GetCursorScreenPoint();
+      display::Screen::Get()->GetCursorScreenPoint();
   // Cursor is invisible in tablet mode and plug in an external mouse in
   // tablet mode will switch to clamshell mode.
   if (shelf_region.Contains(cursor_position_in_screen) && !in_tablet_mode)
@@ -3071,7 +3075,9 @@ bool ShelfLayoutManager::MaybeStartDragWindowFromShelf(
   if (drag_status_ != kDragInProgress)
     return false;
 
-  // Do not drag on an auto-hidden shelf or a hidden shelf.
+  // Do not start a window drag from a shelf that is not fully visible. The
+  // shelf state is not updated during a drag, so a single gesture from a
+  // hidden shelf cannot start a window drag.
   if ((visibility_state() == SHELF_AUTO_HIDE &&
        auto_hide_state() == SHELF_AUTO_HIDE_HIDDEN) ||
       visibility_state() == SHELF_HIDDEN) {

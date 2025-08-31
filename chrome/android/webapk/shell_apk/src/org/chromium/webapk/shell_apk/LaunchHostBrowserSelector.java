@@ -25,16 +25,16 @@ public class LaunchHostBrowserSelector {
     private static final String LAST_RESORT_HOST_BROWSER_APPLICATION_NAME = "Google Chrome";
     private static final String TAG = "cr_LaunchHostBrowserSelector";
 
-    private Context mContext;
+    private final Context mContext;
 
     /** Parent activity for any dialogs. */
-    private Activity mParentActivity;
+    private final Activity mParentActivity;
 
     /**
      * Called once {@link #selectHostBrowser()} has selected the host browser either via a shared
      * preferences/<meta-data> lookup or via the user selecting the host browser from a dialog.
      */
-    public static interface Callback {
+    public interface Callback {
         void onBrowserSelected(
                 @Nullable PackageNameAndComponentName hostBrowserPackageNameAndComponentName,
                 boolean dialogShown);

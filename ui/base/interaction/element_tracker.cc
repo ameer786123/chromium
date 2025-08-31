@@ -16,7 +16,6 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
-#include "base/not_fatal_until.h"
 #include "ui/base/interaction/element_identifier.h"
 
 namespace ui {
@@ -102,7 +101,7 @@ class ElementTracker::ElementData {
   void NotifyElementHidden(TrackedElement* element) {
     if (context_) {
       const auto it = element_lookup_.find(element);
-      CHECK(it != element_lookup_.end(), base::NotFatalUntil::M130);
+      CHECK(it != element_lookup_.end());
       elements_.erase(it->second);
       element_lookup_.erase(it);
     }
@@ -195,6 +194,10 @@ TrackedElement::~TrackedElement() = default;
 
 gfx::Rect TrackedElement::GetScreenBounds() const {
   return gfx::Rect();
+}
+
+gfx::NativeView TrackedElement::GetNativeView() const {
+  return gfx::NativeView();
 }
 
 std::string TrackedElement::ToString() const {
@@ -411,7 +414,7 @@ void ElementTracker::NotifyElementActivated(TrackedElement* element) {
   GarbageCollector::Frame gc_frame(gc_.get());
   const auto it =
       element_data_.find(LookupKey(element->identifier(), element->context()));
-  CHECK(it != element_data_.end(), base::NotFatalUntil::M130);
+  CHECK(it != element_data_.end());
   it->second.NotifyElementActivated(safe_element);
 
   // Do "all contexts" notification:
@@ -440,7 +443,7 @@ void ElementTracker::NotifyElementHidden(TrackedElement* element) {
   // Call context-specific callbacks and erase entry.
   const auto it =
       element_data_.find(LookupKey(element->identifier(), element->context()));
-  CHECK(it != element_data_.end(), base::NotFatalUntil::M130);
+  CHECK(it != element_data_.end());
   ElementData* const data = &it->second;
   data->NotifyElementHidden(element);
   gc_frame.Add(data);

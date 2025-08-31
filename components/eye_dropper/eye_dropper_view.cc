@@ -2,17 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "components/eye_dropper/eye_dropper_view.h"
 
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "components/color/color_id.h"
 #include "components/eye_dropper/features.h"
@@ -27,7 +24,7 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/views/widget/widget.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -69,7 +66,7 @@ EyeDropperView::ViewPositionHandler::~ViewPositionHandler() {
 
 void EyeDropperView::ViewPositionHandler::UpdateViewPosition() {
   owner_->OnCursorPositionUpdate(
-      display::Screen::GetScreen()->GetCursorScreenPoint());
+      display::Screen::Get()->GetCursorScreenPoint());
 }
 
 class EyeDropperView::ScreenCapturer
@@ -100,7 +97,7 @@ class EyeDropperView::ScreenCapturer
 
 EyeDropperView::ScreenCapturer::ScreenCapturer(EyeDropperView* owner)
     : owner_(owner) {
-  static bool allow_wgc_screen_capture =
+  static bool allow_wgc_screen_capturer =
 #if BUILDFLAG(IS_WIN)
       // Allow WGC screen capture if Windows version is greater or equal
       // than 10.0.20348.0, as the following API, which controls if a border is
@@ -110,13 +107,21 @@ EyeDropperView::ScreenCapturer::ScreenCapturer(EyeDropperView* owner)
       base::win::GetVersion() >= base::win::Version::SERVER_2022 &&
 #endif  // BUILDFLAG(IS_WIN)
       base::FeatureList::IsEnabled(features::kAllowEyeDropperWGCScreenCapture);
+  auto options = content::desktop_capture::CreateDesktopCaptureOptions();
+
+#if defined(RTC_ENABLE_WIN_WGC)
+  if (allow_wgc_screen_capturer) {
+    options.set_allow_wgc_screen_capturer(true);
+  }
+#endif  // defined(RTC_ENABLE_WIN_WGC)
+
   // TODO(iopopesc): Update the captured frame after a period of time to match
   // latest content on screen.
-  capturer_ =
-      content::desktop_capture::CreateScreenCapturer(allow_wgc_screen_capture);
+  capturer_ = content::desktop_capture::CreateScreenCapturer(
+      options, /*for_snapshot=*/true);
   if (capturer_) {
     capturer_->Start(this);
-    if (allow_wgc_screen_capture) {
+    if (allow_wgc_screen_capturer) {
       capturer_->SelectSource(webrtc::kFullDesktopScreenId);
     }
   }
@@ -143,8 +148,8 @@ void EyeDropperView::ScreenCapturer::OnCaptureResult(
   }
 
   frame_.allocN32Pixels(frame->size().width(), frame->size().height(), true);
-  memcpy(frame_.getAddr32(0, 0), frame->data(),
-         frame->size().height() * frame->stride());
+  UNSAFE_TODO(memcpy(frame_.getAddr32(0, 0), frame->data(),
+                     frame->size().height() * frame->stride()));
   frame_.setImmutable();
 
   // The captured frame is in full desktop coordinates. E.g. the top left
@@ -152,15 +157,14 @@ void EyeDropperView::ScreenCapturer::OnCaptureResult(
   // origins.
   original_offset_x_ = 0;
   original_offset_y_ = 0;
-  for (const auto& display : display::Screen::GetScreen()->GetAllDisplays()) {
+  for (const auto& display : display::Screen::Get()->GetAllDisplays()) {
 #if BUILDFLAG(IS_WIN)
     // The window parameter is intentionally passed as nullptr on Windows
     // because a non-null window parameter causes errors when restoring windows
     // to saved positions in variable-DPI situations. See
     // https://crbug.com/1224715 for details.
-    gfx::Rect scaled_bounds =
-        display::Screen::GetScreen()->DIPToScreenRectInWindow(
-            /*window=*/nullptr, display.bounds());
+    gfx::Rect scaled_bounds = display::Screen::Get()->DIPToScreenRectInWindow(
+        /*window=*/nullptr, display.bounds());
 #else
     gfx::Rect scaled_bounds = gfx::ScaleToEnclosingRect(
         display.bounds(), display.device_scale_factor());
@@ -235,7 +239,7 @@ EyeDropperView::EyeDropperView(gfx::NativeView parent,
       std::make_unique<PreEventDispatchHandler>(this, event_handler);
   widget->Show();
   CaptureInput();
-  auto* screen = display::Screen::GetScreen();
+  auto* screen = display::Screen::Get();
   gfx::Point initial_position = screen->GetCursorScreenPoint();
 #if BUILDFLAG(IS_CHROMEOS)
   if (screen->InTabletMode()) {
@@ -308,7 +312,7 @@ void EyeDropperView::OnPaint(gfx::Canvas* view_canvas) {
   // The captured frame is not scaled so we need to use widget's bounds in
   // pixels to have the magnified region match cursor position.
   center_position_px =
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->DIPToScreenRectInWindow(GetWidget()->GetNativeWindow(),
                                     GetWidget()->GetWindowBoundsInScreen())
           .CenterPoint();
@@ -390,7 +394,7 @@ void EyeDropperView::OnWidgetMove() {
 #if BUILDFLAG(IS_CHROMEOS)
 void EyeDropperView::OnWindowAddedToRootWindow(aura::Window* window) {
   display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window);
+      display::Screen::Get()->GetDisplayNearestWindow(window);
   CaptureScreen(display.id());
 }
 

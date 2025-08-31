@@ -28,9 +28,7 @@ enum class ClientSummarizedResultType : int {
   kUnknown = 5,
   kMaxValue = kUnknown
 };
-// LINT.ThenChange(
-//     //tools/metrics/histograms/enums.xml:ClientSummarizedResultType
-// )
+// LINT.ThenChange(//tools/metrics/histograms/enums.xml:ClientSummarizedResultType)
 
 // OmniboxMetricsProvider is responsible for filling out the |omnibox_event|
 // section of the UMA proto.
@@ -68,6 +66,9 @@ class OmniboxMetricsProvider : public metrics::MetricsProvider {
 
   // Records zero-prefix suggestion precision/recall/usage metrics.
   void RecordZeroPrefixPrecisionRecallUsage(const OmniboxLog& log);
+
+  // Records contextual search suggestion precision/recall/usage metrics.
+  void RecordContextualSearchPrecisionRecallUsage(const OmniboxLog& log);
 
   // Subscription for receiving Omnibox event callbacks.
   base::CallbackListSubscription subscription_;

@@ -9,16 +9,18 @@
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/finder/find_buffer.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 
 namespace blink {
 
 namespace {
 
-constexpr LChar kAnyLevel[] = "*";
-constexpr LChar kBaseLevel[] = "0";
-constexpr UChar kLevelDelimiter = kComma;
+constexpr std::array<LChar, 1> kBaseLevel = {'0'};
+constexpr UChar kLevelDelimiter = uchar::kComma;
+
+const AtomicString& AnyLevel() {
+  return g_star_atom;
+}
 
 const Node* FindOuterMostRubyContainerInBlockContainer(const Node& node,
                                                        const Node& block) {
@@ -32,8 +34,7 @@ const Node* FindOuterMostRubyContainerInBlockContainer(const Node& node,
     if (const ComputedStyle* style = element->GetComputedStyle()) {
       if (style->Display() == EDisplay::kRuby ||
           style->Display() == EDisplay::kBlockRuby ||
-          (RuntimeEnabledFeatures::FindOrphanAnnotationFixEnabled() &&
-           style->Display() == EDisplay::kRubyText)) {
+          style->Display() == EDisplay::kRubyText) {
         ruby_container = element;
       }
       if (&ancestor == &block) {
@@ -215,7 +216,7 @@ class ChunkGraphBuilder {
       node = FlatTreeTraversal::NextSibling(*node);
     }
     if (chunk_text_list_.size() > 0) {
-      parent_chunk_->Link(PushChunk(String(kAnyLevel)));
+      parent_chunk_->Link(PushChunk(AnyLevel()));
     }
     return next_start.value_or(node ? node : just_after_block);
   }
@@ -238,7 +239,7 @@ class ChunkGraphBuilder {
     if (depth_context_.size() > 0) {
       return PushChunk(CreateLevel(depth_context_));
     } else if (ruby_depth_ == 0) {
-      return PushChunk(String(kAnyLevel));
+      return PushChunk(AnyLevel());
     } else {
       return PushChunk(String(kBaseLevel));
     }
@@ -368,7 +369,7 @@ void TextOrChar::Trace(Visitor* visitor) const {
   visitor->Trace(text);
 }
 
-CorpusChunk::CorpusChunk() : level_(String(kAnyLevel)) {}
+CorpusChunk::CorpusChunk() : level_(AnyLevel()) {}
 
 CorpusChunk::CorpusChunk(const HeapVector<TextOrChar>& text_list,
                          const String& level)
@@ -389,11 +390,12 @@ const CorpusChunk* CorpusChunk::FindNext(const String& level) const {
   if (next_list_.empty()) {
     return nullptr;
   }
+  const String base_level(kBaseLevel);
   const CorpusChunk* annotation_next = nullptr;
   for (const auto& chunk : next_list_) {
-    if (chunk->level_ == kAnyLevel) {
+    if (chunk->level_ == AnyLevel()) {
       return chunk;
-    } else if (level.empty() && chunk->level_ == kBaseLevel) {
+    } else if (level.empty() && chunk->level_ == base_level) {
       return chunk;
     } else if (chunk->level_ == level) {
       annotation_next = chunk;
@@ -404,15 +406,13 @@ const CorpusChunk* CorpusChunk::FindNext(const String& level) const {
   }
   // A single "base" link should be assumed as "any".  The "base" doesn't have
   // the requested level of an annotation.
-  if (next_list_.size() == 1 && next_list_[0]->level_ == kBaseLevel) {
+  if (next_list_.size() == 1 && next_list_[0]->level_ == base_level) {
     return next_list_[0];
   }
   wtf_size_t delimiter_index = level.ReverseFind(kLevelDelimiter);
   if (delimiter_index == kNotFound) {
     // No link for `level`. We should apply the base level link.
-    return RuntimeEnabledFeatures::FindNestedAnnotationFixEnabled()
-               ? FindNext(String(kBaseLevel))
-               : nullptr;
+    return FindNext(base_level);
   }
   return FindNext(level.Substring(0, delimiter_index));
 }

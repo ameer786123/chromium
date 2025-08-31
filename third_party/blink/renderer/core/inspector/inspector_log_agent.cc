@@ -14,6 +14,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/bindings/source_location.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -71,7 +72,7 @@ String MessageCategoryValue(mojom::blink::ConsoleMessageCategory category) {
     case mojom::blink::ConsoleMessageCategory::Cors:
       return protocol::Log::LogEntry::CategoryEnum::Cors;
   }
-  return WTF::g_empty_string;
+  return g_empty_string;
 }
 
 }  // namespace
@@ -104,7 +105,7 @@ void InspectorLogAgent::Restore() {
   if (violation_thresholds_.IsEmpty())
     return;
   auto settings = std::make_unique<protocol::Array<ViolationSetting>>();
-  for (const WTF::String& key : violation_thresholds_.Keys()) {
+  for (const String& key : violation_thresholds_.Keys()) {
     settings->emplace_back(ViolationSetting::create()
                                .setName(key)
                                .setThreshold(violation_thresholds_.Get(key))
@@ -181,8 +182,8 @@ void InspectorLogAgent::InnerEnable() {
         protocol::Log::LogEntry::create()
             .setSource(protocol::Log::LogEntry::SourceEnum::Other)
             .setLevel(protocol::Log::LogEntry::LevelEnum::Warning)
-            .setText(String::Number(storage_->ExpiredCount()) +
-                     String(" log entries are not shown."))
+            .setText(StrCat({String::Number(storage_->ExpiredCount()),
+                             " log entries are not shown."}))
             .setTimestamp(0)
             .build();
     GetFrontend()->entryAdded(std::move(expired));
@@ -243,7 +244,7 @@ protocol::Response InspectorLogAgent::startViolationsReport(
   performance_monitor_->UnsubscribeAll(this);
   violation_thresholds_.Clear();
   for (const std::unique_ptr<ViolationSetting>& setting : *settings) {
-    const WTF::String& name = setting->getName();
+    const String& name = setting->getName();
     double threshold = setting->getThreshold();
     PerformanceMonitor::Violation violation = ParseViolation(name);
     if (violation == PerformanceMonitor::kAfterLast)
@@ -281,7 +282,7 @@ void InspectorLogAgent::ReportGenericViolation(PerformanceMonitor::Violation,
                                                SourceLocation* location) {
   auto* message = MakeGarbageCollected<ConsoleMessage>(
       mojom::blink::ConsoleMessageSource::kViolation,
-      mojom::blink::ConsoleMessageLevel::kVerbose, text, location->Clone());
+      mojom::blink::ConsoleMessageLevel::kVerbose, text, location);
   ConsoleMessageAdded(message);
 }
 

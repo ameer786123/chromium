@@ -16,6 +16,8 @@
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/lens/lens_overlay_theme_utils.h"
+#include "chrome/browser/ui/lens/lens_search_feature_flag_utils.h"
+#include "chrome/browser/ui/lens/lens_string_utils.h"
 #include "chrome/browser/ui/tabs/public/tab_dialog_manager.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/grit/branded_strings.h"
@@ -83,21 +85,21 @@ void LensPermissionBubbleController::RequestPermission(
   // several times in succession.
   pref_observer_.Reset();
   pref_observer_.Init(pref_service_);
-  if (lens::features::IsLensOverlayContextualSearchboxEnabled()) {
+  if (lens::IsLensOverlayContextualSearchboxEnabled()) {
     pref_observer_.Add(
         prefs::kLensSharingPageContentEnabled,
         base::BindRepeating(
             &LensPermissionBubbleController::OnPermissionPreferenceUpdated,
-            weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+            weak_ptr_factory_.GetWeakPtr()));
   } else {
     pref_observer_.Add(
         prefs::kLensSharingPageScreenshotEnabled,
         base::BindRepeating(
             &LensPermissionBubbleController::OnPermissionPreferenceUpdated,
-            weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+            weak_ptr_factory_.GetWeakPtr()));
   }
 
-  dialog_widget_ = ShowDialogWidget(web_contents);
+  dialog_widget_ = ShowDialogWidget(std::move(callback), web_contents);
 
   // Clip layers to root layer bounds so that they don't render outside of the
   // dialog boundary when the dialog is small.
@@ -108,19 +110,22 @@ void LensPermissionBubbleController::RequestPermission(
 }
 
 std::unique_ptr<views::Widget> LensPermissionBubbleController::ShowDialogWidget(
+    RequestPermissionCallback callback,
     content::WebContents* web_contents) {
   // The widget will own `model_host` through DialogDelegate.
   views::BubbleDialogModelHost* model_host =
       views::BubbleDialogModelHost::CreateModal(
-          CreateLensPermissionDialogModel(), ui::mojom::ModalType::kChild)
+          CreateLensPermissionDialogModel(std::move(callback)),
+          ui::mojom::ModalType::kChild)
           .release();
   model_host->SetOwnershipOfNewWidget(
       views::Widget::InitParams::CLIENT_OWNS_WIDGET);
 
-  std::unique_ptr<views::Widget> widget =
+  auto widget =
       tab_interface_->GetTabFeatures()
           ->tab_dialog_manager()
-          ->CreateShowDialogAndBlockTabInteraction(model_host);
+          ->CreateAndShowDialog(
+              model_host, std::make_unique<tabs::TabDialogManager::Params>());
   widget->MakeCloseSynchronous(
       base::BindOnce(&LensPermissionBubbleController::CloseDialogWidget,
                      base::Unretained(this)));
@@ -156,7 +161,8 @@ void LensPermissionBubbleController::CloseDialogWidget(
 }
 
 std::unique_ptr<ui::DialogModel>
-LensPermissionBubbleController::CreateLensPermissionDialogModel() {
+LensPermissionBubbleController::CreateLensPermissionDialogModel(
+    RequestPermissionCallback callback) {
   ui::DialogModelLabel::TextReplacement link = ui::DialogModelLabel::CreateLink(
       IDS_LENS_PERMISSION_BUBBLE_DIALOG_LEARN_MORE_LINK,
       base::BindRepeating(
@@ -164,7 +170,7 @@ LensPermissionBubbleController::CreateLensPermissionDialogModel() {
           weak_ptr_factory_.GetWeakPtr()));
 
   auto description_text =
-      lens::features::IsLensOverlayContextualSearchboxEnabled()
+      lens::IsLensOverlayContextualSearchboxEnabled()
           ? ui::DialogModelLabel::CreateWithReplacement(
                 IDS_LENS_PERMISSION_BUBBLE_DIALOG_CSB_DESCRIPTION, link)
           : ui::DialogModelLabel::CreateWithReplacement(
@@ -173,19 +179,23 @@ LensPermissionBubbleController::CreateLensPermissionDialogModel() {
   return ui::DialogModel::Builder()
       .SetInternalName(kLensPermissionDialogName)
       .SetTitle(
-          l10n_util::GetStringUTF16(IDS_LENS_PERMISSION_BUBBLE_DIALOG_TITLE))
+          l10n_util::GetStringUTF16(lens::GetLensOverlayEntrypointLabelAltIds(
+              IDS_LENS_PERMISSION_BUBBLE_DIALOG_TITLE)))
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-      .SetIcon(ui::ImageModel::FromVectorIcon(vector_icons::kGoogleColorIcon,
-                                              ui::kColorIcon, 20))
+      .SetIcon(ui::ImageModel::FromImageSkia(
+          *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+              IDR_GOOGLE_G_GRADIENT_20)))
       .SetBannerImage(ui::ImageModel::FromImageSkia(
           *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-              IDR_LENS_PERMISSION_MODAL_IMAGE)))
+              lens::features::IsLensOverlayPermissionBubbleAltEnabled()
+                  ? IDR_LENS_PERMISSION_MODAL_IMAGE_ALT
+                  : IDR_LENS_PERMISSION_MODAL_IMAGE)))
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
       .AddParagraph(description_text)
       .AddOkButton(
           base::BindOnce(
               &LensPermissionBubbleController::OnPermissionDialogAccept,
-              weak_ptr_factory_.GetWeakPtr()),
+              weak_ptr_factory_.GetWeakPtr(), std::move(callback)),
           ui::DialogModel::Button::Params()
               .SetLabel(l10n_util::GetStringUTF16(
                   IDS_LENS_PERMISSION_BUBBLE_DIALOG_CONTINUE_BUTTON))
@@ -211,35 +221,30 @@ void LensPermissionBubbleController::OnHelpCenterLinkClicked(
   tab_interface_->GetBrowserWindowInterface()->OpenGURL(
       GURL(lens::features::GetLensOverlayHelpCenterURL()),
       ui::DispositionFromEventFlags(event.flags(),
-                                    WindowOpenDisposition::NEW_BACKGROUND_TAB));
+                                    WindowOpenDisposition::NEW_FOREGROUND_TAB));
 }
 
-void LensPermissionBubbleController::OnPermissionDialogAccept() {
-  base::WeakPtr<LensPermissionBubbleController>
-      lens_permission_bubble_controller = weak_ptr_factory_.GetWeakPtr();
-  pref_service_->SetBoolean(prefs::kLensSharingPageScreenshotEnabled, true);
-  // TODO(crbug.com/401029609): Rethink permission bubble lifetime.
-  // Must check WeakPtr in case CloseUISync() is called in
-  // LensOverlayController. This happens if the LensOverlayController cannot
-  // successfully take a screenshot of the page. If CloseUISync() is called,
-  // LensPermissionBubbleController gets reset before the following.
-  if (lens_permission_bubble_controller.get() &&
-      lens::features::IsLensOverlayContextualSearchboxEnabled()) {
+void LensPermissionBubbleController::OnPermissionDialogAccept(
+    RequestPermissionCallback callback) {
+  // Pref observer is used to close background dialogs on other tabs. Observing
+  // the prefs is no longer necessary when the dialog is being closed because
+  // the user accepted the dialog.
+  pref_observer_.Reset();
+  if (lens::IsLensOverlayContextualSearchboxEnabled()) {
     pref_service_->SetBoolean(prefs::kLensSharingPageContentEnabled, true);
   }
+  pref_service_->SetBoolean(prefs::kLensSharingPageScreenshotEnabled, true);
+  // Must close dialog widget before running callback. This ensures that the
+  // overlay can show (it can't if there is another modal is showing).
+  CloseDialogWidget(views::Widget::ClosedReason::kAcceptButtonClicked);
+  callback.Run();
 }
 
-void LensPermissionBubbleController::OnPermissionPreferenceUpdated(
-    RequestPermissionCallback callback) {
-  // If sharing page content pref is enabled, the screenshot pref will also be
-  // enabled. Only need to check for the latter when a pref gets updated.
-  if (CanSharePageScreenshotWithLensOverlay(pref_service_)) {
-    if (HasOpenDialogWidget()) {
-      CloseDialogWidget(views::Widget::ClosedReason::kAcceptButtonClicked);
-    }
-    pref_observer_.Reset();
-    callback.Run();
+void LensPermissionBubbleController::OnPermissionPreferenceUpdated() {
+  if (HasOpenDialogWidget()) {
+    CloseDialogWidget(views::Widget::ClosedReason::kAcceptButtonClicked);
   }
+  pref_observer_.Reset();
 }
 
 void LensPermissionBubbleController::TabWillDetach(

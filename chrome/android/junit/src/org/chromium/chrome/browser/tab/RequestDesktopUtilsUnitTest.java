@@ -44,12 +44,10 @@ import org.robolectric.annotation.Implements;
 import org.robolectric.shadows.ShadowPackageManager;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.ResettersForTesting;
 import org.chromium.base.SysUtils;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.build.BuildConfig;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
@@ -169,6 +167,11 @@ public class RequestDesktopUtilsUnitTest {
     }
 
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
+    @Rule
+    public OverrideContextWrapperTestRule mOverrideContextWrapperTestRule =
+            new OverrideContextWrapperTestRule();
+
     @Mock private WebsitePreferenceBridge.Natives mWebsitePreferenceBridgeJniMock;
     @Mock private MessageDispatcher mMessageDispatcher;
     @Mock private Activity mActivity;
@@ -281,8 +284,6 @@ public class RequestDesktopUtilsUnitTest {
         mShadowPackageManager.setSystemFeature(
                 PackageManager.FEATURE_AUTOMOTIVE, /* supported= */ false);
         RequestDesktopUtils.setTestDisplayMetrics(mDisplayMetrics);
-        BuildConfig.IS_DESKTOP_ANDROID = false;
-        ResettersForTesting.register(() -> BuildConfig.IS_DESKTOP_ANDROID = false);
     }
 
     @After
@@ -565,7 +566,7 @@ public class RequestDesktopUtilsUnitTest {
 
     @Test
     public void testShouldDefaultEnableGlobalSetting_IsAndroidDesktop() {
-        BuildConfig.IS_DESKTOP_ANDROID = true;
+        mOverrideContextWrapperTestRule.setIsDesktop(true);
         ShadowSysUtils.setMemoryInMB(4000);
         boolean shouldDefaultEnable =
                 RequestDesktopUtils.shouldDefaultEnableGlobalSetting(11, mActivity);
@@ -742,27 +743,12 @@ public class RequestDesktopUtilsUnitTest {
 
     @Test
     public void testMaybeShowDefaultEnableGlobalSettingMessage_DoNotShowIfDesktopAndroid() {
-        BuildConfig.IS_DESKTOP_ANDROID = true;
+        mOverrideContextWrapperTestRule.setIsDesktop(true);
 
         boolean shown =
                 RequestDesktopUtils.maybeShowDefaultEnableGlobalSettingMessage(
                         mProfile, mMessageDispatcher, mActivity);
         Assert.assertFalse("Message should not be shown for desktop Android.", shown);
-    }
-
-    @Test
-    public void testUpgradeTabLevelDesktopSiteSetting() {
-        mRdsDefaultValue = ContentSettingValues.BLOCK;
-        @TabUserAgent int tabUserAgent = TabUserAgent.DESKTOP;
-
-        RequestDesktopUtils.maybeUpgradeTabLevelDesktopSiteSetting(
-                mTab, mProfile, tabUserAgent, mGoogleUrl);
-
-        Assert.assertEquals(
-                "Request Desktop Site domain level setting is not set correctly.",
-                ContentSettingValues.ALLOW,
-                mContentSettingMap.get(GOOGLE_COM).intValue());
-        verify(mTab).setUserAgent(TabUserAgent.DEFAULT);
     }
 
     @Test
@@ -858,7 +844,7 @@ public class RequestDesktopUtilsUnitTest {
     public void testMaybeDefaultEnableWindowSetting_DesktopAndroid() {
         mWindowSetting = false;
         mIsDefaultValuePreference = true;
-        BuildConfig.IS_DESKTOP_ANDROID = true;
+        mOverrideContextWrapperTestRule.setIsDesktop(true);
         RequestDesktopUtils.maybeDefaultEnableWindowSetting(mActivity, mProfile);
         Assert.assertFalse(
                 "Desktop site window setting should not be default enabled for desktop "

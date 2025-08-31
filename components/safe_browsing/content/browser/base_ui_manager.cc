@@ -22,6 +22,7 @@
 #include "components/security_interstitials/core/unsafe_resource.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_user_data.h"
@@ -537,8 +538,6 @@ void BaseUIManager::AddToAllowlistUrlSet(
   if (allowlist_url.is_empty())
     return;
 
-  safe_browsing::scheme_logger::LogScheme(
-      allowlist_url, "SafeBrowsing.WarningBypassAllowlist.SchemeOnWrite");
   if (pending) {
     site_list->InsertPending(allowlist_url, navigation_id, threat_type);
   } else {

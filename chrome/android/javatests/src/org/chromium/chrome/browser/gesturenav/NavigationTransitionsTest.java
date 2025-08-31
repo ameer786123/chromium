@@ -13,7 +13,6 @@ import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
 
 import androidx.activity.BackEventCompat;
-import androidx.test.core.app.ApplicationProvider;
 import androidx.test.filters.MediumTest;
 import androidx.test.platform.app.InstrumentationRegistry;
 
@@ -52,7 +51,9 @@ import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.ui.native_page.BasicSmoothTransitionDelegate;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.NewTabPageTestUtils;
 import org.chromium.components.embedder_support.util.UrlConstants;
@@ -87,7 +88,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
 @CommandLineFlags.Add({
     ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-    "enable-features=BackForwardTransitions",
+    "enable-features=BackForwardTransitions"
+            + ":min-required-physical-ram-mb/0/screenshot-send-result-delay-ms/0",
     "force-prefers-no-reduced-motion",
     // Resampling can make scroll offsets non-deterministic so turn it off.
     "disable-features=ResamplingScrollEvents",
@@ -99,7 +101,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 @DisableIf.Build(supported_abis_includes = "x86_64", message = "https://crbug.com/337886037")
 public class NavigationTransitionsTest {
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private EmbeddedTestServer mTestServer;
 
@@ -116,7 +119,7 @@ public class NavigationTransitionsTest {
     private Runnable mRelease;
 
     @ClassParameter
-    private static List<ParameterSet> sClassParams =
+    private static final List<ParameterSet> sClassParams =
             Arrays.asList(
                     new ParameterSet()
                             .value(NavigationTransitionsTest.NAVIGATION_MODE_THREE_BUTTON)
@@ -125,7 +128,8 @@ public class NavigationTransitionsTest {
                             .value(NavigationTransitionsTest.NAVIGATION_MODE_GESTURAL)
                             .name("Gestural"));
 
-    private int mTestNavigationMode;
+    private final int mTestNavigationMode;
+    private WebPageStation mPage;
 
     private static class ScreenshotCallback
             implements ScreenshotCaptureTestHelper.NavScreenshotCallback {
@@ -161,8 +165,8 @@ public class NavigationTransitionsTest {
     }
 
     private class ReleaseController {
-        private Runnable mRelease;
-        private String mExpectedUrl;
+        private final Runnable mRelease;
+        private final String mExpectedUrl;
 
         public ReleaseController(Runnable release, String expectedUrl) {
             mRelease = release;
@@ -174,8 +178,7 @@ public class NavigationTransitionsTest {
         }
 
         public void waitForPageLoad() {
-            ChromeTabUtils.waitForTabPageLoaded(
-                    mActivityTestRule.getActivity().getActivityTab(), mExpectedUrl);
+            ChromeTabUtils.waitForTabPageLoaded(mActivityTestRule.getActivityTab(), mExpectedUrl);
         }
     }
 
@@ -187,13 +190,11 @@ public class NavigationTransitionsTest {
 
     @Before
     public void setUp() {
-        mTestServer =
-                EmbeddedTestServer.createAndStartServer(
-                        ApplicationProvider.getApplicationContext());
+        mTestServer = mActivityTestRule.getTestServer();
 
         mScreenshotCaptureTestHelper = new ScreenshotCaptureTestHelper();
 
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mPage = mActivityTestRule.startOnBlankPage();
         mActivityTestRule.waitForActivityNativeInitializationComplete();
         BackPressManager backPressManager =
                 mActivityTestRule.getActivity().getBackPressManagerForTesting();
@@ -202,7 +203,7 @@ public class NavigationTransitionsTest {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     GestureNavigationTestUtils utils =
-                            new GestureNavigationTestUtils(mActivityTestRule);
+                            new GestureNavigationTestUtils(mActivityTestRule::getActivity);
                     utils.enableGestureNavigationForTesting(three_button_mode);
                 });
         backPressManager.setIsGestureNavEnabledSupplier(() -> !three_button_mode);
@@ -220,12 +221,11 @@ public class NavigationTransitionsTest {
     }
 
     private WebContents getWebContents() {
-        return mActivityTestRule.getActivity().getActivityTab().getWebContents();
+        return mActivityTestRule.getWebContents();
     }
 
     private String getCurrentUrl() {
-        return ChromeTabUtils.getUrlStringOnUiThread(
-                mActivityTestRule.getActivity().getActivityTab());
+        return ChromeTabUtils.getUrlStringOnUiThread(mActivityTestRule.getActivityTab());
     }
 
     private void invokeNavigateGesture(@BackGestureEventSwipeEdge int edge) {
@@ -337,7 +337,7 @@ public class NavigationTransitionsTest {
 
     private void performNavigationTransition(
             String expectedUrl, @BackGestureEventSwipeEdge int edge) {
-        Tab tab = mActivityTestRule.getActivity().getActivityTab();
+        Tab tab = mActivityTestRule.getActivityTab();
         ChromeTabUtils.waitForTabPageLoaded(
                 tab,
                 expectedUrl,
@@ -406,6 +406,13 @@ public class NavigationTransitionsTest {
                 CriteriaHelper.DEFAULT_POLLING_INTERVAL);
     }
 
+    private void loadUrlAndWaitForScreenshotCallback(String url, CallbackHelper helper)
+            throws TimeoutException {
+        mActivityTestRule.loadUrl(url);
+        WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
+        helper.waitForNext();
+    }
+
     /**
      * Basic smoke test of transition back navigation.
      *
@@ -423,15 +430,9 @@ public class NavigationTransitionsTest {
         String url2 = mTestServer.getURL("/chrome/test/data/android/green.html");
         String url3 = mTestServer.getURL("/chrome/test/data/android/simple.html");
         var helper = mScreenshotCallback.expectRequested(true);
-        mActivityTestRule.loadUrl(url1);
-        WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
-        helper.waitForNext();
-        mActivityTestRule.loadUrl(url2);
-        WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
-        helper.waitForNext();
-        mActivityTestRule.loadUrl(url3);
-        WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
-        helper.waitForNext();
+        loadUrlAndWaitForScreenshotCallback(url1, helper);
+        loadUrlAndWaitForScreenshotCallback(url2, helper);
+        loadUrlAndWaitForScreenshotCallback(url3, helper);
 
         HistogramWatcher.Builder builder = HistogramWatcher.newBuilder();
         HistogramWatcher watcher;
@@ -602,16 +603,19 @@ public class NavigationTransitionsTest {
         if (mTestNavigationMode == NAVIGATION_MODE_GESTURAL
                 && VERSION.SDK_INT < VERSION_CODES.UPSIDE_DOWN_CAKE) return;
 
+        var helper = mScreenshotCallback.expectRequested(true);
         // Put "blue.html" and then "green.html" in the session history.
         String url1 = mTestServer.getURL("/chrome/test/data/android/blue.html");
         String url2 = mTestServer.getURL("/chrome/test/data/android/green.html");
-        mActivityTestRule.loadUrl(url1);
-        mActivityTestRule.loadUrl(url2);
+        loadUrlAndWaitForScreenshotCallback(url1, helper);
+        loadUrlAndWaitForScreenshotCallback(url2, helper);
 
         WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
 
         // No screenshot on gesture mode when navigating back.
-        mScreenshotCallback.expectRequested(mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
+        helper =
+                mScreenshotCallback.expectRequested(
+                        mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
         performNavigationTransition(url1, BackEventCompat.EDGE_LEFT);
         waitForTransitionFinished();
 
@@ -624,8 +628,7 @@ public class NavigationTransitionsTest {
         // it forwards touches to the main thread.
         WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
 
-        TouchCommon.singleClickView(
-                mActivityTestRule.getActivity().getActivityTab().getContentView());
+        TouchCommon.singleClickView(mActivityTestRule.getActivityTab().getContentView());
 
         WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
 
@@ -635,6 +638,7 @@ public class NavigationTransitionsTest {
                                 getWebContents(), "window.numTouches"));
 
         Assert.assertEquals(1, numTouches);
+        helper.waitForNext();
     }
 
     /**
@@ -653,13 +657,16 @@ public class NavigationTransitionsTest {
         String url1 = mTestServer.getURL("/chrome/test/data/android/blue.html");
         String url2 = mTestServer.getURL("/chrome/test/data/android/green.html");
         String url3 = mTestServer.getURL("/chrome/test/data/android/simple.html");
-        mActivityTestRule.loadUrl(url1);
-        mActivityTestRule.loadUrl(url2);
-        mActivityTestRule.loadUrl(url3);
 
-        WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
+        var helper = mScreenshotCallback.expectRequested(true);
+        loadUrlAndWaitForScreenshotCallback(url1, helper);
+        loadUrlAndWaitForScreenshotCallback(url2, helper);
+        loadUrlAndWaitForScreenshotCallback(url3, helper);
+
         // No screenshot on gesture mode when navigating back.
-        mScreenshotCallback.expectRequested(mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
+        helper =
+                mScreenshotCallback.expectRequested(
+                        mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
 
         performNavigationTransition(url2, BackEventCompat.EDGE_RIGHT);
         waitForTransitionFinished();
@@ -677,6 +684,8 @@ public class NavigationTransitionsTest {
             waitForTransitionFinished();
             Assert.assertEquals(url1, getCurrentUrl());
         }
+
+        helper.waitForNext();
     }
 
     /**
@@ -720,16 +729,19 @@ public class NavigationTransitionsTest {
                             });
                 });
 
+        var helper = mScreenshotCallback.expectRequested(true);
+
         // Put "blue.html" and then "green.html" in the session history.
         String url1 = mTestServer.getURL("/chrome/test/data/android/blue.html");
-        String url2 = mTestServer.getURL("/chrome/test/data/android/green_scroll.html");
-        mActivityTestRule.loadUrl(url1);
-        mActivityTestRule.loadUrl(url2);
+        loadUrlAndWaitForScreenshotCallback(url1, helper);
 
-        WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
+        String url2 = mTestServer.getURL("/chrome/test/data/android/green_scroll.html");
+        loadUrlAndWaitForScreenshotCallback(url2, helper);
 
         // No screenshot on gesture mode when navigating back.
-        mScreenshotCallback.expectRequested(mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
+        helper =
+                mScreenshotCallback.expectRequested(
+                        mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
 
         // Perform a back gesture transition.
         mViewportTestUtils.hideBrowserControls();
@@ -741,6 +753,8 @@ public class NavigationTransitionsTest {
         Assert.assertTrue(
                 topControlOffsetDuringGesture.get() > -mViewportTestUtils.getTopControlsHeightPx());
         mViewportTestUtils.waitForBrowserControlsState(/* shown= */ true);
+
+        helper.waitForNext();
     }
 
     /**
@@ -878,14 +892,17 @@ public class NavigationTransitionsTest {
         String url1 = mTestServer.getURL("/chrome/test/data/android/blue.html");
         String url2 = mTestServer.getURL("/chrome/test/data/android/green.html");
         String url3 = mTestServer.getURL("/chrome/test/data/android/simple.html");
-        mActivityTestRule.loadUrl(url1);
-        mActivityTestRule.loadUrl(url2);
-        mActivityTestRule.loadUrl(url3);
-        WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
+
+        var helper = mScreenshotCallback.expectRequested(true);
+        loadUrlAndWaitForScreenshotCallback(url1, helper);
+        loadUrlAndWaitForScreenshotCallback(url2, helper);
+        loadUrlAndWaitForScreenshotCallback(url3, helper);
 
         // Perform a back gesture transition from the left edge.
         // No screenshot on gesture mode when navigating back.
-        mScreenshotCallback.expectRequested(mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
+        helper =
+                mScreenshotCallback.expectRequested(
+                        mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
         performNavigationTransition(url2, BackEventCompat.EDGE_LEFT);
         waitForTransitionFinished();
 
@@ -902,7 +919,9 @@ public class NavigationTransitionsTest {
                     manager.getCallback().handleOnBackPressed();
                 });
 
-        ChromeTabUtils.waitForTabPageLoaded(mActivityTestRule.getActivity().getActivityTab(), url1);
+        ChromeTabUtils.waitForTabPageLoaded(mActivityTestRule.getActivityTab(), url1);
+
+        helper.waitForNext();
     }
 
     /** Test that it doesn't crash when the edge is somehow changed in the mid of swipe gesture. */
@@ -989,12 +1008,12 @@ public class NavigationTransitionsTest {
 
         final String url = mTestServer.getURL("/chrome/test/data/android/blue.html");
         mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
-        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivity().getActivityTab());
+        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivityTab());
         mActivityTestRule.loadUrl(url);
 
         WebContentsUtils.waitForCopyableViewInWebContents(getWebContents());
 
-        //         No screenshot on gesture mode when navigating back.
+        // No screenshot on gesture mode when navigating back.
         mScreenshotCallback.expectRequested(mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
         ReleaseController releaseController =
                 performNavigationTransitionAndHold(UrlConstants.NTP_URL, BackEventCompat.EDGE_LEFT);
@@ -1022,21 +1041,29 @@ public class NavigationTransitionsTest {
             "BackForwardTransitions"
                     + ":transition_from_native_pages/false"
                     + "/transition_to_native_pages/false")
-    public void testSwipeBackFromNTPWithoutTransition() throws InterruptedException {
+    public void testSwipeBackFromNTPWithoutTransition()
+            throws InterruptedException, TimeoutException {
+        var helper = mScreenshotCallback.expectRequested(true);
+
         final String url = mTestServer.getURL("/chrome/test/data/android/blue.html");
 
-        final Tab tab = mActivityTestRule.getActivity().getActivityTab();
+        final Tab tab = mActivityTestRule.getActivityTab();
 
         mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
-        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivity().getActivityTab());
+        NewTabPageTestUtils.waitForNtpLoaded(mActivityTestRule.getActivityTab());
+        helper.waitForNext();
 
-        mActivityTestRule.loadUrl(url);
+        loadUrlAndWaitForScreenshotCallback(url, helper);
+
         mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
+        helper.waitForNext();
 
-        //         No screenshot on gesture mode when navigating back.
-        mScreenshotCallback.expectRequested(mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
+        // No screenshot on gesture mode when navigating back.
+        helper =
+                mScreenshotCallback.expectRequested(
+                        mTestNavigationMode == NAVIGATION_MODE_THREE_BUTTON);
         ReleaseController releaseController =
                 performNavigationTransitionAndHold(url, BackEventCompat.EDGE_LEFT);
         CriteriaHelper.pollInstrumentationThread(
@@ -1051,6 +1078,7 @@ public class NavigationTransitionsTest {
                                 == tab.getWebContents().getCurrentBackForwardTransitionStage(),
                 "Back forward transition is not enabled for native pages");
         releaseController.waitForPageLoad();
+        helper.waitForNext();
     }
 
     @Test
@@ -1061,7 +1089,7 @@ public class NavigationTransitionsTest {
                     + "/transition_to_native_pages/true")
     @DisabledTest(message = "crbug.com/398140569")
     public void testSwipeBackToNativeBookmarksPageWithTransition() throws InterruptedException {
-        final Tab tab = mActivityTestRule.getActivity().getActivityTab();
+        final Tab tab = mActivityTestRule.getActivityTab();
         mActivityTestRule.loadUrl("chrome-native://bookmarks/folder/0");
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
         mActivityTestRule.loadUrl(mTestServer.getURL("/chrome/test/data/android/blue.html"));

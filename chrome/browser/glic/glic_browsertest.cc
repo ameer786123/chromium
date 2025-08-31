@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/test/scoped_feature_list.h"
-#include "chrome/browser/glic/glic_enabling.h"
 #include "chrome/browser/glic/glic_pref_names.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/glic/test_support/glic_test_environment.h"
 #include "chrome/browser/glic/test_support/glic_test_util.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/webui_url_constants.h"
@@ -24,9 +25,6 @@ namespace {
 class GlicBrowserTest : public InProcessBrowserTest {
  public:
   GlicBrowserTest() {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kGlic, features::kTabstripComboButton},
-        /*disabled_features=*/{});
   }
   GlicBrowserTest(const GlicBrowserTest&) = delete;
   GlicBrowserTest& operator=(const GlicBrowserTest&) = delete;
@@ -39,7 +37,7 @@ class GlicBrowserTest : public InProcessBrowserTest {
   }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  GlicTestEnvironment glic_test_environment_{{.fre_status = std::nullopt}};
 };
 
 // Ensure basic incognito window doesn't cause a crash. Simply opens an
@@ -56,11 +54,9 @@ IN_PROC_BROWSER_TEST_F(GlicBrowserTest, PausedProfileIsNotReady) {
   auto* profile = browser()->profile();
   auto* const identity_manager = IdentityManagerFactory::GetForProfile(profile);
 
-  SigninWithPrimaryAccount(profile);
-  SetModelExecutionCapability(profile, true);
   ASSERT_TRUE(GlicEnabling::IsEnabledForProfile(profile));
 
-  // False until FRE is completed
+  // False until FRE is completed.
   ASSERT_FALSE(GlicEnabling::IsReadyForProfile(profile));
   SetFRECompletion(profile, prefs::FreStatus::kCompleted);
   ASSERT_TRUE(GlicEnabling::IsReadyForProfile(profile));
@@ -75,8 +71,6 @@ IN_PROC_BROWSER_TEST_F(GlicBrowserTest, GlicEnablingDismissed) {
   // Signin and check that Glic is enabled.
   auto* profile = browser()->profile();
 
-  SigninWithPrimaryAccount(profile);
-  SetModelExecutionCapability(profile, true);
   ASSERT_TRUE(GlicEnabling::IsEnabledForProfile(profile));
 
   // False until FRE is shown.

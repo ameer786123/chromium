@@ -10,7 +10,6 @@ for more details on the presubmit API built into depot_tools.
 import copy
 import io
 import json
-import re
 import sys
 
 # TODO(b/365662411): Upgrade to PRESUBMIT_VERSION 2.0.0.
@@ -19,16 +18,12 @@ from collections import OrderedDict
 
 VALID_EXPERIMENT_KEYS = [
     'name', 'forcing_flag', 'params', 'enable_features', 'disable_features',
-    'min_os_version', 'hardware_classes', 'exclude_hardware_classes', '//0',
-    '//1', '//2', '//3', '//4', '//5', '//6', '//7', '//8', '//9'
+    'min_os_version', 'disable_benchmarking', 'hardware_classes',
+    'exclude_hardware_classes', '//0', '//1', '//2', '//3', '//4', '//5', '//6',
+    '//7', '//8', '//9'
 ]
 
 FIELDTRIAL_CONFIG_FILE_NAME = 'fieldtrial_testing_config.json'
-
-BASE_FEATURE_PATTERN = r'BASE_FEATURE\((.*?),(.*?),(.*?)\);'
-BASE_FEATURE_RE = re.compile(BASE_FEATURE_PATTERN,
-                             flags=re.MULTILINE + re.DOTALL)
-
 
 # LINT.IfChange
 def PrettyPrint(contents):
@@ -60,6 +55,7 @@ def PrettyPrint(contents):
   #                     enable_features: [sorted features]
   #                     disable_features: [sorted features]
   #                     min_os_version: "version string"
+  #                     disable_benchmarking: "'true' or 'false'; optional"
   #                     hardware_classes: [sorted classes]
   #                     exclude_hardware_classes: [sorted classes]
   #                     (Unexpected extra keys will be caught by the validator)
@@ -108,6 +104,9 @@ def PrettyPrint(contents):
         if 'min_os_version' in experiment_group:
           ordered_experiment_group['min_os_version'] = experiment_group[
               'min_os_version']
+        if 'disable_benchmarking' in experiment_group:
+          ordered_experiment_group['disable_benchmarking'] = experiment_group[
+              'disable_benchmarking']
         if 'hardware_classes' in experiment_group:
           ordered_experiment_group['hardware_classes'] = \
               sorted(experiment_group['hardware_classes'])

@@ -9,8 +9,10 @@
 
 #import "ios/chrome/browser/home_customization/ui/home_customization_main_consumer.h"
 
+@protocol HomeCustomizationBackgroundPickerPresentationDelegate;
 @protocol HomeCustomizationDelegate;
 @protocol HomeCustomizationMutator;
+@protocol HomeCustomizationSearchEngineLogoMediatorProvider;
 
 // The view controller representing the first page of the Home customization
 // menu.
@@ -22,6 +24,22 @@
 
 // Delegate for communicating with the coordinator.
 @property(nonatomic, weak) id<HomeCustomizationDelegate> delegate;
+
+// Delegate for background picker actions.
+@property(nonatomic, weak)
+    id<HomeCustomizationBackgroundPickerPresentationDelegate>
+        backgroundPickerPresentationDelegate;
+
+// A provider responsible for supplying a logo vendor object.
+@property(nonatomic, weak) id<HomeCustomizationSearchEngineLogoMediatorProvider>
+    searchEngineLogoMediatorProvider;
+
+// Whether the NTP custom background is enabled by enterprise policy.
+@property(nonatomic, assign) BOOL isNTPCustomBackgroundEnabledByPolicy;
+
+// Whether interaction with the background customization section is enabled.
+// Prevents the background from changing when it should not change.
+@property(nonatomic, assign) BOOL backgroundCustomizationUserInteractionEnabled;
 
 @end
 

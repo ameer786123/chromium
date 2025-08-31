@@ -37,6 +37,7 @@
 #include "chrome/browser/sessions/session_service_log.h"
 #include "chrome/browser/sessions/session_service_utils.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -45,6 +46,7 @@
 #include "chrome/browser/ui/startup/startup_tab.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
@@ -236,6 +238,43 @@ void SessionService::DeleteLastSession() {
   ++count_delete_last_session_for_testing_;
 }
 
+void SessionService::SetSplitTab(SessionID window_id,
+                                 SessionID tab_id,
+                                 std::optional<split_tabs::SplitTabId> split) {
+  if (!ShouldTrackChangesToWindow(window_id) ||
+      !features::IsRestoringSplitViewEnabled()) {
+    return;
+  }
+
+  // Tabs get unsplit as they close. However, if the whole window is closing
+  // tabs should stay in their split. So, ignore this call in that case.
+  if (base::Contains(pending_window_close_ids_, window_id) ||
+      base::Contains(window_closing_ids_, window_id)) {
+    return;
+  }
+
+  ScheduleCommand(sessions::CreateSplitTabCommand(tab_id, std::move(split)));
+}
+
+void SessionService::SetSplitTabData(
+    SessionID window_id,
+    const split_tabs::SplitTabId split,
+    const split_tabs::SplitTabVisualData* visual_data) {
+  if (!ShouldTrackChangesToWindow(window_id) ||
+      !features::IsRestoringSplitViewEnabled()) {
+    return;
+  }
+
+  // Any split metadata changes happening in a closing window can be ignored.
+  if (base::Contains(pending_window_close_ids_, window_id) ||
+      base::Contains(window_closing_ids_, window_id)) {
+    return;
+  }
+
+  ScheduleCommand(
+      sessions::CreateSplitTabDataUpdateCommand(split, visual_data));
+}
+
 void SessionService::SetTabGroup(SessionID window_id,
                                  SessionID tab_id,
                                  std::optional<tab_groups::TabGroupId> group) {
@@ -256,7 +295,7 @@ void SessionService::SetTabGroupMetadata(
     const tab_groups::TabGroupId& group_id,
     const tab_groups::TabGroupVisualData* visual_data) {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile());
   std::optional<std::string> saved_guid;
   if (tab_group_service) {
     if (const std::optional<tab_groups::SavedTabGroup> saved_group =
@@ -500,7 +539,6 @@ void SessionService::DidScheduleCommand() {
   if (is_first_session_service_)
     return;
 
-#if BUILDFLAG(IS_CHROMEOS)
   // TODO(crbug.com/40196304): for debugging, remove once tracked down
   // source of problem.
   // A command has been scheduled for a SessionService other than the first.
@@ -510,7 +548,6 @@ void SessionService::DidScheduleCommand() {
   const bool shutdown_started = browser_shutdown::HasShutdownStarted();
   base::debug::Alias(&shutdown_started);
   base::debug::DumpWithoutCrashing();
-#endif
 }
 
 bool SessionService::ShouldRestoreWindowOfType(
@@ -573,11 +610,12 @@ void SessionService::BuildCommandsForTab(
     WebContents* tab,
     int index_in_window,
     std::optional<tab_groups::TabGroupId> group,
+    std::optional<split_tabs::SplitTabId> split,
     bool is_pinned,
     IdToRange* tab_to_available_range) {
   DCHECK(is_saving_enabled());
   SessionServiceBase::BuildCommandsForTab(window_id, tab, index_in_window,
-                                          group, is_pinned,
+                                          group, split, is_pinned,
                                           tab_to_available_range);
 
   sessions::SessionTabHelper* session_tab_helper =
@@ -600,6 +638,11 @@ void SessionService::BuildCommandsForTab(
   if (group.has_value()) {
     command_storage_manager()->AppendRebuildCommand(
         sessions::CreateTabGroupCommand(session_id, std::move(group)));
+  }
+
+  if (features::IsRestoringSplitViewEnabled() && split.has_value()) {
+    command_storage_manager()->AppendRebuildCommand(
+        sessions::CreateSplitTabCommand(session_id, std::move(split)));
   }
 }
 

@@ -30,8 +30,6 @@ enum class NonStandardGroupId;
 
 namespace blink {
 
-PLATFORM_EXPORT BASE_DECLARE_FEATURE(WebRtcUnshipDeprecatedStats);
-
 // A thin wrapper around a webrtc::RTCStatsReport.
 // TODO(https://crbug.com/1443999): Delete this class, it does not provide any
 // value anymore and blink is allowed to use webrtc classes directly.
@@ -62,7 +60,7 @@ using RTCStatsReportCallback =
     base::OnceCallback<void(std::unique_ptr<RTCStatsReportPlatform>)>;
 
 PLATFORM_EXPORT
-rtc::scoped_refptr<webrtc::RTCStatsCollectorCallback>
+webrtc::scoped_refptr<webrtc::RTCStatsCollectorCallback>
 CreateRTCStatsCollectorCallback(
     scoped_refptr<base::SingleThreadTaskRunner> main_thread,
     RTCStatsReportCallback callback);
@@ -75,7 +73,8 @@ class PLATFORM_EXPORT RTCStatsCollectorCallbackImpl
     : public webrtc::RTCStatsCollectorCallback {
  public:
   void OnStatsDelivered(
-      const rtc::scoped_refptr<const webrtc::RTCStatsReport>& report) override;
+      const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report)
+      override;
 
  protected:
   RTCStatsCollectorCallbackImpl(
@@ -84,7 +83,7 @@ class PLATFORM_EXPORT RTCStatsCollectorCallbackImpl
   ~RTCStatsCollectorCallbackImpl() override;
 
   void OnStatsDeliveredOnMainThread(
-      rtc::scoped_refptr<const webrtc::RTCStatsReport> report);
+      webrtc::scoped_refptr<const webrtc::RTCStatsReport> report);
 
   const scoped_refptr<base::SingleThreadTaskRunner> main_thread_;
   RTCStatsReportCallback callback_;

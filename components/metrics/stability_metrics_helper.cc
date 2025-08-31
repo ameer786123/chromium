@@ -10,6 +10,7 @@
 
 #include "base/check.h"
 #include "base/containers/contains.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
@@ -43,8 +44,9 @@ int MapCrashExitCodeForHistogram(int exit_code) {
   // Since |abs(STATUS_GUARD_PAGE_VIOLATION) == MAX_INT| it causes problems in
   // histograms.cc. Solve this by remapping it to a smaller value, which
   // hopefully doesn't conflict with other codes.
-  if (static_cast<DWORD>(exit_code) == STATUS_GUARD_PAGE_VIOLATION)
+  if (static_cast<DWORD>(exit_code) == STATUS_GUARD_PAGE_VIOLATION) {
     return 0x1FCF7EC3;  // Randomly picked number.
+  }
 #endif
 
   return std::abs(exit_code);
@@ -94,6 +96,8 @@ std::string CdmMetricsNameToUmaPrefix(const std::string& metrics_name) {
     return uma_prefix + "CdmServiceBroker.";
   } else if (metrics_name == "media.mojom.MediaFoundationServiceBroker") {
     return uma_prefix + "MediaFoundationServiceBroker.";
+  } else if (metrics_name == "media.mojom.MediaDrmSupport") {
+    return uma_prefix + "MediaDrmSupport.";
   }
 
   NOTREACHED();

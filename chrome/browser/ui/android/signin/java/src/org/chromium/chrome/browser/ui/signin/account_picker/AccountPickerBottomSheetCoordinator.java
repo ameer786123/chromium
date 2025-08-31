@@ -4,12 +4,15 @@
 
 package org.chromium.chrome.browser.ui.signin.account_picker;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.view.View;
 
 import androidx.annotation.MainThread;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.signin.services.SigninMetricsUtils;
 import org.chromium.chrome.browser.signin.services.SigninPreferencesManager;
 import org.chromium.chrome.browser.ui.signin.R;
@@ -19,13 +22,15 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.Stat
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetObserver;
 import org.chromium.components.browser_ui.bottomsheet.EmptyBottomSheetObserver;
 import org.chromium.components.browser_ui.device_lock.DeviceLockActivityLauncher;
-import org.chromium.components.signin.base.CoreAccountId;
+import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.signin.metrics.AccountConsistencyPromoAction;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
+import org.chromium.google_apis.gaia.CoreAccountId;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 /** Coordinator of the account picker bottom sheet. */
+@NullMarked
 public class AccountPickerBottomSheetCoordinator {
     private final AccountPickerBottomSheetView mView;
     private final AccountPickerBottomSheetMediator mAccountPickerBottomSheetMediator;
@@ -66,6 +71,8 @@ public class AccountPickerBottomSheetCoordinator {
     @MainThread
     public AccountPickerBottomSheetCoordinator(
             WindowAndroid windowAndroid,
+            IdentityManager identityManager,
+            SigninManager signinManager,
             BottomSheetController bottomSheetController,
             AccountPickerDelegate accountPickerDelegate,
             AccountPickerBottomSheetStrings accountPickerBottomSheetStrings,
@@ -82,6 +89,8 @@ public class AccountPickerBottomSheetCoordinator {
         mAccountPickerBottomSheetMediator =
                 new AccountPickerBottomSheetMediator(
                         windowAndroid,
+                        identityManager,
+                        signinManager,
                         accountPickerDelegate,
                         this::dismiss,
                         accountPickerBottomSheetStrings,
@@ -92,12 +101,14 @@ public class AccountPickerBottomSheetCoordinator {
                         selectedAccountId);
         mView =
                 new AccountPickerBottomSheetView(
-                        windowAndroid.getActivity().get(), mAccountPickerBottomSheetMediator);
+                        assumeNonNull(windowAndroid.getActivity().get()),
+                        mAccountPickerBottomSheetMediator);
 
         mAccountPickerCoordinator =
                 new AccountPickerCoordinator(
                         mView.getAccountListView(),
                         mAccountPickerBottomSheetMediator,
+                        identityManager,
                         R.layout.account_picker_bottom_sheet_row,
                         R.layout.account_picker_bottom_sheet_new_account_row);
 
@@ -141,7 +152,7 @@ public class AccountPickerBottomSheetCoordinator {
      * bottom sheet and the flow dismissal in this case. Should be called only by the new sign-in
      * flow.
      */
-    public void onAccountAdded(@NonNull String accountEmail) {
+    public void onAccountAdded(String accountEmail) {
         mAccountPickerBottomSheetMediator.onAccountAdded(accountEmail);
     }
 

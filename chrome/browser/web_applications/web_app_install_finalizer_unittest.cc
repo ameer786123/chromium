@@ -13,6 +13,7 @@
 #include "base/feature_list.h"
 #include "base/scoped_observation.h"
 #include "base/test/bind.h"
+#include "base/test/simple_test_clock.h"
 #include "base/test/test_future.h"
 #include "base/traits_bag.h"
 #include "build/build_config.h"
@@ -20,7 +21,6 @@
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/ui/web_applications/test/isolated_web_app_test_utils.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_integrity_block_data.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
 #include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
@@ -44,7 +44,9 @@
 #include "chrome/test/base/testing_profile.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/services/app_service/public/cpp/file_handler.h"
+#include "components/sync/base/time.h"
 #include "components/webapps/browser/install_result_code.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
 #include "mojo/public/cpp/bindings/struct_ptr.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -338,6 +340,13 @@ TEST_F(WebAppInstallFinalizerUnitTest,
   base::Time old_first_install_time;
   base::Time old_latest_install_time;
 
+  base::SimpleTestClock test_clock;
+  finalizer().SetClockForTesting(&test_clock);
+  auto toProtoResolutionTime = [](base::Time time) {
+    return syncer::ProtoTimeToTime(syncer::TimeToProtoTime(time));
+  };
+  test_clock.SetNow(toProtoResolutionTime(base::Time::Now()));
+
   {
     FinalizeInstallResult result = AwaitFinalizeInstall(*info, options);
 
@@ -352,7 +361,9 @@ TEST_F(WebAppInstallFinalizerUnitTest,
     EXPECT_FALSE(old_first_install_time.is_null());
     EXPECT_FALSE(old_latest_install_time.is_null());
     EXPECT_EQ(old_first_install_time, old_latest_install_time);
+    EXPECT_EQ(old_first_install_time, toProtoResolutionTime(test_clock.Now()));
   }
+  test_clock.Advance(base::Hours(1));
 
   // Try reinstalling the same app again, the latest install time should be
   // updated but the first install time should still stay the same.
@@ -369,7 +380,11 @@ TEST_F(WebAppInstallFinalizerUnitTest,
     EXPECT_FALSE(installed_app->latest_install_time().is_null());
     EXPECT_EQ(installed_app->first_install_time(), old_first_install_time);
     EXPECT_NE(installed_app->latest_install_time(), old_latest_install_time);
+    EXPECT_EQ(installed_app->latest_install_time(),
+              toProtoResolutionTime(test_clock.Now()));
   }
+  // Reset the clock to the default clock, so raw_ptr issues don't happen.
+  finalizer().SetClockForTesting(base::DefaultClock::GetInstance());
 }
 
 TEST_F(WebAppInstallFinalizerUnitTest, InstallNoDesktopShortcut) {
@@ -504,12 +519,12 @@ TEST_F(WebAppInstallFinalizerUnitTest, InstallUrlSetInWebAppDB) {
 }
 
 TEST_F(WebAppInstallFinalizerUnitTest, IsolationDataSetInWebAppDB) {
-  base::Version version("1.2.3");
+  IwaVersion version = *IwaVersion::Create("1.2.3");
 
   auto info = WebAppInstallInfo::CreateWithStartUrlForTesting(
-      GURL("https://foo.example"));
+      GURL("isolated-app://random_app"));
   info->title = u"Foo Title";
-  info->isolated_web_app_version = version;
+  info->set_isolated_web_app_version(version);
 
   const IsolatedWebAppStorageLocation location(
       IwaStorageUnownedBundle{base::FilePath(FILE_PATH_LITERAL("p"))});
@@ -536,39 +551,17 @@ TEST_F(WebAppInstallFinalizerUnitTest, IsolationDataSetInWebAppDB) {
                                            integrity_block_data)));
 }
 
-TEST_F(WebAppInstallFinalizerUnitTest,
-       PopUpContentSettingsGrantedForForceInstalledIwa) {
-  std::unique_ptr<ScopedBundledIsolatedWebApp> app =
-      IsolatedWebAppBuilder(ManifestBuilder().SetVersion("1.0.0"))
-          .BuildBundle();
-
-  const web_app::IsolatedWebAppUrlInfo url_info =
-      app->InstallWithSource(
-             profile(),
-             &web_app::IsolatedWebAppInstallSource::FromExternalPolicy)
-          .value();
-
-  HostContentSettingsMap* const host_content_settings_map =
-      HostContentSettingsMapFactory::GetForProfile(profile());
-
-  EXPECT_EQ(ContentSetting::CONTENT_SETTING_ALLOW,
-            host_content_settings_map->GetContentSetting(
-                url_info.origin().GetURL(), url_info.origin().GetURL(),
-                ContentSettingsType::POPUPS));
-}
-
-TEST_F(WebAppInstallFinalizerUnitTest, PopUpContentSettingsNotGrantedForIwa) {
+TEST_F(WebAppInstallFinalizerUnitTest, PopUpContentSettingsGrantedForIwa) {
   std::unique_ptr<ScopedBundledIsolatedWebApp> app =
       IsolatedWebAppBuilder(ManifestBuilder().SetVersion("1.0.0"))
           .BuildBundle();
   app->TrustSigningKey();
   const web_app::IsolatedWebAppUrlInfo url_info =
       app->InstallChecked(profile());
+  scoped_refptr<HostContentSettingsMap> host_content_settings_map(
+      HostContentSettingsMapFactory::GetForProfile(profile()));
 
-  HostContentSettingsMap* const host_content_settings_map =
-      HostContentSettingsMapFactory::GetForProfile(profile());
-
-  EXPECT_EQ(ContentSetting::CONTENT_SETTING_BLOCK,
+  EXPECT_EQ(ContentSetting::CONTENT_SETTING_ALLOW,
             host_content_settings_map->GetContentSetting(
                 url_info.origin().GetURL(), url_info.origin().GetURL(),
                 ContentSettingsType::POPUPS));

@@ -7,6 +7,7 @@
 #import "base/check.h"
 #import "base/functional/callback.h"
 #import "base/functional/callback_helpers.h"
+#import "base/ios/block_types.h"
 #import "ios/chrome/browser/authentication/ui_bundled/change_profile_continuation_provider.h"
 #import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
@@ -21,6 +22,7 @@
                           promoAction:(signin_metrics::PromoAction)promoAction
                            completion:
                                (SigninCoordinatorCompletionCallback)completion
+                 prepareChangeProfile:(ProceduralBlock)prepareChangeProfile
     changeProfileContinuationProvider:
         (const ChangeProfileContinuationProvider&)provider {
   if ((self = [super init])) {
@@ -34,9 +36,27 @@
     _completion = [completion copy];
     _optionalHistorySync = YES;
     _fullScreenPromo = NO;
+    _prepareChangeProfile = prepareChangeProfile;
     _provider = provider;
   }
   return self;
+}
+
+- (instancetype)initWithOperation:(AuthenticationOperation)operation
+                             identity:(id<SystemIdentity>)identity
+                          accessPoint:(signin_metrics::AccessPoint)accessPoint
+                          promoAction:(signin_metrics::PromoAction)promoAction
+                           completion:
+                               (SigninCoordinatorCompletionCallback)completion
+    changeProfileContinuationProvider:
+        (const ChangeProfileContinuationProvider&)provider {
+  return [self initWithOperation:operation
+                               identity:identity
+                            accessPoint:accessPoint
+                            promoAction:promoAction
+                             completion:completion
+                   prepareChangeProfile:nil
+      changeProfileContinuationProvider:provider];
 }
 
 - (instancetype)initWithOperation:(AuthenticationOperation)operation
@@ -99,6 +119,17 @@
                                             PROMO_ACTION_NO_SIGNIN_PROMO
                              completion:nil
       changeProfileContinuationProvider:DoNothingContinuationProvider()];
+}
+
+- (void)addSigninCompletion:(SigninCoordinatorCompletionCallback)completion {
+  CHECK(completion, base::NotFatalUntil::M145);
+  SigninCoordinatorCompletionCallback firstCompletion = self.completion;
+  _completion = ^(SigninCoordinatorResult result, id<SystemIdentity> identity) {
+    if (firstCompletion) {
+      firstCompletion(result, identity);
+    }
+    completion(result, identity);
+  };
 }
 
 - (const ChangeProfileContinuationProvider&)changeProfileContinuationProvider {

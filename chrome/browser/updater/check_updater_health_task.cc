@@ -15,6 +15,8 @@
 #include "base/sequence_checker.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/browser/updater/browser_updater_client.h"
@@ -25,6 +27,8 @@
 #include "chrome/updater/util/util.h"
 
 #if BUILDFLAG(IS_WIN)
+#include <shlobj.h>
+
 #include "chrome/updater/util/win_util.h"
 #include "chrome/updater/win/task_scheduler.h"
 #include "chrome/updater/win/win_constants.h"
@@ -38,8 +42,6 @@ CheckUpdaterHealthTask::~CheckUpdaterHealthTask() = default;
 
 void CheckUpdaterHealthTask::CheckAndRecordUpdaterHealth(
     const base::Version& version) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
   base::UmaHistogramBoolean("GoogleUpdate.UpdaterHealth.UpdaterValid",
                             version.IsValid());
   if (!version.IsValid()) {
@@ -65,9 +67,22 @@ void CheckUpdaterHealthTask::CheckAndRecordUpdaterHealth(
     }
   }
 
+  if (IsSystemInstall(scope_) && !::IsUserAnAdmin()) {
+    // When run at medium integrity, the task scheduler interfaces do not
+    // enumerate the system `updater` tasks, or in general, any tasks installed
+    // by an administrator. Since reliable metrics cannot be gathered on the
+    // scheduled tasks under these conditions, metrics are not recorded for
+    // this scenario.
+    return;
+  }
+
   // Scheduled task metrics.
   scoped_refptr<TaskScheduler> task_scheduler =
       TaskScheduler::CreateInstance(scope_);
+  if (!task_scheduler) {
+    // Cannot get metrics without a TaskScheduler instance.
+    return;
+  }
   const std::wstring task_name =
       task_scheduler->FindFirstTaskName(GetTaskNamePrefix(scope_, version));
 
@@ -92,7 +107,10 @@ void CheckUpdaterHealthTask::Run(base::OnceClosure callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   BrowserUpdaterClient::Create(scope_)->GetUpdaterVersion(
-      base::BindOnce(&CheckUpdaterHealthTask::CheckAndRecordUpdaterHealth, this)
+      base::BindPostTask(
+          base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}),
+          base::BindOnce(&CheckUpdaterHealthTask::CheckAndRecordUpdaterHealth,
+                         this))
           .Then(std::move(callback)));
 }
 

@@ -86,6 +86,7 @@ export class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy
       ContentSettingsTypes.AR,
       ContentSettingsTypes.AUTO_PICTURE_IN_PICTURE,
       ContentSettingsTypes.AUTOMATIC_DOWNLOADS,
+      ContentSettingsTypes.AUTOMATIC_FULLSCREEN,
       ContentSettingsTypes.BACKGROUND_SYNC,
       ContentSettingsTypes.BLUETOOTH_DEVICES,
       ContentSettingsTypes.BLUETOOTH_SCANNING,
@@ -119,10 +120,6 @@ export class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy
       this.categoryList_.push(ContentSettingsTypes.WEB_PRINTING);
     }
 
-    if (loadTimeData.getBoolean('enableAutomaticFullscreenContentSetting')) {
-      this.categoryList_.push(ContentSettingsTypes.AUTOMATIC_FULLSCREEN);
-    }
-
     if (loadTimeData.getBoolean('capturedSurfaceControlEnabled')) {
       this.categoryList_.push(ContentSettingsTypes.CAPTURED_SURFACE_CONTROL);
     }
@@ -139,6 +136,10 @@ export class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy
       this.categoryList_.push(ContentSettingsTypes.SMART_CARD_READERS);
     }
     // </if>
+
+    if (loadTimeData.getBoolean('enableLocalNetworkAccessSetting')) {
+      this.categoryList_.push(ContentSettingsTypes.LOCAL_NETWORK_ACCESS);
+    }
 
     this.prefs_ = createSiteSettingsPrefs([], [], []);
   }

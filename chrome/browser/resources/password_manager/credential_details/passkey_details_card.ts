@@ -14,6 +14,7 @@ import '../dialogs/delete_passkey_dialog.js';
 import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
 import {assert} from 'chrome://resources/js/assert.js';
+import {htmlEscape} from 'chrome://resources/js/util.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {PasswordManagerImpl, PasswordViewPageInteractions} from '../password_manager_proxy.js';
@@ -54,20 +55,12 @@ export class PasskeyDetailsCardElement extends PasskeyDetailsCardElementBase {
       },
       showEditPasskeyDialog_: Boolean,
       showDeletePasskeyDialog_: Boolean,
-      infoLabelText_: String,
     };
-  }
-
-  static get observers() {
-    return [
-      'updatePasskeyManagementInfoLabel_(isSyncingPasswords)',
-    ];
   }
 
   declare passkey: chrome.passwordsPrivate.PasswordUiEntry;
   declare private showEditPasskeyDialog_: boolean;
   declare private showDeletePasskeyDialog_: boolean;
-  declare private infoLabelText_: string;
 
   private getUsernameValue_(): string {
     return !this.passkey.username || this.passkey.username === '' ?
@@ -108,30 +101,34 @@ export class PasskeyDetailsCardElement extends PasskeyDetailsCardElementBase {
   private getAriaLabelForPasswordCard_(): string {
     return !this.passkey.username ?
         this.i18n('passkeyDetailsCardNoUsernameAriaLabel') :
-        this.i18n('passkeyDetailsCardAriaLabel', this.passkey.username);
+        this.i18n(
+            'passkeyDetailsCardAriaLabel',
+            htmlEscape(this.passkey.username));
   }
 
   private getAriaLabelForEditButton_(): string {
     return !this.passkey.username ?
         this.i18n('passkeyDetailsCardEditButtonNoUsernameAriaLabel') :
         this.i18n(
-            'passkeyDetailsCardEditButtonAriaLabel', this.passkey.username);
+            'passkeyDetailsCardEditButtonAriaLabel',
+            htmlEscape(this.passkey.username));
   }
 
   private getAriaLabelForDeleteButton_(): string {
     return !this.passkey.username ?
         this.i18n('passkeyDetailsCardDeleteButtonNoUsernameAriaLabel') :
         this.i18n(
-            'passkeyDetailsCardDeleteButtonAriaLabel', this.passkey.username);
+            'passkeyDetailsCardDeleteButtonAriaLabel',
+            htmlEscape(this.passkey.username));
   }
 
-  private updatePasskeyManagementInfoLabel_() {
+  private getInfoLabelText_() {
     // Google Password Manager passkeys always have their creation time
     // available.
     assert(this.passkey.creationTime !== undefined);
 
     const date = new Date(this.passkey.creationTime);
-    this.infoLabelText_ = this.i18n(
+    return this.i18n(
         'passkeyManagementInfoLabel',
         date.toLocaleDateString(/*locales=*/ undefined, {dateStyle: 'short'}));
   }

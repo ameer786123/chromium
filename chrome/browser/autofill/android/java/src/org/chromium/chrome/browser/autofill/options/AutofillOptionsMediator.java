@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.autofill.options;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.autofill.options.AutofillOptionsProperties.THIRD_PARTY_AUTOFILL_ENABLED;
 import static org.chromium.chrome.browser.autofill.options.AutofillOptionsProperties.THIRD_PARTY_TOGGLE_HINT;
 import static org.chromium.chrome.browser.autofill.options.AutofillOptionsProperties.THIRD_PARTY_TOGGLE_IS_READ_ONLY;
@@ -20,12 +21,13 @@ import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.IntentUtils;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.autofill.AndroidAutofillAvailabilityStatus;
 import org.chromium.chrome.browser.autofill.AutofillClientProviderUtils;
 import org.chromium.chrome.browser.autofill.R;
 import org.chromium.chrome.browser.autofill.options.AutofillOptionsFragment.AutofillOptionsReferrer;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.prefs.PrefService;
@@ -38,15 +40,15 @@ import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.text.SpanApplier;
 
+import java.util.function.Supplier;
+
 /**
  * The mediator of the autofill options component. Ensures that the model and the pref are in sync
  * (in either direction).
  */
+@NullMarked
 class AutofillOptionsMediator implements ModalDialogProperties.Controller {
     private static final String NON_PACKAGE_NAME = "package:not.a.package.so.all.providers.show";
-    private static final String SKIP_COMPATIBILITY_CHECK_PARAM_NAME = "skip_compatibility_check";
-    private static final String SKIP_ALL_CHECKS_PARAM_VALUE = "skip_all_checks";
-    private static final String ONLY_SKIP_AWG_CHECK_PARAM_VALUE = "only_skip_awg_check";
 
     @VisibleForTesting
     static final String HISTOGRAM_USE_THIRD_PARTY_FILLING =
@@ -61,14 +63,14 @@ class AutofillOptionsMediator implements ModalDialogProperties.Controller {
 
     private final Profile mProfile;
     private final Runnable mRestartRunnable;
-    private final Supplier<ModalDialogManager> mModalDialogManagerSupplier;
+    private final Supplier<@Nullable ModalDialogManager> mModalDialogManagerSupplier;
     private final Supplier<PropertyModel> mRestartConfirmationDialogModelSupplier;
     private PropertyModel mModel;
     private Context mContext;
 
     AutofillOptionsMediator(
             Profile profile,
-            Supplier<ModalDialogManager> modalDialogManagerSupplier,
+            Supplier<@Nullable ModalDialogManager> modalDialogManagerSupplier,
             Supplier<PropertyModel> restartConfirmationDialogModelSupplier,
             Runnable restartRunnable) {
         mProfile = profile;
@@ -87,13 +89,11 @@ class AutofillOptionsMediator implements ModalDialogProperties.Controller {
                 return;
             case ModalDialogProperties.ButtonType.NEGATIVE:
                 RecordHistogram.recordBooleanHistogram(HISTOGRAM_RESTART_ACCEPTED, false);
-                mModalDialogManagerSupplier
-                        .get()
-                        .dismissDialog(
-                                restartConfirmationModel,
-                                DialogDismissalCause.NEGATIVE_BUTTON_CLICKED);
+                ModalDialogManager dialogManager = mModalDialogManagerSupplier.get();
+                assumeNonNull(dialogManager);
+                dialogManager.dismissDialog(
+                        restartConfirmationModel, DialogDismissalCause.NEGATIVE_BUTTON_CLICKED);
                 return;
-            case ModalDialogProperties.ButtonType.TITLE_ICON:
             case ModalDialogProperties.ButtonType.POSITIVE_EPHEMERAL:
                 assert false : "Unhandled button click!";
         }
@@ -105,6 +105,7 @@ class AutofillOptionsMediator implements ModalDialogProperties.Controller {
         updateToggleStateFromPref(); // Radio buttons always change. Reset them to match the prefs.
     }
 
+    @Initializer
     void initialize(PropertyModel model, @AutofillOptionsReferrer int referrer, Context context) {
         mModel = model;
         mContext = context;
@@ -131,27 +132,14 @@ class AutofillOptionsMediator implements ModalDialogProperties.Controller {
         }
         switch (AutofillClientProviderUtils.getAndroidAutofillFrameworkAvailability(prefs())) {
             case AndroidAutofillAvailabilityStatus.NOT_ALLOWED_BY_POLICY:
+            case AndroidAutofillAvailabilityStatus.ANDROID_AUTOFILL_MANAGER_NOT_AVAILABLE:
+            case AndroidAutofillAvailabilityStatus.ANDROID_AUTOFILL_NOT_SUPPORTED:
+            case AndroidAutofillAvailabilityStatus.UNKNOWN_ANDROID_AUTOFILL_SERVICE:
+            case AndroidAutofillAvailabilityStatus.ANDROID_AUTOFILL_SERVICE_IS_GOOGLE:
                 return true;
             case AndroidAutofillAvailabilityStatus.SETTING_TURNED_OFF: // Pref may be changed!
             case AndroidAutofillAvailabilityStatus.AVAILABLE:
                 return false;
-            case AndroidAutofillAvailabilityStatus.ANDROID_VERSION_TOO_OLD:
-            case AndroidAutofillAvailabilityStatus.ANDROID_AUTOFILL_MANAGER_NOT_AVAILABLE:
-            case AndroidAutofillAvailabilityStatus.ANDROID_AUTOFILL_NOT_SUPPORTED:
-            case AndroidAutofillAvailabilityStatus.UNKNOWN_ANDROID_AUTOFILL_SERVICE:
-                return !SKIP_ALL_CHECKS_PARAM_VALUE.equals(
-                        ChromeFeatureList.getFieldTrialParamByFeature(
-                                ChromeFeatureList.AUTOFILL_VIRTUAL_VIEW_STRUCTURE_ANDROID,
-                                SKIP_COMPATIBILITY_CHECK_PARAM_NAME));
-            case AndroidAutofillAvailabilityStatus.ANDROID_AUTOFILL_SERVICE_IS_GOOGLE:
-                return !SKIP_ALL_CHECKS_PARAM_VALUE.equals(
-                                ChromeFeatureList.getFieldTrialParamByFeature(
-                                        ChromeFeatureList.AUTOFILL_VIRTUAL_VIEW_STRUCTURE_ANDROID,
-                                        SKIP_COMPATIBILITY_CHECK_PARAM_NAME))
-                        && !ONLY_SKIP_AWG_CHECK_PARAM_VALUE.equals(
-                                ChromeFeatureList.getFieldTrialParamByFeature(
-                                        ChromeFeatureList.AUTOFILL_VIRTUAL_VIEW_STRUCTURE_ANDROID,
-                                        SKIP_COMPATIBILITY_CHECK_PARAM_NAME));
         }
         assert false : "Unhandled AndroidAutofillFrameworkAvailability state!";
         return false;

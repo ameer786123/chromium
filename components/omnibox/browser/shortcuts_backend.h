@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
@@ -34,8 +35,8 @@ struct TestShortcutData;
 
 void PopulateShortcutsBackendWithTestData(
     scoped_refptr<ShortcutsBackend> backend,
-    TestShortcutData* db,
-    size_t db_size);
+    base::span<TestShortcutData> db,
+    size_t spanification_suspected_redundant_db_size);
 
 class ShortcutsDatabase;
 
@@ -117,8 +118,7 @@ class ShortcutsBackend : public RefcountedKeyedService,
   friend class FakeShortcutsBackend;
   friend void PopulateShortcutsBackendWithTestData(
       scoped_refptr<ShortcutsBackend> backend,
-      TestShortcutData* db,
-      size_t db_size);
+      base::span<TestShortcutData> db);
 
   enum CurrentState {
     NOT_INITIALIZED,  // Backend created but not initialized.
@@ -177,8 +177,9 @@ class ShortcutsBackend : public RefcountedKeyedService,
   // `template_url_service_` or whose `keyword` is inactive.
   // This is called once on initialization by `DeleteOldShortcuts()` and
   // whenever the `template_url_service_` is updated.
-  void DeleteShortcutsWithInvalidKeywords();
-  ShortcutsDatabase::ShortcutIDs GetShortcutsWithInvalidKeywords() const;
+  void DeleteShortcutsWithDeletedOrInactiveKeywords();
+  ShortcutsDatabase::ShortcutIDs GetShortcutsWithDeletedOrInactiveKeywords()
+      const;
 
   // Deletes all of the shortcuts.
   bool DeleteAllShortcuts();

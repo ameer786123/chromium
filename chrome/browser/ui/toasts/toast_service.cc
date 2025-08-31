@@ -21,16 +21,18 @@
 #include "chrome/browser/ui/toasts/api/toast_registry.h"
 #include "chrome/browser/ui/toasts/api/toast_specification.h"
 #include "chrome/browser/ui/toasts/toast_controller.h"
+#include "chrome/browser/ui/toasts/toast_features.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_entry_id.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_enums.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/commerce/core/commerce_feature_list.h"
 #include "components/data_sharing/public/features.h"
 #include "components/omnibox/browser/vector_icons.h"
-#include "components/plus_addresses/features.h"
+#include "components/plus_addresses/core/common/features.h"
 #include "components/plus_addresses/grit/plus_addresses_strings.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
@@ -67,6 +69,11 @@ void ToastService::RegisterToasts(
       ToastId::kImageCopied,
       ToastSpecification::Builder(kCopyMenuIcon, IDS_IMAGE_COPIED_TOAST_BODY)
           .Build());
+  toast_registry_->RegisterToast(
+      ToastId::kVideoFrameCopied,
+      ToastSpecification::Builder(kCopyMenuIcon,
+                                  IDS_VIDEO_FRAME_COPIED_TOAST_BODY)
+          .Build());
 
   toast_registry_->RegisterToast(
       ToastId::kLinkToHighlightCopied,
@@ -99,8 +106,8 @@ void ToastService::RegisterToasts(
   // updated.
   toast_registry_->RegisterToast(
       ToastId::kNonMilestoneUpdate,
-      ToastSpecification::Builder(kLinkChromeRefreshIcon,
-                                  IDS_LINK_COPIED_TOAST_BODY)
+      ToastSpecification::Builder(kBrowserLogoIcon,
+                                  IDS_NON_MILESTONE_UPDATE_TOAST_BODY)
           .AddGlobalScoped()
           .Build());
 
@@ -124,9 +131,7 @@ void ToastService::RegisterToasts(
   }
 
   if (base::FeatureList::IsEnabled(
-          plus_addresses::features::kPlusAddressesEnabled) &&
-      base::FeatureList::IsEnabled(
-          plus_addresses::features::kPlusAddressFullFormFill)) {
+          plus_addresses::features::kPlusAddressesEnabled)) {
     toast_registry_->RegisterToast(
         ToastId::kPlusAddressOverride,
         ToastSpecification::Builder(
@@ -246,5 +251,47 @@ void ToastService::RegisterToasts(
                                     IDS_DATA_SHARING_TOAST_BLOCK_LEAVE)
             .AddGlobalScoped()
             .Build());
+
+    // The version has been updated and shared tab groups is enabled again.
+    toast_registry_->RegisterToast(
+        ToastId::kTabGroupSharingVersionUpToDate,
+        ToastSpecification::Builder(
+            kTabGroupSharingIcon,
+            IDS_COLLABORATION_SHARED_TAB_GROUPS_AVAILABLE_AGAIN_IPH_MESSAGE)
+            .AddGlobalScoped()
+            .Build());
   }
-}
+
+  if (toast_features::IsEnabled(toast_features::kPinnedTabToastOnClose)) {
+    toast_registry_->RegisterToast(
+        ToastId::kClosePinnedTab,
+        ToastSpecification::Builder(kKeepIcon, IDS_CLOSE_PINNED_TAB_TOAST_BODY)
+            .SetToastAsActionable()
+            .Build());
+  }
+
+  if (features::kGlicActorUiToast.Get()) {
+    toast_registry_->RegisterToast(
+        ToastId::kGeminiWorkingOnTask,
+        ToastSpecification::Builder(kScreensaverAutoIcon,
+                                    IDS_GEMINI_WORKING_ON_TASK_BODY)
+            .AddCloseButton()
+            .Build());
+  }
+
+  toast_registry_->RegisterToast(
+      ToastId::kDiceUserMigrated,
+      ToastSpecification::Builder(vector_icons::kCelebrationIcon,
+                                  IDS_DICE_MIGRATION_CONFIRMATION_TOAST_MESSAGE)
+          .AddCloseButton()
+          .AddActionButton(IDS_DICE_MIGRATION_CONFIRMATION_TOAST_BUTTON,
+                           base::BindRepeating(
+                               [](BrowserWindowInterface* window) {
+                                 chrome::ShowSettingsSubPageForProfile(
+                                     window->GetProfile(),
+                                     chrome::kSyncSetupSubPage);
+                               },
+                               base::Unretained(browser_window_interface)))
+          .AddGlobalScoped()
+          .Build());
+}  // RegisterToasts() end.

@@ -49,6 +49,7 @@
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/intent_picker_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_model.h"
@@ -103,8 +104,8 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
-#include "chrome/browser/ash/app_mode/web_app/web_kiosk_browser_controller_ash.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
+#include "chrome/browser/chromeos/app_mode/kiosk_web_app_browser_controller.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/web_applications/chromeos_web_app_experiments.h"
 #include "chromeos/ash/experiences/system_web_apps/types/system_web_app_delegate.h"
@@ -138,7 +139,7 @@ Browser* ReparentWebContentsIntoAppBrowser(content::WebContents* contents,
 
   ReparentWebContentsIntoBrowserImpl(
       source_browser, contents, target_browser,
-      /*insert_as_pinned_first_tab=*/insert_as_pinned_home_tab);
+      /*insert_as_pinned_home_tab=*/insert_as_pinned_home_tab);
   return target_browser;
 }
 
@@ -161,8 +162,8 @@ std::unique_ptr<AppBrowserController> CreateWebKioskBrowserController(
     Browser* browser,
     WebAppProvider* provider,
     const webapps::AppId& app_id) {
-  return std::make_unique<ash::WebKioskBrowserControllerAsh>(*provider, browser,
-                                                             app_id);
+  return std::make_unique<chromeos::KioskWebAppBrowserController>(
+      *provider, browser, app_id);
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -354,12 +355,8 @@ void ReparentWebContentsIntoBrowserImpl(Browser* source_browser,
   CHECK_EQ(web_contents,
            target_browser->tab_strip_model()->GetActiveWebContents());
 
-  if (insert_as_pinned_home_tab) {
-    if (target_has_pinned_home_tab) {
-      target_browser->tab_strip_model()->DetachAndDeleteWebContentsAt(1);
-    }
-    SetWebContentsIsPinnedHomeTab(
-        target_browser->tab_strip_model()->GetWebContentsAt(0));
+  if (insert_as_pinned_home_tab && target_has_pinned_home_tab) {
+    target_browser->tab_strip_model()->DetachAndDeleteWebContentsAt(1);
   }
 
   if (!target_app_id) {
@@ -423,6 +420,7 @@ bool MaybeHandleIntentPickerFocusExistingOrNavigateExisting(
     const GURL& launch_url,
     content::WebContents* contents,
     const webapps::AppId& app_id,
+    base::TimeTicks time_reparent_started,
     WebAppRegistrar& registrar) {
   LaunchHandler::ClientMode client_mode = registrar.GetAppById(app_id)
                                               ->launch_handler()
@@ -472,7 +470,8 @@ bool MaybeHandleIntentPickerFocusExistingOrNavigateExisting(
                       preexisting_web_contents);
   EnqueueLaunchParams(preexisting_web_contents, app_id, launch_url,
                       /*wait_for_navigation_to_complete=*/client_mode ==
-                          LaunchHandler::ClientMode::kNavigateExisting);
+                          LaunchHandler::ClientMode::kNavigateExisting,
+                      time_reparent_started);
   return true;
 }
 
@@ -489,6 +488,7 @@ Browser* ReparentWebContentsIntoAppBrowser(
     content::WebContents* contents,
     const webapps::AppId& app_id,
     base::OnceCallback<void(content::WebContents*)> completion_callback) {
+  base::TimeTicks time_reparent_started = base::TimeTicks::Now();
   Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
   // Incognito tabs reparent correctly, but remain incognito without any
   // indication to the user, so disallow it.
@@ -540,7 +540,8 @@ Browser* ReparentWebContentsIntoAppBrowser(
     // by focusing such apps in the background instead of re-parenting the
     // current contents.
     if (MaybeHandleIntentPickerFocusExistingOrNavigateExisting(
-            profile, launch_url, contents, app_id, registrar)) {
+            profile, launch_url, contents, app_id, time_reparent_started,
+            registrar)) {
       return nullptr;
     }
   }
@@ -592,13 +593,9 @@ Browser* ReparentWebContentsIntoAppBrowser(
   return reparented_browser;
 }
 
-void SetWebContentsIsPinnedHomeTab(content::WebContents* contents) {
-  auto* helper = WebAppTabHelper::FromWebContents(contents);
-  helper->set_is_pinned_home_tab(true);
-}
-
 std::unique_ptr<AppBrowserController> MaybeCreateAppBrowserController(
-    Browser* browser) {
+    BrowserWindowInterface* bwi) {
+  Browser* const browser = bwi->GetBrowserForMigrationOnly();
   std::unique_ptr<AppBrowserController> controller;
   const webapps::AppId app_id =
       GetAppIdFromApplicationName(browser->app_name());
@@ -642,13 +639,6 @@ void MaybeAddPinnedHomeTab(Browser* browser, const std::string& app_id) {
     home_tab_nav_params.disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
     home_tab_nav_params.tabstrip_add_types |= AddTabTypes::ADD_PINNED;
     Navigate(&home_tab_nav_params);
-
-    content::WebContents* const web_contents =
-        home_tab_nav_params.navigated_or_inserted_contents;
-
-    if (web_contents) {
-      SetWebContentsIsPinnedHomeTab(web_contents);
-    }
   }
 }
 
@@ -710,8 +700,7 @@ Browser* CreateWebAppWindowFromNavigationParams(
   return created_browser;
 }
 
-content::WebContents* NavigateWebAppUsingParams(const std::string& app_id,
-                                                NavigateParams& nav_params) {
+content::WebContents* NavigateWebAppUsingParams(NavigateParams& nav_params) {
   nav_params.pwa_navigation_capturing_force_off = true;
   if (nav_params.browser->app_controller() &&
       nav_params.browser->app_controller()->IsUrlInHomeTabScope(
@@ -970,12 +959,16 @@ void LaunchWebApp(apps::AppLaunchParams params,
 void EnqueueLaunchParams(content::WebContents* contents,
                          const webapps::AppId& app_id,
                          const GURL& url,
-                         bool wait_for_navigation_to_complete) {
+                         bool wait_for_navigation_to_complete,
+                         base::TimeTicks time_navigation_started) {
   CHECK(contents);
   webapps::LaunchParams launch_params;
   launch_params.started_new_navigation = wait_for_navigation_to_complete;
   launch_params.app_id = app_id;
   launch_params.target_url = url;
+  if (!time_navigation_started.is_null()) {
+    launch_params.time_navigation_started_for_enqueue = time_navigation_started;
+  }
   WebAppTabHelper::FromWebContents(contents)->EnsureLaunchQueue().Enqueue(
       std::move(launch_params));
 }

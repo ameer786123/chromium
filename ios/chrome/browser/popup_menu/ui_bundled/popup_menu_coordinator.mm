@@ -21,6 +21,7 @@
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
 #import "ios/chrome/browser/follow/model/follow_action_state.h"
 #import "ios/chrome/browser/follow/model/follow_browser_agent.h"
+#import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/lens_overlay/coordinator/lens_overlay_availability.h"
 #import "ios/chrome/browser/overlays/model/public/overlay_presenter.h"
 #import "ios/chrome/browser/popup_menu/ui_bundled/overflow_menu/feature_flags.h"
@@ -38,6 +39,7 @@
 #import "ios/chrome/browser/popup_menu/ui_bundled/public/popup_menu_table_view_controller.h"
 #import "ios/chrome/browser/presenters/ui_bundled/contained_presenter_delegate.h"
 #import "ios/chrome/browser/promos_manager/model/promos_manager_factory.h"
+#import "ios/chrome/browser/reader_mode/model/features.h"
 #import "ios/chrome/browser/reading_list/model/reading_list_browser_agent.h"
 #import "ios/chrome/browser/reading_list/model/reading_list_model_factory.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
@@ -53,6 +55,7 @@
 #import "ios/chrome/browser/shared/public/commands/bookmarks_commands.h"
 #import "ios/chrome/browser/shared/public/commands/browser_commands.h"
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
+#import "ios/chrome/browser/shared/public/commands/bwg_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/find_in_page_commands.h"
 #import "ios/chrome/browser/shared/public/commands/help_commands.h"
@@ -65,6 +68,7 @@
 #import "ios/chrome/browser/shared/public/commands/price_tracked_items_commands.h"
 #import "ios/chrome/browser/shared/public/commands/qr_scanner_commands.h"
 #import "ios/chrome/browser/shared/public/commands/quick_delete_commands.h"
+#import "ios/chrome/browser/shared/public/commands/reader_mode_commands.h"
 #import "ios/chrome/browser/shared/public/commands/reminder_notifications_commands.h"
 #import "ios/chrome/browser/shared/public/commands/settings_commands.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
@@ -174,6 +178,7 @@ using base::UserMetricsAction;
     [self dismissPopupMenuAnimated:NO];
   }
   [self.popupMenuHelpCoordinator stop];
+  self.popupMenuHelpCoordinator = nil;
   [self.browser->GetCommandDispatcher() stopDispatchingToTarget:self];
   [self.overflowMenuMediator disconnect];
   self.overflowMenuMediator = nil;
@@ -262,10 +267,10 @@ using base::UserMetricsAction;
     UIContentSizeCategory contentSizeCategory =
         self.baseViewController.traitCollection.preferredContentSizeCategory;
 
-    BOOL isIncognito = profile->IsOffTheRecord();
-    mediator.isIncognito = isIncognito;
+    BOOL incognito = profile->IsOffTheRecord();
+    mediator.incognito = incognito;
     _overflowMenuOrderer =
-        [[OverflowMenuOrderer alloc] initWithIsIncognito:isIncognito];
+        [[OverflowMenuOrderer alloc] initWithIsIncognito:incognito];
     _overflowMenuOrderer.visibleDestinationsCount = [OverflowMenuUIConfiguration
         numDestinationsVisibleWithoutHorizontalScrollingForScreenWidth:
             screenWidth
@@ -293,10 +298,19 @@ using base::UserMetricsAction;
       mediator.applicationHandler =
           HandlerForProtocol(dispatcher, ApplicationCommands);
     }
+
+    if (IsPageActionMenuEnabled()) {
+      mediator.BWGHandler = HandlerForProtocol(dispatcher, BWGCommands);
+    }
+
     mediator.browserCoordinatorHandler =
         HandlerForProtocol(dispatcher, BrowserCoordinatorCommands);
     mediator.findInPageHandler =
         HandlerForProtocol(dispatcher, FindInPageCommands);
+    if (IsReaderModeAvailable()) {
+      mediator.readerModeHandler =
+          HandlerForProtocol(dispatcher, ReaderModeCommands);
+    }
     mediator.helpHandler = HandlerForProtocol(dispatcher, HelpCommands);
     mediator.overflowMenuCustomizationHandler =
         HandlerForProtocol(dispatcher, OverflowMenuCustomizationCommands);
@@ -418,11 +432,11 @@ using base::UserMetricsAction;
   }
 
   self.mediator = [[PopupMenuMediator alloc]
-         initWithIsIncognito:self.profile->IsOffTheRecord()
-            readingListModel:ReadingListModelFactory::GetForProfile(
-                                 self.profile)
-      browserPolicyConnector:GetApplicationContext()
-                                 ->GetBrowserPolicyConnector()];
+      initWithReadingListModel:ReadingListModelFactory::GetForProfile(
+                                   self.profile)
+               policyConnector:GetApplicationContext()
+                                   ->GetBrowserPolicyConnector()
+                     incognito:self.profile->IsOffTheRecord()];
   self.mediator.engagementTracker = tracker;
   self.mediator.webStateList = self.browser->GetWebStateList();
   self.mediator.readingListBrowserAgent =

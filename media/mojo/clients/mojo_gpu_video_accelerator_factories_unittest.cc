@@ -59,7 +59,6 @@
 #endif
 
 using ::testing::_;
-using ::testing::Invoke;
 using ::testing::NiceMock;
 using ::testing::Return;
 using ::testing::UnorderedElementsAre;
@@ -322,12 +321,6 @@ class FakeInterfaceFactory : public media::mojom::InterfaceFactory {
       mojo::PendingRemote<media::mojom::FlingingRendererClientExtension>
           client_extension,
       mojo::PendingReceiver<media::mojom::Renderer> receiver) override {}
-  void CreateMediaPlayerRenderer(
-      mojo::PendingRemote<media::mojom::MediaPlayerRendererClientExtension>
-          client_extension_remote,
-      mojo::PendingReceiver<media::mojom::Renderer> receiver,
-      mojo::PendingReceiver<media::mojom::MediaPlayerRendererExtension>
-          renderer_extension_receiver) override {}
 #endif  // BUILDFLAG(IS_ANDROID)
 #if BUILDFLAG(IS_WIN)
   void CreateMediaFoundationRenderer(
@@ -420,7 +413,7 @@ class MojoGpuVideoAcceleratorFactoriesTest : public testing::Test {
     // Simulate success, since we're not actually talking to the service
     // in this test suite.
     ON_CALL(mock_gpu_channel_, CreateCommandBuffer(_, _, _, _, _, _, _, _))
-        .WillByDefault(Invoke(
+        .WillByDefault(
             [&](gpu::mojom::CreateCommandBufferParamsPtr params,
                 int32_t routing_id, base::UnsafeSharedMemoryRegion shared_state,
                 mojo::PendingAssociatedReceiver<gpu::mojom::CommandBuffer>
@@ -436,12 +429,12 @@ class MojoGpuVideoAcceleratorFactoriesTest : public testing::Test {
               receiver.EnableUnassociatedUsage();
               *result = gpu::ContextResult::kSuccess;
               return true;
-            }));
+            });
     ON_CALL(mock_gpu_channel_, GetChannelToken(_))
-        .WillByDefault(Invoke(
+        .WillByDefault(
             [&](gpu::MockGpuChannel::GetChannelTokenCallback callback) -> void {
               std::move(callback).Run(base::UnguessableToken::Create());
-            }));
+            });
   }
 
   void MockContextProvider() {

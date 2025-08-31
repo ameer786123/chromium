@@ -12,8 +12,8 @@
 
 #include "base/functional/callback.h"
 #include "components/affiliations/core/browser/mock_affiliation_service.h"
+#include "components/plus_addresses/core/browser/plus_address_types.h"
 #include "components/plus_addresses/plus_address_service.h"
-#include "components/plus_addresses/plus_address_types.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace plus_addresses {
@@ -30,7 +30,6 @@ class FakePlusAddressService : public PlusAddressService {
   bool IsPlusAddress(const std::string& potential_plus_address) const override;
   bool MatchesPlusAddressFormat(const std::u16string& value) const override;
   bool IsPlusAddressFillingEnabled(const url::Origin& origin) const override;
-  bool IsPlusAddressFullFormFillingEnabled() const override;
   bool IsFieldEligibleForPlusAddress(
       const autofill::AutofillField& field) const override;
   void GetAffiliatedPlusAddresses(
@@ -42,8 +41,8 @@ class FakePlusAddressService : public PlusAddressService {
       bool is_off_the_record,
       const autofill::FormData& focused_form,
       const autofill::FormFieldData& focused_field,
-      const base::flat_map<autofill::FieldGlobalId, autofill::FieldTypeGroup>&
-          form_field_type_groups,
+      const base::flat_map<autofill::FieldGlobalId,
+                           autofill::FieldTypeGroupSet>& form_field_type_groups,
       const autofill::PasswordFormClassification& focused_form_classification,
       autofill::AutofillSuggestionTriggerSource trigger_source) override;
   autofill::Suggestion GetManagePlusAddressSuggestion() const override;

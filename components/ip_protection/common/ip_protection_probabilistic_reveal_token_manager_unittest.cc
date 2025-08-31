@@ -22,16 +22,17 @@
 #include "base/time/time.h"
 #include "components/ip_protection/common/ip_protection_probabilistic_reveal_token_crypter.h"
 #include "components/ip_protection/common/ip_protection_probabilistic_reveal_token_fetcher.h"
+#include "components/ip_protection/common/probabilistic_reveal_token_test_consumer.h"
 #include "components/ip_protection/common/probabilistic_reveal_token_test_issuer.h"
 #include "net/base/net_errors.h"
+#include "net/base/schemeful_site.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "sql/database.h"
 #include "sql/statement.h"
 #include "sql/test/test_helpers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/boringssl/src/include/openssl/base.h"
-#include "third_party/boringssl/src/include/openssl/bytestring.h"
+#include "url/gurl.h"
 
 namespace ip_protection {
 
@@ -50,43 +51,7 @@ constexpr char kSubsequentTokenAvailableHistogram[] =
 constexpr char kRandomizationTimeHistogram[] =
     "NetworkService.IpProtection.ProbabilisticRevealTokenRandomizationTime";
 
-// Size of a PRT when TLS serialized, before base64 encoding.
-constexpr size_t kPRTSize = 79;
-constexpr size_t kPRTPointSize = 33;
-constexpr size_t kEpochIdSize = 8;
-
-// Deserialize a given prt serialized using
-// `IpProtectionProbabilisticRevealTokenManager::SerializePrt()`.
-bool Deserialize(const std::string& serialized_prt,
-                 ProbabilisticRevealToken& token_out,
-                 std::string& epoch_id_out) {
-  CBS cbs;
-  CBS_init(&cbs, reinterpret_cast<const uint8_t*>(serialized_prt.data()),
-           serialized_prt.size());
-  if (CBS_len(&cbs) != kPRTSize) {
-    return false;
-  }
-  uint8_t version;
-  uint16_t u_size;
-  uint16_t e_size;
-  std::string u(kPRTPointSize, '0');
-  std::string e(kPRTPointSize, '0');
-  std::string epoch_id(kEpochIdSize, '0');
-  if (!CBS_get_u8(&cbs, &version) || !CBS_get_u16(&cbs, &u_size) ||
-      u_size != kPRTPointSize ||
-      !CBS_copy_bytes(&cbs, reinterpret_cast<uint8_t*>(u.data()), u_size) ||
-      !CBS_get_u16(&cbs, &e_size) || e_size != kPRTPointSize ||
-      !CBS_copy_bytes(&cbs, reinterpret_cast<uint8_t*>(e.data()), e_size) ||
-      !CBS_copy_bytes(&cbs, reinterpret_cast<uint8_t*>(epoch_id.data()),
-                      kEpochIdSize)) {
-    return false;
-  }
-  token_out.version = version;
-  token_out.u = std::move(u);
-  token_out.e = std::move(e);
-  epoch_id_out = std::move(epoch_id);
-  return true;
-}
+constexpr size_t kPlaintextSize = 29;
 
 // Mocks a PRT fetcher. Uses ProbabilisticRevealTokenTestIssuer for successful
 // fetches with valid tokens and SetResponse to mock error results.
@@ -117,11 +82,23 @@ class MockFetcher : public IpProtectionProbabilisticRevealTokenFetcher {
                          std::string epoch_id) {
     {
       auto maybe_issuer =
-          ProbabilisticRevealTokenTestIssuer::Create(private_key, num_tokens);
+          ProbabilisticRevealTokenTestIssuer::Create(private_key);
       if (!maybe_issuer.has_value()) {
         return maybe_issuer.error();
       }
       issuer_ = std::move(maybe_issuer.value());
+      // Issue and store tokens in issuer_.
+      std::vector<std::string> plaintexts(num_tokens, "");
+      for (std::size_t i = 0; i < num_tokens; ++i) {
+        std::string p = "awesome-prt-" + base::NumberToString(i);
+        plaintexts[i] = p + std::string(kPlaintextSize - p.size(), '-');
+      }
+      base::expected<GetProbabilisticRevealTokenResponse, absl::Status>
+          maybe_response = issuer_->Issue(plaintexts, expiration, next_start,
+                                          num_tokens_with_signal, epoch_id);
+      if (!maybe_response.has_value()) {
+        return maybe_response.error();
+      }
     }
     TryGetProbabilisticRevealTokensOutcome outcome;
     outcome.tokens = issuer_->Tokens();
@@ -193,6 +170,18 @@ class IpProtectionProbabilisticRevealTokenManagerTest : public testing::Test {
     ASSERT_TRUE(status.ok());
   }
 
+  // Deserialize a given prt serialized using
+  // `IpProtectionProbabilisticRevealTokenManager::SerializePrt()`.
+  void Deserialize(const std::string& serialized_prt,
+                   ProbabilisticRevealToken& token_out,
+                   std::string& epoch_id_out) {
+    std::optional<ProbabilisticRevealTokenTestConsumer> consumer =
+        ProbabilisticRevealTokenTestConsumer::MaybeCreate(serialized_prt);
+    ASSERT_TRUE(consumer) << "Deserializing PRT failed";
+    token_out = consumer->Token();
+    epoch_id_out = consumer->EpochId();
+  }
+
   // Decrypt given token, serialize returned point, and base64 encode.
   std::string DecryptSerializeEncode(const ProbabilisticRevealToken& token) {
     auto maybe_serialized_point =
@@ -244,7 +233,9 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest, NotRequestedTokensYet) {
       std::move(fetcher_), DataDirectory());
   task_environment_.FastForwardBy(base::TimeDelta());
   EXPECT_FALSE(manager_->IsTokenAvailable());
-  EXPECT_FALSE(manager_->GetToken("A", "b42"));
+  const GURL destination_url("https://thirdparty.com");
+  const net::SchemefulSite top_level_site(GURL("https://toplevel.com"));
+  EXPECT_FALSE(manager_->GetToken(destination_url, top_level_site));
 
   histogram_tester_.ExpectUniqueSample(
       kGetTokensResultHistogram,
@@ -273,8 +264,11 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
       TryGetProbabilisticRevealTokensStatus::kSuccess, 1);
   histogram_tester_.ExpectTotalCount(kGetTokensRequestTimeHistogram, 1);
 
+  const GURL destination_url("https://thirdparty.com");
+  const net::SchemefulSite top_level_site(GURL("https://toplevel.com"));
+
   EXPECT_TRUE(manager_->IsTokenAvailable());
-  EXPECT_TRUE(manager_->GetToken("fp.ex", "tp.ex"));
+  EXPECT_TRUE(manager_->GetToken(destination_url, top_level_site));
 
   histogram_tester_.ExpectUniqueSample(kInitialTokenAvailableHistogram, true,
                                        1);
@@ -285,7 +279,7 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
   task_environment_.AdvanceClock(expiration - base::Time::Now() -
                                  base::Seconds(5));
   EXPECT_TRUE(manager_->IsTokenAvailable());
-  EXPECT_TRUE(manager_->GetToken("fp.ex", "tp.ex"));
+  EXPECT_TRUE(manager_->GetToken(destination_url, top_level_site));
 
   histogram_tester_.ExpectUniqueSample(kInitialTokenAvailableHistogram, true,
                                        1);
@@ -296,7 +290,7 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
   task_environment_.AdvanceClock(expiration - base::Time::Now() -
                                  base::Seconds(1));
   EXPECT_TRUE(manager_->IsTokenAvailable());
-  EXPECT_TRUE(manager_->GetToken("fp.ex", "tp.ex"));
+  EXPECT_TRUE(manager_->GetToken(destination_url, top_level_site));
 
   histogram_tester_.ExpectUniqueSample(kInitialTokenAvailableHistogram, true,
                                        1);
@@ -306,7 +300,7 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
   // Advance time to expiration of tokens.
   task_environment_.AdvanceClock(expiration - base::Time::Now());
   EXPECT_FALSE(manager_->IsTokenAvailable());
-  EXPECT_FALSE(manager_->GetToken("a.ex", "b.ex"));
+  EXPECT_FALSE(manager_->GetToken(destination_url, top_level_site));
 
   histogram_tester_.ExpectUniqueSample(kInitialTokenAvailableHistogram, true,
                                        1);
@@ -326,16 +320,16 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
 
   task_environment_.FastForwardBy(base::TimeDelta());
 
-  const std::string top_level = "awe-page.ex";
-  const std::string third_party = "tp.ex";
+  const GURL destination_url("https://thirdparty.com");
+  const net::SchemefulSite top_level_site(GURL("https://toplevel.com"));
 
   std::optional<std::string> serialized_token =
-      manager_->GetToken(top_level, third_party);
+      manager_->GetToken(destination_url, top_level_site);
   ASSERT_TRUE(serialized_token.has_value());
   const std::string token1 = serialized_token.value();
 
   for (int i = 0; i < 5; ++i) {
-    serialized_token = manager_->GetToken(top_level, third_party);
+    serialized_token = manager_->GetToken(destination_url, top_level_site);
     ASSERT_TRUE(serialized_token.has_value());
     const std::string token2 = serialized_token.value();
     EXPECT_EQ(token1, token2);
@@ -355,14 +349,16 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
 
   task_environment_.FastForwardBy(base::TimeDelta());
 
-  const std::string top_level = "awe-page.ex";
+  const GURL destination_url_1("https://thirdparty1.com");
+  const GURL destination_url_2("https://thirdparty2.com");
+  const net::SchemefulSite top_level_site(GURL("https://toplevel.com"));
 
   std::optional<std::string> serialized_token_ex =
-      manager_->GetToken(top_level, "tp.ex");
+      manager_->GetToken(destination_url_1, top_level_site);
   ASSERT_TRUE(serialized_token_ex.has_value());
 
   std::optional<std::string> serialized_token_com =
-      manager_->GetToken(top_level, "tp.com");
+      manager_->GetToken(destination_url_2, top_level_site);
   ASSERT_TRUE(serialized_token_com.has_value());
 
   EXPECT_NE(serialized_token_ex.value(), serialized_token_com.value());
@@ -372,12 +368,11 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
 
   ProbabilisticRevealToken token_ex;
   std::string epoch_id_ex;
-  ASSERT_TRUE(Deserialize(serialized_token_ex.value(), token_ex, epoch_id_ex));
+  Deserialize(serialized_token_ex.value(), token_ex, epoch_id_ex);
 
   ProbabilisticRevealToken token_com;
   std::string epoch_id_com;
-  ASSERT_TRUE(
-      Deserialize(serialized_token_com.value(), token_com, epoch_id_com));
+  Deserialize(serialized_token_com.value(), token_com, epoch_id_com);
 
   EXPECT_EQ(epoch_id_ex, epoch_id_com);
 
@@ -416,12 +411,16 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest, RefetchSuccess) {
   // it is in decrypted `first_batch_tokens`.
   std::vector<std::string> first_batch_points =
       DecryptSerializeEncode(first_batch_tokens);
-  std::optional<std::string> serialized_token = manager_->GetToken("a", "b");
+  const GURL destination_url("https://thirdparty.com");
+  const net::SchemefulSite top_level_site(GURL("https://toplevel.com"));
+
+  std::optional<std::string> serialized_token =
+      manager_->GetToken(destination_url, top_level_site);
   ASSERT_TRUE(serialized_token.has_value());
 
   ProbabilisticRevealToken token;
   std::string epoch_id;
-  ASSERT_TRUE(Deserialize(serialized_token.value(), token, epoch_id));
+  Deserialize(serialized_token.value(), token, epoch_id);
   EXPECT_EQ(epoch_id, epoch_id_1);
 
   std::string point = DecryptSerializeEncode(token);
@@ -454,9 +453,9 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest, RefetchSuccess) {
   EXPECT_TRUE(manager_->IsTokenAvailable());
   std::vector<std::string> second_batch_points =
       DecryptSerializeEncode(second_batch_tokens);
-  serialized_token = manager_->GetToken("a", "b");
+  serialized_token = manager_->GetToken(destination_url, top_level_site);
   ASSERT_TRUE(serialized_token.has_value());
-  ASSERT_TRUE(Deserialize(serialized_token.value(), token, epoch_id));
+  Deserialize(serialized_token.value(), token, epoch_id);
   EXPECT_EQ(epoch_id, epoch_id_2);
   point = DecryptSerializeEncode(token);
   EXPECT_THAT(second_batch_points, testing::Contains(point))
@@ -571,7 +570,9 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
   task_environment_.FastForwardBy(base::TimeDelta());
 
   EXPECT_FALSE(manager_->IsTokenAvailable());
-  EXPECT_FALSE(manager_->GetToken("a", "b"));
+  const GURL destination_url("https://thirdparty.com");
+  const net::SchemefulSite top_level_site(GURL("https://toplevel.com"));
+  EXPECT_FALSE(manager_->GetToken(destination_url, top_level_site));
 }
 
 // Test behavior when PRT issuer is misconfigured and the second response from
@@ -634,12 +635,14 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
   // `first_batch_tokens`.
   EXPECT_TRUE(manager_->IsTokenAvailable());
   auto first_batch_points = DecryptSerializeEncode(first_batch_tokens);
-  auto serialized_token = manager_->GetToken("a", "b");
+  const GURL destination_url("https://thirdparty.com");
+  const net::SchemefulSite top_level_site(GURL("https://toplevel.com"));
+  auto serialized_token = manager_->GetToken(destination_url, top_level_site);
   ASSERT_TRUE(serialized_token.has_value());
 
   ProbabilisticRevealToken token;
   std::string epoch_id;
-  ASSERT_TRUE(Deserialize(serialized_token.value(), token, epoch_id));
+  Deserialize(serialized_token.value(), token, epoch_id);
   EXPECT_EQ(epoch_id, epoch_id_1);
 
   auto point = DecryptSerializeEncode(token);
@@ -660,7 +663,7 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
 
   // First batch of tokens is now expired, and no re-fetch has succeeded.
   EXPECT_FALSE(manager_->IsTokenAvailable());
-  EXPECT_FALSE(manager_->GetToken("ip", "protection"));
+  EXPECT_FALSE(manager_->GetToken(destination_url, top_level_site));
 }
 
 TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
@@ -682,7 +685,9 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
 
   // Expect that tokens are available.
   EXPECT_TRUE(manager_->IsTokenAvailable());
-  EXPECT_TRUE(manager_->GetToken("fp.ex", "tp.ex"));
+  const GURL destination_url("https://thirdparty.com");
+  const net::SchemefulSite top_level_site(GURL("https://toplevel.com"));
+  EXPECT_TRUE(manager_->GetToken(destination_url, top_level_site));
 
   // Destroy the manager to trigger the database write.
   fetcher_ptr_ = nullptr;
@@ -711,7 +716,9 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
 
   // Expect that tokens are available.
   EXPECT_TRUE(manager_->IsTokenAvailable());
-  EXPECT_TRUE(manager_->GetToken("fp.ex", "tp.ex"));
+  const GURL destination_url("https://thirdparty.com");
+  const net::SchemefulSite top_level_site(GURL("https://toplevel.com"));
+  EXPECT_TRUE(manager_->GetToken(destination_url, top_level_site));
 
   // Destroy the manager to trigger the database write.
   fetcher_ptr_ = nullptr;
@@ -739,7 +746,9 @@ TEST_F(IpProtectionProbabilisticRevealTokenManagerTest,
 
   // Expect that tokens are available, but they fail to serialize.
   EXPECT_TRUE(manager_->IsTokenAvailable());
-  EXPECT_FALSE(manager_->GetToken("a", "b"));
+  const GURL destination_url("https://thirdparty.com");
+  const net::SchemefulSite top_level_site(GURL("https://toplevel.com"));
+  EXPECT_FALSE(manager_->GetToken(destination_url, top_level_site));
 }
 
 }  // namespace ip_protection

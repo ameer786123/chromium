@@ -4,6 +4,7 @@
 
 #import <UIKit/UIKit.h>
 
+#import "base/ios/ios_util.h"
 #import "base/test/ios/wait_util.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
@@ -198,10 +199,9 @@ using chrome_test_util::SettingsSignInRowMatcher;
       performAction:grey_tap()];
 
   // Tap on fakeIdentity1 confirm remove button.
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_IOS_REMOVE_ACCOUNT_LABEL)]
-      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+                     IDS_IOS_REMOVE_ACCOUNT_LABEL)] performAction:grey_tap()];
 
   // Check that the user is signed out and the Main Settings screen is shown.
   [[EarlGrey selectElementWithMatcher:SettingsSignInRowMatcher()]
@@ -218,6 +218,11 @@ using chrome_test_util::SettingsSignInRowMatcher;
 // third time to remove a second identity.
 // The goal of this test is to confirm the dialog can be opened several times.
 - (void)testRemoveAccountSeveralTime {
+  // TODO(crbug.com/436557023): Re-enable the test on iOS26.
+  if (base::ios::IsRunningOnIOS26OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
+
   FakeSystemIdentity* fakeIdentity1 = [FakeSystemIdentity fakeIdentity1];
   FakeSystemIdentity* fakeIdentity2 = [FakeSystemIdentity fakeIdentity2];
   FakeSystemIdentity* fakeIdentity3 = [FakeSystemIdentity fakeIdentity3];
@@ -238,8 +243,8 @@ using chrome_test_util::SettingsSignInRowMatcher;
       performAction:grey_tap()];
 
   // Cancel it.
-  if ([ChromeEarlGrey isIPadIdiom]) {
-    // There is no Cancel button on ipad.
+  if ([ChromeEarlGrey isIPadIdiom] || iOS26_OR_ABOVE()) {
+    // There is no Cancel button on ipad and on newer iOS versions.
     // Tap on Remove fakeIdentity1 button to dismiss the alert.
     [[EarlGrey
         selectElementWithMatcher:
@@ -259,10 +264,9 @@ using chrome_test_util::SettingsSignInRowMatcher;
               [kSettingsAccountsRemoveAccountButtonAccessibilityIdentifier
                   stringByAppendingString:fakeIdentity2.userEmail])]
       performAction:grey_tap()];
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_IOS_REMOVE_ACCOUNT_LABEL)]
-      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+                     IDS_IOS_REMOVE_ACCOUNT_LABEL)] performAction:grey_tap()];
 
   // Open it a third time for `fakeIdentity3`, confirmal removal.
   [[EarlGrey
@@ -271,10 +275,9 @@ using chrome_test_util::SettingsSignInRowMatcher;
               [kSettingsAccountsRemoveAccountButtonAccessibilityIdentifier
                   stringByAppendingString:fakeIdentity3.userEmail])]
       performAction:grey_tap()];
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_IOS_REMOVE_ACCOUNT_LABEL)]
-      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+                     IDS_IOS_REMOVE_ACCOUNT_LABEL)] performAction:grey_tap()];
 }
 
 // Tests add account flow.

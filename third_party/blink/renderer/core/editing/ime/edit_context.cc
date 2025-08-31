@@ -69,6 +69,17 @@ ExecutionContext* EditContext::GetExecutionContext() const {
   return execution_context_;
 }
 
+void EditContext::AddedEventListener(
+    const AtomicString& event_type,
+    RegisteredEventListener& registered_listener) {
+  EventTarget::AddedEventListener(event_type, registered_listener);
+
+  if (event_type == event_type_names::kTextformatupdate) {
+    UseCounter::Count(GetExecutionContext(),
+                      WebFeature::kEditContextTextFormatUpdateAddListener);
+  }
+}
+
 void EditContext::SetExecutionContext(ExecutionContext* context) {
   execution_context_ = context;
 }
@@ -138,6 +149,7 @@ void EditContext::DispatchTextFormatEvent(
   DCHECK(has_composition_);
   HeapVector<Member<TextFormat>> text_formats;
   text_formats.reserve(base::checked_cast<wtf_size_t>(ime_text_spans.size()));
+  bool is_text_format_underline_style_or_thickness_not_none = false;
 
   for (const auto& ime_text_span : ime_text_spans) {
     const auto range_start = base::checked_cast<wtf_size_t>(
@@ -179,11 +191,26 @@ void EditContext::DispatchTextFormatEvent(
     text_formats.push_back(TextFormat::Create(
         range_start, range_end,
         underline_style, underline_thickness));
+
+    if (underline_style != "None" || underline_thickness != "None") {
+      is_text_format_underline_style_or_thickness_not_none = true;
+    }
   }
 
   TextFormatUpdateEvent* event = MakeGarbageCollected<TextFormatUpdateEvent>(
       event_type_names::kTextformatupdate, text_formats);
   DispatchEvent(*event);
+
+  if (HasEventListeners(event_type_names::kTextformatupdate)) {
+    UseCounter::Count(GetExecutionContext(),
+                      WebFeature::kEditContextTextFormatUpdateFireEvent);
+    if (is_text_format_underline_style_or_thickness_not_none) {
+      UseCounter::Count(
+          GetExecutionContext(),
+          WebFeature::
+              kEditContextTextFormatUpdateTextFormatThicknessOrStyleNotNone);
+    }
+  }
 }
 
 void EditContext::Focus() {
@@ -216,7 +243,16 @@ void EditContext::updateSelection(uint32_t start,
   TRACE_EVENT2("ime", "EditContext::updateSelection", "start",
                std::to_string(start), "end", std::to_string(end));
 
-  SetSelection(std::min(start, text_.length()), std::min(end, text_.length()));
+  uint32_t bound_start = std::min(start, text_.length());
+  uint32_t bound_end = std::min(end, text_.length());
+  if (has_composition_ &&
+      (bound_start != selection_start_ || bound_end != selection_end_)) {
+    UseCounter::Count(
+        GetExecutionContext(),
+        WebFeature::kEditContextUpdateSelectionDuringActiveComposition);
+  }
+
+  SetSelection(bound_start, bound_end);
   if (!has_composition_)
     return;
 
@@ -282,6 +318,29 @@ void EditContext::updateText(uint32_t start,
   }
   end = std::min(end, text_.length());
   start = std::min(start, end);
+
+  if (OrderedSelectionEnd() > start) {
+    UseCounter::Count(
+        GetExecutionContext(),
+        WebFeature::kEditContextUpdateTextRangePrecedesOrOverlapsSelection);
+  }
+
+  if (has_composition_ && composition_range_end_ > start) {
+    if (composition_range_start_ >= end) {
+      // Example:
+      // Composition range: [3, 6], Update range: [1, 2]
+      UseCounter::Count(
+          GetExecutionContext(),
+          WebFeature::kEditContextUpdateTextRangePrecedesCompositionRange);
+    } else {
+      // Example:
+      // Composition range: [3, 6], Update range: [4, 7]
+      UseCounter::Count(
+          GetExecutionContext(),
+          WebFeature::kEditContextUpdateTextRangeOverlapsCompositionRange);
+    }
+  }
+
   text_ = text_.Substring(0, start) + new_text + text_.Substring(end);
 }
 
@@ -504,7 +563,7 @@ void EditContext::DeleteBackward() {
   if (selection_start_ == selection_end_) {
     SetSelection(FindNextBoundaryOffset<BackwardGraphemeBoundaryStateMachine>(
                      text_, selection_start_),
-                 selection_end_);
+                 selection_end_, /*sync_selection=*/false);
   }
 
   DeleteCurrentSelection();
@@ -514,7 +573,8 @@ void EditContext::DeleteForward() {
   if (selection_start_ == selection_end_) {
     SetSelection(selection_start_,
                  FindNextBoundaryOffset<ForwardGraphemeBoundaryStateMachine>(
-                     text_, selection_start_));
+                     text_, selection_start_),
+                 /*sync_selection=*/false);
   }
 
   DeleteCurrentSelection();
@@ -526,7 +586,7 @@ void EditContext::DeleteWordBackward() {
     text16bit.Ensure16Bit();
     // TODO(shihken): implement platform behaviors when the spec is finalized.
     SetSelection(FindNextWordBackward(text16bit.Span16(), selection_end_),
-                 selection_end_);
+                 selection_end_, /*sync_selection=*/false);
   }
 
   DeleteCurrentSelection();
@@ -538,7 +598,8 @@ void EditContext::DeleteWordForward() {
     text16bit.Ensure16Bit();
     // TODO(shihken): implement platform behaviors when the spec is finalized.
     SetSelection(selection_start_,
-                 FindNextWordForward(text16bit.Span16(), selection_start_));
+                 FindNextWordForward(text16bit.Span16(), selection_start_),
+                 /*sync_selection=*/false);
   }
 
   DeleteCurrentSelection();
@@ -656,14 +717,20 @@ void EditContext::DeleteSurroundingText(int before, int after) {
 
 void EditContext::SetSelection(int start,
                                int end,
+                               bool sync_selection,
                                bool dispatch_text_update_event) {
   TRACE_EVENT1("ime", "EditContext::SetSelection", "start, end",
                std::to_string(start) + ", " + std::to_string(end));
 
+  if (start == base::saturated_cast<int>(selection_start_) &&
+      end == base::saturated_cast<int>(selection_end_)) {
+    return;
+  }
+
   selection_start_ = start;
   selection_end_ = end;
 
-  if (DomWindow() && DomWindow()->GetFrame()) {
+  if (sync_selection && DomWindow() && DomWindow()->GetFrame()) {
     DomWindow()->GetFrame()->Client()->DidChangeSelection(
         /*is_selection_empty=*/selection_start_ == selection_end_,
         blink::SyncCondition::kNotForced);

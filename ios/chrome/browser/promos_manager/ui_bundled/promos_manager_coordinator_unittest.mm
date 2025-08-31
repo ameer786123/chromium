@@ -20,6 +20,7 @@
 #import "ios/chrome/browser/shared/model/prefs/browser_prefs.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/credential_provider_promo_commands.h"
 #import "ios/chrome/browser/shared/public/commands/docking_promo_commands.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
@@ -43,6 +44,7 @@ namespace {
 class PromosManagerCoordinatorTest : public PlatformTest {
  public:
   void SetUp() override {
+    PlatformTest::SetUp();
     TestProfileIOS::Builder builder;
     builder.AddTestingFactory(
         AuthenticationServiceFactory::GetInstance(),
@@ -68,6 +70,13 @@ class PromosManagerCoordinatorTest : public PlatformTest {
         [[[UIApplication sharedApplication] connectedScenes] anyObject]);
   }
 
+  void TearDown() override {
+    [coordinator_ stop];
+    [scene_state_ shutdown];
+    scene_state_ = nil;
+    PlatformTest::TearDown();
+  }
+
   // Initializes a new `PromosManagerCoordinator` for testing.
   void CreatePromosManagerCoordinator() {
     Browser* browser =
@@ -75,6 +84,8 @@ class PromosManagerCoordinatorTest : public PlatformTest {
     coordinator_ = [[PromosManagerCoordinator alloc]
             initWithBaseViewController:view_controller_
                                browser:browser
+                    applicationHandler:OCMStrictProtocolMock(
+                                           @protocol(ApplicationCommands))
         credentialProviderPromoHandler:OCMStrictProtocolMock(@protocol(
                                            CredentialProviderPromoCommands))
                    dockingPromoHandler:OCMStrictProtocolMock(

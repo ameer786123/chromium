@@ -10,14 +10,12 @@
 #include "chrome/browser/privacy_sandbox/notice/notice_model.h"
 #include "chrome/browser/privacy_sandbox/notice/notice_service_interface.h"
 #include "chrome/browser/privacy_sandbox/notice/notice_storage.h"
-#include "components/keyed_service/core/keyed_service.h"
 
 #if !BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/privacy_sandbox/notice/desktop_view_manager.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 class Profile;
-class PrefService;
 
 namespace privacy_sandbox {
 
@@ -30,8 +28,7 @@ class NoticeCatalog;
 // 4. Keeps an internal registry to keep track of when notices were shown,
 // what actions were taken on them and how
 class PrivacySandboxNoticeService
-    : public KeyedService,
-      public PrivacySandboxNoticeServiceInterface {
+    : public PrivacySandboxNoticeServiceInterface {
  public:
   PrivacySandboxNoticeService(Profile* profile,
                               std::unique_ptr<NoticeCatalog> catalog,
@@ -46,25 +43,25 @@ class PrivacySandboxNoticeService
   void EventOccurred(NoticeId notice_id,
                      notice::mojom::PrivacySandboxNoticeEvent event) override;
 
-  // Service Accessors.
-  NoticeStorage* GetNoticeStorage();
-  PrefService* GetPrefService();
-  NoticeCatalog* GetCatalog();
-
 #if !BUILDFLAG(IS_ANDROID)
-  DesktopViewManager* GetDesktopViewManager();
+  DesktopViewManagerInterface* GetDesktopViewManager() override;
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   // KeyedService:
   void Shutdown() override;
 
  private:
+  void EmitStartupHistograms();
+
+  NoticeStorage* notice_storage() { return notice_storage_.get(); }
+
   // TODO(crbug.com/392612108): Create eligibility and notice result callbacks.
   raw_ptr<Profile> profile_;
   std::unique_ptr<NoticeCatalog> catalog_;
   std::unique_ptr<NoticeStorage> notice_storage_;
+
 #if !BUILDFLAG(IS_ANDROID)
-  std::unique_ptr<DesktopViewManager> desktop_view_manager_;
+  std::unique_ptr<DesktopViewManagerInterface> desktop_view_manager_;
 #endif  // !BUILDFLAG(IS_ANDROID)
 };
 

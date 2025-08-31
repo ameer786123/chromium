@@ -36,12 +36,11 @@ NSString* const kWhatsNewPromoStatus = @"WhatsNewPromoStatus";
 NSString* const kClearApplicationGroup = @"ClearApplicationGroup";
 NSString* const kNextPromoForDisplayOverride = @"NextPromoForDisplayOverride";
 NSString* const kFirstRunRecency = @"FirstRunRecency";
+NSString* const kIgnoreDeviceLocaleConditions = @"IgnoreDeviceLocaleConditions";
 NSString* const kForceExperienceForDeviceSwitcherExperimentalSettings =
     @"ForceExperienceForDeviceSwitcher";
 NSString* const kForceExperienceForShopperExperimentalSettings =
     @"ForceExperienceForShopper";
-NSString* const kForceReaderModeDebugHTMLOverride =
-    @"ForceReaderModeDebugHTMLOverride";
 NSString* const kSafetyCheckUpdateChromeStateOverride =
     @"SafetyCheckUpdateChromeStateOverride";
 NSString* const kSafetyCheckPasswordStateOverride =
@@ -59,8 +58,7 @@ NSString* const kShouldIgnoreHistorySyncDeclineLimits =
     @"ShouldIgnoreHistorySyncDeclineLimits";
 NSString* const kSafetyCheckNotificationsInactivityThreshold =
     @"SafetyCheckNotificationsInactivityThreshold";
-BASE_FEATURE(kEnableThirdPartyKeyboardWorkaround,
-             "EnableThirdPartyKeyboardWorkaround",
+BASE_FEATURE(EnableThirdPartyKeyboardWorkaround,
              base::FEATURE_ENABLED_BY_DEFAULT);
 NSString* const kTipsMagicStackLensShopWithImage =
     @"TipsMagicStackLensShopWithImage";
@@ -68,6 +66,7 @@ NSString* const kTipsMagicStackStateOverride = @"TipsMagicStackStateOverride";
 NSString* const kInactiveTabsDemoMode = @"InactiveTabsDemoMode";
 NSString* const kInactiveTabsTestMode = @"InactiveTabsTestMode";
 NSString* const kAsyncStartupOverrideResponse = @"AsyncStartupOverrideResponse";
+NSString* const kLensResultPanelGwsURL = @"LensResultPanelGwsURL";
 }  // namespace
 
 namespace experimental_flags {
@@ -112,6 +111,11 @@ bool ShouldForceContentNotificationsPromo() {
 bool ShouldForceFeedSigninPromo() {
   return [[NSUserDefaults standardUserDefaults]
       boolForKey:@"ForceFeedSigninPromo"];
+}
+
+bool ShouldIgnoreDeviceLocaleConditions() {
+  return [[NSUserDefaults standardUserDefaults]
+      boolForKey:kIgnoreDeviceLocaleConditions];
 }
 
 bool ShouldIgnoreTileAblationConditions() {
@@ -357,9 +361,9 @@ bool EnableAIPrototypingMenu() {
       boolForKey:@"EnableAIPrototypingMenu"];
 }
 
-bool ShouldForceReaderModeDebugHTMLOverride() {
+NSString* GetLensResultPanelGwsURL() {
   return [[NSUserDefaults standardUserDefaults]
-      boolForKey:@"ForceReaderModeDebugHTMLOverride"];
+      stringForKey:kLensResultPanelGwsURL];
 }
 
 }  // namespace experimental_flags

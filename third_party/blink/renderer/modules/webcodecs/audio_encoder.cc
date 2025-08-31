@@ -55,13 +55,13 @@ constexpr uint32_t kDefaultOpusComplexity = 9;
 template <typename T>
 bool VerifyParameterValues(const T& value,
                            String error_message_base_base,
-                           WTF::Vector<T> supported_values,
+                           Vector<T> supported_values,
                            String* js_error_message) {
   if (base::Contains(supported_values, value)) {
     return true;
   }
 
-  WTF::StringBuilder error_builder;
+  StringBuilder error_builder;
   error_builder.Append(error_message_base_base);
   error_builder.Append(" Supported values: ");
   for (auto i = 0u; i < supported_values.size(); i++) {
@@ -200,16 +200,17 @@ AudioEncoderTraits::ParsedConfig* ParseConfigStatic(
 
   auto* result = MakeGarbageCollected<AudioEncoderTraits::ParsedConfig>();
 
-  result->options.codec = media::AudioCodec::kUnknown;
-  bool is_codec_ambiguous = true;
-  bool parse_succeeded = ParseAudioCodecString(
-      "", config->codec().Utf8(), &is_codec_ambiguous, &result->options.codec);
-
-  if (!parse_succeeded || is_codec_ambiguous) {
+  std::optional<media::AudioType> audio_type =
+      media::ParseAudioCodecString("", config->codec().Utf8());
+  if (!audio_type) {
     result->options.codec = media::AudioCodec::kUnknown;
     return result;
   }
 
+  // AudioCodecProfile isn't supported by any of Chromium's encoders. It's not
+  // likely in the future either since the existing profiles are for multi-pass
+  // type encodings that this API is not designed for.
+  result->options.codec = audio_type->codec;
   result->options.channels = config->numberOfChannels();
   if (result->options.channels == 0) {
     exception_state.ThrowTypeError(String::Format(

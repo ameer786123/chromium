@@ -16,6 +16,7 @@ import androidx.annotation.VisibleForTesting;
 
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ui.favicon.FaviconUtils;
 import org.chromium.components.browser_ui.widget.RoundedIconGenerator;
 import org.chromium.components.favicon.LargeIconBridge;
@@ -26,7 +27,7 @@ import org.chromium.url.GURL;
 /** Common util methods for multi-instance UI. */
 @NullMarked
 class UiUtils {
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     static final int INVALID_TASK_ID = -1; // Defined in android.app.ActivityTaskManager.
 
     private final Context mContext;
@@ -34,7 +35,7 @@ class UiUtils {
     private final int mDisplayedIconSize;
     private final Drawable mIncognitoFavicon;
     private final Drawable mGlobeFavicon;
-    private LargeIconBridge mLargeIconBridge;
+    private final LargeIconBridge mLargeIconBridge;
     private final RoundedIconGenerator mIconGenerator;
 
     UiUtils(Context context, LargeIconBridge iconBridge) {
@@ -64,7 +65,10 @@ class UiUtils {
         int totalTabCount = totalTabCount(item);
         String title;
         Resources res = mContext.getResources();
-        if (totalTabCount == 0 || isBeforeFirstTabLoad(item, totalTabCount)) {
+        // TODO (crbug.com/441312171): Add "Incognito - " prefix for incognito instances.
+        if (!TextUtils.isEmpty(item.customTitle)) {
+            title = item.customTitle;
+        } else if (totalTabCount == 0 || isBeforeFirstTabLoad(item, totalTabCount)) {
             title = res.getString(R.string.instance_switcher_entry_empty_window);
         } else if (item.isIncognitoSelected && incognitoTabCount > 0) {
             // Show 'incognito tab' only when we have any restorable incognito tabs.
@@ -84,9 +88,9 @@ class UiUtils {
         int totalTabCount = totalTabCount(item);
         String desc;
         Resources res = mContext.getResources();
-        if (item.type == InstanceInfo.Type.CURRENT) {
+        if (item.type == InstanceInfo.Type.CURRENT && !isInstanceSwitcherV2Enabled()) {
             desc = res.getString(R.string.instance_switcher_current_window);
-        } else if (item.type == InstanceInfo.Type.ADJACENT) {
+        } else if (item.type == InstanceInfo.Type.ADJACENT && !isInstanceSwitcherV2Enabled()) {
             desc = res.getString(R.string.instance_switcher_adjacent_window);
         } else if (totalTabCount == 0) { // <ex>No tabs</ex>
             desc = res.getString(R.string.instance_switcher_tab_count_zero);
@@ -144,7 +148,11 @@ class UiUtils {
             } else { // 1 incognito and 3 more tabs will be closed
                 msg =
                         res.getQuantityString(
-                                R.plurals.instance_switcher_close_confirm_deleted_incognito_mixed,
+                                isInstanceSwitcherV2Enabled()
+                                        ? R.plurals
+                                                .instance_switcher_close_confirm_deleted_incognito_mixed_v2
+                                        : R.plurals
+                                                .instance_switcher_close_confirm_deleted_incognito_mixed,
                                 item.tabCount,
                                 incognitoTabCount,
                                 item.tabCount,
@@ -152,12 +160,20 @@ class UiUtils {
             }
         } else if (totalTabCount == 0) { // The window will be closed
             msg = res.getString(R.string.instance_switcher_close_confirm_deleted_tabs_zero);
-        } else if (totalTabCount == 1) { // The tab YouTube will be closed
-            msg = res.getString(R.string.instance_switcher_close_confirm_deleted_tabs_one, title);
+        } else if (totalTabCount == 1) {
+            // V1. The tab YouTube will be closed. V2. YouTube will be closed.
+            msg =
+                    res.getString(
+                            isInstanceSwitcherV2Enabled()
+                                    ? R.string.instance_switcher_close_confirm_deleted_tabs_one_v2
+                                    : R.string.instance_switcher_close_confirm_deleted_tabs_one,
+                            title);
         } else { // YouTube and 3 more tabs will be closed
             msg =
                     res.getQuantityString(
-                            R.plurals.instance_switcher_close_confirm_deleted_tabs_many,
+                            isInstanceSwitcherV2Enabled()
+                                    ? R.plurals.instance_switcher_close_confirm_deleted_tabs_many_v2
+                                    : R.plurals.instance_switcher_close_confirm_deleted_tabs_many,
                             totalTabCount - 1,
                             title,
                             totalTabCount - 1,
@@ -168,6 +184,7 @@ class UiUtils {
 
     /**
      * Set the favicon for the given instance.
+     *
      * @param model {@link PropertyModel} that represents the instance entry.
      * @param faviconKey Property key for favicon item in the model.
      * @param item {@link InstanceInfo} object for the given instance.
@@ -193,7 +210,7 @@ class UiUtils {
         }
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     static int recoverableIncognitoTabCount(InstanceInfo item) {
         return item.taskId == INVALID_TASK_ID ? 0 : item.incognitoTabCount;
     }
@@ -228,5 +245,24 @@ class UiUtils {
             TargetSelectorCoordinator.sPrevInstance.dismissDialog(
                     DialogDismissalCause.NAVIGATE_BACK_OR_TOUCH_OUTSIDE);
         }
+    }
+
+    /**
+     * Checks whether the Instance Switcher V2 feature is enabled.
+     *
+     * @return {@code true} if the Instance Switcher V2 feature is enabled, {@code false} otherwise.
+     */
+    public static boolean isInstanceSwitcherV2Enabled() {
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.INSTANCE_SWITCHER_V2);
+    }
+
+    /**
+     * Checks whether the Robust Window Management feature is enabled.
+     *
+     * @return {@code true} if the Robust Window Management feature is enabled, {@code false}
+     *     otherwise.
+     */
+    public static boolean isRobustWindowManagementEnabled() {
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.ROBUST_WINDOW_MANAGEMENT);
     }
 }

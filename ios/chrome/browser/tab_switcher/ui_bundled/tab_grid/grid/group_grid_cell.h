@@ -9,10 +9,11 @@
 
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_constants.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_theme.h"
-#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/group_tab_info.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_context_menu/tab_cell.h"
 
+@protocol FacePileProviding;
 @class GroupGridCell;
+@class TabSnapshotAndFavicon;
 
 // Informs the receiver of actions on the cell.
 @protocol GroupGridCellDelegate
@@ -34,14 +35,15 @@
 @property(nonatomic, assign) CGFloat opacity;
 // The current state which the cell should display.
 @property(nonatomic, assign) GridCellState state;
+// The FacePileProvider, to be set externally. Held as a strong reference to
+// ensure the provider's lifecycle is maintained for managing and updating the
+// FacePileView's content.
+@property(nonatomic, strong) id<FacePileProviding> facePileProvider;
 
-// The face pile, to be set externally.
-@property(nonatomic, strong) UIView* facePile;
-
-// Configures every tab of the group with a given snapshot/favicon pairs and
-// passes the total tabs count to the bottomTrailingView.
-- (void)configureWithGroupTabInfos:(NSArray<GroupTabInfo*>*)groupTabInfos
-                    totalTabsCount:(NSInteger)totalTabsCount;
+// Assigns a `TabSnapshotAndFavicon` object to a specific `tabIndex`
+- (void)configureTabSnapshotAndFavicon:
+            (TabSnapshotAndFavicon*)tabSnapshotAndFavicon
+                              tabIndex:(NSInteger)tabIndex;
 
 // Returns all tab views that compose this tab group view in the order they're
 // presented.

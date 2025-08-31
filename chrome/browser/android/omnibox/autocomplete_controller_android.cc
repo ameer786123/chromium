@@ -37,7 +37,10 @@
 #include "chrome/browser/predictors/autocomplete_action_predictor_factory.h"
 #include "chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_service.h"
 #include "chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_service_factory.h"
+#include "chrome/browser/preloading/preloading_features.h"
 #include "chrome/browser/preloading/prerender/prerender_manager.h"
+#include "chrome/browser/preloading/search_preload/search_preload_service.h"
+#include "chrome/browser/preloading/search_preload/search_preload_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/common/webui_url_constants.h"
@@ -45,6 +48,7 @@
 #include "components/omnibox/browser/actions/omnibox_answer_action.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_controller_emitter.h"
+#include "components/omnibox/browser/autocomplete_enums.h"
 #include "components/omnibox/browser/autocomplete_grouper_sections.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
@@ -181,13 +185,10 @@ void AutocompleteControllerAndroid::Start(JNIEnv* env,
 void AutocompleteControllerAndroid::StartPrefetch(
     JNIEnv* env,
     const JavaRef<jstring>& j_current_url,
-    jint j_page_classification) {
+    jint j_page_classification,
+    const JavaParamRef<jobject>& j_web_contents) {
   auto page_classification =
       OmniboxEventProto::PageClassification(j_page_classification);
-  if (!OmniboxFieldTrial::IsZeroSuggestPrefetchingEnabledInContext(
-          page_classification)) {
-    return;
-  }
 
   GURL current_url;
   std::u16string auto_complete_text;
@@ -199,6 +200,18 @@ void AutocompleteControllerAndroid::StartPrefetch(
     auto_complete_text = omnibox::IsNTPPage(page_classification)
                              ? u""
                              : ConvertJavaStringToUTF16(env, j_current_url);
+  }
+
+  // If the Prewarm feature is enabled, we trigger them from the omnibox focus,
+  // so we check them here.
+  if (features::kPrewarmZeroSuggestTrigger.Get()) {
+    if (auto* web_contents =
+            content::WebContents::FromJavaWebContents(j_web_contents)) {
+      auto* prerender_manager =
+          PrerenderManager::GetOrCreateForWebContents(web_contents);
+      CHECK(prerender_manager);
+      prerender_manager->MaybeStartPrewarmSearchResult();
+    }
   }
 
   AutocompleteInput input(auto_complete_text, page_classification,
@@ -288,7 +301,9 @@ void AutocompleteControllerAndroid::OnOmniboxFocused(
 }
 
 void AutocompleteControllerAndroid::Stop(JNIEnv* env, bool clear_results) {
-  autocomplete_controller_->Stop(clear_results);
+  autocomplete_controller_->Stop(clear_results
+                                     ? AutocompleteStopReason::kClobbered
+                                     : AutocompleteStopReason::kInteraction);
 }
 
 void AutocompleteControllerAndroid::ResetSession(JNIEnv* env) {
@@ -351,12 +366,7 @@ void AutocompleteControllerAndroid::OnSuggestionSelected(
       base::Milliseconds(elapsed_time_since_first_modified), completed_length,
       now - autocomplete_controller_->last_time_default_match_changed(),
       autocomplete_controller_->result(), match.destination_url,
-      profile_->IsOffTheRecord(),
-      match.zero_prefix_suggestions_shown_in_session,
-      match.zero_prefix_search_suggestions_shown_in_session,
-      match.zero_prefix_url_suggestions_shown_in_session,
-      match.typed_search_suggestions_shown_in_session,
-      match.typed_url_suggestions_shown_in_session);
+      profile_->IsOffTheRecord(), input_.IsZeroSuggest(), match.session);
   autocomplete_controller_->AddProviderAndTriggeringLogs(&log);
 
   OmniboxEventGlobalTracker::GetInstance()->OnURLOpened(&log);
@@ -395,6 +405,14 @@ jboolean AutocompleteControllerAndroid::OnSuggestionTouchDown(
         match_index, match, omnibox::mojom::NavigationPredictor::kTouchDown,
         content::WebContents::FromJavaWebContents(j_web_contents));
   }
+
+  if (SearchPreloadService* search_preload_service =
+          SearchPreloadServiceFactory::GetForProfile(profile_)) {
+    return search_preload_service->OnNavigationLikely(
+        match_index, match, omnibox::mojom::NavigationPredictor::kTouchDown,
+        content::WebContents::FromJavaWebContents(j_web_contents));
+  }
+
   return false;
 }
 

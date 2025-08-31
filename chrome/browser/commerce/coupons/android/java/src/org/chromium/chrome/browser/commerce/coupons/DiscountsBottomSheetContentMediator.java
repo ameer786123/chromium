@@ -14,11 +14,10 @@ import static org.chromium.chrome.browser.commerce.coupons.DiscountsBottomSheetC
 import android.content.Context;
 import android.view.View.OnClickListener;
 
-import androidx.annotation.NonNull;
-
 import org.chromium.base.Callback;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.commerce.core.DiscountClusterType;
@@ -34,32 +33,37 @@ import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Supplier;
 
 /** Mediator for discounts bottom sheet responsible for model list update. */
+@NullMarked
 public class DiscountsBottomSheetContentMediator {
     private final Context mContext;
-    private final Supplier<Tab> mTabSupplier;
+    private final Supplier<@Nullable Tab> mTabSupplier;
     private final ModelList mModelList;
 
     private boolean mCopyButtonClickedHistogramRecorded;
 
     public DiscountsBottomSheetContentMediator(
-            @NonNull Context context,
-            @NonNull Supplier<Tab> tabSupplier,
-            @NonNull ModelList modelList) {
+            Context context, Supplier<@Nullable Tab> tabSupplier, ModelList modelList) {
         mContext = context;
         mTabSupplier = tabSupplier;
         mModelList = modelList;
     }
 
     public void requestShowContent(Callback<Boolean> contentReadyCallback) {
-        ShoppingService shoppingService =
-                ShoppingServiceFactory.getForProfile(mTabSupplier.get().getProfile());
+        Tab tab = mTabSupplier.get();
+        if (tab == null) {
+            contentReadyCallback.onResult(false);
+            return;
+        }
+        ShoppingService shoppingService = ShoppingServiceFactory.getForProfile(tab.getProfile());
         if (shoppingService == null || !shoppingService.isDiscountEligibleToShowOnNavigation()) {
             contentReadyCallback.onResult(false);
+            return;
         }
         shoppingService.getDiscountInfoForUrl(
-                mTabSupplier.get().getUrl(),
+                tab.getUrl(),
                 (url, infoList) -> {
                     updateModelList(infoList);
                     contentReadyCallback.onResult(mModelList.size() > 0);
@@ -71,7 +75,10 @@ public class DiscountsBottomSheetContentMediator {
         mModelList.clear();
     }
 
-    private void updateModelList(List<DiscountInfo> infoList) {
+    private void updateModelList(@Nullable List<DiscountInfo> infoList) {
+        if (infoList == null) {
+            return;
+        }
         for (DiscountInfo info : infoList) {
             if (info == null || info.discountCode.isEmpty()) {
                 continue;
@@ -85,6 +92,8 @@ public class DiscountsBottomSheetContentMediator {
                                     mContext.getString(R.string.discount_code_copy_button_text));
             if (info.expiryTimeSec.isPresent()) {
                 propertyModelBuilder.with(EXPIRY_TIME, formatExpiryTime(info.expiryTimeSec.get()));
+            } else {
+                propertyModelBuilder.with(EXPIRY_TIME, null);
             }
             PropertyModel propertyModel = propertyModelBuilder.build();
             propertyModel.set(

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 // Font Settings Extension API implementation.
 
 #include "chrome/browser/extensions/api/font_settings/font_settings_api.h"
@@ -341,9 +336,15 @@ ExtensionFunction::ResponseAction FontSettingsSetFontFunction::Run() {
 }
 
 ExtensionFunction::ResponseAction FontSettingsGetFontListFunction::Run() {
+#if BUILDFLAG(IS_ANDROID)
+  // Android does not support a mechanism to get "all installed fonts" like
+  // Windows/Mac/Linux.
+  return RespondNow(WithArguments(base::Value::List()));
+#else
   content::GetFontListAsync(
       BindOnce(&FontSettingsGetFontListFunction::FontListHasLoaded, this));
   return RespondLater();
+#endif
 }
 
 void FontSettingsGetFontListFunction::FontListHasLoaded(

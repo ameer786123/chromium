@@ -15,7 +15,6 @@
 #include "ash/clipboard/clipboard_history_item.h"
 #include "ash/clipboard/clipboard_history_menu_model_adapter.h"
 #include "ash/clipboard/clipboard_history_resource_manager.h"
-#include "ash/clipboard/clipboard_history_url_title_fetcher.h"
 #include "ash/clipboard/clipboard_history_util.h"
 #include "ash/clipboard/clipboard_nudge_constants.h"
 #include "ash/clipboard/clipboard_nudge_controller.h"
@@ -225,23 +224,8 @@ ui::KeyEvent SyntheticCtrl(ui::EventType type) {
 void SyntheticPaste(
     crosapi::mojom::ClipboardHistoryControllerShowSource paste_source) {
   auto* host = GetWindowTreeHostForDisplay(
-      display::Screen::GetScreen()->GetDisplayForNewWindows().id());
+      display::Screen::Get()->GetDisplayForNewWindows().id());
   CHECK(host);
-
-  // Because we do not require the user to release Ctrl+V before selecting a
-  // clipboard history item to paste, the Ctrl+V event we synthesize below may
-  // be discarded as a perceived continuation of the long press. Preempt this
-  // scenario by issuing a Ctrl+V release to ensure that the press and release
-  // below are handled as an independent paste.
-  // TODO(http://b/283533126): Replace this workaround with a long-term fix.
-  if (paste_source == crosapi::mojom::ClipboardHistoryControllerShowSource::
-                          kControlVLongpress) {
-    ui::KeyEvent v_release = SyntheticCtrlV(ui::EventType::kKeyReleased);
-    host->DeliverEventToSink(&v_release);
-
-    ui::KeyEvent ctrl_release = SyntheticCtrl(ui::EventType::kKeyReleased);
-    host->DeliverEventToSink(&ctrl_release);
-  }
 
   ui::KeyEvent ctrl_press = SyntheticCtrl(ui::EventType::kKeyPressed);
   host->DeliverEventToSink(&ctrl_press);
@@ -437,8 +421,6 @@ class ClipboardHistoryControllerImpl::MenuDelegate
 ClipboardHistoryControllerImpl::ClipboardHistoryControllerImpl(
     std::unique_ptr<ClipboardHistoryControllerDelegate> delegate)
     : delegate_(std::move(delegate)),
-      image_model_factory_(delegate_->CreateImageModelFactory()),
-      url_title_fetcher_(delegate_->CreateUrlTitleFetcher()),
       clipboard_history_(std::make_unique<ClipboardHistory>()),
       resource_manager_(std::make_unique<ClipboardHistoryResourceManager>(
           clipboard_history_.get())),
@@ -446,9 +428,6 @@ ClipboardHistoryControllerImpl::ClipboardHistoryControllerImpl(
       nudge_controller_(
           std::make_unique<ClipboardNudgeController>(clipboard_history_.get())),
       menu_delegate_(std::make_unique<MenuDelegate>(this)) {
-  if (!image_model_factory_ || !url_title_fetcher_) {
-    CHECK_IS_TEST();
-  }
   clipboard_history_->AddObserver(this);
   resource_manager_->AddObserver(this);
   SessionController::Get()->AddObserver(this);
@@ -1119,7 +1098,7 @@ void ClipboardHistoryControllerImpl::AdvancePseudoFocus(bool reverse) {
 }
 
 gfx::Rect ClipboardHistoryControllerImpl::CalculateAnchorRect() const {
-  display::Display display = display::Screen::GetScreen()->GetPrimaryDisplay();
+  display::Display display = display::Screen::Get()->GetPrimaryDisplay();
   auto* host = GetWindowTreeHostForDisplay(display.id());
 
   // Some web apps render the caret in an IFrame, and we will not get the
@@ -1146,8 +1125,7 @@ gfx::Rect ClipboardHistoryControllerImpl::CalculateAnchorRect() const {
   if (textfield_bounds_are_valid)
     return textfield_bounds;
 
-  return gfx::Rect(display::Screen::GetScreen()->GetCursorScreenPoint(),
-                   gfx::Size());
+  return gfx::Rect(display::Screen::Get()->GetCursorScreenPoint(), gfx::Size());
 }
 
 void ClipboardHistoryControllerImpl::OnMenuClosed() {

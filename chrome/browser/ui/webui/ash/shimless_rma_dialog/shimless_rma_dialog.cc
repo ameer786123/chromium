@@ -12,6 +12,7 @@
 #include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
@@ -45,14 +46,14 @@ void ShimlessRmaDialog::AdjustWidgetInitParams(
   params->name = "ShimlessRmaDialogView";
   params->type = views::Widget::InitParams::Type::TYPE_WINDOW_FRAMELESS;
   params->visible_on_all_workspaces = true;
-  params->corner_radius = 0;
+  params->rounded_corners = gfx::RoundedCornersF();
   params->show_state = ui::mojom::WindowShowState::kFullscreen;
   params->remove_standard_frame = true;
   params->opacity = views::Widget::InitParams::WindowOpacity::kOpaque;
 }
 
 void ShimlessRmaDialog::GetDialogSize(gfx::Size* size) const {
-  *size = display::Screen::GetScreen()->GetPrimaryDisplay().size();
+  *size = display::Screen::Get()->GetPrimaryDisplay().size();
 }
 
 bool ShimlessRmaDialog::ShouldShowCloseButton() const {
@@ -70,7 +71,7 @@ bool ShimlessRmaDialog::CanMaximizeDialog() const {
 void ShimlessRmaDialog::OnDisplayMetricsChanged(const display::Display& display,
                                                 uint32_t changed_metrics) {
   dialog_window()->SetBounds(
-      display::Screen::GetScreen()->GetPrimaryDisplay().bounds());
+      display::Screen::Get()->GetPrimaryDisplay().bounds());
 }
 
 }  // namespace ash

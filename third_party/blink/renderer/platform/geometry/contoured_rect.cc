@@ -8,13 +8,65 @@
 
 #include "third_party/blink/renderer/platform/geometry/path.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "ui/gfx/geometry/outsets_f.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/quad_f.h"
+#include "ui/gfx/geometry/rect_f.h"
 
 namespace blink {
 
 using Corner = ContouredRect::Corner;
+using CornerCurvature = ContouredRect::CornerCurvature;
+
+namespace {
+float CornerRectIntercept(float y,
+                          const gfx::RectF& corner_rect,
+                          float curvature) {
+  DCHECK_GT(corner_rect.height(), 0);
+
+  // Retain existing logic for rounded curvature, to keep backwards
+  // compatibility. The general-case version has some floating point rounding
+  // differences.
+  if (curvature == CornerCurvature::kRound) {
+    return corner_rect.width() *
+           sqrt(1 - (y * y) / (corner_rect.height() * corner_rect.height()));
+  }
+
+  // A concave superellipse is a mirror image of the convex version, rather than
+  // the direct superellipse.
+  if (curvature < CornerCurvature::kBevel) {
+    return corner_rect.width() - CornerRectIntercept(corner_rect.height() - y,
+                                                     corner_rect,
+                                                     1 / curvature);
+  }
+  return corner_rect.width() *
+         std::pow(1 - std::pow(y / corner_rect.height(), curvature),
+                  1 / curvature);
+}
+
+void ApplyOutsetAsTransform(FloatRoundedRect& rect,
+                            const gfx::OutsetsF& outsets) {
+  if (rect.IsEmpty()) {
+    return;
+  }
+
+  // For anything else, keep the same proportions between the original radii and
+  // the original rect.
+  gfx::RectF new_rect = rect.Rect();
+  FloatRoundedRect::Radii radii = rect.GetRadii();
+  new_rect.Outset(outsets);
+
+  float scale_x = new_rect.width() / rect.Rect().width();
+  float scale_y = new_rect.height() / rect.Rect().height();
+  radii.SetTopLeft(gfx::ScaleSize(radii.TopLeft(), scale_x, scale_y));
+  radii.SetTopRight(gfx::ScaleSize(radii.TopRight(), scale_x, scale_y));
+  radii.SetBottomRight(gfx::ScaleSize(radii.BottomRight(), scale_x, scale_y));
+  radii.SetBottomLeft(gfx::ScaleSize(radii.BottomLeft(), scale_x, scale_y));
+  rect.SetRadii(radii);
+  rect.SetRect(new_rect);
+}
+}  // namespace
 
 String ContouredRect::CornerCurvature::ToString() const {
   return String::Format("tl:%.2f; tr:%.2f; bl:%.2f; br:%.2f", TopLeft(),
@@ -28,7 +80,8 @@ String ContouredRect::ToString() const {
     return rect_string;
   }
 
-  return rect_string + " curvature:(" + GetCornerCurvature().ToString() + ")";
+  return StrCat(
+      {rect_string, " curvature:(", GetCornerCurvature().ToString(), ")"});
 }
 
 bool ContouredRect::IntersectsQuad(const gfx::QuadF& quad) const {
@@ -43,21 +96,64 @@ void ContouredRect::OutsetForMarginOrShadow(const gfx::OutsetsF& outsets) {
     return;
   }
 
-  // For anything else, keep the same proportions between the original radii and
-  // the original rect.
-  gfx::RectF new_rect = rect_.Rect();
-  FloatRoundedRect::Radii radii = rect_.GetRadii();
-  new_rect.Outset(outsets);
+  ApplyOutsetAsTransform(rect_, outsets);
+  if (origin_rect_) {
+    ApplyOutsetAsTransform(*origin_rect_, outsets);
+  }
+}
 
-  CHECK(!rect_.IsEmpty());
-  float scale_x = new_rect.width() / rect_.Rect().width();
-  float scale_y = new_rect.height() / rect_.Rect().height();
-  radii.SetTopLeft(gfx::ScaleSize(radii.TopLeft(), scale_x, scale_y));
-  radii.SetTopRight(gfx::ScaleSize(radii.TopRight(), scale_x, scale_y));
-  radii.SetBottomRight(gfx::ScaleSize(radii.BottomRight(), scale_x, scale_y));
-  radii.SetBottomLeft(gfx::ScaleSize(radii.BottomLeft(), scale_x, scale_y));
-  rect_.SetRadii(radii);
-  rect_.SetRect(new_rect);
+bool ContouredRect::XInterceptsAtY(float y,
+                                   float& min_x_intercept,
+                                   float& max_x_intercept) const {
+  if (y < Rect().y() || y > Rect().bottom()) {
+    return false;
+  }
+
+  if (!IsRounded()) {
+    min_x_intercept = Rect().x();
+    max_x_intercept = Rect().right();
+    return true;
+  }
+
+  const gfx::RectF& top_left_rect = rect_.TopLeftCorner();
+  const gfx::RectF& bottom_left_rect = rect_.BottomLeftCorner();
+
+  if (!top_left_rect.IsEmpty() && y >= top_left_rect.y() &&
+      y < top_left_rect.bottom()) {
+    min_x_intercept =
+        top_left_rect.right() -
+        CornerRectIntercept(top_left_rect.bottom() - y, top_left_rect,
+                            corner_curvature_.TopLeft());
+  } else if (!bottom_left_rect.IsEmpty() && y >= bottom_left_rect.y() &&
+             y <= bottom_left_rect.bottom()) {
+    min_x_intercept =
+        bottom_left_rect.right() -
+        CornerRectIntercept(y - bottom_left_rect.y(), bottom_left_rect,
+                            corner_curvature_.BottomLeft());
+  } else {
+    min_x_intercept = rect_.Rect().x();
+  }
+
+  const gfx::RectF& top_right_rect = rect_.TopRightCorner();
+  const gfx::RectF& bottom_right_rect = rect_.BottomRightCorner();
+
+  if (!top_right_rect.IsEmpty() && y >= top_right_rect.y() &&
+      y <= top_right_rect.bottom()) {
+    max_x_intercept =
+        top_right_rect.x() + CornerRectIntercept(top_right_rect.bottom() - y,
+                                                 top_right_rect,
+                                                 corner_curvature_.TopRight());
+  } else if (!bottom_right_rect.IsEmpty() && y >= bottom_right_rect.y() &&
+             y <= bottom_right_rect.bottom()) {
+    max_x_intercept =
+        bottom_right_rect.x() +
+        CornerRectIntercept(y - bottom_right_rect.y(), bottom_right_rect,
+                            corner_curvature_.BottomRight());
+  } else {
+    max_x_intercept = rect_.Rect().right();
+  }
+
+  return true;
 }
 
 Path ContouredRect::GetPath() const {
@@ -71,21 +167,37 @@ String ContouredRect::Corner::ToString() const {
                         curvature_);
 }
 
+gfx::PointF ContouredRect::Corner::QuadraticControlPoint() const {
+  if (IsConcave()) {
+    return Inverse().QuadraticControlPoint();
+  }
+
+  // For hyperellipses (round and above), there is no equivalent quadratic, so
+  // we use the outer point.
+  if (Curvature() >= CornerCurvature::kRound) {
+    return Outer();
+  }
+
+  // For hypoellipses (between bevel and round), the quadratic curve is very
+  // close to the superellipse. Given a point (P, P) at t=0.5, the quadratic
+  // control point is at 2 * P - 0.5.
+  const float normalized_control_point =
+      2 * HalfCornerForCurvature(curvature_) - 0.5;
+  return MapPoint(
+      gfx::Vector2dF(normalized_control_point, normalized_control_point));
+}
+
 // This method creates a corner from a target (this) and an origin.
 // The resulting "aligned" corner has its coordinates and curvature adjusted
 // in such a way that it would have consistent thickness along its entire path.
-Corner ContouredRect::Corner::AlignedToOrigin(const Corner& origin) const {
-  if (IsZero() || *this == origin) {
+Corner ContouredRect::Corner::AlignedToOrigin(const Corner& origin,
+                                              float thickness_start,
+                                              float thickness_end) const {
+  if (origin.IsEmpty() || *this == origin) {
     return *this;
   }
 
   const float curvature = origin.Curvature();
-
-  // The thickness is derived from the difference between the target and the
-  // origin, in the v1 (start->outer) and v2 (outer->end) directions.
-  const float thickness_start = (origin.v2().Length() - v2().Length());
-  const float thickness_end = (origin.v1().Length() - v1().Length());
-
   // The curve should start at a position perpendicular to the curve, with the
   // thickness as the distance. We use the hull of the superellipse (x*2 - 1/2,
   // y*2 - 1/2), normalize a vector in that direction, and find its

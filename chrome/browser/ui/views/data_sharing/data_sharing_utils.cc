@@ -12,10 +12,14 @@
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/token.h"
+#include "chrome/browser/collaboration/collaboration_service_factory.h"
 #include "chrome/browser/data_sharing/data_sharing_service_factory.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/collaboration/public/collaboration_service.h"
+#include "components/collaboration/public/service_status.h"
 #include "components/data_sharing/public/group_data.h"
 #include "components/saved_tab_groups/public/saved_tab_group_tab.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
@@ -77,11 +81,11 @@ GURL CreateJoinUrl(const GURL& url,
   return updated_url;
 }
 
-GURL CreateManageUrl(
-    const GURL& url,
-    const std::variant<tab_groups::LocalTabGroupID, data_sharing::GroupToken>&
-        group_id,
-    const std::optional<tab_groups::SavedTabGroup> saved_group) {
+GURL CreateManageUrl(const GURL& url,
+                     const std::variant<tab_groups::LocalTabGroupID,
+                                        data_sharing::GroupToken>& group_id,
+                     const std::optional<tab_groups::SavedTabGroup> saved_group,
+                     bool is_disabled_for_policy) {
   GURL updated_url = url;
   CHECK(saved_group->is_shared_tab_group());
   if (std::holds_alternative<tab_groups::LocalTabGroupID>(group_id)) {
@@ -105,6 +109,10 @@ GURL CreateManageUrl(
     updated_url = net::AppendQueryParameter(updated_url, kQueryParamGroupId,
                                             group_token.group_id.value());
   }
+
+  updated_url =
+      net::AppendQueryParameter(updated_url, kQueryParamIsDisabledForPolicy,
+                                is_disabled_for_policy ? kTrue : kFalse);
 
   return updated_url;
 }
@@ -168,7 +176,7 @@ GURL CreateCloseUrl(
 std::optional<GURL> data_sharing::GenerateWebUIUrl(RequestInfo request_info,
                                                    Profile* profile) {
   tab_groups::TabGroupSyncService* const tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(profile);
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile);
   if (!tab_group_service) {
     return std::nullopt;
   }
@@ -207,7 +215,13 @@ std::optional<GURL> data_sharing::GenerateWebUIUrl(RequestInfo request_info,
       break;
     }
     case kManage: {
-      url = CreateManageUrl(url, request_info.id, saved_group);
+      auto* collaboration_service =
+          collaboration::CollaborationServiceFactory::GetForProfile(profile);
+      bool is_disabled_for_policy =
+          collaboration_service->GetServiceStatus().collaboration_status ==
+          collaboration::CollaborationStatus::kDisabledForPolicy;
+      url = CreateManageUrl(url, request_info.id, saved_group,
+                            is_disabled_for_policy);
       break;
     }
     case kDelete: {

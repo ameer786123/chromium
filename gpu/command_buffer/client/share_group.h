@@ -13,6 +13,7 @@
 #include <GLES2/gl2.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 
 #include "base/synchronization/lock.h"
@@ -66,6 +67,7 @@ class IdHandlerInterface {
   virtual ~IdHandlerInterface() = default;
 
   // Makes some ids at or above id_offset.
+  // TODO(crbug.com/439823997): Remove `id_offset` it's not needed anymore.
   virtual void MakeIds(
       GLES2Implementation* gl_impl,
       GLuint id_offset, GLsizei n, GLuint* ids) = 0;
@@ -180,10 +182,12 @@ class GLES2_IMPL_EXPORT ShareGroup
   // Install a new program info manager. Used for testing only;
   void SetProgramInfoManagerForTesting(ProgramInfoManager* manager);
 
-  std::unique_ptr<IdHandlerInterface> id_handlers_[static_cast<int>(
-      SharedIdNamespaces::kNumSharedIdNamespaces)];
-  std::unique_ptr<RangeIdHandlerInterface>
-      range_id_handlers_[id_namespaces::kNumRangeIdNamespaces];
+  std::array<std::unique_ptr<IdHandlerInterface>,
+             static_cast<int>(SharedIdNamespaces::kNumSharedIdNamespaces)>
+      id_handlers_;
+  std::array<std::unique_ptr<RangeIdHandlerInterface>,
+             id_namespaces::kNumRangeIdNamespaces>
+      range_id_handlers_;
   std::unique_ptr<ProgramInfoManager> program_info_manager_;
   ClientDiscardableTextureManager discardable_texture_manager_;
 

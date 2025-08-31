@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 
+#include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
@@ -107,13 +108,6 @@ int NetworkServiceNetworkDelegate::OnBeforeURLRequest(
         request->traffic_annotation());
   }
 
-  if (!loader)
-    return net::OK;
-
-  if (network_service) {
-    loader->SetEnableReportingRawHeaders(network_service->HasRawHeadersAccess(
-        loader->GetProcessId(), *effective_url));
-  }
   return net::OK;
 }
 
@@ -220,10 +214,6 @@ NetworkServiceNetworkDelegate::OnGetStorageAccessStatus(
                               request.cookie_setting_overrides(),
                               request.cookie_partition_key(),
                               GetPermissionsPolicy(request));
-}
-
-bool NetworkServiceNetworkDelegate::OnIsStorageAccessHeaderEnabled() const {
-  return CookieSettings::IsStorageAccessHeadersEnabled();
 }
 
 bool NetworkServiceNetworkDelegate::OnAnnotateAndMoveUserBlockedCookies(
@@ -349,9 +339,9 @@ bool NetworkServiceNetworkDelegate::OnCanQueueReportingReport(
     const url::Origin& origin) const {
   return network_context_->cookie_manager()
       ->cookie_settings()
-      .IsFullCookieAccessAllowed(origin.GetURL(),
-                                 net::SiteForCookies::FromOrigin(origin),
-                                 origin, net::CookieSettingOverrides());
+      .IsFullCookieAccessAllowed(
+          origin.GetURL(), net::SiteForCookies::FromOrigin(origin), origin,
+          net::CookieSettingOverrides(), /*cookie_partition_key=*/std::nullopt);
 }
 
 void NetworkServiceNetworkDelegate::OnCanSendReportingReports(
@@ -383,9 +373,9 @@ bool NetworkServiceNetworkDelegate::OnCanSetReportingClient(
     const GURL& endpoint) const {
   return network_context_->cookie_manager()
       ->cookie_settings()
-      .IsFullCookieAccessAllowed(origin.GetURL(),
-                                 net::SiteForCookies::FromOrigin(origin),
-                                 origin, net::CookieSettingOverrides());
+      .IsFullCookieAccessAllowed(
+          origin.GetURL(), net::SiteForCookies::FromOrigin(origin), origin,
+          net::CookieSettingOverrides(), /*cookie_partition_key=*/std::nullopt);
 }
 
 bool NetworkServiceNetworkDelegate::OnCanUseReportingClient(
@@ -393,9 +383,9 @@ bool NetworkServiceNetworkDelegate::OnCanUseReportingClient(
     const GURL& endpoint) const {
   return network_context_->cookie_manager()
       ->cookie_settings()
-      .IsFullCookieAccessAllowed(origin.GetURL(),
-                                 net::SiteForCookies::FromOrigin(origin),
-                                 origin, net::CookieSettingOverrides());
+      .IsFullCookieAccessAllowed(
+          origin.GetURL(), net::SiteForCookies::FromOrigin(origin), origin,
+          net::CookieSettingOverrides(), /*cookie_partition_key=*/std::nullopt);
 }
 
 int NetworkServiceNetworkDelegate::HandleClearSiteDataHeader(

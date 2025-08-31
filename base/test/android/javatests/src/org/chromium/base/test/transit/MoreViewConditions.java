@@ -7,8 +7,9 @@ package org.chromium.base.test.transit;
 import android.view.View;
 import android.view.ViewGroup;
 
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
+
+import java.util.function.Supplier;
 
 /**
  * More specific {@link Condition}s related to Android {@link View}s.
@@ -23,10 +24,11 @@ public class MoreViewConditions {
     /** Condition that the supplied View has exactly the expected number of children. */
     public static class ViewHasChildrenCountCondition extends UiThreadCondition {
 
-        private final Supplier<View> mViewSupplier;
+        private final Supplier<? extends View> mViewSupplier;
         private final int mExpectedCount;
 
-        public ViewHasChildrenCountCondition(Supplier<View> viewSupplier, int expectedCount) {
+        public ViewHasChildrenCountCondition(
+                Supplier<? extends View> viewSupplier, int expectedCount) {
             mViewSupplier = dependOnSupplier(viewSupplier, "View");
             mExpectedCount = expectedCount;
         }

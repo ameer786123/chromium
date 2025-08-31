@@ -142,6 +142,11 @@ inline constexpr content::PreloadingPredictor kChromeCustomTabs(
 inline constexpr content::PreloadingPredictor
     kMouseHoverOrMouseDownOnNewTabPage(116,
                                        "MouseHoverOrMouseDownOnNewTabPage");
+
+// When the default search engine needs to prerender a prewarm page.
+inline constexpr content::PreloadingPredictor kPrewarmDefaultSearchEngine(
+    117,
+    "PrewarmDefaultSearchEngine");
 }  // namespace chrome_preloading_predictor
 // LINT.ThenChange()
 
@@ -197,7 +202,13 @@ enum class ChromePreloadingEligibility {
           content::PreloadingEligibility::kPreloadingEligibilityContentEnd) +
       6,
 
-  kMaxValue = kPreloadingErrorBackOff,
+  // Search urls are not eligible for certain types of preloading triggers.
+  KDisallowSearchUrl =
+      static_cast<int>(
+          content::PreloadingEligibility::kPreloadingEligibilityContentEnd) +
+      7,
+
+  kMaxValue = KDisallowSearchUrl,
 };
 // LINT.ThenChange()
 
@@ -216,13 +227,15 @@ std::u16string ExtractSearchTermsFromURL(
     content::BrowserContext* browser_context,
     const GURL& url);
 
-// Returns true if a canonical URL representation of a |preloading_url| can be
-// generated. |canonical_url| is set to the canonical URL representation when
-// this method returns |true|.
+// Returns true if a canonical URL representation of a `preloading_url` can be
+// generated. `canonical_url` is set to the canonical URL representation when
+// this method returns `true`. The search query is returned in `search_terms` if
+// the passing `search_terms` is not nullptr.
 bool HasCanonicalPreloadingOmniboxSearchURL(
     const GURL& preloading_url,
     content::BrowserContext* browser_context,
-    GURL* canonical_url);
+    GURL* canonical_url,
+    std::u16string* search_terms = nullptr);
 
 // Returns true when |navigation_url| is considered as navigating to the same
 // omnibox search results page as |canonical_preloading_search_url|.

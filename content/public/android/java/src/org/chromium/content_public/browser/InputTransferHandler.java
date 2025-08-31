@@ -25,10 +25,10 @@ import org.chromium.ui.base.WindowAndroid;
 public class InputTransferHandler implements WindowAndroid.SelectionHandlesObserver {
     private static @Nullable Integer sInitialBrowserToken;
 
-    private InputTransferToken mBrowserToken;
+    private final InputTransferToken mBrowserToken;
     private @Nullable InputTransferToken mVizToken;
     private boolean mSelectionHandlesActive;
-    private WindowAndroid mWindowAndroid;
+    private final WindowAndroid mWindowAndroid;
 
     public InputTransferHandler(InputTransferToken browserToken, WindowAndroid windowAndroid) {
         if (sInitialBrowserToken == null) {
@@ -64,11 +64,12 @@ public class InputTransferHandler implements WindowAndroid.SelectionHandlesObser
         }
 
         // Browser InputTransfeToken might have changed. On Viz side we aren't destroying
-        // InputReceiver (due to platform bug: b/385124056) which was created with the initial
-        // Browser token. Attempt at transferring touch sequence using new Browser token and old Viz
-        // token would fail, so just early out here instead of making a binder call later.
+        // InputReceiver (due to platform bug: b/385124056 on Android V) which was created with the
+        // initial Browser token. Attempt at transferring touch sequence using new Browser token and
+        // old Viz token would fail, so just early out here instead of making a binder call later.
         assert sInitialBrowserToken != null;
-        if (sInitialBrowserToken != mBrowserToken.hashCode()) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA
+                && sInitialBrowserToken != mBrowserToken.hashCode()) {
             return TransferInputToVizResult.BROWSER_TOKEN_CHANGED;
         }
 

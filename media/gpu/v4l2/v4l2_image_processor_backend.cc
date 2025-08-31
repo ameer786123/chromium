@@ -36,6 +36,7 @@
 #include "media/gpu/chromeos/video_frame_resource.h"
 #include "media/gpu/macros.h"
 #include "media/gpu/v4l2/v4l2_utils.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 namespace media {
 
@@ -58,7 +59,7 @@ void FillV4L2BufferByGpuMemoryBufferHandle(
   DCHECK_EQ(buffer->Memory(), V4L2_MEMORY_DMABUF);
   const size_t num_planes = GetNumPlanesOfV4L2PixFmt(fourcc.ToV4L2PixFmt());
   const std::vector<gfx::NativePixmapPlane>& planes =
-      gmb_handle.native_pixmap_handle.planes;
+      gmb_handle.native_pixmap_handle().planes;
 
   for (size_t i = 0; i < num_planes; ++i) {
     if (fourcc.IsMultiPlanar()) {
@@ -854,12 +855,11 @@ void V4L2ImageProcessorBackend::Dequeue() {
     output_frame->set_color_space(job_record->input_frame->ColorSpace());
 
     if (job_record->start_time) {
-      TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
-          "media", "V4L2ImageProcessorBackend::Process", TRACE_ID_LOCAL(this),
-          job_record->start_time.value());
-      TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP1(
-          "media", "V4L2ImageProcessorBackend::Process", TRACE_ID_LOCAL(this),
-          base::TimeTicks::Now(), "timestamp", timestamp.InMilliseconds());
+      TRACE_EVENT_BEGIN("media", "V4L2ImageProcessorBackend::Process",
+                        perfetto::Track::FromPointer(this),
+                        job_record->start_time.value());
+      TRACE_EVENT_END("media", perfetto::Track::FromPointer(this), "timestamp",
+                      timestamp.InMilliseconds());
     }
 
     if (!job_record->legacy_ready_cb.is_null()) {
@@ -909,7 +909,7 @@ bool V4L2ImageProcessorBackend::EnqueueInputRecord(
       FillV4L2BufferByGpuMemoryBufferHandle(
           input_config_.fourcc, input_config_.size, *input_handle, &buffer);
       if (!std::move(buffer).QueueDMABuf(
-              input_handle->native_pixmap_handle.planes)) {
+              input_handle->native_pixmap_handle().planes)) {
         VPLOGF(1) << "Failed to queue a DMABUF buffer to input queue";
         NotifyError();
         return false;
@@ -948,7 +948,7 @@ bool V4L2ImageProcessorBackend::EnqueueOutputRecord(
       FillV4L2BufferByGpuMemoryBufferHandle(
           output_config_.fourcc, output_config_.size, *output_handle, &buffer);
       return std::move(buffer).QueueDMABuf(
-          output_handle->native_pixmap_handle.planes);
+          output_handle->native_pixmap_handle().planes);
     }
     default:
       NOTREACHED();

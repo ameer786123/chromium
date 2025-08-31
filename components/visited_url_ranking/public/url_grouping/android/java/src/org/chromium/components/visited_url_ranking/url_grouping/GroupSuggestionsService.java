@@ -6,6 +6,8 @@ package org.chromium.components.visited_url_ranking.url_grouping;
 
 import org.chromium.base.Callback;
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.url.GURL;
 
 /**
  * GroupSuggestionsService is the core class for managing group suggestions. It represents a native
@@ -28,7 +30,7 @@ public interface GroupSuggestionsService {
     void didAddTab(int tabId, int tabLaunchType);
 
     /** Gets called when a tab is selected. */
-    void didSelectTab(int tabId, int tabSelectionType, int lastTabId);
+    void didSelectTab(int tabId, GURL url, int tabSelectionType, int lastTabId);
 
     /** Gets called when a tab will be closed. */
     void willCloseTab(int tabId);
@@ -42,12 +44,24 @@ public interface GroupSuggestionsService {
     /** Gets called when user enters tab switcher. */
     void didEnterTabSwitcher();
 
-    /** Gets called when page load finishes on any candidate tab. */
-    void onPageLoadFinished(int tabId);
+    /** Gets called when user-initiated page navigation finishes on any candidate tab. */
+    void onDidFinishNavigation(int tabId, int transitionType);
 
     /** Registers a delegate to receive backend suggestions. */
     void registerDelegate(Delegate delegate, int windowId);
 
     /** Unregisters a delegate to receive backend suggestions. */
     void unregisterDelegate(Delegate delegate);
+
+    /**
+     * Returns the cached suggestions for the given window/scope.
+     *
+     * <p>If a non-null value is returned, {@link CachedSuggestions#userResponseMetadataCallback}
+     * must either be called once or destroyed before it goes out of scope.
+     *
+     * @param windowId The ID of the window or tab model scope.
+     * @return {@link CachedSuggestions} containing suggestions for the window, or null if none are
+     *     cached.
+     */
+    @Nullable CachedSuggestions getCachedSuggestions(int windowId);
 }

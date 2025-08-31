@@ -5,7 +5,9 @@
 #import "ios/chrome/browser/authentication/ui_bundled/separate_profiles_util.h"
 
 #import "base/strings/sys_string_conversions.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin/account_menu/account_menu_constants.h"
+#import "base/test/ios/wait_util.h"
+#import "ios/chrome/browser/authentication/ui_bundled/account_menu/account_menu_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/history_sync/pref_names.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/first_run/ui_bundled/first_run_constants.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_constants.h"
@@ -24,6 +26,12 @@ id<GREYMatcher> AccountMenuMatcher() {
   return grey_accessibilityID(kAccountMenuTableViewId);
 }
 
+id<GREYMatcher> SignOutSnackbarLabelMatcher() {
+  NSString* snackbarLabel = l10n_util::GetNSString(
+      IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_SIGN_OUT_SNACKBAR_MESSAGE);
+  return grey_accessibilityLabel(snackbarLabel);
+}
+
 void TapIdentityDisc() {
   [ChromeEarlGrey
       waitForSufficientlyVisibleElementWithMatcher:IdentityDiscMatcher()];
@@ -34,8 +42,8 @@ void TapIdentityDisc() {
 void OpenAccountMenu() {
   TapIdentityDisc();
   // Ensure the Account Menu is displayed.
-  [[EarlGrey selectElementWithMatcher:AccountMenuMatcher()]
-      assertWithMatcher:grey_sufficientlyVisible()];
+  [ChromeEarlGrey
+      waitForSufficientlyVisibleElementWithMatcher:AccountMenuMatcher()];
 }
 
 void OpenManageAccountsView() {
@@ -52,10 +60,43 @@ void OpenManageAccountsView() {
                                        IDS_IOS_ACCOUNT_MENU_EDIT_ACCOUNT_LIST)),
                                    grey_interactable(), nil)]
       performAction:grey_tap()];
-  // Checks the manage accounts view is shown
+  // Checks the manage accounts view is shown.
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
                                           kSettingsEditAccountListTableViewId)]
       assertWithMatcher:grey_sufficientlyVisible()];
+}
+
+void SignoutFromAccountMenu() {
+  OpenAccountMenu();
+  // Tap in Sign out.
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                          kAccountMenuSignoutButtonId)]
+      performAction:grey_tap()];
+
+  // Dismiss the signout snackbar.
+  [ChromeEarlGrey
+      waitForUIElementToAppearWithMatcher:SignOutSnackbarLabelMatcher()
+                                  timeout:base::test::ios::
+                                              kWaitForUIElementTimeout];
+  [[EarlGrey selectElementWithMatcher:SignOutSnackbarLabelMatcher()]
+      performAction:grey_tap()];
+}
+
+void WaitForEnterpriseOnboardingScreen() {
+  // Wait for the enterprise onboarding screen for `kWaitForActionTimeout`
+  // seconds.
+  ConditionBlock enterpriseOnboardingCondition = ^{
+    NSError* error;
+    [[EarlGrey selectElementWithMatcher:ManagedProfileCreationScreenMatcher()]
+        assertWithMatcher:grey_sufficientlyVisible()
+                    error:&error];
+
+    return error == nil;
+  };
+  GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(
+                 base::test::ios::kWaitForActionTimeout,
+                 enterpriseOnboardingCondition),
+             @"Enterprise onboarding didn't appear.");
 }
 
 id<GREYMatcher> SigninScreenMatcher() {
@@ -97,4 +138,11 @@ id<GREYMatcher> ContinueButtonWithIdentityMatcher(
                  grey_sufficientlyVisible(), nil);
 
   return matcher;
+}
+
+void ClearHistorySyncPrefs() {
+  [ChromeEarlGrey clearUserPrefWithName:history_sync_prefs::
+                                            kHistorySyncSuccessiveDeclineCount];
+  [ChromeEarlGrey clearUserPrefWithName:history_sync_prefs::
+                                            kHistorySyncLastDeclinedTimestamp];
 }

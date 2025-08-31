@@ -54,7 +54,7 @@ constexpr char kAndroidIntentPrefix[] = "#Intent";
 
 // Returns true if device is in tablet mode, false otherwise.
 bool IsTabletMode() {
-  return display::Screen::GetScreen()->InTabletMode();
+  return display::Screen::Get()->InTabletMode();
 }
 
 bool launch_with_mic_open() {
@@ -85,20 +85,13 @@ AssistantInteractionControllerImpl::AssistantInteractionControllerImpl(
   model_.AddObserver(this);
 
   assistant_controller_observation_.Observe(AssistantController::Get());
-  display_observation_.Observe(display::Screen::GetScreen());
+  display_observation_.Observe(display::Screen::Get());
 }
 
 AssistantInteractionControllerImpl::~AssistantInteractionControllerImpl() {
   model_.RemoveObserver(this);
   if (assistant_)
     assistant_->RemoveAssistantInteractionSubscriber(this);
-}
-
-// static
-void AssistantInteractionControllerImpl::RegisterProfilePrefs(
-    PrefRegistrySimple* registry) {
-  registry->RegisterTimePref(prefs::kAssistantTimeOfLastInteraction,
-                             base::Time());
 }
 
 void AssistantInteractionControllerImpl::SetAssistant(

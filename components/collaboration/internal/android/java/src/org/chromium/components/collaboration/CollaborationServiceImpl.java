@@ -14,6 +14,8 @@ import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.data_sharing.GroupData;
 import org.chromium.components.data_sharing.member_role.MemberRole;
+import org.chromium.components.tab_group_sync.EitherId.EitherGroupId;
+import org.chromium.components.tab_group_sync.LocalTabGroupId;
 import org.chromium.url.GURL;
 
 /**
@@ -37,25 +39,48 @@ public class CollaborationServiceImpl implements CollaborationService {
 
     @Override
     public boolean isEmptyService() {
-        return CollaborationServiceImplJni.get().isEmptyService(mNativePtr, this);
+        return CollaborationServiceImplJni.get().isEmptyService(mNativePtr);
     }
 
     @Override
-    public void startJoinFlow(
-            CollaborationControllerDelegate delegate,
-            GURL url,
-            @CollaborationServiceJoinEntryPoint int entry) {
-        CollaborationServiceImplJni.get()
-                .startJoinFlow(mNativePtr, delegate.getNativePtr(), url, entry);
+    public void startJoinFlow(CollaborationControllerDelegate delegate, GURL url) {
+        CollaborationServiceImplJni.get().startJoinFlow(mNativePtr, delegate.getNativePtr(), url);
     }
 
     @Override
     public void startShareOrManageFlow(
             CollaborationControllerDelegate delegate,
-            String syncId,
+            EitherGroupId eitherId,
             @CollaborationServiceShareOrManageEntryPoint int entry) {
+        String syncId = null;
+        LocalTabGroupId localId = null;
+        if (eitherId.isSyncId()) {
+            syncId = eitherId.getSyncId();
+        } else {
+            localId = eitherId.getLocalId();
+        }
+
         CollaborationServiceImplJni.get()
-                .startShareOrManageFlow(mNativePtr, delegate.getNativePtr(), syncId, entry);
+                .startShareOrManageFlow(
+                        mNativePtr, delegate.getNativePtr(), syncId, localId, entry);
+    }
+
+    @Override
+    public void startLeaveOrDeleteFlow(
+            CollaborationControllerDelegate delegate,
+            EitherGroupId eitherId,
+            @CollaborationServiceLeaveOrDeleteEntryPoint int entry) {
+        String syncId = null;
+        LocalTabGroupId localId = null;
+        if (eitherId.isSyncId()) {
+            syncId = eitherId.getSyncId();
+        } else {
+            localId = eitherId.getLocalId();
+        }
+
+        CollaborationServiceImplJni.get()
+                .startLeaveOrDeleteFlow(
+                        mNativePtr, delegate.getNativePtr(), syncId, localId, entry);
     }
 
     @Override
@@ -108,19 +133,23 @@ public class CollaborationServiceImpl implements CollaborationService {
 
     @NativeMethods
     interface Natives {
-        boolean isEmptyService(
-                long nativeCollaborationServiceAndroid, CollaborationServiceImpl caller);
+        boolean isEmptyService(long nativeCollaborationServiceAndroid);
 
         void startJoinFlow(
-                long nativeCollaborationServiceAndroid,
-                long delegateNativePtr,
-                GURL url,
-                int entry);
+                long nativeCollaborationServiceAndroid, long delegateNativePtr, GURL url);
 
         void startShareOrManageFlow(
                 long nativeCollaborationServiceAndroid,
                 long delegateNativePtr,
-                String syncId,
+                @Nullable String syncId,
+                @Nullable LocalTabGroupId localId,
+                int entry);
+
+        void startLeaveOrDeleteFlow(
+                long nativeCollaborationServiceAndroid,
+                long delegateNativePtr,
+                @Nullable String syncId,
+                @Nullable LocalTabGroupId localId,
                 int entry);
 
         ServiceStatus getServiceStatus(long nativeCollaborationServiceAndroid);

@@ -6,6 +6,9 @@ package org.chromium.chrome.browser.customtabs;
 
 import static androidx.browser.customtabs.CustomTabsIntent.CLOSE_BUTTON_POSITION_END;
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_CLOSE_BUTTON_POSITION;
+import static androidx.test.espresso.assertion.ViewAssertions.matches;
+import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -14,6 +17,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import static org.chromium.chrome.browser.customtabs.CustomTabsTestUtils.createTestBitmap;
+import static org.chromium.ui.test.util.ViewUtils.onViewWaiting;
 
 import android.app.PendingIntent;
 import android.content.Context;
@@ -47,10 +51,8 @@ import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.customtabs.features.minimizedcustomtab.MinimizedFeatureUtils;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.R;
@@ -116,7 +118,7 @@ public class CustomTabActivityRenderTest {
     @Rule
     public final RenderTestRule mRenderTestRule =
             RenderTestRule.Builder.withPublicCorpus()
-                    .setRevision(6)
+                    .setRevision(8)
                     .setBugComponent(RenderTestRule.Component.UI_BROWSER_MOBILE_CUSTOM_TABS)
                     .build();
 
@@ -160,7 +162,15 @@ public class CustomTabActivityRenderTest {
     }
 
     private void startActivityAndRenderToolbar(String renderTestId) throws IOException {
+        startActivityAndRenderToolbar(renderTestId, /* expectTitle= */ false);
+    }
+
+    private void startActivityAndRenderToolbar(String renderTestId, boolean expectTitle)
+            throws IOException {
         mCustomTabActivityTestRule.startCustomTabActivityWithIntent(mIntent);
+        if (expectTitle) {
+            onViewWaiting(withId(R.id.title_bar)).check(matches(isDisplayed()));
+        }
         View toolbarView = mCustomTabActivityTestRule.getActivity().findViewById(R.id.toolbar);
         mRenderTestRule.render(toolbarView, renderTestId);
     }
@@ -178,13 +188,13 @@ public class CustomTabActivityRenderTest {
     public void testCctToolbarWithTitle() throws IOException {
         mIntent.putExtra(
                 CustomTabsIntent.EXTRA_TITLE_VISIBILITY_STATE, CustomTabsIntent.SHOW_PAGE_TITLE);
-        startActivityAndRenderToolbar("cct_toolbar_with_title_with_https_" + mRunWithHttps);
+        startActivityAndRenderToolbar(
+                "cct_toolbar_with_title_with_https_" + mRunWithHttps, /* expectTitle= */ true);
     }
 
     @Test
     @MediumTest
     @Feature("RenderTest")
-    @EnableFeatures({ChromeFeatureList.CCT_MINIMIZED})
     public void testCctToolbarWithMinimizeButton() throws IOException {
         MinimizedFeatureUtils.setDeviceEligibleForMinimizedCustomTabForTesting(true);
         startActivityAndRenderToolbar(
@@ -241,7 +251,6 @@ public class CustomTabActivityRenderTest {
     @Test
     @MediumTest
     @Feature("RenderTest")
-    @EnableFeatures({ChromeFeatureList.CCT_MINIMIZED})
     public void testCctToolbarWithEndCloseButtonWithMinimizeButton() throws IOException {
         MinimizedFeatureUtils.setDeviceEligibleForMinimizedCustomTabForTesting(true);
         mIntent.putExtra(EXTRA_CLOSE_BUTTON_POSITION, CLOSE_BUTTON_POSITION_END);

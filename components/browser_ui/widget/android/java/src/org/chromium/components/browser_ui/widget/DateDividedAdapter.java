@@ -176,7 +176,7 @@ public abstract class DateDividedAdapter extends Adapter<RecyclerView.ViewHolder
 
     /** An item representing a date header. */
     static class DateHeaderTimedItem extends TimedItem {
-        private long mTimestamp;
+        private final long mTimestamp;
 
         public DateHeaderTimedItem(long timestamp) {
             mTimestamp = getDateAtMidnight(timestamp).getTime();
@@ -218,7 +218,7 @@ public abstract class DateDividedAdapter extends Adapter<RecyclerView.ViewHolder
     }
 
     protected static class SubsectionHeaderViewHolder extends RecyclerView.ViewHolder {
-        private View mView;
+        private final View mView;
 
         public SubsectionHeaderViewHolder(View itemView) {
             super(itemView);
@@ -337,7 +337,7 @@ public abstract class DateDividedAdapter extends Adapter<RecyclerView.ViewHolder
 
             Collections.sort(
                     mItems,
-                    new Comparator<TimedItem>() {
+                    new Comparator<>() {
                         @Override
                         public int compare(TimedItem lhs, TimedItem rhs) {
                             return compareItem(lhs, rhs);
@@ -445,7 +445,7 @@ public abstract class DateDividedAdapter extends Adapter<RecyclerView.ViewHolder
 
     private final SortedSet<ItemGroup> mGroups =
             new TreeSet<>(
-                    new Comparator<ItemGroup>() {
+                    new Comparator<>() {
                         @Override
                         public int compare(ItemGroup lhs, ItemGroup rhs) {
                             if (lhs == rhs) return 0;
@@ -781,6 +781,17 @@ public abstract class DateDividedAdapter extends Adapter<RecyclerView.ViewHolder
     @Override
     public final int getItemCount() {
         return mSize;
+    }
+
+    /**
+     * @return Is any normal content is available in the adapter
+     */
+    public boolean isNormalContentAvailable() {
+        for (ItemGroup group : mGroups) {
+            if (group.priority() != GroupPriority.NORMAL_CONTENT) continue;
+            if (group.size() > 0) return true;
+        }
+        return false;
     }
 
     /**

@@ -12,6 +12,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/data_manager/addresses/address_data_cleaner.h"
 #include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
+#include "components/autofill/core/browser/data_manager/addresses/home_and_work_metadata_store.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile_comparator.h"
 #include "components/autofill/core/browser/data_quality/addresses/profile_requirement_utils.h"
@@ -49,6 +50,44 @@ bool ShouldCountryApproximationBeRemoved(
   AutofillProfile without_country = profile;
   without_country.ClearFields({ADDRESS_HOME_COUNTRY});
   return IsMergeableWithExistingProfiles(without_country);
+}
+
+// Checks if `unedited_autofilled_profile_guids` set is populated in a way that
+// allows for creating a profile that is a superset of both the
+// `kAccountNameEmail` profile and one of the Home/Work profiles. This flow
+// works only if there are 2 profiles in the set. One of them must be of type
+// `kAccountNameEmail` and the remaining one must be either `kAccountHome` or
+// `kAccountWork`.
+bool CanCombineAccountNameEmailWithHomeWork(
+    const ProfileImportMetadata& import_metadata,
+    const AddressDataManager& address_data_manager) {
+  if (import_metadata.unedited_autofilled_profile_guids.size() != 2) {
+    return false;
+  }
+
+  bool account_name_email_was_filled = false;
+  bool home_or_work_was_filled = false;
+  for (const auto& guid : import_metadata.unedited_autofilled_profile_guids) {
+    const AutofillProfile* profile =
+        address_data_manager.GetProfileByGUID(guid);
+    if (profile) {
+      switch (profile->record_type()) {
+        case AutofillProfile::RecordType::kAccountNameEmail:
+          account_name_email_was_filled = true;
+          break;
+        case AutofillProfile::RecordType::kAccountHome:
+        case AutofillProfile::RecordType::kAccountWork:
+          home_or_work_was_filled = true;
+          break;
+        case AutofillProfile::RecordType::kAccount:
+        case AutofillProfile::RecordType::kLocalOrSyncable:
+          // These profile types cannot take part in this flow, hence return
+          // false.
+          return false;
+      }
+    }
+  }
+  return account_name_email_was_filled && home_or_work_was_filled;
 }
 
 }  // namespace
@@ -108,6 +147,10 @@ void ProfileImportProcess::DetermineProfileImportType() {
   int number_of_blocked_profile_updates = 0;
   std::optional<AutofillProfile> migration_candidate;
 
+  const bool account_name_email_home_work_merge =
+      CanCombineAccountNameEmailWithHomeWork(import_metadata(),
+                                             *address_data_manager_);
+
   // We don't offer an import if `observed_profile_` is a duplicate of an
   // existing profile.
   const std::vector<const AutofillProfile*> existing_profiles =
@@ -155,15 +198,9 @@ void ProfileImportProcess::DetermineProfileImportType() {
     // confirmation.
     if (AutofillProfileComparator::ProfilesHaveDifferentSettingsVisibleValues(
             *existing_profile, merged_profile, app_locale_)) {
-      if (allow_only_silent_updates_) {
-        ++number_of_unchanged_profiles;
-        continue;
-      }
-
       // Determine if the existing profile is blocked for updates.
-      // If the address data manager is not available the profile is considered
-      // as not blocked. Also, updates can be disabled by a feature flag.
       bool is_blocked_for_update =
+          allow_only_silent_updates_ ||
           address_data_manager_->IsProfileUpdateBlocked(
               existing_profile->guid()) ||
           base::FeatureList::IsEnabled(
@@ -205,38 +242,48 @@ void ProfileImportProcess::DetermineProfileImportType() {
   // If the profile is not mergeable with an existing profile, the import
   // corresponds to a new profile.
   if (!is_mergeable_with_existing_profile) {
-    if (!allow_only_silent_updates_) {
-      // There should be no import candidate yet.
-      DCHECK(!import_candidate_.has_value());
-      if (address_data_manager_->IsNewProfileImportBlockedForDomain(
-              form_source_url_)) {
-        import_type_ = AutofillProfileImportType::kSuppressedNewProfile;
-      } else {
-        import_type_ = AutofillProfileImportType::kNewProfile;
-        import_candidate_ = observed_profile();
-      }
+    // There should be no import candidate yet.
+    DCHECK(!import_candidate_.has_value());
+    if (allow_only_silent_updates_ ||
+        address_data_manager_->IsNewProfileImportBlockedForDomain(
+            form_source_url_)) {
+      import_type_ = AutofillProfileImportType::kSuppressedNewProfile;
     } else {
-      import_type_ = AutofillProfileImportType::kUnusableIncompleteProfile;
+      import_type_ = AutofillProfileImportType::kNewProfile;
+      import_candidate_ = observed_profile();
     }
   } else {
     bool silent_updates_present = !silently_updated_profiles_.empty();
 
     if (merge_candidate_.has_value()) {
-      import_type_ =
-          silent_updates_present
-              ? AutofillProfileImportType::kConfirmableMergeAndSilentUpdate
-              : AutofillProfileImportType::kConfirmableMerge;
+      switch (import_candidate_->record_type()) {
+        case AutofillProfile::RecordType::kAccountHome:
+        case AutofillProfile::RecordType::kAccountWork:
+          import_type_ =
+              account_name_email_home_work_merge
+                  ? AutofillProfileImportType::kHomeWorkNameEmailMerge
+                  : AutofillProfileImportType::kHomeAndWorkSuperset;
+          break;
+        case AutofillProfile::RecordType::kAccountNameEmail:
+          import_type_ =
+              account_name_email_home_work_merge
+                  ? AutofillProfileImportType::kHomeWorkNameEmailMerge
+                  : AutofillProfileImportType::kNameEmailSuperset;
+          break;
+        case AutofillProfile::RecordType::kAccount:
+        case AutofillProfile::RecordType::kLocalOrSyncable:
+          import_type_ =
+              silent_updates_present
+                  ? AutofillProfileImportType::kConfirmableMergeAndSilentUpdate
+                  : AutofillProfileImportType::kConfirmableMerge;
+          break;
+      }
     } else if (number_of_blocked_profile_updates > 0) {
       import_type_ =
           silent_updates_present
               ? AutofillProfileImportType::
                     kSuppressedConfirmableMergeAndSilentUpdate
               : AutofillProfileImportType::kSuppressedConfirmableMerge;
-    } else if (allow_only_silent_updates_) {
-      import_type_ =
-          silent_updates_present
-              ? AutofillProfileImportType::kSilentUpdateForIncompleteProfile
-              : AutofillProfileImportType::kUnusableIncompleteProfile;
     } else if (!migration_candidate) {
       import_type_ = silent_updates_present
                          ? AutofillProfileImportType::kSilentUpdate
@@ -256,6 +303,24 @@ void ProfileImportProcess::DetermineProfileImportType() {
         AutofillClock::Now());
   }
 
+  if (import_type_ == AutofillProfileImportType::kHomeWorkNameEmailMerge ||
+      import_type_ == AutofillProfileImportType::kNameEmailSuperset) {
+    // Setting `merge_candidate_` to `std::nullopt` ensures that the save
+    // bubble will appear. Although `observed_profile` can be merged with
+    // with `kAccountNameEmail` profile this flow is supposed to create a
+    // new profile since the `kAccountNameEmail` profile, from the POV of
+    // import process, is read-only. The reasoning is the same in the case
+    // of `kHomeWorkNameEmailMerge`.
+    merge_candidate_ = std::nullopt;
+    // Resetting merge_candidate_ creates discrepancy between the real
+    // number of unchanged profiles and number stored in
+    // `number_of_unchanged_profiles` variable. In order to account for
+    // the fact that the `kAccountNameEmail` profile or a H/W profile will not
+    // be changed (and instead a new profile will be created)
+    // `number_of_unchanged_profiles` should be incremented.
+    ++number_of_unchanged_profiles;
+  }
+
   // At this point, all existing profiles are either unchanged, updated and/or
   // one is the merge candidate.
   // One of the unchanged or updated profiles might be considered for migration.
@@ -267,14 +332,35 @@ void ProfileImportProcess::DetermineProfileImportType() {
 }
 
 void ProfileImportProcess::DetermineSourceOfImportCandidate() {
-  if (import_type_ != AutofillProfileImportType::kNewProfile) {
+  // The flow signified by `kNameEmailSuperset` leads to the save profile
+  // prompt. Since the `kAccountNameEmail` profile is available both to users
+  // eligible and ineligible for account address storage, `import_candidate_`
+  // (which has record type `kAccountNameEmail` in this case) must be converted
+  // to either `kAccount` (eligible) or `kLocalOrSyncable` (ineligible).
+  if (import_type_ == AutofillProfileImportType::kNameEmailSuperset) {
+    CHECK(import_candidate_);
+    import_candidate_ =
+        address_data_manager_->IsEligibleForAddressAccountStorage()
+            ? import_candidate_->ConvertToAccountProfile()
+            : import_candidate_->ConvertToLocalOrSyncableProfile();
+    return;
+  }
+  // kHomeAndWorkSuperset prompts use the "Update profile" UI, but store a new
+  // profile under the hood, since Home & Work is read-only. This makes sure
+  // that the profile created is an account profile, since Home & Work is only
+  // available for users eligible to account address storage.
+  //
+  // Merging the `kAccountNameEmail` profile with a H/W profile also results in
+  // creation of a new profile. Since, H/W is available only for users eligible
+  // for account address storage, the profile created as a result of this flow
+  // should also be of type `kAccount`.
+  if (import_type_ != AutofillProfileImportType::kNewProfile &&
+      import_type_ != AutofillProfileImportType::kHomeAndWorkSuperset &&
+      import_type_ != AutofillProfileImportType::kHomeWorkNameEmailMerge) {
     return;
   }
   CHECK(import_candidate_);
-  if (address_data_manager_->IsEligibleForAddressAccountStorage() &&
-      address_data_manager_->IsCountryEligibleForAccountStorage(
-          base::UTF16ToUTF8(
-              import_candidate_->GetRawInfo(ADDRESS_HOME_COUNTRY)))) {
+  if (address_data_manager_->IsEligibleForAddressAccountStorage()) {
     import_candidate_ = import_candidate_->ConvertToAccountProfile();
   }
 }
@@ -282,17 +368,11 @@ void ProfileImportProcess::DetermineSourceOfImportCandidate() {
 void ProfileImportProcess::MaybeSetMigrationCandidate(
     std::optional<AutofillProfile>& migration_candidate,
     const AutofillProfile& profile) const {
-  // Basic checks: No migration candidate was selected yet, prompts can be shown
-  // (i.e. not only silent updates) and the `profile` is not stored in the
-  // user's account already.
   if (migration_candidate || allow_only_silent_updates_ ||
-      profile.IsAccountProfile()) {
+      !IsEligibleForMigrationToAccount(*address_data_manager_, profile)) {
     return;
   }
-  // Check the eligiblity of the user and profile.
-  if (IsEligibleForMigrationToAccount(*address_data_manager_, profile)) {
-    migration_candidate = profile;
-  }
+  migration_candidate = profile;
 }
 
 void ProfileImportProcess::ApplyImport() {
@@ -303,22 +383,32 @@ void ProfileImportProcess::ApplyImport() {
   }
 
   // Apply silent updates.
+  HomeAndWorkMetadataStore* home_and_work_metadata_store =
+      address_data_manager_->home_and_work_metadata_store();
   for (const AutofillProfile& updated_profile : silently_updated_profiles_) {
     address_data_manager_->UpdateProfile(updated_profile);
+    if (home_and_work_metadata_store) {
+      home_and_work_metadata_store->RecordSilentUpdate(updated_profile);
+    }
   }
 
   if (!confirmed_import_candidate_.has_value()) {
     return;
   }
-  const AutofillProfile& confirmed_profile = *confirmed_import_candidate_;
   // Confirming an import candidate corresponds to either a new/update profile
   // or a migration prompt.
   if (is_migration()) {
-    address_data_manager_->MigrateProfileToAccount(confirmed_profile);
+    address_data_manager_->MigrateProfileToAccount(
+        *confirmed_import_candidate_);
   } else if (is_confirmable_update()) {
-    address_data_manager_->UpdateProfile(confirmed_profile);
+    address_data_manager_->UpdateProfile(*confirmed_import_candidate_);
   } else {
-    address_data_manager_->AddProfile(confirmed_profile);
+    // This is reached in case of:
+    // 1. New profile prompt
+    // 2. Home & Work superset import prompt
+    // 3. `kAccountNameEmail` superset import prompt
+    // 4. Merging the `kAccountNameEmail` profile with a H/W profile prompt
+    address_data_manager_->AddProfile(*confirmed_import_candidate_);
   }
 }
 
@@ -447,9 +537,7 @@ void ProfileImportProcess::CollectMetrics(
   if (allow_only_silent_updates_) {
     // Record the import type for the silent updates.
     autofill_metrics::LogSilentUpdatesProfileImportType(import_type_);
-    if (import_type_ == AutofillProfileImportType::kSilentUpdate ||
-        import_type_ ==
-            AutofillProfileImportType::kSilentUpdateForIncompleteProfile) {
+    if (import_type_ == AutofillProfileImportType::kSilentUpdate) {
       LogUkmMetrics();
     }
     return;
@@ -473,6 +561,16 @@ void ProfileImportProcess::CollectMetrics(
     if (UserAccepted()) {
       autofill_metrics::LogNewProfileStorageLocation(
           *confirmed_import_candidate_);
+    }
+  } else if (import_type_ == AutofillProfileImportType::kHomeAndWorkSuperset) {
+    autofill_metrics::LogHomeAndWorkSupersetImportDecision(user_decision_);
+    CHECK(merge_candidate_.has_value() && import_candidate_.has_value());
+    // Log the types that triggered the prompt.
+    for (const ProfileValueDifference& difference :
+         AutofillProfileComparator::GetSettingsVisibleProfileDifference(
+             import_candidate_.value(), merge_candidate_.value(),
+             app_locale_)) {
+      autofill_metrics::LogHomeAndWorkSupersetAffectedType(difference.type);
     }
   } else if (is_confirmable_update()) {
     autofill_metrics::LogProfileUpdateImportDecision(
@@ -518,9 +616,11 @@ int ProfileImportProcess::CollectedEditedTypeHistograms() const {
       autofill_metrics::LogNewProfileEditedType(difference.type);
     } else if (is_confirmable_update()) {
       autofill_metrics::LogProfileUpdateEditedType(difference.type);
-    } else {
-      CHECK(is_migration());
+    } else if (is_migration()) {
       autofill_metrics::LogProfileMigrationEditedType(difference.type);
+    } else {
+      CHECK_EQ(import_type(), AutofillProfileImportType::kHomeAndWorkSuperset);
+      autofill_metrics::LogHomeAndWorkSupersetEditedType(difference.type);
     }
   }
   return edit_difference.size();

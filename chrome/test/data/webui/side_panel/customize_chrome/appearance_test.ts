@@ -7,8 +7,9 @@ import 'chrome://customize-chrome-side-panel.top-chrome/appearance.js';
 import type {AppearanceElement} from 'chrome://customize-chrome-side-panel.top-chrome/appearance.js';
 import {CustomizeChromeAction} from 'chrome://customize-chrome-side-panel.top-chrome/common.js';
 import type {CustomizeChromePageRemote} from 'chrome://customize-chrome-side-panel.top-chrome/customize_chrome.mojom-webui.js';
-import {CustomizeChromePageCallbackRouter, CustomizeChromePageHandlerRemote} from 'chrome://customize-chrome-side-panel.top-chrome/customize_chrome.mojom-webui.js';
+import {CustomizeChromePageCallbackRouter, CustomizeChromePageHandlerRemote, NewTabPageType} from 'chrome://customize-chrome-side-panel.top-chrome/customize_chrome.mojom-webui.js';
 import {CustomizeChromeApiProxy} from 'chrome://customize-chrome-side-panel.top-chrome/customize_chrome_api_proxy.js';
+import type {HoverButtonElement} from 'chrome://customize-chrome-side-panel.top-chrome/hover_button.js';
 import type {ManagedDialogElement} from 'chrome://resources/cr_components/managed_dialog/managed_dialog.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {assertEquals, assertFalse, assertNotEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
@@ -18,6 +19,16 @@ import type {TestMock} from 'chrome://webui-test/test_mock.js';
 import {eventToPromise, microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {$$, assertNotStyle, assertStyle, createBackgroundImage, createTheme, createThirdPartyThemeInfo, installMock} from './test_support.js';
+
+const newTabPageTypes = [
+  NewTabPageType.kFirstPartyWebUI,
+  NewTabPageType.kThirdPartyWebUI,
+  NewTabPageType.kThirdPartyRemote,
+  NewTabPageType.kExtension,
+  NewTabPageType.kIncognito,
+  NewTabPageType.kGuestMode,
+  NewTabPageType.kNone,
+];
 
 suite('AppearanceTest', () => {
   let appearanceElement: AppearanceElement;
@@ -257,6 +268,31 @@ suite('AppearanceTest', () => {
     assertEquals(0, handler.getCallCount('removeBackgroundImage'));
   });
 
+
+  test('shows managed name and description', async () => {
+    // Arrange.
+    const theme = createTheme();
+    theme.backgroundImage = createBackgroundImage('chrome://theme/foo');
+    callbackRouterRemote.setTheme(theme);
+    // Set any non-1P WebUI NTP type.
+    callbackRouterRemote.attachedTabStateUpdated(
+        NewTabPageType.kThirdPartyWebUI);
+    await microtasksFinished();
+
+    // Act.
+    const name = 'foo';
+    const desc = 'bar';
+    callbackRouterRemote.ntpManagedByNameUpdated(name, desc);
+    await callbackRouterRemote.$.flushForTesting();
+    await microtasksFinished();
+
+    const managedButton = $$<HoverButtonElement>(
+        appearanceElement, '#thirdPartyManageLinkButton');
+    assertTrue(!!managedButton);
+    assertEquals(name, managedButton.label);
+    assertEquals(desc, managedButton.labelDescription);
+  });
+
   suite('DisableDeviceTheme', () => {
     suiteSetup(() => {
       loadTimeData.overrideValues({
@@ -385,10 +421,15 @@ suite('AppearanceTest', () => {
       await callbackRouterRemote.$.flushForTesting();
       assertNotStyle(
           appearanceElement.$.thirdPartyThemeLinkButton, 'display', 'none');
-      assertNotStyle(
-          appearanceElement.$.setClassicChromeButton, 'display', 'none');
       assertStyle(appearanceElement.$.themeSnapshot, 'display', 'none');
       assertStyle(appearanceElement.$.chromeColors, 'display', 'none');
+      if (loadTimeData.getBoolean('footerEnabled')) {
+        assertStyle(
+            appearanceElement.$.setClassicChromeButton, 'display', 'none');
+      } else {
+        assertNotStyle(
+            appearanceElement.$.setClassicChromeButton, 'display', 'none');
+      }
     });
 
     test('clicking 3P theme link opens theme page', async () => {
@@ -619,7 +660,32 @@ suite('AppearanceTest', () => {
     });
   });
 
-  test('isSourceTabFirstPartyNtp should update the content', async () => {
+  suite('NtpFooterEnabled', () => {
+    suiteSetup(() => {
+      loadTimeData.overrideValues({
+        footerEnabled: true,
+      });
+    });
+
+    newTabPageTypes.forEach((t) => {
+      test(`classic chrome button NTP type ${t}`, async () => {
+        // Arrange.
+        const theme = createTheme();
+        theme.backgroundImage = createBackgroundImage('chrome://theme/foo');
+        callbackRouterRemote.setTheme(theme);
+        callbackRouterRemote.attachedTabStateUpdated(t);
+        await microtasksFinished();
+
+        // Assert.
+        assertEquals(
+            t === NewTabPageType.kFirstPartyWebUI ||
+                t === NewTabPageType.kThirdPartyWebUI,
+            !appearanceElement.$.setClassicChromeButton.hidden);
+      });
+    });
+  });
+
+  test('source tab type should update the content', async () => {
     const idsControlledByIsSourceTabFirstPartyNtp = [
       '#editButtonsContainer',
       '#themeSnapshot',
@@ -632,24 +698,23 @@ suite('AppearanceTest', () => {
       '#chromeColors',
       '#followThemeToggle',
       '#followThemeToggleControl',
-      '#setClassicChromeButton',
       '#editThemeButton',
       '#editThemeIcon',
     ];
 
-    const checkIdsVisibility = (isSourceTabFirstPartyNtp: boolean) => {
+    const checkIdsVisibility = (sourceTabType: NewTabPageType) => {
       idsControlledByIsSourceTabFirstPartyNtp.forEach(
           id => assertEquals(
-              isSourceTabFirstPartyNtp,
+              sourceTabType === NewTabPageType.kFirstPartyWebUI,
               !!appearanceElement.shadowRoot.querySelector(id)));
       idsNotControlledByIsSourceTabFirstPartyNtp.forEach(
           id => assertTrue(!!appearanceElement.shadowRoot.querySelector(id)));
     };
 
-    await[true, false].forEach(async b => {
-      callbackRouterRemote.attachedTabStateUpdated(b);
+    await newTabPageTypes.forEach(async t => {
+      callbackRouterRemote.attachedTabStateUpdated(t);
       await microtasksFinished();
-      checkIdsVisibility(b);
+      checkIdsVisibility(t);
     });
   });
 });

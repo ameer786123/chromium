@@ -26,7 +26,7 @@
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/frame/browser_caption_button_container_win.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+#include "chrome/browser/ui/views/frame/tab_strip_view_interface.h"
 #include "chrome/browser/ui/views/frame/webui_tab_strip_container_view.h"
 #include "chrome/browser/ui/views/tabs/new_tab_button.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
@@ -63,6 +63,14 @@ HICON BrowserFrameViewWin::throbber_icons_
 
 namespace {
 
+// When enabled, a call to BrowserFrame::GetMinimizeButtonOffset() is avoided
+// when not needed. Behind a feature to assess impact
+// (go/chrome-performance-work-should-be-finched).
+// TODO(crbug.com/40897031): Clean up when experiment is complete.
+BASE_FEATURE(kAvoidUnnecessaryGetMinimizeButtonOffset,
+             "AvoidUnnecessaryGetMinimizeButtonOffset",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Converts the |image| to a Windows icon and returns the corresponding HICON
 // handle. |image| is resized to desired |width| and |height| if needed.
 base::win::ScopedGDIObject<HICON> CreateHICONFromSkBitmapSizedTo(
@@ -97,7 +105,12 @@ BrowserFrameViewWin::BrowserFrameViewWin(BrowserFrame* frame,
   // is true. Everything else here is only used when
   // ShouldBrowserCustomDrawTitlebar() is true.
 
-  if (browser_view->GetSupportsIcon()) {
+  Browser* browser = browser_view->browser();
+  bool supports_title_bar =
+      browser->SupportsWindowFeature(Browser::FEATURE_TITLEBAR);
+
+  // Only show icons if the browser supports title bars.
+  if (supports_title_bar) {
     InitThrobberIcons();
 
     AddChildView(views::Builder<TabIconView>()
@@ -112,9 +125,13 @@ BrowserFrameViewWin::BrowserFrameViewWin(BrowserFrame* frame,
                      .Build());
   }
 
+  bool supports_title =
+      supports_title_bar ||
+      WebUITabStripContainerView::SupportsTouchableTabStrip(browser);
+
   // If this is a web app window, the window title will be part of the
   // BrowserView and thus we don't need to create another one here.
-  if (!browser_view->GetIsWebAppType() && browser_view->GetSupportsTitle()) {
+  if (!browser_view->GetIsWebAppType() && supports_title) {
     window_title_ = new views::Label(browser_view->GetWindowTitle());
     window_title_->SetSubpixelRenderingEnabled(false);
     window_title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
@@ -169,23 +186,6 @@ gfx::Rect BrowserFrameViewWin::GetBoundsForWebAppFrameToolbar(
                    caption_button_container_->size().height());
 }
 
-void BrowserFrameViewWin::LayoutWebAppWindowTitle(
-    const gfx::Rect& available_space,
-    views::Label& window_title_label) const {
-  gfx::Rect bounds = available_space;
-  // If nothing has been added to the left, match native Windows 10 UWP apps
-  // that don't have window icons.
-  // TODO(crbug.com/40890502): Avoid hardcoding sizes like this.
-  constexpr int kMinimumTitleLeftBorderMargin = 11;
-  if (bounds.x() < kMinimumTitleLeftBorderMargin) {
-    bounds.SetHorizontalBounds(kMinimumTitleLeftBorderMargin, bounds.right());
-  }
-  window_title_label.SetSubpixelRenderingEnabled(false);
-  window_title_label.SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  window_title_label.SetAutoColorReadabilityEnabled(false);
-  window_title_label.SetBoundsRect(bounds);
-}
-
 int BrowserFrameViewWin::GetTopInset(bool restored) const {
   if (browser_view()->GetTabStripVisible() || IsWebUITabStrip()) {
     return TopAreaHeight(restored);
@@ -195,26 +195,9 @@ int BrowserFrameViewWin::GetTopInset(bool restored) const {
              : 0;
 }
 
-bool BrowserFrameViewWin::HasVisibleBackgroundTabShapes(
-    BrowserFrameActiveState active_state) const {
-  DCHECK(GetWidget());
-
-  // Enabling high contrast mode disables the custom-drawn titlebar (so the
-  // system-drawn frame will respect the native frame colors) and enables the
-  // IncreasedContrastThemeSupplier (which does not respect the native frame
-  // colors).
-  // TODO(pkasting): https://crbug.com/831769  Change the architecture of the
-  // high contrast support to respect system colors, then remove this.
-  if (GetNativeTheme()->UserHasContrastPreference()) {
-    return true;
-  }
-
-  return BrowserNonClientFrameView::HasVisibleBackgroundTabShapes(active_state);
-}
-
 SkColor BrowserFrameViewWin::GetCaptionColor(
     BrowserFrameActiveState active_state) const {
-  return GetColorProvider()->GetColor(ShouldPaintAsActive(active_state)
+  return GetColorProvider()->GetColor(ShouldPaintAsActiveForState(active_state)
                                           ? kColorCaptionForegroundActive
                                           : kColorCaptionForegroundInactive);
 }
@@ -538,8 +521,8 @@ int BrowserFrameViewWin::FrameTopBorderThicknessPx(bool restored) const {
   // Note that this method assumes an equal resize handle thickness on all
   // sides of the window.
   // TODO(dfried): Consider having it return a gfx::Insets object instead.
-  return ui::GetFrameThickness(
-      MonitorFromWindow(HWNDForView(this), MONITOR_DEFAULTTONEAREST));
+  return ui::GetFrameThicknessFromWindow(HWNDForView(this),
+                                         MONITOR_DEFAULTTONEAREST);
 }
 
 int BrowserFrameViewWin::TopAreaHeight(bool restored) const {
@@ -593,7 +576,9 @@ int BrowserFrameViewWin::TitlebarHeight(bool restored) const {
 
 int BrowserFrameViewWin::GetFrameHeight() const {
   if (browser_view()->GetTabStripVisible()) {
-    return browser_view()->tab_strip_region_view()->GetMinimumSize().height() -
+    // TODO(crbug.com/437915973): Account for the vertical tab region when using
+    // GetMinimumSize().
+    return browser_view()->tab_strip_view()->GetMinimumSize().height() -
            WindowTopY() - GetLayoutConstant(TABSTRIP_TOOLBAR_OVERLAP);
   }
   return IsMaximized() ? TitlebarMaximizedVisualHeight()
@@ -612,12 +597,18 @@ int BrowserFrameViewWin::WindowTopY() const {
 }
 
 int BrowserFrameViewWin::CaptionButtonsRegionWidth() const {
-  int system_caption_buttons_width =
-      width() - frame()->GetMinimizeButtonOffset();
+  std::optional<int> system_caption_buttons_width;
+  if (!base::FeatureList::IsEnabled(kAvoidUnnecessaryGetMinimizeButtonOffset)) {
+    system_caption_buttons_width = width() - frame()->GetMinimizeButtonOffset();
+  }
 
   int total_width = caption_button_container_->size().width();
   if (!ShouldBrowserCustomDrawTitlebar(browser_view())) {
-    total_width += system_caption_buttons_width;
+    if (!system_caption_buttons_width.has_value()) {
+      system_caption_buttons_width =
+          width() - frame()->GetMinimizeButtonOffset();
+    }
+    total_width += system_caption_buttons_width.value();
   }
 
   return total_width;
@@ -718,10 +709,12 @@ void BrowserFrameViewWin::PaintTitlebar(gfx::Canvas* canvas) const {
       titlebar_color));
   canvas->DrawRect(gfx::RectF(0, 0, width() * scale, y), flags);
 
+  // TODO(crbug.com/437915973): Account for the vertical tab region when using
+  // GetMinimumSize().
   const int titlebar_height =
       browser_view()->GetTabStripVisible()
           ? GetBoundsForTabStripRegion(
-                browser_view()->tab_strip_region_view()->GetMinimumSize())
+                browser_view()->tab_strip_view()->GetMinimumSize())
                 .bottom()
           : TitlebarHeight(false);
   const gfx::Rect titlebar_rect = gfx::ToEnclosingRect(
@@ -793,7 +786,7 @@ void BrowserFrameViewWin::LayoutTitleBar() {
   if (show_title && window_title_) {
     window_title_->SetText(browser_view()->GetWindowTitle());
     const int max_text_width = std::max(0, next_trailing_x - next_leading_x);
-    LayoutWebAppWindowTitle(
+    frame()->LayoutWebAppWindowTitle(
         gfx::Rect(next_leading_x, window_icon_bounds.y(), max_text_width,
                   window_icon_bounds.height()),
         *window_title_);

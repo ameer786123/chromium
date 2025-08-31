@@ -98,7 +98,11 @@ class TaskManagerTableModel : public TaskManagerObserver,
   void SetObserver(ui::TableModelObserver* observer) override;
   int CompareValues(size_t row1, size_t row2, int column_id) override;
   std::u16string GetAXNameForHeader(
-      const std::vector<std::u16string>& visible_column_titles) override;
+      const std::vector<std::u16string>& visible_column_titles,
+      const std::vector<std::u16string>& visible_column_sortable) override;
+  std::u16string GetAXNameForHeaderCell(
+      const std::u16string& visible_column_title,
+      const std::u16string& visible_column_sortable) override;
   std::u16string GetAXNameForRow(
       size_t row,
       const std::vector<int>& visible_column_ids) override;
@@ -225,9 +229,6 @@ class TaskManagerTableModel : public TaskManagerObserver,
   // The owned task manager values stringifier that will be used to convert the
   // values to string16.
   std::unique_ptr<TaskManagerValuesStringifier> stringifier_;
-
-  // The status of the flag #enable-nacl-debug.
-  bool is_nacl_debugging_flag_enabled_;
 
   // Determines which rows should be kept from GetTaskIdsList().
   DisplayCategory display_category_;

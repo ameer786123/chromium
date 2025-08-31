@@ -10,6 +10,7 @@
 #import <memory>
 #import <utility>
 
+#import "base/check_deref.h"
 #import "base/functional/callback.h"
 #import "base/memory/raw_ptr.h"
 #import "base/time/time.h"
@@ -23,7 +24,6 @@
 #import "components/autofill/ios/browser/autofill_agent.h"
 #import "components/autofill/ios/browser/autofill_driver_ios.h"
 #import "components/autofill/ios/browser/autofill_driver_ios_factory.h"
-#import "components/autofill/ios/browser/test_autofill_client_ios.h"
 #import "components/autofill/ios/browser/test_autofill_manager_injector.h"
 #import "components/infobars/core/infobar_manager.h"
 #import "ios/chrome/browser/autofill/model/autofill_agent_delegate.h"
@@ -101,10 +101,9 @@ class ChromeAutofillClientIOSTest : public PlatformTest {
 
     autofill_agent.delegate = autofill_agent_delegate_;
     InfoBarManagerImpl::CreateForWebState(web_state_.get());
-    autofill_client_ =
-        std::make_unique<WithFakedFromWebState<ChromeAutofillClientIOS>>(
-            profile_.get(), web_state_.get(),
-            InfoBarManagerImpl::FromWebState(web_state_.get()), autofill_agent);
+    autofill::ChromeAutofillClientIOS::CreateForWebState(
+        web_state_.get(), profile_.get(),
+        InfoBarManagerImpl::FromWebState(web_state_.get()), autofill_agent);
     autofill_manager_injector_ =
         std::make_unique<TestAutofillManagerInjector<TestAutofillManager>>(
             web_state_.get());
@@ -124,7 +123,10 @@ class ChromeAutofillClientIOSTest : public PlatformTest {
                expected_number_of_forms;
   }
 
-  ChromeAutofillClientIOS& client() { return *autofill_client_; }
+  ChromeAutofillClientIOS& client() {
+    return CHECK_DEREF(
+        autofill::ChromeAutofillClientIOS::FromWebState(web_state_.get()));
+  }
 
   TestAutofillManager* main_frame_manager() {
     return autofill_manager_injector_->GetForMainFrame();
@@ -142,7 +144,6 @@ class ChromeAutofillClientIOSTest : public PlatformTest {
   web::WebTaskEnvironment task_environment_;
   web::ScopedTestingWebClient web_client_;
   std::unique_ptr<TestProfileIOS> profile_;
-  std::unique_ptr<ChromeAutofillClientIOS> autofill_client_;
   std::unique_ptr<web::WebState> web_state_;
   std::unique_ptr<TestAutofillManagerInjector<TestAutofillManager>>
       autofill_manager_injector_;
@@ -175,9 +176,6 @@ TEST_F(ChromeAutofillClientIOSTest, ClassifyAsPasswordForm) {
 // form that is part of a bigger browser form that stretches across multiple
 // frames. Also tests that non-login renderer forms aren't classified as such.
 TEST_F(ChromeAutofillClientIOSTest, ClassifyAsPasswordForm_AcrossFrames) {
-  base::test::ScopedFeatureList feature_list(
-      autofill::features::kAutofillAcrossIframesIos);
-
   // Render a xframe form composed of one password form and one address form.
   NSString* html =
       @"<form>"
@@ -216,9 +214,6 @@ TEST_F(ChromeAutofillClientIOSTest, ClassifyAsPasswordForm_AcrossFrames) {
 // Tests that `ClassifyAsPasswordForm()` doesn't classify non-login forms.
 TEST_F(ChromeAutofillClientIOSTest,
        ClassifyAsPasswordForm_AcrossFrames_NonLoginForm) {
-  base::test::ScopedFeatureList feature_list(
-      autofill::features::kAutofillAcrossIframesIos);
-
   // Render a xframe form composed of one password form and one address form.
   NSString* html =
       @"<form>"

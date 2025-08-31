@@ -54,6 +54,7 @@ import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.hub.HubLayout;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.omnibox.OmniboxFocusReason;
+import org.chromium.chrome.browser.tabwindow.TabWindowManager;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper;
 import org.chromium.chrome.browser.theme.ThemeUtils;
 import org.chromium.chrome.browser.toolbar.ToolbarFeatures;
@@ -63,8 +64,10 @@ import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderCoordinator;
 import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent.ContentPriority;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.SheetState;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetControllerProvider;
@@ -73,17 +76,17 @@ import org.chromium.components.browser_ui.bottomsheet.TestBottomSheetContent;
 import org.chromium.components.browser_ui.desktop_windowing.AppHeaderState;
 import org.chromium.content_public.browser.test.util.DOMUtils;
 import org.chromium.content_public.browser.test.util.JavaScriptUtils;
-import org.chromium.ui.InsetObserver;
-import org.chromium.ui.InsetsRectProvider;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.ViewUtils;
+import org.chromium.ui.insets.CaptionBarInsetsRectProvider;
+import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.test.util.DeviceRestriction;
 
 import java.util.concurrent.TimeoutException;
 
 /** Browser test for {@link AppHeaderCoordinator} */
 @RequiresApi(Build.VERSION_CODES.R)
-@Restriction({DeviceFormFactor.TABLET, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
+@Restriction({DeviceFormFactor.TABLET_OR_DESKTOP, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
 @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
 @Features.DisableFeatures(ChromeFeatureList.EDGE_TO_EDGE_EVERYWHERE)
 @Batch(Batch.PER_CLASS)
@@ -102,15 +105,17 @@ public class AppHeaderCoordinatorBrowserTest {
                     .build();
 
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
 
-    @Mock private InsetsRectProvider mInsetsRectProvider;
+    @Mock private CaptionBarInsetsRectProvider mInsetsRectProvider;
 
     private final Rect mWidestUnoccludedRect = new Rect();
     private final Rect mWindowRect = new Rect();
     private int mTestAppHeaderHeight;
+    private WebPageStation mPage;
 
     @Before
     public void setup() {
@@ -121,7 +126,7 @@ public class AppHeaderCoordinatorBrowserTest {
         doAnswer(args -> mWidestUnoccludedRect).when(mInsetsRectProvider).getWidestUnoccludedRect();
         doAnswer(args -> mWindowRect).when(mInsetsRectProvider).getWindowRect();
 
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mPage = mActivityTestRule.startOnBlankPage();
 
         // Initialize the strip height for testing. This is due to bots might have different
         // densities.
@@ -323,7 +328,7 @@ public class AppHeaderCoordinatorBrowserTest {
         Intent intent =
                 MultiWindowUtils.createNewWindowIntent(
                         firstActivity.getApplicationContext(),
-                        MultiWindowUtils.INVALID_INSTANCE_ID,
+                        TabWindowManager.INVALID_WINDOW_ID,
                         true,
                         false,
                         true);
@@ -372,6 +377,7 @@ public class AppHeaderCoordinatorBrowserTest {
 
     @Test
     @MediumTest
+    @Restriction(DeviceFormFactor.PHONE) // https://crbug.com/393388366
     public void testKeyboardInDesktopWindow_RootViewPadded() throws TimeoutException {
         ChromeTabbedActivity activity = mActivityTestRule.getActivity();
         triggerDesktopWindowingModeChange(activity, true);
@@ -382,13 +388,13 @@ public class AppHeaderCoordinatorBrowserTest {
                 mActivityTestRule
                         .getTestServer()
                         .getURL("/chrome/test/data/android/page_with_editable.html"));
-        DOMUtils.clickNode(activity.getActivityTab().getWebContents(), TEXTFIELD_DOM_ID);
+        DOMUtils.clickNode(mActivityTestRule.getWebContents(), TEXTFIELD_DOM_ID);
         CriteriaHelper.pollUiThread(
                 () -> {
                     boolean isKeyboardShowing =
                             mActivityTestRule
                                     .getKeyboardDelegate()
-                                    .isKeyboardShowing(activity, activity.getTabsView());
+                                    .isKeyboardShowing(activity.getTabsView());
                     Criteria.checkThat(isKeyboardShowing, Matchers.is(true));
                 },
                 KEYBOARD_TIMEOUT,
@@ -408,8 +414,7 @@ public class AppHeaderCoordinatorBrowserTest {
 
         // Remove input field focus to hide the keyboard.
         JavaScriptUtils.executeJavaScript(
-                activity.getActivityTab().getWebContents(),
-                "document.querySelector('input').blur()");
+                mActivityTestRule.getWebContents(), "document.querySelector('input').blur()");
 
         // Verify that the root view bottom padding uses the nav bar bottom inset.
         CriteriaHelper.pollUiThread(
@@ -420,6 +425,68 @@ public class AppHeaderCoordinatorBrowserTest {
                                     .getInsets(WindowInsetsCompat.Type.navigationBars())
                                     .bottom;
                     Criteria.checkThat(rootView.getPaddingBottom(), Matchers.is(navBarBottomInset));
+                });
+
+        // Dispatch window insets to simulate no overlap of the app window with the nav bar.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    insetObserver.onApplyWindowInsets(
+                            rootView,
+                            new WindowInsetsCompat.Builder()
+                                    .setInsets(
+                                            WindowInsetsCompat.Type.navigationBars(),
+                                            Insets.of(0, 0, 0, 0))
+                                    .build());
+                });
+
+        // Verify that the root view bottom padding is reset.
+        CriteriaHelper.pollUiThread(
+                () -> Criteria.checkThat(rootView.getPaddingBottom(), Matchers.is(0)));
+    }
+
+    @Test
+    @MediumTest
+    @EnableFeatures({ChromeFeatureList.EDGE_TO_EDGE_TABLET})
+    @Restriction(DeviceFormFactor.ONLY_TABLET)
+    public void testKeyboardInDesktopWindow_RootViewNotPadded() throws TimeoutException {
+        ChromeTabbedActivity activity = mActivityTestRule.getActivity();
+        triggerDesktopWindowingModeChange(activity, true);
+        var insetObserver = activity.getWindowAndroid().getInsetObserver();
+
+        // Navigate to a URL with an input field. Clicking on it should trigger the OSK.
+        mActivityTestRule.loadUrl(
+                mActivityTestRule
+                        .getTestServer()
+                        .getURL("/chrome/test/data/android/page_with_editable.html"));
+        DOMUtils.clickNode(mActivityTestRule.getWebContents(), TEXTFIELD_DOM_ID);
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    boolean isKeyboardShowing =
+                            mActivityTestRule
+                                    .getKeyboardDelegate()
+                                    .isKeyboardShowing(activity.getTabsView());
+                    Criteria.checkThat(isKeyboardShowing, Matchers.is(true));
+                },
+                KEYBOARD_TIMEOUT,
+                CriteriaHelper.DEFAULT_POLLING_INTERVAL);
+
+        // Verify that the root view is not padded by keyboard insets because it has been handled
+        // by E2E controller.
+        var rootView = activity.getWindow().getDecorView().getRootView();
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    Criteria.checkThat(rootView.getPaddingBottom(), Matchers.is(0));
+                });
+
+        // Remove input field focus to hide the keyboard.
+        JavaScriptUtils.executeJavaScript(
+                mActivityTestRule.getWebContents(), "document.querySelector('input').blur()");
+
+        // Verify that the root view is not padded by any inset because it has been handled
+        // by E2E controller.
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    Criteria.checkThat(rootView.getPaddingBottom(), Matchers.is(0));
                 });
 
         // Dispatch window insets to simulate no overlap of the app window with the nav bar.
@@ -456,7 +523,7 @@ public class AppHeaderCoordinatorBrowserTest {
                     boolean isKeyboardShowing =
                             mActivityTestRule
                                     .getKeyboardDelegate()
-                                    .isKeyboardShowing(activity, activity.getTabsView());
+                                    .isKeyboardShowing(activity.getTabsView());
                     Criteria.checkThat(isKeyboardShowing, Matchers.is(true));
                 },
                 KEYBOARD_TIMEOUT,
@@ -569,14 +636,13 @@ public class AppHeaderCoordinatorBrowserTest {
                                     activity.getToolbarManager().getToolbarLayoutForTesting();
                     Criteria.checkThat(
                             "Home button tint is incorrect",
-                            toolbarTablet.getHomeButton().getImageTintList().getDefaultColor(),
+                            ((ImageButton) toolbarTablet.findViewById(R.id.home_button))
+                                    .getImageTintList()
+                                    .getDefaultColor(),
                             Matchers.is(nonOmniboxIconTint));
                     Criteria.checkThat(
                             "Tab switcher icon tint is incorrect.",
-                            ((ImageButton)
-                                            activity.getToolbarManager()
-                                                    .getTabSwitcherButtonCoordinatorForTesting()
-                                                    .getContainerView())
+                            ((ImageButton) toolbarTablet.findViewById(R.id.tab_switcher_button))
                                     .getImageTintList()
                                     .getDefaultColor(),
                             Matchers.is(nonOmniboxIconTint));
@@ -588,8 +654,7 @@ public class AppHeaderCoordinatorBrowserTest {
                             Matchers.is(nonOmniboxIconTint));
                     Criteria.checkThat(
                             "Bookmark button tint is incorrect.",
-                            toolbarTablet
-                                    .getBookmarkButtonForTesting()
+                            ((ImageButton) toolbarTablet.findViewById(R.id.bookmark_button))
                                     .getImageTintList()
                                     .getDefaultColor(),
                             Matchers.is(omniboxIconTint));
@@ -608,7 +673,8 @@ public class AppHeaderCoordinatorBrowserTest {
                             new AppHeaderState(
                                     mWindowRect, mWidestUnoccludedRect, isInDesktopWindow);
                     ((AppHeaderCoordinator) appHeaderStateProvider)
-                            .setStateForTesting(isInDesktopWindow, appHeaderState);
+                            .setStateForTesting(
+                                    isInDesktopWindow, appHeaderState, /* isFocused= */ true);
                     AppHeaderUtils.setAppInDesktopWindowForTesting(isInDesktopWindow);
                 });
     }

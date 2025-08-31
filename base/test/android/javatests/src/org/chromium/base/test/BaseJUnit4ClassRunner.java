@@ -27,11 +27,11 @@ import org.junit.runners.model.FrameworkMethod;
 import org.junit.runners.model.InitializationError;
 import org.junit.runners.model.Statement;
 
-import org.chromium.base.LifetimeAssert;
 import org.chromium.base.Log;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ResettersForTesting.State;
 import org.chromium.base.library_loader.LibraryLoader;
+import org.chromium.base.lifetime.LifetimeAssert;
 import org.chromium.base.metrics.UmaRecorderHolder;
 import org.chromium.base.test.params.MethodParamAnnotationRule;
 import org.chromium.base.test.util.AndroidSdkLevelSkipCheck;
@@ -79,7 +79,7 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
         /**
          * @param targetContext the instrumentation context that will be used during the test.
          */
-        public void run(Context targetContext, Class<?> testClass);
+        void run(Context targetContext, Class<?> testClass);
     }
 
     /**
@@ -95,7 +95,7 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
          * @param targetContext the instrumentation context that will be used during the test.
          * @param testMethod the test method to be run.
          */
-        public void run(Context targetContext, FrameworkMethod testMethod);
+        void run(Context targetContext, FrameworkMethod testMethod);
     }
 
     /** Makes it more obvious that all tests are being marked as failed. */
@@ -549,8 +549,8 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
         // assertions, and to match the semantics of Robolectric's runners.
         BaseChromiumAndroidJUnitRunner.sInstance.runOnMainSync(
                 ResettersForTesting::afterClassHooksDidExecute);
-        ActivityFinisher.finishAll();
-        if (afterClassPassed) {
+        boolean finishSuccess = ActivityFinisher.finishAll();
+        if (afterClassPassed && finishSuccess) {
             LifetimeAssert.assertAllInstancesDestroyedForTesting();
         } else {
             LifetimeAssert.resetForTesting();

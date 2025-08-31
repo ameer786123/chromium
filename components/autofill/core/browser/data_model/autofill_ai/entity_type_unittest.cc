@@ -4,7 +4,10 @@
 
 #include "components/autofill/core/browser/data_model/autofill_ai/entity_type.h"
 
+#include "base/test/scoped_feature_list.h"
+#include "components/autofill/core/browser/country_type.h"
 #include "components/autofill/core/browser/data_model/autofill_ai/entity_type_names.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -17,8 +20,13 @@ using ::testing::UnorderedElementsAre;
 TEST(AutofillAttributeTypeTest, Relationships) {
   AttributeType a = AttributeType(AttributeTypeName::kPassportName);
   EXPECT_EQ(a.entity_type(), EntityType(EntityTypeName::kPassport));
-  EXPECT_EQ(a.field_type(), PASSPORT_NAME_TAG);
-  EXPECT_EQ(a, AttributeType::FromFieldType(PASSPORT_NAME_TAG));
+  EXPECT_THAT(a.field_subtypes(),
+              UnorderedElementsAre(
+                  NAME_HONORIFIC_PREFIX, NAME_FIRST, NAME_MIDDLE, NAME_LAST,
+                  NAME_LAST_PREFIX, NAME_LAST_CORE, NAME_LAST_FIRST,
+                  NAME_LAST_SECOND, NAME_LAST_CONJUNCTION, NAME_MIDDLE_INITIAL,
+                  NAME_FULL, NAME_SUFFIX, ALTERNATIVE_FAMILY_NAME,
+                  ALTERNATIVE_GIVEN_NAME, ALTERNATIVE_FULL_NAME));
 }
 
 TEST(AutofillAttributeTypeTest, IsObfuscated) {
@@ -84,6 +92,27 @@ TEST(AutofillEntityTypeTest, DisambiguationOrder) {
 TEST(AutofillEntityTypeTest, Syncable) {
   using enum EntityTypeName;
   EXPECT_FALSE(EntityType(kPassport).syncable());
+}
+
+TEST(AutofillEntityTypeTest, Disabled) {
+  using enum EntityTypeName;
+  EXPECT_TRUE(EntityType(kPassport).enabled());
+  EXPECT_TRUE(EntityType(kDriversLicense).enabled());
+  EXPECT_TRUE(EntityType(kVehicle).enabled());
+}
+
+// Tests that specifying an "excluded geo-ip" disabled the entity in countries
+// with that geo ip.
+TEST(AutofillEntityTypeTest, EnabledWithCountryCode) {
+  EntityType e = EntityType(EntityTypeName::kNationalIdCard);
+  EXPECT_FALSE(e.enabled());
+  EXPECT_FALSE(e.enabled(GeoIpCountryCode("US")));
+
+  base::test::ScopedFeatureList feature_list{
+      features::kAutofillAiNationalIdCard};
+  EXPECT_TRUE(e.enabled(GeoIpCountryCode("US")));
+  EXPECT_TRUE(e.enabled(GeoIpCountryCode("DE")));
+  EXPECT_FALSE(e.enabled(GeoIpCountryCode("IN")));
 }
 
 TEST(AutofillEntityTypeTest, EntityGetNameForI18n) {

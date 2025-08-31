@@ -10,10 +10,8 @@ import static org.mockito.Mockito.when;
 
 import android.app.Activity;
 import android.content.Context;
-import android.os.Build;
 import android.view.View;
 import android.view.Window;
-import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 
 import org.junit.After;
@@ -23,7 +21,6 @@ import org.junit.runner.RunWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
 import org.robolectric.shadows.ShadowLog;
 
@@ -35,8 +32,6 @@ import java.lang.ref.WeakReference;
 
 /** A robolectric test for {@link InputMethodManagerWrapperImpl} class. */
 @RunWith(BaseRobolectricTestRunner.class)
-// Any VERSION_CODE >= O is fine.
-@Config(manifest = Config.NONE, sdk = Build.VERSION_CODES.O)
 @LooperMode(LooperMode.Mode.LEGACY)
 public class InputMethodManagerWrapperImplTest {
     private static final boolean DEBUG = false;
@@ -68,8 +63,6 @@ public class InputMethodManagerWrapperImplTest {
     @Mock private InputMethodManagerWrapper.Delegate mDelegate;
     @Mock private View mView;
     @Mock private InputMethodManager mInputMethodManager;
-    @Mock private WindowManager mContextWindowManager;
-    @Mock private WindowManager mActivityWindowManager;
 
     private int mContextDisplayId = -1; // uninitialized
     private int mActivityDisplayId = -1; // uninitialized

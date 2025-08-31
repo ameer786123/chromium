@@ -18,9 +18,9 @@
 #include "build/build_config.h"
 #include "chrome/updater/branded_constants.h"
 #include "chrome/updater/tag.h"
-#include "chrome/updater/update_usage_stats_task.h"
 #include "chrome/updater/updater_branding.h"
 #include "chrome/updater/updater_scope.h"
+#include "chrome/updater/usage_stats_permissions.h"
 #include "chrome/updater/util/util.h"
 #include "third_party/crashpad/crashpad/client/crash_report_database.h"
 #include "third_party/crashpad/crashpad/client/crashpad_client.h"
@@ -133,13 +133,15 @@ bool CrashClient::InitializeCrashReporting(UpdaterScope updater_scope) {
   }
 
   std::optional<tagging::TagArgs> tag_args = GetTagArgs().tag_args;
-  std::string env_usage_stats;
-  if ((tag_args && tag_args->usage_stats_enable &&
+  const bool usage_stats_enabled =
+      (tag_args && tag_args->usage_stats_enable &&
        *tag_args->usage_stats_enable) ||
-      (base::Environment::Create()->GetVar(kUsageStatsEnabled,
-                                           &env_usage_stats) &&
-       env_usage_stats == kUsageStatsEnabledValueEnabled) ||
-      UsageStatsProvider::Create(updater_scope)->AnyAppEnablesUsageStats()) {
+      base::Environment::Create()
+              ->GetVar(kUsageStatsEnabled)
+              .value_or(std::string()) == kUsageStatsEnabledValueEnabled ||
+      AnyAppEnablesUsageStats(updater_scope);
+
+  if (usage_stats_enabled) {
     crashpad::Settings* crashpad_settings = database_->GetSettings();
     CHECK(crashpad_settings);
     crashpad_settings->SetUploadsEnabled(true);

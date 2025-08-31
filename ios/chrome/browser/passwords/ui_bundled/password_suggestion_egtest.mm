@@ -5,6 +5,7 @@
 #import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
 
+#import "base/ios/ios_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "base/time/time.h"
@@ -79,8 +80,7 @@ id<GREYMatcher> ProactivePasswordGenerationUseKeyboardButton() {
   GREYAssertTrue(self.testServer->Start(), @"Server did not start.");
 
   // Sign in to a chrome account.
-  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
-                                                               fakeIdentity1]];
+  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
 
   // Also reset the dismiss count pref to 0 to make sure the bottom sheet is
   // enabled by default.
@@ -174,7 +174,8 @@ id<GREYMatcher> ProactivePasswordGenerationUseKeyboardButton() {
 
 // Tests that the bottom sheet populates the new password and confirm password
 // fields.
-- (void)testFillNewPasswordWithProactiveBottomSheet {
+// TODO(crbug.com/425885707): ensures this test works on CQ.
+- (void)FLAKY_testFillNewPasswordWithProactiveBottomSheet {
   [self loadSignupPage];
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
@@ -218,6 +219,11 @@ id<GREYMatcher> ProactivePasswordGenerationUseKeyboardButton() {
 // Tests that the bottom sheet does not show after it has been
 // dismissed three consecutive times.
 - (void)testSilenceProactiveBottomSheet {
+  // TODO(crbug.com/439743829): Re-enable the test on iOS26.
+  if (base::ios::IsRunningOnIOS26OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
+
   // Dismiss #1
   [self loadSignupPage];
   [self openAndDismissBottomSheet];
@@ -276,42 +282,38 @@ id<GREYMatcher> ProactivePasswordGenerationUseKeyboardButton() {
 
 // Tests dynamic sizing.
 - (void)testProactiveBottomSheetWithDynamicTypeSizing {
-  if (@available(iOS 17.0, *)) {
-    [self loadSignupPage];
+  [self loadSignupPage];
 
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
-        performAction:chrome_test_util::TapWebElementWithId(
-                          kNewPasswordFieldID)];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId(kNewPasswordFieldID)];
 
-    [ChromeEarlGrey
-        waitForUIElementToAppearWithMatcher:UseSuggestedPasswordButton()];
+  [ChromeEarlGrey
+      waitForUIElementToAppearWithMatcher:UseSuggestedPasswordButton()];
 
-    // Change trait collection to use accessibility large content size.
-    ScopedTraitOverrider overrider(TopPresentedViewController());
-    overrider.SetContentSizeCategory(UIContentSizeCategoryAccessibilityLarge);
+  // Change trait collection to use accessibility large content size.
+  ScopedTraitOverrider overrider(TopPresentedViewController());
+  overrider.SetContentSizeCategory(UIContentSizeCategoryAccessibilityLarge);
 
-    [ChromeEarlGreyUI waitForAppToIdle];
+  [ChromeEarlGreyUI waitForAppToIdle];
 
-    // Verify that the "Use Suggested Password" and "Use Keyboard" buttons are
-    // still visible.
-    [[EarlGrey selectElementWithMatcher:UseSuggestedPasswordButton()]
-        assertWithMatcher:grey_sufficientlyVisible()];
+  // Verify that the "Use Suggested Password" and "Use Keyboard" buttons are
+  // still visible.
+  [[EarlGrey selectElementWithMatcher:UseSuggestedPasswordButton()]
+      assertWithMatcher:grey_sufficientlyVisible()];
 
-    [[EarlGrey
-        selectElementWithMatcher:ProactivePasswordGenerationUseKeyboardButton()]
-        assertWithMatcher:grey_sufficientlyVisible()];
+  [[EarlGrey
+      selectElementWithMatcher:ProactivePasswordGenerationUseKeyboardButton()]
+      assertWithMatcher:grey_sufficientlyVisible()];
 
-    [[EarlGrey selectElementWithMatcher:UseSuggestedPasswordButton()]
-        performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:UseSuggestedPasswordButton()]
+      performAction:grey_tap()];
 
-    [self verifyNewPasswordFieldsHaveBeenFilled];
-  } else {
-    EARL_GREY_TEST_SKIPPED(@"Not available for under iOS 17.");
-  }
+  [self verifyNewPasswordFieldsHaveBeenFilled];
 }
 
 // Tests that the bottom sheet does not show if the user isn't signed in.
-- (void)testUserSignedOut {
+// TODO(crbug.com/440577394): This test is flaky.
+- (void)FLAKY_testUserSignedOut {
   [ChromeEarlGrey signOutAndClearIdentities];
 
   [self loadSignupPage];

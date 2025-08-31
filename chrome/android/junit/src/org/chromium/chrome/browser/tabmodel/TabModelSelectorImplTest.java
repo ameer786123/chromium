@@ -37,7 +37,11 @@ import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ActivityType;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.tab.MockTab;
@@ -75,6 +79,7 @@ public class TabModelSelectorImplTest {
     @Mock private TabDelegateFactory mTabDelegateFactory;
     @Mock private NextTabPolicySupplier mNextTabPolicySupplier;
     @Mock private ModalDialogManager mModalDialogManager;
+    @Mock private MultiInstanceManager mMultiInstanceManager;
 
     @Mock
     private IncognitoTabModelObserver.IncognitoReauthDialogDelegate
@@ -112,6 +117,7 @@ public class TabModelSelectorImplTest {
                         mProfileProviderSupplier,
                         mTabCreatorManager,
                         mNextTabPolicySupplier,
+                        mMultiInstanceManager,
                         mAsyncTabParamsManager,
                         /* supportUndo= */ false,
                         NO_RESTORE_TYPE,
@@ -142,7 +148,9 @@ public class TabModelSelectorImplTest {
 
         mTabCreatorManager.initialize(mTabModelSelector);
         mTabModelSelector.onNativeLibraryReadyInternal(
-                mMockTabContentManager, mRegularTabModel, mIncognitoTabModel);
+                mMockTabContentManager,
+                TabModelHolderFactory.createTabModelHolderForTesting(mRegularTabModel),
+                TabModelHolderFactory.createIncognitoTabModelHolderForTesting(mIncognitoTabModel));
 
         assertEquals(
                 mTabModelSelector.getModel(/* incognito= */ false),
@@ -452,6 +460,7 @@ public class TabModelSelectorImplTest {
     }
 
     @Test
+    @DisableFeatures(ChromeFeatureList.HEADLESS_TAB_MODEL)
     public void testMarkTabStateInitializedReentrancy() {
         mTabModelSelector.destroy();
 
@@ -463,25 +472,25 @@ public class TabModelSelectorImplTest {
                         mProfileProviderSupplier,
                         mTabCreatorManager,
                         mNextTabPolicySupplier,
+                        mMultiInstanceManager,
                         mAsyncTabParamsManager,
                         /* supportUndo= */ false,
                         NO_RESTORE_TYPE,
                         /* startIncognito= */ false);
         when(regularModel.isActiveModel()).thenReturn(true);
-        TabUngrouperFactory factory =
-                (isIncognitoBranded, tabGroupModelFilterSupplier) ->
-                        new PassthroughTabUngrouper(tabGroupModelFilterSupplier);
-        mTabModelSelector.initializeForTesting(regularModel, mIncognitoTabModel, factory);
+        mTabModelSelector.initializeForTesting(
+                TabModelHolderFactory.createTabModelHolderForTesting(regularModel),
+                TabModelHolderFactory.createIncognitoTabModelHolderForTesting(mIncognitoTabModel));
         TabModelSelectorObserver observer =
                 new TabModelSelectorObserver() {
                     @Override
                     public void onTabStateInitialized() {
-                        verify(regularModel, never()).broadcastSessionRestoreComplete();
+                        verify(regularModel, never()).completeInitialization();
                         mTabModelSelector.markTabStateInitialized();
 
                         // Should not be called due to re-entrancy guard until this observer
                         // returns.
-                        verify(regularModel, never()).broadcastSessionRestoreComplete();
+                        verify(regularModel, never()).completeInitialization();
                     }
                 };
 
@@ -492,7 +501,34 @@ public class TabModelSelectorImplTest {
         mTabModelSelector.removeObserver(observer);
 
         // Should be called exactly once.
+        verify(regularModel).completeInitialization();
         verify(regularModel).broadcastSessionRestoreComplete();
+    }
+
+    @Test
+    @EnableFeatures(ChromeFeatureList.HEADLESS_TAB_MODEL)
+    public void testInitDoesNotBroadcastInHeadless() {
+        mTabModelSelector.destroy();
+
+        TabModelImpl regularModel = mock(TabModelImpl.class);
+        mTabModelSelector =
+                new TabModelSelectorImpl(
+                        mContext,
+                        mModalDialogManager,
+                        mProfileProviderSupplier,
+                        mTabCreatorManager,
+                        mNextTabPolicySupplier,
+                        mMultiInstanceManager,
+                        mAsyncTabParamsManager,
+                        /* supportUndo= */ false,
+                        NO_RESTORE_TYPE,
+                        /* startIncognito= */ false);
+        when(regularModel.isActiveModel()).thenReturn(true);
+        mTabModelSelector.initializeForTesting(
+                TabModelHolderFactory.createTabModelHolderForTesting(regularModel),
+                TabModelHolderFactory.createIncognitoTabModelHolderForTesting(mIncognitoTabModel));
+        mTabModelSelector.markTabStateInitialized();
+        verify(regularModel, never()).broadcastSessionRestoreComplete();
     }
 
     @Test

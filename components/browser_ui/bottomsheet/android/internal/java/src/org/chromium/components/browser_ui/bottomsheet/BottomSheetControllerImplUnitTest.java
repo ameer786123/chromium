@@ -4,6 +4,7 @@
 
 package org.chromium.components.browser_ui.bottomsheet;
 
+import static org.junit.Assert.assertFalse;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -35,6 +36,8 @@ import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateMa
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 
+import java.util.function.Supplier;
+
 /** Unit tests for {@link BottomSheetControllerImpl}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
@@ -47,6 +50,7 @@ public class BottomSheetControllerImplUnitTest {
     @Mock private DesktopWindowStateManager mDesktopWindowStateManager;
     @Mock private AppHeaderState mAppHeaderState;
     @Mock private BottomSheet mBottomSheet;
+    @Mock private BottomSheetContent mSheetContent;
     @Captor ArgumentCaptor<BottomSheetObserver> mBottomSheetObserverCaptor;
 
     private BottomSheetControllerImpl mController;
@@ -62,6 +66,7 @@ public class BottomSheetControllerImplUnitTest {
     public void setUp() {
         MockitoAnnotations.openMocks(this);
         Activity activity = buildActivity(Activity.class).setup().get();
+        activity.setTheme(R.style.Theme_BrowserUI_DayNight);
         mWindow = activity.getWindow();
         when(mRoot.getContext()).thenReturn(activity);
         when(mRoot.findViewById(R.id.bottom_sheet)).thenReturn(mBottomSheet);
@@ -162,5 +167,28 @@ public class BottomSheetControllerImplUnitTest {
         doReturn(true).when(mBottomSheet).isSheetOpen();
         mBottomSheetObserverCaptor.getValue().onSheetOpened(StateChangeReason.NONE);
         verify(mRoot).setZ(1.0f);
-   }
+    }
+
+    @Test
+    public void testRequestShowContent_FailsIfRootViewIsNull() {
+        // Create a new supplier that returns null to simulate a destroyed activity.
+        Supplier<ViewGroup> nullRootSupplier = () -> null;
+        BottomSheetControllerImpl controllerWithNullRoot =
+                new BottomSheetControllerImpl(
+                        mScrimManagerSupplier,
+                        mInitializedCallback,
+                        mWindow,
+                        mKeyboardVisibilityDelegate,
+                        nullRootSupplier,
+                        false,
+                        mEdgeToEdgeBottomInsetSupplier,
+                        mDesktopWindowStateManager);
+
+        // Requesting to show content should fail gracefully instead of crashing.
+        boolean result =
+                controllerWithNullRoot.requestShowContent(mSheetContent, /* animate= */ true);
+
+        // Verify that the request was blocked.
+        assertFalse("requestShowContent should return false when the root view is null.", result);
+    }
 }

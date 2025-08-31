@@ -56,6 +56,7 @@
 #include "third_party/blink/renderer/core/input_type_names.h"
 #include "third_party/blink/renderer/core/layout/flex/layout_flexible_box.h"
 #include "third_party/blink/renderer/core/layout/layout_block.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
@@ -132,8 +133,7 @@ double RangeInputType::ValueAsDouble() const {
 void RangeInputType::SetValueAsDouble(double new_value,
                                       TextFieldEventBehavior event_behavior,
                                       ExceptionState& exception_state) const {
-  SetValueAsDecimal(Decimal::FromDouble(new_value), event_behavior,
-                    exception_state);
+  SetValueAsDecimal(Decimal::FromDouble(new_value), event_behavior);
 }
 
 bool RangeInputType::TypeMismatchFor(const String& value) const {
@@ -178,7 +178,7 @@ void RangeInputType::HandleMouseDownEvent(MouseEvent& event) {
   if (GetElement().IsDisabledFormControl())
     return;
 
-  Node* target_node = event.target()->ToNode();
+  Node* target_node = event.RawTarget()->ToNode();
   if (event.button() !=
           static_cast<int16_t>(WebPointerProperties::Button::kLeft) ||
       !target_node)
@@ -258,7 +258,7 @@ void RangeInputType::HandleKeydownEvent(KeyboardEvent& event) {
     EventQueueScope scope;
     TextFieldEventBehavior event_behavior =
         TextFieldEventBehavior::kDispatchInputAndChangeEvent;
-    SetValueAsDecimal(new_value, event_behavior, IGNORE_EXCEPTION_FOR_TESTING);
+    SetValueAsDecimal(new_value, event_behavior);
 
     if (AXObjectCache* cache =
             GetElement().GetDocument().ExistingAXObjectCache())

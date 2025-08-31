@@ -26,6 +26,7 @@
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
 
 #include "cc/input/main_thread_scrolling_reason.h"
+#include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/ime/input_method_controller.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -37,12 +38,10 @@
 #include "third_party/blink/renderer/core/layout/geometry/transform_state.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
 #include "third_party/blink/renderer/core/layout/layout_block.h"
-#include "third_party/blink/renderer/core/layout/layout_flow_thread.h"
 #include "third_party/blink/renderer/core/layout/layout_inline.h"
 #include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_result.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
-#include "third_party/blink/renderer/core/layout/legacy_layout_tree_walking.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/layout/table/layout_table_section.h"
 #include "third_party/blink/renderer/core/page/scrolling/sticky_position_scrolling_constraints.h"
@@ -50,8 +49,10 @@
 #include "third_party/blink/renderer/core/paint/object_paint_invalidator.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
+#include "third_party/blink/renderer/core/style/computed_style_base_constants.h"
 #include "third_party/blink/renderer/core/style/shadow_list.h"
 #include "third_party/blink/renderer/platform/geometry/length_functions.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -65,8 +66,9 @@ void MarkBoxForRelayoutAfterSplit(LayoutBoxModelObject* box) {
 void CollapseLoneAnonymousBlockChild(LayoutBox* parent, LayoutObject* child) {
   auto* child_block_flow = DynamicTo<LayoutBlockFlow>(child);
   auto* parent_block_flow = DynamicTo<LayoutBlockFlow>(parent);
-  if (!child->IsAnonymousBlock() || !child_block_flow)
+  if (!child->IsAnonymousBlockFlow() || !child_block_flow) {
     return;
+  }
   if (!parent_block_flow)
     return;
   parent_block_flow->CollapseAnonymousBlockChild(child_block_flow);
@@ -132,13 +134,6 @@ void LayoutBoxModelObject::StyleWillChange(StyleDifference diff,
       // ObjectPaintInvalidator requires this.
       IsRooted()) {
     ObjectPaintInvalidator(*this).SlowSetPaintingLayerNeedsRepaint();
-  }
-
-  if (Style()) {
-    LayoutFlowThread* flow_thread = FlowThreadContainingBlock();
-    if (flow_thread && flow_thread != this) {
-      flow_thread->FlowThreadDescendantStyleWillChange(this, diff, new_style);
-    }
   }
 
   LayoutObject::StyleWillChange(diff, new_style);
@@ -233,12 +228,6 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
   }
 
   if (old_style && Parent()) {
-    if (LayoutFlowThread* flow_thread = FlowThreadContainingBlock()) {
-      if (flow_thread != this) {
-        flow_thread->FlowThreadDescendantStyleDidChange(this, diff, *old_style);
-      }
-    }
-
     LayoutBlock* block = InclusiveContainingBlock();
 
     if ((could_contain_fixed && !can_contain_fixed) ||
@@ -458,7 +447,7 @@ void LayoutBoxModelObject::UpdateFromStyle() {
   const ComputedStyle& style = StyleRef();
   SetHasBoxDecorationBackground(style.HasBoxDecorationBackground());
   SetInline(ShouldBeHandledAsInline(style));
-  SetPositionState(style.GetPosition());
+  SetPositionState(ToPositionedState(style.GetPosition()));
   SetHorizontalWritingMode(style.IsHorizontalWritingMode());
 
   const bool is_fixed_container = ComputeIsFixedContainer(style);
@@ -728,7 +717,6 @@ PhysicalOffset LayoutBoxModelObject::AdjustedPositionRelativeTo(
            current && current->GetNode() != offset_parent;
            current = current->Container()) {
         // FIXME: What are we supposed to do inside SVG content?
-        reference_point += current->ColumnOffset(reference_point);
         if (current->IsBox()) {
           reference_point += To<LayoutBox>(current)->PhysicalLocation();
         }
@@ -760,20 +748,6 @@ PhysicalOffset LayoutBoxModelObject::AdjustedPositionRelativeTo(
   return reference_point;
 }
 
-LayoutUnit LayoutBoxModelObject::OffsetLeft(const Element* parent) const {
-  NOT_DESTROYED();
-  // Note that LayoutInline and LayoutBox override this to pass a different
-  // startPoint to adjustedPositionRelativeTo.
-  return AdjustedPositionRelativeTo(PhysicalOffset(), parent).left;
-}
-
-LayoutUnit LayoutBoxModelObject::OffsetTop(const Element* parent) const {
-  NOT_DESTROYED();
-  // Note that LayoutInline and LayoutBox override this to pass a different
-  // startPoint to adjustedPositionRelativeTo.
-  return AdjustedPositionRelativeTo(PhysicalOffset(), parent).top;
-}
-
 LayoutUnit LayoutBoxModelObject::ComputedCSSPadding(
     const Length& padding) const {
   NOT_DESTROYED();
@@ -791,7 +765,8 @@ LayoutUnit LayoutBoxModelObject::ContainingBlockLogicalWidthForContent() const {
 
 LogicalRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
     LayoutUnit width,
-    LayoutUnit text_indent_offset) const {
+    LayoutUnit text_indent_offset,
+    CaretShape caret_shape) const {
   NOT_DESTROYED();
   DCHECK(!SlowFirstChild() || SlowFirstChild()->IsPseudoElement());
 
@@ -805,7 +780,19 @@ LogicalRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
 
   CaretAlignment alignment = kAlignLeft;
 
-  switch (current_style.GetTextAlign()) {
+  ETextAlign reference_align = current_style.GetTextAlign();
+  const ComputedStyle* reference_style = &current_style;
+
+  if (reference_align == ETextAlign::kMatchParent) {
+    if (!Parent()) {
+      reference_align = ETextAlign::kStart;
+    } else {
+      reference_align = Parent()->StyleRef().GetTextAlign();
+      reference_style = &Parent()->StyleRef();
+    }
+  }
+
+  switch (reference_align) {
     case ETextAlign::kLeft:
     case ETextAlign::kWebkitLeft:
       break;
@@ -819,12 +806,17 @@ LogicalRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
       break;
     case ETextAlign::kJustify:
     case ETextAlign::kStart:
-      if (!current_style.IsLeftToRightDirection())
+      if (!reference_style->IsLeftToRightDirection()) {
         alignment = kAlignRight;
+      }
       break;
     case ETextAlign::kEnd:
-      if (current_style.IsLeftToRightDirection())
+      if (reference_style->IsLeftToRightDirection()) {
         alignment = kAlignRight;
+      }
+      break;
+    case ETextAlign::kMatchParent:
+      // Already handled above by resolving to parent's alignment
       break;
   }
 
@@ -836,7 +828,7 @@ LogicalRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
               {current_style.GetWritingMode(), TextDirection::kLtr});
   x = border_padding.inline_start;
   max_x = width - border_padding.inline_end;
-  LayoutUnit caret_width = GetFrameView()->CaretWidth();
+  LayoutUnit caret_width = GetFrameView()->BarCaretWidth();
 
   switch (alignment) {
     case kAlignLeft:
@@ -867,6 +859,22 @@ LogicalRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
     height = LayoutUnit(font_data->GetFontMetrics().Height());
   LayoutUnit vertical_space = FirstLineHeight() - height;
   LayoutUnit block_start = border_padding.block_start + (vertical_space / 2);
+  // Care-shape applies to text or elements that accept text input.
+  const Node* node = GetNode();
+  if (!node || !IsEditable(*node)) {
+    caret_shape = CaretShape::kBar;
+  }
+  if (caret_shape != CaretShape::kBar && font_data) [[unlikely]] {
+    if (caret_shape == CaretShape::kBlock) {
+      caret_width = LayoutUnit(font_data->AvgCharWidth());
+    } else if (caret_shape == CaretShape::kUnderscore) {
+      height = caret_width;
+      caret_width = LayoutUnit(font_data->AvgCharWidth());
+      block_start =
+          block_start + LayoutUnit(font_data->GetFontMetrics().Height());
+    }
+  }
+
   return LogicalRect(x, block_start, caret_width, height);
 }
 

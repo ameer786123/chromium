@@ -21,8 +21,6 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/platform/wayland/host/dump_util.h"
-#include "ui/ozone/platform/wayland/host/gtk_shell1.h"
-#include "ui/ozone/platform/wayland/host/gtk_surface1.h"
 #include "ui/ozone/platform/wayland/host/org_kde_kwin_appmenu.h"
 #include "ui/ozone/platform/wayland/host/wayland_bubble.h"
 #include "ui/ozone/platform/wayland/host/wayland_buffer_manager_host.h"
@@ -156,14 +154,23 @@ void WaylandToplevelWindow::Hide() {
   for (auto bubble : child_bubbles()) {
     bubble->Hide();
   }
-  WaylandWindow::Hide();
 
-  if (gtk_surface1_)
-    gtk_surface1_.reset();
-
-  toplevel_session_.reset();
+  // Note that the xdg_toplevel object should be destroyed before we touch
+  // anything else in order to provide the compositor a good reference point
+  // when the window contents can be frozen in case a window closing animation
+  // needs to be played. Ideally, the xdg_toplevel object should also be
+  // destroyed before any subsurface is destroyed, otherwise the window may have
+  // missing contents when the compositor animates it.
+  //
+  // The xdg-shell spec provides another way to hide a window: attach a nil
+  // buffer to the root surface. However, compositors often get it wrong, and it
+  // makes sense only if the xdg_toplevel object is going to be reused, which is
+  // not the case here.
   xdg_toplevel_.reset();
+  toplevel_session_.reset();
   appmenu_.reset();
+
+  WaylandWindow::Hide();
   ClearInFlightRequestsSerial();
 
   connection()->Flush();
@@ -286,23 +293,21 @@ void WaylandToplevelWindow::ShowWindowControlsMenu(const gfx::Point& point) {
 
 void WaylandToplevelWindow::ActivateWithToken(std::string token) {
   DCHECK(connection()->xdg_activation());
-  // xdg-activation implementation doesn't seem to interact well with dnd in
-  // some compositors. Eg: Mutter crashes were observed in tab drag sessions.
-  // See https://gitlab.gnome.org/GNOME/mutter/-/issues/3822.
-  //
-  // TODO(crbug.com/40866970): Remove once the compositor bug gets fixed.
-  if (connection()->IsDragInProgress()) {
-    return;
+  bool can_activate = IsSurfaceConfigured();
+
+  // Stacking the dragged xdg toplevel as the topmost one (and tied to the
+  // pointer cursor) is reponsibility of the Wayland compositor, so bail out
+  // if `this` is currently being dragged.
+  if (auto* drag_controller = connection()->window_drag_controller()) {
+    can_activate &= !drag_controller->IsDraggingWindow(this);
   }
-  connection()->xdg_activation()->Activate(root_surface()->surface(), token);
+
+  if (can_activate) {
+    connection()->xdg_activation()->Activate(root_surface()->surface(), token);
+  }
 }
 
 void WaylandToplevelWindow::Activate() {
-  // Activation is supported through optional protocol extensions and hence may
-  // or may not work depending on the compositor.  The details depend on the
-  // compositor as well; for example, Mutter doesn't bring the window to the top
-  // when it requests focus, but instead shows a system popup notification to
-  // user.
   if (connection()->xdg_activation()) {
     if (auto token = base::nix::TakeXdgActivationToken()) {
       ActivateWithToken(token.value());
@@ -311,14 +316,8 @@ void WaylandToplevelWindow::Activate() {
           base::BindOnce(&WaylandToplevelWindow::ActivateWithToken,
                          weak_ptr_factory_.GetWeakPtr()));
     }
-  } else if (gtk_surface1_) {
-    gtk_surface1_->RequestFocus();
+    connection()->Flush();
   }
-
-  // This is required as the high level activation might not get a flush for
-  // a while.
-  connection()->Flush();
-
   WaylandWindow::Activate();
 }
 
@@ -402,12 +401,6 @@ void WaylandToplevelWindow::SetInputRegion(
   root_surface()->set_input_region(region_px);
 }
 
-void WaylandToplevelWindow::NotifyStartupComplete(
-    const std::string& startup_id) {
-  if (auto* gtk_shell = connection()->gtk_shell1())
-    gtk_shell->SetStartupId(startup_id);
-}
-
 void WaylandToplevelWindow::UpdateWindowScale(bool update_bounds) {
   auto old_scale = applied_state().window_scale;
   WaylandWindow::UpdateWindowScale(update_bounds);
@@ -427,15 +420,27 @@ void WaylandToplevelWindow::UpdateActivationState() {
   bool prev_is_active = is_active_;
 
   // Determine active state from keyboard focus. If keyboard is unavailable,
-  // determine it from xdg-shell "activated" state as that's the only hint the
-  // compositor provides us on whether our window is considered active.
-  // TODO(crbug.com/369574355): utilize zwp_text_input_v3::{enter,leave}
-  // eventually
+  // determine it from zwp_text_input_v3::{enter,leave}.
+  // If neither of those are available, use xdg-shell "activated" state as
+  // that's the only other hint the compositor provides us on whether our window
+  // is considered active.
   if (connection()->IsKeyboardAvailable()) {
     auto* keyboard_focused_window =
         connection()->window_manager()->GetCurrentKeyboardFocusedWindow();
     is_active_ = keyboard_focused_window &&
                  keyboard_focused_window->GetRootParentWindow() == this;
+  } else if (connection()->SupportsTextInputFocus()) {
+    // Note: Some compositors (sway, niri, cosmic etc.) may not send
+    // text-input-v3 enter/leave events if an IM framework is not
+    // installed/running. So text input focus cannot be used always instead of
+    // keyboard focus above. However, if there is no physical keyboard, there
+    // should be an IM framework to facilitate inputting text in some way, e.g.
+    // using a virtual keyboard, and so it should be okay to expect focus to be
+    // received from text-input in that case if text-input-v3 is available.
+    auto* text_input_focused_window =
+        connection()->window_manager()->GetCurrentTextInputFocusedWindow();
+    is_active_ = text_input_focused_window &&
+                 text_input_focused_window->GetRootParentWindow() == this;
   } else {
     is_active_ = is_xdg_active_;
   }
@@ -490,13 +495,17 @@ void WaylandToplevelWindow::HandleToplevelConfigureWithOrigin(
   is_suspended_ = window_states.is_suspended;
 
   // The tiled state affects the window geometry, so apply it here.
-  if (window_states.tiled_edges != tiled_state_) {
+  // TODO(crbug.com/414831391): Remove this and notify in
+  // WindowTreeHostPlatform::OnStateUpdate instead like all other state changes.
+  // The only issue there is when doing that a regression was seen in kwin. See
+  // the bug description for additional details.
+  if (window_states.tiled_edges != applied_state().tiled_edges) {
     // This configure changes the decoration insets.  We should adjust the
     // bounds appropriately.
-    tiled_state_ = window_states.tiled_edges;
     delegate()->OnWindowTiledStateChanged(window_states.tiled_edges);
   }
 
+  pending_configure_state_.tiled_edges = window_states.tiled_edges;
   pending_configure_state_.window_state = window_state;
 
   // Width or height set to 0 means that we should decide on width and height by
@@ -890,13 +899,6 @@ void WaylandToplevelWindow::SetSizeConstraints() {
 void WaylandToplevelWindow::SetUpShellIntegration() {
   // This method should be called after the XDG surface is initialized.
   DCHECK(xdg_toplevel_);
-  // We must not request a new GtkSurface if we already have one, else we get a
-  // "gtk_shell::get_gtk_surface already requested" error. (crbug.com/1380419)
-  if (connection()->gtk_shell1() && !gtk_surface1_) {
-    gtk_surface1_ =
-        connection()->gtk_shell1()->GetGtkSurface1(root_surface()->surface());
-  }
-
   TryAnnounceAppmenu();
 }
 

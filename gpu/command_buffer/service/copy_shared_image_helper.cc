@@ -9,6 +9,7 @@
 
 #include "gpu/command_buffer/service/copy_shared_image_helper.h"
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include "base/types/expected.h"
 #include "base/types/expected_macros.h"
 #include "gpu/command_buffer/common/mailbox.h"
+#include "gpu/command_buffer/service/graphite_shared_context.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
@@ -379,7 +381,7 @@ base::expected<void, GLError> CopySharedImageHelper::CopySharedImage(
                             gfx::RectToSkRect(dest_rect), SkSamplingOptions(),
                             &paint, SkCanvas::kStrict_SrcRectConstraint);
     } else {
-      SkSurface* yuva_sk_surfaces[SkYUVAInfo::kMaxPlanes] = {};
+      std::array<SkSurface*, SkYUVAInfo::kMaxPlanes> yuva_sk_surfaces = {};
       for (int plane_index = 0; plane_index < dest_format.NumberOfPlanes();
            plane_index++) {
         // Get surface per plane from destination scoped write access.
@@ -406,7 +408,8 @@ base::expected<void, GLError> CopySharedImageHelper::CopySharedImage(
       // (non-multiplanar SI) behavior in RenderableGMBVideoFramePool, so it is
       // not a regression. Nonetheless, this behavior should
       // ideally be changed to that described above for correctness.
-      skia::BlitRGBAToYUVA(source_image.get(), yuva_sk_surfaces, yuva_info);
+      skia::BlitRGBAToYUVA(source_image.get(), yuva_sk_surfaces.data(),
+                           yuva_info);
       dest_shared_image->SetCleared();
     }
 
@@ -549,7 +552,7 @@ namespace {
 // that the src rect is contained within the image. This function automatically
 // adjusts the parameters to match the permissiveness of Ganesh's
 // SkImage::readPixels and makes it synchronous.
-bool GraphiteImageReadPixels(skgpu::graphite::Context* graphite_context,
+bool GraphiteImageReadPixels(GraphiteSharedContext* graphite_shared_context,
                              sk_sp<SkImage> sk_image,
                              GrSurfaceOrigin src_surface_origin,
                              int src_x,
@@ -585,14 +588,15 @@ bool GraphiteImageReadPixels(skgpu::graphite::Context* graphite_context,
     // !Contains branch and actually reads the pixels. Check here to prevent
     // infinite recursion.
     CHECK(src_image_bounds.Contains(src_rect));
-    return GraphiteImageReadPixels(
-        graphite_context, std::move(sk_image), src_surface_origin, src_rect.x(),
-        src_rect.y(), subset_dst_info, subset_pixel_addr, row_bytes);
+    return GraphiteImageReadPixels(graphite_shared_context, std::move(sk_image),
+                                   src_surface_origin, src_rect.x(),
+                                   src_rect.y(), subset_dst_info,
+                                   subset_pixel_addr, row_bytes);
   }
 
   // Now that `src_rect` meets the requirements of the asyncRead API, call the
   // async function, then submit and block until it's completed.
-  CHECK(graphite_context);
+  CHECK(graphite_shared_context);
   ReadPixelsContext context;
 
 #if !defined(SK_GRAPHITE_READ_PIXELS_SUPPORTS_BOTTOM_LEFT)
@@ -612,13 +616,15 @@ bool GraphiteImageReadPixels(skgpu::graphite::Context* graphite_context,
   }
 #endif
 
-  graphite_context->asyncRescaleAndReadPixels(
-      sk_image.get(), dst_info, RectToSkIRect(src_rect),
-      SkImage::RescaleGamma::kSrc, SkImage::RescaleMode::kRepeatedLinear,
-      &OnReadPixelsDone, &context);
   // We don't need to insert a recording since asyncRescaleAndReadPixels is a
   // context operation that inserts its own recording internally.
-  graphite_context->submit(skgpu::graphite::SyncToCpu::kYes);
+  if (!graphite_shared_context->asyncRescaleAndReadPixelsAndSubmit(
+          sk_image.get(), dst_info, RectToSkIRect(src_rect),
+          SkImage::RescaleGamma::kSrc, SkImage::RescaleMode::kRepeatedLinear,
+          base::BindOnce(&OnReadPixelsDone), &context)) {
+    return false;
+  }
+
   CHECK(context.finished);
   if (!context.async_result) {
     return false;
@@ -705,11 +711,13 @@ base::expected<void, GLError> CopySharedImageHelper::ReadPixels(
                                    row_bytes, src_x, src_y);
     source_scoped_access->ApplyBackendSurfaceEndState();
     shared_context_state_->SubmitIfNecessary(
-        std::move(end_semaphores), /*need_graphite_context_submit==*/false);
+        std::move(end_semaphores),
+        /*need_graphite_shared_context_submit==*/false);
   } else {
-    auto* graphite_context = shared_context_state_->graphite_context();
+    auto* graphite_shared_context =
+        shared_context_state_->graphite_shared_context();
     success =
-        GraphiteImageReadPixels(graphite_context, std::move(sk_image),
+        GraphiteImageReadPixels(graphite_shared_context, std::move(sk_image),
                                 source_shared_image->surface_origin(), src_x,
                                 src_y, dst_info, pixel_address, row_bytes);
   }
@@ -745,7 +753,7 @@ base::expected<void, GLError> CopySharedImageHelper::WritePixelsYUV(
           &pixmaps[plane], /*numLevels=*/1, dest_shared_image->surface_origin(),
           /*finishedProc=*/nullptr, /*finishedContext=*/nullptr);
     } else {
-      CHECK(shared_context_state_->graphite_context());
+      CHECK(shared_context_state_->graphite_shared_context());
       auto graphite_texture_ref =
           dest_scoped_access->graphite_texture_holder(plane);
       auto* graphite_texture_ptr = graphite_texture_ref.release();

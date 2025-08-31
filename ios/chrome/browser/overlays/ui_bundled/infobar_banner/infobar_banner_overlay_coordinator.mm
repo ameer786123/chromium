@@ -20,6 +20,8 @@
 #import "ios/chrome/browser/overlays/model/public/overlay_request_support.h"
 #import "ios/chrome/browser/overlays/model/public/overlay_response.h"
 #import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/autofill_address_profile/save_address_profile_infobar_banner_overlay_mediator.h"
+#import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/collaboration_group/collaboration_group_infobar_banner_overlay_mediator.h"
+#import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/collaboration_out_of_date/collaboration_out_of_date_infobar_banner_overlay_mediator.h"
 #import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/confirm/confirm_infobar_banner_overlay_mediator.h"
 #import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/features.h"
 #import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/infobar_banner_overlay_mediator.h"
@@ -27,6 +29,7 @@
 #import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/permissions/permissions_infobar_banner_overlay_mediator.h"
 #import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/safe_browsing/enhanced_safe_browsing_infobar_overlay_mediator.h"
 #import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/save_card/save_card_infobar_banner_overlay_mediator.h"
+#import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/save_cvc/save_cvc_infobar_banner_overlay_mediator.h"
 #import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/sync_error/sync_error_infobar_banner_overlay_mediator.h"
 #import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/tailored_security/tailored_security_infobar_banner_overlay_mediator.h"
 #import "ios/chrome/browser/overlays/ui_bundled/infobar_banner/translate/translate_infobar_banner_overlay_mediator.h"
@@ -35,8 +38,12 @@
 #import "ios/chrome/browser/overlays/ui_bundled/overlay_request_mediator_util.h"
 #import "ios/chrome/browser/shared/coordinator/layout_guide/layout_guide_util.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
+#import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/non_modal_signin_promo_commands.h"
+#import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/layout_guide_names.h"
+#import "ios/chrome/browser/shared/ui/util/snackbar_util.h"
 #import "ios/chrome/browser/shared/ui/util/util_swift.h"
 
 @interface InfobarBannerOverlayCoordinator () <InfobarBannerPositioner>
@@ -59,6 +66,7 @@
     [ConfirmInfobarBannerOverlayMediator class],
     [TranslateInfobarBannerOverlayMediator class],
     [SaveCardInfobarBannerOverlayMediator class],
+    [SaveCVCInfobarBannerOverlayMediator class],
     [SaveAddressProfileInfobarBannerOverlayMediator class],
     [PermissionsBannerOverlayMediator class],
     [TailoredSecurityInfobarBannerOverlayMediator class],
@@ -119,8 +127,18 @@
          presentsModal:config->has_badge()
                   type:config->infobar_type()];
   mediator.consumer = self.bannerViewController;
+  // Set the nonModalSignInPromoHandler for non modal sign-in promo.
+  mediator.nonModalSignInPromoHandler = HandlerForProtocol(
+      self.browser->GetCommandDispatcher(), NonModalSignInPromoCommands);
   mediator.engagementTracker =
       feature_engagement::TrackerFactory::GetForProfile(self.profile);
+
+  if ([mediator isKindOfClass:[SaveCardInfobarBannerOverlayMediator class]]) {
+    SaveCardInfobarBannerOverlayMediator* saveCardMediator =
+        (SaveCardInfobarBannerOverlayMediator*)mediator;
+    saveCardMediator.snackbarCommandsHandler = HandlerForProtocol(
+        self.browser->GetCommandDispatcher(), SnackbarCommands);
+  }
 
   self.mediator = mediator;
   // Present the banner.
@@ -234,6 +252,9 @@
     case InfobarType::kInfobarTypeSaveCard:
       mediatorClass = [SaveCardInfobarBannerOverlayMediator class];
       break;
+    case InfobarType::kInfobarTypeSaveCvc:
+      mediatorClass = [SaveCVCInfobarBannerOverlayMediator class];
+      break;
     case InfobarType::kInfobarTypeSyncError:
       mediatorClass = [SyncErrorInfobarBannerOverlayMediator class];
       break;
@@ -242,6 +263,13 @@
       break;
     case InfobarType::kInfobarTypeEnhancedSafeBrowsing:
       mediatorClass = [EnhancedSafeBrowsingBannerOverlayMediator class];
+      break;
+    case InfobarType::kInfobarTypeCollaborationGroup:
+      mediatorClass = [CollaborationGroupInfobarBannerOverlayMediator class];
+      break;
+    case InfobarType::kInfobarTypeCollaborationOutOfDate:
+      mediatorClass =
+          [CollaborationOutOfDateInfobarBannerOverlayMediator class];
       break;
     default:
       NOTREACHED() << "Received unsupported infobarType.";

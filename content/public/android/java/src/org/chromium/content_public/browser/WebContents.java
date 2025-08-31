@@ -58,15 +58,14 @@ public interface WebContents extends Parcelable {
         void set(@Nullable WebContentsInternals internals);
 
         /** Returns {@link WebContentsInternals} object. Can be {@code null}. */
-        @Nullable
-        WebContentsInternals get();
+        @Nullable WebContentsInternals get();
     }
 
     /**
-     * @return a default implementation of {@link InternalsHolder} that holds a reference to
-     * {@link WebContentsInternals} object owned by {@link WebContents} instance.
+     * @return a default implementation of {@link InternalsHolder} that holds a reference to {@link
+     *     WebContentsInternals} object owned by {@link WebContents} instance.
      */
-    public static InternalsHolder createDefaultInternalsHolder() {
+    static InternalsHolder createDefaultInternalsHolder() {
         return new InternalsHolder() {
             private @Nullable WebContentsInternals mInternals;
 
@@ -83,10 +82,9 @@ public interface WebContents extends Parcelable {
     }
 
     /**
-     *
      * Initialize various content objects of {@link WebContents} lifetime.
      *
-     * Note: This method is more of to set the {@link ViewAndroidDelegate} and {@link
+     * <p>Note: This method is more of to set the {@link ViewAndroidDelegate} and {@link
      * ViewEventSink.InternalAccessDelegate}, most of the embedder should only call this once during
      * the whole lifecycle of the {@link WebContents}, but it is safe to call it multiple times.
      *
@@ -99,8 +97,8 @@ public interface WebContents extends Parcelable {
     void setDelegates(
             String productVersion,
             ViewAndroidDelegate viewDelegate,
-            ViewEventSink.InternalAccessDelegate accessDelegate,
-            WindowAndroid windowAndroid,
+            ViewEventSink.@Nullable InternalAccessDelegate accessDelegate,
+            @Nullable WindowAndroid windowAndroid,
             InternalsHolder internalsHolder);
 
     /**
@@ -116,13 +114,13 @@ public interface WebContents extends Parcelable {
     /**
      * @return The top level WindowAndroid associated with this WebContents. This can be null.
      */
-    @Nullable
-    WindowAndroid getTopLevelNativeWindow();
+    @Nullable WindowAndroid getTopLevelNativeWindow();
 
-    /*
+    /**
      * Updates the native {@link WebContents} with a new window. This moves the NativeView and
      * attached it to the new NativeWindow linked with the given {@link WindowAndroid}.
      * TODO(jinsukkim): This should happen through view android tree instead.
+     *
      * @param windowAndroid The new {@link WindowAndroid} for this {@link WebContents}.
      */
     void setTopLevelNativeWindow(@Nullable WindowAndroid windowAndroid);
@@ -135,8 +133,7 @@ public interface WebContents extends Parcelable {
      * @return The {@link ViewAndroidDelegate} from which to get the container view. This can be
      *     null.
      */
-    @Nullable
-    ViewAndroidDelegate getViewAndroidDelegate();
+    @Nullable ViewAndroidDelegate getViewAndroidDelegate();
 
     /** Deletes the Web Contents object. */
     void destroy();
@@ -156,7 +153,6 @@ public interface WebContents extends Parcelable {
     /**
      * @return The navigation controller associated with this WebContents.
      */
-    @Nullable
     NavigationController getNavigationController();
 
     /**
@@ -168,8 +164,7 @@ public interface WebContents extends Parcelable {
      * @return The focused frame associated with this WebContents. Will be null if the WebContents
      * does not have focus.
      */
-    @Nullable
-    RenderFrameHost getFocusedFrame();
+    @Nullable RenderFrameHost getFocusedFrame();
 
     /**
      * @return Whether the focused frame element in this WebContents is editable. Will be false if
@@ -181,15 +176,13 @@ public interface WebContents extends Parcelable {
      * @return The frame associated with the id. Will be null if the ID does not correspond to a
      *         live RenderFrameHost.
      */
-    @Nullable
-    RenderFrameHost getRenderFrameHostFromId(GlobalRenderFrameHostId id);
+    @Nullable RenderFrameHost getRenderFrameHostFromId(GlobalRenderFrameHostId id);
 
     /**
      * @return The root level view from the renderer, or {@code null} in some cases where there is
      *     none.
      */
-    @Nullable
-    RenderWidgetHostView getRenderWidgetHostView();
+    @Nullable RenderWidgetHostView getRenderWidgetHostView();
 
     /**
      * @return The WebContents Visibility. See native WebContents::GetVisibility.
@@ -253,12 +246,17 @@ public interface WebContents extends Parcelable {
 
     /**
      * ChildProcessImportance on Android allows controls of the renderer process bindings
-     * independent of visibility. Note this does not affect importance of subframe processes or main
-     * frames processeses for non-primary pages.
+     * independent of visibility. Note this does not affect importance of processes for non-primary
+     * pages.
      *
-     * @param importance importance of the primary page's main frame process.
+     * <p>The subframeImportance must be less than or equal to the mainFrameImportance.
+     *
+     * @param mainFrameImportance importance of the primary page's main frame process.
+     * @param subframeImportance importance of the primary page's subframes process.
      */
-    void setPrimaryMainFrameImportance(@ChildProcessImportance int importance);
+    void setPrimaryPageImportance(
+            @ChildProcessImportance int mainFrameImportance,
+            @ChildProcessImportance int subframeImportance);
 
     /**
      * Suspends all media players for this WebContents. Note: There may still be activities
@@ -563,12 +561,12 @@ public interface WebContents extends Parcelable {
     void setDisplayCutoutSafeArea(Rect insets);
 
     /**
-     * Sets the context menu "safe area" of the WebContents. These are insets from each edge in
-     * physical pixels.
+     * Instructs the web contents to "show interest" in the Element corresponding to the provided
+     * nodeID.
      *
-     * @param insets The insets stored in a Rect.
+     * @param nodeID The DOMNodeID of the element that should receive interest.
      */
-    void setContextMenuInsets(Rect insets);
+    void showInterestInElement(int nodeID);
 
     /** Notify that web preferences needs update for various properties. */
     void notifyRendererPreferenceUpdate();
@@ -619,6 +617,15 @@ public interface WebContents extends Parcelable {
     void setLongPressLinkSelectText(boolean enabled);
 
     /**
+     * Allow drag-drop of files such as an image to load and replace contents.
+     *
+     * @param enabled whether the behavior should be enabled.
+     */
+    void setCanAcceptLoadDrops(boolean enabled);
+
+    boolean getCanAcceptLoadDropsForTesting();
+
+    /**
      * Update the OffsetTagDefinitions. This could be because the controls' visibility constraints
      * have changed, which requires adding/removing the OffsetTags, or because the
      * OffsetTagConstraints have changed due to a change in the controls' scrollable height.
@@ -628,6 +635,25 @@ public interface WebContents extends Parcelable {
     void captureContentAsBitmapForTesting(Callback<Bitmap> callback);
 
     void setSupportsForwardTransitionAnimation(boolean supports);
+
+    /**
+     * @return whether this WebContents has an opener (corresponding to window.opener in JavaScript)
+     *     associated with it.
+     */
+    boolean hasOpener();
+
+    /**
+     * Returns the window open disposition that was originally requested when this WebContents was
+     * created or navigated to. This method provides the disposition specified by the opener of this
+     * WebContents, indicating how the content was initially intended to be displayed (e.g., as a
+     * new foreground tab, a background tab, a new window, a popup, etc.). This value is determined
+     * at the point of creation, such as during a navigation that results in a new WebContents
+     * (e.g., from a link click with `target="_blank"`, `window.open()`, or a browser-initiated
+     * action).
+     *
+     * @return an integer constant representing the original window open disposition.
+     */
+    int getOriginalWindowOpenDisposition();
 
     /**
      * Factory interface passed to {@link #getOrSetUserData()} for instantiation of class as user
@@ -649,7 +675,7 @@ public interface WebContents extends Parcelable {
      *
      * @param <T> Class to instantiate.
      */
-    public interface UserDataFactory<T> {
+    interface UserDataFactory<T> {
         T create(WebContents webContents);
     }
 
@@ -663,7 +689,7 @@ public interface WebContents extends Parcelable {
      *     yet, or {@code userDataFactory} is null, or the internal data storage is already
      *     garbage-collected.
      */
-    public <T extends UserData> @Nullable T getOrSetUserData(
+    <T extends UserData> @Nullable T getOrSetUserData(
             Class<T> key, @Nullable UserDataFactory<T> userDataFactory);
 
     /**
@@ -673,5 +699,5 @@ public interface WebContents extends Parcelable {
      * @param key The class object representing the type of user data to remove. If no user data
      *     object of this type exists, this method has no effect.
      */
-    public <T extends UserData> void removeUserData(Class<T> key);
+    <T extends UserData> void removeUserData(Class<T> key);
 }

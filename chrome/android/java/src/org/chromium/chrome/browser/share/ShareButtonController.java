@@ -11,7 +11,8 @@ import android.view.View;
 
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.share.ShareDelegate.ShareOrigin;
@@ -27,13 +28,16 @@ import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.ukm.UkmRecorder;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
+import java.util.function.Supplier;
+
 /**
  * Handles displaying share button on toolbar depending on several conditions (e.g.,device width,
  * whether NTP is shown).
  */
+@NullMarked
 public class ShareButtonController extends BaseButtonDataProvider {
     private final ObservableSupplier<ShareDelegate> mShareDelegateSupplier;
-    private final Supplier<Tracker> mTrackerSupplier;
+    private final Supplier<@Nullable Tracker> mTrackerSupplier;
     private final Runnable mOnShareRunnable;
 
     /**
@@ -54,7 +58,7 @@ public class ShareButtonController extends BaseButtonDataProvider {
             Drawable buttonDrawable,
             ActivityTabProvider tabProvider,
             ObservableSupplier<ShareDelegate> shareDelegateSupplier,
-            Supplier<Tracker> trackerSupplier,
+            Supplier<@Nullable Tracker> trackerSupplier,
             ModalDialogManager modalDialogManager,
             Runnable onShareRunnable) {
         super(
@@ -66,8 +70,7 @@ public class ShareButtonController extends BaseButtonDataProvider {
                 /* supportsTinting= */ true,
                 /* iphCommandBuilder= */ null,
                 AdaptiveToolbarButtonVariant.SHARE,
-                /* tooltipTextResId= */ R.string.adaptive_toolbar_button_preference_share,
-                /* showBackgroundHighlight= */ true);
+                /* tooltipTextResId= */ R.string.adaptive_toolbar_button_preference_share);
 
         mShareDelegateSupplier = shareDelegateSupplier;
         mTrackerSupplier = trackerSupplier;
@@ -92,15 +95,14 @@ public class ShareButtonController extends BaseButtonDataProvider {
         }
         shareDelegate.share(tab, /* shareDirectly= */ false, ShareOrigin.TOP_TOOLBAR);
 
-        if (mTrackerSupplier.hasValue()) {
-            mTrackerSupplier
-                    .get()
-                    .notifyEvent(EventConstants.ADAPTIVE_TOOLBAR_CUSTOMIZATION_SHARE_OPENED);
+        Tracker tracker = mTrackerSupplier.get();
+        if (tracker != null) {
+            tracker.notifyEvent(EventConstants.ADAPTIVE_TOOLBAR_CUSTOMIZATION_SHARE_OPENED);
         }
     }
 
     @Override
-    protected boolean shouldShowButton(Tab tab) {
+    protected boolean shouldShowButton(@Nullable Tab tab) {
         if (!super.shouldShowButton(tab) || mShareDelegateSupplier.get() == null) return false;
 
         return ShareUtils.shouldEnableShare(tab);

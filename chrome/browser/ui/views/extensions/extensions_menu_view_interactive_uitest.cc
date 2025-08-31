@@ -6,13 +6,13 @@
 #include <optional>
 
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/browsertest_util.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_context_menu_model.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/install_verifier.h"
 #include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
 #include "chrome/browser/profiles/profile.h"
@@ -37,6 +37,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "extensions/browser/disable_reason.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/pref_names.h"
@@ -307,10 +308,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionsMenuViewInteractiveUITest,
   ASSERT_NE(std::nullopt, action_id);
   ASSERT_EQ(1u, GetVisibleToolbarActionViews().size());
 
-  extensions::ExtensionSystem::Get(browser()->profile())
-      ->extension_service()
+  extensions::ExtensionRegistrar::Get(browser()->profile())
       ->DisableExtension(action_id.value(),
-                         extensions::disable_reason::DISABLE_USER_ACTION);
+                         {extensions::disable_reason::DISABLE_USER_ACTION});
 
   EXPECT_EQ(std::nullopt, extensions_container->GetPoppedOutActionId());
   EXPECT_TRUE(GetVisibleToolbarActionViews().empty());
@@ -329,14 +329,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionsMenuViewInteractiveUITest,
       browser()->GetBrowserView().toolbar()->extensions_container();
   ASSERT_NE(std::nullopt, extensions_container->GetPoppedOutActionId());
 
-  auto* extension_service =
-      extensions::ExtensionSystem::Get(browser()->profile())
-          ->extension_service();
-
-  extension_service->DisableExtension(
-      id1, extensions::disable_reason::DISABLE_USER_ACTION);
-  extension_service->DisableExtension(
-      id2, extensions::disable_reason::DISABLE_USER_ACTION);
+  auto* extension_registrar =
+      extensions::ExtensionRegistrar::Get(browser()->profile());
+  extension_registrar->DisableExtension(
+      id1, {extensions::disable_reason::DISABLE_USER_ACTION});
+  extension_registrar->DisableExtension(
+      id2, {extensions::disable_reason::DISABLE_USER_ACTION});
 
   EXPECT_EQ(std::nullopt, extensions_container->GetPoppedOutActionId());
 }
@@ -625,10 +623,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionsMenuViewInteractiveUITest,
   {
     // Since we are revoking permissions, automatically accept the reload page
     // bubble to update the permissions.
-    content::WebContents* web_contents =
-        browser()->tab_strip_model()->GetActiveWebContents();
-    extensions::ExtensionActionRunner::GetForWebContents(web_contents)
-        ->accept_bubble_for_testing(true);
+    auto reload_page_dialog_reset =
+        extensions::ReloadPageDialogController::AcceptDialogForTesting(true);
     extensions::PermissionsManagerWaiter waiter(
         extensions::PermissionsManager::Get(profile()));
     context_menu->ExecuteCommand(

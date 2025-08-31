@@ -11,7 +11,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
-#include "chrome/browser/themes/theme_syncable_service.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/views/chrome_views_delegate.h"
@@ -23,6 +22,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -179,7 +179,7 @@ class BrowserFrameColorProviderTest : public BrowserFrameTest {
 
     // Set the default browser pref to follow system color mode.
     profile()->GetPrefs()->SetInteger(
-        GetThemePrefNameInMigration(ThemePrefInMigration::kBrowserColorScheme),
+        prefs::kBrowserColorScheme,
         static_cast<int>(ThemeService::BrowserColorScheme::kSystem));
   }
 

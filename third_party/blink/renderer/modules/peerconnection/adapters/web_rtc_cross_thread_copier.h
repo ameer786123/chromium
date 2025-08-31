@@ -24,6 +24,7 @@
 namespace webrtc {
 class DtlsTransportInformation;
 class MediaStreamInterface;
+class MediaStreamTrackInterface;
 class RtpReceiverInterface;
 class SctpTransportInformation;
 class VideoTrackInterface;
@@ -34,10 +35,7 @@ namespace blink {
 
 class MockWebRtcVideoTrack;
 class MediaStreamVideoTrack;
-
-}  // namespace blink
-
-namespace WTF {
+class ThermalResource;
 
 template <>
 struct CrossThreadCopier<std::optional<base::UnguessableToken>>
@@ -122,14 +120,29 @@ struct CrossThreadCopier<
 };
 
 template <>
-struct CrossThreadCopier<blink::MockWebRtcVideoTrack>
-    : public CrossThreadCopierPassThrough<blink::MockWebRtcVideoTrack> {
+struct CrossThreadCopier<
+    webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>>
+    : public CrossThreadCopierPassThrough<
+          webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>> {
   STATIC_ONLY(CrossThreadCopier);
 };
 
 template <>
-struct CrossThreadCopier<blink::MediaStreamVideoTrack>
-    : public CrossThreadCopierPassThrough<blink::MediaStreamVideoTrack> {
+struct CrossThreadCopier<webrtc::scoped_refptr<ThermalResource>>
+    : public CrossThreadCopierPassThrough<
+          webrtc::scoped_refptr<ThermalResource>> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <>
+struct CrossThreadCopier<MockWebRtcVideoTrack>
+    : public CrossThreadCopierPassThrough<MockWebRtcVideoTrack> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <>
+struct CrossThreadCopier<MediaStreamVideoTrack>
+    : public CrossThreadCopierPassThrough<MediaStreamVideoTrack> {
   STATIC_ONLY(CrossThreadCopier);
 };
 
@@ -158,6 +171,6 @@ struct CrossThreadCopier<webrtc::SentPacket>
   STATIC_ONLY(CrossThreadCopier);
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_ADAPTERS_WEB_RTC_CROSS_THREAD_COPIER_H_

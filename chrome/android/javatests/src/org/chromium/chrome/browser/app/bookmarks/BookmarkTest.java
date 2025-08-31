@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.app.bookmarks;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.Espresso.pressBack;
 import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.replaceText;
 import static androidx.test.espresso.action.ViewActions.scrollTo;
 import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
@@ -14,6 +15,7 @@ import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
+import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
@@ -78,6 +80,7 @@ import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.base.test.util.ImportantFormFactors;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.app.metrics.LaunchCauseMetrics;
@@ -98,6 +101,7 @@ import org.chromium.chrome.browser.bookmarks.BookmarkUiState.BookmarkUiMode;
 import org.chromium.chrome.browser.bookmarks.BookmarkUtils;
 import org.chromium.chrome.browser.bookmarks.ImprovedBookmarkRow;
 import org.chromium.chrome.browser.bookmarks.PowerBookmarkUtils;
+import org.chromium.chrome.browser.bookmarks.bar.BookmarkBarUtils;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactoryJni;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -107,6 +111,7 @@ import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.ui.signin.signin_promo.SigninPromoCoordinator;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.transit.ChromeTransitTestRules;
@@ -146,11 +151,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /** Tests for the bookmark manager. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @EnableFeatures({ChromeFeatureList.UNO_PHASE_2_FOLLOW_UP})
+@ImportantFormFactors(DeviceFormFactor.ONLY_TABLET)
 // TODO(crbug.com/40899175): Investigate batching.
 @DoNotBatch(reason = "BookmarkTest has behaviours and thus can't be batched.")
 public class BookmarkTest {
@@ -364,6 +372,9 @@ public class BookmarkTest {
                 () -> {
                     mBookmarkManagerOpener.showBookmarkManager(
                             mActivityTestRule.getActivity(),
+                            mActivityTestRule
+                                    .getActivity()
+                                    .getActivityTab(),
                             mActivityTestRule.getProfile(false),
                             mBookmarkModel.getMobileFolderId());
                 });
@@ -465,6 +476,7 @@ public class BookmarkTest {
     @Test
     @MediumTest
     @Restriction({DeviceFormFactor.PHONE})
+    @DisabledTest(message = "crbug.com/411305260")
     public void testOpenFromReadingListAndNavigateBack() throws Exception {
         openBookmarkManager();
         runOnUiThreadBlocking(
@@ -498,11 +510,17 @@ public class BookmarkTest {
         assertEquals(BookmarkUiMode.FOLDER, mDelegate.getCurrentUiMode());
         assertEquals("Wrong number of items before starting search.", 2, getBookmarkCount());
 
-        enterSearch();
-        assertEquals(BookmarkUiMode.SEARCHING, mDelegate.getCurrentUiMode());
-        assertEquals("No bookmarks should be shown when starting search.", 0, getBookmarkCount());
-
-        searchBookmarks("Google");
+        final boolean isTablet =
+                DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivityTestRule.getActivity());
+        if (isTablet) {
+            onView(withId(R.id.row_search_text)).perform(replaceText("Google"));
+        } else {
+            enterSearch();
+            assertEquals(BookmarkUiMode.SEARCHING, mDelegate.getCurrentUiMode());
+            assertEquals(
+                    "No bookmarks should be shown when starting search.", 0, getBookmarkCount());
+            searchBookmarks("Google");
+        }
         assertEquals("Wrong number of items after searching.", 1, getBookmarkCount());
 
         BookmarkId newBookmark = addBookmark(TEST_PAGE_TITLE_GOOGLE2, mTestPage);
@@ -523,13 +541,21 @@ public class BookmarkTest {
                             is(1));
                 });
 
-        searchBookmarks("Non-existent page");
+        if (isTablet) {
+            onView(withId(R.id.row_search_text)).perform(replaceText("Non-existent page"));
+        } else {
+            searchBookmarks("Non-existent page");
+        }
         assertEquals(
                 "Wrong number of items after searching for non-existent item.",
                 0,
                 getBookmarkCount());
 
-        exitSearch();
+        if (isTablet) {
+            onView(withId(R.id.row_search_text)).perform(replaceText(""));
+        } else {
+            exitSearch();
+        }
         assertEquals(BookmarkUiMode.FOLDER, mDelegate.getCurrentUiMode());
         assertEquals("Wrong number of items after closing search UI.", 2, getBookmarkCount());
         assertEquals(TEST_FOLDER_TITLE, mToolbar.getTitle());
@@ -549,7 +575,7 @@ public class BookmarkTest {
         openFolder(folder);
 
         assertEquals(
-                Boolean.TRUE,
+                true,
                 mBookmarkManagerCoordinator.getHandleBackPressChangedSupplier().get());
 
         runOnUiThreadBlocking(mDelegate::openSearchUi);
@@ -558,7 +584,7 @@ public class BookmarkTest {
         assertEquals("No items are shown when a search is started.", 0, getBookmarkCount());
 
         assertEquals(
-                Boolean.TRUE,
+                true,
                 mBookmarkManagerCoordinator.getHandleBackPressChangedSupplier().get());
 
         exitSearch();
@@ -584,7 +610,7 @@ public class BookmarkTest {
                 "Expected item \"test\" to become not selected");
         assertEquals(BookmarkUiMode.SEARCHING, mDelegate.getCurrentUiMode());
         assertEquals(
-                Boolean.TRUE,
+                true,
                 mBookmarkManagerCoordinator.getHandleBackPressChangedSupplier().get());
 
         // Exit search UI.
@@ -593,14 +619,14 @@ public class BookmarkTest {
 
         // Exit folder.
         assertEquals(
-                Boolean.TRUE,
+                true,
                 mBookmarkManagerCoordinator.getHandleBackPressChangedSupplier().get());
         pressBackButton();
         assertEquals(BookmarkUiMode.FOLDER, mDelegate.getCurrentUiMode());
 
         // Exit bookmark activity.
         assertEquals(
-                Boolean.FALSE,
+                false,
                 mBookmarkManagerCoordinator.getHandleBackPressChangedSupplier().get());
         runOnUiThreadBlocking(mBookmarkActivity.getOnBackPressedDispatcher()::onBackPressed);
         ApplicationTestUtils.waitForActivityState(mBookmarkActivity, Stage.DESTROYED);
@@ -623,32 +649,42 @@ public class BookmarkTest {
                 mDelegate.getCurrentUiMode());
         assertEquals("Wrong number of items before starting search.", 1, getBookmarkCount());
 
-        enterSearch();
-        assertEquals(
-                "Wrong state, should be searching",
-                BookmarkUiMode.SEARCHING,
-                mDelegate.getCurrentUiMode());
-        assertEquals("Wrong number after starting search.", 0, getBookmarkCount());
-
-        searchBookmarks(TEST_PAGE_TITLE_GOOGLE);
+        if (DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivityTestRule.getActivity())) {
+            onView(withId(R.id.row_search_text)).perform(replaceText(TEST_PAGE_TITLE_GOOGLE));
+        } else {
+            enterSearch();
+            assertEquals(
+                    "Wrong state, should be searching",
+                    BookmarkUiMode.SEARCHING,
+                    mDelegate.getCurrentUiMode());
+            assertEquals("Wrong number after starting search.", 0, getBookmarkCount());
+            searchBookmarks(TEST_PAGE_TITLE_GOOGLE);
+        }
         assertEquals("Wrong number item items when searching.", 1, getBookmarkCount());
 
-        // Select testFolder and delete it. This deletion will refresh the current search, which
-        // right now is TEST_FOLDER_TITLE.
+        // Select the bookmark and delete it.
         ImprovedBookmarkRow row = getNthBookmarkRow(1);
-        startSelectionThroughMoreMenu(row);
+        startSelectionThroughLongPress(row);
         clickToolbarMenuItem(R.id.selection_mode_delete_menu_id);
         RecyclerViewTestUtils.waitForStableMvcRecyclerView(mItemsContainer);
 
-        // Should still be searching with the folder gone.
-        assertEquals("Wrong number of items.", 0, getBookmarkCount());
+        // The user should still be searching, and the bookmark should be gone.
+        pollForModeAndCount(
+                DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivityTestRule.getActivity())
+                        ? BookmarkUiMode.FOLDER
+                        : BookmarkUiMode.SEARCHING,
+                0);
 
         // // Undo the deletion.
         runOnUiThreadBlocking(
                 () -> mBookmarkManagerCoordinator.getUndoControllerForTesting().onAction(null));
 
         // The user should still be searching, and the bookmark should reappear.
-        pollForModeAndCount(BookmarkUiMode.SEARCHING, 1);
+        pollForModeAndCount(
+                DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivityTestRule.getActivity())
+                        ? BookmarkUiMode.FOLDER
+                        : BookmarkUiMode.SEARCHING,
+                1);
     }
 
     @Test
@@ -660,26 +696,38 @@ public class BookmarkTest {
         openBookmarkManager();
 
         // Start searching, enter a query.
-        runOnUiThreadBlocking(mDelegate::openSearchUi);
-        assertEquals(
-                "Wrong state, should be searching",
-                BookmarkUiMode.SEARCHING,
-                mDelegate.getCurrentUiMode());
-        searchBookmarks("test");
+        if (DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivityTestRule.getActivity())) {
+            onView(withId(R.id.row_search_text)).perform(replaceText("test"));
+        } else {
+            runOnUiThreadBlocking(mDelegate::openSearchUi);
+            assertEquals(
+                    "Wrong state, should be searching",
+                    BookmarkUiMode.SEARCHING,
+                    mDelegate.getCurrentUiMode());
+            searchBookmarks("test");
+        }
         assertEquals("Wrong number of items after searching.", 2, getBookmarkCount());
 
         // Remove the bookmark.
         removeBookmark(testFolder);
 
         // The user should still be searching, and the bookmark should be gone.
-        pollForModeAndCount(BookmarkUiMode.SEARCHING, 0);
+        pollForModeAndCount(
+                DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivityTestRule.getActivity())
+                        ? BookmarkUiMode.FOLDER
+                        : BookmarkUiMode.SEARCHING,
+                0);
 
         // Undo the deletion.
         runOnUiThreadBlocking(
                 () -> mBookmarkManagerCoordinator.getUndoControllerForTesting().onAction(null));
 
         // The user should still be searching, and the bookmark should reappear.
-        pollForModeAndCount(BookmarkUiMode.SEARCHING, 2);
+        pollForModeAndCount(
+                DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivityTestRule.getActivity())
+                        ? BookmarkUiMode.FOLDER
+                        : BookmarkUiMode.SEARCHING,
+                2);
     }
 
     @Test
@@ -1237,6 +1285,23 @@ public class BookmarkTest {
 
     @Test
     @MediumTest
+    public void testTopLevelFolders() throws Exception {
+        // NOTE: Hide promos to ensure top level-folders will fit the viewport.
+        SigninPromoCoordinator.disablePromoForTesting();
+        BookmarkPromoHeader.forcePromoVisibilityForTesting(false);
+        openBookmarkManager();
+        onViewWaiting(allOf(withText("Mobile bookmarks"), isDisplayed()));
+        onViewWaiting(allOf(withText("Reading list"), isDisplayed()));
+        onView(withText("Bookmarks bar"))
+                .check(
+                        BookmarkBarUtils.isDeviceBookmarkBarCompatible(
+                                        mActivityTestRule.getActivity())
+                                ? matches(isDisplayed())
+                                : doesNotExist());
+    }
+
+    @Test
+    @MediumTest
     public void testTopLevelFolderUpdateAfterSync() throws Exception {
         // Set up the test and open the bookmark manager to the Mobile Bookmarks folder.
         BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule.getActivityTestRule());
@@ -1258,10 +1323,27 @@ public class BookmarkTest {
         }
         runOnUiThreadBlocking(getTestingDelegate()::simulateSignInForTesting);
 
+        final List<String> expectedTopLevelFolders =
+                new ArrayList<>(List.of("Mobile bookmarks", "Other bookmarks", "Reading list"));
+
+        if (BookmarkBarUtils.isDeviceBookmarkBarCompatible(mActivityTestRule.getActivity())) {
+            expectedTopLevelFolders.add(1, "Bookmarks bar");
+        }
+
+        final String expectedTopLevelFoldersStr =
+                IntStream.range(0, expectedTopLevelFolders.size())
+                        .mapToObj(
+                                i -> {
+                                    final var folder = expectedTopLevelFolders.get(i);
+                                    final var isLast = i == expectedTopLevelFolders.size() - 1;
+                                    final var conjunction = isLast ? "and " : "";
+                                    return String.format("%s\"%s\"", conjunction, folder);
+                                })
+                        .collect(Collectors.joining(", "));
+
         assertEquals(
-                "Expected promo, \"Mobile bookmarks\", \"Other bookmarks\" and \"Reading list\""
-                        + " folder to appear!",
-                3,
+                String.format("Expected promo, %s folder to appear!", expectedTopLevelFoldersStr),
+                expectedTopLevelFolders.size(),
                 getBookmarkCount());
     }
 
@@ -1715,11 +1797,7 @@ public class BookmarkTest {
                             .findViewById(R.id.selectable_list_recycler_view);
             mItemsContainer.setItemAnimator(null); // Disable animation to reduce flakiness.
             mBookmarkManagerCoordinator =
-                    ((BookmarkPage)
-                                    mActivityTestRule
-                                            .getActivity()
-                                            .getActivityTab()
-                                            .getNativePage())
+                    ((BookmarkPage) mActivityTestRule.getActivityTab().getNativePage())
                             .getManagerForTesting();
         } else {
             // Phone.
@@ -1750,7 +1828,7 @@ public class BookmarkTest {
 
     private boolean isItemPresentInBookmarkList(final String expectedTitle) {
         return ThreadUtils.runOnUiThreadBlocking(
-                new Callable<Boolean>() {
+                new Callable<>() {
                     @Override
                     public Boolean call() {
                         for (int i = 0; i < getBookmarkCount(); i++) {
@@ -1856,7 +1934,7 @@ public class BookmarkTest {
      */
     private static View getViewWithText(final ViewGroup viewGroup, final String expectedText) {
         return ThreadUtils.runOnUiThreadBlocking(
-                new Callable<View>() {
+                new Callable<>() {
                     @Override
                     public View call() {
                         ArrayList<View> outViews = new ArrayList<>();

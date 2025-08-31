@@ -60,6 +60,15 @@ const base::FeatureParam<base::TimeDelta>
         &kSafetyCheckUnusedSitePermissions,
         "unused-site-permissions-revocation-cleanup-threshold", base::Days(30)};
 
+BASE_FEATURE(kApproximateGeolocationPermission,
+             "ApproximateGeolocationPermission",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+const base::FeatureParam<int> kApproximateGeolocationPermissionPromptArm(
+    &features::kApproximateGeolocationPermission,
+    "prompt_arm",
+    0);
+
 BASE_FEATURE(kUserBypassUI, "UserBypassUI", base::FEATURE_ENABLED_BY_DEFAULT);
 
 const base::FeatureParam<base::TimeDelta> kUserBypassUIExceptionExpiration{
@@ -161,6 +170,10 @@ const base::FeatureParam<EnableForIframeTypes>
 
 BASE_FEATURE(kContentSettingsPartitioning,
              "ContentSettingsPartitioning",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kForceAllowStorageAccess,
+             "ForceAllowStorageAccess",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace features

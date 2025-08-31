@@ -463,7 +463,7 @@ constexpr MessageInfo kWebContentInteraction = {kWebContentInteractionIndices,
                                                 nullptr};
 
 // Proto Message: EventForwarder
-constexpr int kEventForwarderIndices[] = {1, 2, 5, 6, 7, 8, 9, -1};
+constexpr int kEventForwarderIndices[] = {1, 2, 5, 6, 7, 8, 9, 10, -1};
 constexpr MessageInfo kEventForwarder = {kEventForwarderIndices, nullptr};
 
 // Proto Message: TouchDispositionGestureFilter
@@ -527,6 +527,11 @@ constexpr int kChromeFrameReporter2Indices[] = {1, 2, 3,  4,  5,  6,  7,
 constexpr MessageInfo kChromeFrameReporter2 = {kChromeFrameReporter2Indices,
                                                nullptr};
 
+// Proto Message: InputTransferHandler
+constexpr int kInputTransferHandlerIndices[] = {1, -1};
+constexpr MessageInfo kInputTransferHandler = {kInputTransferHandlerIndices,
+                                               nullptr};
+
 // Proto Message: TrackEvent
 constexpr int kTrackEventIndices[] = {
     1,    2,    3,    5,    6,    9,    10,   11,   12,   16,   17,   22,
@@ -536,7 +541,7 @@ constexpr int kTrackEventIndices[] = {
     1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025, 1028,
     1031, 1032, 1033, 1034, 1036, 1038, 1039, 1040, 1041, 1042, 1046, 1047,
     1048, 1049, 1050, 1051, 1052, 1053, 1054, 1055, 1056, 1057, 1058, 1059,
-    1060, 1061, 1064, 1065, 1066, 1067, 1068, 1069, 1071, 1075, -1};
+    1060, 1061, 1064, 1065, 1066, 1067, 1068, 1069, 1071, 1075, 1076, -1};
 constexpr MessageInfo const* kTrackEventComplexMessages[] = {
     nullptr,
     nullptr,
@@ -631,7 +636,8 @@ constexpr MessageInfo const* kTrackEventComplexMessages[] = {
     &kChromeLatencyInfo2,
     &kEventTiming,
     &kCurrentTask,
-    &kChromeFrameReporter2};
+    &kChromeFrameReporter2,
+    &kInputTransferHandler};
 constexpr MessageInfo kTrackEvent = {kTrackEventIndices,
                                      kTrackEventComplexMessages};
 
@@ -797,7 +803,8 @@ constexpr int kCounterDescriptorIndices[] = {1, 3, 4, 5, -1};
 constexpr MessageInfo kCounterDescriptor = {kCounterDescriptorIndices, nullptr};
 
 // Proto Message: TrackDescriptor
-constexpr int kTrackDescriptorIndices[] = {1, 3, 4, 5, 6, 7, 8, 9, 10, -1};
+constexpr int kTrackDescriptorIndices[] = {1, 3,  4,  5,  6,  7,  8,
+                                           9, 10, 11, 12, 15, 17, -1};
 constexpr MessageInfo const* kTrackDescriptorComplexMessages[] = {
     nullptr,
     &kProcessDescriptor,
@@ -806,6 +813,10 @@ constexpr MessageInfo const* kTrackDescriptorComplexMessages[] = {
     &kChromeProcessDescriptor,
     &kChromeThreadDescriptor,
     &kCounterDescriptor,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
     nullptr,
     nullptr};
 constexpr MessageInfo kTrackDescriptor = {kTrackDescriptorIndices,
@@ -816,13 +827,25 @@ constexpr int kTraceUuidIndices[] = {1, 2, -1};
 constexpr MessageInfo kTraceUuid = {kTraceUuidIndices, nullptr};
 
 // Proto Message: CSwitchEtwEvent
-constexpr int kCSwitchEtwEventIndices[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, -1};
+constexpr int kCSwitchEtwEventIndices[] = {1,  2,  3,  4,  5, 9,
+                                           10, 11, 12, 13, -1};
 constexpr MessageInfo kCSwitchEtwEvent = {kCSwitchEtwEventIndices, nullptr};
 
+// Proto Message: ReadyThreadEtwEvent
+constexpr int kReadyThreadEtwEventIndices[] = {1, 3, 5, 6, -1};
+constexpr MessageInfo kReadyThreadEtwEvent = {kReadyThreadEtwEventIndices,
+                                              nullptr};
+
+// Proto Message: MemInfoEtwEvent
+constexpr int kMemInfoEtwEventIndices[] = {1, 2, 3,  4,  5,  6,  7,
+                                           8, 9, 10, 11, 12, 13, -1};
+constexpr MessageInfo kMemInfoEtwEvent = {kMemInfoEtwEventIndices, nullptr};
+
 // Proto Message: EtwTraceEvent
-constexpr int kEtwTraceEventIndices[] = {1, 2, 4, -1};
+constexpr int kEtwTraceEventIndices[] = {1, 2, 3, 4, 5, 6, -1};
 constexpr MessageInfo const* kEtwTraceEventComplexMessages[] = {
-    nullptr, &kCSwitchEtwEvent, nullptr};
+    nullptr, &kCSwitchEtwEvent, &kReadyThreadEtwEvent,
+    nullptr, nullptr,           &kMemInfoEtwEvent};
 constexpr MessageInfo kEtwTraceEvent = {kEtwTraceEventIndices,
                                         kEtwTraceEventComplexMessages};
 

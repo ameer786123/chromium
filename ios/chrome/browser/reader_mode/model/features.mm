@@ -5,36 +5,89 @@
 #import "ios/chrome/browser/reader_mode/model/features.h"
 
 #import "base/feature_list.h"
+#import "base/json/values_util.h"
 #import "base/metrics/field_trial_params.h"
 #import "ios/chrome/browser/reader_mode/model/constants.h"
+#import "ios/chrome/browser/shared/model/application_context/application_context.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
 
-BASE_FEATURE(kEnableReaderModeDistillerHeuristic,
-             "EnableReaderModeDistillerHeuristic",
+namespace {
+// The default number of days to span for determining Reading Mode default
+// browser eligibility.
+constexpr int kReaderModeDefaultBrowserPromoNumDaysCriteria = 14;
+
+// The default number of days a user should be active to display the default
+// browser promo.
+constexpr int kReaderModeDefaultBrowserPromoActiveDaysCriteria = 2;
+
+// Name to configure the number of days a user should be active in Reading Mode
+// to display a default browser promo.
+const char kReaderModeDefaultBrowserActiveDaysCriteriaStringName[] =
+    "reader-mode-default-browser-active-days";
+
+// Name to configure the number of days to span for determining the Reading Mode
+// default browser eligibility criteria.
+const char kReaderModeDefaultBrowserNumDaysCriteriaStringName[] =
+    "reader-mode-default-browser-num-days";
+
+}  // namespace
+
+BASE_FEATURE(EnableReaderMode, base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(EnableReaderModeTranslation, base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(EnableReadabilityHeuristic, base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(EnableReaderModePageEligibilityForToolsMenu,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kEnableReaderModeDistiller,
-             "EnableReaderModeDistiller",
+BASE_FEATURE(EnableReaderModeDebugInfo, base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(EnableReaderModeDefaultBrowserPromo,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-const char kReaderModeDistillerPageLoadProbabilityName[] =
-    "reader-mode-distiller-page-load-probability";
+const char kReaderModeHeuristicPageLoadDelayDurationStringName[] =
+    "reader-mode-heuristic-page-load-delay-duration-string";
 
-constexpr base::FeatureParam<double> kReaderModeDistillerPageLoadProbability{
-    &kEnableReaderModeDistillerHeuristic,
-    /*name=*/kReaderModeDistillerPageLoadProbabilityName,
-    /*default_value=*/0.001};
+const char kReaderModeDistillationTimeoutDurationStringName[] =
+    "reader-mode-distillation-timeout-duration-string";
 
-const char kReaderModeDistillerPageLoadDelayDurationStringName[] =
-    "reader-mode-distiller-page-load-delay-duration-string";
-
-const base::TimeDelta ReaderModeDistillerPageLoadDelay() {
+const base::TimeDelta ReaderModeDistillationTimeout() {
   return base::GetFieldTrialParamByFeatureAsTimeDelta(
-      kEnableReaderModeDistillerHeuristic,
-      /*name=*/kReaderModeDistillerPageLoadDelayDurationStringName,
-      /*default_value=*/kReaderModeDistillerPageLoadDelay);
+      kEnableReaderMode,
+      /*name=*/kReaderModeDistillationTimeoutDurationStringName,
+      /*default_value=*/kReaderModeDistillationTimeout);
+}
+
+const base::TimeDelta ReaderModeHeuristicPageLoadDelay() {
+  return base::GetFieldTrialParamByFeatureAsTimeDelta(
+      kEnableReaderMode,
+      /*name=*/kReaderModeHeuristicPageLoadDelayDurationStringName,
+      /*default_value=*/kReaderModeHeuristicPageLoadDelay);
 }
 
 bool IsReaderModeAvailable() {
-  return experimental_flags::ShouldForceReaderModeDebugHTMLOverride();
+  if (IsDiamondPrototypeEnabled()) {
+    return true;
+  }
+  return base::FeatureList::IsEnabled(kEnableReaderMode);
+}
+
+bool IsReaderModeSnackbarEnabled() {
+  return base::FeatureList::IsEnabled(kEnableReaderModeDebugInfo);
+}
+
+int ReaderModeDefaultBrowserActiveDaysCriteria() {
+  return base::GetFieldTrialParamByFeatureAsInt(
+      kEnableReaderModeDefaultBrowserPromo,
+      /*name=*/kReaderModeDefaultBrowserActiveDaysCriteriaStringName,
+      /*default_value=*/kReaderModeDefaultBrowserPromoActiveDaysCriteria);
+}
+
+int ReaderModeDefaultBrowserNumDaysCriteria() {
+  return base::GetFieldTrialParamByFeatureAsInt(
+      kEnableReaderModeDefaultBrowserPromo,
+      /*name=*/kReaderModeDefaultBrowserNumDaysCriteriaStringName,
+      /*default_value=*/kReaderModeDefaultBrowserPromoNumDaysCriteria);
 }

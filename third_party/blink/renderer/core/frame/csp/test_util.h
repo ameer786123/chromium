@@ -41,9 +41,7 @@ class TestCSPDelegate final : public GarbageCollected<TestCSPDelegate>,
   void SetSandboxFlags(network::mojom::blink::WebSandboxFlags) override {}
   void SetRequireTrustedTypes() override {}
   void AddInsecureRequestPolicy(mojom::blink::InsecureRequestPolicy) override {}
-  std::unique_ptr<SourceLocation> GetSourceLocation() override {
-    return nullptr;
-  }
+  SourceLocation* GetSourceLocation() override { return nullptr; }
   std::optional<uint16_t> GetStatusCode() override { return std::nullopt; }
   String GetDocumentReferrer() override { return ""; }
   void DispatchViolationEvent(const SecurityPolicyViolationEventInit&,
@@ -64,7 +62,7 @@ class TestCSPDelegate final : public GarbageCollected<TestCSPDelegate>,
   void ReportBlockedScriptExecutionToInspector(
       const String& directive_text) override {}
   void DidAddContentSecurityPolicies(
-      WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr>) override {}
+      Vector<network::mojom::blink::ContentSecurityPolicyPtr>) override {}
 
   void Trace(Visitor*) const override {}
 

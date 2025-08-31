@@ -8,6 +8,7 @@ import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.base.CommandLine;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.permissions.OsAdditionalSecurityPermissionProvider;
@@ -18,8 +19,8 @@ import org.chromium.components.permissions.OsAdditionalSecurityPermissionUtil;
 @NullMarked
 public class AdvancedProtectionStatusManagerAndroidBridge
         implements OsAdditionalSecurityPermissionProvider.Observer {
-    private long mNative;
-    private @Nullable OsAdditionalSecurityPermissionProvider mProvider;
+    private final long mNative;
+    private final @Nullable OsAdditionalSecurityPermissionProvider mProvider;
 
     @CalledByNative
     private static AdvancedProtectionStatusManagerAndroidBridge create(
@@ -29,7 +30,14 @@ public class AdvancedProtectionStatusManagerAndroidBridge
     }
 
     @CalledByNative
-    public static boolean isAdvancedProtectionRequestedByOs() {
+    public static boolean isUnderAdvancedProtection() {
+        if (CommandLine.getInstance()
+                .hasSwitch(SafeBrowsingSwitches.FORCE_TREAT_USER_AS_ADVANCED_PROTECTION)) {
+            return true;
+        }
+
+        // Operating-system-requested advanced-protection is the only advanced-protection type
+        // currently supported on Android.
         var provider = OsAdditionalSecurityPermissionUtil.getProviderInstance();
         return provider != null && provider.isAdvancedProtectionRequestedByOs();
     }

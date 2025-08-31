@@ -6,6 +6,7 @@
 
 #include <variant>
 
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
@@ -19,6 +20,7 @@
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/clipboard/clipboard_metadata.h"
 #include "ui/base/clipboard/clipboard_monitor.h"
 #include "ui/base/clipboard/test/test_clipboard.h"
 #include "ui/base/data_transfer_policy/data_transfer_policy_controller.h"
@@ -55,7 +57,7 @@ class PolicyControllerTest : public ui::DataTransferPolicyController {
                     base::OnceClosure drop_cb));
 };
 
-content::ClipboardMetadata CopyMetadata() {
+ui::ClipboardMetadata CopyMetadata() {
   return {.size = 123};
 }
 
@@ -285,7 +287,7 @@ TEST_F(DataProtectionIsClipboardCopyAllowedByPolicyTest, StringReplacement) {
                     ]
                   })"});
 
-  content::ClipboardMetadata metadata = CopyMetadata();
+  ui::ClipboardMetadata metadata = CopyMetadata();
   metadata.seqno = ui::Clipboard::GetForCurrentThread()->GetSequenceNumber(
       ui::ClipboardBuffer::kCopyPaste);
   base::test::TestFuture<const ui::ClipboardFormatType&,
@@ -333,7 +335,7 @@ TEST_F(DataProtectionIsClipboardCopyAllowedByPolicyTest, StringReplacement) {
   // triggers no rule.
   base::test::TestFuture<std::optional<content::ClipboardPasteData>>
       second_paste_future;
-  content::ClipboardMetadata new_metadata;
+  ui::ClipboardMetadata new_metadata;
   PasteIfAllowedByPolicy(SourceEndpoint(), DestinationEndpoint(), new_metadata,
                          MakeClipboardPasteData("text", "image", {}),
                          second_paste_future.GetCallback());
@@ -370,7 +372,7 @@ TEST_F(DataProtectionIsClipboardCopyAllowedByPolicyTest,
                     ]
                   })"});
 
-  content::ClipboardMetadata metadata = CopyMetadata();
+  ui::ClipboardMetadata metadata = CopyMetadata();
   metadata.seqno = ui::Clipboard::GetForCurrentThread()->GetSequenceNumber(
       ui::ClipboardBuffer::kCopyPaste);
   base::test::TestFuture<const ui::ClipboardFormatType&,
@@ -420,7 +422,7 @@ TEST_F(DataProtectionIsClipboardCopyAllowedByPolicyTest,
   // triggers no rule.
   base::test::TestFuture<std::optional<content::ClipboardPasteData>>
       second_paste_future;
-  content::ClipboardMetadata new_metadata;
+  ui::ClipboardMetadata new_metadata;
   PasteIfAllowedByPolicy(SourceEndpoint(), DestinationEndpoint(), new_metadata,
                          MakeClipboardPasteData("text", "image", {}),
                          second_paste_future.GetCallback());
@@ -458,12 +460,12 @@ TEST_F(DataProtectionIsClipboardCopyAllowedByPolicyTest,
                     ]
                   })"});
 
-  content::ClipboardMetadata text_metadata = CopyMetadata();
+  ui::ClipboardMetadata text_metadata = CopyMetadata();
   text_metadata.seqno = ui::Clipboard::GetForCurrentThread()->GetSequenceNumber(
       ui::ClipboardBuffer::kCopyPaste);
   text_metadata.format_type = ui::ClipboardFormatType::PlainTextType();
 
-  content::ClipboardMetadata image_metadata = text_metadata;
+  ui::ClipboardMetadata image_metadata = text_metadata;
   image_metadata.format_type = ui::ClipboardFormatType::PngType();
 
   base::test::TestFuture<const ui::ClipboardFormatType&,
@@ -530,7 +532,7 @@ TEST_F(DataProtectionIsClipboardCopyAllowedByPolicyTest,
   // triggers no rule.
   base::test::TestFuture<std::optional<content::ClipboardPasteData>>
       second_paste_future;
-  content::ClipboardMetadata new_metadata;
+  ui::ClipboardMetadata new_metadata;
   PasteIfAllowedByPolicy(SourceEndpoint(), DestinationEndpoint(), new_metadata,
                          MakeClipboardPasteData("text", "image", {}),
                          second_paste_future.GetCallback());
@@ -571,7 +573,7 @@ TEST_F(DataProtectionIsClipboardCopyAllowedByPolicyTest, NoStringReplacement) {
                          const content::ClipboardPasteData&,
                          std::optional<std::u16string>>
       future;
-  content::ClipboardMetadata metadata = CopyMetadata();
+  ui::ClipboardMetadata metadata = CopyMetadata();
   IsClipboardCopyAllowedByPolicy(
       CopyEndpoint(GURL("https://random.com")), metadata,
       MakeClipboardPasteData("foo", "", {}), future.GetCallback());
@@ -604,7 +606,7 @@ TEST_F(DataProtectionIsClipboardCopyAllowedByPolicyTest, BitmapReplacement) {
                     ]
                   })"});
 
-  content::ClipboardMetadata metadata = CopyMetadata();
+  ui::ClipboardMetadata metadata = CopyMetadata();
   metadata.seqno = ui::Clipboard::GetForCurrentThread()->GetSequenceNumber(
       ui::ClipboardBuffer::kCopyPaste);
 
@@ -665,7 +667,7 @@ TEST_F(DataProtectionIsClipboardCopyAllowedByPolicyTest, BitmapReplacement) {
   // triggers no rule.
   base::test::TestFuture<std::optional<content::ClipboardPasteData>>
       second_paste_future;
-  content::ClipboardMetadata new_metadata;
+  ui::ClipboardMetadata new_metadata;
   PasteIfAllowedByPolicy(SourceEndpoint(), DestinationEndpoint(), new_metadata,
                          MakeClipboardPasteData("text", "image", {}),
                          second_paste_future.GetCallback());
@@ -706,7 +708,7 @@ TEST_F(DataProtectionIsClipboardCopyAllowedByPolicyTest,
                          const content::ClipboardPasteData&,
                          std::optional<std::u16string>>
       future;
-  content::ClipboardMetadata metadata = CopyMetadata();
+  ui::ClipboardMetadata metadata = CopyMetadata();
   IsClipboardCopyAllowedByPolicy(
       CopyEndpoint(GURL("https://source.com")), metadata,
       MakeClipboardPasteData("foo", "", {}), future.GetCallback());

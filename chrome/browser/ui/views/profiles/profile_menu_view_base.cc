@@ -10,6 +10,7 @@
 
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/metrics/histogram_functions.h"
@@ -67,6 +68,7 @@
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/controls/styled_label.h"
+#include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/layout/flex_layout_types.h"
@@ -88,13 +90,6 @@ constexpr int kMenuWidth = 328;
 constexpr int kMaxImageSize = ProfileMenuViewBase::kIdentityImageSize;
 constexpr int kDefaultMargin = 8;
 constexpr int kManagementHeaderIconLabelSpacing = 6;
-// TODO(crbug.com/40148993): Remove this constant by extracting art height from
-// |avatar_header_art|.
-constexpr int kHeaderArtHeight = 91;
-constexpr int kIdentityImageBorder = 2;
-constexpr int kIdentityImageSizeInclBorder =
-    ProfileMenuViewBase::kIdentityImageSize + 2 * kIdentityImageBorder;
-constexpr int kHalfOfAvatarImageViewSize = kIdentityImageSizeInclBorder / 2;
 
 // If the bubble is too large to fit on the screen, it still needs to be at
 // least this tall to show one row.
@@ -103,6 +98,13 @@ constexpr int kMinimumScrollableContentHeight = 40;
 // Spacing between the edge of the user menu and the top/bottom or left/right of
 // the menu items.
 constexpr int kMenuEdgeMargin = 16;
+
+// Empty space between the rounded rectangle (outside) and menu edge.
+constexpr int kIdentityContainerMargin = 12;
+
+// Additional empty space between the menu item (e.g. icon or label) and the
+// edge menu margin.
+constexpr int kMenuItemLeftInternalPadding = 12;
 
 constexpr char kProfileMenuClickedActionableItemHistogram[] =
     "Profile.Menu.ClickedActionableItem";
@@ -207,12 +209,14 @@ class AvatarImageView : public views::ImageView {
   void OnThemeChanged() override {
     ImageView::OnThemeChanged();
     DCHECK(!avatar_image_.IsEmpty());
+    ui::ColorProvider* color_provider = GetColorProvider();
+    CHECK(color_provider);
     gfx::ImageSkia sized_avatar_image;
     if (has_dotted_ring_) {
       const int size_with_border = image_size_ + 2 * border_size_;
       sized_avatar_image = profiles::GetAvatarWithDottedRing(
           avatar_image_, size_with_border, /*has_padding=*/true,
-          /*has_background=*/true, GetColorProvider());
+          /*has_background=*/true, *color_provider);
       // Dotted ring avatar does not support a border, as the border is already
       // included with the dotted ring.
       CHECK_EQ(border_size_, 0);
@@ -222,12 +226,12 @@ class AvatarImageView : public views::ImageView {
         ui::ImageModel sized_avatar_image_without_border =
             GetCircularSizedImage(avatar_image_, image_size_);
         sized_avatar_image = gfx::CanvasImageSource::CreatePadded(
-            sized_avatar_image_without_border.Rasterize(GetColorProvider()),
+            sized_avatar_image_without_border.Rasterize(color_provider),
             gfx::Insets(border_size_));
       } else {
         sized_avatar_image =
             profiles::GetSizedAvatarImageModel(avatar_image_, image_size_)
-                .Rasterize(GetColorProvider());
+                .Rasterize(color_provider);
       }
       sized_avatar_image = profiles::AddBackgroundToImage(sized_avatar_image,
                                                           GetBackgroundColor());
@@ -255,34 +259,6 @@ class AvatarImageView : public views::ImageView {
 BEGIN_METADATA(AvatarImageView)
 END_METADATA
 
-void BuildProfileTitleAndSubtitle(Browser* browser,
-                                  views::View* parent,
-                                  const std::u16string& title,
-                                  const std::u16string& subtitle) {
-  // This function can be deleted when `kEnableImprovedGuestProfileMenu` is
-  // launched.
-  CHECK(
-      !base::FeatureList::IsEnabled(switches::kEnableImprovedGuestProfileMenu));
-  views::View* profile_titles_container =
-      parent->AddChildView(std::make_unique<views::View>());
-  // Separate the titles from the avatar image by the default margin.
-  profile_titles_container->SetLayoutManager(
-      CreateBoxLayout(views::BoxLayout::Orientation::kVertical,
-                      views::BoxLayout::CrossAxisAlignment::kCenter,
-                      gfx::Insets::TLBR(kDefaultMargin, 0, 0, 0)));
-
-  if (!title.empty()) {
-    profile_titles_container->AddChildView(std::make_unique<views::Label>(
-        title, views::style::CONTEXT_DIALOG_TITLE,
-        views::style::STYLE_HEADLINE_4));
-  }
-
-  if (!subtitle.empty()) {
-    profile_titles_container->AddChildView(std::make_unique<views::Label>(
-        subtitle, views::style::CONTEXT_LABEL, views::style::STYLE_BODY_3));
-  }
-}
-
 }  // namespace
 
 ProfileMenuViewBase::IdentitySectionParams::IdentitySectionParams() = default;
@@ -295,21 +271,21 @@ ProfileMenuViewBase::IdentitySectionParams::operator=(IdentitySectionParams&&) =
 
 // ProfileMenuViewBase ---------------------------------------------------------
 
-ProfileMenuViewBase::ProfileMenuViewBase(views::Button* anchor_button,
+ProfileMenuViewBase::ProfileMenuViewBase(ui::TrackedElement* anchor_element,
                                          Browser* browser)
-    : BubbleDialogDelegateView(anchor_button, views::BubbleBorder::TOP_RIGHT),
-      browser_(browser),
-      anchor_button_(anchor_button),
+    : BubbleDialogDelegateView(anchor_element, views::BubbleBorder::TOP_RIGHT),
+      profile_(raw_ref<Profile>::from_ptr(browser->profile())),
       close_bubble_helper_(this, browser->tab_strip_model()) {
   SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
-  // TODO(tluk): Remove when fixing https://crbug.com/822075
-  // The sign in webview will be clipped on the bottom corners without these
-  // margins, see related bug <http://crbug.com/593203>.
-  SetPaintClientToLayer(true);
   set_margins(gfx::Insets(0));
-  DCHECK(anchor_button);
-  views::InkDrop::Get(anchor_button)
-      ->AnimateToState(views::InkDropState::ACTIVATED, nullptr);
+  DCHECK(anchor_element);
+
+  if (anchor_element->IsA<views::TrackedElementViews>()) {
+    anchor_view_.SetView(
+        anchor_element->AsA<views::TrackedElementViews>()->view());
+    views::InkDrop::Get(anchor_view_.view())
+        ->AnimateToState(views::InkDropState::ACTIVATED, nullptr);
+  }
 
   SetEnableArrowKeyTraversal(true);
 
@@ -322,118 +298,14 @@ ProfileMenuViewBase::ProfileMenuViewBase(views::Button* anchor_button,
 
   RegisterWindowClosingCallback(base::BindOnce(
       &ProfileMenuViewBase::OnWindowClosing, base::Unretained(this)));
+
+  SetBackground(views::CreateSolidBackground(kColorProfileMenuBackground));
 }
 
 ProfileMenuViewBase::~ProfileMenuViewBase() = default;
 
-// This function deals with the somewhat complicated layout to build the part of
-// the profile identity info that has a colored background.
-void ProfileMenuViewBase::BuildProfileBackgroundContainer(
-    std::unique_ptr<views::View> avatar_image_view,
-    const ui::ThemedVectorIcon& avatar_header_art) {
-  // This function can be deleted when `kEnableImprovedGuestProfileMenu` is
-  // launched.
-  CHECK(
-      !base::FeatureList::IsEnabled(switches::kEnableImprovedGuestProfileMenu));
-
-  profile_background_container_ = identity_info_container_->AddChildView(
-      std::make_unique<views::FlexLayoutView>());
-
-  auto background_container_insets = gfx::Insets::VH(0, kMenuEdgeMargin);
-  profile_background_container_->SetOrientation(
-      views::LayoutOrientation::kHorizontal);
-  profile_background_container_->SetCrossAxisAlignment(
-      views::LayoutAlignment::kEnd);
-  profile_background_container_->SetInteriorMargin(background_container_insets);
-
-  // Show a colored background iff there is no art.
-  if (avatar_header_art.empty()) {
-    identity_info_color_callback_ = base::BindRepeating(
-        &ProfileMenuViewBase::BuildIdentityInfoColorCallback,
-        base::Unretained(this));
-  } else {
-    profile_background_container_->SetBackground(
-        views::CreateThemedVectorIconBackground(avatar_header_art));
-  }
-
-  // |avatar_margin| is derived from |avatar_header_art| asset height, it
-  // increases margin for the avatar icon to make |avatar_header_art| visible
-  // above the center of the avatar icon.
-  const int avatar_margin = avatar_header_art.empty()
-                                ? kMenuEdgeMargin
-                                : kHeaderArtHeight - kHalfOfAvatarImageViewSize;
-
-  // The |heading_and_image_container| is on the left and it stretches almost
-  // the full width. It contains the profile heading and the avatar image.
-  views::FlexLayoutView* heading_and_image_container =
-      profile_background_container_->AddChildView(
-          std::make_unique<views::FlexLayoutView>());
-  heading_and_image_container->SetProperty(
-      views::kFlexBehaviorKey,
-      views::FlexSpecification(views::LayoutOrientation::kHorizontal,
-                               views::MinimumFlexSizeRule::kScaleToZero,
-                               views::MaximumFlexSizeRule::kUnbounded)
-          .WithOrder(1));
-  heading_and_image_container->SetOrientation(
-      views::LayoutOrientation::kVertical);
-  heading_and_image_container->SetMainAxisAlignment(
-      views::LayoutAlignment::kCenter);
-  heading_and_image_container->SetCrossAxisAlignment(
-      views::LayoutAlignment::kCenter);
-  heading_and_image_container->SetInteriorMargin(
-      gfx::Insets::TLBR(avatar_margin, 0, 0, 0));
-  heading_and_image_container->AddChildView(std::move(avatar_image_view));
-}
-
-void ProfileMenuViewBase::SetProfileIdentityInfo(
-    const ui::ImageModel& image_model,
-    const std::u16string& title,
-    const std::u16string& subtitle,
-    const gfx::VectorIcon* header_art_icon) {
-  // This function can be deleted when `kEnableImprovedGuestProfileMenu` is
-  // launched.
-  CHECK(
-      !base::FeatureList::IsEnabled(switches::kEnableImprovedGuestProfileMenu));
-  ui::ThemedVectorIcon avatar_header_art;
-  if (header_art_icon != nullptr) {
-    avatar_header_art = ui::ThemedVectorIcon(
-        header_art_icon, ui::kColorAvatarHeaderArt, kMenuWidth);
-  }
-
-  constexpr int kBottomMargin = kDefaultMargin;
-
-  identity_info_container_->RemoveAllChildViews();
-  // The colored background fully bleeds to the edges of the menu and to achieve
-  // that margin is set to 0. Further margins will be added by children views.
-  identity_info_container_->SetLayoutManager(
-      CreateBoxLayout(views::BoxLayout::Orientation::kVertical,
-                      views::BoxLayout::CrossAxisAlignment::kStretch,
-                      gfx::Insets::TLBR(0, 0, kBottomMargin, 0)));
-
-  auto avatar_image_view = std::make_unique<AvatarImageView>(
-      image_model, this, ProfileMenuViewBase::kIdentityImageSize,
-      kIdentityImageBorder,
-      /*has_dotted_ring=*/false);
-
-#if BUILDFLAG(IS_LINUX)
-  // crbug.com/1161166: Orca does not read the accessible window title of the
-  // bubble, so we duplicate it in the top-level menu item. To be revisited
-  // after considering other options, including fixes on the AT side.
-  GetViewAccessibility().SetName(GetAccessibleWindowTitle(),
-                                 ax::mojom::NameFrom::kAttribute);
-#endif
-
-  BuildProfileBackgroundContainer(std::move(avatar_image_view),
-                                  avatar_header_art);
-  BuildProfileTitleAndSubtitle(browser_, /*parent=*/identity_info_container_,
-                               title, subtitle);
-}
-
 void ProfileMenuViewBase::SetProfileIdentityWithCallToAction(
     IdentitySectionParams params) {
-  // Empty space between the rounded rectangle (outside) and menu edge.
-  constexpr int kIdentityContainerMargin = 12;
-
   constexpr int kHeaderVerticalSize = 36;
   constexpr int kHeaderImageSize = 16;
   constexpr int kIdentityContainerHorizontalPadding = 24;
@@ -464,9 +336,6 @@ void ProfileMenuViewBase::SetProfileIdentityWithCallToAction(
   // does not support a button without subtitle.
 
   identity_info_container_->RemoveAllChildViews();
-  title_label_ = nullptr;
-  subtitle_label_ = nullptr;
-
   // Vertical BoxLayout.
   auto box_layout =
       CreateBoxLayout(views::BoxLayout::Orientation::kVertical,
@@ -482,9 +351,10 @@ void ProfileMenuViewBase::SetProfileIdentityWithCallToAction(
       gfx::RoundedCornersF(views::LayoutProvider::Get()->GetCornerRadiusMetric(
           views::Emphasis::kHigh)));
 
-  identity_info_color_callback_ =
-      base::BindRepeating(&ProfileMenuViewBase::BuildIdentityInfoColorCallback,
-                          base::Unretained(this));
+  // No need to set rounded corners on the background, because the container
+  // is painted in a layer that has rounded corners already.
+  identity_info_container_->SetBackground(
+      views::CreateSolidBackground(kColorProfileMenuIdentityInfoBackground));
 
   // Space around the rectangle, between the rectangle and the menu edge.
   identity_info_container_->SetProperty(views::kMarginsKey,
@@ -538,7 +408,6 @@ void ProfileMenuViewBase::SetProfileIdentityWithCallToAction(
   identity_info_container_->AddChildView(
       views::Builder<views::Label>()
           .SetText(params.title)
-          .CopyAddressTo(&title_label_)
           .SetTextContext(views::style::CONTEXT_LABEL)
           .SetTextStyle(views::style::STYLE_BODY_3_MEDIUM)
           .SetElideBehavior(gfx::ELIDE_TAIL)
@@ -547,6 +416,7 @@ void ProfileMenuViewBase::SetProfileIdentityWithCallToAction(
                                          kIdentityContainerHorizontalPadding,
                                          title_bottom_margin,
                                          kIdentityContainerHorizontalPadding))
+          .SetEnabledColor(kColorProfileMenuIdentityInfoTitle)
           .Build());
   if (!has_subtitle) {
     CHECK(!has_button);
@@ -568,7 +438,6 @@ void ProfileMenuViewBase::SetProfileIdentityWithCallToAction(
   identity_info_container_->AddChildView(
       views::Builder<views::Label>()
           .SetText(params.subtitle)
-          .CopyAddressTo(&subtitle_label_)
           .SetTextContext(views::style::CONTEXT_LABEL)
           .SetTextStyle(views::style::STYLE_BODY_4)
           .SetMultiLine(true)
@@ -577,6 +446,7 @@ void ProfileMenuViewBase::SetProfileIdentityWithCallToAction(
                        gfx::Insets::TLBR(0, kIdentityContainerHorizontalPadding,
                                          subtitle_bottom_margin,
                                          kIdentityContainerHorizontalPadding))
+          .SetEnabledColor(kColorProfileMenuIdentityInfoSubtitle)
           .Build());
 
   if (!has_button) {
@@ -597,6 +467,82 @@ void ProfileMenuViewBase::SetProfileIdentityWithCallToAction(
           .Build());
 }
 
+void ProfileMenuViewBase::AddPromoButton(const std::u16string& text,
+                                         base::RepeatingClosure action,
+                                         const gfx::VectorIcon& icon) {
+  // Initialize layout if this is the first time a button is added.
+  if (!promo_container_->GetLayoutManager()) {
+    promo_container_->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kVertical));
+  }
+
+  // Do not allow more than 2 promos to be shown at the same time in the Profile
+  // Menu. Currently there only exist two types of promos - if we ever need to
+  // support more, a more complex logic to decide which promo to be shown is
+  // needed.
+  if (promo_container_->children().size() == 2u) {
+    return;
+  }
+
+  // Only first and last buttons should have the rounded corners.
+  bool is_first_button_being_added = promo_container_->children().empty();
+
+  // Reset the last button bottom corners since it will not be the last one
+  // anymore.
+  if (!is_first_button_being_added) {
+    HoverButton* last_child =
+        views::AsViewClass<HoverButton>(promo_container_->children().back());
+    std::optional<gfx::RoundedCornersF> current_rounded_corners =
+        last_child->background()->GetRoundedCornerRadii();
+    CHECK(current_rounded_corners.has_value());
+    current_rounded_corners->set_lower_left(0.f);
+    current_rounded_corners->set_lower_right(0.f);
+    // Override the background with the updated corners.
+    last_child->SetBackground(views::CreateRoundedRectBackground(
+        kColorProfileMenuPromoButtonsBackground,
+        current_rounded_corners.value(),
+        gfx::Insets::VH(0, kIdentityContainerMargin)));
+  }
+
+  // Add background color for promos.
+  constexpr int kBackgroundCornerSize = 8;
+  constexpr int kButtonBackgroundVerticalSize = 40;
+  constexpr int kPromoSeparation = 2;
+
+  std::unique_ptr<HoverButton> button = CreateMenuRowButton(
+      std::move(action), std::make_unique<FeatureButtonIconView>(icon, 1.0f),
+      text);
+
+  // The current button being added to the end, we can already set the bottom
+  // corners.
+  gfx::RoundedCornersF rounded_corners(0.f, 0.f, kBackgroundCornerSize,
+                                       kBackgroundCornerSize);
+  // First element should have upper corners rounded.
+  if (is_first_button_being_added) {
+    rounded_corners.set_upper_left(kBackgroundCornerSize);
+    rounded_corners.set_upper_right(kBackgroundCornerSize);
+  }
+  button->SetBackground(views::CreateRoundedRectBackground(
+      kColorProfileMenuPromoButtonsBackground, rounded_corners,
+      gfx::Insets::VH(0, kIdentityContainerMargin)));
+  // Button with a background should have a larger size to fit the background.
+  button->SetPreferredSize(
+      gfx::Size(kMenuWidth, kButtonBackgroundVerticalSize));
+
+  // When adding the first element in the promo container, ensure a separation
+  // between the promo container and the next container. Otherwise, add a top
+  // margin to the button to add a separatation with the previous promos.
+  if (is_first_button_being_added) {
+    promo_container_->SetProperty(views::kMarginsKey,
+                                  gfx::Insets().set_bottom(kDefaultMargin));
+  } else {
+    button->SetProperty(views::kMarginsKey,
+                        gfx::Insets().set_top(kPromoSeparation));
+  }
+
+  promo_container_->AddChildView(std::move(button));
+}
+
 void ProfileMenuViewBase::AddFeatureButton(const std::u16string& text,
                                            base::RepeatingClosure action,
                                            const gfx::VectorIcon& icon,
@@ -607,17 +553,10 @@ void ProfileMenuViewBase::AddFeatureButton(const std::u16string& text,
         views::BoxLayout::Orientation::kVertical));
   }
 
-  std::unique_ptr<FeatureButtonIconView> icon_view;
-  if (&icon != &gfx::VectorIcon::EmptyIcon()) {
-    icon_view =
-        std::make_unique<FeatureButtonIconView>(icon, icon_to_image_ratio);
-  }
-
-  features_container_->AddChildView(std::make_unique<HoverButton>(
-      base::BindRepeating(&ProfileMenuViewBase::ButtonPressed,
-                          base::Unretained(this), std::move(action)),
-      std::move(icon_view), text, /*subtitle=*/std::u16string(),
-      /*secondary_view=*/nullptr, /*add_vertical_label_spacing=*/false));
+  features_container_->AddChildView(CreateMenuRowButton(
+      std::move(action),
+      std::make_unique<FeatureButtonIconView>(icon, icon_to_image_ratio),
+      text));
 }
 
 void ProfileMenuViewBase::SetProfileManagementHeading(
@@ -637,8 +576,10 @@ void ProfileMenuViewBase::SetProfileManagementHeading(
   profile_mgmt_heading_container_->RemoveAllChildViews();
   profile_mgmt_heading_container_->SetLayoutManager(
       std::make_unique<views::FillLayout>());
-  profile_mgmt_heading_container_->SetBorder(views::CreateEmptyBorder(
-      gfx::Insets::VH(kDefaultMargin, kMenuEdgeMargin)));
+  profile_mgmt_heading_container_->SetBorder(
+      views::CreateEmptyBorder(gfx::Insets::TLBR(
+          kDefaultMargin, kMenuEdgeMargin + kMenuItemLeftInternalPadding,
+          kDefaultMargin, kMenuEdgeMargin)));
 
   // Add heading.
   views::Label* label = profile_mgmt_heading_container_->AddChildView(
@@ -669,14 +610,10 @@ void ProfileMenuViewBase::AddAvailableProfile(const ui::ImageModel& image_model,
   DCHECK(!image_model.IsEmpty());
   ui::ImageModel sized_image =
       GetCircularSizedImage(image_model, kOtherProfileImageSize);
-  views::Button* button = selectable_profiles_container_->AddChildView(
-      std::make_unique<HoverButton>(
-          base::BindRepeating(&ProfileMenuViewBase::ButtonPressed,
-                              base::Unretained(this), std::move(action)),
-          std::make_unique<views::ImageView>(sized_image), name,
-          /*subtitle=*/std::u16string(),
-          /*secondary_view=*/nullptr,
-          /*add_vertical_label_spacing=*/false));
+  views::Button* button =
+      selectable_profiles_container_->AddChildView(CreateMenuRowButton(
+          std::move(action), std::make_unique<views::ImageView>(sized_image),
+          name));
 
   if (!is_guest && !first_profile_button_) {
     first_profile_button_ = button;
@@ -703,12 +640,8 @@ void ProfileMenuViewBase::AddProfileManagementFeatureButton(
 
   auto icon_view =
       std::make_unique<FeatureButtonIconView>(icon, /*icon_to_image_ratio=*/1);
-  profile_mgmt_features_container_->AddChildView(std::make_unique<HoverButton>(
-      base::BindRepeating(&ProfileMenuViewBase::ButtonPressed,
-                          base::Unretained(this), std::move(action)),
-      std::move(icon_view), text, /*subtitle=*/std::u16string(),
-      /*secondary_view=*/nullptr,
-      /*add_vertical_label_spacing=*/false));
+  profile_mgmt_features_container_->AddChildView(
+      CreateMenuRowButton(std::move(action), std::move(icon_view), text));
 }
 
 void ProfileMenuViewBase::AddBottomMargin() {
@@ -722,14 +655,16 @@ void ProfileMenuViewBase::AddBottomMargin() {
   }
 }
 
-void ProfileMenuViewBase::RecordClick(ActionableItem item) {
+void ProfileMenuViewBase::OnActionableItemClicked(ActionableItem item) {
+  actionable_item_clicked_ = true;
+
   // TODO(tangltom): Separate metrics for incognito and guest menu.
   base::UmaHistogramEnumeration(kProfileMenuClickedActionableItemHistogram,
                                 item);
   // Additionally output a version of the metric for supervised users, to allow
   // more fine-grained analysis.
   signin::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfileIfExists(browser()->profile());
+      IdentityManagerFactory::GetForProfileIfExists(&profile());
   if (identity_manager &&
       supervised_user::IsPrimaryAccountSubjectToParentalControls(
           identity_manager) == signin::Tribool::kTrue) {
@@ -741,7 +676,7 @@ void ProfileMenuViewBase::RecordClick(ActionableItem item) {
 int ProfileMenuViewBase::GetMaxHeight() const {
   gfx::Rect anchor_rect = GetAnchorRect();
   gfx::Rect screen_space =
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->GetDisplayNearestPoint(anchor_rect.CenterPoint())
           .work_area();
   int available_space = screen_space.bottom() - anchor_rect.bottom();
@@ -764,6 +699,7 @@ void ProfileMenuViewBase::Reset() {
   // First, add the parts of the current profile.
   identity_info_container_ =
       components->AddChildView(std::make_unique<views::View>());
+  promo_container_ = components->AddChildView(std::make_unique<views::View>());
   features_container_ =
       components->AddChildView(std::make_unique<views::View>());
   profile_mgmt_separator_container_ =
@@ -814,59 +750,17 @@ void ProfileMenuViewBase::FocusFirstProfileButton() {
   }
 }
 
-void ProfileMenuViewBase::BuildIdentityInfoColorCallback(
-    const ui::ColorProvider* color_provider) {
-  if (!profile_background_container_) {
-    const SkColor background_color =
-        color_provider->GetColor(kColorProfileMenuIdentityInfoBackground);
-    // No need to set rounded corners on the background, because the container
-    // is painted in a layer that has rounded corners already.
-    identity_info_container_->SetBackground(
-        views::CreateSolidBackground(background_color));
-
-    title_label_->SetEnabledColor(
-        color_provider->GetColor(kColorProfileMenuIdentityInfoTitle));
-    if (subtitle_label_) {
-      subtitle_label_->SetEnabledColor(
-          color_provider->GetColor(kColorProfileMenuIdentityInfoSubtitle));
-    }
-    return;
-  }
-
-  // Delete this code when `switches::kEnableImprovedGuestProfileMenu` is
-  // launched.
-  CHECK(
-      !base::FeatureList::IsEnabled(switches::kEnableImprovedGuestProfileMenu));
-  // The bottom background edge should match the center of the identity image.
-  static constexpr auto kBackgroundInsets =
-      gfx::Insets::TLBR(0, 0, kHalfOfAvatarImageViewSize, 0);
-  profile_background_container_->SetBackground(
-      views::CreateBackgroundFromPainter(
-          views::Painter::CreateSolidRoundRectPainter(
-              color_provider->GetColor(kColorProfileMenuHeaderBackground),
-              /*radius=*/0, kBackgroundInsets)));
-}
-
 void ProfileMenuViewBase::Init() {
   Reset();
   BuildMenu();
 }
 
-void ProfileMenuViewBase::OnThemeChanged() {
-  views::BubbleDialogDelegateView::OnThemeChanged();
-  const auto* color_provider = GetColorProvider();
-  SetBackground(views::CreateSolidBackground(
-      color_provider->GetColor(kColorProfileMenuBackground)));
-  identity_info_color_callback_.Run(color_provider);
-  sync_info_background_callback_.Run(color_provider);
-}
-
 void ProfileMenuViewBase::OnWindowClosing() {
-  if (!anchor_button()) {
+  if (!anchor_view_) {
     return;
   }
 
-  views::InkDrop::Get(anchor_button())
+  views::InkDrop::Get(anchor_view_.view())
       ->AnimateToState(views::InkDropState::DEACTIVATED, nullptr);
 }
 
@@ -880,12 +774,26 @@ bool ProfileMenuViewBase::HandleContextMenu(
 
 void ProfileMenuViewBase::ButtonPressed(base::RepeatingClosure action) {
   DCHECK(action);
-  signin_ui_util::RecordProfileMenuClick(browser()->profile());
+  signin_ui_util::RecordProfileMenuClick(profile());
   action.Run();
 }
 
 void ProfileMenuViewBase::CreateAXWidgetObserver(views::Widget* widget) {
   ax_widget_observer_ = std::make_unique<AXMenuWidgetObserver>(this, widget);
+}
+
+std::unique_ptr<HoverButton> ProfileMenuViewBase::CreateMenuRowButton(
+    base::RepeatingClosure action,
+    std::unique_ptr<views::View> icon_view,
+    const std::u16string& text) {
+  CHECK(icon_view);
+  auto button = std::make_unique<HoverButton>(
+      base::BindRepeating(&ProfileMenuViewBase::ButtonPressed,
+                          base::Unretained(this), std::move(action)),
+      std::move(icon_view), text, /*subtitle=*/std::u16string(),
+      /*secondary_view=*/nullptr, /*add_vertical_label_spacing=*/false);
+  button->SetIconHorizontalMargins(kMenuItemLeftInternalPadding, /*right=*/0);
+  return button;
 }
 
 // Despite ProfileMenuViewBase being a dialog, we are enforcing it to behave

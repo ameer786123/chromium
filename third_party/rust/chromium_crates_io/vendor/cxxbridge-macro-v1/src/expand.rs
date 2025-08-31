@@ -7,8 +7,8 @@ use crate::syntax::qualified::QualifiedName;
 use crate::syntax::report::Errors;
 use crate::syntax::symbol::Symbol;
 use crate::syntax::{
-    self, check, mangle, Api, Doc, Enum, ExternFn, ExternType, Impl, Lifetimes, Pair, Signature,
-    Struct, Trait, Type, TypeAlias, Types,
+    self, check, mangle, Api, Doc, Enum, ExternFn, ExternType, FnKind, Impl, Lang, Lifetimes, Pair,
+    Signature, Struct, Trait, Type, TypeAlias, Types,
 };
 use crate::type_id::Crate;
 use crate::{derive, generics};
@@ -36,8 +36,6 @@ pub(crate) fn bridge(mut ffi: Module) -> Result<TokenStream> {
     let trusted = ffi.unsafety.is_some();
     let namespace = &ffi.namespace;
     let ref mut apis = syntax::parse_items(errors, content, trusted, namespace);
-    #[cfg(feature = "experimental-enum-variants-from-header")]
-    crate::load::load(errors, apis);
     let ref types = Types::collect(errors, apis);
     errors.propagate()?;
 
@@ -92,7 +90,7 @@ fn expand(ffi: Module, doc: Doc, attrs: OtherAttrs, apis: &[Api], types: &Types)
     }
 
     for (impl_key, &explicit_impl) in &types.impls {
-        match *impl_key {
+        match impl_key {
             ImplKey::RustBox(ident) => {
                 hidden.extend(expand_rust_box(ident, types, explicit_impl));
             }
@@ -138,7 +136,7 @@ fn expand(ffi: Module, doc: Doc, attrs: OtherAttrs, apis: &[Api], types: &Types)
         #doc
         #attrs
         #[deny(improper_ctypes, improper_ctypes_definitions)]
-        #[allow(clippy::unknown_clippy_lints)]
+        #[allow(clippy::unknown_lints)]
         #[allow(
             non_camel_case_types,
             non_snake_case,
@@ -180,11 +178,13 @@ fn expand_struct(strct: &Struct) -> TokenStream {
         }
     };
 
+    let align = strct.align.as_ref().map(|align| quote!(, align(#align)));
+
     quote! {
         #doc
         #derives
         #attrs
-        #[repr(C)]
+        #[repr(C #align)]
         #struct_def
 
         #[automatically_derived]
@@ -360,7 +360,6 @@ fn expand_enum(enm: &Enum) -> TokenStream {
         #[repr(transparent)]
         #enum_def
 
-        #[automatically_derived]
         #[allow(non_upper_case_globals)]
         impl #ident {
             #(#variants)*
@@ -459,7 +458,7 @@ fn expand_cxx_type_assert_pinned(ety: &ExternType, types: &Types) -> TokenStream
 
 fn expand_cxx_function_decl(efn: &ExternFn, types: &Types) -> TokenStream {
     let generics = &efn.generics;
-    let receiver = efn.receiver.iter().map(|receiver| {
+    let receiver = efn.receiver().into_iter().map(|receiver| {
         let receiver_type = receiver.ty();
         quote!(_: #receiver_type)
     });
@@ -502,7 +501,7 @@ fn expand_cxx_function_shim(efn: &ExternFn, types: &Types) -> TokenStream {
     let doc = &efn.doc;
     let attrs = &efn.attrs;
     let decl = expand_cxx_function_decl(efn, types);
-    let receiver = efn.receiver.iter().map(|receiver| {
+    let receiver = efn.receiver().into_iter().map(|receiver| {
         let var = receiver.var;
         if receiver.pinned {
             let colon = receiver.colon_token;
@@ -528,8 +527,8 @@ fn expand_cxx_function_shim(efn: &ExternFn, types: &Types) -> TokenStream {
     };
     let indirect_return = indirect_return(efn, types);
     let receiver_var = efn
-        .receiver
-        .iter()
+        .receiver()
+        .into_iter()
         .map(|receiver| receiver.var.to_token_stream());
     let arg_vars = efn.args.iter().map(|arg| {
         let var = &arg.name.rust;
@@ -650,98 +649,102 @@ fn expand_cxx_function_shim(efn: &ExternFn, types: &Types) -> TokenStream {
         }
     };
     let mut expr;
-    if efn.throws && efn.sig.ret.is_none() {
-        expr = call;
-    } else {
-        expr = match &efn.ret {
-            None => call,
-            Some(ret) => match ret {
-                Type::Ident(ident) if ident.rust == RustString => {
-                    quote_spanned!(span=> #call.into_string())
+    if let Some(ret) = &efn.ret {
+        expr = match ret {
+            Type::Ident(ident) if ident.rust == RustString => {
+                quote_spanned!(span=> #call.into_string())
+            }
+            Type::RustBox(ty) => {
+                if types.is_considered_improper_ctype(&ty.inner) {
+                    quote_spanned!(span=> ::cxx::alloc::boxed::Box::from_raw(#call.cast()))
+                } else {
+                    quote_spanned!(span=> ::cxx::alloc::boxed::Box::from_raw(#call))
                 }
-                Type::RustBox(ty) => {
-                    if types.is_considered_improper_ctype(&ty.inner) {
-                        quote_spanned!(span=> ::cxx::alloc::boxed::Box::from_raw(#call.cast()))
-                    } else {
-                        quote_spanned!(span=> ::cxx::alloc::boxed::Box::from_raw(#call))
-                    }
+            }
+            Type::RustVec(vec) => {
+                if vec.inner == RustString {
+                    quote_spanned!(span=> #call.into_vec_string())
+                } else {
+                    quote_spanned!(span=> #call.into_vec())
                 }
-                Type::RustVec(vec) => {
-                    if vec.inner == RustString {
-                        quote_spanned!(span=> #call.into_vec_string())
-                    } else {
-                        quote_spanned!(span=> #call.into_vec())
-                    }
+            }
+            Type::UniquePtr(ty) => {
+                if types.is_considered_improper_ctype(&ty.inner) {
+                    quote_spanned!(span=> ::cxx::UniquePtr::from_raw(#call.cast()))
+                } else {
+                    quote_spanned!(span=> ::cxx::UniquePtr::from_raw(#call))
                 }
-                Type::UniquePtr(ty) => {
-                    if types.is_considered_improper_ctype(&ty.inner) {
-                        quote_spanned!(span=> ::cxx::UniquePtr::from_raw(#call.cast()))
-                    } else {
-                        quote_spanned!(span=> ::cxx::UniquePtr::from_raw(#call))
-                    }
-                }
-                Type::Ref(ty) => match &ty.inner {
-                    Type::Ident(ident) if ident.rust == RustString => match ty.mutable {
-                        false => quote_spanned!(span=> #call.as_string()),
-                        true => quote_spanned!(span=> #call.as_mut_string()),
-                    },
-                    Type::RustVec(vec) if vec.inner == RustString => match ty.mutable {
-                        false => quote_spanned!(span=> #call.as_vec_string()),
-                        true => quote_spanned!(span=> #call.as_mut_vec_string()),
-                    },
-                    Type::RustVec(_) => match ty.mutable {
-                        false => quote_spanned!(span=> #call.as_vec()),
-                        true => quote_spanned!(span=> #call.as_mut_vec()),
-                    },
-                    inner if types.is_considered_improper_ctype(inner) => {
-                        let mutability = ty.mutability;
-                        let deref_mut = quote_spanned!(span=> &#mutability *#call.cast());
-                        match ty.pinned {
-                            false => deref_mut,
-                            true => {
-                                quote_spanned!(span=> ::cxx::core::pin::Pin::new_unchecked(#deref_mut))
-                            }
-                        }
-                    }
-                    _ => call,
+            }
+            Type::Ref(ty) => match &ty.inner {
+                Type::Ident(ident) if ident.rust == RustString => match ty.mutable {
+                    false => quote_spanned!(span=> #call.as_string()),
+                    true => quote_spanned!(span=> #call.as_mut_string()),
                 },
-                Type::Ptr(ty) => {
-                    if types.is_considered_improper_ctype(&ty.inner) {
-                        quote_spanned!(span=> #call.cast())
-                    } else {
-                        call
-                    }
-                }
-                Type::Str(_) => quote_spanned!(span=> #call.as_str()),
-                Type::SliceRef(slice) => {
-                    let inner = &slice.inner;
-                    match slice.mutable {
-                        false => quote_spanned!(span=> #call.as_slice::<#inner>()),
-                        true => quote_spanned!(span=> #call.as_mut_slice::<#inner>()),
+                Type::RustVec(vec) if vec.inner == RustString => match ty.mutable {
+                    false => quote_spanned!(span=> #call.as_vec_string()),
+                    true => quote_spanned!(span=> #call.as_mut_vec_string()),
+                },
+                Type::RustVec(_) => match ty.mutable {
+                    false => quote_spanned!(span=> #call.as_vec()),
+                    true => quote_spanned!(span=> #call.as_mut_vec()),
+                },
+                inner if types.is_considered_improper_ctype(inner) => {
+                    let mutability = ty.mutability;
+                    let deref_mut = quote_spanned!(span=> &#mutability *#call.cast());
+                    match ty.pinned {
+                        false => deref_mut,
+                        true => {
+                            quote_spanned!(span=> ::cxx::core::pin::Pin::new_unchecked(#deref_mut))
+                        }
                     }
                 }
                 _ => call,
             },
+            Type::Ptr(ty) => {
+                if types.is_considered_improper_ctype(&ty.inner) {
+                    quote_spanned!(span=> #call.cast())
+                } else {
+                    call
+                }
+            }
+            Type::Str(_) => quote_spanned!(span=> #call.as_str()),
+            Type::SliceRef(slice) => {
+                let inner = &slice.inner;
+                match slice.mutable {
+                    false => quote_spanned!(span=> #call.as_slice::<#inner>()),
+                    true => quote_spanned!(span=> #call.as_mut_slice::<#inner>()),
+                }
+            }
+            _ => call,
         };
         if efn.throws {
             expr = quote_spanned!(span=> ::cxx::core::result::Result::Ok(#expr));
         }
+    } else if efn.throws {
+        expr = call;
+    } else {
+        expr = quote! { #call; };
     }
     let dispatch = quote_spanned!(span=> unsafe { #setup #expr });
     let visibility = efn.visibility;
-    let unsafety = &efn.sig.unsafety;
-    let fn_token = efn.sig.fn_token;
+    let unsafety = &efn.unsafety;
+    let fn_token = efn.fn_token;
     let ident = &efn.name.rust;
     let generics = &efn.generics;
-    let arg_list = quote_spanned!(efn.sig.paren_token.span=> (#(#all_args,)*));
+    let arg_list = quote_spanned!(efn.paren_token.span=> (#(#all_args,)*));
+    let calling_conv = match efn.lang {
+        Lang::Cxx => quote_spanned!(span=> "C"),
+        Lang::CxxUnwind => quote_spanned!(span=> "C-unwind"),
+        Lang::Rust => unreachable!(),
+    };
     let fn_body = quote_spanned!(span=> {
-        #UnsafeExtern extern "C" {
+        #UnsafeExtern extern #calling_conv {
             #decl
         }
         #trampolines
         #dispatch
     });
-    match &efn.receiver {
+    match efn.self_type() {
         None => {
             quote! {
                 #doc
@@ -749,32 +752,33 @@ fn expand_cxx_function_shim(efn: &ExternFn, types: &Types) -> TokenStream {
                 #visibility #unsafety #fn_token #ident #generics #arg_list #ret #fn_body
             }
         }
-        Some(receiver) => {
+        Some(self_type) => {
             let elided_generics;
-            let receiver_ident = &receiver.ty.rust;
-            let resolve = types.resolve(&receiver.ty);
-            let receiver_generics = if receiver.ty.generics.lt_token.is_some() {
-                &receiver.ty.generics
-            } else {
-                elided_generics = Lifetimes {
-                    lt_token: resolve.generics.lt_token,
-                    lifetimes: resolve
-                        .generics
-                        .lifetimes
-                        .pairs()
-                        .map(|pair| {
-                            let lifetime = Lifetime::new("'_", pair.value().apostrophe);
-                            let punct = pair.punct().map(|&&comma| comma);
-                            punctuated::Pair::new(lifetime, punct)
-                        })
-                        .collect(),
-                    gt_token: resolve.generics.gt_token,
-                };
-                &elided_generics
+            let resolve = types.resolve(self_type);
+            let self_type_generics = match &efn.kind {
+                FnKind::Method(receiver) if receiver.ty.generics.lt_token.is_some() => {
+                    &receiver.ty.generics
+                }
+                _ => {
+                    elided_generics = Lifetimes {
+                        lt_token: resolve.generics.lt_token,
+                        lifetimes: resolve
+                            .generics
+                            .lifetimes
+                            .pairs()
+                            .map(|pair| {
+                                let lifetime = Lifetime::new("'_", pair.value().apostrophe);
+                                let punct = pair.punct().map(|&&comma| comma);
+                                punctuated::Pair::new(lifetime, punct)
+                            })
+                            .collect(),
+                        gt_token: resolve.generics.gt_token,
+                    };
+                    &elided_generics
+                }
             };
             quote_spanned! {ident.span()=>
-                #[automatically_derived]
-                impl #generics #receiver_ident #receiver_generics {
+                impl #generics #self_type #self_type_generics {
                     #doc
                     #attrs
                     #visibility #unsafety #fn_token #ident #arg_list #ret #fn_body
@@ -806,12 +810,17 @@ fn expand_function_pointer_trampoline(
         &efn.attrs,
         body_span,
     );
+    let calling_conv = match efn.lang {
+        Lang::Cxx => "C",
+        Lang::CxxUnwind => "C-unwind",
+        Lang::Rust => unreachable!(),
+    };
     let var = &var.rust;
 
     quote! {
         let #var = ::cxx::private::FatFunction {
             trampoline: {
-                #UnsafeExtern extern "C" {
+                #UnsafeExtern extern #calling_conv {
                     #[link_name = #c_trampoline]
                     fn trampoline();
                 }
@@ -940,13 +949,13 @@ fn expand_forbid(impls: TokenStream) -> TokenStream {
 
 fn expand_rust_function_shim(efn: &ExternFn, types: &Types) -> TokenStream {
     let link_name = mangle::extern_fn(efn, types);
-    let local_name = match &efn.receiver {
+    let local_name = match efn.self_type() {
         None => format_ident!("__{}", efn.name.rust),
-        Some(receiver) => format_ident!("__{}__{}", receiver.ty.rust, efn.name.rust),
+        Some(self_type) => format_ident!("__{}__{}", self_type, efn.name.rust),
     };
-    let prevent_unwind_label = match &efn.receiver {
+    let prevent_unwind_label = match efn.self_type() {
         None => format!("::{}", efn.name.rust),
-        Some(receiver) => format!("::{}::{}", receiver.ty.rust, efn.name.rust),
+        Some(self_type) => format!("::{}::{}", self_type, efn.name.rust),
     };
     let invoke = Some(&efn.name.rust);
     let body_span = efn.semi_token.span;
@@ -976,10 +985,9 @@ fn expand_rust_function_shim_impl(
 ) -> TokenStream {
     let generics = outer_generics.unwrap_or(&sig.generics);
     let receiver_var = sig
-        .receiver
-        .as_ref()
+        .receiver()
         .map(|receiver| quote_spanned!(receiver.var.span=> __self));
-    let receiver = sig.receiver.as_ref().map(|receiver| {
+    let receiver = sig.receiver().map(|receiver| {
         let colon = receiver.colon_token;
         let receiver_type = receiver.ty();
         quote!(#receiver_var #colon #receiver_type)
@@ -1189,10 +1197,9 @@ fn expand_rust_function_shim_super(
     let generics = &sig.generics;
 
     let receiver_var = sig
-        .receiver
-        .as_ref()
+        .receiver()
         .map(|receiver| Ident::new("__self", receiver.var.span));
-    let receiver = sig.receiver.iter().map(|receiver| {
+    let receiver = sig.receiver().into_iter().map(|receiver| {
         let receiver_type = receiver.ty();
         quote!(#receiver_var: #receiver_type)
     });
@@ -1222,12 +1229,9 @@ fn expand_rust_function_shim_super(
     let vars = receiver_var.iter().chain(arg_vars);
 
     let span = invoke.span();
-    let call = match &sig.receiver {
+    let call = match sig.self_type() {
         None => quote_spanned!(span=> super::#invoke),
-        Some(receiver) => {
-            let receiver_type = &receiver.ty.rust;
-            quote_spanned!(span=> #receiver_type::#invoke)
-        }
+        Some(self_type) => quote_spanned!(span=> #self_type::#invoke),
     };
 
     let mut body = quote_spanned!(span=> #call(#(#vars,)*));
@@ -1297,7 +1301,7 @@ fn type_id(name: &Pair) -> TokenStream {
     crate::type_id::expand(Crate::Cxx, qualified)
 }
 
-fn expand_rust_box(key: NamedImplKey, types: &Types, explicit_impl: Option<&Impl>) -> TokenStream {
+fn expand_rust_box(key: &NamedImplKey, types: &Types, explicit_impl: Option<&Impl>) -> TokenStream {
     let ident = key.rust;
     let resolve = types.resolve(ident);
     let link_prefix = format!("cxxbridge1$box${}$", resolve.name.to_symbol());
@@ -1346,7 +1350,7 @@ fn expand_rust_box(key: NamedImplKey, types: &Types, explicit_impl: Option<&Impl
     }
 }
 
-fn expand_rust_vec(key: NamedImplKey, types: &Types, explicit_impl: Option<&Impl>) -> TokenStream {
+fn expand_rust_vec(key: &NamedImplKey, types: &Types, explicit_impl: Option<&Impl>) -> TokenStream {
     let elem = key.rust;
     let resolve = types.resolve(elem);
     let link_prefix = format!("cxxbridge1$rust_vec${}$", resolve.name.to_symbol());
@@ -1444,7 +1448,7 @@ fn expand_rust_vec(key: NamedImplKey, types: &Types, explicit_impl: Option<&Impl
 }
 
 fn expand_unique_ptr(
-    key: NamedImplKey,
+    key: &NamedImplKey,
     types: &Types,
     explicit_impl: Option<&Impl>,
 ) -> TokenStream {
@@ -1463,6 +1467,11 @@ fn expand_unique_ptr(
 
     let can_construct_from_value = types.is_maybe_trivial(ident);
     let new_method = if can_construct_from_value {
+        let raw_mut = if rustversion::cfg!(since(1.82)) {
+            quote!(&raw mut)
+        } else {
+            quote!(&mut)
+        };
         Some(quote! {
             fn __new(value: Self) -> ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void> {
                 #UnsafeExtern extern "C" {
@@ -1471,7 +1480,7 @@ fn expand_unique_ptr(
                 }
                 let mut repr = ::cxx::core::mem::MaybeUninit::uninit();
                 unsafe {
-                    __uninit(&mut repr).cast::<#ident #ty_generics>().write(value);
+                    __uninit(#raw_mut repr).cast::<#ident #ty_generics>().write(value);
                 }
                 repr
             }
@@ -1483,6 +1492,16 @@ fn expand_unique_ptr(
     let begin_span = explicit_impl.map_or(key.begin_span, |explicit| explicit.impl_token.span);
     let end_span = explicit_impl.map_or(key.end_span, |explicit| explicit.brace_token.span.join());
     let unsafe_token = format_ident!("unsafe", span = begin_span);
+    let raw_const = if rustversion::cfg!(since(1.82)) {
+        quote_spanned!(end_span=> &raw const)
+    } else {
+        quote_spanned!(end_span=> &)
+    };
+    let raw_mut = if rustversion::cfg!(since(1.82)) {
+        quote_spanned!(end_span=> &raw mut)
+    } else {
+        quote_spanned!(end_span=> &mut)
+    };
 
     quote_spanned! {end_span=>
         #[automatically_derived]
@@ -1497,7 +1516,7 @@ fn expand_unique_ptr(
                 }
                 let mut repr = ::cxx::core::mem::MaybeUninit::uninit();
                 unsafe {
-                    __null(&mut repr);
+                    __null(#raw_mut repr);
                 }
                 repr
             }
@@ -1509,7 +1528,7 @@ fn expand_unique_ptr(
                 }
                 let mut repr = ::cxx::core::mem::MaybeUninit::uninit();
                 unsafe {
-                    __raw(&mut repr, raw.cast());
+                    __raw(#raw_mut repr, raw.cast());
                 }
                 repr
             }
@@ -1518,14 +1537,14 @@ fn expand_unique_ptr(
                     #[link_name = #link_get]
                     fn __get(this: *const ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void>) -> *const ::cxx::core::ffi::c_void;
                 }
-                unsafe { __get(&repr).cast() }
+                unsafe { __get(#raw_const repr).cast() }
             }
             unsafe fn __release(mut repr: ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void>) -> *mut Self {
                 #UnsafeExtern extern "C" {
                     #[link_name = #link_release]
                     fn __release(this: *mut ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void>) -> *mut ::cxx::core::ffi::c_void;
                 }
-                unsafe { __release(&mut repr).cast() }
+                unsafe { __release(#raw_mut repr).cast() }
             }
             unsafe fn __drop(mut repr: ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void>) {
                 #UnsafeExtern extern "C" {
@@ -1533,7 +1552,7 @@ fn expand_unique_ptr(
                     fn __drop(this: *mut ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void>);
                 }
                 unsafe {
-                    __drop(&mut repr);
+                    __drop(#raw_mut repr);
                 }
             }
         }
@@ -1541,7 +1560,7 @@ fn expand_unique_ptr(
 }
 
 fn expand_shared_ptr(
-    key: NamedImplKey,
+    key: &NamedImplKey,
     types: &Types,
     explicit_impl: Option<&Impl>,
 ) -> TokenStream {
@@ -1551,6 +1570,7 @@ fn expand_shared_ptr(
     let prefix = format!("cxxbridge1$shared_ptr${}$", resolve.name.to_symbol());
     let link_null = format!("{}null", prefix);
     let link_uninit = format!("{}uninit", prefix);
+    let link_raw = format!("{}raw", prefix);
     let link_clone = format!("{}clone", prefix);
     let link_get = format!("{}get", prefix);
     let link_drop = format!("{}drop", prefix);
@@ -1594,6 +1614,15 @@ fn expand_shared_ptr(
                 }
             }
             #new_method
+            unsafe fn __raw(new: *mut ::cxx::core::ffi::c_void, raw: *mut Self) {
+                #UnsafeExtern extern "C" {
+                    #[link_name = #link_raw]
+                    fn __raw(new: *const ::cxx::core::ffi::c_void, raw: *mut ::cxx::core::ffi::c_void);
+                }
+                unsafe {
+                    __raw(new, raw as *mut ::cxx::core::ffi::c_void);
+                }
+            }
             unsafe fn __clone(this: *const ::cxx::core::ffi::c_void, new: *mut ::cxx::core::ffi::c_void) {
                 #UnsafeExtern extern "C" {
                     #[link_name = #link_clone]
@@ -1623,7 +1652,7 @@ fn expand_shared_ptr(
     }
 }
 
-fn expand_weak_ptr(key: NamedImplKey, types: &Types, explicit_impl: Option<&Impl>) -> TokenStream {
+fn expand_weak_ptr(key: &NamedImplKey, types: &Types, explicit_impl: Option<&Impl>) -> TokenStream {
     let ident = key.rust;
     let name = ident.to_string();
     let resolve = types.resolve(ident);
@@ -1696,7 +1725,7 @@ fn expand_weak_ptr(key: NamedImplKey, types: &Types, explicit_impl: Option<&Impl
 }
 
 fn expand_cxx_vector(
-    key: NamedImplKey,
+    key: &NamedImplKey,
     explicit_impl: Option<&Impl>,
     types: &Types,
 ) -> TokenStream {
@@ -1706,7 +1735,9 @@ fn expand_cxx_vector(
     let prefix = format!("cxxbridge1$std$vector${}$", resolve.name.to_symbol());
     let link_new = format!("{}new", prefix);
     let link_size = format!("{}size", prefix);
+    let link_capacity = format!("{}capacity", prefix);
     let link_get_unchecked = format!("{}get_unchecked", prefix);
+    let link_reserve = format!("{}reserve", prefix);
     let link_push_back = format!("{}push_back", prefix);
     let link_pop_back = format!("{}pop_back", prefix);
     let unique_ptr_prefix = format!(
@@ -1769,6 +1800,17 @@ fn expand_cxx_vector(
         None
     };
 
+    let raw_const = if rustversion::cfg!(since(1.82)) {
+        quote_spanned!(end_span=> &raw const)
+    } else {
+        quote_spanned!(end_span=> &)
+    };
+    let raw_mut = if rustversion::cfg!(since(1.82)) {
+        quote_spanned!(end_span=> &raw mut)
+    } else {
+        quote_spanned!(end_span=> &mut)
+    };
+
     quote_spanned! {end_span=>
         #[automatically_derived]
         #unsafe_token impl #impl_generics ::cxx::private::VectorElement for #elem #ty_generics {
@@ -1789,6 +1831,13 @@ fn expand_cxx_vector(
                 }
                 unsafe { __vector_size(v) }
             }
+            fn __vector_capacity(v: &::cxx::CxxVector<Self>) -> usize {
+                #UnsafeExtern extern "C" {
+                    #[link_name = #link_capacity]
+                    fn __vector_capacity #impl_generics(_: &::cxx::CxxVector<#elem #ty_generics>) -> usize;
+                }
+                unsafe { __vector_capacity(v) }
+            }
             unsafe fn __get_unchecked(v: *mut ::cxx::CxxVector<Self>, pos: usize) -> *mut Self {
                 #UnsafeExtern extern "C" {
                     #[link_name = #link_get_unchecked]
@@ -1799,6 +1848,16 @@ fn expand_cxx_vector(
                 }
                 unsafe { __get_unchecked(v, pos) as *mut Self }
             }
+            unsafe fn __reserve(v: ::cxx::core::pin::Pin<&mut ::cxx::CxxVector<Self>>, new_cap: usize) {
+                #UnsafeExtern extern "C" {
+                    #[link_name = #link_reserve]
+                    fn __reserve #impl_generics(
+                        v: ::cxx::core::pin::Pin<&mut ::cxx::CxxVector<#elem #ty_generics>>,
+                        new_cap: usize,
+                    );
+                }
+                unsafe { __reserve(v, new_cap) }
+            }
             #by_value_methods
             fn __unique_ptr_null() -> ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void> {
                 #UnsafeExtern extern "C" {
@@ -1807,7 +1866,7 @@ fn expand_cxx_vector(
                 }
                 let mut repr = ::cxx::core::mem::MaybeUninit::uninit();
                 unsafe {
-                    __unique_ptr_null(&mut repr);
+                    __unique_ptr_null(#raw_mut repr);
                 }
                 repr
             }
@@ -1818,7 +1877,7 @@ fn expand_cxx_vector(
                 }
                 let mut repr = ::cxx::core::mem::MaybeUninit::uninit();
                 unsafe {
-                    __unique_ptr_raw(&mut repr, raw);
+                    __unique_ptr_raw(#raw_mut repr, raw);
                 }
                 repr
             }
@@ -1827,14 +1886,14 @@ fn expand_cxx_vector(
                     #[link_name = #link_unique_ptr_get]
                     fn __unique_ptr_get #impl_generics(this: *const ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void>) -> *const ::cxx::CxxVector<#elem #ty_generics>;
                 }
-                unsafe { __unique_ptr_get(&repr) }
+                unsafe { __unique_ptr_get(#raw_const repr) }
             }
             unsafe fn __unique_ptr_release(mut repr: ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void>) -> *mut ::cxx::CxxVector<Self> {
                 #UnsafeExtern extern "C" {
                     #[link_name = #link_unique_ptr_release]
                     fn __unique_ptr_release #impl_generics(this: *mut ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void>) -> *mut ::cxx::CxxVector<#elem #ty_generics>;
                 }
-                unsafe { __unique_ptr_release(&mut repr) }
+                unsafe { __unique_ptr_release(#raw_mut repr) }
             }
             unsafe fn __unique_ptr_drop(mut repr: ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void>) {
                 #UnsafeExtern extern "C" {
@@ -1842,7 +1901,7 @@ fn expand_cxx_vector(
                     fn __unique_ptr_drop(this: *mut ::cxx::core::mem::MaybeUninit<*mut ::cxx::core::ffi::c_void>);
                 }
                 unsafe {
-                    __unique_ptr_drop(&mut repr);
+                    __unique_ptr_drop(#raw_mut repr);
                 }
             }
         }

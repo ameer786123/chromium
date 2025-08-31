@@ -5,6 +5,7 @@
 #include "chrome/browser/ash/boca/boca_app_client_impl.h"
 
 #include "ash/webui/system_apps/public/system_web_app_type.h"
+#include "chrome/browser/ash/browser_delegate/browser_delegate.h"
 #include "chrome/browser/ash/settings/device_settings_service.h"
 #include "chrome/browser/feedback/show_feedback_page.h"
 #include "chrome/browser/profiles/profile.h"
@@ -47,6 +48,13 @@ std::string BocaAppClientImpl::GetDeviceId() {
 void BocaAppClientImpl::LaunchApp() {
   ash::LaunchSystemWebAppAsync(ProfileManager::GetActiveUserProfile(),
                                SystemWebAppType::BOCA);
+}
+
+bool BocaAppClientImpl::HasApp() {
+  auto* const browser_delegate =
+      ash::FindSystemWebAppBrowser(ProfileManager::GetActiveUserProfile(),
+                                   SystemWebAppType::BOCA, BrowserType::kApp);
+  return browser_delegate && !browser_delegate->IsClosing();
 }
 
 void BocaAppClientImpl::OpenFeedbackDialog() {

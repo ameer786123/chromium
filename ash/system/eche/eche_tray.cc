@@ -713,7 +713,6 @@ void EcheTray::InitBubble(
 
   auto bubble_view = std::make_unique<TrayBubbleView>(init_params);
   bubble_view->SetCanActivate(true);
-  bubble_view->SetBorder(views::CreateEmptyBorder(kBubblePadding));
 
   header_view_ = bubble_view->AddChildView(CreateBubbleHeaderView(phone_name));
 
@@ -766,7 +765,7 @@ void EcheTray::StartGracefulClose() {
 
 gfx::Size EcheTray::CalculateSizeForEche() const {
   const gfx::Rect work_area_bounds =
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->GetDisplayNearestWindow(
               tray_container()->GetWidget()->GetNativeWindow())
           .work_area();

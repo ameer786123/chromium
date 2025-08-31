@@ -8,40 +8,70 @@
 #include <ranges>
 #include <variant>
 
-#include "base/functional/overloaded.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/types/pass_key.h"
-#include "components/autofill/core/browser/data_model/addresses/autofill_profile_comparator.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_normalization_utils.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_structured_address_component.h"
 #include "components/autofill/core/browser/data_model/addresses/contact_info.h"
 #include "components/autofill/core/browser/data_model/autofill_ai/entity_type.h"
 #include "components/autofill/core/browser/data_model/data_model_utils.h"
 #include "components/autofill/core/browser/data_quality/autofill_data_util.h"
+#include "components/autofill/core/browser/field_type_utils.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/browser/geo/country_names.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace autofill {
 
-AttributeInstance::AttributeInstance(AttributeType type) : type_(type) {
-  switch (type.data_type()) {
-    case AttributeType::DataType::kName:
-      info_ = NameInfo();
-      break;
-    case AttributeType::DataType::kCountry:
-      info_ = CountryInfo();
-      break;
-    case AttributeType::DataType::kDate:
-      info_ = DateInfo();
-      break;
-    case AttributeType::DataType::kState:
-      info_ = StateInfo();
-      break;
-    case AttributeType::DataType::kString:
-      info_ = u"";
-      break;
+namespace {
+
+std::u16string Format(std::u16string s,
+                      base::optional_ref<const std::u16string> format_string) {
+  if (!format_string) {
+    return s;
   }
+
+  // We parse the leading minus here rather than using `base::StringToInt()` to
+  // avoid mixing signed and unsigned integers as this easily leads to
+  // undefined behavior.
+  std::u16string_view format = *format_string;
+  bool suffix = false;
+  if (format_string->starts_with(u"-")) {
+    format = format.substr(1);
+    suffix = true;
+  }
+  uint32_t offset = 0;
+  if (!base::StringToUint(format, &offset)) {
+    return s;
+  }
+
+  if (suffix) {
+    offset = s.size() - offset;
+    s = std::move(s).substr(offset < s.size() ? offset : 0);
+  } else if (offset > 0) {
+    s = std::move(s).substr(0, offset);
+  }
+  return s;
 }
+
+}  // namespace
+
+AttributeInstance::AttributeInstance(AttributeType type)
+    : type_(type), info_([&]() -> InfoStructure {
+        switch (type.data_type()) {
+          case AttributeType::DataType::kName:
+            return NameInfo();
+          case AttributeType::DataType::kCountry:
+            return CountryInfo();
+          case AttributeType::DataType::kDate:
+            return DateInfo();
+          case AttributeType::DataType::kState:
+            return StateInfo();
+          case AttributeType::DataType::kString:
+            return u"";
+        }
+      }()) {}
 
 AttributeInstance::AttributeInstance(const AttributeInstance&) = default;
 AttributeInstance& AttributeInstance::operator=(const AttributeInstance&) =
@@ -51,190 +81,134 @@ AttributeInstance& AttributeInstance::operator=(AttributeInstance&&) = default;
 AttributeInstance::~AttributeInstance() = default;
 
 std::u16string AttributeInstance::GetInfo(
-    FieldType type,
+    FieldType field_type,
     const std::string& app_locale,
     base::optional_ref<const std::u16string> format_string) const {
-  type = GetNormalizedType(type);
-  if (type == UNKNOWN_TYPE) {
-    return u"";
-  }
-  CHECK(GetSupportedTypes().contains(type));
+  field_type = GetNormalizedFieldType(field_type);
   return std::visit(
-      base::Overloaded{
-          [&](const CountryInfo& country) {
-            return country.GetCountryName(app_locale);
-          },
-          [&](const DateInfo& date) {
-            // TODO(crbug.com/396325496): Consider falling back
-            // to a locale-specific format by relying on
-            // `app_locale`.
-            return date.GetDate(format_string ? *format_string : u"YYYY-MM-DD");
-          },
-          [&](const NameInfo&) { return GetRawInfo(/*pass_key=*/{}, type); },
-          [&](const StateInfo&) { return GetRawInfo(/*pass_key=*/{}, type); },
-          [&](const std::u16string&) {
-            return GetRawInfo(/*pass_key=*/{}, type);
-          }},
+      absl::Overload{[&](const CountryInfo& country) {
+                       return country.GetCountryName(app_locale);
+                     },
+                     [&](const DateInfo& date) {
+                       // TODO(crbug.com/396325496): Consider falling back
+                       // to a locale-specific format by relying on
+                       // `app_locale`.
+                       return date.GetDate(format_string ? *format_string
+                                                         : u"YYYY-MM-DD");
+                     },
+                     [&](const NameInfo&) { return GetRawInfo(field_type); },
+                     [&](const StateInfo&) { return GetRawInfo(field_type); },
+                     [&](const std::u16string&) {
+                       return Format(GetRawInfo(field_type), format_string);
+                     }},
       info_);
 }
 
-std::u16string AttributeInstance::GetRawInfo(GetRawInfoPassKey,
-                                             FieldType type) const {
-  type = GetNormalizedType(type);
-  if (type == UNKNOWN_TYPE) {
-    return u"";
-  }
-  CHECK(GetSupportedTypes().contains(type));
+std::u16string AttributeInstance::GetRawInfo(FieldType field_type) const {
+  field_type = GetNormalizedFieldType(field_type);
   return std::visit(
-      base::Overloaded{
+      absl::Overload{
           [&](const CountryInfo& country) {
             return base::UTF8ToUTF16(country.GetCountryCode());
           },
           [&](const DateInfo& date) { return date.GetDate(u"YYYY-MM-DD"); },
-          [&](const NameInfo& name) { return name.GetRawInfo(type); },
+          [&](const NameInfo& name) {
+            if (!name.GetSupportedTypes().contains(field_type)) {
+              return std::u16string();
+            }
+            return name.GetRawInfo(field_type);
+          },
           [&](const StateInfo& state) { return state.value(); },
           [&](const std::u16string& value) { return value; }},
       info_);
 }
 
 VerificationStatus AttributeInstance::GetVerificationStatus(
-    FieldType type) const {
-  type = GetNormalizedType(type);
-  if (type == UNKNOWN_TYPE) {
-    return VerificationStatus::kNoStatus;
-  }
-  CHECK(GetSupportedTypes().contains(type));
+    FieldType field_type) const {
+  field_type = GetNormalizedFieldType(field_type);
   return std::visit(
-      base::Overloaded{
+      absl::Overload{
           [&](const CountryInfo&) { return VerificationStatus::kNoStatus; },
           [&](const DateInfo&) { return VerificationStatus::kNoStatus; },
           [&](const NameInfo& name) {
-            return name.GetVerificationStatus(type);
+            if (!name.GetSupportedTypes().contains(field_type)) {
+              return VerificationStatus::kNoStatus;
+            }
+            return name.GetVerificationStatus(field_type);
           },
           [&](const StateInfo&) { return VerificationStatus::kNoStatus; },
           [&](const std::u16string&) { return VerificationStatus::kNoStatus; }},
       info_);
 }
 
-void AttributeInstance::SetInfo(FieldType type,
+void AttributeInstance::SetInfo(FieldType field_type,
                                 const std::u16string& value,
                                 const std::string& app_locale,
                                 std::u16string_view format_string,
                                 VerificationStatus status) {
-  type = GetNormalizedType(type);
-  if (type == UNKNOWN_TYPE) {
-    return;
-  }
-  CHECK(GetSupportedTypes().contains(type));
-  std::visit(base::Overloaded{
-                 [&](CountryInfo& country) {
-                   // We assume that the given `value` is either a valid
-                   // country code or a valid country name localized to the
-                   // provided `app_locale`.
-                   if (!country.SetCountryFromCountryCode(value) &&
-                       !country.SetCountryFromCountryName(value, app_locale)) {
-                     // In case `value` turns out to be neither of the two
-                     // options mentioned above, we reset the country value to
-                     // indicate failure.
-                     country = CountryInfo();
-                   }
-                 },
-                 [&](DateInfo& date) { date.SetDate(value, format_string); },
-                 [&](NameInfo& name) {
-                   name.SetInfoWithVerificationStatus(type, value, app_locale,
-                                                      status);
-                 },
-                 [&](const StateInfo&) { SetRawInfo(type, value, status); },
-                 [&](std::u16string&) { SetRawInfo(type, value, status); }},
-             info_);
+  field_type = GetNormalizedFieldType(field_type);
+  std::visit(
+      absl::Overload{
+          [&](CountryInfo& country) {
+            // We assume that the given `value` is either a valid country code
+            // or a valid country name localized to the provided `app_locale`.
+            if (!country.SetCountryFromCountryCode(value) &&
+                !country.SetCountryFromCountryName(value, app_locale)) {
+              // In case `value` turns out to be neither of the two options
+              // mentioned above, we reset the country value to indicate
+              // failure.
+              country = CountryInfo();
+            }
+          },
+          [&](DateInfo& date) { date.SetDate(value, format_string); },
+          [&](NameInfo& name) {
+            if (!name.GetSupportedTypes().contains(field_type)) {
+              return;
+            }
+            name.SetInfoWithVerificationStatus(AutofillType(field_type), value,
+                                               app_locale, status);
+          },
+          [&](const StateInfo&) { SetRawInfo(field_type, value, status); },
+          [&](std::u16string&) { SetRawInfo(field_type, value, status); }},
+      info_);
 }
 
-void AttributeInstance::SetRawInfo(FieldType type,
+void AttributeInstance::SetRawInfo(FieldType field_type,
                                    const std::u16string& value,
                                    VerificationStatus status) {
-  type = GetNormalizedType(type);
-  if (type == UNKNOWN_TYPE) {
-    return;
-  }
-  CHECK(GetSupportedTypes().contains(type));
-  std::visit(base::Overloaded{
+  field_type = GetNormalizedFieldType(field_type);
+  std::visit(absl::Overload{
                  [&](CountryInfo& country) {
                    if (!country.SetCountryFromCountryCode(value)) {
-                     // In case `value` isn't a valid country
-                     // code, we reset the country value to
-                     // indicate failure.
+                     // In case `value` isn't a valid country code, we reset the
+                     // country value to indicate failure.
                      country = CountryInfo();
                    }
                  },
                  [&](DateInfo& date) { date.SetDate(value, u"YYYY-MM-DD"); },
                  [&](NameInfo& name) {
-                   name.SetRawInfoWithVerificationStatus(type, value, status);
+                   if (!name.GetSupportedTypes().contains(field_type)) {
+                     return;
+                   }
+                   name.SetRawInfoWithVerificationStatus(field_type, value,
+                                                         status);
                  },
                  [&](StateInfo& state) { state = StateInfo(value); },
                  [&](std::u16string& old_value) { old_value = value; }},
              info_);
 }
 
-FieldTypeSet AttributeInstance::GetSupportedTypes() const {
-  return std::visit(
-      base::Overloaded{
-          [&](const CountryInfo&) {
-            return FieldTypeSet{ADDRESS_HOME_COUNTRY};
-          },
-          [&](const DateInfo&) { return FieldTypeSet{type_.field_type()}; },
-          [&](const NameInfo& name) { return name.GetSupportedTypes(); },
-          [&](const StateInfo&) { return FieldTypeSet{ADDRESS_HOME_STATE}; },
-          [&](const std::u16string&) {
-            return FieldTypeSet{type_.field_type()};
-          }},
-      info_);
-}
-
-FieldTypeSet AttributeInstance::GetDatabaseStoredTypes() const {
-  return std::visit(
-      base::Overloaded{
-          [&](const CountryInfo&) {
-            return FieldTypeSet{ADDRESS_HOME_COUNTRY};
-          },
-          [&](const DateInfo&) { return FieldTypeSet{type_.field_type()}; },
-          [&](const NameInfo&) { return NameInfo::kDatabaseStoredTypes; },
-          [&](const StateInfo&) { return FieldTypeSet{ADDRESS_HOME_STATE}; },
-          [&](const std::u16string&) {
-            return FieldTypeSet{type_.field_type()};
-          }},
-      info_);
-}
-
-FieldType AttributeInstance::GetNormalizedType(FieldType info_type) const {
-  if (GetSupportedTypes().contains(info_type)) {
-    return info_type;
-  }
-  if (info_type == type_.field_type()) {
-    // In some cases, a field might have `AutofillField::Type()` being the one
-    // corresponding to a structured attribute (e.g., PASSPORT_NAME_TAG). This
-    // should not usually happen but for now can, only in case a field couldn't
-    // be classified by Autofill's logic but was classified by the ML model. In
-    // that case, we assume the type is the top-level type of the attribute.
-    return std::visit(
-        base::Overloaded{
-            [&](const CountryInfo&) { return ADDRESS_HOME_COUNTRY; },
-            [&](const DateInfo&) { return type().field_type(); },
-            [&](const NameInfo&) { return NAME_FULL; },
-            [&](const StateInfo&) { return ADDRESS_HOME_STATE; },
-            [&](const std::u16string&) { return type().field_type(); }},
-        info_);
-  }
-  // In case the field classification is totally unrelated to the
-  // attribute type classification, we return UKNOWN_TYPE to inform callers of
-  // that.
-  return UNKNOWN_TYPE;
+FieldType AttributeInstance::GetNormalizedFieldType(
+    FieldType field_type) const {
+  return type_.field_subtypes().contains(field_type) ? field_type
+                                                     : type_.field_type();
 }
 
 void AttributeInstance::FinalizeInfo() {
   std::visit(
-      base::Overloaded{[&](const CountryInfo&) {}, [&](const DateInfo&) {},
-                       [&](NameInfo& name) { name.FinalizeAfterImport(); },
-                       [&](const StateInfo&) {}, [&](const std::u16string&) {}},
+      absl::Overload{[&](const CountryInfo&) {}, [&](const DateInfo&) {},
+                     [&](NameInfo& name) { name.FinalizeAfterImport(); },
+                     [&](const StateInfo&) {}, [&](const std::u16string&) {}},
       info_);
 }
 
@@ -242,14 +216,22 @@ EntityInstance::EntityInstance(
     EntityType type,
     base::flat_set<AttributeInstance, AttributeInstance::CompareByType>
         attributes,
-    base::Uuid guid,
+    EntityId guid,
     std::string nickname,
-    base::Time date_modified)
+    base::Time date_modified,
+    size_t use_count,
+    base::Time use_date,
+    RecordType record_type,
+    AreAttributesReadOnly are_attributes_read_only)
     : type_(type),
       attributes_(std::move(attributes)),
       guid_(std::move(guid)),
       nickname_(std::move(nickname)),
-      date_modified_(date_modified) {
+      date_modified_(date_modified),
+      use_count_(use_count),
+      use_date_(use_date),
+      record_type_(record_type),
+      are_attributes_read_only_(are_attributes_read_only) {
   DCHECK(!attributes_.empty());
   DCHECK(std::ranges::all_of(attributes_, [this](const AttributeInstance& a) {
     return type_ == a.type().entity_type();
@@ -278,7 +260,7 @@ std::ostream& operator<<(std::ostream& os, const AttributeInstance& a) {
 std::ostream& operator<<(std::ostream& os, const EntityInstance& e) {
   os << "- name: " << '"' << e.type() << '"' << std::endl;
   os << "- nickname: " << '"' << e.nickname() << '"' << std::endl;
-  os << "- guid: " << '"' << e.guid().AsLowercaseString() << '"' << std::endl;
+  os << "- guid: " << '"' << e.guid() << '"' << std::endl;
   os << "- date modified: " << '"' << e.date_modified() << '"' << std::endl;
   for (const AttributeInstance& a : e.attributes()) {
     os << "- attribute " << a << std::endl;
@@ -310,13 +292,18 @@ EntityInstance::EntityMergeability::operator=(
 
 EntityInstance::EntityMergeability::~EntityMergeability() = default;
 
+void EntityInstance::RecordEntityUsed(base::Time date) {
+  use_date_ = date;
+  ++use_count_;
+}
+
 EntityInstance::EntityMergeability EntityInstance::GetEntityMergeability(
     const EntityInstance& newer) const {
   CHECK_EQ(type_, newer.type());
 
   auto normalized_value = [](const AttributeInstance& attribute) {
-    return AutofillProfileComparator::NormalizeForComparison(
-        attribute.GetRawInfo(/*pass_key=*/{}, attribute.type().field_type()));
+    return normalization::NormalizeForComparison(
+        attribute.GetRawInfo(attribute.type().field_type()));
   };
 
   // If a certain set of mergeable constraints for both entities have the same
@@ -433,6 +420,34 @@ EntityInstance::EntityMergeability EntityInstance::GetEntityMergeability(
   }
 
   return {std::move(mergeable_attributes), is_subset};
+}
+
+EntityInstance::FrecencyOrder::FrecencyOrder(base::Time now) : now_(now) {}
+
+bool EntityInstance::FrecencyOrder::operator()(
+    const EntityInstance& lhs,
+    const EntityInstance& rhs) const {
+  // At days_since_last_use = 0, use_count = 0, the score is -1.
+  // As days_since_last_use increases, the score becomes more negative.
+  // As use_count increases, the score approaches 0.
+  auto get_ranking_score = [&](const EntityInstance& entity) {
+    int days_since_last_use = std::max(0, (now_ - entity.use_date()).InDays());
+    // The numerator punishes old usages, since as days_since_last_use
+    // grows, the score becomes smaller (note the negative sign). The
+    // denominator softens this penalty by making it smaller the more often a
+    // user has used an entity.
+    return -log(static_cast<double>(days_since_last_use) + 2) /
+           log(entity.use_count() + 2);
+  };
+
+  const double lhs_score = get_ranking_score(lhs);
+  const double rhs_score = get_ranking_score(rhs);
+
+  const double kEpsilon = 0.00001;
+  if (std::fabs(lhs_score - rhs_score) > kEpsilon) {
+    return lhs_score > rhs_score;
+  }
+  return lhs.use_date() > rhs.use_date();
 }
 
 }  // namespace autofill

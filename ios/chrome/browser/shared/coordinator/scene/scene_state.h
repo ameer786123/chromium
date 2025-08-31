@@ -19,6 +19,24 @@
 @class ProfileState;
 @class SceneController;
 @class SceneState;
+class SigninInProgress;
+
+// During profile switching, it is possible that an animation is displayed
+// over the SceneState until the transition is complete. In that case the
+// object responsible should implement this protocol to allow cancellation
+// of the animation if the Profile initialisation needs to present wait for
+// the user to interact with some mandatory interactive step.
+@protocol SceneStateAnimator
+
+// Cancel any in progress animation. The animation can be restarted with
+// the -restartAnimation method.
+- (void)cancelAnimation;
+
+// Restart the animation if it has been cancelled. Does nothing if the
+// animation has not been cancelled before.
+- (void)restartAnimation;
+
+@end
 
 // Scene agents are objects owned by a scene state and providing some
 // scene-scoped function. They can be driven by SceneStateObserver events.
@@ -42,6 +60,9 @@
 // The profile state for profile that owns this scene.
 @property(nonatomic, weak) ProfileState* profileState;
 
+// The SceneStateAnimator instance.
+@property(nonatomic, weak) id<SceneStateAnimator> animator;
+
 // The current activation level.
 @property(nonatomic, assign) SceneActivationLevel activationLevel;
 
@@ -59,9 +80,6 @@
 // The scene object backing this scene state. It's in a 1-to-1 relationship and
 // the window scene owns this object (indirectly through scene delegate).
 @property(nonatomic, weak) UIWindowScene* scene;
-
-// The root view controller of the current scene if any.
-@property(nonatomic, readonly) UIViewController* rootViewController;
 
 // Connection options of `scene`, if any, from when the scene was connected.
 @property(nonatomic, strong) UISceneConnectionOptions* connectionOptions;
@@ -103,13 +121,7 @@
 
 // YES if sign-in is in progress which covers the authentication flow and the
 // sign-in prompt UI.
-@property(nonatomic, assign) BOOL signinInProgress;
-
-// Accessibility identifier of the window.
-@property(nonatomic, assign, readonly) NSString* windowAccessibilityIdentifier;
-
-// Root view controller's view.
-@property(nonatomic, assign, readonly) UIView* rootView;
+@property(nonatomic, readonly) BOOL signinInProgress;
 
 // Adds an observer to this scene state. The observers will be notified about
 // scene state changes per SceneStateObserver protocol.
@@ -132,18 +144,9 @@
 // into NSUserDefaults otherwise (old table, phone, ...).
 - (void)setSessionObject:(NSObject*)object forKey:(NSString*)key;
 
-// Set the root view controller with the given view controller. Set
-// `makeKeyAndVisible` to YES if it is needed to show and position it in front
-// of all other windows.
-- (void)setRootViewController:(UIViewController*)rootViewController
-            makeKeyAndVisible:(BOOL)makeKeyAndVisible;
-
-// Shows and positions rootViewController in front of all others window.
-- (void)setRootViewControllerKeyAndVisible;
-
-// Sets the User Interface Style of the window.
-- (void)setWindowUserInterfaceStyle:
-    (UIUserInterfaceStyle)windowUserInterfaceStyle;
+// Records that an extra sign-in process started. When the returned value is
+// destructed, the sign-in ended.
+- (std::unique_ptr<SigninInProgress>)createSigninInProgress;
 
 @end
 

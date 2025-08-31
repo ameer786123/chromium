@@ -4,16 +4,19 @@
 
 package org.chromium.chrome.browser.app.creator;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.tab.Tab.INVALID_TAB_ID;
 
+import android.content.Context;
 import android.os.Bundle;
 import android.view.MenuItem;
 
 import androidx.appcompat.widget.Toolbar;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.supplier.UnownedUserDataSupplier;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
@@ -36,21 +39,25 @@ import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.ui.base.IntentRequestTracker;
 
+import java.util.function.Supplier;
+
 // import org.chromium.components.feed.proto.wire.FeedEntryPointSource;
 
 /** Activity for the Creator Page. */
+@NullMarked
 public class CreatorActivity extends SnackbarActivity {
     private @Nullable ActivityWindowAndroid mWindowAndroid;
-    private BottomSheetController mBottomSheetController;
-    private CreatorActionDelegateImpl mCreatorActionDelegate;
+    private @Nullable BottomSheetController mBottomSheetController;
+    private @Nullable CreatorActionDelegateImpl mCreatorActionDelegate;
     private ActivityTabProvider mActivityTabProvider;
     private ActivityLifecycleDispatcherImpl mLifecycleDispatcher;
-    private @Nullable UnownedUserDataSupplier<ShareDelegate> mShareDelegateSupplier;
-    private @Nullable UnownedUserDataSupplier<ShareDelegate> mTabShareDelegateSupplier;
+    private UnownedUserDataSupplier<ShareDelegate> mShareDelegateSupplier;
+    private UnownedUserDataSupplier<ShareDelegate> mTabShareDelegateSupplier;
 
     private static class TabShareDelegateImpl extends ShareDelegateImpl {
         public TabShareDelegateImpl(
-                BottomSheetController controller,
+                Context context,
+                @Nullable BottomSheetController controller,
                 ActivityLifecycleDispatcherImpl lifecycleDispatcher,
                 ActivityTabProvider tabProvider,
                 ObservableSupplierImpl tabModelSelectorProvider,
@@ -58,6 +65,7 @@ public class CreatorActivity extends SnackbarActivity {
                 ShareSheetDelegate delegate,
                 boolean isCustomTab) {
             super(
+                    context,
                     controller,
                     lifecycleDispatcher,
                     tabProvider,
@@ -74,8 +82,9 @@ public class CreatorActivity extends SnackbarActivity {
         }
     }
 
+    @Initializer
     @Override
-    protected void onCreateInternal(Bundle savedInstanceState) {
+    protected void onCreateInternal(@Nullable Bundle savedInstanceState) {
         mActivityTabProvider = new ActivityTabProvider();
         mLifecycleDispatcher = new ActivityLifecycleDispatcherImpl(this);
         mShareDelegateSupplier = new ShareDelegateSupplier();
@@ -111,6 +120,7 @@ public class CreatorActivity extends SnackbarActivity {
 
         TabShareDelegateImpl tabshareDelegate =
                 new TabShareDelegateImpl(
+                        this,
                         mBottomSheetController,
                         mLifecycleDispatcher,
                         mActivityTabProvider,
@@ -120,6 +130,8 @@ public class CreatorActivity extends SnackbarActivity {
                         /* isCustomTab= */ false);
         mTabShareDelegateSupplier.set(tabshareDelegate);
 
+        assert webFeedId != null;
+        assumeNonNull(url);
         CreatorCoordinator coordinator =
                 new CreatorCoordinator(
                         this,
@@ -139,6 +151,7 @@ public class CreatorActivity extends SnackbarActivity {
 
         ShareDelegate shareDelegate =
                 new ShareDelegateImpl(
+                        this,
                         mBottomSheetController,
                         mLifecycleDispatcher,
                         mActivityTabProvider,
@@ -162,6 +175,7 @@ public class CreatorActivity extends SnackbarActivity {
         setContentView(coordinator.getView());
         Toolbar actionBar = findViewById(R.id.action_bar);
         setSupportActionBar(actionBar);
+        assumeNonNull(getSupportActionBar());
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
         getSupportActionBar().setTitle("");
 
@@ -179,8 +193,12 @@ public class CreatorActivity extends SnackbarActivity {
         return super.onOptionsItemSelected(item);
     }
 
+    @SuppressWarnings("NullAway")
     @Override
     protected void onDestroy() {
+        if (mLifecycleDispatcher != null) {
+            mLifecycleDispatcher.onDestroyStarted();
+        }
         if (mWindowAndroid != null) {
             mWindowAndroid.destroy();
             mWindowAndroid = null;
@@ -194,6 +212,9 @@ public class CreatorActivity extends SnackbarActivity {
             mShareDelegateSupplier = null;
         }
         super.onDestroy();
+        if (mLifecycleDispatcher != null) {
+            mLifecycleDispatcher.dispatchOnDestroy();
+        }
     }
 
     // This implements the CreatorWebContents interface.
@@ -208,6 +229,7 @@ public class CreatorActivity extends SnackbarActivity {
 
     // This implements the SignInInterstitialInitiator interface.
     public void showSignInInterstitial() {
+        assumeNonNull(mCreatorActionDelegate);
         mCreatorActionDelegate.showSignInInterstitial(
                 SigninAccessPoint.CREATOR_FEED_FOLLOW, mBottomSheetController);
     }

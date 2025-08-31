@@ -41,8 +41,8 @@ import javax.annotation.concurrent.GuardedBy;
 /**
  * Provides information about the current activity's status, and a way to register / unregister
  * listeners for state changes. TODO(crbug.com/40411113): ApplicationStatus will not work on
- * WebView/WebLayer, and should be moved out of base and into //chrome. It should not be relied upon
- * for //components.
+ * WebView, and should be moved out of base and into //chrome. It should not be relied upon for
+ * //components.
  */
 @NullMarked
 @JNINamespace("base::android")
@@ -52,7 +52,7 @@ public class ApplicationStatus {
 
     private static class ActivityInfo {
         private int mStatus = ActivityState.DESTROYED;
-        private ObserverList<ActivityStateListener> mListeners = new ObserverList<>();
+        private final ObserverList<ActivityStateListener> mListeners = new ObserverList<>();
 
         /**
          * @return The current {@link ActivityState} of the activity.
@@ -149,7 +149,7 @@ public class ApplicationStatus {
          * @param activity The {@link Activity} that has a window focus changed event.
          * @param hasFocus Whether or not {@code activity} gained or lost focus.
          */
-        public void onWindowFocusChanged(Activity activity, boolean hasFocus);
+        void onWindowFocusChanged(Activity activity, boolean hasFocus);
     }
 
     /** Interface to be implemented by listeners for task visibility changes. */

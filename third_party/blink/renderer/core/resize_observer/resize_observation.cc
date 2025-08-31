@@ -50,11 +50,13 @@ constexpr LogicalSize kInitialObservationSize(kIndefiniteSize, kIndefiniteSize);
 
 ResizeObservation::ResizeObservation(Element* target,
                                      ResizeObserver* observer,
-                                     ResizeObserverBoxOptions observed_box)
+                                     ResizeObserverBoxOptions observed_box,
+                                     bool fire_on_every_paint)
     : target_(target),
       observer_(observer),
       observation_size_(kInitialObservationSize),
-      observed_box_(observed_box) {
+      observed_box_(observed_box),
+      fire_on_every_paint_(fire_on_every_paint) {
   DCHECK(target_);
   DCHECK(observer_);
 }
@@ -113,6 +115,23 @@ LogicalSize ResizeObservation::ComputeTargetSize() const {
     return LogicalSize(LayoutUnit(size.width()), LayoutUnit(size.height()));
   }
   return LogicalSize();
+}
+
+bool ResizeObservation::NeedsObservationForRepaint() const {
+  if (!fire_on_every_paint_) {
+    return false;
+  }
+  CHECK(RuntimeEnabledFeatures::CanvasDrawElementEnabled());
+  if (!target_ || !target_->GetLayoutObject()) {
+    return false;
+  }
+  const LayoutObject& layout_object = *target_->GetLayoutObject();
+  if (!layout_object.HasLayer()) {
+    return false;
+  }
+  return To<LayoutBoxModelObject>(layout_object)
+      .Layer()
+      ->SelfOrDescendantNeedsRepaint();
 }
 
 void ResizeObservation::Trace(Visitor* visitor) const {

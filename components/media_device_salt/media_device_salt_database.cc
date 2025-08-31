@@ -34,7 +34,7 @@ std::string CreateRandomSalt() {
 
 MediaDeviceSaltDatabase::MediaDeviceSaltDatabase(const base::FilePath& db_path)
     : db_path_(db_path),
-      db_(sql::DatabaseOptions().set_page_size(4096).set_cache_size(16),
+      db_(sql::DatabaseOptions().set_cache_size(16),
           /*tag=*/"MediaDeviceSalts") {}
 
 std::optional<std::string> MediaDeviceSaltDatabase::GetOrInsertSalt(
@@ -214,7 +214,7 @@ bool MediaDeviceSaltDatabase::EnsureOpen(bool is_retry) {
   }
 
   db_.Raze();
-  return is_retry ? false : EnsureOpen(/*is_retry=*/true);
+  return !is_retry && EnsureOpen(/*is_retry=*/true);
 }
 
 void MediaDeviceSaltDatabase::OnDatabaseError(int error,

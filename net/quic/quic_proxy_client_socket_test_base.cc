@@ -8,6 +8,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
 #include "net/base/connection_endpoint_metadata.h"
@@ -176,7 +177,8 @@ void QuicProxyClientSocketTestBase::InitializeSession() {
           QuicSessionKey("mail.example.org", 80, PRIVACY_MODE_DISABLED,
                          proxy_chain_, SessionUsage::kDestination, SocketTag(),
                          NetworkAnonymizationKey(), SecureDnsPolicy::kAllow,
-                         /*require_dns_https_alpn=*/false)),
+                         /*require_dns_https_alpn=*/false,
+                         /*disable_cert_verification_network_fetches=*/false)),
       /*require_confirmation=*/false,
       /*migrate_session_early_v2=*/false,
       /*migrate_session_on_network_change_v2=*/false,
@@ -197,8 +199,7 @@ void QuicProxyClientSocketTestBase::InitializeSession() {
       base::DefaultTickClock::GetInstance(),
       base::SingleThreadTaskRunner::GetCurrentDefault().get(),
       /*socket_performance_watcher=*/nullptr, ConnectionEndpointMetadata(),
-      /*report_ecn=*/true, /*enable_origin_frame=*/true,
-      /*allow_server_preferred_address=*/true,
+      /*enable_origin_frame=*/true, /*allow_server_preferred_address=*/true,
       MultiplexedSessionCreationInitiator::kUnknown,
       NetLogWithSource::Make(NetLogSourceType::NONE));
 

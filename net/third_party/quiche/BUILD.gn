@@ -38,6 +38,10 @@ config("quiche_internal_config") {
       "-Wno-deprecated-declarations",
     ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs = [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 config("quiche_config") {
@@ -452,6 +456,11 @@ bundle_data("test_data") {
               "{{source_root_relative_dir}}/{{source_file_part}}" ]
 }
 
+# TODO(crbug.com/433273929): Remove once fixed.
+config("no_nonnull") {
+  cflags = [ "-Wno-nonnull" ]
+}
+
 source_set("quiche_tests") {
   testonly = true
 
@@ -470,7 +479,6 @@ source_set("quiche_tests") {
     "src/quiche/common/platform/api/quiche_file_utils_test.cc",
     "src/quiche/common/platform/api/quiche_hostname_utils_test.cc",
     "src/quiche/common/platform/api/quiche_lower_case_string_test.cc",
-    "src/quiche/common/platform/api/quiche_mem_slice_test.cc",
     "src/quiche/common/platform/api/quiche_reference_counted_test.cc",
     "src/quiche/common/platform/api/quiche_stack_trace_test.cc",
     "src/quiche/common/platform/api/quiche_time_utils_test.cc",
@@ -485,6 +493,7 @@ source_set("quiche_tests") {
     "src/quiche/common/quiche_ip_address_test.cc",
     "src/quiche/common/quiche_linked_hash_map_test.cc",
     "src/quiche/common/quiche_mem_slice_storage_test.cc",
+    "src/quiche/common/quiche_mem_slice_test.cc",
     "src/quiche/common/quiche_random_test.cc",
     "src/quiche/common/quiche_simple_arena_test.cc",
     "src/quiche/common/quiche_socket_address_test.cc",
@@ -737,6 +746,7 @@ source_set("quiche_tests") {
     "//net:spdy_test_tools",
     "//testing/gmock",
     "//testing/gtest",
+    "//third_party/fuzztest",
   ]
   if (is_ios) {
     deps += [ ":test_data" ]
@@ -766,6 +776,9 @@ source_set("quiche_tests") {
       ":epoll_tool_support",
     ]
   }
+
+  # TODO(crbug.com/433273929): Remove once fixed.
+  configs += [ ":no_nonnull" ]
 }
 
 fuzzer_test("net_quic_framer_fuzzer") {
@@ -842,6 +855,7 @@ component("blind_sign_auth") {
   sources = [
     "src/quiche/blind_sign_auth/blind_sign_auth.cc",
     "src/quiche/blind_sign_auth/blind_sign_auth.h",
+    "src/quiche/blind_sign_auth/blind_sign_tracing_hooks.h",
     "src/quiche/blind_sign_auth/blind_sign_auth_interface.h",
     "src/quiche/blind_sign_auth/blind_sign_message_interface.h",
     "src/quiche/blind_sign_auth/blind_sign_message_response.cc",

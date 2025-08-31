@@ -157,6 +157,9 @@
   <message name="IDS_EXTENSIONS_ITEM_ERRORS" desc="The label of the button to bring the user to the page showing an extension's errors.">
     Errors
   </message>
+  <message name="IDS_EXTENSIONS_ITEM_WARNINGS" desc="The label of the button to bring the user to the page showing an extension's warnings.">
+    Warnings
+  </message>
   <message name="IDS_EXTENSIONS_ITEM_HOST_PERMISSIONS_HEADING" desc="The heading above the details of which websites an extension is allowed to run on.">
     Allow this extension to read and change all your data on websites you visit:
   </message>
@@ -315,6 +318,9 @@
   </message>
   <message name="IDS_EXTENSIONS_ITEM_CHROME_WEB_STORE" desc="Label for button to visit the Chrome web store.">
     View in Chrome Web Store
+  </message>
+  <message name="IDS_EXTENSIONS_VIEW_IN_DEVTOOLS" desc="Label for a button that opens DevTools for a specific error context">
+    View in DevTools
   </message>
   <message name="IDS_EXTENSIONS_ITEM_OPTIONS" desc="The label on the button to open an extension options page.">
     Extension options
@@ -572,6 +578,9 @@
     All Extensions
   </message>
   <!-- Extension Safety Check Review Panel strings -->
+  <message name="IDS_EXTENSIONS_SAFETY_HUB_HEADER" desc="Name of a section in chrome://extensions that gives users an overview over their safety status and where users can take action to improve their safety.">
+    Safety Check
+  </message>
   <message name="IDS_EXTENSIONS_SC_MALWARE" desc="The text explaining the reason for extension being potentially unsafe. The extension in question contains malware.">
     Off • This extension contains malware
   </message>
@@ -714,6 +723,48 @@
   </message>
   <message name="IDS_EXTENSIONS_KIOSK_DISABLE_BAILOUT_SHORTCUT_WARNING_BODY" desc="Warning text of disabling kiosk application launch bail out shortcut.">
     The only way to undo this is to re-install <ph name="IDS_SHORT_PRODUCT_OS_NAME">$1<ex>ChromeOS</ex></ph>
+  </message>
+</if>
+<if expr="enable_extensions">
+  <!-- Extensions Zero State Promo IPH -->
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_HEADER" desc="Header of the extensions zero state in-product help promo.">
+    Enhance your browser with extensions
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_CHIPS_IPH_DESCRIPTION" desc="An one line description for the extensions zero state in-product-help promo.">
+    Extensions are add-ons for Chrome that can help you do more
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_PLAIN_LINK_IPH_DESCRIPTION" desc="An one line description for the extensions zero state in-product-help promo.">
+    Extensions are add-ons to Chrome that can help you
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_SHOPPING_CATEGORY_LABEL" desc="Label for the button that opens the Chrome Web Store shopping category page.">
+    Find coupons
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_WRITING_HELP_COLLECTION_LABEL" desc="Label for the button that opens the Chrome Web Store writing help collection page.">
+    Help me write
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_PRODUCTIVITY_CATEGORY_LABEL" desc="Label for the button that opens the Chrome Web Store producitivty category page.">
+    Boost productivity
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_AI_PRODUCTIVITY_COLLECTION_LABEL" desc="Label for the button that opens the Chrome Web Store ai productivity collection page.">
+    Enhance with AI
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_DISMISS_BUTTON_TITLE" desc="Title attribute for the button that dismisses the extensions zero state in-product-help promo.">
+    Close
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_SHOPPING_CATEGORY_LINK" desc="Link text for the button that opens the Chrome Web Store shopping category page.">
+    Find coupons
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_WRITING_HELP_COLLECTION_LINK" desc="Link text for the button that opens the Chrome Web Store writing help collection page.">
+    Write better
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_PRODUCTIVITY_CATEGORY_LINK" desc="Link text for the button that opens the Chrome Web Store producitivty category page.">
+    Boost productivity
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_AI_PRODUCTIVITY_COLLECTION_LINK" desc="Link text for the button that opens the Chrome Web Store ai productivity collection page.">
+    Enhance with AI
+  </message>
+  <message name="IDS_EXTENSIONS_ZERO_STATE_IPH_DISMISS_BUTTON_TEXT" desc="Text on the button that dismisses the extensions zero state promo IPH.">
+    Got it
   </message>
 </if>
 </grit-part>

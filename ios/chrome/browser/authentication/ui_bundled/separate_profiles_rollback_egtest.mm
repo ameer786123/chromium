@@ -20,6 +20,27 @@
 
 @implementation SeparateProfilesRollbackTestCase
 
++ (void)setUpForTestCase {
+  [SigninEarlGrey setUseFakeResponsesForProfileSeparationPolicyRequests];
+}
+
++ (void)tearDown {
+  [SigninEarlGrey clearUseFakeResponsesForProfileSeparationPolicyRequests];
+  [super tearDown];
+}
+
+- (void)setUp {
+  [super setUp];
+  ClearHistorySyncPrefs();
+}
+
+- (void)tearDownHelper {
+  ClearHistorySyncPrefs();
+  // Make sure any pending prefs changes are written to disk.
+  [ChromeEarlGrey commitPendingUserPrefsWrite];
+  [super tearDownHelper];
+}
+
 - (AppLaunchConfiguration)appConfigurationForTestCase {
   AppLaunchConfiguration config = [super appConfigurationForTestCase];
 
@@ -49,11 +70,6 @@
 }
 
 - (void)testRollbackWithoutManagedAccounts {
-  // Separate profiles are only available in iOS 17+.
-  if (!@available(iOS 17, *)) {
-    return;
-  }
-
   GREYAssert([SigninEarlGrey areSeparateProfilesForManagedAccountsEnabled],
              @"Separate profiles should initially be enabled");
 
@@ -75,11 +91,6 @@
 }
 
 - (void)testRollbackWithoutManagedProfiles {
-  // Separate profiles are only available in iOS 17+.
-  if (!@available(iOS 17, *)) {
-    return;
-  }
-
   GREYAssert([SigninEarlGrey areSeparateProfilesForManagedAccountsEnabled],
              @"Separate profiles should initially be enabled");
 
@@ -108,12 +119,14 @@
              @"Separate profiles should be disabled now");
 }
 
-- (void)testRollbackWithManagedProfile {
-  // Separate profiles are only available in iOS 17+.
-  if (!@available(iOS 17, *)) {
-    return;
-  }
-
+// TODO(crbug.com/433320893): Re-enable this test on device.
+#if !TARGET_OS_SIMULATOR
+#define MAYBE_testRollbackWithManagedProfile \
+  DISABLED_testRollbackWithManagedProfile
+#else
+#define MAYBE_testRollbackWithManagedProfile testRollbackWithManagedProfile
+#endif
+- (void)MAYBE_testRollbackWithManagedProfile {
   NSString* personalProfileName = [ChromeEarlGrey currentProfileName];
 
   GREYAssert([SigninEarlGrey areSeparateProfilesForManagedAccountsEnabled],
@@ -202,12 +215,15 @@
       @"Should be in the managed profile again");
 }
 
-- (void)testRollbackWithManagedProfile_ManagedAccountRemoved {
-  // Separate profiles are only available in iOS 17+.
-  if (!@available(iOS 17, *)) {
-    return;
-  }
-
+// TODO(crbug.com/433320893): Re-enable this test on device.
+#if !TARGET_OS_SIMULATOR
+#define MAYBE_testRollbackWithManagedProfile_ManagedAccountRemoved \
+  DISABLED_testRollbackWithManagedProfile_ManagedAccountRemoved
+#else
+#define MAYBE_testRollbackWithManagedProfile_ManagedAccountRemoved \
+  testRollbackWithManagedProfile_ManagedAccountRemoved
+#endif
+- (void)MAYBE_testRollbackWithManagedProfile_ManagedAccountRemoved {
   NSString* personalProfileName = [ChromeEarlGrey currentProfileName];
 
   GREYAssert([SigninEarlGrey areSeparateProfilesForManagedAccountsEnabled],
@@ -293,12 +309,15 @@
              @"Separate profiles should still be enabled");
 }
 
-- (void)testRollbackWithManagedProfile_KillSwitch {
-  // Separate profiles are only available in iOS 17+.
-  if (!@available(iOS 17, *)) {
-    return;
-  }
-
+// TODO(crbug.com/433320893): Re-enable this test on device.
+#if !TARGET_OS_SIMULATOR
+#define MAYBE_testRollbackWithManagedProfile_KillSwitch \
+  DISABLED_testRollbackWithManagedProfile_KillSwitch
+#else
+#define MAYBE_testRollbackWithManagedProfile_KillSwitch \
+  testRollbackWithManagedProfile_KillSwitch
+#endif
+- (void)MAYBE_testRollbackWithManagedProfile_KillSwitch {
   NSString* personalProfileName = [ChromeEarlGrey currentProfileName];
 
   GREYAssert([SigninEarlGrey areSeparateProfilesForManagedAccountsEnabled],

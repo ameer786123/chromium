@@ -4,10 +4,12 @@
 
 package org.chromium.chrome.browser.autofill;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.text.TextUtils;
 
-import androidx.annotation.Nullable;
+import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
@@ -17,6 +19,9 @@ import org.jni_zero.NativeMethods;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.lifetime.Destroyable;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.autofill.AutofillProfile;
@@ -28,6 +33,8 @@ import org.chromium.components.prefs.PrefService;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.url.GURL;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
@@ -41,9 +48,30 @@ import java.util.Objects;
  *
  * <p>See chrome/browser/autofill/personal_data_manager.h for more details.
  */
+@NullMarked
 @JNINamespace("autofill")
 public class PersonalDataManager implements Destroyable {
     private static final String TAG = "PersonalDataManager";
+
+    @VisibleForTesting
+    static final String AUTOFILL_ADDRESS_OPT_IN_CHANGE_HISTOGRAM_NAME =
+            "Autofill.Address.IsEnabled.Change";
+
+    // Enum to represent the Autofill address opt-in changes.
+    //
+    // These values are persisted to logs. Entries should not be renumbered and
+    // numeric values should never be reused.
+    // LINT.IfChange(AutofillAddressOptInChange)
+    @VisibleForTesting
+    @IntDef({AutofillAddressOptInChange.OPT_IN, AutofillAddressOptInChange.OPT_OUT})
+    @Retention(RetentionPolicy.SOURCE)
+    @interface AutofillAddressOptInChange {
+        int OPT_IN = 0;
+        int OPT_OUT = 1;
+        int HISTOGRAM_BUCKET_COUNT = 2;
+    }
+
+    // LINT.ThenChange(/tools/metrics/histograms/metadata/autofill/enums.xml:AutofillAddressOptInChange)
 
     /** Observer of PersonalDataManager events. */
     public interface PersonalDataManagerObserver {
@@ -57,8 +85,8 @@ public class PersonalDataManager implements Destroyable {
         // marshaled and compared as strings. To save conversions, we sometimes use strings.
         private String mGUID;
         private String mOrigin;
-        private boolean mIsLocal;
-        private boolean mIsVirtual;
+        private final boolean mIsLocal;
+        private final boolean mIsVirtual;
         private String mName;
         private String mNumber;
         private String mNetworkAndLastFourDigits;
@@ -74,10 +102,11 @@ public class PersonalDataManager implements Destroyable {
         // the card in PaymentMethods in Settings.
         private String mCardLabel;
         private String mNickname;
-        private GURL mCardArtUrl;
+        private @Nullable GURL mCardArtUrl;
         private String mCvc;
-        private String mIssuerId;
-        private GURL mProductTermsUrl;
+        private final String mIssuerId;
+        private final String mBenefitSource;
+        private final @Nullable GURL mProductTermsUrl;
         private final @VirtualCardEnrollmentState int mVirtualCardEnrollmentState;
         private final String mProductDescription;
         private final String mCardNameForAutofillDisplay;
@@ -108,6 +137,7 @@ public class PersonalDataManager implements Destroyable {
                 @JniType("std::u16string") String obfuscatedLastFourDigits,
                 @JniType("std::u16string") String cvc,
                 @JniType("std::string") String issuerId,
+                @JniType("std::string") String benefitSource,
                 GURL productTermsUrl) {
             return new CreditCard(
                     guid,
@@ -133,6 +163,7 @@ public class PersonalDataManager implements Destroyable {
                     obfuscatedLastFourDigits,
                     cvc,
                     issuerId,
+                    benefitSource,
                     productTermsUrl);
         }
 
@@ -173,6 +204,7 @@ public class PersonalDataManager implements Destroyable {
                     /* obfuscatedLastFourDigits= */ "",
                     /* cvc= */ "",
                     /* issuerId= */ "",
+                    /* benefitSource= */ "",
                     /* productTermsUrl= */ null);
         }
 
@@ -193,14 +225,15 @@ public class PersonalDataManager implements Destroyable {
                 long instrumentId,
                 String cardLabel,
                 String nickname,
-                GURL cardArtUrl,
+                @Nullable GURL cardArtUrl,
                 @VirtualCardEnrollmentState int virtualCardEnrollmentState,
                 String productDescription,
                 String cardNameForAutofillDisplay,
                 String obfuscatedLastFourDigits,
                 String cvc,
                 String issuerId,
-                GURL productTermsUrl) {
+                String benefitSource,
+                @Nullable GURL productTermsUrl) {
             mGUID = guid;
             mOrigin = origin;
             mIsLocal = isLocal;
@@ -224,6 +257,7 @@ public class PersonalDataManager implements Destroyable {
             mObfuscatedLastFourDigits = obfuscatedLastFourDigits;
             mCvc = cvc;
             mIssuerId = issuerId;
+            mBenefitSource = benefitSource;
             mProductTermsUrl = productTermsUrl;
         }
 
@@ -335,7 +369,7 @@ public class PersonalDataManager implements Destroyable {
         }
 
         @CalledByNative("CreditCard")
-        public GURL getCardArtUrl() {
+        public @Nullable GURL getCardArtUrl() {
             return mCardArtUrl;
         }
 
@@ -360,7 +394,12 @@ public class PersonalDataManager implements Destroyable {
         }
 
         @CalledByNative("CreditCard")
-        public GURL getProductTermsUrl() {
+        public String getBenefitSource() {
+            return mBenefitSource;
+        }
+
+        @CalledByNative("CreditCard")
+        public @Nullable GURL getProductTermsUrl() {
             return mProductTermsUrl;
         }
 
@@ -444,16 +483,16 @@ public class PersonalDataManager implements Destroyable {
 
     /** Autofill IBAN information. */
     public static class Iban {
-        @Nullable private String mGuid;
-        @Nullable private Long mInstrumentId;
+        private final @Nullable String mGuid;
+        private final @Nullable Long mInstrumentId;
 
         // Obfuscated IBAN value. This is used for displaying the IBAN in the Payment methods page.
-        private String mLabel;
+        private final String mLabel;
 
         private String mNickname;
-        private @IbanRecordType int mRecordType;
+        private final @IbanRecordType int mRecordType;
         // Value is empty for server IBAN.
-        @Nullable private String mValue;
+        private @Nullable String mValue;
 
         private Iban(
                 String guid,
@@ -517,7 +556,7 @@ public class PersonalDataManager implements Destroyable {
         }
 
         @CalledByNative("Iban")
-        public @JniType("std::string") String getGuid() {
+        public @Nullable @JniType("std::string") String getGuid() {
             assert mRecordType != IbanRecordType.SERVER_IBAN;
             return mGuid;
         }
@@ -544,7 +583,7 @@ public class PersonalDataManager implements Destroyable {
         }
 
         @CalledByNative("Iban")
-        public @JniType("std::u16string") String getValue() {
+        public @Nullable @JniType("std::u16string") String getValue() {
             return mValue;
         }
 
@@ -581,12 +620,12 @@ public class PersonalDataManager implements Destroyable {
 
         /** Builder for {@link Iban}. */
         public static final class Builder {
-            private String mGuid;
-            private Long mInstrumentId;
-            private String mLabel;
-            private String mNickname;
+            private @Nullable String mGuid;
+            private @Nullable Long mInstrumentId;
+            private @Nullable String mLabel;
+            private @Nullable String mNickname;
             private @IbanRecordType int mRecordType;
-            private String mValue;
+            private @Nullable String mValue;
 
             public Builder setGuid(String guid) {
                 mGuid = guid;
@@ -638,14 +677,21 @@ public class PersonalDataManager implements Destroyable {
                                         + " empty value.";
                         break;
                 }
-                return new Iban(mGuid, mInstrumentId, mLabel, mNickname, mRecordType, mValue);
+                // Non-null enforcement happens inside the constructor if applicable, assume
+                // non-null for all fields.
+                return new Iban(
+                        assumeNonNull(mGuid),
+                        assumeNonNull(mInstrumentId),
+                        assumeNonNull(mLabel),
+                        assumeNonNull(mNickname),
+                        mRecordType,
+                        assumeNonNull(mValue));
             }
         }
     }
 
     private final PrefService mPrefService;
-    private final List<PersonalDataManagerObserver> mDataObservers =
-            new ArrayList<PersonalDataManagerObserver>();
+    private final List<PersonalDataManagerObserver> mDataObservers = new ArrayList<>();
 
     private long mPersonalDataManagerAndroid;
 
@@ -702,53 +748,30 @@ public class PersonalDataManager implements Destroyable {
                         .getProfileGUIDsForSettings(mPersonalDataManagerAndroid));
     }
 
+    public String getProfileDescriptionForEditor(String guid) {
+        ThreadUtils.assertOnUiThread();
+        return PersonalDataManagerJni.get()
+                .getProfileDescriptionForEditor(mPersonalDataManagerAndroid, guid);
+    }
+
     /**
      * TODO(crbug.com/41256488): Reduce the number of Java to Native calls when getting profiles
      *
      * <p>Gets the profiles to suggest when filling a form or completing a transaction. The profiles
      * will have been processed to be more relevant to the user.
      *
-     * @param includeNameInLabel Whether to include the name in the profile's label.
      * @return The list of profiles to suggest to the user.
      */
-    public ArrayList<AutofillProfile> getProfilesToSuggest(boolean includeNameInLabel) {
+    public ArrayList<AutofillProfile> getProfilesToSuggest() {
         ThreadUtils.assertOnUiThread();
         return getProfilesWithLabels(
-                PersonalDataManagerJni.get()
-                        .getProfileLabelsToSuggest(
-                                mPersonalDataManagerAndroid,
-                                includeNameInLabel,
-                                /* includeOrganizationInLabel= */ true,
-                                /* includeCountryInLabel= */ true),
-                PersonalDataManagerJni.get().getProfileGUIDsToSuggest(mPersonalDataManagerAndroid));
-    }
-
-    /**
-     * TODO(crbug.com/41256488): Reduce the number of Java to Native calls when getting profiles.
-     *
-     * <p>Gets the profiles to suggest when associating a billing address to a credit card. The
-     * profiles will have been processed to be more relevant to the user.
-     *
-     * @param includeOrganizationInLabel Whether the organization name should be included in the
-     *     label.
-     * @return The list of billing addresses to suggest to the user.
-     */
-    public ArrayList<AutofillProfile> getBillingAddressesToSuggest(
-            boolean includeOrganizationInLabel) {
-        ThreadUtils.assertOnUiThread();
-        return getProfilesWithLabels(
-                PersonalDataManagerJni.get()
-                        .getProfileLabelsToSuggest(
-                                mPersonalDataManagerAndroid,
-                                /* includeNameInLabel= */ true,
-                                includeOrganizationInLabel,
-                                /* includeCountryInLabel= */ false),
+                PersonalDataManagerJni.get().getProfileLabelsToSuggest(mPersonalDataManagerAndroid),
                 PersonalDataManagerJni.get().getProfileGUIDsToSuggest(mPersonalDataManagerAndroid));
     }
 
     private ArrayList<AutofillProfile> getProfilesWithLabels(
             String[] profileLabels, String[] profileGUIDs) {
-        ArrayList<AutofillProfile> profiles = new ArrayList<AutofillProfile>(profileGUIDs.length);
+        ArrayList<AutofillProfile> profiles = new ArrayList<>(profileGUIDs.length);
         for (int i = 0; i < profileGUIDs.length; i++) {
             AutofillProfile profile =
                     new AutofillProfile(
@@ -816,7 +839,7 @@ public class PersonalDataManager implements Destroyable {
     }
 
     private ArrayList<CreditCard> getCreditCards(String[] creditCardGUIDs) {
-        ArrayList<CreditCard> cards = new ArrayList<CreditCard>(creditCardGUIDs.length);
+        ArrayList<CreditCard> cards = new ArrayList<>(creditCardGUIDs.length);
         for (int i = 0; i < creditCardGUIDs.length; i++) {
             cards.add(
                     PersonalDataManagerJni.get()
@@ -973,43 +996,6 @@ public class PersonalDataManager implements Destroyable {
     }
 
     /**
-     * Users based in unsupported countries and profiles with a country value set to an unsupported
-     * country are not eligible for account storage. This function determines if the `country_code`
-     * is eligible.
-     */
-    public boolean isCountryEligibleForAccountStorage(String countryCode) {
-        return PersonalDataManagerJni.get()
-                .isCountryEligibleForAccountStorage(mPersonalDataManagerAndroid, countryCode);
-    }
-
-    /**
-     * Checks whether the Autofill PersonalDataManager has profiles.
-     *
-     * @return True If there are profiles.
-     */
-    public boolean hasProfiles() {
-        return PersonalDataManagerJni.get().hasProfiles(mPersonalDataManagerAndroid);
-    }
-
-    /**
-     * Checks whether the Autofill PersonalDataManager has credit cards.
-     *
-     * @return True If there are credit cards.
-     */
-    public boolean hasCreditCards() {
-        return PersonalDataManagerJni.get().hasCreditCards(mPersonalDataManagerAndroid);
-    }
-
-    /**
-     * @return Whether FIDO authentication is available.
-     */
-    public boolean isFidoAuthenticationAvailable() {
-        return isAutofillPaymentMethodsEnabled()
-                && PersonalDataManagerJni.get()
-                        .isFidoAuthenticationAvailable(mPersonalDataManagerAndroid);
-    }
-
-    /**
      * @return Whether the Autofill feature for Profiles (addresses) is enabled.
      */
     public boolean isAutofillProfileEnabled() {
@@ -1031,6 +1017,10 @@ public class PersonalDataManager implements Destroyable {
      */
     public void setAutofillProfileEnabled(boolean enable) {
         mPrefService.setBoolean(Pref.AUTOFILL_PROFILE_ENABLED, enable);
+        RecordHistogram.recordEnumeratedHistogram(
+                AUTOFILL_ADDRESS_OPT_IN_CHANGE_HISTOGRAM_NAME,
+                enable ? AutofillAddressOptInChange.OPT_IN : AutofillAddressOptInChange.OPT_OUT,
+                AutofillAddressOptInChange.HISTOGRAM_BUCKET_COUNT);
     }
 
     /**
@@ -1040,24 +1030,6 @@ public class PersonalDataManager implements Destroyable {
      */
     public void setAutofillCreditCardEnabled(boolean enable) {
         mPrefService.setBoolean(Pref.AUTOFILL_CREDIT_CARD_ENABLED, enable);
-    }
-
-    /**
-     * @return Whether the Autofill feature for FIDO authentication is enabled.
-     */
-    public boolean isAutofillCreditCardFidoAuthEnabled() {
-        return mPrefService.getBoolean(Pref.AUTOFILL_CREDIT_CARD_FIDO_AUTH_ENABLED);
-    }
-
-    /**
-     * Enables or disables the Autofill feature for FIDO authentication. We are trying to align this
-     * pref with the server's source of truth, but any mismatches between this pref and the server
-     * should imply the user's intention to opt in/out.
-     *
-     * @param enable True to enable credit card FIDO authentication, false otherwise.
-     */
-    public void setAutofillCreditCardFidoAuthEnabled(boolean enable) {
-        mPrefService.setBoolean(Pref.AUTOFILL_CREDIT_CARD_FIDO_AUTH_ENABLED, enable);
     }
 
     /**
@@ -1097,6 +1069,16 @@ public class PersonalDataManager implements Destroyable {
      */
     public boolean isCardBenefitEnabled() {
         return mPrefService.getBoolean(Pref.AUTOFILL_PAYMENT_CARD_BENEFITS);
+    }
+
+    /**
+     * @param guid The GUID of the credit card.
+     * @return Whether the card is eligible for benefits, based on its `guid`.
+     */
+    public boolean isCardEligibleForBenefits(String guid) {
+        ThreadUtils.assertOnUiThread();
+        return PersonalDataManagerJni.get()
+                .isCardEligibleForBenefits(mPersonalDataManagerAndroid, guid);
     }
 
     /**
@@ -1143,10 +1125,25 @@ public class PersonalDataManager implements Destroyable {
         return mPrefService.getBoolean(Pref.FACILITATED_PAYMENTS_EWALLET);
     }
 
+    /** Sets the preference value for supporting payments using A2A. */
+    public void setFacilitatedPaymentsA2AEnabledPref(boolean value) {
+        mPrefService.setBoolean(Pref.FACILITATED_PAYMENTS_A2A_ENABLED, value);
+    }
+
+    /** Returns the preference value for supporting payments using A2A. */
+    public boolean getFacilitatedPaymentsA2AEnabledPref() {
+        return mPrefService.getBoolean(Pref.FACILITATED_PAYMENTS_A2A_ENABLED);
+    }
+
+    /** Returns the preference value for whether A2A has already been triggered once. */
+    public boolean getFacilitatedPaymentsA2ATriggeredOncePref() {
+        return mPrefService.getBoolean(Pref.FACILITATED_PAYMENTS_A2A_TRIGGERED_ONCE);
+    }
+
     @NativeMethods
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     public interface Natives {
-        long init(PersonalDataManager caller, @JniType("Profile*") Profile profile);
+        long init(PersonalDataManager self, @JniType("Profile*") Profile profile);
 
         void destroy(long nativePersonalDataManagerAndroid);
 
@@ -1158,11 +1155,11 @@ public class PersonalDataManager implements Destroyable {
 
         String[] getProfileLabelsForSettings(long nativePersonalDataManagerAndroid);
 
-        String[] getProfileLabelsToSuggest(
-                long nativePersonalDataManagerAndroid,
-                boolean includeNameInLabel,
-                boolean includeOrganizationInLabel,
-                boolean includeCountryInLabel);
+        @JniType("std::u16string")
+        String getProfileDescriptionForEditor(
+                long nativePersonalDataManagerAndroid, @JniType("std::string") String guid);
+
+        String[] getProfileLabelsToSuggest(long nativePersonalDataManagerAndroid);
 
         AutofillProfile getProfileByGUID(
                 long nativePersonalDataManagerAndroid, @JniType("std::string") String guid);
@@ -1171,9 +1168,6 @@ public class PersonalDataManager implements Destroyable {
 
         @JniType("std::string")
         String getDefaultCountryCodeForNewAddress(long nativePersonalDataManagerAndroid);
-
-        boolean isCountryEligibleForAccountStorage(
-                long nativePersonalDataManagerAndroid, @JniType("std::string") String countryCode);
 
         @JniType("std::string")
         String setProfile(
@@ -1228,12 +1222,6 @@ public class PersonalDataManager implements Destroyable {
         void recordAndLogCreditCardUse(
                 long nativePersonalDataManagerAndroid, @JniType("std::string") String guid);
 
-        boolean hasProfiles(long nativePersonalDataManagerAndroid);
-
-        boolean hasCreditCards(long nativePersonalDataManagerAndroid);
-
-        boolean isFidoAuthenticationAvailable(long nativePersonalDataManagerAndroid);
-
         boolean isAutofillProfileManaged(long nativePersonalDataManagerAndroid);
 
         boolean isAutofillCreditCardManaged(long nativePersonalDataManagerAndroid);
@@ -1259,5 +1247,8 @@ public class PersonalDataManager implements Destroyable {
         BankAccount[] getMaskedBankAccounts(long nativePersonalDataManagerAndroid);
 
         Ewallet[] getEwallets(long nativePersonalDataManagerAndroid);
+
+        boolean isCardEligibleForBenefits(
+                long nativePersonalDataManagerAndroid, @JniType("std::string") String guid);
     }
 }

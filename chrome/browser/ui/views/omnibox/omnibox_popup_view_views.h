@@ -23,6 +23,8 @@
 
 class LocationBarView;
 class OmniboxController;
+class OmniboxRowView;
+class OmniboxRowGroupedView;
 class OmniboxHeaderView;
 class OmniboxResultView;
 class OmniboxViewViews;
@@ -59,6 +61,8 @@ class OmniboxPopupViewViews : public views::View,
   // Returns current popup selection (includes line index).
   virtual OmniboxPopupSelection GetSelection() const;
 
+  void UpdatePopupBounds();
+
   // OmniboxPopupView:
   bool IsOpen() const override;
   void InvalidateLine(size_t line) override;
@@ -71,8 +75,6 @@ class OmniboxPopupViewViews : public views::View,
   void GetPopupAccessibleNodeData(ui::AXNodeData* node_data) const override;
   std::u16string_view GetAccessibleButtonTextForResult(
       size_t line) const override;
-  void SetSuggestionGroupVisibility(size_t match_index,
-                                    bool suggestion_group_hidden) override;
 
   // views::View:
   bool OnMouseDragged(const ui::MouseEvent& event) override;
@@ -87,9 +89,14 @@ class OmniboxPopupViewViews : public views::View,
   void FireAXEventsForNewActiveDescendant(View* descendant_view);
 
  protected:
+  FRIEND_TEST_ALL_PREFIXES(OmniboxRowGroupedViewBrowserTest,
+                           AnimationAndGrouping);
   FRIEND_TEST_ALL_PREFIXES(OmniboxPopupViewViewsTest, ClickOmnibox);
   FRIEND_TEST_ALL_PREFIXES(OmniboxPopupViewViewsTest, DeleteSuggestion);
   FRIEND_TEST_ALL_PREFIXES(OmniboxPopupViewViewsTest, SpaceEntersKeywordMode);
+  FRIEND_TEST_ALL_PREFIXES(OmniboxPopupSuggestionGroupHeadersTest,
+                           ShowSuggestionGroupHeadersByPageContext);
+  friend class OmniboxRowGroupedViewBrowserTest;
   friend class OmniboxPopupViewViewsTest;
   friend class OmniboxSuggestionButtonRowBrowserTest;
   class AutocompletePopupWidget;
@@ -123,10 +130,23 @@ class OmniboxPopupViewViews : public views::View,
 
   void UpdateAccessibleActiveDescendantForInvokingView();
 
+  // Updates a row view with the given match data. `previous_row_header` should
+  // be supplied with the header value for the previous match in order to detect
+  // when the header changes and needs to be displayed. Returns the current
+  // row's header value.
+  std::u16string UpdateRowView(OmniboxRowView* row_view,
+                               const AutocompleteMatch& match,
+                               const std::u16string& previous_row_header);
+
+  // Groups the remaining rows of matches starting with the match at
+  // `match_start_index` into a group view for a joint animation.
+  void UpdateContextualSuggestionsGroup(size_t match_start_index);
+
   // The popup that contains this view.  We create this, but it deletes itself
   // when its window is destroyed.  This is a WeakPtr because it's possible for
   // the OS to destroy the window and thus delete this object before we're
   // deleted, or without our knowledge.
+  // TODO(crbug.com/40232479): Migrate this to CLIENT_OWNS_WIDGET.
   base::WeakPtr<AutocompletePopupWidget> popup_;
 
   // Timestamp for when the current omnibox popup creation started.
@@ -137,6 +157,14 @@ class OmniboxPopupViewViews : public views::View,
 
   // The location bar view that owns |omnibox_view_|. May be nullptr in tests.
   raw_ptr<LocationBarView> location_bar_view_;
+
+  // A view that groups together contextual search row views for a joint
+  // animation.
+  raw_ptr<OmniboxRowGroupedView> contextual_group_view_;
+
+  // The row views that are children of this view or children of subviews of
+  // this view like `row_group_view_`.
+  std::vector<raw_ptr<OmniboxRowView>> row_views_;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_OMNIBOX_OMNIBOX_POPUP_VIEW_VIEWS_H_

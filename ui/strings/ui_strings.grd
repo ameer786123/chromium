@@ -608,6 +608,20 @@ need to be translated for each locale.-->
         Column <ph name="COLUMN_NAME">$1<ex>Column Name</ex></ph> sorted in descending order.
       </message>
 
+      <!-- TableView header sort state accessible strings -->
+      <message name="IDS_APP_TABLE_HEADER_NOT_SORTED_ACCNAME" desc="The text to be announced when specified column becomes unsorted.">
+        Column <ph name="COLUMN_NAME">$1<ex>Column Name</ex></ph> unsorted
+      </message>
+      <message name="IDS_APP_TABLE_HEADER_NOT_SORTED_ACCNAME_MAC" desc="The text to be announced when specified column becomes unsorted.">
+        Column <ph name="COLUMN_NAME">$1<ex>Column Name</ex></ph>
+      </message>
+      <message name="IDS_APP_TABLE_HEADER_SORTED_ASC_ACCNAME" desc="The text to be announced when specified column is sorted in ascending order.">
+        Column <ph name="COLUMN_NAME">$1<ex>Column Name</ex></ph> sorted in ascending order
+      </message>
+      <message name="IDS_APP_TABLE_HEADER_SORTED_DESC_ACCNAME" desc="The text to be announced when specified column is sorted in descending order.">
+        Column <ph name="COLUMN_NAME">$1<ex>Column Name</ex></ph> sorted in descending order
+      </message>
+
       <!-- Textfield context menu item labels. -->
       <message name="IDS_APP_UNDO" desc="The text label of the Undo menu item">
         &amp;Undo
@@ -787,11 +801,6 @@ need to be translated for each locale.-->
         </message>
       </if>
 
-      <!-- Accelerator format -->
-      <message name="IDS_APP_ACCELERATOR_WITH_MODIFIER" desc="Accelerator with a modifier key">
-        <ph name="KEY_MODIFIER_NAME">$1<ex>Ctrl</ex></ph>+<ph name="KEY_COMBO_NAME">$2<ex>C</ex></ph>
-      </message>
-
       <!-- Byte size units -->
       <message name="IDS_APP_BYTES" desc="Units tag indicating a quantity of bytes">
         <ph name="QUANTITY">$1<ex>42</ex></ph> B
@@ -960,13 +969,13 @@ need to be translated for each locale.-->
       </message>
 
       <!-- Strings describing the touch calibration UX -->
-      <message name="IDS_DISPLAY_TOUCH_CALIBRATION_EXIT_LABEL" translateable="false" desc="A message to notify the user about using the escape key to exit the calibration mode.">
+      <message name="IDS_DISPLAY_TOUCH_CALIBRATION_EXIT_LABEL" desc="A message to notify the user about using the escape key to exit the calibration mode.">
         To exit calibration press Esc.
       </message>
-      <message name="IDS_DISPLAY_TOUCH_CALIBRATION_SECONDARY_SKIP_LABEL" translateable="false" desc="A message to notify the user about using the escape key to exit the calibration mode.">
+      <message name="IDS_DISPLAY_TOUCH_CALIBRATION_SECONDARY_SKIP_LABEL" desc="A message to notify the user about using the escape key to exit the calibration mode.">
         If the current display is not a touchscreen, press Esc.
       </message>
-      <message name="IDS_DISPLAY_TOUCH_CALIBRATION_PRIMARY_SKIP_LABEL" translateable="false" desc="A message to notify the user about using the escape key to exit the calibration mode.">
+      <message name="IDS_DISPLAY_TOUCH_CALIBRATION_PRIMARY_SKIP_LABEL" desc="A message to notify the user about using the escape key to exit the calibration mode.">
         If this display is not a touchscreen, press Esc.
       </message>
       <message name="IDS_DISPLAY_TOUCH_CALIBRATION_HINT_LABEL_TEXT" desc="Title of the hint message to inform the user what the next step is in touch calibration is">
@@ -980,6 +989,15 @@ need to be translated for each locale.-->
       </message>
       <message name="IDS_DISPLAY_TOUCH_CALIBRATION_FINISH_LABEL" desc="Message to inform the user that the calibration is now complete">
         Calibration is completed
+      </message>
+      <message name="IDS_DISPLAY_TOUCH_CALIBRATION_A11Y_TARGET_MOVED_TOP_RIGHT" desc="A11Y message to inform the user that the calibration circle moved to top right" is_accessibility_with_no_ui="true">
+        Touch target moved to top right. Tap here.
+      </message>
+      <message name="IDS_DISPLAY_TOUCH_CALIBRATION_A11Y_TARGET_MOVED_BOTTOM_LEFT" desc="A11Y message to inform the user that the calibration circle moved to bottom left" is_accessibility_with_no_ui="true">
+        Touch target moved to bottom left. Tap here.
+      </message>
+      <message name="IDS_DISPLAY_TOUCH_CALIBRATION_A11Y_TARGET_MOVED_BOTTOM_RIGHT" desc="A11Y message to inform the user that the calibration circle moved to bottom right" is_accessibility_with_no_ui="true">
+        Touch target moved to bottom right. Tap here.
       </message>
 
       <!-- Display names -->

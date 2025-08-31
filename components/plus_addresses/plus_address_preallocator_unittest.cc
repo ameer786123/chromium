@@ -17,14 +17,14 @@
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "components/affiliations/core/browser/affiliation_utils.h"
-#include "components/plus_addresses/features.h"
+#include "components/plus_addresses/core/browser/plus_address_types.h"
+#include "components/plus_addresses/core/browser/settings/fake_plus_address_setting_service.h"
+#include "components/plus_addresses/core/common/features.h"
+#include "components/plus_addresses/core/common/plus_address_prefs.h"
 #include "components/plus_addresses/mock_plus_address_http_client.h"
 #include "components/plus_addresses/plus_address_allocator.h"
 #include "components/plus_addresses/plus_address_http_client.h"
-#include "components/plus_addresses/plus_address_prefs.h"
 #include "components/plus_addresses/plus_address_test_utils.h"
-#include "components/plus_addresses/plus_address_types.h"
-#include "components/plus_addresses/settings/fake_plus_address_setting_service.h"
 #include "components/prefs/testing_pref_service.h"
 #include "net/http/http_status_code.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -233,6 +233,67 @@ TEST_F(PlusAddressPreallocatorTest, SynchronousAllocationValidPlusAddresses) {
             std::nullopt);
 }
 
+// Tests that 'AllocatePlusAddressSynchronously' requests new
+// addresses if the remaining ones are less than the minimum size of the
+// pre-allocation pool.
+TEST_F(PlusAddressPreallocatorTest,
+       SynchronousAllocationRequestsPlusAddresses) {
+  base::test::ScopedFeatureList feature;
+  feature.InitAndEnableFeatureWithParameters(
+      features::kPlusAddressPreallocation,
+      {{features::kPlusAddressPreallocationMinimumSize.name, "2"}});
+
+  const url::Origin kOrigin = url::Origin::Create(GURL("https://foo.com"));
+  const base::Time kFuture = base::Time::Now() + base::Days(1);
+  const std::string kPlusAddress1 = "plus1@plus.com";
+  const std::string kPlusAddress2 = "plus2@plus.com";
+
+  SetPreallocatedAddresses(
+      base::Value::List()
+          .Append(CreatePreallocatedPlusAddress(kFuture, kPlusAddress1))
+          .Append(CreatePreallocatedPlusAddress(kFuture, kPlusAddress2)));
+  base::RunLoop loop;
+  MockFunction<void()> check;
+  {
+    InSequence s;
+    EXPECT_CALL(check, Call);
+    // The preallocator fetches additional addresses
+    EXPECT_CALL(http_client(), PreallocatePlusAddresses)
+        .WillOnce(::testing::DoAll(
+            [&]() { loop.Quit(); },
+            RunOnceCallback<0>(
+                PlusAddressHttpClient::PreallocatePlusAddressesResult(
+                    {PreallocatedPlusAddress(PlusAddress(kPlusAddress2),
+                                             /*lifetime=*/base::Days(1))}))));
+    EXPECT_CALL(check, Call);
+  }
+
+  PlusAddressPreallocator allocator(&pref_service(), &setting_service(),
+                                    &http_client(), AlwaysEnabled());
+
+  // The preallocator doesn't fetch addresses on
+  // AllocatePlusAddressSynchronously since the minimum number required are
+  // present.
+  task_environment().FastForwardBy(
+      PlusAddressPreallocator::kDelayUntilServerRequestAfterStartup);
+  allocator.AllocatePlusAddressSynchronously(
+      kOrigin, PlusAddressAllocator::AllocationMode::kAny);
+
+  // Preallocate less than the minimum amount of addresses
+  SetPreallocatedAddresses(base::Value::List().Append(
+      CreatePreallocatedPlusAddress(kFuture, kPlusAddress1)));
+  check.Call();
+  allocator.AllocatePlusAddressSynchronously(
+      kOrigin, PlusAddressAllocator::AllocationMode::kAny);
+  loop.Run();
+  check.Call();
+
+  EXPECT_THAT(GetPreallocatedAddresses(),
+              UnorderedElementsAre(
+                  IsPreallocatedPlusAddress(kFuture, kPlusAddress1),
+                  IsPreallocatedPlusAddress(base::Time::Now() + base::Days(1),
+                                            kPlusAddress2)));
+}
 // Tests synchronous allocation is possible and that options are refreshed when
 // the corresponding allocation mode is used.
 TEST_F(PlusAddressPreallocatorTest, SynchronousAllocationRefreshPlusAddresses) {

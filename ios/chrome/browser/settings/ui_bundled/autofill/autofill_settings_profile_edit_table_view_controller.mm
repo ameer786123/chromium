@@ -7,20 +7,26 @@
 #import "base/apple/foundation_util.h"
 #import "base/feature_list.h"
 #import "base/strings/sys_string_conversions.h"
+#import "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#import "components/autofill/core/common/autofill_features.h"
 #import "components/autofill/ios/common/features.h"
 #import "ios/chrome/browser/autofill/ui_bundled/address_editor/autofill_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/autofill/autofill_settings_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/autofill/autofill_settings_profile_edit_table_view_controller_delegate.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/settings_image_detail_text_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/settings_navigation_controller.h"
+#import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
+#import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
+#import "ios/chrome/browser/shared/ui/table_view/cells/table_view_detail_text_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_text_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_utils.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/l10n/l10n_util.h"
+#import "url/gurl.h"
 
 namespace {
 
@@ -48,6 +54,9 @@ const CGFloat kSymbolSize = 22;
 
   // If `YES`, denotes that the migration to account was clicked.
   BOOL _migrationToAccountSectionWasClicked;
+
+  // If `YES`, the button is shown as a cell item in a section.
+  BOOL _showEditButtonAsCell;
 }
 
 #pragma mark - Initialization
@@ -65,6 +74,10 @@ const CGFloat kSymbolSize = 22;
     _userEmail = userEmail;
     _editIncompleteProfileForAccountView = NO;
     _migrationToAccountSectionWasClicked = NO;
+    autofill::AutofillProfile::RecordType type = [_delegate accountRecordType];
+    _showEditButtonAsCell =
+        (type == autofill::AutofillProfile::RecordType::kAccountHome ||
+         type == autofill::AutofillProfile::RecordType::kAccountWork);
   }
 
   return self;
@@ -135,6 +148,13 @@ const CGFloat kSymbolSize = 22;
         toSectionWithIdentifier:section];
   }
 
+  if (_showEditButtonAsCell) {
+    [model
+        addSectionWithIdentifier:AutofillProfileDetailsSectionIdentifierEdit];
+    [model addItem:[self editCellButtonItem]
+        toSectionWithIdentifier:AutofillProfileDetailsSectionIdentifierEdit];
+  }
+
   [self.handler loadFooterForSettings];
 }
 
@@ -169,6 +189,10 @@ const CGFloat kSymbolSize = 22;
   [self reloadData];
 }
 
+- (BOOL)shouldShowEditButton {
+  return !_showEditButtonAsCell;
+}
+
 - (BOOL)editButtonEnabled {
   return !_migrationToAccountSectionWasClicked ||
          _showMigrateToAccountSection || [_delegate isMinimumAddress];
@@ -195,6 +219,9 @@ const CGFloat kSymbolSize = 22;
           AutofillProfileDetailsItemTypeMigrateToAccountRecommendation ||
       itemType == AutofillProfileDetailsItemTypeMigrateToAccountButton) {
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    return cell;
+  }
+  if (itemType == AutofillProfileDetailsItemTypeEdit) {
     return cell;
   }
   return [self.handler cell:cell
@@ -228,6 +255,22 @@ const CGFloat kSymbolSize = 22;
     }
     return;
   }
+  if (itemType == AutofillProfileDetailsItemTypeEdit) {
+    autofill::AutofillProfile::RecordType type = [_delegate accountRecordType];
+    if (type == autofill::AutofillProfile::RecordType::kAccountHome) {
+      OpenNewTabCommand* command = [OpenNewTabCommand
+          commandWithURLFromChrome:GURL(kGoogleMyAccountHomeAddressURL)];
+      [self.applicationHandler closePresentedViewsAndOpenURL:command];
+      return;
+    }
+
+    if (type == autofill::AutofillProfile::RecordType::kAccountWork) {
+      OpenNewTabCommand* command = [OpenNewTabCommand
+          commandWithURLFromChrome:GURL(kGoogleMyAccountWorkAddressURL)];
+      [self.applicationHandler closePresentedViewsAndOpenURL:command];
+      return;
+    }
+  }
   [self.handler didSelectRowAtIndexPath:indexPath];
 }
 
@@ -253,7 +296,8 @@ const CGFloat kSymbolSize = 22;
     canEditRowAtIndexPath:(NSIndexPath*)indexPath {
   // If we don't allow the edit of the cell, the selection of the cell isn't
   // forwarded.
-  return YES;
+  NSInteger itemType = [self.tableViewModel itemTypeForIndexPath:indexPath];
+  return itemType != AutofillProfileDetailsItemTypeEdit;
 }
 
 - (UITableViewCellEditingStyle)tableView:(UITableView*)tableView
@@ -294,6 +338,17 @@ const CGFloat kSymbolSize = 22;
   item.enabled = !self.tableView.editing;
   item.accessibilityIdentifier = kAutofillAddressMigrateToAccountButtonId;
   item.accessibilityTraits |= UIAccessibilityTraitButton;
+  return item;
+}
+
+- (TableViewDetailTextItem*)editCellButtonItem {
+  TableViewDetailTextItem* item = [[TableViewDetailTextItem alloc]
+      initWithType:AutofillProfileDetailsItemTypeEdit];
+  item.text = l10n_util::GetNSString(IDS_IOS_AUTOFILL_EDIT_ADDRESS_CELL);
+  item.textColor = [UIColor colorNamed:kBlueColor];
+  item.accessibilityIdentifier = kAutofillEditButtonCellId;
+  item.accessibilityTraits |= UIAccessibilityTraitButton;
+  item.accessorySymbol = TableViewDetailTextCellAccessorySymbolExternalLink;
   return item;
 }
 

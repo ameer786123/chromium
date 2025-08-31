@@ -18,7 +18,6 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_client.h"
@@ -26,7 +25,7 @@
 #include "ui/base/models/image_model.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/gfx/range/range.h"
 
 class OmniboxController;
@@ -150,6 +149,17 @@ class OmniboxView {
   // automatically focused (like for browser startup or NTP load).
   virtual void SetFocus(bool is_user_initiated) = 0;
 
+  // Applies a focus ring predicate to control when the AIM button's focus ring
+  // is shown. If `force_focus` is true, the focus ring will always be shown.
+  // This is used to indicated focus when the popup selection selects the AIM
+  // button, even though the omnibox is still the focused view.  If
+  // `force_focus` is false, the focus ring will use the standard behavior,
+  // which is to show the focus ring when the button has focus.
+  virtual void ApplyFocusRingToAimButton(bool force_focus) {}
+
+  // Returns true if the AI mode entrypoint button is visible.
+  virtual bool AimButtonVisible() const = 0;
+
   // Shows or hides the caret based on whether the model's is_caret_visible() is
   // true.
   virtual void ApplyCaretVisibility() = 0;
@@ -228,27 +238,6 @@ class OmniboxView {
   // corpus (e.g. Images) rather than start a new Web search.  This method will
   // only ever return true on mobile ports.
   virtual bool IsIndicatingQueryRefinement() const;
-
-  // Returns |text| with any leading javascript schemas stripped.
-  static std::u16string StripJavascriptSchemas(const std::u16string& text);
-
-  // Automatically collapses internal whitespace as follows:
-  // * Leading and trailing whitespace are often copied accidentally and rarely
-  //   affect behavior, so they are stripped.  If this collapses the whole
-  //   string, returns a space, since pasting nothing feels broken.
-  // * Internal whitespace sequences not containing CR/LF may be integral to the
-  //   meaning of the string and are preserved exactly.  The presence of any of
-  //   these also suggests the input is more likely a search than a navigation,
-  //   which affects the next bullet.
-  // * Internal whitespace sequences containing CR/LF have likely been split
-  //   across lines by terminals, email programs, etc., and are collapsed.  If
-  //   there are any internal non-CR/LF whitespace sequences, the input is more
-  //   likely search data (e.g. street addresses), so collapse these to a single
-  //   space.  If not, the input might be a navigation (e.g. a line-broken URL),
-  //   so collapse these away entirely.
-  //
-  // Finally, calls StripJavascriptSchemas() on the resulting string.
-  static std::u16string SanitizeTextForPaste(const std::u16string& text);
 
  protected:
   // Tracks important state that may change between OnBeforePossibleChange() and

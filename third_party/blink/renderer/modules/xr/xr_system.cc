@@ -17,6 +17,7 @@
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_xr_depth_state_init.h"
@@ -134,15 +135,6 @@ device::mojom::XRDepthUsage ParseDepthUsage(const V8XRDepthUsage& usage) {
   }
 }
 
-Vector<device::mojom::XRDepthUsage> ParseDepthUsages(
-    const Vector<V8XRDepthUsage>& usages) {
-  Vector<device::mojom::XRDepthUsage> result;
-
-  std::ranges::transform(usages, std::back_inserter(result), ParseDepthUsage);
-
-  return result;
-}
-
 device::mojom::XRDepthDataFormat ParseDepthFormat(
     const V8XRDepthDataFormat& format) {
   switch (format.AsEnum()) {
@@ -155,13 +147,13 @@ device::mojom::XRDepthDataFormat ParseDepthFormat(
   }
 }
 
-Vector<device::mojom::XRDepthDataFormat> ParseDepthFormats(
-    const Vector<V8XRDepthDataFormat>& formats) {
-  Vector<device::mojom::XRDepthDataFormat> result;
-
-  std::ranges::transform(formats, std::back_inserter(result), ParseDepthFormat);
-
-  return result;
+device::mojom::XRDepthType ParseDepthType(const V8XRDepthType& type) {
+  switch (type.AsEnum()) {
+    case V8XRDepthType::Enum::kRaw:
+      return device::mojom::XRDepthType::kRaw;
+    case V8XRDepthType::Enum::kSmooth:
+      return device::mojom::XRDepthType::kSmooth;
+  }
 }
 
 bool IsFeatureValidForMode(device::mojom::XRSessionFeature feature,
@@ -331,8 +323,7 @@ bool IsImmersiveArAllowedBySettings(LocalDOMWindow* window) {
 // When enabled, accessing the navigator.xr attribute does not prevent the
 // frame from entering the back forward cache.
 // Kill switch for https://crbug.com/392087591
-BASE_FEATURE(kWebXrAttributeAllowsBackForwardCache,
-             "WebXrAttributeAllowsBackForwardCache",
+BASE_FEATURE(WebXrAttributeAllowsBackForwardCache,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace
@@ -735,6 +726,9 @@ device::mojom::blink::XRSessionOptionsPtr XRSystem::XRSessionOptionsFromQuery(
     session_options->depth_options->usage_preferences = query.PreferredUsage();
     session_options->depth_options->data_format_preferences =
         query.PreferredFormat();
+    session_options->depth_options->depth_type_request =
+        query.DepthTypeRequest();
+    session_options->depth_options->match_depth_view = query.MatchDepthView();
   }
 
   session_options->trace_id = query.TraceId();
@@ -866,8 +860,8 @@ void XRSystem::ExitPresent(base::OnceClosure on_exited) {
       // Once we exit fullscreen, we'll need to come back here to finish
       // shutting down the session.
       fullscreen_exit_observer_->ExitFullscreen(
-          doc, WTF::BindOnce(&XRSystem::ExitPresent, WrapWeakPersistent(this),
-                             std::move(on_exited)));
+          doc, blink::BindOnce(&XRSystem::ExitPresent, WrapWeakPersistent(this),
+                               std::move(on_exited)));
       return;
     }
   }
@@ -951,8 +945,8 @@ ScriptPromise<IDLBoolean> XRSystem::isSessionSupported(
   outstanding_support_queries_.insert(query);
   service_->SupportsSession(
       std::move(session_options),
-      WTF::BindOnce(&XRSystem::OnSupportsSessionReturned, WrapPersistent(this),
-                    WrapPersistent(query)));
+      BindOnce(&XRSystem::OnSupportsSessionReturned, WrapPersistent(this),
+               WrapPersistent(query)));
 
   return promise;
 }
@@ -1072,8 +1066,8 @@ void XRSystem::RequestImmersiveSession(PendingRequestSessionQuery* query,
         MakeGarbageCollected<XrExitFullscreenObserver>();
 
     base::OnceClosure callback =
-        WTF::BindOnce(&XRSystem::DoRequestSession, WrapWeakPersistent(this),
-                      WrapPersistent(query), std::move(session_options));
+        BindOnce(&XRSystem::DoRequestSession, WrapWeakPersistent(this),
+                 WrapPersistent(query), std::move(session_options));
     fullscreen_exit_observer_->ExitFullscreen(doc, std::move(callback));
     return;
   }
@@ -1086,8 +1080,8 @@ void XRSystem::DoRequestSession(
     device::mojom::blink::XRSessionOptionsPtr session_options) {
   service_->RequestSession(
       std::move(session_options),
-      WTF::BindOnce(&XRSystem::OnRequestSessionReturned,
-                    WrapWeakPersistent(this), WrapPersistent(query)));
+      BindOnce(&XRSystem::OnRequestSessionReturned, WrapWeakPersistent(this),
+               WrapPersistent(query)));
 }
 
 void XRSystem::RequestInlineSession(PendingRequestSessionQuery* query,
@@ -1141,8 +1135,8 @@ void XRSystem::RequestInlineSession(PendingRequestSessionQuery* query,
   auto session_options = XRSessionOptionsFromQuery(*query);
   service_->RequestSession(
       std::move(session_options),
-      WTF::BindOnce(&XRSystem::OnRequestSessionReturned,
-                    WrapWeakPersistent(this), WrapPersistent(query)));
+      BindOnce(&XRSystem::OnRequestSessionReturned, WrapWeakPersistent(this),
+               WrapPersistent(query)));
 }
 
 XRSystem::RequestedXRSessionFeatureSet XRSystem::ParseRequestedFeatures(
@@ -1337,19 +1331,40 @@ ScriptPromise<XRSession> XRSystem::requestSession(
     DCHECK(session_init->depthSensing()->hasDataFormatPreference())
         << "required in IDL";
 
-    Vector<device::mojom::XRDepthUsage> preferred_usage =
-        ParseDepthUsages(session_init->depthSensing()->usagePreference());
-    Vector<device::mojom::XRDepthDataFormat> preferred_format =
-        ParseDepthFormats(session_init->depthSensing()->dataFormatPreference());
+    Vector<device::mojom::XRDepthUsage> preferred_usage;
+    std::ranges::transform(session_init->depthSensing()->usagePreference(),
+                           std::back_inserter(preferred_usage),
+                           ParseDepthUsage);
 
-    query->SetDepthSensingConfiguration(preferred_usage, preferred_format);
+    Vector<device::mojom::XRDepthDataFormat> preferred_format;
+    std::ranges::transform(session_init->depthSensing()->dataFormatPreference(),
+                           std::back_inserter(preferred_format),
+                           ParseDepthFormat);
+
+    // `match_depth_view` is true if it is not set.
+    bool match_depth_view = true;
+    Vector<device::mojom::XRDepthType> type_request;
+    if (RuntimeEnabledFeatures::WebXRDepthPerformanceEnabled()) {
+      if (session_init->depthSensing()->hasMatchDepthView()) {
+        match_depth_view = session_init->depthSensing()->matchDepthView();
+      }
+
+      if (session_init->depthSensing()->hasDepthTypeRequest()) {
+        std::ranges::transform(session_init->depthSensing()->depthTypeRequest(),
+                               std::back_inserter(type_request),
+                               ParseDepthType);
+      }
+    }
+
+    query->SetDepthSensingConfiguration(preferred_usage, preferred_format,
+                                        type_request, match_depth_view);
   }
 
   // Defer to request the session until the prerendering page is activated.
   if (DomWindow()->document()->IsPrerendering()) {
     // Pass a nullptr instead of |exception_state| because we can't guarantee
     // this object is alive until the prerendering page is activate.
-    DomWindow()->document()->AddPostPrerenderingActivationStep(WTF::BindOnce(
+    DomWindow()->document()->AddPostPrerenderingActivationStep(BindOnce(
         &XRSystem::RequestSessionInternal, WrapWeakPersistent(this),
         session_mode, WrapPersistent(query), /*exception_state=*/nullptr));
     return promise;
@@ -1464,8 +1479,8 @@ void XRSystem::OnRequestSessionReturned(
       MakeGarbageCollected<XrEnterFullscreenObserver>();
   fullscreen_enter_observer_->RequestFullscreen(
       fullscreen_element, setup_for_dom_overlay, session_has_camera_access,
-      WTF::BindOnce(&XRSystem::OnFullscreenConfigured, WrapPersistent(this),
-                    WrapPersistent(query), std::move(result)));
+      BindOnce(&XRSystem::OnFullscreenConfigured, WrapPersistent(this),
+               WrapPersistent(query), std::move(result)));
 }
 
 void XRSystem::OnFullscreenConfigured(
@@ -1560,8 +1575,8 @@ void XRSystem::FinishSessionCreation(
                   GetExecutionContext()->GetTaskRunner(
                       TaskType::kMiscPlatformAPI)));
       environment_provider_.set_disconnect_handler(
-          WTF::BindOnce(&XRSystem::OnEnvironmentProviderDisconnect,
-                        WrapWeakPersistent(this)));
+          BindOnce(&XRSystem::OnEnvironmentProviderDisconnect,
+                   WrapWeakPersistent(this)));
 
       session->OnEnvironmentProviderCreated();
     }
@@ -1719,9 +1734,9 @@ void XRSystem::TryEnsureService() {
   DomWindow()->GetBrowserInterfaceBroker().GetInterface(
       service_.BindNewPipeAndPassReceiver(
           DomWindow()->GetTaskRunner(TaskType::kMiscPlatformAPI)));
-  service_.set_disconnect_handler(WTF::BindOnce(&XRSystem::Dispose,
-                                                WrapWeakPersistent(this),
-                                                DisposeType::kDisconnected));
+  service_.set_disconnect_handler(BindOnce(&XRSystem::Dispose,
+                                           WrapWeakPersistent(this),
+                                           DisposeType::kDisconnected));
 }
 
 bool XRSystem::IsImmersiveArAllowed() {

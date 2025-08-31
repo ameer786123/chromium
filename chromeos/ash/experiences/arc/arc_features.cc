@@ -10,15 +10,14 @@ namespace arc {
 
 // When enabled, the versions of ChromeOS and ARC are exchanged during
 // handshake. This feature reduces unnecessary inter-process communications.
-BASE_FEATURE(kArcExchangeVersionOnMojoHandshake,
-             "ArcExchangeVersionOnMojoHandshake",
+BASE_FEATURE(ArcExchangeVersionOnMojoHandshake,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Controls whether to always start ARC automatically, or wait for the user's
 // action to start it later in an on-demand manner. Already enabled by default
 // for managed users. In V2, it will be expand to more users such as unmanaged
 // users.
-BASE_FEATURE(kArcOnDemandV2, "ArcOnDemandV2", base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(ArcOnDemandV2, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Controls whether ARC should be activated on any app launches. If set to
 // false, inactive_interval will be checked.
@@ -37,7 +36,7 @@ BASE_FEATURE_PARAM(base::TimeDelta,
                    base::Days(7));
 
 // Controls whether to start ARC with the GKI kernel.
-BASE_FEATURE(kArcVmGki, "ArcVmGki", base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(ArcVmGki, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Controls block IO schedulers in ARCVM.
 BASE_FEATURE(kBlockIoScheduler,
@@ -57,12 +56,6 @@ BASE_FEATURE(kBootCompletedBroadcastFeature,
              "ArcBootCompletedBroadcast",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Controls whether independent ARC container app killer is enabled to replace
-// the ARC container app killing in TabManagerDelegate.
-BASE_FEATURE(kContainerAppKiller,
-             "ContainerAppKiller",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // Controls experimental Custom Tabs feature for ARC.
 BASE_FEATURE(kCustomTabsExperimentFeature,
              "ArcCustomTabsExperiment",
@@ -71,8 +64,7 @@ BASE_FEATURE(kCustomTabsExperimentFeature,
 // Defers the ARC actvation until the user session start up tasks
 // are completed to give more resources to critical tasks for user session
 // starting.
-BASE_FEATURE(kDeferArcActivationUntilUserSessionStartUpTaskCompletion,
-             "DeferArcActivationUntilUserSessionStartUpTaskCompletion",
+BASE_FEATURE(DeferArcActivationUntilUserSessionStartUpTaskCompletion,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 // We decide whether to defer ARC activation by taking a look at recent
@@ -259,29 +251,15 @@ BASE_FEATURE(kNativeBridgeToggleFeature,
 
 // When enabled, utility processes are spawned to perform hardware decode
 // acceleration on behalf of ARC++/ARCVM instead of using the GPU process.
-BASE_FEATURE(kOutOfProcessVideoDecoding,
-             "OutOfProcessVideoDecoding",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(OutOfProcessVideoDecoding, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // When enabled, Android per-app-language settings will be surfaced in ChromeOS
 // Settings page.
-BASE_FEATURE(kPerAppLanguage,
-             "PerAppLanguage",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(PerAppLanguage, base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kResizeCompat,
              "ArcResizeCompat",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kRoundedWindowCompat,
-             "ArcRoundedWindowCompat",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-const char kRoundedWindowCompatStrategy[] = "RoundedWindowCompatStrategy";
-// The following values must be matched with `RoundedWindowCompatStrategy` enum
-// defined in //chromeos/ash/experiences/arc/mojom/chrome_feature_flags.mojom.
-const char kRoundedWindowCompatStrategy_BottomOnlyGesture[] = "1";
-const char kRoundedWindowCompatStrategy_LeftRightBottomGesture[] = "2";
 
 // Controls ARCVM real time vcpu feature on a device with 2 logical cores
 // online.
@@ -311,12 +289,6 @@ BASE_FEATURE(kSkipDropCaches,
              "ArcSkipDropPageCache",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// When enabled, CertStoreService will talk to KeyMint instead of Keymaster on
-// ARC-T.
-BASE_FEATURE(kSwitchToKeyMintOnT,
-             "ArcSwitchToKeyMintOnT",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // On boards that blocks KeyMint at launch, enable this feature to force enable
 // KeyMint.
 BASE_FEATURE(kSwitchToKeyMintOnTOverride,
@@ -342,6 +314,9 @@ BASE_FEATURE(kUnthrottleOnActiveAudioV2,
 BASE_FEATURE(kVideoDecoder,
              "ArcVideoDecoder",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Controls whether ARC uses MappableSharedImage for video encoding.
+BASE_FEATURE(VideoEncodeUseMappableSI, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Feature to continuously log PSI memory pressure data to Chrome.
 BASE_FEATURE(kVmMemoryPSIReports,

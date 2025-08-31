@@ -14,7 +14,8 @@ import androidx.appcompat.content.res.AppCompatResources;
 import org.chromium.base.Callback;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.ConfigurationChangedObserver;
 import org.chromium.chrome.browser.tab.CurrentTabObserver;
@@ -30,23 +31,25 @@ import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /** Defines a toolbar button to add the current web page to bookmarks. */
+@NullMarked
 public class AddToBookmarksToolbarButtonController extends BaseButtonDataProvider
         implements ConfigurationChangedObserver {
     private final ActivityLifecycleDispatcher mActivityLifecycleDispatcher;
     private final Supplier<TabBookmarker> mTabBookmarkerSupplier;
-    private final Supplier<Tracker> mTrackerSupplier;
+    private final Supplier<@Nullable Tracker> mTrackerSupplier;
     private final ObservableSupplier<BookmarkModel> mBookmarkModelSupplier;
     private final ButtonSpec mFilledButtonSpec;
     private final ButtonSpec mEmptyButtonSpec;
     private final Context mContext;
+    private @Nullable BookmarkModel mObservedBookmarkModel;
     private CurrentTabObserver mCurrentTabObserver;
-    private BookmarkModel mObservedBookmarkModel;
     private boolean mIsTablet;
 
     private final Callback<BookmarkModel> mBookmarkModelSupplierObserver =
-            new Callback<BookmarkModel>() {
+            new Callback<>() {
                 @Override
                 public void onResult(BookmarkModel result) {
                     if (mObservedBookmarkModel != null) {
@@ -79,11 +82,11 @@ public class AddToBookmarksToolbarButtonController extends BaseButtonDataProvide
      *     changes and checking if the current tab is bookmarked.
      */
     public AddToBookmarksToolbarButtonController(
-            ObservableSupplier<Tab> activeTabSupplier,
+            ObservableSupplier<@Nullable Tab> activeTabSupplier,
             Context context,
             ActivityLifecycleDispatcher activityLifecycleDispatcher,
             Supplier<TabBookmarker> tabBookmarkerSupplier,
-            Supplier<Tracker> trackerSupplier,
+            Supplier<@Nullable Tracker> trackerSupplier,
             ObservableSupplier<BookmarkModel> bookmarkModelSupplier) {
         // By default use the empty star drawable with an "Add to bookmarks" description.
         super(
@@ -95,8 +98,7 @@ public class AddToBookmarksToolbarButtonController extends BaseButtonDataProvide
                 /* supportsTinting= */ true,
                 /* iphCommandBuilder= */ null,
                 AdaptiveToolbarButtonVariant.ADD_TO_BOOKMARKS,
-                /* tooltipTextResId= */ Resources.ID_NULL,
-                /* showBackgroundHighlight= */ true);
+                /* tooltipTextResId= */ Resources.ID_NULL);
         mActivityLifecycleDispatcher = activityLifecycleDispatcher;
         mTabBookmarkerSupplier = tabBookmarkerSupplier;
         mTrackerSupplier = trackerSupplier;
@@ -129,21 +131,20 @@ public class AddToBookmarksToolbarButtonController extends BaseButtonDataProvide
                         AdaptiveToolbarButtonVariant.ADD_TO_BOOKMARKS,
                         /* actionChipLabelResId= */ Resources.ID_NULL,
                         /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ true,
                         /* hasErrorBadge= */ false);
 
         mIsTablet = DeviceFormFactor.isNonMultiDisplayContextOnTablet(mContext);
     }
 
     private void refreshBookmarkIcon() {
-        if (!mActiveTabSupplier.hasValue()
-                || !mBookmarkModelSupplier.hasValue()
-                || !mBookmarkModelSupplier.get().isBookmarkModelLoaded()) {
+        Tab activeTab = mActiveTabSupplier.get();
+        if (activeTab == null) return;
+        BookmarkModel bookmarkModel = mBookmarkModelSupplier.get();
+        if (bookmarkModel == null || !bookmarkModel.isBookmarkModelLoaded()) {
             return;
         }
 
-        boolean isCurrentTabBookmarked =
-                mBookmarkModelSupplier.get().hasBookmarkIdForTab(mActiveTabSupplier.get());
+        boolean isCurrentTabBookmarked = bookmarkModel.hasBookmarkIdForTab(activeTab);
         ButtonSpec buttonSpecForCurrentTab =
                 isCurrentTabBookmarked ? mFilledButtonSpec : mEmptyButtonSpec;
         if (!Objects.equals(mButtonData.getButtonSpec(), buttonSpecForCurrentTab)) {
@@ -153,7 +154,7 @@ public class AddToBookmarksToolbarButtonController extends BaseButtonDataProvide
     }
 
     @Override
-    protected boolean shouldShowButton(Tab tab) {
+    protected boolean shouldShowButton(@Nullable Tab tab) {
         if (mIsTablet) return false;
 
         return super.shouldShowButton(tab);
@@ -182,20 +183,23 @@ public class AddToBookmarksToolbarButtonController extends BaseButtonDataProvide
 
     @Override
     public void onClick(View view) {
-        if (!mTabBookmarkerSupplier.hasValue() || !mActiveTabSupplier.hasValue()) return;
+        var tabBookmarker = mTabBookmarkerSupplier.get();
+        Tab activeTab = mActiveTabSupplier.get();
+        if (tabBookmarker == null || activeTab == null) return;
 
-        if (mTrackerSupplier.hasValue()) {
-            mTrackerSupplier
-                    .get()
-                    .notifyEvent(
-                            EventConstants.ADAPTIVE_TOOLBAR_CUSTOMIZATION_ADD_TO_BOOKMARKS_OPENED);
+        Tracker tracker = mTrackerSupplier.get();
+        if (tracker != null) {
+            tracker.notifyEvent(
+                    EventConstants.ADAPTIVE_TOOLBAR_CUSTOMIZATION_ADD_TO_BOOKMARKS_OPENED);
         }
 
         RecordUserAction.record("MobileTopToolbarAddToBookmarksButton");
-        mTabBookmarkerSupplier.get().addOrEditBookmark(mActiveTabSupplier.get());
+        // mActiveTabSupplier.hasValue() is true, so .get() should be non-null
+        mTabBookmarkerSupplier.get().addOrEditBookmark(activeTab);
     }
 
     @Override
+    @SuppressWarnings("NullAway")
     public void destroy() {
         if (mObservedBookmarkModel != null) {
             mObservedBookmarkModel.removeObserver(mBookmarkModelObserver);

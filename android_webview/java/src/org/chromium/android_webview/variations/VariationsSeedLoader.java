@@ -23,7 +23,9 @@ import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.android_webview.AwBrowserProcess;
+import org.chromium.android_webview.common.AwFeatures;
 import org.chromium.android_webview.common.AwSwitches;
+import org.chromium.android_webview.common.WebViewCachedFlags;
 import org.chromium.android_webview.common.services.IVariationsSeedServer;
 import org.chromium.android_webview.common.services.IVariationsSeedServerCallback;
 import org.chromium.android_webview.common.services.ServiceConnectionDelayRecorder;
@@ -46,7 +48,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * VariationsSeedLoader asynchronously loads and updates the variations seed. VariationsSeedLoader
@@ -120,7 +121,7 @@ public class VariationsSeedLoader {
 
     @Nullable private FutureTask<SeedLoadResult> mLoadTask;
     private final SeedServerCallback mSeedServerCallback = new SeedServerCallback();
-    private final AtomicBoolean mIsServiceBound = new AtomicBoolean();
+    private boolean mPostedServiceConnected;
 
     private static void recordLoadSeedResult(@LoadSeedResult int result) {
         RecordHistogram.recordEnumeratedHistogram(
@@ -200,6 +201,10 @@ public class VariationsSeedLoader {
         long maxRequestPeriodMillis =
                 VariationsUtils.getDurationSwitchValueInMillis(
                         AwSwitches.FINCH_SEED_MIN_UPDATE_PERIOD, MAX_REQUEST_PERIOD_MILLIS);
+        if (WebViewCachedFlags.get()
+                .isCachedFeatureEnabled(AwFeatures.WEBVIEW_REDUCED_SEED_REQUEST_PERIOD)) {
+            maxRequestPeriodMillis /= 2;
+        }
         return now < lastRequestTime + maxRequestPeriodMillis;
     }
 
@@ -207,6 +212,10 @@ public class VariationsSeedLoader {
         long expirationDuration =
                 VariationsUtils.getDurationSwitchValueInMillis(
                         AwSwitches.FINCH_SEED_EXPIRATION_AGE, SEED_EXPIRATION_MILLIS);
+        if (WebViewCachedFlags.get()
+                .isCachedFeatureEnabled(AwFeatures.WEBVIEW_REDUCED_SEED_EXPIRATION)) {
+            expirationDuration /= 2;
+        }
         return getCurrentTimeMillis() > seedFileTime + expirationDuration;
     }
 
@@ -377,9 +386,13 @@ public class VariationsSeedLoader {
 
         @Override
         public void onServiceConnectedImpl(ComponentName name, IBinder service) {
+            if (mPostedServiceConnected) {
+                // Only post this task once.
+                return;
+            }
             // onServiceConnected is called on the app's main thread. Punt this back to the
             // background thread as this work is not time critical.
-            mIsServiceBound.set(true);
+            mPostedServiceConnected = true;
             PostTask.postTask(
                     TaskTraits.BEST_EFFORT_MAY_BLOCK,
                     () -> {
@@ -391,18 +404,14 @@ public class VariationsSeedLoader {
                         } catch (RemoteException e) {
                             Log.e(TAG, "Faild requesting seed", e);
                         } finally {
-                            if (mIsServiceBound.get()) {
-                                ContextUtils.getApplicationContext().unbindService(this);
-                            }
+                            ContextUtils.getApplicationContext().unbindService(this);
                             VariationsUtils.closeSafely(mNewSeedFd);
                         }
                     });
         }
 
         @Override
-        public void onServiceDisconnected(ComponentName name) {
-            mIsServiceBound.set(false);
-        }
+        public void onServiceDisconnected(ComponentName name) {}
     }
 
     private static class SeedServerCallback extends IVariationsSeedServerCallback.Stub {

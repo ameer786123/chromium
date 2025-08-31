@@ -231,7 +231,7 @@ void PausableScriptExecutor::CreateAndRun(
     v8::Local<v8::Value> argv[],
     mojom::blink::WantResultOption want_result_option,
     WebScriptExecutionCallback callback) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   ScriptState* script_state = ScriptState::From(isolate, context);
   if (!script_state->ContextIsValid()) {
     if (callback)
@@ -244,8 +244,8 @@ void PausableScriptExecutor::CreateAndRun(
           mojom::blink::LoadEventBlockingOption::kDoNotBlock,
           want_result_option, mojom::blink::PromiseResultOption::kDoNotWait,
           std::move(callback),
-          MakeGarbageCollected<V8FunctionExecutor>(
-              script_state->GetIsolate(), function, receiver, argc, argv));
+          MakeGarbageCollected<V8FunctionExecutor>(isolate, function, receiver,
+                                                   argc, argv));
   executor->Run();
 }
 
@@ -332,8 +332,8 @@ void PausableScriptExecutor::PostExecuteAndDestroySelf(
     ExecutionContext* context) {
   task_handle_ = PostCancellableTask(
       *context->GetTaskRunner(TaskType::kJavascriptTimerImmediate), FROM_HERE,
-      WTF::BindOnce(&PausableScriptExecutor::ExecuteAndDestroySelf,
-                    WrapPersistent(this)));
+      BindOnce(&PausableScriptExecutor::ExecuteAndDestroySelf,
+               WrapPersistent(this)));
 }
 
 void PausableScriptExecutor::ExecuteAndDestroySelf() {
@@ -370,8 +370,8 @@ void PausableScriptExecutor::ExecuteAndDestroySelf() {
       keep_alive_ = this;
       MakeGarbageCollected<PromiseAggregator>(
           script_state_, results,
-          WTF::BindOnce(&PausableScriptExecutor::HandleResults,
-                        WrapWeakPersistent(this)));
+          BindOnce(&PausableScriptExecutor::HandleResults,
+                   WrapWeakPersistent(this)));
       break;
 
     case mojom::blink::PromiseResultOption::kDoNotWait:

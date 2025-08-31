@@ -14,6 +14,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
@@ -121,6 +122,7 @@ BrowsingHistoryService::HistoryEntry::HistoryEntry(
     const GURL& remote_icon_url_for_uma,
     int visit_count,
     int typed_count,
+    bool is_actor_visit,
     std::optional<std::string> app_id)
     : entry_type(entry_type),
       url(url),
@@ -133,6 +135,7 @@ BrowsingHistoryService::HistoryEntry::HistoryEntry(
       remote_icon_url_for_uma(remote_icon_url_for_uma),
       visit_count(visit_count),
       typed_count(typed_count),
+      is_actor_visit(is_actor_visit),
       app_id(app_id) {
   all_timestamps.insert(time);
 }
@@ -481,6 +484,9 @@ void BrowsingHistoryService::RemoveVisits(
         base::BindOnce(&BrowsingHistoryService::RemoveWebHistoryComplete,
                        weak_factory_.GetWeakPtr()),
         partial_traffic_annotation);
+
+    base::UmaHistogramCounts1000(
+        "History.RemoveVisitsFromWebHistory.EntryCount", expire_list.size());
   }
 
   driver_->OnRemoveVisits(expire_list);
@@ -613,7 +619,7 @@ void BrowsingHistoryService::QueryComplete(
         HistoryEntry::LOCAL_ENTRY, page.url(), page.title(), page.visit_time(),
         std::string(), !state->search_text.empty(), page.snippet().text(),
         page.blocked_visit(), GURL(), page.visit_count(), page.typed_count(),
-        page.app_id()));
+        page.has_actor_source(), page.app_id()));
   }
 
   state->local_status =
@@ -758,6 +764,7 @@ void BrowsingHistoryService::WebHistoryQueryComplete(
               HistoryEntry::REMOTE_ENTRY, gurl, title, time, client_id,
               !state->search_text.empty(), std::u16string(),
               /* blocked_visit */ false, GURL(favicon_url), 0, 0,
+              /*is_actor_visit=*/false,
               /*app_id= */ std::nullopt));
         }
       }

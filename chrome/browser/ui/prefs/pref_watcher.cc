@@ -112,6 +112,8 @@ PrefWatcher::PrefWatcher(Profile* profile)
                                      renderer_callback);
   profile_pref_change_registrar_.Add(prefs::kWebRTCIPHandlingUrl,
                                      renderer_callback);
+  profile_pref_change_registrar_.Add(prefs::kWebRTCPostQuantumKeyAgreement,
+                                     renderer_callback);
   profile_pref_change_registrar_.Add(prefs::kWebRTCUDPPortRange,
                                      renderer_callback);
 
@@ -124,6 +126,9 @@ PrefWatcher::PrefWatcher(Profile* profile)
   profile_pref_change_registrar_.Add(prefs::kFullscreenAllowed,
                                      renderer_callback);
 #endif
+
+  profile_pref_change_registrar_.Add(prefs::kViewSourceLineWrappingEnabled,
+                                     renderer_callback);
 
   PrefChangeRegistrar::NamedChangeCallback webkit_callback =
       base::BindRepeating(&PrefWatcher::OnWebPrefChanged,

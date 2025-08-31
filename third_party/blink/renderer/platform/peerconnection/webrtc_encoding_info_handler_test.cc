@@ -85,7 +85,7 @@ class WebrtcEncodingInfoHandlerTests : public ::testing::Test {
       const String video_scalability_mode,
       const CodecSupport support) {
     auto video_encoder_factory = std::make_unique<MockVideoEncoderFactory>();
-    rtc::scoped_refptr<webrtc::AudioEncoderFactory> audio_encoder_factory =
+    webrtc::scoped_refptr<webrtc::AudioEncoderFactory> audio_encoder_factory =
         blink::CreateWebrtcAudioEncoderFactory();
     if (sdp_video_format) {
       const std::optional<std::string> expected_scalability_mode =
@@ -94,14 +94,13 @@ class WebrtcEncodingInfoHandlerTests : public ::testing::Test {
               : std::nullopt;
 
       ON_CALL(*video_encoder_factory, QueryCodecSupport)
-          .WillByDefault(testing::Invoke(
-              [sdp_video_format, expected_scalability_mode, support](
-                  const webrtc::SdpVideoFormat& format,
-                  std::optional<std::string> scalability_mode) {
-                EXPECT_TRUE(format.IsSameCodec(*sdp_video_format));
-                EXPECT_EQ(scalability_mode, expected_scalability_mode);
-                return support;
-              }));
+          .WillByDefault([sdp_video_format, expected_scalability_mode, support](
+                             const webrtc::SdpVideoFormat& format,
+                             std::optional<std::string> scalability_mode) {
+            EXPECT_TRUE(format.IsSameCodec(*sdp_video_format));
+            EXPECT_EQ(scalability_mode, expected_scalability_mode);
+            return support;
+          });
       EXPECT_CALL(*video_encoder_factory, QueryCodecSupport)
           .Times(::testing::AtMost(1));
     }

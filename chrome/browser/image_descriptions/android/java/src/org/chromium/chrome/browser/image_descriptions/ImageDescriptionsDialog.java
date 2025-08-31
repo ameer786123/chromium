@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser.image_descriptions;
 
-import static org.chromium.build.NullUtil.assumeNonNull;
-
 import android.content.Context;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -63,24 +61,24 @@ public class ImageDescriptionsDialog
 
     // LINT.ThenChange(/tools/metrics/histograms/metadata/accessibility/enums.xml:AccessibilityImageLabelModeAndroid)
 
-    private ImageDescriptionsControllerDelegate mControllerDelegate;
+    private final ImageDescriptionsControllerDelegate mControllerDelegate;
 
-    private ModalDialogManager mModalDialogManager;
-    private PropertyModel mPropertyModel;
-    private WebContentsObserver mWebContentsObserver;
+    private final ModalDialogManager mModalDialogManager;
+    private final PropertyModel mPropertyModel;
+    private final WebContentsObserver mWebContentsObserver;
 
-    private RadioButtonWithDescriptionLayout mRadioGroup;
-    private RadioButtonWithDescription mOptionJustOnceRadioButton;
-    private RadioButtonWithDescription mOptionAlwaysRadioButton;
-    private CheckBox mOptionalCheckbox;
+    private final RadioButtonWithDescriptionLayout mRadioGroup;
+    private final RadioButtonWithDescription mOptionJustOnceRadioButton;
+    private final RadioButtonWithDescription mOptionAlwaysRadioButton;
+    private final CheckBox mOptionalCheckbox;
 
-    private boolean mShouldShowDontAskAgainOption;
+    private final boolean mShouldShowDontAskAgainOption;
     private boolean mOnlyOnWifiState;
     private boolean mDontAskAgainState;
     private @DialogDismissalCause int mDismissalCause;
-    private WebContents mWebContents;
-    private Profile mProfile;
-    private Context mContext;
+    private final WebContents mWebContents;
+    private final Profile mProfile;
+    private final Context mContext;
 
     protected ImageDescriptionsDialog(
             Context context,
@@ -91,7 +89,7 @@ public class ImageDescriptionsDialog
         mModalDialogManager = modalDialogManager;
         mControllerDelegate = delegate;
         mWebContents = webContents;
-        mProfile = assumeNonNull(Profile.fromWebContents(webContents)).getOriginalProfile();
+        mProfile = Profile.fromWebContents(webContents).getOriginalProfile();
         mContext = context;
 
         // Set initial state.
@@ -223,11 +221,15 @@ public class ImageDescriptionsDialog
                                 ? ImageDescriptionsDialogAction.ENABLED_ONLY_ON_WIFI
                                 : ImageDescriptionsDialogAction.ENABLED;
 
-                // If user requested "only on wifi" and we have no wifi, provide alt toast.
-                if (mOnlyOnWifiState
-                        && (DeviceConditions.getCurrentNetConnectionType(mContext)
-                                != ConnectionType.CONNECTION_WIFI)) {
-                    toastMessage = R.string.image_descriptions_toast_on_no_wifi;
+                // If user requested "only on wifi" and we have no wifi or ethernet,
+                // provide alt toast.
+                if (mOnlyOnWifiState) {
+                    int currentNetType = DeviceConditions.getCurrentNetConnectionType(mContext);
+                    boolean isWifi = (currentNetType == ConnectionType.CONNECTION_WIFI);
+                    boolean isEthernet = (currentNetType == ConnectionType.CONNECTION_ETHERNET);
+                    if (!(isWifi || isEthernet)) {
+                        toastMessage = R.string.image_descriptions_toast_on_no_wifi;
+                    }
                 }
             } else if (mOptionJustOnceRadioButton.isChecked()) {
                 mControllerDelegate.getImageDescriptionsJustOnce(mDontAskAgainState, mWebContents);

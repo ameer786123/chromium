@@ -41,6 +41,11 @@ suite('LanguageMenu', () => {
         '.search-field')!;
   }
 
+  function getLanguageSearchClearButton() {
+    return languageMenu.$.languageMenu.querySelector<HTMLElement>(
+        '#clearLanguageSearch');
+  }
+
   function getNoResultsFoundMessage() {
     return languageMenu.$.languageMenu.querySelector<HTMLElement>(
         '#noResultsMessage');
@@ -182,9 +187,101 @@ suite('LanguageMenu', () => {
             'English (United States)', getLanguageLineItems()[0]!);
         assertEquals(true, getNoResultsFoundMessage()!.hidden);
       });
+
+      test('it matches the language code', async () => {
+        getLanguageSearchField().value = 'en-us';
+        await microtasksFinished();
+
+        assertEquals(1, getLanguageLineItems().length);
+        assertLanguageLineWithTextAndSwitch(
+            'English (United States)', getLanguageLineItems()[0]!);
+        assertEquals(true, getNoResultsFoundMessage()!.hidden);
+      });
+
+      test('shows clear button when search field has contents', async () => {
+        getLanguageSearchField().value = 'eng';
+        await microtasksFinished();
+
+        assertEquals('eng', getLanguageSearchField().value);
+
+        const clearButton = getLanguageSearchClearButton();
+        assertTrue(!!clearButton);
+      });
+
+      test(
+          'does not show clear button when search field has no content',
+          async () => {
+            getLanguageSearchField().value = '';
+            await microtasksFinished();
+
+            assertEquals('', getLanguageSearchField().value);
+
+            const clearButton = getLanguageSearchClearButton();
+            assertFalse(!!clearButton);
+          });
+
+      test('clears search field when clear button is clicked', async () => {
+        getLanguageSearchField().value = 'xxx';
+        await microtasksFinished();
+
+        assertEquals('xxx', getLanguageSearchField().value);
+
+        const clearButton = getLanguageSearchClearButton();
+        assertTrue(!!clearButton);
+
+        clearButton.click();
+        await microtasksFinished();
+
+        assertEquals('', getLanguageSearchField().value);
+      });
+    });
+
+    suite('with display names with accent', () => {
+      const portugueseDisplayName = 'Português (Brasil)';
+
+      setup(() => {
+        availableVoices = [
+          createSpeechSynthesisVoice(
+              {name: portugueseDisplayName, lang: 'pt-br'}),
+        ];
+        languageMenu.localeToDisplayName = {
+          'pt-br': portugueseDisplayName,
+        };
+        languageMenu.availableVoices = availableVoices;
+        return drawLanguageMenu();
+      });
+
+      test('it matches search with accent', async () => {
+        getLanguageSearchField().value = 'português';
+        await microtasksFinished();
+
+        assertEquals(1, getLanguageLineItems().length);
+        assertLanguageLineWithTextAndSwitch(
+            portugueseDisplayName, getLanguageLineItems()[0]!);
+        assertEquals(true, getNoResultsFoundMessage()!.hidden);
+      });
+
+      test('it matches search with no accent', async () => {
+        getLanguageSearchField().value = 'portugues';
+        await microtasksFinished();
+
+        assertEquals(1, getLanguageLineItems().length);
+        assertLanguageLineWithTextAndSwitch(
+            portugueseDisplayName, getLanguageLineItems()[0]!);
+        assertEquals(true, getNoResultsFoundMessage()!.hidden);
+      });
+
+      test('it matches the language code', async () => {
+        getLanguageSearchField().value = 'pt-';
+        await microtasksFinished();
+
+        assertEquals(1, getLanguageLineItems().length);
+        assertLanguageLineWithTextAndSwitch(
+            portugueseDisplayName, getLanguageLineItems()[0]!);
+        assertEquals(true, getNoResultsFoundMessage()!.hidden);
+      });
     });
   });
-
   suite('with multiple languages', () => {
     setup(() => {
       availableVoices = [

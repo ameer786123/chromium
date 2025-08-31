@@ -49,7 +49,7 @@ blink::FencedFrame::ReportingDestination ToPublicDestination(
 }
 
 std::optional<mojom::blink::AutomaticBeaconType> GetAutomaticBeaconType(
-    const WTF::String& input) {
+    const String& input) {
   if (input == blink::kDeprecatedFencedFrameTopNavigationBeaconType) {
     return mojom::blink::AutomaticBeaconType::kDeprecatedTopNavigation;
   }
@@ -158,7 +158,7 @@ void Fence::reportEventToDestinationEnum(const FenceEvent* event,
     }
   }
 
-  WTF::Vector<blink::FencedFrame::ReportingDestination> destinations;
+  Vector<blink::FencedFrame::ReportingDestination> destinations;
   destinations.reserve(event->destination().size());
   std::ranges::transform(event->destination(), std::back_inserter(destinations),
                          ToPublicDestination);
@@ -266,8 +266,8 @@ void Fence::setReportEventDataForAutomaticBeacons(
   std::optional<mojom::blink::AutomaticBeaconType> beacon_type =
       GetAutomaticBeaconType(event->eventType());
   if (!beacon_type.has_value()) {
-    AddConsoleMessage(event->eventType() +
-                      " is not a valid automatic beacon event type.");
+    AddConsoleMessage(StrCat(
+        {event->eventType(), " is not a valid automatic beacon event type."}));
     return;
   }
   if (event->hasEventData() &&
@@ -279,8 +279,8 @@ void Fence::setReportEventDataForAutomaticBeacons(
   }
   if (event->eventType() ==
       blink::kDeprecatedFencedFrameTopNavigationBeaconType) {
-    AddConsoleMessage(event->eventType() + " is deprecated in favor of " +
-                          kFencedFrameTopNavigationCommitBeaconType + ".",
+    AddConsoleMessage(StrCat({event->eventType(), " is deprecated in favor of ",
+                              kFencedFrameTopNavigationCommitBeaconType, "."}),
                       mojom::blink::ConsoleMessageLevel::kWarning);
   }
   LocalFrame* frame = DomWindow()->GetFrame();
@@ -310,7 +310,7 @@ void Fence::setReportEventDataForAutomaticBeacons(
     }
   }
 
-  WTF::Vector<blink::FencedFrame::ReportingDestination> destinations;
+  Vector<blink::FencedFrame::ReportingDestination> destinations;
   destinations.reserve(event->destination().size());
   std::ranges::transform(event->destination(), std::back_inserter(destinations),
                          ToPublicDestination);
@@ -372,7 +372,7 @@ ScriptPromise<IDLUndefined> Fence::disableUntrustedNetwork(
       script_state, exception_state.GetContext());
   auto promise = resolver->Promise();
   frame->GetLocalFrameHostRemote().DisableUntrustedNetworkInFencedFrame(
-      WTF::BindOnce(
+      BindOnce(
           [](ScriptPromiseResolver<IDLUndefined>* resolver) {
             RecordDisableUntrustedNetworkOutcome(
                 DisableUntrustedNetworkOutcome::kResolved);

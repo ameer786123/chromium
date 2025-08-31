@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -49,7 +50,6 @@ enum class VideoFrameResourceType {
   NONE,
   RGB,
   RGBA_PREMULTIPLIED,
-  STREAM_TEXTURE,
   // The VideoFrame is merely a hint to compositor that a hole must be made
   // transparent so the video underlay will be visible.
   // Used by Chromecast only.
@@ -141,10 +141,12 @@ class MEDIA_EXPORT VideoResourceUpdater
   FrameResource* RecycleOrAllocateResource(const gfx::Size& resource_size,
                                            viz::SharedImageFormat si_format,
                                            const gfx::ColorSpace& color_space,
+                                           SkAlphaType alpha_type,
                                            VideoFrame::ID unique_id);
   FrameResource* AllocateResource(const gfx::Size& size,
                                   viz::SharedImageFormat format,
-                                  const gfx::ColorSpace& color_space);
+                                  const gfx::ColorSpace& color_space,
+                                  SkAlphaType alpha_type);
 
   // Create a copy of a texture-backed source video frame in a new GL_TEXTURE_2D
   // texture. This is used when there are multiple GPU threads (Android WebView)
@@ -164,9 +166,7 @@ class MEDIA_EXPORT VideoResourceUpdater
   // (pixel upload).
   viz::SharedImageFormat GetSoftwareOutputFormat(
       VideoPixelFormat input_frame_format,
-      int bits_per_channel,
-      const gfx::ColorSpace& input_frame_color_space,
-      bool& texture_needs_rgb_conversion_out);
+      int bits_per_channel);
 
   // Transfer RGB pixels from the video frame to software resource through
   // canvas via PaintCanvasVideoRenderer.
@@ -218,9 +218,10 @@ class MEDIA_EXPORT VideoResourceUpdater
   uint32_t next_plane_resource_id_ = 1;
 
   // Temporary pixel buffers when converting between formats.
-  std::unique_ptr<uint8_t[], base::UncheckedFreeDeleter>
-      upload_pixels_[SkYUVAInfo::kMaxPlanes] = {};
-  size_t upload_pixels_size_[SkYUVAInfo::kMaxPlanes] = {};
+  std::array<std::unique_ptr<uint8_t[], base::UncheckedFreeDeleter>,
+             SkYUVAInfo::kMaxPlanes>
+      upload_pixels_ = {};
+  std::array<size_t, SkYUVAInfo::kMaxPlanes> upload_pixels_size_ = {};
 
   VideoFrameResourceType frame_resource_type_;
 

@@ -22,6 +22,8 @@
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chrome/browser/ash/boca/on_task/on_task_pod_controller_impl.h"
+#include "chrome/browser/ash/browser_delegate/browser_controller.h"
+#include "chrome/browser/ash/browser_delegate/browser_delegate.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/browser.h"
@@ -43,18 +45,19 @@
 // static
 Browser* LockedSessionWindowTracker::GetBrowserWithTab(
     content::WebContents* tab) {
-  BrowserList* const browser_list = BrowserList::GetInstance();
-  for (auto browser_iterator =
-           browser_list->begin_browsers_ordered_by_activation();
-       browser_iterator != browser_list->end_browsers_ordered_by_activation();
-       ++browser_iterator) {
-    Browser* const browser = *browser_iterator;
-    if (browser && browser->tab_strip_model()->GetIndexOfWebContents(tab) !=
-                       TabStripModel::kNoTab) {
-      return browser;
-    }
-  }
-  return nullptr;
+  Browser* result = nullptr;
+  ash::BrowserController::GetInstance()->ForEachBrowser(
+      ash::BrowserController::BrowserOrder::kAscendingActivationTime,
+      [&](ash::BrowserDelegate& delegate) {
+        Browser* browser = &delegate.GetBrowser();
+        if (browser && browser->tab_strip_model()->GetIndexOfWebContents(tab) !=
+                           TabStripModel::kNoTab) {
+          result = browser;
+          return ash::BrowserController::kBreakIteration;
+        }
+        return ash::BrowserController::kContinueIteration;
+      });
+  return result;
 }
 
 LockedSessionWindowTracker::LockedSessionWindowTracker(
@@ -206,6 +209,7 @@ void LockedSessionWindowTracker::OnPauseModeChanged(bool paused) {
           ->immersive_mode_controller();
   if (paused) {
     immersive_mode_controller->SetEnabled(false);
+    immersive_mode_controller_observation_.Reset();
     immersive_mode_controller_observation_.Observe(immersive_mode_controller);
   } else {
     immersive_mode_controller_observation_.Reset();
@@ -373,6 +377,11 @@ void LockedSessionWindowTracker::WillCloseAllTabs(
 // BrowserListObserver Implementation
 void LockedSessionWindowTracker::OnBrowserClosing(Browser* browser) {
   if (browser == browser_) {
+    // Notify not in workbook when boca closed.
+    for (auto& observer : observers_) {
+      observer.OnActiveTabChanged(
+          l10n_util::GetStringUTF16(IDS_NOT_IN_CLASS_TOOLS));
+    }
     CleanupWindowTracker();
   }
   if (browser->type() == Browser::Type::TYPE_APP_POPUP) {
@@ -404,6 +413,27 @@ void LockedSessionWindowTracker::OnBrowserAdded(Browser* browser) {
         base::BindOnce(&LockedSessionWindowTracker::MaybeCloseBrowser,
                        weak_pointer_factory_.GetWeakPtr(),
                        browser->AsWeakPtr()));
+  }
+}
+
+void LockedSessionWindowTracker::OnBrowserSetLastActive(Browser* browser) {
+  if (!browser || !browser_) {
+    return;
+  }
+  if (browser != browser_) {
+    for (auto& observer : observers_) {
+      observer.OnActiveTabChanged(
+          l10n_util::GetStringUTF16(IDS_NOT_IN_CLASS_TOOLS));
+    }
+    return;
+  }
+  if (!browser->GetActiveTabInterface() ||
+      !browser->GetActiveTabInterface()->GetContents()) {
+    return;
+  }
+  for (auto& observer : observers_) {
+    observer.OnActiveTabChanged(
+        browser->GetActiveTabInterface()->GetContents()->GetTitle());
   }
 }
 

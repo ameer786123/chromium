@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "base/allocator/partition_alloc_features.h"
 
 #include "base/allocator/miracle_parameter.h"
@@ -29,16 +34,9 @@ static constexpr char kBrowserAndRendererStr[] = "browser-and-renderer";
 static constexpr char kNonRendererStr[] = "non-renderer";
 static constexpr char kAllProcessesStr[] = "all-processes";
 
-#if PA_CONFIG(ENABLE_SHADOW_METADATA)
-static constexpr char kRendererOnlyStr[] = "renderer-only";
-static constexpr char kAllChildProcessesStr[] = "all-child-processes";
-#endif  // PA_CONFIG(ENABLE_SHADOW_METADATA)
-
 }  // namespace
 
-BASE_FEATURE(kPartitionAllocUnretainedDanglingPtr,
-             "PartitionAllocUnretainedDanglingPtr",
-             FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(PartitionAllocUnretainedDanglingPtr, FEATURE_ENABLED_BY_DEFAULT);
 
 constexpr FeatureParam<UnretainedDanglingPtrMode>::Option
     kUnretainedDanglingPtrModeOption[] = {
@@ -59,8 +57,7 @@ constinit const FeatureParam<UnretainedDanglingPtrMode>
 // `base::allocator::MakeFreeNoOp()`). No-op `free()` stands down in the
 // presence of DPD, but hypothetically fully launching DPD should prompt
 // a rethink of no-op `free()`.
-BASE_FEATURE(kPartitionAllocDanglingPtr,
-             "PartitionAllocDanglingPtr",
+BASE_FEATURE(PartitionAllocDanglingPtr,
 #if PA_BUILDFLAG(ENABLE_DANGLING_RAW_PTR_FEATURE_FLAG)
              FEATURE_ENABLED_BY_DEFAULT
 #else
@@ -93,9 +90,7 @@ constinit const FeatureParam<DanglingPtrType> kDanglingPtrTypeParam{
 
 #if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 // Use a larger maximum thread cache cacheable bucket size.
-BASE_FEATURE(kPartitionAllocLargeThreadCacheSize,
-             "PartitionAllocLargeThreadCacheSize",
-             FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(PartitionAllocLargeThreadCacheSize, FEATURE_ENABLED_BY_DEFAULT);
 
 MIRACLE_PARAMETER_FOR_INT(GetPartitionAllocLargeThreadCacheSizeValue,
                           kPartitionAllocLargeThreadCacheSize,
@@ -108,17 +103,14 @@ MIRACLE_PARAMETER_FOR_INT(
     "PartitionAllocLargeThreadCacheSizeValueForLowRAMAndroid",
     ::partition_alloc::kThreadCacheDefaultSizeThreshold)
 
-BASE_FEATURE(kPartitionAllocLargeEmptySlotSpanRing,
-             "PartitionAllocLargeEmptySlotSpanRing",
+BASE_FEATURE(PartitionAllocLargeEmptySlotSpanRing,
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
              FEATURE_ENABLED_BY_DEFAULT);
 #else
              FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
-BASE_FEATURE(kPartitionAllocWithAdvancedChecks,
-             "PartitionAllocWithAdvancedChecks",
-             FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(PartitionAllocWithAdvancedChecks, FEATURE_DISABLED_BY_DEFAULT);
 constexpr FeatureParam<PartitionAllocWithAdvancedChecksEnabledProcesses>::Option
     kPartitionAllocWithAdvancedChecksEnabledProcessesOptions[] = {
         {PartitionAllocWithAdvancedChecksEnabledProcesses::kBrowserOnly,
@@ -136,34 +128,21 @@ constinit const FeatureParam<PartitionAllocWithAdvancedChecksEnabledProcesses>
         PartitionAllocWithAdvancedChecksEnabledProcesses::kBrowserOnly,
         &kPartitionAllocWithAdvancedChecksEnabledProcessesOptions};
 
-BASE_FEATURE(kPartitionAllocSchedulerLoopQuarantine,
-             "PartitionAllocSchedulerLoopQuarantine",
+BASE_FEATURE(PartitionAllocSchedulerLoopQuarantine,
              FEATURE_DISABLED_BY_DEFAULT);
-// Scheduler Loop Quarantine's per-branch capacity in bytes.
+// Scheduler Loop Quarantine's config.
 // Note: Do not use the prepared macro as of no need for a local cache.
-constinit const FeatureParam<int>
-    kPartitionAllocSchedulerLoopQuarantineBranchCapacity{
+constinit const FeatureParam<std::string>
+    kPartitionAllocSchedulerLoopQuarantineConfig{
         &kPartitionAllocSchedulerLoopQuarantine,
-        "PartitionAllocSchedulerLoopQuarantineBranchCapacity", 0};
-// Scheduler Loop Quarantine's capacity for the UI thread in bytes.
-BASE_FEATURE_PARAM(int,
-                   kPartitionAllocSchedulerLoopQuarantineBrowserUICapacity,
-                   &kPartitionAllocSchedulerLoopQuarantine,
-                   "PartitionAllocSchedulerLoopQuarantineBrowserUICapacity",
-                   0);
+        "PartitionAllocSchedulerLoopQuarantineConfig", "{}"};
 
-BASE_FEATURE(kPartitionAllocZappingByFreeFlags,
-             "PartitionAllocZappingByFreeFlags",
-             FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kPartitionAllocEventuallyZeroFreedMemory,
-             "PartitionAllocEventuallyZeroFreedMemory",
+BASE_FEATURE(PartitionAllocEventuallyZeroFreedMemory,
              FEATURE_DISABLED_BY_DEFAULT);
 
 // Evaluated and positive stability and peformance-wise on Linux-based systems,
 // disabled elsewhere (for now). Does not apply to Windows.
-BASE_FEATURE(kPartitionAllocFewerMemoryRegions,
-             "PartitionAllocFewerMemoryRegions",
+BASE_FEATURE(PartitionAllocFewerMemoryRegions,
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS)
              FEATURE_ENABLED_BY_DEFAULT);
 #else
@@ -171,8 +150,7 @@ BASE_FEATURE(kPartitionAllocFewerMemoryRegions,
 #endif
 #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
-BASE_FEATURE(kPartitionAllocBackupRefPtr,
-             "PartitionAllocBackupRefPtr",
+BASE_FEATURE(PartitionAllocBackupRefPtr,
 #if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_FEATURE_FLAG)
              FEATURE_ENABLED_BY_DEFAULT
 #else
@@ -192,7 +170,7 @@ BASE_FEATURE_ENUM_PARAM(BackupRefPtrEnabledProcesses,
                         kBackupRefPtrEnabledProcessesParam,
                         &kPartitionAllocBackupRefPtr,
                         kPAFeatureEnabledProcessesStr,
-#if PA_BUILDFLAG(IS_MAC) && PA_BUILDFLAG(PA_ARCH_CPU_ARM64)
+#if PA_BUILDFLAG(IS_ANDROID)
                         BackupRefPtrEnabledProcesses::kNonRenderer,
 #else
                         BackupRefPtrEnabledProcesses::kAllProcesses,
@@ -213,9 +191,20 @@ BASE_FEATURE_ENUM_PARAM(BackupRefPtrMode,
 // Note: Do not use the prepared macro as of no need for a local cache.
 constinit const FeatureParam<int> kBackupRefPtrExtraExtrasSizeParam{
     &kPartitionAllocBackupRefPtr, "brp-extra-extras-size", 0};
+constinit const FeatureParam<bool> kBackupRefPtrSuppressDoubleFreeDetectedCrash{
+    &kPartitionAllocBackupRefPtr, "brp-suppress-double-free-detected-crash",
+    false};
+constinit const FeatureParam<bool> kBackupRefPtrSuppressCorruptionDetectedCrash{
+    &kPartitionAllocBackupRefPtr, "brp-suppress-corruption-detected-crash",
+#if PA_BUILDFLAG(IS_IOS)
+    // TODO(crbug.com/41497028): Continue investigation and remove once
+    // addressed.
+    true};
+#else
+    false};
+#endif
 
-BASE_FEATURE(kPartitionAllocMemoryTagging,
-             "PartitionAllocMemoryTagging",
+BASE_FEATURE(PartitionAllocMemoryTagging,
 #if PA_BUILDFLAG(USE_FULL_MTE) || BUILDFLAG(IS_ANDROID)
              FEATURE_ENABLED_BY_DEFAULT
 #else
@@ -264,13 +253,10 @@ constinit const FeatureParam<MemoryTaggingEnabledProcesses>
 #endif
         &kMemoryTaggingEnabledProcessesOptions};
 
-BASE_FEATURE(kKillPartitionAllocMemoryTagging,
-             "KillPartitionAllocMemoryTagging",
-             FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(KillPartitionAllocMemoryTagging, FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_EXPORT BASE_DECLARE_FEATURE(kPartitionAllocPermissiveMte);
-BASE_FEATURE(kPartitionAllocPermissiveMte,
-             "PartitionAllocPermissiveMte",
+BASE_FEATURE(PartitionAllocPermissiveMte,
 #if PA_BUILDFLAG(USE_FULL_MTE)
              // We want to actually crash if USE_FULL_MTE is enabled.
              FEATURE_DISABLED_BY_DEFAULT
@@ -279,22 +265,16 @@ BASE_FEATURE(kPartitionAllocPermissiveMte,
 #endif
 );
 
-BASE_FEATURE(kAsanBrpDereferenceCheck,
-             "AsanBrpDereferenceCheck",
-             FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(kAsanBrpExtractionCheck,
-             "AsanBrpExtractionCheck",      // Not much noise at the moment to
+BASE_FEATURE(AsanBrpDereferenceCheck, FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(AsanBrpExtractionCheck,        // Not much noise at the moment to
              FEATURE_DISABLED_BY_DEFAULT);  // enable by default.
-BASE_FEATURE(kAsanBrpInstantiationCheck,
-             "AsanBrpInstantiationCheck",
-             FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(AsanBrpInstantiationCheck, FEATURE_ENABLED_BY_DEFAULT);
 
 // If enabled, switches the bucket distribution to a denser one.
 //
 // We enable this by default everywhere except for 32-bit Android, since we saw
 // regressions there.
-BASE_FEATURE(kPartitionAllocUseDenserDistribution,
-             "PartitionAllocUseDenserDistribution",
+BASE_FEATURE(PartitionAllocUseDenserDistribution,
 #if BUILDFLAG(IS_ANDROID) && defined(ARCH_CPU_32_BITS)
              FEATURE_DISABLED_BY_DEFAULT
 #else
@@ -317,9 +297,7 @@ constinit const FeatureParam<BucketDistributionMode>
 #endif  // BUILDFLAG(IS_ANDROID) && defined(ARCH_CPU_32_BITS)
         &kPartitionAllocBucketDistributionOption};
 
-BASE_FEATURE(kPartitionAllocMemoryReclaimer,
-             "PartitionAllocMemoryReclaimer",
-             FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(PartitionAllocMemoryReclaimer, FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE_PARAM(TimeDelta,
                    kPartitionAllocMemoryReclaimerInterval,
                    &kPartitionAllocMemoryReclaimer,
@@ -329,14 +307,12 @@ BASE_FEATURE_PARAM(TimeDelta,
 
 // Configures whether we set a lower limit for renderers that do not have a main
 // frame, similar to the limit that is already done for backgrounded renderers.
-BASE_FEATURE(kLowerPAMemoryLimitForNonMainRenderers,
-             "LowerPAMemoryLimitForNonMainRenderers",
+BASE_FEATURE(LowerPAMemoryLimitForNonMainRenderers,
              FEATURE_DISABLED_BY_DEFAULT);
 
 // Whether to straighten free lists for larger slot spans in PurgeMemory() ->
 // ... -> PartitionPurgeSlotSpan().
-BASE_FEATURE(kPartitionAllocStraightenLargerSlotSpanFreeLists,
-             "PartitionAllocStraightenLargerSlotSpanFreeLists",
+BASE_FEATURE(PartitionAllocStraightenLargerSlotSpanFreeLists,
              FEATURE_ENABLED_BY_DEFAULT);
 const FeatureParam<partition_alloc::StraightenLargerSlotSpanFreeListsMode>::
     Option kPartitionAllocStraightenLargerSlotSpanFreeListsModeOption[] = {
@@ -358,20 +334,15 @@ constinit const FeatureParam<
 };
 
 // Whether to sort free lists for smaller slot spans in PurgeMemory().
-BASE_FEATURE(kPartitionAllocSortSmallerSlotSpanFreeLists,
-             "PartitionAllocSortSmallerSlotSpanFreeLists",
+BASE_FEATURE(PartitionAllocSortSmallerSlotSpanFreeLists,
              FEATURE_ENABLED_BY_DEFAULT);
 
 // Whether to sort the active slot spans in PurgeMemory().
-BASE_FEATURE(kPartitionAllocSortActiveSlotSpans,
-             "PartitionAllocSortActiveSlotSpans",
-             FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(PartitionAllocSortActiveSlotSpans, FEATURE_DISABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_WIN)
 // Whether to retry allocations when commit fails.
-BASE_FEATURE(kPageAllocatorRetryOnCommitFailure,
-             "PageAllocatorRetryOnCommitFailure",
-             FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(PageAllocatorRetryOnCommitFailure, FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS)
@@ -388,8 +359,7 @@ BASE_FEATURE_PARAM(bool,
                    false);
 #endif
 
-BASE_FEATURE(kEnableConfigurableThreadCacheMultiplier,
-             "EnableConfigurableThreadCacheMultiplier",
+BASE_FEATURE(EnableConfigurableThreadCacheMultiplier,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 MIRACLE_PARAMETER_FOR_DOUBLE(GetThreadCacheMultiplier,
@@ -413,8 +383,7 @@ constexpr TimeDelta FromPartitionAllocTimeDelta(
   return Microseconds(time_delta.InMicroseconds());
 }
 
-BASE_FEATURE(kEnableConfigurableThreadCachePurgeInterval,
-             "EnableConfigurableThreadCachePurgeInterval",
+BASE_FEATURE(EnableConfigurableThreadCachePurgeInterval,
              FEATURE_DISABLED_BY_DEFAULT);
 
 MIRACLE_PARAMETER_FOR_TIME_DELTA(
@@ -450,8 +419,7 @@ GetThreadCacheDefaultPurgeInterval() {
   return ToPartitionAllocTimeDelta(GetThreadCacheDefaultPurgeIntervalValue());
 }
 
-BASE_FEATURE(kEnableConfigurableThreadCacheMinCachedMemoryForPurging,
-             "EnableConfigurableThreadCacheMinCachedMemoryForPurging",
+BASE_FEATURE(EnableConfigurableThreadCacheMinCachedMemoryForPurging,
              FEATURE_DISABLED_BY_DEFAULT);
 
 MIRACLE_PARAMETER_FOR_INT(
@@ -468,39 +436,19 @@ MIRACLE_PARAMETER_FOR_INT(
 //
 // TODO(crbug.com/40064499): this is unneeded once
 // MiraclePtr-for-Renderer launches.
-BASE_FEATURE(kPartitionAllocDisableBRPInBufferPartition,
-             "PartitionAllocDisableBRPInBufferPartition",
+BASE_FEATURE(PartitionAllocDisableBRPInBufferPartition,
              FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kPartitionAllocAdjustSizeWhenInForeground,
-             "PartitionAllocAdjustSizeWhenInForeground",
+BASE_FEATURE(PartitionAllocAdjustSizeWhenInForeground,
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
              FEATURE_ENABLED_BY_DEFAULT);
 #else
              FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
-BASE_FEATURE(kPartitionAllocUseSmallSingleSlotSpans,
-             "PartitionAllocUseSmallSingleSlotSpans",
-             FEATURE_ENABLED_BY_DEFAULT);
-
-#if PA_CONFIG(ENABLE_SHADOW_METADATA)
-BASE_FEATURE(kPartitionAllocShadowMetadata,
-             "PartitionAllocShadowMetadata",
+#if PA_BUILDFLAG(ENABLE_PARTITION_LOCK_PRIORITY_INHERITANCE)
+BASE_FEATURE(PartitionAllocUsePriorityInheritanceLocks,
              FEATURE_DISABLED_BY_DEFAULT);
-
-constexpr FeatureParam<ShadowMetadataEnabledProcesses>::Option
-    kShadowMetadataEnabledProcessesOptions[] = {
-        {ShadowMetadataEnabledProcesses::kRendererOnly, kRendererOnlyStr},
-        {ShadowMetadataEnabledProcesses::kAllChildProcesses,
-         kAllChildProcessesStr}};
-
-// Note: Do not use the prepared macro as of no need for a local cache.
-constinit const FeatureParam<ShadowMetadataEnabledProcesses>
-    kShadowMetadataEnabledProcessesParam{
-        &kPartitionAllocShadowMetadata, kPAFeatureEnabledProcessesStr,
-        ShadowMetadataEnabledProcesses::kRendererOnly,
-        &kShadowMetadataEnabledProcessesOptions};
-#endif  // PA_CONFIG(ENABLE_SHADOW_METADATA)
+#endif  // PA_BUILDFLAG(ENABLE_PARTITION_LOCK_PRIORITY_INHERITANCE)
 
 }  // namespace base::features

@@ -23,7 +23,6 @@
 
   SetConfigurationTitle(footer.button, self.buttonText);
   footer.button.enabled = self.enabled;
-  [footer updateButtonColorBasedOnStatus];
 }
 
 @end
@@ -42,8 +41,7 @@
   self = [super initWithReuseIdentifier:reuseIdentifier];
   if (self) {
     // Create button.
-    self.button = PrimaryActionButton(/*pointer_interaction_enabled=*/YES);
-    UpdateButtonColorOnEnableDisable(self.button);
+    self.button = PrimaryActionButton();
     [self.button addTarget:self
                     action:@selector(didTapButton)
           forControlEvents:UIControlEventTouchUpInside];
@@ -66,10 +64,6 @@
     ]];
   }
   return self;
-}
-
-- (void)updateButtonColorBasedOnStatus {
-  UpdateButtonColorOnEnableDisable(self.button);
 }
 
 - (void)didTapButton {

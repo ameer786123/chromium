@@ -21,8 +21,6 @@ class MockDataSource : public CrossOriginDataSource {
   ~MockDataSource() override;
   MockDataSource();
   // Mocked methods from CrossOriginDataSource
-  MOCK_METHOD(bool, IsCorsCrossOrigin, (), (const, override));
-  MOCK_METHOD(bool, HasAccessControl, (), (const, override));
   MOCK_METHOD(const std::string&, GetMimeType, (), (const, override));
   MOCK_METHOD(void,
               Initialize,
@@ -168,7 +166,7 @@ class MockHlsRenditionHost : public HlsRenditionHost {
 
 class MockHlsRendition : public HlsRendition {
  public:
-  MockHlsRendition();
+  explicit MockHlsRendition(GURL uri = GURL("https://hls.io/manifest.m3u8"));
   ~MockHlsRendition() override;
 
   MOCK_METHOD(void,
@@ -186,8 +184,14 @@ class MockHlsRendition : public HlsRendition {
   MOCK_METHOD(void, Stop, (), (override));
   MOCK_METHOD(void,
               UpdatePlaylist,
-              (scoped_refptr<hls::MediaPlaylist>, std::optional<GURL>),
+              (scoped_refptr<hls::MediaPlaylist>),
               (override));
+  MOCK_METHOD(void, MockUpdatePlaylistURI, (const GURL&), ());
+  void UpdatePlaylistURI(const GURL& playlist_uri) override;
+  const GURL& MediaPlaylistUri() const override;
+
+ private:
+  GURL uri_;
 };
 
 class StringHlsDataSourceStreamFactory {

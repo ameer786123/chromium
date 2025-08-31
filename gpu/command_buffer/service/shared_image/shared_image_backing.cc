@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-#include "base/not_fatal_until.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "build/build_config.h"
@@ -255,6 +255,12 @@ std::unique_ptr<DawnBufferRepresentation> SharedImageBacking::ProduceDawnBuffer(
   return nullptr;
 }
 
+std::unique_ptr<WebNNTensorRepresentation>
+SharedImageBacking::ProduceWebNNTensor(SharedImageManager* manager,
+                                       MemoryTypeTracker* tracker) {
+  return nullptr;
+}
+
 std::unique_ptr<OverlayImageRepresentation> SharedImageBacking::ProduceOverlay(
     SharedImageManager* manager,
     MemoryTypeTracker* tracker) {
@@ -345,7 +351,7 @@ void SharedImageBacking::ReleaseRef(SharedImageRepresentation* representation) {
   DCHECK(is_ref_counted_);
 
   auto found = std::ranges::find(refs_, representation);
-  CHECK(found != refs_.end(), base::NotFatalUntil::M130);
+  CHECK(found != refs_.end());
 
   // If the found representation is the first (owning) ref, free the attributed
   // memory.

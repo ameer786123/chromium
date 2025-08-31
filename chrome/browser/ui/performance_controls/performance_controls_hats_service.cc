@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <string>
 
+#include "base/byte_count.h"
 #include "base/check.h"
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
@@ -42,38 +43,6 @@ PerformanceControlsHatsService::PerformanceControlsHatsService(Profile* profile)
           base::RandTimeDelta(kPerformanceControlsPPMSurveyMinDelay.Get(),
                               kPerformanceControlsPPMSurveyMaxDelay.Get())) {
   CHECK(delay_before_ppm_survey_.is_positive());
-  if (base::FeatureList::IsEnabled(
-          performance_manager::features::
-              kPerformanceControlsMemorySaverOptOutSurvey)) {
-    performance_manager::user_tuning::UserPerformanceTuningManager::
-        GetInstance()
-            ->AddObserver(this);
-  }
-
-  if (base::FeatureList::IsEnabled(
-          performance_manager::features::
-              kPerformanceControlsBatterySaverOptOutSurvey)) {
-    performance_manager::user_tuning::BatterySaverModeManager::GetInstance()
-        ->AddObserver(this);
-  }
-}
-
-PerformanceControlsHatsService::~PerformanceControlsHatsService() {
-  // Can't used ScopedObservation because sometimes the
-  // UserPerformanceTuningManager or BatterySaverModeManager are destroyed
-  // before this service.
-  if (performance_manager::user_tuning::UserPerformanceTuningManager::
-          HasInstance()) {
-    performance_manager::user_tuning::UserPerformanceTuningManager::
-        GetInstance()
-            ->RemoveObserver(this);
-  }
-
-  if (performance_manager::user_tuning::BatterySaverModeManager::
-          HasInstance()) {
-    performance_manager::user_tuning::BatterySaverModeManager::GetInstance()
-        ->RemoveObserver(this);
-  }
 }
 
 void PerformanceControlsHatsService::OpenedNewTabPage() {
@@ -107,11 +76,6 @@ void PerformanceControlsHatsService::OpenedNewTabPage() {
         }
       };
 
-  // A general performance survey for all users.
-  launch_survey_if_enabled(
-      performance_manager::features::kPerformanceControlsPerformanceSurvey,
-      kHatsSurveyTriggerPerformanceControlsPerformance);
-
   // Survey to correlate UMA metrics with Poor Performance Moments.
   if (auto ppm_segment_name = GetPPMSurveySegmentName();
       !ppm_segment_name.empty() && MayLaunchPPMSurvey()) {
@@ -123,57 +87,6 @@ void PerformanceControlsHatsService::OpenedNewTabPage() {
           kPerformanceControlsPPMSurveyUniformSampleValue.Get()}},
         {{kPerformanceSegmentPSDName, ppm_segment_name},
          {kChannelPSDName, channel.empty() ? "stable" : channel}});
-  }
-
-#if BUILDFLAG(IS_CHROMEOS)
-  // ChromeOS defaults to the OS battery saver so this survey isn't relevant.
-#else
-  base::Time last_battery_timestamp =
-      performance_manager::user_tuning::BatterySaverModeManager::GetInstance()
-          ->GetLastBatteryUsageTimestamp();
-
-  // A battery performance survey for users with a battery-powered device.
-  if (base::Time::Now() - last_battery_timestamp <=
-      performance_manager::features::kPerformanceControlsBatterySurveyLookback
-          .Get()) {
-    launch_survey_if_enabled(
-        performance_manager::features::
-            kPerformanceControlsBatteryPerformanceSurvey,
-        kHatsSurveyTriggerPerformanceControlsBatteryPerformance);
-  }
-#endif
-}
-
-void PerformanceControlsHatsService::OnBatterySaverModeChanged(
-    bool is_enabled) {
-  HatsService* hats_service = HatsServiceFactory::GetForProfile(profile_, true);
-  if (!hats_service) {
-    return;
-  }
-
-  auto* manager =
-      performance_manager::user_tuning::BatterySaverModeManager::GetInstance();
-  // A survey for users who have turned off battery saver.
-  if (!is_enabled && !manager->IsBatterySaverModeManaged()) {
-    hats_service->LaunchDelayedSurvey(
-        kHatsSurveyTriggerPerformanceControlsBatterySaverOptOut, 10000);
-  }
-}
-
-void PerformanceControlsHatsService::OnMemorySaverModeChanged() {
-  HatsService* hats_service = HatsServiceFactory::GetForProfile(profile_, true);
-  if (!hats_service) {
-    return;
-  }
-
-  auto* manager = performance_manager::user_tuning::
-      UserPerformanceTuningManager::GetInstance();
-  // A survey for users who have turned off memory saver mode.
-  if (!manager->IsMemorySaverModeActive() &&
-      !manager->IsMemorySaverModeManaged() &&
-      !manager->IsMemorySaverModeDefault()) {
-    hats_service->LaunchDelayedSurvey(
-        kHatsSurveyTriggerPerformanceControlsMemorySaverOptOut, 10000);
   }
 }
 
@@ -194,15 +107,17 @@ bool PerformanceControlsHatsService::MayLaunchPPMSurvey() const {
 }
 
 std::string PerformanceControlsHatsService::GetPPMSurveySegmentName() {
-  uint64_t system_ram = memory_mb_for_testing_.value_or(
-      base::SysInfo::AmountOfPhysicalMemoryMB());
-  size_t max_memory1 = kPerformanceControlsPPMSurveySegmentMaxMemoryGB1.Get();
-  size_t max_memory2 = kPerformanceControlsPPMSurveySegmentMaxMemoryGB2.Get();
-  if (max_memory1 == 0 || system_ram <= max_memory1 * 1024) {
+  base::ByteCount system_ram = memory_amount_for_testing_.value_or(
+      base::SysInfo::AmountOfPhysicalMemory());
+  base::ByteCount max_memory1 =
+      base::GiB(kPerformanceControlsPPMSurveySegmentMaxMemoryGB1.Get());
+  base::ByteCount max_memory2 =
+      base::GiB(kPerformanceControlsPPMSurveySegmentMaxMemoryGB2.Get());
+  if (max_memory1.is_zero() || system_ram <= max_memory1) {
     // Segment 1 has no upper bound, or the system RAM is in its bounds.
     return kPerformanceControlsPPMSurveySegmentName1.Get();
   }
-  if (max_memory2 == 0 || system_ram <= max_memory2 * 1024) {
+  if (max_memory2.is_zero() || system_ram <= max_memory2) {
     // Segment 2 has no upper bound, or the system RAM is in its bounds.
     return kPerformanceControlsPPMSurveySegmentName2.Get();
   }

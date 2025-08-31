@@ -7,11 +7,14 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_multi_source_observation.h"
+#include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/screen_capture_notification_ui.h"
 #include "chrome/browser/ui/views/chrome_views_export.h"
+#include "chrome/browser/ui/views/screen_sharing_util.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "content/public/browser/desktop_media_id.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -52,6 +55,9 @@ namespace {
 const int kHorizontalMargin = 10;
 const float kWindowAlphaValue = 0.96f;
 
+using content::DesktopMediaID;
+using UserInteraction = GetDisplayMediaUserInteractionWithControls;
+
 // A ClientView that overrides NonClientHitTest() so that the whole window area
 // acts as a window caption, except a rect specified using SetClientRect().
 // ScreenCaptureNotificationUIViews uses this class to make the notification bar
@@ -81,11 +87,18 @@ class NotificationBarClientView : public views::ClientView {
     if (!bounds().Contains(point)) {
       return HTNOWHERE;
     }
-    // The whole window is HTCAPTION, except the |rect_|.
-    if (rect_.Contains(gfx::PointAtOffsetFromOrigin(point - origin()))) {
+
+    // Client rect is the actionable area of the notification bar.
+    // `point` is in the coordinates of the widget while `rect_` is in the
+    // unmirrored coordinates of the view. In RTL, we need to convert the point
+    // to the mirrored coordinates to compare.
+    // GetMirroredRect() returns the rect as is in LTR.
+    if (GetMirroredRect(rect_).Contains(
+            gfx::PointAtOffsetFromOrigin(point - origin()))) {
       return HTCLIENT;
     }
 
+    // Make the other part of the window draggable.
     return HTCAPTION;
   }
 
@@ -107,6 +120,7 @@ class ScreenCaptureNotificationUIViews : public views::WidgetDelegateView,
   ScreenCaptureNotificationUIViews(
       const std::u16string& text,
       content::WebContents* capturing_web_contents,
+      DesktopMediaID::Type captured_surface_type,
       base::OnceClosure stop_callback,
       content::MediaStreamUI::SourceCallback source_callback);
   ScreenCaptureNotificationUIViews(const ScreenCaptureNotificationUIViews&) =
@@ -125,12 +139,16 @@ class ScreenCaptureNotificationUIViews : public views::WidgetDelegateView,
   void OnViewIsDeleting(views::View* observed_view) override;
 
  private:
-  // Helper to call |stop_callback_|.
-  void NotifyStopped();
-  // Helper to call |source_callback_|.
-  void NotifySourceChange();
+  void OnUserClickedStop();
+  void OnUserClickedChangeSource();
+  void OnUserClickedHide();
+
+  void HandleStopped();
+  void HandleSourceChange();
+  void HandleHide();
 
   const base::WeakPtr<content::WebContents> capturing_web_contents_;
+  ScreensharingControlsHistogramLogger uma_logger_;
   base::OnceClosure stop_callback_;
   content::MediaStreamUI::SourceCallback source_callback_;
   base::ScopedMultiSourceObservation<views::View, views::ViewObserver>
@@ -144,11 +162,13 @@ class ScreenCaptureNotificationUIViews : public views::WidgetDelegateView,
 ScreenCaptureNotificationUIViews::ScreenCaptureNotificationUIViews(
     const std::u16string& text,
     content::WebContents* capturing_web_contents,
+    DesktopMediaID::Type captured_surface_type,
     base::OnceClosure stop_callback,
     content::MediaStreamUI::SourceCallback source_callback)
     : capturing_web_contents_(capturing_web_contents
                                   ? capturing_web_contents->GetWeakPtr()
                                   : nullptr),
+      uma_logger_(captured_surface_type),
       stop_callback_(std::move(stop_callback)),
       source_callback_(std::move(source_callback)) {
   SetShowCloseButton(false);
@@ -157,7 +177,7 @@ ScreenCaptureNotificationUIViews::ScreenCaptureNotificationUIViews(
 
   RegisterDeleteDelegateCallback(
       RegisterDeleteCallbackPassKey(),
-      base::BindOnce(&ScreenCaptureNotificationUIViews::NotifyStopped,
+      base::BindOnce(&ScreenCaptureNotificationUIViews::HandleStopped,
                      base::Unretained(this)));
 
   SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -177,8 +197,9 @@ ScreenCaptureNotificationUIViews::ScreenCaptureNotificationUIViews(
   std::u16string source_text =
       l10n_util::GetStringUTF16(IDS_MEDIA_SCREEN_CAPTURE_NOTIFICATION_SOURCE);
   source_button_ = AddChildView(std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&ScreenCaptureNotificationUIViews::NotifySourceChange,
-                          base::Unretained(this)),
+      base::BindRepeating(
+          &ScreenCaptureNotificationUIViews::OnUserClickedChangeSource,
+          base::Unretained(this)),
       source_text));
 
   if (source_callback_.is_null()) {
@@ -188,7 +209,7 @@ ScreenCaptureNotificationUIViews::ScreenCaptureNotificationUIViews(
   std::u16string stop_text =
       l10n_util::GetStringUTF16(IDS_MEDIA_SCREEN_CAPTURE_NOTIFICATION_STOP);
   auto stop_button = std::make_unique<views::MdTextButton>(
-      base::BindRepeating(&ScreenCaptureNotificationUIViews::NotifyStopped,
+      base::BindRepeating(&ScreenCaptureNotificationUIViews::OnUserClickedStop,
                           base::Unretained(this)),
       stop_text);
   stop_button->SetStyle(ui::ButtonStyle::kProminent);
@@ -196,11 +217,9 @@ ScreenCaptureNotificationUIViews::ScreenCaptureNotificationUIViews(
 
   auto hide_link = std::make_unique<views::Link>(
       l10n_util::GetStringUTF16(IDS_MEDIA_SCREEN_CAPTURE_NOTIFICATION_HIDE));
-  hide_link->SetCallback(base::BindRepeating(
-      [](ScreenCaptureNotificationUIViews* view) {
-        view->GetWidget()->Minimize();
-      },
-      base::Unretained(this)));
+  hide_link->SetCallback(
+      base::BindRepeating(&ScreenCaptureNotificationUIViews::OnUserClickedHide,
+                          base::Unretained(this)));
   hide_link_ = AddChildView(std::move(hide_link));
 
   // The client rect for NotificationBarClientView uses the bounds for the
@@ -255,20 +274,40 @@ void ScreenCaptureNotificationUIViews::OnViewIsDeleting(
   }
 }
 
-void ScreenCaptureNotificationUIViews::NotifySourceChange() {
+void ScreenCaptureNotificationUIViews::OnUserClickedStop() {
+  uma_logger_.Log(UserInteraction::kStopButtonClicked);
+  HandleStopped();
+}
+
+void ScreenCaptureNotificationUIViews::OnUserClickedChangeSource() {
+  // TODO(crbug.com/380211805): Log UMA when this code path is implemented.
+  // uma_logger_.Log(...);
+  HandleSourceChange();
+}
+
+void ScreenCaptureNotificationUIViews::OnUserClickedHide() {
+  uma_logger_.Log(UserInteraction::kHideButtonClicked);
+  HandleHide();
+}
+
+void ScreenCaptureNotificationUIViews::HandleStopped() {
+  if (!stop_callback_.is_null()) {
+    std::move(stop_callback_).Run();
+  }
+}
+
+void ScreenCaptureNotificationUIViews::HandleSourceChange() {
   if (!source_callback_.is_null()) {
     // CSC is only supported for tab-capture, so setting it to `false` is the
     // correct behavior so long as we don't support cross-surface-type
     // switching.
-    source_callback_.Run(content::DesktopMediaID(),
+    source_callback_.Run(DesktopMediaID(),
                          /*captured_surface_control_active=*/false);
   }
 }
 
-void ScreenCaptureNotificationUIViews::NotifyStopped() {
-  if (!stop_callback_.is_null()) {
-    std::move(stop_callback_).Run();
-  }
+void ScreenCaptureNotificationUIViews::HandleHide() {
+  GetWidget()->Minimize();
 }
 
 BEGIN_METADATA(ScreenCaptureNotificationUIViews)
@@ -291,7 +330,7 @@ class ScreenCaptureNotificationUIImpl : public ScreenCaptureNotificationUI {
   gfx::NativeViewId OnStarted(
       base::OnceClosure stop_callback,
       content::MediaStreamUI::SourceCallback source_callback,
-      const std::vector<content::DesktopMediaID>& media_ids) override;
+      const std::vector<DesktopMediaID>& media_ids) override;
 
  private:
   // Helper to set window id to parent browser window id for task bar grouping.
@@ -315,7 +354,16 @@ ScreenCaptureNotificationUIImpl::ScreenCaptureNotificationUIImpl(
 gfx::NativeViewId ScreenCaptureNotificationUIImpl::OnStarted(
     base::OnceClosure stop_callback,
     content::MediaStreamUI::SourceCallback source_callback,
-    const std::vector<content::DesktopMediaID>& media_ids) {
+    const std::vector<DesktopMediaID>& media_ids) {
+  DesktopMediaID::Type captured_surface_type = DesktopMediaID::Type::TYPE_NONE;
+  if (!media_ids.empty()) {
+    CHECK(std::all_of(media_ids.cbegin(), media_ids.cend(),
+                      [&media_ids](const DesktopMediaID& media_id) {
+                        return media_id.type == media_ids.front().type;
+                      }));
+    captured_surface_type = media_ids.front().type;
+  }
+
   if (widget_) {
     return 0;
   }
@@ -323,8 +371,8 @@ gfx::NativeViewId ScreenCaptureNotificationUIImpl::OnStarted(
   widget_ = std::make_unique<views::Widget>();
   auto screen_capture_notification_ui_views =
       std::make_unique<ScreenCaptureNotificationUIViews>(
-          text_, capturing_web_contents_.get(), std::move(stop_callback),
-          std::move(source_callback));
+          text_, capturing_web_contents_.get(), captured_surface_type,
+          std::move(stop_callback), std::move(source_callback));
 
   views::Widget::InitParams params(
       views::Widget::InitParams::CLIENT_OWNS_WIDGET,
@@ -345,7 +393,7 @@ gfx::NativeViewId ScreenCaptureNotificationUIImpl::OnStarted(
   widget_->set_frame_type(views::Widget::FrameType::kForceCustom);
   widget_->Init(std::move(params));
 
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   // TODO(sergeyu): Move the notification to the display being captured when
   // per-display screen capture is supported.
   gfx::Rect work_area = screen->GetPrimaryDisplay().work_area();
@@ -362,7 +410,7 @@ gfx::NativeViewId ScreenCaptureNotificationUIImpl::OnStarted(
 #endif
 
   if (media_ids.empty() ||
-      media_ids.front().type == content::DesktopMediaID::Type::TYPE_SCREEN) {
+      media_ids.front().type == DesktopMediaID::Type::TYPE_SCREEN) {
     // Focus the notification widget if sharing a screen.
     widget_->Show();
   } else {

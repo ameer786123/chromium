@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/webid/account_selection_view_test_base.h"
 
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/views/webid/account_selection_view_base.h"
 #include "chrome/browser/ui/webid/identity_ui_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -67,13 +68,16 @@ AccountSelectionViewTestBase::CreateTestIdentityRequestAccount(
       base::MakeRefCounted<content::IdentityRequestAccount>(
           std::string(kIdBase) + account_suffix, display_identifier,
           display_name, email, name,
-          std::string(kGivenNameBase) + account_suffix, GURL(),
+          std::string(kGivenNameBase) + account_suffix, GURL(), "", "",
           /*login_hints=*/std::vector<std::string>(),
           /*domain_hints=*/std::vector<std::string>(),
           /*labels=*/std::vector<std::string>(), login_state,
           /*browser_trusted_login_state=*/
           content::IdentityRequestAccount::LoginState::kSignUp,
           last_used_timestamp);
+  if (login_state == content::IdentityRequestAccount::LoginState::kSignUp) {
+    account->fields = idp->disclosure_fields;
+  }
   account->identity_provider = std::move(idp);
   return account;
 }
@@ -258,11 +262,13 @@ void AccountSelectionViewTestBase::CheckHoverableAccountRow(
   }
   EXPECT_EQ(
       icon_view->size(),
-      is_modal_dialog ? gfx::Size(kModalAvatarSize, kModalAvatarSize)
+      is_modal_dialog
+          ? gfx::Size(webid::kModalAvatarSize, webid::kModalAvatarSize)
       // Height is increased by 2 * offset so that the account icon is centered.
-      : expect_idp ? gfx::Size(kDesiredAvatarSize + kIdpBadgeOffset,
-                               kDesiredAvatarSize + 2 * kIdpBadgeOffset)
-                   : gfx::Size(kDesiredAvatarSize, kDesiredAvatarSize));
+      : expect_idp
+          ? gfx::Size(webid::kDesiredAvatarSize + webid::kIdpBadgeOffset,
+                      webid::kDesiredAvatarSize + 2 * webid::kIdpBadgeOffset)
+          : gfx::Size(webid::kDesiredAvatarSize, webid::kDesiredAvatarSize));
 
   if (is_modal_dialog) {
     // Check for arrow icon in secondary view.

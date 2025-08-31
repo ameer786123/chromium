@@ -6,21 +6,21 @@
 
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
-#include "base/time/time.h"
 
 namespace content {
 
-BASE_FEATURE(kAttributionReportDeliveryOnNewNavigation,
-             "AttributionReportDeliveryOnNewNavigation",
+BASE_FEATURE(AttributionReportNavigationBasedRetry,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-const base::FeatureParam<base::TimeDelta>
-    kAttributionReportingNavigationForReportDeliveryWindow{
-        &kAttributionReportDeliveryOnNewNavigation, "navigation_window",
-        base::Minutes(2)};
+constexpr base::FeatureParam<NavigationRetryAttempt>::Option
+    kNavigationRetryAttemptOptions[] = {
+        {NavigationRetryAttempt::kFirstRetry, "first_retry"},
+        {NavigationRetryAttempt::kSecondRetry, "second_retry"},
+        {NavigationRetryAttempt::kThirdRetry, "third_retry"}};
 
-BASE_FEATURE(kAttributionReportExpiry,
-             "AttributionReportExpiry",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+const base::FeatureParam<NavigationRetryAttempt>
+    kAttributionReportNavigationRetryAttempt{
+        &kAttributionReportNavigationBasedRetry, "navigation_retry_attempt",
+        NavigationRetryAttempt::kThirdRetry, &kNavigationRetryAttemptOptions};
 
 }  // namespace content

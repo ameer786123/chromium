@@ -27,18 +27,20 @@ public class ProfileManager {
     private static boolean sInitialized;
 
     /** Observer for Profile creation. */
-    public static interface Observer {
+    public interface Observer {
         /**
          * Called whenever a profile is created.
+         *
          * @param profile The profile that has just been created.
          */
-        public void onProfileAdded(Profile profile);
+        void onProfileAdded(Profile profile);
 
         /**
          * Called whenever a profile is destroyed.
+         *
          * @param profile The profile that has just been created.
          */
-        public void onProfileDestroyed(Profile profile);
+        void onProfileDestroyed(Profile profile);
     }
 
     /** Add an observer to be notified when profiles get created. */
@@ -67,7 +69,7 @@ public class ProfileManager {
     }
 
     @CalledByNative
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public static void onProfileAdded(Profile profile) {
         // If a profile has been added, we know the ProfileManager has been initialized.
         sInitialized = true;
@@ -138,7 +140,7 @@ public class ProfileManager {
 
         void onProfileActivated(@JniType("Profile*") Profile profile);
 
-        void destroyWhenAppropriate(@JniType("Profile*") Profile caller);
+        void destroyWhenAppropriate(@JniType("Profile*") Profile profile);
 
         @JniType("std::vector<Profile*>")
         List<Profile> getLoadedProfiles();

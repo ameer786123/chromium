@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "media/filters/source_buffer_stream.h"
 
 #include <algorithm>
@@ -15,6 +10,7 @@
 #include <sstream>
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/demuxer_memory_limit.h"
@@ -155,7 +151,7 @@ SourceBufferStream::SourceBufferStream(const AudioDecoderConfig& audio_config,
       highest_output_buffer_timestamp_(kNoTimestamp),
       max_interbuffer_distance_(
           base::Milliseconds(kMinimumInterbufferDistanceInMs)),
-      memory_limit_(GetDemuxerStreamAudioMemoryLimit(&audio_config)) {
+      memory_limit_(GetDemuxerStreamAudioMemoryLimit(&audio_config).InBytes()) {
   DCHECK(audio_config.IsValidConfig());
   audio_configs_.push_back(audio_config);
   DVLOG(2) << __func__ << ": audio_buffer_size= " << memory_limit_;
@@ -170,9 +166,9 @@ SourceBufferStream::SourceBufferStream(const VideoDecoderConfig& video_config,
       highest_output_buffer_timestamp_(kNoTimestamp),
       max_interbuffer_distance_(
           base::Milliseconds(kMinimumInterbufferDistanceInMs)),
-      memory_limit_(
-          GetDemuxerStreamVideoMemoryLimit(Demuxer::DemuxerTypes::kChunkDemuxer,
-                                           &video_config)) {
+      memory_limit_(GetDemuxerStreamVideoMemoryLimit(DemuxerType::kChunkDemuxer,
+                                                     &video_config)
+                        .InBytes()) {
   DCHECK(video_config.IsValidConfig());
   video_configs_.push_back(video_config);
   DVLOG(2) << __func__ << ": video_buffer_size= " << memory_limit_;
@@ -343,7 +339,7 @@ void SourceBufferStream::Append(const BufferQueue& buffers) {
       } else if (itr != buffers.begin()) {
         // Copy the first key frame and everything after it into
         // |trimmed_buffers|.
-        trimmed_buffers.assign(itr, buffers.end());
+        UNSAFE_TODO(trimmed_buffers.assign(itr, buffers.end()));
         buffers_for_new_range = &trimmed_buffers;
       }
 
@@ -583,7 +579,7 @@ void SourceBufferStream::RemoveInternal(base::TimeDelta start,
     }
 
     if (range == selected_range_ && !range->HasNextBufferPosition())
-      SetSelectedRange(NULL);
+      SetSelectedRange(nullptr);
 
     // If the current range now is completely covered by the removal
     // range then delete it and move on.
@@ -619,7 +615,7 @@ void SourceBufferStream::RemoveInternal(base::TimeDelta start,
 }
 
 void SourceBufferStream::ResetSeekState() {
-  SetSelectedRange(NULL);
+  SetSelectedRange(nullptr);
   track_buffer_.clear();
   config_change_pending_ = false;
   highest_output_buffer_timestamp_ = kNoTimestamp;
@@ -1004,7 +1000,7 @@ size_t SourceBufferStream::FreeBuffers(size_t total_bytes_to_free,
   std::unique_ptr<SourceBufferRange> new_range_for_append;
 
   while (!ranges_.empty() && bytes_freed < total_bytes_to_free) {
-    SourceBufferRange* current_range = NULL;
+    SourceBufferRange* current_range = nullptr;
     BufferQueue buffers;
     size_t bytes_deleted = 0;
 
@@ -1199,8 +1195,9 @@ void SourceBufferStream::TrimSpliceOverlap(const BufferQueue& new_buffers) {
   }
 
   // Trim overlap from the existing buffer.
+  auto existing_discard = overlapped_buffer->discard_padding();
   DecoderBuffer::DiscardPadding discard_padding =
-      overlapped_buffer->discard_padding();
+      existing_discard.value_or(DecoderBuffer::DiscardPadding());
   discard_padding.second += overlap_duration;
   overlapped_buffer->set_discard_padding(discard_padding);
   overlapped_buffer->set_duration(overlapped_buffer->duration() -
@@ -1353,6 +1350,9 @@ void SourceBufferStream::GetTimestampInterval(const BufferQueue& buffers,
 
 bool SourceBufferStream::IsNextGopAdjacentToEndOfCurrentAppendSequence(
     base::TimeDelta next_gop_timestamp) const {
+  if (highest_timestamp_in_append_sequence_ == kNoTimestamp) {
+    return false;
+  }
   base::TimeDelta upper_bound = highest_timestamp_in_append_sequence_ +
                                 ComputeFudgeRoom(GetMaxInterbufferDistance());
   DVLOG(4) << __func__ << " " << GetStreamTypeName()
@@ -1507,7 +1507,7 @@ void SourceBufferStream::OnSetDuration(base::TimeDelta duration) {
 
     if (!deleted_buffers.empty()) {
       // Truncation removed current position. Clear selected range.
-      SetSelectedRange(NULL);
+      SetSelectedRange(nullptr);
     }
   }
 }
@@ -1815,7 +1815,8 @@ bool SourceBufferStream::UpdateAudioConfig(const AudioDecoderConfig& config,
         << ": Skipping updating memory limit as memory limit was overridden.";
   } else {
     // Dynamically increase |memory_limit_| on audio config changes.
-    size_t new_memory_limit = GetDemuxerStreamAudioMemoryLimit(&config);
+    size_t new_memory_limit =
+        GetDemuxerStreamAudioMemoryLimit(&config).InBytes();
     if (new_memory_limit > memory_limit_) {
       DVLOG(2) << __func__ << ": Increase memory limit from " << memory_limit_
                << " to " << new_memory_limit << ".";
@@ -1864,8 +1865,9 @@ bool SourceBufferStream::UpdateVideoConfig(const VideoDecoderConfig& config,
         << ": Skipping updating memory limit as memory limit was overridden.";
   } else {
     // Dynamically increase |memory_limit_| on video config changes.
-    size_t new_memory_limit = GetDemuxerStreamVideoMemoryLimit(
-        Demuxer::DemuxerTypes::kChunkDemuxer, &config);
+    size_t new_memory_limit =
+        GetDemuxerStreamVideoMemoryLimit(DemuxerType::kChunkDemuxer, &config)
+            .InBytes();
     if (new_memory_limit > memory_limit_) {
       DVLOG(2) << __func__ << ": Increase memory limit from " << memory_limit_
                << " to " << new_memory_limit << ".";
@@ -2013,7 +2015,7 @@ void SourceBufferStream::DeleteAndRemoveRange(RangeList::iterator* itr) {
   DCHECK(*itr != ranges_.end());
   if ((*itr)->get() == selected_range_) {
     DVLOG(1) << __func__ << " deleting selected range.";
-    SetSelectedRange(NULL);
+    SetSelectedRange(nullptr);
   }
 
   if (*itr == range_for_next_append_) {

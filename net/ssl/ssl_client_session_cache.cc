@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "net/ssl/ssl_client_session_cache.h"
 
@@ -51,9 +47,11 @@ SSLClientSessionCache::SSLClientSessionCache(const Config& config)
     : clock_(base::DefaultClock::GetInstance()),
       config_(config),
       cache_(config.max_entries) {
-  memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
-      FROM_HERE, base::BindRepeating(&SSLClientSessionCache::OnMemoryPressure,
-                                     base::Unretained(this)));
+  memory_pressure_listener_ =
+      std::make_unique<base::AsyncMemoryPressureListener>(
+          FROM_HERE, base::MemoryPressureListenerTag::kSSLClientSessionCache,
+          base::BindRepeating(&SSLClientSessionCache::OnMemoryPressure,
+                              base::Unretained(this)));
 }
 
 SSLClientSessionCache::~SSLClientSessionCache() {
@@ -88,8 +86,12 @@ bssl::UniquePtr<SSL_SESSION> SSLClientSessionCache::Lookup(
   return session;
 }
 
-void SSLClientSessionCache::Insert(const Key& cache_key,
+void SSLClientSessionCache::Insert(uint64_t generation_number,
+                                   const Key& cache_key,
                                    bssl::UniquePtr<SSL_SESSION> session) {
+  if (generation_number != generation_number_) {
+    return;
+  }
   auto iter = cache_.Get(cache_key);
   if (iter == cache_.end())
     iter = cache_.Put(cache_key, Entry());
@@ -109,6 +111,15 @@ void SSLClientSessionCache::ClearEarlyData(const Key& cache_key) {
 
 void SSLClientSessionCache::FlushForServers(
     const base::flat_set<HostPortPair>& servers) {
+  // The generation number is incremented here, which affects all hosts, even
+  // though this flush only applies to those matching `servers`. Only the
+  // sessions related to `servers` are cleared, so any other already cached
+  // sessions will remain valid despite the generation number changing. It
+  // could prevent sessions unrelated to `servers` that are in-flight at the
+  // time of this flush from being cached. That is not optimal but is a
+  // trade-off for implementation simplicity.
+  ++generation_number_;
+
   auto iter = cache_.begin();
   while (iter != cache_.end()) {
     if (servers.contains(iter->first.server)) {
@@ -120,6 +131,7 @@ void SSLClientSessionCache::FlushForServers(
 }
 
 void SSLClientSessionCache::Flush() {
+  ++generation_number_;
   cache_.Clear();
 }
 

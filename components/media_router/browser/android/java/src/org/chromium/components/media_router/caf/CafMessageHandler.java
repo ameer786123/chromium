@@ -52,7 +52,7 @@ public class CafMessageHandler {
     static final int VOID_SEQUENCE_NUMBER = -1;
     static final int TIMEOUT_IMMEDIATE = 0;
 
-    private static final String MEDIA_MESSAGE_TYPES[] = {
+    private static final String[] MEDIA_MESSAGE_TYPES = {
         "PLAY",
         "LOAD",
         "PAUSE",
@@ -68,7 +68,7 @@ public class CafMessageHandler {
         "QUEUE_REORDER",
     };
 
-    private static final String MEDIA_SUPPORTED_COMMANDS[] = {
+    private static final String[] MEDIA_SUPPORTED_COMMANDS = {
         "pause", "seek", "stream_volume", "stream_mute",
     };
 
@@ -82,13 +82,13 @@ public class CafMessageHandler {
                     "MEDIA_SET_VOLUME", "SET_VOLUME", //
                     "MEDIA_GET_STATUS", "GET_STATUS");
 
-    private SparseArray<RequestRecord> mRequests;
-    private ArrayMap<String, Queue<Integer>> mStopRequests;
-    private Queue<RequestRecord> mVolumeRequests;
+    private final SparseArray<RequestRecord> mRequests;
+    private final ArrayMap<String, Queue<Integer>> mStopRequests;
+    private final Queue<RequestRecord> mVolumeRequests;
 
     private final CastSessionController mSessionController;
     private final CafMediaRouteProvider mRouteProvider;
-    private Handler mHandler;
+    private final Handler mHandler;
 
     /**
      * The record for client requests. {@link CafMessageHandler} uses this class to manage the
@@ -106,16 +106,17 @@ public class CafMessageHandler {
 
     /**
      * Initializes a new {@link CafMessageHandler} instance.
-     * @param session  The {@link CastSession} for communicating with the Cast SDK.
+     *
+     * @param session The {@link CastSession} for communicating with the Cast SDK.
      * @param provider The {@link CafMediaRouteProvider} for communicating with the page.
      */
     public CafMessageHandler(
             CafMediaRouteProvider provider, CastSessionController sessionController) {
         mRouteProvider = provider;
-        mRequests = new SparseArray<RequestRecord>();
-        mStopRequests = new ArrayMap<String, Queue<Integer>>();
+        mRequests = new SparseArray<>();
+        mStopRequests = new ArrayMap<>();
         mSessionController = sessionController;
-        mVolumeRequests = new ArrayDeque<RequestRecord>();
+        mVolumeRequests = new ArrayDeque<>();
         mHandler = new Handler();
     }
 
@@ -386,7 +387,7 @@ public class CafMessageHandler {
     void handleStopMessage(String clientId, int sequenceNumber) {
         Queue<Integer> sequenceNumbersForClient = mStopRequests.get(clientId);
         if (sequenceNumbersForClient == null) {
-            sequenceNumbersForClient = new ArrayDeque<Integer>();
+            sequenceNumbersForClient = new ArrayDeque<>();
             mStopRequests.put(clientId, sequenceNumbersForClient);
         }
         sequenceNumbersForClient.add(sequenceNumber);

@@ -13,6 +13,7 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/notimplemented.h"
 #include "base/scoped_observation.h"
+#include "base/strings/string_number_conversions.h"
 #include "components/data_sharing/internal/android/data_sharing_conversion_bridge.h"
 #include "components/data_sharing/internal/android/data_sharing_network_loader_android.h"
 #include "components/data_sharing/internal/android/fake_preview_server_proxy.h"
@@ -158,8 +159,7 @@ DataSharingServiceAndroid::DataSharingServiceAndroid(
   DCHECK(data_sharing_service_);
   JNIEnv* env = base::android::AttachCurrentThread();
   java_obj_.Reset(env, Java_DataSharingServiceImpl_create(
-                           env, reinterpret_cast<int64_t>(this))
-                           .obj());
+                           env, reinterpret_cast<int64_t>(this)));
   observer_bridge_ =
       std::make_unique<GroupDataObserverBridge>(data_sharing_service, this);
 }
@@ -227,9 +227,7 @@ void DataSharingServiceAndroid::RemoveMember(
                      ScopedJavaGlobalRef<jobject>(j_callback)));
 }
 
-bool DataSharingServiceAndroid::IsEmptyService(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& jcaller) {
+bool DataSharingServiceAndroid::IsEmptyService(JNIEnv* env) {
   return data_sharing_service_->IsEmptyService();
 }
 
@@ -260,9 +258,8 @@ ScopedJavaLocalRef<jobject> DataSharingServiceAndroid::GetDataSharingUrl(
 ScopedJavaLocalRef<jobject> DataSharingServiceAndroid::ParseDataSharingUrl(
     JNIEnv* env,
     const JavaParamRef<jobject>& j_url) {
-  DataSharingService::ParseUrlResult parse_result =
-      data_sharing_service_->ParseDataSharingUrl(
-          url::GURLAndroid::ToNativeGURL(env, j_url));
+  ParseUrlResult parse_result = DataSharingUtils::ParseDataSharingUrl(
+      url::GURLAndroid::ToNativeGURL(env, j_url));
   return DataSharingConversionBridge::CreateParseUrlResult(env, parse_result);
 }
 

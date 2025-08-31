@@ -8,11 +8,11 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/ui/autofill/autofill_ai/mock_save_or_update_ai_data_controller.h"
 #include "chrome/browser/ui/autofill/autofill_ai/save_or_update_autofill_ai_data_controller.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/views/chrome_views_test_base.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
-#include "components/autofill_ai/core/browser/autofill_ai_client.h"
 #include "components/optimization_guide/proto/features/common_quality_data.pb.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_renderer_host.h"
@@ -28,7 +28,7 @@
 
 // TODO(crbug.com/362227379): Consider having an interactive UI test to evaluate
 // both the controller and the view working together.
-namespace autofill_ai {
+namespace autofill {
 
 namespace {
 
@@ -36,42 +36,6 @@ using EntityAttributeUpdateDetails =
     SaveOrUpdateAutofillAiDataController::EntityAttributeUpdateDetails;
 using EntityAttributeUpdateType =
     SaveOrUpdateAutofillAiDataController::EntityAttributeUpdateType;
-
-class MockSaveOrUpdateAutofillAiDataController
-    : public SaveOrUpdateAutofillAiDataController {
- public:
-  MockSaveOrUpdateAutofillAiDataController() = default;
-  MOCK_METHOD(void,
-              ShowPrompt,
-              (autofill::EntityInstance,
-               std::optional<autofill::EntityInstance>,
-               AutofillAiClient::SaveOrUpdatePromptResultCallback),
-              (override));
-  MOCK_METHOD(base::optional_ref<const autofill::EntityInstance>,
-              GetAutofillAiData,
-              (),
-              (const override));
-  MOCK_METHOD(void, OnSaveButtonClicked, (), (override));
-  MOCK_METHOD(std::u16string, GetDialogTitle, (), (const override));
-  MOCK_METHOD(std::vector<EntityAttributeUpdateDetails>,
-              GetUpdatedAttributesDetails,
-              (),
-              (const override));
-  MOCK_METHOD(bool, IsSavePrompt, (), (const override));
-  MOCK_METHOD((std::pair<int, int>),
-              GetTitleImagesResourceId,
-              (),
-              (const override));
-  MOCK_METHOD(void, OnBubbleClosed, (AutofillAiBubbleClosedReason), (override));
-  base::WeakPtr<SaveOrUpdateAutofillAiDataController> GetWeakPtr() override {
-    return weak_ptr_factory_.GetWeakPtr();
-  }
-
- private:
-  base::WeakPtrFactory<SaveOrUpdateAutofillAiDataController> weak_ptr_factory_{
-      this};
-};
-
 class SaveOrUpdateAutofillAiDataBubbleViewTest : public ChromeViewsTestBase {
  public:
   SaveOrUpdateAutofillAiDataBubbleViewTest() = default;
@@ -171,4 +135,4 @@ TEST_F(SaveOrUpdateAutofillAiDataBubbleViewTest, CancelInvokesTheController) {
 
 }  // namespace
 
-}  // namespace autofill_ai
+}  // namespace autofill

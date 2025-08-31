@@ -18,6 +18,7 @@
 #include "base/notreached.h"
 #include "base/numerics/byte_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/default_tick_clock.h"
 #include "components/sync/base/passphrase_enums.h"
@@ -28,8 +29,8 @@
 #include "crypto/random.h"
 #include "crypto/subtle_passkey.h"
 
-const size_t kHashSize = 32;
-const size_t kDefaultScryptCostParameter = 8192;  // 2^13.
+constexpr size_t kHashSize = 32;
+constexpr size_t kDefaultScryptCostParameter = 8192;  // 2^13.
 
 namespace syncer {
 

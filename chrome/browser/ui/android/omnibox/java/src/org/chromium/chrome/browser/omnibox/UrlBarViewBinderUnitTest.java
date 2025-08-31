@@ -20,6 +20,8 @@ import android.content.Context;
 import android.graphics.Color;
 import android.view.View.OnLongClickListener;
 
+import androidx.constraintlayout.widget.ConstraintLayout;
+import androidx.constraintlayout.widget.ConstraintLayout.LayoutParams;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
@@ -57,6 +59,7 @@ public class UrlBarViewBinderUnitTest {
     PropertyModel mModel;
     UrlBarMediator mMediator;
     UrlBar mUrlBar;
+    ConstraintLayout.LayoutParams mUrlBarLayoutParams = new LayoutParams(0, 100);
 
     @Implements(OmniboxResourceProvider.class)
     static class ShadowOmniboxResourceProvider {
@@ -78,10 +81,12 @@ public class UrlBarViewBinderUnitTest {
         mActivity = Robolectric.buildActivity(Activity.class).setup().get();
 
         mModel = new PropertyModel(UrlBarProperties.ALL_KEYS);
+        mModel.set(UrlBarProperties.USE_SMALL_TEXT, false);
         mMediator =
                 new UrlBarMediator(
                         ContextUtils.getApplicationContext(), mModel, mFocusChangeCallback);
         mUrlBar = new UrlBarApi26(mActivity, null);
+        mUrlBar.setLayoutParams(mUrlBarLayoutParams);
         PropertyModelChangeProcessor.create(mModel, mUrlBar, UrlBarViewBinder::bind);
     }
 
@@ -188,11 +193,17 @@ public class UrlBarViewBinderUnitTest {
     @Test
     @SmallTest
     public void testSetHintText() {
-        mModel.set(HINT_TEXT, R.string.hub_search_empty_hint);
-        Assert.assertEquals(mActivity.getString(R.string.hub_search_empty_hint), mUrlBar.getHint());
-        mModel.set(HINT_TEXT, R.string.hub_search_empty_hint_incognito);
-        Assert.assertEquals(
-                mActivity.getString(R.string.hub_search_empty_hint_incognito), mUrlBar.getHint());
+        mModel.set(HINT_TEXT, "Hint Text");
+        Assert.assertEquals("Hint Text", mUrlBar.getHint());
+        mModel.set(HINT_TEXT, "Different Hint Text");
+        Assert.assertEquals("Different Hint Text", mUrlBar.getHint());
+
+        mModel.set(UrlBarProperties.USE_SMALL_TEXT, true);
+        Assert.assertNull(mUrlBar.getHint());
+        mModel.set(HINT_TEXT, "Hint Text");
+        Assert.assertNull(mUrlBar.getHint());
+        mModel.set(UrlBarProperties.USE_SMALL_TEXT, false);
+        Assert.assertEquals("Hint Text", mUrlBar.getHint());
     }
 
     @Test
@@ -201,5 +212,28 @@ public class UrlBarViewBinderUnitTest {
         Assert.assertFalse(mUrlBar.getIsInCctForTesting());
         mModel.set(IS_IN_CCT, true);
         Assert.assertTrue(mUrlBar.getIsInCctForTesting());
+    }
+
+    @Test
+    @SmallTest
+    public void testTextSize() {
+        mUrlBar.setPaddingRelative(13, 0, 17, 0);
+        int normalPadding =
+                mActivity.getResources().getDimensionPixelSize(R.dimen.url_bar_vertical_padding);
+        int smallPadding = 0;
+
+        mModel.set(UrlBarProperties.USE_SMALL_TEXT, true);
+        Assert.assertEquals(LayoutParams.WRAP_CONTENT, mUrlBarLayoutParams.width);
+        Assert.assertEquals(smallPadding, mUrlBar.getPaddingBottom());
+        Assert.assertEquals(smallPadding, mUrlBar.getPaddingTop());
+        Assert.assertEquals(13, mUrlBar.getPaddingStart());
+        Assert.assertEquals(17, mUrlBar.getPaddingEnd());
+
+        mModel.set(UrlBarProperties.USE_SMALL_TEXT, false);
+        Assert.assertEquals(LayoutParams.MATCH_CONSTRAINT, mUrlBarLayoutParams.width);
+        Assert.assertEquals(normalPadding, mUrlBar.getPaddingBottom());
+        Assert.assertEquals(normalPadding, mUrlBar.getPaddingTop());
+        Assert.assertEquals(13, mUrlBar.getPaddingStart());
+        Assert.assertEquals(17, mUrlBar.getPaddingEnd());
     }
 }

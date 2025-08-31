@@ -46,6 +46,7 @@
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/time/time_override.h"
+#include "base/trace_event/trace_log.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -54,10 +55,6 @@
 
 #include "base/files/file_descriptor_watcher_posix.h"
 #endif
-
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-#include "base/trace_event/trace_log.h"  // nogncheck
-#endif                                   // BUILDFLAG(ENABLE_BASE_TRACING)
 
 namespace base::test {
 
@@ -96,6 +93,7 @@ CreateSequenceManagerForMainThreadType(
       base::sequence_manager::SequenceManager::Settings::Builder()
           .SetMessagePumpType(type)
           .SetPrioritySettings(std::move(priority_settings))
+          .SetIsMainThread(true)
           .Build());
 }
 
@@ -500,9 +498,13 @@ TaskEnvironment::TestTaskTracker* TaskEnvironment::CreateThreadPool() {
   auto task_tracker = std::make_unique<TestTaskTracker>();
   TestTaskTracker* raw_task_tracker = task_tracker.get();
   // Disable background threads to avoid hangs when flushing background tasks.
+  // Also disable thread priority monitoring so that creating worker threads
+  // does not interfere with tests that are sensitive to creation of new
+  // histograms.
   auto thread_pool = std::make_unique<internal::ThreadPoolImpl>(
       std::string(), std::move(task_tracker),
-      /*use_background_threads=*/false);
+      /*use_background_threads=*/false,
+      /*monitor_worker_thread_priorities=*/false);
   ThreadPoolInstance::Set(std::move(thread_pool));
   DCHECK(!g_task_tracker);
   g_task_tracker = raw_task_tracker;
@@ -510,11 +512,9 @@ TaskEnvironment::TestTaskTracker* TaskEnvironment::CreateThreadPool() {
 }
 
 void TaskEnvironment::InitializeThreadPool() {
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   // Force the creation of TraceLog instance before starting ThreadPool and
   // creating additional threads to avoid race conditions.
   trace_event::TraceLog::GetInstance();
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 
   task_tracker_ = CreateThreadPool();
   if (mock_time_domain_) {

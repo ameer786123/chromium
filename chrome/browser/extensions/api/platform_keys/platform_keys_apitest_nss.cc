@@ -25,13 +25,13 @@
 #include "chrome/browser/chromeos/platform_keys/extension_key_permissions_service_factory.h"
 #include "chrome/browser/chromeos/platform_keys/extension_platform_keys_service.h"
 #include "chrome/browser/chromeos/platform_keys/extension_platform_keys_service_factory.h"
-#include "chrome/browser/chromeos/platform_keys/platform_keys.h"
 #include "chrome/browser/extensions/api/platform_keys/platform_keys_api.h"
 #include "chrome/browser/extensions/api/platform_keys/platform_keys_test_base.h"
 #include "chrome/browser/extensions/api/platform_keys/verify_trust_api_base.h"
 #include "chrome/browser/net/nss_service.h"
 #include "chrome/browser/net/nss_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chromeos/ash/components/platform_keys/platform_keys.h"
 #include "components/policy/policy_constants.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -228,7 +228,7 @@ class PlatformKeysTest : public PlatformKeysTestBase {
     auto* extension_key_permissions_service_unowned =
         extension_key_permissions_service.get();
     std::vector<uint8_t> subject_public_key_info =
-        chromeos::platform_keys::GetSubjectPublicKeyInfoBlob(client_cert1_);
+        chromeos::platform_keys::GetSubjectPublicKeyInfo(client_cert1_);
 
     // Mimics the behaviour of the ExtensionPlatformKeysService, which sets the
     // one-time signing permission when the key is registered for corporate
@@ -412,24 +412,19 @@ std::unique_ptr<net::test_server::HttpResponse> HandleFileRequest(
   return http_response;
 }
 
-enum class CertNetFetchStatus { kEnabled, kDisabled };
-
 struct UnmanagedVerifyServerCertPlatformKeysTestParams {
   using TupleT = std::tuple<PlatformKeysTestBase::EnrollmentStatus,
                             PlatformKeysTest::UserClientCertSlot,
-                            ContextType,
-                            CertNetFetchStatus>;
+                            ContextType>;
 
   explicit UnmanagedVerifyServerCertPlatformKeysTestParams(const TupleT& t)
       : enrollment_status(std::get<0>(t)),
         user_client_cert_slot(std::get<1>(t)),
-        context_type(std::get<2>(t)),
-        cert_net_fetch_status(std::get<3>(t)) {}
+        context_type(std::get<2>(t)) {}
 
   PlatformKeysTestBase::EnrollmentStatus enrollment_status;
   PlatformKeysTest::UserClientCertSlot user_client_cert_slot;
   ContextType context_type;
-  CertNetFetchStatus cert_net_fetch_status;
 };
 
 class UnmanagedVerifyServerCertPlatformKeysTest
@@ -442,20 +437,7 @@ class UnmanagedVerifyServerCertPlatformKeysTest
                          UserStatus::UNMANAGED,
                          false /* unused */,
                          GetParam().user_client_cert_slot,
-                         GetParam().context_type) {
-    cert_net_fetch_status_ = GetParam().cert_net_fetch_status;
-
-    switch (GetCertNetFetchStatus()) {
-      case CertNetFetchStatus::kEnabled:
-        scoped_feature_list_.InitAndEnableFeature(
-            extensions::kVerifyTLSServerCertificateUseNetFetcher);
-        break;
-      case CertNetFetchStatus::kDisabled:
-        scoped_feature_list_.InitAndDisableFeature(
-            extensions::kVerifyTLSServerCertificateUseNetFetcher);
-        break;
-    }
-  }
+                         GetParam().context_type) {}
 
   void SetUpOnMainThread() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
@@ -465,8 +447,6 @@ class UnmanagedVerifyServerCertPlatformKeysTest
     PlatformKeysTest::SetUpOnMainThread();
     GenerateServerCertificates();
   }
-
-  CertNetFetchStatus GetCertNetFetchStatus() { return cert_net_fetch_status_; }
 
  private:
   void GenerateServerCertificates() {
@@ -539,30 +519,19 @@ class UnmanagedVerifyServerCertPlatformKeysTest
                                 l2_leaf->GetDER()));
 
     auto l3_leaf = std::make_unique<net::CertBuilder>(/*orig_cert=*/nullptr,
-                                                      l2_interm.get());
+                                                      l3_interm.get());
     l3_leaf->SetValidity(not_before, not_after);
     l3_leaf->SetBasicConstraints(/*is_ca=*/false, /*path_len=*/-1);
     l3_leaf->SetKeyUsages({bssl::KEY_USAGE_BIT_DIGITAL_SIGNATURE});
     l3_leaf->SetSubjectAltName("l3_leaf");
-    l3_leaf->SetCaIssuersUrl(base_url.Resolve("l2_interm.der"));
+    l3_leaf->SetCaIssuersUrl(base_url.Resolve("non_existing_file.der"));
     ASSERT_TRUE(base::WriteFile(output_dir.AppendASCII("l3_leaf.der"),
                                 l3_leaf->GetDER()));
-
-    auto l4_leaf = std::make_unique<net::CertBuilder>(/*orig_cert=*/nullptr,
-                                                      l3_interm.get());
-    l4_leaf->SetValidity(not_before, not_after);
-    l4_leaf->SetBasicConstraints(/*is_ca=*/false, /*path_len=*/-1);
-    l4_leaf->SetKeyUsages({bssl::KEY_USAGE_BIT_DIGITAL_SIGNATURE});
-    l4_leaf->SetSubjectAltName("l4_leaf");
-    l4_leaf->SetCaIssuersUrl(base_url.Resolve("non_existing_file.der"));
-    ASSERT_TRUE(base::WriteFile(output_dir.AppendASCII("l4_leaf.der"),
-                                l4_leaf->GetDER()));
   }
 
   net::ScopedTestRoot scoped_test_root_;
   base::test::ScopedFeatureList scoped_feature_list_;
   base::ScopedTempDir temp_dir_;
-  CertNetFetchStatus cert_net_fetch_status_ = CertNetFetchStatus::kDisabled;
 };
 
 }  // namespace
@@ -817,17 +786,7 @@ IN_PROC_BROWSER_TEST_P(UnmanagedVerifyServerCertPlatformKeysTest,
 IN_PROC_BROWSER_TEST_P(UnmanagedVerifyServerCertPlatformKeysTest,
                        VerifyServerCert) {
   ASSERT_TRUE(embedded_test_server()->Started());
-  ASSERT_TRUE(RunPlatformKeysTest("verifyServerCertBasic")) << message_;
-  switch (GetCertNetFetchStatus()) {
-    case CertNetFetchStatus::kEnabled:
-      ASSERT_TRUE(RunPlatformKeysTest("verifyServerCertAiaFetchEnabled"))
-          << message_;
-      break;
-    case CertNetFetchStatus::kDisabled:
-      ASSERT_TRUE(RunPlatformKeysTest("verifyServerCertAiaFetchDisabled"))
-          << message_;
-      break;
-  }
+  ASSERT_TRUE(RunPlatformKeysTest("verifyServerCertTests")) << message_;
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -839,6 +798,4 @@ INSTANTIATE_TEST_SUITE_P(
                 Values(PlatformKeysTest::UserClientCertSlot::kPrivateSlot,
                        PlatformKeysTest::UserClientCertSlot::kPublicSlot),
                 Values(ContextType::kServiceWorker,
-                       ContextType::kPersistentBackground),
-                Values(CertNetFetchStatus::kEnabled,
-                       CertNetFetchStatus::kDisabled))));
+                       ContextType::kPersistentBackground))));

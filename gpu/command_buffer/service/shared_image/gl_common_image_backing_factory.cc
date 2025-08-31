@@ -25,9 +25,7 @@ namespace gpu {
 
 namespace {
 // Kill switch for allowing using core ES3 format types for half float format.
-BASE_FEATURE(kAllowEs3F16CoreTypeForGlSi,
-             "AllowEs3F16CoreTypeForGlSi",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(AllowEs3F16CoreTypeForGlSi, base::FEATURE_ENABLED_BY_DEFAULT);
 
 std::optional<viz::SharedImageFormat> GetFallbackFormatIfNotSupported(
     viz::SharedImageFormat plane_format,
@@ -166,10 +164,10 @@ GLCommonImageBackingFactory::GLCommonImageBackingFactory(
     if (enable_texture_storage && !info.is_compressed &&
         validators->texture_internal_format_storage.IsValid(
             info.storage_internal_format)) {
-      // GL_ALPHA8 requires EXT_texture_storage even with ES3. We should not
+      // GL_ALPHA8_EXT requires EXT_texture_storage even with ES3. We should not
       // rely on validating command decoder logic that allows GL_ALPHA8, but
       // working around here for now until proper fix.
-      if (info.storage_internal_format == GL_ALPHA8 && use_passthrough_) {
+      if (info.storage_internal_format == GL_ALPHA8_EXT && use_passthrough_) {
         continue;
       }
 

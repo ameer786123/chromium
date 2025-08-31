@@ -10,10 +10,15 @@
 #include "base/callback_list.h"
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "base/types/pass_key.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "components/tab_groups/tab_group_id.h"
-#include "components/tabs/public/supports_handles.h"
+#include "components/tabs/public/tab_handle_factory.h"
+
+namespace ui {
+class UnownedUserDataHost;
+}
 
 namespace content {
 class WebContents;
@@ -29,6 +34,7 @@ class SplitTabId;
 
 namespace tabs {
 
+class TabCollection;
 class TabFeatures;
 
 // A feature which wants to show tab-modal UI should call
@@ -39,15 +45,6 @@ class ScopedTabModalUI {
   ScopedTabModalUI() = default;
   virtual ~ScopedTabModalUI() = default;
 };
-
-#if !BUILDFLAG(IS_ANDROID)
-// See documentation for ShouldAcceptMouseEventsWhileWindowInactive.
-class ScopedAcceptMouseEventsWhileWindowInactive {
- public:
-  ScopedAcceptMouseEventsWhileWindowInactive() = default;
-  virtual ~ScopedAcceptMouseEventsWhileWindowInactive() = default;
-};
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 // TODO(crbug.com/404889112): This interface will be reused for Android as part
 // of the effort to share tab collections between desktop and Android. Some
@@ -60,12 +57,14 @@ class ScopedAcceptMouseEventsWhileWindowInactive {
 // Ping erikchen for assistance if this class does not have the functionality
 // your feature needs. This comment will be deleted after there are 10+ features
 // in TabFeatures.
-class TabInterface : public SupportsHandles<TabInterface> {
+class TabInterface : public SupportsTabHandles {
  public:
   // This method exists to ease the transition from WebContents to TabInterface.
   // This method should only be called on instances of WebContents that are
   // known to be tabs. Calling this on a non-tab will crash.
   static TabInterface* GetFromContents(content::WebContents* web_contents);
+  static const TabInterface* GetFromContents(
+      const content::WebContents* web_contents);
 
   // Code that references a WebContents should already know whether the
   // WebContents is a tab, and thus should use GetFromContents(). For historical
@@ -77,11 +76,37 @@ class TabInterface : public SupportsHandles<TabInterface> {
   static TabInterface* MaybeGetFromContents(content::WebContents* web_contents);
 
   // Returns a weak pointer to `this`.
+  //
+  // WARNING: Many uses of base::WeakPtr are inappropriate and lead to bugs.
+  // An appropriate use case is as a variable passed to an asynchronously
+  // invoked PostTask.
+  // An inappropriate use case is to store as a member of an object that can
+  // outlive TabInterface. This leads to inconsistent state machines.
+  // For example (don't do this):
+  // class FooOutlivesTab{
+  //   base::WeakPtr<TabInterface> tab_;
+  //   // Conceptually, this member should only be set if tab_ is set.
+  //   std::optional<SkColor> color_of_tab_;
+  // };
+  // For example (do this):
+  // class FooOutlivesTab {
+  //   // Use RegisterWillDetach() to clear both tab_ and color_of_tab_ prior
+  //   // to tab_ destruction.
+  //   raw_ptr<TabInterface> tab_;
+  //   std::optional<SkColor> color_of_tab_;
+  // };
   virtual base::WeakPtr<TabInterface> GetWeakPtr() = 0;
 
-  // When a tab is in the background, the WebContents may be discarded to save
-  // memory. When a tab is in the foreground it is guaranteed to have a
-  // WebContents.
+  // Returns the WebContents that is currently associated with this tab.
+  //
+  // The returned pointer is guaranteed to be non-null.
+  //
+  // However, the WebContents object *itself* can be replaced, most notably
+  // when a background tab's contents are discarded to save memory.
+  // Callers who need to observe the tab for its entire lifetime should not
+  // cache the WebContents pointer directly. Instead, they should hold a
+  // reference to the TabInterface and call GetContents() when needed, or use
+  // RegisterWillDiscardContents() to be notified of swaps.
   virtual content::WebContents* GetContents() const = 0;
 
   // Closes the tab.
@@ -119,6 +144,11 @@ class TabInterface : public SupportsHandles<TabInterface> {
   // provide multiple visible tabs per window. This state is not related to
   // widget visibility or occlusion of the window.
   virtual bool IsVisible() const = 0;
+
+  // Returns true if the tab is selected in its browser window. Note that
+  // "selected" is distinct from "activated" -- multiple tabs may be selected at
+  // a time, and a selected tab is not necessarily active.
+  virtual bool IsSelected() const = 0;
 
   // Register for these two callbacks to detect changes to IsVisible().
   using DidBecomeVisibleCallback = base::RepeatingCallback<void(TabInterface*)>;
@@ -196,6 +226,7 @@ class TabInterface : public SupportsHandles<TabInterface> {
   // TabFeatures or BrowserWindowFeatures, you can safely assume that this is
   // always non-nullptr.
   virtual BrowserWindowInterface* GetBrowserWindowInterface() = 0;
+  virtual const BrowserWindowInterface* GetBrowserWindowInterface() const = 0;
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   // Returns the feature controllers scoped to this tab.
@@ -209,6 +240,7 @@ class TabInterface : public SupportsHandles<TabInterface> {
   //   (3) It is not possible to perform dependency injection for legacy code
   //   that is conceptually a TabFeature and needs access to other TabFeatures.
   virtual tabs::TabFeatures* GetTabFeatures() = 0;
+  virtual const tabs::TabFeatures* GetTabFeatures() const = 0;
 
   // Return true if the tab is pinned in its tabstrip, or false otherwise.
   virtual bool IsPinned() const = 0;
@@ -224,15 +256,27 @@ class TabInterface : public SupportsHandles<TabInterface> {
   // is not part of a split tab.
   virtual std::optional<split_tabs::SplitTabId> GetSplit() const = 0;
 
-#if !BUILDFLAG(IS_ANDROID)
-  // On macOS, tabs do not accept mouse events if the window is not active, even
-  // if it's a child window that is active. Calling this method overrides that
-  // behavior until the unique_ptr is destroyed. This is only relevant if the
-  // tab is in the foreground.
-  virtual bool ShouldAcceptMouseEventsWhileWindowInactive() const = 0;
-  virtual std::unique_ptr<ScopedAcceptMouseEventsWhileWindowInactive>
-  AcceptMouseEventsWhileWindowInactive() = 0;
-#endif  // !BUILDFLAG(IS_ANDROID)
+  // Returns a pointer to the parent TabCollection.
+  virtual TabCollection* GetParentCollection(
+      base::PassKey<TabCollection>) const = 0;
+
+  virtual const TabCollection* GetParentCollection() const = 0;
+
+  // Updates the parent collection of the TabModel in response to structural
+  // changes such as pinning, grouping, or moving the tab between collections.
+  // This method ensures the TabModel remains correctly associated within the
+  // tab hierarchy, maintaining consistent organization.
+  virtual void OnReparented(TabCollection* parent,
+                            base::PassKey<TabCollection>) = 0;
+
+  // Must be called whenever any of this tab's ancestor collections change.
+  virtual void OnAncestorChanged(base::PassKey<TabCollection>) = 0;
+
+  // Returns the UnownedUserDataHost associated with this tab. This is used to
+  // retrieve arbitrary features from the tab without requiring TabModel to have
+  // knowledge of them.
+  virtual ui::UnownedUserDataHost& GetUnownedUserDataHost() = 0;
+  virtual const ui::UnownedUserDataHost& GetUnownedUserDataHost() const = 0;
 };
 
 using TabHandle = TabInterface::Handle;

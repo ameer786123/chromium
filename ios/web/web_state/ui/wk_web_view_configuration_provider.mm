@@ -10,6 +10,7 @@
 #import <vector>
 
 #import "base/check.h"
+#import "base/check_is_test.h"
 #import "base/functional/callback_helpers.h"
 #import "base/ios/ios_util.h"
 #import "base/memory/ptr_util.h"
@@ -28,6 +29,7 @@
 #import "ios/web/public/browser_state.h"
 #import "ios/web/public/web_client.h"
 #import "ios/web/web_state/ui/wk_content_rule_list_provider.h"
+#import "ios/web/web_state/ui/wk_content_rule_list_util.h"
 #import "ios/web/webui/crw_web_ui_scheme_handler.h"
 
 namespace web {
@@ -35,7 +37,8 @@ namespace web {
 namespace {
 
 // A key used to associate a WKWebViewConfigurationProvider with a BrowserState.
-const char kWKWebViewConfigProviderKeyName[] = "wk_web_view_config_provider";
+constexpr char kWKWebViewConfigProviderKeyName[] =
+    "wk_web_view_config_provider";
 
 // Converts `uuid` to an NSUUID.
 NSUUID* ToNSUUID(const base::Uuid& uuid) {
@@ -104,10 +107,35 @@ WKWebViewConfigurationProvider::WKWebViewConfigurationProvider(
     BrowserState* browser_state)
     : browser_state_(browser_state),
       content_rule_list_provider_(
-          std::make_unique<WKContentRuleListProvider>()) {}
+          std::make_unique<WKContentRuleListProvider>()) {
+  Initialize();
+}
+
+WKWebViewConfigurationProvider::WKWebViewConfigurationProvider(
+    BrowserState* browser_state,
+    std::unique_ptr<WKContentRuleListProvider> rule_list_provider)
+    : browser_state_(browser_state),
+      content_rule_list_provider_(std::move(rule_list_provider)) {
+  CHECK_IS_TEST();
+  Initialize();
+}
 
 WKWebViewConfigurationProvider::~WKWebViewConfigurationProvider() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(_sequence_checker_);
+}
+
+void WKWebViewConfigurationProvider::Initialize() {
+  // Create the static content rule lists.
+  // 1. Create Block Local List
+  content_rule_list_provider_->UpdateRuleList(
+      kBlockLocalResourcesRuleListKey,
+      base::SysNSStringToUTF8(CreateLocalBlockingJsonRuleList()),
+      base::DoNothing());
+  // 2. Create Mixed Content Autoupgrade List
+  content_rule_list_provider_->UpdateRuleList(
+      kMixedContentUpgradeRuleListKey,
+      base::SysNSStringToUTF8(CreateMixedContentAutoUpgradeJsonRuleList()),
+      base::DoNothing());
 }
 
 void WKWebViewConfigurationProvider::ResetWithWebViewConfiguration(
@@ -281,6 +309,12 @@ void WKWebViewConfigurationProvider::UpdateScripts() {
 void WKWebViewConfigurationProvider::Purge() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(_sequence_checker_);
   configuration_ = nil;
+}
+
+WKContentRuleListProvider&
+WKWebViewConfigurationProvider::GetContentRuleListProvider() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(_sequence_checker_);
+  return *content_rule_list_provider_;
 }
 
 base::CallbackListSubscription

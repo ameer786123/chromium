@@ -13,6 +13,7 @@
 #include "base/values.h"
 #include "components/update_client/crx_cache.h"
 #include "components/update_client/patcher.h"
+#include "components/update_client/update_client.h"
 
 namespace base {
 class FilePath;
@@ -31,8 +32,9 @@ base::OnceClosure ZucchiniOperation(
     scoped_refptr<CrxCache> crx_cache,
     scoped_refptr<Patcher> patcher,
     base::RepeatingCallback<void(base::Value::Dict)> event_adder,
-    const std::string& id,
-    const std::string& prev_hash,
+    base::RepeatingCallback<void(ComponentState)> state_tracker,
+    const std::string& previous_hash,
+    const std::string& output_hash,
     const base::FilePath& patch_file,
     base::OnceCallback<void(base::expected<base::FilePath, CategorizedError>)>
         callback);

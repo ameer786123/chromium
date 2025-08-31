@@ -10,6 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/views/tabs/tab_container.h"
 #include "chrome/browser/ui/views/tabs/tab_container_controller.h"
+#include "components/tab_groups/tab_group_id.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/views/view_targeter_delegate.h"
@@ -63,6 +64,9 @@ class CompoundTabContainer : public TabContainer,
   void UpdateTabGroupVisuals(tab_groups::TabGroupId group_id) override;
   void NotifyTabstripBubbleOpened() override;
   void NotifyTabstripBubbleClosed() override;
+  void OnSplitCreated(const std::vector<int>& indices) override;
+  void OnSplitRemoved(const std::vector<int>& indices) override;
+  void OnSplitContentsChanged(const std::vector<int>& indices) override;
   std::optional<int> GetModelIndexOf(
       const TabSlotView* slot_view) const override;
   Tab* GetTabAtModelIndex(int index) const override;
@@ -91,10 +95,10 @@ class CompoundTabContainer : public TabContainer,
   void SetTabSlotVisibility() override;
   bool InTabClose() override;
   TabGroupViews* GetGroupViews(tab_groups::TabGroupId group_id) const override;
+  std::map<tab_groups::TabGroupId, TabGroupHeader*> GetGroupHeaders()
+      const override;
   const std::map<tab_groups::TabGroupId, std::unique_ptr<TabGroupViews>>&
   get_group_views_for_testing() const override;
-  int GetActiveTabWidth() const override;
-  int GetInactiveTabWidth() const override;
   gfx::Rect GetIdealBounds(int model_index) const override;
   gfx::Rect GetIdealBounds(tab_groups::TabGroupId group) const override;
 
@@ -185,6 +189,11 @@ class CompoundTabContainer : public TabContainer,
   // bounds of the tabstrip.
   void AnimateScrollToShowXCoordinate(const int start_edge,
                                       const int target_edge);
+
+  // Forwards the split changed event to the appropriate tab container.
+  using SplitChangedCallback = void (TabContainer::*)(const std::vector<int>&);
+  void OnSplitChanged(const std::vector<int>& indices,
+                      SplitChangedCallback callback);
 
   const raw_ref<TabContainerController> controller_;
 

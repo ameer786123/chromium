@@ -48,13 +48,12 @@
 #include "partition_alloc/partition_root.h"
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
 
-namespace WTF {
+namespace blink {
 
 const char* const Partitions::kAllocatedObjectPoolName =
     "partition_alloc/allocated_objects";
 
-BASE_FEATURE(kBlinkUseLargeEmptySlotSpanRingForBufferRoot,
-             "BlinkUseLargeEmptySlotSpanRingForBufferRoot",
+BASE_FEATURE(BlinkUseLargeEmptySlotSpanRingForBufferRoot,
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
              base::FEATURE_ENABLED_BY_DEFAULT);
 #else
@@ -106,12 +105,6 @@ partition_alloc::PartitionOptions PartitionOptionsFromFeatures() {
   PartitionOptions opts;
   opts.backup_ref_ptr = brp_setting;
   opts.memory_tagging = {.enabled = memory_tagging};
-  opts.use_pool_offset_freelists = partition_alloc::PartitionOptions::kEnabled;
-  opts.use_small_single_slot_spans =
-      base::FeatureList::IsEnabled(
-          base::features::kPartitionAllocUseSmallSingleSlotSpans)
-          ? partition_alloc::PartitionOptions::kEnabled
-          : partition_alloc::PartitionOptions::kDisabled;
   return opts;
 }
 
@@ -270,7 +263,7 @@ size_t Partitions::TotalSizeOfCommittedPages() {
 // static
 size_t Partitions::TotalActiveBytes() {
   LightPartitionStatsDumperImpl dumper;
-  WTF::Partitions::DumpMemoryStats(true, &dumper);
+  Partitions::DumpMemoryStats(true, &dumper);
   return dumper.TotalActiveBytes();
 }
 
@@ -468,4 +461,4 @@ void Partitions::AdjustPartitionsForBackground() {
   }
 }
 
-}  // namespace WTF
+}  // namespace blink

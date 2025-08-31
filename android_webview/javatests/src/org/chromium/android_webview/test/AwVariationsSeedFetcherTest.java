@@ -177,7 +177,7 @@ public class AwVariationsSeedFetcherTest {
 
     // A test AwVariationsSeedFetcher that doesn't call JobFinished.
     private static class TestAwVariationsSeedFetcher extends AwVariationsSeedFetcher {
-        public CallbackHelper helper = new CallbackHelper();
+        public final CallbackHelper helper = new CallbackHelper();
         private JobParameters mJobParameters;
         private boolean mNeededReschedule;
 
@@ -198,9 +198,9 @@ public class AwVariationsSeedFetcherTest {
         }
     }
 
-    private TestJobScheduler mScheduler = new TestJobScheduler();
-    private TestVariationsSeedFetcher mDownloader = new TestVariationsSeedFetcher();
-    private TestClock mClock = new TestClock();
+    private final TestJobScheduler mScheduler = new TestJobScheduler();
+    private final TestVariationsSeedFetcher mDownloader = new TestVariationsSeedFetcher();
+    private final TestClock mClock = new TestClock();
     private Context mContext;
 
     @Mock private JobParameters mMockJobParameters;
@@ -439,7 +439,6 @@ public class AwVariationsSeedFetcherTest {
     public void testFastFetchJitterPeriodSettings() throws IOException, TimeoutException {
         try {
             TestAwVariationsSeedFetcher fetcher = new TestAwVariationsSeedFetcher();
-            final Date date = mock(Date.class);
             PersistableBundle bundle = new PersistableBundle();
             bundle.putBoolean(AwVariationsSeedFetcher.JOB_REQUEST_FAST_MODE, true);
 

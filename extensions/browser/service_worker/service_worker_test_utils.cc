@@ -132,7 +132,8 @@ void TestServiceWorkerContextObserver::OnRegistrationCompleted(
 
 void TestServiceWorkerContextObserver::OnRegistrationStored(
     int64_t registration_id,
-    const GURL& scope) {
+    const GURL& scope,
+    const content::ServiceWorkerRegistrationInformation& service_worker_info) {
   if (scope.SchemeIs(kExtensionScheme)) {
     registration_stored_ = true;
     if (stored_quit_closure_) {
@@ -141,7 +142,7 @@ void TestServiceWorkerContextObserver::OnRegistrationStored(
   }
 }
 
-void TestServiceWorkerContextObserver::OnStartWorkerMessageSent(
+void TestServiceWorkerContextObserver::OnStartWorkerMessageSentSync(
     int64_t version_id,
     const GURL& scope) {
   if (extension_scope_ && extension_scope_ != scope) {
@@ -245,6 +246,17 @@ void TestServiceWorkerTaskQueueObserver::WaitForWorkerStopped(
   run_loop.Run();
 }
 
+void TestServiceWorkerTaskQueueObserver::WaitForUntrackServiceWorkerState(
+    const GURL& scope) {
+  if (untracked_set_.count(scope) != 0) {
+    return;
+  }
+
+  base::RunLoop run_loop;
+  untrack_quit_closure_ = run_loop.QuitClosure();
+  run_loop.Run();
+}
+
 void TestServiceWorkerTaskQueueObserver::WaitForWorkerContextInitialized(
     const ExtensionId& extension_id) {
   if (inited_set_.count(extension_id) != 0) {
@@ -334,8 +346,8 @@ void TestServiceWorkerTaskQueueObserver::DidStartWorkerFail(
   }
 }
 
-void TestServiceWorkerTaskQueueObserver::DidInitializeServiceWorkerContext(
-    const ExtensionId& extension_id) {
+void TestServiceWorkerTaskQueueObserver::
+    RendererDidInitializeServiceWorkerContext(const ExtensionId& extension_id) {
   inited_set_.insert(extension_id);
   if (quit_closure_) {
     std::move(quit_closure_).Run();
@@ -365,11 +377,19 @@ void TestServiceWorkerTaskQueueObserver::RequestedWorkerStart(
   ++requested_worker_started_map_[extension_id];
 }
 
-void TestServiceWorkerTaskQueueObserver::DidStopServiceWorkerContext(
+void TestServiceWorkerTaskQueueObserver::RendererDidStopServiceWorkerContext(
     const ExtensionId& extension_id) {
   stopped_set_.insert(extension_id);
   if (quit_closure_) {
     std::move(quit_closure_).Run();
+  }
+}
+
+void TestServiceWorkerTaskQueueObserver::UntrackServiceWorkerState(
+    const GURL& scope) {
+  untracked_set_.insert(scope);
+  if (untrack_quit_closure_) {
+    std::move(untrack_quit_closure_).Run();
   }
 }
 

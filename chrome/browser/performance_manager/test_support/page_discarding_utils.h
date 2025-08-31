@@ -72,8 +72,8 @@ class LenientMockPageDiscarder
   MOCK_METHOD1(DiscardPageNodeImpl, bool(const PageNode* page_node));
 
  private:
-  std::vector<DiscardEvent> DiscardPageNodes(
-      const std::vector<const PageNode*>& page_nodes,
+  std::optional<base::ByteCount> DiscardPageNode(
+      const PageNode* page_node,
       ::mojom::LifecycleUnitDiscardReason discard_reason) override;
 };
 using MockPageDiscarder = ::testing::StrictMock<LenientMockPageDiscarder>;
@@ -103,6 +103,24 @@ class GraphTestHarnessWithMockDiscarder
       user_performance_tuning_manager_environment_;
   raw_ptr<testing::MockPageDiscarder> mock_discarder_;
 };
+
+// Scoped helper object to unconditionally always discard pages in tests, for
+// the duration of the object's life. This object is not nestable.
+class ScopedSetAllPagesDiscardableForTesting {
+ public:
+  ScopedSetAllPagesDiscardableForTesting() {
+    auto* policy = policies::DiscardEligibilityPolicy::GetFromGraph();
+    CHECK(policy);
+    policy->set_always_discard_for_testing(true);
+  }
+
+  ~ScopedSetAllPagesDiscardableForTesting() {
+    auto* policy = policies::DiscardEligibilityPolicy::GetFromGraph();
+    CHECK(policy);
+    policy->set_always_discard_for_testing(false);
+  }
+};
+
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace testing

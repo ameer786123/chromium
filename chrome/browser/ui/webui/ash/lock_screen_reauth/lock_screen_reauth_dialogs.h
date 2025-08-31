@@ -19,10 +19,15 @@
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
 
+namespace content {
+class WebContents;
+}
+
 namespace ash {
 
 class LockScreenCaptivePortalDialog;
 class LockScreenNetworkDialog;
+class LockScreenReauthHandler;
 
 class LockScreenStartReauthDialog
     : public BaseLockDialog,
@@ -114,8 +119,8 @@ class LockScreenStartReauthDialog
   void UpdateState(NetworkError::ErrorReason reason) override;
 
   // ChromeWebModalDialogManagerDelegate:
-  web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHost()
-      override;
+  web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHost(
+      content::WebContents* web_contents) override;
 
   // web_modal::WebContentsModalDialogHost:
   gfx::Size GetMaximumDialogSize() override;
@@ -141,6 +146,8 @@ class LockScreenStartReauthDialog
   void OnCaptivePortalDialogReadyForTesting();
 
   bool IsAutoReloadActive();
+
+  LockScreenReauthHandler* GetHandler();
 
   scoped_refptr<NetworkStateInformer> network_state_informer_;
   bool is_network_dialog_visible_ = false;

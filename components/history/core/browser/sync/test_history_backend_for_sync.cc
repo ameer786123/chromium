@@ -58,6 +58,13 @@ void TestHistoryBackendForSync::AddOrReplaceContentAnnotation(
   content_annotations_[visit_id] = content_annotation;
 }
 
+void TestHistoryBackendForSync::AddOrReplaceVisitSource(
+    VisitID visit_id,
+    VisitSource visit_source) {
+  DCHECK_NE(visit_id, 0);
+  visit_sources_[visit_id] = visit_source;
+}
+
 void TestHistoryBackendForSync::RemoveURLAndVisits(URLID url_id) {
   std::erase_if(visits_, [url_id](const VisitRow& visit) {
     return visit.url_id == url_id;
@@ -118,6 +125,16 @@ bool TestHistoryBackendForSync::GetVisitByID(VisitID visit_id,
   return false;
 }
 
+bool TestHistoryBackendForSync::GetVisitSource(const VisitID visit_id,
+                                               VisitSource* source) {
+  if (visit_sources_.count(visit_id)) {
+    *source = visit_sources_[visit_id];
+    return true;
+  }
+  *source = VisitSource::SOURCE_BROWSED;
+  return false;
+}
+
 bool TestHistoryBackendForSync::GetMostRecentVisitForURL(URLID id,
                                                          VisitRow* visit_row) {
   *visit_row = VisitRow();
@@ -157,7 +174,7 @@ VisitVector TestHistoryBackendForSync::GetRedirectChain(VisitRow visit) {
     }
     result.push_back(visit);
   }
-  std::reverse(result.begin(), result.end());
+  std::ranges::reverse(result);
   return result;
 }
 

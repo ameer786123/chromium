@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -20,9 +21,9 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/path_service.h"
 #include "base/rand_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -31,7 +32,6 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/download/bubble/download_bubble_prefs.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/download/download_core_service_factory.h"
 #include "chrome/browser/download/download_crx_util.h"
@@ -64,14 +64,17 @@
 #include "components/download/public/common/download_item.h"
 #include "components/download/public/common/download_item_rename_handler.h"
 #include "components/download/public/common/download_stats.h"
+#include "components/enterprise/connectors/core/reporting_utils.h"
 #include "components/offline_pages/buildflags/buildflags.h"
 #include "components/pdf/common/constants.h"
 #include "components/pdf/common/pdf_util.h"
+#include "components/policy/content/policy_blocklist_service.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_member.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/buildflags.h"
+#include "components/safe_browsing/content/browser/safe_browsing_navigation_observer_manager.h"
 #include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_search_api/safe_search_util.h"
@@ -84,6 +87,7 @@
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/service_process_host.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/origin_util.h"
 #include "extensions/buildflags/buildflags.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -91,11 +95,9 @@
 #include "net/base/filename_util.h"
 #include "net/base/mime_util.h"
 #include "net/base/network_change_notifier.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
 #include "base/android/content_uri_utils.h"
 #include "base/android/path_utils.h"
 #include "base/process/process_handle.h"
@@ -108,7 +110,6 @@
 #include "chrome/browser/download/android/download_utils.h"
 #include "chrome/browser/download/android/duplicate_download_dialog_bridge_delegate.h"
 #include "chrome/browser/download/android/insecure_download_dialog_bridge.h"
-#include "chrome/browser/download/android/insecure_download_infobar_delegate.h"
 #include "chrome/browser/download/android/new_navigation_observer.h"
 #include "chrome/browser/flags/android/chrome_feature_list.h"
 #include "chrome/browser/ui/android/pdf/pdf_jni_headers/PdfUtils_jni.h"
@@ -162,8 +163,16 @@
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router.h"
 #include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router_factory.h"
-#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+#endif
+
+#if BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
+#include "chrome/browser/enterprise/connectors/reporting/reporting_event_router_factory.h"
+#include "components/enterprise/connectors/core/reporting_constants.h"
+#include "components/enterprise/connectors/core/reporting_event_router.h"
+#endif  // BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
 #endif  // BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
+
+#include "base/android/device_info.h"
 
 using content::BrowserThread;
 using content::DownloadManager;
@@ -192,8 +201,10 @@ constexpr base::TimeDelta kEphemeralWarningLifetimeBeforeCancel =
 bool IsEphemeralWarningCancellationEnabled() {
 #if BUILDFLAG(IS_ANDROID)
   return ShouldShowSafeBrowsingAndroidDownloadWarnings();
+#elif BUILDFLAG(IS_CHROMEOS)
+  return false;
 #else
-  return download::IsDownloadBubbleEnabled();
+  return true;
 #endif
 }
 
@@ -343,6 +354,8 @@ void OnDownloadDialogClosed(
       std::move(callback).Run(DownloadConfirmationResult::CANCELED,
                               ui::SelectedFileInfo());
       break;
+    case DownloadLocationDialogResult::CONFIRMED_WITHOUT_USER_INPUT:
+      [[fallthrough]];
     case DownloadLocationDialogResult::DUPLICATE_DIALOG:
       // TODO(xingliu): Figure out the dialog behavior on multiple downloads.
       // Currently we just let other downloads continue, which doesn't make
@@ -363,6 +376,17 @@ base::FilePath GetTempPdfDir() {
 bool ShouldOpenPdfInlineInternal(bool incognito) {
   JNIEnv* env = base::android::AttachCurrentThread();
   return Java_PdfUtils_shouldOpenPdfInline(env, incognito);
+}
+
+void OnDetermineSavePackagePathDone(
+    content::SavePackagePathPickedCallback callback,
+    const base::FilePath& file_path,
+    const base::FilePath& display_name) {
+  content::SavePackagePathPickedParams param;
+  param.file_path = file_path;
+  param.save_type = content::SavePageType::SAVE_PAGE_TYPE_AS_MHTML;
+  param.display_name = display_name;
+  std::move(callback).Run(param, base::DoNothing());
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -442,21 +466,35 @@ void MaybeReportDangerousDownloadBlocked(
     }
   }
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
   auto* router =
-      extensions::SafeBrowsingPrivateEventRouterFactory::GetForProfile(profile);
+      enterprise_connectors::ReportingEventRouterFactory::GetForBrowserContext(
+          browser_context);
   if (router) {
     std::string raw_digest_sha256;
     if (download->GetState() == DownloadItem::DownloadState::COMPLETE) {
       raw_digest_sha256 = download->GetHash();
     }
+    google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>
+        referrer_chain;
+    if (base::FeatureList::IsEnabled(safe_browsing::kEnhancedFieldsForSecOps)) {
+      referrer_chain =
+          safe_browsing::GetOrIdentifyReferrerChainForEnterprise(*download);
+    }
+
     router->OnDangerousDownloadEvent(
-        download->GetURL(), download->GetTabUrl(), download_path,
-        base::HexEncode(raw_digest_sha256), danger_type,
-        download->GetMimeType(), /*scan_id*/ "", download->GetTotalBytes(),
+        download->GetURL(), download->GetTabUrl(), /*source*/ "",
+        /*destination=*/"", download_path, base::HexEncode(raw_digest_sha256),
+        danger_type, download->GetMimeType(),
+        enterprise_connectors::kFileDownloadDataTransferEventTrigger,
+        /*scan_id=*/"", /*content_transfer_method=*/"",
+        download->GetTotalBytes(), referrer_chain,
+        enterprise_connectors::CollectFrameUrls(
+            content::DownloadItemUtils::GetWebContents(download),
+            enterprise_connectors::DeepScanAccessPoint::DOWNLOAD),
         enterprise_connectors::EventResult::BLOCKED);
   }
-#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+#endif  // BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
 #endif  // BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 }
 
@@ -670,6 +708,10 @@ bool ChromeDownloadManagerDelegate::DetermineDownloadTarget(
   DownloadPathReservationTracker::FilenameConflictAction action =
       kDefaultPlatformConflictAction;
 #if BUILDFLAG(IS_ANDROID)
+  if (base::android::device_info::is_desktop()) {
+    action = DownloadPathReservationTracker::UNIQUIFY;
+  }
+
   if (download->IsTransient()) {
     if (download_path.empty() && download->GetMimeType() == pdf::kPDFMimeType &&
         !download->IsMustDownload()) {
@@ -1008,7 +1050,18 @@ bool ChromeDownloadManagerDelegate::InterceptDownloadIfApplicable(
     const std::string& request_origin,
     int64_t content_length,
     bool is_transient,
+    bool is_content_initiated,
     content::WebContents* web_contents) {
+  PolicyBlocklistService* service =
+      PolicyBlocklistFactory::GetForBrowserContext(profile_);
+  policy::URLBlocklist::URLBlocklistState blocklist_state =
+      service->GetURLBlocklistState(url);
+  if (blocklist_state ==
+      policy::URLBlocklist::URLBlocklistState::URL_IN_BLOCKLIST) {
+    LOG(WARNING) << "URL is blocked by a policy.";
+    return true;
+  }
+
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   // For background service downloads we don't want offline pages backend to
@@ -1016,11 +1069,18 @@ bool ChromeDownloadManagerDelegate::InterceptDownloadIfApplicable(
   // the download corresponds to background service. Additionally we don't want
   // offline pages backend to intercept html files explicitly marked as
   // attachments.
-  if (!is_transient &&
+  // Also, we only want to respond to browser actions, like saving pages from
+  // a context menu, not content initiated actions. See crbug.com/425492793.
+  if (!is_transient && !is_content_initiated &&
       !net::HttpContentDisposition(content_disposition, std::string())
            .is_attachment() &&
       offline_pages::OfflinePageUtils::CanDownloadAsOfflinePage(url,
                                                                 mime_type)) {
+#if BUILDFLAG(IS_ANDROID)
+    if (profile_->IsOffTheRecord()) {
+      return false;
+    }
+#endif  // BUILDFLAG(IS_ANDROID)
     offline_pages::OfflinePageUtils::ScheduleDownload(
         web_contents, offline_pages::kDownloadNamespace, url,
         offline_pages::OfflinePageUtils::DownloadUIActionFlags::ALL,
@@ -1030,7 +1090,7 @@ bool ChromeDownloadManagerDelegate::InterceptDownloadIfApplicable(
 #endif
 
 #if BUILDFLAG(IS_ANDROID)
-  if (base::android::BuildInfo::GetInstance()->is_automotive()) {
+  if (base::android::device_info::is_automotive()) {
     if (!blink::IsSupportedMimeType(mime_type) &&
         !IsPdfAndSupported(mime_type, web_contents)) {
       download_message_bridge_->ShowUnsupportedDownloadMessage(web_contents);
@@ -1083,10 +1143,27 @@ void ChromeDownloadManagerDelegate::ChooseSavePath(
     const base::FilePath::StringType& default_extension,
     bool can_save_as_complete,
     content::SavePackagePathPickedCallback callback) {
+#if BUILDFLAG(IS_ANDROID)
+  if (!web_contents) {
+    return;
+  }
+
+  base::OnceCallback<void(bool)> confirm_callback =
+      base::BindOnce(&ChromeDownloadManagerDelegate::
+                         RequestIncognitoSavePackageConfirmationDone,
+                     weak_ptr_factory_.GetWeakPtr(), web_contents->GetURL(),
+                     suggested_path, std::move(callback));
+  if (profile_->IsOffTheRecord()) {
+    RequestIncognitoWarningConfirmation(std::move(confirm_callback));
+  } else {
+    std::move(confirm_callback).Run(/*accepted=*/true);
+  }
+#else
   // Deletes itself.
   new SavePackageFilePicker(web_contents, suggested_path, default_extension,
                             can_save_as_complete, download_prefs_.get(),
                             std::move(callback));
+#endif
 }
 
 void ChromeDownloadManagerDelegate::SanitizeSavePackageResourceName(
@@ -1802,7 +1879,7 @@ void ChromeDownloadManagerDelegate::OnInstallerDone(
 
   {
     auto iter = running_crx_installs_.find(token);
-    CHECK(iter != running_crx_installs_.end(), base::NotFatalUntil::M130);
+    CHECK(iter != running_crx_installs_.end());
     installer = iter->second;
     running_crx_installs_.erase(iter);
   }
@@ -2270,3 +2347,18 @@ void ChromeDownloadManagerDelegate::CancelAllEphemeralWarnings() {
     }
   }
 }
+
+#if BUILDFLAG(IS_ANDROID)
+void ChromeDownloadManagerDelegate::RequestIncognitoSavePackageConfirmationDone(
+    const GURL& url,
+    const base::FilePath& suggested_path,
+    content::SavePackagePathPickedCallback callback,
+    bool accept) {
+  if (!accept) {
+    return;
+  }
+  download::DetermineSavePackagePath(
+      url, suggested_path,
+      base::BindOnce(&OnDetermineSavePackagePathDone, std::move(callback)));
+}
+#endif

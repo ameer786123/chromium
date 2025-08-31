@@ -11,10 +11,9 @@
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/timer/timer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/omnibox/browser/on_device_tail_model_executor.h"
-#include "components/optimization_guide/core/optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/delivery/optimization_guide_model_provider.h"
 
 // The key service holds on device tail model executor and its model observer.
 class OnDeviceTailModelService

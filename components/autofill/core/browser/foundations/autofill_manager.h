@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "base/callback_list.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
@@ -36,6 +37,7 @@
 #include "components/autofill/core/common/mojom/autofill_types.mojom.h"
 #include "components/autofill/core/common/signatures.h"
 #include "components/autofill/core/common/unique_ids.h"
+#include "components/optimization_guide/proto/models.pb.h"
 #include "components/translate/core/browser/translate_driver.h"
 
 namespace autofill {
@@ -193,14 +195,15 @@ class AutofillManager
     // be filled: each `FormFieldData::value` contains the filled or previewed
     // value; the corresponding `AutofillField` contains the field type
     // information. The field values come from `filling_payload`.
-    // TODO(crbug.com/40227496): Get rid of FormFieldData.
     // TODO(crbug.com/40280003): Consider removing the event in favor of
     // OnAfterDidFillAutofillFormData(), which is fired by the renderer.
-    virtual void OnFillOrPreviewDataModelForm(
+    // TODO(crbug.com/40227071): Consider removing `action_persistence` as the
+    // preview signal is only used for testing.
+    virtual void OnFillOrPreviewForm(
         AutofillManager& manager,
-        FormGlobalId form,
+        FormGlobalId form_id,
         mojom::ActionPersistence action_persistence,
-        base::span<const FormFieldData* const> filled_fields,
+        const base::flat_set<FieldGlobalId>& filled_field_ids,
         const FillingPayload& filling_payload) {}
 
     // Fired when a form is submitted. A `FormData` is passed instead of a
@@ -251,7 +254,8 @@ class AutofillManager
       const FormData& form,
       const FieldGlobalId& field_id,
       const gfx::Rect& caret_bounds,
-      AutofillSuggestionTriggerSource trigger_source);
+      AutofillSuggestionTriggerSource trigger_source,
+      std::optional<PasswordSuggestionRequest> password_request);
   void OnHidePopup();
   virtual void OnCaretMovedInFormField(const FormData& form,
                                        const FieldGlobalId& field_id,
@@ -346,6 +350,16 @@ class AutofillManager
 
   AutofillDriver& driver() { return *driver_; }
 
+  // Reparses all known forms.
+  void ReparseKnownForms();
+
+  // After subscribing, FieldClassificationModelHandler::OnModelUpdated() will
+  // trigger ReparseKnownForms(). There may be a handler for Autofill and/or
+  // Password Manager.
+  void SubscribeToMlModelChanges(
+      FieldClassificationModelHandler& handler,
+      optimization_guide::proto::OptimizationTarget optimization_target);
+
  protected:
   explicit AutofillManager(AutofillDriver* driver);
 
@@ -382,7 +396,8 @@ class AutofillManager
       const FormData& form,
       const FieldGlobalId& field_id,
       const gfx::Rect& caret_bounds,
-      AutofillSuggestionTriggerSource trigger_source) = 0;
+      AutofillSuggestionTriggerSource trigger_source,
+      std::optional<PasswordSuggestionRequest> password_request) = 0;
   virtual void OnDidFillAutofillFormDataImpl(
       const FormData& form,
       const base::TimeTicks timestamp) = 0;
@@ -508,6 +523,10 @@ class AutofillManager
 
   // Observers that listen to updates of this instance.
   base::ObserverList<Observer> observers_;
+
+  // Set by SubscribeToMlModelChanges().
+  base::CallbackListSubscription autofill_model_change_subscription_;
+  base::CallbackListSubscription password_manager_model_change_subscription_;
 
   // DetermineHeuristicTypes() should only be run on the `parsing_task_runner_`.
   // The reply will be called on the main thread and should be a no-op if this

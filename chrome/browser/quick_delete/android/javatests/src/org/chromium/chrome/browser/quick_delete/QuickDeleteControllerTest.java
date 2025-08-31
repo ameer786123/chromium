@@ -92,7 +92,7 @@ public class QuickDeleteControllerTest {
                 .clearBrowsingData(any(), any(), any(), anyInt(), any(), any(), any(), any());
 
         // Set the time for the initial tab to be outside of the quick delete time span.
-        Tab initialTab = firstPage.getLoadedTab();
+        Tab initialTab = firstPage.loadedTabElement.value();
         runOnUiThreadBlocking(
                 () -> {
                     TabTestUtils.setLastNavigationCommittedTimestampMillis(
@@ -119,7 +119,8 @@ public class QuickDeleteControllerTest {
     public void testDefaultTimePeriodSelectedIs15Minutes() {
         QuickDeleteDialogFacility dialog = mSecondPage.openRegularTabAppMenu().clearBrowsingData();
         var option =
-                (TimePeriodUtils.TimePeriodSpinnerOption) dialog.getSpinner().getSelectedItem();
+                (TimePeriodUtils.TimePeriodSpinnerOption)
+                        dialog.spinnerElement.value().getSelectedItem();
         assertEquals(TimePeriod.LAST_15_MINUTES, option.getTimePeriod());
         dialog.clickCancel();
     }
@@ -228,7 +229,7 @@ public class QuickDeleteControllerTest {
     @Test
     @MediumTest
     public void testMoreOptions_OpensClearBrowsingData() {
-        Tab secondTab = mSecondPage.getLoadedTab();
+        Tab secondTab = mSecondPage.loadedTabElement.value();
         QuickDeleteDialogFacility dialog = mSecondPage.openRegularTabAppMenu().clearBrowsingData();
 
         HistogramWatcher histogramWatcher =
@@ -247,11 +248,9 @@ public class QuickDeleteControllerTest {
         TransitAsserts.assertFinalDestination(clearBrowsingDataSettings);
 
         // Return to a PageStation for InitialStateRule to reset properly.
-        clearBrowsingDataSettings.pressBack(
-                WebPageStation.newBuilder()
-                        .withIsOpeningTabs(0)
-                        .withTabAlreadySelected(secondTab)
-                        .build());
+        clearBrowsingDataSettings
+                .pressBackTo()
+                .arriveAt(WebPageStation.newBuilder().withTabAlreadySelected(secondTab).build());
     }
 
     @Test
@@ -265,12 +264,12 @@ public class QuickDeleteControllerTest {
         WebPageStation realPage =
                 mSecondPage.loadPageProgrammatically(
                         "https://www.google.com/", WebPageStation.newBuilder());
-        assertEquals(1, realPage.getActivity().getCurrentTabModel().getCount());
+        assertEquals(1, realPage.getTabModel().getCount());
 
         QuickDeleteDialogFacility dialog = realPage.openRegularTabAppMenu().clearBrowsingData();
         mTabSwitcher = dialog.confirmDelete().first;
 
-        assertEquals(1, realPage.getActivity().getCurrentTabModel().getCount());
+        assertEquals(1, realPage.getTabModel().getCount());
         histogramWatcher.assertExpected();
     }
 

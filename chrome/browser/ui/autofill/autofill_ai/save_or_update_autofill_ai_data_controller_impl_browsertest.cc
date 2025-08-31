@@ -8,38 +8,45 @@
 
 #include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/with_feature_override.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/core/browser/data_model/autofill_ai/entity_instance.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "content/public/test/browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace autofill_ai {
+namespace autofill {
 
 namespace {
 // Helper method used to simulate an update entity dialog. Returns two
 // entities where the first is the new one and second is the old one. The new
 // one contains one updated and one edited attribute.
-std::pair<autofill::EntityInstance, autofill::EntityInstance>
-GetUpdateEntities() {
-  autofill::test::PassportEntityOptions new_entity_options;
+std::pair<EntityInstance, EntityInstance> GetUpdateEntities() {
+  test::PassportEntityOptions new_entity_options;
   new_entity_options.name = u"Jon doe";
-  autofill::EntityInstance new_entity =
-      autofill::test::GetPassportEntityInstance(new_entity_options);
+  EntityInstance new_entity =
+      test::GetPassportEntityInstance(new_entity_options);
 
-  autofill::test::PassportEntityOptions old_entity_options;
+  test::PassportEntityOptions old_entity_options;
   old_entity_options.name = u"Jonas doe";
   old_entity_options.country = nullptr;
-  autofill::EntityInstance old_entity =
-      autofill::test::GetPassportEntityInstance(old_entity_options);
+  EntityInstance old_entity =
+      test::GetPassportEntityInstance(old_entity_options);
   return std::make_pair(new_entity, old_entity);
 }
 }  // namespace
-class SaveOrUpdateAutofillAiDataControllerImplTest : public DialogBrowserTest {
+class SaveOrUpdateAutofillAiDataControllerImplTest
+    : public DialogBrowserTest,
+      public base::test::WithFeatureOverride {
  public:
-  SaveOrUpdateAutofillAiDataControllerImplTest() = default;
+  SaveOrUpdateAutofillAiDataControllerImplTest()
+      : base::test::WithFeatureOverride(
+            features::kAutofillShowBubblesBasedOnPriorities) {}
+
   SaveOrUpdateAutofillAiDataControllerImplTest(
       const SaveOrUpdateAutofillAiDataControllerImplTest&) = delete;
   SaveOrUpdateAutofillAiDataControllerImplTest& operator=(
@@ -57,14 +64,13 @@ class SaveOrUpdateAutofillAiDataControllerImplTest : public DialogBrowserTest {
         SaveOrUpdateAutofillAiDataControllerImpl::FromWebContents(web_contents);
     CHECK(controller_);
     if (name == "UpdateEntity") {
-      std::pair<autofill::EntityInstance, autofill::EntityInstance> entities =
-          GetUpdateEntities();
+      std::pair<EntityInstance, EntityInstance> entities = GetUpdateEntities();
       controller_->ShowPrompt(std::move(entities.first),
                               std::move(entities.second), base::NullCallback());
       return;
     } else if (name == "SaveNewEntity") {
-      controller_->ShowPrompt(autofill::test::GetPassportEntityInstance(),
-                              std::nullopt, base::NullCallback());
+      controller_->ShowPrompt(test::GetPassportEntityInstance(), std::nullopt,
+                              base::NullCallback());
       return;
     }
     NOTREACHED();
@@ -75,13 +81,16 @@ class SaveOrUpdateAutofillAiDataControllerImplTest : public DialogBrowserTest {
     DialogBrowserTest::TearDownOnMainThread();
   }
 
+  bool IsBubbleManagerEnabled() const { return GetParam(); }
+
   SaveOrUpdateAutofillAiDataControllerImpl* controller() { return controller_; }
 
  private:
+  base::test::ScopedFeatureList scoped_features_;
   raw_ptr<SaveOrUpdateAutofillAiDataControllerImpl> controller_ = nullptr;
 };
 
-IN_PROC_BROWSER_TEST_F(SaveOrUpdateAutofillAiDataControllerImplTest,
+IN_PROC_BROWSER_TEST_P(SaveOrUpdateAutofillAiDataControllerImplTest,
                        UpdatedAttributesDetails_UpdateEntity) {
   ShowUi("UpdateEntity");
   std::vector<
@@ -97,9 +106,22 @@ IN_PROC_BROWSER_TEST_F(SaveOrUpdateAutofillAiDataControllerImplTest,
             SaveOrUpdateAutofillAiDataController::EntityAttributeUpdateType::
                 kNewEntityAttributeAdded);
   EXPECT_EQ(update_details[1].attribute_value, u"Sweden");
+  base::HistogramTester histogram_tester;
+  controller()->OnBubbleClosed(SaveOrUpdateAutofillAiDataController::
+                                   AutofillAiBubbleClosedReason::kAccepted);
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.Ai.UpdatePrompt.Passport",
+      SaveOrUpdateAutofillAiDataController::AutofillAiBubbleClosedReason::
+          kAccepted,
+      1);
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.Ai.UpdatePrompt.AllEntities",
+      SaveOrUpdateAutofillAiDataController::AutofillAiBubbleClosedReason::
+          kAccepted,
+      1);
 }
 
-IN_PROC_BROWSER_TEST_F(SaveOrUpdateAutofillAiDataControllerImplTest,
+IN_PROC_BROWSER_TEST_P(SaveOrUpdateAutofillAiDataControllerImplTest,
                        UpdatedAttributesDetails_SaveNewEntity) {
   ShowUi("SaveNewEntity");
   std::vector<
@@ -112,5 +134,22 @@ IN_PROC_BROWSER_TEST_F(SaveOrUpdateAutofillAiDataControllerImplTest,
               SaveOrUpdateAutofillAiDataController::EntityAttributeUpdateType::
                   kNewEntityAttributeAdded);
   }
+  base::HistogramTester histogram_tester;
+  controller()->OnBubbleClosed(SaveOrUpdateAutofillAiDataController::
+                                   AutofillAiBubbleClosedReason::kAccepted);
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.Ai.SavePrompt.Passport",
+      SaveOrUpdateAutofillAiDataController::AutofillAiBubbleClosedReason::
+          kAccepted,
+      1);
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.Ai.SavePrompt.AllEntities",
+      SaveOrUpdateAutofillAiDataController::AutofillAiBubbleClosedReason::
+          kAccepted,
+      1);
 }
-}  // namespace autofill_ai
+
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(
+    SaveOrUpdateAutofillAiDataControllerImplTest);
+
+}  // namespace autofill

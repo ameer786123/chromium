@@ -7,6 +7,7 @@
 #import "base/feature_list.h"
 #import "base/hash/hash.h"
 #import "base/scoped_observation.h"
+#import "base/strings/string_number_conversions.h"
 #import "base/supports_user_data.h"
 #import "base/task/sequenced_task_runner.h"
 #import "base/task/task_traits.h"
@@ -126,13 +127,8 @@ std::unique_ptr<KeyedService> BuildSegmentationPlatformService(
       base::NumberToString(base::PersistentHash(profile_path.value()));
   params->history_service = ios::HistoryServiceFactory::GetForProfile(
       profile, ServiceAccessType::IMPLICIT_ACCESS);
-  base::TaskPriority priority = base::TaskPriority::BEST_EFFORT;
-  if (base::FeatureList::IsEnabled(
-          features::kSegmentationPlatformUserVisibleTaskRunner)) {
-    priority = base::TaskPriority::USER_VISIBLE;
-  }
-  params->task_runner =
-      base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock(), priority});
+  params->task_runner = base::ThreadPool::CreateSequencedTaskRunner(
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE});
   params->storage_dir =
       profile_path.Append(kSegmentationPlatformStorageDirName);
   params->db_provider = protodb_provider;
@@ -144,7 +140,7 @@ std::unique_ptr<KeyedService> BuildSegmentationPlatformService(
 
   auto home_modules_card_registry =
       std::make_unique<home_modules::HomeModulesCardRegistry>(
-          profile->GetPrefs());
+          profile->GetPrefs(), GetApplicationContext()->GetLocalState());
   params->configs =
       GetSegmentationPlatformConfig(home_modules_card_registry.get());
   params->model_provider = std::make_unique<ModelProviderFactoryImpl>(

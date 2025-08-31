@@ -209,8 +209,9 @@ class MinimumWindowsSupportTest : public DelayloadsTest {
 
 // Run this test only in Release builds.
 //
-// These tests make sure that chrome.dll, chrome_child.dll, and chrome.exe
-// have only certain types of imports.
+// These tests make sure that chrome.dll, and chrome.exe have only certain types
+// of imports.
+//
 // In particular, we explicitly want to ensure user32.dll and its many related
 // dlls are delayloaded and not automatically brought in via some other
 // dependent dll. The primary reason for this is that the sandbox for the
@@ -244,7 +245,6 @@ TEST_F(DelayloadsTest, ChromeDllDelayloadsCheck) {
       "KERNEL32.dll",
       "chrome_elf.dll",
       "DWrite.dll",
-      "ADVAPI32.dll",
       "CRYPT32.dll",
       "dbghelp.dll",
       "dhcpcsvc.DLL",
@@ -252,7 +252,6 @@ TEST_F(DelayloadsTest, ChromeDllDelayloadsCheck) {
       "ntdll.dll",
       "OLEAUT32.dll",
       "Secur32.dll",
-      "UIAutomationCore.DLL",
       "USERENV.dll",
       "WINHTTP.dll",
       "WINMM.dll",
@@ -504,7 +503,7 @@ TEST_F(MinimumWindowsSupportTest, ChromeExtraDlls) {
       // These are not yet supported for Arm64.
       L"dxcompiler.dll", L"dxil.dll",
 #endif  // !defined(ARCH_CPU_ARM64
-      L"libEGL.dll", L"libGLESv2.dll", L"vk_swiftshader.dll", L"vulkan-1.dll"};
+      L"vk_swiftshader.dll", L"vulkan-1.dll"};
   for (const auto& dll : extra_dlls) {
     Validate(dll);
   }

@@ -2,15 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "ash/webui/boca_ui/boca_ui.h"
 
 #include "ash/constants/ash_features.h"
 #include "ash/webui/boca_ui/boca_app_page_handler.h"
+#include "ash/webui/boca_ui/boca_util.h"
 #include "ash/webui/boca_ui/url_constants.h"
 #include "ash/webui/boca_ui/webview_auth_delegate.h"
 #include "ash/webui/boca_ui/webview_auth_handler.h"
@@ -108,10 +105,7 @@ BocaUI::BocaUI(content::WebUI* web_ui,
 #endif  // !DCHECK_IS_ON()
 }
 
-BocaUI::~BocaUI() {
-  BocaAppClient::Get()->GetSessionManager()->ToggleAppStatus(
-      /*is_app_opened=*/false);
-}
+BocaUI::~BocaUI() = default;
 
 void BocaUI::BindInterface(
     mojo::PendingReceiver<boca::mojom::BocaPageHandlerFactory> factory) {
@@ -145,8 +139,7 @@ void BocaUI::Create(
       on_task_session_manager
           ? on_task_session_manager->GetOnTaskSystemWebAppManager()
           : nullptr;
-  BocaAppClient::Get()->GetSessionManager()->ToggleAppStatus(
-      /*is_app_opened=*/true);
+  BocaAppClient::Get()->GetSessionManager()->OnAppWindowOpened();
   page_handler_impl_ = std::make_unique<BocaAppHandler>(
       std::move(page_handler), std::move(page), web_ui(),
       std::move(auth_handler), std::make_unique<ClassroomPageHandlerImpl>(),
@@ -154,6 +147,9 @@ void BocaUI::Create(
       BocaAppClient::Get()->GetSessionManager()->session_client_impl(),
       is_producer_);
   page_handler_impl_->SetSpotlightService(&spotlight_service_);
+  if (ash::features::IsBocaMarkerModeEnabled() && is_producer_) {
+    ash::boca::util::EnableOrDisableMarkerMode(/*enable=*/true);
+  }
 }
 
 WEB_UI_CONTROLLER_TYPE_IMPL(BocaUI)

@@ -14,6 +14,7 @@
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/layout/anchor_scope.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
+#include "third_party/blink/renderer/core/layout/geometry/transform_state.h"
 #include "third_party/blink/renderer/core/style/scoped_css_name.h"
 #include "third_party/blink/renderer/platform/geometry/physical_offset.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
@@ -27,6 +28,7 @@ class LayoutBox;
 class LayoutObject;
 class StitchedAnchorQueries;
 class PaintLayer;
+class PhysicalFragment;
 
 using AnchorKey = std::variant<const AnchorScopedName*, const Element*>;
 
@@ -148,22 +150,38 @@ class AnchorQueryBase : public GarbageCollectedMixin {
 struct CORE_EXPORT PhysicalAnchorReference
     : public GarbageCollected<PhysicalAnchorReference> {
   PhysicalAnchorReference(const Element& element,
-                          const PhysicalRect& rect,
+                          const TransformState& transform_state,
+                          const PhysicalRect& rect_without_transforms,
                           bool is_out_of_flow,
                           GCedHeapHashSet<Member<Element>>* display_locks)
-      : rect(rect),
+      : transform_state(transform_state),
+        rect_without_transforms(rect_without_transforms),
         element(&element),
         display_locks(display_locks),
         is_out_of_flow(is_out_of_flow) {}
 
   LayoutObject* GetLayoutObject() const { return element->GetLayoutObject(); }
 
+  PhysicalRect TransformedBoundingRect() const {
+    gfx::RectF rect_f = transform_state.MappedQuad().BoundingBox();
+    return PhysicalRect::EnclosingRect(rect_f);
+  }
+
+  PhysicalRect RectWithoutTransforms() const { return rect_without_transforms; }
+
   // Insert |this| into the given singly linked list in the reverse tree order.
   void InsertInReverseTreeOrderInto(Member<PhysicalAnchorReference>* head_ptr);
 
   void Trace(Visitor* visitor) const;
 
-  PhysicalRect rect;
+  // For now, store both the transform state (to provide the bounding box after
+  // applying transforms), and also the raw border box rectangle of the anchor
+  // (without transforms). It may be possible that we can drop the latter, once
+  // the CSSAnchorWithTransforms runtime feature sticks, but there are spec
+  // discussions to be had first, if nothing else.
+  TransformState transform_state;
+  PhysicalRect rect_without_transforms;
+
   Member<const Element> element;
   // A singly linked list in the reverse tree order. There can be at most one
   // in-flow reference, which if exists must be at the end of the list.
@@ -188,8 +206,10 @@ class CORE_EXPORT PhysicalAnchorQuery
   // Find and return a valid anchor reference for the specified anchor key.
   // Unless nullptr is returned, the returned anchor reference is guaranteed to
   // have a valid LayoutObject.
-  const PhysicalAnchorReference* AnchorReference(const LayoutBox& query_box,
-                                                 const AnchorKey&) const;
+  const PhysicalAnchorReference* AnchorReference(
+      const LayoutBox& query_box,
+      const LayoutObject* query_box_actual_containing_block,
+      const AnchorKey&) const;
   const LayoutObject* AnchorLayoutObject(const LayoutBox& query_box,
                                          const AnchorKey&) const;
 
@@ -197,33 +217,20 @@ class CORE_EXPORT PhysicalAnchorQuery
   // passed as |element_for_display_lock|.
   void Set(const AnchorKey&,
            const LayoutObject& layout_object,
-           const PhysicalRect& rect,
+           const TransformState& transform_state,
+           const PhysicalRect& rect_without_transforms,
            SetOptions,
            Element* element_for_display_lock);
   void Set(const AnchorKey&, PhysicalAnchorReference* reference);
   // If the element owning this object has a display lock, the element should be
   // passed as |element_for_display_lock|.
   void SetFromChild(const PhysicalAnchorQuery& physical_query,
+                    const PhysicalFragment& child_fragment,
                     PhysicalOffset additional_offset,
+                    const LayoutObject& container_object,
+                    PhysicalSize container_size,
                     SetOptions,
                     Element* element_for_display_lock);
-
-  // Evaluate the |anchor_value| for the given reference. Returns |nullopt| if
-  // the query is invalid (due to wrong axis).
-  std::optional<LayoutUnit> EvaluateAnchor(
-      const PhysicalAnchorReference& reference,
-      CSSAnchorValue anchor_value,
-      float percentage,
-      LayoutUnit available_size,
-      WritingDirectionMode container_writing_direction,
-      WritingDirectionMode self_writing_direction,
-      const PhysicalOffset& offset_to_padding_box,
-      bool is_y_axis,
-      bool is_right_or_bottom) const;
-  LayoutUnit EvaluateSize(const PhysicalAnchorReference& reference,
-                          CSSAnchorSizeValue anchor_size_value,
-                          WritingMode container_writing_mode,
-                          WritingMode self_writing_mode) const;
 };
 
 class CORE_EXPORT AnchorEvaluatorImpl : public AnchorEvaluator {
@@ -237,14 +244,17 @@ class CORE_EXPORT AnchorEvaluatorImpl : public AnchorEvaluator {
   AnchorEvaluatorImpl(const LayoutBox& query_box,
                       const PhysicalAnchorQuery& anchor_query,
                       const LayoutObject* implicit_anchor,
+                      const LayoutObject* css_containing_block,
                       WritingDirectionMode container_writing_direction,
-                      const PhysicalOffset& offset_to_padding_box,
-                      const PhysicalSize& available_size)
+                      const PhysicalRect& container_rect,
+                      const std::optional<PhysicalRect>& scroll_rect)
       : query_box_(&query_box),
         anchor_query_(&anchor_query),
         implicit_anchor_(implicit_anchor),
+        query_box_actual_containing_block_(css_containing_block),
         container_writing_direction_(container_writing_direction),
-        containing_block_rect_(offset_to_padding_box, available_size),
+        container_rect_(container_rect),
+        scroll_rect_(scroll_rect),
         display_locks_affected_by_anchors_(
             MakeGarbageCollected<GCedHeapHashSet<Member<Element>>>()) {
     DCHECK(anchor_query_);
@@ -257,14 +267,15 @@ class CORE_EXPORT AnchorEvaluatorImpl : public AnchorEvaluator {
                       const LayoutObject* implicit_anchor,
                       const LayoutObject& containing_block,
                       WritingDirectionMode container_writing_direction,
-                      const PhysicalOffset& offset_to_padding_box,
-                      const PhysicalSize& available_size)
+                      const PhysicalRect& container_rect,
+                      const std::optional<PhysicalRect>& scroll_rect)
       : query_box_(&query_box),
         anchor_queries_(&anchor_queries),
         implicit_anchor_(implicit_anchor),
         containing_block_(&containing_block),
         container_writing_direction_(container_writing_direction),
-        containing_block_rect_(offset_to_padding_box, available_size),
+        container_rect_(container_rect),
+        scroll_rect_(scroll_rect),
         display_locks_affected_by_anchors_(
             MakeGarbageCollected<GCedHeapHashSet<Member<Element>>>()) {
     DCHECK(anchor_queries_);
@@ -297,6 +308,9 @@ class CORE_EXPORT AnchorEvaluatorImpl : public AnchorEvaluator {
 
   const PhysicalAnchorQuery* AnchorQuery() const;
 
+  // Given the computed value of `position-anchor`, returns the default anchor.
+  const LayoutObject* DefaultAnchor(const ScopedCSSName* position_anchor) const;
+
   // Returns the most recent anchor evaluated. If more than one anchor has been
   // evaluated so far, nullptr is returned. This is done to avoid extra noise
   // for assistive tech.
@@ -327,9 +341,11 @@ class CORE_EXPORT AnchorEvaluatorImpl : public AnchorEvaluator {
       const AnchorSpecifierValue& anchor_specifier,
       CSSAnchorSizeValue anchor_size_value,
       const ScopedCSSName* position_anchor) const;
+  PhysicalRect GetAnchorRect(const PhysicalAnchorReference&,
+                             const ScopedCSSName* position_anchor) const;
+
   void UpdateAccessibilityAnchor(const LayoutObject* anchor) const;
 
-  const LayoutObject* DefaultAnchor(const ScopedCSSName* position_anchor) const;
   const PaintLayer* DefaultAnchorScrollContainerLayer(
       const ScopedCSSName* position_anchor) const;
 
@@ -347,18 +363,31 @@ class CORE_EXPORT AnchorEvaluatorImpl : public AnchorEvaluator {
   // Returns the containing block, further constrained by the position-area.
   // Not to be confused with the inset-modified containing block.
   PhysicalRect PositionAreaModifiedContainingBlock(
-      const std::optional<PositionAreaOffsets>&) const;
+      const std::optional<PositionAreaOffsets>&,
+      bool has_default_anchor) const;
 
   const LayoutBox* query_box_ = nullptr;
   mutable const PhysicalAnchorQuery* anchor_query_ = nullptr;
   mutable const StitchedAnchorQueries* anchor_queries_ = nullptr;
   const LayoutObject* implicit_anchor_ = nullptr;
+
+  // TODO(crbug.com/436305267): Remove this when StitchedAnchorQueries is
+  // removed.
   const LayoutObject* containing_block_ = nullptr;
+
+  // The (CSS) containing block of the querying element. This should only be set
+  // if the containing block in the physical fragment tree is not the same as
+  // this. This inconsistency happens when OOFs participate in block
+  // fragmentation. If specified, some additional tree-walking will be performed
+  // when looking for acceptable anchors.
+  const LayoutObject* query_box_actual_containing_block_ = nullptr;
+
   WritingDirectionMode container_writing_direction_{WritingMode::kHorizontalTb,
                                                     TextDirection::kLtr};
 
   // Either width or height will be used, depending on IsYAxis().
-  PhysicalRect containing_block_rect_;
+  const PhysicalRect container_rect_;
+  const std::optional<PhysicalRect> scroll_rect_;
 
   // A single-value cache. If a call to Get has the same key as the last call,
   // then the cached result it returned. Otherwise, the value is created using
@@ -370,11 +399,6 @@ class CORE_EXPORT AnchorEvaluatorImpl : public AnchorEvaluator {
     template <typename T>
     static bool Equals(const T* a, const T* b) {
       return base::ValuesEquivalent(a, b);
-    }
-
-    template <typename T>
-    static bool Equals(const T& a, const T& b) {
-      return a == b;
     }
 
    public:
@@ -393,10 +417,6 @@ class CORE_EXPORT AnchorEvaluatorImpl : public AnchorEvaluator {
     KeyType key_{};
     std::optional<ValueType> value_;
   };
-
-  // Caches most recent result of PositionAreaModifiedContainingBlock.
-  mutable CachedValue<std::optional<PositionAreaOffsets>, PhysicalRect>
-      cached_position_area_modified_containing_block_;
 
   // Caches most recent result of DefaultAnchor.
   mutable CachedValue<const ScopedCSSName*, const LayoutObject*>

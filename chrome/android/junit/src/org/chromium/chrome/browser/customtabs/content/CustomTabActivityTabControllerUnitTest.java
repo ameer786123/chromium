@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.customtabs.content;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -15,17 +14,17 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.Intent;
-import android.net.Network;
 import android.os.Bundle;
 
 import org.junit.Before;
@@ -39,15 +38,17 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features;
-import org.chromium.chrome.browser.content.WebContentsFactory;
-import org.chromium.chrome.browser.content.WebContentsFactoryJni;
+import org.chromium.chrome.browser.autofill.AndroidAutofillAvailabilityStatus;
+import org.chromium.chrome.browser.autofill.AutofillClientProviderUtils;
 import org.chromium.chrome.browser.cookies.CookiesFetcher;
 import org.chromium.chrome.browser.cookies.CookiesFetcherJni;
+import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.privacy.settings.PrivacyPreferencesManagerImpl;
-import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.embedder_support.util.ShadowUrlUtilities;
+import org.chromium.components.prefs.PrefService;
+import org.chromium.components.user_prefs.UserPrefsJni;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.net.NetId;
 
@@ -56,7 +57,7 @@ import org.chromium.net.NetId;
 @Config(
         manifest = Config.NONE,
         shadows = {ShadowUrlUtilities.class})
-@Features.EnableFeatures(ChromeFeatureList.CCT_PREWARM_TAB)
+@Features.EnableFeatures({ChromeFeatureList.CCT_EARLY_NAV})
 public class CustomTabActivityTabControllerUnitTest {
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
@@ -66,28 +67,27 @@ public class CustomTabActivityTabControllerUnitTest {
 
     private CustomTabActivityTabController mTabController;
 
-    @Mock private Profile mProfile;
-    @Mock private Profile mIncognitoProfile;
     @Mock private PrivacyPreferencesManagerImpl mPrivacyPreferencesManager;
-    @Mock private Network mNetwork;
+    @Mock private UserPrefsJni mMockUserPrefsJni;
 
     @Mock private CookiesFetcher.Natives mCookiesFetcherJni;
-    @Mock private WebContentsFactory.Natives mWebContentsFactoryJni;
 
     private static final long TEST_TARGET_NETWORK = 1000;
 
     @Before
     public void setUp() {
-        when(env.profileProvider.getOriginalProfile()).thenReturn(mProfile);
-        when(env.profileProvider.getOffTheRecordProfile(eq(true))).thenReturn(mIncognitoProfile);
-        when(mIncognitoProfile.isOffTheRecord()).thenReturn(true);
         when(env.intentDataProvider.getTargetNetwork()).thenReturn((long) NetId.INVALID);
 
-        mTabController = env.createTabController();
+        // Ensure the test can read the Autofill pref. Assume it's turned off by default.
+        AutofillClientProviderUtils.setAutofillAvailabilityToUseForTesting(
+                AndroidAutofillAvailabilityStatus.SETTING_TURNED_OFF);
+        UserPrefsJni.setInstanceForTesting(mMockUserPrefsJni);
+        doReturn(mock(PrefService.class)).when(mMockUserPrefsJni).get(any());
+
+        mTabController = spy(env.createTabController());
         PrivacyPreferencesManagerImpl.setInstanceForTesting(mPrivacyPreferencesManager);
 
         CookiesFetcherJni.setInstanceForTesting(mCookiesFetcherJni);
-        WebContentsFactoryJni.setInstanceForTesting(mWebContentsFactoryJni);
     }
 
     @Test
@@ -207,10 +207,29 @@ public class CustomTabActivityTabControllerUnitTest {
     @Test
     public void usesWebContentsCreatedWithWarmRenderer_ByDefault() {
         WebContents webContents = mock(WebContents.class);
-        when(mWebContentsFactoryJni.createWebContents(
+        when(env.mWebContentsFactoryJni.createWebContents(
                         /* profile= */ any(),
                         /* initiallyHidden= */ anyBoolean(),
                         /* initializeRenderer= */ eq(true),
+                        /* usesPlatformAutofill= */ eq(false),
+                        /* targetNetwork= */ anyLong(),
+                        any()))
+                .thenReturn(webContents);
+        mTabController.setUpInitialTab(null);
+        mTabController.finishNativeInitialization();
+        assertEquals(webContents, env.webContentsCaptor.getValue());
+    }
+
+    @Test
+    public void usesWebContentsCreatedWithWarmRenderer_whenUsersOptInto3pAutofill() {
+        AutofillClientProviderUtils.setAutofillAvailabilityToUseForTesting(
+                AndroidAutofillAvailabilityStatus.AVAILABLE);
+        WebContents webContents = mock(WebContents.class);
+        when(env.mWebContentsFactoryJni.createWebContents(
+                        /* profile= */ any(),
+                        /* initiallyHidden= */ anyBoolean(),
+                        /* initializeRenderer= */ eq(true),
+                        /* usesPlatformAutofill= */ eq(true),
                         /* targetNetwork= */ anyLong(),
                         any()))
                 .thenReturn(webContents);
@@ -224,18 +243,20 @@ public class CustomTabActivityTabControllerUnitTest {
         when(env.intentDataProvider.getTargetNetwork()).thenReturn(TEST_TARGET_NETWORK);
         mTabController.setUpInitialTab(null);
         mTabController.finishNativeInitialization();
-        verify(mWebContentsFactoryJni, never())
+        verify(env.mWebContentsFactoryJni, never())
                 .createWebContents(
                         /* profile= */ any(),
                         /* initiallyHidden= */ anyBoolean(),
                         /* initializeRenderer= */ eq(true),
+                        /* usesPlatformAutofill= */ eq(false),
                         /* targetNetwork= */ not(eq(TEST_TARGET_NETWORK)),
                         any());
-        verify(mWebContentsFactoryJni)
+        verify(env.mWebContentsFactoryJni)
                 .createWebContents(
                         /* profile= */ any(),
                         /* initiallyHidden= */ anyBoolean(),
                         /* initializeRenderer= */ eq(true),
+                        /* usesPlatformAutofill= */ eq(false),
                         /* targetNetwork= */ eq(TEST_TARGET_NETWORK),
                         any());
     }
@@ -244,10 +265,11 @@ public class CustomTabActivityTabControllerUnitTest {
     public void createsWebContentsFromScratch_whenIntentDataProviderTargetsNetwork() {
         WebContents webContents = mock(WebContents.class);
         when(env.intentDataProvider.getTargetNetwork()).thenReturn(TEST_TARGET_NETWORK);
-        when(mWebContentsFactoryJni.createWebContents(
+        when(env.mWebContentsFactoryJni.createWebContents(
                         /* profile= */ any(),
                         /* initiallyHidden= */ anyBoolean(),
                         /* initializeRenderer= */ eq(true),
+                        /* usesPlatformAutofill= */ eq(false),
                         /* targetNetwork= */ eq(TEST_TARGET_NETWORK),
                         any()))
                 .thenReturn(webContents);
@@ -286,24 +308,6 @@ public class CustomTabActivityTabControllerUnitTest {
         assertEquals(transferredWebcontents, env.webContentsCaptor.getValue());
     }
 
-    @Test
-    public void usesSpareWebContents_IfAvailable() {
-        WebContents spareWebcontents = env.prepareSpareWebcontents();
-        mTabController.setUpInitialTab(null);
-        mTabController.finishNativeInitialization();
-        assertEquals(spareWebcontents, env.webContentsCaptor.getValue());
-    }
-
-    @Test
-    public void prefersTransferredWebContents_ToSpareWebContents() {
-        WebContents transferredWebcontents = env.prepareTransferredWebcontents();
-        WebContents spareWebcontents = env.prepareSpareWebcontents();
-        mTabController.setUpInitialTab(null);
-        mTabController.finishNativeInitialization();
-        assertEquals(transferredWebcontents, env.webContentsCaptor.getValue());
-        assertNotEquals(spareWebcontents, env.webContentsCaptor.getValue());
-    }
-
     // This is important so that the tab doesn't get hidden, see ChromeActivity#onStopWithNative
     @Test
     public void clearsActiveTab_WhenStartsReparenting() {
@@ -337,7 +341,6 @@ public class CustomTabActivityTabControllerUnitTest {
     public void setsTabObserverRegistrarOnEngagementSignalsHandler() {
         var handler = mock(EngagementSignalsHandler.class);
         when(env.connection.getEngagementSignalsHandler(eq(env.session))).thenReturn(handler);
-        when(env.connection.isDynamicFeatureEnabled(anyString())).thenReturn(true);
         when(mPrivacyPreferencesManager.isUsageAndCrashReportingPermitted()).thenReturn(true);
         mTabController.setUpInitialTab(null);
         mTabController.finishNativeInitialization();
@@ -358,5 +361,46 @@ public class CustomTabActivityTabControllerUnitTest {
         mTabController.setUpInitialTab(null);
         mTabController.finishNativeInitialization();
         assertEquals(tab, env.tabProvider.getTab());
+    }
+
+    @Test
+    public void getTabCount_noTabs() {
+        when(env.tabModel.getCount()).thenReturn(0);
+        assertEquals(0, mTabController.getTabCount());
+    }
+
+    @Test
+    public void getTabCount_oneTab() {
+        when(env.tabModel.getCount()).thenReturn(1);
+        assertEquals(1, mTabController.getTabCount());
+    }
+
+    @Test
+    public void getTabCount_multipleTabs() {
+        when(env.tabModel.getCount()).thenReturn(5);
+        assertEquals(5, mTabController.getTabCount());
+    }
+
+    @Test
+    public void updatesIntentInTab_WhenNotWebapp() {
+        env.warmUp();
+        mTabController.setUpInitialTab(null);
+        mTabController.finishNativeInitialization();
+        assertNotNull(env.tabProvider.getTab());
+
+        verify(mTabController).updateIntentInTab(eq(env.tabProvider.getTab()), eq(true));
+        // Verify that RedirectHandlerTabHelper did not need to ask the tab if it was a custom tab.
+        verify(env.tabFromFactory, never()).isCustomTab();
+    }
+
+    @Test
+    public void doesNotUpdateIntentInTab_WhenIsWebapp() {
+        env.warmUp();
+        when(env.intentDataProvider.getActivityType()).thenReturn(ActivityType.WEBAPP);
+        mTabController.setUpInitialTab(null);
+        mTabController.finishNativeInitialization();
+        assertNotNull(env.tabProvider.getTab());
+
+        verify(mTabController, never()).updateIntentInTab(any(), anyBoolean());
     }
 }

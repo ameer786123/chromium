@@ -8,10 +8,15 @@
 #import "base/test/scoped_feature_list.h"
 #import "components/bookmarks/test/bookmark_test_helpers.h"
 #import "components/commerce/core/mock_shopping_service.h"
+#import "components/sync/service/sync_service_utils.h"
+#import "components/trusted_vault/trusted_vault_server_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/trusted_vault_reauthentication/trusted_vault_reauthentication_coordinator.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
+#import "ios/chrome/browser/browser_view/model/browser_view_visibility_notifier_browser_agent.h"
 #import "ios/chrome/browser/browser_view/ui_bundled/browser_coordinator+Testing.h"
 #import "ios/chrome/browser/browser_view/ui_bundled/browser_view_controller.h"
 #import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
+#import "ios/chrome/browser/discover_feed/model/discover_feed_visibility_browser_agent.h"
 #import "ios/chrome/browser/download/model/download_directory_util.h"
 #import "ios/chrome/browser/download/model/external_app_util.h"
 #import "ios/chrome/browser/favicon/model/favicon_service_factory.h"
@@ -26,10 +31,10 @@
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_coordinator.h"
 #import "ios/chrome/browser/omnibox/model/omnibox_position/omnibox_position_browser_agent.h"
-#import "ios/chrome/browser/prerender/model/prerender_service_factory.h"
 #import "ios/chrome/browser/save_to_photos/ui_bundled/save_to_photos_coordinator.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/segmentation_platform/model/segmentation_platform_service_factory.h"
+#import "ios/chrome/browser/settings/model/sync/utils/sync_presenter.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
@@ -54,6 +59,7 @@
 #import "ios/chrome/browser/tab_insertion/model/tab_insertion_browser_agent.h"
 #import "ios/chrome/browser/tabs/model/tab_helper_util.h"
 #import "ios/chrome/browser/tips_manager/model/tips_manager_ios_factory.h"
+#import "ios/chrome/browser/toolbar/ui_bundled/fullscreen/toolbars_size_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_notifier_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_params.h"
@@ -96,9 +102,6 @@ class BrowserCoordinatorTest : public PlatformTest {
         ios::HistoryServiceFactory::GetInstance(),
         ios::HistoryServiceFactory::GetDefaultFactory());
     test_profile_builder.AddTestingFactory(
-        PrerenderServiceFactory::GetInstance(),
-        PrerenderServiceFactory::GetDefaultFactory());
-    test_profile_builder.AddTestingFactory(
         ios::BookmarkModelFactory::GetInstance(),
         ios::BookmarkModelFactory::GetDefaultFactory());
     test_profile_builder.AddTestingFactory(
@@ -134,18 +137,16 @@ class BrowserCoordinatorTest : public PlatformTest {
         browser_.get(), TabInsertionBrowserAgent::FromBrowser(browser_.get()));
     SyncErrorBrowserAgent::CreateForBrowser(browser_.get());
     OmniboxPositionBrowserAgent::CreateForBrowser(browser_.get());
+    BrowserViewVisibilityNotifierBrowserAgent::CreateForBrowser(browser_.get());
+    DiscoverFeedVisibilityBrowserAgent::CreateForBrowser(browser_.get());
+    ToolbarsSizeBrowserAgent::CreateForBrowser(browser_.get());
+    TestFullscreenController::CreateForBrowser(browser_.get());
 
     WebUsageEnablerBrowserAgent* enabler =
         WebUsageEnablerBrowserAgent::FromBrowser(browser_.get());
     enabler->SetWebUsageEnabled(true);
 
-    IncognitoReauthSceneAgent* reauthAgent = [[IncognitoReauthSceneAgent alloc]
-        initWithReauthModule:[[ReauthenticationModule alloc] init]];
-    [scene_state_ addAgent:reauthAgent];
-
     CommandDispatcher* dispatcher = browser_->GetCommandDispatcher();
-    [dispatcher startDispatchingToTarget:reauthAgent
-                             forProtocol:@protocol(IncognitoReauthCommands)];
 
     // Set up ApplicationCommands mock. Because ApplicationCommands conforms
     // to SettingsCommands, that needs to be mocked and dispatched
@@ -158,6 +159,13 @@ class BrowserCoordinatorTest : public PlatformTest {
                              forProtocol:@protocol(ApplicationCommands)];
     [dispatcher startDispatchingToTarget:mockSettingsCommandHandler
                              forProtocol:@protocol(SettingsCommands)];
+
+    IncognitoReauthSceneAgent* reauthAgent = [[IncognitoReauthSceneAgent alloc]
+              initWithReauthModule:[[ReauthenticationModule alloc] init]
+        applicationCommandsHandler:mockApplicationCommandHandler];
+    [scene_state_ addAgent:reauthAgent];
+    [dispatcher startDispatchingToTarget:reauthAgent
+                             forProtocol:@protocol(IncognitoReauthCommands)];
   }
 
   BrowserCoordinator* GetBrowserCoordinator() {
@@ -196,13 +204,13 @@ class BrowserCoordinatorTest : public PlatformTest {
     urlLoadingBrowserAgent->Load(urlLoadParams);
 
     // Force the WebStateObserver callbacks that simulate a page load.
-    web::WebStateObserver* ntpHelper =
-        (web::WebStateObserver*)NewTabPageTabHelper::FromWebState(web_state);
+    NewTabPageTabHelper* ntp_helper =
+        NewTabPageTabHelper::FromWebState(web_state);
     web::FakeNavigationContext context;
     context.SetUrl(url);
     context.SetIsSameDocument(false);
-    ntpHelper->DidStartNavigation(web_state, &context);
-    ntpHelper->PageLoaded(web_state, web::PageLoadCompletionStatus::SUCCESS);
+    ntp_helper->DidStartNavigation(web_state, &context);
+    ntp_helper->PageLoaded(web_state, web::PageLoadCompletionStatus::SUCCESS);
   }
 
   web::WebTaskEnvironment task_environment_;
@@ -248,15 +256,11 @@ TEST_F(BrowserCoordinatorTest, ShowDownloadsFolder) {
 // Tests that `-showShareSheet` is leaving fullscreen and starting the share
 // coordinator.
 TEST_F(BrowserCoordinatorTest, ShowShareSheet) {
-  std::unique_ptr<TestFullscreenController> controller =
-      std::make_unique<TestFullscreenController>();
-  TestFullscreenController* controller_ptr = controller.get();
+  TestFullscreenController* controller =
+      TestFullscreenController::FromBrowser(browser_.get());
 
-  browser_->SetUserData(TestFullscreenController::UserDataKeyForTesting(),
-                        std::move(controller));
-
-  controller_ptr->EnterFullscreen();
-  ASSERT_EQ(0.0, controller_ptr->GetProgress());
+  controller->EnterFullscreen();
+  ASSERT_EQ(0.0, controller->GetProgress());
 
   id classMock = OCMClassMock([SharingCoordinator class]);
   SharingCoordinator* mockSharingCoordinator = classMock;
@@ -276,7 +280,7 @@ TEST_F(BrowserCoordinatorTest, ShowShareSheet) {
   [browser_coordinator showShareSheet];
 
   // Check that fullscreen is exited.
-  EXPECT_EQ(1.0, controller_ptr->GetProgress());
+  EXPECT_EQ(1.0, controller->GetProgress());
 
   [browser_coordinator stop];
 
@@ -288,15 +292,11 @@ TEST_F(BrowserCoordinatorTest, ShowShareSheet) {
 // SharingCoordinator with SharingParams where scenario is ShareChrome, leaving
 // fullscreen and starting the share coordinator.
 TEST_F(BrowserCoordinatorTest, ShowShareSheetForChromeApp) {
-  std::unique_ptr<TestFullscreenController> controller =
-      std::make_unique<TestFullscreenController>();
-  TestFullscreenController* controller_ptr = controller.get();
+  TestFullscreenController* controller =
+      TestFullscreenController::FromBrowser(browser_.get());
 
-  browser_->SetUserData(TestFullscreenController::UserDataKeyForTesting(),
-                        std::move(controller));
-
-  controller_ptr->EnterFullscreen();
-  ASSERT_EQ(0.0, controller_ptr->GetProgress());
+  controller->EnterFullscreen();
+  ASSERT_EQ(0.0, controller->GetProgress());
 
   id expectShareChromeScenarioArg =
       [OCMArg checkWithBlock:^BOOL(SharingParams* params) {
@@ -319,7 +319,7 @@ TEST_F(BrowserCoordinatorTest, ShowShareSheetForChromeApp) {
   [browser_coordinator showShareSheetForChromeApp];
 
   // Check that fullscreen is exited.
-  EXPECT_EQ(1.0, controller_ptr->GetProgress());
+  EXPECT_EQ(1.0, controller->GetProgress());
 
   [browser_coordinator stop];
 
@@ -433,4 +433,90 @@ TEST_F(BrowserCoordinatorTest, ShowDefaultBrowserPromoAfterRemindMeLater) {
   [handler showDefaultBrowserPromoAfterRemindMeLater];
 
   [browser_coordinator stop];
+}
+
+// Tests that the BrowserCoordinator early returns from
+// `overscrollActionRefresh:` if it doesn't have an active web state.
+TEST_F(BrowserCoordinatorTest,
+       NoCrashOnOverscrollActionsRefreshWithNoActiveWebState) {
+  OverscrollActionsController* overscroll_actions_controller;
+  BrowserCoordinator* browser_coordinator = GetBrowserCoordinator();
+  [browser_coordinator start];
+
+  [browser_coordinator overscrollActionRefresh:overscroll_actions_controller];
+
+  [browser_coordinator stop];
+}
+
+// Tests that a double tap on the trusted vault reauth errors button don’t
+// trigger two openings of the trusted vault reauth coordinator.
+TEST_F(BrowserCoordinatorTest, TestDoubleTapTrustedVaultReauth) {
+  syncer::TrustedVaultUserActionTriggerForUMA trigger =
+      syncer::TrustedVaultUserActionTriggerForUMA::kSettings;
+  BrowserCoordinator<SyncPresenter>* browser_coordinator =
+      GetBrowserCoordinator();
+  TrustedVaultReauthenticationCoordinator* trusted_vault_mock =
+      OCMStrictClassMock([TrustedVaultReauthenticationCoordinator class]);
+  OCMExpect([((id)trusted_vault_mock) alloc]).andReturn(trusted_vault_mock);
+  OCMExpect(
+      [trusted_vault_mock
+          initWithBaseViewController:nil
+                             browser:browser_.get()
+                              intent:SigninTrustedVaultDialogIntentFetchKeys
+                    securityDomainID:trusted_vault::SecurityDomainId::
+                                         kChromeSync
+                             trigger:trigger])
+      .andReturn(trusted_vault_mock);
+  OCMExpect([trusted_vault_mock setDelegate:[OCMArg any]]);
+  OCMExpect([trusted_vault_mock start]);
+  [browser_coordinator showTrustedVaultReauthForFetchKeysWithTrigger:trigger];
+  EXPECT_OCMOCK_VERIFY((id)trusted_vault_mock);
+  // Checks that the second tap is ignored.
+  // Checks that the second tap is ignored. No more
+  // TrustedVaultReauthenticationCoordinator are allocated
+  OCMExpect([((id)trusted_vault_mock) alloc])
+      .andDo(^(NSInvocation* invocation) {
+        EXPECT_FALSE(true);
+      });
+  [browser_coordinator showTrustedVaultReauthForFetchKeysWithTrigger:trigger];
+  [browser_coordinator
+      showTrustedVaultReauthForDegradedRecoverabilityWithTrigger:trigger];
+}
+
+// Tests that a double tap on the trusted vault reauth errors button don’t
+// trigger two openings of the trusted vault reauth coordinator.
+TEST_F(BrowserCoordinatorTest,
+       TestDoubleTapTrustedVaultReauthForDegradedRecoverability) {
+  syncer::TrustedVaultUserActionTriggerForUMA trigger =
+      syncer::TrustedVaultUserActionTriggerForUMA::kSettings;
+  BrowserCoordinator<SyncPresenter>* browser_coordinator =
+      GetBrowserCoordinator();
+  TrustedVaultReauthenticationCoordinator* trusted_vault_mock =
+      OCMStrictClassMock([TrustedVaultReauthenticationCoordinator class]);
+  OCMExpect([((id)trusted_vault_mock) alloc]).andReturn(trusted_vault_mock);
+  SigninTrustedVaultDialogIntent intent =
+      SigninTrustedVaultDialogIntentDegradedRecoverability;
+  OCMExpect([trusted_vault_mock
+                initWithBaseViewController:nil
+                                   browser:browser_.get()
+                                    intent:intent
+                          securityDomainID:trusted_vault::SecurityDomainId::
+                                               kChromeSync
+                                   trigger:trigger])
+      .andReturn(trusted_vault_mock);
+  OCMExpect([trusted_vault_mock setDelegate:[OCMArg any]]);
+  OCMExpect([trusted_vault_mock start]);
+  [browser_coordinator
+      showTrustedVaultReauthForDegradedRecoverabilityWithTrigger:trigger];
+  EXPECT_OCMOCK_VERIFY((id)trusted_vault_mock);
+
+  // Checks that the second tap is ignored. No more
+  // TrustedVaultReauthenticationCoordinator are allocated
+  OCMExpect([((id)trusted_vault_mock) alloc])
+      .andDo(^(NSInvocation* invocation) {
+        EXPECT_FALSE(true);
+      });
+  [browser_coordinator showTrustedVaultReauthForFetchKeysWithTrigger:trigger];
+  [browser_coordinator
+      showTrustedVaultReauthForDegradedRecoverabilityWithTrigger:trigger];
 }

@@ -18,6 +18,7 @@
 #include "base/check.h"
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
+#include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_forward.h"
@@ -34,6 +35,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/favicon_base/favicon_callback.h"
+#include "components/favicon_base/favicon_types.h"
 #include "components/favicon_base/favicon_usage_data.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/history/core/browser/keyword_id.h"
@@ -50,10 +52,6 @@ class GURL;
 class HistoryQuickProviderTest;
 class InMemoryURLIndexTest;
 class SkBitmap;
-
-namespace base {
-class FilePath;
-}  // namespace base
 
 namespace favicon {
 class FaviconServiceImpl;
@@ -179,16 +177,12 @@ class HistoryService : public KeyedService,
   // should be the unique ID of the current navigation entry in the given
   // process.
   //
-  // TODO(avi): This is no longer true. 'page id' was removed years ago, and
-  // their uses replaced by globally-unique nav_entry_ids. Is ContextID still
-  // needed? https://crbug.com/859902
-  //
-  // 'redirects' is an array of redirect URLs leading to this page, with the
+  // `redirects` is an array of redirect URLs leading to this page, with the
   // page itself as the last item (so when there is no redirect, it will have
   // one entry). If there are no redirects, this array may also be empty for
   // the convenience of callers.
   //
-  // 'did_replace_entry' is true when the navigation entry for this page has
+  // `did_replace_entry` is true when the navigation entry for this page has
   // replaced the existing entry. A non-user initiated redirect causes such
   // replacement.
   //
@@ -201,6 +195,7 @@ class HistoryService : public KeyedService,
                const RedirectList& redirects,
                ui::PageTransition transition,
                VisitSource visit_source,
+               VisitResponseCodeCategory response_code_category,
                bool did_replace_entry);
 
   // For adding pages to history where no tracking information can be done
@@ -376,7 +371,8 @@ class HistoryService : public KeyedService,
       QueryMostVisitedURLsCallback callback,
       base::CancelableTaskTracker* tracker,
       const std::optional<std::string>& recency_factor_name = std::nullopt,
-      std::optional<size_t> recency_window_days = std::nullopt);
+      std::optional<size_t> recency_window_days = std::nullopt,
+      bool check_visual_deduplication_flag = false);
 
   // Request `result_count` of the most repeated queries for the given keyword.
   // Used by TopSites.

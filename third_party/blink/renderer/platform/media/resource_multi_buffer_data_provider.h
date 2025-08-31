@@ -13,11 +13,9 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/timer/timer.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/web/web_associated_url_loader_client.h"
 #include "third_party/blink/public/web/web_frame.h"
-#include "third_party/blink/renderer/platform/allow_discouraged_type.h"
 #include "third_party/blink/renderer/platform/media/multi_buffer.h"
 #include "third_party/blink/renderer/platform/media/url_index.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
@@ -54,8 +52,6 @@ class PLATFORM_EXPORT ResourceMultiBufferDataProvider
   int64_t AvailableBytes() const override;
   scoped_refptr<media::DataBuffer> Read() override;
   void SetDeferred(bool defer) override;
-  bool IsStale() const override;
-  void Invalidate() override;
 
   // WebAssociatedURLLoaderClient implementation.
   bool WillFollowRedirect(const WebURL& new_url,
@@ -92,9 +88,6 @@ class PLATFORM_EXPORT ResourceMultiBufferDataProvider
   // If we have made a range request, verify the response from the server.
   bool VerifyPartialResponse(const WebURLResponse& response,
                              const scoped_refptr<UrlData>& url_data);
-
-  // Marks this provider as stale for having been deferred too long.
-  void SetStale();
 
   // Current Position.
   MultiBufferBlockId pos_;
@@ -133,18 +126,9 @@ class PLATFORM_EXPORT ResourceMultiBufferDataProvider
   // Is the client an audio element?
   bool is_client_audio_element_ = false;
 
-  bool invalidated_ = false;
-
   size_t total_bytes_received_ = 0;
 
-  bool is_stale_ = false;
-
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-
-  // Calls SetStale() after having been deferred for too long. Timer is started
-  // upon SetDeferred(true) and cleared upon SetDeferred(false). Repeated calls
-  // to SetDeferred(true) do not extend the timer.
-  base::OneShotTimer cleanup_timer_;
 
   base::WeakPtrFactory<ResourceMultiBufferDataProvider> weak_factory_{this};
 };

@@ -34,11 +34,22 @@ BASE_FEATURE(kBookmarksTreeView,
              "BookmarksTreeView",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// This flag is used for enabling Bookmark triggered prerendering. See
-// crbug.com/1422819 for more details of Bookmark triggered prerendering.
-BASE_FEATURE(kBookmarkTriggerForPrerender2,
-             "BookmarkTriggerForPrerender2",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+// This is used as a kill switch for Bookmark triggered prerendering. See
+// crbug.com/40259793 for more details of Bookmark triggered prerendering.
+BASE_FEATURE(kBookmarkTriggerForPrerender2KillSwitch,
+             "BookmarkTriggerForPrerender2KillSwitch",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// This flag is used for enabling BookmarkBar triggered preconnect.
+BASE_FEATURE(kBookmarkTriggerForPreconnect,
+             "BookmarkTriggerForPreconnect",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// This flag is used for enabling BookmarkBar triggered prefetch.  See
+// crbug.com/413259638 for more details of Bookmark triggered prefetching.
+BASE_FEATURE(kBookmarkTriggerForPrefetch,
+             "BookmarkTriggerForPrefetch",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Enables Certificate Transparency on Desktop and Android Browser (CT is
 // disabled in Android Webview, see aw_browser_context.cc).
@@ -87,7 +98,7 @@ BASE_FEATURE(kDbusSecretPortal,
 // compatible with the synchronous backend.
 BASE_FEATURE(kUseFreedesktopSecretKeyProvider,
              "UseFreedesktopSecretKeyProvider",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_LINUX)
 
 // Destroy profiles when their last browser window is closed, instead of when
@@ -105,14 +116,6 @@ BASE_FEATURE(kDestroyProfileOnBrowserClose,
 BASE_FEATURE(kDestroySystemProfiles,
              "DestroySystemProfiles",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-#if BUILDFLAG(IS_CHROMEOS)
-// Enables being able to zoom a web page by double tapping in Chrome OS tablet
-// mode.
-BASE_FEATURE(kDoubleTapToZoomInTabletMode,
-             "DoubleTapToZoomInTabletMode",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-#endif
 
 // Enables showing the email of the flex org admin that setup CBCM in the
 // management disclosures.
@@ -132,7 +135,17 @@ BASE_FEATURE(kFlexOrgManagementDisclosure,
 // https://github.com/MicrosoftEdge/MSEdgeExplainers/blob/main/Notifications/notifications_actions_customization.md
 BASE_FEATURE(kIncomingCallNotifications,
              "IncomingCallNotifications",
+#if BUILDFLAG(IS_WIN)
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#else
              base::FEATURE_DISABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(IS_WIN)
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+BASE_FEATURE(kInitialExternalExtensions,
+             "InitialExternalExtensions",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 #if !BUILDFLAG(IS_ANDROID)
 // Adds a "Snooze" action to mute notifications during screen sharing sessions.
@@ -146,13 +159,19 @@ BASE_FEATURE(kMuteNotificationSnoozeAction,
 // network request controlled by that policy is observed.
 BASE_FEATURE(kNetworkAnnotationMonitoring,
              "NetworkAnnotationMonitoring",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // This flag is used for enabling New Tab Page triggered prerendering. See
 // crbug.com/1462832 for more details of New Tab Page triggered prerendering.
 BASE_FEATURE(kNewTabPageTriggerForPrerender2,
              "NewTabPageTriggerForPrerender2",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+// This flag is used for enabling New Tab Page triggered prefetch. See
+// crbug.com/421941586 for more details of New Tab Page triggered prefetching.
+BASE_FEATURE(kNewTabPageTriggerForPrefetch,
+             "NewTabPageTriggerForPrefetch",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_ANDROID)
 // Adds an "Unsubscribe" action to web push notifications that allows stopping
@@ -176,22 +195,17 @@ BASE_FEATURE(kPromoBrowserCommands,
 // ui/webui/resources/js/browser_command/browser_command.mojom
 const char kBrowserCommandIdParam[] = "BrowserCommandIdParam";
 
-#if !BUILDFLAG(IS_ANDROID)
-// Keeps accessibility enabled for WebContents as ReadAnything observes changes
-// to the active WebContents. This is a holdback study to evaluate the impact of
-// the new behavior, whereby the accessibility modes required by ReadyAnything
-// are cleared on a WebContents when ReadAnything loses interest in it.
-BASE_FEATURE(kReadAnythingPermanentAccessibility,
-             "ReadAnythingPermanentAccessibility",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-#endif
-
+#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 // When this feature is enabled, Chrome will register os_update_handler with
 // Omaha, to be run on OS upgrade.
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 BASE_FEATURE(kRegisterOsUpdateHandlerWin,
              "RegisterOsUpdateHandlerWin",
              base::FEATURE_ENABLED_BY_DEFAULT);
+// When this feature is enabled, Chrome will install the
+// platform_experience_helper.
+BASE_FEATURE(kInstallPlatformExperienceHelperWin,
+             "InstallPlatformExperienceHelperWin",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 // When this feature is enabled, the network service will restart unsandboxed if
@@ -238,7 +252,7 @@ BASE_FEATURE(kSecretPortalKeyProviderUseForEncryption,
 // FreedesktopSecretKeyProvider. Otherwise, it will only decrypt existing data.
 BASE_FEATURE(kUseFreedesktopSecretKeyProviderForEncryption,
              "UseFreedesktopSecretKeyProviderForEncryption",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             base::FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_LINUX)
 
 // Enables migration of the network context data from `unsandboxed_data_path` to
@@ -326,6 +340,11 @@ const base::FeatureParam<base::TimeDelta>
     kNoPreReadMainDllStartup_StartupDuration{&kNoPreReadMainDllStartup,
                                              "no-preread-dll-startup-time",
                                              base::Minutes(2)};
+
+// When enabled, the browser process will re-launch itself when launched with
+// an elevated linked token. The re-launched browser will use the token from
+// the Windows Shell (explorer.exe), which is typically non-elevated.
+BASE_FEATURE(kAutoDeElevate, "AutoDeElevate", base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_WIN)
 
 #if !BUILDFLAG(IS_ANDROID)

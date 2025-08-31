@@ -21,6 +21,7 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/content_uri_utils.h"
+#include "base/files/file_util.h"
 #endif
 
 namespace base {
@@ -41,25 +42,21 @@ bool GetStat(const FilePath& path, bool show_links, stat_wrapper_t* st) {
   return true;
 }
 
+bool ShouldShowSymLinks(int file_type) {
 #if BUILDFLAG(IS_FUCHSIA)
-bool ShouldShowSymLinks(int file_type) {
   return false;
-}
 #else
-bool ShouldShowSymLinks(int file_type) {
   return file_type & FileEnumerator::SHOW_SYM_LINKS;
-}
 #endif  // BUILDFLAG(IS_FUCHSIA)
+}
 
+bool ShouldTrackVisitedDirectories(int file_type) {
 #if BUILDFLAG(IS_FUCHSIA)
-bool ShouldTrackVisitedDirectories(int file_type) {
   return false;
-}
 #else
-bool ShouldTrackVisitedDirectories(int file_type) {
   return !(file_type & FileEnumerator::SHOW_SYM_LINKS);
-}
 #endif  // BUILDFLAG(IS_FUCHSIA)
+}
 
 }  // namespace
 
@@ -70,8 +67,8 @@ FileEnumerator::FileInfo::FileInfo() {
 }
 
 #if BUILDFLAG(IS_ANDROID)
-FileEnumerator::FileInfo::FileInfo(base::FilePath content_uri,
-                                   base::FilePath filename,
+FileEnumerator::FileInfo::FileInfo(FilePath content_uri,
+                                   FilePath filename,
                                    bool is_directory,
                                    off_t size,
                                    Time time)
@@ -96,7 +93,7 @@ int64_t FileEnumerator::FileInfo::GetSize() const {
 }
 
 base::Time FileEnumerator::FileInfo::GetLastModifiedTime() const {
-  return base::Time::FromTimeT(stat_.st_mtime);
+  return Time::FromTimeT(stat_.st_mtime);
 }
 
 // FileEnumerator --------------------------------------------------------------
@@ -149,12 +146,10 @@ FileEnumerator::FileEnumerator(const FilePath& root_path,
   DCHECK(!(recursive && (INCLUDE_DOT_DOT & file_type_)));
 
 #if BUILDFLAG(IS_ANDROID)
-  // Content-URIs have limited support.
-  if (root_path.IsContentUri()) {
-    CHECK_EQ(file_type_, FileType::FILES | FileType::DIRECTORIES);
+  if (auto content_uri = base::ResolveToContentUri(root_path); content_uri) {
     // Get display-name of root path.
     FileInfo root_info;
-    internal::ContentUriGetFileInfo(root_path, &root_info);
+    internal::ContentUriGetFileInfo(*content_uri, &root_info);
     pending_subdirs_.push(
         std::vector<std::string>({root_info.GetName().value()}));
   }
@@ -168,7 +163,7 @@ FileEnumerator::FileEnumerator(const FilePath& root_path,
   }
 
   if (recursive && ShouldTrackVisitedDirectories(file_type_)) {
-    if (stat_wrapper_t st; GetStat(root_path, false, &st)) {
+    if (stat_wrapper_t st; GetStat(root_path, /*show_links=*/false, &st)) {
       MarkVisited(st);
     }
   }
@@ -194,10 +189,11 @@ FilePath FileEnumerator::Next() {
     pending_paths_.pop();
 
 #if BUILDFLAG(IS_ANDROID)
-    if (root_path_.IsContentUri()) {
+    if (auto content_uri = base::ResolveToContentUri(root_path_); content_uri) {
       subdirs_ = pending_subdirs_.top();
       pending_subdirs_.pop();
-      directory_entries_ = internal::ListContentUriDirectory(root_path_);
+      directory_entries_ =
+          internal::ListContentUriDirectory(*content_uri, file_type_);
       current_directory_entry_ = 0;
       if (directory_entries_.empty()) {
         continue;
@@ -314,7 +310,7 @@ FilePath FileEnumerator::Next() {
   }
 
 #if BUILDFLAG(IS_ANDROID)
-  if (root_path_.IsContentUri()) {
+  if (root_path_.IsContentUri() || root_path_.IsVirtualDocumentPath()) {
     return directory_entries_[current_directory_entry_].content_uri_;
   }
 #endif

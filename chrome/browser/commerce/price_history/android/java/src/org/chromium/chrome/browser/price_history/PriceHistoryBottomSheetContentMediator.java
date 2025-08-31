@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.price_history;
 
+import static org.chromium.build.NullUtil.assertNonNull;
 import static org.chromium.chrome.browser.price_history.PriceHistoryBottomSheetContentProperties.OPEN_URL_BUTTON_ON_CLICK_LISTENER;
 import static org.chromium.chrome.browser.price_history.PriceHistoryBottomSheetContentProperties.OPEN_URL_BUTTON_VISIBLE;
 import static org.chromium.chrome.browser.price_history.PriceHistoryBottomSheetContentProperties.PRICE_HISTORY_CHART;
@@ -14,12 +15,13 @@ import static org.chromium.chrome.browser.price_history.PriceHistoryBottomSheetC
 
 import android.content.Context;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.StringRes;
 
 import org.chromium.base.Callback;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.Contract;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
 import org.chromium.chrome.browser.price_insights.PriceInsightsBottomSheetCoordinator.PriceInsightsDelegate;
 import org.chromium.chrome.browser.tab.Tab;
@@ -32,10 +34,13 @@ import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 
+import java.util.function.Supplier;
+
 /** Mediator for price history bottom sheet responsible for property model update. */
+@NullMarked
 public class PriceHistoryBottomSheetContentMediator {
     private final Context mContext;
-    private final Supplier<Tab> mTabSupplier;
+    private final Supplier<@Nullable Tab> mTabSupplier;
     private final Supplier<TabModelSelector> mTabModelSelectorSupplier;
     private final PropertyModel mPropertyModel;
     private final PriceInsightsDelegate mPriceInsightsDelegate;
@@ -43,11 +48,11 @@ public class PriceHistoryBottomSheetContentMediator {
     private @PriceBucket int mPriceBucket;
 
     public PriceHistoryBottomSheetContentMediator(
-            @NonNull Context context,
-            @NonNull Supplier<Tab> tabSupplier,
-            @NonNull Supplier<TabModelSelector> tabModelSelectorSupplier,
-            @NonNull PropertyModel propertyModel,
-            @NonNull PriceInsightsDelegate priceInsightsDelegate) {
+            Context context,
+            Supplier<@Nullable Tab> tabSupplier,
+            Supplier<TabModelSelector> tabModelSelectorSupplier,
+            PropertyModel propertyModel,
+            PriceInsightsDelegate priceInsightsDelegate) {
         mContext = context;
         mTabSupplier = tabSupplier;
         mTabModelSelectorSupplier = tabModelSelectorSupplier;
@@ -56,31 +61,37 @@ public class PriceHistoryBottomSheetContentMediator {
     }
 
     public void requestShowContent(Callback<Boolean> contentReadyCallback) {
-        ShoppingService shoppingService =
-                ShoppingServiceFactory.getForProfile(mTabSupplier.get().getProfile());
+        Tab tab = mTabSupplier.get();
+        if (tab == null) {
+            contentReadyCallback.onResult(false);
+            return;
+        }
+        ShoppingService shoppingService = ShoppingServiceFactory.getForProfile(tab.getProfile());
         if (shoppingService == null || !shoppingService.isPriceInsightsEligible()) {
             contentReadyCallback.onResult(false);
+            return;
         }
         shoppingService.getPriceInsightsInfoForUrl(
-                mTabSupplier.get().getUrl(),
+                tab.getUrl(),
                 (url, info) -> {
                     boolean hasPriceInsightInfo = isValidPriceInsightsInfo(info);
                     if (hasPriceInsightInfo) {
-                        updatePriceInsightsInfo(info);
+                        updatePriceInsightsInfo(assertNonNull(info), tab);
                     }
                     contentReadyCallback.onResult(hasPriceInsightInfo);
                 });
     }
 
-    private boolean isValidPriceInsightsInfo(PriceInsightsInfo info) {
+    @Contract("null -> false")
+    private boolean isValidPriceInsightsInfo(@Nullable PriceInsightsInfo info) {
         return info != null
                 && !info.currencyCode.isEmpty()
                 && info.catalogHistoryPrices != null
                 && !info.catalogHistoryPrices.isEmpty();
     }
 
-    private void updatePriceInsightsInfo(PriceInsightsInfo info) {
-        mPropertyModel.set(PRICE_HISTORY_CHART_CONTENT_DESCRIPTION, mTabSupplier.get().getTitle());
+    private void updatePriceInsightsInfo(PriceInsightsInfo info, Tab tab) {
+        mPropertyModel.set(PRICE_HISTORY_CHART_CONTENT_DESCRIPTION, tab.getTitle());
         mPriceBucket = info.priceBucket;
         @StringRes int priceHistoryTitleResId = R.string.price_history_title;
         boolean hasMultipleCatalogs =

@@ -14,6 +14,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
+#include "base/notimplemented.h"
 #include "build/build_config.h"
 #include "components/cronet/cronet_context.h"
 #include "components/cronet/cronet_global_state.h"
@@ -24,6 +25,7 @@
 #include "components/cronet/version.h"
 #include "components/grpc_support/include/bidirectional_stream_c.h"
 #include "net/base/hash_value.h"
+#include "net/base/proxy_delegate.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -395,6 +397,16 @@ class Cronet_EngineImpl::Callback : public CronetContext::Callback {
       int32_t timestamp_ms,
       net::NetworkQualityObservationSource source) override;
   void OnStopNetLogCompleted() override LOCKS_EXCLUDED(engine_->lock_);
+  void OnBeforeTunnelRequest(
+      int chain_id,
+      net::ProxyDelegate::OnBeforeTunnelRequestCallback callback) override {
+    NOTREACHED();
+  }
+  bool OnTunnelHeadersReceived(
+      int chain_id,
+      const net::HttpResponseHeaders& response_headers) override {
+    NOTREACHED();
+  }
 
  private:
   // The engine which owns context that owns |this| callback.

@@ -18,7 +18,7 @@ namespace {
 const CGFloat kSpotlightSize = 38;
 const CGFloat kSpotlightCornerRadius = 7;
 const CGFloat kToolsMenuButtonImageSize = 35;
-const CGFloat kBlueDotSize = 10;
+const CGFloat kBlueDotSize = 6;
 const CGFloat kButtonImageInset = 3;
 }  // namespace
 
@@ -180,12 +180,6 @@ const CGFloat kButtonImageInset = 3;
 
 - (void)initializeButton {
   self.translatesAutoresizingMaskIntoConstraints = NO;
-
-  __weak __typeof(self) weakSelf = self;
-  CustomHighlightableButtonHighlightHandler handler = ^(BOOL highlighted) {
-    [weakSelf setIphHighlighted:highlighted];
-  };
-  [self setCustomHighlightHandler:handler];
 }
 
 // Creates spotlightView if not done yet.
@@ -253,6 +247,9 @@ const CGFloat kButtonImageInset = 3;
 
 // Updates the tint color according to the current state.
 - (void)updateTintColor {
+  if (IsDiamondPrototypeEnabled()) {
+    return;
+  }
   self.tintColor =
       (self.iphHighlighted)
           ? self.toolbarConfiguration.buttonsTintColorIPHHighlighted

@@ -8,7 +8,6 @@
 
 #include <memory>
 
-#include "base/android/build_info.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
@@ -16,10 +15,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
-#include "device/base/features.h"
 #include "device/bluetooth/android/wrappers.h"
 #include "device/bluetooth/bluetooth_common.h"
 #include "device/bluetooth/bluetooth_device.h"
@@ -346,9 +343,6 @@ TEST_F(BluetoothAdapterAndroidTest, ChromeBluetoothLeScannerFailToResume) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, GetPairedDevices) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   TestBluetoothAdapterObserver observer(adapter_.get());
@@ -374,9 +368,6 @@ TEST_F(BluetoothAdapterAndroidTest, GetPairedDevices) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, NotifyObserversForNewPairedDevices) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   TestBluetoothAdapterObserver observer(adapter_.get());
@@ -393,9 +384,6 @@ TEST_F(BluetoothAdapterAndroidTest, NotifyObserversForNewPairedDevices) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, IsConnectedAfterNewDevicePaired) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   TestBluetoothAdapterObserver observer(adapter_.get());
@@ -409,9 +397,6 @@ TEST_F(BluetoothAdapterAndroidTest, IsConnectedAfterNewDevicePaired) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, ExposeUuidFromPairedDevices) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   adapter_->GetDevices();
@@ -432,9 +417,6 @@ TEST_F(BluetoothAdapterAndroidTest, ExposeUuidFromPairedDevices) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, RemoveExpiredDevicesOnUnpaired) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   SimulatePairedClassicDevice(1);
@@ -451,9 +433,6 @@ TEST_F(BluetoothAdapterAndroidTest, RemoveExpiredDevicesOnUnpaired) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, RemoveUnpairedDevicesAfterTimeOut) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   SimulatePairedClassicDevice(1);
@@ -487,9 +466,6 @@ TEST_F(BluetoothAdapterAndroidTest, RemoveUnpairedDevicesAfterTimeOut) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, UnknownDeviceUnpaired) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   adapter_->GetDevices();
@@ -498,9 +474,6 @@ TEST_F(BluetoothAdapterAndroidTest, UnknownDeviceUnpaired) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, AclConnected) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   SimulatePairedClassicDevice(1);
@@ -517,9 +490,6 @@ TEST_F(BluetoothAdapterAndroidTest, AclConnected) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, AclDisconnected) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   adapter_->GetDevices();
@@ -537,9 +507,6 @@ TEST_F(BluetoothAdapterAndroidTest, AclDisconnected) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, AclConnectedWithDualTransport) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   SimulatePairedClassicDevice(1);
@@ -557,9 +524,6 @@ TEST_F(BluetoothAdapterAndroidTest, AclConnectedWithDualTransport) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, AclDisconnectedWithDualTransport) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   SimulatePairedClassicDevice(1);
@@ -586,15 +550,44 @@ TEST_F(BluetoothAdapterAndroidTest, AclDisconnectedWithDualTransport) {
   EXPECT_FALSE(observer.last_device()->IsConnected());
 }
 
+TEST_F(BluetoothAdapterAndroidTest, AclDisconnectedOnAdapterOff) {
+  InitWithFakeAdapter();
+
+  SimulatePairedClassicDevice(1);
+
+  BluetoothDevice* device = adapter_->GetDevice(kTestDeviceAddress1);
+  std::optional<std::string> device_name = device->GetName();
+  int device_type = device->GetType();
+  BluetoothDevice::UUIDSet uuids = device->GetUUIDs();
+  uint32_t bluetooth_class = device->GetBluetoothClass();
+
+  EXPECT_NE(bluetooth_class, 0x1F00u);
+
+  SimulateAclConnectStateChange(device, BLUETOOTH_TRANSPORT_CLASSIC,
+                                /*connected=*/true);
+  SimulateAclConnectStateChange(device, BLUETOOTH_TRANSPORT_LE,
+                                /*connected=*/true);
+
+  TestBluetoothAdapterObserver observer(adapter_.get());
+
+  adapter_->SetPowered(false, GetCallback(Call::EXPECTED),
+                       GetCallback(Call::NOT_EXPECTED));
+  task_environment_.FastForwardUntilNoTasksRemain();
+
+  ASSERT_EQ(observer.device_changed_count(), 1);
+  EXPECT_EQ(observer.last_device()->GetName(), device_name);
+  EXPECT_EQ(observer.last_device()->GetType(), device_type);
+  EXPECT_EQ(observer.last_device()->GetUUIDs(), uuids);
+  EXPECT_EQ(observer.last_device()->GetBluetoothClass(), bluetooth_class);
+  EXPECT_TRUE(observer.last_device()->IsPaired());
+}
+
 // The transport extra of ACL connected/disconnected broadcasts was added in API
 // level 33 (Android 13/T). On devices where the extra was not provided, we
 // use BluetoothDevice#TRANSPORT_AUTO (0) as the default value, and later
 // assign an arbitrary non-zero value (BR/EDR) so that the bit-wise flag takes
 // effect. Write unit tests to ensure it works fine.
 TEST_F(BluetoothAdapterAndroidTest, AclConnectedWithoutTransport) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   SimulatePairedClassicDevice(1);
@@ -610,9 +603,6 @@ TEST_F(BluetoothAdapterAndroidTest, AclConnectedWithoutTransport) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, AclDisconnectedWithoutTransport) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   adapter_->GetDevices();
@@ -630,9 +620,6 @@ TEST_F(BluetoothAdapterAndroidTest, AclDisconnectedWithoutTransport) {
 }
 
 TEST_F(BluetoothAdapterAndroidTest, ScanFailsWithoutLeSupport) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kBluetoothRfcommAndroid);
-
   InitWithFakeAdapter();
 
   SetEnabledDeviceTransport(BLUETOOTH_TRANSPORT_CLASSIC);

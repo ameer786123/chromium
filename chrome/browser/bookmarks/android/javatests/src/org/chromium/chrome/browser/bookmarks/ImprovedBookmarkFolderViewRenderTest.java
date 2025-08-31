@@ -23,7 +23,6 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
@@ -45,9 +44,7 @@ import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.bookmarks.BookmarkType;
-import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
-import org.chromium.components.payments.ui.CurrencyFormatter;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 import org.chromium.ui.test.util.BlankUiTestActivity;
@@ -64,7 +61,7 @@ import java.util.List;
 @Batch(Batch.PER_CLASS)
 public class ImprovedBookmarkFolderViewRenderTest {
     @ParameterAnnotations.ClassParameter
-    private static List<ParameterSet> sClassParams = new NightModeParams().getParameters();
+    private static final List<ParameterSet> sClassParams = new NightModeParams().getParameters();
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
@@ -78,8 +75,6 @@ public class ImprovedBookmarkFolderViewRenderTest {
                     .setBugComponent(ChromeRenderTestRule.Component.UI_BROWSER_BOOKMARKS)
                     .setRevision(3)
                     .build();
-
-    @Mock private CurrencyFormatter mFormatter;
 
     private BookmarkModel mBookmarkModel;
     private ImprovedBookmarkFolderView mView;
@@ -160,8 +155,8 @@ public class ImprovedBookmarkFolderViewRenderTest {
                                     BookmarkRowDisplayPref.VISUAL));
                     mModel.set(
                             ImprovedBookmarkRowProperties.FOLDER_START_AREA_BACKGROUND_COLOR,
-                            ChromeColors.getSurfaceColor(
-                                    mActivityTestRule.getActivity(), R.dimen.default_elevation_1));
+                            SemanticColorUtils.getColorSurfaceContainerLow(
+                                    mActivityTestRule.getActivity()));
                     mModel.set(
                             ImprovedBookmarkRowProperties.FOLDER_START_ICON_TINT,
                             AppCompatResources.getColorStateList(

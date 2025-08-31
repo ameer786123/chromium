@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "media/cdm/cdm_helpers.h"
 
@@ -100,22 +96,22 @@ cdm::Buffer* VideoFrameImpl::FrameBuffer() {
 }
 
 void VideoFrameImpl::SetPlaneOffset(cdm::VideoPlane plane, uint32_t offset) {
-  CHECK(plane < cdm::kMaxPlanes, base::NotFatalUntil::M140);
+  CHECK(plane < cdm::kMaxPlanes);
   plane_offsets_[plane] = offset;
 }
 
 uint32_t VideoFrameImpl::PlaneOffset(cdm::VideoPlane plane) {
-  CHECK(plane < cdm::kMaxPlanes, base::NotFatalUntil::M140);
+  CHECK(plane < cdm::kMaxPlanes);
   return plane_offsets_[plane];
 }
 
 void VideoFrameImpl::SetStride(cdm::VideoPlane plane, uint32_t stride) {
-  CHECK(plane < cdm::kMaxPlanes, base::NotFatalUntil::M140);
+  CHECK(plane < cdm::kMaxPlanes);
   strides_[plane] = stride;
 }
 
 uint32_t VideoFrameImpl::Stride(cdm::VideoPlane plane) {
-  CHECK(plane < cdm::kMaxPlanes, base::NotFatalUntil::M140);
+  CHECK(plane < cdm::kMaxPlanes);
   return strides_[plane];
 }
 

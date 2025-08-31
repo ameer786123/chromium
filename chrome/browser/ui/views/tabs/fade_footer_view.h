@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "chrome/browser/ui/tabs/tab_enums.h"
+#include "base/byte_count.h"
 #include "chrome/browser/ui/views/tabs/fade_view.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/geometry/size.h"
@@ -15,16 +15,20 @@
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/flex_layout.h"
 
+namespace tabs {
+enum class TabAlert;
+}  // namespace tabs
+
 struct AlertFooterRowData {
-  std::optional<TabAlertState> alert_state;
+  std::optional<tabs::TabAlert> alert_state;
   bool should_show_discard_status = false;
-  int64_t memory_savings_in_bytes = 0;
+  base::ByteCount memory_savings_in_bytes;
 };
 
 struct PerformanceRowData {
   bool show_memory_usage = false;
   bool is_high_memory_usage = false;
-  int64_t memory_usage_in_bytes = 0;
+  base::ByteCount memory_usage_in_bytes;
 };
 
 struct CollaborationMessagingRowData {

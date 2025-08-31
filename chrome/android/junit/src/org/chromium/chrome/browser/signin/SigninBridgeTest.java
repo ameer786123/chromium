@@ -43,7 +43,9 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetControllerProvider;
 import org.chromium.components.signin.metrics.AccountConsistencyPromoAction;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
+import org.chromium.components.signin.test.util.TestAccounts;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.url.GURL;
 
 /** JUnit tests for the class {@link SigninBridge}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -66,7 +68,7 @@ public class SigninBridgeTest {
         }
     }
 
-    private static final String CONTINUE_URL = "https://test-continue-url.com";
+    private static final GURL CONTINUE_URL = new GURL("https://test-continue-url.com");
 
     @Rule
     public final AccountManagerTestRule mAccountManagerTestRule = new AccountManagerTestRule();
@@ -123,7 +125,7 @@ public class SigninBridgeTest {
         SigninBridge.openAccountPickerBottomSheet(
                 mTabMock, CONTINUE_URL, mAccountPickerBottomSheetCoordinatorFactoryMock);
         verify(mAccountPickerBottomSheetCoordinatorFactoryMock, never())
-                .create(any(), any(), any(), any(), any(), anyInt());
+                .create(any(), any(), any(), any(), any(), any(), any(), anyInt());
     }
 
     @Test
@@ -137,7 +139,7 @@ public class SigninBridgeTest {
         SigninBridge.openAccountPickerBottomSheet(
                 mTabMock, CONTINUE_URL, mAccountPickerBottomSheetCoordinatorFactoryMock);
         verify(mAccountPickerBottomSheetCoordinatorFactoryMock, never())
-                .create(any(), any(), any(), any(), any(), anyInt());
+                .create(any(), any(), any(), any(), any(), any(), any(), anyInt());
     }
 
     @Test
@@ -152,7 +154,7 @@ public class SigninBridgeTest {
                         AccountConsistencyPromoAction.SUPPRESSED_SIGNIN_NOT_ALLOWED,
                         SigninAccessPoint.WEB_SIGNIN);
         verify(mAccountPickerBottomSheetCoordinatorFactoryMock, never())
-                .create(any(), any(), any(), any(), any(), anyInt());
+                .create(any(), any(), any(), any(), any(), any(), any(), anyInt());
     }
 
     @Test
@@ -167,14 +169,14 @@ public class SigninBridgeTest {
                         AccountConsistencyPromoAction.SUPPRESSED_NO_ACCOUNTS,
                         SigninAccessPoint.WEB_SIGNIN);
         verify(mAccountPickerBottomSheetCoordinatorFactoryMock, never())
-                .create(any(), any(), any(), any(), any(), anyInt());
+                .create(any(), any(), any(), any(), any(), any(), any(), anyInt());
     }
 
     @Test
     @SmallTest
     public void testAccountPickerSuppressedIfDismissLimitReached() {
         when(mSigninManagerMock.isSigninAllowed()).thenReturn(true);
-        mAccountManagerTestRule.addAccount("account@test.com");
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
         ChromeSharedPreferences.getInstance()
                 .writeInt(
                         ChromePreferenceKeys.WEB_SIGNIN_ACCOUNT_PICKER_ACTIVE_DISMISSAL_COUNT,
@@ -187,20 +189,22 @@ public class SigninBridgeTest {
                         AccountConsistencyPromoAction.SUPPRESSED_CONSECUTIVE_DISMISSALS,
                         SigninAccessPoint.WEB_SIGNIN);
         verify(mAccountPickerBottomSheetCoordinatorFactoryMock, never())
-                .create(any(), any(), any(), any(), any(), anyInt());
+                .create(any(), any(), any(), any(), any(), any(), any(), anyInt());
     }
 
     @Test
     @SmallTest
     public void testAccountPickerShown() {
         when(mSigninManagerMock.isSigninAllowed()).thenReturn(true);
-        mAccountManagerTestRule.addAccount("account@test.com");
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
 
         SigninBridge.openAccountPickerBottomSheet(
                 mTabMock, CONTINUE_URL, mAccountPickerBottomSheetCoordinatorFactoryMock);
         verify(mAccountPickerBottomSheetCoordinatorFactoryMock)
                 .create(
                         eq(mWindowAndroidMock),
+                        any(),
+                        any(),
                         eq(mBottomSheetControllerMock),
                         any(),
                         any(),

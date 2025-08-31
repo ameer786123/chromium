@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "third_party/blink/renderer/platform/media/multi_buffer_data_source.h"
 
 #include <stddef.h>
@@ -15,6 +10,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/heap_array.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
@@ -26,7 +22,7 @@
 #include "media/base/mock_filters.h"
 #include "media/base/mock_media_log.h"
 #include "media/base/test_helpers.h"
-#include "services/network/public/mojom/fetch_api.mojom.h"
+#include "services/network/public/mojom/fetch_api.mojom-blink.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/renderer/platform/media/buffered_data_source_host_impl.h"
@@ -41,7 +37,6 @@ namespace blink {
 
 using ::testing::_;
 using ::testing::Assign;
-using ::testing::Invoke;
 using ::testing::InSequence;
 using ::testing::NiceMock;
 using ::testing::StrictMock;
@@ -134,7 +129,7 @@ class TestUrlData : public UrlData {
  public:
   TestUrlData(const KURL& url,
               CorsMode cors_mode,
-              UrlIndex* url_index,
+              base::WeakPtr<UrlIndex> url_index,
               UrlData::CacheMode cache_mode,
               scoped_refptr<base::SingleThreadTaskRunner> task_runner)
       : UrlData(url, cors_mode, url_index, cache_mode, task_runner),
@@ -177,7 +172,7 @@ class TestUrlIndex : public UrlIndex {
                                     UrlData::CacheMode cache_mode) override {
     NotifyNewUrlData(url, cors_mode, cache_mode);
     last_url_data_ = base::MakeRefCounted<TestUrlData>(
-        url, cors_mode, this, cache_mode, task_runner_);
+        url, cors_mode, weak_factory_.GetWeakPtr(), cache_mode, task_runner_);
     return last_url_data_;
   }
 
@@ -218,8 +213,8 @@ class MockMultiBufferDataSource : public MultiBufferDataSource {
             std::move(url_data),
             media_log,
             host,
-            WTF::BindRepeating(&MockMultiBufferDataSource::set_downloading,
-                               WTF::Unretained(this))),
+            BindRepeating(&MockMultiBufferDataSource::set_downloading,
+                          Unretained(this))),
         downloading_(false) {}
 
   MockMultiBufferDataSource(const MockMultiBufferDataSource&) = delete;
@@ -249,9 +244,9 @@ class MultiBufferDataSourceTest : public testing::Test {
  public:
   MultiBufferDataSourceTest() : preload_(MultiBufferDataSource::AUTO) {
     ON_CALL(fetch_context_, CreateUrlLoader(_))
-        .WillByDefault(Invoke([](const WebAssociatedURLLoaderOptions&) {
+        .WillByDefault([](const WebAssociatedURLLoaderOptions&) {
           return std::make_unique<NiceMock<MockWebAssociatedURLLoader>>();
-        }));
+        });
   }
 
   MultiBufferDataSourceTest(const MultiBufferDataSourceTest&) = delete;
@@ -275,8 +270,8 @@ class MultiBufferDataSourceTest : public testing::Test {
         std::make_unique<TestResponseGenerator>(url, file_size);
     EXPECT_CALL(*this, OnInitialize(expected));
     data_source_->SetIsClientAudioElement(is_client_audio_element_);
-    data_source_->Initialize(WTF::BindOnce(
-        &MultiBufferDataSourceTest::OnInitialize, WTF::Unretained(this)));
+    data_source_->Initialize(
+        BindOnce(&MultiBufferDataSourceTest::OnInitialize, Unretained(this)));
     base::RunLoop().RunUntilIdle();
 
     // Not really loading until after OnInitialize is called.
@@ -351,7 +346,7 @@ class MultiBufferDataSourceTest : public testing::Test {
   void ReceiveDataLow(int size) {
     EXPECT_TRUE(active_loader());
     auto data = base::HeapArray<char>::Uninit(size);
-    memset(data.data(), 0xA5, size);  // Arbitrary non-zero value.
+    UNSAFE_TODO(memset(data.data(), 0xA5, size));  // Arbitrary non-zero value.
 
     data_provider()->DidReceiveData(data);
   }
@@ -375,9 +370,9 @@ class MultiBufferDataSourceTest : public testing::Test {
   MOCK_METHOD1(ReadCallback, void(int size));
 
   void ReadAt(int64_t position, int howmuch = kDataSize) {
-    data_source_->Read(position, howmuch, buffer_,
-                       WTF::BindOnce(&MultiBufferDataSourceTest::ReadCallback,
-                                     WTF::Unretained(this)));
+    data_source_->Read(
+        position, howmuch, buffer_,
+        BindOnce(&MultiBufferDataSourceTest::ReadCallback, Unretained(this)));
     base::RunLoop().RunUntilIdle();
   }
 
@@ -706,7 +701,7 @@ TEST_F(MultiBufferDataSourceTest, Http_RetryOnError) {
   Stop();
 }
 
-// Make sure that we prefetch across partial responses. (crbug.com/516589)
+// Make sure that we prefetch across partial responses. (crbug.com/41192138).
 TEST_F(MultiBufferDataSourceTest, Http_PartialResponsePrefetch) {
   Initialize(kHttpUrl, true);
   WebURLResponse response1 =
@@ -935,9 +930,9 @@ TEST_F(MultiBufferDataSourceTest, StopDuringRead) {
   InitializeWith206Response();
 
   uint8_t buffer[256];
-  data_source_->Read(kDataSize, std::size(buffer), buffer,
-                     WTF::BindOnce(&MultiBufferDataSourceTest::ReadCallback,
-                                   WTF::Unretained(this)));
+  data_source_->Read(
+      kDataSize, std::size(buffer), buffer,
+      BindOnce(&MultiBufferDataSourceTest::ReadCallback, Unretained(this)));
 
   // The outstanding read should fail before the stop callback runs.
   {
@@ -1051,8 +1046,8 @@ TEST_F(MultiBufferDataSourceTest, Http_ShareData) {
   // This call would not be expected if we were not sharing data.
   EXPECT_CALL(host2, SetTotalBytes(response_generator_->content_length()));
   EXPECT_CALL(host2, AddBufferedByteRange(0, kDataSize * 2));
-  source2.Initialize(WTF::BindOnce(&MultiBufferDataSourceTest::OnInitialize,
-                                   WTF::Unretained(this)));
+  source2.Initialize(
+      BindOnce(&MultiBufferDataSourceTest::OnInitialize, Unretained(this)));
   base::RunLoop().RunUntilIdle();
 
   // Always loading after initialize.
@@ -1392,9 +1387,9 @@ TEST_F(MultiBufferDataSourceTest,
   EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize * 4));
   ReceiveData(kDataSize);
   EXPECT_EQ(data_source_->downloading(), false);
-  data_source_->Read(kDataSize * 10, kDataSize, buffer_,
-                     WTF::BindOnce(&MultiBufferDataSourceTest::ReadCallback,
-                                   WTF::Unretained(this)));
+  data_source_->Read(
+      kDataSize * 10, kDataSize, buffer_,
+      BindOnce(&MultiBufferDataSourceTest::ReadCallback, Unretained(this)));
   data_source_->StopPreloading();
   EXPECT_TRUE(active_loader_allownull());
   EXPECT_CALL(*this, ReadCallback(-1));
@@ -1518,8 +1513,8 @@ TEST_F(MultiBufferDataSourceTest, SeekPastEOF) {
   response_generator_ =
       std::make_unique<TestResponseGenerator>(url, kDataSize + 1);
   EXPECT_CALL(*this, OnInitialize(true));
-  data_source_->Initialize(WTF::BindOnce(
-      &MultiBufferDataSourceTest::OnInitialize, WTF::Unretained(this)));
+  data_source_->Initialize(
+      BindOnce(&MultiBufferDataSourceTest::OnInitialize, Unretained(this)));
   base::RunLoop().RunUntilIdle();
 
   // Not really loading until after OnInitialize is called.
@@ -1561,7 +1556,7 @@ TEST_F(MultiBufferDataSourceTest, Http_RetryThenRedirect) {
 
   // Server responds with a redirect.
   WebURL url{KURL(kHttpDifferentPathUrl)};
-  WebURLResponse response((KURL(kHttpUrl)));
+  WebURLResponse response{KURL(kHttpUrl)};
   response.SetHttpStatusCode(307);
   data_provider()->WillFollowRedirect(url, response);
 
@@ -1579,7 +1574,7 @@ TEST_F(MultiBufferDataSourceTest, Http_NotStreamingAfterRedirect) {
 
   // Server responds with a redirect.
   WebURL url{KURL(kHttpDifferentPathUrl)};
-  WebURLResponse response((KURL(kHttpUrl)));
+  WebURLResponse response{KURL(kHttpUrl)};
   response.SetHttpStatusCode(307);
   data_provider()->WillFollowRedirect(url, response);
 
@@ -1601,7 +1596,7 @@ TEST_F(MultiBufferDataSourceTest, Http_RangeNotSatisfiableAfterRedirect) {
 
   // Server responds with a redirect.
   WebURL url{KURL(kHttpDifferentPathUrl)};
-  WebURLResponse response((KURL(kHttpUrl)));
+  WebURLResponse response{KURL(kHttpUrl)};
   response.SetHttpStatusCode(307);
   data_provider()->WillFollowRedirect(url, response);
 
@@ -1615,7 +1610,7 @@ TEST_F(MultiBufferDataSourceTest, Http_404AfterRedirect) {
 
   // Server responds with a redirect.
   WebURL url{KURL(kHttpDifferentPathUrl)};
-  WebURLResponse response((KURL(kHttpUrl)));
+  WebURLResponse response{KURL(kHttpUrl)};
   response.SetHttpStatusCode(307);
   data_provider()->WillFollowRedirect(url, response);
 
@@ -1654,8 +1649,8 @@ TEST_F(MultiBufferDataSourceTest, PreserveCachingModeAfterRedirect) {
         std::make_unique<TestResponseGenerator>(start, kFileSize);
     data_source->SetIsClientAudioElement(false);
     EXPECT_CALL(*this, OnInitialize(true));
-    data_source->Initialize(WTF::BindOnce(
-        &MultiBufferDataSourceTest::OnInitialize, WTF::Unretained(this)));
+    data_source->Initialize(
+        BindOnce(&MultiBufferDataSourceTest::OnInitialize, Unretained(this)));
     base::RunLoop().RunUntilIdle();
     EXPECT_EQ(data_source->downloading(), false);
     EXPECT_CALL(url_index_,
@@ -1684,8 +1679,8 @@ TEST_F(MultiBufferDataSourceTest, PreserveCachingModeAfterRedirect) {
         std::make_unique<TestResponseGenerator>(start, kFileSize);
     data_source->SetIsClientAudioElement(false);
     EXPECT_CALL(*this, OnInitialize(true));
-    data_source->Initialize(WTF::BindOnce(
-        &MultiBufferDataSourceTest::OnInitialize, WTF::Unretained(this)));
+    data_source->Initialize(
+        BindOnce(&MultiBufferDataSourceTest::OnInitialize, Unretained(this)));
     base::RunLoop().RunUntilIdle();
     EXPECT_EQ(data_source->downloading(), false);
     EXPECT_CALL(url_index_, NotifyNewUrlData(redir, _, _)).Times(0);
@@ -1714,8 +1709,8 @@ TEST_F(MultiBufferDataSourceTest, PreserveCachingModeAfterRedirect) {
         std::make_unique<TestResponseGenerator>(start, kFileSize);
     data_source->SetIsClientAudioElement(false);
     EXPECT_CALL(*this, OnInitialize(true));
-    data_source->Initialize(WTF::BindOnce(
-        &MultiBufferDataSourceTest::OnInitialize, WTF::Unretained(this)));
+    data_source->Initialize(
+        BindOnce(&MultiBufferDataSourceTest::OnInitialize, Unretained(this)));
     base::RunLoop().RunUntilIdle();
     EXPECT_EQ(data_source->downloading(), false);
     EXPECT_CALL(url_index_,
@@ -1783,7 +1778,7 @@ TEST_F(MultiBufferDataSourceTest, ResponseTypeBasic) {
   set_preload(MultiBufferDataSource::NONE);
   WebURLResponse response1 =
       response_generator_->GeneratePartial206(0, kDataSize - 1);
-  response1.SetType(network::mojom::FetchResponseType::kBasic);
+  response1.SetType(network::mojom::blink::FetchResponseType::kBasic);
 
   EXPECT_CALL(host_, SetTotalBytes(kFileSize));
   EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize));
@@ -1793,7 +1788,6 @@ TEST_F(MultiBufferDataSourceTest, ResponseTypeBasic) {
   ReceiveData(kDataSize);
   ReadAt(0);
   EXPECT_TRUE(loading());
-  EXPECT_FALSE(data_source_->IsCorsCrossOrigin());
 
   FinishLoading();
 }
@@ -1803,7 +1797,7 @@ TEST_F(MultiBufferDataSourceTest, ResponseTypeCors) {
   set_preload(MultiBufferDataSource::NONE);
   WebURLResponse response1 =
       response_generator_->GeneratePartial206(0, kDataSize - 1);
-  response1.SetType(network::mojom::FetchResponseType::kCors);
+  response1.SetType(network::mojom::blink::FetchResponseType::kCors);
 
   EXPECT_CALL(host_, SetTotalBytes(kFileSize));
   EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize));
@@ -1813,7 +1807,6 @@ TEST_F(MultiBufferDataSourceTest, ResponseTypeCors) {
   ReceiveData(kDataSize);
   ReadAt(0);
   EXPECT_TRUE(loading());
-  EXPECT_FALSE(data_source_->IsCorsCrossOrigin());
 
   FinishLoading();
 }
@@ -1823,7 +1816,7 @@ TEST_F(MultiBufferDataSourceTest, ResponseTypeDefault) {
   set_preload(MultiBufferDataSource::NONE);
   WebURLResponse response1 =
       response_generator_->GeneratePartial206(0, kDataSize - 1);
-  response1.SetType(network::mojom::FetchResponseType::kDefault);
+  response1.SetType(network::mojom::blink::FetchResponseType::kDefault);
 
   EXPECT_CALL(host_, SetTotalBytes(kFileSize));
   EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize));
@@ -1833,7 +1826,6 @@ TEST_F(MultiBufferDataSourceTest, ResponseTypeDefault) {
   ReceiveData(kDataSize);
   ReadAt(0);
   EXPECT_TRUE(loading());
-  EXPECT_FALSE(data_source_->IsCorsCrossOrigin());
 
   FinishLoading();
 }
@@ -1843,7 +1835,7 @@ TEST_F(MultiBufferDataSourceTest, ResponseTypeOpaque) {
   set_preload(MultiBufferDataSource::NONE);
   WebURLResponse response1 =
       response_generator_->GeneratePartial206(0, kDataSize - 1);
-  response1.SetType(network::mojom::FetchResponseType::kOpaque);
+  response1.SetType(network::mojom::blink::FetchResponseType::kOpaque);
 
   EXPECT_CALL(host_, SetTotalBytes(kFileSize));
   EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize));
@@ -1853,7 +1845,6 @@ TEST_F(MultiBufferDataSourceTest, ResponseTypeOpaque) {
   ReceiveData(kDataSize);
   ReadAt(0);
   EXPECT_TRUE(loading());
-  EXPECT_TRUE(data_source_->IsCorsCrossOrigin());
 
   FinishLoading();
 }
@@ -1863,7 +1854,7 @@ TEST_F(MultiBufferDataSourceTest, ResponseTypeOpaqueRedirect) {
   set_preload(MultiBufferDataSource::NONE);
   WebURLResponse response1 =
       response_generator_->GeneratePartial206(0, kDataSize - 1);
-  response1.SetType(network::mojom::FetchResponseType::kOpaqueRedirect);
+  response1.SetType(network::mojom::blink::FetchResponseType::kOpaqueRedirect);
 
   EXPECT_CALL(host_, SetTotalBytes(kFileSize));
   EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize));
@@ -1873,7 +1864,6 @@ TEST_F(MultiBufferDataSourceTest, ResponseTypeOpaqueRedirect) {
   ReceiveData(kDataSize);
   ReadAt(0);
   EXPECT_TRUE(loading());
-  EXPECT_TRUE(data_source_->IsCorsCrossOrigin());
 
   FinishLoading();
 }
@@ -2004,8 +1994,8 @@ TEST_F(MultiBufferDataSourceTest, Http_CheckLoadingTransition) {
   response_generator_ =
       std::make_unique<TestResponseGenerator>(url, kDataSize * 1);
   EXPECT_CALL(*this, OnInitialize(true));
-  data_source_->Initialize(WTF::BindOnce(
-      &MultiBufferDataSourceTest::OnInitialize, WTF::Unretained(this)));
+  data_source_->Initialize(
+      BindOnce(&MultiBufferDataSourceTest::OnInitialize, Unretained(this)));
   base::RunLoop().RunUntilIdle();
 
   // Not really loading until after OnInitialize is called.
@@ -2023,9 +2013,9 @@ TEST_F(MultiBufferDataSourceTest, Http_CheckLoadingTransition) {
   data_provider()->DidFinishLoading();
 
   EXPECT_CALL(*this, ReadCallback(1));
-  data_source_->Read(kDataSize, 2, buffer_,
-                     WTF::BindOnce(&MultiBufferDataSourceTest::ReadCallback,
-                                   WTF::Unretained(this)));
+  data_source_->Read(
+      kDataSize, 2, buffer_,
+      BindOnce(&MultiBufferDataSourceTest::ReadCallback, Unretained(this)));
   base::RunLoop().RunUntilIdle();
 
   // Make sure we're not downloading anymore.

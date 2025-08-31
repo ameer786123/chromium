@@ -9,6 +9,7 @@ import android.view.Window;
 
 import androidx.annotation.Nullable;
 
+import org.chromium.android_webview.common.AwFeatureMap;
 import org.chromium.base.BaseFeatures;
 import org.chromium.base.TimeUtils;
 import org.chromium.base.jank_tracker.FrameMetricsListener;
@@ -33,8 +34,8 @@ class AwFrameMetricsListener {
             new WeakHashMap<>();
 
     private boolean mAttached;
-    private JankTrackerStateController mController;
-    private JankTracker mJankTracker;
+    private final JankTrackerStateController mController;
+    private final JankTracker mJankTracker;
     private WeakReference<Window> mWindow;
     private int mAttachedWebviews;
     private int mVisibleWebviews;

@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -19,8 +20,12 @@ class GlicWindowController;
 class WebUIContentsContainer : public content::WebContentsDelegate,
                                public content::WebContentsObserver {
  public:
+  // `initially_hidden` value is only relevant when
+  // `kGlicGuestContentsVisibilityState` flag is enabled, otherwise the default
+  // value is used (i.e. false).
   WebUIContentsContainer(Profile* profile,
-                         GlicWindowController* glic_window_controller);
+                         GlicWindowController* glic_window_controller,
+                         bool initially_hidden);
   ~WebUIContentsContainer() override;
 
   WebUIContentsContainer(const WebUIContentsContainer&) = delete;
@@ -34,6 +39,10 @@ class WebUIContentsContainer : public content::WebContentsDelegate,
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
       content::MediaResponseCallback callback) override;
+  void RunFileChooser(
+      content::RenderFrameHost* render_frame_host,
+      scoped_refptr<content::FileSelectListener> listener,
+      const blink::mojom::FileChooserParams& params) override;
 
   // content::WebContentsObserver:
   void PrimaryMainFrameRenderProcessGone(

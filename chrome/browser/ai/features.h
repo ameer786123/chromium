@@ -12,9 +12,12 @@ namespace features {
 
 BASE_DECLARE_FEATURE(kAILanguageModelOverrideConfiguration);
 extern const base::FeatureParam<int>
-    kAILanguageModelOverrideConfigurationMaxTopK;
-extern const base::FeatureParam<double>
-    kAILanguageModelOverrideConfigurationMaxTemperature;
+    kAILanguageModelOverrideConfigurationOutputBuffer;
+
+// When enabled some amount of bytes will not be loadable when creating one of
+// the built-in AI APIs.
+BASE_DECLARE_FEATURE(kAIModelUnloadableProgress);
+extern const base::FeatureParam<int> kAIModelUnloadableProgressBytes;
 
 }  // namespace features
 

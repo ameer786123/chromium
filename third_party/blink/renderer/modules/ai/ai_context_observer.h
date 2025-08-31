@@ -33,8 +33,8 @@ class AIContextObserver : public ContextLifecycleObserver {
     SetContextLifecycleNotifier(context_client_->GetExecutionContext());
     if (abort_signal_) {
       CHECK(!abort_signal_->aborted());
-      abort_handle_ = abort_signal_->AddAlgorithm(WTF::BindOnce(
-          &AIContextObserver::OnAborted, WrapWeakPersistent(this)));
+      abort_handle_ = abort_signal_->AddAlgorithm(
+          BindOnce(&AIContextObserver::OnAborted, WrapWeakPersistent(this)));
     }
   }
 
@@ -55,6 +55,7 @@ class AIContextObserver : public ContextLifecycleObserver {
   ScriptPromiseResolver<V8SessionObjectType>* GetResolver() {
     return resolver_;
   }
+  AbortSignal* GetAbortSignal() { return abort_signal_; }
 
   void Cleanup() {
     ResetReceiver();
@@ -67,6 +68,8 @@ class AIContextObserver : public ContextLifecycleObserver {
   }
 
   virtual void ResetReceiver() = 0;
+
+  ScriptState* GetScriptState() const { return script_state_.Get(); }
 
  private:
   // `ContextLifecycleObserver` implementation

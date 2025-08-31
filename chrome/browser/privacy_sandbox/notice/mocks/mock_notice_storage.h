@@ -9,9 +9,9 @@
 #include "chrome/browser/privacy_sandbox/notice/notice_storage.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
-class PrefService;
-
 namespace privacy_sandbox {
+
+class Notice;
 
 class MockNoticeStorage : public NoticeStorage {
  public:
@@ -20,21 +20,16 @@ class MockNoticeStorage : public NoticeStorage {
 
   MOCK_METHOD(void,
               RecordEvent,
-              (PrefService * prefs,
-               std::string_view notice,
-               notice::mojom::PrivacySandboxNoticeEvent event,
-               base::Time event_time),
+              (const Notice& notice,
+               notice::mojom::PrivacySandboxNoticeEvent event),
               (override));
 
-  MOCK_METHOD(std::optional<PrivacySandboxNoticeData>,
+  MOCK_METHOD(std::optional<NoticeStorageData>,
               ReadNoticeData,
-              (PrefService * pref_service, std::string_view notice),
+              (std::string_view notice),
               (const, override));
 
-  MOCK_METHOD(void,
-              RecordHistogramsOnStartup,
-              (PrefService * pref_service, std::string_view notice),
-              (const, override));
+  MOCK_METHOD(void, RecordStartupHistograms, (), (const, override));
 };
 
 }  // namespace privacy_sandbox

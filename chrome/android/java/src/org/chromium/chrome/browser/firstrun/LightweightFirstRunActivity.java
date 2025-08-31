@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.firstrun;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+
 import android.os.Handler;
 import android.os.SystemClock;
 import android.text.method.LinkMovementMethod;
@@ -13,7 +15,6 @@ import android.view.accessibility.AccessibilityEvent;
 import android.widget.Button;
 import android.widget.TextView;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
 
@@ -21,6 +22,9 @@ import org.chromium.base.IntentUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TimeUtils;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
 import org.chromium.chrome.browser.enterprise.util.EnterpriseInfo;
@@ -32,6 +36,7 @@ import org.chromium.ui.text.SpanApplier.SpanInfo;
 import org.chromium.ui.widget.LoadingView;
 
 /** Lightweight FirstRunActivity. It shows ToS dialog only. */
+@NullMarked
 public class LightweightFirstRunActivity extends FirstRunActivityBase
         implements LoadingView.Observer {
     // TODO(crbug.com/40156897) Clean this boolean when releasing this feature, and remove
@@ -40,7 +45,6 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
 
     private @Nullable SkipTosDialogPolicyListener mSkipTosDialogPolicyListener;
 
-    private FirstRunFlowSequencer mFirstRunFlowSequencer;
     private TextView mTosAndPrivacyTextView;
     private Button mOkButton;
     private LoadingView mLoadingView;
@@ -51,8 +55,10 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
     private boolean mNativeInitialized;
     private boolean mTriggerAcceptAfterNativeInit;
 
-    private Handler mHandler;
-    private Runnable mExitFreRunnable;
+    @SuppressWarnings("HidingField")
+    private @Nullable Handler mHandler;
+
+    private @Nullable Runnable mExitFreRunnable;
 
     public static final String EXTRA_ASSOCIATED_APP_NAME =
             "org.chromium.chrome.browser.firstrun.AssociatedAppName";
@@ -76,19 +82,21 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase
 
         setFinishOnTouchOutside(true);
 
-        mFirstRunFlowSequencer =
+        FirstRunFlowSequencer firstRunFlowSequencer =
                 new FirstRunFlowSequencer(
-                        getProfileProviderSupplier(), getChildAccountStatusSupplier()) {
+                        getProfileProviderSupplier(),
+                        assertNonNull(getChildAccountStatusSupplier())) {
                     @Override
                     public void onFlowIsKnown(boolean isChild) {
                         initializeViews(isChild);
                     }
                 };
-        mFirstRunFlowSequencer.start();
+        firstRunFlowSequencer.start();
         onInitialLayoutInflationComplete();
     }
 
     /** Called once it is known whether the device has a child account. */
+    @Initializer
     private void initializeViews(boolean hasChildAccount) {
         setContentView(
                 LayoutInflater.from(LightweightFirstRunActivity.this)

@@ -6,8 +6,6 @@ package org.chromium.chrome.browser.auxiliary_search;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -19,7 +17,6 @@ import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Bitmap.Config;
-import android.text.format.DateUtils;
 
 import androidx.test.filters.SmallTest;
 
@@ -41,6 +38,7 @@ import org.chromium.base.TimeUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
+import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchController.AuxiliarySearchHostType;
 import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchGroupProto.AuxiliarySearchEntry;
 import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchMetrics.RequestStatus;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -48,9 +46,11 @@ import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.ui.favicon.FaviconHelper;
+import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,10 +76,6 @@ public class AuxiliarySearchControllerImplUnitTest {
     @Mock private AuxiliarySearchHooks mHooks;
 
     @Captor private ArgumentCaptor<Callback<List<Tab>>> mCallbackCaptor;
-
-    @Captor
-    private ArgumentCaptor<Callback<List<AuxiliarySearchDataEntry>>> mEntryReadyCallbackCaptor;
-
     @Captor private ArgumentCaptor<Callback<Boolean>> mDeleteCallbackCaptor;
     @Captor private ArgumentCaptor<Callback<Boolean>> mBackgroundTaskCompleteCallbackCaptor;
     @Captor private ArgumentCaptor<Callback<Boolean>> mDonationCompleteCallbackCaptor;
@@ -87,8 +83,9 @@ public class AuxiliarySearchControllerImplUnitTest {
     @Captor private ArgumentCaptor<FaviconHelper.FaviconImageCallback> mFaviconImageCallbackCaptor1;
     @Captor private ArgumentCaptor<FaviconHelper.FaviconImageCallback> mFaviconImageCallbackCaptor2;
 
-    private AuxiliarySearchDataEntry mDataEntry1;
-    private AuxiliarySearchDataEntry mDataEntry2;
+    @Captor
+    private ArgumentCaptor<Callback<List<AuxiliarySearchDataEntry>>> mEntryReadyCallbackCaptor;
+
     private AuxiliarySearchControllerImpl mAuxiliarySearchControllerImpl;
 
     @Before
@@ -102,7 +99,7 @@ public class AuxiliarySearchControllerImplUnitTest {
     @After
     public void tearDown() {
         mFakeTime.resetTimes();
-        mAuxiliarySearchControllerImpl.destroy();
+        mAuxiliarySearchControllerImpl.destroy(mActivityLifecycleDispatcher);
     }
 
     @Test
@@ -142,7 +139,8 @@ public class AuxiliarySearchControllerImplUnitTest {
                         mProfile,
                         mAuxiliarySearchProvider,
                         mAuxiliarySearchDonor,
-                        mFaviconHelper);
+                        mFaviconHelper,
+                        AuxiliarySearchHostType.CTA);
         mAuxiliarySearchControllerImpl.onResumeWithNative();
 
         verify(mAuxiliarySearchDonor).deleteAll(any(Callback.class));
@@ -164,7 +162,7 @@ public class AuxiliarySearchControllerImplUnitTest {
         verify(mAuxiliarySearchProvider).getTabsSearchableDataProtoAsync(mCallbackCaptor.capture());
         mFakeTime.advanceMillis(timeDelta);
 
-        mCallbackCaptor.getValue().onResult(new ArrayList<>());
+        mCallbackCaptor.getValue().onResult(Collections.emptyList());
         histogramWatcher.assertExpected();
     }
 
@@ -178,37 +176,63 @@ public class AuxiliarySearchControllerImplUnitTest {
     }
 
     @Test
+    public void testDonateCustomTabs() {
+        int timeDelta = 50;
+        var histogramWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecord("Search.AuxiliarySearch.QueryTime.CustomTabs", timeDelta)
+                        .expectIntRecords("Search.AuxiliarySearch.CustomTabFetchResults.Count", 0)
+                        .build();
+
+        long beginTime = 4 * TimeUtils.MILLISECONDS_PER_MINUTE;
+        GURL url = JUnitTestGURLs.URL_1;
+        mAuxiliarySearchControllerImpl.donateCustomTabs(url, beginTime);
+        verify(mAuxiliarySearchProvider)
+                .getCustomTabsAsync(
+                        eq(url),
+                        eq(beginTime - AuxiliarySearchControllerImpl.TIME_RANGE_MS),
+                        mEntryReadyCallbackCaptor.capture());
+
+        mFakeTime.advanceMillis(timeDelta);
+        mEntryReadyCallbackCaptor.getValue().onResult(Collections.emptyList());
+        histogramWatcher.assertExpected();
+
+        List<AuxiliarySearchDataEntry> entries =
+                AuxiliarySearchTestHelper.createAuxiliarySearchDataEntries_CustomTabs(
+                        TimeUtils.uptimeMillis());
+        assertEquals(3, entries.size());
+        histogramWatcher =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecords(
+                                "Search.AuxiliarySearch.CustomTabFetchResults.Count",
+                                entries.size())
+                        .build();
+        mEntryReadyCallbackCaptor.getValue().onResult(entries);
+        histogramWatcher.assertExpected();
+    }
+
+    @Test
     public void testOnDestroy() {
         int currentSize =
                 AuxiliarySearchConfigManager.getInstance().getObserverListSizeForTesting();
-
-        // Enables multiple data source and starts observing MVTs.
-        when(mHooks.isMultiDataTypeEnabledOnDevice()).thenReturn(true);
-        assertTrue(AuxiliarySearchControllerFactory.getInstance().isMultiDataTypeEnabledOnDevice());
         createController();
-        mAuxiliarySearchControllerImpl.onDeferredStartup();
 
         assertEquals(
                 currentSize + 1,
                 AuxiliarySearchConfigManager.getInstance().getObserverListSizeForTesting());
         mAuxiliarySearchControllerImpl.register(mActivityLifecycleDispatcher);
 
-        mAuxiliarySearchControllerImpl.destroy();
+        mAuxiliarySearchControllerImpl.destroy(mActivityLifecycleDispatcher);
 
         verify(mActivityLifecycleDispatcher).unregister(eq(mAuxiliarySearchControllerImpl));
-
         verify(mFaviconHelper).destroy();
-
         assertEquals(
                 currentSize,
                 AuxiliarySearchConfigManager.getInstance().getObserverListSizeForTesting());
-        verify(mAuxiliarySearchProvider).setObserver(eq(null));
     }
 
     @Test
     public void testRegister() {
-        mAuxiliarySearchControllerImpl.register(mActivityLifecycleDispatcher);
-
         verify(mActivityLifecycleDispatcher).register(eq(mAuxiliarySearchControllerImpl));
     }
 
@@ -285,30 +309,6 @@ public class AuxiliarySearchControllerImplUnitTest {
     }
 
     @Test
-    @EnableFeatures({
-        ChromeFeatureList.ANDROID_APP_INTEGRATION_WITH_FAVICON,
-        ChromeFeatureList.ANDROID_APP_INTEGRATION_MULTI_DATA_SOURCE
-    })
-    public void testOnNonSensitiveHistoryDataAvailable_EmptyList() {
-        long now = TimeUtils.uptimeMillis();
-        int timeDelta = 50;
-        var histogramWatcher =
-                HistogramWatcher.newBuilder()
-                        .expectIntRecord("Search.AuxiliarySearch.QueryTime.History", timeDelta)
-                        .build();
-
-        // Verifies the case when the entry list is empty.
-        mFakeTime.advanceMillis(timeDelta);
-        List<AuxiliarySearchDataEntry> entries = new ArrayList<>();
-        mAuxiliarySearchControllerImpl.onNonSensitiveHistoryDataAvailable(entries, now);
-
-        histogramWatcher.assertExpected();
-        verify(mAuxiliarySearchDonor, never())
-                .donateEntries(
-                        eq(entries), any(int[].class), mDonationCompleteCallbackCaptor.capture());
-    }
-
-    @Test
     @EnableFeatures(ChromeFeatureList.ANDROID_APP_INTEGRATION_WITH_FAVICON)
     public void testOnNonSensitiveDataAvailable() {
         long now = TimeUtils.uptimeMillis();
@@ -348,7 +348,8 @@ public class AuxiliarySearchControllerImplUnitTest {
 
     private <T> void testOnNonSensitiveDataAvailableImpl(
             List<T> entries, long startTime, int timeDelta) {
-        mAuxiliarySearchControllerImpl.onNonSensitiveDataAvailable(entries, startTime);
+        mAuxiliarySearchControllerImpl.onNonSensitiveDataAvailable(
+                entries, startTime, /* onDonationCompleteRunnable= */ null);
 
         verify(mAuxiliarySearchDonor)
                 .donateEntries(
@@ -436,61 +437,9 @@ public class AuxiliarySearchControllerImplUnitTest {
 
         verify(mAuxiliarySearchProvider).getTabsSearchableDataProtoAsync(mCallbackCaptor.capture());
 
-        mAuxiliarySearchControllerImpl.destroy();
+        mAuxiliarySearchControllerImpl.destroy(mActivityLifecycleDispatcher);
         mFakeTime.advanceMillis(timeDelta);
         mCallbackCaptor.getAllValues().get(0).onResult(tabs);
-
-        verify(mAuxiliarySearchDonor, never())
-                .donateEntries(any(List.class), any(int[].class), any(Callback.class));
-    }
-
-    @Test
-    @EnableFeatures({ChromeFeatureList.ANDROID_APP_INTEGRATION_WITH_FAVICON})
-    public void testOnNonSensitiveHistoryDataAvailable_AfterDestroy() {
-        // Cleans up before creating a new controller.
-        mAuxiliarySearchControllerImpl.destroy();
-
-        when(mHooks.isMultiDataTypeEnabledOnDevice()).thenReturn(true);
-        assertTrue(AuxiliarySearchControllerFactory.getInstance().isMultiDataTypeEnabledOnDevice());
-        createController();
-
-        long now = TimeUtils.uptimeMillis();
-        int timeDelta = 50;
-
-        mDataEntry1 =
-                new AuxiliarySearchDataEntry(
-                        /* type= */ AuxiliarySearchEntryType.TAB,
-                        /* url= */ JUnitTestGURLs.URL_1,
-                        /* title= */ "Title 1",
-                        /* lastActiveTime= */ now - 2,
-                        /* tabId= */ TAB_ID_1,
-                        /* appId= */ null,
-                        /* visitId= */ -1,
-                        /* score= */ 0);
-        mDataEntry2 =
-                new AuxiliarySearchDataEntry(
-                        /* type= */ AuxiliarySearchEntryType.TAB,
-                        /* url= */ JUnitTestGURLs.URL_2,
-                        /* title= */ "Title 2",
-                        /* lastActiveTime= */ now - 1,
-                        /* tabId= */ TAB_ID_2,
-                        /* appId= */ null,
-                        /* visitId= */ -1,
-                        /* score= */ 0);
-
-        List<AuxiliarySearchDataEntry> entries = new ArrayList<>();
-        entries.add(mDataEntry1);
-        entries.add(mDataEntry2);
-
-        when(mAuxiliarySearchDonor.canDonate()).thenReturn(true);
-        mAuxiliarySearchControllerImpl.onPauseWithNative();
-
-        verify(mAuxiliarySearchProvider)
-                .getHistorySearchableDataProtoAsync(mEntryReadyCallbackCaptor.capture());
-
-        mAuxiliarySearchControllerImpl.destroy();
-        mFakeTime.advanceMillis(timeDelta);
-        mEntryReadyCallbackCaptor.getAllValues().get(0).onResult(entries);
 
         verify(mAuxiliarySearchDonor, never())
                 .donateEntries(any(List.class), any(int[].class), any(Callback.class));
@@ -505,67 +454,6 @@ public class AuxiliarySearchControllerImplUnitTest {
         verify(mAuxiliarySearchDonor).onConfigChanged(eq(true), any(Callback.class));
     }
 
-    @Test
-    public void testOnDeferredStartup() {
-        // Verifies case when multiple data source is disabled.
-        mAuxiliarySearchControllerImpl.onDeferredStartup();
-        verify(mAuxiliarySearchProvider, never()).setObserver(eq(mAuxiliarySearchControllerImpl));
-
-        // Enables multiple data source.
-        when(mHooks.isMultiDataTypeEnabledOnDevice()).thenReturn(true);
-        assertTrue(AuxiliarySearchControllerFactory.getInstance().isMultiDataTypeEnabledOnDevice());
-        createController();
-
-        mAuxiliarySearchControllerImpl.onDeferredStartup();
-        verify(mAuxiliarySearchProvider).setObserver(eq(mAuxiliarySearchControllerImpl));
-
-        Mockito.reset(mAuxiliarySearchProvider);
-        mAuxiliarySearchControllerImpl.onDeferredStartup();
-        verify(mAuxiliarySearchProvider, never()).setObserver(eq(mAuxiliarySearchControllerImpl));
-    }
-
-    @Test
-    @SmallTest
-    public void testGetMergedList() {
-        long now = TimeUtils.uptimeMillis();
-        // Verifies the case that both history data list and most visited sites list are null.
-        List<AuxiliarySearchDataEntry> mergedList =
-                mAuxiliarySearchControllerImpl.getMergedList(null);
-        assertNull(mergedList);
-
-        // Verifies the case that the most visited sites list is null.
-        List<AuxiliarySearchDataEntry> historyEntryList =
-                AuxiliarySearchTestHelper.createAuxiliarySearchDataEntries(now);
-        mergedList = mAuxiliarySearchControllerImpl.getMergedList(historyEntryList);
-        assertEquals(historyEntryList, mergedList);
-
-        // Verifies the case that the history data list is null.
-        List<AuxiliarySearchDataEntry> mvtList =
-                AuxiliarySearchTestHelper.createAuxiliarySearchDataEntries_TopSite(now);
-        mAuxiliarySearchControllerImpl.onSiteSuggestionsAvailable(mvtList);
-        mergedList = mAuxiliarySearchControllerImpl.getMergedList(null);
-        assertEquals(mvtList, mergedList);
-
-        // Verifies the case that both history data list and most visited sites list aren't null.
-        mergedList = mAuxiliarySearchControllerImpl.getMergedList(historyEntryList);
-        assertEquals(4, mergedList.size());
-        assertEquals(mvtList.get(0), mergedList.get(0));
-        assertEquals(historyEntryList.get(0), mergedList.get(1));
-        assertEquals(historyEntryList.get(1), mergedList.get(2));
-        assertEquals(mvtList.get(1), mergedList.get(3));
-
-        // Verifies the case that most visited sites list expired.
-        long timeDelta = DateUtils.DAY_IN_MILLIS + 1;
-        mFakeTime.advanceMillis(timeDelta);
-        HistogramWatcher histogramWatcher =
-                HistogramWatcher.newBuilder()
-                        .expectAnyRecord("Search.AuxiliarySearch.TopSites.ExpirationDuration")
-                        .build();
-        mergedList = mAuxiliarySearchControllerImpl.getMergedList(historyEntryList);
-        assertEquals(historyEntryList, mergedList);
-        histogramWatcher.assertExpected();
-    }
-
     private void createController() {
         mAuxiliarySearchControllerImpl =
                 new AuxiliarySearchControllerImpl(
@@ -573,6 +461,8 @@ public class AuxiliarySearchControllerImplUnitTest {
                         mProfile,
                         mAuxiliarySearchProvider,
                         mAuxiliarySearchDonor,
-                        mFaviconHelper);
+                        mFaviconHelper,
+                        AuxiliarySearchHostType.CTA);
+        mAuxiliarySearchControllerImpl.register(mActivityLifecycleDispatcher);
     }
 }

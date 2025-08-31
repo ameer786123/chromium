@@ -7,11 +7,10 @@ package org.chromium.chrome.browser.toolbar.optional_button;
 import android.graphics.drawable.Drawable;
 import android.view.View;
 
-import androidx.annotation.DrawableRes;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarFeatures;
 import org.chromium.chrome.browser.user_education.IphCommandBuilder;
@@ -23,6 +22,7 @@ import java.util.Objects;
  *
  * @see ButtonDataProvider
  */
+@NullMarked
 public interface ButtonData {
     /** Returns {@code true} when the {@link ButtonDataProvider} wants to show a button. */
     boolean canShow();
@@ -30,12 +30,11 @@ public interface ButtonData {
     /** Returns {@code true} if the button is supposed to be enabled and clickable. */
     boolean isEnabled();
 
-    /** Sets the background resource that will be used to highlight the button. */
-    /* package */ void setBackgroundResource(@DrawableRes int resId);
-
-    /** Gets the background resource that will be used to highlight the button. */
-    @DrawableRes
-    /* package */ int getBackgroundResource();
+    /**
+     * Returns {@code true} if the button with a chip string should show a text bubble instead of
+     * expansion/collapse animation.
+     */
+    boolean shouldShowTextBubble();
 
     /**
      * Returns a {@link ButtonSpec} describing button properties which don't change often. When
@@ -47,32 +46,57 @@ public interface ButtonData {
     /** A set of button properties which are not expected to change values often. */
     final class ButtonSpec {
         public static final int INVALID_TOOLTIP_TEXT_ID = 0;
-        @NonNull private final Drawable mDrawable;
-        // TODO(crbug.com/40753109): make mOnClickListener @NonNull
-        @Nullable private final View.OnClickListener mOnClickListener;
-        @Nullable private final View.OnLongClickListener mOnLongClickListener;
+        private final @Nullable Drawable mDrawable;
+        // TODO(crbug.com/40753109): make mOnClickListener
+        private final View.OnClickListener mOnClickListener;
+        private final View.@Nullable OnLongClickListener mOnLongClickListener;
         private final String mContentDescription;
         private final boolean mSupportsTinting;
-        @Nullable private final IphCommandBuilder mIphCommandBuilder;
+        private final @Nullable IphCommandBuilder mIphCommandBuilder;
         @AdaptiveToolbarButtonVariant private final int mButtonVariant;
         private final boolean mIsDynamicAction;
         @StringRes private final int mActionChipLabelResId;
-        private final boolean mShowBackgroundHighlight;
         @StringRes private final int mTooltipTextResId;
         private final boolean mHasErrorBadge;
+        private final boolean mIsChecked;
 
         public ButtonSpec(
-                @NonNull Drawable drawable,
-                @NonNull View.OnClickListener onClickListener,
-                @Nullable View.OnLongClickListener onLongClickListener,
+                @Nullable Drawable drawable,
+                View.OnClickListener onClickListener,
+                View.@Nullable OnLongClickListener onLongClickListener,
                 String contentDescription,
                 boolean supportsTinting,
                 @Nullable IphCommandBuilder iphCommandBuilder,
                 @AdaptiveToolbarButtonVariant int buttonVariant,
                 int actionChipLabelResId,
                 int tooltipTextResId,
-                boolean showBackgroundHighlight,
                 boolean hasErrorBadge) {
+            this(
+                    drawable,
+                    onClickListener,
+                    onLongClickListener,
+                    contentDescription,
+                    supportsTinting,
+                    iphCommandBuilder,
+                    buttonVariant,
+                    actionChipLabelResId,
+                    tooltipTextResId,
+                    hasErrorBadge,
+                    /* isChecked= */ false);
+        }
+
+        public ButtonSpec(
+                @Nullable Drawable drawable,
+                View.OnClickListener onClickListener,
+                View.@Nullable OnLongClickListener onLongClickListener,
+                String contentDescription,
+                boolean supportsTinting,
+                @Nullable IphCommandBuilder iphCommandBuilder,
+                @AdaptiveToolbarButtonVariant int buttonVariant,
+                int actionChipLabelResId,
+                int tooltipTextResId,
+                boolean hasErrorBadge,
+                boolean isChecked) {
             mDrawable = drawable;
             mOnClickListener = onClickListener;
             mOnLongClickListener = onLongClickListener;
@@ -83,24 +107,22 @@ public interface ButtonData {
             mIsDynamicAction = AdaptiveToolbarFeatures.isDynamicAction(mButtonVariant);
             mActionChipLabelResId = actionChipLabelResId;
             mTooltipTextResId = tooltipTextResId;
-            mShowBackgroundHighlight = showBackgroundHighlight;
             mHasErrorBadge = hasErrorBadge;
+            mIsChecked = isChecked;
         }
 
         /** Returns the {@link Drawable} for the button icon. */
-        public @NonNull Drawable getDrawable() {
+        public @Nullable Drawable getDrawable() {
             return mDrawable;
         }
 
         /** Returns the {@link View.OnClickListener} used on the button. */
-        @NonNull
         public View.OnClickListener getOnClickListener() {
             return mOnClickListener;
         }
 
         /** Returns an optional {@link View.OnLongClickListener} used on the button. */
-        @NonNull
-        public View.OnLongClickListener getOnLongClickListener() {
+        public View.@Nullable OnLongClickListener getOnLongClickListener() {
             return mOnLongClickListener;
         }
 
@@ -147,19 +169,20 @@ public interface ButtonData {
         }
 
         /**
-         * Returns {@code true} if a background highlight on hover, keyboard focus, press etc.
-         * should be shown for the button.
-         */
-        public boolean shouldShowBackgroundHighlight() {
-            return mShowBackgroundHighlight;
-        }
-
-        /**
          * Returns {@code true} if the button has an error badge. False otherwise. The button's
          * height is increased to accommodate the larger icon when an error badge is present.
          */
         public boolean hasErrorBadge() {
             return mHasErrorBadge;
+        }
+
+        /**
+         * Returns true if the button is a "checked" state. Currently, price tracking is the only
+         * action with a "checked" state. For price tracking, returns true if the price is being
+         * tracked and false otherwise.
+         */
+        public boolean isChecked() {
+            return mIsChecked;
         }
 
         @Override
@@ -175,6 +198,7 @@ public interface ButtonData {
                     && mButtonVariant == that.mButtonVariant
                     && mIsDynamicAction == that.mIsDynamicAction
                     && mActionChipLabelResId == that.mActionChipLabelResId
+                    && mIsChecked == that.mIsChecked
                     && Objects.equals(mDrawable, that.mDrawable)
                     && Objects.equals(mOnClickListener, that.mOnClickListener)
                     && Objects.equals(mOnLongClickListener, that.mOnLongClickListener)

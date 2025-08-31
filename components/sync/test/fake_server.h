@@ -18,6 +18,7 @@
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "base/values.h"
+#include "components/sync/base/collaboration_id.h"
 #include "components/sync/base/data_type.h"
 #include "components/sync/engine/loopback_server/loopback_server.h"
 #include "components/sync/engine/loopback_server/loopback_server_entity.h"
@@ -155,6 +156,16 @@ class FakeServer : public syncer::LoopbackServer::ObserverForTests {
   base::Time SetOfferData(
       const std::vector<sync_pb::SyncEntity>& offer_entities);
 
+  // Sets the Google Wallet valuable data to be served in following GetUpdates
+  // requests (any further GetUpdates response will be empty, indicating no
+  // change, if the client already has received `valuable_entities`).
+  //
+  // The returned value represents the timestamp of the write, such that any
+  // progress marker greater or equal to this timestamp must have processed the
+  // changes. See GetProgressMarkerTimestamp() below.
+  base::Time SetValuableData(
+      const std::vector<sync_pb::SyncEntity>& valuable_entities);
+
   // Allows the caller to know the timestamp corresponding to
   // `progress_marker` as annotated by the FakeServer during the GetUpdates
   // request that returned the progress marker.
@@ -253,11 +264,11 @@ class FakeServer : public syncer::LoopbackServer::ObserverForTests {
 
   // Add the user to the collaboration for the shared data types. No-op if the
   // user is already in this collaboration.
-  void AddCollaboration(const std::string& collaboration_id);
+  void AddCollaboration(syncer::CollaborationId collaboration_id);
 
   // Removes the user from the collaboration. Does not clean up related entities
   // from the server.
-  void RemoveCollaboration(const std::string& collaboration_id);
+  void RemoveCollaboration(const syncer::CollaborationId& collaboration_id);
 
   // Implement LoopbackServer::ObserverForTests:
   void OnCommit(syncer::DataTypeSet committed_data_types) override;
@@ -370,8 +381,12 @@ class FakeServer : public syncer::LoopbackServer::ObserverForTests {
   // the FakeServer handles those itself.
   std::vector<sync_pb::SyncEntity> offer_entities_;
 
+  // The LoopbackServer does not know how to handle valuable data properly, so
+  // the FakeServer handles those itself.
+  std::vector<sync_pb::SyncEntity> valuable_entities_;
+
   // Collaborations the user is a member of, used for all shared types.
-  std::set<std::string> collaborations_;
+  std::set<syncer::CollaborationId> collaborations_;
 
   // Creates WeakPtr versions of the current FakeServer. This must be the last
   // data member!

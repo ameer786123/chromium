@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/infobars/confirm_infobar.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -27,13 +28,13 @@ ConfirmInfoBar::ConfirmInfoBar(std::unique_ptr<ConfirmInfoBarDelegate> delegate)
     : InfoBarView(std::move(delegate)) {
   SetProperty(views::kElementIdentifierKey, kInfoBarElementId);
   auto* delegate_ptr = GetDelegate();
-  label_ = AddChildView(CreateLabel(delegate_ptr->GetMessageText()));
+  label_ = AddContentChildView(CreateLabel(delegate_ptr->GetMessageText()));
   label_->SetElideBehavior(delegate_ptr->GetMessageElideBehavior());
 
   const int buttons = delegate_ptr->GetButtons();
   const auto create_button = [&](ConfirmInfoBarDelegate::InfoBarButton type,
                                  void (ConfirmInfoBar::*click_function)()) {
-    auto* button = AddChildView(std::make_unique<views::MdTextButton>(
+    auto* button = AddContentChildView(std::make_unique<views::MdTextButton>(
         base::BindRepeating(click_function, base::Unretained(this)),
         GetDelegate()->GetButtonLabel(type)));
     button->SetProperty(
@@ -66,9 +67,8 @@ ConfirmInfoBar::ConfirmInfoBar(std::unique_ptr<ConfirmInfoBarDelegate> delegate)
                                 kCancelButtonElementId);
   }
 
-  // TODO(crbug.com/378107817): It seems like link_ isn't always needed, but
-  // it's added regardless. See about only adding when necessary.
-  link_ = AddChildView(CreateLink(delegate_ptr->GetLinkText()));
+  link_ = AddContentChildView(CreateLink(
+      delegate_ptr->GetLinkText(), delegate_ptr->GetLinkAccessibleText()));
 }
 
 ConfirmInfoBar::~ConfirmInfoBar() = default;
@@ -99,6 +99,18 @@ void ConfirmInfoBar::Layout(PassKey) {
             DISTANCE_INFOBAR_HORIZONTAL_ICON_LABEL_PADDING);
   }
 
+  if (GetDelegate()->ShouldShowLinkBeforeButton()) {
+    link_->SetPosition(gfx::Point(label_->bounds().right(), OffsetY(link_)));
+
+    if (!link_->GetText().empty()) {
+      x = link_->bounds().right() +
+          layout_provider->GetDistanceMetric(
+              views::DISTANCE_RELATED_LABEL_HORIZONTAL);
+    }
+  } else {
+    link_->SetPosition(gfx::Point(GetEndX() - link_->width(), OffsetY(link_)));
+  }
+
   // Add buttons into a vector to be displayed in an ordered row.
   // Depending on the PlatformStyle, reverse the vector so the ok button will be
   // on the correct leading style.
@@ -120,8 +132,6 @@ void ConfirmInfoBar::Layout(PassKey) {
         layout_provider->GetDistanceMetric(
             views::DISTANCE_RELATED_BUTTON_HORIZONTAL);
   }
-
-  link_->SetPosition(gfx::Point(GetEndX() - link_->width(), OffsetY(link_)));
 }
 
 void ConfirmInfoBar::OkButtonPressed() {
@@ -146,6 +156,10 @@ ConfirmInfoBarDelegate* ConfirmInfoBar::GetDelegate() {
   return delegate()->AsConfirmInfoBarDelegate();
 }
 
+const ConfirmInfoBarDelegate* ConfirmInfoBar::GetDelegate() const {
+  return delegate()->AsConfirmInfoBarDelegate();
+}
+
 int ConfirmInfoBar::GetContentMinimumWidth() const {
   return label_->GetMinimumSize().width() + link_->GetMinimumSize().width() +
          NonLabelWidth();
@@ -153,9 +167,17 @@ int ConfirmInfoBar::GetContentMinimumWidth() const {
 
 int ConfirmInfoBar::NonLabelWidth() const {
   ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
-
-  const int label_spacing = layout_provider->GetDistanceMetric(
-      views::DISTANCE_RELATED_LABEL_HORIZONTAL);
+  const bool should_show_link_before_button =
+      GetDelegate()->ShouldShowLinkBeforeButton();
+  // The link should be shown before the button if the custom layout is
+  // enabled. The spacing between the label and the link is different than the
+  // spacing between the link and the button.
+  const int label_spacing =
+      should_show_link_before_button
+          ? layout_provider->GetDistanceMetric(
+                DISTANCE_INFOBAR_HORIZONTAL_ICON_LABEL_PADDING)
+          : layout_provider->GetDistanceMetric(
+                views::DISTANCE_RELATED_LABEL_HORIZONTAL);
   const int button_spacing = layout_provider->GetDistanceMetric(
       views::DISTANCE_RELATED_BUTTON_HORIZONTAL);
 

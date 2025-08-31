@@ -112,6 +112,10 @@ const char kComposePromotionUmaName[] = "ComposePromotion";
 
 const char kEphemeralHomeModuleBackendKey[] = "ephemeral_home_module_backend";
 
+const char kIosDefaultBrowserPromoKey[] = "ios_default_browser_promo";
+const char kIosDefaultBrowserPromoUmaName[] = "IosDefaultBrowserPromo";
+const char kIosDefaultBrowserPromoShowLabel[] = "ShowIosDefaultBrowserPromo";
+
 // The key is used to decide whether the user would use FedCM.
 const char kFedCmUserKey[] = "fedcm_user";
 const char kFedCmUserUmaName[] = "FedCmUser";
@@ -160,12 +164,14 @@ const char kAdaptiveToolbarModelLabelVoice[] = "Voice";
 const char kAdaptiveToolbarModelLabelTranslate[] = "Translate";
 const char kAdaptiveToolbarModelLabelAddToBookmarks[] = "AddToBookmarks";
 const char kAdaptiveToolbarModelLabelReadAloud[] = "ReadAloud";
+const char kAdaptiveToolbarModelLabelOpenInBrowser[] = "OpenInBrowser";
 
 // Labels for contextual page actions model.
 const char kContextualPageActionModelLabelDiscounts[] = "discounts";
 const char kContextualPageActionModelLabelPriceTracking[] = "price_tracking";
 const char kContextualPageActionModelLabelReaderMode[] = "reader_mode";
 const char kContextualPageActionModelLabelPriceInsights[] = "price_insights";
+const char kContextualPageActionModelLabelTabGrouping[] = "tab_grouping";
 
 // Labels for cross device segment.
 const char kNoCrossDeviceUsage[] = "NoCrossDeviceUsage";
@@ -231,6 +237,15 @@ const char kParcelTrackingFreshness[] = "parcel_tracking_freshness";
 const char kIsShowingStartSurface[] = "is_showing_start_surface";
 const char kShopCardFreshness[] = "shop_card_freshness";
 
+// Input Context keys for inputs for IOS default browser model.
+const char kClientAgeWeeks[] = "client_age_weeks";
+const char kIsPhone[] = "is_phone";
+const char kCountryBRIIM[] = "is_country_BRIIM";
+const char kSegmentationAndroidPhone[] = "is_segmentation_android_phone_input";
+const char kSegmentationIOSPhoneChrome[] = "is_segmentation_ios_chrome_phone";
+const char kSegmentationSyncedAndFirstDevice[] =
+    "is_segmentation_synced_first_device";
+
 // Labels for desktop new tab page drive module model.
 // Any updates to these strings need to also update the field trials allowlist
 // in go/segmentation-field-trials-map.
@@ -243,6 +258,8 @@ const char kContextualPageActionModelInputReaderMode[] = "has_reader_mode";
 const char kContextualPageActionModelInputPriceInsights[] =
     "has_price_insights";
 const char kContextualPageActionModelInputDiscounts[] = "has_discounts";
+const char kContextualPageActionModelInputTabGrouping[] =
+    "has_tab_grouping_suggestion";
 
 const char kComposePrmotionLabelShow[] = "Show";
 const char kComposePrmotionLabelDontShow[] = "DontShow";
@@ -251,16 +268,16 @@ const char kComposePrmotionLabelDontShow[] = "DontShow";
 constexpr char kModelExecutionSamplingRateKey[] =
     "model_execution_sampling_rate";
 
-// Finch parameter key for introducing delay(in ms) in model initialization at
-// startup.
-constexpr char kModelInitializationDelay[] = "model_initialization_delay";
-
-// Input Context keys for FedCM clickthrough rates.
-const char kPerPageLoadClickthroughRate[] = "per_page_load_clickthrough_rate";
-const char kPerClientClickthroughRate[] = "per_client_clickthrough_rate";
-const char kPerImpressionClickthroughRate[] =
+// Input Context keys for FedCM.
+const char kFedCmHost[] = "host";
+const char kFedCmUrl[] = "url";
+const char kFedCmPerPageLoadClickthroughRate[] =
+    "per_page_load_clickthrough_rate";
+const char kFedCmPerClientClickthroughRate[] = "per_client_clickthrough_rate";
+const char kFedCmPerImpressionClickthroughRate[] =
     "per_impression_clickthrough_rate";
-const char kLikelyToSignin[] = "likely_to_signin";
+const char kFedCmLikelyToSignin[] = "likely_to_signin";
+const char kFedCmLikelyInsufficientData[] = "likely_insufficient_data";
 
 }  // namespace segmentation_platform
 

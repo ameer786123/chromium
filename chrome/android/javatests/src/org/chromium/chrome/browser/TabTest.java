@@ -16,7 +16,6 @@ import static org.mockito.Mockito.verify;
 
 import android.app.Activity;
 
-import androidx.annotation.Nullable;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.filters.SmallTest;
 
@@ -78,6 +77,7 @@ public class TabTest {
 
     private Tab mTab;
     private int mRootIdForReset;
+    private Token mTabGroupIdForReset;
     private CallbackHelper mOnTitleUpdatedHelper;
 
     private final TabObserver mTabObserver =
@@ -94,19 +94,21 @@ public class TabTest {
 
     @Before
     public void setUp() throws Exception {
-        mTab = mActivityTestRule.getActivity().getActivityTab();
+        mTab = mActivityTestRule.getActivityTab();
         ThreadUtils.runOnUiThreadBlocking(() -> mTab.addObserver(mTabObserver));
         mOnTitleUpdatedHelper = new CallbackHelper();
         mRootIdForReset = mTab.getRootId();
+        mTabGroupIdForReset = mTab.getTabGroupId();
     }
 
     @After
     public void tearDown() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    // Reset Root Id to what it was at the start, as it can be modified in the
-                    // tests.
+                    // Reset root id and tab group id to what it was at the start, as it can be
+                    // modified in the tests.
                     mTab.setRootId(mRootIdForReset);
+                    mTab.setTabGroupId(mTabGroupIdForReset);
                     mTab.removeObserver(mTabObserver);
                 });
     }
@@ -251,6 +253,7 @@ public class TabTest {
         tabState.rootId = 5;
         tabState.tabGroupId = new Token(1L, 2L);
         tabState.tabHasSensitiveContent = true;
+        tabState.isPinned = true;
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -263,6 +266,7 @@ public class TabTest {
         assertEquals(tabState.rootId, mTab.getRootId());
         assertEquals(tabState.tabGroupId, mTab.getTabGroupId());
         assertEquals(tabState.tabHasSensitiveContent, mTab.getTabHasSensitiveContent());
+        assertEquals(tabState.isPinned, mTab.getIsPinned());
     }
 
     @FunctionalInterface
@@ -352,14 +356,11 @@ public class TabTest {
         String secondUrl =
                 mActivityTestRule.getTestServer().getURL("/chrome/test/data/android/test.html");
         checkFreezingAndAppendingPendingNavigation(
-                this::createSecondFrozenTab, firstUrl, secondUrl, null);
+                this::createSecondFrozenTab, firstUrl, secondUrl, "");
     }
 
     private void checkFreezingAndAppendingPendingNavigation(
-            TestTabCreator tabCreator,
-            String firstUrl,
-            String secondUrl,
-            @Nullable String secondTitle) {
+            TestTabCreator tabCreator, String firstUrl, String secondUrl, String secondTitle) {
         TabObserver observer = Mockito.mock(TabObserver.class);
         Tab bgTab = tabCreator.createTab(firstUrl);
         boolean wasFrozen = bgTab.isFrozen();

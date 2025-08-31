@@ -19,6 +19,7 @@
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/status_icons/status_icon.h"
 #include "chrome/browser/status_icons/status_tray.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/webui/whats_new/whats_new_ui.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/fake_profile_manager.h"
@@ -80,14 +81,6 @@ class GlicStatusIconTest : public testing::Test {
   ~GlicStatusIconTest() override = default;
 
   void SetUp() override {
-    // Pref registrations needed for GlobalFeatures or GlicStatusIcon
-    prefs::RegisterLocalStatePrefs(local_state_.registry());
-    WhatsNewUI::RegisterLocalStatePrefs(local_state_.registry());
-    profiles::RegisterPrefs(local_state_.registry());
-    ProfileAttributesStorage::RegisterPrefs(local_state_.registry());
-
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&local_state_);
-
     auto profile_manager_unique = std::make_unique<FakeProfileManager>(
         base::CreateUniqueTempDirectoryScopedToTest());
     TestingBrowserProcess::GetGlobal()->SetProfileManager(
@@ -103,7 +96,6 @@ class GlicStatusIconTest : public testing::Test {
     glic_status_icon_.reset();
 
     TestingBrowserProcess::GetGlobal()->GetFeatures()->Shutdown();
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
     TestingBrowserProcess::GetGlobal()->SetProfileManager(nullptr);
   }
 
@@ -117,7 +109,6 @@ class GlicStatusIconTest : public testing::Test {
  private:
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::MainThreadType::UI};
-  TestingPrefServiceSimple local_state_;
   std::unique_ptr<GlicStatusIcon> glic_status_icon_;
   MockStatusTray status_tray_;
   MockGlicController glic_controller_;

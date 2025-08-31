@@ -5,86 +5,111 @@
 //! Define the allocator that Rust code in Chrome should use.
 //!
 //! Any final artifact that depends on this crate, even transitively, will use
-//! the allocator defined here. Currently this is a thin wrapper around
-//! allocator_impls.cc's functions; see the documentation there.
+//! the allocator defined here.
+//!
+//! List of known issues:
+//!
+//! 1. We'd like to use PartitionAlloc on Windows, but the stdlib uses Windows
+//!    heap functions directly that PartitionAlloc can not intercept.
+//! 2. We'd like `Vec::try_reserve` to fail at runtime on Linux instead of
+//!    crashing in malloc() where PartitionAlloc replaces that function.
 
 // Required to apply weak linkage to symbols.
+//
+// TODO(https://crbug.com/410596442): Stop using unstable features here.
+// https://github.com/rust-lang/rust/issues/29603 tracks stabilization of the `linkage` feature.
 #![feature(linkage)]
 // Required to apply `#[rustc_std_internal_symbol]` to our alloc error handler
 // so the name is correctly mangled as rustc expects.
-#![cfg_attr(mangle_alloc_error_handler, allow(internal_features))]
-#![cfg_attr(mangle_alloc_error_handler, feature(rustc_attrs))]
+//
+// TODO(https://crbug.com/410596442): Stop using internal features here.
+#![allow(internal_features)]
+#![feature(rustc_attrs)]
 
-#[cfg(use_cpp_allocator_impls)]
-use std::alloc::{GlobalAlloc, Layout};
+/// Module that provides `#[global_allocator]` / `GlobalAlloc` interface for
+/// using an allocator from C++.
+#[cfg(rust_allocator_uses_allocator_impls_h)]
+mod cpp_allocator {
+    use allocator_impls_ffi::rust_allocator_internal as ffi;
+    use std::alloc::{GlobalAlloc, Layout};
 
-#[cfg(use_cpp_allocator_impls)]
-struct Allocator;
+    struct Allocator;
 
-#[cfg(use_cpp_allocator_impls)]
-unsafe impl GlobalAlloc for Allocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe { ffi::alloc(layout.size(), layout.align()) }
-    }
+    unsafe impl GlobalAlloc for Allocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            unsafe { ffi::alloc(layout.size(), layout.align()) }
+        }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe {
-            ffi::dealloc(ptr, layout.size(), layout.align());
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe {
+                ffi::dealloc(ptr, layout.size(), layout.align());
+            }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            unsafe { ffi::alloc_zeroed(layout.size(), layout.align()) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            unsafe { ffi::realloc(ptr, layout.size(), layout.align(), new_size) }
         }
     }
 
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        unsafe { ffi::alloc_zeroed(layout.size(), layout.align()) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        unsafe { ffi::realloc(ptr, layout.size(), layout.align(), new_size) }
-    }
+    #[global_allocator]
+    static GLOBAL: Allocator = Allocator;
 }
 
-#[cfg(use_cpp_allocator_impls)]
-#[global_allocator]
-static GLOBAL: Allocator = Allocator;
-
-#[cfg(not(use_cpp_allocator_impls))]
-#[global_allocator]
-static GLOBAL: std::alloc::System = std::alloc::System;
-
-// As part of rustc's contract for using `#[global_allocator]` without
-// rustc-generated shims we must define this symbol, since we are opting in to
-// unstable functionality. See https://github.com/rust-lang/rust/issues/123015
-#[no_mangle]
-#[linkage = "weak"]
-static __rust_no_alloc_shim_is_unstable: u8 = 0;
-
-// Mangle the symbol name as rustc expects.
-#[cfg_attr(mangle_alloc_error_handler, rustc_std_internal_symbol)]
-#[cfg_attr(not(mangle_alloc_error_handler), no_mangle)]
-#[allow(non_upper_case_globals)]
-#[linkage = "weak"]
-static __rust_alloc_error_handler_should_panic: u8 = 0;
-
-// Mangle the symbol name as rustc expects.
-#[cfg_attr(mangle_alloc_error_handler, rustc_std_internal_symbol)]
-#[cfg_attr(not(mangle_alloc_error_handler), no_mangle)]
-#[allow(non_upper_case_globals)]
-#[linkage = "weak"]
-fn __rust_alloc_error_handler(_size: usize, _align: usize) {
-    unsafe { ffi::crash_immediately() }
+/// Module that provides `#[global_allocator]` / `GlobalAlloc` interface for
+/// using the default Rust allocator.
+#[cfg(not(rust_allocator_uses_allocator_impls_h))]
+mod rust_allocator {
+    #[global_allocator]
+    static GLOBAL: std::alloc::System = std::alloc::System;
 }
 
-// TODO(crbug.com/408221149): conditionally include the FFI glue based on
-// `use_cpp_allocator_impls`
-#[allow(dead_code)]
-#[cxx::bridge(namespace = "rust_allocator_internal")]
-mod ffi {
-    extern "C++" {
-        include!("build/rust/allocator/allocator_impls.h");
+/// Module that provides global symbols that are needed both by `cpp_allocator`
+/// and `rust_allocator`.
+///
+/// When `rustc` drives linking, then it will define the symbols below.  But
+/// Chromium only uses `rustc` to link Rust-only executables (e.g. `build.rs`
+/// scripts) and otherwise uses a non-Rust linker.  This is why we have to
+/// manually define a few symbols below.  We define those symbols
+/// as "weak" symbols, so that Rust-provided symbols "win" in case where Rust
+/// actually does drive the linking.  This hack works (not only for Chromium,
+/// but also for google3 and other projects), but isn't officially supported by
+/// `rustc`.
+///
+/// TODO(https://crbug.com/410596442): Stop using internal features here.
+mod both_allocators {
+    use alloc_error_handler_impl_ffi::rust_allocator_internal as ffi;
 
-        unsafe fn alloc(size: usize, align: usize) -> *mut u8;
-        unsafe fn dealloc(p: *mut u8, size: usize, align: usize);
-        unsafe fn realloc(p: *mut u8, old_size: usize, align: usize, new_size: usize) -> *mut u8;
-        unsafe fn alloc_zeroed(size: usize, align: usize) -> *mut u8;
-        unsafe fn crash_immediately();
+    /// As part of rustc's contract for using `#[global_allocator]` without
+    /// rustc-generated shims we must define this symbol, since we are opting in
+    /// to unstable functionality. See https://github.com/rust-lang/rust/issues/123015
+    #[rustc_std_internal_symbol]
+    #[linkage = "weak"]
+    fn __rust_no_alloc_shim_is_unstable_v2() {}
+
+    #[rustc_std_internal_symbol]
+    #[linkage = "weak"]
+    fn __rust_alloc_error_handler_should_panic_v2() -> u8 {
+        0
+    }
+
+    // Mangle the symbol name as rustc expects.
+    // TODO(crbug.com/440481922): Remove this after rolling past https://github.com/rust-lang/rust/pull/143387
+    #[rustc_std_internal_symbol]
+    #[allow(non_upper_case_globals)]
+    #[linkage = "weak"]
+    static __rust_alloc_error_handler_should_panic: u8 = 0;
+
+    // Mangle the symbol name as rustc expects.
+    #[rustc_std_internal_symbol]
+    #[allow(non_upper_case_globals)]
+    #[linkage = "weak"]
+    fn __rust_alloc_error_handler(_size: usize, _align: usize) {
+        // TODO(lukasza): Investigate if we can just call `std::process::abort()` here.
+        // (Not really _needed_, but it could simplify code a little bit.)
+        unsafe { ffi::alloc_error_handler_impl() }
     }
 }

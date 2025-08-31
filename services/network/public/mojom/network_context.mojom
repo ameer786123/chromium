@@ -6,10 +6,12 @@ module network.mojom;
 
 import "components/content_settings/core/common/content_settings.mojom";
 import "components/ip_protection/mojom/core.mojom";
+import "components/ip_protection/mojom/data_types.mojom";
 import "mojo/public/mojom/base/file_path.mojom";
 import "mojo/public/mojom/base/time.mojom";
 import "mojo/public/mojom/base/unguessable_token.mojom";
 import "mojo/public/mojom/base/values.mojom";
+import "mojo/public/mojom/base/big_buffer.mojom";
 import "sandbox/policy/mojom/context.mojom";
 import "services/network/public/mojom/address_list.mojom";
 import "services/network/public/mojom/cert_verifier_service.mojom";
@@ -48,6 +50,7 @@ import "services/network/public/mojom/proxy_config.mojom";
 import "services/network/public/mojom/proxy_config_with_annotation.mojom";
 import "services/network/public/mojom/proxy_lookup_client.mojom";
 import "services/network/public/mojom/proxy_resolving_socket.mojom";
+import "services/network/public/mojom/connection_change_observer_client.mojom";
 import "services/network/public/mojom/reporting_service.mojom";
 import "services/network/public/mojom/restricted_cookie_manager.mojom";
 import "services/network/public/mojom/restricted_udp_socket.mojom";
@@ -214,6 +217,12 @@ struct NetworkContextFilePaths {
   // Points to the HTTP cache directory. Ignored if the cache is disabled.
   // If null and the cache is enabled, an in-memory database is used.
   TransferableDirectory? http_cache_directory;
+
+  // Points to the directory used for persisting the No-Vary-Search cache for
+  // the HTTP cache. Ignored if the cache is disabled or `http_cache_directory`
+  // is null. If left null, will be set to a subdirectory of
+  // `http_cache_directory` automatically by the network service.
+  TransferableDirectory? no_vary_search_directory;
 
   // Points to a path that contains all the network service files and databases
   // as listed below. If this network context is running inside a sandboxed
@@ -631,6 +640,10 @@ struct NetworkContextParams {
   // the URLRequestContextOwner object in the NetworkContext.
   [EnableIf=is_android]
   bool stale_dns_enabled = false;
+
+  // Modifies the default value of the QUIC connection timeout, this value
+  // gets applied while constructing NetworkContext by updating the quic_params.
+  int64? quic_idle_connection_timeout_seconds;
 };
 
 struct NetworkConditions {
@@ -659,6 +672,11 @@ struct NetworkConditions {
 
   // Allow packet reordering for WebRTC connections.
   bool packet_reordering;
+};
+
+struct NetworkDurableMessageConfig {
+  // Maximum size for the durable storage.
+  uint64 http_storage_max_size;
 };
 
 // Represents a shared dictionary.
@@ -925,6 +943,21 @@ struct URLLoaderFactoryParams {
   // For context on usage see:
   // https://privacycg.github.io/saa-non-cookie-storage/shared-workers.html
   bool require_cross_site_request_for_cookies = false;
+
+  // If this is true, this URLLoaderFactory should not be reset when
+  // calling `ResetURLLoaderFactories()`.
+  bool ignore_factory_reset = false;
+};
+
+// Represents a Durable Message Collector instance tied to a throttling profile.
+interface DurableMessageCollector {
+    // Configures the collector instance.
+    Configure(NetworkDurableMessageConfig config);
+
+    // Retrieve a collected Durable Message for the given DevTools request ID,
+    // if one is available.
+    Retrieve(string devtools_request_id) =>
+        (mojo_base.mojom.BigBuffer? message);
 };
 
 // Represents a distinct context for making network requests, with its own
@@ -958,8 +991,6 @@ interface NetworkContext {
       URLLoaderFactoryParams params);
 
   // Destroys all URLLoaderFactory bindings, which should then be regenerated.
-  // This should be called if there is a change to the proxies which should be
-  // used on URLLoaders.
   ResetURLLoaderFactories();
 
   // Uses Oblivious HTTP to indirectly perform the request. Specification at
@@ -1033,6 +1064,12 @@ interface NetworkContext {
   GetPrivateStateTokenRedemptionRecords()
       => (map<url.mojom.Origin, array<ToplevelRedemptionRecord>>
               issuer_redemption_record_map);
+
+  // Gets the current IP Proxy status from IpProtectionCore.
+  //
+  // Only returns a kOk status if both kEnableIpPrivacyProxy and
+  // kMaskedDomainList are enabled, and IP Protection is available and on.
+  GetIpProxyStatus() => (ip_protection.mojom.IpProxyStatus status);
 
   // Deletes all Trust Tokens issued by |issuer|.
   //
@@ -1261,6 +1298,11 @@ interface NetworkContext {
   SetNetworkConditions(mojo_base.mojom.UnguessableToken throttling_profile_id,
                        NetworkConditions? conditions);
 
+  // Enables network level storage of HTTP request/response bodies.
+  EnableDurableMessageCollector(
+        mojo_base.mojom.UnguessableToken throttling_profile_id,
+        pending_receiver<DurableMessageCollector> receiver);
+
   // Updates the Accept-Language header to be used for requests.
   SetAcceptLanguage(string new_accept_language);
 
@@ -1458,6 +1500,7 @@ interface NetworkContext {
       url.mojom.Origin origin,
       NetworkAnonymizationKey network_anonymization_key,
       array<WebTransportCertificateFingerprint> fingerprints,
+      array<string> application_protocols,
       pending_remote<WebTransportHandshakeClient> handshake_client);
 
   // Create a NetLogExporter, which helps export NetLog to an existing file.
@@ -1473,13 +1516,18 @@ interface NetworkContext {
   // `credentials_mode` and `network_anonymization_key`.
   // `traffic_annotation` will be used to distinguish where the preconnect was
   // initiated from.
+  // `keepalive_config` specifies keep-alive behavior such as periodic ping or
+  // reconnect notifier.
   // The preconnect is aborted if network access is disabled for
   // `network_anonymization_key->GetNonce()`.
-  PreconnectSockets(uint32 num_streams,
-                    url.mojom.Url url,
-                    network.mojom.CredentialsMode credentials_mode,
-                    NetworkAnonymizationKey network_anonymization_key,
-                    MutableNetworkTrafficAnnotationTag traffic_annotation);
+  PreconnectSockets(
+      uint32 num_streams,
+      url.mojom.Url url,
+      network.mojom.CredentialsMode credentials_mode,
+      NetworkAnonymizationKey network_anonymization_key,
+      MutableNetworkTrafficAnnotationTag traffic_annotation,
+      ConnectionKeepAliveConfig? keepalive_config,
+      pending_remote<ConnectionChangeObserverClient>? observer_client);
 
   // Creates a P2PSocketManager instance, used for WebRTC.
   // `network_anonymization_key` is the network cache shard to associate with
@@ -1549,6 +1597,14 @@ interface NetworkContext {
                               string ocsp_response,
                               string sct_list)
       => (int32 error_code, CertVerifyResult cv_result, bool pkp_bypassed);
+
+  // Performs 2-QWAC verification. Returns the verified 2-QWAC certificate
+  // chain if `binding` is a valid 2-QWAC binding for `hostname` which binds
+  // `tls_certificate`.
+  Verify2QwacCertBinding(string binding,
+                         string hostname,
+                         X509Certificate tls_certificate)
+      => (X509Certificate verified_cert);
 
   // Adds explicitly-specified data as if it was processed from an
   // HSTS header. Used by tests and implementation of chrome://net-internals.
@@ -1623,14 +1679,6 @@ interface NetworkContext {
   // supported in this network context.
   SetCorsNonWildcardRequestHeadersSupport(bool value);
 
-  // Looks up credentials in the HttpAuthCache using the origin and path from
-  // |url|. Only supports basic auth scheme. Only looks up server (not proxy)
-  // auth credentials, and only those that are usable in the scope of
-  // |network_anonymization_key|.
-  LookupServerBasicAuthCredentials(
-      url.mojom.Url url, NetworkAnonymizationKey network_anonymization_key)
-      => (AuthCredentials? credentials);
-
   // Looks up the proxy authentication credentials associated with
   // |proxy_server|, |auth_scheme| and |realm| in the HttpAuthCache.
   // |auth_scheme| is the authentication scheme of the challenge and it's
@@ -1650,6 +1698,9 @@ interface NetworkContext {
                               string hostname,
                               string ocsp_response,
                               string sct_list) => (int32 error_code);
+
+  [Sync]
+  GetTrustAnchorIDsForTesting() => (array<array<uint8>> trust_anchor_ids);
 
   // Adds a Domain Reliability Context.
   [Sync]

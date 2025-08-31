@@ -181,12 +181,12 @@ class VideoWakeLockTest : public testing::Test {
 
     GetFrame().GetBrowserInterfaceBroker().SetBinderForTesting(
         mojom::blink::PictureInPictureService::Name_,
-        WTF::BindRepeating(&VideoWakeLockPictureInPictureService::Bind,
-                           WTF::Unretained(&pip_service_)));
+        BindRepeating(&VideoWakeLockPictureInPictureService::Bind,
+                      Unretained(&pip_service_)));
 
     fake_layer_ = cc::Layer::Create();
 
-    GetDocument().body()->setInnerHTML(
+    GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
         "<body><div></div><video></video></body>");
     video_ = To<HTMLVideoElement>(
         GetDocument().QuerySelector(AtomicString("video")));
@@ -270,6 +270,8 @@ class VideoWakeLockTest : public testing::Test {
 
   void UpdateObservers() {
     UpdateAllLifecyclePhasesForTest();
+    task_environment_.FastForwardBy(VideoWakeLock::kIntersectionObserverDelay +
+                                    base::Microseconds(1));
     test::RunPendingTasks();
   }
 
@@ -300,7 +302,8 @@ class VideoWakeLockTest : public testing::Test {
   }
 
  private:
-  test::TaskEnvironment task_environment_;
+  test::TaskEnvironment task_environment_{
+      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   std::unique_ptr<VideoWakeLockTestWebFrameClient> client_;
   Persistent<HTMLDivElement> div_;
   Persistent<HTMLVideoElement> video_;

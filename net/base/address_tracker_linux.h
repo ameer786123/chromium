@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 
 #include "base/compiler_specific.h"
@@ -74,12 +75,14 @@ class NET_EXPORT_PRIVATE AddressTrackerLinux : public AddressMapOwnerLinux {
   // should run on a sequence that can block, e.g. a base::SequencedTaskRunner
   // with base::MayBlock(). If nullptr, SetDiffCallback() cannot be used off of
   // the AddressTrackerLinux's sequence.
-  AddressTrackerLinux(const base::RepeatingClosure& address_callback,
-                      const base::RepeatingClosure& link_callback,
-                      const base::RepeatingClosure& tunnel_callback,
-                      const std::unordered_set<std::string>& ignored_interfaces,
-                      scoped_refptr<base::SequencedTaskRunner>
-                          blocking_thread_runner = nullptr);
+  AddressTrackerLinux(
+      const base::RepeatingCallback<
+          void(NetworkChangeNotifier::IPAddressChangeType)>& address_callback,
+      const base::RepeatingClosure& link_callback,
+      const base::RepeatingClosure& tunnel_callback,
+      const std::unordered_set<std::string>& ignored_interfaces,
+      scoped_refptr<base::SequencedTaskRunner> blocking_thread_runner =
+          nullptr);
   ~AddressTrackerLinux() override;
 
   // In tracking mode, it starts watching the system configuration for
@@ -131,15 +134,14 @@ class NET_EXPORT_PRIVATE AddressTrackerLinux : public AddressMapOwnerLinux {
   // Safe to call from any thread, but will block until Init() has completed.
   NetworkChangeNotifier::ConnectionType GetCurrentConnectionType();
 
-  // Returns the name for the interface with interface index |interface_index|.
-  // |buf| should be a pointer to an array of size IFNAMSIZ. The returned
-  // pointer will point to |buf|. This function acts like if_indextoname which
-  // cannot be used as net/if.h cannot be mixed with linux/if.h. We'll stick
-  // with exclusively talking to the kernel and not the C library.
-  static char* GetInterfaceName(int interface_index, char* buf);
+  // Returns the name for the interface with interface index `interface_index`.
+  // This function acts like if_indextoname which cannot be used as net/if.h
+  // cannot be mixed with linux/if.h. We'll stick with exclusively talking to
+  // the kernel and not the C library.
+  static std::string GetInterfaceName(int interface_index);
 
   // Does |name| refer to a tunnel interface?
-  static bool IsTunnelInterfaceName(const char* name);
+  static bool IsTunnelInterfaceName(std::string_view name);
 
  private:
   friend class net::test::AddressTrackerLinuxTest;
@@ -167,7 +169,7 @@ class NET_EXPORT_PRIVATE AddressTrackerLinux : public AddressMapOwnerLinux {
   // A function that returns the name of an interface given the interface index
   // in |interface_index|. |ifname| should be a buffer of size IFNAMSIZ. The
   // function should return a pointer to |ifname|.
-  typedef char* (*GetInterfaceNameFunction)(int interface_index, char* ifname);
+  using GetInterfaceNameFunction = std::string (*)(int interface_index);
 
   // Retrieves a dump of the current AddressMap and set of online links as part
   // of initialization. Expects |netlink_fd_| to exist already.
@@ -245,8 +247,8 @@ class NET_EXPORT_PRIVATE AddressTrackerLinux : public AddressMapOwnerLinux {
   GetInterfaceNameFunction get_interface_name_;
 
   DiffCallback diff_callback_ GUARDED_BY_CONTEXT(sequence_checker_);
-  base::RepeatingClosure address_callback_
-      GUARDED_BY_CONTEXT(sequence_checker_);
+  base::RepeatingCallback<void(NetworkChangeNotifier::IPAddressChangeType)>
+      address_callback_ GUARDED_BY_CONTEXT(sequence_checker_);
   base::RepeatingClosure link_callback_ GUARDED_BY_CONTEXT(sequence_checker_);
   base::RepeatingClosure tunnel_callback_ GUARDED_BY_CONTEXT(sequence_checker_);
 

@@ -143,7 +143,7 @@ SurfaceTreeHost::~SurfaceTreeHost() {
     auto* context_factory = aura::Env::GetInstance()->context_factory();
     auto* host_frame_sink_manager = context_factory->GetHostFrameSinkManager();
     host_frame_sink_manager->InvalidateFrameSinkId(frame_sink_id_,
-                                                   host_window());
+                                                   host_window(), {});
   }
 }
 
@@ -319,8 +319,7 @@ void SurfaceTreeHost::OnFrameSinkLost() {
 // SurfaceTreeHost, protected:
 
 void SurfaceTreeHost::UpdateDisplayOnTree() {
-  auto display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(host_window());
+  auto display = display::Screen::Get()->GetDisplayNearestWindow(host_window());
   if (output_display_id_ != display.id()) {
     if (root_surface_) {
       if (root_surface_->UpdateDisplay(output_display_id_, display.id())) {
@@ -553,9 +552,8 @@ SurfaceTreeHost::CreateLayerTreeFrameSink() {
   cc::mojo_embedder::AsyncLayerTreeFrameSink::InitParams params;
   params.pipes.compositor_frame_sink_remote = std::move(sink_remote);
   params.pipes.client_receiver = std::move(client_receiver);
+  params.auto_needs_begin_frame = true;
 
-  params.auto_needs_begin_frame =
-      base::FeatureList::IsEnabled(kExoReactiveFrameSubmission);
   auto frame_sink =
       std::make_unique<cc::mojo_embedder::AsyncLayerTreeFrameSink>(
           nullptr /* context_provider */, nullptr /* worker_context_provider */,

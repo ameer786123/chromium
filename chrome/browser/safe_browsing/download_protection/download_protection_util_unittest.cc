@@ -502,7 +502,89 @@ TEST(DownloadProtectionUtilTest, ShouldSendDangerousDownloadReport) {
         &download_item,
         ClientSafeBrowsingReportRequest::DANGEROUS_DOWNLOAD_WARNING));
   }
+  // Report type for Android is gated by ESB (non-Incognito).
+  {
+    TestingProfile profile;
+    NiceMock<download::MockDownloadItem> download_item;
+    setup(&profile, &download_item);
+    SetSafeBrowsingState(profile.GetPrefs(),
+                         SafeBrowsingState::NO_SAFE_BROWSING);
+    EXPECT_FALSE(ShouldSendDangerousDownloadReport(
+        &download_item,
+        ClientSafeBrowsingReportRequest::DANGEROUS_DOWNLOAD_WARNING_ANDROID));
+  }
+  {
+    TestingProfile profile;
+    NiceMock<download::MockDownloadItem> download_item;
+    setup(&profile, &download_item);
+    SetSafeBrowsingState(profile.GetPrefs(),
+                         SafeBrowsingState::STANDARD_PROTECTION);
+    EXPECT_FALSE(ShouldSendDangerousDownloadReport(
+        &download_item,
+        ClientSafeBrowsingReportRequest::DANGEROUS_DOWNLOAD_WARNING_ANDROID));
+  }
+  {
+    TestingProfile profile;
+    NiceMock<download::MockDownloadItem> download_item;
+    setup(&profile, &download_item);
+    SetSafeBrowsingState(profile.GetPrefs(),
+                         SafeBrowsingState::ENHANCED_PROTECTION);
+    EXPECT_TRUE(ShouldSendDangerousDownloadReport(
+        &download_item,
+        ClientSafeBrowsingReportRequest::DANGEROUS_DOWNLOAD_WARNING_ANDROID));
+  }
+  {
+    TestingProfile profile;
+    TestingProfile::Builder profile_builder;
+    TestingProfile* otr_profile = profile_builder.BuildIncognito(&profile);
+    NiceMock<download::MockDownloadItem> download_item;
+    setup(otr_profile, &download_item);
+    SetSafeBrowsingState(otr_profile->GetPrefs(),
+                         SafeBrowsingState::ENHANCED_PROTECTION);
+    EXPECT_FALSE(ShouldSendDangerousDownloadReport(
+        &download_item,
+        ClientSafeBrowsingReportRequest::DANGEROUS_DOWNLOAD_WARNING_ANDROID));
+  }
 }
 #endif
+
+TEST(DownloadProtectionUtilTest, IsFiletypeSupportedForFullDownloadProtection) {
+  // Set up a fake config that specifies ping types for filetype extensions.
+  safe_browsing::FileTypePoliciesTestOverlay file_type_policies;
+  auto fake_config = std::make_unique<DownloadFileTypeConfig>();
+  fake_config->mutable_default_file_type()->set_ping_setting(
+      DownloadFileType::NO_PING);
+  std::pair<std::string, DownloadFileType::PingSetting> kPingSettings[] = {
+      {"noping", DownloadFileType::NO_PING},
+      {"sampledping", DownloadFileType::SAMPLED_PING},
+      {"fullping", DownloadFileType::FULL_PING}};
+  for (const auto& [extension, ping_setting] : kPingSettings) {
+    auto* file_type = fake_config->add_file_types();
+    file_type->set_extension(extension);
+    file_type->set_ping_setting(ping_setting);
+  }
+  file_type_policies.SwapConfig(fake_config);
+
+  EXPECT_FALSE(IsFiletypeSupportedForFullDownloadProtection(
+      base::FilePath(FILE_PATH_LITERAL("foo.default"))));
+  EXPECT_FALSE(IsFiletypeSupportedForFullDownloadProtection(
+      base::FilePath(FILE_PATH_LITERAL("foo.noping"))));
+  EXPECT_FALSE(IsFiletypeSupportedForFullDownloadProtection(
+      base::FilePath(FILE_PATH_LITERAL("foo.sampledping"))));
+#if !BUILDFLAG(IS_ANDROID)
+  EXPECT_TRUE(IsFiletypeSupportedForFullDownloadProtection(
+      base::FilePath(FILE_PATH_LITERAL("foo.fullping"))));
+  EXPECT_TRUE(IsFiletypeSupportedForFullDownloadProtection(
+      base::FilePath(FILE_PATH_LITERAL("foo.fUlLpInG"))));
+#else
+  EXPECT_FALSE(IsFiletypeSupportedForFullDownloadProtection(
+      base::FilePath(FILE_PATH_LITERAL("foo.fullping"))));
+  // Android hard-codes that only APK files are supported.
+  EXPECT_TRUE(IsFiletypeSupportedForFullDownloadProtection(
+      base::FilePath(FILE_PATH_LITERAL("foo.apk"))));
+  EXPECT_TRUE(IsFiletypeSupportedForFullDownloadProtection(
+      base::FilePath(FILE_PATH_LITERAL("foo.APK"))));
+#endif
+}
 
 }  // namespace safe_browsing

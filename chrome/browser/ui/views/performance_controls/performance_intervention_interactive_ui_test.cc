@@ -14,6 +14,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/performance_manager/public/user_tuning/performance_detection_manager.h"
+#include "chrome/browser/performance_manager/test_support/page_discarding_utils.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_test_util.h"
 #include "chrome/browser/resource_coordinator/lifecycle_unit.h"
@@ -58,6 +59,7 @@
 #include "ui/views/view.h"
 
 namespace {
+using ::performance_manager::testing::ScopedSetAllPagesDiscardableForTesting;
 
 class DiscardObserver : public resource_coordinator::LifecycleUnitObserver,
                         public ui::test::StateObserver<bool> {
@@ -118,6 +120,13 @@ class PerformanceInterventionInteractiveTest
     InteractiveFeaturePromoTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(embedded_test_server()->Start());
+    unconditionally_discard_pages_ =
+        std::make_unique<ScopedSetAllPagesDiscardableForTesting>();
+  }
+
+  void TearDownOnMainThread() override {
+    unconditionally_discard_pages_.reset();
+    InteractiveFeaturePromoTest::TearDownOnMainThread();
   }
 
   Profile* CreateTestProfile() {
@@ -204,6 +213,10 @@ class PerformanceInterventionInteractiveTest
                                enabled);
     });
   }
+
+ private:
+  std::unique_ptr<ScopedSetAllPagesDiscardableForTesting>
+      unconditionally_discard_pages_;
 };
 
 IN_PROC_BROWSER_TEST_F(PerformanceInterventionInteractiveTest,
@@ -442,17 +455,18 @@ IN_PROC_BROWSER_TEST_F(PerformanceInterventionInteractiveTest,
 IN_PROC_BROWSER_TEST_F(PerformanceInterventionInteractiveTest,
                        TakeSuggestedAction) {
   RunTestSequence(
+      InstrumentTab(kFirstTab), NavigateWebContents(kFirstTab, GetURL()),
       AddInstrumentedTab(kSecondTab, GetURL()),
-      AddInstrumentedTab(kThirdTab, GetURL()), SelectTab(kTabStripElementId, 0),
-      TriggerOnActionableTabListChange({1, 2}),
+      AddInstrumentedTab(kThirdTab, GetURL()), WaitForShow(kThirdTab),
+      TriggerOnActionableTabListChange({0, 1}),
       WaitForShow(kToolbarPerformanceInterventionButtonElementId),
       WaitForShow(PerformanceInterventionBubble::
                       kPerformanceInterventionDialogDeactivateButton),
       ObserveState(kTabDiscardedState, 2),
       PressButton(PerformanceInterventionBubble::
                       kPerformanceInterventionDialogDeactivateButton),
-      WaitForState(kTabDiscardedState, true), CheckTabDiscardStatus(0, false),
-      CheckTabDiscardStatus(1, true), CheckTabDiscardStatus(2, true));
+      WaitForState(kTabDiscardedState, true), CheckTabDiscardStatus(0, true),
+      CheckTabDiscardStatus(1, true), CheckTabDiscardStatus(2, false));
 }
 
 // The dialog should discard tabs suggested in the tab list
@@ -462,9 +476,10 @@ IN_PROC_BROWSER_TEST_F(PerformanceInterventionInteractiveTest,
   const char kSuggestedCloseButton[] = "SuggestedCloseButton";
 
   RunTestSequence(
+      InstrumentTab(kFirstTab), NavigateWebContents(kFirstTab, GetURL()),
       AddInstrumentedTab(kSecondTab, GetURL()),
-      AddInstrumentedTab(kThirdTab, GetURL()), SelectTab(kTabStripElementId, 0),
-      TriggerOnActionableTabListChange({1, 2}),
+      AddInstrumentedTab(kThirdTab, GetURL()), WaitForShow(kThirdTab),
+      TriggerOnActionableTabListChange({0, 1}),
       WaitForShow(kToolbarPerformanceInterventionButtonElementId),
       WaitForShow(
           PerformanceInterventionBubble::kPerformanceInterventionTabList),
@@ -489,7 +504,7 @@ IN_PROC_BROWSER_TEST_F(PerformanceInterventionInteractiveTest,
       PressButton(PerformanceInterventionBubble::
                       kPerformanceInterventionDialogDeactivateButton),
       WaitForState(kTabDiscardedState, true), CheckTabDiscardStatus(0, false),
-      CheckTabDiscardStatus(1, false), CheckTabDiscardStatus(2, true));
+      CheckTabDiscardStatus(1, true), CheckTabDiscardStatus(2, false));
 }
 
 // Intervention dialog should only show when the performance intervention
@@ -727,6 +742,17 @@ class PerformanceInterventionNotificationImprovementTest
     PerformanceInterventionInteractiveTest::SetUp();
   }
 
+  auto CheckAcceptHistorySize(size_t expected_size) {
+    return CheckResult(
+        [=]() {
+          return g_browser_process->local_state()
+              ->GetList(performance_manager::user_tuning::prefs::
+                            kPerformanceInterventionNotificationAcceptHistory)
+              .size();
+        },
+        expected_size);
+  }
+
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
@@ -805,4 +831,21 @@ IN_PROC_BROWSER_TEST_F(PerformanceInterventionNotificationImprovementTest,
                       kPerformanceInterventionDialogDeactivateButton),
       WaitForHide(kToolbarPerformanceInterventionButtonElementId),
       CheckResult([=] { return controller->GetAcceptancePercentage(); }, 20));
+}
+
+// Regression test for crbug.com/411210860.
+IN_PROC_BROWSER_TEST_F(PerformanceInterventionNotificationImprovementTest,
+                       UpdateAcceptHistory) {
+  RunTestSequence(
+      AddInstrumentedTab(kSecondTab, GetURL()),
+      AddInstrumentedTab(kThirdTab, GetURL()), SelectTab(kTabStripElementId, 0),
+      TriggerOnActionableTabListChange({1}),
+      WaitForShow(kToolbarPerformanceInterventionButtonElementId),
+      WaitForShow(PerformanceInterventionBubble::
+                      kPerformanceInterventionDialogDeactivateButton),
+      CheckAcceptHistorySize(0),
+      PressButton(PerformanceInterventionBubble::
+                      kPerformanceInterventionDialogDeactivateButton),
+      WaitForHide(kToolbarPerformanceInterventionButtonElementId),
+      CheckAcceptHistorySize(1));
 }

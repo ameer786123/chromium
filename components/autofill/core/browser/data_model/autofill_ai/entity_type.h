@@ -11,6 +11,9 @@
 
 #include "base/containers/span.h"
 #include "base/notreached.h"
+#include "base/types/optional_ref.h"
+#include "base/types/pass_key.h"
+#include "components/autofill/core/browser/country_type.h"
 #include "components/autofill/core/browser/data_model/autofill_ai/entity_type_names.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/common/dense_set.h"
@@ -29,6 +32,7 @@ namespace autofill {
 // entity_schema.json.
 class EntityType;
 class AttributeType;
+class EntityTable;
 
 // An attribute type is the blueprint for an attribute instance, which in turn
 // represents a string value with additional metadata.
@@ -59,9 +63,6 @@ class AttributeType final {
   static bool DisambiguationOrder(const AttributeType& lhs,
                                   const AttributeType& rhs);
 
-  // Maps each Autofill AI `FieldType` to the corresponding AttributeType.
-  static std::optional<AttributeType> FromFieldType(FieldType type);
-
   constexpr explicit AttributeType(AttributeTypeName n) : name_(n) {}
 
   constexpr AttributeType(const AttributeType&) = default;
@@ -75,8 +76,18 @@ class AttributeType final {
 
   constexpr DataType data_type() const;
 
-  // Maps this AttributeType to the corresponding Autofill AI `FieldType`.
+  // There are three kinds of AttributeType / FieldType associations:
+  // - `field_type()` is the one that best describes the full attribute.
+  //   Except for name types, the `field_type()` uniquely identifies the
+  //   AttributeType.
+  // - `field_subtypes()` additionally include more fine-granular ones.
+  //   Except for name types, `field_subtypes() == {field_type}`.
+  //   For name types, `field_subtypes()` includes `NAME_FIRST` etc.
+  // - `storable_field_types()` are the ones that may be physically stored in
+  //   the database.
   constexpr FieldType field_type() const;
+  constexpr FieldTypeSet field_subtypes() const;
+  FieldTypeSet storable_field_types(base::PassKey<EntityTable> pass_key) const;
 
   // Returns whether the attribute should be obfuscated in preview and
   // suggestion labels.
@@ -109,36 +120,76 @@ class AttributeType final {
 
 constexpr AttributeType::DataType AttributeType::data_type() const {
   switch (name_) {
-    case AttributeTypeName::kPassportName:
     case AttributeTypeName::kDriversLicenseName:
+    case AttributeTypeName::kKnownTravelerNumberName:
+    case AttributeTypeName::kNationalIdCardName:
+    case AttributeTypeName::kPassportName:
+    case AttributeTypeName::kRedressNumberName:
     case AttributeTypeName::kVehicleOwner:
       return DataType::kName;
+    case AttributeTypeName::kNationalIdCardCountry:
     case AttributeTypeName::kPassportCountry:
       return DataType::kCountry;
-    case AttributeTypeName::kPassportExpirationDate:
-    case AttributeTypeName::kPassportIssueDate:
     case AttributeTypeName::kDriversLicenseExpirationDate:
     case AttributeTypeName::kDriversLicenseIssueDate:
+    case AttributeTypeName::kKnownTravelerNumberExpirationDate:
+    case AttributeTypeName::kNationalIdCardIssueDate:
+    case AttributeTypeName::kNationalIdCardExpirationDate:
+    case AttributeTypeName::kPassportExpirationDate:
+    case AttributeTypeName::kPassportIssueDate:
       return DataType::kDate;
-    case AttributeTypeName::kVehiclePlateState:
     case AttributeTypeName::kDriversLicenseState:
+    case AttributeTypeName::kVehiclePlateState:
       return DataType::kState;
+    case AttributeTypeName::kDriversLicenseNumber:
+    case AttributeTypeName::kKnownTravelerNumberNumber:
+    case AttributeTypeName::kNationalIdCardNumber:
     case AttributeTypeName::kPassportNumber:
+    case AttributeTypeName::kRedressNumberNumber:
     case AttributeTypeName::kVehiclePlateNumber:
     case AttributeTypeName::kVehicleVin:
     case AttributeTypeName::kVehicleMake:
     case AttributeTypeName::kVehicleModel:
     case AttributeTypeName::kVehicleYear:
-    case AttributeTypeName::kDriversLicenseNumber:
       return DataType::kString;
+      break;
   }
   NOTREACHED();
 }
 
 constexpr FieldType AttributeType::field_type() const {
   switch (name_) {
+    case AttributeTypeName::kDriversLicenseName:
+      return NAME_FULL;
+    case AttributeTypeName::kDriversLicenseState:
+      return DRIVERS_LICENSE_REGION;
+    case AttributeTypeName::kDriversLicenseNumber:
+      return DRIVERS_LICENSE_NUMBER;
+    case AttributeTypeName::kDriversLicenseExpirationDate:
+      return DRIVERS_LICENSE_EXPIRATION_DATE;
+    case AttributeTypeName::kDriversLicenseIssueDate:
+      return DRIVERS_LICENSE_ISSUE_DATE;
+
+    case AttributeTypeName::kKnownTravelerNumberNumber:
+      return KNOWN_TRAVELER_NUMBER;
+    case AttributeTypeName::kKnownTravelerNumberExpirationDate:
+      return KNOWN_TRAVELER_NUMBER_EXPIRATION_DATE;
+    case AttributeTypeName::kKnownTravelerNumberName:
+      return NAME_FULL;
+
+    case AttributeTypeName::kNationalIdCardName:
+      return NAME_FULL;
+    case AttributeTypeName::kNationalIdCardCountry:
+      return NATIONAL_ID_CARD_ISSUING_COUNTRY;
+    case AttributeTypeName::kNationalIdCardNumber:
+      return NATIONAL_ID_CARD_NUMBER;
+    case AttributeTypeName::kNationalIdCardIssueDate:
+      return NATIONAL_ID_CARD_ISSUE_DATE;
+    case AttributeTypeName::kNationalIdCardExpirationDate:
+      return NATIONAL_ID_CARD_EXPIRATION_DATE;
+
     case AttributeTypeName::kPassportName:
-      return PASSPORT_NAME_TAG;
+      return NAME_FULL;
     case AttributeTypeName::kPassportNumber:
       return PASSPORT_NUMBER;
     case AttributeTypeName::kPassportCountry:
@@ -148,8 +199,13 @@ constexpr FieldType AttributeType::field_type() const {
     case AttributeTypeName::kPassportIssueDate:
       return PASSPORT_ISSUE_DATE;
 
+    case AttributeTypeName::kRedressNumberNumber:
+      return REDRESS_NUMBER;
+    case AttributeTypeName::kRedressNumberName:
+      return NAME_FULL;
+
     case AttributeTypeName::kVehicleOwner:
-      return VEHICLE_OWNER_TAG;
+      return NAME_FULL;
     case AttributeTypeName::kVehiclePlateNumber:
       return VEHICLE_LICENSE_PLATE;
     case AttributeTypeName::kVehicleVin:
@@ -162,19 +218,15 @@ constexpr FieldType AttributeType::field_type() const {
       return VEHICLE_YEAR;
     case AttributeTypeName::kVehiclePlateState:
       return VEHICLE_PLATE_STATE;
-
-    case AttributeTypeName::kDriversLicenseName:
-      return DRIVERS_LICENSE_NAME_TAG;
-    case AttributeTypeName::kDriversLicenseState:
-      return DRIVERS_LICENSE_REGION;
-    case AttributeTypeName::kDriversLicenseNumber:
-      return DRIVERS_LICENSE_NUMBER;
-    case AttributeTypeName::kDriversLicenseExpirationDate:
-      return DRIVERS_LICENSE_EXPIRATION_DATE;
-    case AttributeTypeName::kDriversLicenseIssueDate:
-      return DRIVERS_LICENSE_ISSUE_DATE;
   }
   NOTREACHED();
+}
+
+constexpr FieldTypeSet AttributeType::field_subtypes() const {
+  if (data_type() == DataType::kName) {
+    return FieldTypesOfGroup(FieldTypeGroup::kName);
+  }
+  return {field_type()};
 }
 
 template <>
@@ -236,6 +288,22 @@ class EntityType final {
   // Defined in entity_type_funcs.cc generated by transpile_entity_schema.py.
   DenseSet<AttributeType> attributes() const;
 
+  // Required fields are a precondition for a form to be considered an
+  // AutofillAi form. An AutofillAi form is a form where filling suggestions are
+  // displayed, save/update prompts can appear after submission, specifics
+  // metrics are emitted etc.
+  //
+  // The required fields are a list of set of attributes where only when at
+  // least one of these sets is present, a form is considered to be AutofillAi.
+  //
+  // For example, for a passport the required fields may be {number} and
+  // {expiry date}. Then the following forms would be considered AutofillAi
+  // forms: {number}, {expiry date}, {number, name} but {name, country} would
+  // not.
+  //
+  // Defined in entity_type_funcs.cc generated by transpile_entity_schema.py.
+  base::span<const DenseSet<AttributeType>> required_fields() const;
+
   // An import constraint is a precondition for importing an EntityInstance on
   // form submission: it is a set of attributes all of which the instance must
   // set.
@@ -284,6 +352,23 @@ class EntityType final {
   // Defined in entity_type_funcs.cc generated by transpile_entity_schema.py.
   bool syncable() const;
 
+  // Indicates if the entity is enabled.
+  //
+  // An entity can be:
+  // - Disabled for all country codes, i.e., when gated behind a disabled
+  //   feature flag. Such entities cannot be filled, imported, or created in
+  //   settings.
+  //   This is configured by specifying "experiment feature" in the entity
+  //   schema.
+  // - Disabled for specific country codes only. Such entities cannot be
+  //   imported or created in settings, but they can be filled.
+  //   This is configured by specifying "excluded geo-ips" in the entity schema.
+  // - Enabled.
+  //
+  // Defined in entity_type_funcs.cc generated by transpile_entity_schema.py.
+  bool enabled(base::optional_ref<const GeoIpCountryCode> country_code =
+                   std::nullopt) const;
+
   friend constexpr bool operator==(const EntityType& lhs,
                                    const EntityType& rhs) = default;
 
@@ -320,11 +405,8 @@ struct DenseSetTraits<EntityType> {
 class EntityTable;
 
 // Defined in entity_type_funcs.cc generated by transpile_entity_schema.py.
-std::optional<EntityType> StringToEntityType(
-    base::PassKey<EntityTable> pass_key,
-    std::string_view entity_type_name);
+std::optional<EntityType> StringToEntityType(std::string_view entity_type_name);
 std::optional<AttributeType> StringToAttributeType(
-    base::PassKey<EntityTable> pass_key,
     EntityType entity_type,
     std::string_view attribute_type_name);
 

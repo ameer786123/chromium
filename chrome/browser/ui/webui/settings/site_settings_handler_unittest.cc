@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/settings/site_settings_handler.h"
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include "base/barrier_closure.h"
+#include "base/byte_count.h"
 #include "base/check_deref.h"
 #include "base/command_line.h"
 #include "base/files/scoped_temp_dir.h"
@@ -43,10 +45,10 @@
 #include "chrome/browser/browsing_topics/browsing_topics_service_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/engagement/site_engagement_service_factory.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/file_system_access/chrome_file_system_access_permission_context.h"
 #include "chrome/browser/file_system_access/file_system_access_permission_context_factory.h"
+#include "chrome/browser/global_features.h"
 #include "chrome/browser/hid/hid_chooser_context.h"
 #include "chrome/browser/hid/hid_chooser_context_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -59,6 +61,7 @@
 #include "chrome/browser/serial/serial_chooser_context.h"
 #include "chrome/browser/serial/serial_chooser_context_factory.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_test_util.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/web_applications/test/isolated_web_app_test_utils.h"
 #include "chrome/browser/ui/webui/settings/site_settings_helper.h"
@@ -114,6 +117,7 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_web_ui.h"
@@ -125,7 +129,6 @@
 #include "extensions/common/extension_builder.h"
 #include "google_apis/gaia/gaia_id.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "services/device/public/cpp/test/fake_hid_manager.h"
 #include "services/device/public/cpp/test/fake_serial_port_manager.h"
 #include "services/device/public/cpp/test/fake_usb_device_manager.h"
@@ -343,6 +346,7 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
     testing_profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
     EXPECT_TRUE(testing_profile_manager_->SetUp());
+    TestingBrowserProcess::GetGlobal()->CreateGlobalFeaturesForTesting();
     profile_ = testing_profile_manager_->CreateTestingProfile(
         kTestUserEmail, {TestingProfile::TestingFactory{
                             HistoryServiceFactory::GetInstance(),
@@ -355,7 +359,6 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
   }
 
   void SetUp() override {
-    TestingBrowserProcess::GetGlobal()->CreateGlobalFeaturesForTesting();
     browsing_topics::BrowsingTopicsServiceFactory::GetInstance()
         ->SetTestingFactoryAndUse(
             profile(),
@@ -374,6 +377,8 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
 
     profile()->SetPermissionControllerDelegate(
         permissions::GetPermissionControllerDelegate(profile()));
+
+    safety_hub_test_util::CreateNotificationPermissionsReviewService(profile());
 
     handler_ = std::make_unique<SiteSettingsHandler>(profile());
     handler()->set_web_ui(web_ui());
@@ -789,7 +794,13 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
 
   void ValidateZoom(const std::vector<ZoomLevel>& zoom_levels,
                     size_t expected_total_calls) {
-    EXPECT_EQ(expected_total_calls, web_ui()->call_data().size());
+    const size_t zoom_changed_count = std::ranges::count_if(
+        web_ui()->call_data(),
+        [](const std::unique_ptr<content::TestWebUI::CallData>& call_data_ptr) {
+          return call_data_ptr && call_data_ptr->arg1() &&
+                 *call_data_ptr->arg1() == "onZoomLevelsChanged";
+        });
+    EXPECT_EQ(expected_total_calls, zoom_changed_count);
 
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
     EXPECT_EQ("cr.webUIListenerCallback", data.function_name());
@@ -980,10 +991,7 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
   }
 
   void UnloadExtension(std::string extension_id) {
-    auto* extension_service =
-        extensions::ExtensionSystem::Get(profile())->extension_service();
-    ASSERT_TRUE(extension_service);
-    extension_service->UnloadExtension(
+    extensions::ExtensionRegistrar::Get(profile())->RemoveExtension(
         extension_id, extensions::UnloadedExtensionReason::DISABLE);
   }
 
@@ -2386,59 +2394,6 @@ TEST_F(SiteSettingsHandlerTest, IncrementsTrackingProtectionMetrics) {
             1);
 }
 
-class Reset3pcCategoryPermissionTest
-    : public SiteSettingsHandlerBaseTest,
-      public testing::WithParamInterface<bool> {
- public:
-  Reset3pcCategoryPermissionTest() {
-    std::vector<base::test::FeatureRef> enabled_features;
-    enabled_features.push_back(
-        privacy_sandbox::kTrackingProtectionContentSettingUbControl);
-    if (GetParam()) {
-      enabled_features.push_back(
-          privacy_sandbox::kTrackingProtectionContentSettingInSettings);
-    }
-    feature_list_.InitWithFeatures(enabled_features, {});
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-INSTANTIATE_TEST_SUITE_P(All, Reset3pcCategoryPermissionTest, testing::Bool());
-
-TEST_P(Reset3pcCategoryPermissionTest,
-       RemovesTrackingProtectionExceptionsWhenFeatureIsOff) {
-  constexpr char kOrigin[] = "https://www.test.com:443";
-  base::Value::List set_args;
-  set_args.Append("*");      // Primary pattern.
-  set_args.Append(kOrigin);  // Secondary pattern.
-  set_args.Append(kTrackingProtection);
-  set_args.Append(
-      content_settings::ContentSettingToString(CONTENT_SETTING_ALLOW));
-  set_args.Append(false);  // Incognito
-  handler()->HandleSetCategoryPermissionForPattern(set_args);
-  // We should have 1 Tracking Protection exception
-  base::Value::List initial_exceptions;
-  site_settings::GetExceptionsForContentType(
-      ContentSettingsType::TRACKING_PROTECTION, profile(), web_ui(),
-      /*incognito=*/false, &initial_exceptions);
-  EXPECT_EQ(initial_exceptions.size(), 1U);
-
-  base::Value::List reset_args;
-  reset_args.Append("*");      // Primary pattern.
-  reset_args.Append(kOrigin);  // Secondary pattern.
-  reset_args.Append(kCookies);
-  reset_args.Append(false);  // Incognito
-  handler()->HandleResetCategoryPermissionForPattern(reset_args);
-  base::Value::List actual_exceptions;
-  site_settings::GetExceptionsForContentType(
-      ContentSettingsType::TRACKING_PROTECTION, profile(), web_ui(),
-      /*incognito=*/false, &actual_exceptions);
-  // The exception should only have been removed if the feature is off.
-  EXPECT_EQ(actual_exceptions.size(), GetParam() ? 1U : 0U);
-}
-
 // TODO(crbug.com/40688152): Test flakes on TSAN and ASAN.
 #if defined(THREAD_SANITIZER) || defined(ADDRESS_SANITIZER)
 #define MAYBE_DefaultSettingSource DISABLED_DefaultSettingSource
@@ -3132,18 +3087,14 @@ class SiteSettingsHandlerInfobarTest : public BrowserWithTestWindowTest {
     handler()->AllowJavascript();
     web_ui()->ClearTrackedCalls();
 
-    window2_ = CreateBrowserWindow();
-    browser2_ =
-        CreateBrowser(profile(), browser()->type(), false, window2_.get());
-    window3_ = CreateBrowserWindow();
+    browser2_ = CreateBrowser(profile(), browser()->type(), false);
 
     // Creates the second profile used by this test.
     TestingProfile* profile2_ = profile_manager()->CreateTestingProfile(
         "testing_profile2@test", nullptr, std::u16string(), 0,
         GetTestingFactories());
 
-    browser3_ =
-        CreateBrowser(profile2_, browser()->type(), false, window3_.get());
+    browser3_ = CreateBrowser(profile2_, browser()->type(), false);
 
     extensions::TestExtensionSystem* extension_system =
         static_cast<extensions::TestExtensionSystem*>(
@@ -3212,9 +3163,7 @@ class SiteSettingsHandlerInfobarTest : public BrowserWithTestWindowTest {
  private:
   content::TestWebUI web_ui_;
   std::unique_ptr<SiteSettingsHandler> handler_;
-  std::unique_ptr<BrowserWindow> window2_;
   std::unique_ptr<Browser> browser2_;
-  std::unique_ptr<BrowserWindow> window3_;
   std::unique_ptr<Browser> browser3_;
 };
 
@@ -6403,7 +6352,7 @@ TEST_F(SiteSettingsHandlerTest, HandleGetFormattedBytes) {
   EXPECT_EQ("cr.webUIResponse", data.function_name());
   EXPECT_EQ(kCallbackId, data.arg1()->GetString());
   ASSERT_TRUE(data.arg2()->GetBool());
-  EXPECT_EQ(base::UTF16ToUTF8(ui::FormatBytes(int64_t(size))),
+  EXPECT_EQ(base::UTF16ToUTF8(ui::FormatBytes(base::ByteCount(size))),
             data.arg3()->GetString());
 }
 

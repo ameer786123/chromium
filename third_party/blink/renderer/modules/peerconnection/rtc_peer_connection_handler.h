@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <map>
 #include <memory>
 #include <string>
@@ -49,10 +50,10 @@ class PeerConnectionTracker;
 class RTCAnswerOptionsPlatform;
 class RTCOfferOptionsPlatform;
 class RTCPeerConnectionHandlerClient;
+class RTCRtpTransport;
 class RTCSessionDescriptionInit;
 class RTCVoidRequest;
 class SetLocalDescriptionRequest;
-class WebLocalFrame;
 
 // Helper class for passing pre-parsed session descriptions to functions.
 // Create a ParsedSessionDescription by calling one of the Parse functions.
@@ -211,12 +212,19 @@ class MODULES_EXPORT RTCPeerConnectionHandler {
       mojom::blink::DeviceThermalState thermal_state);
 
   // Start recording an event log.
-  void StartEventLog(int output_period_ms);
+  virtual void StartEventLog(int output_period_ms);
   // Stop recording an event log.
-  void StopEventLog();
+  virtual void StopEventLog();
 
   // WebRTC event log fragments sent back from PeerConnection land here.
-  void OnWebRtcEventLogWrite(const WTF::Vector<uint8_t>& output);
+  virtual void OnWebRtcEventLogWrite(const Vector<uint8_t>& output);
+
+  // Start recording a DataChannel log.
+  virtual void StartDataChannelLog();
+  // Stop recording a DataChannel log.
+  virtual void StopDataChannelLog();
+
+  virtual void OnWebRtcDataChannelLogWrite(const Vector<uint8_t>& output);
 
   // Virtual for testing purposes.
   virtual scoped_refptr<base::SingleThreadTaskRunner> signaling_thread() const;
@@ -432,7 +440,8 @@ class MODULES_EXPORT RTCPeerConnectionHandler {
   std::unique_ptr<FirstSessionDescription> first_remote_description_;
 
   // Track which ICE Connection state that this PeerConnection has gone through.
-  bool ice_state_seen_[webrtc::PeerConnectionInterface::kIceConnectionMax] = {};
+  std::array<bool, webrtc::PeerConnectionInterface::kIceConnectionMax>
+      ice_state_seen_ = {};
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 

@@ -55,12 +55,13 @@ class MockSession : public OptimizationGuideModelExecutor::Session {
   // This should be called *before* other ON_CALL statements.
   void Delegate(OptimizationGuideModelExecutor::Session* impl);
 
-  MOCK_METHOD(on_device_model::mojom::Session&, GetSession, (), (override));
   MOCK_METHOD(const optimization_guide::TokenLimits&,
               GetTokenLimits,
               (),
               (const, override));
-  MOCK_METHOD(void, SetInput, (MultimodalMessage request));
+  MOCK_METHOD(void,
+              SetInput,
+              (MultimodalMessage request, SetInputCallback callback));
   MOCK_METHOD(void,
               AddContext,
               (const google::protobuf::MessageLite& request_metadata));
@@ -75,9 +76,9 @@ class MockSession : public OptimizationGuideModelExecutor::Session {
        OptimizationGuideModelExecutionResultStreamingCallback callback));
   MOCK_METHOD(
       void,
-      ExecuteModelWithResponseJsonSchema,
+      ExecuteModelWithResponseConstraint,
       (const google::protobuf::MessageLite& request_metadata,
-       const std::optional<std::string>& response_json_schema,
+       on_device_model::mojom::ResponseConstraintPtr constraint,
        OptimizationGuideModelExecutionResultStreamingCallback callback));
   MOCK_METHOD(void,
               GetSizeInTokens,

@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
@@ -14,7 +15,6 @@
 #include "base/not_fatal_until.h"
 #include "base/task/sequenced_task_runner.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
-#include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "media/base/format_utils.h"
 #include "media/base/media_util.h"
 #include "media/base/video_color_space.h"
@@ -31,7 +31,7 @@
 #include "media/gpu/macros.h"
 #include "media/media_buildflags.h"
 #include "ui/gfx/buffer_format_util.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gl/gl_bindings.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -62,8 +62,9 @@ int32_t FakeTimestampToBitstreamId(base::TimeDelta timestamp) {
 std::vector<ColorPlaneLayout> ExtractColorPlaneLayout(
     const gfx::GpuMemoryBufferHandle& gmb_handle) {
   std::vector<ColorPlaneLayout> planes;
-  for (const auto& plane : gmb_handle.native_pixmap_handle.planes)
+  for (const auto& plane : gmb_handle.native_pixmap_handle().planes) {
     planes.emplace_back(plane.stride, plane.offset, plane.size);
+  }
   return planes;
 }
 
@@ -114,18 +115,18 @@ scoped_refptr<DecoderBuffer> DecryptBitstreamBuffer(
   }
   // Apply the offset here so we don't need to worry about page alignment in the
   // mapping.
-  data += bitstream_buffer.offset();
+  UNSAFE_TODO(data += bitstream_buffer.offset());
   if (available_size <= cdm_oemcrypto::kSecureBufferHeaderSize ||
-      memcmp(data, cdm_oemcrypto::kSecureBufferTag,
-             cdm_oemcrypto::kSecureBufferTagLen)) {
+      UNSAFE_TODO(memcmp(data, cdm_oemcrypto::kSecureBufferTag,
+                         cdm_oemcrypto::kSecureBufferTagLen))) {
     // This occurs in Intel implementations when we are in a clear portion.
     return bitstream_buffer.ToDecoderBuffer();
   }
   VLOG(2) << "Detected secure buffer format in VDVDA";
   // Read the protobuf size.
   uint32_t proto_size = 0;
-  memcpy(&proto_size, data + cdm_oemcrypto::kSecureBufferTagLen,
-         sizeof(uint32_t));
+  UNSAFE_TODO(memcpy(&proto_size, data + cdm_oemcrypto::kSecureBufferTagLen,
+                     sizeof(uint32_t)));
   if (proto_size > cdm_oemcrypto::kSecureBufferHeaderSize -
                        cdm_oemcrypto::kSecureBufferProtoOffset) {
     DVLOG(2) << "Proto size goes beyond header size";
@@ -133,8 +134,8 @@ scoped_refptr<DecoderBuffer> DecryptBitstreamBuffer(
   }
   // Read the serialized proto.
   std::string serialized_proto(
-      data + cdm_oemcrypto::kSecureBufferProtoOffset,
-      data + cdm_oemcrypto::kSecureBufferProtoOffset + proto_size);
+      UNSAFE_TODO(data + cdm_oemcrypto::kSecureBufferProtoOffset),
+      UNSAFE_TODO(data + cdm_oemcrypto::kSecureBufferProtoOffset + proto_size));
   chromeos::cdm::ArcSecureBufferForChrome buffer_proto;
   if (!buffer_proto.ParseFromString(serialized_proto)) {
     DVLOG(2) << "Failed deserializing secure buffer proto";
@@ -514,7 +515,7 @@ void VdVideoDecodeAccelerator::ImportBufferForPicture(
     CHECK(media::VerifyGpuMemoryBufferHandle(pixel_format, coded_size_,
                                              gmb_handle));
     const uint64_t modifier = gmb_handle.type == gfx::NATIVE_PIXMAP
-                                  ? gmb_handle.native_pixmap_handle.modifier
+                                  ? gmb_handle.native_pixmap_handle().modifier
                                   : gfx::NativePixmapHandle::kNoModifier;
 
     std::vector<ColorPlaneLayout> planes = ExtractColorPlaneLayout(gmb_handle);
@@ -569,7 +570,7 @@ void VdVideoDecodeAccelerator::ImportBufferForPicture(
           base::TimeDelta(), gfx::BufferUsage::SCANOUT_CPU_READ_WRITE,
           base::MakeRefCounted<gfx::NativePixmapDmaBuf>(
               layout_->coded_size(), *buffer_format,
-              std::move(gmb_handle.native_pixmap_handle)));
+              std::move(gmb_handle).native_pixmap_handle()));
 
   // Ensures that the tracking token is unique for frames in the frame pool.
   frame_tracking_token_helper_.SetUniqueTrackingToken(origin_frame->metadata());
@@ -583,8 +584,7 @@ void VdVideoDecodeAccelerator::ImportBufferForPicture(
   CHECK(res.second);
 
   // |wrapped_frame| is used to keep |origin_frame| alive until everyone
-  // released |wrapped_frame|. Then GpuMemoryBufferId will be available at
-  // OnFrameReleased().
+  // released |wrapped_frame|.
   scoped_refptr<FrameResource> wrapped_frame =
       origin_frame->CreateWrappingFrame();
   wrapped_frame->AddDestructionObserver(

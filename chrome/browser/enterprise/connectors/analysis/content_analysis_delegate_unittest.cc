@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_delegate.h"
 
@@ -25,8 +21,10 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/enterprise/connectors/common.h"
@@ -43,14 +41,28 @@
 #include "components/enterprise/buildflags/buildflags.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/enterprise/connectors/core/analysis_settings.h"
+#include "components/enterprise/connectors/core/features.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_task_environment.h"
+#include "content/public/test/browser_test_utils.h"
+#include "content/public/test/navigation_simulator.h"
+#include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
+#include "content/public/test/web_contents_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "base/values.h"
+#include "chrome/browser/extensions/extension_service.h"  // nogncheck
+#include "chrome/browser/extensions/test_extension_system.h"
+#include "extensions/browser/extension_registrar.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_builder.h"
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 #if BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
 #include "chrome/browser/enterprise/connectors/test/fake_content_analysis_sdk_manager.h"  // nogncheck
@@ -86,6 +98,20 @@ constexpr char kBlockingScansForDlp[] = R"(
   ],
   "block_until_verdict": 1
 })";
+
+#if BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
+constexpr char kBlockingScansForLocalDlp[] = R"(
+{
+  "service_provider": "local_user_agent",
+  "enable": [
+    {
+      "url_list": ["*"],
+      "tags": ["dlp"]
+    }
+  ],
+  "block_until_verdict": 1
+})";
+#endif  // BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
 
 constexpr char kBlockingScansForMalware[] = R"(
 {
@@ -138,6 +164,10 @@ class BaseTest : public testing::Test {
     EXPECT_TRUE(profile_manager_.SetUp());
     profile_ = profile_manager_.CreateTestingProfile("test-user");
     ContentAnalysisDelegate::DisableUIForTesting();
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/{safe_browsing::kEnhancedFieldsForSecOps,
+                              kEnterpriseIframeDlpRulesSupport},
+        /*disabled_features=*/{});
   }
 
   void ScanUpload(content::WebContents* web_contents,
@@ -146,9 +176,9 @@ class BaseTest : public testing::Test {
     // The access point is only used for metrics and choosing the dialog text if
     // one is shown, so its value doesn't affect the tests in this file and can
     // always be the same.
-    ContentAnalysisDelegate::CreateForWebContents(
-        web_contents, std::move(data), std::move(callback),
-        safe_browsing::DeepScanAccessPoint::UPLOAD);
+    ContentAnalysisDelegate::CreateForWebContents(web_contents, std::move(data),
+                                                  std::move(callback),
+                                                  DeepScanAccessPoint::UPLOAD);
   }
 
   void CreateFilesForTest(
@@ -570,10 +600,12 @@ class ContentAnalysisDelegateAuditOnlyTest : public BaseTest {
             ? it->second
             : test::FakeContentAnalysisDelegate::SuccessfulResponse([this]() {
                 std::set<std::string> tags;
-                if (include_dlp_ && !dlp_response_.has_value())
+                if (include_dlp_ && !dlp_response_.has_value()) {
                   tags.insert("dlp");
-                if (include_malware_)
+                }
+                if (include_malware_) {
                   tags.insert("malware");
+                }
                 return tags;
               }());
 
@@ -596,6 +628,13 @@ class ContentAnalysisDelegateAuditOnlyTest : public BaseTest {
 
   // DLP response to ovewrite in the callback if present.
   std::optional<ContentAnalysisResponse> dlp_response_ = std::nullopt;
+
+#if BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
+  // This installs a fake SDK manager that creates fake SDK clients when
+  // its GetClient() method is called. This is needed so that calls to
+  // ContentAnalysisSdkManager::Get()->GetClient() do not fail.
+  FakeContentAnalysisSdkManager sdk_manager_;
+#endif
 };
 
 TEST_F(ContentAnalysisDelegateAuditOnlyTest, Empty) {
@@ -740,7 +779,7 @@ TEST_F(ContentAnalysisDelegateAuditOnlyTest, PagePrintAllowed) {
             *called = true;
           },
           &called),
-      safe_browsing::DeepScanAccessPoint::PRINT);
+      DeepScanAccessPoint::PRINT);
   RunUntilDone();
   EXPECT_EQ(1,
             test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
@@ -774,7 +813,7 @@ TEST_F(ContentAnalysisDelegateAuditOnlyTest, PagePrintBlocked) {
             *called = true;
           },
           &called),
-      safe_browsing::DeepScanAccessPoint::PRINT);
+      DeepScanAccessPoint::PRINT);
   RunUntilDone();
   EXPECT_EQ(1,
             test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
@@ -1167,7 +1206,10 @@ TEST_F(ContentAnalysisDelegateAuditOnlyTest, StringFileDataNoDLP) {
   EXPECT_TRUE(called);
 }
 
-TEST_F(ContentAnalysisDelegateAuditOnlyTest, ImageData) {
+TEST_F(ContentAnalysisDelegateAuditOnlyTest, ImageDataCloudScan) {
+  enterprise_connectors::test::SetAnalysisConnector(
+      profile_->GetPrefs(), BULK_DATA_ENTRY, kBlockingScansForDlp);
+
   GURL url(kTestUrl);
   ContentAnalysisDelegate::Data data;
   ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(profile(), url, &data,
@@ -1187,12 +1229,80 @@ TEST_F(ContentAnalysisDelegateAuditOnlyTest, ImageData) {
                  },
                  &called));
   RunUntilDone();
+
+  // There shouldn't be any image request made when the policy is set to do
+  // cloud scanning.
+  EXPECT_EQ(0,
+            test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
+  EXPECT_TRUE(called);
+}
+
+#if BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
+TEST_F(ContentAnalysisDelegateAuditOnlyTest, ImageDataLocalScan) {
+  enterprise_connectors::test::SetAnalysisConnector(
+      profile_->GetPrefs(), BULK_DATA_ENTRY, kBlockingScansForLocalDlp);
+
+  GURL url(kTestUrl);
+  ContentAnalysisDelegate::Data data;
+  ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(profile(), url, &data,
+                                                 BULK_DATA_ENTRY));
+
+  data.image = large_text();
+
+  bool called = false;
+  ScanUpload(contents(), std::move(data),
+             base::BindOnce(
+                 [](bool* called, const ContentAnalysisDelegate::Data& data,
+                    ContentAnalysisDelegate::Result& result) {
+                   EXPECT_EQ(0u, data.text.size());
+                   EXPECT_EQ(0u, result.text_results.size());
+                   EXPECT_TRUE(result.image_result);
+                   *called = true;
+                 },
+                 &called));
+  RunUntilDone();
+
+  EXPECT_EQ(1,
+            test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
+  EXPECT_TRUE(called);
+}
+#endif  // BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
+
+TEST_F(ContentAnalysisDelegateAuditOnlyTest, TextAndImageDataCloudScan) {
+  enterprise_connectors::test::SetAnalysisConnector(
+      profile_->GetPrefs(), BULK_DATA_ENTRY, kBlockingScansForDlp);
+
+  GURL url(kTestUrl);
+  ContentAnalysisDelegate::Data data;
+  ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(profile(), url, &data,
+                                                 BULK_DATA_ENTRY));
+  data.text.emplace_back(large_text());
+  data.image = large_text();
+
+  bool called = false;
+  ScanUpload(contents(), std::move(data),
+             base::BindOnce(
+                 [](bool* called, const ContentAnalysisDelegate::Data& data,
+                    ContentAnalysisDelegate::Result& result) {
+                   EXPECT_EQ(1u, result.text_results.size());
+                   EXPECT_TRUE(result.text_results[0]);
+                   EXPECT_TRUE(result.image_result);
+                   *called = true;
+                 },
+                 &called));
+  RunUntilDone();
+
+  // Only the text data is scanned for cloud scans.
   EXPECT_EQ(1,
             test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
   EXPECT_TRUE(called);
 }
 
-TEST_F(ContentAnalysisDelegateAuditOnlyTest, TextAndImageData) {
+#if BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
+TEST_F(ContentAnalysisDelegateAuditOnlyTest, TextAndImageDataLocalScan) {
+  enterprise_connectors::test::SetAnalysisConnector(
+      profile_->GetPrefs(), BULK_DATA_ENTRY, kBlockingScansForLocalDlp);
+
   GURL url(kTestUrl);
   ContentAnalysisDelegate::Data data;
   ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(profile(), url, &data,
@@ -1216,6 +1326,7 @@ TEST_F(ContentAnalysisDelegateAuditOnlyTest, TextAndImageData) {
             test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
   EXPECT_TRUE(called);
 }
+#endif  // BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
 
 TEST_F(ContentAnalysisDelegateAuditOnlyTest, StringFileDataFailedDLP) {
   SetScanPolicies(/*dlp=*/true, /*malware=*/false);
@@ -1489,8 +1600,9 @@ TEST_P(ContentAnalysisDelegateResultHandlingTest, Test) {
   // This is not a desktop platform don't try the non-cloud case since it
   // is not supported.
 #if !BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
-  if (!is_cloud())
+  if (!is_cloud()) {
     return;
+  }
 #endif
 
   GURL url(kTestUrl);

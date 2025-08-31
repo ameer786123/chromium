@@ -4,12 +4,16 @@
 
 package org.chromium.chrome.browser.ui.signin.signin_promo;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 
 import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.ProfileDataCache;
@@ -24,13 +28,14 @@ import org.chromium.components.sync.SyncService;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 /** Coordinator for the signin promo card. */
+@NullMarked
 public class SigninPromoCoordinator {
     private static boolean sPromoDisabledForTesting;
     private final Context mContext;
     private final SigninPromoDelegate mDelegate;
     private final SigninPromoMediator mMediator;
-    private ImpressionTracker mImpressionTracker;
-    private PropertyModelChangeProcessor mPropertyModelChangeProcessor;
+    private @Nullable ImpressionTracker mImpressionTracker;
+    private @Nullable PropertyModelChangeProcessor mPropertyModelChangeProcessor;
 
     /** Disables promo in tests. */
     public static void disablePromoForTesting() {
@@ -49,11 +54,13 @@ public class SigninPromoCoordinator {
     public SigninPromoCoordinator(Context context, Profile profile, SigninPromoDelegate delegate) {
         mContext = context;
         mDelegate = delegate;
-        ProfileDataCache profileDataCache =
-                ProfileDataCache.createWithDefaultImageSizeAndNoBadge(mContext);
         IdentityManager identityManager =
                 IdentityServicesProvider.get().getIdentityManager(profile);
+        assumeNonNull(identityManager);
+        ProfileDataCache profileDataCache =
+                ProfileDataCache.createWithDefaultImageSizeAndNoBadge(mContext, identityManager);
         SyncService syncService = SyncServiceFactory.getForProfile(profile);
+        assumeNonNull(syncService);
         mMediator =
                 new SigninPromoMediator(
                         identityManager,
@@ -65,12 +72,7 @@ public class SigninPromoCoordinator {
 
     public void destroy() {
         mMediator.destroy();
-        if (mPropertyModelChangeProcessor != null) {
-            mPropertyModelChangeProcessor.destroy();
-            mPropertyModelChangeProcessor = null;
-            mImpressionTracker.setListener(null);
-            mImpressionTracker = null;
-        }
+        destroyPropertyModelChangeProcessor();
     }
 
     /** Determines whether the signin promo can be shown. */
@@ -79,7 +81,7 @@ public class SigninPromoCoordinator {
     }
 
     /** Builds a promo view object for the corresponding access point. */
-    public View buildPromoView(ViewGroup parent) {
+    public View buildPromoView(@Nullable ViewGroup parent) {
         return LayoutInflater.from(mContext)
                 .inflate(getLayoutResId(mDelegate.getAccessPoint()), parent, false);
     }
@@ -90,17 +92,23 @@ public class SigninPromoCoordinator {
         if (promoView == null) {
             throw new IllegalArgumentException("Promo view doesn't exist in container");
         }
-        if (mPropertyModelChangeProcessor != null) {
-            mPropertyModelChangeProcessor.destroy();
-            mPropertyModelChangeProcessor = null;
-            mImpressionTracker.setListener(null);
-            mImpressionTracker = null;
-        }
+        destroyPropertyModelChangeProcessor();
         mPropertyModelChangeProcessor =
                 PropertyModelChangeProcessor.create(
                         mMediator.getModel(), promoView, SigninPromoViewBinder::bind);
         mImpressionTracker = new ImpressionTracker(promoView);
         mImpressionTracker.setListener(mMediator::recordImpression);
+    }
+
+    private void destroyPropertyModelChangeProcessor() {
+        if (mPropertyModelChangeProcessor != null) {
+            mPropertyModelChangeProcessor.destroy();
+            mPropertyModelChangeProcessor = null;
+            // Always initialized and destroyed with mPropertyModelChangeProcessor.
+            assumeNonNull(mImpressionTracker);
+            mImpressionTracker.setListener(null);
+            mImpressionTracker = null;
+        }
     }
 
     static int getLayoutResId(@SigninAccessPoint int accessPoint) {

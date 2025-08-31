@@ -11,6 +11,7 @@
 #include "base/observer_list.h"
 #include "base/scoped_observation.h"
 #include "components/account_id/account_id.h"
+#include "components/session_manager/core/session_manager_delegate.h"
 #include "components/session_manager/session_manager_export.h"
 #include "components/session_manager/session_manager_types.h"
 #include "components/user_manager/user_manager.h"
@@ -24,7 +25,8 @@ class SessionManagerObserver;
 class SESSION_EXPORT SessionManager
     : public user_manager::UserManager::Observer {
  public:
-  SessionManager();
+  explicit SessionManager(
+      std::unique_ptr<session_manager::SessionManagerDelegate> delegate);
 
   SessionManager(const SessionManager&) = delete;
   SessionManager& operator=(const SessionManager&) = delete;
@@ -62,6 +64,9 @@ class SESSION_EXPORT SessionManager
   // called in advance).
   void SwitchActiveSession(const AccountId& account_id);
 
+  // Request to sign out user from session.
+  void RequestSignOut();
+
   // Returns true if we're logged in and browser has been started i.e.
   // browser_creator.LaunchBrowser(...) was called after sign in
   // or restart after crash.
@@ -87,6 +92,23 @@ class SESSION_EXPORT SessionManager
 
   // Returns true if the session for the given user was started.
   bool HasSessionForAccountId(const AccountId& user_account_id) const;
+
+  // Returns the Session instance for the user specified by the given
+  // `account_id`. Returns nullptr if not found.
+  const Session* FindSession(const AccountId& account_id) const;
+
+  // Returns the Session instance for the current active session.
+  // If there's no such session, returns nullptr.
+  // NOTE: in most cases, this is not what you should use, because when you
+  // need this kind of function, it means the function is running under the
+  // active session conceptually, so, importantly, its callers, too.
+  // Instead of calling this, please pass `const Session&` via arguments
+  // from the bottom of the call stack.
+  const Session* GetActiveSession() const;
+
+  // Returns the Session instance for the primary session.
+  // If there's no such session (i.e. before user log-in), returns nullptr.
+  const Session* GetPrimarySession() const;
 
   // Convenience wrapps of session state.
   bool IsInSecondaryLoginScreen() const;
@@ -173,6 +195,8 @@ class SESSION_EXPORT SessionManager
   std::vector<std::unique_ptr<Session>> sessions_;
 
   base::ObserverList<SessionManagerObserver> observers_;
+
+  const std::unique_ptr<SessionManagerDelegate> delegate_;
 };
 
 }  // namespace session_manager

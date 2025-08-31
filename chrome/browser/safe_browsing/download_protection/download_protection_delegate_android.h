@@ -7,12 +7,19 @@
 
 #include <optional>
 
+#include "base/memory/weak_ptr.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_delegate.h"
+#include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
+#include "chrome/browser/safe_browsing/download_protection/rate_limiting_key_manager.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "url/gurl.h"
 
 namespace base {
 class FilePath;
+}
+
+namespace content {
+struct FileSystemAccessWriteItem;
 }
 
 namespace download {
@@ -25,8 +32,6 @@ struct ResourceRequest;
 
 namespace safe_browsing {
 
-class ClientDownloadRequest;
-
 class DownloadProtectionDelegateAndroid : public DownloadProtectionDelegate {
  public:
   DownloadProtectionDelegateAndroid();
@@ -34,11 +39,15 @@ class DownloadProtectionDelegateAndroid : public DownloadProtectionDelegate {
 
   // DownloadProtectionDelegate:
   bool ShouldCheckDownloadUrl(download::DownloadItem* item) const override;
-  bool ShouldCheckClientDownload(download::DownloadItem* item) const override;
-  bool IsSupportedDownload(download::DownloadItem& item,
-                           const base::FilePath& target_path) const override;
-  void PreSerializeRequest(const download::DownloadItem* item,
-                           ClientDownloadRequest& request_proto) override;
+  bool MayCheckClientDownload(download::DownloadItem* item) const override;
+  bool MayCheckFileSystemAccessWrite(
+      content::FileSystemAccessWriteItem* item) const override;
+  MayCheckDownloadResult IsSupportedDownload(
+      download::DownloadItem& item,
+      const base::FilePath& target_path) const override;
+  std::vector<PendingClientDownloadRequestModification>
+  ProduceClientDownloadRequestModifications(const download::DownloadItem* item,
+                                            Profile* profile) override;
   void FinalizeResourceRequest(
       network::ResourceRequest& resource_request) override;
   const GURL& GetDownloadRequestUrl() const override;
@@ -56,11 +65,37 @@ class DownloadProtectionDelegateAndroid : public DownloadProtectionDelegate {
   void SetNextShouldSampleForTesting(bool should_sample);
 
  private:
+  // Executes one instance of random sampling for a file that would otherwise
+  // send a download request, taking any testing override into account.
+  // Note: this sampling performed by DownloadProtectionDelegateAndroid is
+  // distinct from sampling for "light" pings for unsupported filetypes, and
+  // sampling of allowlisted files.
+  bool ShouldSampleEligibleFile() const;
+
+  // Translates a MayCheckDownloadResult into a bool to return from
+  // MayCheck{ClientDownload,FileSystemAccessWrite}.
+  // If `download_item` is non-null, this updates metrics data accordingly.
+  bool MayCheckItem(MayCheckDownloadResult may_check_download_result,
+                    download::DownloadItem* download_item = nullptr) const;
+
+  // Generates a modification to add `rate_limiting_key` in the
+  // ClientDownloadRequest. If there's no initialized RateLimitingKeyManager,
+  // this kicks off a lookup of safety_net_id in order to initialize the
+  // manager, then tries again using that.
+  void PopulateRateLimitingKey(const std::string& profile_id,
+                               CollectModificationCallback callback);
+
+  void InitRateLimitingKeyManager(const std::string& safety_net_id);
+
   const GURL download_request_url_;
 
   // Overrides the next call to ShouldSample() within IsSupportedDownload(), for
   // convenience in tests to bypass the random number generator.
   mutable std::optional<bool> should_sample_override_;
+
+  std::optional<RateLimitingKeyManager> rate_limiting_key_manager_;
+
+  base::WeakPtrFactory<DownloadProtectionDelegateAndroid> weak_factory_{this};
 };
 
 }  // namespace safe_browsing

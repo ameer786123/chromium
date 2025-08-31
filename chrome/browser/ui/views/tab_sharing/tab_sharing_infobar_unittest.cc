@@ -20,16 +20,21 @@
 
 namespace {
 
-using FocusTarget = ::TabSharingInfoBarDelegate::FocusTarget;
+using ::content::GlobalRenderFrameHostId;
 using TabRole = ::TabSharingInfoBarDelegate::TabRole;
 
 const std::u16string kSharedTabName = u"example.com";
 const std::u16string kAppName = u"sharing.com";
 const std::u16string kSinkName = u"Living Room TV";
 
+// TODO(crbug.com/441128451): Eliminate the duplication of this mock
+// across multiple test suites.
 class MockTabSharingUIViews : public TabSharingUI {
  public:
-  MockTabSharingUIViews() = default;
+  MockTabSharingUIViews()
+      : uma_logger_(content::DesktopMediaID::Type::TYPE_WEB_CONTENTS) {}
+  ~MockTabSharingUIViews() override = default;
+
   MOCK_METHOD(void, StartSharing, (infobars::InfoBar * infobar));
   MOCK_METHOD(void, StopSharing, ());
 
@@ -40,8 +45,14 @@ class MockTabSharingUIViews : public TabSharingUI {
     return 0;
   }
 
+  ScreensharingControlsHistogramLogger& GetUmaLogger() override {
+    return uma_logger_;
+  }
+
   void OnRegionCaptureRectChanged(
       const std::optional<gfx::Rect>& region_capture_rect) override {}
+
+  ScreensharingControlsHistogramLogger uma_logger_;
 };
 
 class TestInfoBarManager : public infobars::InfoBarManager {
@@ -132,10 +143,8 @@ class TabSharingInfoBarTest : public testing::TestWithParam<bool> {
     TabRole role;
     TabSharingInfoBarDelegate::TabShareType capture_type =
         TabSharingInfoBarDelegate::TabShareType::CAPTURE;
-    content::GlobalRenderFrameHostId shared_tab_id =
-        content::GlobalRenderFrameHostId(1, 1);
-    content::GlobalRenderFrameHostId capturer_id =
-        content::GlobalRenderFrameHostId(2, 2);
+    GlobalRenderFrameHostId shared_tab_id = GlobalRenderFrameHostId(1, 1);
+    GlobalRenderFrameHostId capturer_id = GlobalRenderFrameHostId(2, 2);
   };
 
   TabSharingInfoBarTest() {
@@ -148,7 +157,7 @@ class TabSharingInfoBarTest : public testing::TestWithParam<bool> {
         infobar_manager_.get(), nullptr, prefs.shared_tab_id, prefs.capturer_id,
         prefs.shared_tab_name, prefs.capturer_name, /*web_contents=*/nullptr,
         prefs.role, TabSharingInfoBarDelegate::ButtonState::ENABLED,
-        FocusTarget(), true, &mock_ui, prefs.capture_type, false));
+        GlobalRenderFrameHostId(), true, &mock_ui, prefs.capture_type));
   }
 
  protected:
@@ -203,8 +212,8 @@ TEST_P(TabSharingInfoBarTest, InfobarOnSelfCapturingTab) {
       CreateInfobar({.shared_tab_name = std::u16string(),
                      .capturer_name = kAppName,
                      .role = TabRole::kSelfCapturingTab,
-                     .shared_tab_id = content::GlobalRenderFrameHostId(1, 1),
-                     .capturer_id = content::GlobalRenderFrameHostId(1, 1)});
+                     .shared_tab_id = GlobalRenderFrameHostId(1, 1),
+                     .capturer_id = GlobalRenderFrameHostId(1, 1)});
   CheckStatusMessage(infobar, {LabelInfo(u"Sharing this tab to " + kAppName)});
 }
 

@@ -2,14 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "media/base/mime_util.h"
 
 #include <stddef.h>
+
+#include <array>
 
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
@@ -24,9 +22,6 @@
 #include "media/media_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
-#endif
 
 namespace media::internal {
 
@@ -55,9 +50,13 @@ const bool kHlsSupported = false;
 // |single_value|.
 static std::vector<bool> CreateTestVector(bool test_all_values,
                                           bool single_value) {
-  const bool kTestStates[] = {true, false};
-  if (test_all_values)
-    return std::vector<bool>(kTestStates, kTestStates + std::size(kTestStates));
+  const auto kTestStates = std::to_array<bool>({true, false});
+  if (test_all_values) {
+    return std::vector<bool>(kTestStates.data(),
+                             base::span<const bool>(kTestStates)
+                                 .subspan(std::size(kTestStates))
+                                 .data());
+  }
   return std::vector<bool>(1, single_value);
 }
 
@@ -206,8 +205,8 @@ TEST(MimeUtilTest, SplitAndStripCodecs) {
   const struct {
     const char* const original;
     size_t expected_size;
-    const char* const split_results[2];
-    const char* const strip_results[2];
+    const std::array<const char*, 2> split_results;
+    const std::array<const char*, 2> strip_results;
   } tests[] = {
       {"\"bogus\"", 1, {"bogus"}, {"bogus"}},
       {"0", 1, {"0"}, {"0"}},
@@ -232,13 +231,15 @@ TEST(MimeUtilTest, SplitAndStripCodecs) {
 
     SplitCodecs(test.original, &codecs_out);
     ASSERT_EQ(test.expected_size, codecs_out.size());
-    for (size_t j = 0; j < test.expected_size; ++j)
+    for (size_t j = 0; j < test.expected_size; ++j) {
       EXPECT_EQ(test.split_results[j], codecs_out[j]);
+    }
 
     StripCodecs(&codecs_out);
     ASSERT_EQ(test.expected_size, codecs_out.size());
-    for (size_t j = 0; j < test.expected_size; ++j)
+    for (size_t j = 0; j < test.expected_size; ++j) {
       EXPECT_EQ(test.strip_results[j], codecs_out[j]);
+    }
   }
 }
 
@@ -343,133 +344,131 @@ TEST(MimeUtilTest, ParseVideoCodecString_NoMimeType) {
 }
 
 TEST(MimeUtilTest, ParseAudioCodecString) {
-  bool out_is_ambiguous;
-  AudioCodec out_codec;
-
   // Valid Opus string.
-  EXPECT_TRUE(ParseAudioCodecString("audio/webm", "opus", &out_is_ambiguous,
-                                    &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kOpus, out_codec);
+  auto result = ParseAudioCodecString("audio/webm", "opus");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kOpus, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 
   // Valid AAC string when proprietary codecs are supported.
-  EXPECT_EQ(kUsePropCodecs,
-            ParseAudioCodecString("audio/mp4", "mp4a.40.2", &out_is_ambiguous,
-                                  &out_codec));
+  result = ParseAudioCodecString("audio/mp4", "mp4a.40.2");
+  EXPECT_EQ(kUsePropCodecs, result.has_value());
   if (kUsePropCodecs) {
-    EXPECT_FALSE(out_is_ambiguous);
-    EXPECT_EQ(AudioCodec::kAAC, out_codec);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(AudioCodec::kAAC, result->codec);
   }
 
   // Valid FLAC string with MP4. Neither decoding nor demuxing is proprietary.
-  EXPECT_TRUE(ParseAudioCodecString("audio/mp4", "flac", &out_is_ambiguous,
-                                    &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kFLAC, out_codec);
+  result = ParseAudioCodecString("audio/mp4", "flac");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kFLAC, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 
-  // Ambiguous AAC string.
-  // TODO(chcunningha): This can probably be allowed. I think we treat all
-  // MPEG4_AAC the same.
-  EXPECT_EQ(kUsePropCodecs,
-            ParseAudioCodecString("audio/mp4", "mp4a.40", &out_is_ambiguous,
-                                  &out_codec));
+  // Ambiguous AAC string "mp4a.40" should fail without allow_ambiguous_matches.
+  EXPECT_FALSE(ParseAudioCodecString("audio/mp4", "mp4a.40"));
+
+  // But it should succeed with allow_ambiguous_matches=true.
+  result = ParseAudioCodecString("audio/mp4", "mp4a.40", true);
+  EXPECT_EQ(kUsePropCodecs, result.has_value());
   if (kUsePropCodecs) {
-    EXPECT_TRUE(out_is_ambiguous);
-    EXPECT_EQ(AudioCodec::kAAC, out_codec);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(AudioCodec::kAAC, result->codec);
+    EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
+  }
+
+  result = ParseAudioCodecString("audio/mp4", "mp4a.40.42");
+  EXPECT_EQ(kUsePropCodecs, result.has_value());
+  if (kUsePropCodecs) {
+    ASSERT_TRUE(result);
+    EXPECT_EQ(AudioCodec::kAAC, result->codec);
+    EXPECT_EQ(AudioCodecProfile::kXHE_AAC, result->profile);
   }
 
   // Valid empty codec string. Codec unambiguously implied by mime type.
-  EXPECT_TRUE(
-      ParseAudioCodecString("audio/flac", "", &out_is_ambiguous, &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kFLAC, out_codec);
+  result = ParseAudioCodecString("audio/flac", "");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kFLAC, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 
   // Valid audio codec should still be allowed with video mime type.
-  EXPECT_TRUE(ParseAudioCodecString("video/webm", "opus", &out_is_ambiguous,
-                                    &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kOpus, out_codec);
+  result = ParseAudioCodecString("video/webm", "opus");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kOpus, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 
   // Video codec is not valid for audio API.
-  EXPECT_FALSE(ParseAudioCodecString("audio/webm", "vp09.00.10.08",
-                                     &out_is_ambiguous, &out_codec));
+  EXPECT_FALSE(ParseAudioCodecString("audio/webm", "vp09.00.10.08"));
 
   // Made up codec is also not valid.
-  EXPECT_FALSE(ParseAudioCodecString("audio/webm", "bogus", &out_is_ambiguous,
-                                     &out_codec));
+  EXPECT_FALSE(ParseAudioCodecString("audio/webm", "bogus"));
 }
 
 TEST(MimeUtilTest, ParseAudioCodecString_NoMimeType) {
-  bool out_is_ambiguous;
-  AudioCodec out_codec;
-
   // Invalid to give empty codec without a mime type.
-  EXPECT_FALSE(ParseAudioCodecString("", "", &out_is_ambiguous, &out_codec));
+  EXPECT_FALSE(ParseAudioCodecString("", ""));
 
   // Valid Opus string.
-  EXPECT_TRUE(ParseAudioCodecString("", "opus", &out_is_ambiguous, &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kOpus, out_codec);
+  auto result = ParseAudioCodecString("", "opus");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kOpus, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 
   // Valid AAC string when proprietary codecs are supported.
-  EXPECT_TRUE(
-      ParseAudioCodecString("", "mp4a.40.2", &out_is_ambiguous, &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kAAC, out_codec);
+  result = ParseAudioCodecString("", "mp4a.40.2");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kAAC, result->codec);
 
   // Valid FLAC string. Neither decoding nor demuxing is proprietary.
-  EXPECT_TRUE(ParseAudioCodecString("", "flac", &out_is_ambiguous, &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kFLAC, out_codec);
+  result = ParseAudioCodecString("", "flac");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kFLAC, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 
-  // Ambiguous AAC string.
-  // TODO(chcunningha): This can probably be allowed. I think we treat all
-  // MPEG4_AAC the same.
-  EXPECT_TRUE(
-      ParseAudioCodecString("", "mp4a.40", &out_is_ambiguous, &out_codec));
+  // Ambiguous AAC string "mp4a.40" should fail without allow_ambiguous_matches.
+  EXPECT_FALSE(ParseAudioCodecString("", "mp4a.40"));
+
+  // But it should succeed with allow_ambiguous_matches=true.
+  result = ParseAudioCodecString("", "mp4a.40", true);
+  ASSERT_TRUE(result);
   if (kUsePropCodecs) {
-    EXPECT_TRUE(out_is_ambiguous);
-    EXPECT_EQ(AudioCodec::kAAC, out_codec);
+    EXPECT_EQ(AudioCodec::kAAC, result->codec);
+    EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
   }
 
   // Video codec is not valid for audio API.
-  EXPECT_FALSE(ParseAudioCodecString("", "vp09.00.10.08", &out_is_ambiguous,
-                                     &out_codec));
+  EXPECT_FALSE(ParseAudioCodecString("", "vp09.00.10.08"));
 
   // Made up codec is also not valid.
-  EXPECT_FALSE(
-      ParseAudioCodecString("", "bogus", &out_is_ambiguous, &out_codec));
+  EXPECT_FALSE(ParseAudioCodecString("", "bogus"));
 }
 
 // MP3 is a weird case where we allow either the mime type, codec string, or
 // both, and there are several valid codec strings.
 TEST(MimeUtilTest, ParseAudioCodecString_Mp3) {
-  bool out_is_ambiguous;
-  AudioCodec out_codec;
+  auto result = ParseAudioCodecString("audio/mpeg", "mp3");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kMP3, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 
-  EXPECT_TRUE(ParseAudioCodecString("audio/mpeg", "mp3", &out_is_ambiguous,
-                                    &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kMP3, out_codec);
+  result = ParseAudioCodecString("audio/mpeg", "");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kMP3, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 
-  EXPECT_TRUE(
-      ParseAudioCodecString("audio/mpeg", "", &out_is_ambiguous, &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kMP3, out_codec);
+  result = ParseAudioCodecString("", "mp3");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kMP3, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 
-  EXPECT_TRUE(ParseAudioCodecString("", "mp3", &out_is_ambiguous, &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kMP3, out_codec);
+  result = ParseAudioCodecString("", "mp4a.69");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kMP3, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 
-  EXPECT_TRUE(
-      ParseAudioCodecString("", "mp4a.69", &out_is_ambiguous, &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kMP3, out_codec);
-
-  EXPECT_TRUE(
-      ParseAudioCodecString("", "mp4a.6B", &out_is_ambiguous, &out_codec));
-  EXPECT_FALSE(out_is_ambiguous);
-  EXPECT_EQ(AudioCodec::kMP3, out_codec);
+  result = ParseAudioCodecString("", "mp4a.6B");
+  ASSERT_TRUE(result);
+  EXPECT_EQ(AudioCodec::kMP3, result->codec);
+  EXPECT_EQ(AudioCodecProfile::kUnknown, result->profile);
 }
 
 // These codecs really only have one profile. Ensure that |out_profile| is
@@ -686,22 +685,19 @@ TEST(IsCodecSupportedOnAndroidTest, AndroidHLSAAC) {
   const std::string mpeg4_aac_codec_strings[] = {
       "mp4a.40.2", "mp4a.40.02", "mp4a.40.5", "mp4a.40.05", "mp4a.40.29"};
 
-  bool out_is_ambiguous;
-  AudioCodec out_codec;
   for (const auto& hls_mime_type : hls_mime_types) {
     // MPEG2_AAC is never supported with HLS. Even when HLS on android is
     // supported, MediaPlayer lacks the needed MPEG2_AAC demuxers.
     // See https://crbug.com/544268.
     for (const auto& mpeg2_aac_string : mpeg2_aac_codec_strings) {
-      EXPECT_FALSE(ParseAudioCodecString(hls_mime_type, mpeg2_aac_string,
-                                         &out_is_ambiguous, &out_codec));
+      EXPECT_FALSE(ParseAudioCodecString(hls_mime_type, mpeg2_aac_string));
     }
 
     // MPEG4_AAC is supported with HLS whenever HLS is supported.
     for (const auto& mpeg4_aac_string : mpeg4_aac_codec_strings) {
-      EXPECT_EQ(kHlsSupported,
-                ParseAudioCodecString(hls_mime_type, mpeg4_aac_string,
-                                      &out_is_ambiguous, &out_codec));
+      EXPECT_EQ(
+          kHlsSupported,
+          ParseAudioCodecString(hls_mime_type, mpeg4_aac_string).has_value());
     }
   }
 

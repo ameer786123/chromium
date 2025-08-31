@@ -22,10 +22,6 @@ enum class RecentActivityAction;
 // `activityMetadata`.
 @interface RecentActivityLogItem : NSObject
 
-// When true, all other values should be ignored. This represents an absence of
-// item.
-@property(nonatomic, assign) BOOL emptyItem;
-
 // Attributes for the favicon.
 @property(nonatomic, strong) FaviconAttributes* attributes;
 
@@ -36,13 +32,13 @@ enum class RecentActivityAction;
 @property(nonatomic, strong) id<ShareKitAvatarPrimitive> avatarPrimitive;
 
 // Title of the item.
-@property(nonatomic, strong) NSString* title;
+@property(nonatomic, copy) NSString* title;
 
 // Description of the item.
-@property(nonatomic, strong) NSString* actionDescription;
+@property(nonatomic, copy) NSString* actionDescription;
 
 // Elapsed time since the action occurred (e.g., "6h ago", "just now").
-@property(nonatomic, strong) NSString* elapsedTime;
+@property(nonatomic, copy) NSString* elapsedTime;
 
 // The type of action to be taken when this activity row is clicked.
 // Not to be used by the UI.

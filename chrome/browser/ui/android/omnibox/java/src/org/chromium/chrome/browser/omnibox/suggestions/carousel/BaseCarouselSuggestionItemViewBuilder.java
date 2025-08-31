@@ -12,6 +12,7 @@ import android.view.ViewGroup;
 
 import androidx.annotation.IntDef;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.omnibox.R;
 import org.chromium.chrome.browser.omnibox.styles.OmniboxResourceProvider;
 import org.chromium.chrome.browser.omnibox.suggestions.mostvisited.MostVisitedTileViewBinder;
@@ -26,6 +27,7 @@ import java.lang.annotation.RetentionPolicy;
  * ViewBuilder for the Carousel suggestion. Its sole responsibility is to inflate appropriate view
  * layouts for supplied view type.
  */
+@NullMarked
 public class BaseCarouselSuggestionItemViewBuilder {
     /**
      * ViewType defines a list of Views that are understood by the Carousel. Views below can be used
@@ -35,7 +37,7 @@ public class BaseCarouselSuggestionItemViewBuilder {
     @Retention(RetentionPolicy.SOURCE)
     public @interface ViewType {
         /** Carousel item is a TileView instance. */
-        public int TILE_VIEW = 0;
+        int TILE_VIEW = 0;
     }
 
     /**

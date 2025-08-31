@@ -6,19 +6,22 @@
 #define CONTENT_BROWSER_PRELOADING_PREFETCH_PREFETCH_RESPONSE_READER_H_
 
 #include "base/time/time.h"
-#include "content/browser/preloading/prefetch/prefetch_data_pipe_tee.h"
 #include "content/browser/preloading/prefetch/prefetch_streaming_url_loader_common_types.h"
 #include "content/common/content_export.h"
-#include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
-#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/remote_set.h"
 #include "net/http/http_cookie_indices.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
 
+namespace ukm::builders {
+class PrefetchProxy_PrefetchedResource;
+}  // namespace ukm::builders
+
 namespace content {
 
+class PrefetchContainer;
+class PrefetchDataPipeTee;
 class PrefetchStreamingURLLoader;
 class ServiceWorkerClient;
 class ServiceWorkerMainResourceHandle;
@@ -47,12 +50,9 @@ class CONTENT_EXPORT PrefetchResponseReader final
     : public network::mojom::URLLoader,
       public base::RefCounted<PrefetchResponseReader> {
  public:
-  // TODO(crbug.com/373553133): Stop using two different constructors once we
-  // find how we enable `is_reusable_` path.
-  explicit PrefetchResponseReader(bool is_reusable);
-  // For
-  // //content/browser/preloading/prefetch/prefetch_streaming_url_loader_unittest.cc
-  explicit PrefetchResponseReader();
+  PrefetchResponseReader(base::OnceClosure on_determined_head_callback,
+                         OnPrefetchResponseCompletedCallback
+                             on_prefetch_response_completed_callback);
 
   void SetStreamingURLLoader(
       base::WeakPtr<PrefetchStreamingURLLoader> streaming_url_loader);
@@ -98,10 +98,6 @@ class CONTENT_EXPORT PrefetchResponseReader final
 
   bool Servable(base::TimeDelta cacheable_duration) const;
   bool IsWaitingForResponse() const;
-  std::optional<network::URLLoaderCompletionStatus> GetCompletionStatus()
-      const {
-    return completion_status_;
-  }
   const network::mojom::URLResponseHead* GetHead() const { return head_.get(); }
 
   // True if this response had Vary: Cookie (or Vary: *), and a Cookie-Indices
@@ -114,17 +110,64 @@ class CONTENT_EXPORT PrefetchResponseReader final
   bool MatchesCookieIndices(
       base::span<const std::pair<std::string, std::string>> cookies) const;
 
+  void RecordOnPrefetchContainerDestroyed(
+      base::PassKey<PrefetchContainer>,
+      ukm::builders::PrefetchProxy_PrefetchedResource& builder) const;
+
+  // Valid state transitions (which imply valid event sequences) are:
+  // - Redirect: `kStarted` -> `kRedirectHandled`
+  // - Non-redirect: `kStarted` -> `kResponseReceived` -> `kCompleted`
+  // - Failure: `kStarted` -> `kFailed`
+  //            `kStarted` -> `kFailedRedirect`
+  //            `kStarted` -> `kFailedResponseReceived` -> `kFailed`
+  //            `kStarted` -> `kResponseReceived` -> `kFailed`
+  // Optional `OnReceiveEarlyHints()` and `OnTransferSizeUpdated()` events can
+  // be received in any non-final states.
+  enum class LoadState {
+    // Initial state, not yet receiving a redirect nor non-redirect response.
+    kStarted,
+
+    // [Final] A redirect response is received (`HandleRedirect()` is called).
+    // This is a final state because we always switch to a new
+    // `PrefetchResponseReader` on redirects.
+    kRedirectHandled,
+
+    // [servable] A non-redirect successful response is received
+    // (`OnReceiveResponse()` is called with `servable` = true).
+    kResponseReceived,
+
+    // A non-redirect failed response is received (`OnReceiveResponse()` is
+    // called with `servable` = false).
+    kFailedResponseReceived,
+
+    // [Final, servable] Successful completion (`OnComplete(net::OK)` is called
+    // after `kResponseReceived`.
+    kCompleted,
+
+    // [Final] Failed completion (`OnComplete()` is called, either with
+    // non-`net::OK`, or after `kFailedResponseReceived`).
+    kFailed,
+
+    // [Final] Failed redirects.
+    kFailedRedirect
+  };
+
+  LoadState load_state() const { return load_state_; }
+
   base::WeakPtr<PrefetchResponseReader> GetWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();
   }
-
-  bool is_reusable() const { return is_reusable_; }
 
  private:
   // Identifies a client in `serving_url_loader_clients_`.
   using ServingUrlLoaderClientId = mojo::RemoteSetElementId;
 
   friend class base::RefCounted<PrefetchResponseReader>;
+  // This is necessary because `PrefetchContainerObserver` emulates a callback
+  // that we will provide in the future.
+  //
+  // TODO(crbug.com/400761083): Remove it.
+  friend class PrefetchContainerObserver;
 
   ~PrefetchResponseReader() override;
 
@@ -173,9 +216,6 @@ class CONTENT_EXPORT PrefetchResponseReader final
   // redirect responses).
   void StoreInfoFromResponseHead(const network::mojom::URLResponseHead& head);
 
-  // If true, the body is reusable with help of `PrefetchDataPipeTee`.
-  const bool is_reusable_;
-
   // All URLLoader events are queued up here.
   std::vector<EventCallback> event_queue_;
 
@@ -186,52 +226,33 @@ class CONTENT_EXPORT PrefetchResponseReader final
   };
   EventQueueStatus event_queue_status_{EventQueueStatus::kNotRunning};
 
-  // Valid state transitions (which imply valid event sequences) are:
-  // - Redirect: `kStarted` -> `kRedirectHandled`
-  // - Non-redirect: `kStarted` -> `kResponseReceived` -> `kCompleted`
-  // - Failure: `kStarted` -> `kFailed`
-  //            `kStarted` -> `kFailedRedirect`
-  //            `kStarted` -> `kFailedResponseReceived` -> `kFailed`
-  //            `kStarted` -> `kResponseReceived` -> `kFailed`
-  // Optional `OnReceiveEarlyHints()` and `OnTransferSizeUpdated()` events can
-  // be received in any non-final states.
-  enum class LoadState {
-    // Initial state, not yet receiving a redirect nor non-redirect response.
-    kStarted,
-
-    // [Final] A redirect response is received (`HandleRedirect()` is called).
-    // This is a final state because we always switch to a new
-    // `PrefetchResponseReader` on redirects.
-    kRedirectHandled,
-
-    // [servable] A non-redirect successful response is received
-    // (`OnReceiveResponse()` is called with `servable` = true).
-    kResponseReceived,
-
-    // A non-redirect failed response is received (`OnReceiveResponse()` is
-    // called with `servable` = false).
-    kFailedResponseReceived,
-
-    // [Final, servable] Successful completion (`OnComplete(net::OK)` is called
-    // after `kResponseReceived`.
-    kCompleted,
-
-    // [Final] Failed completion (`OnComplete()` is called, either with
-    // non-`net::OK`, or after `kFailedResponseReceived`).
-    kFailed,
-
-    // [Final] Failed redirects.
-    kFailedRedirect
-  };
-
   // Always access/update through `load_state()` and
   // `SetLoadStateAndAddEventToQueue()` below, to avoid unintentional state
   // changes and missing related callbacks on state changes.
   LoadState load_state_{LoadState::kStarted};
 
-  LoadState load_state() const { return load_state_; }
   void SetLoadStateAndAddEventToQueue(LoadState new_load_state,
                                       EventCallback callback);
+
+  // Called when transitioned for the first time to a state other than
+  // `kStarted` nor `kRedirectHandled`.
+  //
+  // This should be always called once for the entire `PrefetchResponseReader`s
+  // for a given `PrefetchContainer`.
+  // TODO(https://crbug.com/400761083): This isn't called for:
+  // - unexpected mojo disconnection cases (See
+  //   `PrefetchStreamingURLLoaderTest.UnexpectedUrlLoaderDisconnect`).
+  base::OnceClosure on_determined_head_callback_;
+
+  // Called when transitioned to `kCompleted` or `kFailed`.
+  // This is called after `on_determined_head_callback_` at most once for the
+  // entire `PrefetchResponseReader`s for a given `PrefetchContainer`.
+  // TODO(https://crbug.com/400761083): This isn't called for:
+  // - `kFailedRedirect` (See
+  //   `PrefetchStreamingURLLoaderTest.IneligibleRedirect`) or
+  // - unexpected mojo disconnection cases (See
+  //   `PrefetchStreamingURLLoaderTest.UnexpectedUrlLoaderDisconnect`).
+  OnPrefetchResponseCompletedCallback on_prefetch_response_completed_callback_;
 
   // Used for UMA recording.
   // TODO(crbug.com/40064891): we might want to adapt these flags and UMA
@@ -262,9 +283,6 @@ class CONTENT_EXPORT PrefetchResponseReader final
 
   // The prefetched data and metadata. Not set for a redirect response.
   network::mojom::URLResponseHeadPtr head_;
-  // `body_` is set/used only when `!is_reusable_`.
-  mojo::ScopedDataPipeConsumerHandle body_;
-  // `body_tee_` is set/used only when `is_reusable_`.
   scoped_refptr<PrefetchDataPipeTee> body_tee_;
   std::optional<network::URLLoaderCompletionStatus> completion_status_;
   // Recorded on `OnComplete` and used to check if the prefetch data is still

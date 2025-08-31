@@ -185,9 +185,6 @@ class AppInstallEventLoggerTest : public testing::Test {
       delete;
 
   void SetUp() override {
-    RegisterLocalState(pref_service_.registry());
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&pref_service_);
-
     chromeos::PowerManagerClient::InitializeFake();
   }
 
@@ -195,7 +192,6 @@ class AppInstallEventLoggerTest : public testing::Test {
     logger_.reset();
     task_environment_.RunUntilIdle();
     chromeos::PowerManagerClient::Shutdown();
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
   }
 
   // Runs |function|, verifies that the expected event is added to the logs for
@@ -283,7 +279,6 @@ class AppInstallEventLoggerTest : public testing::Test {
 
   content::BrowserTaskEnvironment task_environment_;
   ash::NetworkHandlerTestHelper network_handler_test_helper_;
-  TestingPrefServiceSimple pref_service_;
   TestingProfile profile_;
 
   MockAppInstallEventLoggerDelegate delegate_;

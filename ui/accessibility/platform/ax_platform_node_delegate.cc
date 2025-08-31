@@ -5,7 +5,10 @@
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
 
 #include "base/containers/fixed_flat_set.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_selection.h"
 #include "ui/accessibility/platform/ax_platform.h"
@@ -83,8 +86,9 @@ std::u16string AXPlatformNodeDelegate::GetTextContentUTF16() const {
     // const_cast.
     const AXPlatformNode* child = AXPlatformNode::FromNativeViewAccessible(
         const_cast<AXPlatformNodeDelegate*>(this)->ChildAtIndex(i));
-    if (!child || !child->GetDelegate())
+    if (!child) {
       continue;
+    }
     text_content += child->GetDelegate()->GetTextContentUTF16();
   }
   return text_content;
@@ -677,8 +681,7 @@ bool AXPlatformNodeDelegate::GetFloatAttribute(
   return false;
 }
 
-const std::vector<std::pair<ax::mojom::IntAttribute, int32_t>>&
-AXPlatformNodeDelegate::GetIntAttributes() const {
+const AXIntAttributes& AXPlatformNodeDelegate::GetIntAttributes() const {
   if (node_)
     return node_->GetIntAttributes();
   return GetData().int_attributes;
@@ -707,8 +710,7 @@ bool AXPlatformNodeDelegate::GetIntAttribute(ax::mojom::IntAttribute attribute,
   return false;
 }
 
-const std::vector<std::pair<ax::mojom::StringAttribute, std::string>>&
-AXPlatformNodeDelegate::GetStringAttributes() const {
+const AXStringAttributes& AXPlatformNodeDelegate::GetStringAttributes() const {
   if (node_)
     return node_->GetStringAttributes();
   return GetData().string_attributes;
@@ -773,8 +775,8 @@ std::u16string AXPlatformNodeDelegate::GetInheritedString16Attribute(
   return GetData().GetString16Attribute(attribute);
 }
 
-const std::vector<std::pair<ax::mojom::IntListAttribute, std::vector<int32_t>>>&
-AXPlatformNodeDelegate::GetIntListAttributes() const {
+const AXIntListAttributes& AXPlatformNodeDelegate::GetIntListAttributes()
+    const {
   if (node_)
     return node_->GetIntListAttributes();
   return GetData().intlist_attributes;
@@ -840,16 +842,14 @@ AXTextAttributes AXPlatformNodeDelegate::GetTextAttributes() const {
   return GetData().GetTextAttributes();
 }
 
+AXStates AXPlatformNodeDelegate::GetStates() const {
+  return node_ ? node_->GetStates() : GetData().GetStates();
+}
+
 bool AXPlatformNodeDelegate::HasState(ax::mojom::State state) const {
   if (node_)
     return node_->HasState(state);
   return GetData().HasState(state);
-}
-
-ax::mojom::State AXPlatformNodeDelegate::GetState() const {
-  if (node_)
-    return node_->GetState();
-  return static_cast<ax::mojom::State>(GetData().state);
 }
 
 bool AXPlatformNodeDelegate::HasAction(ax::mojom::Action action) const {
@@ -950,16 +950,7 @@ ax::mojom::DescriptionFrom AXPlatformNodeDelegate::GetDescriptionFrom() const {
 
 const AXSelection AXPlatformNodeDelegate::GetUnignoredSelection() const {
   if (node_)
-    return node_->GetUnignoredSelection(/*non_text_endpoints*/ false);
-
-  NOTIMPLEMENTED();
-  return AXSelection();
-}
-
-const AXSelection AXPlatformNodeDelegate::GetHypertextSelection() const {
-  if (node_) {
-    return node_->GetUnignoredSelection(/*non_text_endpoints*/ true);
-  }
+    return node_->GetUnignoredSelection();
 
   NOTIMPLEMENTED();
   return AXSelection();

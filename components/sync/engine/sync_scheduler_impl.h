@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/cancelable_callback.h"
@@ -76,7 +77,6 @@ class SyncSchedulerImpl : public SyncScheduler {
       const std::map<DataType, base::TimeDelta>& nudge_delays) override;
   void OnSyncProtocolError(
       const SyncProtocolError& sync_protocol_error) override;
-  void OnReceivedGuRetryDelay(const base::TimeDelta& delay) override;
   void OnReceivedMigrationRequest(DataTypeSet types) override;
   void OnReceivedQuotaParamsForExtensionTypes(
       std::optional<int> max_tokens,
@@ -200,9 +200,6 @@ class SyncSchedulerImpl : public SyncScheduler {
   // Creates a cycle for a poll and performs the sync.
   void PollTimerCallback();
 
-  // Creates a cycle for a retry and performs the sync.
-  void RetryTimerCallback();
-
   // Returns the set of types that are enabled and not currently throttled and
   // backed off.
   DataTypeSet GetEnabledAndUnblockedTypes();
@@ -233,8 +230,8 @@ class SyncSchedulerImpl : public SyncScheduler {
   // The mode of operation.
   Mode mode_ = CONFIGURATION_MODE;
 
-  // Current wait state.  Null if we're not in backoff and not throttled.
-  std::unique_ptr<WaitInterval> wait_interval_;
+  // Current wait state. `Nullopt` if we're not in backoff and not throttled.
+  std::optional<WaitInterval> wait_interval_;
 
   std::unique_ptr<BackoffDelayProvider> delay_provider_;
 
@@ -260,9 +257,6 @@ class SyncSchedulerImpl : public SyncScheduler {
   // The time when the last poll request finished. Used for computing the next
   // poll time.
   base::Time last_poll_reset_time_;
-
-  // One-shot timer for scheduling GU retry according to delay set by server.
-  base::OneShotTimer retry_timer_;
 
   // Dictates if the scheduler should wait for authentication to happen or not.
   const bool ignore_auth_credentials_;

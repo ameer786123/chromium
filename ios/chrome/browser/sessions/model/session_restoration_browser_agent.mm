@@ -277,36 +277,31 @@ std::unique_ptr<web::WebState> CreateWebState(
 
 }  // namespace
 
-BROWSER_USER_DATA_KEY_IMPL(SessionRestorationBrowserAgent)
-
 SessionRestorationBrowserAgent::SessionRestorationBrowserAgent(
     Browser* browser,
     SessionServiceIOS* session_service,
-    bool enable_pinned_web_states,
-    bool enable_tab_groups)
-    : session_service_(session_service),
-      browser_(browser),
+    bool enable_pinned_web_states)
+    : BrowserUserData(browser),
+      session_service_(session_service),
       session_window_ios_factory_([[SessionWindowIOSFactory alloc]
           initWithWebStateList:browser_->GetWebStateList()]),
       enable_pinned_web_states_(enable_pinned_web_states),
-      enable_tab_groups_(enable_tab_groups),
       all_web_state_observer_(std::make_unique<AllWebStateObservationForwarder>(
           browser_->GetWebStateList(),
           this)) {
-  browser_->AddObserver(this);
   browser_->GetWebStateList()->AddObserver(this);
 }
 
 SessionRestorationBrowserAgent::~SessionRestorationBrowserAgent() {
+  // Stop observing web states.
+  all_web_state_observer_.reset();
+
+  // Stop observing web state list.
+  browser_->GetWebStateList()->RemoveObserver(this);
+
   // Disconnect the session factory object as it's not garanteed that it will
   // be released before it's referenced by the session service.
   [session_window_ios_factory_ disconnect];
-
-  // If the object is destroyed before the Browser, unregister it from the
-  // ObserverList explicitly.
-  if (browser_) {
-    BrowserDestroyed(browser_);
-  }
 }
 
 void SessionRestorationBrowserAgent::SetSessionID(
@@ -344,7 +339,7 @@ void SessionRestorationBrowserAgent::RestoreSessionWindow(
   const std::vector<web::WebState*> restored_web_states =
       DeserializeWebStateList(
           browser_->GetWebStateList(), FilterInvalidTabs(window),
-          enable_pinned_web_states_, enable_tab_groups_,
+          enable_pinned_web_states_,
           base::BindRepeating(&CreateWebState, web::WebState::CreateParams(
                                                    browser_->GetProfile())));
 
@@ -415,11 +410,6 @@ bool SessionRestorationBrowserAgent::CanSaveSession() {
     return false;
   }
 
-  // A session requires an active Browser.
-  if (!browser_) {
-    return false;
-  }
-
   // Sessions where there's no active tab shouldn't be saved, unless the web
   // state list is empty. This is a transitional state.
   WebStateList* const web_state_list = browser_->GetWebStateList();
@@ -428,19 +418,6 @@ bool SessionRestorationBrowserAgent::CanSaveSession() {
   }
 
   return true;
-}
-
-#pragma mark - BrowserObserver
-
-void SessionRestorationBrowserAgent::BrowserDestroyed(Browser* browser) {
-  DCHECK_EQ(browser, browser_);
-  // Stop observing web states.
-  all_web_state_observer_.reset();
-
-  // Stop observing web state list.
-  browser_->GetWebStateList()->RemoveObserver(this);
-  browser_->RemoveObserver(this);
-  browser_ = nullptr;
 }
 
 #pragma mark - WebStateListObserver

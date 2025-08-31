@@ -56,6 +56,8 @@ class RealtimeReportingClient : public RealtimeReportingClientBase {
 
   // RealtimeReportingClientBase overrides:
   std::string GetProfileUserName() override;
+  std::string GetProfileIdentifier() override;
+  std::string GetContentAreaAccountEmail(const GURL& url) override;
   base::WeakPtr<RealtimeReportingClientBase> AsWeakPtr() override;
   std::optional<ReportingSettings> GetReportingSettings() override;
 
@@ -79,6 +81,9 @@ class RealtimeReportingClient : public RealtimeReportingClientBase {
                                    const ReportingSettings& settings,
                                    base::Value::Dict event);
 
+  base::Value::Dict ReportErrorDetails(
+      const policy::CloudPolicyClient::Result& upload_result);
+
   // Report safe browsing events that have occurred in the past but has not yet
   // been reported. This is currently used for browser crash events, which are
   // polled at a fixed time interval. Declared as virtual for tests.
@@ -89,7 +94,6 @@ class RealtimeReportingClient : public RealtimeReportingClientBase {
 
  private:
   // RealtimeReportingClientBase overrides (all overrides below):
-  std::string GetProfileIdentifier() override;
   std::string GetBrowserClientId() override;
   base::Value::Dict GetContext() override;
   ::chrome::cros::reporting::proto::UploadEventsRequest
@@ -99,13 +103,15 @@ class RealtimeReportingClient : public RealtimeReportingClientBase {
       base::Value::Dict event_wrapper,
       bool per_profile,
       policy::CloudPolicyClient* client,
-      EnterpriseReportingEventType eventType,
+      EnterpriseReportingEventType event_type,
+      base::TimeTicks upload_started_at,
       policy::CloudPolicyClient::Result upload_result) override;
   void UploadCallback(
       ::chrome::cros::reporting::proto::UploadEventsRequest request,
       bool per_profile,
       policy::CloudPolicyClient* client,
-      EnterpriseReportingEventType eventType,
+      EnterpriseReportingEventType event_type,
+      base::TimeTicks upload_started_at,
       policy::CloudPolicyClient::Result upload_result) override;
 
 #if !BUILDFLAG(IS_CHROMEOS)
@@ -179,6 +185,9 @@ class RealtimeReportingClient : public RealtimeReportingClientBase {
 // chrome/cros/reporting/api/proto/browser_events.proto
 void AddCrowdstrikeSignalsToEvent(
     base::Value::Dict& event,
+    const device_signals::SignalsAggregationResponse& response);
+void AddCrowdstrikeSignalsToEvent(
+    ::chrome::cros::reporting::proto::Event& event,
     const device_signals::SignalsAggregationResponse& response);
 #endif
 

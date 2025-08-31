@@ -180,6 +180,24 @@ class CookieSettingsBase {
   static ThirdPartyCookieAllowMechanism TpcdMetadataSourceToAllowMechanism(
       const mojom::TpcdMetadataRuleSource& source);
 
+  // MetadataSourceType exposes 3PCD metadata rule sources in UKM. It should
+  // match FirstPartyMetadataSource in tools/metrics/histograms/enums.xml.
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class MetadataSourceType {
+    None = 0,
+    FirstPartyDt = 1,
+    ThirdPartyDt = 2,
+    CriticalSector = 3,
+    CriticalSectorTld = 4,
+    Cuj = 5,
+    OtherMetadata = 6,
+    Heuristics = 7,
+  };
+
+  static MetadataSourceType AllowMechanismToMetadataSourceType(
+      const ThirdPartyCookieAllowMechanism& allow_mechanism);
+
   class CookieSettingWithMetadata {
    public:
     CookieSettingWithMetadata() = default;
@@ -284,15 +302,6 @@ class CookieSettingsBase {
       base::optional_ref<const net::CookiePartitionKey> cookie_partition_key,
       CookieSettingWithMetadata* cookie_settings = nullptr) const;
 
-  // TODO(https://crbug.com/399826579): Remove this overload and migrate all
-  // callsites to signature above
-  bool IsFullCookieAccessAllowed(
-      const GURL& url,
-      const net::SiteForCookies& site_for_cookies,
-      base::optional_ref<const url::Origin> top_frame_origin,
-      net::CookieSettingOverrides overrides,
-      CookieSettingWithMetadata* cookie_settings = nullptr) const;
-
   // Returns true if the cookie set by a page identified by |url| should be
   // session only. Querying this only makes sense if |IsFullCookieAccessAllowed|
   // has returned true.
@@ -388,18 +397,6 @@ class CookieSettingsBase {
   // access.
   static bool IsValidSettingForLegacyAccess(ContentSetting setting);
 
-  // Returns a set of overrides that includes Storage Access API and Top-Level
-  // Storage Access API overrides iff the config booleans indicate that Storage
-  // Access API and Top-Level Storage Access API should unlock access to DOM
-  // storage.
-  net::CookieSettingOverrides SettingOverridesForStorage() const;
-
-  // Controls whether Storage Access API grants allow access to unpartitioned
-  // *storage*, in addition to unpartitioned cookies. This is static so that all
-  // instances behave consistently.
-  static void SetStorageAccessAPIGrantsUnpartitionedStorageForTesting(
-      bool grants);
-
   // Returns an indication of whether the context given by `url`,
   // `top_frame_origin`, and `site_for_cookies` has storage access,
   // given a particular set of `overrides`. Returns nullopt for same-site
@@ -439,10 +436,36 @@ class CookieSettingsBase {
   // `first_party_url`.
   bool IsBlockedByTopLevel3pcdOriginTrial(const GURL& first_party_url) const;
 
-  // Proxies of the restricted cookie manager can override if third party
-  // cookies should be allowed.
-  // Used by WebView.
-  bool Are3pcsForceDisabledByOverride(
+  // The cookie behavior that may result from a cookie settings modifier
+  // (`CookieSettingOverrides` or origin trial).
+  enum class ModifierMode {
+    // Indicates that the modifiers are not enough to determine the resulting
+    // cookie behavior.
+    kUndefined = 0,
+    // Indicates that third-party cookies are allowed due to the modifiers.
+    kAllow = 1,
+    // Indicates that third-party cookies are blocked but may also be unblocked
+    // due to third-party cookie phaseout related mitigations (grace period,
+    // heuristics, etc.)
+    kPhaseout = 2,
+    // Indicates that third-party cookies are blocked and cannot be unblocked
+    // due to third-party cookie phaseout related mitigations (grace period,
+    // heuristics, etc.)
+    kBlock = 3,
+  };
+
+  // Will return the `ModifierMode` based on the `CookieSettingOverrides` and
+  // top-level 3pcd origin trial status.
+  ModifierMode GetModifierMode(
+      base::optional_ref<const url::Origin> top_frame_origin,
+      net::CookieSettingOverrides overrides) const;
+
+  // Returns whether third-party cookies should be blocked solely due to
+  // third-party-cookie "modifiers" (`CookieSettingOverrides` or origin trial).
+  // If the modifiers are not enough to determine a decision, `std::nullopt`
+  // will be returned.
+  std::optional<bool> MaybeBlockThirdPartyCookiesPerModifiers(
+      base::optional_ref<const url::Origin> top_frame_origin,
       net::CookieSettingOverrides overrides) const;
 
  private:
@@ -549,9 +572,6 @@ class CookieSettingsBase {
   // Returns whether |scheme| is always allowed to access 3p cookies.
   virtual bool IsThirdPartyCookiesAllowedScheme(
       const std::string& scheme) const = 0;
-
-  static bool storage_access_api_grants_unpartitioned_storage_;
-  const bool is_storage_partitioned_;
 };
 
 }  // namespace content_settings

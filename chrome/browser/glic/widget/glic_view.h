@@ -7,31 +7,24 @@
 
 #include <optional>
 
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/views/view.h"
+#include "ui/views/controls/webview/webview.h"
 #include "ui/views/widget/unique_widget_ptr.h"
-
-namespace content {
-class WebContents;
-}
 
 namespace gfx {
 class Rect;
 }  // namespace gfx
 
-namespace views {
-class WebView;
-}  // namespace views
-
 class Profile;
 
 namespace glic {
 
-class GlicView : public views::View {
-  METADATA_HEADER(GlicView, views::View)
+class GlicView : public views::WebView {
+  METADATA_HEADER(GlicView, views::WebView)
 
  public:
   GlicView(Profile* profile,
@@ -47,17 +40,17 @@ class GlicView : public views::View {
 
   bool IsPointWithinDraggableArea(const gfx::Point& point);
 
-  void SetWebContents(content::WebContents* web_contents);
-
   // Try to get the background color from the web UI and use it as this view's
   // background color. Only call after the client is initialized.
   void UpdateBackgroundColor();
 
   void UpdatePrimaryDraggableAreaOnResize();
 
-  views::WebView* web_view() { return web_view_; }
-
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
+
+  base::WeakPtr<GlicView> GetWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
 
  private:
   std::optional<SkColor> GetClientBackgroundColor();
@@ -67,6 +60,7 @@ class GlicView : public views::View {
   // Defines the areas of the view from which it can be dragged. These areas can
   // be updated by the glic web client.
   std::vector<gfx::Rect> draggable_areas_;
+  base::WeakPtrFactory<GlicView> weak_ptr_factory_{this};
 };
 
 }  // namespace glic

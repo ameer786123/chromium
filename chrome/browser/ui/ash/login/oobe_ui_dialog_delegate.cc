@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/ui/ash/login/oobe_ui_dialog_delegate.h"
 
@@ -225,7 +221,7 @@ class LayoutWidgetDelegateView : public views::WidgetDelegateView {
     gfx::Rect bounds;
     const int shelf_height = has_shelf_ ? ShelfConfig::Get()->shelf_size() : 0;
     const gfx::Size display_size =
-        display::Screen::GetScreen()->GetPrimaryDisplay().size();
+        display::Screen::Get()->GetPrimaryDisplay().size();
     const bool is_horizontal = display_size.width() > display_size.height();
     CalculateOobeDialogBounds(GetContentsBounds(), shelf_height, is_horizontal,
                               &bounds);
@@ -495,7 +491,8 @@ void OobeUIDialogDelegate::OnFocusLeavingSystemTray(bool reverse) {
 }
 
 web_modal::WebContentsModalDialogHost*
-OobeUIDialogDelegate::GetWebContentsModalDialogHost() {
+OobeUIDialogDelegate::GetWebContentsModalDialogHost(
+    content::WebContents* web_contents) {
   return this;
 }
 

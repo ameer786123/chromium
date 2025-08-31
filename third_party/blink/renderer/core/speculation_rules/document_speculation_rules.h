@@ -8,7 +8,6 @@
 #include "third_party/blink/public/mojom/speculation_rules/speculation_rules.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/speculation_rules/speculation_rule_set.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -63,6 +62,8 @@ class CORE_EXPORT DocumentSpeculationRules
   void LinkGainedOrLostComputedStyle(HTMLAnchorElementBase* link);
   void DocumentStyleUpdated();
   void ChildStyleRecalcBlocked(Element* root);
+  void DisplayLockedRootsForceUpdateEnded(
+      const HeapVector<Member<Element>>& roots);
   void DidStyleChildren(Element* root);
   void DisplayLockedElementDisconnected(Element* root);
 
@@ -74,6 +75,8 @@ class CORE_EXPORT DocumentSpeculationRules
   // Requests a future call to UpdateSpeculationCandidates, if none is yet
   // scheduled.
   void QueueUpdateSpeculationCandidates(bool force_style_update = false);
+
+  void FlushMojoMessageForTesting();
 
   void Trace(Visitor*) const override;
 

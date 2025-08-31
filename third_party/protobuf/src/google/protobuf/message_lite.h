@@ -12,6 +12,12 @@
 //
 // Defines MessageLite, the abstract interface implemented by all (lite
 // and non-lite) protocol message objects.
+//
+// This is only intended to be extended by protoc created gencode or types
+// defined in the Protobuf runtime. It is not intended or supported for
+// application code to extend this class, and any protected methods may be
+// removed without being it being considered a breaking change as long as the
+// corresponding gencode does not use it.
 
 #ifndef GOOGLE_PROTOBUF_MESSAGE_LITE_H__
 #define GOOGLE_PROTOBUF_MESSAGE_LITE_H__
@@ -22,19 +28,16 @@
 #include <cstring>
 #include <iosfwd>
 #include <memory>
-#include <new>
 #include <string>
 #include <type_traits>
 #include <utility>
 
 #include "absl/base/attributes.h"
-#include "absl/base/casts.h"
 #include "absl/log/absl_check.h"
 #include "absl/numeric/bits.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/arena.h"
-#include "google/protobuf/explicitly_constructed.h"
 #include "google/protobuf/internal_visibility.h"
 #include "google/protobuf/io/coded_stream.h"
 #include "google/protobuf/metadata_lite.h"
@@ -81,6 +84,8 @@ namespace internal {
 
 namespace v2 {
 class TableDriven;
+class TableDrivenMessage;
+class TableDrivenParse;
 }  // namespace v2
 
 class MessageCreator {
@@ -125,11 +130,11 @@ class MessageCreator {
         func_(func) {}
 
   // Template for testing.
-  template <bool test_call = false, typename MessageLite>
+  template <typename MessageLite>
   MessageLite* New(const MessageLite* prototype_for_func,
                    const MessageLite* prototype_for_copy, Arena* arena) const;
 
-  template <bool test_call = false, typename MessageLite>
+  template <typename MessageLite>
   MessageLite* PlacementNew(const MessageLite* prototype_for_func,
                             const MessageLite* prototype_for_copy, void* mem,
                             Arena* arena) const;
@@ -240,7 +245,15 @@ class PROTOBUF_EXPORT CachedSize {
 #endif
 };
 
-auto GetClassData(const MessageLite& msg);
+struct ClassData;
+
+// Returns the ClassData for the given message.
+//
+// This function is used to get the ClassData for a message without having to
+// know the type of the message. This is useful for when the message is a
+// generated message.
+template <typename Type>
+const ClassData* GetClassData(const Type& msg);
 
 template <const auto* kDefault, const auto* kClassData>
 struct GeneratedMessageTraitsT {
@@ -253,7 +266,8 @@ template <typename T>
 struct FallbackMessageTraits {
   static const void* default_instance() { return &T::default_instance(); }
   static constexpr const auto* class_data() {
-    return GetClassData(T::default_instance());
+    // Force the abstract branch of `GetClassData()` to avoid endless recursion.
+    return GetClassData<MessageLite>(T::default_instance());
   }
   // We can't make a constexpr pointer to the default, so use a function pointer
   // instead.
@@ -302,6 +316,7 @@ class WireFormatLite;
 class WeakFieldMap;
 class RustMapHelper;
 
+
 // We compute sizes as size_t but cache them as int.  This function converts a
 // computed size to a cached size.  Since we don't proceed with serialization
 // if the total size was > INT_MAX, it is not important what this function
@@ -329,18 +344,10 @@ inline int ToIntSize(size_t size) {
   return static_cast<int>(size);
 }
 
-#if defined(PROTOBUF_FUTURE_STRING_VIEW_RETURN_TYPE)
-using GetTypeNameReturnType = absl::string_view;
-#else
-using GetTypeNameReturnType = std::string;
-#endif
-
 
 PROTOBUF_EXPORT inline const std::string& GetEmptyStringAlreadyInited() {
   return fixed_address_empty_string.get();
 }
-
-PROTOBUF_EXPORT size_t StringSpaceUsedExcludingSelfLong(const std::string& str);
 
 struct ClassDataFull;
 
@@ -406,13 +413,12 @@ struct PROTOBUF_EXPORT ClassData {
       bool (*is_initialized)(const MessageLite&),
       void (*merge_to_from)(MessageLite& to, const MessageLite& from_msg),
       internal::MessageCreator message_creator,
-      void (*destroy_message)(MessageLite& msg),  //
-#if defined(PROTOBUF_CUSTOM_VTABLE)
-      void (MessageLite::*clear)(),
-#endif  // PROTOBUF_CUSTOM_VTABLE
-      size_t (*byte_size_long)(const MessageLite&),
-      uint8_t* (*serialize)(const MessageLite& msg, uint8_t* ptr,
-                            io::EpsCopyOutputStream* stream),
+      [[maybe_unused]] void (*destroy_message)(MessageLite& msg),  //
+      [[maybe_unused]] void (*clear)(MessageLite*),
+      [[maybe_unused]] size_t (*byte_size_long)(const MessageLite&),
+      [[maybe_unused]] uint8_t* (*serialize)(const MessageLite& msg,
+                                             uint8_t* ptr,
+                                             io::EpsCopyOutputStream* stream),
       uint32_t cached_size_offset, bool is_lite
       )
       : prototype(prototype),
@@ -540,7 +546,7 @@ class PROTOBUF_EXPORT MessageLite {
   // Basic Operations ------------------------------------------------
 
   // Get the name of this message type, e.g. "foo.bar.BazProto".
-  internal::GetTypeNameReturnType GetTypeName() const;
+  absl::string_view GetTypeName() const;
 
   // Construct a new instance of the same type.  Ownership is passed to the
   // caller.
@@ -705,7 +711,6 @@ class PROTOBUF_EXPORT MessageLite {
   bool MergePartialFromString(absl::string_view data);
   bool MergePartialFromString(const absl::Cord& data);
 
-
   // Serialization ---------------------------------------------------
   // Methods for serializing in protocol buffer format.  Most of these
   // are just simple wrappers around ByteSize() and SerializeWithCachedSizes().
@@ -829,6 +834,7 @@ class PROTOBUF_EXPORT MessageLite {
   virtual size_t ByteSizeLong() const = 0;
 #endif  // PROTOBUF_CUSTOM_VTABLE
 
+
   // Legacy ByteSize() API.
   [[deprecated("Please use ByteSizeLong() instead")]] int ByteSize() const {
     return internal::ToIntSize(ByteSizeLong());
@@ -893,12 +899,7 @@ class PROTOBUF_EXPORT MessageLite {
   }
   template <typename T>
   static constexpr internal::MessageCreator GetNewImpl() {
-#if defined(__cpp_if_constexpr)
     if constexpr (internal::EnableCustomNewFor<T>()) {
-#else
-    // Equally valid code, but might be more work for the compiler
-    if (internal::EnableCustomNewFor<T>()) {
-#endif
       return T::InternalNewImpl_();
     } else {
       return internal::MessageCreator(&T::PlacementNew_, sizeof(T), alignof(T));
@@ -986,6 +987,8 @@ class PROTOBUF_EXPORT MessageLite {
         GetClassData()->cached_size_offset);
   }
 
+  void VerifyHasBitConsistency() const;
+
  public:
   enum ParseFlags {
     // Merge vs. Parse:
@@ -1059,14 +1062,34 @@ class PROTOBUF_EXPORT MessageLite {
   friend class internal::WireFormatLite;
   friend class internal::RustMapHelper;
   friend class internal::v2::TableDriven;
-  friend internal::MessageCreator;
-
+  friend class internal::v2::TableDrivenMessage;
+  friend class internal::v2::TableDrivenParse;
+  friend class internal::MessageCreator;
+  friend class internal::RepeatedPtrFieldBase;
+  template <typename Type>
+  friend class internal::GenericTypeHandler;
   template <typename Type>
   friend class Arena::InternalHelper;
+  template <typename Type>
+  friend struct FallbackMessageTraits;
 
-  friend auto internal::GetClassData(const MessageLite& msg);
+  template <typename Type>
+  friend const internal::ClassData* internal::GetClassData(const Type& msg);
+
+  static bool CheckFieldPresence(const internal::ParseContext& ctx,
+                                 const MessageLite& msg,
+                                 MessageLite::ParseFlags parse_flags);
 
   void LogInitializationErrorMessage() const;
+
+  // Merges the contents of `other` into `this`. This is faster than
+  // `CheckTypeAndMergeFrom()` and should be preferred by friended internal
+  // callers that have the right `ClassData` handy.
+  // REQUIRES: Both `this` and `other` are the exact same class as represented
+  // by `data`. If there is a mismatch, CHECK-fails in debug builds or causes UB
+  // in release builds (probably a crash).
+  void MergeFromWithClassData(const MessageLite& other,
+                              const internal::ClassData* data);
 
   bool MergeFromImpl(io::CodedInputStream* input, ParseFlags parse_flags);
 
@@ -1148,7 +1171,18 @@ class TypeId {
 
 namespace internal {
 
-inline auto GetClassData(const MessageLite& msg) { return msg.GetClassData(); }
+// The point of this function being a template is that for a concrete message
+// `Type`, the otherwise virtual `GetClassData()` call is resolved and inlined
+// at compile time (via `MessageTraits`).
+template <typename T>
+PROTOBUF_NDEBUG_INLINE const ClassData* GetClassData(const T& msg) {
+  static_assert(std::is_base_of_v<MessageLite, T>);
+  if constexpr (std::is_same_v<T, MessageLite> || std::is_same_v<Message, T>) {
+    return msg.GetClassData();
+  } else {
+    return MessageTraits<T>::class_data();
+  }
+}
 
 template <bool alias>
 bool MergeFromImpl(absl::string_view input, MessageLite* msg,
@@ -1248,19 +1282,15 @@ T* OnShutdownDelete(T* p) {
   return p;
 }
 
-template <bool test_call, typename MessageLite>
+template <typename MessageLite>
 PROTOBUF_ALWAYS_INLINE MessageLite* MessageCreator::PlacementNew(
     const MessageLite* prototype_for_func,
     const MessageLite* prototype_for_copy, void* mem, Arena* arena) const {
   ABSL_DCHECK_EQ(reinterpret_cast<uintptr_t>(mem) % alignment_, 0u);
   const Tag as_tag = tag();
-  // When the feature is not enabled we skip the `as_tag` check since it is
-  // unnecessary. Except for testing, where we want to test the copy logic even
-  // when we can't use it for real messages.
-  constexpr bool kMustBeFunc = !test_call && !internal::EnableCustomNew();
   static_assert(kFunc < 0 && !(kZeroInit < 0) && !(kMemcpy < 0),
                 "Only kFunc must be the only negative value");
-  if (ABSL_PREDICT_FALSE(kMustBeFunc || as_tag < 0)) {
+  if (ABSL_PREDICT_FALSE(static_cast<int8_t>(as_tag) < 0)) {
     PROTOBUF_DEBUG_COUNTER("MessageCreator.Func").Inc();
     return static_cast<MessageLite*>(func_(prototype_for_func, mem, arena));
   }
@@ -1349,15 +1379,15 @@ PROTOBUF_ALWAYS_INLINE MessageLite* MessageCreator::PlacementNew(
   return Launder(reinterpret_cast<MessageLite*>(mem));
 }
 
-template <bool test_call, typename MessageLite>
+template <typename MessageLite>
 PROTOBUF_ALWAYS_INLINE MessageLite* MessageCreator::New(
     const MessageLite* prototype_for_func,
     const MessageLite* prototype_for_copy, Arena* arena) const {
-  return PlacementNew<test_call>(prototype_for_func, prototype_for_copy,
-                                 arena != nullptr
-                                     ? arena->AllocateAligned(allocation_size_)
-                                     : ::operator new(allocation_size_),
-                                 arena);
+  return PlacementNew(prototype_for_func, prototype_for_copy,
+                      arena != nullptr
+                          ? arena->AllocateAligned(allocation_size_)
+                          : ::operator new(allocation_size_),
+                      arena);
 }
 
 }  // namespace internal

@@ -12,17 +12,16 @@
 #include "base/memory/weak_ptr.h"
 #include "base/types/expected.h"
 #include "base/types/optional_ref.h"
-#include "base/version.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/web_app_internals/web_app_internals.mojom.h"
 #include "components/webapps/common/web_app_id.h"
+#include "components/webapps/isolated_web_apps/types/iwa_version.h"
 #include "content/public/browser/web_ui.h"
 #include "url/gurl.h"
 
 namespace web_app {
 
 class IwaSourceDevModeWithFileOp;
-class ScopedTempWebBundleFile;
 class WebAppInternalsIwaInstallationBrowserTest;
 struct InstallIsolatedWebAppCommandSuccess;
 
@@ -97,18 +96,6 @@ class IwaInternalsHandler {
 
   Profile* profile() { return &profile_.get(); }
 
-  void DownloadWebBundleToFile(
-      const GURL& web_bundle_url,
-      ::mojom::UpdateInfoPtr update_info,
-      Handler::InstallIsolatedWebAppFromBundleUrlCallback callback,
-      web_app::ScopedTempWebBundleFile file);
-
-  void OnWebBundleDownloaded(
-      ::mojom::UpdateInfoPtr update_info,
-      Handler::InstallIsolatedWebAppFromBundleUrlCallback callback,
-      web_app::ScopedTempWebBundleFile bundle,
-      int32_t result);
-
   void OnIsolatedWebAppDevModeBundleSelected(
       Handler::SelectFileAndInstallIsolatedWebAppFromDevBundleCallback callback,
       std::optional<base::FilePath> path);
@@ -140,7 +127,7 @@ class IwaInternalsHandler {
   const raw_ref<content::WebUI> web_ui_;
   const raw_ref<Profile> profile_;
 
-  base::flat_map<webapps::AppId, base::Version> pinned_versions_;
+  base::flat_map<webapps::AppId, IwaVersion> pinned_versions_;
   base::flat_set<webapps::AppId> app_ids_allowing_downgrades_;
 
   // Runs updates for manifest-installed dev-mode apps.

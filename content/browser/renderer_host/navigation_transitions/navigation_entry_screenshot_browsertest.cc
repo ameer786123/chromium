@@ -391,9 +391,10 @@ class NavigationEntryScreenshotBrowserTest
   ~NavigationEntryScreenshotBrowserTest() override = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    base::FieldTrialParams bf_transition_params;
+    base::FieldTrialParams bf_transition_params{
+        {"min-required-physical-ram-mb", "0"}};
     if (Use1MinuteEvictionDelay()) {
-      bf_transition_params = {{"invisible-cache-cleanup-delay", "1m"}};
+      bf_transition_params["invisible-cache-cleanup-delay"] = "1m";
     }
     std::vector<base::test::FeatureRefAndParams> enabled_features = {
         {blink::features::kBackForwardTransitions, bf_transition_params}};
@@ -1199,8 +1200,15 @@ IN_PROC_BROWSER_TEST_P(NavigationEntryScreenshotBrowserTest,
 }
 
 // Regression test for https://crbug.com/368289857.
+// TODO(crbug.com/429352317): Re-enable this test.
 IN_PROC_BROWSER_TEST_P(NavigationEntryScreenshotBrowserTest,
-                       NavigateWhileHidden_NotCaptured) {
+  DISABLED_NavigateWhileHidden_NotCaptured) {
+  // TODO(crbug.com/390571607): Update this test to support default
+  // SiteInstanceGroup in all parameterization modes.
+  if (ShouldUseDefaultSiteInstanceGroup()) {
+    GTEST_SKIP();
+  }
+
   const size_t page_size = GetUncompressedScreenshotSizeInBytes();
   const size_t memory_budget = 10 * page_size;
   auto* manager = GetManagerForTab(web_contents());
@@ -1799,9 +1807,8 @@ class SameDocNavigationEntryScreenshotBrowserTest
   void SetUpCommandLine(base::CommandLine* command_line) override {
     std::vector<base::test::FeatureRefAndParams> enabled_features = {
         {viz::mojom::EnableVizTestApis, {}},
-        {blink::features::kBackForwardTransitions, {}},
-        {blink::features::kIncrementLocalSurfaceIdForMainframeSameDocNavigation,
-         {}}};
+        {blink::features::kBackForwardTransitions,
+         {{"min-required-physical-ram-mb", "0"}}}};
 
     scoped_feature_list_.InitWithFeaturesAndParameters(enabled_features, {});
 
@@ -2371,6 +2378,52 @@ IN_PROC_BROWSER_TEST_P(NavigationEntryScreenshotCacheHitOrMissReasonBrowserTest,
   }
 }
 
+// Ensure that only the necessary screenshots persist when a navigation happens
+// while a gesture is ongoing.
+IN_PROC_BROWSER_TEST_P(NavigationEntryScreenshotCacheHitOrMissReasonBrowserTest,
+                       NavigationDuringGesture) {
+  // One screenshot per Profile (BrowserContext).
+  const size_t page_size = GetUncompressedScreenshotSizeInBytes();
+  auto* manager = GetManagerForTab(web_contents());
+  manager->SetMemoryBudgetForTesting(page_size);
+  auto& controller = web_contents()->GetController();
+  {
+    SCOPED_TRACE("[red*] -> [red&, green*]");
+    NavigateTabAndWaitForScreenshotCached(web_contents(), controller,
+                                          GetNextUrl("/green.html"));
+    AssertCacheHitOrMissReasonsAre(
+        controller, {CacheHitOrMissReason::kCacheHit, std::nullopt});
+    AssertOrderedScreenshotsAre(controller, {SK_ColorRED, std::nullopt});
+  }
+  {
+    SCOPED_TRACE("[red&, green*] -> [red*, green&]");
+    // Simulate initiating a gesture.
+    std::unique_ptr<NavigationEntryScreenshot> screenshot =
+        controller.GetNavigationEntryScreenshotCache()->RemoveScreenshot(
+            controller.GetEntryAtOffset(-1));
+    AssertCacheHitOrMissReasonsAre(controller, {std::nullopt, std::nullopt});
+
+    // A renderer navigation starts.
+    auto* tab = web_contents();
+    TestFrameNavigationObserver nav_observer(tab->GetPrimaryMainFrame());
+    ScopedScreenshotCapturedObserverForTesting screenshot_observer(
+        controller.GetLastCommittedEntryIndex());
+    EXPECT_THAT(EvalJs(tab, "history.back();"), EvalJsResult::IsOk());
+
+    // Wait for screenshot to be pending.
+    screenshot_observer.Wait();
+    // Simulate canceling the gesture.
+    controller.GetNavigationEntryScreenshotCache()->SetScreenshot(
+        nullptr, std::move(screenshot), false);
+
+    // Navigation completes
+    nav_observer.Wait();
+    AssertCacheHitOrMissReasonsAre(
+        controller, {std::nullopt, CacheHitOrMissReason::kCacheHit});
+    AssertOrderedScreenshotsAre(controller, {std::nullopt, SK_ColorGREEN});
+  }
+}
+
 IN_PROC_BROWSER_TEST_P(NavigationEntryScreenshotCacheHitOrMissReasonBrowserTest,
                        CCNSPagesCached) {
   // Max of three screenshots per Profile (BrowserContext).
@@ -2411,8 +2464,9 @@ class NavigationEntryScreenshotCompressionBrowserTest
   ~NavigationEntryScreenshotCompressionBrowserTest() override = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    scoped_feature_list_.InitAndEnableFeature(
-        blink::features::kBackForwardTransitions);
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        blink::features::kBackForwardTransitions,
+        {{"min-required-physical-ram-mb", "0"}});
     NavigationEntryScreenshotBrowserTestBase::SetUpCommandLine(command_line);
   }
 

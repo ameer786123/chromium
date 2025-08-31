@@ -44,7 +44,6 @@
 #include "mojo/public/cpp/bindings/remote_set.h"
 #include "third_party/blink/public/common/input/web_gesture_event.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
-#include "third_party/blink/public/common/page/browsing_context_group_info.h"
 #include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
@@ -130,17 +129,17 @@ class CORE_EXPORT WebViewImpl final : public WebView,
       scheduler::WebAgentGroupScheduler& agent_group_scheduler,
       const SessionStorageNamespaceId& session_storage_namespace_id,
       std::optional<SkColor> page_base_background_color,
-      const BrowsingContextGroupInfo& browsing_context_group_info,
+      const base::UnguessableToken& browsing_context_group_token,
       const ColorProviderColorMaps* color_provider_colors,
-      blink::mojom::PartitionedPopinParamsPtr partitioned_popin_params);
+      blink::mojom::PartitionedPopinParamsPtr partitioned_popin_params,
+      int32_t history_index,
+      int32_t history_length,
+      const std::optional<uint64_t>& canvas_noise_token);
 
   // All calls to Create() should be balanced with a call to Close(). This
   // synchronously destroys the WebViewImpl.
   void Close() override;
   static HashSet<WebViewImpl*>& AllInstances();
-  // Returns true if popup menus should be rendered by the browser, false if
-  // they should be rendered by WebKit (which is the default).
-  static bool UseExternalPopupMenus();
 
   // Returns whether frames under this WebView are backed by a compositor.
   bool does_composite() const { return does_composite_; }
@@ -209,8 +208,6 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   void EnableAutoResizeForTesting(const gfx::Size& min_window_size,
                                   const gfx::Size& max_window_size) override;
   void DisableAutoResizeForTesting(const gfx::Size& new_window_size) override;
-  WebHitTestResult HitTestResultForTap(const gfx::Point&,
-                                       const gfx::Size&) override;
   void EnableDeviceEmulation(const DeviceEmulationParams&) override;
   void DisableDeviceEmulation() override;
   void PerformCustomContextMenuAction(unsigned action) override;
@@ -316,15 +313,20 @@ class CORE_EXPORT WebViewImpl final : public WebView,
       mojom::blink::FrameReplicationStatePtr replicated_state,
       bool is_loading,
       const base::UnguessableToken& devtools_frame_token,
+      const std::optional<base::UnguessableToken>& navigation_metrics_token,
       mojom::blink::RemoteFrameInterfacesFromBrowserPtr remote_frame_interfaces,
       mojom::blink::RemoteMainFrameInterfacesPtr remote_main_frame_interfaces)
       override;
   void UpdatePageBrowsingContextGroup(
-      const BrowsingContextGroupInfo& browsing_context_group_info) override;
+      const base::UnguessableToken& browsing_context_group_token) override;
   void SetPageAttributionSupport(
       network::mojom::AttributionSupport support) override;
   void UpdateColorProviders(
       const ColorProviderColorMaps& color_provider_colors) override;
+  void UpdateCanvasNoiseToken(
+      std::optional<uint64_t> canvas_noise_token) override;
+
+  std::optional<uint64_t> CanvasNoiseTokenForTesting() override;
 
   void DispatchPersistedPageshow(base::TimeTicks navigation_start);
   void DispatchPagehide(mojom::blink::PagehideDispatch pagehide_dispatch);
@@ -466,8 +468,8 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   void ZoomToFindInPageRect(const gfx::Rect&);
 
   void ComputeScaleAndScrollForBlockRect(
-      const gfx::Point& hit_point,
-      const gfx::Rect& block_rect,
+      gfx::Rect hit_rect_in_root_frame,
+      gfx::Rect block_rect_in_root_frame,
       float padding,
       float default_scale_when_already_legible,
       float& scale,
@@ -516,6 +518,8 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   // Called anytime browser controls layout height or content offset have
   // changed.
   void DidUpdateBrowserControls();
+
+  void DidUpdateLoadProgress(float);
 
   void DidUpdateMaxSafeAreaInsets(const gfx::InsetsF& max_safe_area_insets);
 
@@ -721,9 +725,12 @@ class CORE_EXPORT WebViewImpl final : public WebView,
       scheduler::WebAgentGroupScheduler& agent_group_scheduler,
       const SessionStorageNamespaceId& session_storage_namespace_id,
       std::optional<SkColor> page_base_background_color,
-      const BrowsingContextGroupInfo& browsing_context_group_info,
+      const base::UnguessableToken& browsing_context_group_token,
       const ColorProviderColorMaps* color_provider_colors,
-      blink::mojom::PartitionedPopinParamsPtr partitioned_popin_params);
+      blink::mojom::PartitionedPopinParamsPtr partitioned_popin_params,
+      int32_t history_index,
+      int32_t history_length,
+      const std::optional<uint64_t>& canvas_noise_token);
   ~WebViewImpl() override;
 
   void ConfigureAutoResizeMode();
@@ -891,8 +898,8 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   // The RenderView's current impression of the history length.  This includes
   // any items that have committed in this process, but because of cross-process
   // navigations, the history may have some entries that were committed in other
-  // processes.  We won't know about them until the next navigation in this
-  // process.
+  // processes. History information from other processes in the frame tree are
+  // broadcasted to this process once the navigation commimts.
   int32_t history_list_length_ = 0;
 
   // The popup associated with an input/select element. The popup is owned via
@@ -966,14 +973,14 @@ class CORE_EXPORT WebViewImpl final : public WebView,
   Persistent<ResizeViewportAnchor> resize_viewport_anchor_;
 
   // Handle to the local main frame host. Only valid when the MainFrame is
-  // local. It is ok to use WTF::Unretained(this) for callbacks made on this
+  // local. It is ok to use blink::Unretained(this) for callbacks made on this
   // interface because the callbacks will be associated with the lifecycle
   // of this AssociatedRemote and the lifetime of the main LocalFrame.
   mojo::AssociatedRemote<mojom::blink::LocalMainFrameHost>
       local_main_frame_host_remote_;
 
   // Handle to the remote main frame host. Only valid when the MainFrame is
-  // remote.  It is ok to use WTF::Unretained(this) for callbacks made on this
+  // remote.  It is ok to use blink::Unretained(this) for callbacks made on this
   // interface because the callbacks will be associated with the lifecycle
   // of this AssociatedRemote and the lifetime of the main RemoteFrame.
   mojo::AssociatedRemote<mojom::blink::RemoteMainFrameHost>

@@ -26,8 +26,6 @@
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/win/singleton_hwnd_observer.h"
 
-class VirtualDisplayUtilWinInteractiveUitest;
-
 namespace display::win {
 
 class ScreenWinDisplay;
@@ -131,6 +129,9 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   // Returns |hwnd|'s scale factor, including accessibility adjustments.
   virtual float GetScaleFactorForHWND(HWND hwnd) const;
 
+  // Returns raw scale factor for monitor excluding accessibility adjustments.
+  virtual float GetScaleFactorForMonitor(HMONITOR monitor) const;
+
   // Returns the unmodified DPI for a particular |hwnd|, without accessibility
   // adjustments.
   virtual int GetDPIForHWND(HWND hwnd) const;
@@ -200,10 +201,6 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   FRIEND_TEST_ALL_PREFIXES(ScreenWinTestSingleDisplay1x,
                            DisconnectPrimaryDisplay);
 
-  // Allow virtual display test to access default constructor that picks up the
-  // system monitor configuration.
-  friend class ::VirtualDisplayUtilWinInteractiveUitest;
-
   ScreenWin();
 
   // `initialize_from_system` is true if the ScreenWin should be initialized
@@ -240,6 +237,10 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
       const std::vector<internal::DisplayInfo>& display_infos);
 
   // Virtual to support mocking by unit tests and headless screen.
+  virtual HMONITOR HMONITORFromScreenPoint(
+      const gfx::Point& screen_point) const;
+  virtual HMONITOR HMONITORFromScreenRect(const gfx::Rect& screen_rect) const;
+  virtual HMONITOR HMONITORFromWindow(HWND hwnd, DWORD default_options) const;
   virtual std::optional<MONITORINFOEX> MonitorInfoFromScreenPoint(
       const gfx::Point& screen_point) const;
   virtual std::optional<MONITORINFOEX> MonitorInfoFromScreenRect(
@@ -247,6 +248,9 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   virtual std::optional<MONITORINFOEX> MonitorInfoFromWindow(
       HWND hwnd,
       DWORD default_options) const;
+  virtual std::optional<MONITORINFOEX> MonitorInfoFromHMONITOR(
+      HMONITOR monitor) const;
+
   virtual int64_t GetDisplayIdFromMonitorInfo(
       const MONITORINFOEX& monitor_info) const;
   virtual HWND GetRootWindow(HWND hwnd) const;
@@ -258,11 +262,11 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   virtual ScreenWinDisplay GetScreenWinDisplayNearestHWND(HWND hwnd) const;
 
   // Returns the ScreenWinDisplay closest to or enclosing |screen_rect|.
-  ScreenWinDisplay GetScreenWinDisplayNearestScreenRect(
+  virtual ScreenWinDisplay GetScreenWinDisplayNearestScreenRect(
       const gfx::Rect& screen_rect) const;
 
   // Returns the ScreenWinDisplay closest to or enclosing |screen_point|.
-  ScreenWinDisplay GetScreenWinDisplayNearestScreenPoint(
+  virtual ScreenWinDisplay GetScreenWinDisplayNearestScreenPoint(
       const gfx::Point& screen_point) const;
 
   // Returns the ScreenWinDisplay closest to or enclosing |dip_point|.
@@ -280,6 +284,16 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   virtual ScreenWinDisplay GetScreenWinDisplay(
       std::optional<MONITORINFOEX> monitor_info) const;
 
+  // Returns the ScreenWinDisplay for the given `monitor`, first by matching on
+  // ScreenWinDisplay::hmonitor(), then by looking up the monitor info if
+  // there's no match.
+  virtual ScreenWinDisplay GetScreenWinDisplayForHMONITOR(
+      HMONITOR monitor) const;
+
+  // Returns the result of GetSystemMetrics for |metric| scaled to the specified
+  // |scale_factor|.
+  int GetSystemMetricsForScaleFactor(float scale_factor, int metric) const;
+
  private:
   void Initialize();
 
@@ -290,10 +304,6 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   template <typename Getter, typename GetterType>
   static ScreenWinDisplay GetScreenWinDisplayVia(Getter getter,
                                                  GetterType value);
-
-  // Returns the result of GetSystemMetrics for |metric| scaled to the specified
-  // |scale_factor|.
-  int GetSystemMetricsForScaleFactor(float scale_factor, int metric) const;
 
   //-----------------------------------------------------------------
   // UwpTextScaleFactor::Observer:

@@ -87,7 +87,7 @@ public class ActivityTabProviderTest {
     private ChromeTabbedActivity mActivity;
     private ActivityTabProvider mProvider;
     private Tab mActivityTab;
-    private CallbackHelper mActivityTabChangedHelper = new CallbackHelper();
+    private final CallbackHelper mActivityTabChangedHelper = new CallbackHelper();
 
     @Before
     public void setUp() throws Exception {
@@ -113,7 +113,8 @@ public class ActivityTabProviderTest {
      * @return The {@link Tab} that the active model currently has selected.
      */
     private Tab getModelSelectedTab() {
-        return mActivity.getTabModelSelector().getCurrentTab();
+        return ThreadUtils.runOnUiThreadBlocking(
+                () -> mActivity.getTabModelSelector().getCurrentTab());
     }
 
     /**

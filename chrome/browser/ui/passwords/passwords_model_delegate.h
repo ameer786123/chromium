@@ -101,6 +101,13 @@ class PasswordsModelDelegate {
   // the empty string if there isn't one.
   virtual const std::string& PasskeyRpId() const = 0;
 
+  // Returns username of a password that was updated during a recent password
+  // change flow.
+  virtual const std::u16string& PasswordChangeUsername() const = 0;
+
+  // Returns password that was generated during a recent password change flow.
+  virtual const std::u16string& PasswordChangeNewPassword() const = 0;
+
   // Called from the model when the bubble is displayed.
   virtual void OnBubbleShown() = 0;
 
@@ -115,6 +122,10 @@ class PasswordsModelDelegate {
 
   // Called from the model when the user chooses to never save passwords.
   virtual void NeverSavePassword() = 0;
+
+  // Called from the model when the user chooses "not now" in response to the
+  // password-save prompt.
+  virtual void OnNotNowClicked() = 0;
 
   // Called when the passwords are revealed to the user without obfuscation.
   virtual void OnPasswordsRevealed() = 0;
@@ -213,6 +224,12 @@ class PasswordsModelDelegate {
 
   // Opens the password change settings page as a separate tab.
   virtual void NavigateToPasswordChangeSettings() = 0;
+
+  // Called when the mouse enters the bubble view.
+  virtual void OnMouseEntered() = 0;
+
+  // Called when the mouse exits the bubble view.
+  virtual void OnMouseExited() = 0;
 
  protected:
   virtual ~PasswordsModelDelegate() = default;

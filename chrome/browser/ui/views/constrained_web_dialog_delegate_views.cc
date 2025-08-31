@@ -9,7 +9,6 @@
 #include "chrome/browser/renderer_preferences_util.h"
 #include "chrome/browser/ui/blocked_content/popunder_preventer.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/webui/chrome_web_contents_handler.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
@@ -173,7 +172,7 @@ class WebDialogWebContentsDelegateViews
           web_modal::WebContentsModalDialogManager::FromWebContents(
               top_level_web_contents)
               ->delegate()
-              ->GetWebContentsModalDialogHost());
+              ->GetWebContentsModalDialogHost(top_level_web_contents));
     }
   }
 

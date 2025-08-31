@@ -27,10 +27,11 @@ import org.chromium.android_webview.AwBrowserProcess;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContents.DependencyFactory;
 import org.chromium.android_webview.AwContents.InternalAccessDelegate;
-import org.chromium.android_webview.AwContents.NativeDrawFunctorFactory;
 import org.chromium.android_webview.AwContentsClient;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.AwWebResourceRequest;
+import org.chromium.android_webview.common.WebViewCachedFlags;
+import org.chromium.android_webview.gfx.AwDrawFnImpl;
 import org.chromium.android_webview.test.util.GraphicsTestUtils;
 import org.chromium.android_webview.test.util.JSUtils;
 import org.chromium.base.Log;
@@ -39,6 +40,7 @@ import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.util.ApplicationTestUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.InMemorySharedPreferences;
 import org.chromium.base.test.util.ScalableTimeout;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer.OnPageFinishedHelper;
@@ -92,7 +94,7 @@ public class AwActivityTestRule extends BaseActivityTestRule<AwTestRunnerActivit
     /** An interface to call onCreateWindow(AwContents). */
     public interface OnCreateWindowHandler {
         /** This will be called when a new window pops up from the current webview. */
-        public boolean onCreateWindow(AwContents awContents);
+        boolean onCreateWindow(AwContents awContents);
     }
 
     private Description mCurrentTestDescription;
@@ -105,7 +107,8 @@ public class AwActivityTestRule extends BaseActivityTestRule<AwTestRunnerActivit
      */
     private static AwBrowserContext sBrowserContext;
 
-    private List<WeakReference<AwContents>> mAwContentsDestroyedInTearDown = new ArrayList<>();
+    private final List<WeakReference<AwContents>> mAwContentsDestroyedInTearDown =
+            new ArrayList<>();
 
     private Consumer<AwSettings> mMaybeMutateAwSettings;
 
@@ -235,6 +238,7 @@ public class AwActivityTestRule extends BaseActivityTestRule<AwTestRunnerActivit
                     () -> {
                         AwTestContainerView.installDrawFnFunctionTable(useVulkan);
                         AwBrowserProcess.configureChildProcessLauncherForTesting();
+                        WebViewCachedFlags.init(new InMemorySharedPreferences());
                         AwBrowserProcess.startForTesting();
                         sBrowserContext = AwBrowserContext.getDefault();
                     });
@@ -316,7 +320,7 @@ public class AwActivityTestRule extends BaseActivityTestRule<AwTestRunnerActivit
     /** Loads url on the UI thread but does not block. */
     public void postUrlAsync(final AwContents awContents, final String url, byte[] postData) {
         class PostUrl implements Runnable {
-            byte[] mPostData;
+            final byte[] mPostData;
 
             public PostUrl(byte[] postData) {
                 mPostData = postData;
@@ -525,7 +529,7 @@ public class AwActivityTestRule extends BaseActivityTestRule<AwTestRunnerActivit
                         testContainerView,
                         testContainerView.getContext(),
                         testContainerView.getInternalAccessDelegate(),
-                        testContainerView.getNativeDrawFunctorFactory(),
+                        testContainerView.getDrawFnAccess(),
                         awContentsClient,
                         awSettings,
                         testDependencyFactory);
@@ -916,7 +920,7 @@ public class AwActivityTestRule extends BaseActivityTestRule<AwTestRunnerActivit
                 ViewGroup containerView,
                 Context context,
                 InternalAccessDelegate internalAccessAdapter,
-                NativeDrawFunctorFactory nativeDrawFunctorFactory,
+                AwDrawFnImpl.DrawFnAccess drawFnAccess,
                 AwContentsClient contentsClient,
                 AwSettings settings,
                 DependencyFactory dependencyFactory) {
@@ -925,7 +929,7 @@ public class AwActivityTestRule extends BaseActivityTestRule<AwTestRunnerActivit
                     containerView,
                     context,
                     internalAccessAdapter,
-                    nativeDrawFunctorFactory,
+                    drawFnAccess,
                     contentsClient,
                     settings,
                     dependencyFactory);

@@ -6,11 +6,13 @@
 
 #include <tuple>
 
+#include "base/notreached.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
+#include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkImage.h"
@@ -70,6 +72,13 @@ CreateGraphiteSkImageReleaseProc(
   return {wrapped_release_proc, wrapped_release_context};
 }
 }  // namespace
+
+SkiaImageRepresentation::GraphiteTextureHolder::GraphiteTextureHolder(
+    skgpu::graphite::BackendTexture texture)
+    : texture_(std::move(texture)) {}
+
+SkiaImageRepresentation::GraphiteTextureHolder::~GraphiteTextureHolder() =
+    default;
 
 ///////////////////////////////////////////////////////////////////////////////
 // SharedImageRepresentation
@@ -803,6 +812,45 @@ std::string SkiaGraphiteImageRepresentation::WrappedTextureDebugLabel(
   }
   return debug_label;
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// WebNNTensorRepresentation
+
+WebNNTensorRepresentation::ScopedAccess::ScopedAccess(
+    base::PassKey<WebNNTensorRepresentation> /* pass_key */,
+    WebNNTensorRepresentation* representation,
+    AccessMode access_mode)
+    : ScopedAccessBase(representation, access_mode) {}
+
+WebNNTensorRepresentation::ScopedAccess::~ScopedAccess() {
+  representation()->EndAccess();
+}
+
+std::unique_ptr<WebNNTensorRepresentation::ScopedAccess>
+WebNNTensorRepresentation::BeginScopedAccess() {
+  if (!BeginAccess()) {
+    return nullptr;
+  }
+  return std::make_unique<ScopedAccess>(
+      base::PassKey<WebNNTensorRepresentation>(), this, AccessMode::kWrite);
+}
+
+#if BUILDFLAG(IS_WIN)
+Microsoft::WRL::ComPtr<ID3D12Resource>
+WebNNTensorRepresentation::GetD3D12Buffer() const {
+  NOTREACHED();
+}
+void WebNNTensorRepresentation::ConsumeWebNNTensor(
+    base::WeakPtr<webnn::native::d3d12::WebNNTensor> webnn_tensor) {
+  NOTREACHED();
+}
+#endif
+
+#if BUILDFLAG(IS_MAC)
+IOSurfaceRef WebNNTensorRepresentation::GetIOSurface() const {
+  NOTREACHED();
+}
+#endif  // BUILDFLAG(IS_MAC)
 
 ///////////////////////////////////////////////////////////////////////////////
 // OverlayImageRepresentation

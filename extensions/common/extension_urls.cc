@@ -49,6 +49,9 @@ const char kChromeWebstoreApiURL[] = "https://chromewebstore.googleapis.com/";
 const char kAppMenuUtmSource[] = "ext_app_menu";
 const char kExtensionsMenuUtmSource[] = "ext_extensions_menu";
 const char kExtensionsSidebarUtmSource[] = "ext_sidebar";
+const char kCustomActionIphUtmSource[] = "ext_zero_state_promo_generic_iph";
+const char kCustomUiChipIphUtmSource[] = "ext_zero_state_promo_chips_iph";
+const char kCustomUiPlainLinkIphUtmSource[] = "ext_zero_state_promo_links_iph";
 
 GURL GetWebstoreLaunchURL() {
   extensions::ExtensionsClient* client = extensions::ExtensionsClient::Get();
@@ -96,6 +99,12 @@ GURL GetWebstoreItemSnippetURL(const extensions::ExtensionId& extension_id) {
   return GURL(kChromeWebstoreApiURL)
       .Resolve(base::StringPrintf("v2/items/%s:fetchItemSnippet",
                                   extension_id.c_str()));
+}
+
+GURL GetWebstoreBlockStatusURL() {
+  return GURL(kChromeWebstoreApiURL)
+      .Resolve(base::StringPrintf(
+          "v2/items:batchFetchItemBlockStatusForEnterprise"));
 }
 
 base::AutoReset<const GURL*> SetItemSnippetURLForTesting(const GURL* test_url) {

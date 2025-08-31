@@ -56,6 +56,10 @@ public final class EventConstants {
     /** The `Translate` app menu button was clicked. */
     public static final String TRANSLATE_MENU_BUTTON_CLICKED = "translate_menu_button_clicked";
 
+    /** The keyboard accessory was used to fill account name and email data into a form. */
+    public static final String KEYBOARD_ACCESSORY_ACCOUNT_NAME_EMAIL_AUTOFILLED =
+            "account_name_email_create_suggestion_feature_used";
+
     /** The keyboard accessory was used to fill address data into a form. */
     public static final String KEYBOARD_ACCESSORY_ADDRESS_AUTOFILLED =
             "keyboard_accessory_address_suggestion_accepted";
@@ -77,11 +81,15 @@ public final class EventConstants {
 
     /** The keyboard accessory was used to fill home and work address data into a form. */
     public static final String KEYBOARD_ACCESSORY_HOME_AND_WORK_ADDRESS_AUTOFILLED =
-            "keyboard_accessory_home_and_work_address_autofilled";
+            "home_work_address_create_suggestion_feature_used";
+
+    /** The keyboard accessory was used to fill loyalty card info into a form. */
+    public static final String KEYBOARD_ACCESSORY_LOYALTY_CARDS_AUTOFILLED =
+            "keyboard_accessory_loyalty_cards_autofilled";
 
     /** The keyboard accessory was used to create a new plus address. */
     public static final String KEYBOARD_ACCESSORY_PLUS_ADDRESS_CREATE_SUGGESTION =
-            "keyboard_accessory_plus_address_create_suggestion";
+            "plus_address_create_suggestion_feature_used";
 
     /** User has finished drop-to-merge to create a group. */
     public static final String TAB_DRAG_AND_DROP_TO_GROUP = "tab_drag_and_drop_to_group";
@@ -229,6 +237,11 @@ public final class EventConstants {
 
     /** An app menu pdf page download event. */
     public static final String APP_MENU_PDF_PAGE_DOWNLOADED = "app_menu_pdf_page_downloaded";
+
+    public static final String ADAPTIVE_TOOLBAR_PAGE_SUMMARY_WEB_USED =
+            "adaptive_toolbar_page_summary_web_used";
+    public static final String ADAPTIVE_TOOLBAR_PAGE_SUMMARY_PDF_USED =
+            "adaptive_toolbar_page_summary_pdf_used";
 
     /** Do not instantiate. */
     private EventConstants() {}

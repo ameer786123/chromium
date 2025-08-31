@@ -47,8 +47,8 @@ public class ShoppingPersistedTabDataService {
      * service.
      */
     public static class PriceChangeItem {
-        private Tab mTab;
-        private ShoppingPersistedTabData mData;
+        private final Tab mTab;
+        private final ShoppingPersistedTabData mData;
 
         public PriceChangeItem(Tab tab, ShoppingPersistedTabData data) {
             mTab = tab;
@@ -71,7 +71,7 @@ public class ShoppingPersistedTabDataService {
     }
 
     /** Creates a new instance. */
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     protected ShoppingPersistedTabDataService() {
         mTabsWithPriceDrop = new HashSet<>();
         mSharedPreferencesManager = ChromeSharedPreferences.getInstance();

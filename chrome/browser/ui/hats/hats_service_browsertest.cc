@@ -34,8 +34,8 @@
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
-#include "components/plus_addresses/features.h"
-#include "components/plus_addresses/plus_address_hats_utils.h"
+#include "components/plus_addresses/core/browser/plus_address_hats_utils.h"
+#include "components/plus_addresses/core/common/features.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
@@ -715,8 +715,8 @@ IN_PROC_BROWSER_TEST_F(HatsServiceProbabilityOne,
   // ensure it completes before the survey tries to run.
   GetHatsService()->LaunchDelayedSurveyForWebContents(
       kHatsSurveyTriggerSettings, web_contents, 10000, {}, {},
-      /*navigation_behaviour=*/
-      HatsService::NavigationBehaviour::REQUIRE_SAME_ORIGIN);
+      /*navigation_behavior=*/
+      HatsService::NavigationBehavior::REQUIRE_SAME_ORIGIN);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("b.test", "/empty.html")));
   base::RunLoop().RunUntilIdle();
@@ -738,8 +738,8 @@ IN_PROC_BROWSER_TEST_F(HatsServiceProbabilityOne,
   EXPECT_FALSE(GetHatsService()->HasPendingTasks());
   GetHatsService()->LaunchDelayedSurveyForWebContents(
       kHatsSurveyTriggerSettings, web_contents, 10000, {}, {},
-      /*navigation_behaviour=*/
-      HatsService::NavigationBehaviour::ALLOW_ANY);
+      /*navigation_behavior=*/
+      HatsService::NavigationBehavior::ALLOW_ANY);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("b.test", "/empty.html")));
   base::RunLoop().RunUntilIdle();
@@ -763,8 +763,8 @@ IN_PROC_BROWSER_TEST_F(HatsServiceProbabilityOne,
   // ensure it completes before the survey tries to run.
   GetHatsService()->LaunchDelayedSurveyForWebContents(
       kHatsSurveyTriggerSettings, web_contents, 10000, {}, {},
-      /*navigation_behaviour=*/
-      HatsService::NavigationBehaviour::REQUIRE_SAME_DOCUMENT);
+      /*navigation_behavior=*/
+      HatsService::NavigationBehavior::REQUIRE_SAME_DOCUMENT);
 
   // Same-document navigation
   web_contents->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
@@ -798,8 +798,8 @@ IN_PROC_BROWSER_TEST_F(HatsServiceProbabilityOne, SameOriginNavigation) {
   EXPECT_FALSE(GetHatsService()->HasPendingTasks());
   GetHatsService()->LaunchDelayedSurveyForWebContents(
       kHatsSurveyTriggerSettings, web_contents, 10000, {}, {},
-      /*navigation_behaviour=*/
-      HatsService::NavigationBehaviour::REQUIRE_SAME_ORIGIN);
+      /*navigation_behavior=*/
+      HatsService::NavigationBehavior::REQUIRE_SAME_ORIGIN);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("a.test", "/form.html")));
   base::RunLoop().RunUntilIdle();

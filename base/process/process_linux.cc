@@ -10,6 +10,8 @@
 #include <sys/vfs.h>
 
 #include <cstring>
+#include <optional>
+#include <string>
 #include <string_view>
 
 #include "base/check.h"
@@ -44,13 +46,9 @@
 namespace base {
 
 #if BUILDFLAG(IS_CHROMEOS)
-BASE_FEATURE(kOneGroupPerRenderer,
-             "OneGroupPerRenderer",
-             FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(OneGroupPerRenderer, FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kFlattenCpuCgroups,
-             "FlattenCpuCgroups",
-             FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(FlattenCpuCgroups, FEATURE_ENABLED_BY_DEFAULT);
 
 // If FlattenCpuCgroupsUnified parameter is enabled, foreground renderer
 // processes uses /sys/fs/cgroup/cpu/ui cgroup instead of
@@ -322,13 +320,13 @@ Process::Priority GetProcessPriorityCGroup(std::string_view cgroup_contents) {
 // If the process is not in a PID namespace or /proc/<pid>/status does not
 // report NSpid, kNullProcessId is returned.
 ProcessId Process::GetPidInNamespace() const {
-  StringPairs pairs;
-  if (!internal::ReadProcFileToTrimmedStringPairs(process_, "status", &pairs)) {
+  std::string buffer;
+  std::optional<StringViewPairs> pairs =
+      internal::ReadProcFileToTrimmedStringPairs(process_, "status", &buffer);
+  if (!pairs) {
     return kNullProcessId;
   }
-  for (const auto& pair : pairs) {
-    const std::string& key = pair.first;
-    const std::string& value_str = pair.second;
+  for (const auto& [key, value_str] : *pairs) {
     if (key == "NSpid") {
       std::vector<std::string_view> split_value_str = SplitStringPiece(
           value_str, "\t", TRIM_WHITESPACE, SPLIT_WANT_NONEMPTY);

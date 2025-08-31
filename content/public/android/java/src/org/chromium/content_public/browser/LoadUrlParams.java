@@ -10,7 +10,6 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.UserDataHost;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.navigation_controller.LoadURLType;
@@ -24,11 +23,11 @@ import org.chromium.url.Origin;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
- * Holds parameters for NavigationController.LoadUrl. Parameters should match
- * counterparts in NavigationController::LoadURLParams, including default
- * values.
+ * Holds parameters for NavigationController.LoadUrl. Parameters should match counterparts in
+ * NavigationController::LoadURLParams, including default values.
  */
 @JNINamespace("content")
 @NullMarked
@@ -302,7 +301,7 @@ public class LoadUrlParams {
     }
 
     /** Sets the referrer of this load. */
-    public void setReferrer(Referrer referrer) {
+    public void setReferrer(@Nullable Referrer referrer) {
         mReferrer = referrer;
     }
 
@@ -387,10 +386,10 @@ public class LoadUrlParams {
     }
 
     /**
-     * Sets the verbatim extra headers string. This is an alternative to storing the headers in
-     * a map (setExtraHeaders()) for the embedders that use collapsed headers strings.
+     * Sets the verbatim extra headers string. This is an alternative to storing the headers in a
+     * map (setExtraHeaders()) for the embedders that use collapsed headers strings.
      */
-    public void setVerbatimHeaders(String headers) {
+    public void setVerbatimHeaders(@Nullable String headers) {
         mVerbatimHeaders = headers;
         verifyHeaders();
     }
@@ -605,7 +604,7 @@ public class LoadUrlParams {
      * @param additionalNavigationParams Additional navigation params associated with the load.
      */
     public void setAdditionalNavigationParams(
-            AdditionalNavigationParams additionalNavigationParams) {
+            @Nullable AdditionalNavigationParams additionalNavigationParams) {
         mAdditionalNavigationParams = additionalNavigationParams;
     }
 

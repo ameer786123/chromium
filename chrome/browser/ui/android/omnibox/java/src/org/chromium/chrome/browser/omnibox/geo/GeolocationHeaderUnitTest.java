@@ -38,8 +38,9 @@ import org.robolectric.annotation.LooperMode;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.components.browser_ui.site_settings.GeolocationSetting;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni;
 import org.chromium.components.content_settings.ContentSettingValues;
@@ -48,6 +49,7 @@ import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.embedder_support.util.UrlUtilitiesJni;
 import org.chromium.components.omnibox.OmniboxFeatureList;
 import org.chromium.components.omnibox.OmniboxFeatures;
+import org.chromium.components.permissions.PermissionsAndroidFeatureList;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.content_public.browser.BrowserContextHandle;
 import org.chromium.content_public.browser.WebContents;
@@ -56,6 +58,7 @@ import org.chromium.content_public.browser.WebContents;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.LEGACY)
+@EnableFeatures(PermissionsAndroidFeatureList.APPROXIMATE_GEOLOCATION_PERMISSION)
 public class GeolocationHeaderUnitTest {
     private static final String SEARCH_URL = "https://www.google.com/search?q=potatoes";
 
@@ -72,7 +75,6 @@ public class GeolocationHeaderUnitTest {
     @Mock UrlUtilities.Natives mUrlUtilitiesJniMock;
     @Mock WebsitePreferenceBridge.Natives mWebsitePreferenceBridgeJniMock;
     @Mock Profile mProfileMock;
-    @Mock private Tab mTab;
     @Mock WebContents mWebContentsMock;
     @Mock TemplateUrlService mTemplateUrlServiceMock;
     @Mock FusedLocationProviderClient mLocationProviderClient;
@@ -85,13 +87,17 @@ public class GeolocationHeaderUnitTest {
         WebsitePreferenceBridgeJni.setInstanceForTesting(mWebsitePreferenceBridgeJniMock);
         GeolocationTracker.setLocationAgeForTesting(null);
         GeolocationHeader.setAppPermissionGrantedForTesting(true);
-        when(mTab.isIncognito()).thenReturn(false);
-        when(mTab.getProfile()).thenReturn(mProfileMock);
-        when(mTab.getWebContents()).thenReturn(mWebContentsMock);
         when(mWebsitePreferenceBridgeJniMock.getPermissionSettingForOrigin(
                         any(BrowserContextHandle.class), eq(ContentSettingsType.GEOLOCATION),
                         anyString(), anyString()))
                 .thenReturn(ContentSettingValues.ALLOW);
+        when(mWebsitePreferenceBridgeJniMock.getGeolocationSettingForOrigin(
+                        any(BrowserContextHandle.class),
+                                eq(ContentSettingsType.GEOLOCATION_WITH_OPTIONS),
+                        anyString(), anyString()))
+                .thenReturn(
+                        new GeolocationSetting(
+                                ContentSettingValues.ALLOW, ContentSettingValues.ALLOW));
         when(mWebsitePreferenceBridgeJniMock.isDSEOrigin(
                         any(BrowserContextHandle.class), anyString()))
                 .thenReturn(true);
@@ -99,6 +105,7 @@ public class GeolocationHeaderUnitTest {
         when(mProfileMock.isOffTheRecord()).thenReturn(false);
         when(mTemplateUrlServiceMock.getUrlForSearchQuery(anyString()))
                 .thenReturn("https://example.com/");
+        when(mTemplateUrlServiceMock.isDefaultSearchEngineGoogle()).thenReturn(true);
         sRefreshLastKnownLocation = 0;
         ShadowLocationServices.sFusedLocationProviderClient = mLocationProviderClient;
     }
@@ -116,7 +123,8 @@ public class GeolocationHeaderUnitTest {
         GeolocationTracker.setLocationForTesting(location, null);
         // 1 minute should be good enough and not require visible networks.
         GeolocationTracker.setLocationAgeForTesting(1 * 60 * 1000L);
-        String header = GeolocationHeader.getGeoHeader(SEARCH_URL, mTab);
+        String header =
+                GeolocationHeader.getGeoHeader(SEARCH_URL, mProfileMock, mTemplateUrlServiceMock);
         assertEquals("X-Geo: w " + ENCODED_PROTO_LOCATION, header);
     }
 
@@ -155,6 +163,12 @@ public class GeolocationHeaderUnitTest {
                         any(BrowserContextHandle.class), eq(ContentSettingsType.GEOLOCATION),
                         anyString(), anyString()))
                 .thenReturn(ContentSettingValues.ASK);
+        when(mWebsitePreferenceBridgeJniMock.getGeolocationSettingForOrigin(
+                        any(BrowserContextHandle.class),
+                                eq(ContentSettingsType.GEOLOCATION_WITH_OPTIONS),
+                        anyString(), anyString()))
+                .thenReturn(
+                        new GeolocationSetting(ContentSettingValues.ASK, ContentSettingValues.ASK));
         GeolocationHeader.primeLocationForGeoHeaderIfEnabled(mProfileMock, mTemplateUrlServiceMock);
         assertEquals(0, sRefreshLastKnownLocation);
     }
@@ -203,7 +217,8 @@ public class GeolocationHeaderUnitTest {
         GeolocationTracker.setLocationForTesting(location, null);
         // 6 minutes should hit the age limit, but the feature is off.
         GeolocationTracker.setLocationAgeForTesting(6 * 60 * 1000L);
-        String header = GeolocationHeader.getGeoHeader(SEARCH_URL, mTab);
+        String header =
+                GeolocationHeader.getGeoHeader(SEARCH_URL, mProfileMock, mTemplateUrlServiceMock);
         assertEquals(expectedHeader, header);
     }
 

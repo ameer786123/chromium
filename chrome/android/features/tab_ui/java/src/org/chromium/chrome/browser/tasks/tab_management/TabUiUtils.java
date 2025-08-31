@@ -4,19 +4,24 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
 import android.content.Context;
 import android.os.Build;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.View;
 import android.widget.FrameLayout;
 
-import androidx.annotation.Nullable;
+import android.widget.ScrollView;
 import androidx.annotation.RequiresApi;
 
 import org.chromium.base.Callback;
 import org.chromium.base.Token;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.collaboration.CollaborationServiceFactory;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabManager;
 import org.chromium.chrome.browser.data_sharing.ui.shared_image_tiles.SharedImageTilesCoordinator;
@@ -29,6 +34,7 @@ import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncUtils;
 import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager;
 import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager.MaybeBlockingResult;
+import org.chromium.chrome.browser.tabmodel.TabClosingSource;
 import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabGroupTitleUtils;
@@ -44,16 +50,20 @@ import org.chromium.components.data_sharing.member_role.MemberRole;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.identitymanager.IdentityManager;
+import org.chromium.components.tab_group_sync.EitherId.EitherGroupId;
 import org.chromium.components.tab_group_sync.LocalTabGroupId;
 import org.chromium.components.tab_group_sync.SavedTabGroup;
+import org.chromium.components.tab_group_sync.SavedTabGroupTab;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 import org.chromium.components.tab_groups.TabGroupColorId;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogUtils;
+import org.chromium.ui.util.XrUtils;
 
 import java.util.List;
 
 /** Static utilities for Tab UI. */
+@NullMarked
 public class TabUiUtils {
 
     /**
@@ -61,12 +71,16 @@ public class TabUiUtils {
      *
      * @param filter The {@link TabGroupModelFilter} to act on.
      * @param tabId The ID of one of the tabs in the tab group.
+     * @param tabClosingSource The tab closing source, e.g. the tablet tab strip.
+     * @param allowUndo Whether to allow undo of the tab group closure.
      * @param hideTabGroups Whether to hide or delete the tab group.
      * @param didCloseCallback Run after the close confirmation to indicate if a close happened.
      */
     public static void closeTabGroup(
             TabGroupModelFilter filter,
             int tabId,
+            @TabClosingSource int tabClosingSource,
+            boolean allowUndo,
             boolean hideTabGroups,
             @Nullable Callback<Boolean> didCloseCallback) {
         TabModel tabModel = filter.getTabModel();
@@ -75,10 +89,16 @@ public class TabUiUtils {
             Callback.runNullSafe(didCloseCallback, false);
             return;
         }
+        TabClosureParams.CloseTabsBuilder builder =
+                TabClosureParams.forCloseTabGroup(filter, tab.getTabGroupId());
+        if (builder == null) {
+            Callback.runNullSafe(didCloseCallback, false);
+            return;
+        }
         TabClosureParams closureParams =
-                TabClosureParams.forCloseTabGroup(filter, tab.getTabGroupId())
-                        .hideTabGroups(hideTabGroups)
-                        .allowUndo(true)
+                builder.hideTabGroups(hideTabGroups)
+                        .allowUndo(allowUndo)
+                        .tabClosingSource(tabClosingSource)
                         .build();
 
         @Nullable TabModelActionListener listener = buildMaybeDidCloseTabListener(didCloseCallback);
@@ -123,22 +143,22 @@ public class TabUiUtils {
         if (!filter.tabGroupExists(tabGroupId)) return;
 
         filter.getTabUngrouper()
-                .ungroupTabs(tabGroupId, /* trailing= */ true, /* allowDialog= */ true);
+                .ungroupTabGroup(tabGroupId, /* trailing= */ false, /* allowDialog= */ true);
     }
 
     /**
      * Update the tab group color.
      *
      * @param filter The {@link TabGroupModelFilter} to act on.
-     * @param rootId The root id of the interacting tab group.
+     * @param tabGroupId The group id of the interacting tab group.
      * @param newGroupColor The new group color being assigned to the tab group.
      * @return Whether the tab group color is updated.
      */
     public static boolean updateTabGroupColor(
-            TabGroupModelFilter filter, int rootId, @TabGroupColorId int newGroupColor) {
-        int curGroupColor = filter.getTabGroupColor(rootId);
+            TabGroupModelFilter filter, Token tabGroupId, @TabGroupColorId int newGroupColor) {
+        int curGroupColor = filter.getTabGroupColor(tabGroupId);
         if (curGroupColor != newGroupColor) {
-            filter.setTabGroupColor(rootId, newGroupColor);
+            filter.setTabGroupColor(tabGroupId, newGroupColor);
             return true;
         }
         return false;
@@ -148,16 +168,16 @@ public class TabUiUtils {
      * Update the tab group title.
      *
      * @param filter The {@link TabGroupModelFilter} to act on.
-     * @param rootId The root id of the interacting tab group.
+     * @param tabGroupId The group id of the interacting tab group.
      * @param newGroupTitle The new group title being assigned to the tab group.
      * @return Whether the tab group title is updated.
      */
     public static boolean updateTabGroupTitle(
-            TabGroupModelFilter filter, int rootId, String newGroupTitle) {
+            TabGroupModelFilter filter, Token tabGroupId, String newGroupTitle) {
         assert newGroupTitle != null && !newGroupTitle.isEmpty();
-        String curGroupTitle = filter.getTabGroupTitle(rootId);
+        String curGroupTitle = filter.getTabGroupTitle(tabGroupId);
         if (!newGroupTitle.equals(curGroupTitle)) {
-            filter.setTabGroupTitle(rootId, newGroupTitle);
+            filter.setTabGroupTitle(tabGroupId, newGroupTitle);
             return true;
         }
         return false;
@@ -182,18 +202,19 @@ public class TabUiUtils {
         assert actionConfirmationManager != null;
 
         TabModel tabModel = filter.getTabModel();
-        Profile profile = tabModel.getProfile();
-        TabGroupSyncService tabGroupSyncService = TabGroupSyncServiceFactory.getForProfile(profile);
+        Profile profile = assumeNonNull(tabModel.getProfile());
+        TabGroupSyncService tabGroupSyncService =
+                assumeNonNull(TabGroupSyncServiceFactory.getForProfile(profile));
         IdentityManager identityManager =
-                IdentityServicesProvider.get().getIdentityManager(profile);
+                assumeNonNull(IdentityServicesProvider.get().getIdentityManager(profile));
         CollaborationService collaborationService =
                 CollaborationServiceFactory.getForProfile(profile);
 
-        @Nullable
-        SavedTabGroup savedTabGroup =
+        @Nullable SavedTabGroup savedTabGroup =
                 TabGroupSyncUtils.getSavedTabGroupFromTabId(tabId, tabModel, tabGroupSyncService);
-        @Nullable
-        CoreAccountInfo account = identityManager.getPrimaryAccountInfo(ConsentLevel.SIGNIN);
+
+        @Nullable CoreAccountInfo account =
+                identityManager.getPrimaryAccountInfo(ConsentLevel.SIGNIN);
         if (savedTabGroup == null
                 || TextUtils.isEmpty(savedTabGroup.collaborationId)
                 || account == null) {
@@ -232,9 +253,10 @@ public class TabUiUtils {
         // The default title is not included in the savedTabGroup data. Use the filter to get the
         // last known title for the tab group.
         String title = savedTabGroup.title;
-        @Nullable Tab tab = tabModel.getTabById(tabId);
-        if (tab != null) {
-            title = TabGroupTitleUtils.getDisplayableTitle(context, filter, tab.getTabGroupId());
+        Tab tab = tabModel.getTabById(tabId);
+        if (tab != null || TextUtils.isEmpty(title)) {
+            Token tabGroupId = tab == null ? null : tab.getTabGroupId();
+            title = TabGroupTitleUtils.getDisplayableTitle(context, filter, tabGroupId);
         }
 
         if (memberRole == MemberRole.OWNER) {
@@ -254,10 +276,11 @@ public class TabUiUtils {
      * @return Whether to show Tab Group Sync IPH.
      */
     public static boolean shouldShowIphForSync(
-            TabGroupSyncService tabGroupSyncService, Token tabGroupId) {
+            @Nullable TabGroupSyncService tabGroupSyncService, @Nullable Token tabGroupId) {
         if (tabGroupSyncService == null || tabGroupId == null) return false;
-        @Nullable
-        SavedTabGroup savedTabGroup = tabGroupSyncService.getGroup(new LocalTabGroupId(tabGroupId));
+
+        @Nullable SavedTabGroup savedTabGroup =
+                tabGroupSyncService.getGroup(new LocalTabGroupId(tabGroupId));
         // Don't try to show the IPH if the group is:
         // 1) Not in TabGroupSyncService for some reason.
         // 2) A shared tab group.
@@ -316,10 +339,14 @@ public class TabUiUtils {
             String tabGroupDisplayName,
             @CollaborationServiceShareOrManageEntryPoint int entry) {
         Tab tab = filter.getTabModel().getTabById(tabId);
+        // The tab may have been closed in parallel with the share starting. Skip if this happens.
+        if (tab == null) return;
+
         LocalTabGroupId localTabGroupId = TabGroupSyncUtils.getLocalTabGroupId(tab);
+        if (localTabGroupId == null) return;
 
         dataSharingTabManager.createOrManageFlow(
-                activity, /* syncId= */ null, localTabGroupId, entry, (ignored) -> {});
+                EitherGroupId.createLocalId(localTabGroupId), entry, (ignored) -> {});
     }
 
     /**
@@ -398,8 +425,8 @@ public class TabUiUtils {
             return;
         }
 
-        for (int i = 0; i < tabList.getCount(); i++) {
-            if (tabList.getTabAt(i).getTabHasSensitiveContent()) {
+        for (Tab tab : tabList) {
+            if (tab.getTabHasSensitiveContent()) {
                 contentSensitivitySetter.onResult(/* result= */ true);
                 RecordHistogram.recordBooleanHistogram(histogram, /* sample= */ true);
                 return;
@@ -454,4 +481,54 @@ public class TabUiUtils {
         return ChromeFeatureList.isEnabled(ChromeFeatureList.DATA_SHARING)
                 || ChromeFeatureList.isEnabled(ChromeFeatureList.DATA_SHARING_JOIN_ONLY);
     }
+
+    /**
+     * Returns the last updated timestamp for the {@link SavedTabGroup}, determined from the last
+     * updated time on each {@link SavedTabGroupTab} within the group.
+     *
+     * @param savedTabGroup The saved tab group to retrieve the last updated timestamp for.
+     */
+    public static long getGroupLastUpdatedTimestamp(SavedTabGroup savedTabGroup) {
+        long timestamp = 0;
+        for (SavedTabGroupTab savedTab : savedTabGroup.savedTabs) {
+            // TODO(crbug.com/432292097): Use navigation time from native when available.
+            timestamp = Math.max(timestamp, savedTab.updateTimeMs);
+        }
+        return timestamp;
+    }
+
+    /**
+     * Applies the backplate and adjusts the layout for the empty state view on XR devices.
+     *
+     * @param rootView The view containing the empty state UI.
+     */
+    public static void applyXrEmptyStateBackplate(View rootView) {
+        if (!XrUtils.isXrDevice()) {
+            return;
+        }
+
+        View emptyStateContainer =
+                rootView.findViewById(R.id.empty_state_container);
+        View emptyStateIllustration =
+                rootView.findViewById(R.id.empty_state_icon);
+
+        if (emptyStateContainer instanceof ScrollView) {
+            ScrollView scrollView = (ScrollView) emptyStateContainer;
+            FrameLayout.LayoutParams scrollParams =
+                    (FrameLayout.LayoutParams) scrollView.getLayoutParams();
+            scrollParams.width = FrameLayout.LayoutParams.WRAP_CONTENT;
+            scrollParams.height = FrameLayout.LayoutParams.WRAP_CONTENT;
+            scrollParams.gravity = Gravity.CENTER;
+            scrollView.setLayoutParams(scrollParams);
+        }
+
+        if (emptyStateIllustration != null
+                && emptyStateIllustration.getParent() instanceof View) {
+            View container = (View) emptyStateIllustration.getParent();
+            container.setBackgroundResource(
+                    R.drawable.xr_empty_state_backplate);
+        }
+    }
+
+
 }

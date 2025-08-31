@@ -26,15 +26,16 @@
 #include "base/types/pass_key.h"
 #include "base/values.h"
 #include "chrome/browser/web_applications/isolated_web_apps/commands/isolated_web_app_apply_update_command.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_apply_task.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_apply_waiter.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_discovery_task.h"
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_info_provider.h"
 #include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_external_install_options.h"
-#include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest.h"
 #include "chrome/browser/web_applications/web_app_install_manager_observer.h"
 #include "components/webapps/common/web_app_id.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
+#include "components/webapps/isolated_web_apps/types/iwa_version.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
+#include "components/webapps/isolated_web_apps/types/update_channel.h"
 #include "net/base/backoff_entry.h"
 
 class GURL;
@@ -47,7 +48,6 @@ class SignedWebBundleId;
 namespace web_app {
 
 class IsolatedWebAppUrlInfo;
-class IsolatedWebAppURLLoaderFactory;
 class WebAppProvider;
 
 namespace {
@@ -73,15 +73,17 @@ enum class IsolatedWebAppUpdateError {
   kBundleDownloadError = 8,
   kUpdateDryRunFailed = 9,
   kUpdateApplyFailed = 10,
-  kMaxValue = kUpdateApplyFailed
+  kSystemShutdown = 11,
+  kPinnedVersionNotFoundInUpdateManifest = 12,
+  kDowngradeNotAllowed = 13,
+  kMaxValue = kDowngradeNotAllowed
 };
 
 struct IsolatedWebAppUpdateOptions {
-  IsolatedWebAppUpdateOptions(
-      const GURL& update_manifest_url,
-      UpdateChannel update_channel,
-      bool allow_downgrades,
-      const std::optional<base::Version>& pinned_version);
+  IsolatedWebAppUpdateOptions(const GURL& update_manifest_url,
+                              UpdateChannel update_channel,
+                              bool allow_downgrades,
+                              const std::optional<IwaVersion>& pinned_version);
 
   IsolatedWebAppUpdateOptions(const IsolatedWebAppUpdateOptions& other);
   IsolatedWebAppUpdateOptions& operator=(IsolatedWebAppUpdateOptions&& other);
@@ -90,7 +92,7 @@ struct IsolatedWebAppUpdateOptions {
   GURL update_manifest_url;
   UpdateChannel update_channel;
   bool allow_downgrades;
-  std::optional<base::Version> pinned_version;
+  std::optional<IwaVersion> pinned_version;
 };
 
 // The `IsolatedWebAppUpdateManager` is responsible for discovery, download, and
@@ -99,9 +101,6 @@ struct IsolatedWebAppUpdateOptions {
 //
 // TODO(crbug.com/40274186): Implement updates for unmanaged IWAs once we have
 // designed that process.
-//
-// TODO(crbug.com/40274187): Consider only executing update discovery tasks when
-// the user is not on a metered/paid internet connection.
 class IsolatedWebAppUpdateManager
     : public WebAppInstallManagerObserver,
       public IwaKeyDistributionInfoProvider::Observer {
@@ -139,12 +138,7 @@ class IsolatedWebAppUpdateManager
 
   // Returns `true` if an update for the provided `app_id` is currently being
   // applied or scheduled to be applied soon.
-  //
-  // Use of this method should be limited to the
-  // `IsolatedWebAppURLLoaderFactory`. If you have a different use case, please
-  // talk to iwa-dev@chromium.org first.
-  bool IsUpdateBeingApplied(base::PassKey<IsolatedWebAppURLLoaderFactory>,
-                            const webapps::AppId app_id) const;
+  bool IsUpdateBeingApplied(const webapps::AppId app_id) const;
 
   // Starts an already scheduled update apply task for the provided `app_id`, if
   // it is queued but not already running. This happens regardless of whether
@@ -153,12 +147,7 @@ class IsolatedWebAppUpdateManager
   //
   // `callback` will be run once the update apply task for the provided `app_id`
   // finishes.
-  //
-  // Use of this method should be limited to the
-  // `IsolatedWebAppURLLoaderFactory`. If you have a different use case, please
-  // talk to iwa-dev@chromium.org first.
   void PrioritizeUpdateAndWait(
-      base::PassKey<IsolatedWebAppURLLoaderFactory>,
       const webapps::AppId& app_id,
       base::OnceCallback<void(IsolatedWebAppUpdateApplyTask::CompletionStatus)>
           callback);
@@ -191,7 +180,7 @@ class IsolatedWebAppUpdateManager
                              const GURL& update_manifest_url,
                              const UpdateChannel& update_channel,
                              bool allow_downgrades,
-                             const std::optional<base::Version>& pinned_version,
+                             const std::optional<IwaVersion>& pinned_version,
                              bool dev_mode);
 
   // Used to queue update discovery tasks manually from the
@@ -204,7 +193,7 @@ class IsolatedWebAppUpdateManager
   void DiscoverApplyAndPrioritizeLocalDevModeUpdate(
       const IwaSourceDevModeWithFileOp& location,
       const IsolatedWebAppUrlInfo& url_info,
-      base::OnceCallback<void(base::expected<base::Version, std::string>)>
+      base::OnceCallback<void(base::expected<IwaVersion, std::string>)>
           callback);
 
   std::optional<base::TimeTicks> GetNextUpdateDiscoveryTimeForTesting() const {
@@ -303,8 +292,7 @@ class IsolatedWebAppUpdateManager
   };
 
   // IwaKeyDistributionInfoProvider::Observer:
-  void OnComponentUpdateSuccess(const base::Version& version,
-                                bool is_preloaded) override;
+  void OnComponentUpdateSuccess(bool is_preloaded) override;
 
   void QueueUpdatesForIwasAffectedByKeyRotation();
 
@@ -351,14 +339,14 @@ class IsolatedWebAppUpdateManager
 
   void OnLocalUpdateDiscovered(
       IsolatedWebAppUrlInfo url_info,
-      base::OnceCallback<void(base::expected<base::Version, std::string>)>
+      base::OnceCallback<void(base::expected<IwaVersion, std::string>)>
           callback,
-      base::expected<base::Version, std::string> update_discovery_result);
+      base::expected<IwaVersion, std::string> update_discovery_result);
 
   void OnLocalUpdateApplyTaskCreated(
       IsolatedWebAppUrlInfo url_info,
-      base::Version update_version,
-      base::OnceCallback<void(base::expected<base::Version, std::string>)>
+      IwaVersion update_version,
+      base::OnceCallback<void(base::expected<IwaVersion, std::string>)>
           callback);
 
   raw_ref<Profile> profile_;

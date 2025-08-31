@@ -13,11 +13,6 @@
 
 namespace content {
 
-bool RenderWidgetHostDelegate::PreHandleMouseEvent(
-    const blink::WebMouseEvent& event) {
-  return false;
-}
-
 KeyboardEventProcessingResult RenderWidgetHostDelegate::PreHandleKeyboardEvent(
     const input::NativeWebKeyboardEvent& event) {
   return KeyboardEventProcessingResult::NOT_HANDLED;
@@ -185,11 +180,6 @@ int RenderWidgetHostDelegate::GetVirtualKeyboardResizeHeight() {
 
 bool RenderWidgetHostDelegate::ShouldDoLearning() {
   return true;
-}
-
-input::mojom::RenderInputRouterDelegate*
-RenderWidgetHostDelegate::GetRenderInputRouterDelegateRemote() {
-  return nullptr;
 }
 
 #if BUILDFLAG(IS_ANDROID)

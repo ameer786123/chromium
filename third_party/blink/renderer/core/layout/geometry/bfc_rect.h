@@ -10,10 +10,7 @@
 #include "third_party/blink/renderer/core/layout/geometry/bfc_offset.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_size.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
-
-namespace WTF {
-class String;
-}  // namespace WTF
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
@@ -52,7 +49,7 @@ struct CORE_EXPORT BfcRect {
 
   bool operator!=(const BfcRect& other) const { return !(*this == other); }
 
-  WTF::String ToString() const;
+  String ToString() const;
 
   BfcOffset start_offset;
   BfcOffset end_offset;

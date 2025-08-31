@@ -14,18 +14,22 @@ import android.view.ViewGroup.LayoutParams;
 import android.widget.TextView;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.UserData;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.EnsuresNonNull;
+import org.chromium.build.annotations.EnsuresNonNullIf;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.build.annotations.RequiresNonNull;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.infobar.InfoBarContainer;
 import org.chromium.chrome.browser.media.MediaCaptureDevicesDispatcherAndroid;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabUtils;
 import org.chromium.chrome.browser.tab.TabViewProvider;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
@@ -33,10 +37,13 @@ import org.chromium.content_public.browser.Visibility;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
 
+import java.util.function.Supplier;
+
 /**
  * Represents the suspension page presented when a user tries to visit a site whose fully-qualified
  * domain name (FQDN) has been suspended via Digital Wellbeing.
  */
+@NullMarked
 public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewProvider {
     private static final String DIGITAL_WELLBEING_SITE_DETAILS_ACTION =
             "org.chromium.chrome.browser.usage_stats.action.SHOW_WEBSITE_DETAILS";
@@ -69,7 +76,7 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
         return suspendedTab;
     }
 
-    public static SuspendedTab get(Tab tab) {
+    public static @Nullable SuspendedTab get(Tab tab) {
         return tab.getUserDataHost().getUserData(USER_DATA_KEY);
     }
 
@@ -80,8 +87,8 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
 
     private final Tab mTab;
     private final Supplier<TabContentManager> mTabContentManagerSupplier;
-    private View mView;
-    private String mFqdn;
+    private @Nullable View mView;
+    private @Nullable String mFqdn;
 
     private SuspendedTab(Tab tab, Supplier<TabContentManager> tabContentManagerSupplier) {
         mTab = tab;
@@ -101,11 +108,8 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
         WebContents webContents = mTab.getWebContents();
         if (webContents != null) {
             webContents.updateWebContentsVisibility(Visibility.HIDDEN);
-            webContents.suspendAllMediaPlayers();
-            webContents.setAudioMuted(true);
-            if (MediaCaptureDevicesDispatcherAndroid.isCapturingAudio(webContents)
-                    || MediaCaptureDevicesDispatcherAndroid.isCapturingVideo(webContents)
-                    || MediaCaptureDevicesDispatcherAndroid.isCapturingScreen(webContents)) {
+            TabUtils.pauseMedia(mTab);
+            if (TabUtils.isCapturingForMedia(mTab)) {
                 MediaCaptureDevicesDispatcherAndroid.notifyStopped(webContents);
             }
         }
@@ -147,8 +151,10 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
         mFqdn = null;
     }
 
-    /** @return the fqdn this SuspendedTab is currently showing for; null if not showing. */
-    public String getFqdn() {
+    /**
+     * @return the fqdn this SuspendedTab is currently showing for; null if not showing.
+     */
+    public @Nullable String getFqdn() {
         return mFqdn;
     }
 
@@ -158,6 +164,7 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
     }
 
     @VisibleForTesting
+    @EnsuresNonNullIf("mView")
     boolean isViewAttached() {
         return mView != null && mTab.getTabViewManager().isShowing(this);
     }
@@ -172,6 +179,7 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
         return suspendedTabView;
     }
 
+    @EnsuresNonNull("mView")
     private void attachView() {
         assert mView == null;
 
@@ -180,6 +188,7 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
         updateFqdnText();
     }
 
+    @RequiresNonNull("mView")
     private void updateFqdnText() {
         Context context = mTab.getContext();
         TextView explanationText = mView.findViewById(R.id.suspended_tab_explanation);
@@ -188,6 +197,7 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
         setSettingsLinkClickListener();
     }
 
+    @RequiresNonNull("mView")
     private void setSettingsLinkClickListener() {
         Context context = mTab.getContext();
         View settingsLink = mView.findViewById(R.id.suspended_tab_settings_button);
@@ -237,7 +247,7 @@ public class SuspendedTab extends EmptyTabObserver implements UserData, TabViewP
     }
 
     @Override
-    public View getView() {
+    public @Nullable View getView() {
         return mView;
     }
 }

@@ -36,6 +36,9 @@ namespace device {
 struct OpenXrExtensionMethods {
   OpenXrExtensionMethods();
   ~OpenXrExtensionMethods();
+  // General Methods
+  OPENXR_DECLARE_FN(xrPollFutureEXT);
+
   // Hand Tracking
   OPENXR_DECLARE_FN(xrCreateHandTrackerEXT);
   OPENXR_DECLARE_FN(xrDestroyHandTrackerEXT);
@@ -58,6 +61,22 @@ struct OpenXrExtensionMethods {
   OPENXR_DECLARE_FN(xrLocateSceneComponentsMSFT);
   OPENXR_DECLARE_FN(xrGetSceneMeshBuffersMSFT);
 
+  // Spatial Entities
+  OPENXR_DECLARE_FN(xrCreateSpatialContextAsyncEXT);
+  OPENXR_DECLARE_FN(xrCreateSpatialContextCompleteEXT);
+  OPENXR_DECLARE_FN(xrCreateSpatialDiscoverySnapshotAsyncEXT);
+  OPENXR_DECLARE_FN(xrCreateSpatialDiscoverySnapshotCompleteEXT);
+  OPENXR_DECLARE_FN(xrCreateSpatialUpdateSnapshotEXT);
+  OPENXR_DECLARE_FN(xrDestroySpatialContextEXT);
+  OPENXR_DECLARE_FN(xrDestroySpatialEntityEXT);
+  OPENXR_DECLARE_FN(xrDestroySpatialSnapshotEXT);
+  OPENXR_DECLARE_FN(xrEnumerateSpatialCapabilitiesEXT);
+  OPENXR_DECLARE_FN(xrEnumerateSpatialCapabilityComponentTypesEXT);
+  OPENXR_DECLARE_FN(xrQuerySpatialComponentDataEXT);
+
+  // Spatial Anchors
+  OPENXR_DECLARE_FN(xrCreateSpatialAnchorEXT);
+
 #if BUILDFLAG(IS_WIN)
   // Time
   OPENXR_DECLARE_FN(xrConvertWin32PerformanceCounterToTimeKHR);
@@ -67,8 +86,6 @@ struct OpenXrExtensionMethods {
   // since the API is still under development we'll try to limit the scope for
   // the time being.
 #if BUILDFLAG(IS_ANDROID)
-  OPENXR_DECLARE_FN(xrGetReferenceSpaceBoundsPolygonANDROID);
-
   // Trackables and Raycasting.
   OPENXR_DECLARE_FN(xrCreateTrackableTrackerANDROID);
   OPENXR_DECLARE_FN(xrDestroyTrackableTrackerANDROID);
@@ -90,6 +107,7 @@ struct OpenXrExtensionMethods {
 // Ensure that we don't export our helper macro.
 #undef OPENXR_DECLARE_FN
 
+class OpenXrApiWrapper;
 class OpenXrExtensionEnumeration {
  public:
   OpenXrExtensionEnumeration();
@@ -130,10 +148,6 @@ class OpenXrExtensionHelper {
   // abstract the *actual* extension that we need to use, since different
   // extensions will be looking for different methods.
 
-  std::unique_ptr<OpenXrAnchorManager> CreateAnchorManager(
-      XrSession session,
-      XrSpace base_space) const;
-
   std::unique_ptr<OpenXrDepthSensor> CreateDepthSensor(
       XrSession session,
       XrSpace base_space,
@@ -148,7 +162,12 @@ class OpenXrExtensionHelper {
       XrSpace base_space) const;
 
   std::unique_ptr<OpenXRSceneUnderstandingManager>
-  CreateSceneUnderstandingManager(XrSession session, XrSpace base_space) const;
+  CreateSceneUnderstandingManager(
+      OpenXrApiWrapper* openxr,
+      XrSession session,
+      XrSpace base_space,
+      const std::vector<mojom::XRSessionFeature>& required_features,
+      const std::vector<mojom::XRSessionFeature>& optional_features) const;
 
   std::unique_ptr<OpenXrStageBoundsProvider> CreateStageBoundsProvider(
       XrSession session) const;

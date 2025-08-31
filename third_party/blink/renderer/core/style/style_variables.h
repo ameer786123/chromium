@@ -5,6 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_STYLE_VARIABLES_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_STYLE_VARIABLES_H_
 
+#include <array>
+#include <concepts>
 #include <iosfwd>
 #include <optional>
 
@@ -294,7 +296,7 @@ class HashTrieNode : public GarbageCollected<HashTrieNode<Data>> {
   // Add or remove the given key/value pair from the given hash.
   static void UpdateHash(const AtomicString& key, Data* value, unsigned& hash) {
     if (value) {
-      hash ^= WTF::HashInts(key.Hash(), value->Hash());
+      hash ^= HashInts(key.Hash(), value->Hash());
     }
   }
 
@@ -430,10 +432,8 @@ CORE_EXPORT std::ostream& operator<<(std::ostream& stream,
                                      const StyleVariables& variables);
 
 template <typename T>
-struct ThreadingTrait<
-    T,
-    std::enable_if_t<
-        std::is_base_of<blink::HashTrieNode<CSSVariableData>, T>::value>> {
+  requires(std::derived_from<T, blink::HashTrieNode<CSSVariableData>>)
+struct ThreadingTrait<T> {
   static constexpr ThreadAffinity kAffinity = kMainThreadOnly;
 };
 

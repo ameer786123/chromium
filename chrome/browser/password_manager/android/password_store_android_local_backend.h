@@ -22,13 +22,12 @@ class AffiliatedMatchHelper;
 class PasswordStoreAndroidLocalBackend : public PasswordStoreBackend,
                                          public PasswordStoreAndroidBackend {
  public:
-  explicit PasswordStoreAndroidLocalBackend(PrefService* prefs);
+  PasswordStoreAndroidLocalBackend();
 
   // Only for testing.
   PasswordStoreAndroidLocalBackend(
       std::unique_ptr<PasswordStoreAndroidBackendBridgeHelper> bridge_helper,
-      std::unique_ptr<PasswordManagerLifecycleHelper> lifecycle_helper,
-      PrefService* prefs);
+      std::unique_ptr<PasswordManagerLifecycleHelper> lifecycle_helper);
   ~PasswordStoreAndroidLocalBackend() override;
 
   // PasswordStoreBackend implementation.
@@ -67,8 +66,6 @@ class PasswordStoreAndroidLocalBackend : public PasswordStoreBackend,
   std::unique_ptr<syncer::DataTypeControllerDelegate>
   CreateSyncControllerDelegate() override;
   void OnSyncServiceInitialized(syncer::SyncService* sync_service) override;
-  void RecordAddLoginAsyncCalledFromTheStore() override;
-  void RecordUpdateLoginAsyncCalledFromTheStore() override;
   SmartBubbleStatsStore* GetSmartBubbleStatsStore() override;
   base::WeakPtr<PasswordStoreBackend> AsWeakPtr() override;
 

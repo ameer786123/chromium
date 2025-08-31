@@ -11,7 +11,8 @@ import org.chromium.base.Token;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
-import org.chromium.chrome.browser.multiwindow.WindowId;
+import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabId;
@@ -71,11 +72,6 @@ public interface TabWindowManager {
     void removeObserver(Observer observer);
 
     /**
-     * Returns the maximum number of simultaneous TabModelSelector instances in this Application.
-     */
-    int getMaxSimultaneousSelectors();
-
-    /**
      * Called to request a {@link TabModelSelector} based on {@code index}. Note that the {@link
      * TabModelSelector} returned might not actually be the one related to {@code index} and {@link
      * #getIdForWindow(Activity)} should be called to grab the actual index if required.
@@ -85,6 +81,7 @@ public interface TabWindowManager {
      * @param profileProviderSupplier The provider of the Profiles used in the selector.
      * @param tabCreatorManager An instance of {@link TabCreatorManager}.
      * @param nextTabPolicySupplier An instance of {@link NextTabPolicySupplier}.
+     * @param multiInstanceManager An instance of {@link MultiInstanceManager}.
      * @param mismatchedIndicesHandler An instance of {@link MismatchedIndicesHandler}.
      * @param windowId The suggested id of the window that the selector should correspond to. Not
      *     guaranteed to be the index of the {@link TabModelSelector} returned.
@@ -97,8 +94,30 @@ public interface TabWindowManager {
             OneshotSupplier<ProfileProvider> profileProviderSupplier,
             TabCreatorManager tabCreatorManager,
             NextTabPolicySupplier nextTabPolicySupplier,
+            MultiInstanceManager multiInstanceManager,
             MismatchedIndicesHandler mismatchedIndicesHandler,
             @WindowId int windowId);
+
+    /**
+     * Creates and returns a headless selector if possible. If there's already a tabbed selector, it
+     * will be returned instead, meaning you should not assume the returned selector is necessarily
+     * headless. Note that the selector returned may still being initialized.
+     *
+     * @param windowId The window id to load the tabs for. Unlike {@link #requestSelector}, this
+     *     will not be re-assigned.
+     * @param profile The profile to scope everything to.
+     * @return The selector to access tabs.
+     */
+    @Nullable TabModelSelector requestSelectorWithoutActivity(
+            @WindowId int windowId, Profile profile);
+
+    /**
+     * Remove headless tracking for a given selector if any is currently available.
+     *
+     * @param windowId The window id that tabs might be loaded for.
+     * @return Whether there was headless selectors that could be shutdown.
+     */
+    boolean shutdownIfHeadless(@WindowId int windowId);
 
     /**
      * Finds the current index of the {@link TabModelSelector} bound to {@code window}.
@@ -164,5 +183,27 @@ public interface TabWindowManager {
     boolean canTabThumbnailBeDeleted(@TabId int tabId);
 
     /** Sets the given archived {@link TabModelSelector} singleton instance. */
-    void setArchivedTabModelSelector(TabModelSelector archivedTabModelSelector);
+    void setArchivedTabModelSelector(@Nullable TabModelSelector archivedTabModelSelector);
+
+    /**
+     * Starts to initialize tab models for all windows with data. Some may be headless.
+     *
+     * @param multiInstanceManager Used to fetch window ids.
+     * @param profile Used to scope access.
+     * @param selector The current selector for the caller, used as a fallback when window
+     *     information is not available.
+     */
+    void keepAllTabModelsLoaded(
+            MultiInstanceManager multiInstanceManager, Profile profile, TabModelSelector selector);
+
+    /**
+     * Tries to discern the correct window id that contains a tab group. This may be a like activity
+     * or in a headless tab model. If the requested tab group cannot be found, then
+     * INVALID_WINDOW_ID is returned.
+     *
+     * @param tabGroupId The group to look for.
+     * @return The window id that holds the given tab group.
+     */
+    @WindowId
+    int findWindowIdForTabGroup(Token tabGroupId);
 }

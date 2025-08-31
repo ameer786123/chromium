@@ -47,6 +47,7 @@ extern const base::FeatureParam<DevToolsFreestylerExecutionMode>
     kDevToolsFreestylerExecutionMode;
 extern const base::FeatureParam<bool> kDevToolsFreestylerPatching;
 extern const base::FeatureParam<bool> kDevToolsFreestylerMultimodal;
+extern const base::FeatureParam<bool> kDevToolsFreestylerMultimodalUploadInput;
 extern const base::FeatureParam<bool> kDevToolsFreestylerFunctionCalling;
 
 BASE_DECLARE_FEATURE(kDevToolsAiAssistanceNetworkAgent);
@@ -75,25 +76,32 @@ extern const base::FeatureParam<double>
 extern const base::FeatureParam<DevToolsFreestylerUserTier>
     kDevToolsAiAssistanceFileAgentUserTier;
 
+BASE_DECLARE_FEATURE(kDevToolsAiCodeCompletion);
+extern const base::FeatureParam<std::string> kDevToolsAiCodeCompletionModelId;
+extern const base::FeatureParam<double> kDevToolsAiCodeCompletionTemperature;
+extern const base::FeatureParam<DevToolsFreestylerUserTier>
+    kDevToolsAiCodeCompletionUserTier;
+
 BASE_DECLARE_FEATURE(kDevToolsSharedProcessInfobar);
-BASE_DECLARE_FEATURE(kDevToolsVeLogging);
-extern const base::FeatureParam<bool> kDevToolsVeLoggingTesting;
 
 BASE_DECLARE_FEATURE(kDevToolsAnimationStylesInStylesTab);
 
-BASE_DECLARE_FEATURE(kDevToolsAutomaticFileSystems);
-
 BASE_DECLARE_FEATURE(kDevToolsWellKnown);
-
-BASE_DECLARE_FEATURE(kDevToolsCssValueTracing);
 
 BASE_DECLARE_FEATURE(kDevToolsAiGeneratedTimelineLabels);
 
 BASE_DECLARE_FEATURE(kDevToolsNewPermissionDialog);
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-BASE_DECLARE_FEATURE(kDevToolsDebuggingRestrictions);
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+BASE_DECLARE_FEATURE(kDevToolsVerticalDrawer);
+
+BASE_DECLARE_FEATURE(kDevToolsAiSubmenuPrompts);
+BASE_DECLARE_FEATURE(kDevToolsAiDebugWithAi);
+
+BASE_DECLARE_FEATURE(kDevToolsGlobalAiButton);
+extern const base::FeatureParam<bool> kDevToolsGlobalAiButtonPromotionEnabled;
+
+BASE_DECLARE_FEATURE(kDevToolsGdpProfiles);
+extern const base::FeatureParam<bool> kDevToolsGdpProfilesStarterBadgeEnabled;
 
 }  // namespace features
 

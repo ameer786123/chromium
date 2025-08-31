@@ -4,9 +4,12 @@
 
 package org.chromium.chrome.browser.customtabs.content;
 
+import android.app.Activity;
 import android.text.TextUtils;
 
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
+import org.chromium.chrome.browser.browserservices.ui.controller.CurrentPageVerifier;
+import org.chromium.chrome.browser.browserservices.ui.controller.Verifier;
 import org.chromium.chrome.browser.customtabs.CustomTabAuthUrlHeuristics;
 import org.chromium.chrome.browser.customtabs.CustomTabObserver;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -22,14 +25,23 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
     private final CustomTabActivityTabProvider mTabProvider;
     private final CustomTabActivityNavigationController mNavigationController;
     private final CustomTabObserver mCustomTabObserver;
+    private final Verifier mVerifier;
+    private final CurrentPageVerifier mCurrentPageVerifier;
+    private final Activity mActivity;
 
     public DefaultCustomTabIntentHandlingStrategy(
             CustomTabActivityTabProvider tabProvider,
             CustomTabActivityNavigationController navigationController,
-            CustomTabObserver customTabObserver) {
+            CustomTabObserver customTabObserver,
+            Verifier verifier,
+            CurrentPageVerifier currentPageVerifier,
+            Activity activity) {
         mTabProvider = tabProvider;
         mNavigationController = navigationController;
         mCustomTabObserver = customTabObserver;
+        mVerifier = verifier;
+        mCurrentPageVerifier = currentPageVerifier;
+        mActivity = activity;
     }
 
     @Override
@@ -37,6 +49,18 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
         @TabCreationMode int initialTabCreationMode = mTabProvider.getInitialTabCreationMode();
         if (mTabProvider.getTab() != null) {
             CustomTabAuthUrlHeuristics.setFirstCctPageLoadForMetrics(mTabProvider.getTab());
+        }
+
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_WEB_APP_LAUNCH_HANDLER)
+                && intentDataProvider.isTrustedWebActivity()) {
+            WebAppLaunchHandler launchHandler =
+                    WebAppLaunchHandler.create(
+                            mVerifier,
+                            mCurrentPageVerifier,
+                            mNavigationController,
+                            mTabProvider.getTab().getWebContents(),
+                            mActivity);
+            launchHandler.handleInitialIntent(intentDataProvider);
         }
 
         if (initialTabCreationMode == TabCreationMode.HIDDEN) {
@@ -48,10 +72,6 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
 
         CustomTabAuthUrlHeuristics.recordUrlParamsHistogram(intentDataProvider.getUrlToLoad());
         CustomTabAuthUrlHeuristics.recordRedirectUriSchemeHistogram(intentDataProvider);
-
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_WEB_APP_LAUNCH_HANDLER)) {
-            handleLaunch(intentDataProvider, true);
-        }
     }
 
     // The hidden tab case needs a bit of special treatment.
@@ -69,7 +89,7 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
         boolean useSpeculation = TextUtils.equals(speculatedUrl, url);
         boolean hasCommitted = !tab.getWebContents().getLastCommittedUrl().isEmpty();
         mCustomTabObserver.trackNextPageLoadForHiddenTab(
-                useSpeculation, hasCommitted, intentDataProvider.getIntent());
+                tab.getWebContents(), useSpeculation, hasCommitted, intentDataProvider.getIntent());
 
         if (useSpeculation) return;
 
@@ -82,21 +102,6 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
         }
 
         mNavigationController.navigate(params, intentDataProvider.getIntent());
-    }
-
-    private void handleLaunch(
-            BrowserServicesIntentDataProvider intentDataProvider, boolean isInitialIntent) {
-        WebAppLaunchHandler launchHandler =
-                new WebAppLaunchHandler(
-                        intentDataProvider.getLaunchHandlerClientMode(),
-                        intentDataProvider.getUrlToLoad(),
-                        intentDataProvider.getClientPackageName());
-
-        if (launchHandler.getStartNewNavigation() && !isInitialIntent) {
-            loadUrl(intentDataProvider);
-        }
-
-        launchHandler.notifyLaunchQueue(mTabProvider.getTab().getWebContents());
     }
 
     private void loadUrl(BrowserServicesIntentDataProvider intentDataProvider) {
@@ -117,8 +122,16 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
 
     @Override
     public void handleNewIntent(BrowserServicesIntentDataProvider intentDataProvider) {
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_WEB_APP_LAUNCH_HANDLER)) {
-            handleLaunch(intentDataProvider, false);
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_WEB_APP_LAUNCH_HANDLER)
+                && intentDataProvider.isTrustedWebActivity()) {
+            WebAppLaunchHandler launchHandler =
+                    WebAppLaunchHandler.create(
+                            mVerifier,
+                            mCurrentPageVerifier,
+                            mNavigationController,
+                            mTabProvider.getTab().getWebContents(),
+                            mActivity);
+            launchHandler.handleNewIntent(intentDataProvider);
         } else {
             loadUrl(intentDataProvider);
         }

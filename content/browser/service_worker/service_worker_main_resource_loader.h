@@ -186,7 +186,7 @@ class CONTENT_EXPORT ServiceWorkerMainResourceLoader
 
   void Fallback(ResponseHeadUpdateParams response_header_params);
 
-  std::string GetInitialServiceWorkerStatusString();
+  std::string_view GetInitialServiceWorkerStatusString();
   std::string GetFrameTreeNodeTypeString();
   bool IsEligibleForRecordingTimingMetrics();
   void RecordFindRegistrationToCompletedTrace();
@@ -274,6 +274,10 @@ class CONTENT_EXPORT ServiceWorkerMainResourceLoader
 
   void OnCompleteSyntheticNetworkRequest(
       const network::URLLoaderCompletionStatus& status);
+
+  void CreateAndRunCacheMatcher(
+      const std::optional<std::string>& cache_name,
+      scoped_refptr<ServiceWorkerVersion> active_worker);
 
   NavigationLoaderInterceptor::FallbackCallback fallback_callback_;
 

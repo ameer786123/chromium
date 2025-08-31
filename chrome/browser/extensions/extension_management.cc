@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/extensions/extension_management.h"
 
 #include <memory>
@@ -29,6 +24,7 @@
 #include "base/values.h"
 #include "base/version.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/enterprise/util/managed_browser_utils.h"
 #include "chrome/browser/extensions/cws_info_service.h"
 #include "chrome/browser/extensions/extension_management_constants.h"
 #include "chrome/browser/extensions/extension_management_internal.h"
@@ -61,6 +57,10 @@
 #include "extensions/common/url_pattern.h"
 #include "url/gurl.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "google_apis/gaia/gaia_auth_util.h"
+#endif
+
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
@@ -73,7 +73,7 @@
 #endif
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
-#include "chrome/browser/enterprise/browser_management/management_service_factory.h"
+#include "chrome/browser/extensions/management/management_util.h"
 #endif
 
 namespace extensions {
@@ -83,18 +83,6 @@ namespace extensions {
 BASE_FEATURE(kDisableOffstoreForceInstalledExtensionsInLowTrustEnviroment,
              "DisableOffstoreForceInstalledExtensionsInLowTrustEnviroment",
              base::FEATURE_ENABLED_BY_DEFAULT);
-
-// The highest level of trustworthiness for either platform or browser.
-policy::ManagementAuthorityTrustworthiness GetHighestTrustworthiness(
-    Profile* profile) {
-  policy::ManagementAuthorityTrustworthiness platform_trustworthiness =
-      policy::ManagementServiceFactory::GetForPlatform()
-          ->GetManagementAuthorityTrustworthiness();
-  policy::ManagementAuthorityTrustworthiness browser_trustworthiness =
-      policy::ManagementServiceFactory::GetForProfile(profile)
-          ->GetManagementAuthorityTrustworthiness();
-  return std::max(platform_trustworthiness, browser_trustworthiness);
-}
 #endif
 
 ExtensionManagement::ExtensionManagement(Profile* profile)
@@ -178,9 +166,35 @@ ManagedInstallationMode ExtensionManagement::GetInstallationMode(
                              update_url ? *update_url : std::string());
 }
 
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+bool ExtensionManagement::ExtensionsEnabledForDesktopAndroid() const {
+  // Disable extensions only for specific domains.
+  // This check keeps many tests from failing.
+  std::string user_name = profile_->GetProfileUserName();
+  // Crude check to avoid passing invalid strings to `ExtractDomainName`.
+  if (base::Contains(user_name, "@")) {
+    std::string domain = gaia::ExtractDomainName(user_name);
+    if (domain == "google.com" || domain == "managedchrome.com") {
+      return false;
+    }
+  }
+  return true;
+}
+#endif  // BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+
 ManagedInstallationMode ExtensionManagement::GetInstallationMode(
     const ExtensionId& extension_id,
     const std::string& update_url) {
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+  // Block extensions for managed profiles on Desktop Android. This is
+  // temporary until extensions are ready for dogfooding.
+  // TODO(crbug.com/422307625): Remove this check once extensions are ready for
+  // dogfooding.
+  if (!ExtensionsEnabledForDesktopAndroid()) {
+    return ManagedInstallationMode::kRemoved;
+  }
+#endif  // BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+
   // Check per-extension installation mode setting first.
   auto* setting = GetSettingsForId(extension_id);
   if (setting)
@@ -465,7 +479,7 @@ bool ExtensionManagement::IsForceInstalledInLowTrustEnvironment(
     return false;
   }
 
-  return GetHighestTrustworthiness(profile_) <
+  return GetHigherManagementAuthorityTrustworthiness(profile_) <
          policy::ManagementAuthorityTrustworthiness::TRUSTED;
 #else
   return false;
@@ -489,7 +503,7 @@ bool ExtensionManagement::ShouldBlockForceInstalledOffstoreExtension(
     return false;
   }
 
-  return GetHighestTrustworthiness(profile_) <
+  return GetHigherManagementAuthorityTrustworthiness(profile_) <
          policy::ManagementAuthorityTrustworthiness::TRUSTED;
 #else
   return false;
@@ -768,10 +782,10 @@ void ExtensionManagement::Refresh() {
       const base::Value::Dict* subdict = iter.second.GetIfDict();
       if (!subdict)
         continue;
-      if (base::StartsWith(iter.first, schema_constants::kUpdateUrlPrefix,
-                           base::CompareCase::SENSITIVE)) {
-        const std::string& update_url =
-            iter.first.substr(strlen(schema_constants::kUpdateUrlPrefix));
+      std::optional<std::string_view> remainder =
+          base::RemovePrefix(iter.first, schema_constants::kUpdateUrlPrefix);
+      if (remainder) {
+        const std::string update_url(*remainder);
         if (!GURL(update_url).is_valid()) {
           LOG(WARNING) << "Invalid update URL: " << update_url << ".";
           continue;

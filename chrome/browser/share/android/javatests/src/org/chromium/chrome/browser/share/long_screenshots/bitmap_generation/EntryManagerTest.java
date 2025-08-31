@@ -8,12 +8,15 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyFloat;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 
 import android.graphics.Bitmap;
+import android.graphics.Point;
 import android.graphics.Rect;
+import android.util.Size;
 
 import org.junit.After;
 import org.junit.Before;
@@ -80,7 +83,8 @@ public class EntryManagerTest {
                 ArgumentCaptor.forClass(LongScreenshotsTabService.CaptureProcessor.class);
         mInOrder.verify(mTabServiceMock).setCaptureProcessor(captor.capture());
         mProcessor = captor.getValue();
-        mInOrder.verify(mTabServiceMock).captureTab(eq(mTabMock), any(), eq(false));
+        mInOrder.verify(mTabServiceMock)
+                .captureTab(eq(mTabMock), any(), eq(false), anyInt(), anyInt());
         mInOrder.verify(mObserverMock).onStatusChange(eq(EntryStatus.CAPTURE_IN_PROGRESS));
         mGenerator = mEntryManager.getBitmapGeneratorForTesting();
         mGenerator.setCompositorFactoryForTesting(
@@ -100,6 +104,8 @@ public class EntryManagerTest {
         when(mLongScreenshotsCompositorMock.requestBitmap(
                         any(), anyFloat(), mErrorCaptor.capture(), mCompleteCaptor.capture()))
                 .thenReturn(0);
+        when(mLongScreenshotsCompositorMock.getContentSize()).thenReturn(new Size(50, 50));
+        when(mLongScreenshotsCompositorMock.getScrollOffset()).thenReturn(new Point(20, 20));
     }
 
     @After
@@ -111,6 +117,7 @@ public class EntryManagerTest {
     /** Tests capture through to generation of the fullpage entry. */
     @Test
     public void testGenerateFullpageEntry() {
+        when(mBoundsManagerMock.getFullEntryBounds()).thenReturn(new Rect(0, 100, 0, 100));
         mProcessor.processCapturedTab(FAKE_CAPTURE_ADDR, Status.OK);
         mOnCompositorResultCallback.onResult(CompositorStatus.OK);
         mInOrder.verify(mObserverMock).onStatusChange(eq(EntryStatus.CAPTURE_COMPLETE));

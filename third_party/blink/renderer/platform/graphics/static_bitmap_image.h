@@ -11,6 +11,7 @@
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/common/mailbox_holder.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
+#include "third_party/blink/renderer/platform/graphics/canvas_high_entropy_op_type.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/khronos/GLES2/gl2.h"
@@ -46,7 +47,7 @@ class PLATFORM_EXPORT StaticBitmapImage : public Image {
   gfx::Size SizeWithConfig(SizeConfig) const final;
 
   // Methods have common implementation for all sub-classes
-  bool CurrentFrameIsComplete() override { return true; }
+  bool FirstFrameIsComplete() override { return true; }
   void DestroyDecodedData() override {}
 
   // Methods that have a default implementation, and overridden by only one
@@ -93,12 +94,17 @@ class PLATFORM_EXPORT StaticBitmapImage : public Image {
   bool OriginClean() const { return is_origin_clean_; }
   void SetOriginClean(bool flag) { is_origin_clean_ = flag; }
 
+  HighEntropyCanvasOpType HighEntropyCanvasOpTypes() const {
+    return high_entropy_canvas_op_types_;
+  }
+  void SetHighEntropyCanvasOpTypes(HighEntropyCanvasOpType types) {
+    high_entropy_canvas_op_types_ = types;
+  }
+
   // StaticBitmapImage needs to store the orientation of the image itself,
   // because the underlying representations do not. If the bitmap represents
   // a non-default orientation it must be explicitly given in the constructor.
-  ImageOrientation CurrentFrameOrientation() const override {
-    return orientation_;
-  }
+  ImageOrientation Orientation() const override { return orientation_; }
 
   void SetOrientation(ImageOrientation orientation) {
     orientation_ = orientation;
@@ -114,8 +120,6 @@ class PLATFORM_EXPORT StaticBitmapImage : public Image {
 
   virtual gfx::Size GetSize() const = 0;
   virtual SkAlphaType GetAlphaType() const = 0;
-  virtual SkColorType GetSkColorType() const = 0;
-  virtual sk_sp<SkColorSpace> GetSkColorSpace() const = 0;
   virtual gfx::ColorSpace GetColorSpace() const = 0;
   virtual viz::SharedImageFormat GetSharedImageFormat() const = 0;
 
@@ -139,6 +143,9 @@ class PLATFORM_EXPORT StaticBitmapImage : public Image {
   // AcceleratedStaticBitmapImage. To change this property, the call site would
   // have to call SetOriginClean().
   bool is_origin_clean_ = true;
+
+  HighEntropyCanvasOpType high_entropy_canvas_op_types_ =
+      HighEntropyCanvasOpType::kNone;
 };
 
 template <>

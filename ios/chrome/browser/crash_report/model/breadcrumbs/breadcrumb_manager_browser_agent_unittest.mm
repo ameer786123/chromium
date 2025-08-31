@@ -145,9 +145,9 @@ TEST_F(BreadcrumbManagerBrowserAgentTest, BatchOperations) {
     WebStateList::ScopedBatchOperation lock =
         browser_->GetWebStateList()->StartBatchOperation();
     browser_->GetWebStateList()->CloseWebStateAt(
-        0, WebStateList::ClosingFlags::CLOSE_NO_FLAGS);
+        0, WebStateList::ClosingReason::kDefault);
     browser_->GetWebStateList()->CloseWebStateAt(
-        0, WebStateList::ClosingFlags::CLOSE_NO_FLAGS);
+        0, WebStateList::ClosingReason::kDefault);
   }
 
   ASSERT_EQ(2u, events.size());
@@ -165,8 +165,8 @@ TEST_F(BreadcrumbManagerBrowserAgentTest, JavaScriptAlertOverlay) {
       OverlayModality::kWebContentArea);
   queue->AddRequest(
       OverlayRequest::CreateWithConfig<JavaScriptAlertDialogRequest>(
-          browser_->GetWebStateList()->GetWebStateAt(0), GURL(),
-          /*is_main_frame=*/true, @"message"));
+          browser_->GetWebStateList()->GetWebStateAt(0), GURL(), url::Origin(),
+          @"message"));
   queue->CancelAllRequests();
 
   const auto& events = GetEvents();
@@ -189,8 +189,8 @@ TEST_F(BreadcrumbManagerBrowserAgentTest, JavaScriptConfirmOverlay) {
       OverlayModality::kWebContentArea);
   queue->AddRequest(
       OverlayRequest::CreateWithConfig<JavaScriptConfirmDialogRequest>(
-          browser_->GetWebStateList()->GetWebStateAt(0), GURL(),
-          /*is_main_frame=*/true, @"message"));
+          browser_->GetWebStateList()->GetWebStateAt(0), GURL(), url::Origin(),
+          @"message"));
   queue->CancelAllRequests();
 
   const auto& events = GetEvents();
@@ -213,8 +213,8 @@ TEST_F(BreadcrumbManagerBrowserAgentTest, JavaScriptPromptOverlay) {
       OverlayModality::kWebContentArea);
   queue->AddRequest(
       OverlayRequest::CreateWithConfig<JavaScriptPromptDialogRequest>(
-          browser_->GetWebStateList()->GetWebStateAt(0), GURL(),
-          /*is_main_frame=*/true, @"message",
+          browser_->GetWebStateList()->GetWebStateAt(0), GURL(), url::Origin(),
+          @"message",
           /*default_text_field_value=*/nil));
   queue->CancelAllRequests();
 

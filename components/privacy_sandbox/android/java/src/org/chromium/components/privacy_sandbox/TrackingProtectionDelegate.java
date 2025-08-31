@@ -30,6 +30,11 @@ public interface TrackingProtectionDelegate {
     void setDoNotTrack(boolean enabled);
 
     /**
+     * @return whether the IP protection UX is enabled.
+     */
+    boolean isIpProtectionUxEnabled();
+
+    /**
      * @return whether the IP protection is enabled.
      */
     boolean isIpProtectionEnabled();
@@ -38,9 +43,34 @@ public interface TrackingProtectionDelegate {
     void setIpProtection(boolean enabled);
 
     /**
+     * @return whether IP protection is disabled for users on enterprise devices.
+     */
+    boolean isIpProtectionDisabledForEnterprise();
+
+    /**
+     * @return whether IP protection is managed.
+     */
+    boolean isIpProtectionManaged();
+
+    /**
+     * @return whether fingerprinting protection is managed.
+     */
+    boolean isFingerprintingProtectionManaged();
+
+    /**
+     * @return whether the fingerprinting protection UX is enabled.
+     */
+    boolean isFingerprintingProtectionUxEnabled();
+
+    /**
      * @return whether the fingerprinting protection is enabled.
      */
     boolean isFingerprintingProtectionEnabled();
+
+    /**
+     * @return true if wildcards should be shown in content settings patterns.
+     */
+    boolean isDisplayWildcardInContentSettingsEnabled();
 
     /** Set the value of the fingerprinting protection state. */
     void setFingerprintingProtection(boolean enabled);

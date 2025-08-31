@@ -23,8 +23,6 @@ include_rules = [
   "+media/cdm",
   "+media/filters",
   "+media/formats",
-  "+media/learning/common",
-  "+media/learning/mojo/public/cpp",
   "+media/media_buildflags.h",
   "+media/mojo/mojom",
   "+media/renderers/paint_canvas_video_renderer.h",
@@ -51,7 +49,6 @@ specific_include_rules = {
     "+gpu/command_buffer/client/test_shared_image_interface.h",
     "+media/mojo/services",
     "+media/renderers",
-    "+media/video/fake_gpu_memory_buffer.h",
     "+gin/v8_initializer.h",
 
     # Allow test support dependencies.

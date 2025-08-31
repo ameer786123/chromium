@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/layout/logical_fragment_link.h"
 #include "third_party/blink/renderer/core/layout/pagination_utils.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -69,9 +70,12 @@ struct StitchedAnchorReference
   PhysicalAnchorReference* GetStitchedAnchorReference(
       const WritingModeConverter& converter) const {
     PhysicalRect physical_rect = converter.ToPhysical(StitchedRect());
+    TransformState transform_state(TransformState::kApplyTransformDirection,
+                                   gfx::QuadF(gfx::RectF(physical_rect)));
 
     return MakeGarbageCollected<PhysicalAnchorReference>(
-        *element, physical_rect, /* is_out_of_flow */ false, nullptr);
+        *element, transform_state, physical_rect, /*is_out_of_flow=*/false,
+        nullptr);
   }
 
   void Unite(const LogicalRect& other_rect,
@@ -131,9 +135,13 @@ struct StitchedAnchorQuery : public GarbageCollected<StitchedAnchorQuery>,
       return;
     for (auto entry : *anchor_query) {
       DCHECK(entry.value->GetLayoutObject());
-      AddAnchorReference(entry.key, *entry.value->GetLayoutObject(),
-                         entry.value->rect + offset_from_fragmentainer,
-                         fragmentainer, Conflict::kLastInCallOrder);
+      // TODO(crbug.com/425388879): Handle transforms correctly (ideally just
+      // delete all this code (the entire file), which what the referenced bug
+      // is about).
+      AddAnchorReference(
+          entry.key, *entry.value->GetLayoutObject(),
+          entry.value->RectWithoutTransforms() + offset_from_fragmentainer,
+          fragmentainer, Conflict::kLastInCallOrder);
     }
   }
 
@@ -378,6 +386,7 @@ StitchedAnchorQueries::StitchedAnchorQueries(
     : root_box_(root_box),
       container_size_(container_size),
       writing_direction_(writing_direction) {
+  DCHECK(!RuntimeEnabledFeatures::CSSAnchorSimplifiedFragmentationEnabled());
   DCHECK(&root_box);
   SetChildren(children);
 }

@@ -27,7 +27,6 @@
 
 using ::testing::_;
 using ::testing::InSequence;
-using ::testing::Invoke;
 
 namespace media {
 
@@ -286,19 +285,19 @@ TEST_F(MojoVideoEncodeAcceleratorTest, EncodeOneFrame) {
     ASSERT_TRUE(shmem.IsValid());
     const scoped_refptr<VideoFrame> video_frame = VideoFrame::WrapExternalData(
         PIXEL_FORMAT_I420, kInputVisibleSize, gfx::Rect(kInputVisibleSize),
-        kInputVisibleSize, static_cast<uint8_t*>(shmem.mapping.memory()),
-        shmem.mapping.size(), base::TimeDelta());
+        kInputVisibleSize, shmem.mapping.GetMemoryAsSpan<uint8_t>(),
+        base::TimeDelta());
     video_frame->BackWithSharedMemory(&shmem.region);
     const bool is_keyframe = true;
 
     // The remote end of the mojo Pipe doesn't receive |video_frame| itself.
     EXPECT_CALL(*mock_mojo_vea(), DoEncode(_, is_keyframe));
     EXPECT_CALL(*mock_vea_client, BitstreamBufferReady(kBitstreamBufferId, _))
-        .WillOnce(Invoke([is_keyframe, &video_frame](
-                             int32_t, const BitstreamBufferMetadata& metadata) {
+        .WillOnce([is_keyframe, &video_frame](
+                      int32_t, const BitstreamBufferMetadata& metadata) {
           EXPECT_EQ(is_keyframe, metadata.key_frame);
           EXPECT_EQ(metadata.timestamp, video_frame->timestamp());
-        }));
+        });
 
     mojo_vea()->Encode(video_frame, is_keyframe);
     base::RunLoop().RunUntilIdle();

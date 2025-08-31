@@ -18,10 +18,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/not_fatal_until.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/rand_util.h"
 #include "base/synchronization/lock.h"
@@ -71,9 +70,6 @@ class RandomNameGenerator {
   size_t cache_index_ = kRandomNameCacheSize;
 };
 
-base::LazyInstance<RandomNameGenerator>::Leaky g_name_generator =
-    LAZY_INSTANCE_INITIALIZER;
-
 int DebugError(const char* message, int error_code) {
   NOTREACHED() << "Oops: " << message;
 }
@@ -96,7 +92,8 @@ bool CanAcceptMoreMessages(const Port* port) {
 }
 
 void GenerateRandomPortName(PortName* name) {
-  *name = g_name_generator.Get().GenerateRandomPortName();
+  static base::NoDestructor<RandomNameGenerator> generator;
+  *name = generator->GenerateRandomPortName();
 }
 
 }  // namespace
@@ -1547,7 +1544,7 @@ int Node::PrepareToForwardUserMessage(const PortRef& forwarding_port_ref,
     for (size_t i = 0; i < message->num_ports(); ++i) {
       const PortName& attached_port_name = message->ports()[i];
       auto iter = ports_.find(attached_port_name);
-      CHECK(iter != ports_.end(), base::NotFatalUntil::M130);
+      CHECK(iter != ports_.end());
       attached_port_refs[i] = PortRef(attached_port_name, iter->second);
       ports_to_lock[i + 1] = &attached_port_refs[i];
     }

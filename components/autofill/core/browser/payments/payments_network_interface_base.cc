@@ -8,6 +8,7 @@
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "components/autofill/core/browser/payments/account_info_getter.h"
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/payments/payments_requests/payments_request.h"
@@ -15,11 +16,13 @@
 #include "components/signin/public/identity_manager/access_token_fetcher.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/oauth_consumer_ids.h"
 #include "components/variations/net/variations_http_headers.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 
@@ -27,10 +30,6 @@ namespace autofill::payments {
 namespace {
 
 using PaymentsRpcResult = PaymentsAutofillClient::PaymentsRpcResult;
-
-const char kTokenFetchId[] = "wallet_client";
-const char kPaymentsOAuth2Scope[] =
-    "https://www.googleapis.com/auth/wallet.chrome";
 
 GURL GetRequestUrl(const std::string& path) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch("sync-url")) {
@@ -286,18 +285,16 @@ void PaymentsNetworkInterfaceBase::StartTokenFetch(bool invalidate_old) {
 
   DCHECK(account_info_getter_);
 
-  signin::ScopeSet payments_scopes;
-  payments_scopes.insert(kPaymentsOAuth2Scope);
   CoreAccountId account_id =
       account_info_getter_->GetAccountInfoForPaymentsServer().account_id;
   if (invalidate_old) {
     DCHECK(!access_token_.empty());
-    identity_manager_->RemoveAccessTokenFromCache(account_id, payments_scopes,
-                                                  access_token_);
+    identity_manager_->RemoveAccessTokenFromCache(
+        account_id, signin::OAuthConsumerId::kAutofillPayments, access_token_);
   }
   access_token_.clear();
   token_fetcher_ = identity_manager_->CreateAccessTokenFetcherForAccount(
-      account_id, kTokenFetchId, payments_scopes,
+      account_id, signin::OAuthConsumerId::kAutofillPayments,
       base::BindOnce(&PaymentsNetworkInterfaceBase::AccessTokenFetchFinished,
                      base::Unretained(this)),
       signin::AccessTokenFetcher::Mode::kImmediate);

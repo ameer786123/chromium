@@ -5,17 +5,51 @@
 #include "chrome/test/base/android/android_browser_test.h"
 
 #include "base/command_line.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/ui/android/tab_model/tab_model.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "chrome/test/base/test_launcher_utils.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/buildflags/buildflags.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+#include "extensions/common/extension_features.h"
+#endif
+
+namespace {
+AndroidBrowserTest* g_current_test = nullptr;
+}  // namespace
 
 AndroidBrowserTest::AndroidBrowserTest() {
+  // chrome::DIR_TEST_DATA isn't going to be setup until after we call
+  // ContentMain. However that is after tests' constructors or SetUp methods,
+  // which sometimes need it. So just override it.
+  chrome_test_utils::OverrideChromeTestDataDir();
+
   CreateTestServer(base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+  // Allow unpacked extensions without developer mode for testing.
+  feature_list_.InitAndDisableFeature(
+      extensions_features::kExtensionDisableUnsupportedDeveloper);
+#endif
+  g_current_test = this;
+
+  create_services_subscription_ =
+      BrowserContextDependencyManager::GetInstance()
+          ->RegisterCreateServicesCallbackForTesting(base::BindRepeating(
+              &AndroidBrowserTest::SetUpBrowserContextKeyedServices,
+              base::Unretained(this)));
 }
 
-AndroidBrowserTest::~AndroidBrowserTest() = default;
+AndroidBrowserTest::~AndroidBrowserTest() {
+  g_current_test = nullptr;
+}
+
+AndroidBrowserTest* AndroidBrowserTest::GetCurrent() {
+  return g_current_test;
+}
 
 void AndroidBrowserTest::SetUp() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
@@ -26,6 +60,8 @@ void AndroidBrowserTest::SetUp() {
   InitializeHTTPSTestServer();
   embedded_https_test_server().AddDefaultHandlers(GetChromeTestDataDir());
 
+  ASSERT_TRUE(SetUpUserDataDirectory());
+
   BrowserTestBase::SetUp();
 }
 
@@ -34,6 +70,10 @@ void AndroidBrowserTest::SetUpDefaultCommandLine(
   test_launcher_utils::PrepareBrowserCommandLineForTests(command_line);
   test_launcher_utils::PrepareBrowserCommandLineForBrowserTests(
       command_line, /*open_about_blank_on_launch=*/true);
+}
+
+bool AndroidBrowserTest::SetUpUserDataDirectory() {
+  return true;
 }
 
 void AndroidBrowserTest::PreRunTestOnMainThread() {}
@@ -65,4 +105,13 @@ size_t AndroidBrowserTest::GetTestPreCount() {
 
 base::FilePath AndroidBrowserTest::GetChromeTestDataDir() const {
   return chrome_test_utils::GetChromeTestDataDir();
+}
+
+Profile* AndroidBrowserTest::GetProfile() const {
+  for (TabModel* model : TabModelList::models()) {
+    if (model->GetProfile()) {
+      return model->GetProfile();
+    }
+  }
+  return nullptr;
 }

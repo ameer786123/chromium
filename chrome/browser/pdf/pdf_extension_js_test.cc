@@ -200,6 +200,12 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionJSTest, Elements) {
   RunTestsInJsModule("material_elements_test.js", "test.pdf");
 }
 
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSTest, SaveControlsMixin) {
+  // Although this test file does not require a PDF to be loaded, loading the
+  // elements without loading a PDF is difficult.
+  RunTestsInJsModule("save_controls_mixin_test.js", "test.pdf");
+}
+
 IN_PROC_BROWSER_TEST_P(PDFExtensionJSTest, DownloadControls) {
   // Although this test file does not require a PDF to be loaded, loading the
   // elements without loading a PDF is difficult.
@@ -300,32 +306,6 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionJSTest, Printing) {
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if BUILDFLAG(ENABLE_INK)
-// TODO(crbug.com/41434927): Test times out under sanitizers.
-// TODO(crbug.com/41495998): Test fails for
-// testViewportToCameraConversion.
-IN_PROC_BROWSER_TEST_P(PDFExtensionJSTest, DISABLED_AnnotationsFeatureEnabled) {
-  // TODO(crbug.com/40268279): Remove this once the test passes for OOPIF PDF.
-  if (UseOopif()) {
-    GTEST_SKIP();
-  }
-
-  RunTestsInJsModule("annotations_feature_enabled_test.js", "test.pdf");
-}
-
-IN_PROC_BROWSER_TEST_P(PDFExtensionJSTest, AnnotationsToolbar) {
-  // Although this test file does not require a PDF to be loaded, loading the
-  // elements without loading a PDF is difficult.
-  RunTestsInJsModule("annotations_toolbar_test.js", "test.pdf");
-}
-
-IN_PROC_BROWSER_TEST_P(PDFExtensionJSTest, ViewerToolbarDropdown) {
-  // Although this test file does not require a PDF to be loaded, loading the
-  // elements without loading a PDF is difficult.
-  RunTestsInJsModule("viewer_toolbar_dropdown_test.js", "test.pdf");
-}
-#endif  // BUILDFLAG(ENABLE_INK)
-
 IN_PROC_BROWSER_TEST_P(PDFExtensionJSTest, ViewerFilePicker) {
   base::ScopedAllowBlockingForTesting allow_blocking;
 
@@ -405,7 +385,7 @@ class PDFExtensionContentSettingJSTest : public PDFExtensionJSTest {
           content::EvalJs(extension_host, kEnsurePdfHasLoadedScript);
       // The dom can be in an unusable state during setup. If the EvalJs
       // errors out tries again.
-      if (js_result.error.empty() && js_result.ExtractBool()) {
+      if (js_result.is_ok() && js_result.ExtractBool()) {
         return true;
       }
     }
@@ -564,10 +544,6 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2AnnotationBrushMixin) {
   RunTestsInJsModule("ink2_annotation_brush_mixin_test.js", "test.pdf");
 }
 
-IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2AnnotationTextMixin) {
-  RunTestsInJsModule("ink2_annotation_text_mixin_test.js", "test.pdf");
-}
-
 IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2BottomToolbar) {
   // The window must be smaller than 960px to show the bottom toolbar.
   GetActiveWebContents()->Resize({0, 0, 959, 100});
@@ -588,30 +564,6 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, SelectableIconButton) {
   RunTestsInJsModule("selectable_icon_button_test.js", "test.pdf");
 }
 
-IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2TextAlignmentSelector) {
-  RunTestsInJsModule("ink2_text_alignment_selector_test.js", "test.pdf");
-}
-
-IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2TextBottomToolbar) {
-  // The window must be smaller than 960px to show the bottom toolbar.
-  GetActiveWebContents()->Resize({0, 0, 959, 100});
-  RunTestsInJsModule("ink2_text_bottom_toolbar_test.js", "test.pdf");
-}
-
-IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2TextBoxTest) {
-  RunTestsInJsModule("ink2_text_box_test.js", "test.pdf");
-}
-
-IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2TextSidePanel) {
-  // The window must be at least 960px to show the text side panel.
-  GetActiveWebContents()->Resize({0, 0, 960, 100});
-  RunTestsInJsModule("ink2_text_side_panel_test.js", "test.pdf");
-}
-
-IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2TextStylesSelector) {
-  RunTestsInJsModule("ink2_text_styles_selector_test.js", "test.pdf");
-}
-
 IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2BrushSelector) {
   RunTestsInJsModule("ink2_brush_selector_test.js", "test.pdf");
 }
@@ -626,6 +578,63 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2SizeSelector) {
 
 IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2ViewerToolbar) {
   RunTestsInJsModule("ink2_viewer_toolbar_test.js", "test.pdf");
+}
+
+class PDFExtensionJSInk2TextTest : public PDFExtensionJSTest {
+ protected:
+  std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
+      const override {
+    auto enabled = PDFExtensionJSTest::GetEnabledFeatures();
+    enabled.push_back(
+        {chrome_pdf::features::kPdfInk2,
+         {{chrome_pdf::features::kPdfInk2TextAnnotations.name, "true"}}});
+    return enabled;
+  }
+};
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2TextTest, Ink2AnnotationTextMixin) {
+  RunTestsInJsModule("ink2_annotation_text_mixin_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2TextTest, Ink2TextBottomToolbar) {
+  // The window must be smaller than 960px to show the bottom toolbar.
+  GetActiveWebContents()->Resize({0, 0, 959, 100});
+  RunTestsInJsModule("ink2_text_bottom_toolbar_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2TextAlignmentSelector) {
+  RunTestsInJsModule("ink2_text_alignment_selector_test.js", "test.pdf");
+}
+
+// TODO(crbug.com/440552067): Deflake and re-enable.
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2TextTest, DISABLED_Ink2TextBoxTest) {
+  RunTestsInJsModule("ink2_text_box_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2TextTest, Ink2TextSidePanel) {
+  // The window must be at least 960px to show the text side panel.
+  GetActiveWebContents()->Resize({0, 0, 960, 100});
+  RunTestsInJsModule("ink2_text_side_panel_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2TextTest, Ink2TextStylesSelector) {
+  RunTestsInJsModule("ink2_text_styles_selector_test.js", "test.pdf");
+}
+
+class PDFExtensionJSCaretBrowsingModeTest : public PDFExtensionJSTest {
+ protected:
+  std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
+      const override {
+    auto enabled = PDFExtensionJSTest::GetEnabledFeatures();
+    enabled.push_back(
+        {chrome_pdf::features::kPdfInk2,
+         {{chrome_pdf::features::kPdfInk2TextHighlighting.name, "true"}}});
+    return enabled;
+  }
+};
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSCaretBrowsingModeTest, CaretBrowsingMode) {
+  RunTestsInJsModule("caret_browsing_mode_test.js", "test-bookmarks.pdf");
 }
 
 class PDFExtensionJSInk2BeforeUnloadTest : public PDFExtensionJSTestBase {
@@ -652,6 +661,40 @@ IN_PROC_BROWSER_TEST_F(PDFExtensionJSInk2BeforeUnloadTest, Undo) {
 
 #endif  // BUILDFLAG(ENABLE_PDF_INK2)
 
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+class PDFExtensionJSSaveToDriveTest : public PDFExtensionJSTest {
+ protected:
+  std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
+      const override {
+    auto enabled = PDFExtensionJSTest::GetEnabledFeatures();
+    enabled.push_back({chrome_pdf::features::kPdfSaveToDrive, {}});
+    return enabled;
+  }
+};
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSSaveToDriveTest, CircularProgressRing) {
+  // Although this test file does not require a PDF to be loaded, loading the
+  // elements without loading a PDF is difficult.
+  RunTestsInJsModule("circular_progress_ring_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSSaveToDriveTest, SaveToDrive) {
+  RunTestsInJsModule("save_to_drive_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSSaveToDriveTest, SaveToDriveBubble) {
+  // Although this test file does not require a PDF to be loaded, loading the
+  // elements without loading a PDF is difficult.
+  RunTestsInJsModule("save_to_drive_bubble_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSSaveToDriveTest, SaveToDriveControls) {
+  // Although this test file does not require a PDF to be loaded, loading the
+  // elements without loading a PDF is difficult.
+  RunTestsInJsModule("save_to_drive_controls_test.js", "test.pdf");
+}
+#endif  // BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+
 // TODO(crbug.com/40268279): Stop testing both modes after OOPIF PDF viewer
 // launches.
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionJSTest);
@@ -662,4 +705,11 @@ INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionServiceWorkerJSTest);
 #if !BUILDFLAG(IS_CHROMEOS)
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionJSNoInk2Test);
 #endif
+#if BUILDFLAG(ENABLE_PDF_INK2)
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionJSInk2Test);
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionJSInk2TextTest);
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionJSCaretBrowsingModeTest);
+#endif  // BUILDFLAG(ENABLE_PDF_INK2)
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionJSSaveToDriveTest);
+#endif  // BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)

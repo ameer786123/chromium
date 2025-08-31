@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include <array>
 #include <memory>
 #include <string_view>
@@ -187,8 +182,8 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
+#include "net/test/embedded_test_server/install_default_websocket_handlers.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
 #include "net/test/test_certificate_data.h"
 #include "net/test/test_data_directory.h"
 #include "services/network/public/cpp/features.h"
@@ -211,11 +206,8 @@
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 #if BUILDFLAG(USE_NSS_CERTS)
-#include "chrome/browser/certificate_manager_model.h"
 #include "chrome/browser/net/nss_service.h"
 #include "chrome/browser/net/nss_service_factory.h"
-#include "components/user_manager/scoped_user_manager.h"
-#include "components/user_manager/user_manager.h"
 #include "crypto/scoped_test_nss_db.h"
 #include "net/cert/nss_cert_database.h"
 #include "net/cert/x509_util_nss.h"
@@ -229,8 +221,6 @@
 #include "chrome/browser/policy/profile_policy_connector_builder.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/core/common/policy_service.h"
-#include "components/session_manager/core/session_manager.h"
-#include "components/user_manager/test_helper.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 using content::WebContents;
@@ -424,12 +414,8 @@ class SSLUITestBase : public InProcessBrowserTest,
         https_server_mismatched_(net::EmbeddedTestServer::TYPE_HTTPS),
         https_server_sha1_(net::EmbeddedTestServer::TYPE_HTTPS),
         https_server_common_name_only_(net::EmbeddedTestServer::TYPE_HTTPS),
-        wss_server_expired_(net::SpawnedTestServer::TYPE_WSS,
-                            SSLOptions(SSLOptions::CERT_EXPIRED),
-                            net::GetWebSocketTestDataDirectory()),
-        wss_server_mismatched_(net::SpawnedTestServer::TYPE_WSS,
-                               SSLOptions(SSLOptions::CERT_MISMATCHED_NAME),
-                               net::GetWebSocketTestDataDirectory()) {
+        wss_server_expired_(net::EmbeddedTestServer::TYPE_HTTPS),
+        wss_server_mismatched_(net::EmbeddedTestServer::TYPE_HTTPS) {
     https_server_.AddDefaultHandlers(GetChromeTestDataDir());
 
     https_server_expired_.SetSSLConfig(net::EmbeddedTestServer::CERT_EXPIRED);
@@ -445,6 +431,15 @@ class SSLUITestBase : public InProcessBrowserTest,
     https_server_common_name_only_.SetSSLConfig(
         net::EmbeddedTestServer::CERT_COMMON_NAME_ONLY);
     https_server_common_name_only_.AddDefaultHandlers(GetChromeTestDataDir());
+
+    wss_server_expired_.SetSSLConfig(net::EmbeddedTestServer::CERT_EXPIRED);
+    net::test_server::InstallDefaultWebSocketHandlers(&wss_server_expired_);
+    wss_server_expired_.AddDefaultHandlers(GetChromeTestDataDir());
+
+    wss_server_mismatched_.SetSSLConfig(
+        net::EmbeddedTestServer::CERT_MISMATCHED_NAME);
+    net::test_server::InstallDefaultWebSocketHandlers(&wss_server_mismatched_);
+    wss_server_mismatched_.AddDefaultHandlers(GetChromeTestDataDir());
   }
 
   SSLUITestBase(const SSLUITestBase&) = delete;
@@ -554,6 +549,21 @@ class SSLUITestBase : public InProcessBrowserTest,
             "window.certificateErrorPageController.reportPhishingError();";
         break;
       }
+      case security_interstitials::CMD_OPEN_HELP_CENTER_IN_NEW_TAB: {
+        javascript =
+            "window.certificateErrorPageController.openHelpCenterInNewTab();";
+        break;
+      }
+      case security_interstitials::CMD_OPEN_REPORTING_PRIVACY_IN_NEW_TAB: {
+        javascript = "window.certificateErrorPageController."
+                     "openReportingPrivacyInNewTab();";
+        break;
+      }
+      case security_interstitials::CMD_OPEN_WHITEPAPER_IN_NEW_TAB: {
+        javascript =
+            "window.certificateErrorPageController.openWhitepaperInNewTab();";
+        break;
+      }
       default: {
         // Other values in the enum are not used by these tests, and don't
         // have a Javascript equivalent that can be called here.
@@ -619,42 +629,6 @@ class SSLUITestBase : public InProcessBrowserTest,
     return helper->GetBlockingPageForCurrentlyCommittedNavigationForTesting();
   }
 
-  // Sets the policy identified by |policy_name| to be true, ensuring
-  // that the corresponding boolean pref |pref_name| is updated to match.
-  void EnablePolicy(PrefService* pref_service,
-                    const char* policy_name,
-                    const char* pref_name) {
-    policy::PolicyMap policy_map;
-    policy_map.Set(policy_name, policy::POLICY_LEVEL_MANDATORY,
-                   policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
-                   base::Value(true), nullptr);
-
-    EXPECT_NO_FATAL_FAILURE(UpdateChromePolicy(policy_map));
-
-    EXPECT_TRUE(pref_service->GetBoolean(pref_name));
-    EXPECT_TRUE(pref_service->IsManagedPreference(pref_name));
-
-    // Wait for the updated SSL configuration to be sent to the network service,
-    // to avoid a race.
-    g_browser_process->system_network_context_manager()
-        ->FlushSSLConfigManagerForTesting();
-  }
-
-  // Sets the policy identified by |policy_name| to |policy_value|.
-  void SetPolicy(const char* policy_name, base::Value policy_value) {
-    policy::PolicyMap policy_map;
-    policy_map.Set(policy_name, policy::POLICY_LEVEL_MANDATORY,
-                   policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
-                   std::move(policy_value), nullptr);
-
-    EXPECT_NO_FATAL_FAILURE(UpdateChromePolicy(policy_map));
-
-    // Wait for the updated SSL configuration to be sent to the network service,
-    // to avoid a race.
-    g_browser_process->system_network_context_manager()
-        ->FlushSSLConfigManagerForTesting();
-  }
-
   // Helper function for TestInterstitialLinksOpenInNewTab. Implemented as a
   // test fixture method because the whole test fixture class is friended by
   // SSLBlockingPage.
@@ -696,8 +670,6 @@ class SSLUITestBase : public InProcessBrowserTest,
   }
 
  protected:
-  typedef net::SpawnedTestServer::SSLOptions SSLOptions;
-
   // Navigates to an interstitial and clicks through the certificate
   // error; then navigates to a page at |path| that loads unsafe content.
   void SetUpUnsafeContentsWithUserException(const std::string& path) {
@@ -749,8 +721,8 @@ class SSLUITestBase : public InProcessBrowserTest,
   net::EmbeddedTestServer https_server_sha1_;
   net::EmbeddedTestServer https_server_common_name_only_;
 
-  net::SpawnedTestServer wss_server_expired_;
-  net::SpawnedTestServer wss_server_mismatched_;
+  net::EmbeddedTestServer wss_server_expired_;
+  net::EmbeddedTestServer wss_server_mismatched_;
 
   testing::NiceMock<policy::MockConfigurationPolicyProvider> policy_provider_;
 
@@ -762,8 +734,8 @@ class SSLUITest : public SSLUITestBase {
  public:
   SSLUITest() : SSLUITestBase() {
     scoped_feature_list_.InitWithFeatures(
-        /* enabled_features */ {},
-        /* disabled_features */ {blink::features::kMixedContentAutoupgrade});
+        /*enabled_features=*/{},
+        /*disabled_features=*/{blink::features::kMixedContentAutoupgrade});
   }
 
   SSLUITest(const SSLUITest&) = delete;
@@ -857,8 +829,8 @@ class SSLUITestReduceSubresourceNotifications : public SSLUITestBase {
  public:
   SSLUITestReduceSubresourceNotifications() {
     scoped_feature_list_.InitWithFeatures(
-        /* enabled_features */ {features::kReduceSubresourceResponseStartedIPC},
-        /* disabled_features */ {blink::features::kMixedContentAutoupgrade});
+        /*enabled_features=*/{features::kReduceSubresourceResponseStartedIPC},
+        /*disabled_features=*/{blink::features::kMixedContentAutoupgrade});
   }
 
   SSLUITestReduceSubresourceNotifications(
@@ -1574,12 +1546,12 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, TestWSSInvalidCertAndClose) {
   std::string wss_close_url_path = base::StringPrintf(
       "%s?%d",
       embedded_test_server()->GetURL("/ssl/wss_close.html").spec().c_str(),
-      wss_server_expired_.host_port_pair().port());
+      wss_server_expired_.port());
   GURL wss_close_url(wss_close_url_path);
   std::string wss_loop_url_path = base::StringPrintf(
       "%s?%d",
       embedded_test_server()->GetURL("/ssl/wss_close_loop.html").spec().c_str(),
-      wss_server_expired_.host_port_pair().port());
+      wss_server_expired_.port());
   GURL wss_loop_url(wss_loop_url_path);
 
   // Create tabs and visit pages which keep on creating wss connections.
@@ -1615,11 +1587,8 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, TestWSSInvalidCert) {
   watcher.AlsoWaitForTitle(u"FAIL");
 
   // Visit bad HTTPS page.
-  GURL::Replacements replacements;
-  replacements.SetSchemeStr("https");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), wss_server_expired_.GetURL("connect_check.html")
-                     .ReplaceComponents(replacements)));
+      browser(), wss_server_expired_.GetURL("/websocket/connect_check.html")));
   ASSERT_TRUE(chrome_browser_interstitials::IsShowingInterstitial(tab));
   ssl_test_util::CheckAuthenticationBrokenState(
       tab, net::CERT_STATUS_DATE_INVALID, AuthState::SHOWING_INTERSTITIAL);
@@ -1696,19 +1665,17 @@ IN_PROC_BROWSER_TEST_F(SSLUITestWithClientCert, DISABLED_TestWSSClientCert) {
                                        std::u16string(), true, nullptr));
 
   // Start WebSocket test server with TLS and client cert authentication.
-  net::SpawnedTestServer::SSLOptions options(
-      net::SpawnedTestServer::SSLOptions::CERT_OK);
-  options.request_client_certificate = true;
-  base::FilePath ca_path = net::GetTestCertsDirectory().Append(
-      FILE_PATH_LITERAL("websocket_cacert.pem"));
-  options.client_authorities.push_back(ca_path);
-  net::SpawnedTestServer wss_server(net::SpawnedTestServer::TYPE_WSS, options,
-                                    net::GetWebSocketTestDataDirectory());
+  net::EmbeddedTestServer wss_server(net::EmbeddedTestServer::Type::TYPE_HTTP);
+  {
+    net::SSLServerConfig ssl_config;
+    ssl_config.client_cert_type =
+        net::SSLServerConfig::ClientCertType::REQUIRE_CLIENT_CERT;
+    wss_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK, ssl_config);
+  }
+  net::test_server::InstallDefaultWebSocketHandlers(&wss_server);
+  wss_server.AddDefaultHandlers(GetChromeTestDataDir());
   ASSERT_TRUE(wss_server.Start());
-  GURL::Replacements replacements;
-  replacements.SetSchemeStr("https");
-  GURL url =
-      wss_server.GetURL("connect_check.html").ReplaceComponents(replacements);
+  GURL url = wss_server.GetURL("/websocket/connect_check.html");
 
   // Setup page title observer.
   WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
@@ -1720,7 +1687,7 @@ IN_PROC_BROWSER_TEST_F(SSLUITestWithClientCert, DISABLED_TestWSSClientCert) {
   Profile* profile = Profile::FromBrowserContext(tab->GetBrowserContext());
   DCHECK(profile);
   base::Value::Dict filter;
-  filter.SetByDottedPath("ISSUER.CN", "pywebsocket");
+  filter.SetByDottedPath("ISSUER.CN", "Test Root CA");
   base::Value::List filters;
   filters.Append(std::move(filter));
   base::Value::Dict setting;
@@ -3425,9 +3392,10 @@ IN_PROC_BROWSER_TEST_P(
 // This test checks that all mixed content requests from a dedicated worker are
 // blocked regardless of the settings in WebPreferences when
 // block-all-mixed-content CSP is set with allow_running_insecure_content=true.
+// TODO(crbug.com/429204994): Disabled due to flakiness.
 IN_PROC_BROWSER_TEST_P(
     SSLUIWorkerFetchTest,
-    MixedContentSettingsWithBlockingCSP_AllowRunningInsecureContent) {
+    DISABLED_MixedContentSettingsWithBlockingCSP_AllowRunningInsecureContent) {
   ChromeContentBrowserClientForMixedContentTest browser_client;
   content::ScopedContentBrowserClientSetting setting(&browser_client);
 
@@ -3670,11 +3638,8 @@ IN_PROC_BROWSER_TEST_F(SSLUITestIgnoreCertErrors, TestWSS) {
   watcher.AlsoWaitForTitle(u"FAIL");
 
   // Visit bad HTTPS page.
-  GURL::Replacements replacements;
-  replacements.SetSchemeStr("https");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), wss_server_expired_.GetURL("connect_check.html")
-                     .ReplaceComponents(replacements)));
+      browser(), wss_server_expired_.GetURL("/websocket/connect_check.html")));
 
   // We shouldn't have an interstitial page showing here.
 
@@ -3697,11 +3662,8 @@ IN_PROC_BROWSER_TEST_F(SSLUITestIgnoreCertErrorsBySPKIWSS, TestWSSExpired) {
   watcher.AlsoWaitForTitle(u"FAIL");
 
   // Visit bad HTTPS page.
-  GURL::Replacements replacements;
-  replacements.SetSchemeStr("https");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), wss_server_expired_.GetURL("connect_check.html")
-                     .ReplaceComponents(replacements)));
+      browser(), wss_server_expired_.GetURL("/websocket/connect_check.html")));
 
   // We shouldn't have an interstitial page showing here.
 
@@ -5558,286 +5520,77 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, DISABLED_PushStateSSLState) {
   ssl_test_util::CheckAuthenticatedState(tab, AuthState::NONE);
 }
 
-#if BUILDFLAG(IS_CHROMEOS)
+namespace {
 
-class SSLUITestNoCert : public SSLUITest,
-                        public CertificateManagerModel::Observer {
- public:
-  SSLUITestNoCert() {
-    // These tests are specifically for the ChromeOS NSS database integration.
-    // On ChromeOS, once the kEnableCertManagementUIV2Write feature is launched
-    // NSS is no longer used and the equivalent functionality is provided by
-    // ServerCertificateDatabaseService and is tested by
-    // cert_verifier_service_browsertest.cc.
-    feature_list_.InitWithFeatures(
-        /*enabled_features=*/{},
-        /*disabled_features=*/
-        {features::kEnableCertManagementUIV2,
-         features::kEnableCertManagementUIV2Write,
-         features::kEnableCertManagementUIV2EditCerts});
+// A request handler returns different HTTP response codes
+// to simulate server responses in browser tests.
+std::unique_ptr<net::test_server::HttpResponse> SimpleHttpResponseCodeHandler(
+    const net::test_server::HttpRequest& request) {
+  auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+  if (request.relative_url == "/code-200") {
+    response->set_code(net::HTTP_OK);
+    response->set_content("HTTP OK");
+    response->set_content_type("text/html");
+  } else if (request.relative_url == "/code-500") {
+    response->set_code(net::HTTP_INTERNAL_SERVER_ERROR);
+    response->AddCustomHeader("Content-Length", "0");
+  } else {
+    response->set_code(net::HTTP_NOT_FOUND);
+    response->AddCustomHeader("Content-Length", "0");
   }
-  ~SSLUITestNoCert() override = default;
+  return response;
+}
 
-  void SetUp() override {
-    net::TestRootCerts::GetInstance()->Clear();
-    SSLUITest::SetUp();
-  }
+}  // namespace
 
-  // CertificateManagerModel::Observer implementation:
-  void CertificatesRefreshed() override {}
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-class TestCertDatabaseObserver : public net::CertDatabase::Observer {
- public:
-  TestCertDatabaseObserver() {
-    net::CertDatabase* cert_db = net::CertDatabase::GetInstance();
-    cert_db->AddObserver(this);
-  }
-  ~TestCertDatabaseObserver() override = default;
-  void OnTrustStoreChanged() override { run_loop.Quit(); }
-  void WaitForCertDBChange() { run_loop.Run(); }
-
- private:
-  base::RunLoop run_loop;
-};
-
-// Checks that a newly-added certificate authority is usable immediately.
-IN_PROC_BROWSER_TEST_F(SSLUITestNoCert, NewCertificateAuthority) {
-  if (!content::IsOutOfProcessNetworkService())
-    return;
-
+// Checks that when navigating to the following scenarios with various HTTP
+// response codes on a server with a valid SSL certificate, the SSL state
+// (certificate) remains present.
+IN_PROC_BROWSER_TEST_F(SSLUITest, SSLStateOnDifferentHttpResponses) {
+  https_server_.RegisterRequestHandler(
+      base::BindRepeating(&SimpleHttpResponseCodeHandler));
   ASSERT_TRUE(https_server_.Start());
 
+  // 1) Navigating to a page that returns HTTP 200.
+  // The SSL certificate state should remain present.
+  GURL success_url = https_server_.GetURL("/code-200");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), success_url));
   WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), https_server_.GetURL("/ssl/google.html")));
-  EXPECT_TRUE(chrome_browser_interstitials::IsShowingInterstitial(tab));
 
-  std::unique_ptr<CertificateManagerModel> model;
-  base::RunLoop run_loop;
-  CertificateManagerModel::Create(
-      browser()->profile(), this,
-      base::BindLambdaForTesting(
-          [&](std::unique_ptr<CertificateManagerModel> model2) {
-            model = std::move(model2);
-            run_loop.Quit();
-          }));
-  run_loop.Run();
+  auto* helper = SecurityStateTabHelper::FromWebContents(tab);
+  EXPECT_TRUE(helper->GetVisibleSecurityState()->certificate);
 
-  scoped_refptr<net::X509Certificate> cert;
-  net::ScopedCERTCertificateList nss_certs;
+  content::NavigationEntry* entry = tab->GetController().GetVisibleEntry();
+  ASSERT_TRUE(entry);
+  EXPECT_TRUE(entry->GetSSL().certificate);
 
-  {
-    base::ScopedAllowBlockingForTesting allow_io;
-    cert = net::CreateCertificateChainFromFile(
-        net::GetTestCertsDirectory(), "root_ca_cert.pem",
-        net::X509Certificate::FORMAT_PEM_CERT_SEQUENCE);
+  // 2) Navigating to a page that returns HTTP 500 with empty content.
+  // The browser shows a default error page for the HTTP 500 response.
+  // The SSL certificate state should still remain present.
+  GURL error_url = https_server_.GetURL("/code-500");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), error_url));
 
-    nss_certs = net::x509_util::CreateCERTCertificateListFromX509Certificate(
-        cert.get());
-  }
+  tab = browser()->tab_strip_model()->GetActiveWebContents();
+  helper = SecurityStateTabHelper::FromWebContents(tab);
+  EXPECT_TRUE(helper->GetVisibleSecurityState()->certificate);
 
-  TestCertDatabaseObserver cert_database_observer;
-  net::NSSCertDatabase::ImportCertFailureList not_imported;
-  EXPECT_TRUE(model->ImportCACerts(nss_certs, net::NSSCertDatabase::TRUSTED_SSL,
-                                   &not_imported));
-  cert_database_observer.WaitForCertDBChange();
-  EXPECT_TRUE(not_imported.empty());
+  entry = tab->GetController().GetVisibleEntry();
+  ASSERT_TRUE(entry);
+  EXPECT_TRUE(entry->GetSSL().certificate);
 
-  content::FlushNetworkServiceInstanceForTesting();
+  // 3) Navigating to a page that returns HTTP 404 with empty content.
+  // The browser shows a default error page for the HTTP 404 response.
+  // The SSL certificate state should still remain present.
+  GURL not_found_url = https_server_.GetURL("/not-found");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), not_found_url));
+  tab = browser()->tab_strip_model()->GetActiveWebContents();
+  helper = SecurityStateTabHelper::FromWebContents(tab);
+  EXPECT_TRUE(helper->GetVisibleSecurityState()->certificate);
 
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), https_server_.GetURL("/ssl/google.html")));
-  EXPECT_FALSE(chrome_browser_interstitials::IsShowingInterstitial(tab));
+  entry = tab->GetController().GetVisibleEntry();
+  ASSERT_TRUE(entry);
+  EXPECT_TRUE(entry->GetSSL().certificate);
 }
-
-// A test class which prepares two profiles and allows importing certificates
-// into their NSS databases.
-class SSLUITestCustomCACerts : public SSLUITestNoCert {
- public:
-  static inline constexpr char kPrimaryUserAccount[] = "test1@test.com";
-  static inline constexpr GaiaId::Literal kPrimaryUserGaiaId{"1234567890"};
-  static inline constexpr char kPrimaryUserHash[] = "test1-hash";
-  static inline constexpr char kSecondaryUserAccount[] = "test2@test.com";
-  static inline constexpr GaiaId::Literal kSecondaryUserGaiaId{"9876543210"};
-  static inline constexpr char kSecondaryUserHash[] = "test2-hash";
-
-  SSLUITestCustomCACerts() = default;
-
-  SSLUITestCustomCACerts(const SSLUITestCustomCACerts&) = delete;
-  SSLUITestCustomCACerts& operator=(const SSLUITestCustomCACerts&) = delete;
-
-  ~SSLUITestCustomCACerts() override = default;
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    SSLUITestNoCert::SetUpCommandLine(command_line);
-    // Don't require policy for our sessions - this is required so the policy
-    // code knows not to expect cached policy for the secondary profile.
-    command_line->AppendSwitchASCII(ash::switches::kProfileRequiresPolicy,
-                                    "false");
-
-    command_line->AppendSwitchASCII(ash::switches::kLoginUser,
-                                    kPrimaryUserAccount);
-    command_line->AppendSwitchASCII(ash::switches::kLoginProfile,
-                                    kPrimaryUserHash);
-  }
-
-  void SetUpLocalStatePrefService(PrefService* local_state) override {
-    SSLUITestNoCert::SetUpLocalStatePrefService(local_state);
-
-    // Register a persisted user.
-    user_manager::TestHelper::RegisterPersistedUser(
-        *local_state, AccountId::FromUserEmailGaiaId(kPrimaryUserAccount,
-                                                     kPrimaryUserGaiaId));
-    user_manager::TestHelper::RegisterPersistedUser(
-        *local_state, AccountId::FromUserEmailGaiaId(kSecondaryUserAccount,
-                                                     kSecondaryUserGaiaId));
-  }
-
-  void SetUpOnMainThread() override {
-    SSLUITestNoCert::SetUpOnMainThread();
-
-    profile_1_ = browser()->profile();
-
-    // Create a second profile.
-    {
-      ON_CALL(policy_for_profile_2_, IsInitializationComplete(testing::_))
-          .WillByDefault(testing::Return(true));
-      ON_CALL(policy_for_profile_2_, IsFirstPolicyLoadComplete(testing::_))
-          .WillByDefault(testing::Return(true));
-      policy::PushProfilePolicyConnectorProviderForTesting(
-          &policy_for_profile_2_);
-
-      base::FilePath user_data_directory;
-      base::PathService::Get(chrome::DIR_USER_DATA, &user_data_directory);
-      session_manager::SessionManager::Get()->CreateSession(
-          AccountId::FromUserEmailGaiaId(kSecondaryUserAccount,
-                                         kSecondaryUserGaiaId),
-          kSecondaryUserHash, /*new_user=*/false,
-          /*has_active_session=*/false);
-      // Set up the secondary profile.
-      base::FilePath profile_dir = user_data_directory.Append(
-          ash::ProfileHelper::GetUserProfileDir(kSecondaryUserHash).BaseName());
-      profile_2_ =
-          g_browser_process->profile_manager()->GetProfile(profile_dir);
-    }
-
-    // Get cert databases for both profiles.
-    {
-      base::RunLoop loop;
-      NssServiceFactory::GetForContext(profile_1_)
-          ->UnsafelyGetNSSCertDatabaseForTesting(base::BindOnce(
-              &SSLUITestCustomCACerts::DidGetCertDatabase,
-              base::Unretained(this), &loop, &profile_1_cert_db_));
-      loop.Run();
-    }
-
-    {
-      base::RunLoop loop;
-      NssServiceFactory::GetForContext(profile_2_)
-          ->UnsafelyGetNSSCertDatabaseForTesting(base::BindOnce(
-              &SSLUITestCustomCACerts::DidGetCertDatabase,
-              base::Unretained(this), &loop, &profile_2_cert_db_));
-      loop.Run();
-    }
-
-    // Double-check that the profile initialization was correct and the two
-    // profiles have distinct NSS databases with distinc NSS public slots.
-    EXPECT_NE(profile_1_cert_db_, profile_2_cert_db_);
-    EXPECT_NE(profile_1_cert_db_->GetPublicSlot().get(),
-              profile_2_cert_db_->GetPublicSlot().get());
-  }
-
-  void TearDownOnMainThread() override {
-    profile_1_cert_db_ = nullptr;
-    profile_2_cert_db_ = nullptr;
-    profile_1_ = nullptr;
-    profile_2_ = nullptr;
-  }
-
- protected:
-  void ImportCACertAsTrusted(const std::string& cert_file_name,
-                             net::NSSCertDatabase* cert_db) {
-    base::ScopedAllowBlockingForTesting allow_blocking;
-
-    net::ScopedCERTCertificateList ca_cert_list =
-        net::CreateCERTCertificateListFromFile(
-            net::GetTestCertsDirectory(), cert_file_name,
-            net::X509Certificate::FORMAT_AUTO);
-    ASSERT_FALSE(ca_cert_list.empty());
-    net::NSSCertDatabase::ImportCertFailureList failures;
-    ASSERT_TRUE(cert_db->ImportCACerts(
-        ca_cert_list, net::NSSCertDatabase::TRUSTED_SSL, &failures));
-    ASSERT_TRUE(failures.empty());
-  }
-
-  // The first profile.
-  raw_ptr<Profile> profile_1_;
-  // The second profile.
-  raw_ptr<Profile> profile_2_;
-
-  // The NSSCertDatabase for |profile_1_|.
-  raw_ptr<net::NSSCertDatabase> profile_1_cert_db_;
-
-  // The NSSCertDatabase for |profile_2_|.
-  raw_ptr<net::NSSCertDatabase> profile_2_cert_db_;
-
-  // Policy provider for |profile_2_|. Overrides any other policy providers.
-  testing::NiceMock<policy::MockConfigurationPolicyProvider>
-      policy_for_profile_2_;
-
- private:
-  void DidGetCertDatabase(base::RunLoop* loop,
-                          raw_ptr<net::NSSCertDatabase>* out_cert_db,
-                          net::NSSCertDatabase* cert_db) {
-    *out_cert_db = cert_db;
-    loop->Quit();
-  }
-};
-
-// Imports a trusted CA certiifcate into a profile's NSS database.
-// Verifies that the certificate is trusted in the context of the profile it was
-// imported for.
-// Verifies that the certificate is *not* trusted in the context of a different
-// profile.
-IN_PROC_BROWSER_TEST_F(SSLUITestCustomCACerts,
-                       TrustedCertOnlyRespectedInProfileThatOwnsIt) {
-  ASSERT_TRUE(https_server_.Start());
-
-  ASSERT_NO_FATAL_FAILURE(
-      ImportCACertAsTrusted("root_ca_cert.pem", profile_2_cert_db_));
-
-  // Flush the network service instance so persistent NSS Database changes are
-  // reflected in the network service.
-  content::FlushNetworkServiceInstanceForTesting();
-
-  // The certificate that is trusted in |profile_2_| should not be respected in
-  // browsers that belong to |profile_1_|.
-  Browser* browser_for_profile_1 = CreateBrowser(profile_1_);
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser_for_profile_1, https_server_.GetURL("/ssl/google.html")));
-  WebContents* tab_for_profile_1 =
-      browser_for_profile_1->tab_strip_model()->GetActiveWebContents();
-  ASSERT_TRUE(
-      chrome_browser_interstitials::IsShowingInterstitial(tab_for_profile_1));
-  ssl_test_util::CheckAuthenticationBrokenState(
-      tab_for_profile_1, net::CERT_STATUS_AUTHORITY_INVALID,
-      AuthState::SHOWING_INTERSTITIAL);
-
-  // The certificate that is trusted in |profile_2_| should be respected in
-  // browsers that belong to |profile_2_|.
-  Browser* browser_for_profile_2 = CreateBrowser(profile_2_);
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser_for_profile_2, https_server_.GetURL("/ssl/google.html")));
-  WebContents* tab_for_profile_2 =
-      browser_for_profile_2->tab_strip_model()->GetActiveWebContents();
-  ssl_test_util::CheckAuthenticatedState(tab_for_profile_2, AuthState::NONE);
-}
-
-#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // Regression test for http://crbug.com/635833 (crash when a window with no
 // NavigationEntry commits).
@@ -6186,9 +5939,6 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, GoBackFromInsecureFormWarning) {
 
 // Checks mixed form warnings work correctly for non-redirects.
 IN_PROC_BROWSER_TEST_F(SSLUITest, TestDisplaysInsecureFormSubmissionWarning) {
-  base::HistogramTester histograms;
-  const std::string interstitial_histogram =
-      "Security.MixedForm.InterstitialTriggerState";
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_TRUE(https_server_.Start());
 
@@ -6209,22 +5959,12 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, TestDisplaysInsecureFormSubmissionWarning) {
   EXPECT_EQ(helper->GetBlockingPageForCurrentlyCommittedNavigationForTesting()
                 ->GetTypeForTesting(),
             security_interstitials::InsecureFormBlockingPage::kTypeForTesting);
-
-  // Check this was logged correctly as a non-redirect interstitial.
-  histograms.ExpectTotalCount(interstitial_histogram, 1);
-  histograms.ExpectBucketCount(interstitial_histogram,
-                               InsecureFormNavigationThrottle::
-                                   InterstitialTriggeredState::kMixedFormDirect,
-                               1);
 }
 
 // Checks interstitial is shown for mixed forms caused by a 307 POST http
 // redirect, and that metrics are logged.
 IN_PROC_BROWSER_TEST_F(SSLUITest,
                        TestDisplaysInsecureFormSubmissionWarningRedirect) {
-  base::HistogramTester histograms;
-  const std::string interstitial_histogram =
-      "Security.MixedForm.InterstitialTriggerState";
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_TRUE(https_server_.Start());
 
@@ -6245,24 +5985,12 @@ IN_PROC_BROWSER_TEST_F(SSLUITest,
   EXPECT_EQ(helper->GetBlockingPageForCurrentlyCommittedNavigationForTesting()
                 ->GetTypeForTesting(),
             security_interstitials::InsecureFormBlockingPage::kTypeForTesting);
-
-  // Check this was logged correctly as a redirect mixed form that may expose
-  // form data.
-  histograms.ExpectTotalCount(interstitial_histogram, 1);
-  histograms.ExpectBucketCount(
-      interstitial_histogram,
-      InsecureFormNavigationThrottle::InterstitialTriggeredState::
-          kMixedFormRedirectWithFormData,
-      1);
 }
 
 // Checks interstitial is shown for mixed forms caused by a 308 POST http
 // redirect, and that metrics are logged.
 IN_PROC_BROWSER_TEST_F(SSLUITest,
                        TestDisplaysInsecureFormSubmissionWarningRedirect308) {
-  base::HistogramTester histograms;
-  const std::string interstitial_histogram =
-      "Security.MixedForm.InterstitialTriggerState";
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_TRUE(https_server_.Start());
 
@@ -6283,24 +6011,12 @@ IN_PROC_BROWSER_TEST_F(SSLUITest,
   EXPECT_EQ(helper->GetBlockingPageForCurrentlyCommittedNavigationForTesting()
                 ->GetTypeForTesting(),
             security_interstitials::InsecureFormBlockingPage::kTypeForTesting);
-
-  // Check this was logged correctly as a redirect mixed form that may expose
-  // form data.
-  histograms.ExpectTotalCount(interstitial_histogram, 1);
-  histograms.ExpectBucketCount(
-      interstitial_histogram,
-      InsecureFormNavigationThrottle::InterstitialTriggeredState::
-          kMixedFormRedirectWithFormData,
-      1);
 }
 
 // Checks no interstitial is shown for mixed forms caused for a POST form with a
 // 301 redirect, and that metrics are logged correctly.
 IN_PROC_BROWSER_TEST_F(SSLUITest,
                        TestDisplaysInsecureFormSubmissionWarningRedirect301) {
-  base::HistogramTester histograms;
-  const std::string interstitial_histogram =
-      "Security.MixedForm.InterstitialTriggerState";
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_TRUE(https_server_.Start());
 
@@ -6327,24 +6043,12 @@ IN_PROC_BROWSER_TEST_F(SSLUITest,
           tab);
   // There should have been no interstitial triggered.
   EXPECT_FALSE(helper);
-
-  // Check this was logged correctly as a redirect mixed form that would not
-  // expose form data.
-  histograms.ExpectTotalCount(interstitial_histogram, 1);
-  histograms.ExpectBucketCount(
-      interstitial_histogram,
-      InsecureFormNavigationThrottle::InterstitialTriggeredState::
-          kMixedFormRedirectNoFormData,
-      1);
 }
 
 // Checks no interstitial is shown for mixed forms caused for a POST form with a
 // 302 redirect, and that metrics are logged correctly.
 IN_PROC_BROWSER_TEST_F(SSLUITest,
                        TestDisplaysInsecureFormSubmissionWarningRedirect302) {
-  base::HistogramTester histograms;
-  const std::string interstitial_histogram =
-      "Security.MixedForm.InterstitialTriggerState";
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_TRUE(https_server_.Start());
 
@@ -6369,15 +6073,6 @@ IN_PROC_BROWSER_TEST_F(SSLUITest,
           tab);
   // There should have been no interstitial triggered.
   EXPECT_FALSE(helper);
-
-  // Check this was logged correctly as a redirect mixed form that would not
-  // expose form data.
-  histograms.ExpectTotalCount(interstitial_histogram, 1);
-  histograms.ExpectBucketCount(
-      interstitial_histogram,
-      InsecureFormNavigationThrottle::InterstitialTriggeredState::
-          kMixedFormRedirectNoFormData,
-      1);
 }
 
 namespace {
@@ -6410,9 +6105,6 @@ std::unique_ptr<net::test_server::HttpResponse> FormActionHTTPRedirectHandler(
 // a 307 redirect to http, and that metrics are logged correctly.
 IN_PROC_BROWSER_TEST_F(SSLUITest,
                        TestDisplaysInsecureFormSubmissionWarningRedirectGet) {
-  base::HistogramTester histograms;
-  const std::string interstitial_histogram =
-      "Security.MixedForm.InterstitialTriggerState";
   ASSERT_TRUE(embedded_test_server()->Start());
   https_server_.RegisterRequestHandler(
       base::BindRepeating(&FormActionHTTPRedirectHandler, &https_server_));
@@ -6439,15 +6131,6 @@ IN_PROC_BROWSER_TEST_F(SSLUITest,
           tab);
   // There should have been no interstitial triggered.
   EXPECT_FALSE(helper);
-
-  // Check this was logged correctly as a redirect mixed form that would not
-  // expose form data.
-  histograms.ExpectTotalCount(interstitial_histogram, 1);
-  histograms.ExpectBucketCount(
-      interstitial_histogram,
-      InsecureFormNavigationThrottle::InterstitialTriggeredState::
-          kMixedFormRedirectNoFormData,
-      1);
 }
 
 class MixedFormsPolicyTest : public policy::PolicyTest {};
@@ -6993,7 +6676,8 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, NetworkErrorDoesntRevokeExemptions) {
 // Checks we don't attempt to show an interstitial (or crash) when visiting an
 // SSL error related page in chrome://network-errors. Regression test for
 // crbug.com/953812
-IN_PROC_BROWSER_TEST_F(SSLUITest, NoInterstitialOnNetworkErrorPage) {
+IN_PROC_BROWSER_TEST_F(SSLUITest,
+                       NoInterstitialOnNetworkErrorPage) {
   GURL invalid_cert_url(blink::kChromeUINetworkErrorURL);
   GURL::Replacements replacements;
   replacements.SetPathStr("-207");
@@ -7001,6 +6685,81 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, NoInterstitialOnNetworkErrorPage) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), invalid_cert_url));
   EXPECT_FALSE(chrome_browser_interstitials::IsShowingInterstitial(
       browser()->tab_strip_model()->GetActiveWebContents()));
+}
+
+IN_PROC_BROWSER_TEST_F(SSLUITest, OpenHelpCenterInNewTab) {
+  ASSERT_TRUE(https_server_expired_.Start());
+  WebContents* interstitial_tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_server_expired_.GetURL("/ssl/google.html")));
+  ASSERT_TRUE(
+      chrome_browser_interstitials::IsShowingSSLInterstitial(interstitial_tab));
+
+  EXPECT_EQ(1, browser()->tab_strip_model()->count());
+
+  content::TestNavigationObserver nav_observer(nullptr);
+  nav_observer.StartWatchingNewWebContents();
+  SendInterstitialCommand(
+      interstitial_tab,
+      security_interstitials::CMD_OPEN_HELP_CENTER_IN_NEW_TAB);
+  nav_observer.Wait();
+
+  EXPECT_EQ(2, browser()->tab_strip_model()->count());
+  WebContents* new_tab = browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(new_tab);
+  EXPECT_NE(new_tab, interstitial_tab);
+  EXPECT_FALSE(chrome_browser_interstitials::IsShowingInterstitial(new_tab));
+}
+
+IN_PROC_BROWSER_TEST_F(SSLUITest, OpenReportingPrivacyInNewTab) {
+  ASSERT_TRUE(https_server_expired_.Start());
+  WebContents* interstitial_tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_server_expired_.GetURL("/ssl/google.html")));
+  ASSERT_TRUE(
+      chrome_browser_interstitials::IsShowingSSLInterstitial(interstitial_tab));
+
+  EXPECT_EQ(1, browser()->tab_strip_model()->count());
+
+  content::TestNavigationObserver nav_observer(nullptr);
+  nav_observer.StartWatchingNewWebContents();
+  SendInterstitialCommand(
+      interstitial_tab,
+      security_interstitials::CMD_OPEN_REPORTING_PRIVACY_IN_NEW_TAB);
+  nav_observer.Wait();
+
+  EXPECT_EQ(2, browser()->tab_strip_model()->count());
+  WebContents* new_tab = browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(new_tab);
+  EXPECT_NE(new_tab, interstitial_tab);
+  EXPECT_FALSE(chrome_browser_interstitials::IsShowingInterstitial(new_tab));
+}
+
+IN_PROC_BROWSER_TEST_F(SSLUITest, OpenWhitepaperInNewTab) {
+  ASSERT_TRUE(https_server_expired_.Start());
+  WebContents* interstitial_tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_server_expired_.GetURL("/ssl/google.html")));
+  ASSERT_TRUE(
+      chrome_browser_interstitials::IsShowingSSLInterstitial(interstitial_tab));
+
+  EXPECT_EQ(1, browser()->tab_strip_model()->count());
+
+  content::TestNavigationObserver nav_observer(nullptr);
+  nav_observer.StartWatchingNewWebContents();
+  SendInterstitialCommand(
+      interstitial_tab,
+      security_interstitials::CMD_OPEN_WHITEPAPER_IN_NEW_TAB);
+  nav_observer.Wait();
+
+  EXPECT_EQ(2, browser()->tab_strip_model()->count());
+  WebContents* new_tab = browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(new_tab);
+  EXPECT_NE(new_tab, interstitial_tab);
+  EXPECT_FALSE(chrome_browser_interstitials::IsShowingInterstitial(new_tab));
 }
 
 // This SPKI hash is from a self signed certificate generated using the
@@ -7035,7 +6794,7 @@ class SSLUIDynamicInterstitialTest : public CertVerifierBrowserTest {
 
     net::HashValue hash;
     ASSERT_TRUE(hash.FromString(kMatchingDynamicInterstitialCert));
-    verify_result.public_key_hashes.push_back(hash);
+    verify_result.public_key_hashes.push_back(hash.sha256hashvalue());
 
     mock_cert_verifier()->AddResultForCert(cert, verify_result,
                                            net::ERR_CERT_COMMON_NAME_INVALID);
@@ -7052,6 +6811,14 @@ class SSLUIDynamicInterstitialTest : public CertVerifierBrowserTest {
     return config_proto;
   }
 
+  // Returns a valid sha256 hashvalue string which does not match
+  // kMatchingDynamicInterstitialCert.
+  static std::string MakeSha256String(uint8_t i) {
+    net::SHA256HashValue value;
+    value.fill(i);
+    return net::HashValue(value).ToString();
+  }
+
   // Adds a dynamic interstitial to |config_proto|. All of the dynamic
   // interstitial's fields mismatch with |https_server_|'s SSL info.
   void AddMismatchDynamicInterstitial(
@@ -7063,8 +6830,8 @@ class SSLUIDynamicInterstitialTest : public CertVerifierBrowserTest {
     filter->set_cert_error(
         chrome_browser_ssl::DynamicInterstitial::ERR_CERT_DATE_INVALID);
 
-    filter->add_sha256_hash("sha256/killdeer");
-    filter->add_sha256_hash("sha256/thickkne");
+    filter->add_sha256_hash(MakeSha256String(1));
+    filter->add_sha256_hash(MakeSha256String(2));
 
     filter->set_issuer_common_name_regex("beeeater");
     filter->set_issuer_organization_regex("honeycreeper");
@@ -7085,9 +6852,9 @@ class SSLUIDynamicInterstitialTest : public CertVerifierBrowserTest {
     filter->set_cert_error(
         chrome_browser_ssl::DynamicInterstitial::ERR_CERT_COMMON_NAME_INVALID);
 
-    filter->add_sha256_hash("sha256/kingfisher");
+    filter->add_sha256_hash(MakeSha256String(3));
     filter->add_sha256_hash(kMatchingDynamicInterstitialCert);
-    filter->add_sha256_hash("sha256/flycatcher");
+    filter->add_sha256_hash(MakeSha256String(4));
 
     scoped_refptr<net::X509Certificate> cert = https_server_.GetCertificate();
     filter->set_issuer_common_name_regex(cert.get()->issuer().common_name);
@@ -7280,8 +7047,8 @@ IN_PROC_BROWSER_TEST_F(SSLUIDynamicInterstitialTest, MismatchHash) {
     chrome_browser_ssl::DynamicInterstitial* match =
         AddMatchingDynamicInterstitial(config_proto.get());
     match->clear_sha256_hash();
-    match->add_sha256_hash("sha256/sapsucker");
-    match->add_sha256_hash("sha256/flowerpiercer");
+    match->add_sha256_hash(MakeSha256String(5));
+    match->add_sha256_hash(MakeSha256String(6));
 
     SSLErrorHandler::SetErrorAssistantProto(std::move(config_proto));
     ASSERT_EQ(SSLErrorHandler::GetErrorAssistantProtoVersionIdForTesting(),

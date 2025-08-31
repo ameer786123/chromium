@@ -47,6 +47,7 @@ import org.chromium.base.TimeUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.test.BackgroundShadowAsyncTask;
+import org.chromium.base.test.BaseRobolectricTestRule;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.blink.mojom.DisplayMode;
@@ -225,9 +226,9 @@ public class WebApkUpdateManagerUnitTest {
          * Whether App Identity updates should be enabled. If either of those is true when the tests
          * run, all App Identity update dialogs will be pre-approved (without showing).
          */
-        private boolean mNameUpdatesEnabled;
+        private final boolean mNameUpdatesEnabled;
 
-        private boolean mIconUpdatesEnabled;
+        private final boolean mIconUpdatesEnabled;
 
         public TestWebApkUpdateManager(Activity activity) {
             this(activity, /* nameUpdatesEnabled= */ false, /* iconUpdatesEnabled= */ false);
@@ -391,7 +392,7 @@ public class WebApkUpdateManagerUnitTest {
 
     private static class FakeDefaultBackgroundColorResource extends Resources {
         private static final int ID = 10;
-        private int mColorValue;
+        private final int mColorValue;
 
         public FakeDefaultBackgroundColorResource(int colorValue) {
             super(new AssetManager(), null, null);
@@ -874,6 +875,7 @@ public class WebApkUpdateManagerUnitTest {
         assertTrue(new File(updateRequestPath).exists());
 
         tryCompletingUpdate(updateManager, storage, WebApkInstallResult.FAILURE);
+        BaseRobolectricTestRule.runAllBackgroundAndUi();
 
         assertNull(storage.getPendingUpdateRequestPath());
         assertFalse(new File(updateRequestPath).exists());
@@ -899,6 +901,7 @@ public class WebApkUpdateManagerUnitTest {
         assertTrue(new File(updateRequestPath).exists());
 
         updateManager.getStoreUpdateRequestCallback().onResult(false);
+        BaseRobolectricTestRule.runAllBackgroundAndUi();
 
         assertNull(storage.getPendingUpdateRequestPath());
         assertFalse(new File(updateRequestPath).exists());

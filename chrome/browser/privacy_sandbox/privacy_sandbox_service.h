@@ -5,31 +5,21 @@
 #ifndef CHROME_BROWSER_PRIVACY_SANDBOX_PRIVACY_SANDBOX_SERVICE_H_
 #define CHROME_BROWSER_PRIVACY_SANDBOX_PRIVACY_SANDBOX_SERVICE_H_
 
-#include <set>
-
-#include "base/gtest_prod_util.h"
-#include "base/memory/raw_ptr.h"
-#include "chrome/browser/first_party_sets/first_party_sets_policy_service.h"
-#include "chrome/browser/privacy_sandbox/privacy_sandbox_countries.h"
-#include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "base/functional/callback_forward.h"
+#include "chrome/browser/privacy_sandbox/notice/notice_definitions.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/prefs/pref_change_registrar.h"
 #include "components/privacy_sandbox/canonical_topic.h"
 #include "components/privacy_sandbox/privacy_sandbox_prefs.h"
-#include "components/privacy_sandbox/privacy_sandbox_settings.h"
-#include "components/profile_metrics/browser_profile_type.h"
-#include "components/user_education/common/product_messaging_controller.h"
-#include "content/public/browser/interest_group_manager.h"
 #include "net/base/schemeful_site.h"
 
-#if !BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/privacy_sandbox/privacy_sandbox_queue_manager.h"
-#endif  // !BUILDFLAG(IS_ANDROID)
-
-class Browser;
+class BrowserWindowInterface;
 
 namespace views {
 class Widget;
+}
+
+namespace privacy_sandbox {
+class PrivacySandboxQueueManager;
 }
 
 // Service which encapsulates logic related to displaying and controlling the
@@ -53,6 +43,67 @@ class PrivacySandboxService : public KeyedService {
     kMaxValue = kM1NoticeRestricted,
   };
 
+  // Combination of `PromptType` from the Privacy Sandbox Service (PS) and the
+  // Notice Service (NS). Used for UMA logging. The value is calculated as:
+  // `ps_prompt_type | (notice_service_prompt_type << 3)`.
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  // LINT.IfChange(PrivacySandboxPromptTypeCombination)
+  enum class PromptTypeCombination {
+    // PS = 0 (kNone), NS = 0 (kNone)
+    kPSNone_NSNone = 0,
+    // PS = 1 (kM1Consent), NS = 0 (kNone)
+    kPSConsent_NSNone = 1,
+    // PS = 2 (kM1NoticeROW), NS = 0 (kNone)
+    kPSNoticeROW_NSNone = 2,
+    // PS = 3 (kM1NoticeEEA), NS = 0 (kNone)
+    kPSNoticeEEA_NSNone = 3,
+    // PS = 4 (kM1NoticeRestricted), NS = 0 (kNone)
+    kPSNoticeRestricted_NSNone = 4,
+    // PS = 0 (kNone), NS = 1 (kM1Consent)
+    kPSNone_NSConsent = 8,
+    // PS = 1 (kM1Consent), NS = 1 (kM1Consent)
+    kPSConsent_NSConsent = 9,
+    // PS = 2 (kM1NoticeROW), NS = 1 (kM1Consent)
+    kPSNoticeROW_NSConsent = 10,
+    // PS = 3 (kM1NoticeEEA), NS = 1 (kM1Consent)
+    kPSNoticeEEA_NSConsent = 11,
+    // PS = 4 (kM1NoticeRestricted), NS = 1 (kM1Consent)
+    kPSNoticeRestricted_NSConsent = 12,
+    // PS = 0 (kNone), NS = 2 (kM1NoticeROW)
+    kPSNone_NSNoticeROW = 16,
+    // PS = 1 (kM1Consent), NS = 2 (kM1NoticeROW)
+    kPSConsent_NSNoticeROW = 17,
+    // PS = 2 (kM1NoticeROW), NS = 2 (kM1NoticeROW)
+    kPSNoticeROW_NSNoticeROW = 18,
+    // PS = 3 (kM1NoticeEEA), NS = 2 (kM1NoticeROW)
+    kPSNoticeEEA_NSNoticeROW = 19,
+    // PS = 4 (kM1NoticeRestricted), NS = 2 (kM1NoticeROW)
+    kPSNoticeRestricted_NSNoticeROW = 20,
+    // PS = 0 (kNone), NS = 3 (kM1NoticeEEA)
+    kPSNone_NSNoticeEEA = 24,
+    // PS = 1 (kM1Consent), NS = 3 (kM1NoticeEEA)
+    kPSConsent_NSNoticeEEA = 25,
+    // PS = 2 (kM1NoticeROW), NS = 3 (kM1NoticeEEA)
+    kPSNoticeROW_NSNoticeEEA = 26,
+    // PS = 3 (kM1NoticeEEA), NS = 3 (kM1NoticeEEA)
+    kPSNoticeEEA_NSNoticeEEA = 27,
+    // PS = 4 (kM1NoticeRestricted), NS = 3 (kM1NoticeEEA)
+    kPSNoticeRestricted_NSNoticeEEA = 28,
+    // PS = 0 (kNone), NS = 4 (kM1NoticeRestricted)
+    kPSNone_NSNoticeRestricted = 32,
+    // PS = 1 (kM1Consent), NS = 4 (kM1NoticeRestricted)
+    kPSConsent_NSNoticeRestricted = 33,
+    // PS = 2 (kM1NoticeROW), NS = 4 (kM1NoticeRestricted)
+    kPSNoticeROW_NSNoticeRestricted = 34,
+    // PS = 3 (kM1NoticeEEA), NS = 4 (kM1NoticeRestricted)
+    kPSNoticeEEA_NSNoticeRestricted = 35,
+    // PS = 4 (kM1NoticeRestricted), NS = 4 (kM1NoticeRestricted)
+    kPSNoticeRestricted_NSNoticeRestricted = 36,
+    kMaxValue = kPSNoticeRestricted_NSNoticeRestricted,
+  };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/privacy/enums.xml:PrivacySandboxPromptTypeCombination)
+
   // A list of the client surfaces we show consents / notices on.
   // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.privacy_sandbox
   enum class SurfaceType {
@@ -61,36 +112,6 @@ class PrivacySandboxService : public KeyedService {
     kAGACCT = 2,
     kMaxValue = kAGACCT,
   };
-
-  // Account sign in user groups
-  // LINT.IfChange(PrimaryAccountUserGroups)
-  enum class PrimaryAccountUserGroups {
-    kNotSet = 0,
-    kSignedOut = 1,
-    kSignedInCapabilityFalse = 2,
-    kSignedInCapabilityTrue = 3,
-    kSignedInCapabilityUnknown = 4,
-    kMaxValue = kSignedInCapabilityUnknown,
-  };
-  // LINT.ThenChange(//tools/metrics/histograms/enums.xml:PrivacySandboxPrimaryAccountUserGroups)
-
-  // Suppression reason for a generic prompt.
-  // LINT.IfChange(FakeNoticePromptSuppressionReason)
-  enum class FakeNoticePromptSuppressionReason {
-    kNone = 0,
-    // Prompt suppressed due to third party cookies being blocked.
-    k3PC_Blocked = 1 << 0,
-    // Prompt suppressed due to account capability.
-    kCapabilityFalse = 1 << 1,
-    // Prompt suppressed due to managed devices have the third party cookie
-    // policy set.
-    kManagedDevice = 1 << 2,
-    // Prompt suppressed due to the notice being shown before, tracked by a fake
-    // pref.
-    kNoticeShownBefore = 1 << 3,
-    kMaxValue = kNoticeShownBefore,
-  };
-  // LINT.ThenChange(//tools/metrics/histograms/enums.xml:PrivacySandboxPromptSuppressionReason)
 
   // An exhaustive list of actions related to showing & interacting with the
   // prompt. Includes actions which do not impact consent / notice state.
@@ -214,19 +235,6 @@ class PrivacySandboxService : public KeyedService {
     kOpenMeasurementSettings,
   };
 
-  // Returns whether |url| is suitable to display the Privacy Sandbox prompt
-  // over. Only about:blank and certain chrome:// URLs are considered
-  // suitable.
-  static bool IsUrlSuitableForPrompt(const GURL& url);
-
-  // Disables the display of the Privacy Sandbox prompt for testing. When
-  // |disabled| is true, GetRequiredPromptType() will only ever return that
-  // no prompt is required. NOTE: This is set to true in
-  // InProcessBrowserTest::SetUp, disabling the prompt for those tests. If
-  // you set this outside of that context, you should ensure it is reset at
-  // the end of your test.
-  static void SetPromptDisabledForTests(bool disabled);
-
   // Returns the prompt type that should be shown to the user. This consults
   // previous consent / notice information stored in preferences, the
   // current state of the Privacy Sandbox settings, and the current location
@@ -249,12 +257,12 @@ class PrivacySandboxService : public KeyedService {
 #if !BUILDFLAG(IS_ANDROID)
   // Informs the service that a Privacy Sandbox prompt has been opened
   // or closed for |browser|.
-  virtual void PromptOpenedForBrowser(Browser* browser,
+  virtual void PromptOpenedForBrowser(BrowserWindowInterface* browser,
                                       views::Widget* widget) = 0;
-  virtual void PromptClosedForBrowser(Browser* browser) = 0;
+  virtual void PromptClosedForBrowser(BrowserWindowInterface* browser) = 0;
 
   // Returns whether a Privacy Sandbox prompt is currently open for |browser|.
-  virtual bool IsPromptOpenForBrowser(Browser* browser) = 0;
+  virtual bool IsPromptOpenForBrowser(BrowserWindowInterface* browser) = 0;
 
   virtual privacy_sandbox::PrivacySandboxQueueManager&
   GetPrivacySandboxNoticeQueueManager() = 0;
@@ -370,7 +378,7 @@ class PrivacySandboxService : public KeyedService {
   virtual void TopicsToggleChanged(bool new_value) const = 0;
 
   // Whether the current profile requires consent for Topics to operate.
-  virtual bool TopicsConsentRequired() const = 0;
+  virtual bool TopicsConsentRequired() = 0;
 
   // Whether there is an active consent for Topics currently recorded.
   virtual bool TopicsHasActiveConsent() const = 0;
@@ -381,6 +389,17 @@ class PrivacySandboxService : public KeyedService {
   TopicsConsentLastUpdateSource() const = 0;
   virtual base::Time TopicsConsentLastUpdateTime() const = 0;
   virtual std::string TopicsConsentLastUpdateText() const = 0;
+
+  // Notice Framework Result Callbacks.
+  virtual void UpdateTopicsApiResult(bool value) = 0;
+  virtual void UpdateProtectedAudienceApiResult(bool value) = 0;
+  virtual void UpdateMeasurementApiResult(bool value) = 0;
+  // Notice Framework Eligibility Callbacks.
+  virtual privacy_sandbox::EligibilityLevel GetTopicsApiEligibility() = 0;
+  virtual privacy_sandbox::EligibilityLevel
+  GetProtectedAudienceApiEligibility() = 0;
+  virtual privacy_sandbox::EligibilityLevel
+  GetAdMeasurementApiEligibility() = 0;
 };
 
 #endif  // CHROME_BROWSER_PRIVACY_SANDBOX_PRIVACY_SANDBOX_SERVICE_H_

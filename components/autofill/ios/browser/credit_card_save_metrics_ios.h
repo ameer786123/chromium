@@ -10,37 +10,54 @@
 #import <string>
 #import <string_view>
 
+#import "components/autofill/core/browser/metrics/payments/credit_card_save_metrics.h"
 #import "components/autofill/core/browser/payments/payments_autofill_client.h"
 
 namespace autofill::autofill_metrics {
 
-// Metrics to track events when a credit card dialog (banner, modal) is offered
-// on iOS. These values are persisted to logs. Entries should not be renumbered
-// and numeric values should never be reused.
+// Metrics to track events when a credit card dialog (banner, modal or
+// bottomsheet) is offered on iOS. These values are persisted to logs. Entries
+// should not be renumbered and numeric values should never be reused.
 // LINT.IfChange(SaveCreditCardPromptResultIOS)
 enum class SaveCreditCardPromptResultIOS {
   // Dialog shown to user.
   kShown = 0,
   // Dialog accepted.
   kAccepted = 1,
-  // User explicitly denied the modal by tapping the `Close` button.
+  // User explicitly denied the modal by tapping the `Close` button or the
+  // bottomsheet by tapping the `No thanks` button.
   kDenied = 2,
   // Banner swiped away.
   kSwiped = 3,
   // Banner timed out.
   KTimedOut = 4,
-  // User clicked a link on the modal, which caused the dialog to close.
+  // User clicked a link on the modal or the bottomsheet, which caused the
+  // dialog to close.
   kLinkClicked = 5,
   // User did not interact with the modal.
   kIgnored = 6,
-  kMaxValue = kIgnored,
+  // Dialog not shown to user.
+  kNotShown = 7,
+  kMaxValue = kNotShown,
 };
 // LINT.ThenChange(//tools/metrics/histograms/metadata/autofill/enums.xml:SaveCreditCardPromptResultIOS)
 
+// LINT.IfChange(SaveCvcPromptResultIOS)
+enum class SaveCvcPromptResultIOS {
+  // CVC save banner accepted.
+  kAccepted = 0,
+  // CVC save banner swiped away.
+  kSwiped = 1,
+  // CVC save banner timed out.
+  kTimedOut = 2,
+  kMaxValue = kTimedOut,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/autofill/enums.xml:SaveCvcPromptResultIOS)
+
 // Enum describing the types of overlays displayed for saving a card on iOS.
 enum class SaveCreditCardPromptOverlayType {
-  // TODO(crbug.com/391366699): Add `kBottomSheet` as an overlay type
   kBanner,
+  kBottomSheet,
   kModal,
 };
 
@@ -54,6 +71,16 @@ void LogSaveCreditCardPromptResultIOS(
     bool is_uploading,
     const payments::PaymentsAutofillClient::SaveCreditCardOptions& options,
     SaveCreditCardPromptOverlayType overlay_type);
+
+// Logs when a CVC save prompt is offered on iOS.
+void LogSaveCvcPromptOfferedIOS(bool is_uploading);
+
+// Logs events that happen when the prompt to save a security code (locally or
+// to the server) is shown and user's subsequent action for that prompt.
+void LogSaveCvcPromptResultIOS(
+    SaveCvcPromptResultIOS metric,
+    bool is_uploading,
+    const payments::PaymentsAutofillClient::SaveCreditCardOptions& options);
 
 }  // namespace autofill::autofill_metrics
 

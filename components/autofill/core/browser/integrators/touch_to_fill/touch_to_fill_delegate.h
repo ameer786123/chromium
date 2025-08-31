@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <string>
 #include <variant>
 
 #include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/data_model/payments/iban.h"
+#include "components/autofill/core/browser/data_model/valuables/loyalty_card.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/unique_ids.h"
@@ -15,7 +17,6 @@
 
 namespace autofill {
 
-class AutofillManager;
 class FormStructure;
 
 // An interface for interaction with the bottom sheet UI controller, which is
@@ -25,11 +26,8 @@ class TouchToFillDelegate {
  public:
   virtual ~TouchToFillDelegate() = default;
 
-  virtual AutofillManager* GetManager() = 0;
-
   virtual bool IntendsToShowTouchToFill(FormGlobalId form_id,
-                                        FieldGlobalId field_id,
-                                        const FormData& form) = 0;
+                                        FieldGlobalId field_id) = 0;
 
   // Checks whether TTF is eligible for the given web form data and, if
   // successful, triggers the corresponding surface and returns |true|.
@@ -56,6 +54,10 @@ class TouchToFillDelegate {
   // Iban::InstrumentId for server IBANs.
   virtual void IbanSuggestionSelected(
       std::variant<Iban::Guid, Iban::InstrumentId> backend_id) = 0;
+  // Called when the user taps on a loyalty card in the payments TTF bottom
+  // sheet.
+  virtual void LoyaltyCardSuggestionSelected(
+      const LoyaltyCard& loyalty_card) = 0;
   virtual void OnDismissed(bool dismissed_by_user) = 0;
 
   virtual void LogMetricsAfterSubmission(

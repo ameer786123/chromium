@@ -80,22 +80,14 @@ const float kMaxModuleEngagementIndex = 50;
           kMagicStackModuleEngagementTabResumptionIndexHistogram, index,
           kMaxModuleEngagementIndex);
       break;
-    case ContentSuggestionsModuleType::kParcelTracking:
-      UMA_HISTOGRAM_EXACT_LINEAR(
-          kMagicStackModuleEngagementParcelTrackingIndexHistogram, index,
-          kMaxModuleEngagementIndex);
-      break;
     case ContentSuggestionsModuleType::kPriceTrackingPromo:
       UMA_HISTOGRAM_EXACT_LINEAR(
           kMagicStackModuleEngagementPriceTrackingPromoIndexHistogram, index,
           kMaxModuleEngagementIndex);
       break;
-    case ContentSuggestionsModuleType::kSetUpListSync:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
     case ContentSuggestionsModuleType::kSetUpListNotifications:
-    case ContentSuggestionsModuleType::kSetUpListDocking:
-    case ContentSuggestionsModuleType::kSetUpListAddressBar:
     case ContentSuggestionsModuleType::kCompactedSetUpList:
     case ContentSuggestionsModuleType::kSetUpListAllSet:
       UMA_HISTOGRAM_EXACT_LINEAR(
@@ -112,6 +104,9 @@ const float kMaxModuleEngagementIndex = 50;
           kMagicStackModuleEngagementShopCardIndexHistogram, index,
           kMaxModuleEngagementIndex);
       break;
+    case ContentSuggestionsModuleType::kAppBundlePromo:
+      // TODO(crbug.com/441721282): Add metrics collection for the app bundle
+      // promo.
     case ContentSuggestionsModuleType::kPlaceholder:
     case ContentSuggestionsModuleType::kInvalid:
       break;

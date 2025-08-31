@@ -4,12 +4,14 @@
 
 #include "ui/gfx/hdr_metadata.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 
 #include "skia/ext/skcolorspace_primaries.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkData.h"
+#include "ui/gfx/switches.h"
 
 namespace gfx {
 
@@ -34,6 +36,17 @@ std::string HdrMetadataSmpteSt2086::ToString() const {
      << "minLum:" << luminance_min << ", "
      << "maxLum:" << luminance_max << "}";
   return ss.str();
+}
+
+std::partial_ordering HdrMetadataSmpteSt2086::operator<=>(
+    const HdrMetadataSmpteSt2086& rhs) const {
+  return std::tie(primaries.fRX, primaries.fRY, primaries.fGX, primaries.fGY,
+                  primaries.fBX, primaries.fBY, primaries.fWX, primaries.fWY,
+                  luminance_min, luminance_max) <=>
+         std::tie(rhs.primaries.fRX, rhs.primaries.fRY, rhs.primaries.fGX,
+                  rhs.primaries.fGY, rhs.primaries.fBX, rhs.primaries.fBY,
+                  rhs.primaries.fWX, rhs.primaries.fWY, rhs.luminance_min,
+                  rhs.luminance_max);
 }
 
 std::string HdrMetadataNdwl::ToString() const {
@@ -65,6 +78,12 @@ HdrMetadataAgtm& HdrMetadataAgtm::operator=(const HdrMetadataAgtm& other) =
 
 HdrMetadataAgtm::~HdrMetadataAgtm() = default;
 
+// static
+bool HdrMetadataAgtm::IsEnabled() {
+  static bool result = base::FeatureList::IsEnabled(features::kHdrAgtm);
+  return result;
+}
+
 std::string HdrMetadataAgtm::ToString() const {
   return "agtm placeholder";
 }
@@ -74,6 +93,22 @@ bool HdrMetadataAgtm::operator==(const HdrMetadataAgtm& rhs) const {
     return !rhs.payload;
   }
   return payload->equals(rhs.payload.get());
+}
+
+std::strong_ordering HdrMetadataAgtm::operator<=>(
+    const HdrMetadataAgtm& rhs) const {
+  if (!payload && !rhs.payload) {
+    return std::strong_ordering::equal;
+  }
+  if (!payload) {
+    return std::strong_ordering::less;
+  }
+  if (!rhs.payload) {
+    return std::strong_ordering::greater;
+  }
+  return std::lexicographical_compare_three_way(
+      payload->byteSpan().begin(), payload->byteSpan().end(),
+      rhs.payload->byteSpan().begin(), rhs.payload->byteSpan().end());
 }
 
 HDRMetadata::HDRMetadata() = default;
@@ -89,13 +124,30 @@ HDRMetadata& HDRMetadata::operator=(const HDRMetadata& rhs) = default;
 HDRMetadata::~HDRMetadata() = default;
 
 // static
+float HDRMetadata::GetContentMaxLuminance(
+    const std::optional<gfx::HDRMetadata>& metadata) {
+  if (metadata.has_value()) {
+    if (metadata->cta_861_3.has_value() &&
+        metadata->cta_861_3->max_content_light_level > 0.f) {
+      return metadata->cta_861_3->max_content_light_level;
+    }
+    if (metadata->smpte_st_2086.has_value() &&
+        metadata->smpte_st_2086->luminance_max > 0.f) {
+      return metadata->smpte_st_2086->luminance_max;
+    }
+  }
+  return 1000.f;
+}
+
+// static
 HDRMetadata HDRMetadata::PopulateUnspecifiedWithDefaults(
     const std::optional<gfx::HDRMetadata>& hdr_metadata) {
   constexpr HdrMetadataSmpteSt2086 kDefaults2086(SkNamedPrimaries::kRec2020,
                                                  1000.f, 0.f);
 
-  if (!hdr_metadata)
+  if (!hdr_metadata) {
     return HDRMetadata(kDefaults2086);
+  }
 
   HDRMetadata result = *hdr_metadata;
   if (!result.smpte_st_2086) {

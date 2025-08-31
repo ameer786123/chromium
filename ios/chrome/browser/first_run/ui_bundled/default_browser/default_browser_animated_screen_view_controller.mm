@@ -99,7 +99,16 @@ const CGFloat kTitleTopMarginWhenNoHeaderImage = 30;
 
   UIStackView* contentStack = [self contentStack];
   [self.specificContentView addSubview:contentStack];
-  AddSameConstraints(contentStack, self.specificContentView);
+  [NSLayoutConstraint activateConstraints:@[
+    [contentStack.leadingAnchor
+        constraintEqualToAnchor:self.specificContentView.leadingAnchor],
+    [contentStack.trailingAnchor
+        constraintEqualToAnchor:self.specificContentView.trailingAnchor],
+    [contentStack.bottomAnchor
+        constraintEqualToAnchor:self.specificContentView.bottomAnchor],
+    [contentStack.topAnchor
+        constraintGreaterThanOrEqualToAnchor:self.specificContentView.topAnchor]
+  ]];
 
   [super viewDidLoad];
 }
@@ -133,6 +142,12 @@ const CGFloat kTitleTopMarginWhenNoHeaderImage = 30;
   UIStackView* stack = [[UIStackView alloc] initWithArrangedSubviews:@[
     _animationViewWrapper.animationView,
     _animationViewWrapperDarkMode.animationView
+  ]];
+  [NSLayoutConstraint activateConstraints:@[
+    [_animationViewWrapper.animationView.widthAnchor
+        constraintEqualToAnchor:stack.widthAnchor],
+    [_animationViewWrapperDarkMode.animationView.widthAnchor
+        constraintEqualToAnchor:stack.widthAnchor],
   ]];
 
   if ([self shouldShowInstructions]) {
@@ -191,19 +206,11 @@ const CGFloat kTitleTopMarginWhenNoHeaderImage = 30;
       .translatesAutoresizingMaskIntoConstraints = NO;
 
   // Set low compression resistance priority for the animation views to make
-  // their height dynamic. We need to index the subviews here because Lottie
-  // animation wrapper doesn't expose the view we need access to for this.
-  // TODO(crbug.com/404301564): Expose the subview we need from Lottie.
-  NSArray<UIView*>* animationSubviews =
-      _animationViewWrapper.animationView.subviews;
-  NSArray<UIView*>* animationDarkmodeSubviews =
-      _animationViewWrapper.animationView.subviews;
-  CHECK([animationSubviews count] == 1, base::NotFatalUntil::M138);
-  CHECK([animationDarkmodeSubviews count] == 1, base::NotFatalUntil::M138);
-  [animationSubviews[0]
+  // their height dynamic.
+  [_animationViewWrapper.animationView
       setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
                                       forAxis:UILayoutConstraintAxisVertical];
-  [animationDarkmodeSubviews[0]
+  [_animationViewWrapperDarkMode.animationView
       setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
                                       forAxis:UILayoutConstraintAxisVertical];
 

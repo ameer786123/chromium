@@ -11,8 +11,10 @@
 #include "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #include "ios/public/provider/chrome/browser/user_feedback/user_feedback_sender.h"
 
+enum class AccountMenuAccessPoint;
 class GURL;
 @class OpenNewTabCommand;
+@protocol SafariDataImportUIHandler;
 @class ShowSigninCommand;
 @class UIViewController;
 namespace password_manager {
@@ -22,6 +24,7 @@ enum class WarningType;
 namespace signin_metrics {
 enum class AccessPoint;
 }  // namespace signin_metrics
+enum class SafariDataImportEntryPoint;
 namespace syncer {
 enum class TrustedVaultUserActionTriggerForUMA;
 }  // namespace syncer
@@ -76,47 +79,6 @@ enum class TabGridOpeningMode {
 // Shows the settings UI for price tracking notifications.
 - (void)showPriceTrackingNotificationsSettings;
 
-// Presents the Trusted Vault reauth dialog.
-// `baseViewController` presents the sign-in.
-// `securityDomainID` Identifies a particular security domain.
-// `trigger` UI elements where the trusted vault reauth has been triggered.
-// `accessPoint` Identifies where the dialog is initiated from.
-- (void)
-    showTrustedVaultReauthForFetchKeysFromViewController:
-        (UIViewController*)baseViewController
-                                        securityDomainID:
-                                            (trusted_vault::SecurityDomainId)
-                                                securityDomainID
-                                                 trigger:
-                                                     (syncer::
-                                                          TrustedVaultUserActionTriggerForUMA)
-                                                         trigger
-                                             accessPoint:
-                                                 (signin_metrics::AccessPoint)
-                                                     accessPoint;
-
-// Presents the Trusted Vault degraded recoverability (to enroll additional
-// recovery factors).
-// `baseViewController` presents the sign-in.
-// `securityDomainID` Identifies a particular security domain.
-// `trigger` UI elements where the trusted vault reauth has been triggered.
-// `accessPoint` Identifies where the dialog is initiated from.
-- (void)
-    showTrustedVaultReauthForDegradedRecoverabilityFromViewController:
-        (UIViewController*)baseViewController
-                                                     securityDomainID:
-                                                         (trusted_vault::
-                                                              SecurityDomainId)
-                                                             securityDomainID
-                                                              trigger:
-                                                                  (syncer::
-                                                                       TrustedVaultUserActionTriggerForUMA)
-                                                                      trigger
-                                                          accessPoint:
-                                                              (signin_metrics::
-                                                                   AccessPoint)
-                                                                  accessPoint;
-
 // Shows the Safe Browsing settings page presenting from `baseViewController`.
 - (void)showSafeBrowsingSettingsFromViewController:
     (UIViewController*)baseViewController;
@@ -164,17 +126,18 @@ enum class TabGridOpeningMode {
 
 // TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
 // Shows the signin UI, presenting from `baseViewController`.
+// DISCLAIMER: If possible, prefer calling `[SigninCoordinator
+// signinCoordinatorWithCommand:browser:baseViewController]` instead.
+// Keep ownership of the `SigninCoordinator` and start it explicitly.
 - (void)showSignin:(ShowSigninCommand*)command
     baseViewController:(UIViewController*)baseViewController;
 
 // Shows the account menu. On scenes with regular width, the account menu
-// appears as a popover near the `anchorView`, if provided. If
-// `skipIfUINotAvailable` is true, then this command is ignored if there is
-// already a UI being presented.
-- (void)showAccountMenuWithAnchorView:(UIView*)anchorView
-                 skipIfUINotAvailable:(BOOL)skipIfUINotAvailable
-                              fromWeb:(BOOL)fromWeb
-                           completion:(void (^)())completion;
+// appears as a popover. This command is ignored if there is already a UI being
+// presented. Also, redirects to `url` when the sign-in flow is complete and one
+// is provided.
+- (void)showAccountMenuFromAccessPoint:(AccountMenuAccessPoint)accessPoint
+                                   URL:(const GURL&)url;
 
 // TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
 // Shows the consistency promo UI that allows users to sign in to Chrome using
@@ -194,9 +157,12 @@ enum class TabGridOpeningMode {
 // Open a new window with `userActivity`
 - (void)openNewWindowWithActivity:(NSUserActivity*)userActivity;
 
-// Closes all open modals and ensures that a non-incognito NTP tab is open. If
+// Closes all open modals. If `dismissSnackbars` is YES, also dismisses
+// all snackbars. Ensures that a non-incognito NTP tab is open. If
 // incognito is forced, then it will ensure an incognito NTP tab is open.
-- (void)prepareToPresentModal:(ProceduralBlock)completion;
+// The `completion` block is called once all these preparations are complete.
+- (void)prepareToPresentModalWithSnackbarDismissal:(BOOL)dismissSnackbars
+                                        completion:(ProceduralBlock)completion;
 
 // Opens a debug menu for AI prototyping.
 - (void)openAIMenu;
@@ -205,6 +171,17 @@ enum class TabGridOpeningMode {
 // the promo is dismissed.
 - (void)showSigninUpgradePromoWithCompletion:
     (SigninCoordinatorCompletionCallback)dismissalCompletion;
+
+// Shows the user the modal that contains a button to start the workflow to
+// import Safari data to Chrome. Optionally attach a UI handler for the
+// workflow.
+- (void)displaySafariDataImportFromEntryPoint:
+            (SafariDataImportEntryPoint)entryPoint
+                                withUIHandler:
+                                    (id<SafariDataImportUIHandler>)UIHandler;
+
+// Shows the application App Store page, if any.
+- (void)showAppStorePage;
 
 @end
 

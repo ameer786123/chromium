@@ -5,6 +5,7 @@
 #import "ios/chrome/browser/page_info/model/about_this_site_service_factory.h"
 
 #import "base/metrics/histogram_functions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/page_info/core/about_this_site_service.h"
 #import "components/page_info/core/features.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service.h"
@@ -28,6 +29,7 @@ AboutThisSiteServiceFactory* AboutThisSiteServiceFactory::GetInstance() {
 
 AboutThisSiteServiceFactory::AboutThisSiteServiceFactory()
     : ProfileKeyedServiceFactoryIOS("AboutThisSiteServiceFactory",
+                                    TestingCreation::kNoServiceForTests,
                                     ServiceCreation::kCreateWithProfile) {
   DependsOn(OptimizationGuideServiceFactory::GetInstance());
   DependsOn(ios::TemplateURLServiceFactory::GetInstance());
@@ -40,7 +42,7 @@ AboutThisSiteServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   const bool is_about_this_site_language_supported =
       page_info::IsAboutThisSiteFeatureEnabled(
-          GetApplicationContext()->GetApplicationLocale());
+          GetApplicationContext()->GetApplicationLocaleStorage()->Get());
 
   base::UmaHistogramBoolean("Security.PageInfo.AboutThisSiteLanguageSupported",
                             is_about_this_site_language_supported);

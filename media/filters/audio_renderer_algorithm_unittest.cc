@@ -8,21 +8,18 @@
 // correct rate.  We always pass in a very large destination buffer with the
 // expectation that FillBuffer() will fill as much as it can but no more.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "media/filters/audio_renderer_algorithm.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
 #include <algorithm>  // For std::min().
+#include <array>
 #include <cmath>
 #include <memory>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "media/base/audio_buffer.h"
@@ -54,7 +51,7 @@ static void FillWithSquarePulseTrain(
       pulse = -pulse;
       k = 0;
     }
-    data[n] = pulse;
+    UNSAFE_TODO(data[n]) = pulse;
   }
 
   // Fill forward from |offset| towards the end, starting with 1, alternating
@@ -65,7 +62,7 @@ static void FillWithSquarePulseTrain(
       pulse = -pulse;
       k = 0;
     }
-    data[n] = pulse;
+    UNSAFE_TODO(data[n]) = pulse;
   }
 }
 
@@ -202,7 +199,7 @@ class AudioRendererAlgorithmTest : public testing::Test {
   bool VerifyAudioData(AudioBus* bus, int offset, int frames, float value) {
     for (int ch = 0; ch < bus->channels(); ++ch) {
       for (int i = offset; i < offset + frames; ++i) {
-        if (bus->channel(ch)[i] != value) {
+        if (UNSAFE_TODO(bus->channel(ch)[i]) != value) {
           return false;
         }
       }
@@ -421,9 +418,10 @@ class AudioRendererAlgorithmTest : public testing::Test {
 
           // Because of overlap-and-add we might have round off error.
           for (int k = 0; k < kPulseWidthSamples; ++k) {
-            ASSERT_NEAR(reinterpret_cast<float*>(channel_data[m])[k],
-                        pulse_ch[k], kTolerance) << " loop " << n
-                                << " channel/sample " << m << "/" << k;
+            UNSAFE_TODO(
+                ASSERT_NEAR(reinterpret_cast<float*>(channel_data[m])[k],
+                            pulse_ch[k], kTolerance))
+                << " loop " << n << " channel/sample " << m << "/" << k;
           }
         }
       }
@@ -705,8 +703,8 @@ TEST_F(AudioRendererAlgorithmTest, MovingBlockEnergy) {
 
   // Fill up both channels.
   for (int n = 0; n < kFrames; ++n) {
-    ch_left[n] = n;
-    ch_right[n] = kFrames - 1 - n;
+    UNSAFE_TODO(ch_left[n]) = n;
+    UNSAFE_TODO(ch_right[n]) = kFrames - 1 - n;
   }
 
   internal::MultiChannelMovingBlockEnergies(a.get(), kFramesPerBlock,
@@ -716,14 +714,16 @@ TEST_F(AudioRendererAlgorithmTest, MovingBlockEnergy) {
   for (int n = 0; n < kNumBlocks; ++n) {
     float expected_energy = 0;
     for (int k = 0; k < kFramesPerBlock; ++k)
-      expected_energy += ch_left[n + k] * ch_left[n + k];
+      expected_energy +=
+          UNSAFE_TODO(ch_left[n + k]) * UNSAFE_TODO(ch_left[n + k]);
 
     // Left (first) channel.
     EXPECT_FLOAT_EQ(expected_energy, energies[2 * n]);
 
     expected_energy = 0;
     for (int k = 0; k < kFramesPerBlock; ++k)
-      expected_energy += ch_right[n + k] * ch_right[n + k];
+      expected_energy +=
+          UNSAFE_TODO(ch_right[n + k]) * UNSAFE_TODO(ch_right[n + k]);
 
     // Second (right) channel.
     EXPECT_FLOAT_EQ(expected_energy, energies[2 * n + 1]);
@@ -743,9 +743,9 @@ TEST_F(AudioRendererAlgorithmTest, FullAndDecimatedSearch) {
   std::unique_ptr<AudioBus> search_region =
       AudioBus::Create(kChannels, kFramesInSearchRegion);
   float* ch = search_region->channel(0);
-  memcpy(ch, ch_0, sizeof(float) * kFramesInSearchRegion);
+  UNSAFE_TODO(memcpy(ch, ch_0, sizeof(float) * kFramesInSearchRegion));
   ch = search_region->channel(1);
-  memcpy(ch, ch_1, sizeof(float) * kFramesInSearchRegion);
+  UNSAFE_TODO(memcpy(ch, ch_1, sizeof(float) * kFramesInSearchRegion));
 
   const int kFramePerBlock = 4;
   float target_0[] = { 1.0f, 1.0f, 1.0f, 0.0f };
@@ -757,9 +757,9 @@ TEST_F(AudioRendererAlgorithmTest, FullAndDecimatedSearch) {
   std::unique_ptr<AudioBus> target =
       AudioBus::Create(kChannels, kFramePerBlock);
   ch = target->channel(0);
-  memcpy(ch, target_0, sizeof(float) * kFramePerBlock);
+  UNSAFE_TODO(memcpy(ch, target_0, sizeof(float) * kFramePerBlock));
   ch = target->channel(1);
-  memcpy(ch, target_1, sizeof(float) * kFramePerBlock);
+  UNSAFE_TODO(memcpy(ch, target_1, sizeof(float) * kFramePerBlock));
 
   auto energy_target = std::make_unique<float[]>(kChannels);
 
@@ -877,7 +877,8 @@ TEST_F(AudioRendererAlgorithmTest, FillBufferOffset) {
   // Verify that the first half of |bus| remains zero and the last half is
   // filled appropriately at normal, above normal, and below normal.
   const int kHalfSize = kFrameSize / 2;
-  const float kAudibleRates[] = {1.0f, 2.0f, 0.5f, 5.0f, 0.25f};
+  const auto kAudibleRates =
+      std::to_array<float>({1.0f, 2.0f, 0.5f, 5.0f, 0.25f});
   for (size_t i = 0; i < std::size(kAudibleRates); ++i) {
     SCOPED_TRACE(kAudibleRates[i]);
     bus->Zero();
@@ -905,7 +906,7 @@ TEST_F(AudioRendererAlgorithmTest, FillBuffer_ChannelMask) {
   for (int ch = 0; ch < bus->channels(); ++ch) {
     double sum = 0;
     for (int i = 0; i < bus->frames(); ++i)
-      sum += bus->channel(ch)[i];
+      sum += UNSAFE_TODO(bus->channel(ch)[i]);
     if (ch % 2 == 1)
       ASSERT_EQ(sum, 0);
     else
@@ -921,7 +922,7 @@ TEST_F(AudioRendererAlgorithmTest, FillBuffer_ChannelMask) {
   for (int ch = 0; ch < bus->channels(); ++ch) {
     double sum = 0;
     for (int i = 0; i < bus->frames(); ++i)
-      sum += bus->channel(ch)[i];
+      sum += UNSAFE_TODO(bus->channel(ch)[i]);
     ASSERT_NE(sum, 0);
   }
 }

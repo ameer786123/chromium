@@ -8,11 +8,14 @@
 #include <string>
 
 #include "base/memory/weak_ptr.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autofill/ui/ui_util.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/global_features.h"
 #include "chrome/browser/ui/autofill/address_bubble_controller_delegate.h"
 #include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/application_locale_storage/application_locale_storage.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile_test_api.h"
 #include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
@@ -82,7 +85,9 @@ class SaveAddressBubbleControllerTest : public ::testing::Test {
   content::WebContents* web_contents() { return web_contents_.get(); }
 
   const std::string& app_locale() const {
-    return g_browser_process->GetApplicationLocale();
+    return g_browser_process->GetFeatures()
+        ->application_locale_storage()
+        ->Get();
   }
 
  private:
@@ -109,8 +114,9 @@ TEST_F(SaveAddressBubbleControllerTest, SavingNonAccountAddress) {
                               /*include_country=*/true));
   EXPECT_EQ(controller->GetProfileEmail(),
             profile.GetInfo(EMAIL_ADDRESS, app_locale()));
-  EXPECT_EQ(controller->GetProfilePhone(),
-            profile.GetInfo(PHONE_HOME_WHOLE_NUMBER, app_locale()));
+  EXPECT_EQ(
+      controller->GetProfilePhone(),
+      autofill::i18n::GetFormattedPhoneNumberForDisplay(profile, app_locale()));
   EXPECT_EQ(controller->GetOkButtonLabel(),
             l10n_util::GetStringUTF16(
                 IDS_AUTOFILL_EDIT_ADDRESS_DIALOG_OK_BUTTON_LABEL_SAVE));
@@ -139,8 +145,9 @@ TEST_F(SaveAddressBubbleControllerTest, SavingAccountAddress) {
                               /*include_country=*/true));
   EXPECT_EQ(controller->GetProfileEmail(),
             profile.GetInfo(EMAIL_ADDRESS, app_locale()));
-  EXPECT_EQ(controller->GetProfilePhone(),
-            profile.GetInfo(PHONE_HOME_WHOLE_NUMBER, app_locale()));
+  EXPECT_EQ(
+      controller->GetProfilePhone(),
+      autofill::i18n::GetFormattedPhoneNumberForDisplay(profile, app_locale()));
   EXPECT_EQ(controller->GetOkButtonLabel(),
             l10n_util::GetStringUTF16(
                 IDS_AUTOFILL_EDIT_ADDRESS_DIALOG_OK_BUTTON_LABEL_SAVE));

@@ -9,8 +9,9 @@ import android.os.Bundle;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.settings.ChromeBaseSettingsFragment;
 import org.chromium.chrome.browser.tab.TabArchiveSettings;
@@ -19,6 +20,7 @@ import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 
 /** Fragment for tab archive configurations to Chrome. */
+@NullMarked
 public class TabArchiveSettingsFragment extends ChromeBaseSettingsFragment {
     // Must match key in tab_archive_settings.xml
     static final String PREF_TAB_ARCHIVE_ALLOW_AUTODELETE = "tab_archive_allow_autodelete";
@@ -39,7 +41,7 @@ public class TabArchiveSettingsFragment extends ChromeBaseSettingsFragment {
     private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
 
     @Override
-    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+    public void onCreatePreferences(@Nullable Bundle savedInstanceState, @Nullable String rootKey) {
         mArchiveSettings = new TabArchiveSettings(ChromeSharedPreferences.getInstance());
         mArchiveSettings.addObserver(mTabArchiveSettingsObserver);
         SettingsUtils.addPreferencesFromResource(this, R.xml.tab_archive_settings);
@@ -71,13 +73,13 @@ public class TabArchiveSettingsFragment extends ChromeBaseSettingsFragment {
         // Auto delete switch.
         ChromeSwitchPreference enableAutoDeleteSwitch =
                 (ChromeSwitchPreference) findPreference(PREF_TAB_ARCHIVE_ALLOW_AUTODELETE);
-        int autoDeleteTimeDeltaDays = mArchiveSettings.getAutoDeleteTimeDeltaDays();
-        enableAutoDeleteSwitch.setTitle(
+        int autoDeleteTimeDeltaMonths = mArchiveSettings.getAutoDeleteTimeDeltaMonths();
+        enableAutoDeleteSwitch.setSummary(
                 getResources()
                         .getQuantityString(
-                                R.plurals.archive_settings_allow_autodelete_title,
-                                autoDeleteTimeDeltaDays,
-                                autoDeleteTimeDeltaDays));
+                                R.plurals.archive_settings_allow_autodelete_summary,
+                                autoDeleteTimeDeltaMonths,
+                                autoDeleteTimeDeltaMonths));
         boolean isAutoDeleteEnabled =
                 mArchiveSettings.getArchiveEnabled() && mArchiveSettings.isAutoDeleteEnabled();
         enableAutoDeleteSwitch.setEnabled(mArchiveSettings.getArchiveEnabled());
@@ -96,8 +98,7 @@ public class TabArchiveSettingsFragment extends ChromeBaseSettingsFragment {
                 (ChromeSwitchPreference) findPreference(PREF_TAB_ARCHIVE_INCLUDE_DUPLICATE_TABS);
         enableArchiveDuplicateTabsSwitch.setTitle(
                 getString(R.string.archive_settings_archive_duplicate_tabs_title));
-        enableArchiveDuplicateTabsSwitch.setEnabled(
-                ChromeFeatureList.sAndroidTabDeclutterArchiveDuplicateTabs.isEnabled());
+        enableArchiveDuplicateTabsSwitch.setEnabled(mArchiveSettings.getArchiveEnabled());
         enableArchiveDuplicateTabsSwitch.setChecked(
                 mArchiveSettings.isArchiveDuplicateTabsEnabled());
         enableArchiveDuplicateTabsSwitch.setOnPreferenceChangeListener(
@@ -108,5 +109,10 @@ public class TabArchiveSettingsFragment extends ChromeBaseSettingsFragment {
                             "Tabs.ArchiveSettings.ArchiveDuplicateTabsEnabled", enabled);
                     return true;
                 });
+    }
+
+    @Override
+    public @AnimationType int getAnimationType() {
+        return AnimationType.PROPERTY;
     }
 }

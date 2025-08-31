@@ -55,14 +55,6 @@ using UkmSubmittedFormWithExperimentalFieldsType =
 using ExpectedUkmMetricsRecord = std::vector<ExpectedUkmMetricsPair>;
 using ExpectedUkmMetrics = std::vector<ExpectedUkmMetricsRecord>;
 
-FormSignature Collapse(FormSignature sig) {
-  return FormSignature(sig.value() % 1021);
-}
-
-FieldSignature Collapse(FieldSignature sig) {
-  return FieldSignature(sig.value() % 1021);
-}
-
 std::string SerializeAndEncode(const AutofillQueryResponse& response) {
   std::string unencoded_response_string;
   if (!response.SerializeToString(&unencoded_response_string)) {
@@ -547,7 +539,8 @@ TEST_F(FieldLogUkmMetricTest, AutofillFieldInfoMetricsFieldType) {
 
   auto form_structure = std::make_unique<FormStructure>(form);
   FormStructure* form_structure_ptr = form_structure.get();
-  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
+  form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""),
+                                          LanguageCode(""), nullptr);
   ASSERT_TRUE(
       test_api(autofill_manager())
           .mutable_form_structures()
@@ -1719,8 +1712,7 @@ TEST_P(LogFocusedComplexFormAtFormRemoveTest, TestEmittedUKM) {
                FieldTypeGroup::kCreditCard) {
       autofill_manager().FillOrPreviewForm(
           mojom::ActionPersistence::kFill, form, first_field.global_id(),
-          personal_data().payments_data_manager().GetCreditCardByGUID(
-              "10000000-0000-0000-0000-000000000001"),
+          paydm().GetCreditCardByGUID("10000000-0000-0000-0000-000000000001"),
           AutofillTriggerSource::kPopup);
     } else {
       // Autofill should not be simulated on a field that is not autofillable.

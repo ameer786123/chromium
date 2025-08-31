@@ -5,7 +5,10 @@
 #include "chrome/browser/glic/browser_ui/glic_iph_controller.h"
 
 #include "base/time/time.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/host/guest_util.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "components/tabs/public/tab_interface.h"
@@ -44,8 +47,12 @@ GlicIphController::~GlicIphController() = default;
 void GlicIphController::MaybeShowPromo() {
   // Determine that there is a valid active tab we could show the promo for.
   auto* const tab = window_->GetActiveTabInterface();
+  if (!tab) {
+    return;
+  }
   auto* const contents = tab->GetContents();
   if (!contents->GetURL().SchemeIsHTTPOrHTTPS() ||
+      contents->GetURL().host() == GetGuestURL().host() ||
       !contents->IsDocumentOnLoadCompletedInPrimaryMainFrame()) {
     return;
   }
@@ -60,7 +67,7 @@ void GlicIphController::MaybeShowPromo() {
       feature_engagement::kIPHGlicPromoFeature);
   params.show_promo_result_callback = base::BindOnce(
       &GlicIphController::OnShowPromoResult, weak_ptr_factory_.GetWeakPtr());
-  window_->GetUserEducationInterface()->MaybeShowFeaturePromo(
+  BrowserUserEducationInterface::From(&*window_)->MaybeShowFeaturePromo(
       std::move(params));
 }
 
@@ -75,7 +82,7 @@ void GlicIphController::OnShowPromoResult(
   if (result == user_education::FeaturePromoResult::Success()) {
     auto* profile = window_->GetProfile();
     auto* glic_service = GlicKeyedServiceFactory::GetGlicKeyedService(profile);
-    glic_service->TryPreloadFre();
+    glic_service->TryPreloadFre(glic::GlicPrewarmingFreSource::kIph);
   }
 }
 

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chromeos/ash/components/kcer/kcer_token_impl.h"
 
 #include <stdint.h>
@@ -15,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/hash/sha1.h"
 #include "base/logging.h"
 #include "base/task/thread_pool.h"
@@ -96,8 +92,8 @@ bool GetKeyType(const chaps::Attribute* attr, KeyType& key_type) {
     return false;
   }
   chromeos::PKCS11_CK_KEY_TYPE pkcs_key_type =
-      *reinterpret_cast<const chromeos::PKCS11_CK_KEY_TYPE*>(
-          attr->value().data());
+      *UNSAFE_TODO(reinterpret_cast<const chromeos::PKCS11_CK_KEY_TYPE*>(
+          attr->value().data()));
   if (pkcs_key_type == chromeos::PKCS11_CKK_RSA) {
     key_type = KeyType::kRsa;
     return true;
@@ -178,7 +174,7 @@ Pkcs11Id MakePkcs11IdFromEcKey(bssl::UniquePtr<EC_KEY> ec_key) {
   }
   bssl::UniquePtr<uint8_t> point_bytes_deleter(point_bytes);
 
-  return MakePkcs11Id(base::span(point_bytes, point_bytes_len));
+  return MakePkcs11Id(UNSAFE_TODO(base::span(point_bytes, point_bytes_len)));
 }
 
 // Calculates PKCS#11 id for the provided public key SPKI.
@@ -298,53 +294,8 @@ base::expected<DigestWithPrefix, Error> DigestOnWorkerThread(
     }
   }
 
-  return DigestWithPrefix(std::vector<uint8_t>(digest, digest + digest_len));
-}
-
-// The EC signature returned by Chaps is a concatenation of two numbers r and s
-// (see PKCS#11 v2.40: 2.3.1 EC Signatures). Kcer needs to return it as a DER
-// encoding of the following ASN.1 notations:
-// Ecdsa-Sig-Value ::= SEQUENCE {
-//     r       INTEGER,
-//     s       INTEGER
-// }
-// (according to the RFC 8422, Section 5.4).
-// This function reencodes the signature.
-base::expected<std::vector<uint8_t>, Error> ReencodeEcSignature(
-    base::span<const uint8_t> signature) {
-  if (signature.size() % 2 != 0) {
-    return base::unexpected(Error::kFailedToSignBadSignatureLength);
-  }
-  size_t order_size_bytes = signature.size() / 2;
-  base::span<const uint8_t> r_bytes = signature.first(order_size_bytes);
-  base::span<const uint8_t> s_bytes = signature.subspan(order_size_bytes);
-
-  // Convert the RAW ECDSA signature to a DER-encoded ECDSA-Sig-Value.
-  bssl::UniquePtr<ECDSA_SIG> sig(ECDSA_SIG_new());
-  if (!sig || !BN_bin2bn(r_bytes.data(), r_bytes.size(), sig->r) ||
-      !BN_bin2bn(s_bytes.data(), s_bytes.size(), sig->s)) {
-    return base::unexpected(Error::kFailedToDerEncode);
-  }
-
-  std::vector<uint8_t> result_signature;
-
-  {
-    const int len = i2d_ECDSA_SIG(sig.get(), nullptr);
-    if (len <= 0) {
-      return base::unexpected(Error::kFailedToSignBadSignatureLength);
-    }
-    result_signature.resize(len);
-  }
-
-  {
-    uint8_t* ptr = result_signature.data();
-    const int len = i2d_ECDSA_SIG(sig.get(), &ptr);
-    if (len <= 0) {
-      return base::unexpected(Error::kFailedToDerEncode);
-    }
-  }
-
-  return result_signature;
+  return DigestWithPrefix(
+      std::vector<uint8_t>(digest, UNSAFE_TODO(digest + digest_len)));
 }
 
 std::vector<uint8_t> GetPssSignParams(SigningScheme kcer_signing_scheme) {
@@ -377,7 +328,8 @@ std::vector<uint8_t> GetPssSignParams(SigningScheme kcer_signing_scheme) {
   pss_params.sLen = EVP_MD_size(digest_method);
 
   const uint8_t* params_ptr = reinterpret_cast<const uint8_t*>(&pss_params);
-  return std::vector<uint8_t>(params_ptr, params_ptr + sizeof(pss_params));
+  return std::vector<uint8_t>(params_ptr,
+                              UNSAFE_TODO(params_ptr + sizeof(pss_params)));
 }
 
 }  // namespace
@@ -652,7 +604,7 @@ void KcerTokenImpl::GenerateEcKeyImpl(GenerateEcKeyTask task) {
   AddAttribute(public_key_attrs, chromeos::PKCS11_CKA_VERIFY, MakeSpan(&kTrue));
   AddAttribute(public_key_attrs, chromeos::PKCS11_CKA_WRAP, MakeSpan(&kTrue));
   AddAttribute(public_key_attrs, chromeos::PKCS11_CKA_EC_PARAMS,
-               base::span(ec_params_der, ec_params_der_len));
+               UNSAFE_TODO(base::span(ec_params_der, ec_params_der_len)));
 
   chaps::AttributeList private_key_attrs;
   AddAttribute(private_key_attrs, chromeos::PKCS11_CKA_TOKEN, MakeSpan(&kTrue));
@@ -732,7 +684,7 @@ void KcerTokenImpl::DidGetEcPublicKey(
   const uint8_t* ec_point_data = ASN1_STRING_data(ec_point_oct.get());
   size_t ec_point_data_len = ASN1_STRING_length(ec_point_oct.get());
   base::span<const uint8_t> ec_point =
-      base::span(ec_point_data, ec_point_data_len);
+      UNSAFE_TODO(base::span(ec_point_data, ec_point_data_len));
 
   base::expected<PublicKey, Error> kcer_public_key =
       MakeEcPublicKey(token_, ec_point);
@@ -886,7 +838,7 @@ void KcerTokenImpl::ImportCertFromBytesWithExistingCerts(
   }
   PublicKeySpki spki(std::vector<uint8_t>(
       spki_string_piece.data(),
-      spki_string_piece.data() + spki_string_piece.size()));
+      UNSAFE_TODO(spki_string_piece.data() + spki_string_piece.size())));
 
   Pkcs11Id key_id = GetPkcs11IdFromSpki(spki);
   if (key_id->empty()) {
@@ -1192,8 +1144,8 @@ void KcerTokenImpl::RemoveCertImpl(RemoveCertTask task) {
   }
 
   const CRYPTO_BUFFER* buffer = task.cert->GetX509Cert()->cert_buffer();
-  base::span<const uint8_t> cert_der =
-      base::span(CRYPTO_BUFFER_data(buffer), CRYPTO_BUFFER_len(buffer));
+  base::span<const uint8_t> cert_der = UNSAFE_TODO(
+      base::span(CRYPTO_BUFFER_data(buffer), CRYPTO_BUFFER_len(buffer)));
 
   CK_OBJECT_CLASS cert_class = CKO_CERTIFICATE;
   chaps::AttributeList attributes;
@@ -1474,7 +1426,7 @@ void KcerTokenImpl::ListKeysDidGetOneEcKey(ListKeysTask task,
   const uint8_t* ec_point_data = ASN1_STRING_data(ec_point_oct.get());
   size_t ec_point_data_len = ASN1_STRING_length(ec_point_oct.get());
   base::span<const uint8_t> ec_point =
-      base::span(ec_point_data, ec_point_data_len);
+      UNSAFE_TODO(base::span(ec_point_data, ec_point_data_len));
 
   PublicKeySpki spki = MakeEcSpki(ec_point);
   if (spki->empty()) {
@@ -1736,7 +1688,7 @@ void KcerTokenImpl::DidSign(SignTask task,
   uint64_t mechanism = SigningSchemeToPkcs11Mechanism(task.signing_scheme);
   if (mechanism == chromeos::PKCS11_CKM_ECDSA) {
     base::expected<std::vector<uint8_t>, Error> reencoded_signature =
-        ReencodeEcSignature(std::move(signature));
+        ReencodeEcSignatureAsAsn1(std::move(signature));
     if (!reencoded_signature.has_value()) {
       return std::move(task.callback)
           .Run(base::unexpected(reencoded_signature.error()));

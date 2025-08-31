@@ -20,7 +20,7 @@
 #include "ui/aura/test/aura_test_utils.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/test/ui_controls.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/ozone/public/ozone_ui_controls_test_helper.h"
 #include "ui/views/test/test_desktop_screen_ozone.h"
@@ -44,9 +44,9 @@ aura::Window* RootWindowForPoint(const gfx::Point& point,
   // other things to work properly. Therefore we hack around this by
   // iterating across the windows owned DesktopWindowTreeHostLinux since this
   // doesn't rely on having a DesktopScreenX11.
-  std::vector<aura::Window*> windows =
+  aura::Window::Windows windows =
       views::DesktopWindowTreeHostPlatform::GetAllOpenWindows();
-  const auto i = std::ranges::find_if(windows, [point](auto* window) {
+  const auto i = std::ranges::find_if(windows, [point](auto& window) {
     return window->GetBoundsInScreen().Contains(point) || window->HasCapture();
   });
 
@@ -172,7 +172,7 @@ bool SendMouseMoveNotifyWhenDone(int screen_x,
   host->ConvertPixelsToDIP(&root_current_location);
 
   auto* screen = views::test::TestDesktopScreenOzone::GetInstance();
-  DCHECK_EQ(screen, display::Screen::GetScreen());
+  DCHECK_EQ(screen, display::Screen::Get());
   screen->set_cursor_screen_point(gfx::Point(screen_x, screen_y));
 
   if (root_location != root_current_location &&

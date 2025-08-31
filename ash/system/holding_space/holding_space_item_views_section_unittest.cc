@@ -21,6 +21,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "ui/views/widget/unique_widget_ptr.h"
 #include "ui/views/widget/widget.h"
 
@@ -139,7 +140,7 @@ TEST_P(HoldingSpaceItemViewsSectionTest, ItemOrder) {
 
   // Reverse the items so that the are the same order that we expect from the
   // views.
-  std::reverse(items.begin(), items.end());
+  std::ranges::reverse(items);
 
   auto views = item_views_section()->GetHoldingSpaceItemViews();
 

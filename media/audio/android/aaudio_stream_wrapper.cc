@@ -2,18 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "media/audio/android/aaudio_stream_wrapper.h"
+
+#include <aaudio/AAudio.h>
+
+#include <array>
+#include <optional>
 
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/thread_annotations.h"
 #include "base/trace_event/trace_event.h"
+#include "media/audio/android/audio_device.h"
+#include "media/audio/android/audio_device_id.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/channel_layout.h"
 
@@ -24,7 +28,7 @@ namespace media {
 
 // Used to circumvent issues where the AAudio thread callbacks continue
 // after AAudioStream_requestStop() completes. See crbug.com/1183255.
-class REQUIRES_ANDROID_API(AAUDIO_MIN_API) LOCKABLE AAudioDestructionHelper {
+class LOCKABLE AAudioDestructionHelper {
  public:
   explicit AAudioDestructionHelper(AAudioStreamWrapper* wrapper)
       : wrapper_(wrapper) {}
@@ -58,11 +62,11 @@ class REQUIRES_ANDROID_API(AAUDIO_MIN_API) LOCKABLE AAudioDestructionHelper {
   bool is_closing_ GUARDED_BY(lock_) = false;
 };
 
-static REQUIRES_ANDROID_API(AAUDIO_MIN_API) aaudio_data_callback_result_t
-    OnAudioDataRequestedCallback(AAudioStream* stream,
-                                 void* user_data,
-                                 void* audio_data,
-                                 int32_t num_frames) {
+static aaudio_data_callback_result_t OnAudioDataRequestedCallback(
+    AAudioStream* stream,
+    void* user_data,
+    void* audio_data,
+    int32_t num_frames) {
   AAudioDestructionHelper* destruction_helper =
       reinterpret_cast<AAudioDestructionHelper*>(user_data);
 
@@ -78,10 +82,9 @@ static REQUIRES_ANDROID_API(AAUDIO_MIN_API) aaudio_data_callback_result_t
   return result;
 }
 
-static REQUIRES_ANDROID_API(AAUDIO_MIN_API) void OnStreamErrorCallback(
-    AAudioStream* stream,
-    void* user_data,
-    aaudio_result_t error) {
+static void OnStreamErrorCallback(AAudioStream* stream,
+                                  void* user_data,
+                                  aaudio_result_t error) {
   AAudioDestructionHelper* destruction_helper =
       reinterpret_cast<AAudioDestructionHelper*>(user_data);
 
@@ -95,8 +98,9 @@ static REQUIRES_ANDROID_API(AAUDIO_MIN_API) void OnStreamErrorCallback(
 }
 
 // Matches the ordering of media::Channels.
-static constexpr REQUIRES_ANDROID_API(AAUDIO_CHANNEL_MASK_MIN_API) uint32_t
-    kMediaChannelToAAudioChannel[] = {
+static constexpr REQUIRES_ANDROID_API(
+    AAUDIO_CHANNEL_MASK_MIN_API) auto kMediaChannelToAAudioChannel =
+    std::to_array<uint32_t>({
         AAUDIO_CHANNEL_FRONT_LEFT,
         AAUDIO_CHANNEL_FRONT_RIGHT,
         AAUDIO_CHANNEL_FRONT_CENTER,
@@ -108,7 +112,7 @@ static constexpr REQUIRES_ANDROID_API(AAUDIO_CHANNEL_MASK_MIN_API) uint32_t
         AAUDIO_CHANNEL_BACK_CENTER,
         AAUDIO_CHANNEL_SIDE_LEFT,
         AAUDIO_CHANNEL_SIDE_RIGHT,
-};
+    });
 
 REQUIRES_ANDROID_API(AAUDIO_CHANNEL_MASK_MIN_API)
 std::optional<aaudio_channel_mask_t> ChannelMaskFromChannelLayout(
@@ -158,8 +162,10 @@ void SetChannelMask(AAudioStreamBuilder* builder,
 AAudioStreamWrapper::AAudioStreamWrapper(DataCallback* callback,
                                          StreamType stream_type,
                                          const AudioParameters& params,
+                                         android::AudioDevice device,
                                          aaudio_usage_t usage)
     : params_(params),
+      requested_device_(std::move(device)),
       stream_type_(stream_type),
       usage_(usage),
       callback_(callback),
@@ -236,6 +242,8 @@ bool AAudioStreamWrapper::Open() {
   AAudioStreamBuilder_setPerformanceMode(builder, performance_mode_);
   AAudioStreamBuilder_setFramesPerDataCallback(builder,
                                                params_.frames_per_buffer());
+  AAudioStreamBuilder_setDeviceId(builder,
+                                  requested_device_.GetId().ToAAudioDeviceId());
 
   if (__builtin_available(android AAUDIO_CHANNEL_MASK_MIN_API, *)) {
     SetChannelMask(builder, params_);
@@ -275,6 +283,21 @@ bool AAudioStreamWrapper::Open() {
   }
 
   CHECK_EQ(AAUDIO_FORMAT_PCM_FLOAT, AAudioStream_getFormat(aaudio_stream_));
+
+  if (!requested_device_.GetId().IsDefault()) {
+    // `AAudioStreamBuilder_setDeviceId` is not guaranteed to set the specified
+    // device.
+    const int32_t expected_device_id =
+        requested_device_.GetId().ToAAudioDeviceId();
+    const int32_t actual_device_id = AAudioStream_getDeviceId(aaudio_stream_);
+    bool device_id_matches = expected_device_id == actual_device_id;
+    EmitSetDeviceIdResultToHistogram(device_id_matches);
+    if (!device_id_matches) {
+      DLOG(WARNING) << "Failed to set device ID for AAudio stream. Expected: "
+                    << expected_device_id << "; actual: " << actual_device_id;
+      return false;
+    }
+  }
 
   // After opening the stream, sets the effective buffer size to 3X the burst
   // size to prevent glitching if the burst is small (e.g. < 128). On some
@@ -346,6 +369,24 @@ bool AAudioStreamWrapper::Stop() {
                                            &next_state, kTimeoutNanoseconds);
 
   return true;
+}
+
+std::optional<android::AudioDeviceId> AAudioStreamWrapper::GetActualDeviceId() {
+  if (!aaudio_stream_) {
+    return std::nullopt;
+  }
+  int32_t raw_id = AAudioStream_getDeviceId(aaudio_stream_);
+
+  std::optional<android::AudioDeviceId> id =
+      android::AudioDeviceId::NonDefault(raw_id);
+  if (!id.has_value()) {
+    // Empirically, `AAudioStream_getDeviceId` is not expected to fail to
+    // determine the actual device ID, but this is not guaranteed by the API.
+    LOG(WARNING) << "AAudioStream_getDeviceId failed to return a non-default "
+                    "device ID. Requested device ID: "
+                 << requested_device_.GetId().ToAAudioDeviceId();
+  }
+  return id;
 }
 
 base::TimeDelta AAudioStreamWrapper::GetOutputDelay(
@@ -422,6 +463,25 @@ void AAudioStreamWrapper::OnStreamError(aaudio_result_t error) {
   } else {
     callback_->OnError();
   }
+}
+
+void AAudioStreamWrapper::EmitSetDeviceIdResultToHistogram(bool success) {
+  std::string_view direction_string;
+  switch (stream_type_) {
+    case StreamType::kInput:
+      direction_string = "Input";
+      break;
+    case StreamType::kOutput:
+      direction_string = "Output";
+      break;
+  }
+
+  std::string_view success_string = success ? "Success" : "Failure";
+
+  std::string histogram_name =
+      base::StrCat({"Media.Audio.Android.AAudioSetDeviceId.", direction_string,
+                    ".", success_string});
+  base::UmaHistogramEnumeration(histogram_name, requested_device_.GetType());
 }
 
 }  // namespace media

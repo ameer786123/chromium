@@ -12,9 +12,11 @@
 #include "base/memory/weak_ptr.h"
 #include "base/types/strong_alias.h"
 #include "components/autofill/core/common/aliases.h"
+#include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/mojom/autofill_types.mojom-shared.h"
 #include "components/autofill/core/common/unique_ids.h"
 #include "ui/accessibility/ax_tree_id.h"
+#include "url/origin.h"
 
 class GURL;
 
@@ -24,6 +26,10 @@ struct ParsingResult;
 struct PasswordFormGenerationData;
 struct PasswordFormFillData;
 }  // namespace autofill
+
+namespace gfx {
+class RectF;
+}  // namespace gfx
 
 namespace password_manager {
 
@@ -84,23 +90,38 @@ class PasswordManagerDriver {
   virtual void FocusNextFieldAfterPasswords() {}
 
   // Tells the renderer to fill the given `value` into the triggering field.
-  // Also includes the `suggestion_source`, used to update the
-  // `FieldPropertiesMask` of the filled field.
-  virtual void FillField(
-      const std::u16string& value,
-      autofill::AutofillSuggestionTriggerSource suggestion_source) {}
+  // Also includes the `FieldPropertiesFlags` used to update the
+  // `FieldPropertiesMask` of the filled field. It invokes `success_callback`
+  // with true if the filling could be performed and false otherwise.
+  virtual void FillField(autofill::FieldRendererId triggering_field_id,
+                         const std::u16string& value,
+                         autofill::FieldPropertiesFlags field_flags,
+                         base::OnceCallback<void(bool)> success_callback) {}
+
+  // Tells the renderer to open the suggestions popup on the login field
+  // specified in `field_id`.
+  virtual void TriggerPasswordRecoverySuggestions(
+      autofill::FieldRendererId field_id) {}
 
   // Tells the renderer to fill and submit a change password form, specifically
   // `password_element_id` with `old_password` and `new_password_element_id`,
   // `confirm_password_element_id` with `new_password`. Upon completion
   // asynchronously returns `form_data` with filled values.
-  virtual void SubmitChangePasswordForm(
+  virtual void FillChangePasswordForm(
       autofill::FieldRendererId password_element_id,
       autofill::FieldRendererId new_password_element_id,
       autofill::FieldRendererId confirm_password_element_id,
       const std::u16string& old_password,
       const std::u16string& new_password,
-      base::OnceCallback<void(const autofill::FormData&)> form_data_callback) {}
+      base::OnceCallback<void(const std::optional<autofill::FormData>&)>
+          form_data_callback) {}
+
+  // Submits a form based on field id if all conditions for submission with
+  // Enter are satisfied, i.e. the form exists, there is a submit element inside
+  // a form, the submit element is not disabled.
+  virtual void SubmitFormWithEnter(
+      autofill::FieldRendererId field,
+      base::OnceCallback<void(bool)> success_callback) {}
 
   // Tells the driver to fill the currently focused form with the `username` and
   // `password`.
@@ -189,10 +210,16 @@ class PasswordManagerDriver {
   // Returns the last committed URL of the frame.
   virtual const GURL& GetLastCommittedURL() const = 0;
 
+  // Returns the last committed origin of the frame.
+  virtual const url::Origin& GetLastCommittedOrigin() const = 0;
+
   // Annotate password related (username, password) DOM input elements with
   // corresponding HTML attributes. It is used only for debugging.
   virtual void AnnotateFieldsWithParsingResult(
       const autofill::ParsingResult& parsing_result) {}
+
+  virtual gfx::RectF TransformToRootCoordinates(
+      const gfx::RectF& bounds_in_frame_coordinates) = 0;
 
   // Get a WeakPtr to the instance.
   virtual base::WeakPtr<PasswordManagerDriver> AsWeakPtr() = 0;

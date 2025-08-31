@@ -4,12 +4,19 @@
 
 #include "chrome/browser/ai/ai_summarizer.h"
 
-#include "base/strings/stringprintf.h"
+#include <algorithm>
+
+#include "base/containers/fixed_flat_set.h"
+#include "base/metrics/field_trial_params.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/ai/ai_context_bound_object.h"
 #include "chrome/browser/ai/ai_utils.h"
+#include "components/language/core/common/locale_util.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
 #include "components/optimization_guide/proto/features/summarize.pb.h"
 #include "components/optimization_guide/proto/string_value.pb.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/mojom/ai/model_streaming_responder.mojom.h"
 
 namespace {
@@ -59,7 +66,7 @@ AISummarizer::AISummarizer(
     blink::mojom::AISummarizerCreateOptionsPtr options,
     mojo::PendingReceiver<blink::mojom::AISummarizer> receiver)
     : AIContextBoundObject(context_bound_object_set),
-      session_(std::move(session)),
+      session_wrapper_(std::move(session)),
       receiver_(this, std::move(receiver)),
       options_(std::move(options)) {
   receiver_.set_disconnect_handler(base::BindOnce(
@@ -68,7 +75,8 @@ AISummarizer::AISummarizer(
 
 AISummarizer::~AISummarizer() {
   for (auto& responder : responder_set_) {
-    responder->OnError(
+    AIUtils::SendStreamingStatus(
+        responder,
         blink::mojom::ModelStreamingResponseStatus::kErrorSessionDestroyed);
   }
 }
@@ -82,24 +90,33 @@ AISummarizer::ToProtoOptions(
   proto_options->set_output_type(ToProtoType(options->type));
   proto_options->set_output_format(ToProtoFormat(options->format));
   proto_options->set_output_length(ToProtoLength(options->length));
+  if (options->output_language && !options->output_language->code.empty()) {
+    proto_options->set_output_language(
+        language::ExtractBaseLanguage(options->output_language->code));
+  }
   return proto_options;
 }
 
 // static
-std::string AISummarizer::CombineContexts(const std::string& shared_context,
-                                          const std::string& input_context) {
-  std::string final_context = shared_context;
-  if (!input_context.empty()) {
-    if (!final_context.empty()) {
-      final_context = final_context + " " + input_context;
-    } else {
-      final_context = input_context;
-    }
-  }
-  if (!final_context.empty()) {
-    final_context += "\n";
-  }
-  return final_context;
+std::string AISummarizer::CombineContexts(std::string_view shared,
+                                          std::string_view input) {
+  std::string result = (!shared.empty() && !input.empty())
+                           ? base::JoinString({shared, input}, " ")
+                           : std::string(shared.empty() ? input : shared);
+  return result.empty() ? result : base::StrCat({result, "\n"});
+}
+
+// static
+base::flat_set<std::string_view> AISummarizer::GetSupportedLanguageBaseCodes() {
+  // Comma-separated language codes to enable; or "*" enables all supported.
+  const base::FeatureParam<std::string> kAISummarizationAPILanguagesEnabled{
+      &blink::features::kAISummarizationAPI, "langs", /*default=*/"en,es,ja"};
+  // TODO(crbug.com/394841624): Get supported languages from the model config.
+  auto kSupportedBaseLanguages =
+      base::MakeFixedFlatSet<std::string_view>({"en", "ja", "es"});
+  return AIUtils::RestrictSupportedLanguagesForFeature(
+      base::MakeFlatSet<std::string_view>(kSupportedBaseLanguages),
+      kAISummarizationAPILanguagesEnabled);
 }
 
 void AISummarizer::Summarize(
@@ -107,10 +124,12 @@ void AISummarizer::Summarize(
     const std::string& context,
     mojo::PendingRemote<blink::mojom::ModelStreamingResponder>
         pending_responder) {
-  if (!session_) {
+  auto* session = session_wrapper_.session();
+  if (!session) {
     mojo::Remote<blink::mojom::ModelStreamingResponder> responder(
         std::move(pending_responder));
-    responder->OnError(
+    AIUtils::SendStreamingStatus(
+        responder,
         blink::mojom::ModelStreamingResponseStatus::kErrorSessionDestroyed);
     return;
   }
@@ -118,8 +137,7 @@ void AISummarizer::Summarize(
   mojo::RemoteSetElementId responder_id =
       responder_set_.Add(std::move(pending_responder));
   auto request = BuildRequest(input, context);
-
-  session_->GetExecutionInputSizeInTokens(
+  session->GetExecutionInputSizeInTokens(
       optimization_guide::MultimodalMessageReadView(request),
       base::BindOnce(&AISummarizer::DidGetExecutionInputSizeForSummarize,
                      weak_ptr_factory_.GetWeakPtr(), responder_id, request));
@@ -127,7 +145,7 @@ void AISummarizer::Summarize(
 
 void AISummarizer::DidGetExecutionInputSizeForSummarize(
     mojo::RemoteSetElementId responder_id,
-    optimization_guide::proto::SummarizeRequest request,
+    const optimization_guide::proto::SummarizeRequest& request,
     std::optional<uint32_t> result) {
   blink::mojom::ModelStreamingResponder* responder =
       responder_set_.Get(responder_id);
@@ -137,26 +155,31 @@ void AISummarizer::DidGetExecutionInputSizeForSummarize(
     return;
   }
 
-  if (!session_) {
-    responder->OnError(
+  if (!session_wrapper_.session()) {
+    AIUtils::SendStreamingStatus(
+        responder,
         blink::mojom::ModelStreamingResponseStatus::kErrorSessionDestroyed);
     return;
   }
 
   if (!result.has_value()) {
-    responder->OnError(
+    AIUtils::SendStreamingStatus(
+        responder,
         blink::mojom::ModelStreamingResponseStatus::kErrorGenericFailure);
     return;
   }
 
-  if (result.value() > blink::mojom::kWritingAssistanceMaxInputTokenSize) {
-    responder->OnError(
-        blink::mojom::ModelStreamingResponseStatus::kErrorInputTooLarge);
+  uint32_t quota = blink::mojom::kWritingAssistanceMaxInputTokenSize;
+  if (result.value() > quota) {
+    AIUtils::SendStreamingStatus(
+        responder,
+        blink::mojom::ModelStreamingResponseStatus::kErrorInputTooLarge,
+        blink::mojom::QuotaErrorInfo::New(result.value(), quota));
     return;
   }
 
-  session_->ExecuteModel(
-      request,
+  session_wrapper_.ExecuteModelOrQueue(
+      optimization_guide::MultimodalMessage(request),
       base::BindRepeating(&AISummarizer::ModelExecutionCallback,
                           weak_ptr_factory_.GetWeakPtr(), responder_id));
 }
@@ -171,7 +194,8 @@ void AISummarizer::ModelExecutionCallback(
   }
 
   if (!result.response.has_value()) {
-    responder->OnError(
+    AIUtils::SendStreamingStatus(
+        responder,
         AIUtils::ConvertModelExecutionError(result.response.error().error()));
     return;
   }
@@ -189,21 +213,23 @@ void AISummarizer::ModelExecutionCallback(
 void AISummarizer::MeasureUsage(const std::string& input,
                                 const std::string& context,
                                 MeasureUsageCallback callback) {
-  if (!session_) {
+  auto* session = session_wrapper_.session();
+  if (!session) {
     std::move(callback).Run(std::nullopt);
     return;
   }
 
   auto request = BuildRequest(input, context);
-  session_->GetExecutionInputSizeInTokens(
+  session->GetExecutionInputSizeInTokens(
       optimization_guide::MultimodalMessageReadView(request),
       base::BindOnce(&AISummarizer::DidGetExecutionInputSizeInTokensForMeasure,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void AISummarizer::SetPriority(on_device_model::mojom::Priority priority) {
-  if (session_) {
-    session_->SetPriority(priority);
+  auto* session = session_wrapper_.session();
+  if (session) {
+    session->SetPriority(priority);
   }
 }
 

@@ -13,12 +13,13 @@ import android.view.View;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Callback;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.MonotonicNonNull;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.messages.MessageContainer.MessageContainerA11yDelegate;
 import org.chromium.ui.modelutil.PropertyModel;
+
+import java.util.function.Supplier;
 
 /** Coordinator to show / hide a banner message on given container and delegate events. */
 @NullMarked
@@ -46,7 +47,7 @@ public class SingleActionMessage implements MessageStateHandler, MessageContaine
     private boolean mFullyVisibleBefore;
     private final boolean mAreExtraHistogramsEnabled;
 
-    private long mMessageEnqueuedTime;
+    private final long mMessageEnqueuedTime;
     // The timestamp when the message was shown. Used for reproting visible duration.
     private long mMessageShownTime;
 
@@ -92,6 +93,7 @@ public class SingleActionMessage implements MessageStateHandler, MessageContaine
         mModel.set(
                 MessageBannerProperties.PRIMARY_BUTTON_CLICK_LISTENER, this::handlePrimaryAction);
         mModel.set(MessageBannerProperties.ON_SECONDARY_BUTTON_CLICK, this::handleSecondaryAction);
+        mModel.set(MessageBannerProperties.CLOSE_BUTTON_CLICK_LISTENER, this::handleCloseButton);
         mMessageEnqueuedTime = MessagesMetrics.now();
         mAreExtraHistogramsEnabled = MessageFeatureList.areExtraHistogramsEnabled();
     }
@@ -118,14 +120,10 @@ public class SingleActionMessage implements MessageStateHandler, MessageContaine
                             mTopOffsetSupplier,
                             mContainer.getResources(),
                             mContainer,
-                            () -> {
-                                mDismissHandler.invoke(mModel, DismissReason.GESTURE);
-                            },
+                            () -> mDismissHandler.invoke(mModel, DismissReason.GESTURE),
                             mSwipeAnimationHandler,
                             mAutodismissDurationMs,
-                            () -> {
-                                mDismissHandler.invoke(mModel, DismissReason.TIMER);
-                            });
+                            () -> mDismissHandler.invoke(mModel, DismissReason.TIMER));
         }
         assumeNonNull(mView);
 
@@ -234,6 +232,11 @@ public class SingleActionMessage implements MessageStateHandler, MessageContaine
         // Avoid running the secondary action callback if the message has already been dismissed.
         if (mMessageDismissed) return;
         mModel.get(MessageBannerProperties.ON_SECONDARY_ACTION).run();
+    }
+
+    private void handleCloseButton(View v) {
+        if (mMessageDismissed) return;
+        mDismissHandler.invoke(mModel, DismissReason.CLOSE_BUTTON);
     }
 
     @VisibleForTesting

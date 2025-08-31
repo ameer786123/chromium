@@ -6,6 +6,7 @@
 
 #include "ash/constants/ash_features.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/notimplemented.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -131,7 +132,7 @@ scoped_refptr<base::RefCountedMemory> GetUserImageInternal(
   ui::ResourceScaleFactor scale_factor = ui::k100Percent;
   // Use the scaling that matches primary display. These source images are
   // 96x96 and often used at that size in WebUI pages.
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   if (screen) {
     scale_factor = ui::GetSupportedResourceScaleFactor(
         screen->GetPrimaryDisplay().device_scale_factor());

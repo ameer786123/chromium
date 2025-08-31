@@ -37,6 +37,7 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/loader/render_blocking_resource_manager.h"
+#include "third_party/blink/renderer/core/scheduler/task_attribution_util.h"
 #include "third_party/blink/renderer/core/script/ignore_destructive_write_count_incrementer.h"
 #include "third_party/blink/renderer/core/script/script_element_base.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
@@ -63,7 +64,7 @@ WebScopedVirtualTimePauser CreateWebScopedVirtualTimePauser(
 // about IsInDocumentWrite() use here.
 PendingScript::PendingScript(ScriptElementBase* element,
                              const TextPosition& starting_position,
-                             scheduler::TaskAttributionInfo* parent_task)
+                             scheduler::TaskAttributionInfo* task_state)
     : element_(element),
       starting_position_(starting_position),
       virtual_time_pauser_(CreateWebScopedVirtualTimePauser(element)),
@@ -72,7 +73,7 @@ PendingScript::PendingScript(ScriptElementBase* element,
       original_execution_context_(element->GetExecutionContext()),
       created_during_document_write_(
           element->GetDocument().IsInDocumentWrite()),
-      parent_task_(parent_task) {}
+      task_state_(task_state) {}
 
 PendingScript::~PendingScript() {}
 
@@ -164,15 +165,8 @@ void PendingScript::ExecuteScriptBlock() {
   }
 
   std::optional<scheduler::TaskAttributionTracker::TaskScope>
-      task_attribution_scope;
-  if (ScriptState* script_state = ToScriptStateForMainWorld(frame)) {
-    if (auto* tracker = scheduler::TaskAttributionTracker::From(
-            script_state->GetIsolate())) {
-      task_attribution_scope = tracker->CreateTaskScope(
-          script_state, parent_task_,
-          scheduler::TaskAttributionTracker::TaskScopeType::kScriptExecution);
-    }
-  }
+      task_attribution_scope(SetCurrentTaskStateIfTopLevel(
+          task_state_, context, TaskScopeType::kScriptExecution));
 
   Script* script = GetSource();
 
@@ -324,7 +318,7 @@ void PendingScript::Trace(Visitor* visitor) const {
   visitor->Trace(client_);
   visitor->Trace(original_execution_context_);
   visitor->Trace(original_element_document_);
-  visitor->Trace(parent_task_);
+  visitor->Trace(task_state_);
 }
 
 bool PendingScript::IsControlledByScriptRunner() const {
@@ -344,7 +338,6 @@ bool PendingScript::IsControlledByScriptRunner() const {
 
     case ScriptSchedulingType::kInOrder:
     case ScriptSchedulingType::kAsync:
-    case ScriptSchedulingType::kForceInOrder:
       return true;
   }
 }

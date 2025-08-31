@@ -86,7 +86,8 @@ constexpr int kRefreshInkDropRadius = 12;
 
 // Popup items that use a leading icon instead of a trailing one.
 constexpr auto kPopupItemTypesUsingLeadingIcons = DenseSet<SuggestionType>(
-    {SuggestionType::kAllSavedPasswordsEntry, SuggestionType::kManageAddress,
+    {SuggestionType::kAllLoyaltyCardsEntry,
+     SuggestionType::kAllSavedPasswordsEntry, SuggestionType::kManageAddress,
      SuggestionType::kManageAutofillAi, SuggestionType::kManageCreditCard,
      SuggestionType::kManageIban, SuggestionType::kManageLoyaltyCard,
      SuggestionType::kManagePlusAddress, SuggestionType::kUndoOrClear,
@@ -99,12 +100,15 @@ constexpr int kAutofillPopupPasswordMaxWidth = 108;
 
 // Max width for the Autofill suggestion text.
 constexpr int kAutofillSuggestionMaxWidth = 192;
+// Multiline suggestions look crammed without extra vertical margin.
+constexpr int kAutofillMultilineSuggestionAdditionalVerticalMargin = 8;
 
 constexpr auto kMainTextStyle = views::style::TextStyle::STYLE_BODY_3_MEDIUM;
 constexpr auto kMainTextStyleLight = views::style::TextStyle::STYLE_BODY_3;
 constexpr auto kMainTextStyleHighlighted =
     views::style::TextStyle::STYLE_BODY_3_BOLD;
 constexpr auto kMinorTextStyle = views::style::TextStyle::STYLE_BODY_4;
+constexpr auto kBadgeTextStyle = views::style::TextStyle::STYLE_BODY_5;
 constexpr auto kDisabledTextStyle = views::style::TextStyle::STYLE_DISABLED;
 
 // Returns a wrapper around `closure` that posts it to the default message
@@ -120,9 +124,40 @@ base::RepeatingClosure CreateExecuteSoonWrapper(base::RepeatingClosure task) {
 }
 
 bool IsDeactivatedPasswordOrPasskey(const Suggestion& suggestion) {
-  return suggestion.HasDeactivatedStyle() &&
-         GetFillingProductFromSuggestionType(suggestion.type) ==
-             FillingProduct::kPassword;
+  switch (GetFillingProductFromSuggestionType(suggestion.type)) {
+    case FillingProduct::kPassword:
+    case FillingProduct::kPasskey:
+      return suggestion.HasDeactivatedStyle();
+    case FillingProduct::kAddress:
+    case FillingProduct::kPlusAddresses:
+    case FillingProduct::kCreditCard:
+    case FillingProduct::kIban:
+    case FillingProduct::kAutocomplete:
+    case FillingProduct::kMerchantPromoCode:
+    case FillingProduct::kCompose:
+    case FillingProduct::kAutofillAi:
+    case FillingProduct::kLoyaltyCard:
+    case FillingProduct::kIdentityCredential:
+    case FillingProduct::kDataList:
+    case FillingProduct::kOneTimePassword:
+    case FillingProduct::kNone:
+      return false;
+  }
+}
+
+std::unique_ptr<views::BoxLayoutView> GetBadgeView(std::u16string_view label) {
+  return views::Builder<views::BoxLayoutView>()
+      .AddChildren(views::Builder<views::Label>()
+                       .SetText(std::u16string(label))
+                       .SetTextStyle(kBadgeTextStyle)
+                       .SetBorder(views::CreateRoundedRectBorder(
+                           /*thickness=*/0, /*corner_radius=*/100,
+                           gfx::Insets::TLBR(/*top=*/2, /*left=*/8,
+                                             /*bottom=*/2, /*right=*/8),
+                           ui::kColorSysNeutralContainer))
+                       .SetBackground(views::CreateRoundedRectBackground(
+                           ui::kColorSysNeutralContainer, 100)))
+      .Build();
 }
 
 void FormatLabel(views::Label& label,
@@ -135,6 +170,7 @@ void FormatLabel(views::Label& label,
     case FillingProduct::kAutofillAi:
     case FillingProduct::kPlusAddresses:
     case FillingProduct::kLoyaltyCard:
+    case FillingProduct::kIdentityCredential:
       label.SetMaximumWidthSingleLine(maximum_width_single_line);
       break;
     case FillingProduct::kCreditCard:
@@ -145,8 +181,11 @@ void FormatLabel(views::Label& label,
     case FillingProduct::kCompose:
     case FillingProduct::kIban:
     case FillingProduct::kMerchantPromoCode:
+    case FillingProduct::kPasskey:
     case FillingProduct::kPassword:
+    case FillingProduct::kDataList:
     case FillingProduct::kNone:
+    case FillingProduct::kOneTimePassword:
       break;
   }
 }
@@ -179,9 +218,9 @@ std::unique_ptr<views::Label> CreateMainTextLabel(
 }
 
 // Creates a label for the suggestion's minor text.
-std::vector<std::unique_ptr<views::Label>> CreateMinorTextLabels(
+std::vector<std::unique_ptr<views::View>> CreateMinorTextLabels(
     const Suggestion& suggestion) {
-  std::vector<std::unique_ptr<views::Label>> minor_text_labels;
+  std::vector<std::unique_ptr<views::View>> minor_text_labels;
   for (const Suggestion::Text& text : suggestion.minor_texts) {
     if (text.value.empty()) {
       continue;
@@ -279,9 +318,15 @@ std::unique_ptr<PopupRowContentView> CreateFooterPopupRowContentView(
   }
   main_text_label->SetEnabled(!suggestion.is_loading);
 
-  if (suggestion.type == SuggestionType::kPendingStateSignin) {
+  if (suggestion.type == SuggestionType::kPendingStateSignin ||
+      suggestion.type == SuggestionType::kFreeformFooter) {
     main_text_label->SetMultiLine(true);
     main_text_label->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
+    view->SetInsideBorderInsets(
+        gfx::Insets(view->GetInsideBorderInsets())
+            .set_top_bottom(
+                kAutofillMultilineSuggestionAdditionalVerticalMargin,
+                kAutofillMultilineSuggestionAdditionalVerticalMargin));
   }
 
   view->AddChildView(std::move(main_text_label));
@@ -397,7 +442,9 @@ std::unique_ptr<PopupRowContentView> CreatePasswordPopupRowContentView(
   }
 
   std::vector<std::unique_ptr<views::View>> subtext_views;
-  subtext_views.push_back(CreatePasswordSubtextView(suggestion));
+  if (!suggestion.labels.empty()) {
+    subtext_views.push_back(CreatePasswordSubtextView(suggestion));
+  }
   popup_cell_utils::AddSuggestionContentToView(
       suggestion, std::move(main_text_label), CreateMinorTextLabels(suggestion),
       CreatePasswordDescriptionLabel(suggestion), std::move(subtext_views),
@@ -427,9 +474,67 @@ std::unique_ptr<PopupRowContentView> CreateComposePopupRowContentView(
   return view;
 }
 
-// Creates the content view for regular address and credit card suggestions.
-// Content views for suggestions of other types and special suggestions are
-// created by corresponding `Create*PopupRowContentView()` methods.
+// Creates the content view for virtual card (VCN) and IBAN suggestions.
+// This method (currently) is only for VCNs and IBANs.
+std::unique_ptr<PopupRowContentView>
+CreateAlternativePaymentMethodPopupRowContentView(
+    base::WeakPtr<AutofillPopupController> controller,
+    const Suggestion& suggestion,
+    std::optional<user_education::DisplayNewBadge> show_new_badge,
+    FillingProduct main_filling_product,
+    std::optional<AutofillPopupController::SuggestionFilterMatch>
+        filter_match) {
+  auto view = std::make_unique<PopupRowContentView>();
+  std::unique_ptr<views::Label> main_text_label =
+      CreateMainTextLabel(suggestion, show_new_badge);
+  if (filter_match) {
+    main_text_label->SetTextStyleRange(kMainTextStyleHighlighted,
+                                       filter_match->main_text_match);
+  }
+
+  FormatLabel(*main_text_label, suggestion.main_text, main_filling_product,
+              kAutofillSuggestionMaxWidth);
+  std::vector<std::unique_ptr<views::View>> minor_labels =
+      CreateMinorTextLabels(suggestion);
+
+  std::unique_ptr<views::BoxLayoutView> badge_view =
+      GetBadgeView(l10n_util::GetStringUTF16(
+          suggestion.type == SuggestionType::kVirtualCreditCardEntry
+              ? IDS_AUTOFILL_VIRTUAL_CARD_SUGGESTION_OPTION_VALUE
+              : IDS_AUTOFILL_IBAN_SUGGESTION_OPTION_VALUE));
+
+  std::vector<std::unique_ptr<views::View>> subtext_views =
+      CreateSubtextViews(*view, suggestion, main_filling_product);
+  if (suggestion.type == SuggestionType::kVirtualCreditCardEntry &&
+      !minor_labels.empty()) {
+    // If this is a virtual card suggestion with non-empty minor_labels,
+    // it means that the minor_text represents expiration date and should be
+    // replaced with a badge label.
+    minor_labels.clear();
+    minor_labels.push_back(std::move(badge_view));
+  } else if (suggestion.type == SuggestionType::kIbanEntry &&
+             subtext_views.empty()) {
+    // If this is an IBAN suggestion with an empty subtext_views,
+    // it means that the main_text represents IBAN's masked value and a
+    // badge label should be put as the minor_text.
+    minor_labels.clear();
+    minor_labels.push_back(std::move(badge_view));
+  } else if (!subtext_views.empty()) {
+    views::View* layout_view = subtext_views.front().get();
+    layout_view->AddChildView(std::move(badge_view));
+  }
+
+  popup_cell_utils::AddSuggestionContentToView(
+      suggestion, std::move(main_text_label), std::move(minor_labels),
+      /*description_label=*/nullptr, std::move(subtext_views),
+      popup_cell_utils::GetIconImageView(suggestion), *view);
+  return view;
+}
+
+// Creates the content view for regular address and regular credit card
+// suggestions. views for suggestions of other types and special
+// suggestions are created by corresponding `Create*PopupRowContentView()`
+// methods.
 std::unique_ptr<PopupRowContentView> CreatePopupRowContentView(
     const Suggestion& suggestion,
     std::optional<user_education::DisplayNewBadge> show_new_badge,
@@ -603,6 +708,8 @@ std::unique_ptr<PopupRowView> CreatePopupRowView(
     case SuggestionType::kInsecureContextPaymentDisabledMessage:
       NOTREACHED();
     case SuggestionType::kPasswordEntry:
+    case SuggestionType::kBackupPasswordEntry:
+    case SuggestionType::kTroubleSigningInEntry:
     case SuggestionType::kAccountStoragePasswordEntry:
       return std::make_unique<PopupRowView>(
           a11y_selection_delegate, selection_delegate, controller, line_number,
@@ -625,6 +732,19 @@ std::unique_ptr<PopupRowView> CreatePopupRowView(
       return CreateNewPlusAddressInlineSuggestion(
           controller, a11y_selection_delegate, selection_delegate, line_number,
           show_new_badge);
+    }
+    case SuggestionType::kIbanEntry:
+    case SuggestionType::kVirtualCreditCardEntry: {
+      return std::make_unique<PopupRowView>(
+          a11y_selection_delegate, selection_delegate, controller, line_number,
+          base::FeatureList::IsEnabled(
+              features::kAutofillEnableNewFopDisplayDesktop)
+              ? CreateAlternativePaymentMethodPopupRowContentView(
+                    controller, suggestion, show_new_badge,
+                    main_filling_product, std::move(filter_match))
+              : CreatePopupRowContentView(suggestion, show_new_badge,
+                                          main_filling_product,
+                                          std::move(filter_match)));
     }
     default:
       return std::make_unique<PopupRowView>(

@@ -7,8 +7,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/extensions/app_tab_helper.h"
 #include "chrome/browser/extensions/extension_util.h"
-#include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -35,7 +35,7 @@
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -92,8 +92,8 @@ ui::ImageModel HostedAppBrowserController::GetWindowAppIcon() const {
     return GetFallbackAppIcon();
   }
 
-  extensions::TabHelper* extensions_tab_helper =
-      extensions::TabHelper::FromWebContents(contents);
+  extensions::AppTabHelper* extensions_tab_helper =
+      extensions::AppTabHelper::FromWebContents(contents);
   if (!extensions_tab_helper) {
     return GetFallbackAppIcon();
   }
@@ -126,10 +126,10 @@ std::u16string HostedAppBrowserController::GetTitle() const {
   return AppBrowserController::GetTitle();
 }
 
-GURL HostedAppBrowserController::GetAppStartUrl() const {
+const GURL& HostedAppBrowserController::GetAppStartUrl() const {
   const Extension* extension = GetExtension();
   if (!extension) {
-    return GURL();
+    return GURL::EmptyGURL();
   }
 
   return AppLaunchInfo::GetLaunchWebURL(extension);
@@ -202,10 +202,6 @@ bool HostedAppBrowserController::IsInstalled() const {
   return GetExtension();
 }
 
-bool HostedAppBrowserController::IsHostedApp() const {
-  return true;
-}
-
 void HostedAppBrowserController::OnExtensionUninstallDialogClosed(
     bool success,
     const std::u16string& error) {
@@ -216,13 +212,14 @@ void HostedAppBrowserController::OnTabInserted(content::WebContents* contents) {
   AppBrowserController::OnTabInserted(contents);
 
   const Extension* extension = GetExtension();
-  extensions::TabHelper::FromWebContents(contents)->SetExtensionApp(extension);
+  extensions::AppTabHelper::FromWebContents(contents)->SetExtensionApp(
+      extension);
 }
 
 void HostedAppBrowserController::OnTabRemoved(content::WebContents* contents) {
   AppBrowserController::OnTabRemoved(contents);
 
-  extensions::TabHelper::FromWebContents(contents)->SetExtensionApp(nullptr);
+  extensions::AppTabHelper::FromWebContents(contents)->SetExtensionApp(nullptr);
 }
 
 void HostedAppBrowserController::LoadAppIcon(

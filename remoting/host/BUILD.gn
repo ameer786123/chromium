@@ -35,6 +35,7 @@ group("all") {
       "//remoting/host:remoting_native_messaging_manifests",
       "//remoting/host:remoting_start_host",
       "//remoting/host/it2me:remote_assistance_host",
+      "//remoting/host/webauthn:remote_webauthn",
     ]
 
     if (is_linux || is_win) {
@@ -42,10 +43,7 @@ group("all") {
     }
 
     if (enable_me2me_host && (is_linux || is_win)) {
-      deps += [
-        "//remoting/host/remote_open_url",
-        "//remoting/host/webauthn:remote_webauthn",
-      ]
+      deps += [ "//remoting/host/remote_open_url" ]
     }
   }
 }
@@ -104,15 +102,6 @@ source_set("host_main_headers") {
   ]
 }
 
-source_set("capturer_interfaces") {
-  visibility = [ ":*" ]
-  sources = [ "desktop_and_cursor_composer.h" ]
-  deps = [
-    "//base:base",
-    "//third_party/webrtc_overrides:webrtc_component",
-  ]
-}
-
 source_set("common_headers") {
   visibility = [ "//remoting/host/*" ]
   sources = [
@@ -125,6 +114,7 @@ source_set("common_headers") {
     "desktop_environment.h",
     "evaluate_capability.h",
     "legacy_interaction_strategy.h",
+    "polling_desktop_display_info_monitor.h",
     "sas_injector.h",
     "usage_stats_consent.h",
     "worker_process_ipc_delegate.h",
@@ -133,12 +123,13 @@ source_set("common_headers") {
     sources += [ "me2me_desktop_environment.h" ]
   }
   deps = [
-    ":capturer_interfaces",
     ":platform_interfaces",
+    "//base",
     "//ipc",
     "//remoting/base",
     "//remoting/host/base",
     "//remoting/protocol",
+    "//third_party/webrtc_overrides:webrtc_component",
   ]
 }
 
@@ -173,6 +164,21 @@ source_set("chromoting_host_services_client") {
   }
 }
 
+source_set("chromoting_host_services_server") {
+  sources = [
+    "chromoting_host_services_server.cc",
+    "chromoting_host_services_server.h",
+  ]
+  deps = [
+    ":ipc_constants",
+    ":mojo_caller_security_checker",
+    "//base",
+    "//components/named_mojo_ipc_server",
+    "//mojo/public/cpp/platform",
+    "//remoting/host/mojom",
+  ]
+}
+
 # Split up from common to avoid circular dependency.
 source_set("client_session_control") {
   sources = [ "client_session_control.h" ]
@@ -180,7 +186,7 @@ source_set("client_session_control") {
   deps = [
     "//remoting/base",
     "//remoting/protocol",
-    "//ui/events:events",
+    "//ui/events",
   ]
 }
 
@@ -189,7 +195,7 @@ source_set("clipboard") {
 
   deps = [
     "//base",
-    "//remoting/base:base",
+    "//remoting/base",
     "//remoting/host/base",
     "//remoting/proto",
     "//remoting/protocol",
@@ -290,21 +296,33 @@ source_set("mojo_caller_security_checker") {
     "mojo_caller_security_checker.h",
   ]
   deps = [
-    ":remoting_version",
     "//base",
     "//components/named_mojo_ipc_server",
     "//remoting/host/base",
   ]
   if (is_mac) {
-    deps += [ "//remoting/host/mac:constants" ]
-    frameworks = [
-      "Security.framework",
-      "Carbon.framework",
+    deps += [
+      "//remoting/host/mac:constants",
+      "//remoting/host/mac:trust_util",
     ]
   }
   if (is_win) {
     deps += [ "//remoting/host/win:trust_util" ]
   }
+}
+
+source_set("desktop_capturer") {
+  sources = [
+    "desktop_capturer_proxy.cc",
+    "desktop_capturer_proxy.h",
+    "desktop_capturer_wrapper.cc",
+    "desktop_capturer_wrapper.h",
+  ]
+  deps = [
+    "//base",
+    "//remoting/protocol",
+    "//third_party/webrtc_overrides:webrtc_component",
+  ]
 }
 
 # This must be a static library instead of a source set because
@@ -346,20 +364,16 @@ static_library("common") {
     "corp_heartbeat_service_client.h",
     "corp_host_status_logger.cc",
     "corp_host_status_logger.h",
+    "corp_register_support_host_request.cc",
+    "corp_register_support_host_request.h",
     "crash_process.cc",
     "crash_process.h",
     "create_desktop_interaction_strategy_factory.cc",
     "daemon_process.cc",
     "daemon_process.h",
-    "desktop_and_cursor_composer.h",
     "desktop_and_cursor_composer_notifier.cc",
     "desktop_and_cursor_composer_notifier.h",
     "desktop_and_cursor_conditional_composer.cc",
-    "desktop_capturer_proxy.cc",
-    "desktop_capturer_proxy.h",
-    "desktop_capturer_wrapper.cc",
-    "desktop_capturer_wrapper.h",
-    "desktop_display_info_monitor.cc",
     "desktop_process.cc",
     "desktop_process.h",
     "desktop_session.cc",
@@ -396,8 +410,6 @@ static_library("common") {
     "host_power_save_blocker.h",
     "host_secret.cc",
     "host_secret.h",
-    "host_status_logger.cc",
-    "host_status_logger.h",
     "host_status_monitor.cc",
     "host_status_monitor.h",
     "host_status_observer.h",
@@ -446,15 +458,16 @@ static_library("common") {
     "pin_hash.h",
     "policy_watcher.cc",
     "policy_watcher.h",
+    "polling_desktop_display_info_monitor.cc",
     "register_support_host_request.h",
+    "register_support_host_request_base.cc",
+    "register_support_host_request_base.h",
     "remote_input_filter.cc",
     "remote_input_filter.h",
     "remoting_register_support_host_request.cc",
     "remoting_register_support_host_request.h",
     "resizing_host_observer.cc",
     "resizing_host_observer.h",
-    "server_log_entry_host.cc",
-    "server_log_entry_host.h",
     "session_policies_from_dict.cc",
     "session_policies_from_dict.h",
     "shutdown_watchdog.cc",
@@ -465,20 +478,10 @@ static_library("common") {
     "test_echo_extension_session.h",
     "video_memory_utils.cc",
     "video_memory_utils.h",
-    "xmpp_register_support_host_request.cc",
-    "xmpp_register_support_host_request.h",
     "xsession_chooser_ui.inc",
     "zombie_host_detector.cc",
     "zombie_host_detector.h",
   ]
-
-  # ChromotingHostServices currently only works on Linux and Windows.
-  if (is_linux || is_win) {
-    sources += [
-      "chromoting_host_services_server.cc",
-      "chromoting_host_services_server.h",
-    ]
-  }
 
   libs = []
 
@@ -490,8 +493,10 @@ static_library("common") {
   defines = [ "WEBRTC_CHROMIUM_BUILD" ]
 
   deps = [
+    ":chromoting_host_services_server",
     ":client_session_control",
     ":clipboard",
+    ":desktop_capturer",
     ":display_layout",
     ":host_main_headers",
     ":ipc_constants",
@@ -525,12 +530,12 @@ static_library("common") {
     "//remoting/proto/remoting/v1:remote_support_host_messages",
     "//remoting/protocol",
     "//remoting/resources",
-    "//remoting/signaling:signaling",
+    "//remoting/signaling",
     "//services/network:network_service",
-    "//services/network/public/cpp:cpp",
+    "//services/network/public/cpp",
     "//third_party/libjingle_xmpp:rtc_xmllite",
     "//third_party/webrtc_overrides:webrtc_component",
-    "//ui/events:events",
+    "//ui/events",
 
     # //remoting uses the power_save_blocker directly. See crbug.com/689423
     "//services/device/wake_lock/power_save_blocker",
@@ -568,14 +573,13 @@ static_library("common") {
 
   if (is_linux) {
     sources += [
-      "host_utmp_logger.cc",
-      "host_utmp_logger.h",
+      "host_wtmpdb_logger.cc",
+      "host_wtmpdb_logger.h",
     ]
 
-    libs += [
-      "utempter",
-      "util",
-    ]
+    libs += [ "util" ]
+
+    deps += [ "//sql" ]
   }
 
   if (is_linux) {
@@ -683,7 +687,7 @@ static_library("common") {
       ":remoting_version",
       "//remoting/host/base",
       "//remoting/host/mac:permission_checking",
-      "//ui/events:events",
+      "//ui/events",
     ]
   }
 
@@ -714,8 +718,8 @@ static_library("common") {
       # On Windows, we use //media/gpu/MediaFoundationVideoEncodeAcceleratorWin
       # to detect whether HW encoder is supported by the system.
       "//media",
-      "//media/gpu:gpu",
-      "//mojo/core/embedder:embedder",
+      "//media/gpu",
+      "//mojo/core/embedder",
       "//remoting/base/crash",
       "//remoting/host/crash:crash_uploader",
       "//remoting/host/win",
@@ -755,6 +759,7 @@ static_library("test_support") {
   deps = [
     ":chromoting_host_services_client",
     ":client_session_control",
+    ":desktop_capturer",
     ":platform_interfaces",
     "//remoting/base:errors",
     "//remoting/base:session_policies",
@@ -764,14 +769,14 @@ static_library("test_support") {
     "//remoting/host/mojom",
     "//remoting/host/remote_open_url:common",
     "//remoting/host/remote_open_url:test_support",
-    "//remoting/host/security_key:security_key",
+    "//remoting/host/security_key",
     "//remoting/host/webauthn",
     "//remoting/proto",
-    "//remoting/protocol:protocol",
+    "//remoting/protocol",
     "//remoting/protocol:test_support",
     "//testing/gmock",
     "//testing/gtest",
-    "//ui/events:events",
+    "//ui/events",
   ]
   public_deps = [
     ":common",
@@ -809,7 +814,6 @@ source_set("unit_tests") {
     "host_experiment_session_plugin_unittest.cc",
     "host_extension_session_manager_unittest.cc",
     "host_power_save_blocker_unittest.cc",
-    "host_status_logger_unittest.cc",
     "input_monitor/local_input_monitor_unittest.cc",
     "ipc_desktop_environment_unittest.cc",
     "it2me/it2me_confirmation_dialog_proxy_unittest.cc",
@@ -822,16 +826,15 @@ source_set("unit_tests") {
     "native_messaging/native_messaging_writer_unittest.cc",
     "pin_hash_unittest.cc",
     "policy_watcher_unittest.cc",
+    "register_support_host_request_base_unittest.cc",
     "remote_input_filter_unittest.cc",
     "remoting_register_support_host_request_unittest.cc",
     "resizing_host_observer_unittest.cc",
     "resources_unittest.cc",
-    "server_log_entry_host_unittest.cc",
     "session_policies_from_dict_unittest.cc",
     "setup/host_starter_oauth_helper_unittest.cc",
     "setup/me2me_native_messaging_host_unittest.cc",
     "setup/pin_validator_unittest.cc",
-    "xmpp_register_support_host_request_unittest.cc",
     "zombie_host_detector_unittest.cc",
   ]
 
@@ -842,7 +845,6 @@ source_set("unit_tests") {
   configs += [ "//remoting/build/config:version" ]
 
   deps = [
-    ":chromoting_host_services_client",
     ":client_session_control",
     ":common",
     ":display_layout",
@@ -859,7 +861,7 @@ source_set("unit_tests") {
     "//remoting/codec:encoder",
     "//remoting/host/base",
     "//remoting/host/file_transfer:unit_tests",
-    "//remoting/host/input_monitor:input_monitor",
+    "//remoting/host/input_monitor",
     "//remoting/host/it2me:common",
     "//remoting/host/it2me:constants",
     "//remoting/host/mojom",
@@ -888,14 +890,18 @@ source_set("unit_tests") {
     "//ui/events",
   ]
 
-  # ChromotingHostServices currently only works on Linux and Windows.
-  if (is_linux || is_win) {
+  # These tests do not work on ChromeOS.
+  if (!is_chromeos) {
     sources += [
       "chromoting_host_services_client_unittest.cc",
       "chromoting_host_services_server_unittest.cc",
     ]
 
-    deps += [ "//remoting/host:ipc_constants" ]
+    deps += [
+      ":chromoting_host_services_client",
+      ":chromoting_host_services_server",
+      "//remoting/host:ipc_constants",
+    ]
   }
 
   # start_host is only supported on Linux and Windows.
@@ -904,7 +910,10 @@ source_set("unit_tests") {
   }
 
   if (is_linux) {
-    deps += [ "//ui/gtk:gtk_config" ]
+    deps += [
+      "//components/dbus",
+      "//ui/gtk:gtk_config",
+    ]
   }
 
   if (is_linux) {
@@ -955,6 +964,10 @@ source_set("unit_tests") {
     sources += [ "evaluate_capability_unittest.cc" ]
     data_deps = [ "//remoting/test:capability_test_stub" ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 group("remoting_host_branded") {
@@ -1005,7 +1018,7 @@ if (enable_me2me_host) {
     if (is_mac) {
       me2me_host_path = "/Library/PrivilegedHelperTools/$me2me_host_bundle_name/Contents/MacOS/$native_messaging_host_bundle_name/Contents/MacOS/native_messaging_host"
       it2me_host_path = "/Library/PrivilegedHelperTools/$me2me_host_bundle_name/Contents/MacOS/$remote_assistance_host_bundle_name/Contents/MacOS/remote_assistance_host"
-      remote_webauthn_path = "/Library/PrivilegedHelperTools/$me2me_host_bundle_name/Contents/MacOS/$remote_assistance_host_bundle_name/Contents/MacOS/remote_webauthn"
+      remote_webauthn_path = "/Library/PrivilegedHelperTools/$me2me_host_bundle_name/Contents/MacOS/remote_webauthn"
     } else if (is_win) {
       me2me_host_path = "remoting_native_messaging_host.exe"
       it2me_host_path = "remote_assistance_host.exe"
@@ -1017,6 +1030,31 @@ if (enable_me2me_host) {
           "/opt/google/chrome-remote-desktop/remote-assistance-host"
       remote_webauthn_path = "/opt/google/chrome-remote-desktop/remote-webauthn"
     }
+
+    # LINT.IfChange(extension_ids)
+    if (is_debug) {
+      companion_extension_ids = [
+        "inomeogfingihgjfjlpeplalcfajhgai",  # prod
+        "pbnaomcgbfiofkfobmlhmdobjchjkphi",  # dev
+      ]
+      security_key_extension_ids = [
+        "djjmngfglakhkhmgcfdmjalogilepkhd",  # prod
+        "kbapnajlciffffomeaphfpckfdcfopef",  # dev
+      ]
+    } else {
+      companion_extension_ids = [
+        "inomeogfingihgjfjlpeplalcfajhgai",  # prod
+      ]
+      security_key_extension_ids = [
+        "djjmngfglakhkhmgcfdmjalogilepkhd",  # prod
+      ]
+    }
+
+    # LINT.ThenChange(/remoting/host/it2me/it2me_native_messaging_host_allowed_origins.h:it2me_origins, /remoting/host/webauthn/remote_webauthn_extension_notifier.cc:extension_ids)
+
+    companion_extension_ids_joined = string_join(",", companion_extension_ids)
+    security_key_extension_ids_joined =
+        string_join(",", security_key_extension_ids)
 
     script = "../tools/build/remoting_localize.py"
 
@@ -1039,6 +1077,10 @@ if (enable_me2me_host) {
       "IT2ME_HOST_PATH=$it2me_host_path",
       "--define",
       "REMOTE_WEBAUTHN_PATH=$remote_webauthn_path",
+      "--define_list",
+      "COMPANION_EXTENSION_IDS=$companion_extension_ids_joined",
+      "--define_list",
+      "SECURITY_KEY_EXTENSION_IDS=$security_key_extension_ids_joined",
       "--variables",
       rebase_path(branding_path, root_build_dir),
       "--template",
@@ -1097,6 +1139,7 @@ if (enable_me2me_host) {
     ]
 
     deps = [
+      ":chromoting_host_services_server",
       ":platform_interfaces",
       ":settings",
       "//base",
@@ -1114,11 +1157,11 @@ if (enable_me2me_host) {
       "//remoting/host",
       "//remoting/host/base",
       "//remoting/host/mojom",
-      "//remoting/host/security_key:security_key",
+      "//remoting/host/security_key",
       "//remoting/proto",
-      "//remoting/protocol:protocol",
-      "//remoting/signaling:signaling",
-      "//services/network/public/cpp:cpp",
+      "//remoting/protocol",
+      "//remoting/signaling",
+      "//services/network/public/cpp",
       "//third_party/libjingle_xmpp:rtc_xmllite",
       "//third_party/webrtc_overrides:webrtc_component",
     ]
@@ -1127,7 +1170,7 @@ if (enable_me2me_host) {
       defines += [ "REMOTING_USE_X11" ]
       deps += [
         "//remoting/host/linux:platform_impls",
-        "//ui/events/platform/x11:x11",
+        "//ui/events/platform/x11",
       ]
       if (is_linux) {
         deps += [ "//ui/gtk:gtk_config" ]
@@ -1174,7 +1217,7 @@ if (enable_me2me_host) {
       ":resources",
       "//base",
       "//base:debugging_buildflags",
-      "//mojo/core/embedder:embedder",
+      "//mojo/core/embedder",
       "//remoting/base",
       "//remoting/base/crash",
       "//remoting/host/base",
@@ -1200,6 +1243,7 @@ if (enable_me2me_host) {
       "//remoting/host/it2me:main",
       "//remoting/host/setup:native_messaging_host_main",
       "//remoting/host/setup:start_host_main",
+      "//remoting/host/webauthn:main",
     ]
     if (is_mac) {
       deps += [
@@ -1207,14 +1251,13 @@ if (enable_me2me_host) {
         "//remoting/host/mac:host_service_main",
       ]
     } else {
-      deps += [
-        "//remoting/host/crash:crash_uploader_main",
-        "//remoting/host/remote_open_url:main",
-        "//remoting/host/webauthn:main",
-      ]
+      deps += [ "//remoting/host/remote_open_url:main" ]
     }
     if (is_win) {
-      deps += [ "//remoting/host/security_key:main" ]
+      deps += [
+        "//remoting/host/crash:crash_uploader_main",
+        "//remoting/host/security_key:main",
+      ]
     }
   }
 

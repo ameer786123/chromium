@@ -24,8 +24,6 @@
 #import "ios/chrome/browser/sync/model/sync_error_browser_agent_profile_state_observer.h"
 #import "ios/chrome/browser/sync/model/sync_service_factory.h"
 
-BROWSER_USER_DATA_KEY_IMPL(SyncErrorBrowserAgent)
-
 namespace {
 
 password_manager::PasswordFormCache* GetPasswordFormCacheFromWebState(
@@ -78,6 +76,8 @@ bool UserActionRequiredToFixPasswordSyncError(ProfileIOS* profile) {
         kTrustedVaultRecoverabilityDegradedForPasswords:
     case syncer::SyncService::UserActionableError::
         kTrustedVaultRecoverabilityDegradedForEverything:
+    // This error has no UI on iOS.
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
       return false;
   }
 
@@ -87,8 +87,7 @@ bool UserActionRequiredToFixPasswordSyncError(ProfileIOS* profile) {
 }  // namespace
 
 SyncErrorBrowserAgent::SyncErrorBrowserAgent(Browser* browser)
-    : browser_(browser) {
-  DCHECK(browser_);
+    : BrowserUserData(browser) {
   browser->AddObserver(this);
   browser->GetWebStateList()->AddObserver(this);
   profile_state_observer_ = [[SyncErrorBrowserAgentProfileStateObserver alloc]
@@ -97,16 +96,14 @@ SyncErrorBrowserAgent::SyncErrorBrowserAgent(Browser* browser)
   [profile_state_observer_ start];
 }
 
-SyncErrorBrowserAgent::~SyncErrorBrowserAgent() {
-  DCHECK(!browser_);
-}
+SyncErrorBrowserAgent::~SyncErrorBrowserAgent() = default;
 
 void SyncErrorBrowserAgent::SetUIProviders(
-    id<SigninPresenter> signin_presenter_provider,
+    id<ReSigninPresenter> resignin_presenter_provider,
     id<SyncPresenter> sync_presenter_provider) {
-  DCHECK(signin_presenter_provider);
+  DCHECK(resignin_presenter_provider);
   DCHECK(sync_presenter_provider);
-  signin_presenter_provider_ = signin_presenter_provider;
+  resignin_presenter_provider_ = resignin_presenter_provider;
   sync_presenter_provider_ = sync_presenter_provider;
 
   // Re-evaluate all web states.
@@ -114,7 +111,7 @@ void SyncErrorBrowserAgent::SetUIProviders(
 }
 
 void SyncErrorBrowserAgent::ClearUIProviders() {
-  signin_presenter_provider_ = nil;
+  resignin_presenter_provider_ = nil;
   sync_presenter_provider_ = nil;
 }
 
@@ -132,7 +129,6 @@ void SyncErrorBrowserAgent::BrowserDestroyed(Browser* browser) {
   profile_state_observer_ = nil;
   browser->GetWebStateList()->RemoveObserver(this);
   browser->RemoveObserver(this);
-  browser_ = nullptr;
 }
 
 #pragma mark - WebStateListObserver
@@ -151,8 +147,8 @@ void SyncErrorBrowserAgent::WebStateListDidChange(
       web::WebState* detached_web_state = detach_change.detached_web_state();
       if (!detached_web_state->IsRealized()) {
         web_state_observations_.RemoveObservation(detached_web_state);
-        RemovePasswordFormManagerObserver(detached_web_state);
       }
+      RemovePasswordFormManagerObserver(detached_web_state);
       break;
     }
     case WebStateListChange::Type::kMove:
@@ -164,8 +160,8 @@ void SyncErrorBrowserAgent::WebStateListDidChange(
       web::WebState* replaced_web_state = replace_change.replaced_web_state();
       if (!replaced_web_state->IsRealized()) {
         web_state_observations_.RemoveObservation(replaced_web_state);
-        RemovePasswordFormManagerObserver(replaced_web_state);
       }
+      RemovePasswordFormManagerObserver(replaced_web_state);
       CreateReSignInInfoBarDelegate(replace_change.inserted_web_state());
       break;
     }
@@ -198,7 +194,6 @@ void SyncErrorBrowserAgent::WebStateDestroyed(web::WebState* web_state) {
 
 void SyncErrorBrowserAgent::WebStateRealized(web::WebState* web_state) {
   web_state_observations_.RemoveObservation(web_state);
-  RemovePasswordFormManagerObserver(web_state);
   CreateReSignInInfoBarDelegate(web_state);
 }
 
@@ -211,7 +206,8 @@ void SyncErrorBrowserAgent::OnPasswordFormParsed(
       UserActionRequiredToFixPasswordSyncError(profile) &&
       base::FeatureList::IsEnabled(
           syncer::kSyncTrustedVaultInfobarImprovements)) {
-    DisplaySyncErrors(profile, active_web_state, sync_presenter_provider_);
+    DisplaySyncErrors(profile, active_web_state, sync_presenter_provider_,
+                      SyncErrorInfoBarTrigger::kPasswordFormParsed);
   }
 }
 
@@ -231,7 +227,7 @@ void SyncErrorBrowserAgent::CreateReSignInInfoBarDelegate(
     return;
   }
 
-  if (!signin_presenter_provider_ || !sync_presenter_provider_) {
+  if (!resignin_presenter_provider_ || !sync_presenter_provider_) {
     return;
   }
 
@@ -245,13 +241,14 @@ void SyncErrorBrowserAgent::CreateReSignInInfoBarDelegate(
       ReSignInInfoBarDelegate::Create(
           AuthenticationServiceFactory::GetForProfile(profile),
           IdentityManagerFactory::GetForProfile(profile),
-          signin_presenter_provider_);
+          resignin_presenter_provider_);
   if (delegate) {
     InfoBarManagerImpl::FromWebState(web_state)->AddInfoBar(
         CreateConfirmInfoBar(std::move(delegate)));
     return;
   }
-  DisplaySyncErrors(profile, web_state, sync_presenter_provider_);
+  DisplaySyncErrors(profile, web_state, sync_presenter_provider_,
+                    SyncErrorInfoBarTrigger::kNewTabOpened);
 }
 
 void SyncErrorBrowserAgent::AddPasswordFormManagerObserver(

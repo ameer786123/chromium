@@ -7,6 +7,10 @@
 #pragma allow_unsafe_buffers
 #endif
 
+#include <array>
+
+#include "base/containers/span.h"
+
 #ifndef GL_GLEXT_PROTOTYPES
 #define GL_GLEXT_PROTOTYPES
 #endif
@@ -162,7 +166,7 @@ void setColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a, uint8_t* color) {
 
 void getExpectedColorAndMask(GLenum src_internal_format,
                              GLenum dest_internal_format,
-                             const uint8_t* color,
+                             base::span<const uint8_t> color,
                              uint8_t* expected_color,
                              uint8_t* expected_mask) {
   uint8_t adjusted_color[4];
@@ -330,8 +334,8 @@ void getTextureDataAndExpectedRGBAs(FormatType src_format_type,
 
     return;
   } else if (src_format_type.type == GL_UNSIGNED_SHORT) {
-    constexpr uint16_t color_16bit[4] = {color[0] << 8, color[1] << 8,
-                                         color[2] << 8, color[3] << 8};
+    constexpr std::array<uint16_t, 4> color_16bit = {
+        color[0] << 8, color[1] << 8, color[2] << 8, color[3] << 8};
 
     texture_data->resize(num_pixels * src_channel_count * sizeof(uint16_t));
     uint16_t* texture_data16 =
@@ -1039,7 +1043,7 @@ TEST_P(GLCopyTextureCHROMIUMTest, InternalFormatNotSupported) {
   EXPECT_TRUE(GL_NO_ERROR == glGetError());
 
   // Check unsupported format reports error.
-  GLint unsupported_dest_formats[] = {GL_RED, GL_RG};
+  auto unsupported_dest_formats = std::to_array<GLint>({GL_RED, GL_RG});
   for (size_t dest_index = 0; dest_index < std::size(unsupported_dest_formats);
        dest_index++) {
     if (copy_type == TexImage) {
@@ -1075,11 +1079,11 @@ TEST_F(GLCopyTextureCHROMIUMTest, InternalFormatTypeCombinationNotSupported) {
 
   // Check unsupported internal_format/type combination reports error.
   struct FormatType { GLenum format, type; };
-  FormatType unsupported_format_types[] = {
-    {GL_RGB, GL_UNSIGNED_SHORT_4_4_4_4},
-    {GL_RGB, GL_UNSIGNED_SHORT_5_5_5_1},
-    {GL_RGBA, GL_UNSIGNED_SHORT_5_6_5},
-  };
+  auto unsupported_format_types = std::to_array<FormatType>({
+      {GL_RGB, GL_UNSIGNED_SHORT_4_4_4_4},
+      {GL_RGB, GL_UNSIGNED_SHORT_5_5_5_1},
+      {GL_RGBA, GL_UNSIGNED_SHORT_5_6_5},
+  });
   for (size_t dest_index = 0; dest_index < std::size(unsupported_format_types);
        dest_index++) {
     glCopyTextureCHROMIUM(textures_[0], 0, GL_TEXTURE_2D, textures_[1], 0,
@@ -1293,7 +1297,7 @@ TEST_P(GLCopyTextureCHROMIUMTest, BasicStatePreservation) {
                  nullptr);
   }
 
-  GLboolean reference_settings[2] = { GL_TRUE, GL_FALSE };
+  std::array<GLboolean, 2> reference_settings = {GL_TRUE, GL_FALSE};
   for (int x = 0; x < 2; ++x) {
     GLboolean setting = reference_settings[x];
     glEnableDisable(GL_DEPTH_TEST, setting);
@@ -1645,11 +1649,11 @@ TEST_P(GLCopyTextureCHROMIUMTest, UninitializedSource) {
   }
   EXPECT_TRUE(GL_NO_ERROR == glGetError());
 
-  uint8_t pixels[kHeight][kWidth][4] = {};
+  std::array<std::array<std::array<uint8_t, 4>, kWidth>, kHeight> pixels = {};
   pixels[0][0][0] = 1;  // Set a pixel to a non-zero value, to ensure the zeroes
                         // are indeed written by `glReadPixels`.
 
-  glReadPixels(0, 0, kWidth, kHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  glReadPixels(0, 0, kWidth, kHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
   for (int x = 0; x < kWidth; ++x) {
     for (int y = 0; y < kHeight; ++y) {
       EXPECT_EQ(0, pixels[y][x][0]);

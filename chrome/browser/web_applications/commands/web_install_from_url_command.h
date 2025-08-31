@@ -11,7 +11,9 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/web_applications/commands/web_app_command.h"
+#include "chrome/browser/web_applications/jobs/manifest_to_web_app_install_info_job.h"
 #include "chrome/browser/web_applications/locks/shared_web_contents_lock.h"
+#include "chrome/browser/web_applications/web_app_install_params.h"
 #include "chrome/browser/web_applications/web_app_logging.h"
 #include "components/webapps/common/web_app_id.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-forward.h"
@@ -70,6 +72,8 @@ class WebInstallFromUrlCommand
   WebInstallFromUrlCommand(Profile& profile,
                            const GURL& install_url,
                            const std::optional<GURL>& manifest_id,
+                           base::WeakPtr<content::WebContents> web_contents,
+                           WebAppInstallDialogCallback dialog_callback,
                            WebInstallFromUrlCommandCallback installed_callback);
   ~WebInstallFromUrlCommand() override;
 
@@ -85,12 +89,12 @@ class WebInstallFromUrlCommand
   void OnDidPerformInstallableCheck(blink::mojom::ManifestPtr opt_manifest,
                                     bool valid_manifest_for_web_app,
                                     webapps::InstallableStatusCode error_code);
-  void GetIcons();
-  void OnIconsRetrievedShowDialog(
-      IconsDownloadedResult result,
-      IconsMap icons_map,
-      DownloadedIconsHttpResults icons_http_results);
-  void OnInstallDialogCompleted(bool user_accepted);
+  void CreateWebAppInstallInfoFromManifest();
+  void OnWebAppInstallInfoCreatedShowDialog(
+      std::unique_ptr<WebAppInstallInfo> install_info);
+  void OnInstallDialogCompleted(
+      bool user_accepted,
+      std::unique_ptr<WebAppInstallInfo> web_app_info);
   void InstallApp();
   void OnAppInstalled(const webapps::AppId& app_id,
                       webapps::InstallResultCode code);
@@ -102,6 +106,10 @@ class WebInstallFromUrlCommand
   // Unset if the WebInstall API's 1-parameter signature was called.
   std::optional<GURL> manifest_id_;
   GURL install_url_;
+  // The WebContents that initiated the install. This is used only to show the
+  // install dialog.
+  base::WeakPtr<content::WebContents> web_contents_;
+  WebAppInstallDialogCallback dialog_callback_;
   InstallErrorLogEntry install_error_log_entry_;
 
   std::unique_ptr<SharedWebContentsLock> web_contents_lock_;
@@ -110,6 +118,7 @@ class WebInstallFromUrlCommand
   std::unique_ptr<webapps::WebAppUrlLoader> url_loader_;
   std::unique_ptr<WebAppDataRetriever> data_retriever_;
   std::unique_ptr<WebAppInstallInfo> web_app_info_;
+  std::unique_ptr<ManifestToWebAppInstallInfoJob> manifest_to_install_info_job_;
   IconUrlSizeSet icons_from_manifest_;
   webapps::InstallResultCode install_result_code_;
   blink::mojom::ManifestPtr opt_manifest_;

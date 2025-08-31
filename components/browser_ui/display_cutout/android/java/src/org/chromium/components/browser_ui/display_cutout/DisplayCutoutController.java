@@ -26,8 +26,8 @@ import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
-import org.chromium.ui.InsetObserver;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.insets.InsetObserver;
 
 /**
  * Controls the display safe area for a {@link WebContents} and the cutout mode for an {@link
@@ -141,7 +141,7 @@ public class DisplayCutoutController implements InsetObserver.WindowInsetObserve
          * Returns the activity-specific (vs tab-specific) cutout mode. The activity-specific cutout
          * mode takes precedence over the tab-specific cutout mode.
          */
-        ObservableSupplier<Integer> getBrowserDisplayCutoutModeSupplier();
+        @Nullable ObservableSupplier<Integer> getBrowserDisplayCutoutModeSupplier();
 
         /** Whether the activity is in browser (not-HTML) fullscreen. */
         boolean isInBrowserFullscreen();
@@ -390,10 +390,13 @@ public class DisplayCutoutController implements InsetObserver.WindowInsetObserve
             return LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
         }
 
-        if (mBrowserCutoutModeSupplier != null && mBrowserCutoutModeSupplier.hasValue()) {
-            int browserCutoutMode = mBrowserCutoutModeSupplier.get();
-            if (browserCutoutMode != LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT) {
-                return browserCutoutMode;
+        if (mBrowserCutoutModeSupplier != null) {
+            Integer mode = mBrowserCutoutModeSupplier.get();
+            if (mode != null) {
+                int browserCutoutMode = mode;
+                if (browserCutoutMode != LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT) {
+                    return browserCutoutMode;
+                }
             }
         }
 

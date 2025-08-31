@@ -4,44 +4,37 @@
 
 #import "components/autofill/ios/browser/autofill_client_ios.h"
 
-#import "base/containers/flat_set.h"
-#import "base/no_destructor.h"
-
 namespace autofill {
-
-namespace {
-
-base::flat_set<AutofillClientIOS::FromWebStateImpl>& GetFromWebStateImpls() {
-  static base::NoDestructor<base::flat_set<AutofillClientIOS::FromWebStateImpl>>
-      g_from_web_state_impls;
-  return *g_from_web_state_impls;
-}
-
-}  // namespace
 
 // static
 AutofillClientIOS* AutofillClientIOS::FromWebState(web::WebState* web_state) {
-  for (FromWebStateImpl from_web_state_impl : GetFromWebStateImpls()) {
-    if (AutofillClientIOS* client = from_web_state_impl(web_state)) {
-      return client;
-    }
-  }
-  return nullptr;
+  return static_cast<AutofillClientIOS*>(web_state->GetUserData(UserDataKey()));
 }
 
-AutofillClientIOS::AutofillClientIOS(FromWebStateImpl from_web_state_impl,
-                                     web::WebState* web_state,
-                                     id<AutofillDriverIOSBridge> bridge)
-    : web_state_(web_state->GetWeakPtr()),
-      autofill_driver_factory_(this, bridge) {
-  CHECK(from_web_state_impl);
-  GetFromWebStateImpls().insert(from_web_state_impl);
+// static
+const AutofillClientIOS* AutofillClientIOS::FromWebState(
+    const web::WebState* web_state) {
+  return static_cast<const AutofillClientIOS*>(
+      web_state->GetUserData(UserDataKey()));
 }
 
+// Even though the destructor is marked as pure virtual (to prevent
+// instantiation) it must be defined since it will be called by the
+// sub-classes destructors.
 AutofillClientIOS::~AutofillClientIOS() = default;
 
 AutofillDriverIOSFactory& AutofillClientIOS::GetAutofillDriverFactory() {
   return autofill_driver_factory_;
+}
+
+AutofillClientIOS::AutofillClientIOS(web::WebState* web_state,
+                                     id<AutofillDriverIOSBridge> bridge)
+    : web_state_(web_state), autofill_driver_factory_(this, bridge) {}
+
+// static
+const void* AutofillClientIOS::UserDataKey() {
+  static const int kId = 0;
+  return &kId;
 }
 
 }  // namespace autofill

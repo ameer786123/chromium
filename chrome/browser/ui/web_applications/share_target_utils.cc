@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
@@ -30,10 +31,6 @@
 #endif
 
 namespace web_app {
-
-bool SharedField::operator==(const SharedField& other) const {
-  return name == other.name && value == other.value;
-}
 
 std::vector<SharedField> ExtractSharedFields(
     const apps::ShareTarget& share_target,

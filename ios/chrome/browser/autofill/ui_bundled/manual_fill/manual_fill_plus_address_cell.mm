@@ -50,7 +50,7 @@ CGFloat GetFaviconSize() {
 // The part of the cell's accessibility label that is used to indicate the index
 // at which the plus address represented by this item is positioned in the list
 // of plus addresses to show.
-@property(nonatomic, strong) NSString* cellIndexAccessibilityLabel;
+@property(nonatomic, copy) NSString* cellIndexAccessibilityLabel;
 
 @end
 
@@ -71,7 +71,7 @@ CGFloat GetFaviconSize() {
     _manualFillPlusAddress = plusAddress;
     _contentInjector = contentInjector;
     _menuActions = menuActions;
-    _cellIndexAccessibilityLabel = cellIndexAccessibilityLabel;
+    _cellIndexAccessibilityLabel = [cellIndexAccessibilityLabel copy];
     _isAddressManualFallbackUI = isAddressManualFallbackUI;
     self.cellClass = [ManualFillPlusAddressCell class];
   }
@@ -110,9 +110,6 @@ CGFloat GetFaviconSize() {
 // The dynamic constraints for all the lines (i.e. not set in createView).
 @property(nonatomic, strong)
     NSMutableArray<NSLayoutConstraint*>* dynamicConstraints;
-
-// The constraints for the visible favicon.
-@property(nonatomic, strong) NSArray<NSLayoutConstraint*>* faviconContraints;
 
 // The view displayed at the top the cell containing the favicon, the site name
 // and an overflow button.
@@ -154,14 +151,12 @@ CGFloat GetFaviconSize() {
 
 - (void)prepareForReuse {
   [super prepareForReuse];
-  [NSLayoutConstraint deactivateConstraints:self.faviconContraints];
-  self.faviconView.hidden = YES;
 
   [NSLayoutConstraint deactivateConstraints:self.dynamicConstraints];
   [self.dynamicConstraints removeAllObjects];
 
   self.siteNameLabel.text = @"";
-  [self configureFaviconWithAttributes:nil];
+  [self setUpFaviconViewWithAttributes:nil];
 
   [self.plusAddressButton setTitle:@"" forState:UIControlStateNormal];
   self.plusAddressButton.enabled = YES;
@@ -247,14 +242,7 @@ CGFloat GetFaviconSize() {
 }
 
 - (void)configureWithFaviconAttributes:(FaviconAttributes*)attributes {
-  if (attributes.faviconImage) {
-    self.faviconView.hidden = NO;
-    [NSLayoutConstraint activateConstraints:self.faviconContraints];
-    [self configureFaviconWithAttributes:attributes];
-    return;
-  }
-  [NSLayoutConstraint deactivateConstraints:self.faviconContraints];
-  self.faviconView.hidden = YES;
+  [self setUpFaviconViewWithAttributes:attributes];
 }
 
 #pragma mark - Private
@@ -275,11 +263,11 @@ CGFloat GetFaviconSize() {
   self.faviconView.translatesAutoresizingMaskIntoConstraints = NO;
   self.faviconView.clipsToBounds = YES;
   self.faviconView.hidden = YES;
-  self.faviconContraints = @[
+  [NSLayoutConstraint activateConstraints:@[
     [self.faviconView.widthAnchor constraintEqualToConstant:GetFaviconSize()],
     [self.faviconView.heightAnchor
         constraintEqualToAnchor:self.faviconView.widthAnchor],
-  ];
+  ]];
 
   self.siteNameLabel = CreateLabel();
   // The cell index provided here is only used to set the
@@ -327,8 +315,8 @@ CGFloat GetFaviconSize() {
                              requiresHTTPS:NO];
 }
 
-// Configure the favicon with the given `attributes`.
-- (void)configureFaviconWithAttributes:(FaviconAttributes*)attributes {
+// Sets up the favicon with the given `attributes`.
+- (void)setUpFaviconViewWithAttributes:(FaviconAttributes*)attributes {
   FaviconView* favicon;
   if (IsKeyboardAccessoryUpgradeEnabled()) {
     FaviconContainerView* faviconContainerView =
@@ -337,6 +325,8 @@ CGFloat GetFaviconSize() {
   } else {
     favicon = static_cast<FaviconView*>(self.faviconView);
   }
+  favicon.accessibilityIdentifier =
+      manual_fill::kExpandedManualFillPlusAddressFaviconID;
   [favicon configureWithAttributes:attributes];
 }
 

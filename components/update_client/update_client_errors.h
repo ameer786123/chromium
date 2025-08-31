@@ -91,6 +91,7 @@ enum class UnpackerError {
   kPatchInvalidPatchFile = 25,
   kPatchInvalidNewFile = 26,
   kXzFailed = 27,
+  kPatchOutHashMismatch = 28,
 };
 
 // These errors are returned with the |kInstall| error category and
@@ -155,9 +156,9 @@ enum class ProtocolError : int {
 };
 
 struct CategorizedError {
-  ErrorCategory category_ = ErrorCategory::kNone;
-  int code_ = 0;
-  int extra_ = 0;
+  ErrorCategory category = ErrorCategory::kNone;
+  int code = 0;
+  int extra = 0;
 };
 
 }  // namespace update_client

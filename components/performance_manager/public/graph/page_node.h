@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 
+#include "base/byte_count.h"
 #include "base/containers/flat_set.h"
 #include "base/observer_list_types.h"
 #include "base/time/time.h"
@@ -111,18 +112,18 @@ class PageNode : public TypedNode<PageNode> {
   // See PageNodeObserver::OnIsVisibleChanged.
   virtual bool IsVisible() const = 0;
 
-  // Returns the time since the last visibility change. It is always well
-  // defined as the visibility property is set at node creation.
-  virtual base::TimeDelta GetTimeSinceLastVisibilityChange() const = 0;
+  // Returns the time of the last visibility change. It is always well defined
+  // as the visibility property is set at node creation.
+  virtual base::TimeTicks GetLastVisibilityChangeTime() const = 0;
 
   // Returns true if this page is currently audible, false otherwise.
   // See PageNodeObserver::OnIsAudibleChanged.
   virtual bool IsAudible() const = 0;
 
   // Returns the time since the last audible change. Unlike
-  // GetTimeSinceLastVisibilityChange(), this returns nullopt for a node which
-  // has never been audible. If a node is audible when created, it is considered
-  // to change from inaudible to audible at that point.
+  // GetLastVisibilityChangeTime(), this returns nullopt for a node which has
+  // never been audible. If a node is audible when created, it is considered to
+  // change from inaudible to audible at that point.
   virtual std::optional<base::TimeDelta> GetTimeSinceLastAudibleChange()
       const = 0;
 
@@ -197,7 +198,7 @@ class PageNode : public TypedNode<PageNode> {
   // Returns the private memory footprint size of the main frame and its
   // children. This differs from EstimatePrivateFootprintSize which includes
   // all the frames under the page node.
-  virtual uint64_t EstimateMainFramePrivateFootprintSize() const = 0;
+  virtual base::ByteCount EstimateMainFramePrivateFootprintSize() const = 0;
 
   // Indicates if at least one of the frames in the page has received some form
   // interactions.
@@ -213,9 +214,13 @@ class PageNode : public TypedNode<PageNode> {
   // dereferenced on the UI thread.
   virtual base::WeakPtr<content::WebContents> GetWebContents() const = 0;
 
-  virtual uint64_t EstimateResidentSetSize() const = 0;
+  virtual base::ByteCount EstimateResidentSetSize() const = 0;
 
-  virtual uint64_t EstimatePrivateFootprintSize() const = 0;
+  virtual base::ByteCount EstimatePrivateFootprintSize() const = 0;
+
+  // Returns a weak pointer to this page node.
+  virtual base::WeakPtr<PageNode> GetWeakPtr() = 0;
+  virtual base::WeakPtr<const PageNode> GetWeakPtr() const = 0;
 };
 
 // Observer interface for page nodes.
@@ -291,7 +296,7 @@ class PageNodeObserver : public base::CheckedObserver {
 
   // Invoked when the IsVisible property changes.
   //
-  // GetTimeSinceLastVisibilityChange() will return the time since the previous
+  // GetLastVisibilityChangeTime() will return the time of the previous
   // IsVisible change. After all observers have fired it will return the time of
   // this property change.
   virtual void OnIsVisibleChanged(const PageNode* page_node) {}

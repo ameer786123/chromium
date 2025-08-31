@@ -15,6 +15,7 @@
 #include "services/webnn/public/mojom/webnn_context.mojom.h"
 #include "services/webnn/public/mojom/webnn_context_provider.mojom.h"
 #include "services/webnn/public/mojom/webnn_error.mojom.h"
+#include "services/webnn/webnn_test_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(IS_MAC)
@@ -62,7 +63,8 @@ TEST_F(WebNNContextProviderImplTest, NotSupported) {
 
   mojo::Remote<mojom::WebNNContextProvider> provider_remote;
 
-  WebNNContextProviderImpl::CreateForTesting(
+  test::WebNNTestEnvironment webnn_test_environment;
+  webnn_test_environment.BindWebNNContextProvider(
       provider_remote.BindNewPipeAndPassReceiver());
 
   base::test::TestFuture<mojom::CreateContextResultPtr> future;
@@ -73,7 +75,7 @@ TEST_F(WebNNContextProviderImplTest, NotSupported) {
   const mojom::ErrorPtr& create_context_error = result->get_error();
   EXPECT_EQ(create_context_error->code, mojom::Error::Code::kNotSupportedError);
   EXPECT_EQ(create_context_error->message,
-            "WebNN Service is not supported on this platform.");
+            "WebNN is not supported on this platform.");
 }
 
 #endif
@@ -82,14 +84,14 @@ TEST_F(WebNNContextProviderImplTest, NotSupported) {
 
 TEST_F(WebNNContextProviderImplTest, CPUIsSupported) {
   mojo::Remote<mojom::WebNNContextProvider> provider_remote;
-
-  WebNNContextProviderImpl::CreateForTesting(
+  test::WebNNTestEnvironment webnn_test_environment;
+  webnn_test_environment.BindWebNNContextProvider(
       provider_remote.BindNewPipeAndPassReceiver());
 
   base::test::TestFuture<mojom::CreateContextResultPtr> future;
   provider_remote->CreateWebNNContext(
       mojom::CreateContextOptions::New(
-          mojom::CreateContextOptions::Device::kCpu,
+          mojom::Device::kCpu,
           mojom::CreateContextOptions::PowerPreference::kDefault),
       future.GetCallback());
   mojom::CreateContextResultPtr result = future.Take();
@@ -103,14 +105,15 @@ TEST_F(WebNNContextProviderImplTest, CPUIsSupported) {
 TEST_F(WebNNContextProviderImplTest, GPUNotSupported) {
   mojo::Remote<mojom::WebNNContextProvider> provider_remote;
 
-  WebNNContextProviderImpl::CreateForTesting(
-      provider_remote.BindNewPipeAndPassReceiver(),
+  test::WebNNTestEnvironment webnn_test_environment(
       WebNNContextProviderImpl::WebNNStatus::kWebNNGpuDisabled);
+  webnn_test_environment.BindWebNNContextProvider(
+      provider_remote.BindNewPipeAndPassReceiver());
 
   base::test::TestFuture<mojom::CreateContextResultPtr> future;
   provider_remote->CreateWebNNContext(
       mojom::CreateContextOptions::New(
-          mojom::CreateContextOptions::Device::kGpu,
+          mojom::Device::kGpu,
           mojom::CreateContextOptions::PowerPreference::kDefault),
       future.GetCallback());
   mojom::CreateContextResultPtr result = future.Take();
@@ -124,14 +127,15 @@ TEST_F(WebNNContextProviderImplTest, GPUNotSupported) {
 TEST_F(WebNNContextProviderImplTest, NPUNotSupported) {
   mojo::Remote<mojom::WebNNContextProvider> provider_remote;
 
-  WebNNContextProviderImpl::CreateForTesting(
-      provider_remote.BindNewPipeAndPassReceiver(),
+  test::WebNNTestEnvironment webnn_test_environment(
       WebNNContextProviderImpl::WebNNStatus::kWebNNNpuDisabled);
+  webnn_test_environment.BindWebNNContextProvider(
+      provider_remote.BindNewPipeAndPassReceiver());
 
   base::test::TestFuture<mojom::CreateContextResultPtr> future;
   provider_remote->CreateWebNNContext(
       mojom::CreateContextOptions::New(
-          mojom::CreateContextOptions::Device::kNpu,
+          mojom::Device::kNpu,
           mojom::CreateContextOptions::PowerPreference::kDefault),
       future.GetCallback());
   mojom::CreateContextResultPtr result = future.Take();
@@ -145,14 +149,15 @@ TEST_F(WebNNContextProviderImplTest, NPUNotSupported) {
 TEST_F(WebNNContextProviderImplTest, GpuFeatureStatusDisabled) {
   mojo::Remote<mojom::WebNNContextProvider> provider_remote;
 
-  WebNNContextProviderImpl::CreateForTesting(
-      provider_remote.BindNewPipeAndPassReceiver(),
+  test::WebNNTestEnvironment webnn_test_environment(
       WebNNContextProviderImpl::WebNNStatus::kWebNNGpuFeatureStatusDisabled);
+  webnn_test_environment.BindWebNNContextProvider(
+      provider_remote.BindNewPipeAndPassReceiver());
 
   base::test::TestFuture<mojom::CreateContextResultPtr> future;
   provider_remote->CreateWebNNContext(
       mojom::CreateContextOptions::New(
-          mojom::CreateContextOptions::Device::kNpu,
+          mojom::Device::kNpu,
           mojom::CreateContextOptions::PowerPreference::kDefault),
       future.GetCallback());
   mojom::CreateContextResultPtr result = future.Take();
@@ -160,7 +165,7 @@ TEST_F(WebNNContextProviderImplTest, GpuFeatureStatusDisabled) {
   const mojom::ErrorPtr& create_context_error = result->get_error();
   EXPECT_EQ(create_context_error->code, mojom::Error::Code::kNotSupportedError);
   EXPECT_EQ(create_context_error->message,
-            "WebNN is not compatible with device.");
+            "DirectML: WebNN is not compatible with device.");
 }
 
 #endif

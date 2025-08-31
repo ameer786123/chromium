@@ -33,6 +33,7 @@
 #import "components/segmentation_platform/public/segmentation_platform_service.h"
 #import "components/send_tab_to_self/features.h"
 #import "components/send_tab_to_self/pref_names.h"
+#import "ios/chrome/browser/app_store_bundle/model/app_store_bundle_service.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/cells/most_visited_tiles_config.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/cells/most_visited_tiles_mediator.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/cells/shortcuts_config.h"
@@ -104,8 +105,7 @@ using segmentation_platform::home_modules::EnhancedSafeBrowsingEphemeralModule;
 using segmentation_platform::home_modules::LensEphemeralModule;
 using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
 
-@interface MagicStackRankingModel () <MostVisitedTilesMediatorDelegate,
-                                      PriceTrackingPromoMediatorDelegate,
+@interface MagicStackRankingModel () <PriceTrackingPromoMediatorDelegate,
                                       SafetyCheckMagicStackMediatorDelegate,
                                       SendTabPromoMediatorDelegate,
                                       ShopCardMediatorDelegate,
@@ -122,6 +122,7 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
   raw_ptr<segmentation_platform::SegmentationPlatformService>
       _segmentationService;
   raw_ptr<commerce::ShoppingService> _shoppingService;
+  raw_ptr<AppStoreBundleService> _appStoreBundleService;
   raw_ptr<AuthenticationService> _authService;
   raw_ptr<PrefService> _prefService;
   raw_ptr<PrefService> _localState;
@@ -158,11 +159,13 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
                      localState:(PrefService*)localState
                 moduleMediators:(NSArray*)moduleMediators
                     tipsManager:(TipsManagerIOS*)tipsManager
-             templateURLService:(TemplateURLService*)templateURLService {
+             templateURLService:(TemplateURLService*)templateURLService
+          appStoreBundleService:(AppStoreBundleService*)appStoreBundleService {
   self = [super init];
   if (self) {
     _segmentationService = segmentationService;
     _shoppingService = shoppingService;
+    _appStoreBundleService = appStoreBundleService;
     _authService = authenticationService;
     _prefService = prefService;
     _localState = localState;
@@ -178,7 +181,6 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
       if ([mediator isKindOfClass:[MostVisitedTilesMediator class]]) {
         _mostVisitedTilesMediator =
             static_cast<MostVisitedTilesMediator*>(mediator);
-        _mostVisitedTilesMediator.delegate = self;
       } else if ([mediator isKindOfClass:[SetUpListMediator class]]) {
         _setUpListMediator = static_cast<SetUpListMediator*>(mediator);
         _setUpListMediator.audience = self;
@@ -356,34 +358,6 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
       }];
 }
 
-#pragma mark - MostVisitedTilesMediatorDelegate
-
-- (void)didReceiveInitialMostVistedTiles {
-  if (![self isMagicStackOrderReady]) {
-    return;
-  }
-
-  NSArray<MagicStackModule*>* rank = [self latestMagicStackConfigRank];
-  NSUInteger index =
-      [rank indexOfObject:_mostVisitedTilesMediator.mostVisitedConfig];
-  [self.delegate
-      magicStackRankingModel:self
-               didInsertItem:_mostVisitedTilesMediator.mostVisitedConfig
-                     atIndex:index];
-}
-
-- (void)removeMostVisitedTilesModule {
-  if (![self isMagicStackOrderReady]) {
-    return;
-  }
-
-  [self.delegate
-      magicStackRankingModel:self
-               didRemoveItem:_mostVisitedTilesMediator.mostVisitedConfig
-                     animate:YES
-              withCompletion:nil];
-}
-
 #pragma mark - PriceTrackingPromoMediatorDelegate
 
 - (void)promoWasTapped {
@@ -536,6 +510,16 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
         segmentation_platform::kLensAllowedByEnterprisePolicy,
         segmentation_platform::processing::ProcessedValue::FromFloat(
             [self isLensEnabled]));
+
+    if (base::FeatureList::IsEnabled(
+            segmentation_platform::features::kAppBundlePromoEphemeralCard)) {
+      CHECK(_appStoreBundleService);
+      inputContext->metadata_args.emplace(
+          segmentation_platform::kAppBundleAppsInstalledCount,
+          segmentation_platform::processing::ProcessedValue::FromFloat(
+              static_cast<float>(
+                  _appStoreBundleService->GetInstalledAppCount())));
+    }
   }
 
   __weak MagicStackRankingModel* weakSelf = self;
@@ -553,6 +537,13 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
 // one to show.
 - (void)didReceiveEphemeralCardSegmentationResult:
     (const segmentation_platform::ClassificationResult&)result {
+  // If an ephemeral card has already been selected for this ranking cycle,
+  // do not process another result. This prevents duplicate insertions if the
+  // segmentation callback fires multiple times (race condition).
+  if (_ephemeralCardToShow != ContentSuggestionsModuleType::kInvalid) {
+    return;
+  }
+
   if (result.status != segmentation_platform::PredictionStatus::kSucceeded) {
     return;
   }
@@ -639,6 +630,9 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
 
   NSArray<MagicStackModule*>* rank = [self latestMagicStackConfigRank];
   NSUInteger index = [rank indexOfObject:_shopCardMediator.shopCardItemToShow];
+  if (index == NSNotFound) {
+    return;
+  }
   [self.delegate magicStackRankingModel:self
                           didInsertItem:_shopCardMediator.shopCardItemToShow
                                 atIndex:index];
@@ -822,6 +816,9 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
         }
         break;
       }
+      case ContentSuggestionsModuleType::kAppBundlePromo:
+        // TODO(crbug.com/441721282): Introduce the app bundle promo mediator
+        // and add it to the magic stack order.
       default:
         break;
     }
@@ -831,26 +828,10 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
         (ContentSuggestionsModuleType)[moduleNumber intValue];
     switch (moduleType) {
       case ContentSuggestionsModuleType::kMostVisited: {
-        BOOL shouldShowMostVisitedTileInMagicStack =
-            _mostVisitedTilesMediator.mostVisitedConfig.inMagicStack;
-        BOOL isMostVisitedTileVisible = _prefService->GetBoolean(
-            prefs::kHomeCustomizationMostVisitedEnabled);
-        BOOL hasMostVisitedItems = [_mostVisitedTilesMediator.mostVisitedConfig
-                                           .mostVisitedItems count] > 0;
-        if (shouldShowMostVisitedTileInMagicStack && isMostVisitedTileVisible &&
-            hasMostVisitedItems) {
-          [magicStackOrder
-              addObject:_mostVisitedTilesMediator.mostVisitedConfig];
-        }
         break;
       }
       case ContentSuggestionsModuleType::kTabResumption:
         if (![self shouldShowTabResumption]) {
-          break;
-        }
-        // If ShouldHideIrrelevantModules() is enabled and it is not ranked as
-        // the first two modules, do not add it to the Magic Stack.
-        if (ShouldHideIrrelevantModules() && [magicStackOrder count] > 1) {
           break;
         }
         if (PromoteTabResumptionShopCardToFrontOfStack()) {
@@ -893,11 +874,7 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
           break;
         }
 
-        // If ShouldHideIrrelevantModules() is enabled and it is not the first
-        // ranked module, do not add it to the Magic Stack.
-        if (!ShouldHideIrrelevantModules() || [magicStackOrder count] == 0) {
-          [magicStackOrder addObject:_safetyCheckMediator.safetyCheckState];
-        }
+        [magicStackOrder addObject:_safetyCheckMediator.safetyCheckState];
 
         break;
       }
@@ -909,9 +886,6 @@ using segmentation_platform::home_modules::SavePasswordsEphemeralModule;
             _shopCardMediator.shopCardItemToShow) {
           [magicStackOrder addObject:_shopCardMediator.shopCardItemToShow];
         }
-        break;
-      case ContentSuggestionsModuleType::kParcelTracking:
-        // TODO(crbug.com/391002352): Remove kParcelTracking entirely.
         break;
       default:
         // These module types should not have been added by the logic

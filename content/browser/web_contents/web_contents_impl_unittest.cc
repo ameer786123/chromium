@@ -20,6 +20,7 @@
 #include "base/test/gtest_util.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
+#include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "components/download/public/common/download_url_parameters.h"
 #include "components/input/native_web_keyboard_event.h"
@@ -71,7 +72,9 @@
 #include "net/base/network_handle.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/web_sandbox_flags.h"
+#include "services/network/public/mojom/attribution.mojom.h"
 #include "services/network/test/test_network_context.h"
 #include "skia/ext/skia_utils_base.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -174,6 +177,12 @@ class TestWebContentsObserver : public WebContentsObserver {
     text_copied_to_clipboard_ = copied_text;
   }
 
+  void OnKeepAliveRequestCreated(
+      const network::ResourceRequest& resource_request,
+      RenderFrameHost* initiator_rfh) override {
+    fetch_keepalive_request_ = resource_request;
+  }
+
   void ExpectOnCaptureHandleConfigUpdate(
       blink::mojom::CaptureHandleConfigPtr config) {
     CHECK(config) << "Malformed test.";
@@ -195,6 +204,10 @@ class TestWebContentsObserver : public WebContentsObserver {
     return text_copied_to_clipboard_;
   }
 
+  const network::ResourceRequest& fetch_keepalive_request() const {
+    return fetch_keepalive_request_;
+  }
+
  private:
   GURL last_url_;
   int theme_color_change_calls_ = 0;
@@ -202,6 +215,7 @@ class TestWebContentsObserver : public WebContentsObserver {
   bool observed_did_first_visually_non_empty_paint_ = false;
   blink::mojom::CaptureHandleConfigPtr expected_capture_handle_config_;
   std::u16string text_copied_to_clipboard_;
+  network::ResourceRequest fetch_keepalive_request_;
 };
 
 class MockWebContentsDelegate : public WebContentsDelegate {
@@ -368,32 +382,48 @@ class TestColorProviderSource : public ui::ColorProviderSource {
  public:
   TestColorProviderSource() = default;
 
-  const ui::ColorProvider* GetColorProvider() const override {
-    return &provider_;
-  }
-
+  // ui::ColorProviderSource:
+  const ui::ColorProvider* GetColorProvider() const override;
   ui::RendererColorMap GetRendererColorMap(
       ui::ColorProviderKey::ColorMode color_mode,
-      ui::ColorProviderKey::ForcedColors forced_colors) const override {
-    if (forced_colors == ui::ColorProviderKey::ForcedColors::kActive) {
-      return forced_colors_map;
-    }
-    return color_mode == ui::ColorProviderKey::ColorMode::kLight ? light_colors
-                                                                 : dark_colors;
-  }
+      ui::ColorProviderKey::ForcedColors forced_colors) const override;
+  ui::ColorProviderKey GetColorProviderKey() const override;
 
-  ui::ColorProviderKey GetColorProviderKey() const override { return key_; }
+  // Swaps the light and dark maps.
+  void SwapMaps();
 
  private:
   ui::ColorProvider provider_;
   ui::ColorProviderKey key_;
-  const ui::RendererColorMap light_colors{
+  ui::RendererColorMap light_colors_{
       {color::mojom::RendererColorId::kColorMenuBackground, SK_ColorWHITE}};
-  const ui::RendererColorMap dark_colors{
+  ui::RendererColorMap dark_colors_{
       {color::mojom::RendererColorId::kColorMenuBackground, SK_ColorBLACK}};
-  const ui::RendererColorMap forced_colors_map{
+  const ui::RendererColorMap system_colors_{
       {color::mojom::RendererColorId::kColorMenuBackground, SK_ColorCYAN}};
 };
+
+const ui::ColorProvider* TestColorProviderSource::GetColorProvider() const {
+  return &provider_;
+}
+
+ui::RendererColorMap TestColorProviderSource::GetRendererColorMap(
+    ui::ColorProviderKey::ColorMode color_mode,
+    ui::ColorProviderKey::ForcedColors forced_colors) const {
+  if (forced_colors == ui::ColorProviderKey::ForcedColors::kActive) {
+    return system_colors_;
+  }
+  return color_mode == ui::ColorProviderKey::ColorMode::kLight ? light_colors_
+                                                               : dark_colors_;
+}
+
+ui::ColorProviderKey TestColorProviderSource::GetColorProviderKey() const {
+  return key_;
+}
+
+void TestColorProviderSource::SwapMaps() {
+  light_colors_.swap(dark_colors_);
+}
 
 class MockNetworkContext : public network::TestNetworkContext {
  public:
@@ -895,7 +925,7 @@ TEST_F(WebContentsImplTest, NavigateFromSitelessUrl) {
   main_test_rfh()->GetSiteInstance()->group()->IncrementActiveFrameCount();
 
   EXPECT_EQ(orig_instance, contents()->GetSiteInstance());
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_TRUE(
         contents()->GetSiteInstance()->GetSiteURL().DomainIs("google.com"));
   } else {
@@ -998,13 +1028,13 @@ TEST_F(WebContentsImplTest, NavigateFromRestoredRegularUrl) {
 
   EXPECT_EQ(orig_instance, contents()->GetSiteInstance());
   EXPECT_TRUE(orig_instance->HasSite());
-  EXPECT_EQ(!AreAllSitesIsolatedForTesting(),
+  EXPECT_EQ(!AreStrictSiteInstancesEnabled(),
             orig_instance->IsDefaultSiteInstance());
 
   // Navigate to another site and verify that a new SiteInstance was created.
   const GURL url("http://www.google.com");
   NavigationSimulator::NavigateAndCommitFromBrowser(contents(), url);
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_NE(orig_instance, contents()->GetSiteInstance());
   } else {
     // Verify this remains the default SiteInstance since |url| does
@@ -1045,7 +1075,9 @@ TEST_F(WebContentsImplTest, FindOpenerRVHWhenPending) {
       TestWebContents::Create(browser_context(), instance));
   popup->SetOpener(contents());
   contents()->GetRenderManager()->CreateOpenerProxies(
-      instance->group(), nullptr, pending_rfh->browsing_context_state());
+      instance->group(), /*skip_this_node=*/nullptr,
+      pending_rfh->browsing_context_state(),
+      /*navigation_metrics_token=*/std::nullopt);
 
   // If swapped out is forbidden, a new proxy should be created for the opener
   // in the group |instance| belongs to, and we should ensure that its routing
@@ -1665,7 +1697,8 @@ TEST_F(WebContentsImplTest, FilterURLs) {
   other_contents->NavigateAndCommit(url_normalized);
 
   // Check that an IPC with about:whatever is correctly normalized.
-  other_contents->GetPrimaryMainFrame()->DidFailLoadWithError(url_from_ipc, 1);
+  other_contents->GetPrimaryMainFrame()->DidFailLoadWithError(url_from_ipc,
+                                                              net::ERR_FAILED);
   EXPECT_EQ(url_blocked, other_observer.last_url());
 }
 
@@ -2568,6 +2601,17 @@ TEST_F(WebContentsImplTest, MediaWakeLock) {
   EXPECT_FALSE(has_audio_wake_lock());
 }
 
+TEST_F(WebContentsImplTest, MarkAudible) {
+  AudioStreamMonitor* monitor = contents()->audio_stream_monitor();
+  EXPECT_FALSE(monitor->IsCurrentlyAudible());
+
+  base::ScopedClosureRunner audible_closure = contents()->MarkAudible();
+  EXPECT_TRUE(monitor->IsCurrentlyAudible());
+
+  audible_closure.RunAndReset();
+  EXPECT_FALSE(monitor->IsCurrentlyAudible());
+}
+
 // Test that the WebContentsObserver is notified when text is copied to the
 // clipboard for a given RenderFrameHost.
 TEST_F(WebContentsImplTest, OnTextCopiedToClipboard) {
@@ -2954,11 +2998,11 @@ TEST_F(WebContentsImplTest, Usb) {
 
   EXPECT_CALL(observer,
               OnCapabilityTypesChanged(WebContentsCapabilityType::kUSB, true))
-      .WillOnce(testing::Invoke([&]() {
+      .WillOnce([&]() {
         // Accessor must return the updated state when the observer is notified.
         EXPECT_TRUE(
             contents()->IsCapabilityActive(WebContentsCapabilityType::kUSB));
-      }));
+      });
   contents()->TestIncrementUsbActiveFrameCount();
   testing::Mock::VerifyAndClearExpectations(&observer);
   EXPECT_TRUE(contents()->IsCapabilityActive(WebContentsCapabilityType::kUSB));
@@ -2971,10 +3015,10 @@ TEST_F(WebContentsImplTest, Usb) {
 
   EXPECT_CALL(observer,
               OnCapabilityTypesChanged(WebContentsCapabilityType::kUSB, false))
-      .WillOnce(testing::Invoke([&]() {
+      .WillOnce([&]() {
         EXPECT_FALSE(
             contents()->IsCapabilityActive(WebContentsCapabilityType::kUSB));
-      }));
+      });
   contents()->TestDecrementUsbActiveFrameCount();
   testing::Mock::VerifyAndClearExpectations(&observer);
   EXPECT_FALSE(contents()->IsCapabilityActive(WebContentsCapabilityType::kUSB));
@@ -2986,11 +3030,11 @@ TEST_F(WebContentsImplTest, Hid) {
 
   EXPECT_CALL(observer,
               OnCapabilityTypesChanged(WebContentsCapabilityType::kHID, true))
-      .WillOnce(testing::Invoke([&]() {
+      .WillOnce([&]() {
         // Accessor must return the updated state when the observer is notified.
         EXPECT_TRUE(
             contents()->IsCapabilityActive(WebContentsCapabilityType::kHID));
-      }));
+      });
   contents()->TestIncrementHidActiveFrameCount();
   testing::Mock::VerifyAndClearExpectations(&observer);
   EXPECT_TRUE(contents()->IsCapabilityActive(WebContentsCapabilityType::kHID));
@@ -3003,10 +3047,10 @@ TEST_F(WebContentsImplTest, Hid) {
 
   EXPECT_CALL(observer,
               OnCapabilityTypesChanged(WebContentsCapabilityType::kHID, false))
-      .WillOnce(testing::Invoke([&]() {
+      .WillOnce([&]() {
         EXPECT_FALSE(
             contents()->IsCapabilityActive(WebContentsCapabilityType::kHID));
-      }));
+      });
   contents()->TestDecrementHidActiveFrameCount();
   testing::Mock::VerifyAndClearExpectations(&observer);
   EXPECT_FALSE(contents()->IsCapabilityActive(WebContentsCapabilityType::kHID));
@@ -3019,11 +3063,11 @@ TEST_F(WebContentsImplTest, Serial) {
 
   EXPECT_CALL(observer, OnCapabilityTypesChanged(
                             WebContentsCapabilityType::kSerial, true))
-      .WillOnce(testing::Invoke([&]() {
+      .WillOnce([&]() {
         // Accessor must return the updated state when the observer is notified.
         EXPECT_TRUE(
             contents()->IsCapabilityActive(WebContentsCapabilityType::kSerial));
-      }));
+      });
   contents()->TestIncrementSerialActiveFrameCount();
   testing::Mock::VerifyAndClearExpectations(&observer);
   EXPECT_TRUE(
@@ -3039,10 +3083,10 @@ TEST_F(WebContentsImplTest, Serial) {
 
   EXPECT_CALL(observer, OnCapabilityTypesChanged(
                             WebContentsCapabilityType::kSerial, false))
-      .WillOnce(testing::Invoke([&]() {
+      .WillOnce([&]() {
         EXPECT_FALSE(
             contents()->IsCapabilityActive(WebContentsCapabilityType::kSerial));
-      }));
+      });
   contents()->TestDecrementSerialActiveFrameCount();
   testing::Mock::VerifyAndClearExpectations(&observer);
   EXPECT_FALSE(
@@ -3057,11 +3101,11 @@ TEST_F(WebContentsImplTest, Bluetooth) {
   EXPECT_CALL(observer,
               OnCapabilityTypesChanged(
                   WebContentsCapabilityType::kBluetoothConnected, true))
-      .WillOnce(testing::Invoke([&]() {
+      .WillOnce([&]() {
         // Accessor must return the updated state when the observer is notified.
         EXPECT_TRUE(contents()->IsCapabilityActive(
             WebContentsCapabilityType::kBluetoothConnected));
-      }));
+      });
   contents()->TestIncrementBluetoothConnectedDeviceCount();
   testing::Mock::VerifyAndClearExpectations(&observer);
   EXPECT_TRUE(contents()->IsCapabilityActive(
@@ -3078,10 +3122,10 @@ TEST_F(WebContentsImplTest, Bluetooth) {
   EXPECT_CALL(observer,
               OnCapabilityTypesChanged(
                   WebContentsCapabilityType::kBluetoothConnected, false))
-      .WillOnce(testing::Invoke([&]() {
+      .WillOnce([&]() {
         EXPECT_FALSE(contents()->IsCapabilityActive(
             WebContentsCapabilityType::kBluetoothConnected));
-      }));
+      });
   contents()->TestDecrementBluetoothConnectedDeviceCount();
   testing::Mock::VerifyAndClearExpectations(&observer);
   EXPECT_FALSE(contents()->IsCapabilityActive(
@@ -3093,7 +3137,7 @@ TEST_F(WebContentsImplTest, BadDownloadImageResponseFromRenderer) {
   // exercising the code in WebContentsImpl.
   scoped_refptr<SiteInstance> instance =
       SiteInstance::Create(GetBrowserContext());
-  instance->GetOrCreateProcess()->Init();
+  instance->GetOrCreateProcessForTesting()->Init();
   WebContents::CreateParams create_params(GetBrowserContext(),
                                           std::move(instance));
   create_params.desired_renderer_state = WebContents::CreateParams::
@@ -3442,15 +3486,28 @@ TEST_F(WebContentsImplTest, OnColorProviderChangedTriggersPageBroadcast) {
   testing::NiceMock<MockPageBroadcast> mock_page_broadcast(
       broadcast_remote.BindNewEndpointAndPassDedicatedReceiver());
   contents()->GetRenderViewHost()->BindPageBroadcast(broadcast_remote.Unbind());
+  blink::ColorProviderColorMaps color_maps =
+      contents()->GetColorProviderColorMaps();
+  mock_page_broadcast.FlushForTesting();
 
+  // Set a new source, which should broadcast a change.
+  color_maps.light_colors_map = color_provider_source.GetRendererColorMap(
+      ui::ColorProviderKey::ColorMode::kLight,
+      ui::ColorProviderKey::ForcedColors::kNone);
+  color_maps.dark_colors_map = color_provider_source.GetRendererColorMap(
+      ui::ColorProviderKey::ColorMode::kDark,
+      ui::ColorProviderKey::ForcedColors::kNone);
+  EXPECT_CALL(mock_page_broadcast, UpdateColorProviders(color_maps));
   contents()->SetColorProviderSource(&color_provider_source);
-  const auto color_provider_colors = contents()->GetColorProviderColorMaps();
-  color_provider_source.NotifyColorProviderChanged();
+  mock_page_broadcast.FlushForTesting();
+  ::testing::Mock::VerifyAndClearExpectations(&mock_page_broadcast);
 
-  // The page broadcast should have been called twice. Once when first set and
-  // again when the source notified of a ColorProvider change.
-  EXPECT_CALL(mock_page_broadcast, UpdateColorProviders(color_provider_colors))
-      .Times(2);
+  // Change something, then notify, which should broadcast another change. (If
+  // nothing has changed, the broadcast won't occur.)
+  color_maps.light_colors_map.swap(color_maps.dark_colors_map);
+  EXPECT_CALL(mock_page_broadcast, UpdateColorProviders(color_maps));
+  color_provider_source.SwapMaps();
+  color_provider_source.NotifyColorProviderChanged();
   mock_page_broadcast.FlushForTesting();
 }
 
@@ -3484,7 +3541,7 @@ TEST_F(WebContentsImplTest, BadDownloadImageFromAXNodeId) {
   // exercising the code in WebContentsImpl.
   scoped_refptr<SiteInstance> instance =
       SiteInstance::Create(GetBrowserContext());
-  instance->GetOrCreateProcess()->Init();
+  instance->GetOrCreateProcessForTesting()->Init();
   WebContents::CreateParams create_params(GetBrowserContext(),
                                           std::move(instance));
   create_params.desired_renderer_state = WebContents::CreateParams::
@@ -3517,6 +3574,67 @@ TEST_F(WebContentsImplTest, BadDownloadImageFromAXNodeId) {
         run_loop.Quit();
       }));
   run_loop.Run();
+}
+
+TEST_F(WebContentsImplTest, DownloadImageFromAxNodeInSubframe) {
+  const GURL main_url("https://a.com");
+  const GURL child_url("https://b.com");
+
+  // Navigate the main frame.
+  NavigationSimulator::NavigateAndCommitFromBrowser(contents(), main_url);
+  RenderFrameHostImpl* main_rfh = contents()->GetPrimaryMainFrame();
+  // Create and navigate a child frame.
+  RenderFrameHostImpl* child_rfh = static_cast<RenderFrameHostImpl*>(
+      RenderFrameHostTester::For(main_rfh)->AppendChild("iframe"));
+  child_rfh = static_cast<RenderFrameHostImpl*>(
+      NavigationSimulator::NavigateAndCommitFromDocument(child_url, child_rfh));
+
+  ASSERT_NE(main_rfh->GetAXTreeID(), child_rfh->GetAXTreeID());
+  FakeImageDownloader fake_downloader;
+  fake_downloader.Init(child_rfh->GetRemoteInterfaces());
+
+  constexpr int kAxNodeId = 42;
+  SkBitmap bitmap;
+  bitmap.allocN32Pixels(10, 10);
+  bitmap.eraseColor(SK_ColorBLUE);
+  fake_downloader.SetFakeResponseData(kAxNodeId, {bitmap}, {gfx::Size(10, 10)});
+
+  base::test::TestFuture<int, int, const GURL&, const std::vector<SkBitmap>&,
+                         const std::vector<gfx::Size>&>
+      future;
+  contents()->DownloadImageFromAxNode(
+      child_rfh->GetAXTreeID(), kAxNodeId, /*preferred_size=*/gfx::Size(),
+      /*max_bitmap_size=*/0, /*bypass_cache=*/false, future.GetCallback());
+
+  ASSERT_TRUE(future.Wait());
+  EXPECT_EQ(0, std::get<1>(future.Get()));
+
+  // Check that we received the correct bitmap from the fake downloader.
+  const auto& bitmaps = std::get<3>(future.Get());
+  ASSERT_EQ(1u, bitmaps.size());
+  EXPECT_EQ(10, bitmaps[0].width());
+  EXPECT_EQ(10, bitmaps[0].height());
+  EXPECT_EQ(SK_ColorBLUE, bitmaps[0].getColor(5, 5));
+}
+
+// Test that the WebContentsObserver is notified when a fetch keepalive request
+// is created in a given RenderFrameHost.
+TEST_F(WebContentsImplTest, OnKeepAliveRequestCreated) {
+  TestWebContentsObserver observer(contents());
+  TestRenderFrameHost* rfh = main_test_rfh();
+  network::ResourceRequest request;
+  request.url = GURL("https://example.com");
+  request.attribution_reporting_eligibility =
+      network::mojom::AttributionReportingEligibility::kEmpty;
+  request.keepalive = true;
+  request.keepalive_token = base::UnguessableToken::Create();
+
+  rfh->OnKeepAliveRequestCreated(request);
+
+  EXPECT_EQ(request.url, observer.fetch_keepalive_request().url);
+  EXPECT_EQ(request.keepalive, observer.fetch_keepalive_request().keepalive);
+  EXPECT_EQ(request.keepalive_token,
+            observer.fetch_keepalive_request().keepalive_token);
 }
 
 class WebContentsImplTestKeyboardEvents

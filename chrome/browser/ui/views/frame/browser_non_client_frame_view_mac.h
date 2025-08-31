@@ -15,13 +15,10 @@
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_registrar_observer.h"
 #include "components/prefs/pref_member.h"
+#include "ui/gfx/geometry/rect_f.h"
 
 namespace base {
 class OneShotTimer;
-}
-
-namespace views {
-class Label;
 }
 
 namespace remote_cocoa::mojom {
@@ -51,8 +48,6 @@ class BrowserNonClientFrameViewMac : public BrowserNonClientFrameView,
       const gfx::Size& tabstrip_minimum_size) const override;
   gfx::Rect GetBoundsForWebAppFrameToolbar(
       const gfx::Size& toolbar_preferred_size) const override;
-  void LayoutWebAppWindowTitle(const gfx::Rect& available_space,
-                               views::Label& window_title_label) const override;
   int GetTopInset(bool restored) const override;
   void UpdateFullscreenTopUI() override;
   bool ShouldHideTopUIForFullscreen() const override;
@@ -77,13 +72,6 @@ class BrowserNonClientFrameViewMac : public BrowserNonClientFrameView,
                                               bool show) override;
   void OnAppRegistrarDestroyed() override;
 
-  // Creates an inset from the caption button size which controls for which edge
-  // the captions buttons exists on. Used to position the tab strip region view
-  // and the caption button placeholder container. Returns the distance from the
-  // leading edge of the frame to the first tab in the tabstrip not including
-  // the corner radius.
-  gfx::Insets GetCaptionButtonInsets() const;
-
   // Used by TabContainerOverlayView to paint the tab strip background.
   void PaintThemedFrame(gfx::Canvas* canvas) override;
 
@@ -97,6 +85,20 @@ class BrowserNonClientFrameViewMac : public BrowserNonClientFrameView,
                            GetCenteredTitleBounds);
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewMacTest,
                            GetCaptionButtonPlaceholderBounds);
+
+  // Creates an inset from the caption button size which controls for which edge
+  // the captions buttons exists on. Used to position elements like the tabstrip
+  // that are adjacent to the caption buttons.
+  //
+  // The `visual_overlap` parameter specifies how much - if any - the adjacent
+  // View overlaps the caption button region; the insets will be reduced by that
+  // amount. For example, the tabstrip overlaps by the size of the bottom curve
+  // of the first tab. In most cases this will be zero.
+  gfx::Insets GetCaptionButtonInsets(int visual_overlap = 0) const;
+
+  // Populates `bounds` with a region determined from the actual caption
+  // buttons, or returns false if the buttons cannot be retrieved.
+  bool GetCaptionButtonRegion(gfx::RectF& bounds) const;
 
   static gfx::Rect GetCenteredTitleBounds(gfx::Rect frame,
                                           gfx::Rect available_space,

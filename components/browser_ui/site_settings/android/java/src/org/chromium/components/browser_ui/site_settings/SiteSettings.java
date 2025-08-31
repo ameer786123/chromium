@@ -48,8 +48,6 @@ public class SiteSettings extends BaseSiteSettingsFragment
     public static final String PERMISSION_AUTOREVOCATION_HISTOGRAM_NAME =
             "Settings.SafetyHub.AutorevokeUnusedSitePermissions.Changed";
 
-    private static final String DIVIDER_PREF = "divider";
-
     private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
 
     @Override
@@ -93,15 +91,6 @@ public class SiteSettings extends BaseSiteSettingsFragment
                 Preference pref = findPreference(type);
                 getPreferenceScreen().removePreference(pref);
             }
-        }
-
-        // Remove the permission autorevocation preference if Safety Hub is not enabled.
-        if (!getSiteSettingsDelegate().isSafetyHubEnabled()) {
-            Preference autorevocationPref =
-                    findPreference(PERMISSION_AUTOREVOCATION_PREF);
-            getPreferenceScreen().removePreference(autorevocationPref);
-            Preference dividerPref = findPreference(DIVIDER_PREF);
-            getPreferenceScreen().removePreference(dividerPref);
         }
     }
 
@@ -167,11 +156,8 @@ public class SiteSettings extends BaseSiteSettingsFragment
                 p.setSummary(ContentSettingsResources.getSiteDataListSummary(checked));
             } else if (Type.THIRD_PARTY_COOKIES == prefCategory) {
                 p.setSummary(
-                        getSiteSettingsDelegate().isAlwaysBlock3pcsIncognitoEnabled()
-                                        && cookieControlsMode == CookieControlsMode.INCOGNITO_ONLY
-                                ? R.string.third_party_cookies_link_row_sub_label_enabled
-                                : ContentSettingsResources.getThirdPartyCookieListSummary(
-                                        cookieControlsMode));
+                        ContentSettingsResources.getThirdPartyCookieListSummary(
+                                cookieControlsMode));
             } else if (Type.DEVICE_LOCATION == prefCategory
                     && checked
                     && WebsitePreferenceBridge.isLocationAllowedByPolicy(browserContextHandle)) {
@@ -250,8 +236,8 @@ public class SiteSettings extends BaseSiteSettingsFragment
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
+    public void onStart() {
+        super.onStart();
         updatePreferenceStates();
     }
 
@@ -268,5 +254,10 @@ public class SiteSettings extends BaseSiteSettingsFragment
                         SingleCategorySettings.EXTRA_TITLE,
                         assumeNonNull(preference.getTitle()).toString());
         return false;
+    }
+
+    @Override
+    public @AnimationType int getAnimationType() {
+        return AnimationType.PROPERTY;
     }
 }

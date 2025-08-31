@@ -15,6 +15,7 @@
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/environment.h"
+#include "base/numerics/safe_math.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/to_string.h"
 #include "base/test/gtest_util.h"
@@ -31,6 +32,7 @@
 #include "base/android/jni_android.h"
 #elif BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_CHROMEOS)
 #include "base/test/icu_test_util.h"
+#include "base/test/scoped_libc_timezone_override.h"
 #elif BUILDFLAG(IS_WIN)
 #include <windows.h>
 #endif
@@ -75,42 +77,6 @@ TimeDelta TimePassedAfterMidnight(const Time::Exploded& time) {
   return base::Hours(time.hour) + base::Minutes(time.minute) +
          base::Seconds(time.second) + base::Milliseconds(time.millisecond);
 }
-
-// Timezone environment variable
-
-class ScopedLibcTZ {
- public:
-  explicit ScopedLibcTZ(const std::string& timezone) {
-    auto env = base::Environment::Create();
-    old_timezone_ = env->GetVar(kTZ);
-    if (!env->SetVar(kTZ, timezone)) {
-      success_ = false;
-    }
-    tzset();
-  }
-
-  ~ScopedLibcTZ() {
-    auto env = base::Environment::Create();
-    if (old_timezone_.has_value()) {
-      CHECK(env->SetVar(kTZ, old_timezone_.value()));
-    } else {
-      CHECK(env->UnSetVar(kTZ));
-    }
-  }
-
-  ScopedLibcTZ(const ScopedLibcTZ& other) = delete;
-  ScopedLibcTZ& operator=(const ScopedLibcTZ& other) = delete;
-
-  bool is_success() const { return success_; }
-
- private:
-  static constexpr char kTZ[] = "TZ";
-
-  bool success_ = true;
-  std::optional<std::string> old_timezone_;
-};
-
-constexpr char ScopedLibcTZ::kTZ[];
 
 #endif  //  BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_CHROMEOS)
 
@@ -1140,8 +1106,7 @@ TEST_F(TimeTest, UTCExplodedIsLocaleIndependent) {
   // th-TH maps to a non-gregorian calendar.
   test::ScopedRestoreICUDefaultLocale scoped_icu_locale(kThaiLocale);
   test::ScopedRestoreDefaultTimezone scoped_timezone(kBangkokTimeZoneId);
-  ScopedLibcTZ scoped_libc_tz(kBangkokTimeZoneId);
-  ASSERT_TRUE(scoped_libc_tz.is_success());
+  test::ScopedLibcTimezoneOverride scoped_libc_tz(kBangkokTimeZoneId);
 
   Time::Exploded utc_exploded_orig;
   utc_exploded_orig.year = 2020;
@@ -1178,8 +1143,7 @@ TEST_F(TimeTest, LocalExplodedIsLocaleIndependent) {
   // th-TH maps to a non-gregorian calendar.
   test::ScopedRestoreICUDefaultLocale scoped_icu_locale(kThaiLocale);
   test::ScopedRestoreDefaultTimezone scoped_timezone(kBangkokTimeZoneId);
-  ScopedLibcTZ scoped_libc_tz(kBangkokTimeZoneId);
-  ASSERT_TRUE(scoped_libc_tz.is_success());
+  test::ScopedLibcTimezoneOverride scoped_libc_tz(kBangkokTimeZoneId);
 
   Time::Exploded utc_exploded_orig;
   utc_exploded_orig.year = 2020;
@@ -1941,6 +1905,33 @@ TEST(TimeDelta, TimeSpecConversion) {
   EXPECT_EQ(result.tv_sec, 1);
   EXPECT_EQ(result.tv_nsec, 1000);
   EXPECT_EQ(delta, TimeDelta::FromTimeSpec(result));
+
+  delta = Milliseconds(10600) - Seconds(20);
+  EXPECT_TRUE(delta.is_negative());
+  result = delta.ToTimeSpec();
+  EXPECT_EQ(result.tv_sec, 0);
+  EXPECT_EQ(result.tv_nsec, 0);
+  EXPECT_NE(delta, TimeDelta::FromTimeSpec(result));
+
+  delta = TimeDelta::Max();
+  result = delta.ToTimeSpec();
+  EXPECT_EQ(result.tv_sec,
+            saturated_cast<time_t>(TimeDelta::Max().InSeconds()));
+  const int64_t expected_extra_microseconds =
+      TimeDelta::Max().InMicroseconds() % Time::kMicrosecondsPerSecond;
+  EXPECT_EQ(result.tv_nsec,
+            static_cast<long>(expected_extra_microseconds *
+                              Time::kNanosecondsPerMicrosecond));
+  if (TimeDelta::Max().InSeconds() <= std::numeric_limits<time_t>::max()) {
+    EXPECT_EQ(delta, TimeDelta::FromTimeSpec(result));
+  }
+
+  delta = TimeDelta::Min();
+  EXPECT_TRUE(delta.is_negative());
+  result = delta.ToTimeSpec();
+  EXPECT_EQ(result.tv_sec, 0);
+  EXPECT_EQ(result.tv_nsec, 0);
+  EXPECT_NE(delta, TimeDelta::FromTimeSpec(result));
 }
 #endif  // BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 

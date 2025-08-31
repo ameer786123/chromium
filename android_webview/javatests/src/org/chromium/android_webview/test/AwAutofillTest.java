@@ -14,8 +14,6 @@ import static org.junit.Assert.assertTrue;
 import android.content.Context;
 import android.graphics.Rect;
 import android.net.Uri;
-import android.os.Build;
-import android.os.Build.VERSION;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.SystemClock;
@@ -52,7 +50,6 @@ import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.HistogramWatcher;
@@ -63,11 +60,13 @@ import org.chromium.components.autofill.AutofillPopup;
 import org.chromium.components.autofill.AutofillProvider;
 import org.chromium.components.autofill.AutofillProviderTestHelper;
 import org.chromium.components.autofill.AutofillProviderUMA;
+import org.chromium.components.autofill.FieldType;
 import org.chromium.components.autofill.TestViewStructure;
 import org.chromium.components.autofill_public.ViewType;
 import org.chromium.components.embedder_support.util.WebResourceResponseInfo;
 import org.chromium.content_public.browser.test.util.DOMUtils;
 import org.chromium.content_public.browser.test.util.TouchCommon;
+import org.chromium.content_public.browser.test.util.WebContentsUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.util.TestWebServer;
 
@@ -96,18 +95,16 @@ public class AwAutofillTest extends AwParameterizedTest {
     public static final int AUTOFILL_VIEW_EXITED = 1;
     public static final int AUTOFILL_VALUE_CHANGED = 2;
     public static final int AUTOFILL_COMMIT = 3;
-    public static final int AUTOFILL_CANCEL_PRE_P = 4;
-    public static final int AUTOFILL_CANCEL = 5;
-    public static final int AUTOFILL_SESSION_STARTED = 6;
-    public static final int AUTOFILL_PREDICTIONS_AVAILABLE = 7;
-    public static final int AUTOFILL_EVENT_MAX = 8;
+    public static final int AUTOFILL_CANCEL = 4;
+    public static final int AUTOFILL_SESSION_STARTED = 5;
+    public static final int AUTOFILL_PREDICTIONS_AVAILABLE = 6;
+    public static final int AUTOFILL_EVENT_MAX = 7;
 
     public static final String[] EVENT = {
         "VIEW_ENTERED",
         "VIEW_EXITED",
         "VALUE_CHANGED",
         "COMMIT",
-        "CANCEL_PRE_P",
         "CANCEL",
         "SESSION_STARTED",
         "QUERY_DONE"
@@ -243,8 +240,8 @@ public class AwAutofillTest extends AwParameterizedTest {
         private static final int TOTAL_CONTROLS = 1; // text1
 
         private int mCnt;
-        private AwAutofillTest mTest;
-        private TestWebServer mWebServer;
+        private final AwAutofillTest mTest;
+        private final TestWebServer mWebServer;
 
         public AwAutofillSessionUMATestHelper(AwAutofillTest test, TestWebServer webServer) {
             mTest = test;
@@ -260,7 +257,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                     mTest.waitForCallbackAndVerifyTypes(
                             mCnt,
                             new Integer[] {
-                                AUTOFILL_CANCEL_PRE_P,
                                 AUTOFILL_VIEW_ENTERED,
                                 AUTOFILL_SESSION_STARTED,
                                 AUTOFILL_VALUE_CHANGED
@@ -278,7 +274,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                     mTest.waitForCallbackAndVerifyTypes(
                             mCnt,
                             new Integer[] {
-                                AUTOFILL_CANCEL_PRE_P,
                                 AUTOFILL_VIEW_ENTERED,
                                 AUTOFILL_SESSION_STARTED,
                                 AUTOFILL_VALUE_CHANGED
@@ -343,7 +338,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                             mCnt,
                             new Integer[] {
                                 AUTOFILL_VIEW_EXITED,
-                                AUTOFILL_CANCEL_PRE_P,
                                 AUTOFILL_VIEW_ENTERED,
                                 AUTOFILL_SESSION_STARTED,
                                 AUTOFILL_VALUE_CHANGED
@@ -367,10 +361,10 @@ public class AwAutofillTest extends AwParameterizedTest {
     private EmbeddedTestServer mEmbeddedServer;
     private AwTestContainerView mTestContainerView;
     private AwAutofillTestClient mContentsClient;
-    private CallbackHelper mCallbackHelper = new CallbackHelper();
+    private final CallbackHelper mCallbackHelper = new CallbackHelper();
     private AwContents mAwContents;
-    private ConcurrentLinkedQueue<Integer> mEventQueue = new ConcurrentLinkedQueue<>();
-    private TestValues mTestValues = new TestValues();
+    private final ConcurrentLinkedQueue<Integer> mEventQueue = new ConcurrentLinkedQueue<>();
+    private final TestValues mTestValues = new TestValues();
     private int mSubmissionSource;
     private TestAutofillManagerWrapper mTestAutofillManagerWrapper;
     private AwAutofillSessionUMATestHelper mUMATestHelper;
@@ -405,8 +399,9 @@ public class AwAutofillTest extends AwParameterizedTest {
                 ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             return HistogramWatcher.newSingleRecordWatcher(
-                                    AutofillProviderUMA.UMA_AUTOFILL_CREATED_BY_ACTIVITY_CONTEXT,
-                                    true);
+                                    AutofillProviderUMA.UMA_AUTOFILL_CREATION_CONTEXT,
+                                    AutofillProviderUMA.AutofillManagerCreationContext
+                                            .ACTIVITY_CONTEXT);
                         });
         mContentsClient = new AwAutofillTestClient();
         mTestContainerView =
@@ -475,9 +470,7 @@ public class AwAutofillTest extends AwParameterizedTest {
         cnt +=
                 waitForCallbackAndVerifyTypes(
                         cnt,
-                        new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P, AUTOFILL_VIEW_ENTERED, AUTOFILL_SESSION_STARTED
-                        });
+                        new Integer[] { AUTOFILL_VIEW_ENTERED, AUTOFILL_SESSION_STARTED});
         dispatchDownAndUpKeyEvents(KeyEvent.KEYCODE_A);
         waitForCallbackAndVerifyTypes(cnt, new Integer[] {AUTOFILL_VALUE_CHANGED});
 
@@ -487,7 +480,10 @@ public class AwAutofillTest extends AwParameterizedTest {
 
     @Test
     @SmallTest
-    @CommandLineFlags.Add({"disable-features=AutofillServerCommunication"})
+    @CommandLineFlags.Add({
+        "disable-features=AutofillServerCommunication",
+        "enable-features=AutofillIgnoreCheckableElements"
+    })
     @Feature({"AndroidWebView"})
     public void testBasicAutofill() throws Throwable {
         final String url =
@@ -509,7 +505,7 @@ public class AwAutofillTest extends AwParameterizedTest {
                                     <input type='color' id='color1'><input type='file' id='file1'>
                                     <input type='image' id='image1'>
                             </form>""");
-        final int totalControls = 4; // text1, checkbox1, select1, textarea1
+        final int totalControls = 3; // text1, select1, textarea1
         int cnt = 0;
         executeJavaScriptAndWaitForResult("document.getElementById('text1').select();");
         dispatchDownAndUpKeyEvents(KeyEvent.KEYCODE_A);
@@ -517,7 +513,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -560,9 +555,9 @@ public class AwAutofillTest extends AwParameterizedTest {
         assertEquals("30", htmlInfo0.getAttribute("maxlength"));
         assertEquals("NAME_FIRST", htmlInfo0.getAttribute("ua-autofill-hints"));
 
-        // Verify checkbox control filled correctly in ViewStructure.
+        // Verify select control filled correctly in ViewStructure.
         TestViewStructure child1 = viewStructure.getChild(1);
-        assertEquals(View.AUTOFILL_TYPE_TOGGLE, child1.getAutofillType());
+        assertEquals(View.AUTOFILL_TYPE_LIST, child1.getAutofillType());
         assertEquals("", child1.getHint());
         assertNull(child1.getAutofillHints());
         assertFalse(child1.getDimensRect().isEmpty());
@@ -570,16 +565,15 @@ public class AwAutofillTest extends AwParameterizedTest {
         assertEquals(0, child1.getDimensScrollX());
         assertEquals(0, child1.getDimensScrollY());
         TestViewStructure.TestHtmlInfo htmlInfo1 = child1.getHtmlInfo();
-        assertEquals("checkbox", htmlInfo1.getAttribute("type"));
-        assertEquals("checkbox1", htmlInfo1.getAttribute("id"));
-        assertEquals("showpassword", htmlInfo1.getAttribute("name"));
-        assertEquals("", htmlInfo1.getAttribute("label"));
-        assertNull(htmlInfo1.getAttribute("maxlength"));
-        assertNull(htmlInfo1.getAttribute("ua-autofill-hints"));
+        assertEquals("month", htmlInfo1.getAttribute("name"));
+        assertEquals("select1", htmlInfo1.getAttribute("id"));
+        CharSequence[] options = child1.getAutofillOptions();
+        assertEquals("Jan", options[0]);
+        assertEquals("Feb", options[1]);
 
-        // Verify select control filled correctly in ViewStructure.
+        // Verify textarea control is filled correctly in ViewStructure.
         TestViewStructure child2 = viewStructure.getChild(2);
-        assertEquals(View.AUTOFILL_TYPE_LIST, child2.getAutofillType());
+        assertEquals(View.AUTOFILL_TYPE_TEXT, child2.getAutofillType());
         assertEquals("", child2.getHint());
         assertNull(child2.getAutofillHints());
         assertFalse(child2.getDimensRect().isEmpty());
@@ -587,30 +581,13 @@ public class AwAutofillTest extends AwParameterizedTest {
         assertEquals(0, child2.getDimensScrollX());
         assertEquals(0, child2.getDimensScrollY());
         TestViewStructure.TestHtmlInfo htmlInfo2 = child2.getHtmlInfo();
-        assertEquals("month", htmlInfo2.getAttribute("name"));
-        assertEquals("select1", htmlInfo2.getAttribute("id"));
-        CharSequence[] options = child2.getAutofillOptions();
-        assertEquals("Jan", options[0]);
-        assertEquals("Feb", options[1]);
-
-        // Verify textarea control is filled correctly in ViewStructure.
-        TestViewStructure child3 = viewStructure.getChild(3);
-        assertEquals(View.AUTOFILL_TYPE_TEXT, child3.getAutofillType());
-        assertEquals("", child3.getHint());
-        assertNull(child3.getAutofillHints());
-        assertFalse(child3.getDimensRect().isEmpty());
-        // The field has no scroll, should always be zero.
-        assertEquals(0, child3.getDimensScrollX());
-        assertEquals(0, child3.getDimensScrollY());
-        TestViewStructure.TestHtmlInfo htmlInfo3 = child3.getHtmlInfo();
-        assertEquals("textarea1", htmlInfo3.getAttribute("name"));
+        assertEquals("textarea1", htmlInfo2.getAttribute("name"));
 
         // Autofill form and verify filled values.
         SparseArray<AutofillValue> values = new SparseArray<AutofillValue>();
         values.append(child0.getId(), AutofillValue.forText("Juan"));
-        values.append(child1.getId(), AutofillValue.forToggle(true));
-        values.append(child2.getId(), AutofillValue.forList(1));
-        values.append(child3.getId(), AutofillValue.forText("aaa"));
+        values.append(child1.getId(), AutofillValue.forList(1));
+        values.append(child2.getId(), AutofillValue.forText("aaa"));
         cnt = getCallbackCount();
         clearChangedValues();
         invokeAutofill(values);
@@ -618,10 +595,7 @@ public class AwAutofillTest extends AwParameterizedTest {
         waitForCallbackAndVerifyTypes(
                 cnt,
                 new Integer[] {
-                    AUTOFILL_VALUE_CHANGED,
-                    AUTOFILL_VALUE_CHANGED,
-                    AUTOFILL_VALUE_CHANGED,
-                    AUTOFILL_VALUE_CHANGED,
+                    AUTOFILL_VALUE_CHANGED, AUTOFILL_VALUE_CHANGED, AUTOFILL_VALUE_CHANGED,
                 });
 
         // Verify form filled by Javascript
@@ -629,18 +603,14 @@ public class AwAutofillTest extends AwParameterizedTest {
                 executeJavaScriptAndWaitForResult("document.getElementById('text1').value;");
         assertEquals("\"Juan\"", value0);
         String value1 =
-                executeJavaScriptAndWaitForResult("document.getElementById('checkbox1').value;");
-        assertEquals("\"on\"", value1);
-        String value2 =
                 executeJavaScriptAndWaitForResult("document.getElementById('select1').value;");
-        assertEquals("\"2\"", value2);
-        String value3 =
+        assertEquals("\"2\"", value1);
+        String value2 =
                 executeJavaScriptAndWaitForResult("document.getElementById('textarea1').value;");
-        assertEquals("\"aaa\"", value3);
+        assertEquals("\"aaa\"", value2);
         ArrayList<Pair<Integer, AutofillValue>> changedValues = getChangedValues();
         assertEquals("Juan", changedValues.get(0).second.getTextValue());
-        assertTrue(changedValues.get(1).second.getToggleValue());
-        assertEquals(1, changedValues.get(2).second.getListValue());
+        assertEquals(1, changedValues.get(1).second.getListValue());
     }
 
     /** Tests that a frame-transcending form is filled correctly. */
@@ -669,7 +639,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VIEW_EXITED,
@@ -739,8 +708,7 @@ public class AwAutofillTest extends AwParameterizedTest {
         cnt +=
                 waitForCallbackAndVerifyTypes(
                         cnt,
-                        new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P, AUTOFILL_VIEW_ENTERED, AUTOFILL_SESSION_STARTED
+                        new Integer[] { AUTOFILL_VIEW_ENTERED, AUTOFILL_SESSION_STARTED
                         });
 
         // Reload the page and check that the user clicking on the same form field ends the current
@@ -755,7 +723,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                         new Integer[] {
                             AUTOFILL_VIEW_EXITED,
                             AUTOFILL_CANCEL,
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED
                         });
@@ -776,7 +743,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -812,7 +778,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -861,7 +826,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -915,7 +879,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -982,7 +945,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -1058,7 +1020,6 @@ public class AwAutofillTest extends AwParameterizedTest {
         waitForCallbackAndVerifyTypes(
                 cnt,
                 new Integer[] {
-                    AUTOFILL_CANCEL_PRE_P,
                     AUTOFILL_VIEW_ENTERED,
                     AUTOFILL_SESSION_STARTED,
                     AUTOFILL_VALUE_CHANGED
@@ -1091,7 +1052,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -1103,7 +1063,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 cnt,
                 new Integer[] {
                     AUTOFILL_VIEW_EXITED,
-                    AUTOFILL_CANCEL_PRE_P,
                     AUTOFILL_VIEW_ENTERED,
                     AUTOFILL_SESSION_STARTED,
                     AUTOFILL_VALUE_CHANGED
@@ -1178,7 +1137,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         count,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -1197,7 +1155,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 count,
                 new Integer[] {
                     AUTOFILL_VIEW_EXITED,
-                    AUTOFILL_CANCEL_PRE_P,
                     AUTOFILL_VIEW_ENTERED,
                     AUTOFILL_SESSION_STARTED,
                     AUTOFILL_VALUE_CHANGED
@@ -1235,8 +1192,7 @@ public class AwAutofillTest extends AwParameterizedTest {
         cnt +=
                 waitForCallbackAndVerifyTypes(
                         cnt,
-                        new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P, AUTOFILL_VIEW_ENTERED, AUTOFILL_SESSION_STARTED
+                        new Integer[] { AUTOFILL_VIEW_ENTERED, AUTOFILL_SESSION_STARTED
                         });
     }
 
@@ -1269,8 +1225,7 @@ public class AwAutofillTest extends AwParameterizedTest {
         cnt +=
                 waitForCallbackAndVerifyTypes(
                         cnt,
-                        new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P, AUTOFILL_VIEW_ENTERED, AUTOFILL_SESSION_STARTED
+                        new Integer[] { AUTOFILL_VIEW_ENTERED, AUTOFILL_SESSION_STARTED
                         });
 
         // Removing focus from this element should cause a notification that the autofill view was
@@ -1318,7 +1273,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -1360,9 +1314,6 @@ public class AwAutofillTest extends AwParameterizedTest {
     @SmallTest
     @Feature({"AndroidWebView"})
     @CommandLineFlags.Add({"disable-features=AutofillServerCommunication"})
-    @DisableIf.Build(
-            sdk_is_less_than = Build.VERSION_CODES.P,
-            message = "This test is disabled on Android O because of https://crbug.com/997362")
     public void testSelectControlChangeNotification() throws Throwable {
         int cnt = 0;
         loadHTML(
@@ -1380,7 +1331,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -1412,9 +1362,6 @@ public class AwAutofillTest extends AwParameterizedTest {
     @SmallTest
     @Feature({"AndroidWebView"})
     @CommandLineFlags.Add({"disable-features=AutofillServerCommunication"})
-    @DisableIf.Build(
-            sdk_is_less_than = Build.VERSION_CODES.P,
-            message = "This test is disabled on Android O because of https://crbug.com/997362")
     public void testSelectControlChangeStartAutofillSession() throws Throwable {
         int cnt = 0;
         loadHTML(
@@ -1434,7 +1381,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -1485,7 +1431,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -1529,7 +1474,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -1542,7 +1486,10 @@ public class AwAutofillTest extends AwParameterizedTest {
 
     @Test
     @SmallTest
-    @CommandLineFlags.Add({"disable-features=AutofillServerCommunication"})
+    @CommandLineFlags.Add({
+        "disable-features=AutofillServerCommunication",
+        "enable-features=AutofillIgnoreCheckableElements"
+    })
     @Feature({"AndroidWebView"})
     public void testUaAutofillHints() throws Throwable {
         loadHTML(
@@ -1561,7 +1508,7 @@ public class AwAutofillTest extends AwParameterizedTest {
                         <input name=\"bill-country\" id=\"frmCountryB\">
                         <input type='submit'>
                     </form>""");
-        final int totalControls = 6;
+        final int totalControls = 5;
         int cnt = 0;
         executeJavaScriptAndWaitForResult("document.getElementById('frmAddressB').select();");
         dispatchDownAndUpKeyEvents(KeyEvent.KEYCODE_A);
@@ -1569,7 +1516,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -1597,11 +1543,7 @@ public class AwAutofillTest extends AwParameterizedTest {
 
         TestViewStructure child4 = viewStructure.getChild(4);
         TestViewStructure.TestHtmlInfo htmlInfo4 = child4.getHtmlInfo();
-        assertNull(htmlInfo4.getAttribute("ua-autofill-hints"));
-
-        TestViewStructure child5 = viewStructure.getChild(5);
-        TestViewStructure.TestHtmlInfo htmlInfo5 = child5.getHtmlInfo();
-        assertEquals("ADDRESS_HOME_COUNTRY", htmlInfo5.getAttribute("ua-autofill-hints"));
+        assertEquals("ADDRESS_HOME_COUNTRY", htmlInfo4.getAttribute("ua-autofill-hints"));
     }
 
     @Test
@@ -2072,7 +2014,7 @@ public class AwAutofillTest extends AwParameterizedTest {
                                             true)
                                     .build();
                         });
-        mUMATestHelper.simulateServerPredictionBeforeTriggeringAutofill(/*USERNAME*/ 86);
+        mUMATestHelper.simulateServerPredictionBeforeTriggeringAutofill(FieldType.USERNAME);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     histograms.assertExpected();
@@ -2099,7 +2041,7 @@ public class AwAutofillTest extends AwParameterizedTest {
                                     .build();
                         });
         mUMATestHelper.triggerAutofill();
-        mUMATestHelper.simulateServerPrediction(/*NO_SERVER_DATA*/ 0);
+        mUMATestHelper.simulateServerPrediction(FieldType.NO_SERVER_DATA);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     histograms.assertExpected();
@@ -2212,7 +2154,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2269,7 +2210,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2324,7 +2264,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2438,7 +2377,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2451,11 +2389,6 @@ public class AwAutofillTest extends AwParameterizedTest {
         dispatchDownAndUpKeyEvents(KeyEvent.KEYCODE_B);
         List<Integer> expectedValues = new ArrayList<>();
 
-        // On Android version below P scroll triggers additional
-        // AUTOFILL_VIEW_ENTERED (@see AutofillProvider#onTextFieldDidScroll).
-        if (VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            expectedValues.add(AUTOFILL_VIEW_ENTERED);
-        }
         // Check if NotifyVirtualValueChanged() called again and with extra AUTOFILL_VIEW_EXITED
         // and AUTOFILL_VIEW_ENTERED
         expectedValues.addAll(
@@ -2478,7 +2411,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2512,7 +2444,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2543,6 +2474,7 @@ public class AwAutofillTest extends AwParameterizedTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView"})
+    @DisabledTest(message = "crbug.com/424007303")
     @CommandLineFlags.Add({"disable-features=AutofillServerCommunication"})
     public void testNoEventSentToAutofillServiceForFocusedDatalist() throws Throwable {
         final String url = getAbsoluteTestPageUrl("form_with_datalist.html");
@@ -2553,8 +2485,7 @@ public class AwAutofillTest extends AwParameterizedTest {
         // Verify not notifying AUTOFILL_VIEW_ENTERED and AUTOFILL_VALUE_CHANGED events for the
         // datalist.
         cnt +=
-                waitForCallbackAndVerifyTypes(
-                        cnt, new Integer[] {AUTOFILL_CANCEL_PRE_P, AUTOFILL_SESSION_STARTED});
+                waitForCallbackAndVerifyTypes(cnt, new Integer[] {AUTOFILL_SESSION_STARTED});
         // Verify input accepted.
         String value1 =
                 executeJavaScriptAndWaitForResult("document.getElementById('text2').value;");
@@ -2573,6 +2504,7 @@ public class AwAutofillTest extends AwParameterizedTest {
     @SmallTest
     @Feature({"AndroidWebView"})
     @CommandLineFlags.Add({"disable-features=AutofillServerCommunication"})
+    @DisabledTest(message = "crbug.com/424007303")
     public void testDatalistPopup() throws Throwable {
         final String url = getAbsoluteTestPageUrl("form_with_datalist.html");
         loadUrlSync(url);
@@ -2621,7 +2553,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2653,8 +2584,12 @@ public class AwAutofillTest extends AwParameterizedTest {
                                         mAwContents.getWebContents(),
                                         new String[] {"text1", "text2"},
                                         new int[][] {
-                                            {86 /* USERNAME */, 9 /* EMAIL_ADDRESS */,},
-                                            {9 /* EMAIL_ADDRESS */,}
+                                            {
+                                                FieldType.USERNAME, FieldType.EMAIL_ADDRESS,
+                                            },
+                                            {
+                                                FieldType.EMAIL_ADDRESS,
+                                            }
                                         }));
 
         int cnt = 0;
@@ -2665,7 +2600,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2735,13 +2669,10 @@ public class AwAutofillTest extends AwParameterizedTest {
                                         mAwContents.getWebContents(),
                                         new String[] {"name", "num", "exp", "csc"},
                                         new int[][] {
-                                            {51 /* CREDIT_CARD_NAME_FULL */},
-                                            {52 /*CREDIT_CARD_NUMBER*/},
-                                            {
-                                                56 /*CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR*/,
-                                                57 /*CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR*/,
-                                            },
-                                            {59 /*CREDIT_CARD_VERIFICATION_CODE*/}
+                                            {FieldType.CREDIT_CARD_NAME_FULL},
+                                            {FieldType.CREDIT_CARD_NUMBER},
+                                            {FieldType.CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+                                            {FieldType.CREDIT_CARD_VERIFICATION_CODE}
                                         }));
 
         int cnt = 0;
@@ -2752,7 +2683,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2805,7 +2735,7 @@ public class AwAutofillTest extends AwParameterizedTest {
                 "CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR",
                 viewStructure.getChild(2).getHtmlInfo().getAttribute("computed-autofill-hints"));
         assertEquals(
-                "CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR,CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR",
+                "CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR",
                 viewStructure
                         .getChild(2)
                         .getHtmlInfo()
@@ -2848,7 +2778,7 @@ public class AwAutofillTest extends AwParameterizedTest {
                                 .simulateMainFrameAutofillServerResponseForTesting(
                                         mAwContents.getWebContents(),
                                         new String[] {"text1", "text2"},
-                                        new int[] {86 /* USERNAME */, 9 /* EMAIL_ADDRESS */}));
+                                        new int[] {FieldType.USERNAME, FieldType.EMAIL_ADDRESS}));
 
         int cnt = 0;
         executeJavaScriptAndWaitForResult("document.getElementById('text1').select();");
@@ -2858,7 +2788,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2906,10 +2835,7 @@ public class AwAutofillTest extends AwParameterizedTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView"})
-    @CommandLineFlags.Add({
-        "enable-features=AutofillFixValueSemantics",
-        "disable-features=AutofillServerCommunication"
-    })
+    @CommandLineFlags.Add({"disable-features=AutofillServerCommunication"})
     public void testServerPredictionArrivesAfterAutofillStart() throws Throwable {
         loadHTML(
                 """
@@ -2925,7 +2851,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -2979,8 +2904,8 @@ public class AwAutofillTest extends AwParameterizedTest {
                                         mAwContents.getWebContents(),
                                         new String[] {"text1", "text2"},
                                         new int[][] {
-                                            {86 /* USERNAME */, 9 /* EMAIL_ADDRESS */},
-                                            {9 /* EMAIL_ADDRESS */}
+                                            {FieldType.USERNAME, FieldType.EMAIL_ADDRESS},
+                                            {FieldType.EMAIL_ADDRESS}
                                         }));
 
         cnt += waitForCallbackAndVerifyTypes(cnt, new Integer[] {AUTOFILL_PREDICTIONS_AVAILABLE});
@@ -2990,23 +2915,20 @@ public class AwAutofillTest extends AwParameterizedTest {
         assertEquals(2, viewTypes.size());
         assertEquals(viewStructure.getChild(0).getAutofillId(), viewTypes.get(0).mAutofillId);
         assertEquals("USERNAME", viewTypes.get(0).mServerType);
-        assertEquals("USERNAME", viewTypes.get(0).mComputedType);
+        assertEquals("USERNAME", viewTypes.get(0).mOverallType);
         assertArrayEquals(
                 new String[] {"USERNAME", "EMAIL_ADDRESS"},
                 viewTypes.get(0).getServerPredictions());
         assertEquals(viewStructure.getChild(1).getAutofillId(), viewTypes.get(1).mAutofillId);
         assertEquals("EMAIL_ADDRESS", viewTypes.get(1).mServerType);
-        assertEquals("HTML_TYPE_EMAIL", viewTypes.get(1).mComputedType);
+        assertEquals("HTML_TYPE_EMAIL", viewTypes.get(1).mOverallType);
         assertArrayEquals(new String[] {"EMAIL_ADDRESS"}, viewTypes.get(1).getServerPredictions());
     }
 
     @Test
     @SmallTest
     @Feature({"AndroidWebView"})
-    @CommandLineFlags.Add({
-        "enable-features=AutofillFixValueSemantics",
-        "disable-features=AutofillServerCommunication"
-    })
+    @CommandLineFlags.Add({"disable-features=AutofillServerCommunication"})
     public void testServerPredictionPrimaryTypeArrivesAfterAutofillStart() throws Throwable {
         loadHTML(
                 """
@@ -3022,7 +2944,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -3075,7 +2996,7 @@ public class AwAutofillTest extends AwParameterizedTest {
                                 .simulateMainFrameAutofillServerResponseForTesting(
                                         mAwContents.getWebContents(),
                                         new String[] {"text1", "text2"},
-                                        new int[] {86 /* USERNAME */, 9 /* EMAIL_ADDRESS */}));
+                                        new int[] {FieldType.USERNAME, FieldType.EMAIL_ADDRESS}));
 
         cnt += waitForCallbackAndVerifyTypes(cnt, new Integer[] {AUTOFILL_PREDICTIONS_AVAILABLE});
         assertTrue(mTestAutofillManagerWrapper.isQuerySucceed());
@@ -3084,21 +3005,18 @@ public class AwAutofillTest extends AwParameterizedTest {
         assertEquals(2, viewTypes.size());
         assertEquals(viewStructure.getChild(0).getAutofillId(), viewTypes.get(0).mAutofillId);
         assertEquals("USERNAME", viewTypes.get(0).mServerType);
-        assertEquals("USERNAME", viewTypes.get(0).mComputedType);
+        assertEquals("USERNAME", viewTypes.get(0).mOverallType);
         assertArrayEquals(new String[] {"USERNAME"}, viewTypes.get(0).getServerPredictions());
         assertEquals(viewStructure.getChild(1).getAutofillId(), viewTypes.get(1).mAutofillId);
         assertEquals("EMAIL_ADDRESS", viewTypes.get(1).mServerType);
-        assertEquals("HTML_TYPE_EMAIL", viewTypes.get(1).mComputedType);
+        assertEquals("HTML_TYPE_EMAIL", viewTypes.get(1).mOverallType);
         assertArrayEquals(new String[] {"EMAIL_ADDRESS"}, viewTypes.get(1).getServerPredictions());
     }
 
     @Test
     @SmallTest
     @Feature({"AndroidWebView"})
-    @CommandLineFlags.Add({
-        "enable-features=AutofillFixValueSemantics",
-        "disable-features=AutofillServerCommunication"
-    })
+    @CommandLineFlags.Add({"disable-features=AutofillServerCommunication"})
     public void testServerPredictionArrivesBeforeCallbackRegistered() throws Throwable {
         loadHTML(
                 """
@@ -3114,7 +3032,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -3162,8 +3079,8 @@ public class AwAutofillTest extends AwParameterizedTest {
                                         mAwContents.getWebContents(),
                                         new String[] {"text1", "text2"},
                                         new int[][] {
-                                            {86 /* USERNAME */, 9 /* EMAIL_ADDRESS */},
-                                            {9 /* EMAIL_ADDRESS */}
+                                            {FieldType.USERNAME, FieldType.EMAIL_ADDRESS},
+                                            {FieldType.EMAIL_ADDRESS}
                                         }));
 
         cnt += waitForCallbackAndVerifyTypes(cnt, new Integer[] {AUTOFILL_PREDICTIONS_AVAILABLE});
@@ -3179,13 +3096,13 @@ public class AwAutofillTest extends AwParameterizedTest {
         assertEquals(2, viewTypes.size());
         assertEquals(viewStructure.getChild(0).getAutofillId(), viewTypes.get(0).mAutofillId);
         assertEquals("USERNAME", viewTypes.get(0).mServerType);
-        assertEquals("USERNAME", viewTypes.get(0).mComputedType);
+        assertEquals("USERNAME", viewTypes.get(0).mOverallType);
         assertArrayEquals(
                 new String[] {"USERNAME", "EMAIL_ADDRESS"},
                 viewTypes.get(0).getServerPredictions());
         assertEquals(viewStructure.getChild(1).getAutofillId(), viewTypes.get(1).mAutofillId);
         assertEquals("EMAIL_ADDRESS", viewTypes.get(1).mServerType);
-        assertEquals("HTML_TYPE_EMAIL", viewTypes.get(1).mComputedType);
+        assertEquals("HTML_TYPE_EMAIL", viewTypes.get(1).mOverallType);
         assertArrayEquals(new String[] {"EMAIL_ADDRESS"}, viewTypes.get(1).getServerPredictions());
     }
 
@@ -3212,7 +3129,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -3275,7 +3191,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -3357,7 +3272,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -3418,7 +3332,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -3458,7 +3371,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                 waitForCallbackAndVerifyTypes(
                         cnt,
                         new Integer[] {
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -3473,7 +3385,6 @@ public class AwAutofillTest extends AwParameterizedTest {
                         cnt,
                         new Integer[] {
                             AUTOFILL_VIEW_EXITED,
-                            AUTOFILL_CANCEL_PRE_P,
                             AUTOFILL_VIEW_ENTERED,
                             AUTOFILL_SESSION_STARTED,
                             AUTOFILL_VALUE_CHANGED
@@ -3538,6 +3449,9 @@ public class AwAutofillTest extends AwParameterizedTest {
         mRule.loadUrlSync(
                 mTestContainerView.getAwContents(), mContentsClient.getOnPageFinishedHelper(), url);
         done.waitForCallback(callCount);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> WebContentsUtils.simulateEndOfPaintHolding(mAwContents.getWebContents()));
     }
 
     private void reloadSync() throws Exception {
@@ -3597,18 +3511,7 @@ public class AwAutofillTest extends AwParameterizedTest {
     private int waitForCallbackAndVerifyTypes(int currentCallCount, Integer[] expectedEventArray)
             throws TimeoutException {
         Integer[] adjustedEventArray;
-        ArrayList<Integer> adjusted = new ArrayList<>();
-            for (Integer event : expectedEventArray) {
-            // Filter out AUTOFILL_CANCEL_PRE_P.
-            // TODO(b/326551145): clean that up once we stop supporting android O.
-            if (event == AUTOFILL_CANCEL_PRE_P) {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-                    adjusted.add(AUTOFILL_CANCEL);
-                }
-                continue;
-            }
-            adjusted.add(event);
-        }
+        ArrayList<Integer> adjusted = new ArrayList<>(Arrays.asList(expectedEventArray));
 
         adjustedEventArray = new Integer[adjusted.size()];
         adjusted.toArray(adjustedEventArray);

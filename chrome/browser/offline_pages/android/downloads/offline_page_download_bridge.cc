@@ -48,6 +48,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/download_request_utils.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -315,6 +316,12 @@ void OnOfflinePageAcquireFileAccessPermissionDone(
     return;
   }
 
+  // Off the record save page are handled separately.
+  if (web_contents->GetBrowserContext()->IsOffTheRecord()) {
+    web_contents->OnSavePage();
+    return;
+  }
+
   // Otherwise, save the HTML page as archive.
   GURL original_url =
       offline_pages::OfflinePageUtils::GetOriginalURLFromWebContents(
@@ -358,13 +365,12 @@ void InitializeBackendOnProfileCreated(Profile* profile) {
 
 OfflinePageDownloadBridge::OfflinePageDownloadBridge(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj)
+    const base::android::JavaParamRef<jobject>& obj)
     : weak_java_ref_(env, obj) {}
 
 OfflinePageDownloadBridge::~OfflinePageDownloadBridge() = default;
 
-void OfflinePageDownloadBridge::Destroy(JNIEnv* env,
-                                        const JavaParamRef<jobject>&) {
+void OfflinePageDownloadBridge::Destroy(JNIEnv* env) {
   delete this;
 }
 
@@ -394,7 +400,7 @@ void JNI_OfflinePageDownloadBridge_StartDownload(
 
 static jlong JNI_OfflinePageDownloadBridge_Init(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
+    const base::android::JavaParamRef<jobject>& obj) {
   ProfileKey* key = ::android::GetLastUsedRegularProfileKey();
   FullBrowserTransitionManager::Get()->RegisterCallbackOnProfileCreation(
       key, base::BindOnce(&InitializeBackendOnProfileCreated));

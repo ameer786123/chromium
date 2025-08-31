@@ -6,13 +6,17 @@
 #include "build/build_config.h"
 #include "cc/base/features.h"
 #include "cc/paint/record_paint_canvas.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/web_coalesced_input_event.h"
+#include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
 #include "third_party/blink/public/common/input/web_pointer_properties.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/public/platform/web_theme_engine.h"
 #include "third_party/blink/public/web/web_script_source.h"
+#include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
+#include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
@@ -26,6 +30,7 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
+#include "third_party/blink/renderer/core/scroll/mac_scrollbar_animator.h"
 #include "third_party/blink/renderer/core/scroll/scroll_types.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme_overlay_mock.h"
 #include "third_party/blink/renderer/core/testing/color_scheme_helper.h"
@@ -171,6 +176,21 @@ class ScrollbarsTest : public PaintTestConfigurations, public SimTest {
     GetEventHandler().HandleMousePressEvent(event);
   }
 
+  WebInputEventResult HandleWheelEvent(int x,
+                                       int y,
+                                       int delta_x,
+                                       int delta_y,
+                                       WebMouseWheelEvent::Phase phase) {
+    WebMouseWheelEvent event(
+        WebInputEvent::Type::kMouseWheel, blink::WebInputEvent::kNoModifiers,
+        blink::WebInputEvent::GetStaticTimeStampForTests());
+    event.SetPositionInWidget(x, y);
+    event.delta_x = delta_x;
+    event.delta_y = delta_y;
+    event.phase = phase;
+    return GetEventHandler().HandleWheelEvent(event);
+  }
+
   void HandleContextMenuEvent(int x, int y) {
     WebMouseEvent event(
         WebInputEvent::Type::kMouseDown, gfx::PointF(x, y), gfx::PointF(x, y),
@@ -311,9 +331,9 @@ class ScrollbarsTestWithVirtualTimer : public ScrollbarsTest {
     TimeAdvance();
     scheduler::GetSingleThreadTaskRunnerForTesting()->PostDelayedTask(
         FROM_HERE,
-        WTF::BindOnce(
+        blink::BindOnce(
             &ScrollbarsTestWithVirtualTimer::StopVirtualTimeAndExitRunLoop,
-            WTF::Unretained(this), loop.QuitClosure()),
+            Unretained(this), loop.QuitClosure()),
         delay);
     loop.Run();
   }
@@ -1006,7 +1026,7 @@ TEST_P(ScrollbarsTest, MouseOverCustomScrollbarTrackPieceWithCustomCursor) {
 
   Element* div = document.getElementById(AtomicString("d1"));
 
-  div->scrollTo(0, 100);
+  div->scrollToForTesting(0, 100);
   // Ensure hittest has DIV and scrollbar.
   HitTestResult hit_test_result = HitTest(195, 5);
 
@@ -3519,6 +3539,136 @@ TEST_P(ScrollbarsTestWithVirtualTimer,
   GetWebFrameWidget().FlushInputHandlerTasks();
 }
 
+#if BUILDFLAG(IS_MAC)
+class MockMacScrollbarAnimator : public MacScrollbarAnimator {
+ public:
+  MockMacScrollbarAnimator() = default;
+  virtual ~MockMacScrollbarAnimator() = default;
+
+  void MouseEnteredScrollbar(Scrollbar&) const override {}
+  void MouseExitedScrollbar(Scrollbar&) const override {}
+
+  void DidAddVerticalScrollbar(Scrollbar&) override {}
+  void WillRemoveVerticalScrollbar(Scrollbar&) override {}
+  void DidAddHorizontalScrollbar(Scrollbar&) override {}
+  void WillRemoveHorizontalScrollbar(Scrollbar&) override {}
+
+  void DidChangeUserVisibleScrollOffset(const ScrollOffset&) override {}
+
+  void Dispose() override {}
+
+  MOCK_METHOD0(FadeInScrollbarIfExists, bool());
+};
+
+TEST_P(ScrollbarsTestWithVirtualTimer,
+       FadeInOverlayScrollbarWhenMouseWheelEventMayBeginPhase) {
+  WebView().MainFrameViewWidget()->Resize(gfx::Size(800, 600));
+  SimRequest request("https://example.com/test.html", "text/html");
+  LoadURL("https://example.com/test.html");
+  request.Complete(R"HTML(
+    <!DOCTYPE html>
+    <style> body { height: 3000px; } </style>)HTML");
+  Compositor().BeginFrame();
+
+  ScrollableArea* scrollable_area = GetDocument().View()->LayoutViewport();
+  DCHECK(scrollable_area);
+
+  HitTestResult hit_test_result = HitTest(100, 100);
+  EXPECT_EQ(hit_test_result.InnerElement(), GetDocument().body());
+  EXPECT_EQ(scrollable_area,
+            HitTestResult::GetScrollableArea(GetDocument().body()));
+
+  EXPECT_EQ(
+      WebInputEventResult::kNotHandled,
+      HandleWheelEvent(100, 100, 0, 0, WebMouseWheelEvent::kPhaseMayBegin));
+
+  auto* scrollbar_animator = MakeGarbageCollected<MockMacScrollbarAnimator>();
+  scrollable_area->SetMacScrollbarAnimatorForTesting(scrollbar_animator);
+
+  EXPECT_CALL(*scrollbar_animator, FadeInScrollbarIfExists).Times(0);
+  EXPECT_EQ(
+      WebInputEventResult::kNotHandled,
+      HandleWheelEvent(100, 100, 0, 0, WebMouseWheelEvent::kPhaseMayBegin));
+  testing::Mock::VerifyAndClearExpectations(scrollbar_animator);
+
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      blink::features::kFadeInScrollbarWhenMouseWheelMayBegin);
+
+  bool did_fade_in = false;
+  auto fade_in_scrollbar = [&did_fade_in]() -> bool { return did_fade_in; };
+
+  EXPECT_CALL(*scrollbar_animator, FadeInScrollbarIfExists)
+      .WillOnce(fade_in_scrollbar);
+  EXPECT_EQ(
+      WebInputEventResult::kNotHandled,
+      HandleWheelEvent(100, 100, 0, 0, WebMouseWheelEvent::kPhaseMayBegin));
+  testing::Mock::VerifyAndClearExpectations(scrollbar_animator);
+
+  did_fade_in = true;
+  EXPECT_CALL(*scrollbar_animator, FadeInScrollbarIfExists)
+      .WillOnce(fade_in_scrollbar);
+  EXPECT_EQ(
+      WebInputEventResult::kHandledSystem,
+      HandleWheelEvent(100, 100, 0, 0, WebMouseWheelEvent::kPhaseMayBegin));
+  testing::Mock::VerifyAndClearExpectations(scrollbar_animator);
+}
+
+TEST_P(ScrollbarsTestWithVirtualTimer,
+       FadeInOverlayScrollbarWhenMouseWheelEventMayBeginPhaseOnSlottedText) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      blink::features::kFadeInScrollbarWhenMouseWheelMayBegin);
+
+  WebView().MainFrameViewWidget()->Resize(gfx::Size(800, 600));
+  SimRequest request("https://example.com/test.html", "text/html");
+  LoadURL("https://example.com/test.html");
+  request.Complete(R"HTML(
+    <!DOCTYPE html>
+    <style> body { font-size: 100px; } </style>
+    <test-element id="test-element">test</test-element>
+    <template id="template"><slot id="test-slot"></slot></template>
+    <script>
+      class TestElement extends HTMLElement {
+        constructor() {
+          super();
+          const shadow = this.attachShadow({ mode: 'open' });
+          const tpl = document.getElementById('template');
+          shadow.appendChild(tpl.content.cloneNode(true));
+        }
+      }
+      customElements.define('test-element', TestElement);
+    </script>
+  )HTML");
+  Compositor().BeginFrame();
+
+  auto* test_slot = DynamicTo<HTMLSlotElement>(
+      GetDocument()
+          .getElementById(AtomicString("test-element"))
+          ->GetShadowRoot()
+          ->getElementById(AtomicString("test-slot")));
+  EXPECT_EQ(nullptr, HitTestResult::GetScrollableArea(test_slot));
+
+  HitTestResult hit_test_result = HitTest(50, 50);
+  EXPECT_EQ(test_slot->FirstAssignedNode(), hit_test_result.InnerNode());
+
+  ScrollableArea* scrollable_area = GetDocument().View()->LayoutViewport();
+  DCHECK(scrollable_area);
+
+  EXPECT_EQ(scrollable_area,
+            HitTestResult::GetScrollableArea(hit_test_result.InnerNode()));
+
+  auto* scrollbar_animator = MakeGarbageCollected<MockMacScrollbarAnimator>();
+  scrollable_area->SetMacScrollbarAnimatorForTesting(scrollbar_animator);
+
+  EXPECT_CALL(*scrollbar_animator, FadeInScrollbarIfExists)
+      .WillOnce([]() -> bool { return true; });
+  EXPECT_EQ(WebInputEventResult::kHandledSystem,
+            HandleWheelEvent(50, 50, 0, 0, WebMouseWheelEvent::kPhaseMayBegin));
+  testing::Mock::VerifyAndClearExpectations(scrollbar_animator);
+}
+#endif  // BUILDFLAG(IS_MAC)
+
 class ScrollbarTrackMarginsTest : public ScrollbarsTest {
  public:
   void PrepareTest(const String& track_style) {
@@ -4038,7 +4188,10 @@ TEST_P(ScrollbarsTest, ScrollbarsRestoredAfterCapturePaintPreview) {
   content_div->setInnerText("B");
 
   cc::RecordPaintCanvas canvas;
-  MainFrame().CapturePaintPreview(gfx::Rect(1000, 1000), &canvas, false, false);
+  MainFrame().CapturePaintPreview(gfx::Rect(1000, 1000), &canvas,
+                                  /*include_linked_destinations=*/false,
+                                  /*skip_accelerated_content=*/false,
+                                  /*allow_scrollbars=*/false);
 
   // Scrollbars are removed during the capture (see LocalFrame::ClipsContent).
   ASSERT_FALSE(layout_viewport->VerticalScrollbar() ||
@@ -4049,6 +4202,150 @@ TEST_P(ScrollbarsTest, ScrollbarsRestoredAfterCapturePaintPreview) {
   Compositor().BeginFrame();
   ASSERT_TRUE(layout_viewport->VerticalScrollbar() &&
               layout_viewport->HorizontalScrollbar());
+
+  // Hover the vertical scrollbar thumb.
+  HandleMouseMoveEvent(795, 100);
+  auto* scrollbar = layout_viewport->VerticalScrollbar();
+  ASSERT_EQ(kThumbPart, scrollbar->HoveredPart());
+
+  // Make sure we invoked SetNeedsDisplay on the scrollbar's cc::Layer. If this
+  // was successful, we will have cleared the Scrollbar::needs_update_display_
+  // bit in ScrollableArea::SetScrollbarNeedsPaintInvalidation.
+  ASSERT_FALSE(scrollbar->NeedsUpdateDisplay());
+}
+
+TEST_P(ScrollbarsTest, OverlayScrollbarsRestoredAfterCapturePaintPreview) {
+  ENABLE_OVERLAY_SCROLLBARS(true);
+
+  ResizeView(gfx::Size(800, 600));
+  SimRequest request("https://example.com/test.html", "text/html");
+  LoadURL("https://example.com/test.html");
+  request.Complete(R"HTML(
+    <!DOCTYPE html>
+    <style>
+      body {
+        margin: 0;
+      }
+      #content {
+        width: 1200px;
+        height: 1200px;
+      }
+    </style>
+    <div id="content">A</div>
+  )HTML");
+  Compositor().BeginFrame();
+
+  Document& document = GetDocument();
+  LocalFrameView* frame_view = document.View();
+  PaintLayerScrollableArea* layout_viewport = frame_view->LayoutViewport();
+  HTMLElement* content_div =
+      To<HTMLElement>(document.getElementById(AtomicString("content")));
+
+  ASSERT_TRUE(layout_viewport->VerticalScrollbar() &&
+              layout_viewport->HorizontalScrollbar());
+
+  // Make layout dirty.
+  content_div->setInnerText("B");
+
+  cc::RecordPaintCanvas canvas;
+  MainFrame().CapturePaintPreview(gfx::Rect(1000, 1000), &canvas,
+                                  /*include_linked_destinations=*/false,
+                                  /*skip_accelerated_content=*/false,
+                                  /*allow_scrollbars=*/false);
+
+  // Scrollbars are removed during the capture (see LocalFrame::ClipsContent).
+  ASSERT_FALSE(layout_viewport->VerticalScrollbar() ||
+               layout_viewport->HorizontalScrollbar());
+  ASSERT_TRUE(frame_view->NeedsLayout());
+
+  // Update lifecycle to restore the scrollbars.
+  Compositor().BeginFrame();
+  ASSERT_TRUE(layout_viewport->VerticalScrollbar() &&
+              layout_viewport->HorizontalScrollbar());
+}
+
+TEST_P(ScrollbarsTest, CapturePaintPreviewWithScrollbarsEnabled) {
+  ENABLE_OVERLAY_SCROLLBARS(false);
+
+  ResizeView(gfx::Size(800, 600));
+  SimRequest request("https://example.com/test.html", "text/html");
+  LoadURL("https://example.com/test.html");
+  request.Complete(R"HTML(
+    <!DOCTYPE html>
+    <style>
+      body {
+        margin: 0;
+      }
+      #content {
+        width: 1200px;
+        height: 1200px;
+      }
+    </style>
+    <div id="content">A</div>
+  )HTML");
+  Compositor().BeginFrame();
+
+  Document& document = GetDocument();
+  LocalFrameView* frame_view = document.View();
+  PaintLayerScrollableArea* layout_viewport = frame_view->LayoutViewport();
+
+  ASSERT_TRUE(layout_viewport->VerticalScrollbar() &&
+              layout_viewport->HorizontalScrollbar());
+
+  cc::RecordPaintCanvas canvas;
+  MainFrame().CapturePaintPreview(
+      gfx::Rect(1000, 1000), &canvas, /*include_linked_destinations=*/false,
+      /*skip_accelerated_content=*/false, /*allow_scrollbars=*/true);
+
+  // Scrollbars are allowed during the capture (see LocalFrame::ClipsContent).
+  ASSERT_TRUE(layout_viewport->VerticalScrollbar() &&
+              layout_viewport->HorizontalScrollbar());
+
+  // Relayout will not be needed if scrollbars are allowed in capture paint
+  // preview.
+  ASSERT_FALSE(frame_view->NeedsLayout());
+}
+
+TEST_P(ScrollbarsTest, CapturePaintPreviewWithOverlayScrollbarsEnabled) {
+  ENABLE_OVERLAY_SCROLLBARS(true);
+
+  ResizeView(gfx::Size(800, 600));
+  SimRequest request("https://example.com/test.html", "text/html");
+  LoadURL("https://example.com/test.html");
+  request.Complete(R"HTML(
+    <!DOCTYPE html>
+    <style>
+      body {
+        margin: 0;
+      }
+      #content {
+        width: 1200px;
+        height: 1200px;
+      }
+    </style>
+    <div id="content">A</div>
+  )HTML");
+  Compositor().BeginFrame();
+
+  Document& document = GetDocument();
+  LocalFrameView* frame_view = document.View();
+  PaintLayerScrollableArea* layout_viewport = frame_view->LayoutViewport();
+
+  ASSERT_TRUE(layout_viewport->VerticalScrollbar() &&
+              layout_viewport->HorizontalScrollbar());
+
+  cc::RecordPaintCanvas canvas;
+  MainFrame().CapturePaintPreview(
+      gfx::Rect(1000, 1000), &canvas, /*include_linked_destinations=*/false,
+      /*skip_accelerated_content=*/false, /*allow_scrollbars=*/true);
+
+  // Scrollbars are allowed during the capture (see LocalFrame::ClipsContent).
+  ASSERT_TRUE(layout_viewport->VerticalScrollbar() &&
+              layout_viewport->HorizontalScrollbar());
+
+  // Relayout will not be needed if scrollbars are allowed in capture paint
+  // preview.
+  ASSERT_FALSE(frame_view->NeedsLayout());
 }
 
 // Tests that when overlay scrollbars are on, Scrollbar::UsedColorScheme follows

@@ -28,38 +28,41 @@ public class TrustedCdn extends TabWebContentsUserData {
     private final long mNativeTrustedCdn;
 
     /**
-     * UnownedUserData shared across all tabs to get the publisher url visibility.
-     * This hangs off of an activity via WindowAndroid.
+     * UnownedUserData shared across all tabs to get the publisher url visibility. This hangs off of
+     * an activity via WindowAndroid.
      */
-    public static interface PublisherUrlVisibility extends UnownedUserData {
+    public interface PublisherUrlVisibility extends UnownedUserData {
         /** The key for accessing this object on an {@link UnownedUserDataHost}. */
-        public static final UnownedUserDataKey<PublisherUrlVisibility> KEY =
+        UnownedUserDataKey<PublisherUrlVisibility> KEY =
                 new UnownedUserDataKey<>(PublisherUrlVisibility.class);
 
         /**
-         * Get the Activity's {@link PublisherUrlVisibility} from the provided
-         * {@link WindowAndroid}.
+         * Get the Activity's {@link PublisherUrlVisibility} from the provided {@link
+         * WindowAndroid}.
+         *
          * @param window The window to get the validator from.
          * @return The Activity's {@link PublisherUrlVisibility}.
          */
-        public static @Nullable PublisherUrlVisibility from(WindowAndroid window) {
+        static @Nullable PublisherUrlVisibility from(WindowAndroid window) {
             return KEY.retrieveDataFromHost(window.getUnownedUserDataHost());
         }
 
         /**
          * Make this instance of PublisherUrlVisibility available through the activity's window.
+         *
          * @param window A {@link WindowAndroid} to attach to.
          * @param validator The {@link PublisherUrlVisibility} to attach.
          */
-        public static void attach(WindowAndroid window, PublisherUrlVisibility validator) {
+        static void attach(WindowAndroid window, PublisherUrlVisibility validator) {
             KEY.attachToHost(window.getUnownedUserDataHost(), validator);
         }
 
         /**
          * Detach the provided PublisherUrlVisibility from any host it is associated with.
+         *
          * @param validator The {@link PublisherUrlVisibility} to detach.
          */
-        public static void detach(PublisherUrlVisibility validator) {
+        static void detach(PublisherUrlVisibility validator) {
             KEY.detachFromAllHosts(validator);
         }
 
@@ -114,22 +117,22 @@ public class TrustedCdn extends TabWebContentsUserData {
     private TrustedCdn(Tab tab) {
         super(tab);
         mTab = tab;
-        mNativeTrustedCdn = TrustedCdnJni.get().init(TrustedCdn.this);
+        mNativeTrustedCdn = TrustedCdnJni.get().init(this);
     }
 
     @Override
     public void initWebContents(WebContents webContents) {
-        TrustedCdnJni.get().setWebContents(mNativeTrustedCdn, TrustedCdn.this, webContents);
+        TrustedCdnJni.get().setWebContents(mNativeTrustedCdn, webContents);
     }
 
     @Override
     public void cleanupWebContents(@Nullable WebContents webContents) {
-        TrustedCdnJni.get().resetWebContents(mNativeTrustedCdn, TrustedCdn.this);
+        TrustedCdnJni.get().resetWebContents(mNativeTrustedCdn);
     }
 
     @Override
     public void destroyInternal() {
-        TrustedCdnJni.get().onDestroyed(mNativeTrustedCdn, TrustedCdn.this);
+        TrustedCdnJni.get().onDestroyed(mNativeTrustedCdn);
     }
 
     @VisibleForTesting
@@ -152,13 +155,13 @@ public class TrustedCdn extends TabWebContentsUserData {
 
     @NativeMethods
     public interface Natives {
-        long init(TrustedCdn caller);
+        long init(TrustedCdn self);
 
-        void onDestroyed(long nativeTrustedCdn, TrustedCdn caller);
+        void onDestroyed(long nativeTrustedCdn);
 
-        void setWebContents(long nativeTrustedCdn, TrustedCdn caller, WebContents webContents);
+        void setWebContents(long nativeTrustedCdn, WebContents webContents);
 
-        void resetWebContents(long nativeTrustedCdn, TrustedCdn caller);
+        void resetWebContents(long nativeTrustedCdn);
 
         GURL getPublisherUrl(long nativeTrustedCdn);
     }

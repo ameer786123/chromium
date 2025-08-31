@@ -11,7 +11,6 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/no_destructor.h"
-#include "base/not_fatal_until.h"
 #include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
@@ -152,9 +151,11 @@ ExtensionsToolbarContainer::ExtensionsToolbarContainer(Browser* browser,
                                views::MaximumFlexSizeRule::kPreferred)
           .WithWeight(0);
   GetTargetLayoutManager()
-      ->SetFlexAllocationOrder(views::FlexAllocationOrder::kReverse)
+      ->SetFlexAllocationOrder(views::FlexAllocationOrder::kNormal)
       .SetDefault(views::kFlexBehaviorKey,
-                  hide_icon_flex_specification.WithOrder(3));
+                  hide_icon_flex_specification.WithOrder(
+                      ExtensionsToolbarContainerViewController::
+                          kFlexOrderExtensionsButton));
 
   switch (display_mode) {
     case DisplayMode::kNormal:
@@ -212,7 +213,7 @@ ExtensionsToolbarContainer::~ExtensionsToolbarContainer() {
     widgets.push_back(anchored_widget.widget);
   }
   for (auto* widget : widgets) {
-    widget->Close();
+    widget->CloseNow();
   }
   // The widgets should close synchronously (resulting in OnWidgetClosing()),
   // so |anchored_widgets_| should now be empty.
@@ -261,7 +262,7 @@ void ExtensionsToolbarContainer::RemoveAction(
 
   auto iter = std::ranges::find(actions_, action_id,
                                 &ToolbarActionViewController::GetId);
-  CHECK(iter != actions_.end(), base::NotFatalUntil::M130);
+  CHECK(iter != actions_.end());
   // Ensure the action outlives the UI element to perform any cleanup.
   std::unique_ptr<ToolbarActionViewController> controller = std::move(*iter);
   actions_.erase(iter);
@@ -356,7 +357,7 @@ void ExtensionsToolbarContainer::UpdateRequestAccessButton(
 
   // Extensions are included in the request access button only when:
   //   - site allows customizing site access by extension
-  //   - extension added a request that has not been dismised
+  //   - extension added a request that has not been dismissed
   //   - requests can be shown in the toolbar
   std::vector<extensions::ExtensionId> extensions;
   if (site_setting ==
@@ -470,6 +471,10 @@ bool ExtensionsToolbarContainer::ShouldForceVisibility(
 
 void ExtensionsToolbarContainer::UpdateIconVisibility(
     const std::string& extension_id) {
+  if (!GetWidget() || GetWidget()->IsClosed()) {
+    return;
+  }
+
   ToolbarActionView* const action_view = GetViewForId(extension_id);
   if (!action_view) {
     return;
@@ -663,7 +668,7 @@ void ExtensionsToolbarContainer::ShowToolbarActionBubble(
   views::Widget* const widget = views::BubbleDialogDelegateView::CreateBubble(
       std::make_unique<ToolbarActionsBarBubbleViews>(
           anchor_view ? anchor_view : GetExtensionsButton(),
-          anchor_view != nullptr, std::move(controller)));
+          std::move(controller)));
 
   ShowWidgetForExtension(widget, extension_id);
 }
@@ -737,6 +742,21 @@ gfx::Size ExtensionsToolbarContainer::GetToolbarActionSize() {
   return browser_view
              ? browser_view->toolbar_button_provider()->GetToolbarButtonSize()
              : kDefaultSize;
+}
+
+void ExtensionsToolbarContainer::MovePinnedActionBy(
+    const std::string& action_id,
+    int move_by) {
+  auto iter = std::ranges::find(model_->pinned_action_ids(), action_id);
+  CHECK(iter != model_->pinned_action_ids().cend());
+  int current_index = iter - model_->pinned_action_ids().cbegin();
+  int new_index =
+      std::clamp(current_index + move_by, 0,
+                 static_cast<int>(model_->pinned_action_ids().size()) - 1);
+  if (new_index == current_index) {
+    return;
+  }
+  model_->MovePinnedAction(action_id, new_index);
 }
 
 void ExtensionsToolbarContainer::WriteDragDataForView(
@@ -884,11 +904,13 @@ views::View::DropCallback ExtensionsToolbarContainer::GetDropCallback(
 void ExtensionsToolbarContainer::OnWidgetDestroying(views::Widget* widget) {
   auto iter =
       std::ranges::find(anchored_widgets_, widget, &AnchoredWidget::widget);
-  CHECK(iter != anchored_widgets_.end(), base::NotFatalUntil::M130);
+  CHECK(iter != anchored_widgets_.end());
   iter->widget->RemoveObserver(this);
   const std::string extension_id = std::move(iter->extension_id);
   anchored_widgets_.erase(iter);
-  UpdateIconVisibility(extension_id);
+  if (GetWidget() && !GetWidget()->IsClosed()) {
+    UpdateIconVisibility(extension_id);
+  }
 }
 
 size_t ExtensionsToolbarContainer::WidthToIconCount(int x_offset) {
@@ -985,12 +1007,13 @@ void ExtensionsToolbarContainer::OnMenuOpening() {
   // Record IPH usage, which should only be shown when any extension has access.
   if (GetExtensionsButton()->state() ==
       ExtensionsToolbarButton::State::kAnyExtensionHasAccess) {
-    browser_->window()->NotifyFeaturePromoFeatureUsed(
-        feature_engagement::kIPHExtensionsMenuFeature,
-        FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
+    BrowserUserEducationInterface::From(browser_)
+        ->NotifyFeaturePromoFeatureUsed(
+            feature_engagement::kIPHExtensionsMenuFeature,
+            FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   } else {
     // Otherwise, just close the IPH if it's present.
-    browser_->window()->AbortFeaturePromo(
+    BrowserUserEducationInterface::From(browser_)->AbortFeaturePromo(
         feature_engagement::kIPHExtensionsMenuFeature);
   }
 

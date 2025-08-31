@@ -16,7 +16,7 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history_embeddings/history_embeddings_features.h"
 #include "components/history_embeddings/history_embeddings_service.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
 #include "components/page_content_annotations/core/page_content_annotations_features.h"
 #include "components/page_content_annotations/core/page_content_annotations_service.h"
 #include "components/page_content_annotations/core/test_page_content_annotator.h"
@@ -96,7 +96,7 @@ class HistoryEmbeddingsInteractiveTest
 
 // TODO(crbug.com/374710231): Reenable - currently, this fails consistently on
 // Win11 ARM debug builds.
-#if BUILDFLAG(IS_WIN) && defined(ARCH_CPU_ARM64)
+#if (BUILDFLAG(IS_WIN) && defined(ARCH_CPU_ARM64)) || BUILDFLAG(IS_MAC)
 #define MAYBE_FeedbackDialog DISABLED_FeedbackDialog
 #else
 #define MAYBE_FeedbackDialog FeedbackDialog
@@ -131,6 +131,7 @@ IN_PROC_BROWSER_TEST_F(HistoryEmbeddingsInteractiveTest, MAYBE_FeedbackDialog) {
       NavigateWebContents(kHistoryTabId,
                           GURL("chrome://history/?q=A+B+C+D+e+f+g")),
       WaitForElementToRender(kHistoryTabId, kThumbsDownElement),
+      ScrollIntoView(kHistoryTabId, kThumbsDownElement),
       MoveMouseTo(kHistoryTabId, kThumbsDownElement), ClickMouse(),
       InAnyContext(WaitForShow(FeedbackDialog::kFeedbackDialogForTesting)));
 }

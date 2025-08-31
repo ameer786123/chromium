@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/data_sharing/collaboration_controller_delegate_desktop.h"
 
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/collaboration/collaboration_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_ui_util.h"
@@ -12,17 +13,23 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/profiles/profile_view_utils.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_action_context_desktop.h"
 #include "chrome/browser/ui/views/data_sharing/account_card_view.h"
 #include "chrome/browser/ui/views/data_sharing/data_sharing_bubble_controller.h"
+#include "chrome/common/webui_url_constants.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/collaboration/public/collaboration_service.h"
 #include "components/collaboration/public/service_status.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
+#include "components/signin/public/identity_manager/account_info.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/dialog_model.h"
 #include "ui/views/bubble/bubble_dialog_model_host.h"
@@ -47,6 +54,12 @@ DialogText GetPromptDialogTextFromStatus(
       title_id = IDS_DATA_SHARING_NEED_SIGN_IN;
       body_id = IDS_DATA_SHARING_NEED_SIGN_IN_BODY;
       ok_button_text_id = IDS_DATA_SHARING_NEED_SIGN_IN_CONTINUE_BUTTON;
+      valid = true;
+      break;
+    case collaboration::SigninStatus::kSigninDisabled:
+      title_id = IDS_DATA_SHARING_SIGNED_OUT;
+      body_id = IDS_DATA_SHARING_SIGNED_OUT_BODY;
+      ok_button_text_id = IDS_DATA_SHARING_SETTINGS;
       valid = true;
       break;
     case collaboration::SigninStatus::kSignedInPaused:
@@ -123,11 +136,16 @@ void CollaborationControllerDelegateDesktop::ShowError(const ErrorInfo& error,
     return;
   }
 
-  ShowErrorDialog();
+  DataSharingBubbleController::From(browser_)->Close();
+
+  ShowErrorDialog(error);
   error_ui_callback_ = std::move(result);
 }
 
 void CollaborationControllerDelegateDesktop::Cancel(ResultCallback result) {
+  if (browser_) {
+    DataSharingBubbleController::From(browser_)->Close();
+  }
   MaybeCloseDialogs();
   std::move(result).Run(CollaborationControllerDelegate::Outcome::kSuccess);
 }
@@ -150,14 +168,11 @@ void CollaborationControllerDelegateDesktop::ShowJoinDialog(
   if (!browser_) {
     return;
   }
-  auto* controller =
-      DataSharingBubbleController::GetOrCreateForBrowser(browser_);
-  controller->SetOnCloseCallback(base::BindOnce(
-      &CollaborationControllerDelegateDesktop::OnJoinDialogClosing,
-      weak_ptr_factory_.GetWeakPtr(), std::move(result)));
-  controller->SetShowErrorDialogCallback(
-      base::BindOnce(&CollaborationControllerDelegateDesktop::ShowErrorDialog,
-                     weak_ptr_factory_.GetWeakPtr()));
+  auto* controller = DataSharingBubbleController::From(browser_);
+  controller->SetJoinCallback(std::move(result));
+  controller->SetShowErrorDialogCallback(base::BindOnce(
+      &CollaborationControllerDelegateDesktop::ShowErrorDialog,
+      weak_ptr_factory_.GetWeakPtr(), ErrorInfo(ErrorInfo::Type::kUnknown)));
 
   data_sharing::RequestInfo request_info(token, data_sharing::FlowType::kJoin);
   controller->Show(request_info);
@@ -173,8 +188,7 @@ void CollaborationControllerDelegateDesktop::ShowShareDialog(
   data_sharing::RequestInfo request_info(
       std::get<tab_groups::LocalTabGroupID>(either_id),
       data_sharing::FlowType::kShare);
-  auto* controller =
-      DataSharingBubbleController::GetOrCreateForBrowser(browser_);
+  auto* controller = DataSharingBubbleController::From(browser_);
   controller->SetOnShareLinkRequestedCallback(std::move(result));
   controller->Show(request_info);
 }
@@ -183,8 +197,7 @@ void CollaborationControllerDelegateDesktop::OnUrlReadyToShare(
     const data_sharing::GroupId& group_id,
     const GURL& url,
     ResultCallback result) {
-  auto* controller =
-      DataSharingBubbleController::GetOrCreateForBrowser(browser_);
+  auto* controller = DataSharingBubbleController::From(browser_);
   controller->OnUrlReadyToShare(url);
   std::move(result).Run(CollaborationControllerDelegate::Outcome::kSuccess);
 }
@@ -229,8 +242,7 @@ void CollaborationControllerDelegateDesktop::ShowManageDialog(
     return;
   }
 
-  auto* controller =
-      DataSharingBubbleController::GetOrCreateForBrowser(browser_);
+  auto* controller = DataSharingBubbleController::From(browser_);
   controller->SetOnCloseCallback(base::BindOnce(
       &CollaborationControllerDelegateDesktop::OnManageDialogClosing,
       weak_ptr_factory_.GetWeakPtr(), std::move(result)));
@@ -255,6 +267,9 @@ void CollaborationControllerDelegateDesktop::PromoteTabGroup(
   if (!browser_) {
     return;
   }
+
+  DataSharingBubbleController::From(browser_)->Close();
+
   // Open tab group by group id.
   tab_groups::TabGroupSyncService* tab_group_sync_service =
       tab_groups::TabGroupSyncServiceFactory::GetForProfile(
@@ -309,20 +324,10 @@ void CollaborationControllerDelegateDesktop::OnBrowserClosing(
   // When the current browser is closing, cancel the flow because we can't show
   // any UI on the current browser.
   if (browser_ == browser) {
+    MaybeCloseDialogs();
     browser_ = nullptr;
     ExitFlow();
   }
-}
-
-void CollaborationControllerDelegateDesktop::OnJoinDialogClosing(
-    ResultCallback result,
-    std::optional<data_sharing::mojom::GroupAction> action,
-    std::optional<data_sharing::mojom::GroupActionProgress> progress) {
-  // Joins flow should end when the shared tab group is open after join
-  // or cancel without joining.
-  // TODO(crbug.org/380287432): Only cancel the flow if user doesn't join the
-  // group.
-  std::move(result).Run(CollaborationControllerDelegate::Outcome::kCancel);
 }
 
 void CollaborationControllerDelegateDesktop::OnManageDialogClosing(
@@ -339,26 +344,39 @@ void CollaborationControllerDelegateDesktop::OnManageDialogClosing(
   }
 }
 
-void CollaborationControllerDelegateDesktop::ShowErrorDialog() {
+void CollaborationControllerDelegateDesktop::ShowErrorDialog(
+    const ErrorInfo& error) {
   if (error_dialog_widget_) {
     return;
   }
 
-  // TODO(crbug.com/366057481): Show more detail errors based on ErrorInfo.
-  std::unique_ptr<ui::DialogModel> dialog_model =
-      ui::DialogModel::Builder()
-          .SetTitle(l10n_util::GetStringUTF16(IDS_DATA_SHARING_SOMETHING_WRONG))
-          .AddParagraph(ui::DialogModelLabel(
-              l10n_util::GetStringUTF16(IDS_DATA_SHARING_SOMETHING_WRONG_BODY)))
-          .AddOkButton(
-              base::BindOnce(
-                  &CollaborationControllerDelegateDesktop::OnErrorDialogOk,
-                  weak_ptr_factory_.GetWeakPtr()),
-              ui::DialogModel::Button::Params()
-                  .SetLabel(l10n_util::GetStringUTF16(IDS_DATA_SHARING_GOT_IT))
-                  .SetEnabled(true)
-                  .SetId(kDataSharingErrorDialogOkButtonElementId))
-          .Build();
+  ui::DialogModel::Builder builder{};
+  builder.SetTitle(base::UTF8ToUTF16(error.error_header))
+      .AddParagraph(ui::DialogModelLabel(base::UTF8ToUTF16(error.error_body)))
+      .AddOkButton(
+          base::BindOnce(
+              error.type() ==
+                      ErrorInfo::Type::kUpdateChromeUiForVersionOutOfDate
+                  ? &CollaborationControllerDelegateDesktop::
+                        OnErrorDialogOkForUpdate
+                  : &CollaborationControllerDelegateDesktop::OnErrorDialogOk,
+              weak_ptr_factory_.GetWeakPtr()),
+          ui::DialogModel::Button::Params()
+              .SetLabel(l10n_util::GetStringUTF16(
+                  error.type() ==
+                          ErrorInfo::Type::kUpdateChromeUiForVersionOutOfDate
+                      ? IDS_SYNC_ERROR_USER_MENU_UPGRADE_BUTTON
+                      : IDS_DATA_SHARING_GOT_IT))
+              .SetEnabled(true)
+              .SetId(kDataSharingErrorDialogOkButtonElementId));
+
+  if (error.type() == ErrorInfo::Type::kUpdateChromeUiForVersionOutOfDate) {
+    builder.AddCancelButton(base::DoNothing(),
+                            ui::DialogModel::Button::Params().SetLabel(
+                                l10n_util::GetStringUTF16(IDS_NOT_NOW)));
+  }
+
+  std::unique_ptr<ui::DialogModel> dialog_model = builder.Build();
   error_dialog_widget_ =
       chrome::ShowBrowserModal(browser_, std::move(dialog_model));
 }
@@ -378,6 +396,9 @@ void CollaborationControllerDelegateDesktop::MaybeShowSignInAndSyncUi() {
     case collaboration::SigninStatus::kNotSignedIn:
       ShowSignInAndSyncUi(profile);
       break;
+    case collaboration::SigninStatus::kSigninDisabled:
+      chrome::ShowSettingsSubPage(browser_, chrome::kSyncSetupSubPage);
+      break;
     case collaboration::SigninStatus::kSignedInPaused:
       signin_ui_util::ShowReauthForAccount(
           profile, GetAccountInfoFromProfile(profile).email,
@@ -389,9 +410,11 @@ void CollaborationControllerDelegateDesktop::MaybeShowSignInAndSyncUi() {
           ShowSignInAndSyncUi(profile);
           break;
         case collaboration::SyncStatus::kSyncWithoutTabGroup:
-          chrome::ShowSettingsSubPage(browser_, chrome::kSyncSetupSubPage);
+          chrome::ShowSettingsSubPage(browser_,
+                                      chrome::kSyncSetupAdvancedSubPage);
           break;
         case collaboration::SyncStatus::kSyncEnabled:
+        case collaboration::SyncStatus::kSyncDisabledByEnterprise:
           NOTREACHED();
       }
       break;
@@ -472,6 +495,17 @@ void CollaborationControllerDelegateDesktop::OnErrorDialogOk() {
     std::move(error_ui_callback_)
         .Run(CollaborationControllerDelegate::Outcome::kSuccess);
   }
+}
+
+void CollaborationControllerDelegateDesktop::OnErrorDialogOkForUpdate() {
+  if (browser_) {
+    NavigateParams params(browser_, GURL("chrome://settings/help"),
+                          ui::PAGE_TRANSITION_LINK);
+    params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+    Navigate(&params);
+  }
+
+  OnErrorDialogOk();
 }
 
 void CollaborationControllerDelegateDesktop::MaybeCloseDialogs() {

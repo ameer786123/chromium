@@ -148,7 +148,7 @@ many of the data classes.
 
 import 'chrome://foo-bar/foo_bar.js';
 
-import {FooBarSearchBoxElement} from 'chrome://foo-bar/foo_bar.js';
+import type {FooBarSearchBoxElement} from 'chrome://foo-bar/foo_bar.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {eventToPromise} from 'chrome://webui-test/test_util.js';
 
@@ -157,13 +157,13 @@ suite('SearchNonEmpty', function() {
 
   setup(function() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
-    const searchBox = document.createElement('foo-bar-search-box');
+    searchBox = document.createElement('foo-bar-search-box');
     document.body.appendChild(searchBox);
 
     // More setup goes here
   });
 
-  test('search abc', async() {
+  test('search abc', async function () {
     const search = searchBox.shadowRoot!.querySelector('input');
     assertTrue(!!search);
     search.value = 'abc';
@@ -172,7 +172,7 @@ suite('SearchNonEmpty', function() {
     // Do some assertions
   });
 
-  test('search def', async () => {
+  test('search def', async function () => {
     // etc
   });
 });
@@ -351,6 +351,21 @@ will often have a need to step through the code in the DevTools debugger, to
 figure out what is happening. Use the `launchDebugger` helper function to do
 that. Detailed instructions on how to use it exist in the source code
 documentation [here] (https://source.chromium.org/chromium/chromium/src/+/main:chrome/test/data/webui/test_util.ts;l=107-144;drc=b1866df4398a971088ba287d4c7efe704f6bc4b1)
+
+### Reporting WebUI test results to LUCI
+
+WebUI test results are automatically reported to LUCI. No special handling is
+required of WebUI test authors.
+
+A single GTest typically reports a single test result. A [new test reporting
+mechanism was
+added](https://chromium-review.googlesource.com/c/chromium/src/+/6358478) to
+support reporting multiple results from a single GTest. Using this mechanism,
+each Mocha JS test can have its own entry in LUCI (see screenshot). The
+integration is accomplished by calling base::AddSubTestResult in
+WebUIMochaBrowserTest.
+
+![screenshot of WebUI JS test results in LUCI UI](images/luci_webui_js_test_results.png)
 
 ### Common errors
 

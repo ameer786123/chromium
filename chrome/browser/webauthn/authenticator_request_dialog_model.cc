@@ -93,17 +93,15 @@ AUTHENTICATOR_EVENTS
 // static
 std::u16string AuthenticatorRequestDialogModel::GetMechanismDescription(
     const device::DiscoverableCredentialMetadata& cred,
-    const std::optional<std::string>& phone_name,
     UIPresentation ui_presentation) {
-  if (cred.source == device::AuthenticatorType::kPhone) {
-    return l10n_util::GetStringFUTF16(IDS_WEBAUTHN_SOURCE_PHONE,
-                                      base::UTF8ToUTF16(*phone_name));
-  }
+  bool immediate_mode = UIPresentation::kModalImmediate == ui_presentation;
   if (cred.provider_name) {
-    return base::UTF8ToUTF16(*cred.provider_name);
+    return immediate_mode ? l10n_util::GetStringFUTF16(
+                                IDS_PASSWORD_MANAGER_PASSKEY_FROM_PROVIDER,
+                                base::UTF8ToUTF16(*cred.provider_name))
+                          : base::UTF8ToUTF16(*cred.provider_name);
   }
   int message;
-  bool immediate_mode = UIPresentation::kModalImmediate == ui_presentation;
   switch (cred.source) {
     case device::AuthenticatorType::kWinNative:
       message = immediate_mode ? IDS_PASSWORD_MANAGER_PASSKEY_FROM_WINDOWS_HELLO
@@ -278,7 +276,6 @@ std::ostream& operator<<(std::ostream& os,
       {Step::kBlePowerOnManual, "kBlePowerOnManual"},
       {Step::kBlePermissionMac, "kBlePermissionMac"},
       {Step::kOffTheRecordInterstitial, "kOffTheRecordInterstitial"},
-      {Step::kPhoneConfirmationSheet, "kPhoneConfirmationSheet"},
       {Step::kCableActivate, "kCableActivate"},
       {Step::kCableV2QRCode, "kCableV2QRCode"},
       {Step::kCableV2Connecting, "kCableV2Connecting"},
@@ -328,12 +325,12 @@ std::ostream& operator<<(std::ostream& os,
 AuthenticatorRequestDialogModel::Mechanism::Mechanism(
     AuthenticatorRequestDialogModel::Mechanism::Type in_type,
     std::u16string in_name,
-    std::u16string in_short_name,
     const gfx::VectorIcon& in_icon,
-    base::RepeatingClosure in_callback)
+    base::RepeatingClosure in_callback,
+    std::u16string in_display_name)
     : type(std::move(in_type)),
       name(std::move(in_name)),
-      short_name(std::move(in_short_name)),
+      display_name(std::move(in_display_name)),
       icon(in_icon),
       callback(std::move(in_callback)) {}
 AuthenticatorRequestDialogModel::Mechanism::~Mechanism() = default;
@@ -341,11 +338,24 @@ AuthenticatorRequestDialogModel::Mechanism::Mechanism(Mechanism&&) = default;
 
 AuthenticatorRequestDialogModel::Mechanism::CredentialInfo::CredentialInfo(
     device::AuthenticatorType source_in,
-    std::vector<uint8_t> user_id_in)
-    : source(source_in), user_id(std::move(user_id_in)) {}
+    std::vector<uint8_t> user_id_in,
+    std::optional<base::Time> last_used_time_in)
+    : source(source_in),
+      user_id(std::move(user_id_in)),
+      last_used_time(last_used_time_in) {}
 AuthenticatorRequestDialogModel::Mechanism::CredentialInfo::CredentialInfo(
     const CredentialInfo&) = default;
 AuthenticatorRequestDialogModel::Mechanism::CredentialInfo::~CredentialInfo() =
     default;
 bool AuthenticatorRequestDialogModel::Mechanism::CredentialInfo::operator==(
     const CredentialInfo&) const = default;
+
+AuthenticatorRequestDialogModel::Mechanism::PasswordInfo::PasswordInfo(
+    std::optional<base::Time> last_used_time_in)
+    : last_used_time(std::move(last_used_time_in)) {}
+AuthenticatorRequestDialogModel::Mechanism::PasswordInfo::PasswordInfo(
+    const PasswordInfo&) = default;
+AuthenticatorRequestDialogModel::Mechanism::PasswordInfo::~PasswordInfo() =
+    default;
+bool AuthenticatorRequestDialogModel::Mechanism::PasswordInfo::operator==(
+    const PasswordInfo&) const = default;

@@ -17,6 +17,7 @@
 #import "components/collaboration/public/features.h"
 #import "components/collaboration/public/messaging/empty_messaging_backend_service.h"
 #import "components/data_sharing/public/features.h"
+#import "ios/chrome/browser/collaboration/model/collaboration_service_factory.h"
 #import "ios/chrome/browser/collaboration/model/features.h"
 #import "ios/chrome/browser/collaboration/model/messaging/instant_messaging_service.h"
 #import "ios/chrome/browser/collaboration/model/messaging/instant_messaging_service_factory.h"
@@ -41,11 +42,11 @@ MessagingBackendServiceFactory* MessagingBackendServiceFactory::GetInstance() {
 }
 
 MessagingBackendServiceFactory::MessagingBackendServiceFactory()
-    : ProfileKeyedServiceFactoryIOS("MessagingBackendService",
-                                    ProfileSelection::kNoInstanceInIncognito) {
+    : ProfileKeyedServiceFactoryIOS("MessagingBackendService") {
   DependsOn(tab_groups::TabGroupSyncServiceFactory::GetInstance());
   DependsOn(data_sharing::DataSharingServiceFactory::GetInstance());
   DependsOn(IdentityManagerFactory::GetInstance());
+  DependsOn(collaboration::CollaborationServiceFactory::GetInstance());
   DependsOn(
       collaboration::messaging::InstantMessagingServiceFactory::GetInstance());
 }
@@ -58,7 +59,9 @@ MessagingBackendServiceFactory::BuildServiceInstanceFor(
   ProfileIOS* profile = ProfileIOS::FromBrowserState(context);
   CHECK(!profile->IsOffTheRecord());
 
-  if (!IsSharedTabGroupsJoinEnabled(profile) ||
+  collaboration::CollaborationService* collaboration_service =
+      collaboration::CollaborationServiceFactory::GetForProfile(profile);
+  if (!IsSharedTabGroupsJoinEnabled(collaboration_service) ||
       !base::FeatureList::IsEnabled(
           collaboration::features::kCollaborationMessaging)) {
     return std::make_unique<EmptyMessagingBackendService>();

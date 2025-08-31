@@ -21,6 +21,7 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/sequence_checker.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -227,8 +228,7 @@ namespace media {
 #if BUILDFLAG(IS_MAC)
 // TODO(crbug.com/40070224): When this code path has been verified on
 // Canary, change to enabled-by-default.
-BASE_FEATURE(kFallbackToSharedMemoryIfNotNv12OnMac,
-             "FallbackToSharedMemoryIfNotNv12OnMac",
+BASE_FEATURE(FallbackToSharedMemoryIfNotNv12OnMac,
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
@@ -295,6 +295,9 @@ class BufferPoolBufferHandleProvider
   const int buffer_id_;
 };
 
+VideoEffectsContext::VideoEffectsContext() = default;
+
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
 VideoEffectsContext::VideoEffectsContext(
     mojo::PendingRemote<video_effects::mojom::VideoEffectsProcessor>
         processor_remote,
@@ -302,6 +305,7 @@ VideoEffectsContext::VideoEffectsContext(
         readonly_manager_remote)
     : video_effects_processor_(std::move(processor_remote)),
       readonly_video_effects_manager_(std::move(readonly_manager_remote)) {}
+#endif
 
 VideoEffectsContext::VideoEffectsContext(VideoEffectsContext&& other) = default;
 VideoEffectsContext& VideoEffectsContext::operator=(
@@ -309,6 +313,7 @@ VideoEffectsContext& VideoEffectsContext::operator=(
 
 VideoEffectsContext::~VideoEffectsContext() = default;
 
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
 mojo::PendingRemote<video_effects::mojom::VideoEffectsProcessor>&&
 VideoEffectsContext::TakeVideoEffectsProcessor() {
   return std::move(video_effects_processor_);
@@ -318,6 +323,7 @@ mojo::PendingRemote<media::mojom::ReadonlyVideoEffectsManager>&&
 VideoEffectsContext::TakeReadonlyVideoEffectsManager() {
   return std::move(readonly_video_effects_manager_);
 }
+#endif
 
 #if BUILDFLAG(IS_CHROMEOS)
 VideoCaptureDeviceClient::VideoCaptureDeviceClient(

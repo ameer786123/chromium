@@ -17,6 +17,7 @@
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/web_selection/model/web_selection_response.h"
 #import "ios/chrome/browser/web_selection/model/web_selection_tab_helper.h"
@@ -31,18 +32,14 @@ typedef void (^ProceduralBlockWithBlockWithItemArray)(
 }  // namespace
 
 @implementation ExplainWithGeminiMediator {
-  // The Browser's WebStateList.
-  base::WeakPtr<WebStateList> _webStateList;
   raw_ptr<signin::IdentityManager> _identityManager;
   raw_ptr<AuthenticationService> _authService;
 }
 
-- (instancetype)initWithWebStateList:(WebStateList*)webStateList
-                     identityManager:(signin::IdentityManager*)identityManager
-                         authService:(AuthenticationService*)authService {
+- (instancetype)initWithIdentityManager:
+                    (signin::IdentityManager*)identityManager
+                            authService:(AuthenticationService*)authService {
   if ((self = [super init])) {
-    CHECK(webStateList);
-    _webStateList = webStateList->AsWeakPtr();
     _identityManager = identityManager;
     _authService = authService;
   }
@@ -51,18 +48,7 @@ typedef void (^ProceduralBlockWithBlockWithItemArray)(
 
 #pragma mark - Private
 
-// Getter for WebSelectionTabHelper.
-- (WebSelectionTabHelper*)webSelectionTabHelper {
-  web::WebState* webState =
-      _webStateList ? _webStateList->GetActiveWebState() : nullptr;
-  if (!webState) {
-    return nullptr;
-  }
-  WebSelectionTabHelper* helper = WebSelectionTabHelper::FromWebState(webState);
-  return helper;
-}
-
-// Checks if Explain With Gemini can be performed.
+// Checks if Explain With Gemini can be performed generally.
 - (BOOL)canPerformExplainWithGemini {
   CHECK(ExplainGeminiEditMenuPosition() !=
         PositionForExplainGeminiEditMenu::kDisabled);
@@ -70,7 +56,16 @@ typedef void (^ProceduralBlockWithBlockWithItemArray)(
       [self isManagedAccount]) {
     return NO;
   };
-  WebSelectionTabHelper* tabHelper = [self webSelectionTabHelper];
+  return YES;
+}
+
+// Checks if Explain With Gemini can be performed in `webState`.
+- (BOOL)canPerformExplainWithGeminiInWebState:(web::WebState*)webState {
+  if (!webState || ![self canPerformExplainWithGemini]) {
+    return NO;
+  }
+  WebSelectionTabHelper* tabHelper =
+      WebSelectionTabHelper::FromWebState(webState);
   return tabHelper && tabHelper->CanRetrieveSelectedText() &&
          self.applicationCommandHandler;
 }
@@ -111,9 +106,37 @@ typedef void (^ProceduralBlockWithBlockWithItemArray)(
                                     IDS_IOS_EXPLAIN_GEMINI_EDIT_MENU)];
 }
 
+// Fetches the selection in the web page. On success, trigger a "Explain with
+// Gemini" on the selection. This is used on iOS26 where the action must be
+// added before the selection is retrieved.
+- (void)fetchSelectionForWebState:(base::WeakPtr<web::WebState>)weakWebState {
+  if (!weakWebState) {
+    return;
+  }
+  web::WebState* webState = weakWebState.get();
+  if (![self canPerformExplainWithGeminiInWebState:webState]) {
+    return;
+  }
+  WebSelectionTabHelper* tabHelper =
+      WebSelectionTabHelper::FromWebState(webState);
+  __weak __typeof(self) weakSelf = self;
+  tabHelper->GetSelectedText(base::BindOnce(^(WebSelectionResponse* response) {
+    if (weakSelf && response.valid && response.selectedText.length) {
+      [weakSelf triggerExplainWithGeminiForText:response.selectedText];
+    }
+  }));
+}
+
 // Adds Explain With Gemini item to the menu with a completion block.
-- (void)addItemWithCompletion:(ProceduralBlockWithItemArray)completion {
-  WebSelectionTabHelper* tabHelper = [self webSelectionTabHelper];
+- (void)addItemForWebState:(base::WeakPtr<web::WebState>)weakWebState
+            withCompletion:(ProceduralBlockWithItemArray)completion {
+  if (!weakWebState) {
+    completion(@[]);
+    return;
+  }
+  web::WebState* webState = weakWebState.get();
+  WebSelectionTabHelper* tabHelper =
+      WebSelectionTabHelper::FromWebState(webState);
   if (!tabHelper) {
     completion(@[]);
     return;
@@ -137,7 +160,6 @@ typedef void (^ProceduralBlockWithBlockWithItemArray)(
     return;
   }
   NSString* text = response.selectedText;
-  NSString* explainWithGeminiMenuTitle = [self buttonTitle];
   if ([[text
           stringByTrimmingCharactersInSet:[NSCharacterSet
                                               whitespaceAndNewlineCharacterSet]]
@@ -146,15 +168,10 @@ typedef void (^ProceduralBlockWithBlockWithItemArray)(
     return;
   }
 
-  NSString* explainWithGeminiMenuId = @"chromeAction.explainGemini";
   __weak __typeof(self) weakSelf = self;
-  UIAction* action =
-      [UIAction actionWithTitle:explainWithGeminiMenuTitle
-                          image:nil
-                     identifier:explainWithGeminiMenuId
-                        handler:^(UIAction* a) {
-                          [weakSelf triggerExplainWithGeminiForText:text];
-                        }];
+  UIAction* action = [self actionWithHandler:^(UIAction* a) {
+    [weakSelf triggerExplainWithGeminiForText:text];
+  }];
   completion(@[ action ]);
 }
 
@@ -177,40 +194,65 @@ typedef void (^ProceduralBlockWithBlockWithItemArray)(
 
   command.extraHeaders = @{
     kExplainWithGeminiHeader :
-        [NSString stringWithFormat:@"%@ : %@",
-                                   l10n_util::GetNSString(
-                                       IDS_IOS_EXPLAIN_GEMINI_PROMPT_PREFIX),
-                                   text]
+        [[NSString stringWithFormat:@"%@ : %@",
+                                    l10n_util::GetNSString(
+                                        IDS_IOS_EXPLAIN_GEMINI_PROMPT_PREFIX),
+                                    text]
+            stringByAddingPercentEncodingWithAllowedCharacters:
+                [NSCharacterSet URLQueryAllowedCharacterSet]]
   };
   base::UmaHistogramCounts10000("IOS.ExplainWithGemini.CharSelected",
                                 [text length]);
   [self.applicationCommandHandler openURLInNewTab:command];
 }
 
-#pragma mark - EditMenuProvider
+// Returns the action to trigger the search with feature. Calls `handler` on
+// activation.
+- (UIAction*)actionWithHandler:(void (^)(UIAction*))handler {
+  NSString* explainWithGeminiMenuId = @"chromeAction.explainGemini";
+  NSString* explainWithGeminiMenuTitle = [self buttonTitle];
+  return [UIAction actionWithTitle:explainWithGeminiMenuTitle
+                             image:nil
+                        identifier:explainWithGeminiMenuId
+                           handler:handler];
+}
 
-- (void)buildMenuWithBuilder:(id<UIMenuBuilder>)builder {
-  if (![self canPerformExplainWithGemini]) {
+#pragma mark - EditMenuBuilder
+
+- (void)buildEditMenuWithBuilder:(id<UIMenuBuilder>)builder
+                      inWebState:(web::WebState*)webState {
+  if (!webState) {
     return;
   }
 
+  if (![self canPerformExplainWithGeminiInWebState:webState]) {
+    return;
+  }
+
+  base::WeakPtr<web::WebState> weakWebState = webState->GetWeakPtr();
   __weak __typeof(self) weakSelf = self;
-  ProceduralBlockWithBlockWithItemArray provider =
-      ^(ProceduralBlockWithItemArray completion) {
-        [weakSelf addItemWithCompletion:completion];
-      };
-  UIDeferredMenuElement* deferredMenuElement =
-      [UIDeferredMenuElement elementWithProvider:provider];
+  UIMenuElement* menuElement = nil;
+  if (ShouldShowEditMenuItemsSynchronously()) {
+    menuElement = [self actionWithHandler:^(UIAction* a) {
+      [weakSelf fetchSelectionForWebState:weakWebState];
+    }];
+  } else {
+    ProceduralBlockWithBlockWithItemArray provider =
+        ^(ProceduralBlockWithItemArray completion) {
+          [weakSelf addItemForWebState:weakWebState withCompletion:completion];
+        };
+    menuElement = [UIDeferredMenuElement elementWithProvider:provider];
+  }
 
   if (ExplainGeminiEditMenuPosition() ==
       PositionForExplainGeminiEditMenu::kAfterSearch) {
-    edit_menu::AddElementToChromeMenu(builder, deferredMenuElement,
+    edit_menu::AddElementToChromeMenu(builder, menuElement,
                                       /*primary*/ YES);
     return;
   }
   if (ExplainGeminiEditMenuPosition() ==
       PositionForExplainGeminiEditMenu::kAfterEdit) {
-    edit_menu::AddElementToChromeMenu(builder, deferredMenuElement,
+    edit_menu::AddElementToChromeMenu(builder, menuElement,
                                       /*primary*/ NO);
     return;
   }

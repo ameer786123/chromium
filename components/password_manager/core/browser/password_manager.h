@@ -80,8 +80,20 @@ constexpr void operator|=(PasswordVsOtpFormType& lhs,
                                            static_cast<int>(rhs));
 }
 
-inline constexpr base::TimeDelta kDelayBeforeSuccessfulLogin =
-    base::Milliseconds(500);
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// LINT.IfChange(LogInWithChangedPasswordOutcome)
+enum class LogInWithChangedPasswordOutcome {
+  kPrimaryPasswordFailed = 0,
+  kPrimaryPasswordSucceeded = 1,
+  kBackupPasswordFailed = 2,
+  kBackupPasswordSucceeded = 3,
+  kUnknownPasswordFailed = 4,
+  kUnknownPasswordSucceeded = 5,
+  kMaxValue = kUnknownPasswordSucceeded
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/password/enums.xml:LogInWithChangedPasswordOutcome)
 
 // Per-tab password manager. Handles creation and management of UI elements,
 // receiving password form data from the renderer and managing the password
@@ -301,18 +313,21 @@ class PasswordManager : public PasswordManagerInterface {
   bool ShouldBlockPasswordForSameOriginButDifferentScheme(
       const GURL& origin) const;
 
-  // ScheduleOnLoginsSuccessful is called when the login was deemed successful.
-  // It post OnLoginSuccessful with a delayed. The delay allows to catch failed
-  // logins (e.g. based on failed POST requests) more effectively as a sequence
-  // of events isn't guaranteed. OnLoginSuccessful handles the special case when
-  // the provisionally saved password is a sync credential, and otherwise asks
-  // the user about saving the password or saves it directly, as appropriate.
-  void ScheduleOnLoginsSuccessful();
+  // Called when the login was deemed successful. It handles the special case
+  // when the provisionally saved password is a sync credential, and otherwise
+  // asks the user about saving the password or saves it directly, as
+  // appropriate.
   void OnLoginSuccessful();
 
   // Called when the login was considered unsuccessful. Takes care of logging
   // and reporting metrics and resets the submitted manager data.
-  void OnLoginFailed(BrowserSavePasswordProgressLogger* logger);
+  void OnLoginFailed(PasswordManagerDriver* driver,
+                     BrowserSavePasswordProgressLogger* logger);
+
+  // Similar to OnLoginFailed() but doesn't report metrics and doesn't reset the
+  // submitted manager data.
+  void OnLoginPotentiallyFailed(PasswordManagerDriver* driver,
+                                BrowserSavePasswordProgressLogger* logger);
 
   // Checks for every form in |forms_data| whether |pending_login_managers_|
   // already contain a manager for that form. If not, adds a manager for each
@@ -328,6 +343,8 @@ class PasswordManager : public PasswordManagerInterface {
 
   // Create PasswordFormManager for |form|, adds the newly created one to
   // |form_managers_| and returns it.
+  // Returns nullptr if the manager should not be created for a form (e.g. when
+  // filling is disabled).
   PasswordFormManager* CreateFormManager(PasswordManagerDriver* driver,
                                          const autofill::FormData& form);
 
@@ -487,11 +504,6 @@ class PasswordManager : public PasswordManagerInterface {
       possible_usernames_ =
           base::LRUCache<PossibleUsernameFieldIdentifier, PossibleUsernameData>(
               kMaxSingleUsernameFieldsToStore);
-
-  // Closure holding a scheduled call to OnLoginSuccessful().
-  base::CancelableOnceClosure on_successful_submission_closure_;
-
-  base::WeakPtrFactory<PasswordManager> weak_ptr_factory_{this};
 };
 
 }  // namespace password_manager

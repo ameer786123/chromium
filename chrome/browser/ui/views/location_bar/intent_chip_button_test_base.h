@@ -10,7 +10,6 @@
 #include "base/feature_list.h"
 #include "chrome/browser/apps/link_capturing/link_capturing_feature_test_support.h"
 #include "chrome/browser/ui/actions/chrome_action_id.h"
-#include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/intent_chip_button.h"
 #include "chrome/browser/ui/views/page_action/page_action_view.h"
 #include "ui/views/controls/button/button.h"
@@ -29,7 +28,6 @@ class IntentChipButtonTestBase {
 
   // Check if the intent picker chip is done animating
   testing::AssertionResult WaitForPageActionButtonVisible(
-      actions::ActionId action_id,
       Browser* browser) const;
 
   // Function to generate test names for IntentChipButton tests.

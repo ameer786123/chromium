@@ -128,6 +128,12 @@ extern const char kGoogleMyAccountURL[];
 // URL of the Google Account page showing the known user devices.
 extern const char kGoogleMyAccountDeviceActivityURL[];
 
+// URL of the Google Account home address page.
+extern const char kGoogleMyAccountHomeAddressURL[];
+
+// URL of the Google Account work address page.
+extern const char kGoogleMyAccountWorkAddressURL[];
+
 // URL used in referrer to signal that the navigation originates from Reading
 // List page and thus should not be considered for Most Visited.
 extern const char kReadingListReferrerURL[];
@@ -147,5 +153,14 @@ extern const char kMyActivityURL[];
 
 // "Learn more" URL for the Lens Overlay.
 extern const char kLearnMoreLensURL[];
+
+// URL for the BWG App Activity Settings row.
+extern const char kBWGAppActivityURL[];
+
+// URL for the BWG Precise Location Settings row.
+extern const char kBWGPreciseLocationURL[];
+
+// URL for the BWG Page Content Sharing Settings row.
+extern const char kBWGPageContentSharingURL[];
 
 #endif  // IOS_CHROME_BROWSER_SHARED_MODEL_URL_CHROME_URL_CONSTANTS_H_

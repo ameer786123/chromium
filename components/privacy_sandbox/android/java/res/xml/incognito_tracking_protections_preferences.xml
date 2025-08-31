@@ -10,7 +10,28 @@ found in the LICENSE file.
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <org.chromium.components.browser_ui.settings.TextMessagePreference
-        android:summary="@string/incognito_tracking_protections_page_title"
+        android:summary="@string/incognito_tracking_protections_page_description"
         app:allowDividerBelow="false" />
+
+    <org.chromium.chrome.browser.privacy_sandbox.PreferenceCategoryWithClickableSummary
+        android:title="@string/incognito_tracking_protections_header"
+        android:key="incognito_tracking_protections_description"
+        app:allowDividerBelow="false" />
+
+    <org.chromium.components.browser_ui.settings.ChromeSwitchPreference
+      android:key="block_3pcs_toggle"
+      android:title="@string/incognito_tracking_protections_block_3pcs_toggle_label"
+      android:summary="@string/incognito_tracking_protections_block_3pcs_toggle_sublabel"
+      android:enabled="false"/>
+    <Preference
+        android:key="ip_protection"
+        android:title="@string/ip_protection_link_row_label"
+        android:fragment="org.chromium.components.privacy_sandbox.IpProtectionSettingsFragment"
+        app:isPreferenceVisible="false" />
+    <Preference
+        android:key="fp_protection"
+        android:title="@string/fingerprinting_protection_link_row_label"
+        android:fragment="org.chromium.components.privacy_sandbox.FingerprintingProtectionSettingsFragment"
+        app:isPreferenceVisible="false" />
 
 </PreferenceScreen>

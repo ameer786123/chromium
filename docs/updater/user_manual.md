@@ -280,3 +280,19 @@ installed. Note that there are two possible product directories (one for
 system scope and one for user scope), and so there are often two log files.
 
 See [the functional spec](functional_spec.md#logging) for more details.
+
+## Force updates to all apps
+
+Updates can be force-triggered by running the updater as follows for Windows:
+* Run the following from a medium `cmd` prompt for `user` installs, and from an
+  elevated prompt with the `--system` switch for `system` installs:
+  `{%LocalAppData%|%programfiles(x86)%}\{Company}\{Company}Update\{Company}Update.exe --update-apps {--system}`.
+* For example, using "Google" as the `Company`:
+  `{%LocalAppData%|%programfiles(x86)%}\Google\GoogleUpdate\GoogleUpdate.exe --update-apps {--system}`.
+
+Similar steps apply for macOS. The example below is using "Google" as the
+`Company`:
+* (macOS, per-user):
+`~/Library/Application\ Support/Google/GoogleUpdater/*/GoogleUpdater.app/Contents/MacOS/GoogleUpdater --update-apps`
+* (macOS, system-wide):
+`sudo /Library/Application\ Support/Google/GoogleUpdater/*/GoogleUpdater.app/Contents/MacOS/GoogleUpdater --update-apps --system`

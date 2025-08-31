@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/functional/callback_helpers.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/values_test_util.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
@@ -21,6 +22,7 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/test_extension_registry_observer.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extensions_client.h"
@@ -32,6 +34,8 @@
 #include "extensions/common/user_script.h"
 #include "extensions/test/test_extension_dir.h"
 #include "testing/gmock/include/gmock/gmock.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extensions::mojom::ManifestLocation;
 
@@ -228,7 +232,7 @@ TEST_F(ScriptingPermissionsModifierUnitTest,
 
   auto reload_extension = [this, &extension_id]() {
     TestExtensionRegistryObserver observer(ExtensionRegistry::Get(profile()));
-    service()->ReloadExtension(extension_id);
+    registrar()->ReloadExtension(extension_id);
     return observer.WaitForExtensionLoaded();
   };
 
@@ -630,7 +634,7 @@ TEST_F(ScriptingPermissionsModifierUnitTest,
 
   {
     TestExtensionRegistryObserver observer(ExtensionRegistry::Get(profile()));
-    service()->ReloadExtension(extension->id());
+    registrar()->ReloadExtension(extension->id());
     extension = observer.WaitForExtensionLoaded();
   }
   EXPECT_TRUE(extension->permissions_data()

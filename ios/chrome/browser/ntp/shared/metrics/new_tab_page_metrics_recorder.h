@@ -95,12 +95,17 @@ enum class HomeCustomizationEntrypoint {
 // Logs a metric for the identity disc being tapped in the NTP.
 - (void)recordIdentityDiscTapped;
 
+// Logs a metric for the incognito button being tapped in the NTP.
+- (void)recordIncognitoTapped;
+
+// Logs a metric for the MIA entry point being tapped in the NTP.
+- (void)recordMIATapped;
+
 // Logs the current customization state of the Magic Stack modules.
 - (void)
     recordMagicStackCustomizationStateWithSetUpList:(BOOL)setUpListEnabled
                                         safetyCheck:(BOOL)safetyCheckEnabled
                                       tabResumption:(BOOL)tabResumptionEnabled
-                                     parcelTracking:(BOOL)parcelTrackingEnabled
                                                tips:(BOOL)tipsEnabled;
 
 // Logs the entrypoint used to open the customization menu.

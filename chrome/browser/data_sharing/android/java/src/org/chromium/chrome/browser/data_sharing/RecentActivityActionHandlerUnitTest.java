@@ -32,7 +32,6 @@ import org.chromium.components.tab_group_sync.LocalTabGroupId;
 import org.chromium.components.tab_group_sync.SavedTabGroup;
 import org.chromium.components.tab_group_sync.SavedTabGroupTab;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
-import org.chromium.url.GURL;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -44,7 +43,6 @@ public class RecentActivityActionHandlerUnitTest {
     private static final String COLLABORATION_ID = "collaboration_1";
     private static final String SYNC_TAB_GROUP_ID = "sync_tab_group_1";
     private static final String SYNC_TAB_ID = "sync_tab_1";
-    private static final GURL TAB_URL = new GURL("https://google.com");
     private static final Token TOKEN_1 = new Token(3, 5);
     private static final int ROOT_ID_1 = 9;
     private static final int TAB_ID_1 = 9;
@@ -76,10 +74,9 @@ public class RecentActivityActionHandlerUnitTest {
         when(mTabGroupModelFilterProvider.getTabGroupModelFilter(false))
                 .thenReturn(mTabGroupModelFilter);
         when(mTabGroupModelFilter.getTabModel()).thenReturn(mTabModel);
-        when(mTabGroupModelFilter.getRootIdFromTabGroupId(TOKEN_1)).thenReturn(ROOT_ID_1);
+        when(mTabGroupModelFilter.getGroupLastShownTabId(TOKEN_1)).thenReturn(ROOT_ID_1);
         List<Tab> relatedTabs = new ArrayList<>();
         relatedTabs.add(mTab1);
-        when(mTabGroupModelFilter.getTabGroupIdFromRootId(ROOT_ID_1)).thenReturn(TOKEN_1);
         when(mTabGroupModelFilter.getRelatedTabList(ROOT_ID_1)).thenReturn(relatedTabs);
         when(mTabModel.getTabCreator()).thenReturn(mTabCreator);
 
@@ -119,7 +116,7 @@ public class RecentActivityActionHandlerUnitTest {
     @Test
     public void testOpenTabGroupEditDialog() {
         mRecentActivityActionHandler.openTabGroupEditDialog();
-        verify(mDataSharingTabGroupsDelegate, times(1)).openTabGroupWithTabId(TAB_ID_1);
+        verify(mDataSharingTabGroupsDelegate, times(1)).openTabGroup(TOKEN_1);
     }
 
     @Test

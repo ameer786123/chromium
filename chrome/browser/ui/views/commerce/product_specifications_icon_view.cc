@@ -76,7 +76,8 @@ void ProductSpecificationsIconView::OnExecuting(
   tab_helper->OnProductSpecificationsIconClicked();
 
   commerce::ShowProductSpecsConfirmationToast(
-      tab_helper->GetComparisonSetName(), browser_);
+      tab_helper->GetComparisonSetName(),
+      browser_->browser_window_features()->toast_controller());
 }
 
 void ProductSpecificationsIconView::ForceVisibleForTesting(bool is_added) {
@@ -96,6 +97,7 @@ void ProductSpecificationsIconView::UpdateImpl() {
     SetVisualState(IsInProductSpecificationsSet());
     MaybeShowPageActionLabel();
   } else {
+    scoped_window_call_to_action_ptr_.reset();
     HidePageActionLabel();
   }
   SetVisible(should_show);
@@ -156,6 +158,17 @@ void ProductSpecificationsIconView::MaybeShowPageActionLabel() {
                          PageActionIconType::kProductSpecifications)) {
     return;
   }
+  if (!tabs::TabInterface::GetFromContents(GetWebContents())
+           ->GetBrowserWindowInterface()
+           ->CanShowCallToAction()) {
+    return;
+  }
+
+  scoped_window_call_to_action_ptr_ =
+      tabs::TabInterface::GetFromContents(GetWebContents())
+          ->GetBrowserWindowInterface()
+          ->ShowCallToAction();
+
   should_extend_label_shown_duration_ = true;
   AnimateIn(std::nullopt);
 }

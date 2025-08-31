@@ -67,14 +67,14 @@ class BtmBounceTrackingDevToolsIssueTest
 
   void WaitForIssueAndCheckTrackingSites(
       const std::vector<std::string>& sites) {
-    auto is_dips_issue = [](const base::Value::Dict& params) {
+    auto is_btm_issue = [](const base::Value::Dict& params) {
       return *(params.FindStringByDottedPath("issue.code")) ==
              "BounceTrackingIssue";
     };
 
     // Wait for notification of a Bounce Tracking Issue.
     base::Value::Dict params = WaitForMatchingNotification(
-        "Audits.issueAdded", base::BindRepeating(is_dips_issue));
+        "Audits.issueAdded", base::BindRepeating(is_btm_issue));
     ASSERT_EQ(*params.FindStringByDottedPath("issue.code"),
               "BounceTrackingIssue");
 
@@ -150,7 +150,5 @@ IN_PROC_BROWSER_TEST_F(BtmBounceTrackingDevToolsIssueTest,
           "/cross-site-with-cookie/f.test/cross-site-with-cookie/g.test/"
           "title1.html"),
       embedded_test_server()->GetURL("g.test", "/title1.html")));
-  // Note d.test is not listed as a potentially tracking site since it did not
-  // write cookies before bouncing the user.
-  WaitForIssueAndCheckTrackingSites({"e.test", "f.test"});
+  WaitForIssueAndCheckTrackingSites({"d.test", "e.test", "f.test"});
 }

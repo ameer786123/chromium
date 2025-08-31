@@ -29,8 +29,8 @@ using ::blink::mojom::CapturedWheelAction;
 using ::blink::mojom::CapturedWheelActionPtr;
 using ::blink::mojom::ZoomLevelAction;
 using CSCResult = ::blink::mojom::CapturedSurfaceControlResult;
-using CSCPermissionResult =
-    CapturedSurfaceControlPermissionManager::PermissionResult;
+using CSCPermissionResult = CapturedSurfaceControlPermissionManager::
+    CapturedSurfaceControlPermissionStatus;
 
 const char* const kUrlString = "http://www.example.com/";
 
@@ -205,7 +205,7 @@ class TestTab {
       BrowserContext* browser_context) {
     scoped_refptr<SiteInstance> instance =
         SiteInstance::Create(browser_context);
-    instance->GetOrCreateProcess()->Init();
+    instance->GetOrCreateProcessForTesting()->Init();
     return TestWebContents::Create(browser_context, std::move(instance));
   }
 

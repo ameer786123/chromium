@@ -18,6 +18,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -92,11 +93,8 @@ class AppBannerManagerTest : public AppBannerManager {
 
   bool banner_shown() { return banner_shown_.get() && *banner_shown_; }
 
-  WebappInstallSource install_source() {
-    if (install_source_.get())
-      return *install_source_;
-
-    return WebappInstallSource::COUNT;
+  std::optional<WebappInstallSource> install_source() {
+    return install_source_;
   }
 
   void clear_will_show() { banner_shown_.reset(); }
@@ -170,8 +168,7 @@ class AppBannerManagerTest : public AppBannerManager {
       clear_will_show();
     ASSERT_FALSE(banner_shown_.get());
     banner_shown_ = std::make_unique<bool>(false);
-    install_source_ =
-        std::make_unique<WebappInstallSource>(WebappInstallSource::COUNT);
+    install_source_ = std::nullopt;
     if (on_done_)
       base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, std::move(on_done_));
@@ -184,7 +181,7 @@ class AppBannerManagerTest : public AppBannerManager {
     ReportStatus(InstallableStatusCode::SHOWING_WEB_APP_BANNER);
     ASSERT_FALSE(banner_shown_.get());
     banner_shown_ = std::make_unique<bool>(true);
-    install_source_ = std::make_unique<WebappInstallSource>(install_source);
+    install_source_ = install_source;
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, std::move(on_done_));
   }
@@ -233,6 +230,8 @@ class AppBannerManagerTest : public AppBannerManager {
                              "installed-extension-id");
   }
 
+  void InstallableWebAppStatusUpdate() override {}
+
   base::OnceClosure on_done_;
 
  private:
@@ -241,7 +240,7 @@ class AppBannerManagerTest : public AppBannerManager {
   base::OnceClosure on_banner_prompt_reply_;
 
   std::unique_ptr<bool> banner_shown_;
-  std::unique_ptr<WebappInstallSource> install_source_;
+  std::optional<WebappInstallSource> install_source_;
 
   base::WeakPtrFactory<AppBannerManagerTest> weak_factory_{this};
 };
@@ -295,7 +294,7 @@ class AppBannerManagerBrowserTest
                   InstallableStatusCode::MAX_ERROR_CODE) ==
                   InstallableStatusCode::SHOWING_WEB_APP_BANNER,
               manager->banner_shown());
-    EXPECT_EQ(WebappInstallSource::COUNT, manager->install_source());
+    EXPECT_EQ(std::nullopt, manager->install_source());
 
     // Generally the manager will be in the complete state, however some test
     // cases navigate the page, causing the state to go back to INACTIVE.

@@ -35,6 +35,7 @@
 #include "chrome/browser/ash/app_list/search/system_info/system_info_card_provider.h"
 #include "chrome/browser/ash/arc/arc_util.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
@@ -54,11 +55,9 @@ std::unique_ptr<SearchController> CreateSearchController(
     Profile* profile,
     AppListModelUpdater* model_updater,
     AppListControllerDelegate* list_controller,
-    ash::AppListNotifier* notifier,
-    ash::federated::FederatedServiceController* federated_service_controller) {
+    ash::AppListNotifier* notifier) {
   auto controller = std::make_unique<SearchController>(
-      model_updater, list_controller, notifier, profile,
-      federated_service_controller);
+      model_updater, list_controller, notifier, profile);
   controller->Initialize();
 
   // Add search providers.
@@ -77,10 +76,7 @@ std::unique_ptr<SearchController> CreateSearchController(
         profile, base::FileEnumerator::FileType::FILES |
                      base::FileEnumerator::FileType::DIRECTORIES));
     controller->AddProvider(std::make_unique<DriveSearchProvider>(profile));
-    if (search_features::IsLauncherSystemInfoAnswerCardsEnabled()) {
-      controller->AddProvider(
-          std::make_unique<SystemInfoCardProvider>(profile));
-    }
+    controller->AddProvider(std::make_unique<SystemInfoCardProvider>(profile));
     if (search_features::IsLauncherImageSearchEnabled()) {
       controller->AddProvider(
           std::make_unique<LocalImageSearchProvider>(profile));

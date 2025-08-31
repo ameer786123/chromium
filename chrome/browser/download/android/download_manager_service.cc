@@ -106,7 +106,6 @@ void DownloadManagerService::CreateAutoResumptionHandler() {
   auto config = std::make_unique<download::AutoResumptionHandler::Config>();
   config->auto_resumption_size_limit =
       DownloadUtils::GetAutoResumptionSizeLimit();
-  config->is_auto_resumption_enabled_in_native = true;
   download::AutoResumptionHandler::Create(
       std::move(network_listener), std::move(task_manager), std::move(config),
       base::DefaultClock::GetInstance());
@@ -184,7 +183,7 @@ DownloadManagerService::DownloadManagerService()
 DownloadManagerService::~DownloadManagerService() = default;
 
 void DownloadManagerService::Init(JNIEnv* env,
-                                  jobject obj,
+                                  const base::android::JavaRef<jobject>& obj,
                                   bool is_profile_added) {
   java_ref_.Reset(env, obj);
   if (is_profile_added) {
@@ -198,7 +197,6 @@ void DownloadManagerService::Init(JNIEnv* env,
 }
 
 void DownloadManagerService::OnProfileAdded(JNIEnv* env,
-                                            jobject obj,
                                             Profile* profile) {
   OnProfileAdded(profile);
 }
@@ -242,7 +240,6 @@ void DownloadManagerService::HandleOMADownload(download::DownloadItem* download,
 
 void DownloadManagerService::OpenDownload(
     JNIEnv* env,
-    jobject obj,
     std::string& download_guid,
     const JavaParamRef<jobject>& j_profile_key,
     jint source) {
@@ -277,7 +274,6 @@ void DownloadManagerService::OpenDownloadsPage(
 
 void DownloadManagerService::ResumeDownload(
     JNIEnv* env,
-    jobject obj,
     std::string& download_guid,
     const JavaParamRef<jobject>& j_profile_key) {
   ProfileKey* profile_key =
@@ -291,7 +287,6 @@ void DownloadManagerService::ResumeDownload(
 
 void DownloadManagerService::PauseDownload(
     JNIEnv* env,
-    jobject obj,
     std::string& download_guid,
     const JavaParamRef<jobject>& j_profile_key) {
   ProfileKey* profile_key =
@@ -304,7 +299,6 @@ void DownloadManagerService::PauseDownload(
 
 void DownloadManagerService::RemoveDownload(
     JNIEnv* env,
-    jobject obj,
     std::string& download_guid,
     const JavaParamRef<jobject>& j_profile_key) {
   ProfileKey* profile_key =
@@ -317,7 +311,6 @@ void DownloadManagerService::RemoveDownload(
 
 void DownloadManagerService::GetAllDownloads(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& j_profile_key) {
   ProfileKey* profile_key =
       ProfileKeyAndroid::FromProfileKeyAndroid(j_profile_key);
@@ -362,7 +355,6 @@ void DownloadManagerService::GetAllDownloadsInternal(ProfileKey* profile_key) {
 
 void DownloadManagerService::CheckForExternallyRemovedDownloads(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& j_profile_key) {
   // Once the DownloadManager is initlaized, DownloadHistory will check for the
   // removal of history files. If the history query is not yet complete, ignore
@@ -379,7 +371,6 @@ void DownloadManagerService::CheckForExternallyRemovedDownloads(
 
 void DownloadManagerService::UpdateLastAccessTime(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     std::string& download_guid,
     const JavaParamRef<jobject>& j_profile_key) {
   ProfileKey* profile_key =
@@ -391,7 +382,6 @@ void DownloadManagerService::UpdateLastAccessTime(
 
 void DownloadManagerService::CancelDownload(
     JNIEnv* env,
-    jobject obj,
     std::string& download_guid,
     const JavaParamRef<jobject>& j_profile_key) {
   ProfileKey* profile_key =
@@ -645,7 +635,6 @@ DownloadManagerService::GetCoordinator(ProfileKey* profile_key) {
 
 void DownloadManagerService::RenameDownload(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     std::string& download_guid,
     std::string& target_name,
     const JavaParamRef<jobject>& j_callback,
@@ -672,7 +661,6 @@ void DownloadManagerService::RenameDownload(
 
 void DownloadManagerService::CreateInterruptedDownloadForTest(
     JNIEnv* env,
-    jobject obj,
     std::string& url,
     std::string& download_guid,
     std::string& target_path_str) {

@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.autofill.editors;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.UserFlow.CREATE_NEW_ADDRESS_PROFILE;
 import static org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.UserFlow.MIGRATE_EXISTING_ADDRESS_PROFILE;
 import static org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.UserFlow.SAVE_NEW_ADDRESS_PROFILE;
@@ -12,6 +13,7 @@ import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ALLO
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ALL_KEYS;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.CANCEL_RUNNABLE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.CUSTOM_DONE_BUTTON_TEXT;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.DELETE_CONFIRMATION_PRIMARY_BUTTON_TEXT;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.DELETE_CONFIRMATION_TEXT;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.DELETE_CONFIRMATION_TITLE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.DELETE_RUNNABLE;
@@ -21,14 +23,23 @@ import static org.chromium.chrome.browser.autofill.editors.EditorProperties.Drop
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.DropdownFieldProperties.DROPDOWN_KEY_VALUE_LIST;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.EDITOR_FIELDS;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.EDITOR_TITLE;
-import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FOOTER_MESSAGE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.IS_REQUIRED;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.LABEL;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.VALIDATOR;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.VALUE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ItemType.DROPDOWN;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ItemType.NON_EDITABLE_TEXT;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ItemType.NOTICE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ItemType.TEXT_INPUT;
-import static org.chromium.chrome.browser.autofill.editors.EditorProperties.SHOW_REQUIRED_INDICATOR;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.NonEditableTextProperties.CLICK_RUNNABLE;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.NonEditableTextProperties.CONTENT_DESCRIPTION;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.NonEditableTextProperties.ICON;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.NonEditableTextProperties.NON_EDITABLE_TEXT_ALL_KEYS;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.NonEditableTextProperties.TEXT;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.NoticeProperties.IMPORTANT_FOR_ACCESSIBILITY;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.NoticeProperties.NOTICE_ALL_KEYS;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.NoticeProperties.NOTICE_TEXT;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.SHOW_BUTTONS;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.TextFieldProperties.TEXT_ALL_KEYS;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.TextFieldProperties.TEXT_FIELD_TYPE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.TextFieldProperties.TEXT_FORMATTER;
@@ -39,10 +50,12 @@ import static org.chromium.chrome.browser.autofill.editors.EditorProperties.vali
 
 import android.content.Context;
 import android.text.TextUtils;
-
-import androidx.annotation.Nullable;
+import android.text.style.ClickableSpan;
+import android.view.View;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.autofill.AddressValidationType;
 import org.chromium.chrome.browser.autofill.AutofillAddress;
 import org.chromium.chrome.browser.autofill.AutofillProfileBridge;
@@ -51,11 +64,10 @@ import org.chromium.chrome.browser.autofill.PhoneNumberUtil;
 import org.chromium.chrome.browser.autofill.R;
 import org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.Delegate;
 import org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.UserFlow;
-import org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldItem;
+import org.chromium.chrome.browser.autofill.editors.EditorProperties.EditorItem;
 import org.chromium.components.autofill.AutofillAddressEditorUiInfo;
 import org.chromium.components.autofill.AutofillAddressUiComponent;
 import org.chromium.components.autofill.AutofillProfile;
-import org.chromium.components.autofill.DropdownKeyValue;
 import org.chromium.components.autofill.FieldType;
 import org.chromium.components.autofill.RecordType;
 import org.chromium.components.signin.base.CoreAccountInfo;
@@ -65,9 +77,9 @@ import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.UserSelectableType;
 import org.chromium.ui.modelutil.ListModel;
 import org.chromium.ui.modelutil.PropertyModel;
+import org.chromium.ui.text.SpanApplier;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -77,6 +89,7 @@ import java.util.function.Predicate;
  * Contains the logic for the autofill address editor component. It sets the state of the model and
  * reacts to events like address country selection.
  */
+@NullMarked
 class AddressEditorMediator {
     private final PhoneNumberUtil.CountryAwareFormatTextWatcher mPhoneFormatter =
             new PhoneNumberUtil.CountryAwareFormatTextWatcher();
@@ -95,11 +108,11 @@ class AddressEditorMediator {
     private final PropertyModel mPhoneField;
     private final PropertyModel mEmailField;
 
-    private AutofillAddressEditorUiInfo mEditorUiInfo;
-    @Nullable private String mCustomDoneButtonText;
+    private @Nullable AutofillAddressEditorUiInfo mEditorUiInfo;
+    private @Nullable String mCustomDoneButtonText;
     private boolean mAllowDelete;
 
-    @Nullable private PropertyModel mEditorModel;
+    private @Nullable PropertyModel mEditorModel;
 
     private PropertyModel getFieldForFieldType(@FieldType int fieldType) {
         if (!mAddressFields.containsKey(fieldType)) {
@@ -112,20 +125,6 @@ class AddressEditorMediator {
                             .build());
         }
         return mAddressFields.get(fieldType);
-    }
-
-    // TODO(crbug.com/40263955): remove temporary unsupported countries filtering.
-    private static List<DropdownKeyValue> getSupportedCountries(
-            PersonalDataManager personalDataManager, boolean filterOutUnsupportedCountries) {
-        List<DropdownKeyValue> supportedCountries = AutofillProfileBridge.getSupportedCountries();
-        if (filterOutUnsupportedCountries) {
-            supportedCountries.removeIf(
-                    entry ->
-                            !personalDataManager.isCountryEligibleForAccountStorage(
-                                    entry.getKey()));
-        }
-
-        return supportedCountries;
     }
 
     AddressEditorMediator(
@@ -153,10 +152,7 @@ class AddressEditorMediator {
                         .with(LABEL, mContext.getString(R.string.autofill_profile_editor_country))
                         .with(
                                 DROPDOWN_KEY_VALUE_LIST,
-                                getSupportedCountries(
-                                        mPersonalDataManager,
-                                        isAccountAddressProfile()
-                                                && mUserFlow != CREATE_NEW_ADDRESS_PROFILE))
+                                AutofillProfileBridge.getSupportedCountries())
                         .with(IS_REQUIRED, false)
                         .with(
                                 VALUE,
@@ -219,16 +215,12 @@ class AddressEditorMediator {
                 new PropertyModel.Builder(ALL_KEYS)
                         .with(EDITOR_TITLE, getEditorTitle())
                         .with(CUSTOM_DONE_BUTTON_TEXT, mCustomDoneButtonText)
-                        .with(FOOTER_MESSAGE, getRecordTypeNoticeText())
                         .with(DELETE_CONFIRMATION_TITLE, getDeleteConfirmationTitle())
                         .with(DELETE_CONFIRMATION_TEXT, getDeleteConfirmationText())
-                        .with(SHOW_REQUIRED_INDICATOR, false)
                         .with(
-                                EDITOR_FIELDS,
-                                buildEditorFieldList(
-                                        AutofillAddress.getCountryCode(
-                                                mProfileToEdit, mPersonalDataManager),
-                                        mProfileToEdit.getLanguageCode()))
+                                DELETE_CONFIRMATION_PRIMARY_BUTTON_TEXT,
+                                getDeleteConfirmationPrimaryButtonText())
+                        .with(EDITOR_FIELDS, setEditorFields())
                         .with(DONE_RUNNABLE, this::onCommitChanges)
                         // If the user clicks [Cancel], send `toEdit` address back to the caller,
                         // which was the original state (could be null, a complete address, a
@@ -237,24 +229,40 @@ class AddressEditorMediator {
                         .with(ALLOW_DELETE, mAllowDelete)
                         .with(DELETE_RUNNABLE, () -> mDelegate.onDelete(mAddressToEdit))
                         .with(VALIDATE_ON_SHOW, mUserFlow != CREATE_NEW_ADDRESS_PROFILE)
+                        .with(SHOW_BUTTONS, !isNonEditableProfile())
                         .build();
 
         mCountryField.set(
                 DROPDOWN_CALLBACK,
-                new Callback<String>() {
+                new Callback<>() {
                     /** Update the list of fields according to the selected country. */
                     @Override
                     public void onResult(String countryCode) {
-                        mEditorModel.set(
-                                EDITOR_FIELDS,
-                                buildEditorFieldList(
-                                        countryCode, Locale.getDefault().getLanguage()));
+                        assumeNonNull(mEditorModel)
+                                .set(
+                                        EDITOR_FIELDS,
+                                        buildEditorFieldList(
+                                                countryCode, Locale.getDefault().getLanguage()));
 
                         mPhoneFormatter.setCountryCode(countryCode);
                     }
                 });
 
         return mEditorModel;
+    }
+
+    private ListModel<EditorItem> setEditorFields() {
+        if (isNonEditableProfile()) {
+            return buildNonEditableItemsList();
+        }
+        return buildEditorFieldList(
+                AutofillAddress.getCountryCode(mProfileToEdit, mPersonalDataManager),
+                mProfileToEdit.getLanguageCode());
+    }
+
+    private boolean isNonEditableProfile() {
+        return mProfileToEdit.isHomeOrWorkProfile()
+                || mProfileToEdit.getRecordType() == RecordType.ACCOUNT_NAME_EMAIL;
     }
 
     private boolean shouldDisplayRequiredErrorIfFieldEmpty(AutofillAddressUiComponent component) {
@@ -282,14 +290,14 @@ class AddressEditorMediator {
      * @param countryCode The country for which fields are to be added.
      * @param languageCode The language in which localized strings (e.g. label) are presented.
      */
-    private ListModel<FieldItem> buildEditorFieldList(String countryCode, String languageCode) {
-        ListModel<FieldItem> editorFields = new ListModel<>();
+    private ListModel<EditorItem> buildEditorFieldList(String countryCode, String languageCode) {
+        ListModel<EditorItem> editorFields = new ListModel<>();
         mEditorUiInfo =
                 mAutofillProfileBridge.getAddressEditorUiInfo(
                         countryCode, languageCode, AddressValidationType.ACCOUNT);
 
         // In terms of order, country must be the first field.
-        editorFields.add(new FieldItem(DROPDOWN, mCountryField, /* isFullLine= */ true));
+        editorFields.add(new EditorItem(DROPDOWN, mCountryField, /* isFullLine= */ true));
 
         for (AutofillAddressUiComponent component : mEditorUiInfo.getComponents()) {
             PropertyModel field = getFieldForFieldType(component.id);
@@ -317,21 +325,89 @@ class AddressEditorMediator {
                     component.isFullLine
                             || component.id == FieldType.ADDRESS_HOME_CITY
                             || component.id == FieldType.ADDRESS_HOME_DEPENDENT_LOCALITY;
-            editorFields.add(new FieldItem(TEXT_INPUT, field, isFullLine));
+            editorFields.add(new EditorItem(TEXT_INPUT, field, isFullLine));
         }
         // Phone number (and email if applicable) are the last fields of the address.
         if (mPhoneField != null) {
             mPhoneField.set(VALIDATOR, getPhoneValidator(countryCode));
-            editorFields.add(new FieldItem(TEXT_INPUT, mPhoneField, /* isFullLine= */ true));
+            editorFields.add(new EditorItem(TEXT_INPUT, mPhoneField, /* isFullLine= */ true));
         }
         if (mEmailField != null) {
-            editorFields.add(new FieldItem(TEXT_INPUT, mEmailField, /* isFullLine= */ true));
+            editorFields.add(new EditorItem(TEXT_INPUT, mEmailField, /* isFullLine= */ true));
         }
+        for (EditorItem item : editorFields) {
+            if (item.model.get(IS_REQUIRED)) {
+                editorFields.add(
+                        new EditorItem(
+                                NOTICE,
+                                new PropertyModel.Builder(NOTICE_ALL_KEYS)
+                                        .with(
+                                                NOTICE_TEXT,
+                                                mContext.getString(
+                                                        R.string.payments_required_field_message))
+                                        // Required fields are indicated by an asterisk (*) and
+                                        // announced separately by screen readers. Don't announce
+                                        // the message itself.
+                                        .with(IMPORTANT_FOR_ACCESSIBILITY, false)
+                                        .build(),
+                                /* isFullLine= */ true));
+                break;
+            }
+        }
+        maybeAddRecordTypeNotice(editorFields);
 
         return editorFields;
     }
 
+    /**
+     * Build a special list of items to display for non-editable profiles, e.g. home and work, gaia
+     * name and email.
+     */
+    private ListModel<EditorItem> buildNonEditableItemsList() {
+        ListModel<EditorItem> editorFields = new ListModel<>();
+        PropertyModel descriptionModel =
+                new PropertyModel.Builder(NON_EDITABLE_TEXT_ALL_KEYS)
+                        .with(
+                                TEXT,
+                                mPersonalDataManager.getProfileDescriptionForEditor(
+                                        mProfileToEdit.getGUID()))
+                        .build();
+        editorFields.add(
+                new EditorItem(NON_EDITABLE_TEXT, descriptionModel, /* isFullLine= */ true));
+
+        maybeAddRecordTypeNotice(editorFields);
+
+        PropertyModel model =
+                new PropertyModel.Builder(NON_EDITABLE_TEXT_ALL_KEYS)
+                        .with(TEXT, mContext.getString(R.string.autofill_edit_address_label))
+                        .with(ICON, R.drawable.autofill_external_link)
+                        .with(CLICK_RUNNABLE, () -> mDelegate.onExternalEdit(mProfileToEdit))
+                        .with(
+                                CONTENT_DESCRIPTION,
+                                mContext.getString(
+                                        R.string.autofill_edit_address_label_content_description))
+                        .build();
+        editorFields.add(new EditorItem(NON_EDITABLE_TEXT, model, /* isFullLine= */ true));
+
+        return editorFields;
+    }
+
+    private void maybeAddRecordTypeNotice(ListModel<EditorItem> editorFields) {
+        @Nullable String recordTypeNoticeText = getRecordTypeNoticeText();
+        if (recordTypeNoticeText != null) {
+            editorFields.add(
+                    new EditorItem(
+                            NOTICE,
+                            new PropertyModel.Builder(NOTICE_ALL_KEYS)
+                                    .with(NOTICE_TEXT, recordTypeNoticeText)
+                                    .with(IMPORTANT_FOR_ACCESSIBILITY, true)
+                                    .build(),
+                            /* isFullLine= */ true));
+        }
+    }
+
     private void onCommitChanges() {
+        assumeNonNull(mEditorModel);
         if (!validateForm(mEditorModel)) {
             scrollToFieldWithErrorMessage(mEditorModel);
             return;
@@ -347,6 +423,7 @@ class AddressEditorMediator {
     }
 
     private void onCancelEditing() {
+        assumeNonNull(mEditorModel);
         mEditorModel.set(VISIBLE, false);
 
         mDelegate.onCancel();
@@ -355,9 +432,7 @@ class AddressEditorMediator {
     /** Saves the edited profile on disk. */
     private void commitChanges(AutofillProfile profile) {
         String country = mCountryField.get(VALUE);
-        if (willBeSavedInAccount()
-                && mUserFlow == CREATE_NEW_ADDRESS_PROFILE
-                && mPersonalDataManager.isCountryEligibleForAccountStorage(country)) {
+        if (willBeSavedInAccount() && mUserFlow == CREATE_NEW_ADDRESS_PROFILE) {
             profile.setRecordType(RecordType.ACCOUNT);
         }
         // Country code and phone number are always required and are always collected from the
@@ -370,6 +445,7 @@ class AddressEditorMediator {
             profile.setInfo(FieldType.EMAIL_ADDRESS, mEmailField.get(VALUE));
         }
 
+        assumeNonNull(mEditorUiInfo);
         // Autofill profile bridge normalizes the language code for the autofill profile.
         profile.setLanguageCode(mEditorUiInfo.getBestLanguageTag());
 
@@ -425,10 +501,59 @@ class AddressEditorMediator {
         return CoreAccountInfo.getEmailFrom(accountInfo);
     }
 
-    private @Nullable String getDeleteConfirmationText() {
+    private String getDeleteConfirmationTitle() {
+        if (mProfileToEdit.getRecordType() == RecordType.ACCOUNT_HOME) {
+            return mContext.getString(
+                    R.string.autofill_remove_home_profile_suggestion_confirmation_title);
+        }
+        if (mProfileToEdit.getRecordType() == RecordType.ACCOUNT_WORK) {
+            return mContext.getString(
+                    R.string.autofill_remove_work_profile_suggestion_confirmation_title);
+        }
+        if (mProfileToEdit.getRecordType() == RecordType.ACCOUNT_NAME_EMAIL) {
+            return mContext.getString(
+                    R.string
+                            .autofill_remove_account_name_and_email_profile_suggestion_confirmation_title);
+        }
+        return mContext.getString(R.string.autofill_delete_address_confirmation_dialog_title);
+    }
+
+    private CharSequence createMessageWithLink(String body) {
+        ClickableSpan span =
+                new ClickableSpan() {
+                    @Override
+                    public void onClick(View view) {
+                        mDelegate.onExternalEdit(mProfileToEdit);
+                    }
+                };
+        return SpanApplier.applySpans(body, new SpanApplier.SpanInfo("<link>", "</link>", span));
+    }
+
+    private CharSequence getDeleteConfirmationText() {
         if (isAccountAddressProfile()) {
             @Nullable String email = getUserEmail();
-            if (email == null) return null;
+            if (email == null) return "";
+            if (mProfileToEdit.getRecordType() == RecordType.ACCOUNT_HOME) {
+                return createMessageWithLink(
+                        mContext.getString(
+                                        R.string
+                                                .autofill_remove_home_profile_suggestion_confirmation_body)
+                                .replace("$1", email));
+            }
+            if (mProfileToEdit.getRecordType() == RecordType.ACCOUNT_WORK) {
+                return createMessageWithLink(
+                        mContext.getString(
+                                        R.string
+                                                .autofill_remove_work_profile_suggestion_confirmation_body)
+                                .replace("$1", email));
+            }
+            if (mProfileToEdit.getRecordType() == RecordType.ACCOUNT_NAME_EMAIL) {
+                return createMessageWithLink(
+                        mContext.getString(
+                                        R.string
+                                                .autofill_remove_account_name_and_email_profile_suggestion_confirmation_body)
+                                .replace("$1", email));
+            }
             return mContext.getString(R.string.autofill_delete_account_address_record_type_notice)
                     .replace("$1", email);
         }
@@ -438,12 +563,24 @@ class AddressEditorMediator {
         return mContext.getString(R.string.autofill_delete_local_address_record_type_notice);
     }
 
+    private String getDeleteConfirmationPrimaryButtonText() {
+        if (isNonEditableProfile()) {
+            return mContext.getString(R.string.autofill_remove_suggestion_button);
+        }
+        return mContext.getString(R.string.autofill_delete_suggestion_button);
+    }
+
     private @Nullable String getRecordTypeNoticeText() {
         if (!isAccountAddressProfile()) return null;
         @Nullable String email = getUserEmail();
         if (email == null) return null;
 
         if (isAlreadySavedInAccount()) {
+            if (isNonEditableProfile()) {
+                return mContext.getString(
+                                R.string.autofill_address_home_and_work_record_type_notice)
+                        .replace("$1", email);
+            }
             return mContext.getString(
                             R.string.autofill_address_already_saved_in_account_record_type_notice)
                     .replace("$1", email);
@@ -454,15 +591,12 @@ class AddressEditorMediator {
                 .replace("$1", email);
     }
 
-    private String getDeleteConfirmationTitle() {
-        return mContext.getString(R.string.autofill_delete_address_confirmation_dialog_title);
-    }
-
     private boolean isAlreadySavedInAccount() {
         // User edits an account address profile either from Chrome settings or upon form
         // submission.
-        return mUserFlow == UPDATE_EXISTING_ADDRESS_PROFILE
-                && mProfileToEdit.getRecordType() == RecordType.ACCOUNT;
+        return (mUserFlow == UPDATE_EXISTING_ADDRESS_PROFILE
+                        && mProfileToEdit.getRecordType() == RecordType.ACCOUNT)
+                || isNonEditableProfile();
     }
 
     private boolean isAddressSyncOn() {

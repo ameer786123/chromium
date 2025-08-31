@@ -29,6 +29,7 @@
 #import "components/segmentation_platform/public/segmentation_platform_service.h"
 #import "components/signin/public/base/signin_pref_names.h"
 #import "components/sync_preferences/testing_pref_service_syncable.h"
+#import "components/ukm/test_ukm_recorder.h"
 #import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/cells/content_suggestions_most_visited_action_item.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/cells/content_suggestions_most_visited_item.h"
@@ -63,6 +64,8 @@
 #import "ios/chrome/browser/safety_check/model/ios_chrome_safety_check_manager_factory.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/segmentation_platform/model/segmentation_platform_service_factory.h"
+#import "ios/chrome/browser/segmentation_platform/model/ukm_data_manager_test_utils.h"
+#import "ios/chrome/browser/segmentation_platform/model/ukm_database_client.h"
 #import "ios/chrome/browser/shared/coordinator/scene/test/fake_scene_state.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
@@ -83,6 +86,7 @@
 #import "ios/chrome/browser/url_loading/model/fake_url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_notifier_browser_agent.h"
 #import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
+#import "ios/chrome/test/providers/app_store_bundle/test_app_store_bundle_service.h"
 #import "ios/web/public/test/web_task_environment.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -155,13 +159,8 @@ std::unique_ptr<KeyedService> BuildFeatureEngagementMockTracker(
     _config = [[MostVisitedTilesConfig alloc] init];
     _config.mostVisitedItems =
         @[ [[ContentSuggestionsMostVisitedItem alloc] init] ];
-    _config.inMagicStack = self.inMagicStack;
   }
   return _config;
-}
-
-- (BOOL)inMagicStack {
-  return ShouldPutMostVisitedSitesInMagicStack(FeedActivityBucket::kNoActivity);
 }
 
 @end
@@ -210,7 +209,6 @@ std::unique_ptr<KeyedService> BuildFeatureEngagementMockTracker(
 
 // Expose -hasReceivedMagicStackResponse for waiting for ranking to return.
 @interface MagicStackRankingModel (Testing) <
-    MostVisitedTilesMediatorDelegate,
     SafetyCheckMagicStackMediatorDelegate,
     TipsMagicStackMediatorDelegate,
     TabResumptionHelperDelegate>
@@ -225,8 +223,11 @@ class MagicStackRankingModelTest : public PlatformTest {
     scoped_command_line_.GetProcessCommandLine()->AppendSwitchASCII(
         segmentation_platform::kEphemeralModuleBackendRankerTestOverride,
         "price_tracking_notification_promo");
-    scoped_feature_list_.InitWithFeaturesAndParameters(
-        {{kMagicStack, {{kMagicStackMostVisitedModuleParam, "true"}}}}, {});
+
+    segmentation_test_utils_ =
+        std::make_unique<segmentation_platform::UkmDataManagerTestUtils>(
+            &ukm_recorder_);
+    segmentation_test_utils_->PreProfileInit({});
 
     TestProfileIOS::Builder builder;
     builder.AddTestingFactory(
@@ -238,12 +239,13 @@ class MagicStackRankingModelTest : public PlatformTest {
     builder.AddTestingFactory(
         segmentation_platform::SegmentationPlatformServiceFactory::
             GetInstance(),
-        segmentation_platform::SegmentationPlatformServiceFactory::
-            GetDefaultFactory());
+        base::BindOnce(&MagicStackRankingModelTest::SetUpEnvironment,
+                       base::Unretained(this))
+            .Then(segmentation_platform::SegmentationPlatformServiceFactory::
+                      GetDefaultFactory()));
     builder.AddTestingFactory(
         ReadingListModelFactory::GetInstance(),
-        base::BindRepeating(&BuildReadingListModelWithFakeStorage,
-                            std::vector<scoped_refptr<ReadingListEntry>>()));
+        ReadingListModelTestingFactoryWithFakeStorage({}));
     builder.AddTestingFactory(
         feature_engagement::TrackerFactory::GetInstance(),
         base::BindRepeating(&BuildFeatureEngagementMockTracker));
@@ -269,8 +271,6 @@ class MagicStackRankingModelTest : public PlatformTest {
     ClearDefaultBrowserPromoData();
     WriteFirstRunSentinel();
 
-    syncer::SyncService* syncService =
-        SyncServiceFactory::GetForProfile(GetProfile());
     AuthenticationService* authenticationService =
         AuthenticationServiceFactory::GetForProfile(GetProfile());
     signin::IdentityManager* identityManager =
@@ -286,21 +286,16 @@ class MagicStackRankingModelTest : public PlatformTest {
         ReadingListModelFactory::GetForProfile(GetProfile());
     feature_engagement::Tracker* tracker =
         feature_engagement::TrackerFactory::GetForProfile(GetProfile());
-    AuthenticationService* authentication_service =
-        AuthenticationServiceFactory::GetForProfile(GetProfile());
     _shortcutsMediator = [[ShortcutsMediator alloc]
         initWithReadingListModel:readingListModel
         featureEngagementTracker:(feature_engagement::Tracker*)tracker
-                     authService:authentication_service];
+                 identityManager:identityManager];
     _setUpListMediator = [[FakeSetUpListMediator alloc]
-                   initWithPrefService:GetProfile()->GetPrefs()
-                           syncService:syncService
-                       identityManager:identityManager
-                 authenticationService:authenticationService
-                            sceneState:scene_state_
-                 isDefaultSearchEngine:NO
-                   segmentationService:nullptr
-        deviceSwitcherResultDispatcher:nullptr];
+          initWithPrefService:GetProfile()->GetPrefs()
+              identityManager:identityManager
+                   sceneState:scene_state_
+        isDefaultSearchEngine:NO
+         priceTrackingEnabled:NO];
     _setUpListMediator.shouldShowSetUpList = YES;
     _tabResumptionMediator = [[FakeTabResumptionMediator alloc]
               initWithLocalState:GetLocalState()
@@ -322,7 +317,8 @@ class MagicStackRankingModelTest : public PlatformTest {
             &pref_service_, /*identity_manager*/ nullptr,
             /*supervised_user_service*/ nullptr, /*top_sites*/ nullptr,
             /*popular_sites*/ nullptr,
-            /*custom_links*/ nullptr, /*icon_cacher*/ nullptr,
+            /*custom_links*/ nullptr,
+            /*managed_custom_links*/ nullptr, /*icon_cacher*/ nullptr,
             /*is_default_chrome_app_migrated*/ true,
             /*is_custom_links_mixable*/ false);
     _mostVisitedTilesMediator = [[FakeMostVisitedTilesMediator alloc]
@@ -342,6 +338,7 @@ class MagicStackRankingModelTest : public PlatformTest {
 
     shopping_service_ = std::make_unique<commerce::MockShoppingService>();
     bookmark_model_ = bookmarks::TestBookmarkClient::CreateModel();
+    app_store_bundle_service_ = std::make_unique<TestAppStoreBundleService>();
 
     _tipsMediator = [[TipsMagicStackMediator alloc]
         initWithIdentifier:segmentation_platform::TipIdentifier::kUnknown
@@ -386,7 +383,8 @@ class MagicStackRankingModelTest : public PlatformTest {
                         tipsManager:TipsManagerIOSFactory::GetForProfile(
                                         browser_->GetProfile())
                  templateURLService:ios::TemplateURLServiceFactory::
-                                        GetForProfile(browser_->GetProfile())];
+                                        GetForProfile(browser_->GetProfile())
+              appStoreBundleService:app_store_bundle_service_.get()];
 
     metrics_recorder_ = [[ContentSuggestionsMetricsRecorder alloc]
         initWithLocalState:GetLocalState()];
@@ -395,6 +393,17 @@ class MagicStackRankingModelTest : public PlatformTest {
     _setUpListMediator.contentSuggestionsMetricsRecorder = metrics_recorder_;
 
     histogram_tester_ = std::make_unique<base::HistogramTester>();
+  }
+
+  void TearDown() override {
+    segmentation_test_utils_->WillDestroyProfile(profile_.get());
+    PlatformTest::TearDown();
+  }
+
+  web::BrowserState* SetUpEnvironment(web::BrowserState* context) {
+    ProfileIOS* setup_profile = ProfileIOS::FromBrowserState(context);
+    segmentation_test_utils_->SetupForProfile(setup_profile);
+    return context;
   }
 
   ProfileIOS* GetProfile() { return profile_.get(); }
@@ -429,12 +438,16 @@ class MagicStackRankingModelTest : public PlatformTest {
   base::test::ScopedCommandLine scoped_command_line_;
   base::test::ScopedFeatureList scoped_feature_list_;
   IOSChromeScopedTestingLocalState scoped_testing_local_state_;
+  ukm::TestUkmRecorder ukm_recorder_;
+  std::unique_ptr<segmentation_platform::UkmDataManagerTestUtils>
+      segmentation_test_utils_;
   TestProfileManagerIOS profile_manager_;
   raw_ptr<ProfileIOS> profile_;
   sync_preferences::TestingPrefServiceSyncable pref_service_;
   FakeSceneState* scene_state_;
   std::unique_ptr<Browser> browser_;
   std::unique_ptr<commerce::MockShoppingService> shopping_service_;
+  std::unique_ptr<TestAppStoreBundleService> app_store_bundle_service_;
   std::unique_ptr<bookmarks::BookmarkModel> bookmark_model_;
   raw_ptr<FakeUrlLoadingBrowserAgent> url_loader_;
   FakeSetUpListMediator* _setUpListMediator;
@@ -514,15 +527,11 @@ TEST_F(MagicStackRankingModelTest, TestModuleClickIndexMetric) {
         return _magicStackRankingModel.hasReceivedMagicStackResponse;
       }));
 
-  [_magicStackRankingModel logMagicStackEngagementForType:
-                               ContentSuggestionsModuleType::kSetUpListSync];
+  [_magicStackRankingModel
+      logMagicStackEngagementForType:ContentSuggestionsModuleType::
+                                         kSetUpListDefaultBrowser];
   histogram_tester_->ExpectUniqueSample("IOS.MagicStack.Module.Click.SetUpList",
                                         0, 1);
-
-  [_magicStackRankingModel logMagicStackEngagementForType:
-                               ContentSuggestionsModuleType::kMostVisited];
-  histogram_tester_->ExpectUniqueSample(
-      "IOS.MagicStack.Module.Click.MostVisited", 1, 1);
 }
 
 // Test that the ranking model passed an expected list of module configs in
@@ -538,7 +547,7 @@ TEST_F(MagicStackRankingModelTest, TestModelDidGetLatestRankingOrder) {
         base::RunLoop().RunUntilIdle();
         return [delegate_.rank count] > 0;
       }));
-  NSArray* expectedModuleRank = @[ @(5), @(0), @(1), @(10) ];
+  NSArray* expectedModuleRank = @[ @(5), @(1), @(10) ];
   EXPECT_EQ([delegate_.rank count], [expectedModuleRank count]);
   for (NSUInteger i = 0; i < [expectedModuleRank count]; i++) {
     MagicStackModule* config = delegate_.rank[i];
@@ -561,46 +570,8 @@ TEST_F(MagicStackRankingModelTest, TestFeatureInsertCalls) {
       }));
 
   [_magicStackRankingModel tabResumptionHelperDidReceiveItem];
-  EXPECT_EQ(delegate_.lastInsertionIndex, 3u);
+  EXPECT_EQ(delegate_.lastInsertionIndex, 2u);
   EXPECT_EQ(delegate_.lastInsertedItem, _tabResumptionMediator.itemConfig);
-}
-
-// Test the TestMostVisitedTilesMediatorDelegate API implementations in
-// MagicStackRankingModel.
-TEST_F(MagicStackRankingModelTest, TestMostVisitedTilesMediatorDelegate) {
-  scoped_feature_list_.Reset();
-  scoped_feature_list_.InitWithFeaturesAndParameters(
-      {{kMagicStack, {{kMagicStackMostVisitedModuleParam, "true"}}}}, {});
-
-  // Assert that delegate API isn't called if rank has not been received yet.
-  id mockDelegate =
-      OCMStrictProtocolMock(@protocol(MagicStackRankingModelDelegate));
-  _magicStackRankingModel.delegate = mockDelegate;
-  [_magicStackRankingModel didReceiveInitialMostVistedTiles];
-  [_magicStackRankingModel removeMostVisitedTilesModule];
-  EXPECT_OCMOCK_VERIFY(mockDelegate);
-
-  FakeMagicStackRankingModelDelegate* fakeDelegate =
-      [[FakeMagicStackRankingModelDelegate alloc] init];
-  _magicStackRankingModel.delegate = fakeDelegate;
-  [_magicStackRankingModel fetchLatestMagicStackRanking];
-  EXPECT_TRUE(base::test::ios::WaitUntilConditionOrTimeout(
-      TestTimeouts::action_timeout(), true, ^bool() {
-        base::RunLoop().RunUntilIdle();
-        return [fakeDelegate.rank count] > 0;
-      }));
-
-  _magicStackRankingModel.delegate = mockDelegate;
-  OCMExpect([mockDelegate magicStackRankingModel:[OCMArg any]
-                                   didInsertItem:[OCMArg any]
-                                         atIndex:1]);
-  [_magicStackRankingModel didReceiveInitialMostVistedTiles];
-  OCMExpect([mockDelegate magicStackRankingModel:[OCMArg any]
-                                   didRemoveItem:[OCMArg any]
-                                         animate:[OCMArg any]
-                                  withCompletion:[OCMArg any]]);
-  [_magicStackRankingModel removeMostVisitedTilesModule];
-  EXPECT_OCMOCK_VERIFY(mockDelegate);
 }
 
 // Verifies that the ranking model correctly emits removal signals to its

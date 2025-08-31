@@ -24,6 +24,7 @@
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/threading/sequence_bound.h"
 #include "base/threading/thread_checker.h"
@@ -55,12 +56,13 @@ bool FinishedReadingResponse(const std::vector<uint8_t>& response_buffer) {
       base::MakeRefCounted<net::HttpResponseHeaders>(raw_headers);
 
   // Check that response contains the full body.
-  size_t content_length = parsed_headers->GetContentLength();
-  if (content_length < 0) {
+  std::optional<base::ByteCount> content_length =
+      parsed_headers->GetContentLength();
+  if (!content_length) {
     return false;
   }
 
-  if (response_buffer.size() < end_of_headers + content_length) {
+  if (response_buffer.size() < end_of_headers + content_length->InBytes()) {
     return false;
   }
 

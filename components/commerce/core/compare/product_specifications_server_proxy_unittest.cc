@@ -18,6 +18,7 @@
 #include "components/endpoint_fetcher/endpoint_fetcher.h"
 #include "components/endpoint_fetcher/mock_endpoint_fetcher.h"
 #include "components/prefs/testing_pref_service.h"
+#include "net/base/net_errors.h"
 #include "net/http/http_status_code.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
@@ -25,6 +26,8 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+using endpoint_fetcher::MockEndpointFetcher;
 
 namespace commerce {
 namespace {
@@ -108,10 +111,9 @@ class MockProductSpecificationsServerProxy
   MockProductSpecificationsServerProxy operator=(
       const MockProductSpecificationsServerProxy&) = delete;
   ~MockProductSpecificationsServerProxy() override = default;
-  MOCK_METHOD(std::unique_ptr<EndpointFetcher>,
+  MOCK_METHOD(std::unique_ptr<endpoint_fetcher::EndpointFetcher>,
               CreateEndpointFetcher,
               (const GURL& url,
-               const std::string& http_method,
                const std::string& post_data),
               (override));
 };

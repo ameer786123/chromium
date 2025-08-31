@@ -18,7 +18,9 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/preconnect_manager.h"
 #include "content/public/test/browser_task_environment.h"
+#include "content/public/test/preconnect_test_util.h"
 #include "content/public/test/test_utils.h"
 #include "net/base/network_anonymization_key.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -30,6 +32,10 @@ using testing::Return;
 using testing::StrictMock;
 using testing::DoAll;
 using testing::SetArgPointee;
+
+using content::PreconnectManager;
+using content::PreconnectRequest;
+using content::PreconnectStats;
 
 namespace predictors {
 
@@ -44,7 +50,7 @@ const char kUrl3[] =
 
 class MockPreconnectManager : public PreconnectManager {
  public:
-  MockPreconnectManager(base::WeakPtr<Delegate> delegate, Profile* profile);
+  MockPreconnectManager() = default;
 
   MOCK_METHOD2(StartProxy,
                void(const GURL& url,
@@ -61,23 +67,30 @@ class MockPreconnectManager : public PreconnectManager {
            const net::NetworkAnonymizationKey& network_anonymization_key,
            net::NetworkTrafficAnnotationTag traffic_annotation,
            const content::StoragePartitionConfig*));
-  MOCK_METHOD5(StartPreconnectUrl,
-               void(const GURL& url,
-                    bool allow_credentials,
-                    net::NetworkAnonymizationKey network_anonymization_key,
-                    net::NetworkTrafficAnnotationTag traffic_annotation,
-                    const content::StoragePartitionConfig*));
+  MOCK_METHOD7(
+      StartPreconnectUrl,
+      void(const GURL& url,
+           bool allow_credentials,
+           net::NetworkAnonymizationKey network_anonymization_key,
+           net::NetworkTrafficAnnotationTag traffic_annotation,
+           const content::StoragePartitionConfig*,
+           std::optional<net::ConnectionKeepAliveConfig> keepalive_config,
+           mojo::PendingRemote<network::mojom::ConnectionChangeObserverClient>
+               observer_client));
   MOCK_METHOD1(Stop, void(const GURL& url));
 
+  MOCK_METHOD0(GetWeakPtr, base::WeakPtr<PreconnectManager>());
+  MOCK_METHOD1(SetNetworkContextForTesting,
+               void(network::mojom::NetworkContext* network_context));
+  MOCK_METHOD1(SetObserverForTesting, void(Observer* observer));
+
   void Start(const GURL& url,
-             std::vector<PreconnectRequest> requests) override {
+             std::vector<PreconnectRequest> requests,
+             net::NetworkTrafficAnnotationTag traffic_annotation) override {
     StartProxy(url, requests);
   }
 };
 
-MockPreconnectManager::MockPreconnectManager(base::WeakPtr<Delegate> delegate,
-                                             Profile* profile)
-    : PreconnectManager(delegate, profile) {}
 
 LoadingPredictorConfig CreateConfig() {
   LoadingPredictorConfig config;
@@ -161,8 +174,7 @@ class LoadingPredictorPreconnectTest : public LoadingPredictorTest {
 void LoadingPredictorPreconnectTest::SetUp() {
   LoadingPredictorTest::SetUp();
   auto mock_preconnect_manager =
-      std::make_unique<StrictMock<MockPreconnectManager>>(
-          predictor_->GetWeakPtr(), profile_.get());
+      std::make_unique<StrictMock<MockPreconnectManager>>();
   mock_preconnect_manager_ = mock_preconnect_manager.get();
   predictor_->set_mock_preconnect_manager(std::move(mock_preconnect_manager));
 }
@@ -179,16 +191,12 @@ void LoadingPredictorPreconnectTest::SetPreference() {
 
 TEST_F(LoadingPredictorTest, TestOnNavigationStarted) {
   // Should return true if there are predictions.
-  auto navigation_id = GetNextId();
-  EXPECT_TRUE(predictor_->OnNavigationStarted(
-      navigation_id, ukm::SourceId(), /*initiator_origin=*/std::nullopt,
-      GURL(kUrl), base::TimeTicks::Now()));
+  EXPECT_TRUE(predictor_->PrepareForPageLoad(
+      /*initiator_origin=*/std::nullopt, GURL(kUrl), HintOrigin::NAVIGATION));
 
   // Should return false since there are no predictions.
-  auto navigation_id2 = GetNextId();
-  EXPECT_FALSE(predictor_->OnNavigationStarted(
-      navigation_id2, ukm::SourceId(), /*initiator_origin=*/std::nullopt,
-      GURL(kUrl3), base::TimeTicks::Now()));
+  EXPECT_FALSE(predictor_->PrepareForPageLoad(
+      /*initiator_origin=*/std::nullopt, GURL(kUrl3), HintOrigin::NAVIGATION));
 }
 
 TEST_F(LoadingPredictorTest, TestMainFrameResponseCancelsHint) {
@@ -212,9 +220,10 @@ TEST_F(LoadingPredictorTest, TestMainFrameResponseClearsNavigations) {
 
   auto navigation_id = GetNextId();
 
-  predictor_->OnNavigationStarted(navigation_id, ukm::SourceId(),
-                                  /*initiator_origin=*/std::nullopt, url,
+  predictor_->OnNavigationStarted(navigation_id, ukm::SourceId(), url,
                                   base::TimeTicks::Now());
+  predictor_->PrepareForPageLoad(/*initiator_origin=*/std::nullopt, url,
+                                 HintOrigin::EXTERNAL);
   EXPECT_NE(active_navigations.find(navigation_id), active_navigations.end());
   EXPECT_FALSE(active_hints.empty());
   EXPECT_NE(active_urls_to_navigations.find(url),
@@ -226,9 +235,10 @@ TEST_F(LoadingPredictorTest, TestMainFrameResponseClearsNavigations) {
   EXPECT_TRUE(active_urls_to_navigations.empty());
 
   // With redirects.
-  predictor_->OnNavigationStarted(navigation_id, ukm::SourceId(),
-                                  /*initiator_origin=*/std::nullopt, url,
+  predictor_->OnNavigationStarted(navigation_id, ukm::SourceId(), url,
                                   base::TimeTicks::Now());
+  predictor_->PrepareForPageLoad(/*initiator_origin=*/std::nullopt, url,
+                                 HintOrigin::EXTERNAL);
   EXPECT_NE(active_navigations.find(navigation_id), active_navigations.end());
   EXPECT_FALSE(active_hints.empty());
   EXPECT_NE(active_urls_to_navigations.find(url),
@@ -259,7 +269,6 @@ TEST_F(LoadingPredictorTest, TestMainFrameRequestDoesntCancelExternalHint) {
   auto navigation_id = GetNextId();
 
   predictor_->OnNavigationStarted(navigation_id, ukm::SourceId(),
-                                  /*initiator_origin=*/std::nullopt,
                                   GURL(url.spec()), base::TimeTicks::Now());
   EXPECT_NE(active_navigations.find(navigation_id), active_navigations.end());
   it = active_hints.find(url);
@@ -345,11 +354,11 @@ TEST_F(LoadingPredictorTest, TestDontPredictOmniboxHints) {
 
 TEST_F(LoadingPredictorPreconnectTest, TestHandleOmniboxHint) {
   const GURL preconnect_suggestion = GURL("http://search.com/kittens");
-  EXPECT_CALL(
-      *mock_preconnect_manager_,
-      StartPreconnectUrl(preconnect_suggestion, true,
-                         CreateNetworkanonymization_key(preconnect_suggestion),
-                         kLoadingPredictorPreconnectTrafficAnnotation, _));
+  EXPECT_CALL(*mock_preconnect_manager_,
+              StartPreconnectUrl(
+                  preconnect_suggestion, true,
+                  CreateNetworkanonymization_key(preconnect_suggestion),
+                  kLoadingPredictorPreconnectTrafficAnnotation, _, _, _));
   predictor_->PrepareForPageLoad(/*initiator_origin=*/std::nullopt,
                                  preconnect_suggestion, HintOrigin::OMNIBOX,
                                  true);
@@ -629,11 +638,11 @@ TEST_F(LoadingPredictorPreconnectTest, TestHandleHintWhenOnlyHttpsAllowed) {
                                               /*preconnectable=*/true,
                                               /*only_allow_https=*/true,
                                               preconnect_data));
-  EXPECT_CALL(
-      *mock_preconnect_manager_,
-      StartPreconnectUrl(main_frame_url_https, true,
-                         CreateNetworkanonymization_key(main_frame_url_https),
-                         kLoadingPredictorPreconnectTrafficAnnotation, _));
+  EXPECT_CALL(*mock_preconnect_manager_,
+              StartPreconnectUrl(
+                  main_frame_url_https, true,
+                  CreateNetworkanonymization_key(main_frame_url_https),
+                  kLoadingPredictorPreconnectTrafficAnnotation, _, _, _));
   EXPECT_TRUE(predictor_->HandleHintByOrigin(main_frame_url_https,
                                              /*preconnectable=*/true,
                                              /*only_allow_https=*/true,

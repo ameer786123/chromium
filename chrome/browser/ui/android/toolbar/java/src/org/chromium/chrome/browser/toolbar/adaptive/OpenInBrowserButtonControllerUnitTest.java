@@ -15,6 +15,7 @@ import android.content.Context;
 import android.graphics.drawable.Drawable;
 import android.view.View;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -26,9 +27,9 @@ import org.mockito.junit.MockitoRule;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.base.test.util.UserActionTester;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
@@ -37,6 +38,8 @@ import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.url.JUnitTestGURLs;
+
+import java.util.function.Supplier;
 
 /** Unit tests for {@link OpenInBrowserButtonController}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -52,6 +55,7 @@ public final class OpenInBrowserButtonControllerUnitTest {
     @Mock private Tracker mTracker;
 
     private OpenInBrowserButtonController mOpenInBrowserButtonController;
+    private UserActionTester mActionTester;
 
     @Before
     public void setUp() {
@@ -64,7 +68,13 @@ public final class OpenInBrowserButtonControllerUnitTest {
         mOpenInBrowserButtonController =
                 new OpenInBrowserButtonController(
                         mContext, mDrawable, mTabSupplier, mOpenInBrowserRunnable, () -> mTracker);
+        mActionTester = new UserActionTester();
         TrackerFactory.setTrackerForTests(mTracker);
+    }
+
+    @After
+    public void tearDown() {
+        mActionTester.tearDown();
     }
 
     @Test
@@ -101,5 +111,6 @@ public final class OpenInBrowserButtonControllerUnitTest {
 
         verify(mTracker, times(1))
                 .notifyEvent(EventConstants.ADAPTIVE_TOOLBAR_CUSTOMIZATION_OPEN_IN_BROWSER_OPENED);
+        assertEquals(1, mActionTester.getActionCount("MobileTopToolbarOpenInBrowserButton"));
     }
 }

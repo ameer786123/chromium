@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 
 #import <objc/runtime.h>
 
 #import <memory>
 
+#import "GREYConstants.h"
 #import "base/apple/bundle_locations.h"
 #import "base/base_paths.h"
 #import "base/command_line.h"
@@ -24,6 +30,7 @@
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case_app_interface.h"
 #import "ios/chrome/test/earl_grey/scoped_allow_crash_on_startup.h"
+#import "ios/chrome/test/scoped_eg_synchronization_disabler.h"
 #import "ios/testing/earl_grey/app_launch_manager.h"
 #import "ios/testing/earl_grey/earl_grey_test.h"
 #import "ios/third_party/edo/src/Service/Sources/EDOClientService.h"
@@ -146,8 +153,8 @@ void ResetAuthentication() {
 
   std::unique_ptr<net::EmbeddedTestServer> _testServer;
 
-  // The orientation of the device when entering these tests.
-  UIDeviceOrientation _originalOrientation;
+  // The orientation of the interface when entering these tests.
+  UIInterfaceOrientation _originalOrientation;
 }
 
 // Cleans up mock authentication.
@@ -284,11 +291,18 @@ void ResetAuthentication() {
     policy_test_utils::ClearPolicies();
   }
 
-  if ([[GREY_REMOTE_CLASS_IN_APP(UIDevice) currentDevice] orientation] !=
-      _originalOrientation) {
+  UIInterfaceOrientation currentOrientation =
+      [ChromeEarlGrey interfaceOrientation];
+  if (currentOrientation != _originalOrientation) {
+    // Synchronization off due to an infinite spinner if the keyboard is
+    // visible.
+    ScopedSynchronizationDisabler disabler;
+
+    UIDeviceOrientation originalOrientation = [GREYConstants
+        deviceOrientationForInterfaceOrientation:_originalOrientation];
     // Rotate the device back to the original orientation, since some tests
     // attempt to run in other orientations.
-    [EarlGrey rotateDeviceToOrientation:_originalOrientation error:nil];
+    [EarlGrey rotateDeviceToOrientation:originalOrientation error:nil];
   }
   _executedTestMethodSetUp = NO;
   [super tearDown];
@@ -466,7 +480,7 @@ void ResetAuthentication() {
 
   gIsMockAuthenticationDisabled = NO;
   _tearDownHandler = nil;
-  _originalOrientation = [[XCUIDevice sharedDevice] orientation];
+  _originalOrientation = [ChromeEarlGrey interfaceOrientation];
 }
 
 // Returns the method name, e.g. "testSomething" of the test that is currently

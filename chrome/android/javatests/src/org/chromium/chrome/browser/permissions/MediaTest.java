@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.permissions;
 
-
 import androidx.test.filters.MediumTest;
 
 import org.junit.Before;
@@ -42,7 +41,7 @@ public class MediaTest {
     private void testMediaPermissionsPlumbing(
             String prefix, String script, int numUpdates, boolean withGesture, boolean isDialog)
             throws Exception {
-        Tab tab = mPermissionRule.getActivity().getActivityTab();
+        Tab tab = mPermissionRule.getActivityTab();
         PermissionUpdateWaiter updateWaiter =
                 new PermissionUpdateWaiter(prefix, mPermissionRule.getActivity());
         ThreadUtils.runOnUiThreadBlocking(() -> tab.addObserver(updateWaiter));
@@ -56,7 +55,8 @@ public class MediaTest {
     @MediumTest
     @Feature({"MediaPermissions", "Main"})
     @CommandLineFlags.Add({FAKE_DEVICE})
-    @DisableIf.Device(DeviceFormFactor.TABLET) // crbug.com/41486136, https://crbug.com/383407975
+    @DisableIf.Device(
+            DeviceFormFactor.ONLY_TABLET) // crbug.com/41486136, https://crbug.com/383407975
     public void testMicrophoneMediaPermissionsPlumbingDialog() throws Exception {
         testMediaPermissionsPlumbing("Mic count:", "initiate_getMicrophone()", 1, true, true);
     }
@@ -81,7 +81,7 @@ public class MediaTest {
     @MediumTest
     @Feature({"MediaPermissions", "Main"})
     @CommandLineFlags.Add({FAKE_DEVICE})
-    @DisableIf.Device(DeviceFormFactor.TABLET) // crbug.com/41486136
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // crbug.com/41486136
     public void testCombinedPermissionsPlumbingDialog() throws Exception {
         testMediaPermissionsPlumbing("Combined count:", "initiate_getCombined()", 1, true, true);
     }

@@ -12,6 +12,9 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/time/time.h"
+#include "base/trace_event/memory_pressure_level_proto.h"
+#include "base/trace_event/named_trigger.h"
+#include "base/trace_event/typed_macros.h"
 #include "chrome/browser/performance_manager/mechanisms/page_loader.h"
 #include "chrome/browser/performance_manager/policies/background_tab_loading_policy_helpers.h"
 #include "chrome/browser/performance_manager/public/background_tab_loading_policy.h"
@@ -95,6 +98,11 @@ BackgroundTabLoadingPolicy::PageNodeData::~PageNodeData() = default;
 
 void ScheduleLoadForRestoredTabs(
     std::vector<content::WebContents*> web_contents_vector) {
+  // Trigger a slow-reports and collect a session restore trace if needed.
+  base::trace_event::EmitNamedTrigger("session-restore-config");
+  TRACE_EVENT("browser", "ScheduleLoadForRestoredTabs", "tabs_count",
+              web_contents_vector.size());
+
   DCHECK(!web_contents_vector.empty());
 
   std::vector<BackgroundTabLoadingPolicy::PageNodeData> page_node_data_vector;
@@ -142,7 +150,12 @@ BackgroundTabLoadingPolicy::BackgroundTabLoadingPolicy(
     base::RepeatingClosure all_restored_tabs_loaded_callback)
     : all_restored_tabs_loaded_callback_(
           std::move(all_restored_tabs_loaded_callback)),
-      page_loader_(std::make_unique<mechanism::PageLoader>()) {
+      page_loader_(std::make_unique<mechanism::PageLoader>()),
+      memory_pressure_listener_(
+          FROM_HERE,
+          base::MemoryPressureListenerTag::kBackgroundTabLoadingPolicy,
+          base::BindRepeating(&BackgroundTabLoadingPolicy::OnMemoryPressure,
+                              base::Unretained(this))) {
   DCHECK(!g_background_tab_loading_policy);
   g_background_tab_loading_policy = this;
   max_simultaneous_tab_loads_ = CalculateMaxSimultaneousTabLoads(
@@ -157,20 +170,19 @@ BackgroundTabLoadingPolicy::~BackgroundTabLoadingPolicy() {
 
 void BackgroundTabLoadingPolicy::OnPassedToGraph(Graph* graph) {
   graph->AddPageNodeObserver(this);
-  graph->AddSystemNodeObserver(this);
   graph->GetNodeDataDescriberRegistry()->RegisterDescriber(this,
                                                            kDescriberName);
 }
 
 void BackgroundTabLoadingPolicy::OnTakenFromGraph(Graph* graph) {
   graph->GetNodeDataDescriberRegistry()->UnregisterDescriber(this);
-  graph->RemoveSystemNodeObserver(this);
   graph->RemovePageNodeObserver(this);
 }
 
 void BackgroundTabLoadingPolicy::OnLoadingStateChanged(
     const PageNode* page_node,
     PageNode::LoadingState previous_state) {
+  TRACE_EVENT("browser", "BackgroundTabLoadingPolicy::OnLoadingStateChanged");
   DCHECK_EQ(has_restored_tabs_to_load_, HasRestoredTabsToLoad());
 
   switch (page_node->GetLoadingState()) {
@@ -206,14 +218,21 @@ void BackgroundTabLoadingPolicy::OnLoadingStateChanged(
       // PageNode from the set of PageNodes for which a load needs to be
       // initiated and from the set of PageNodes for which a load has been
       // initiated but hasn't started.
+      const bool erased_page_node_to_load = ErasePageNodeToLoadData(page_node);
       const bool erased =
-          ErasePageNodeToLoadData(page_node) ||
+          erased_page_node_to_load ||
           std::erase(page_nodes_load_initiated_, page_node) != 0;
 
       // Keep track of all PageNodes that are loading, even when the load isn't
       // initiated by this policy.
       DCHECK(!base::Contains(page_nodes_loading_, page_node));
       page_nodes_loading_.emplace(page_node, erased);
+
+      if (erased_page_node_to_load) {
+        // Removing a page to load may result in all those remaining being
+        // scored.
+        DispatchNotifyAllTabsScoredIfNeeded();
+      }
 
       return;
     }
@@ -232,6 +251,7 @@ void BackgroundTabLoadingPolicy::OnLoadingStateChanged(
 
 void BackgroundTabLoadingPolicy::OnBeforePageNodeRemoved(
     const PageNode* page_node) {
+  TRACE_EVENT("browser", "BackgroundTabLoadingPolicy::OnBeforePageNodeRemoved");
   RemovePageNode(page_node);
 
   // There may be free loading slots, check and load more tabs if that's the
@@ -377,8 +397,10 @@ bool BackgroundTabLoadingPolicy::ShouldLoad(
     return false;
 
   // Enforce a max time since last use.
-  if (page_node_data.page_node->GetTimeSinceLastVisibilityChange() >
-      kMaxTimeSinceLastUseToLoad) {
+  const base::TimeDelta time_since_last_visibility_change =
+      base::TimeTicks::Now() -
+      page_node_data.page_node->GetLastVisibilityChangeTime();
+  if (time_since_last_visibility_change > kMaxTimeSinceLastUseToLoad) {
     return false;
   }
 
@@ -400,6 +422,8 @@ bool BackgroundTabLoadingPolicy::ShouldLoad(
 
 void BackgroundTabLoadingPolicy::OnUsedInBackgroundAvailable(
     base::WeakPtr<PageNode> page_node) {
+  TRACE_EVENT("browser",
+              "BackgroundTabLoadingPolicy::OnUsedInBackgroundAvailable");
   if (!page_node) {
     // Ignore the value if the PageNode was deleted.
     return;
@@ -427,6 +451,7 @@ void BackgroundTabLoadingPolicy::OnUsedInBackgroundAvailable(
 }
 
 void BackgroundTabLoadingPolicy::StopLoadingTabs() {
+  TRACE_EVENT("browser", "BackgroundTabLoadingPolicy::StopLoadingTabs");
   // Clear out the remaining tabs to load and clean ourselves up.
   page_nodes_to_load_.clear();
   tabs_scored_ = 0;
@@ -439,6 +464,14 @@ void BackgroundTabLoadingPolicy::StopLoadingTabs() {
 
 void BackgroundTabLoadingPolicy::OnMemoryPressure(
     base::MemoryPressureListener::MemoryPressureLevel new_level) {
+  TRACE_EVENT_INSTANT(
+      "browser", "BackgroundTabLoadingPolicy::OnMemoryPressure",
+      [&](perfetto::EventContext ctx) {
+        auto* event = ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>();
+        auto* data = event->set_chrome_memory_pressure_notification();
+        data->set_level(
+            base::trace_event::MemoryPressureLevelToTraceEnum(new_level));
+      });
   switch (new_level) {
     case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE:
       break;
@@ -471,9 +504,10 @@ void BackgroundTabLoadingPolicy::ScoreTab(
 
   // Refine the score using the age of the tab. More recently used tabs have
   // higher scores.
-  score += CalculateAgeScore(
-      page_node_to_load_data->page_node->GetTimeSinceLastVisibilityChange()
-          .InSecondsF());
+  const base::TimeDelta time_since_last_visibility_change =
+      base::TimeTicks::Now() -
+      page_node_to_load_data->page_node->GetLastVisibilityChangeTime();
+  score += CalculateAgeScore(time_since_last_visibility_change.InSecondsF());
 
   ++tabs_scored_;
   page_node_to_load_data->score = score;
@@ -511,9 +545,18 @@ void BackgroundTabLoadingPolicy::NotifyAllTabsScored() {
 }
 
 void BackgroundTabLoadingPolicy::InitiateLoad(const PageNode* page_node) {
+  TRACE_EVENT("browser", "BackgroundTabLoadingPolicy::InitiateLoad");
+  for (const PageNode* to_load : page_loader_->GetPageNodesToLoad(page_node)) {
+    InitiateSinglePageLoad(to_load);
+  }
+}
+
+void BackgroundTabLoadingPolicy::InitiateSinglePageLoad(
+    const PageNode* page_node) {
   // The page shouldn't already be loading.
   DCHECK(!base::Contains(page_nodes_load_initiated_, page_node));
   DCHECK(!base::Contains(page_nodes_loading_, page_node));
+  DCHECK_EQ(tabs_scored_, page_nodes_to_load_.size());
 
   // Mark |page_node| as load initiated. Ensure that InitiateLoad is only called
   // for a PageNode that is tracked by the policy.
@@ -524,23 +567,34 @@ void BackgroundTabLoadingPolicy::InitiateLoad(const PageNode* page_node) {
 
   // Make the call to load |page_node|.
   page_loader_->LoadPageNode(page_node);
+
+  // No need to call DispatchNotifyAllTabsScoredIfNeeded() following
+  // ErasePageNodeToLoadData() - all pages to load were already scored at the
+  // beginning of this method.
 }
 
 void BackgroundTabLoadingPolicy::RemovePageNode(const PageNode* page_node) {
-  ErasePageNodeToLoadData(page_node);
+  const bool erased_page_node_to_load_data = ErasePageNodeToLoadData(page_node);
   std::erase(page_nodes_load_initiated_, page_node);
   page_nodes_loading_.erase(page_node);
 
   // All restored tabs may be loaded.
   UpdateHasRestoredTabsToLoad();
+
+  if (erased_page_node_to_load_data) {
+    // Removing a page to load may result in all those remaining being scored.
+    DispatchNotifyAllTabsScoredIfNeeded();
+  }
 }
 
 void BackgroundTabLoadingPolicy::MaybeLoadSomeTabs() {
+  TRACE_EVENT("browser", "BackgroundTabLoadingPolicy::MaybeLoadSomeTabs");
   // Continue to load tabs while possible. This is in a loop with a
   // recalculation of GetMaxNewTabLoads() as reentrancy can cause conditions
   // to change as each tab load is initiated.
-  while (GetMaxNewTabLoads() > 0)
+  while (GetMaxNewTabLoads() > 0) {
     LoadNextTab();
+  }
 
   // All restored tabs may be loaded.
   UpdateHasRestoredTabsToLoad();
@@ -572,6 +626,7 @@ size_t BackgroundTabLoadingPolicy::GetMaxNewTabLoads() const {
 }
 
 void BackgroundTabLoadingPolicy::LoadNextTab() {
+  TRACE_EVENT("browser", "BackgroundTabLoadingPolicy::LoadNextTab");
   DCHECK(!page_nodes_to_load_.empty());
   DCHECK_EQ(tabs_scored_, page_nodes_to_load_.size());
 
@@ -586,14 +641,17 @@ void BackgroundTabLoadingPolicy::LoadNextTab() {
     // |page_node| should not be loaded at this time. Remove |page_node| from
     // the policy.
     ErasePageNodeToLoadData(page_node);
+
+    // No need to call DispatchNotifyAllTabsScoredIfNeeded() following
+    // ErasePageNodeToLoadData() - all pages to load were already scored at the
+    // beginning of this method.
   }
 }
 
 size_t BackgroundTabLoadingPolicy::GetFreePhysicalMemoryMib() const {
   if (free_memory_mb_for_testing_ != 0)
     return free_memory_mb_for_testing_;
-  constexpr uint64_t kMibibytesInBytes = 1 << 20;
-  return base::SysInfo::AmountOfAvailablePhysicalMemory() / kMibibytesInBytes;
+  return base::SysInfo::AmountOfAvailablePhysicalMemory().InMiB();
 }
 
 bool BackgroundTabLoadingPolicy::ErasePageNodeToLoadData(
@@ -605,14 +663,9 @@ bool BackgroundTabLoadingPolicy::ErasePageNodeToLoadData(
         // |tabs_scored_| count.
         DCHECK_GT(tabs_scored_, 0U);
         --tabs_scored_;
-        std::erase(page_nodes_to_load_, page_node_to_load_data);
-      } else {
-        std::erase(page_nodes_to_load_, page_node_to_load_data);
-
-        // If the PageNode has not been scored yet, then removing it may trigger
-        // all tabs scored notification.
-        DispatchNotifyAllTabsScoredIfNeeded();
       }
+
+      std::erase(page_nodes_to_load_, page_node_to_load_data);
       return true;
     }
   }

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/login/ui/lock_contents_view.h"
 
 #include <algorithm>
@@ -325,7 +320,7 @@ class LockContentsView::LockContentsViewLayout : public views::LayoutManager {
       return gfx::Size();
     }
     const display::Display& display =
-        display::Screen::GetScreen()->GetDisplayNearestWindow(
+        display::Screen::Get()->GetDisplayNearestWindow(
             host_->GetWidget()->GetNativeWindow());
     gfx::Size preferred_size = display.size();
     preferred_size.set_height(preferred_size.height() -
@@ -1463,8 +1458,7 @@ void LockContentsView::OnDisplayMetricsChanged(const display::Display& display,
   // Set bounds here so that the lock screen widget always shows up on the
   // primary display. Sometimes the widget bounds are incorrect in the case
   // where multiple external displays are used. See crbug.com/1031571.
-  GetWidget()->SetBounds(
-      display::Screen::GetScreen()->GetPrimaryDisplay().bounds());
+  GetWidget()->SetBounds(display::Screen::Get()->GetPrimaryDisplay().bounds());
 }
 
 void LockContentsView::OnKeyboardVisibilityChanged(bool is_visible) {
@@ -1938,18 +1932,22 @@ void LockContentsView::LayoutAuth(LoginBigUserView* to_update,
           to_update_auth |= LoginAuthUserView::AUTH_PIN;
         }
         if (!state->show_password && !state->show_pin) {
-          CHECK(state->pin_available_at.has_value())
-              << "Password or pin factor must be present, if pin is not locked";
-          if (IsTimeInPast(state->pin_available_at)) {
-            LOG(WARNING)
-                << "User PIN factor should have been enabled by cryptohome at "
-                << ToString(state->pin_available_at)
-                << ". Waiting for OnPinUnlock call.";
+          if (state->pin_available_at.has_value()) {
+            if (IsTimeInPast(state->pin_available_at)) {
+              LOG(WARNING) << "User PIN factor should have been enabled by "
+                              "cryptohome at "
+                           << ToString(state->pin_available_at)
+                           << ". Waiting for OnPinUnlock call.";
+            }
+            to_update_auth =
+                screen_type_ == LockScreen::ScreenType::kLogin
+                    ? LoginAuthUserView::AUTH_PIN_LOCKED_SHOW_RECOVERY
+                    : LoginAuthUserView::AUTH_PIN_LOCKED;
+          } else {
+            LOG(ERROR) << "Password or pin factor must be present, if pin is "
+                          "not locked";
+            to_update_auth = LoginAuthUserView::AUTH_DISABLED;
           }
-          to_update_auth =
-              screen_type_ == LockScreen::ScreenType::kLogin
-                  ? LoginAuthUserView::AUTH_PIN_LOCKED_SHOW_RECOVERY
-                  : LoginAuthUserView::AUTH_PIN_LOCKED;
           // The auth error message might be shown at the moment due to previous
           // wrong attempts. We will hide it as it shows similar content as the
           // recover button and the pin delay message.
@@ -2273,37 +2271,33 @@ bool LockContentsView::OnKeyPressed(const ui::KeyEvent& event) {
 }
 
 void LockContentsView::RegisterAccelerators() {
-  for (size_t i = 0; i < kLoginAcceleratorDataLength; ++i) {
+  for (auto& accel : kLoginAcceleratorData) {
     // We need to register global accelerators and a few additional ones that
     // are handled by the WebUI (and normally registered by the WebUI).
     // When WebUI is loaded on demand, we would need to start WebUI after
     // accelerator is pressed. So we register WebUI acceleratos here
     // and then start WebUI when needed and pass the accelerator.
-    if (!kLoginAcceleratorData[i].global &&
-        kLoginAcceleratorData[i].action !=
-            LoginAcceleratorAction::kCancelScreenAction) {
+    if (!accel.global &&
+        accel.action != LoginAcceleratorAction::kCancelScreenAction) {
       continue;
     }
     if ((screen_type_ == LockScreen::ScreenType::kLogin) &&
-        !(kLoginAcceleratorData[i].scope & kScopeLogin)) {
+        !(accel.scope & kScopeLogin)) {
       continue;
     }
     if ((screen_type_ == LockScreen::ScreenType::kLock) &&
-        !(kLoginAcceleratorData[i].scope & kScopeLock)) {
+        !(accel.scope & kScopeLock)) {
       continue;
     }
     // Show reset conflicts with rotate screen when --ash-dev-shortcuts is
     // passed. Favor --ash-dev-shortcuts since that is explicitly added.
-    if (kLoginAcceleratorData[i].action ==
-            LoginAcceleratorAction::kShowResetScreen &&
+    if (accel.action == LoginAcceleratorAction::kShowResetScreen &&
         base::CommandLine::ForCurrentProcess()->HasSwitch(
             switches::kAshDeveloperShortcuts)) {
       continue;
     }
 
-    accel_map_[ui::Accelerator(kLoginAcceleratorData[i].keycode,
-                               kLoginAcceleratorData[i].modifiers)] =
-        kLoginAcceleratorData[i].action;
+    accel_map_[ui::Accelerator(accel.keycode, accel.modifiers)] = accel.action;
   }
 
   // Register the accelerators.
@@ -2458,8 +2452,7 @@ void LockContentsView::ForceSyncLayoutOfAllViews() {
 void LockContentsView::UpdateAccessiblePreviousAndNextFocus() {
   if (GetWidget() && GetWidget()->GetNativeWindow()) {
     Shelf* shelf = Shelf::ForWindow(GetWidget()->GetNativeWindow());
-    ShelfWidget* shelf_widget = shelf->shelf_widget();
-    GetViewAccessibility().SetNextFocus(shelf_widget);
+    GetViewAccessibility().SetNextFocus(shelf->login_shelf_widget());
     GetViewAccessibility().SetPreviousFocus(shelf->GetStatusAreaWidget());
   } else {
     GetViewAccessibility().SetNextFocus(nullptr);

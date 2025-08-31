@@ -16,7 +16,7 @@
 #include "chrome/browser/ui/views/webid/fedcm_account_selection_view_desktop.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/strings/grit/components_strings.h"
-#include "content/public/browser/identity_request_dialog_controller.h"
+#include "content/public/browser/webid/identity_request_dialog_controller.h"
 #include "content/public/test/browser_test.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
@@ -31,6 +31,7 @@
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/controls/throbber.h"
 #include "ui/views/layout/box_layout.h"
+#include "ui/views/window/dialog_delegate.h"
 
 namespace webid {
 namespace {
@@ -62,6 +63,7 @@ class AccountSelectionModalViewTest : public DialogBrowserTest,
             content::IdentityProviderMetadata(),
             CreateTestClientMetadata(),
             blink::mojom::RpContext::kSignIn,
+            /*format=*/std::nullopt,
             kDefaultDisclosureFields,
             /*has_login_status_mismatch=*/false)) {
     test_shared_url_loader_factory_ =
@@ -85,8 +87,9 @@ class AccountSelectionModalViewTest : public DialogBrowserTest,
         delegate_.get(), browser()->GetActiveTabInterface(),
         test_shared_url_loader_factory_);
     account_selection_view_->ShowLoadingDialog(
-        base::UTF16ToASCII(kRpETLDPlusOne), base::UTF16ToASCII(kIdpETLDPlusOne),
-        blink::mojom::RpContext::kSignIn, blink::mojom::RpMode::kActive);
+        content::RelyingPartyData(kRpETLDPlusOne, iframe_for_display_),
+        base::UTF16ToASCII(kIdpETLDPlusOne), blink::mojom::RpContext::kSignIn,
+        blink::mojom::RpMode::kActive);
     dialog_ = static_cast<AccountSelectionModalView*>(
         account_selection_view_->account_selection_view());
 
@@ -108,10 +111,16 @@ class AccountSelectionModalViewTest : public DialogBrowserTest,
 
   void CreateAndShowMultiAccountPicker(
       const std::vector<std::string>& account_suffixes,
+      bool has_display_identifier,
       bool supports_add_account = false) {
     idp_data_->idp_metadata.supports_add_account = supports_add_account;
     account_list_ =
         CreateTestIdentityRequestAccounts(account_suffixes, idp_data_);
+    if (!has_display_identifier) {
+      for (auto& account : account_list_) {
+        account->display_identifier = "";
+      }
+    }
 
     CreateAccountSelectionModal();
     dialog_->ShowMultiAccountPicker(account_list_, {idp_data_},
@@ -130,6 +139,10 @@ class AccountSelectionModalViewTest : public DialogBrowserTest,
 
   void CreateAndShowVerifyingSheet() {
     CreateAccountSelectionModal();
+    ShowVerifyingSheet();
+  }
+
+  void ShowVerifyingSheet() {
     const std::string kAccountSuffix = "suffix";
     IdentityRequestAccountPtr account(CreateTestIdentityRequestAccount(
         kAccountSuffix, idp_data_,
@@ -152,15 +165,23 @@ class AccountSelectionModalViewTest : public DialogBrowserTest,
                            bool expect_visible_idp_icon = true,
                            bool expect_visible_combined_icons = false) {
     // Perform some basic dialog checks.
-    EXPECT_FALSE(dialog()->ShouldShowCloseButton());
-    EXPECT_FALSE(dialog()->ShouldShowWindowTitle());
+    auto* delegate = dialog_delegate();
+    ASSERT_TRUE(delegate);
+
+    EXPECT_FALSE(delegate->ShouldShowCloseButton());
+    EXPECT_FALSE(delegate->ShouldShowWindowTitle());
 
     // Default buttons should not be shown.
-    EXPECT_FALSE(dialog()->GetOkButton());
-    EXPECT_FALSE(dialog()->GetCancelButton());
+    EXPECT_FALSE(delegate->GetOkButton());
+    EXPECT_FALSE(delegate->GetCancelButton());
+
+    bool has_subtitle = !iframe_for_display_.empty();
 
     // Order: Brand icon, title and body for non loading UI.
     std::vector<std::string> expected_class_names = {"View", "Label"};
+    if (has_subtitle) {
+      expected_class_names.push_back("Label");
+    }
     bool is_loading_dialog =
         !expect_visible_idp_icon && !expect_visible_combined_icons;
     if (!is_loading_dialog) {
@@ -260,11 +281,27 @@ class AccountSelectionModalViewTest : public DialogBrowserTest,
     // Check title text.
     views::Label* title_view = static_cast<views::Label*>(header_children[1]);
     ASSERT_TRUE(title_view);
-    EXPECT_EQ(title_view->GetText(), kTitleSignIn);
+    if (has_subtitle) {
+      EXPECT_EQ(title_view->GetText(), kTitleIframeSignIn);
+      EXPECT_EQ(dialog()->GetDialogTitle(),
+                base::UTF16ToUTF8(kTitleIframeSignIn));
+
+      views::Label* subtitle_view =
+          static_cast<views::Label*>(header_children[2]);
+      ASSERT_TRUE(subtitle_view);
+      EXPECT_EQ(subtitle_view->GetText(), kSubtitleIframeSignIn);
+      EXPECT_EQ(dialog()->GetDialogSubtitle(),
+                base::UTF16ToUTF8(kSubtitleIframeSignIn));
+    } else {
+      EXPECT_EQ(title_view->GetText(), kTitleSignIn);
+      EXPECT_EQ(dialog()->GetDialogTitle(), base::UTF16ToUTF8(kTitleSignIn));
+      EXPECT_EQ(dialog()->GetDialogSubtitle(), std::nullopt);
+    }
 
     if (!is_loading_dialog) {
       // Check body text.
-      views::Label* body_view = static_cast<views::Label*>(header_children[2]);
+      views::Label* body_view =
+          static_cast<views::Label*>(header_children[has_subtitle ? 3 : 2]);
       ASSERT_TRUE(body_view);
       EXPECT_EQ(body_view->GetText(), kBodySignIn);
       EXPECT_EQ(body_view->GetVisible(), expect_visible_body_label_);
@@ -375,7 +412,9 @@ class AccountSelectionModalViewTest : public DialogBrowserTest,
 
   void TestMultipleAccounts(bool supports_add_account = false) {
     const std::vector<std::string> kAccountSuffixes = {"0", "1", "2"};
-    CreateAndShowMultiAccountPicker(kAccountSuffixes, supports_add_account);
+    CreateAndShowMultiAccountPicker(kAccountSuffixes,
+                                    /*has_display_identifier=*/true,
+                                    supports_add_account);
 
     std::vector<raw_ptr<views::View, VectorExperimental>> children =
         dialog()->children();
@@ -673,6 +712,13 @@ class AccountSelectionModalViewTest : public DialogBrowserTest,
 
   AccountSelectionModalView* dialog() { return dialog_; }
 
+  views::DialogDelegate* dialog_delegate() {
+    if (auto* widget = dialog()->GetWidget()) {
+      return widget->widget_delegate()->AsDialogDelegate();
+    }
+    return nullptr;
+  }
+
   IdentityProviderDataPtr idp_data() { return idp_data_; }
 
   scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory()
@@ -686,6 +732,10 @@ class AccountSelectionModalViewTest : public DialogBrowserTest,
       idp_data_->idp_metadata.brand_decoded_icon = gfx::Image();
     }
   }
+
+  // Can be set before the dialog is created to be set on the RelyingPartyData
+  // that is passed to the dialog.
+  std::u16string iframe_for_display_;
 
  private:
   bool expect_visible_body_label_{true};
@@ -1025,6 +1075,19 @@ IN_PROC_BROWSER_TEST_F(AccountSelectionModalViewTest,
                         content::IdentityRequestAccount::LoginState::kSignIn,
                         /*idp_brand_icon_url=*/kIdpBrandIconUrl,
                         /*rp_brand_icon_url=*/kRpBrandIconUrl);
+}
+
+IN_PROC_BROWSER_TEST_F(AccountSelectionModalViewTest,
+                       VerifyingSheetSingleIdentifier) {
+  CreateAndShowMultiAccountPicker(/*account_suffixes=*/{"0", "suffix", "2"},
+                                  /*has_display_identifier=*/false);
+  ShowVerifyingSheet();
+}
+
+IN_PROC_BROWSER_TEST_F(AccountSelectionModalViewTest, IframeTitle) {
+  iframe_for_display_ = kIframeETLDPlusOne;
+  // This will also run the header/title tests.
+  CreateAccountSelectionModal();
 }
 
 }  //  namespace webid

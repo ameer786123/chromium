@@ -11,7 +11,6 @@ import org.jni_zero.CalledByNative;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
-import org.chromium.base.Promise;
 import org.chromium.base.ThreadUtils;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -20,10 +19,9 @@ import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
 import org.chromium.components.signin.AccountUtils;
 import org.chromium.components.signin.base.CoreAccountInfo;
+import org.chromium.google_apis.gaia.CoreAccountId;
 import org.chromium.google_apis.gaia.GoogleServiceAuthError;
 import org.chromium.google_apis.gaia.GoogleServiceAuthErrorState;
-
-import java.util.List;
 
 /**
  * Java instance for the native ProfileOAuth2TokenServiceDelegate.
@@ -37,6 +35,7 @@ import java.util.List;
 final class ProfileOAuth2TokenServiceDelegate {
     private static final String OAUTH2_SCOPE_PREFIX = "oauth2:";
 
+    private final long mNativePtr;
     private final AccountManagerFacade mAccountManagerFacade;
 
     @VisibleForTesting
@@ -44,34 +43,23 @@ final class ProfileOAuth2TokenServiceDelegate {
     ProfileOAuth2TokenServiceDelegate(long nativeProfileOAuth2TokenServiceDelegate) {
         assert nativeProfileOAuth2TokenServiceDelegate != 0
                 : "nativeProfileOAuth2TokenServiceDelegate should not be zero!";
+        mNativePtr = nativeProfileOAuth2TokenServiceDelegate;
         mAccountManagerFacade = AccountManagerFacadeProvider.getInstance();
     }
 
     /**
      * Called by native method AndroidAccessTokenFetcher::Start() to retrieve OAuth2 tokens.
-     * @param accountEmail The account email.
+     *
+     * @param coreAccountInfo The account info.
      * @param scope The scope to get an auth token for (without Android-style 'oauth2:' prefix).
-     * @param nativeCallback The pointer to the native callback that should be run upon
-     *         completion.
+     * @param nativeCallback The pointer to the native callback that should be run upon completion.
      */
     @MainThread
     @CalledByNative
     private void getAccessTokenFromNative(
-            String accountEmail, String scope, final long nativeCallback) {
-        assert accountEmail != null : "Account email cannot be null!";
-        mAccountManagerFacade
-                .getCoreAccountInfos()
-                .then(
-                        coreAccountInfos -> {
-                            final @Nullable CoreAccountInfo coreAccountInfo =
-                                    AccountUtils.findCoreAccountInfoByEmail(
-                                            coreAccountInfos, accountEmail);
-                            getAccessToken(coreAccountInfo, scope, nativeCallback);
-                        });
-    }
-
-    private void getAccessToken(
-            @Nullable CoreAccountInfo coreAccountInfo, String scope, final long nativeCallback) {
+            @Nullable @JniType("CoreAccountInfo") CoreAccountInfo coreAccountInfo,
+            String scope,
+            final long nativeCallback) {
         if (coreAccountInfo == null) {
             ThreadUtils.postOnUiThread(
                     () -> {
@@ -126,16 +114,22 @@ final class ProfileOAuth2TokenServiceDelegate {
 
     /**
      * Called by the native method ProfileOAuth2TokenServiceDelegate::RefreshTokenIsAvailable to
-     * check whether the account has an OAuth2 refresh token. TODO(crbug.com/40928950): Use
-     * CoreAccountId instead of string email.
+     * check whether the account has an OAuth2 refresh token.
      */
     @VisibleForTesting
     @CalledByNative
-    boolean hasOAuth2RefreshToken(String accountEmail) {
-        Promise<List<CoreAccountInfo>> promise = mAccountManagerFacade.getCoreAccountInfos();
+    boolean hasOAuth2RefreshToken(@JniType("CoreAccountId") CoreAccountId coreAccountId) {
+        var promise = mAccountManagerFacade.getAccounts();
         return promise.isFulfilled()
-                && AccountUtils.findCoreAccountInfoByEmail(promise.getResult(), accountEmail)
+                && AccountUtils.findAccountByGaiaId(promise.getResult(), coreAccountId.getId())
                         != null;
+    }
+
+    @MainThread
+    void updateAuthErrorForTesting(CoreAccountId accountId, GoogleServiceAuthError authError) {
+        ProfileOAuth2TokenServiceDelegateJni.get()
+                .updateAuthErrorFromJava(
+                        mNativePtr, accountId, authError, /* fireAuthErrorChanged= */ false);
     }
 
     @NativeMethods
@@ -156,5 +150,18 @@ final class ProfileOAuth2TokenServiceDelegate {
                 long expirationTimeSecs,
                 @JniType("GoogleServiceAuthError") GoogleServiceAuthError authError,
                 long nativeCallback);
+
+        /**
+         * Called to C++ to update auth error.
+         *
+         * @param accountId The account which has the auth error.
+         * @param authError The {@link GoogleServiceAuthError} to set for the account.
+         * @param fireAuthErrorChanged Whether observers should be notified of this update.
+         */
+        void updateAuthErrorFromJava(
+                long nativeProfileOAuth2TokenServiceDelegateAndroid,
+                @JniType("CoreAccountId") CoreAccountId accountId,
+                @JniType("GoogleServiceAuthError") GoogleServiceAuthError authError,
+                boolean fireAuthErrorChanged);
     }
 }

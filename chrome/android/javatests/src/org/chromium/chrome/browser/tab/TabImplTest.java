@@ -4,11 +4,14 @@
 
 package org.chromium.chrome.browser.tab;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import androidx.test.filters.SmallTest;
 
-import org.junit.ClassRule;
+import org.hamcrest.Matchers;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -16,12 +19,17 @@ import org.junit.runner.RunWith;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.Criteria;
+import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.page.WebPageStation;
+import org.chromium.components.autofill.TestViewStructure;
 
 /** Tests for the {@link TabImpl} class. */
 @RunWith(ChromeJUnit4ClassRunner.class)
@@ -32,24 +40,28 @@ import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
 @Batch(Batch.PER_CLASS)
 public class TabImplTest {
     private static final String TEST_PATH = "/chrome/test/data/android/about.html";
-
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    private static final long DEFAULT_MAX_TIME_TO_WAIT_IN_MS = 3000;
 
     @Rule
-    public BlankCTATabInitialStateRule mBlankCtaTabInitialStateRule =
-            new BlankCTATabInitialStateRule(sActivityTestRule, false);
+    public AutoResetCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.fastAutoResetCtaActivityRule();
+
+    private WebPageStation mInitialPage;
+
+    @Before
+    public void setUp() {
+        mInitialPage = mActivityTestRule.startOnBlankPage();
+    }
 
     private TabImpl createFrozenTab() {
-        Tab tab =
-                sActivityTestRule.loadUrlInNewTab(
-                        sActivityTestRule.getTestServer().getURL(TEST_PATH),
-                        /* incognito= */ false);
+        String url = mActivityTestRule.getTestServer().getURL(TEST_PATH);
+        WebPageStation testPage = mInitialPage.openFakeLinkToWebPage(url);
+        Tab tab = testPage.loadedTabElement.value();
+
         return ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     TabState state = TabStateExtractor.from(tab);
-                    sActivityTestRule
+                    mActivityTestRule
                             .getActivity()
                             .getCurrentTabModel()
                             .getTabRemover()
@@ -57,7 +69,7 @@ public class TabImplTest {
                                     TabClosureParams.closeTab(tab).allowUndo(false).build(),
                                     /* allowDialog= */ false);
                     return (TabImpl)
-                            sActivityTestRule
+                            mActivityTestRule
                                     .getActivity()
                                     .getCurrentTabCreator()
                                     .createFrozenTab(state, tab.getId(), /* index= */ 1);
@@ -67,12 +79,63 @@ public class TabImplTest {
     @Test
     @SmallTest
     @Feature({"Tab"})
-    public void testTabLoadIfNeededEnsuresBackingForMediaCapture() throws Exception {
+    public void testTabLoadIfNeededEnsuresBackingForMediaCapture() {
         TabImpl tab = createFrozenTab();
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> tab.loadIfNeeded(TabLoadIfNeededCaller.MEDIA_CAPTURE_PICKER));
 
         ThreadUtils.runOnUiThreadBlocking(() -> assertTrue(tab.hasBacking()));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Tab"})
+    public void testTabIsNotInPWA() {
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    Criteria.checkThat(
+                            mActivityTestRule.getActivity().getActivityTab(),
+                            Matchers.notNullValue());
+                },
+                DEFAULT_MAX_TIME_TO_WAIT_IN_MS,
+                CriteriaHelper.DEFAULT_POLLING_INTERVAL);
+
+        assertFalse(mActivityTestRule.getActivityTab().isTabInPWA());
+        assertTrue(mActivityTestRule.getActivityTab().isTabInBrowser());
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Tab"})
+    @EnableFeatures({"AnnotatedPageContentsVirtualStructure"})
+    public void testOnProvideVirtualStructure() {
+        var url = mActivityTestRule.getTestServer().getURL(TEST_PATH);
+        mActivityTestRule.loadUrl(url);
+        TabImpl tabImpl = (TabImpl) mActivityTestRule.getActivityTab();
+        TestViewStructure viewStructure = new TestViewStructure();
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    tabImpl.getContentView().onProvideVirtualStructure(viewStructure);
+                });
+
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    if (viewStructure.getChildCount() != 1) return false;
+                    var rootNode = viewStructure.getChild(0);
+                    if (!rootNode.hasExtras()) return false;
+                    return rootNode.getExtras()
+                            .containsKey("org.chromium.chrome.browser.AnnotatedPageContents");
+                },
+                DEFAULT_MAX_TIME_TO_WAIT_IN_MS,
+                CriteriaHelper.DEFAULT_POLLING_INTERVAL);
+
+        assertEquals(1, viewStructure.getChildCount());
+        var rootNode = viewStructure.getChild(0);
+        assertTrue(rootNode.hasExtras());
+        assertTrue(
+                rootNode.getExtras()
+                        .containsKey("org.chromium.chrome.browser.AnnotatedPageContents"));
     }
 }

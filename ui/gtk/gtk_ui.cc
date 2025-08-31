@@ -2,24 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ui/gtk/gtk_ui.h"
 
 #include <cairo.h>
+#include <glib.h>
 #include <pango/pango.h>
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <optional>
 #include <set>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_map.h"
 #include "base/debug/leak_annotations.h"
@@ -30,6 +29,7 @@
 #include "base/nix/xdg_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/observer_list.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "chrome/browser/themes/theme_properties.h"  // nogncheck
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -60,6 +60,7 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/image/image_skia_source.h"
+#include "ui/gfx/linux/fontconfig_util.h"
 #include "ui/gfx/skbitmap_operations.h"
 #include "ui/gtk/gtk_color_mixers.h"
 #include "ui/gtk/gtk_compat.h"
@@ -125,28 +126,29 @@ gfx::FontRenderParams GetGtkFontRenderParams() {
   gfx::FontRenderParams params;
   params.antialiasing = antialias != 0;
 
-  if (hinting == 0 || !hint_style || strcmp(hint_style, "hintnone") == 0) {
+  if (hinting == 0 || !hint_style ||
+      UNSAFE_TODO(strcmp(hint_style, "hintnone")) == 0) {
     params.hinting = gfx::FontRenderParams::HINTING_NONE;
-  } else if (strcmp(hint_style, "hintslight") == 0) {
+  } else if (UNSAFE_TODO(strcmp(hint_style, "hintslight")) == 0) {
     params.hinting = gfx::FontRenderParams::HINTING_SLIGHT;
-  } else if (strcmp(hint_style, "hintmedium") == 0) {
+  } else if (UNSAFE_TODO(strcmp(hint_style, "hintmedium")) == 0) {
     params.hinting = gfx::FontRenderParams::HINTING_MEDIUM;
-  } else if (strcmp(hint_style, "hintfull") == 0) {
+  } else if (UNSAFE_TODO(strcmp(hint_style, "hintfull")) == 0) {
     params.hinting = gfx::FontRenderParams::HINTING_FULL;
   } else {
     LOG(WARNING) << "Unexpected gtk-xft-hintstyle \"" << hint_style << "\"";
     params.hinting = gfx::FontRenderParams::HINTING_NONE;
   }
 
-  if (!rgba || strcmp(rgba, "none") == 0) {
+  if (!rgba || UNSAFE_TODO(strcmp(rgba, "none")) == 0) {
     params.subpixel_rendering = gfx::FontRenderParams::SUBPIXEL_RENDERING_NONE;
-  } else if (strcmp(rgba, "rgb") == 0) {
+  } else if (UNSAFE_TODO(strcmp(rgba, "rgb")) == 0) {
     params.subpixel_rendering = gfx::FontRenderParams::SUBPIXEL_RENDERING_RGB;
-  } else if (strcmp(rgba, "bgr") == 0) {
+  } else if (UNSAFE_TODO(strcmp(rgba, "bgr")) == 0) {
     params.subpixel_rendering = gfx::FontRenderParams::SUBPIXEL_RENDERING_BGR;
-  } else if (strcmp(rgba, "vrgb") == 0) {
+  } else if (UNSAFE_TODO(strcmp(rgba, "vrgb")) == 0) {
     params.subpixel_rendering = gfx::FontRenderParams::SUBPIXEL_RENDERING_VRGB;
-  } else if (strcmp(rgba, "vbgr") == 0) {
+  } else if (UNSAFE_TODO(strcmp(rgba, "vbgr")) == 0) {
     params.subpixel_rendering = gfx::FontRenderParams::SUBPIXEL_RENDERING_VBGR;
   } else {
     LOG(WARNING) << "Unexpected gtk-xft-rgba \"" << rgba << "\"";
@@ -196,6 +198,100 @@ double FontScale() {
   return std::round(font_scale * 64) / 64;
 }
 
+// Some misconfigured systems have missing or corrupted schemas, see
+// https://crbug.com/434763642. Avoid initializing GTK in this case to prevent
+// a crash.
+bool IsValidSchema(ui::LinuxUiBackend backend) {
+  struct GFreeDeleter {
+    void operator()(gchar* ptr) const { g_free(ptr); }
+  };
+  struct GVariantDeleter {
+    void operator()(GVariant* ptr) const { g_variant_unref(ptr); }
+  };
+  struct GSettingsSchemaKeyDeleter {
+    void operator()(GSettingsSchemaKey* ptr) const {
+      g_settings_schema_key_unref(ptr);
+    }
+  };
+  struct GSettingsSchemaDeleter {
+    void operator()(GSettingsSchema* ptr) const {
+      g_settings_schema_unref(ptr);
+    }
+  };
+
+  struct {
+    const char* interface;
+    std::array<const char*, 3> keys;
+  } static constexpr kInterfaces[] = {
+      {"org.gnome.desktop.interface",
+       {"font-antialiasing", "font-hinting", "font-rgba-order"}},
+      {"org.gnome.settings-daemon.plugins.xsettings",
+       {"antialiasing", "hinting", "rgba-order"}},
+  };
+
+  if (backend != ui::LinuxUiBackend::kWayland) {
+    // The GTK codepath using these schemas is only used on Wayland.
+    return true;
+  }
+
+  auto* source = g_settings_schema_source_get_default();
+  if (!source) {
+    return true;
+  }
+
+  for (const auto& interface : kInterfaces) {
+    std::unique_ptr<GSettingsSchema, GSettingsSchemaDeleter> schema(
+        g_settings_schema_source_lookup(source, interface.interface,
+                                        /*recursive=*/true));
+    if (!schema) {
+      // Not an error, try the next schema.
+      continue;
+    }
+
+    for (const char* key_string : interface.keys) {
+      // Checking for the key first is required, otherwise
+      // g_settings_schema_get_key() could crash.
+      if (!g_settings_schema_has_key(schema.get(), key_string)) {
+        LOG(ERROR) << "Schema " << interface.interface << " does not have key "
+                   << key_string;
+        return false;
+      }
+
+      std::unique_ptr<GSettingsSchemaKey, GSettingsSchemaKeyDeleter> key(
+          g_settings_schema_get_key(schema.get(), key_string));
+      if (!key) {
+        LOG(ERROR) << "Schema " << interface.interface << " has key "
+                   << key_string << ", but g_settings_schema_get_key() failed";
+        return false;
+      }
+
+      std::unique_ptr<GVariant, GVariantDeleter> range(
+          g_settings_schema_key_get_range(key.get()));
+      if (!range) {
+        LOG(ERROR) << "Schema " << interface.interface << " key " << key_string
+                   << " has no range, but it is required";
+        return false;
+      }
+
+      char* type_string = nullptr;
+      g_variant_get(range.get(), "(sv)", &type_string, nullptr);
+      std::unique_ptr<gchar, GFreeDeleter> type_string_deleter(type_string);
+      if (!type_string || type_string != std::string_view("enum")) {
+        LOG(ERROR) << "Schema " << interface.interface << " key " << key_string
+                   << " must be an enum";
+        return false;
+      }
+    }
+
+    // Valid schema. Return now since GTK uses the first present schema.
+    return true;
+  }
+
+  // No schema found. This is acceptable, because GTK will fallback to using
+  // default values.
+  return true;
+}
+
 }  // namespace
 
 GtkUi::GtkUi() : window_frame_actions_() {
@@ -215,13 +311,24 @@ GtkUiPlatform* GtkUi::GetPlatform() {
 }
 
 bool GtkUi::Initialize() {
-  if (!LoadGtk() || !GtkCheckVersion(3, 20)) {
+  const auto* delegate = ui::LinuxUiDelegate::GetInstance();
+  DCHECK(delegate);
+  const auto backend = delegate->GetBackend();
+
+  if (!IsValidSchema(backend)) {
     return false;
   }
 
-  auto* delegate = ui::LinuxUiDelegate::GetInstance();
-  DCHECK(delegate);
-  platform_ = CreateGtkUiPlatform(delegate->GetBackend());
+  if (!LoadGtk(backend) || !GtkCheckVersion(3, 20)) {
+    return false;
+  }
+
+  // Gtk initialization through pango may call FcInit() before we get to that.
+  // Retrieve global FontConfig config here to call FcInit() with configuration
+  // we control.
+  gfx::GetGlobalFontConfig();
+
+  platform_ = CreateGtkUiPlatform(backend);
 
   // Avoid GTK initializing atk-bridge, and let AuraLinux implementation
   // do it once it is ready.
@@ -295,7 +402,7 @@ bool GtkUi::Initialize() {
 
   indicators_count = 0;
 
-  platform_->OnInitialized(GetDummyWindow());
+  platform_->OnInitialized();
 
   return true;
 }
@@ -552,6 +659,15 @@ bool GtkUi::PreferDarkTheme() const {
   return dark;
 }
 
+std::vector<std::string> GtkUi::GetCmdLineFlagsForCopy() const {
+  const auto& gtk_version = GtkVersion();
+  uint32_t major_version =
+      gtk_version.IsValid() ? gtk_version.components()[0] : 0;
+  return {std::string(switches::kUiToolkitFlag) + "=gtk",
+          std::string(switches::kGtkVersionFlag) + "=" +
+              base::NumberToString(major_version)};
+}
+
 void GtkUi::SetDarkTheme(bool dark) {
   auto* settings = gtk_settings_get_default();
   g_object_set(settings, "gtk-application-prefer-dark-theme", dark, nullptr);
@@ -638,17 +754,18 @@ base::flat_map<std::string, std::string> GtkUi::GetKeyboardLayoutMap() {
       for (gint i = 0; i < n_entries; ++i) {
         // There are 4 entries per layout group, one each for shift level 0..3.
         // We only care about the unshifted values (level = 0).
-        if (keys[i].level == 0) {
-          uint16_t unicode = gdk_keyval_to_unicode(keyvals[i]);
+        if (UNSAFE_TODO(keys[i]).level == 0) {
+          uint16_t unicode = gdk_keyval_to_unicode(UNSAFE_TODO(keyvals[i]));
           if (unicode == 0) {
             for (const auto& i_dead : kDeadKeyMapping) {
-              if (keyvals[i] == i_dead.gdk_key) {
+              if (UNSAFE_TODO(keyvals[i]) == i_dead.gdk_key) {
                 unicode = i_dead.unicode;
               }
             }
           }
           if (unicode != 0) {
-            layouts->GetLayout(keys[i].group)->AddKeyMapping(domcode, unicode);
+            layouts->GetLayout(UNSAFE_TODO(keys[i]).group)
+                ->AddKeyMapping(domcode, unicode);
           }
         }
       }
@@ -815,19 +932,10 @@ void GtkUi::UpdateColors() {
   // use the ColorProvider instance from the ColorProviderManager corresponding
   // to the theme bits associated with the NativeThemeGtk instance to ensure
   // we do not regress existing behavior during the transition.
-  const auto color_scheme = native_theme_->GetDefaultSystemColorScheme();
   ui::ColorProviderKey key;
-  key.color_mode = (color_scheme == ui::NativeTheme::ColorScheme::kDark)
-                       ? ui::ColorProviderKey::ColorMode::kDark
-                       : ui::ColorProviderKey::ColorMode::kLight;
-  key.contrast_mode =
-      (color_scheme == ui::NativeTheme::ColorScheme::kPlatformHighContrast)
-          ? ui::ColorProviderKey::ContrastMode::kHigh
-          : ui::ColorProviderKey::ContrastMode::kNormal;
-  key.forced_colors =
-      (color_scheme == ui::NativeTheme::ColorScheme::kPlatformHighContrast)
-          ? ui::ColorProviderKey::ForcedColors::kActive
-          : ui::ColorProviderKey::ForcedColors::kNone;
+  if (native_theme_->ShouldUseDarkColors()) {
+    key.color_mode = ui::ColorProviderKey::ColorMode::kDark;
+  }
   // Some theme colors, e.g. COLOR_NTP_LINK, are derived from color provider
   // colors. We assume that those sources' colors won't change with frame type.
   key.system_theme = ui::SystemTheme::kGtk;

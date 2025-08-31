@@ -7,19 +7,18 @@
 #include <vector>
 
 #include "base/check_deref.h"
+#include "base/strings/string_util.h"
 #include "build/build_config.h"
+#include "chrome/browser/extensions/extension_browsertest.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/common/extension.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_browsertest.h"
-#else
+#if !BUILDFLAG(IS_ANDROID)
 #include "base/command_line.h"
 #include "base/containers/to_vector.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/api/settings_overrides/settings_overrides_api.h"
-#include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/external_provider_manager.h"
 #include "chrome/browser/prefs/session_startup_pref.h"  // nogncheck
@@ -32,6 +31,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/search_test_utils.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/default_search_manager.h"
@@ -346,11 +346,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsDisabledWithSettingsOverrideAPI,
 
 #else
 
-#if BUILDFLAG(IS_ANDROID)
-using ExtensionSettingsOverrideTest = ExtensionPlatformBrowserTest;
-#else
 using ExtensionSettingsOverrideTest = ExtensionBrowserTest;
-#endif
 
 IN_PROC_BROWSER_TEST_F(ExtensionSettingsOverrideTest,
                        SettingsOverridesDisallowed) {

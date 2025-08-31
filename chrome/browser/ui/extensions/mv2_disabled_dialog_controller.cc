@@ -5,10 +5,10 @@
 #include "chrome/browser/ui/extensions/mv2_disabled_dialog_controller.h"
 
 #include "base/barrier_closure.h"
-#include "base/check_is_test.h"
 #include "base/functional/bind.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/manifest_v2_experiment_manager.h"
 #include "chrome/browser/extensions/mv2_experiment_stage.h"
@@ -49,7 +49,6 @@ constexpr PrefMap kMV2DeprecationUnsupportedDisabledDialogAcknowledgedPref = {
 const PrefMap& GetDisabledDialogAcknowledgedPref(
     MV2ExperimentStage experiment_stage) {
   switch (experiment_stage) {
-    case MV2ExperimentStage::kNone:
     case MV2ExperimentStage::kWarning:
       // There is no disabled dialog for this stage, thus extension cannot be
       // acknowledged.
@@ -119,7 +118,6 @@ void Mv2DisabledDialogController::TearDown() {
 }
 
 void Mv2DisabledDialogController::MaybeShowDisabledDialogForTesting() {
-  CHECK_IS_TEST();
   ComputeAffectedExtensions();
 }
 

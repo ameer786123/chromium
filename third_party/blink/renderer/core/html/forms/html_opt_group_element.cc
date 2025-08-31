@@ -106,22 +106,16 @@ void HTMLOptGroupElement::ChildrenChanged(const ChildrenChange& change) {
   DCHECK_NE(change.type,
             ChildrenChangeType::kFinishedBuildingDocumentFragmentTree);
   if (change.type == ChildrenChangeType::kElementInserted) {
-    if (auto* option = DynamicTo<HTMLOptionElement>(change.sibling_changed)) {
-      select->OptionInserted(*option, option->Selected());
-    } else if (IsA<HTMLLegendElement>(change.sibling_changed)) {
+    if (IsA<HTMLLegendElement>(change.sibling_changed)) {
       UpdateGroupLabel();
     }
   } else if (change.type == ChildrenChangeType::kElementRemoved) {
-    if (auto* option = DynamicTo<HTMLOptionElement>(change.sibling_changed)) {
-      select->OptionRemoved(*option);
-    } else if (IsA<HTMLLegendElement>(change.sibling_changed)) {
+    if (IsA<HTMLLegendElement>(change.sibling_changed)) {
       UpdateGroupLabel();
     }
   } else if (change.type == ChildrenChangeType::kAllChildrenRemoved) {
     for (Node* node : change.removed_nodes) {
-      if (auto* option = DynamicTo<HTMLOptionElement>(node)) {
-        select->OptionRemoved(*option);
-      } else if (IsA<HTMLLegendElement>(change.sibling_changed)) {
+      if (IsA<HTMLLegendElement>(node)) {
         UpdateGroupLabel();
       }
     }
@@ -137,19 +131,15 @@ Node::InsertionNotificationRequest HTMLOptGroupElement::InsertedInto(
   customizable_select_rendering_ = false;
   HTMLElement::InsertedInto(insertion_point);
 
-  if (HTMLSelectElement::SelectParserRelaxationEnabled(this)) {
-    owner_select_ = HTMLSelectElement::NearestAncestorSelectNoNesting(*this);
-    if (owner_select_) {
-      owner_select_->OptGroupInsertedOrRemoved(*this);
-    }
-    if (HTMLSelectElement::CustomizableSelectEnabled(this)) {
-      // TODO(crbug.com/1511354): This UsesMenuList check doesn't account for
-      // the case when the select's rendering is changed after insertion.
-      customizable_select_rendering_ =
-          owner_select_ && owner_select_->UsesMenuList();
-      UpdateGroupLabel();
-    }
+  owner_select_ = HTMLSelectElement::NearestAncestorSelectNoNesting(*this);
+  if (owner_select_) {
+    owner_select_->OptGroupInsertedOrRemoved(*this);
   }
+  // TODO(crbug.com/1511354): This UsesMenuList check doesn't account for
+  // the case when the select's rendering is changed after insertion.
+  customizable_select_rendering_ =
+      owner_select_ && owner_select_->UsesMenuList();
+  UpdateGroupLabel();
 
   if (HTMLSelectElement* select = OwnerSelectElement()) {
     if (&insertion_point == select) {
@@ -160,7 +150,6 @@ Node::InsertionNotificationRequest HTMLOptGroupElement::InsertedInto(
 }
 
 void HTMLOptGroupElement::RemovedFrom(ContainerNode& insertion_point) {
-  if (HTMLSelectElement::SelectParserRelaxationEnabled(this)) {
     HTMLSelectElement* new_ancestor_select =
         HTMLSelectElement::NearestAncestorSelectNoNesting(*this);
     if (owner_select_ != new_ancestor_select) {
@@ -170,17 +159,13 @@ void HTMLOptGroupElement::RemovedFrom(ContainerNode& insertion_point) {
       owner_select_->OptGroupInsertedOrRemoved(*this);
       owner_select_ = new_ancestor_select;
     }
-  } else if (auto* select = DynamicTo<HTMLSelectElement>(insertion_point)) {
-    if (!parentNode())
-      select->OptGroupInsertedOrRemoved(*this);
-  }
+
   HTMLElement::RemovedFrom(insertion_point);
 }
 
 String HTMLOptGroupElement::GroupLabelText() const {
   String label_attribute_text = LabelAttributeText();
-  if (HTMLSelectElement::CustomizableSelectEnabled(this) &&
-      label_attribute_text.ContainsOnlyWhitespaceOrEmpty()) {
+  if (label_attribute_text.ContainsOnlyWhitespaceOrEmpty()) {
     if (auto* legend = FirstChildLegend(*this)) {
       return legend->textContent();
     }
@@ -202,15 +187,11 @@ String HTMLOptGroupElement::LabelAttributeText() const {
 
 HTMLSelectElement* HTMLOptGroupElement::OwnerSelectElement(
     bool skip_check) const {
-  if (HTMLSelectElement::SelectParserRelaxationEnabled(this)) {
-    if (!skip_check) {
-      DCHECK_EQ(owner_select_,
-                HTMLSelectElement::NearestAncestorSelectNoNesting(*this));
-    }
-    return owner_select_;
-  } else {
-    return DynamicTo<HTMLSelectElement>(parentNode());
+  if (!skip_check) {
+    DCHECK_EQ(owner_select_,
+              HTMLSelectElement::NearestAncestorSelectNoNesting(*this));
   }
+  return owner_select_;
 }
 
 String HTMLOptGroupElement::DefaultToolTip() const {
@@ -243,7 +224,8 @@ void HTMLOptGroupElement::ManuallyAssignSlots() {
   for (Node& child : NodeTraversal::ChildrenOf(*this)) {
     if (!child.IsSlotable())
       continue;
-    if (customizable_select_rendering_ || CanAssignToOptGroupSlot(child)) {
+    if (RuntimeEnabledFeatures::CustomizableSelectInPageEnabled() ||
+        customizable_select_rendering_ || CanAssignToOptGroupSlot(child)) {
       opt_group_nodes.push_back(child);
     }
   }
@@ -255,11 +237,26 @@ void HTMLOptGroupElement::UpdateGroupLabel() {
   HTMLDivElement& label = OptGroupLabelElement();
   label.setTextContent(label_text);
   label.setAttribute(html_names::kAriaLabelAttr, AtomicString(label_text));
-  if (label_text.ContainsOnlyWhitespaceOrEmpty() || FirstChildLegend(*this)) {
-    if (customizable_select_rendering_) {
+
+  // Empty or missing label attributes result in a blank line being rendered,
+  // see fast/forms/select/listbox-appearance-basic.html. If the author provides
+  // a <legend> element which replaces the label attribute, then set the label
+  // to display:none.
+  // The ContainsOnlyWhitespaceOrEmpty() check here was shortsightedly added for
+  // CustomizableSelect to remove the empty line behavior, but we want to remove
+  // it for CustomizableSelectInPage.
+  if ((!RuntimeEnabledFeatures::CustomizableSelectInPageEnabled() &&
+       label_text.ContainsOnlyWhitespaceOrEmpty()) ||
+      FirstChildLegend(*this)) {
+    if (customizable_select_rendering_ ||
+        RuntimeEnabledFeatures::CustomizableSelectInPageEnabled()) {
       // If the author uses <legend> to label the <optgroup> instead of the
       // label attribute, then we don't want extra space being taken up for the
       // unused label attribute.
+      // TODO(crbug.com/383841336): Consider replacing this with UA style rules
+      // if we can make the label attribute become a part like pseudo-element,
+      // and add more tests for the label attribute with base appearance
+      // rendering.
       label.SetInlineStyleProperty(CSSPropertyID::kDisplay, "none");
     }
   } else {

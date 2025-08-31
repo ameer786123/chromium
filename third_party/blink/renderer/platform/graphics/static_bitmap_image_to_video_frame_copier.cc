@@ -91,8 +91,7 @@ void StaticBitmapImageToVideoFrameCopier::Convert(
   auto& context_provider = context_provider_wrapper->ContextProvider();
 
   // Readback to YUV is only used when result is opaque.
-  const bool result_is_opaque =
-      image->CurrentFrameKnownToBeOpaque() || can_discard_alpha_;
+  const bool result_is_opaque = image->IsOpaque() || can_discard_alpha_;
 
   const bool supports_yuv_readback =
       context_provider.GetCapabilities().supports_yuv_readback;
@@ -195,16 +194,20 @@ void StaticBitmapImageToVideoFrameCopier::ReadARGBPixelsAsync(
   GrSurfaceOrigin image_origin = shared_image->surface_origin();
   gfx::Point src_point;
   DCHECK(context_provider->RasterInterface());
-  context_provider->RasterInterface()->WaitSyncTokenCHROMIUM(
-      image->GetSyncToken().GetConstData());
+  std::unique_ptr<gpu::RasterScopedAccess> ri_access =
+      shared_image->BeginRasterAccess(context_provider->RasterInterface(),
+                                      image->GetSyncToken(), /*readonly=*/true);
   context_provider->RasterInterface()->ReadbackARGBPixelsAsync(
       shared_image->mailbox(), shared_image->GetTextureTarget(), image_origin,
       image_size, src_point, info,
       temp_argb_frame->stride(media::VideoFrame::Plane::kARGB),
-      temp_argb_frame->GetWritableVisibleData(media::VideoFrame::Plane::kARGB),
-      WTF::BindOnce(&StaticBitmapImageToVideoFrameCopier::OnARGBPixelsReadAsync,
-                    weak_ptr_factory_.GetWeakPtr(), image, temp_argb_frame,
-                    std::move(callback)));
+      temp_argb_frame->GetWritableVisiblePlaneData(
+          media::VideoFrame::Plane::kARGB),
+      blink::BindOnce(
+          &StaticBitmapImageToVideoFrameCopier::OnARGBPixelsReadAsync,
+          weak_ptr_factory_.GetWeakPtr(), image, temp_argb_frame,
+          std::move(callback)));
+  gpu::RasterScopedAccess::EndAccess(std::move(ri_access));
 }
 
 void StaticBitmapImageToVideoFrameCopier::ReadYUVPixelsAsync(
@@ -227,24 +230,26 @@ void StaticBitmapImageToVideoFrameCopier::ReadYUVPixelsAsync(
   }
 
   auto shared_image = image->GetSharedImage();
-  context_provider->RasterInterface()->WaitSyncTokenCHROMIUM(
-      image->GetSyncToken().GetConstData());
+  std::unique_ptr<gpu::RasterScopedAccess> ri_access =
+      shared_image->BeginRasterAccess(context_provider->RasterInterface(),
+                                      image->GetSyncToken(), /*readonly=*/true);
   context_provider->RasterInterface()->ReadbackYUVPixelsAsync(
       shared_image->mailbox(), shared_image->GetTextureTarget(), image_size,
       gfx::Rect(image_size),
       shared_image->surface_origin() != kTopLeft_GrSurfaceOrigin,
       output_frame->stride(media::VideoFrame::Plane::kY),
-      output_frame->GetWritableVisibleData(media::VideoFrame::Plane::kY),
+      output_frame->GetWritableVisiblePlaneData(media::VideoFrame::Plane::kY),
       output_frame->stride(media::VideoFrame::Plane::kU),
-      output_frame->GetWritableVisibleData(media::VideoFrame::Plane::kU),
+      output_frame->GetWritableVisiblePlaneData(media::VideoFrame::Plane::kU),
       output_frame->stride(media::VideoFrame::Plane::kV),
-      output_frame->GetWritableVisibleData(media::VideoFrame::Plane::kV),
+      output_frame->GetWritableVisiblePlaneData(media::VideoFrame::Plane::kV),
       gfx::Point(0, 0),
-      WTF::BindOnce(&StaticBitmapImageToVideoFrameCopier::OnReleaseMailbox,
-                    weak_ptr_factory_.GetWeakPtr(), image),
-      WTF::BindOnce(&StaticBitmapImageToVideoFrameCopier::OnYUVPixelsReadAsync,
-                    weak_ptr_factory_.GetWeakPtr(), output_frame,
-                    std::move(callback)));
+      blink::BindOnce(&StaticBitmapImageToVideoFrameCopier::OnReleaseMailbox,
+                      weak_ptr_factory_.GetWeakPtr(), image),
+      blink::BindOnce(
+          &StaticBitmapImageToVideoFrameCopier::OnYUVPixelsReadAsync,
+          weak_ptr_factory_.GetWeakPtr(), output_frame, std::move(callback)));
+  gpu::RasterScopedAccess::EndAccess(std::move(ri_access));
 }
 
 void StaticBitmapImageToVideoFrameCopier::OnARGBPixelsReadAsync(

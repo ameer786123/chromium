@@ -9,8 +9,10 @@
 #include "base/containers/contains.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
+#include "base/test/trace_test_utils.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
+#include "base/trace_event/trace_log.h"
 #include "build/build_config.h"
 #include "gin/public/isolate_holder.h"
 #include "gin/test/v8_test.h"
@@ -153,6 +155,7 @@ TEST_F(V8MemoryDumpProviderWorkerTest, DumpContextStatistics) {
 }
 
 TEST_F(V8MemoryDumpProviderTest, DumpCodeStatistics) {
+  base::test::TracingEnvironment tracing_environment;
   // Code stats are disabled unless this category is enabled.
   base::trace_event::TraceLog::GetInstance()->SetEnabled(
       base::trace_event::TraceConfig(

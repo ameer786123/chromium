@@ -8,7 +8,6 @@
 #include <optional>
 #include <utility>
 
-#include "base/android/build_info.h"
 #include "base/check.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -16,8 +15,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/browser/android/resource_mapper.h"
-#include "chrome/browser/flags/android/chrome_feature_list.h"
-#include "chrome/browser/password_manager/android/access_loss/password_access_loss_warning_bridge_impl.h"
 #include "chrome/browser/password_manager/android/password_manager_android_util.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/profiles/profile.h"
@@ -32,8 +29,6 @@
 #include "components/password_manager/core/browser/password_form_metrics_recorder.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/password_ui_utils.h"
-#include "components/password_manager/core/browser/split_stores_and_local_upm.h"
-#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/prefs/pref_service.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/web_contents.h"
@@ -45,32 +40,9 @@
 namespace {
 
 using password_manager::PasswordForm;
-using password_manager::UsesSplitStoresAndUPMForLocal;
 
 // Duration of message before timeout; 20 seconds.
 const int kMessageDismissDurationMs = 20000;
-
-constexpr base::TimeDelta kUpdateGMSCoreMessageDisplayDelay =
-    base::Milliseconds(500);
-
-void TryToShowAccessLossWarning(content::WebContents* web_contents,
-                                PasswordAccessLossWarningBridge* bridge) {
-  if (base::FeatureList::IsEnabled(
-          password_manager::features::
-              kUnifiedPasswordManagerLocalPasswordsAndroidAccessLossWarning)) {
-    Profile* profile =
-        Profile::FromBrowserContext(web_contents->GetBrowserContext());
-    PrefService* prefs = profile->GetPrefs();
-    if (profile && bridge->ShouldShowAccessLossNoticeSheet(
-                       prefs, /*called_at_startup=*/false)) {
-      bridge->MaybeShowAccessLossNoticeSheet(
-          prefs, web_contents->GetTopLevelNativeWindow(), profile,
-          /*called_at_startup=*/false,
-          password_manager_android_util::PasswordAccessLossWarningTriggers::
-              kPasswordSaveUpdateMessage);
-    }
-  }
-}
 
 }  // namespace
 
@@ -81,18 +53,14 @@ SaveUpdatePasswordMessageDelegate::SaveUpdatePasswordMessageDelegate()
 SaveUpdatePasswordMessageDelegate::SaveUpdatePasswordMessageDelegate(
     PasswordEditDialogFactory password_edit_dialog_factory)
     : password_edit_dialog_factory_(std::move(password_edit_dialog_factory)),
-      device_lock_bridge_(std::make_unique<DeviceLockBridge>()),
-      access_loss_bridge_(
-          std::make_unique<PasswordAccessLossWarningBridgeImpl>()) {}
+      device_lock_bridge_(std::make_unique<DeviceLockBridge>()) {}
 
 SaveUpdatePasswordMessageDelegate::SaveUpdatePasswordMessageDelegate(
     base::PassKey<class SaveUpdatePasswordMessageDelegateTest>,
     PasswordEditDialogFactory password_edit_dialog_factory,
-    std::unique_ptr<DeviceLockBridge> device_lock_bridge,
-    std::unique_ptr<PasswordAccessLossWarningBridge> access_loss_bridge)
+    std::unique_ptr<DeviceLockBridge> device_lock_bridge)
     : SaveUpdatePasswordMessageDelegate(password_edit_dialog_factory) {
   device_lock_bridge_ = std::move(device_lock_bridge);
-  access_loss_bridge_ = std::move(access_loss_bridge);
 }
 
 SaveUpdatePasswordMessageDelegate::~SaveUpdatePasswordMessageDelegate() {
@@ -155,7 +123,7 @@ void SaveUpdatePasswordMessageDelegate::DisplaySaveUpdatePasswordPromptInternal(
   account_email_ = GetAccountForMessageDescription(account_info);
 
   CreateMessage(update_password);
-  RecordMessageShownMetrics();
+  RecordMessageShownMetrics(update_password);
   password_manager::metrics_util::LogFormSubmissionsVsSavePromptsHistogram(
       password_manager::metrics_util::SaveFlowStep::kSavePromptShown);
   messages::MessageDispatcherBridge::Get()->EnqueueMessage(
@@ -325,12 +293,6 @@ void SaveUpdatePasswordMessageDelegate::HandleSaveButtonClicked() {
 void SaveUpdatePasswordMessageDelegate::SavePassword() {
   if (!device_lock_bridge_->ShouldShowDeviceLockUi()) {
     passwords_state_.form_manager()->Save();
-    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(
-            &SaveUpdatePasswordMessageDelegate::MaybeNudgeToUpdateGmsCore,
-            weak_ptr_factory_.GetWeakPtr()),
-        kUpdateGMSCoreMessageDisplayDelay);
     return;
   }
   device_lock_bridge_->LaunchDeviceLockUiIfNeededBeforeRunningCallback(
@@ -345,13 +307,6 @@ void SaveUpdatePasswordMessageDelegate::SavePasswordAfterDeviceLockUi(
   CHECK(device_lock_bridge_->RequiresDeviceLock());
   if (is_device_lock_requirement_met) {
     passwords_state_.form_manager()->Save();
-    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(
-            &SaveUpdatePasswordMessageDelegate::MaybeNudgeToUpdateGmsCore,
-            weak_ptr_factory_.GetWeakPtr()),
-        kUpdateGMSCoreMessageDisplayDelay);
-    TryToShowAccessLossWarning(web_contents_, access_loss_bridge_.get());
   }
   ClearState();
 }
@@ -410,9 +365,6 @@ void SaveUpdatePasswordMessageDelegate::HandleMessageDismissed(
   // callback.
   if (!(device_lock_bridge_->ShouldShowDeviceLockUi() &&
         web_contents_->GetNativeView()->GetWindowAndroid())) {
-    if (dismiss_reason == messages::DismissReason::PRIMARY_ACTION) {
-      TryToShowAccessLossWarning(web_contents_, access_loss_bridge_.get());
-    }
     ClearState();
   }
 }
@@ -441,7 +393,6 @@ void SaveUpdatePasswordMessageDelegate::HandleDialogDismissed(
   // callback.
   if (!(device_lock_bridge_->ShouldShowDeviceLockUi() &&
         web_contents_->GetNativeView()->GetWindowAndroid())) {
-    TryToShowAccessLossWarning(web_contents_, access_loss_bridge_.get());
     ClearState();
   }
 }
@@ -460,15 +411,9 @@ bool SaveUpdatePasswordMessageDelegate::IsUsingAccountStorage(
     return false;
   }
 
-  // Pre-UPM the profile storage was used in fact as the account store (when
-  // sync is on). So this is the cut-off for the users who are not using UPM
-  // (this evaluates to using account store when the user is syncing and using
-  // profile store when they are not syncing).
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents_->GetBrowserContext());
-  if (!UsesSplitStoresAndUPMForLocal(profile->GetPrefs())) {
-    return account_email_.has_value();
-  }
+  // After UPM, an updated credential can be saved either to the local or
+  // account storage, so the credential itself needs to be checked to determine
+  // whether account storage messaging needs to be displayed.
 
   // Copy the pending password form here and assign the new username.
   password_manager::PasswordForm updated_credentials =
@@ -490,11 +435,15 @@ void SaveUpdatePasswordMessageDelegate::ClearState() {
   web_contents_ = nullptr;
 }
 
-void SaveUpdatePasswordMessageDelegate::RecordMessageShownMetrics() {
+void SaveUpdatePasswordMessageDelegate::RecordMessageShownMetrics(
+    bool update_password) {
   if (auto* recorder = passwords_state_.form_manager()->GetMetricsRecorder()) {
     recorder->RecordPasswordBubbleShown(
         passwords_state_.form_manager()->GetCredentialSource(),
-        password_manager::metrics_util::AUTOMATIC_WITH_PASSWORD_PENDING);
+        update_password
+            ? password_manager::metrics_util::
+                  AUTOMATIC_WITH_PASSWORD_PENDING_UPDATE
+            : password_manager::metrics_util::AUTOMATIC_WITH_PASSWORD_PENDING);
   }
 }
 
@@ -535,15 +484,4 @@ SaveUpdatePasswordMessageDelegate::
       break;
   }
   return ui_dismissal_reason;
-}
-
-void SaveUpdatePasswordMessageDelegate::MaybeNudgeToUpdateGmsCore() {
-  if (passwords_state_.client()
-          ->GetPasswordFeatureManager()
-          ->ShouldUpdateGmsCore()) {
-    passwords_state_.client()->ShowPasswordManagerErrorMessage(
-        password_manager::ErrorMessageFlowType::kSaveFlow,
-        password_manager::PasswordStoreBackendErrorType::
-            kGMSCoreOutdatedSavingPossible);
-  }
 }

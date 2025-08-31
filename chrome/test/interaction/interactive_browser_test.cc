@@ -4,18 +4,20 @@
 
 #include "chrome/test/interaction/interactive_browser_test.h"
 
+#include <sstream>
 #include <string>
 #include <utility>
 #include <variant>
 
 #include "base/check.h"
+#include "base/command_line.h"
 #include "base/functional/bind.h"
-#include "base/functional/overloaded.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
+#include "base/test/test_switches.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
@@ -32,6 +34,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/update_user_activation_state_interceptor.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-shared.h"
 #include "third_party/blink/public/mojom/frame/user_activation_update_types.mojom-shared.h"
 #include "ui/base/interaction/element_identifier.h"
@@ -44,6 +47,25 @@
 #include "ui/views/interaction/interaction_test_util_views.h"
 #include "ui/views/interaction/interactive_views_test.h"
 #include "ui/views/views_delegate.h"
+
+namespace {
+
+// Checks that an element is visible in a non-empty region of the viewport.
+// Perhaps look into using checkVisibility() in the future, but this approach
+// seems most robust.
+constexpr char kElementVisibilityQuery[] =
+    R"(
+  function(el) {
+    const rect = el.getBoundingClientRect();
+    const left = Math.max(0, rect.x);
+    const top = Math.max(0, rect.y);
+    const right = Math.min(rect.x + rect.width, window.innerWidth);
+    const bottom = Math.min(rect.y + rect.height, window.innerHeight);
+    return right > left && bottom > top;
+  }
+)";
+
+}  // namespace
 
 DEFINE_CLASS_CUSTOM_ELEMENT_EVENT_TYPE(InteractiveBrowserTestApi,
                                        kDefaultWaitForJsResultEvent);
@@ -90,7 +112,8 @@ InteractiveBrowserTestApi::MultiStep InteractiveBrowserTestApi::Screenshot(
       },
       base::Unretained(this), screenshot_name, baseline_cl));
 
-  auto steps = Steps(MaybeWaitForPaint(element), std::move(builder));
+  auto steps = Steps(MaybeWaitForPaint(element), std::move(builder),
+                     MaybeWaitForUserToDismiss(element));
   AddDescriptionPrefix(steps, base::StrCat({"Screenshot( \"", screenshot_name,
                                             "\", \"", baseline_cl, "\" )"}));
   return steps;
@@ -115,7 +138,8 @@ InteractiveBrowserTestApi::ScreenshotSurface(
       },
       base::Unretained(this), screenshot_name, baseline_cl));
 
-  auto steps = Steps(MaybeWaitForPaint(element_in_surface), std::move(builder));
+  auto steps = Steps(MaybeWaitForPaint(element_in_surface), std::move(builder),
+                     MaybeWaitForUserToDismiss(element_in_surface));
   AddDescriptionPrefix(
       steps, base::StrCat({"ScreenshotSurface( \"", screenshot_name, "\", \"",
                            baseline_cl, "\" )"}));
@@ -586,6 +610,19 @@ InteractiveBrowserTestApi::EnsureNotPresent(
   return builder;
 }
 
+ui::InteractionSequence::StepBuilder
+InteractiveBrowserTestApi::EnsureNotVisible(
+    ui::ElementIdentifier webcontents_id,
+    const DeepQuery& where) {
+  return IfElement(
+      webcontents_id,
+      [where](const ui::TrackedElement* el) {
+        return el->AsA<TrackedElementWebContents>()->owner()->Exists(where);
+      },
+      Then(CheckJsResultAt(webcontents_id, where, kElementVisibilityQuery,
+                           false)));
+}
+
 // static
 ui::InteractionSequence::StepBuilder InteractiveBrowserTestApi::ExecuteJs(
     ui::ElementIdentifier webcontents_id,
@@ -741,21 +778,10 @@ InteractiveBrowserTestApi::WaitForElementVisible(
     ui::ElementIdentifier web_contents,
     const DeepQuery& where) {
   DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(kWaitforElementVisibleCompleteEvent);
-  const std::string function =
-      R"(
-        function(el) {
-          const rect = el.getBoundingClientRect();
-          const left = Math.max(0, rect.x);
-          const top = Math.max(0, rect.y);
-          const right = Math.min(rect.x + rect.width, window.innerWidth);
-          const bottom = Math.min(rect.y + rect.height, window.innerHeight);
-          return right > left && bottom > top;
-        }
-      )";
 
   StateChange change;
   change.event = kWaitforElementVisibleCompleteEvent;
-  change.test_function = function;
+  change.test_function = kElementVisibilityQuery;
   change.type = StateChange::Type::kExistsAndConditionTrue;
   change.where = where;
 
@@ -856,7 +882,6 @@ InteractiveBrowserTestApi::DeepQueryToRelativePosition(const DeepQuery& query) {
       query);
 }
 
-// static
 InteractiveBrowserTestApi::MultiStep
 InteractiveBrowserTestApi::MaybeWaitForPaint(ElementSpecifier element) {
   // Only wait if `element` is actually a `WebContents`.
@@ -879,27 +904,59 @@ InteractiveBrowserTestApi::MaybeWaitForPaint(ElementSpecifier element) {
       Then(WaitForWebContentsPainted(element_id))));
 }
 
+// static
+InteractiveBrowserTestApi::StepBuilder
+InteractiveBrowserTestApi::MaybeWaitForUserToDismiss(ElementSpecifier element) {
+  // In interactive mode (--test-launcher-interactive) the behavior for pixel
+  // tests is to wait until the user closes/hides the surface that has the
+  // element to screenshot. This may break the rest of the test, but it's fine
+  // because the purpose of interactive mode is for a human user to observe
+  // what the test sees during the screenshot step.
+  return If(
+      []() {
+        return base::CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kTestLauncherInteractive);
+      },
+      Then(Log(
+               R"(
+
+------------------
+
+Since --test-launcher-interactive is specified, this test will now wait for you
+to dismiss the element that is being screenshot:
+
+)",
+               "  ", element,
+               R"(
+
+Note that This may cause the remainder of the test to fail or crash, if the test
+does not expect the surface to be dismissed.
+
+------------------
+)"),
+           WaitForHide(element)));
+}
+
 Browser* InteractiveBrowserTestApi::GetBrowserFor(
     ui::ElementContext current_context,
     BrowserSpecifier spec) {
   return std::visit(
-      base::Overloaded{[](AnyBrowser) -> Browser* { return nullptr; },
-                       [current_context](CurrentBrowser) {
-                         Browser* const browser =
-                             InteractionTestUtilBrowser::GetBrowserFromContext(
-                                 current_context);
-                         CHECK(browser) << "Current context is not a browser.";
-                         return browser;
-                       },
-                       [](Browser* browser) {
-                         CHECK(browser)
-                             << "BrowserSpecifier: Browser* is null.";
-                         return browser;
-                       },
-                       [](std::reference_wrapper<Browser*> browser) {
-                         CHECK(browser.get())
-                             << "BrowserSpecifier: Browser* is null.";
-                         return browser.get();
-                       }},
+      absl::Overload{[](AnyBrowser) -> Browser* { return nullptr; },
+                     [current_context](CurrentBrowser) {
+                       Browser* const browser =
+                           InteractionTestUtilBrowser::GetBrowserFromContext(
+                               current_context);
+                       CHECK(browser) << "Current context is not a browser.";
+                       return browser;
+                     },
+                     [](Browser* browser) {
+                       CHECK(browser) << "BrowserSpecifier: Browser* is null.";
+                       return browser;
+                     },
+                     [](std::reference_wrapper<Browser*> browser) {
+                       CHECK(browser.get())
+                           << "BrowserSpecifier: Browser* is null.";
+                       return browser.get();
+                     }},
       spec);
 }

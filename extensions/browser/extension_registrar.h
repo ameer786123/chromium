@@ -10,6 +10,7 @@
 
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -36,7 +37,7 @@ class DevToolsAgentHost;
 }  // namespace content
 
 namespace extensions {
-
+class DelayedInstallManager;
 class Extension;
 class ExtensionHost;
 class ExtensionPrefs;
@@ -50,13 +51,6 @@ class RendererStartupHelper;
 // but eventually only ExtensionRegistrar will be able to make changes to it.
 class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
  public:
-  // How to surface an extension load error, e.g. showing an error dialog. The
-  // actual behavior is up to the embedder.
-  enum class LoadErrorBehavior {
-    kQuiet = 0,  // Just log the error.
-    kNoisy,      // Show an error dialog.
-  };
-
   // Delegate for embedder-specific functionality like policy and permissions.
   class Delegate {
    public:
@@ -67,7 +61,7 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
 
     virtual ~Delegate() = default;
 
-    // Called before |extension| is added. |old_extension| is the extension
+    // Called before `extension` is added. `old_extension` is the extension
     // being replaced, in the case of a reload or upgrade.
     virtual void PreAddExtension(const Extension* extension,
                                  const Extension* old_extension) = 0;
@@ -85,37 +79,32 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
     virtual void PostDeactivateExtension(
         scoped_refptr<const Extension> extension) = 0;
 
-    // Called before |extension| is uninstalled. Performs the operations
-    // necessary before |extension| is uninstalled.
+    // Called before `extension` is uninstalled. Performs the operations
+    // necessary before `extension` is uninstalled.
     virtual void PreUninstallExtension(
         scoped_refptr<const Extension> extension) = 0;
 
-    // Called after |extension| is uninstalled. Performs the operations to
+    // Called after `extension` is uninstalled. Performs the operations to
     // clean up the extensions files, etc.
     virtual void PostUninstallExtension(
         scoped_refptr<const Extension> extension,
         base::OnceClosure done_callback) = 0;
 
-    // Called after |extension| un-installation event has been notified to
-    // all observers.
-    virtual void PostNotifyUninstallExtension(
-        scoped_refptr<const Extension> extension) = 0;
-
-    // Given an extension ID and/or path, loads that extension as a reload.
-    virtual void LoadExtensionForReload(
+    // Given an extension ID and/or path, loads that extension as a reload with
+    // noisy load error behavior.
+    virtual void LoadExtensionForReload(const ExtensionId& extension_id,
+                                        const base::FilePath& path) = 0;
+    // Given an extension ID and/or path, loads that extension as a reload with
+    // quiet load error behavior.
+    virtual void LoadExtensionForReloadWithQuietFailure(
         const ExtensionId& extension_id,
-        const base::FilePath& path,
-        LoadErrorBehavior load_error_behavior) = 0;
+        const base::FilePath& path) = 0;
 
     // Informs the user that an extension was disabled after upgrading to higher
-    // permissions. If |is_remote_install| is true, the extension was disabled
+    // permissions. If `is_remote_install` is true, the extension was disabled
     // because it was installed remotely.
     virtual void ShowExtensionDisabledError(const Extension* extension,
                                             bool is_remote_install) = 0;
-
-    // Finishes the delayed installations if there are any delayed
-    // extensions ready to be installed.
-    virtual void FinishDelayedInstallationsIfAny() = 0;
 
     // Returns true if the extension is allowed to be enabled or disabled,
     // respectively.
@@ -131,11 +120,11 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
 
     // Informs the service that an extension's files are in place for loading.
     //
-    // |extension|                the extension
-    // |page_ordinal|             the location of the extension in the app
+    // `extension`                the extension
+    // `page_ordinal`             the location of the extension in the app
     //                            launcher
-    // |install_flags|            a bitmask of InstallFlags
-    // |ruleset_install_prefs|    Install prefs needed for the Declarative Net
+    // `install_flags`            a bitmask of InstallFlags
+    // `ruleset_install_prefs`    Install prefs needed for the Declarative Net
     //                            Request API.
     virtual void OnExtensionInstalled(
         const Extension* extension,
@@ -151,7 +140,7 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
 
   ~ExtensionRegistrar() override;
 
-  // Returns the instance for the given |browser_context|.
+  // Returns the instance for the given `browser_context`.
   static ExtensionRegistrar* Get(content::BrowserContext* browser_context);
 
   // The provided `delegate` should outlive this object. May be called multiple
@@ -161,6 +150,9 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
             const base::CommandLine* command_line,
             const base::FilePath& install_directory,
             const base::FilePath& unpacked_install_directory);
+
+  // Returns true if the registrar has been initialized.
+  bool IsInitialized() const;
 
   // Returns a weak pointer to `this`.
   base::WeakPtr<ExtensionRegistrar> GetWeakPtr();
@@ -178,7 +170,7 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
   // the extension is installed, e.g., to update event handlers on background
   // pages; and performs other extension install tasks before calling
   // AddExtension.
-  // |install_flags| is a bitmask of InstallFlags.
+  // `install_flags` is a bitmask of InstallFlags.
   void AddNewOrUpdatedExtension(const Extension* extension,
                                 const base::flat_set<int>& disable_reasons,
                                 int install_flags,
@@ -188,11 +180,11 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
 
   // Informs the service that an extension's files are in place for loading.
   //
-  // |extension|                the extension
-  // |page_ordinal|             the location of the extension in the app
+  // `extension`                the extension
+  // `page_ordinal`             the location of the extension in the app
   //                            launcher
-  // |install_flags|            a bitmask of InstallFlags
-  // |ruleset_install_prefs|    Install prefs needed for the Declarative Net
+  // `install_flags`            a bitmask of InstallFlags
+  // `ruleset_install_prefs`    Install prefs needed for the Declarative Net
   //                            Request API.
   void OnExtensionInstalled(const Extension* extension,
                             const syncer::StringOrdinal& page_ordinal,
@@ -204,7 +196,7 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
                          static_cast<int>(kInstallFlagNone));
   }
 
-  // Removes |extension| from the extension system by deactivating it if it is
+  // Removes `extension` from the extension system by deactivating it if it is
   // enabled and removing references to it from the ExtensionRegistry's
   // enabled, disabled or terminated sets.
   // Note: Extensions will not be removed from other sets (blocklisted or
@@ -219,7 +211,7 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
   // extensions cannot be enabled.)
   void EnableExtension(const ExtensionId& extension_id);
 
-  // Marks |extension| as disabled and deactivates it. The ExtensionRegistry
+  // Marks `extension` as disabled and deactivates it. The ExtensionRegistry
   // retains a reference to it, so it can be enabled later.
   void DisableExtension(const ExtensionId& extension_id,
                         const DisableReasonSet& disable_reasons);
@@ -266,16 +258,13 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
   void RemoveDisableReasonAndMaybeEnable(const std::string& extension_id,
                                          disable_reason::DisableReason reason);
 
-  // Attempts to reload the specified extension by disabling it if it is enabled
-  // and requesting the Delegate load it again.
-  // NOTE: Reloading an extension can invalidate |extension_id| and Extension
-  // pointers for the given extension. Consider making a copy of |extension_id|
-  // first and retrieving a new Extension pointer afterwards.
-  void ReloadExtension(const ExtensionId extension_id,
-                       LoadErrorBehavior load_error_behavior);
+  // Attempts to reload extension with noisy failures.
+  void ReloadExtension(const ExtensionId& extension_id);
+  // Attempts to reload extension with suppressing noisy failures.
+  void ReloadExtensionWithQuietFailure(const ExtensionId& extension_id);
 
   // Uninstalls the specified extension. Callers should only call this method
-  // with extensions that exist. |reason| lets the caller specify why the
+  // with extensions that exist. `reason` lets the caller specify why the
   // extension is uninstalled.
   // Note: this method synchronously removes the extension from the
   // set of installed extensions stored in the ExtensionRegistry, but will
@@ -283,7 +272,7 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
   // Returns true if an uninstall was successfully triggered; this can fail if
   // the extension cannot be uninstalled (such as a policy force-installed
   // extension).
-  // |done_callback| is synchronously invoked once the site-related data and the
+  // `done_callback` is synchronously invoked once the site-related data and the
   // files stored on disk are removed. If such a callback is not needed, pass in
   // a null callback (base::NullCallback()).
   bool UninstallExtension(
@@ -295,7 +284,7 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
   // Uninstalls extensions that have been migrated to component extensions.
   void UninstallMigratedExtensions(base::span<const char* const> migrated_ids);
 
-  // Finishes installing |extension| and notifying the observers.
+  // Finishes installing `extension` and notifying the observers.
   void FinishInstallation(const Extension* extension);
 
   // Helper method to determine if an extension can be blocked.
@@ -374,6 +363,7 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
 
   // Simple accessors.
   bool extensions_enabled() const { return extensions_enabled_; }
+  bool block_extensions() const { return block_extensions_; }
   const base::FilePath& install_directory() const { return install_directory_; }
   const base::FilePath& unpacked_install_directory() const {
     return unpacked_install_directory_;
@@ -384,18 +374,33 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
   }
 
  private:
+  // How to surface an extension load error, e.g. showing an error dialog. The
+  // actual behavior is up to the embedder.
+  enum class LoadErrorBehavior {
+    kQuiet = 0,  // Just log the error.
+    kNoisy,      // Show an error dialog.
+  };
+
   // Adds the extension to the appropriate registry set, based on ExtensionPrefs
-  // and our |delegate_|. Activates the extension if it's added to the enabled
+  // and our `delegate_`. Activates the extension if it's added to the enabled
   // set.
   void AddNewExtension(scoped_refptr<const Extension> extension);
 
-  // Activates |extension| by marking it enabled and notifying other components
+  // Activates `extension` by marking it enabled and notifying other components
   // about it.
   void ActivateExtension(const Extension* extension, bool is_newly_added);
 
   // Triggers the unloaded notifications to deactivate an extension.
   void DeactivateExtension(const Extension* extension,
                            UnloadedExtensionReason reason);
+
+  // Attempts to reload the specified extension by disabling it if it is enabled
+  // and requesting the Delegate load it again.
+  // Because reloading can invalidate a reference to the ID. So make a copy of
+  // `extension_id` first by passing value and retrieve a new Extension pointer
+  // afterwards.
+  void DoReloadExtension(ExtensionId extension_id,
+                         LoadErrorBehavior load_error_behavior);
 
   // Unregister the service worker that is not from manifest and has extension
   // root scope.
@@ -444,6 +449,7 @@ class ExtensionRegistrar : public KeyedService, public ProcessManagerObserver {
   const raw_ptr<ExtensionPrefs> extension_prefs_;
   const raw_ptr<ExtensionRegistry> registry_;
   const raw_ptr<RendererStartupHelper> renderer_helper_;
+  raw_ptr<DelayedInstallManager> delayed_install_manager_ = nullptr;
 
   // Map of DevToolsAgentHost instances that are detached,
   // waiting for an extension to be reloaded.

@@ -23,15 +23,9 @@ namespace gfx {
 COMPONENT_EXPORT(GFX)
 base::span<const BufferFormat> GetBufferFormatsForTesting();
 
-// Returns the number of bits of alpha for the specified format.
-COMPONENT_EXPORT(GFX) size_t AlphaBitsForBufferFormat(BufferFormat format);
-
 // Returns the number of planes for |format|.
 COMPONENT_EXPORT(GFX)
 size_t NumberOfPlanesForLinearBufferFormat(BufferFormat format);
-
-// Returns whether |format| is multiplanar.
-COMPONENT_EXPORT(GFX) bool BufferFormatIsMultiplanar(BufferFormat format);
 
 // Returns the subsampling factor applied to the given zero-indexed |plane| of
 // |format| both horizontally and vertically.

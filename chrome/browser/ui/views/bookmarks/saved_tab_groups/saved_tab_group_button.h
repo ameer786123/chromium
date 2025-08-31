@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/views/event_utils.h"
 #include "components/saved_tab_groups/public/saved_tab_group.h"
 #include "components/tab_groups/tab_group_color.h"
@@ -63,6 +64,7 @@ class SavedTabGroupButton : public views::MenuButton,
 
   // views::View
   bool OnKeyPressed(const ui::KeyEvent& event) override;
+  gfx::Point GetKeyboardContextMenuLocation() override;
 
   // views::LabelButton
   bool IsTriggerableEvent(const ui::Event& e) override;

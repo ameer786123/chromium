@@ -48,12 +48,10 @@
 #import <UIKit/UIKit.h>
 #endif
 
-BASE_FEATURE(kAVFoundationCaptureForwardSampleTimestamps,
-             "AVFoundationCaptureForwardSampleTimestamps",
+BASE_FEATURE(AVFoundationCaptureForwardSampleTimestamps,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kAVFoundationCaptureSonomaRestartStalledCamera,
-             "AVFoundationCaptureSonomaRestartStalledCamera",
+BASE_FEATURE(AVFoundationCaptureSonomaRestartStalledCamera,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
@@ -108,14 +106,11 @@ constexpr size_t kPixelBufferPoolSize = 10;
 namespace media {
 
 // Uses the most recent advice from Apple for configuring and starting.
-BASE_FEATURE(kConfigureCaptureBeforeStart,
-             "ConfigureCaptureBeforeStart",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(ConfigureCaptureBeforeStart, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Allow disabling optimizations (https://crbug.com/1143477,
 // https://crbug.com/959962) because of flickering (https://crbug.com/1515598).
-BASE_FEATURE(kOverrideCameraIOSurfaceColorSpace,
-             "OverrideCameraIOSurfaceColorSpace",
+BASE_FEATURE(OverrideCameraIOSurfaceColorSpace,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 AVCaptureDeviceFormat* FindBestCaptureFormat(
@@ -424,9 +419,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
     [self stopPhotoOutput];
     if (_captureDeviceInput) {
       DCHECK(_captureDevice);
-      if (@available(macOS 12.0, *)) {
-        [_captureDevice removeObserver:self forKeyPath:@"portraitEffectActive"];
-      }
+      [_captureDevice removeObserver:self forKeyPath:@"portraitEffectActive"];
       [_captureSession stopRunning];
       [_captureSession removeInput:_captureDeviceInput];
       _captureDeviceInput = nil;
@@ -469,12 +462,10 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   [_captureVideoDataOutput setSampleBufferDelegate:self queue:_sampleQueue];
   [_captureSession addOutput:_captureVideoDataOutput];
 
-  if (@available(macOS 12.0, *)) {
-    [_captureDevice addObserver:self
-                     forKeyPath:@"portraitEffectActive"
-                        options:0
-                        context:(__bridge void*)_captureDevice];
-  }
+  [_captureDevice addObserver:self
+                   forKeyPath:@"portraitEffectActive"
+                      options:0
+                      context:(__bridge void*)_captureDevice];
 
 #if BUILDFLAG(IS_IOS)
   _orientation = [[UIDevice currentDevice] orientation];
@@ -970,10 +961,8 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
                                       colorSpace:
                                           (const gfx::ColorSpace&)colorSpace {
   DCHECK(ioSurface);
-  gfx::GpuMemoryBufferHandle handle;
-  handle.id = gfx::GpuMemoryBufferHandle::kInvalidId;
-  handle.type = gfx::GpuMemoryBufferType::IO_SURFACE_BUFFER;
-  handle.io_surface.reset(ioSurface, base::scoped_policy::RETAIN);
+  gfx::GpuMemoryBufferHandle handle(
+      gfx::ScopedIOSurface(ioSurface, base::scoped_policy::RETAIN));
 
   // The BT709_APPLE color space is stored as an ICC profile, which is parsed
   // every frame in the GPU process. For this particularly common case, go back
@@ -1244,10 +1233,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   if (_isPortraitEffectSupportedForTesting.has_value()) {
     return _isPortraitEffectSupportedForTesting.value();
   }
-  if (@available(macOS 12.0, *)) {
-    return _captureDevice.activeFormat.portraitEffectSupported;
-  }
-  return false;
+  return _captureDevice.activeFormat.portraitEffectSupported;
 }
 
 - (void)setIsPortraitEffectActiveForTesting:
@@ -1268,20 +1254,15 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   if (_isPortraitEffectActiveForTesting.has_value()) {
     return _isPortraitEffectActiveForTesting.value();
   }
-  if (@available(macOS 12.0, *)) {
-    return _captureDevice.portraitEffectActive;
-  }
-  return false;
+  return _captureDevice.portraitEffectActive;
 }
 
 - (void)observeValueForKeyPath:(NSString*)keyPath
                       ofObject:(id)object
                         change:(NSDictionary*)change
                        context:(void*)context {
-  if (@available(macOS 12.0, *)) {
-    if ([keyPath isEqual:@"portraitEffectActive"]) {
-      [self captureConfigurationChanged];
-    }
+  if ([keyPath isEqual:@"portraitEffectActive"]) {
+    [self captureConfigurationChanged];
   }
 }
 

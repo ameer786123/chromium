@@ -320,6 +320,7 @@ source_set("ip_protection_proxy_delegate") {
     ":ip_protection_proxy_config_manager_impl",
     ":ip_protection_telemetry",
     ":ip_protection_token_manager_impl",
+    ":probabilistic_reveal_token_registry",
   ]
 }
 
@@ -329,11 +330,16 @@ source_set("ip_protection_proxy_delegate_unittest") {
   deps = [
     ":ip_protection_core",
     ":ip_protection_data_types",
+    ":ip_protection_probabilistic_reveal_token_direct_fetcher",
+    ":ip_protection_probabilistic_reveal_token_manager",
     ":ip_protection_proxy_config_manager",
     ":ip_protection_proxy_delegate",
     ":ip_protection_telemetry",
     ":ip_protection_token_manager",
     ":masked_domain_list_manager",
+    ":probabilistic_reveal_token_registry",
+    ":probabilistic_reveal_token_test_consumer",
+    ":probabilistic_reveal_token_test_issuer",
     "//base",
     "//base/test:test_support",
     "//components/privacy_sandbox/masked_domain_list:masked_domain_list_proto",
@@ -341,6 +347,7 @@ source_set("ip_protection_proxy_delegate_unittest") {
     "//net:gtest_util",
     "//net:test_support",
     "//net/traffic_annotation:test_support",
+    "//services/network:test_support",
     "//services/network/public/cpp",
     "//services/network/public/mojom",
     "//testing/gmock",
@@ -384,7 +391,7 @@ source_set("ip_protection_token_direct_fetcher") {
     ":ip_protection_data_types",
     ":ip_protection_telemetry",
     ":ip_protection_token_fetcher_helper",
-    "//components/signin/public/identity_manager:identity_manager",
+    "//components/signin/public/identity_manager",
     "//net/third_party/quiche:blind_sign_auth",
   ]
 }
@@ -403,6 +410,10 @@ source_set("ip_protection_token_direct_fetcher_unittest") {
     "//services/network:test_support",
     "//testing/gtest",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("ip_protection_token_fetcher") {
@@ -428,6 +439,28 @@ source_set("ip_protection_token_fetcher_helper") {
   ]
 }
 
+source_set("ip_protection_performance_hooks") {
+  sources = [
+    "ip_protection_performance_hooks.cc",
+    "ip_protection_performance_hooks.h",
+  ]
+  public_deps = [ "//net/third_party/quiche:blind_sign_auth" ]
+  deps = [ "//base" ]
+}
+
+source_set("ip_protection_performance_hooks_unittest") {
+  testonly = true
+  sources = [ "ip_protection_performance_hooks_unittest.cc" ]
+  deps = [
+    ":ip_protection_performance_hooks",
+    "//base",
+    "//base/test:test_support",
+    "//base/test:test_trace_processor",
+    "//testing/gmock",
+    "//testing/gtest",
+  ]
+}
+
 source_set("ip_protection_token_manager") {
   sources = [ "ip_protection_token_manager.h" ]
 }
@@ -439,6 +472,7 @@ source_set("ip_protection_token_manager_impl") {
   ]
   public_deps = [
     ":ip_protection_core",
+    ":ip_protection_core_host_remote",
     ":ip_protection_token_manager",
     "//base",
   ]
@@ -464,6 +498,10 @@ source_set("ip_protection_token_manager_impl_unittest") {
     "//net",
     "//testing/gtest",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("masked_domain_list_manager") {
@@ -473,7 +511,6 @@ source_set("masked_domain_list_manager") {
   ]
   public_deps = [
     ":masked_domain_list",
-    ":url_matcher_with_bypass",
     "//base",
     "//components/privacy_sandbox/masked_domain_list:masked_domain_list_proto",
     "//net",
@@ -501,6 +538,10 @@ source_set("masked_domain_list_manager_unittest") {
     "//testing/gtest",
     "//url",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("masked_domain_list") {
@@ -528,7 +569,7 @@ source_set("masked_domain_list_unittest") {
     "//components/ip_protection/common/flat:masked_domain_list",
     "//testing/gtest",
     "//third_party/flatbuffers",
-    "//url:url",
+    "//url",
   ]
 }
 
@@ -544,37 +585,6 @@ source_set("mock_blind_sign_auth") {
   ]
 }
 
-source_set("url_matcher_with_bypass") {
-  sources = [
-    "url_matcher_with_bypass.cc",
-    "url_matcher_with_bypass.h",
-  ]
-  public_deps = [
-    "//base",
-    "//components/privacy_sandbox/masked_domain_list:masked_domain_list_proto",
-    "//net",
-    "//url",
-  ]
-  deps = [
-    ":ip_protection_data_types",
-    "//services/network/public/cpp",
-  ]
-}
-
-source_set("url_matcher_with_bypass_unittest") {
-  testonly = true
-  sources = [ "url_matcher_with_bypass_unittest.cc" ]
-  deps = [
-    ":ip_protection_data_types",
-    ":url_matcher_with_bypass",
-    "//base",
-    "//components/privacy_sandbox/masked_domain_list:masked_domain_list_proto",
-    "//net",
-    "//testing/gtest",
-    "//url",
-  ]
-}
-
 source_set("ip_protection_probabilistic_reveal_token_direct_fetcher") {
   sources = [
     "ip_protection_probabilistic_reveal_token_direct_fetcher.cc",
@@ -583,7 +593,6 @@ source_set("ip_protection_probabilistic_reveal_token_direct_fetcher") {
   public_deps = [
     ":ip_protection_probabilistic_reveal_token_fetcher",
     "//base",
-    "//base/version_info:channel",
     "//services/network/public/cpp",
     "//services/network/public/mojom",
   ]
@@ -603,9 +612,9 @@ source_set("ip_protection_probabilistic_reveal_token_direct_fetcher_unittest") {
   deps = [
     ":ip_protection_probabilistic_reveal_token_crypter",
     ":ip_protection_probabilistic_reveal_token_direct_fetcher",
+    ":probabilistic_reveal_token_test_issuer",
     "//base",
     "//base/test:test_support",
-    "//base/version_info:channel",
     "//components/ip_protection:get_probabilistic_reveal_token_proto",
     "//net",
     "//services/network:test_support",
@@ -671,11 +680,12 @@ source_set("ip_protection_probabilistic_reveal_token_crypter_unittest") {
   sources = [ "ip_protection_probabilistic_reveal_token_crypter_unittest.cc" ]
   deps = [
     ":ip_protection_probabilistic_reveal_token_crypter",
+    ":probabilistic_reveal_token_test_issuer",
     "//base",
     "//base/test:test_support",
+    "//components/ip_protection:get_probabilistic_reveal_token_proto",
     "//testing/gmock",
     "//testing/gtest",
-    "//third_party/private-join-and-compute/src:ec_commutative_cipher",
   ]
 }
 
@@ -706,6 +716,7 @@ source_set("ip_protection_probabilistic_reveal_token_manager_unittest") {
     ":ip_protection_probabilistic_reveal_token_crypter",
     ":ip_protection_probabilistic_reveal_token_fetcher",
     ":ip_protection_probabilistic_reveal_token_manager",
+    ":probabilistic_reveal_token_test_consumer",
     ":probabilistic_reveal_token_test_issuer",
     "//base",
     "//base/test:test_support",
@@ -760,9 +771,9 @@ bundle_data("tests_bundle_data") {
       [ ":ip_protection_probabilistic_reveal_token_data_storage_unittest" ]
   testonly = true
   sources = [
-    "//components/test/data/ip_protection/probabilistic_reveal_tokens_v3.too_old.sql",
-    "//components/test/data/ip_protection/probabilistic_reveal_tokens_v4.sql",
-    "//components/test/data/ip_protection/probabilistic_reveal_tokens_v5.too_new.sql",
+    "//components/test/data/ip_protection/probabilistic_reveal_tokens_v4.too_old.sql",
+    "//components/test/data/ip_protection/probabilistic_reveal_tokens_v5.sql",
+    "//components/test/data/ip_protection/probabilistic_reveal_tokens_v6.too_new.sql",
   ]
   outputs = [ "{{bundle_resources_dir}}/" +
               "{{source_root_relative_dir}}/{{source_file_part}}" ]
@@ -787,6 +798,7 @@ source_set("probabilistic_reveal_token_registry_unittest") {
     ":probabilistic_reveal_token_registry",
     "//base",
     "//base/test:test_support",
+    "//net",
     "//testing/gmock",
     "//testing/gtest",
     "//url",
@@ -799,11 +811,55 @@ source_set("probabilistic_reveal_token_test_issuer") {
     "probabilistic_reveal_token_test_issuer.cc",
     "probabilistic_reveal_token_test_issuer.h",
   ]
-  public_deps = [ ":ip_protection_data_types" ]
+  public_deps = [
+    ":ip_protection_data_types",
+    "//components/ip_protection:get_probabilistic_reveal_token_proto",
+  ]
   deps = [
     "//base",
     "//third_party/abseil-cpp:absl",
     "//third_party/private-join-and-compute/src:ec_commutative_cipher",
+  ]
+}
+
+source_set("probabilistic_reveal_token_test_issuer_unittest") {
+  testonly = true
+  sources = [ "probabilistic_reveal_token_test_issuer_unittest.cc" ]
+  deps = [
+    ":probabilistic_reveal_token_test_issuer",
+    "//testing/gmock",
+    "//testing/gtest",
+    "//third_party/abseil-cpp:absl",
+  ]
+}
+
+source_set("probabilistic_reveal_token_test_consumer") {
+  testonly = true
+  sources = [
+    "probabilistic_reveal_token_test_consumer.cc",
+    "probabilistic_reveal_token_test_consumer.h",
+  ]
+  public_deps = [ ":ip_protection_data_types" ]
+  deps = [
+    "//base",
+    "//third_party/boringssl",
+  ]
+}
+
+source_set("probabilistic_reveal_token_test_consumer_unittest") {
+  testonly = true
+  sources = [ "probabilistic_reveal_token_test_consumer_unittest.cc" ]
+  deps = [
+    ":ip_protection_data_types",
+    ":ip_protection_probabilistic_reveal_token_fetcher",
+    ":ip_protection_probabilistic_reveal_token_manager",
+    ":probabilistic_reveal_token_test_consumer",
+    ":probabilistic_reveal_token_test_issuer",
+    "//base",
+    "//base/test:test_support",
+    "//net",
+    "//testing/gmock",
+    "//testing/gtest",
   ]
 }
 

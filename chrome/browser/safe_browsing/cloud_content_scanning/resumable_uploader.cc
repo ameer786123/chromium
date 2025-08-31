@@ -13,6 +13,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
@@ -139,7 +140,7 @@ void ResumableUploadRequest::SetMetadataRequestHeaders(
   if (!access_token_.empty()) {
     LogAuthenticatedCookieResets(
         *request, SafeBrowsingAuthenticatedEndpoint::kDeepScanning);
-    SetAccessTokenAndClearCookieInResourceRequest(request, access_token_);
+    SetAccessToken(request, access_token_);
   }
   request->credentials_mode = network::mojom::CredentialsMode::kOmit;
 }
@@ -160,6 +161,9 @@ std::string ResumableUploadRequest::GetUploadInfo() {
       break;
     case METADATA_ONLY:
       scan_info = "Metadata only scan";
+      break;
+    case ASYNC:
+      scan_info = "Async content upload";
       break;
   }
 
@@ -282,6 +286,7 @@ void ResumableUploadRequest::OnMetadataUploadCompleted(
         return;
       }
 
+      scan_type_ = ASYNC;
       std::move(verdict_received_callback_)
           .Run(IsSuccess(url_loader_->NetError(), response_code), response_code,
                output);
@@ -291,9 +296,9 @@ void ResumableUploadRequest::OnMetadataUploadCompleted(
   }
 
   // If chrome is being told to upload the content but the content is too large
-  // or is encrypted, fail now.
+  // or is encrypted and encrypted file upload is not enabled, fail now.
   if (get_data_result_ == BinaryUploadService::Result::FILE_TOO_LARGE ||
-      get_data_result_ == BinaryUploadService::Result::FILE_ENCRYPTED) {
+    (get_data_result_ == BinaryUploadService::Result::FILE_ENCRYPTED && !ShouldUploadEncryptedFile())) {
     Finish(net::ERR_FAILED, net::HTTP_BAD_REQUEST, std::move(response_body));
     return;
   }
@@ -302,6 +307,11 @@ void ResumableUploadRequest::OnMetadataUploadCompleted(
   SendContentSoon(headers->GetNormalizedHeader(kUploadUrlHeader).value());
 }
 
+bool ResumableUploadRequest::ShouldUploadEncryptedFile() {
+  return base::FeatureList::IsEnabled(
+             enterprise_connectors::kEnableEncryptedFileUpload) &&
+         scan_type_ == ASYNC;
+}
 void ResumableUploadRequest::SendContentSoon(const std::string& upload_url) {
   auto request = std::make_unique<network::ResourceRequest>();
   request->method = "POST";
@@ -380,7 +390,12 @@ void ResumableUploadRequest::OnSendContentCompleted(
     base::TimeTicks start_time,
     std::optional<std::string> response_body) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  scan_type_ = FULL_CONTENT;
+
+  // If this has already been called after the metadata check, that means that
+  // we have set the value to ASYNC.
+  if (!verdict_received_callback_.is_null()) {
+    scan_type_ = FULL_CONTENT;
+  }
 
   base::UmaHistogramCustomTimes(
       base::StrCat({"Enterprise.ResumableRequest.ContentCheck.",

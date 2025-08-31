@@ -26,6 +26,7 @@ import org.chromium.components.data_sharing.DataSharingUIDelegate;
 import org.chromium.components.data_sharing.GroupData;
 import org.chromium.components.data_sharing.GroupMember;
 import org.chromium.components.data_sharing.configs.DataSharingAvatarBitmapConfig;
+import org.chromium.ui.display.DisplayUtil;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
@@ -178,6 +179,7 @@ public class SharedImageTilesCoordinator {
         mAvailableMemberCount = count;
         mModel.set(SharedImageTilesProperties.REMAINING_TILES, 0);
         mModel.set(SharedImageTilesProperties.ICON_TILES, 0);
+        mModel.set(SharedImageTilesProperties.SHOW_MANAGE_TILE, false);
         initializeSharedImageTiles();
     }
 
@@ -219,7 +221,7 @@ public class SharedImageTilesCoordinator {
                         mContext,
                         validMembers,
                         getAllIconViews(),
-                        getAvatarSizeInPixels(sizeInDp),
+                        getAvatarSizeInPixelsUnscaled(sizeInDp),
                         mDataSharingService.getUiDelegate(),
                         finishedCallback);
     }
@@ -279,8 +281,19 @@ public class SharedImageTilesCoordinator {
         }
     }
 
-    private int getAvatarSizeInPixels(int sizeInDp) {
-        return mContext.getResources().getDimensionPixelSize(sizeInDp);
+    private int getAvatarSizeInPixelsUnscaled(int sizeInDp) {
+        // Returns the given unscaled value converted from dp to px.
+        float sizeInPx = mContext.getResources().getDimensionPixelSize(sizeInDp);
+        if (DisplayUtil.isUiScaled()) {
+            // Unscaling once is needed here because else we apply the scaling factor twice:
+            // 1. When converting dp -> px.
+            // 2. When displaying the bitmap.
+            // This unscaling undoes the 1st scaling and let the avatar show normally. More details
+            // at crbug.com/404572952.
+            sizeInPx = sizeInPx / DisplayUtil.getCurrentUiScalingFactor(mContext);
+        }
+
+        return (int) sizeInPx;
     }
 
     /** Populate the shared_image_tiles container with the specific icons. */
@@ -301,6 +314,9 @@ public class SharedImageTilesCoordinator {
 
         // Add icon tile(s).
         mModel.set(SharedImageTilesProperties.ICON_TILES, mIconTilesCount);
+
+        // Add manage tile.
+        mModel.set(SharedImageTilesProperties.SHOW_MANAGE_TILE, mIconTilesCount == 1);
 
         // Add number tile.
         if (showNumberTile) {

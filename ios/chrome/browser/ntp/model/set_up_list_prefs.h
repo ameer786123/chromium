@@ -15,13 +15,10 @@ enum class SetUpListItemType;
 namespace set_up_list_prefs {
 
 // Prefs to store the state of each item in the list.
-extern const char kSigninSyncItemState[];
 extern const char kDefaultBrowserItemState[];
 extern const char kAutofillItemState[];
 extern const char kFollowItemState[];
 extern const char kNotificationsItemState[];
-extern const char kDockingItemState[];
-extern const char kAddressBarItemState[];
 extern const char kAllItemsComplete[];
 extern const char kDisabled[];
 

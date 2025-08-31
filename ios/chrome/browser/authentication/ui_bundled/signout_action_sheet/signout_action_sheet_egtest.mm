@@ -5,6 +5,7 @@
 #import "base/strings/strcat.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/policy/core/common/policy_loader_ios_constants.h"
+#import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
@@ -103,6 +104,11 @@ void ClickSignOutInAccountSettings() {
 // also makes sure the settings are not blocked after the sign-out.
 // Related to crbug.com/1471942.
 - (void)testSignoutFromAccountsTableView {
+  // Signing out from the accounts table view is not possible with separate
+  // profiles.
+  if ([SigninEarlGrey areSeparateProfilesForManagedAccountsEnabled]) {
+    return;
+  }
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
@@ -214,8 +220,9 @@ void ClickSignOutInAccountSettings() {
   VerifySignoutDialogShownForManagedAccount();
 
   // Tap cancel and verify user is still signed in.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::CancelButton()]
-      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::AlertItemWithAccessibilityLabelId(
+                     IDS_CANCEL)] performAction:grey_tap()];
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeManagedIdentity];
 
   // Verify histogram metric for cancelling signout is recorded.
@@ -244,12 +251,8 @@ void ClickSignOutInAccountSettings() {
   // Sign in with managed account.
   FakeSystemIdentity* fakeManagedIdentity =
       [FakeSystemIdentity fakeManagedIdentity];
-  if ([SigninEarlGrey areSeparateProfilesForManagedAccountsEnabled]) {
-    [SigninEarlGrey
-        signinWithFakeManagedIdentityInPersonalProfile:fakeManagedIdentity];
-  } else {
-    [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
-  }
+  [SigninEarlGrey
+      signinWithFakeManagedIdentityInPersonalProfile:fakeManagedIdentity];
 
   // The sign out button should directly sign out the user.
   ClickSignOutInAccountSettings();

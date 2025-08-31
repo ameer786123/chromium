@@ -9,7 +9,8 @@
 #import "base/containers/contains.h"
 #import "base/memory/raw_ptr.h"
 #import "base/strings/utf_string_conversions.h"
-#import "base/test/task_environment.h"
+#import "base/test/scoped_feature_list.h"
+#import "ios/chrome/browser/badges/model/features.h"
 #import "ios/chrome/browser/badges/ui_bundled/badge_consumer.h"
 #import "ios/chrome/browser/badges/ui_bundled/badge_item.h"
 #import "ios/chrome/browser/badges/ui_bundled/badge_type.h"
@@ -19,6 +20,7 @@
 #import "ios/chrome/browser/infobars/model/infobar_badge_tab_helper_delegate.h"
 #import "ios/chrome/browser/infobars/model/infobar_ios.h"
 #import "ios/chrome/browser/infobars/model/infobar_manager_impl.h"
+#import "ios/chrome/browser/infobars/model/infobar_type.h"
 #import "ios/chrome/browser/infobars/model/test/fake_infobar_ios.h"
 #import "ios/chrome/browser/infobars/ui_bundled/test_infobar_delegate.h"
 #import "ios/chrome/browser/overlays/model/public/common/infobars/infobar_overlay_request_config.h"
@@ -32,6 +34,7 @@
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
 #import "ios/web/public/test/fakes/fake_navigation_manager.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "ios/web/public/web_state_user_data.h"
 #import "testing/gtest/include/gtest/gtest.h"
 
@@ -51,24 +54,17 @@ enum class TestParam {
 // Fake of BadgeConsumer.
 @interface FakeBadgeConsumer : NSObject <BadgeConsumer>
 @property(nonatomic, strong) id<BadgeItem> displayedBadge;
-@property(nonatomic, assign) BOOL hasFullscreenOffTheRecordBadge;
 @property(nonatomic, assign) BOOL hasUnreadBadge;
 @end
 
 @implementation FakeBadgeConsumer
-- (void)setupWithDisplayedBadge:(id<BadgeItem>)displayedBadgeItem
-                fullScreenBadge:(id<BadgeItem>)fullscreenBadgeItem {
-  self.hasFullscreenOffTheRecordBadge =
-      fullscreenBadgeItem != nil &&
-      fullscreenBadgeItem.badgeType == kBadgeTypeIncognito;
+@synthesize forceDisabled = _forceDisabled;
+
+- (void)setupWithDisplayedBadge:(id<BadgeItem>)displayedBadgeItem {
   self.displayedBadge = displayedBadgeItem;
 }
 - (void)updateDisplayedBadge:(id<BadgeItem>)displayedBadgeItem
-             fullScreenBadge:(id<BadgeItem>)fullscreenBadgeItem
                      infoBar:(InfoBarIOS*)infoBar {
-  self.hasFullscreenOffTheRecordBadge =
-      fullscreenBadgeItem != nil &&
-      fullscreenBadgeItem.badgeType == kBadgeTypeIncognito;
   self.displayedBadge = displayedBadgeItem;
 }
 - (void)markDisplayedBadgeAsRead:(BOOL)read {
@@ -87,8 +83,7 @@ class BadgeMediatorTest : public testing::TestWithParam<TestParam> {
     overlay_presenter_->SetPresentationContext(&overlay_presentation_context_);
     badge_mediator_ =
         [[BadgeMediator alloc] initWithWebStateList:web_state_list()
-                                   overlayPresenter:overlay_presenter_
-                                        isIncognito:is_off_the_record()];
+                                   overlayPresenter:overlay_presenter_];
     badge_mediator_.consumer = badge_consumer_;
   }
 
@@ -149,7 +144,7 @@ class BadgeMediatorTest : public testing::TestWithParam<TestParam> {
     return InfobarBadgeTabHelper::GetOrCreateForWebState(web_state());
   }
 
-  base::test::TaskEnvironment environment_;
+  web::WebTaskEnvironment environment_;
   FakeBadgeConsumer* badge_consumer_;
   std::unique_ptr<ProfileIOS> profile_;
   std::unique_ptr<Browser> browser_;
@@ -163,8 +158,6 @@ class BadgeMediatorTest : public testing::TestWithParam<TestParam> {
 TEST_P(BadgeMediatorTest, BadgeMediatorTestNoInfobar) {
   AppendActivatedWebState();
   EXPECT_FALSE(badge_consumer_.displayedBadge);
-  EXPECT_EQ(is_off_the_record(),
-            badge_consumer_.hasFullscreenOffTheRecordBadge);
 }
 
 // Test that the BadgeMediator responds with one new badge when an infobar is
@@ -271,8 +264,7 @@ TEST_P(BadgeMediatorTest, BadgeMediatorTestRestartWithInfobar) {
   badge_consumer_ = [[FakeBadgeConsumer alloc] init];
   badge_mediator_ =
       [[BadgeMediator alloc] initWithWebStateList:web_state_list()
-                                 overlayPresenter:overlay_presenter_
-                                      isIncognito:is_off_the_record()];
+                                 overlayPresenter:overlay_presenter_];
   badge_mediator_.consumer = badge_consumer_;
   ASSERT_TRUE(badge_consumer_.displayedBadge);
   EXPECT_EQ(badge_consumer_.displayedBadge.badgeType, kBadgeTypePasswordSave);
@@ -326,6 +318,27 @@ TEST_P(BadgeMediatorTest, InfobarBannerOverlayObserving) {
   queue->CancelAllRequests();
   badge_states = tab_helper->GetInfobarBadgeStates();
   EXPECT_FALSE(badge_states[type] & BadgeStatePresented);
+}
+
+// Test that no badge is shown when an autofill infobar is added and the feature
+// to remove the badge is enabled.
+TEST_P(BadgeMediatorTest, BadgeMediatorTestNoBadge) {
+  base::test::ScopedFeatureList feature_list_{kAutofillBadgeRemoval};
+
+  AppendActivatedWebState();
+
+  AddInfobar(InfobarType::kInfobarTypePasswordSave, u"FakeInfobar1");
+  EXPECT_FALSE(badge_consumer_.displayedBadge);
+
+  AddInfobar(InfobarType::kInfobarTypePasswordUpdate, u"FakeInfobar2");
+  EXPECT_FALSE(badge_consumer_.displayedBadge);
+
+  AddInfobar(InfobarType::kInfobarTypeSaveAutofillAddressProfile,
+             u"FakeInfobar3");
+  EXPECT_FALSE(badge_consumer_.displayedBadge);
+
+  AddInfobar(InfobarType::kInfobarTypeSaveCard, u"FakeInfobar4");
+  EXPECT_FALSE(badge_consumer_.displayedBadge);
 }
 
 INSTANTIATE_TEST_SUITE_P(/* No InstantiationName */,

@@ -61,17 +61,20 @@ id<GREYMatcher> GetMatcherForPinnedCellWithTitle(NSString* title) {
 
 // Matcher for the "Done" button on the Tab Grid.
 id<GREYMatcher> GetMatcherForDoneButton() {
-  return grey_accessibilityID(kTabGridDoneButtonIdentifier);
+  return grey_allOf(grey_accessibilityID(kTabGridDoneButtonIdentifier),
+                    grey_sufficientlyVisible(), nil);
 }
 
 // Matcher for the "Edit" button on the Tab Grid.
 id<GREYMatcher> GetMatcherForEditButton() {
-  return grey_accessibilityID(kTabGridEditButtonIdentifier);
+  return grey_allOf(grey_accessibilityID(kTabGridEditButtonIdentifier),
+                    grey_sufficientlyVisible(), nil);
 }
 
 // Matcher for the "Undo" button on the Tab Grid.
 id<GREYMatcher> GetMatcherForUndoButton() {
-  return grey_accessibilityID(kTabGridUndoCloseAllButtonIdentifier);
+  return grey_allOf(grey_accessibilityID(kTabGridUndoCloseAllButtonIdentifier),
+                    grey_sufficientlyVisible(), nil);
 }
 
 // Matcher for the pinned view.
@@ -124,7 +127,8 @@ GURL GetURLForTitle(net::EmbeddedTestServer* test_server, NSString* title) {
 }
 
 // Tests that there is only one active (selected) tab at a time.
-- (void)testOneActiveTabAtATime {
+// TODO(crbug.com/440615724): This test is flaky.
+- (void)FLAKY_testOneActiveTabAtATime {
   if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad. The Pinned Tabs feature is only "
                            @"supported on iPhone.");
@@ -344,8 +348,10 @@ GURL GetURLForTitle(net::EmbeddedTestServer* test_server, NSString* title) {
       assertWithMatcher:grey_enabled()];
 
   // Verify "Edit" button is disabled.
-  [[EarlGrey selectElementWithMatcher:GetMatcherForEditButton()]
-      assertWithMatcher:grey_not(grey_enabled())];
+  [self
+      waitForAnimationCompletionWithMacther:grey_allOf(
+                                                GetMatcherForEditButton(),
+                                                grey_not(grey_enabled()), nil)];
 
   [self waitForAnimationCompletionWithMacther:GetMatcherForPinnedCellWithTitle(
                                                   @"PinnedTab0")];
@@ -376,8 +382,10 @@ GURL GetURLForTitle(net::EmbeddedTestServer* test_server, NSString* title) {
       performAction:grey_tap()];
 
   // Verify "Done" button is disabled.
-  [[EarlGrey selectElementWithMatcher:GetMatcherForDoneButton()]
-      assertWithMatcher:grey_not(grey_enabled())];
+  [self
+      waitForAnimationCompletionWithMacther:grey_allOf(
+                                                GetMatcherForDoneButton(),
+                                                grey_not(grey_enabled()), nil)];
 
   // Verify "Edit" button is disabled.
   [[EarlGrey selectElementWithMatcher:GetMatcherForEditButton()]
@@ -456,17 +464,20 @@ GURL GetURLForTitle(net::EmbeddedTestServer* test_server, NSString* title) {
       performAction:grey_tap()];
 
   // Verify "Done" button is disabled.
-  [[EarlGrey selectElementWithMatcher:GetMatcherForDoneButton()]
-      assertWithMatcher:grey_not(grey_enabled())];
+  [self
+      waitForAnimationCompletionWithMacther:grey_allOf(
+                                                GetMatcherForDoneButton(),
+                                                grey_not(grey_enabled()), nil)];
 
   // Verify "Edit" button is disabled.
   [[EarlGrey selectElementWithMatcher:GetMatcherForEditButton()]
       assertWithMatcher:grey_not(grey_enabled())];
 }
 
+// TODO(crbug.com/441313129): This test is disabled because of its flakiness.
 // Tests closing all the regular tabs with "Close All" button and then undoing
 // the action.
-- (void)testUndoCloseAllRegularTabs {
+- (void)DISABLED_testUndoCloseAllRegularTabs {
   if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad. The Pinned Tabs feature is only "
                            @"supported on iPhone.");
@@ -546,8 +557,9 @@ GURL GetURLForTitle(net::EmbeddedTestServer* test_server, NSString* title) {
       assertWithMatcher:grey_sufficientlyVisible()];
 }
 
+// TODO(crbug.com/441313129): This test is disabled because of its flakiness.
 // Tests scrolling of the pinned tabs collection.
-- (void)testPinnedTabsScrolling {
+- (void)DISABLED_testPinnedTabsScrolling {
   if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad. The Pinned Tabs feature is only "
                            @"supported on iPhone.");

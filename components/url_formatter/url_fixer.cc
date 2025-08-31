@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/url_formatter/url_fixer.h"
 
 #include <stddef.h>
@@ -15,6 +10,7 @@
 #include <string_view>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/i18n/char_iterator.h"
@@ -370,7 +366,7 @@ bool HasPort(const std::string& original_text,
                                      url::ParserMode::kSpecialURL)) {
     ++port_end;
   }
-  std::string_view port_piece(original_text.data() + port_start,
+  std::string_view port_piece(UNSAFE_TODO(original_text.data() + port_start),
                               port_end - port_start);
   if (port_piece.empty()) {
     return false;
@@ -414,7 +410,7 @@ bool GetValidScheme(const std::string& text,
   // brackets are not in the whitelist.
   url::StdStringCanonOutput canon_scheme_output(canon_scheme);
   url::Component canon_scheme_component;
-  if (!url::CanonicalizeScheme(text.data(), *scheme_component,
+  if (!url::CanonicalizeScheme(scheme_component->as_string_view_on(text.data()),
                                &canon_scheme_output, &canon_scheme_component)) {
     return false;
   }
@@ -480,11 +476,8 @@ std::string SegmentURLInternal(std::string* text, url::Parsed* parts) {
     if (semicolon != 0 && semicolon != std::string::npos) {
       (*text)[semicolon] = ':';
       if (GetValidScheme(*text, &parts->scheme, &scheme) &&
-          (url::IsStandard(
-               scheme.c_str(),
-               url::Component(0, static_cast<int>(scheme.length()))) ||
-           scheme == url::kAboutScheme || scheme == kChromeUIScheme ||
-           scheme == url::kFileScheme)) {
+          (url::IsStandard(scheme) || scheme == url::kAboutScheme ||
+           scheme == kChromeUIScheme || scheme == url::kFileScheme)) {
         found_scheme = true;
       } else {
         (*text)[semicolon] = ';';
@@ -500,9 +493,7 @@ std::string SegmentURLInternal(std::string* text, url::Parsed* parts) {
   // Proceed with about, chrome, and devtools schemes,
   // but not file or nonstandard schemes.
   if ((scheme != url::kAboutScheme) && (scheme != kChromeUIScheme) &&
-      (scheme != kDevToolsScheme) &&
-      !url::IsStandard(scheme.c_str(),
-                       url::Component(0, static_cast<int>(scheme.length())))) {
+      (scheme != kDevToolsScheme) && !url::IsStandard(scheme)) {
     return scheme;
   }
 
@@ -633,9 +624,7 @@ GURL FixupURLInternal(const std::string& text,
   bool chrome_url =
       (scheme == url::kAboutScheme) || (scheme == kChromeUIScheme);
   bool devtools_url = (scheme == kDevToolsScheme);
-  if (chrome_url || devtools_url ||
-      url::IsStandard(scheme.c_str(),
-                      url::Component(0, static_cast<int>(scheme.length())))) {
+  if (chrome_url || devtools_url || url::IsStandard(scheme)) {
     // Replace the about: scheme with the chrome: scheme.
     std::string url(scheme == url::kAboutScheme ? kChromeUIScheme : scheme);
     url.append(url::kStandardSchemeSeparator);

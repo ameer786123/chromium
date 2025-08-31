@@ -27,6 +27,7 @@
 #include "components/omnibox/browser/omnibox_controller.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/search/search.h"
 #include "components/search_engines/template_url_service.h"
@@ -42,7 +43,7 @@
 
 #endif
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
 // GN doesn't understand conditional includes, so we need nogncheck here.
 #include "extensions/common/constants.h"  // nogncheck
 #endif
@@ -58,111 +59,6 @@ bool HasVectorIconBackground(const AutocompleteMatch& match) {
 #endif
 
 }  // namespace
-
-// static
-std::u16string OmniboxView::StripJavascriptSchemas(const std::u16string& text) {
-  const std::u16string kJsPrefix(
-      base::StrCat({url::kJavaScriptScheme16, u":"}));
-
-  bool found_JavaScript = false;
-  size_t i = 0;
-  // Find the index of the first character that isn't whitespace, a control
-  // character, or a part of a JavaScript: scheme.
-  while (i < text.size()) {
-    if (base::IsUnicodeWhitespace(text[i]) || (text[i] < 0x20)) {
-      ++i;
-    } else {
-      if (!base::EqualsCaseInsensitiveASCII(text.substr(i, kJsPrefix.length()),
-                                            kJsPrefix))
-        break;
-
-      // We've found a JavaScript scheme. Continue searching to ensure that
-      // strings like "javascript:javascript:alert()" are fully stripped.
-      found_JavaScript = true;
-      i += kJsPrefix.length();
-    }
-  }
-
-  // If we found any "JavaScript:" schemes in the text, return the text starting
-  // at the first non-whitespace/control character after the last instance of
-  // the scheme.
-  if (found_JavaScript)
-    return text.substr(i);
-
-  return text;
-}
-
-// static
-std::u16string OmniboxView::SanitizeTextForPaste(const std::u16string& text) {
-  if (text.empty())
-    return std::u16string();  // Nothing to do.
-
-  size_t end = text.find_first_not_of(base::kWhitespaceUTF16);
-  if (end == std::u16string::npos)
-    return u" ";  // Convert all-whitespace to single space.
-  // Because |end| points at the first non-whitespace character, the loop
-  // below will skip leading whitespace.
-
-  // Reserve space for the sanitized output.
-  std::u16string output;
-  output.reserve(text.size());  // Guaranteed to be large enough.
-
-  // Copy all non-whitespace sequences.
-  // Do not copy trailing whitespace.
-  // Copy all other whitespace sequences that do not contain CR/LF.
-  // Convert all other whitespace sequences that do contain CR/LF to either ' '
-  // or nothing, depending on whether there are any other sequences that do not
-  // contain CR/LF.
-  bool output_needs_lf_conversion = false;
-  bool seen_non_lf_whitespace = false;
-  const auto copy_range = [&text, &output](size_t begin, size_t end) {
-    output +=
-        text.substr(begin, (end == std::u16string::npos) ? end : (end - begin));
-  };
-  constexpr char16_t kNewline[] = {'\n', 0};
-  constexpr char16_t kSpace[] = {' ', 0};
-  while (true) {
-    // Copy this non-whitespace sequence.
-    size_t begin = end;
-    end = text.find_first_of(base::kWhitespaceUTF16, begin + 1);
-    copy_range(begin, end);
-
-    // Now there is either a whitespace sequence, or the end of the string.
-    if (end != std::u16string::npos) {
-      // There is a whitespace sequence; see if it contains CR/LF.
-      begin = end;
-      end = text.find_first_not_of(base::kWhitespaceNoCrLfUTF16, begin);
-      if ((end != std::u16string::npos) && (text[end] != '\n') &&
-          (text[end] != '\r')) {
-        // Found a non-trailing whitespace sequence without CR/LF.  Copy it.
-        seen_non_lf_whitespace = true;
-        copy_range(begin, end);
-        continue;
-      }
-    }
-
-    // |end| either points at the end of the string or a CR/LF.
-    if (end != std::u16string::npos)
-      end = text.find_first_not_of(base::kWhitespaceUTF16, end + 1);
-    if (end == std::u16string::npos)
-      break;  // Ignore any trailing whitespace.
-
-    // The preceding whitespace sequence contained CR/LF.  Convert to a single
-    // LF that we'll fix up below the loop.
-    output_needs_lf_conversion = true;
-    output += '\n';
-  }
-
-  // Convert LFs to ' ' or '' depending on whether there were non-LF whitespace
-  // sequences.
-  if (output_needs_lf_conversion) {
-    base::ReplaceChars(output, kNewline,
-                       seen_non_lf_whitespace ? kSpace : std::u16string(),
-                       &output);
-  }
-
-  return StripJavascriptSchemas(output);
-}
 
 OmniboxView::~OmniboxView() = default;
 
@@ -206,22 +102,48 @@ ui::ImageModel OmniboxView::GetIcon(int dip_size,
           controller_->client()->GetSizedIcon(bitmap));
     }
   }
-  if (AutocompleteMatch::IsSearchType(match.type)) {
-    // For search queries, display default search engine's favicon. If the
-    // default search engine is google return the icon instead of favicon for
+  if (AutocompleteMatch::IsSearchType(match.type) ||
+      match.enterprise_search_aggregator_type ==
+          AutocompleteMatch::EnterpriseSearchAggregatorType::PEOPLE) {
+    const TemplateURL* turl =
+        !match.keyword.empty() ? controller_->client()
+                                     ->GetTemplateURLService()
+                                     ->GetTemplateURLForKeyword(match.keyword)
+                               : nullptr;
+    // For search queries, display match's search engine's favicon. If the
+    // search engine is google, return the icon instead of favicon for
     // search queries with the chrome refresh feature.
-    if (search::DefaultSearchProviderIsGoogle(
-            controller_->client()->GetTemplateURLService())) {
-      // For non chrome builds this would return an empty image model. In
+    if ((turl &&
+         search::TemplateURLIsGoogle(turl, controller_->client()
+                                               ->GetTemplateURLService()
+                                               ->search_terms_data())) ||
+        (!turl && search::DefaultSearchProviderIsGoogle(
+                      controller_->client()->GetTemplateURLService()))) {
+      // For non-chrome builds this would return an empty image model. In
       // those cases revert to using the favicon.
       ui::ImageModel icon = model()->GetSuperGIcon(dip_size, dark_mode);
       if (!icon.IsEmpty()) {
         return icon;
       }
+    } else if (turl && turl->CreatedByEnterpriseSearchAggregatorPolicy()) {
+      // If the search engine is enterprise search aggregator, return the icon
+      // from the bitmap instead of favicon.
+      const SkBitmap* bitmap = model()->GetIconBitmap(turl->favicon_url());
+      if (bitmap) {
+        return ui::ImageModel::FromImage(
+            controller_->client()->GetSizedIcon(bitmap));
+      }
+      // For non-chrome builds this would return an empty image model. In
+      // those cases revert to using the favicon.
+      gfx::Image icon = model()->GetAgentspaceIcon(dark_mode);
+      if (!icon.IsEmpty()) {
+        return ui::ImageModel::FromImage(icon);
+      }
     }
-
-    favicon = controller_->client()->GetFaviconForDefaultSearchProvider(
-        std::move(on_icon_fetched));
+    favicon = turl ? controller_->client()->GetFaviconForKeywordSearchProvider(
+                         turl, std::move(on_icon_fetched))
+                   : controller_->client()->GetFaviconForDefaultSearchProvider(
+                         std::move(on_icon_fetched));
 
   } else if (match.type != AutocompleteMatchType::HISTORY_CLUSTER) {
     // The starter pack suggestions are a unique case. These suggestions
@@ -257,7 +179,18 @@ ui::ImageModel OmniboxView::GetIcon(int dip_size,
                 ->GetTemplateURLService()
                 ->GetTemplateURLForKeyword(match.associated_keyword->keyword)
           : nullptr;
-  const gfx::VectorIcon& vector_icon = match.GetVectorIcon(is_bookmarked, turl);
+  OmniboxAction* action = nullptr;
+  if (match.IsToolbelt() && omnibox_feature_configs::Toolbelt::Get()
+                                .use_action_icons_in_location_bar) {
+    OmniboxPopupSelection selection = model()->GetPopupSelection();
+    if (selection.state == OmniboxPopupSelection::FOCUSED_BUTTON_ACTION &&
+        selection.action_index < match.actions.size()) {
+      action = match.actions[selection.action_index].get();
+    }
+  }
+  const gfx::VectorIcon& vector_icon =
+      action ? action->GetVectorIcon()
+             : match.GetVectorIcon(is_bookmarked, turl);
   const auto& color = (match.type == AutocompleteMatchType::HISTORY_CLUSTER ||
                        match.type == AutocompleteMatchType::STARTER_PACK)
                           ? color_bright_vectors
@@ -294,6 +227,8 @@ void OmniboxView::RevertAll() {
 
 void OmniboxView::CloseOmniboxPopup() {
   controller()->StopAutocomplete(/*clear_result=*/true);
+  // Reset focus ring for the AIM button if it was set.
+  ApplyFocusRingToAimButton(false);
 }
 
 bool OmniboxView::IsImeShowingPopup() const {
@@ -406,7 +341,7 @@ void OmniboxView::UpdateTextStyle(
       display_text.substr(scheme.begin, scheme.len);
 
   const bool is_extension_url =
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
       base::EqualsASCII(url_scheme, extensions::kExtensionScheme);
 #else
       false;

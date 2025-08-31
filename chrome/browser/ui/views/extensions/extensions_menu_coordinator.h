@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSIONS_MENU_COORDINATOR_H_
 #define CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSIONS_MENU_COORDINATOR_H_
 
+#include "base/memory/raw_ptr.h"
 #include "ui/views/view_observer.h"
 #include "ui/views/view_tracker.h"
 
@@ -60,6 +61,9 @@ class ExtensionsMenuCoordinator : public views::ViewObserver {
 
   const raw_ptr<Browser> browser_;
   views::ViewTracker bubble_tracker_;
+
+  base::ScopedObservation<views::View, views::ViewObserver>
+      bubble_view_observation_{this};
 
   std::unique_ptr<ExtensionsMenuViewController> controller_;
 };

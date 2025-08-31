@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/gwp_asan/client/sampling_malloc_shims.h"
 
 #include <algorithm>
@@ -79,7 +74,7 @@ void* AllocZeroInitializedFn(size_t n, size_t size, void* context) {
 
     size_t total_size = checked_total.ValueOrDie();
     if (void* allocation = gpa->Allocate(total_size)) {
-      memset(allocation, 0, total_size);
+      UNSAFE_TODO(memset(allocation, 0, total_size));
       return allocation;
     }
   }
@@ -118,7 +113,8 @@ void* ReallocFn(void* address, size_t size, void* context) {
   if (!new_alloc)
     return nullptr;
 
-  memcpy(new_alloc, address, std::min(size, gpa->GetRequestedSize(address)));
+  UNSAFE_TODO(memcpy(new_alloc, address,
+                     std::min(size, gpa->GetRequestedSize(address))));
   gpa->Deallocate(address);
   return new_alloc;
 }
@@ -147,7 +143,8 @@ void* ReallocUncheckedFn(void* address, size_t size, void* context) {
     return nullptr;
   }
 
-  memcpy(new_alloc, address, std::min(size, gpa->GetRequestedSize(address)));
+  UNSAFE_TODO(memcpy(new_alloc, address,
+                     std::min(size, gpa->GetRequestedSize(address))));
   gpa->Deallocate(address);
   return new_alloc;
 }
@@ -158,6 +155,44 @@ void FreeFn(void* address, void* context) {
   }
 
   g_allocator_dispatch.next->free_function(address, context);
+}
+
+void FreeWithSizeFn(void* address, size_t size, void* context) {
+  if (gpa->PointerIsMine(address)) [[unlikely]] {
+    // TODO(vtsyrklevich): Perform this check in GuardedPageAllocator and report
+    // failed checks using the same pipeline.
+    CHECK_EQ(size, gpa->GetRequestedSize(address));
+    gpa->Deallocate(address);
+    return;
+  }
+
+  g_allocator_dispatch.next->free_with_size_function(address, size, context);
+}
+
+void FreeWithAlignmentFn(void* address, size_t alignment, void* context) {
+  if (gpa->PointerIsMine(address)) [[unlikely]] {
+    gpa->Deallocate(address);
+    return;
+  }
+
+  g_allocator_dispatch.next->free_with_alignment_function(address, alignment,
+                                                          context);
+}
+
+void FreeWithSizeAndAlignmentFn(void* address,
+                                size_t size,
+                                size_t alignment,
+                                void* context) {
+  if (gpa->PointerIsMine(address)) [[unlikely]] {
+    // TODO(vtsyrklevich): Perform this check in GuardedPageAllocator and report
+    // failed checks using the same pipeline.
+    CHECK_EQ(size, gpa->GetRequestedSize(address));
+    gpa->Deallocate(address);
+    return;
+  }
+
+  g_allocator_dispatch.next->free_with_size_and_alignment_function(
+      address, size, alignment, context);
 }
 
 size_t GetSizeEstimateFn(void* address, void* context) {
@@ -198,31 +233,18 @@ void BatchFreeFn(void** to_be_freed, unsigned num_to_be_freed, void* context) {
   // A batch_free() hook is implemented because it is imperative that we never
   // call free() with a GWP-ASan allocation.
   for (size_t i = 0; i < num_to_be_freed; i++) {
-    if (gpa->PointerIsMine(to_be_freed[i])) [[unlikely]] {
+    if (gpa->PointerIsMine(UNSAFE_TODO(to_be_freed[i]))) [[unlikely]] {
       // If this batch includes guarded allocations, call free() on all of the
       // individual allocations to ensure the guarded allocations are handled
       // correctly.
       for (size_t j = 0; j < num_to_be_freed; j++)
-        FreeFn(to_be_freed[j], context);
+        FreeFn(UNSAFE_TODO(to_be_freed[j]), context);
       return;
     }
   }
 
   g_allocator_dispatch.next->batch_free_function(to_be_freed, num_to_be_freed,
                                                  context);
-}
-
-void FreeDefiniteSizeFn(void* address, size_t size, void* context) {
-  if (gpa->PointerIsMine(address)) [[unlikely]] {
-    // TODO(vtsyrklevich): Perform this check in GuardedPageAllocator and report
-    // failed checks using the same pipeline.
-    CHECK_EQ(size, gpa->GetRequestedSize(address));
-    gpa->Deallocate(address);
-    return;
-  }
-
-  g_allocator_dispatch.next->free_definite_size_function(address, size,
-                                                         context);
 }
 
 void TryFreeDefaultFn(void* address, void* context) {
@@ -282,7 +304,8 @@ static void* AlignedReallocFn(void* address,
   if (!new_alloc)
     return nullptr;
 
-  memcpy(new_alloc, address, std::min(size, gpa->GetRequestedSize(address)));
+  UNSAFE_TODO(memcpy(new_alloc, address,
+                     std::min(size, gpa->GetRequestedSize(address))));
   gpa->Deallocate(address);
   return new_alloc;
 }
@@ -314,7 +337,8 @@ static void* AlignedReallocUncheckedFn(void* address,
     return nullptr;
   }
 
-  memcpy(new_alloc, address, std::min(size, gpa->GetRequestedSize(address)));
+  UNSAFE_TODO(memcpy(new_alloc, address,
+                     std::min(size, gpa->GetRequestedSize(address))));
   gpa->Deallocate(address);
   return new_alloc;
 }
@@ -335,12 +359,14 @@ AllocatorDispatch g_allocator_dispatch = {
     &ReallocFn,
     &ReallocUncheckedFn,
     &FreeFn,
+    &FreeWithSizeFn,
+    &FreeWithAlignmentFn,
+    &FreeWithSizeAndAlignmentFn,
     &GetSizeEstimateFn,
     &GoodSizeFn,
     &ClaimedAddressFn,
     &BatchMallocFn,
     &BatchFreeFn,
-    &FreeDefiniteSizeFn,
     &TryFreeDefaultFn,
     &AlignedMallocFn,
     &AlignedMallocUncheckedFn,
@@ -357,14 +383,20 @@ GWP_ASAN_EXPORT GuardedPageAllocator& GetMallocGpaForTesting() {
   return *gpa;
 }
 
-void InstallMallocHooks(const AllocatorSettings& settings,
+bool InstallMallocHooks(const AllocatorSettings& settings,
                         GuardedPageAllocator::OutOfMemoryCallback callback) {
   static crash_reporter::CrashKeyString<24> malloc_crash_key(kMallocCrashKey);
   gpa = new GuardedPageAllocator();
-  gpa->Init(settings, std::move(callback), false);
+  if (!gpa->Init(settings, std::move(callback), false)) {
+    return false;
+  }
   malloc_crash_key.Set(gpa->GetCrashKey());
   sampling_state.Init(settings.sampling_frequency);
+  sampling_state.SetSampleSizeRestriction(settings.sampling_min_size,
+                                          settings.sampling_max_size);
+
   allocator_shim::InsertAllocatorDispatch(&g_allocator_dispatch);
+  return true;
 }
 
 }  // namespace internal

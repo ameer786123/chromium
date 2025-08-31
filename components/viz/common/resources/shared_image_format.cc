@@ -35,10 +35,6 @@ const char* SinglePlaneFormatToString(SharedImageFormat format) {
     return "BGRA_8888";
   } else if (format == SinglePlaneFormat::kALPHA_8) {
     return "ALPHA_8";
-  } else if (format == SinglePlaneFormat::kLUMINANCE_8) {
-    return "LUMINANCE_8";
-  } else if (format == SinglePlaneFormat::kRGB_565) {
-    return "RGB_565";
   } else if (format == SinglePlaneFormat::kBGR_565) {
     return "BGR_565";
   } else if (format == SinglePlaneFormat::kETC1) {
@@ -135,11 +131,6 @@ static_assert(std::is_trivially_copyable_v<SharedImageFormat>);
 // that operator==() is just memcmp(). That would probably require something
 // like manually packing bits into a single uint64_t for storage.
 
-bool SharedImageFormat::IsBitmapFormatSupported() const {
-  return is_single_plane() &&
-         singleplanar_format() == mojom::SingleplanarFormat::RGBA_8888;
-}
-
 int SharedImageFormat::NumberOfPlanes() const {
   if (is_single_plane()) {
     return 1;
@@ -234,6 +225,26 @@ bool SharedImageFormat::VerifySizeInBytes(const gfx::Size& size) const {
   return MaybeEstimatedSizeInBytes(size).has_value();
 }
 
+std::pair<int, int> SharedImageFormat::GetSubsamplingScale() const {
+  DCHECK(is_multi_plane());
+  // UV scales
+  int width_scale = 1;
+  int height_scale = 1;
+  switch (subsampling()) {
+    case Subsampling::k420:
+      width_scale = 2;
+      height_scale = 2;
+      break;
+    case Subsampling::k422:
+      width_scale = 2;
+      break;
+    case Subsampling::k444:
+      break;
+  }
+
+  return {width_scale, height_scale};
+}
+
 gfx::Size SharedImageFormat::GetPlaneSize(int plane_index,
                                           const gfx::Size& size) const {
   DCHECK(IsValidPlaneIndex(plane_index));
@@ -253,21 +264,8 @@ gfx::Size SharedImageFormat::GetPlaneSize(int plane_index,
     return size;
   }
 
-  // UV scales
-  float width_scale = 1.0;
-  float height_scale = 1.0;
-  switch (subsampling()) {
-    case Subsampling::k420:
-      width_scale = 0.5;
-      height_scale = 0.5;
-      break;
-    case Subsampling::k422:
-      width_scale = 0.5;
-      break;
-    case Subsampling::k444:
-      break;
-  }
-  return gfx::ScaleToCeiledSize(size, width_scale, height_scale);
+  auto [width_scale, height_scale] = GetSubsamplingScale();
+  return gfx::ScaleToCeiledSize(size, 1.0 / width_scale, 1.0 / height_scale);
 }
 
 // For multiplanar formats.
@@ -375,7 +373,6 @@ int SharedImageFormat::BitsPerPixel() const {
     case mojom::SingleplanarFormat::RG_1616:
       return 32;
     case mojom::SingleplanarFormat::RGBA_4444:
-    case mojom::SingleplanarFormat::RGB_565:
     case mojom::SingleplanarFormat::LUMINANCE_F16:
     case mojom::SingleplanarFormat::R_F16:
     case mojom::SingleplanarFormat::R_16:
@@ -383,13 +380,23 @@ int SharedImageFormat::BitsPerPixel() const {
     case mojom::SingleplanarFormat::RG_88:
       return 16;
     case mojom::SingleplanarFormat::ALPHA_8:
-    case mojom::SingleplanarFormat::LUMINANCE_8:
     case mojom::SingleplanarFormat::R_8:
       return 8;
     case mojom::SingleplanarFormat::ETC1:
       return 4;
   }
   NOTREACHED();
+}
+
+SharedImageFormat SharedImageFormat::N32Format() {
+  // Skia has an internal algorithm for determining the N32 flag, but we
+  // override this with a build flag based on the Platform, so we can reduce
+  // this to checking if we're building for Android.
+#if BUILDFLAG(IS_ANDROID)
+  return SinglePlaneFormat::kRGBA_8888;
+#else
+  return SinglePlaneFormat::kBGRA_8888;
+#endif
 }
 
 bool SharedImageFormat::operator==(const SharedImageFormat& o) const {

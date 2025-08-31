@@ -24,10 +24,6 @@ BASE_FEATURE(kSegmentationPlatformUkmEngine,
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
 
-BASE_FEATURE(kSegmentationPlatformUserVisibleTaskRunner,
-             "SegmentationPlatformUserVisibleTaskRunner",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kSegmentationPlatformAdaptiveToolbarV2Feature,
              "SegmentationPlatformAdaptiveToolbarV2Feature",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -72,8 +68,8 @@ BASE_FEATURE(kContextualPageActions,
              "ContextualPageActions",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kContextualPageActionShareModel,
-             "ContextualPageActionShareModel",
+BASE_FEATURE(kContextualPageActionTabGrouping,
+             "ContextualPageActionTabGrouping",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kSegmentationDefaultReportingSegments,
@@ -128,14 +124,6 @@ BASE_FEATURE(kSegmentationPlatformTimeDelaySampling,
              "SegmentationPlatformTimeDelaySampling",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kSegmentationPlatformCollectTabRankData,
-             "SegmentationPlatformCollectTabRankData",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kSegmentationPlatformModelInitializationDelay,
-             "SegmentationPlatformModelInitializationDelay",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // Enabled only on iOS to improve startup performance of the module ranker.
 BASE_FEATURE(kSegmentationPlatformSignalDbCache,
              "SegmentationPlatformSignalDbCache",
@@ -151,7 +139,7 @@ BASE_FEATURE(kSegmentationPlatformComposePromotion,
 
 BASE_FEATURE(kSegmentationPlatformUmaFromSqlDb,
              "SegmentationPlatformUmaFromSqlDb",
-#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_CHROMEOS)
+#if !BUILDFLAG(IS_CHROMEOS)
              base::FEATURE_ENABLED_BY_DEFAULT);
 #else
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -160,7 +148,7 @@ BASE_FEATURE(kSegmentationPlatformUmaFromSqlDb,
 BASE_FEATURE(kSegmentationPlatformIosModuleRankerSplitBySurface,
              "SegmentationPlatformIosModuleRankerSplitBySurface",
 #if BUILDFLAG(IS_IOS)
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 #else
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
@@ -247,10 +235,25 @@ constexpr base::FeatureParam<int> kMaxTabGroupSyncCardImpressions{
 constexpr base::FeatureParam<int> kMaxQuickDeleteCardImpressions{
     &kEducationalTipModule, "max_quick_delete_card_impressions",
     /*default_value=*/10};
+constexpr base::FeatureParam<int> kMaxHistorySyncCardImpressions{
+    &kEducationalTipModule, "max_history_sync_card_impressions",
+    /*default_value=*/10};
+
+constexpr base::FeatureParam<int> KDaysToShowEphemeralCardOnce{
+    &kEducationalTipModule, "days_to_show_ephemeral_card_once",
+    /*default_value=*/1};
+
+constexpr base::FeatureParam<int> KDaysToShowEachEphemeralCardOnce{
+    &kEducationalTipModule, "days_to_show_each_ephemeral_card_once",
+    /*default_value=*/7};
+
+constexpr base::FeatureParam<std::string> KNamesOfEphemeralCardsToShow{
+    &kEducationalTipModule, "names_of_ephemeral_cards_to_show",
+    /*default_value=*/""};
 
 BASE_FEATURE(kAndroidAppIntegrationModule,
              "AndroidAppIntegrationModule",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 constexpr base::FeatureParam<bool> kMaxAuxiliarySearchForceShow{
     &kAndroidAppIntegrationModule, "force_card_shown",
@@ -263,5 +266,38 @@ constexpr base::FeatureParam<int> kMaxAuxiliarySearchCardImpressions{
 BASE_FEATURE(kSegmentationPlatformFedCmUser,
              "SegmentationPlatformFedCmUser",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kDefaultBrowserPromoPropensityModel,
+             "DefaultBrowserPromoPropensityModel",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kAppBundlePromoEphemeralCard,
+             "AppBundlePromoEphemeralCard",
+#if BUILDFLAG(IS_IOS)
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#else
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+constexpr base::FeatureParam<int> kMaxAppBundlePromoImpressions{
+    &kAppBundlePromoEphemeralCard, "max_app_bundle_promo_impressions",
+    /*default_value=*/3};
+
+constexpr base::FeatureParam<int> kMaxAppBundleAppsInstalled{
+    &kAppBundlePromoEphemeralCard, "max_app_bundle_apps_installed",
+    /*default_value=*/4};
+
+BASE_FEATURE(kDefaultBrowserMagicStackIos,
+             "DefaultBrowserMagicStackIos",
+#if BUILDFLAG(IS_IOS)
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#else
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+constexpr base::FeatureParam<int> kMaxDefaultBrowserMagicStackIosImpressions{
+    &kDefaultBrowserMagicStackIos,
+    "max_default_browser_magic_stack_ios_impressions",
+    /*default_value=*/6};
 
 }  // namespace segmentation_platform::features

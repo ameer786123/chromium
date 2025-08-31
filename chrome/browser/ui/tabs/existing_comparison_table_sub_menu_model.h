@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_UI_TABS_EXISTING_COMPARISON_TABLE_SUB_MENU_MODEL_H_
 #define CHROME_BROWSER_UI_TABS_EXISTING_COMPARISON_TABLE_SUB_MENU_MODEL_H_
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/tabs/existing_base_sub_menu_model.h"
 #include "components/commerce/core/product_specifications/product_specifications_service.h"
 
-class Browser;
 class TabMenuModelDelegate;
 
 namespace commerce {
@@ -43,7 +43,6 @@ class ExistingComparisonTableSubMenuModel : public ExistingBaseSubMenuModel {
       const std::vector<ProductSpecificationsSet> sets);
   void AddUrlToSet(const UrlInfo& url_info, base::Uuid set_uuid);
 
-  const raw_ptr<Browser> browser_;
   const raw_ptr<ProductSpecificationsService> product_specs_service_;
 
   // Map of index in the menu model to table UUID.

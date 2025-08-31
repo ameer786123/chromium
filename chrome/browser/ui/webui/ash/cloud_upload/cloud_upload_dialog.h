@@ -28,9 +28,13 @@
 #include "storage/browser/file_system/file_system_url.h"
 #include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 
 class Profile;
+
+namespace ash {
+class BrowserDelegate;
+}  // namespace ash
 
 namespace extensions::app_file_handler_util {
 class MimeTypeCollector;
@@ -63,15 +67,15 @@ struct ODFSFileSystemAndPath {
 };
 
 // The string conversions of ash::cloud_upload::mojom::UserAction.
-constexpr char kUserActionCancel[] = "cancel";
-constexpr char kUserActionCancelGoogleDrive[] = "cancel-drive";
-constexpr char kUserActionCancelOneDrive[] = "cancel-onedrive";
-constexpr char kUserActionSetUpOneDrive[] = "setup-onedrive";
-constexpr char kUserActionUploadToGoogleDrive[] = "upload-drive";
-constexpr char kUserActionUploadToOneDrive[] = "upload-onedrive";
-constexpr char kUserActionConfirmOrUploadToGoogleDrive[] =
+inline constexpr char kUserActionCancel[] = "cancel";
+inline constexpr char kUserActionCancelGoogleDrive[] = "cancel-drive";
+inline constexpr char kUserActionCancelOneDrive[] = "cancel-onedrive";
+inline constexpr char kUserActionSetUpOneDrive[] = "setup-onedrive";
+inline constexpr char kUserActionUploadToGoogleDrive[] = "upload-drive";
+inline constexpr char kUserActionUploadToOneDrive[] = "upload-onedrive";
+inline constexpr char kUserActionConfirmOrUploadToGoogleDrive[] =
     "confirm-or-upload-google-drive";
-constexpr char kUserActionConfirmOrUploadToOneDrive[] =
+inline constexpr char kUserActionConfirmOrUploadToOneDrive[] =
     "confirm-or-upload-onedrive";
 
 // Options for which setup or move confirmation sub-page/flow we want to show.
@@ -166,6 +170,7 @@ class CloudOpenTask : public BrowserListObserver,
   CloudOpenTask(Profile* profile,
                 std::vector<storage::FileSystemURL> file_urls,
                 const ::file_manager::file_tasks::TaskDescriptor& task,
+                const SourceType source_type,
                 const CloudProvider cloud_provider,
                 std::unique_ptr<CloudOpenMetrics> cloud_open_metrics);
 
@@ -245,6 +250,7 @@ class CloudOpenTask : public BrowserListObserver,
   // File being currently uploaded.
   size_t file_urls_idx_ = 0;
   const ::file_manager::file_tasks::TaskDescriptor task_;
+  SourceType source_type_;
   CloudProvider cloud_provider_;
   std::unique_ptr<CloudOpenMetrics> cloud_open_metrics_;
   std::unique_ptr<DriveUploadHandler> drive_upload_handler_;
@@ -258,7 +264,9 @@ class CloudOpenTask : public BrowserListObserver,
   OfficeFilesTransferRequired transfer_required_ =
       OfficeFilesTransferRequired::kNotRequired;
   bool need_new_files_app_ = false;
-  raw_ptr<Browser> files_app_browser_;
+  // TODO(crbug.com/440001206): Clients should fetch BrowserDelegate refs
+  // dynamically or handle BrowserDelegate destruction events directly.
+  raw_ptr<BrowserDelegate, DanglingUntriaged> files_app_browser_;
   bool files_app_closed_ = false;
 };
 

@@ -36,8 +36,11 @@ import java.util.Set;
  * Finds installed native Android payment apps and verifies their signatures according to the
  * payment method manifests. The manifests are located based on the payment method name, which is a
  * URL that starts with "https://" (localhosts can be "http://", however). The W3C-published non-URL
- * payment method names are exceptions: these are common payment method names that do not have a
+ * payment method names[1] are exceptions: these are common payment method names that do not have a
  * manifest and can be used by any payment app.
+ *
+ * <p>[1] <a href="https://w3c.github.io/payment-method-id/#registry">Registry of standardized
+ * payment methods</a>.
  */
 @NullMarked
 public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
@@ -47,6 +50,8 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
 
     /** The maximum number of payment method manifests to download. */
     private static final int MAX_NUMBER_OF_MANIFESTS = 10;
+
+    private static final int DEFAULT_PAYMENT_DETAILS_UPDATE_SERVICE_MAX_RETRY_NUMBER = 5;
 
     /** Meta data name of an app's supported payment method names. */
     public static final String META_DATA_NAME_OF_PAYMENT_METHOD_NAMES =
@@ -63,11 +68,17 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
     private static @Nullable PackageManagerDelegate sPackageManagerDelegateForTest;
     private static @Nullable PaymentManifestDownloader sDownloaderForTest;
     private static boolean sBypassIsReadyToPayServiceInTest;
+    private static boolean sIsReadyToPayResponseInTest = true;
     private static @Nullable AndroidIntentLauncher sAndroidIntentLauncherForTest;
 
-    private final Set<GURL> mUrlPaymentMethods = new HashSet<>();
+    /**
+     * The set of payment methods that the merchant website has specified in the Payment Request
+     * API. This is the set of payment methods that the merchant supports.
+     */
+    private final Set<GURL> mMerchantRequestedUrlPaymentMethods = new HashSet<>();
+
     private final PaymentManifestDownloader mDownloader;
-    private final PaymentManifestWebDataService mWebDataService;
+    private final WebPaymentsWebDataService mWebDataService;
     private final PaymentManifestParser mParser;
     private final PackageManagerDelegate mPackageManagerDelegate;
     private final PaymentAppFactoryDelegate mFactoryDelegate;
@@ -145,9 +156,12 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
      */
     private final Map<String, String> mUpdatePaymentDetailsServices = new HashMap<>();
 
+    private final int mPaymentDetailsUpdateServiceMaxRetryNumber;
+
     private int mPendingVerifiersCount;
     private int mPendingIsReadyToPayQueries;
     private int mPendingResourceUsersCount;
+    private boolean mIsCanMakePaymentReportedToFactoryDelegate;
 
     /**
      * @param delegate The package manager delegate to use in testing.
@@ -165,10 +179,26 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
         sDownloaderForTest = downloader;
     }
 
+    /**
+     * @param bypass Whether to bypass the IS_READY_TO_PAY service in testing (by not opening a
+     *     connection to it).
+     */
+    @VisibleForTesting
+    public static void bypassIsReadyToPayServiceInTest(boolean bypass) {
+        sBypassIsReadyToPayServiceInTest = bypass;
+    }
+
     /** Do not open a connection to the IS_READY_TO_PAY service in testing. */
     @VisibleForTesting
     public static void bypassIsReadyToPayServiceInTest() {
         sBypassIsReadyToPayServiceInTest = true;
+    }
+
+    /**
+     * @param isReadyToPay The response of IS_READY_TO_PAY in test. The default is true.
+     */
+    public static void setIsReadyToPayResponseInTest(boolean isReadyToPay) {
+        sIsReadyToPayResponseInTest = isReadyToPay;
     }
 
     /**
@@ -192,7 +222,7 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
      *     call.
      */
     public AndroidPaymentAppFinder(
-            PaymentManifestWebDataService webDataService,
+            WebPaymentsWebDataService webDataService,
             PaymentManifestDownloader downloader,
             PaymentManifestParser parser,
             PackageManagerDelegate packageManagerDelegate,
@@ -223,6 +253,13 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
         mFactory = factory;
         assert mFactoryDelegate.getParams() != null;
         mIsOffTheRecord = mFactoryDelegate.getParams().isOffTheRecord();
+
+        mPaymentDetailsUpdateServiceMaxRetryNumber =
+                PaymentFeatureList.isEnabledOrExperimentalFeaturesEnabled(
+                                PaymentFeatureList
+                                        .RECONNECT_ON_LOST_CONNECTION_TO_UPDATE_PAYMENT_DETAILS_SERVICE)
+                        ? DEFAULT_PAYMENT_DETAILS_UPDATE_SERVICE_MAX_RETRY_NUMBER
+                        : 0; // No reconnect attempts.
     }
 
     private void findAppStoreBillingApp(List<ResolveInfo> allInstalledPaymentApps) {
@@ -298,9 +335,15 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
         for (String method : mFactoryDelegate.getParams().getMethodData().keySet()) {
             assert !TextUtils.isEmpty(method);
             GURL url = new GURL(method); // Only URL payment method names are supported.
-            if (mAppStores.containsValue(url)) continue;
+            if (mAppStores.containsValue(url)) {
+                Log.i(TAG, "App store method \"%s\".", method);
+                continue;
+            }
             if (UrlUtil.isValidUrlBasedPaymentMethodIdentifier(url)) {
-                mUrlPaymentMethods.add(url);
+                Log.i(TAG, "PaymentRequest API supportedMethods: \"%s\".", method);
+                mMerchantRequestedUrlPaymentMethods.add(url);
+            } else {
+                Log.e(TAG, "Invalid method \"%s\".", method);
             }
         }
 
@@ -311,6 +354,12 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
             Log.e(TAG, "No apps with \"%s\" intent filter.", WebPaymentIntentHelper.ACTION_PAY);
             onAllAppsFoundAndValidated();
             return;
+        } else {
+            Log.i(
+                    TAG,
+                    "\"%s\" intent apps: %s.",
+                    WebPaymentIntentHelper.ACTION_PAY,
+                    String.join(", ", getActivityPackageNames(allInstalledPaymentApps)));
         }
 
         if (!mIsOffTheRecord) {
@@ -339,7 +388,10 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
         // in this set:
         //
         // ("https://bobpay.com/personal", "https://alicepay.com/webpay")
-        Set<GURL> urlMethods = new HashSet<>(mUrlPaymentMethods);
+        //
+        // Manifests from all of these URLs will be downloaded for verification of app package
+        // names, versions, signatures, and "supported_origins".
+        Set<GURL> urlMethodsForManifestDownload = new HashSet<>();
 
         // A mapping from all known payment method names to the corresponding payment apps that
         // claim to support these payment methods. Example contents:
@@ -379,6 +431,13 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
             GURL appOrigin = null;
             GURL defaultUrlMethod = null;
             if (!TextUtils.isEmpty(defaultMethod)) {
+                Log.i(
+                        TAG,
+                        "\"%s\" meta-data \"%s\": \"%s\".",
+                        app.activityInfo.name,
+                        META_DATA_NAME_OF_DEFAULT_PAYMENT_METHOD_NAME,
+                        defaultMethod);
+
                 defaultUrlMethod = new GURL(defaultMethod);
 
                 // Do not download any manifests for the app whose default payment method identifier
@@ -400,22 +459,19 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
                 }
 
                 if (!methodToAppsMapping.containsKey(defaultMethod)) {
-                    methodToAppsMapping.put(defaultMethod, new HashSet<ResolveInfo>());
+                    methodToAppsMapping.put(defaultMethod, new HashSet<>());
                 }
                 methodToAppsMapping.get(defaultMethod).add(app);
 
                 if (UrlUtil.isURLValid(defaultUrlMethod)) {
-                    urlMethods.add(defaultUrlMethod);
-
                     if (!urlMethodToDefaultAppsMapping.containsKey(defaultUrlMethod)) {
-                        urlMethodToDefaultAppsMapping.put(
-                                defaultUrlMethod, new HashSet<ResolveInfo>());
+                        urlMethodToDefaultAppsMapping.put(defaultUrlMethod, new HashSet<>());
                     }
                     urlMethodToDefaultAppsMapping.get(defaultUrlMethod).add(app);
 
                     appOrigin = defaultUrlMethod.getOrigin();
                     if (!mOriginToUrlDefaultMethodsMapping.containsKey(appOrigin)) {
-                        mOriginToUrlDefaultMethodsMapping.put(appOrigin, new HashSet<GURL>());
+                        mOriginToUrlDefaultMethodsMapping.put(appOrigin, new HashSet<>());
                     }
                     mOriginToUrlDefaultMethodsMapping.get(appOrigin).add(defaultUrlMethod);
                 }
@@ -430,39 +486,63 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
             // Note that a payment app with non-URL default payment method (e.g., "basic-card")
             // can support URL payment methods (e.g., "https://bobpay.com/public-standard").
             Set<String> supportedMethods = getSupportedPaymentMethods(app.activityInfo);
+
+            if (!supportedMethods.isEmpty()) {
+                Log.i(
+                        TAG,
+                        "\"%s\" meta-data \"%s\": %s.",
+                        app.activityInfo.name,
+                        META_DATA_NAME_OF_PAYMENT_METHOD_NAMES,
+                        String.join(", ", supportedMethods));
+            }
+
+            Set<GURL> supportedUrlMethods = new HashSet<>();
             for (String supportedMethod : supportedMethods) {
                 GURL supportedUrlMethod = new GURL(supportedMethod);
                 if (!UrlUtil.isURLValid(supportedUrlMethod)) supportedUrlMethod = null;
+
                 if (supportedUrlMethod != null && supportedUrlMethod.equals(defaultUrlMethod)) {
+                    Log.w(TAG, "Ignore duplicate method \"%s\".", supportedMethod);
                     continue;
                 }
 
                 // Ignore payment method identifiers of app stores, because app store method URLs
                 // are used only for identification and do not host manifest files.
                 if (mAppStores.values().contains(supportedUrlMethod)) {
+                    Log.w(TAG, "Ignore app store method \"%s\".", supportedMethod);
                     continue;
                 }
 
                 if (!methodToAppsMapping.containsKey(supportedMethod)) {
-                    methodToAppsMapping.put(supportedMethod, new HashSet<ResolveInfo>());
+                    methodToAppsMapping.put(supportedMethod, new HashSet<>());
                 }
                 methodToAppsMapping.get(supportedMethod).add(app);
 
-                if (supportedUrlMethod == null) continue;
+                if (supportedUrlMethod == null) {
+                    Log.e(TAG, "Method \"%s\" invalid URL.", supportedMethod);
+                    continue;
+                }
+
+                supportedUrlMethods.add(supportedUrlMethod);
 
                 if (!mMethodToSupportedAppsMapping.containsKey(supportedUrlMethod)) {
-                    mMethodToSupportedAppsMapping.put(
-                            supportedUrlMethod, new HashSet<ResolveInfo>());
+                    mMethodToSupportedAppsMapping.put(supportedUrlMethod, new HashSet<>());
                 }
                 mMethodToSupportedAppsMapping.get(supportedUrlMethod).add(app);
 
                 if (appOrigin == null) continue;
 
                 if (!urlMethodToSupportedOriginsMapping.containsKey(supportedUrlMethod)) {
-                    urlMethodToSupportedOriginsMapping.put(supportedUrlMethod, new HashSet<GURL>());
+                    urlMethodToSupportedOriginsMapping.put(supportedUrlMethod, new HashSet<>());
                 }
                 urlMethodToSupportedOriginsMapping.get(supportedUrlMethod).add(appOrigin);
             }
+
+            urlMethodsForManifestDownload.addAll(
+                    PaymentManifestResolver.getManifestsToDownload(
+                            defaultUrlMethod,
+                            supportedUrlMethods,
+                            mMerchantRequestedUrlPaymentMethods));
 
             // Record the total number of payment methods that this activity `ResolveInfo app`
             // declares to support in its metadata.
@@ -476,8 +556,13 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
         }
 
         List<PaymentManifestVerifier> manifestVerifiers = new ArrayList<>();
-        for (GURL urlMethodName : urlMethods) {
-            if (!methodToAppsMapping.containsKey(urlToStringWithoutTrailingSlash(urlMethodName))) {
+        for (GURL urlMethodNameForManifestDownload : urlMethodsForManifestDownload) {
+            if (!methodToAppsMapping.containsKey(
+                    urlToStringWithoutTrailingSlash(urlMethodNameForManifestDownload))) {
+                Log.e(
+                        TAG,
+                        "No apps support method \"%s\".",
+                        urlMethodNameForManifestDownload.getSpec());
                 continue;
             }
 
@@ -496,9 +581,9 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
             manifestVerifiers.add(
                     new PaymentManifestVerifier(
                             mFactoryDelegate.getParams().getPaymentRequestSecurityOrigin(),
-                            urlMethodName,
-                            urlMethodToDefaultAppsMapping.get(urlMethodName),
-                            urlMethodToSupportedOriginsMapping.get(urlMethodName),
+                            urlMethodNameForManifestDownload,
+                            urlMethodToDefaultAppsMapping.get(urlMethodNameForManifestDownload),
+                            urlMethodToSupportedOriginsMapping.get(urlMethodNameForManifestDownload),
                             mWebDataService,
                             mDownloader,
                             mParser,
@@ -524,6 +609,18 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
         }
     }
 
+    private static List<String> getActivityPackageNames(List<ResolveInfo> resolveInfos) {
+        List<String> result = new ArrayList<>();
+        for (ResolveInfo resolveInfo : resolveInfos) {
+            if (resolveInfo != null
+                    && resolveInfo.activityInfo != null
+                    && !TextUtils.isEmpty(resolveInfo.activityInfo.packageName)) {
+                result.add(resolveInfo.activityInfo.packageName);
+            }
+        }
+        return result;
+    }
+
     private void addIntentServiceToServiceMap(
             String intentName, Map<String, String> packageNameToServiceNameMap) {
         List<ResolveInfo> services =
@@ -531,6 +628,13 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
         for (int i = 0; i < services.size(); i++) {
             ServiceInfo service = services.get(i).serviceInfo;
             packageNameToServiceNameMap.put(service.packageName, service.name);
+        }
+        if (!packageNameToServiceNameMap.isEmpty()) {
+            Log.i(
+                    TAG,
+                    "\"%s\" intent apps: %s.",
+                    intentName,
+                    String.join(", ", packageNameToServiceNameMap.keySet()));
         }
     }
 
@@ -585,6 +689,11 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
 
     @Override
     public void onValidSupportedOrigin(GURL methodName, GURL supportedOrigin) {
+        Log.i(
+                TAG,
+                "Apps from \"%s\" validated for \"%s\".",
+                supportedOrigin.getSpec(),
+                methodName.getSpec());
         getOrCreateVerifiedPaymentMethod(methodName).supportedOrigins.add(supportedOrigin);
     }
 
@@ -610,7 +719,9 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
 
         for (Map.Entry<GURL, PaymentMethod> nameAndMethod : mVerifiedPaymentMethods.entrySet()) {
             GURL methodName = nameAndMethod.getKey();
-            if (!mUrlPaymentMethods.contains(methodName)) continue;
+            if (!mMerchantRequestedUrlPaymentMethods.contains(methodName)) {
+                continue;
+            }
 
             PaymentMethod method = nameAndMethod.getValue();
             String methodNameString = urlToStringWithoutTrailingSlash(methodName);
@@ -649,9 +760,8 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
         assert mPendingVerifiersCount == 0;
 
         boolean hasValidApps = mValidApps.size() > 0;
-        mFactoryDelegate.onCanMakePaymentCalculated(hasValidApps);
-
         if (!hasValidApps) {
+            onCanMakePaymentCalculated(false);
             Log.e(TAG, "No valid apps found.");
         }
 
@@ -663,7 +773,10 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
         mPendingIsReadyToPayQueries = mValidApps.size();
         for (Map.Entry<String, AndroidPaymentApp> entry : mValidApps.entrySet()) {
             AndroidPaymentApp app = entry.getValue();
-            if (sBypassIsReadyToPayServiceInTest) app.bypassIsReadyToPayServiceInTest();
+            if (sBypassIsReadyToPayServiceInTest) {
+                app.bypassIsReadyToPayServiceInTest();
+                app.setIsReadyToPayResponseInTest(sIsReadyToPayResponseInTest);
+            }
             app.maybeQueryIsReadyToPayService(
                     filterMethodDataForApp(
                             mFactoryDelegate.getParams().getMethodData(),
@@ -701,14 +814,30 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
     }
 
     private void onIsReadyToPayResponse(AndroidPaymentApp app, boolean isReadyToPay) {
-        Log.e(
+        Log.i(
                 TAG,
                 "Android app id \"%s\" ready to pay: \"%b\".",
                 app.getIdentifier(),
                 isReadyToPay);
-        if (isReadyToPay) mFactoryDelegate.onPaymentAppCreated(app);
+
+        app.setHasEnrolledInstrument(isReadyToPay);
+        if (isReadyToPay
+                || PaymentFeatureList.isEnabledOrExperimentalFeaturesEnabled(
+                        PaymentFeatureList.ALLOW_SHOW_WITHOUT_READY_TO_PAY)) {
+            onCanMakePaymentCalculated(true);
+            mFactoryDelegate.onPaymentAppCreated(app);
+        }
+
         if (--mPendingIsReadyToPayQueries == 0) {
             mFactoryDelegate.onDoneCreatingPaymentApps(mFactory);
+        }
+    }
+
+    private void onCanMakePaymentCalculated(boolean value) {
+        if (!mIsCanMakePaymentReportedToFactoryDelegate) {
+            mIsCanMakePaymentReportedToFactoryDelegate = true;
+            Log.i(TAG, "Can make payment: \"%b\".", value);
+            mFactoryDelegate.onCanMakePaymentCalculated(value);
         }
     }
 
@@ -716,10 +845,9 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
      * Enables the given payment app to use this method name.
      *
      * @param resolveInfo The payment app that's allowed to use the method name.
-     * @param methodName  The method name that can be used by the app.
+     * @param methodName The method name that can be used by the app.
      */
-    private void onValidPaymentAppForPaymentMethodName(
-            ResolveInfo resolveInfo, String methodName) {
+    private void onValidPaymentAppForPaymentMethodName(ResolveInfo resolveInfo, String methodName) {
         if (mFactoryDelegate.getParams().hasClosed()) return;
         String packageName = resolveInfo.activityInfo.packageName;
 
@@ -778,28 +906,31 @@ public class AndroidPaymentAppFinder implements ManifestVerifyCallback {
                             mIsOffTheRecord,
                             webAppIdCanDeduped,
                             appSupportedDelegations,
+                            PaymentFeatureList.isEnabledOrExperimentalFeaturesEnabled(
+                                    PaymentFeatureList.ALLOW_SHOW_WITHOUT_READY_TO_PAY),
                             PaymentFeatureList.isEnabled(
                                     PaymentFeatureList.SHOW_READY_TO_PAY_DEBUG_INFO),
                             /* removeDeprecatedFields= */ PaymentFeatureList
                                     .isEnabledOrExperimentalFeaturesEnabled(
                                             PaymentFeatureList
-                                                    .ANDROID_PAYMENT_INTENTS_OMIT_DEPRECATED_PARAMETERS));
+                                                    .ANDROID_PAYMENT_INTENTS_OMIT_DEPRECATED_PARAMETERS),
+                            mPaymentDetailsUpdateServiceMaxRetryNumber);
             mValidApps.put(packageName, app);
         }
 
         // The same method may be added multiple times.
         app.addMethodName(methodName);
+        Log.i(
+                TAG,
+                "Activity \"%s\" in package \"%s\" validated for \"%s\".",
+                resolveInfo.activityInfo.name,
+                packageName,
+                methodName);
     }
 
     private static void debugLogPaymentAppServicePresence(
             String packageName, String actionIntentFilterName, @Nullable String serviceName) {
-        if (TextUtils.isEmpty(serviceName)) {
-            Log.e(
-                    TAG,
-                    "Payment app \"%s\": No \"%s\" service.",
-                    packageName,
-                    actionIntentFilterName);
-        } else {
+        if (!TextUtils.isEmpty(serviceName)) {
             Log.i(
                     TAG,
                     "Payment app \"%s\": \"%s\" service in \"%s\".",

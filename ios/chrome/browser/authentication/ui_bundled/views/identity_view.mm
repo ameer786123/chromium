@@ -37,7 +37,7 @@ const StyleValues kDefaultStyle = {
 const StyleValues kSignInChooseryStyle = {
     24., /* avatarLeadingMargin */
     40., /* avatarSize */
-    0.,  /* managementIconTrailingMargin */
+    16., /* managementIconTrailingMargin */
     4.,  /* titleOffset */
     7.,  /* minimumTopMargin */
     7.,  /* minimumBottomMargin */
@@ -47,6 +47,24 @@ const StyleValues kConsistencyStyle = {
     16., /* avatarLeadingMargin */
     30., /* avatarSize */
     16., /* managementIconTrailingMargin */
+    0.,  /* titleOffset */
+    10., /* minimumTopMargin */
+    8.,  /* minimumBottomMargin */
+};
+
+const StyleValues kConsistencyContainedStyle = {
+    16., /* avatarLeadingMargin */
+    30., /* avatarSize */
+    4.,  /* managementIconTrailingMargin */
+    0.,  /* titleOffset */
+    10., /* minimumTopMargin */
+    8.,  /* minimumBottomMargin */
+};
+
+const StyleValues kConsistencyDefaultIdentityStyle = {
+    16., /* avatarLeadingMargin */
+    30., /* avatarSize */
+    0.,  /* managementIconTrailingMargin */
     0.,  /* titleOffset */
     10., /* minimumTopMargin */
     8.,  /* minimumBottomMargin */
@@ -83,7 +101,7 @@ constexpr CGFloat kEnterpriseIconPointSize = 20;
     NSArray<NSLayoutConstraint*>* avatarSizeConstraints;
 // Leading margin constraint for the avatar.
 @property(nonatomic, strong) NSLayoutConstraint* avatarLeadingMarginConstraint;
-// Leading margin constraint for the management icon.
+// Trailing margin constraint for the management icon.
 @property(nonatomic, strong)
     NSLayoutConstraint* managementIconTrailingMarginConstraint;
 
@@ -300,6 +318,10 @@ constexpr CGFloat kEnterpriseIconPointSize = 20;
       return &kSignInChooseryStyle;
     case IdentityViewStyleConsistency:
       return &kConsistencyStyle;
+    case IdentityViewStyleConsistencyContained:
+      return &kConsistencyContainedStyle;
+    case IdentityViewStyleConsistencyDefaultIdentity:
+      return &kConsistencyDefaultIdentityStyle;
   }
   NOTREACHED();
 }
@@ -321,6 +343,8 @@ constexpr CGFloat kEnterpriseIconPointSize = 20;
           [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
       break;
     case IdentityViewStyleConsistency:
+    case IdentityViewStyleConsistencyContained:
+    case IdentityViewStyleConsistencyDefaultIdentity:
       self.titleFont = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
       self.subtitleFont =
           [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];

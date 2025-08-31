@@ -176,7 +176,7 @@ EnumTraits<mojom_accelerator_action, ash::AcceleratorAction>::ToMojom(
       return mojom_accelerator_action::kShowEmojiPicker;
     case ash::AcceleratorAction::kToggleImeMenuBubble:
       return mojom_accelerator_action::kToggleImeMenuBubble;
-    case ash::AcceleratorAction::kTogglePicker:
+    case ash::AcceleratorAction::kToggleQuickInsert:
       return mojom_accelerator_action::kToggleQuickInsert;
     case ash::AcceleratorAction::kShowShortcutViewer:
       return mojom_accelerator_action::kShowShortcutViewer;
@@ -252,8 +252,8 @@ EnumTraits<mojom_accelerator_action, ash::AcceleratorAction>::ToMojom(
       return mojom_accelerator_action::kToggleProjectorMarker;
     case ash::AcceleratorAction::kToggleResizeLockMenu:
       return mojom_accelerator_action::kToggleResizeLockMenu;
-    case ash::AcceleratorAction::kCreateSnapGroup:
-      return mojom_accelerator_action::kCreateSnapGroup;
+    case ash::AcceleratorAction::kToggleSnapGroup:
+      return mojom_accelerator_action::kToggleSnapGroup;
     case ash::AcceleratorAction::kToggleSnapGroupWindowsMinimizeAndRestore:
       return mojom_accelerator_action::
           kToggleSnapGroupWindowsMinimizeAndRestore;
@@ -319,6 +319,8 @@ EnumTraits<mojom_accelerator_action, ash::AcceleratorAction>::ToMojom(
       return mojom_accelerator_action::kDebugShowToast;
     case ash::AcceleratorAction::kDebugShowSystemNudge:
       return mojom_accelerator_action::kDebugShowSystemNudge;
+    case ash::AcceleratorAction::kDebugShowTestWindow:
+      return mojom_accelerator_action::kDebugShowTestWindow;
     case ash::AcceleratorAction::kDebugStartSunfishSession:
       return mojom_accelerator_action::kDebugStartSunfishSession;
     case ash::AcceleratorAction::kDebugSystemUiStyleViewer:
@@ -610,7 +612,7 @@ bool EnumTraits<mojom_accelerator_action, ash::AcceleratorAction>::FromMojom(
       *out = ash::AcceleratorAction::kToggleImeMenuBubble;
       return true;
     case mojom_accelerator_action::kToggleQuickInsert:
-      *out = ash::AcceleratorAction::kTogglePicker;
+      *out = ash::AcceleratorAction::kToggleQuickInsert;
       return true;
     case mojom_accelerator_action::kShowShortcutViewer:
       *out = ash::AcceleratorAction::kShowShortcutViewer;
@@ -723,8 +725,8 @@ bool EnumTraits<mojom_accelerator_action, ash::AcceleratorAction>::FromMojom(
     case mojom_accelerator_action::kToggleResizeLockMenu:
       *out = ash::AcceleratorAction::kToggleResizeLockMenu;
       return true;
-    case mojom_accelerator_action::kCreateSnapGroup:
-      *out = ash::AcceleratorAction::kCreateSnapGroup;
+    case mojom_accelerator_action::kToggleSnapGroup:
+      *out = ash::AcceleratorAction::kToggleSnapGroup;
       return true;
     case mojom_accelerator_action::kToggleSnapGroupWindowsMinimizeAndRestore:
       *out = ash::AcceleratorAction::kToggleSnapGroupWindowsMinimizeAndRestore;
@@ -821,6 +823,9 @@ bool EnumTraits<mojom_accelerator_action, ash::AcceleratorAction>::FromMojom(
       return true;
     case mojom_accelerator_action::kDebugShowSystemNudge:
       *out = ash::AcceleratorAction::kDebugShowSystemNudge;
+      return true;
+    case mojom_accelerator_action::kDebugShowTestWindow:
+      *out = ash::AcceleratorAction::kDebugShowTestWindow;
       return true;
     case mojom_accelerator_action::kDebugStartSunfishSession:
       *out = ash::AcceleratorAction::kDebugStartSunfishSession;

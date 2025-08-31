@@ -4,10 +4,10 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Token;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.collaboration.messaging.MessageUtils;
@@ -24,13 +24,14 @@ import java.util.Optional;
 import java.util.Set;
 
 /** Pushes bubble/dot notifications for tabs. */
+@NullMarked
 public class TabBubbler extends TabObjectNotificationUpdater {
-    private final ObservableSupplier<Token> mTabGroupIdSupplier;
+    private final ObservableSupplier<@Nullable Token> mTabGroupIdSupplier;
 
     public TabBubbler(
             Profile profile,
             TabListNotificationHandler tabListNotificationHandler,
-            ObservableSupplier<Token> tabGroupIdSupplier) {
+            ObservableSupplier<@Nullable Token> tabGroupIdSupplier) {
         super(profile, tabListNotificationHandler);
         mTabGroupIdSupplier = tabGroupIdSupplier;
         // Do not observe mTabGroupIdSupplier. We will be told to #showAll() is this changes.
@@ -38,7 +39,7 @@ public class TabBubbler extends TabObjectNotificationUpdater {
 
     @Override
     public void showAll() {
-        @Nullable Token tabGroupId = mTabGroupIdSupplier.get();
+        Token tabGroupId = mTabGroupIdSupplier.get();
         if (tabGroupId == null) return;
         LocalTabGroupId localTabGroupId = new LocalTabGroupId(tabGroupId);
         EitherGroupId eitherGroupId = EitherGroupId.createLocalId(localTabGroupId);

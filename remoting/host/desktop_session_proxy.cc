@@ -154,10 +154,16 @@ std::string DesktopSessionProxy::GetCapabilities() const {
   result += " ";
   result += protocol::kMultiStreamCapability;
 
-  // Ask the client to send its resolution unconditionally.
   if (options_.enable_curtaining()) {
+    // Ask the client to send its resolution unconditionally.
     result += " ";
     result += protocol::kSendInitialResolution;
+    // Advertise support for high-DPI resizing.
+    result += " ";
+    result += protocol::kHighDpiCapability;
+    // Advertise good support for resize.
+    result += " ";
+    result += protocol::kDefaultResizeCapability;
   }
 
   if (InputInjector::SupportsTouchEvents()) {
@@ -195,11 +201,6 @@ void DesktopSessionProxy::SetCapabilities(const std::string& capabilities) {
                                                   options_.enable_curtaining());
     }
   }
-}
-
-bool DesktopSessionProxy::OnMessageReceived(const IPC::Message& message) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  NOTREACHED() << "Received unexpected IPC type: " << message.type();
 }
 
 void DesktopSessionProxy::OnChannelConnected(int32_t peer_pid) {
@@ -685,6 +686,24 @@ void DesktopSessionProxy::OnKeyboardLayoutChanged(
   keyboard_layout_ = layout;
   if (keyboard_layout_monitor_) {
     keyboard_layout_monitor_->OnKeyboardChanged(layout);
+  }
+}
+
+void DesktopSessionProxy::OnLocalMouseMoveDetected(
+    const webrtc::DesktopVector& new_position) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (client_session_control_) {
+    client_session_control_->OnLocalPointerMoved(new_position,
+                                                 ui::EventType::kMouseMoved);
+  }
+}
+
+void DesktopSessionProxy::OnLocalKeyboardInputDetected(int32_t usb_keycode) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (client_session_control_) {
+    client_session_control_->OnLocalKeyPressed(usb_keycode);
   }
 }
 

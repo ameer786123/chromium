@@ -13,7 +13,6 @@
 #include "ash/webui/camera_app_ui/pdf_builder.mojom.h"
 #include "ash/webui/camera_app_ui/url_constants.h"
 #include "ash/webui/settings/public/constants/routes.mojom.h"
-#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
@@ -22,6 +21,7 @@
 #include "base/logging.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/string_util.h"
 #include "base/system/sys_info.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
@@ -74,7 +74,7 @@
 #include "ui/chromeos/styles/cros_styles.h"
 #include "ui/gfx/codec/jpeg_codec.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "url/gurl.h"
 
 namespace {
@@ -307,7 +307,7 @@ void ChromeCameraAppUIDelegate::PdfServiceManager::GetThumbnail(
     std::move(callback).Run({});
     return;
   }
-  UNSAFE_TODO(memcpy(pdf_region.mapping.memory(), pdf.data(), pdf.size()));
+  pdf_region.mapping.GetMemoryAsSpan<uint8_t>().copy_prefix_from(pdf);
 
   mojo::Remote<pdf::mojom::PdfService> pdf_service = LaunchPdfService();
   mojo::PendingRemote<pdf::mojom::PdfThumbnailer> pdf_thumbnailer;

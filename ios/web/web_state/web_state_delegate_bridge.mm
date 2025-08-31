@@ -4,6 +4,8 @@
 
 #import "ios/web/public/web_state_delegate_bridge.h"
 
+#import "base/functional/callback.h"
+#import "base/functional/callback_helpers.h"
 #import "ios/web/public/ui/context_menu_params.h"
 
 namespace web {
@@ -56,6 +58,45 @@ void WebStateDelegateBridge::ShowRepostFormWarningDialog(
     bool default_response =
         warning_type == FormWarningType::kRepost ? true : false;
     std::move(callback).Run(default_response);
+  }
+}
+
+void WebStateDelegateBridge::ShouldAllowCopy(
+    WebState* source,
+    base::OnceCallback<void(bool)> callback) {
+  SEL selector = @selector(webState:shouldAllowCopyWithDecisionHandler:);
+  if ([delegate_ respondsToSelector:selector]) {
+    [delegate_ webState:source
+        shouldAllowCopyWithDecisionHandler:base::CallbackToBlock(
+                                               std::move(callback))];
+  } else {
+    std::move(callback).Run(true);
+  }
+}
+
+void WebStateDelegateBridge::ShouldAllowPaste(
+    WebState* source,
+    base::OnceCallback<void(bool)> callback) {
+  SEL selector = @selector(webState:shouldAllowPasteWithDecisionHandler:);
+  if ([delegate_ respondsToSelector:selector]) {
+    [delegate_ webState:source
+        shouldAllowPasteWithDecisionHandler:base::CallbackToBlock(
+                                                std::move(callback))];
+  } else {
+    std::move(callback).Run(true);
+  }
+}
+
+void WebStateDelegateBridge::ShouldAllowCut(
+    WebState* source,
+    base::OnceCallback<void(bool)> callback) {
+  SEL selector = @selector(webState:shouldAllowCutWithDecisionHandler:);
+  if ([delegate_ respondsToSelector:selector]) {
+    [delegate_ webState:source
+        shouldAllowCutWithDecisionHandler:base::CallbackToBlock(
+                                              std::move(callback))];
+  } else {
+    std::move(callback).Run(true);
   }
 }
 

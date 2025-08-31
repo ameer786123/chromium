@@ -130,6 +130,7 @@ class CORE_EXPORT HTMLMediaElement
     kPaused_RemotePlayStateChange,
     kPaused_PauseRequestedByUser,
     kPaused_PauseRequestedInternally,
+    kPaused_FrameFrozen,
     kPaused_FrameHidden,
     kPaused_LetAudioDescriptionFinish
   };
@@ -432,6 +433,10 @@ class CORE_EXPORT HTMLMediaElement
   // the correct execution context.
   ExecutionContext* GetExecutionContextForPlayer() const;
 
+  // WebAudio audio destination node is connected. The HTMLMediaElement could
+  // stop the sink at this time if it is still playing.
+  void ConnectToDestinationReady();
+
  protected:
   // Assert the correct order of the children in shadow dom when DCHECK is on.
   static void AssertShadowRootChildren(ShadowRoot&);
@@ -527,7 +532,7 @@ class CORE_EXPORT HTMLMediaElement
   bool IsInteractiveContent() const final;
 
   // ExecutionContextLifecycleStateObserver functions.
-  void ContextLifecycleStateChanged(mojom::FrameLifecycleState) override;
+  void ContextLifecycleStateChanged(mojom::blink::FrameLifecycleState) override;
   void ContextDestroyed() override;
 
   virtual void OnPlay() {}
@@ -621,7 +626,8 @@ class CORE_EXPORT HTMLMediaElement
   void RequestVisibility(
       RequestVisibilityCallback request_visibility_cb) override {}
   void RecordAutoPictureInPictureInfo(
-      const String& auto_picture_in_picture_info) override;
+      const media::PictureInPictureEventsInfo::AutoPipInfo&
+          auto_picture_in_picture_info) override;
 
   void LoadTimerFired(TimerBase*);
   void ProgressEventTimerFired();
@@ -860,7 +866,6 @@ class CORE_EXPORT HTMLMediaElement
   bool muted_ : 1;
   bool paused_ : 1;
   bool seeking_ : 1;
-  bool paused_by_context_paused_ : 1;
   bool show_poster_flag_ : 1;
 
   // data has not been loaded since sending a "stalled" event
@@ -890,6 +895,9 @@ class CORE_EXPORT HTMLMediaElement
   bool is_remote_rendering_ = false;
   // Whether the media content is encrypted.
   bool is_encrypted_media_ = false;
+
+  // Whether webaudio destination is connected.
+  bool is_audio_destination_connected_ = false;
   WebString remote_device_friendly_name_;
   std::optional<media::AudioCodec> audio_codec_ = std::nullopt;
   std::optional<media::VideoCodec> video_codec_ = std::nullopt;
@@ -951,12 +959,20 @@ class CORE_EXPORT HTMLMediaElement
     void SetClient(AudioSourceProviderClient*) override;
     void ProvideInput(AudioBus*, int frames_to_process) override;
 
+    void ConnectToDestinationReady() override;
+
     void Trace(Visitor*) const;
 
    private:
     base::Lock provide_input_lock;
     scoped_refptr<WebAudioSourceProviderImpl> web_audio_source_provider_
         GUARDED_BY(provide_input_lock);
+
+    // Resampling case, connect to the destination can be called before
+    // `audio_source_provider_` is ready. We have to call it during
+    // `audio_source_provider_` assignment.
+    bool connection_to_destination_ready_ = false;
+
     Member<AudioClientImpl> client_;
   };
 

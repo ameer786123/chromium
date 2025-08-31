@@ -7,8 +7,10 @@
 #include <array>
 #include <map>
 
+#include "base/containers/contains.h"
 #include "base/containers/to_vector.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/functional/callback_forward.h"
 #include "base/notreached.h"
 #include "base/strings/to_string.h"
@@ -35,22 +37,83 @@ constexpr base::TimeDelta kBatchUploadAvatarButtonOverrideTextDuration =
 // This list contains all the data types that are available for the Batch Upload
 // dialog. Data types should not be repeated and the list is ordered based on
 // the priority of showing in the dialog.
-const std::array<syncer::DataType, 4> kBatchUploadAvailableTypesOrder{
+// An exception to the order of this list may happen to the first item, when the
+// entry point used to open the batch upload dialog is tied to a data type. This
+// data type will be shown first for consistency with the action from the entry
+// point. E.g. Bookmarks promo card entry point will force
+// `syncer::DataType::BOOKMARKS` to be the first data type shown (and not
+// repeated afterwards).
+const std::array<syncer::DataType, 6> kBatchUploadAvailableTypesOrder{
+    // clang-format off
     syncer::DataType::PASSWORDS,
     syncer::DataType::BOOKMARKS,
+    syncer::DataType::READING_LIST,
     syncer::DataType::CONTACT_INFO,
+    syncer::DataType::EXTENSIONS,
     syncer::DataType::THEMES,
+    // clang-format on
 };
+
+// Determines the primary type based on the entry point. Some entry point may be
+// generic and not tied to any data type - std::nullopt is returned in this
+// case.
+std::optional<syncer::DataType> PrimaryTypeFromEntryPoint(
+    BatchUploadService::EntryPoint entry_point) {
+  switch (entry_point) {
+    case BatchUploadService::EntryPoint::kPasswordManagerSettings:
+    case BatchUploadService::EntryPoint::kPasswordPromoCard:
+      return syncer::PASSWORDS;
+    case BatchUploadService::EntryPoint::kBookmarksManagerPromoCard:
+      return syncer::BOOKMARKS;
+    case BatchUploadService::EntryPoint::kProfileMenu:
+      return std::nullopt;
+  }
+}
+
+// Return the primary local data description after performing additional checks.
+syncer::LocalDataDescription GetPrimaryTypeLocalDataDescription(
+    const std::map<syncer::DataType, syncer::LocalDataDescription>&
+        local_data_descriptions_map,
+    syncer::DataType primary_type) {
+  CHECK(base::Contains(kBatchUploadAvailableTypesOrder, primary_type));
+  CHECK(local_data_descriptions_map.contains(primary_type));
+  const syncer::LocalDataDescription& primary_local_data_description =
+      local_data_descriptions_map.at(primary_type);
+  CHECK(!primary_local_data_description.local_data_models.empty())
+      << "Primary data type should have local data since the entry point "
+         "is available.";
+  CHECK_EQ(primary_type, primary_local_data_description.type)
+      << "Non empty data description's data type and the keyed mapping "
+         "value should always match.";
+  return primary_local_data_description;
+}
 
 // Returns the list of data descriptions in `local_data_descriptions_map`
 // following the expected displayed order in the dialog.
-// Data descriptions with no local data will be filtered out.
+// `entry_point` is used to determine the primary (first) type, if any, to be
+// displayed, overriding the expected order for the first type only. Primary
+// type should have local data - since the entry point was available.
+// Generic entry points have no primary type associated with it, the regular
+// order will be displayed.
+// Other data descriptions with no local data will be filtered out.
 std::vector<syncer::LocalDataDescription>
 GetOrderedListOfNonEmptyDataDescriptions(
     std::map<syncer::DataType, syncer::LocalDataDescription>
-        local_data_descriptions_map) {
-  // TODO(crbug.com/361340640): make the data type entry point be the first one.
+        local_data_descriptions_map,
+    BatchUploadService::EntryPoint entry_point) {
   std::vector<syncer::LocalDataDescription> local_data_description_list;
+
+  std::optional<syncer::DataType> primary_type =
+      PrimaryTypeFromEntryPoint(entry_point);
+  if (primary_type.has_value()) {
+    // Treat the primary type first to make sure it is the first type for
+    // display, overriding the expected order given in
+    // `kBatchUploadAvailableTypesOrder`.
+    local_data_description_list.push_back(GetPrimaryTypeLocalDataDescription(
+        local_data_descriptions_map, *primary_type));
+    local_data_descriptions_map.erase(*primary_type);
+  }
+
   // Reorder the result from the `local_data_descriptions_map` based on the
   // available types order.
   for (syncer::DataType type : kBatchUploadAvailableTypesOrder) {
@@ -124,20 +187,23 @@ void BatchUploadService::OpenBatchUpload(
   state_.dialog_state_->entry_point_ = entry_point;
   state_.dialog_state_->dialog_shown_callback_ = std::move(success_callback);
 
-  RequestLocalDataDescriptions();
+  GetLocalDataDescriptionsForAvailableTypes(
+      base::BindOnce(&BatchUploadService::OnGetLocalDataDescriptionsReady,
+                     base::Unretained(this)));
 }
 
-void BatchUploadService::RequestLocalDataDescriptions() {
+void BatchUploadService::GetLocalDataDescriptionsForAvailableTypes(
+    base::OnceCallback<
+        void(std::map<syncer::DataType, syncer::LocalDataDescription>)>
+        result_callback) {
   syncer::DataTypeSet data_types;
   // Iterate over all available enums.
   for (syncer::DataType type : kBatchUploadAvailableTypesOrder) {
     data_types.Put(type);
   }
 
-  sync_service_->GetLocalDataDescriptions(
-      data_types,
-      base::BindOnce(&BatchUploadService::OnGetLocalDataDescriptionsReady,
-                     base::Unretained(this)));
+  sync_service_->GetLocalDataDescriptions(data_types,
+                                          std::move(result_callback));
 }
 
 void BatchUploadService::OnGetLocalDataDescriptionsReady(
@@ -150,7 +216,8 @@ void BatchUploadService::OnGetLocalDataDescriptionsReady(
 
   delegate_->ShowBatchUploadDialog(
       state_.dialog_state_->browser_,
-      GetOrderedListOfNonEmptyDataDescriptions(std::move(local_data_map)),
+      GetOrderedListOfNonEmptyDataDescriptions(
+          std::move(local_data_map), state_.dialog_state_->entry_point_),
       state_.dialog_state_->entry_point_,
       /*complete_callback=*/
       base::BindOnce(&BatchUploadService::OnBatchUploadDialogResult,
@@ -207,10 +274,11 @@ void BatchUploadService::TriggerAvatarButtonSavingDataText(Browser* browser) {
       BrowserView::GetBrowserViewForBrowser(browser)
           ->toolbar_button_provider()
           ->GetAvatarToolbarButton()
-          ->ShowExplicitText(
+          ->SetExplicitButtonState(
               l10n_util::GetStringUTF16(
                   IDS_BATCH_UPLOAD_AVATAR_BUTTON_SAVING_TO_ACCOUNT),
-              std::nullopt);
+              /*accessibility_label=*/std::nullopt,
+              /*explicit_action=*/std::nullopt);
   // Prepare the timer to stop the overridden text from showing.
   state_.saving_browser_state_->avatar_override_timer_.Start(
       FROM_HERE, kBatchUploadAvatarButtonOverrideTextDuration,
@@ -242,8 +310,7 @@ BatchUploadService::ResettableState::DialogState::DialogState() = default;
 BatchUploadService::ResettableState::DialogState::~DialogState() = default;
 
 // static
-std::vector<syncer::DataType>
-BatchUploadService::AvailableTypesOrderForTesting() {
+std::vector<syncer::DataType> BatchUploadService::AvailableTypesOrder() {
   // Transforming to vector to avoid changing every definition on updates.
   return base::ToVector(kBatchUploadAvailableTypesOrder);
 }

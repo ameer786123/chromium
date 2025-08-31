@@ -9,6 +9,8 @@
 #include "chrome/browser/web_applications/generated_icon_fix_manager.h"
 #include "chrome/browser/web_applications/generated_icon_fix_util.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
+#include "chrome/browser/web_applications/proto/web_app.equal.h"
+#include "chrome/browser/web_applications/proto/web_app.to_value.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
 #include "chrome/browser/web_applications/test/fake_web_contents_manager.h"
 #include "chrome/browser/web_applications/test/web_app_icon_test_utils.h"
@@ -28,7 +30,7 @@ namespace proto {
 // Used by GTEST for pretty printing in EXPECT_EQ.
 static void PrintTo(const GeneratedIconFix& generated_icon_fix,
                     std::ostream* out) {
-  *out << generated_icon_fix_util::ToDebugValue(&generated_icon_fix);
+  *out << Serialize(generated_icon_fix);
 }
 
 }  // namespace proto
@@ -72,11 +74,7 @@ class TwoClientGeneratedIconFixSyncTest : public WebAppsSyncTestBase {
     return generated_icon_fix;
   }
 
-  TwoClientGeneratedIconFixSyncTest() : WebAppsSyncTestBase(TWO_CLIENT) {
-    // Because the retry happens asynchronously it causes flakiness in the
-    // metric expectations.
-    GeneratedIconFixManager::DisableAutoRetryForTesting();
-  }
+  TwoClientGeneratedIconFixSyncTest() : WebAppsSyncTestBase(TWO_CLIENT) {}
   ~TwoClientGeneratedIconFixSyncTest() override = default;
 
   void SetUpOnMainThread() override {
@@ -126,8 +124,10 @@ class TwoClientGeneratedIconFixSyncTest : public WebAppsSyncTestBase {
   };
   IconState CheckIconState(Profile* profile, const webapps::AppId& app_id) {
     base::test::TestFuture<std::map<SquareSizePx, SkBitmap>> icons_future;
-    fake_providers_[profile]->icon_manager().ReadIcons(
-        app_id, IconPurpose::ANY, {256}, icons_future.GetCallback());
+    fake_providers_[profile]
+        ->icon_manager()
+        .ReadTrustedIconsWithFallbackToManifestIcons(
+            app_id, {256}, IconPurpose::ANY, icons_future.GetCallback());
     return {
         .is_generated = fake_providers_[profile]
                             ->registrar_unsafe()
@@ -173,6 +173,10 @@ class TwoClientGeneratedIconFixSyncTest : public WebAppsSyncTestBase {
           })};
 
   base::flat_map<raw_ptr<Profile>, raw_ptr<FakeWebAppProvider>> fake_providers_;
+  // Because the retry happens asynchronously it causes flakiness in the
+  // metric expectations.
+  base::AutoReset<bool> disable_generated_icon_fixes_for_testing_ =
+      GeneratedIconFixManager::DisableAutoRetryForTesting();
 
   OsIntegrationManager::ScopedSuppressForTesting os_hooks_suppress_;
 };

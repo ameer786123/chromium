@@ -18,7 +18,7 @@
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
-#include "gpu/ipc/common/vulkan_ycbcr_info.h"
+#include "gpu/vulkan/vulkan_ycbcr_info.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
@@ -48,7 +48,8 @@ class ImageContextImpl final : public ExternalUseClient::ImageContext {
  public:
   ImageContextImpl(const TransferableResource& resource,
                    bool maybe_concurrent_reads,
-                   bool raw_draw_if_possible);
+                   bool raw_draw_if_possible,
+                   uint32_t client_id);
 
   // Used only for creating promise image from RenderPass.
   ImageContextImpl(const gpu::Mailbox& mailbox,

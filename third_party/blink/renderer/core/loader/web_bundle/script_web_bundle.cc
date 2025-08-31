@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -71,8 +72,8 @@ ScriptWebBundle::CreateOrReuseInline(ScriptElementBase& element,
       context->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
           mojom::blink::ConsoleMessageSource::kOther,
           mojom::blink::ConsoleMessageLevel::kWarning,
-          "A nested bundle is not supported: " +
-              rule.source_url().ElidedString()));
+          StrCat({"A nested bundle is not supported: ",
+                  rule.source_url().ElidedString()})));
     }
     return ScriptWebBundleError(ScriptWebBundleError::Type::kSystemError,
                                 "A nested bundle is not supported.");
@@ -128,17 +129,19 @@ bool ScriptWebBundle::CanHandleRequest(const KURL& url) const {
   DCHECK(bundle_loader_);
   if (!bundle_loader_->GetSecurityOrigin()->IsSameOriginWith(
           SecurityOrigin::Create(url).get())) {
-    OnWebBundleError(url.ElidedString() + " cannot be loaded from WebBundle " +
-                     bundle_loader_->url().ElidedString() +
-                     ": bundled resource must be same origin with the bundle.");
+    OnWebBundleError(
+        StrCat({url.ElidedString(), " cannot be loaded from WebBundle ",
+                bundle_loader_->url().ElidedString(),
+                ": bundled resource must be same origin with the bundle."}));
     return false;
   }
 
   if (!url.GetString().StartsWith(bundle_loader_->url().BaseAsString())) {
     OnWebBundleError(
-        url.ElidedString() + " cannot be loaded from WebBundle " +
-        bundle_loader_->url().ElidedString() +
-        ": bundled resource path must contain the bundle's path as a prefix.");
+        StrCat({url.ElidedString(), " cannot be loaded from WebBundle ",
+                bundle_loader_->url().ElidedString(),
+                ": bundled resource path must contain the bundle's path as a "
+                "prefix."}));
     return false;
   }
   return true;
@@ -260,7 +263,7 @@ void ScriptWebBundle::WillReleaseBundleLoaderAndUnregister() {
   if (element_document_) {
     auto task = std::make_unique<ReleaseResourceTask>(*this);
     element_document_->GetAgent().event_loop()->EnqueueMicrotask(
-        WTF::BindOnce(&ReleaseResourceTask::Run, std::move(task)));
+        BindOnce(&ReleaseResourceTask::Run, std::move(task)));
   } else {
     ReleaseBundleLoaderAndUnregister();
   }
@@ -282,14 +285,12 @@ void ScriptWebBundle::ReusedWith(ScriptElementBase& element,
   DCHECK(bundle_loader_);
   if (bundle_loader_->HasLoaded()) {
     element_document_->GetTaskRunner(TaskType::kDOMManipulation)
-        ->PostTask(FROM_HERE,
-                   WTF::BindOnce(&ScriptElementBase::DispatchLoadEvent,
-                                 WrapPersistent(element_.Get())));
+        ->PostTask(FROM_HERE, BindOnce(&ScriptElementBase::DispatchLoadEvent,
+                                       WrapPersistent(element_.Get())));
   } else if (bundle_loader_->HasFailed()) {
     element_document_->GetTaskRunner(TaskType::kDOMManipulation)
-        ->PostTask(FROM_HERE,
-                   WTF::BindOnce(&ScriptElementBase::DispatchErrorEvent,
-                                 WrapPersistent(element_.Get())));
+        ->PostTask(FROM_HERE, BindOnce(&ScriptElementBase::DispatchErrorEvent,
+                                       WrapPersistent(element_.Get())));
   }
 }
 

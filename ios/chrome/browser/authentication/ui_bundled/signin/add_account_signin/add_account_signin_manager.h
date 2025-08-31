@@ -53,6 +53,9 @@ enum class SigninAddAccountToDeviceResult : int {
 @end
 
 // Manager that handles add account and reauthentication UI.
+// Note that, up to iOS 18, the add account view may disappear if the user turn
+// off their screen, without informing the delegate, due to a bug in UIKit. See
+// crbug.com/395959814.
 @interface AddAccountSigninManager : NSObject
 
 // The delegate.
@@ -66,7 +69,7 @@ enum class SigninAddAccountToDeviceResult : int {
                identityManager:(signin::IdentityManager*)identityManager
     identityInteractionManager:
         (id<SystemIdentityInteractionManager>)identityInteractionManager
-    NS_DESIGNATED_INITIALIZER;
+                prefilledEmail:(NSString*)email NS_DESIGNATED_INITIALIZER;
 
 // Displays the add account sign-in flow.
 // `signinIntent`: intent for the add account sign-in flow.

@@ -45,6 +45,7 @@
 #include "components/viz/service/surfaces/surface_observer.h"
 #include "components/viz/service/viz_service_export.h"
 #include "gpu/ipc/common/surface_handle.h"
+#include "mojo/public/cpp/bindings/direct_receiver.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -114,7 +115,7 @@ class VIZ_SERVICE_EXPORT FrameSinkManagerImpl
   // Mac |task_runner| will be the resize helper task runner. May only be called
   // once.
   void BindAndSetClient(
-      mojo::PendingReceiver<mojom::FrameSinkManager> receiver,
+      mojo::PendingReceiver<mojom::FrameSinkManager> interface_receiver,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       mojo::PendingRemote<mojom::FrameSinkManagerClient> client,
       SharedImageInterfaceProvider* shared_image_interface_provider);
@@ -134,7 +135,8 @@ class VIZ_SERVICE_EXPORT FrameSinkManagerImpl
   // mojom::FrameSinkManager implementation:
   void RegisterFrameSinkId(const FrameSinkId& frame_sink_id,
                            bool report_activation) override;
-  void InvalidateFrameSinkId(const FrameSinkId& frame_sink_id) override;
+  void InvalidateFrameSinkId(const FrameSinkId& frame_sink_id,
+                             InvalidateFrameSinkIdCallback callback) override;
   void SetFrameSinkDebugLabel(const FrameSinkId& frame_sink_id,
                               const std::string& debug_label) override;
   void CreateRootCompositorFrameSink(
@@ -186,12 +188,9 @@ class VIZ_SERVICE_EXPORT FrameSinkManagerImpl
       override;
   void EnableFrameSinkManagerTestApi(
       mojo::PendingReceiver<mojom::FrameSinkManagerTestApi> receiver) override;
-  void SetupRenderInputRouterDelegateConnection(
-      const base::UnguessableToken& grouping_id,
-      mojo::PendingRemote<input::mojom::RenderInputRouterDelegateClient>
-          rir_delegate_client_remote,
-      mojo::PendingReceiver<input::mojom::RenderInputRouterDelegate>
-          rir_delegate_receiver) override;
+  void SetupRendererInputRouterDelegateRegistry(
+      mojo::PendingReceiver<mojom::RendererInputRouterDelegateRegistry>
+          receiver) override;
   void NotifyRendererBlockStateChanged(
       bool blocked,
       const std::vector<FrameSinkId>& render_input_routers) override;
@@ -298,6 +297,9 @@ class VIZ_SERVICE_EXPORT FrameSinkManagerImpl
   void OnFrameSinkDeviceScaleFactorChanged(const FrameSinkId& frame_sink_id,
                                            float device_scale_factor);
 
+  void OnFrameSinkMobileOptimizedChanged(const FrameSinkId& frame_sink_id,
+                                         bool is_mobile_optimized);
+
   void AddObserver(FrameSinkObserver* obs);
   void RemoveObserver(FrameSinkObserver* obs);
 
@@ -309,9 +311,12 @@ class VIZ_SERVICE_EXPORT FrameSinkManagerImpl
   // oldest embedding. To be called by non-root CompositorFrameSinks only.
   FrameSinkId GetOldestParentByChildFrameId(
       const FrameSinkId& child_frame_sink_id) const;
+  int GetNumParents(const FrameSinkId& frame_sink_id) const;
   // Returns the oldest RootCompositorFrameSink's FrameSinkId associated with
   // `child_frame_sink_id`, since all frame production/input processing uses
   // the oldest embedding.
+  // In case `child_frame_sink_id` is not attached to a RootCompositorFrameSink
+  // FrameSink(0,0) is returned.
   FrameSinkId GetOldestRootCompositorFrameSinkId(
       const FrameSinkId& child_frame_sink_id) const;
 
@@ -321,10 +326,6 @@ class VIZ_SERVICE_EXPORT FrameSinkManagerImpl
       const FrameSinkId& parent_frame_sink_id) const;
   CompositorFrameSinkSupport* GetFrameSinkForId(
       const FrameSinkId& frame_sink_id) const;
-
-  base::TimeDelta GetPreferredFrameIntervalForFrameSinkId(
-      const FrameSinkId& id,
-      mojom::CompositorFrameSinkType* type) const;
 
   // This cancels pending output requests owned by the frame sinks associated
   // with the specified BeginFrameSource.
@@ -601,7 +602,9 @@ class VIZ_SERVICE_EXPORT FrameSinkManagerImpl
   //     |client_|. Used for some unit tests.
   raw_ptr<mojom::FrameSinkManagerClient, DanglingUntriaged> client_ = nullptr;
 
-  mojo::Receiver<mojom::FrameSinkManager> frame_sink_manager_receiver_{this};
+  using Receiver = mojo::Receiver<mojom::FrameSinkManager>;
+  using DirectReceiver = mojo::DirectReceiver<mojom::FrameSinkManager>;
+  std::variant<Receiver, DirectReceiver> frame_sink_manager_receiver_;
   mojo::Receiver<mojom::FrameSinksMetricsRecorder> metrics_receiver_{this};
   mojo::Receiver<mojom::FrameSinkManagerTestApi> test_api_receiver_{this};
 

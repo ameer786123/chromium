@@ -6,7 +6,9 @@
 
 #include "base/android/feature_map.h"
 #include "base/no_destructor.h"
+#include "components/content_settings/core/common/features.h"
 #include "components/permissions/features.h"
+#include "media/base/media_switches.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "components/permissions/android/core_jni/PermissionsAndroidFeatureMap_jni.h"
@@ -21,8 +23,9 @@ namespace {
 // components/permissions/features.h).
 const base::Feature* const kFeaturesExposedToJava[] = {
     &kAndroidCancelPermissionPromptOnTouchOutside,
-    &features::kOneTimePermission,
     &features::kOsAdditionalSecurityPermissionKillSwitch,
+    &content_settings::features::kApproximateGeolocationPermission,
+    &media::kAutoPictureInPictureAndroid,
 };
 
 // static

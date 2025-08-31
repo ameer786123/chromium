@@ -71,11 +71,10 @@ bool IsSupportedLocaleForFeature(
     return true;
   }
 
-  // Otherwise, the locale or the
-  // primary language subtag must match an element of the allowlist.
-  std::string locale_language = l10n_util::GetLanguage(locale);
+  // Otherwise, the locale or the primary language subtag must match an element
+  // of the allowlist.
   return base::Contains(supported_locales, locale) ||
-         base::Contains(supported_locales, locale_language);
+         base::Contains(supported_locales, l10n_util::GetLanguage(locale));
 }
 
 bool IsSupportedCountryForFeature(const std::string& country_code,
@@ -111,10 +110,7 @@ bool IsSupportedCountryForFeature(const std::string& country_code,
 }
 
 const base::FeatureParam<base::TimeDelta> kAnnotatedPageContentCaptureDelay{
-    &kAnnotatedPageContentExtraction, "capture_delay", base::Seconds(1)};
-
-const base::FeatureParam<bool> kAnnotatedPageContentIncludeGeometry{
-    &kAnnotatedPageContentExtraction, "include_geometry", false};
+    &kAnnotatedPageContentExtraction, "capture_delay", base::Seconds(5)};
 
 const base::FeatureParam<bool> kAnnotatedPageContentStudyIncludeInnerText{
     &kAnnotatedPageContentExtraction, "include_inner_text", false};
@@ -122,9 +118,8 @@ const base::FeatureParam<bool> kAnnotatedPageContentStudyIncludeInnerText{
 const base::FeatureParam<bool> kAnnotatedPageContentOnCriticalPath{
     &kAnnotatedPageContentExtraction, "on_critical_path", false};
 
-const base::FeatureParam<bool> kIncludeHiddenButSearchableContent{
-    &kAnnotatedPageContentExtraction, "include_hidden_but_searchable_content",
-    false};
+const base::FeatureParam<std::string> kAnnotatedPageContentMode{
+    &kAnnotatedPageContentExtraction, "mode", "default"};
 
 }  // namespace
 
@@ -163,6 +158,10 @@ BASE_FEATURE(kAnnotatedPageContentExtraction,
              "AnnotatedPageContentExtraction",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+BASE_FEATURE(kOnDeviceCategoryClassifier,
+             "OnDeviceCategoryClassifier",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 base::TimeDelta PCAServiceWaitForTitleDelayDuration() {
   return base::Milliseconds(GetFieldTrialParamByFeatureAsInt(
       kPageContentAnnotations,
@@ -176,7 +175,8 @@ bool ShouldEnablePageContentAnnotations() {
          base::FeatureList::IsEnabled(page_content_annotations::features::
                                           kPageContentAnnotationsValidation) ||
          base::FeatureList::IsEnabled(
-             page_content_annotations::features::kRemotePageMetadata);
+             page_content_annotations::features::kRemotePageMetadata) ||
+         base::FeatureList::IsEnabled(kOnDeviceCategoryClassifier);
 }
 
 bool ShouldWriteContentAnnotationsToHistoryService() {
@@ -290,16 +290,12 @@ base::TimeDelta GetAnnotatedPageContentCaptureDelay() {
   return kAnnotatedPageContentCaptureDelay.Get();
 }
 
-bool ShouldAnnotatedPageContentIncludeGeometry() {
-  return kAnnotatedPageContentIncludeGeometry.Get();
-}
-
 bool ShouldAnnotatedPageContentStudyIncludeInnerText() {
   return kAnnotatedPageContentStudyIncludeInnerText.Get();
 }
 
-bool ShouldIncludeHiddenButSearchableContent() {
-  return kIncludeHiddenButSearchableContent.Get();
+std::string AnnotatedPageContentMode() {
+  return kAnnotatedPageContentMode.Get();
 }
 
 }  // namespace page_content_annotations::features

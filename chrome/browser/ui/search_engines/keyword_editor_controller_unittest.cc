@@ -14,9 +14,11 @@
 #include "chrome/browser/search_engines/template_url_service_factory_test_util.h"
 #include "chrome/browser/search_engines/template_url_service_test_util.h"
 #include "chrome/browser/ui/search_engines/template_url_table_model.h"
+#include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/search_engines/choice_made_location.h"
+#include "components/search_engines/enterprise/enterprise_search_manager.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_data.h"
 #include "components/search_engines/template_url_service.h"
@@ -94,6 +96,7 @@ class KeywordEditorControllerTest : public testing::Test,
   TemplateURLTableModel* table_model() { return controller_->table_model(); }
   KeywordEditorController* controller() { return controller_.get(); }
   const TemplateURLServiceFactoryTestUtil* util() const { return &util_; }
+  const TestingProfile& profile() const { return profile_; }
 
  private:
   content::BrowserTaskEnvironment task_environment_;
@@ -155,6 +158,96 @@ TEST_F(KeywordEditorControllerTest, Modify) {
   EXPECT_EQ(u"a1", turl->short_name());
   EXPECT_EQ(u"b1", turl->keyword());
   EXPECT_EQ("http://c1", turl->url());
+
+  // Verify preference was not updated.
+  const base::Value::List& overridden_keywords = profile().GetPrefs()->GetList(
+      EnterpriseSearchManager::kSiteSearchSettingsOverriddenKeywordsPrefName);
+  EXPECT_TRUE(overridden_keywords.empty());
+}
+
+// Tests modifying a SiteSearch TemplateURL.
+TEST_F(KeywordEditorControllerTest, Modify_SiteSearchPolicyEngine) {
+  // Create an entry from Site Search policy.
+  TemplateURLData data;
+  data.SetShortName(kA);
+  data.SetKeyword(kB);
+  data.SetURL("http://c");
+  data.policy_origin = TemplateURLData::PolicyOrigin::kSiteSearch;
+  TemplateURL* turl = util()->model()->Add(std::make_unique<TemplateURL>(data));
+  ClearChangeCount();
+
+  // Modify the entry.
+  controller()->ModifyTemplateURL(turl, kA1, kB1, "http://c1");
+
+  // Make sure it was updated appropriately.
+  VerifyChanged();
+  EXPECT_EQ(u"a1", turl->short_name());
+  EXPECT_EQ(u"b1", turl->keyword());
+  EXPECT_EQ("http://c1", turl->url());
+
+  // Verify preference was updated to include keyword.
+  const base::Value::List& overridden_keywords = profile().GetPrefs()->GetList(
+      EnterpriseSearchManager::kSiteSearchSettingsOverriddenKeywordsPrefName);
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
+  EXPECT_EQ(1u, overridden_keywords.size());
+  EXPECT_EQ(base::UTF16ToUTF8(kB), overridden_keywords[0].GetString());
+#else
+  EXPECT_TRUE(overridden_keywords.empty());
+#endif
+}
+
+// Tests removing a TemplateURL.
+TEST_F(KeywordEditorControllerTest, Remove) {
+  int index = controller()->AddTemplateURL(kA, kB, "http://c");
+  auto original_size = util()->model()->GetTemplateURLs().size();
+  ClearChangeCount();
+
+  // Remove the entry.
+  controller()->RemoveTemplateURL(index);
+
+  // Make sure it was deleted appropriately.
+  VerifyChanged();
+  EXPECT_FALSE(util()->model()->GetTemplateURLForKeyword(kB));
+  EXPECT_EQ(original_size - 1, util()->model()->GetTemplateURLs().size());
+
+  // Verify preference was not updated.
+  const base::Value::List& overridden_keywords = profile().GetPrefs()->GetList(
+      EnterpriseSearchManager::kSiteSearchSettingsOverriddenKeywordsPrefName);
+  EXPECT_TRUE(overridden_keywords.empty());
+}
+
+// Tests removing a SiteSearch TemplateURL.
+TEST_F(KeywordEditorControllerTest, Remove_SiteSearchPolicyEngine) {
+  // Create an entry from Site Search policy.
+  TemplateURLData data;
+  data.SetShortName(kA);
+  data.SetKeyword(kB);
+  data.SetURL("http://c");
+  data.policy_origin = TemplateURLData::PolicyOrigin::kSiteSearch;
+  TemplateURL* turl = util()->model()->Add(std::make_unique<TemplateURL>(data));
+  auto original_size = util()->model()->GetTemplateURLs().size();
+  ClearChangeCount();
+
+  // Remove the entry.
+  int index = table_model()->IndexOfTemplateURL(turl).value();
+  controller()->RemoveTemplateURL(index);
+
+  // Make sure it was deleted appropriately.
+  VerifyChanged();
+  EXPECT_FALSE(util()->model()->GetTemplateURLForKeyword(kB));
+  EXPECT_EQ(original_size - 1, util()->model()->GetTemplateURLs().size());
+
+  // Verify preference was updated to include keyword.
+  const base::Value::List& overridden_keywords = profile().GetPrefs()->GetList(
+      EnterpriseSearchManager::kSiteSearchSettingsOverriddenKeywordsPrefName);
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
+  EXPECT_EQ(1u, overridden_keywords.size());
+  EXPECT_EQ(base::UTF16ToUTF8(kB), overridden_keywords[0].GetString());
+#else
+  EXPECT_TRUE(overridden_keywords.empty());
+#endif
 }
 
 // Tests making a TemplateURL the default search provider.
@@ -535,8 +628,9 @@ void CheckKeywordsToDisplay(
     const TemplateURL* template_url = table_model->GetTemplateURL(row);
     ASSERT_TRUE(template_url);
     EXPECT_EQ(template_url->short_name(), kExpectedShortNamesOrder[i]);
-    EXPECT_EQ(table_model->GetKeywordToDisplay(row),
-              kExpectedKeywordsToDisplay[i]);
+    EXPECT_EQ(
+        table_model->GetText(row, IDS_SEARCH_ENGINES_EDITOR_KEYWORD_COLUMN),
+        kExpectedKeywordsToDisplay[i]);
   }
 }
 
@@ -588,12 +682,14 @@ TEST_F(KeywordEditorControllerTest, FeaturedEnterpriseSiteSearch) {
 
   const auto kExpectedShortNamesOrder = std::vector<std::u16string>({
       u"Featured 1",
+      u"Featured 1",
       u"Featured 2",
       u"Non-featured",
       u"User-defined engine",
   });
   const auto kExpectedKeywordsToDisplay = std::vector<std::u16string>({
-      u"@kw1, kw1",
+      u"@kw1",
+      u"kw1",
       u"@kw2",
       u"kw3",
       u"kw2",
@@ -678,11 +774,13 @@ TEST_F(KeywordEditorControllerTest,
   const auto kExpectedShortNamesOrder = std::vector<std::u16string>({
       u"Featured 1",
       u"Featured 2",
+      u"Featured 2",
       u"User-defined engine",
   });
   const auto kExpectedKeywordsToDisplay = std::vector<std::u16string>({
       u"@kw1",
-      u"@kw2, kw2",
+      u"@kw2",
+      u"kw2",
       u"kw1",
   });
 
@@ -724,10 +822,10 @@ TEST_F(KeywordEditorControllerTest, EnterpriseSearchAggregator) {
     VerifyChanged();
   }
 
-  const auto kExpectedShortNamesOrder =
-      std::vector<std::u16string>({u"Featured 1", u"Non-featured"});
+  const auto kExpectedShortNamesOrder = std::vector<std::u16string>(
+      {u"Featured 1", u"Featured 1", u"Non-featured"});
   const auto kExpectedKeywordsToDisplay =
-      std::vector<std::u16string>({u"@kw1, kw1", u"kw2"});
+      std::vector<std::u16string>({u"@kw1", u"kw1", u"kw2"});
 
   size_t numExpectedKeywords = kExpectedShortNamesOrder.size();
   CheckKeywordsToDisplay(kExpectedShortNamesOrder, kExpectedKeywordsToDisplay,
@@ -849,10 +947,11 @@ TEST_F(KeywordEditorControllerTest, EnterpriseSiteSearchAndSearchAggregator) {
     VerifyChanged();
   }
 
-  const auto kExpectedShortNamesOrder = std::vector<std::u16string>(
-      {u"Featured 1", u"Featured 3", u"Non-featured"});
+  const auto kExpectedShortNamesOrder =
+      std::vector<std::u16string>({u"Featured 1", u"Featured 1", u"Featured 3",
+                                   u"Featured 3", u"Non-featured"});
   const auto kExpectedKeywordsToDisplay =
-      std::vector<std::u16string>({u"@kw1, kw1", u"@kw3, kw3", u"kw2"});
+      std::vector<std::u16string>({u"@kw1", u"kw1", u"@kw3", u"kw3", u"kw2"});
 
   size_t numExpectedKeywords = kExpectedShortNamesOrder.size();
   CheckKeywordsToDisplay(kExpectedShortNamesOrder, kExpectedKeywordsToDisplay,

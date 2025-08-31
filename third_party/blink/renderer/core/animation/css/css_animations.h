@@ -58,7 +58,7 @@ class StylePropertyShorthand;
 class StyleResolver;
 class StyleTimeline;
 class WritingDirectionMode;
-class AnimationTrigger;
+class TimelineTrigger;
 
 class CORE_EXPORT CSSAnimations final {
   DISALLOW_NEW();
@@ -132,6 +132,12 @@ class CORE_EXPORT CSSAnimations final {
   static void UpdateAnimationFlags(Element& animating_element,
                                    CSSAnimationUpdate&,
                                    ComputedStyleBuilder&);
+
+  // This performs an update of the given element's set of named triggers, but
+  // only named triggers which are directly declared on this element via CSS.
+  static void UpdateNamedTriggers(const ComputedStyleBuilder& style_builder,
+                                  const CSSAnimationUpdate& update,
+                                  Element& element);
 
   const CSSAnimationUpdate& PendingUpdate() const { return pending_update_; }
   void SetPendingUpdate(const CSSAnimationUpdate& update) {
@@ -465,11 +471,13 @@ class CORE_EXPORT CSSAnimations final {
       TransitionUpdateState& state,
       const PropertyHandle& transitioning_property);
 
-  static AnimationTrigger* ComputeTrigger(Element* element,
-                                          const CSSAnimationData* data,
-                                          wtf_size_t animation_index,
-                                          const CSSAnimationUpdate& update,
-                                          AnimationTrigger* existing_trigger);
+  static TimelineTrigger* ComputeTimelineTrigger(
+      const CSSAnimationData* data,
+      wtf_size_t animation_index,
+      const CSSAnimationUpdate& update,
+      float zoom,
+      Element* element,
+      TimelineTrigger* existing_trigger);
 
   class AnimationEventDelegate final : public AnimationEffect::EventDelegate {
    public:
@@ -525,7 +533,7 @@ class CORE_EXPORT CSSAnimations final {
     void Trace(Visitor*) const override;
 
    private:
-    void EnqueueEvent(const WTF::AtomicString& type,
+    void EnqueueEvent(const AtomicString& type,
                       const AnimationTimeDelta& elapsed_time);
 
     const Element& TransitionTarget() const { return *transition_target_; }

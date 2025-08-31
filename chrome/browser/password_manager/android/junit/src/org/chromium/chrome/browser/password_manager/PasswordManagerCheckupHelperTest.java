@@ -7,7 +7,6 @@ package org.chromium.chrome.browser.password_manager;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -38,7 +37,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
-import org.robolectric.ParameterizedRobolectricTestRunner;
 import org.robolectric.Robolectric;
 import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
@@ -48,15 +46,14 @@ import org.robolectric.shadows.ShadowSystemClock;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
-import org.chromium.base.FeatureOverrides;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.test.BaseRobolectricTestRule;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.HistogramWatcher;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.R;
 import org.chromium.chrome.browser.loading_modal.LoadingModalDialogCoordinator;
 import org.chromium.chrome.browser.password_manager.CredentialManagerLauncher.CredentialManagerError;
-import org.chromium.chrome.browser.password_manager.PasswordCheckupClientHelper.PasswordCheckBackendException;
+import org.chromium.chrome.browser.password_manager.PasswordCheckupClientHelper.PasswordManagerUnavailableException;
 import org.chromium.chrome.browser.password_manager.PasswordManagerHelper.PasswordCheckOperation;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -64,45 +61,33 @@ import org.chromium.chrome.browser.pwm_disabled.PasswordCsvDownloadFlowControlle
 import org.chromium.chrome.browser.pwm_disabled.PasswordCsvDownloadFlowControllerFactory;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.components.browser_ui.settings.SettingsCustomTabLauncher;
-import org.chromium.components.browser_ui.test.BrowserUiDummyFragmentActivity;
+import org.chromium.components.browser_ui.test.BrowserUiTestFragmentActivity;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.CoreAccountInfo;
-import org.chromium.components.signin.base.GaiaId;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.UserSelectableType;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.components.user_prefs.UserPrefsJni;
+import org.chromium.google_apis.gaia.GaiaId;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modelutil.PropertyModel;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 
-/** Tests for the password checkup-related methods in {@link PasswordManagerHelper}.* */
-@RunWith(ParameterizedRobolectricTestRunner.class)
+/** Tests for the password checkup-related methods in {@link PasswordManagerHelper}. */
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(
         manifest = Config.NONE,
         shadows = {ShadowSystemClock.class})
 @Batch(Batch.PER_CLASS)
 public class PasswordManagerCheckupHelperTest {
-    @ParameterizedRobolectricTestRunner.Parameters
-    public static Collection testCases() {
-        return Arrays.asList(
-                /* isLoginDbDeprecationEnabled= */ true, /* isLoginDbDeprecationEnabled= */ false);
-    }
-
-    @Rule(order = -2)
-    public BaseRobolectricTestRule mBaseRule = new BaseRobolectricTestRule();
-
     private static final String TEST_EMAIL_ADDRESS = "test@email.com";
     private static final String TEST_NO_EMAIL_ADDRESS = null;
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @ParameterizedRobolectricTestRunner.Parameter public boolean mIsLoginDbDeprecationEnabled;
 
     // TODO(crbug.com/40854050): Use a fake for PasswordCheckupClientHelper.
     @Mock private PasswordCheckupClientHelperFactory mPasswordCheckupClientHelperFactoryMock;
@@ -135,12 +120,7 @@ public class PasswordManagerCheckupHelperTest {
     private PasswordManagerHelper mPasswordManagerHelper;
 
     @Before
-    public void setUp() throws PasswordCheckBackendException {
-        if (mIsLoginDbDeprecationEnabled) {
-            FeatureOverrides.enable(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID);
-        } else {
-            FeatureOverrides.disable(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID);
-        }
+    public void setUp() {
         UserPrefsJni.setInstanceForTesting(mUserPrefsJniMock);
         PasswordManagerUtilBridgeJni.setInstanceForTesting(mPasswordManagerUtilBridgeJniMock);
         mPasswordManagerHelper = new PasswordManagerHelper(mProfile);
@@ -162,13 +142,9 @@ public class PasswordManagerCheckupHelperTest {
                 .addObserver(any(LoadingModalDialogCoordinator.Observer.class));
         PasswordManagerBackendSupportHelper.setInstanceForTesting(mBackendSupportHelperMock);
         when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
-        if (mIsLoginDbDeprecationEnabled) {
-            when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
-                            eq(mPrefService), eq(true)))
-                    .thenReturn(true);
-        } else {
-            when(mPasswordManagerUtilBridgeJniMock.areMinUpmRequirementsMet()).thenReturn(true);
-        }
+        when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
+                        eq(mPrefService), eq(true)))
+                .thenReturn(true);
         when(mPasswordCheckupClientHelperFactoryMock.createHelper())
                 .thenReturn(mPasswordCheckupClientHelperMock);
         PasswordCheckupClientHelperFactory.setFactoryForTesting(
@@ -178,8 +154,6 @@ public class PasswordManagerCheckupHelperTest {
 
     @Test
     public void testThrowsPasswordManagerNotAvailableException() {
-        // This test only applies if the login DB deprecation is enabled.
-        assumeTrue(ChromeFeatureList.isEnabled(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID));
         when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
                         eq(mPrefService), eq(true)))
                 .thenReturn(false);
@@ -192,58 +166,10 @@ public class PasswordManagerCheckupHelperTest {
                 TEST_EMAIL_ADDRESS,
                 mock(Callback.class),
                 failureCallback);
-        final ArgumentCaptor<PasswordCheckBackendException> captor =
-                ArgumentCaptor.forClass(PasswordCheckBackendException.class);
+        final ArgumentCaptor<PasswordManagerUnavailableException> captor =
+                ArgumentCaptor.forClass(PasswordManagerUnavailableException.class);
 
         verify(failureCallback).onResult(captor.capture());
-        assertEquals(
-                CredentialManagerError.PASSWORD_MANAGER_NOT_AVAILABLE, captor.getValue().errorCode);
-    }
-
-    @Test
-    public void testShowsUpdateDialogOnShowPasswordCheckupForAccountWhenBackendUpdateNeeded()
-            throws PasswordCheckBackendException {
-        chooseToSyncPasswords();
-
-        when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
-        when(mPasswordManagerUtilBridgeJniMock.areMinUpmRequirementsMet()).thenReturn(false);
-
-        when(mPasswordCheckupClientHelperFactoryMock.createHelper())
-                .thenThrow(
-                        new PasswordCheckBackendException(
-                                "", CredentialManagerError.BACKEND_VERSION_NOT_SUPPORTED));
-
-        mPasswordManagerHelper.showPasswordCheckup(
-                ContextUtils.getApplicationContext(),
-                PasswordCheckReferrer.SAFETY_CHECK,
-                mModalDialogManagerSupplier,
-                TEST_EMAIL_ADDRESS,
-                mSettingsCustomTabLauncher);
-
-        assertNotNull(mModalDialogManager.getCurrentDialogForTest());
-    }
-
-    @Test
-    public void testShowsUpdateDialogOnShowPasswordCheckupForLocalWhenBackendUpdateNeeded()
-            throws PasswordCheckBackendException {
-        chooseToSyncPasswords();
-
-        when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
-        when(mPasswordManagerUtilBridgeJniMock.areMinUpmRequirementsMet()).thenReturn(false);
-
-        when(mPasswordCheckupClientHelperFactoryMock.createHelper())
-                .thenThrow(
-                        new PasswordCheckBackendException(
-                                "", CredentialManagerError.BACKEND_VERSION_NOT_SUPPORTED));
-
-        mPasswordManagerHelper.showPasswordCheckup(
-                ContextUtils.getApplicationContext(),
-                PasswordCheckReferrer.SAFETY_CHECK,
-                mModalDialogManagerSupplier,
-                TEST_NO_EMAIL_ADDRESS,
-                mSettingsCustomTabLauncher);
-
-        assertNotNull(mModalDialogManager.getCurrentDialogForTest());
     }
 
     @Test
@@ -292,16 +218,13 @@ public class PasswordManagerCheckupHelperTest {
         verify(mPasswordCheckupClientHelperMock)
                 .getPasswordCheckupIntent(
                         eq(PasswordCheckReferrer.SAFETY_CHECK),
-                        eq(Optional.of(TEST_EMAIL_ADDRESS)),
+                        eq(TEST_EMAIL_ADDRESS),
                         any(Callback.class),
                         any(Callback.class));
     }
 
     @Test
     public void testRetrievesIntentForLocalCheckup() {
-        when(mPasswordManagerUtilBridgeJniMock.shouldUseUpmWiring(mSyncServiceMock, mPrefService))
-                .thenReturn(true);
-
         mPasswordManagerHelper.showPasswordCheckup(
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
@@ -312,7 +235,7 @@ public class PasswordManagerCheckupHelperTest {
         verify(mPasswordCheckupClientHelperMock)
                 .getPasswordCheckupIntent(
                         eq(PasswordCheckReferrer.SAFETY_CHECK),
-                        eq(Optional.empty()),
+                        eq(null),
                         any(Callback.class),
                         any(Callback.class));
     }
@@ -332,9 +255,6 @@ public class PasswordManagerCheckupHelperTest {
 
     @Test
     public void testPasswordCheckupIntentForLocalCalledIfSuccess() throws CanceledException {
-        when(mPasswordManagerUtilBridgeJniMock.shouldUseUpmWiring(mSyncServiceMock, mPrefService))
-                .thenReturn(true);
-
         setUpSuccessfulCheckupIntentFetching(mPendingIntentMock, TEST_NO_EMAIL_ADDRESS);
         mPasswordManagerHelper.showPasswordCheckup(
                 ContextUtils.getApplicationContext(),
@@ -381,8 +301,6 @@ public class PasswordManagerCheckupHelperTest {
                                         .PASSWORD_CHECKUP_LAUNCH_CREDENTIAL_MANAGER_SUCCESS_HISTOGRAM,
                                 1)
                         .build();
-        when(mPasswordManagerUtilBridgeJniMock.shouldUseUpmWiring(mSyncServiceMock, mPrefService))
-                .thenReturn(true);
         setUpSuccessfulCheckupIntentFetching(mPendingIntentMock, TEST_NO_EMAIL_ADDRESS);
 
         mPasswordManagerHelper.showPasswordCheckup(
@@ -400,7 +318,7 @@ public class PasswordManagerCheckupHelperTest {
         HistogramWatcher.Builder builder =
                 histogramWatcherBuilderOfPasswordCheckupFailureHistogramsForOperation(
                         PasswordCheckOperation.GET_PASSWORD_CHECKUP_INTENT,
-                        CredentialManagerError.UNCATEGORIZED,
+                        CredentialManagerError.PASSWORD_MANAGER_NOT_AVAILABLE,
                         OptionalInt.empty());
         HistogramWatcher histogram =
                 builder.expectNoRecords(
@@ -410,8 +328,7 @@ public class PasswordManagerCheckupHelperTest {
 
         chooseToSyncPasswords();
         returnErrorWhenFetchingIntentForPasswordCheckup(
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED),
-                TEST_EMAIL_ADDRESS);
+                new PasswordManagerUnavailableException(), TEST_EMAIL_ADDRESS);
 
         mPasswordManagerHelper.showPasswordCheckup(
                 ContextUtils.getApplicationContext(),
@@ -428,7 +345,7 @@ public class PasswordManagerCheckupHelperTest {
         HistogramWatcher.Builder builder =
                 histogramWatcherBuilderOfPasswordCheckupFailureHistogramsForOperation(
                         PasswordCheckOperation.GET_PASSWORD_CHECKUP_INTENT,
-                        CredentialManagerError.UNCATEGORIZED,
+                        CredentialManagerError.PASSWORD_MANAGER_NOT_AVAILABLE,
                         OptionalInt.empty());
         HistogramWatcher histogram =
                 builder.expectNoRecords(
@@ -436,11 +353,8 @@ public class PasswordManagerCheckupHelperTest {
                                         .PASSWORD_CHECKUP_LAUNCH_CREDENTIAL_MANAGER_SUCCESS_HISTOGRAM)
                         .build();
 
-        when(mPasswordManagerUtilBridgeJniMock.shouldUseUpmWiring(mSyncServiceMock, mPrefService))
-                .thenReturn(true);
         returnErrorWhenFetchingIntentForPasswordCheckup(
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED),
-                TEST_NO_EMAIL_ADDRESS);
+                new PasswordManagerUnavailableException(), TEST_NO_EMAIL_ADDRESS);
 
         mPasswordManagerHelper.showPasswordCheckup(
                 ContextUtils.getApplicationContext(),
@@ -492,8 +406,6 @@ public class PasswordManagerCheckupHelperTest {
                                 PasswordMetricsUtil
                                         .PASSWORD_CHECKUP_LAUNCH_CREDENTIAL_MANAGER_SUCCESS_HISTOGRAM)
                         .build();
-        when(mPasswordManagerUtilBridgeJniMock.shouldUseUpmWiring(mSyncServiceMock, mPrefService))
-                .thenReturn(true);
         returnErrorWhenFetchingIntentForPasswordCheckup(
                 new ApiException(new Status(CommonStatusCodes.DEVELOPER_ERROR)),
                 TEST_NO_EMAIL_ADDRESS);
@@ -531,13 +443,12 @@ public class PasswordManagerCheckupHelperTest {
         HistogramWatcher histogram =
                 histogramWatcherBuilderOfPasswordCheckupFailureHistogramsForOperation(
                                 PasswordCheckOperation.RUN_PASSWORD_CHECKUP,
-                                CredentialManagerError.UNCATEGORIZED,
+                                CredentialManagerError.PASSWORD_MANAGER_NOT_AVAILABLE,
                                 OptionalInt.empty())
                         .build();
 
         chooseToSyncPasswords();
-        returnErrorWhenRunningPasswordCheckup(
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED));
+        returnErrorWhenRunningPasswordCheckup(new PasswordManagerUnavailableException());
 
         mPasswordManagerHelper.runPasswordCheckupInBackground(
                 PasswordCheckReferrer.SAFETY_CHECK,
@@ -632,12 +543,11 @@ public class PasswordManagerCheckupHelperTest {
         HistogramWatcher histogram =
                 histogramWatcherBuilderOfPasswordCheckupFailureHistogramsForOperation(
                                 PasswordCheckOperation.GET_BREACHED_CREDENTIALS_COUNT,
-                                CredentialManagerError.UNCATEGORIZED,
+                                CredentialManagerError.PASSWORD_MANAGER_NOT_AVAILABLE,
                                 OptionalInt.empty())
                         .build();
         chooseToSyncPasswords();
-        returnErrorWhenGettingBreachedCredentialsCount(
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED));
+        returnErrorWhenGettingBreachedCredentialsCount(new PasswordManagerUnavailableException());
 
         mPasswordManagerHelper.getBreachedCredentialsCount(
                 PasswordCheckReferrer.SAFETY_CHECK,
@@ -653,12 +563,11 @@ public class PasswordManagerCheckupHelperTest {
         HistogramWatcher histogram =
                 histogramWatcherBuilderOfPasswordCheckupFailureHistogramsForOperation(
                                 PasswordCheckOperation.GET_WEAK_CREDENTIALS_COUNT,
-                                CredentialManagerError.UNCATEGORIZED,
+                                CredentialManagerError.PASSWORD_MANAGER_NOT_AVAILABLE,
                                 OptionalInt.empty())
                         .build();
         chooseToSyncPasswords();
-        returnErrorWhenGettingWeakCredentialsCount(
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED));
+        returnErrorWhenGettingWeakCredentialsCount(new PasswordManagerUnavailableException());
 
         mPasswordManagerHelper.getWeakCredentialsCount(
                 PasswordCheckReferrer.SAFETY_CHECK,
@@ -674,12 +583,11 @@ public class PasswordManagerCheckupHelperTest {
         HistogramWatcher histogram =
                 histogramWatcherBuilderOfPasswordCheckupFailureHistogramsForOperation(
                                 PasswordCheckOperation.GET_REUSED_CREDENTIALS_COUNT,
-                                CredentialManagerError.UNCATEGORIZED,
+                                CredentialManagerError.PASSWORD_MANAGER_NOT_AVAILABLE,
                                 OptionalInt.empty())
                         .build();
         chooseToSyncPasswords();
-        returnErrorWhenGettingReusedCredentialsCount(
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED));
+        returnErrorWhenGettingReusedCredentialsCount(new PasswordManagerUnavailableException());
 
         mPasswordManagerHelper.getReusedCredentialsCount(
                 PasswordCheckReferrer.SAFETY_CHECK,
@@ -832,8 +740,7 @@ public class PasswordManagerCheckupHelperTest {
             throws CanceledException {
         chooseToSyncPasswords();
         returnErrorWhenFetchingIntentForPasswordCheckup(
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED),
-                TEST_EMAIL_ADDRESS);
+                new PasswordManagerUnavailableException(), TEST_EMAIL_ADDRESS);
 
         mPasswordManagerHelper.launchPasswordCheckup(
                 PasswordCheckReferrer.SAFETY_CHECK,
@@ -1047,8 +954,7 @@ public class PasswordManagerCheckupHelperTest {
             throws CanceledException {
         chooseToSyncPasswords();
         returnErrorWhenFetchingIntentForPasswordCheckup(
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED),
-                TEST_EMAIL_ADDRESS);
+                new PasswordManagerUnavailableException(), TEST_EMAIL_ADDRESS);
         when(mLoadingModalDialogCoordinator.getState())
                 .thenReturn(LoadingModalDialogCoordinator.State.PENDING);
 
@@ -1085,8 +991,7 @@ public class PasswordManagerCheckupHelperTest {
     @Test
     public void testRecordsErrorMetricsWhenRunPasswordCheckupFails() {
         chooseToSyncPasswords();
-        Exception expectedException =
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED);
+        Exception expectedException = new PasswordManagerUnavailableException();
         returnErrorWhenRunningPasswordCheckup(expectedException);
 
         mPasswordManagerHelper.runPasswordCheckupInBackground(
@@ -1099,8 +1004,7 @@ public class PasswordManagerCheckupHelperTest {
     @Test
     public void testRecordsErrorMetricsWhenGetBreachedCredentialsCountFails() {
         chooseToSyncPasswords();
-        Exception expectedException =
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED);
+        Exception expectedException = new PasswordManagerUnavailableException();
         returnErrorWhenGettingBreachedCredentialsCount(expectedException);
 
         mPasswordManagerHelper.getBreachedCredentialsCount(
@@ -1113,8 +1017,7 @@ public class PasswordManagerCheckupHelperTest {
     @Test
     public void testRecordsErrorMetricsWhenGetWeakCredentialsCountFails() {
         chooseToSyncPasswords();
-        Exception expectedException =
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED);
+        Exception expectedException = new PasswordManagerUnavailableException();
         returnErrorWhenGettingWeakCredentialsCount(expectedException);
 
         mPasswordManagerHelper.getWeakCredentialsCount(
@@ -1127,8 +1030,7 @@ public class PasswordManagerCheckupHelperTest {
     @Test
     public void testRecordsErrorMetricsWhenGetReusedCredentialsCountFails() {
         chooseToSyncPasswords();
-        Exception expectedException =
-                new PasswordCheckBackendException("", CredentialManagerError.UNCATEGORIZED);
+        Exception expectedException = new PasswordManagerUnavailableException();
         returnErrorWhenGettingReusedCredentialsCount(expectedException);
 
         mPasswordManagerHelper.getReusedCredentialsCount(
@@ -1140,8 +1042,6 @@ public class PasswordManagerCheckupHelperTest {
 
     @Test
     public void testShowDownloadCsvDialogIfCsvIsPresentAndPwmNotAvailable() {
-        // The dialog exists only if the login db deprecation is enabled.
-        assumeTrue(mIsLoginDbDeprecationEnabled);
         when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
         when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
                         eq(mPrefService), eq(true)))
@@ -1150,7 +1050,7 @@ public class PasswordManagerCheckupHelperTest {
         LoginDbDeprecationUtilBridge.setHasCsvFileForTesting(true);
 
         FragmentActivity testActivity =
-                Robolectric.buildActivity(BrowserUiDummyFragmentActivity.class).setup().get();
+                Robolectric.buildActivity(BrowserUiTestFragmentActivity.class).setup().get();
         setUpUpdatableGmsCore(testActivity);
 
         PasswordCsvDownloadFlowController mockController =
@@ -1174,8 +1074,6 @@ public class PasswordManagerCheckupHelperTest {
 
     @Test
     public void testShowDownloadCsvDialogIfCsvIsPresentAndNoGms() {
-        // The dialog exists only if the login db deprecation is enabled.
-        assumeTrue(mIsLoginDbDeprecationEnabled);
         when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
         when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
                         eq(mPrefService), eq(true)))
@@ -1184,7 +1082,7 @@ public class PasswordManagerCheckupHelperTest {
         LoginDbDeprecationUtilBridge.setHasCsvFileForTesting(true);
 
         FragmentActivity testActivity =
-                Robolectric.buildActivity(BrowserUiDummyFragmentActivity.class).setup().get();
+                Robolectric.buildActivity(BrowserUiTestFragmentActivity.class).setup().get();
 
         PasswordCsvDownloadFlowController mockController =
                 mock(PasswordCsvDownloadFlowController.class);
@@ -1207,8 +1105,6 @@ public class PasswordManagerCheckupHelperTest {
 
     @Test
     public void testShowPwmUnavailableDialogNoCsvNoGms() {
-        // The dialog exists only if the login db deprecation is enabled.
-        assumeTrue(mIsLoginDbDeprecationEnabled);
         when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
         when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
                         eq(mPrefService), eq(true)))
@@ -1217,7 +1113,7 @@ public class PasswordManagerCheckupHelperTest {
         LoginDbDeprecationUtilBridge.setHasCsvFileForTesting(false);
 
         FragmentActivity testActivity =
-                Robolectric.buildActivity(BrowserUiDummyFragmentActivity.class).setup().get();
+                Robolectric.buildActivity(BrowserUiTestFragmentActivity.class).setup().get();
 
         mPasswordManagerHelper.showPasswordCheckup(
                 testActivity,
@@ -1228,18 +1124,12 @@ public class PasswordManagerCheckupHelperTest {
         PropertyModel dialogModel = mModalDialogManager.getCurrentDialogForTest();
         assertNotNull(dialogModel);
         assertEquals(
-                testActivity
-                        .getResources()
-                        .getString(
-                                org.chromium.chrome.browser.access_loss.R.string
-                                        .pwm_disabled_no_gms_dialog_title),
+                testActivity.getResources().getString(R.string.pwm_disabled_no_gms_dialog_title),
                 dialogModel.get(ModalDialogProperties.TITLE));
     }
 
     @Test
     public void testShowPwmUnavailableDialogNoCsvUpdatableGms() {
-        // The dialog exists only if the login db deprecation is enabled.
-        assumeTrue(mIsLoginDbDeprecationEnabled);
         when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
         when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
                         eq(mPrefService), eq(true)))
@@ -1248,7 +1138,7 @@ public class PasswordManagerCheckupHelperTest {
         LoginDbDeprecationUtilBridge.setHasCsvFileForTesting(false);
 
         FragmentActivity testActivity =
-                Robolectric.buildActivity(BrowserUiDummyFragmentActivity.class).setup().get();
+                Robolectric.buildActivity(BrowserUiTestFragmentActivity.class).setup().get();
         setUpUpdatableGmsCore(testActivity);
         mPasswordManagerHelper.showPasswordCheckup(
                 testActivity,
@@ -1259,11 +1149,7 @@ public class PasswordManagerCheckupHelperTest {
         PropertyModel dialogModel = mModalDialogManager.getCurrentDialogForTest();
         assertNotNull(dialogModel);
         assertEquals(
-                testActivity
-                        .getResources()
-                        .getString(
-                                org.chromium.chrome.browser.access_loss.R.string
-                                        .access_loss_update_gms_title),
+                testActivity.getResources().getString(R.string.access_loss_update_gms_title),
                 dialogModel.get(ModalDialogProperties.TITLE));
     }
 
@@ -1274,10 +1160,6 @@ public class PasswordManagerCheckupHelperTest {
                 .thenReturn(
                         CoreAccountInfo.createFromEmailAndGaiaId(
                                 TEST_EMAIL_ADDRESS, new GaiaId("0")));
-        // Set the adequate PasswordManagerUtilBridge response for shouldUseUpmWiring for a syncing
-        // user.
-        when(mPasswordManagerUtilBridgeJniMock.shouldUseUpmWiring(mSyncServiceMock, mPrefService))
-                .thenReturn(true);
     }
 
     private void setUpSuccessfulCheckupIntentFetching(PendingIntent intent, String accountEmail) {
@@ -1289,10 +1171,7 @@ public class PasswordManagerCheckupHelperTest {
                         })
                 .when(mPasswordCheckupClientHelperMock)
                 .getPasswordCheckupIntent(
-                        anyInt(),
-                        eq(accountEmail == null ? Optional.empty() : Optional.of(accountEmail)),
-                        any(Callback.class),
-                        any(Callback.class));
+                        anyInt(), eq(accountEmail), any(Callback.class), any(Callback.class));
     }
 
     private void returnErrorWhenFetchingIntentForPasswordCheckup(
@@ -1305,10 +1184,7 @@ public class PasswordManagerCheckupHelperTest {
                         })
                 .when(mPasswordCheckupClientHelperMock)
                 .getPasswordCheckupIntent(
-                        anyInt(),
-                        eq(accountEmail == null ? Optional.empty() : Optional.of(accountEmail)),
-                        any(Callback.class),
-                        any(Callback.class));
+                        anyInt(), eq(accountEmail), any(Callback.class), any(Callback.class));
     }
 
     private void setUpSuccessfulRunPasswordCheckup() {

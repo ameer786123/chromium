@@ -5,8 +5,13 @@
 #include "components/signin/public/base/signin_switches.h"
 
 #include "base/feature_list.h"
+#include "base/time/time.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/base/signin_pref_names.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "base/win/windows_version.h"
+#endif
 
 namespace switches {
 
@@ -17,21 +22,26 @@ BASE_FEATURE(kCctSignInPrompt,
              "CctSignInPrompt",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Migrate usages of USM flag to force child account sign-in to use the account
-// capability `IsSubjectToParentalControls`.
-BASE_FEATURE(kForceSupervisedSigninWithCapabilities,
-             "ForceSupervisedSigninWithCapabilities",
+BASE_FEATURE(kForceHistoryOptInScreen,
+             "ForceHistoryOptInScreen",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Add history sync opt-in promo in the History Page.
-BASE_FEATURE(kHistoryPageHistorySyncPromo,
-             "HistoryPageHistorySyncPromo",
+// Enables a history sync educational tip in the magic stack on NTP.
+BASE_FEATURE(kHistoryOptInEducationalTip,
+             "HistoryOptInEducationalTip",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Makes the History Page history opt-in promo use a different CTA String.
-// No-op unless "HistoryPageHistorySyncPromo" is enabled.
-BASE_FEATURE(kHistoryPagePromoCtaStringVariation,
-             "HistoryPagePromoCtaStringVariation",
+// Determines which text should be shown on the history sync educational tip
+// button. No-op unless HistoryOptInEducationalTip is enabled.
+const base::FeatureParam<int> kHistoryOptInEducationalTipVariation(
+    &kHistoryOptInEducationalTip,
+    "history_opt_in_educational_tip_param",
+    0);
+
+// When enabled a new library is used to fetch accounts via
+// AccountManagerAccountManagerDelegate
+BASE_FEATURE(kMigrateAccountManagerDelegate,
+             "MigrateAccountManagerDelegate",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Feature to bypass double-checking that signin callers have correctly gotten
@@ -43,46 +53,56 @@ BASE_FEATURE(kSkipCheckForAccountManagementOnSignin,
              "SkipCheckForAccountManagementOnSignin",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kUnoForAuto, "UnoForAuto", base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kUnoForAuto, "UnoForAuto", base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kUseHostedDomainForManagementCheckOnSignin,
              "UseHostedDomainForManagementCheckOnSignin",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kMakeAccountsAvailableInIdentityManager,
+             "MakeAccountsAvailableInIdentityManager",
              base::FEATURE_DISABLED_BY_DEFAULT);
-#endif
+
+BASE_FEATURE(kSmartEmailLineBreaking,
+             "SmartEmailLineBreaking",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Killswitch for the support of AddSession in web sign-in flow.
+BASE_FEATURE(kSupportWebSigninAddSession,
+             "SupportWebSigninAddSession",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 // Enables the History Sync Opt-in on Desktop.
 BASE_FEATURE(kEnableHistorySyncOptin,
              "EnableHistorySyncOptin",
              base::FEATURE_DISABLED_BY_DEFAULT);
+// Enables the History Sync Opt-in from the tab helper entry point.
+BASE_FEATURE(kEnableHistorySyncOptinFromTabHelper,
+             "EnableHistorySyncOptinFromTabHelper",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
+// Move the step of browser Signin into the Sync header processing logic.
+// This flag is meant to be used as a kill switch, as the feature starts enabled
+// by default.
+BASE_FEATURE(kBrowserSigninInSyncHeaderOnGaiaIntegration,
+             "BrowserSigninInSyncHeaderOnGaiaIntegration",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+// Whether we re-try showing the signing in interception bubble if the Dice
+// sync header does not arrive within a time window from the LST token.
+// This flag is meant to be used as a kill switch, as the feature starts enabled
+// by default.
+BASE_FEATURE(kRetryInterceptionBubbleOnDiceSyncHeaderTimeout,
+             "RetryInterceptionBubbleOnDiceSyncHeaderTimeout",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 // Enables the History Sync Opt-in expansion pill on Desktop.
 BASE_FEATURE(kEnableHistorySyncOptinExpansionPill,
              "EnableHistorySyncOptinExpansionPill",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-constexpr base::FeatureParam<HistorySyncOptinExpansionPillOption>::Option
-    kHistorySyncOptinExpansionPillOptions[] = {
-        {HistorySyncOptinExpansionPillOption::kBrowseAcrossDevices,
-         "browse-across-devices"},
-        {HistorySyncOptinExpansionPillOption::kSyncHistory, "sync-history"},
-        {HistorySyncOptinExpansionPillOption::kSeeTabsFromOtherDevices,
-         "see-tabs-from-other-devices"},
-        {HistorySyncOptinExpansionPillOption::kSyncHistoryProfileMenu,
-         "sync-history-profile-menu"}};
-
-// Determines the experiment arm of the History Sync Opt-in expansion pill (it
-// can be either a different text or a different action after the pill is
-// clicked).
-// It is no-op unless "EnableHistorySyncOptin" is enabled.
-constexpr base::FeatureParam<HistorySyncOptinExpansionPillOption>
-    kHistorySyncOptinExpansionPillOption = {
-        &kEnableHistorySyncOptinExpansionPill,
-        "history-sync-optin-expansion-pill-option",
-        HistorySyncOptinExpansionPillOption::kBrowseAcrossDevices,
-        &kHistorySyncOptinExpansionPillOptions};
 
 // Force enable the default browser step in the first run experience on Desktop.
 const char kForceFreDefaultBrowserStep[] = "force-fre-default-browser-step";
@@ -92,11 +112,23 @@ const char kForceFreDefaultBrowserStep[] = "force-fre-default-browser-step";
 // expiration of credentials during testing.
 const char kClearTokenService[] = "clear-token-service";
 
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+BASE_FEATURE(kWebSigninLeadsToImplicitlySignedInState,
+             "WebSigninLeadsToImplicitlySignedInState",
+             // THIS IS A TEST-ONLY FLAG AND SHOULD NEVER BE ENABLED.
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 // Enable experimental binding session credentials to the device.
 BASE_FEATURE(kEnableBoundSessionCredentials,
              "EnableBoundSessionCredentials",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+#if BUILDFLAG(IS_WIN)
+             base::FEATURE_ENABLED_BY_DEFAULT
+#else
+             base::FEATURE_DISABLED_BY_DEFAULT
+#endif
+);
 
 bool IsBoundSessionCredentialsEnabled(const PrefService* profile_prefs) {
   // Enterprise policy takes precedence over the feature value.
@@ -124,10 +156,22 @@ const base::FeatureParam<std::string>
     kEnableBoundSessionCredentialsExclusiveRegistrationPath{
         &kEnableBoundSessionCredentials, "exclusive-registration-path", ""};
 
+// Allows to disable the bound session credentials code in case of emergency.
+BASE_FEATURE(kBoundSessionCredentialsKillSwitch,
+             "BoundSessionCredentialsKillSwitch",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
 // Enables Chrome refresh tokens binding to a device.
 BASE_FEATURE(kEnableChromeRefreshTokenBinding,
              "EnableChromeRefreshTokenBinding",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+#if BUILDFLAG(IS_WIN)
+             base::FEATURE_ENABLED_BY_DEFAULT
+#else
+             base::FEATURE_DISABLED_BY_DEFAULT
+#endif
+);
 
 bool IsChromeRefreshTokenBindingEnabled(const PrefService* profile_prefs) {
   // Enterprise policy takes precedence over the feature value.
@@ -138,36 +182,35 @@ bool IsChromeRefreshTokenBindingEnabled(const PrefService* profile_prefs) {
   return base::FeatureList::IsEnabled(kEnableChromeRefreshTokenBinding);
 }
 
-// Allows to disable the bound session credentials code in case of emergency.
-BASE_FEATURE(kBoundSessionCredentialsKillSwitch,
-             "BoundSessionCredentialsKillSwitch",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 // When enabled, Chrome will always use the /IssueToken endpoint to fetch access
 // tokens, no matter if a refresh token is bound or not.
 BASE_FEATURE(kUseIssueTokenToFetchAccessTokens,
              "UseIssueTokenToFetchAccessTokens",
              base::FEATURE_DISABLED_BY_DEFAULT);
-#endif
+
+// Enables binding the OAuthMultilogin cookies to a device.
+BASE_FEATURE(kEnableOAuthMultiloginCookiesBinding,
+             "EnableOAuthMultiloginCookiesBinding",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 BASE_FEATURE(kEnablePreferencesAccountStorage,
              "EnablePreferencesAccountStorage",
-#if BUILDFLAG(IS_IOS) || BUILDFLAG(IS_ANDROID)
-             base::FEATURE_ENABLED_BY_DEFAULT
-#else
+#if BUILDFLAG(IS_CHROMEOS)
              base::FEATURE_DISABLED_BY_DEFAULT
-#endif
+#else
+             base::FEATURE_ENABLED_BY_DEFAULT
+#endif  // BUILDFLAG(IS_CHROMEOS)
 );
-
-// This feature disables all extended sync promos.
-BASE_FEATURE(kForceDisableExtendedSyncPromos,
-             "ForceDisableExtendedSyncPromos",
-             base::FEATURE_DISABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 // Features to trigger the startup sign-in promo at boot.
 BASE_FEATURE(kForceStartupSigninPromo,
              "ForceStartupSigninPromo",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kFullscreenSignInPromoUseDate,
+             "FullscreenSignInPromoUseDate",
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
@@ -175,38 +218,39 @@ BASE_FEATURE(kInterceptBubblesDismissibleByAvatarButton,
              "InterceptBubblesDismissibleByAvatarButton",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kImprovedSigninUIOnDesktop,
-             "ImprovedSigninUIOnDesktop",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
 
-bool IsImprovedSigninUIOnDesktopEnabled() {
-  return base::FeatureList::IsEnabled(kImprovedSigninUIOnDesktop);
-}
-
-BASE_FEATURE(kImprovedSettingsUIOnDesktop,
-             "ImprovedSettingsUIOnDesktop",
-#if BUILDFLAG(IS_CHROMEOS)
-             base::FEATURE_DISABLED_BY_DEFAULT
-#else
-             base::FEATURE_ENABLED_BY_DEFAULT
-#endif
-);
-
-bool IsImprovedSettingsUIOnDesktopEnabled() {
-  return base::FeatureList::IsEnabled(kImprovedSettingsUIOnDesktop);
-}
-
-BASE_FEATURE(kEnableSnackbarInSettings,
-             "EnableSnackbarInSettings",
+BASE_FEATURE(kOfferMigrationToDiceUsers,
+             "OfferMigrationToDiceUsers",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kEnableImprovedGuestProfileMenu,
-             "EnableImprovedGuestProfileMenu",
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kOfferMigrationToDiceUsersMinDelay,
+                   &kOfferMigrationToDiceUsers,
+                   "offer_migration_to_dice_users_min_delay",
+                   base::Seconds(30));
+
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kOfferMigrationToDiceUsersMaxDelay,
+                   &kOfferMigrationToDiceUsers,
+                   "offer_migration_to_dice_users_max_delay",
+                   base::Minutes(5));
+
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kOfferMigrationToDiceUsersMinTimeBetweenDialogs,
+                   &kOfferMigrationToDiceUsers,
+                   "offer_migration_to_dice_users_min_time_between_dialogs",
+                   base::Days(7));
+
+BASE_FEATURE(kRollbackDiceMigration,
+             "RollbackDiceMigration",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kEnablePendingModePasswordsPromo,
-             "EnablePendingModePasswordsPromo",
+BASE_FEATURE(kForcedDiceMigration,
+             "ForcedDiceMigration",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 #if BUILDFLAG(IS_IOS)
 
@@ -220,18 +264,21 @@ BASE_FEATURE(kEnableErrorBadgeOnIdentityDisc,
 
 BASE_FEATURE(kEnableASWebAuthenticationSession,
              "EnableASWebAuthenticationSession",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-#endif
-
-// Enables showing the enterprise dialog after every signin into a managed
-// account.
-BASE_FEATURE(kShowEnterpriseDialogForAllManagedAccountsSignin,
-             "ShowEnterpriseDialogForAllManagedAccountsSignin",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kAllowlistScopesForMdmErrors,
+             "AllowlistScopesForMdmErrors",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kSupportAddSessionEmailPrefill,
+             "SupportAddSessionEmailPrefill",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+#endif
 
 BASE_FEATURE(kEnableExtensionsExplicitBrowserSignin,
              "EnableExtensionsExplicitBrowserSignin",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 bool IsExtensionsExplicitBrowserSigninEnabled() {
   return base::FeatureList::IsEnabled(kEnableExtensionsExplicitBrowserSignin);
@@ -246,11 +293,127 @@ BASE_FEATURE(kSyncEnableBookmarksInTransportMode,
 #endif  // BUILDFLAG(IS_IOS)
 );
 
-BASE_FEATURE(kDeferWebSigninTrackerCreation,
-             "DeferWebSigninTrackerCreation",
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+BASE_FEATURE(kSignInPromoMaterialNextUI,
+             "SignInPromoMaterialNextUI",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveyAddressBubbleSignin,
+             "ChromeIdentitySurveyAddressBubbleSignin",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveyDiceWebSigninAccepted,
+             "ChromeIdentitySurveyDiceWebSigninAccepted",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveyDiceWebSigninDeclined,
+             "ChromeIdentitySurveyDiceWebSigninDeclined",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveyFirstRunSignin,
+             "ChromeIdentitySurveyFirstRunSignin",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveyPasswordBubbleSignin,
+             "ChromeIdentitySurveyPasswordBubbleSignin",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveyProfileMenuDismissed,
+             "ChromeIdentitySurveyProfileMenuDismissed",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveyProfileMenuSignin,
+             "ChromeIdentitySurveyProfileMenuSignin",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveyProfilePickerAddProfileSignin,
+             "ChromeIdentitySurveyProfilePickerAddProfileSignin",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveySigninInterceptProfileSeparation,
+             "ChromeIdentitySurveySigninInterceptProfileSeparation",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveySigninPromoBubbleDismissed,
+             "ChromeIdentitySurveySigninPromoBubbleDismissed",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveySwitchProfileFromProfileMenu,
+             "ChromeIdentitySurveySwitchProfileFromProfileMenu",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveySwitchProfileFromProfilePicker,
+             "ChromeIdentitySurveySwitchProfileFromProfilePicker",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kChromeIdentitySurveyLaunchWithDelay,
+             "ChromeIdentitySurveyLaunchWithDelay",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-}  // namespace switches
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kChromeIdentitySurveyLaunchWithDelayDuration,
+                   &kChromeIdentitySurveyLaunchWithDelay,
+                   "launch_delay_duration",
+                   base::Milliseconds(3000));
+
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+// Enables the management disclaimer for managed signed profiles. All signed in
+// profiles that never saw the management disclaimer will be shown the
+// management disclaimer when they open Chrome. Every time the primary signed in
+// account changes to a managed account, the management disclaimer will be
+// shown. This is only for desktop platforms.
+BASE_FEATURE(kEnforceManagementDisclaimer,
+             "EnforceManagementDisclaimer",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+#if BUILDFLAG(IS_WIN)
+// Enables expanding the Avatar Pill to show a sync promo. Expected to be used
+// by Windows users only.
+BASE_FEATURE(kAvatarButtonSyncPromo,
+             "AvatarButtonSyncPromo",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kAvatarButtonSyncPromoMinimumCookieAgeParam,
+                   &kAvatarButtonSyncPromo,
+                   "minimum-cookie-age",
+                   base::Days(14));
+#endif
+// Convenient testing flag for `kAvatarButtonSyncPromo` on all platforms.
+// Also reduces the minimum cookie age to 30 seconds.
+BASE_FEATURE(kAvatarButtonSyncPromoForTesting,
+             "AvatarButtonSyncPromoForTesting",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsAvatarSyncPromoFeatureEnabled() {
+  if (base::FeatureList::IsEnabled(
+          switches::kAvatarButtonSyncPromoForTesting)) {
+    return true;
+  }
+#if BUILDFLAG(IS_WIN)
+  return (base::win::GetVersion() >= base::win::Version::WIN7 &&
+          base::win::GetVersion() <= base::win::Version::WIN10_22H2) &&
+         base::FeatureList::IsEnabled(switches::kAvatarButtonSyncPromo);
+#else
+  return false;
+#endif
+}
+
+base::TimeDelta GetAvatarSyncPromoFeatureMinimumCookeAgeParam() {
+  CHECK(IsAvatarSyncPromoFeatureEnabled());
+
+  if (base::FeatureList::IsEnabled(
+          switches::kAvatarButtonSyncPromoForTesting)) {
+    return base::Seconds(30);
+  }
+#if BUILDFLAG(IS_WIN)
+  return kAvatarButtonSyncPromoMinimumCookieAgeParam.Get();
+#else
+  NOTREACHED();
+#endif
+}
 
 #if BUILDFLAG(IS_CHROMEOS)
 // Enables the generation of pseudo-stable per-user per-device device
@@ -261,19 +424,9 @@ BASE_FEATURE(kStableDeviceId,
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if BUILDFLAG(ENABLE_MIRROR) && !BUILDFLAG(IS_IOS)
-BASE_FEATURE(kVerifyRequestInitiatorForMirrorHeaders,
-             "VerifyRequestInitiatorForMirrorHeaders",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-#endif  // BUILDFLAG(ENABLE_MIRROR) && !BUILDFLAG(IS_IOS)
-
 BASE_FEATURE(kProfilesReordering,
              "ProfilesReordering",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kOutlineSilhouetteIcon,
-             "OutlineSilhouetteIcon",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_ANDROID)
 BASE_FEATURE(kIgnoreMirrorHeadersInBackgoundTabs,
@@ -284,3 +437,5 @@ BASE_FEATURE(kIgnoreMirrorHeadersInBackgoundTabs,
 BASE_FEATURE(kNonDefaultGaiaOriginCheck,
              "NonDefaultGaiaOriginCheck",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+}  // namespace switches

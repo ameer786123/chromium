@@ -20,7 +20,7 @@
 #include "cc/paint/skia_paint_canvas.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
-#include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
+#include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_capabilities.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/ipc/common/surface_handle.h"
@@ -31,6 +31,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/video_capture/public/mojom/video_frame_handler.mojom.h"
+#include "services/video_effects/public/cpp/buildflags.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "ui/aura/env.h"
 #include "ui/compositor/compositor.h"
@@ -422,11 +423,13 @@ void FakeCameraDevice::CreatePushSubscription(
       requested_settings);
 }
 
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
 void FakeCameraDevice::RegisterVideoEffectsProcessor(
     mojo::PendingRemote<video_effects::mojom::VideoEffectsProcessor> remote) {}
 
 void FakeCameraDevice::RegisterReadonlyVideoEffectsManager(
     mojo::PendingRemote<media::mojom::ReadonlyVideoEffectsManager> remote) {}
+#endif
 
 void FakeCameraDevice::OnFinishedConsumingBuffer(int32_t buffer_id) {
   auto iter = buffer_pool_.find(buffer_id);

@@ -377,8 +377,7 @@
   }
 
   window.test_driver_internal.get_fedcm_dialog_title = async function() {
-    // TODO(crbug.com/331237005): Return a subtitle, if we have one.
-    return {title: await internals.getFedCmTitle()};
+    return internals.getFedCmTitleAndSubtitle();
   }
 
   window.test_driver_internal.select_fedcm_account = async function(account_index) {
@@ -426,13 +425,17 @@
   }
 
   window.test_driver_internal.update_virtual_pressure_source = function(
-      source_type, sample) {
-    return internals.updateVirtualPressureSource(source_type, sample);
+      source_type, state, own_contribution_estimate = -1.0) {
+    return internals.updateVirtualPressureSource(source_type, state, own_contribution_estimate);
   }
 
   window.test_driver_internal.remove_virtual_pressure_source = function(
       source_type) {
     return internals.removeVirtualPressureSource(source_type);
+  }
+
+  window.test_driver_internal.set_protected_audience_k_anonymity = function(owner, name, hashes) {
+    return internals.setProtectedAudienceKAnonymity(owner, name, hashes);
   }
 
   // Enable automation so we don't wait for user input on unimplemented APIs

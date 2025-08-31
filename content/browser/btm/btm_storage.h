@@ -24,7 +24,10 @@ class GURL;
 
 namespace content {
 
-// Manages the storage of BtmState values.
+// Manages the storage of `BtmState` values in the BTM database.
+//
+// This class is not thread-safe and should only be used on the sequence it was
+// created on.
 class CONTENT_EXPORT BtmStorage {
  public:
   explicit BtmStorage(const std::optional<base::FilePath>& path);
@@ -58,20 +61,25 @@ class CONTENT_EXPORT BtmStorage {
 
   // DIPS Helper Method Impls --------------------------------------------------
 
-  // Record that |url| wrote to storage.
-  void RecordStorage(const GURL& url, base::Time time, BtmCookieMode mode);
-  // Record that there was a user activation on |url|.
-  void RecordUserActivation(const GURL& url,
-                            base::Time time,
-                            BtmCookieMode mode);
-  void RecordWebAuthnAssertion(const GURL& url,
-                               base::Time time,
-                               BtmCookieMode mode);
+  // Record that `url` wrote to storage.
+  void RecordStorage(const GURL& url, base::Time time);
+  // Record that there was a user activation on `url`.
+  void RecordUserActivation(const GURL& url, base::Time time);
+  void RecordWebAuthnAssertion(const GURL& url, base::Time time);
   // Record that |url| redirected the user and whether it was |stateful|,
   // meaning that |url| wrote to storage while redirecting.
   void RecordBounce(const GURL& url, base::Time time, bool stateful);
 
   // Storage querying Methods --------------------------------------------------
+
+  // Returns two subsets of sites in `sites` with a protective event recorded.
+  // A protective event is a user activation or successful WebAuthn assertion.
+  //
+  // The first item in the return value contains the sites that had a user
+  // activation, and the second item contains the sites that had a WebAuthn
+  // assertion.
+  std::pair<std::set<std::string>, std::set<std::string>>
+  FilterSitesWithProtectiveEvent(const std::set<std::string>& sites) const;
 
   // Returns the subset of sites in |sites| WITHOUT a protective event recorded.
   // A protective event is a user activation or successful WebAuthn assertion.
@@ -82,16 +90,7 @@ class CONTENT_EXPORT BtmStorage {
   std::vector<std::string> GetSitesThatBounced(
       base::TimeDelta grace_period) const;
 
-  // Returns all sites that did a stateful bounce that aren't protected from
-  // DIPS.
-  std::vector<std::string> GetSitesThatBouncedWithState(
-      base::TimeDelta grace_period) const;
-
-  // Returns all sites which use storage that aren't protected from DIPS.
-  std::vector<std::string> GetSitesThatUsedStorage(
-      base::TimeDelta grace_period) const;
-
-  // Returns the list of sites that should have their state cleared by DIPS. How
+  // Returns the list of sites that should have their state cleared by BTM. How
   // these sites are determined is controlled by the value of
   // `features::kBtmTriggeringAction`. Passing a non-NULL `grace_period`
   // parameter overrides the use of `features::kBtmGracePeriod` when

@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/core/editing/commands/typing_command.h"
 
+#include "base/trace_event/trace_event.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
@@ -115,6 +116,7 @@ DispatchEventResult DispatchTextInputEvent(LocalFrame* frame,
 }
 
 PlainTextRange GetSelectionOffsets(const SelectionInDOMTree& selection) {
+  TRACE_EVENT0("blink", "GetSelectionOffsets");
   const EphemeralRange range = selection.ComputeRange();
   if (range.IsNull())
     return PlainTextRange();
@@ -194,8 +196,9 @@ TypingCommand::TypingCommand(Document& document,
                              const String& text_to_insert,
                              Options options,
                              TextGranularity granularity,
-                             TextCompositionType composition_type)
-    : CompositeEditCommand(document),
+                             TextCompositionType composition_type,
+                             DataTransfer* data_transfer)
+    : CompositeEditCommand(document, data_transfer),
       command_type_(command_type),
       text_to_insert_(text_to_insert),
       open_for_more_typing_(true),
@@ -380,7 +383,9 @@ void TypingCommand::InsertText(
     EditingState* editing_state,
     TextCompositionType composition_type,
     const bool is_incremental_insertion,
-    InputEvent::InputType input_type) {
+    InputEvent::InputType input_type,
+    DataTransfer* data_transfer) {
+  TRACE_EVENT0("blink", "TypingCommand::InsertText");
   DCHECK(!document.NeedsLayoutTreeUpdate());
   LocalFrame* frame = document.GetFrame();
   DCHECK(frame);
@@ -457,7 +462,7 @@ void TypingCommand::InsertText(
 
   TypingCommand* command = MakeGarbageCollected<TypingCommand>(
       document, kInsertText, new_text, options, TextGranularity::kCharacter,
-      composition_type);
+      composition_type, data_transfer);
   const SelectionInDOMTree& current_selection =
       frame->Selection().GetSelectionInDOMTree();
   bool change_selection =

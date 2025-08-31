@@ -19,7 +19,7 @@ class ActiveTabObserver;
 
 class PageLiveStateDecoratorHelper
     : public MediaStreamCaptureIndicator::Observer,
-      public PerformanceManagerObserverDefaultImpl,
+      public PerformanceManagerObserver,
       public content::DevToolsAgentHostObserver {
  public:
   PageLiveStateDecoratorHelper();
@@ -36,6 +36,8 @@ class PageLiveStateDecoratorHelper
                                  bool is_capturing_audio) override;
   void OnIsBeingMirroredChanged(content::WebContents* contents,
                                 bool is_being_mirrored) override;
+  void OnIsCapturingTabChanged(content::WebContents* contents,
+                               bool is_capturing_tab) override;
   void OnIsCapturingWindowChanged(content::WebContents* contents,
                                   bool is_capturing_window) override;
   void OnIsCapturingDisplayChanged(content::WebContents* contents,

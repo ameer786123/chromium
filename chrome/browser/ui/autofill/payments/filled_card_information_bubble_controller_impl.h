@@ -34,7 +34,7 @@ class FilledCardInformationBubbleControllerImpl
       const FilledCardInformationBubbleControllerImpl&) = delete;
 
   // Show the bubble view.
-  void ShowBubble(const FilledCardInformationBubbleOptions& options);
+  void SetupAndShowBubble(const FilledCardInformationBubbleOptions& options);
 
   // Invoked when the omnibox icon is clicked.
   void ReshowBubble();
@@ -60,8 +60,13 @@ class FilledCardInformationBubbleControllerImpl
   void OnFieldClicked(FilledCardInformationBubbleField field) override;
   bool ShouldShowGooglePayIconInTitle() const override;
   std::u16string GetMaskedCardNameForDescriptionView() const override;
-  gfx::Image GetCardImageForDescriptionView() const override;
+  std::pair<ui::ImageModel, std::optional<ui::ImageModel>>
+  GetCardImageForDescriptionView() const override;
   bool EducationalBodyHasLearnMoreLink() const override;
+
+  // BubbleControllerBase:
+  BubbleType GetBubbleType() const override;
+  base::WeakPtr<BubbleControllerBase> GetBubbleControllerBaseWeakPtr() override;
 
  protected:
   explicit FilledCardInformationBubbleControllerImpl(
@@ -77,6 +82,15 @@ class FilledCardInformationBubbleControllerImpl
   friend class content::WebContentsUserData<
       FilledCardInformationBubbleControllerImpl>;
   friend class FilledCardInformationBubbleViewsInteractiveUiTest;
+
+  // If the bubble manager is enabled, requests the manager to show the bubble
+  // or if it is disabled, shows the bubble.
+  void RequestShowBubble();
+
+  // Initializes the state for the filled card information bubble. This includes
+  // setting the bubble's content options and resetting flags related to user
+  // interaction and visibility.
+  void SetupBubbleState(FilledCardInformationBubbleOptions options);
 
   // Updates the system clipboard with the |text|.
   void UpdateClipboard(const std::u16string& text) const;

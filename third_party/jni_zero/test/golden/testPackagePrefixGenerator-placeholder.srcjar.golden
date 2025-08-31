@@ -10,12 +10,11 @@ package org.jni_zero;
 
 public interface SampleForTests {
   public interface AnnotationWithNamedNonStringParam {}
-  public interface SomeAnnotation {}
   public interface AnotherAnnotation {}
+  public interface InnerEnum {}
+  public interface InnerInterface {}
   public interface InnerStructA {}
   public interface InnerStructB {}
-  public interface InnerInterface {}
-  public interface InnerEnum {}
   public interface Natives {
     public void addStructB(long nativeCPPClass, org.jni_zero.SampleForTests caller, org.jni_zero.SampleForTests.InnerStructB b);
     public void classUnderSamePackageTest(org.jni_zero.SampleUnderSamePackage arg);
@@ -33,8 +32,11 @@ public interface SampleForTests {
     public double methodOtherP0(long nativePtr, org.jni_zero.SampleForTests caller);
     public boolean[] primitiveArrays(byte[] b, char[] c, short[] s, int[] i, long[] l, float[] f, double[] d);
     public String returnAString(long nativeCPPClass, org.jni_zero.SampleForTests caller);
+    public int returnFromEnum();
     public void setNonPODDatatype(org.jni_zero.SampleForTests obj, android.graphics.Rect rect);
   }
+  public interface SomeAnnotation {}
+  public interface TestDuplicateClassName {}
 }
 
 

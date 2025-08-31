@@ -26,8 +26,11 @@
 #include "chrome/test/base/testing_profile.h"
 #include "components/crx_file/id_util.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/permissions_manager.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_features.h"
@@ -36,6 +39,8 @@
 #include "extensions/test/permissions_manager_waiter.h"
 #include "extensions/test/test_extension_dir.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extension_test_util::LoadManifest;
 using extensions::mojom::APIPermissionID;
@@ -967,8 +972,8 @@ TEST_F(PermissionsUpdaterTestWithEnhancedHostControls,
   }
 
   // Note that the PermissionsManger requires the extension to be in the
-  // ExtensionRegistry, so add it through the ExtensionService.
-  service()->AddExtension(extension.get());
+  // ExtensionRegistry, so add it through the ExtensionRegistrar.
+  registrar()->AddExtension(extension);
 
   const GURL first_url("http://first.example");
   const GURL second_url("http://second.example");

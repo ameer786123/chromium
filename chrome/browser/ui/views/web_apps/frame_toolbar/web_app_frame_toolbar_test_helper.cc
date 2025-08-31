@@ -10,6 +10,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/notreached.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -197,7 +198,7 @@ base::Value::List WebAppFrameToolbarTestHelper::GetXYWidthHeightListValue(
     const std::string& rect_value_list,
     const std::string& rect_var_name) {
   EXPECT_TRUE(ExecJs(web_contents->GetPrimaryMainFrame(), rect_value_list));
-  return EvalJs(web_contents, rect_var_name).ExtractList();
+  return EvalJs(web_contents, rect_var_name).TakeValue().TakeList();
 }
 
 gfx::Rect WebAppFrameToolbarTestHelper::GetXYWidthHeightRect(

@@ -19,6 +19,7 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/ash/app_restore/full_restore_prefs.h"
 #include "chrome/browser/ash/app_restore/full_restore_service_factory.h"
+#include "chrome/browser/ash/floating_workspace/floating_workspace_util.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/first_run/first_run.h"
@@ -481,6 +482,17 @@ TEST_F(FullRestoreServiceTest, Upgrading) {
   EXPECT_FALSE(CanPerformRestore(account_id()));
 }
 
+// Full restore is disabled if Floating Workspace is enabled.
+TEST_F(FullRestoreServiceTest, NoServiceWithFloatingWorkspace) {
+  profile()->GetTestingPrefService()->SetManagedPref(
+      ash::prefs::kFloatingWorkspaceV2Enabled,
+      std::make_unique<base::Value>(true));
+  ASSERT_TRUE(ash::floating_workspace_util::IsFloatingWorkspaceV2Enabled());
+  FullRestoreService* service =
+      FullRestoreServiceFactory::GetForProfile(profile());
+  EXPECT_EQ(nullptr, service);
+}
+
 class FullRestoreServiceTestHavingFullRestoreFile
     : public FullRestoreServiceTest {
  public:
@@ -804,6 +816,19 @@ TEST_F(ForestFullRestoreServiceMultipleUsersTest,
       .Times(0);
   full_restore_service->OnTransitionedToNewActiveUser(profile());
   VerifyRestoreInitSettingHistogram(RestoreOption::kAskEveryTime, 2);
+}
+
+// If the welcome recap switch is disabled for factory testing, don't show the
+// informed restore dialog.
+TEST_F(FullRestoreServiceTest, DisableWelcomeRecapForFactoryTest) {
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kDisableWelcomeRecapForFactoryTest);
+
+  auto mock_delegate = std::make_unique<MockFullRestoreServiceDelegate>();
+  EXPECT_CALL(*mock_delegate,
+              MaybeStartInformedRestoreOverviewSession(testing::_))
+      .Times(0);
+  CreateFullRestoreServiceForTesting(std::move(mock_delegate));
 }
 
 }  // namespace ash::full_restore

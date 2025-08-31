@@ -6,31 +6,120 @@
 
 #include <stdint.h>
 
-#include <memory>
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
 #include <optional>
+#include <string_view>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "services/device/public/mojom/screen_orientation_lock_types.mojom-data-view.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/safe_url_pattern.h"
+#include "third_party/blink/public/mojom/manifest/display_mode.mojom-data-view.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-blink.h"
-#include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-shared.h"
+#include "third_party/blink/public/mojom/manifest/manifest_launch_handler.mojom-blink.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_impl.h"
+#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_uchar.h"
-#include "third_party/liburlpattern/pattern.h"
+#include "third_party/liburlpattern/part.h"
 
 namespace blink {
 
+using liburlpattern::PartType;
+using testing::AllOf;
+using testing::Field;
+
 namespace {
+
 bool IsManifestEmpty(const mojom::blink::ManifestPtr& manifest) {
   return manifest == mojom::blink::Manifest::New();
 }
+
+// Holds values to be compared against a `SafeUrlPattern`. See also the
+// `PatternDataEq` matcher.
+struct UrlPatternData {
+  // Represents either a `liburlpattern::Part::value` or a
+  // `liburlpattern::Part::type`.
+  using ValueOrType = std::variant<std::string_view, PartType>;
+
+  // The fields below correspond to the fields of `SafeUrlPattern`.
+  std::vector<ValueOrType> protocol;
+  std::vector<ValueOrType> username;
+  std::vector<ValueOrType> password;
+  std::vector<ValueOrType> hostname;
+  std::vector<ValueOrType> port;
+  std::vector<ValueOrType> pathname;
+  std::vector<ValueOrType> search;
+  std::vector<ValueOrType> hash;
+};
+
+// Matcher to compare a `liburlpattern::Part` to a `ValueOrType`.
+testing::Matcher<const liburlpattern::Part&> PatternPartEq(
+    const UrlPatternData::ValueOrType& value_or_type) {
+  // The docs in `liburlpattern::Part::value` explain the relationship between
+  // different `part` types and values. Refer to those docs for details.
+  return std::visit(
+      absl::Overload(
+          // When `value_or_type` is a string value, expect `part` has the same
+          // `value` and its type is `kFixed`.
+          [](const std::string_view value) {
+            return AllOf(
+                Field("type", &liburlpattern::Part::type, PartType::kFixed),
+                Field("value", &liburlpattern::Part::value, value));
+          },
+          // Otherwise, expect `part` has the same `type` and an empty value.
+          [](const PartType type) {
+            return AllOf(Field("type", &liburlpattern::Part::type, type),
+                         Field("value", &liburlpattern::Part::value, ""));
+          }),
+      value_or_type);
+}
+
+// Returns a list of matchers for `values` using `PatternDataEq`.
+std::vector<testing::Matcher<const liburlpattern::Part&>> PatternDataMatchers(
+    const std::vector<UrlPatternData::ValueOrType>& values) {
+  std::vector<testing::Matcher<const liburlpattern::Part&>> result;
+  std::ranges::transform(values, std::back_inserter(result), &PatternPartEq);
+  return result;
+}
+
+// Matches a `SafeUrlPattern` by the values and types of its parts against the
+// given `expected` data.
+testing::Matcher<const SafeUrlPattern&> PatternDataEq(
+    const UrlPatternData& expected) {
+  using testing::ElementsAreArray;
+  return AllOf(Field("protocol", &SafeUrlPattern::protocol,
+                     ElementsAreArray(PatternDataMatchers(expected.protocol))),
+               Field("username", &SafeUrlPattern::username,
+                     ElementsAreArray(PatternDataMatchers(expected.username))),
+               Field("password", &SafeUrlPattern::password,
+                     ElementsAreArray(PatternDataMatchers(expected.password))),
+               Field("hostname", &SafeUrlPattern::hostname,
+                     ElementsAreArray(PatternDataMatchers(expected.hostname))),
+               Field("port", &SafeUrlPattern::port,
+                     ElementsAreArray(PatternDataMatchers(expected.port))),
+               Field("pathname", &SafeUrlPattern::pathname,
+                     ElementsAreArray(PatternDataMatchers(expected.pathname))),
+               Field("search", &SafeUrlPattern::search,
+                     ElementsAreArray(PatternDataMatchers(expected.search))),
+               Field("hash", &SafeUrlPattern::hash,
+                     ElementsAreArray(PatternDataMatchers(expected.hash))));
+}
+
 }  // namespace
 
 class ManifestParserTest : public SimTest {
@@ -39,8 +128,8 @@ class ManifestParserTest : public SimTest {
   ManifestParserTest& operator=(const ManifestParserTest&) = delete;
 
  protected:
-  ManifestParserTest() {}
-  ~ManifestParserTest() override {}
+  ManifestParserTest() = default;
+  ~ManifestParserTest() override = default;
 
   mojom::blink::ManifestPtr& ParseManifestWithURLs(const String& data,
                                                    const KURL& manifest_url,
@@ -52,8 +141,9 @@ class ManifestParserTest : public SimTest {
     parser.TakeErrors(&errors);
 
     errors_.clear();
-    for (auto& error : errors)
+    for (auto& error : errors) {
       errors_.push_back(std::move(error->message));
+    }
     manifest_ = parser.TakeManifest();
     EXPECT_TRUE(manifest_);
     return manifest_;
@@ -88,25 +178,6 @@ class ManifestParserTest : public SimTest {
     expected_manifest->id.RemoveFragmentIdentifier();
     expected_manifest->scope = KURL(document_url.BaseAsString().ToString());
     return manifest == expected_manifest;
-  }
-
-  void VerifySafeUrlPatternSizes(const SafeUrlPattern& pattern,
-                                 size_t protocol_size,
-                                 size_t username_size,
-                                 size_t password_size,
-                                 size_t hostname_size,
-                                 size_t port_size,
-                                 size_t pathname_size,
-                                 size_t search_size,
-                                 size_t hash_size) {
-    EXPECT_EQ(pattern.protocol.size(), protocol_size);
-    EXPECT_EQ(pattern.username.size(), username_size);
-    EXPECT_EQ(pattern.password.size(), password_size);
-    EXPECT_EQ(pattern.hostname.size(), hostname_size);
-    EXPECT_EQ(pattern.port.size(), port_size);
-    EXPECT_EQ(pattern.pathname.size(), pathname_size);
-    EXPECT_EQ(pattern.search.size(), search_size);
-    EXPECT_EQ(pattern.hash.size(), hash_size);
   }
 
  private:
@@ -957,7 +1028,6 @@ TEST_F(ManifestParserTest, DisplayParseRules) {
 }
 
 TEST_F(ManifestParserTest, DisplayOverrideParseRules) {
-
   // Smoke test: if no display_override, no value.
   {
     auto& manifest = ParseManifest(R"({ "display_override": [] })");
@@ -3599,6 +3669,8 @@ TEST_F(ManifestParserTest, ScopeExtensionParseRules) {
 
   // Parse origin with wildcard.
   {
+    base::test::ScopedFeatureList inner_feature_list(
+        blink::features::kWebAppEnableScopeExtensionsBySite);
     auto& manifest = ParseManifest(R"({
           "scope_extensions": [
             {
@@ -3617,6 +3689,8 @@ TEST_F(ManifestParserTest, ScopeExtensionParseRules) {
 
   // Parse invalid origin wildcard format.
   {
+    base::test::ScopedFeatureList inner_feature_list(
+        blink::features::kWebAppEnableScopeExtensionsBySite);
     auto& manifest = ParseManifest(R"({
           "scope_extensions": [
             {
@@ -3635,6 +3709,8 @@ TEST_F(ManifestParserTest, ScopeExtensionParseRules) {
 
   // Parse origin where the host is just the wildcard prefix.
   {
+    base::test::ScopedFeatureList inner_feature_list(
+        blink::features::kWebAppEnableScopeExtensionsBySite);
     auto& manifest = ParseManifest(R"({
           "scope_extensions": [
             {
@@ -3654,6 +3730,8 @@ TEST_F(ManifestParserTest, ScopeExtensionParseRules) {
 
   // Parse invalid origin where wildcard is used with a TLD.
   {
+    base::test::ScopedFeatureList inner_feature_list(
+        blink::features::kWebAppEnableScopeExtensionsBySite);
     auto& manifest = ParseManifest(R"({
           "scope_extensions": [
             {
@@ -3673,6 +3751,8 @@ TEST_F(ManifestParserTest, ScopeExtensionParseRules) {
 
   // Parse invalid origin where wildcard is used with an unknown TLD.
   {
+    base::test::ScopedFeatureList inner_feature_list(
+        blink::features::kWebAppEnableScopeExtensionsBySite);
     auto& manifest = ParseManifest(R"({
           "scope_extensions": [
             {
@@ -3692,6 +3772,8 @@ TEST_F(ManifestParserTest, ScopeExtensionParseRules) {
 
   // Parse invalid origin where wildcard is used with a multipart TLD.
   {
+    base::test::ScopedFeatureList inner_feature_list(
+        blink::features::kWebAppEnableScopeExtensionsBySite);
     auto& manifest = ParseManifest(R"({
           "scope_extensions": [
             {
@@ -3711,6 +3793,8 @@ TEST_F(ManifestParserTest, ScopeExtensionParseRules) {
 
   // Parse valid origin with private registry.
   {
+    base::test::ScopedFeatureList inner_feature_list(
+        blink::features::kWebAppEnableScopeExtensionsBySite);
     auto& manifest = ParseManifest(R"({
           "scope_extensions": [
             {
@@ -5968,49 +6052,25 @@ TEST_F(ManifestParserTest, TabStripHomeTabScopeParseRules) {
   {
     auto& manifest = ParseManifest(R"({
         "tab_strip": {
-          "home_tab": {"scope_patterns":
-            [{"protocol": "ftp"}, {"hostname": "bar.com"},
-            {"protocol": "ftp", "hostname": "bar.com"}]}} })");
+          "home_tab": {
+            "scope_patterns": [
+              { "protocol": "ftp" },
+              { "hostname": "bar.com" },
+              { "protocol": "ftp", "hostname": "bar.com" }
+            ]
+          }
+        }
+      })");
     EXPECT_FALSE(manifest->tab_strip.is_null());
     EXPECT_TRUE(GetDocument().Loader()->GetUseCounter().IsCounted(
         WebFeature::kWebAppManifestTabStrip));
     EXPECT_FALSE(manifest->tab_strip->home_tab->is_visibility());
-    EXPECT_EQ(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns.size(), 3u);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[0], 1, 0, 0,
-        0, 0, 0, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[1], 1, 0, 0,
-        1, 0, 0, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[2], 1, 0, 0,
-        1, 0, 0, 0, 0);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[0]
-                  .protocol[0]
-                  .value,
-              "ftp");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .protocol[0]
-                  .value,
-              "http");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .hostname[0]
-                  .value,
-              "bar.com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .protocol[0]
-                  .value,
-              "ftp");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .hostname[0]
-                  .value,
-              "bar.com");
+    EXPECT_THAT(
+        manifest->tab_strip->home_tab->get_params()->scope_patterns,
+        ElementsAre(
+            PatternDataEq({.protocol = {"ftp"}}),
+            PatternDataEq({.protocol = {"http"}, .hostname = {"bar.com"}}),
+            PatternDataEq({.protocol = {"ftp"}, .hostname = {"bar.com"}})));
 
     EXPECT_EQ(0u, GetErrorCount());
   }
@@ -6020,130 +6080,35 @@ TEST_F(ManifestParserTest, TabStripHomeTabScopeParseRules) {
   {
     auto& manifest = ParseManifestWithURLs(
         R"({
-        "tab_strip": {
-          "home_tab": {"scope_patterns":
-            [{"pathname": "foo"}, {"pathname": "foo/bar/"},
-            {"pathname": "/foo/"}, {"pathname": "/foo/bar/"}]
-          }} })",
+          "tab_strip": {
+            "home_tab": {
+              "scope_patterns": [
+                { "pathname": "foo" },
+                { "pathname": "foo/bar/" },
+                { "pathname": "/foo/" },
+                { "pathname": "/foo/bar/" }
+              ]
+            }
+          }
+        })",
         KURL("http://foo.com/static/manifest.json"), DefaultDocumentUrl());
     EXPECT_FALSE(manifest->tab_strip.is_null());
     EXPECT_TRUE(GetDocument().Loader()->GetUseCounter().IsCounted(
         WebFeature::kWebAppManifestTabStrip));
     EXPECT_FALSE(manifest->tab_strip->home_tab->is_visibility());
-    EXPECT_EQ(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns.size(), 4u);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[0], 1, 0, 0,
-        1, 0, 1, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[1], 1, 0, 0,
-        1, 0, 1, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[2], 1, 0, 0,
-        1, 0, 1, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[3], 1, 0, 0,
-        1, 0, 1, 0, 0);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[0]
-                  .protocol[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[0]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[0]
-                  .hostname[0]
-                  .value,
-              "foo.com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[0]
-                  .pathname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[0]
-                  .pathname[0]
-                  .value,
-              "/static/foo");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .protocol[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .hostname[0]
-                  .value,
-              "foo.com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .pathname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .pathname[0]
-                  .value,
-              "/static/foo/bar/");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .protocol[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .hostname[0]
-                  .value,
-              "foo.com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .pathname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .pathname[0]
-                  .value,
-              "/foo/");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .protocol[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .hostname[0]
-                  .value,
-              "foo.com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .pathname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .pathname[0]
-                  .value,
-              "/foo/bar/");
+    EXPECT_THAT(manifest->tab_strip->home_tab->get_params()->scope_patterns,
+                ElementsAre(PatternDataEq({.protocol = {"http"},
+                                           .hostname = {"foo.com"},
+                                           .pathname = {"/static/foo"}}),
+                            PatternDataEq({.protocol = {"http"},
+                                           .hostname = {"foo.com"},
+                                           .pathname = {"/static/foo/bar/"}}),
+                            PatternDataEq({.protocol = {"http"},
+                                           .hostname = {"foo.com"},
+                                           .pathname = {"/foo/"}}),
+                            PatternDataEq({.protocol = {"http"},
+                                           .hostname = {"foo.com"},
+                                           .pathname = {"/foo/bar/"}})));
 
     EXPECT_EQ(0u, GetErrorCount());
   }
@@ -6152,97 +6117,37 @@ TEST_F(ManifestParserTest, TabStripHomeTabScopeParseRules) {
   {
     auto& manifest = ParseManifest(R"({
         "tab_strip": {
-          "home_tab": {"scope_patterns":
-            [{"protocol": "ftp", "baseURL": "https://www.bar.com"},
-            {"hostname": "bar.com", "baseURL": "https://foobar.com"},
-            {"pathname": "/foo/bar/", "baseURL": "https://bar.com"},
-            // Invalid (expect to be discarded).
-            {"pathname": "/foobar/", "baseURL": "notaurl"},
-            {"pathname": "bar", "baseURL": "https://bar.com/foo"},
-            {"pathname": "bar", "baseURL": "https://bar.com/foo/"}
-          ]}}
-         })");
+          "home_tab": {
+            "scope_patterns": [
+              { "protocol": "ftp", "baseURL": "https://www.bar.com" },
+              { "hostname": "bar.com", "baseURL": "https://foobar.com" },
+              { "pathname": "/foo/bar/", "baseURL": "https://bar.com" },
+              // Invalid (expect to be discarded).
+              { "pathname": "/foobar/", "baseURL": "notaurl" },
+              { "pathname": "bar", "baseURL": "https://bar.com/foo" },
+              { "pathname": "bar", "baseURL": "https://bar.com/foo/" }
+            ]
+          }
+        }
+      })");
     EXPECT_FALSE(manifest->tab_strip.is_null());
     EXPECT_TRUE(GetDocument().Loader()->GetUseCounter().IsCounted(
         WebFeature::kWebAppManifestTabStrip));
     EXPECT_FALSE(manifest->tab_strip->home_tab->is_visibility());
-    EXPECT_EQ(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns.size(), 5u);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[0], 1, 0, 0,
-        0, 0, 0, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[1], 1, 0, 0,
-        1, 0, 0, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[2], 1, 0, 0,
-        1, 0, 1, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[3], 1, 0, 0,
-        1, 0, 1, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[4], 1, 0, 0,
-        1, 0, 1, 0, 0);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[0]
-                  .protocol[0]
-                  .value,
-              "ftp");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .protocol[0]
-                  .value,
-              "https");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .hostname[0]
-                  .value,
-              "bar.com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .protocol[0]
-                  .value,
-              "https");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .hostname[0]
-                  .value,
-              "bar.com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .pathname[0]
-                  .value,
-              "/foo/bar/");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .protocol[0]
-                  .value,
-              "https");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .hostname[0]
-                  .value,
-              "bar.com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .pathname[0]
-                  .value,
-              "/bar");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .protocol[0]
-                  .value,
-              "https");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .hostname[0]
-                  .value,
-              "bar.com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .pathname[0]
-                  .value,
-              "/foo/bar");
+
+    EXPECT_THAT(manifest->tab_strip->home_tab->get_params()->scope_patterns,
+                ElementsAre(PatternDataEq({.protocol = {"ftp"}}),
+                            PatternDataEq({.protocol = {"https"},
+                                           .hostname = {"bar.com"}}),
+                            PatternDataEq({.protocol = {"https"},
+                                           .hostname = {"bar.com"},
+                                           .pathname = {"/foo/bar/"}}),
+                            PatternDataEq({.protocol = {"https"},
+                                           .hostname = {"bar.com"},
+                                           .pathname = {"/bar"}}),
+                            PatternDataEq({.protocol = {"https"},
+                                           .hostname = {"bar.com"},
+                                           .pathname = {"/foo/bar"}})));
 
     EXPECT_EQ(1u, GetErrorCount());
   }
@@ -6251,121 +6156,56 @@ TEST_F(ManifestParserTest, TabStripHomeTabScopeParseRules) {
   {
     auto& manifest = ParseManifest(R"({
         "tab_strip": {
-          "home_tab": {"scope_patterns":
-            [{"pathname": "*"}, {"pathname": ":foo"}, {"pathname": "/foo/*"},
-            {"pathname": "/foo/*/bar"}, {"pathname": "/foo/:bar"},
-            {"pathname": "/foo/:bar/*"}]}}
-        })");
+          "home_tab": {
+            "scope_patterns": [
+              { "pathname": "*" },
+              { "pathname": ":foo" },
+              { "pathname": "/foo/*" },
+              { "pathname": "/foo/*/bar" },
+              { "pathname": "/foo/:bar" },
+              { "pathname": "/foo/:bar/*" }
+            ]
+          }
+        }
+      })");
     EXPECT_FALSE(manifest->tab_strip.is_null());
     EXPECT_TRUE(GetDocument().Loader()->GetUseCounter().IsCounted(
         WebFeature::kWebAppManifestTabStrip));
     EXPECT_FALSE(manifest->tab_strip->home_tab->is_visibility());
-    EXPECT_EQ(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns.size(), 6u);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[0], 1, 0, 0,
-        1, 0, 1, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[1], 1, 0, 0,
-        1, 0, 1, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[2], 1, 0, 0,
-        1, 0, 2, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[3], 1, 0, 0,
-        1, 0, 3, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[4], 1, 0, 0,
-        1, 0, 2, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[5], 1, 0, 0,
-        1, 0, 3, 0, 0);
 
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[0]
-                  .pathname[0]
-                  .type,
-              liburlpattern::PartType::kFullWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .pathname[0]
-                  .type,
-              liburlpattern::PartType::kSegmentWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .pathname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .pathname[0]
-                  .value,
-              "/foo");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .pathname[1]
-                  .type,
-              liburlpattern::PartType::kFullWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .pathname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .pathname[0]
-                  .value,
-              "/foo");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .pathname[1]
-                  .type,
-              liburlpattern::PartType::kFullWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .pathname[2]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .pathname[2]
-                  .value,
-              "/bar");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .pathname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .pathname[0]
-                  .value,
-              "/foo");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .pathname[1]
-                  .type,
-              liburlpattern::PartType::kSegmentWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[5]
-                  .pathname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[5]
-                  .pathname[0]
-                  .value,
-              "/foo");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[5]
-                  .pathname[1]
-                  .type,
-              liburlpattern::PartType::kSegmentWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[5]
-                  .pathname[2]
-                  .type,
-              liburlpattern::PartType::kFullWildcard);
+    EXPECT_THAT(
+        manifest->tab_strip->home_tab->get_params()->scope_patterns,
+        ElementsAre(PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"foo.com"},
+                        .pathname = {PartType::kFullWildcard},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"foo.com"},
+                        .pathname = {PartType::kSegmentWildcard},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"foo.com"},
+                        .pathname = {"/foo", PartType::kFullWildcard},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"foo.com"},
+                        .pathname = {"/foo", PartType::kFullWildcard, "/bar"},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"foo.com"},
+                        .pathname = {"/foo", PartType::kSegmentWildcard},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"foo.com"},
+                        .pathname = {"/foo", PartType::kSegmentWildcard,
+                                     PartType::kFullWildcard},
+                    })));
 
     EXPECT_EQ(0u, GetErrorCount());
   }
@@ -6374,154 +6214,55 @@ TEST_F(ManifestParserTest, TabStripHomeTabScopeParseRules) {
   {
     auto& manifest = ParseManifest(R"({
         "tab_strip": {
-          "home_tab": {"scope_patterns":
-            [{"hostname": "*"}, {"hostname": "bar.com"}, {"hostname": "bar*.com"},
-            {"hostname": "bar.*"}, {"hostname": "bar.*.com"},
-            {"hostname": "foo.:bar.*"}, {"hostname": "*.com"}]}}
-        })");
+          "home_tab": {
+            "scope_patterns": [
+              { "hostname": "*" },
+              { "hostname": "bar.com" },
+              { "hostname": "bar*.com" },
+              { "hostname": "bar.*" },
+              { "hostname": "bar.*.com" },
+              { "hostname": "foo.:bar.*" },
+              { "hostname": "*.com" }
+            ]
+          }
+        }
+      })");
     EXPECT_FALSE(manifest->tab_strip.is_null());
     EXPECT_TRUE(GetDocument().Loader()->GetUseCounter().IsCounted(
         WebFeature::kWebAppManifestTabStrip));
     EXPECT_FALSE(manifest->tab_strip->home_tab->is_visibility());
-    EXPECT_EQ(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns.size(), 7u);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[0], 1, 0, 0,
-        1, 0, 0, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[1], 1, 0, 0,
-        1, 0, 0, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[2], 1, 0, 0,
-        3, 0, 0, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[3], 1, 0, 0,
-        2, 0, 0, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[4], 1, 0, 0,
-        3, 0, 0, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[5], 1, 0, 0,
-        3, 0, 0, 0, 0);
-    VerifySafeUrlPatternSizes(
-        manifest->tab_strip->home_tab->get_params()->scope_patterns[6], 1, 0, 0,
-        2, 0, 0, 0, 0);
 
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[0]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFullWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[1]
-                  .hostname[0]
-                  .value,
-              "bar.com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .hostname[0]
-                  .value,
-              "bar");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .hostname[1]
-                  .type,
-              liburlpattern::PartType::kFullWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .hostname[2]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[2]
-                  .hostname[2]
-                  .value,
-              ".com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .hostname[0]
-                  .value,
-              "bar");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[3]
-                  .hostname[1]
-                  .type,
-              liburlpattern::PartType::kFullWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .hostname[0]
-                  .value,
-              "bar");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .hostname[1]
-                  .type,
-              liburlpattern::PartType::kFullWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .hostname[2]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[4]
-                  .hostname[2]
-                  .value,
-              ".com");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[5]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[5]
-                  .hostname[0]
-                  .value,
-              "foo");
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[5]
-                  .hostname[1]
-                  .type,
-              liburlpattern::PartType::kSegmentWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[5]
-                  .hostname[2]
-                  .type,
-              liburlpattern::PartType::kFullWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[6]
-                  .hostname[0]
-                  .type,
-              liburlpattern::PartType::kFullWildcard);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[6]
-                  .hostname[1]
-                  .type,
-              liburlpattern::PartType::kFixed);
-    EXPECT_EQ(manifest->tab_strip->home_tab->get_params()
-                  ->scope_patterns[6]
-                  .hostname[1]
-                  .value,
-              ".com");
+    EXPECT_THAT(
+        manifest->tab_strip->home_tab->get_params()->scope_patterns,
+        ElementsAre(PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {PartType::kFullWildcard},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"bar.com"},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"bar", PartType::kFullWildcard, ".com"},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"bar", PartType::kFullWildcard},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"bar", PartType::kFullWildcard, ".com"},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {"foo", PartType::kSegmentWildcard,
+                                     PartType::kFullWildcard},
+                    }),
+                    PatternDataEq({
+                        .protocol = {"http"},
+                        .hostname = {PartType::kFullWildcard, ".com"},
+                    })));
 
     EXPECT_EQ(0u, GetErrorCount());
   }
@@ -6605,97 +6346,617 @@ TEST_F(ManifestParserTest, VersionParseRules) {
   }
 }
 
-TEST_F(ManifestParserTest, UpdateTokenParseRules) {
-  // update_token is not parsed when manifest id is not specified
+TEST_F(ManifestParserTest, NameLocalizedParseRules) {
+  // Smoke test.
   {
-    auto& manifest = ParseManifest(R"({"update_token": "foo" })");
-    EXPECT_TRUE(manifest->update_token.IsNull());
-    EXPECT_NE(manifest->update_token, "foo");
-    EXPECT_FALSE(GetDocument().IsWebDXFeatureCounted(
-        WebDXFeature::kWebAppManifestUpdateToken));
+    auto& manifest = ParseManifest(R"({
+      "name_localized": {
+        "en": "English Name",
+        "es": "Nombre en Español"
+      }
+    })");
+    EXPECT_FALSE(manifest->name_localized.empty());
+    EXPECT_EQ(manifest->name_localized.size(), 2u);
+    EXPECT_TRUE(manifest->name_localized.Contains("en"));
+    EXPECT_TRUE(manifest->name_localized.Contains("es"));
+    EXPECT_EQ(manifest->name_localized.find("en")->value->value,
+              "English Name");
+    EXPECT_EQ(manifest->name_localized.find("es")->value->value,
+              "Nombre en Español");
     EXPECT_EQ(0u, GetErrorCount());
   }
 
-  // update_token is not parsed when manifest id is not specified by the
-  // developer and uses the default value.
+  // Smoke test: object format.
   {
-    auto& manifest = ParseManifest(R"({ "id": "", "update_token": "foo" })");
-    EXPECT_TRUE(manifest->update_token.IsNull());
-    EXPECT_NE(manifest->update_token, "foo");
-    EXPECT_FALSE(GetDocument().IsWebDXFeatureCounted(
-        WebDXFeature::kWebAppManifestUpdateToken));
+    auto& manifest = ParseManifest(R"({
+      "name_localized": {
+        "en": {
+          "value": "English Name",
+          "lang": "en-US",
+          "dir": "ltr"
+        },
+        "ar": {
+          "value": "اسم عربي",
+          "lang": "ar",
+          "dir": "rtl"
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->name_localized.empty());
+    EXPECT_EQ(manifest->name_localized.size(), 2u);
+    EXPECT_EQ(manifest->name_localized.find("en")->value->value,
+              "English Name");
+    EXPECT_EQ(manifest->name_localized.find("en")->value->lang, "en-US");
+    EXPECT_EQ(manifest->name_localized.find("en")->value->dir,
+              mojom::blink::Manifest::TextDirection::kLTR);
+    EXPECT_EQ(manifest->name_localized.find("ar")->value->value, "اسم عربي");
+    EXPECT_EQ(manifest->name_localized.find("ar")->value->lang, "ar");
+    EXPECT_EQ(manifest->name_localized.find("ar")->value->dir,
+              mojom::blink::Manifest::TextDirection::kRTL);
     EXPECT_EQ(0u, GetErrorCount());
   }
 
-  // update_token is valid but not parsed since the manifest id is invalid.
+  // Trim whitespaces.
   {
-    auto& manifest = ParseManifest(R"({ "id": 42, "update_token": "foo" })");
-    EXPECT_TRUE(manifest->update_token.IsNull());
-    EXPECT_NE(manifest->update_token, "foo");
-    EXPECT_FALSE(GetDocument().IsWebDXFeatureCounted(
-        WebDXFeature::kWebAppManifestUpdateToken));
-    // 1 error since `id` will be ignored as this is not a string.
+    auto& manifest = ParseManifest(R"({
+      "name_localized": {
+        "en": "  English Name  ",
+        "es": {
+          "value": "  Nombre en Español  ",
+          "lang": "  es-ES  "
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->name_localized.empty());
+    EXPECT_EQ(manifest->name_localized.find("en")->value->value,
+              "English Name");
+    EXPECT_EQ(manifest->name_localized.find("es")->value->value,
+              "Nombre en Español");
+    EXPECT_EQ(manifest->name_localized.find("es")->value->lang, "es-ES");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Test stripping out of \t \r and \n.
+  {
+    auto& manifest = ParseManifest(R"({
+      "name_localized": {
+        "en": "\t\r\nEnglish Name\t\r\n",
+        "es": {
+          "value": "\t\r\nNombre en Español\t\r\n",
+          "lang": "\t\r\nes-ES\t\r\n"
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->name_localized.empty());
+    EXPECT_EQ(manifest->name_localized.find("en")->value->value,
+              "English Name");
+    EXPECT_EQ(manifest->name_localized.find("es")->value->value,
+              "Nombre en Español");
+    EXPECT_EQ(manifest->name_localized.find("es")->value->lang, "es-ES");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Empty values are ignored.
+  {
+    auto& manifest = ParseManifest(R"({
+      "name_localized": {
+        "en": "",
+        "es": "Valid Name",
+        "fr": {
+          "value": "",
+          "lang": "fr"
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->name_localized.empty());
+    EXPECT_EQ(manifest->name_localized.size(), 1u);
+    EXPECT_TRUE(manifest->name_localized.Contains("es"));
+    EXPECT_EQ(manifest->name_localized.find("es")->value->value, "Valid Name");
     EXPECT_EQ(1u, GetErrorCount());
   }
 
-  // update_token is valid but not parsed since the manifest id is a json
-  // (malformed input).
+  // Non-string and non-object values are ignored.
   {
-    auto& manifest = ParseManifest(R"({ "id": {}, "update_token": "foo" })");
-    EXPECT_TRUE(manifest->update_token.IsNull());
-    EXPECT_NE(manifest->update_token, "foo");
-    EXPECT_FALSE(GetDocument().IsWebDXFeatureCounted(
-        WebDXFeature::kWebAppManifestUpdateToken));
-    // 1 error since `id` will be ignored as this is not a string.
+    auto& manifest = ParseManifest(R"({
+      "name_localized": {
+        "en": "Valid Name",
+        "es": 42,
+        "fr": null,
+        "de": ["array", "value"]
+      }
+    })");
+    EXPECT_FALSE(manifest->name_localized.empty());
+    EXPECT_EQ(manifest->name_localized.size(), 1u);
+    EXPECT_TRUE(manifest->name_localized.Contains("en"));
+    EXPECT_EQ(manifest->name_localized.find("en")->value->value, "Valid Name");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Missing value in object format is ignored.
+  {
+    auto& manifest = ParseManifest(R"({
+      "name_localized": {
+        "en": {
+          "lang": "en-US",
+          "dir": "ltr"
+        },
+        "es": {
+          "value": "Valid Name",
+          "lang": "es"
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->name_localized.empty());
+    EXPECT_EQ(manifest->name_localized.size(), 1u);
+    EXPECT_TRUE(manifest->name_localized.Contains("es"));
+    EXPECT_EQ(manifest->name_localized.find("es")->value->value, "Valid Name");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Don't parse if name_localized isn't an object.
+  {
+    auto& manifest = ParseManifest(R"({ "name_localized": "not an object" })");
+    EXPECT_TRUE(manifest->name_localized.empty());
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Don't parse if name_localized is an array.
+  {
+    auto& manifest =
+        ParseManifest(R"({ "name_localized": ["array", "value"] })");
+    EXPECT_TRUE(manifest->name_localized.empty());
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+}
+
+TEST_F(ManifestParserTest, ShortNameLocalizedParseRules) {
+  // Smoke test.
+  {
+    auto& manifest = ParseManifest(R"({
+      "short_name_localized": {
+        "en": "Short",
+        "es": "Corto"
+      }
+    })");
+    EXPECT_FALSE(manifest->short_name_localized.empty());
+    EXPECT_EQ(manifest->short_name_localized.size(), 2u);
+    EXPECT_TRUE(manifest->short_name_localized.Contains("en"));
+    EXPECT_TRUE(manifest->short_name_localized.Contains("es"));
+    EXPECT_EQ(manifest->short_name_localized.find("en")->value->value, "Short");
+    EXPECT_EQ(manifest->short_name_localized.find("es")->value->value, "Corto");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Smoke test: object format.
+  {
+    auto& manifest = ParseManifest(R"({
+      "short_name_localized": {
+        "en": {
+          "value": "Short",
+          "lang": "en-US",
+          "dir": "ltr"
+        },
+        "ar": {
+          "value": "قصير",
+          "lang": "ar",
+          "dir": "rtl"
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->short_name_localized.empty());
+    EXPECT_EQ(manifest->short_name_localized.size(), 2u);
+    EXPECT_EQ(manifest->short_name_localized.find("en")->value->value, "Short");
+    EXPECT_EQ(manifest->short_name_localized.find("en")->value->lang, "en-US");
+    EXPECT_EQ(manifest->short_name_localized.find("en")->value->dir,
+              mojom::blink::Manifest::TextDirection::kLTR);
+    EXPECT_EQ(manifest->short_name_localized.find("ar")->value->value, "قصير");
+    EXPECT_EQ(manifest->short_name_localized.find("ar")->value->lang, "ar");
+    EXPECT_EQ(manifest->short_name_localized.find("ar")->value->dir,
+              mojom::blink::Manifest::TextDirection::kRTL);
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Trim whitespaces.
+  {
+    auto& manifest = ParseManifest(R"({
+      "short_name_localized": {
+        "en": "  Short  ",
+        "es": {
+          "value": "  Corto  ",
+          "lang": "  es-ES  "
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->short_name_localized.empty());
+    EXPECT_EQ(manifest->short_name_localized.find("en")->value->value, "Short");
+    EXPECT_EQ(manifest->short_name_localized.find("es")->value->value, "Corto");
+    EXPECT_EQ(manifest->short_name_localized.find("es")->value->lang, "es-ES");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Test stripping out of \t \r and \n.
+  {
+    auto& manifest = ParseManifest(R"({
+      "short_name_localized": {
+        "en": "\t\r\nShort\t\r\n",
+        "es": {
+          "value": "\t\r\nCorto\t\r\n",
+          "lang": "\t\r\nes-ES\t\r\n"
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->short_name_localized.empty());
+    EXPECT_EQ(manifest->short_name_localized.find("en")->value->value, "Short");
+    EXPECT_EQ(manifest->short_name_localized.find("es")->value->value, "Corto");
+    EXPECT_EQ(manifest->short_name_localized.find("es")->value->lang, "es-ES");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Empty values are ignored.
+  {
+    auto& manifest = ParseManifest(R"({
+      "short_name_localized": {
+        "en": "",
+        "es": "Valid",
+        "fr": {
+          "value": "",
+          "lang": "fr"
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->short_name_localized.empty());
+    EXPECT_EQ(manifest->short_name_localized.size(), 1u);
+    EXPECT_TRUE(manifest->short_name_localized.Contains("es"));
+    EXPECT_EQ(manifest->short_name_localized.find("es")->value->value, "Valid");
     EXPECT_EQ(1u, GetErrorCount());
   }
 
-  // update_token not specified in the manifest so it is not parsed.
+  // Don't parse if short_name_localized isn't an object.
   {
-    auto& manifest = ParseManifest(R"({"id": "foo", "version": "1.2.3" })");
-    EXPECT_TRUE(manifest->update_token.IsNull());
-    EXPECT_FALSE(GetDocument().IsWebDXFeatureCounted(
-        WebDXFeature::kWebAppManifestUpdateToken));
+    auto& manifest =
+        ParseManifest(R"({ "short_name_localized": "not an object" })");
+    EXPECT_TRUE(manifest->short_name_localized.empty());
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+}
+
+TEST_F(ManifestParserTest, DescriptionLocalizedParseRules) {
+  // Smoke test.
+  {
+    auto& manifest = ParseManifest(R"({
+      "description_localized": {
+        "en": "English description",
+        "es": "Descripción en español"
+      }
+    })");
+    EXPECT_FALSE(manifest->description_localized.empty());
+    EXPECT_EQ(manifest->description_localized.size(), 2u);
+    EXPECT_TRUE(manifest->description_localized.Contains("en"));
+    EXPECT_TRUE(manifest->description_localized.Contains("es"));
+    EXPECT_EQ(manifest->description_localized.find("en")->value->value,
+              "English description");
+    EXPECT_EQ(manifest->description_localized.find("es")->value->value,
+              "Descripción en español");
     EXPECT_EQ(0u, GetErrorCount());
   }
 
-  // update_token as an empty string is parsed and counted since it is not null.
+  // Smoke test: object format.
   {
-    auto& manifest = ParseManifest(R"({"id": "foo", "update_token": "" })");
-    EXPECT_FALSE(manifest->update_token.IsNull());
-    EXPECT_TRUE(manifest->update_token.empty());
+    auto& manifest = ParseManifest(R"({
+      "description_localized": {
+        "en": {
+          "value": "English description",
+          "lang": "en-US",
+          "dir": "ltr"
+        },
+        "ar": {
+          "value": "وصف عربي",
+          "lang": "ar",
+          "dir": "rtl"
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->description_localized.empty());
+    EXPECT_EQ(manifest->description_localized.size(), 2u);
+    EXPECT_EQ(manifest->description_localized.find("en")->value->value,
+              "English description");
+    EXPECT_EQ(manifest->description_localized.find("en")->value->lang, "en-US");
+    EXPECT_EQ(manifest->description_localized.find("en")->value->dir,
+              mojom::blink::Manifest::TextDirection::kLTR);
+    EXPECT_EQ(manifest->description_localized.find("ar")->value->value,
+              "وصف عربي");
+    EXPECT_EQ(manifest->description_localized.find("ar")->value->lang, "ar");
+    EXPECT_EQ(manifest->description_localized.find("ar")->value->dir,
+              mojom::blink::Manifest::TextDirection::kRTL);
     EXPECT_EQ(0u, GetErrorCount());
-    EXPECT_TRUE(GetDocument().IsWebDXFeatureCounted(
-        WebDXFeature::kWebAppManifestUpdateToken));
   }
 
-  // update_token specified in the manifest are parsed and increments use
-  // counter
+  // Trim whitespaces.
   {
-    auto& manifest = ParseManifest(R"({ "id": "foo", "update_token": "foo" })");
-    EXPECT_FALSE(manifest->update_token.IsNull());
-    EXPECT_EQ(manifest->update_token, "foo");
-    EXPECT_TRUE(GetDocument().IsWebDXFeatureCounted(
-        WebDXFeature::kWebAppManifestUpdateToken));
+    auto& manifest = ParseManifest(R"({
+      "description_localized": {
+        "en": "  English description  ",
+        "es": {
+          "value": "  Descripción en español  ",
+          "lang": "  es-ES  "
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->description_localized.empty());
+    EXPECT_EQ(manifest->description_localized.find("en")->value->value,
+              "English description");
+    EXPECT_EQ(manifest->description_localized.find("es")->value->value,
+              "Descripción en español");
+    EXPECT_EQ(manifest->description_localized.find("es")->value->lang, "es-ES");
     EXPECT_EQ(0u, GetErrorCount());
   }
 
-  // Don't parse if update_token is not a string (invalid data type).
+  // Empty values are ignored.
   {
-    auto& manifest = ParseManifest(R"({"id": "foo", "update_token": 42 })");
-    EXPECT_TRUE(manifest->update_token.IsNull());
-    ASSERT_EQ(1u, GetErrorCount());
-    EXPECT_EQ("property 'update_token' ignored, type string expected.",
+    auto& manifest = ParseManifest(R"({
+      "description_localized": {
+        "en": "",
+        "es": "Valid description",
+        "fr": {
+          "value": "",
+          "lang": "fr"
+        }
+      }
+    })");
+    EXPECT_FALSE(manifest->description_localized.empty());
+    EXPECT_EQ(manifest->description_localized.size(), 1u);
+    EXPECT_TRUE(manifest->description_localized.Contains("es"));
+    EXPECT_EQ(manifest->description_localized.find("es")->value->value,
+              "Valid description");
+    EXPECT_EQ(1u, GetErrorCount());
+  }
+
+  // Don't parse if description_localized isn't an object.
+  {
+    auto& manifest =
+        ParseManifest(R"({ "description_localized": "not an object" })");
+    EXPECT_TRUE(manifest->description_localized.empty());
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+}
+
+TEST_F(ManifestParserTest, IconsLocalizedParseRules) {
+  // Smoke test: if one icon with valid src, it will be present in the list.
+  {
+    auto& manifest = ParseManifest(R"({
+      "icons_localized": {
+        "en": [
+          { "src": "icon-en.png", "sizes": "32x32", "type": "image/png" }
+        ],
+        "es": [
+          { "src": "icon-es.png", "sizes": "32x32", "type": "image/png" }
+        ]
+      }
+    })");
+    EXPECT_FALSE(manifest->icons_localized.empty());
+    EXPECT_EQ(manifest->icons_localized.size(), 2u);
+    EXPECT_TRUE(manifest->icons_localized.Contains("en"));
+    EXPECT_TRUE(manifest->icons_localized.Contains("es"));
+    EXPECT_EQ(manifest->icons_localized.find("en")->value.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("es")->value.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->src.GetString(),
+              "http://foo.com/icon-en.png");
+    EXPECT_EQ(manifest->icons_localized.find("es")->value[0]->src.GetString(),
+              "http://foo.com/icon-es.png");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Smoke test: multiple icons per locale.
+  {
+    auto& manifest = ParseManifest(R"({
+      "icons_localized": {
+        "en": [
+          { "src": "icon-en-32.png", "sizes": "32x32", "type": "image/png" },
+          { "src": "icon-en-64.png", "sizes": "64x64", "type": "image/png" }
+        ],
+        "es": [
+          { "src": "icon-es-32.png", "sizes": "32x32", "type": "image/png" }
+        ]
+      }
+    })");
+    EXPECT_FALSE(manifest->icons_localized.empty());
+    EXPECT_EQ(manifest->icons_localized.size(), 2u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value.size(), 2u);
+    EXPECT_EQ(manifest->icons_localized.find("es")->value.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->src.GetString(),
+              "http://foo.com/icon-en-32.png");
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[1]->src.GetString(),
+              "http://foo.com/icon-en-64.png");
+    EXPECT_EQ(manifest->icons_localized.find("es")->value[0]->src.GetString(),
+              "http://foo.com/icon-es-32.png");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Test that empty icon arrays are ignored
+  {
+    auto& manifest = ParseManifest(R"({
+      "icons_localized": {
+        "en": [],
+        "es": [
+          { "src": "icon-es.png", "sizes": "32x32", "type": "image/png" }
+        ]
+      }
+    })");
+    EXPECT_FALSE(manifest->icons_localized.empty());
+    EXPECT_EQ(manifest->icons_localized.size(), 1u);
+    EXPECT_TRUE(manifest->icons_localized.Contains("es"));
+    EXPECT_FALSE(manifest->icons_localized.Contains("en"));
+    EXPECT_EQ(manifest->icons_localized.find("es")->value.size(), 1u);
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Smoke test: if empty icon, no value.
+  {
+    auto& manifest = ParseManifest(R"({
+      "icons_localized": {
+        "en": [ {} ],
+        "es": [
+          { "src": "icon-es.png", "sizes": "32x32", "type": "image/png" }
+        ]
+      }
+    })");
+    EXPECT_FALSE(manifest->icons_localized.empty());
+    EXPECT_EQ(manifest->icons_localized.size(), 1u);
+    EXPECT_TRUE(manifest->icons_localized.Contains("es"));
+    EXPECT_FALSE(manifest->icons_localized.Contains("en"));
+    EXPECT_EQ(manifest->icons_localized.find("es")->value.size(), 1u);
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Smoke test: icon with invalid src, no value.
+  {
+    auto& manifest = ParseManifest(R"({
+      "icons_localized": {
+        "en": [
+          { "icons": [] },
+          { "src": "valid-icon.png", "sizes": "32x32", "type": "image/png" }
+        ]
+      }
+    })");
+    EXPECT_FALSE(manifest->icons_localized.empty());
+    EXPECT_EQ(manifest->icons_localized.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->src.GetString(),
+              "http://foo.com/valid-icon.png");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Smoke test: if icon with empty src, it will be present in the list.
+  {
+    auto& manifest = ParseManifest(R"({
+      "icons_localized": {
+        "en": [ { "src": "" } ]
+      }
+    })");
+    EXPECT_FALSE(manifest->icons_localized.empty());
+    EXPECT_EQ(manifest->icons_localized.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->src.GetString(),
+              "http://foo.com/manifest.json");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Test icon src validation - non-string src property should cause icon to be
+  // ignored
+  {
+    auto& manifest = ParseManifest(R"({
+      "icons_localized": {
+        "en": [
+          { "src": {} },
+          { "src": "valid-icon.png" }
+        ]
+      }
+    })");
+    EXPECT_FALSE(manifest->icons_localized.empty());
+    EXPECT_EQ(manifest->icons_localized.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->src.GetString(),
+              "http://foo.com/valid-icon.png");
+    EXPECT_EQ(1u, GetErrorCount());
+    EXPECT_EQ("property 'src' ignored, type string expected.", errors()[0]);
+  }
+
+  // Test comprehensive icon with all properties
+  {
+    auto& manifest = ParseManifest(R"(
+        {
+          "icons_localized": {
+            "en": [
+              {
+                "src": "foo.webp",
+                "type": "image/webp",
+                "sizes": "192x192"
+              },
+              {
+                "src": "foo.svg",
+                "type": "image/svg+xml",
+                "sizes": "144x144"
+              }
+            ]
+          }
+        }
+      )");
+    EXPECT_FALSE(manifest->icons_localized.empty());
+    EXPECT_EQ(manifest->icons_localized.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value.size(), 2u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->src,
+              KURL(DefaultDocumentUrl(), "foo.webp"));
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->type,
+              "image/webp");
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->sizes.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->sizes[0].width(),
+              192);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->sizes[0].height(),
+              192);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[1]->src,
+              KURL(DefaultDocumentUrl(), "foo.svg"));
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[1]->type,
+              "image/svg+xml");
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[1]->sizes.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[1]->sizes[0].width(),
+              144);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[1]->sizes[0].height(),
+              144);
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Test that invalid icons are ignored but valid ones are kept
+  {
+    auto& manifest = ParseManifest(R"({
+      "icons_localized": {
+        "en": [
+          { "sizes": "32x32", "type": "image/png" },
+          { "src": "valid-icon.png", "sizes": "32x32", "type": "image/png" }
+        ]
+      }
+    })");
+    EXPECT_FALSE(manifest->icons_localized.empty());
+    EXPECT_EQ(manifest->icons_localized.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value.size(), 1u);
+    EXPECT_EQ(manifest->icons_localized.find("en")->value[0]->src.GetString(),
+              "http://foo.com/valid-icon.png");
+    EXPECT_EQ(0u, GetErrorCount());
+  }
+
+  // Don't parse if icons_localized isn't an object
+  {
+    auto& manifest = ParseManifest(R"({ "icons_localized": "not an object" })");
+    EXPECT_TRUE(manifest->icons_localized.empty());
+    EXPECT_EQ(1u, GetErrorCount());
+    EXPECT_EQ("property 'icons_localized' ignored, type object expected.",
               errors()[0]);
   }
 
-  // Don't parse if update_token is a json (malformed input).
+  // Don't parse if icons_localized is an array
   {
-    auto& manifest = ParseManifest(R"({"id": "foo", "update_token": {} })");
-    EXPECT_TRUE(manifest->update_token.IsNull());
-    ASSERT_EQ(1u, GetErrorCount());
-    EXPECT_EQ("property 'update_token' ignored, type string expected.",
+    auto& manifest =
+        ParseManifest(R"({ "icons_localized": ["array", "value"] })");
+    EXPECT_TRUE(manifest->icons_localized.empty());
+    EXPECT_EQ(1u, GetErrorCount());
+    EXPECT_EQ("property 'icons_localized' ignored, type object expected.",
               errors()[0]);
+  }
+
+  // Test that non-array values for locales are ignored
+  {
+    auto& manifest = ParseManifest(R"({
+      "icons_localized": {
+        "en": "not an array",
+        "es": [
+          { "src": "valid-icon.png", "sizes": "32x32", "type": "image/png" }
+        ]
+      }
+    })");
+    EXPECT_FALSE(manifest->icons_localized.empty());
+    EXPECT_EQ(manifest->icons_localized.size(), 1u);
+    EXPECT_TRUE(manifest->icons_localized.Contains("es"));
+    EXPECT_FALSE(manifest->icons_localized.Contains("en"));
+    EXPECT_EQ(1u, GetErrorCount());
   }
 }
 

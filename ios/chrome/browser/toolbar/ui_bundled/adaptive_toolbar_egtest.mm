@@ -309,9 +309,11 @@ void CheckCurrentURLContainsString(std::string string) {
         performAction:grey_tap()];
 
   } else {
+    id<GREYMatcher> cancelButton =
+        grey_accessibilityID(kToolbarCancelOmniboxEditButtonIdentifier);
     [[EarlGrey
-        selectElementWithMatcher:grey_accessibilityID(
-                                     kToolbarCancelOmniboxEditButtonIdentifier)]
+        selectElementWithMatcher:grey_allOf(cancelButton,
+                                            grey_sufficientlyVisible(), nil)]
         performAction:grey_tap()];
   }
 }
@@ -439,8 +441,16 @@ id<GREYMatcher> FormInputAccessoryOmniboxTypingShield() {
   if ([ChromeEarlGrey isIPadIdiom]) {
     // Remove the override.
     for (UIViewController* child in topViewController.childViewControllers) {
-      [topViewController setOverrideTraitCollection:originalTraitCollection
-                             forChildViewController:child];
+      if (@available(iOS 17, *)) {
+        child.traitOverrides.horizontalSizeClass =
+            originalTraitCollection.horizontalSizeClass;
+      }
+#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
+      else {
+        [topViewController setOverrideTraitCollection:originalTraitCollection
+                               forChildViewController:child];
+      }
+#endif
     }
   } else {
     // Cancel the rotation.
@@ -483,8 +493,16 @@ id<GREYMatcher> FormInputAccessoryOmniboxTypingShield() {
   if ([ChromeEarlGrey isIPadIdiom]) {
     // Remove the override.
     for (UIViewController* child in topViewController.childViewControllers) {
-      [topViewController setOverrideTraitCollection:originalTraitCollection
-                             forChildViewController:child];
+      if (@available(iOS 17, *)) {
+        child.traitOverrides.horizontalSizeClass =
+            originalTraitCollection.horizontalSizeClass;
+      }
+#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
+      else {
+        [topViewController setOverrideTraitCollection:originalTraitCollection
+                               forChildViewController:child];
+      }
+#endif
     }
   } else {
     // Cancel the rotation.
@@ -613,6 +631,10 @@ id<GREYMatcher> FormInputAccessoryOmniboxTypingShield() {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::
                                           TabGridIncognitoTabsPanelButton()]
       performAction:grey_tap()];
+
+  // Synchronization off due to an infinite spinner.
+  ScopedSynchronizationDisabler disabler;
+
   [[EarlGrey
       selectElementWithMatcher:chrome_test_util::TabGridNewIncognitoTabButton()]
       performAction:grey_tap()];
@@ -649,8 +671,16 @@ id<GREYMatcher> FormInputAccessoryOmniboxTypingShield() {
   if ([ChromeEarlGrey isIPadIdiom]) {
     // Remove the override.
     for (UIViewController* child in topViewController.childViewControllers) {
-      [topViewController setOverrideTraitCollection:originalTraitCollection
-                             forChildViewController:child];
+      if (@available(iOS 17, *)) {
+        child.traitOverrides.horizontalSizeClass =
+            originalTraitCollection.horizontalSizeClass;
+      }
+#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
+      else {
+        [topViewController setOverrideTraitCollection:originalTraitCollection
+                               forChildViewController:child];
+      }
+#endif
     }
   } else {
     // Cancel the rotation.
@@ -689,9 +719,18 @@ id<GREYMatcher> FormInputAccessoryOmniboxTypingShield() {
   // Revert the orientation/trait collection to the original.
   if ([ChromeEarlGrey isIPadIdiom]) {
     // Remove the override.
+
     for (UIViewController* child in topViewController.childViewControllers) {
-      [topViewController setOverrideTraitCollection:originalTraitCollection
-                             forChildViewController:child];
+      if (@available(iOS 17, *)) {
+        child.traitOverrides.horizontalSizeClass =
+            originalTraitCollection.horizontalSizeClass;
+      }
+#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
+      else {
+        [topViewController setOverrideTraitCollection:originalTraitCollection
+                               forChildViewController:child];
+      }
+#endif
     }
   } else {
     // Cancel the rotation.

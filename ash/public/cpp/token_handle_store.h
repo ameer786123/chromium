@@ -54,6 +54,17 @@ class TokenHandleStore {
   virtual void StoreTokenHandle(const AccountId& account_id,
                                 const std::string& handle) = 0;
 
+  // Depending on the state of the current token handle, execute a token handle
+  // fetch and store it.
+  virtual void MaybeFetchTokenHandle(
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      const AccountId& account_id,
+      const std::string& access_token,
+      const std::string& refresh_token_hash) = 0;
+
+  // Sets the token handle to stale.
+  virtual void SetTokenHandleStale(const AccountId& account_id) = 0;
+
   // Testing methods:
   virtual void SetInvalidTokenForTesting(const char* token) = 0;
 

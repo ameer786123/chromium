@@ -19,9 +19,8 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/startup/default_browser_prompt/default_browser_infobar_delegate.h"
 #include "chrome/browser/ui/startup/default_browser_prompt/default_browser_prompt_manager.h"
 #include "chrome/browser/ui/startup/default_browser_prompt/default_browser_prompt_prefs.h"
@@ -39,29 +38,31 @@ namespace {
 void ShowPrompt() {
   // Show the default browser request prompt in the most recently active,
   // visible, tabbed browser. Do not show the prompt if no such browser exists.
-  for (Browser* browser : BrowserList::GetInstance()->OrderedByActivation()) {
-    // |browser| may be null in UI tests. Also, don't show the prompt in an app
-    // window, which is not meant to be treated as a Chrome window. Only show in
-    // a normal, tabbed browser.
-    if (browser && !browser->is_type_normal()) {
-      continue;
-    }
+  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+      [](BrowserWindowInterface* browser) {
+        // |browser| may be null in UI tests. Also, don't show the prompt in an
+        // app window, which is not meant to be treated as a Chrome window. Only
+        // show in a normal, tabbed browser.
+        if (browser &&
+            browser->GetType() != BrowserWindowInterface::TYPE_NORMAL) {
+          return true;  // continue iterating
+        }
 
-    // In ChromeBot tests, there might be a race. This line appears to get
-    // called during shutdown and the active web contents can be nullptr.
-    content::WebContents* web_contents =
-        browser->tab_strip_model()->GetActiveWebContents();
-    if (!web_contents ||
-        web_contents->GetVisibility() != content::Visibility::VISIBLE) {
-      continue;
-    }
+        // In ChromeBot tests, there might be a race. This line appears to get
+        // called during shutdown and the active web contents can be nullptr.
+        content::WebContents* web_contents =
+            browser->GetTabStripModel()->GetActiveWebContents();
+        if (!web_contents ||
+            web_contents->GetVisibility() != content::Visibility::VISIBLE) {
+          return true;  // continue iterating
+        }
 
-    DefaultBrowserInfoBarDelegate::Create(
-        infobars::ContentInfoBarManager::FromWebContents(web_contents),
-        browser->profile(),
-        /*can_pin_to_taskbar=*/false);
-    break;
-  }
+        DefaultBrowserInfoBarDelegate::Create(
+            infobars::ContentInfoBarManager::FromWebContents(web_contents),
+            browser->GetProfile(),
+            /*can_pin_to_taskbar=*/false);
+        return false;  // stop iterating
+      });
 }
 
 // Do not show the prompt if "suppress_default_browser_prompt_for_version" in
@@ -78,7 +79,9 @@ bool ShouldShowDefaultBrowserPromptForCurrentVersion() {
 
 void OnCheckIsDefaultBrowserFinished(
     Profile* profile,
+    base::OnceCallback<void(bool)> done_callback,
     shell_integration::DefaultWebClientState state) {
+  bool did_show_prompt = false;
   if (state == shell_integration::IS_DEFAULT) {
     // Notify the user in the future if Chrome ceases to be the user's chosen
     // default browser.
@@ -91,8 +94,10 @@ void OnCheckIsDefaultBrowserFinished(
     // Only show the prompt if some other program is the user's default browser.
     // In particular, don't show it if another install mode is default (e.g.,
     // don't prompt for Chrome Beta if stable Chrome is the default).
-    DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
+    did_show_prompt =
+        DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
   }
+  std::move(done_callback).Run(did_show_prompt);
 }
 
 }  // namespace
@@ -145,7 +150,8 @@ void MigrateDefaultBrowserLastDeclinedPref(PrefService* profile_prefs) {
   }
 }
 
-void ShowDefaultBrowserPrompt(Profile* profile) {
+void ShowDefaultBrowserPrompt(Profile* profile,
+                              base::OnceCallback<void(bool)> done_callback) {
   // Do not check if Chrome is the default browser if there is a policy in
   // control of this setting.
   if (g_browser_process->local_state()->IsManagedPreference(
@@ -157,8 +163,8 @@ void ShowDefaultBrowserPrompt(Profile* profile) {
 
   scoped_refptr<shell_integration::DefaultBrowserWorker>(
       new shell_integration::DefaultBrowserWorker())
-      ->StartCheckIsDefault(
-          base::BindOnce(&OnCheckIsDefaultBrowserFinished, profile));
+      ->StartCheckIsDefault(base::BindOnce(&OnCheckIsDefaultBrowserFinished,
+                                           profile, std::move(done_callback)));
 }
 
 void ShowPromptForTesting() {

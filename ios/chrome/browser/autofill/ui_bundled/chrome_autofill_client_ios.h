@@ -27,10 +27,10 @@
 #import "components/autofill/core/browser/ui/payments/card_unmask_prompt_options.h"
 #import "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #import "components/autofill/ios/browser/autofill_agent.h"
-#import "components/autofill/ios/browser/autofill_client_ios.h"
 #import "components/autofill/ios/browser/autofill_client_ios_bridge.h"
+#import "components/autofill/ios/browser/autofill_client_ios_mixin.h"
 #import "components/infobars/core/infobar_manager.h"
-#import "components/plus_addresses/plus_address_types.h"
+#import "components/plus_addresses/core/browser/plus_address_types.h"
 #import "components/prefs/pref_service.h"
 #import "components/sync/service/sync_service.h"
 #import "ios/chrome/browser/autofill/model/credit_card/autofill_save_card_infobar_delegate_ios.h"
@@ -51,25 +51,9 @@ class LogRouter;
 enum class SuggestionType;
 
 // Chrome iOS implementation of AutofillClient.
-//
-// Satisfies the AutofillClientIOS contract for the following reason.
-// ChromeAutofillClientIOS is owned by web::WebStateUserData, so
-// - first ~WebStateImpl() notifies web::WebStateObserver::WebStateDestroyed()
-// - then ~WebStateImpl() invalidates weak_ptr(), and
-// - then ~SupportsUserData() destroys WebStateUserData and thus
-//   ChromeAutofillClientIOS.
-class ChromeAutofillClientIOS : public AutofillClientIOS {
+class ChromeAutofillClientIOS
+    : public AutofillClientIOSMixin<ChromeAutofillClientIOS> {
  public:
-  ChromeAutofillClientIOS(
-      FromWebStateImpl from_web_state_impl,
-      ProfileIOS* profile,
-      web::WebState* web_state,
-      infobars::InfoBarManager* infobar_manager,
-      id<AutofillClientIOSBridge, AutofillDriverIOSBridge> bridge);
-
-  ChromeAutofillClientIOS(const ChromeAutofillClientIOS&) = delete;
-  ChromeAutofillClientIOS& operator=(const ChromeAutofillClientIOS&) = delete;
-
   ~ChromeAutofillClientIOS() override;
 
   // Sets a weak reference to the view controller used to present UI.
@@ -90,8 +74,10 @@ class ChromeAutofillClientIOS : public AutofillClientIOS {
   AutofillCrowdsourcingManager& GetCrowdsourcingManager() override;
   VotesUploader& GetVotesUploader() override;
   PersonalDataManager& GetPersonalDataManager() override;
-  ValuablesDataManager& GetValuablesDataManager() override;
+  ValuablesDataManager* GetValuablesDataManager() override;
   EntityDataManager* GetEntityDataManager() override;
+  FieldClassificationModelHandler*
+  GetAutofillFieldClassificationModelHandler() override;
   FieldClassificationModelHandler*
   GetPasswordManagerFieldClassificationModelHandler() override;
   SingleFieldFillRouter& GetSingleFieldFillRouter() override;
@@ -163,7 +149,17 @@ class ChromeAutofillClientIOS : public AutofillClientIOS {
   // Removes the save card infobar if it exists.
   virtual void RemoveAutofillSaveCardInfoBar();
 
- private:
+ protected:
+  // This is required to get TestChromeAutofillClient to compile.
+  template <typename Derived, typename Super>
+  friend class AutofillClientIOSMixin;
+
+  ChromeAutofillClientIOS(
+      web::WebState* web_state,
+      ProfileIOS* profile,
+      infobars::InfoBarManager* infobar_manager,
+      id<AutofillClientIOSBridge, AutofillDriverIOSBridge> bridge);
+
   // Returns the account email of the signed-in user, or nullopt if there is no
   // signed-in user.
   std::optional<std::u16string> GetUserEmail();

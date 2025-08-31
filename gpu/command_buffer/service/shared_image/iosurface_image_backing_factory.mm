@@ -9,6 +9,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/resource_sizes.h"
+#include "components/viz/common/resources/shared_image_format.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/service_utils.h"
@@ -22,7 +23,7 @@
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "ui/gfx/buffer_format_util.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gfx/mac/io_surface.h"
 #include "ui/gl/buildflags.h"
 #include "ui/gl/gl_context.h"
@@ -55,6 +56,7 @@ bool IsFormatSupported(viz::SharedImageFormat format) {
          (format == viz::SinglePlaneFormat::kR_8) ||
          (format == viz::SinglePlaneFormat::kRG_88) ||
          (format == viz::SinglePlaneFormat::kR_16) ||
+         (format == viz::SinglePlaneFormat::kR_F16) ||
          (format == viz::SinglePlaneFormat::kRG_1616) ||
          (format == viz::SinglePlaneFormat::kBGRA_1010102) ||
          (format == viz::SinglePlaneFormat::kRGBA_1010102);
@@ -121,7 +123,12 @@ constexpr SharedImageUsageSet kSupportedUsage =
     SHARED_IMAGE_USAGE_MACOS_VIDEO_TOOLBOX |
     SHARED_IMAGE_USAGE_HIGH_PERFORMANCE_GPU |
     SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
-    SHARED_IMAGE_USAGE_WEBGPU_STORAGE_TEXTURE | SHARED_IMAGE_USAGE_CPU_UPLOAD;
+    SHARED_IMAGE_USAGE_WEBGPU_STORAGE_TEXTURE | SHARED_IMAGE_USAGE_CPU_UPLOAD |
+    SHARED_IMAGE_USAGE_RASTER_COPY_SOURCE | SHARED_IMAGE_USAGE_CPU_READ |
+    SHARED_IMAGE_USAGE_WEBGPU_SHARED_BUFFER |
+    SHARED_IMAGE_USAGE_WEBNN_SHARED_TENSOR |
+    SHARED_IMAGE_USAGE_WEBNN_SHARED_TENSOR_WRITE |
+    SHARED_IMAGE_USAGE_WEBNN_SHARED_TENSOR_READ;
 
 }  // anonymous namespace
 
@@ -149,6 +156,9 @@ IOSurfaceImageBackingFactory::IOSurfaceImageBackingFactory(
       supported_formats_.insert(format);
     }
   }
+
+  // Support R_F16 for SHARED_IMAGE_USAGE_WEBNN_SHARED_TENSOR.
+  supported_formats_.insert(viz::SinglePlaneFormat::kR_F16);
 
   // Add supported multi-plane formats.
   supported_formats_.insert(viz::MultiPlaneFormat::kNV12);
@@ -238,7 +248,6 @@ IOSurfaceImageBackingFactory::CreateSharedImage(
   gfx::ScopedIOSurface io_surface;
   {
     gl::ScopedProgressReporter scoped_progress_reporter(progress_reporter_);
-    const gfx::BufferFormat buffer_format = ToBufferFormat(format);
     const bool should_clear = true;
     const bool override_rgba_to_bgra =
 #if BUILDFLAG(IS_IOS)
@@ -246,8 +255,8 @@ IOSurfaceImageBackingFactory::CreateSharedImage(
 #else
         gr_context_type_ == GrContextType::kGL;
 #endif
-    io_surface = gfx::CreateIOSurface(size, buffer_format, should_clear,
-                                      override_rgba_to_bgra);
+    io_surface =
+        gfx::CreateIOSurface(size, format, should_clear, override_rgba_to_bgra);
     if (!io_surface) {
       LOG(ERROR) << "CreateSharedImage: Failed to create bindable image";
       return nullptr;
@@ -255,16 +264,11 @@ IOSurfaceImageBackingFactory::CreateSharedImage(
   }
   SetIOSurfaceColorSpace(io_surface.get(), color_space);
 
-  gfx::GpuMemoryBufferHandle handle;
-  handle.type = gfx::IO_SURFACE_BUFFER;
-  handle.io_surface = std::move(io_surface);
-  handle.id = gfx::GpuMemoryBufferHandle::kInvalidId;
-
   CHECK(!format.PrefersExternalSampler());
-  return CreateSharedImageGMBs(mailbox, format, size, color_space,
-                               surface_origin, alpha_type, usage,
-                               std::move(debug_label), std::move(handle),
-                               is_thread_safe, std::move(buffer_usage));
+  return CreateSharedImageGMBs(
+      mailbox, format, size, color_space, surface_origin, alpha_type, usage,
+      std::move(debug_label), gfx::GpuMemoryBufferHandle(std::move(io_surface)),
+      is_thread_safe, std::move(buffer_usage));
 }
 
 bool IOSurfaceImageBackingFactory::IsSupported(
@@ -275,6 +279,19 @@ bool IOSurfaceImageBackingFactory::IsSupported(
     gfx::GpuMemoryBufferType gmb_type,
     GrContextType gr_context_type,
     base::span<const uint8_t> pixel_data) {
+  // Only allow WebGPU shared buffer for WebNN use case for now.
+  if (usage.Has(SHARED_IMAGE_USAGE_WEBGPU_SHARED_BUFFER) &&
+      !usage.Has(SHARED_IMAGE_USAGE_WEBNN_SHARED_TENSOR)) {
+    return false;
+  }
+
+  // This is the only format that can be used as MLMultiArray for WebNN.
+  if (usage.Has(SHARED_IMAGE_USAGE_WEBNN_SHARED_TENSOR)) {
+    if (format != viz::SinglePlaneFormat::kR_F16) {
+      return false;
+    }
+  }
+
   if (thread_safe &&
       !base::FeatureList::IsEnabled(features::kIOSurfaceMultiThreading)) {
     return false;
@@ -352,10 +369,8 @@ IOSurfaceImageBackingFactory::CreateSharedImageInternal(
   // reported immediately after allocation/upload and before other GL
   // operations.
   gfx::ScopedIOSurface io_surface;
-  const gfx::GenericSharedMemoryId io_surface_id;
   {
     gl::ScopedProgressReporter scoped_progress_reporter(progress_reporter_);
-    const gfx::BufferFormat buffer_format = ToBufferFormat(format);
     const bool should_clear = false;
     const bool override_rgba_to_bgra =
 #if BUILDFLAG(IS_IOS)
@@ -363,8 +378,8 @@ IOSurfaceImageBackingFactory::CreateSharedImageInternal(
 #else
         gr_context_type_ == GrContextType::kGL;
 #endif
-    io_surface = gfx::CreateIOSurface(size, buffer_format, should_clear,
-                                      override_rgba_to_bgra);
+    io_surface =
+        gfx::CreateIOSurface(size, format, should_clear, override_rgba_to_bgra);
     if (!io_surface) {
       LOG(ERROR) << "CreateSharedImage: Failed to create bindable image";
       return nullptr;
@@ -377,9 +392,9 @@ IOSurfaceImageBackingFactory::CreateSharedImageInternal(
       for_framebuffer_attachment && angle_texture_usage_;
 
   auto backing = std::make_unique<IOSurfaceImageBacking>(
-      io_surface, io_surface_id, mailbox, format, size, color_space,
-      surface_origin, alpha_type, usage, std::move(debug_label),
-      texture_target_, framebuffer_attachment_angle, is_cleared, is_thread_safe,
+      io_surface, mailbox, format, size, color_space, surface_origin,
+      alpha_type, usage, std::move(debug_label), texture_target_,
+      framebuffer_attachment_angle, is_cleared, is_thread_safe,
       gr_context_type_);
   if (!pixel_data.empty()) {
     gl::ScopedProgressReporter scoped_progress_reporter(progress_reporter_);
@@ -401,7 +416,7 @@ IOSurfaceImageBackingFactory::CreateSharedImageGMBs(
     gfx::GpuMemoryBufferHandle handle,
     bool is_thread_safe,
     std::optional<gfx::BufferUsage> buffer_usage) {
-  if (handle.type != gfx::IO_SURFACE_BUFFER || !handle.io_surface) {
+  if (handle.type != gfx::IO_SURFACE_BUFFER || !handle.io_surface()) {
     LOG(ERROR) << "Invalid IOSurface GpuMemoryBufferHandle.";
     return nullptr;
   }
@@ -412,8 +427,7 @@ IOSurfaceImageBackingFactory::CreateSharedImageGMBs(
     return nullptr;
   }
 
-  auto io_surface = handle.io_surface;
-  const auto io_surface_id = handle.id;
+  auto io_surface = std::move(handle).io_surface();
 
   // Ensure that the IOSurface has the same size and pixel format as those
   // specified by `size` and `format`. A malicious client could lie about
@@ -447,10 +461,10 @@ IOSurfaceImageBackingFactory::CreateSharedImageGMBs(
       for_framebuffer_attachment && angle_texture_usage_;
 
   return std::make_unique<IOSurfaceImageBacking>(
-      io_surface, io_surface_id, mailbox, format, size, color_space,
-      surface_origin, alpha_type, usage, std::move(debug_label),
-      texture_target_, framebuffer_attachment_angle, /*is_cleared=*/true,
-      is_thread_safe, gr_context_type_, std::move(buffer_usage));
+      std::move(io_surface), mailbox, format, size, color_space, surface_origin,
+      alpha_type, usage, std::move(debug_label), texture_target_,
+      framebuffer_attachment_angle, /*is_cleared=*/true, is_thread_safe,
+      gr_context_type_, std::move(buffer_usage));
 }
 
 SharedImageBackingType IOSurfaceImageBackingFactory::GetBackingType() {

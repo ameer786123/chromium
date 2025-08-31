@@ -111,7 +111,8 @@ size_t GetNotificationCount() {
         // `PrivacyIndicatorsTrayItemView` or `CameraMicTrayItemView` to show
         // indicators on the systray.
         if (notifier == kPrivacyIndicatorsNotifierId ||
-            notifier == kVmCameraMicNotifierId) {
+            notifier == kVmCameraMicNotifierId ||
+            notifier == kPrivacyIndicatorsMultiCaptureNotifierId) {
           return false;
         }
 
@@ -171,7 +172,7 @@ GetActiveNotificationViewControllerForNotificationView(
     views::View* notification_view) {
   aura::Window* window = notification_view->GetWidget()->GetNativeWindow();
   auto display_id =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window).id();
+      display::Screen::Get()->GetDisplayNearestWindow(window).id();
 
   return GetActiveNotificationViewControllerForDisplay(display_id);
 }
@@ -180,7 +181,7 @@ NotificationGroupingController* GetGroupingControllerForNotificationView(
     views::View* notification_view) {
   aura::Window* window = notification_view->GetWidget()->GetNativeWindow();
   auto display_id =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window).id();
+      display::Screen::Get()->GetDisplayNearestWindow(window).id();
 
   RootWindowController* root_window_controller =
       Shell::GetRootWindowControllerWithDisplayId(display_id);

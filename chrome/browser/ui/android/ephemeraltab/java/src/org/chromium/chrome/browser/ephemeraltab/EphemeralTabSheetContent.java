@@ -287,8 +287,8 @@ public class EphemeralTabSheetContent implements BottomSheetContent {
     }
 
     @Override
-    public @Nullable Integer getBackgroundColor() {
-        return null;
+    public boolean hasSolidBackgroundColor() {
+        return false;
     }
 
     @Nullable
@@ -318,11 +318,6 @@ public class EphemeralTabSheetContent implements BottomSheetContent {
     @Override
     public boolean swipeToDismissEnabled() {
         return true;
-    }
-
-    @Override
-    public int getPeekHeight() {
-        return HeightMode.DISABLED;
     }
 
     @Override

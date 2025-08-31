@@ -17,7 +17,6 @@
 #include "base/base64.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
-#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
@@ -54,8 +53,6 @@
 #include "content/public/browser/navigation_ui_data.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "crypto/secure_hash.h"
-#include "crypto/sha2.h"
 #include "extensions/browser/content_verifier/content_verifier.h"
 #include "extensions/browser/content_verifier/content_verify_job.h"
 #include "extensions/browser/extension_navigation_ui_data.h"
@@ -120,11 +117,22 @@ using extensions::SharedModuleInfo;
 namespace extensions {
 namespace {
 
-BASE_FEATURE(kOverrideExtensionFilesMimeTypes,
-             "OverrideExtensionFilesMimeTypes",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 ExtensionProtocolTestHandler* g_test_handler = nullptr;
+
+// Stores relevant info about an ExtensionResource, namely: its file path, last
+// modified time and file size.
+struct ResourceInfo {
+  ResourceInfo(base::FilePath file_path,
+               base::Time last_modified_time,
+               int64_t size)
+      : file_path(std::move(file_path)),
+        last_modified_time(last_modified_time),
+        size(size) {}
+
+  base::FilePath file_path;
+  base::Time last_modified_time;
+  int64_t size = 0;
+};
 
 void GenerateBackgroundPageContents(const Extension* extension,
                                     std::string* mime_type,
@@ -136,29 +144,28 @@ void GenerateBackgroundPageContents(const Extension* extension,
   *data = "<!DOCTYPE html>\n<body>\n";
   for (const auto& script : BackgroundInfo::GetBackgroundScripts(extension)) {
     *data += "<script src=\"";
-    *data += script;
+    *data += script.relative_path().AsUTF8Unsafe();
     *data += "\"></script>\n";
   }
 }
 
-base::Time GetFileLastModifiedTime(const base::FilePath& filename) {
-  if (base::PathExists(filename)) {
-    base::File::Info info;
-    if (base::GetFileInfo(filename, &info)) {
-      return info.last_modified;
-    }
-  }
-  return base::Time();
-}
-
-std::pair<base::FilePath, base::Time> ReadResourceFilePathAndLastModifiedTime(
-    const extensions::ExtensionResource& resource,
-    const base::FilePath& directory) {
+ResourceInfo ReadResourceInfo(const extensions::ExtensionResource& resource,
+                              const base::FilePath& directory) {
   // NOTE: ExtensionResource::GetFilePath() must be called on a sequence which
   // tolerates blocking operations.
   base::FilePath file_path = resource.GetFilePath();
-  base::Time last_modified_time = GetFileLastModifiedTime(file_path);
-  return std::make_pair(file_path, last_modified_time);
+
+  base::Time last_modified_time;
+  int64_t size = 0;
+  if (base::PathExists(file_path)) {
+    base::File::Info info;
+    if (base::GetFileInfo(file_path, &info)) {
+      last_modified_time = info.last_modified;
+      size = info.size;
+    }
+  }
+
+  return ResourceInfo(file_path, last_modified_time, size);
 }
 
 bool ExtensionCanLoadInIncognito(bool is_main_frame,
@@ -353,8 +360,7 @@ bool IsBackgroundServiceWorker(const Extension& extension,
              network::mojom::RequestDestination::kServiceWorker &&
          BackgroundInfo::IsServiceWorkerBased(&extension) &&
          request.url ==
-             extension.GetResourceURL(
-                 BackgroundInfo::GetBackgroundServiceWorkerScript(&extension));
+             BackgroundInfo::GetBackgroundServiceWorkerScriptURL(&extension);
 }
 
 bool IsExtensionDocument(const Extension& extension,
@@ -431,11 +437,9 @@ void AddCacheHeaders(net::HttpResponseHeaders& headers,
   // On Fuchsia, some resources are served from read-only filesystems which
   // don't manage creation timestamps. Cache-control headers should still
   // be generated for those resources.
-#if !BUILDFLAG(IS_FUCHSIA)
   if (last_modified_time.is_null()) {
     return;
   }
-#endif  // !BUILDFLAG(IS_FUCHSIA)
 
   // Hash the time and make an etag to avoid exposing the exact
   // user installation time of the extension.
@@ -472,8 +476,7 @@ class FileLoaderObserver : public content::FileURLLoaderObserver {
     DCHECK_EQ(seek_position_, 0);
     base::AutoLock auto_lock(lock_);
     seek_position_ = result;
-    // TODO(asargent) - we'll need to add proper support for range headers.
-    // crbug.com/369895.
+    // TODO(crbug.com/410916670) Add proper support for range headers.
     const bool is_seek_contiguous = result == bytes_read_;
     if (result > 0 && verify_job_.get() && !is_seek_contiguous) {
       verify_job_ = nullptr;
@@ -643,28 +646,47 @@ class ExtensionURLLoader : public network::mojom::URLLoader {
     LoadExtension(extension, std::move(directory_path));
   }
 
-  void OnFilePathAndLastModifiedTimeRead(
-      const extensions::ExtensionResource& resource,
-      scoped_refptr<net::HttpResponseHeaders> headers,
-      scoped_refptr<ContentVerifier> content_verifier,
-      std::pair<base::FilePath, base::Time> file_path_and_time) {
+  void OnResourceInfoRead(const extensions::ExtensionResource& resource,
+                          const base::Version& extension_version,
+                          scoped_refptr<net::HttpResponseHeaders> headers,
+                          scoped_refptr<ContentVerifier> content_verifier,
+                          const ResourceInfo& resource_info) {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-    const auto& read_file_path = file_path_and_time.first;
-    const auto& last_modified_time = file_path_and_time.second;
+    const auto& read_file_path = resource_info.file_path;
+    const auto& last_modified_time = resource_info.last_modified_time;
+    const auto& file_size = resource_info.size;
     request_.url = net::FilePathToFileURL(read_file_path);
 
     AddCacheHeaders(*headers, last_modified_time);
+    AddMimeTypeHeaders(*headers, read_file_path);
 
-    // TODO(https://crbug.com/400647848): Remove this if-check and always
-    // override mime type headers in M139.
-    if (base::FeatureList::IsEnabled(kOverrideExtensionFilesMimeTypes)) {
-      AddMimeTypeHeaders(*headers, read_file_path);
+    // TODO(crbug.com/405286894, crbug.com/410916670): Properly implement
+    // content verification for range headers which return a subset of the
+    // extension's file. Currently end headers may trigger unintentional
+    // corruptions.
+    bool should_verify_content = true;
+
+    if (std::optional<std::string> range_header =
+            request_.headers.GetHeader(net::HttpRequestHeaders::kRange);
+        range_header) {
+      std::vector<net::HttpByteRange> ranges;
+      if (net::HttpUtil::ParseRangeHeader(*range_header, &ranges) &&
+          ranges.size() == 1) {
+        // For now, skip content verification if the file will be read before
+        // its end.
+        should_verify_content = !ranges[0].HasLastBytePosition() ||
+                                ranges[0].last_byte_position() == file_size - 1;
+      } else {
+        // Malformed range header or multiple ranges detected. The FileURLLoader
+        // will also detect this and return an error.
+        should_verify_content = false;
+      }
     }
 
     scoped_refptr<ContentVerifyJob> verify_job;
-    if (content_verifier) {
+    if (content_verifier && should_verify_content) {
       verify_job = ContentVerifier::CreateAndStartJobFor(
-          resource.extension_id(), resource.extension_root(),
+          resource.extension_id(), resource.extension_root(), extension_version,
           resource.relative_path(), content_verifier);
     }
 
@@ -723,24 +745,6 @@ class ExtensionURLLoader : public network::mojom::URLLoader {
     bool include_allow_service_worker_header = false;
 
     if (extension) {
-      // Log if loading an extension resource not listed as a web accessible
-      // resource from a sandboxed page.
-      if (request_.request_initiator.has_value() &&
-          request_.request_initiator->opaque() &&
-          request_.request_initiator->GetTupleOrPrecursorTupleIfOpaque()
-                  .scheme() == kExtensionScheme) {
-        // Surface opaque origin for web accessible resource verification.
-        const auto origin = url::Origin::Create(
-            request_.request_initiator->GetTupleOrPrecursorTupleIfOpaque()
-                .GetURL());
-        bool is_web_accessible_resource =
-            WebAccessibleResourcesInfo::IsResourceWebAccessibleRedirect(
-                extension.get(), request_.url, origin, upstream_url_);
-        base::UmaHistogramBoolean(
-            "Extensions.SandboxedPageLoad.IsWebAccessibleResource",
-            is_web_accessible_resource);
-      }
-
       GetSecurityPolicyForURL(
           request_, *extension, is_web_view_request_, &content_security_policy,
           &cross_origin_embedder_policy, &cross_origin_opener_policy,
@@ -851,11 +855,11 @@ class ExtensionURLLoader : public network::mojom::URLLoader {
 
     base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE, {base::MayBlock()},
-        base::BindOnce(&ReadResourceFilePathAndLastModifiedTime, resource,
-                       directory_path),
-        base::BindOnce(&ExtensionURLLoader::OnFilePathAndLastModifiedTimeRead,
+        base::BindOnce(&ReadResourceInfo, resource, directory_path),
+        base::BindOnce(&ExtensionURLLoader::OnResourceInfoRead,
                        weak_ptr_factory_.GetWeakPtr(), resource,
-                       std::move(headers), std::move(content_verifier)));
+                       extension->version(), std::move(headers),
+                       std::move(content_verifier)));
   }
 
   void OnMojoDisconnect() { DeleteThis(); }

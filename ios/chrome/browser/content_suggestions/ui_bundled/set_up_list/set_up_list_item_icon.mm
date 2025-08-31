@@ -251,12 +251,6 @@ UIView* IconInSquare(NSString* symbol,
 // Creates the type-specific icon for this item.
 - (UIView*)createTypeIcon {
   switch (_type) {
-    case SetUpListItemType::kSignInSync: {
-      return _inSquare ? IconInSquare(kPersonCropCircleSymbol, _compactLayout,
-                                      kGreen500Color)
-                       : IconInCircle(kPersonCropCircleSymbol, _compactLayout,
-                                      kGreen500Color);
-    }
     case SetUpListItemType::kDefaultBrowser: {
       UIImageView* iconImage = DefaultBrowserIcon(_compactLayout || _inSquare);
       if (_inSquare) {
@@ -274,17 +268,6 @@ UIView* IconInSquare(NSString* symbol,
       return _inSquare ? IconInSquare(kBellBadgeSymbol, NO, kPink500Color)
                        : IconInCircle(kBellBadgeSymbol, _compactLayout,
                                       kPink500Color);
-    }
-    case SetUpListItemType::kDocking: {
-      return _inSquare ? IconInSquare(kMovePlatterToBottomPhoneSymbol, NO,
-                                      kPurple600Color)
-                       : IconInCircle(kMovePlatterToBottomPhoneSymbol,
-                                      _compactLayout, kPurple600Color);
-    }
-    case SetUpListItemType::kAddressBar: {
-      return _inSquare ? IconInSquare(kGlobeAmericasSymbol, NO, kPurple600Color)
-                       : IconInCircle(kGlobeAmericasSymbol, _compactLayout,
-                                      kPurple600Color);
     }
     case SetUpListItemType::kAllSet: {
       return IconForSymbol(

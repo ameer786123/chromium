@@ -10,13 +10,12 @@
 #include "android_webview/browser/gfx/gpu_service_webview.h"
 #include "android_webview/browser/gfx/viz_compositor_thread_runner_webview.h"
 #include "base/android/android_hardware_buffer_compat.h"
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #include "base/android/scoped_hardware_buffer_fence_sync.h"
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/not_fatal_until.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
@@ -513,7 +512,7 @@ class OverlayProcessorWebView::Manager
   OverlaySurface& GetOverlaySurfaceLocked(uint64_t id) {
     lock_.AssertAcquired();
     auto surface = overlay_surfaces_.find(id);
-    CHECK(surface != overlay_surfaces_.end(), base::NotFatalUntil::M130);
+    CHECK(surface != overlay_surfaces_.end());
     return surface->second;
   }
 
@@ -606,8 +605,8 @@ class OverlayProcessorWebView::Manager
       // OnComplete callback. To workaround it we create 1x1 buffer instead of
       // setting empty one.
       const bool need_empty_buffer_workaround =
-          base::android::BuildInfo::GetInstance()->sdk_int() >=
-          base::android::SDK_VERSION_T;
+          base::android::android_info::sdk_int() >=
+          base::android::android_info::SDK_VERSION_T;
       if (need_empty_buffer_workaround) {
         // We never delete this buffer.
         static AHardwareBuffer* fake_buffer = nullptr;
@@ -880,7 +879,7 @@ void OverlayProcessorWebView::UpdateOverlayResource(
     const gfx::RectF& uv_rect) {
   DCHECK(resource_provider_);
   auto overlay = overlays_.find(frame_sink_id);
-  CHECK(overlay != overlays_.end(), base::NotFatalUntil::M130);
+  CHECK(overlay != overlays_.end());
 
   DCHECK(resource_provider_->IsOverlayCandidate(new_resource_id));
 
@@ -911,7 +910,7 @@ void OverlayProcessorWebView::ReturnResource(viz::ResourceId resource_id,
   // OverlayManager return resources. When we delete last lock resource will be
   // return to the client.
   auto it = locked_resources_.find(resource_id);
-  CHECK(it != locked_resources_.end(), base::NotFatalUntil::M130);
+  CHECK(it != locked_resources_.end());
   locked_resources_.erase(it);
 
   DCHECK(resource_lock_count_.contains(surface_id.frame_sink_id()));
@@ -940,7 +939,7 @@ bool OverlayProcessorWebView::ProcessForFrameSinkId(
     const viz::FrameSinkId& frame_sink_id,
     const viz::ResolvedFrameData* frame_data) {
   auto it = overlays_.find(frame_sink_id);
-  CHECK(it != overlays_.end(), base::NotFatalUntil::M130);
+  CHECK(it != overlays_.end());
   auto& overlay = it->second;
 
   const auto& passes = frame_data->GetResolvedPasses();
@@ -980,7 +979,8 @@ bool OverlayProcessorWebView::ProcessForFrameSinkId(
       }
       if (frame_interval &&
           frame_interval_inputs.has_only_content_frame_interval_updates) {
-        frame_rate = frame_interval->ToHz();
+        float interval_s = frame_interval->InSecondsF();
+        frame_rate = interval_s == 0 ? 0 : (1 / interval_s);
       }
       constexpr float kEpsilon = 0.005;
       if (std::abs(frame_rate - frame_rate_) > kEpsilon) {

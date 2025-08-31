@@ -46,19 +46,23 @@ enum class TrustedVaultUserActionTriggerForUMA {
   kSettings = 0,
   // Used on desktop platform only.
   kProfileMenu = 1,
-  // Used on Android and ChromeOS, represents OS-level notification.
+  // Used on Android, ChromeOS, and iOS. Represents OS-level notification.
   kNotification = 2,
   // Used on iOS only. Represents Infobar on the New Tab Page.
   // TODO(crbug.com/40131571): record this bucket bucket on Android once
   // corresponding UI added.
   kNewTabPageInfobar = 3,
-  // Used on Android only. This dialog is shown when GMSCore returned
-  // kKeyRetrievalRequired, kEmptySecurityDomain or kIrretrievableSecurityDomain
-  // error when obtaining passwords.
+  // This dialog is shown on Android and iOS during sign-in or sign-up flows
+  // when there is an error preventing passwords from being fetched from
+  // an account (e.g. need to retrieve trusted vault key for passwords).
   kPasswordManagerErrorMessage = 4,
   // Used on iOS only, from the account menu.
   kAccountMenu = 5,
-  kMaxValue = kAccountMenu
+  // From the Password Manager Settings (currently used only on iOS).
+  kPasswordManagerSettings = 6,
+  // From the passwords keyboard accessory (only used on Android).
+  kPasswordManagerKeyboardAccessory = 7,
+  kMaxValue = kPasswordManagerKeyboardAccessory
 };
 // LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:TrustedVaultUserActionTrigger)
 

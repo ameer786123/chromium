@@ -14,6 +14,7 @@
 #include "chrome/browser/ui/views/chrome_views_export.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/models/menu_model.h"
 #include "ui/base/mojom/menu_source_type.mojom-forward.h"
 #include "ui/base/pointer/touch_ui_controller.h"
 #include "ui/base/theme_provider.h"
@@ -131,9 +132,6 @@ class ToolbarButton : public views::LabelButton,
   void OnMouseExited(const ui::MouseEvent& event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   std::unique_ptr<views::ActionViewInterface> GetActionViewInterface() override;
-  void AddLayerToRegion(ui::Layer* new_layer,
-                        views::LayerRegion region) override;
-  void RemoveLayerFromRegions(ui::Layer* old_layer) override;
 
   // When IPH is showing we suppress the tooltip text. This means that we must
   // provide an alternative accessible name, when this is the case. This is
@@ -179,6 +177,10 @@ class ToolbarButton : public views::LabelButton,
 
   // Function to show the dropdown menu.
   virtual void ShowDropDownMenu(ui::mojom::MenuSourceType source_type);
+
+  // Shows the given `menu_model` anchored to this button.
+  void ShowMenuForModel(ui::mojom::MenuSourceType source_type,
+                        ui::MenuModel* menu_model);
 
   // Updates the button's background and border.
   virtual void UpdateColorsAndInsets();

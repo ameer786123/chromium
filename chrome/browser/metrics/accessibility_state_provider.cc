@@ -20,7 +20,8 @@ metrics::SystemProfileProto::AccessibilityState::AXMode ModeFlagsToProtoEnum(
     case ui::AXMode::kInlineTextBoxes:
       return metrics::SystemProfileProto::AccessibilityState::INLINE_TEXT_BOXES;
     case ui::AXMode::kExtendedProperties:
-      return metrics::SystemProfileProto::AccessibilityState::SCREEN_READER;
+      return metrics::SystemProfileProto::AccessibilityState::
+          EXTENDED_PROPERTIES;
     case ui::AXMode::kHTML:
       return metrics::SystemProfileProto::AccessibilityState::HTML;
     case ui::AXMode::kHTMLMetadata:
@@ -29,11 +30,11 @@ metrics::SystemProfileProto::AccessibilityState::AXMode ModeFlagsToProtoEnum(
       return metrics::SystemProfileProto::AccessibilityState::LABEL_IMAGES;
     case ui::AXMode::kPDFPrinting:
       return metrics::SystemProfileProto::AccessibilityState::PDF_PRINTING;
-    case ui::AXMode::kPDFOcr:
-      return metrics::SystemProfileProto::AccessibilityState::PDF_OCR;
     case ui::AXMode::kAnnotateMainNode:
       return metrics::SystemProfileProto::AccessibilityState::
           ANNOTATE_MAIN_NODE;
+    case ui::AXMode::kScreenReader:
+      return metrics::SystemProfileProto::AccessibilityState::SCREEN_READER;
     default:
       NOTREACHED();
   }
@@ -60,6 +61,13 @@ void AccessibilityStateProvider::ProvideSystemProfileMetrics(
   if (mode.is_mode_off()) {
     return;
   }
+  if (content::BrowserAccessibilityState::GetInstance()
+          ->IsAccessibilityPerformanceMeasurementExperimentActive()) {
+    // An active experiment means that the existing AXMode were not user
+    // initiated. We don't want to record those AXModes in the UMA.
+    return;
+  }
+
   auto* state = system_profile->mutable_accessibility_state();
 
   MaybeAddAccessibilityModeFlags(mode, ui::AXMode::kNativeAPIs, state);
@@ -70,6 +78,9 @@ void AccessibilityStateProvider::ProvideSystemProfileMetrics(
   MaybeAddAccessibilityModeFlags(mode, ui::AXMode::kHTMLMetadata, state);
   MaybeAddAccessibilityModeFlags(mode, ui::AXMode::kLabelImages, state);
   MaybeAddAccessibilityModeFlags(mode, ui::AXMode::kPDFPrinting, state);
-  MaybeAddAccessibilityModeFlags(mode, ui::AXMode::kPDFOcr, state);
   MaybeAddAccessibilityModeFlags(mode, ui::AXMode::kAnnotateMainNode, state);
+  // ui::AXMode::kFromPlatform is unconditionally filtered out and is therefore
+  // never present in `mode`.
+  CHECK(!mode.has_mode(ui::AXMode::kFromPlatform));
+  MaybeAddAccessibilityModeFlags(mode, ui::AXMode::kScreenReader, state);
 }

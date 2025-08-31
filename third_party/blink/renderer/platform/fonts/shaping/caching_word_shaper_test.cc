@@ -83,7 +83,11 @@ TEST_F(CachingWordShaperTest, CommonAccentLeftToRightByWord) {
       TestInfo(result)->RunInfoForTesting(0, start_index, num_glyphs, script));
   EXPECT_EQ(0u, offset + start_index);
   EXPECT_EQ(3u, num_glyphs);
+#if U_ICU_VERSION_MAJOR_NUM >= 76
+  EXPECT_EQ(HB_SCRIPT_CHEROKEE, script);
+#else
   EXPECT_EQ(HB_SCRIPT_COMMON, script);
+#endif
   offset += result->NumCharacters();
 
   ASSERT_TRUE(iterator.Next(&result));
@@ -369,7 +373,7 @@ TEST_F(CachingWordShaperTest, GlyphBoundsWithSpaces) {
   float periods_width = shaper.Width(periods, &periods_glyph_bounds);
 
   TextRun periods_and_spaces(
-      reinterpret_cast<const LChar*>(". . . . . . . . . ."));
+      base::byte_span_from_cstring(". . . . . . . . . ."));
   gfx::RectF periods_and_spaces_glyph_bounds;
   float periods_and_spaces_width =
       shaper.Width(periods_and_spaces, &periods_and_spaces_glyph_bounds);

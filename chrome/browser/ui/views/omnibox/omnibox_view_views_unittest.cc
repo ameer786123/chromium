@@ -18,6 +18,7 @@
 #include "base/i18n/rtl.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/simple_test_tick_clock.h"
@@ -31,10 +32,6 @@
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/chrome_signin_client_test_util.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/hats/hats_service.h"
-#include "chrome/browser/ui/hats/hats_service_factory.h"
-#include "chrome/browser/ui/hats/mock_hats_service.h"
-#include "chrome/browser/ui/hats/survey_config.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_client.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
@@ -336,7 +333,6 @@ class OmniboxViewViewsTest : public OmniboxViewViewsTestBase {
   TestLocationBarModel* location_bar_model() { return &location_bar_model_; }
   CommandUpdaterImpl* command_updater() { return &command_updater_; }
   TestingOmniboxView* omnibox_view() const { return omnibox_view_; }
-  MockHatsService* mock_hats_service() { return mock_hats_service_.get(); }
 
   // TODO(tommycli): These base class accessors exist because Textfield and
   // OmniboxView both hide member functions that were public in base classes.
@@ -402,9 +398,7 @@ class OmniboxViewViewsTest : public OmniboxViewViewsTestBase {
  private:
   network::TestURLLoaderFactory test_url_loader_factory_;
   std::unique_ptr<TestingProfile> profile_;
-  std::unique_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
-  raw_ptr<MockHatsService> mock_hats_service_;
   std::unique_ptr<TemplateURLServiceFactoryTestUtil> util_;
   CommandUpdaterImpl command_updater_;
   TestLocationBarModel location_bar_model_;
@@ -454,11 +448,11 @@ void OmniboxViewViewsTest::SetUp() {
       base::BindRepeating(&BuildChromeSigninClientWithURLLoader,
                           &test_url_loader_factory_));
   profile_ = profile_builder.Build();
-  browser_window_ = std::make_unique<TestBrowserWindow>();
+  auto browser_window = std::make_unique<TestBrowserWindow>();
   Browser::CreateParams params(profile(), /*user_gesture*/ true);
   params.type = Browser::TYPE_NORMAL;
-  params.window = browser_window_.get();
-  browser_.reset(Browser::Create(params));
+  params.window = browser_window.release();
+  browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
 
   util_ = std::make_unique<TemplateURLServiceFactoryTestUtil>(profile_.get());
 
@@ -470,10 +464,6 @@ void OmniboxViewViewsTest::SetUp() {
   AutocompleteClassifierFactory::GetInstance()->SetTestingFactoryAndUse(
       profile_.get(),
       base::BindRepeating(&AutocompleteClassifierFactory::BuildInstanceFor));
-  mock_hats_service_ = static_cast<MockHatsService*>(
-      HatsServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-          profile(), base::BindRepeating(&BuildMockHatsService)));
-  ON_CALL(*mock_hats_service_, CanShowAnySurvey(_)).WillByDefault(Return(true));
   auto omnibox_view = std::make_unique<TestingOmniboxView>(
       std::make_unique<ChromeOmniboxClient>(&location_bar_, browser(),
                                             profile()),
@@ -491,10 +481,8 @@ void OmniboxViewViewsTest::TearDown() {
 
   location_bar()->set_omnibox_view(nullptr);
   omnibox_view_ = nullptr;
-  mock_hats_service_ = nullptr;
   browser_->tab_strip_model()->CloseAllTabs();
   browser_ = nullptr;
-  browser_window_ = nullptr;
 
   widget_.reset();
   util_.reset();
@@ -632,6 +620,57 @@ TEST_F(OmniboxViewViewsTest, OnBlur) {
   EXPECT_EQ(gfx::ELIDE_TAIL, render_text->elide_behavior());
   EXPECT_EQ(0, render_text->GetUpdatedDisplayOffset().x());
   EXPECT_FALSE(omnibox_view()->IsSelectAll());
+}
+
+// Verifies that crbug.com/417895268 does not regress.
+TEST_F(OmniboxViewViewsTest, EmojiPickerInsertion) {
+  omnibox_view()->SetFocus(/*is_user_initiated=*/true);
+
+  // Set "ab|c", where | is the caret position.
+  omnibox_textfield()->InsertText(
+      u"abc", OmniboxViewViews::InsertTextCursorBehavior::kMoveCursorAfterText);
+  omnibox_textfield()->Scroll({2});
+  {
+    size_t start, end;
+    omnibox_view()->GetSelectionBounds(&start, &end);
+    EXPECT_EQ(2u, start);
+    EXPECT_EQ(2u, end);
+    EXPECT_EQ(2u, omnibox_view()->GetCursorPosition());
+  }
+
+  // Emulation of Emoji picker. Because emoji picker has the focus,
+  // omnibox looses it.
+  omnibox_textfield()->OnBlur();
+  {
+    size_t start, end;
+    omnibox_view()->GetSelectionBounds(&start, &end);
+    EXPECT_EQ(2u, start);
+    EXPECT_EQ(2u, end);
+    EXPECT_EQ(2u, omnibox_view()->GetCursorPosition());
+  }
+
+  // Then, insertion of an emoji. Uses 0x1F600 (smile mark) as an example.
+  omnibox_textfield()->InsertText(
+      u"\xD83D\xDE00",
+      OmniboxViewViews::InsertTextCursorBehavior::kMoveCursorAfterText);
+
+  // Now, emoji picker closes, and so omnibox will be re-focused.
+  omnibox_textfield()->OnFocus();
+
+  // Verify the result. Emoji is inserted between 'b' and 'c', then
+  // the caret is placed between the emoji and 'c'.
+  EXPECT_EQ(
+      u"ab"
+      u"\xD83D\xDE00"
+      u"c",
+      omnibox_view()->GetText());
+  {
+    size_t start, end;
+    omnibox_view()->GetSelectionBounds(&start, &end);
+    EXPECT_EQ(4u, start);
+    EXPECT_EQ(4u, end);
+    EXPECT_EQ(4u, omnibox_view()->GetCursorPosition());
+  }
 }
 
 // Verifies that https://crbug.com/45260 doesn't regress.
@@ -1137,45 +1176,6 @@ TEST_F(OmniboxViewViewsTest, AccessibleValue) {
   omnibox_view()->GetViewAccessibility().GetAccessibleNodeData(&node_data);
   EXPECT_EQ("https://permanent-text.com/",
             node_data.GetStringAttribute(ax::mojom::StringAttribute::kValue));
-}
-
-TEST_F(OmniboxViewViewsTest, ShowHatsSurvey) {
-  profile()->GetPrefs()->SetBoolean(
-      unified_consent::prefs::kUrlKeyedAnonymizedDataCollectionEnabled, true);
-  profile()->GetPrefs()->SetBoolean(prefs::kSearchSuggestEnabled, true);
-
-  omnibox_feature_configs::ScopedConfigForTesting<
-      omnibox_feature_configs::HappinessTrackingSurveyForOmniboxOnFocusZps>
-      survey_config;
-  survey_config.Get().enabled = true;
-  survey_config.Get().survey_delay = 0;
-
-  omnibox_feature_configs::ScopedConfigForTesting<
-      omnibox_feature_configs::OmniboxUrlSuggestionsOnFocus>
-      suggest_config;
-  suggest_config.Get().enabled = true;
-
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      omnibox::kFocusTriggersWebAndSRPZeroSuggest);
-
-  EXPECT_CALL(*mock_hats_service(), LaunchDelayedSurvey(_, _, _, _))
-      .Times(1)
-      .WillOnce(testing::Invoke(
-          [](const std::string& trigger, int timeout_ms,
-             const SurveyBitsData& survey_specific_bits_data,
-             const SurveyStringData& survey_specific_string_data) -> bool {
-            EXPECT_TRUE(
-                trigger == kHatsSurveyTriggerOnFocusZpsSuggestionsHappiness ||
-                trigger == kHatsSurveyTriggerOnFocusZpsSuggestionsUtility);
-            return true;
-          }));
-
-  location_bar_model()->set_url(GURL("https://test.com/"));
-  for (int i = 0; i < 5; i++) {
-    omnibox_textfield()->OnFocus();
-    omnibox_textfield()->OnBlur();
-  }
 }
 
 class OmniboxViewViewsClipboardTest

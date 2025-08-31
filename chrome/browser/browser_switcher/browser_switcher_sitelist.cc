@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/browser_switcher/browser_switcher_sitelist.h"
 
 #include <string.h>
@@ -145,15 +140,16 @@ class DefaultModeRule : public Rule {
 
     // The parsed URL might start with "ftp://XXX/" or "ftp://". Remove that
     // prefix.
-    if (base::StartsWith(spec, placeholder,
-                         base::CompareCase::INSENSITIVE_ASCII)) {
-      spec = spec.substr(placeholder.size());
+    auto remainder = base::RemovePrefix(spec, placeholder,
+                                        base::CompareCase::INSENSITIVE_ASCII);
+    if (remainder) {
+      spec = *remainder;
     }
-    if (base::StartsWith(spec, placeholder_scheme,
-                         base::CompareCase::INSENSITIVE_ASCII)) {
-      spec = spec.substr(strlen(placeholder_scheme));
+    remainder = base::RemovePrefix(spec, placeholder_scheme,
+                                   base::CompareCase::INSENSITIVE_ASCII);
+    if (remainder) {
+      spec = *remainder;
     }
-
     canonical_ = std::string(spec);
   }
 

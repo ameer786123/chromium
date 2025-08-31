@@ -28,6 +28,7 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/child_process_binding_types.h"
@@ -78,6 +79,9 @@ void RenderProcessPriority::WriteIntoTrace(
     case ChildProcessImportance::MODERATE:
       proto->set_importance(PriorityProto::IMPORTANCE_MODERATE);
       break;
+    case ChildProcessImportance::PERCEPTIBLE:
+      proto->set_importance(PriorityProto::IMPORTANCE_PERCEPTIBLE);
+      break;
   }
 #endif
 }
@@ -118,7 +122,8 @@ ChildProcessLauncher::ChildProcessLauncher(
 #endif
 {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("startup", "ChildProcessLauncher", this);
+  TRACE_EVENT_BEGIN("startup", "ChildProcessLauncher",
+                    perfetto::Track::FromPointer(this));
 
 #if BUILDFLAG(IS_WIN)
   should_launch_elevated_ = delegate->ShouldLaunchElevated();
@@ -161,12 +166,12 @@ void ChildProcessLauncher::SetRenderProcessPriority(
 void ChildProcessLauncher::SetProcessPriority(
     base::Process::Priority priority) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  base::Process to_pass = process_.process.Duplicate();
-  GetProcessLauncherTaskRunner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          &ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread,
-          helper_, std::move(to_pass), priority));
+
+  if (priority == priority_) {
+    return;
+  }
+
+  SetProcessPriorityImpl(priority);
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
@@ -176,13 +181,28 @@ void ChildProcessLauncher::Notify(ChildProcessLauncherHelper::Process process,
 #endif
                                   int error_code) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  TRACE_EVENT_NESTABLE_ASYNC_END0("startup", "ChildProcessLauncher", this);
+  // Corresponds to the TRACE_EVENT_BEGIN in ChildProcessLauncher.
+  TRACE_EVENT_END("startup", perfetto::Track::FromPointer(this));
 
   starting_ = false;
   process_ = std::move(process);
 
   if (process_.process.IsValid()) {
     process_start_time_ = base::TimeTicks::Now();
+
+#if BUILDFLAG(IS_MAC)
+    // On mac, the task port is required to change the priority of the child
+    // process.
+    auto* port_provider = ChildProcessTaskPortProvider::GetInstance();
+    CHECK(port_provider);
+    if (port_provider->TaskForHandle(process_.process.Handle()) ==
+        MACH_PORT_NULL) {
+      // In the most common case, the task port is not available at launch time.
+      scoped_port_provider_observation_.Observe(port_provider);
+    }
+#endif
+
+    // Note:: May delete |this|.
     client_->OnProcessLaunched();
   } else {
     termination_info_.status = base::TERMINATION_STATUS_LAUNCH_FAILED;
@@ -195,6 +215,41 @@ void ChildProcessLauncher::Notify(ChildProcessLauncherHelper::Process process,
     client_->OnProcessLaunchFailed(error_code);
   }
 }
+
+#if BUILDFLAG(IS_MAC)
+void ChildProcessLauncher::OnReceivedTaskPort(
+    base::ProcessHandle process_handle) {
+  if (!process_.process.IsValid()) {
+    // The process has died since. No need to keep observing for task ports.
+    scoped_port_provider_observation_.Reset();
+    return;
+  }
+
+  // Ignore notifications about different processes.
+  if (process_.process.Handle() != process_handle) {
+    return;
+  }
+
+  scoped_port_provider_observation_.Reset();
+
+  if (priority_) {
+    SetProcessPriorityImpl(*priority_);
+  }
+}
+#endif
+
+#if !BUILDFLAG(IS_ANDROID)
+void ChildProcessLauncher::SetProcessPriorityImpl(
+    base::Process::Priority priority) {
+  priority_ = priority;
+  base::Process to_pass = process_.process.Duplicate();
+  GetProcessLauncherTaskRunner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          &ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread,
+          helper_, std::move(to_pass), priority));
+}
+#endif
 
 bool ChildProcessLauncher::IsStarting() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -292,6 +347,7 @@ RenderProcessPriority::RenderProcessPriority(
     bool intersects_viewport,
     bool boost_for_pending_views,
     bool boost_for_loading,
+    bool boost_for_discard,
     bool is_spare_renderer
 #if BUILDFLAG(IS_ANDROID)
     ,
@@ -310,6 +366,7 @@ RenderProcessPriority::RenderProcessPriority(
       intersects_viewport(intersects_viewport),
       boost_for_pending_views(boost_for_pending_views),
       boost_for_loading(boost_for_loading),
+      boost_for_discard(boost_for_discard),
       is_spare_renderer(is_spare_renderer)
 #if BUILDFLAG(IS_ANDROID)
       ,
@@ -338,7 +395,7 @@ bool RenderProcessPriority::is_background() const {
       return false;
     }
     // TODO(351953350): Migrate this logic to the performance manager.
-    if (boost_for_loading) {
+    if (boost_for_loading || boost_for_discard) {
       return false;
     }
     return *priority_override == base::Process::Priority::kBestEffort;
@@ -346,7 +403,7 @@ bool RenderProcessPriority::is_background() const {
 #endif
   return !visible && !has_media_stream && !has_immersive_xr_session &&
          !boost_for_pending_views && !has_foreground_service_worker &&
-         !boost_for_loading;
+         !boost_for_loading && !boost_for_discard;
 }
 
 base::Process::Priority RenderProcessPriority::GetProcessPriority() const {
@@ -359,7 +416,7 @@ base::Process::Priority RenderProcessPriority::GetProcessPriority() const {
       return base::Process::Priority::kUserBlocking;
     }
     // TODO(351953350): Migrate this logic to the performance manager.
-    if (boost_for_loading) {
+    if (boost_for_loading || boost_for_discard) {
       return base::Process::Priority::kUserBlocking;
     }
     return *priority_override;
@@ -370,9 +427,6 @@ base::Process::Priority RenderProcessPriority::GetProcessPriority() const {
 }
 
 bool RenderProcessPriority::operator==(
-    const RenderProcessPriority& other) const = default;
-
-bool RenderProcessPriority::operator!=(
     const RenderProcessPriority& other) const = default;
 
 }  // namespace content

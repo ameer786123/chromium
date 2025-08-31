@@ -146,7 +146,7 @@ void ContinueBrowsingChip::ButtonPressed() {
   phone_hub_metrics::LogTabContinuationChipClicked(index_);
   user_action_recorder_->RecordBrowserTabOpened();
 
-  NewWindowDelegate::GetPrimary()->OpenUrl(
+  NewWindowDelegate::GetInstance()->OpenUrl(
       url_, NewWindowDelegate::OpenUrlFrom::kUserInteraction,
       NewWindowDelegate::Disposition::kNewForegroundTab);
 
@@ -157,7 +157,7 @@ void ContinueBrowsingChip::ButtonPressed() {
   if (!widget)
     return;
   int64_t current_display_id =
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->GetDisplayNearestWindow(widget->GetNativeWindow())
           .id();
   Shell::GetRootWindowControllerWithDisplayId(current_display_id)

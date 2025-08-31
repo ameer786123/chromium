@@ -63,26 +63,20 @@ struct TextStyle {
   gfx::BaselineStyle baseline = gfx::BaselineStyle::kNormalBaseline;
 };
 
-void ApplyTextStyleFromColorType(
-    const std::optional<omnibox::FormattedString::ColorType>& color_type,
-    OmniboxResultView* result_view,
-    gfx::RenderText* render_text,
-    const gfx::Range& range) {
+void ApplyTextStyleForAnswer(OmniboxResultView* result_view,
+                             gfx::RenderText* render_text,
+                             const gfx::Range& range,
+                             bool is_headline) {
   render_text->ApplyWeight(gfx::Font::Weight::NORMAL, range);
   render_text->ApplyBaselineStyle(gfx::BaselineStyle::kNormalBaseline, range);
   const bool selected =
       result_view->GetThemeState() == OmniboxPartState::SELECTED;
   ui::ColorId id;
-  if (color_type.value() ==
-      omnibox::FormattedString::COLOR_ON_SURFACE_POSITIVE) {
-    id = selected ? kColorOmniboxResultsTextPositiveSelected
-                  : kColorOmniboxResultsTextPositive;
-  } else if (color_type.value() ==
-             omnibox::FormattedString::COLOR_ON_SURFACE_NEGATIVE) {
-    id = selected ? kColorOmniboxResultsTextNegativeSelected
-                  : kColorOmniboxResultsTextNegative;
+  if (is_headline) {
+    id = selected ? kColorOmniboxResultsTextSelected : kColorOmniboxText;
   } else {
-    return;
+    id = selected ? kColorOmniboxResultsTextDimmedSelected
+                  : kColorOmniboxResultsTextDimmed;
   }
   render_text->ApplyColor(result_view->GetColorProvider()->GetColor(id), range);
 }
@@ -181,10 +175,11 @@ void OmniboxTextView::SetTextWithStyling(
   ReapplyStyling();
 }
 
-void OmniboxTextView::AppendTextWithStyling(
+void OmniboxTextView::AppendAndStyleAnswerText(
     const omnibox::FormattedString& formatted_string,
     size_t fragment_index,
-    const omnibox::AnswerType& answer_type) {
+    const omnibox::AnswerType& answer_type,
+    bool is_headline) {
   cached_classifications_.reset();
   wrap_text_lines_ = AnswerHasDefinedMaxLines(answer_type);
   const auto fragments_size =
@@ -197,13 +192,13 @@ void OmniboxTextView::AppendTextWithStyling(
     size_t offset = render_text_ ? render_text_->text().length() : 0u;
     gfx::Range range(offset, offset + append_text.length());
     render_text_->AppendText(append_text);
-    ApplyTextStyleFromColorType(formatted_string.fragments(i).color(),
-                                result_view_, render_text_.get(), range);
+    ApplyTextStyleForAnswer(result_view_, render_text_.get(), range,
+                            is_headline);
   }
   OnStyleChanged();
 }
 
-void OmniboxTextView::SetMultilineText(
+void OmniboxTextView::SetMultilineAnswerText(
     const omnibox::FormattedString& formatted_string,
     const omnibox::AnswerType& answer_type) {
   render_text_ = CreateRenderText(u"");
@@ -212,7 +207,8 @@ void OmniboxTextView::SetMultilineText(
     render_text_->SetMultiline(true);
     render_text_->SetMaxLines(1);
   }
-  AppendTextWithStyling(formatted_string, /*fragment_index=*/0u, answer_type);
+  AppendAndStyleAnswerText(formatted_string, /*fragment_index=*/0u, answer_type,
+                           /*is_headline=*/false);
 }
 
 void OmniboxTextView::SetMultilineText(const std::u16string& text) {
@@ -262,6 +258,13 @@ void OmniboxTextView::ReapplyStyling() {
     // Calculate style-related data.
     if ((*cached_classifications_)[i].style & ACMatchClassification::MATCH) {
       render_text_->ApplyWeight(gfx::Font::Weight::BOLD, current_range);
+    } else if ((*cached_classifications_)[i].style &
+               ACMatchClassification::TOOLBELT) {
+      // TODO(crbug.com/430318151): Investigate whether this font weight and
+      // size handling can be done in chrome_typography.cc, like other omnibox
+      // text.
+      render_text_->ApplyWeight(gfx::Font::Weight::MEDIUM, current_range);
+      render_text_->ApplyFontSizeOverride(12, current_range);
     }
 
     const bool selected =

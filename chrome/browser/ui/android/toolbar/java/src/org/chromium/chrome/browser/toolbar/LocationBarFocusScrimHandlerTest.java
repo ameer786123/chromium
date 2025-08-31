@@ -31,6 +31,7 @@ import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.chrome.R;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.omnibox.LocationBarDataProvider;
 import org.chromium.chrome.browser.omnibox.NewTabPageDelegate;
@@ -103,9 +104,10 @@ public class LocationBarFocusScrimHandlerTest {
         ArgumentCaptor<Callback<Integer>> captor = ArgumentCaptor.forClass(Callback.class);
         verify(mTabStripHeightSupplier).addObserver(captor.capture());
         Callback<Integer> tabStripHeightChangeCallback = captor.getValue();
-        int newTabStripHeight =
-                mContext.getResources()
-                        .getDimensionPixelSize(org.chromium.chrome.R.dimen.tab_strip_height);
+        int newTabStripHeight = 10;
+        doReturn(newTabStripHeight)
+                .when(mResources)
+                .getDimensionPixelSize(R.dimen.tab_strip_height);
         tabStripHeightChangeCallback.onResult(newTabStripHeight);
         assertEquals(
                 "Scrim top margin should be updated when tab strip height changes.",

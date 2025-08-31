@@ -5,12 +5,6 @@
 #include "net/socket/udp_socket_posix.h"
 
 #include "base/notimplemented.h"
-
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "build/build_config.h"
 
 #if BUILDFLAG(IS_APPLE)
@@ -31,6 +25,7 @@
 #include <memory>
 
 #include "base/debug/alias.h"
+#include "base/debug/crash_logging.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -40,15 +35,16 @@
 #include "base/rand_util.h"
 #include "base/task/current_thread.h"
 #include "base/task/thread_pool.h"
+#include "base/trace_event/trace_event.h"
 #include "net/base/cronet_buildflags.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_address.h"
+#include "net/base/ip_address_util.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_activity_monitor.h"
 #include "net/base/sockaddr_storage.h"
 #include "net/base/trace_constants.h"
-#include "net/base/tracing.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_source.h"
@@ -66,6 +62,7 @@
 
 #if BUILDFLAG(IS_APPLE)
 #include "net/base/apple/guarded_fd.h"
+#include "net/socket/socket_apple.h"
 #endif  // BUILDFLAG(IS_APPLE)
 
 #if BUILDFLAG(IS_MAC)
@@ -155,7 +152,7 @@ int UDPSocketPosix::AdoptOpenedSocket(AddressFamily address_family,
 }
 
 int UDPSocketPosix::ConfigureOpenedSocket() {
-#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD)
+#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD) && !BUILDFLAG(IS_IOS_TVOS)
   // https://crbug.com/41271555: Guard against a file descriptor being closed
   // out from underneath the socket.
   guardid_t guardid = reinterpret_cast<guardid_t>(this);
@@ -202,7 +199,7 @@ void UDPSocketPosix::Close() {
   CHECK_EQ(socket_hash_, GetSocketFDHash(socket_));
   TRACE_EVENT("base", perfetto::StaticString{"CloseSocketUDP"});
 
-#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD)
+#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD) && !BUILDFLAG(IS_IOS_TVOS)
   // Attempt to clear errors on the socket so that they are not returned by
   // close(). This seems to be effective at clearing some, but not all,
   // EPROTOTYPE errors. See https://crbug.com/40732798.
@@ -220,7 +217,13 @@ void UDPSocketPosix::Close() {
     // because it may have been reused by another thread in the meantime. We may
     // leak file handles here and cause a crash indirectly later. See
     // https://crbug.com/40732798.
-    PCHECK(errno == ENOTCONN || errno == EPROTOTYPE);
+    if (errno != ENOTCONN && errno != EPROTOTYPE) {
+      // TODO(crbug.com/437414746): Remove this once the new crash has been
+      // diagnosed.
+      SCOPED_CRASH_KEY_NUMBER("UdpSocketPosix", "guarded_close_np_errno",
+                              errno);
+      PLOG(FATAL) << "Unexpected errno from guarded_close_np";
+    }
   }
 #else
   PCHECK(IGNORE_EINTR(close(socket_)) == 0);
@@ -778,7 +781,9 @@ int UDPSocketPosix::InternalRecvFromNonConnectedSocket(IOBuffer* buf,
     last_tos_ = 0;
     if (bytes_transferred > 0 && msg.msg_controllen > 0) {
       for (struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg); cmsg != nullptr;
-           cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+           // SAFETY: Size and null pointer checks are done in system header
+           // files.
+           cmsg = UNSAFE_BUFFERS(CMSG_NXTHDR(&msg, cmsg))) {
 #if BUILDFLAG(IS_APPLE)
         if ((cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_RECVTOS) ||
             (cmsg->cmsg_level == IPPROTO_IPV6 &&
@@ -788,7 +793,11 @@ int UDPSocketPosix::InternalRecvFromNonConnectedSocket(IOBuffer* buf,
             (cmsg->cmsg_level == IPPROTO_IPV6 &&
              cmsg->cmsg_type == IPV6_TCLASS)) {
 #endif  // BUILDFLAG(IS_APPLE)
-          last_tos_ = *(reinterpret_cast<uint8_t*>(CMSG_DATA(cmsg)));
+          auto cmsg_data_as_span =
+              // SAFETY: `CMSG_DATA` points to `control_buffer`. Its size is
+              // 512.
+              UNSAFE_BUFFERS(base::span(CMSG_DATA(cmsg), sizeof(uint8_t)));
+          base::byte_span_from_ref(last_tos_).copy_from(cmsg_data_as_span);
         }
       }
     }
@@ -814,12 +823,26 @@ int UDPSocketPosix::InternalSendTo(IOBuffer* buf,
     }
   }
 
-  int result = HANDLE_EINTR(sendto(socket_, buf->data(), buf_len, sendto_flags_,
-                                   addr, storage.addr_len));
-  if (result < 0)
+#if !defined(WORK_AROUND_CRBUG_40064248)
+  ssize_t result = HANDLE_EINTR(sendto(socket_, buf->data(), buf_len,
+                                       sendto_flags_, addr, storage.addr_len));
+#else   // !WORK_AROUND_CRBUG_40064248
+  ssize_t result = HANDLE_EINTR(SendtoAndDetectBogusReturnValue(
+      socket_, buf->data(), buf_len, sendto_flags_, addr, storage.addr_len));
+  if (result == kSendBogusReturnValueDetected) {
+    // https://crbug.com/40064248 is known to occur as a result of certain
+    // network configuration changes.
+    result = ERR_NETWORK_CHANGED;
+  } else
+#endif  // !WORK_AROUND_CRBUG_40064248
+  if (result < 0) {
     result = MapSystemError(errno);
-  if (result != ERR_IO_PENDING)
+  } else {
+    CHECK_LE(result, buf_len);
+  }
+  if (result != ERR_IO_PENDING) {
     LogWrite(result, buf->data(), address);
+  }
   return result;
 }
 
@@ -924,8 +947,7 @@ int UDPSocketPosix::JoinGroup(const IPAddress& group_address) const {
       ip_mreqn mreq = {};
       mreq.imr_ifindex = multicast_interface_;
       mreq.imr_address.s_addr = htonl(INADDR_ANY);
-      memcpy(&mreq.imr_multiaddr, group_address.bytes().data(),
-             IPAddress::kIPv4AddressSize);
+      mreq.imr_multiaddr = ToInAddr(group_address);
       int rv = setsockopt(socket_, IPPROTO_IP, IP_ADD_MEMBERSHIP,
                           &mreq, sizeof(mreq));
       if (rv < 0)
@@ -937,8 +959,7 @@ int UDPSocketPosix::JoinGroup(const IPAddress& group_address) const {
         return ERR_ADDRESS_INVALID;
       ipv6_mreq mreq;
       mreq.ipv6mr_interface = multicast_interface_;
-      memcpy(&mreq.ipv6mr_multiaddr, group_address.bytes().data(),
-             IPAddress::kIPv6AddressSize);
+      mreq.ipv6mr_multiaddr = ToIn6Addr(group_address);
       int rv = setsockopt(socket_, IPPROTO_IPV6, IPV6_JOIN_GROUP,
                           &mreq, sizeof(mreq));
       if (rv < 0)
@@ -963,8 +984,7 @@ int UDPSocketPosix::LeaveGroup(const IPAddress& group_address) const {
       ip_mreqn mreq = {};
       mreq.imr_ifindex = multicast_interface_;
       mreq.imr_address.s_addr = INADDR_ANY;
-      memcpy(&mreq.imr_multiaddr, group_address.bytes().data(),
-             IPAddress::kIPv4AddressSize);
+      mreq.imr_multiaddr = ToInAddr(group_address);
       int rv = setsockopt(socket_, IPPROTO_IP, IP_DROP_MEMBERSHIP,
                           &mreq, sizeof(mreq));
       if (rv < 0)
@@ -980,8 +1000,7 @@ int UDPSocketPosix::LeaveGroup(const IPAddress& group_address) const {
 #else   // BUILDFLAG(IS_FUCHSIA)
       mreq.ipv6mr_interface = 0;  // 0 indicates default multicast interface.
 #endif  // !BUILDFLAG(IS_FUCHSIA)
-      memcpy(&mreq.ipv6mr_multiaddr, group_address.bytes().data(),
-             IPAddress::kIPv6AddressSize);
+      mreq.ipv6mr_multiaddr = ToIn6Addr(group_address);
       int rv = setsockopt(socket_, IPPROTO_IPV6, IPV6_LEAVE_GROUP,
                           &mreq, sizeof(mreq));
       if (rv < 0)
@@ -1097,6 +1116,19 @@ int UDPSocketPosix::SetIOSNetworkServiceType(int ios_network_service_type) {
   }
 #endif  // BUILDFLAG(IS_IOS)
   return OK;
+}
+
+void UDPSocketPosix::RegisterQuicConnectionClosePayload(
+    base::span<uint8_t> payload) {
+#if BUILDFLAG(IS_ANDROID)
+  net::android::RegisterQuicConnectionClosePayload(socket_, payload);
+#endif  // BUILDFLAG(IS_ANDROID)
+}
+
+void UDPSocketPosix::UnregisterQuicConnectionClosePayload() {
+#if BUILDFLAG(IS_ANDROID)
+  net::android::UnregisterQuicConnectionClosePayload(socket_);
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 }  // namespace net

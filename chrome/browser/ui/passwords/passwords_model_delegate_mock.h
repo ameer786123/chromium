@@ -67,11 +67,20 @@ class PasswordsModelDelegateMock : public PasswordsModelDelegate {
               (),
               (const override));
   MOCK_METHOD(const std::string&, PasskeyRpId, (), (const override));
+  MOCK_METHOD(const std::u16string&,
+              PasswordChangeUsername,
+              (),
+              (const override));
+  MOCK_METHOD(const std::u16string&,
+              PasswordChangeNewPassword,
+              (),
+              (const override));
   MOCK_METHOD(void, OnBubbleShown, (), (override));
   MOCK_METHOD(void, OnBubbleHidden, (), (override));
   MOCK_METHOD(void, OnNoInteraction, (), (override));
   MOCK_METHOD(void, OnNopeUpdateClicked, (), (override));
   MOCK_METHOD(void, NeverSavePassword, (), (override));
+  MOCK_METHOD(void, OnNotNowClicked, (), (override));
   MOCK_METHOD(void, OnPasswordsRevealed, (), (override));
   MOCK_METHOD(void,
               SavePassword,
@@ -132,6 +141,8 @@ class PasswordsModelDelegateMock : public PasswordsModelDelegate {
               (),
               (override));
   MOCK_METHOD(void, NavigateToPasswordChangeSettings, (), (override));
+  MOCK_METHOD(void, OnMouseEntered, (), (override));
+  MOCK_METHOD(void, OnMouseExited, (), (override));
 
   base::WeakPtr<PasswordsModelDelegateMock> AsWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();

@@ -29,6 +29,7 @@
 #include "chrome/browser/ui/views/autofill/popup/popup_view_views.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "components/autofill/core/browser/filling/filling_product.h"
+#include "components/autofill/core/browser/metrics/autofill_metrics.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "components/autofill/core/browser/suggestions/suggestion_type.h"
 #include "components/autofill/core/common/autofill_features.h"
@@ -182,10 +183,7 @@ PopupRowView::PopupRowView(
           controller->ShouldIgnoreMouseObservedOutsideItemBoundsCheck()),
       suggestion_is_acceptable_(
           controller && line_number < controller->GetLineCount() &&
-          controller->GetSuggestionAt(line_number).IsAcceptable()),
-      highlight_on_select_(
-          controller && line_number < controller->GetLineCount() &&
-          controller->GetSuggestionAt(line_number).highlight_on_select) {
+          controller->GetSuggestionAt(line_number).IsAcceptable()) {
   CHECK(content_view);
   CHECK(controller_);
   CHECK_LT(line_number_, controller_->GetLineCount());
@@ -310,7 +308,8 @@ void PopupRowView::OnMouseReleased(const ui::MouseEvent& event) {
   if (event.IsOnlyLeftMouseButton() &&
       content_view_->HitTestPoint(event.location()) && controller_ &&
       IsViewVisibleEnough()) {
-    controller_->AcceptSuggestion(line_number_);
+    controller_->AcceptSuggestion(
+        line_number_, AutofillMetrics::SuggestionAcceptedMethod::kMouse);
   }
 }
 
@@ -319,7 +318,8 @@ void PopupRowView::OnGestureEvent(ui::GestureEvent* event) {
     case ui::EventType::kGestureTap:
       if (content_view_->HitTestPoint(event->location()) && controller_ &&
           IsViewVisibleEnough()) {
-        controller_->AcceptSuggestion(line_number_);
+        controller_->AcceptSuggestion(
+            line_number_, AutofillMetrics::SuggestionAcceptedMethod::kTap);
       }
       break;
     default:
@@ -388,7 +388,7 @@ void PopupRowView::SetSelectedCell(std::optional<CellType> new_cell) {
     selected_cell_ = new_cell;
   } else if (new_cell == CellType::kContent) {
     controller_->SelectSuggestion(line_number_);
-    content_view_->UpdateStyle(/*selected=*/highlight_on_select_);
+    content_view_->UpdateStyle(/*selected=*/true);
     GetA11ySelectionDelegate().NotifyAXSelection(*content_view_);
     content_view_->GetViewAccessibility().SetIsSelected(true);
     NotifyAccessibilityEventDeprecated(
@@ -442,7 +442,8 @@ bool PopupRowView::HandleKeyPressEvent(
           event.GetModifiers() & blink::WebInputEvent::kKeyModifiers;
       if (*GetSelectedCell() == CellType::kContent && controller_ &&
           !kHasKeyModifierPressed && IsViewVisibleEnough()) {
-        controller_->AcceptSuggestion(line_number_);
+        controller_->AcceptSuggestion(
+            line_number_, AutofillMetrics::SuggestionAcceptedMethod::kKeyboard);
         return true;
       }
       return false;
@@ -467,9 +468,6 @@ void PopupRowView::OnCellSelected(std::optional<CellType> type,
 
 void PopupRowView::UpdateBackground() {
   const bool is_highlighted = [&]() {
-    if (!highlight_on_select_) {
-      return false;
-    }
     // The whole row is highlighted when the subpopup is open, or ...
     if (child_suggestions_displayed_) {
       return true;

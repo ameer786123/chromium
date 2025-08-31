@@ -137,8 +137,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest, CancelDialog) {
   ASSERT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
   auto result = EvalJs(shell(), "self.showOpenFilePicker()");
-  EXPECT_TRUE(result.error.find("aborted") != std::string::npos)
-      << result.error;
+  EXPECT_TRUE(result.ExtractError().find("aborted") != std::string::npos)
+      << result;
 }
 
 IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest, OpenFile) {
@@ -256,8 +256,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
   ASSERT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
   auto result = EvalJs(shell(), "self.showOpenFilePicker()");
-  EXPECT_TRUE(result.error.find("not allowed") != std::string::npos)
-      << result.error;
+  EXPECT_TRUE(result.ExtractError().find("not allowed") != std::string::npos)
+      << result;
   EXPECT_EQ(ui::SelectFileDialog::SELECT_NONE, dialog_params_.type);
 }
 
@@ -473,8 +473,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
   ASSERT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
   auto result = EvalJs(shell(), "self.showSaveFilePicker()");
-  EXPECT_TRUE(result.error.find("not allowed") != std::string::npos)
-      << result.error;
+  EXPECT_TRUE(result.ExtractError().find("not allowed") != std::string::npos)
+      << result;
   EXPECT_EQ(ui::SelectFileDialog::SELECT_NONE, dialog_params_.type);
 }
 
@@ -593,8 +593,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
   ASSERT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
   auto result = EvalJs(shell(), "self.showDirectoryPicker()");
-  EXPECT_TRUE(result.error.find("not allowed") != std::string::npos)
-      << result.error;
+  EXPECT_TRUE(result.ExtractError().find("not allowed") != std::string::npos)
+      << result;
   EXPECT_EQ(ui::SelectFileDialog::SELECT_NONE, dialog_params_.type);
 }
 
@@ -668,13 +668,12 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest, OpenDirectory_DenyAccess) {
       .WillOnce(testing::Return(write_grant));
   EXPECT_CALL(permission_context, CheckPathsAgainstEnterprisePolicy(
                                       testing::_, testing::_, testing::_))
-      .WillOnce(testing::Invoke(
-          [](std::vector<PathInfo> entries,
-             content::GlobalRenderFrameHostId frame_id,
-             FileSystemAccessPermissionContext::
-                 EntriesAllowedByEnterprisePolicyCallback callback) {
-            std::move(callback).Run(std::move(entries));
-          }));
+      .WillOnce([](std::vector<PathInfo> entries,
+                   content::GlobalRenderFrameHostId frame_id,
+                   FileSystemAccessPermissionContext::
+                       EntriesAllowedByEnterprisePolicyCallback callback) {
+        std::move(callback).Run(std::move(entries));
+      });
 
   EXPECT_CALL(
       *read_grant,
@@ -690,8 +689,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest, OpenDirectory_DenyAccess) {
   ASSERT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
   auto result = EvalJs(shell(), "self.showDirectoryPicker()");
-  EXPECT_TRUE(result.error.find("aborted") != std::string::npos)
-      << result.error;
+  EXPECT_TRUE(result.ExtractError().find("aborted") != std::string::npos)
+      << result;
 }
 
 IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
@@ -765,13 +764,12 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
       .WillOnce(testing::Return(write_grant));
   EXPECT_CALL(permission_context, CheckPathsAgainstEnterprisePolicy(
                                       testing::_, testing::_, testing::_))
-      .WillOnce(testing::Invoke(
-          [](std::vector<PathInfo> entries,
-             content::GlobalRenderFrameHostId frame_id,
-             FileSystemAccessPermissionContext::
-                 EntriesAllowedByEnterprisePolicyCallback callback) {
-            std::move(callback).Run(std::move(entries));
-          }));
+      .WillOnce([](std::vector<PathInfo> entries,
+                   content::GlobalRenderFrameHostId frame_id,
+                   FileSystemAccessPermissionContext::
+                       EntriesAllowedByEnterprisePolicyCallback callback) {
+        std::move(callback).Run(std::move(entries));
+      });
 
   EXPECT_CALL(
       *read_grant,
@@ -869,13 +867,12 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
       .WillOnce(testing::Return(write_grant));
   EXPECT_CALL(permission_context, CheckPathsAgainstEnterprisePolicy(
                                       testing::_, testing::_, testing::_))
-      .WillOnce(testing::Invoke(
-          [](std::vector<PathInfo> entries,
-             content::GlobalRenderFrameHostId frame_id,
-             FileSystemAccessPermissionContext::
-                 EntriesAllowedByEnterprisePolicyCallback callback) {
-            std::move(callback).Run(std::move(entries));
-          }));
+      .WillOnce([](std::vector<PathInfo> entries,
+                   content::GlobalRenderFrameHostId frame_id,
+                   FileSystemAccessPermissionContext::
+                       EntriesAllowedByEnterprisePolicyCallback callback) {
+        std::move(callback).Run(std::move(entries));
+      });
 
   EXPECT_CALL(
       *read_grant,
@@ -968,8 +965,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
   ASSERT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
   auto result = EvalJs(shell(), "self.showSaveFilePicker()");
-  EXPECT_TRUE(result.error.find("aborted") != std::string::npos)
-      << result.error;
+  EXPECT_TRUE(result.ExtractError().find("aborted") != std::string::npos)
+      << result;
 
   {
     // File should still exist, and be unmodified.
@@ -1042,8 +1039,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
   ASSERT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
   auto result = EvalJs(shell(), "self.showSaveFilePicker()");
-  EXPECT_TRUE(result.error.find("aborted") != std::string::npos)
-      << result.error;
+  EXPECT_TRUE(result.ExtractError().find("aborted") != std::string::npos)
+      << result;
 
   {
     // File should not have been created.
@@ -1064,8 +1061,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest, AcceptsOptions) {
              "  {accept: {'image/jpeg': []}},"
              "  {accept: {'image/svg+xml': '.svg'}},"
              "]})");
-  EXPECT_TRUE(result.error.find("aborted") != std::string::npos)
-      << result.error;
+  EXPECT_TRUE(result.ExtractError().find("aborted") != std::string::npos)
+      << result;
 
   ASSERT_TRUE(dialog_params_.file_types);
   EXPECT_TRUE(dialog_params_.file_types->include_all_files);
@@ -1096,8 +1093,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest, UndefinedAccepts) {
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
   auto result =
       EvalJs(shell(), "self.showOpenFilePicker({types: [undefined]})");
-  EXPECT_TRUE(result.error.find("aborted") != std::string::npos)
-      << result.error;
+  EXPECT_TRUE(result.ExtractError().find("aborted") != std::string::npos)
+      << result;
 
   ASSERT_TRUE(dialog_params_.file_types);
   EXPECT_TRUE(dialog_params_.file_types->include_all_files);
@@ -1175,13 +1172,12 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
       .WillOnce(testing::Return(write_grant));
   EXPECT_CALL(permission_context, CheckPathsAgainstEnterprisePolicy(
                                       testing::_, testing::_, testing::_))
-      .WillOnce(testing::Invoke(
-          [](std::vector<PathInfo> entries,
-             content::GlobalRenderFrameHostId frame_id,
-             FileSystemAccessPermissionContext::
-                 EntriesAllowedByEnterprisePolicyCallback callback) {
-            std::move(callback).Run(std::move(entries));
-          }));
+      .WillOnce([](std::vector<PathInfo> entries,
+                   content::GlobalRenderFrameHostId frame_id,
+                   FileSystemAccessPermissionContext::
+                       EntriesAllowedByEnterprisePolicyCallback callback) {
+        std::move(callback).Run(std::move(entries));
+      });
 
   EXPECT_CALL(
       *read_grant,
@@ -1285,13 +1281,12 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
       .WillOnce(testing::Return(write_grant));
   EXPECT_CALL(permission_context, CheckPathsAgainstEnterprisePolicy(
                                       testing::_, testing::_, testing::_))
-      .WillOnce(testing::Invoke(
-          [](std::vector<PathInfo> entries,
-             content::GlobalRenderFrameHostId frame_id,
-             FileSystemAccessPermissionContext::
-                 EntriesAllowedByEnterprisePolicyCallback callback) {
-            std::move(callback).Run(std::move(entries));
-          }));
+      .WillOnce([](std::vector<PathInfo> entries,
+                   content::GlobalRenderFrameHostId frame_id,
+                   FileSystemAccessPermissionContext::
+                       EntriesAllowedByEnterprisePolicyCallback callback) {
+        std::move(callback).Run(std::move(entries));
+      });
 
   EXPECT_CALL(
       *read_grant,
@@ -1389,13 +1384,12 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
       .WillOnce(testing::Return(write_grant));
   EXPECT_CALL(permission_context, CheckPathsAgainstEnterprisePolicy(
                                       testing::_, testing::_, testing::_))
-      .WillOnce(testing::Invoke(
-          [](std::vector<PathInfo> entries,
-             content::GlobalRenderFrameHostId frame_id,
-             FileSystemAccessPermissionContext::
-                 EntriesAllowedByEnterprisePolicyCallback callback) {
-            std::move(callback).Run(std::move(entries));
-          }));
+      .WillOnce([](std::vector<PathInfo> entries,
+                   content::GlobalRenderFrameHostId frame_id,
+                   FileSystemAccessPermissionContext::
+                       EntriesAllowedByEnterprisePolicyCallback callback) {
+        std::move(callback).Run(std::move(entries));
+      });
 
   EXPECT_CALL(
       *read_grant,
@@ -1502,13 +1496,12 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
       .WillOnce(testing::Return(write_grant));
   EXPECT_CALL(permission_context, CheckPathsAgainstEnterprisePolicy(
                                       testing::_, testing::_, testing::_))
-      .WillOnce(testing::Invoke(
-          [](std::vector<PathInfo> entries,
-             content::GlobalRenderFrameHostId frame_id,
-             FileSystemAccessPermissionContext::
-                 EntriesAllowedByEnterprisePolicyCallback callback) {
-            std::move(callback).Run(std::move(entries));
-          }));
+      .WillOnce([](std::vector<PathInfo> entries,
+                   content::GlobalRenderFrameHostId frame_id,
+                   FileSystemAccessPermissionContext::
+                       EntriesAllowedByEnterprisePolicyCallback callback) {
+        std::move(callback).Run(std::move(entries));
+      });
 
   EXPECT_CALL(
       *read_grant,
@@ -1612,13 +1605,12 @@ IN_PROC_BROWSER_TEST_F(FileSystemChooserBrowserTest,
       .WillOnce(testing::Return(write_grant));
   EXPECT_CALL(permission_context, CheckPathsAgainstEnterprisePolicy(
                                       testing::_, testing::_, testing::_))
-      .WillOnce(testing::Invoke(
-          [](std::vector<PathInfo> entries,
-             content::GlobalRenderFrameHostId frame_id,
-             FileSystemAccessPermissionContext::
-                 EntriesAllowedByEnterprisePolicyCallback callback) {
-            std::move(callback).Run(std::move(entries));
-          }));
+      .WillOnce([](std::vector<PathInfo> entries,
+                   content::GlobalRenderFrameHostId frame_id,
+                   FileSystemAccessPermissionContext::
+                       EntriesAllowedByEnterprisePolicyCallback callback) {
+        std::move(callback).Run(std::move(entries));
+      });
 
   EXPECT_CALL(
       *read_grant,

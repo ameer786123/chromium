@@ -14,26 +14,27 @@ import android.net.Uri;
 import android.util.Pair;
 
 import androidx.annotation.GuardedBy;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.PackageUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TimeUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.EnsuresNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.build.annotations.UsedByReflection;
 import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.base.SplitCompatContentProvider;
 import org.chromium.chrome.browser.content_extraction.InnerTextBridge;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.gsa.GSAUtils;
 import org.chromium.chrome.browser.provider.PageContentProviderMetrics.PageContentProviderEvent;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.content_public.browser.RenderFrameHost;
@@ -53,28 +54,25 @@ import java.util.concurrent.TimeoutException;
  * switches).
  */
 @UsedByReflection("PageContentProvider.java")
+@NullMarked
 public class PageContentProviderImpl extends SplitCompatContentProvider.Impl {
 
     private static final int INVALIDATE_URI_DELAY_MS = 60_000;
     private static final int PAGE_EXTRACTION_TIMEOUT_MS = 30_000;
-    private static final String[] AUTHORIZED_PACKAGE_NAMES =
-            new String[] {GSAUtils.GSA_PACKAGE_NAME};
 
     static final class PageContentInvocationState {
 
         public PageContentInvocationState(
-                @NonNull String invocationId,
-                @NonNull String invokedUrl,
-                @NonNull ActivityTabProvider activityTabProvider) {
+                String invocationId, String invokedUrl, ActivityTabProvider activityTabProvider) {
             mInvocationId = invocationId;
             mInvokedUrl = invokedUrl;
             mActivityTabProvider = activityTabProvider;
             mInvocationStartTimestampMs = TimeUtils.elapsedRealtimeMillis();
         }
 
-        @NonNull private final String mInvocationId;
-        @NonNull private final String mInvokedUrl;
-        @NonNull private final ActivityTabProvider mActivityTabProvider;
+        private final String mInvocationId;
+        private final String mInvokedUrl;
+        private final ActivityTabProvider mActivityTabProvider;
 
         private long mInvocationStartTimestampMs;
         private long mExtractionStartTimestampMs;
@@ -85,13 +83,14 @@ public class PageContentProviderImpl extends SplitCompatContentProvider.Impl {
 
     private static final int URI_MATCH_INVOCATION_URL = 1;
 
-    private UriMatcher mUriMatcher;
+    private @Nullable UriMatcher mUriMatcher;
 
     @GuardedBy("sLock")
-    private static PageContentInvocationState sInvocationState;
+    private static @Nullable PageContentInvocationState sInvocationState;
 
     private static final Object sLock = new Object();
 
+    @EnsuresNonNull("mUriMatcher")
     private void ensureUriMatcherInitialized() {
         if (mUriMatcher != null) {
             return;
@@ -115,13 +114,12 @@ public class PageContentProviderImpl extends SplitCompatContentProvider.Impl {
      * current page if "success" is 1, empty string otherwise. - "error_message": An error message
      * if "success" is 0.
      */
-    @Nullable
     @Override
-    public Cursor query(
-            @NonNull Uri uri,
-            @Nullable String[] strings,
+    public @Nullable Cursor query(
+            Uri uri,
+            String @Nullable [] strings,
             @Nullable String s,
-            @Nullable String[] strings1,
+            String @Nullable [] strings1,
             @Nullable String s1) {
         try (var t = TraceEvent.scoped("PageContentProviderImpl.query")) {
             ThreadUtils.assertOnBackgroundThread();
@@ -174,6 +172,8 @@ public class PageContentProviderImpl extends SplitCompatContentProvider.Impl {
                                                         == null) {
                                             return null;
                                         }
+                                        PageContentProviderMetrics.recordPageContentRequestedUkm(
+                                                currentTab);
 
                                         return Pair.create(
                                                 currentTab.getUrl().getSpec(),
@@ -234,34 +234,32 @@ public class PageContentProviderImpl extends SplitCompatContentProvider.Impl {
         }
     }
 
-    @Nullable
     @Override
-    public String getType(@NonNull Uri uri) {
-        return null;
-    }
-
-    @Nullable
-    @Override
-    public Uri insert(@NonNull Uri uri, @Nullable ContentValues contentValues) {
+    public @Nullable String getType(Uri uri) {
         return null;
     }
 
     @Override
-    public int delete(@NonNull Uri uri, @Nullable String s, @Nullable String[] strings) {
+    public @Nullable Uri insert(Uri uri, @Nullable ContentValues contentValues) {
+        return null;
+    }
+
+    @Override
+    public int delete(Uri uri, @Nullable String s, String @Nullable [] strings) {
         return 0;
     }
 
     @Override
     public int update(
-            @NonNull Uri uri,
+            Uri uri,
             @Nullable ContentValues contentValues,
             @Nullable String s,
-            @Nullable String[] strings) {
+            String @Nullable [] strings) {
         return 0;
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-    protected static String getContentUriForUrl(
+    @VisibleForTesting
+    protected static @Nullable String getContentUriForUrl(
             String url, ActivityTabProvider activityTabProvider) {
         if (!ChromeFeatureList.isEnabled(ChromeFeatureList.PAGE_CONTENT_PROVIDER)) {
             return null;
@@ -294,14 +292,13 @@ public class PageContentProviderImpl extends SplitCompatContentProvider.Impl {
         }
     }
 
-    private void setResultToCursor(
-            @NonNull MatrixCursor cursor, String pageUrl, String pageContents) {
+    private void setResultToCursor(MatrixCursor cursor, String pageUrl, String pageContents) {
         assert cursor.getCount() == 0 : "Only one row should be set";
 
         cursor.addRow(new Object[] {pageUrl, 1, pageContents, ""});
     }
 
-    private void setErrorToCursor(@NonNull MatrixCursor cursor, String errorMessage) {
+    private void setErrorToCursor(MatrixCursor cursor, String errorMessage) {
         assert cursor.getCount() == 0 : "Only one row should be set";
         cursor.addRow(new Object[] {"", 0, "", errorMessage});
     }
@@ -317,8 +314,7 @@ public class PageContentProviderImpl extends SplitCompatContentProvider.Impl {
      * @return A JSON string containing a URI to be used with the {@code query()} method to extract
      *     the text of {@code url}.
      */
-    @Nullable
-    public static String getAssistContentStructuredDataForUrl(
+    public static @Nullable String getAssistContentStructuredDataForUrl(
             String url, ActivityTabProvider activityTabProvider, boolean isManagedProfile) {
         String contentUri = getContentUriForUrl(url, activityTabProvider);
         if (contentUri == null) return null;
@@ -354,13 +350,21 @@ public class PageContentProviderImpl extends SplitCompatContentProvider.Impl {
     }
 
     private static void grantAccessToUri(Uri uri) {
-        for (String packageName : AUTHORIZED_PACKAGE_NAMES) {
-            ContextUtils.getApplicationContext()
-                    .grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        var assistantPackageName =
+                PackageUtils.getDefaultAssistantPackageName(ContextUtils.getApplicationContext());
+        RecordHistogram.recordBooleanHistogram(
+                "Android.AssistContent.WebPageContentProvider.GetAssistantPackageResult",
+                assistantPackageName != null);
+        if (assistantPackageName == null) {
+            return;
         }
+
+        ContextUtils.getApplicationContext()
+                .grantUriPermission(
+                        assistantPackageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     protected static void clearCachedContent() {
         synchronized (sLock) {
             if (sInvocationState != null) {

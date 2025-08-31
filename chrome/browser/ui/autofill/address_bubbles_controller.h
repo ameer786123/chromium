@@ -49,10 +49,7 @@ class AddressBubblesController
       const AutofillProfile& profile,
       const AutofillProfile* original_profile,
       bool is_migration_to_account,
-      AutofillClient::AddressProfileSavePromptCallback callback);
-
-  static void SetUpAndShowAddNewAddressBubble(
-      content::WebContents* web_contents,
+      bool user_has_any_profile_saved,
       AutofillClient::AddressProfileSavePromptCallback callback);
 
   // AddressBubbleControllerDelegate:
@@ -70,6 +67,10 @@ class AddressBubblesController
   bool IsBubbleActive() const override;
   std::u16string GetPageActionIconTootip() const override;
   AutofillBubbleBase* GetBubbleView() const override;
+
+  // BubbleControllerBase:
+  BubbleType GetBubbleType() const override;
+  base::WeakPtr<BubbleControllerBase> GetBubbleControllerBaseWeakPtr() override;
 
   base::WeakPtr<AddressBubbleControllerDelegate> GetWeakPtr();
 
@@ -93,8 +94,17 @@ class AddressBubblesController
   void SetUpAndShowBubble(ShowBubbleViewCallback show_bubble_view_callback,
                           std::u16string page_action_icon_tootip,
                           bool is_migration_to_account,
+                          bool user_has_any_profile_saved,
                           AutofillClient::AddressProfileSavePromptCallback
                               address_profile_save_prompt_callback);
+
+  // Sets up the controller's state for showing a save/update address bubble.
+  void SetUpBubble(ShowBubbleViewCallback show_bubble_view_callback,
+                   std::u16string page_action_icon_tootip,
+                   bool is_migration_to_account,
+                   bool user_has_any_profile_saved,
+                   AutofillClient::AddressProfileSavePromptCallback
+                       address_profile_save_prompt_callback);
 
   // Maybe shows the iOS bubble promo after the user accepts to save their
   // address information.
@@ -122,6 +132,9 @@ class AddressBubblesController
   // update/save which asks them if they want to sign in to Chrome and move the
   // just saved address to account store.
   bool is_showing_sign_in_promo_ = false;
+
+  // Whether the user has any addresses profile saved.
+  bool user_has_any_profile_saved_ = false;
 
   // The callback to create and show the bubble. It defines the appearance of
   // the bubble and contains some specific logic. The controller doesn't take

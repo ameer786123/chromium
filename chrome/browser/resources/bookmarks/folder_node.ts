@@ -14,7 +14,7 @@ import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
 import {changeFolderOpen, selectFolder} from './actions.js';
 import {BookmarksCommandManagerElement} from './command_manager.js';
-import {FOLDER_OPEN_BY_DEFAULT_DEPTH, MenuSource, ROOT_NODE_ID} from './constants.js';
+import {LOCAL_HEADING_NODE_ID, MenuSource, ROOT_NODE_ID} from './constants.js';
 import {getCss} from './folder_node.css.js';
 import {getHtml} from './folder_node.html.js';
 import {StoreClientMixinLit} from './store_client_mixin_lit.js';
@@ -93,9 +93,12 @@ export class BookmarksFolderNodeElement extends BookmarksFolderNodeElementBase {
         changedProperties as Map<PropertyKey, unknown>;
     if (changedProperties.has('depth') ||
         changedPrivateProperties.has('openState_')) {
-      this.isOpen = this.openState_ !== null ?
-          this.openState_ :
-          this.depth <= FOLDER_OPEN_BY_DEFAULT_DEPTH;
+      // If account nodes exist, the permanent account nodes should be visible,
+      // while the local ones are collapsed.
+      const defaultOpenState =
+          isRootNode(this.itemId) && this.itemId !== LOCAL_HEADING_NODE_ID;
+      this.isOpen =
+          this.openState_ !== null ? this.openState_ : defaultOpenState;
     }
 
     if (changedProperties.has('itemId') ||
@@ -371,6 +374,11 @@ export class BookmarksFolderNodeElement extends BookmarksFolderNodeElementBase {
     // search is active, even though this node is not technically selected. This
     // allows the sidebar to be focusable during a search.
     return this.selectedFolder_ === this.itemId ? '0' : '-1';
+  }
+
+  protected getAriaLevel_(): number {
+    // Converts (-1)-indexed depth to 1-based ARIA level.
+    return this.depth + 2;
   }
 
   /**

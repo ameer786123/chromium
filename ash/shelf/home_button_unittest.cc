@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -13,9 +14,6 @@
 #include "ash/app_list/app_list_controller_impl.h"
 #include "ash/app_list/test/app_list_test_helper.h"
 #include "ash/app_list/views/app_list_view.h"
-#include "ash/assistant/assistant_controller_impl.h"
-#include "ash/assistant/model/assistant_ui_model.h"
-#include "ash/assistant/test/test_assistant_service.h"
 #include "ash/capture_mode/base_capture_mode_session.h"
 #include "ash/capture_mode/capture_mode_controller.h"
 #include "ash/capture_mode/capture_mode_types.h"
@@ -44,6 +42,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "chromeos/ash/services/assistant/public/cpp/assistant_enums.h"
 #include "chromeos/ash/services/assistant/public/cpp/assistant_prefs.h"
+#include "chromeos/ash/services/assistant/public/cpp/features.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -127,8 +126,6 @@ class HomeButtonTest : public HomeButtonTestBase,
   }
 
   bool IsHideShelfControlsInTabletModeEnabled() const { return GetParam(); }
-
-  AssistantState* assistant_state() const { return AssistantState::Get(); }
 
   PrefService* prefs() {
     return Shell::Get()->session_controller()->GetPrimaryUserPrefService();
@@ -221,6 +218,11 @@ class HomeButtonWithQuickAppAccess : public HomeButtonTestBase {
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+class HomeButtonNoSessionTest : public HomeButtonTest {
+ public:
+  HomeButtonNoSessionTest() { set_start_session(false); }
 };
 
 // Test that setting an existing app item as the quick app shows a working
@@ -687,6 +689,7 @@ class HomeButtonVisibilityWithAccessibilityFeaturesTest
 // The parameter indicates whether the kHideShelfControlsInTabletMode feature
 // is enabled.
 INSTANTIATE_TEST_SUITE_P(All, HomeButtonTest, testing::Bool());
+INSTANTIATE_TEST_SUITE_P(All, HomeButtonNoSessionTest, testing::Bool());
 
 // Tests that the shelf navigation widget clip rect is not clipping the intended
 // home button bounds.
@@ -1031,45 +1034,7 @@ TEST_F(HomeButtonAnimationTest, NonAnimatedLayoutDuringAnimation) {
 
 inline constexpr LoginInfo k2ndRegularUserLoginInfo = {"user1@tray"};
 
-TEST_P(HomeButtonTest, LongPressGestureAssistant) {
-  // Simulate two users with primary user as active.
-  auto primary = SimulateUserLogin(kRegularUserLoginInfo);
-  SimulateUserLogin(k2ndRegularUserLoginInfo);
-  SwitchActiveUser(primary);
-
-  // Disable Sunfish and Scanner via enterprise policies.
-  DisableSunfishScanner();
-  // Enable the Assistant in system settings.
-  prefs()->SetBoolean(assistant::prefs::kAssistantEnabled, true);
-  assistant_state()->NotifyFeatureAllowed(
-      assistant::AssistantAllowedState::ALLOWED);
-  assistant_state()->NotifyStatusChanged(assistant::AssistantStatus::READY);
-
-  ShelfNavigationWidget::TestApi test_api(
-      GetPrimaryShelf()->navigation_widget());
-  EXPECT_TRUE(test_api.IsHomeButtonVisible());
-  ASSERT_TRUE(home_button());
-
-  ui::GestureEvent long_press = CreateGestureEvent(
-      ui::GestureEventDetails(ui::EventType::kGestureLongPress));
-  SendGestureEvent(&long_press);
-  GetAppListTestHelper()->WaitUntilIdle();
-  EXPECT_EQ(AssistantVisibility::kVisible,
-            AssistantUiController::Get()->GetModel()->visibility());
-  auto* capture_mode_controller = CaptureModeController::Get();
-  EXPECT_FALSE(capture_mode_controller->IsActive());
-
-  AssistantUiController::Get()->CloseUi(
-      assistant::AssistantExitPoint::kUnspecified);
-  // Test long press gesture on secondary display.
-  SendGestureEventToSecondaryDisplay(&long_press);
-  GetAppListTestHelper()->WaitUntilIdle();
-  EXPECT_EQ(AssistantVisibility::kVisible,
-            AssistantUiController::Get()->GetModel()->visibility());
-  EXPECT_FALSE(capture_mode_controller->IsActive());
-}
-
-TEST_P(HomeButtonTest, LongPressGestureSunfishScanner) {
+TEST_P(HomeButtonNoSessionTest, LongPressGestureSunfishScanner) {
   // Simulate two users with primary user as active.
   auto primary = SimulateUserLogin(kRegularUserLoginInfo);
   SimulateUserLogin(k2ndRegularUserLoginInfo);
@@ -1077,8 +1042,6 @@ TEST_P(HomeButtonTest, LongPressGestureSunfishScanner) {
 
   // Sunfish / Scanner should already be enabled.
   ASSERT_TRUE(CanShowSunfishOrScannerUi());
-  // Disable Assistant in system settings.
-  prefs()->SetBoolean(assistant::prefs::kAssistantEnabled, false);
 
   ShelfNavigationWidget::TestApi test_api(
       GetPrimaryShelf()->navigation_widget());
@@ -1106,251 +1069,41 @@ TEST_P(HomeButtonTest, LongPressGestureSunfishScanner) {
             BehaviorType::kSunfish);
 }
 
-TEST_P(HomeButtonTest, LongPressGestureSunfishScannerWithAssistant) {
+TEST_P(HomeButtonNoSessionTest, LongPressGestureInTabletModeSunfishScanner) {
   // Simulate two users with primary user as active.
-  auto primary = SimulateUserLogin({kDefaultUserEmail});
-  SimulateUserLogin({kDefaultUserEmail});
-  SwitchActiveUser(primary);
-
-  // Sunfish / Scanner should already be enabled.
-  ASSERT_TRUE(CanShowSunfishOrScannerUi());
-  // Enable the Assistant in system settings.
-  prefs()->SetBoolean(assistant::prefs::kAssistantEnabled, true);
-  assistant_state()->NotifyFeatureAllowed(
-      assistant::AssistantAllowedState::ALLOWED);
-  assistant_state()->NotifyStatusChanged(assistant::AssistantStatus::READY);
-
-  ShelfNavigationWidget::TestApi test_api(
-      GetPrimaryShelf()->navigation_widget());
-  ASSERT_TRUE(test_api.IsHomeButtonVisible());
-  ASSERT_TRUE(home_button());
-
-  ui::GestureEvent long_press = CreateGestureEvent(
-      ui::GestureEventDetails(ui::EventType::kGestureLongPress));
-  SendGestureEvent(&long_press);
-  auto* capture_mode_controller = CaptureModeController::Get();
-  ASSERT_TRUE(capture_mode_controller->IsActive());
-  EXPECT_EQ(capture_mode_controller->capture_mode_session()
-                ->active_behavior()
-                ->behavior_type(),
-            BehaviorType::kSunfish);
-  EXPECT_NE(AssistantUiController::Get()->GetModel()->visibility(),
-            AssistantVisibility::kVisible);
-  capture_mode_controller->Stop();
-  ASSERT_FALSE(capture_mode_controller->IsActive());
-
-  // Test long press gesture on secondary display.
-  SendGestureEventToSecondaryDisplay(&long_press);
-  ASSERT_TRUE(capture_mode_controller->IsActive());
-  EXPECT_EQ(capture_mode_controller->capture_mode_session()
-                ->active_behavior()
-                ->behavior_type(),
-            BehaviorType::kSunfish);
-  EXPECT_NE(AssistantUiController::Get()->GetModel()->visibility(),
-            AssistantVisibility::kVisible);
-}
-
-TEST_P(HomeButtonTest, LongPressGestureInTabletModeAssistant) {
-  // Simulate two users with primary user as active.
-  auto primary = SimulateUserLogin({kDefaultUserEmail});
-  SimulateUserLogin({kDefaultUserEmail});
-  SwitchActiveUser(primary);
-
-  // Disable Sunfish and Scanner via enterprise policies.
-  DisableSunfishScanner();
-  // Enable the Assistant in system settings.
-  prefs()->SetBoolean(assistant::prefs::kAssistantEnabled, true);
-  assistant_state()->NotifyFeatureAllowed(
-      assistant::AssistantAllowedState::ALLOWED);
-  assistant_state()->NotifyStatusChanged(assistant::AssistantStatus::READY);
-
-  ash::TabletModeControllerTestApi().EnterTabletMode();
-
-  ShelfNavigationWidget::TestApi test_api(
-      GetPrimaryShelf()->navigation_widget());
-  const bool should_show_home_button =
-      !IsHideShelfControlsInTabletModeEnabled();
-  EXPECT_EQ(should_show_home_button, test_api.IsHomeButtonVisible());
-  ASSERT_EQ(should_show_home_button, static_cast<bool>(home_button()));
-
-  // App list should be shown by default in tablet mode.
-  GetAppListTestHelper()->CheckVisibility(true);
-  GetAppListTestHelper()->CheckState(AppListViewState::kFullscreenAllApps);
-
-  if (!should_show_home_button)
-    return;
-
-  ui::GestureEvent long_press = CreateGestureEvent(
-      ui::GestureEventDetails(ui::EventType::kGestureLongPress));
-  SendGestureEvent(&long_press);
-  GetAppListTestHelper()->WaitUntilIdle();
-  EXPECT_EQ(AssistantVisibility::kVisible,
-            AssistantUiController::Get()->GetModel()->visibility());
-  EXPECT_FALSE(CaptureModeController::Get()->IsActive());
-  GetAppListTestHelper()->CheckVisibility(true);
-  GetAppListTestHelper()->CheckState(AppListViewState::kFullscreenAllApps);
-
-  // Tap on the home button should close assistant.
-  gfx::Point center = home_button()->GetBoundsInScreen().CenterPoint();
-  GetEventGenerator()->MoveMouseTo(center);
-  GetEventGenerator()->ClickLeftButton();
-
-  GetAppListTestHelper()->WaitUntilIdle();
-  GetAppListTestHelper()->CheckVisibility(true);
-  GetAppListTestHelper()->CheckState(AppListViewState::kFullscreenAllApps);
-  EXPECT_EQ(AssistantVisibility::kClosed,
-            AssistantUiController::Get()->GetModel()->visibility());
-
-  AssistantUiController::Get()->CloseUi(
-      assistant::AssistantExitPoint::kUnspecified);
-}
-
-TEST_P(HomeButtonTest, LongPressGestureInTabletModeSunfishScanner) {
-  // Simulate two users with primary user as active.
-  auto primary = SimulateUserLogin({kDefaultUserEmail});
-  SimulateUserLogin({kDefaultUserEmail});
-  SwitchActiveUser(primary);
-
-  // Sunfish / Scanner should already be enabled.
-  ASSERT_TRUE(CanShowSunfishOrScannerUi());
-  // Enable the Assistant in system settings.
-  prefs()->SetBoolean(assistant::prefs::kAssistantEnabled, true);
-  assistant_state()->NotifyFeatureAllowed(
-      assistant::AssistantAllowedState::ALLOWED);
-  assistant_state()->NotifyStatusChanged(assistant::AssistantStatus::READY);
-
-  ash::TabletModeControllerTestApi().EnterTabletMode();
-
-  ShelfNavigationWidget::TestApi test_api(
-      GetPrimaryShelf()->navigation_widget());
-  const bool should_show_home_button =
-      !IsHideShelfControlsInTabletModeEnabled();
-  EXPECT_EQ(test_api.IsHomeButtonVisible(), should_show_home_button);
-  ASSERT_EQ(static_cast<bool>(home_button()), should_show_home_button);
-
-  // App list should be shown by default in tablet mode.
-  GetAppListTestHelper()->CheckVisibility(true);
-  GetAppListTestHelper()->CheckState(AppListViewState::kFullscreenAllApps);
-
-  if (!should_show_home_button) {
-    return;
-  }
-
-  ui::GestureEvent long_press = CreateGestureEvent(
-      ui::GestureEventDetails(ui::EventType::kGestureLongPress));
-  SendGestureEvent(&long_press);
-  auto* capture_mode_controller = CaptureModeController::Get();
-  ASSERT_TRUE(capture_mode_controller->IsActive());
-  EXPECT_EQ(capture_mode_controller->capture_mode_session()
-                ->active_behavior()
-                ->behavior_type(),
-            BehaviorType::kSunfish);
-  EXPECT_NE(AssistantUiController::Get()->GetModel()->visibility(),
-            AssistantVisibility::kVisible);
-}
-
-TEST_P(HomeButtonTest,
-       LongPressGestureInTabletModeSunfishScannerWithAssistant) {
-  // Simulate two users with primary user as active.
-  auto primary = SimulateUserLogin({kDefaultUserEmail});
-  SimulateUserLogin({kDefaultUserEmail});
-  SwitchActiveUser(primary);
-
-  // Sunfish / Scanner should already be enabled.
-  ASSERT_TRUE(CanShowSunfishOrScannerUi());
-  // Disable Assistant in system settings.
-  prefs()->SetBoolean(assistant::prefs::kAssistantEnabled, false);
-
-  ash::TabletModeControllerTestApi().EnterTabletMode();
-
-  ShelfNavigationWidget::TestApi test_api(
-      GetPrimaryShelf()->navigation_widget());
-  const bool should_show_home_button =
-      !IsHideShelfControlsInTabletModeEnabled();
-  EXPECT_EQ(test_api.IsHomeButtonVisible(), should_show_home_button);
-  ASSERT_EQ(static_cast<bool>(home_button()), should_show_home_button);
-
-  // App list should be shown by default in tablet mode.
-  GetAppListTestHelper()->CheckVisibility(true);
-  GetAppListTestHelper()->CheckState(AppListViewState::kFullscreenAllApps);
-
-  if (!should_show_home_button) {
-    return;
-  }
-
-  ui::GestureEvent long_press = CreateGestureEvent(
-      ui::GestureEventDetails(ui::EventType::kGestureLongPress));
-  SendGestureEvent(&long_press);
-  auto* capture_mode_controller = CaptureModeController::Get();
-  ASSERT_TRUE(capture_mode_controller->IsActive());
-  EXPECT_EQ(capture_mode_controller->capture_mode_session()
-                ->active_behavior()
-                ->behavior_type(),
-            BehaviorType::kSunfish);
-  EXPECT_NE(AssistantUiController::Get()->GetModel()->visibility(),
-            AssistantVisibility::kVisible);
-}
-
-TEST_P(HomeButtonTest, LongPressGestureWithSecondaryUserAssistant) {
-  // Disallowed by secondary user.
-  assistant_state()->NotifyFeatureAllowed(
-      assistant::AssistantAllowedState::DISALLOWED_BY_NONPRIMARY_USER);
-
-  // Disable Sunfish and Scanner via enterprise policies.
-  DisableSunfishScanner();
-  // Enable the Assistant in system settings.
-  prefs()->SetBoolean(assistant::prefs::kAssistantEnabled, true);
-
-  ShelfNavigationWidget::TestApi test_api(
-      GetPrimaryShelf()->navigation_widget());
-  EXPECT_TRUE(test_api.IsHomeButtonVisible());
-  ASSERT_TRUE(home_button());
-
-  ui::GestureEvent long_press = CreateGestureEvent(
-      ui::GestureEventDetails(ui::EventType::kGestureLongPress));
-  SendGestureEvent(&long_press);
-  // The Assistant is disabled for secondary user.
-  EXPECT_NE(AssistantVisibility::kVisible,
-            AssistantUiController::Get()->GetModel()->visibility());
-  auto* capture_mode_controller = CaptureModeController::Get();
-  EXPECT_FALSE(capture_mode_controller->IsActive());
-
-  // Test long press gesture on secondary display.
-  SendGestureEventToSecondaryDisplay(&long_press);
-  EXPECT_NE(AssistantVisibility::kVisible,
-            AssistantUiController::Get()->GetModel()->visibility());
-  EXPECT_FALSE(capture_mode_controller->IsActive());
-}
-
-TEST_P(HomeButtonTest, LongPressGestureWithAssistantAndSunfishScannerDisabled) {
-  // Simulate two user with primary user as active.
   auto primary = SimulateUserLogin(kRegularUserLoginInfo);
   SimulateUserLogin(k2ndRegularUserLoginInfo);
   SwitchActiveUser(primary);
 
-  // Disable Sunfish and Scanner via enterprise policies.
-  DisableSunfishScanner();
-  // Simulate a user who has already completed setup flow, but disabled the
-  // Assistant in settings.
-  prefs()->SetBoolean(assistant::prefs::kAssistantEnabled, false);
-  assistant_state()->NotifyFeatureAllowed(
-      assistant::AssistantAllowedState::ALLOWED);
+  // Sunfish / Scanner should already be enabled.
+  ASSERT_TRUE(CanShowSunfishOrScannerUi());
+
+  ash::TabletModeControllerTestApi().EnterTabletMode();
 
   ShelfNavigationWidget::TestApi test_api(
       GetPrimaryShelf()->navigation_widget());
-  EXPECT_TRUE(test_api.IsHomeButtonVisible());
-  ASSERT_TRUE(home_button());
+  const bool should_show_home_button =
+      !IsHideShelfControlsInTabletModeEnabled();
+  EXPECT_EQ(test_api.IsHomeButtonVisible(), should_show_home_button);
+  ASSERT_EQ(static_cast<bool>(home_button()), should_show_home_button);
+
+  // App list should be shown by default in tablet mode.
+  GetAppListTestHelper()->CheckVisibility(true);
+  GetAppListTestHelper()->CheckState(AppListViewState::kFullscreenAllApps);
+
+  if (!should_show_home_button) {
+    return;
+  }
 
   ui::GestureEvent long_press = CreateGestureEvent(
       ui::GestureEventDetails(ui::EventType::kGestureLongPress));
   SendGestureEvent(&long_press);
-  EXPECT_NE(AssistantVisibility::kVisible,
-            AssistantUiController::Get()->GetModel()->visibility());
-
-  // Test long press gesture on secondary display.
-  SendGestureEventToSecondaryDisplay(&long_press);
-  EXPECT_NE(AssistantVisibility::kVisible,
-            AssistantUiController::Get()->GetModel()->visibility());
+  auto* capture_mode_controller = CaptureModeController::Get();
+  ASSERT_TRUE(capture_mode_controller->IsActive());
+  EXPECT_EQ(capture_mode_controller->capture_mode_session()
+                ->active_behavior()
+                ->behavior_type(),
+            BehaviorType::kSunfish);
 }
 
 // Tests that tapping in the bottom left corner in tablet mode results in the
@@ -1415,7 +1168,7 @@ TEST_P(HomeButtonTest, ClickOnCornerPixel) {
   // that a click on the bottom-left corner (or bottom-right corner in RTL)
   // can trigger the home button.
   gfx::Point corner(
-      0, display::Screen::GetScreen()->GetPrimaryDisplay().bounds().height());
+      0, display::Screen::Get()->GetPrimaryDisplay().bounds().height());
 
   ShelfNavigationWidget::TestApi test_api(
       GetPrimaryShelf()->navigation_widget());

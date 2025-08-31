@@ -206,7 +206,8 @@ std::u16string GetEnvelopeStyleAddress(const AutofillProfile& profile,
                                        bool include_recipient,
                                        bool include_country) {
   const std::u16string& country_code = profile.GetInfo(
-      AutofillType(HtmlFieldType::kCountryCode), ui_language_code);
+      AutofillType(ADDRESS_HOME_COUNTRY, /*is_country_code=*/true),
+      ui_language_code);
 
   std::string not_used;
   std::vector<AutofillAddressUIComponent> components =
@@ -401,13 +402,10 @@ AddressUIComponentIconType GetAddressUIComponentIconTypeForFieldType(
     case NO_SERVER_DATA:
     case EMPTY_TYPE:
     case AMBIGUOUS_TYPE:
-    case FIELD_WITH_DEFAULT_VALUE:
     case MERCHANT_EMAIL_SIGNUP:
     case PRICE:
     case NUMERIC_QUANTITY:
     case SEARCH_TERM:
-    case IMPROVED_PREDICTION:
-    case PASSPORT_NAME_TAG:
     case PASSPORT_NUMBER:
     case PASSPORT_ISSUING_COUNTRY:
     case PASSPORT_EXPIRATION_DATE:
@@ -415,18 +413,23 @@ AddressUIComponentIconType GetAddressUIComponentIconTypeForFieldType(
     case LOYALTY_MEMBERSHIP_PROGRAM:
     case LOYALTY_MEMBERSHIP_PROVIDER:
     case LOYALTY_MEMBERSHIP_ID:
-    case VEHICLE_OWNER_TAG:
     case VEHICLE_LICENSE_PLATE:
     case VEHICLE_VIN:
     case VEHICLE_MAKE:
     case VEHICLE_MODEL:
     case VEHICLE_YEAR:
     case VEHICLE_PLATE_STATE:
-    case DRIVERS_LICENSE_NAME_TAG:
     case DRIVERS_LICENSE_REGION:
     case DRIVERS_LICENSE_NUMBER:
     case DRIVERS_LICENSE_EXPIRATION_DATE:
     case DRIVERS_LICENSE_ISSUE_DATE:
+    case NATIONAL_ID_CARD_NUMBER:
+    case NATIONAL_ID_CARD_EXPIRATION_DATE:
+    case NATIONAL_ID_CARD_ISSUE_DATE:
+    case NATIONAL_ID_CARD_ISSUING_COUNTRY:
+    case REDRESS_NUMBER:
+    case KNOWN_TRAVELER_NUMBER:
+    case KNOWN_TRAVELER_NUMBER_EXPIRATION_DATE:
     case MAX_VALID_FIELD_TYPE:
     case DELIVERY_INSTRUCTIONS:
     case ADDRESS_HOME_SUBPREMISE:
@@ -445,6 +448,8 @@ AddressUIComponentIconType GetAddressUIComponentIconTypeForFieldType(
     case ADDRESS_HOME_CITY:
     case ADDRESS_HOME_STATE:
     case ADDRESS_HOME_ZIP:
+    case ADDRESS_HOME_ZIP_PREFIX:
+    case ADDRESS_HOME_ZIP_SUFFIX:
     case ADDRESS_HOME_COUNTRY:
     case ADDRESS_HOME_DEPENDENT_LOCALITY:
     case ADDRESS_HOME_STREET_NAME:
@@ -462,6 +467,7 @@ AddressUIComponentIconType GetAddressUIComponentIconTypeForFieldType(
     case ADDRESS_HOME_STREET_LOCATION_AND_LOCALITY:
     case ADDRESS_HOME_STREET_LOCATION_AND_LANDMARK:
     case ADDRESS_HOME_DEPENDENT_LOCALITY_AND_LANDMARK:
+    case EMAIL_OR_LOYALTY_MEMBERSHIP_ID:
       return AddressUIComponentIconType::kNoIcon;
   }
 }

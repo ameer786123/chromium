@@ -5,12 +5,12 @@
 #include "chrome/browser/ash/policy/remote_commands/crd/public/crd_session_result_codes.h"
 
 #include "base/notreached.h"
-#include "remoting/protocol/errors.h"
+#include "remoting/base/errors.h"
 
 namespace policy {
 
 namespace {
-using remoting::protocol::ErrorCode;
+using remoting::ErrorCode;
 }  // namespace
 
 ExtendedStartCrdSessionResultCode ToExtendedStartCrdSessionResultCode(
@@ -76,6 +76,10 @@ ExtendedStartCrdSessionResultCode ToExtendedStartCrdSessionResultCode(
       return ExtendedStartCrdSessionResultCode::kFailureInvalidState;
     case ErrorCode::INVALID_ARGUMENT:
       return ExtendedStartCrdSessionResultCode::kFailureInvalidArgument;
+    case ErrorCode::NETWORK_FAILURE:
+      return ExtendedStartCrdSessionResultCode::kFailureNetworkFailure;
+    case ErrorCode::OPERATION_TIMEOUT:
+      return ExtendedStartCrdSessionResultCode::kFailureOperationTimeout;
   }
   NOTREACHED();
 }
@@ -128,6 +132,8 @@ StartCrdSessionResultCode ToStartCrdSessionResultCode(
         kFailureUnexpectedAuthenticatorError:
     case ExtendedStartCrdSessionResultCode::kFailureInvalidState:
     case ExtendedStartCrdSessionResultCode::kFailureInvalidArgument:
+    case ExtendedStartCrdSessionResultCode::kFailureNetworkFailure:
+    case ExtendedStartCrdSessionResultCode::kFailureOperationTimeout:
       // The server side is not interested in a lot of the different CRD host
       // failures, which is why most of them are simply mapped to
       // 'FAILURE_CRD_HOST_ERROR`.

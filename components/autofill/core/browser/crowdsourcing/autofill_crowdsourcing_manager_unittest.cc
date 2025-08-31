@@ -22,7 +22,9 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
@@ -1188,6 +1190,7 @@ class AutofillServerCommunicationTest
 
   bool SendUploadRequest(const FormStructure& form,
                          RandomizedEncoder& randomized_encoder,
+                         LanguageCode current_page_language,
                          const FieldTypeSet& available_field_types,
                          std::optional<FormSignature> login_form_signature,
                          bool observed_submission,
@@ -1201,6 +1204,7 @@ class AutofillServerCommunicationTest
 
     EncodeUploadRequestOptions options;
     options.encoder = RandomizedEncoder::Create(client().GetPrefs());
+    options.current_page_language = std::move(current_page_language);
     options.available_field_types = available_field_types;
     options.login_form_signature = login_form_signature;
     options.observed_submission = observed_submission;
@@ -1272,7 +1276,8 @@ TEST_P(AutofillServerCommunicationTest, Upload) {
                                   {.fields = {{.role = NAME_FIRST},
                                               {.role = NAME_LAST},
                                               {.role = EMAIL_ADDRESS}}})),
-                              *randomized_encoder, /*available_field_types=*/{},
+                              *randomized_encoder, LanguageCode(""),
+                              /*available_field_types=*/{},
                               /*login_form_signature=*/std::nullopt,
                               /*observed_submission=*/true,
                               /*is_password_manager_upload=*/false));
@@ -1373,9 +1378,13 @@ TEST_P(AutofillQueryTest, SendsExperiment) {
     AutofillPageQueryRequest query_contents;
     ASSERT_TRUE(query_contents.ParseFromString(payloads()[0]));
 
-    ASSERT_EQ(2, query_contents.experiments_size());
-    EXPECT_EQ(3312923, query_contents.experiments(0));
-    EXPECT_EQ(3314883, query_contents.experiments(1));
+    if constexpr (BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) ||
+                  BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)) {
+      EXPECT_THAT(query_contents.experiments(),
+                  ElementsAre(3312923, 3314883, 3314871));
+    } else {
+      EXPECT_THAT(query_contents.experiments(), ElementsAre(3312923, 3314883));
+    }
   }
 
   // Query a third time (will experiments still enabled). This should go to the
@@ -1591,7 +1600,6 @@ TEST_P(AutofillUploadTest, RichMetadata) {
   AutofillCrowdsourcingManager crowdsourcing_manager(
       &client(), version_info::Channel::UNKNOWN);
   FormStructure form_structure(form);
-  form_structure.set_current_page_language(LanguageCode("fr"));
   SetCorrectFieldHostFormSignatures(form_structure);
 
   client().GetPrefs()->SetBoolean(
@@ -1610,6 +1618,7 @@ TEST_P(AutofillUploadTest, RichMetadata) {
 
     // The first attempt should succeed.
     EXPECT_TRUE(SendUploadRequest(form_structure, *randomized_encoder,
+                                  LanguageCode("fr"),
                                   /*available_field_types=*/{},
                                   /*login_form_signature=*/std::nullopt,
                                   /*observed_submission=*/true,
@@ -1617,6 +1626,7 @@ TEST_P(AutofillUploadTest, RichMetadata) {
 
     // The second attempt should always fail.
     EXPECT_FALSE(SendUploadRequest(form_structure, *randomized_encoder,
+                                   LanguageCode(""),
                                    /*available_field_types=*/{},
                                    /*login_form_signature=*/std::nullopt,
                                    /*observed_submission=*/true,
@@ -1633,8 +1643,7 @@ TEST_P(AutofillUploadTest, RichMetadata) {
     ASSERT_TRUE(request.ParseFromString(payloads().front()));
     ASSERT_TRUE(request.has_upload());
     const AutofillUploadContents& upload = request.upload();
-    EXPECT_EQ(upload.language(),
-              form_structure.current_page_language().value());
+    EXPECT_EQ(upload.language(), "fr");
     // Only first upload has metadata.
     const bool expect_metadata = i == 0;
     EXPECT_EQ(upload.has_randomized_form_metadata(), expect_metadata);
@@ -1685,6 +1694,7 @@ TEST_P(AutofillUploadTest, Throttling) {
 
     // The first attempt should succeed.
     EXPECT_TRUE(SendUploadRequest(form_structure, *randomized_encoder,
+                                  LanguageCode(""),
                                   /*available_field_types=*/{},
                                   /*login_form_signature=*/std::nullopt,
                                   /*observed_submission=*/true,
@@ -1692,6 +1702,7 @@ TEST_P(AutofillUploadTest, Throttling) {
 
     // The second attempt should always fail.
     EXPECT_FALSE(SendUploadRequest(form_structure, *randomized_encoder,
+                                   LanguageCode(""),
                                    /*available_field_types=*/{},
                                    /*login_form_signature=*/std::nullopt,
                                    /*observed_submission=*/true,
@@ -1709,6 +1720,60 @@ TEST_P(AutofillUploadTest, Throttling) {
         AutofillMetrics::SubmissionSourceToUploadEventMetric(submission_source),
         1, 1);
   }
+}
+
+TEST_P(AutofillUploadTest, ThrottlingStructuralFormSignatures) {
+  ASSERT_NE(DISABLED, GetParam());
+
+  AutofillCrowdsourcingManager crowdsourcing_manager(
+      &client(), version_info::Channel::UNKNOWN);
+
+  const FormSignature kStructuralFormSignature(42);
+
+  // Create two form structures with different signatures and submission sources
+  // but the same structural form signature.
+  FormStructure form_structure_1(
+      test::GetFormData({.fields = {{.role = NAME_FIRST},
+                                    {.role = NAME_LAST},
+                                    {.role = EMAIL_ADDRESS}}}));
+  const FormSignature kMainFormSignature1(123);
+  form_structure_1.set_form_signature(kMainFormSignature1);
+  form_structure_1.set_structural_form_signature(kStructuralFormSignature);
+  form_structure_1.set_submission_source(SubmissionSource::FORM_SUBMISSION);
+
+  FormStructure form_structure_2(form_structure_1.ToFormData());
+  const FormSignature kMainFormSignature2(456);
+  form_structure_2.set_form_signature(kMainFormSignature2);
+  form_structure_2.set_structural_form_signature(kStructuralFormSignature);
+  form_structure_2.set_submission_source(SubmissionSource::XHR_SUCCEEDED);
+
+  std::optional<RandomizedEncoder> randomized_encoder =
+      RandomizedEncoder::Create(client().GetPrefs());
+
+  // The first attempt should succeed and include the structural form signature.
+  EXPECT_TRUE(SendUploadRequest(form_structure_1, *randomized_encoder,
+                                LanguageCode(""), /*available_field_types=*/{},
+                                /*login_form_signature=*/std::nullopt,
+                                /*observed_submission=*/true,
+                                /*is_password_manager_upload=*/false));
+  ASSERT_THAT(payloads(), SizeIs(1));
+  AutofillUploadRequest request_1;
+  ASSERT_TRUE(request_1.ParseFromString(payloads()[0]));
+  EXPECT_EQ(request_1.upload().structural_form_signature(),
+            kStructuralFormSignature.value());
+
+  // The second attempt should succeed but NOT include the structural form
+  // signature, because it has been throttled.
+  EXPECT_TRUE(SendUploadRequest(form_structure_2, *randomized_encoder,
+                                LanguageCode(""), /*available_field_types=*/{},
+                                /*login_form_signature=*/std::nullopt,
+                                /*observed_submission=*/true,
+                                /*is_password_manager_upload=*/false));
+  ASSERT_THAT(payloads(), SizeIs(2));
+  AutofillUploadRequest request_2;
+  ASSERT_TRUE(request_2.ParseFromString(payloads()[1]));
+  EXPECT_FALSE(request_2.upload().has_structural_form_signature());
+  payloads().clear();
 }
 
 // Tests that votes are not throttled with
@@ -1733,14 +1798,14 @@ TEST_P(AutofillUploadTest, SuccessfulSubmissionOnDisabledThrottling) {
   base::HistogramTester histogram_tester;
   // The first upload must be successfully sent to the Autofill server.
   EXPECT_TRUE(SendUploadRequest(form_structure, *randomized_encoder,
-                                /*available_field_types=*/{},
+                                LanguageCode(""), /*available_field_types=*/{},
                                 /*login_form_signature=*/std::nullopt,
                                 /*observed_submission=*/true,
                                 /*is_password_manager_upload=*/false));
 
   // The second upload also must be successfully sent to the Autofill server.
   EXPECT_TRUE(SendUploadRequest(form_structure, *randomized_encoder,
-                                /*available_field_types=*/{},
+                                LanguageCode(""), /*available_field_types=*/{},
                                 /*login_form_signature=*/std::nullopt,
                                 /*observed_submission=*/true,
                                 /*is_password_manager_upload=*/false));
@@ -1811,7 +1876,7 @@ TEST_P(AutofillUploadTest, PeriodicReset) {
 
   // The first attempt should succeed.
   EXPECT_TRUE(SendUploadRequest(form_structure, *randomized_encoder,
-                                /*available_field_types=*/{},
+                                LanguageCode(""), /*available_field_types=*/{},
                                 /*login_form_signature=*/std::nullopt,
                                 /*observed_submission=*/true,
                                 /*is_password_manager_upload=*/false));
@@ -1820,7 +1885,7 @@ TEST_P(AutofillUploadTest, PeriodicReset) {
   // so the upload should not be sent.
   test_clock.Advance(base::Days(15));
   EXPECT_FALSE(SendUploadRequest(form_structure, *randomized_encoder,
-                                 /*available_field_types=*/{},
+                                 LanguageCode(""), /*available_field_types=*/{},
                                  /*login_form_signature=*/std::nullopt,
                                  /*observed_submission=*/true,
                                  /*is_password_manager_upload=*/false));
@@ -1829,7 +1894,7 @@ TEST_P(AutofillUploadTest, PeriodicReset) {
   // the upload should succeed.
   test_clock.Advance(base::Days(2));  // Total = 29
   EXPECT_TRUE(SendUploadRequest(form_structure, *randomized_encoder,
-                                /*available_field_types=*/{},
+                                LanguageCode(""), /*available_field_types=*/{},
                                 /*login_form_signature=*/std::nullopt,
                                 /*observed_submission=*/true,
                                 /*is_password_manager_upload=*/false));
@@ -1870,7 +1935,7 @@ TEST_P(AutofillUploadTest, ResetOnClearUploadHistory) {
 
   // The first attempt should succeed.
   EXPECT_TRUE(SendUploadRequest(form_structure, *randomized_encoder,
-                                /*available_field_types=*/{},
+                                LanguageCode(""), /*available_field_types=*/{},
                                 /*login_form_signature=*/std::nullopt,
                                 /*observed_submission=*/true,
                                 /*is_password_manager_upload=*/false));
@@ -1878,7 +1943,7 @@ TEST_P(AutofillUploadTest, ResetOnClearUploadHistory) {
   // Clear the upload throttling history.
   AutofillCrowdsourcingManager::ClearUploadHistory(client().GetPrefs());
   EXPECT_TRUE(SendUploadRequest(form_structure, *randomized_encoder,
-                                /*available_field_types=*/{},
+                                LanguageCode(""), /*available_field_types=*/{},
                                 /*login_form_signature=*/std::nullopt,
                                 /*observed_submission=*/true,
                                 /*is_password_manager_upload=*/false));
@@ -1905,14 +1970,14 @@ TEST_P(AutofillUploadTest, ThrottleMetadataOnPasswordManagerUploads) {
   base::HistogramTester histogram_tester;
   // The first upload must be successfully sent to the Autofill server.
   EXPECT_TRUE(SendUploadRequest(form_structure, *randomized_encoder,
-                                /*available_field_types=*/{},
+                                LanguageCode(""), /*available_field_types=*/{},
                                 /*login_form_signature=*/std::nullopt,
                                 /*observed_submission=*/true,
                                 /*is_password_manager_upload=*/true));
 
   // The second upload also must be successfully sent to the Autofill server.
   EXPECT_TRUE(SendUploadRequest(form_structure, *randomized_encoder,
-                                /*available_field_types=*/{},
+                                LanguageCode(""), /*available_field_types=*/{},
                                 /*login_form_signature=*/std::nullopt,
                                 /*observed_submission=*/true,
                                 /*is_password_manager_upload=*/true));
@@ -1959,6 +2024,93 @@ TEST_P(AutofillUploadTest, ThrottleMetadataOnPasswordManagerUploads) {
 INSTANTIATE_TEST_SUITE_P(All,
                          AutofillUploadTest,
                          ::testing::Values(FINCHED_URL, COMMAND_LINE_URL));
+
+// Tests that AutofillCrowdsourcingManager correctly records the number
+// of query and upload requests made within a one-minute sliding window
+TEST_F(AutofillCrowdsourcingManagerTest, RequestsInLastMinute) {
+  // Reset counters between test runs
+  auto crowdsourcing_manager =
+      AutofillCrowdsourcingManagerTestApi::CreateManagerForApiKey(&client(),
+                                                                  "dummykey");
+  test_api(*crowdsourcing_manager).reset_request_timestamps();
+  test_api(*crowdsourcing_manager).set_max_form_cache_size(0);
+  base::HistogramTester histogram;
+  url_loader_factory().SetInterceptor(
+      base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
+        if (request.url.path().find("/v1/pages") != std::string::npos) {
+          url_loader_factory().AddResponse(
+              request.url.spec(),
+              "<autofillqueryresponse></autofillqueryresponse>");
+        } else if (request.url.path().find("/v1/forms:vote") !=
+                   std::string::npos) {
+          url_loader_factory().AddResponse(
+              request.url.spec(),
+              "<autofillqueryresponse></autofillqueryresponse>");
+        }
+      }));
+
+  auto Upload = [&](int request_index) -> bool {
+    FormStructure form_structure(test::GetFormData(
+        {.fields = {{.name = base::ASCIIToUTF16(
+                         base::NumberToString(request_index))}}}));
+    SetCorrectFieldHostFormSignatures(form_structure);
+    SubmissionSource submission_source = SubmissionSource::FORM_SUBMISSION;
+    form_structure.set_submission_source(submission_source);
+    std::optional<RandomizedEncoder> randomized_encoder =
+        RandomizedEncoder::Create(client().GetPrefs());
+    EncodeUploadRequestOptions options;
+    options.encoder = RandomizedEncoder::Create(client().GetPrefs());
+    options.observed_submission = true;
+    std::vector<AutofillUploadContents> upload_contents =
+        EncodeUploadRequest(form_structure, options);
+    bool result = crowdsourcing_manager->StartUploadRequest(
+        std::move(upload_contents), form_structure.submission_source(),
+        /*is_password_manager_upload=*/false);
+    task_environment().RunUntilIdle();
+    return result;
+  };
+
+  auto Query = [&](int request_index) -> bool {
+    std::vector<std::unique_ptr<FormStructure>> form_structures;
+    form_structures.push_back(std::make_unique<FormStructure>(test::GetFormData(
+        {.fields = {{.name = base::ASCIIToUTF16(
+                         base::NumberToString(request_index))}}})));
+    base::RunLoop run_loop;
+    bool result = crowdsourcing_manager->StartQueryRequest(
+        ToRawPointerVector(form_structures), driver().GetIsolationInfo(),
+        base::BindOnce(
+            &AutofillCrowdsourcingManagerTest::OnLoadedServerPredictions,
+            GetWeakPtr())
+            .Then(run_loop.QuitClosure()));
+    if (result) {
+      run_loop.Run();
+    }
+    return result;
+  };
+
+  EXPECT_TRUE(Upload(0));
+  EXPECT_TRUE(Upload(1));
+  histogram.ExpectBucketCount("Autofill.Upload.RequestsInLastMinute", 1, 1);
+  histogram.ExpectBucketCount("Autofill.Upload.RequestsInLastMinute", 2, 1);
+  histogram.ExpectTotalCount("Autofill.Upload.RequestsInLastMinute", 2);
+
+  EXPECT_TRUE(Query(2));
+  EXPECT_TRUE(Query(3));
+  histogram.ExpectBucketCount("Autofill.Query.RequestsInLastMinute", 1, 1);
+  histogram.ExpectBucketCount("Autofill.Query.RequestsInLastMinute", 2, 1);
+  histogram.ExpectTotalCount("Autofill.Query.RequestsInLastMinute", 2);
+
+  task_environment().FastForwardBy(base::Seconds(30));
+  EXPECT_TRUE(Query(4));
+  histogram.ExpectBucketCount("Autofill.Query.RequestsInLastMinute", 3, 1);
+  histogram.ExpectTotalCount("Autofill.Query.RequestsInLastMinute", 3);
+
+  task_environment().FastForwardBy(base::Seconds(31));
+  EXPECT_TRUE(Query(5));
+  // Sliding window has now requests #4 and #5
+  histogram.ExpectBucketCount("Autofill.Query.RequestsInLastMinute", 2, 2);
+  histogram.ExpectTotalCount("Autofill.Query.RequestsInLastMinute", 4);
+}
 
 }  // namespace
 }  // namespace autofill

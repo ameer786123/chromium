@@ -11,9 +11,10 @@
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/notreached.h"
+#include "base/strings/string_util.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
+#include "chrome/browser/ui/tab_ui_helper.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_group_theme.h"
 #include "chrome/browser/ui/tabs/tab_menu_model_delegate.h"
@@ -23,9 +24,11 @@
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tab_groups/tab_group_visual_data.h"
+#include "components/tabs/public/tab_group.h"
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/accelerators/menu_label_accelerator_util.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/image_model.h"
 #include "ui/base/models/list_selection_model.h"
 #include "ui/color/color_provider.h"
@@ -33,9 +36,23 @@
 #include "ui/gfx/image/canvas_image_source.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/gfx/text_elider.h"
 
 namespace {
 constexpr int kIconSize = 14;
+
+// TODO(crbug.com/418774949) Move to TabGroupFeatures for desktop.
+std::u16string GetContentString(const TabGroup& group) {
+  constexpr size_t kContextMenuTabTitleMaxLength = 30;
+  std::u16string format_string = l10n_util::GetPluralStringFUTF16(
+      IDS_TAB_CXMENU_PLACEHOLDER_GROUP_TITLE, group.tab_count() - 1);
+  std::u16string short_title;
+  gfx::ElideString(
+      group.GetFirstTab()->GetTabFeatures()->tab_ui_helper()->GetTitle(),
+      kContextMenuTabTitleMaxLength, &short_title);
+  return base::ReplaceStringPlaceholders(format_string, short_title, nullptr);
+}
+
 }  // anonymous namespace
 
 ExistingTabGroupSubMenuModel::ExistingTabGroupSubMenuModel(
@@ -54,9 +71,6 @@ ExistingTabGroupSubMenuModel::ExistingTabGroupSubMenuModel(
 
   menu_item_infos = GetMenuItemsFromModel(model);
   std::vector<tab_groups::TabGroupId> groups = GetGroupsFromModel(model);
-  // TODO(dljames): Consider moving CHECK + loop into a separate private
-  // function that updates both `menu_item_infos` and
-  // `target_index_to_group_mapping_`.
   CHECK_EQ(menu_item_infos.size(), groups.size());
   for (const auto& group : groups) {
     size_t index = target_index_to_group_mapping_.size();
@@ -128,7 +142,7 @@ ExistingTabGroupSubMenuModel::GetMenuItemsFromModel(
     // TODO(dljames): Add method to tab_group.cc to return displayed_title.
     // TODO(dljames): Add unit tests for all of tab_group.h
     const std::u16string displayed_title =
-        group_title.empty() ? tab_group->GetContentString() : group_title;
+        group_title.empty() ? GetContentString(*tab_group) : group_title;
     const int color_id =
         GetTabGroupContextMenuColorId(tab_group->visual_data()->color());
     const ui::ColorProvider& color_provider =

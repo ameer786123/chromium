@@ -19,8 +19,9 @@
 #endif
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_enabling.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/widget/glic_window_controller.h"
 #endif
 
@@ -42,18 +43,7 @@ bool IsHostForGlic(content::RenderProcessHost* host) {
 
   auto* glic_service = glic::GlicKeyedServiceFactory::GetGlicKeyedService(
       host->GetBrowserContext());
-  if (!glic_service) {
-    return false;
-  }
-
-  auto& window_controller = glic_service->window_controller();
-  auto* wc = window_controller.GetWebContents();
-  if (wc && wc->GetPrimaryMainFrame()->GetProcess() == host) {
-    return true;
-  }
-
-  auto* fre_wc = window_controller.GetFreWebContents();
-  return fre_wc && fre_wc->GetPrimaryMainFrame()->GetProcess() == host;
+  return glic_service && glic_service->IsProcessHostForGlic(host);
 }
 #endif  // BUILDFLAG(ENABLE_GLIC)
 

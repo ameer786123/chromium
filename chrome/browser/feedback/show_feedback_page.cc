@@ -13,7 +13,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/feedback/feedback_dialog_utils.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/webui/feedback/feedback_dialog.h"
@@ -164,7 +164,6 @@ bool IsFromUserInteraction(feedback::FeedbackSource source) {
     case feedback::kFeedbackSourceCookieControls:
     case feedback::kFeedbackSourceNetworkHealthPage:
     case feedback::kFeedbackSourceMdSettingsAboutPage:
-    case feedback::kFeedbackSourceOldSettingsAboutPage:
     case feedback::kFeedbackSourceOsSettingsSearch:
     case feedback::kFeedbackSourcePriceInsights:
     case feedback::kFeedbackSourceQuickAnswers:
@@ -235,9 +234,7 @@ void RequestFeedbackFlow(const GURL& page_url,
       description_template, description_placeholder_text, category_tag,
       extra_diagnostics, page_url, flow,
       source == feedback::kFeedbackSourceAssistant, include_bluetooth_logs,
-      show_questionnaire,
-      source == feedback::kFeedbackSourceChromeLabs ||
-          source == feedback::kFeedbackSourceKaleidoscope,
+      show_questionnaire, source == feedback::kFeedbackSourceChromeLabs,
       source == feedback::kFeedbackSourceAutofillContextMenu, autofill_metadata,
       ai_metadata);
 
@@ -246,7 +243,7 @@ void RequestFeedbackFlow(const GURL& page_url,
 
 }  // namespace
 
-void ShowFeedbackPage(const Browser* browser,
+void ShowFeedbackPage(BrowserWindowInterface* bwi,
                       feedback::FeedbackSource source,
                       const std::string& description_template,
                       const std::string& description_placeholder_text,
@@ -255,12 +252,11 @@ void ShowFeedbackPage(const Browser* browser,
                       base::Value::Dict autofill_metadata,
                       base::Value::Dict ai_metadata) {
   GURL page_url;
-  if (browser) {
-    page_url = GetTargetTabUrl(browser->session_id(),
-                               browser->tab_strip_model()->active_index());
+  if (bwi) {
+    page_url = GetTargetTabUrl(bwi, bwi->GetTabStripModel()->active_index());
   }
 
-  Profile* profile = GetFeedbackProfile(browser);
+  Profile* profile = GetFeedbackProfile(bwi);
 
   ShowFeedbackPage(page_url, profile, source, description_template,
                    description_placeholder_text, category_tag,

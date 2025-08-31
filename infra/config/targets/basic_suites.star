@@ -9,7 +9,7 @@
 # suite is no longer needed in //testing/buildbot, targets.bundle (which does
 # not yet exist) can be used for grouping tests in a more flexible manner.
 
-load("//lib/targets.star", "targets")
+load("@chromium-luci//targets.star", "targets")
 
 # TODO(gbeaty) - Make the resultdb information for tests using the same binaries
 # consistent and move the information onto the binaries
@@ -26,7 +26,7 @@ targets.legacy_basic_suite(
 targets.legacy_basic_suite(
     name = "blink_unittests_suite",
     tests = {
-        "blink_unit_tests": targets.legacy_test_config(),
+        "blink_unittests": targets.legacy_test_config(),
     },
 )
 
@@ -101,20 +101,40 @@ targets.legacy_basic_suite(
     },
 )
 
+targets.legacy_basic_suite(
+    name = "chromeos_chrome_all_tast_tests_tfc",
+    tests = {
+        "chrome_all_tast_tests": targets.legacy_test_config(
+            skylab = targets.skylab(
+                # TODO(fqj): Remove stub tast_expr.
+                # Currently, recipe_module/chromium_tests has some
+                # tast-specific logic relying on tast_expr to be non-empty.
+                tast_expr = "STUB_STRING_TO_RUN_TAST_TESTS",
+                timeout_sec = 14400,
+                cros_ctp_suite_name = "chrome-uprev-hw",
+                cros_test_names_exclude_from_file = ["chromeos/tast_control_disabled_tests.txt"],
+                cros_test_tags = ["group:mainline", "dep:chrome"],
+                cros_test_tags_exclude = ["informational", "dep:no_chrome_dcheck"],
+            ),
+        ),
+    },
+)
+
 # Test suite for running critical Tast tests.
 targets.legacy_basic_suite(
-    name = "chromeos_chrome_criticalstaging_tast_tests",
+    name = "chromeos_chrome_criticalstaging_tast_tests_tfc",
     tests = {
         "chrome_criticalstaging_tast_tests": targets.legacy_test_config(
             ci_only = True,
             skylab = targets.skylab(
-                # `tast_expr` must be a non-empty string to run the tast tests. But the value of
-                # would be overridden by `tast_arrt_expr` defined in chromeos/BUILD.gn, so that we
-                # put the stub string here.
+                # TODO(fqj): Remove stub tast_expr.
+                # Currently, recipe_module/chromium_tests has some
+                # tast-specific logic relying on tast_expr to be non-empty.
                 tast_expr = "STUB_STRING_TO_RUN_TAST_TESTS",
-                test_level_retries = 2,
-                shards = 3,
                 timeout_sec = 14400,
+                cros_test_names_exclude_from_file = ["chromeos/tast_control_disabled_tests.txt"],
+                cros_test_tags = ["group:mainline", "dep:chrome", "informational", "group:criticalstaging"],
+                cros_test_tags_exclude = ["dep:lacros", "dep:no_chrome_dcheck"],
             ),
             experiment_percentage = 100,
         ),
@@ -124,18 +144,17 @@ targets.legacy_basic_suite(
 # Test suite for running disabled Tast tests to collect data to re-enable
 # them. The test suite should not be critical to builders.
 targets.legacy_basic_suite(
-    name = "chromeos_chrome_disabled_tast_tests",
+    name = "chromeos_chrome_disabled_tast_tests_tfc",
     tests = {
         "chrome_disabled_tast_tests": targets.legacy_test_config(
             ci_only = True,
             skylab = targets.skylab(
-                # `tast_expr` must be a non-empty string to run the tast tests. But the value of
-                # would be overridden by `tast_arrt_expr` defined in chromeos/BUILD.gn, so that we
-                # put the stub string here.
+                # TODO(fqj): Remove stub tast_expr.
+                # Currently, recipe_module/chromium_tests has some
+                # tast-specific logic relying on tast_expr to be non-empty.
                 tast_expr = "STUB_STRING_TO_RUN_TAST_TESTS",
-                test_level_retries = 1,
-                shards = 2,
                 timeout_sec = 14400,
+                cros_test_names_from_file = ["chromeos/tast_control_disabled_tests.txt"],
             ),
             experiment_percentage = 100,
         ),
@@ -372,6 +391,11 @@ targets.legacy_basic_suite(
         "blink_common_unittests": targets.legacy_test_config(),
         "blink_heap_unittests": targets.legacy_test_config(),
         "blink_platform_unittests": targets.legacy_test_config(),
+        "blink_unittests": targets.legacy_test_config(
+            android_swarming = targets.swarming(
+                shards = 6,
+            ),
+        ),
         "boringssl_crypto_tests": targets.legacy_test_config(),
         "boringssl_ssl_tests": targets.legacy_test_config(),
         "capture_unittests": targets.legacy_test_config(
@@ -440,11 +464,6 @@ targets.legacy_basic_suite(
         "ui_base_unittests": targets.legacy_test_config(),
         "ui_touch_selection_unittests": targets.legacy_test_config(),
         "url_unittests": targets.legacy_test_config(),
-        "webkit_unit_tests": targets.legacy_test_config(
-            android_swarming = targets.swarming(
-                shards = 6,
-            ),
-        ),
         "wtf_unittests": targets.legacy_test_config(),
         "zlib_unittests": targets.legacy_test_config(),
     },
@@ -860,6 +879,34 @@ targets.legacy_basic_suite(
 )
 
 targets.legacy_basic_suite(
+    name = "gpu_webrtc_telemetry_test",
+    tests = {
+        "webrtc_tests": targets.legacy_test_config(),
+    },
+)
+
+targets.legacy_basic_suite(
+    name = "gpu_webrtc_gl_passthrough_ganesh_telemetry_test",
+    tests = {
+        "webrtc_gl_passthrough_ganesh_tests": targets.legacy_test_config(),
+    },
+)
+
+targets.legacy_basic_suite(
+    name = "gpu_webrtc_metal_passthrough_ganesh_telemetry_test",
+    tests = {
+        "webrtc_metal_passthrough_ganesh_tests": targets.legacy_test_config(),
+    },
+)
+
+targets.legacy_basic_suite(
+    name = "gpu_webrtc_metal_passthrough_graphite_telemetry_test",
+    tests = {
+        "webrtc_metal_passthrough_graphite_tests": targets.legacy_test_config(),
+    },
+)
+
+targets.legacy_basic_suite(
     name = "gpu_webgl2_conformance_d3d11_passthrough_telemetry_tests",
     tests = {
         "webgl2_conformance_d3d11_passthrough_tests": targets.legacy_test_config(
@@ -1202,10 +1249,8 @@ targets.legacy_basic_suite(
             ),
         ),
         "message_center_unittests": targets.legacy_test_config(),
-        "nacl_loader_unittests": targets.legacy_test_config(),
         "native_theme_unittests": targets.legacy_test_config(),
         "pdf_unittests": targets.legacy_test_config(),
-        "ppapi_unittests": targets.legacy_test_config(),
         "printing_unittests": targets.legacy_test_config(),
         "remoting_unittests": targets.legacy_test_config(),
         "snapshot_unittests": targets.legacy_test_config(),
@@ -1341,11 +1386,6 @@ targets.legacy_basic_suite(
                 "--use-xvfb",
             ],
         ),
-        "optimization_guide_browser_tests": targets.legacy_test_config(
-            linux_args = [
-                "--use-xvfb",
-            ],
-        ),
         "optimization_guide_unittests": targets.legacy_test_config(
             linux_args = [
                 "--use-xvfb",
@@ -1362,7 +1402,33 @@ targets.legacy_basic_suite(
                 "--ui-test-action-timeout=30000",
             ],
             linux_args = [
-                "-use-xvfb",
+                "--use-xvfb",
+            ],
+        ),
+        "optimization_guide_services_unittests": targets.legacy_test_config(
+            args = [
+                "--ui-test-action-timeout=30000",
+            ],
+            linux_args = [
+                "--no-xvfb",
+            ],
+        ),
+    },
+)
+
+# TODO: crbug.com/433525769 - When builders using this suite are all migrated to
+# starlark, this should be combined with optimization_guide_gpu_gtests.
+targets.legacy_basic_suite(
+    name = "optimization_guide_gpu_isolated_scripts",
+    tests = {
+        "blink_wpt_tests": targets.legacy_test_config(
+            args = [
+                # Ensure that the platform-specific backends are disabled so
+                # that TFLite is used.
+                "--additional-driver-flag=--disable-features=WebNNCoreML,WebNNDirectML,WebNNOnnxRuntime",
+                "--ignore-default-expectations",
+                "--additional-expectations=../../third_party/blink/web_tests/OptimizationGuideExpectations",
+                "--test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/optimization_guide.filter",
             ],
         ),
     },

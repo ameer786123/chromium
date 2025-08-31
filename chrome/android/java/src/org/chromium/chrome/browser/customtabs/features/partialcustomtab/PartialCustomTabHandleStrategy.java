@@ -12,11 +12,11 @@ import android.view.VelocityTracker;
 import androidx.core.view.MotionEventCompat;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.customtabs.features.partialcustomtab.PartialCustomTabBottomSheetStrategy.HeightStatus;
 import org.chromium.chrome.browser.customtabs.features.toolbar.CustomTabToolbar;
 
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /** Handling touch events for resizing the Window. */
 class PartialCustomTabHandleStrategy extends GestureDetector.SimpleOnGestureListener
@@ -35,12 +35,12 @@ class PartialCustomTabHandleStrategy extends GestureDetector.SimpleOnGestureList
     private float mLastPosY;
     private float mDeltaY;
     private boolean mSeenFirstMoveOrDown;
-    private VelocityTracker mVelocityTracker;
+    private final VelocityTracker mVelocityTracker;
     private Runnable mCloseHandler;
 
-    private BooleanSupplier mIsFullHeight;
-    private Supplier<Integer> mStatus;
-    private DragEventCallback mDragEventCallback;
+    private final BooleanSupplier mIsFullHeight;
+    private final Supplier<Integer> mStatus;
+    private final DragEventCallback mDragEventCallback;
 
     /** Callback for drag events. */
     interface DragEventCallback {

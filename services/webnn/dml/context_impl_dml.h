@@ -18,6 +18,7 @@
 namespace webnn::dml {
 
 class Adapter;
+class CommandQueue;
 class CommandRecorder;
 class TensorImplDml;
 
@@ -29,16 +30,17 @@ class COMPONENT_EXPORT(WEBNN_SERVICE) ContextImplDml final
     : public WebNNContextImpl {
  public:
   ContextImplDml(scoped_refptr<Adapter> adapter,
-                 mojo::PendingReceiver<mojom::WebNNContext> receiver,
+                 mojo::PendingAssociatedReceiver<mojom::WebNNContext> receiver,
                  WebNNContextProviderImpl* context_provider,
                  mojom::CreateContextOptionsPtr options,
                  std::unique_ptr<CommandRecorder> command_recorder,
-                 const gpu::GpuFeatureInfo& gpu_feature_info);
+                 const gpu::GpuFeatureInfo& gpu_feature_info,
+                 gpu::CommandBufferId command_buffer_id,
+                 std::unique_ptr<ScopedSequence> sequence,
+                 scoped_refptr<gpu::SchedulerTaskRunner> task_runner);
 
   ContextImplDml(const WebNNContextImpl&) = delete;
   ContextImplDml& operator=(const ContextImplDml&) = delete;
-
-  ~ContextImplDml() override;
 
   // static
   static ContextProperties GetProperties(DML_FEATURE_LEVEL feature_level);
@@ -59,6 +61,8 @@ class COMPONENT_EXPORT(WEBNN_SERVICE) ContextImplDml final
   // gracefully terminate the GPU process.
   void HandleContextLostOrCrash(std::string_view message_for_log, HRESULT hr);
 
+  CommandQueue* GetCommandQueue() const;
+
   void RemoveDeviceForTesting();
 
   // The test cases can override the graph/tensor creating behavior by
@@ -71,28 +75,36 @@ class COMPONENT_EXPORT(WEBNN_SERVICE) ContextImplDml final
         WebNNGraphImpl::ComputeResourceInfo compute_resource_info,
         CreateGraphImplCallback callback) = 0;
 
-    virtual void CreateTensorImpl(
+    virtual base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr>
+    CreateTensorImpl(
         ContextImplDml* context,
         mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
-        mojom::TensorInfoPtr tensor_info,
-        CreateTensorImplCallback callback) = 0;
+        mojom::TensorInfoPtr tensor_info) = 0;
   };
 
   static void SetBackendForTesting(BackendForTesting* backend_for_testing);
 
  private:
+  ~ContextImplDml() override;
+
   void CreateGraphImpl(
       mojo::PendingAssociatedReceiver<mojom::WebNNGraph> receiver,
       mojom::GraphInfoPtr graph_info,
       WebNNGraphImpl::ComputeResourceInfo compute_resource_info,
-      base::flat_map<uint64_t, std::unique_ptr<WebNNConstantOperand>>
+      base::flat_map<OperandId, std::unique_ptr<WebNNConstantOperand>>
           constant_operands,
+      base::flat_map<OperandId, WebNNTensorImpl*> constant_tensor_operands,
       CreateGraphImplCallback callback) override;
 
-  void CreateTensorImpl(
+  base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr>
+  CreateTensorImpl(mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
+                   mojom::TensorInfoPtr tensor_info) override;
+
+  base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr>
+  CreateTensorFromMailboxImpl(
       mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
       mojom::TensorInfoPtr tensor_info,
-      CreateTensorImplCallback callback) override;
+      gpu::Mailbox mailbox) override;
 
   // Begins recording commands needed for context operations.
   // If recording failed, calling this function will recreate the recorder to

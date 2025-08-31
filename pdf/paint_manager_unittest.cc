@@ -16,6 +16,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkCPURecorder.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkImage.h"
@@ -129,8 +130,8 @@ class PaintManagerTest : public testing::Test {
 
     // Check if `snapshot` matches `expected_bitmap`.
     snapshot = snapshot->makeSubset(
-        static_cast<GrDirectContext*>(nullptr),
-        SkIRect::MakeWH(plugin_size.width(), plugin_size.height()));
+        skcpu::Recorder::TODO(),
+        SkIRect::MakeWH(plugin_size.width(), plugin_size.height()), {});
     ASSERT_TRUE(snapshot);
 
     SkBitmap snapshot_bitmap;
@@ -175,12 +176,10 @@ class PaintManagerTest : public testing::Test {
 
     // Compare snapshot to `expected_png`.
     snapshot = snapshot->makeSubset(
-        static_cast<GrDirectContext*>(nullptr),
-        SkIRect::MakeWH(plugin_size.width(), plugin_size.height()));
+        skcpu::Recorder::TODO(),
+        SkIRect::MakeWH(plugin_size.width(), plugin_size.height()), {});
     ASSERT_TRUE(snapshot);
-
-    EXPECT_TRUE(
-        MatchesPngFile(snapshot.get(), GetTestDataFilePath(expected_png)));
+    EXPECT_TRUE(MatchesPngFile(*snapshot, GetTestDataFilePath(expected_png)));
   }
 
   NiceMock<FakeClient> client_;
@@ -270,9 +269,9 @@ TEST_F(PaintManagerTest, DoPaintFirst) {
                    {{{25, 50, 200, 100},
                      CreateSkiaImageForTesting({200, 100}, SK_ColorGRAY)}},
                    /*fake_pending=*/{});
-
-  EXPECT_TRUE(MatchesPngFile(snapshot.get(),
-                             GetTestDataFilePath("do_paint_first.png")));
+  ASSERT_TRUE(snapshot);
+  EXPECT_TRUE(
+      MatchesPngFile(*snapshot, GetTestDataFilePath("do_paint_first.png")));
 }
 
 TEST_F(PaintManagerTest, PaintImage) {

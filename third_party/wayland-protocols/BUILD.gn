@@ -11,6 +11,10 @@ wayland_protocol("alpha_compositing_protocol") {
   sources = [ "unstable/alpha-compositing/alpha-compositing-unstable-v1.xml" ]
 }
 
+wayland_protocol("color_management_protocol") {
+  sources = [ "src/staging/color-management/color-management-v1.xml" ]
+}
+
 wayland_protocol("content_type_protocol") {
   sources = [ "unstable/content-type/content-type-v1.xml" ]
 }
@@ -168,11 +172,12 @@ wayland_protocol("touchpad_haptics_protocol") {
 }
 
 wayland_protocol("ui_controls_protocol") {
-  sources = [ "unstable/ui-controls/ui-controls-unstable-v1.xml" ]
+  sources = [ "unstable/ui-controls/ui-controls-unstable-v2.xml" ]
 }
 
-wayland_protocol("test_controller_protocol") {
-  sources = [ "unstable/test-controller/test-controller-unstable-v1.xml" ]
+wayland_protocol("ui_controls_v1_protocol") {
+  # This is used by exo.
+  sources = [ "unstable/ui-controls/ui-controls-unstable-v1.xml" ]
 }
 
 wayland_protocol("viewporter_protocol") {

@@ -8,12 +8,12 @@
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/keyboard/ui_bundled/UIKeyCommand+Chrome.h"
 #import "ios/chrome/browser/lens_overlay/public/lens_overlay_constants.h"
-#import "ios/chrome/browser/lens_overlay/ui/lens_overlay_progress_bar.h"
 #import "ios/chrome/browser/lens_overlay/ui/lens_result_page_mutator.h"
 #import "ios/chrome/browser/lens_overlay/ui/lens_toolbar_mutator.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/text_field_view_containing.h"
+#import "ios/chrome/browser/omnibox/ui/text_field_view_containing.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
+#import "ios/chrome/browser/toolbar/ui_bundled/toolbar_progress_bar.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/common/ui/util/ui_util.h"
@@ -94,13 +94,17 @@ const CGFloat kGrabberTopPadding = 5;
   /// Button to focus the omnibox.
   UIButton* _omniboxTapTarget;
   /// Loading progress bar.
-  LensOverlayProgressBar* _progressBar;
+  ToolbarProgressBar* _progressBar;
   /// Whether the web view should be hidden.
   BOOL _webViewHidden;
   NSLayoutConstraint* _omniboxLeadingConstraint;
   /// When set, the omnibox tap target continues to "eat" the touches, but they
   /// are ignored, effectively preventing omnibox interaction.
   BOOL _ignoreOmniboxTaps;
+  /// The grabber indicator for the bottom sheet.
+  UIView* _bottomSheetGrabber;
+  /// Whether to show the bottom sheet grabber.
+  BOOL _bottomSheetGrabberVisible;
 }
 
 - (instancetype)init {
@@ -113,7 +117,7 @@ const CGFloat kGrabberTopPadding = 5;
     // `viewDidLoad`.
     _omniboxContainer = [[UIView alloc] init];
     _omniboxTapTarget = [[UIButton alloc] init];
-    _progressBar = [[LensOverlayProgressBar alloc] init];
+    _progressBar = [[ToolbarProgressBar alloc] init];
     [_omniboxContainer addSubview:_omniboxTapTarget];
   }
   return self;
@@ -131,13 +135,15 @@ const CGFloat kGrabberTopPadding = 5;
   [self.view addSubview:self.webViewContainer];
 
   // Bottom sheet grabber.
-  UIView* grabber = [self createSheetGrabber];
-  [self.view addSubview:grabber];
-  AddSameCenterXConstraint(grabber, self.view);
+  _bottomSheetGrabber = [self createSheetGrabber];
+  [self.view addSubview:_bottomSheetGrabber];
+  [self setBottomSheetGrabberVisible:_bottomSheetGrabberVisible];
+  AddSameCenterXConstraint(_bottomSheetGrabber, self.view);
   AddSameConstraintsToSidesWithInsets(
-      grabber, self.view, LayoutSides::kTop,
+      _bottomSheetGrabber, self.view, LayoutSides::kTop,
       NSDirectionalEdgeInsetsMake(kGrabberTopPadding, 0, 0, 0));
-  AddSizeConstraints(grabber, CGSizeMake(kGrabberWidth, kGrabberHeight));
+  AddSizeConstraints(_bottomSheetGrabber,
+                     CGSizeMake(kGrabberWidth, kGrabberHeight));
 
   // Omnibox popup container.
   _omniboxPopupContainer.translatesAutoresizingMaskIntoConstraints = NO;
@@ -264,10 +270,8 @@ const CGFloat kGrabberTopPadding = 5;
       _omniboxPopupContainer, self.view,
       LayoutSides::kLeading | LayoutSides::kBottom | LayoutSides::kTrailing);
 
-  if (@available(iOS 17, *)) {
-    [self registerForTraitChanges:@[ UITraitUserInterfaceStyle.class ]
-                       withAction:@selector(updateMutatorDarkMode)];
-  }
+  [self registerForTraitChanges:@[ UITraitUserInterfaceStyle.class ]
+                     withAction:@selector(updateMutatorDarkMode)];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -287,20 +291,6 @@ const CGFloat kGrabberTopPadding = 5;
               object:nil];
 }
 
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (@available(iOS 17, *)) {
-    return;
-  }
-
-  if (self.traitCollection.userInterfaceStyle !=
-      previousTraitCollection.userInterfaceStyle) {
-    [self updateMutatorDarkMode];
-  }
-}
-#endif
-
 - (void)setWebViewHidden:(BOOL)hidden {
   if (_webViewHidden == hidden) {
     return;
@@ -318,6 +308,11 @@ const CGFloat kGrabberTopPadding = 5;
   _editView.translatesAutoresizingMaskIntoConstraints = NO;
   [_omniboxContainer insertSubview:_editView belowSubview:_omniboxTapTarget];
   AddSameConstraints(_editView, _omniboxContainer);
+}
+
+- (void)setBottomSheetGrabberVisible:(BOOL)bottomSheetGrabberVisible {
+  _bottomSheetGrabberVisible = bottomSheetGrabberVisible;
+  _bottomSheetGrabber.hidden = !bottomSheetGrabberVisible;
 }
 
 - (void)setMutator:(id<LensResultPageMutator>)mutator {

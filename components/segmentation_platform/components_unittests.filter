@@ -1,11 +1,13 @@
 *AddressBarPositionEphemeralModuleTest.*
 *AndroidHomeModuleRankerTest.*
+*AppBundlePromoEphemeralModuleTest.*
 *AutofillPasswordsEphemeralModuleTest.*
 *AuxiliarySearchPromoTest.*
 *BackgroundRecorderTest.*
 *CachedResultProviderTest.*
 *CachedResultWriterTest.*
 *CardSelectionSignalsTest.*
+*ChromeUserEngagementTest.*
 *ClientResultPrefsTest.*
 *ComposePromotionTest.*
 *ConfigParserTest.*
@@ -34,6 +36,7 @@
 *FrequentFeatureUserModelTest.*
 *HistogramSignalHandlerTest.*
 *HistoryDelegateImplTest.*
+*HistorySyncPromoTest.*
 *HomeModulesCardRegistryTest.*
 *InputContextAndroidTest.*
 *IntentionalUserModelTest.*

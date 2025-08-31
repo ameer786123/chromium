@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
 import {assertNotReached} from 'chrome://resources/js/assert.js';
 import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
-import type {AnnotationText} from '../constants.js';
+import type {TextAttributes} from '../constants.js';
 import {TextAlignment} from '../constants.js';
 import {colorToHex} from '../pdf_viewer_utils.js';
 
@@ -17,7 +18,7 @@ import {getCss} from './viewer_text_bottom_toolbar.css.js';
 import {getHtml} from './viewer_text_bottom_toolbar.html.js';
 
 const ViewerTextBottomToolbarElementBase =
-    InkAnnotationTextMixin(InkTextObserverMixin(CrLitElement));
+    InkAnnotationTextMixin(InkTextObserverMixin(I18nMixinLit(CrLitElement)));
 
 export interface ViewerTextBottomToolbarElement {
   $: {
@@ -59,21 +60,19 @@ export class ViewerTextBottomToolbarElement extends
   protected getAlignmentIcon_(): string {
     switch (this.currentAlignment_) {
       case TextAlignment.LEFT:
-        return 'pdf:text-align-left';
+        return 'pdf-ink:text-align-left';
       case TextAlignment.CENTER:
-        return 'pdf:text-align-center';
+        return 'pdf-ink:text-align-center';
       case TextAlignment.RIGHT:
-        return 'pdf:text-align-right';
-      case TextAlignment.JUSTIFY:
-        return 'pdf:text-align-justify';
+        return 'pdf-ink:text-align-right';
       default:
         assertNotReached();
     }
   }
 
-  override onTextChanged(text: AnnotationText) {
-    super.onTextChanged(text);
-    this.currentAlignment_ = text.alignment;
+  override onTextAttributesChanged(attributes: TextAttributes) {
+    super.onTextAttributesChanged(attributes);
+    this.currentAlignment_ = attributes.alignment;
   }
 }
 

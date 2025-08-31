@@ -4,30 +4,26 @@
 
 package org.chromium.chrome.browser.bookmarks.bar;
 
-import static android.util.TypedValue.COMPLEX_UNIT_DIP;
-import static android.util.TypedValue.applyDimension;
 import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
 
 import static org.hamcrest.Matchers.equalTo;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import android.app.Activity;
-import android.content.res.Resources;
 import android.graphics.Rect;
 import android.view.View;
-import android.view.View.MeasureSpec;
 import android.view.ViewGroup.LayoutParams;
 import android.view.ViewGroup.MarginLayoutParams;
 import android.view.ViewStub;
 import android.widget.ImageButton;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.core.app.ActivityScenario.ActivityAction;
 import androidx.test.ext.junit.rules.ActivityScenarioRule;
@@ -42,8 +38,6 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
-import org.robolectric.RuntimeEnvironment;
-import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplier;
@@ -51,21 +45,30 @@ import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisabledTest;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.bookmarks.BookmarkManagerOpener;
 import org.chromium.chrome.browser.bookmarks.BookmarkModel;
 import org.chromium.chrome.browser.bookmarks.BookmarkOpener;
 import org.chromium.chrome.browser.bookmarks.FakeBookmarkModel;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
+import org.chromium.chrome.browser.browser_controls.TopControlsStacker;
 import org.chromium.chrome.browser.fullscreen.BrowserControlsManager;
-import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
-import org.chromium.chrome.browser.lifecycle.ConfigurationChangedObserver;
+import org.chromium.chrome.browser.fullscreen.FullscreenManager;
+import org.chromium.chrome.browser.layouts.LayoutManager;
 import org.chromium.chrome.browser.page_image_service.ImageServiceBridgeJni;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.theme.TopUiThemeColorProvider;
 import org.chromium.chrome.browser.ui.favicon.FaviconHelperJni;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.browser_ui.widget.CoordinatorLayoutForPointer;
 import org.chromium.ui.base.TestActivity;
+import org.chromium.ui.resources.ResourceFactory;
+import org.chromium.ui.resources.ResourceFactoryJni;
+import org.chromium.ui.resources.ResourceManager;
+import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
 import org.chromium.url.GURL;
 
 import java.util.ArrayList;
@@ -83,15 +86,25 @@ public class BookmarkBarCoordinatorTest {
 
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
-    @Mock private ActivityLifecycleDispatcher mActivityLifecycleDispatcher;
+    @Mock private BookmarkBarSceneLayer.Natives mBookmarkBarSceneLayerJniMock;
+    @Mock private ResourceFactory.Natives mResourceFactoryJniMock;
+
+    @Mock private LayoutManager mLayoutManager;
+    @Mock private Runnable mLayoutManagerRequestUpdate;
+    @Mock private FullscreenManager mFullscreenManager;
+    @Mock private ResourceManager mResourceManager;
+    @Mock private DynamicResourceLoader mDynamicResourceLoader;
     @Mock private BrowserControlsManager mBrowserControlsManager;
     @Mock private FaviconHelperJni mFaviconHelperJni;
-    @Mock private Callback<Integer> mHeightChangeCallback;
-    @Mock private Callback<Integer> mHeightSupplierObserver;
+    @Mock private Callback<Void> mHeightChangeCallback;
     @Mock private ImageServiceBridgeJni mImageServiceBridgeJni;
     @Mock private Profile mProfile;
+    @Mock private Tab mCurrentTab;
     @Mock private BookmarkOpener mBookmarkOpener;
     @Mock private BookmarkManagerOpener mBookmarkManagerOpener;
+    @Mock private TopControlsStacker mTopControlsStacker;
+    @Mock private ObservableSupplier<@Nullable Tab> mCurrentTabSupplier;
+    @Mock private TopUiThemeColorProvider mTopUiThemeColorProvider;
 
     private BookmarkBarCoordinator mCoordinator;
     private BookmarkId mDesktopFolderId;
@@ -106,8 +119,11 @@ public class BookmarkBarCoordinatorTest {
         mModel = FakeBookmarkModel.createModel();
         mDesktopFolderId = mModel.getDesktopFolderId();
         mProfileSupplier = new ObservableSupplierImpl<>(mProfile);
+        BookmarkBarSceneLayerJni.setInstanceForTesting(mBookmarkBarSceneLayerJniMock);
+        ResourceFactoryJni.setInstanceForTesting(mResourceFactoryJniMock);
 
         when(mFaviconHelperJni.init()).thenReturn(1L);
+        when(mResourceManager.getBitmapDynamicResourceLoader()).thenReturn(mDynamicResourceLoader);
 
         BookmarkModel.setInstanceForTesting(mModel);
         FaviconHelperJni.setInstanceForTesting(mFaviconHelperJni);
@@ -130,12 +146,6 @@ public class BookmarkBarCoordinatorTest {
         assertEquals(item.getTitle(), renderedItem.getTitleForTesting());
     }
 
-    private void assertItemWidthAtIndex(int index, int width) {
-        final var renderedItem = (BookmarkBarButton) mItemsContainer.getChildAt(index);
-        assertNotNull(renderedItem);
-        assertEquals(width, renderedItem.getWidth());
-    }
-
     private void assertItemsRenderedCount(int count) {
         // NOTE: Use `Criteria` rather than `Assert` to allow polling via `CriteriaHelper`.
         Criteria.checkThat(mItemsContainer.getChildCount(), equalTo(count));
@@ -154,13 +164,21 @@ public class BookmarkBarCoordinatorTest {
         mCoordinator =
                 new BookmarkBarCoordinator(
                         activity,
-                        mActivityLifecycleDispatcher,
+                        mLayoutManager,
+                        mLayoutManagerRequestUpdate,
+                        mFullscreenManager,
+                        mResourceManager,
                         mBrowserControlsManager,
                         mHeightChangeCallback,
                         mProfileSupplier,
                         viewStub,
+                        mCurrentTab,
                         mBookmarkOpener,
-                        new ObservableSupplierImpl<>(mBookmarkManagerOpener));
+                        new ObservableSupplierImpl<>(mBookmarkManagerOpener),
+                        mTopControlsStacker,
+                        mCurrentTabSupplier,
+                        mTopUiThemeColorProvider);
+
         assertNotNull("Verify view stub inflation during construction.", mView);
 
         mItemsContainer = mView.findViewById(R.id.bookmark_bar_items_container);
@@ -198,12 +216,14 @@ public class BookmarkBarCoordinatorTest {
 
     @Test
     @SmallTest
+    @DisabledTest(message = "https://crbug.com/430058443")
     public void testConstructorWhenTopControlOffsetIsNonZero() {
         testConstructor(/* topControlOffset= */ -1);
     }
 
     @Test
     @SmallTest
+    @DisabledTest(message = "https://crbug.com/430058443")
     public void testConstructorWhenTopControlOffsetIsZero() {
         testConstructor(/* topControlOffset= */ 0);
     }
@@ -232,29 +252,24 @@ public class BookmarkBarCoordinatorTest {
     @SmallTest
     public void testOnBookmarkBarHeightChanged() {
         // Verify initial state.
-        ObservableSupplier<Integer> heightSupplier = mCoordinator.getHeightSupplier();
-        assertEquals("Verify initial state.", 0, heightSupplier.get().intValue());
+        assertEquals("Verify initial state.", 0, mCoordinator.getTopControlHeight());
 
         // NOTE: the `mHeightChangeCallback` is expected to have been registered for observation
         // during `mCoordinator` construction and notified of initial height via posted task.
         onActivity(
                 activity -> {
-                    verify(mHeightChangeCallback).onResult(mView.getHeight());
-                    verifyNoMoreInteractions(mHeightSupplierObserver);
+                    verify(mHeightChangeCallback).onResult(null);
                 });
-
-        // Register another observer explicitly.
-        heightSupplier.addObserver(mHeightSupplierObserver);
 
         // Verify state after height-changing layout.
         final var rect = new Rect(1, 2, 3, 4);
+        clearInvocations(mHeightChangeCallback);
         mView.layout(rect.left, rect.top, rect.right, rect.bottom);
         assertEquals(
                 "Verify state after height-changing layout.",
                 rect.height(),
-                heightSupplier.get().intValue());
-        verify(mHeightChangeCallback).onResult(rect.height());
-        verify(mHeightSupplierObserver).onResult(rect.height());
+                mCoordinator.getTopControlHeight());
+        verify(mHeightChangeCallback).onResult(null);
 
         // Verify state after height-consistent layout.
         rect.top += 1;
@@ -263,12 +278,8 @@ public class BookmarkBarCoordinatorTest {
         assertEquals(
                 "Verify state after height-consistent layout.",
                 rect.height(),
-                heightSupplier.get().intValue());
+                mCoordinator.getTopControlHeight());
         verifyNoMoreInteractions(mHeightChangeCallback);
-        verifyNoMoreInteractions(mHeightSupplierObserver);
-
-        // Clean up.
-        heightSupplier.removeObserver(mHeightSupplierObserver);
     }
 
     @Test
@@ -368,55 +379,6 @@ public class BookmarkBarCoordinatorTest {
 
     @Test
     @SmallTest
-    @Config(qualifiers = "w600dp")
-    public void testOnConfigurationChanged() {
-        onActivity(
-                activity -> {
-                    // Verify observer registration.
-                    var observer = ArgumentCaptor.forClass(ConfigurationChangedObserver.class);
-                    verify(mActivityLifecycleDispatcher).register(observer.capture());
-
-                    // Set up item with a long title.
-                    setItemsWithinDesktopFolder(List.of("Title".repeat(100)));
-                    Robolectric.flushForegroundThreadScheduler();
-
-                    // Verify item max width constraint at "w600dp".
-                    var metrics = activity.getResources().getDisplayMetrics();
-                    assertItemsRenderedCount(1);
-                    assertItemWidthAtIndex(
-                            /* index= */ 0,
-                            /* width= */ Math.round(
-                                    applyDimension(COMPLEX_UNIT_DIP, 187, metrics)));
-
-                    // Change configuration to below "w600dp".
-                    RuntimeEnvironment.setQualifiers("w599dp");
-                    var newConfig = Resources.getSystem().getConfiguration();
-                    activity.onConfigurationChanged(newConfig);
-                    observer.getValue().onConfigurationChanged(newConfig);
-
-                    // NOTE: Robolectric does not automatically re-measure/-layout the view.
-                    mItemsContainer.measure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED);
-                    mItemsContainer.layout(
-                            mItemsContainer.getLeft(),
-                            mItemsContainer.getTop(),
-                            mItemsContainer.getRight(),
-                            mItemsContainer.getBottom());
-
-                    // Verify item max width constraint below "w600dp".
-                    assertItemsRenderedCount(1);
-                    assertItemWidthAtIndex(
-                            /* index= */ 0,
-                            /* width= */ Math.round(
-                                    applyDimension(COMPLEX_UNIT_DIP, 124, metrics)));
-
-                    // Verify observer unregistration.
-                    mCoordinator.destroy();
-                    verify(mActivityLifecycleDispatcher).unregister(observer.getValue());
-                });
-    }
-
-    @Test
-    @SmallTest
     public void testOnItemsOverflowChanged() {
         onActivity(
                 activity -> {
@@ -480,6 +442,7 @@ public class BookmarkBarCoordinatorTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testOnTopControlsHeightChanged() {
         // Initialize browser controls manager.
         final int topControlsHeight = 1;
@@ -501,6 +464,7 @@ public class BookmarkBarCoordinatorTest {
 
     @Test
     @SmallTest
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testOnTopControlsOffsetChanged() {
         // Initialize browser controls manager.
         final var topControlOffset = new AtomicInteger(-1);

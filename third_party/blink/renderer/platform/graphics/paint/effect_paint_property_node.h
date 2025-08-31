@@ -138,12 +138,12 @@ class PLATFORM_EXPORT EffectPaintPropertyNode final
     // When set, the affected elements should avoid doing clipping for
     // optimization purposes (like off-screen clipping). This is set by view
     // transition code to ensure that the element is fully painted since it will
-    // likely be drawn by pseudo elements that themselves can reposition and
+    // likely be drawn by pseudo-elements that themselves can reposition and
     // resize the painted output of the element. Note that this bit is
     // propagated to the subtree of the effect tree.
     bool self_or_ancestor_participates_in_view_transition = false;
 
-    bool has_2d_scale_transform = false;
+    bool needs_effect_for_2d_scale_transform = false;
 
     PaintPropertyChangeType ComputeChange(
         const State& other,
@@ -361,7 +361,9 @@ class PLATFORM_EXPORT EffectPaintPropertyNode final
     return state_.self_or_ancestor_participates_in_view_transition;
   }
 
-  bool Has2DScaleTransform() const { return state_.has_2d_scale_transform; }
+  bool NeedsEffectFor2DScaleTransform() const {
+    return state_.needs_effect_for_2d_scale_transform;
+  }
 
   std::unique_ptr<JSONObject> ToJSON() const final;
 

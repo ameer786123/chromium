@@ -14,6 +14,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/sync/base/time.h"
 #include "components/sync/engine/cycle/sync_cycle_snapshot.h"
 #include "components/sync/engine/sync_status.h"
@@ -30,10 +31,10 @@ namespace syncer::sync_ui_util {
 
 namespace {
 
-const char kUninitialized[] = "Uninitialized";
+constexpr char kUninitialized[] = "Uninitialized";
 
-const char kUninitializedCSSClass[] = "uninitialized";
-const char kBadStateCSSClass[] = "in_bad_state";
+constexpr char kUninitializedCSSClass[] = "uninitialized";
+constexpr char kBadStateCSSClass[] = "in_bad_state";
 
 std::string SeverityToString(TypeStatusForDebugging::Severity severity) {
   switch (severity) {
@@ -181,44 +182,6 @@ class SectionList {
   std::vector<std::unique_ptr<Section>> sections_;
 };
 
-std::string GetDisableReasonsString(
-    SyncService::DisableReasonSet disable_reasons) {
-  if (disable_reasons.empty()) {
-    return "None";
-  }
-  std::vector<std::string> reason_strings;
-  if (disable_reasons.Has(SyncService::DISABLE_REASON_ENTERPRISE_POLICY)) {
-    reason_strings.push_back("Enterprise policy");
-  }
-  if (disable_reasons.Has(SyncService::DISABLE_REASON_NOT_SIGNED_IN)) {
-    reason_strings.push_back("Not signed in");
-  }
-  if (disable_reasons.Has(SyncService::DISABLE_REASON_UNRECOVERABLE_ERROR)) {
-    reason_strings.push_back("Unrecoverable error");
-  }
-  return base::JoinString(reason_strings, ", ");
-}
-
-std::string GetTransportStateString(syncer::SyncService::TransportState state) {
-  switch (state) {
-    case syncer::SyncService::TransportState::DISABLED:
-      return "Disabled";
-    case syncer::SyncService::TransportState::PAUSED:
-      return "Paused";
-    case syncer::SyncService::TransportState::START_DEFERRED:
-      return "Start deferred";
-    case syncer::SyncService::TransportState::INITIALIZING:
-      return "Initializing";
-    case syncer::SyncService::TransportState::PENDING_DESIRED_CONFIGURATION:
-      return "Pending desired configuration";
-    case syncer::SyncService::TransportState::CONFIGURING:
-      return "Configuring data types";
-    case syncer::SyncService::TransportState::ACTIVE:
-      return "Active";
-  }
-  NOTREACHED();
-}
-
 std::string GetUserActionableErrorString(
     SyncService::UserActionableError state) {
   switch (state) {
@@ -238,6 +201,18 @@ std::string GetUserActionableErrorString(
     case SyncService::UserActionableError::
         kTrustedVaultRecoverabilityDegradedForEverything:
       return "Trusted vault recoverability degraded for everything";
+#if !BUILDFLAG(IS_IOS)
+    case SyncService::UserActionableError::kNeedsSettingsConfirmation:
+      return "Needs settings confirmation";
+    case SyncService::UserActionableError::kUnrecoverableError:
+      return "Unrecoverable error";
+#endif  // !BUILDFLAG(IS_IOS)
+#if BUILDFLAG(IS_ANDROID)
+    case SyncService::UserActionableError::kNeedsUPMBackendUpgrade:
+      return "Needs UPM backend upgrade";
+#endif  // BUILDFLAG(IS_ANDROID)
+    case SyncService::UserActionableError::kNeedsClientUpgrade:
+      return "Client version is too old and needs upgrade";
   }
 
   NOTREACHED();
@@ -329,6 +304,45 @@ std::string GetConnectionStatus(const SyncTokenStatus& status) {
 }
 
 }  // namespace
+
+std::string GetDisableReasonsDebugString(
+    SyncService::DisableReasonSet disable_reasons) {
+  if (disable_reasons.empty()) {
+    return "None";
+  }
+  std::vector<std::string> reason_strings;
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_ENTERPRISE_POLICY)) {
+    reason_strings.push_back("Enterprise policy");
+  }
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_NOT_SIGNED_IN)) {
+    reason_strings.push_back("Not signed in");
+  }
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_UNRECOVERABLE_ERROR)) {
+    reason_strings.push_back("Unrecoverable error");
+  }
+  return base::JoinString(reason_strings, ", ");
+}
+
+std::string TransportStateStringToDebugString(
+    SyncService::TransportState state) {
+  switch (state) {
+    case SyncService::TransportState::DISABLED:
+      return "Disabled";
+    case SyncService::TransportState::PAUSED:
+      return "Paused";
+    case SyncService::TransportState::START_DEFERRED:
+      return "Start deferred";
+    case SyncService::TransportState::INITIALIZING:
+      return "Initializing";
+    case SyncService::TransportState::PENDING_DESIRED_CONFIGURATION:
+      return "Pending desired configuration";
+    case SyncService::TransportState::CONFIGURING:
+      return "Configuring data types";
+    case SyncService::TransportState::ACTIVE:
+      return "Active";
+  }
+  NOTREACHED();
+}
 
 // This function both defines the structure of the message to be returned and
 // its contents.  Most of the message consists of simple fields in
@@ -477,13 +491,15 @@ base::Value::Dict ConstructAboutInformation(
   }
 
   // Summary.
-  transport_state->Set(GetTransportStateString(service->GetTransportState()));
+  transport_state->Set(
+      TransportStateStringToDebugString(service->GetTransportState()));
   const SyncService::UserActionableError user_actionable_error =
       service->GetUserActionableError();
   error_state->Set(GetUserActionableErrorString(user_actionable_error),
                    /*is_good=*/user_actionable_error ==
                        SyncService::UserActionableError::kNone);
-  disable_reasons->Set(GetDisableReasonsString(service->GetDisableReasons()));
+  disable_reasons->Set(
+      GetDisableReasonsDebugString(service->GetDisableReasons()));
   // TODO(crbug.com/40067058): Delete this when ConsentLevel::kSync is deleted.
   // See ConsentLevel::kSync documentation for details.
   feature_enabled->Set(service->IsSyncFeatureEnabled());
@@ -682,6 +698,14 @@ base::Value::Dict ConstructAboutInformation(
 
   about_info.Set("unrecoverable_error_detected",
                  base::Value(service->HasUnrecoverableError()));
+
+  // Sync-the-feature should not be enabled on mobile platforms, where the
+  // sync-to-signin migration is completed.
+  const bool allow_enabling_sync_the_feature =
+      !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS);
+
+  about_info.Set("allow_enabling_sync_the_feature",
+                 base::Value(allow_enabling_sync_the_feature));
 
   if (service->HasUnrecoverableError()) {
     std::string unrecoverable_error_message =

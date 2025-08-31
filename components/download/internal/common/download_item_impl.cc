@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/check_is_test.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
 #include "base/functional/bind.h"
@@ -65,6 +66,7 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/referrer_policy.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "components/download/internal/common/android/download_collection_bridge.h"
@@ -485,12 +487,14 @@ DownloadItemImpl::DownloadItemImpl(
     DownloadItemImplDelegate* delegate,
     uint32_t download_id,
     const base::FilePath& path,
+    const base::FilePath& display_name,
     const GURL& url,
     const std::string& mime_type,
     DownloadJob::CancelRequestCallback cancel_request_callback)
     : request_info_(url),
       guid_(base::Uuid::GenerateRandomV4().AsLowercaseString()),
       download_id_(download_id),
+      display_name_(display_name),
       mime_type_(mime_type),
       original_mime_type_(mime_type),
       start_tick_(base::TimeTicks::Now()),
@@ -813,6 +817,15 @@ const std::string& DownloadItemImpl::GetGuid() const {
 
 DownloadItem::DownloadState DownloadItemImpl::GetState() const {
   return InternalToExternalState(state_);
+}
+
+void DownloadItemImpl::SetStateForTesting(DownloadItem::DownloadState state) {
+  CHECK_IS_TEST();
+  state_ = ExternalToInternalState(state);
+}
+
+void DownloadItemImpl::SetDownloadUrlForTesting(GURL url) {
+  request_info_.url_chain.push_back(url);
 }
 
 DownloadInterruptReason DownloadItemImpl::GetLastReason() const {
@@ -1194,8 +1207,8 @@ bool DownloadItemImpl::RequireSafetyChecks() const {
 }
 
 bool DownloadItemImpl::IsParallelDownload() const {
-  bool is_parallelizable = job_ ? job_->IsParallelizable() : false;
-  return is_parallelizable && download::IsParallelDownloadEnabled();
+  return job_ && job_->IsParallelizable() &&
+         download::IsParallelDownloadEnabled();
 }
 
 DownloadItem::DownloadCreationType DownloadItemImpl::GetDownloadCreationType()
@@ -1457,6 +1470,15 @@ void DownloadItemImpl::MarkAsComplete() {
 
   DCHECK(AllDataSaved());
   destination_info_.end_time = base::Time::Now();
+#if BUILDFLAG(IS_ANDROID)
+  if (GetTargetFilePath().IsContentUri()) {
+    GetDownloadTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            base::IgnoreResult(&DownloadCollectionBridge::PublishDownload),
+            GetTargetFilePath()));
+  }
+#endif
   TransitionTo(COMPLETE_INTERNAL);
   UpdateObservers();
 }
@@ -1571,10 +1593,9 @@ void DownloadItemImpl::Init(bool active,
       GetDangerType(), GetReceivedBytes(), HasUserGesture());
 
   if (active) {
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
-        "download", "DownloadItemActive",
-        TRACE_ID_WITH_SCOPE("DownloadItemActive", download_id_),
-        "download_item", std::move(active_data));
+    TRACE_EVENT_BEGIN("download", "DownloadItemActive",
+                      perfetto::NamedTrack("DownloadItemActive", download_id_),
+                      "download_item", std::move(active_data));
     ukm_download_id_ = ukm::NoURLSourceId();
   } else {
     TRACE_EVENT_INSTANT1("download", "DownloadItemActive",
@@ -2076,15 +2097,6 @@ void DownloadItemImpl::Completed() {
   if (is_parallelizable) {
     RecordParallelizableDownloadCount(COMPLETED_COUNT,
                                       IsParallelDownloadEnabled());
-    int64_t content_length = -1;
-    if (response_headers_->response_code() != net::HTTP_PARTIAL_CONTENT) {
-      content_length = response_headers_->GetContentLength();
-    } else {
-      int64_t first_byte = -1;
-      int64_t last_byte = -1;
-      response_headers_->GetContentRangeFor206(&first_byte, &last_byte,
-                                               &content_length);
-    }
   }
 
   if (auto_opened_) {
@@ -2464,16 +2476,15 @@ void DownloadItemImpl::TransitionTo(DownloadInternalState new_state) {
 
   // Termination
   if (is_done && !was_done)
-    TRACE_EVENT_NESTABLE_ASYNC_END0(
-        "download", "DownloadItemActive",
-        TRACE_ID_WITH_SCOPE("DownloadItemActive", download_id_));
+    TRACE_EVENT_END("download",
+                    perfetto::NamedTrack("DownloadItemActive", download_id_));
 
   // Resumption
   if (was_done && !is_done) {
     std::string file_name(GetTargetFilePath().BaseName().AsUTF8Unsafe());
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
+    TRACE_EVENT_BEGIN(
         "download", "DownloadItemActive",
-        TRACE_ID_WITH_SCOPE("DownloadItemActive", download_id_),
+        perfetto::NamedTrack("DownloadItemActive", download_id_),
         "download_item",
         std::make_unique<DownloadItemActivatedData>(
             TYPE_ACTIVE_DOWNLOAD, GetId(), GetOriginalUrl(), GetURL(),

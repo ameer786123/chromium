@@ -12,7 +12,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
@@ -47,7 +47,6 @@ using ::device::MockBluetoothGattService;
 using ::testing::_;
 using ::testing::AtLeast;
 using ::testing::DoAll;
-using ::testing::Invoke;
 using ::testing::NiceMock;
 using ::testing::Return;
 using ::testing::SaveArg;
@@ -83,15 +82,6 @@ const std::vector<uint8_t>& GetCorrectEidValue() {
 const std::vector<uint8_t>& GetIncorrectEidValue() {
   static const std::vector<uint8_t> kIncorrectEidValue({0xEF, 0xAB});
   return kIncorrectEidValue;
-}
-
-std::string EidToString(const std::vector<uint8_t>& eid_value_read) {
-  std::string output;
-  char* string_contents_ptr =
-      base::WriteInto(&output, eid_value_read.size() + 1);
-  UNSAFE_TODO(memcpy(string_contents_ptr, eid_value_read.data(),
-                     eid_value_read.size()));
-  return output;
 }
 
 }  //  namespace
@@ -176,7 +166,7 @@ class SecureChannelBluetoothLowEnergyCharacteristicFinderTest
     // |task_environment_.RunUntilIdle()| in tests will process any
     // pending callbacks.
     ON_CALL(*characteristic.get(), ReadRemoteCharacteristic_(_))
-        .WillByDefault(Invoke(
+        .WillByDefault(
             [read_success, correct_eid](
                 BluetoothRemoteGattCharacteristic::ValueCallback& callback) {
               std::optional<BluetoothGattService::GattErrorCode> error_code;
@@ -192,7 +182,7 @@ class SecureChannelBluetoothLowEnergyCharacteristicFinderTest
               base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
                   FROM_HERE,
                   base::BindOnce(std::move(callback), error_code, value));
-            }));
+            });
     return characteristic;
   }
 
@@ -259,7 +249,7 @@ class SecureChannelBluetoothLowEnergyCharacteristicFinderTest
     fake_background_eid_generator_->set_identified_device_id(
         remote_device_.GetDeviceId());
     fake_background_eid_generator_->set_matching_service_data(
-        EidToString(GetCorrectEidValue()));
+        std::string(base::as_string_view(GetCorrectEidValue())));
     return fake_background_eid_generator;
   }
 

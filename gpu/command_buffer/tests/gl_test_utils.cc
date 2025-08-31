@@ -13,12 +13,14 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <array>
 #include <memory>
 #include <string>
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/containers/heap_array.h"
+#include "base/containers/span.h"
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
@@ -209,13 +211,15 @@ GLuint GLTestHelper::SetupColorsForUnitQuad(
   GLuint vbo = 0;
   glGenBuffers(1, &vbo);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  GLfloat vertices[6 * 4];
+  std::array<GLfloat, 6 * 4> vertices;
   for (int ii = 0; ii < 6; ++ii) {
     for (int jj = 0; jj < 4; ++jj) {
       vertices[ii * 4 + jj] = color[jj];
     }
   }
-  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, usage);
+  glBufferData(GL_ARRAY_BUFFER,
+               (vertices.size() * sizeof(decltype(vertices)::value_type)),
+               vertices.data(), usage);
   glEnableVertexAttribArray(location);
   glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE, 0, 0);
 
@@ -274,12 +278,12 @@ bool GLTestHelper::CheckPixels(GLint x,
 
 namespace {
 
-void Set16BitValue(uint8_t dest[2], uint16_t value) {
+void Set16BitValue(base::span<uint8_t, 2> dest, uint16_t value) {
   dest[0] = value & 0xFFu;
   dest[1] = value >> 8;
 }
 
-void Set32BitValue(uint8_t dest[4], uint32_t value) {
+void Set32BitValue(base::span<uint8_t, 4> dest, uint32_t value) {
   dest[0] = (value >> 0) & 0xFFu;
   dest[1] = (value >> 8) & 0xFFu;
   dest[2] = (value >> 16) & 0xFFu;

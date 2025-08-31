@@ -29,8 +29,6 @@ import static org.mockito.Mockito.when;
 import static org.chromium.ui.test.util.MockitoHelper.doCallback;
 import static org.chromium.ui.test.util.MockitoHelper.doRunnable;
 
-import static java.util.Map.entry;
-
 import android.app.Activity;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
@@ -73,6 +71,7 @@ import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs.BookmarkRowSortOrde
 import org.chromium.chrome.browser.bookmarks.BookmarkUiState.BookmarkUiMode;
 import org.chromium.chrome.browser.bookmarks.ImprovedBookmarkRow.Location;
 import org.chromium.chrome.browser.bookmarks.ImprovedBookmarkRowProperties.ImageVisibility;
+import org.chromium.chrome.browser.bookmarks.bar.BookmarkBarUtils;
 import org.chromium.chrome.browser.commerce.PriceTrackingUtils;
 import org.chromium.chrome.browser.commerce.PriceTrackingUtilsJni;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
@@ -346,7 +345,7 @@ public class BookmarkManagerMediatorTest {
     private final ModelList mModelList = new ModelList();
     private final Bitmap mBitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
 
-    private BookmarkUiPrefs mBookmarkUiPrefs =
+    private final BookmarkUiPrefs mBookmarkUiPrefs =
             new BookmarkUiPrefs(ChromeSharedPreferences.getInstance());
     private Activity mActivity;
     private BookmarkManagerMediator mMediator;
@@ -365,6 +364,7 @@ public class BookmarkManagerMediatorTest {
         mActivityScenarioRule.getScenario().onActivity(this::onActivity);
     }
 
+    @SuppressWarnings("DirectInvocationOnMock")
     private void onActivity(Activity activity) {
         mActivity = spy(activity);
 
@@ -428,6 +428,9 @@ public class BookmarkManagerMediatorTest {
                                 mReadingListFolderId))
                 .when(mBookmarkModel)
                 .getTopLevelFolderIds();
+        doAnswer(i -> mBookmarkModel.getTopLevelFolderIds())
+                .when(mBookmarkModel)
+                .getTopLevelFolderIds(/* forceVisibleMask= */ anyInt());
 
         // Setup SelectableListLayout.
         doReturn(mActivity).when(mSelectableListLayout).getContext();
@@ -665,11 +668,15 @@ public class BookmarkManagerMediatorTest {
             syncStateChangedListener.syncStateChanged();
         }
 
-        verify(mBookmarkModel, times(0)).getTopLevelFolderIds();
+        verify(mBookmarkModel, times(0)).getTopLevelFolderIds(anyInt());
 
         finishLoading();
-        mMediator.openFolder(mBookmarkModel.getRootFolderId());
-        verify(mBookmarkModel, times(1)).getTopLevelFolderIds();
+        mMediator.openFolder(mRootFolderId);
+        verify(mBookmarkModel, times(1))
+                .getTopLevelFolderIds(
+                        BookmarkBarUtils.isDeviceBookmarkBarCompatible(mActivity)
+                                ? BookmarkNodeMaskBit.ACCOUNT_AND_LOCAL_BOOKMARK_BAR
+                                : BookmarkNodeMaskBit.NONE);
     }
 
     @Test
@@ -1217,10 +1224,8 @@ public class BookmarkManagerMediatorTest {
         verify(mBookmarkModel).addObserver(mBookmarkModelObserverArgumentCaptor.capture());
         assertNotNull(mSubscriptionsObserver.getValue());
 
-        doReturn(new ArrayList<BookmarkItem>())
-                .when(mBookmarkModel)
-                .searchBookmarks(anyString(), anyInt());
-        doReturn(new ArrayList<BookmarkId>()).when(mBookmarkModel).getChildIds(mFolderId1);
+        doReturn(new ArrayList<>()).when(mBookmarkModel).searchBookmarks(anyString(), anyInt());
+        doReturn(new ArrayList<>()).when(mBookmarkModel).getChildIds(mFolderId1);
 
         mMediator.openFolder(mFolderId1);
 
@@ -1284,19 +1289,19 @@ public class BookmarkManagerMediatorTest {
         assertNotNull(menu);
 
         // Select.
-        menu.onItemClick(null, null, 0, 0);
+        clickChildAt(menu, 0);
         verify(mSelectionDelegate).toggleSelectionForItem(mBookmarkId21);
 
         // Edit.
         // TODO(crbug.com/40267749): This doesn't actually open the activity yet.
-        menu.onItemClick(null, null, 1, 0);
+        clickChildAt(menu, 1);
 
         // Move.
         // TODO(crbug.com/40267749): This doesn't actually open the activity yet.
-        menu.onItemClick(null, null, 2, 0);
+        clickChildAt(menu, 2);
 
         // Delete.
-        menu.onItemClick(null, null, 3, 0);
+        clickChildAt(menu, 3);
         verify(mBookmarkModel).deleteBookmarks(mBookmarkId21);
     }
 
@@ -1339,7 +1344,7 @@ public class BookmarkManagerMediatorTest {
         assertNotNull(menu);
 
         // Delete.
-        menu.onItemClick(null, null, 4, 0);
+        clickChildAt(menu, 4);
         verify(mPriceTrackingUtilsJniMock)
                 .setPriceTrackingStateForBookmark(
                         any(), anyLong(), anyBoolean(), any(), anyBoolean());
@@ -1713,7 +1718,7 @@ public class BookmarkManagerMediatorTest {
                         eq(Set.of(DataType.BOOKMARKS, DataType.PASSWORDS, DataType.READING_LIST)),
                         any(Callback.class));
         mMediator
-                .getBookmarkBatchUploadCardCoordinator()
+                .getBatchUploadCardCoordinatorForTesting()
                 .immediatelyHideBatchUploadCardAndUpdateItsVisibility();
 
         mBookmarkUiPrefs.setBookmarkRowSortOrder(BookmarkRowSortOrder.ALPHABETICAL);
@@ -1786,7 +1791,7 @@ public class BookmarkManagerMediatorTest {
                         eq(Set.of(DataType.BOOKMARKS, DataType.PASSWORDS, DataType.READING_LIST)),
                         any(Callback.class));
         mMediator
-                .getBookmarkBatchUploadCardCoordinator()
+                .getBatchUploadCardCoordinatorForTesting()
                 .immediatelyHideBatchUploadCardAndUpdateItsVisibility();
 
         mBookmarkUiPrefs.setBookmarkRowSortOrder(BookmarkRowSortOrder.ALPHABETICAL);
@@ -1861,7 +1866,7 @@ public class BookmarkManagerMediatorTest {
                         eq(Set.of(DataType.BOOKMARKS, DataType.PASSWORDS, DataType.READING_LIST)),
                         any(Callback.class));
         mMediator
-                .getBookmarkBatchUploadCardCoordinator()
+                .getBatchUploadCardCoordinatorForTesting()
                 .immediatelyHideBatchUploadCardAndUpdateItsVisibility();
 
         mBookmarkUiPrefs.setBookmarkRowSortOrder(BookmarkRowSortOrder.ALPHABETICAL);
@@ -1899,7 +1904,7 @@ public class BookmarkManagerMediatorTest {
         assertFalse(mModelList.get(1).model.get(BookmarkManagerProperties.IS_HIGHLIGHTED));
 
         // Show in folder.
-        menu.onItemClick(null, null, 4, 0);
+        clickChildAt(menu, 4);
         assertTrue(mModelList.get(1).model.get(BookmarkManagerProperties.IS_HIGHLIGHTED));
     }
 
@@ -2456,5 +2461,9 @@ public class BookmarkManagerMediatorTest {
         assertEquals(2, mModelList.size());
         assertEquals(ViewType.SEARCH_BOX, mModelList.get(0).type);
         assertEquals(ViewType.EMPTY_STATE, mModelList.get(1).type);
+    }
+
+    private void clickChildAt(BasicListMenu menu, int i) {
+        menu.clickItemForTesting(i);
     }
 }

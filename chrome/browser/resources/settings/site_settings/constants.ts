@@ -81,7 +81,6 @@ export enum ContentSetting {
   BLOCK = 'block',
   ASK = 'ask',
   SESSION_ONLY = 'session_only',
-  IMPORTANT_CONTENT = 'detect_important_content',
 }
 
 /**
@@ -106,12 +105,14 @@ export enum ChooserType {
  * This should be kept in sync with the |CookieControlsMode| enum in
  * components/content_settings/core/browser/cookie_settings.h
  */
+// LINT.IfChange(CookieControlsMode)
 export enum CookieControlsMode {
   OFF = 0,
   BLOCK_THIRD_PARTY = 1,
   INCOGNITO_ONLY = 2,
   LIMITED = 3,
 }
+// LINT.ThenChange(//tools/metrics/histograms/metadata/privacy/enums.xml:CookieControlsMode, //components/content_settings/core/browser/cookie_settings.h:CookieControlsMode)
 
 /**
  * Contains the possible sources of a ContentSetting.

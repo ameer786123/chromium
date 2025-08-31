@@ -13,6 +13,8 @@ extern const char kMarkAsUws[];
 extern const char kMarkAsHighConfidenceAllowlisted[];
 extern const char kArtificialCachedUrlRealTimeVerdictFlag[];
 extern const char kArtificialCachedHashPrefixRealTimeVerdictFlag[];
+extern const char kArtificialCachedEnterpriseBlockedVerdictFlag[];
+extern const char kArtificialCachedEnterpriseWarnedVerdictFlag[];
 extern const char kSkipHighConfidenceAllowlist[];
 extern const char kUrlFilteringEndpointFlag[];
 extern const char kCsdDebugFeatureDirectoryFlag[];
@@ -26,6 +28,7 @@ extern const char kCloudBinaryUploadServiceUrlFlag[];
 extern const char kSbManualDownloadBlocklist[];
 extern const char kSbEnableEnhancedProtection[];
 extern const char kForceTreatUserAsAdvancedProtection[];
+extern const char kScamDetectionKeyboardLockTriggerAndroid[];
 
 }  // namespace safe_browsing::switches
 

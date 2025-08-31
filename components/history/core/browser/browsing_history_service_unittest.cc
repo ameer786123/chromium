@@ -12,12 +12,14 @@
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "base/timer/mock_timer.h"
 #include "base/values.h"
 #include "components/history/core/browser/browsing_history_driver.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/history/core/browser/history_types.h"
 #include "components/history/core/test/fake_web_history_service.h"
 #include "components/history/core/test/history_service_test_util.h"
 #include "components/sync/service/sync_service_observer.h"
@@ -55,6 +57,7 @@ struct TestResult {
   int64_t hour_offset;  // Visit time in hours past the baseline time.
   HistoryEntry::EntryType type;
   std::string remote_icon_url_for_uma;
+  VisitSource visit_source = VisitSource::SOURCE_BROWSED;
 };
 
 class TestBrowsingHistoryDriver : public BrowsingHistoryDriver {
@@ -142,7 +145,7 @@ class ReversedWebHistoryService : public TestWebHistoryService {
       bool* more_results_left) override {
     auto result = FakeWebHistoryService::GetVisitsBetween(begin, end, count,
                                                           more_results_left);
-    std::reverse(result.begin(), result.end());
+    std::ranges::reverse(result);
     return result;
   }
 };
@@ -209,7 +212,7 @@ class BrowsingHistoryServiceTest : public ::testing::Test {
       if (entry.type == kLocal) {
         local_history()->AddPage(GURL(entry.url),
                                  OffsetToTime(entry.hour_offset),
-                                 VisitSource::SOURCE_BROWSED);
+                                 entry.visit_source);
       } else if (entry.type == kRemote) {
         web_history->AddSyncedVisit(entry.url, OffsetToTime(entry.hour_offset),
                                     entry.remote_icon_url_for_uma);
@@ -223,6 +226,16 @@ class BrowsingHistoryServiceTest : public ::testing::Test {
     AddHistory(data, web_history());
   }
 
+  HistoryEntry CreateEntry(const std::string& url,
+                           const std::vector<int>& hour_offsets) {
+    HistoryEntry entry;
+    entry.url = GURL(url);
+    for (int hour_offset : hour_offsets) {
+      entry.all_timestamps.insert(OffsetToTime(hour_offset));
+    }
+    return entry;
+  }
+
   void VerifyEntry(const TestResult& expected, const HistoryEntry& actual) {
     EXPECT_EQ(GURL(expected.url), actual.url);
     EXPECT_EQ(OffsetToTime(expected.hour_offset), actual.time);
@@ -230,6 +243,8 @@ class BrowsingHistoryServiceTest : public ::testing::Test {
               static_cast<int>(actual.entry_type));
     EXPECT_EQ(GURL(expected.remote_icon_url_for_uma),
               actual.remote_icon_url_for_uma);
+    EXPECT_EQ(expected.visit_source == VisitSource::SOURCE_ACTOR,
+              actual.is_actor_visit);
   }
 
   TestBrowsingHistoryDriver::QueryResult QueryHistory(size_t max_count = 0) {
@@ -732,6 +747,60 @@ TEST_F(BrowsingHistoryServiceTest, IncorrectlyOrderedRemoteResults) {
   // BrowsingHistoryService before `reversed` goes out of scope.
   driver()->SetWebHistory(nullptr);
   ResetService(driver(), nullptr, nullptr);
+}
+
+TEST_F(BrowsingHistoryServiceTest, RemoveVisitsMetric) {
+  // `kUrl1` was visited 3 times on day 1, and 4 times on day 2. `kUrl2` was
+  // visited once on day 1. In total, there are 3 `HistoryEntry` instances
+  // (since every "entry" groups all visits to a URL for a single day).
+  // Note that for this test it doesn't matter that no such history entries were
+  // actually added to the service first.
+  const std::vector<HistoryEntry> entries{CreateEntry(kUrl1, {1, 2, 3}),
+                                          CreateEntry(kUrl2, {4}),
+                                          CreateEntry(kUrl1, {25, 26, 27, 28})};
+
+  {
+    base::HistogramTester histograms;
+
+    service()->RemoveVisits(entries);
+
+    histograms.ExpectUniqueSample(
+        "History.RemoveVisitsFromWebHistory.EntryCount", 3, 1);
+  }
+
+  {
+    // Simulate that history sync is disabled, so `WebHistoryService` is null.
+    driver()->SetWebHistory(nullptr);
+
+    base::HistogramTester histograms;
+
+    service()->RemoveVisits(entries);
+
+    // Without WebHistoryService, nothing should be recorded.
+    histograms.ExpectTotalCount("History.RemoveVisitsFromWebHistory.EntryCount",
+                                0);
+  }
+}
+
+TEST_F(BrowsingHistoryServiceTest, ActorVisitPropagated) {
+  AddHistory({
+      {kUrl1, 1, kRemote},
+      {kUrl2, 2, kRemote},
+      {kUrl2, 3, kLocal, "", VisitSource::SOURCE_ACTOR},
+      {kUrl3, 4, kLocal, "", VisitSource::SOURCE_ACTOR},
+      {kUrl3, 5, kLocal},
+  });
+
+  VerifyQueryResult(
+      /*reached_beginning*/ true, /*has_synced_results*/ true,
+      {{kUrl3, 5, kLocal, "",
+        VisitSource::SOURCE_BROWSED},  // Duplicate visits take the latest visit
+                                       // values.
+       {kUrl2, 3, kBoth, "",
+        VisitSource::SOURCE_ACTOR},  // Duplicate visits take the latest visit
+                                     // values.
+       {kUrl1, 1, kRemote}},
+      QueryHistory());
 }
 
 }  // namespace

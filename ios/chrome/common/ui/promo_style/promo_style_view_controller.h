@@ -53,7 +53,7 @@ enum class ActionButtonsVisibility {
 - (instancetype)initWithCoder:(NSCoder*)coder NS_UNAVAILABLE;
 
 // The name of the banner image. Must be set before the view is loaded.
-@property(nonatomic, strong) NSString* bannerName;
+@property(nonatomic, copy) NSString* bannerName;
 
 // The ratio of the view covered by the banner.
 // - kExtraShort: 15%,
@@ -162,10 +162,6 @@ enum class ActionButtonsVisibility {
 
 // The text for the primary action. Must be set before the view is loaded.
 @property(nonatomic, copy) NSString* primaryActionString;
-
-// The configuration update handler for the primaryActionButton. Must be set
-// before the view is loaded.
-@property(nonatomic, copy) UIButtonConfigurationUpdateHandler updateHandler;
 
 // The primary action button is enabled when set to YES, disabled when NO. The
 // button is enabled by default.

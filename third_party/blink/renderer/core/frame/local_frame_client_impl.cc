@@ -355,9 +355,9 @@ void LocalFrameClientImpl::Detached(FrameDetachType type) {
   // place at this point since we are no longer associated with the Page.
   web_frame_->SetClient(nullptr);
 
-  DetachReason detach_reason = (type == FrameDetachType::kSwap)
-                                   ? DetachReason::kNavigation
-                                   : DetachReason::kFrameDeletion;
+  DetachReason detach_reason = (type == FrameDetachType::kRemove)
+                                   ? DetachReason::kFrameDeletion
+                                   : DetachReason::kNavigation;
   client->WillDetach(detach_reason);
 
   // We only notify the browser process when the frame is being detached for
@@ -400,8 +400,6 @@ std::optional<KURL> LocalFrameClientImpl::DispatchWillSendRequest(
 void LocalFrameClientImpl::DispatchDidDispatchDOMContentLoadedEvent() {
   if (web_frame_->Client())
     web_frame_->Client()->DidDispatchDOMContentLoadedEvent();
-
-  web_frame_->DidDispatchDOMContentLoadedEvent();
 }
 
 void LocalFrameClientImpl::DispatchDidLoadResourceFromMemoryCache(
@@ -457,26 +455,35 @@ void LocalFrameClientImpl::DidFinishSameDocumentNavigation(
       if (!should_skip_screenshot && commit_type != kWebHistoryInertCommit &&
           !web_frame_->GetFrame()->GetSettings()->GetPrefersReducedMotion()) {
         navigation_with_screenshot = true;
-        if (RuntimeEnabledFeatures::
-                IncrementLocalSurfaceIdForMainframeSameDocNavigationEnabled()) {
+#if BUILDFLAG(IS_ANDROID)
+        if (web_frame_->View()
+                ->GetWebPreferences()
+                .increment_local_surface_id_for_mainframe_same_doc_navigation) {
           frame_widget->RequestNewLocalSurfaceId();
           if (RuntimeEnabledFeatures::BackForwardTransitionsEnabled()) {
             screenshot_destination = base::UnguessableToken::Create();
             frame_widget->RequestViewportScreenshot(screenshot_destination);
           }
         }
+#endif  // BUILDFLAG(IS_ANDROID)
 
-        frame_widget->NotifyPresentationTime(WTF::BindOnce(
-            [](base::TimeTicks start,
-               const viz::FrameTimingDetails& frame_timing_details) {
-              base::TimeDelta duration =
-                  frame_timing_details.presentation_feedback.timestamp - start;
-              base::UmaHistogramTimes(
-                  "Navigation."
-                  "MainframeSameDocumentNavigationCommitToPresentFirstFrame",
-                  duration);
-            },
-            base::TimeTicks::Now()));
+        if (LocalFrame* frame = web_frame_->GetFrame();
+            frame && frame->View()) {
+          frame->View()->RequestSameDocumentNavigationPresentationTime(
+              blink::BindOnce(
+                  [](base::TimeTicks start,
+                     const viz::FrameTimingDetails& frame_timing_details) {
+                    base::TimeDelta duration =
+                        frame_timing_details.presentation_feedback.timestamp -
+                        start;
+                    base::UmaHistogramTimes(
+                        "Navigation."
+                        "MainframeSameDocumentNavigationCommitToPresentFirstFra"
+                        "me",
+                        duration);
+                  },
+                  base::TimeTicks::Now()));
+        }
       }
     }
     base::UmaHistogramBoolean("Navigation.SameDocumentNavigationWithScreenshot",
@@ -562,13 +569,11 @@ void LocalFrameClientImpl::DispatchDidCommitLoad(
             web_frame_->GetDocument().GetUkmSourceId(),
             KURL(web_frame_->Client()->LastCommittedUrlForUKM()));
 
-        auto smoothness_shmem =
-            frame_widget->CreateSharedMemoryForSmoothnessUkm();
         auto dropped_frames_shmem =
             frame_widget->CreateSharedMemoryForDroppedFramesUkm();
-        if (smoothness_shmem.IsValid() && dropped_frames_shmem.IsValid()) {
-          web_frame_->Client()->SetUpSharedMemoryForUkms(
-              std::move(smoothness_shmem), std::move(dropped_frames_shmem));
+        if (dropped_frames_shmem.IsValid()) {
+          web_frame_->Client()->SetUpSharedMemoryForDroppedFrames(
+              std::move(dropped_frames_shmem));
         }
       }
     }
@@ -617,7 +622,7 @@ void LocalFrameClientImpl::BeginNavigation(
     const String& href_translate,
     const std::optional<Impression>& impression,
     const LocalFrameToken* initiator_frame_token,
-    std::unique_ptr<SourceLocation> source_location,
+    SourceLocation* source_location,
     mojo::PendingRemote<mojom::blink::NavigationStateKeepAliveHandle>
         initiator_navigation_state_keep_alive_handle,
     bool is_container_initiated,
@@ -804,8 +809,8 @@ void LocalFrameClientImpl::DidStopLoading() {
 
 bool LocalFrameClientImpl::NavigateBackForward(
     int offset,
-    std::optional<scheduler::TaskAttributionId>
-        soft_navigation_heuristics_task_id) const {
+    base::TimeTicks actual_navigation_start,
+    std::optional<scheduler::TaskAttributionId> task_state_id) const {
   WebViewImpl* webview = web_frame_->ViewImpl();
   DCHECK(webview->Client());
   DCHECK(web_frame_->Client());
@@ -819,7 +824,7 @@ bool LocalFrameClientImpl::NavigateBackForward(
   bool has_user_gesture =
       LocalFrame::HasTransientUserActivation(web_frame_->GetFrame());
   web_frame_->GetFrame()->GetLocalFrameHostRemote().GoToEntryAtOffset(
-      offset, has_user_gesture, soft_navigation_heuristics_task_id);
+      offset, has_user_gesture, actual_navigation_start, task_state_id);
   return true;
 }
 
@@ -875,7 +880,7 @@ void LocalFrameClientImpl::DidObserveNewFeatureUsage(
 
 // A new soft navigation was observed.
 void LocalFrameClientImpl::DidObserveSoftNavigation(
-    SoftNavigationMetrics metrics) {
+    SoftNavigationMetricsForReporting metrics) {
   if (WebLocalFrameClient* client = web_frame_->Client()) {
     client->DidObserveSoftNavigation(metrics);
   }
@@ -1146,12 +1151,11 @@ void LocalFrameClientImpl::OnMainFrameViewportRectangleChanged(
       main_frame_viewport_rect);
 }
 
-void LocalFrameClientImpl::OnMainFrameImageAdRectangleChanged(
+void LocalFrameClientImpl::OnMainFrameAdRectangleChanged(
     DOMNodeId element_id,
-    const gfx::Rect& image_ad_rect) {
+    const gfx::Rect& ad_rect) {
   DCHECK(web_frame_->Client());
-  web_frame_->Client()->OnMainFrameImageAdRectangleChanged(element_id,
-                                                           image_ad_rect);
+  web_frame_->Client()->OnMainFrameAdRectangleChanged(element_id, ad_rect);
 }
 
 void LocalFrameClientImpl::OnOverlayPopupAdDetected() {
@@ -1179,17 +1183,16 @@ v8::Local<v8::Object> LocalFrameClientImpl::GetScriptableObject(
 }
 
 scoped_refptr<WebWorkerFetchContext>
-LocalFrameClientImpl::CreateWorkerFetchContext() {
+LocalFrameClientImpl::CreateWorkletFetchContext() {
   DCHECK(web_frame_->Client());
-  return web_frame_->Client()->CreateWorkerFetchContext();
+  return web_frame_->Client()->CreateWorkletFetchContext();
 }
 
 scoped_refptr<WebWorkerFetchContext>
-LocalFrameClientImpl::CreateWorkerFetchContextForPlzDedicatedWorker(
+LocalFrameClientImpl::CreateWorkerFetchContext(
     WebDedicatedWorkerHostFactoryClient* factory_client) {
   DCHECK(web_frame_->Client());
-  return web_frame_->Client()->CreateWorkerFetchContextForPlzDedicatedWorker(
-      factory_client);
+  return web_frame_->Client()->CreateWorkerFetchContext(factory_client);
 }
 
 std::unique_ptr<WebContentSettingsClient>

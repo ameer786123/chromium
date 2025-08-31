@@ -31,23 +31,23 @@ namespace internal {
 // Wrapper around PostTask method arguments and the assigned task type.
 // Eventually it becomes a PendingTask once accepted by a TaskQueueImpl.
 struct BASE_EXPORT PostedTask {
-  explicit PostedTask(scoped_refptr<SequencedTaskRunner> task_runner,
-                      OnceClosure callback,
-                      Location location,
-                      TimeDelta delay = base::TimeDelta(),
-                      Nestable nestable = Nestable::kNestable,
-                      TaskType task_type = kTaskTypeNone,
-                      WeakPtr<DelayedTaskHandleDelegate>
-                          delayed_task_handle_delegate = nullptr);
-  explicit PostedTask(scoped_refptr<SequencedTaskRunner> task_runner,
-                      OnceClosure callback,
-                      Location location,
-                      TimeTicks delayed_run_time,
-                      subtle::DelayPolicy delay_policy,
-                      Nestable nestable = Nestable::kNestable,
-                      TaskType task_type = kTaskTypeNone,
-                      WeakPtr<DelayedTaskHandleDelegate>
-                          delayed_task_handle_delegate = nullptr);
+  PostedTask(scoped_refptr<SequencedTaskRunner> task_runner,
+             OnceClosure callback,
+             Location location,
+             TimeDelta delay = base::TimeDelta(),
+             Nestable nestable = Nestable::kNestable,
+             TaskType task_type = kTaskTypeNone,
+             WeakPtr<DelayedTaskHandleDelegate> delayed_task_handle_delegate =
+                 nullptr);
+  PostedTask(scoped_refptr<SequencedTaskRunner> task_runner,
+             OnceClosure callback,
+             Location location,
+             TimeTicks delayed_run_time,
+             subtle::DelayPolicy delay_policy,
+             Nestable nestable = Nestable::kNestable,
+             TaskType task_type = kTaskTypeNone,
+             WeakPtr<DelayedTaskHandleDelegate> delayed_task_handle_delegate =
+                 nullptr);
   PostedTask(PostedTask&& move_from) noexcept;
   PostedTask(const PostedTask&) = delete;
   PostedTask& operator=(const PostedTask&) = delete;
@@ -83,12 +83,7 @@ struct WakeUp {
   TimeDelta leeway;
   subtle::DelayPolicy delay_policy = subtle::DelayPolicy::kFlexibleNoSooner;
 
-  bool operator!=(const WakeUp& other) const {
-    return time != other.time || leeway != other.leeway ||
-           delay_policy != other.delay_policy;
-  }
-
-  bool operator==(const WakeUp& other) const { return !(*this != other); }
+  friend bool operator==(const WakeUp&, const WakeUp&) = default;
 
   bool is_immediate() const { return time.is_null(); }
 

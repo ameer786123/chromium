@@ -124,13 +124,6 @@ ToolbarButton::ToolbarButton(PressedCallback callback,
 
   SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
   views::FocusRing::Get(this)->SetOutsetFocusRingDisabled(true);
-
-#if BUILDFLAG(IS_WIN)
-  // Paint image(s) to a layer so that the canvas is snapped to pixel
-  // boundaries.
-  image_container_view()->SetPaintToLayer();
-  image_container_view()->layer()->SetFillsBoundsOpaquely(false);
-#endif
 }
 
 ToolbarButton::~ToolbarButton() = default;
@@ -550,6 +543,11 @@ void ToolbarButton::ShowDropDownMenu(ui::mojom::MenuSourceType source_type) {
     return;
   }
 
+  ShowMenuForModel(source_type, model_.get());
+}
+
+void ToolbarButton::ShowMenuForModel(ui::mojom::MenuSourceType source_type,
+                                     ui::MenuModel* menu_model) {
   gfx::Rect menu_anchor_bounds = GetAnchorBoundsInScreen();
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -558,12 +556,12 @@ void ToolbarButton::ShowDropDownMenu(ui::mojom::MenuSourceType source_type) {
   // the menu button exists.
   gfx::NativeView view = GetWidget()->GetNativeView();
   display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestView(view);
+      display::Screen::Get()->GetDisplayNearestView(view);
   int left_bound = display.bounds().x();
 #else
   // The window might be positioned over the edge between two screens. We'll
   // want to position the dropdown on the screen the mouse cursor is on.
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   display::Display display =
       screen->GetDisplayNearestPoint(screen->GetCursorScreenPoint());
   int left_bound = display.bounds().x();
@@ -581,7 +579,7 @@ void ToolbarButton::ShowDropDownMenu(ui::mojom::MenuSourceType source_type) {
 
   // Exit if the model is null. Although ToolbarButton::ShouldShowMenu()
   // performs the same check, its overrides may not.
-  if (!model_) {
+  if (!menu_model) {
     return;
   }
 
@@ -591,8 +589,8 @@ void ToolbarButton::ShowDropDownMenu(ui::mojom::MenuSourceType source_type) {
 
   // Create and run menu.
   menu_model_adapter_ = std::make_unique<views::MenuModelAdapter>(
-      model_.get(), base::BindRepeating(&ToolbarButton::OnMenuClosed,
-                                        base::Unretained(this)));
+      menu_model, base::BindRepeating(&ToolbarButton::OnMenuClosed,
+                                      base::Unretained(this)));
   menu_model_adapter_->set_triggerable_event_flags(GetTriggerableEventFlags());
   std::unique_ptr<views::MenuItemView> root = menu_model_adapter_->CreateMenu();
   root->SetSubmenuId(menu_identifier_);
@@ -758,24 +756,6 @@ void ToolbarButton::HighlightColorAnimation::ClearHighlightColor() {
 std::unique_ptr<views::ActionViewInterface>
 ToolbarButton::GetActionViewInterface() {
   return std::make_unique<ToolbarButtonActionViewInterface>(this);
-}
-
-void ToolbarButton::AddLayerToRegion(ui::Layer* new_layer,
-                                     views::LayerRegion region) {
-#if !BUILDFLAG(IS_WIN)
-  image_container_view()->SetPaintToLayer();
-  image_container_view()->layer()->SetFillsBoundsOpaquely(false);
-#endif
-  ink_drop_container()->SetVisible(true);
-  ink_drop_container()->AddLayerToRegion(new_layer, region);
-}
-
-void ToolbarButton::RemoveLayerFromRegions(ui::Layer* old_layer) {
-  ink_drop_container()->RemoveLayerFromRegions(old_layer);
-  ink_drop_container()->SetVisible(false);
-#if !BUILDFLAG(IS_WIN)
-  image_container_view()->DestroyLayer();
-#endif
 }
 
 ToolbarButtonActionViewInterface::ToolbarButtonActionViewInterface(

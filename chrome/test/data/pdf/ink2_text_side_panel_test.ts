@@ -2,10 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {AnnotationMode, hexToColor, Ink2Manager, TEXT_COLORS, UserAction} from 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_viewer_wrapper.js';
+import {AnnotationMode, hexToColor, Ink2Manager, TEXT_COLORS, TextTypeface, UserAction} from 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_viewer_wrapper.js';
 import type {Color} from 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_viewer_wrapper.js';
 import {assert} from 'chrome://resources/js/assert.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {eventToPromise, isVisible, microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {setupMockMetricsPrivate} from './test_util.js';
@@ -18,12 +17,8 @@ chrome.test.runTests([
   async function testOpenSidePanel() {
     const mockMetricsPrivate = setupMockMetricsPrivate();
 
-    // Enable text annotations.
-    loadTimeData.overrideValues({'pdfTextAnnotationsEnabled': true});
-    viewer.$.toolbar.strings = Object.assign({}, viewer.$.toolbar.strings);
-    await microtasksFinished();
-
     viewer.$.toolbar.setAnnotationMode(AnnotationMode.TEXT);
+    await Ink2Manager.getInstance().initializeTextAnnotations();
     await microtasksFinished();
 
     chrome.test.assertEq(AnnotationMode.TEXT, viewer.$.toolbar.annotationMode);
@@ -43,17 +38,18 @@ chrome.test.runTests([
     // Font is the first select.
     const fontSelect = sidePanel.shadowRoot.querySelector('select');
     assert(fontSelect);
-    const initialFont = Ink2Manager.getInstance().getCurrentText().font;
+    const initialFont =
+        Ink2Manager.getInstance().getCurrentTextAttributes().typeface;
     chrome.test.assertEq(initialFont, fontSelect.value);
 
     const whenChanged =
-        eventToPromise('text-changed', Ink2Manager.getInstance());
-    const newValue = 'Serif';
+        eventToPromise('attributes-changed', Ink2Manager.getInstance());
+    const newValue = TextTypeface.SERIF;
     fontSelect.focus();
     fontSelect.value = newValue;
     fontSelect.dispatchEvent(new CustomEvent('change'));
     const changedEvent = await whenChanged;
-    chrome.test.assertEq(newValue, changedEvent.detail.font);
+    chrome.test.assertEq(newValue, changedEvent.detail.typeface);
     await microtasksFinished();
     chrome.test.assertEq(newValue, fontSelect.value);
 
@@ -70,11 +66,12 @@ chrome.test.runTests([
     const selects = sidePanel.shadowRoot.querySelectorAll('select');
     chrome.test.assertEq(2, selects.length);
     const sizeSelect = selects[1]!;
-    const initialSize = Ink2Manager.getInstance().getCurrentText().size;
+    const initialSize =
+        Ink2Manager.getInstance().getCurrentTextAttributes().size;
     chrome.test.assertEq(initialSize.toString(), sizeSelect.value);
 
     const whenChanged =
-        eventToPromise('text-changed', Ink2Manager.getInstance());
+        eventToPromise('attributes-changed', Ink2Manager.getInstance());
     sizeSelect.focus();
     sizeSelect.value = '20';
     sizeSelect.dispatchEvent(new CustomEvent('change'));
@@ -117,7 +114,8 @@ chrome.test.runTests([
     const buttons = colorSelector.shadowRoot.querySelectorAll('input');
     chrome.test.assertEq(TEXT_COLORS.length, buttons.length);
     assertColorsEqual(
-        {r: 0, g: 0, b: 0}, Ink2Manager.getInstance().getCurrentText().color);
+        {r: 0, g: 0, b: 0},
+        Ink2Manager.getInstance().getCurrentTextAttributes().color);
     chrome.test.assertTrue(buttons[0]!.checked);
 
     // Confirm we passed all the right colors to the color selector.
@@ -132,7 +130,7 @@ chrome.test.runTests([
 
     // Change to a different color by clicking on an unchecked button.
     const whenChanged =
-        eventToPromise('text-changed', Ink2Manager.getInstance());
+        eventToPromise('attributes-changed', Ink2Manager.getInstance());
     buttons[1]!.click();
     const changedEvent = await whenChanged;
     assertColorsEqual(

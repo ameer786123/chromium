@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.download;
 
+import static org.chromium.chrome.test.util.ChromeTabUtils.getTabCountOnUiThread;
+
 import android.app.Notification;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -267,7 +269,7 @@ public class DownloadTest {
     public void testHttpGetDownload() throws Exception {
         loadUrl(sTestServer.getURL(TEST_DOWNLOAD_DIRECTORY + "get.html"));
         waitForFocus();
-        View currentView = sDownloadTestRule.getActivity().getActivityTab().getView();
+        View currentView = sDownloadTestRule.getActivityTab().getView();
 
         int callCount = sDownloadTestRule.getChromeDownloadCallCount();
         TouchCommon.singleClickView(currentView);
@@ -281,7 +283,7 @@ public class DownloadTest {
     public void testHttpPostDownload() throws Exception {
         loadUrl(sTestServer.getURL(TEST_DOWNLOAD_DIRECTORY + "post.html"));
         waitForFocus();
-        View currentView = sDownloadTestRule.getActivity().getActivityTab().getView();
+        View currentView = sDownloadTestRule.getActivityTab().getView();
 
         int callCount = sDownloadTestRule.getChromeDownloadCallCount();
         TouchCommon.singleClickView(currentView);
@@ -297,9 +299,10 @@ public class DownloadTest {
     public void testCloseEmptyDownloadTab() throws Exception {
         loadUrl(sTestServer.getURL(TEST_DOWNLOAD_DIRECTORY + "get.html"));
         waitForFocus();
-        final int initialTabCount = sDownloadTestRule.getActivity().getCurrentTabModel().getCount();
+        final int initialTabCount =
+                getTabCountOnUiThread(sDownloadTestRule.getActivity().getCurrentTabModel());
         int currentCallCount = sDownloadTestRule.getChromeDownloadCallCount();
-        View currentView = sDownloadTestRule.getActivity().getActivityTab().getView();
+        View currentView = sDownloadTestRule.getActivityTab().getView();
         TouchCommon.singleClickView(currentView);
         Assert.assertTrue(sDownloadTestRule.waitForChromeDownloadToFinish(currentCallCount));
 
@@ -317,7 +320,7 @@ public class DownloadTest {
     public void testUrlEscaping() throws Exception {
         loadUrl(sTestServer.getURL(TEST_DOWNLOAD_DIRECTORY + "urlescaping.html"));
         waitForFocus();
-        View currentView = sDownloadTestRule.getActivity().getActivityTab().getView();
+        View currentView = sDownloadTestRule.getActivityTab().getView();
 
         int callCount = sDownloadTestRule.getChromeDownloadCallCount();
         TouchCommon.singleClickView(currentView);
@@ -329,7 +332,7 @@ public class DownloadTest {
         sDownloadTestRule.loadUrlInTab(
                 url,
                 PageTransition.TYPED | PageTransition.FROM_ADDRESS_BAR,
-                sDownloadTestRule.getActivity().getActivityTab(),
+                sDownloadTestRule.getActivityTab(),
                 20L // 20 seconds timeout
                 );
     }
@@ -337,6 +340,9 @@ public class DownloadTest {
     @Test
     @LargeTest
     @Feature({"Navigation"})
+    // TestWebServer hosts on [::1] (versus EmbeddedTestServer hosting on 127.0.0.1), so we need to
+    // set this to avoid Local Network Access (LNA) checks.
+    @CommandLineFlags.Add({"ip-address-space-overrides=[::1]:0=public"})
     public void testOMADownloadInterception() throws Exception {
         TestWebServer webServer = TestWebServer.start();
         try {
@@ -359,7 +365,7 @@ public class DownloadTest {
                                     + "  }"
                                     + "</script>"
                                     + "<body id='body' onclick='download()'></body>"));
-            DOMUtils.clickNode(sDownloadTestRule.getActivity().getCurrentWebContents(), "body");
+            DOMUtils.clickNode(sDownloadTestRule.getWebContents(), "body");
             CriteriaHelper.pollUiThread(
                     () -> {
                         Criteria.checkThat(interceptor.mDownloadItem, Matchers.notNullValue());
@@ -373,7 +379,7 @@ public class DownloadTest {
     }
 
     private void waitForFocus() {
-        View currentView = sDownloadTestRule.getActivity().getActivityTab().getView();
+        View currentView = sDownloadTestRule.getActivityTab().getView();
         if (!currentView.hasFocus()) {
             TouchCommon.singleClickView(currentView);
         }

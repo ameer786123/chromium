@@ -9,20 +9,21 @@
 #import "base/functional/bind.h"
 #import "base/ios/ios_util.h"
 #import "base/strings/stringprintf.h"
-#import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "build/build_config.h"
 #import "components/feature_engagement/public/feature_constants.h"
 #import "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/browser_container/ui_bundled/edit_menu_app_interface.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/ntp_home_constant.h"
 #import "ios/chrome/browser/omnibox/eg_tests/omnibox_app_interface.h"
 #import "ios/chrome/browser/omnibox/eg_tests/omnibox_earl_grey.h"
 #import "ios/chrome/browser/omnibox/eg_tests/omnibox_test_util.h"
+#import "ios/chrome/browser/omnibox/public/omnibox_popup_accessibility_identifier_constants.h"
 #import "ios/chrome/browser/omnibox/public/omnibox_ui_features.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/popup/omnibox_popup_accessibility_identifier_constants.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_constants.h"
+#import "ios/chrome/common/NSString+Chromium.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
@@ -60,12 +61,6 @@ const char kHeaderPageURL[] = "/page3.html";
 const char kHeaderPageSuccess[] = "header found!";
 const char kHeaderPageFailure[] = "header failure";
 
-// Path to a page containing the chromium logo and the text `kLogoPageText`.
-const char kLogoPagePath[] = "/chromium_logo_page.html";
-// The text of the message on the logo page.
-const char kLogoPageText[] = "Page with some text and the chromium logo image.";
-// The DOM element ID of the chromium image on the logo page.
-const char kLogoPageChromiumImageId[] = "chromium_image";
 // Y offset to tap on the middle of the text.
 const CGFloat kOmniboxTextFieldMidY = 18;
 // X offset to tap on the beginning of the text, tapping on the left edge
@@ -182,12 +177,6 @@ id<GREYMatcher> SearchCopiedImageButton() {
                     chrome_test_util::SystemSelectionCallout(), nil);
 }
 
-// Returns Clear button at the trailing edge of the omnibox's text field.
-id<GREYMatcher> ClearButton() {
-  return chrome_test_util::ButtonWithAccessibilityLabelId(
-      IDS_IOS_ACCNAME_CLEAR_TEXT);
-}
-
 #pragma mark LocationBar context menu buttons
 
 // LocationBar context menu buttons can be showed in different orders depending
@@ -297,31 +286,6 @@ void FocusFakebox() {
   [ChromeEarlGrey waitForWebStateContainingText:kPage1];
 }
 
-// Copies image from `kLogoPagePath` into the clipboard using web context menu
-// interactions.
-- (void)copyImageIntoClipboard {
-  [ChromeEarlGrey clearPasteboard];
-  [ChromeEarlGrey loadURL:self.testServer->GetURL(kLogoPagePath)];
-  [ChromeEarlGrey waitForWebStateContainingText:kLogoPageText];
-  [[EarlGrey selectElementWithMatcher:WebViewMatcher()]
-      performAction:chrome_test_util::LongPressElementForContextMenu(
-                        [ElementSelector
-                            selectorWithElementID:kLogoPageChromiumImageId],
-                        true /* menu should appear */)];
-  [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::ContextMenuItemWithAccessibilityLabelId(
-                     IDS_IOS_CONTENT_CONTEXT_COPYIMAGE)]
-      performAction:grey_tap()];
-
-  GREYCondition* copyCondition =
-      [GREYCondition conditionWithName:@"Image copied condition"
-                                 block:^BOOL {
-                                   return [ChromeEarlGrey pasteboardHasImages];
-                                 }];
-  // Wait for copy to happen or timeout after 5 seconds.
-  GREYAssertTrue([copyCondition waitWithTimeout:5], @"Copying image failed");
-}
-
 // Tests that the XClientData header is sent when navigating to
 // https://google.com through the omnibox.
 - (void)testXClientData {
@@ -348,10 +312,10 @@ void FocusFakebox() {
   GURL::Replacements httpsReplacements;
   httpsReplacements.SetSchemeStr(url::kHttpsScheme);
 
-  NSString* URL = base::SysUTF8ToNSString(
-      self.testServer->GetURL("www.google.com", kHeaderPageURL)
-          .ReplaceComponents(httpsReplacements)
-          .spec());
+  NSString* URL = [NSString
+      cr_fromString:self.testServer->GetURL("www.google.com", kHeaderPageURL)
+                        .ReplaceComponents(httpsReplacements)
+                        .spec()];
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_replaceText(URL)];
@@ -387,6 +351,13 @@ void FocusFakebox() {
 // Tests that Search Copied Text menu button is shown with text in the clipboard
 // and is starting a search.
 - (void)testOmniboxMenuPasteTextToSearch {
+// TODO(crbug.com/435377733): Re-enable the test on iOS26.
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (iOS26_OR_ABOVE()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
+#endif
+
   FocusFakebox();
   NSString* textToSearch = @"TextToCopy";
   // Copy text in clipboard.
@@ -395,16 +366,28 @@ void FocusFakebox() {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_longPress()];
 
+  NSError* error = nil;
+  [[EarlGrey
+      selectElementWithMatcher:[EditMenuAppInterface editMenuNextButtonMatcher]]
+      assertWithMatcher:grey_sufficientlyVisible()
+                  error:&error];
+  if (error == nil) {
+    // Tap the forward button if it's visible. It depends on the device size.
+    [[EarlGrey selectElementWithMatcher:[EditMenuAppInterface
+                                            editMenuNextButtonMatcher]]
+        performAction:grey_tap()];
+  }
+
   // Wait for UIMenuController to appear or timeout after 2 seconds.
   GREYCondition* SearchTextButtonIsDisplayed = [GREYCondition
       conditionWithName:@"Search Copied Text button display condition"
                   block:^BOOL {
-                    NSError* error = nil;
+                    NSError* e = nil;
                     [[EarlGrey
                         selectElementWithMatcher:SearchCopiedTextButton()]
                         assertWithMatcher:grey_notNil()
-                                    error:&error];
-                    return error == nil;
+                                    error:&e];
+                    return e == nil;
                   }];
   GREYAssertTrue([SearchTextButtonIsDisplayed
                      waitWithTimeout:kWaitForUIElementTimeout.InSecondsF()],
@@ -414,7 +397,7 @@ void FocusFakebox() {
   // Check that the omnibox contains the copied text.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       assertWithMatcher:chrome_test_util::OmniboxContainingText(
-                            base::SysNSStringToUTF8(textToSearch))];
+                            textToSearch.cr_UTF8String)];
 }
 
 // Tests that Visit Copied Link menu button is shown with a link in the
@@ -422,7 +405,7 @@ void FocusFakebox() {
 - (void)testOmniboxMenuPasteURLToSearch {
   FocusFakebox();
   // Copy URL into clipboard.
-  [ChromeEarlGrey copyTextToPasteboard:base::SysUTF8ToNSString(_URL1.spec())];
+  [ChromeEarlGrey copyTextToPasteboard:[NSString cr_fromString:_URL1.spec()]];
   // Tap Visit Copied Link menu button.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_longPress()];
@@ -444,44 +427,6 @@ void FocusFakebox() {
       performAction:grey_tap()];
   // Verify that the page is loaded.
   [ChromeEarlGrey waitForWebStateContainingText:kPage1];
-}
-
-// Tests that Search Copied Image menu button is shown with an image in the
-// clipboard and is starting an image search.
-// TODO(crbug.com/40928559): Fix flakiness and re-enable.
-- (void)DISABLED_testOmniboxMenuPasteImageToSearch {
-  [self copyImageIntoClipboard];
-
-  // Wait for the context menu to dismiss, so the omnibox can be tapped.
-  [ChromeEarlGrey waitForSufficientlyVisibleElementWithMatcher:
-                      chrome_test_util::DefocusedLocationView()];
-
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::DefocusedLocationView()]
-      performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:ClearButton()] performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-      performAction:grey_longPress()];
-
-  // Wait for UIMenuController to appear or timeout after 2 seconds.
-  GREYCondition* SearchImageButtonIsDisplayed = [GREYCondition
-      conditionWithName:@"Search Copied Image button display condition"
-                  block:^BOOL {
-                    NSError* error = nil;
-                    [[EarlGrey
-                        selectElementWithMatcher:SearchCopiedImageButton()]
-                        assertWithMatcher:grey_notNil()
-                                    error:&error];
-                    return error == nil;
-                  }];
-  GREYAssertTrue([SearchImageButtonIsDisplayed
-                     waitWithTimeout:kWaitForUIElementTimeout.InSecondsF()],
-                 @"Search Copied Image button display failed");
-  [[EarlGrey selectElementWithMatcher:SearchCopiedImageButton()]
-      performAction:grey_tap()];
-
-  // Check that the omnibox started a google search.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-      assertWithMatcher:chrome_test_util::OmniboxContainingText("google")];
 }
 
 @end
@@ -594,7 +539,7 @@ void FocusFakebox() {
   // Tapping it should copy the URL.
   [[EarlGrey selectElementWithMatcher:CopyContextMenuButton()]
       performAction:grey_tap()];
-  [ChromeEarlGrey verifyStringCopied:base::SysUTF8ToNSString(_URL1.spec())];
+  [ChromeEarlGrey verifyStringCopied:[NSString cr_fromString:_URL1.spec()]];
 
   // Go to another web page.
   [self openPage2];
@@ -1263,7 +1208,7 @@ void FocusFakebox() {
   [ChromeEarlGrey simulatePhysicalKeyboardEvent:@"C"
                                           flags:UIKeyModifierCommand];
 
-  [ChromeEarlGrey verifyStringCopied:base::SysUTF8ToNSString(_URL1.spec())];
+  [ChromeEarlGrey verifyStringCopied:[NSString cr_fromString:_URL1.spec()]];
 
   // Defocus the omnibox.
   DefocusOmnibox();
@@ -1308,7 +1253,7 @@ void FocusFakebox() {
 
   [ChromeEarlGrey simulatePhysicalKeyboardEvent:@"X"
                                           flags:UIKeyModifierCommand];
-  [ChromeEarlGrey verifyStringCopied:base::SysUTF8ToNSString(_URL1.spec())];
+  [ChromeEarlGrey verifyStringCopied:[NSString cr_fromString:_URL1.spec()]];
 
   // Verify that the omnibox is empty.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]

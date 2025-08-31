@@ -7,44 +7,70 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/base64.h"
-#include "base/functional/callback_forward.h"
+#include "base/containers/to_vector.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/browser_features.h"
+#include "chrome/browser/net/secure_dns_config.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/certificate_transparency/certificate_transparency_config.pb.h"
+#include "components/metrics/content/subprocess_metrics_provider.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/navigation_throttle.h"
+#include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/network_service_util.h"
 #include "content/public/browser/ssl_status.h"
+#include "content/public/browser/storage_partition.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
-#include "crypto/ec_private_key.h"
-#include "crypto/sha2.h"
+#include "content/public/test/test_navigation_throttle_inserter.h"
+#include "crypto/hash.h"
+#include "crypto/keypair.h"
+#include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 #include "net/cert/test_root_certs.h"
 #include "net/cert/x509_certificate.h"
+#include "net/dns/dns_test_util.h"
 #include "net/dns/mock_host_resolver.h"
+#include "net/dns/public/util.h"
 #include "net/net_buildflags.h"
+#include "net/ssl/ssl_server_config.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/test_data_directory.h"
+#include "net/test/test_doh_server.h"
+#include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
+#include "base/test/bind.h"
 #include "chrome/browser/ssl/ssl_browsertest_util.h"
 #include "net/base/features.h"
 #include "net/cert/internal/trust_store_chrome.h"
+#include "net/cert/root_store_proto_lite/root_store.pb.h"
 #include "net/cert/x509_util.h"
 #include "net/test/cert_builder.h"
+#include "third_party/boringssl/src/include/openssl/ssl.h"
 #endif
 
 namespace {
@@ -62,6 +88,76 @@ enum class CTEnforcement {
 
 int64_t SecondsSinceEpoch(base::Time t) {
   return (t - base::Time::UnixEpoch()).InSeconds();
+}
+
+// A CTLog generates a log identity private key, then computes and
+// caches several properties from that key that are needed in test cases.
+class CTLog {
+ public:
+  CTLog(std::string_view name,
+        base::Time start,
+        base::Time end,
+        chrome_browser_certificate_transparency::CTLog::LogType type)
+      : name_(name), start_(start), end_(end), type_(type) {}
+
+  std::string_view name() const { return name_; }
+  base::Time start() const { return start_; }
+  base::Time end() const { return end_; }
+  chrome_browser_certificate_transparency::CTLog::LogType type() const {
+    return type_;
+  }
+
+  base::span<const uint8_t> spki() const { return spki_; }
+  std::string_view spki_base64() const { return spki_base64_; }
+
+  // Even though the id is just a span of bytes, so this should theoretically
+  // return a base::span<const uint8_t> referencing the data we've cached, all the
+  // call sites want it as a string.
+  std::string id() const { return std::string(base::as_string_view(id_)); }
+  std::string_view id_base64() const { return id_base64_; }
+
+  bssl::UniquePtr<EVP_PKEY> key() { return bssl::UpRef(private_key_.key()); }
+
+ private:
+  const std::string name_;
+  const base::Time start_;
+  const base::Time end_;
+  const chrome_browser_certificate_transparency::CTLog::LogType type_;
+
+  // The generated private key and things derived from it. Note that the private
+  // key itself can't be const, because returning a reference to it in key()
+  // above requires mutating its inner refcount.
+  crypto::keypair::PrivateKey private_key_{
+      crypto::keypair::PrivateKey::GenerateEcP256()};
+  const std::vector<uint8_t> spki_{private_key_.ToSubjectPublicKeyInfo()};
+  const std::string spki_base64_{base::Base64Encode(spki_)};
+  const std::array<uint8_t, crypto::hash::kSha256Size> id_{
+      crypto::hash::Sha256(spki_)};
+  const std::string id_base64_{base::Base64Encode(id_)};
+};
+
+void AddLogToCTConfig(chrome_browser_certificate_transparency::CTConfig* config,
+                      const CTLog& log) {
+  chrome_browser_certificate_transparency::CTLog* entry =
+      config->mutable_log_list()->add_logs();
+  entry->set_log_id(log.id_base64());
+  entry->set_key(log.spki_base64());
+  entry->set_purpose(chrome_browser_certificate_transparency::CTLog::PROD);
+  entry->set_log_type(log.type());
+  entry->mutable_temporal_interval()->mutable_start()->set_seconds(
+      SecondsSinceEpoch(log.start()));
+  entry->mutable_temporal_interval()->mutable_end()->set_seconds(
+      SecondsSinceEpoch(log.end()));
+  chrome_browser_certificate_transparency::CTLog_State* log_state =
+      entry->add_state();
+  log_state->set_current_state(
+      chrome_browser_certificate_transparency::CTLog::USABLE);
+  log_state->mutable_state_start()->set_seconds(SecondsSinceEpoch(log.start()));
+  chrome_browser_certificate_transparency::CTLog_OperatorChange*
+      operator_history = entry->add_operator_history();
+  operator_history->set_name(log.name());
+  operator_history->mutable_operator_start()->set_seconds(
+      SecondsSinceEpoch(log.start()));
 }
 
 }  // namespace
@@ -200,7 +296,7 @@ IN_PROC_BROWSER_TEST_P(PKIMetadataComponentUpdaterTest,
   net::ScopedTestKnownRoot scoped_known_root(root_cert.get());
 
   net::EmbeddedTestServer https_server_ok(net::EmbeddedTestServer::TYPE_HTTPS);
-  constexpr char kHostname[] = "example.com";
+  static constexpr char kHostname[] = "example.com";
   https_server_ok.SetCertHostnames({kHostname});
   https_server_ok.ServeFilesFromSourceDirectory("chrome/test/data");
   ASSERT_TRUE(https_server_ok.Start());
@@ -234,29 +330,14 @@ IN_PROC_BROWSER_TEST_P(PKIMetadataComponentUpdaterTest,
 }
 
 IN_PROC_BROWSER_TEST_P(PKIMetadataComponentUpdaterTest, TestCTUpdate) {
-  const std::string kLog1OperatorName = "log operator 1";
-  std::unique_ptr<crypto::ECPrivateKey> log1_private_key =
-      crypto::ECPrivateKey::Create();
-  std::vector<uint8_t> log1_spki;
-  ASSERT_TRUE(log1_private_key->ExportPublicKey(&log1_spki));
-  const std::string log1_spki_base64 = base::Base64Encode(log1_spki);
-  const std::string log1_id =
-      crypto::SHA256HashString(std::string(log1_spki.begin(), log1_spki.end()));
-  const std::string log1_id_base64 = base::Base64Encode(log1_id);
+  const base::Time kLogStart = base::Time::Now() - base::Days(1);
+  const base::Time kLogEnd = base::Time::Now() + base::Days(1);
 
-  const std::string kLog2OperatorName = "log operator 2";
-  std::unique_ptr<crypto::ECPrivateKey> log2_private_key =
-      crypto::ECPrivateKey::Create();
-  std::vector<uint8_t> log2_spki;
-  ASSERT_TRUE(log2_private_key->ExportPublicKey(&log2_spki));
-  const std::string log2_spki_base64 = base::Base64Encode(log2_spki);
-  const std::string log2_id =
-      crypto::SHA256HashString(std::string(log2_spki.begin(), log2_spki.end()));
-  const std::string log2_id_base64 = base::Base64Encode(log2_id);
-
-  const int64_t kLogStart =
-      SecondsSinceEpoch(base::Time::Now() - base::Days(1));
-  const int64_t kLogEnd = SecondsSinceEpoch(base::Time::Now() + base::Days(1));
+  CTLog log1("log operator 1", kLogStart, kLogEnd,
+             chrome_browser_certificate_transparency::CTLog::RFC6962);
+  CTLog log2(
+      "log operator 2", kLogStart, kLogEnd,
+      chrome_browser_certificate_transparency::CTLog::LOG_TYPE_UNSPECIFIED);
 
   // Make the test root be interpreted as a known root so that CT will be
   // required.
@@ -273,10 +354,10 @@ IN_PROC_BROWSER_TEST_P(PKIMetadataComponentUpdaterTest, TestCTUpdate) {
   // updates cause verifier caches and socket pool invalidation, so that the
   // next request for the same host will use the updated CT state.
   server_config.dns_names = {"example.com"};
-  server_config.embedded_scts.emplace_back(
-      log1_id, bssl::UpRef(log1_private_key->key()), base::Time::Now());
-  server_config.embedded_scts.emplace_back(
-      log2_id, bssl::UpRef(log2_private_key->key()), base::Time::Now());
+  server_config.embedded_scts.emplace_back(log1.id(), log1.key(),
+                                           base::Time::Now());
+  server_config.embedded_scts.emplace_back(log2.id(), log2.key(),
+                                           base::Time::Now());
   https_server_ok.SetSSLConfig(server_config);
 
   https_server_ok.ServeFilesFromSourceDirectory("chrome/test/data");
@@ -302,43 +383,9 @@ IN_PROC_BROWSER_TEST_P(PKIMetadataComponentUpdaterTest, TestCTUpdate) {
                                        CTEnforcement::kDisabledByProto);
   ct_config.mutable_log_list()->mutable_timestamp()->set_seconds(
       SecondsSinceEpoch(base::Time::Now()));
-  {
-    chrome_browser_certificate_transparency::CTLog* log =
-        ct_config.mutable_log_list()->add_logs();
-    log->set_log_id(log1_id_base64);
-    log->set_key(log1_spki_base64);
-    log->set_purpose(chrome_browser_certificate_transparency::CTLog::PROD);
-    log->set_log_type(chrome_browser_certificate_transparency::CTLog::RFC6962);
-    log->mutable_temporal_interval()->mutable_start()->set_seconds(kLogStart);
-    log->mutable_temporal_interval()->mutable_end()->set_seconds(kLogEnd);
-    chrome_browser_certificate_transparency::CTLog_State* log_state =
-        log->add_state();
-    log_state->set_current_state(
-        chrome_browser_certificate_transparency::CTLog::USABLE);
-    log_state->mutable_state_start()->set_seconds(kLogStart);
-    chrome_browser_certificate_transparency::CTLog_OperatorChange*
-        operator_history = log->add_operator_history();
-    operator_history->set_name(kLog1OperatorName);
-    operator_history->mutable_operator_start()->set_seconds(kLogStart);
-  }
-  {
-    chrome_browser_certificate_transparency::CTLog* log =
-        ct_config.mutable_log_list()->add_logs();
-    log->set_log_id(log2_id_base64);
-    log->set_key(log2_spki_base64);
-    log->set_purpose(chrome_browser_certificate_transparency::CTLog::PROD);
-    log->mutable_temporal_interval()->mutable_start()->set_seconds(kLogStart);
-    log->mutable_temporal_interval()->mutable_end()->set_seconds(kLogEnd);
-    chrome_browser_certificate_transparency::CTLog_State* log_state =
-        log->add_state();
-    log_state->set_current_state(
-        chrome_browser_certificate_transparency::CTLog::USABLE);
-    log_state->mutable_state_start()->set_seconds(kLogStart);
-    chrome_browser_certificate_transparency::CTLog_OperatorChange*
-        operator_history = log->add_operator_history();
-    operator_history->set_name(kLog2OperatorName);
-    operator_history->mutable_operator_start()->set_seconds(kLogStart);
-  }
+  AddLogToCTConfig(&ct_config, log1);
+  AddLogToCTConfig(&ct_config, log2);
+
   {
     base::ScopedAllowBlockingForTesting allow_blocking;
     ASSERT_TRUE(PKIMetadataComponentInstallerService::GetInstance()
@@ -367,14 +414,16 @@ IN_PROC_BROWSER_TEST_P(PKIMetadataComponentUpdaterTest, TestCTUpdate) {
           log->add_state();
       log_state->set_current_state(
           chrome_browser_certificate_transparency::CTLog::RETIRED);
-      log_state->mutable_state_start()->set_seconds(kLogStart + 1);
+      log_state->mutable_state_start()->set_seconds(
+          SecondsSinceEpoch(kLogStart) + 1);
     }
     {
       chrome_browser_certificate_transparency::CTLog_State* log_state =
           log->add_state();
       log_state->set_current_state(
           chrome_browser_certificate_transparency::CTLog::USABLE);
-      log_state->mutable_state_start()->set_seconds(kLogStart);
+      log_state->mutable_state_start()->set_seconds(
+          SecondsSinceEpoch(kLogStart));
     }
   }
   {
@@ -406,29 +455,10 @@ IN_PROC_BROWSER_TEST_P(PKIMetadataComponentUpdaterTest, TestCTUpdate) {
 void PKIMetadataComponentUpdaterTest::DoTestAtLeastOneRFC6962LogPolicy(
     chrome_browser_certificate_transparency::CTLog::LogType log_type,
     bool expect_ct_error_with_static_ct_api_enforcement) {
-  const std::string kLog1OperatorName = "log operator 1";
-  std::unique_ptr<crypto::ECPrivateKey> log1_private_key =
-      crypto::ECPrivateKey::Create();
-  std::vector<uint8_t> log1_spki;
-  ASSERT_TRUE(log1_private_key->ExportPublicKey(&log1_spki));
-  const std::string log1_spki_base64 = base::Base64Encode(log1_spki);
-  const std::string log1_id =
-      crypto::SHA256HashString(std::string(log1_spki.begin(), log1_spki.end()));
-  const std::string log1_id_base64 = base::Base64Encode(log1_id);
-
-  const std::string kLog2OperatorName = "log operator 2";
-  std::unique_ptr<crypto::ECPrivateKey> log2_private_key =
-      crypto::ECPrivateKey::Create();
-  std::vector<uint8_t> log2_spki;
-  ASSERT_TRUE(log2_private_key->ExportPublicKey(&log2_spki));
-  const std::string log2_spki_base64 = base::Base64Encode(log2_spki);
-  const std::string log2_id =
-      crypto::SHA256HashString(std::string(log2_spki.begin(), log2_spki.end()));
-  const std::string log2_id_base64 = base::Base64Encode(log2_id);
-
-  const int64_t kLogStart =
-      SecondsSinceEpoch(base::Time::Now() - base::Days(1));
-  const int64_t kLogEnd = SecondsSinceEpoch(base::Time::Now() + base::Days(1));
+  const base::Time kLogStart = base::Time::Now() - base::Days(1);
+  const base::Time kLogEnd = base::Time::Now() + base::Days(1);
+  CTLog log1("log operator 1", kLogStart, kLogEnd, log_type);
+  CTLog log2("log operator 2", kLogStart, kLogEnd, log_type);
 
   // Make the test root be interpreted as a known root so that CT will be
   // required.
@@ -445,10 +475,10 @@ void PKIMetadataComponentUpdaterTest::DoTestAtLeastOneRFC6962LogPolicy(
   // updates cause verifier caches and socket pool invalidation, so that the
   // next request for the same host will use the updated CT state.
   server_config.dns_names = {"example.com"};
-  server_config.embedded_scts.emplace_back(
-      log1_id, bssl::UpRef(log1_private_key->key()), base::Time::Now());
-  server_config.embedded_scts.emplace_back(
-      log2_id, bssl::UpRef(log2_private_key->key()), base::Time::Now());
+  server_config.embedded_scts.emplace_back(log1.id(), log1.key(),
+                                           base::Time::Now());
+  server_config.embedded_scts.emplace_back(log2.id(), log2.key(),
+                                           base::Time::Now());
   https_server_ok.SetSSLConfig(server_config);
 
   https_server_ok.ServeFilesFromSourceDirectory("chrome/test/data");
@@ -475,44 +505,9 @@ void PKIMetadataComponentUpdaterTest::DoTestAtLeastOneRFC6962LogPolicy(
                                        CTEnforcement::kDisabledByProto);
   ct_config.mutable_log_list()->mutable_timestamp()->set_seconds(
       SecondsSinceEpoch(base::Time::Now()));
-  {
-    chrome_browser_certificate_transparency::CTLog* log =
-        ct_config.mutable_log_list()->add_logs();
-    log->set_log_id(log1_id_base64);
-    log->set_key(log1_spki_base64);
-    log->set_purpose(chrome_browser_certificate_transparency::CTLog::PROD);
-    log->set_log_type(log_type);
-    log->mutable_temporal_interval()->mutable_start()->set_seconds(kLogStart);
-    log->mutable_temporal_interval()->mutable_end()->set_seconds(kLogEnd);
-    chrome_browser_certificate_transparency::CTLog_State* log_state =
-        log->add_state();
-    log_state->set_current_state(
-        chrome_browser_certificate_transparency::CTLog::USABLE);
-    log_state->mutable_state_start()->set_seconds(kLogStart);
-    chrome_browser_certificate_transparency::CTLog_OperatorChange*
-        operator_history = log->add_operator_history();
-    operator_history->set_name(kLog1OperatorName);
-    operator_history->mutable_operator_start()->set_seconds(kLogStart);
-  }
-  {
-    chrome_browser_certificate_transparency::CTLog* log =
-        ct_config.mutable_log_list()->add_logs();
-    log->set_log_id(log2_id_base64);
-    log->set_key(log2_spki_base64);
-    log->set_purpose(chrome_browser_certificate_transparency::CTLog::PROD);
-    log->set_log_type(log_type);
-    log->mutable_temporal_interval()->mutable_start()->set_seconds(kLogStart);
-    log->mutable_temporal_interval()->mutable_end()->set_seconds(kLogEnd);
-    chrome_browser_certificate_transparency::CTLog_State* log_state =
-        log->add_state();
-    log_state->set_current_state(
-        chrome_browser_certificate_transparency::CTLog::USABLE);
-    log_state->mutable_state_start()->set_seconds(kLogStart);
-    chrome_browser_certificate_transparency::CTLog_OperatorChange*
-        operator_history = log->add_operator_history();
-    operator_history->set_name(kLog2OperatorName);
-    operator_history->mutable_operator_start()->set_seconds(kLogStart);
-  }
+  AddLogToCTConfig(&ct_config, log1);
+  AddLogToCTConfig(&ct_config, log2);
+
   {
     base::ScopedAllowBlockingForTesting allow_blocking;
     ASSERT_TRUE(PKIMetadataComponentInstallerService::GetInstance()
@@ -715,7 +710,7 @@ IN_PROC_BROWSER_TEST_F(PKIMetadataComponentChromeRootStoreUpdateTest,
   // what's in Chrome Root Store.
   net::TestRootCerts::GetInstance()->Clear();
 
-  constexpr char kHostname[] = "a.example.com";
+  static constexpr char kHostname[] = "a.example.com";
 
   ASSERT_TRUE(https_server_ok.Start());
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
@@ -767,6 +762,191 @@ IN_PROC_BROWSER_TEST_F(PKIMetadataComponentChromeRootStoreUpdateTest,
   ssl_test_util::CheckAuthenticationBrokenState(
       tab, net::CERT_STATUS_AUTHORITY_INVALID,
       ssl_test_util::AuthState::SHOWING_INTERSTITIAL);
+}
+
+IN_PROC_BROWSER_TEST_F(PKIMetadataComponentChromeRootStoreUpdateTest,
+                       UpdateTrustAnchorIDs) {
+  // TODO(crbug.com/440207613): This test has temporary debug logging to try to
+  // narrow down a flaky test timeout. Remove debug logging when done.
+  LOG(ERROR) << "UpdateTrustAnchorIDs start";
+  content::StoragePartition* partition =
+      chrome_test_utils::GetActiveWebContents(this)
+          ->GetBrowserContext()
+          ->GetDefaultStoragePartition();
+  int64_t crs_version = net::CompiledChromeRootStoreVersion();
+  scoped_refptr<net::X509Certificate> root_cert =
+      net::ImportCertFromFile(net::EmbeddedTestServer::GetRootCertPemPath());
+  ASSERT_TRUE(root_cert);
+  scoped_refptr<net::X509Certificate> intermediate1 = net::ImportCertFromFile(
+      net::GetTestCertsDirectory(), "intermediate_ca_cert.pem");
+  ASSERT_TRUE(intermediate1);
+  scoped_refptr<net::X509Certificate> intermediate2 = net::ImportCertFromFile(
+      net::GetTestCertsDirectory(), "verisign_intermediate_ca_2016.pem");
+  ASSERT_TRUE(intermediate2);
+  LOG(ERROR) << "UpdateTrustAnchorIDs after loading test certs";
+
+  // Test that the initial set of Trust Anchor IDs comes from the compiled-in
+  // root store.
+  {
+    std::vector<std::vector<uint8_t>> expected_trust_anchor_ids =
+        net::TrustStoreChrome::GetTrustAnchorIDsFromCompiledInRootStore();
+    mojo::ScopedAllowSyncCallForTesting allow_sync_call;
+    std::vector<std::vector<uint8_t>> trust_anchor_ids;
+    LOG(ERROR)
+        << "UpdateTrustAnchorIDs before 1st GetTrustAnchorIDsForTesting call";
+    partition->GetNetworkContext()->GetTrustAnchorIDsForTesting(
+        &trust_anchor_ids);
+    LOG(ERROR)
+        << "UpdateTrustAnchorIDs after 1st GetTrustAnchorIDsForTesting call";
+    EXPECT_THAT(trust_anchor_ids,
+                testing::UnorderedElementsAreArray(expected_trust_anchor_ids));
+  }
+
+  // Install CRS update that contains no trusted Trust Anchor IDs.
+  {
+    chrome_root_store::RootStore root_store_proto;
+    root_store_proto.set_version_major(++crs_version);
+    chrome_root_store::TrustAnchor* anchor =
+        root_store_proto.add_trust_anchors();
+    anchor->set_der(std::string(
+        net::x509_util::CryptoBufferAsStringPiece(root_cert->cert_buffer())));
+    LOG(ERROR) << "UpdateTrustAnchorIDs before 1st InstallCRSUpdate call";
+    InstallCRSUpdate(std::move(root_store_proto));
+    LOG(ERROR) << "UpdateTrustAnchorIDs after 1st InstallCRSUpdate call";
+    // Ensure that SSLConfigClients have been notified of the new trust anchor
+    // IDs.
+    SystemNetworkContextManager::GetInstance()
+        ->FlushSSLConfigManagerForTesting();
+    mojo::ScopedAllowSyncCallForTesting allow_sync_call;
+    std::vector<std::vector<uint8_t>> trust_anchor_ids;
+    LOG(ERROR)
+        << "UpdateTrustAnchorIDs before 2nd GetTrustAnchorIDsForTesting call";
+    partition->GetNetworkContext()->GetTrustAnchorIDsForTesting(
+        &trust_anchor_ids);
+    LOG(ERROR)
+        << "UpdateTrustAnchorIDs after 2nd GetTrustAnchorIDsForTesting call";
+    EXPECT_TRUE(trust_anchor_ids.empty());
+  }
+
+  // Install CRS update that contains two trusted Trust Anchor IDs.
+  {
+    chrome_root_store::RootStore root_store_proto;
+    root_store_proto.set_version_major(++crs_version);
+    chrome_root_store::TrustAnchor* anchor =
+        root_store_proto.add_trust_anchors();
+    anchor->set_der(std::string(
+        net::x509_util::CryptoBufferAsStringPiece(root_cert->cert_buffer())));
+    anchor->set_trust_anchor_id({0x01, 0x02, 0x03});
+
+    chrome_root_store::TrustAnchor* additional_cert1 =
+        root_store_proto.add_additional_certs();
+    additional_cert1->set_der(
+        std::string(net::x509_util::CryptoBufferAsStringPiece(
+            intermediate1->cert_buffer())));
+    additional_cert1->set_trust_anchor_id({0x01, 0x02});
+    // `additional_cert1`'s trust anchor ID should be ignored because it is not
+    // configured as a TLS trust anchor.
+    additional_cert1->set_tls_trust_anchor(false);
+
+    chrome_root_store::TrustAnchor* additional_cert2 =
+        root_store_proto.add_additional_certs();
+    additional_cert2->set_der(
+        std::string(net::x509_util::CryptoBufferAsStringPiece(
+            intermediate2->cert_buffer())));
+    additional_cert2->set_trust_anchor_id({0x02, 0x03});
+    additional_cert2->set_tls_trust_anchor(true);
+
+    LOG(ERROR) << "UpdateTrustAnchorIDs before 2nd InstallCRSUpdate call";
+    InstallCRSUpdate(std::move(root_store_proto));
+    LOG(ERROR) << "UpdateTrustAnchorIDs after 2nd InstallCRSUpdate call";
+
+    // Ensure that SSLConfigClients have been notified of the new trust anchor
+    // IDs.
+    SystemNetworkContextManager::GetInstance()
+        ->FlushSSLConfigManagerForTesting();
+
+    mojo::ScopedAllowSyncCallForTesting allow_sync_call;
+    std::vector<std::vector<uint8_t>> trust_anchor_ids;
+    LOG(ERROR)
+        << "UpdateTrustAnchorIDs before 3rd GetTrustAnchorIDsForTesting call";
+    partition->GetNetworkContext()->GetTrustAnchorIDsForTesting(
+        &trust_anchor_ids);
+    LOG(ERROR)
+        << "UpdateTrustAnchorIDs after 3rd GetTrustAnchorIDsForTesting call";
+    EXPECT_THAT(trust_anchor_ids, testing::UnorderedElementsAre(
+                                      std::vector<uint8_t>({0x01, 0x02, 0x3}),
+                                      std::vector<uint8_t>({0x02, 0x03})));
+  }
+  LOG(ERROR) << "UpdateTrustAnchorIDs end";
+}
+
+// Tests that when new network contexts are created after a Trust Anchor IDs
+// component update is received, the new network context uses the Trust Anchor
+// IDs from the component updater.
+IN_PROC_BROWSER_TEST_F(PKIMetadataComponentChromeRootStoreUpdateTest,
+                       NewNetworkContextAfterUpdatingTrustAnchorIDs) {
+  // This test is only works with an out-of-process network service because it
+  // uses a network service crash/restart to test what happens when a new
+  // network context is created.
+  if (content::IsInProcessNetworkService()) {
+    return;
+  }
+
+  content::StoragePartition* partition =
+      chrome_test_utils::GetActiveWebContents(this)
+          ->GetBrowserContext()
+          ->GetDefaultStoragePartition();
+  int64_t crs_version = net::CompiledChromeRootStoreVersion();
+  scoped_refptr<net::X509Certificate> root_cert =
+      net::ImportCertFromFile(net::EmbeddedTestServer::GetRootCertPemPath());
+  ASSERT_TRUE(root_cert);
+
+  // Install CRS update that contains one trusted Trust Anchor IDs.
+  {
+    chrome_root_store::RootStore root_store_proto;
+    root_store_proto.set_version_major(++crs_version);
+    chrome_root_store::TrustAnchor* anchor =
+        root_store_proto.add_trust_anchors();
+    anchor->set_der(std::string(
+        net::x509_util::CryptoBufferAsStringPiece(root_cert->cert_buffer())));
+    anchor->set_trust_anchor_id(
+        {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08});
+    InstallCRSUpdate(std::move(root_store_proto));
+    // Ensure that SSLConfigClients have been notified of the new trust anchor
+    // IDs.
+    SystemNetworkContextManager::GetInstance()
+        ->FlushSSLConfigManagerForTesting();
+    mojo::ScopedAllowSyncCallForTesting allow_sync_call;
+    std::vector<std::vector<uint8_t>> trust_anchor_ids;
+    partition->GetNetworkContext()->GetTrustAnchorIDsForTesting(
+        &trust_anchor_ids);
+    EXPECT_THAT(trust_anchor_ids,
+                testing::UnorderedElementsAre(std::vector<uint8_t>(
+                    {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08})));
+  }
+
+  network::mojom::NetworkContext* old_network_context =
+      partition->GetNetworkContext();
+
+  // Simulate a network service crash and restart, and check that the newly
+  // created network service uses the Trust Anchor ID from the prior component
+  // update.
+  SimulateNetworkServiceCrash();
+  // Flush the interface to make sure it notices the crash.
+  partition->FlushNetworkInterfaceForTesting();
+  {
+    mojo::ScopedAllowSyncCallForTesting allow_sync_call;
+    std::vector<std::vector<uint8_t>> trust_anchor_ids;
+    // Just to be sure that the test is testing what it intends to, check that a
+    // new network context has been created.
+    ASSERT_NE(old_network_context, partition->GetNetworkContext());
+
+    partition->GetNetworkContext()->GetTrustAnchorIDsForTesting(
+        &trust_anchor_ids);
+    EXPECT_THAT(trust_anchor_ids,
+                testing::UnorderedElementsAre(std::vector<uint8_t>(
+                    {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08})));
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(PKIMetadataComponentChromeRootStoreUpdateTest,
@@ -1094,40 +1274,16 @@ class PKIMetadataComponentCtAndCrsUpdaterTest
 
 IN_PROC_BROWSER_TEST_P(PKIMetadataComponentCtAndCrsUpdaterTest,
                        TestChromeRootStoreConstraintsSct) {
-  const std::string kLog1OperatorName = "log operator 1";
-  std::unique_ptr<crypto::ECPrivateKey> log1_private_key =
-      crypto::ECPrivateKey::Create();
-  std::vector<uint8_t> log1_spki;
-  ASSERT_TRUE(log1_private_key->ExportPublicKey(&log1_spki));
-  const std::string log1_spki_base64 = base::Base64Encode(log1_spki);
-  const std::string log1_id =
-      crypto::SHA256HashString(std::string(log1_spki.begin(), log1_spki.end()));
-  const std::string log1_id_base64 = base::Base64Encode(log1_id);
-
-  const std::string kLog2OperatorName = "log operator 2";
-  std::unique_ptr<crypto::ECPrivateKey> log2_private_key =
-      crypto::ECPrivateKey::Create();
-  std::vector<uint8_t> log2_spki;
-  ASSERT_TRUE(log2_private_key->ExportPublicKey(&log2_spki));
-  const std::string log2_spki_base64 = base::Base64Encode(log2_spki);
-  const std::string log2_id =
-      crypto::SHA256HashString(std::string(log2_spki.begin(), log2_spki.end()));
-  const std::string log2_id_base64 = base::Base64Encode(log2_id);
-
-  const std::string kUnknownLogOperatorName = "unknown log operator";
-  std::unique_ptr<crypto::ECPrivateKey> unknown_log_private_key =
-      crypto::ECPrivateKey::Create();
-  std::vector<uint8_t> unknown_log_spki;
-  ASSERT_TRUE(unknown_log_private_key->ExportPublicKey(&unknown_log_spki));
-  const std::string unknown_log_spki_base64 =
-      base::Base64Encode(unknown_log_spki);
-  const std::string unknown_log_id = crypto::SHA256HashString(
-      std::string(unknown_log_spki.begin(), unknown_log_spki.end()));
-  const std::string unknown_log_id_base64 = base::Base64Encode(unknown_log_id);
-
-  const int64_t kLogStart =
-      SecondsSinceEpoch(base::Time::Now() - base::Days(1));
-  const int64_t kLogEnd = SecondsSinceEpoch(base::Time::Now() + base::Days(1));
+  const base::Time kLogStart = base::Time::Now() - base::Days(1);
+  const base::Time kLogEnd = base::Time::Now() + base::Days(1);
+  CTLog log1("log operator 1", kLogStart, kLogEnd,
+             chrome_browser_certificate_transparency::CTLog::RFC6962);
+  CTLog log2(
+      "log operator 2", kLogStart, kLogEnd,
+      chrome_browser_certificate_transparency::CTLog::LOG_TYPE_UNSPECIFIED);
+  CTLog unknown_log(
+      "unknown log operator", kLogStart, kLogEnd,
+      chrome_browser_certificate_transparency::CTLog::LOG_TYPE_UNSPECIFIED);
 
   const base::Time kSctTime0UnknownLog = base::Time::Now() - base::Minutes(30);
   const base::Time kSctTime1 = base::Time::Now() - base::Minutes(20);
@@ -1138,13 +1294,10 @@ IN_PROC_BROWSER_TEST_P(PKIMetadataComponentCtAndCrsUpdaterTest,
   net::EmbeddedTestServer https_server_ok(net::EmbeddedTestServer::TYPE_HTTPS);
   net::EmbeddedTestServer::ServerCertificateConfig server_config;
   server_config.dns_names = {"*.example.com"};
-  server_config.embedded_scts.emplace_back(
-      log1_id, bssl::UpRef(log1_private_key->key()), kSctTime1);
-  server_config.embedded_scts.emplace_back(
-      log2_id, bssl::UpRef(log2_private_key->key()), kSctTime2);
-  server_config.embedded_scts.emplace_back(
-      unknown_log_id, bssl::UpRef(unknown_log_private_key->key()),
-      kSctTime0UnknownLog);
+  server_config.embedded_scts.emplace_back(log1.id(), log1.key(), kSctTime1);
+  server_config.embedded_scts.emplace_back(log2.id(), log2.key(), kSctTime2);
+  server_config.embedded_scts.emplace_back(unknown_log.id(), unknown_log.key(),
+                                           kSctTime0UnknownLog);
   https_server_ok.SetSSLConfig(server_config);
 
   https_server_ok.ServeFilesFromSourceDirectory("chrome/test/data");
@@ -1180,43 +1333,9 @@ IN_PROC_BROWSER_TEST_P(PKIMetadataComponentCtAndCrsUpdaterTest,
                                        CTEnforcement::kDisabledByProto);
   ct_config.mutable_log_list()->mutable_timestamp()->set_seconds(
       SecondsSinceEpoch(base::Time::Now()));
-  {
-    chrome_browser_certificate_transparency::CTLog* log =
-        ct_config.mutable_log_list()->add_logs();
-    log->set_log_id(log1_id_base64);
-    log->set_key(log1_spki_base64);
-    log->set_purpose(chrome_browser_certificate_transparency::CTLog::PROD);
-    log->set_log_type(chrome_browser_certificate_transparency::CTLog::RFC6962);
-    log->mutable_temporal_interval()->mutable_start()->set_seconds(kLogStart);
-    log->mutable_temporal_interval()->mutable_end()->set_seconds(kLogEnd);
-    chrome_browser_certificate_transparency::CTLog_State* log_state =
-        log->add_state();
-    log_state->set_current_state(
-        chrome_browser_certificate_transparency::CTLog::USABLE);
-    log_state->mutable_state_start()->set_seconds(kLogStart);
-    chrome_browser_certificate_transparency::CTLog_OperatorChange*
-        operator_history = log->add_operator_history();
-    operator_history->set_name(kLog1OperatorName);
-    operator_history->mutable_operator_start()->set_seconds(kLogStart);
-  }
-  {
-    chrome_browser_certificate_transparency::CTLog* log =
-        ct_config.mutable_log_list()->add_logs();
-    log->set_log_id(log2_id_base64);
-    log->set_key(log2_spki_base64);
-    log->set_purpose(chrome_browser_certificate_transparency::CTLog::PROD);
-    log->mutable_temporal_interval()->mutable_start()->set_seconds(kLogStart);
-    log->mutable_temporal_interval()->mutable_end()->set_seconds(kLogEnd);
-    chrome_browser_certificate_transparency::CTLog_State* log_state =
-        log->add_state();
-    log_state->set_current_state(
-        chrome_browser_certificate_transparency::CTLog::USABLE);
-    log_state->mutable_state_start()->set_seconds(kLogStart);
-    chrome_browser_certificate_transparency::CTLog_OperatorChange*
-        operator_history = log->add_operator_history();
-    operator_history->set_name(kLog2OperatorName);
-    operator_history->mutable_operator_start()->set_seconds(kLogStart);
-  }
+  AddLogToCTConfig(&ct_config, log1);
+  AddLogToCTConfig(&ct_config, log2);
+
   {
     base::ScopedAllowBlockingForTesting allow_blocking;
     ASSERT_TRUE(PKIMetadataComponentInstallerService::GetInstance()
@@ -1354,6 +1473,445 @@ INSTANTIATE_TEST_SUITE_P(
                     CTEnforcement::kEnabledWithStaticCTEnforcement,
                     CTEnforcement::kDisabledByProto,
                     CTEnforcement::kDisabledByFeature));
+
+std::string X509CertificateToString(scoped_refptr<net::X509Certificate> cert) {
+  std::vector<std::string> pem_encoded_chain;
+  EXPECT_TRUE(cert->GetPEMEncodedChain(&pem_encoded_chain));
+  return base::JoinString(pem_encoded_chain, "\n");
+}
+
+// Checks that navigation responses were served over a connection where the
+// server provided the given `expected_server_certificate_chain`. Note that this
+// checks the certificate chain that the server served, not the chain that the
+// client built while validating the server's certificate.
+class CertificateCheckingThrottle : public content::NavigationThrottle {
+ public:
+  CertificateCheckingThrottle(
+      content::NavigationThrottleRegistry& registry,
+      scoped_refptr<net::X509Certificate> expected_server_certificate_chain,
+      base::OnceCallback<void(uint8_t)> report_num_responses_callback)
+      : content::NavigationThrottle(registry),
+        expected_server_certificate_chain_(expected_server_certificate_chain),
+        report_num_responses_callback_(
+            std::move(report_num_responses_callback)) {}
+
+  CertificateCheckingThrottle(const CertificateCheckingThrottle&) = delete;
+  CertificateCheckingThrottle& operator=(const CertificateCheckingThrottle&) =
+      delete;
+  ~CertificateCheckingThrottle() override {
+    std::move(report_num_responses_callback_).Run(num_responses_);
+  }
+
+  uint8_t num_responses() const { return num_responses_; }
+
+ protected:
+  const char* GetNameForLogging() override {
+    return "CertificateCheckingThrottle";
+  }
+
+  ThrottleCheckResult WillProcessResponse() override {
+    EXPECT_TRUE(navigation_handle()
+                    ->GetSSLInfo()
+                    ->unverified_cert->EqualsIncludingChain(
+                        expected_server_certificate_chain_.get()))
+        << "\n\nExpected server chain: "
+        << X509CertificateToString(expected_server_certificate_chain_)
+        << "\n\nObserved unverified server chain: "
+        << X509CertificateToString(
+               navigation_handle()->GetSSLInfo()->unverified_cert);
+    ++num_responses_;
+    return content::NavigationThrottle::PROCEED;
+  }
+
+ private:
+  scoped_refptr<net::X509Certificate> expected_server_certificate_chain_;
+  uint8_t num_responses_ = 0;
+  base::OnceCallback<void(uint8_t)> report_num_responses_callback_;
+};
+
+class TestDnsOverHttpsConfigSource : public DnsOverHttpsConfigSource {
+ public:
+  TestDnsOverHttpsConfigSource(std::string dns_over_https_templates,
+                               std::string dns_over_https_mode)
+      : dns_over_https_templates_(std::move(dns_over_https_templates)),
+        dns_over_https_mode_(std::move(dns_over_https_mode)) {}
+
+  TestDnsOverHttpsConfigSource(const TestDnsOverHttpsConfigSource&) = delete;
+  TestDnsOverHttpsConfigSource& operator=(const TestDnsOverHttpsConfigSource&) =
+      delete;
+  ~TestDnsOverHttpsConfigSource() override = default;
+
+  // DnsOverHttpsConfigSource:
+  std::string GetDnsOverHttpsMode() const override {
+    return dns_over_https_mode_;
+  }
+  std::string GetDnsOverHttpsTemplates() const override {
+    return dns_over_https_templates_;
+  }
+  bool IsConfigManaged() const override {
+    // Return managed=true, otherwise the test config will be ignored if the
+    // test is run on an enterprise enrolled device.
+    return true;
+  }
+  void SetDohChangeCallback(base::RepeatingClosure callback) override {}
+
+ private:
+  std::string dns_over_https_templates_;
+  std::string dns_over_https_mode_;
+};
+
+// Test fixture for testing Trust Anchor IDs, including a test DoH server for
+// advertising Trust Anchor IDs in DNS.
+class PKIMetadataComponentChromeRootStoreUpdateWithDoHServerTest
+    : public PKIMetadataComponentChromeRootStoreUpdateTest {
+ public:
+  static constexpr std::string_view kDohServerHostname = "doh.test";
+  static constexpr std::string_view kHostname = "a.com";
+
+  PKIMetadataComponentChromeRootStoreUpdateWithDoHServerTest()
+      : PKIMetadataComponentChromeRootStoreUpdateTest() {
+    feature_list_.InitAndEnableFeature(net::features::kTLSTrustAnchorIDs);
+  }
+
+  void SetUpOnMainThread() override {
+    // Set up an HTTPS server that has two certificate chains.
+    // The first is directly issued by a unique root with the trust anchor ID
+    // `kIntermediateTrustAnchorId`.
+    // The second chain has a leaf and intermediate issued by the default test
+    // root cert, and has no trust anchor ID.
+    net::SSLServerConfig server_config;
+    // TODO(crbug.com/431064813): this callback just adds some debugging
+    // info to try to investigate a flake. It can be removed once the cause of
+    // the flake is found.
+    server_config.client_hello_callback_for_testing =
+        base::BindLambdaForTesting([&](const SSL_CLIENT_HELLO* client_hello) {
+          const uint8_t* data = nullptr;
+          size_t len = 0;
+          SSL_early_callback_ctx_extension_get(
+              client_hello, TLSEXT_TYPE_trust_anchors, &data, &len);
+          LOG(ERROR) << "Trust anchor IDs from Client Hello: "
+                     << base::HexEncode(data, len);
+          return true;
+        });
+
+    net::EmbeddedTestServer::ServerCertificateConfig tai_cert_config;
+    tai_cert_config.intermediate =
+        net::EmbeddedTestServer::IntermediateType::kNone;
+    tai_cert_config.root = net::EmbeddedTestServer::RootType::kUniqueRoot;
+    tai_cert_config.trust_anchor_id =
+        base::ToVector(kIntermediateTrustAnchorId);
+    tai_cert_config.dns_names.emplace_back(kHostname);
+
+    net::EmbeddedTestServer::ServerCertificateConfig default_cert_config;
+    default_cert_config.intermediate =
+        net::EmbeddedTestServer::IntermediateType::kInHandshake;
+    default_cert_config.root = net::EmbeddedTestServer::RootType::kUniqueRoot;
+    default_cert_config.dns_names.emplace_back(kHostname);
+
+    trust_anchor_ids_server_.SetSSLConfig(
+        {tai_cert_config, default_cert_config}, server_config);
+    trust_anchor_ids_server_.ServeFilesFromSourceDirectory("chrome/test/data");
+    ASSERT_TRUE(trust_anchor_ids_server_.Start());
+
+    // Start a DoH server, which ensures we use a resolver with HTTPS RR
+    // support. Configure it to serve records for `trust_anchor_ids_server_`.
+    doh_server_.SetHostname(kDohServerHostname);
+    url::SchemeHostPort tai_host(
+        trust_anchor_ids_server_.GetURL(kHostname, "/"));
+    doh_server_.AddAddressRecord(tai_host.host(),
+                                 net::IPAddress::IPv4Localhost());
+    doh_server_.AddRecord(net::BuildTestHttpsServiceRecord(
+        net::dns_util::GetNameForHttpsQuery(tai_host),
+        /*priority=*/1, /*service_name=*/tai_host.host(),
+        {net::BuildTestHttpsServiceTrustAnchorIDsParam(
+            GetTrustAnchorIDsForDns())}));
+    ASSERT_TRUE(doh_server_.Start());
+
+    doh_config_source_ = std::make_unique<TestDnsOverHttpsConfigSource>(
+        doh_server_.GetTemplate(), SecureDnsConfig::kModeSecure);
+    SystemNetworkContextManager::GetStubResolverConfigReader()
+        ->SetOverrideDnsOverHttpsConfigSource(std::move(doh_config_source_));
+    // The net stack doesn't enable DoH when it can't find a system DNS config
+    // (see https://crbug.com/1251715).
+    SetReplaceSystemDnsConfig();
+
+    // Ensure that the DoH configuration is picked up.
+    content::FlushNetworkServiceInstanceForTesting();
+
+    // Add a single bootstrapping rule so we can resolve the DoH server.
+    host_resolver()->AddRule(kDohServerHostname, "127.0.0.1");
+  }
+
+  void UpdateNumObservedResponses(uint8_t num_responses) {
+    num_observed_responses_ += num_responses;
+  }
+
+ protected:
+  // The Trust Anchor ID configured by `trust_anchor_ids_server_` for the
+  // intermediate that it uses in its certificate chain.
+  static constexpr uint8_t kIntermediateTrustAnchorId[] = {0x01, 0x02, 0x03};
+
+  // A Trust Anchor ID that is advertised for `trust_anchor_ids_server_` in DNS,
+  // but not actually associated with a certificate chain configured on the
+  // server.
+  static constexpr uint8_t kAdvertisedButNotServedTrustAnchorId[] = {0x04, 0x05,
+                                                                     0x06};
+  // A Trust Anchor ID that is neither advertised for `trust_anchor_ids_server_`
+  // in DNS, nor actually associated with a certificate chain configured on the
+  // server.
+  static constexpr uint8_t kNotAdvertisedAndNotServedTrustAnchorId[] = {
+      0x07, 0x08, 0x09};
+
+  static constexpr size_t kTaiCredentialNum = 0;
+  static constexpr size_t kDefaultCredentialNum = 1;
+
+  // By default, `kIntermediateTrustAnchorId` and
+  // `kAdvertisedButNotServedTrustAnchorId` are advertised for `kHostname` in an
+  // HTTPS record served by `doh_server_`. Subclasses can override this method
+  // to change which Trust Anchor IDs are advertised for this host.
+  virtual std::vector<std::vector<uint8_t>> GetTrustAnchorIDsForDns() {
+    return {base::ToVector(kAdvertisedButNotServedTrustAnchorId),
+            base::ToVector(kIntermediateTrustAnchorId)};
+  }
+
+  // Installs a navigation throttle that expects `certificate` to be the served
+  // certificate chain on successful responses. Overwrites previous calls to
+  // this method (i.e., only one certificate-checking throttle is in place at a
+  // time). When the navigation is finished and the inserted throttle is
+  // destroyed, UpdateNumObservedResponses() will be called, which allows tests
+  // to check that the throttle was successfully installed and observed a
+  // navigation.
+  void SetExpectedCertificateOnResponses(
+      scoped_refptr<net::X509Certificate> certificate) {
+    num_observed_responses_ = 0;
+    throttle_inserter_ =
+        std::make_unique<content::TestNavigationThrottleInserter>(
+            chrome_test_utils::GetActiveWebContents(this),
+            base::BindRepeating(
+                &PKIMetadataComponentChromeRootStoreUpdateWithDoHServerTest::
+                    InsertThrottle,
+                base::Unretained(this), certificate));
+  }
+
+  void InsertThrottle(
+      scoped_refptr<net::X509Certificate> expected_server_certificate,
+      content::NavigationThrottleRegistry& registry) {
+    registry.AddThrottle(std::make_unique<CertificateCheckingThrottle>(
+        registry, expected_server_certificate,
+        base::BindOnce(
+            &PKIMetadataComponentChromeRootStoreUpdateWithDoHServerTest::
+                UpdateNumObservedResponses,
+            base::Unretained(this))));
+  }
+
+  // Checks that the most recently installed navigation throttle observed at
+  // least one response.
+  void CheckThrottleObservedNavigation() {
+    ASSERT_GT(num_observed_responses_, 0u);
+  }
+
+  net::EmbeddedTestServer trust_anchor_ids_server_{
+      net::EmbeddedTestServer::TYPE_HTTPS};
+  net::TestDohServer doh_server_;
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+  std::unique_ptr<content::TestNavigationThrottleInserter> throttle_inserter_;
+  std::unique_ptr<TestDnsOverHttpsConfigSource> doh_config_source_;
+  // Tracks the number of responses observed by CertificateCheckingThrottles.
+  // Reset to 0 on each new `SetExpectedCertificateOnResponses()` call.
+  uint8_t num_observed_responses_ = 0;
+};
+
+IN_PROC_BROWSER_TEST_F(
+    PKIMetadataComponentChromeRootStoreUpdateWithDoHServerTest,
+    TrustAnchorIDs) {
+  int64_t crs_version = net::CompiledChromeRootStoreVersion();
+
+  {
+    // Install CRS update that contains only the default root and no trust
+    // anchor ids.
+    chrome_root_store::RootStore root_store_proto;
+    root_store_proto.set_version_major(++crs_version);
+    chrome_root_store::TrustAnchor* anchor =
+        root_store_proto.add_trust_anchors();
+    anchor->set_der(std::string(net::x509_util::CryptoBufferAsStringPiece(
+        trust_anchor_ids_server_.GetRoot(kDefaultCredentialNum)
+            ->cert_buffer())));
+
+    InstallCRSUpdate(std::move(root_store_proto));
+
+    // Ensure that SSLConfigClients have been notified of the new trust anchor
+    // IDs.
+    SystemNetworkContextManager::GetInstance()
+        ->FlushSSLConfigManagerForTesting();
+
+    // Before updating the root store with trust anchor IDs, the server should
+    // serve the default credential which has both a leaf and an intermediate.
+    scoped_refptr<net::X509Certificate> server_certificate =
+        trust_anchor_ids_server_.GetCertificate(kDefaultCredentialNum);
+    ASSERT_EQ(server_certificate->intermediate_buffers().size(), 1u);
+
+    SetExpectedCertificateOnResponses(server_certificate);
+
+    ASSERT_TRUE(ui_test_utils::NavigateToURL(
+        browser(), trust_anchor_ids_server_.GetURL(kHostname, "/simple.html")));
+    ASSERT_EQ(chrome_test_utils::GetActiveWebContents(this)->GetTitle(), u"OK");
+    CheckThrottleObservedNavigation();
+  }
+
+  // Install CRS update that contains two trusted Trust Anchor IDs, including
+  // one that is advertised by the server corresponding to its root
+  // certificate.
+  {
+    chrome_root_store::RootStore root_store_proto;
+    root_store_proto.set_version_major(++crs_version);
+    chrome_root_store::TrustAnchor* anchor =
+        root_store_proto.add_trust_anchors();
+    anchor->set_der(std::string(net::x509_util::CryptoBufferAsStringPiece(
+        trust_anchor_ids_server_.GetRoot(kDefaultCredentialNum)
+            ->cert_buffer())));
+
+    chrome_root_store::TrustAnchor* additional_cert1 =
+        root_store_proto.add_additional_certs();
+    additional_cert1->set_der(
+        std::string(net::x509_util::CryptoBufferAsStringPiece(
+            trust_anchor_ids_server_.GetRoot(kTaiCredentialNum)
+                ->cert_buffer())));
+    additional_cert1->set_trust_anchor_id(
+        base::as_string_view(kIntermediateTrustAnchorId));
+    additional_cert1->set_tls_trust_anchor(true);
+
+    chrome_root_store::TrustAnchor* additional_cert2 =
+        root_store_proto.add_additional_certs();
+    scoped_refptr<net::X509Certificate> unused_intermediate =
+        net::ImportCertFromFile(net::GetTestCertsDirectory(),
+                                "verisign_intermediate_ca_2016.pem");
+    additional_cert2->set_der(
+        std::string(net::x509_util::CryptoBufferAsStringPiece(
+            unused_intermediate->cert_buffer())));
+    additional_cert2->set_trust_anchor_id(
+        base::as_string_view(kNotAdvertisedAndNotServedTrustAnchorId));
+    additional_cert2->set_tls_trust_anchor(true);
+
+    InstallCRSUpdate(std::move(root_store_proto));
+
+    // Ensure that SSLConfigClients have been notified of the new trust anchor
+    // IDs.
+    SystemNetworkContextManager::GetInstance()
+        ->FlushSSLConfigManagerForTesting();
+
+    // The server should now serve a single leaf, without any intermediates,
+    // because the client should signal that it trusts the intermediate as a
+    // trust anchor.
+    scoped_refptr<net::X509Certificate> server_certificate =
+        trust_anchor_ids_server_.GetCertificate(kTaiCredentialNum);
+    ASSERT_EQ(server_certificate->intermediate_buffers().size(), 0u);
+    SetExpectedCertificateOnResponses(server_certificate);
+
+    // TODO(crbug.com/431064813): remove after debugging test flake.
+    LOG(ERROR) << "Beginning navigation with Trust Anchor IDs";
+
+    ASSERT_TRUE(ui_test_utils::NavigateToURL(
+        browser(), trust_anchor_ids_server_.GetURL(kHostname, "/simple.html")));
+    ASSERT_EQ(u"OK", chrome_test_utils::GetActiveWebContents(this)->GetTitle());
+    CheckThrottleObservedNavigation();
+  }
+}
+
+// Test fixture that simulates a stale DNS record, advertising a Trust Anchor ID
+// that is not supported by the server. The root store does not trust the root
+// for the full chain served by the server and accepts only an elided chain,
+// for testing the Trust Anchor IDs retry flow.
+class PKIMetadataComponentChromeRootStoreUpdateWithStaleDoHServerTest
+    : public PKIMetadataComponentChromeRootStoreUpdateWithDoHServerTest {
+ public:
+  PKIMetadataComponentChromeRootStoreUpdateWithStaleDoHServerTest() = default;
+
+ protected:
+  std::vector<std::vector<uint8_t>> GetTrustAnchorIDsForDns() override {
+    return {base::ToVector(kAdvertisedButNotServedTrustAnchorId)};
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(
+    PKIMetadataComponentChromeRootStoreUpdateWithStaleDoHServerTest,
+    TrustAnchorIDsRetry) {
+  // Install CRS update that contains two trusted Trust Anchor IDs, including
+  // one that is advertised by the server corresponding to its intermediate
+  // certificate, and one that is advertised by the server but not actually used
+  // on the server (simulating, e.g., a stale DNS record that is out of sync
+  // with the server's actual credentials). The CRS update does NOT trust the
+  // test server's default (non-TAI) root.
+  int64_t crs_version = net::CompiledChromeRootStoreVersion();
+  chrome_root_store::RootStore root_store_proto;
+  root_store_proto.set_version_major(++crs_version);
+
+  chrome_root_store::TrustAnchor* additional_cert1 =
+      root_store_proto.add_additional_certs();
+  additional_cert1->set_der(
+      std::string(net::x509_util::CryptoBufferAsStringPiece(
+          trust_anchor_ids_server_.GetRoot(kTaiCredentialNum)->cert_buffer())));
+  additional_cert1->set_trust_anchor_id(
+      base::as_string_view(kIntermediateTrustAnchorId));
+  additional_cert1->set_tls_trust_anchor(true);
+
+  chrome_root_store::TrustAnchor* additional_cert2 =
+      root_store_proto.add_additional_certs();
+  scoped_refptr<net::X509Certificate> unused_intermediate =
+      net::ImportCertFromFile(net::GetTestCertsDirectory(),
+                              "verisign_intermediate_ca_2016.pem");
+  ASSERT_TRUE(unused_intermediate);
+  additional_cert2->set_der(
+      std::string(net::x509_util::CryptoBufferAsStringPiece(
+          unused_intermediate->cert_buffer())));
+  additional_cert2->set_trust_anchor_id(
+      base::as_string_view(kAdvertisedButNotServedTrustAnchorId));
+  additional_cert2->set_tls_trust_anchor(true);
+
+  InstallCRSUpdate(std::move(root_store_proto));
+
+  // Ensure that SSLConfigClients have been notified of the new trust anchor
+  // IDs.
+  SystemNetworkContextManager::GetInstance()->FlushSSLConfigManagerForTesting();
+
+  // Send a request to the server. Initially, the client will advertise the
+  // intersection of what is advertised in DNS with its trust store -- i.e.,
+  // only `kAdvertisedButNotServedTrustAnchorID`. The server does not actually
+  // support this Trust Anchor ID, and thus will serve its full chain. This
+  // should result in a certificate error (since kDefaultCredentialNum root is
+  // not trusted), which will cause the client to retry using the Trust Anchor
+  // ID that the server actually supports. The final result is that the
+  // connection should succeed and serve the elided certificate chain.
+  SetExpectedCertificateOnResponses(
+      trust_anchor_ids_server_.GetCertificate(kTaiCredentialNum));
+
+  base::HistogramTester histogram_tester;
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), trust_anchor_ids_server_.GetURL(kHostname, "/simple.html")));
+  ASSERT_EQ(u"OK", chrome_test_utils::GetActiveWebContents(this)->GetTitle());
+  CheckThrottleObservedNavigation();
+  metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
+  // This test uses ExpectBucketCount rather than ExpectUniqueSample, since
+  // other results are likely to be recorded by the histogram during the
+  // navigation. The DoH lookups should record kNoDnsSuccessInitial.
+  // The connection done by the test should be the only one that has a
+  // possibility of recording kDnsSuccessRetry, so this will still verify that
+  // the test hit the expected result. After the connection is successful
+  // another entry may be recorded for the favicon fetch, but it should record
+  // kDnsSuccessInitial since it will use TLS session resumption.
+  //
+  // Sometimes (on builds where browser_tests isn't using
+  // fieldtrial_testing_config), the browser makes two connections. So just
+  // check that the bucket has been logged at least once.
+  EXPECT_GE(histogram_tester.GetBucketCount(
+                "Net.SSL.TrustAnchorIDsResult",
+                net::SSLClientSocket::TrustAnchorIDsResult::kDnsSuccessRetry),
+            1);
+
+  // TODO(crbug.com/427778127): when Trust Anchor ID netlogs are added, check
+  // them here.
+}
 
 // TODO(crbug.com/40816087) additional Chrome Root Store browser tests to
 // add:

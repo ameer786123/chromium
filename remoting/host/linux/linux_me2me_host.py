@@ -63,6 +63,10 @@ DEFAULT_SIZES_ENV_VAR = "CHROME_REMOTE_DESKTOP_DEFAULT_DESKTOP_SIZES"
 # launch Xvfb.
 USE_XVFB_ENV_VAR = "CHROME_REMOTE_DESKTOP_USE_XVFB"
 
+# If this environment variable is set, the script will launch a Wayland
+# session instead of X11.
+USE_WAYLAND_ENV_VAR = "CHROME_REMOTE_DESKTOP_USE_WAYLAND"
+
 # The amount of video RAM the dummy driver should claim to have, which limits
 # the maximum possible resolution.
 # 1048576 KiB = 1 GiB, which is the amount of video RAM needed to have a
@@ -286,9 +290,13 @@ def is_supported_platform():
 
 
 def is_crash_reporting_enabled(config):
-  # Enable crash reporting for Google hosts or when usage_stats_consent is true.
-  return (config.get("host_owner", "").endswith("@google.com") or
-          config.get("usage_stats_consent", False))
+  # Use the value in the host config for usage_stats_consent if it exists,
+  # otherwise opt into crash reporting if the owner is a Googler.
+  usage_stats_consent = config.get("usage_stats_consent", None)
+  if usage_stats_consent is not None:
+    return usage_stats_consent
+  else:
+    return config.get("host_owner", "").endswith("@google.com")
 
 
 def get_pipewire_session_manager():
@@ -630,7 +638,17 @@ class Desktop(abc.ABC):
     self.crash_uploader_inhibitor = None
 
   def _init_child_env(self):
-    self.child_env = dict(os.environ)
+    # For Wayland, initialize using a safe subset of the current environment.
+    # GNOME starts 'gnome-shell' as a system service, and it may import its
+    # full environment into systemd. This script may run in an environment
+    # with values that may break 'gnome-shell' - see
+    # http://crbug.com/431672013.
+    self.child_env = {}
+    # These are the values set by the remoting-user-session binary when it
+    # launches this script.
+    for key in "USER", "LOGNAME", "HOME", "SHELL", "PATH":
+      if key in os.environ:
+        self.child_env[key] = os.environ[key]
 
     self.child_env["CHROME_REMOTE_DESKTOP_SESSION"] = "1"
 
@@ -1163,7 +1181,6 @@ class WaylandDesktop(Desktop):
 
   def _init_child_env(self):
     super(WaylandDesktop, self)._init_child_env()
-    self.child_env["GDK_BACKEND"] = "wayland,x11"
     self.child_env["XDG_SESSION_TYPE"] = "wayland"
     self.child_env["XDG_RUNTIME_DIR"] = self.runtime_dir
 
@@ -1199,6 +1216,18 @@ class WaylandDesktop(Desktop):
       return False
     return True
 
+  @staticmethod
+  def _is_dbus_x11_present():
+    try:
+      dbus_x11_info = subprocess.check_output(['dpkg-query', '-s', 'dbus-x11'])
+      if re.search(br'^Status:.*installed', dbus_x11_info, re.MULTILINE):
+        return True
+    except subprocess.CalledProcessError:
+      pass
+    except Exception as e:
+      logging.warning("Couldn't check if dbus-x11 is installed: %s" % str(e))
+    return False
+
   def _launch_server(self, *args, **kwargs):
     if not self._is_gnome_session_present():
       logging.error("Only GNOME based wayland hosts are supported currently. "
@@ -1206,6 +1235,11 @@ class WaylandDesktop(Desktop):
                     "'gnome-shell' is installed on it")
       # Error won't be fixed without user intervention so we quit here without
       # attempting to relaunch.
+      sys.exit(1)
+    if self._is_dbus_x11_present():
+      # TODO(432108529): Remove this check if we can fix the incompatibility.
+      logging.error("The dbus-x11 package is incompatible with Chrome Remote "
+                    "Desktop in Wayland mode. Please remove it and try again.")
       sys.exit(1)
     logging.info("Launching wayland server.")
     self._wayland_socket = self._get_unused_wayland_socket()
@@ -1429,6 +1463,14 @@ class XDesktop(Desktop):
 
   def _init_child_env(self):
     super(XDesktop, self)._init_child_env()
+
+    # For backwards compatibility, copy the full environment into
+    # self.child_env, without overwriting any values that were set earlier by
+    # this script.
+    for key in os.environ:
+      if key not in self.child_env:
+        self.child_env[key] = os.environ[key]
+
     # Force GDK to use the X11 backend, as otherwise parts of the host that use
     # GTK can end up connecting to an active Wayland display instead of the
     # CRD X11 session.
@@ -2568,7 +2610,9 @@ def main():
   if HOST_EXTRA_PARAMS_ENV_VAR in os.environ:
       extra_start_host_args = \
           re.split(r"\s+", os.environ[HOST_EXTRA_PARAMS_ENV_VAR].strip())
-  is_wayland = any([opt == '--enable-wayland' for opt in extra_start_host_args])
+  if USE_WAYLAND_ENV_VAR in os.environ:
+      extra_start_host_args.append('--enable-wayland')
+  is_wayland = '--enable-wayland' in extra_start_host_args
   if is_wayland:
     desktop = WaylandDesktop(sizes, host_config)
   else:

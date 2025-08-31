@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/web_ui_mocha_browser_test.h"
@@ -27,6 +28,10 @@ IN_PROC_BROWSER_TEST_F(SettingsFocusTest, PaymentsSectionInteractive) {
 
 IN_PROC_BROWSER_TEST_F(SettingsFocusTest, PaymentsSectionFocus) {
   RunTest("settings/payments_section_focus_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(SettingsFocusTest, SettingsViewMixin) {
+  RunTest("settings/settings_view_mixin_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(SettingsFocusTest, SyncPage) {
@@ -63,9 +68,9 @@ IN_PROC_BROWSER_TEST_F(SettingsFocusTest, Menu) {
 }
 
 #if BUILDFLAG(ENABLE_GLIC)
-class SettingsGlicPageFocusTest : public SettingsFocusTest {
+class SettingsGlicSubpageFocusTest : public SettingsFocusTest {
  public:
-  SettingsGlicPageFocusTest() {
+  SettingsGlicSubpageFocusTest() {
     scoped_feature_list_.InitWithFeatures(
         {features::kGlic, features::kTabstripComboButton}, {});
   }
@@ -74,7 +79,14 @@ class SettingsGlicPageFocusTest : public SettingsFocusTest {
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-IN_PROC_BROWSER_TEST_F(SettingsGlicPageFocusTest, GlicPageFocus) {
-  RunTest("settings/glic_page_focus_test.js", "mocha.run()");
+// TODO(crbug.com/424864547): Investigate flakiness and enable on Mac64 and
+// Win64.
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#define MAYBE_GlicSubpageFocus DISABLED_GlicSubpageFocus
+#else
+#define MAYBE_GlicSubpageFocus GlicSubpageFocus
+#endif  // BUILDFLAG(IS_MAC)
+IN_PROC_BROWSER_TEST_F(SettingsGlicSubpageFocusTest, MAYBE_GlicSubpageFocus) {
+  RunTest("settings/glic_subpage_focus_test.js", "mocha.run()");
 }
 #endif

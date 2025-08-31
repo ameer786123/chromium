@@ -28,10 +28,9 @@
 #include "components/feed/core/v2/feed_stream.h"
 #include "components/feed/core/v2/public/feed_api.h"
 #include "components/feed/feed_feature_list.h"
-#include "components/reading_list/features/reading_list_switches.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #endif
 
 namespace feed {
@@ -97,7 +96,7 @@ feedwire::Version GetPlatformVersionMessage() {
   result.set_minor(minor);
   result.set_revision(revision);
 #if BUILDFLAG(IS_ANDROID)
-  result.set_api_version(base::android::BuildInfo::GetInstance()->sdk_int());
+  result.set_api_version(base::android::android_info::sdk_int());
 #endif
   return result;
 }
@@ -116,7 +115,7 @@ feedwire::Version GetAppVersionMessage(const ChromeInfo& chrome_info) {
   }
 
 #if BUILDFLAG(IS_ANDROID)
-  result.set_api_version(base::android::BuildInfo::GetInstance()->sdk_int());
+  result.set_api_version(base::android::android_info::sdk_int());
 #endif
   return result;
 }
@@ -175,9 +174,7 @@ feedwire::Request CreateFeedQueryRequest(
     feed_request.add_client_capability(Capability::SYNTHETIC_CAPABILITIES);
   }
 
-  if (base::FeatureList::IsEnabled(kFeedDynamicColors)) {
-    feed_request.add_client_capability(Capability::DYNAMIC_COLORS);
-  }
+  feed_request.add_client_capability(Capability::DYNAMIC_COLORS);
 
   if (base::FeatureList::IsEnabled(kFeedStreaming)) {
     feed_request.add_client_capability(Capability::STREAMING_FULL);

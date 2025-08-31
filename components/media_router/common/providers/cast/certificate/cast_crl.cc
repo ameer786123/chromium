@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/media_router/common/providers/cast/certificate/cast_crl.h"
 
 #include <memory>
@@ -14,15 +9,16 @@
 #include <unordered_set>
 
 #include "base/build_time.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "base/time/time.h"
 #include "components/media_router/common/providers/cast/certificate/cast_fallback_crl.h"
+#include "crypto/evp.h"
 #include "crypto/sha2.h"
 #include "net/cert/time_conversions.h"
 #include "net/cert/x509_util.h"
-#include "third_party/boringssl/src/include/openssl/bytestring.h"
 #include "third_party/boringssl/src/include/openssl/digest.h"
 #include "third_party/boringssl/src/include/openssl/evp.h"
 #include "third_party/boringssl/src/pki/cert_errors.h"
@@ -146,11 +142,9 @@ bool VerifyCRL(const Crl& crl,
     return false;
   }
 
-  CBS spki;
-  CBS_init(&spki, parsed_cert->tbs().spki_tlv.data(),
-           parsed_cert->tbs().spki_tlv.size());
-  bssl::UniquePtr<EVP_PKEY> pubkey(EVP_parse_public_key(&spki));
-  if (!pubkey || CBS_len(&spki) != 0) {
+  bssl::UniquePtr<EVP_PKEY> pubkey =
+      crypto::evp::PublicKeyFromBytes(parsed_cert->tbs().spki_tlv);
+  if (!pubkey) {
     VLOG(2) << "CRL - Parsing public key failed";
 #ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
     return false;
@@ -460,8 +454,9 @@ std::unique_ptr<CastCRL> ParseAndVerifyFallbackCRLUsingCustomTrustStore(
     const base::Time& time,
     bssl::TrustStore* trust_store) {
   std::string fallback_serialized_crl(
-      kCastFallbackCRLs, kCastFallbackCRLs + sizeof kCastFallbackCRLs /
-                                                 sizeof kCastFallbackCRLs[0]);
+      kCastFallbackCRLs,
+      UNSAFE_TODO(kCastFallbackCRLs +
+                  sizeof kCastFallbackCRLs / sizeof kCastFallbackCRLs[0]));
   return ParseAndVerifyCRLUsingCustomTrustStore(
       fallback_serialized_crl, time, trust_store, true /* is_fallback_crl */);
 }

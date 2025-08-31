@@ -2,14 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import <memory>
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
 
+#import <memory>
+#import <string_view>
+
+#import "base/strings/strcat.h"
+#import "base/strings/string_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "base/time/time.h"
 #import "components/autofill/core/browser/field_types.h"
 #import "components/autofill/core/common/autofill_features.h"
+#import "components/autofill/ios/common/constants.h"
 #import "components/autofill/ios/common/features.h"
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
@@ -17,15 +26,18 @@
 #import "ios/chrome/browser/autofill/ui_bundled/address_editor/autofill_constants.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
 #import "ios/chrome/browser/autofill/ui_bundled/bottom_sheet/bottom_sheet_constants.h"
+#import "ios/chrome/browser/badges/model/features.h"
 #import "ios/chrome/browser/badges/ui_bundled/badge_constants.h"
 #import "ios/chrome/browser/infobars/ui_bundled/banners/infobar_banner_constants.h"
 #import "ios/chrome/browser/infobars/ui_bundled/infobar_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/infobars/ui_bundled/modals/infobar_address_profile_modal_constants.h"
+#import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/testing/earl_grey/earl_grey_test.h"
@@ -55,9 +67,23 @@ constexpr base::TimeDelta kTypingCoolDownPeriod = base::Milliseconds(50);
 // Email value used by the tests.
 constexpr char kEmail[] = "foo1@gmail.com";
 
+// Histogram bucket representing renderer errors.
+constexpr int kRendererErrorHistogramBucket = 8;
+
 struct FullAddressFormPageParams {
   // True if the submission should be default prevented.
   bool default_prevented = false;
+  // True if there should be redirection done after submitting with
+  // a parameter that can stop the submit event from being handled by Autofill.
+  bool redirect = false;
+  // True if the submission should be prevented from propagating to any other
+  // listener regardless of their positioning.
+  bool stop_immediate_propagation = false;
+  // True if multiple submissions should be scheduled.
+  bool multiple_submissions = false;
+  // True if when using `multiple_submissions` the last programmatic submission
+  // should be skipped.
+  bool multiple_submissions_skip_programmatic = false;
 };
 
 // Matcher for the banner button.
@@ -104,17 +130,9 @@ id<GREYMatcher> CountryEntry(NSString* label) {
 
 // Matcher for the search bar.
 id<GREYMatcher> SearchBar() {
-  return grey_allOf(grey_accessibilityID(kAutofillCountrySelectionTableViewId),
+  // Match using the accessibility trait for a search field.
+  return grey_allOf(grey_accessibilityTrait(UIAccessibilityTraitSearchField),
                     grey_sufficientlyVisible(), nil);
-}
-
-// Matcher for the search bar's cancel button.
-id<GREYMatcher> SearchBarCancelButton() {
-  return grey_allOf(
-      chrome_test_util::ButtonWithAccessibilityLabelId(IDS_APP_CANCEL),
-      grey_kindOfClass([UIButton class]),
-      grey_ancestor(grey_kindOfClass([UISearchBar class])),
-      grey_sufficientlyVisible(), nil);
 }
 
 // Matcher for the search bar's scrim.
@@ -168,7 +186,16 @@ void TypeTextInXframeField(NSString* fieldID, NSString* text) {
 
 @implementation SaveProfileEGTest
 
+- (void)setUp {
+  [super setUp];
+  chrome_test_util::GREYAssertErrorNil(
+      [MetricsAppInterface setupHistogramTester]);
+}
+
 - (void)tearDownHelper {
+  chrome_test_util::GREYAssertErrorNil(
+      [MetricsAppInterface releaseHistogramTester]);
+
   // Clear existing profile.
   [AutofillAppInterface clearProfilesStore];
 
@@ -176,7 +203,7 @@ void TypeTextInXframeField(NSString* fieldID, NSString* text) {
 }
 
 // TODO(crbug.com/391826905): Re-enable this test on simulator.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_testEditBottomSheetAlertBySwipingDown \
   FLAKY_testEditBottomSheetAlertBySwipingDown
 #else
@@ -195,6 +222,17 @@ void TypeTextInXframeField(NSString* fieldID, NSString* text) {
         kAutofillDynamicallyLoadsFieldsForAddressInput);
   }
 
+  if ([self isRunningTest:@selector(FLAKY_testSaveWithoutBadge)]) {
+    config.features_enabled.push_back(kAutofillBadgeRemoval);
+  }
+
+  if ([self isRunningTest:@selector(testUserData_AccountSave)] ||
+      [self
+          isRunningTest:@selector(testUserData_LocalHideBottomSheetOnCancel)]) {
+    // These test cases need a badge.
+    config.features_disabled.push_back(kAutofillBadgeRemoval);
+  }
+
   config.features_disabled.push_back(
       autofill::features::test::kAutofillServerCommunication);
 
@@ -209,15 +247,52 @@ void TypeTextInXframeField(NSString* fieldID, NSString* text) {
     config.features_enabled.push_back(kAutofillFixXhrForXframe);
   }
 
-  if ([self isRunningTest:@selector
-            (testSubmissionDetection_defaultPrevented_whenAllowed)]) {
-    config.features_enabled.push_back(kAutofillAllowDefaultPreventedSubmission);
+  if ([self isRunningTest:@selector(testSubmissionDetectionWithDeduping)]) {
+    config.features_enabled.push_back(kAutofillDedupeFormSubmission);
   }
 
-  if ([self isRunningTest:@selector
-            (testSubmissionDetection_defaultPrevented_whenNotAllowed)]) {
+  if ([self isRunningTest:@selector(testSubmissionDetectionWithoutDeduping)]) {
+    config.features_disabled.push_back(kAutofillDedupeFormSubmission);
+  }
+
+  if ([self isRunningTest:@selector(testSubmissionDetection_inCaptureMode)]) {
+    config.features_enabled.push_back(
+        kAutofillFormSubmissionEventsInCaptureMode);
+  }
+
+  if ([self
+          isRunningTest:@selector(testSubmissionDetection_notInCaptureMode)]) {
     config.features_disabled.push_back(
-        kAutofillAllowDefaultPreventedSubmission);
+        kAutofillFormSubmissionEventsInCaptureMode);
+  }
+
+  if ([self isRunningTest:@selector(testSubmissionErrorReporting_Enabled)]) {
+    config.features_enabled.push_back(kAutofillIsolatedWorldForJavascriptIos);
+    config.features_enabled.push_back(kAutofillReportFormSubmissionErrors);
+  }
+
+  if ([self isRunningTest:@selector(testSubmissionErrorReporting_Disabled)]) {
+    config.features_enabled.push_back(kAutofillIsolatedWorldForJavascriptIos);
+    config.features_disabled.push_back(kAutofillReportFormSubmissionErrors);
+  }
+
+  // TODO(crbug.com/428189566): Re-enable after the test is fixed for
+  // ios-fieldtrial-rel.
+  if ([self isRunningTest:@selector
+            (DISABLED_testSubmissionCountReporting_ScheduledTask)] ||
+      [self isRunningTest:@selector
+            (DISABLED_testSubmissionCountReporting_UnloadPage)]) {
+    config.features_enabled.push_back(kAutofillIsolatedWorldForJavascriptIos);
+    config.features_enabled.push_back(kAutofillCountFormSubmissionInRenderer);
+  }
+
+  // TODO(crbug.com/428189566): Re-enable after the test is fixed for
+  // ios-fieldtrial-rel.
+  if ([self
+          isRunningTest:@selector
+          (DISABLED_testSubmissionCountReporting_ScheduledTask_NotIsolated)]) {
+    config.features_disabled.push_back(kAutofillIsolatedWorldForJavascriptIos);
+    config.features_enabled.push_back(kAutofillCountFormSubmissionInRenderer);
   }
 
   return config;
@@ -289,24 +364,54 @@ void TypeTextInXframeField(NSString* fieldID, NSString* text) {
 }
 
 // Loads, fills, and submits the full address form.
-- (void)loadAndSubmitFullAddressFormWithParams:
-    (FullAddressFormPageParams)params {
+- (void)loadFullAddressFormWithParams:(FullAddressFormPageParams)params {
   // Start server.
   GREYAssertTrue(self.testServer->Start(), @"Server did not start.");
+
+  auto makeQueryString = [](FullAddressFormPageParams params) -> std::string {
+    std::vector<std::string_view> queryParameters;
+    if (params.default_prevented) {
+      queryParameters.push_back("preventDefault");
+    }
+    if (params.redirect) {
+      queryParameters.push_back("redirectWhenSubmissionPrevented");
+    }
+    if (params.stop_immediate_propagation) {
+      queryParameters.push_back("stopImmediatePropagation");
+    }
+    if (params.multiple_submissions) {
+      queryParameters.push_back("triggerMultipleSubmissions");
+    }
+    if (params.multiple_submissions_skip_programmatic) {
+      queryParameters.push_back("triggerMultipleSubmissionsNoProgrammatic");
+    }
+    return base::JoinString(queryParameters, "&");
+  };
 
   // Get the URL for the served test page with the query parameters for setting
   // it up.
   const GURL baseURL = self.testServer->GetURL(kFullAddressFormPage);
   GURL::Replacements replacements;
-  replacements.SetQueryStr(params.default_prevented ? "preventDefault" : "");
+  std::string query = makeQueryString(params).c_str();
+  replacements.SetQueryStr(query);
   const GURL fullURL = baseURL.ReplaceComponents(replacements);
 
   // Load the URL and wait for its content to be loaded.
   [ChromeEarlGrey loadURL:fullURL];
 
+  // Wait until the expected content is loaded in the DOM. If the page is in an
+  // error state this verification will fail.
+  NSString* wait_content_script =
+      @"document.body.innerText.includes('Address Form Test Page')";
+  [ChromeEarlGrey waitForJavaScriptCondition:wait_content_script];
+
   // Call the helper function embedded in the page content to fill the form.
   [ChromeEarlGrey evaluateJavaScriptForSideEffect:@"FillForm();"];
+}
 
+- (void)loadAndSubmitFullAddressFormWithParams:
+    (FullAddressFormPageParams)params {
+  [self loadFullAddressFormWithParams:params];
   // Submit the form via the dedicated <button>.
   [ChromeEarlGrey tapWebStateElementWithID:@"submit-button"];
 }
@@ -429,6 +534,12 @@ void TypeTextInXframeField(NSString* fieldID, NSString* text) {
   [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
 
   [self fillPresidentProfileAndShowSaveModal];
+
+  // Verify that the address badge is displayed.
+  [[EarlGrey selectElementWithMatcher:
+                 grey_accessibilityID(
+                     kBadgeButtonSaveAddressProfileAccessibilityIdentifier)]
+      assertWithMatcher:grey_notNil()];
 
   id<GREYMatcher> footerMatcher = grey_text(
       l10n_util::GetNSStringF(IDS_IOS_AUTOFILL_SAVE_ADDRESS_IN_ACCOUNT_FOOTER,
@@ -583,10 +694,10 @@ void TypeTextInXframeField(NSString* fieldID, NSString* text) {
       assertWithMatcher:grey_notNil()];
 
   // Verify the cancel button is visible and unfocuses search bar when tapped.
-  [[EarlGrey selectElementWithMatcher:SearchBarCancelButton()]
-      performAction:grey_tap()];
+  [ChromeEarlGreyUI clearAndDismissSearchBar];
 
-  // Verify countries are searchable using their name in the current locale.
+  // Verify countries are searchable using their name in the current
+  // locale.
   [[EarlGrey selectElementWithMatcher:SearchBar()] performAction:grey_tap()];
 
   [[EarlGrey selectElementWithMatcher:SearchBar()]
@@ -638,6 +749,37 @@ void TypeTextInXframeField(NSString* fieldID, NSString* text) {
   // Save the profile.
   [[EarlGrey selectElementWithMatcher:ModalButtonMatcher()]
       performAction:grey_tap()];
+}
+
+// Tests that the save address flow is still working correctly when the address
+// badge is removed.
+- (void)FLAKY_testSaveWithoutBadge {
+  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
+
+  [self fillPresidentProfileAndShowSaveModal];
+
+  // Verify that the address badge is not displayed.
+  [[EarlGrey selectElementWithMatcher:
+                 grey_accessibilityID(
+                     kBadgeButtonSaveAddressProfileAccessibilityIdentifier)]
+      assertWithMatcher:grey_nil()];
+
+  id<GREYMatcher> footerMatcher = grey_text(
+      l10n_util::GetNSStringF(IDS_IOS_AUTOFILL_SAVE_ADDRESS_IN_ACCOUNT_FOOTER,
+                              base::UTF8ToUTF16(std::string(kEmail))));
+
+  [[EarlGrey selectElementWithMatcher:footerMatcher]
+      assertWithMatcher:grey_sufficientlyVisible()];
+
+  // Save the profile.
+  [[EarlGrey selectElementWithMatcher:ModalButtonMatcher()]
+      performAction:grey_tap()];
+
+  // Ensure profile is saved locally.
+  GREYAssertEqual(1U, [AutofillAppInterface profilesCount],
+                  @"Profile should have been saved.");
+
+  [SigninEarlGrey signOut];
 }
 
 // Tests the sticky address prompt journey where the prompt remains there when
@@ -787,7 +929,7 @@ void TypeTextInXframeField(NSString* fieldID, NSString* text) {
   [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
 
   // Submit the form with `defaultPrevented` not considered.
-  FullAddressFormPageParams params{.default_prevented = true};
+  FullAddressFormPageParams params{.default_prevented = true, .redirect = true};
   [self loadAndSubmitFullAddressFormWithParams:params];
 
   // Wait on the infobar to be displayed after submission.
@@ -811,21 +953,446 @@ void TypeTextInXframeField(NSString* fieldID, NSString* text) {
   [SigninEarlGrey signOut];
 }
 
-// Tests that submission isn't detected hence the infobar isn't displayed when
-// the "form" event behind the submission is `defaultPrevented` while the
-// corresponding feature doesn't allows it.
-- (void)testSubmissionDetection_defaultPrevented_whenNotAllowed {
-  // Sign-in so the profile would be saved into the account.
+
+
+
+// Tests that multiple submissions on the same form are not deduped when
+// deduping is disabled where all submissions are sent over to the browser.
+- (void)testSubmissionDetectionWithoutDeduping {
+  // Submit the form with `defaultPrevented` not considered and without
+  // redirecting so the same form can be submitted multiple time.
+  FullAddressFormPageParams params{.default_prevented = true,
+                                   .redirect = false};
+  [self loadAndSubmitFullAddressFormWithParams:params];
+
+  // Wait on the infobar to be displayed after submission, meaning that
+  // submission was detected.
+  [InfobarEarlGreyUI waitUntilInfobarBannerVisibleOrTimeout:YES];
+
+  // Spam submissions.
+  for (int i = 0; i < 5; ++i) {
+    [ChromeEarlGrey tapWebStateElementWithID:@"submit-button"];
+  }
+
+  // Verify that all submissions were sent over to the browser and recorded.
+  GREYAssertTrue(
+      base::test::ios::WaitUntilConditionOrTimeout(
+          base::Milliseconds(200),
+          ^{
+            NSError* error = [MetricsAppInterface
+                expectTotalCount:6
+                    forHistogram:@"Autofill.iOS.FormSubmission.OutcomeV2"];
+            return error == nil;
+          }),
+      @"Timed out waiting for all form submission events.");
+}
+
+// Tests that multiple submissions on the same form are deduped when deduping is
+// enabled where only one submission per form element is allowed when.
+- (void)testSubmissionDetectionWithDeduping {
+  // Submit the form with `defaultPrevented` not considered and without
+  // redirecting so the same form can be submitted multiple time.
+  FullAddressFormPageParams params{.default_prevented = true,
+                                   .redirect = false};
+  [self loadAndSubmitFullAddressFormWithParams:params];
+
+  // Wait on the infobar to be displayed after submission, meaning that
+  // submission was detected.
+  [InfobarEarlGreyUI waitUntilInfobarBannerVisibleOrTimeout:YES];
+
+  // Spam submissions.
+  for (int i = 0; i < 5; ++i) {
+    [ChromeEarlGrey tapWebStateElementWithID:@"submit-button"];
+  }
+
+  // Wait some time so the hypothetical form submission messages would have been
+  // sent over to the browser by then.
+  base::test::ios::SpinRunLoopWithMinDelay(base::Milliseconds(200));
+
+  // Verify that only one submission was actually recorded despite triggering
+  // multiple submissions on the same form.
+  chrome_test_util::GREYAssertErrorNil([MetricsAppInterface
+      expectTotalCount:1
+          forHistogram:@"Autofill.iOS.FormSubmission.OutcomeV2"]);
+}
+
+// Tests that the submission errors that occur in the renderer are reported to
+// the browser.
+- (void)testSubmissionErrorReporting_Enabled {
+  // Inject a bug that will trigger error when handling the form submission in
+  // the renderer.
+  constexpr char kInjectedBug[] = R"(
+    // Swizzle autofillSubmissionData() with an erroring function.
+    gcrweb.gCrWeb.fill.autofillSubmissionData = function() {
+      throw new Error("Oh no, something bad happened!");
+    };
+    // This is to give a return value to make the thing handling the JS
+    // execution happy.
+    true
+  )";
+
+  // Load page without submitting the form.
+  [self loadFullAddressFormWithParams:{}];
+
+  // Inject the bug in the submission handler so it triggers an error that will
+  // be reported to the browser.
+  [ChromeEarlGrey
+      evaluateJavaScriptInIsolatedWorldForSideEffect:base::SysUTF8ToNSString(
+                                                         kInjectedBug)];
+
+  // Now that the submission handler is buggy, submit the form to trigger the
+  // error.
+  [ChromeEarlGrey tapWebStateElementWithID:@"submit-button"];
+
+  // Verify that no infobar is displayed when there is a submission error.
+  [InfobarEarlGreyUI waitUntilInfobarBannerVisibleOrTimeout:NO];
+
+  // Verify that the submission error was reported and recorded.
+  GREYAssertTrue(
+      base::test::ios::WaitUntilConditionOrTimeout(
+          base::Milliseconds(200),
+          ^{
+            NSError* error = [MetricsAppInterface
+                expectUniqueSampleWithCount:1
+                                  forBucket:kRendererErrorHistogramBucket
+                               forHistogram:
+                                   @"Autofill.iOS.FormSubmission.OutcomeV2"];
+            return error == nil;
+          }),
+      @"Timed out waiting for the submission error uma record.");
+}
+
+// Tests that the submission errors that occur in the renderer are not reported
+// to the browser when the feature is disabled.
+- (void)testSubmissionErrorReporting_Disabled {
+  // Inject a bug that will trigger error when handling the form submission in
+  // the renderer.
+  constexpr char kInjectedBug[] = R"(
+    // Swizzle autofillSubmissionData() with an erroring function.
+    gcrweb.gCrWeb.fill.autofillSubmissionData = function() {
+      throw new Error("Oh no, something bad happened!");
+    };
+    // This is to give a return value to make the thing handling the JS
+    // execution happy.
+    true
+  )";
+
+  // Load page without submitting the form.
+  [self loadFullAddressFormWithParams:{}];
+
+  // Inject the bug in the submission handler so it triggers an error that will
+  // be reported to the browser.
+  [ChromeEarlGrey
+      evaluateJavaScriptInIsolatedWorldForSideEffect:base::SysUTF8ToNSString(
+                                                         kInjectedBug)];
+
+  // Now that the submission handler is buggy, submit the form to trigger the
+  // error.
+  [ChromeEarlGrey tapWebStateElementWithID:@"submit-button"];
+
+  // Verify for some time that no infobar is displayed when there is a
+  // submission error.
+  [InfobarEarlGreyUI waitUntilInfobarBannerVisibleOrTimeout:NO];
+
+  // Verify that no submission error was not reported and recorded. At this
+  // point there should have been enough time to hypothetically handle the
+  // submit event if there was no error.
+  chrome_test_util::GREYAssertErrorNil([MetricsAppInterface
+      expectTotalCount:0
+          forHistogram:@"Autofill.iOS.FormSubmission.OutcomeV2"]);
+}
+
+// Tests that submission is detected hence the infobar is displayed when the
+// "form" event behind the submission has its propagation entirely stopped via
+// stopImmediatePropagation() while the form submit event listener for Autofill
+// is set in capture mode.
+- (void)testSubmissionDetection_inCaptureMode {
+  // Sign-in so the profile can be saved into the account.
   [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
 
-  // Submit the form with `defaultPrevented` considered.
-  FullAddressFormPageParams params{.default_prevented = true};
+  // Submit the form with `defaultPrevented` not considered.
+  FullAddressFormPageParams params{.redirect = true,
+                                   .stop_immediate_propagation = true};
+  [self loadAndSubmitFullAddressFormWithParams:params];
+
+  // Wait on the infobar to be displayed after submission.
+  [InfobarEarlGreyUI waitUntilInfobarBannerVisibleOrTimeout:YES];
+
+  // Accept the banner to save the profile.
+  [[EarlGrey selectElementWithMatcher:BannerButtonMatcher()]
+      performAction:grey_tap()];
+
+  // Wait for the save profile dialog to appear.
+  [ChromeEarlGrey waitForMatcher:ModalButtonMatcher()];
+
+  // Save the profile.
+  [[EarlGrey selectElementWithMatcher:ModalButtonMatcher()]
+      performAction:grey_tap()];
+
+  // Ensure profile is saved.
+  GREYAssertEqual(1U, [AutofillAppInterface profilesCount],
+                  @"Profile should have been saved.");
+
+  [SigninEarlGrey signOut];
+}
+
+// Tests that submission isn't detected hence the infobar not displayed when the
+// "form" event behind the submission has its propagation entirely stopped via
+// stopImmediatePropagation() while the form submit event listener for Autofill
+// isn't set in capture mode.
+- (void)testSubmissionDetection_notInCaptureMode {
+  // Sign-in so the profile can be saved into the account.
+  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
+
+  // Submit the form with the submit event propagation stopped via
+  // stopImmediatePropagation().
+  FullAddressFormPageParams params{.redirect = true,
+                                   .stop_immediate_propagation = true};
   [self loadAndSubmitFullAddressFormWithParams:params];
 
   // Make sure the infobar isn't displayed.
   [InfobarEarlGreyUI waitUntilInfobarBannerVisibleOrTimeout:NO];
 
   [SigninEarlGrey signOut];
+}
+
+// Tests submission count reporting with the scheduled task for the 2 types of
+// form submission, regular and programmatic.
+// TODO(crbug.com/428189566): Re-enable after the test is fixed for
+// ios-fieldtrial-rel.
+- (void)DISABLED_testSubmissionCountReporting_ScheduledTask {
+  // Load the page without submitting the form.
+  [self loadFullAddressFormWithParams:{.default_prevented = true,
+                                       .multiple_submissions = true}];
+
+  // Submit the form which will trigger 4 extra submissions consisting of 3
+  // button click submissions and 1 `form.submit()` programmatic submission,
+  // for a total of 5 submissions.
+  [ChromeEarlGrey tapWebStateElementWithID:@"submit-button"];
+
+  // Navigate back so the scheduled reporting task can be completed which
+  // requires the frame to be "active".
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::BackButton()]
+      performAction:grey_tap()];
+  [ChromeEarlGrey waitForWebStateContainingText:"Address Form Test Page"];
+
+  // Verify that that all the form click submissions were recorded. Wait enough
+  // time for the report to be sent from the renderer. The reporting period is 2
+  // seconds.
+  GREYAssertTrue(
+      base::test::ios::WaitUntilConditionOrTimeout(
+          base::Seconds(3),
+          ^{
+            // Expect 5 submissions in total, 4 regulars and 1 programmatic.
+            NSError* error = [MetricsAppInterface
+                 expectCount:4
+                   forBucket:static_cast<int>(CountedSubmissionType::kHtmlEvent)
+                forHistogram:
+                    @"Autofill.iOS.FormActivity."
+                    @"SubmissionDetectedBeforeProcessing.PerType.FromAll"];
+            error = [MetricsAppInterface
+                 expectCount:1
+                   forBucket:static_cast<int>(
+                                 CountedSubmissionType::kProgrammatic)
+                forHistogram:
+                    @"Autofill.iOS.FormActivity."
+                    @"SubmissionDetectedBeforeProcessing.PerType.FromAll"];
+            // Expect 2  regular submissions from the instant reports. Which
+            // is the maximal number allowed by the quotas. Regular submissions
+            // are handled in the isolated world.
+            error = [MetricsAppInterface
+                 expectCount:2
+                   forBucket:static_cast<int>(CountedSubmissionType::kHtmlEvent)
+                forHistogram:
+                    @"Autofill.iOS.FormActivity."
+                    @"SubmissionDetectedBeforeProcessing.PerType.FromInstant"];
+            // Expect 1  programmatic submission from the instant reports. This
+            // can bust the limit of 2 because the content world quotas are used
+            // for the programmatic submission while the rest of Autofill is in
+            // the isolated world (which includes the detection of regular click
+            // submissions). Each world has its own quotas basically.
+            error = [MetricsAppInterface
+                 expectCount:1
+                   forBucket:static_cast<int>(
+                                 CountedSubmissionType::kProgrammatic)
+                forHistogram:
+                    @"Autofill.iOS.FormActivity."
+                    @"SubmissionDetectedBeforeProcessing.PerType.FromInstant"];
+            // Expect 2 regular submissions from the scheduled reports as all
+            // the quotas were used for the 2 first reports.
+            error = [MetricsAppInterface
+                 expectCount:2
+                   forBucket:static_cast<int>(CountedSubmissionType::kHtmlEvent)
+                forHistogram:@"Autofill.iOS.FormActivity."
+                             @"SubmissionDetectedBeforeProcessing.PerType."
+                             @"FromScheduledTask"];
+            // Expect 4 batches of reports, 3 from the instant reports (1
+            // report per batch) and 1 batch with the 2 reports that were
+            // reported by the scheduled task.
+            error = [MetricsAppInterface
+                 expectCount:3
+                   forBucket:1
+                forHistogram:@"Autofill.iOS.FormActivity."
+                             @"SubmissionDetectedBeforeProcessing.BatchSize"];
+            error = [MetricsAppInterface
+                 expectCount:1
+                   forBucket:2
+                forHistogram:@"Autofill.iOS.FormActivity."
+                             @"SubmissionDetectedBeforeProcessing.BatchSize"];
+            return error == nil;
+          }),
+      @"Timed out waiting for the form submission metrics.");
+}
+
+// Tests submission count reporting with the scheduled task for the 2 types of
+// form submission, regular and programmatic - when autofill isn't in the
+// isolated world.
+// TODO(crbug.com/428189566): Re-enable after the test is fixed for
+// ios-fieldtrial-rel.
+- (void)DISABLED_testSubmissionCountReporting_ScheduledTask_NotIsolated {
+  // Load page without submitting the form.
+  [self loadFullAddressFormWithParams:{.default_prevented = true,
+                                       .multiple_submissions = true}];
+
+  // Submit the form which will trigger 4 extra submissions consisting of 3
+  // button click submissions and 1 `form.submit()` programmatic submission,
+  // for a total of 5 submissions.
+  [ChromeEarlGrey tapWebStateElementWithID:@"submit-button"];
+
+  // Navigate back so the scheduled reporting task can be completed which
+  // requires the frame to be "active".
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::BackButton()]
+      performAction:grey_tap()];
+  [ChromeEarlGrey waitForWebStateContainingText:"Address Form Test Page"];
+
+  // Verify that that all the form submission reporting metrics were recorded.
+  GREYAssertTrue(
+      base::test::ios::WaitUntilConditionOrTimeout(
+          base::Seconds(3),
+          ^{
+            // Expect 5 submissions in total, 4 regulars and 1 programmatic.
+            NSError* error = [MetricsAppInterface
+                 expectCount:4
+                   forBucket:static_cast<int>(CountedSubmissionType::kHtmlEvent)
+                forHistogram:
+                    @"Autofill.iOS.FormActivity."
+                    @"SubmissionDetectedBeforeProcessing.PerType.FromAll"];
+            error = [MetricsAppInterface
+                 expectCount:1
+                   forBucket:static_cast<int>(
+                                 CountedSubmissionType::kProgrammatic)
+                forHistogram:
+                    @"Autofill.iOS.FormActivity."
+                    @"SubmissionDetectedBeforeProcessing.PerType.FromAll"];
+            // Expect 2  regular submissions from the instant reports. Which
+            // is the maximal number allowed by the quotas. Regular submissions
+            // are handled in the isolated world.
+            error = [MetricsAppInterface
+                 expectCount:2
+                   forBucket:static_cast<int>(CountedSubmissionType::kHtmlEvent)
+                forHistogram:
+                    @"Autofill.iOS.FormActivity."
+                    @"SubmissionDetectedBeforeProcessing.PerType.FromInstant"];
+            // Expect 2 regular submissions from the scheduled reports as all
+            // the quotas were used for the 2 first reports.
+            error = [MetricsAppInterface
+                 expectCount:2
+                   forBucket:static_cast<int>(CountedSubmissionType::kHtmlEvent)
+                forHistogram:@"Autofill.iOS.FormActivity."
+                             @"SubmissionDetectedBeforeProcessing.PerType."
+                             @"FromScheduledTask"];
+            // Expect one programmatic submission from the scheduled report.
+            error = [MetricsAppInterface
+                 expectCount:2
+                   forBucket:static_cast<int>(
+                                 CountedSubmissionType::kProgrammatic)
+                forHistogram:@"Autofill.iOS.FormActivity."
+                             @"SubmissionDetectedBeforeProcessing.PerType."
+                             @"FromScheduledTask"];
+            // Expect 4 batches of reports, 2 from the instant reports (1
+            // report per batch) and 1 batch with the 3 reports that were
+            // reported when unloading the page.
+            error = [MetricsAppInterface
+                 expectCount:2
+                   forBucket:1
+                forHistogram:@"Autofill.iOS.FormActivity."
+                             @"SubmissionDetectedBeforeProcessing.BatchSize"];
+            error = [MetricsAppInterface
+                 expectCount:1
+                   forBucket:3
+                forHistogram:@"Autofill.iOS.FormActivity."
+                             @"SubmissionDetectedBeforeProcessing.BatchSize"];
+            return error == nil;
+          }),
+      @"Timed out waiting for the form submission metrics.");
+}
+
+// Tests submission count reporting when unloading a page.
+// TODO(crbug.com/428189566): Re-enable after the test is fixed for
+// ios-fieldtrial-rel.
+- (void)DISABLED_testSubmissionCountReporting_UnloadPage {
+  // Load page without submitting the form.
+  [self loadFullAddressFormWithParams:{.default_prevented = true,
+                                       .multiple_submissions_skip_programmatic =
+                                           true}];
+
+  // Submit the form which will trigger 4 extra submissions consisting of 3
+  // button click submissions and 1 `form.submit()` programmatic submission,
+  // for a total of 5 submissions.
+  [ChromeEarlGrey tapWebStateElementWithID:@"submit-button"];
+
+  // Reload the page content which triggers reporting.
+  [ChromeEarlGrey reload];
+  [ChromeEarlGrey waitForWebStateContainingText:"Address Form Test Page"];
+
+  // Verify that that all the submissions were reported. No need for a long
+  // timeout as the report was sent when reloading the page so all the metrics
+  // should have been recorded at this point.
+  GREYAssertTrue(
+      base::test::ios::WaitUntilConditionOrTimeout(
+          base::Milliseconds(200),
+          ^{
+            // Expect 4 regular submission in total.
+            NSError* error = [MetricsAppInterface
+                 expectCount:4
+                   forBucket:static_cast<int>(CountedSubmissionType::kHtmlEvent)
+                forHistogram:
+                    @"Autofill.iOS.FormActivity."
+                    @"SubmissionDetectedBeforeProcessing.PerType.FromAll"];
+            // Expect 2  regular submissions from the instant reports. Which
+            // is the maximal number allowed by the quotas. Regular submissions
+            // are handled in the isolated world.
+            error = [MetricsAppInterface
+                 expectCount:2
+                   forBucket:static_cast<int>(CountedSubmissionType::kHtmlEvent)
+                forHistogram:
+                    @"Autofill.iOS.FormActivity."
+                    @"SubmissionDetectedBeforeProcessing.PerType.FromInstant"];
+            // Expect 2 regular submissions from the report triggered by
+            // unloading the page as all the quotas were used for the 2 first
+            // reports.
+            error = [MetricsAppInterface
+                 expectCount:2
+                   forBucket:static_cast<int>(CountedSubmissionType::kHtmlEvent)
+                forHistogram:@"Autofill.iOS.FormActivity."
+                             @"SubmissionDetectedBeforeProcessing.PerType."
+                             @"FromUnloadPage"];
+            // Expect 4 batches of reports, 2 from the instant reports (1
+            // report per batch) and 1 batch with the 2 reports that were
+            // reported when unloading the page.
+            error = [MetricsAppInterface
+                 expectCount:2
+                   forBucket:1
+                forHistogram:@"Autofill.iOS.FormActivity."
+                             @"SubmissionDetectedBeforeProcessing.BatchSize"];
+            error = [MetricsAppInterface
+                 expectCount:1
+                   forBucket:2
+                forHistogram:@"Autofill.iOS.FormActivity."
+                             @"SubmissionDetectedBeforeProcessing.BatchSize"];
+            return error == nil;
+          }),
+      @"Timed out waiting for the form submission metrics.");
 }
 
 @end

@@ -12,12 +12,12 @@
 #include <utility>
 #include <vector>
 
-#include "ash/constants/ash_features.h"
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/raw_ref.h"
+#include "base/notreached.h"
 #include "chrome/browser/ash/app_mode/isolated_web_app/kiosk_iwa_data.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_manager_base.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_types.h"
@@ -26,9 +26,9 @@
 #include "chrome/browser/chromeos/app_mode/kiosk_web_app_update_observer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "components/account_id/account_id.h"
-#include "components/policy/core/common/device_local_account_type.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "url/origin.h"
@@ -71,7 +71,7 @@ KioskIwaManager* KioskIwaManager::Get() {
 }
 
 KioskIwaManager::KioskIwaManager(PrefService& local_state)
-    : local_state_(local_state) {
+    : KioskAppManagerBase(&local_state) {
   CHECK(!g_kiosk_iwa_manager_instance);  // Only one instance is allowed.
   g_kiosk_iwa_manager_instance = this;
   UpdateAppsFromPolicy();
@@ -82,23 +82,14 @@ KioskIwaManager::~KioskIwaManager() {
 }
 
 KioskAppManagerBase::AppList KioskIwaManager::GetApps() const {
-  if (!ash::features::IsIsolatedWebAppKioskEnabled()) {
-    return {};
-  }
-
   AppList result;
   for (const auto& iwa_app_data : isolated_web_apps_) {
-    // TODO(crbug.com/361017701): fill in the install url
     result.emplace_back(*iwa_app_data);
   }
   return result;
 }
 
 const KioskIwaData* KioskIwaManager::GetApp(const AccountId& account_id) const {
-  if (!ash::features::IsIsolatedWebAppKioskEnabled()) {
-    return nullptr;
-  }
-
   const auto iter = std::ranges::find_if(
       isolated_web_apps_,
       [&account_id](const std::unique_ptr<KioskIwaData>& app) {
@@ -150,12 +141,6 @@ void KioskIwaManager::AddAppForTesting(
 }
 
 void KioskIwaManager::UpdateAppsFromPolicy() {
-  if (!ash::features::IsIsolatedWebAppKioskEnabled()) {
-    // keeps KioskIwaManager empty if the feature is disabled.
-    Reset();
-    return;
-  }
-
   auto previous_apps = GetAppsAndReset();
 
   const std::vector<policy::DeviceLocalAccount> device_local_accounts =
@@ -217,12 +202,9 @@ void KioskIwaManager::ProcessDeviceLocalAccount(
   if (account.type != policy::DeviceLocalAccountType::kKioskIsolatedWebApp) {
     return;
   }
-  const std::string& web_bundle_id = account.kiosk_iwa_info.web_bundle_id();
-  const GURL update_manifest_url(account.kiosk_iwa_info.update_manifest_url());
 
-  auto new_iwa_data =
-      KioskIwaData::Create(local_state_.get(), account.user_id, web_bundle_id,
-                           update_manifest_url, *this);
+  auto new_iwa_data = KioskIwaData::Create(
+      account.user_id, account.kiosk_iwa_info, *this, local_state_.get());
 
   if (!new_iwa_data) {
     LOG(WARNING) << "Cannot create Kiosk IWA data for account "
@@ -230,24 +212,23 @@ void KioskIwaManager::ProcessDeviceLocalAccount(
     return;
   }
 
-  // TODO(crbug.com/378065964): Revisit app data processing below after
-  // implementing icon and title.
+  // Check the new app entry against existing apps.
   auto previous_match = previous_apps.find(new_iwa_data->app_id());
   if (previous_match != previous_apps.end()) {
-    // Reuse the already existing app data and keep this app from deletion.
+    // Keep this app from deletion.
     auto previous_iwa_data = std::move(previous_match->second);
     previous_apps.erase(previous_match);
 
-    // But still replace with a new IWA entry if manifest URL changed.
-    if (new_iwa_data->update_manifest_url() !=
-        previous_iwa_data->update_manifest_url()) {
+    // Replace with the new IWA entry if there are changes (e.g. different
+    // update manifest URL or version setting).
+    if (*new_iwa_data != *previous_iwa_data) {
       isolated_web_apps_.push_back(std::move(new_iwa_data));
       isolated_web_apps_.back()->LoadFromCache();
     } else {
       isolated_web_apps_.push_back(std::move(previous_iwa_data));
     }
   } else {
-    // Add a new IWA entry (no existing matches).
+    // Add the new IWA entry (no previous matches).
     isolated_web_apps_.push_back(std::move(new_iwa_data));
     isolated_web_apps_.back()->LoadFromCache();
   }

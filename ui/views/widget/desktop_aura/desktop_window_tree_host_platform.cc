@@ -12,6 +12,7 @@
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
@@ -230,8 +231,8 @@ DesktopWindowTreeHostPlatform* DesktopWindowTreeHostPlatform::GetHostForWidget(
 }
 
 // static
-std::vector<aura::Window*> DesktopWindowTreeHostPlatform::GetAllOpenWindows() {
-  std::vector<aura::Window*> windows(open_windows().size());
+aura::Window::Windows DesktopWindowTreeHostPlatform::GetAllOpenWindows() {
+  aura::Window::Windows windows(open_windows().size());
   std::ranges::transform(
       open_windows(), windows.begin(),
       DesktopWindowTreeHostPlatform::GetContentWindowForWidget);
@@ -329,7 +330,8 @@ void DesktopWindowTreeHostPlatform::OnWidgetInitDone() {
 }
 
 void DesktopWindowTreeHostPlatform::OnWidgetThemeChanged(
-    ui::ColorProviderKey::ColorMode color_mode) {}
+    ui::ColorProviderKey::ColorMode color_mode,
+    std::optional<SkColor> background_color) {}
 
 void DesktopWindowTreeHostPlatform::OnActiveWindowChanged(bool active) {
 #if BUILDFLAG(IS_OZONE)
@@ -891,7 +893,7 @@ gfx::Transform DesktopWindowTreeHostPlatform::GetRootTransform() const {
     root_window = window_parent_->window();
   }
 
-  auto* const screen = display::Screen::GetScreen();
+  auto* const screen = display::Screen::Get();
   const float scale = root_window
                           ? screen
                                 ->GetPreferredScaleFactorForWindow(
@@ -1163,7 +1165,7 @@ display::Display DesktopWindowTreeHostPlatform::GetDisplayNearestRootWindow()
   DCHECK(window());
   DCHECK(window()->IsRootWindow());
   // TODO(sky): GetDisplayNearestWindow() should take a const aura::Window*.
-  return display::Screen::GetScreen()->GetDisplayNearestWindow(
+  return display::Screen::Get()->GetDisplayNearestWindow(
       const_cast<aura::Window*>(window()));
 }
 

@@ -16,6 +16,7 @@
 #include "base/json/json_reader.h"
 #include "base/location.h"
 #include "base/logging.h"  // For CHECK macros.
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
@@ -380,20 +381,10 @@ Status InitSessionHelper(const InitSessionParams& bound_params,
     }
 
     base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-    // Create a target fot BiDi-CDP mapper. It should be either a visible tab
-    // or a hidden target based on the `--debug-bidi-mapper` switch.
-    if (cmd_line->HasSwitch("debug-bidi-mapper")) {
-      // Create a visible tab.
-      status = session->chrome->NewWindow(session->window,
-        Chrome::WindowType::kTab, true,
-        session->w3c_compliant, &session->bidi_mapper_web_view_id);
-
-    } else {
-      // Create a hidden target.
-      status = session->chrome->NewHiddenTarget(
-          session->window, session->w3c_compliant,
-          &session->bidi_mapper_web_view_id);
-    }
+    // Create a hidden target for running  BiDi-CDP mapper in it.
+    status = session->chrome->NewHiddenTarget(
+        session->window, session->w3c_compliant,
+        &session->bidi_mapper_web_view_id);
     if (status.IsError()) {
       return status;
     }
@@ -1757,15 +1748,24 @@ Status ExecuteUpdateVirtualPressureSource(Session* session,
     return Status(kInvalidArgument, "'type' must be a string");
   }
 
-  const std::string* sample = params.FindString("sample");
-  if (!sample) {
+  const std::string* state = params.FindString("sample");
+  if (!state) {
     return Status(kInvalidArgument, "'sample' must be a string");
   }
 
   base::Value::Dict body;
   body.Set("source", *type);
-  body.Set("state", *sample);
-  return web_view->SendCommand("Emulation.setPressureStateOverride", body);
+  body.Set("state", *state);
+
+  std::optional<double> maybe_estimate =
+      params.FindDouble("own_contribution_estimate");
+  if (!maybe_estimate.has_value()) {
+    body.Set("ownContributionEstimate", -1.0);
+  } else {
+    body.Set("ownContributionEstimate", maybe_estimate.value());
+  }
+
+  return web_view->SendCommand("Emulation.setPressureDataOverride", body);
 }
 
 Status ExecuteRemoveVirtualPressureSource(Session* session,
@@ -1787,6 +1787,42 @@ Status ExecuteRemoveVirtualPressureSource(Session* session,
   body.Set("source", *type);
   return web_view->SendCommand("Emulation.setPressureSourceOverrideEnabled",
                                body);
+}
+
+Status ExecuteSetProtectedAudienceKAnonymity(
+    Session* session,
+    const base::Value::Dict& params,
+    std::unique_ptr<base::Value>* value) {
+  WebView* web_view = nullptr;
+  Status status = session->GetTargetWindow(&web_view);
+  if (status.IsError()) {
+    return status;
+  }
+
+  const std::string* owner = params.FindString("owner");
+  if (!owner) {
+    return Status(kInvalidArgument, "missing parameter 'owner'");
+  }
+  const std::string* name = params.FindString("name");
+  if (!name) {
+    return Status(kInvalidArgument, "missing parameter 'name'");
+  }
+  const base::Value::List* hashes = params.FindList("hashes");
+  if (!hashes) {
+    return Status(kInvalidArgument, "missing parameter 'hashes'");
+  }
+  for (const auto& hash : *hashes) {
+    if (!hash.is_string()) {
+      return Status(kInvalidArgument, "hashes should be base64 strings");
+    }
+  }
+
+  base::Value::Dict body;
+  body.Set("owner", *owner);
+  body.Set("name", *name);
+  body.Set("hashes", base::Value(hashes->Clone()));
+
+  return web_view->SendCommand("Storage.setProtectedAudienceKAnonymity", body);
 }
 
 // Run a BiDi command

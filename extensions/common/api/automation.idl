@@ -296,6 +296,7 @@
     menuItem,
     menuItemCheckBox,
     menuItemRadio,
+    menuItemSeparator,
     menuListOption,
     menuListPopup,
     meter,
@@ -384,7 +385,7 @@
     vertical,
     visited,
     hasActions,
-    hasInterestTarget
+    hasInterestFor
   };
 
   // All possible actions that can be performed on automation nodes.
@@ -478,7 +479,7 @@
     caption,
     contents,
     cssAltText,
-    interestTarget,
+    interestFor,
     placeholder,
     popoverTarget,
     prohibited,
@@ -492,7 +493,7 @@
     ariaDescription,
     attributeExplicitlyEmpty,
     buttonLabel,
-    interestTarget,
+    interestFor,
     popoverTarget,
     prohibitedNameRepair,
     relatedElement,

@@ -6,9 +6,8 @@ package org.chromium.chrome.browser.logo;
 
 import android.graphics.Bitmap;
 
-import jp.tomorrowkey.android.gifplayer.BaseGifImage;
-
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.logo.LogoBridge.Logo;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
@@ -17,6 +16,7 @@ import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 
 /** The properties required to build the logo on start surface or ntp. */
+@NullMarked
 interface LogoProperties {
     // TODO(crbug.com/40881870): It doesn't really make sense for those
     //  WritableObjectPropertyKey<Boolean> with skipEquality equals to true property keys;
@@ -41,7 +41,9 @@ interface LogoProperties {
     WritableObjectPropertyKey<Bitmap> DEFAULT_GOOGLE_LOGO = new WritableObjectPropertyKey<>();
     WritableObjectPropertyKey<Boolean> SHOW_LOADING_VIEW =
             new WritableObjectPropertyKey<>(/* skipEquality= */ true);
-    WritableObjectPropertyKey<BaseGifImage> ANIMATED_LOGO = new WritableObjectPropertyKey<>();
+    // TODO(crbug.com/434200490): Replace Object reference with AnimatedImageDrawable when the
+    // refactoring is fully rolled out.
+    WritableObjectPropertyKey<Object> ANIMATED_LOGO = new WritableObjectPropertyKey<>();
     WritableObjectPropertyKey<Callback<Logo>> LOGO_AVAILABLE_CALLBACK =
             new WritableObjectPropertyKey<>();
     WritableIntPropertyKey DOODLE_SIZE = new WritableIntPropertyKey();

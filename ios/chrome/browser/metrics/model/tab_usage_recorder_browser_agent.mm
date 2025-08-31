@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/chrome/browser/metrics/model/tab_usage_recorder_browser_agent.h"
 
 #import <UIKit/UIKit.h>
@@ -9,8 +14,7 @@
 #import "base/metrics/histogram_macros.h"
 #import "components/previous_session_info/previous_session_info.h"
 #import "components/ukm/ios/ukm_url_recorder.h"
-#import "ios/chrome/browser/prerender/model/prerender_service.h"
-#import "ios/chrome/browser/prerender/model/prerender_service_factory.h"
+#import "ios/chrome/browser/prerender/model/prerender_tab_helper.h"
 #import "ios/chrome/browser/sessions/model/session_restoration_service.h"
 #import "ios/chrome/browser/sessions/model/session_restoration_service_factory.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
@@ -24,13 +28,10 @@
 #import "services/metrics/public/cpp/ukm_builders.h"
 #import "ui/base/page_transition_types.h"
 
-BROWSER_USER_DATA_KEY_IMPL(TabUsageRecorderBrowserAgent)
-
 TabUsageRecorderBrowserAgent::TabUsageRecorderBrowserAgent(Browser* browser)
-    : restore_start_time_(base::TimeTicks::Now()),
-      web_state_list_(browser->GetWebStateList()),
-      prerender_service_(
-          PrerenderServiceFactory::GetForProfile(browser->GetProfile())) {
+    : BrowserUserData(browser),
+      restore_start_time_(base::TimeTicks::Now()),
+      web_state_list_(browser->GetWebStateList()) {
   browser->AddObserver(this);
 
   DCHECK(web_state_list_);
@@ -156,8 +157,7 @@ void TabUsageRecorderBrowserAgent::RecordTabSwitched(
 
   // Should never happen.  Keeping the check to ensure that the prerender logic
   // is never overlooked, should behavior at the tab_model level change.
-  DCHECK(!prerender_service_ ||
-         !prerender_service_->IsWebStatePrerendered(new_web_state));
+  DCHECK(!PrerenderTabHelper::FromWebState(new_web_state));
 
   tab_usage_recorder::TabStateWhenSelected web_state_state =
       ExtractWebStateState(new_web_state);

@@ -16,6 +16,8 @@
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/containers/flat_map.h"
+#include "base/functional/callback_helpers.h"
+#include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -102,9 +104,12 @@ class VIZ_HOST_EXPORT HostFrameSinkManager
   // Invalidates `frame_sink_id` when the client is done submitting
   // CompositorFrames. If there is a CompositorFrameSink for `frame_sink_id`
   // then it will be destroyed and the message pipe to the client will be
-  // closed.
+  // closed. `callback` if non-null is called after invalidation is done on
+  // service side, or if there are errors before service side is able to
+  // complete the invalidation. Thus it is safe use `callback` for clean up.
   void InvalidateFrameSinkId(const FrameSinkId& frame_sink_id,
-                             HostFrameSinkClient* client);
+                             HostFrameSinkClient* client,
+                             base::OnceClosure callback);
 
   // |debug_label| is used when printing out the surface hierarchy so we know
   // which clients are contributing which surfaces.
@@ -208,17 +213,18 @@ class VIZ_HOST_EXPORT HostFrameSinkManager
                            std::unique_ptr<CopyOutputRequest> request,
                            bool capture_exact_surface_id = false);
 
-  // Setup the connection between the Browser (at WebContentsImpl level) and the
-  // VizCompositor thread (at InputManager level) to allow transferring
+  // Setup the connection between the Browser (at RenderWidgetHost level) and
+  // the VizCompositor thread (at InputManager level) to allow transferring
   // information from Viz to the Browser and vice versa. Viz can inform Browser
   // about inputs that it process on VizCompositor thread, and Browser can
   // inform Viz about |TouchTransferState| to start processing input events for
   // a sequence.
   void SetupRenderInputRouterDelegateConnection(
-      base::UnguessableToken grouping_id,
-      mojo::PendingRemote<input::mojom::RenderInputRouterDelegateClient>
+      const FrameSinkId& frame_sink_id,
+      mojo::PendingAssociatedRemote<
+          input::mojom::RenderInputRouterDelegateClient>
           rir_delegate_client_remote,
-      mojo::PendingReceiver<input::mojom::RenderInputRouterDelegate>
+      mojo::PendingAssociatedReceiver<input::mojom::RenderInputRouterDelegate>
           rir_delegate_receiver);
 
   // Notifies the VizCompositor thread (at InputManager level) about block state
@@ -294,6 +300,8 @@ class VIZ_HOST_EXPORT HostFrameSinkManager
  private:
   friend class HostFrameSinkManagerTest;
   friend class HostFrameSinkManagerTestApi;
+  FRIEND_TEST_ALL_PREFIXES(HostFrameSinkManagerTest,
+                           InvalidateFrameSinkIdCallbackOnConnectionError);
 
   struct FrameSinkData {
     FrameSinkData();
@@ -353,6 +361,8 @@ class VIZ_HOST_EXPORT HostFrameSinkManager
   // Registers FrameSinkId and FrameSink hierarchy again after connection loss.
   void RegisterAfterConnectionLoss();
 
+  void InvalidateFrameSinkCallback(const FrameSinkId& frame_sink_id);
+
   // mojom::FrameSinkManagerClient:
   void OnFrameTokenChanged(const FrameSinkId& frame_sink_id,
                            uint32_t frame_token,
@@ -371,6 +381,8 @@ class VIZ_HOST_EXPORT HostFrameSinkManager
           destination_token,
       std::unique_ptr<CopyOutputResult> copy_output_result) override;
 
+  mojo::Remote<mojom::RendererInputRouterDelegateRegistry>
+      rir_delegate_registry_;
   // Connections to/from FrameSinkManagerImpl.
   mojo::Remote<mojom::FrameSinkManager> frame_sink_manager_remote_;
   // This will point to |frame_sink_manager_remote_| if using mojo or it may
@@ -385,6 +397,9 @@ class VIZ_HOST_EXPORT HostFrameSinkManager
   // Per CompositorFrameSink data.
   std::unordered_map<FrameSinkId, FrameSinkData, FrameSinkIdHash>
       frame_sink_data_map_;
+
+  base::flat_map<FrameSinkId, base::ScopedClosureRunner>
+      frame_sink_invalidate_callbacks_;
 
   // If |frame_sink_manager_remote_| connection was lost.
   bool connection_was_lost_ = false;

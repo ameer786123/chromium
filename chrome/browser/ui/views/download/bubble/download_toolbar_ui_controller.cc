@@ -60,16 +60,13 @@
 #include "ui/gfx/render_text.h"
 #include "ui/gfx/text_constants.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/progress_ring_utils.h"
 #include "ui/views/event_monitor.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
-
-#if BUILDFLAG(IS_CHROMEOS)
-#include "chromeos/components/kiosk/kiosk_utils.h"
-#endif
 
 #if BUILDFLAG(IS_MAC)
 #include "chrome/browser/ui/fullscreen_util_mac.h"
@@ -98,16 +95,6 @@ PinnedToolbarActionsContainer* GetPinnedToolbarActionsContainer(
 ToolbarButton* GetDownloadsButton(BrowserView* browser_view) {
   auto* container = GetPinnedToolbarActionsContainer(browser_view);
   return container ? container->GetButtonFor(kActionShowDownloads) : nullptr;
-}
-
-SkColor GetIconColor(bool is_dormant,
-                     DownloadDisplay::IconActive active,
-                     const ui::ColorProvider* color_provider) {
-  ui::ColorId color_id = kColorDownloadToolbarButtonActive;
-  if (is_dormant || active != DownloadDisplay::IconActive::kActive) {
-    color_id = kColorDownloadToolbarButtonInactive;
-  }
-  return color_provider->GetColor(color_id);
 }
 
 class DownloadProgressRing : public views::View, gfx::AnimationDelegate {
@@ -335,17 +322,19 @@ class DownloadsImageBadge : public views::ImageView {
                    int progress_download_count,
                    SkColor badge_text_color,
                    SkColor badge_background_color) {
-    // Only display the badge if there are multiple downloads.
-    if (!is_active || progress_download_count < 2) {
+    const int badge_size = std::min(bounds().height(), bounds().width());
+    // Only display the badge if there are multiple downloads, or this image
+    // view is visible. Use 2dp to make sure that the image has size even with
+    // scale factor < 1.0. (this can happen on CrOS).
+    if (!is_active || progress_download_count < 2 || badge_size < 2) {
       SetImage(ui::ImageModel());
       return;
     }
-    const int badge_height = bounds().height();
     // base::Unretained is safe because this owns the ImageView to which the
     // image source is applied.
     SetImage(ui::ImageModel::FromImageSkia(
         gfx::CanvasImageSource::MakeImageSkia<CircleBadgeImageSource>(
-            gfx::Size(badge_height, badge_height), badge_background_color,
+            gfx::Size(badge_size, badge_size), badge_background_color,
             base::BindRepeating(&DownloadsImageBadge::GetBadgeText,
                                 base::Unretained(this), progress_download_count,
                                 badge_text_color))));
@@ -445,23 +434,19 @@ DownloadToolbarUIController::DownloadToolbarUIController(
           base::BindRepeating(
               &DownloadToolbarUIController::AutoClosePartialView,
               base::Unretained(this))) {
-  action_item_ =
-      actions::ActionManager::Get()
-          .FindAction(
-              kActionShowDownloads,
-              browser_view_->browser()->browser_actions()->root_action_item())
-          ->GetAsWeakPtr();
+  Browser* const browser = browser_view_->browser();
+  action_item_ = actions::ActionManager::Get().FindAction(
+      kActionShowDownloads, browser->browser_actions()->root_action_item());
+  CHECK(action_item_);
   tooltip_texts_[0] = l10n_util::GetStringUTF16(IDS_TOOLTIP_DOWNLOAD_ICON);
   action_item_->SetTooltipText(tooltip_texts_.at(0));
 
-  bubble_controller_ =
-      std::make_unique<DownloadBubbleUIController>(browser_view_->browser());
+  bubble_controller_ = std::make_unique<DownloadBubbleUIController>(browser);
 
-  BrowserList::GetInstance()->AddObserver(this);
+  browser_list_observation_.Observe(BrowserList::GetInstance());
 }
 
 DownloadToolbarUIController::~DownloadToolbarUIController() {
-  BrowserList::GetInstance()->RemoveObserver(this);
   controller_.reset();
   bubble_controller_.reset();
 }
@@ -471,6 +456,13 @@ void DownloadToolbarUIController::Init() {
   // separately at a point where the PinnedToolbarActionsContainer will exist.
   controller_ = std::make_unique<DownloadDisplayController>(
       this, browser_view_->browser(), bubble_controller_.get());
+}
+
+void DownloadToolbarUIController::TearDownPreBrowserWindowDestruction() {
+  immersive_revealed_lock_.reset();
+  // DownloadDisplayController depends on BrowserView.
+  controller_.reset();
+  browser_view_ = nullptr;
 }
 
 void DownloadToolbarUIController::Show() {
@@ -496,15 +488,11 @@ bool DownloadToolbarUIController::IsShowing() const {
 }
 
 void DownloadToolbarUIController::Enable() {
-  if (action_item_.get()) {
-    action_item_->SetEnabled(true);
-  }
+  action_item_->SetEnabled(true);
 }
 
 void DownloadToolbarUIController::Disable() {
-  if (action_item_.get()) {
-    action_item_->SetEnabled(false);
-  }
+  action_item_->SetEnabled(false);
 }
 
 void DownloadToolbarUIController::UpdateDownloadIcon(
@@ -604,11 +592,6 @@ bool DownloadToolbarUIController::ShouldShowExclusiveAccessBubble() const {
     return true;
   }
 #endif
-#if BUILDFLAG(IS_CHROMEOS)
-  if (chromeos::IsKioskSession()) {
-    return false;
-  }
-#endif
   return !browser_view_->IsImmersiveModeEnabled() &&
          browser_view_->CanUserExitFullscreen();
 }
@@ -644,10 +627,6 @@ bool DownloadToolbarUIController::IsShowingDetails() const {
 }
 
 void DownloadToolbarUIController::UpdateIcon() {
-  if (!action_item_.get()) {
-    return;
-  }
-
   auto* button = GetDownloadsButton(browser_view_);
   if (!button) {
     return;
@@ -671,8 +650,12 @@ void DownloadToolbarUIController::UpdateIcon() {
       button->GetColorProvider()->GetColor(kColorToolbar);
 
   const gfx::VectorIcon* new_icon;
-  SkColor icon_color =
-      GetIconColor(is_dormant_, active_, browser_view_->GetColorProvider());
+  // An active icon is indicated by the color and the presence of an underline
+  // under the icon button.
+  bool is_icon_active = !is_dormant_ && is_active;
+  SkColor icon_color = browser_view_->GetColorProvider()->GetColor(
+      is_icon_active ? kColorDownloadToolbarButtonActive
+                     : kColorDownloadToolbarButtonInactive);
   bool is_touch_mode = ui::TouchUiController::Get()->touch_ui();
   if (state_ == IconState::kProgress || state_ == IconState::kDeepScanning) {
     new_icon = is_touch_mode ? &kDownloadInProgressTouchIcon
@@ -681,8 +664,7 @@ void DownloadToolbarUIController::UpdateIcon() {
     new_icon = is_touch_mode ? &kDownloadToolbarButtonTouchIcon
                              : &kDownloadToolbarButtonChromeRefreshIcon;
   }
-  action_item_->SetProperty(kActionItemUnderlineIndicatorKey,
-                            (!is_dormant_ && (active_ == IconActive::kActive)));
+  action_item_->SetProperty(kActionItemUnderlineIndicatorKey, is_icon_active);
 
   action_item_->SetImage(ui::ImageModel::FromVectorIcon(*new_icon, icon_color));
 
@@ -696,7 +678,16 @@ void DownloadToolbarUIController::UpdateIcon() {
     tooltip_for_progress_count = l10n_util::GetPluralStringFUTF16(
         IDS_DOWNLOAD_BUBBLE_TOOLTIP_IN_PROGRESS_COUNT, progress_download_count);
   }
-  action_item_->SetTooltipText(tooltip_texts_.at(progress_download_count));
+  if (progress_download_count == 0 && is_icon_active) {
+    // If there are 0 in-progress downloads but the icon is still active, use
+    // the tooltip text to indicate to a11y users (along with the visual
+    // indications of the icon color and underline) that there is a new
+    // "unactioned" complete download.
+    action_item_->SetTooltipText(
+        l10n_util::GetStringUTF16(IDS_TOOLTIP_DOWNLOAD_ICON_NEW_DOWNLOAD));
+  } else {
+    action_item_->SetTooltipText(tooltip_for_progress_count);
+  }
 
   redraw_progress_soon_ = false;
 
@@ -790,8 +781,8 @@ DownloadToolbarUIController::GetWeakPtr() {
 // browser becomes active, so that clicking outside the bubble will deactivate
 // and close it.
 void DownloadToolbarUIController::OnBrowserSetLastActive(Browser* browser) {
-  if (browser == browser_view_->browser() && bubble_delegate_ &&
-      !bubble_delegate_->GetWidget()->IsClosed()) {
+  if (browser_view_ && browser == browser_view_->browser() &&
+      bubble_delegate_ && !bubble_delegate_->GetWidget()->IsClosed()) {
     // We need to defer activating the download bubble when the browser window
     // is being activated, otherwise this is ineffective on macOS.
     content::GetUIThreadTaskRunner()->PostTask(
@@ -982,9 +973,8 @@ void DownloadToolbarUIController::CreateBubbleDialogDelegate() {
   } else {
     bubble_delegate_->GetWidget()->Show();
   }
-  if (action_item_.get()) {
-    action_item_->SetIsShowingBubble(true);
-  }
+
+  action_item_->SetIsShowingBubble(true);
 
   // For IPH bubble. The IPH should show when the partial view is closed, either
   // manually or automatically.
@@ -1003,10 +993,7 @@ void DownloadToolbarUIController::OnBubbleClosing() {
   bubble_contents_ = nullptr;
   bubble_closer_.reset();
   UpdateIconDormant();
-
-  if (action_item_.get()) {
-    action_item_->SetIsShowingBubble(false);
-  }
+  action_item_->SetIsShowingBubble(false);
 }
 
 void DownloadToolbarUIController::OnPartialViewClosed() {
@@ -1034,8 +1021,9 @@ void DownloadToolbarUIController::ShowIphPromo() {
   if (safe_browsing::GetSafeBrowsingState(*profile->GetPrefs()) ==
           safe_browsing::SafeBrowsingState::STANDARD_PROTECTION &&
       !profile->IsOffTheRecord()) {
-    browser_view_->MaybeShowFeaturePromo(
-        feature_engagement::kIPHDownloadEsbPromoFeature);
+    BrowserUserEducationInterface::From(browser_view_->browser())
+        ->MaybeShowFeaturePromo(
+            feature_engagement::kIPHDownloadEsbPromoFeature);
   }
 #endif
 }
@@ -1109,6 +1097,11 @@ bool DownloadToolbarUIController::ShouldShowScanningAnimation() const {
 }
 
 void DownloadToolbarUIController::UpdateIconDormant() {
+  // Ensure no updates are attempted once BrowserView destruction has started.
+  if (!browser_view_) {
+    return;
+  }
+
   // Check if the current browser is the last active browser in this profile.
   // TODO(crbug.com/323962334): This should also check whether the bubble is
   // open once the bubble is added.

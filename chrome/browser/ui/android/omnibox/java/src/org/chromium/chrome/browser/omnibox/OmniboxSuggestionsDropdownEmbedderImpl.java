@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.omnibox;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+
 import android.content.ComponentCallbacks;
 import android.content.Context;
 import android.content.res.Configuration;
@@ -12,15 +14,15 @@ import android.view.View.OnLayoutChangeListener;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
 import android.view.WindowInsets;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.core.graphics.Insets;
 import androidx.core.view.WindowInsetsCompat;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
 import org.chromium.chrome.browser.omnibox.styles.OmniboxResourceProvider;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsDropdownEmbedder;
 import org.chromium.ui.base.DeviceFormFactor;
@@ -28,32 +30,36 @@ import org.chromium.ui.base.ViewUtils;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.display.DisplayUtil;
 
+import java.util.function.Supplier;
+
 /**
  * Implementation of {@link OmniboxSuggestionsDropdownEmbedder} that positions it using an "anchor"
  * and "horizontal alignment" view.
  */
+@NullMarked
 class OmniboxSuggestionsDropdownEmbedderImpl
         implements OmniboxSuggestionsDropdownEmbedder,
                 OnLayoutChangeListener,
                 OnGlobalLayoutListener,
                 ComponentCallbacks {
     private final ObservableSupplierImpl<OmniboxAlignment> mOmniboxAlignmentSupplier =
-            new ObservableSupplierImpl<>();
-    private final @NonNull WindowAndroid mWindowAndroid;
-    private final @NonNull View mAnchorView;
-    private final @NonNull View mAlignmentView;
+            new ObservableSupplierImpl<>(OmniboxAlignment.UNSPECIFIED);
+    private final WindowAndroid mWindowAndroid;
+    private final View mAnchorView;
+    private final View mAlignmentView;
     private final boolean mForcePhoneStyleOmnibox;
+    private final Supplier<@ControlsPosition Integer> mControlsPositionSupplier;
     private final Supplier<Integer> mKeyboardHeightSupplier;
     private final Supplier<Integer> mBottomWindowPaddingSupplier;
-    private final @NonNull Context mContext;
+    private final Context mContext;
     // Reusable int array to pass to positioning methods that operate on a two element int array.
     // Keeping it as a member lets us avoid allocating a temp array every time.
     private final int[] mPositionArray = new int[2];
     private int mVerticalOffsetInWindow;
     private int mWindowWidthDp;
     private int mWindowHeightDp;
-    private WindowInsetsCompat mWindowInsetsCompat;
-    private @Nullable View mBaseChromeLayout;
+    private @Nullable WindowInsetsCompat mWindowInsetsCompat;
+    private final @Nullable View mBaseChromeLayout;
 
     /**
      * @param windowAndroid Window object in which the dropdown will be displayed.
@@ -76,17 +82,19 @@ class OmniboxSuggestionsDropdownEmbedderImpl
      *     soft keyboard is not visible.
      */
     OmniboxSuggestionsDropdownEmbedderImpl(
-            @NonNull WindowAndroid windowAndroid,
-            @NonNull View anchorView,
-            @NonNull View alignmentView,
+            WindowAndroid windowAndroid,
+            View anchorView,
+            View alignmentView,
             boolean forcePhoneStyleOmnibox,
             @Nullable View baseChromeLayout,
+            Supplier<@ControlsPosition Integer> controlsPositionSupplier,
             Supplier<Integer> keyboardHeightSupplier,
             Supplier<Integer> bottomWindowPaddingSupplier) {
         mWindowAndroid = windowAndroid;
         mAnchorView = anchorView;
         mAlignmentView = alignmentView;
         mForcePhoneStyleOmnibox = forcePhoneStyleOmnibox;
+        mControlsPositionSupplier = controlsPositionSupplier;
         mKeyboardHeightSupplier = keyboardHeightSupplier;
         mBottomWindowPaddingSupplier = bottomWindowPaddingSupplier;
         mContext = mAnchorView.getContext();
@@ -100,7 +108,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
 
     @Override
     public OmniboxAlignment addAlignmentObserver(Callback<OmniboxAlignment> obs) {
-        return mOmniboxAlignmentSupplier.addObserver(obs);
+        return assertNonNull(mOmniboxAlignmentSupplier.addObserver(obs));
     }
 
     @Override
@@ -108,10 +116,9 @@ class OmniboxSuggestionsDropdownEmbedderImpl
         mOmniboxAlignmentSupplier.removeObserver(obs);
     }
 
-    @Nullable
     @Override
     public OmniboxAlignment getCurrentAlignment() {
-        return mOmniboxAlignmentSupplier.get();
+        return assertNonNull(mOmniboxAlignmentSupplier.get());
     }
 
     @Override
@@ -162,7 +169,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
 
     // ComponentCallbacks
     @Override
-    public void onConfigurationChanged(@NonNull Configuration newConfig) {
+    public void onConfigurationChanged(Configuration newConfig) {
         int windowWidth = newConfig.screenWidthDp;
         int windowHeight = newConfig.screenHeightDp;
         if (windowWidth == mWindowWidthDp && mWindowHeightDp == windowHeight) return;
@@ -216,12 +223,20 @@ class OmniboxSuggestionsDropdownEmbedderImpl
             contentView = mAnchorView.getRootView().findViewById(android.R.id.content);
         }
 
-        ViewUtils.getRelativeLayoutPosition(contentView, mAnchorView, mPositionArray);
-        int top = mPositionArray[1] + mAnchorView.getMeasuredHeight() - contentView.getPaddingTop();
+        int top;
         int left;
         int width;
         int paddingLeft;
         int paddingRight;
+
+        @ControlsPosition int controlsPosition = mControlsPositionSupplier.get();
+        if (controlsPosition == ControlsPosition.BOTTOM) {
+            top = 0;
+        } else {
+            ViewUtils.getRelativeLayoutPosition(contentView, mAnchorView, mPositionArray);
+            top = mPositionArray[1] + mAnchorView.getMeasuredHeight() - contentView.getPaddingTop();
+        }
+
         if (isTablet()) {
             ViewUtils.getRelativeLayoutPosition(mAnchorView, mAlignmentView, mPositionArray);
             // Width equal to alignment view and left equivalent to left of alignment view. Top
@@ -252,7 +267,7 @@ class OmniboxSuggestionsDropdownEmbedderImpl
         int keyboardHeight = mKeyboardHeightSupplier.get();
 
         int windowHeight;
-        if (BuildInfo.getInstance().isAutomotive
+        if (DeviceInfo.isAutomotive()
                 && contentView != null
                 && contentView.getRootWindowInsets() != null) {
             // Some automotive devices dismiss bottom system bars when bringing up the keyboard,
@@ -289,7 +304,12 @@ class OmniboxSuggestionsDropdownEmbedderImpl
                 contentView == null
                         ? Integer.MAX_VALUE
                         : contentView.getMeasuredHeight() - keyboardHeight;
-        int height = Math.min(windowSpace, contentSpace) - top;
+        int height;
+        if (controlsPosition == ControlsPosition.BOTTOM) {
+            height = Math.min(windowSpace, contentSpace) - mAnchorView.getMeasuredHeight();
+        } else {
+            height = Math.min(windowSpace, contentSpace) - top;
+        }
 
         // TODO(pnoland@, https://crbug.com/1416985): avoid pushing changes that are identical to
         // the previous alignment value.

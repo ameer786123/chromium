@@ -13,7 +13,6 @@
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/not_fatal_until.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_file_util.h"
@@ -58,17 +57,6 @@ std::unique_ptr<Profile> BuildTestingProfile(
 TestingProfileManager::TestingProfileManager(TestingBrowserProcess* process)
     : called_set_up_(false),
       browser_process_(process),
-      owned_local_state_(std::make_unique<ScopedTestingLocalState>(process)),
-      profile_manager_(nullptr) {
-  local_state_ = owned_local_state_.get();
-}
-
-TestingProfileManager::TestingProfileManager(
-    TestingBrowserProcess* process,
-    ScopedTestingLocalState* local_state)
-    : called_set_up_(false),
-      browser_process_(process),
-      local_state_(local_state),
       profile_manager_(nullptr) {}
 
 TestingProfileManager::~TestingProfileManager() {
@@ -76,7 +64,6 @@ TestingProfileManager::~TestingProfileManager() {
 
   // Drop unowned references before destroying the object that owns them.
   profile_manager_ = nullptr;
-  local_state_ = nullptr;
 
   // Destroying this class also destroys the LocalState, so make sure the
   // associated ProfileManager is also destroyed.
@@ -257,7 +244,7 @@ void TestingProfileManager::DeleteGuestProfile() {
   DCHECK(called_set_up_);
 
   auto it = testing_profiles_.find(kGuestProfileName);
-  CHECK(it != testing_profiles_.end(), base::NotFatalUntil::M130);
+  CHECK(it != testing_profiles_.end());
 
   profile_manager_->profiles_info_.erase(ProfileManager::GetGuestProfilePath());
 }
@@ -267,7 +254,7 @@ void TestingProfileManager::DeleteSystemProfile() {
   DCHECK(called_set_up_);
 
   auto it = testing_profiles_.find(kSystemProfileName);
-  CHECK(it != testing_profiles_.end(), base::NotFatalUntil::M130);
+  CHECK(it != testing_profiles_.end());
 
   profile_manager_->profiles_info_.erase(
       ProfileManager::GetSystemProfilePath());

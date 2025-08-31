@@ -11,7 +11,7 @@
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/url_formatter/elide_url.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
-#include "content/public/browser/identity_request_dialog_controller.h"
+#include "content/public/browser/webid/identity_request_dialog_controller.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/label.h"
@@ -92,7 +92,7 @@ void FedCmModalDialogView::ClosePopupWindow() {
   }
 
   std::string histogram_name =
-      active_mode_sheet_type_ == AccountSelectionView::LOADING
+      active_mode_sheet_type_ == webid::SheetType::kLoading
           ? "Blink.FedCm.Button.LoadingStatePopupInteraction"
           : "Blink.FedCm.Button.UseOtherAccountPopupInteraction";
   PopupInteraction metric =
@@ -130,7 +130,7 @@ void FedCmModalDialogView::ResizeAndFocusPopupWindow() {
 
 void FedCmModalDialogView::WebContentsDestroyed() {
   std::string histogram_name =
-      active_mode_sheet_type_ == AccountSelectionView::LOADING
+      active_mode_sheet_type_ == webid::SheetType::kLoading
           ? "Blink.FedCm.Button.LoadingStatePopupInteraction"
           : "Blink.FedCm.Button.UseOtherAccountPopupInteraction";
   // Closing the window causes the focus to be lost so `num_lost_focus_` is at
@@ -163,8 +163,7 @@ void FedCmModalDialogView::SetCustomYPosition(int y) {
   custom_y_position_ = y;
 }
 
-void FedCmModalDialogView::SetActiveModeSheetType(
-    AccountSelectionView::SheetType sheet_type) {
+void FedCmModalDialogView::SetActiveModeSheetType(webid::SheetType sheet_type) {
   active_mode_sheet_type_ = sheet_type;
 }
 

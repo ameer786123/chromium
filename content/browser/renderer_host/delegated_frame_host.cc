@@ -10,6 +10,7 @@
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
+#include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -68,7 +69,7 @@ DelegatedFrameHost::~DelegatedFrameHost() {
 
   CHECK(host_frame_sink_manager_);
   if (owns_frame_sink_id_) {
-    host_frame_sink_manager_->InvalidateFrameSinkId(frame_sink_id_, this);
+    host_frame_sink_manager_->InvalidateFrameSinkId(frame_sink_id_, this, {});
   }
 }
 
@@ -178,7 +179,7 @@ void DelegatedFrameHost::CopyFromCompositingSurfaceAsTexture(
   CopyFromCompositingSurfaceInternal(
       src_subrect, output_size, surface_id,
       viz::CopyOutputRequest::ResultFormat::RGBA,
-      viz::CopyOutputRequest::ResultDestination::kNativeTextures,
+      viz::CopyOutputRequest::ResultDestination::kSharedImage,
       std::move(callback));
 }
 
@@ -351,8 +352,11 @@ void DelegatedFrameHost::EmbedSurface(
     client_->DelegatedFrameHostGetLayer()->SetShowSurface(
         new_primary_surface_id, current_frame_size_in_dip_, GetGutterColor(),
         deadline_policy, false /* stretch_content_to_fill_bounds */);
-    if (compositor_)
+#if BUILDFLAG(IS_CHROMEOS)
+    if (compositor_) {
       compositor_->OnChildResizing();
+    }
+#endif  // BUILDFLAG(IS_CHROMEOS)
   }
 }
 
@@ -365,7 +369,13 @@ SkColor DelegatedFrameHost::GetGutterColor() const {
 
 void DelegatedFrameHost::OnFirstSurfaceActivation(
     const viz::SurfaceInfo& surface_info) {
+#if BUILDFLAG(IS_CHROMEOS)
+  if (compositor_) {
+    compositor_->OnChildResizeActivated();
+  }
+#else
   NOTREACHED();
+#endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
 void DelegatedFrameHost::OnFrameTokenChanged(uint32_t frame_token,
@@ -476,7 +486,7 @@ void DelegatedFrameHost::DidCopyStaleContent(
 
   CHECK_EQ(result->format(), viz::CopyOutputResult::Format::RGBA);
   CHECK_EQ(result->destination(),
-           viz::CopyOutputResult::Destination::kNativeTextures);
+           viz::CopyOutputResult::Destination::kSharedImage);
 
 // TODO(crbug.com/1227661): Revert https://crrev.com/c/3222541 to re-enable this
 // CHECK on CrOS.
@@ -487,13 +497,12 @@ void DelegatedFrameHost::DidCopyStaleContent(
   ContinueDelegatedFrameEviction(
       frame_evictor_->CollectSurfaceIdsForEviction());
 
-  auto transfer_resource = viz::TransferableResource::MakeGpu(
-      result->GetTextureResult()->mailbox, GL_TEXTURE_2D, gpu::SyncToken(),
-      result->size(), viz::SinglePlaneFormat::kRGBA_8888,
-      false /* is_overlay_candidate */,
-      viz::TransferableResource::ResourceSource::kStaleContent);
+  auto transfer_resource = viz::TransferableResource::Make(
+      result->GetSharedImage(),
+      viz::TransferableResource::ResourceSource::kStaleContent,
+      gpu::SyncToken(), /*override=*/{.color_space = gfx::ColorSpace()});
   viz::CopyOutputResult::ReleaseCallbacks release_callbacks =
-      result->TakeTextureOwnership();
+      result->TakeSharedImageOwnership();
   CHECK_EQ(1u, release_callbacks.size());
 
   if (stale_content_layer_->parent() != client_->DelegatedFrameHostGetLayer())
@@ -710,7 +719,13 @@ void DelegatedFrameHost::SetIsFrameSinkIdOwner(bool is_owner) {
   owns_frame_sink_id_ = is_owner;
   if (owns_frame_sink_id_) {
     host_frame_sink_manager_->RegisterFrameSinkId(
-        frame_sink_id_, this, viz::ReportFirstSurfaceActivation::kNo);
+        frame_sink_id_, this,
+#if BUILDFLAG(IS_CHROMEOS)
+        viz::ReportFirstSurfaceActivation::kYes
+#else
+        viz::ReportFirstSurfaceActivation::kNo
+#endif  // BUILDFLAG(IS_CHROMEOS)
+    );
     host_frame_sink_manager_->SetFrameSinkDebugLabel(frame_sink_id_,
                                                      "DelegatedFrameHost");
   }

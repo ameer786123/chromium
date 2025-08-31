@@ -131,7 +131,6 @@ class CORE_EXPORT InspectorCSSAgent final
   // the rule list, and the CSSFunctionRules that resulted from looking up
   // those function references.
   static void CollectReferencedFunctionRules(
-      Document&,
       const HeapHashSet<Member<CSSStyleSheet>>& document_style_sheets,
       const RuleIndexList&,
       HeapHashMap<Member<const ScopedCSSName>, Member<CSSFunctionRule>>&
@@ -198,14 +197,19 @@ class CORE_EXPORT InspectorCSSAgent final
       std::optional<int>* parent_layout_node_id,
       std::unique_ptr<protocol::Array<protocol::CSS::CSSFunctionRule>>*)
       override;
+  protocol::Response getEnvironmentVariables(
+      std::unique_ptr<protocol::DictionaryValue>* environment_variables)
+      override;
   protocol::Response getInlineStylesForNode(
       int node_id,
       std::unique_ptr<protocol::CSS::CSSStyle>* inline_style,
       std::unique_ptr<protocol::CSS::CSSStyle>* attributes_style) override;
   protocol::Response getComputedStyleForNode(
       int node_id,
-      std::unique_ptr<
-          protocol::Array<protocol::CSS::CSSComputedStyleProperty>>*) override;
+      std::unique_ptr<protocol::Array<protocol::CSS::CSSComputedStyleProperty>>*
+          style,
+      std::unique_ptr<protocol::CSS::ComputedStyleExtraFields>* extra_fields)
+      override;
   protocol::Response resolveValues(
       std::unique_ptr<protocol::Array<String>> values,
       int node_id,
@@ -402,7 +406,7 @@ class CORE_EXPORT InspectorCSSAgent final
   std::unique_ptr<protocol::CSS::CSSFontPaletteValuesRule> FontPalettesForNode(
       Element& element);
 
-  // If the |animating_element| is a pseudo element, then |element| is a
+  // If the |animating_element| is a pseudo-element, then |element| is a
   // reference to its originating DOM element.
   std::unique_ptr<protocol::Array<protocol::CSS::CSSKeyframesRule>>
   AnimationsForNode(Element* element, Element* animating_element);

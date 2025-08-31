@@ -14,6 +14,7 @@ import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Build.VERSION_CODES;
+import android.os.Process;
 
 import androidx.annotation.GuardedBy;
 
@@ -24,6 +25,7 @@ import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.build.BuildConfig;
+import org.chromium.build.NativeLibraries;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 
@@ -34,27 +36,10 @@ public final class DeviceInfo {
     private static final String TAG = "DeviceInfo";
 
     private static @Nullable String sGmsVersionCodeForTesting;
+    private static @Nullable Boolean sIsAutomotiveForTesting;
     private static boolean sInitialized;
-
-    /** The versionCode of Play Services. Can be overridden in tests. */
-    private String mGmsVersionCode;
-
-    /** Whether we're running on Android TV or not */
-    private final boolean mIsTv;
-
-    /** Whether we're running on an Android Automotive OS device or not. */
-    private final boolean mIsAutomotive;
-
-    /** Whether we're running on an Android Foldable OS device or not. */
-    private final boolean mIsFoldable;
-
-    /** Whether we're running on an Android Desktop OS device or not. */
-    private final boolean mIsDesktop;
-
-    /**
-     * version of the FEATURE_VULKAN_DEQP_LEVEL, if available. Queried only on Android T or above
-     */
-    private final int mVulkanDeqpLevel;
+    private static boolean sIsXrForTesting;
+    private final IDeviceInfo mIDeviceInfo;
 
     @GuardedBy("CREATION_LOCK")
     private static @Nullable DeviceInfo sInstance;
@@ -68,54 +53,82 @@ public final class DeviceInfo {
     // function.
     @CalledByNative
     private static void nativeReadyForFields() {
+        sendToNative(getInstance().mIDeviceInfo);
+    }
+
+    public static void sendToNative(IDeviceInfo info) {
         DeviceInfoJni.get()
                 .fillFields(
-                        /* gmsVersionCode= */ getGmsVersionCode(),
-                        /* isTV= */ isTV(),
-                        /* isAutomotive= */ isAutomotive(),
-                        /* isFoldable= */ isFoldable(),
-                        /* isDesktop= */ isDesktop(),
-                        /* vulkanDeqpLevel= */ getVulkanDeqpLevel());
+                        /* gmsVersionCode= */ info.gmsVersionCode,
+                        /* isTV= */ info.isTv,
+                        /* isAutomotive= */ info.isAutomotive,
+                        /* isFoldable= */ info.isFoldable,
+                        /* isDesktop= */ info.isDesktop,
+                        /* vulkanDeqpLevel= */ info.vulkanDeqpLevel,
+                        /* isXr= */ sIsXrForTesting ? true : info.isXr);
+    }
+
+    public static IDeviceInfo getAidlInfo() {
+        return getInstance().mIDeviceInfo;
     }
 
     public static String getGmsVersionCode() {
-        return sGmsVersionCodeForTesting == null
-                ? getInstance().mGmsVersionCode
-                : sGmsVersionCodeForTesting;
+        return getInstance().mIDeviceInfo.gmsVersionCode;
     }
 
     @CalledByNativeForTesting
     public static void setGmsVersionCodeForTest(@JniType("std::string") String gmsVersionCode) {
         sGmsVersionCodeForTesting = gmsVersionCode;
+        // Every time we call getInstance in a test we reconstruct the mIDeviceInfo object, so we
+        // don't need to set mIDeviceInfo's copy here as it'll just get reconstructed.
         ResettersForTesting.register(() -> sGmsVersionCodeForTesting = null);
     }
 
+    public static void setIsAutomotiveForTesting(boolean isAutomotive) {
+        sIsAutomotiveForTesting = isAutomotive;
+        ResettersForTesting.register(() -> sIsAutomotiveForTesting = null);
+    }
+
     public static boolean isTV() {
-        return getInstance().mIsTv;
+        return getInstance().mIDeviceInfo.isTv;
     }
 
     public static boolean isAutomotive() {
-        return getInstance().mIsAutomotive;
+        return getInstance().mIDeviceInfo.isAutomotive;
     }
 
     public static boolean isFoldable() {
-        return getInstance().mIsFoldable;
+        return getInstance().mIDeviceInfo.isFoldable;
     }
 
     public static boolean isDesktop() {
-        return getInstance().mIsDesktop;
+        return getInstance().mIDeviceInfo.isDesktop;
     }
 
     public static int getVulkanDeqpLevel() {
-        return getInstance().mVulkanDeqpLevel;
+        return getInstance().mIDeviceInfo.vulkanDeqpLevel;
+    }
+
+    public static boolean isXr() {
+        return getInstance().mIDeviceInfo.isXr;
     }
 
     public static boolean isInitializedForTesting() {
         return sInitialized;
     }
 
+    @CalledByNativeForTesting
+    public static void setIsXrForTesting() {
+        sIsXrForTesting = true;
+    }
+
+    @CalledByNativeForTesting
+    public static void resetIsXrForTesting() {
+        sIsXrForTesting = false;
+    }
+
     private static DeviceInfo getInstance() {
-        // Some tests mock out things BuildInfo is based on, so disable caching in tests to ensure
+        // Some tests mock out things DeviceInfo is based on, so disable caching in tests to ensure
         // such mocking is not defeated by caching.
         if (BuildConfig.IS_FOR_TEST) {
             return new DeviceInfo();
@@ -141,19 +154,37 @@ public final class DeviceInfo {
         }
     }
 
+    /**
+     * @return CPU architecture name, see "arch:" in:
+     *     https://chromium.googlesource.com/chromium/src.git/+/master/docs/updater/protocol_3_1.md
+     */
+    public static String getArch() {
+        boolean is64Bit = Process.is64Bit();
+        if (NativeLibraries.sCpuFamily == NativeLibraries.CPU_FAMILY_ARM) {
+            return is64Bit ? "arm64" : "arm";
+        } else if (NativeLibraries.sCpuFamily == NativeLibraries.CPU_FAMILY_X86) {
+            return is64Bit ? "x86_64" : "x86";
+        }
+        return "";
+    }
+
     private DeviceInfo() {
+        mIDeviceInfo = new IDeviceInfo();
         sInitialized = true;
         PackageInfo gmsPackageInfo = PackageUtils.getPackageInfo("com.google.android.gms", 0);
-        mGmsVersionCode =
+        mIDeviceInfo.gmsVersionCode =
                 gmsPackageInfo != null
                         ? String.valueOf(packageVersionCode(gmsPackageInfo))
                         : "gms versionCode not available.";
+        if (sGmsVersionCodeForTesting != null) {
+            mIDeviceInfo.gmsVersionCode = sGmsVersionCodeForTesting;
+        }
 
         Context appContext = ContextUtils.getApplicationContext();
         PackageManager pm = appContext.getPackageManager();
         // See https://developer.android.com/training/tv/start/hardware.html#runtime-check.
         UiModeManager uiModeManager = (UiModeManager) appContext.getSystemService(UI_MODE_SERVICE);
-        mIsTv =
+        mIDeviceInfo.isTv =
                 uiModeManager != null
                         && uiModeManager.getCurrentModeType()
                                 == Configuration.UI_MODE_TYPE_TELEVISION;
@@ -169,14 +200,21 @@ public final class DeviceInfo {
             // should not have such a modification.
             isAutomotive = false;
         }
-        mIsAutomotive = isAutomotive;
+        mIDeviceInfo.isAutomotive = isAutomotive;
+
+        if (sIsAutomotiveForTesting != null) {
+            mIDeviceInfo.isAutomotive = sIsAutomotiveForTesting;
+        }
+
+        mIDeviceInfo.isDesktop =
+                (BuildConfig.IS_DESKTOP_ANDROID && pm.hasSystemFeature(PackageManager.FEATURE_PC))
+                        || CommandLine.getInstance().hasSwitch(BaseSwitches.FORCE_DESKTOP_ANDROID);
 
         // Detect whether device is foldable.
-        mIsFoldable =
-                Build.VERSION.SDK_INT >= VERSION_CODES.R
+        mIDeviceInfo.isFoldable =
+                !mIDeviceInfo.isDesktop
+                        && Build.VERSION.SDK_INT >= VERSION_CODES.R
                         && pm.hasSystemFeature(PackageManager.FEATURE_SENSOR_HINGE_ANGLE);
-
-        mIsDesktop = pm.hasSystemFeature(PackageManager.FEATURE_PC);
 
         int vulkanLevel = 0;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -190,17 +228,20 @@ public final class DeviceInfo {
                 }
             }
         }
-        mVulkanDeqpLevel = vulkanLevel;
+        mIDeviceInfo.vulkanDeqpLevel = vulkanLevel;
+
+        mIDeviceInfo.isXr = pm.hasSystemFeature("android.software.xr.api.openxr");
     }
 
     @NativeMethods
     interface Natives {
         void fillFields(
-                String gmsVersionCode,
+                @JniType("std::string") String gmsVersionCode,
                 boolean isTV,
                 boolean isAutomotive,
                 boolean isFoldable,
                 boolean isDesktop,
-                int vulkanDeqpLevel);
+                int vulkanDeqpLevel,
+                boolean isXr);
     }
 }

@@ -21,11 +21,13 @@
 #include "components/bookmarks/test/test_bookmark_client.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_controller.h"
+#include "components/omnibox/browser/omnibox_text_util.h"
 #include "components/omnibox/browser/test_omnibox_client.h"
 #include "components/omnibox/browser/test_omnibox_edit_model.h"
 #include "components/omnibox/browser/test_omnibox_popup_view.h"
 #include "components/omnibox/browser/test_omnibox_view.h"
 #include "components/omnibox/common/omnibox_features.h"
+#include "components/search_engines/template_url_data.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -45,6 +47,7 @@ using testing::_;
 using testing::DoAll;
 using testing::Return;
 using testing::SaveArg;
+using testing::SaveArgPointee;
 
 namespace {
 
@@ -110,102 +113,6 @@ class OmniboxViewPopupTest : public testing::Test {
 };
 }  // namespace
 
-TEST_F(OmniboxViewTest, TestStripSchemasUnsafeForPaste) {
-  constexpr const auto urls = std::to_array<const char*>({
-      " \x01 ",                                       // Safe query.
-      "http://www.google.com?q=javascript:alert(0)",  // Safe URL.
-      "JavaScript",                                   // Safe query.
-      "javaScript:",                                  // Unsafe JS URL.
-      " javaScript: ",                                // Unsafe JS URL.
-      "javAscript:Javascript:javascript",             // Unsafe JS URL.
-      "javAscript:alert(1)",                          // Unsafe JS URL.
-      "javAscript:javascript:alert(2)",               // Single strip unsafe.
-      "jaVascript:\njavaScript:\x01 alert(3) \x01",   // Single strip unsafe.
-      ("\x01\x02\x03\x04\x05\x06\x07\x08\x09\x10\x11\x12\x13\x14\x15\x16\x17"
-       "\x18\x19 JavaScript:alert(4)"),  // Leading control chars unsafe.
-      "\x01\x02javascript:\x03\x04JavaScript:alert(5)",  // Embedded control
-                                                         // characters unsafe.
-  });
-
-  constexpr const auto expecteds = std::to_array<const char*>({
-      " \x01 ",                                       // Safe query.
-      "http://www.google.com?q=javascript:alert(0)",  // Safe URL.
-      "JavaScript",                                   // Safe query.
-      "",                                             // Unsafe JS URL.
-      "",                                             // Unsafe JS URL.
-      "javascript",                                   // Unsafe JS URL.
-      "alert(1)",                                     // Unsafe JS URL.
-      "alert(2)",                                     // Single strip unsafe.
-      "alert(3) \x01",                                // Single strip unsafe.
-      "alert(4)",  // Leading control chars unsafe.
-      "alert(5)",  // Embedded control characters unsafe.
-  });
-
-  for (size_t i = 0; i < std::size(urls); i++) {
-    EXPECT_EQ(ASCIIToUTF16(expecteds[i]),
-              OmniboxView::StripJavascriptSchemas(base::UTF8ToUTF16(urls[i])));
-  }
-}
-
-TEST_F(OmniboxViewTest, SanitizeTextForPaste) {
-  const struct {
-    std::u16string input;
-    std::u16string output;
-  } kTestcases[] = {
-      // No whitespace: leave unchanged.
-      {std::u16string(), std::u16string()},
-      {u"a", u"a"},
-      {u"abc", u"abc"},
-
-      // Leading/trailing whitespace: remove.
-      {u" abc", u"abc"},
-      {u"  \n  abc", u"abc"},
-      {u"abc ", u"abc"},
-      {u"abc\t \t", u"abc"},
-      {u"\nabc\n", u"abc"},
-
-      // All whitespace: Convert to single space.
-      {u" ", u" "},
-      {u"\n", u" "},
-      {u"   ", u" "},
-      {u"\n\n\n", u" "},
-      {u" \n\t", u" "},
-
-      // Broken URL has newlines stripped.
-      {u"http://www.chromium.org/developers/testing/chromium-\n"
-       u"build-infrastructure/tour-of-the-chromium-buildbot",
-       u"http://www.chromium.org/developers/testing/"
-       u"chromium-build-infrastructure/tour-of-the-chromium-buildbot"},
-
-      // Multi-line address is converted to a single-line address.
-      {u"1600 Amphitheatre Parkway\nMountain View, CA",
-       u"1600 Amphitheatre Parkway Mountain View, CA"},
-
-      // Line-breaking the JavaScript scheme with no other whitespace results in
-      // a
-      // dangerous URL that is sanitized by dropping the scheme.
-      {u"java\x0d\x0ascript:alert(0)", u"alert(0)"},
-
-      // Line-breaking the JavaScript scheme with whitespace elsewhere in the
-      // string results in a safe string with a space replacing the line break.
-      {u"java\x0d\x0ascript: alert(0)", u"java script: alert(0)"},
-
-      // Unusual URL with multiple internal spaces is preserved as-is.
-      {u"http://foo.com/a.  b", u"http://foo.com/a.  b"},
-
-      // URL with unicode whitespace is also preserved as-is.
-      {u"http://foo.com/a\x3000"
-       u"b",
-       u"http://foo.com/a\x3000"
-       u"b"},
-  };
-
-  for (const auto& testcase : kTestcases) {
-    EXPECT_EQ(testcase.output,
-              OmniboxView::SanitizeTextForPaste(testcase.input));
-  }
-}
-
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 // Tests GetIcon returns the default search icon when the match is a search
 // query.
@@ -243,6 +150,38 @@ TEST_F(OmniboxViewTest, DISABLED_GetIcon_BookmarkIcon) {
   EXPECT_EQ(expected_icon, icon);
 }
 
+// Tests GetIcon returns the keyword search provider favicon when the match is a
+// non-Google search query.
+TEST_F(OmniboxViewTest, GetIcon_NonGoogleKeywordSearch) {
+  SkBitmap bitmap;
+  bitmap.allocN32Pixels(16, 16);
+  bitmap.eraseColor(SK_ColorRED);
+  gfx::Image expected_image =
+      gfx::Image(gfx::ImageSkia::CreateFrom1xBitmap(bitmap));
+
+  EXPECT_CALL(*client(), GetFaviconForKeywordSearchProvider(_, _))
+      .WillOnce(Return(expected_image));
+
+  TemplateURLData data;
+  data.SetKeyword(u"foo");
+  data.SetURL("https://foo.com");
+  TemplateURL* turl =
+      view()->controller()->client()->GetTemplateURLService()->Add(
+          std::make_unique<TemplateURL>(data));
+  ASSERT_TRUE(turl);
+
+  AutocompleteMatch match;
+  match.type = AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED;
+  match.keyword = u"foo";
+  model()->SetCurrentMatchForTest(match);
+
+  ui::ImageModel image = view()->GetIcon(
+      gfx::kFaviconSize, gfx::kPlaceholderColor, gfx::kPlaceholderColor,
+      gfx::kPlaceholderColor, gfx::kPlaceholderColor, base::DoNothing(), false);
+  gfx::test::CheckColors(bitmap.getColor(0, 0),
+                         image.GetImage().ToSkBitmap()->getColor(0, 0));
+}
+
 // Tests GetIcon returns the website's favicon when the match is a website.
 TEST_F(OmniboxViewTest, GetIcon_Favicon) {
   const GURL kUrl("https://woahDude.com");
@@ -261,6 +200,42 @@ TEST_F(OmniboxViewTest, GetIcon_Favicon) {
                   gfx::kPlaceholderColor, base::DoNothing(), false);
 
   EXPECT_EQ(page_url, kUrl);
+}
+
+// Tests GetIcon returns the search aggregator's favicon by bitmap when the
+// match is a non-Google search query with search aggregator keyword.
+TEST_F(OmniboxViewPopupTest, GetIcon_SearchAggregatorKeywordSearch) {
+  SkBitmap bitmap;
+  bitmap.allocN32Pixels(16, 16);
+  bitmap.eraseColor(SK_ColorRED);
+  gfx::Image expected_image =
+      gfx::Image(gfx::ImageSkia::CreateFrom1xBitmap(bitmap));
+
+  EXPECT_CALL(*client(), GetFaviconForKeywordSearchProvider(_, _)).Times(0);
+
+  TemplateURLData data;
+  data.SetKeyword(u"foo");
+  data.SetURL("https://foo.com");
+  data.favicon_url = GURL("https://foo.com/icon.png");
+  data.policy_origin = TemplateURLData::PolicyOrigin::kSearchAggregator;
+  TemplateURL* turl =
+      view()->controller()->client()->GetTemplateURLService()->Add(
+          std::make_unique<TemplateURL>(data));
+  ASSERT_TRUE(turl);
+
+  // Sets the icon bitmap for search aggregator.
+  model()->SetIconBitmap(GURL("https://foo.com/icon.png"), bitmap);
+
+  AutocompleteMatch match;
+  match.type = AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED;
+  match.keyword = u"foo";
+  model()->SetCurrentMatchForTest(match);
+
+  ui::ImageModel image = view()->GetIcon(
+      gfx::kFaviconSize, gfx::kPlaceholderColor, gfx::kPlaceholderColor,
+      gfx::kPlaceholderColor, gfx::kPlaceholderColor, base::DoNothing(), false);
+  gfx::test::CheckColors(bitmap.getColor(0, 0),
+                         image.GetImage().ToSkBitmap()->getColor(0, 0));
 }
 
 // Tests GetIcon returns the website's favicon when the match is a website.

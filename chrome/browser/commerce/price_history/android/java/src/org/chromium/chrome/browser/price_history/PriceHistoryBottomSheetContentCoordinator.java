@@ -8,10 +8,9 @@ import android.content.Context;
 import android.view.LayoutInflater;
 import android.view.View;
 
-import androidx.annotation.NonNull;
-
 import org.chromium.base.Callback;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.commerce.CommerceBottomSheetContentProperties;
 import org.chromium.chrome.browser.commerce.CommerceBottomSheetContentProvider;
 import org.chromium.chrome.browser.price_insights.PriceInsightsBottomSheetCoordinator.PriceInsightsDelegate;
@@ -20,21 +19,22 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
+import java.util.function.Supplier;
+
 /** Coordinator of the price history bottom sheet content. */
+@NullMarked
 public class PriceHistoryBottomSheetContentCoordinator
         implements CommerceBottomSheetContentProvider {
-    private Context mContext;
-    private View mPriceHistoryContentContainer;
-    private PriceHistoryBottomSheetContentMediator mMediator;
+    private final View mPriceHistoryContentContainer;
+    private final PriceHistoryBottomSheetContentMediator mMediator;
 
     public PriceHistoryBottomSheetContentCoordinator(
-            @NonNull Context context,
-            @NonNull Supplier<Tab> tabSupplier,
-            @NonNull Supplier<TabModelSelector> tabModelSelectorSupplier,
-            @NonNull PriceInsightsDelegate priceInsightsDelegate) {
-        mContext = context;
+            Context context,
+            Supplier<@Nullable Tab> tabSupplier,
+            Supplier<TabModelSelector> tabModelSelectorSupplier,
+            PriceInsightsDelegate priceInsightsDelegate) {
         mPriceHistoryContentContainer =
-                LayoutInflater.from(mContext)
+                LayoutInflater.from(context)
                         .inflate(R.layout.price_history_layout_v2, /* root= */ null);
         PropertyModel propertyModel =
                 new PropertyModel(PriceHistoryBottomSheetContentProperties.ALL_KEYS);
@@ -52,7 +52,7 @@ public class PriceHistoryBottomSheetContentCoordinator
     }
 
     @Override
-    public void requestContent(Callback<PropertyModel> contentReadyCallback) {
+    public void requestContent(Callback<@Nullable PropertyModel> contentReadyCallback) {
         Callback<Boolean> showContentCallback =
                 (hasContent) -> {
                     contentReadyCallback.onResult(hasContent ? createContentModel() : null);

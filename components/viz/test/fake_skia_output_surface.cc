@@ -10,7 +10,7 @@
 
 #include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/not_fatal_until.h"
+#include "base/notimplemented.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -28,6 +28,7 @@
 #include "gpu/command_buffer/common/swap_buffers_complete_params.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
 #include "third_party/khronos/GLES2/gl2ext.h"
+#include "third_party/skia/include/core/SkCPURecorder.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkPixelRef.h"
 #include "third_party/skia/include/gpu/GpuTypes.h"
@@ -148,7 +149,8 @@ gpu::SyncToken FakeSkiaOutputSurface::ReleaseImageContexts(
 std::unique_ptr<ExternalUseClient::ImageContext>
 FakeSkiaOutputSurface::CreateImageContext(const TransferableResource& resource,
                                           bool concurrent_reads,
-                                          bool raw_draw_if_possible) {
+                                          bool raw_draw_if_possible,
+                                          uint32_t client_id) {
   return std::make_unique<ExternalUseClient::ImageContext>(resource);
 }
 
@@ -210,7 +212,7 @@ sk_sp<SkImage> FakeSkiaOutputSurface::MakePromiseSkImageFromRenderPass(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   auto it = sk_surfaces_.find(id);
-  CHECK(it != sk_surfaces_.end(), base::NotFatalUntil::M130);
+  CHECK(it != sk_surfaces_.end());
   return it->second->makeImageSnapshot();
 }
 
@@ -221,7 +223,7 @@ void FakeSkiaOutputSurface::RemoveRenderPassResource(
 
   for (const auto& id : ids) {
     auto it = sk_surfaces_.find(id);
-    CHECK(it != sk_surfaces_.end(), base::NotFatalUntil::M130);
+    CHECK(it != sk_surfaces_.end());
     sk_surfaces_.erase(it);
   }
 
@@ -260,7 +262,7 @@ void FakeSkiaOutputSurface::CopyOutput(
   }
 
   if (request->result_destination() ==
-      CopyOutputResult::Destination::kNativeTextures) {
+      CopyOutputResult::Destination::kSharedImage) {
     // NOTE: This implementation is incomplete and doesn't copy anything into
     // the mailbox, but currently the only tests that use this don't actually
     // check the returned texture data. A corollary to this fact is that the
@@ -283,16 +285,16 @@ void FakeSkiaOutputSurface::CopyOutput(
             &FakeSkiaOutputSurface::DestroyCopyOutputTexture,
             weak_ptr_factory_.GetWeakPtr(), std::move(client_shared_image))));
 
-    request->SendResult(std::make_unique<CopyOutputTextureResult>(
-        CopyOutputResult::Format::RGBA, geometry.result_bounds,
-        CopyOutputResult::TextureResult(local_mailbox, color_space),
-        std::move(release_callbacks)));
+    request->SendResult(std::make_unique<CopyOutputSharedImageResult>(
+        CopyOutputResult::Format::RGBA, geometry.result_bounds, local_mailbox,
+        color_space, "CopyOutput", std::move(release_callbacks)));
     return;
   }
 
   GrDirectContext* direct = GrAsDirectContext(gr_context());
   auto copy_image = surface->makeImageSnapshot()->makeSubset(
-      direct, RectToSkIRect(geometry.sampling_bounds));
+      direct ? direct->asRecorder() : skcpu::Recorder::TODO(),
+      RectToSkIRect(geometry.sampling_bounds), {});
   // Send copy request by copying into a bitmap.
   SkBitmap bitmap;
   copy_image->asLegacyBitmap(&bitmap);
@@ -343,7 +345,6 @@ bool FakeSkiaOutputSurface::GetGrBackendTexture(
   DCHECK(!image_context.mailbox().IsZero());
 
   auto* gl = context_provider()->ContextGL();
-  gl->WaitSyncTokenCHROMIUM(image_context.sync_token().GetConstData());
   auto texture_id = gl->CreateAndTexStorage2DSharedImageCHROMIUM(
       image_context.mailbox().name);
   auto gl_format_desc = gpu::GLFormatCaps().ToGLFormatDesc(

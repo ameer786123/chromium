@@ -18,11 +18,16 @@
 class PrefChangeRegistrar;
 class PrefService;
 
+namespace content {
+class RenderFrameHost;
+}  // namespace content
+
 namespace captions {
 
 class CaptionBubbleContext;
 class CaptionBubbleController;
 class CaptionBubbleSettings;
+class TranslationViewWrapperBase;
 
 class CaptionControllerBase : public ui::NativeThemeObserver {
  public:
@@ -36,7 +41,9 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
     virtual std::unique_ptr<CaptionBubbleController>
     CreateCaptionBubbleController(
         CaptionBubbleSettings* caption_bubble_settings,
-        const std::string& application_locale) = 0;
+        const std::string& application_locale,
+        std::unique_ptr<TranslationViewWrapperBase>
+            translation_view_wrapper) = 0;
 
     virtual void AddCaptionStyleObserver(ui::NativeThemeObserver* observer) = 0;
 
@@ -53,17 +60,26 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
    public:
     virtual ~Listener() = default;
 
-    // Called when a transcription is received from the service.
+    // Called when a transcription is received from the service for audio that
+    // originated in the RFH.  This may be null if the audio was not associated
+    // with any particulat RFH.
+    //
     // Transcriptions will halt if this returns false.
     virtual bool OnTranscription(
+        content::RenderFrameHost*,
         CaptionBubbleContext*,
         const media::SpeechRecognitionResult& result) = 0;
 
-    // Called when the audio stream has ended.
+    // Called when the audio stream has ended for audio from the
+    // RenderFrameHost, which may be null.
     virtual void OnAudioStreamEnd(
+        content::RenderFrameHost*,
         CaptionBubbleContext* caption_bubble_context) = 0;
 
+    // Called when the language is identified for audio from the
+    // RenderFrameHost, which may be null.
     virtual void OnLanguageIdentificationEvent(
+        content::RenderFrameHost*,
         CaptionBubbleContext* caption_bubble_context,
         const media::mojom::LanguageIdentificationEventPtr& event) = 0;
 
@@ -87,14 +103,17 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
   // there's at most one listener anyway.
   //
   // Transcriptions will halt if this returns false.
-  bool DispatchTranscription(CaptionBubbleContext* caption_bubble_context,
+  bool DispatchTranscription(content::RenderFrameHost* rfh,
+                             CaptionBubbleContext* caption_bubble_context,
                              const media::SpeechRecognitionResult& result);
 
   // Alerts all listeners that the audio stream has ended.
-  void OnAudioStreamEnd(CaptionBubbleContext* caption_bubble_context);
+  void OnAudioStreamEnd(content::RenderFrameHost* rfh,
+                        CaptionBubbleContext* caption_bubble_context);
 
   // Notifies all listeners about a language identification event.
   void OnLanguageIdentificationEvent(
+      content::RenderFrameHost* rfh,
       CaptionBubbleContext* caption_bubble_context,
       const media::mojom::LanguageIdentificationEventPtr& event);
 
@@ -102,6 +121,10 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
   void destroy_ui_for_testing() { DestroyUI(); }
   CaptionBubbleController* caption_bubble_controller_for_testing() const {
     return caption_bubble_controller();
+  }
+
+  void remove_listener_for_testing(Listener* listener) {
+    RemoveListener(listener);
   }
 
  protected:
@@ -117,6 +140,14 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
   PrefChangeRegistrar* pref_change_registrar() const;
   CaptionBubbleController* caption_bubble_controller() const;
 
+  virtual std::unique_ptr<TranslationViewWrapperBase>
+  CreateTranslationViewWrapper();
+
+  // Called when the size of the listener set goes to or from zero.  This allows
+  // subclasses to handle SODA installation as needed on a per-platform basis.
+  virtual void OnFirstListenerAdded() {}
+  virtual void OnLastListenerRemoved() {}
+
  private:
   virtual CaptionBubbleSettings* caption_bubble_settings() = 0;
 
@@ -129,7 +160,7 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
   // about it.
   void RemoveListener(Listener*);
 
-  const raw_ptr<PrefService> profile_prefs_;
+  const raw_ptr<PrefService> profile_prefs_ = nullptr;
   const std::string application_locale_;
   const std::unique_ptr<Delegate> delegate_;
 

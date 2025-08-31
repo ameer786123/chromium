@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "content/browser/attribution_reporting/attribution_data_host_manager_impl.h"
 
 #include <stddef.h>
@@ -562,11 +557,9 @@ TEST_F(AttributionDataHostManagerImplTest,
   // Non-whole-day expiry is invalid for `SourceType::kEvent`.
   source_data.expiry = base::Days(1) + base::Microseconds(1);
   source_data.aggregatable_report_window = source_data.expiry;
-  source_data.trigger_specs = attribution_reporting::TriggerSpecs(
-      SourceType::kEvent,
+  source_data.event_report_windows =
       *attribution_reporting::EventReportWindows::FromDefaults(
-          source_data.expiry, SourceType::kEvent),
-      attribution_reporting::MaxEventLevelReports());
+          source_data.expiry, SourceType::kEvent);
 
   {
     mojo::test::BadMessageObserver bad_message_observer;
@@ -814,8 +807,8 @@ TEST_F(AttributionDataHostManagerImplTest,
 
   source_data.destination_set = *DestinationSet::Create(
       {net::SchemefulSite::Deserialize("https://trigger2.example")});
-  data_host_remote->SourceDataAvailable(
-      reporting_origin, std::move(source_data), kViaServiceWorker);
+  data_host_remote->SourceDataAvailable(reporting_origin, source_data,
+                                        kViaServiceWorker);
 
   data_host_remote.reset();
 
@@ -828,8 +821,8 @@ TEST_F(AttributionDataHostManagerImplTest,
 
   source_data.destination_set = *DestinationSet::Create(
       {net::SchemefulSite::Deserialize("https://trigger3.example")});
-  data_host_remote->SourceDataAvailable(
-      reporting_origin, std::move(source_data), kViaServiceWorker);
+  data_host_remote->SourceDataAvailable(reporting_origin, source_data,
+                                        kViaServiceWorker);
 
   data_host_remote.reset();
 
@@ -5349,202 +5342,6 @@ TEST_F(AttributionDataHostManagerImplTest, RegistrationInfoErrorMetric) {
                                     test_case.expected.value(), 1);
     } else {
       histograms.ExpectTotalCount(kRegistrationInfoErrorMetric, 0);
-    }
-  }
-}
-
-TEST_F(AttributionDataHostManagerImplTest,
-       GoogleAmpViewerContext_DataHostSource) {
-  AttributionOsLevelManager::ScopedApiStateForTesting scoped_api_state_setting(
-      AttributionOsLevelManager::ApiState::kEnabled);
-
-  auto page_origin = *SuitableOrigin::Deserialize("https://page.example");
-  auto destination_site =
-      net::SchemefulSite::Deserialize("https://trigger.example");
-  auto reporting_origin =
-      *SuitableOrigin::Deserialize("https://reporter.example");
-
-  for (const bool is_web : {false, true}) {
-    SCOPED_TRACE(is_web);
-    for (const bool is_context_google_amp_viewer : {false, true}) {
-      SCOPED_TRACE(is_context_google_amp_viewer);
-
-      base::HistogramTester histograms;
-
-      mojo::Remote<attribution_reporting::mojom::DataHost> data_host_remote;
-      data_host_manager_.RegisterDataHost(
-          data_host_remote.BindNewPipeAndPassReceiver(),
-          AttributionSuitableContext::CreateForTesting(
-              page_origin,
-              /*is_nested_within_fenced_frame=*/false, kFrameId,
-              kLastNavigationId, AttributionInputEvent(),
-              {ContentBrowserClient::AttributionReportingOsRegistrar::kWeb,
-               ContentBrowserClient::AttributionReportingOsRegistrar::kWeb},
-              /*attribution_data_host_manager=*/nullptr,
-              is_context_google_amp_viewer),
-          RegistrationEligibility::kSourceOrTrigger, kIsForBackgroundRequests);
-
-      if (is_web) {
-        data_host_remote->SourceDataAvailable(
-            reporting_origin,
-            SourceRegistration(*DestinationSet::Create({destination_site})),
-            kViaServiceWorker);
-      } else {
-        data_host_remote->OsSourceDataAvailable(
-            {attribution_reporting::OsRegistrationItem{
-                .url = GURL("https://a.test/x")}},
-            kViaServiceWorker);
-      }
-
-      data_host_remote.FlushForTesting();
-
-      histograms.ExpectBucketCount("Conversions.GoogleAmpViewer.Source",
-                                   is_context_google_amp_viewer, 1);
-    }
-  }
-}
-
-TEST_F(AttributionDataHostManagerImplTest,
-       GoogleAmpViewerContext_DataHostTrigger) {
-  AttributionOsLevelManager::ScopedApiStateForTesting scoped_api_state_setting(
-      AttributionOsLevelManager::ApiState::kEnabled);
-
-  auto page_origin = *SuitableOrigin::Deserialize("https://page.example");
-  auto reporting_origin =
-      *SuitableOrigin::Deserialize("https://reporter.example");
-
-  for (const bool is_web : {false, true}) {
-    SCOPED_TRACE(is_web);
-    for (const bool is_context_google_amp_viewer : {false, true}) {
-      SCOPED_TRACE(is_context_google_amp_viewer);
-
-      base::HistogramTester histograms;
-
-      mojo::Remote<attribution_reporting::mojom::DataHost> data_host_remote;
-      data_host_manager_.RegisterDataHost(
-          data_host_remote.BindNewPipeAndPassReceiver(),
-          AttributionSuitableContext::CreateForTesting(
-              page_origin,
-              /*is_nested_within_fenced_frame=*/false, kFrameId,
-              kLastNavigationId, AttributionInputEvent(),
-              {ContentBrowserClient::AttributionReportingOsRegistrar::kWeb,
-               ContentBrowserClient::AttributionReportingOsRegistrar::kWeb},
-              /*attribution_data_host_manager=*/nullptr,
-              is_context_google_amp_viewer),
-          RegistrationEligibility::kSourceOrTrigger, kIsForBackgroundRequests);
-
-      if (is_web) {
-        data_host_remote->TriggerDataAvailable(
-            reporting_origin, TriggerRegistration(), kViaServiceWorker);
-      } else {
-        data_host_remote->OsTriggerDataAvailable(
-            {attribution_reporting::OsRegistrationItem{
-                .url = GURL("https://a.test/x")}},
-            kViaServiceWorker);
-      }
-
-      data_host_remote.FlushForTesting();
-
-      histograms.ExpectBucketCount("Conversions.GoogleAmpViewer.Trigger",
-                                   is_context_google_amp_viewer, 1);
-    }
-  }
-}
-
-TEST_F(AttributionDataHostManagerImplWithInBrowserMigrationTest,
-       GoogleAmpViewerContext_BackgroundSource) {
-  AttributionOsLevelManager::ScopedApiStateForTesting scoped_api_state_setting(
-      AttributionOsLevelManager::ApiState::kEnabled);
-
-  auto page_origin = *SuitableOrigin::Deserialize("https://page.example");
-  GURL reporting_url("https://report.test");
-
-  for (const bool is_web : {false, true}) {
-    SCOPED_TRACE(is_web);
-    for (const bool is_context_google_amp_viewer : {false, true}) {
-      SCOPED_TRACE(is_context_google_amp_viewer);
-
-      base::HistogramTester histograms;
-
-      auto headers = base::MakeRefCounted<net::HttpResponseHeaders>("");
-      if (is_web) {
-        headers->SetHeader(kAttributionReportingRegisterSourceHeader,
-                           kRegisterSourceJson);
-      } else {
-        headers->SetHeader(kAttributionReportingRegisterOsSourceHeader,
-                           R"("https://r.test/x")");
-      }
-
-      data_host_manager_.NotifyBackgroundRegistrationStarted(
-          kBackgroundId,
-          AttributionSuitableContext::CreateForTesting(
-              page_origin,
-              /*is_nested_within_fenced_frame=*/false, kFrameId,
-              kLastNavigationId, AttributionInputEvent(),
-              {ContentBrowserClient::AttributionReportingOsRegistrar::kWeb,
-               ContentBrowserClient::AttributionReportingOsRegistrar::kWeb},
-              /*attribution_data_host_manager=*/nullptr,
-              is_context_google_amp_viewer),
-          RegistrationEligibility::kSourceOrTrigger,
-          /*attribution_src_token=*/std::nullopt, kDevtoolsRequestId);
-
-      data_host_manager_.NotifyBackgroundRegistrationData(
-          kBackgroundId, headers.get(), reporting_url);
-      data_host_manager_.NotifyBackgroundRegistrationCompleted(kBackgroundId);
-
-      task_environment_.FastForwardBy(base::TimeDelta());
-
-      histograms.ExpectBucketCount("Conversions.GoogleAmpViewer.Source",
-                                   is_context_google_amp_viewer, 1);
-    }
-  }
-}
-
-TEST_F(AttributionDataHostManagerImplWithInBrowserMigrationTest,
-       GoogleAmpViewerContext_BackgroundTrigger) {
-  AttributionOsLevelManager::ScopedApiStateForTesting scoped_api_state_setting(
-      AttributionOsLevelManager::ApiState::kEnabled);
-
-  auto page_origin = *SuitableOrigin::Deserialize("https://page.example");
-  GURL reporting_url("https://report.test");
-
-  for (const bool is_web : {false, true}) {
-    SCOPED_TRACE(is_web);
-    for (const bool is_context_google_amp_viewer : {false, true}) {
-      SCOPED_TRACE(is_context_google_amp_viewer);
-
-      base::HistogramTester histograms;
-
-      auto headers = base::MakeRefCounted<net::HttpResponseHeaders>("");
-      if (is_web) {
-        headers->SetHeader(kAttributionReportingRegisterTriggerHeader,
-                           kRegisterTriggerJson);
-      } else {
-        headers->SetHeader(kAttributionReportingRegisterOsTriggerHeader,
-                           R"("https://r.test/x")");
-      }
-
-      data_host_manager_.NotifyBackgroundRegistrationStarted(
-          kBackgroundId,
-          AttributionSuitableContext::CreateForTesting(
-              page_origin,
-              /*is_nested_within_fenced_frame=*/false, kFrameId,
-              kLastNavigationId, AttributionInputEvent(),
-              {ContentBrowserClient::AttributionReportingOsRegistrar::kWeb,
-               ContentBrowserClient::AttributionReportingOsRegistrar::kWeb},
-              /*attribution_data_host_manager=*/nullptr,
-              is_context_google_amp_viewer),
-          RegistrationEligibility::kSourceOrTrigger,
-          /*attribution_src_token=*/std::nullopt, kDevtoolsRequestId);
-
-      data_host_manager_.NotifyBackgroundRegistrationData(
-          kBackgroundId, headers.get(), reporting_url);
-      data_host_manager_.NotifyBackgroundRegistrationCompleted(kBackgroundId);
-
-      task_environment_.FastForwardBy(base::TimeDelta());
-
-      histograms.ExpectBucketCount("Conversions.GoogleAmpViewer.Trigger",
-                                   is_context_google_amp_viewer, 1);
     }
   }
 }

@@ -11,6 +11,7 @@
 #include "ash/public/cpp/notification_utils.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
+#include "base/check_deref.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
@@ -27,10 +28,12 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
 #include "content/public/browser/browser_context.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/text_constants.h"
@@ -91,25 +94,12 @@ void MaybeShowLoginNotification(bool is_multi_capture_allowed) {
           IDS_MULTI_CAPTURE_NOTIFICATION_ON_LOGIN_MESSAGE));
 }
 
-// This function makes sure that on login all data required to check whether a
-// notification is needed is propagated from the policy to the
-// ManagedAccessToGetAllScreensMediaInSessionAllowedForUrls pref.
-void TransferGetAllScreensMediaPolicyValue(
-    content::BrowserContext* browser_context) {
-  DCHECK(browser_context);
-  Profile* profile = Profile::FromBrowserContext(browser_context);
-  PrefService* pref_service = profile->GetPrefs();
-  if (!pref_service) {
+void ShowLoginNotificationIfMultiCaptureAllowed() {
+  if (base::FeatureList::IsEnabled(
+          chromeos::features::kMultiCaptureReworkedUsageIndicators)) {
     return;
   }
-  const base::Value::List& allowed_origins = pref_service->GetList(
-      capture_policy::kManagedAccessToGetAllScreensMediaAllowedForUrls);
-  pref_service->SetList(
-      prefs::kManagedAccessToGetAllScreensMediaInSessionAllowedForUrls,
-      allowed_origins.Clone());
-}
 
-void ShowLoginNotificationIfMultiCaptureAllowed() {
   auto* active_user = user_manager::UserManager::Get()->GetActiveUser();
   if (!active_user) {
     return;
@@ -121,11 +111,8 @@ void ShowLoginNotificationIfMultiCaptureAllowed() {
     return;
   }
 
-  // TODO(b/329064666): Remove this function once the pivot to IWAs is complete.
-  TransferGetAllScreensMediaPolicyValue(browser_context);
-
-  capture_policy::CheckGetAllScreensMediaAllowedForAnyOrigin(
-      browser_context, base::BindOnce(&MaybeShowLoginNotification));
+  MaybeShowLoginNotification(
+      capture_policy::IsMultiScreenCaptureAllowed(std::nullopt));
 }
 
 }  // namespace
@@ -154,22 +141,23 @@ void MultiCaptureNotifications::MultiCaptureStarted(const std::string& label,
                                                     const url::Origin& origin) {
   const std::string host = origin.host();
   MultiCaptureStartedInternal(label, base::StrCat({kMultiCaptureId, ":", host}),
-                              host);
+                              host, origin);
 }
 
 void MultiCaptureNotifications::MultiCaptureStartedFromApp(
     const std::string& label,
     const std::string& app_id,
-    const std::string& app_short_name) {
-  MultiCaptureStartedInternal(
-      label, base::StrCat({kMultiCaptureId, ":", label}), app_short_name);
+    const std::string& app_short_name,
+    const url::Origin& app_origin) {
+  MultiCaptureStartedInternal(label,
+                              base::StrCat({kMultiCaptureId, ":", label}),
+                              app_short_name, app_origin);
 }
 
 void MultiCaptureNotifications::MultiCaptureStopped(const std::string& label) {
   const auto notifications_metadata_iterator =
       notifications_metadata_.find(label);
   if (notifications_metadata_iterator == notifications_metadata_.end()) {
-    LOG(ERROR) << "Label could not be found";
     return;
   }
 
@@ -214,7 +202,13 @@ void MultiCaptureNotifications::LoggedInStateChanged() {
 void MultiCaptureNotifications::MultiCaptureStartedInternal(
     const std::string& label,
     const std::string& notification_id,
-    const std::string& app_name) {
+    const std::string& app_name,
+    const url::Origin& app_origin) {
+  if (base::FeatureList::IsEnabled(
+          chromeos::features::kMultiCaptureReworkedUsageIndicators)) {
+    return;
+  }
+
   notifications_metadata_.emplace(
       label, NotificationMetadata(notification_id, base::TimeTicks::Now()));
 

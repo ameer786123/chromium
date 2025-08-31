@@ -9,12 +9,18 @@
  * 'en-US'. For more information on locales:
  * https://en.wikipedia.org/wiki/Locale_(computer_software)
  */
+import {BridgeHelper} from '/common/bridge_helper.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
+
+import {BridgeConstants} from '../common/bridge_constants.js';
 
 import {Msgs} from './msgs.js';
 
 type AutomationNode = chrome.automation.AutomationNode;
 type TtsVoice = chrome.tts.TtsVoice;
+
+const TARGET = BridgeConstants.LocaleOutputHelper.TARGET;
+const Action = BridgeConstants.LocaleOutputHelper.Action;
 
 interface TextWithLocale {
   text: string;
@@ -33,16 +39,16 @@ export class LocaleOutputHelper {
     this.lastSpokenLocale_ = this.currentLocale_;
     this.availableVoices_ = [];
 
-    const setAvailableVoices = (): void => {
-      chrome.tts.getVoices(voices => {
-        this.availableVoices_ = voices || [];
-      });
-    };
-    setAvailableVoices();
-    if (window.speechSynthesis) {
-      window.speechSynthesis.addEventListener(
-          'voiceschanged', setAvailableVoices, /* useCapture */ false);
-    }
+    this.setAvailableVoices_();
+
+    BridgeHelper.registerHandler(
+        TARGET, Action.ON_VOICES_CHANGED, () => this.setAvailableVoices_());
+  }
+
+  private setAvailableVoices_(): void {
+    chrome.tts.getVoices(voices => {
+      this.availableVoices_ = voices || [];
+    });
   }
 
   /**

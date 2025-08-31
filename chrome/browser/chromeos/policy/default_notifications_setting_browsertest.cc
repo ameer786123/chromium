@@ -9,6 +9,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/permissions/features.h"
 #include "components/policy/policy_constants.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -30,6 +31,11 @@ class DefaultNotificationsSettingBrowserTest
     : public policy::PolicyTest,
       public testing::WithParamInterface<int> {
  public:
+  DefaultNotificationsSettingBrowserTest() {
+    feature_list_.InitWithFeatures(
+        {}, {permissions::features::kPermissionSiteSettingsRadioButton});
+  }
+
   void SetUpInProcessBrowserTestFixture() override {
     policy::PolicyTest::SetUpInProcessBrowserTestFixture();
 
@@ -80,6 +86,11 @@ IN_PROC_BROWSER_TEST_P(DefaultNotificationsSettingBrowserTest, Policy) {
       break;
   }
 
+  // Wait for 'settings-notifications-page' custom element to be defined.
+  EXPECT_TRUE(content::ExecJs(
+      web_contents,
+      "customElements.whenDefined('settings-notifications-page')"));
+
   // The UI has 3 radio buttons which are inside several layers of shadow DOM.
   // The buttons are:
   // (0) Sites can ask to send notifications
@@ -90,8 +101,8 @@ IN_PROC_BROWSER_TEST_P(DefaultNotificationsSettingBrowserTest, Policy) {
       "let radios = "
       "  document.querySelector('settings-ui').shadowRoot."
       "  querySelector('settings-main').shadowRoot."
-      "  querySelector('settings-basic-page').shadowRoot."
-      "  querySelector('settings-privacy-page').shadowRoot."
+      "  querySelector('settings-privacy-page-index').shadowRoot."
+      "  querySelector('settings-notifications-page').shadowRoot."
       "  querySelectorAll('cr-radio-button');";
   std::string kGetRadiosChecked = kGetRadios +
                                   "let radiosChecked = [];"
@@ -100,7 +111,7 @@ IN_PROC_BROWSER_TEST_P(DefaultNotificationsSettingBrowserTest, Policy) {
                                   "radiosChecked.push(radios[2].checked);"
                                   "radiosChecked;";
   base::Value::List radios_checked_list =
-      content::EvalJs(web_contents, kGetRadiosChecked).ExtractList();
+      content::EvalJs(web_contents, kGetRadiosChecked).TakeValue().TakeList();
 
   std::string kGetRadiosEnabled = kGetRadios +
                                   "let radiosEnabled = [];"
@@ -109,7 +120,7 @@ IN_PROC_BROWSER_TEST_P(DefaultNotificationsSettingBrowserTest, Policy) {
                                   "radiosEnabled.push(!radios[2].disabled);"
                                   "radiosEnabled;";
   base::Value::List radios_enabled_list =
-      content::EvalJs(web_contents, kGetRadiosEnabled).ExtractList();
+      content::EvalJs(web_contents, kGetRadiosEnabled).TakeValue().TakeList();
 
   switch (GetParam()) {
     case 0:

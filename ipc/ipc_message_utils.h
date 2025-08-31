@@ -34,7 +34,6 @@
 #include "base/types/id_type.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "ipc/ipc_buildflags.h"
 #include "ipc/ipc_param_traits.h"
 #include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 
@@ -49,10 +48,6 @@
 
 #if BUILDFLAG(IS_WIN)
 #include "base/strings/string_util_win.h"
-#endif
-
-#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
-#include "ipc/ipc_message.h"
 #endif
 
 namespace base {
@@ -72,28 +67,6 @@ struct ChannelHandle;
 #if BUILDFLAG(IS_WIN)
 class PlatformFileForTransit;
 #endif
-
-// -----------------------------------------------------------------------------
-// How we send IPC message logs across channels.
-struct COMPONENT_EXPORT(IPC) LogData {
-  LogData();
-  LogData(const LogData& other);
-  ~LogData();
-
-  std::string channel;
-  int32_t routing_id;
-  uint32_t type;  // "User-defined" message type, from ipc_message.h.
-  std::string flags;
-  int64_t sent;  // Time that the message was sent (i.e. at Send()).
-  int64_t receive;  // Time before it was dispatched (i.e. before calling
-                    // OnMessageReceived).
-  int64_t dispatch;  // Time after it was dispatched (i.e. after calling
-                     // OnMessageReceived).
-  std::string message_name;
-  std::string params;
-};
-
-//-----------------------------------------------------------------------------
 
 // A dummy struct to place first just to allow leading commas for all
 // members in the macro-generated constructor initializer lists.
@@ -1091,16 +1064,6 @@ struct COMPONENT_EXPORT(IPC) ParamTraits<IPC::ChannelHandle> {
 };
 
 template <>
-struct COMPONENT_EXPORT(IPC) ParamTraits<LogData> {
-  typedef LogData param_type;
-  static void Write(base::Pickle* m, const param_type& p);
-  static bool Read(const base::Pickle* m,
-                   base::PickleIterator* iter,
-                   param_type* r);
-  static void Log(const param_type& p, std::string* l);
-};
-
-template <>
 struct COMPONENT_EXPORT(IPC) ParamTraits<Message> {
   static void Write(base::Pickle* m, const Message& p);
   static bool Read(const base::Pickle* m,
@@ -1132,53 +1095,6 @@ struct COMPONENT_EXPORT(IPC) ParamTraits<MSG> {
   static void Log(const param_type& p, std::string* l);
 };
 #endif  // BUILDFLAG(IS_WIN)
-
-//-----------------------------------------------------------------------------
-// Generic message subclasses
-
-// defined in ipc_logging.cc
-COMPONENT_EXPORT(IPC)
-void GenerateLogData(const Message& message, LogData* data, bool get_params);
-
-#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
-inline void AddOutputParamsToLog(const Message* msg, std::string* l) {
-  const std::string& output_params = msg->output_params();
-  if (!l->empty() && !output_params.empty())
-    l->append(", ");
-
-  l->append(output_params);
-}
-
-template <class ReplyParamType>
-inline void LogReplyParamsToMessage(const ReplyParamType& reply_params,
-                                    const Message* msg) {
-  if (msg->received_time() != 0) {
-    std::string output_params;
-    LogParam(reply_params, &output_params);
-    msg->set_output_params(output_params);
-  }
-}
-
-inline void ConnectMessageAndReply(const Message* msg, Message* reply) {
-  if (msg->sent_time()) {
-    // Don't log the sync message after dispatch, as we don't have the
-    // output parameters at that point.  Instead, save its data and log it
-    // with the outgoing reply message when it's sent.
-    LogData* data = new LogData;
-    GenerateLogData(*msg, data, true);
-    msg->set_dont_log();
-    reply->set_sync_log_data(data);
-  }
-}
-#else
-inline void AddOutputParamsToLog(const Message* msg, std::string* l) {}
-
-template <class ReplyParamType>
-inline void LogReplyParamsToMessage(const ReplyParamType& reply_params,
-                                    const Message* msg) {}
-
-inline void ConnectMessageAndReply(const Message* msg, Message* reply) {}
-#endif
 
 }  // namespace IPC
 

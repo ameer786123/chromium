@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/chrome_build.gni")
+import("//tools/grit/grit_rule.gni")
 import("//tools/json_to_struct/json_to_struct.gni")
 
 json_to_struct("prepopulated_engines") {
@@ -30,4 +32,53 @@ json_to_struct("regional_settings") {
     ":prepopulated_engines",
     "//base",
   ]
+}
+
+if (enable_builtin_search_provider_assets) {
+  group("resources") {
+    public_deps = [ ":search_engines_scaled_resources" ]
+
+    if (!is_android) {
+      public_deps += [
+        ":search_engine_descriptions_strings",
+        ":search_engines_marketing_snippets",
+      ]
+    }
+  }
+
+  grit("search_engines_scaled_resources") {
+    source = "resources_internal/search_engines_scaled_resources.grd"
+    outputs = [
+      "search_engines_scaled_resources.h",
+      "search_engines_scaled_resources_map.cc",
+      "search_engines_scaled_resources_map.h",
+      "search_engines_resources_100_percent.pak",
+      "search_engines_resources_200_percent.pak",
+      "search_engines_resources_300_percent.pak",
+    ]
+    output_dir = target_gen_dir
+  }
+
+  if (!is_android) {
+    source_set("search_engines_marketing_snippets") {
+      visibility = [
+        ":*",
+        "//components/search_engines:*",
+      ]
+      sources = [
+        "built_in_marketing_snippets.cc",
+        "built_in_marketing_snippets.h",
+      ]
+      deps = [
+        ":prepopulated_engines",
+        ":search_engine_descriptions_strings",
+        "//base",
+      ]
+    }
+
+    grit_strings("search_engine_descriptions_strings") {
+      source = "resources_internal/search_engine_descriptions_strings.grd"
+      outputs = [ "grit/search_engine_descriptions_strings.h" ]
+    }
+  }
 }

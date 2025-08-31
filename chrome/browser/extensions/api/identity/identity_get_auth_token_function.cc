@@ -49,14 +49,21 @@
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/oauth2_mint_token_flow.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "ui/base/idle/idle.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/device_identity/device_oauth2_token_service.h"
+#include "chrome/browser/device_identity/device_oauth2_token_service_factory.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chromeos/components/kiosk/kiosk_utils.h"
 #include "chromeos/components/mgs/managed_guest_session_utils.h"
 #include "components/account_manager_core/account_manager_util.h"
+#include "components/signin/public/identity_manager/scope_set.h"
+#include "google_apis/gaia/google_service_auth_error.h"
+#include "google_apis/gaia/oauth2_access_token_consumer.h"
+#include "google_apis/gaia/oauth2_access_token_manager.h"
 #endif
 
 namespace extensions {
@@ -114,13 +121,13 @@ CoreAccountInfo GetSigninPrimaryAccount(Profile* profile) {
 IdentityGetAuthTokenFunction::IdentityGetAuthTokenFunction() = default;
 
 IdentityGetAuthTokenFunction::~IdentityGetAuthTokenFunction() {
-  TRACE_EVENT_NESTABLE_ASYNC_END0("identity", "IdentityGetAuthTokenFunction",
-                                  this);
+  TRACE_EVENT_END("identity", perfetto::Track::FromPointer(this));
 }
 
 ExtensionFunction::ResponseAction IdentityGetAuthTokenFunction::Run() {
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("identity", "IdentityGetAuthTokenFunction",
-                                    this, "extension", extension()->id());
+  TRACE_EVENT_BEGIN("identity", "IdentityGetAuthTokenFunction",
+                    perfetto::Track::FromPointer(this), "extension",
+                    extension()->id());
 
   if (GetProfile()->IsOffTheRecord()) {
     IdentityGetAuthTokenError error(
@@ -299,8 +306,9 @@ void IdentityGetAuthTokenFunction::CompleteFunctionWithResult(
 
 void IdentityGetAuthTokenFunction::CompleteFunctionWithError(
     const IdentityGetAuthTokenError& error) {
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT1("identity", "CompleteFunctionWithError",
-                                      this, "error", error.ToString());
+  TRACE_EVENT_INSTANT("identity", "CompleteFunctionWithError",
+                      perfetto::Track::FromPointer(this), "error",
+                      error.ToString());
   RecordFunctionResult(error, remote_consent_approved_);
   CompleteAsyncRun(Error(error.ToString()));
 }
@@ -370,8 +378,8 @@ void IdentityGetAuthTokenFunction::StartMintTokenFlow(
              ->HasAccountWithRefreshToken(token_key_.account_info.account_id))
       << "No Refresh token!";
 #endif
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("identity", "MintTokenFlow", this, "type",
-                                    type);
+  TRACE_EVENT_BEGIN("identity", "MintTokenFlow",
+                    perfetto::Track::FromPointer(this), "type", type);
 
   mint_token_flow_type_ = type;
 
@@ -402,7 +410,7 @@ void IdentityGetAuthTokenFunction::StartMintTokenFlow(
 }
 
 void IdentityGetAuthTokenFunction::CompleteMintTokenFlow() {
-  TRACE_EVENT_NESTABLE_ASYNC_END0("identity", "MintTokenFlow", this);
+  TRACE_EVENT_END("identity", perfetto::Track::FromPointer(this));
 
   IdentityMintRequestQueue::MintType type = mint_token_flow_type_;
 
@@ -414,8 +422,8 @@ void IdentityGetAuthTokenFunction::CompleteMintTokenFlow() {
 
 void IdentityGetAuthTokenFunction::StartMintToken(
     IdentityMintRequestQueue::MintType type) {
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT1("identity", "StartMintToken", this,
-                                      "type", type);
+  TRACE_EVENT_INSTANT("identity", "StartMintToken",
+                      perfetto::Track::FromPointer(this), "type", type);
 
   DCHECK(extension());
   const auto& oauth2_info = OAuth2ManifestHandler::GetOAuth2Info(*extension());
@@ -505,7 +513,8 @@ void IdentityGetAuthTokenFunction::StartMintToken(
 
 void IdentityGetAuthTokenFunction::OnMintTokenSuccess(
     const OAuth2MintTokenFlow::MintTokenResult& result) {
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT0("identity", "OnMintTokenSuccess", this);
+  TRACE_EVENT_INSTANT("identity", "OnMintTokenSuccess",
+                      perfetto::Track::FromPointer(this));
 
   IdentityTokenCacheValue token = IdentityTokenCacheValue::CreateToken(
       result.access_token, result.granted_scopes, result.time_to_live);
@@ -520,8 +529,9 @@ void IdentityGetAuthTokenFunction::OnMintTokenSuccess(
 
 void IdentityGetAuthTokenFunction::OnMintTokenFailure(
     const GoogleServiceAuthError& error) {
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT1("identity", "OnMintTokenFailure", this,
-                                      "error", error.ToString());
+  TRACE_EVENT_INSTANT("identity", "OnMintTokenFailure",
+                      perfetto::Track::FromPointer(this), "error",
+                      error.ToString());
   CompleteMintTokenFlow();
   switch (error.state()) {
     case GoogleServiceAuthError::SERVICE_ERROR:
@@ -542,8 +552,8 @@ void IdentityGetAuthTokenFunction::OnMintTokenFailure(
 
 void IdentityGetAuthTokenFunction::OnRemoteConsentSuccess(
     const RemoteConsentResolutionData& resolution_data) {
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT0("identity", "OnRemoteConsentSuccess",
-                                      this);
+  TRACE_EVENT_INSTANT("identity", "OnRemoteConsentSuccess",
+                      perfetto::Track::FromPointer(this));
 
   IdentityAPI::GetFactoryInstance()
       ->Get(GetProfile())
@@ -607,8 +617,8 @@ void IdentityGetAuthTokenFunction::OnPrimaryAccountChanged(
     return;
   }
 
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT0("identity",
-                                      "OnPrimaryAccountChanged (set)", this);
+  TRACE_EVENT_INSTANT("identity", "OnPrimaryAccountChanged (set)",
+                      perfetto::Track::FromPointer(this));
 
   const CoreAccountInfo& primary_account_info =
       event_details.GetCurrentState().primary_account;
@@ -623,7 +633,8 @@ void IdentityGetAuthTokenFunction::OnPrimaryAccountChanged(
 }
 
 void IdentityGetAuthTokenFunction::SigninFailed() {
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT0("identity", "SigninFailed", this);
+  TRACE_EVENT_INSTANT("identity", "SigninFailed",
+                      perfetto::Track::FromPointer(this));
   CompleteFunctionWithError(IdentityGetAuthTokenError(
       IdentityGetAuthTokenError::State::kSignInFailed));
 }
@@ -675,9 +686,8 @@ void IdentityGetAuthTokenFunction::OnGaiaRemoteConsentFlowFailed(
 void IdentityGetAuthTokenFunction::OnGaiaRemoteConsentFlowApproved(
     const std::string& consent_result,
     const GaiaId& gaia_id) {
-  TRACE_EVENT_NESTABLE_ASYNC_INSTANT1("identity",
-                                      "OnGaiaRemoteConsentFlowApproved", this,
-                                      "gaia_id", gaia_id.ToString());
+  TRACE_EVENT_INSTANT("identity", "OnGaiaRemoteConsentFlowApproved",
+                      perfetto::Track::FromPointer(this));
   DCHECK(!consent_result.empty());
   remote_consent_approved_ = true;
 
@@ -730,14 +740,12 @@ void IdentityGetAuthTokenFunction::OnGetAccessTokenComplete(
 #endif
   DCHECK(!token_key_account_access_token_fetcher_);
   if (access_token) {
-    TRACE_EVENT_NESTABLE_ASYNC_END1(
-        "identity", "GetAccessToken", this, "account",
-        token_key_.account_info.account_id.ToString());
+    TRACE_EVENT_END("identity", perfetto::Track::FromPointer(this));
 
     StartGaiaRequest(access_token.value());
   } else {
-    TRACE_EVENT_NESTABLE_ASYNC_END1("identity", "GetAccessToken", this, "error",
-                                    error.ToString());
+    TRACE_EVENT_END("identity", perfetto::Track::FromPointer(this), "error",
+                    error.ToString());
 
     CompleteMintTokenFlow();
     if (TryRecoverFromServiceAuthError(error)) {
@@ -748,26 +756,6 @@ void IdentityGetAuthTokenFunction::OnGetAccessTokenComplete(
             error.ToString()));
   }
 }
-
-#if BUILDFLAG(IS_CHROMEOS)
-void IdentityGetAuthTokenFunction::OnAccessTokenForDeviceAccountFetchCompleted(
-    crosapi::mojom::AccessTokenResultPtr result) {
-  std::optional<std::string> access_token;
-  base::Time expiration_time;
-  GoogleServiceAuthError error = GoogleServiceAuthError::AuthErrorNone();
-  if (result->is_access_token_info()) {
-    access_token = result->get_access_token_info()->access_token;
-    expiration_time = result->get_access_token_info()->expiration_time;
-  } else {
-    DCHECK(result->is_error());
-    error = account_manager::FromMojoGoogleServiceAuthError(result->get_error())
-                .value_or(GoogleServiceAuthError(
-                    GoogleServiceAuthError::SERVICE_ERROR));
-  }
-  device_oauth2_token_fetcher_.reset();
-  OnGetAccessTokenComplete(access_token, expiration_time, error);
-}
-#endif
 
 void IdentityGetAuthTokenFunction::OnAccessTokenFetchCompleted(
     GoogleServiceAuthError error,
@@ -786,9 +774,7 @@ void IdentityGetAuthTokenFunction::OnIdentityAPIShutdown() {
 #if BUILDFLAG(IS_CHROMEOS)
   device_oauth2_token_fetcher_.reset();
 #endif
-  if (gaia_remote_consent_flow_) {
-    gaia_remote_consent_flow_->Stop();
-  }
+  gaia_remote_consent_flow_.reset();
   token_key_account_access_token_fetcher_.reset();
   refresh_tokens_loaded_waiter_.reset();
   scoped_identity_manager_observation_.Reset();
@@ -801,23 +787,9 @@ void IdentityGetAuthTokenFunction::OnIdentityAPIShutdown() {
       IdentityGetAuthTokenError::State::kBrowserContextShutDown));
 }
 
-#if BUILDFLAG(IS_CHROMEOS)
-void IdentityGetAuthTokenFunction::StartDeviceAccessTokenRequest() {
-  device_oauth2_token_fetcher_ = std::make_unique<DeviceOAuth2TokenFetcher>();
-  // Since robot account refresh tokens are scoped down to [any-api] only,
-  // request access token for [any-api] instead of login.
-  // `Unretained()` is safe because this outlives
-  // `device_oauth2_token_fetcher_`.
-  device_oauth2_token_fetcher_->FetchAccessTokenForDeviceAccount(
-      {GaiaConstants::kAnyApiOAuth2Scope},
-      base::BindOnce(&IdentityGetAuthTokenFunction::
-                         OnAccessTokenForDeviceAccountFetchCompleted,
-                     base::Unretained(this)));
-}
-#endif
-
 void IdentityGetAuthTokenFunction::StartTokenKeyAccountAccessTokenRequest() {
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("identity", "GetAccessToken", this);
+  TRACE_EVENT_BEGIN("identity", "GetAccessToken",
+                    perfetto::Track::FromPointer(this));
 
   auto* identity_manager = IdentityManagerFactory::GetForProfile(GetProfile());
   token_key_account_access_token_fetcher_ =
@@ -1038,5 +1010,70 @@ void IdentityGetAuthTokenFunction::RefreshTokensLoadedWaiter::
   identity_manager_observation_.Reset();
   std::move(callback_).Run();
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+
+class IdentityGetAuthTokenFunction::DeviceOAuth2TokenFetcher
+    : public OAuth2AccessTokenManager::Consumer {
+ public:
+  using CallbackType = base::OnceCallback<void(
+      const std::optional<std::string>& /*access_token*/,
+      base::Time /*expiration_time*/,
+      const GoogleServiceAuthError& /*error*/)>;
+
+  DeviceOAuth2TokenFetcher()
+      : OAuth2AccessTokenManager::Consumer("device_oauth2_token_service_ash") {}
+  ~DeviceOAuth2TokenFetcher() override = default;
+
+  // Starts requesting access token.
+  void StartRequest(CallbackType callback) {
+    request_ = DeviceOAuth2TokenServiceFactory::Get()->StartAccessTokenRequest(
+        {GaiaConstants::kAnyApiOAuth2Scope}, this);
+    callback_ = std::move(callback);
+  }
+
+  // OAuth2AccessTokenManager::Consumer:
+
+  void OnGetTokenSuccess(
+      const OAuth2AccessTokenManager::Request* request,
+      const OAuth2AccessTokenConsumer::TokenResponse& token_response) override {
+    if (callback_) {
+      std::move(callback_).Run(token_response.access_token,
+                               token_response.expiration_time,
+                               GoogleServiceAuthError::AuthErrorNone());
+    }
+  }
+
+  void OnGetTokenFailure(const OAuth2AccessTokenManager::Request* request,
+                         const GoogleServiceAuthError& error) override {
+    if (callback_) {
+      std::move(callback_).Run(std::nullopt, base::Time(), error);
+    }
+  }
+
+ private:
+  std::unique_ptr<OAuth2AccessTokenManager::Request> request_;
+  CallbackType callback_;
+};
+
+void IdentityGetAuthTokenFunction::StartDeviceAccessTokenRequest() {
+  device_oauth2_token_fetcher_ = std::make_unique<DeviceOAuth2TokenFetcher>();
+  // Since robot account refresh tokens are scoped down to [any-api] only,
+  // request access token for [any-api] instead of login.
+  device_oauth2_token_fetcher_->StartRequest(
+      base::BindOnce(&IdentityGetAuthTokenFunction::
+                         OnAccessTokenForDeviceAccountFetchCompleted,
+                     weak_ptr_factory_.GetWeakPtr()));
+}
+
+void IdentityGetAuthTokenFunction::OnAccessTokenForDeviceAccountFetchCompleted(
+    const std::optional<std::string>& access_token,
+    base::Time expiration_time,
+    const GoogleServiceAuthError& error) {
+  device_oauth2_token_fetcher_.reset();
+  OnGetAccessTokenComplete(access_token, expiration_time, error);
+}
+
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace extensions

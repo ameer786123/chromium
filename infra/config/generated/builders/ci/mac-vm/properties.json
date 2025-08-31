@@ -19,8 +19,9 @@
                 "apply_configs": [
                   "mb"
                 ],
-                "build_config": "Debug",
+                "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "arm",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -68,5 +69,5 @@
   },
   "builder_group": "chromium.fyi",
   "recipe": "chromium",
-  "xcode_build_version": "16c5032a"
+  "xcode_build_version": "17a5305f"
 }

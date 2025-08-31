@@ -73,7 +73,9 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
 
   // AutofillSuggestionController:
   void OnSuggestionsChanged() override;
-  void AcceptSuggestion(int index) override;
+  void AcceptSuggestion(
+      int index,
+      AutofillMetrics::SuggestionAcceptedMethod accept_method) override;
   bool RemoveSuggestion(
       int list_index,
       AutofillMetrics::SingleEntryRemovalMethod removal_method) override;
@@ -199,10 +201,6 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
   // quickly after a the popup view was shown (see the `show_threshold`
   // parameter of `AcceptSuggestion`).
   std::optional<NextIdleBarrier> barrier_for_accepting_;
-
-  // The time of the latest successful (the view is created and shown) `Show()`
-  // call.
-  std::optional<base::TimeTicks> shown_time_;
 
   // An override to suppress minimum show thresholds. It should only be set
   // during tests that cannot mock time (e.g. the autofill interactive

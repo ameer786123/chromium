@@ -25,7 +25,6 @@
 #include "ios/web/public/webui/url_data_source_ios.h"
 #include "ui/base/device_form_factor.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "url/gurl.h"
 
 namespace {
 
@@ -59,49 +58,6 @@ class AboutUIHTMLSource : public web::URLDataSourceIOS {
   std::string source_name_;
 };
 
-void AppendHeader(std::string* output,
-                  int refresh,
-                  const std::string& unescaped_title) {
-  output->append("<!DOCTYPE HTML>\n<html>\n<head>\n");
-  if (!unescaped_title.empty()) {
-    output->append("<title>");
-    output->append(base::EscapeForHTML(unescaped_title));
-    output->append("</title>\n");
-  }
-  output->append("<meta charset='utf-8'>\n");
-  if (refresh > 0) {
-    output->append("<meta http-equiv='refresh' content='");
-    output->append(base::NumberToString(refresh));
-    output->append("'/>\n");
-  }
-}
-
-void AppendBody(std::string* output) {
-  output->append("</head>\n<body>\n");
-}
-
-void AppendFooter(std::string* output) {
-  output->append("</body>\n</html>\n");
-}
-
-std::string ChromeURLs() {
-  std::string html;
-  AppendHeader(&html, 0, "Chrome URLs");
-  AppendBody(&html);
-  html += "<h2>List of Chrome URLs</h2>\n<ul>\n";
-  std::vector<std::string> hosts(kChromeHostURLs,
-                                 kChromeHostURLs + kNumberOfChromeHostURLs);
-  std::sort(hosts.begin(), hosts.end());
-  for (std::vector<std::string>::const_iterator i = hosts.begin();
-       i != hosts.end(); ++i) {
-    html += "<li><a href='chrome://" + *i + "/' id='" + *i + "'>chrome://" +
-            *i + "</a></li>\n";
-  }
-  html += "</ul>\n";
-  AppendFooter(&html);
-  return html;
-}
-
 }  // namespace
 
 // AboutUIHTMLSource ----------------------------------------------------------
@@ -120,9 +76,7 @@ void AboutUIHTMLSource::StartDataRequest(
     web::URLDataSourceIOS::GotDataCallback callback) {
   std::string response;
   // Add your data source here, in alphabetical order.
-  if (source_name_ == kChromeUIChromeURLsHost) {
-    response = ChromeURLs();
-  } else if (source_name_ == kChromeUICreditsHost) {
+  if (source_name_ == kChromeUICreditsHost) {
     int idr = IDR_ABOUT_UI_CREDITS_HTML;
     if (path == kCreditsJsPath) {
       idr = IDR_ABOUT_UI_CREDITS_JS;

@@ -19,38 +19,19 @@ public class PasswordMetricsUtil {
     // These values are persisted to logs. Entries should not be renumbered and
     // numeric values should never be reused.
     @IntDef({
-        PostPasswordMigrationSheetOutcome.GOT_IT,
-        PostPasswordMigrationSheetOutcome.DISMISS,
-        PostPasswordMigrationSheetOutcome.COUNT
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface PostPasswordMigrationSheetOutcome {
-        int GOT_IT = 0;
-        int DISMISS = 1;
-        int COUNT = 2;
-    }
-
-    public static final String POST_PASSWORD_MIGRATION_SHEET_OUTCOME =
-            "PasswordManager.PostPasswordsMigrationSheet.Outcome";
-
-    // These values are persisted to logs. Entries should not be renumbered and
-    // numeric values should never be reused.
-    @IntDef({
         HistogramExportResult.SUCCESS,
-        HistogramExportResult.USER_ABORTED,
         HistogramExportResult.WRITE_FAILED,
         HistogramExportResult.NO_CONSUMER,
-        HistogramExportResult.NO_SCREEN_LOCK_SET_UP,
         HistogramExportResult.ACTIVITY_DESTROYED,
         HistogramExportResult.NUM_ENTRIES
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface HistogramExportResult {
         int SUCCESS = 0;
-        int USER_ABORTED = 1;
+        // Deprecated: int USER_ABORTED = 1;
         int WRITE_FAILED = 2;
         int NO_CONSUMER = 3;
-        int NO_SCREEN_LOCK_SET_UP = 4;
+        // Deprecated: int NO_SCREEN_LOCK_SET_UP = 4;
         int ACTIVITY_DESTROYED = 5;
         // If you add new values to HistogramExportResult, also update NUM_ENTRIES to match
         // its new size.
@@ -58,12 +39,7 @@ public class PasswordMetricsUtil {
     }
 
     // The prefix for the histograms, which will be used log the export flow metrics when the export
-    // flow starts form the password migration warning.
-    public static final String PASSWORD_MIGRATION_WARNING_EXPORT_METRICS_ID =
-            "PasswordManager.PasswordMigrationWarning.Export";
-
-    // The prefix for the histograms, which will be used log the export flow metrics when the export
-    // flow starts form the password migration warning.
+    // flow starts from password settings.
     public static final String PASSWORD_SETTINGS_EXPORT_METRICS_ID =
             "PasswordManager.Settings.Export";
 
@@ -100,20 +76,6 @@ public class PasswordMetricsUtil {
 
     public static final String PASSWORD_CHECKUP_LAUNCH_CREDENTIAL_MANAGER_SUCCESS_HISTOGRAM =
             "PasswordManager.PasswordCheckup.Launch.Success";
-
-    /**
-     * This is a helper that logs what happened with the post password migration sheet such that it
-     * got closed.
-     *
-     * @param result is the value to be recorded
-     */
-    public static void logPostPasswordMigrationOutcome(
-            @PostPasswordMigrationSheetOutcome int result) {
-        RecordHistogram.recordEnumeratedHistogram(
-                POST_PASSWORD_MIGRATION_SHEET_OUTCOME,
-                result,
-                PostPasswordMigrationSheetOutcome.COUNT);
-    }
 
     /**
      * This is a helper that logs the results of password export which could be triggered from

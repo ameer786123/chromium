@@ -2,13 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #ifndef GPU_COMMAND_BUFFER_CLIENT_MOCK_TRANSFER_BUFFER_H_
 #define GPU_COMMAND_BUFFER_CLIENT_MOCK_TRANSFER_BUFFER_H_
+
+#include <array>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/stack_allocated.h"
@@ -28,6 +26,7 @@ class MockTransferBuffer : public TransferBufferInterface {
     uint32_t offset;
     int32_t id;
     uint8_t* ptr;
+    base::span<uint8_t> span;
   };
 
   MockTransferBuffer(CommandBuffer* command_buffer,
@@ -81,6 +80,13 @@ class MockTransferBuffer : public TransferBufferInterface {
     return static_cast<uint8_t*>(buffers_[expected_buffer_index_]->memory());
   }
 
+  base::span<uint8_t> actual_span() {
+    return buffers_[actual_buffer_index_]->as_byte_span();
+  }
+  base::span<uint8_t> expected_span() {
+    return buffers_[expected_buffer_index_]->as_byte_span();
+  }
+
   uint32_t AllocateExpectedTransferBuffer(uint32_t size);
   void* GetExpectedTransferAddressFromOffset(uint32_t offset, uint32_t size);
   int GetExpectedResultBufferId();
@@ -91,8 +97,8 @@ class MockTransferBuffer : public TransferBufferInterface {
   uint32_t size_;
   uint32_t result_size_;
   uint32_t alignment_;
-  int buffer_ids_[kNumBuffers];
-  scoped_refptr<Buffer> buffers_[kNumBuffers];
+  std::array<int, kNumBuffers> buffer_ids_;
+  std::array<scoped_refptr<Buffer>, kNumBuffers> buffers_;
   int actual_buffer_index_;
   int expected_buffer_index_;
   raw_ptr<void> last_alloc_;

@@ -13,10 +13,10 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/ash/policy/core/device_local_account.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/ash/components/policy/weekly_time/weekly_time.h"
 #include "chromeos/ash/components/policy/weekly_time/weekly_time_interval.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
-#include "components/policy/core/common/device_local_account_type.h"
 #include "components/policy/core/common/policy_bundle.h"
 #include "components/policy/policy_constants.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
@@ -615,6 +615,47 @@ TEST_F(DevicePolicyDecoderTest, DeviceHindiInscriptLayoutEnabled) {
       std::move(device_hindi_inscript_layout_enabled_value));
 }
 
+TEST_F(DevicePolicyDecoderTest, DeviceUserInitiatedFirmwareUpdatesEnabled) {
+  em::ChromeDeviceSettingsProto device_policy;
+
+  DecodeUnsetDevicePolicyTestHelper(
+      device_policy, key::kDeviceUserInitiatedFirmwareUpdatesEnabled);
+
+  base::Value device_user_initiated_firmware_updates_enabled_value(true);
+
+  em::BooleanPolicyProto* proto =
+      device_policy.mutable_deviceuserinitiatedfirmwareupdatesenabled();
+  proto->set_value(
+      device_user_initiated_firmware_updates_enabled_value.GetBool());
+
+  DecodeDevicePolicyTestHelper(
+      device_policy, key::kDeviceUserInitiatedFirmwareUpdatesEnabled,
+      std::move(device_user_initiated_firmware_updates_enabled_value));
+}
+
+TEST_F(DevicePolicyDecoderTest,
+       DeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled) {
+  em::ChromeDeviceSettingsProto device_policy;
+
+  DecodeUnsetDevicePolicyTestHelper(
+      device_policy, key::kDeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled);
+
+  base::Value device_user_initiated_flex_system_firmware_updates_enabled_value(
+      true);
+
+  em::BooleanPolicyProto* proto =
+      device_policy
+          .mutable_deviceuserinitiatedflexsystemfirmwareupdatesenabled();
+  proto->set_value(
+      device_user_initiated_flex_system_firmware_updates_enabled_value
+          .GetBool());
+
+  DecodeDevicePolicyTestHelper(
+      device_policy, key::kDeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled,
+      std::move(
+          device_user_initiated_flex_system_firmware_updates_enabled_value));
+}
+
 TEST_F(DevicePolicyDecoderTest, DeviceSystemAecEnabled) {
   em::ChromeDeviceSettingsProto device_policy;
 
@@ -962,4 +1003,44 @@ TEST_F(DevicePolicyDecoderTest, DevicePowerBatteryChargingOptimization) {
                                key::kDevicePowerBatteryChargingOptimization,
                                std::move(expected_value));
 }
+
+TEST_F(DevicePolicyDecoderTest,
+       DecodeDeviceBluetoothJustWorksPairingEnabledSuccess) {
+  em::ChromeDeviceSettingsProto device_policy;
+
+  DecodeUnsetDevicePolicyTestHelper(
+      device_policy, key::kDeviceBluetoothJustWorksPairingEnabled);
+
+  base::Value device_bluetooth_just_works_pairing_enabled_value(true);
+
+  em::BooleanPolicyProto* proto =
+      device_policy.mutable_devicebluetoothjustworkspairingenabled();
+  proto->set_value(device_bluetooth_just_works_pairing_enabled_value.GetBool());
+
+  DecodeDevicePolicyTestHelper(
+      device_policy, key::kDeviceBluetoothJustWorksPairingEnabled,
+      std::move(device_bluetooth_just_works_pairing_enabled_value));
+}
+
+TEST_F(DevicePolicyDecoderTest, DeviceLoginScreenSecurityKeyPermitAttestation) {
+  em::ChromeDeviceSettingsProto device_policy;
+
+  DecodeUnsetDevicePolicyTestHelper(
+      device_policy, key::kDeviceLoginScreenSecurityKeyPermitAttestation);
+
+  em::StringList* list =
+      device_policy.mutable_deviceloginscreensecuritykeypermitattestation()
+          ->mutable_value();
+
+  auto list_items = base::Value::List().Append("example.com").Append("foo.com");
+
+  for (auto& item : list_items) {
+    list->add_entries(item.GetString());
+  }
+
+  DecodeDevicePolicyTestHelper(
+      device_policy, key::kDeviceLoginScreenSecurityKeyPermitAttestation,
+      base::Value(std::move(list_items)));
+}
+
 }  // namespace policy

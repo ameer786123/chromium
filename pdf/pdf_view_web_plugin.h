@@ -29,19 +29,21 @@
 #include "pdf/mojom/pdf.mojom.h"
 #include "pdf/paint_manager.h"
 #include "pdf/pdf_accessibility_action_handler.h"
-#include "pdf/pdf_accessibility_image_fetcher.h"
 #include "pdf/pdfium/pdfium_engine_client.h"
 #include "pdf/pdfium/pdfium_form_filler.h"
 #include "pdf/post_message_receiver.h"
 #include "pdf/preview_mode_client.h"
 #include "pdf/v8_value_converter.h"
 #include "services/screen_ai/buildflags/buildflags.h"
+#include "third_party/blink/public/mojom/annotation/annotation.mojom.h"
+#include "third_party/blink/public/platform/cross_variant_mojo_util.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_text_input_type.h"
 #include "third_party/blink/public/web/web_plugin.h"
 #include "third_party/blink/public/web/web_plugin_container.h"
 #include "third_party/blink/public/web/web_plugin_params.h"
 #include "third_party/blink/public/web/web_print_params.h"
+#include "third_party/blink/public/web/web_view_observer.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/cursor/cursor.h"
@@ -50,6 +52,11 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 #include "v8/include/v8.h"
+
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+#include "mojo/public/cpp/bindings/unique_receiver_set.h"
+#include "pdf/save_data_buffer_handler_for_drive.h"
+#endif  // BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
 
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 #include "services/screen_ai/public/mojom/screen_ai_service.mojom-forward.h"
@@ -82,6 +89,7 @@ namespace chrome_pdf {
 class MetricsHandler;
 class PDFiumEngine;
 class PdfAccessibilityDataHandler;
+class PdfAnnotationAgent;
 class Thumbnail;
 
 #if BUILDFLAG(ENABLE_PDF_INK2)
@@ -91,13 +99,14 @@ class PdfInkModuleClient;
 
 class PdfViewWebPlugin final : public PDFiumEngineClient,
                                public blink::WebPlugin,
+                               public blink::WebViewObserver,
                                public pdf::mojom::PdfListener,
                                public UrlLoader::Client,
                                public PostMessageReceiver::Client,
                                public PaintManager::Client,
                                public PdfAccessibilityActionHandler,
-                               public PdfAccessibilityImageFetcher,
-                               public PreviewModeClient::Client {
+                               public PreviewModeClient::Client,
+                               public blink::mojom::AnnotationAgentContainer {
  public:
   // Do not save files larger than 100 MB. This cap should be kept in sync with
   // and is also enforced in chrome/browser/resources/pdf/pdf_viewer.ts.
@@ -107,14 +116,6 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
     kLoading = 0,
     kComplete,
     kFailed,
-  };
-
-  // Must match `SaveRequestType` in chrome/browser/resources/pdf/constants.ts.
-  enum class SaveRequestType {
-    kAnnotation = 0,
-    kOriginal = 1,
-    kEdited = 2,
-    kSearchified = 3,
   };
 
   // Provides services from the plugin's container.
@@ -239,11 +240,15 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
     virtual std::unique_ptr<PdfAccessibilityDataHandler>
     CreateAccessibilityDataHandler(
         PdfAccessibilityActionHandler* action_handler,
-        PdfAccessibilityImageFetcher* image_fetcher,
-        blink::WebPluginContainer* plugin_container,
-        bool print_preview) = 0;
+        blink::WebPluginContainer* plugin_container) = 0;
 
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+    // Returns the maximum expected dimension of the images to be OCRed. If
+    // images are larger than the returned value, they will be downsampled
+    // before processing.
+    virtual void GetOcrMaxImageDimension(
+        base::OnceCallback<void(uint32_t)> callback) = 0;
+
     // Performs OCR on `image` and sends the recognized text to `callback`.
     // In case OCR service gets disconnected before or during running this
     // request, `callback` will not be called.
@@ -335,13 +340,23 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
       const gfx::Range& replacement_range,
       int relative_cursor_pos) override;
   void ImeFinishComposingTextForPlugin(bool keep_selection) override;
+  bool SupportsAnnotation() const override;
+  void BindAnnotationAgentContainer(
+      blink::CrossVariantMojoReceiver<
+          blink::mojom::AnnotationAgentContainerInterfaceBase> pending_receiver)
+      override;
+
+  // blink::WebViewObserver:
+  void OnDestruct() override;
+  void OnRendererPreferencesUpdated(
+      const blink::RendererPreferences& preferences) override;
 
   // PDFiumEngineClient:
   void ProposeDocumentLayout(const DocumentLayout& layout) override;
   void Invalidate(const gfx::Rect& rect) override;
   void DidScroll(const gfx::Vector2d& offset) override;
-  void ScrollToX(int x_screen_coords) override;
-  void ScrollToY(int y_screen_coords) override;
+  void ScrollToX(int x_screen_coords, bool force_smooth_scroll) override;
+  void ScrollToY(int y_screen_coords, bool force_smooth_scroll) override;
   void ScrollBy(const gfx::Vector2d& delta) override;
   void ScrollToPage(int page) override;
   void NavigateTo(const std::string& url,
@@ -392,12 +407,14 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
   void SetSelectedText(const std::string& selected_text) override;
   void SetLinkUnderCursor(const std::string& link_under_cursor) override;
   bool IsValidLink(const std::string& url) override;
+  void OnNewTextFragmentsSearchStarted() override;
 #if BUILDFLAG(ENABLE_PDF_INK2)
   bool IsInAnnotationMode() const override;
 #endif  // BUILDFLAG(ENABLE_PDF_INK2)
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
   void OnSearchifyStateChange(bool busy) override;
   void OnHasSearchifyText() override;
+  void MaybeShowSearchifyInProgress() override;
 #endif
 
   // pdf::mojom::PdfListener:
@@ -408,6 +425,11 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
   void GetPdfBytes(uint32_t size_limit, GetPdfBytesCallback callback) override;
   void GetPageText(int32_t page_index, GetPageTextCallback callback) override;
   void GetMostVisiblePageIndex(GetMostVisiblePageIndexCallback callback) override;
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+  void GetSaveDataBufferHandlerForDrive(
+      pdf::mojom::SaveRequestType request_type,
+      GetSaveDataBufferHandlerForDriveCallback callback) override;
+#endif  // BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
 
   // UrlLoader::Client:
   bool IsValid() const override;
@@ -437,13 +459,21 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
       const AccessibilityActionData& action_data) override;
   void LoadOrReloadAccessibility() override;
 
-  // PdfAccessibilityImageFetcher:
-  SkBitmap GetImageForOcr(int32_t page_index,
-                          int32_t page_object_index) override;
-
   // PreviewModeClient::Client:
   void PreviewDocumentLoadComplete() override;
   void PreviewDocumentLoadFailed() override;
+
+  // `blink::mojom::AnnotationAgentContainer`:
+  void CreateAgent(
+      mojo::PendingRemote<blink::mojom::AnnotationAgentHost> host_remote,
+      mojo::PendingReceiver<blink::mojom::AnnotationAgent> agent_receiver,
+      blink::mojom::AnnotationType type,
+      blink::mojom::SelectorPtr selector,
+      std::optional<int> search_range_start_node_id) override;
+  void CreateAgentFromSelection(
+      blink::mojom::AnnotationType type,
+      CreateAgentFromSelectionCallback callback) override;
+  void RemoveAgentsOfType(blink::mojom::AnnotationType type) override;
 
   // Initializes the plugin for testing, bypassing certain consistency checks.
   bool InitializeForTesting();
@@ -505,6 +535,32 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
   bool IsSaveDataBufferEmptyForTesting() const {
     return save_data_buffer_.empty();
   }
+
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+  size_t GetSaveToDriveBufferHandlerReceiverSizeForTesting() const {
+    return save_data_buffer_handler_receivers_.size();
+  }
+#endif  // BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+
+  // Returns the size of the original PDF file. It does not handle files larger
+  // than INT_MAX. If the file is larger than that, it returns 0.
+  uint32_t GetOriginalFileSize();
+
+  // Returns a block of data from the original PDF file.
+  std::vector<uint8_t> GetOriginalFileData(uint32_t offset,
+                                           uint32_t block_size);
+
+  // Populates `buffer` with the modified PDF file data.
+  // The `buffer` is released if the file is larger than `INT_MAX`.
+  void PopulateBufferWithModifiedFileData(std::vector<uint8_t>& buffer);
+
+  // Gets a block of modified PDF data from `buffer`.
+  // `PopulateBufferWithModifiedFileData()` must be called first to populate
+  // `buffer`.
+  std::vector<uint8_t> GetModifiedFileDataFromBuffer(
+      base::span<const uint8_t> buffer,
+      uint32_t offset,
+      uint32_t block_size);
 
  private:
   // Callback that runs after `LoadUrl()`. The `loader` is the loader used to
@@ -589,8 +645,15 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
   void HandleStopScrollingMessage(const base::Value::Dict& message);
   void HandleViewportMessage(const base::Value::Dict& message);
 
-  void SaveToBuffer(SaveRequestType request_type, const std::string& token);
+  void SaveToBuffer(pdf::mojom::SaveRequestType request_type,
+                    const std::string& token);
   void SaveToFile(const std::string& token);
+
+  // For a call in `SaveBlockToBuffer()`, ensures `offset` and `block_size` have
+  // expected values and returns the effective `block_size`.
+  uint32_t VerifyParamsAndGetSaveBlockSize(uint32_t total_file_size,
+                                           uint32_t offset,
+                                           uint32_t block_size);
 
   // Returns `block_size` bytes to save the PDF with `request_type`, starting
   // from location `offset`. Since the caller may not know the exact file size,
@@ -599,18 +662,9 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
   // The function also returns the total file size.
   // Note that it only handles files less than INT_MAX size, and if the file is
   // larger than that, it returns 0 as file size and no data.
-  SaveDataBlock SaveBlockToBuffer(SaveRequestType request_type,
+  SaveDataBlock SaveBlockToBuffer(pdf::mojom::SaveRequestType request_type,
                                   uint32_t offset,
                                   uint32_t block_size);
-
-  // For a call to `SaveBlockToBuffer`, ensures `offset` and `block_size` have
-  // expected values and returns the effective `block_size`.
-  uint32_t VerifyParamsAndGetSaveBlockSize(uint32_t total_file_size,
-                                           uint32_t offset,
-                                           uint32_t block_size);
-
-  // Release buffered data for saving.
-  void ReleaseSaveBuffer();
 
   // Sets whether the plugin can and should handle the save by using `pdf_host_`
   // to notify the browser. Prevents duplicate notifications to the browser if
@@ -754,6 +808,9 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
 
   // Starts loading accessibility information.
   void LoadAccessibility();
+
+  // Applies the initial renderer preferences and observes future updates.
+  void ApplyAndObserveRendererPreferences();
 
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
   // Triggered to show/hide Searchify progress indicator.
@@ -997,11 +1054,29 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
   // Maximum size of save data in each block.
   uint32_t max_save_buffer_size_;
 
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-  bool show_searchify_in_progress_ = false;
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+  // Owns all the receivers for `pdf::mojom::SaveDataBufferHandler`. Each
+  // receiver is associated with a Save to Drive handler and is used to read the
+  // corresponding data request. Once a receiver is destroyed, the corresponding
+  // buffer and handler are freed.
+  mojo::UniqueReceiverSet<pdf::mojom::SaveDataBufferHandler>
+      save_data_buffer_handler_receivers_;
+#endif  // BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
 
-  // Tells if searchify ever started.
-  bool searchify_started_ = false;
+  // Used to allow the embedder to scroll-to and highlight a text fragment.
+  mojo::Receiver<blink::mojom::AnnotationAgentContainer>
+      annotation_agent_container_receiver_{this};
+  std::unique_ptr<PdfAnnotationAgent> annotation_agent_;
+
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  enum class SearchifyState {
+    kNotStarted,
+    kStarted,
+    kShowingInProgress,
+    kStopped,
+  };
+
+  SearchifyState searchify_state_ = SearchifyState::kNotStarted;
 #endif
 
   base::WeakPtrFactory<PdfViewWebPlugin> weak_factory_{this};

@@ -5,35 +5,27 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTENSION_APITEST_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_APITEST_H_
 
+#include <memory>
 #include <string>
 #include <string_view>
 
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/extensions/extension_browsertest_platform_delegate.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
-
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_browsertest.h"
-#else
 #include "chrome/browser/extensions/extension_browsertest.h"
-#endif  // BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 
 namespace base {
 class FilePath;
+}
+
+namespace net::test_server {
+class EmbeddedTestServer;
 }
 
 class GURL;
 
 namespace extensions {
 class Extension;
-class ExtensionBrowserTestPlatformDelegate;
-
-#if BUILDFLAG(IS_ANDROID)
-using ExtensionApiTestBase = ExtensionPlatformBrowserTest;
-#else
-using ExtensionApiTestBase = ExtensionBrowserTest;
-#endif
 
 // The general flow of these API tests should work like this:
 // (1) Setup initial browser state (e.g. create some bookmarks for the
@@ -43,7 +35,7 @@ using ExtensionApiTestBase = ExtensionBrowserTest;
 //     chrome.test.fail
 // (4) Verify expected browser state.
 // TODO(erikkay): There should also be a way to drive events in these tests.
-class ExtensionApiTest : public ExtensionApiTestBase {
+class ExtensionApiTest : public ExtensionBrowserTest {
  public:
   struct RunOptions {
     // Start the test by opening the specified page URL. This must be an
@@ -81,7 +73,7 @@ class ExtensionApiTest : public ExtensionApiTestBase {
   void SetUpOnMainThread() override;
   void TearDownOnMainThread() override;
 
-  // Loads the extension with |extension_name| and default RunOptions and
+  // Loads the extension with `extension_name` and default RunOptions and
   // LoadOptions.
   [[nodiscard]] bool RunExtensionTest(const char* extension_name);
 
@@ -96,8 +88,8 @@ class ExtensionApiTest : public ExtensionApiTestBase {
                                       const RunOptions& run_options,
                                       const LoadOptions& load_options);
 
-  // Opens the given |url| and waits for the next result from the
-  // chrome.test API. If |open_in_incognito| is true, the URL is opened
+  // Opens the given `url` and waits for the next result from the
+  // chrome.test API. If `open_in_incognito` is true, the URL is opened
   // in an off-the-record browser profile. This API is different from
   // RunExtensionTest as it doesn't load an extension.
   [[nodiscard]] bool OpenTestURL(const GURL& url,
@@ -112,7 +104,7 @@ class ExtensionApiTest : public ExtensionApiTestBase {
   //
   // Starting the test server is done in two steps; first the server socket is
   // created and starts listening, followed by the start of an IO thread on
-  // which the test server will accept connectons.
+  // which the test server will accept connections.
   //
   // In general you can start the test server using StartEmbeddedTestServer()
   // which handles both steps. When you need to register request handlers that
@@ -127,13 +119,16 @@ class ExtensionApiTest : public ExtensionApiTestBase {
   // StartEmbeddedTestServer() instead.
   void EmbeddedTestServerAcceptConnections();
 
+  // Returns the test WebSocket EmbeddedTestServer. Can be used to configure
+  // the server before it has started.
+  net::test_server::EmbeddedTestServer& GetWebSocketServer();
+
   // Start the test WebSocket server, and store details of its state. Those
   // details will be available to javascript tests using
   // chrome.test.getConfig(). Enable HTTP basic authentication if needed.
-  bool StartWebSocketServer(const base::FilePath& root_directory,
-                            bool enable_basic_auth = false);
+  bool StartWebSocketServer(bool enable_basic_auth = false);
 
-  // Sets the additional string argument |customArg| to the test config object,
+  // Sets the additional string argument `customArg` to the test config object,
   // which is available to javascript tests using chrome.test.getConfig().
   void SetCustomArg(std::string_view custom_arg);
 
@@ -153,44 +148,26 @@ class ExtensionApiTest : public ExtensionApiTestBase {
 
   base::Value::Dict* GetTestConfig() { return test_config_.get(); }
 
-  // Creates a new secure test server that can be used in place of the default
-  // HTTP embedded_test_server defined in BrowserTestBase. The new test server
-  // can then be retrieved using the same embedded_test_server() method used
-  // to get the BrowserTestBase HTTP server.
-  void UseHttpsTestServer();
-
-  // This will return either the https test server or the
-  // default one specified in BrowserTestBase, depending on if an https test
-  // server was created by calling UseHttpsTestServer().
-  net::EmbeddedTestServer* embedded_test_server() {
-    return (https_test_server_) ? https_test_server_.get()
-                                : BrowserTestBase::embedded_test_server();
-  }
-
  private:
   void OpenURL(const GURL& url, bool open_in_incognito);
 
   // Initializes the test data directories to the proper locations.
   void SetUpTestDataDir();
 
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
+
   // Hold details of the test, set in C++, which can be accessed by
   // javascript using chrome.test.getConfig().
   std::unique_ptr<base::Value::Dict> test_config_;
 
   // Hold the test WebSocket server.
-  std::unique_ptr<net::SpawnedTestServer> websocket_server_;
+  std::unique_ptr<net::test_server::EmbeddedTestServer> websocket_server_;
 
   // Test data directory shared with //extensions.
   base::FilePath shared_test_data_dir_;
-
-  // Secure test server, isn't created by default. Needs to be
-  // created using UseHttpsTestServer() and then called with
-  // embedded_test_server().
-  std::unique_ptr<net::EmbeddedTestServer> https_test_server_;
-
-  // A delegate to handle platform-specific behavior.
-  // TODO(devlin): Hoist this up to ExtensionPlatformBrowserTest?
-  ExtensionBrowserTestPlatformDelegate platform_delegate_;
 };
 
 }  // namespace extensions

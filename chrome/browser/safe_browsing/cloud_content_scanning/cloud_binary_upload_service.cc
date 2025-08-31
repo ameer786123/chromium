@@ -25,7 +25,6 @@
 #include "chrome/browser/safe_browsing/cloud_content_scanning/multipart_uploader.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/resumable_uploader.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chromeos/components/mgs/managed_guest_session_utils.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/enterprise/connectors/core/reporting_utils.h"
 #include "components/policy/core/common/management/management_service.h"
@@ -35,6 +34,10 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/http/http_status_code.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chromeos/components/mgs/managed_guest_session_utils.h"
+#endif
 
 namespace safe_browsing {
 namespace {
@@ -425,6 +428,11 @@ void CloudBinaryUploadService::OnGetRequestData(Request::Id request_id,
     // file contents to the content analysis service.  Let the service know that
     // a metadata-only analysis is required.
     request->set_require_metadata_verdict(true);
+    // If the file is encrypted, let the service know that the file is
+    // encrypted.
+    if (result == Result::FILE_ENCRYPTED) {
+      request->set_is_content_encrypted(true);
+    }
   }
 
   if (!request->IsAuthRequest() && data.size == 0) {

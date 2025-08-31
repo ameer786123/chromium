@@ -206,8 +206,7 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
   unsigned PreviousBreakOpportunity(unsigned offset, unsigned min = 0) const;
 
   static bool IsBreakableSpace(UChar ch) {
-    return ch == kSpaceCharacter || ch == kTabulationCharacter ||
-           ch == kNewlineCharacter;
+    return ch == uchar::kSpace || ch == uchar::kTab || ch == uchar::kLineFeed;
   }
 
  private:
@@ -247,7 +246,7 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
     return iterator_.get();
   }
 
-  NonSharedCharacterBreakIterator& GetCharacterBreakIterator() const {
+  CharacterBreakIterator& GetCharacterBreakIterator() const {
     if (!character_iterator_) {
       character_iterator_.emplace(StringView(string_, start_offset_));
     }
@@ -271,7 +270,7 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
   const LayoutLocale* locale_ = nullptr;
   mutable AtomicString locale_with_keyword_;
   mutable PooledBreakIterator iterator_;
-  mutable std::optional<NonSharedCharacterBreakIterator> character_iterator_;
+  mutable std::optional<CharacterBreakIterator> character_iterator_;
   unsigned start_offset_ = 0;
   LineBreakType break_type_;
   BreakSpaceType break_space_ = BreakSpaceType::kAfterSpaceRun;

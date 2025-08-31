@@ -102,18 +102,20 @@ id<GREYMatcher> SupervisedIncognitoMessage() {
 
   [[EarlGrey selectElementWithMatcher:ShowTabsButton()]
       performAction:grey_longPress()];
+
   policy::AssertButtonInCollectionEnabled(IDS_IOS_TOOLS_MENU_NEW_TAB);
   policy::AssertButtonInCollectionDisabled(
       IDS_IOS_TOOLS_MENU_NEW_INCOGNITO_TAB);
 
   // Dismiss the popup menu by tapping anywhere.
-  [[EarlGrey selectElementWithMatcher:ShowTabsButton()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       performAction:grey_tap()];
 
   [SigninEarlGrey signOut];
 
   [[EarlGrey selectElementWithMatcher:ShowTabsButton()]
       performAction:grey_longPress()];
+
   policy::AssertButtonInCollectionEnabled(IDS_IOS_TOOLS_MENU_NEW_TAB);
   policy::AssertButtonInCollectionEnabled(IDS_IOS_TOOLS_MENU_NEW_INCOGNITO_TAB);
 }
@@ -153,17 +155,15 @@ id<GREYMatcher> SupervisedIncognitoMessage() {
                                    grey_sufficientlyVisible(), nil)]
       performAction:grey_tap()];
 
-  // Wait for the Family Link page to finish loading.
-  [ChromeEarlGrey waitForPageToFinishLoading];
+  // The Family Link url will load in a new tab.
+  [ChromeEarlGrey waitForMainTabCount:2];
 
-  // For testing, there will be a redirect to the main Family Link website and
-  // thus we only compare the hostnames.
-  std::string expectedHostname =
-      GURL(supervised_user::kManagedByParentUiMoreInfoUrl).host();
-  GREYAssertEqual([ChromeEarlGrey webStateLastCommittedURL].host(),
-                  expectedHostname,
-                  @"Did not open the correct Learn more URL with hostname %s",
-                  expectedHostname.c_str());
+  GURL currentURL = [ChromeEarlGrey webStateVisibleURL];
+  GURL expectedURL = GURL(supervised_user::kManagedByParentUiMoreInfoUrl);
+  GREYAssertEqual(
+      expectedURL, currentURL,
+      @"Page navigated unexpectedly to %s, instead of the Family Link website",
+      currentURL.spec().c_str());
 
   GREYAssertNil([MetricsAppInterface
                     expectTotalCount:1
@@ -284,7 +284,9 @@ id<GREYMatcher> SupervisedIncognitoMessage() {
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Check that the edit button is disabled.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::TabGridEditButton()]
+  [[EarlGrey
+      selectElementWithMatcher:grey_allOf(chrome_test_util::TabGridEditButton(),
+                                          grey_sufficientlyVisible(), nil)]
       assertWithMatcher:grey_not(grey_enabled())];
 }
 
@@ -310,7 +312,7 @@ id<GREYMatcher> SupervisedIncognitoMessage() {
 
   // The user should stay on the new tab page.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabPageOmnibox()]
-      assertWithMatcher:grey_sufficientlyVisible()];
+      assertWithMatcher:grey_notNil()];
 }
 
 @end

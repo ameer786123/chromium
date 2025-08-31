@@ -20,12 +20,12 @@
 #include "ui/display/tablet_state.h"
 
 TabletModePageBehavior::TabletModePageBehavior() {
-  display::Screen::GetScreen()->AddObserver(this);
-  OnTabletModeToggled(display::Screen::GetScreen()->InTabletMode());
+  display::Screen::Get()->AddObserver(this);
+  OnTabletModeToggled(display::Screen::Get()->InTabletMode());
 }
 
 TabletModePageBehavior::~TabletModePageBehavior() {
-  display::Screen::GetScreen()->RemoveObserver(this);
+  display::Screen::Get()->RemoveObserver(this);
 }
 
 void TabletModePageBehavior::OnTabletModeToggled(bool enabled) {
@@ -48,8 +48,9 @@ void TabletModePageBehavior::OnDisplayTabletStateChanged(
   }
 }
 
-bool TabletModePageBehavior::ShouldTrackBrowser(Browser* browser) {
-  return display::Screen::GetScreen()->InTabletMode();
+bool TabletModePageBehavior::ShouldTrackBrowser(
+    BrowserWindowInterface* browser) {
+  return display::Screen::Get()->InTabletMode();
 }
 
 void TabletModePageBehavior::OnTabStripModelChanged(

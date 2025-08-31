@@ -59,6 +59,10 @@
 #include "ui/gfx/font_fallback_linux.h"
 #endif
 
+#if BUILDFLAG(IS_MAC)
+#include "third_party/blink/renderer/platform/fonts/mac/character_fallback_cache.h"
+#endif
+
 class SkString;
 class SkTypeface;
 
@@ -153,7 +157,6 @@ class PLATFORM_EXPORT FontCache final {
   void Invalidate();
 
   sk_sp<SkFontMgr> FontManager() { return font_manager_; }
-  static void SetFontManager(sk_sp<SkFontMgr>);
 
 #if BUILDFLAG(IS_WIN)
   static WebFontPrewarmer* GetFontPrewarmer() { return prewarmer_; }
@@ -270,7 +273,7 @@ class PLATFORM_EXPORT FontCache final {
   // BCP47 list used when requesting fallback font for a character.
   // inlineCapacity is set to 4: the array vector not need to hold more than 4
   // elements.
-  using Bcp47Vector = WTF::Vector<const char*, 4>;
+  using Bcp47Vector = Vector<const char*, 4>;
 
   const SimpleFontData* PlatformFallbackFontForCharacter(
       const FontDescription&,
@@ -317,11 +320,12 @@ class PLATFORM_EXPORT FontCache final {
                                    std::string& name);
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  static AtomicString GetFamilyNameForCharacter(SkFontMgr*,
-                                                UChar32,
-                                                const FontDescription&,
-                                                const char* family_name,
-                                                FontFallbackPriority);
+  static const FontPlatformData* CreateFontPlatformDataForCharacter(
+      SkFontMgr*,
+      UChar32,
+      const FontDescription&,
+      const char* family_name,
+      FontFallbackPriority);
 #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX) ||
         // BUILDFLAG(IS_CHROMEOS)
 
@@ -332,9 +336,6 @@ class PLATFORM_EXPORT FontCache final {
   int purge_prevent_count_ = 0;
 
   sk_sp<SkFontMgr> font_manager_;
-
-  // A leaky owning bare pointer.
-  static SkFontMgr* static_font_manager_;
 
 #if BUILDFLAG(IS_WIN)
   static WebFontPrewarmer* prewarmer_;
@@ -369,6 +370,10 @@ class PLATFORM_EXPORT FontCache final {
   FontDataCache font_data_cache_;
 
   Member<FontFallbackMap> font_fallback_map_;
+
+#if BUILDFLAG(IS_MAC)
+  CharacterFallbackCache character_fallback_cache_;
+#endif
 
   void PurgeFallbackListShaperCache();
 

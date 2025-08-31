@@ -23,7 +23,7 @@
 #include "gpu/ipc/common/surface_handle.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace gpu {
 
@@ -229,6 +229,9 @@ class ExternalVkImageBacking final : public ClearTrackingSharedImageBacking {
   void CopyPixelsFromGLTextureToVkImage();
   void CopyPixelsFromVkImageToGLTexture();
 
+  void CopyPixelsFromGLTextureToVkImageUsingStagingBuffer();
+  void CopyPixelsFromVKImageToGLTextureUsingStagingBuffer();
+
   scoped_refptr<SharedContextState> context_state_;
   std::vector<TextureHolderVk> vk_textures_;
 
@@ -240,6 +243,7 @@ class ExternalVkImageBacking final : public ClearTrackingSharedImageBacking {
 
   bool is_write_in_progress_ = false;
   uint32_t reads_in_progress_ = 0;
+  bool is_updating_content_ = false;
   uint32_t gl_reads_in_progress_ = 0;
 
   std::vector<GLTextureHolder> gl_textures_;

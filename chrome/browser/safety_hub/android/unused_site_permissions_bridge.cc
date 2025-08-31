@@ -15,6 +15,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/safety_hub/revoked_permissions_service.h"
 #include "chrome/browser/ui/safety_hub/revoked_permissions_service_factory.h"
+#include "chrome/browser/ui/safety_hub/unused_site_permissions_manager.h"
 #include "components/content_settings/core/common/content_settings_constraints.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_types.h"
@@ -49,6 +50,9 @@ PermissionsData FromJavaPermissionsData(
       content_settings::ContentSettingConstraints(expiration - lifetime);
   permissions_data.constraints.set_lifetime(lifetime);
 
+  permissions_data.revocation_type = static_cast<PermissionsRevocationType>(
+      Java_PermissionsData_getRevocationType(env, jobject));
+
   return permissions_data;
 }
 
@@ -64,12 +68,14 @@ base::android::ScopedJavaLocalRef<jobject> ToJavaPermissionsData(
   // but here it is ok since the primary pattern belongs to a single
   // origin. Therefore, it has a fully defined URL+scheme+port which makes
   // converting primary pattern to origin successful.
-  url::Origin origin = RevokedPermissionsService::ConvertPrimaryPatternToOrigin(
-      obj.primary_pattern);
+  url::Origin origin =
+      UnusedSitePermissionsManager::ConvertPrimaryPatternToOrigin(
+          obj.primary_pattern);
   return Java_PermissionsData_create(
       env, origin.Serialize(), permissions,
       obj.constraints.expiration().ToDeltaSinceWindowsEpoch().InMicroseconds(),
-      obj.constraints.lifetime().InMicroseconds());
+      obj.constraints.lifetime().InMicroseconds(),
+      static_cast<int32_t>(obj.revocation_type));
 }
 
 std::vector<PermissionsData> GetRevokedPermissions(Profile* profile) {
@@ -114,10 +120,7 @@ void RestoreRevokedPermissionsReviewList(
   RevokedPermissionsService* service =
       RevokedPermissionsServiceFactory::GetForProfile(profile);
   CHECK(service);
-
-  for (const auto& permissions_data : permissions_data_list) {
-    service->StorePermissionInRevokedPermissionSetting(permissions_data);
-  }
+  service->RestoreDeletedRevokedPermissionsList(permissions_data_list);
 }
 
 std::vector<std::u16string> ContentSettingsTypeToString(

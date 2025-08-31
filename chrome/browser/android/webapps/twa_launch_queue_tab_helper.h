@@ -19,8 +19,6 @@ class LaunchQueue;
 class TwaLaunchQueueTabHelper
     : public content::WebContentsUserData<TwaLaunchQueueTabHelper> {
  public:
-  static void Create(content::WebContents* contents);
-
   explicit TwaLaunchQueueTabHelper(content::WebContents* contents);
   TwaLaunchQueueTabHelper(const TwaLaunchQueueTabHelper&) = delete;
   TwaLaunchQueueTabHelper& operator=(const TwaLaunchQueueTabHelper&) = delete;

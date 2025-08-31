@@ -16,6 +16,7 @@
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/task/task_traits.h"
@@ -131,7 +132,6 @@ void SodaInstallerImpl::UninstallSoda(PrefService* global_prefs) {
                                             weak_factory_.GetWeakPtr()));
 
   SodaInstaller::UnregisterLanguages(global_prefs);
-  global_prefs->SetTime(prefs::kSodaScheduledDeletionTime, base::Time());
 
   soda_binary_installed_ = false;
   is_soda_downloading_ = false;
@@ -159,9 +159,9 @@ void SodaInstallerImpl::OnEvent(const update_client::CrxUpdateItem& item) {
   switch (item.state) {
     case update_client::ComponentState::kCanUpdate:
     case update_client::ComponentState::kDownloading:
-    case update_client::ComponentState::kDownloadingDiff:
+    case update_client::ComponentState::kDecompressing:
+    case update_client::ComponentState::kPatching:
     case update_client::ComponentState::kUpdating:
-    case update_client::ComponentState::kUpdatingDiff:
       downloading_components_[language_code] = item;
 
       if (language_code == LanguageCode::kNone &&
@@ -200,7 +200,6 @@ void SodaInstallerImpl::OnEvent(const update_client::CrxUpdateItem& item) {
     case update_client::ComponentState::kChecking:
     case update_client::ComponentState::kUpdated:
     case update_client::ComponentState::kUpToDate:
-    case update_client::ComponentState::kLastStatus:
     case update_client::ComponentState::kRun:
       // Do nothing.
       break;

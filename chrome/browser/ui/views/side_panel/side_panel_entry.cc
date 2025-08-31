@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/side_panel/side_panel_entry.h"
 
+#include "base/functional/callback_helpers.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_entry_observer.h"
@@ -13,23 +14,29 @@
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kShouldShowTitleInSidePanelHeaderKey, true)
 
 SidePanelEntry::SidePanelEntry(
-    Id id,
+    Key key,
     CreateContentCallback create_content_callback,
-    std::optional<base::RepeatingCallback<GURL()>> open_in_new_tab_url_callback,
-    std::optional<base::RepeatingCallback<std::unique_ptr<ui::MenuModel>()>>
-        more_info_callback)
-    : key_(id), create_content_callback_(std::move(create_content_callback)) {
-  open_in_new_tab_url_callback_ =
-      open_in_new_tab_url_callback.value_or(base::NullCallbackAs<GURL()>());
-  more_info_callback_ = more_info_callback.value_or(
-      base::NullCallbackAs<std::unique_ptr<ui::MenuModel>()>());
-}
-
-SidePanelEntry::SidePanelEntry(Key key,
-                               CreateContentCallback create_content_callback)
-    : key_(key), create_content_callback_(std::move(create_content_callback)) {
+    base::RepeatingCallback<GURL()> open_in_new_tab_url_callback,
+    base::RepeatingCallback<std::unique_ptr<ui::MenuModel>()>
+        more_info_callback,
+    base::RepeatingCallback<int()> default_content_width_callback)
+    : key_(key),
+      create_content_callback_(std::move(create_content_callback)),
+      open_in_new_tab_url_callback_(std::move(open_in_new_tab_url_callback)),
+      more_info_callback_(std::move(more_info_callback)),
+      default_content_width_callback_(default_content_width_callback) {
   DCHECK(create_content_callback_);
 }
+
+SidePanelEntry::SidePanelEntry(
+    Key key,
+    CreateContentCallback create_content_callback,
+    base::RepeatingCallback<int()> default_content_width_callback)
+    : SidePanelEntry(key,
+                     std::move(create_content_callback),
+                     base::NullCallback(),
+                     base::NullCallback(),
+                     default_content_width_callback) {}
 
 SidePanelEntry::~SidePanelEntry() = default;
 
@@ -104,4 +111,17 @@ bool SidePanelEntry::SupportsMoreInfoButton() {
 
 void SidePanelEntry::ResetLoadTimestamp() {
   entry_show_triggered_timestamp_ = base::TimeTicks();
+}
+
+int SidePanelEntry::GetDefaultContentWidth() const {
+  if (default_content_width_callback_.is_null()) {
+    return default_content_width_;
+  }
+
+  int preferred_default_width = default_content_width_callback_.Run();
+  // The default width must be greater than or equal to the default side panel
+  // width.
+  return preferred_default_width >= kSidePanelDefaultContentWidth
+             ? preferred_default_width
+             : default_content_width_;
 }

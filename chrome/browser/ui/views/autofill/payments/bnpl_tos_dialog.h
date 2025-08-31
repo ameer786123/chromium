@@ -34,9 +34,11 @@ class BnplTosDialog : public views::DialogDelegateView {
 
   // DialogDelegate:
   void AddedToWidget() override;
+  void OnWidgetInitialized() override;
 
  private:
   TitleWithIconAfterLabelView::Icon GetTitleIcon() const;
+  std::u16string GetTitleIconAccessibilityString() const;
   bool OnAccepted();
   bool OnCancelled();
 

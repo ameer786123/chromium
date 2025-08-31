@@ -9,7 +9,6 @@
 #import "base/functional/callback_forward.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/metrics/histogram_tester.h"
-#import "base/test/task_environment.h"
 #import "components/prefs/pref_service.h"
 #import "components/signin/public/base/consent_level.h"
 #import "components/signin/public/identity_manager/identity_test_utils.h"
@@ -36,6 +35,7 @@
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/providers/photos/test_photos_service.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -120,11 +120,14 @@ class FakeImageFetchTabHelper : public ImageFetchTabHelper {
 class SaveToPhotosMediatorTest : public PlatformTest {
  protected:
   void SetUp() final {
+    PlatformTest::SetUp();
     TestProfileIOS::Builder builder;
     builder.AddTestingFactory(
         IdentityManagerFactory::GetInstance(),
         base::BindRepeating(IdentityTestEnvironmentBrowserStateAdaptor::
                                 BuildIdentityManagerForTests));
+    builder.AddTestingFactory(PhotosServiceFactory::GetInstance(),
+                              PhotosServiceFactory::GetDefaultFactory());
     profile_ = std::move(builder).Build();
     browser_ = std::make_unique<TestBrowser>(profile_.get());
     web_state_ = std::make_unique<web::FakeWebState>();
@@ -166,7 +169,13 @@ class SaveToPhotosMediatorTest : public PlatformTest {
     GetTestPhotosService()->SetQuitClosure(task_environment_.QuitClosure());
   }
 
-  void TearDown() final { [mock_application_ stopMocking]; }
+  void TearDown() final {
+    EXPECT_OCMOCK_VERIFY(mock_application_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_manage_storage_alert_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_google_one_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_application_);
+    PlatformTest::TearDown();
+  }
 
   // Create a SaveToPhotosMediator with services from the test browser state.
   SaveToPhotosMediator* CreateSaveToPhotosMediator() {
@@ -207,7 +216,7 @@ class SaveToPhotosMediatorTest : public PlatformTest {
         ImageFetchTabHelper::FromWebState(web_state_.get()));
   }
 
-  base::test::TaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_;
   std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<TestBrowser> browser_;
   std::unique_ptr<web::FakeWebState> web_state_;
@@ -545,6 +554,7 @@ TEST_F(SaveToPhotosMediatorTest, SnackbarOpenButtonOpensPhotosAppIfInstalled) {
   // Verify that the mediator detected that the app is installed and tried to
   // open it.
   EXPECT_OCMOCK_VERIFY(mock_application_);
+  EXPECT_OCMOCK_VERIFY(mock_save_to_photos_mediator_delegate);
 }
 
 // Tests that the SaveToPhotosMediator tries to show the StoreKit if it detects

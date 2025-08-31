@@ -17,12 +17,13 @@ import androidx.annotation.VisibleForTesting;
 import androidx.browser.customtabs.CustomTabsIntent;
 
 import org.chromium.base.Log;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.feed.FeedServiceBridge;
 import org.chromium.chrome.browser.feed.R;
 import org.chromium.chrome.browser.feed.StreamKind;
 import org.chromium.chrome.browser.feed.v2.FeedUserActionType;
+import org.chromium.ui.modelutil.MVCListAdapter;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
-import org.chromium.ui.modelutil.ModelListAdapter;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /**
@@ -32,9 +33,10 @@ import org.chromium.ui.modelutil.PropertyModel;
  * Design doc here: https://docs.google.com/document/d/1D-ZfhGv9GFLXHYKzAqsaw-LiVhsENRTJC5ZMaZ9z0sQ/
  * edit#heading=h.p79wagdgjgx6
  */
+@NullMarked
 public class FeedManagementMediator {
     private static final String TAG = "FeedManagementMdtr";
-    private ModelList mModelList;
+    private final ModelList mModelList;
     private final Context mContext;
     private final @StreamKind int mInitiatingStreamKind;
 
@@ -51,7 +53,7 @@ public class FeedManagementMediator {
                         R.string.feed_manage_activity_description,
                         this::handleActivityClick);
         mModelList.add(
-                new ModelListAdapter.ListItem(
+                new MVCListAdapter.ListItem(
                         FeedManagementItemProperties.DEFAULT_ITEM_TYPE, activityModel));
         PropertyModel followingModel =
                 generateListItem(
@@ -59,7 +61,7 @@ public class FeedManagementMediator {
                         R.string.feed_manage_following_description,
                         this::handleFollowingClick);
         mModelList.add(
-                new ModelListAdapter.ListItem(
+                new MVCListAdapter.ListItem(
                         FeedManagementItemProperties.DEFAULT_ITEM_TYPE, followingModel));
         PropertyModel hiddenModel =
                 generateListItem(
@@ -67,7 +69,7 @@ public class FeedManagementMediator {
                         R.string.feed_manage_hidden_description,
                         this::handleHiddenClick);
         mModelList.add(
-                new ModelListAdapter.ListItem(
+                new MVCListAdapter.ListItem(
                         FeedManagementItemProperties.DEFAULT_ITEM_TYPE, hiddenModel));
     }
 

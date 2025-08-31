@@ -11,7 +11,7 @@
 #import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_collection_utils.h"
 #import "ios/chrome/browser/contextual_panel/entrypoint/ui/contextual_panel_entrypoint_visibility_delegate.h"
 #import "ios/chrome/browser/location_bar/ui_bundled/badges_container_view.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/omnibox_constants.h"
+#import "ios/chrome/browser/omnibox/public/omnibox_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/elements/extended_touch_target_button.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
@@ -195,12 +195,6 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
   // Make the pointer shape fit the location bar's semi-circle end shape.
   _trailingButton.pointerStyleProvider =
       CreateLiftEffectCirclePointerStyleProvider();
-
-  __weak __typeof(self) weakSelf = self;
-  CustomHighlightableButtonHighlightHandler handler = ^(BOOL highlighted) {
-    [weakSelf updateTrailingButtonWithHighlightedStatus:highlighted];
-  };
-  [_trailingButton setCustomHighlightHandler:handler];
 
   // Setup label.
   _locationLabel.lineBreakMode = NSLineBreakByTruncatingHead;
@@ -462,6 +456,14 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
   [self updateAccessibility];
 }
 
+- (void)setIncognitoBadgeView:(UIView*)incognitoBadgeView {
+  BOOL hadBadgeView = _badgesContainerView.incognitoBadgeView != nil;
+  if (!hadBadgeView && incognitoBadgeView) {
+    _badgesContainerView.incognitoBadgeView = incognitoBadgeView;
+  }
+  [self updateAccessibility];
+}
+
 - (void)setBadgeView:(UIView*)badgeView {
   BOOL hadBadgeView = _badgesContainerView.badgeView != nil;
   if (!hadBadgeView && badgeView) {
@@ -477,6 +479,13 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
   if (!hadEntrypointView && contextualPanelEntrypointView) {
     _badgesContainerView.contextualPanelEntrypointView =
         contextualPanelEntrypointView;
+  }
+  [self updateAccessibility];
+}
+
+- (void)setReaderModeChipView:(UIView*)readerModeChipView {
+  if (!_badgesContainerView.readerModeChipView && readerModeChipView) {
+    _badgesContainerView.readerModeChipView = readerModeChipView;
   }
   [self updateAccessibility];
 }
@@ -564,7 +573,16 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
   return self.badgesContainerView;
 }
 
+- (id<ReaderModeChipVisibilityDelegate>)readerModeChipVisibilityDelegate {
+  return self.badgesContainerView;
+}
+
 - (id<BadgeViewVisibilityDelegate>)badgeViewVisibilityDelegate {
+  return self.badgesContainerView;
+}
+
+- (id<IncognitoBadgeViewVisibilityDelegate>)
+    incognitoBadgeViewVisibilityDelegate {
   return self.badgesContainerView;
 }
 
@@ -636,13 +654,6 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
 - (UIFont*)locationLabelFont {
   return LocationBarSteadyViewFont(
       self.traitCollection.preferredContentSizeCategory);
-}
-
-- (void)updateTrailingButtonWithHighlightedStatus:(BOOL)highlighted {
-  self.trailingButton.tintColor =
-      highlighted ? [UIColor colorNamed:kSolidButtonTextColor]
-                  : [UIColor colorNamed:kToolbarButtonColor];
-  _trailingButtonSpotlightView.hidden = !highlighted;
 }
 
 // Updates the `locationLabel`'s font when the device's preferred content size

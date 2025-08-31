@@ -35,7 +35,7 @@ void UpdateDialogPosition(views::Widget* widget,
   auto* dialog_host =
       web_modal::WebContentsModalDialogManager::FromWebContents(web_contents)
           ->delegate()
-          ->GetWebContentsModalDialogHost();
+          ->GetWebContentsModalDialogHost(web_contents);
   views::Widget* host_widget =
       views::Widget::GetWidgetForNativeView(dialog_host->GetHostView());
   auto size = widget->GetRootView()->GetPreferredSize();
@@ -57,7 +57,7 @@ void UpdateDialogPosition(views::Widget* widget,
 
   // Adjust the dialog bound to ensure it remains visible on the display.
   const gfx::Rect display_work_area =
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->GetDisplayNearestView(dialog_host->GetHostView())
           .work_area();
   if (!display_work_area.Contains(dialog_screen_bounds)) {
@@ -108,7 +108,7 @@ DialogArgs& DialogArgs::operator=(const DialogArgs&) = default;
 base::Value::Dict DialogArgs::ToValue() {
   base::Value::Dict dialog_args_value;
   base::Value::List product_spec_urls;
-  for (auto url : urls) {
+  for (const auto& url : urls) {
     product_spec_urls.Append(url.spec());
   }
   dialog_args_value.Set(kDialogArgsName, std::move(name));

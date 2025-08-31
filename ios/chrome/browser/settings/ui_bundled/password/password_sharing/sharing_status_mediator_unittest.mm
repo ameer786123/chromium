@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/settings/ui_bundled/password/password_sharing/sharing_status_mediator.h"
 
+#import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/password_manager/core/browser/sharing/recipients_fetcher.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_constants.h"
@@ -55,8 +56,8 @@ NSArray<RecipientInfoForIOSDisplay*>* CreateRecipients(int amount) {
 
 @property(nonatomic, strong) UIImage* senderImage;
 @property(nonatomic, strong) UIImage* recipientImage;
-@property(nonatomic, strong) NSString* subtitleString;
-@property(nonatomic, strong) NSString* footerString;
+@property(nonatomic, copy) NSString* subtitleString;
+@property(nonatomic, copy) NSString* footerString;
 @property(nonatomic, readonly) GURL URL;
 
 @end
@@ -72,11 +73,11 @@ NSArray<RecipientInfoForIOSDisplay*>* CreateRecipients(int amount) {
 }
 
 - (void)setSubtitleString:(NSString*)subtitleString {
-  _subtitleString = subtitleString;
+  _subtitleString = [subtitleString copy];
 }
 
 - (void)setFooterString:(NSString*)footerString {
-  _footerString = footerString;
+  _footerString = [footerString copy];
 }
 
 - (void)setURL:(const GURL&)URL {

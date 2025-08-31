@@ -21,7 +21,6 @@
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/frame_timing_details.h"
 #include "components/viz/common/frame_timing_details_map.h"
-#include "components/viz/common/gpu/raster_context_provider.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "gpu/ipc/client/client_shared_image_interface.h"
@@ -34,11 +33,14 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/viz/public/mojom/compositing/compositor_frame_sink.mojom.h"
 
+namespace viz {
+class RasterContextProvider;
+}  // namespace viz
+
 namespace cc {
 
 class LayerContext;
 class LayerTreeHostImpl;
-class RasterContextProviderWrapper;
 
 namespace mojo_embedder {
 
@@ -97,6 +99,10 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
     // `auto_needs_begin_frame` is.
     bool auto_needs_begin_frame = false;
 
+    // If true, the client will not receive DidReceiveCompositorFrameAck() and
+    // should not wait for it before submitting another CompositorFrame.
+    bool no_compositor_frame_acks = false;
+
     // If it has value(n), internal begin frame source will be used when n
     // consecutive "did not produce frame" are observed. It will stop using
     // internal begin frame source when there's a submitted compositor frame.
@@ -108,8 +114,7 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
 
   AsyncLayerTreeFrameSink(
       scoped_refptr<viz::RasterContextProvider> context_provider,
-      scoped_refptr<RasterContextProviderWrapper>
-          worker_context_provider_wrapper,
+      scoped_refptr<viz::RasterContextProvider> worker_context_provider,
       scoped_refptr<gpu::ClientSharedImageInterface> shared_image_interface,
       InitParams* params);
 
@@ -139,6 +144,7 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
                              bool hit_test_data_changed) override;
   void DidNotProduceFrame(const viz::BeginFrameAck& ack,
                           FrameSkippedReason reason) override;
+  void ExportFrameTiming() override;
   std::unique_ptr<LayerContext> CreateLayerContext(
       LayerTreeHostImpl& host_impl) override;
 
@@ -167,6 +173,8 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
   void OnCompositorFrameTransitionDirectiveProcessed(
       uint32_t sequence_id) override;
   void OnSurfaceEvicted(const viz::LocalSurfaceId& local_surface_id) override;
+
+  void NotifyNewLocalSurfaceIdExpectedWhilePaused() override;
 
   // ExternalBeginFrameSourceClient implementation.
   void OnNeedsBeginFrames(bool needs_begin_frames) override;
@@ -212,6 +220,9 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
 
   // Please see comment of `InitParams::auto_needs_begin_frame`.
   const bool auto_needs_begin_frame_;
+
+  // Please see comment of `InitParams::no_compositor_frame_acks`.
+  const bool no_compositor_frame_acks_;
 
   viz::HitTestRegionList last_hit_test_data_;
 

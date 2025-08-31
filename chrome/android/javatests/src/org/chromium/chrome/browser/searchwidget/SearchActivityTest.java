@@ -8,7 +8,6 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -31,6 +30,7 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
@@ -45,10 +45,12 @@ import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
+import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.app.metrics.LaunchCauseMetrics;
 import org.chromium.chrome.browser.customtabs.CustomTabActivityTestRule;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.locale.LocaleManagerDelegate;
@@ -69,20 +71,21 @@ import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.I
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.ResolutionType;
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.SearchType;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
+import org.chromium.components.omnibox.AutocompleteInput;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatchBuilder;
 import org.chromium.components.omnibox.AutocompleteResult;
-import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
 import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.content_public.common.ContentUrlConstants;
+import org.chromium.ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
 import org.chromium.ui.test.util.DeviceRestriction;
 import org.chromium.url.GURL;
 
@@ -102,6 +105,12 @@ import java.util.concurrent.Callable;
 @Restriction({DeviceRestriction.RESTRICTION_TYPE_NON_AUTO}) // Search widget not supported on auto.
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
+// TODO(crbug.com/419289558): Re-enable color surface feature flags
+@Features.DisableFeatures({
+    ChromeFeatureList.ANDROID_SURFACE_COLOR_UPDATE,
+    ChromeFeatureList.GRID_TAB_SWITCHER_SURFACE_COLOR_UPDATE,
+    ChromeFeatureList.GRID_TAB_SWITCHER_UPDATE
+})
 @DoNotBatch(reason = "Test start up behaviors.")
 public class SearchActivityTest {
     private static class TestDelegate extends SearchActivityDelegate {
@@ -170,8 +179,8 @@ public class SearchActivityTest {
         }
     }
 
-    public @Rule ChromeTabbedActivityTestRule mActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    public @Rule FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
     // Needed for CT connection cleanup.
     public @Rule CustomTabActivityTestRule mCustomTabActivityTestRule =
             new CustomTabActivityTestRule();
@@ -229,77 +238,6 @@ public class SearchActivityTest {
                         buildSimpleAutocompleteMatch("https://www.google.com"),
                         buildSimpleAutocompleteMatch("https://android.com")),
                 null);
-    }
-
-    @Test
-    @SmallTest
-    public void testOmniboxSuggestionContainerAppears_defaultRetainOmniboxOnFocus()
-            throws Exception {
-        testOmniboxSuggestionContainerAppears();
-    }
-
-    @Test
-    @SmallTest
-    public void testOmniboxSuggestionContainerAppears_shouldNotRetainOmniboxOnFocus()
-            throws Exception {
-        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.FALSE);
-        testOmniboxSuggestionContainerAppears();
-    }
-
-    @Test
-    @SmallTest
-    public void testOmniboxSuggestionContainerAppears_shouldRetainOmniboxOnFocus()
-            throws Exception {
-        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.TRUE);
-        testOmniboxSuggestionContainerAppears();
-    }
-
-    private void testOmniboxSuggestionContainerAppears() throws Exception {
-        startSearchActivity();
-
-        // Wait for the Activity to fully load.
-        mTestDelegate.shouldDelayNativeInitializationCallback.waitForCallback(0);
-        mTestDelegate.showSearchEngineDialogIfNeededCallback.waitForCallback(0);
-        mTestDelegate.onFinishDeferredInitializationCallback.waitForCallback(0);
-
-        // Focus empty omnibox.  It should force the suggestions to appear.
-        mOmnibox.requestFocus();
-        verify(mAutocompleteController)
-                .startZeroSuggest(
-                        eq(""),
-                        any(/* DSE URL*/ ),
-                        eq(PageClassification.ANDROID_SEARCH_WIDGET_VALUE),
-                        eq(""));
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () ->
-                        mOnSuggestionsReceivedListener.onSuggestionsReceived(
-                                buildSimpleAutocompleteResult(), true));
-        mOmnibox.checkSuggestionsShown();
-
-        // Type in anything.
-        mOmnibox.typeText("text", /* execute= */ false);
-        mOmnibox.checkText(Matchers.equalTo("text"), null);
-
-        // Clear omnibox focus. This should always clear uncommitted text and hide suggestions.
-        mOmnibox.sendKey(KeyEvent.KEYCODE_ESCAPE);
-        mOmnibox.checkText(Matchers.isEmptyString(), null);
-        mOmnibox.checkSuggestionsShown(false);
-
-        // Refocusing omnibox should once again force the suggestions to appear.
-        mOmnibox.requestFocus();
-        verify(mAutocompleteController, times(2))
-                .startZeroSuggest(
-                        eq(""),
-                        any(/* DSE URL*/ ),
-                        eq(PageClassification.ANDROID_SEARCH_WIDGET_VALUE),
-                        eq(""));
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () ->
-                        mOnSuggestionsReceivedListener.onSuggestionsReceived(
-                                buildSimpleAutocompleteResult(), true));
-        mOmnibox.checkSuggestionsShown();
     }
 
     @Test
@@ -404,7 +342,7 @@ public class SearchActivityTest {
 
         // Suggestions requests are always delayed. Rather than check for the request itself
         // confirm that any prior requests have been canceled.
-        verify(mAutocompleteController, times(1)).resetSession();
+        verify(mAutocompleteController).resetSession();
 
         waitForChromeTabbedActivityToStart(
                 () -> {
@@ -491,7 +429,7 @@ public class SearchActivityTest {
         Assert.assertNotNull(mTestDelegate.onSearchEngineFinalizedCallback);
         Assert.assertEquals(0, mTestDelegate.onFinishDeferredInitializationCallback.getCallCount());
         // Native initialization is finished, but we don't have a DSE elected yet.
-        verify(mAutocompleteController, times(1)).addOnSuggestionsReceivedListener(any());
+        verify(mAutocompleteController).addOnSuggestionsReceivedListener(any());
 
         // Set some text in the search box, then continue startup.
         mOmnibox.requestFocus();
@@ -510,12 +448,12 @@ public class SearchActivityTest {
         mTestDelegate.onFinishDeferredInitializationCallback.waitForCallback(0);
 
         // Omnibox suggestions should be requested now.
-        verify(mAutocompleteController, times(1))
-                .startZeroSuggest(
-                        eq(""),
-                        any(/* DSE URL */ ),
-                        eq(PageClassification.ANDROID_SEARCH_WIDGET_VALUE),
-                        any());
+        var captor = ArgumentCaptor.forClass(AutocompleteInput.class);
+        verify(mAutocompleteController).startZeroSuggest(captor.capture());
+        Assert.assertEquals("", captor.getValue().getUserText());
+        Assert.assertEquals(
+                PageClassification.ANDROID_SEARCH_WIDGET_VALUE,
+                captor.getValue().getPageClassification());
     }
 
     @Test
@@ -546,7 +484,7 @@ public class SearchActivityTest {
     @Test
     @MediumTest
     public void testLaunchIncognitoSearchActivity() {
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
         SearchActivity searchActivity =
                 ActivityTestUtils.waitForActivity(
                         InstrumentationRegistry.getInstrumentation(),
@@ -588,7 +526,7 @@ public class SearchActivityTest {
     @Test
     @SmallTest
     public void statusAndNavigationBarColor_incognito() {
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
         SearchActivity searchActivity =
                 ActivityTestUtils.waitForActivity(
                         InstrumentationRegistry.getInstrumentation(),
@@ -695,6 +633,6 @@ public class SearchActivityTest {
                     Criteria.checkThat(tab, Matchers.notNullValue());
                     Criteria.checkThat(tab.getUrl().getSpec(), Matchers.is(expectedUrl));
                 });
-        mActivityTestRule.setActivity(cta);
+        mActivityTestRule.getActivityTestRule().setActivity(cta);
     }
 }

@@ -21,6 +21,7 @@
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/cursor/mojom/cursor_type.mojom.h"
@@ -134,6 +135,13 @@ WaylandWindow::~WaylandWindow() {
 
   for (auto bubble : child_bubbles_) {
     bubble->set_parent_window(nullptr);
+  }
+
+  if (focus_client_) {
+    focus_client_->OnKeyboardFocusChanged(false);
+    if (connection_->SupportsTextInputFocus()) {
+      focus_client_->OnTextInputFocusChanged(false);
+    }
   }
 }
 
@@ -319,6 +327,18 @@ void WaylandWindow::OnPointerFocusChanged(bool focused) {
   }
 }
 
+void WaylandWindow::OnKeyboardFocusChanged(bool focused) {
+  if (focus_client_) {
+    focus_client_->OnKeyboardFocusChanged(focused);
+  }
+}
+
+void WaylandWindow::OnTextInputFocusChanged(bool focused) {
+  if (focus_client_) {
+    focus_client_->OnTextInputFocusChanged(focused);
+  }
+}
+
 bool WaylandWindow::HasPointerFocus() const {
   return this ==
          connection_->window_manager()->GetCurrentPointerFocusedWindow();
@@ -465,6 +485,11 @@ void WaylandWindow::OnChannelDestroyed() {
 void WaylandWindow::OnFontScaleFactorChanged() {
   CHECK(connection_->IsUiScaleEnabled());
   UpdateWindowScale(/*update_bounds=*/false);
+}
+
+void WaylandWindow::OnDisplayColorSpacesChanged(
+    scoped_refptr<gfx::DisplayColorSpacesRef> display_color_spaces) {
+  delegate_->OnDisplayColorSpacesChanged(std::move(display_color_spaces));
 }
 
 void WaylandWindow::DumpState(std::ostream& out) const {
@@ -921,7 +946,7 @@ bool WaylandWindow::Initialize(PlatformWindowInitProperties properties) {
   if (state.bounds_dip.IsEmpty()) {
     // If bounds are not specified, place the window on the appropriate display,
     // if supported.
-    auto* screen = display::Screen::GetScreen();
+    auto* screen = display::Screen::Get();
     DCHECK(screen) << "A TestScreen must be instantiated for tests creating "
                       "windows with no initial bounds.";
     state.bounds_dip = gfx::Rect({0, 0}, {1, 1});
@@ -1117,7 +1142,7 @@ bool WaylandWindow::CommitOverlays(
   }
 
   // Wayland submits from front to back. A simple reverse can avoid a full sort.
-  std::reverse(overlays.begin(), overlays.end());
+  std::ranges::reverse(overlays);
   if (!std::is_sorted(overlays.begin(), overlays.end(),
                       OverlayStackOrderCompare)) {
     // |overlays| is sorted from bottom to top.
@@ -1271,6 +1296,9 @@ void WaylandWindow::ProcessPendingConfigureState(uint32_t serial) {
   }
   if (pending_configure_state_.size_px.has_value()) {
     state.size_px = pending_configure_state_.size_px.value();
+  }
+  if (pending_configure_state_.tiled_edges.has_value()) {
+    state.tiled_edges = pending_configure_state_.tiled_edges.value();
   }
 
   if (state.bounds_dip.IsEmpty() &&
@@ -1502,9 +1530,11 @@ void WaylandWindow::LatchStateRequest(const StateRequest& req) {
   auto old_state = latched_state_;
   latched_state_ = req.state;
 
-  // Update the geometry if the bounds or the insets are changed since the last
-  // latched request.
+  // Update the geometry if:
+  // - either bounds, tiling or insets has changed since the latest latched
+  //   request.
   if (req.state.bounds_dip.size() != old_state.bounds_dip.size() ||
+      req.state.tiled_edges != old_state.tiled_edges ||
       delegate()->CalculateInsetsInDIP(req.state.window_state) !=
           delegate()->CalculateInsetsInDIP(old_state.window_state)) {
     SetWindowGeometry(req.state);

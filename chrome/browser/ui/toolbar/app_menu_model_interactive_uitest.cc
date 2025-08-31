@@ -13,7 +13,9 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
+#include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/profiles/profile.h"
@@ -33,6 +35,7 @@
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/interactive_test_utils.h"
@@ -71,6 +74,11 @@
 #include "ui/menus/simple_menu_model.h"
 #include "ui/views/controls/menu/menu_item_view.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(IS_MAC)
+#include "chrome/browser/ui/browser_commands_mac.h"
+#include "chrome/browser/ui/fullscreen_util_mac.h"
+#endif  // BUILDFLAG(IS_MAC)
 
 namespace {
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kPrimaryTabPageElementId);
@@ -143,7 +151,9 @@ IN_PROC_BROWSER_TEST_F(AppMenuModelInteractiveTest, PerformanceNavigation) {
   RunTestSequence(
       InstrumentTab(kPrimaryTabPageElementId),
       PressButton(kToolbarAppMenuButtonElementId),
+      ScrollIntoView(AppMenuModel::kMoreToolsMenuItem),
       SelectMenuItem(AppMenuModel::kMoreToolsMenuItem),
+      ScrollIntoView(ToolsMenuModel::kPerformanceMenuItem),
       SelectMenuItem(ToolsMenuModel::kPerformanceMenuItem),
       WaitForWebContentsNavigation(
           kPrimaryTabPageElementId,
@@ -183,6 +193,19 @@ IN_PROC_BROWSER_TEST_F(AppMenuModelInteractiveTest,
       EnsurePresent(AppMenuModel::kCastTitleItem));
 }
 
+#if BUILDFLAG(IS_MAC)
+IN_PROC_BROWSER_TEST_F(AppMenuModelInteractiveTest,
+                       ShowAppMenuInImmersiveFullscreen) {
+  chrome::SetAlwaysShowToolbarInFullscreenForTesting(browser(), false);
+  ASSERT_TRUE(!fullscreen_utils::IsAlwaysShowToolbarEnabled(browser()));
+  ui_test_utils::ToggleFullscreenModeAndWait(browser());
+  chrome::RevealToolbarForTesting(browser());
+  RunTestSequence(WaitForShow(kToolbarAppMenuButtonElementId),
+                  PressButton(kToolbarAppMenuButtonElementId),
+                  WaitForShow(AppMenuModel::kMoreToolsMenuItem));
+}
+#endif  // BUILDFLAG(IS_MAC)
+
 namespace {
 
 enum ExtensionsTestMode {
@@ -214,37 +237,54 @@ class AppMenuModelExtensionsInteractiveTest
   }
 
   void SetUpOnMainThread() override {
+    if (GetParam() != ExtensionsTestMode::kDoNotCollapse) {
+      // Enable promotions.
+      promotions_enabled_value_to_restore_opt_ =
+          g_browser_process->local_state()->GetBoolean(
+              prefs::kPromotionsEnabled);
+      g_browser_process->local_state()->SetBoolean(prefs::kPromotionsEnabled,
+                                                   true);
+    }
     if (GetParam() == ExtensionsTestMode::kCollapseWithExtensions) {
       // Create and load a dummy extension.
       constexpr char kExtensionManifest[] = R"(
         {
           "name": "an extension",
           "version": "1.0",
-          "manifest_version": 2,
-          "browser_action": {}
+          "manifest_version": 3,
+          "action": {}
         }
       )";
       extensions::TestExtensionDir dir;
       dir.WriteManifest(kExtensionManifest);
       const auto id = crx_file::id_util::GenerateIdForPath(
           base::MakeAbsoluteFilePath(dir.UnpackedPath()));
-      auto* const service =
-          extensions::ExtensionSystem::Get(browser()->profile())
-              ->extension_service();
-      CHECK(service);
       auto* const registry =
           extensions::ExtensionRegistry::Get(browser()->profile());
       CHECK(registry);
       extensions::TestExtensionRegistryObserver observer(registry, id);
-      extensions::UnpackedInstaller::Create(service)->Load(dir.UnpackedPath());
+      extensions::UnpackedInstaller::Create(browser()->profile())
+          ->Load(dir.UnpackedPath());
       observer.WaitForExtensionLoaded();
     }
     AppMenuModelInteractiveTest::SetUpOnMainThread();
   }
 
+  void TearDownOnMainThread() override {
+    InteractiveBrowserTest::TearDownOnMainThread();
+    if (promotions_enabled_value_to_restore_opt_.has_value()) {
+      g_browser_process->local_state()->SetBoolean(
+          prefs::kPromotionsEnabled,
+          promotions_enabled_value_to_restore_opt_.value());
+    }
+  }
+
  protected:
   base::HistogramTester histograms_;
   base::test::ScopedFeatureList scoped_feature_list_;
+
+ private:
+  std::optional<bool> promotions_enabled_value_to_restore_opt_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -525,8 +565,16 @@ IN_PROC_BROWSER_TEST_F(UniversalInstallAppMenuModelInteractiveTest,
       VerifyDiyAppMenuItemViews());
 }
 
-IN_PROC_BROWSER_TEST_F(UniversalInstallAppMenuModelInteractiveTest,
-                       DIYAppMenuWorksCorrectlyInvalidManifestParsingSites) {
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_DIYAppMenuWorksCorrectlyInvalidManifestParsingSites \
+  DISABLED_DIYAppMenuWorksCorrectlyInvalidManifestParsingSites
+#else
+#define MAYBE_DIYAppMenuWorksCorrectlyInvalidManifestParsingSites \
+  DIYAppMenuWorksCorrectlyInvalidManifestParsingSites
+#endif
+IN_PROC_BROWSER_TEST_F(
+    UniversalInstallAppMenuModelInteractiveTest,
+    MAYBE_DIYAppMenuWorksCorrectlyInvalidManifestParsingSites) {
   RunTestSequence(InstrumentTab(kPrimaryTabPageElementId),
                   ObserveState(kAppBannerManagerState, GetManager()),
                   NavigateWebContents(kPrimaryTabPageElementId,

@@ -32,8 +32,10 @@
 #include "components/omnibox/browser/in_memory_url_index_types.h"
 #include "components/omnibox/browser/shortcuts_database.h"
 #include "components/omnibox/browser/tailored_word_break_iterator.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/search_engines/template_url_service.h"
+#include "ui/base/page_transition_types.h"
 
 namespace {
 
@@ -345,6 +347,16 @@ void ShortcutsBackend::AddOrUpdateShortcut(const std::u16string& text,
   if (match.type == AutocompleteMatchType::HISTORY_EMBEDDINGS_ANSWER)
     return;
 
+  // The shortcut DB doesn't store enough info to distinguish between search
+  // suggestion types. Resurfacing a AI mode usage with a traditional search
+  // shortcut match would be surprising. Repeated AI mode matches are probably
+  // uncommon anyways.
+  if (omnibox_feature_configs::AiMode::Get()
+          .do_not_show_historic_aim_suggestions &&
+      match.IsSearchAimSuggestion()) {
+    return;
+  }
+
   const std::u16string text_trimmed_lowercase(
       base::i18n::ToLower(text_trimmed));
   const base::Time now(base::Time::Now());
@@ -413,13 +425,33 @@ ShortcutsDatabase::Shortcut::MatchCore ShortcutsBackend::MatchToMatchCore(
   const AutocompleteMatch* normalized_match = &match;
   AutocompleteMatch temp;
 
-  if (AutocompleteMatch::IsSpecializedSearchType(match.type)) {
-    DCHECK(match.search_terms_args);
+  // TODO(crbug.com/410023142): Remove `CreateShortcutSearchSuggestion()` and
+  //   stop storing match classifications.
+  // Note: `search_terms_args` might not be populated for all search types
+  // (e.g., VOICE_SUGGEST, CLIPBOARD_TEXT, CLIPBOARD_IMAGE).
+  if (AutocompleteMatch::IsSearchType(match.type) && match.search_terms_args) {
     temp = BaseSearchProvider::CreateShortcutSearchSuggestion(
         match.search_terms_args->search_terms, match_type,
-        ui::PageTransitionCoreTypeIs(match.transition,
-                                     ui::PAGE_TRANSITION_KEYWORD),
         match.GetTemplateURL(template_url_service, false), *search_terms_data);
+    normalized_match = &temp;
+  } else if (!match.keyword.empty()) {
+    // Remove the keyword from `fill_into_edit` and `transition` since
+    // suggestions should not use scoped UI in default mode.
+    temp = match;
+    if (ui::PageTransitionCoreTypeIs(match.transition,
+                                     ui::PAGE_TRANSITION_KEYWORD)) {
+      std::u16string keyword_plus_space = temp.keyword + u" ";
+      if (base::StartsWith(temp.fill_into_edit, keyword_plus_space,
+                           base::CompareCase::SENSITIVE)) {
+        temp.fill_into_edit.erase(0, keyword_plus_space.length());
+      }
+    }
+    // `AutocompleteController::UpdateKeywordDescriptions` expects search types
+    // (but not navigation types) to have a keyword.
+    if (!AutocompleteMatch::IsSearchType(match_type)) {
+      temp.keyword = u"";
+    }
+    temp.transition = ui::PAGE_TRANSITION_GENERATED;
     normalized_match = &temp;
   }
 
@@ -469,7 +501,7 @@ void ShortcutsBackend::OnTemplateURLServiceChanged() {
   if (!initialized()) {
     return;
   }
-  DeleteShortcutsWithInvalidKeywords();
+  DeleteShortcutsWithDeletedOrInactiveKeywords();
   return;
 }
 
@@ -626,21 +658,24 @@ bool ShortcutsBackend::DeleteShortcutsWithURL(const GURL& url,
                  db_.get(), url_spec));
 }
 
-void ShortcutsBackend::DeleteShortcutsWithInvalidKeywords() {
+void ShortcutsBackend::DeleteShortcutsWithDeletedOrInactiveKeywords() {
   ShortcutsDatabase::ShortcutIDs shortcut_ids =
-      GetShortcutsWithInvalidKeywords();
+      GetShortcutsWithDeletedOrInactiveKeywords();
   UMA_HISTOGRAM_COUNTS_10000(
-      "ShortcutsProvider.InvalidKeywordEntryDeletions.OnKeywordChange",
+      "ShortcutsProvider.DeletedOrInactiveKeywordEntryDeletions."
+      "OnKeywordChange",
       shortcut_ids.size());
   DeleteShortcutsWithIDs(shortcut_ids);
 }
 
 ShortcutsDatabase::ShortcutIDs
-ShortcutsBackend::GetShortcutsWithInvalidKeywords() const {
+ShortcutsBackend::GetShortcutsWithDeletedOrInactiveKeywords() const {
   ShortcutsDatabase::ShortcutIDs shortcut_ids;
   for (const auto& pair : guid_map_) {
     // Check if the keyword is invalid: not present in the `TemplateURLService`
-    // or inactive.
+    // or inactive. Prepopulated engines have an active status of
+    // `ActiveStatus::kUnspecified` by default and should be considered active
+    // at all times because they cannot be deactivated by the user.
     if (pair.second->second.match_core.keyword.empty()) {
       continue;
     }
@@ -648,7 +683,8 @@ ShortcutsBackend::GetShortcutsWithInvalidKeywords() const {
         template_url_service_->GetTemplateURLForKeyword(
             pair.second->second.match_core.keyword);
     if (!template_url ||
-        template_url->is_active() != TemplateURLData::ActiveStatus::kTrue) {
+        (template_url->prepopulate_id() == 0 &&
+         template_url->is_active() != TemplateURLData::ActiveStatus::kTrue)) {
       shortcut_ids.push_back(pair.first);
     }
   }
@@ -675,9 +711,9 @@ bool ShortcutsBackend::DeleteOldShortcuts() {
   UMA_HISTOGRAM_COUNTS_10000("ShortcutsProvider.OldEntryDeletions.OnInit",
                              shortcut_ids.size());
   ShortcutsDatabase::ShortcutIDs shortcut_ids_invalid_keywords =
-      GetShortcutsWithInvalidKeywords();
+      GetShortcutsWithDeletedOrInactiveKeywords();
   UMA_HISTOGRAM_COUNTS_10000(
-      "ShortcutsProvider.InvalidKeywordEntryDeletions.OnInit",
+      "ShortcutsProvider.DeletedOrInactiveKeywordEntryDeletions.OnInit",
       shortcut_ids_invalid_keywords.size());
   shortcut_ids.insert(shortcut_ids.end(), shortcut_ids_invalid_keywords.begin(),
                       shortcut_ids_invalid_keywords.end());

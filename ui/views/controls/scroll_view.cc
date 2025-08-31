@@ -657,6 +657,7 @@ void ScrollView::Layout(PassKey) {
   }
 
   gfx::Rect available_rect = GetContentsBounds();
+  views::SizeBounds available_size(available_rect.size());
   if (is_bounded() && contents_) {
     int content_width = available_rect.width();
     int content_height = contents_->GetHeightForWidth(content_width);
@@ -724,6 +725,10 @@ void ScrollView::Layout(PassKey) {
   bool vert_sb_required = false;
   if (contents_) {
     gfx::Size content_size = contents_->size();
+    if (use_contents_preferred_size_ &&
+        !contents_->GetPreferredSize(available_size).IsEmpty()) {
+      content_size = contents_->GetPreferredSize(available_size);
+    }
     ComputeScrollBarsVisibility(viewport_size, content_size, &horiz_sb_required,
                                 &vert_sb_required);
   }
@@ -790,6 +795,10 @@ void ScrollView::Layout(PassKey) {
   // events will correctly hit it, and overscroll looks correct.
   if (contents_ && ScrollsWithLayers()) {
     gfx::Size container_size = contents_ ? contents_->size() : gfx::Size();
+    if (contents_ && use_contents_preferred_size_ &&
+        !contents_->GetPreferredSize(available_size).IsEmpty()) {
+      container_size = contents_->GetPreferredSize(available_size);
+    }
     container_size.SetToMax(viewport_bounds.size());
     contents_->SetBoundsRect(gfx::Rect(container_size));
     contents_->layer()->SetScrollable(viewport_bounds.size());
@@ -833,6 +842,15 @@ void ScrollView::Layout(PassKey) {
   UpdateScrollBarPositions();
   if (contents_) {
     UpdateOverflowIndicatorVisibility(CurrentOffset());
+  }
+
+  // If registered, run the post-layout callback. This is used to move the
+  // scroll view contents to the appropriate position that's different from the
+  // position assigned above.
+  if (post_layout_callback_) {
+    const bool layout_needed = needs_layout();
+    post_layout_callback_.Run(this);
+    CHECK_EQ(layout_needed, needs_layout());
   }
 }
 
@@ -1360,6 +1378,11 @@ void ScrollView::UpdateOverflowIndicatorVisibility(const gfx::PointF& offset) {
       more_content_right_.get(),
       !draw_border_ && IsHorizontalScrollEnabled() && !vert_sb_->GetVisible() &&
           offset.x() < horiz_sb_->GetMaxPosition() && draw_overflow_indicator_);
+}
+
+void ScrollView::RegisterPostLayoutCallback(
+    base::RepeatingCallback<void(ScrollView*)> post_layout_callback) {
+  post_layout_callback_ = post_layout_callback;
 }
 
 View* ScrollView::GetContentsViewportForTest() const {

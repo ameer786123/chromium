@@ -8,6 +8,7 @@ import androidx.annotation.IntDef;
 
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.components.data_sharing.configs.DataSharingUiConfig.DataSharingUserAction;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -49,7 +50,7 @@ public class DataSharingMetrics {
         int PREVIEW_FETCHED = 10;
         int PREVIEW_FAVICONS_FETCHED = 11;
         int ALL_FAVICONS_FETCHED = 12;
-        int COUNT = 9;
+        int COUNT = 13;
     }
 
     // LINT.ThenChange(//tools/metrics/histograms/metadata/data_sharing/enums.xml:JoinActionStateAndroid)
@@ -66,7 +67,9 @@ public class DataSharingMetrics {
         ShareActionStateAndroid.GROUP_CREATE_FAILED,
         ShareActionStateAndroid.URL_CREATION_FAILED,
         ShareActionStateAndroid.SHARE_SHEET_SHOWN,
-        ShareActionStateAndroid.COUNT
+        ShareActionStateAndroid.SHARE_SHEET_CLICKED,
+        ShareActionStateAndroid.SHARE_SHEET_CANCELLED,
+        ShareActionStateAndroid.COUNT,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ShareActionStateAndroid {
@@ -78,7 +81,9 @@ public class DataSharingMetrics {
         int GROUP_CREATE_FAILED = 5;
         int URL_CREATION_FAILED = 6;
         int SHARE_SHEET_SHOWN = 7;
-        int COUNT = 8;
+        int SHARE_SHEET_CLICKED = 8;
+        int SHARE_SHEET_CANCELLED = 9;
+        int COUNT = 10;
     }
 
     // LINT.ThenChange(//tools/metrics/histograms/metadata/data_sharing/enums.xml:ShareActionStateAndroid)
@@ -96,5 +101,10 @@ public class DataSharingMetrics {
     public static void recordJoinFlowLatency(String stepName, long durationMs) {
         RecordHistogram.recordTimesHistogram(
                 "DataSharing.Android.JoinFlow." + stepName, durationMs);
+    }
+
+    public static void recordUserActionClicks(@DataSharingUserAction int userAction) {
+        RecordHistogram.recordEnumeratedHistogram(
+                "DataSharing.Android.UserAction", userAction, DataSharingUserAction.COUNT);
     }
 }

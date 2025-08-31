@@ -10,9 +10,10 @@
 #include "base/version_info/channel.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/channel_info.h"
+#include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/boca/boca_role_util.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
+#include "chromeos/ash/components/channel/channel_info.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_ui_data_source.h"
 
@@ -34,16 +35,19 @@ class ChromeBocaUIDelegate : public ash::boca::BocaUIDelegate {
     const user_manager::User* user =
         ash::BrowserContextHelper::Get()->GetUserByBrowserContext(profile_);
     const PrefService* pref_service = profile_->GetPrefs();
-    version_info::Channel channel = chrome::GetChannel();
+    version_info::Channel channel = ash::GetChannel();
     source->AddBoolean("isDevChannel",
                        channel == version_info::Channel::DEV ||
                            channel == version_info::Channel::UNKNOWN);
     source->AddBoolean("isProducer", ash::boca_util::IsProducer(user));
     source->AddBoolean("isConsumer", ash::boca_util::IsConsumer(user));
+    // Do not honor sub-feature flag for student as there is no way to config
+    // it for consumer.
     source->AddBoolean(
         "spotlightEnabled",
-        pref_service->GetBoolean(
-            prefs::kClassManagementToolsViewScreenEligibilitySetting));
+        ash::boca_util::IsConsumer(user) ||
+            pref_service->GetBoolean(
+                prefs::kClassManagementToolsViewScreenEligibilitySetting));
     source->AddString("appLocale", g_browser_process->GetApplicationLocale());
     source->AddBoolean(
         "classroomEnabled",
@@ -51,12 +55,23 @@ class ChromeBocaUIDelegate : public ash::boca::BocaUIDelegate {
             prefs::kClassManagementToolsClassroomEligibilitySetting));
     source->AddBoolean(
         "captionEnabled",
-        pref_service->GetBoolean(
-            prefs::kClassManagementToolsCaptionEligibilitySetting));
-    source->AddBoolean(
-        "onTaskEnabled",
-        pref_service->GetBoolean(
-            prefs::kClassManagementToolsSendingContentEligibilitySetting));
+        ash::boca_util::IsConsumer(user) ||
+            pref_service->GetBoolean(
+                prefs::kClassManagementToolsCaptionEligibilitySetting));
+    if (features::IsBocaSpotlightEnabled()) {
+      source->AddString("spotlightUrlTemplate",
+                        features::kBocaSpotlightUrlTemplate.Get());
+    }
+    source->AddBoolean("sessionControlsUpdate",
+                       features::IsBocaLockPauseUpdateEnabled());
+    source->AddBoolean("navSettingsDialog",
+                       features::IsBocaNavSettingsDialogEnabled());
+    source->AddBoolean("captionToggle", features::IsBocaCaptionToggleEnabled());
+
+    source->AddBoolean("spotlightNativeClientUpdate",
+                       features::IsBocaSpotlightRobotRequesterEnabled());
+    source->AddBoolean("userFeedbackAllowed",
+                       pref_service->GetBoolean(::prefs::kUserFeedbackAllowed));
   }
 
  private:

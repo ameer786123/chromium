@@ -19,9 +19,11 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/interaction/browser_elements.h"
 #include "chrome/browser/ui/views/translate/translate_bubble_controller.h"
 #include "chrome/browser/ui/views/translate/translate_bubble_view.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
@@ -199,10 +201,7 @@ class TranslateBubbleViewUITest
   }
 
   TranslateBubbleView* GetCurrentTranslateBubble() {
-    return browser()
-        ->GetFeatures()
-        .translate_bubble_controller()
-        ->GetTranslateBubble();
+    return TranslateBubbleController::From(browser())->GetTranslateBubble();
   }
 
   base::HistogramTester& histograms_tester() { return histograms_tester_; }
@@ -249,7 +248,7 @@ IN_PROC_BROWSER_TEST_P(TranslateBubbleViewUITest, ClickLanguageTab) {
   // If translate bubble changes to another context, the tests will have to be
   // modified to fix context handling, so best to put a sanity check here to
   // eliminate unexplained errors later.
-  ASSERT_EQ(browser()->window()->GetElementContext(),
+  ASSERT_EQ(BrowserElements::From(browser())->GetContext(),
             views::ElementTrackerViews::GetContextForView(translate_bubble));
 
   RunTestSequence(
@@ -324,6 +323,10 @@ IN_PROC_BROWSER_TEST_P(TranslateBubbleViewUITest, ClickOpenLanguageSettings) {
         // V1. Verify that the “Open language settings” option is not shown in
         // incognito mode.
         EnsureNotPresent(TranslateBubbleView::kOpenLanguageSettings));
+
+    // Close bubble at the end of test to avoid unexpected bubble cleanup in
+    // test fixture while the menu is open.
+    GetCurrentTranslateBubble()->CloseBubble();
   } else {
     RunTestSequence(
         views::InteractionSequenceViews::WithInitialView(

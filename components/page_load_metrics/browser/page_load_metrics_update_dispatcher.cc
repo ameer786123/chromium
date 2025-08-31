@@ -508,14 +508,13 @@ void PageLoadMetricsUpdateDispatcher::UpdateFeatures(
   client_->UpdateFeaturesUsage(render_frame_host, new_features);
 }
 
-void PageLoadMetricsUpdateDispatcher::SetUpSharedMemoryForUkms(
+void PageLoadMetricsUpdateDispatcher::SetUpSharedMemoryForDroppedFrames(
     content::RenderFrameHost* render_frame_host,
-    base::ReadOnlySharedMemoryRegion smoothness_memory,
     base::ReadOnlySharedMemoryRegion dropped_frames_memory) {
   const bool is_main_frame = client_->IsPageMainFrame(render_frame_host);
   if (is_main_frame) {
-    client_->SetUpSharedMemoryForUkms(std::move(smoothness_memory),
-                                      std::move(dropped_frames_memory));
+    client_->SetUpSharedMemoryForDroppedFrames(
+        std::move(dropped_frames_memory));
   }
 }
 
@@ -759,8 +758,8 @@ void PageLoadMetricsUpdateDispatcher::UpdateMainFrameMetadata(
                                          main_frame_metadata_);
     MaybeUpdateMainFrameViewportRect(main_frame_metadata_);
 
-    client_->OnMainFrameImageAdRectsChanged(
-        main_frame_metadata_->main_frame_image_ad_rects);
+    client_->OnMainFrameAdRectsChanged(
+        main_frame_metadata_->main_frame_ad_rects);
   }
 }
 

@@ -97,6 +97,7 @@ class SavedTabGroupModel {
   // updated group is retrieved from the service before use.
   void MakeTabGroupSharedForTesting(const LocalTabGroupID& local_group_id,
                                     CollaborationId collaboration_id);
+  void MakeTabGroupUnsharedForTesting(const LocalTabGroupID& local_group_id);
 
   // Mark whether the tab group identified by `local_group_id` is transitioning
   // to a saved group.
@@ -146,8 +147,10 @@ class SavedTabGroupModel {
   // Removes saved tab `tab_id` in the specified group denoted by `group_id` if
   // it exists. The group is deleted if the last tab is removed from it.
   // Notifies observers if the tab was removed locally.
-  void RemoveTabFromGroupLocally(const base::Uuid& group_id,
-                                 const base::Uuid& tab_id);
+  void RemoveTabFromGroupLocally(
+      const base::Uuid& group_id,
+      const base::Uuid& tab_id,
+      std::optional<GaiaId> local_gaia_id = std::nullopt);
 
   // Similar to above but the group with `group_id` must exist. Notifies
   // observers that the tab was removed from sync. `removed_by` is the user who
@@ -199,11 +202,17 @@ class SavedTabGroupModel {
   void UpdateLastUserInteractionTimeLocally(
       const LocalTabGroupID& local_group_id);
 
-  // Update the last time a tab was seen.
-  void UpdateTabLastSeenTime(const base::Uuid& group_id,
-                             const base::Uuid& tab_id,
-                             base::Time time,
-                             TriggerSource source);
+  // Update the last seen time for a tab.
+  void UpdateTabLastSeenTimeFromLocal(const base::Uuid& group_id,
+                                      const base::Uuid& tab_id);
+  void UpdateTabLastSeenTimeFromSync(const base::Uuid& group_id,
+                                     const base::Uuid& tab_id,
+                                     base::Time time);
+
+  // Update the position for a share group from sync. If the position is
+  // nullopt, the group will be moved to the end of the list.
+  void UpdatePositionForSharedGroupFromSync(const base::Uuid& group_id,
+                                            std::optional<size_t> position);
 
   // Update the last updater cache guid for a give group and optionally a tab.
   void UpdateLastUpdaterCacheGuidForGroup(
@@ -257,6 +266,10 @@ class SavedTabGroupModel {
   // Update the archival status and archival timestamp of the local tab group.
   void UpdateArchivalStatus(const base::Uuid& id, bool archivalStatus);
 
+  // Update bookmark node id of the local tab group.
+  void UpdateBookmarkNodeId(const base::Uuid& id,
+                            const std::optional<base::Uuid>& bookmark_node_id);
+
  private:
   // Returns mutable group containing tab with ID `saved_tab_guid`, otherwise
   // returns null.
@@ -296,6 +309,8 @@ class SavedTabGroupModel {
   void MergePendingNtpWithIncomingTabIfAny(SavedTabGroup& group,
                                            const base::Uuid& tab_id);
   SavedTabGroupTab* FindPendingNtpInGroup(SavedTabGroup& group);
+
+  void HandleTabGroupRemovedFromSync(int index);
 
   // Obsevers of the model.
   base::ObserverList<SavedTabGroupModelObserver>::Unchecked observers_;

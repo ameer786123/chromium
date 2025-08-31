@@ -31,6 +31,7 @@
 #import "ios/chrome/browser/download/model/download_directory_util.h"
 #import "ios/chrome/browser/download/model/download_manager_metric_names.h"
 #import "ios/chrome/browser/download/model/download_manager_tab_helper.h"
+#import "ios/chrome/browser/download/model/download_record_service_factory.h"
 #import "ios/chrome/browser/download/model/external_app_util.h"
 #import "ios/chrome/browser/download/model/installation_notifier.h"
 #import "ios/chrome/browser/download/ui/download_manager_view_controller.h"
@@ -139,6 +140,10 @@
   _mediator.SetIdentityManager(IdentityManagerFactory::GetForProfile(profile));
   _mediator.SetDriveService(drive::DriveServiceFactory::GetForProfile(profile));
   _mediator.SetPrefService(profile->GetPrefs());
+  if (IsDownloadListEnabled()) {
+    _mediator.SetDownloadRecordService(
+        DownloadRecordServiceFactory::GetForProfile(profile));
+  }
 
   _mediator.SetDownloadTask(_downloadTask);
   _mediator.SetConsumer(_viewController);
@@ -163,9 +168,16 @@
 
 // Similar to stop, but the coordinator can be restarted later.
 - (void)pause {
+  if (_stopped) {
+    return;
+  }
+
   _mediator.SetDriveService(nullptr);
   _mediator.SetPrefService(nullptr);
   _mediator.SetIdentityManager(nullptr);
+  if (IsDownloadListEnabled()) {
+    _mediator.SetDownloadRecordService(nullptr);
+  }
   if (base::FeatureList::IsEnabled(kIOSDownloadNoUIUpdateInBackground)) {
     _mediator.StopObservingNotifications();
   }
@@ -181,9 +193,7 @@
   _shouldObserveFullscreen = NO;
   _downloadTask = nullptr;
 
-  if (self.browser) {
-    (self.browser->GetWebStateList())->RemoveObserver(&_unopenedDownloads);
-  }
+  self.browser->GetWebStateList()->RemoveObserver(&_unopenedDownloads);
 
   [self stopStoreKitCoordinator];
 
@@ -326,7 +336,8 @@
 #pragma mark - DownloadManagerViewControllerDelegate
 
 - (void)downloadManagerViewControllerDidClose:(UIViewController*)controller {
-  if (_mediator.GetDownloadManagerState() != kDownloadManagerStateInProgress) {
+  if (_mediator.GetDownloadManagerState() !=
+      DownloadManagerState::kInProgress) {
     base::UmaHistogramEnumeration("Download.IOSDownloadFileResult",
                                   DownloadFileResult::NotStarted,
                                   DownloadFileResult::Count);
@@ -450,7 +461,7 @@
       [[OpenNewTabCommand alloc] initWithURL:filePathURL
                                   virtualURL:virtualFilePathURL
                                     referrer:web::Referrer()
-                                 inIncognito:self.profile->IsOffTheRecord()
+                                 inIncognito:self.isOffTheRecord
                                 inBackground:NO
                                     appendTo:OpenPosition::kCurrentTab];
   id<ApplicationCommands> applicationHandler = HandlerForProtocol(
@@ -486,7 +497,7 @@
 
 // Cancels the download task and stops the coordinator.
 - (void)cancelDownload {
-  // `stop` nulls-our _downloadTask and `Cancel` destroys the task. Call `stop`
+  // `pause` nulls-our _downloadTask and `Cancel` destroys the task. Call `stop`
   // first to perform all coordinator cleanups, but copy `_downloadTask`
   // pointer to destroy the task.
   web::DownloadTask* downloadTask = _downloadTask;

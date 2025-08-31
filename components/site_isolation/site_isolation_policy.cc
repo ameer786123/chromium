@@ -69,10 +69,11 @@ bool ShouldDisableSiteIsolationDueToMemorySlow(
     int memory_threshold_mb = base::GetFieldTrialParamByFeatureAsInt(
         features::kSiteIsolationMemoryThresholdsAndroid, param_name,
         default_memory_threshold_mb);
-    return base::SysInfo::AmountOfPhysicalMemoryMB() <= memory_threshold_mb;
+    return base::SysInfo::AmountOfPhysicalMemory().InMiB() <=
+           memory_threshold_mb;
   }
 
-  if (base::SysInfo::AmountOfPhysicalMemoryMB() <=
+  if (base::SysInfo::AmountOfPhysicalMemory().InMiB() <=
       default_memory_threshold_mb) {
     return true;
   }
@@ -115,7 +116,8 @@ bool ShouldDisableOriginIsolationDueToMemorySlow() {
         features::kOriginIsolationMemoryThreshold,
         features::kOriginIsolationMemoryThresholdParamName,
         default_memory_threshold_mb);
-    return base::SysInfo::AmountOfPhysicalMemoryMB() <= memory_threshold_mb;
+    return base::SysInfo::AmountOfPhysicalMemory().InMiB() <=
+           memory_threshold_mb;
   }
   return false;
 #endif
@@ -186,13 +188,36 @@ bool SiteIsolationPolicy::IsIsolationForOAuthSitesEnabled() {
 }
 
 // static
+bool SiteIsolationPolicy::IsOriginIsolationForJsOptExceptionsEnabled() {
+  if (content::SiteIsolationPolicy::IsStrictOriginIsolationEnabled() ||
+      content::SiteIsolationPolicy::AreOriginKeyedProcessesEnabledByDefault()) {
+    // Origin isolation for JavaScript optimizer exceptions isn't needed if
+    // origin isolation is enabled for everything because an origin gets passed
+    // into AreV8OptimizationsDisabledForSite() and the return value will match
+    // the outcome that is specified by the configured rules.
+    return false;
+  }
+  return IsOriginIsolationForJsOptExceptionsSupported() &&
+         base::FeatureList::IsEnabled(
+             site_isolation::features::kOriginIsolationForJsOptExceptions);
+}
+
+// static
+bool SiteIsolationPolicy::IsOriginIsolationForJsOptExceptionsSupported() {
+  // Dynamic origin isolation is required for the
+  // features::kOriginIsolationForJsOptExceptions feature to work.
+  return content::SiteIsolationPolicy::AreDynamicIsolatedOriginsEnabled();
+}
+
+// static
 bool SiteIsolationPolicy::IsEnterprisePolicyApplicable() {
 #if BUILDFLAG(IS_ANDROID)
   // https://crbug.com/844118: Limiting policy to devices with > 1GB RAM.
   // Using 1077 rather than 1024 because it helps ensure that devices with
   // exactly 1GB of RAM won't get included because of inaccuracies or off-by-one
   // errors.
-  bool have_enough_memory = base::SysInfo::AmountOfPhysicalMemoryMB() > 1077;
+  bool have_enough_memory =
+      base::SysInfo::AmountOfPhysicalMemory().InMiB() > 1077;
   return have_enough_memory;
 #else
   return true;

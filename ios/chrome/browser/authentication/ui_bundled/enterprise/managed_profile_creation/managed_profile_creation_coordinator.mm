@@ -34,6 +34,7 @@
   BOOL _skipBrowsingDataMigration;
   BOOL _mergeBrowsingDataByDefault;
   BOOL _browsingDataMigrationDisabledByPolicy;
+  BOOL _multiProfileForceMigration;
   ManagedProfileCreationViewController* _viewController;
   // Used to display `_viewController` initially and
   // `_browsingDataMigrationViewController` if the user tries to modify how
@@ -51,7 +52,8 @@
                  skipBrowsingDataMigration:(BOOL)skipBrowsingDataMigration
                 mergeBrowsingDataByDefault:(BOOL)mergeBrowsingDataByDefault
      browsingDataMigrationDisabledByPolicy:
-         (BOOL)browsingDataMigrationDisabledByPolicy {
+         (BOOL)browsingDataMigrationDisabledByPolicy
+                multiProfileForceMigration:(BOOL)multiProfileForceMigration {
   // TODO(crbug.com/381853288): Add a mediator to listen to the identity
   // changes.
   DCHECK(viewController);
@@ -63,14 +65,16 @@
     _mergeBrowsingDataByDefault = mergeBrowsingDataByDefault;
     _browsingDataMigrationDisabledByPolicy =
         browsingDataMigrationDisabledByPolicy;
+    _multiProfileForceMigration = multiProfileForceMigration;
   }
   return self;
 }
 
 - (void)start {
   _viewController = [[ManagedProfileCreationViewController alloc]
-      initWithUserEmail:_identity.userEmail
-           hostedDomain:_hostedDomain];
+               initWithUserEmail:_identity.userEmail
+                    hostedDomain:_hostedDomain
+      multiProfileForceMigration:_multiProfileForceMigration];
   _viewController.delegate = self;
   _viewController.managedProfileCreationViewControllerPresentationDelegate =
       self;
@@ -116,18 +120,18 @@
 - (void)didTapPrimaryActionButton {
   // `dismissViewControllerAnimated` will release the mediator, so grab this
   // value first.
-  BOOL keepBrowsingDataSeparate = _mediator.keepBrowsingDataSeparate;
+  BOOL browsingDataSeparate = _mediator.browsingDataSeparate;
   [self dismissViewControllerAnimated:YES];
   [self.delegate managedProfileCreationCoordinator:self
                                          didAccept:YES
-                          keepBrowsingDataSeparate:keepBrowsingDataSeparate];
+                              browsingDataSeparate:browsingDataSeparate];
 }
 
 - (void)didTapSecondaryActionButton {
   [self dismissViewControllerAnimated:YES];
   [self.delegate managedProfileCreationCoordinator:self
                                          didAccept:NO
-                          keepBrowsingDataSeparate:NO];
+                              browsingDataSeparate:NO];
 }
 
 - (void)didTapURLInDisclaimer:(NSURL*)URL {
@@ -145,8 +149,8 @@
   CHECK(!_browsingDataMigrationViewController);
   _browsingDataMigrationViewController =
       [[BrowsingDataMigrationViewController alloc]
-                 initWithUserEmail:_identity.userEmail
-          keepBrowsingDataSeparate:_mediator.keepBrowsingDataSeparate];
+             initWithUserEmail:_identity.userEmail
+          browsingDataSeparate:_mediator.browsingDataSeparate];
   _browsingDataMigrationViewController.mutator = _mediator;
   [_navigationController pushViewController:_browsingDataMigrationViewController
                                    animated:YES];

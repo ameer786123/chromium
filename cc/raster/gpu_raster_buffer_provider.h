@@ -37,6 +37,7 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
  public:
   static constexpr float kRasterMetricProbability = 0.01;
   GpuRasterBufferProvider(
+      scoped_refptr<gpu::SharedImageInterface> sii,
       viz::RasterContextProvider* compositor_context_provider,
       viz::RasterContextProvider* worker_context_provider,
       bool is_overlay_candidate,
@@ -131,12 +132,13 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
     base::TimeTicks creation_time_;
   };
 
+  const scoped_refptr<gpu::SharedImageInterface> sii_;
   const raw_ptr<viz::RasterContextProvider> compositor_context_provider_;
   const raw_ptr<viz::RasterContextProvider> worker_context_provider_;
   const bool tile_overlay_candidate_;
   const gfx::Size max_tile_size_;
 
-  const raw_ptr<RasterQueryQueue, DanglingUntriaged> pending_raster_queries_;
+  const raw_ptr<RasterQueryQueue> pending_raster_queries_;
 
   const double raster_metric_probability_;
   // Accessed with the worker context lock acquired.

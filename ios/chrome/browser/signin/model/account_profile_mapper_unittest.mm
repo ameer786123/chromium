@@ -11,22 +11,24 @@
 #import "base/task/thread_pool.h"
 #import "base/test/gmock_callback_support.h"
 #import "base/test/scoped_feature_list.h"
-#import "base/test/task_environment.h"
 #import "base/test/test_file_util.h"
 #import "base/test/test_future.h"
 #import "base/uuid.h"
 #import "ios/chrome/app/change_profile_commands.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
+#import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/profile/features.h"
 #import "ios/chrome/browser/shared/model/profile/mutable_profile_attributes_storage_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_attributes_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_attributes_storage_observer_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_manager_ios.h"
+#import "ios/chrome/browser/shared/model/profile/scoped_profile_keep_alive_ios.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity_manager.h"
 #import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "testing/gmock/include/gmock/gmock.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
@@ -66,6 +68,7 @@ using testing::UnorderedElementsAre;
 
 - (void)changeProfile:(std::string_view)profileName
              forScene:(SceneState*)sceneState
+               reason:(ChangeProfileReason)reason
          continuation:(ChangeProfileContinuation)continuation {
   NOTREACHED();
 }
@@ -199,6 +202,8 @@ class FakeProfileManagerIOS : public ProfileManagerIOS {
   }
   ~FakeProfileManagerIOS() override = default;
 
+  void PrepareForDestruction() override { NOTREACHED(); }
+
   void AddObserver(ProfileManagerObserverIOS* observer) override {
     NOTREACHED();
   }
@@ -265,20 +270,16 @@ class FakeProfileManagerIOS : public ProfileManagerIOS {
     ProfileIOS* profile = profiles_map_.find(name)->second.get();
     if (created_callback) {
       base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-          FROM_HERE, base::BindOnce(std::move(created_callback), profile));
+          FROM_HERE, base::BindOnce(std::move(created_callback),
+                                    CreateScopedProfileKeepAlive(profile)));
     }
     if (initialized_callback) {
       base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-          FROM_HERE, base::BindOnce(std::move(initialized_callback), profile));
+          FROM_HERE, base::BindOnce(std::move(initialized_callback),
+                                    CreateScopedProfileKeepAlive(profile)));
     }
     return true;
   }
-
-  ProfileIOS* LoadProfile(std::string_view name) override { NOTREACHED(); }
-  ProfileIOS* CreateProfile(std::string_view name) override { NOTREACHED(); }
-
-  void UnloadProfile(std::string_view name) override { NOTREACHED(); }
-  void UnloadAllProfiles() override { NOTREACHED(); }
 
   void MarkProfileForDeletion(std::string_view name) override {
     DCHECK(CanDeleteProfileWithName(name));
@@ -298,6 +299,10 @@ class FakeProfileManagerIOS : public ProfileManagerIOS {
   }
 
  private:
+  ScopedProfileKeepAliveIOS CreateScopedProfileKeepAlive(ProfileIOS* profile) {
+    return ScopedProfileKeepAliveIOS(CreatePassKey(), profile, {});
+  }
+
   MutableProfileAttributesStorageIOS profile_attributes_storage_;
 
   std::map<std::string, std::unique_ptr<FakeProfileIOS>, std::less<>>
@@ -306,9 +311,13 @@ class FakeProfileManagerIOS : public ProfileManagerIOS {
 
 class AccountProfileMapperTest : public PlatformTest {
  public:
-  explicit AccountProfileMapperTest(bool separate_profiles_enabled) {
-    features_.InitWithFeatureState(kSeparateProfilesForManagedAccounts,
-                                   separate_profiles_enabled);
+  explicit AccountProfileMapperTest(
+      bool separate_profiles_enabled,
+      bool separate_profiles_force_migration_enabled) {
+    features_.InitWithFeatureStates(
+        {{kSeparateProfilesForManagedAccounts, separate_profiles_enabled},
+         {kSeparateProfilesForManagedAccountsForceMigration,
+          separate_profiles_force_migration_enabled}});
 
     profile_manager_ = std::make_unique<FakeProfileManagerIOS>(
         GetApplicationContext()->GetLocalState());
@@ -356,8 +365,8 @@ class AccountProfileMapperTest : public PlatformTest {
 
  protected:
   IOSChromeScopedTestingLocalState scoped_testing_local_state_;
-  base::test::TaskEnvironment task_environment_{
-      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
+  web::WebTaskEnvironment task_environment_{
+      web::WebTaskEnvironment::TimeSource::MOCK_TIME};
   std::unique_ptr<FakeProfileManagerIOS> profile_manager_;
   raw_ptr<FakeSystemIdentityManager> system_identity_manager_;
   std::unique_ptr<AccountProfileMapper> account_profile_mapper_;
@@ -370,7 +379,9 @@ class AccountProfileMapperAccountsInSeparateProfilesTest
     : public AccountProfileMapperTest {
  public:
   AccountProfileMapperAccountsInSeparateProfilesTest()
-      : AccountProfileMapperTest(/*separate_profiles_enabled=*/true) {}
+      : AccountProfileMapperTest(
+            /*separate_profiles_enabled=*/true,
+            /*separate_profiles_force_migration_enabled=*/false) {}
   ~AccountProfileMapperAccountsInSeparateProfilesTest() override = default;
 };
 
@@ -378,15 +389,32 @@ class AccountProfileMapperAccountsInSingleProfileTest
     : public AccountProfileMapperTest {
  public:
   AccountProfileMapperAccountsInSingleProfileTest()
-      : AccountProfileMapperTest(/*separate_profiles_enabled=*/false) {}
+      : AccountProfileMapperTest(
+            /*separate_profiles_enabled=*/false,
+            /*separate_profiles_force_migration_enabled=*/false) {}
   ~AccountProfileMapperAccountsInSingleProfileTest() override = default;
+};
+
+class AccountProfileMapperAccountsInSeparateProfilesWithForceMigrationTest
+    : public AccountProfileMapperTest {
+ public:
+  AccountProfileMapperAccountsInSeparateProfilesWithForceMigrationTest()
+      : AccountProfileMapperTest(
+            /*separate_profiles_enabled=*/true,
+            /*separate_profiles_force_migration_enabled=*/true) {}
+  ~AccountProfileMapperAccountsInSeparateProfilesWithForceMigrationTest()
+      override = default;
+
+ private:
+  base::test::ScopedFeatureList features_;
 };
 
 // Tests that AccountProfileMapper lists no identity when there are no
 // identities.
 TEST_F(AccountProfileMapperAccountsInSingleProfileTest, NoIdentity) {
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
   testing::StrictMock<MockObserver> mock_observer;
   account_profile_mapper_->AddObserver(&mock_observer, kPersonalProfileName);
 
@@ -410,7 +438,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest, NoIdentity) {
     return;
   }
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
   testing::StrictMock<MockObserver> mock_observer;
   account_profile_mapper_->AddObserver(&mock_observer, kPersonalProfileName);
 
@@ -431,7 +460,7 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   const std::string kTestProfile1Name("11111111-1111-1111-1111-111111111111");
   const std::string kTestProfile2Name("ffffffff-ffff-ffff-ffff-ffffffffffff");
 
-  base::test::TestFuture<ProfileIOS*> profile_initialized;
+  base::test::TestFuture<ScopedProfileKeepAliveIOS> profile_initialized;
   profile_manager_->CreateProfileAsync(
       kTestProfile1Name, profile_initialized.GetCallback(), base::DoNothing());
   ASSERT_TRUE(profile_initialized.Wait());
@@ -440,7 +469,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   ASSERT_TRUE(profile_initialized.Wait());
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   testing::StrictMock<MockObserver> mock_personal_observer;
   account_profile_mapper_->AddObserver(&mock_personal_observer,
@@ -477,13 +507,14 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
     return;
   }
   const std::string kTestProfile1Name("TestProfile1");
-  base::test::TestFuture<ProfileIOS*> profile_initialized;
+  base::test::TestFuture<ScopedProfileKeepAliveIOS> profile_initialized;
   profile_manager_->CreateProfileAsync(
       kTestProfile1Name, profile_initialized.GetCallback(), base::DoNothing());
   ASSERT_TRUE(profile_initialized.Wait());
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
   testing::StrictMock<MockObserver> mock_personal_observer;
   account_profile_mapper_->AddObserver(&mock_personal_observer,
                                        kPersonalProfileName);
@@ -511,7 +542,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
 TEST_F(AccountProfileMapperAccountsInSingleProfileTest,
        RefreshTokenNotification) {
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
   testing::StrictMock<MockObserver> mock_personal_observer;
   account_profile_mapper_->AddObserver(&mock_personal_observer,
                                        kPersonalProfileName);
@@ -533,13 +565,14 @@ TEST_F(AccountProfileMapperAccountsInSingleProfileTest,
 TEST_F(AccountProfileMapperAccountsInSingleProfileTest,
        AllIdentitiesAreVisibleInAllProfiles) {
   const std::string kTestProfile1Name("TestProfile1");
-  base::test::TestFuture<ProfileIOS*> profile_initialized;
+  base::test::TestFuture<ScopedProfileKeepAliveIOS> profile_initialized;
   profile_manager_->CreateProfileAsync(
       kTestProfile1Name, profile_initialized.GetCallback(), base::DoNothing());
   ASSERT_TRUE(profile_initialized.Wait());
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
   testing::StrictMock<MockObserver> mock_observer0;
   account_profile_mapper_->AddObserver(&mock_observer0, kPersonalProfileName);
   testing::StrictMock<MockObserver> mock_observer1;
@@ -603,7 +636,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
   testing::StrictMock<MockObserver> mock_observer;
   account_profile_mapper_->AddObserver(&mock_observer, kPersonalProfileName);
 
@@ -634,7 +668,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
   testing::StrictMock<MockObserver> mock_observer_personal;
   account_profile_mapper_->AddObserver(&mock_observer_personal,
                                        kPersonalProfileName);
@@ -704,7 +739,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
     return;
   }
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
   testing::StrictMock<MockObserver> mock_observer_personal;
   account_profile_mapper_->AddObserver(&mock_observer_personal,
                                        kPersonalProfileName);
@@ -782,7 +818,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
     return;
   }
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
   testing::StrictMock<MockObserver> mock_observer_personal;
   account_profile_mapper_->AddObserver(&mock_observer_personal,
                                        kPersonalProfileName);
@@ -877,7 +914,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   system_identity_manager_->AddIdentity(gmail_identity1);
 
@@ -908,7 +946,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   system_identity_manager_->AddIdentity(google_identity);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   // A new enterprise profile should've been registered.
   EXPECT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 2u);
@@ -950,7 +989,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
       }));
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   // The identity should have been attached to the personal profile (even though
   // it's a managed identity), and no additional profile should've been
@@ -960,6 +1000,99 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
                   .GetAttachedGaiaIds(),
               UnorderedElementsAre(GaiaId(google_identity.gaiaID)));
   EXPECT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
+}
+
+// Tests that if a managed account was the primary account pre-multi-profile,
+// it stays in that state if the force-migration period is not reached yet.
+TEST_F(AccountProfileMapperAccountsInSeparateProfilesWithForceMigrationTest,
+       DoesNotAssignPrimaryManagedAccountToManagedProfile) {
+  // Separate profiles are only available in iOS 17+.
+  if (!@available(iOS 17, *)) {
+    return;
+  }
+
+  base::test::ScopedFeatureList feature_list;
+
+  // A managed identity and a personal identity exist on the device. The managed
+  // one is set as the primary account in the personal profile. It is *not*
+  // assigned to the profile though (as in GetAttachedGaiaIds()), since the
+  // signin predates this mapping.
+  system_identity_manager_->AddIdentity(google_identity);
+  system_identity_manager_->AddIdentity(gmail_identity1);
+  profile_attributes_storage()->UpdateAttributesForProfileWithName(
+      kPersonalProfileName, base::BindOnce([](ProfileAttributesIOS& attr) {
+        attr.SetAuthenticationInfo(
+            GaiaId(google_identity.gaiaID),
+            base::SysNSStringToUTF8(google_identity.userFullName));
+        attr.SetAttachedGaiaIds(
+            {GaiaId(gmail_identity1.gaiaID), GaiaId(google_identity.gaiaID)});
+      }));
+  ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
+
+  // Set the force migration time pref to still be less than the expected
+  // duration.
+  GetApplicationContext()->GetLocalState()->SetTime(
+      prefs::kWaitingForMultiProfileForcedMigrationTimestamp,
+      base::Time::Now() - base::Days(70));
+
+  account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
+
+  // Both identities should stay attached to the personal profile.
+  EXPECT_THAT(profile_attributes_storage()
+                  ->GetAttributesForProfileWithName(kPersonalProfileName)
+                  .GetAttachedGaiaIds(),
+              UnorderedElementsAre(GaiaId(google_identity.gaiaID),
+                                   GaiaId(gmail_identity1.gaiaID)));
+  EXPECT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
+}
+
+// Tests that if a managed account was the primary account pre-multi-profile,
+// after force-migration period, the personal profile gets migrated to become a
+// managed profile, and a new personal profile is created for the rest of the
+// personal accounts.
+TEST_F(AccountProfileMapperAccountsInSeparateProfilesWithForceMigrationTest,
+       AssignsPrimaryManagedAccountToManagedProfile) {
+  // Separate profiles are only available in iOS 17+.
+  if (!@available(iOS 17, *)) {
+    return;
+  }
+
+  base::test::ScopedFeatureList feature_list;
+
+  // A managed identity exists on the device, and is set as the primary account
+  // in the personal profile. It is *not* assigned to the profile though (as in
+  // GetAttachedGaiaIds()), since the signin predates this mapping.
+  system_identity_manager_->AddIdentity(google_identity);
+  system_identity_manager_->AddIdentity(gmail_identity1);
+  profile_attributes_storage()->UpdateAttributesForProfileWithName(
+      kPersonalProfileName, base::BindOnce([](ProfileAttributesIOS& attr) {
+        attr.SetAuthenticationInfo(
+            GaiaId(google_identity.gaiaID),
+            base::SysNSStringToUTF8(google_identity.userFullName));
+        attr.SetAttachedGaiaIds(
+            {GaiaId(gmail_identity1.gaiaID), GaiaId(google_identity.gaiaID)});
+      }));
+  ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
+
+  // Set the force migration time pref larger than the grace period.
+  GetApplicationContext()->GetLocalState()->SetTime(
+      prefs::kWaitingForMultiProfileForcedMigrationTimestamp,
+      base::Time::Now() - base::Days(100));
+
+  account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
+
+  // The managed identity should be attached to its managed profile, which is
+  // the old personal profile that got converted to managed. And a new personal
+  // profile gets created for the personal identity.
+  EXPECT_THAT(profile_attributes_storage()
+                  ->GetAttributesForProfileWithName(kPersonalProfileName)
+                  .GetAttachedGaiaIds(),
+              UnorderedElementsAre(GaiaId(google_identity.gaiaID)));
+  EXPECT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 2u);
 }
 
 // Tests that a pre-existing identity which is the primary identity in a
@@ -994,7 +1127,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   // Both identities should still be attached to the personal profile.
   EXPECT_THAT(profile_attributes_storage()
@@ -1034,7 +1168,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   // Both identities are attached to the personal profile.
   ASSERT_THAT(profile_attributes_storage()
@@ -1042,6 +1177,10 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
                   .GetAttachedGaiaIds(),
               UnorderedElementsAre(GaiaId(gmail_identity1.gaiaID),
                                    GaiaId(google_identity.gaiaID)));
+  // Verify the force-migration pref is recorded.
+  EXPECT_NE(GetApplicationContext()->GetLocalState()->GetTime(
+                prefs::kWaitingForMultiProfileForcedMigrationTimestamp),
+            base::Time());
 
   // No additional profile have been registered.
   ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
@@ -1102,7 +1241,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   // The managed identity should have been reassigned to a new dedicated
   // profile.
@@ -1134,7 +1274,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   // A personal and a managed account get added.
   system_identity_manager_->AddIdentity(gmail_identity1);
@@ -1217,7 +1358,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
       initWithProfileManager:profile_manager_.get()];
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
   account_profile_mapper_->SetChangeProfileCommandsHandler(handler);
   ASSERT_FALSE(handler.deleteProfileCalled);
 
@@ -1303,7 +1445,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   system_identity_manager_->SetInstantlyFillHostedDomainCache(false);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   testing::StrictMock<MockObserver> mock_personal_observer;
   account_profile_mapper_->AddObserver(&mock_personal_observer,
@@ -1359,7 +1502,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   system_identity_manager_->SetGetHostedDomainError(error);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   system_identity_manager_->AddIdentity(google_identity);
   // A new enterprise profile should *not* have been registered yet, since the
@@ -1406,7 +1550,8 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   system_identity_manager_->SetGetHostedDomainError(error);
 
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      system_identity_manager_, profile_manager_.get());
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
 
   system_identity_manager_->AddIdentity(google_identity);
   // A new enterprise profile should *not* have been registered yet, since the
@@ -1421,6 +1566,130 @@ TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
   EXPECT_EQ(system_identity_manager_->GetNumHostedDomainErrorsReturned(), 5u);
   EXPECT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
   EXPECT_NSEQ(@[], GetIdentitiesForProfile(kPersonalProfileName));
+}
+
+// Tests that the force-migration pref is recorded for a managed account was the
+// primary account pre-multi-profile, which remained the primary account in the
+// personal profile (and did *not* get moved to its own managed profile).
+TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
+       ForceMigrationPrefRecordedForManagedAccountInPersonalProfile) {
+  // Separate profiles are only available in iOS 17+.
+  if (!@available(iOS 17, *)) {
+    return;
+  }
+  ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
+  EXPECT_EQ(GetApplicationContext()->GetLocalState()->GetTime(
+                prefs::kWaitingForMultiProfileForcedMigrationTimestamp),
+            base::Time());
+
+  // A managed identity exists on the device, and is set as the primary account
+  // in the personal profile. It is *not* assigned to the profile though (as in
+  // GetAttachedGaiaIds()), since the signin predates this mapping.
+  system_identity_manager_->AddIdentity(google_identity);
+  profile_attributes_storage()->UpdateAttributesForProfileWithName(
+      kPersonalProfileName, base::BindOnce([](ProfileAttributesIOS& attr) {
+        attr.SetAuthenticationInfo(
+            GaiaId(google_identity.gaiaID),
+            base::SysNSStringToUTF8(google_identity.userFullName));
+        attr.SetAttachedGaiaIds({GaiaId(google_identity.gaiaID)});
+      }));
+
+  account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
+
+  // The identity should have been attached to the personal profile (even though
+  // it's a managed identity), and no additional profile should've been
+  // registered.
+  EXPECT_THAT(profile_attributes_storage()
+                  ->GetAttributesForProfileWithName(kPersonalProfileName)
+                  .GetAttachedGaiaIds(),
+              UnorderedElementsAre(GaiaId(google_identity.gaiaID)));
+  EXPECT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
+
+  // Verify the force-migration pref is set.
+  EXPECT_NE(GetApplicationContext()->GetLocalState()->GetTime(
+                prefs::kWaitingForMultiProfileForcedMigrationTimestamp),
+            base::Time());
+}
+
+// Tests that the force-migration pref is *not* recorded for a correctly mapped
+// consumer account.
+TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
+       ForceMigrationPrefNotRecordedForPersonalAccountInPersonalProfile) {
+  // Separate profiles are only available in iOS 17+.
+  if (!@available(iOS 17, *)) {
+    return;
+  }
+  ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
+  EXPECT_EQ(GetApplicationContext()->GetLocalState()->GetTime(
+                prefs::kWaitingForMultiProfileForcedMigrationTimestamp),
+            base::Time());
+
+  // A consumer identity exists on the device, and is set as the primary account
+  // in the personal profile.
+  system_identity_manager_->AddIdentity(gmail_identity1);
+  profile_attributes_storage()->UpdateAttributesForProfileWithName(
+      kPersonalProfileName, base::BindOnce([](ProfileAttributesIOS& attr) {
+        attr.SetAuthenticationInfo(
+            GaiaId(gmail_identity1.gaiaID),
+            base::SysNSStringToUTF8(gmail_identity1.userFullName));
+        attr.SetAttachedGaiaIds({GaiaId(gmail_identity1.gaiaID)});
+      }));
+
+  account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
+
+  EXPECT_THAT(profile_attributes_storage()
+                  ->GetAttributesForProfileWithName(kPersonalProfileName)
+                  .GetAttachedGaiaIds(),
+              UnorderedElementsAre(GaiaId(gmail_identity1.gaiaID)));
+  EXPECT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
+
+  // Verify the force-migration pref is not set.
+  EXPECT_EQ(GetApplicationContext()->GetLocalState()->GetTime(
+                prefs::kWaitingForMultiProfileForcedMigrationTimestamp),
+            base::Time());
+}
+
+// Tests that the force-migration pref is *not* recorded for a correctly mapped
+// managed account.
+TEST_F(AccountProfileMapperAccountsInSeparateProfilesTest,
+       ForceMigrationPrefNotRecordedForManagedAccountInManagedProfile) {
+  // Separate profiles are only available in iOS 17+.
+  if (!@available(iOS 17, *)) {
+    return;
+  }
+  ASSERT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 1u);
+  EXPECT_EQ(GetApplicationContext()->GetLocalState()->GetTime(
+                prefs::kWaitingForMultiProfileForcedMigrationTimestamp),
+            base::Time());
+
+  account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
+      system_identity_manager_, profile_manager_.get(),
+      GetApplicationContext()->GetLocalState());
+
+  // Managed account added after AccountProfileMapper is created.
+  system_identity_manager_->AddIdentity(google_identity);
+
+  // A new enterprise profile should've been registered.
+  EXPECT_EQ(profile_attributes_storage()->GetNumberOfProfiles(), 2u);
+
+  // Find the name of the new profile.
+  std::string managed_profile_name = FindCreatedProfileName(
+      /*known_profile_names=*/{std::string(kPersonalProfileName)});
+  ASSERT_FALSE(managed_profile_name.empty());
+
+  // Verify the assignment of the identity to profile.
+  NSArray* expected_identities_managed = @[ google_identity ];
+  EXPECT_NSEQ(expected_identities_managed,
+              GetIdentitiesForProfile(managed_profile_name));
+
+  // Verify the force-migration pref is not set.
+  EXPECT_EQ(GetApplicationContext()->GetLocalState()->GetTime(
+                prefs::kWaitingForMultiProfileForcedMigrationTimestamp),
+            base::Time());
 }
 
 }  // namespace

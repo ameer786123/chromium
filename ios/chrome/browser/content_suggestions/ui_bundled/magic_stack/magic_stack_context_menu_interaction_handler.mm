@@ -31,14 +31,10 @@ BOOL AllowsLongPressForModuleType(ContentSuggestionsModuleType type) {
   switch (type) {
     case ContentSuggestionsModuleType::kTabResumption:
     case ContentSuggestionsModuleType::kSafetyCheck:
-    case ContentSuggestionsModuleType::kSetUpListSync:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
     case ContentSuggestionsModuleType::kSetUpListNotifications:
-    case ContentSuggestionsModuleType::kSetUpListDocking:
-    case ContentSuggestionsModuleType::kSetUpListAddressBar:
     case ContentSuggestionsModuleType::kCompactedSetUpList:
-    case ContentSuggestionsModuleType::kParcelTracking:
     case ContentSuggestionsModuleType::kPriceTrackingPromo:
     case ContentSuggestionsModuleType::kSendTabPromo:
     case ContentSuggestionsModuleType::kTipsWithProductImage:
@@ -78,15 +74,12 @@ NSString* GetContextMenuTitleForType(ContentSuggestionsModuleType type,
     }
     case ContentSuggestionsModuleType::kSafetyCheck:
       return l10n_util::GetNSString(IDS_IOS_SAFETY_CHECK_CONTEXT_MENU_TITLE);
-    case ContentSuggestionsModuleType::kSetUpListSync:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
     case ContentSuggestionsModuleType::kCompactedSetUpList:
     case ContentSuggestionsModuleType::kSetUpListNotifications:
       return l10n_util::GetNSString(
           IDS_IOS_SET_UP_LIST_HIDE_MODULE_CONTEXT_MENU_TITLE);
-    case ContentSuggestionsModuleType::kParcelTracking:
-      return l10n_util::GetNSString(IDS_IOS_PARCEL_TRACKING_CONTEXT_MENU_TITLE);
     case ContentSuggestionsModuleType::kPriceTrackingPromo:
     case ContentSuggestionsModuleType::kSendTabPromo:
 
@@ -133,22 +126,14 @@ NSString* GetContextMenuHideDescriptionForType(
     case ContentSuggestionsModuleType::kSafetyCheck:
       return l10n_util::GetNSString(
           IDS_IOS_SAFETY_CHECK_CONTEXT_MENU_DESCRIPTION);
-    case ContentSuggestionsModuleType::kSetUpListSync:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
     case ContentSuggestionsModuleType::kSetUpListNotifications:
-    case ContentSuggestionsModuleType::kSetUpListDocking:
-    case ContentSuggestionsModuleType::kSetUpListAddressBar:
     case ContentSuggestionsModuleType::kCompactedSetUpList:
       return l10n_util::GetNSStringF(
           IDS_IOS_SET_UP_LIST_HIDE_MODULE_CONTEXT_MENU_DESCRIPTION,
           l10n_util::GetStringUTF16(
               content_suggestions::SetUpListTitleStringID()));
-    case ContentSuggestionsModuleType::kParcelTracking:
-      return l10n_util::GetNSStringF(
-          IDS_IOS_PARCEL_TRACKING_CONTEXT_MENU_DESCRIPTION,
-          base::SysNSStringToUTF16(l10n_util::GetNSString(
-              IDS_IOS_CONTENT_SUGGESTIONS_PARCEL_TRACKING_MODULE_TITLE)));
     case ContentSuggestionsModuleType::kPriceTrackingPromo:
       return l10n_util::GetNSString(
           IDS_IOS_CONTENT_SUGGESTIONS_PRICE_TRACKING_PROMO_HIDE_CARD);
@@ -189,7 +174,7 @@ NSString* GetContextMenuHideDescriptionForType(
 @property(nonatomic, assign) ContentSuggestionsModuleType type;
 
 // Configuration for the Magic Stack Module.
-@property(nonatomic, assign) MagicStackModule* config;
+@property(nonatomic, strong) MagicStackModule* config;
 
 /// Whether the magic stack module should be hidden when the context menu
 /// finishes presentation.
@@ -198,14 +183,6 @@ NSString* GetContextMenuHideDescriptionForType(
 @end
 
 @implementation MagicStackContextMenuInteractionHandler
-
-- (instancetype)initWithType:(ContentSuggestionsModuleType)type {
-  self = [super init];
-  if (self) {
-    _shouldHide = NO;
-  }
-  return self;
-}
 
 - (void)configureWithType:(ContentSuggestionsModuleType)type
                    config:(MagicStackModule*)config {
@@ -222,7 +199,6 @@ NSString* GetContextMenuHideDescriptionForType(
   NSMutableArray<UIAction*>* actions = [[NSMutableArray alloc] init];
 
   BOOL canShowTipsNotificationsOptIn =
-      IsIOSTipsNotificationsEnabled() &&
       (IsSetUpListModuleType(self.type) || IsTipsModuleType(self.type));
 
   BOOL canShowSafetyCheckNotificationsOptIn =
@@ -238,16 +214,6 @@ NSString* GetContextMenuHideDescriptionForType(
   [actions addObject:[self customizeCardAction]];
 
   return actions;
-}
-
-- (void)notifyContextMenuInteractionEndWithAnimator:
-    (id<UIContextMenuInteractionAnimating>)animator {
-  if (self.shouldHide) {
-    __weak __typeof(self) weakSelf = self;
-    [animator addCompletion:^{
-      [weakSelf.delegate neverShowModuleType:weakSelf.type];
-    }];
-  }
 }
 
 #pragma mark - UIContextMenuInteractionDelegate
@@ -274,8 +240,11 @@ NSString* GetContextMenuHideDescriptionForType(
 - (void)contextMenuInteraction:(UIContextMenuInteraction*)interaction
        willEndForConfiguration:(UIContextMenuConfiguration*)configuration
                       animator:(id<UIContextMenuInteractionAnimating>)animator {
-  if (configuration) {
-    [self notifyContextMenuInteractionEndWithAnimator:animator];
+  if (configuration && self.shouldHide) {
+    __weak __typeof(self) weakSelf = self;
+    [animator addCompletion:^{
+      [weakSelf.delegate neverShowModuleType:weakSelf.type];
+    }];
   }
 }
 
@@ -285,11 +254,12 @@ NSString* GetContextMenuHideDescriptionForType(
 - (UIAction*)hideAction {
   __weak __typeof(self) weakSelf = self;
 
+  NSString* title =
+      GetContextMenuHideDescriptionForType(self.type, self.config);
   UIAction* hideAction = [UIAction
-      actionWithTitle:GetContextMenuHideDescriptionForType(self.type,
-                                                           self.config)
+      actionWithTitle:title
                 image:DefaultSymbolWithPointSize(kHideActionSymbol, 18)
-           identifier:nil
+           identifier:title
               handler:^(UIAction* action) {
                 weakSelf.shouldHide = YES;
               }];

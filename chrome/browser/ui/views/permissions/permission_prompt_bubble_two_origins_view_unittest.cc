@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/permissions/permission_prompt_bubble_two_origins_view.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/containers/to_vector.h"
 #include "base/memory/raw_ptr.h"
@@ -50,10 +51,9 @@ class TestDelegateTwoOrigins : public permissions::PermissionPrompt::Delegate {
         });
   }
 
-  const std::vector<
-      raw_ptr<permissions::PermissionRequest, VectorExperimental>>&
-  Requests() override {
-    return raw_requests_;
+  const std::vector<std::unique_ptr<permissions::PermissionRequest>>& Requests()
+      override {
+    return requests_;
   }
 
   GURL GetRequestingOrigin() const override {
@@ -67,6 +67,7 @@ class TestDelegateTwoOrigins : public permissions::PermissionPrompt::Delegate {
   void Deny() override {}
   void Dismiss() override {}
   void Ignore() override {}
+  void SetPromptOptions(PromptOptions prompt_options) override {}
   void FinalizeCurrentRequests() override {}
   void OpenHelpCenterLink(const ui::Event& event) override {}
   void PreIgnoreQuietPrompt() override {}
@@ -117,8 +118,7 @@ class PermissionPromptBubbleTwoOriginsViewTest : public ChromeViewsTestBase {
   std::unique_ptr<PermissionPromptBubbleBaseView> CreateBubble(
       TestDelegateTwoOrigins* delegate) {
     return std::make_unique<PermissionPromptBubbleTwoOriginsView>(
-        browser(), delegate->GetWeakPtr(), base::TimeTicks::Now(),
-        PermissionPromptStyle::kBubbleOnly);
+        browser(), delegate->GetWeakPtr(), PermissionPromptStyle::kBubbleOnly);
   }
 
  private:
@@ -131,16 +131,15 @@ class PermissionPromptBubbleTwoOriginsViewTest : public ChromeViewsTestBase {
         FaviconServiceFactory::GetInstance(),
         FaviconServiceFactory::GetDefaultFactory());
     profile_ = profile_builder.Build();
-    browser_window_ = std::make_unique<TestBrowserWindow>();
+    auto browser_window = std::make_unique<TestBrowserWindow>();
     Browser::CreateParams params(profile_.get(), /*user_gesture=*/true);
     params.type = Browser::TYPE_NORMAL;
-    params.window = browser_window_.get();
-    browser_.reset(Browser::Create(params));
+    params.window = browser_window.release();
+    browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
   }
 
   std::unique_ptr<TestingProfile> profile_;
   std::unique_ptr<Browser> browser_;
-  std::unique_ptr<TestBrowserWindow> browser_window_;
 };
 
 TEST_F(PermissionPromptBubbleTwoOriginsViewTest,

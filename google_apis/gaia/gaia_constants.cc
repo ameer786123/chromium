@@ -133,6 +133,10 @@ const char kDriveOAuth2Scope[] = "https://www.googleapis.com/auth/drive";
 const char kExperimentsAndConfigsOAuth2Scope[] =
     "https://www.googleapis.com/auth/experimentsandconfigs";
 
+// OAuth2 scope for access for DriveFS to use client-side notifications.
+const char kClientChannelOAuth2Scope[] =
+    "https://www.googleapis.com/auth/client_channel";
+
 // The scope required for an access token in order to query ItemSuggest.
 const char kDriveReadOnlyOAuth2Scope[] =
     "https://www.googleapis.com/auth/drive.readonly";
@@ -191,7 +195,7 @@ const char kCalendarReadOnlyOAuth2Scope[] =
 
 // OAuth 2 scope for Google Password Manager passkey enclaves.
 const char kPasskeysEnclaveOAuth2Scope[] =
-  "https://www.googleapis.com/auth/secureidentity.action";
+    "https://www.googleapis.com/auth/secureidentity.action";
 
 // OAuth2 scope for Cloud Search query API.
 const char kCloudSearchQueryOAuth2Scope[] =
@@ -200,6 +204,18 @@ const char kCloudSearchQueryOAuth2Scope[] =
 // OAuth2 scope for Discovery Engine suggestion API.
 const char kDiscoveryEngineCompleteQueryOAuth2Scope[] =
     "https://www.googleapis.com/auth/discoveryengine.complete_query";
+
+// OAuth2 scope for Gemini app.
+const char kGeminiOAuth2Scope[] = "https://www.googleapis.com/auth/gemini";
+
+// OAuth2 scope for Chrome Memex API, used in the Chrome Shopping Insights
+// Side Panel.
+const char kChromeMemexOAuth2Scope[] =
+    "https://www.googleapis.com/auth/chromememex";
+
+// OAuth2 scope to access the ChromebookEmailService API.
+const char kChromebookOAuth2Scope[] =
+    "https://www.googleapis.com/auth/chromebook.email";
 
 // OAuth 2 scopes for Google Tasks API.
 const char kTasksReadOnlyOAuth2Scope[] =
@@ -236,6 +252,17 @@ const char kLensOAuth2Scope[] = "https://www.googleapis.com/auth/lens";
 
 // OAuth2 scope for DevTools GenAI features.
 const char kAidaOAuth2Scope[] = "https://www.googleapis.com/auth/aida";
+
+// OAuth2 scope for Google Developer Program <-> DevTools integration features.
+const char kGdpOAuth2Scope[] =
+    "https://www.googleapis.com/auth/devprofiles.full_control";
+
+// OAuth2 scope for Chrome Web Store.
+const char kWebstoreOAuth2Scope[] =
+    "https://www.googleapis.com/auth/chromewebstore.readonly";
+// OAuth2 scope for push notifications.
+const char kPushNotificationOAuth2Scope[] =
+    "https://www.googleapis.com/auth/notifications";
 
 // Used to build ClientOAuth requests.  These are the names of keys used when
 // building base::DictionaryValue that represent the json data that makes up

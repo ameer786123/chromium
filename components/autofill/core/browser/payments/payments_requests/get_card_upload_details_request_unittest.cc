@@ -6,6 +6,7 @@
 
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/autofill/core/browser/payments/credit_card_save_manager.h"
@@ -47,8 +48,7 @@ struct GetCardUploadDetailsOptions {
     return *this;
   }
 
-  UploadCardSource upload_card_source =
-      UploadCardSource::UNKNOWN_UPLOAD_CARD_SOURCE;
+  UploadCardSource upload_card_source = UploadCardSource::kUnknown;
   int64_t billing_customer_number = 111222333444L;
   std::vector<ClientBehaviorConstants> client_behavior_signals;
 };
@@ -141,7 +141,7 @@ TEST(GetCardUploadDetailsRequestTest,
   std::unique_ptr<GetCardUploadDetailsRequest> request =
       CreateGetCardUploadDetailsRequest(
           GetCardUploadDetailsOptions().with_upload_card_source(
-              UploadCardSource::UPSTREAM_CHECKOUT_FLOW));
+              UploadCardSource::kUpstreamCheckoutFlow));
 
   // Verify that the correct upload card source was included in the request.
   EXPECT_TRUE(request->GetRequestContent().find("UPSTREAM_CHECKOUT_FLOW") !=
@@ -153,7 +153,7 @@ TEST(GetCardUploadDetailsRequestTest,
   std::unique_ptr<GetCardUploadDetailsRequest> request =
       CreateGetCardUploadDetailsRequest(
           GetCardUploadDetailsOptions().with_upload_card_source(
-              UploadCardSource::UPSTREAM_SETTINGS_PAGE));
+              UploadCardSource::kUpstreamSettingsPage));
 
   // Verify that the correct upload card source was included in the request.
   EXPECT_TRUE(request->GetRequestContent().find("UPSTREAM_SETTINGS_PAGE") !=
@@ -165,7 +165,7 @@ TEST(GetCardUploadDetailsRequestTest,
   std::unique_ptr<GetCardUploadDetailsRequest> request =
       CreateGetCardUploadDetailsRequest(
           GetCardUploadDetailsOptions().with_upload_card_source(
-              UploadCardSource::UPSTREAM_CARD_OCR));
+              UploadCardSource::kUpstreamCardOcr));
 
   // Verify that the correct upload card source was included in the request.
   EXPECT_TRUE(request->GetRequestContent().find("UPSTREAM_CARD_OCR") !=

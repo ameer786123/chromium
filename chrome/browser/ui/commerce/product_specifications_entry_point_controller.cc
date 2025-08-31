@@ -24,6 +24,7 @@
 #include "components/commerce/core/mojom/product_specifications.mojom.h"
 #include "components/commerce/core/mojom/shopping_service.mojom.h"
 #include "components/commerce/core/pref_names.h"
+#include "components/commerce/core/product_specifications/product_specifications_service.h"
 #include "components/commerce/core/shopping_service.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
@@ -116,10 +117,13 @@ void LogClusterUKM(const TabStripModel* tab_strip_model,
 
 namespace commerce {
 
+DEFINE_USER_DATA(ProductSpecificationsEntryPointController);
+
 // TODO(b/340252809): No need to have browser as a dependency.
 ProductSpecificationsEntryPointController::
     ProductSpecificationsEntryPointController(BrowserWindowInterface* browser)
-    : browser_(browser) {
+    : browser_(browser),
+      scoped_data_holder_(browser->GetUnownedUserDataHost(), *this) {
   CHECK(browser_);
   browser_->GetTabStripModel()->AddObserver(this);
   shopping_service_ =
@@ -136,6 +140,14 @@ ProductSpecificationsEntryPointController::
 
 ProductSpecificationsEntryPointController::
     ~ProductSpecificationsEntryPointController() = default;
+
+// static
+ProductSpecificationsEntryPointController*
+ProductSpecificationsEntryPointController::From(
+    BrowserWindowInterface* browser_window_interface) {
+  return ui::ScopedUnownedUserData<ProductSpecificationsEntryPointController>::
+      Get(browser_window_interface->GetUnownedUserDataHost());
+}
 
 void ProductSpecificationsEntryPointController::OnTabStripModelChanged(
     TabStripModel* tab_strip_model,
@@ -184,7 +196,8 @@ void ProductSpecificationsEntryPointController::OnEntryPointExecuted() {
   std::set<GURL> urls;
   auto candidate_products =
       current_entry_point_info_->similar_candidate_products;
-  for (auto url_info : shopping_service_->GetUrlInfosForActiveWebWrappers()) {
+  for (const auto& url_info :
+       shopping_service_->GetUrlInfosForActiveWebWrappers()) {
     if (base::Contains(candidate_products, url_info.url)) {
       urls.insert(url_info.url);
     }

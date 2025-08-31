@@ -9,8 +9,10 @@
 #import "base/memory/raw_ptr.h"
 #import "base/metrics/field_trial_params.h"
 #import "base/metrics/histogram_macros.h"
+#import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/bookmarks/browser/bookmark_model.h"
 #import "components/bookmarks/browser/bookmark_node.h"
 #import "components/commerce/core/commerce_constants.h"
@@ -29,6 +31,7 @@
 #import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_metrics_constants.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_metrics_recorder.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/impression_limits/impression_limit_service.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/impression_limits/impression_limit_service_observer_bridge.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/shop_card/shop_card_action_delegate.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/shop_card/shop_card_constants.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/shop_card/shop_card_data.h"
@@ -60,7 +63,8 @@ int GetImpressionLimit() {
 
 }  // namespace
 
-@interface ShopCardMediator () <MagicStackModuleDelegate,
+@interface ShopCardMediator () <ImpressionLimitServiceObserverBridgeDelegate,
+                                MagicStackModuleDelegate,
                                 PrefObserverDelegate,
                                 ShopCardFaviconConsumerSource>
 @end
@@ -80,6 +84,8 @@ int GetImpressionLimit() {
   bool _faviconCallbackCalledOnce;
   id<ShopCardFaviconConsumer> _faviconConsumer;
   raw_ptr<ImpressionLimitService> _impressionLimitService;
+  std::unique_ptr<ImpressionLimitServiceObserverBridge>
+      _impressionLimitServiceObserverBridge;
 }
 
 - (instancetype)
@@ -106,6 +112,9 @@ int GetImpressionLimit() {
         &_prefChangeRegistrar);
     _faviconLoader = faviconLoader;
     _impressionLimitService = impressionLimitService;
+    _impressionLimitServiceObserverBridge =
+        std::make_unique<ImpressionLimitServiceObserverBridge>(
+            self, _impressionLimitService);
   }
   return self;
 }
@@ -116,10 +125,12 @@ int GetImpressionLimit() {
   _imageFetcher = nil;
   _faviconLoader = nil;
   _impressionLimitService = nil;
+  _impressionLimitServiceObserverBridge.reset();
 }
 
 - (void)reset {
   _shopCardItem = nil;
+  _shoppingDataForShopCardFound = false;
 }
 
 #pragma mark - ShopCardFaviconConsumerSource
@@ -168,6 +179,10 @@ int GetImpressionLimit() {
 
 - (void)onPriceTrackedBookmarksReceived:
     (std::vector<const bookmarks::BookmarkNode*>)subscriptions {
+  if (_shoppingDataForShopCardFound) {
+    // Prevent duplicate Magic Stack insertions.
+    return;
+  }
   // Iterate through all subscriptions, find the first recent one with a drop
   // populate item.
   for (const bookmarks::BookmarkNode* bookmark : subscriptions) {
@@ -188,6 +203,7 @@ int GetImpressionLimit() {
       continue;
     }
 
+    _shoppingDataForShopCardFound = true;
     [self populateShopCardItem:specifics bookmark:bookmark];
 
     GURL productImageUrl = GURL(meta->lead_image().url());
@@ -226,7 +242,7 @@ int GetImpressionLimit() {
   std::unique_ptr<payments::CurrencyFormatter> formatter =
       std::make_unique<payments::CurrencyFormatter>(
           specifics.previous_price().currency_code(),
-          GetApplicationContext()->GetApplicationLocale());
+          GetApplicationContext()->GetApplicationLocaleStorage()->Get());
 
   float current_price_micros =
       static_cast<float>(specifics.current_price().amount_micros());
@@ -347,6 +363,14 @@ std::u16string GetHostnameFromGURL(const GURL& url) {
                        atIndex:index];
 }
 
+#pragma mark - ImpressionLimitServiceObserverBridgeDelegate
+- (void)onUrlUntracked:(GURL)url {
+  if (_shopCardItem && _shopCardItem.shopCardData &&
+      url == _shopCardItem.shopCardData.productURL) {
+    [self.delegate removeShopCard];
+  }
+}
+
 #pragma mark - ShopCardMediatorDelegate
 
 - (void)removeShopCard {
@@ -441,6 +465,9 @@ std::u16string GetHostnameFromGURL(const GURL& url) {
 
 - (ShopCardItem*)shopCardItemForTesting {
   return self->_shopCardItem;
+}
+- (void)onUrlUntrackedForTesting:(GURL)url {
+  [self onUrlUntracked:url];
 }
 
 @end

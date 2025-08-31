@@ -17,15 +17,19 @@
 #include "base/containers/flat_set.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
-#include "gpu/ipc/service/gpu_memory_buffer_factory.h"
 #include "media/base/bitrate.h"
 #include "media/base/media_switches.h"
 #include "media/gpu/buildflags.h"
 #include "media/gpu/gpu_video_encode_accelerator_helpers.h"
 #include "media/gpu/macros.h"
 #include "media/gpu/test/raw_video.h"
+#if BUILDFLAG(IS_ANDROID)
+#include "ui/gl/gl_implementation.h"
+#include "ui/gl/init/gl_factory.h"
+#endif
 
 namespace media {
 namespace test {
@@ -134,6 +138,13 @@ constexpr auto kSpatialLayersResolutionScaleDenom =
         {2, 1, 0},  // For two spatial layers.
         {4, 2, 1},  // For three spatial layers.
     });
+
+#if BUILDFLAG(IS_ANDROID)
+// Android test harness already creates a task environment.
+constexpr bool kNeedInternalTaskEnvironment = false;
+#else
+constexpr bool kNeedInternalTaskEnvironment = true;
+#endif  // BUILDFLAG(IS_ANDROID)
 
 VideoBitrateAllocation CreateBitrateAllocation(
     const VideoCodec codec,
@@ -281,24 +292,16 @@ VideoEncoderTestEnvironment* VideoEncoderTestEnvironment::Create(
       num_spatial_layers, num_temporal_layers, is_vbr,
       test_type == TestType::kValidation);
 
-  // TODO(b/182008564) Add checks to make sure no features are duplicated, and
-  // there is no intersection between the enabled and disabled set.
+  // TODO(b/182008564) Add checks to make sure no features are duplicated.
   std::vector<base::test::FeatureRef> combined_enabled_features(
       enabled_features);
-  std::vector<base::test::FeatureRef> combined_disabled_features(
-      disabled_features);
-#if BUILDFLAG(USE_VAAPI)
-  // Disable this feature so that the encoder test can test a resolution
-  // which is denied for the sake of performance. See crbug.com/1008491.
-  combined_disabled_features.push_back(
-      media::kVaapiEnforceVideoMinMaxResolution);
-#endif
 
 #if BUILDFLAG(IS_LINUX) && BUILDFLAG(USE_VAAPI)
   combined_enabled_features.push_back(media::kAcceleratedVideoEncodeLinux);
 #endif
 
-#if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+// TODO(crbug.com/414430336): Consider restricting to IS_CHROMEOS.
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
   combined_enabled_features.push_back(media::kChromeOSHWVBREncoding);
 #endif
 
@@ -306,8 +309,7 @@ VideoEncoderTestEnvironment* VideoEncoderTestEnvironment::Create(
       test_type, std::move(video), output_folder, video_path.BaseName(),
       profile, inter_layer_pred_mode, num_spatial_layers, num_temporal_layers,
       content_type, bitrate_allocation, save_output_bitstream, reverse,
-      frame_output_config, combined_enabled_features,
-      combined_disabled_features);
+      frame_output_config, combined_enabled_features, disabled_features);
 }
 
 VideoEncoderTestEnvironment::VideoEncoderTestEnvironment(
@@ -326,7 +328,9 @@ VideoEncoderTestEnvironment::VideoEncoderTestEnvironment(
     const FrameOutputConfig& frame_output_config,
     const std::vector<base::test::FeatureRef>& enabled_features,
     const std::vector<base::test::FeatureRef>& disabled_features)
-    : VideoTestEnvironment(enabled_features, disabled_features),
+    : VideoTestEnvironment(enabled_features,
+                           disabled_features,
+                           kNeedInternalTaskEnvironment),
       test_type_(test_type),
       video_(std::move(video)),
       output_folder_(output_folder),
@@ -342,11 +346,23 @@ VideoEncoderTestEnvironment::VideoEncoderTestEnvironment(
       content_type_(content_type),
       save_output_bitstream_(save_output_bitstream),
       reverse_(reverse),
-      frame_output_config_(frame_output_config),
-      gpu_memory_buffer_factory_(
-          gpu::GpuMemoryBufferFactory::CreateNativeType(nullptr)) {}
+      frame_output_config_(frame_output_config) {}
 
 VideoEncoderTestEnvironment::~VideoEncoderTestEnvironment() = default;
+
+void VideoEncoderTestEnvironment::SetUp() {
+  VideoTestEnvironment::SetUp();
+#if BUILDFLAG(IS_ANDROID)
+  CHECK(gl::init::InitializeGLOneOff(gl::GpuPreference::kDefault));
+#endif
+}
+
+void VideoEncoderTestEnvironment::TearDown() {
+#if BUILDFLAG(IS_ANDROID)
+  gl::init::ShutdownGL(nullptr, false);
+#endif
+  VideoTestEnvironment::TearDown();
+}
 
 media::test::RawVideo* VideoEncoderTestEnvironment::Video() const {
   return video_.get();
@@ -427,9 +443,5 @@ const FrameOutputConfig& VideoEncoderTestEnvironment::ImageOutputConfig()
   return frame_output_config_;
 }
 
-gpu::GpuMemoryBufferFactory*
-VideoEncoderTestEnvironment::GetGpuMemoryBufferFactory() const {
-  return gpu_memory_buffer_factory_.get();
-}
 }  // namespace test
 }  // namespace media

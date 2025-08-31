@@ -43,11 +43,13 @@ public class ServiceStatus {
         switch (collaborationStatus) {
             case CollaborationStatus.DISABLED:
             case CollaborationStatus.DISABLED_PENDING:
-            case CollaborationStatus.DISABLED_FOR_POLICY:
                 return false;
+            case CollaborationStatus.DISABLED_FOR_POLICY:
             case CollaborationStatus.ALLOWED_TO_JOIN:
             case CollaborationStatus.ENABLED_JOIN_ONLY:
             case CollaborationStatus.ENABLED_CREATE_AND_JOIN:
+            case CollaborationStatus.VERSION_OUT_OF_DATE:
+            case CollaborationStatus.VERSION_OUT_OF_DATE_SHOW_UPDATE_CHROME_UI:
                 return true;
         }
         return false;
@@ -57,14 +59,19 @@ public class ServiceStatus {
      * @return Whether the user is allowed to create a collaboration group.
      */
     public boolean isAllowedToCreate() {
+        if (signinStatus == SigninStatus.SIGNIN_DISABLED) {
+            return false;
+        }
         switch (collaborationStatus) {
             case CollaborationStatus.DISABLED:
             case CollaborationStatus.DISABLED_PENDING:
             case CollaborationStatus.DISABLED_FOR_POLICY:
             case CollaborationStatus.ALLOWED_TO_JOIN:
             case CollaborationStatus.ENABLED_JOIN_ONLY:
+            case CollaborationStatus.VERSION_OUT_OF_DATE:
                 return false;
             case CollaborationStatus.ENABLED_CREATE_AND_JOIN:
+            case CollaborationStatus.VERSION_OUT_OF_DATE_SHOW_UPDATE_CHROME_UI:
                 return true;
         }
         return false;

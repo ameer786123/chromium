@@ -138,6 +138,7 @@ suite('General', () => {
       emptyBodyGuest: 'guest body',
       bookmarksTreeViewEnabled: false,
       isBookmarksInTransportModeEnabled: false,
+      splitViewEnabled: false,
     });
 
     powerBookmarksList = await initializeUi(bookmarksApi);
@@ -159,8 +160,12 @@ suite('General', () => {
               powerBookmarksList.getKeyboardNavigationServiceforTesting()
                   .getElementsForTesting()
                   .map((el: HTMLElement) => el.id)),
-          JSON.stringify(
-              ['bookmark-1', 'bookmark-5', 'bookmark-4', 'bookmark-3']));
+          JSON.stringify([
+            'bookmark-SIDE_PANEL_BOOKMARK_BAR_ID',
+            'bookmark-5',
+            'bookmark-4',
+            'bookmark-3',
+          ]));
 
       bookmarksApi.callbackRouterRemote.onBookmarkNodeAdded({
         id: '999',
@@ -171,6 +176,7 @@ suite('General', () => {
         children: null,
         dateAdded: null,
         dateLastUsed: null,
+        unmodifiable: false,
       });
       await microtasksFinished();
       await flushTasks();
@@ -181,7 +187,7 @@ suite('General', () => {
                   .getElementsForTesting()
                   .map((el: HTMLElement) => el.id)),
           JSON.stringify([
-            'bookmark-1',
+            'bookmark-SIDE_PANEL_BOOKMARK_BAR_ID',
             'bookmark-5',
             'bookmark-999',
             'bookmark-4',
@@ -197,8 +203,12 @@ suite('General', () => {
               powerBookmarksList.getKeyboardNavigationServiceforTesting()
                   .getElementsForTesting()
                   .map((el: HTMLElement) => el.id)),
-          JSON.stringify(
-              ['bookmark-1', 'bookmark-5', 'bookmark-4', 'bookmark-3']));
+          JSON.stringify([
+            'bookmark-SIDE_PANEL_BOOKMARK_BAR_ID',
+            'bookmark-5',
+            'bookmark-4',
+            'bookmark-3',
+          ]));
 
       bookmarksApi.callbackRouterRemote.onBookmarkNodesRemoved(['4']);
       await flushTasks();
@@ -209,7 +219,11 @@ suite('General', () => {
               powerBookmarksList.getKeyboardNavigationServiceforTesting()
                   .getElementsForTesting()
                   .map((el: HTMLElement) => el.id)),
-          JSON.stringify(['bookmark-1', 'bookmark-5', 'bookmark-3']));
+          JSON.stringify([
+            'bookmark-SIDE_PANEL_BOOKMARK_BAR_ID',
+            'bookmark-5',
+            'bookmark-3',
+          ]));
     });
 
     test('RebuildsKeyboardNavigationMoved', async () => {
@@ -220,8 +234,12 @@ suite('General', () => {
               powerBookmarksList.getKeyboardNavigationServiceforTesting()
                   .getElementsForTesting()
                   .map((el: HTMLElement) => el.id)),
-          JSON.stringify(
-              ['bookmark-1', 'bookmark-5', 'bookmark-4', 'bookmark-3']));
+          JSON.stringify([
+            'bookmark-SIDE_PANEL_BOOKMARK_BAR_ID',
+            'bookmark-5',
+            'bookmark-4',
+            'bookmark-3',
+          ]));
 
       const movedBookmark = FOLDERS[1]!.children![2]!.children![0]!;
       assertTrue(!!movedBookmark);
@@ -241,7 +259,7 @@ suite('General', () => {
                   .getElementsForTesting()
                   .map((el: HTMLElement) => el.id)),
           JSON.stringify([
-            'bookmark-1',
+            'bookmark-SIDE_PANEL_BOOKMARK_BAR_ID',
             'bookmark-5',
             'bookmark-6',
             'bookmark-4',
@@ -253,7 +271,7 @@ suite('General', () => {
       const bookmarks = getBookmarks(powerBookmarksList);
       assertEquals(4, bookmarks.length);
       // All folders should come first
-      assertEquals('1', bookmarks[0]!.id);
+      assertEquals('SIDE_PANEL_BOOKMARK_BAR_ID', bookmarks[0]!.id);
       assertEquals('5', bookmarks[1]!.id);
       // Newest URL should come next
       assertEquals('4', bookmarks[2]!.id);
@@ -291,6 +309,10 @@ suite('General', () => {
           1,
           metrics.count(
               'PowerBookmarks.SidePanel.SearchOrFilter.BookmarksShown', 2));
+      // Bookmark list is shown when there are no filter results in the active
+      // folder.
+      assertTrue(isHidden(powerBookmarksList.$.topLevelEmptyState));
+      assertFalse(isHidden(powerBookmarksList.$.bookmarks));
     });
 
     test('UpdatesChangedBookmarks', async () => {
@@ -349,6 +371,7 @@ suite('General', () => {
         children: null,
         dateAdded: null,
         dateLastUsed: null,
+        unmodifiable: false,
       });
       await flushTasks();
 
@@ -381,6 +404,7 @@ suite('General', () => {
         children: null,
         dateAdded: null,
         dateLastUsed: null,
+        unmodifiable: false,
       });
       await flushTasks();
 
@@ -399,6 +423,7 @@ suite('General', () => {
         children: null,
         dateAdded: null,
         dateLastUsed: null,
+        unmodifiable: false,
       });
       await flushTasks();
 
@@ -412,6 +437,7 @@ suite('General', () => {
         children: null,
         dateAdded: null,
         dateLastUsed: null,
+        unmodifiable: false,
       });
       await flushTasks();
 
@@ -440,6 +466,7 @@ suite('General', () => {
         children: null,
         dateAdded: null,
         dateLastUsed: null,
+        unmodifiable: false,
       });
       await flushTasks();
 
@@ -458,6 +485,7 @@ suite('General', () => {
         children: null,
         dateAdded: null,
         dateLastUsed: null,
+        unmodifiable: false,
       });
       await flushTasks();
 
@@ -475,6 +503,7 @@ suite('General', () => {
         children: null,
         dateAdded: null,
         dateLastUsed: null,
+        unmodifiable: false,
       });
       await flushTasks();
 
@@ -483,6 +512,43 @@ suite('General', () => {
       assertTrue(!!getBookmarkWithId(powerBookmarksList, '789'));
       assertEquals(2, getBookmarksInList(powerBookmarksList, 0).length);
       assertEquals(4, getBookmarksInList(powerBookmarksList, 1).length);
+    });
+
+    test('AddRemoveAddRemove', async () => {
+      const addTabButton = getAddTabButton();
+      assertFalse(addTabButton.disabled);
+
+      const newBookmark = {
+        id: '999',
+        title: 'New bookmark of current url',
+        index: 0,
+        parentId: FOLDERS[1]!.id,
+        url: powerBookmarksList.getCurrentUrlForTesting()!,
+        children: null,
+        dateAdded: null,
+        dateLastUsed: null,
+        unmodifiable: false,
+      };
+
+      // Add a bookmark for the current URL.
+      bookmarksApi.callbackRouterRemote.onBookmarkNodeAdded(newBookmark);
+      await flushTasks();
+      assertTrue(addTabButton.disabled);
+
+      // Remove the bookmark.
+      bookmarksApi.callbackRouterRemote.onBookmarkNodesRemoved(['999']);
+      await flushTasks();
+      assertFalse(addTabButton.disabled);
+
+      // Undo the removal.
+      bookmarksApi.callbackRouterRemote.onBookmarkNodeAdded(newBookmark);
+      await flushTasks();
+      assertTrue(addTabButton.disabled);
+
+      // Remove the bookmark again.
+      bookmarksApi.callbackRouterRemote.onBookmarkNodesRemoved(['999']);
+      await flushTasks();
+      assertFalse(addTabButton.disabled);
     });
   });
 
@@ -518,6 +584,7 @@ suite('General', () => {
         children: null,
         dateAdded: null,
         dateLastUsed: null,
+        unmodifiable: false,
       });
       await flushTasks();
 
@@ -696,7 +763,8 @@ suite('General', () => {
 
       flush();
 
-      const bookmarksBarFolderElement = getCrUrlListItemElementWithId('1');
+      const bookmarksBarFolderElement =
+          getCrUrlListItemElementWithId('SIDE_PANEL_BOOKMARK_BAR_ID');
       assertTrue(!!bookmarksBarFolderElement);
       assertEquals(0, bookmarksBarFolderElement.imageUrls.length);
 
@@ -736,7 +804,7 @@ suite('General', () => {
 
       // Open the context menu.
       contextMenu.showAtPosition(
-          new MouseEvent('click'), [bookmark], false, false);
+          new MouseEvent('click'), [bookmark], false, false, false);
       await waitAfterNextRender(contextMenu);
 
       // Get the edit option in the menu.
@@ -771,7 +839,7 @@ suite('General', () => {
 
       // Open the context menu.
       contextMenu.showAtPosition(
-          new MouseEvent('click'), bookmarks, false, false);
+          new MouseEvent('click'), bookmarks, false, false, false);
       await waitAfterNextRender(contextMenu);
 
       // Get the move option in the menu.
@@ -829,7 +897,7 @@ suite('General', () => {
       assertFalse(isHidden(footer));
 
       // Opening an empty folder.
-      await openBookmark('1');
+      await openBookmark('SIDE_PANEL_BOOKMARK_BAR_ID');
 
       assertFalse(isHidden(search));
       assertTrue(isHidden(labels));

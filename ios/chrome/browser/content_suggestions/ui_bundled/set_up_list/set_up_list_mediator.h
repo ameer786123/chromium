@@ -9,7 +9,10 @@
 
 #import "base/ios/block_types.h"
 
-class AuthenticationService;
+namespace signin {
+class IdentityManager;
+}
+
 @protocol ContentSuggestionsDelegate;
 @class ContentSuggestionsMetricsRecorder;
 @protocol ContentSuggestionsViewControllerAudience;
@@ -18,19 +21,6 @@ class PrefService;
 @class SetUpListConfig;
 @class SetUpListItem;
 @class SetUpListItemViewData;
-
-namespace segmentation_platform {
-class DeviceSwitcherResultDispatcher;
-class SegmentationPlatformService;
-}  // namespace segmentation_platform
-
-namespace signin {
-class IdentityManager;
-}  // namespace signin
-
-namespace syncer {
-class SyncService;
-}  // namespace syncer
 
 // Interface for listening to events occurring in SetUpListMediator.
 @protocol SetUpListConsumer
@@ -74,20 +64,12 @@ class SyncService;
 @property(nonatomic, weak)
     ContentSuggestionsMetricsRecorder* contentSuggestionsMetricsRecorder;
 
-// Initializer with optional `segmentationService` and
-// `deviceSwitcherResultDispatcher` used for personalizing messaging in the Set
-// Up List Default Browser item.
+// Default initializer.
 - (instancetype)initWithPrefService:(PrefService*)prefService
-                        syncService:(syncer::SyncService*)syncService
                     identityManager:(signin::IdentityManager*)identityManager
-              authenticationService:(AuthenticationService*)authService
                          sceneState:(SceneState*)sceneState
               isDefaultSearchEngine:(BOOL)isDefaultSearchEngine
-                segmentationService:
-                    (segmentation_platform::SegmentationPlatformService*)
-                        segmentationService
-     deviceSwitcherResultDispatcher:
-         (segmentation_platform::DeviceSwitcherResultDispatcher*)dispatcher
+               priceTrackingEnabled:(BOOL)priceTrackingEnabled
     NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -113,9 +95,6 @@ class SyncService;
 
 // Indicates to the mediator to disable SetUpList entirely.
 - (void)disableModule;
-
-// Retrieves user segmentation data from the Segmentation Platform.
-- (void)retrieveUserSegment;
 
 @end
 

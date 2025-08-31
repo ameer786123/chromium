@@ -18,7 +18,7 @@ group("build") {
 }
 
 accessibility_common_dir =
-    "$root_out_dir/resources/chromeos/accessibility/accessibility_common"
+    "$root_out_dir/resources/chromeos/accessibility/accessibility_common/mv3"
 
 # Directory where typescript build will occur.
 ts_build_staging_dir = "$target_gen_dir/ts_build_staging"
@@ -37,6 +37,8 @@ misc_sources = [
   "dictation/earcons/audio_end.wav",
   "dictation/earcons/audio_initiate.wav",
   "dictation/earcons/null_selection.wav",
+  "offscreen.html",
+  "sandboxed_pumpkin_tagger.html",
 ]
 
 # TS files to build.
@@ -51,6 +53,8 @@ ts_modules = [
   "dictation/metrics_utils.ts",
   "dictation/ui_controller.ts",
   "dictation/macros/list_commands_macro.ts",
+  "dictation/offscreen_audio.ts",
+  "dictation/offscreen_pumpkin_worker.ts",
   "dictation/parse/input_text_strategy.ts",
   "dictation/parse/parse_strategy.ts",
   "dictation/parse/pumpkin_parse_strategy.ts",
@@ -67,11 +71,15 @@ ts_modules = [
   "facegaze/gesture_timer.ts",
   "facegaze/metrics_utils.ts",
   "facegaze/mouse_controller.ts",
+  "facegaze/offscreen_web_cam.ts",
   "facegaze/scroll_mode_controller.ts",
   "facegaze/macros/mouse_long_click_macro.ts",
   "facegaze/macros/mouse_scroll_macro.ts",
   "facegaze/macros/reset_cursor_macro.ts",
   "magnifier/magnifier.ts",
+  "messenger.ts",
+  "offscreen.ts",
+  "offscreen_command_type.ts",
 ]
 
 # The relative path in the staging directory of TS modules that need to be copied from another directory.
@@ -81,7 +89,7 @@ ts_definitions = [
   "$mediapipe_dir/vision.d.ts",
   "dictation/parse/pumpkin/pumpkin_tagger_externs.d.ts",
   "../../definitions/accessibility_features_mv2.d.ts",
-  "../../definitions/accessibility_private_mv2.d.ts",
+  "../../definitions/accessibility_private_mv3.d.ts",
   "../../definitions/audio.d.ts",
   "../../definitions/automation.d.ts",
   "../../definitions/command_line_private.d.ts",
@@ -91,11 +99,11 @@ ts_definitions = [
   "../../definitions/input_method_private.d.ts",
   "../../definitions/language_settings_private.d.ts",
   "../../definitions/metrics_private.d.ts",
+  "../../definitions/offscreen.d.ts",
   "../../definitions/runtime.d.ts",
   "../../definitions/settings_private_mv2.d.ts",
   "../../definitions/speech_recognition_private.d.ts",
   "../../definitions/tabs.d.ts",
-  "../../definitions/settings_private_mv2.d.ts",
   "../../definitions/windows.d.ts",
   "//tools/typescript/definitions/chrome_event.d.ts",
   "//tools/typescript/definitions/i18n.d.ts",
@@ -124,7 +132,7 @@ ts_library("ts_build") {
 
     # For type-checking purposes, map vision_bundle.mjs to the definition file
     # in third_party/.
-    "chrome-extension://egfdjlfmgnehecnclamagfafdccgfndp/accessibility_common/third_party/mediapipe_task_vision/vision_bundle.mjs|" + rebase_path(
+    "chrome-extension://egfdjlfmgnehecnclamagfafdccgfndp/accessibility_common/mv3/third_party/mediapipe_task_vision/vision_bundle.mjs|" + rebase_path(
             "$mediapipe_dir/vision.d.ts",
             target_gen_dir),
   ]
@@ -136,6 +144,8 @@ ts_library("ts_build") {
   tsconfig_base = "../../tsconfig.base.json"
 }
 
+# TODO(crbug.com/388867838): Use bundle_js and minify_js, similar to what is
+# done for mv2.
 # Instead of setting up copy targets, use a script to copy all files.
 run_jsbundler("copied_files") {
   mode = "copy"
@@ -158,7 +168,6 @@ run_jsbundler("copied_files") {
   rewrite_rules = [
     rebase_path("$tsc_out_dir", root_build_dir) + ":",
     rebase_path(".", root_build_dir) + ":",
-    rebase_path(closure_library_dir, root_build_dir) + ":closure",
   ]
 }
 
@@ -200,12 +209,12 @@ source_set("browser_tests") {
     "$root_out_dir/chrome_200_percent.pak",
     "$root_out_dir/locales/en-US.pak",
     "$root_out_dir/resources.pak",
-    "$root_out_dir/resources/chromeos/accessibility/accessibility_common/",
+    "$accessibility_common_dir/",
 
     "$root_out_dir/test_data/chrome/browser/resources/chromeos/accessibility/accessibility_common/",
 
     # The test uses data from the original location, not the copied one.
-    "//chrome/browser/resources/chromeos/accessibility/accessibility_common/",
+    "//chrome/browser/resources/chromeos/accessibility/accessibility_common/mv3/",
     "//chrome/browser/resources/chromeos/accessibility/common/",
   ]
   data += js2gtest_js_libraries
@@ -282,7 +291,7 @@ action("pumpkin_test_files") {
   ]
 
   args = [
-    "--dest-dir=resources/chromeos/accessibility/accessibility_common/third_party/pumpkin",
+    "--dest-dir=resources/chromeos/accessibility/accessibility_common/mv3/third_party/pumpkin",
     rebase_path("../../common/testing/fake_pumpkin_dlc.tar.xz", root_build_dir),
     string_join(",", files_to_extract),
     out_dir,
@@ -302,7 +311,7 @@ action("facegaze_test_files") {
   ]
 
   args = [
-    "--dest-dir=resources/chromeos/accessibility/accessibility_common/third_party/mediapipe_task_vision",
+    "--dest-dir=resources/chromeos/accessibility/accessibility_common/mv3/third_party/mediapipe_task_vision",
     rebase_path("../../common/testing/fake_facegaze_assets_dlc.tar.xz",
                 root_build_dir),
     string_join(",", files_to_extract),

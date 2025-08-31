@@ -6,14 +6,14 @@
 
 #include "chrome/browser/glic/glic_pref_names.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_action_container.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #endif
 
 namespace tabs {
@@ -36,7 +36,20 @@ void GlicNudgeController::UpdateNudgeLabel(
   auto* const tab_interface =
       browser_window_interface_->GetActiveTabInterface();
   if (tab_interface->GetContents() != web_contents) {
-    callback.Run(GlicNudgeActivity::kNudgeNotShownWebContents);
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(callback),
+                       GlicNudgeActivity::kNudgeNotShownWebContents));
+    return;
+  }
+  // Empty nudge labels close the nudge, allow those to bypass the
+  // CanShowCallToAction check.
+  if (!nudge_label.empty() &&
+      !browser_window_interface_->CanShowCallToAction()) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(callback),
+                       GlicNudgeActivity::kNudgeNotShownWindowCallToActionUI));
     return;
   }
 
@@ -44,14 +57,16 @@ void GlicNudgeController::UpdateNudgeLabel(
   PrefService* const pref_service =
       browser_window_interface_->GetProfile()->GetPrefs();
   if (pref_service->GetBoolean(glic::prefs::kGlicPinnedToTabstrip)) {
-    for (auto& observer : observers_) {
-      observer.OnTriggerGlicNudgeUI(nudge_label);
+    if (delegate_) {
+      delegate_->OnTriggerGlicNudgeUI(nudge_label);
     }
   }
 
   if (nudge_label.empty()) {
     CHECK(activity);
     OnNudgeActivity(*activity);
+  } else {
+    OnNudgeActivity(tabs::GlicNudgeActivity::kNudgeShown);
   }
 }
 
@@ -70,9 +85,11 @@ void GlicNudgeController::OnNudgeActivity(GlicNudgeActivity activity) {
       auto* profile = browser_window_interface_->GetProfile();
       auto* glic_service =
           glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile);
-      glic_service->TryPreloadFre();
+      glic_service->TryPreloadFre(glic::GlicPrewarmingFreSource::kNudge);
 #endif
       nudge_activity_callback_.Run(GlicNudgeActivity::kNudgeShown);
+      scoped_window_call_to_action_ptr =
+          browser_window_interface_->ShowCallToAction();
       break;
     }
     case GlicNudgeActivity::kNudgeClicked:
@@ -81,8 +98,12 @@ void GlicNudgeController::OnNudgeActivity(GlicNudgeActivity activity) {
     case GlicNudgeActivity::kNudgeIgnoredNavigation:
       nudge_activity_callback_.Run(activity);
       nudge_activity_callback_.Reset();
+      scoped_window_call_to_action_ptr.reset();
+
       break;
     case GlicNudgeActivity::kNudgeNotShownWebContents:
+    case GlicNudgeActivity::kNudgeNotShownWindowCallToActionUI:
+      scoped_window_call_to_action_ptr.reset();
       nudge_activity_callback_.Reset();
       break;
   }
@@ -94,10 +115,10 @@ void GlicNudgeController::SetNudgeActivityCallbackForTesting() {
 
 void GlicNudgeController::OnActiveTabChanged(
     BrowserWindowInterface* browser_interface) {
-  for (auto& observer : observers_) {
-    observer.OnTriggerGlicNudgeUI(std::string());
+  if (delegate_ && delegate_->GetIsShowingGlicNudge()) {
+    delegate_->OnTriggerGlicNudgeUI(std::string());
+    OnNudgeActivity(tabs::GlicNudgeActivity::kNudgeIgnoredActiveTabChanged);
   }
-  OnNudgeActivity(tabs::GlicNudgeActivity::kNudgeIgnoredActiveTabChanged);
 }
 
 }  // namespace tabs

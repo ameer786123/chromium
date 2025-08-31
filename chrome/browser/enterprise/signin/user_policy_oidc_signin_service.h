@@ -8,7 +8,7 @@
 #include <variant>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -77,6 +77,9 @@ class UserPolicyOidcSigninService : public UserPolicySigninServiceBase,
 
   // CloudPolicyClient::Observer implementation:
   void OnPolicyFetched(CloudPolicyClient* client) override;
+
+  // UserPolicySigninServiceBase implementation:
+  void ShutdownCloudPolicyManager() override;
 
   void FetchPolicyForOidcUser(
       const AccountId& account_id,

@@ -9,8 +9,9 @@ import static org.chromium.chrome.browser.hub.HubColorMixer.COLOR_MIXER;
 import android.view.View;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.modelutil.PropertyKey;
-import org.chromium.ui.modelutil.PropertyModel.ReadableObjectPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
@@ -18,11 +19,8 @@ import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 import java.util.List;
 
 /** Responsible for holding properties of the toolbar in the hub. */
+@NullMarked
 class HubToolbarProperties {
-    // When set then an interactable button for the primary pane action should be shown.
-    public static final WritableObjectPropertyKey<FullButtonData> ACTION_BUTTON_DATA =
-            new WritableObjectPropertyKey();
-
     public static final WritableObjectPropertyKey<List<FullButtonData>> PANE_SWITCHER_BUTTON_DATA =
             new WritableObjectPropertyKey<>();
     public static final WritableIntPropertyKey PANE_SWITCHER_INDEX = new WritableIntPropertyKey();
@@ -42,24 +40,29 @@ class HubToolbarProperties {
     public static final WritableObjectPropertyKey<Runnable> SEARCH_LISTENER =
             new WritableObjectPropertyKey<>();
 
+    public static final WritableBooleanPropertyKey BACK_BUTTON_VISIBLE =
+            new WritableBooleanPropertyKey();
+
+    public static final WritableBooleanPropertyKey BACK_BUTTON_ENABLED =
+            new WritableBooleanPropertyKey();
+
+    public static final WritableObjectPropertyKey<Runnable> BACK_BUTTON_LISTENER =
+            new WritableObjectPropertyKey<>();
+
     public static final WritableBooleanPropertyKey IS_INCOGNITO = new WritableBooleanPropertyKey();
 
     public static final WritableBooleanPropertyKey APPLY_DELAY_FOR_SEARCH_BOX_ANIMATION =
             new WritableBooleanPropertyKey();
 
-    public static final ReadableObjectPropertyKey<Runnable> MENU_BUTTON_ENTER_PRESSED_RUNNABLE =
-            new ReadableObjectPropertyKey<>();
-
     @FunctionalInterface
     public interface PaneButtonLookup {
-        View get(int index);
+        @Nullable View get(int index);
     }
 
     public static final WritableObjectPropertyKey<Callback<PaneButtonLookup>>
             PANE_BUTTON_LOOKUP_CALLBACK = new WritableObjectPropertyKey();
 
     static final PropertyKey[] ALL_KEYS = {
-        ACTION_BUTTON_DATA,
         PANE_SWITCHER_BUTTON_DATA,
         PANE_SWITCHER_INDEX,
         COLOR_MIXER,
@@ -68,9 +71,11 @@ class HubToolbarProperties {
         SEARCH_BOX_VISIBLE,
         SEARCH_LOUPE_VISIBLE,
         SEARCH_LISTENER,
+        BACK_BUTTON_VISIBLE,
+        BACK_BUTTON_ENABLED,
+        BACK_BUTTON_LISTENER,
         IS_INCOGNITO,
         APPLY_DELAY_FOR_SEARCH_BOX_ANIMATION,
         HUB_SEARCH_ENABLED_STATE,
-        MENU_BUTTON_ENTER_PRESSED_RUNNABLE,
     };
 }

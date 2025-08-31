@@ -26,7 +26,6 @@
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/dom/events/mutation_event_suppression_scope.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/slot_assignment.h"
@@ -116,14 +115,14 @@ void HTMLDetailsElement::DidAddUserAgentShadowRoot(ShadowRoot& root) {
   root.AppendChild(default_summary_style);
 }
 
-Element* HTMLDetailsElement::FindMainSummary() const {
+Element& HTMLDetailsElement::MainSummary() const {
   if (HTMLSummaryElement* summary =
           Traversal<HTMLSummaryElement>::FirstChild(*this))
-    return summary;
+    return *summary;
   HTMLSlotElement& slot =
       To<HTMLSlotElement>(*UserAgentShadowRoot()->firstChild());
   CHECK(IsA<HTMLSummaryElement>(*slot.firstChild()));
-  return To<Element>(slot.firstChild());
+  return *To<Element>(slot.firstChild());
 }
 
 void HTMLDetailsElement::ManuallyAssignSlots() {
@@ -176,11 +175,11 @@ void HTMLDetailsElement::ParseAttribute(
     }
     pending_toggle_event_ =
         ToggleEvent::Create(event_type_names::kToggle, Event::Cancelable::kNo,
-                            old_state, new_state);
+                            old_state, new_state, /*source=*/nullptr);
     pending_event_task_ = PostCancellableTask(
         *GetDocument().GetTaskRunner(TaskType::kDOMManipulation), FROM_HERE,
-        WTF::BindOnce(&HTMLDetailsElement::DispatchPendingEvent,
-                      WrapPersistent(this), params.reason));
+        BindOnce(&HTMLDetailsElement::DispatchPendingEvent,
+                 WrapPersistent(this), params.reason));
 
     Element* content =
         EnsureUserAgentShadowRoot(SlotAssignmentMode::kManual)
@@ -201,10 +200,6 @@ void HTMLDetailsElement::ParseAttribute(
       // AttributeChanged instead?
       if (!GetName().empty() &&
           params.reason == AttributeModificationReason::kDirectly) {
-        // Don't fire mutation events for any changes to the open attribute
-        // that this causes.
-        MutationEventSuppressionScope scope(GetDocument());
-
         HeapVector<Member<HTMLDetailsElement>> details_with_name(
             OtherElementsInNameGroup());
         for (HTMLDetailsElement* other_details : details_with_name) {
@@ -227,13 +222,16 @@ void HTMLDetailsElement::ParseAttribute(
 
 void HTMLDetailsElement::AttributeChanged(
     const AttributeModificationParams& params) {
-  const QualifiedName& name = params.name;
-  if (name == html_names::kNameAttr) {
+  if (params.name == html_names::kNameAttr) {
     if (!params.new_value.empty()) {
       UseCounter::Count(GetDocument(),
                         WebFeature::kHTMLDetailsElementNameAttribute);
     }
     MaybeCloseForExclusivity();
+  }
+  if (params.name == html_names::kOpenAttr &&
+      params.old_value != params.new_value) {
+    PseudoStateChanged(CSSSelector::kPseudoOpen);
   }
 
   HTMLElement::AttributeChanged(params);
@@ -254,10 +252,6 @@ void HTMLDetailsElement::MaybeCloseForExclusivity() {
   if (GetName().empty() || !is_open_) {
     return;
   }
-
-  // Don't fire mutation events for any changes to the open attribute
-  // that this causes.
-  MutationEventSuppressionScope scope(GetDocument());
 
   HeapVector<Member<HTMLDetailsElement>> details_with_name(
       OtherElementsInNameGroup());
@@ -298,42 +292,6 @@ bool HTMLDetailsElement::IsInteractiveContent() const {
   return true;
 }
 
-// static
-bool HTMLDetailsElement::ExpandDetailsAncestors(const Node& node) {
-  CHECK(&node);
-  // Since setting the open attribute fires mutation events which could mess
-  // with the FlatTreeTraversal iterator, we should first iterate details
-  // elements to open and then open them all.
-  HeapVector<Member<HTMLDetailsElement>> details_to_open;
-
-  for (Node& parent : FlatTreeTraversal::AncestorsOf(node)) {
-    if (HTMLDetailsElement* details = DynamicTo<HTMLDetailsElement>(parent)) {
-      // If the active match is inside the <summary> of a <details>, then we
-      // shouldn't expand the <details> because the active match is already
-      // visible.
-      bool inside_summary = false;
-      Element& summary = *details->FindMainSummary();
-      for (Node& ancestor : FlatTreeTraversal::AncestorsOf(node)) {
-        if (&ancestor == &summary) {
-          inside_summary = true;
-          break;
-        }
-      }
-
-      if (!inside_summary &&
-          !details->FastHasAttribute(html_names::kOpenAttr)) {
-        details_to_open.push_back(details);
-      }
-    }
-  }
-
-  for (HTMLDetailsElement* details : details_to_open) {
-    details->setAttribute(html_names::kOpenAttr, g_empty_atom);
-  }
-
-  return details_to_open.size();
-}
-
 bool HTMLDetailsElement::IsValidBuiltinCommand(HTMLElement& invoker,
                                                CommandEventType command) {
   bool parent_is_valid = HTMLElement::IsValidBuiltinCommand(invoker, command);
@@ -355,20 +313,35 @@ bool HTMLDetailsElement::HandleCommandInternal(HTMLElement& invoker,
 
   if (command == CommandEventType::kToggle) {
     ToggleOpen();
-    return true;
   } else if (command == CommandEventType::kClose) {
     if (is_open_) {
       setAttribute(html_names::kOpenAttr, g_null_atom);
     }
-    return true;
   } else if (command == CommandEventType::kOpen) {
     if (!is_open_) {
       setAttribute(html_names::kOpenAttr, g_empty_atom);
     }
-    return true;
+  } else {
+    return false;
   }
 
-  return false;
+  if (RuntimeEnabledFeatures::ToggleEventSourceEnabled() &&
+      pending_toggle_event_) {
+    // pending_toggle_event_ is created inside the attribute handling code which
+    // we can't pass the invoker to, so we set it here instead.
+    pending_toggle_event_ = ToggleEvent::Create(
+        pending_toggle_event_->type(),
+        pending_toggle_event_->cancelable() ? Event::Cancelable::kYes
+                                            : Event::Cancelable::kNo,
+        pending_toggle_event_->oldState(), pending_toggle_event_->newState(),
+        &invoker);
+  }
+
+  return true;
+}
+
+bool HTMLDetailsElement::IsAssignedToContentSlot(const Node& node) const {
+  return node.AssignedSlot() == content_slot_;
 }
 
 }  // namespace blink

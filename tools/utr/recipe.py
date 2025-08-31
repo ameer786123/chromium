@@ -103,10 +103,13 @@ class LegacyRunner:
                skip_prompts,
                build_dir,
                additional_test_args=None,
+               swarming_dimensions=None,
+               swarming_shards=None,
                reuse_task=None,
                skip_coverage=False,
                no_rbe=False,
-               no_siso=False):
+               no_siso=False,
+               use_autoninja=False):
     """Constructor for LegacyRunner
 
     Args:
@@ -121,10 +124,13 @@ class LegacyRunner:
       skip_prompts: If True, skip Y/N prompts for warnings.
       build_dir: pathlib.Path to the build dir to build in.
       additional_test_args: List of additional args to pass to the tests.
+      swarming_dimensions: List of dimensions to overwrite in the tests.
+      swarming_shards: Number of swarming shards to overrite in the tests.
       reuse_task: String of a swarming task to reuse.
       skip_coverage: If True, skip code coverage instrumentation.
       no_rbe: If True, disables RBE during compile.
       no_siso: If True, disabled Siso during compile and isolate.
+      use_autoninja: If True, uses autoninja during compile.
     """
     self._recipes_py = recipes_py
     self._skip_coverage = skip_coverage
@@ -155,10 +161,23 @@ class LegacyRunner:
     input_props['build_dir'] = str(build_dir.absolute())
     if additional_test_args:
       input_props['additional_test_args'] = additional_test_args
+    if swarming_dimensions:
+      input_props['swarming_dimensions'] = swarming_dimensions
+    if swarming_shards:
+      input_props['swarming_shards'] = swarming_shards
     # The recipe will overwrite this property so we have to put it preserve it
     # elsewhere
     if 'recipe' in input_props:
       input_props['builder_recipe'] = input_props['recipe']
+
+    if not skip_compile and use_autoninja:
+      # We use the autoninja in the depot_tools on PATH rather than the one in
+      # //third_party/depot_tools/ since the latter likely won't be sufficiently
+      # bootstrapped.
+      autoninja_path = shutil.which('autoninja')
+      if not autoninja_path:
+        raise FileNotFoundError('autoninja not found; is depot_tools on PATH?')
+      input_props['autoninja_path'] = autoninja_path
 
     mode = 'RUN_TYPE_COMPILE_AND_RUN'
     assert not (skip_compile and skip_test)
@@ -200,6 +219,9 @@ class LegacyRunner:
     input_props['$build/reclient']['instance'] = self._get_reclient_instance()
     if not '$build/siso' in input_props:
       input_props['$build/siso'] = {}
+    # Builders often have a lower build parallelization than what most devs
+    # expect. So uncap the amount of siso jobs.
+    input_props['$build/siso']['remote_jobs'] = -1
     input_props['$build/siso']['project'] = self._get_siso_project()
     if no_rbe:
       input_props['no_rbe'] = True
@@ -359,6 +381,7 @@ class LegacyRunner:
       if not rerun_prop_options:
         logging.warning('')
         if exit_code:
+          adapter.EnsureFailurePrinted()
           # Use the markdown printer from "rich" to better format the text in
           # a terminal.
           md = pretty_md if pretty_md else 'Unknown error'

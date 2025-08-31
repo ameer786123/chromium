@@ -28,6 +28,7 @@
 #include "extensions/browser/background_script_executor.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_event_histogram_value.h"
+#include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/process_manager.h"
@@ -519,8 +520,7 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), extension->GetResourceURL("page.html")));
 
-  content::WebContents* extension_contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
+  content::WebContents* extension_contents = GetActiveWebContents();
 
   // So far, no events should have been received.
   EXPECT_EQ(0, content::EvalJs(extension_contents, "self.receivedEvents;"));
@@ -528,15 +528,13 @@ IN_PROC_BROWSER_TEST_F(
   // Navigate to http://example.com/simple.html.
   const GURL url =
       embedded_test_server()->GetURL("example.com", "/simple.html");
-  ASSERT_TRUE(ui_test_utils::NavigateToURLWithDisposition(
-      browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP));
+  NavigateToURLInNewTab(url);
 
   // TODO(crbug.com/40365717): This should be:
   // EXPECT_EQ(2, content::EvalJs(extension_contents, "self.receivedEvents;"));
   // because each listener should fire exactly once (we only visited one new
   // page).
-  // However, currently we'll disptach the event to the same process twice
+  // However, currently we'll dispatch the event to the same process twice
   // (once for each listener), and each dispatch will match both listeners,
   // resulting in each listener being triggered twice (for a total of four
   // received events).
@@ -606,13 +604,13 @@ IN_PROC_BROWSER_TEST_F(ChromeUpdatesEventsApiTest, PRE_ChromeUpdates) {
 // Test that we only dispatch the onInstalled event triggered by a chrome update
 // to extensions that have a registered onInstalled listener.
 IN_PROC_BROWSER_TEST_F(ChromeUpdatesEventsApiTest, ChromeUpdates) {
-  ChromeExtensionTestNotificationObserver(browser())
+  ChromeExtensionTestNotificationObserver(profile())
       .WaitForExtensionViewsToLoad();
 
   content::RunAllPendingInMessageLoop();
   content::RunAllTasksUntilIdle();
 
-  // "chrome updates listener" registerd a listener for the onInstalled event,
+  // "chrome updates listener" registered a listener for the onInstalled event,
   // whereas "chrome updates non listener" did not. Only the
   // "chrome updates listener" extension should have been woken up for the
   // chrome update event.
@@ -741,10 +739,6 @@ class NavigatingEventDispatchingApiTest : public EventDispatchingApiTest {
     ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(StartEmbeddedTestServer());
-  }
-
-  content::WebContents* web_contents() {
-    return browser()->tab_strip_model()->GetActiveWebContents();
   }
 };
 
@@ -905,7 +899,7 @@ IN_PROC_BROWSER_TEST_P(NavigatingEventDispatchingApiTest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(),
       embedded_test_server()->GetURL("example.com", "/simple.html")));
-  ASSERT_TRUE(content::WaitForLoadStop(web_contents()));
+  ASSERT_TRUE(content::WaitForLoadStop(GetActiveWebContents()));
   ASSERT_TRUE(content_script_loaded.WaitUntilSatisfied());
 
   // Set storage value which should fire chrome.storage.onChanged listeners.

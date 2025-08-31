@@ -27,8 +27,15 @@ class ChromiumDepGraph {
     // Some libraries don't properly fill their POM with the appropriate licensing information. It is provided here from
     // manual lookups. Note that licenseUrl must provide textual content rather than be an html page.
     static final Map<String, PropertyOverride> PROPERTY_OVERRIDES = [
+            androidx_datastore_datastore_preferences_external_protobuf: new PropertyOverride(
+                    licenseUrl: 'https://raw.githubusercontent.com/protocolbuffers/protobuf/refs/heads/main/LICENSE',
+                    licenseName: 'BSD'),
             androidx_multidex_multidex: new PropertyOverride(
                     url: 'https://maven.google.com/androidx/multidex/multidex/2.0.0/multidex-2.0.0.aar'),
+            com_android_extensions_xr_extensions_xr: new PropertyOverride(
+                    url: 'https://maven.google.com/web/index.html?q=xr#com.android.extensions.xr:extensions-xr',
+                    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
+                    licenseName: 'Apache-2.0'),
             com_google_android_datatransport_transport_api: new PropertyOverride(
                     description: 'Interfaces for data logging in gmscore SDKs.'),
             com_google_android_gms_play_services_cloud_messaging: new PropertyOverride(
@@ -48,6 +55,7 @@ class ChromiumDepGraph {
                     licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
                     licenseName: 'Apache 2.0'),
             com_google_code_gson_gson: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:google:gson',
                     url: 'https://github.com/google/gson',
                     description: 'A Java serialization/deserialization library to convert Java Objects into JSON and back',
                     licenseUrl: 'https://raw.githubusercontent.com/google/gson/master/LICENSE',
@@ -89,19 +97,16 @@ class ChromiumDepGraph {
                     url: 'https://github.com/google/guava',
                     licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
                     licenseName: 'Apache 2.0'),
+            // This targets needs to conditionally support android. When no internal android override is defined, this
+            // target needs to set supports_android=true as both android and non-android targets use guava, but when an
+            // internal android override is defined, android targets should use that instead (and fail compile if they
+            // use this one) but non-android targets still needs this guava target to exist.
             com_google_guava_guava: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:google:guava',
                     url: 'https://github.com/google/guava',
                     licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
                     licenseName: 'Apache 2.0',
-                    supportsAndroid: false,
-                    // Both -jre and -android versions are listed. Filter to only the -jre ones.
-                    versionFilter: '-jre'),
-            com_google_guava_guava_android: new PropertyOverride(
-                    url: 'https://github.com/google/guava',
-                    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
-                    licenseName: 'Apache 2.0',
-                    // Both -jre and -android versions are listed. Filter to only the -android ones.
-                    versionFilter: '-android'),
+                    supportsAndroid: false),
             com_google_testparameterinjector_test_parameter_injector: new PropertyOverride(
                     url: 'https://github.com/google/TestParameterInjector',
                     licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
@@ -127,9 +132,53 @@ class ChromiumDepGraph {
                     licenseUrl: 'https://raw.githubusercontent.com/protocolbuffers/protobuf/master/LICENSE',
                     licenseName: 'BSD'),
             com_google_protobuf_protobuf_javalite: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:google:protobuf-javalite',
                     url: 'https://github.com/protocolbuffers/protobuf/blob/master/java/lite.md',
                     licenseUrl: 'https://raw.githubusercontent.com/protocolbuffers/protobuf/master/LICENSE',
                     licenseName: 'BSD'),
+            io_grpc_grpc_android: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:grpc:grpc',
+                    licenseUrl: 'https://raw.githubusercontent.com/grpc/grpc-java/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
+            io_grpc_grpc_binder: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:grpc:grpc',
+                    licenseUrl: 'https://raw.githubusercontent.com/grpc/grpc-java/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
+            io_grpc_grpc_api: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:grpc:grpc',
+                    licenseUrl: 'https://raw.githubusercontent.com/grpc/grpc-java/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
+            io_grpc_grpc_context: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:grpc:grpc',
+                    licenseUrl: 'https://raw.githubusercontent.com/grpc/grpc-java/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
+            io_grpc_grpc_core: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:grpc:grpc',
+                    licenseUrl: 'https://raw.githubusercontent.com/grpc/grpc-java/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
+            io_grpc_grpc_protobuf_lite: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:grpc:grpc',
+                    licenseUrl: 'https://raw.githubusercontent.com/grpc/grpc-java/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
+            io_grpc_grpc_stub: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:grpc:grpc',
+                    licenseUrl: 'https://raw.githubusercontent.com/grpc/grpc-java/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
+            io_grpc_grpc_testing: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:grpc:grpc',
+                    licenseUrl: 'https://raw.githubusercontent.com/grpc/grpc-java/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
+            io_grpc_grpc_inprocess: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:grpc:grpc',
+                    licenseUrl: 'https://raw.githubusercontent.com/grpc/grpc-java/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
+            io_grpc_grpc_util: new PropertyOverride(
+                    cpePrefix: 'cpe:/a:grpc:grpc',
+                    licenseUrl: 'https://raw.githubusercontent.com/grpc/grpc-java/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
+            io_perfmark_perfmark_api: new PropertyOverride(
+                    licenseUrl: 'https://raw.githubusercontent.com/perfmark/perfmark/refs/heads/master/LICENSE',
+                    licenseName: 'Apache 2.0'),
             jakarta_inject_jakarta_inject_api: new PropertyOverride(
                     // Help gradle resolve the same version that our 3pp script does.
                     versionFilter: '\\d+\\.\\d+\\.\\d+$'),
@@ -257,7 +306,8 @@ class ChromiumDepGraph {
             org_jetbrains_kotlinx_kotlinx_coroutines_rx3: new PropertyOverride(
                     exclude: true),  // An unnecessary dep of androidx.xr.runtime.
             org_reactivestreams_reactive_streams: new PropertyOverride(
-                    exclude: true),  // An unnecessary dep of androidx.xr.runtime.
+                    licenseName: 'MIT',
+                    licenseUrl: 'https://raw.githubusercontent.com/reactive-streams/reactive-streams-jvm/refs/tags/v1.0.4/LICENSE'),
 
     ]
 
@@ -285,11 +335,6 @@ class ChromiumDepGraph {
         // Does not include version because by default the resolution strategy for gradle is to use the newest version
         // among the required ones. We want to be able to match it in the BUILD.gn file.
         String moduleId = sanitize("${group}_${module}")
-
-        // Add 'android' suffix for guava-android so that its module name is distinct from the module for guava.
-        if (module == 'guava' && version.contains('android')) {
-            moduleId += '_android'
-        }
         return moduleId
     }
 

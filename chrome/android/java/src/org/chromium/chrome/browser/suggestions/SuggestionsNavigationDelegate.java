@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.suggestions;
 
 import android.app.Activity;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.native_page.NativePageNavigationDelegateImpl;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -23,6 +24,7 @@ import org.chromium.ui.mojom.WindowOpenDisposition;
 import org.chromium.url.GURL;
 
 /** Extension of {@link NativePageNavigationDelegate} with suggestions-specific methods. */
+@NullMarked
 public class SuggestionsNavigationDelegate extends NativePageNavigationDelegateImpl {
 
     public SuggestionsNavigationDelegate(
@@ -62,10 +64,10 @@ public class SuggestionsNavigationDelegate extends NativePageNavigationDelegateI
     public boolean maybeSelectTabWithUrl(GURL keyUrl) {
         TabModel tabModel = mTabModelSelector.getModel(/* incognito= */ false);
 
-        boolean laxSchemeHost = ChromeFeatureList.mMostVisitedTilesReselectLaxSchemeHost.getValue();
-        boolean laxRef = ChromeFeatureList.mMostVisitedTilesReselectLaxRef.getValue();
-        boolean laxQuery = ChromeFeatureList.mMostVisitedTilesReselectLaxQuery.getValue();
-        boolean laxPath = ChromeFeatureList.mMostVisitedTilesReselectLaxPath.getValue();
+        boolean laxSchemeHost = ChromeFeatureList.sMostVisitedTilesReselectLaxSchemeHost.getValue();
+        boolean laxRef = ChromeFeatureList.sMostVisitedTilesReselectLaxRef.getValue();
+        boolean laxQuery = ChromeFeatureList.sMostVisitedTilesReselectLaxQuery.getValue();
+        boolean laxPath = ChromeFeatureList.sMostVisitedTilesReselectLaxPath.getValue();
         UrlSimilarityScorer scorer =
                 new UrlSimilarityScorer(keyUrl, laxSchemeHost, laxRef, laxQuery, laxPath);
         MatchResult result = scorer.findTabWithMostSimilarUrl(tabModel);

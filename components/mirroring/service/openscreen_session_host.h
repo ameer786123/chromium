@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_MIRRORING_SERVICE_OPENSCREEN_SESSION_HOST_H_
 #define COMPONENTS_MIRRORING_SERVICE_OPENSCREEN_SESSION_HOST_H_
 
+#include <vector>
+
 #include "base/component_export.h"
 #include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
@@ -150,7 +152,11 @@ class COMPONENT_EXPORT(MIRRORING_SERVICE) OpenscreenSessionHost final
   void OnAsyncInitialized(const SupportedProfiles& profiles);
 
   // Notify `observer_` that error occurred and close the session.
-  void ReportAndLogError(mojom::SessionError error, std::string_view message);
+  //
+  // NOTE: since this method is used with base::Callback, it takes ownership
+  // of the `message` to avoid lifetime issues, especially when posted to a task
+  // runner.
+  void ReportAndLogError(mojom::SessionError error, std::string message);
 
   // Stops the current streaming session. If not called from StopSession(), a
   // new streaming session will start later after exchanging OFFER/ANSWER
@@ -220,7 +226,10 @@ class COMPONENT_EXPORT(MIRRORING_SERVICE) OpenscreenSessionHost final
   // `video_capture_client_` instance.
   void StartCapturingVideo();
   void PauseCapturingVideo();
-  void ResumeCapturingVideo();
+
+  // Returns `true` if successfully restarted video capture, otherwise it
+  // may need to be started again.
+  bool TryResumeCapturingVideo();
 
   // Called to provide Open Screen with access to this host's network proxy.
   network::mojom::NetworkContext* GetNetworkContext();
@@ -309,19 +318,12 @@ class COMPONENT_EXPORT(MIRRORING_SERVICE) OpenscreenSessionHost final
   // capture should be resumed.
   bool has_video_encoder_been_initialized_ = false;
 
-  // True if video capture has been paused.
-  bool is_video_capture_paused_ = false;
-
   // Manages the clock and thread proxies for the audio sender, video sender,
   // and media remoter.
   //
   // NOTE: this is lazy initialized on the first session negotiation, and then
   // destructed only on the destruction of this class.
   scoped_refptr<media::cast::CastEnvironment> cast_environment_;
-
-  // Task runners used specifically for audio, video encoding.
-  scoped_refptr<base::SingleThreadTaskRunner> audio_encode_thread_;
-  scoped_refptr<base::SingleThreadTaskRunner> video_encode_thread_;
 
   // Called when audio is successfully captured by `audio_input_device_`.
   std::unique_ptr<AudioCapturingCallback> audio_capturing_callback_;

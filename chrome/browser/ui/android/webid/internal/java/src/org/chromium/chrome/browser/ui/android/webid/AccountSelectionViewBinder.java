@@ -140,24 +140,17 @@ class AccountSelectionViewBinder {
             ViewGroup.LayoutParams layoutParams = avatarView.getLayoutParams();
             ViewGroup.MarginLayoutParams marginLayoutParams =
                     (ViewGroup.MarginLayoutParams) layoutParams;
-            int size =
-                    resources.getDimensionPixelSize(
-                            R.dimen.account_selection_account_avatar_multi_idp_size);
             int marginEnd =
                     resources.getDimensionPixelSize(
                             R.dimen.account_selection_account_avatar_multi_idp_margin_end);
-            layoutParams.width = size;
-            layoutParams.height = size;
+            layoutParams.width = avatarSize;
+            layoutParams.height = avatarSize;
             marginLayoutParams.setMarginEnd(marginEnd);
 
             // In this case, we expect the image to be badged and cropped, so we set the image
             // directly instead of using the monogram and invoking AvatarGenerator.makeRoundAvatar.
-            Bitmap output = Bitmap.createBitmap(avatarSize, avatarSize, Config.ARGB_8888);
-            Canvas canvas = new Canvas(output);
-            Paint paint = new Paint();
-            paint.setAntiAlias(true);
-            canvas.drawBitmap(avatar, null, new Rect(0, 0, avatarSize, avatarSize), paint);
-            avatarView.setImageDrawable(new BitmapDrawable(resources, output));
+            // The input bitmap is expected to be already badged and cropped to the correct size.
+            avatarView.setImageDrawable(new BitmapDrawable(resources, avatar));
             return;
         }
 
@@ -167,8 +160,6 @@ class AccountSelectionViewBinder {
                     view.getResources()
                             .getDimensionPixelSize(
                                     R.dimen.account_selection_account_avatar_monogram_text_size);
-            // TODO(crbug.com/40214151): Consult UI team to determine the background color we
-            // need to use here.
             RoundedIconGenerator roundedIconGenerator =
                     new RoundedIconGenerator(
                             resources,
@@ -245,7 +236,7 @@ class AccountSelectionViewBinder {
             }
             if (model.get(AccountProperties.SHOW_IDP)
                     && account.getSecondaryDescription() != null) {
-                if (account.isSignIn()) {
+                if (account.isIdpClaimedSignIn() || account.isBrowserTrustedSignIn()) {
                     // Include a hint that this is a returning account.
                     secondaryDescription.setText(
                             view.getContext()
@@ -315,6 +306,11 @@ class AccountSelectionViewBinder {
                                         identityProvider.getIdpForDisplay())
                                 : context.getString(R.string.account_selection_add_account);
                 subject.setText(buttonText);
+                String buttonTextWithOpensInNewTab =
+                        context.getString(
+                                R.string.account_selection_add_account_opens_in_new_tab,
+                                buttonText);
+                subject.setContentDescription(buttonTextWithOpensInNewTab);
 
                 view.setOnClickListener(
                         clickedView -> {
@@ -388,7 +384,7 @@ class AccountSelectionViewBinder {
                     model.get(DataSharingConsentProperties.PROPERTIES);
 
             Context context = view.getContext();
-            ArrayList<String> fieldStrings = new ArrayList<String>();
+            ArrayList<String> fieldStrings = new ArrayList<>();
             for (@IdentityRequestDialogDisclosureField int field : properties.mDisclosureFields) {
                 switch (field) {
                     case IdentityRequestDialogDisclosureField.NAME:
@@ -675,6 +671,9 @@ class AccountSelectionViewBinder {
             HeaderProperties.HeaderType headerType = properties.mHeaderType;
             if (headerType == HeaderProperties.HeaderType.SIGN_IN_TO_IDP_STATIC) {
                 btnText = context.getString(R.string.signin_continue);
+                button.setContentDescription(
+                        context.getString(
+                                R.string.account_selection_add_account_opens_in_new_tab, btnText));
             } else if (headerType == HeaderProperties.HeaderType.SIGN_IN_ERROR) {
                 btnText = context.getString(R.string.signin_error_dialog_got_it_button);
             } else {
@@ -881,7 +880,7 @@ class AccountSelectionViewBinder {
                             model.get(HeaderProperties.RP_MODE) == RpMode.ACTIVE
                                     ? R.dimen.account_selection_active_mode_sheet_icon_size
                                     : R.dimen.account_selection_sheet_icon_size);
-            ImageView headerIconView = (ImageView) view.findViewById(R.id.header_icon);
+            ImageView headerIconView = view.findViewById(R.id.header_icon);
             if (shouldCircleCrop) {
                 Drawable croppedBrandIcon =
                         createBitmapWithMaskableIconSafeZone(resources, brandIcon, iconSize);
@@ -900,8 +899,8 @@ class AccountSelectionViewBinder {
             if (model.get(HeaderProperties.RP_MODE) == RpMode.PASSIVE) return;
 
             Bitmap brandIcon = model.get(HeaderProperties.RP_BRAND_ICON);
-            ImageView headerIconView = (ImageView) view.findViewById(R.id.header_rp_icon);
-            ImageView arrowRangeIcon = (ImageView) view.findViewById(R.id.arrow_range_icon);
+            ImageView headerIconView = view.findViewById(R.id.header_rp_icon);
+            ImageView arrowRangeIcon = view.findViewById(R.id.arrow_range_icon);
             if (brandIcon != null) {
                 int iconSize =
                         resources.getDimensionPixelSize(

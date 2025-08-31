@@ -4,7 +4,8 @@
 
 import type {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
-import type {AnnotationText, Color} from '../constants.js';
+import type {Color, TextAttributes} from '../constants.js';
+import {TextTypeface} from '../constants.js';
 import {Ink2Manager} from '../ink2_manager.js';
 import {hexToColor} from '../pdf_viewer_utils.js';
 
@@ -15,10 +16,6 @@ type Constructor<T> = new (...args: any[]) => T;
 export const TEXT_SIZES: number[] =
     [6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 72, 100];
 
-// TODO(crbug.com/402547554): Fix labels to correspond to colors, and add
-// the labels to pdf_strings.grdp once they are available from UX. Some
-// "blue" colors are actually teal, "Yellow3" and "Red2" are subtly different
-// from the corresponding brush colors.
 export const TEXT_COLORS: ColorOption[] = [
   // Row 1:
   {label: 'annotationColorBlack', color: '#000000', blended: false},
@@ -30,19 +27,19 @@ export const TEXT_COLORS: ColorOption[] = [
   {label: 'ink2BrushColorRed1', color: '#f28b82', blended: false},
   {label: 'ink2BrushColorYellow1', color: '#fdd663', blended: false},
   {label: 'ink2BrushColorGreen1', color: '#81c995', blended: false},
-  {label: 'ink2BrushColorBlue1', color: '#78d9ec', blended: false},
+  {label: 'ink2TextColorCyan1', color: '#78d9ec', blended: false},
   {label: 'ink2BrushColorBlue1', color: '#8ab4f8', blended: false},
   // Row 3:
   {label: 'ink2BrushColorRed2', color: '#e94235', blended: false},
   {label: 'ink2BrushColorYellow2', color: '#fbbc04', blended: false},
   {label: 'ink2BrushColorGreen2', color: '#34a853', blended: false},
-  {label: 'ink2BrushColorBlue2', color: '#24c1e0', blended: false},
+  {label: 'ink2TextColorCyan2', color: '#24c1e0', blended: false},
   {label: 'ink2BrushColorBlue2', color: '#4285f4', blended: false},
   // Row 4:
   {label: 'ink2BrushColorRed3', color: '#c5221f', blended: false},
   {label: 'ink2BrushColorYellow3', color: '#d56e0c', blended: false},
   {label: 'ink2BrushColorGreen3', color: '#188038', blended: false},
-  {label: 'ink2BrushColorBlue3', color: '#12a4af', blended: false},
+  {label: 'ink2TextColorCyan3', color: '#12a4af', blended: false},
   {label: 'ink2BrushColorBlue3', color: '#1967d2', blended: false},
 ];
 
@@ -55,39 +52,46 @@ export const InkAnnotationTextMixin =
           return {
             colors: {type: Array},
             currentColor: {type: Object},
-            currentFont: {type: String},
             currentSize: {type: Number},
-            fonts: {type: Array},
+            currentTypeface: {type: String},
+            fontNames: {type: Array},
             sizes: {type: Array},
           };
         }
 
         accessor currentColor: Color = hexToColor(TEXT_COLORS[0]!.color);
-        accessor currentFont: string = '';
-        accessor currentSize: number = TEXT_SIZES[0]!;
+        accessor currentSize: number = TEXT_SIZES[3]!;
+        accessor currentTypeface: TextTypeface = TextTypeface.SANS_SERIF;
         accessor colors: ColorOption[] = TEXT_COLORS;
-        accessor fonts: string[] = [];
+        accessor fontNames: TextTypeface[] = [
+          TextTypeface.SANS_SERIF,
+          TextTypeface.SERIF,
+          TextTypeface.MONOSPACE,
+        ];
         accessor sizes: number[] = TEXT_SIZES;
 
-        override firstUpdated() {
-          Ink2Manager.getInstance().getTextAnnotationFonts().then(fonts => {
-            // Set the fonts and then update the text.
-            this.fonts = fonts;
-            this.onTextChanged(Ink2Manager.getInstance().getCurrentText());
-          });
+        getLabelForTypeface(typeface: TextTypeface): string {
+          switch (typeface) {
+            case TextTypeface.SANS_SERIF:
+              return 'ink2TextFontSansSerif';
+            case TextTypeface.SERIF:
+              return 'ink2TextFontSerif';
+            case TextTypeface.MONOSPACE:
+              return 'ink2TextFontMonospace';
+          }
         }
 
-        isSelectedFont(font: string): boolean {
-          return font === this.currentFont;
+        isSelectedTypeface(typeface: TextTypeface): boolean {
+          return typeface === this.currentTypeface;
         }
 
         isSelectedSize(size: number): boolean {
           return size === this.currentSize;
         }
 
-        onFontSelected(e: Event) {
+        onTypefaceSelected(e: Event) {
           const newValue = (e.target as HTMLSelectElement).value;
-          Ink2Manager.getInstance().setTextFont(newValue);
+          Ink2Manager.getInstance().setTextTypeface(newValue as TextTypeface);
         }
 
         onSizeSelected(e: Event) {
@@ -105,10 +109,10 @@ export const InkAnnotationTextMixin =
           }
         }
 
-        onTextChanged(text: AnnotationText) {
-          this.currentColor = text.color;
-          this.currentFont = text.font;
-          this.currentSize = text.size;
+        onTextAttributesChanged(attributes: TextAttributes) {
+          this.currentColor = attributes.color;
+          this.currentTypeface = attributes.typeface;
+          this.currentSize = attributes.size;
         }
       }
       return InkAnnotationTextMixin;
@@ -117,14 +121,15 @@ export const InkAnnotationTextMixin =
 export interface InkAnnotationTextMixinInterface {
   colors: ColorOption[];
   currentColor: Color;
-  currentFont: string;
   currentSize: number;
-  fonts: string[];
+  currentTypeface: string;
+  fontNames: TextTypeface[];
   sizes: number[];
-  isSelectedFont(font: string): boolean;
+  getLabelForTypeface(typeface: TextTypeface): string;
+  isSelectedTypeface(typeface: string): boolean;
   isSelectedSize(size: number): boolean;
-  onFontSelected(e: Event): void;
+  onTypefaceSelected(e: Event): void;
   onCurrentColorChanged(e: CustomEvent<{value: Color}>): void;
   onSizeSelected(e: CustomEvent<{value: number}>): void;
-  onTextChanged(text: AnnotationText): void;
+  onTextAttributesChanged(attributes: TextAttributes): void;
 }

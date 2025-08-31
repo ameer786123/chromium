@@ -26,8 +26,8 @@ import org.chromium.ui.base.WindowAndroid;
 public class WebOTPServiceInfoBar extends ConfirmInfoBar {
     private static final String TAG = "WebOTPServiceInfoBar";
     private static final boolean DEBUG = false;
-    private String mMessage;
-    private WindowAndroid mWindowAndroid;
+    private final String mMessage;
+    private final WindowAndroid mWindowAndroid;
     private @Nullable Long mKeyboardDismissedTime;
 
     @VisibleForTesting
@@ -75,8 +75,7 @@ public class WebOTPServiceInfoBar extends ConfirmInfoBar {
             View focusedView = activity.getCurrentFocus();
             KeyboardVisibilityDelegate keyboardVisibilityDelegate =
                     KeyboardVisibilityDelegate.getInstance();
-            if (focusedView != null
-                    && keyboardVisibilityDelegate.isKeyboardShowing(activity, focusedView)) {
+            if (focusedView != null && keyboardVisibilityDelegate.isKeyboardShowing(focusedView)) {
                 keyboardVisibilityDelegate.hideKeyboard(focusedView);
                 WebOTPServiceUma.recordInfobarAction(
                         WebOTPServiceUma.InfobarAction.KEYBOARD_DISMISSED);

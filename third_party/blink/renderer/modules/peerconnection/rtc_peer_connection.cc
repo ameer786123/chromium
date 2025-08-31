@@ -95,6 +95,7 @@
 #include "third_party/blink/renderer/modules/mediastream/media_stream_event.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_track_impl.h"
 #include "third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.h"
+#include "third_party/blink/renderer/modules/peerconnection/peer_connection_features.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_certificate.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_certificate_generator.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_data_channel.h"
@@ -175,7 +176,7 @@ void AsyncCallErrorCallback(ExecutionContext* context,
                             V8RTCPeerConnectionErrorCallback* error_callback,
                             DOMException* exception) {
   DCHECK(error_callback);
-  context->GetAgent()->event_loop()->EnqueueMicrotask(WTF::BindOnce(
+  context->GetAgent()->event_loop()->EnqueueMicrotask(BindOnce(
       &V8RTCPeerConnectionErrorCallback::InvokeAndReportException,
       WrapPersistent(error_callback), nullptr, WrapPersistent(exception)));
 }
@@ -769,8 +770,7 @@ ScriptPromise<IDLUndefined> RTCPeerConnection::createOffer(
     ScriptState* script_state,
     V8RTCSessionDescriptionCallback* success_callback,
     V8RTCPeerConnectionErrorCallback* error_callback,
-    const RTCOfferOptions* options,
-    ExceptionState& exception_state) {
+    const RTCOfferOptions* options) {
   DCHECK(success_callback);
   DCHECK(error_callback);
   ExecutionContext* context = ExecutionContext::From(script_state);
@@ -825,8 +825,7 @@ ScriptPromise<RTCSessionDescriptionInit> RTCPeerConnection::createAnswer(
 ScriptPromise<IDLUndefined> RTCPeerConnection::createAnswer(
     ScriptState* script_state,
     V8RTCSessionDescriptionCallback* success_callback,
-    V8RTCPeerConnectionErrorCallback* error_callback,
-    ExceptionState&) {
+    V8RTCPeerConnectionErrorCallback* error_callback) {
   DCHECK(success_callback);
   DCHECK(error_callback);
   ExecutionContext* context = ExecutionContext::From(script_state);
@@ -1338,6 +1337,10 @@ void RTCPeerConnection::setConfiguration(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
         "The given configuration has a syntax error.");
+  } else if (error == webrtc::RTCErrorType::INVALID_PARAMETER) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kInvalidAccessError,
+        "The given configuration has invalid parameters.");
   } else {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kOperationError,
@@ -1463,8 +1466,8 @@ ScriptPromise<RTCCertificate> RTCPeerConnection::generateCertificate(
 
   // Helper closure callback for RTCPeerConnection::generateCertificate.
   auto completion_callback =
-      WTF::BindOnce(RTCPeerConnection::GenerateCertificateCompleted,
-                    WrapPersistent(resolver));
+      BindOnce(RTCPeerConnection::GenerateCertificateCompleted,
+               WrapPersistent(resolver));
 
   // Generate certificate. The |certificateObserver| will resolve the promise
   // asynchronously upon completion. The observer will manage its own
@@ -1679,7 +1682,7 @@ void RTCPeerConnection::restartIce() {
   peer_handler_->RestartIce();
 }
 
-void RTCPeerConnection::addStream(v8::Isolate* isolate,
+void RTCPeerConnection::addStream(ScriptState* script_state,
                                   MediaStream* stream,
                                   ExceptionState& exception_state) {
   if (ThrowExceptionIfSignalingStateClosed(signaling_state_, &exception_state))
@@ -1688,14 +1691,13 @@ void RTCPeerConnection::addStream(v8::Isolate* isolate,
   MediaStreamVector streams;
   streams.push_back(stream);
   for (const auto& track : stream->getTracks()) {
-    addTrack(track, streams, IgnoreException(isolate));
+    addTrack(track, streams, IGNORE_EXCEPTION);
   }
 
   stream->RegisterObserver(this);
 }
 
-void RTCPeerConnection::removeStream(v8::Isolate* isolate,
-                                     MediaStream* stream,
+void RTCPeerConnection::removeStream(MediaStream* stream,
                                      ExceptionState& exception_state) {
   if (ThrowExceptionIfSignalingStateClosed(signaling_state_, &exception_state))
     return;
@@ -1703,7 +1705,7 @@ void RTCPeerConnection::removeStream(v8::Isolate* isolate,
     auto* sender = FindSenderForTrackAndStream(track, stream);
     if (!sender)
       continue;
-    removeTrack(sender, IgnoreException(isolate));
+    removeTrack(sender, IGNORE_EXCEPTION);
   }
   stream->UnregisterObserver(this);
 }
@@ -1758,8 +1760,8 @@ ScriptPromise<RTCStatsReport> RTCPeerConnection::getStats(
       // while leaving the associated promise pending as specified.
       resolver->Detach();
     } else {
-      peer_handler_->GetStats(WTF::BindOnce(WebRTCStatsReportCallbackResolver,
-                                            WrapPersistent(resolver)));
+      peer_handler_->GetStats(BindOnce(WebRTCStatsReportCallbackResolver,
+                                       WrapPersistent(resolver)));
     }
     return promise;
   }
@@ -2109,12 +2111,16 @@ HeapVector<Member<RTCRtpReceiver>>::iterator RTCPeerConnection::FindReceiver(
 }
 
 HeapVector<Member<RTCRtpTransceiver>>::iterator
+RTCPeerConnection::FindTransceiverById(uintptr_t id) {
+  return std::ranges::find_if(transceivers_, [&](const auto& transceiver) {
+    return transceiver->platform_transceiver()->Id() == id;
+  });
+}
+
+HeapVector<Member<RTCRtpTransceiver>>::iterator
 RTCPeerConnection::FindTransceiver(
     const RTCRtpTransceiverPlatform& platform_transceiver) {
-  return std::ranges::find_if(transceivers_, [&](const auto& transceiver) {
-    return transceiver->platform_transceiver()->Id() ==
-           platform_transceiver.Id();
-  });
+  return FindTransceiverById(platform_transceiver.Id());
 }
 
 RTCRtpSender* RTCPeerConnection::CreateOrUpdateSender(
@@ -2428,20 +2434,17 @@ void RTCPeerConnection::DidModifyTransceivers(
   // Remove transceivers and update their states to reflect that they are
   // necessarily stopped.
   for (auto id : removed_transceiver_ids) {
-    for (auto it = transceivers_.begin(); it != transceivers_.end();
-         UNSAFE_TODO(++it)) {
-      if ((*it)->platform_transceiver()->Id() == id) {
-        // All streams are removed on stop, update `remove_list` if necessary.
-        auto* track = (*it)->receiver()->track();
-        for (const auto& stream : (*it)->receiver()->streams()) {
-          if (stream->getTracks().Contains(track)) {
-            remove_list.push_back(std::make_pair(stream, track));
-          }
+    auto it = FindTransceiverById(id);
+    if (it != transceivers_.end()) {
+      // All streams are removed on stop, update `remove_list` if necessary.
+      auto* track = (*it)->receiver()->track();
+      for (const auto& stream : (*it)->receiver()->streams()) {
+        if (stream->getTracks().Contains(track)) {
+          remove_list.push_back(std::make_pair(stream, track));
         }
-        (*it)->OnTransceiverStopped();
-        transceivers_.erase(it);
-        break;
       }
+      (*it)->OnTransceiverStopped();
+      transceivers_.erase(it);
     }
   }
   for (auto& platform_transceiver : platform_transceivers) {
@@ -2544,12 +2547,12 @@ void RTCPeerConnection::DidModifyTransceivers(
     MaybeDispatchEvent(track_event);
   }
 
-  // Unmute "pc.ontrack" tracks. Fires "track.onunmute" synchronously.
-  // TODO(https://crbug.com/889487): The correct thing to do is to unmute in
-  // response to receiving RTP packets.
-  for (auto& transceiver : track_events) {
-    transceiver->receiver()->track()->Component()->Source()->SetReadyState(
-        MediaStreamSource::kReadyStateLive);
+  // TODO(https://crbug.com/40821064): Remove killswitch after rollout.
+  if (!base::FeatureList::IsEnabled(kWebRtcUnmuteTracksWhenPacketArrives)) {
+    for (auto& transceiver : track_events) {
+      transceiver->receiver()->track()->Component()->Source()->SetReadyState(
+          MediaStreamSource::kReadyStateLive);
+    }
   }
 
   // Transceiver modifications can cause changes in the set of ICE
@@ -2695,8 +2698,8 @@ void RTCPeerConnection::ChangeIceGatheringState(
       webrtc::PeerConnectionInterface::kIceConnectionClosed) {
     ScheduleDispatchEvent(
         Event::Create(event_type_names::kIcegatheringstatechange),
-        WTF::BindOnce(&RTCPeerConnection::SetIceGatheringState,
-                      WrapPersistent(this), ice_gathering_state));
+        BindOnce(&RTCPeerConnection::SetIceGatheringState, WrapPersistent(this),
+                 ice_gathering_state));
     if (ice_gathering_state ==
         webrtc::PeerConnectionInterface::kIceGatheringComplete) {
       // If ICE gathering is completed, generate a null ICE candidate, to
@@ -2810,8 +2813,8 @@ void RTCPeerConnection::ChangePeerConnectionState(
       webrtc::PeerConnectionInterface::PeerConnectionState::kClosed) {
     ScheduleDispatchEvent(
         Event::Create(event_type_names::kConnectionstatechange),
-        WTF::BindOnce(&RTCPeerConnection::SetPeerConnectionState,
-                      WrapPersistent(this), peer_connection_state));
+        BindOnce(&RTCPeerConnection::SetPeerConnectionState,
+                 WrapPersistent(this), peer_connection_state));
   }
 }
 
@@ -2900,8 +2903,8 @@ void RTCPeerConnection::ScheduleDispatchEvent(Event* event,
     // https://www.w3.org/TR/webrtc/#operation
     dispatch_scheduled_events_task_handle_ = PostCancellableTask(
         *context->GetTaskRunner(TaskType::kNetworking), FROM_HERE,
-        WTF::BindOnce(&RTCPeerConnection::DispatchScheduledEvents,
-                      WrapPersistent(this)));
+        BindOnce(&RTCPeerConnection::DispatchScheduledEvents,
+                 WrapPersistent(this)));
   }
 }
 
@@ -2921,10 +2924,9 @@ void RTCPeerConnection::DispatchScheduledEvents() {
   HeapVector<Member<EventWrapper>> events;
   events.swap(scheduled_events_);
 
-  HeapVector<Member<EventWrapper>>::iterator it = events.begin();
-  for (; it != events.end(); UNSAFE_TODO(++it)) {
-    if ((*it)->Setup()) {
-      DispatchEvent(*(*it)->event_.Release());
+  for (auto& event : events) {
+    if (event->Setup()) {
+      DispatchEvent(*event->event_.Release());
     }
   }
 

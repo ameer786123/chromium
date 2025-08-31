@@ -12,6 +12,11 @@ namespace prefs {
 inline constexpr char kAddressBarSettingsNewBadgeShownCount[] =
     "ios.address_bar_settings_new_badge_shown_count";
 
+// Timestamp marking when the "new" badge for the AI Hub icon should stop
+// showing.
+inline constexpr char kAIHubNewBadgeExpirationTime[] =
+    "ios.ai_hub_new_badge_expiration_time";
+
 // The application locale.
 inline constexpr char kApplicationLocale[] = "intl.app_locale";
 
@@ -39,6 +44,15 @@ inline constexpr char kBottomOmniboxByDefault[] =
 // Boolean that is true when Browser Lockdown Mode is enabled.
 inline constexpr char kBrowserLockdownModeEnabled[] =
     "ios.browser_lockdown_mode_enabled";
+
+// A map of sessionID (clientID) to sub-dictionaries of conversationID
+// (serverID) and creation timestamp.
+inline constexpr char kBwgSessionMap[] = "ios.bwg.session_map";
+
+// Number of times the "BWG" settings "new" IPH badge has been shown.
+// This is set to INT_MAX when the user visites the "BWG" settings page.
+inline constexpr char kBWGSettingsNewBadgeShownCount[] =
+    "ios.bwg_settings_new_badge_shown_count";
 
 // A map of profile data directory to cached information. This cache can
 // be used to display information about profiles without actually having
@@ -113,6 +127,11 @@ inline constexpr char kFirstFollowUpdateUIShownCount[] =
 // to send notifications to the user. This is stored in Profile prefs.
 inline constexpr char kFeaturePushNotificationPermissions[] =
     "push_notifications.feature_permissions";
+
+// A list of delivered notification identifiers that have been handled by the
+// metrics recorder.
+inline constexpr char kHandledDeliveredNotificationIds[] =
+    "push_notifications.handled_delivered_notification_ids";
 
 // A boolean indicating if the user has ever switched accounts via an account
 // menu triggered from a web flow.
@@ -207,6 +226,15 @@ inline constexpr char kIosBringAndroidTabsPromptDisplayed[] =
 inline constexpr char kIosCredentialProviderPromoLastActionTaken[] =
     "ios.credential_provider_promo_last_action_taken";
 
+// The timestamp of the last time the CPE promo was displayed.
+inline constexpr char kIosCredentialProviderPromoDisplayTime[] =
+    "ios.credential_provider_promo_display_time";
+
+// The timestamp of the last time the user had a successful login with an
+// existing saved password.
+inline constexpr char kIosSuccessfulLoginWithExistingPassword[] =
+    "ios.successful_login_with_existing_password";
+
 // Boolean that is true when the CredentialProviderPromoEnabled policy is
 // enabled.
 inline constexpr char kIosCredentialProviderPromoPolicyEnabled[] =
@@ -288,6 +316,10 @@ inline constexpr char
 inline constexpr char
     kIosMagicStackSegmentationTabResumptionImpressionsSinceFreshness[] =
         "ios.magic_stack_segmentation.tab_resumption_freshness";
+
+// Whether to show Google links to GoogleMaps in a native view.
+inline constexpr char kIosMiniMapShowNativeMap[] =
+    "ios.mini_map.show_native_map";
 
 // The number of consecutive times the user dismissed the password bottom sheet.
 // This gets reset to 0 whenever the user selects a password from the bottom
@@ -375,6 +407,19 @@ inline constexpr char kIosSaveToDriveDownloadManagerPolicySettings[] =
 inline constexpr char kIosChooseFromDriveFilePickerPolicySettings[] =
     "ios.choose_from_drive.file_picker_policy";
 
+// Preference to store the current ThemeSpecificsIos for the user's background
+// choices.
+inline constexpr char kIosSavedThemeSpecificsIos[] =
+    "ios.saved_theme_specifics_ios";
+
+// Dictionary pref storing user-uploaded background image path and framing data.
+inline constexpr char kIosUserUploadedBackground[] =
+    "ios.user_uploaded_background";
+
+// List pref storing recently used NTP backgrounds.
+inline constexpr char kIosRecentlyUsedBackgrounds[] =
+    "ios.recently_used_backgrounds";
+
 // String preference containing the default account to use for saving images to
 // Google Photos.
 inline constexpr char kIosSaveToPhotosDefaultGaiaId[] =
@@ -451,6 +496,11 @@ inline constexpr char kNTPContentSuggestionsEnabled[] =
 inline constexpr char kNTPContentSuggestionsForSupervisedUserEnabled[] =
     "ios.ntp.supervised.content_suggestions_enabled";
 
+// Preference that holds a boolean indicating whether users can customize their
+// NTP backgrounds, as determined by enterprise policy.
+inline constexpr char kNTPCustomBackgroundEnabledByPolicy[] =
+    "ios.ntp.custom_background_enabled_by_policy";
+
 // Preference that represents the sorting order of the Following feed content.
 inline constexpr char kNTPFollowingFeedSortType[] =
     "ios.ntp.following_feed.sort_type";
@@ -502,14 +552,6 @@ inline constexpr char kSearchSuggestEnabled[] = "search.suggest_enabled";
 // Boolean that is true when the TabPickup feature is enabled.
 inline constexpr char kTabPickupEnabled[] = "ios.tab_pickup_enabled";
 
-// The last time a tab pickup banner was displayed.
-inline constexpr char kTabPickupLastDisplayedTime[] =
-    "ios.tab_pickup_last_displayed_time";
-
-// The last URL used to display a tab pickup banner.
-inline constexpr char kTabPickupLastDisplayedURL[] =
-    "ios.tab_pickup_last_displayed_url";
-
 // Boolean indicating if displaying price drops for shopping URLs on Tabs
 // in the Tab Switching UI is enabled.
 inline constexpr char kTrackPricesOnTabsEnabled[] =
@@ -522,6 +564,10 @@ inline constexpr char kLensCameraAssistedSearchPolicyAllowed[] =
 
 // Date of the last time the user opened the Lens UI.
 inline constexpr char kLensLastOpened[] = "ios.lens.last_opened";
+
+// Date when the Lens Overlay was last presented.
+inline constexpr char kLensOverlayLastPresented[] =
+    "ios.lens_overlay.last_presented";
 
 // Number of times the NTP Lens button "new" IPH badge has been shown.
 // This is set to INT_MAX when the user taps the button.
@@ -601,10 +647,6 @@ inline constexpr char kLastBackgroundedTime[] = "ios.last_backgrounded_time";
 // browser policy.
 inline constexpr char kLastSigninTimestamp[] = "signin.last_signin_timestamp";
 
-// Integer that represents the value of BrowserSigninPolicy. Values are defined
-// in ios/chrome/browser/policy/model/policy_util.h.
-inline constexpr char kBrowserSigninPolicy[] = "signin.browser_signin_policy";
-
 // Bool that represents whether iCloud backups are allowed by policy.
 inline constexpr char kAllowChromeDataInBackups[] =
     "ios.allow_chrome_data_in_backups";
@@ -681,8 +723,6 @@ inline constexpr char kHomeCustomizationMagicStackSafetyCheckEnabled[] =
     "ios.home_customization.magic_stack.safety_check.enabled";
 inline constexpr char kHomeCustomizationMagicStackTabResumptionEnabled[] =
     "ios.home_customization.magic_stack.tab_resumption.enabled";
-inline constexpr char kHomeCustomizationMagicStackParcelTrackingEnabled[] =
-    "ios.home_customization.magic_stack.parcel_tracking.enabled";
 inline constexpr char kHomeCustomizationMagicStackTipsEnabled[] =
     "ios.home_customization.magic_stack.tips.enabled";
 inline constexpr char
@@ -749,6 +789,69 @@ inline constexpr char kProvisionalNotificationsAllowedByPolicy[] =
 // (either explicitly swiped by the user or through the dismissal timeout).
 inline constexpr char kIosSyncInfobarErrorLastDismissedTimestamp[] =
     "ios.sync_infobar_error.last_dismissed_timestamp";
+
+// A boolean specifying whether the bwg consent form has been accepted.
+inline constexpr char kIOSBwgConsent[] = "ios.bwg.consent";
+
+// A boolean specifying whether the BWG precise location setting is enabled.
+inline constexpr char kIOSBWGPreciseLocationSetting[] =
+    "ios.bwg.precise.location.setting";
+
+// A boolean specifying whether the BWG page content setting is enabled.
+inline constexpr char kIOSBWGPageContentSetting[] =
+    "ios.bwg.page.content.setting";
+
+// An integer specifying how many times the BWG Promo was shown.
+inline constexpr char kIOSBWGPromoImpressionCount[] =
+    "ios.bwg.promo_impressions";
+
+// Timestamp tracking the last interaction with the Gemini floaty.
+inline constexpr char kLastGeminiInteractionTimestamp[] =
+    "ios.gemini.last_interaction_timestamp";
+
+// The URL where the user last had a Gemini interaction.
+inline constexpr char kLastGeminiInteractionURL[] =
+    "ios.gemini.last_interaction_url";
+
+// A string specifying the active conversation ID.
+inline constexpr char kGeminiConversationId[] = "ios.gemini.conversation_id";
+
+// A time object storing the first browser startup with a managed primary
+// identity in the personal profile after multi-profile becomes supported. Used
+// to trigger forced migration after some grace period.
+inline constexpr char kWaitingForMultiProfileForcedMigrationTimestamp[] =
+    "ios.waiting_for_multi_profile_forced_migration_timestamp";
+
+// A time object storing when the sign-in promo should be displayed again.
+// The value is set on the first cold start to make sure sign-in promo is not
+// triggered right after the FRE.
+inline constexpr char kNextSSORecallTime[] = "ios.next_sso_recall_time";
+
+// An integer determining the enabled status of Gemini by policy.
+// 0 means Gemini is enabled (default), and 1 means it's disabled.
+inline constexpr char kGeminiEnabledByPolicy[] = "ios.gemini_enabled_by_policy";
+
+// A boolean specifying if the multi-profile force-migration is done.
+inline constexpr char kMultiProfileForcedMigrationDone[] =
+    "ios.multi_profile_forced_migration_done";
+
+// A bool checking that multi-profile support for widgets is available.
+inline constexpr char kWidgetsForMultiProfile[] =
+    "ios.multi_profile_for_widgets";
+
+// An integer pref to store the placement ID of the acceptance data if the
+// install was attributable to the external promo.
+inline constexpr char kIOSGMOSKOLastAttributionPlacementID[] =
+    "ios.gmosko_last_attribution_placement_id";
+
+// A time pref to store the date after which the placement ID can be logged.
+inline constexpr char kIOSGMOSKOPlacementIDNextLogDate[] =
+    "ios.gmosko_placement_id_next_log_date";
+
+// An integer storing whether the install attribution was attributable within
+// the short window or the long window.
+inline constexpr char kIOSGMOSKOLastAttributionWindowType[] =
+    "ios.gmosko_last_attribution_window_type";
 
 }  // namespace prefs
 

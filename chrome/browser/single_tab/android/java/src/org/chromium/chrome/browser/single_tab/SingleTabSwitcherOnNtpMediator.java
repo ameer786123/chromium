@@ -34,7 +34,9 @@ import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.chrome.browser.tab_ui.TabContentManagerThumbnailProvider;
 import org.chromium.chrome.browser.tab_ui.TabListFaviconProvider;
+import org.chromium.chrome.browser.tab_ui.TabListFaviconProvider.TabFaviconMetadata;
 import org.chromium.chrome.browser.tab_ui.ThumbnailProvider;
+import org.chromium.chrome.browser.tab_ui.ThumbnailProvider.MultiThumbnailMetadata;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.components.browser_ui.widget.displaystyle.DisplayStyleObserver;
 import org.chromium.components.browser_ui.widget.displaystyle.HorizontalDisplayStyle;
@@ -63,10 +65,10 @@ public class SingleTabSwitcherOnNtpMediator {
     private @Nullable Tab mMostRecentTab;
     private @Nullable Callback<Integer> mSingleTabCardClickedCallback;
     private @Nullable Runnable mSeeMoreLinkClickedCallback;
-    private @Nullable ThumbnailProvider mThumbnailProvider;
+    private final @Nullable ThumbnailProvider mThumbnailProvider;
     private @Nullable Size mThumbnailSize;
     private @Nullable DisplayStyleObserver mDisplayStyleObserver;
-    private @Nullable ModuleDelegate mModuleDelegate;
+    private final @Nullable ModuleDelegate mModuleDelegate;
 
     SingleTabSwitcherOnNtpMediator(
             Context context,
@@ -234,7 +236,11 @@ public class SingleTabSwitcherOnNtpMediator {
     private void updateFavicon() {
         assert mTabListFaviconProvider.isInitialized();
         mTabListFaviconProvider.getFaviconDrawableForTabAsync(
-                assumeNonNull(mMostRecentTab),
+                new TabFaviconMetadata(
+                        assumeNonNull(mMostRecentTab),
+                        mMostRecentTab.getUrl(),
+                        mMostRecentTab.isIncognitoBranded(),
+                        mMostRecentTab.getTabGroupId() != null),
                 (Drawable favicon) -> {
                     mPropertyModel.set(FAVICON, favicon);
                 });
@@ -246,10 +252,14 @@ public class SingleTabSwitcherOnNtpMediator {
         }
 
         mThumbnailProvider.getTabThumbnailWithCallback(
-                mMostRecentTab.getId(),
+                MultiThumbnailMetadata.createMetadataWithoutUrls(
+                        mMostRecentTab.getId(),
+                        mMostRecentTab.getTabGroupId() != null,
+                        mMostRecentTab.isIncognitoBranded(),
+                        /* tabGroupColor= */ null),
                 mThumbnailSize,
                 /* isSelected= */ false,
-                (Drawable tabThumbnail) -> {
+                (@Nullable Drawable tabThumbnail) -> {
                     mPropertyModel.set(TAB_THUMBNAIL, tabThumbnail);
                 });
     }

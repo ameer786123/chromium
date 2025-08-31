@@ -15,10 +15,10 @@ import {isVisible} from 'chrome://webui-test/test_util.js';
 // clang-format on
 
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import type {AccessibilityBrowserProxy, LanguageHelper, SettingsA11yPageElement} from 'chrome://settings/lazy_load.js';
-import {AccessibilityBrowserProxyImpl} from 'chrome://settings/lazy_load.js';
+import type {AccessibilityBrowserProxy, SettingsA11yPageElement} from 'chrome://settings/lazy_load.js';
+import {AccessibilityBrowserProxyImpl, ToastAlertLevel} from 'chrome://settings/lazy_load.js';
 import type {SettingsPrefsElement, SettingsToggleButtonElement} from 'chrome://settings/settings.js';
-import {CrSettingsPrefs, loadTimeData, ToastAlertLevel} from 'chrome://settings/settings.js';
+import {CrSettingsPrefs, loadTimeData} from 'chrome://settings/settings.js';
 import {FakeSettingsPrivate} from 'chrome://webui-test/fake_settings_private.js';
 import type {MetricsTracker} from 'chrome://webui-test/metrics_test_support.js';
 import {fakeMetricsPrivate} from 'chrome://webui-test/metrics_test_support.js';
@@ -56,14 +56,12 @@ suite('A11yPage', () => {
   let a11yPage: SettingsA11yPageElement;
   let settingsPrefs: SettingsPrefsElement;
   let browserProxy: TestAccessibilityBrowserProxy;
-  let languageHelper: LanguageHelper;
   let metrics: MetricsTracker;
 
   setup(function() {
     loadTimeData.overrideValues({
       axTreeFixingEnabled: true,
       mainNodeAnnotationsEnabled: true,
-      enableToastRefinements: true,
     });
 
     metrics = fakeMetricsPrivate();
@@ -88,18 +86,14 @@ suite('A11yPage', () => {
       a11yPage.prefs = settingsPrefs.prefs;
       fakeDataBind(settingsPrefs, a11yPage, 'prefs');
 
-      a11yPage.languageHelper = settingsLanguages.languageHelper;
-      fakeDataBind(settingsLanguages, a11yPage, 'language-helper');
-
       document.body.appendChild(a11yPage);
       flush();
 
-      languageHelper = a11yPage.languageHelper;
-      return languageHelper.whenReady();
+      return settingsLanguages.whenReady();
     });
   });
 
-  test('test ax tree fixing toggle and pref', async () => {
+  test('ax tree fixing toggle and pref', async () => {
     assertTrue(loadTimeData.getBoolean('axTreeFixingEnabled'));
 
     const toggle =
@@ -170,58 +164,3 @@ suite('A11yPage', () => {
 
   // TODO(crbug.com/40940496): Add more test cases to improve code coverage.
 });
-
-// <if expr="is_win or is_linux or is_macosx">
-suite('A11yPage without toast refinements', () => {
-  let a11yPage: SettingsA11yPageElement;
-  let settingsPrefs: SettingsPrefsElement;
-  let browserProxy: TestAccessibilityBrowserProxy;
-  let languageHelper: LanguageHelper;
-
-  setup(async () => {
-    loadTimeData.overrideValues({
-      mainNodeAnnotationsEnabled: true,
-      enableToastRefinements: false,
-    });
-
-    document.body.innerHTML = window.trustedTypes!.emptyHTML;
-    settingsPrefs = document.createElement('settings-prefs');
-    const settingsPrivate = new FakeSettingsPrivate(getFakeLanguagePrefs());
-    settingsPrefs.initialize(settingsPrivate);
-    document.body.appendChild(settingsPrefs);
-
-    await CrSettingsPrefs.initialized;
-
-    // Set up test browser proxy.
-    browserProxy = new TestAccessibilityBrowserProxy();
-    AccessibilityBrowserProxyImpl.setInstance(browserProxy);
-
-    // Set up languages helper.
-    const settingsLanguages = document.createElement('settings-languages');
-    settingsLanguages.prefs = settingsPrefs.prefs;
-    fakeDataBind(settingsPrefs, settingsLanguages, 'prefs');
-    document.body.appendChild(settingsLanguages);
-
-    a11yPage = document.createElement('settings-a11y-page');
-    a11yPage.prefs = settingsPrefs.prefs;
-    fakeDataBind(settingsPrefs, a11yPage, 'prefs');
-
-    a11yPage.languageHelper = settingsLanguages.languageHelper;
-    fakeDataBind(settingsLanguages, a11yPage, 'language-helper');
-
-    document.body.appendChild(a11yPage);
-    flush();
-
-    languageHelper = a11yPage.languageHelper;
-    await languageHelper.whenReady();
-  });
-
-
-  test('toast refinements toggle hidden', () => {
-    const toastToggle =
-        a11yPage.shadowRoot!.querySelector<SettingsToggleButtonElement>(
-            '#toastToggle');
-    assertFalse(!!toastToggle);
-  });
-});
-// </if>

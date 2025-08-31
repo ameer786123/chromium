@@ -40,6 +40,7 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
@@ -50,20 +51,16 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/chromeos_camera/gpu_mjpeg_decode_accelerator_factory.h"
-#include "components/viz/common/resources/shared_image_format_utils.h"
-#include "gpu/command_buffer/client/client_shared_image.h"
-#include "gpu/command_buffer/client/test_shared_image_interface.h"
 #include "media/base/color_plane_layout.h"
 #include "media/base/format_utils.h"
 #include "media/base/test_data_util.h"
 #include "media/base/video_frame_layout.h"
 #include "media/base/video_util.h"
 #include "media/gpu/buildflags.h"
-#include "media/gpu/test/local_gpu_memory_buffer_manager.h"
+#include "media/gpu/test/test_gbm_buffer_manager.h"
 #include "media/gpu/test/video_frame_helpers.h"
 #include "media/gpu/test/video_test_helpers.h"
 #include "media/parsers/jpeg_parser.h"
-#include "media/video/fake_gpu_memory_buffer.h"
 #include "mojo/core/embedder/embedder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libyuv/include/libyuv.h"
@@ -72,7 +69,7 @@
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gfx/native_pixmap_handle.h"
 
 #if BUILDFLAG(USE_VAAPI)
@@ -95,7 +92,7 @@ bool g_save_to_file = false;
 // images. This is used for measuring of the similarity of two images.
 constexpr double kDecodeSimilarityThreshold = 1.25;
 
-// The buffer usage used to create GpuMemoryBuffer for testing.
+// The buffer usage used for testing.
 constexpr gfx::BufferUsage kBufferUsage =
     gfx::BufferUsage::SCANOUT_CPU_READ_WRITE;
 
@@ -215,17 +212,17 @@ class MjpegDecodeAcceleratorTestEnvironment : public ::testing::Environment {
       const gfx::Size& visible_size);
 
   // Creates a zero-initialized DMA-buf backed VideoFrame. Also returns the
-  // backing Mappable shared image in |backing_shared_image| if it is not null.
+  // backing buffer in |backing_buffer| if it is not null.
   scoped_refptr<media::VideoFrame> CreateDmaBufVideoFrame(
       media::VideoPixelFormat format,
       const gfx::Size& coded_size,
       const gfx::Size& visible_size,
-      scoped_refptr<gpu::ClientSharedImage>* backing_shared_image = nullptr);
+      std::unique_ptr<media::TestGbmBuffer>* backing_buffer = nullptr);
 
-  // Maps |shared_image| into a VideoFrame containing the data pointers.
-  // |shared_image| should outlive the returned Videoframe.
+  // Maps |buffer| into a VideoFrame containing the data pointers. |buffer|
+  // should outlive the returned Videoframe.
   scoped_refptr<media::VideoFrame> MapToVideoFrame(
-      scoped_refptr<gpu::ClientSharedImage> shared_image,
+      media::TestGbmBuffer* buffer,
       const media::VideoFrameLayout& layout,
       const gfx::Rect& visible_rect);
 
@@ -263,9 +260,8 @@ class MjpegDecodeAcceleratorTestEnvironment : public ::testing::Environment {
   const base::FilePath::CharType* test_data_path_;
   const base::FilePath::CharType* perf_output_path_;
   base::Value::Dict metrics_;
-  std::unique_ptr<media::LocalGpuMemoryBufferManager>
-      gpu_memory_buffer_manager_;
-  scoped_refptr<gpu::TestSharedImageInterface> test_sii_;
+
+  std::unique_ptr<media::TestGbmBufferManager> gbm_buffer_manager_;
 };
 
 void MjpegDecodeAcceleratorTestEnvironment::SetUp() {
@@ -293,9 +289,7 @@ void MjpegDecodeAcceleratorTestEnvironment::SetUp() {
     image_data_user_.push_back(std::move(image_data));
   }
 
-  gpu_memory_buffer_manager_ =
-      std::make_unique<media::LocalGpuMemoryBufferManager>();
-  test_sii_ = base::MakeRefCounted<gpu::TestSharedImageInterface>();
+  gbm_buffer_manager_ = std::make_unique<media::TestGbmBufferManager>();
 }
 
 void MjpegDecodeAcceleratorTestEnvironment::TearDown() {
@@ -323,37 +317,54 @@ MjpegDecodeAcceleratorTestEnvironment::CreateDmaBufVideoFrame(
     media::VideoPixelFormat format,
     const gfx::Size& coded_size,
     const gfx::Size& visible_size,
-    scoped_refptr<gpu::ClientSharedImage>* backing_shared_image) {
-  // Create a GpuMemoryBuffer and get a NativePixmapHandle from it.
+    std::unique_ptr<media::TestGbmBuffer>* backing_buffer) {
+  DCHECK(gbm_buffer_manager_);
+
+  // Create a buffer and get a NativePixmapHandle from it.
   const std::optional<gfx::BufferFormat> gfx_format =
       media::VideoPixelFormatToGfxBufferFormat(format);
   if (!gfx_format) {
     LOG(ERROR) << "Unsupported pixel format: " << format;
     return nullptr;
   }
-  auto gmb_handle =
-      media::CreatePixmapHandleForTesting(coded_size, *gfx_format);
-  if (gmb_handle.is_null()) {
-    LOG(ERROR) << "Failed to allocate a GMB handle";
+  std::unique_ptr<media::TestGbmBuffer> buffer =
+      gbm_buffer_manager_->CreateGbmBuffer(coded_size, *gfx_format,
+                                           kBufferUsage,
+                                           gpu::kNullSurfaceHandle, nullptr);
+  if (!buffer) {
+    LOG(ERROR) << "Failed to create buffer";
     return nullptr;
   }
-  if (gmb_handle.type != gfx::NATIVE_PIXMAP) {
+  gfx::GpuMemoryBufferHandle buffer_handle = buffer->CloneHandle();
+  if (buffer_handle.type != gfx::NATIVE_PIXMAP) {
     LOG(ERROR) << "The GpuMemoryBufferHandle doesn't have type NATIVE_PIXMAP";
     return nullptr;
   }
 
+  auto native_pixmap_handle = buffer_handle.Clone().native_pixmap_handle();
   const size_t num_planes = media::VideoFrame::NumPlanes(format);
-  if (gmb_handle.native_pixmap_handle.planes.size() != num_planes) {
+  if (native_pixmap_handle.planes.size() != num_planes) {
     LOG(ERROR) << "The number of planes of NativePixmapHandle doesn't match "
                   "the pixel format";
     return nullptr;
   }
 
+  // Fill in the memory with zeros.
+  if (!buffer->Map()) {
+    LOG(ERROR) << "Failed to map buffer";
+    return nullptr;
+  }
+  for (size_t i = 0; i < num_planes; i++) {
+    gfx::NativePixmapPlane& plane = native_pixmap_handle.planes[i];
+    memset(buffer->memory(i), 0, plane.size);
+  }
+  buffer->Unmap();
+
   // Create a VideoFrame from the NativePixmapHandle.
   std::vector<media::ColorPlaneLayout> planes;
   std::vector<base::ScopedFD> dmabuf_fds;
   for (size_t i = 0; i < num_planes; i++) {
-    gfx::NativePixmapPlane& plane = gmb_handle.native_pixmap_handle.planes[i];
+    gfx::NativePixmapPlane& plane = native_pixmap_handle.planes[i];
     planes.emplace_back(base::checked_cast<int32_t>(plane.stride),
                         base::checked_cast<size_t>(plane.offset),
                         base::checked_cast<size_t>(plane.size));
@@ -363,38 +374,14 @@ MjpegDecodeAcceleratorTestEnvironment::CreateDmaBufVideoFrame(
       media::VideoFrameLayout::CreateWithPlanes(
           format, coded_size, std::move(planes),
           media::VideoFrameLayout::kBufferAddressAlignment,
-          gmb_handle.native_pixmap_handle.modifier);
+          native_pixmap_handle.modifier);
   if (!layout) {
     LOG(ERROR) << "Failed to create VideoFrameLayout";
     return nullptr;
   }
 
-  const auto si_usage = gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
-                        gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
-  auto shared_image = test_sii_->CreateSharedImage(
-      {viz::GetSharedImageFormat(*gfx_format), coded_size, gfx::ColorSpace(),
-       gpu::SharedImageUsageSet(si_usage),
-       "MjpegDecodeAcceleratorTestEnvironment"},
-      gpu::kNullSurfaceHandle, kBufferUsage, std::move(gmb_handle));
-  if (!shared_image) {
-    LOG(ERROR) << "Failed to create a mappable shared image.";
-    return nullptr;
-  }
-
-  // Fill in the memory with zeros.
-  auto mapping = shared_image->Map();
-  if (!mapping) {
-    LOG(ERROR) << "Mapping shared image failed.";
-    test_sii_->DestroySharedImage(gpu::SyncToken(), std::move(shared_image));
-    return nullptr;
-  }
-  for (size_t i = 0; i < num_planes; i++) {
-    std::ranges::fill(mapping->GetMemoryForPlane(i), 0x0);
-  }
-  mapping.reset();
-
-  if (backing_shared_image) {
-    *backing_shared_image = std::move(shared_image);
+  if (backing_buffer) {
+    *backing_buffer = std::move(buffer);
   }
 
   return media::VideoFrame::WrapExternalDmabufs(
@@ -404,18 +391,17 @@ MjpegDecodeAcceleratorTestEnvironment::CreateDmaBufVideoFrame(
 
 scoped_refptr<media::VideoFrame>
 MjpegDecodeAcceleratorTestEnvironment::MapToVideoFrame(
-    scoped_refptr<gpu::ClientSharedImage> shared_image,
+    media::TestGbmBuffer* buffer,
     const media::VideoFrameLayout& layout,
     const gfx::Rect& visible_rect) {
-  CHECK(shared_image);
-  auto mapping = shared_image->Map();
-  if (!mapping) {
-    LOG(ERROR) << "Failed to map shared image.";
+  DCHECK(buffer);
+  if (!buffer->Map()) {
+    LOG(ERROR) << "Failed to map buffer";
     return nullptr;
   }
   std::array<uint8_t*, 3> data{};
   for (size_t i = 0; i < layout.num_planes(); i++)
-    data[i] = static_cast<uint8_t*>(mapping->GetMemoryForPlane(0).data());
+    data[i] = static_cast<uint8_t*>(buffer->memory(i));
   scoped_refptr<media::VideoFrame> frame =
       media::VideoFrame::WrapExternalYuvDataWithLayout(
           layout, visible_rect, visible_rect.size(), data[0], data[1], data[2],
@@ -424,11 +410,8 @@ MjpegDecodeAcceleratorTestEnvironment::MapToVideoFrame(
     LOG(ERROR) << "Failed to create VideoFrame";
     return nullptr;
   }
-  frame->AddDestructionObserver(base::BindOnce(
-      [](std::unique_ptr<gpu::ClientSharedImage::ScopedMapping> mapping) {
-        mapping.reset();
-      },
-      std::move(mapping)));
+  frame->AddDestructionObserver(
+      base::BindOnce(&media::TestGbmBuffer::Unmap, base::Unretained(buffer)));
   return frame;
 }
 
@@ -437,52 +420,45 @@ base::ScopedFD MjpegDecodeAcceleratorTestEnvironment::CreateDmaBufFd(
     size_t size) {
   DCHECK(data);
   DCHECK_GT(size, 0u);
+  DCHECK(gbm_buffer_manager_);
 
-  auto gmb_handle = media::CreatePixmapHandleForTesting(
-      gfx::Size(base::checked_cast<int>(size), 1), gfx::BufferFormat::R_8);
-  if (gmb_handle.is_null()) {
-    LOG(ERROR) << "Failed to allocate a GMB handle";
+  // The DMA-buf FD is intended to allow importing into hardware accelerators,
+  // so we allocate the buffer by GBM manager instead of simply memfd_create().
+  // The buffer has R_8 format and dimensions (|size|, 1).
+  std::unique_ptr<media::TestGbmBuffer> buffer =
+      gbm_buffer_manager_->CreateGbmBuffer(
+          gfx::Size(base::checked_cast<int>(size), 1), gfx::BufferFormat::R_8,
+          kBufferUsage, gpu::kNullSurfaceHandle, nullptr);
+  if (!buffer) {
+    LOG(ERROR) << "Failed to create buffer";
     return base::ScopedFD();
   }
-  if (gmb_handle.type != gfx::NATIVE_PIXMAP) {
+
+  gfx::GpuMemoryBufferHandle buffer_handle = buffer->CloneHandle();
+  if (buffer_handle.type != gfx::NATIVE_PIXMAP) {
     LOG(ERROR) << "The GpuMemoryBufferHandle doesn't have type NATIVE_PIXMAP";
     return base::ScopedFD();
   }
-  if (gmb_handle.native_pixmap_handle.planes.size() != 1) {
+  auto native_pixmap_handle = std::move(buffer_handle).native_pixmap_handle();
+  if (native_pixmap_handle.planes.size() != 1) {
     LOG(ERROR) << "The number of planes of NativePixmapHandle is not 1 for R_8 "
                   "format";
     return base::ScopedFD();
   }
-  if (gmb_handle.native_pixmap_handle.planes[0].offset != 0) {
+  if (native_pixmap_handle.planes[0].offset != 0) {
     LOG(ERROR) << "The memory offset is not zero";
     return base::ScopedFD();
   }
 
-  const auto si_usage = gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
-                        gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
-  auto shared_image = test_sii_->CreateSharedImage(
-      {viz::SinglePlaneFormat::kR_8,
-       gfx::Size(base::checked_cast<int>(size), 1), gfx::ColorSpace(),
-       gpu::SharedImageUsageSet(si_usage),
-       "MjpegDecodeAcceleratorTestEnvironment"},
-      gpu::kNullSurfaceHandle, kBufferUsage, gmb_handle.Clone());
-  if (!shared_image) {
-    LOG(ERROR) << "Failed to create a mappable shared image.";
-    return base::ScopedFD();
-  }
-
-  auto mapping = shared_image->Map();
-  if (!mapping) {
-    LOG(ERROR) << "Mapping shared image failed.";
-    test_sii_->DestroySharedImage(gpu::SyncToken(), std::move(shared_image));
-    return base::ScopedFD();
-  }
-
   // Fill in the memory with |data|.
-  std::ranges::copy(static_cast<const uint8_t*>(data),
-                    static_cast<const uint8_t*>(data) + size,
-                    mapping->GetMemoryForPlane(0).begin());
-  return std::move(gmb_handle.native_pixmap_handle.planes[0].fd);
+  if (!buffer->Map()) {
+    LOG(ERROR) << "Failed to map buffer";
+    return base::ScopedFD();
+  }
+  memcpy(buffer->memory(0), data, size);
+  buffer->Unmap();
+
+  return std::move(native_pixmap_handle.planes[0].fd);
 }
 
 std::vector<media::VideoPixelFormat>
@@ -495,9 +471,10 @@ MjpegDecodeAcceleratorTestEnvironment::GetSupportedDmaBufFormats() {
   for (const media::VideoPixelFormat format : kPreferredFormats) {
     const std::optional<gfx::BufferFormat> gfx_format =
         media::VideoPixelFormatToGfxBufferFormat(format);
-    if (gfx_format && gpu_memory_buffer_manager_->IsFormatAndUsageSupported(
-                          *gfx_format, kBufferUsage))
+    if (gfx_format && gbm_buffer_manager_->IsFormatAndUsageSupported(
+                          *gfx_format, kBufferUsage)) {
       supported_formats.push_back(format);
+    }
   }
   return supported_formats;
 }
@@ -596,7 +573,7 @@ class JpegClient : public MjpegDecodeAccelerator::Client {
   // Input DMA buffer file descriptor.
   base::ScopedFD in_dmabuf_fd_;
   // Output video frame from the hardware decoder.
-  scoped_refptr<gpu::ClientSharedImage> hw_out_shared_image_;
+  std::unique_ptr<media::TestGbmBuffer> hw_out_buffer_;
   scoped_refptr<media::VideoFrame> hw_out_dmabuf_frame_;
   scoped_refptr<media::VideoFrame> hw_out_frame_;
   // Output and intermediate frame for the software decoder.
@@ -678,7 +655,7 @@ void JpegClient::VideoFrameReady(int32_t task_id) {
   if (use_dmabuf_) {
     // Map and convert the output frame to I420.
     mapped_dmabuf_frame = g_env->MapToVideoFrame(
-        hw_out_shared_image_, hw_out_dmabuf_frame_->layout(),
+        hw_out_buffer_.get(), hw_out_dmabuf_frame_->layout(),
         hw_out_dmabuf_frame_->visible_rect());
     ASSERT_TRUE(mapped_dmabuf_frame);
     decode_map_times_.push_back(timer.Elapsed());
@@ -737,9 +714,9 @@ void JpegClient::PrepareMemory(int32_t task_id) {
     ASSERT_FALSE(supported_formats.empty());
     hw_out_dmabuf_frame_ =
         g_env->CreateDmaBufVideoFrame(supported_formats[0], task.target_size,
-                                      task.target_size, &hw_out_shared_image_);
+                                      task.target_size, &hw_out_buffer_);
     ASSERT_TRUE(hw_out_dmabuf_frame_);
-    ASSERT_TRUE(hw_out_shared_image_);
+    ASSERT_TRUE(hw_out_buffer_);
   } else {
     in_shm_mapping_ = base::WritableSharedMemoryMapping();
     in_shm_ =

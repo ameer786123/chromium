@@ -18,10 +18,14 @@ std::optional<V8GPUFeatureName::Enum> GPUSupportedFeatures::ToV8FeatureNameEnum(
           kChromiumExperimentalTimestampQueryInsidePasses;
     case wgpu::FeatureName::TextureCompressionBC:
       return V8GPUFeatureName::Enum::kTextureCompressionBc;
+    case wgpu::FeatureName::TextureCompressionBCSliced3D:
+      return V8GPUFeatureName::Enum::kTextureCompressionBcSliced3d;
     case wgpu::FeatureName::TextureCompressionETC2:
       return V8GPUFeatureName::Enum::kTextureCompressionEtc2;
     case wgpu::FeatureName::TextureCompressionASTC:
       return V8GPUFeatureName::Enum::kTextureCompressionAstc;
+    case wgpu::FeatureName::TextureCompressionASTCSliced3D:
+      return V8GPUFeatureName::Enum::kTextureCompressionAstcSliced3d;
     case wgpu::FeatureName::IndirectFirstInstance:
       return V8GPUFeatureName::Enum::kIndirectFirstInstance;
     case wgpu::FeatureName::DepthClipControl:
@@ -40,6 +44,8 @@ std::optional<V8GPUFeatureName::Enum> GPUSupportedFeatures::ToV8FeatureNameEnum(
       return V8GPUFeatureName::Enum::kDualSourceBlending;
     case wgpu::FeatureName::Subgroups:
       return V8GPUFeatureName::Enum::kSubgroups;
+    case wgpu::FeatureName::TextureComponentSwizzle:
+      return V8GPUFeatureName::Enum::kTextureComponentSwizzle;
     case wgpu::FeatureName::CoreFeaturesAndLimits:
       return V8GPUFeatureName::Enum::kCoreFeaturesAndLimits;
     case wgpu::FeatureName::ClipDistances:
@@ -50,6 +56,10 @@ std::optional<V8GPUFeatureName::Enum> GPUSupportedFeatures::ToV8FeatureNameEnum(
       return V8GPUFeatureName::Enum::kChromiumExperimentalUnorm16TextureFormats;
     case wgpu::FeatureName::Snorm16TextureFormats:
       return V8GPUFeatureName::Enum::kChromiumExperimentalSnorm16TextureFormats;
+    case wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix:
+      return V8GPUFeatureName::Enum::kChromiumExperimentalSubgroupMatrix;
+    case wgpu::FeatureName::PrimitiveIndex:
+      return V8GPUFeatureName::Enum::kPrimitiveIndex;
     default:
       return std::nullopt;
   }
@@ -100,8 +110,7 @@ GPUSupportedFeatures::IterationSource::IterationSource(
 
 bool GPUSupportedFeatures::IterationSource::FetchNextItem(
     ScriptState* script_state,
-    String& value,
-    ExceptionState& exception_state) {
+    String& value) {
   if (iter_ == features_.end()) {
     return false;
   }

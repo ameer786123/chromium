@@ -31,20 +31,20 @@
 #include "components/autofill/core/common/aliases.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/plus_address_survey_type.h"
-#include "components/plus_addresses/features.h"
-#include "components/plus_addresses/metrics/plus_address_metrics.h"
+#include "components/plus_addresses/core/browser/metrics/plus_address_metrics.h"
+#include "components/plus_addresses/core/browser/plus_address_blocklist_data.h"
+#include "components/plus_addresses/core/browser/plus_address_hats_utils.h"
+#include "components/plus_addresses/core/browser/plus_address_types.h"
+#include "components/plus_addresses/core/browser/plus_address_ui_utils.h"
+#include "components/plus_addresses/core/browser/settings/plus_address_setting_service.h"
+#include "components/plus_addresses/core/common/features.h"
+#include "components/plus_addresses/core/common/plus_address_prefs.h"
 #include "components/plus_addresses/plus_address_allocator.h"
-#include "components/plus_addresses/plus_address_blocklist_data.h"
-#include "components/plus_addresses/plus_address_hats_utils.h"
 #include "components/plus_addresses/plus_address_http_client.h"
 #include "components/plus_addresses/plus_address_http_client_impl.h"
 #include "components/plus_addresses/plus_address_jit_allocator.h"
 #include "components/plus_addresses/plus_address_preallocator.h"
-#include "components/plus_addresses/plus_address_prefs.h"
 #include "components/plus_addresses/plus_address_suggestion_generator.h"
-#include "components/plus_addresses/plus_address_types.h"
-#include "components/plus_addresses/plus_address_ui_utils.h"
-#include "components/plus_addresses/settings/plus_address_setting_service.h"
 #include "components/plus_addresses/webdata/plus_address_sync_util.h"
 #include "components/plus_addresses/webdata/plus_address_webdata_service.h"
 #include "components/prefs/pref_service.h"
@@ -288,22 +288,16 @@ bool PlusAddressServiceImpl::IsPlusAddressFillingEnabled(
   return IsEnabled() && IsSupportedOrigin(origin);
 }
 
-bool PlusAddressServiceImpl::IsPlusAddressFullFormFillingEnabled() const {
-  return base::FeatureList::IsEnabled(features::kPlusAddressFullFormFill);
-}
-
 bool PlusAddressServiceImpl::IsFieldEligibleForPlusAddress(
     const autofill::AutofillField& field) const {
-  autofill::FillingProduct filling_product =
-      autofill::GetFillingProductFromFieldTypeGroup(field.Type().group());
+  auto filling_products = autofill::DenseSet<autofill::FillingProduct>(
+      field.Type().GetGroups(), &autofill::GetFillingProductFromFieldTypeGroup);
 
-  if (filling_product == autofill::FillingProduct::kAddress) {
+  if (filling_products.contains(autofill::FillingProduct::kAddress)) {
     return true;
   }
 
-  return base::FeatureList::IsEnabled(
-             features::kPlusAddressSuggestionsOnUsernameFields) &&
-         (field.server_type() == autofill::FieldType::USERNAME ||
+  return (field.server_type() == autofill::FieldType::USERNAME ||
           field.server_type() == autofill::FieldType::SINGLE_USERNAME) &&
          field.heuristic_type() == autofill::FieldType::EMAIL_ADDRESS;
 }
@@ -331,7 +325,7 @@ std::vector<Suggestion> PlusAddressServiceImpl::GetSuggestionsFromPlusAddresses(
     bool is_off_the_record,
     const autofill::FormData& focused_form,
     const autofill::FormFieldData& focused_field,
-    const base::flat_map<autofill::FieldGlobalId, autofill::FieldTypeGroup>&
+    const base::flat_map<autofill::FieldGlobalId, autofill::FieldTypeGroupSet>&
         form_field_type_groups,
     const autofill::PasswordFormClassification& focused_form_classification,
     AutofillSuggestionTriggerSource trigger_source) {
@@ -521,6 +515,11 @@ void PlusAddressServiceImpl::OnWebDataServiceRequestDone(
   }
 }
 
+void PlusAddressServiceImpl::Shutdown() {
+  identity_manager_observation_.Reset();
+  PlusAddressService::Shutdown();
+}
+
 void PlusAddressServiceImpl::OnPrimaryAccountChanged(
     const signin::PrimaryAccountChangeEvent& event) {
   signin::PrimaryAccountChangeEvent::Type type =
@@ -543,6 +542,12 @@ void PlusAddressServiceImpl::OnErrorStateOfRefreshTokenUpdatedForAccount(
   if (error.state() != GoogleServiceAuthError::NONE) {
     HandleSignout();
   }
+}
+
+void PlusAddressServiceImpl::OnIdentityManagerShutdown(
+    signin::IdentityManager* identity_manager) {
+  // Needs to be shutdown before IdentityManager.
+  NOTREACHED(base::NotFatalUntil::M142);
 }
 
 void PlusAddressServiceImpl::HandleSignout() {

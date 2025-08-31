@@ -5,6 +5,8 @@
 import type {CrActionMenuElement} from '//resources/cr_elements/cr_action_menu/cr_action_menu.js';
 import {AnchorAlignment} from '//resources/cr_elements/cr_action_menu/cr_action_menu.js';
 
+import {TextSegmenter} from './read_aloud/text_segmenter.js';
+
 // Determined by experimentation - can be adjusted to fine tune for different
 // platforms.
 export const minOverflowLengthToScroll = 75;
@@ -31,6 +33,8 @@ export enum ToolbarEvent {
   PLAY_PREVIEW = 'preview-voice',
   LANGUAGE_MENU_OPEN = 'language-menu-open',
   LANGUAGE_MENU_CLOSE = 'language-menu-close',
+  VOICE_MENU_OPEN = 'voice-menu-open',
+  VOICE_MENU_CLOSE = 'voice-menu-close',
 }
 
 // The user settings stored in preferences and restored on re-opening Reading
@@ -45,10 +49,10 @@ export interface SettingsPrefs {
 }
 
 const ACTIVE_CSS_CLASS = 'active';
-
-export function getCurrentSpeechRate(): number {
-  return parseFloat(chrome.readingMode.speechRate.toFixed(1));
-}
+// The percent of a view that must be visible to be considered "mostly visible"
+// for the purpose of determining what's likely being actually read in the
+// reading mode panel.
+export const MOSTLY_VISIBLE_PERCENT = 0.8;
 
 // Propagates a custom event with the given name and any details.
 export function emitEvent(
@@ -62,7 +66,7 @@ export function emitEvent(
 
 export function openMenu(
     menuToOpen: CrActionMenuElement, target: HTMLElement,
-    showAtConfig?: {minX: number, maxX: number}) {
+    showAtConfig?: {minX: number, maxX: number}, onShow?: () => void) {
   // The button should stay active while the menu is open and deactivate when
   // the menu closes.
   menuToOpen.addEventListener('close', () => {
@@ -88,18 +92,43 @@ export function openMenu(
                 noOffset: true,
               },
               showAtConfig));
+      if (onShow) {
+        onShow();
+      }
     });
   });
 }
 
-// Returns true is the given string can be considered whitespace.
-export function isWhitespace(s: string): boolean {
-  return /\s+/g.test(s);
+// Estimate the word count of the given text using the TextSegmenter class.
+export function getWordCount(text: string): number {
+  return TextSegmenter.getInstance().getWordCount(text);
 }
 
-export function isHtmlElementVisible(element: HTMLElement): boolean {
-  const boundingRect = element.getBoundingClientRect();
-  return (boundingRect.bottom <= window.innerHeight ||
-          boundingRect.bottom <= document.documentElement.clientHeight) &&
-      boundingRect.top >= 0;
+// Returns true if the given rect is mostly within the visible window.
+export function isRectMostlyVisible(rect: DOMRect): boolean {
+  if (rect.height <= 0) {
+    return false;
+  }
+  const isTopMostlyVisible = isPointVisible(rect.top) &&
+      isPointVisible(rect.top + (rect.height * MOSTLY_VISIBLE_PERCENT));
+  const isBottomMostlyVisible = isPointVisible(rect.bottom) &&
+      isPointVisible(rect.bottom - (rect.height * MOSTLY_VISIBLE_PERCENT));
+  const isMiddleMostlyVisible = rect.top < 0 &&
+      rect.bottom > window.innerHeight &&
+      (rect.height * MOSTLY_VISIBLE_PERCENT) < window.innerHeight;
+  return isTopMostlyVisible || isBottomMostlyVisible || isMiddleMostlyVisible;
+}
+
+// Returns true if any part of the given rect is within the visible window.
+export function isRectVisible(rect: DOMRect): boolean {
+  return (rect.height > 0) &&
+      ((rect.top <= 0 && rect.bottom >= window.innerHeight) ||
+       isPointVisible(rect.top) || isPointVisible(rect.bottom));
+}
+
+function isPointVisible(point: number) {
+  return (
+      (point >= 0) &&
+      ((point <= window.innerHeight) ||
+       (point <= document.documentElement.clientHeight)));
 }

@@ -73,7 +73,7 @@ class X11Window : public PlatformWindow,
   // X11WindowManager calls this.
   void OnXWindowLostCapture();
 
-  void OnMouseEnter();
+  void OnCursorUpdate();
 
   gfx::AcceleratedWidget GetWidget() const;
   gfx::Rect GetOuterBounds() const;
@@ -227,10 +227,8 @@ class X11Window : public PlatformWindow,
 
   void QuitDragLoop();
 
-  // Handles `key_event` as an Atk Key Event
-  bool HandleAsAtkEvent(const x11::KeyEvent& key_event,
-                        bool send_event,
-                        bool transient);
+  // Handles `event` as an Atk Key Event
+  bool HandleAsAtkEvent(const x11::Event& event);
 
   // Adjusts |requested_size_in_pixels| to avoid the WM "feature" where setting
   // the window size to the monitor size causes the WM to set the EWMH for

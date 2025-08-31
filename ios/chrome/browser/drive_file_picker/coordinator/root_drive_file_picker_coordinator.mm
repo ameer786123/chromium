@@ -8,7 +8,10 @@
 #import "base/memory/weak_ptr.h"
 #import "components/image_fetcher/core/image_data_fetcher.h"
 #import "components/signin/public/base/consent_level.h"
+#import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
 #import "ios/chrome/browser/drive/model/drive_list.h"
 #import "ios/chrome/browser/drive/model/drive_service_factory.h"
 #import "ios/chrome/browser/drive_file_picker/coordinator/browse_drive_file_picker_coordinator.h"
@@ -44,6 +47,7 @@
 @end
 
 @implementation RootDriveFilePickerCoordinator {
+  SigninCoordinator* _signinCoordinator;
   DriveFilePickerNavigationController* _navigationController;
   DriveFilePickerMediator* _mediator;
   DriveFilePickerTableViewController* _viewController;
@@ -161,6 +165,7 @@
 }
 
 - (void)stop {
+  [self stopSigninCoordinator];
   [_metricsHelper reportOutcomeMetrics];
   [self.baseViewController.view.window
       removeGestureRecognizer:_tapToDismissGestureRecognizer];
@@ -319,27 +324,45 @@
 
 #pragma mark - Private
 
+- (void)stopSigninCoordinator {
+  [_signinCoordinator stop];
+  _signinCoordinator = nil;
+}
+
+- (void)addAccountCompletionWithResult:(SigninCoordinatorResult)result
+                    completionIdentity:(id<SystemIdentity>)completionIdentity {
+  if (result == SigninCoordinatorResultSuccess) {
+    [self addAndSelectNewIdentity:completionIdentity];
+  } else {
+    [self reportAddingIdentityFailure];
+  }
+  [self stopSigninCoordinator];
+}
+
 // Initiate the add account flow.
 - (void)showAddAccount {
+  if (_signinCoordinator.viewWillPersist) {
+    return;
+  }
+  [_signinCoordinator stop];
   __weak __typeof(self) weakSelf = self;
-  id<ApplicationCommands> applicationCommandsHandler = HandlerForProtocol(
-      self.browser->GetCommandDispatcher(), ApplicationCommands);
-  ShowSigninCommand* addAccountCommand = [[ShowSigninCommand alloc]
-      initWithOperation:AuthenticationOperation::kAddAccount
-               identity:nil
-            accessPoint:signin_metrics::AccessPoint::kDriveFilePickerIos
-            promoAction:signin_metrics::PromoAction::
-                            PROMO_ACTION_NO_SIGNIN_PROMO
-             completion:^(SigninCoordinatorResult result,
-                          id<SystemIdentity> completionIdentity) {
-               if (result == SigninCoordinatorResultSuccess) {
-                 [weakSelf addAndSelectNewIdentity:completionIdentity];
-               } else {
-                 [weakSelf reportAddingIdentityFailure];
-               }
-             }];
-  [applicationCommandsHandler showSignin:addAccountCommand
-                      baseViewController:_navigationController];
+  signin_metrics::AccessPoint accessPoint =
+      signin_metrics::AccessPoint::kDriveFilePickerIos;
+  SigninContextStyle contextStyle = SigninContextStyle::kDefault;
+  _signinCoordinator = [SigninCoordinator
+      addAccountCoordinatorWithBaseViewController:_navigationController
+                                          browser:self.browser
+                                     contextStyle:contextStyle
+                                      accessPoint:accessPoint
+                                   prefilledEmail:nil
+                             continuationProvider:
+                                 DoNothingContinuationProvider()];
+  _signinCoordinator.signinCompletion =
+      ^(SigninCoordinatorResult result, id<SystemIdentity> completionIdentity) {
+        [weakSelf addAccountCompletionWithResult:result
+                              completionIdentity:completionIdentity];
+      };
+  [_signinCoordinator start];
 }
 
 // Called when user interrupted a download/upload.

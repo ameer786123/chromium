@@ -93,7 +93,7 @@ public class WebApkUpdateManager implements WebApkUpdateDataFetcher.Observer, De
     private static Integer sIconThresholdForTesting;
 
     /** The activity context to use. */
-    private Context mContext;
+    private final Context mContext;
 
     /** The minimum shell version the WebAPK needs to be using. */
     private static int sWebApkTargetShellVersion;
@@ -122,9 +122,9 @@ public class WebApkUpdateManager implements WebApkUpdateDataFetcher.Observer, De
     private Handler mUpdateFailureHandler;
 
     /** Called with update result. */
-    public static interface WebApkUpdateCallback {
+    public interface WebApkUpdateCallback {
         @CalledByNative("WebApkUpdateCallback")
-        public void onResultFromNative(@WebApkInstallResult int result, boolean relaxUpdates);
+        void onResultFromNative(@WebApkInstallResult int result, boolean relaxUpdates);
     }
 
     public WebApkUpdateManager(
@@ -141,7 +141,8 @@ public class WebApkUpdateManager implements WebApkUpdateDataFetcher.Observer, De
      * Manifest has changed. Skips the check if the check was done recently.
      */
     public void updateIfNeeded(
-            WebappDataStorage storage, BrowserServicesIntentDataProvider intentDataProvider) {
+            WebappDataStorage storage,
+            @Nullable BrowserServicesIntentDataProvider intentDataProvider) {
         mStorage = storage;
         mInfo = WebappInfo.create(intentDataProvider);
 
@@ -262,7 +263,7 @@ public class WebApkUpdateManager implements WebApkUpdateDataFetcher.Observer, De
 
     @Override
     public void onGotManifestData(
-            BrowserServicesIntentDataProvider fetchedIntentDataProvider,
+            @Nullable BrowserServicesIntentDataProvider fetchedIntentDataProvider,
             String primaryIconUrl,
             String splashIconUrl) {
         mFetchedPrimaryIconUrl = primaryIconUrl;
@@ -948,7 +949,7 @@ public class WebApkUpdateManager implements WebApkUpdateDataFetcher.Observer, De
 
     @NativeMethods
     interface Natives {
-        public void storeWebApkUpdateRequestToFile(
+        void storeWebApkUpdateRequestToFile(
                 @JniType("std::string") String updateRequestPath,
                 @JniType("std::string") String startUrl,
                 @JniType("std::string") String scope,
@@ -988,9 +989,9 @@ public class WebApkUpdateManager implements WebApkUpdateDataFetcher.Observer, De
                 int[] updateReasons,
                 Callback<Boolean> callback);
 
-        public void updateWebApkFromFile(
+        void updateWebApkFromFile(
                 @JniType("std::string") String updateRequestPath, WebApkUpdateCallback callback);
 
-        public int getWebApkTargetShellVersion();
+        int getWebApkTargetShellVersion();
     }
 }

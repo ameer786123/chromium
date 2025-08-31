@@ -17,6 +17,7 @@
 #include "third_party/blink/renderer/core/html/html_br_element.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_node_object.h"
+#include "third_party/blink/renderer/modules/accessibility/ax_object-inl.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "ui/accessibility/ax_common.h"
 
@@ -455,10 +456,11 @@ void AXRelationCache::UpdateReverseElementAttributeRelations(
   }
 }
 
-base::span<std::pair<QualifiedName, uint32_t>>
+base::span<std::pair<QualifiedName, Element::TinyBloomFilter>>
 AXRelationCache::GetTextRelationAttributes() {
   // Avoid issues with commas within the type name in DEFINE_STATIC_LOCAL().
-  using QualifiedNameArray = std::array<std::pair<QualifiedName, uint32_t>, 3>;
+  using QualifiedNameArray =
+      std::array<std::pair<QualifiedName, Element::TinyBloomFilter>, 3>;
   DEFINE_STATIC_LOCAL(
       QualifiedNameArray, text_attributes,
       ({{html_names::kAriaLabelledbyAttr,
@@ -561,10 +563,11 @@ void AXRelationCache::UpdateReverseOwnsRelations(Element& source) {
   }
 }
 
-base::span<std::pair<QualifiedName, uint32_t>>
+base::span<std::pair<QualifiedName, Element::TinyBloomFilter>>
 AXRelationCache::GetOtherRelationAttributes() {
   // Avoid issues with commas within the type name in DEFINE_STATIC_LOCAL().
-  using QualifiedNameArray = std::array<std::pair<QualifiedName, uint32_t>, 5>;
+  using QualifiedNameArray =
+      std::array<std::pair<QualifiedName, Element::TinyBloomFilter>, 5>;
   DEFINE_STATIC_LOCAL(
       QualifiedNameArray, attributes,
       ({{html_names::kAriaControlsAttr,
@@ -923,10 +926,7 @@ void AXRelationCache::UpdateAriaOwnsWithCleanLayout(AXObject* owner,
                             html_names::kAriaOwnsAttr)) {
     // TODO (crbug.com/41469336): Also check ElementInternals here.
     UpdateAriaOwnsFromAttrAssociatedElementsWithCleanLayout(
-        owner,
-        // TODO (crbug.com/353750122): Set resolve_reference_target to false.
-        *element->GetAttrAssociatedElements(html_names::kAriaOwnsAttr,
-                                            /*resolve_reference_target*/ true),
+        owner, *element->GetAttrAssociatedElements(html_names::kAriaOwnsAttr),
         owned_children, force);
   } else {
     // Figure out the ids that actually correspond to children that exist

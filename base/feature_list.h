@@ -22,10 +22,13 @@
 #include "base/dcheck_is_on.h"
 #include "base/feature_list_buildflags.h"
 #include "base/gtest_prod_util.h"
-#include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
+
+#if BUILDFLAG(ENABLE_BANNED_BASE_FEATURE_PREFIX)
+#include "base/logging.h"
+#endif
 
 namespace base {
 
@@ -66,13 +69,60 @@ enum FeatureState {
 
 // Provides a definition for `kFeature` with `name` and `default_state`, e.g.
 //
-//   BASE_FEATURE(kMyFeature, "MyFeature", base::FEATURE_DISABLED_BY_DEFAULT);
+// This macro can be used in two ways:
+//
+// 1. With two arguments, to define a feature whose C++ identifier is derived
+//    from its name. This form is preferred, as it avoids repeating the feature
+//    name and helps prevent typos.
+//
+//      BASE_FEATURE(MyFeature, base::FEATURE_DISABLED_BY_DEFAULT);
+//
+//    This is equivalent to:
+//
+//      BASE_FEATURE(kMyFeature, "MyFeature",
+//                   base::FEATURE_DISABLED_BY_DEFAULT);
+//
+// 2. With three arguments, to explicitly specify the C++ identifier and the
+//    name of the feature. This form should be used only if the feature needs
+//    to have a C++ identifier that does not match the feature name, which
+//    should be rare.
+//
+//      BASE_FEATURE(kMyFeature, "MyFeatureName",
+//                   base::FEATURE_DISABLED_BY_DEFAULT);
 //
 // Features should *not* be defined in header files; do not use this macro in
 // header files.
-#define BASE_FEATURE(feature, name, default_state) \
-  constinit const base::Feature feature(           \
+#define BASE_FEATURE_INTERNAL_3_ARGS(feature, name, default_state) \
+  constinit const base::Feature feature(                           \
       name, default_state, base::internal::FeatureMacroHandshake::kSecret)
+
+#define BASE_FEATURE_INTERNAL_2_ARGS(name, default_state) \
+  BASE_FEATURE_INTERNAL_3_ARGS(k##name, #name, default_state)
+
+// DO NOT USE. This is a temporary macro to test code search.
+//
+// TODO(crbug.com/436274260): Rename BASE_FEATURE_2 back to BASE_FEATURE
+// conditionally as part of the migration.
+//
+// Same as BASE_FEATURE_INTERNAL_2_ARGS, but allows
+//    BASE_FEATURE_2(kMyFeature, base::FEATURE_ENABLED_BY_DEFAULT);
+// instead of
+//    BASE_FEATURE(MyFeature, base::FEATURE_ENABLED_BY_DEFAULT);
+// to solve the code search issue.
+#define BASE_FEATURE_2(feature, default_state)                              \
+  constinit const base::Feature feature(                                    \
+      ([] {                                                                 \
+        constexpr std::string_view feature_sv = #feature;                   \
+        static_assert(base::internal::IsValidFeatureIdentifier(feature_sv), \
+                      "Feature identifier must start with 'k'.");           \
+        return base::internal::GetFeatureNameFromIdentifier(feature_sv);    \
+      }()),                                                                 \
+      default_state, base::internal::FeatureMacroHandshake::kSecret)
+
+#define GET_BASE_FEATURE_MACRO(_1, _2, _3, NAME, ...) NAME
+#define BASE_FEATURE(...)                                            \
+  GET_BASE_FEATURE_MACRO(__VA_ARGS__, BASE_FEATURE_INTERNAL_3_ARGS,  \
+                         BASE_FEATURE_INTERNAL_2_ARGS)(__VA_ARGS__)
 
 // Provides a forward declaration for `feature_object_name` in a header file,
 // e.g.
@@ -144,11 +194,25 @@ enum FeatureState {
       &field_trial_params_internal::                                   \
           GetFeatureParamWithCacheFor##feature_object_name)
 
+namespace internal {
 // Secret handshake to (try to) ensure all places that construct a base::Feature
 // go through the helper `BASE_FEATURE()` macro above.
-namespace internal {
 enum class FeatureMacroHandshake { kSecret };
+
+// Returns whether `feature` is a valid feature identifier, e.g. must
+// start with 'k' and cannot be too short. This is important for
+// deriving feature name string from the identifier.
+constexpr bool IsValidFeatureIdentifier(std::string_view feature) {
+  return feature.length() > 2 && feature[0] == 'k';
 }
+
+// Returns the feature name from the given C++ identifier, e.g.
+//   "kMyFeature" -> "MyFeature".
+constexpr const char* GetFeatureNameFromIdentifier(std::string_view feature) {
+  return feature.substr(1).data();
+}
+
+}  // namespace internal
 
 // The Feature struct is used to define the default state for a feature. There
 // must only ever be one struct instance for a given feature name—generally
@@ -366,19 +430,20 @@ class BASE_EXPORT FeatureList {
 
   // Returns true if the state of |feature_name| has been overridden (regardless
   // of whether the overridden value is the same as the default value) for any
-  // reason (e.g. command line or field trial).
-  bool IsFeatureOverridden(const std::string& feature_name) const;
+  // reason (e.g. command line or field trial). Note: This will return true even
+  // when a feature is overridden with OVERRIDE_USE_DEFAULT (default group).
+  bool IsFeatureOverridden(std::string_view feature_name) const;
 
   // Returns true if the state of |feature_name| has been overridden via
   // |InitFromCommandLine()|. This includes features explicitly
   // disabled/enabled with --disable-features and --enable-features, as well as
   // any extra feature overrides that depend on command line switches.
   bool IsFeatureOverriddenFromCommandLine(
-      const std::string& feature_name) const;
+      std::string_view feature_name) const;
 
   // Returns true if the state |feature_name| has been overridden by
   // |InitFromCommandLine()| and the state matches |state|.
-  bool IsFeatureOverriddenFromCommandLine(const std::string& feature_name,
+  bool IsFeatureOverriddenFromCommandLine(std::string_view feature_name,
                                           OverrideState state) const;
 
   // Associates a field trial for reporting purposes corresponding to the

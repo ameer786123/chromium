@@ -9,6 +9,7 @@
 <translation id="1178017578188974117">{DAYS,plural, =1{1 天前}other{# 天前}}</translation>
 <translation id="1181037720776840403">移除</translation>
 <translation id="1243314992276662751">上傳</translation>
+<translation id="1253734725326687145">觸控目標已移至右上方。輕觸這裡。</translation>
 <translation id="1266864766717917324">無法分享<ph name="CONTENT_TYPE" /></translation>
 <translation id="1269641567813814718">Windows 鍵</translation>
 <translation id="1291104554099683393">請嘗試將要分享的文字分成多個片段。</translation>
@@ -56,6 +57,7 @@
 <translation id="2435457462613246316">顯示密碼</translation>
 <translation id="24452542372838207">展開通知</translation>
 <translation id="2445449901874883781">使用高密度模式</translation>
+<translation id="2448407890032181691">觸控目標已移至右下方。輕觸這裡。</translation>
 <translation id="2482878487686419369">通知</translation>
 <translation id="2497284189126895209">所有檔案</translation>
 <translation id="2515586267016047495">Alt</translation>
@@ -108,6 +110,7 @@
 <translation id="40579289237549812">{UNREAD_NOTIFICATIONS,plural, =1{1 則未讀取的通知}other{# 則未讀取的通知}}</translation>
 <translation id="41501027364808384">{COUNT,plural, =1{在無痕模式中開啟以下擴充功能：}other{在無痕模式中開啟以下擴充功能：}}</translation>
 <translation id="4266252015790371705">{MONTHS,plural, =1{1 個月前}other{# 個月前}}</translation>
+<translation id="4277033906326892359">「<ph name="COLUMN_NAME" />」欄已依照遞增順序排列</translation>
 <translation id="4289300219472526559">Start Speaking</translation>
 <translation id="4289540628985791613">總覽</translation>
 <translation id="4491109536499578614">圖片</translation>
@@ -140,11 +143,13 @@
 <translation id="5606865426897221650">Tab 鍵</translation>
 <translation id="5613020302032141669">向左鍵</translation>
 <translation id="5633029987065897167">空白</translation>
+<translation id="5651438382973553530">觸控目標已移至左下方。輕觸這裡。</translation>
 <translation id="5754277640426581776">{MINUTES,plural, =1{1 分鐘}other{# 分鐘}}</translation>
 <translation id="5763338081255973061">{DAYS,plural, =0{上次使用時間：今天}=1{上次使用時間：1 天前}other{上次使用時間：# 天前}}</translation>
 <translation id="5768079895599174203">{DAYS,plural, =1{1 天 }other{# 天 }}</translation>
 <translation id="5789643057113097023">.</translation>
 <translation id="5843690142429128814">圖片。</translation>
+<translation id="5860491529813859533">開啟</translation>
 <translation id="5866104238061687188">{YEARS,plural, =1{1 年內}other{# 年內}}</translation>
 <translation id="588258955323874662">全螢幕</translation>
 <translation id="5906667377645263094">{SECONDS,plural, =1{還剩 1 秒}other{還剩 # 秒}}</translation>
@@ -160,6 +165,7 @@
 <translation id="6264365405983206840">選取全部(&amp;A)</translation>
 <translation id="6346952829206698721">從剪貼簿貼上</translation>
 <translation id="6364916375976753737">向左捲動</translation>
+<translation id="63712816010840859">如果目前的螢幕無法觸控，請按下 Esc 鍵。</translation>
 <translation id="6394627529324717982">逗號</translation>
 <translation id="6397363302884558537">Stop Speaking</translation>
 <translation id="6404817160109697034">{SECONDS,plural, =1{1 秒前}other{# 秒前}}</translation>
@@ -168,8 +174,11 @@
 <translation id="6503257047630241175">RTF 內容</translation>
 <translation id="6539092367496845964">發生錯誤，請稍後再試。</translation>
 <translation id="654149438358937226">封鎖所有通知</translation>
+<translation id="6612467943526193239">如要結束校正模式，請按下 Esc 鍵。</translation>
 <translation id="6620110761915583480">儲存檔案</translation>
 <translation id="6699343763173986273">下一首媒體曲目</translation>
+<translation id="6738856801552481343">如果這不是觸控螢幕，請按下 Esc 鍵。</translation>
+<translation id="6807086321996342431">第 <ph name="COLUMN_NAME" /> 欄</translation>
 <translation id="6808150112686056157">停止媒體播放</translation>
 <translation id="6845383723252244143">選取資料夾</translation>
 <translation id="6863590663815976734">{HOURS,plural, =1{還剩 1 小時}other{還剩 # 小時}}</translation>
@@ -201,11 +210,11 @@
 <translation id="7969046989155602842">Command 鍵</translation>
 <translation id="8074552109918343525">{MAX_UNREAD_NOTIFICATIONS,plural, =1{超過 1 則未讀通知}other{超過 # 則未讀通知}}</translation>
 <translation id="8086866675552927481">{MINUTES,plural, =1{1 分鐘內}other{# 分鐘內}}</translation>
-<translation id="8087772101393322318"><ph name="KEY_MODIFIER_NAME" /> + <ph name="KEY_COMBO_NAME" /></translation>
 <translation id="8090736967111090568">從 <ph name="ORIGIN" /> 撥打的號碼</translation>
 <translation id="8106081041558092062">{HOURS,plural, =1{1 小時前}other{# 小時前}}</translation>
 <translation id="8131263257437993507">{SECONDS,plural, =1{還剩 1 秒}other{還剩 # 秒}}</translation>
 <translation id="8134065097954893699">重新載入這個頁面</translation>
+<translation id="813785873406874127">已取消排序「<ph name="COLUMN_NAME" />」欄</translation>
 <translation id="815598010540052116">向下捲動</translation>
 <translation id="8179976553408161302">Enter</translation>
 <translation id="8210608804940886430">向下翻頁</translation>
@@ -217,6 +226,7 @@
 <translation id="8393700583063109961">傳送訊息</translation>
 <translation id="8394908167088220973">媒體播放/暫停</translation>
 <translation id="8458811141851741261">{YEARS,plural, =1{1 年}other{# 年}}</translation>
+<translation id="8582972250170726813">「<ph name="COLUMN_NAME" />」欄已依照遞減順序排列</translation>
 <translation id="8598144894266192959"><ph name="NUMBER" />%</translation>
 <translation id="8602707065186045623"><ph name="SAVEAS_EXTENSION_TYPE" /> 檔案 (.<ph name="SAVEAS_EXTENSION_NAME" />)</translation>
 <translation id="8677655579646609597"><ph name="QUANTITY" /> KB/秒</translation>

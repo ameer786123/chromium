@@ -68,6 +68,7 @@ bool DidEndBeforeCallingOpenOrMoveFiles(OfficeTaskResult task_result) {
     case OfficeTaskResult::kNoFilesToOpen:
     case OfficeTaskResult::kOkAtFallback:
     case OfficeTaskResult::kFileAlreadyBeingOpened:
+    case OfficeTaskResult::kCannotGetSourceType:
       return true;
     case OfficeTaskResult::kOpened:
     case OfficeTaskResult::kMoved:
@@ -112,6 +113,7 @@ bool DidEndAtFallback(OfficeTaskResult task_result) {
     case OfficeTaskResult::kCannotShowMoveConfirmation:
     case OfficeTaskResult::kNoFilesToOpen:
     case OfficeTaskResult::kFileAlreadyBeingOpened:
+    case OfficeTaskResult::kCannotGetSourceType:
       return false;
   }
 }
@@ -143,6 +145,7 @@ bool DidEndAtMoveConfirmation(OfficeTaskResult task_result) {
     case OfficeTaskResult::kCancelledAtFallbackAfterOpen:
     case OfficeTaskResult::kCannotGetFallbackChoiceAfterOpen:
     case OfficeTaskResult::kFileAlreadyBeingOpened:
+    case OfficeTaskResult::kCannotGetSourceType:
       return false;
   }
 }
@@ -707,6 +710,7 @@ void CloudOpenMetrics::CheckForInconsistencies(
           case OfficeTaskResult::kCancelledAtFallbackAfterOpen:
           case OfficeTaskResult::kCannotGetFallbackChoiceAfterOpen:
           case OfficeTaskResult::kFileAlreadyBeingOpened:
+          case OfficeTaskResult::kCannotGetSourceType:
             SetWrongValueLogged(task_result);
             break;
         }

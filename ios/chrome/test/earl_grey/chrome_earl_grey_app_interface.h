@@ -161,9 +161,6 @@ enum class TipsNotificationType;
 // Simulates opening a custom `URL` from another application.
 + (void)simulateExternalAppURLOpeningWithURL:(NSURL*)URL;
 
-// Simulates opening the add account sign-in flow from the web.
-+ (void)simulateAddAccountFromWeb;
-
 // Closes current tab.
 + (void)closeCurrentTab;
 
@@ -499,6 +496,12 @@ enum class TipsNotificationType;
 // otherwise returns object representing execution result.
 + (JavaScriptExecutionResult*)executeJavaScript:(NSString*)javaScript;
 
+// Same as -executeJavaScript but executes the script in the isolated world
+// instead of the page content world. This allows interacting with the gcrweb
+// objects that are injected there.
++ (JavaScriptExecutionResult*)executeJavaScriptInIsolatedWorld:
+    (NSString*)javaScript;
+
 // Returns the user agent that should be used for the mobile version.
 + (NSString*)mobileUserAgentString;
 
@@ -526,9 +529,6 @@ enum class TipsNotificationType;
 // Returns YES if kTestFeature is enabled.
 + (BOOL)isTestFeatureEnabled;
 
-// Returns YES if DWA feature is enabled.
-+ (BOOL)isDWAEnabled [[nodiscard]];
-
 // Returns YES if DemographicMetricsReporting feature is enabled.
 + (BOOL)isDemographicMetricsReportingEnabled [[nodiscard]];
 
@@ -553,17 +553,14 @@ enum class TipsNotificationType;
 // Returns whether the UseLensToSearchForImage feature is enabled.
 + (BOOL)isUseLensToSearchForImageEnabled;
 
-// Returns whether the Web Channels feature is enabled.
-+ (BOOL)isWebChannelsEnabled;
-
-// Returns whether Tab Group Sync is enabled.
-+ (BOOL)isTabGroupSyncEnabled;
-
 // Returns whether the current layout is showing the bottom omnibox.
 + (BOOL)isCurrentLayoutBottomOmnibox;
 
 // Returns whether the Enhanced Safe Browsing Infobar Promo feature is enabled.
 + (BOOL)isEnhancedSafeBrowsingInfobarEnabled;
+
+// Returns the interface orientation of the scene.
++ (UIInterfaceOrientation)interfaceOrientation;
 
 #pragma mark - ContentSettings
 
@@ -601,6 +598,10 @@ enum class TipsNotificationType;
 // returns a Value of type NONE.
 + (NSString*)localStatePrefValue:(NSString*)prefName;
 
+// Gets the time value for the local state pref with `prefName`. Local State
+// contains the preferences that are shared between all profiles.
++ (base::Time)localStateTimePref:(NSString*)prefName;
+
 // Sets the integer value for the local state pref with `prefName`. `value`
 // can be either a casted enum or any other numerical value. Local State
 // contains the preferences that are shared between all profiles.
@@ -635,6 +636,9 @@ enum class TipsNotificationType;
 
 // Sets the value of a integer user pref in the original profile.
 + (void)setIntegerValue:(int)value forUserPref:(NSString*)prefName;
+
+// Sets the value of a double user pref in the original profile.
++ (void)setDoubleValue:(double)value forUserPref:(NSString*)prefName;
 
 // Returns true if the LocalState Preference is currently using its default
 // value, and has not been set by any higher-priority source (even with the same
@@ -700,6 +704,9 @@ enum class TipsNotificationType;
 // Copies `link` into pasteboard as a NSURL.
 + (void)copyLinkAsURLToPasteBoard:(NSString*)link;
 
+// Copies png `data` as image into pasteboard.
++ (void)copyImageToPasteboard:(NSData*)imageData;
+
 #pragma mark - Watcher utilities
 
 // Starts monitoring for buttons (based on traits) with the given
@@ -745,6 +752,11 @@ enum class TipsNotificationType;
 
 // Forces an override of the variations stored permanent country.
 + (void)overrideVariationsServiceStoredPermanentCountry:(NSString*)country;
+
+#pragma mark - Shared Tab Groups Utilities
+
+// Waits for the MessagingBackendService to be initialized.
++ (NSError*)waitForMessagingBackendServiceInitialized;
 
 @end
 

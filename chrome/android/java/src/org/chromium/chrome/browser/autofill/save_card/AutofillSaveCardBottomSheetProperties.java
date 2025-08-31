@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.autofill.save_card;
 
+
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.components.autofill.payments.LegalMessageLine;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.ReadableIntPropertyKey;
@@ -14,6 +16,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
 
+@NullMarked
 /*package*/ class AutofillSaveCardBottomSheetProperties {
     /** Legal messages. */
     static class LegalMessage {
@@ -43,6 +46,10 @@ import java.util.function.Consumer;
 
     /** The icon for the logo of the server upload save card. */
     static final ReadableIntPropertyKey LOGO_ICON = new ReadableIntPropertyKey();
+
+    /** The accessibility description for the logo of the server upload save card bottom sheet. */
+    static final ReadableObjectPropertyKey<String> LOGO_ICON_DESCRIPTION =
+            new ReadableObjectPropertyKey<>();
 
     /** The description for the card. */
     static final ReadableObjectPropertyKey<String> CARD_DESCRIPTION =
@@ -81,6 +88,7 @@ import java.util.function.Consumer;
         TITLE,
         DESCRIPTION,
         LOGO_ICON,
+        LOGO_ICON_DESCRIPTION,
         CARD_DESCRIPTION,
         CARD_ICON,
         CARD_LABEL,

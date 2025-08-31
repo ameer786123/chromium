@@ -52,8 +52,10 @@ import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.util.DefaultBrowserInfo;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.feature_engagement.EventConstants;
@@ -69,8 +71,8 @@ import org.chromium.content_public.common.ContentUrlConstants;
 // as expected with test values
 public class ReengagementNotificationControllerIntegrationTest {
     @Rule
-    public ChromeTabbedActivityTestRule mTabbedActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mTabbedActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule
     public CustomTabActivityTestRule mCustomTabActivityTestRule = new CustomTabActivityTestRule();
@@ -213,7 +215,7 @@ public class ReengagementNotificationControllerIntegrationTest {
     @Test
     @SmallTest
     public void testEngagementTracked() {
-        mTabbedActivityTestRule.startMainActivityFromLauncher();
+        mTabbedActivityTestRule.startFromLauncherAtNtp();
         verify(mTracker, times(1)).notifyEvent(EventConstants.STARTED_FROM_MAIN_INTENT);
     }
 
@@ -232,14 +234,14 @@ public class ReengagementNotificationControllerIntegrationTest {
     @DisableFeatures(ChromeFeatureList.REENGAGEMENT_NOTIFICATION)
     @DisabledTest(message = "crbug.com/1112519 - Disabled while safety guard is in place.")
     public void testEngagementTrackedWhenDisabled() {
-        mTabbedActivityTestRule.startMainActivityFromLauncher();
+        mTabbedActivityTestRule.startFromLauncherAtNtp();
         verify(mTracker, times(1)).notifyEvent(EventConstants.STARTED_FROM_MAIN_INTENT);
     }
 
     @Test
     @SmallTest
     public void testEngagementNotTrackedDueToIntentOpeningTab() {
-        mTabbedActivityTestRule.startMainActivityWithURL(
+        mTabbedActivityTestRule.startOnUrl(
                 UrlUtils.encodeHtmlDataUri("<html><head></head><body>foo</body></html>"));
         verify(mTracker, never()).notifyEvent(EventConstants.STARTED_FROM_MAIN_INTENT);
     }
@@ -272,9 +274,10 @@ public class ReengagementNotificationControllerIntegrationTest {
     @Test
     @MediumTest
     public void testReengagementActivity() throws Exception {
-        mTabbedActivityTestRule.startMainActivityOnBlankPage();
+        WebPageStation blankPage = mTabbedActivityTestRule.startOnBlankPage();
         int initialTabCount =
-                mTabbedActivityTestRule.getActivity().getTabModelSelector().getTotalTabCount();
+                ThreadUtils.runOnUiThreadBlocking(
+                        () -> blankPage.getTabModelSelector().getTotalTabCount());
 
         final CallbackHelper tabAddedCallback = new CallbackHelper();
         TabModelSelectorObserver selectorObserver =
@@ -299,14 +302,17 @@ public class ReengagementNotificationControllerIntegrationTest {
         InstrumentationRegistry.getInstrumentation().startActivitySync(intent);
 
         tabAddedCallback.waitForCallback(0);
-        Tab tab =
-                ThreadUtils.runOnUiThreadBlocking(
-                        () -> mTabbedActivityTestRule.getActivity().getActivityTab());
+        Tab tab = mTabbedActivityTestRule.getActivityTab();
         Assert.assertTrue(UrlUtilities.isNtpUrl(ChromeTabUtils.getUrlOnUiThread(tab)));
         Assert.assertFalse(tab.isIncognito());
-        Assert.assertEquals(
-                initialTabCount + 1,
-                mTabbedActivityTestRule.getActivity().getTabModelSelector().getTotalTabCount());
+        int finalTotalTabCount =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                mTabbedActivityTestRule
+                                        .getActivity()
+                                        .getTabModelSelector()
+                                        .getTotalTabCount());
+        Assert.assertEquals(initialTabCount + 1, finalTotalTabCount);
     }
 
     private void verifyNotification(@StringRes int title, @StringRes int description) {

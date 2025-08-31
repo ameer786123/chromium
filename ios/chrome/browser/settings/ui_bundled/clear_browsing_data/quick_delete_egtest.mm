@@ -283,7 +283,6 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   config.features_enabled.push_back(kIOSQuickDelete);
   config.additional_args.push_back(std::string("--") +
                                    syncer::kSyncShortNudgeDelayForTest);
-  config.features_enabled.push_back(kTabGroupsIPad);
   config.features_enabled.push_back(
       data_sharing::features::kDataSharingFeature);
   return config;
@@ -314,11 +313,9 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 - (void)openQuickDeleteFromThreeDotMenu {
   [ChromeEarlGreyUI openToolsMenu];
 
-  [[EarlGrey
-      selectElementWithMatcher:ButtonWithAccessibilityLabel(
-                                   l10n_util::GetNSString(
-                                       IDS_IOS_TOOLS_MENU_CLEAR_BROWSING_DATA))]
-      performAction:grey_tap()];
+  [ChromeEarlGreyUI
+      tapToolsMenuAction:ButtonWithAccessibilityLabel(l10n_util::GetNSString(
+                             IDS_IOS_TOOLS_MENU_CLEAR_BROWSING_DATA))];
 
   // Wait for the summary to be loaded.
   [ChromeEarlGrey waitForUIElementToDisappearWithMatcher:
@@ -728,7 +725,8 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 // row when browsing history is selected as a data type to be deleted and when
 // the user syncs history. It also tests that the history entries get deleted
 // when the deletion of browsing data is selected.
-- (void)testBrowsingHistoryForDeletionWithHistorySync {
+// TODO(crbug.com/433322022): Re-enable this test once flakiness is fixed.
+- (void)DISABLED_testBrowsingHistoryForDeletionWithHistorySync {
   // Sign in and enable history sync.
   [self signInAndEnableHistorySync];
 
@@ -1133,6 +1131,11 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 - (void)testTimeRangeSelectionUpdatesInMultiwindow {
   if (![ChromeEarlGrey areMultipleWindowsSupported]) {
     EARL_GREY_TEST_DISABLED(@"Multiple windows can't be opened.");
+  }
+  if (@available(iOS 19.0, *)) {
+    // TODO(crbug.com/427699033): Re-enable test on iOS 26.
+    // Fails final histogram check.
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
   }
 
   // Set time range pref to the last hour.
@@ -1717,6 +1720,11 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 - (void)testPrefChangeUpdatesInMultiwindow {
   if (![ChromeEarlGrey areMultipleWindowsSupported]) {
     EARL_GREY_TEST_DISABLED(@"Multiple windows can't be opened.");
+  }
+  if (@available(iOS 19.0, *)) {
+    // TODO(crbug.com/427699033): Re-enable test on iOS 26.
+    // Fails interacting with both windows.
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
   }
 
   // Set the cache preference to true.

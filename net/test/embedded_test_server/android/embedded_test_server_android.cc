@@ -10,7 +10,7 @@
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/test/test_support_android.h"
-#include "net/base/tracing.h"
+#include "base/trace_event/trace_event.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "net/android/net_test_support_provider_jni/EmbeddedTestServerImpl_jni.h"
@@ -39,9 +39,6 @@ void EmbeddedTestServerAndroid::ConnectionListener::ReadFromSocket(
     int rv) {
   test_server_android_->ReadFromSocket(static_cast<const void*>(&socket));
 }
-
-void EmbeddedTestServerAndroid::ConnectionListener::
-    OnResponseCompletedSuccessfully(std::unique_ptr<StreamSocket> socket) {}
 
 EmbeddedTestServerAndroid::EmbeddedTestServerAndroid(
     JNIEnv* env,

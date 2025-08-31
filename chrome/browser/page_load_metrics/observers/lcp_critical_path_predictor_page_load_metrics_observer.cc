@@ -8,7 +8,7 @@
 
 #include "base/check_is_test.h"
 #include "base/notreached.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "chrome/browser/predictors/lcp_critical_path_predictor/lcp_critical_path_predictor_util.h"
 #include "chrome/browser/predictors/loading_predictor.h"
 #include "chrome/browser/predictors/loading_predictor_factory.h"
@@ -20,6 +20,7 @@
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 namespace internal {
 
@@ -624,6 +625,7 @@ LcpCriticalPathPredictorPageLoadMetricsObserver::OnCommit(
       navigation_handle->GetLCPPNavigationHint();
   if (hint) {
     if (!hint->lcp_element_locators.empty() ||
+        !hint->lcp_element_locators_all.empty() ||
         !hint->lcp_influencer_scripts.empty() ||
         !hint->preconnect_origins.empty()) {
       is_lcpp_hinted_navigation_ = true;
@@ -727,6 +729,8 @@ void LcpCriticalPathPredictorPageLoadMetricsObserver::FinalizeLCP() {
     ReportSubresourceUMA(*commit_url_, lcpp_stat_prelearn, *lcpp_data_inputs_);
     MaybeReportConfidenceUMAs(*commit_url_, lcpp_stat_prelearn,
                               *lcpp_data_inputs_);
+    base::UmaHistogramCounts10000("Blink.LCPP.PreconnectCount",
+                                  lcpp_data_inputs_->preconnect_origins.size());
     predictor->LearnLcpp(initiator_origin_, *commit_url_, *lcpp_data_inputs_);
   }
 
@@ -831,12 +835,11 @@ void LcpCriticalPathPredictorPageLoadMetricsObserver::
         "Blink.LCPP.NavigationToStartPreload.MainFrame.FirstSubresource.Time",
         subresource_load_start);
     const base::TimeTicks navigation_start = GetDelegate().GetNavigationStart();
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
-        "loading", "NavigationToStartFirstPreload", TRACE_ID_LOCAL(this),
-        navigation_start, "url", subresource_url);
-    TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
-        "loading", "NavigationToStartFirstPreload", TRACE_ID_LOCAL(this),
-        navigation_start + subresource_load_start);
+    TRACE_EVENT_BEGIN("loading", "NavigationToStartFirstPreload",
+                      perfetto::Track::FromPointer(this), navigation_start,
+                      "url", subresource_url);
+    TRACE_EVENT_END("loading", perfetto::Track::FromPointer(this),
+                    navigation_start + subresource_load_start);
   }
   base::UmaHistogramMediumTimes(
       "Blink.LCPP.NavigationToStartPreload.MainFrame.EachSubresource.Time",
@@ -857,12 +860,20 @@ void LcpCriticalPathPredictorPageLoadMetricsObserver::
   lcpp_data_inputs_->lcp_influencer_scripts = lcp_influencer_scripts;
 }
 
-void LcpCriticalPathPredictorPageLoadMetricsObserver::SetPreconnectOrigins(
-    const std::vector<GURL>& origins) {
+void LcpCriticalPathPredictorPageLoadMetricsObserver::AddPreconnectOrigin(
+    const url::Origin& origin) {
   if (!lcpp_data_inputs_) {
     lcpp_data_inputs_.emplace();
   }
-  lcpp_data_inputs_->preconnect_origins = origins;
+
+  std::set<url::Origin>& preconnect_origins =
+      lcpp_data_inputs_->preconnect_origins;
+  if (blink::features::kLCPPAutoPreconnectRecordAllOrigins.Get()) {
+    preconnect_origins.insert(origin);
+  } else {
+    preconnect_origins.clear();
+    preconnect_origins.insert(origin);
+  }
 }
 
 void LcpCriticalPathPredictorPageLoadMetricsObserver::SetUnusedPreloads(

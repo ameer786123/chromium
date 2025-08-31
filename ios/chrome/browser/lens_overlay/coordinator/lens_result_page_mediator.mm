@@ -80,7 +80,9 @@ BOOL URLHasLensRequestQueryParam(const GURL& URL) {
 /// them out explicitly.
 GURL URLByRemovingLensSurfaceParamIfNecessary(const GURL& URL) {
   // If not a finance or flights URL, do nothing
-  if (URLIsFinance(URL) || URLIsFlights(URL) || URLIsShopping(URL)) {
+  if (URLIsFinance(URL) || URLIsFlights(URL) || URLIsShopping(URL) ||
+      (lens::IsLensAIMSRP(URL) &&
+       !base::FeatureList::IsEnabled(kLensLoadAIMInLensResultPage))) {
     return net::AppendOrReplaceQueryParameter(URL, "lns_surface", std::nullopt);
   }
 
@@ -160,7 +162,8 @@ inline constexpr char kDarkModeParameterDarkValue[] = "1";
 
 @interface LensResultPageMediator () <CRWWebStateDelegate,
                                       CRWWebStateObserver,
-                                      CRWWebStatePolicyDecider>
+                                      CRWWebStatePolicyDecider,
+                                      UIGestureRecognizerDelegate>
 @end
 
 @implementation LensResultPageMediator {
@@ -184,6 +187,8 @@ inline constexpr char kDarkModeParameterDarkValue[] = "1";
   BOOL _isDarkMode;
   /// The last commited progress to the loading bar.
   float _lastCommitedProgress;
+  /// Most recent loaded HTTP headers.
+  NSDictionary<NSString*, NSString*>* _latestHttpHeaders;
 }
 
 - (instancetype)
@@ -250,13 +255,14 @@ inline constexpr char kDarkModeParameterDarkValue[] = "1";
     // The web view is hidden until the page fully loads to prevent a brief
     // flash of mixed dark and light UI elements.
     [_consumer setWebViewHidden:YES];
-    [self loadResultsURL:latestLoadedURL];
+    [self loadResultsURL:latestLoadedURL httpHeaders:_latestHttpHeaders];
   }
 }
 
 #pragma mark - LensOverlayResultConsumer
 
-- (void)loadResultsURL:(GURL)URL {
+- (void)loadResultsURL:(GURL)URL
+           httpHeaders:(NSDictionary<NSString*, NSString*>*)httpHeaders {
   CHECK(_webState, kLensOverlayNotFatalUntil);
 
   // Add light/dark mode query parameter.
@@ -270,9 +276,16 @@ inline constexpr char kDarkModeParameterDarkValue[] = "1";
   web::NavigationManager::WebLoadParams webParams =
       web::NavigationManager::WebLoadParams(URL);
 
-  // Add variation headers.
-  webParams.extra_headers =
-      web_navigation_util::VariationHeadersForURL(URL, _isIncognito);
+  // Keep track of the latest non-nil headers.
+  if (httpHeaders) {
+    _latestHttpHeaders = [httpHeaders copy];
+  }
+  NSMutableDictionary<NSString*, NSString*>* headers =
+      [_latestHttpHeaders mutableCopy] ?: [NSMutableDictionary dictionary];
+  // Add variation headers last, because they have precedence.
+  [headers addEntriesFromDictionary:web_navigation_util::VariationHeadersForURL(
+                                        URL, _isIncognito)];
+  webParams.extra_headers = headers;
 
   _webState->GetNavigationManager()->LoadURLWithParams(webParams);
 }
@@ -327,15 +340,69 @@ inline constexpr char kDarkModeParameterDarkValue[] = "1";
     [self.delegate
          lensResultPageMediator:self
         didOpenNewTabFromSource:lens::LensOverlayNewTabSource::kWebNavigation];
+  } else if (lens::IsLensAIMSRP(URL) &&
+             !base::FeatureList::IsEnabled(kLensLoadAIMInLensResultPage)) {
+    decisionHandler(web::WebStatePolicyDecider::PolicyDecision::Cancel());
+
+    // AIM SRP requires lns_surface, but we can't use Chromnient's (4), so use
+    // CHROME_SEARCH.
+    URL = net::AppendOrReplaceQueryParameter(URL, "lns_surface", "45");
+    [self.delegate lensResultPageOpenURLInNewTabRequsted:URL];
+    [self.delegate
+         lensResultPageMediator:self
+        didOpenNewTabFromSource:lens::LensOverlayNewTabSource::kExploreBarTab];
+  } else if (base::FeatureList::IsEnabled(kLensSearchHeadersCheckEnabled) &&
+             lens::IsGoogleHostURL(URL) && [self shouldAddHeaders:request]) {
+    [self loadResultsURL:URL httpHeaders:_latestHttpHeaders];
+    decisionHandler(web::WebStatePolicyDecider::PolicyDecision::Cancel());
   } else {
     decisionHandler(web::WebStatePolicyDecider::PolicyDecision::Allow());
   }
+}
+
+- (BOOL)shouldAddHeaders:(NSURLRequest*)request {
+  if (_latestHttpHeaders == nil) {
+    return false;
+  }
+
+  NSDictionary<NSString*, NSString*>* allHeaders = request.allHTTPHeaderFields;
+  for (NSString* key in _latestHttpHeaders) {
+    if ([allHeaders objectForKey:key] == nil) {
+      return true;
+    }
+  }
+  return false;
 }
 
 #pragma mark - CRWWebStateObserver
 
 - (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {
   [_consumer setWebViewHidden:NO];
+  [self.delegate lensResultPageWebStateShown];
+
+  UIView* webView = webState->GetView();
+
+  UISwipeGestureRecognizer* downHorizontalRecognizer =
+      [[UISwipeGestureRecognizer alloc]
+          initWithTarget:self
+                  action:@selector(didSwipeOnWebView:)];
+  downHorizontalRecognizer.direction = UISwipeGestureRecognizerDirectionDown;
+
+  UISwipeGestureRecognizer* upHorizontalRecognizer =
+      [[UISwipeGestureRecognizer alloc]
+          initWithTarget:self
+                  action:@selector(didSwipeOnWebView:)];
+  upHorizontalRecognizer.direction = UISwipeGestureRecognizerDirectionUp;
+
+  NSArray<UIGestureRecognizer*>* swipeRecognizers =
+      @[ downHorizontalRecognizer, upHorizontalRecognizer ];
+
+  for (UIGestureRecognizer* swipeRecognizer in swipeRecognizers) {
+    swipeRecognizer.enabled = YES;
+    swipeRecognizer.delegate = self;
+    swipeRecognizer.cancelsTouchesInView = NO;
+    [webView addGestureRecognizer:swipeRecognizer];
+  }
 }
 
 - (void)webState:(web::WebState*)webState
@@ -410,8 +477,7 @@ inline constexpr char kDarkModeParameterDarkValue[] = "1";
 }
 
 - (void)closeWebState:(web::WebState*)webState {
-  // This should not happen in the result page.
-  NOTREACHED(kLensOverlayNotFatalUntil);
+  [self.delegate lensResultPageWebStateDestroyed];
 }
 
 - (web::WebState*)webState:(web::WebState*)webState
@@ -559,6 +625,11 @@ inline constexpr char kDarkModeParameterDarkValue[] = "1";
   }
 }
 
+- (void)didSwipeOnWebView:(UISwipeGestureRecognizer*)recognizer {
+  [self.delegate
+      lensResultPageWebViewDidSwipeWithDirection:recognizer.direction];
+}
+
 #pragma mark - CRWWebStateObserver
 
 - (void)webStateDestroyed:(web::WebState*)webState {
@@ -568,6 +639,14 @@ inline constexpr char kDarkModeParameterDarkValue[] = "1";
   }
 
   [self.delegate lensResultPageWebStateDestroyed];
+}
+
+#pragma mark - UIGestureRecognizerDelegate
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer*)gestureRecognizer
+    shouldRecognizeSimultaneouslyWithGestureRecognizer:
+        (UIGestureRecognizer*)otherGestureRecognizer {
+  return YES;
 }
 
 @end

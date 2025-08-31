@@ -7,7 +7,6 @@
 #include <optional>
 
 #include "base/metrics/histogram_functions.h"
-#include "base/not_fatal_until.h"
 #include "base/token.h"
 #include "base/types/expected.h"
 #include "base/uuid.h"
@@ -27,8 +26,6 @@
 namespace blink {
 
 namespace {
-
-#if !BUILDFLAG(IS_ANDROID)
 
 using ApplySubCaptureTargetResult =
     BrowserCaptureMediaStreamTrack::ApplySubCaptureTargetResult;
@@ -52,7 +49,7 @@ void RaiseApplySubCaptureTargetException(
     ScriptPromiseResolverWithTracker<ApplySubCaptureTargetResult, IDLUndefined>*
         resolver,
     DOMExceptionCode exception_code,
-    const WTF::String& exception_text,
+    const String& exception_text,
     ApplySubCaptureTargetResult result) {
   resolver->Reject<DOMException>(
       MakeGarbageCollected<DOMException>(exception_code, exception_text),
@@ -113,8 +110,6 @@ void ResolveApplySubCaptureTargetPromiseHelper(
   NOTREACHED();
 }
 
-#endif  // !BUILDFLAG(IS_ANDROID)
-
 }  // namespace
 
 BrowserCaptureMediaStreamTrack::BrowserCaptureMediaStreamTrack(
@@ -136,12 +131,10 @@ BrowserCaptureMediaStreamTrack::BrowserCaptureMediaStreamTrack(
                            ready_state,
                            std::move(callback)) {}
 
-#if !BUILDFLAG(IS_ANDROID)
 void BrowserCaptureMediaStreamTrack::Trace(Visitor* visitor) const {
   visitor->Trace(pending_promises_);
   MediaStreamTrackImpl::Trace(visitor);
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 ScriptPromise<IDLUndefined> BrowserCaptureMediaStreamTrack::cropTo(
     ScriptState* script_state,
@@ -204,14 +197,6 @@ BrowserCaptureMediaStreamTrack::ApplySubCaptureTarget(
   }
   auto promise = resolver->Promise();
 
-#if BUILDFLAG(IS_ANDROID)
-  resolver->Reject<DOMException>(
-      MakeGarbageCollected<DOMException>(DOMExceptionCode::kUnknownError,
-                                         "Not supported on Android."),
-      ApplySubCaptureTargetResult::kUnsupportedPlatform);
-  return promise;
-#else
-
   const std::optional<base::Token> token =
       IdStringToToken(target ? target->GetId() : String());
   if (!token.has_value()) {
@@ -267,20 +252,18 @@ BrowserCaptureMediaStreamTrack::ApplySubCaptureTarget(
   // to the new crop-target is observed.
   native_track->AddSubCaptureTargetVersionCallback(
       sub_capture_target_version,
-      WTF::BindOnce(
+      BindOnce(
           &BrowserCaptureMediaStreamTrack::OnSubCaptureTargetVersionObserved,
           WrapWeakPersistent(this), sub_capture_target_version));
 
   native_source->ApplySubCaptureTarget(
       type, token.value(), sub_capture_target_version,
-      WTF::BindOnce(&BrowserCaptureMediaStreamTrack::OnResultFromBrowserProcess,
-                    WrapWeakPersistent(this), sub_capture_target_version));
+      BindOnce(&BrowserCaptureMediaStreamTrack::OnResultFromBrowserProcess,
+               WrapWeakPersistent(this), sub_capture_target_version));
 
   return promise;
-#endif
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 void BrowserCaptureMediaStreamTrack::OnResultFromBrowserProcess(
     uint32_t sub_capture_target_version,
     media::mojom::ApplySubCaptureTargetResult result) {
@@ -319,7 +302,7 @@ void BrowserCaptureMediaStreamTrack::OnSubCaptureTargetVersionObserved(
 void BrowserCaptureMediaStreamTrack::MaybeFinalizeCropPromise(
     BrowserCaptureMediaStreamTrack::PromiseMapIterator iter) {
   DCHECK(IsMainThread());
-  CHECK_NE(iter, pending_promises_.end(), base::NotFatalUntil::M130);
+  CHECK_NE(iter, pending_promises_.end());
 
   PromiseInfo* const info = iter->value;
 
@@ -353,6 +336,5 @@ void BrowserCaptureMediaStreamTrack::MaybeFinalizeCropPromise(
   pending_promises_.erase(iter);
   ResolveApplySubCaptureTargetPromiseHelper(resolver, result);
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace blink

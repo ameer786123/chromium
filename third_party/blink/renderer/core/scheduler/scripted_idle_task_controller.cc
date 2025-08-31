@@ -9,6 +9,7 @@
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/not_fatal_until.h"
+#include "base/strings/string_number_conversions.h"
 #include "third_party/blink/public/mojom/frame/lifecycle.mojom-shared.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_idle_request_options.h"
@@ -83,9 +84,8 @@ void UpdateMaxIdleTasksCrashKey(size_t num_pending_idle_tasks) {
 
 }  // namespace
 
-BASE_FEATURE(kRemoveCancelledScriptedIdleTasks,
-             "RemoveCancelledScriptedIdleTasks",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(RemoveCancelledScriptedIdleTasks,
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 IdleTask::~IdleTask() {
   CHECK(!delayed_task_handle_.IsValid());
@@ -115,7 +115,7 @@ ScriptedIdleTaskController::ScriptedIdleTaskController(
 }
 
 ScriptedIdleTaskController::~ScriptedIdleTaskController() {
-  CHECK(idle_tasks_.empty(), base::NotFatalUntil::M135);
+  CHECK(idle_tasks_.empty());
 }
 
 void ScriptedIdleTaskController::Trace(Visitor* visitor) const {

@@ -22,13 +22,15 @@ import android.view.KeyEvent;
 import org.jni_zero.CalledByNative;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.base.AndroidInfo;
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList.RewindableIterator;
 import org.chromium.base.PackageManagerUtils;
 import org.chromium.base.lifetime.Destroyable;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ZoomController;
 import org.chromium.chrome.browser.app.bluetooth.BluetoothNotificationService;
@@ -56,6 +58,7 @@ import org.chromium.url.GURL;
 import java.util.List;
 
 /** Implementation class of {@link TabWebContentsDelegateAndroid}. */
+@NullMarked
 final class TabWebContentsDelegateAndroidImpl extends TabWebContentsDelegateAndroid
         implements Destroyable {
     private final TabImpl mTab;
@@ -234,7 +237,7 @@ final class TabWebContentsDelegateAndroidImpl extends TabWebContentsDelegateAndr
     @Override
     public boolean addMessageToConsole(int level, String message, int lineNumber, String sourceId) {
         // Only output console.log messages on debug variants of Android OS. crbug/869804
-        return !BuildInfo.isDebugAndroid();
+        return !AndroidInfo.isDebugAndroid();
     }
 
     @Override
@@ -261,19 +264,29 @@ final class TabWebContentsDelegateAndroidImpl extends TabWebContentsDelegateAndr
     }
 
     @Override
+    public boolean preHandleKeyboardEvent(long nativeKeyEvent) {
+        return mDelegate.preHandleKeyboardEvent(nativeKeyEvent);
+    }
+
+    @Override
     public void handleKeyboardEvent(KeyEvent event) {
         mDelegate.handleKeyboardEvent(event);
     }
 
     @Override
-    public void enterFullscreenModeForTab(boolean prefersNavigationBar, boolean prefersStatusBar) {
-        mDelegate.enterFullscreenModeForTab(prefersNavigationBar, prefersStatusBar);
+    public void enterFullscreenModeForTab(
+            long requestingFrame,
+            boolean prefersNavigationBar,
+            boolean prefersStatusBar,
+            long displayId) {
+        mDelegate.enterFullscreenModeForTab(
+                requestingFrame, prefersNavigationBar, prefersStatusBar, displayId);
     }
 
     @Override
     public void fullscreenStateChangedForTab(
-            boolean prefersNavigationBar, boolean prefersStatusBar) {
-        mDelegate.fullscreenStateChangedForTab(prefersNavigationBar, prefersStatusBar);
+            boolean prefersNavigationBar, boolean prefersStatusBar, long displayId) {
+        mDelegate.fullscreenStateChangedForTab(prefersNavigationBar, prefersStatusBar, displayId);
     }
 
     @Override
@@ -284,6 +297,21 @@ final class TabWebContentsDelegateAndroidImpl extends TabWebContentsDelegateAndr
     @Override
     public boolean isFullscreenForTabOrPending() {
         return mDelegate.isFullscreenForTabOrPending();
+    }
+
+    @Override
+    public long getFullscreenTargetDisplay() {
+        return mDelegate.getFullscreenTargetDisplay();
+    }
+
+    @Override
+    public void requestKeyboardLock(boolean escKeyLocked) {
+        mDelegate.requestKeyboardLock(escKeyLocked);
+    }
+
+    @Override
+    public void cancelKeyboardLockRequest() {
+        mDelegate.cancelKeyboardLockRequest();
     }
 
     @Override
@@ -338,7 +366,7 @@ final class TabWebContentsDelegateAndroidImpl extends TabWebContentsDelegateAndr
             // Speculative fix for crbug.com/384566650
             if (webContents != null && !webContents.isDestroyed()) {
                 auditor.notifyCertificateFailure(
-                        PolicyAuditorJni.get().getCertificateFailure(mTab.getWebContents()),
+                        PolicyAuditorJni.get().getCertificateFailure(webContents),
                         ContextUtils.getApplicationContext());
             }
         }
@@ -456,11 +484,11 @@ final class TabWebContentsDelegateAndroidImpl extends TabWebContentsDelegateAndr
 
     /**
      * @return the WebAPK manifest scope. This gives frames within the scope increased privileges
-     * such as autoplaying media unmuted.
+     *     such as autoplaying media unmuted.
      */
     @CalledByNative
     @Override
-    protected String getManifestScope() {
+    protected @Nullable String getManifestScope() {
         return mDelegate.getManifestScope();
     }
 
@@ -501,6 +529,19 @@ final class TabWebContentsDelegateAndroidImpl extends TabWebContentsDelegateAndr
         return mDelegate.isDynamicSafeAreaInsetsEnabled();
     }
 
+    @CalledByNative
+    @Override
+    public void requestPointerLock(
+            WebContents webContents, boolean userGesture, boolean lastUnlockedByTarget) {
+        mDelegate.requestPointerLock(webContents, userGesture, lastUnlockedByTarget);
+    }
+
+    @CalledByNative
+    @Override
+    public void lostPointerLock() {
+        mDelegate.lostPointerLock();
+    }
+
     @Override
     public int getTopControlsHeight() {
         return mDelegate.getTopControlsHeight();
@@ -537,12 +578,12 @@ final class TabWebContentsDelegateAndroidImpl extends TabWebContentsDelegateAndr
     }
 
     @Override
-    public boolean maybeCopyContentAreaAsBitmap(Callback<Bitmap> callback) {
+    public boolean maybeCopyContentAreaAsBitmap(Callback<@Nullable Bitmap> callback) {
         return NativePageBitmapCapturer.maybeCaptureNativeView(mTab, callback);
     }
 
     @Override
-    public Bitmap maybeCopyContentAreaAsBitmapSync() {
+    public @Nullable Bitmap maybeCopyContentAreaAsBitmapSync() {
         return NativePageBitmapCapturer.maybeCaptureNativeViewSync(mTab, getTopControlsHeight());
     }
 

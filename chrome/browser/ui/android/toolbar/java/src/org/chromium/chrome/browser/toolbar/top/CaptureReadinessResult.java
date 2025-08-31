@@ -8,6 +8,8 @@ import androidx.annotation.IntDef;
 
 import org.chromium.base.TraceEvent;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.toolbar.ToolbarFeatures;
 
 import java.lang.annotation.Retention;
@@ -19,6 +21,7 @@ import java.lang.annotation.RetentionPolicy;
  * arbitrarily and consistently pick one reason. The reason is used to report metrics and should
  * still be a useful tool for understanding captures.
  */
+@NullMarked
 public class CaptureReadinessResult {
     /**
      * TODO(peilinwang): For debugging https://crbug.com/398845668, if an animation is blocking a
@@ -65,6 +68,7 @@ public class CaptureReadinessResult {
         TopToolbarBlockCaptureReason.NTP_Y_TRANSLATION,
         TopToolbarBlockCaptureReason.FULLSCREEN,
         TopToolbarBlockCaptureReason.TABLET_BUTTON_ANIMATION_IN_PROGRESS,
+        TopToolbarBlockCaptureReason.LAYOUT_REQUESTED,
         TopToolbarBlockCaptureReason.NUM_ENTRIES
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -84,7 +88,8 @@ public class CaptureReadinessResult {
         int NTP_Y_TRANSLATION = 12;
         int FULLSCREEN = 13;
         int TABLET_BUTTON_ANIMATION_IN_PROGRESS = 14;
-        int NUM_ENTRIES = 15;
+        int LAYOUT_REQUESTED = 15;
+        int NUM_ENTRIES = 16;
     }
 
     public static CaptureReadinessResult readyForced() {
@@ -135,7 +140,7 @@ public class CaptureReadinessResult {
                 TopToolbarBlockCaptureReason.NUM_ENTRIES);
     }
 
-    public static void logCaptureReasonFromResult(CaptureReadinessResult result) {
+    public static void logCaptureReasonFromResult(@Nullable CaptureReadinessResult result) {
         if (!ToolbarFeatures.shouldRecordSuppressionMetrics()) {
             return;
         }

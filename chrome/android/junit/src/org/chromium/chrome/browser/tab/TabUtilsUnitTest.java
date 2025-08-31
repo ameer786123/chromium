@@ -11,14 +11,11 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.app.Activity;
-import android.content.res.Configuration;
-import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Insets;
 import android.graphics.drawable.BitmapDrawable;
@@ -53,7 +50,7 @@ import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.TabUtils.UseDesktopUserAgentCaller;
 import org.chromium.chrome.browser.tab_ui.TabThumbnailView;
-import org.chromium.chrome.test.AutomotiveContextWrapperTestRule;
+import org.chromium.chrome.test.OverrideContextWrapperTestRule;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni;
 import org.chromium.components.browser_ui.util.AutomotiveUtils;
@@ -103,8 +100,8 @@ public class TabUtilsUnitTest {
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Rule
-    public AutomotiveContextWrapperTestRule mAutomotiveContextWrapperTestRule =
-            new AutomotiveContextWrapperTestRule();
+    public OverrideContextWrapperTestRule mAutomotiveContextWrapperTestRule =
+            new OverrideContextWrapperTestRule();
 
     @Rule
     public ActivityScenarioRule<TestActivity> mActivityScenarioRule =
@@ -124,9 +121,6 @@ public class TabUtilsUnitTest {
     @Mock private NavigationController mNavigationController;
     @Mock private Profile mProfile;
     @Mock private BrowserControlsStateProvider mBrowserControlsStateProvider;
-    @Mock private Resources mResources;
-    @Mock private Configuration mConfiguration;
-    @Mock private DisplayMetrics mDisplayMetrics;
 
     private boolean mRdsDefault;
     private @ContentSettingValues int mRdsException;
@@ -227,61 +221,6 @@ public class TabUtilsUnitTest {
         mUseDesktopUserAgent = true;
         Assert.assertTrue(
                 "Should get RDS from WebContents.", TabUtils.isUsingDesktopUserAgent(mWebContents));
-    }
-
-    @Test
-    public void testGetTabUserAgent_UpgradePath() {
-        mTabUserAgent = TabUserAgent.UNSET;
-        mUseDesktopUserAgent = false;
-        Assert.assertEquals(
-                "TabUserAgent is not set up correctly for upgrade path.",
-                TabUserAgent.DEFAULT,
-                TabUtils.getTabUserAgent(mTab));
-        verify(mTab).setUserAgent(TabUserAgent.DEFAULT);
-
-        mTabUserAgent = TabUserAgent.UNSET;
-        mUseDesktopUserAgent = true;
-        Assert.assertEquals(
-                "TabUserAgent is not set up correctly for upgrade path.",
-                TabUserAgent.DESKTOP,
-                TabUtils.getTabUserAgent(mTab));
-        verify(mTab).setUserAgent(TabUserAgent.DESKTOP);
-    }
-
-    @Test
-    public void testGetTabUserAgent_Mobile() {
-        mTabUserAgent = TabUserAgent.MOBILE;
-        mUseDesktopUserAgent = false;
-        Assert.assertEquals(
-                "Read unexpected TabUserAgent value.",
-                TabUserAgent.MOBILE,
-                TabUtils.getTabUserAgent(mTab));
-
-        mUseDesktopUserAgent = true;
-        Assert.assertEquals(
-                "Read unexpected TabUserAgent value.",
-                TabUserAgent.MOBILE,
-                TabUtils.getTabUserAgent(mTab));
-
-        verify(mTab, never()).setUserAgent(anyInt());
-    }
-
-    @Test
-    public void testGetTabUserAgent_Desktop() {
-        mTabUserAgent = TabUserAgent.DESKTOP;
-        mUseDesktopUserAgent = false;
-        Assert.assertEquals(
-                "Read unexpected TabUserAgent value.",
-                TabUserAgent.DESKTOP,
-                TabUtils.getTabUserAgent(mTab));
-
-        mUseDesktopUserAgent = true;
-        Assert.assertEquals(
-                "Read unexpected TabUserAgent value.",
-                TabUserAgent.DESKTOP,
-                TabUtils.getTabUserAgent(mTab));
-
-        verify(mTab, never()).setUserAgent(anyInt());
     }
 
     @Test

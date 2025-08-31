@@ -44,7 +44,6 @@ import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs.BookmarkRowSortOrder;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.bookmarks.BookmarkItem;
 import org.chromium.components.commerce.core.CommerceFeatureUtils;
@@ -68,7 +67,6 @@ public class ImprovedBookmarkQueryHandlerTest {
 
     @Mock private BookmarkModel mBookmarkModel;
     @Mock private Tracker mTracker;
-    @Mock private Profile mProfile;
     @Mock private BookmarkUiPrefs mBookmarkUiPrefs;
     @Mock private ShoppingService mShoppingService;
     @Mock private CommerceFeatureUtils.Natives mCommerceFeatureUtilsJniMock;
@@ -85,7 +83,10 @@ public class ImprovedBookmarkQueryHandlerTest {
 
         mHandler =
                 new ImprovedBookmarkQueryHandler(
-                        mBookmarkModel, mBookmarkUiPrefs, mShoppingService);
+                        mBookmarkModel,
+                        mBookmarkUiPrefs,
+                        mShoppingService,
+                        /* rootFolderForceVisibleMask= */ BookmarkNodeMaskBit.NONE);
     }
 
     @Test
@@ -111,7 +112,10 @@ public class ImprovedBookmarkQueryHandlerTest {
         fakeBookmarkModel.setAreAccountBookmarkFoldersActive(true);
         mHandler =
                 new ImprovedBookmarkQueryHandler(
-                        fakeBookmarkModel, mBookmarkUiPrefs, mShoppingService);
+                        fakeBookmarkModel,
+                        mBookmarkUiPrefs,
+                        mShoppingService,
+                        /* rootFolderForceVisibleMask= */ BookmarkNodeMaskBit.NONE);
 
         doReturn(BookmarkRowSortOrder.CHRONOLOGICAL)
                 .when(mBookmarkUiPrefs)
@@ -381,13 +385,16 @@ public class ImprovedBookmarkQueryHandlerTest {
         FakeBookmarkModel fakeBookmarkModel = FakeBookmarkModel.createModel();
         mHandler =
                 new ImprovedBookmarkQueryHandler(
-                        fakeBookmarkModel, mBookmarkUiPrefs, mShoppingService);
+                        fakeBookmarkModel,
+                        mBookmarkUiPrefs,
+                        mShoppingService,
+                        /* rootFolderForceVisibleMask= */ BookmarkNodeMaskBit.NONE);
 
         doReturn(BookmarkRowSortOrder.ALPHABETICAL)
                 .when(mBookmarkUiPrefs)
                 .getBookmarkRowSortOrder();
         List<BookmarkListEntry> result =
-                mHandler.buildBookmarkListForFolderSelect(mBookmarkModel.getRootFolderId());
+                mHandler.buildBookmarkListForFolderSelect(ROOT_BOOKMARK_ID);
         List<BookmarkId> expected =
                 Arrays.asList(
                         fakeBookmarkModel.getDesktopFolderId(),
@@ -404,13 +411,16 @@ public class ImprovedBookmarkQueryHandlerTest {
         fakeBookmarkModel.setAreAccountBookmarkFoldersActive(true);
         mHandler =
                 new ImprovedBookmarkQueryHandler(
-                        fakeBookmarkModel, mBookmarkUiPrefs, mShoppingService);
+                        fakeBookmarkModel,
+                        mBookmarkUiPrefs,
+                        mShoppingService,
+                        /* rootFolderForceVisibleMask= */ BookmarkNodeMaskBit.NONE);
 
         doReturn(BookmarkRowSortOrder.ALPHABETICAL)
                 .when(mBookmarkUiPrefs)
                 .getBookmarkRowSortOrder();
         List<BookmarkListEntry> result =
-                mHandler.buildBookmarkListForFolderSelect(mBookmarkModel.getRootFolderId());
+                mHandler.buildBookmarkListForFolderSelect(ROOT_BOOKMARK_ID);
         List<BookmarkId> expected =
                 Arrays.asList(
                         null,
@@ -432,11 +442,14 @@ public class ImprovedBookmarkQueryHandlerTest {
         fakeBookmarkModel.setAreAccountBookmarkFoldersActive(true);
         mHandler =
                 new ImprovedBookmarkQueryHandler(
-                        fakeBookmarkModel, mBookmarkUiPrefs, mShoppingService);
+                        fakeBookmarkModel,
+                        mBookmarkUiPrefs,
+                        mShoppingService,
+                        /* rootFolderForceVisibleMask= */ BookmarkNodeMaskBit.NONE);
 
         doReturn(BookmarkRowSortOrder.MANUAL).when(mBookmarkUiPrefs).getBookmarkRowSortOrder();
         List<BookmarkListEntry> result =
-                mHandler.buildBookmarkListForFolderSelect(mBookmarkModel.getRootFolderId());
+                mHandler.buildBookmarkListForFolderSelect(ROOT_BOOKMARK_ID);
         List<BookmarkId> expected =
                 Arrays.asList(
                         null,

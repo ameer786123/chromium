@@ -55,7 +55,7 @@ TsPacket* TsPacket::Parse(const uint8_t* buf, size_t size) {
   if (size < kPacketSize) {
     DVLOG(1) << "Buffer does not hold one full TS packet:"
              << " buffer_size=" << size;
-    return NULL;
+    return nullptr;
   }
 
   DCHECK_EQ(buf[0], kTsHeaderSyncword);
@@ -63,14 +63,14 @@ TsPacket* TsPacket::Parse(const uint8_t* buf, size_t size) {
     DVLOG(1) << "Not on a TS syncword:"
              << " buf[0]="
              << std::hex << static_cast<int>(buf[0]) << std::dec;
-    return NULL;
+    return nullptr;
   }
 
   std::unique_ptr<TsPacket> ts_packet(new TsPacket());
   bool status = ts_packet->ParseHeader(buf);
   if (!status) {
     DVLOG(1) << "Parsing header failed";
-    return NULL;
+    return nullptr;
   }
   return ts_packet.release();
 }
@@ -86,12 +86,12 @@ bool TsPacket::ParseHeader(const uint8_t* buf) {
   payload_ = {buf, kPacketSize};
 
   // Read the TS header: 4 bytes.
-  int syncword;
-  int transport_error_indicator;
-  int payload_unit_start_indicator;
-  int transport_priority;
-  int transport_scrambling_control;
-  int adaptation_field_control;
+  uint8_t syncword;
+  uint8_t transport_error_indicator;
+  uint8_t payload_unit_start_indicator;
+  uint8_t transport_priority;
+  uint8_t transport_scrambling_control;
+  uint8_t adaptation_field_control;
   RCHECK(bit_reader.ReadBits(8, &syncword));
   RCHECK(bit_reader.ReadBits(1, &transport_error_indicator));
   RCHECK(bit_reader.ReadBits(1, &payload_unit_start_indicator));
@@ -143,16 +143,16 @@ bool TsPacket::ParseHeader(const uint8_t* buf) {
 bool TsPacket::ParseAdaptationField(BitReader* bit_reader,
                                     size_t adaptation_field_length) {
   DCHECK_GT(adaptation_field_length, 0u);
-  int adaptation_field_start_marker = bit_reader->bits_available() / 8;
+  size_t adaptation_field_start_marker = bit_reader->bits_available() / 8;
 
-  int discontinuity_indicator;
-  int random_access_indicator;
-  int elementary_stream_priority_indicator;
-  int pcr_flag;
-  int opcr_flag;
-  int splicing_point_flag;
-  int transport_private_data_flag;
-  int adaptation_field_extension_flag;
+  uint8_t discontinuity_indicator;
+  uint8_t random_access_indicator;
+  uint8_t elementary_stream_priority_indicator;
+  uint8_t pcr_flag;
+  uint8_t opcr_flag;
+  uint8_t splicing_point_flag;
+  uint8_t transport_private_data_flag;
+  uint8_t adaptation_field_extension_flag;
   RCHECK(bit_reader->ReadBits(1, &discontinuity_indicator));
   RCHECK(bit_reader->ReadBits(1, &random_access_indicator));
   RCHECK(bit_reader->ReadBits(1, &elementary_stream_priority_indicator));
@@ -165,18 +165,18 @@ bool TsPacket::ParseAdaptationField(BitReader* bit_reader,
   random_access_indicator_ = (random_access_indicator != 0);
 
   if (pcr_flag) {
-    int64_t program_clock_reference_base;
-    int reserved;
-    int program_clock_reference_extension;
+    uint64_t program_clock_reference_base;
+    uint8_t reserved;
+    uint16_t program_clock_reference_extension;
     RCHECK(bit_reader->ReadBits(33, &program_clock_reference_base));
     RCHECK(bit_reader->ReadBits(6, &reserved));
     RCHECK(bit_reader->ReadBits(9, &program_clock_reference_extension));
   }
 
   if (opcr_flag) {
-    int64_t original_program_clock_reference_base;
-    int reserved;
-    int original_program_clock_reference_extension;
+    uint64_t original_program_clock_reference_base;
+    uint8_t reserved;
+    uint16_t original_program_clock_reference_extension;
     RCHECK(bit_reader->ReadBits(33, &original_program_clock_reference_base));
     RCHECK(bit_reader->ReadBits(6, &reserved));
     RCHECK(
@@ -184,28 +184,28 @@ bool TsPacket::ParseAdaptationField(BitReader* bit_reader,
   }
 
   if (splicing_point_flag) {
-    int splice_countdown;
+    uint8_t splice_countdown;
     RCHECK(bit_reader->ReadBits(8, &splice_countdown));
   }
 
   if (transport_private_data_flag) {
-    int transport_private_data_length;
+    uint8_t transport_private_data_length;
     RCHECK(bit_reader->ReadBits(8, &transport_private_data_length));
     RCHECK(bit_reader->SkipBits(8 * transport_private_data_length));
   }
 
   if (adaptation_field_extension_flag) {
-    int adaptation_field_extension_length;
+    uint8_t adaptation_field_extension_length;
     RCHECK(bit_reader->ReadBits(8, &adaptation_field_extension_length));
     RCHECK(bit_reader->SkipBits(8 * adaptation_field_extension_length));
   }
 
   // The rest of the adaptation field should be stuffing bytes.
-  const auto bits_used = base::checked_cast<size_t>(
-      adaptation_field_start_marker - bit_reader->bits_available() / 8);
+  const auto bits_used =
+      adaptation_field_start_marker - bit_reader->bits_available() / 8;
   RCHECK(adaptation_field_length >= bits_used);
   for (size_t k = 0; k < adaptation_field_length - bits_used; ++k) {
-    int stuffing_byte;
+    uint8_t stuffing_byte;
     RCHECK(bit_reader->ReadBits(8, &stuffing_byte));
     // Unfortunately, a lot of streams exist in the field that do not fill
     // the remaining of the adaptation field with the expected stuffing value:
@@ -221,4 +221,3 @@ bool TsPacket::ParseAdaptationField(BitReader* bit_reader,
 
 }  // namespace mp2t
 }  // namespace media
-

@@ -17,9 +17,12 @@
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/frame/cached_permission_status.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/core/html/html_permission_icon_element.h"
 #include "third_party/blink/renderer/core/intersection_observer/intersection_observer.h"
 #include "third_party/blink/renderer/core/scroll/scroll_snapshot_client.h"
+#include "third_party/blink/renderer/platform/geometry/length_size.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver_set.h"
@@ -33,7 +36,10 @@ namespace blink {
 class Page;
 class V8PermissionState;
 
-class CORE_EXPORT HTMLPermissionElement final
+// For more information, see the explainer here:
+// https://github.com/WICG/PEPC/blob/main/explainer.md
+// and the design doc here: docs/permissions/pepc.md.
+class CORE_EXPORT HTMLPermissionElement
     : public HTMLElement,
       public mojom::blink::EmbeddedPermissionControlClient,
       public ScrollSnapshotClient,
@@ -44,7 +50,8 @@ class CORE_EXPORT HTMLPermissionElement final
  public:
   static bool isTypeSupported(const AtomicString& type);
 
-  explicit HTMLPermissionElement(Document&);
+  explicit HTMLPermissionElement(Document&,
+                                 std::optional<QualifiedName> = std::nullopt);
 
   ~HTMLPermissionElement() override;
 
@@ -86,6 +93,7 @@ class CORE_EXPORT HTMLPermissionElement final
 
   bool HasInvalidStyle() const;
   bool IsOccluded() const;
+  bool IsRenderered() const;
   bool granted() const { return PermissionsGranted(); }
 
   // Given an input type, return permissions list. This method is for testing
@@ -100,6 +108,9 @@ class CORE_EXPORT HTMLPermissionElement final
   // HTMLElement overrides.
   bool IsHTMLPermissionElement() const final { return true; }
 
+ protected:
+  void setType(const AtomicString& type);
+
  private:
   // TODO(crbug.com/1315595): remove this friend class once migration
   // to blink_unittests_v2 completes.
@@ -108,6 +119,7 @@ class CORE_EXPORT HTMLPermissionElement final
   friend class HTMLPermissionElementIntersectionTest;
   friend class HTMLPermissionElementLayoutChangeTest;
 
+  FRIEND_TEST_ALL_PREFIXES(HTMLGeolocationElementTestBase, GetTypeAttribute);
   FRIEND_TEST_ALL_PREFIXES(HTMLPermissionElementClickingEnabledTest,
                            UnclickableBeforeRegistered);
   FRIEND_TEST_ALL_PREFIXES(HTMLPermissionElementIntersectionTest,
@@ -136,6 +148,8 @@ class CORE_EXPORT HTMLPermissionElement final
                            FontSizeCanDisableElement);
   FRIEND_TEST_ALL_PREFIXES(HTMLPermissionElementSimTest,
                            MovePEPCToAnotherDocument);
+  FRIEND_TEST_ALL_PREFIXES(HTMLPermissionElementSimTest,
+                           RegisterAfterBeingVisible);
   FRIEND_TEST_ALL_PREFIXES(HTMLPermissionElementLayoutChangeTest,
                            InvalidatePEPCAfterMove);
   FRIEND_TEST_ALL_PREFIXES(HTMLPermissionElementLayoutChangeTest,
@@ -209,8 +223,9 @@ class CORE_EXPORT HTMLPermissionElement final
     kLowConstrastColorAndBackgroundColor = 1,
     kTooSmallFontSize = 3,
     kTooLargeFontSize = 4,
+    kInvalidDisplayProperty = 5,
 
-    kMaxValue = kTooLargeFontSize,
+    kMaxValue = kInvalidDisplayProperty,
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/blink/enums.xml:PermissionElementInvalidStyleReason)
 
@@ -262,9 +277,8 @@ class CORE_EXPORT HTMLPermissionElement final
     void Fired() final { (element_->*function_)(this); }
 
     base::OnceClosure BindTimerClosure() final {
-      return WTF::BindOnce(&DisableReasonExpireTimer::RunInternalTrampoline,
-                           WTF::Unretained(this),
-                           WrapWeakPersistent(element_.Get()));
+      return BindOnce(&DisableReasonExpireTimer::RunInternalTrampoline,
+                      Unretained(this), WrapWeakPersistent(element_.Get()));
     }
 
    private:
@@ -309,6 +323,9 @@ class CORE_EXPORT HTMLPermissionElement final
   // process.
   bool MaybeRegisterPageEmbeddedPermissionControl();
 
+  // Ensure we reset the PEPC IPC endpoint.
+  void EnsureUnregisterPageEmbeddedPermissionControl();
+
   // blink::Element implements
   void AttributeChanged(const AttributeModificationParams& params) override;
   void DidAddUserAgentShadowRoot(ShadowRoot&) override;
@@ -352,15 +369,19 @@ class CORE_EXPORT HTMLPermissionElement final
   // ScrollSnapshotClient. It could make sense to bring this in line with other
   // features that deal with snapshotting this state, such as scroll-driven
   // animations, scroll-state container queries, and anchor positioning.
-  void UpdateSnapshot() override;
-  bool ValidateSnapshot() override;
+  bool UpdateSnapshot() override;
   bool ShouldScheduleNextService() override { return false; }
 
-  // Update and notify CSS pseudo class changed, which indicates PEPC is
+  // Update and notify CSS pseudo-class changed, which indicates PEPC is
   // currently entering/exiting clicking disable state, such as invalid style or
   // being occluded.
   // Return true if the state has been changed.
   bool NotifyClickingDisablePseudoStateChanged();
+
+  // Wrapper to make this a void function for PostTask().
+  void NotifyClickingDisablePseudoStateChangedTask() {
+    NotifyClickingDisablePseudoStateChanged();
+  }
 
   // Verify whether the element has been registered in browser process.
   bool is_registered_in_browser_process() const {
@@ -438,22 +459,20 @@ class CORE_EXPORT HTMLPermissionElement final
       const HeapVector<Member<IntersectionObserverEntry>>& entries);
 
   bool IsStyleValid();
+  bool IsMaskedByAncestor() const;
 
-  // Returns an adjusted bounded length that takes in the site-provided length
-  // and creates an expression-type length that is bounded on upper or lower
-  // sides by the provided bounds. The expression uses min|max|clamp depending
-  // on which bound(s) is/are present. The bounds will be multiplied by
-  // |fit-content-size| if |should_multiply_by_content_size| is true. At least
-  // one of the bounds must be specified.
+  // A wrapper method which keeps track of logging console messages before
+  // calling the HTMLPermissionElementUtils::AdjustedBoundedLength method.
+  Length AdjustedBoundedLengthWrapper(const Length& length,
+                                      std::optional<float> lower_bound,
+                                      std::optional<float> upper_bound,
+                                      bool should_multiply_by_content_size);
 
-  // If |length| is not a "specified" length, it is ignored and the returned
-  // length will be |lower_bound| or |upper_bound| (if both are specified,
-  // |lower_bound| is used), optionally multiplied by |fit-content-size| as
-  // described above.
-  Length AdjustedBoundedLength(const Length& length,
-                               std::optional<float> lower_bound,
-                               std::optional<float> upper_bound,
-                               bool should_multiply_by_content_size);
+  // A method which bounds the specified radius on the width and height sides
+  // using the provided percentage bounds.
+  LengthSize AdjustedPercentBoundedRadius(const LengthSize& length_size,
+                                          float width_percent_bound,
+                                          float height_percent_bound);
 
   // LocalFrameView::LifecycleNotificationObserver
   void DidFinishLifecycleUpdate(const LocalFrameView&) override;
@@ -520,18 +539,23 @@ class CORE_EXPORT HTMLPermissionElement final
 
   bool is_registered_in_browser_process_ = false;
 
+  bool is_cache_registered_ = false;
+
   // Holds reasons for which clicking is currently disabled (if any). Each
   // entry will have an expiration time associated with it, which can be
   // |base::TimeTicks::Max()| if it's indefinite.
   HashMap<DisableReason, base::TimeTicks> clicking_disabled_reasons_;
 
+  // A element which contains the internal permission elements(text and icon).
+  Member<HTMLDivElement> permission_container_;
   Member<HTMLSpanElement> permission_text_span_;
+  Member<HTMLPermissionIconElement> permission_internal_icon_;
   Member<IntersectionObserver> intersection_observer_;
 
   // Keeps track of the time a request was created.
   std::optional<base::TimeTicks> pending_request_created_;
 
-  // Store information to notify CSS pseudo class changed.
+  // Store information to notify CSS pseudo-class changed.
   struct ClickingDisablePseudoState {
     bool has_invalid_style = false;
     bool is_occluded = false;

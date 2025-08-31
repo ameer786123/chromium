@@ -4,6 +4,7 @@
 
 #include <memory>
 
+#include "base/byte_count.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
@@ -15,12 +16,13 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/interaction/browser_elements.h"
 #include "chrome/browser/ui/performance_controls/memory_saver_utils.h"
 #include "chrome/browser/ui/performance_controls/tab_resource_usage_tab_helper.h"
 #include "chrome/browser/ui/performance_controls/test_support/memory_metrics_refresh_waiter.h"
 #include "chrome/browser/ui/performance_controls/test_support/memory_saver_interactive_test_mixin.h"
+#include "chrome/browser/ui/tabs/alert/tab_alert.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/collaboration_messaging_tab_data.h"
-#include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/tabs/fade_footer_view.h"
 #include "chrome/browser/ui/views/tabs/fade_label_view.h"
@@ -30,6 +32,7 @@
 #include "chrome/browser/ui/views/tabs/tab_hover_card_controller.h"
 #include "chrome/browser/ui/views/tabs/tab_hover_card_test_util.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
+#include "chrome/browser/ui/views/test/tab_strip_interactive_test_mixin.h"
 #include "chrome/browser/ui/web_applications/test/web_app_browsertest_util.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/common/pref_names.h"
@@ -81,7 +84,7 @@ TabRendererData MakeTabRendererData() {
   TabRendererData new_tab_data = TabRendererData();
   new_tab_data.title = kTabTitle;
   new_tab_data.last_committed_url = GURL(kTabUrl);
-  new_tab_data.alert_state = {TabAlertState::AUDIO_PLAYING};
+  new_tab_data.alert_state = {tabs::TabAlert::AUDIO_PLAYING};
   return new_tab_data;
 }
 
@@ -107,7 +110,8 @@ collaboration::messaging::PersistentMessage CreateMessage(
 }  // namespace
 
 class TabHoverCardInteractiveUiTest
-    : public MemorySaverInteractiveTestMixin<InteractiveBrowserTest>,
+    : public TabStripInteractiveTestMixin<
+          MemorySaverInteractiveTestMixin<InteractiveBrowserTest>>,
       public test::TabHoverCardTestUtil {
  public:
   ~TabHoverCardInteractiveUiTest() override = default;
@@ -139,21 +143,6 @@ class TabHoverCardInteractiveUiTest
     MemorySaverInteractiveTestMixin::TearDownOnMainThread();
   }
 
-  MultiStep FinishTabstripAnimations() {
-    return Steps(WaitForShow(kTabStripElementId),
-                 WithView(kTabStripElementId, [](TabStrip* tab_strip) {
-                   tab_strip->StopAnimating(true);
-                 }));
-  }
-
-  auto HoverTabAt(int index) {
-    const char kTabToHover[] = "Tab to hover";
-    return Steps(
-        FinishTabstripAnimations(),
-        NameDescendantViewByType<Tab>(kTabStripElementId, kTabToHover, index),
-        MoveMouseTo(kTabToHover));
-  }
-
   auto UnhoverTab() {
     return Steps(MoveMouseTo(kNewTabButtonElementId));
   }
@@ -164,6 +153,14 @@ class TabHoverCardInteractiveUiTest
 
   StepBuilder CheckHovercardIsClosed() {
     return WaitForHide(TabHoverCardBubbleView::kHoverCardBubbleElementId);
+  }
+
+  TabResourceUsageTabHelper* GetResourceUsageAt(int index) {
+    return browser()
+        ->tab_strip_model()
+        ->GetTabAtIndex(index)
+        ->GetTabFeatures()
+        ->resource_usage_helper();
   }
 
  private:
@@ -564,14 +561,13 @@ IN_PROC_BROWSER_TEST_P(TabHoverCardFadeFooterWithDiscardInteractiveUiTest,
   EXPECT_TRUE(alert_row->icon()->GetImageModel().IsEmpty());
 
   // Show discard status with memory savings
-  tab_renderer_data.discarded_memory_savings_in_bytes = 1000;
+  tab_renderer_data.discarded_memory_savings = base::ByteCount(1000);
   tab_strip->SetTabData(1, tab_renderer_data);
   SimulateHoverTab(browser(), 1);
   EXPECT_EQ(
       l10n_util::FormatString(
           l10n_util::GetStringUTF16(IDS_HOVERCARD_INACTIVE_TAB_MEMORY_SAVINGS),
-          {ui::FormatBytes(
-              tab_renderer_data.discarded_memory_savings_in_bytes)},
+          {ui::FormatBytes(tab_renderer_data.discarded_memory_savings)},
           nullptr),
       alert_row->footer_label()->GetText());
 }
@@ -588,29 +584,29 @@ IN_PROC_BROWSER_TEST_F(TabHoverCardFadeFooterInteractiveUiTest,
   ASSERT_TRUE(
       AddTabAtIndex(1, GURL(url::kAboutBlankURL), ui::PAGE_TRANSITION_TYPED));
 
-  uint64_t bytes_used = 1000;
-  auto* const tab_resource_usage_tab_helper =
-      TabResourceUsageTabHelper::FromWebContents(GetWebContentsAt(1));
-  tab_resource_usage_tab_helper->SetMemoryUsageInBytes(bytes_used);
+  base::ByteCount memory_usage = base::ByteCount(1000);
+  auto* const tab_resource_usage_tab_helper = GetResourceUsageAt(1);
+  tab_resource_usage_tab_helper->SetMemoryUsage(memory_usage);
 
   // Show memory usage without savings
   FadePerformanceFooterRow* const performance_row =
       GetPrimaryPerformanceRowFromHoverCard(SimulateHoverTab(browser(), 1));
   EXPECT_EQ(l10n_util::FormatString(
                 l10n_util::GetStringUTF16(IDS_HOVERCARD_TAB_MEMORY_USAGE),
-                {ui::FormatBytes(bytes_used)}, nullptr),
+                {ui::FormatBytes(memory_usage)}, nullptr),
             performance_row->footer_label()->GetText());
   EXPECT_FALSE(performance_row->icon()->GetImageModel().IsEmpty());
 
-  // Hover card updates and shows high memory usage when card is still open
-  bytes_used = TabResourceUsage::kHighMemoryUsageThresholdBytes + 100;
-  tab_resource_usage_tab_helper->SetMemoryUsageInBytes(bytes_used);
+  // Hover card updates and shows high memory usage when card is still open.
+  memory_usage =
+      TabResourceUsage::kHighMemoryUsageThreshold + base::ByteCount(100);
+  tab_resource_usage_tab_helper->SetMemoryUsage(memory_usage);
   GetTabStrip(browser())
       ->hover_card_controller_for_testing()
       ->OnTabResourceMetricsRefreshed();
   EXPECT_EQ(l10n_util::FormatString(
                 l10n_util::GetStringUTF16(IDS_HOVERCARD_TAB_HIGH_MEMORY_USAGE),
-                {ui::FormatBytes(bytes_used)}, nullptr),
+                {ui::FormatBytes(memory_usage)}, nullptr),
             performance_row->footer_label()->GetText());
 }
 
@@ -625,10 +621,9 @@ IN_PROC_BROWSER_TEST_F(TabHoverCardFadeFooterInteractiveUiTest,
   ASSERT_TRUE(
       AddTabAtIndex(1, GURL(url::kAboutBlankURL), ui::PAGE_TRANSITION_TYPED));
 
-  uint64_t bytes_used = 1000;
-  auto* const tab_resource_usage_tab_helper =
-      TabResourceUsageTabHelper::FromWebContents(GetWebContentsAt(1));
-  tab_resource_usage_tab_helper->SetMemoryUsageInBytes(bytes_used);
+  base::ByteCount memory_usage = base::ByteCount(1000);
+  auto* const tab_resource_usage_tab_helper = GetResourceUsageAt(1);
+  tab_resource_usage_tab_helper->SetMemoryUsage(memory_usage);
 
   // Don't show memory usage
   FadePerformanceFooterRow* const performance_row =
@@ -637,22 +632,22 @@ IN_PROC_BROWSER_TEST_F(TabHoverCardFadeFooterInteractiveUiTest,
   EXPECT_TRUE(performance_row->icon()->GetImageModel().IsEmpty());
 
   // Hover card updates and shows high memory usage when card is still open
-  bytes_used = TabResourceUsage::kHighMemoryUsageThresholdBytes + 100;
-  tab_resource_usage_tab_helper->SetMemoryUsageInBytes(bytes_used);
+  memory_usage =
+      TabResourceUsage::kHighMemoryUsageThreshold + base::ByteCount(100);
+  tab_resource_usage_tab_helper->SetMemoryUsage(memory_usage);
   GetTabStrip(browser())
       ->hover_card_controller_for_testing()
       ->OnTabResourceMetricsRefreshed();
   EXPECT_EQ(l10n_util::FormatString(
                 l10n_util::GetStringUTF16(IDS_HOVERCARD_TAB_HIGH_MEMORY_USAGE),
-                {ui::FormatBytes(bytes_used)}, nullptr),
+                {ui::FormatBytes(memory_usage)}, nullptr),
             performance_row->footer_label()->GetText());
 }
 
 IN_PROC_BROWSER_TEST_F(TabHoverCardFadeFooterInteractiveUiTest,
                        ActiveMemoryUsageHidesOnDiscard) {
-  const uint64_t bytes_used = 1;
-  TabResourceUsageTabHelper::FromWebContents(GetWebContentsAt(0))
-      ->SetMemoryUsageInBytes(bytes_used);
+  const base::ByteCount memory_usage = base::ByteCount(1);
+  GetResourceUsageAt(0)->SetMemoryUsage(memory_usage);
 
   RunTestSequence(InstrumentTab(kFirstTabContents, 0),
                   NavigateWebContents(kFirstTabContents, GetURL("a.com")),
@@ -702,9 +697,8 @@ IN_PROC_BROWSER_TEST_P(TabHoverCardFadeFooterWithDiscardInteractiveUiTest,
 // another site since the data is now out of date
 IN_PROC_BROWSER_TEST_F(TabHoverCardFadeFooterInteractiveUiTest,
                        MemoryUpdatesOnNavigation) {
-  const uint64_t bytes_used = 1;
-  TabResourceUsageTabHelper::FromWebContents(GetWebContentsAt(0))
-      ->SetMemoryUsageInBytes(bytes_used);
+  const base::ByteCount memory_usage = base::ByteCount(1);
+  GetResourceUsageAt(0)->SetMemoryUsage(memory_usage);
 
   RunTestSequence(
       InstrumentTab(kFirstTabContents, 0), UnhoverTab(), HoverTabAt(0),
@@ -720,7 +714,7 @@ IN_PROC_BROWSER_TEST_F(TabHoverCardFadeFooterInteractiveUiTest,
                 GetPrimaryPerformanceRowFromHoverCard(bubble)->footer_label();
             return performance_label->GetText().find(l10n_util::GetStringFUTF16(
                        IDS_HOVERCARD_TAB_MEMORY_USAGE,
-                       ui::FormatBytes(bytes_used))) != std::string::npos;
+                       ui::FormatBytes(memory_usage))) != std::string::npos;
           },
           false));
 }
@@ -733,8 +727,7 @@ IN_PROC_BROWSER_TEST_F(TabHoverCardFadeFooterInteractiveUiTest,
   ASSERT_TRUE(
       AddTabAtIndex(1, GURL(url::kAboutBlankURL), ui::PAGE_TRANSITION_TYPED));
 
-  TabResourceUsageTabHelper::FromWebContents(GetWebContentsAt(0))
-      ->SetMemoryUsageInBytes(1000);
+  GetResourceUsageAt(0)->SetMemoryUsage(base::ByteCount(1000));
 
   // Footer should show when hovering over tab with memory usage
   views::View* const footer_view =
@@ -742,8 +735,7 @@ IN_PROC_BROWSER_TEST_F(TabHoverCardFadeFooterInteractiveUiTest,
   EXPECT_TRUE(footer_view->GetVisible());
 
   // Hover over a tab without memory usage
-  TabResourceUsageTabHelper::FromWebContents(GetWebContentsAt(1))
-      ->SetMemoryUsageInBytes(0);
+  GetResourceUsageAt(1)->SetMemoryUsage(base::ByteCount(0));
   SimulateHoverTab(browser(), 1);
 
   // Footer should no longer be visible because there is no memory data
@@ -758,7 +750,7 @@ IN_PROC_BROWSER_TEST_F(TabHoverCardFadeFooterInteractiveUiTest,
   browser()->tab_strip_model()->ActivateTabAt(0);
   Tab* const tab = tab_strip->tab_at(1);
   TabRendererData data = tab->data();
-  data.alert_state = {TabAlertState::AUDIO_PLAYING};
+  data.alert_state = {tabs::TabAlert::AUDIO_PLAYING};
   tab->SetData(data);
   tab_strip->GetFocusManager()->SetFocusedView(tab);
   WaitForHoverCardVisible(tab_strip);
@@ -866,14 +858,14 @@ class TabHoverCardSystemWebAppTest : public InteractiveBrowserTest {
 IN_PROC_BROWSER_TEST_F(TabHoverCardSystemWebAppTest,
                        HideDomainNameFromHoverCard) {
   test_system_web_app_installation_->WaitForAppInstall();
-  const auto* const app_browser = web_app::LaunchWebAppBrowser(
+  auto* const app_browser = web_app::LaunchWebAppBrowser(
       browser()->profile(), test_system_web_app_installation_->GetAppId());
   const char kTabToHover[] = "Tab to hover";
 
   RunTestSequenceInContext(
-      app_browser->window()->GetElementContext(),
+      BrowserElements::From(app_browser)->GetContext(),
       WithView(kTabStripElementId,
-               [](TabStrip* tab_strip) { tab_strip->StopAnimating(true); }),
+               [](TabStrip* tab_strip) { tab_strip->StopAnimating(); }),
       NameDescendantViewByType<Tab>(kBrowserViewElementId, kTabToHover, 0),
       MoveMouseTo(kTabToHover),
       WaitForShow(TabHoverCardBubbleView::kHoverCardBubbleElementId),

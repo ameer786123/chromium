@@ -18,8 +18,6 @@
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "google_apis/gaia/gaia_id.h"
-#include "ui/gfx/image/image.h"
-#include "url/gurl.h"
 
 namespace tab_groups {
 
@@ -43,10 +41,8 @@ class SavedTabGroup {
       std::optional<std::string> creator_cache_guid = std::nullopt,
       std::optional<std::string> last_updater_cache_guid = std::nullopt,
       bool created_before_syncing_tab_groups = false,
-      std::optional<base::Time> creation_time_windows_epoch_micros =
-          std::nullopt,
-      std::optional<base::Time> update_time_windows_epoch_micros =
-          std::nullopt);
+      std::optional<base::Time> creation_time = std::nullopt,
+      std::optional<base::Time> update_time = std::nullopt);
   SavedTabGroup(const SavedTabGroup& other);
   SavedTabGroup& operator=(const SavedTabGroup& other);
   SavedTabGroup(SavedTabGroup&& other);
@@ -70,12 +66,8 @@ class SavedTabGroup {
   const std::optional<LocalTabGroupID>& local_group_id() const {
     return local_group_id_;
   }
-  const base::Time& creation_time_windows_epoch_micros() const {
-    return creation_time_windows_epoch_micros_;
-  }
-  const base::Time& update_time_windows_epoch_micros() const {
-    return update_time_windows_epoch_micros_;
-  }
+  const base::Time& creation_time() const { return creation_time_; }
+  const base::Time& update_time() const { return update_time_; }
   const base::Time& last_user_interaction_time() const {
     return last_user_interaction_time_;
   }
@@ -103,6 +95,10 @@ class SavedTabGroup {
   }
   const SharedAttribution& shared_attribution() const {
     return shared_attribution_;
+  }
+
+  const std::optional<base::Uuid>& bookmark_node_id() const {
+    return bookmark_node_id_;
   }
 
   bool is_pinned() const { return position_.has_value(); }
@@ -158,13 +154,13 @@ class SavedTabGroup {
   SavedTabGroup& SetLastUpdaterCacheGuid(std::optional<std::string> cache_guid);
   SavedTabGroup& SetCreatedBeforeSyncingTabGroups(
       bool created_before_syncing_tab_groups);
-  SavedTabGroup& SetUpdateTimeWindowsEpochMicros(
-      base::Time update_time_windows_epoch_micros);
+  SavedTabGroup& SetUpdateTime(base::Time update_time);
   SavedTabGroup& SetLastUserInteractionTime(
       base::Time last_user_interaction_time);
   SavedTabGroup& SetArchivalTime(std::optional<base::Time> archival_time);
   SavedTabGroup& SetPosition(size_t position);
   SavedTabGroup& SetPinned(bool pinned);
+  SavedTabGroup& SetBookmarkNodeId(std::optional<base::Uuid> bookmark_node_id);
   SavedTabGroup& SetCollaborationId(
       std::optional<CollaborationId> collaboration_id);
   SavedTabGroup& SetSharedGroupStatus(SharedGroupStatus shared_group_status);
@@ -209,7 +205,9 @@ class SavedTabGroup {
   // order of the group as is. CHECKs that the removed tab is not the last tab,
   // unless `ignore_empty_groups_for_testing` is true. `removed_by` is the user
   // who removed the tab, used for shared groups only and may be empty.
-  SavedTabGroup& RemoveTabLocally(const base::Uuid& saved_tab_guid);
+  SavedTabGroup& RemoveTabLocally(
+      const base::Uuid& saved_tab_guid,
+      std::optional<GaiaId> local_gaia_id = std::nullopt);
   SavedTabGroup& RemoveTabFromSync(
       const base::Uuid& saved_tab_guid,
       GaiaId removed_by,
@@ -284,6 +282,10 @@ class SavedTabGroup {
   // and all the tabs. UUID and local tab and group IDs are not copied.
   SavedTabGroup CopyBaseFieldsWithTabs() const;
 
+  // Updates the `last_removed_tabs_metadata_` for a given tab and gaia ID.
+  void UpdateLastRemovedTabMetadata(const base::Uuid& saved_tab_guid,
+                                    GaiaId removed_by);
+
   // The ID used to represent the group in sync.
   base::Uuid saved_guid_;
 
@@ -319,12 +321,13 @@ class SavedTabGroup {
   // Whether the tab group was created when sync was disabled.
   bool created_before_syncing_tab_groups_;
 
-  // Timestamp for when the tab was created using windows epoch microseconds.
-  base::Time creation_time_windows_epoch_micros_;
+  // Timestamp for when the tab group was created.
+  base::Time creation_time_;
 
-  // Timestamp for when the tab was last updated using windows epoch
-  // microseconds.
-  base::Time update_time_windows_epoch_micros_;
+  // Timestamp for when the tab group was last updated.
+  // Only accounts for the tab group property updates such as title and color
+  // but doesn't include structural modifications such as tab updates.
+  base::Time update_time_;
 
   // Timestamp of last explicit user interaction with the group, which currently
   // refers to tab addition, tab removal and tab navigation only. Only for
@@ -369,6 +372,10 @@ class SavedTabGroup {
 
   // Whether to show/disable a shared tab group is known from this status.
   SharedGroupStatus shared_group_status_ = SharedGroupStatus::kEnabled;
+
+  // The ID of the bookmark node this group is associated with, if any.
+  // Only used in saved tab group, not shared tab group.
+  std::optional<base::Uuid> bookmark_node_id_;
 };
 
 }  // namespace tab_groups

@@ -8,11 +8,13 @@
 #include <optional>
 
 #include "base/metrics/user_metrics.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/uuid.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_metrics.h"
@@ -226,7 +228,7 @@ void STGTabsMenuModel::ExecuteCommand(int command_id, int event_flags) {
       base::RecordAction(base::UserMetricsAction(
           "TabGroups_SavedTabGroups_OpenedFromTabGroupsAppMenu"));
       TabGroupSyncService* tab_group_service =
-          tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+          tab_groups::TabGroupSyncServiceFactory::GetForProfile(
               browser_->profile());
 
       bool will_open_shared_group = false;

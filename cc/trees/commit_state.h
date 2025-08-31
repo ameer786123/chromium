@@ -7,6 +7,7 @@
 
 #include <array>
 #include <memory>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -90,6 +91,7 @@ struct CC_EXPORT CommitState {
   float bottom_controls_shown_ratio = 0.f;
   float device_scale_factor = 1.f;
   float external_page_scale_factor = 1.f;
+  float load_progress = 0.f;
   float max_page_scale_factor = 1.f;
   float min_page_scale_factor = 1.f;
   float page_scale_factor = 1.f;
@@ -143,7 +145,8 @@ struct CC_EXPORT CommitState {
   std::unique_ptr<gfx::DelegatedInkMetadata> delegated_ink_metadata;
 
   std::unique_ptr<PendingPageScaleAnimation> pending_page_scale_animation;
-  std::vector<std::pair<int, std::unique_ptr<DrawImage>>> queued_image_decodes;
+  std::vector<std::tuple<int, std::unique_ptr<DrawImage>, bool>>
+      queued_image_decodes;
 
   // Presentation time callbacks requested for the next frame are initially
   // added here.

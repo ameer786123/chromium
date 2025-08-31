@@ -17,12 +17,15 @@ class ChromeAccountManagerService;
 class PrefService;
 @protocol SigninPresenter;
 @protocol AccountSettingsPresenter;
+typedef NS_ENUM(NSUInteger, SigninCoordinatorResult);
 @class SigninPromoViewConfigurator;
+@class ShowSigninCommand;
 @protocol SigninPromoViewConsumer;
 @protocol SystemIdentity;
 
 namespace signin {
 class IdentityManager;
+enum class Tribool;
 }  // namespace signin
 
 namespace signin_metrics {
@@ -69,6 +72,17 @@ enum class SigninPromoAction {
   kReviewAccountSettings,
 };
 
+@class SigninPromoViewMediator;
+
+// Protocol used to display signin UI.
+@protocol SigninPromoViewMediatorDelegate
+
+// Asks the presenter to display the signin UI configured by `command`.
+- (void)showSignin:(SigninPromoViewMediator*)mediator
+           command:(ShowSigninCommand*)command;
+
+@end
+
 // Class that monitors the available identities and creates
 // SigninPromoViewConfigurator. This class makes the link between the model and
 // the view. The consumer will receive notification if default identity is
@@ -91,6 +105,12 @@ enum class SigninPromoAction {
 
 // Sign-in promo view state. kNeverVisible by default.
 @property(nonatomic, assign) SigninPromoViewState signinPromoViewState;
+
+// kTrue if the sign-in flow is in progress.
+// kFalse if the sign-in flow is not in progress.
+// kUnknown if the sign-in flow is quite probably displayed but may have
+// disappeared silently. See crbug.com/395959814.
+@property(nonatomic, assign, readonly) signin::Tribool signinInProgress;
 
 // YES if the promo spinner should be displayed. Either the sign-in or the
 // initial sync is in progress.
@@ -137,7 +157,8 @@ enum class SigninPromoAction {
                           prefService:(PrefService*)prefService
                           syncService:(syncer::SyncService*)syncService
                           accessPoint:(signin_metrics::AccessPoint)accessPoint
-                      signinPresenter:(id<SigninPresenter>)signinPresenter
+                             delegate:
+                                 (id<SigninPromoViewMediatorDelegate>)delegate
              accountSettingsPresenter:
                  (id<AccountSettingsPresenter>)accountSettingsPresenter
     changeProfileContinuationProvider:(const ChangeProfileContinuationProvider&)
@@ -159,6 +180,9 @@ enum class SigninPromoAction {
 // promo view is removed from the view hierarchy (it or one of its superviews is
 // removed). The mediator should not be used after this called.
 - (void)disconnect;
+
+// Callback for the SigninPresenter.
+- (void)signinDidCompleteWithResult:(SigninCoordinatorResult)result;
 
 @end
 

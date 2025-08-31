@@ -18,7 +18,7 @@ found in the LICENSE file.
         <attr name="buttonTextColor" format="reference"/>
         <attr name="rippleColor"/>
         <attr name="borderColor" format="color"/>
-        <attr name="borderWidth" format="reference|dimension"/>
+        <attr name="buttonBorderWidth" format="reference|dimension"/>
         <!-- The vertical inset of the button background drawable. -->
         <attr name="verticalInset"/>
 
@@ -68,4 +68,18 @@ found in the LICENSE file.
         <attr name="menuPositionedAtStart" format="boolean" />
         <attr name="menuPositionedAtEnd" format="boolean" />
     </declare-styleable>
+
+    <declare-styleable name="TextViewWithClickableSpans">
+        <attr name="spanBackgroundStrokeColor" format="color"/>
+    </declare-styleable>
+
+    <attr name="minInteractTargetSize" format="dimension" />
+    <attr name="listItemHeight" format="dimension" />
+    <attr name="listItemIconSize" format="dimension" />
+    <attr name="listItemIconViewWidth" format="dimension" />
+    <attr name="listItemIconHorizontalPadding" format="dimension" />
+    <attr name="listItemIconTextSpacing" format="dimension" />
+
+    <attr name="textLargeSize" format="dimension"/>
+    <attr name="textLargeLeading" format="dimension"/>
 </resources>

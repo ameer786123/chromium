@@ -35,7 +35,7 @@ import org.chromium.components.signin.ConnectionRetry.AuthTask;
 import org.chromium.components.signin.base.AccountCapabilities;
 import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
-import org.chromium.components.signin.base.GaiaId;
+import org.chromium.google_apis.gaia.GaiaId;
 import org.chromium.google_apis.gaia.GoogleServiceAuthError;
 import org.chromium.google_apis.gaia.GoogleServiceAuthErrorState;
 
@@ -50,12 +50,6 @@ import java.util.concurrent.atomic.AtomicReference;
 /** AccountManagerFacade wraps our access of AccountManager in Android. */
 @NullMarked
 public class AccountManagerFacadeImpl implements AccountManagerFacade {
-    /**
-     * An account feature (corresponding to a Gaia service flag) that specifies whether the account
-     * is a USM account.
-     */
-    @VisibleForTesting public static final String FEATURE_IS_USM_ACCOUNT_KEY = "service_usm";
-
     /**
      * The maximum amount of acceptable retries (for a total of MAXIMUM_RETRIES+1 attempts). *
      *
@@ -78,11 +72,10 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     private final ObserverList<AccountsChangeObserver> mObservers = new ObserverList<>();
 
     private final AtomicReference<List<Account>> mAllAccounts = new AtomicReference<>();
+    private final AtomicReference<List<PlatformAccount>> mAllPlatformAccounts =
+            new AtomicReference<>();
     private final AtomicReference<List<PatternMatcher>> mAccountRestrictionPatterns =
             new AtomicReference<>();
-
-    // Deprecated in favor of `mAccountsPromise`, to be removed after migrating all affected calls.
-    private Promise<List<CoreAccountInfo>> mCoreAccountInfosPromise = new Promise<>();
 
     private Promise<List<AccountInfo>> mAccountsPromise = new Promise<>();
 
@@ -102,7 +95,14 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     public AccountManagerFacadeImpl(AccountManagerDelegate delegate) {
         ThreadUtils.assertOnUiThread();
         mDelegate = delegate;
-        mDelegate.attachAccountsChangeObserver(this::onAccountsUpdated);
+
+        if (SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled()) {
+            mDelegate.attachAccountsChangeObserver(this::onPlatformAccountsUpdated);
+            onPlatformAccountsUpdated();
+        } else {
+            mDelegate.attachAccountsChangeObserver(this::onAccountsUpdated);
+            onAccountsUpdated();
+        }
         new AccountRestrictionPatternReceiver(this::onAccountRestrictionPatternsUpdated);
 
         getAccounts()
@@ -111,7 +111,6 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
                             RecordHistogram.recordExactLinearHistogram(
                                     "Signin.AndroidNumberOfDeviceAccounts", accounts.size(), 50);
                         });
-        onAccountsUpdated();
     }
 
     /**
@@ -134,13 +133,6 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         ThreadUtils.assertOnUiThread();
         boolean success = mObservers.removeObserver(observer);
         assert success : "Can't find observer";
-    }
-
-    @MainThread
-    @Override
-    public Promise<List<CoreAccountInfo>> getCoreAccountInfos() {
-        ThreadUtils.assertOnUiThread();
-        return mCoreAccountInfosPromise;
     }
 
     @MainThread
@@ -170,8 +162,7 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
                     @Override
                     public AccessTokenData run() throws AuthException {
                         return mDelegate.getAccessToken(
-                                AccountUtils.createAccountFromName(coreAccountInfo.getEmail()),
-                                scope);
+                                CoreAccountInfo.getAndroidAccountFrom(coreAccountInfo), scope);
                     }
 
                     @Override
@@ -252,32 +243,13 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     }
 
     @Override
-    public void checkChildAccountStatus(
-            CoreAccountInfo coreAccountInfo, ChildAccountStatusListener listener) {
-        ThreadUtils.assertOnUiThread();
-        new AsyncTask<Boolean>() {
-            @Override
-            public Boolean doInBackground() {
-                Account account = AccountUtils.createAccountFromName(coreAccountInfo.getEmail());
-                return mDelegate.hasFeature(account, FEATURE_IS_USM_ACCOUNT_KEY);
-            }
-
-            @Override
-            protected void onPostExecute(Boolean isChild) {
-                // TODO(crbug.com/40201126): rework this interface to avoid passing a null account.
-                listener.onStatusReady(isChild, isChild ? coreAccountInfo : null);
-            }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
-    }
-
-    @Override
     public void checkIsSubjectToParentalControls(
             CoreAccountInfo coreAccountInfo, ChildAccountStatusListener listener) {
         ThreadUtils.assertOnUiThread();
         new AsyncTask<Boolean>() {
             @Override
             public Boolean doInBackground() {
-                Account account = AccountUtils.createAccountFromName(coreAccountInfo.getEmail());
+                Account account = CoreAccountInfo.getAndroidAccountFrom(coreAccountInfo);
                 @CapabilityResponse
                 int capability =
                         mDelegate.hasCapability(
@@ -337,9 +309,10 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
      *     If there is an issue while creating the intent, callback will receive null.
      */
     @Override
-    public void createAddAccountIntent(Callback<@Nullable Intent> callback) {
+    public void createAddAccountIntent(
+            @Nullable String prefilledEmail, Callback<@Nullable Intent> callback) {
         RecordUserAction.record("Signin_AddAccountToDevice");
-        mDelegate.createAddAccountIntent(callback);
+        mDelegate.createAddAccountIntent(prefilledEmail, callback);
     }
 
     /**
@@ -363,12 +336,10 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         return mDidAccountFetchSucceed;
     }
 
-    /**
-     * Fetches gaia ids, creates account objects and updates {@link #mCoreAccountInfosPromise} and
-     * {@link #mAccountsPromise}.
-     */
+    /** Fetches gaia ids, creates account objects and updates {@link #mAccountsPromise}. */
     @MainThread
     private void fetchGaiaIdsAndUpdateCoreAccountInfos() {
+        assert !SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled();
         ThreadUtils.assertOnUiThread();
         if (mFetchGaiaIdsTask != null) {
             // Cancel previous fetch task as it is obsolete now.
@@ -381,6 +352,7 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     }
 
     private void onAccountsUpdated() {
+        assert !SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled();
         ThreadUtils.assertOnUiThread();
         new AsyncTask<@Nullable List<Account>>() {
             @Override
@@ -432,6 +404,61 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         }.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
     }
 
+    private void onPlatformAccountsUpdated() {
+        assert SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled();
+        ThreadUtils.assertOnUiThread();
+        new AsyncTask<@Nullable List<PlatformAccount>>() {
+            @Override
+            protected @Nullable List<PlatformAccount> doInBackground() {
+                try {
+                    return mDelegate.getPlatformAccountsSynchronous();
+                } catch (AccountManagerDelegateException delegateException) {
+                    Log.e(TAG, "Error fetching accounts from the delegate.", delegateException);
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(@Nullable List<PlatformAccount> allAccounts) {
+                mDidAccountFetchSucceed = true;
+                if (allAccounts == null) {
+                    mDidAccountFetchSucceed = false;
+                    if (shouldRetry()) {
+                        // Wait for a fixed amount of time then try to fetch the accounts again.
+                        PostTask.postDelayedTask(
+                                TaskTraits.UI_USER_VISIBLE,
+                                () -> {
+                                    onPlatformAccountsUpdated();
+                                },
+                                GET_ACCOUNTS_BACKOFF_DELAY);
+                        return;
+                    } else {
+                        // We shouldn't wait indefinitely for the account fetching to succeed, at it
+                        // might block certain features. Fall back to an empty list to allow the
+                        // user to proceed.
+                        allAccounts =
+                                mAllPlatformAccounts.get() == null
+                                        ? List.of()
+                                        : mAllPlatformAccounts.get();
+                    }
+                }
+                if (mNumberOfRetries != 0) {
+                    RecordHistogram.recordBooleanHistogram(
+                            "Signin.GetAccountsBackoffSuccess", mDidAccountFetchSucceed);
+                    if (mDidAccountFetchSucceed) {
+                        RecordHistogram.recordExactLinearHistogram(
+                                "Signin.GetAccountsBackoffRetries",
+                                mNumberOfRetries,
+                                MAXIMUM_RETRIES + 1);
+                    }
+                }
+                mNumberOfRetries = 0;
+                mAllPlatformAccounts.set(allAccounts);
+                updateAccountInfos();
+            }
+        }.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
+    }
+
     private boolean shouldRetry() {
         if (mNumberOfRetries < MAXIMUM_RETRIES) {
             mNumberOfRetries += 1;
@@ -442,18 +469,69 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
 
     private void onAccountRestrictionPatternsUpdated(List<PatternMatcher> patternMatchers) {
         mAccountRestrictionPatterns.set(patternMatchers);
+        if (SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled()) {
+            updateAccountInfos();
+            return;
+        }
         updateAccounts();
     }
 
     @MainThread
     private void updateAccounts() {
+        assert !SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled();
         if (mAllAccounts.get() == null || mAccountRestrictionPatterns.get() == null) {
             return;
         }
         fetchGaiaIdsAndUpdateCoreAccountInfos();
     }
 
+    @MainThread
+    private void updateAccountInfos() {
+        assert SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled();
+
+        if (mAllPlatformAccounts.get() == null || mAccountRestrictionPatterns.get() == null) {
+            return;
+        }
+
+        List<AccountInfo> accounts = new ArrayList<>();
+        for (PlatformAccount account : getFilteredPlatformAccounts()) {
+            accounts.add(new AccountInfo.Builder(account.getEmail(), account.getId()).build());
+        }
+
+        if (mAccountsPromise.isFulfilled()) {
+            mAccountsPromise = Promise.fulfilled(accounts);
+        } else {
+            mAccountsPromise.fulfill(accounts);
+        }
+
+        for (AccountsChangeObserver observer : mObservers) {
+            observer.onCoreAccountInfosChanged();
+        }
+    }
+
+    private List<PlatformAccount> getFilteredPlatformAccounts() {
+        assert SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled();
+        List<PlatformAccount> filteredAccounts = new ArrayList<>();
+        List<PatternMatcher> restrictions = assumeNonNull(mAccountRestrictionPatterns.get());
+        for (PlatformAccount account : assumeNonNull(mAllPlatformAccounts.get())) {
+            String email = account.getEmail();
+            boolean matches = restrictions.isEmpty();
+            for (PatternMatcher matcher : restrictions) {
+                if (matches) {
+                    break;
+                }
+                matches = matcher.matches(email);
+            }
+            if (matches) {
+                filteredAccounts.add(account);
+            }
+        }
+
+        return filteredAccounts;
+    }
+
     private List<String> getFilteredAccountEmails() {
+        assert !SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled();
         List<String> ret = new ArrayList<>();
         List<PatternMatcher> restrictions = mAccountRestrictionPatterns.get();
         assumeNonNull(restrictions);
@@ -485,9 +563,12 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     }
 
     public void resetAccountsForTesting() {
-        mCoreAccountInfosPromise = new Promise<>();
         mAccountsPromise = new Promise<>();
         mAllAccounts.set(null);
+        if (SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled()) {
+            updateAccountInfos();
+            return;
+        }
         updateAccounts();
     }
 
@@ -501,6 +582,7 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         private final List<String> mEmails;
 
         GetAccountAsyncTask(List<String> emails) {
+            assert !SigninFeatureMap.sMigrateAccountManagerDelegate.isEnabled();
             mEmails = emails;
         }
 
@@ -533,20 +615,15 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
                 fetchGaiaIdsAndUpdateCoreAccountInfos();
                 return;
             }
-            List<CoreAccountInfo> coreAccountInfos = new ArrayList<>();
             List<AccountInfo> accounts = new ArrayList<>();
             for (int index = 0; index < mEmails.size(); index++) {
                 String email = mEmails.get(index);
                 GaiaId gaiaId = gaiaIds.get(index);
-                coreAccountInfos.add(CoreAccountInfo.createFromEmailAndGaiaId(email, gaiaId));
                 accounts.add(new AccountInfo.Builder(email, gaiaId).build());
             }
-            assert mCoreAccountInfosPromise.isFulfilled() == mAccountsPromise.isFulfilled();
-            if (mCoreAccountInfosPromise.isFulfilled()) {
-                mCoreAccountInfosPromise = Promise.fulfilled(coreAccountInfos);
+            if (mAccountsPromise.isFulfilled()) {
                 mAccountsPromise = Promise.fulfilled(accounts);
             } else {
-                mCoreAccountInfosPromise.fulfill(coreAccountInfos);
                 mAccountsPromise.fulfill(accounts);
             }
             for (AccountsChangeObserver observer : mObservers) {

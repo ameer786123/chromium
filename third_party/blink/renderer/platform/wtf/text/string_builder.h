@@ -36,7 +36,7 @@
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_export.h"
 
-namespace WTF {
+namespace blink {
 
 class WTF_EXPORT StringBuilder {
   USING_FAST_MALLOC(StringBuilder);
@@ -152,7 +152,7 @@ class WTF_EXPORT StringBuilder {
 
   void AppendNumber(double, unsigned precision = 6);
 
-  // Like WTF::String::Format, supports Latin-1 only.
+  // Like blink::String::Format, supports Latin-1 only.
   PRINTF_FORMAT(2, 3)
   void AppendFormat(const char* format, ...);
 
@@ -313,8 +313,6 @@ inline bool operator!=(const String& a, const StringBuilder& b) {
   return !Equal(b, a);
 }
 
-}  // namespace WTF
-
-using WTF::StringBuilder;
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_STRING_BUILDER_H_

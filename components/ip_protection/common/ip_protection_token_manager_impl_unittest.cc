@@ -14,22 +14,33 @@
 #include <utility>
 #include <vector>
 
+#include "base/notreached.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "components/ip_protection/common/ip_protection_core.h"
+#include "components/ip_protection/common/ip_protection_core_host_remote.h"
 #include "components/ip_protection/common/ip_protection_data_types.h"
 #include "components/ip_protection/common/ip_protection_telemetry.h"
 #include "components/ip_protection/common/ip_protection_token_fetcher.h"
 #include "components/ip_protection/common/ip_protection_token_manager.h"
+#include "components/ip_protection/mojom/core.mojom.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "net/base/features.h"
+#include "net/base/schemeful_site.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
+#include "url/gurl.h"
 
 namespace ip_protection {
 
 namespace {
+
+using ::testing::ElementsAre;
+using ::testing::Pair;
 
 constexpr char kGeoChangeTokenPresence[] =
     "NetworkService.IpProtection.GeoChangeTokenPresence";
@@ -47,6 +58,20 @@ constexpr char kTokenBatchGenerationTimeHistogram[] =
     "NetworkService.IpProtection.TokenBatchGenerationTime";
 constexpr char kGetAuthTokenResultForGeoHistogram[] =
     "NetworkService.IpProtection.GetAuthTokenResultForGeo";
+constexpr char kProxyATokenCountIssuedHistogram[] =
+    "NetworkService.IpProtection.ProxyA.TokenCount.Issued";
+constexpr char kProxyATokenCountSpentHistogram[] =
+    "NetworkService.IpProtection.ProxyA.TokenCount.Spent";
+constexpr char kProxyATokenCountExpiredHistogram[] =
+    "NetworkService.IpProtection.ProxyA.TokenCount.Expired";
+constexpr char kProxyBTokenCountIssuedHistogram[] =
+    "NetworkService.IpProtection.ProxyB.TokenCount.Issued";
+constexpr char kProxyBTokenCountSpentHistogram[] =
+    "NetworkService.IpProtection.ProxyB.TokenCount.Spent";
+constexpr char kProxyBTokenCountExpiredHistogram[] =
+    "NetworkService.IpProtection.ProxyB.TokenCount.Expired";
+constexpr char kProxyATokenCountOrphanedHistogram[] =
+    "NetworkService.IpProtection.ProxyA.TokenCount.Orphaned";
 
 constexpr base::TimeDelta kTokenLimitExceededDelay = base::Minutes(10);
 constexpr base::TimeDelta kTokenRateMeasurementInterval = base::Minutes(5);
@@ -140,8 +165,8 @@ class MockIpProtectionCore : public IpProtectionCore {
     return std::nullopt;
   }
   std::optional<std::string> GetProbabilisticRevealToken(
-      const std::string& top_level,
-      const std::string& third_party) override {
+      const GURL& url,
+      const net::SchemefulSite& top_frame_site) override {
     NOTREACHED();
   }
   bool IsProxyListAvailable() override { return false; }
@@ -158,6 +183,43 @@ class MockIpProtectionCore : public IpProtectionCore {
       const GURL& request_url) override {
     return false;
   }
+  IpProxyStatus GetIpProxyStatus() override {
+    return IpProxyStatus::kUnavailable;
+  }
+};
+
+class FakeCoreHost : public ip_protection::mojom::CoreHost {
+ public:
+  void TryGetAuthTokens(uint32_t batch_size,
+                        ip_protection::ProxyLayer proxy_layer,
+                        ip_protection::mojom::CoreHost::TryGetAuthTokensCallback
+                            callback) override {
+    NOTREACHED();
+  }
+  void GetProxyConfig(ip_protection::mojom::CoreHost::GetProxyConfigCallback
+                          callback) override {
+    NOTREACHED();
+  }
+  void TryGetProbabilisticRevealTokens(
+      ip_protection::mojom::CoreHost::TryGetProbabilisticRevealTokensCallback
+          callback) override {
+    NOTREACHED();
+  }
+  void RecycleTokens(ip_protection::ProxyLayer proxy_layer,
+                     const std::vector<BlindSignedAuthToken>& tokens) override {
+    returned_tokens_[proxy_layer] = tokens;
+  }
+
+  const absl::flat_hash_map<ip_protection::ProxyLayer,
+                            std::vector<BlindSignedAuthToken>>&
+  returned_tokens() {
+    return returned_tokens_;
+  }
+
+ private:
+  absl::flat_hash_map<ip_protection::ProxyLayer,
+                      std::vector<BlindSignedAuthToken>>
+      returned_tokens_;
 };
 
 struct HistogramState {
@@ -192,11 +254,16 @@ class IpProtectionTokenManagerImplTest : public testing::Test {
           }
         });
 
+    auto core_host_remote = base::MakeRefCounted<IpProtectionCoreHostRemote>(
+        core_host_receiver_.BindNewPipeAndPassRemote());
+
     ipp_proxy_a_token_manager_ = std::make_unique<IpProtectionTokenManagerImpl>(
-        &mock_core_, std::move(ipp_proxy_a_token_fetcher), ProxyLayer::kProxyA,
+        &mock_core_, core_host_remote, std::move(ipp_proxy_a_token_fetcher),
+        ProxyLayer::kProxyA,
         /* disable_cache_management_for_testing=*/true);
     ipp_proxy_b_token_manager_ = std::make_unique<IpProtectionTokenManagerImpl>(
-        &mock_core_, std::move(ipp_proxy_b_token_fetcher), ProxyLayer::kProxyB,
+        &mock_core_, core_host_remote, std::move(ipp_proxy_b_token_fetcher),
+        ProxyLayer::kProxyB,
         /* disable_cache_management_for_testing=*/true);
 
     // Default to disabling token expiration fuzzing.
@@ -266,6 +333,9 @@ class IpProtectionTokenManagerImplTest : public testing::Test {
   const base::Time kPastExpiration = base::Time::Now() - base::Hours(1);
 
   testing::NiceMock<MockIpProtectionCore> mock_core_;
+  FakeCoreHost fake_core_host_;
+  mojo::Receiver<ip_protection::mojom::CoreHost> core_host_receiver_{
+      &fake_core_host_};
 
   std::unique_ptr<IpProtectionTokenManagerImpl> ipp_proxy_a_token_manager_;
   std::unique_ptr<IpProtectionTokenManagerImpl> ipp_proxy_b_token_manager_;
@@ -275,6 +345,51 @@ class IpProtectionTokenManagerImplTest : public testing::Test {
 
   base::HistogramTester histogram_tester_;
 };
+
+TEST_F(IpProtectionTokenManagerImplTest,
+       DtorWithNoTokensDoesNotCallRecycleTokens) {
+  // No orphaned tokens should be logged if the cache is empty.
+  ipp_proxy_a_token_fetcher_ = nullptr;
+  ipp_proxy_a_token_manager_.reset();
+  core_host_receiver_.FlushForTesting();
+  EXPECT_TRUE(fake_core_host_.returned_tokens().empty());
+  histogram_tester_.ExpectTotalCount(kProxyATokenCountOrphanedHistogram, 0);
+}
+
+TEST_F(IpProtectionTokenManagerImplTest,
+       DtorWithOrphanedTokensCallsRecycleTokens) {
+  // Add a token to the cache.
+  auto tokens = TokenBatch(1, kFutureExpiration, kMountainViewGeo);
+  ipp_proxy_a_token_fetcher_->ExpectTryGetAuthTokensCall(expected_batch_size_,
+                                                         tokens);
+  CallTryGetAuthTokensAndWait(ProxyLayer::kProxyA);
+
+  // Destroy the token manager and verify that the orphaned token is logged and
+  // returned.
+  ipp_proxy_a_token_fetcher_ = nullptr;
+  ipp_proxy_a_token_manager_.reset();
+  core_host_receiver_.FlushForTesting();
+  EXPECT_THAT(fake_core_host_.returned_tokens(),
+              ElementsAre(Pair(ProxyLayer::kProxyA, tokens)));
+  histogram_tester_.ExpectUniqueSample(kProxyATokenCountOrphanedHistogram, 1,
+                                       1);
+}
+
+TEST_F(IpProtectionTokenManagerImplTest,
+       DtorWithExpiredTokensDoesNotCallRecycleTokens) {
+  // Add an expired token to the cache.
+  ipp_proxy_a_token_fetcher_->ExpectTryGetAuthTokensCall(
+      expected_batch_size_, TokenBatch(1, kPastExpiration, kMountainViewGeo));
+  CallTryGetAuthTokensAndWait(ProxyLayer::kProxyA);
+
+  // Destroy the token manager and verify that no orphaned tokens are logged or
+  // returned.
+  ipp_proxy_a_token_fetcher_ = nullptr;
+  ipp_proxy_a_token_manager_.reset();
+  core_host_receiver_.FlushForTesting();
+  EXPECT_TRUE(fake_core_host_.returned_tokens().empty());
+  histogram_tester_.ExpectTotalCount(kProxyATokenCountOrphanedHistogram, 0);
+}
 
 // `IsAuthTokenAvailable()` returns false on an empty cache.
 TEST_F(IpProtectionTokenManagerImplTest, IsAuthTokenAvailableFalseEmpty) {
@@ -471,7 +586,8 @@ TEST_F(IpProtectionTokenManagerImplTest, SkipExpiredTokens) {
   CallTryGetAuthTokensAndWait(ProxyLayer::kProxyA);
   ASSERT_TRUE(ipp_proxy_a_token_fetcher_->GotAllExpectedMockCalls());
 
-  auto got_token = ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
+  std::optional<BlindSignedAuthToken> got_token =
+      ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
   EXPECT_EQ(got_token.value().token, "good-token");
   EXPECT_EQ(got_token.value().expiration, kFutureExpiration);
   EXPECT_EQ(got_token.value().geo_hint, kMountainViewGeo);
@@ -489,7 +605,8 @@ TEST_F(IpProtectionTokenManagerImplTest, TokenExpirationFuzzed) {
   CallTryGetAuthTokensAndWait(ProxyLayer::kProxyA);
   ASSERT_TRUE(ipp_proxy_a_token_fetcher_->GotAllExpectedMockCalls());
 
-  auto got_token = ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
+  std::optional<BlindSignedAuthToken> got_token =
+      ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
   EXPECT_EQ(got_token.value().token, "token-0");
   EXPECT_LT(got_token.value().expiration, kFutureExpiration);
   EXPECT_EQ(got_token.value().geo_hint, kMountainViewGeo);
@@ -502,8 +619,9 @@ TEST_F(IpProtectionTokenManagerImplTest, TokenExpirationFuzzed) {
 TEST_F(IpProtectionTokenManagerImplTest, NullGetter) {
   MockIpProtectionCore core;
   auto ipp_token_manager = IpProtectionTokenManagerImpl(
-      &core, nullptr, ProxyLayer::kProxyA,
-      /* disable_cache_management_for_testing=*/true);
+      &core, /*core_host_remote=*/nullptr, /*fetcher=*/nullptr,
+      ProxyLayer::kProxyA,
+      /*disable_cache_management_for_testing=*/true);
 
   EXPECT_FALSE(ipp_token_manager.IsAuthTokenAvailable(kMountainViewGeoId));
 
@@ -528,7 +646,7 @@ TEST_F(IpProtectionTokenManagerImplTest, ProxyATokenSpendRate) {
 
   // Get four tokens from the batch.
   for (int i = 0; i < 4; i++) {
-    auto got_token =
+    std::optional<BlindSignedAuthToken> got_token =
         ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
     EXPECT_EQ(got_token.value().token, base::StringPrintf("token-%d", i));
     EXPECT_EQ(got_token.value().expiration, kFutureExpiration);
@@ -541,7 +659,8 @@ TEST_F(IpProtectionTokenManagerImplTest, ProxyATokenSpendRate) {
   histogram_tester_.ExpectUniqueSample(kProxyATokenSpendRateHistogram, 48, 1);
 
   // Get the remaining token in the batch.
-  auto got_token = ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
+  std::optional<BlindSignedAuthToken> got_token =
+      ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
   EXPECT_EQ(got_token.value().token, "token-4");
   EXPECT_EQ(got_token.value().expiration, kFutureExpiration);
 
@@ -566,7 +685,8 @@ TEST_F(IpProtectionTokenManagerImplTest, ProxyATokenExpirationRate) {
   ASSERT_TRUE(ipp_proxy_a_token_fetcher_->GotAllExpectedMockCalls());
 
   // Try to get a token, which will incidentally record the expired tokens.
-  auto got_token = ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
+  std::optional<BlindSignedAuthToken> got_token =
+      ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
   EXPECT_FALSE(got_token);
 
   // Fast-forward to run the measurement timer.
@@ -597,7 +717,7 @@ TEST_F(IpProtectionTokenManagerImplTest, ProxyBTokenSpendRate) {
 
   // Get four tokens from the batch.
   for (int i = 0; i < 4; i++) {
-    auto got_token =
+    std::optional<BlindSignedAuthToken> got_token =
         ipp_proxy_b_token_manager_->GetAuthToken(kMountainViewGeoId);
     EXPECT_EQ(got_token.value().token, base::StringPrintf("token-%d", i));
     EXPECT_EQ(got_token.value().expiration, kFutureExpiration);
@@ -610,7 +730,8 @@ TEST_F(IpProtectionTokenManagerImplTest, ProxyBTokenSpendRate) {
   histogram_tester_.ExpectUniqueSample(kProxyBTokenSpendRateHistogram, 48, 1);
 
   // Get the remaining token in the batch.
-  auto got_token = ipp_proxy_b_token_manager_->GetAuthToken(kMountainViewGeoId);
+  std::optional<BlindSignedAuthToken> got_token =
+      ipp_proxy_b_token_manager_->GetAuthToken(kMountainViewGeoId);
   EXPECT_EQ(got_token.value().token, "token-4");
   EXPECT_EQ(got_token.value().expiration, kFutureExpiration);
 
@@ -635,7 +756,8 @@ TEST_F(IpProtectionTokenManagerImplTest, ProxyBTokenExpirationRate) {
   ASSERT_TRUE(ipp_proxy_b_token_fetcher_->GotAllExpectedMockCalls());
 
   // Try to get a token, which will incidentally record the expired tokens.
-  auto got_token = ipp_proxy_b_token_manager_->GetAuthToken(kMountainViewGeoId);
+  std::optional<BlindSignedAuthToken> got_token =
+      ipp_proxy_b_token_manager_->GetAuthToken(kMountainViewGeoId);
   EXPECT_FALSE(got_token);
 
   // Fast-forward to run the measurement timer.
@@ -778,7 +900,8 @@ TEST_F(IpProtectionTokenManagerImplTest, RefillAfterExpiration) {
       ipp_proxy_a_token_manager_->IsAuthTokenAvailable(kMountainViewGeoId));
 
   // The un-expired token should be returned.
-  auto got_token = ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
+  std::optional<BlindSignedAuthToken> got_token =
+      ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
   EXPECT_EQ(got_token.value().token, "exp3");
 
   // Histogram should have no samples because after the initial fill there was
@@ -1107,5 +1230,129 @@ TEST_F(IpProtectionTokenManagerImplTest,
   histogram_tester_.ExpectBucketCount(kGeoChangeTokenPresence, true, 1);
   histogram_tester_.ExpectBucketCount(kGeoChangeTokenPresence, false, 1);
 }
+
+// Verify that requesting tokens logs the correct histogram count.
+TEST_F(IpProtectionTokenManagerImplTest, TokenCountRequested) {
+  const int batch_size = 5;
+  ipp_proxy_a_token_fetcher_->ExpectTryGetAuthTokensCall(
+      expected_batch_size_,
+      TokenBatch(batch_size, kFutureExpiration, kMountainViewGeo));
+  CallTryGetAuthTokensAndWait(ProxyLayer::kProxyA);
+  ASSERT_TRUE(ipp_proxy_a_token_fetcher_->GotAllExpectedMockCalls());
+
+  // Verify that 5 tokens were recorded as issued for ProxyA.
+  histogram_tester_.ExpectUniqueSample(kProxyATokenCountIssuedHistogram,
+                                       batch_size, 1);
+  // Verify other histograms were not recorded.
+  histogram_tester_.ExpectTotalCount(kProxyATokenCountSpentHistogram, 0);
+  histogram_tester_.ExpectTotalCount(kProxyATokenCountExpiredHistogram, 0);
+  histogram_tester_.ExpectTotalCount(kProxyBTokenCountIssuedHistogram, 0);
+}
+
+// Verify that spending a token logs the correct histogram count.
+TEST_F(IpProtectionTokenManagerImplTest, TokenCountSpent) {
+  // Fill the cache.
+  ipp_proxy_a_token_fetcher_->ExpectTryGetAuthTokensCall(
+      expected_batch_size_, TokenBatch(1, kFutureExpiration, kMountainViewGeo));
+  CallTryGetAuthTokensAndWait(ProxyLayer::kProxyA);
+  ASSERT_TRUE(ipp_proxy_a_token_fetcher_->GotAllExpectedMockCalls());
+  histogram_tester_.ExpectUniqueSample(kProxyATokenCountIssuedHistogram, 1, 1);
+
+  // Get the token.
+  std::optional<BlindSignedAuthToken> got_token =
+      ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
+  ASSERT_TRUE(got_token);
+
+  // Verify that 1 token was recorded as spent for ProxyA.
+  histogram_tester_.ExpectUniqueSample(kProxyATokenCountSpentHistogram, 1, 1);
+  // Verify other histograms were not recorded (beyond the initial issue).
+  histogram_tester_.ExpectTotalCount(kProxyATokenCountExpiredHistogram, 0);
+  histogram_tester_.ExpectTotalCount(kProxyBTokenCountSpentHistogram, 0);
+}
+
+// Verify that expired tokens log the correct histogram count.
+TEST_F(IpProtectionTokenManagerImplTest, TokenCountExpired) {
+  const int expired_count = 3;
+  // Fill the cache with expired tokens.
+  ipp_proxy_a_token_fetcher_->ExpectTryGetAuthTokensCall(
+      expected_batch_size_,
+      TokenBatch(expired_count, kPastExpiration, kMountainViewGeo));
+  CallTryGetAuthTokensAndWait(ProxyLayer::kProxyA);
+  ASSERT_TRUE(ipp_proxy_a_token_fetcher_->GotAllExpectedMockCalls());
+  histogram_tester_.ExpectUniqueSample(kProxyATokenCountIssuedHistogram,
+                                       expired_count, 1);
+
+  // Attempt to get a token, which triggers RemoveExpiredTokens.
+  std::optional<BlindSignedAuthToken> got_token =
+      ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId);
+  ASSERT_FALSE(got_token);
+
+  // Verify that 3 tokens were recorded as expired (each logged individually).
+  histogram_tester_.ExpectUniqueSample(kProxyATokenCountExpiredHistogram,
+                                       expired_count,
+                                       /*expected_bucket_count=*/1);
+  // Verify other histograms were not recorded (beyond the initial issue).
+  histogram_tester_.ExpectTotalCount(kProxyATokenCountSpentHistogram, 0);
+  histogram_tester_.ExpectTotalCount(kProxyBTokenCountExpiredHistogram, 0);
+}
+
+// Verify that events for different proxy layers are recorded separately.
+TEST_F(IpProtectionTokenManagerImplTest, TokenCountProxyLayerSeparation) {
+  // Issue 5 tokens for Proxy A.
+  ipp_proxy_a_token_fetcher_->ExpectTryGetAuthTokensCall(
+      expected_batch_size_, TokenBatch(5, kFutureExpiration, kMountainViewGeo));
+  CallTryGetAuthTokensAndWait(ProxyLayer::kProxyA);
+  ASSERT_TRUE(ipp_proxy_a_token_fetcher_->GotAllExpectedMockCalls());
+
+  // Issue 3 tokens for Proxy B.
+  ipp_proxy_b_token_fetcher_->ExpectTryGetAuthTokensCall(
+      expected_batch_size_, TokenBatch(3, kFutureExpiration, kMountainViewGeo));
+  CallTryGetAuthTokensAndWait(ProxyLayer::kProxyB);
+  ASSERT_TRUE(ipp_proxy_b_token_fetcher_->GotAllExpectedMockCalls());
+
+  // Spend 1 token for Proxy A.
+  ASSERT_TRUE(ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId));
+
+  // Spend 1 token for Proxy B.
+  ASSERT_TRUE(ipp_proxy_b_token_manager_->GetAuthToken(kMountainViewGeoId));
+
+  // Verify Proxy A counts.
+  histogram_tester_.ExpectUniqueSample(kProxyATokenCountIssuedHistogram, 5, 1);
+  histogram_tester_.ExpectUniqueSample(kProxyATokenCountSpentHistogram, 1, 1);
+  histogram_tester_.ExpectTotalCount(kProxyATokenCountExpiredHistogram, 0);
+
+  // Verify Proxy B counts.
+  histogram_tester_.ExpectUniqueSample(kProxyBTokenCountIssuedHistogram, 3, 1);
+  histogram_tester_.ExpectUniqueSample(kProxyBTokenCountSpentHistogram, 1, 1);
+  histogram_tester_.ExpectTotalCount(kProxyBTokenCountExpiredHistogram, 0);
+}
+
+// Verify multiple event types are recorded correctly within one manager.
+TEST_F(IpProtectionTokenManagerImplTest, TokenCountMultipleEvents) {
+  // Issue 5 tokens, 2 of which are already expired.
+  std::vector<BlindSignedAuthToken> tokens =
+      TokenBatch(3, kFutureExpiration, kMountainViewGeo);
+  std::vector<BlindSignedAuthToken> expired_tokens =
+      TokenBatch(2, kPastExpiration, kMountainViewGeo);
+  tokens.insert(tokens.end(), std::make_move_iterator(expired_tokens.begin()),
+                std::make_move_iterator(expired_tokens.end()));
+
+  ipp_proxy_a_token_fetcher_->ExpectTryGetAuthTokensCall(expected_batch_size_,
+                                                         std::move(tokens));
+  CallTryGetAuthTokensAndWait(ProxyLayer::kProxyA);
+  ASSERT_TRUE(ipp_proxy_a_token_fetcher_->GotAllExpectedMockCalls());
+
+  // Spend 1 token (this also triggers removal of expired tokens).
+  ASSERT_TRUE(ipp_proxy_a_token_manager_->GetAuthToken(kMountainViewGeoId));
+
+  // Verify counts.
+  histogram_tester_.ExpectUniqueSample(kProxyATokenCountIssuedHistogram, 5,
+                                       1);  // 3 good + 2 expired
+  histogram_tester_.ExpectUniqueSample(kProxyATokenCountSpentHistogram, 1, 1);
+  histogram_tester_.ExpectUniqueSample(
+      kProxyATokenCountExpiredHistogram, /*sample=*/2,
+      /*expected_bucket_count=*/1);  // 2 expired tokens removed
+}
+
 }  // namespace
 }  // namespace ip_protection

@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "components/exo/wayland/clients/blur.h"
 
@@ -220,7 +216,7 @@ void Blur::Run(double sigma_x,
 
       // Restore blur surfaces for next frame.
       std::swap(content_surfaces, blur_surfaces);
-      std::reverse(blur_surfaces.begin(), blur_surfaces.end());
+      std::ranges::reverse(blur_surfaces);
     } else {  // !blur_filter
       SkCanvas* canvas = buffer->sk_surface->getCanvas();
       DrawContents(grid_image_.get(), cell_size, elapsed_time, canvas);

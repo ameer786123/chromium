@@ -42,7 +42,7 @@ BASE_FEATURE(kPeriodicSyncPermissionForDefaultSearchEngine,
 PeriodicBackgroundSyncPermissionContext::
     PeriodicBackgroundSyncPermissionContext(
         content::BrowserContext* browser_context)
-    : PermissionContextBase(
+    : ContentSettingPermissionContextBase(
           browser_context,
           ContentSettingsType::PERIODIC_BACKGROUND_SYNC,
           network::mojom::PermissionsPolicyFeature::kNotFound) {
@@ -92,7 +92,7 @@ GURL PeriodicBackgroundSyncPermissionContext::GetDefaultSearchEngineUrl()
 }
 
 ContentSetting
-PeriodicBackgroundSyncPermissionContext::GetPermissionStatusInternal(
+PeriodicBackgroundSyncPermissionContext::GetContentSettingStatusInternal(
     content::RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
     const GURL& embedding_origin) const {
@@ -130,7 +130,7 @@ PeriodicBackgroundSyncPermissionContext::GetPermissionStatusInternal(
 }
 
 void PeriodicBackgroundSyncPermissionContext::DecidePermission(
-    permissions::PermissionRequestData request_data,
+    std::unique_ptr<permissions::PermissionRequestData> request_data,
     permissions::BrowserPermissionCallback callback) {
   // The user should never be prompted to authorize Periodic Background Sync
   // from PeriodicBackgroundSyncPermissionContext.
@@ -138,20 +138,16 @@ void PeriodicBackgroundSyncPermissionContext::DecidePermission(
 }
 
 void PeriodicBackgroundSyncPermissionContext::NotifyPermissionSet(
-    const permissions::PermissionRequestID& id,
-    const GURL& requesting_origin,
-    const GURL& embedding_origin,
+    const permissions::PermissionRequestData& request_data,
     permissions::BrowserPermissionCallback callback,
     bool persist,
-    ContentSetting content_setting,
-    bool is_one_time,
+    PermissionDecision decision,
     bool is_final_decision) {
   DCHECK(!persist);
   DCHECK(is_final_decision);
 
-  permissions::PermissionContextBase::NotifyPermissionSet(
-      id, requesting_origin, embedding_origin, std::move(callback), persist,
-      content_setting, is_one_time, is_final_decision);
+  permissions::ContentSettingPermissionContextBase::NotifyPermissionSet(
+      request_data, std::move(callback), persist, decision, is_final_decision);
 }
 
 void PeriodicBackgroundSyncPermissionContext::OnContentSettingChanged(
@@ -163,7 +159,7 @@ void PeriodicBackgroundSyncPermissionContext::OnContentSettingChanged(
           ContentSettingsType::PERIODIC_BACKGROUND_SYNC)) {
     return;
   }
-  permissions::PermissionContextBase::OnContentSettingChanged(
+  permissions::ContentSettingPermissionContextBase::OnContentSettingChanged(
       primary_pattern, secondary_pattern,
       ContentSettingsTypeSet(ContentSettingsType::PERIODIC_BACKGROUND_SYNC));
 }

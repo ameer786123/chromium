@@ -14,15 +14,12 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/views/bubble/webui_bubble_dialog_view.h"
 #include "chrome/browser/ui/webui/ash/emoji/bubble_utils.h"
-#include "chrome/browser/ui/webui/ash/emoji/seal_utils.h"
 #include "chrome/browser/ui/webui/sanitized_image_source.h"
 #include "chrome/browser/ui/webui/top_chrome/webui_contents_wrapper.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/emoji_picker_resources.h"
 #include "chrome/grit/emoji_picker_resources_map.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/seal_resources.h"
-#include "chrome/grit/seal_resources_map.h"
 #include "chromeos/ash/components/emoji/grit/emoji_map.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_ui.h"
@@ -58,7 +55,7 @@ class EmojiBubbleDialogView : public WebUIBubbleDialogView {
     // float and PIP windows for example. See crbug.com/402617739 for more
     // details.
     display::Display display =
-        display::Screen::GetScreen()->GetDisplayMatching(caret_bounds);
+        display::Screen::Get()->GetDisplayMatching(caret_bounds);
     aura::Window* root_window =
         ash::Shell::GetRootWindowForDisplayId(display.id());
     CHECK(root_window);
@@ -127,20 +124,6 @@ EmojiUI::EmojiUI(content::WebUI* web_ui)
                               IDR_EMOJI_PICKER_INDEX_HTML);
   source->AddResourcePaths(kEmoji);
 
-  // Add seal extra resources.
-  if (SealUtils::ShouldEnable()) {
-    source->AddResourcePaths(kSealResources);
-  }
-
-  // Some web components defined in seal extra resources are based on lit; so
-  // we override content security policy here to make them work.
-  source->OverrideContentSecurityPolicy(
-      network::mojom::CSPDirectiveName::TrustedTypes,
-      "trusted-types goog#html parse-html-subset sanitize-inner-html "
-      "static-types lit-html lottie-worker-script-loader webui-test-script "
-      "webui-test-html print-preview-plugin-loader polymer-html-literal "
-      "polymer-template-event-attribute-policy;");
-
   Profile* profile = Profile::FromWebUI(web_ui);
   content::URLDataSource::Add(profile,
                               std::make_unique<SanitizedImageSource>(profile));
@@ -161,7 +144,7 @@ bool EmojiUI::ShouldShow(const ui::TextInputClient* input_client,
 void EmojiUI::Show(ui::EmojiPickerCategory category,
                    ui::EmojiPickerFocusBehavior focus_behavior,
                    const std::string& initial_query) {
-  if (display::Screen::GetScreen()->InTabletMode()) {
+  if (display::Screen::Get()->InTabletMode()) {
     ui::ShowTabletModeEmojiPanel();
     return;
   }
@@ -251,18 +234,6 @@ void EmojiUI::BindInterface(
     mojo::PendingReceiver<new_window_proxy::mojom::NewWindowProxy> receiver) {
   new_window_proxy_ =
       std::make_unique<ash::NewWindowProxy>(std::move(receiver));
-}
-
-void EmojiUI::BindInterface(
-    mojo::PendingReceiver<seal::mojom::SealService> receiver) {
-  if (SealUtils::ShouldEnable()) {
-    Profile* profile = Profile::FromWebUI(web_ui());
-    manta::MantaService* manta_service =
-        manta::MantaServiceFactory::GetForProfile(profile);
-    seal_service_ = std::make_unique<SealService>(
-        /*receiver=*/std::move(receiver),
-        /*snapper_provider=*/manta_service->CreateSnapperProvider());
-  }
 }
 
 void EmojiUI::CreatePageHandler(

@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/component_export.h"
+#include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/geometry/insets.h"
@@ -16,6 +17,7 @@
 #include "ui/gfx/native_widget_types.h"
 
 namespace gfx {
+class DisplayColorSpacesRef;
 class Size;
 class PointF;
 }  // namespace gfx
@@ -78,14 +80,18 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowDelegate {
   // This is used by OnStateChanged and currently only by ozone/wayland.
   struct COMPONENT_EXPORT(PLATFORM_WINDOW) State {
     bool operator==(const State& rhs) const {
-      return std::tie(window_state, bounds_dip, size_px, window_scale, ui_scale,
-                      occlusion_state) ==
-             std::tie(rhs.window_state, rhs.bounds_dip, rhs.size_px,
-                      rhs.window_scale, rhs.ui_scale, rhs.occlusion_state);
+      return std::tie(window_state, tiled_edges, bounds_dip, size_px,
+                      window_scale, ui_scale, occlusion_state) ==
+             std::tie(rhs.window_state, tiled_edges, rhs.bounds_dip,
+                      rhs.size_px, rhs.window_scale, rhs.ui_scale,
+                      rhs.occlusion_state);
     }
 
     // Current platform window state.
     PlatformWindowState window_state = PlatformWindowState::kUnknown;
+
+    // The tiled edges of the window.
+    WindowTiledEdges tiled_edges;
 
     // Bounds in DIP. The origin of `bounds_dip` does not affect whether it
     // produces a new frame or not. Only the size of `bounds_dip` does.
@@ -180,10 +186,9 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowDelegate {
   // This is used to create the non-rectangular window shape.
   virtual SkPath GetWindowMaskForWindowShapeInPixels();
 
-  // Called when the location of mouse pointer entered the window.  This is
-  // different from ui::EventType::kMouseEntered which may not be generated when
-  // mouse is captured either by implicitly or explicitly.
-  virtual void OnMouseEnter() = 0;
+  // Called in an event that will cause cursor configurattion change, such as a
+  // cursor entering the window.
+  virtual void OnCursorUpdate() = 0;
 
   // Called when the occlusion state changes, if the underlying platform
   // is providing us with occlusion information.
@@ -200,6 +205,9 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowDelegate {
   // synchronized. For example, this can happen if the old and new states are
   // the same, or it only changes the origin of the bounds.
   virtual int64_t OnStateUpdate(const State& old, const State& latest);
+
+  virtual void OnDisplayColorSpacesChanged(
+      scoped_refptr<gfx::DisplayColorSpacesRef> color_spaces);
 
   // Returns optional information for owned windows that require anchor for
   // positioning. Useful for such backends as Wayland as it provides flexibility

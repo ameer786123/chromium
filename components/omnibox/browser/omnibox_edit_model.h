@@ -28,7 +28,7 @@
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/window_open_disposition.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "url/gurl.h"
 
 class OmniboxController;
@@ -127,6 +127,8 @@ class OmniboxEditModel {
 
   bool user_input_in_progress() const { return user_input_in_progress_; }
 
+  std::u16string user_text() const { return user_text_; }
+
   // Encapsulates all the varied conditions for whether to override the
   // permanent page icon (associated with the currently displayed page),
   // with a temporary icon (associated with the current match or user text).
@@ -136,6 +138,11 @@ class OmniboxEditModel {
   // ImageModel. If `dark_mode` is enabled, return the monochrome version of the
   // icon.
   ui::ImageModel GetSuperGIcon(int image_size, bool dark_mode) const;
+
+  // Returns the Agentspace icon for chrome builds. Otherwise return an empty
+  // Image. If `dark_mode` is enabled, return the monochrome version of the
+  // icon.
+  gfx::Image GetAgentspaceIcon(bool dark_mode) const;
 
   // Sets the state of user_input_in_progress_, and notifies the observer if
   // that state has changed.
@@ -194,19 +201,30 @@ class OmniboxEditModel {
                       AutocompleteMatch* match,
                       GURL* alternate_nav_url) const;
 
+  // Navigates to AI Mode, with the contents of the currently selected match, if
+  // any.
+  // `via_keyboard` is set to `true` if AI Mode was invoked via keyboard event
+  // and is set to `false` if AI Mode was invoked via mouse / gesture event.
+  void OpenAiMode(bool via_keyboard);
+
   // Opens given selection. Most kinds of selection invoke an action or
   // otherwise call `OpenMatch`, but some may `AcceptInput` which is not
   // guaranteed to open a match or commit the omnibox.
+  // `via_keyboard` is set to `true` if the selection was opened due to a
+  // keyboard event and is set to `false` if the selection was opened due
+  // to a mouse / gesture event.
   virtual void OpenSelection(
       OmniboxPopupSelection selection,
       base::TimeTicks timestamp = base::TimeTicks(),
-      WindowOpenDisposition disposition = WindowOpenDisposition::CURRENT_TAB);
+      WindowOpenDisposition disposition = WindowOpenDisposition::CURRENT_TAB,
+      bool via_keyboard = false);
 
   // A simplified version of OpenSelection that opens the model's current
   // selection.
   virtual void OpenSelection(
       base::TimeTicks timestamp = base::TimeTicks(),
-      WindowOpenDisposition disposition = WindowOpenDisposition::CURRENT_TAB);
+      WindowOpenDisposition disposition = WindowOpenDisposition::CURRENT_TAB,
+      bool via_keyboard = false);
 
   OmniboxFocusState focus_state() const { return focus_state_; }
   bool has_focus() const { return focus_state_ != OMNIBOX_FOCUS_NONE; }
@@ -316,13 +334,6 @@ class OmniboxEditModel {
   // entering keyword mode on a match somewhere down the list.
   bool OnSpacePressed();
 
-  // Checks for special input conditions to accelerate keyword mode entry
-  // for starter pack '@' keywords. Returns true if keyword mode was
-  // entered; returns false if feature is disabled or special input
-  // conditions were not detected, in which case this is a no-op.
-  bool MaybeAccelerateKeywordSelection(std::u16string_view input_text,
-                                       char16_t ch);
-
   // Called when any relevant data changes.  This rolls together several
   // separate pieces of data into one call so we can update all the UI
   // efficiently. Specifically, it's invoked for temporary text, autocompletion,
@@ -370,8 +381,6 @@ class OmniboxEditModel {
   // Called when the current match has changed in the OmniboxController.
   void OnCurrentMatchChanged();
 
-  std::u16string GetUserTextForTesting() const { return user_text_; }
-
   AutocompleteInput GetInputForTesting() const { return input_; }
 
   // Name of the histogram tracking cut or copy omnibox commands.
@@ -390,11 +399,22 @@ class OmniboxEditModel {
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
   // Gets the icon for the given `match`.
   gfx::Image GetMatchIcon(const AutocompleteMatch& match,
-                          SkColor vector_icon_color) const;
+                          SkColor vector_icon_color,
+                          bool dark_mode = false) const;
   // Gets the icon for the given `match` if the match was provided by an omnibox
   // API extension, otherwise returns empty image.
   gfx::Image GetMatchIconIfExtension(const AutocompleteMatch& match) const;
 #endif
+
+  // Gets the suggestion group header text associated with the given suggestion
+  // group ID.
+  // In addition to calling `AutocompleteResult::GetHeaderForSuggestionGroup()`,
+  // this function takes into account certain header visibility criteria (e.g.
+  // experiment flags) to determine the proper header text, which will then be
+  // used by the relevant code to conditionally show suggestion group headers
+  // in the Omnibox/Realbox popup.
+  std::u16string GetSuggestionGroupHeaderText(
+      const std::optional<omnibox::GroupId>& suggestion_group_id) const;
 
   // Returns true if the popup exists and is open. Virtual for testing.
   virtual bool PopupIsOpen() const;
@@ -476,10 +496,6 @@ class OmniboxEditModel {
 
   // Stores the icon in a local data member and schedules a repaint.
   void SetIconBitmap(const GURL& icon_url, const SkBitmap& bitmap);
-
-  // Updates the popup view when the visibility of a group changes.
-  void SetPopupSuggestionGroupVisibility(size_t match_index,
-                                         bool suggestion_group_hidden);
 
   void SetAutocompleteInput(AutocompleteInput input);
 
@@ -653,6 +669,15 @@ class OmniboxEditModel {
   // Always use these to set keyword members instead of mutating them directly.
   void SetKeyword(const std::u16string& keyword);
   void SetKeywordPlaceholder(const std::u16string& keyword_placeholder);
+
+  // Record various UMA metrics associated with the AIM page action.
+  // `query_text` represents the text entered by the user at activation time.
+  // `activated` represents whether or not the user activated the page action.
+  // `via_keyboard` represents the page action entry method (i.e. `true` =
+  // keyboard event / `false` = mouse/gesture event).
+  void RecordAiModeMetrics(const std::u16string& query_text,
+                           bool activated,
+                           bool via_keyboard);
 
   // Owns this.
   raw_ptr<OmniboxController> controller_;

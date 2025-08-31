@@ -19,6 +19,7 @@
 #include "base/notreached.h"
 #include "base/path_service.h"
 #include "base/scoped_native_library.h"
+#include "base/strings/string_util.h"
 #include "base/test/scoped_amount_of_physical_memory_override.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/types/expected.h"
@@ -375,6 +376,8 @@ class TestSandboxDelegate : public SandboxDelegate {
 
   bool CetCompatible() override { return true; }
 
+  bool RestrictCoreSharing() override { return false; }
+
  private:
   sandbox::mojom::Sandbox sandbox_type_;
 };
@@ -445,12 +448,12 @@ TEST_F(SandboxWinTest, GeneratedPolicyTestNoSandbox) {
 }
 
 TEST_F(SandboxWinTest, GetJobMemoryLimit) {
-  constexpr uint64_t k8GB = 8192;
+  constexpr base::ByteCount k8GB = base::GiB(8);
 #if defined(ARCH_CPU_64_BITS)
-  constexpr uint64_t kGB = 1024 * 1024 * 1024;
-  constexpr uint64_t k65GB = 66560;
-  constexpr uint64_t k33GB = 33792;
-  constexpr uint64_t k17GB = 17408;
+  constexpr uint64_t kGB = base::GiB(1).InBytesUnsigned();
+  constexpr base::ByteCount k65GB = base::GiB(65);
+  constexpr base::ByteCount k33GB = base::GiB(33);
+  constexpr base::ByteCount k17GB = base::GiB(17);
 
   // Test GPU with physical memory > 64GB.
   {

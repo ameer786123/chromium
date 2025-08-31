@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/json/json_writer.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/escape.h"
@@ -17,6 +18,7 @@
 #include "build/blink_buildflags.h"
 #include "build/build_config.h"
 #include "components/dom_distiller/core/distilled_page_prefs.h"
+#include "components/dom_distiller/core/dom_distiller_features.h"
 #include "components/dom_distiller/core/dom_distiller_service.h"
 #include "components/dom_distiller/core/experiments.h"
 #include "components/dom_distiller/core/proto/distilled_article.pb.h"
@@ -36,25 +38,45 @@ namespace viewer {
 
 namespace {
 
-// JS Themes. Must agree with useTheme() in dom_distiller_viewer.js.
+// LINT.IfChange(JSThemesAndFonts)
+
+// JS Themes. Must agree with themeClasses in dom_distiller_viewer.js.
 const char kDarkJsTheme[] = "dark";
 const char kLightJsTheme[] = "light";
 const char kSepiaJsTheme[] = "sepia";
 
-// CSS Theme classes.  Must agree with classes in distilledpage.css.
-const char kDarkCssClass[] = "dark";
-const char kLightCssClass[] = "light";
-const char kSepiaCssClass[] = "sepia";
-
-// JS FontFamilies. Must agree with useFontFamily() in dom_distiller_viewer.js.
+// JS FontFamilies. Must agree with fontFamilyClasses in
+// dom_distiller_viewer.js.
 const char kSerifJsFontFamily[] = "serif";
 const char kSansSerifJsFontFamily[] = "sans-serif";
 const char kMonospaceJsFontFamily[] = "monospace";
 
-// CSS FontFamily classes.  Must agree with classes in distilledpage.css.
+// LINT.ThenChange(//components/dom_distiller/core/javascript/dom_distiller_viewer.js:JSThemesAndFonts)
+
+// LINT.IfChange
+
+// CSS Theme classes.  Must agree with classes in distilledpage_common.css.
+const char kDarkCssClass[] = "dark";
+const char kLightCssClass[] = "light";
+const char kSepiaCssClass[] = "sepia";
+
+// CSS FontFamily classes.  Must agree with classes in distilledpage_common.css.
 const char kSerifCssClass[] = "serif";
 const char kSansSerifCssClass[] = "sans-serif";
 const char kMonospaceCssClass[] = "monospace";
+
+// LINT.ThenChange(//components/dom_distiller/core/css/distilledpage_common.css)
+
+std::string GetVersionedCss() {
+#if BUILDFLAG(IS_ANDROID)
+  if (base::FeatureList::IsEnabled(dom_distiller::kReaderModeDistillInApp)) {
+    return ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
+        IDR_DISTILLER_NEW_CSS);
+  }
+#endif
+  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
+      IDR_DISTILLER_CSS);
+}
 
 std::string GetPlatformSpecificCss() {
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
@@ -101,16 +123,17 @@ const std::string GetFontCssClass(mojom::FontFamily font_family) {
   return kSansSerifCssClass;
 }
 
-void EnsureNonEmptyContent(std::string* content) {
-  if (content->empty()) {
-    *content =
-        l10n_util::GetStringUTF8(IDS_DOM_DISTILLER_VIEWER_NO_DATA_CONTENT);
+const std::string EnsureNonEmptyContent(const std::string& content) {
+  if (content.empty()) {
+    return l10n_util::GetStringUTF8(IDS_DOM_DISTILLER_VIEWER_NO_DATA_CONTENT);
   }
+  return content;
 }
 
 std::string ReplaceHtmlTemplateValues(const mojom::Theme theme,
                                       const mojom::FontFamily font_family,
-                                      const std::string& csp_nonce) {
+                                      const std::string& csp_nonce,
+                                      bool use_offline_data) {
   std::string html_template =
       ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
           IDR_DOM_DISTILLER_VIEWER_HTML);
@@ -165,28 +188,27 @@ std::string ReplaceHtmlTemplateValues(const mojom::Theme theme,
   // and return the local data once a page is loaded.
   css << "<style>" << viewer::GetCss() << "</style>";
   svg << viewer::GetLoadingImage();
-
-  // iOS specific CSP policy to mitigate leaking of data from different
-  // origins.
-  csp << "<meta http-equiv=\"Content-Security-Policy\" content=\"";
-  csp << "default-src 'none'; ";
-  csp << "script-src 'nonce-" << csp_nonce << "'; ";
-  // YouTube videos are embedded as an iframe.
-  csp << "frame-src http://www.youtube.com; ";
-  csp << "style-src 'unsafe-inline' https://fonts.googleapis.com; ";
-  // Allows the fallback font-face from the main stylesheet.
-  csp << "font-src https://fonts.gstatic.com; ";
-  // Images will be inlined as data-uri if they are valid.
-  csp << "img-src data:; ";
-  csp << "form-action 'none'; ";
-  csp << "base-uri 'none'; ";
-  csp << "\">";
-
 #else
   css << "<link rel=\"stylesheet\" href=\"/" << kViewerCssPath << "\">";
   svg << "<img src=\"/" << kViewerLoadingImagePath << "\">";
-#endif  // BUILDFLAG(IS_IOS)
+#endif  // BUILDFLAG(IS_IOS) && !BUILDFLAG(USE_BLINK)
 
+  if (use_offline_data) {
+    // CSP policy to mitigate leaking of data from different origins.
+    csp << "<meta http-equiv=\"Content-Security-Policy\" content=\"";
+    csp << "default-src 'none'; ";
+    csp << "script-src 'nonce-" << csp_nonce << "'; ";
+    // YouTube videos are embedded as an iframe.
+    csp << "frame-src http://www.youtube.com; ";
+    csp << "style-src 'unsafe-inline' https://fonts.googleapis.com; ";
+    // Allows the fallback font-face from the main stylesheet.
+    csp << "font-src https://fonts.gstatic.com; ";
+    // Images will be inlined as data-uri if they are valid.
+    csp << "img-src data:; ";
+    csp << "form-action 'none'; ";
+    csp << "base-uri 'none'; ";
+    csp << "\">";
+  }
   substitutions.push_back(csp.str());  // $1
   substitutions.push_back(css.str());  // $2
   substitutions.push_back(GetThemeCssClass(theme) + " " +
@@ -205,13 +227,8 @@ std::string ReplaceHtmlTemplateValues(const mojom::Theme theme,
 const std::string GetUnsafeIncrementalDistilledPageJs(
     const DistilledPageProto* page_proto,
     bool is_last_page) {
-  std::string output(page_proto->html());
-  EnsureNonEmptyContent(&output);
-  base::Value value(output);
-  base::JSONWriter::Write(value, &output);
-  std::string page_update("addToPage(");
-  page_update += output + ");";
-  return page_update + GetToggleLoadingIndicatorJs(is_last_page);
+  return GetAddToPageJs(page_proto->html()) +
+         GetToggleLoadingIndicatorJs(is_last_page);
 }
 
 const std::string GetErrorPageJs() {
@@ -219,11 +236,8 @@ const std::string GetErrorPageJs() {
       IDS_DOM_DISTILLER_VIEWER_FAILED_TO_FIND_ARTICLE_TITLE));
   std::string page_update(GetSetTitleJs(title));
 
-  base::Value value(l10n_util::GetStringUTF8(
+  page_update += GetAddToPageJs(l10n_util::GetStringUTF8(
       IDS_DOM_DISTILLER_VIEWER_FAILED_TO_FIND_ARTICLE_CONTENT));
-  std::string output;
-  base::JSONWriter::Write(value, &output);
-  page_update += "addToPage(" + output + ");";
   page_update += GetSetTextDirectionJs(std::string("auto"));
   page_update += GetToggleLoadingIndicatorJs(true);
   return page_update;
@@ -260,8 +274,10 @@ const std::string GetToggleLoadingIndicatorJs(bool is_last_page) {
 
 const std::string GetArticleTemplateHtml(mojom::Theme theme,
                                          mojom::FontFamily font_family,
-                                         const std::string& csp_nonce) {
-  return ReplaceHtmlTemplateValues(theme, font_family, csp_nonce);
+                                         const std::string& csp_nonce,
+                                         bool use_offline_data) {
+  return ReplaceHtmlTemplateValues(theme, font_family, csp_nonce,
+                                   use_offline_data);
 }
 
 const std::string GetUnsafeArticleContentJs(
@@ -274,19 +290,21 @@ const std::string GetUnsafeArticleContentJs(
     }
   }
 
-  std::string output(unsafe_output_stream.str());
-  EnsureNonEmptyContent(&output);
+  return GetAddToPageJs(unsafe_output_stream.str()) +
+         GetToggleLoadingIndicatorJs(true);
+}
+
+const std::string GetAddToPageJs(const std::string& unsafe_content) {
+  std::string output(EnsureNonEmptyContent(unsafe_content));
   base::JSONWriter::Write(base::Value(output), &output);
-  std::string page_update("addToPage(");
-  page_update += output + ");";
-  return page_update + GetToggleLoadingIndicatorJs(true);
+  return "addToPage(" + output + ");";
 }
 
 const std::string GetCss() {
   return base::StrCat(
       {ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
-           IDR_DISTILLER_CSS),
-       GetPlatformSpecificCss()});
+           IDR_DISTILLER_COMMON_CSS),
+       GetVersionedCss(), GetPlatformSpecificCss()});
 }
 
 const std::string GetLoadingImage() {
@@ -294,9 +312,25 @@ const std::string GetLoadingImage() {
       IDR_DISTILLER_LOADING_IMAGE);
 }
 
+static std::string GetMinPinchZoomScale() {
+  std::string min_scale = "0.5";
+#if BUILDFLAG(IS_ANDROID)
+  // Make the minimum pinch zoom value to be 1.0 for distillation in app to
+  // align with prefs UI.
+  if (base::FeatureList::IsEnabled(kReaderModeDistillInApp)) {
+    min_scale = "1.0";
+  }
+#endif
+  return min_scale;
+}
+
 const std::string GetJavaScript() {
-  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
-      IDR_DOM_DISTILLER_VIEWER_JS);
+  std::string js =
+      ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
+          IDR_DOM_DISTILLER_VIEWER_JS);
+  base::ReplaceFirstSubstringAfterOffset(&js, 0, "$MIN_SCALE",
+                                         GetMinPinchZoomScale());
+  return js;
 }
 
 std::unique_ptr<ViewerHandle> CreateViewRequest(
@@ -344,6 +378,10 @@ const std::string GetDistilledPageFontFamilyJs(mojom::FontFamily font_family) {
 
 const std::string GetDistilledPageFontScalingJs(float scaling) {
   return "useFontScaling(" + base::NumberToString(scaling) + ");";
+}
+
+const std::string SetDistilledPageBaseFontSize(float baseFontSize) {
+  return "useBaseFontSize(" + base::NumberToString(baseFontSize) + ");";
 }
 
 }  // namespace viewer

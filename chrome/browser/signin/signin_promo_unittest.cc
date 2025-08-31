@@ -4,9 +4,11 @@
 
 #include "chrome/browser/signin/signin_promo.h"
 
+#include "base/command_line.h"
+#include "base/strings/to_string.h"
 #include "build/build_config.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
-#include "chrome/browser/extensions/extension_sync_util.h"
+#include "chrome/browser/extensions/sync/extension_sync_util.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/chrome_signin_client_test_util.h"
 #include "chrome/browser/signin/chrome_signin_pref_names.h"
@@ -15,19 +17,19 @@
 #include "chrome/browser/signin/signin_promo_util.h"
 #include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/sync/sync_service_factory.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
-#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/test_utils/test_profiles.h"
-#include "components/autofill/core/common/autofill_features.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/signin_prefs.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/sync/base/command_line_switches.h"
 #include "components/sync/base/data_type.h"
@@ -72,6 +74,7 @@ TEST(SigninPromoTest, TestReauthURL) {
 }
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
 TEST(SigninPromoTest, SigninURLForDice) {
   EXPECT_EQ(
       "https://accounts.google.com/signin/chrome/sync?ssp=1&"
@@ -93,6 +96,36 @@ TEST(SigninPromoTest, SigninURLForDice) {
       GetAddAccountURLForDice("email@gmail.com",
                               GURL("https://continue_url/")));
 }
+
+TEST(SigninPromoTest,
+     SigninURLForDiceWithMaterialNextThemeAndHistorySyncOptin) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{switches::kSignInPromoMaterialNextUI,
+                            switches::kEnableHistorySyncOptin},
+      /*disabled_features=*/{});
+  EXPECT_EQ(
+      "https://accounts.google.com/signin/chrome/sync?ssp=1&"
+      "color_scheme=dark&flow=promo&theme=mn",
+      GetChromeSyncURLForDice(
+          {.request_dark_scheme = true, .flow = Flow::PROMO}));
+  EXPECT_EQ(
+      "https://accounts.google.com/signin/chrome/"
+      "sync?ssp=1&email_hint=email%40gmail.com&continue=https%3A%2F%2Fcontinue_"
+      "url%2F&flow=history_opt_in&theme=mn",
+      GetChromeSyncURLForDice(
+          {"email@gmail.com", GURL("https://continue_url/")}));
+  EXPECT_EQ(
+      "https://accounts.google.com/signin/chrome/"
+      "sync?ssp=1&flow=embedded_promo&theme=mn",
+      GetChromeSyncURLForDice({.flow = Flow::EMBEDDED_PROMO}));
+  EXPECT_EQ(
+      "https://accounts.google.com/AddSession?"
+      "Email=email%40gmail.com&continue=https%3A%2F%2Fcontinue_url%2F",
+      GetAddAccountURLForDice("email@gmail.com",
+                              GURL("https://continue_url/")));
+}
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 TEST(SigninPromoTest, IsSignInPromo_AutofillTypes) {
   EXPECT_TRUE(IsSignInPromo(signin_metrics::AccessPoint::kPasswordBubble));
@@ -185,16 +218,6 @@ class ShowPromoTest : public testing::Test {
       identity_test_env_adaptor_;
   scoped_refptr<const extensions::Extension> extension_;
 };
-
-TEST_F(ShowPromoTest, DoNotShowAddressSignInPromoWithoutImprovedBrowserSignin) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      /*enabled_features=*/{},
-      /*disabled_features=*/{switches::kImprovedSigninUIOnDesktop});
-
-  EXPECT_FALSE(ShouldShowAddressSignInPromo(*profile(),
-                                            autofill::test::StandardProfile()));
-}
 
 TEST_F(ShowPromoTest, DoNotShowBookmarkSignInPromoWithoutExplicitSignIn) {
   base::test::ScopedFeatureList feature_list;
@@ -310,8 +333,7 @@ class ShowSigninPromoTestWithFeatureFlags : public ShowPromoTest {
     ShowPromoTest::SetUp();
     feature_list_.InitWithFeatures(
         /*enabled_features=*/
-        {switches::kImprovedSigninUIOnDesktop,
-         switches::kSyncEnableBookmarksInTransportMode,
+        {switches::kSyncEnableBookmarksInTransportMode,
          switches::kEnableExtensionsExplicitBrowserSignin},
         /*disabled_features=*/{});
     ON_CALL(*sync_service(), GetDataTypesForTransportOnlyMode())
@@ -361,6 +383,22 @@ TEST_F(ShowSigninPromoTestWithFeatureFlags,
   MakePrimaryAccountAvailable(identity_manager(), "test@email.com",
                               ConsentLevel::kSync);
   EXPECT_FALSE(ShouldShowPasswordSignInPromo(*profile()));
+}
+
+TEST_F(ShowSigninPromoTestWithFeatureFlags, DoNotShowPromoWithNoSyncService) {
+  TestingProfile::Builder profile_builder;
+  profile_builder.AddTestingFactory(
+      SyncServiceFactory::GetInstance(),
+      base::BindRepeating([](content::BrowserContext* context) {
+        return static_cast<std::unique_ptr<KeyedService>>(nullptr);
+      }));
+
+  std::unique_ptr<TestingProfile> profile =
+      IdentityTestEnvironmentProfileAdaptor::
+          CreateProfileForIdentityTestEnvironment(profile_builder);
+
+  ASSERT_EQ(nullptr, SyncServiceFactory::GetForProfile(profile.get()));
+  EXPECT_FALSE(ShouldShowPasswordSignInPromo(*profile));
 }
 
 TEST_F(ShowSigninPromoTestWithFeatureFlags,
@@ -489,23 +527,6 @@ TEST_F(ShowSigninPromoTestWithFeatureFlags,
   EXPECT_FALSE(ShouldShowAddressSignInPromo(*profile(), address));
 }
 
-// TODO(crbug.com/40100455): Remove when
-// kAutofillEnableAccountStorageForIneligibleCountries is cleaned up.
-TEST_F(ShowSigninPromoTestWithFeatureFlags,
-       DoNotShowAddressIfCountryNotEligibleForAccountStorage) {
-  base::test::ScopedFeatureList feature;
-  feature.InitAndDisableFeature(
-      autofill::features::kAutofillEnableAccountStorageForIneligibleCountries);
-  const std::string non_eligible_country_code("IR");
-
-  ASSERT_FALSE(
-      autofill::PersonalDataManagerFactory::GetForBrowserContext(profile())
-          ->address_data_manager()
-          .IsCountryEligibleForAccountStorage(non_eligible_country_code));
-  EXPECT_FALSE(ShouldShowAddressSignInPromo(
-      *profile(), CreateAddress(non_eligible_country_code)));
-}
-
 TEST_F(ShowSigninPromoTestWithFeatureFlags,
        OnlyShowBookmarkPromoInSignInPendingWithAccountStorageEnabled) {
   MakePrimaryAccountAvailable(identity_manager(), "test@email.com",
@@ -592,7 +613,6 @@ TEST_F(ShowSigninPromoTestWithFeatureFlags,
 
 TEST_F(ShowSigninPromoTestWithFeatureFlags, RecordSignInPromoShownWithAccount) {
   // Test setup for adding an account with cookies.
-  ScopedTestingLocalState local_state(TestingBrowserProcess::GetGlobal());
   network::TestURLLoaderFactory url_loader_factory =
       network::TestURLLoaderFactory();
 
@@ -636,7 +656,6 @@ TEST_F(ShowSigninPromoTestWithFeatureFlags, RecordSignInPromoShownWithAccount) {
 TEST_F(ShowSigninPromoTestWithFeatureFlags,
        RecordSignInPromoShownWithAccount_PromoShouldShowForDifferentType) {
   // Test setup for adding an account with cookies.
-  ScopedTestingLocalState local_state(TestingBrowserProcess::GetGlobal());
   network::TestURLLoaderFactory url_loader_factory =
       network::TestURLLoaderFactory();
 
@@ -692,7 +711,6 @@ TEST_F(ShowSigninPromoTestWithFeatureFlags,
 TEST_F(ShowSigninPromoTestWithFeatureFlags,
        RecordSignInPromoShownWithAccount_BookmarkPromoAlwaysShown) {
   // Test setup for adding an account with cookies.
-  ScopedTestingLocalState local_state(TestingBrowserProcess::GetGlobal());
   network::TestURLLoaderFactory url_loader_factory =
       network::TestURLLoaderFactory();
 
@@ -742,81 +760,88 @@ TEST_F(ShowSigninPromoTestWithFeatureFlags,
 
 class SyncPromoIdentityPillManagerTest : public testing::Test {
  public:
-  SyncPromoIdentityPillManagerTest()
-      : local_state_(TestingBrowserProcess::GetGlobal()) {
-    // Environment setup for adding an account with cookies to store the
-    // per-account prefs.
-    TestingProfile::Builder builder;
-    builder.AddTestingFactories(
-        IdentityTestEnvironmentProfileAdaptor::
-            GetIdentityTestEnvironmentFactoriesWithAppendedFactories(
-                {TestingProfile::TestingFactory{
-                    ChromeSigninClientFactory::GetInstance(),
-                    base::BindRepeating(&BuildChromeSigninClientWithURLLoader,
-                                        &url_loader_factory_)}}));
-    profile_ = builder.Build();
-    identity_test_env_adaptor_ =
-        std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile_.get());
-    identity_test_env_adaptor_->identity_test_env()->SetTestURLLoaderFactory(
-        &url_loader_factory_);
+  SyncPromoIdentityPillManagerTest() {
+    SigninPrefs::RegisterProfilePrefs(pref_service_.registry());
   }
 
-  AccountInfo MakeAccountAvailable(std::string_view email) {
-    return identity_test_env_adaptor_->identity_test_env()
-        ->MakeAccountAvailable(
-            identity_test_env_adaptor_->identity_test_env()
-                ->CreateAccountAvailabilityOptionsBuilder()
-                .WithAccessPoint(signin_metrics::AccessPoint::kUnknown)
-                .WithCookie(true)
-                .Build(email));
+  AccountInfo Signin(const std::string& email) {
+    return signin::MakePrimaryAccountAvailable(identity_manager(), email,
+                                               signin::ConsentLevel::kSignin);
   }
 
-  Profile& profile() { return *profile_.get(); }
+  signin::IdentityManager* identity_manager() {
+    return identity_test_environment_.identity_manager();
+  }
+  PrefService& pref_service() { return pref_service_; }
 
  private:
-  ScopedTestingLocalState local_state_;
-  network::TestURLLoaderFactory url_loader_factory_;
   content::BrowserTaskEnvironment task_environment_;
-  std::unique_ptr<TestingProfile> profile_;
-  std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
-      identity_test_env_adaptor_;
+  signin::IdentityTestEnvironment identity_test_environment_;
+  TestingPrefServiceSimple pref_service_;
 };
 
 TEST_F(SyncPromoIdentityPillManagerTest, MaxShownCount) {
-  const AccountInfo account = MakeAccountAvailable("test@email.com");
+  Signin("test@email.com");
   const int max_shown_count = 10;
-  SyncPromoIdentityPillManager manager(max_shown_count, /*max_used_count=*/1);
+  SyncPromoIdentityPillManager manager(identity_manager(), &pref_service(),
+                                       max_shown_count,
+                                       /*max_used_count=*/1);
 
   for (int i = 0; i < max_shown_count; ++i) {
+    SCOPED_TRACE("Iteration: " + base::ToString(i));
     // The promo should be shown if the shown count is below the max.
-    EXPECT_TRUE(manager.ShouldShowPromo(profile()));
-    manager.RecordPromoShown(profile());
+    EXPECT_TRUE(manager.ShouldShowPromo());
+    manager.RecordPromoShown();
   }
 
   // The promo should not be shown if the shown count is at the max.
-  EXPECT_FALSE(manager.ShouldShowPromo(profile()));
+  EXPECT_FALSE(manager.ShouldShowPromo());
 }
 
 TEST_F(SyncPromoIdentityPillManagerTest, MaxUsedCount) {
-  const AccountInfo account = MakeAccountAvailable("test@email.com");
+  Signin("test@email.com");
   const int max_used_count = 5;
-  SyncPromoIdentityPillManager manager(/*max_shown_count=*/10, max_used_count);
+  SyncPromoIdentityPillManager manager(identity_manager(), &pref_service(),
+                                       /*max_shown_count=*/10, max_used_count);
 
   for (int i = 0; i < max_used_count; ++i) {
+    SCOPED_TRACE("Iteration: " + base::ToString(i));
     // The promo should be shown if the used count is below the max.
-    EXPECT_TRUE(manager.ShouldShowPromo(profile()));
-    manager.RecordPromoUsed(profile());
+    EXPECT_TRUE(manager.ShouldShowPromo());
+    manager.RecordPromoUsed();
   }
 
   // The promo should not be shown if the used count is at the max.
-  EXPECT_FALSE(manager.ShouldShowPromo(profile()));
+  EXPECT_FALSE(manager.ShouldShowPromo());
 }
 
-TEST_F(SyncPromoIdentityPillManagerTest, ShouldNotShowPromoIfNoAccount) {
-  SyncPromoIdentityPillManager manager(/*max_shown_count=*/10,
+TEST_F(SyncPromoIdentityPillManagerTest, ShouldNotShowPromoIfSignedOut) {
+  SyncPromoIdentityPillManager manager(identity_manager(), &pref_service(),
+                                       /*max_shown_count=*/10,
                                        /*max_used_count=*/2);
-  EXPECT_FALSE(manager.ShouldShowPromo(profile()));
+  EXPECT_FALSE(manager.ShouldShowPromo());
 }
+
+TEST_F(SyncPromoIdentityPillManagerTest, ShouldNotShowPromoIfSigninPending) {
+  Signin("test@email.com");
+  signin::SetInvalidRefreshTokenForPrimaryAccount(identity_manager());
+  SyncPromoIdentityPillManager manager(identity_manager(), &pref_service(),
+                                       /*max_shown_count=*/10,
+                                       /*max_used_count=*/2);
+  EXPECT_FALSE(manager.ShouldShowPromo());
+}
+
+TEST_F(SyncPromoIdentityPillManagerTest,
+       ShouldNotShowPromoIfPromotionsDisabled) {
+  TestingBrowserProcess::GetGlobal()->local_state()->SetBoolean(
+      prefs::kPromotionsEnabled, false);
+  Signin("test@email.com");
+  SyncPromoIdentityPillManager manager(identity_manager(), &pref_service(),
+                                       /*max_shown_count=*/10,
+                                       /*max_used_count=*/2);
+  EXPECT_FALSE(manager.ShouldShowPromo());
+}
+
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 }  // namespace signin

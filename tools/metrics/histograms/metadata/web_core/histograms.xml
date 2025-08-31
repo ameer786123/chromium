@@ -63,7 +63,7 @@ chromium-metrics-reviews@google.com.
 </variants>
 
 <histogram name="WebCore.DistillabilityUs" units="microseconds"
-    expires_after="2025-09-21">
+    expires_after="2026-01-25">
   <owner>wychen@chromium.org</owner>
   <owner>gilmanmh@google.com</owner>
   <summary>
@@ -80,7 +80,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebCore.Document.execCommand" enum="MappedEditingCommands"
-    expires_after="2025-09-28">
+    expires_after="2025-11-08">
   <owner>kojii@chromium.org</owner>
   <owner>tkent@chromium.org</owner>
   <summary>
@@ -90,7 +90,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebCore.Editing.Commands" enum="MappedEditingCommands"
-    expires_after="2025-05-11">
+    expires_after="2025-11-08">
   <owner>kojii@chromium.org</owner>
   <owner>tkent@chromium.org</owner>
   <summary>
@@ -129,47 +129,6 @@ chromium-metrics-reviews@google.com.
     The (android only) outcome of a particular framebust infobar. Recorded when
     the user either closes the infobar or declines the intervention by clicking
     the link.
-  </summary>
-</histogram>
-
-<histogram name="WebCore.Fullscreen.LockStateAtEntryViaApi"
-    enum="FullscreenLockState" expires_after="2025-08-24">
-  <owner>muyaoxu@google.com</owner>
-  <owner>openscreen-eng@google.com</owner>
-  <summary>
-    This metric records whether keyboard/pointer locks are engaged each time a
-    web page enters fullscreen via the Fullscreen API.
-
-    Canary/Dev data from December 2023 - January 2024 may be inaccurate due to a
-    bug.
-  </summary>
-</histogram>
-
-<histogram name="WebCore.Fullscreen.LockStateAtEntryViaBrowserUi"
-    enum="FullscreenLockState" expires_after="2025-08-24">
-  <owner>muyaoxu@google.com</owner>
-  <owner>openscreen-eng@google.com</owner>
-  <summary>
-    This metric records whether keyboard/pointer locks are engaged each time the
-    user enters fullscreen via the browser UI.
-
-    Note that even when keyboard lock has been requested, it doesn't get
-    activated when entering fullscreen through the browser UI. The Fullscreen
-    API must (also) be called.
-
-    Canary/Dev data from December 2023 - January 2024 may be inaccurate due to a
-    bug.
-  </summary>
-</histogram>
-
-<histogram name="WebCore.Fullscreen.WebsiteStateAtApiRequest"
-    enum="WebsiteStateAtFullscreenRequest" expires_after="2025-08-24">
-  <owner>muyaoxu@google.com</owner>
-  <owner>openscreen-eng@google.com</owner>
-  <summary>
-    This metric records the state of the website origin when it requests to
-    enter fullscreen via the Fullscreen API. &quot;Not visited&quot; means the
-    origin has not been visited more than a day ago.
   </summary>
 </histogram>
 
@@ -268,17 +227,6 @@ chromium-metrics-reviews@google.com.
     Records the time that it takes to succesfully open IndexedDB's backing
     store. Unlike OpenFirstTrySuccessTime, this is recorded regardless of
     whether the success was on the first try.
-  </summary>
-</histogram>
-
-<histogram name="WebCore.IndexedDB.BackingStore.OverlyLargeOriginLength"
-    units="characters" expires_after="2025-03-09">
-  <owner>estade@chromium.org</owner>
-  <owner>chrome-owp-storage@google.com</owner>
-  <summary>
-    Length of leveldb directories that cause paths to not fit in the filesystem,
-    either because the individual component is too long or the overall path is
-    larger than MAX_PATH.
   </summary>
 </histogram>
 
@@ -489,7 +437,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebCore.IndexedDB.RequestDuration2.{RequestType}" units="ms"
-    expires_after="2025-10-12">
+    expires_after="2025-12-14">
   <owner>estade@chromium.org</owner>
   <owner>chrome-owp-storage@google.com</owner>
   <summary>
@@ -505,7 +453,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebCore.IndexedDB.RequestDuration2.{RequestType}.Foreground"
-    units="ms" expires_after="2025-09-21">
+    units="ms" expires_after="2026-01-25">
   <owner>estade@chromium.org</owner>
   <owner>chrome-owp-storage@google.com</owner>
   <summary>
@@ -536,7 +484,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebCore.IndexedDB.Transaction.{TransactionType}.TimeActive2"
-    units="ms" expires_after="2025-09-07">
+    units="ms" expires_after="2025-11-09">
   <owner>estade@chromium.org</owner>
   <owner>chrome-owp-storage@google.com</owner>
   <summary>
@@ -549,7 +497,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="WebCore.IndexedDB.Transaction.{TransactionType}.TimeActive2.Foreground"
-    units="ms" expires_after="2025-09-21">
+    units="ms" expires_after="2026-01-25">
   <owner>estade@chromium.org</owner>
   <owner>chrome-owp-storage@google.com</owner>
   <summary>
@@ -565,7 +513,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebCore.IndexedDB.Transaction.{TransactionType}.TimeQueued"
-    units="ms" expires_after="2025-09-07">
+    units="ms" expires_after="2026-01-11">
   <owner>estade@chromium.org</owner>
   <owner>chrome-owp-storage@google.com</owner>
   <summary>
@@ -579,7 +527,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram
     name="WebCore.IndexedDB.Transaction.{TransactionType}.TimeQueued.Foreground"
-    units="ms" expires_after="2025-09-21">
+    units="ms" expires_after="2026-01-25">
   <owner>estade@chromium.org</owner>
   <owner>chrome-owp-storage@google.com</owner>
   <summary>
@@ -596,7 +544,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="WebCore.IndexedDB.TransactionAbortReason" enum="IDBException"
-    expires_after="2025-09-07">
+    expires_after="2026-01-11">
   <owner>estade@chromium.org</owner>
   <owner>chrome-owp-storage@google.com</owner>
   <summary>

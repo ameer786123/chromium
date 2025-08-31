@@ -78,7 +78,7 @@ void ShowResizeShadow(aura::Window* window, int component) {
   // 1) the window is not toplevel.
   // 2) the device is in tablet mode.
   // 3) the window is not resizable.
-  if (display::Screen::GetScreen()->InTabletMode() ||
+  if (display::Screen::Get()->InTabletMode() ||
       window != window->GetToplevelWindow() ||
       ((window->GetProperty(aura::client::kResizeBehaviorKey) &
         aura::client::kResizeBehaviorCanResize) == 0)) {
@@ -250,7 +250,7 @@ void ToplevelWindowEventHandler::OnDisplayMetricsChanged(
     return;
 
   display::Display current_display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(
+      display::Screen::Get()->GetDisplayNearestWindow(
           window_resizer_->resizer()->GetTarget());
   if (display.id() != current_display.id())
     return;
@@ -851,7 +851,7 @@ aura::Window* ToplevelWindowEventHandler::GetTargetForClientAreaGesture(
 
   aura::Window* toplevel = widget->GetNativeWindow();
 
-  if (!display::Screen::GetScreen()->InTabletMode()) {
+  if (!display::Screen::Get()->InTabletMode()) {
     return nullptr;
   }
   WindowState* window_state = WindowState::Get(toplevel);
@@ -872,7 +872,7 @@ aura::Window* ToplevelWindowEventHandler::GetTargetForClientAreaGesture(
   const gfx::Point location_in_screen =
       event->target()->GetScreenLocation(*event);
   const gfx::Rect work_area_bounds =
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->GetDisplayNearestWindow(static_cast<aura::Window*>(event->target()))
           .work_area();
 
@@ -930,6 +930,12 @@ bool ToplevelWindowEventHandler::PrepareForDrag(
       window);
 
   requires_reinitialization_ = false;
+
+  if (auto* snap_group_divider =
+          SnapGroupController::Get()->GetSnapGroupDividerForWindow(window)) {
+    snap_group_divider->OnWindowDragStarted(window);
+  }
+
   return true;
 }
 
@@ -938,6 +944,12 @@ bool ToplevelWindowEventHandler::CompleteDrag(DragResult result) {
 
   if (!window_resizer_) {
     return false;
+  }
+
+  if (auto* snap_group_divider =
+          SnapGroupController::Get()->GetSnapGroupDividerForWindow(
+              window_resizer_->resizer()->GetTarget())) {
+    snap_group_divider->OnWindowDragEnded();
   }
 
   std::unique_ptr<ScopedWindowResizer> resizer(std::move(window_resizer_));
@@ -1027,16 +1039,6 @@ void ToplevelWindowEventHandler::HandleDrag(aura::Window* target,
   // moves from the move/size operation from being sent to the target.
   if (event->phase() != ui::EP_PRETARGET)
     return;
-
-  // Break the Snap Group when dragging a window out of it. Check
-  // `window_resizer_` to avoid breaking the group if it is tab dragging.
-  if (SnapGroupController* snap_group_controller = SnapGroupController::Get()) {
-    if (SnapGroup* snap_group =
-            snap_group_controller->GetSnapGroupForGivenWindow(target);
-        snap_group && window_resizer_) {
-      snap_group->OnLocatedEvent(event);
-    }
-  }
 
   // `window_resizer_` may have been reset, early return in this case.
   if (!window_resizer_) {

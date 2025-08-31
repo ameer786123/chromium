@@ -8,8 +8,10 @@
 #include <string>
 
 #include "base/memory/raw_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/download/download_ui_model.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/download/download_bubble_row_list_view_info.h"
 #include "chrome/browser/ui/download/download_display.h"
@@ -58,6 +60,7 @@ class DownloadToolbarUIController
   // PinnedToolbarActionsContainer is available since the
   // DownloadDisplayController can call Show() immediately.
   void Init();
+  void TearDownPreBrowserWindowDestruction();
 
   // DownloadDisplay:
   void Show() override;
@@ -183,7 +186,7 @@ class DownloadToolbarUIController
 
   raw_ptr<BrowserView> browser_view_;
   bool is_primary_partial_view_ = false;
-  base::WeakPtr<actions::ActionItem> action_item_ = nullptr;
+  raw_ptr<actions::ActionItem> action_item_ = nullptr;
   // Controller for the DownloadToolbarButton UI.
   std::unique_ptr<DownloadDisplayController> controller_;
   // Controller for keeping track of items for both main view and partial view.
@@ -225,12 +228,7 @@ class DownloadToolbarUIController
 
 // Overrides whether we are allowed to show the download started animation,
 // may be false in tests.
-#if BUILDFLAG(IS_CHROMEOS)
-  // NOTE: Disabled on ChromeOS to respect its own download renderings.
-  bool show_download_started_animation_ = false;
-#else
   bool show_download_started_animation_ = true;
-#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Tracks the task to automatically close the partial view after some amount
   // of time open, to minimize disruption to the user.
@@ -240,6 +238,9 @@ class DownloadToolbarUIController
 
   base::TimeTicks button_click_time_;
 
+  base::ScopedObservation<BrowserList, BrowserListObserver>
+      browser_list_observation_{this};
+
   // Maps number of in-progress downloads to the corresponding tooltip text, to
   // avoid having to create the strings repeatedly. The entry for 0 is the
   // default tooltip ("Downloads"), the entries for larger numbers are the
@@ -247,7 +248,7 @@ class DownloadToolbarUIController
   std::map<int, std::u16string> tooltip_texts_;
 
   // Used for holding the top views visible while the download bubble is showing
-  // in immersive mode on ChromeOS and Mac.
+  // in immersive mode on Mac.
   std::unique_ptr<ImmersiveRevealedLock> immersive_revealed_lock_;
 
   std::unique_ptr<BubbleCloser> bubble_closer_;

@@ -220,6 +220,10 @@ views::ProposedLayout IconLabelBubbleView::CalculateProposedLayout(
   layout.child_layouts.emplace_back(ink_drop_container(), true,
                                     GetLocalBounds());
 
+  // Allows the label to be displayed even if there's not enough space with the
+  // preferred size of this view, due to an animation being in progress.
+  bool can_expand_label_for_animation = slide_animation_.is_animating();
+
   // First calculate the preferred size of this view, according to the
   // preferred size of the label (i.e. with an expanded label).
   // If that won't fit in the available bounds, then size this view
@@ -228,12 +232,16 @@ views::ProposedLayout IconLabelBubbleView::CalculateProposedLayout(
   gfx::Size preferred_size = GetSizeForLabelWidth(preferred_label_width);
   if (size_bounds.width().is_bounded() &&
       preferred_size.width() > size_bounds.width()) {
-    preferred_size = GetSizeForLabelWidth(0);
+    preferred_size = GetMinimumSize();
     // If the label should be shown, and supports elision, then extend the
     // width to whatever space is available.
     if (ShouldShowLabel() && label()->GetElideBehavior() != gfx::NO_ELIDE) {
       preferred_size.set_width(
           std::max(preferred_size.width(), size_bounds.width().value()));
+    } else {
+      // There's not enough space to expand the view if its animating, so
+      // don't allow the label to be expanded either.
+      can_expand_label_for_animation = false;
     }
   }
   if (size_bounds.height().is_bounded() &&
@@ -290,11 +298,11 @@ views::ProposedLayout IconLabelBubbleView::CalculateProposedLayout(
   // If the fully expanded label fits, or it is mid-animation, then we
   // accept the "_with_label" image bounds.
   const bool can_label_expand = available_label_width >= preferred_label_width;
+  const bool should_use_label_bounds =
+      ShouldShowLabel() && (can_label_expand || can_expand_label_for_animation);
   layout.child_layouts.emplace_back(
       const_cast<views::View*>(this->image_container_view()), true,
-      (can_label_expand || slide_animation_.is_animating())
-          ? image_bounds_with_label
-          : image_bounds);
+      should_use_label_bounds ? image_bounds_with_label : image_bounds);
 
   // The separator should be the same height as the icons.
   const int separator_height = GetLayoutConstant(LOCATION_BAR_ICON_SIZE);
@@ -506,7 +514,7 @@ gfx::Size IconLabelBubbleView::CalculatePreferredSize(
 }
 
 gfx::Size IconLabelBubbleView::GetMinimumSize() const {
-  return views::View::GetMinimumSize();
+  return GetSizeForLabelWidth(0);
 }
 
 bool IconLabelBubbleView::OnMousePressed(const ui::MouseEvent& event) {
@@ -716,7 +724,9 @@ void IconLabelBubbleView::AnimateIn(std::optional<int> string_id) {
   if (!label()->GetVisible() || IsShrinking()) {
     // Start animation from the current width, otherwise the icon will also be
     // included if visible.
-    grow_animation_starting_width_ = GetVisibleBounds().width();
+    // Use a min width of at least 1 to prevent this view from being considered
+    // hidden while animating in.
+    grow_animation_starting_width_ = std::max(GetVisibleBounds().width(), 1);
     if (string_id) {
       std::u16string label = l10n_util::GetStringUTF16(string_id.value());
       SetLabel(label);

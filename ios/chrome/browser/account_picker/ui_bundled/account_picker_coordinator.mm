@@ -18,6 +18,8 @@
 #import "ios/chrome/browser/account_picker/ui_bundled/account_picker_screen/account_picker_screen_presentation_controller.h"
 #import "ios/chrome/browser/account_picker/ui_bundled/account_picker_screen/account_picker_screen_slide_transition_animator.h"
 #import "ios/chrome/browser/account_picker/ui_bundled/account_picker_selection/account_picker_selection_screen_coordinator.h"
+#import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/shared/coordinator/alert/alert_coordinator.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
@@ -38,9 +40,15 @@
     UINavigationControllerDelegate,
     UIViewControllerTransitioningDelegate>
 
+// YES if the an add account operation is in progress.
+@property(nonatomic, assign) BOOL openAddAccountOperationInProgress;
+
 @end
 
 @implementation AccountPickerCoordinator {
+  SigninCoordinator* _addAccountSigninCoordinator;
+  signin_metrics::AccessPoint _accessPoint;
+
   // Navigation controller for the account picker.
   __strong AccountPickerScreenNavigationController* _navigationController;
 
@@ -59,12 +67,14 @@
 
 #pragma mark - Public
 
-- (instancetype)initWithBaseViewController:(UIViewController*)baseViewController
-                                   browser:(Browser*)browser
-                             configuration:
-                                 (AccountPickerConfiguration*)configuration {
+- (instancetype)
+    initWithBaseViewController:(UIViewController*)baseViewController
+                       browser:(Browser*)browser
+                 configuration:(AccountPickerConfiguration*)configuration
+                   accessPoint:(signin_metrics::AccessPoint)accessPoint {
   self = [super initWithBaseViewController:baseViewController browser:browser];
   if (self) {
+    _accessPoint = accessPoint;
     _configuration = configuration;
   }
   return self;
@@ -88,6 +98,8 @@
   _accountPickerSelectionScreenCoordinator = nil;
   [_accountPickerConfirmationScreenCoordinator stop];
   _accountPickerConfirmationScreenCoordinator = nil;
+  [self stopAddAccountSigninCoordinator];
+  [super stop];
 }
 
 #pragma mark - AccountPickerConsumer
@@ -155,8 +167,14 @@
 
 #pragma mark - Private
 
+- (void)stopAddAccountSigninCoordinator {
+  [_addAccountSigninCoordinator stop];
+  _addAccountSigninCoordinator = nil;
+}
+
 // Called on completion of the AddAccountSigninCoordinator view.
 - (void)addAccountCompletionWithIdentity:(id<SystemIdentity>)identity {
+  self.openAddAccountOperationInProgress = NO;
   if (!identity) {
     return;
   }
@@ -166,11 +184,25 @@
 
 // Opens an AddAccountSigninCoordinator to add an account to the device.
 - (void)openAddAccountCoordinator {
+  // Up to iOS 18, due to crbug.com/395959814, the add account view may
+  // disappear without the signinCompletion being called.
+  [_addAccountSigninCoordinator stop];
+  self.openAddAccountOperationInProgress = YES;
   __weak __typeof(self) weakSelf = self;
-  [self.delegate accountPickerCoordinator:self
-             openAddAccountWithCompletion:^(id<SystemIdentity> identity) {
-               [weakSelf addAccountCompletionWithIdentity:identity];
-             }];
+  SigninContextStyle contextStyle = SigninContextStyle::kDefault;
+  _addAccountSigninCoordinator = [SigninCoordinator
+      addAccountCoordinatorWithBaseViewController:self.baseViewController
+                                          browser:self.browser
+                                     contextStyle:contextStyle
+                                      accessPoint:_accessPoint
+                                   prefilledEmail:nil
+                             continuationProvider:
+                                 DoNothingContinuationProvider()];
+  _addAccountSigninCoordinator.signinCompletion =
+      ^(SigninCoordinatorResult result, id<SystemIdentity> identity) {
+        [weakSelf addAccountCompletionWithIdentity:identity];
+      };
+  [_addAccountSigninCoordinator start];
   [self.logger logAccountPickerAddAccountScreenOpened];
 }
 
@@ -294,11 +326,6 @@
 - (void)accountPickerConfirmationScreenCoordinatorSubmit:
     (AccountPickerConfirmationScreenCoordinator*)coordinator {
   [self startValidation];
-}
-
-- (void)accountPickerConfirmationScreenCoordinatorOpenAddAccount:
-    (AccountPickerConfirmationScreenCoordinator*)coordinator {
-  [self openAddAccountCoordinator];
 }
 
 #pragma mark - UIViewControllerTransitioningDelegate

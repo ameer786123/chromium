@@ -15,6 +15,7 @@ import org.chromium.components.tab_group_sync.LocalTabGroupId;
 import org.chromium.components.tab_group_sync.OpeningSource;
 import org.chromium.components.tab_group_sync.SavedTabGroup;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
+import org.chromium.components.tab_group_sync.VersioningMessageController;
 import org.chromium.url.GURL;
 
 import java.util.ArrayList;
@@ -23,10 +24,11 @@ import java.util.List;
 /** Test implementation of {@link TabGroupSyncService} that can be used for unit tests. */
 @NullMarked
 class TestTabGroupSyncService implements TabGroupSyncService {
-    public static final String SYNC_ID_1 = "SYNC_ID_1";
     public static final String LOCAL_DEVICE_CACHE_GUID = "LocalDevice";
 
-    private List<SavedTabGroup> mTabGroups = new ArrayList<>();
+    private final List<SavedTabGroup> mTabGroups = new ArrayList<>();
+    private final VersioningMessageController mVersioningMessageController =
+            new TestVersioningMessageController();
 
     @Override
     public void addObserver(Observer observer) {}
@@ -66,7 +68,10 @@ class TestTabGroupSyncService implements TabGroupSyncService {
     public void onTabSelected(@Nullable LocalTabGroupId tabGroupId, int tabId, String tabTitle) {}
 
     @Override
-    public void makeTabGroupShared(LocalTabGroupId tabGroupId, String collaborationId) {}
+    public void makeTabGroupShared(
+            LocalTabGroupId tabGroupId,
+            String collaborationId,
+            @Nullable Callback<Boolean> tabGroupSharingCallback) {}
 
     @Override
     public void aboutToUnShareTabGroup(
@@ -121,7 +126,7 @@ class TestTabGroupSyncService implements TabGroupSyncService {
     }
 
     @Override
-    public boolean isRemoteDevice(String syncCacheGuid) {
+    public boolean isRemoteDevice(@Nullable String syncCacheGuid) {
         boolean isLocal =
                 TextUtils.isEmpty(syncCacheGuid)
                         || TextUtils.equals(LOCAL_DEVICE_CACHE_GUID, syncCacheGuid);
@@ -138,4 +143,33 @@ class TestTabGroupSyncService implements TabGroupSyncService {
 
     @Override
     public void updateArchivalStatus(String syncTabGroupId, boolean archivalStatus) {}
+
+    @Override
+    public VersioningMessageController getVersioningMessageController() {
+        return mVersioningMessageController;
+    }
+
+    @Override
+    public void setCollaborationAvailableInFinderForTesting(String collaborationId) {}
+
+    private static class TestVersioningMessageController implements VersioningMessageController {
+        @Override
+        public boolean isInitialized() {
+            return false;
+        }
+
+        @Override
+        public boolean shouldShowMessageUi(int messageType) {
+            return false;
+        }
+
+        @Override
+        public void shouldShowMessageUiAsync(int messageType, Callback<Boolean> callback) {}
+
+        @Override
+        public void onMessageUiShown(int messageType) {}
+
+        @Override
+        public void onMessageUiDismissed(int messageType) {}
+    }
 }

@@ -192,8 +192,7 @@ TEST_P(StylusWritingGestureTest, TestGestureDelete) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("A EFGH", input->Value());
   EXPECT_EQ(1, range.StartOffset());
@@ -212,8 +211,7 @@ TEST_P(StylusWritingGestureTest, TestGestureDelete) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data2),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("AXX EFGH", input->Value());
   EXPECT_EQ(3, range.StartOffset());
@@ -264,8 +262,7 @@ TEST_P(StylusWritingGestureTest, TestGestureDeleteWithWordGranularity) {
 
     WidgetImpl()->HandleStylusWritingGestureAction(
         std::move(gesture_data),
-        WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                      base::Unretained(this)));
+        BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
     EXPECT_EQ(test_case.expected, input->Value());
     EXPECT_EQ(mojom::blink::HandwritingGestureResult::kSuccess,
               last_gesture_result);
@@ -289,8 +286,7 @@ TEST_P(StylusWritingGestureTest, TestGestureDeleteNotFirstLine) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   EXPECT_EQ("ABCD\nGH", input->Value());
   EXPECT_EQ(mojom::blink::HandwritingGestureResult::kSuccess,
             last_gesture_result);
@@ -300,11 +296,7 @@ TEST_P(StylusWritingGestureTest, TestGestureDeleteNotFirstLine) {
 TEST_P(StylusWritingGestureTest, TestGestureAtEndOfLineWithWordGranularity) {
   const bool is_RTL = GetParam();
   auto* input = SetUpMultilineInput(is_RTL);
-  auto* inner_editor = input->InnerEditorElement();
-  Document& doc = GetDocument();
-  inner_editor->appendChild(Text::Create(doc, "ABCD"));
-  inner_editor->appendChild(Text::Create(doc, "\n"));
-  inner_editor->appendChild(Text::Create(doc, "EFGH"));
+  input->SetValue("ABCD\nEFGH");
   const int width = input->BoundsInWidget().width();
 
   mojom::blink::StylusWritingGestureDataPtr gesture_data(
@@ -318,8 +310,7 @@ TEST_P(StylusWritingGestureTest, TestGestureAtEndOfLineWithWordGranularity) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   EXPECT_EQ("\nEFGH", input->Value());
   EXPECT_EQ(mojom::blink::HandwritingGestureResult::kSuccess,
             last_gesture_result);
@@ -342,8 +333,7 @@ TEST_P(StylusWritingGestureTest, TestGestureDeleteMultiline) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   EXPECT_EQ("ABGH", input->Value());
   EXPECT_EQ(mojom::blink::HandwritingGestureResult::kSuccess,
             last_gesture_result);
@@ -365,8 +355,7 @@ TEST_P(StylusWritingGestureTest,
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABGH", input->Value());
   EXPECT_EQ(2, range.StartOffset());
@@ -394,8 +383,7 @@ TEST_P(StylusWritingGestureTest, TestGestureRemoveSpaces) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCDEFGH", input->Value());
   EXPECT_EQ(4, range.StartOffset());
@@ -415,8 +403,7 @@ TEST_P(StylusWritingGestureTest, TestGestureRemoveSpaces) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data2),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCDXXEFGH", input->Value());
   EXPECT_EQ(6, range.StartOffset());
@@ -443,8 +430,7 @@ TEST_P(StylusWritingGestureTest, TestGestureRemoveFirstSpace) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCD EF GH", input->Value());
   EXPECT_EQ(2, range.StartOffset());
@@ -468,8 +454,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSelect) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("AB CD EF GH", input->Value());
   EXPECT_EQ(1, range.StartOffset());
@@ -499,8 +484,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSelectsNoSpacesEitherSide) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("AB CD EF GH", input->Value());
   EXPECT_EQ(3, range.StartOffset());
@@ -528,8 +512,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSelectMultiline) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCD\nEFGH", input->Value());
   EXPECT_EQ(2, range.StartOffset());
@@ -557,8 +540,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSelectPartiallyOutsideBounds) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCD EFGH", input->Value());
   EXPECT_EQ(0, range.StartOffset());
@@ -589,8 +571,7 @@ TEST_P(StylusWritingGestureTest, TestGestureAddSpaceOrText) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCD EFGH", input->Value());
   EXPECT_EQ(5, range.StartOffset());
@@ -610,8 +591,7 @@ TEST_P(StylusWritingGestureTest, TestGestureAddSpaceOrText) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data2),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCD XXEFGH", input->Value());
   EXPECT_EQ(7, range.StartOffset());
@@ -636,8 +616,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSplitOrMerge_RemovesAllSpaces) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCDEFGH", input->Value());
   EXPECT_EQ(4, range.StartOffset());
@@ -657,8 +636,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSplitOrMerge_RemovesAllSpaces) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data1),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCDEFGH", input->Value());
   EXPECT_EQ(4, range.StartOffset());
@@ -684,8 +662,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSplitOrMerge_NonEmptyInput) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCD EFGH", input->Value());
   EXPECT_EQ(5, range.StartOffset());
@@ -704,8 +681,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSplitOrMerge_NonEmptyInput) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data1),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCDEFGH", input->Value());
   EXPECT_EQ(4, range.StartOffset());
@@ -724,8 +700,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSplitOrMerge_NonEmptyInput) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data2),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCDXXEFGH", input->Value());
   EXPECT_EQ(6, range.StartOffset());
@@ -744,8 +719,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSplitOrMerge_NonEmptyInput) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data3),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("ABCDXXXXEFGH", input->Value());
   EXPECT_EQ(8, range.StartOffset());
@@ -770,8 +744,7 @@ TEST_P(StylusWritingGestureTest, TestGestureSplitOrMerge_EmptyInput) {
 
   WidgetImpl()->HandleStylusWritingGestureAction(
       std::move(gesture_data),
-      WTF::BindOnce(&StylusWritingGestureTest::ResultCallback,
-                    base::Unretained(this)));
+      BindOnce(&StylusWritingGestureTest::ResultCallback, Unretained(this)));
   WebRange range = Controller()->GetSelectionOffsets();
   EXPECT_EQ("XX", input->Value());
   EXPECT_EQ(2, range.StartOffset());

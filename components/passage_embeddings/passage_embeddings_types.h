@@ -6,12 +6,12 @@
 #define COMPONENTS_PASSAGE_EMBEDDINGS_PASSAGE_EMBEDDINGS_TYPES_H_
 
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "base/functional/callback.h"
 #include "base/observer_list_types.h"
-#include "services/passage_embeddings/public/mojom/passage_embeddings.mojom.h"
 
 namespace passage_embeddings {
 
@@ -46,11 +46,14 @@ enum PassagePriority {
   // Executed as quickly as possible, runs faster and costs more resources.
   kUserInitiated = 0,
 
+  // Executes quickly but possibly at lower cost than kUserInitiated.
+  kUrgent = 1,
+
   // Execution is deprioritized and runs more slowly but more economically.
-  kPassive = 1,
+  kPassive = 2,
 
   // Execution may be delayed indefinitely and runs economically.
-  kLatent = 2,
+  kLatent = 3,
 };
 
 // The status of an embeddings generation attempt.
@@ -153,7 +156,6 @@ class Embedding {
 class Embedder {
  public:
   using TaskId = uint64_t;
-  static constexpr TaskId kInvalidTaskId = 0;
 
   virtual ~Embedder() = default;
 
@@ -171,6 +173,10 @@ class Embedder {
       PassagePriority priority,
       std::vector<std::string> passages,
       ComputePassagesEmbeddingsCallback callback) = 0;
+
+  // Updates all pending tasks to have the specified priority.
+  virtual void ReprioritizeTasks(PassagePriority priority,
+                                 const std::set<TaskId>& tasks) = 0;
 
   // Cancels computation of embeddings iff none of the passages given to
   // `ComputePassagesEmbeddings()` has been submitted for embedding yet.

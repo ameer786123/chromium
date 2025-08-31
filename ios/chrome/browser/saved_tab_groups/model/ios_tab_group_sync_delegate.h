@@ -13,6 +13,7 @@
 #import "components/saved_tab_groups/delegate/tab_group_sync_delegate.h"
 #import "components/saved_tab_groups/public/saved_tab_group.h"
 #import "components/saved_tab_groups/public/types.h"
+#import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 
 class Browser;
 class BrowserList;
@@ -38,6 +39,29 @@ namespace tab_groups {
 // IOS Subclass of the TabGroupSyncDelegate.
 class IOSTabGroupSyncDelegate : public TabGroupSyncDelegate {
  public:
+  // iOS derived class of the scoped batch operation designed to stop the
+  // updates of the WebStateLists.
+  class [[maybe_unused, nodiscard]] IOSScopedBatchOperation
+      : public TabGroupSyncDelegate::ScopedBatchOperation {
+   public:
+    IOSScopedBatchOperation(
+        std::vector<std::unique_ptr<WebStateList::ScopedBatchOperation>>
+            web_state_list_batches);
+
+    IOSScopedBatchOperation(IOSScopedBatchOperation&& other);
+
+    IOSScopedBatchOperation& operator=(IOSScopedBatchOperation&& other) {
+      web_state_list_batches_ = std::move(other.web_state_list_batches_);
+      return *this;
+    }
+
+    ~IOSScopedBatchOperation() override;
+
+   private:
+    std::vector<std::unique_ptr<WebStateList::ScopedBatchOperation>>
+        web_state_list_batches_;
+  };
+
   IOSTabGroupSyncDelegate(
       BrowserList* browser_list,
       TabGroupSyncService* sync_service,
@@ -48,6 +72,7 @@ class IOSTabGroupSyncDelegate : public TabGroupSyncDelegate {
   ~IOSTabGroupSyncDelegate() override;
 
   // TabGroupSyncDelegate.
+  std::unique_ptr<ScopedBatchOperation> StartBatchOperation() override;
   std::optional<LocalTabGroupID> HandleOpenTabGroupRequest(
       const base::Uuid& sync_tab_group_id,
       std::unique_ptr<TabGroupActionContext> context) override;
@@ -67,10 +92,6 @@ class IOSTabGroupSyncDelegate : public TabGroupSyncDelegate {
       const LocalTabGroupID& local_tab_group_id) override;
 
  private:
-  // Retrieves the browser associated with the scene with the highest level of
-  // activation.
-  Browser* GetMostActiveSceneBrowser();
-
   // Inserts the `distant_tab` using `tab_insertion_browser_agent` at
   // `web_state_index`.
   web::WebState* InsertDistantTab(

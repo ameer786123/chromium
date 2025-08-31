@@ -70,7 +70,7 @@ Socket::Socket(ScriptState* script_state)
       service_.BindNewPipeAndPassReceiver(
           GetExecutionContext()->GetTaskRunner(TaskType::kNetworking)));
   service_.set_disconnect_handler(
-      WTF::BindOnce(&Socket::OnServiceConnectionError, WrapPersistent(this)));
+      BindOnce(&Socket::OnServiceConnectionError, WrapPersistent(this)));
 
   // |closed| promise is just one of the ways to learn that the socket state has
   // changed. Therefore it's not necessary to force developers to handle
@@ -143,6 +143,17 @@ void Socket::Trace(Visitor* visitor) const {
 void Socket::ResetServiceAndFeatureHandle() {
   feature_handle_for_scheduler_.reset();
   service_.reset();
+}
+
+// static
+protocol::Network::DirectSocketDnsQueryType Socket::MapProbeDnsQueryType(
+    V8SocketDnsQueryType dns_query_type) {
+  switch (dns_query_type.AsEnum()) {
+    case V8SocketDnsQueryType::Enum::kIpv4:
+      return protocol::Network::DirectSocketDnsQueryTypeEnum::Ipv4;
+    case V8SocketDnsQueryType::Enum::kIpv6:
+      return protocol::Network::DirectSocketDnsQueryTypeEnum::Ipv6;
+  }
 }
 
 }  // namespace blink

@@ -23,10 +23,10 @@
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_web_contents_listener.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_action_context_desktop.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_sync_delegate_desktop.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/views/bookmarks/saved_tab_groups/saved_tab_group_bar.h"
 #include "chrome/common/channel_info.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/collaboration/public/messaging/empty_messaging_backend_service.h"
 #include "components/collaboration/public/messaging/messaging_backend_service.h"
@@ -46,6 +46,7 @@
 #include "components/sync_device_info/device_info_sync_service.h"
 #include "components/sync_device_info/device_info_tracker.h"
 #include "components/tab_groups/tab_group_color.h"
+#include "components/tabs/public/tab_group.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
@@ -65,7 +66,7 @@ class TabGroupSyncDelegateBrowserTest : public InProcessBrowserTest,
                                         public TabGroupSyncService::Observer {
  public:
   TabGroupSyncDelegateBrowserTest() {
-    features_.InitWithFeatures({kTabGroupSyncServiceDesktopMigration}, {});
+    features_.InitWithFeatures({}, {});
 
     dependency_manager_subscription_ =
         BrowserContextDependencyManager::GetInstance()
@@ -499,8 +500,17 @@ IN_PROC_BROWSER_TEST_F(TabGroupSyncDelegateBrowserTest,
             GURL("chrome://newtab"));
 }
 
+// TODO(crbug.com/438299988): Re-enable this test after resolving null tab in
+// SavedTabGroupWebContentsListener::DidFinishNavigation.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_RemoveLastTabFromSyncKeepsGroupAndAddsPendingNTP \
+  DISABLED_RemoveLastTabFromSyncKeepsGroupAndAddsPendingNTP
+#else
+#define MAYBE_RemoveLastTabFromSyncKeepsGroupAndAddsPendingNTP \
+  RemoveLastTabFromSyncKeepsGroupAndAddsPendingNTP
+#endif
 IN_PROC_BROWSER_TEST_F(TabGroupSyncDelegateBrowserTest,
-                       RemoveLastTabFromSyncKeepsGroupAndAddsPendingNTP) {
+                       MAYBE_RemoveLastTabFromSyncKeepsGroupAndAddsPendingNTP) {
   chrome::AddTabAt(browser(), GURL("chrome://history"), 1, false);
   ASSERT_EQ(browser()->tab_strip_model()->count(), 2);
 
@@ -878,7 +888,8 @@ IN_PROC_BROWSER_TEST_F(TabGroupSyncDelegateBrowserTest,
   TabGroup* local_group =
       browser()->tab_strip_model()->group_model()->GetTabGroup(local_id);
   ASSERT_THAT(local_group, NotNull());
-  local_group->SetVisualData(
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(
+      local_id,
       TabGroupVisualData(u"Title", TabGroupColorId::kBlue,
                          /*is_collapsed=*/true),
       /*is_customized=*/true);
@@ -905,8 +916,16 @@ IN_PROC_BROWSER_TEST_F(TabGroupSyncDelegateBrowserTest,
   EXPECT_TRUE(local_group->visual_data()->is_collapsed());
 }
 
+// TODO(crbug.com/438395752): Re-enable this test on Linux.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_TabRemovalsFromSyncDontCauseZeroTabStateInLocal \
+  DISABLED_TabRemovalsFromSyncDontCauseZeroTabStateInLocal
+#else
+#define MAYBE_TabRemovalsFromSyncDontCauseZeroTabStateInLocal \
+  TabRemovalsFromSyncDontCauseZeroTabStateInLocal
+#endif
 IN_PROC_BROWSER_TEST_F(TabGroupSyncDelegateBrowserTest,
-                       TabRemovalsFromSyncDontCauseZeroTabStateInLocal) {
+                       MAYBE_TabRemovalsFromSyncDontCauseZeroTabStateInLocal) {
   // Starts with one tab.
   EXPECT_EQ(1, browser()->tab_strip_model()->count());
 
@@ -920,7 +939,8 @@ IN_PROC_BROWSER_TEST_F(TabGroupSyncDelegateBrowserTest,
       browser()->tab_strip_model()->group_model()->GetTabGroup(local_id);
   ASSERT_THAT(local_group, NotNull());
   ASSERT_EQ(1, local_group->tab_count());
-  local_group->SetVisualData(
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(
+      local_id,
       TabGroupVisualData(u"Title", TabGroupColorId::kBlue,
                          /*is_collapsed=*/true),
       /*is_customized=*/true);

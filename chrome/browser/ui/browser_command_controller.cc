@@ -36,7 +36,7 @@
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/signin/signin_ui_util.h"
-#include "chrome/browser/ui/apps/app_info_dialog.h"
+#include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/bookmarks/bookmark_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_actions.h"
@@ -47,6 +47,7 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/bubble_anchor_util.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/customize_chrome/side_panel_controller.h"
@@ -67,7 +68,6 @@
 #include "chrome/browser/ui/toolbar/chrome_labs/chrome_labs_utils.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_entry_id.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_enums.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/web_applications/web_app_dialog_utils.h"
@@ -143,11 +143,13 @@
 #endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_enabling.h"
+#include "chrome/browser/glic/fre/glic_fre_controller.h"
 #include "chrome/browser/glic/glic_enums.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/glic_pref_names.h"
 #include "chrome/browser/glic/glic_profile_manager.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/widget/glic_window_controller.h"
 #endif
 
 using WebExposedIsolationLevel = content::WebExposedIsolationLevel;
@@ -213,8 +215,10 @@ void InvokeAction(actions::ActionId id, actions::ActionItem* scope) {
 ///////////////////////////////////////////////////////////////////////////////
 // BrowserCommandController, public:
 
-BrowserCommandController::BrowserCommandController(Browser* browser)
-    : browser_(browser), command_updater_(nullptr) {
+// TODO(crbug.com/434734349): Implement dependency injection for this class to
+// allow removing the Browser dependency.
+BrowserCommandController::BrowserCommandController(BrowserWindowInterface* bwi)
+    : browser_(bwi->GetBrowserForMigrationOnly()) {
   browser_->tab_strip_model()->AddObserver(this);
   PrefService* local_state = g_browser_process->local_state();
   if (local_state) {
@@ -262,6 +266,40 @@ BrowserCommandController::BrowserCommandController(Browser* browser)
       base::BindRepeating(
           &BrowserCommandController::UpdateCommandsForFullscreenMode,
           base::Unretained(this)));
+#endif  //! BUILDFLAG(IS_MAC)
+
+#if BUILDFLAG(ENABLE_GLIC)
+  if (glic::GlicEnabling::IsEnabledByFlags()) {
+    auto* glic_service =
+        glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
+    if (glic_service) {
+      glic_enabling_subscription_ = std::make_unique<
+          base::CallbackListSubscription>(
+
+          glic_service->enabling().RegisterAllowedChanged(base::BindRepeating(
+              &BrowserCommandController::UpdateCommandsForEnableGlicChanged,
+              base::Unretained(this))));
+    }
+  }
+#endif  // BUILDFLAG(ENABLE_GLIC)
+
+#if BUILDFLAG(ENABLE_GLIC)
+  if (glic::GlicEnabling::IsEnabledByFlags()) {
+    auto* service =
+        glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
+    if (service) {
+      glic_window_activation_subscription_ =
+          service->window_controller().AddWindowActivationChangedCallback(
+              base::BindRepeating(
+                  &BrowserCommandController::GlicWindowActivationChanged,
+                  base::Unretained(this)));
+      glic_fre_state_change_subscription_ =
+          service->fre_controller().AddWebUiStateChangedCallback(
+              base::BindRepeating(
+                  &BrowserCommandController::GlicFreStateChanged,
+                  base::Unretained(this)));
+    }
+  }
 #endif
 
   InitCommandState();
@@ -286,7 +324,7 @@ BrowserCommandController::~BrowserCommandController() {
   }
   profile_pref_registrar_.RemoveAll();
   local_pref_registrar_.RemoveAll();
-  browser_->tab_strip_model()->RemoveObserver(this);
+  glic_enabling_subscription_.reset();
 }
 
 bool BrowserCommandController::IsReservedCommandOrKey(
@@ -385,6 +423,17 @@ void BrowserCommandController::LoadingStateChanged(bool is_loading,
   UpdateReloadStopState(is_loading, force);
 }
 
+#if BUILDFLAG(ENABLE_GLIC)
+void BrowserCommandController::GlicWindowActivationChanged(bool active) {
+  UpdateGlicState();
+}
+
+void BrowserCommandController::GlicFreStateChanged(
+    glic::mojom::FreWebUiState new_state) {
+  UpdateGlicState();
+}
+#endif
+
 void BrowserCommandController::FindBarVisibilityChanged() {
   // Block find command updates in locked fullscreen mode unless the instance is
   // locked for OnTask (only relevant for non-web browser scenarios).
@@ -414,6 +463,26 @@ void BrowserCommandController::TabKeyboardFocusChangedTo(
 
 void BrowserCommandController::WebContentsFocusChanged() {
   UpdateCommandsForWebContentsFocus();
+}
+
+void BrowserCommandController::ShowCustomizeChromeSidePanel(
+    SidePanelOpenTrigger trigger,
+    std::optional<CustomizeChromeSection> section) {
+  tabs::TabInterface* tab = browser_->tab_strip_model()->GetActiveTab();
+  if (!tab || !tab->GetTabFeatures() ||
+      !tab->GetTabFeatures()->customize_chrome_side_panel_controller()) {
+    return;
+  }
+
+  customize_chrome::SidePanelController* side_panel_controller =
+      tab->GetTabFeatures()->customize_chrome_side_panel_controller();
+
+  if (!side_panel_controller ||
+      !side_panel_controller->IsCustomizeChromeEntryAvailable()) {
+    return;
+  }
+
+  side_panel_controller->OpenSidePanel(trigger, section);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -493,6 +562,9 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       break;
     case IDC_TAB_SEARCH_CLOSE:
       CloseTabSearch(browser_);
+      break;
+    case IDC_TOGGLE_VERTICAL_TABS:
+      ToggleVerticalTabs(browser_);
       break;
 
     // Window management commands
@@ -674,6 +746,11 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       break;
     case IDC_TURN_ON_SYNC:
       signin_ui_util::EnableSyncFromSingleAccountPromo(
+          browser_->profile(), GetAccountInfoFromProfile(browser_->profile()),
+          signin_metrics::AccessPoint::kMenu);
+      break;
+    case IDC_SHOW_SIGNIN:
+      signin_ui_util::SignInFromSingleAccountPromo(
           browser_->profile(), GetAccountInfoFromProfile(browser_->profile()),
           signin_metrics::AccessPoint::kMenu);
       break;
@@ -880,6 +957,9 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_SHOW_GOOGLE_LENS_SHORTCUT:
       ToggleShowGoogleLensShortcut(browser_);
       break;
+    case IDC_SHOW_SEARCH_TOOLS:
+      ToggleShowSearchTools(browser_);
+      break;
     case IDC_PROFILING_ENABLED:
       content::Profiling::Toggle();
       break;
@@ -913,6 +993,10 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       break;
     case IDC_SHOW_DOWNLOADS:
       ShowDownloads(browser_->GetBrowserForOpeningWebUi());
+      break;
+    case IDC_SHOW_COMMENTS_SIDE_PANEL:
+      browser_->GetFeatures().side_panel_ui()->Show(
+          SidePanelEntryId::kComments, SidePanelOpenTrigger::kAppMenu);
       break;
     case IDC_MANAGE_EXTENSIONS:
     case IDC_SAFETY_HUB_MANAGE_EXTENSIONS:
@@ -1002,12 +1086,16 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_WINDOW_GROUP_TAB:
       GroupTab(browser_);
       break;
+
+    // Tab group commands.
     case IDC_FOCUS_NEXT_TAB_GROUP:
       if (base::i18n::IsRTL()) {
         FocusPreviousTabGroup(browser_);
       } else {
         FocusNextTabGroup(browser_);
       }
+      base::UmaHistogramEnumeration("TabGroups.Shortcuts",
+                                    TabGroupShortcut::kFocusNextTabGroup);
       break;
     case IDC_FOCUS_PREV_TAB_GROUP:
       if (base::i18n::IsRTL()) {
@@ -1015,16 +1103,25 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       } else {
         FocusPreviousTabGroup(browser_);
       }
+      base::UmaHistogramEnumeration("TabGroups.Shortcuts",
+                                    TabGroupShortcut::kFocusPrevTabGroup);
       break;
     case IDC_CLOSE_TAB_GROUP:
       CloseTabGroup(browser_);
+      base::UmaHistogramEnumeration("TabGroups.Shortcuts",
+                                    TabGroupShortcut::kCloseTabGroup);
       break;
     case IDC_CREATE_NEW_TAB_GROUP:
       CreateNewTabGroup(browser_);
+      base::UmaHistogramEnumeration("TabGroups.Shortcuts",
+                                    TabGroupShortcut::kCreateNewTabGroup);
       break;
     case IDC_ADD_NEW_TAB_TO_GROUP:
       AddNewTabToGroup(browser_);
+      base::UmaHistogramEnumeration("TabGroups.Shortcuts",
+                                    TabGroupShortcut::kAddNewTabToGroup);
       break;
+
     case IDC_WINDOW_CLOSE_TABS_TO_RIGHT:
       CloseTabsToRight(browser_);
       break;
@@ -1108,12 +1205,14 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
     }
 
     case IDC_SHOW_CUSTOMIZE_CHROME_SIDE_PANEL: {
-      ShowCustomizeChromeSidePanel(CustomizeChromeSection::kAppearance);
+      ShowCustomizeChromeSidePanel(SidePanelOpenTrigger::kAppMenu,
+                                   CustomizeChromeSection::kAppearance);
       break;
     }
 
     case IDC_SHOW_CUSTOMIZE_CHROME_TOOLBAR: {
-      ShowCustomizeChromeSidePanel(CustomizeChromeSection::kToolbar);
+      ShowCustomizeChromeSidePanel(SidePanelOpenTrigger::kAppMenu,
+                                   CustomizeChromeSection::kToolbar);
       break;
     }
 
@@ -1170,11 +1269,6 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
             g_browser_process->local_state()->GetInteger(
                 prefs::kDefaultBrowserDeclinedCount) +
                 1);
-        base::UmaHistogramCustomTimes(
-            "DefaultBrowser.AppMenu.TimeToSetDefault",
-            base::Time::Now() - g_browser_process->local_state()->GetTime(
-                                    prefs::kDefaultBrowserFirstShownTime),
-            base::Milliseconds(1), base::Days(7), 50);
       }
       chrome::startup::default_prompt::UpdatePrefsForDismissedPrompt(
           browser_->profile());
@@ -1198,13 +1292,6 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
             browser_,
             /*prevent_close=*/true,
             glic::mojom::InvocationSource::kThreeDotsMenu);
-      }
-      break;
-    }
-    case IDC_GLIC_TOGGLE_FOCUS: {
-      if (auto* glic_keyed_service =
-              glic::GlicProfileManager::GetInstance()->GetLastActiveGlic()) {
-        glic_keyed_service->FocusUI();
       }
       break;
     }
@@ -1321,6 +1408,11 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_FOCUS_PREV_TAB_GROUP, true);
   command_updater_.UpdateCommandEnabled(IDC_CLOSE_TAB_GROUP, true);
 
+  // Omnibox commands
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_FULL_URLS, true);
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_GOOGLE_LENS_SHORTCUT, true);
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_SEARCH_TOOLS, true);
+
   // Window management commands
   command_updater_.UpdateCommandEnabled(IDC_CLOSE_WINDOW, true);
   command_updater_.UpdateCommandEnabled(
@@ -1334,6 +1426,7 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_NAME_WINDOW, true);
   command_updater_.UpdateCommandEnabled(IDC_ORGANIZE_TABS, true);
   command_updater_.UpdateCommandEnabled(IDC_DECLUTTER_TABS, true);
+  command_updater_.UpdateCommandEnabled(IDC_TOGGLE_VERTICAL_TABS, true);
 #if BUILDFLAG(IS_CHROMEOS)
   command_updater_.UpdateCommandEnabled(IDC_TOGGLE_MULTITASK_MENU, true);
   command_updater_.UpdateCommandEnabled(IDC_MINIMIZE_WINDOW, true);
@@ -1400,6 +1493,7 @@ void BrowserCommandController::InitCommandState() {
       IDC_SHOW_HISTORY_CLUSTERS_SIDE_PANEL,
       (!guest_session && !profile()->IsSystemProfile()));
   command_updater_.UpdateCommandEnabled(IDC_SHOW_DOWNLOADS, true);
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_COMMENTS_SIDE_PANEL, true);
   command_updater_.UpdateCommandEnabled(IDC_FIND_AND_EDIT_MENU, true);
   command_updater_.UpdateCommandEnabled(IDC_SAVE_AND_SHARE_MENU, true);
   command_updater_.UpdateCommandEnabled(IDC_SHOW_READING_MODE_SIDE_PANEL, true);
@@ -1420,6 +1514,7 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_SHOW_SYNC_SETTINGS, true);
   command_updater_.UpdateCommandEnabled(IDC_TURN_ON_SYNC, true);
   command_updater_.UpdateCommandEnabled(IDC_SHOW_SIGNIN_WHEN_PAUSED, true);
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_SIGNIN, true);
   command_updater_.UpdateCommandEnabled(IDC_SHOW_ADDRESSES, !guest_session);
   command_updater_.UpdateCommandEnabled(IDC_HELP_MENU, true);
   command_updater_.UpdateCommandEnabled(IDC_HELP_PAGE_VIA_KEYBOARD, true);
@@ -1551,10 +1646,7 @@ void BrowserCommandController::InitCommandState() {
   // Glic commands.
   command_updater_.UpdateCommandEnabled(
       IDC_GLIC_TOGGLE_PIN, glic::GlicEnabling::IsProfileEligible(profile()));
-  command_updater_.UpdateCommandEnabled(
-      IDC_OPEN_GLIC, glic::GlicEnabling::IsEnabledForProfile(profile()));
-  command_updater_.UpdateCommandEnabled(
-      IDC_GLIC_TOGGLE_FOCUS, glic::GlicEnabling::IsProfileEligible(profile()));
+  UpdateGlicState();
 #endif
 
   // Initialize other commands whose state changes based on various conditions.
@@ -1592,9 +1684,6 @@ void BrowserCommandController::UpdateSharedCommandsForIncognitoAvailability(
       extensions::ExtensionRegistrar::Get(profile);
   const bool enable_extensions =
       extension_registrar && extension_registrar->extensions_enabled();
-
-  command_updater->UpdateCommandEnabled(IDC_SHOW_FULL_URLS, true);
-  command_updater->UpdateCommandEnabled(IDC_SHOW_GOOGLE_LENS_SHORTCUT, true);
 
   // Bookmark manager and settings page/subpages are forced to open in normal
   // mode. For this reason we disable these commands when incognito is forced.
@@ -1673,8 +1762,10 @@ void BrowserCommandController::UpdateCommandsForTabState() {
   }
 
   // Navigation commands
-  command_updater_.UpdateCommandEnabled(IDC_BACK, CanGoBack(browser_));
-  command_updater_.UpdateCommandEnabled(IDC_FORWARD, CanGoForward(browser_));
+  command_updater_.UpdateCommandEnabled(IDC_BACK,
+                                        ShouldEnableBackButton(browser_));
+  command_updater_.UpdateCommandEnabled(IDC_FORWARD,
+                                        ShouldEnableForwardButton(browser_));
   const bool can_reload = CanReload(browser_);
   command_updater_.UpdateCommandEnabled(IDC_RELOAD, can_reload);
   command_updater_.UpdateCommandEnabled(IDC_RELOAD_BYPASSING_CACHE, can_reload);
@@ -1711,7 +1802,8 @@ void BrowserCommandController::UpdateCommandsForTabState() {
 
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
   command_updater_.UpdateCommandEnabled(
-      IDC_CREATE_SHORTCUT, shortcuts::CanCreateDesktopShortcut(browser_));
+      IDC_CREATE_SHORTCUT,
+      shortcuts::CanCreateDesktopShortcut(current_web_contents));
 #else
   command_updater_.UpdateCommandEnabled(IDC_CREATE_SHORTCUT,
                                         can_create_web_app);
@@ -2012,6 +2104,20 @@ void BrowserCommandController::UpdatePrintingState() {
 #endif
 }
 
+#if BUILDFLAG(ENABLE_GLIC)
+void BrowserCommandController::UpdateGlicState() {
+  if (glic::GlicEnabling::IsEnabledByFlags()) {
+    auto* service =
+        glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
+    if (service) {
+      command_updater_.UpdateCommandEnabled(
+          IDC_OPEN_GLIC, glic::GlicEnabling::IsEnabledForProfile(profile()) &&
+                             !service->IsWindowOrFreShowing());
+    }
+  }
+}
+#endif
+
 void BrowserCommandController::UpdateSaveAsState() {
   if (is_locked_fullscreen_) {
     return;
@@ -2134,16 +2240,16 @@ void BrowserCommandController::UpdateCommandsForTabStripStateChanged() {
 
 actions::ActionItem* BrowserCommandController::FindAction(
     actions::ActionId action_id) {
-  BrowserActions* browser_actions = browser_->browser_actions();
+  actions::ActionItem* const root_action_item =
+      browser_->GetActions()->root_action_item();
 
   // If there is no root action item then ActionManager falls back to the
   // root_action_parent_ which might contain actions from other browser windows.
-  if (!browser_actions->root_action_item()) {
+  if (!root_action_item) {
     return nullptr;
   }
 
-  return actions::ActionManager::Get().FindAction(
-      action_id, browser_actions->root_action_item());
+  return actions::ActionManager::Get().FindAction(action_id, root_action_item);
 }
 
 void BrowserCommandController::UpdateCommandAndActionEnabled(
@@ -2156,31 +2262,19 @@ void BrowserCommandController::UpdateCommandAndActionEnabled(
   }
 }
 
+void BrowserCommandController::UpdateCommandsForEnableGlicChanged() {
+#if BUILDFLAG(ENABLE_GLIC)
+  command_updater_.UpdateCommandEnabled(
+      IDC_OPEN_GLIC, glic::GlicEnabling::IsEnabledForProfile(profile()));
+#endif  //  BUILDFLAG(ENABLE_GLIC)
+}
+
 BrowserWindow* BrowserCommandController::window() {
   return browser_->window();
 }
 
 Profile* BrowserCommandController::profile() {
   return browser_->profile();
-}
-
-void BrowserCommandController::ShowCustomizeChromeSidePanel(
-    std::optional<CustomizeChromeSection> section) {
-  tabs::TabInterface* tab = browser_->tab_strip_model()->GetActiveTab();
-  if (!tab || !tab->GetTabFeatures() ||
-      !tab->GetTabFeatures()->customize_chrome_side_panel_controller()) {
-    return;
-  }
-
-  customize_chrome::SidePanelController* side_panel_controller =
-      tab->GetTabFeatures()->customize_chrome_side_panel_controller();
-
-  if (!side_panel_controller ||
-      !side_panel_controller->IsCustomizeChromeEntryAvailable()) {
-    return;
-  }
-
-  side_panel_controller->OpenSidePanel(SidePanelOpenTrigger::kAppMenu, section);
 }
 
 }  // namespace chrome

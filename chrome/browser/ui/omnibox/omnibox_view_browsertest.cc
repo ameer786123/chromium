@@ -2,20 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <array>
-
-#include "components/omnibox/common/omnibox_features.h"
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
+#include "components/omnibox/browser/omnibox_view.h"
 
 #include <stddef.h>
 #include <stdio.h>
 
+#include <array>
 #include <memory>
+#include <optional>
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -37,6 +34,7 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/omnibox/omnibox_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -57,8 +55,8 @@
 #include "components/omnibox/browser/omnibox_controller.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_selection.h"
-#include "components/omnibox/browser/omnibox_view.h"
 #include "components/omnibox/browser/test_location_bar_model.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/policy_constants.h"
@@ -176,7 +174,10 @@ const int kCtrlOrCmdMask = ui::EF_CONTROL_DOWN;
 
 class OmniboxViewTest : public InProcessBrowserTest {
  public:
-  OmniboxViewTest() = default;
+  OmniboxViewTest() {
+    scoped_feature_list_.InitAndDisableFeature(
+        omnibox::kAiModeOmniboxEntryPoint);
+  }
 
   OmniboxViewTest(const OmniboxViewTest&) = delete;
   OmniboxViewTest& operator=(const OmniboxViewTest&) = delete;
@@ -243,7 +244,7 @@ class OmniboxViewTest : public InProcessBrowserTest {
   }
 
   void SendKeySequence(const ui::KeyboardCode* keys) {
-    for (; *keys != ui::VKEY_UNKNOWN; ++keys) {
+    for (; *keys != ui::VKEY_UNKNOWN; UNSAFE_TODO(++keys)) {
       ASSERT_NO_FATAL_FAILURE(SendKey(*keys, 0));
     }
   }
@@ -399,7 +400,7 @@ class OmniboxViewTest : public InProcessBrowserTest {
       test_location_bar_model_ = new TestLocationBarModel;
       std::unique_ptr<LocationBarModel> location_bar_model(
           test_location_bar_model_);
-      browser()->swap_location_bar_models(&location_bar_model);
+      browser()->GetFeatures().swap_location_bar_models(&location_bar_model);
     }
 
     test_location_bar_model_->set_formatted_full_url(text);
@@ -425,6 +426,7 @@ class OmniboxViewTest : public InProcessBrowserTest {
   }
 
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
   testing::NiceMock<policy::MockConfigurationPolicyProvider> policy_provider_;
   base::CallbackListSubscription create_services_subscription_;
   std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
@@ -1509,20 +1511,42 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_SelectAllStaysAfterUpdate) {
   EXPECT_EQ(1u, GetSelectionSize(omnibox_view));
 }
 
-base::Value CreateSiteSearchPolicyValue(bool featured) {
-  base::Value::List policy_value;
-  policy_value.Append(
-      base::Value::Dict()
-          .Set(policy::SiteSearchPolicyHandler::kShortcut,
-               kSiteSearchPolicyKeyword)
-          .Set(policy::SiteSearchPolicyHandler::kName, kSiteSearchPolicyName)
-          .Set(policy::SiteSearchPolicyHandler::kUrl, kSiteSearchPolicyURL)
-          .Set(policy::SiteSearchPolicyHandler::kFeatured, featured));
-  return base::Value(std::move(policy_value));
-}
+class SiteSearchPolicyOmniboxViewTest
+    : public OmniboxViewTest,
+      public ::testing::WithParamInterface<std::optional<bool>> {
+ public:
+  SiteSearchPolicyOmniboxViewTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        omnibox::kEnableSiteSearchAllowUserOverridePolicy);
+  }
+  ~SiteSearchPolicyOmniboxViewTest() override = default;
+
+  base::Value CreateSiteSearchPolicyValue(bool featured) {
+    base::Value::Dict policy_dict =
+        base::Value::Dict()
+            .Set(policy::SiteSearchPolicyHandler::kShortcut,
+                 kSiteSearchPolicyKeyword)
+            .Set(policy::SiteSearchPolicyHandler::kName, kSiteSearchPolicyName)
+            .Set(policy::SiteSearchPolicyHandler::kUrl, kSiteSearchPolicyURL)
+            .Set(policy::SiteSearchPolicyHandler::kFeatured, featured);
+    if (is_allow_user_override().has_value()) {
+      policy_dict.Set(policy::SiteSearchPolicyHandler::kAllowUserOverride,
+                      is_allow_user_override().value());
+    }
+    base::Value::List policy_value;
+    policy_value.Append(std::move(policy_dict));
+    return base::Value(std::move(policy_value));
+  }
+
+  std::optional<bool> is_allow_user_override() const { return GetParam(); }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
 
 // Verifies that keyword search works when `SiteSearchSettings` policy is set.
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, NonFeaturedPolicyKeyword) {
+IN_PROC_BROWSER_TEST_P(SiteSearchPolicyOmniboxViewTest,
+                       NonFeaturedPolicyKeyword) {
   policy::PolicyMap policies;
   policies.Set(policy::key::kSiteSearchSettings, policy::POLICY_LEVEL_MANDATORY,
                policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
@@ -1541,6 +1565,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, NonFeaturedPolicyKeyword) {
   EXPECT_EQ(turl->short_name(), kSiteSearchPolicyName);
   EXPECT_EQ(turl->url(), kSiteSearchPolicyURL);
   EXPECT_FALSE(turl->featured_by_policy());
+  EXPECT_EQ(turl->enforced_by_policy(),
+            !is_allow_user_override().value_or(false));
 
   // Trigger keyword hint mode.
   ASSERT_NO_FATAL_FAILURE(SendKeySequence(kSiteSearchPolicyKeywordKeys));
@@ -1567,7 +1593,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, NonFeaturedPolicyKeyword) {
 
 // Verifies that keyword search works when `SiteSearchSettings` policy defines
 // a featured search engine.
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeyword) {
+IN_PROC_BROWSER_TEST_P(SiteSearchPolicyOmniboxViewTest, FeaturedPolicyKeyword) {
   policy::PolicyMap policies;
   policies.Set(policy::key::kSiteSearchSettings, policy::POLICY_LEVEL_MANDATORY,
                policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
@@ -1586,6 +1612,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeyword) {
   EXPECT_EQ(turl->short_name(), kSiteSearchPolicyName);
   EXPECT_EQ(turl->url(), kSiteSearchPolicyURL);
   EXPECT_TRUE(turl->featured_by_policy());
+  EXPECT_EQ(turl->enforced_by_policy(),
+            !is_allow_user_override().value_or(false));
 
   // Type the keyword.
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_2, ui::EF_SHIFT_DOWN));
@@ -1614,7 +1642,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeyword) {
 
 // Verifies that featured search engine is shown with starter pack on "@" state
 // and that the underlying search works.
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeywordArrowDown) {
+IN_PROC_BROWSER_TEST_P(SiteSearchPolicyOmniboxViewTest,
+                       FeaturedPolicyKeywordArrowDown) {
   policy::PolicyMap policies;
   policies.Set(policy::key::kSiteSearchSettings, policy::POLICY_LEVEL_MANDATORY,
                policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
@@ -1633,6 +1662,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeywordArrowDown) {
   EXPECT_EQ(turl->short_name(), kSiteSearchPolicyName);
   EXPECT_EQ(turl->url(), kSiteSearchPolicyURL);
   EXPECT_TRUE(turl->featured_by_policy());
+  EXPECT_EQ(turl->enforced_by_policy(),
+            !is_allow_user_override().value_or(false));
 
   // Trigger keyword mode.
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_2, ui::EF_SHIFT_DOWN));
@@ -1653,6 +1684,10 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeywordArrowDown) {
                 ->destination_url.spec(),
             kSiteSearchPolicyTextURL);
 }
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         SiteSearchPolicyOmniboxViewTest,
+                         ::testing::Values(std::nullopt, true, false));
 
 class SearchAggregatorPolicyOmniboxViewTest : public OmniboxViewTest {
  public:
@@ -1706,7 +1741,7 @@ IN_PROC_BROWSER_TEST_F(SearchAggregatorPolicyOmniboxViewTest, NonFeatured) {
   EXPECT_EQ(turl->url(), kSearchAggregatorPolicySearchUrl);
   EXPECT_EQ(turl->suggestions_url(), kSearchAggregatorPolicySuggestUrl);
   EXPECT_EQ(turl->favicon_url(), kSearchAggregatorPolicyIconUrl);
-  EXPECT_FALSE(turl->enforced_by_policy());
+  EXPECT_TRUE(turl->enforced_by_policy());
   EXPECT_FALSE(turl->safe_for_autoreplace());
   EXPECT_FALSE(turl->featured_by_policy());
 
@@ -1759,7 +1794,7 @@ IN_PROC_BROWSER_TEST_F(SearchAggregatorPolicyOmniboxViewTest, Featured) {
   EXPECT_EQ(turl->url(), kSearchAggregatorPolicySearchUrl);
   EXPECT_EQ(turl->suggestions_url(), kSearchAggregatorPolicySuggestUrl);
   EXPECT_EQ(turl->favicon_url(), kSearchAggregatorPolicyIconUrl);
-  EXPECT_FALSE(turl->enforced_by_policy());
+  EXPECT_TRUE(turl->enforced_by_policy());
   EXPECT_FALSE(turl->safe_for_autoreplace());
   EXPECT_TRUE(turl->featured_by_policy());
 
@@ -1816,7 +1851,7 @@ IN_PROC_BROWSER_TEST_F(SearchAggregatorPolicyOmniboxViewTest,
   EXPECT_EQ(turl->url(), kSearchAggregatorPolicySearchUrl);
   EXPECT_EQ(turl->suggestions_url(), kSearchAggregatorPolicySuggestUrl);
   EXPECT_EQ(turl->favicon_url(), kSearchAggregatorPolicyIconUrl);
-  EXPECT_FALSE(turl->enforced_by_policy());
+  EXPECT_TRUE(turl->enforced_by_policy());
   EXPECT_FALSE(turl->safe_for_autoreplace());
   EXPECT_TRUE(turl->featured_by_policy());
 

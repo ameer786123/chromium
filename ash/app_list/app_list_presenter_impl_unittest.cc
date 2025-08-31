@@ -22,6 +22,7 @@
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
+#include "chromeos/ash/services/assistant/public/cpp/features.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
@@ -34,7 +35,7 @@ namespace ash {
 namespace {
 
 int64_t GetPrimaryDisplayId() {
-  return display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  return display::Screen::Get()->GetPrimaryDisplay().id();
 }
 
 class AppListPresenterImplTest : public AshTestBase {
@@ -70,15 +71,6 @@ class AppListPresenterImplTest : public AshTestBase {
                       GetPrimaryDisplay().id(), base::TimeTicks(),
                       /*show_source=*/std::nullopt);
   }
-
-  // Shows the Assistant UI.
-  void ShowAssistantUI() {
-    presenter()->ShowEmbeddedAssistantUI(/*show=*/true);
-  }
-
-  bool IsShowingAssistantUI() {
-    return presenter()->IsShowingEmbeddedAssistantUI();
-  }
 };
 
 // Tests, in tablet mode, that when specific container id widgets are focused,
@@ -108,29 +100,6 @@ TEST_F(AppListPresenterImplTest,
         << " container " << id;
     EXPECT_EQ(hotseat->state(), HotseatState::kShownHomeLauncher);
   }
-}
-
-// Tests that Assistant UI in tablet mode is closed when open another window.
-TEST_F(AppListPresenterImplTest, HideAssistantUIOnFocusOut) {
-  // Enter tablet mode to display the home launcher.
-  EnableTabletMode();
-  EXPECT_TRUE(presenter()->IsVisibleDeprecated());
-  EXPECT_FALSE(IsShowingAssistantUI());
-
-  // Open a window to cover Home Launcher.
-  std::unique_ptr<aura::Window> window1 = CreateTestWindow();
-  EXPECT_FALSE(presenter()->IsVisibleDeprecated());
-
-  // Open Assistant UI.
-  ShowAssistantUI();
-  // Assistant UI is visible but Home Launcher is considered not visible.
-  EXPECT_TRUE(IsShowingAssistantUI());
-  EXPECT_FALSE(presenter()->IsVisibleDeprecated());
-
-  // Open another window should close Assistant UI.
-  std::unique_ptr<aura::Window> window2 = CreateTestWindow();
-  EXPECT_FALSE(IsShowingAssistantUI());
-  EXPECT_FALSE(presenter()->IsVisibleDeprecated());
 }
 
 // Regression test for https://crbug.com/1235056

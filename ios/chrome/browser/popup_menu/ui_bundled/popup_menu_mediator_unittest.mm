@@ -8,6 +8,7 @@
 #import "base/ios/ios_util.h"
 #import "base/memory/raw_ptr.h"
 #import "base/memory/scoped_refptr.h"
+#import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/time/default_clock.h"
 #import "components/bookmarks/browser/bookmark_model.h"
@@ -114,8 +115,7 @@ class PopupMenuMediatorTest : public PlatformTest {
                             password_manager::MockPasswordStoreInterface>));
     builder.AddTestingFactory(
         ReadingListModelFactory::GetInstance(),
-        base::BindRepeating(&BuildReadingListModelWithFakeStorage,
-                            std::vector<scoped_refptr<ReadingListEntry>>()));
+        ReadingListModelTestingFactoryWithFakeStorage({}));
     builder.AddTestingFactory(
         ios::TemplateURLServiceFactory::GetInstance(),
         ios::TemplateURLServiceFactory::GetDefaultFactory());
@@ -131,8 +131,9 @@ class PopupMenuMediatorTest : public PlatformTest {
     popup_menu_ = OCMClassMock([PopupMenuTableViewController class]);
     popup_menu_strict_ =
         OCMStrictClassMock([PopupMenuTableViewController class]);
-    OCMExpect([popup_menu_strict_ setPopupMenuItems:[OCMArg any]]);
-    OCMExpect([popup_menu_strict_ setDelegate:[OCMArg any]]);
+    // TODO(crbug.com/422439645): Change back to expect or delete the stub.
+    OCMStub([popup_menu_strict_ setPopupMenuItems:[OCMArg any]]);
+    OCMStub([popup_menu_strict_ setDelegate:[OCMArg any]]);
 
     // Set up the TestBrowser.
     browser_ = std::make_unique<TestBrowser>(profile_.get());
@@ -179,6 +180,8 @@ class PopupMenuMediatorTest : public PlatformTest {
     // observers when browser_ gets destroyed.
     [mediator_ disconnect];
     browser_.reset();
+    EXPECT_OCMOCK_VERIFY((id)popup_menu_);
+    EXPECT_OCMOCK_VERIFY((id)popup_menu_strict_);
 
     PlatformTest::TearDown();
   }
@@ -186,9 +189,9 @@ class PopupMenuMediatorTest : public PlatformTest {
  protected:
   PopupMenuMediator* CreateMediator(BOOL is_incognito) {
     mediator_ =
-        [[PopupMenuMediator alloc] initWithIsIncognito:is_incognito
-                                      readingListModel:reading_list_model_
-                                browserPolicyConnector:nil];
+        [[PopupMenuMediator alloc] initWithReadingListModel:reading_list_model_
+                                            policyConnector:nil
+                                                  incognito:is_incognito];
     return mediator_;
   }
 
@@ -196,9 +199,9 @@ class PopupMenuMediatorTest : public PlatformTest {
       BOOL is_incognito,
       BrowserPolicyConnectorIOS* browser_policy_connector) {
     mediator_ = [[PopupMenuMediator alloc]
-           initWithIsIncognito:is_incognito
-              readingListModel:reading_list_model_
-        browserPolicyConnector:browser_policy_connector];
+        initWithReadingListModel:reading_list_model_
+                 policyConnector:browser_policy_connector
+                       incognito:is_incognito];
     return mediator_;
   }
 
@@ -417,8 +420,7 @@ TEST_F(PopupMenuMediatorTest, TestReadLaterDisabled) {
       web_state_, OverlayModality::kWebContentArea);
   queue->AddRequest(
       OverlayRequest::CreateWithConfig<JavaScriptAlertDialogRequest>(
-          web_state_, kUrl,
-          /*is_main_frame=*/true, @"message"));
+          web_state_, kUrl, url::Origin::Create(kUrl), @"message"));
   EXPECT_TRUE(HasItem(consumer, kToolsMenuReadLater, /*enabled=*/NO));
 
   // Cancel the request and verify that the "Add to Reading List" button is

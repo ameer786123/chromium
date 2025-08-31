@@ -7,12 +7,14 @@ package org.chromium.components.embedder_support.view;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Rect;
+import android.os.Build;
 import android.os.Handler;
 import android.util.SparseArray;
 import android.view.DragEvent;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.PointerIcon;
+import android.view.Surface;
 import android.view.View;
 import android.view.View.OnDragListener;
 import android.view.View.OnSystemUiVisibilityChangeListener;
@@ -24,13 +26,16 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.FrameLayout;
 
+import androidx.annotation.VisibleForTesting;
+
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.ObserverList;
 import org.chromium.base.TraceEvent;
 import org.chromium.build.annotations.EnsuresNonNullIf;
 import org.chromium.build.annotations.NullUnmarked;
 import org.chromium.build.annotations.Nullable;
-import org.chromium.components.autofill.AndroidAutofillFeatures;
 import org.chromium.components.embedder_support.util.TouchEventFilter;
+import org.chromium.content_public.browser.GestureListenerManager;
 import org.chromium.content_public.browser.ImeAdapter;
 import org.chromium.content_public.browser.RenderCoordinates;
 import org.chromium.content_public.browser.SmartClipProvider;
@@ -41,7 +46,9 @@ import org.chromium.ui.accessibility.AccessibilityState;
 import org.chromium.ui.base.EventForwarder;
 import org.chromium.ui.base.EventOffsetHandler;
 import org.chromium.ui.base.ViewAndroidDelegate;
+import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.dragdrop.DragEventDispatchHelper.DragEventDispatchDestination;
+import org.chromium.ui.util.MotionEventUtils;
 
 import java.util.function.Supplier;
 
@@ -76,9 +83,13 @@ public class ContentView extends FrameLayout
     private ViewEventSink mViewEventSink;
     @Nullable private Supplier<PointerIcon> mStylusWritingIconSupplier;
 
+    // TODO(b/422918648): Remove this.
+    @Nullable private MotionEvent mPendingTwoFingerSwipeDownEvent;
+    @Nullable private VirtualStructureProvider mVirtualStructureProvider;
+
     /**
-     * The desired size of this view in {@link MeasureSpec}. Set by the host
-     * when it should be different from that of the parent.
+     * The desired size of this view in {@link MeasureSpec}. Set by the host when it should be
+     * different from that of the parent.
      */
     private int mDesiredWidthMeasureSpec = DEFAULT_MEASURE_SPEC;
 
@@ -190,6 +201,10 @@ public class ContentView extends FrameLayout
 
     public void setStylusWritingIconSupplier(Supplier<PointerIcon> iconSupplier) {
         mStylusWritingIconSupplier = iconSupplier;
+    }
+
+    public void setVirtualStructureProvider(VirtualStructureProvider virtualStructureProvider) {
+        mVirtualStructureProvider = virtualStructureProvider;
     }
 
     @Override
@@ -373,9 +388,17 @@ public class ContentView extends FrameLayout
     }
 
     @Override
+    public boolean onKeyPreIme(int keyCode, KeyEvent event) {
+        if (hasValidWebContents()) {
+            ImeAdapter.fromWebContents(mWebContents).onKeyPreIme(keyCode, event);
+        }
+        return super.onKeyPreIme(keyCode, event);
+    }
+
+    @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         EventForwarder forwarder = getEventForwarder();
-        return forwarder != null ? forwarder.onKeyUp(keyCode, event) : false;
+        return forwarder != null ? forwarder.onKeyUp(event) : false;
     }
 
     @Override
@@ -391,10 +414,55 @@ public class ContentView extends FrameLayout
         return forwarder != null ? forwarder.onDragEvent(event, this) : false;
     }
 
+    @VisibleForTesting
+    boolean maybeHandleTwoFingerSwipeEvent(
+            MotionEvent event, EventForwarder forwarder, GestureListenerManager gestureManager) {
+        // HACK: InputFlinger (namely, in GestureConverter::handleFling()) may generate fake touch
+        // events after a Two-finger swipe on a trackpad which is an ACTION_DOWN MotionEvent
+        // immediately followed by ACTION_CANCEL. These events are to stop the active fling scroll,
+        // but may cause unexpected behaviors in web contents when not scrolling. Ignore them
+        // unless there is an active fling scroll. (b/405275205).
+        // TODO(b/422918648): Remove this desktop-only hack.
+        if (forwarder == null || gestureManager == null) {
+            return false;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && Build.VERSION.SDK_INT <= 38
+                && DeviceInfo.isDesktop()) {
+            if (MotionEventUtils.isTrackpadEvent(event)
+                    && event.getClassification() == MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE
+                    && forwarder != null) {
+                if (mPendingTwoFingerSwipeDownEvent != null) {
+                    MotionEvent lastEvent = mPendingTwoFingerSwipeDownEvent;
+                    mPendingTwoFingerSwipeDownEvent = null;
+                    // Ignore ACTION_DOWN followed by ACTION_CANCEL unless there is an active fling
+                    // scroll. If there is, send them to cancel the scroll.
+                    if (event.getAction() == MotionEvent.ACTION_CANCEL
+                            && !gestureManager.hasActiveFlingScroll()) {
+                        return true;
+                    }
+                    // Send the stored event.
+                    forwarder.onTouchEvent(lastEvent);
+                }
+                // Store ACTION_DOWN event to see if the next event is ACTION_CANCEL or not.
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    mPendingTwoFingerSwipeDownEvent = MotionEvent.obtain(event);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (TouchEventFilter.hasInvalidToolType(event)) return false;
         EventForwarder forwarder = getEventForwarder();
+        GestureListenerManager gestureManager =
+                webContentsAttached() ? GestureListenerManager.fromWebContents(mWebContents) : null;
+        if (maybeHandleTwoFingerSwipeEvent(event, forwarder, gestureManager)) {
+            return true;
+        }
         boolean ret = forwarder != null ? forwarder.onTouchEvent(event) : false;
         return ret;
     }
@@ -421,7 +489,19 @@ public class ContentView extends FrameLayout
     @Override
     public boolean onCapturedPointerEvent(MotionEvent event) {
         EventForwarder forwarder = getEventForwarder();
-        return forwarder != null ? forwarder.onCapturedPointerEvent(event) : false;
+        if (forwarder != null) {
+            // Device rotation is needed to update the raw touchpad events based on the device
+            // orientation
+            int deviceRotation = Surface.ROTATION_0;
+            WindowAndroid window = mWebContents.getTopLevelNativeWindow();
+            if (window != null) {
+                deviceRotation = window.getDisplay().getRotation();
+            }
+
+            return forwarder.onCapturedPointerEvent(event, deviceRotation);
+        }
+
+        return false;
     }
 
     @Override
@@ -564,6 +644,12 @@ public class ContentView extends FrameLayout
 
     @Override
     public void onProvideVirtualStructure(final ViewStructure structure) {
+        if (hasValidWebContents() && mVirtualStructureProvider != null) {
+            mVirtualStructureProvider.provideVirtualStructureForWebContents(
+                    structure, mWebContents);
+            return;
+        }
+
         WebContentsAccessibility wcax = getWebContentsAccessibility();
         if (wcax != null) wcax.onProvideVirtualStructure(structure, false);
     }
@@ -572,9 +658,7 @@ public class ContentView extends FrameLayout
     public void autofill(final SparseArray<AutofillValue> values) {
         ViewAndroidDelegate viewDelegate = mWebContents.getViewAndroidDelegate();
         if (viewDelegate == null || !viewDelegate.providesAutofillStructure()) {
-            if (allowAutofillViaAccessibilityAPI()) {
-                super.autofill(values);
-            }
+            super.autofill(values);
             return;
         }
         viewDelegate.autofill(values);
@@ -584,16 +668,10 @@ public class ContentView extends FrameLayout
     public void onProvideAutofillVirtualStructure(ViewStructure structure, int flags) {
         ViewAndroidDelegate viewDelegate = mWebContents.getViewAndroidDelegate();
         if (viewDelegate == null || !viewDelegate.providesAutofillStructure()) {
-            if (allowAutofillViaAccessibilityAPI()) {
-                super.onProvideAutofillVirtualStructure(structure, flags);
-            }
+            super.onProvideAutofillVirtualStructure(structure, flags);
             return;
         }
         viewDelegate.onProvideAutofillVirtualStructure(structure, flags);
-    }
-
-    private boolean allowAutofillViaAccessibilityAPI() {
-        return !AndroidAutofillFeatures.ANDROID_AUTOFILL_DEPRECATE_ACCESSIBILITY_API.isEnabled();
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////

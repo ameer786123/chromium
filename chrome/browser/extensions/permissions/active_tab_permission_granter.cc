@@ -15,6 +15,7 @@
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
@@ -26,6 +27,7 @@
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/renderer_startup_helper.h"
 #include "extensions/browser/script_injection_tracker.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/manifest_handlers/incognito_info.h"
@@ -118,7 +120,10 @@ ActiveTabPermissionGranter::ActiveTabPermissionGranter(
     content::WebContents* web_contents,
     int tab_id,
     Profile* profile)
-    : content::WebContentsObserver(web_contents), tab_id_(tab_id) {
+    : content::WebContentsObserver(web_contents),
+      content::WebContentsUserData<ActiveTabPermissionGranter>(*web_contents),
+      tab_id_(tab_id) {
+  CHECK_NE(tab_id_, extension_misc::kUnknownTabId);
   extension_registry_observation_.Observe(ExtensionRegistry::Get(profile));
 }
 
@@ -310,5 +315,7 @@ void ActiveTabPermissionGranter::ClearGrantedExtensionsAndNotify(
     granted_extensions_.Remove(id);
   }
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(ActiveTabPermissionGranter);
 
 }  // namespace extensions

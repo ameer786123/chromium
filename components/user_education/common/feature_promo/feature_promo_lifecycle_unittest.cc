@@ -10,6 +10,7 @@
 
 #include "base/callback_list.h"
 #include "base/feature_list.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/metrics/user_action_tester.h"
@@ -45,7 +46,8 @@ constexpr char kAppName[] = "App1";
 constexpr char kAppName2[] = "App2";
 constexpr int kNumRotatingPromos = 3;
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kTestElementId);
-const ui::ElementContext kTestElementContext{1};
+constexpr ui::ElementContext kTestElementContext =
+    ui::ElementContext::CreateFakeContextForTesting(1);
 
 template <typename Arg, typename... Args>
 std::string ParamToString(

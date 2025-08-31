@@ -29,6 +29,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/callback.h"
+#include "base/functional/function_ref.h"
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/strings/escape.h"
@@ -47,6 +48,7 @@
 #include "chrome/updater/updater_branding.h"
 #include "chrome/updater/updater_scope.h"
 #include "chrome/updater/updater_version.h"
+#include "components/update_client/utils.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_LINUX)
@@ -227,7 +229,7 @@ void InitLogging(UpdaterScope updater_scope) {
 #if BUILDFLAG(IS_WIN)
   // Enable Event Tracing for Windows.
   // {4D7D9607-78B6-4583-A188-2136AB85F5F1}
-  constexpr GUID kUpdaterETWProviderName = {
+  static constexpr GUID kUpdaterETWProviderName = {
       0x4d7d9607,
       0x78b6,
       0x4583,
@@ -337,14 +339,10 @@ bool DeleteExcept(std::optional<base::FilePath> except) {
       .ForEach([&](const base::FilePath& item) {
         if (item != *except) {
           VLOG(2) << "DeleteExcept deleting: " << item;
-          for (size_t i = 0; i <= 2; ++i) {
-            if (delete_success = base::DeletePathRecursively(item);
-                delete_success) {
-              break;
-            }
-            VPLOG(1) << "DeleteExcept failed to delete: " << item;
-            base::PlatformThread::Sleep(base::Milliseconds(100));
-          }
+          const bool success = update_client::RetryDeletePathRecursivelyCustom(
+              item, /*tries=*/2,
+              /*time_between_tries=*/base::Milliseconds(100));
+          VPLOG_IF(1, !success) << "DeleteExcept failed to delete: " << item;
         }
       });
   return delete_success;
@@ -356,6 +354,22 @@ int GetDownloadProgress(int64_t downloaded_bytes, int64_t total_bytes) {
   }
   return 100 * std::clamp(static_cast<double>(downloaded_bytes) / total_bytes,
                           0.0, 1.0);
+}
+
+std::vector<base::FilePath> GetFilesWithPredicate(
+    const base::FilePath& dir,
+    base::FunctionRef<bool(const base::FilePath&)> predicate) {
+  if (dir.empty()) {
+    return {};
+  }
+  std::vector<base::FilePath> files;
+  base::FileEnumerator(dir, /*recursive=*/true, base::FileEnumerator::FILES)
+      .ForEach([&](const base::FilePath& item) {
+        if (predicate(item)) {
+          files.push_back(item);
+        }
+      });
+  return files;
 }
 
 }  // namespace updater

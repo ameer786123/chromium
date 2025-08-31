@@ -240,9 +240,12 @@ NSString* GetGaiaIdForProfile(ProfileIOS* profile) {
       showSnackbarWithMessage:self.confirmationMessage
                    buttonText:buttonText
                 messageAction:^{
-                  [weakApplicationHandler prepareToPresentModal:^{
-                    [weakSettingsHandler showNotificationsSettings];
-                  }];
+                  [weakApplicationHandler
+                      prepareToPresentModalWithSnackbarDismissal:YES
+                                                      completion:^{
+                                                        [weakSettingsHandler
+                                                            showNotificationsSettings];
+                                                      }];
                 }
              completionAction:nil];
 }
@@ -251,10 +254,8 @@ NSString* GetGaiaIdForProfile(ProfileIOS* profile) {
 - (void)openIOSNotificationSettings {
   __weak __typeof(self) weakSelf = self;
 
-  NSURL* url = [NSURL URLWithString:UIApplicationOpenSettingsURLString];
-  if (@available(iOS 15.4, *)) {
-    url = [NSURL URLWithString:UIApplicationOpenNotificationSettingsURLString];
-  }
+  NSURL* url =
+      [NSURL URLWithString:UIApplicationOpenNotificationSettingsURLString];
 
   [[UIApplication sharedApplication]
                 openURL:url

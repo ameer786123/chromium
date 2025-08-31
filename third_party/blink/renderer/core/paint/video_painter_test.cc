@@ -141,8 +141,8 @@ TEST_F(VideoPainterTest, VideoLayerAppearsInLayerTree) {
   ASSERT_TRUE(layer);
   EXPECT_TRUE(HasLayerAttached(*layer));
   // The layer bounds reflects the aspect ratio and object-fit of the video.
-  EXPECT_EQ(gfx::Vector2dF(0, 75), layer->offset_to_transform_parent());
-  EXPECT_EQ(gfx::Size(300, 150), layer->bounds());
+  EXPECT_EQ(gfx::Vector2dF(0, 0), layer->offset_to_transform_parent());
+  EXPECT_EQ(gfx::Size(300, 300), layer->bounds());
 }
 
 class MockWebMediaPlayer : public StubWebMediaPlayer {
@@ -238,7 +238,8 @@ class VideoPaintPreviewTest : public testing::Test,
     GetLocalMainFrame().CapturePaintPreview(
         bounds(), canvas,
         /*include_linked_destinations=*/true,
-        /*skip_accelerated_content=*/skip_accelerated_content);
+        /*skip_accelerated_content=*/skip_accelerated_content,
+        /*allow_scrollbars=*/false);
     return recorder.finishRecordingAsPicture();
   }
 

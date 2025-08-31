@@ -13,7 +13,7 @@
 #include "base/no_destructor.h"
 #include "base/process/process_handle.h"
 #include "base/synchronization/lock.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/tracing/protos/chrome_enums.pbzero.h"
 #include "build/buildflag.h"
 
 namespace tracing {
@@ -35,8 +35,11 @@ namespace test {
 class CurrentProcessForTest;
 }  // namespace test
 
-using CurrentProcessType =
-    perfetto::protos::pbzero::ChromeProcessDescriptor::ProcessType;
+#if BUILDFLAG(IS_ANDROID)
+class PlatformThreadPriorityMonitor;
+#endif  // BUILDFLAG(IS_ANDROID)
+
+using CurrentProcessType = perfetto::protos::chrome_enums::pbzero::ProcessType;
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -102,6 +105,9 @@ class BASE_EXPORT CurrentProcess {
   class NameKey {
    private:
     NameKey() = default;
+#if BUILDFLAG(IS_ANDROID)
+    friend class ::base::PlatformThreadPriorityMonitor;
+#endif  // BUILDFLAG(IS_ANDROID)
     friend class ::base::test::CurrentProcessForTest;
     friend class ::tracing::TraceEventDataSource;
     friend class ::tracing::TrackNameRecorder;

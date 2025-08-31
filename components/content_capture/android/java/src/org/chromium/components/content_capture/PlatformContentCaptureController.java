@@ -17,7 +17,7 @@ import android.view.contentcapture.DataRemovalRequest;
 import androidx.annotation.RequiresApi;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.BuildInfo;
+import org.chromium.base.AndroidInfo;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.build.annotations.NullMarked;
@@ -43,7 +43,7 @@ public class PlatformContentCaptureController {
     private boolean mShouldStartCapture;
     private boolean mIsAiai;
     private @Nullable UrlAllowlist mAllowlist;
-    private ContentCaptureManager mContentCaptureManager;
+    private final ContentCaptureManager mContentCaptureManager;
 
     public static PlatformContentCaptureController lazyInit() {
         if (sContentCaptureController == null) {
@@ -91,7 +91,8 @@ public class PlatformContentCaptureController {
                             + assumeNonNull(mContentCaptureManager.getServiceComponentName())
                                     .getPackageName());
             // Disable the ContentCapture if there is no testing flag.
-            if (!BuildInfo.isDebugAndroid() && !ContentCaptureFeatures.isDumpForTestingEnabled()) {
+            if (!AndroidInfo.isDebugAndroid()
+                    && !ContentCaptureFeatures.isDumpForTestingEnabled()) {
                 return;
             }
         }
@@ -116,10 +117,10 @@ public class PlatformContentCaptureController {
         ArrayList<Pattern> allowedRe = null;
         for (ContentCaptureCondition c : conditions) {
             if ((c.getFlags() & ContentCaptureCondition.FLAG_IS_REGEX) != 0) {
-                if (allowedRe == null) allowedRe = new ArrayList<Pattern>();
+                if (allowedRe == null) allowedRe = new ArrayList<>();
                 allowedRe.add(Pattern.compile(c.getLocusId().getId()));
             } else {
-                if (allowedUrls == null) allowedUrls = new HashSet<String>();
+                if (allowedUrls == null) allowedUrls = new HashSet<>();
                 allowedUrls.add(c.getLocusId().getId());
             }
         }

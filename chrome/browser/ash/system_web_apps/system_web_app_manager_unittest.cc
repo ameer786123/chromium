@@ -27,7 +27,6 @@
 #include "chrome/browser/web_applications/external_install_options.h"
 #include "chrome/browser/web_applications/externally_managed_app_manager.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
-#include "chrome/browser/web_applications/test/fake_externally_managed_app_manager.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
 #include "chrome/browser/web_applications/test/test_web_app_url_loader.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
@@ -39,7 +38,6 @@
 #include "chrome/browser/web_applications/web_app_registry_update.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
-#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/ash/components/browser_context_helper/annotated_account_id.h"
 #include "chromeos/ash/experiences/system_web_apps/types/system_web_app_delegate_map.h"
@@ -82,6 +80,10 @@ std::unique_ptr<web_app::WebAppInstallInfo> GetWebAppInstallInfo(
   return info;
 }
 
+std::unique_ptr<web_app::WebAppInstallInfo> GetNullWebAppInstallInfo() {
+  return nullptr;
+}
+
 web_app::WebAppInstallInfoFactory GetApp1WebAppInfoFactory() {
   // "static" so that web_app::ExternalInstallOptions comparisons in tests work.
   static auto factory = base::BindRepeating(&GetWebAppInstallInfo, AppUrl1());
@@ -91,6 +93,11 @@ web_app::WebAppInstallInfoFactory GetApp1WebAppInfoFactory() {
 web_app::WebAppInstallInfoFactory GetApp2WebAppInfoFactory() {
   // "static" so that web_app::ExternalInstallOptions comparisons in tests work.
   static auto factory = base::BindRepeating(&GetWebAppInstallInfo, AppUrl2());
+  return factory;
+}
+
+web_app::WebAppInstallInfoFactory GetNullWebAppInfoFactory() {
+  static auto factory = base::BindRepeating(&GetNullWebAppInstallInfo);
   return factory;
 }
 
@@ -180,16 +187,13 @@ class SystemWebAppManagerTest : public ChromeRenderViewHostTestHarness {
         *SystemWebAppManager::GetWebAppProvider(profile()));
   }
 
-  // TODO(crbug.com/407797639): Remove dependency on
-  // FakeExternallyManagedAppManager.
-  web_app::FakeExternallyManagedAppManager& externally_managed_app_manager() {
-    return static_cast<web_app::FakeExternallyManagedAppManager&>(
-        provider().externally_managed_app_manager());
-  }
-
   TestSystemWebAppManager& system_web_app_manager() {
     return static_cast<TestSystemWebAppManager&>(
         *SystemWebAppManager::Get(profile()));
+  }
+
+  web_app::ExternallyManagedAppManager& externally_managed_app_manager() {
+    return provider().externally_managed_app_manager();
   }
 
   bool IsInstalled(const GURL& install_url) {
@@ -589,25 +593,17 @@ TEST_F(SystemWebAppManagerTest, InstallResultHistogram) {
         SystemWebAppManager::kFreshInstallDurationHistogramName, 1);
   }
 
-  externally_managed_app_manager().SetHandleInstallRequestCallback(
-      base::BindLambdaForTesting(
-          [](const web_app::ExternalInstallOptions&)
-              -> web_app::ExternallyManagedAppManager::InstallResult {
-            return web_app::ExternallyManagedAppManager::InstallResult(
-                webapps::InstallResultCode::kWebAppDisabled);
-          }));
-
   {
     SystemWebAppDelegateMap system_apps;
     system_apps.emplace(
         SystemWebAppType::SETTINGS,
         std::make_unique<UnittestingSystemAppDelegate>(
             SystemWebAppType::SETTINGS, kSettingsAppInternalName, AppUrl1(),
-            GetApp1WebAppInfoFactory()));
+            GetNullWebAppInfoFactory()));
     system_apps.emplace(SystemWebAppType::CAMERA,
                         std::make_unique<UnittestingSystemAppDelegate>(
                             SystemWebAppType::CAMERA, kCameraAppInternalName,
-                            AppUrl2(), GetApp2WebAppInfoFactory()));
+                            AppUrl2(), GetNullWebAppInfoFactory()));
     system_web_app_manager().SetSystemAppsForTesting(std::move(system_apps));
 
     StartAndWaitForAppsToSynchronize();
@@ -616,14 +612,15 @@ TEST_F(SystemWebAppManagerTest, InstallResultHistogram) {
         SystemWebAppManager::kInstallResultHistogramName, 3);
     histograms.ExpectBucketCount(
         SystemWebAppManager::kInstallResultHistogramName,
-        webapps::InstallResultCode::kWebAppDisabled, 2);
+        webapps::InstallResultCode::kGetWebAppInstallInfoFailed, 2);
     histograms.ExpectTotalCount(settings_app_install_result_histogram, 2);
-    histograms.ExpectBucketCount(settings_app_install_result_histogram,
-                                 webapps::InstallResultCode::kWebAppDisabled,
-                                 1);
-    histograms.ExpectBucketCount(camera_app_install_result_histogram,
-                                 webapps::InstallResultCode::kWebAppDisabled,
-                                 1);
+    histograms.ExpectBucketCount(
+        settings_app_install_result_histogram,
+        webapps::InstallResultCode::kGetWebAppInstallInfoFailed, 1);
+
+    histograms.ExpectBucketCount(
+        camera_app_install_result_histogram,
+        webapps::InstallResultCode::kGetWebAppInstallInfoFailed, 1);
   }
 
   {
@@ -656,7 +653,7 @@ TEST_F(SystemWebAppManagerTest, InstallResultHistogram) {
         webapps::InstallResultCode::kCancelledOnWebAppProviderShuttingDown, 1);
     histograms.ExpectBucketCount(
         SystemWebAppManager::kInstallResultHistogramName,
-        webapps::InstallResultCode::kWebAppDisabled, 2);
+        webapps::InstallResultCode::kGetWebAppInstallInfoFailed, 2);
 
     histograms.ExpectBucketCount(
         settings_app_install_result_histogram,
@@ -664,56 +661,11 @@ TEST_F(SystemWebAppManagerTest, InstallResultHistogram) {
     histograms.ExpectBucketCount(
         profile_install_result_histogram,
         webapps::InstallResultCode::kCancelledOnWebAppProviderShuttingDown, 1);
+
     // If install was interrupted by shutdown, do not report duration.
     histograms.ExpectTotalCount(
         SystemWebAppManager::kFreshInstallDurationHistogramName, 2);
   }
-}
-
-TEST_F(SystemWebAppManagerTest,
-       InstallResultHistogram_ExcludeAlreadyInstalled) {
-  base::HistogramTester histograms;
-  const std::string settings_app_install_result_histogram =
-      std::string(SystemWebAppManager::kInstallResultHistogramName) + ".Apps." +
-      kSettingsAppInternalName;
-  const std::string camera_app_install_result_histogram =
-      std::string(SystemWebAppManager::kInstallResultHistogramName) + ".Apps." +
-      kCameraAppInternalName;
-  // Profile category for Chrome OS testing environment is "Other".
-  const std::string profile_install_result_histogram =
-      std::string(SystemWebAppManager::kInstallResultHistogramName) +
-      ".Profiles.Other";
-
-  SystemWebAppDelegateMap system_apps;
-  system_apps.emplace(SystemWebAppType::SETTINGS,
-                      std::make_unique<UnittestingSystemAppDelegate>(
-                          SystemWebAppType::SETTINGS, kSettingsAppInternalName,
-                          AppUrl1(), GetApp1WebAppInfoFactory()));
-  system_apps.emplace(SystemWebAppType::CAMERA,
-                      std::make_unique<UnittestingSystemAppDelegate>(
-                          SystemWebAppType::CAMERA, kCameraAppInternalName,
-                          AppUrl2(), GetApp2WebAppInfoFactory()));
-  system_web_app_manager().SetSystemAppsForTesting(std::move(system_apps));
-
-  externally_managed_app_manager().SetHandleInstallRequestCallback(
-      base::BindLambdaForTesting(
-          [](const web_app::ExternalInstallOptions& opts)
-              -> web_app::ExternallyManagedAppManager::InstallResult {
-            if (opts.install_url == AppUrl1())
-              return web_app::ExternallyManagedAppManager::InstallResult(
-                  webapps::InstallResultCode::kSuccessAlreadyInstalled);
-            return web_app::ExternallyManagedAppManager::InstallResult(
-                webapps::InstallResultCode::kSuccessNewInstall);
-          }));
-
-  StartAndWaitForAppsToSynchronize();
-
-  // Record results that aren't kSuccessAlreadyInstalled.
-  histograms.ExpectTotalCount(SystemWebAppManager::kInstallResultHistogramName,
-                              1);
-  histograms.ExpectTotalCount(settings_app_install_result_histogram, 0);
-  histograms.ExpectTotalCount(camera_app_install_result_histogram, 1);
-  histograms.ExpectTotalCount(profile_install_result_histogram, 1);
 }
 
 TEST_F(SystemWebAppManagerTest,
@@ -734,17 +686,6 @@ TEST_F(SystemWebAppManagerTest,
       SystemWebAppManager::UpdatePolicy::kOnVersionChange);
 
   {
-    externally_managed_app_manager().SetHandleInstallRequestCallback(
-        base::BindLambdaForTesting(
-            [](const web_app::ExternalInstallOptions& opts)
-                -> web_app::ExternallyManagedAppManager::InstallResult {
-              if (opts.install_url == AppUrl1())
-                return web_app::ExternallyManagedAppManager::InstallResult(
-                    webapps::InstallResultCode::kWriteDataFailed);
-              return web_app::ExternallyManagedAppManager::InstallResult(
-                  webapps::InstallResultCode::kSuccessNewInstall);
-            }));
-
     StartAndWaitForAppsToSynchronize();
 
     // The install duration histogram should be recorded, because the first
@@ -754,16 +695,6 @@ TEST_F(SystemWebAppManagerTest,
   }
 
   {
-    externally_managed_app_manager().SetHandleInstallRequestCallback(
-        base::BindLambdaForTesting(
-            [](const web_app::ExternalInstallOptions& opts)
-                -> web_app::ExternallyManagedAppManager::InstallResult {
-              if (opts.install_url == AppUrl1())
-                return web_app::ExternallyManagedAppManager::InstallResult(
-                    webapps::InstallResultCode::kSuccessNewInstall);
-              return web_app::ExternallyManagedAppManager::InstallResult(
-                  webapps::InstallResultCode::kSuccessAlreadyInstalled);
-            }));
     StartAndWaitForAppsToSynchronize();
 
     // Don't record install duration histogram, because this time we don't ask
@@ -1495,10 +1426,10 @@ class SystemWebAppManagerInKioskTest : public ChromeRenderViewHostTestHarness,
   void SetUp() override {
     // Kiosk user session needs to be set up before profile creation done in
     // ChromeRenderViewHostTestHarness::SetUp().
-    user_manager_.Reset(
-        std::make_unique<user_manager::FakeUserManager>(local_state_.Get()));
+    user_manager_.Reset(std::make_unique<user_manager::FakeUserManager>(
+        TestingBrowserProcess::GetGlobal()->local_state()));
     ash::ProfileHelper::Get();  // Instantiate BrowserContextHelper.
-    chromeos::SetUpFakeKioskSession();
+    chromeos::SetUpFakeChromeAppKioskSession();
     ChromeRenderViewHostTestHarness::SetUp();
   }
 
@@ -1531,7 +1462,6 @@ class SystemWebAppManagerInKioskTest : public ChromeRenderViewHostTestHarness,
   }
 
  private:
-  ScopedTestingLocalState local_state_{TestingBrowserProcess::GetGlobal()};
   user_manager::ScopedUserManager user_manager_;
 };
 

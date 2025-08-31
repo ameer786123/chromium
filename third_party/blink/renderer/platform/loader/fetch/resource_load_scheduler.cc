@@ -11,7 +11,6 @@
 #include "base/containers/contains.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram.h"
-#include "base/not_fatal_until.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/default_clock.h"
@@ -37,12 +36,17 @@ constexpr char kRendererSideResourceScheduler[] =
 
 // Used in the tight mode (see the header file for details).
 constexpr size_t kTightLimitForRendererSideResourceScheduler = 2u;
+// The number of medium-priority requests to allow in tight-mode independent of
+// the total number of outstanding requests.
+constexpr size_t kTightMediumLimitForRendererSideResourceScheduler = 2u;
 // Used in the normal mode (see the header file for details).
 constexpr size_t kLimitForRendererSideResourceScheduler = 1024u;
 
 constexpr char kTightLimitForRendererSideResourceSchedulerName[] =
     "tight_limit";
 constexpr char kLimitForRendererSideResourceSchedulerName[] = "limit";
+constexpr char kTightMediumLimitForRendererSideResourceSchedulerName[] =
+    "tight_medium_limit";
 
 // Represents a resource load circumstance, e.g. from main frame vs sub-frames,
 // or on throttled state vs on not-throttled state.
@@ -110,15 +114,15 @@ ResourceLoadScheduler::ResourceLoadScheduler(
       GetFieldTrialUint32Param(kRendererSideResourceScheduler,
                                kTightLimitForRendererSideResourceSchedulerName,
                                kTightLimitForRendererSideResourceScheduler);
-
-  if (base::FeatureList::IsEnabled(features::kBoostImagePriority)) {
-    tight_medium_limit_ = features::kBoostImagePriorityTightMediumLimit.Get();
-  }
+  tight_medium_limit_ = GetFieldTrialUint32Param(
+      kRendererSideResourceScheduler,
+      kTightMediumLimitForRendererSideResourceSchedulerName,
+      kTightMediumLimitForRendererSideResourceScheduler);
 
   scheduler_observer_handle_ = frame_or_worker_scheduler->AddLifecycleObserver(
       FrameScheduler::ObserverType::kLoader,
-      WTF::BindRepeating(&ResourceLoadScheduler::OnLifecycleStateChanged,
-                         WrapWeakPersistent(this)));
+      BindRepeating(&ResourceLoadScheduler::OnLifecycleStateChanged,
+                    WrapWeakPersistent(this)));
 }
 
 ResourceLoadScheduler::~ResourceLoadScheduler() = default;
@@ -202,7 +206,7 @@ void ResourceLoadScheduler::SetPriority(ClientId client_id,
   auto it = throttle_option_queue.find(ClientIdWithPriority(
       client_id, client_it->value->priority, client_it->value->intra_priority));
 
-  CHECK(it != throttle_option_queue.end(), base::NotFatalUntil::M130);
+  CHECK(it != throttle_option_queue.end());
   throttle_option_queue.erase(it);
 
   client_it->value->priority = priority;

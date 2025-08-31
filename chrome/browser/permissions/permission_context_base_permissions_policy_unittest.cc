@@ -12,8 +12,13 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/permissions/contexts/geolocation_permission_context.h"
 #include "components/permissions/contexts/midi_permission_context.h"
+#include "components/permissions/permission_decision.h"
+#include "components/permissions/permission_manager.h"
 #include "components/permissions/permission_request_id.h"
 #include "components/permissions/permission_util.h"
+#include "components/permissions/resolvers/content_setting_permission_resolver.h"
+#include "content/public/browser/permission_descriptor_util.h"
+#include "content/public/browser/permission_result.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/navigation_simulator.h"
@@ -36,15 +41,15 @@
 // PermissionsPolicy class itself is tested thoroughly in
 // permissions_policy_unittest.cc and in
 // render_frame_host_permissions_policy_unittest.cc. Instead they are meant to
-// ensure that integration with content::PermissionContextBase works correctly.
+// ensure that integration with content::PermissionContextBase
+// works correctly.
 class PermissionContextBasePermissionsPolicyTest
     : public ChromeRenderViewHostTestHarness {
  public:
   void EnableBlockMidiByDefault() {
     feature_list_.InitAndEnableFeature(blink::features::kBlockMidiByDefault);
   }
-  PermissionContextBasePermissionsPolicyTest()
-      : last_request_result_(CONTENT_SETTING_DEFAULT) {}
+  PermissionContextBasePermissionsPolicyTest() = default;
 
   void SetUp() override { ChromeRenderViewHostTestHarness::SetUp(); }
 
@@ -111,26 +116,32 @@ class PermissionContextBasePermissionsPolicyTest
                                        content::RenderFrameHost* rfh) {
     return permissions::PermissionUtil::PermissionStatusToContentSetting(
         pcb->GetPermissionStatus(
+               content::PermissionDescriptorUtil::
+                   CreatePermissionDescriptorForPermissionType(
+                       permissions::PermissionUtil::
+                           ContentSettingsTypeToPermissionType(
+                               pcb->content_settings_type())),
                rfh, rfh->GetLastCommittedURL(),
                web_contents()->GetPrimaryMainFrame()->GetLastCommittedURL())
             .status);
   }
 
-  ContentSetting RequestPermissionForFrame(
+  PermissionStatus RequestPermissionForFrame(
       permissions::PermissionContextBase* pcb,
       content::RenderFrameHost* rfh) {
     permissions::PermissionRequestID id(
         rfh, permission_request_id_generator_.GenerateNextId());
     pcb->RequestPermission(
-        permissions::PermissionRequestData(pcb, id,
-                                           /*user_gesture=*/true,
-                                           rfh->GetLastCommittedURL()),
+        std::make_unique<permissions::PermissionRequestData>(
+            std::make_unique<permissions::ContentSettingPermissionResolver>(
+                pcb->content_settings_type()),
+            id, /*user_gesture=*/true, rfh->GetLastCommittedURL()),
         base::BindOnce(&PermissionContextBasePermissionsPolicyTest::
                            RequestPermissionForFrameFinished,
                        base::Unretained(this)));
-    EXPECT_NE(CONTENT_SETTING_DEFAULT, last_request_result_);
-    ContentSetting result = last_request_result_;
-    last_request_result_ = CONTENT_SETTING_DEFAULT;
+    EXPECT_NE(PermissionStatus::ASK, last_request_result_);
+    PermissionStatus result = last_request_result_;
+    last_request_result_ = PermissionStatus::ASK;
     return result;
   }
 
@@ -148,8 +159,8 @@ class PermissionContextBasePermissionsPolicyTest
 
  private:
   base::test::ScopedFeatureList feature_list_;
-  void RequestPermissionForFrameFinished(ContentSetting setting) {
-    last_request_result_ = setting;
+  void RequestPermissionForFrameFinished(content::PermissionResult result) {
+    last_request_result_ = result.status;
   }
 
   void SimulateNavigation(content::RenderFrameHost** rfh, const GURL& url) {
@@ -159,7 +170,7 @@ class PermissionContextBasePermissionsPolicyTest
     *rfh = navigation_simulator->GetFinalRenderFrameHost();
   }
 
-  ContentSetting last_request_result_;
+  PermissionStatus last_request_result_ = PermissionStatus::ASK;
   permissions::PermissionRequestID::RequestLocalId::Generator
       permission_request_id_generator_;
 };
@@ -268,7 +279,7 @@ TEST_F(PermissionContextBasePermissionsPolicyTest, RequestPermission) {
 
   // Request geolocation in the top level frame, request should work.
   auto geolocation = MakeGeolocationPermissionContext();
-  EXPECT_EQ(CONTENT_SETTING_ALLOW,
+  EXPECT_EQ(PermissionStatus::GRANTED,
             RequestPermissionForFrame(geolocation.get(), parent));
 
   // Disable geolocation in the top level frame.
@@ -277,6 +288,6 @@ TEST_F(PermissionContextBasePermissionsPolicyTest, RequestPermission) {
       std::vector<std::string>());
 
   // Request should fail.
-  EXPECT_EQ(CONTENT_SETTING_BLOCK,
+  EXPECT_EQ(PermissionStatus::DENIED,
             RequestPermissionForFrame(geolocation.get(), parent));
 }

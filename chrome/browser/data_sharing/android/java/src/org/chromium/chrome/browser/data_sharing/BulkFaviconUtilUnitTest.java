@@ -7,14 +7,12 @@ package org.chromium.chrome.browser.data_sharing;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -53,15 +51,14 @@ public class BulkFaviconUtilUnitTest {
     @Mock private Profile mProfile;
     @Mock private FaviconHelper mFaviconHelper;
     @Mock private RoundedIconGenerator mRoundedIconGenerator;
-    @Mock private FaviconHelper.DefaultFaviconHelper mDefaultFaviconHelper;
     @Captor private ArgumentCaptor<FaviconHelper.FaviconImageCallback> mCallbackCaptor;
     @Captor private ArgumentCaptor<List<Bitmap>> mResultCaptor;
 
     private Context mContext;
     private BulkFaviconUtil mBulkFaviconUtil;
-    private GURL mGurl1 = new GURL("https://www.google.com");
-    private GURL mGurl2 = new GURL("https://www.chromium.org");
-    private List<GURL> mGurlList = Arrays.asList(mGurl1, mGurl2);
+    private final GURL mGurl1 = new GURL("https://www.google.com");
+    private final GURL mGurl2 = new GURL("https://www.chromium.org");
+    private final List<GURL> mGurlList = Arrays.asList(mGurl1, mGurl2);
 
     @Before
     public void setUp() {
@@ -70,8 +67,6 @@ public class BulkFaviconUtilUnitTest {
         mBulkFaviconUtil.setFaviconHelperForTesting(mFaviconHelper);
         mBulkFaviconUtil.setRoundedIconGeneratorForTesting(mRoundedIconGenerator);
         // Necessary to avoid an NPE in |FaviconUtils.getIconDrawableWithFilter|.
-        when(mDefaultFaviconHelper.getDefaultFaviconBitmap(any(), any(), anyBoolean()))
-                .thenReturn(mock(Bitmap.class));
     }
 
     @After

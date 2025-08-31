@@ -11,15 +11,13 @@
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/unguessable_token.h"
-#include "chrome/browser/ash/crosapi/crosapi_ash.h"
-#include "chrome/browser/ash/crosapi/crosapi_manager.h"
-#include "chrome/browser/ash/crosapi/media_ui_ash.h"
-#include "chrome/browser/ash/crosapi/test_crosapi_environment.h"
 #include "chrome/browser/media/router/discovery/mdns/dns_sd_registry.h"
 #include "chrome/browser/ui/global_media_controls/cast_media_notification_item.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/test/base/chrome_ash_test_base.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "components/global_media_controls/public/constants.h"
 #include "components/global_media_controls/public/media_item_manager.h"
 #include "components/global_media_controls/public/media_session_item_producer.h"
@@ -31,6 +29,8 @@
 #include "components/media_message_center/mock_media_notification_item.h"
 #include "components/media_message_center/notification_theme.h"
 #include "components/media_router/common/media_route.h"
+#include "components/session_manager/core/fake_session_manager_delegate.h"
+#include "components/session_manager/core/session_manager.h"
 #include "content/public/test/browser_task_environment.h"
 #include "services/media_session/public/cpp/media_session_service.h"
 #include "services/media_session/public/mojom/audio_focus.mojom.h"
@@ -132,12 +132,13 @@ class MediaNotificationProviderImplTest : public ChromeAshTestBase {
   ~MediaNotificationProviderImplTest() override = default;
 
   void SetUp() override {
+    ASSERT_TRUE(testing_profile_manager_.SetUp());
+
     auto shell_delegate = std::make_unique<MediaTestShellDelegate>();
     shell_delegate_ = shell_delegate.get();
     set_shell_delegate(std::move(shell_delegate));
     ChromeAshTestBase::SetUp();
 
-    crosapi_environment_.SetUp();
     provider_ = static_cast<MediaNotificationProviderImpl*>(
         MediaNotificationProvider::Get());
     provider_->SetColorTheme(media_message_center::NotificationTheme());
@@ -147,8 +148,8 @@ class MediaNotificationProviderImplTest : public ChromeAshTestBase {
   }
 
   void TearDown() override {
+    provider_->RemoveObserver(observer_.get());
     observer_.reset();
-    crosapi_environment_.TearDown();
     ChromeAshTestBase::TearDown();
   }
 
@@ -187,11 +188,23 @@ class MediaNotificationProviderImplTest : public ChromeAshTestBase {
             view.release()));
   }
 
+  // Currently, Ash, which is maintained ChromeAshTestBase, needs to be
+  // destroyed *before* TestingProfileManager.
+  // However, it also holds SessionManager, which is required on destroying
+  // TestingProfileManager (in more precise, some BrowserContextKeyedServices
+  // depend on SessionManager).
+  // To break the circular dependency, set up SessionManager in this class
+  // member so AshTestHelper will use this instance, and destruction order will
+  // follow the production behavior.
+  session_manager::SessionManager session_manager_{
+      std::make_unique<session_manager::FakeSessionManagerDelegate>()};
+
   std::unique_ptr<ChromeLayoutProvider> layout_provider_;
   std::unique_ptr<MockMediaNotificationProviderObserver> observer_;
   raw_ptr<MediaNotificationProviderImpl, DanglingUntriaged> provider_ = nullptr;
   raw_ptr<MediaTestShellDelegate, DanglingUntriaged> shell_delegate_ = nullptr;
-  crosapi::TestCrosapiEnvironment crosapi_environment_;
+  TestingProfileManager testing_profile_manager_{
+      TestingBrowserProcess::GetGlobal()};
 };
 
 TEST_F(MediaNotificationProviderImplTest, NotificationListTest) {
@@ -266,8 +279,7 @@ class CastStartStopMediaNotificationProviderImplTest
     // starts the GPU service thread.
     MediaNotificationProviderImplTest::SetUp();
 
-    profile_ =
-        crosapi_environment_.profile_manager()->CreateTestingProfile("Profile");
+    profile_ = testing_profile_manager_.CreateTestingProfile("Profile");
     InitProvider();
   }
 
@@ -326,20 +338,6 @@ TEST_F(CastStartStopMediaNotificationProviderImplTest, ShowDeviceSelectorView) {
       static_cast<global_media_controls::MediaItemUIView*>(media_item_ui_view)
           ->device_selector_view_for_testing();
   EXPECT_TRUE(selector_view);
-}
-
-TEST_F(CastStartStopMediaNotificationProviderImplTest,
-       SetDevicePickerProvider) {
-  provider_->OnPrimaryUserSessionStarted();
-
-  MockDeviceService device_service;
-  EXPECT_CALL(device_service, SetDevicePickerProvider);
-  crosapi::CrosapiManager::Get()
-      ->crosapi_ash()
-      ->media_ui_ash()
-      ->RegisterDeviceService(base::UnguessableToken::Create(),
-                              device_service.PassRemote());
-  device_service.FlushForTesting();
 }
 
 }  // namespace ash

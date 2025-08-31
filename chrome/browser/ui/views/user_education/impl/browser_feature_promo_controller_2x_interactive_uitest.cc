@@ -9,6 +9,8 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/run_loop.h"
+#include "base/scoped_observation.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -17,21 +19,31 @@
 #include "base/time/time.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/toolbar_controller_util.h"
+#include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/contents_web_view.h"
 #include "chrome/browser/ui/views/frame/test_with_browser_view.h"
+#include "chrome/browser/ui/views/interaction/browser_elements_views.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_controller.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/browser/ui/views/user_education/impl/browser_feature_promo_controller_20.h"
 #include "chrome/browser/ui/views/user_education/impl/browser_feature_promo_preconditions.h"
+#include "chrome/browser/ui/views/user_education/impl/browser_user_education_interface_impl.h"
 #include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/browser/user_education/user_education_service_factory.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/interaction/interaction_test_util_browser.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "chrome/test/user_education/interactive_feature_promo_test.h"
+#include "components/feature_engagement/public/feature_constants.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/omnibox_controller.h"
 #include "components/omnibox/browser/omnibox_view.h"
@@ -40,6 +52,7 @@
 #include "components/user_education/common/feature_promo/feature_promo_result.h"
 #include "components/user_education/common/feature_promo/feature_promo_specification.h"
 #include "components/user_education/common/help_bubble/help_bubble_params.h"
+#include "components/user_education/common/user_education_context.h"
 #include "components/user_education/common/user_education_data.h"
 #include "components/user_education/common/user_education_features.h"
 #include "components/user_education/common/user_education_storage_service.h"
@@ -51,15 +64,17 @@
 #include "omnibox_event.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/interaction/element_tracker.h"
+#include "ui/base/unowned_user_data/user_data_factory.h"
 #include "ui/events/event_modifiers.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/interaction/widget_focus_observer.h"
 #include "ui/views/test/views_test_utils.h"
 #include "ui/views/view.h"
+#include "ui/views/view_observer.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_utils.h"
 
@@ -106,9 +121,10 @@ class BrowserFeaturePromoController2xUiTestBase
       : InteractiveFeaturePromoTest(UseMockTracker(), clock_mode) {}
   ~BrowserFeaturePromoController2xUiTestBase() override = default;
 
-  void OnCustomUiCustomAction(ui::ElementContext context,
-                              user_education::FeaturePromoHandle promo_handle) {
-    EXPECT_EQ(browser()->window()->GetElementContext(), context);
+  void OnCustomUiCustomAction(
+      const user_education::UserEducationContextPtr& context,
+      user_education::FeaturePromoHandle promo_handle) {
+    EXPECT_EQ(GetContext(), context->GetElementContext());
     continued_promo_handle_ = std::move(promo_handle);
   }
 
@@ -119,7 +135,8 @@ class BrowserFeaturePromoController2xUiTestBase
     oss << "QueryIPH(" << iph_feature.name << ", " << expected_result << ")";
     return CheckResult(
         [this, &iph_feature]() {
-          return promo_controller()->CanShowPromo(iph_feature);
+          return promo_controller()->CanShowPromo(iph_feature,
+                                                  user_education_context());
         },
         expected_result, oss.str());
   }
@@ -204,28 +221,35 @@ class BrowserFeaturePromoController2xUiTestBase
   }
 
   auto PressEscAndWaitForClose(ElementSpecifier spec) {
-    auto native_view =
-        base::MakeRefCounted<base::RefCountedData<gfx::NativeView>>(
-            gfx::NativeView());
+    auto widget =
+        base::MakeRefCounted<base::RefCountedData<const views::Widget*>>(
+            nullptr);
     return Steps(
         WaitForShow(spec),
         IfView(
             spec,
-            [native_view](const views::View* view) {
-              native_view.get()->data = view->GetWidget()->GetNativeView();
+            [widget](const views::View* view) {
+              widget.get()->data = view->GetWidget();
               return !view->GetWidget()->IsActive();
             },
             Then(ObserveState(views::test::kCurrentWidgetFocus),
-                 WaitForState(
-                     views::test::kCurrentWidgetFocus,
-                     [native_view]() { return native_view.get()->data; }))),
+                 WaitForState(views::test::kCurrentWidgetFocus,
+                              [widget]() { return widget.get()->data; }))),
         SendAccelerator(spec,
                         ui::Accelerator(ui::VKEY_ESCAPE, ui::MODIFIER_NONE)),
         WaitForHide(spec));
   }
 
   user_education::FeaturePromoController* promo_controller() const {
-    return browser()->window()->GetFeaturePromoControllerForTesting();
+    return UserEducationServiceFactory::GetForBrowserContext(
+               browser()->profile())
+        ->GetFeaturePromoControllerForTesting();
+  }
+
+  const user_education::UserEducationContextPtr& user_education_context()
+      const {
+    return BrowserUserEducationInterface::From(browser())
+        ->GetUserEducationContextForTesting();
   }
 
  protected:
@@ -258,10 +282,12 @@ class BrowserFeaturePromoController2xUiTest
             FeaturePromoSpecification::AcceleratorInfo()));
     RegisterTestFeature(
         browser(),
-        user_education::FeaturePromoSpecification::CreateForCustomAction(
-            kCustomActionTestFeature, kToolbarAppMenuButtonElementId,
-            IDS_TUTORIAL_TAB_GROUP_EDIT_BUBBLE, IDS_TUTORIAL_TAB_GROUP_COLLAPSE,
-            base::DoNothing()));
+        std::move(
+            user_education::FeaturePromoSpecification::CreateForCustomAction(
+                kCustomActionTestFeature, kToolbarAppMenuButtonElementId,
+                IDS_TUTORIAL_TAB_GROUP_EDIT_BUBBLE,
+                IDS_TUTORIAL_TAB_GROUP_COLLAPSE, custom_action_callback_.Get())
+                .SetInAnyContext(true)));
 
     RegisterTestFeature(
         browser(),
@@ -278,8 +304,9 @@ class BrowserFeaturePromoController2xUiTest
         user_education::FeaturePromoSpecification::CreateForCustomUi(
             kCustomUiTestFeature, kToolbarAppMenuButtonElementId,
             user_education::CreateCustomHelpBubbleViewFactoryCallback(
-                base::BindRepeating([](ui::ElementContext reference_context,
-                                       user_education::HelpBubbleArrow arrow,
+                base::BindRepeating([](const user_education::
+                                           UserEducationContextPtr&
+                                               reference_context,
                                        FeaturePromoSpecification::
                                            BuildHelpBubbleParams build_params) {
                   auto* const anchor_element =
@@ -287,12 +314,16 @@ class BrowserFeaturePromoController2xUiTest
                   return std::make_unique<
                       user_education::test::TestCustomHelpBubbleView>(
                       anchor_element->AsA<views::TrackedElementViews>()->view(),
-                      user_education::HelpBubbleViews::TranslateArrow(arrow));
+                      user_education::HelpBubbleViews::TranslateArrow(
+                          build_params.arrow));
                 })),
             base::BindRepeating(&BrowserFeaturePromoController2xUiTestBase::
                                     OnCustomUiCustomAction,
                                 weak_ptr_factory_.GetWeakPtr())));
   }
+
+  base::MockCallback<FeaturePromoSpecification::CustomActionCallback>
+      custom_action_callback_;
 
  private:
   base::WeakPtrFactory<BrowserFeaturePromoController2xUiTest> weak_ptr_factory_{
@@ -318,6 +349,7 @@ IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xUiTest,
 
 IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xUiTest,
                        LogsCustomActionMetrics) {
+  EXPECT_CALL(custom_action_callback_, Run).Times(1);
   RunTestSequence(MaybeShowPromo(kCustomActionTestFeature),
                   PressNonDefaultPromoButton(),
                   CheckMetrics(kCustomActionTestFeature,
@@ -352,6 +384,8 @@ IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xUiTest,
   bool called = false;
   FeaturePromoClosedReason close_reason = FeaturePromoClosedReason::kAbortPromo;
 
+  EXPECT_CALL(custom_action_callback_, Run).Times(0);
+
   user_education::FeaturePromoParams params(kCustomActionTestFeature);
   params.close_callback =
       base::BindLambdaForTesting([this, &called, &close_reason]() {
@@ -372,6 +406,8 @@ IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xUiTest,
                        CallbackHappensAfterConfirm) {
   bool called = false;
   FeaturePromoClosedReason close_reason = FeaturePromoClosedReason::kAbortPromo;
+
+  EXPECT_CALL(custom_action_callback_, Run).Times(0);
 
   user_education::FeaturePromoParams params(kCustomActionTestFeature);
   params.close_callback =
@@ -416,6 +452,10 @@ IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xUiTest,
       user_education::test::TestCustomHelpBubbleView::kBubbleId;
   RunTestSequence(
       MaybeShowPromo(kCustomUiTestFeature, CustomHelpBubbleShown{kBubbleId}),
+      CheckView(kBubbleId,
+                [](views::BubbleDialogDelegateView* bubble) {
+                  return bubble->GetBubbleFrameView()->GetDisplayVisibleArrow();
+                }),
       WithView(kBubbleId,
                [](views::View* view) { view->GetWidget()->Close(); }),
       WaitForHide(kBubbleId), CheckPromoRequested(kCustomUiTestFeature, false),
@@ -494,6 +534,64 @@ IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xUiTest,
                    ExpectedMetrics{.custom_action_count = 1}));
 }
 
+MATCHER_P(MatchesContext, expected, "Matches the expected context") {
+  return arg.get() == expected.get();
+}
+
+IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xUiTest,
+                       CustomActionCallbackInSecondWindow) {
+  // Create a second browser.
+  Browser* const other = CreateBrowser(browser()->profile());
+
+  // Hide the anchor element in the first browser.
+  auto* const app_menu_button = BrowserElementsViews::From(browser())->GetView(
+      kToolbarAppMenuButtonElementId);
+  app_menu_button->SetVisible(false);
+
+  auto& context = BrowserUserEducationInterface::From(other)
+                      ->GetUserEducationContextForTesting();
+  EXPECT_CALL(custom_action_callback_, Run(MatchesContext(context), testing::_))
+      .Times(1);
+
+  RunTestSequence(InAnyContext(
+      // This will always try to trigger the promo from the original `browser()`
+      // because the default context is always checked first in Kombucha, and
+      // the original window is still visible.
+      //
+      // However, the bubble can only show in the `other` browser because we hid
+      // the first browser's app menu button (and the IPH specifies that it need
+      // not show in the original context).
+      MaybeShowPromo(kCustomActionTestFeature),
+      // Perform the action, and verify that the second browser's context is
+      // used when the action button is clicked.
+      PressNonDefaultPromoButton()));
+}
+
+IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xUiTest,
+                       CustomActionCallbackInSecondWindowAfterFirstCloses) {
+  // Create a second browser.
+  Browser* const other = CreateBrowser(browser()->profile());
+
+  // Hide the anchor element in the first browser.
+  auto* const app_menu_button = BrowserElementsViews::From(browser())->GetView(
+      kToolbarAppMenuButtonElementId);
+  app_menu_button->SetVisible(false);
+
+  // The promo should now show in the second window.
+  auto& context = BrowserUserEducationInterface::From(other)
+                      ->GetUserEducationContextForTesting();
+  EXPECT_CALL(custom_action_callback_, Run(MatchesContext(context), testing::_))
+      .Times(1);
+
+  RunTestSequence(InAnyContext(
+      MaybeShowPromo(kCustomActionTestFeature),
+      Do([this]() { browser()->window()->Close(); }),
+      WaitForHide(kBrowserViewElementId).SetTransitionOnlyOnEvent(true),
+      EnsurePresent(
+          user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
+      PressNonDefaultPromoButton()));
+}
+
 class BrowserFeaturePromoController2xLiveTrackerUiTest
     : public InteractiveFeaturePromoTest,
       public testing::WithParamInterface<ControllerMode> {
@@ -529,45 +627,66 @@ INSTANTIATE_V2X_TEST(BrowserFeaturePromoController2xLiveTrackerUiTest);
 // Regression test with live tracker for https://crbug.com/396344371
 IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xLiveTrackerUiTest,
                        ShowPromoTwice) {
-  RunTestSequence(WithView(kBrowserViewElementId,
-                           [](BrowserView* browser_view) {
-                             browser_view->MaybeShowFeaturePromo(kFeature);
-                           }),
-                  WithView(kBrowserViewElementId,
-                           [](BrowserView* browser_view) {
-                             browser_view->MaybeShowFeaturePromo(kFeature);
-                           }),
-                  WaitForPromo(kFeature));
+  RunTestSequence(
+      WithView(kBrowserViewElementId,
+               [](BrowserView* browser_view) {
+                 BrowserUserEducationInterface::From(browser_view->browser())
+                     ->MaybeShowFeaturePromo(kFeature);
+               }),
+      WithView(kBrowserViewElementId,
+               [](BrowserView* browser_view) {
+                 BrowserUserEducationInterface::From(browser_view->browser())
+                     ->MaybeShowFeaturePromo(kFeature);
+               }),
+      WaitForPromo(kFeature));
 }
 
 // Using the base interactive browser test re-enables window activation
 // checking. This is only 2.0 since activation precondition is tested elsewhere.
-class BrowserFeaturePromoController20ActivationUiTest
+class BrowserFeaturePromoController20CanShowPromoForElementUiTest
     : public InteractiveBrowserTest {
  public:
-  BrowserFeaturePromoController20ActivationUiTest() {
+  BrowserFeaturePromoController20CanShowPromoForElementUiTest() {
     feature_list_.InitAndDisableFeature(
         user_education::features::kUserEducationExperienceVersion2Point5);
+  }
+  ~BrowserFeaturePromoController20CanShowPromoForElementUiTest() override =
+      default;
+
+  auto CheckCanShowPromoForElement(
+      ElementSpecifier spec,
+      user_education::FeaturePromoResult expected) {
+    return CheckElement(
+        spec,
+        [this](ui::TrackedElement* anchor) {
+          const auto* const controller =
+              UserEducationServiceFactory::GetForBrowserContext(
+                  browser()->profile())
+                  ->GetFeaturePromoControllerForTesting();
+          const auto context = BrowserUserEducationInterface::From(browser())
+                                   ->GetUserEducationContextForTesting();
+          return static_cast<const BrowserFeaturePromoController20*>(controller)
+              ->CanShowPromoForElement(anchor, context);
+        },
+        expected);
   }
 
  private:
   base::test::ScopedFeatureList feature_list_;
 };
 
+using BrowserFeaturePromoController20ActivationUiTest =
+    BrowserFeaturePromoController20CanShowPromoForElementUiTest;
+
 IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20ActivationUiTest,
                        CanShowPromoForElement) {
   auto widget = std::make_unique<views::Widget>();
 
-  auto can_show_promo = [this](ui::TrackedElement* anchor) {
-    return static_cast<BrowserFeaturePromoController20*>(
-               browser()->window()->GetFeaturePromoControllerForTesting())
-        ->CanShowPromoForElement(anchor);
-  };
-
   RunTestSequence(
       // Verify that at first, we can show the promo on the browser.
-      CheckElement(kToolbarAppMenuButtonElementId, can_show_promo,
-                   user_education::FeaturePromoResult::Success()),
+      CheckCanShowPromoForElement(
+          kToolbarAppMenuButtonElementId,
+          user_education::FeaturePromoResult::Success()),
       // Start observing widget focus, and create the widget.
       ObserveState(views::test::kCurrentWidgetFocus),
       // Create a second widget and give it focus. We can't guarantee that we
@@ -589,13 +708,103 @@ IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20ActivationUiTest,
                  widget->Activate();
                }),
       // Wait for widget activation to move to the new widget.
-      WaitForState(views::test::kCurrentWidgetFocus,
-                   [&widget]() { return widget->GetNativeView(); }),
+      WaitForState(views::test::kCurrentWidgetFocus, widget.get()),
       // Verify that we can no longer show the promo, since the browser is not
       // the active window.
-      CheckElement(
-          kToolbarAppMenuButtonElementId, can_show_promo,
+      CheckCanShowPromoForElement(
+          kToolbarAppMenuButtonElementId,
           user_education::FeaturePromoResult::kAnchorSurfaceNotActive));
+}
+
+using BrowserFeaturePromoController20FullscreenUiTest =
+    BrowserFeaturePromoController20CanShowPromoForElementUiTest;
+
+IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20FullscreenUiTest,
+                       NotFullscreen) {
+  DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kTabId);
+  RunTestSequence(
+      InstrumentTab(kTabId),
+      NavigateWebContents(kTabId,
+                          GURL(chrome::kChromeUIUserEducationInternalsURL)),
+      CheckCanShowPromoForElement(
+          // Need to choose an element that will be visible in fullscreen.
+          ContentsWebView::kContentsWebViewElementId,
+          user_education::FeaturePromoResult::Success()));
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20FullscreenUiTest,
+                       Fullscreen) {
+  DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kTabId);
+  RunTestSequence(
+      InstrumentTab(kTabId),
+      NavigateWebContents(kTabId,
+                          GURL(chrome::kChromeUIUserEducationInternalsURL)),
+      WithElement(kTabId,
+                  [this](ui::TrackedElement* tab) {
+                    browser()
+                        ->GetFeatures()
+                        .exclusive_access_manager()
+                        ->fullscreen_controller()
+                        ->EnterFullscreenModeForTab(
+                            AsInstrumentedWebContents(tab)
+                                ->web_contents()
+                                ->GetPrimaryMainFrame());
+                  }),
+      CheckResult(
+          [this]() {
+            return browser()
+                ->GetFeatures()
+                .exclusive_access_manager()
+                ->fullscreen_controller()
+                ->IsTabFullscreen();
+          },
+          true),
+      CheckCanShowPromoForElement(
+          // Need to choose an element that will be visible in fullscreen.
+          ContentsWebView::kContentsWebViewElementId,
+          user_education::FeaturePromoResult::kBlockedByUi));
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20FullscreenUiTest,
+                       ExitFullscreen) {
+  DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kTabId);
+  RunTestSequence(
+      InstrumentTab(kTabId),
+      NavigateWebContents(kTabId,
+                          GURL(chrome::kChromeUIUserEducationInternalsURL)),
+      WithElement(kTabId,
+                  [this](ui::TrackedElement* tab) {
+                    browser()
+                        ->GetFeatures()
+                        .exclusive_access_manager()
+                        ->fullscreen_controller()
+                        ->EnterFullscreenModeForTab(
+                            AsInstrumentedWebContents(tab)
+                                ->web_contents()
+                                ->GetPrimaryMainFrame());
+                  }),
+      WithElement(kTabId,
+                  [this](ui::TrackedElement* tab) {
+                    browser()
+                        ->GetFeatures()
+                        .exclusive_access_manager()
+                        ->fullscreen_controller()
+                        ->ExitFullscreenModeForTab(
+                            AsInstrumentedWebContents(tab)->web_contents());
+                  }),
+      CheckResult(
+          [this]() {
+            return browser()
+                ->GetFeatures()
+                .exclusive_access_manager()
+                ->fullscreen_controller()
+                ->IsTabFullscreen();
+          },
+          false),
+      CheckCanShowPromoForElement(
+          // Need to choose an element that will be visible in fullscreen.
+          ContentsWebView::kContentsWebViewElementId,
+          user_education::FeaturePromoResult::Success()));
 }
 
 namespace {
@@ -733,4 +942,108 @@ IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController25OverflowUiTest,
       MaybeShowPromo(kIPHExemptFromOmniboxFeature,
                      user_education::FeaturePromoResult::kWindowTooSmall),
       MaybeShowPromo(kIPHExemptFromToolbarNotCollapsedFeature));
+}
+
+namespace {
+
+// Class that allows the injection of a startup promo when the browser user
+// education interface is initialized.
+class BrowserUserEducationInterfaceWithStartupPromo
+    : public BrowserUserEducationInterfaceImpl,
+      public views::ViewObserver {
+ public:
+  BrowserUserEducationInterfaceWithStartupPromo(
+      BrowserWindowInterface* browser,
+      user_education::FeaturePromoParams startup_promo_params)
+      : BrowserUserEducationInterfaceImpl(browser),
+        startup_promo_params_(std::move(startup_promo_params)) {}
+  ~BrowserUserEducationInterfaceWithStartupPromo() override = default;
+
+  void Init(BrowserView* browser_view) override {
+    BrowserUserEducationInterfaceImpl::Init(browser_view);
+    browser_view_observation_.Observe(browser_view);
+  }
+
+ private:
+  void OnViewAddedToWidget(views::View* observed_view) override {
+    browser_view_observation_.Reset();
+    // This is about the same point where startup promos are queued; when the
+    // BrowserView is added to the widget, but after browser window features are
+    // initialized.
+    MaybeShowStartupFeaturePromo(std::move(startup_promo_params_));
+  }
+
+  user_education::FeaturePromoParams startup_promo_params_;
+  base::ScopedObservation<views::View, views::ViewObserver>
+      browser_view_observation_{this};
+};
+
+}  // namespace
+
+// Regression test for startup promo issues on User Education 2.5.
+// See https://crbug.com/439030167 for more information.
+class BrowserFeaturePromoController2xLiveStartupTest
+    : public InteractiveFeaturePromoTest,
+      public testing::WithParamInterface<ControllerMode> {
+ public:
+  // This will be the feature to use for startup tests below.
+  // It should (a) anchor to something that is visible at/near startup, (b) be a
+  // toast, and (c) not be dependent on any other flags, features, etc.
+  static const base::Feature& GetStartupTestFeature() {
+    return feature_engagement::kIPHReadingListDiscoveryFeature;
+  }
+
+  BrowserFeaturePromoController2xLiveStartupTest()
+      : InteractiveFeaturePromoTest(
+            UseDefaultTrackerAllowingPromos({GetStartupTestFeature()}),
+            ClockMode::kUseDefaultClock,
+            InitialSessionState::kInsideGracePeriod) {}
+  ~BrowserFeaturePromoController2xLiveStartupTest() override = default;
+
+  void SetUp() override {
+    SetControllerMode(GetParam());
+    user_ed_override_ =
+        BrowserWindowFeatures::GetUserDataFactoryForTesting()
+            .AddOverrideForTesting(base::BindRepeating(
+                &BrowserFeaturePromoController2xLiveStartupTest::CreateUserEd,
+                base::Unretained(this)));
+    InteractiveFeaturePromoTest::SetUp();
+  }
+
+  void WaitForPromo() {
+    if (!got_result_) {
+      run_loop_ = std::make_unique<base::RunLoop>();
+      run_loop_->Run();
+    }
+  }
+
+ private:
+  std::unique_ptr<BrowserUserEducationInterface> CreateUserEd(
+      BrowserWindowInterface& browser) {
+    user_education::FeaturePromoParams params(GetStartupTestFeature());
+    params.show_promo_result_callback = base::BindOnce(
+        &BrowserFeaturePromoController2xLiveStartupTest::OnShowPromoResult,
+        base::Unretained(this));
+    return std::make_unique<BrowserUserEducationInterfaceWithStartupPromo>(
+        &browser, std::move(params));
+  }
+
+  void OnShowPromoResult(user_education::FeaturePromoResult result) {
+    EXPECT_EQ(user_education::FeaturePromoResult::Success(), result);
+    got_result_ = true;
+    if (run_loop_) {
+      run_loop_->Quit();
+    }
+  }
+
+  bool got_result_ = false;
+  std::unique_ptr<base::RunLoop> run_loop_;
+  ui::UserDataFactory::ScopedOverride user_ed_override_;
+};
+
+INSTANTIATE_V2X_TEST(BrowserFeaturePromoController2xLiveStartupTest);
+
+IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xLiveStartupTest,
+                       CheckStartupPromo) {
+  WaitForPromo();
 }

@@ -14,24 +14,29 @@
 #include <vector>
 
 #include "base/memory/stack_allocated.h"
+#include "base/types/optional_ref.h"
 #include "base/values.h"
 #include "content/browser/devtools/devtools_device_request_prompt_info.h"
 #include "content/browser/devtools/devtools_throttle_handle.h"
 #include "content/browser/interest_group/devtools_enums.h"
 #include "content/browser/preloading/prefetch/prefetch_status.h"
 #include "content/browser/preloading/prerender/prerender_final_status.h"
-#include "content/browser/renderer_host/back_forward_cache_impl.h"
-#include "content/browser/renderer_host/frame_tree.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/certificate_request_result_type.h"
 #include "content/public/browser/global_routing_id.h"
+#include "content/public/browser/frame_tree_node_id.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "net/cookies/cookie_setting_override.h"
 #include "net/filter/source_stream_type.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
+#include "services/network/public/mojom/cookie_manager.mojom-forward.h"
+#include "services/network/public/mojom/network_context.mojom-forward.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
+#include "third_party/blink/public/common/page/drag_operation.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom-forward.h"
 #include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-forward.h"
+#include "third_party/blink/public/mojom/drag/drag.mojom-forward.h"
 #include "third_party/blink/public/mojom/navigation/navigation_params.mojom-forward.h"
 #include "third_party/blink/public/mojom/speculation_rules/speculation_rules.mojom-forward.h"
 
@@ -46,6 +51,8 @@ struct UserAgentMetadata;
 }
 
 namespace net {
+class HttpResponseHeaders;
+class SiteForCookies;
 class SSLInfo;
 class X509Certificate;
 struct WebTransportError;
@@ -53,6 +60,11 @@ struct WebTransportError;
 
 namespace network {
 class URLLoaderFactoryBuilder;
+
+namespace mojom {
+class NetworkContextParams;
+class URLResponseHeadDevToolsInfo;
+}  // namespace mojom
 }  // namespace network
 
 namespace download {
@@ -63,13 +75,15 @@ class DownloadUrlParameters;
 
 namespace content {
 class BackForwardCacheCanStoreDocumentResult;
+class BackForwardCacheCanStoreTreeResult;
 class BrowserContext;
 class DevToolsAgentHostImpl;
 class FencedFrame;
+class FrameTree;
 class FrameTreeNode;
-class NavigationHandle;
 class NavigationRequest;
-class NavigationThrottle;
+class NavigationThrottleRegistry;
+class RenderFrameHost;
 class RenderFrameHostImpl;
 class RenderProcessHost;
 class SharedWorkerHost;
@@ -77,6 +91,7 @@ class ServiceWorkerContextWrapper;
 class SignedExchangeEnvelope;
 class StoragePartition;
 class WebContents;
+struct DropData;
 struct PrerenderMismatchedHeaders;
 
 struct SignedExchangeError;
@@ -98,7 +113,8 @@ void ApplyAuctionNetworkRequestOverrides(FrameTreeNode* frame_tree_node,
 // `devtools_user_agent_overridden` will be set to true; otherwise, it will be
 // set to false. If this function caused the Accept-Language header to be
 // overridden, `devtools_accept_language_overridden` will be set to true;
-// otherwise, it will be set to false.
+// otherwise, it will be set to false. If the Referrer header was overridden,
+// `referrer_override` will be set to the new Referrer header value.
 void ApplyNetworkRequestOverrides(
     FrameTreeNode* frame_tree_node,
     blink::mojom::BeginNavigationParams* begin_params,
@@ -106,7 +122,8 @@ void ApplyNetworkRequestOverrides(
     std::optional<std::vector<net::SourceStreamType>>*
         devtools_accepted_stream_types,
     bool* devtools_user_agent_overridden,
-    bool* devtools_accept_language_overridden);
+    bool* devtools_accept_language_overridden,
+    GURL* referrer_override);
 
 // Returns true if devtools want |*override_out| to be used.
 // (A true return and |*override_out| being nullopt means no user agent client
@@ -160,6 +177,9 @@ class WillCreateURLLoaderFactoryParams final {
 
 void OnResetNavigationRequest(NavigationRequest* navigation_request);
 void MaybeAssignResourceRequestId(FrameTreeNode* ftn,
+                                  const std::string& id,
+                                  network::ResourceRequest& request);
+void MaybeAssignResourceRequestId(FrameTreeNodeId frame_node_id,
                                   const std::string& id,
                                   network::ResourceRequest& request);
 void OnNavigationRequestWillBeSent(const NavigationRequest& navigation_request);
@@ -218,13 +238,13 @@ bool NeedInterestGroupAuctionEvents(FrameTreeNodeId frame_tree_node_id);
 void OnInterestGroupAuctionEventOccurred(
     FrameTreeNodeId frame_tree_node_id,
     base::Time event_time,
-    content::InterestGroupAuctionEventType type,
+    InterestGroupAuctionEventType type,
     const std::string& unique_auction_id,
     base::optional_ref<const std::string> parent_auction_id,
     const base::Value::Dict& auction_config);
 void OnInterestGroupAuctionNetworkRequestCreated(
     FrameTreeNodeId frame_tree_node_id,
-    content::InterestGroupAuctionFetchType type,
+    InterestGroupAuctionFetchType type,
     const std::string& request_id,
     const std::vector<std::string>& devtools_auction_ids);
 
@@ -326,8 +346,7 @@ void OnSignedExchangeCertificateRequestCompleted(
     const base::UnguessableToken& request_id,
     const network::URLLoaderCompletionStatus& status);
 
-std::vector<std::unique_ptr<NavigationThrottle>> CreateNavigationThrottles(
-    NavigationHandle* navigation_handle);
+void CreateAndAddNavigationThrottles(NavigationThrottleRegistry& registry);
 
 // When registering a new ServiceWorker with PlzServiceWorker, the main script
 // fetch happens before starting the worker. This means that we need to give
@@ -358,7 +377,7 @@ void ThrottleWorkerMainScriptFetch(
 bool ShouldWaitForDebuggerInWindowOpen();
 
 void WillStartDragging(FrameTreeNode* main_frame_tree_node,
-                       const content::DropData& drop_data,
+                       const DropData& drop_data,
                        const blink::mojom::DragDataPtr drag_data,
                        blink::DragOperationsMask drag_operations_mask,
                        bool* intercepted);
@@ -368,7 +387,7 @@ void DragEnded(FrameTreeNode& node);
 // Asks any interested agents to handle the given certificate error. Returns
 // |true| if the error was handled, |false| otherwise.
 using CertErrorCallback =
-    base::RepeatingCallback<void(content::CertificateRequestResultType)>;
+    base::RepeatingCallback<void(CertificateRequestResultType)>;
 bool HandleCertificateError(WebContents* web_contents,
                             int cert_error,
                             const GURL& request_url,
@@ -395,9 +414,9 @@ void ReportCookieIssue(
 //
 // DevTools must be attached, otherwise issues reported through
 // |ReportBrowserInitiatedIssue| are lost.
-void CONTENT_EXPORT
-ReportBrowserInitiatedIssue(RenderFrameHostImpl* frame,
-                            protocol::Audits::InspectorIssue* issue);
+void CONTENT_EXPORT ReportBrowserInitiatedIssue(
+    RenderFrameHostImpl* frame,
+    std::unique_ptr<protocol::Audits::InspectorIssue> issue);
 
 // Produces an inspector issue and sends it to the client with
 // |ReportBrowserInitiatedIssue|.
@@ -471,6 +490,17 @@ void WillSendFedCmRequest(RenderFrameHost& render_frame_host,
 void WillShowFedCmDialog(RenderFrameHost& render_frame_host, bool* intercept);
 void DidShowFedCmDialog(RenderFrameHost& render_frame_host);
 void DidCloseFedCmDialog(RenderFrameHost& render_frame_host);
+
+// Fires Network Handler to capture FedCM request and response events.
+void WillSendFedCmNetworkRequest(FrameTreeNodeId frame_tree_node_id,
+                                 const network::ResourceRequest& request);
+void DidReceiveFedCmNetworkResponse(
+    FrameTreeNodeId frame_tree_node_id,
+    const std::string& devtools_request_id,
+    const GURL& url,
+    const network::mojom::URLResponseHead* response_head,
+    const std::string& response_body,
+    const network::URLLoaderCompletionStatus& status);
 
 // Handles dev tools integration for fenced frame reporting beacons. Used in
 // `FencedFrameReporter`.

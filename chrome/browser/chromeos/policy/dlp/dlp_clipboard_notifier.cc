@@ -16,6 +16,7 @@
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/policy/dlp/clipboard_bubble.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_clipboard_bubble_constants.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_policy_constants.h"
@@ -45,7 +46,7 @@ ui::DataTransferEndpoint CloneEndpoint(
 
 void SynthesizePaste() {
   auto* host = ash::GetWindowTreeHostForDisplay(
-      display::Screen::GetScreen()->GetDisplayForNewWindows().id());
+      display::Screen::Get()->GetDisplayForNewWindows().id());
   DCHECK(host);
 
   ui::KeyEvent control_press(/*type=*/ui::EventType::kKeyPressed,
@@ -88,7 +89,7 @@ bool HasEndpoint(const std::vector<ui::DataTransferEndpoint>& saved_endpoints,
 }
 
 void OnToastClicked() {
-  ash::NewWindowDelegate::GetPrimary()->OpenUrl(
+  ash::NewWindowDelegate::GetInstance()->OpenUrl(
       GURL(dlp::kDlpLearnMoreUrl),
       ash::NewWindowDelegate::OpenUrlFrom::kUserInteraction,
       ash::NewWindowDelegate::Disposition::kNewForegroundTab);
@@ -249,8 +250,8 @@ void DlpClipboardNotifier::ProceedPressed(
 
   std::move(reporting_cb).Run();
 
-  if (!display::Screen::GetScreen()) {  // Clipboard related elements do not
-                                        // exist in unittests.
+  if (!display::Screen::Get()) {  // Clipboard related elements do not
+                                  // exist in unittests.
     return;
   }
 

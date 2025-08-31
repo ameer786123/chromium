@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/metrics/histogram_functions.h"
+#include "base/logging.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
 #include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
@@ -94,9 +95,9 @@ bool SyncSessionDurationsMetricsRecorder::IsSyncing() const {
 void SyncSessionDurationsMetricsRecorder::OnSessionStarted(
     base::TimeTicks session_start) {
   DVLOG(1) << "Session start";
-  total_session_timer_ = std::make_unique<base::ElapsedTimer>();
-  signin_session_timer_ = std::make_unique<base::ElapsedTimer>();
-  sync_account_session_timer_ = std::make_unique<base::ElapsedTimer>();
+  total_session_timer_.emplace();
+  signin_session_timer_.emplace();
+  sync_account_session_timer_.emplace();
 
   history_sync_recorder_.OnSessionStarted();
 }
@@ -157,17 +158,23 @@ void SyncSessionDurationsMetricsRecorder::OnAccountsInCookieUpdated(
     // No signed in account.
     if (cookie_signin_status_ == FeatureState::ON && signin_session_timer_) {
       LogSigninDuration(signin_session_timer_->Elapsed());
-      signin_session_timer_ = std::make_unique<base::ElapsedTimer>();
+      signin_session_timer_.emplace();
     }
     cookie_signin_status_ = FeatureState::OFF;
   } else {
     // There is a signed in account.
     if (cookie_signin_status_ == FeatureState::OFF && signin_session_timer_) {
       LogSigninDuration(signin_session_timer_->Elapsed());
-      signin_session_timer_ = std::make_unique<base::ElapsedTimer>();
+      signin_session_timer_.emplace();
     }
     cookie_signin_status_ = FeatureState::ON;
   }
+}
+
+void SyncSessionDurationsMetricsRecorder::OnIdentityManagerShutdown(
+    signin::IdentityManager* identity_manager) {
+  CHECK_EQ(identity_manager, identity_manager_);
+  identity_manager_observation_.Reset();
 }
 
 void SyncSessionDurationsMetricsRecorder::OnStateChanged(SyncService* sync) {
@@ -228,7 +235,7 @@ void SyncSessionDurationsMetricsRecorder::UpdateSyncAndAccountStatus(
   // the sync engine has not yet started.
   if (ShouldLogUpdate(new_sync_status, new_signin_status)) {
     LogSyncAndAccountDuration(sync_account_session_timer_->Elapsed());
-    sync_account_session_timer_ = std::make_unique<base::ElapsedTimer>();
+    sync_account_session_timer_.emplace();
   }
   sync_status_ = new_sync_status;
   signin_status_ = new_signin_status;

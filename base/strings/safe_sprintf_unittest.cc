@@ -14,10 +14,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <array>
 #include <limits>
 #include <memory>
 
 #include "base/check_op.h"
+#include "base/containers/heap_array.h"
 #include "base/types/fixed_array.h"
 #include "build/build_config.h"
 #include "partition_alloc/partition_alloc_config.h"
@@ -392,7 +394,7 @@ void PrintLongString(char* buf, size_t sz) {
   char* out = tmp.data();
   size_t out_sz = sz;
   size_t len;
-  for (std::unique_ptr<char[]> perfect_buf;;) {
+  for (base::HeapArray<char> perfect_buf;;) {
     size_t needed =
         SafeSNPrintf(out, out_sz,
 #if defined(NDEBUG)
@@ -423,10 +425,10 @@ void PrintLongString(char* buf, size_t sz) {
     // running SafeSNPrintf() the first time, it is possible to compute the
     // correct buffer size for this test. So, allocate a second buffer and run
     // the exact same SafeSNPrintf() command again.
-    if (!perfect_buf.get()) {
+    if (perfect_buf.empty()) {
       out_sz = std::min(needed, sz);
-      out = new char[out_sz];
-      perfect_buf.reset(out);
+      perfect_buf = base::HeapArray<char>::Uninit(out_sz);
+      out = perfect_buf.data();
     } else {
       break;
     }
@@ -445,9 +447,10 @@ void PrintLongString(char* buf, size_t sz) {
   // N.B.: It would be so much cleaner to use snprintf(). But unfortunately,
   //       Visual Studio doesn't support this function, and the work-arounds
   //       are all really awkward.
-  char ref[256];
-  CHECK_LE(sz, sizeof(ref));
-  snprintf(ref, sizeof(ref), "A long string: %%d 00DEADBEEF %lld 0x%llX <NULL>",
+  std::array<char, 256> ref;
+  CHECK_LE(sz, (ref.size() * sizeof(decltype(ref)::value_type)));
+  snprintf(ref.data(), (ref.size() * sizeof(decltype(ref)::value_type)),
+           "A long string: %%d 00DEADBEEF %lld 0x%llX <NULL>",
            static_cast<long long>(std::numeric_limits<intptr_t>::min()),
            static_cast<unsigned long long>(
                reinterpret_cast<uintptr_t>(PrintLongString)));
@@ -460,7 +463,8 @@ void PrintLongString(char* buf, size_t sz) {
 #endif
 
   // Compare the output from SafeSPrintf() to the one from snprintf().
-  EXPECT_EQ(std::string(ref).substr(0, kSSizeMax - 1), std::string(tmp.data()));
+  EXPECT_EQ(std::string(ref.data()).substr(0, kSSizeMax - 1),
+            std::string(tmp.data()));
 
   // We allocated a slightly larger buffer, so that we could perform some
   // extra sanity checks. Now that the tests have all passed, we copy the

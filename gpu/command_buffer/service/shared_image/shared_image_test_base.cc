@@ -10,6 +10,7 @@
 #include "cc/test/pixel_comparator.h"
 #include "cc/test/pixel_test_utils.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
+#include "gpu/command_buffer/service/graphite_shared_context.h"
 #include "gpu/command_buffer/service/service_utils.h"
 #include "gpu/command_buffer/service/shared_image/copy_image_plane.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
@@ -25,7 +26,7 @@
 #include "ui/gl/init/gl_factory.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #endif
 
 #if BUILDFLAG(ENABLE_VULKAN)
@@ -39,7 +40,7 @@
 #endif
 
 #if BUILDFLAG(SKIA_USE_METAL)
-#include "components/viz/common/gpu/metal_context_provider.h"
+#include "gpu/command_buffer/service/metal_context_provider.h"
 #endif
 
 #if BUILDFLAG(SKIA_USE_DAWN) || BUILDFLAG(USE_DAWN)
@@ -64,16 +65,16 @@ void OnReadPixelsDone(
 
 void InsertRecordingAndSubmit(gpu::SharedContextState* context,
                               bool sync_cpu = false) {
-  CHECK(context->graphite_context());
+  CHECK(context->graphite_shared_context());
   auto recording = context->gpu_main_graphite_recorder()->snap();
   if (recording) {
     skgpu::graphite::InsertRecordingInfo info = {};
     info.fRecording = recording.get();
-    context->graphite_context()->insertRecording(info);
+    context->graphite_shared_context()->insertRecording(info);
   }
-  context->graphite_context()->submit(sync_cpu
-                                          ? skgpu::graphite::SyncToCpu::kYes
-                                          : skgpu::graphite::SyncToCpu::kNo);
+  context->graphite_shared_context()->submit(
+      sync_cpu ? skgpu::graphite::SyncToCpu::kYes
+               : skgpu::graphite::SyncToCpu::kNo);
 }
 
 }  // namespace
@@ -151,8 +152,8 @@ bool SharedImageTestBase::IsGraphiteDawnSupported() {
   return true;
 #elif BUILDFLAG(IS_ANDROID) && BUILDFLAG(SKIA_USE_DAWN)
   // Any Android Q+ devices where we have compiled Graphite/Dawn should work.
-  return base::android::BuildInfo::GetInstance()->sdk_int() >=
-         base::android::SDK_VERSION_Q;
+  return base::android::android_info::sdk_int() >=
+         base::android::android_info::SDK_VERSION_Q;
 #else
   return false;
 #endif
@@ -168,7 +169,7 @@ void SharedImageTestBase::InitializeContext(GrContextType context_type) {
 #if BUILDFLAG(SKIA_USE_DAWN)
     dawn_context_provider_ = DawnContextProvider::CreateWithBackend(
         GetDawnBackendType(), DawnForceFallbackAdapter(), gpu_preferences_,
-        DawnContextProvider::DefaultValidateAdapterFn);
+        GpuFeatureInfo());
     ASSERT_TRUE(dawn_context_provider_);
 #else
     FAIL() << "Graphite-Dawn not available";
@@ -238,7 +239,7 @@ void SharedImageTestBase::VerifyPixelsWithReadback(
   if (gr_context()) {
     VerifyPixelsWithReadbackGanesh(mailbox, expected_bitmaps);
   } else {
-    CHECK(context_state_->graphite_context());
+    CHECK(context_state_->graphite_shared_context());
     VerifyPixelsWithReadbackGraphite(mailbox, expected_bitmaps);
   }
 }
@@ -330,12 +331,13 @@ void SharedImageTestBase::VerifyPixelsWithReadbackGraphite(
         plane_color_type, skia_representation->alpha_type(), nullptr);
     ASSERT_TRUE(sk_image) << "plane_index=" << plane;
 
-    ASSERT_TRUE(context_state_->graphite_context());
+    ASSERT_TRUE(context_state_->graphite_shared_context());
     ReadPixelsContext context;
     const SkIRect src_rect = dst_info.bounds();
-    context_state_->graphite_context()->asyncRescaleAndReadPixels(
+    context_state_->graphite_shared_context()->asyncRescaleAndReadPixels(
         sk_image.get(), dst_info, src_rect, SkImage::RescaleGamma::kSrc,
-        SkImage::RescaleMode::kRepeatedLinear, &OnReadPixelsDone, &context);
+        SkImage::RescaleMode::kRepeatedLinear,
+        base::BindOnce(&OnReadPixelsDone), &context);
     InsertRecordingAndSubmit(context_state_.get(), /*sync_cpu=*/true);
     ASSERT_TRUE(context.finished) << "plane_index=" << plane;
     if (context.async_result) {

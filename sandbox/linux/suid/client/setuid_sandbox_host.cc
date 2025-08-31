@@ -2,13 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <array>
-
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "sandbox/linux/suid/client/setuid_sandbox_host.h"
 
 #include <fcntl.h>
@@ -17,12 +10,14 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/environment.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -33,6 +28,7 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/launch.h"
 #include "base/process/process_metrics.h"
+#include "base/strings/cstring_view.h"
 #include "base/strings/string_number_conversions.h"
 #include "sandbox/linux/suid/common/sandbox.h"
 #include "sandbox/linux/suid/common/suid_unsafe_environment_variables.h"
@@ -71,8 +67,8 @@ void UnsetExpectedEnvironmentVariables(base::EnvironmentMap* env_map) {
 // Wrapper around a shared C function.
 // Returns the "saved" environment variable name corresponding to |envvar|
 // in a new string or NULL.
-std::string* CreateSavedVariableName(const char* env_var) {
-  char* const saved_env_var = SandboxSavedEnvironmentVariable(env_var);
+std::string* CreateSavedVariableName(base::cstring_view env_var) {
+  char* const saved_env_var = SandboxSavedEnvironmentVariable(env_var.c_str());
   if (!saved_env_var)
     return nullptr;
   std::string* saved_env_var_copy = new std::string(saved_env_var);
@@ -86,8 +82,9 @@ std::string* CreateSavedVariableName(const char* env_var) {
 // different names here so that the SUID sandbox can resolve them for the
 // renderer.
 void SaveSUIDUnsafeEnvironmentVariables(base::Environment* env) {
-  for (unsigned i = 0; kSUIDUnsafeEnvironmentVariables[i]; ++i) {
-    const char* env_var = kSUIDUnsafeEnvironmentVariables[i];
+  for (unsigned i = 0; UNSAFE_TODO(kSUIDUnsafeEnvironmentVariables[i]); ++i) {
+    const base::cstring_view UNSAFE_TODO(
+        env_var(kSUIDUnsafeEnvironmentVariables[i]));
     // Get the saved environment variable corresponding to envvar.
     std::unique_ptr<std::string> saved_env_var(
         CreateSavedVariableName(env_var));

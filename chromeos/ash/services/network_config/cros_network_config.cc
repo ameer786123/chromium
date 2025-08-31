@@ -15,7 +15,6 @@
 #include "base/containers/flat_map.h"
 #include "base/i18n/time_formatting.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/not_fatal_until.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -56,7 +55,6 @@
 #include "chromeos/services/network_config/public/cpp/cros_network_config_util.h"
 #include "chromeos/services/network_config/public/mojom/cros_network_config.mojom-shared.h"
 #include "chromeos/services/network_config/public/mojom/cros_network_config.mojom.h"
-#include "chromeos/services/network_config/public/mojom/cros_network_config_mojom_traits.h"
 #include "components/captive_portal/core/captive_portal_detector.h"
 #include "components/device_event_log/device_event_log.h"
 #include "components/onc/onc_constants.h"
@@ -361,7 +359,7 @@ std::optional<GURL> GetPortalProbeUrl(const NetworkState* network) {
       if (probe_url.is_valid())
         return probe_url;
       else
-        return GURL(captive_portal::CaptivePortalDetector::kDefaultURL);
+        return GURL(captive_portal::CaptivePortalDetector::GetDefaultUrl());
     }
     case NetworkState::PortalState::kNoInternet:
       return std::nullopt;
@@ -673,8 +671,7 @@ mojom::DeviceStatePropertiesPtr DeviceStateToMojo(
 std::string GetRequiredString(const base::Value::Dict* dict, const char* key) {
   const base::Value* v = dict->Find(key);
   if (!v) {
-    NOTREACHED(base::NotFatalUntil::M127) << "Required key missing: " << key;
-    return std::string();
+    NOTREACHED() << "Required key missing: " << key;
   }
   if (!v->is_string()) {
     NET_LOG(ERROR) << "Expected string, found: " << *v;

@@ -1558,8 +1558,8 @@ ScriptPromise<PhotoCapabilities> ImageCapture::getPhotoCapabilities(
           script_state);
   auto promise = resolver->Promise();
   GetMojoPhotoState(resolver,
-                    WTF::BindOnce(&ImageCapture::ResolveWithPhotoCapabilities,
-                                  WrapPersistent(this)));
+                    BindOnce(&ImageCapture::ResolveWithPhotoCapabilities,
+                             WrapPersistent(this)));
   return promise;
 }
 
@@ -1568,9 +1568,8 @@ ScriptPromise<PhotoSettings> ImageCapture::getPhotoSettings(
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver<PhotoSettings>>(script_state);
   auto promise = resolver->Promise();
-  GetMojoPhotoState(resolver,
-                    WTF::BindOnce(&ImageCapture::ResolveWithPhotoSettings,
-                                  WrapPersistent(this)));
+  GetMojoPhotoState(resolver, BindOnce(&ImageCapture::ResolveWithPhotoSettings,
+                                       WrapPersistent(this)));
   return promise;
 }
 
@@ -1655,8 +1654,8 @@ ScriptPromise<Blob> ImageCapture::takePhoto(
 
   service_->SetPhotoOptions(
       SourceId(), std::move(settings),
-      WTF::BindOnce(&ImageCapture::OnMojoSetPhotoOptions, WrapPersistent(this),
-                    WrapPersistent(resolver), /*trigger_take_photo=*/true));
+      BindOnce(&ImageCapture::OnMojoSetPhotoOptions, WrapPersistent(this),
+               WrapPersistent(resolver), /*trigger_take_photo=*/true));
   return promise;
 }
 
@@ -1696,8 +1695,8 @@ void ImageCapture::UpdateAndCheckMediaTrackSettingsAndCapabilities(
                "ImageCapture::UpdateAndCheckMediaTrackSettingsAndCapabilities");
   service_->GetPhotoState(
       stream_track_->Component()->Source()->Id(),
-      WTF::BindOnce(&ImageCapture::GotPhotoState, WrapPersistent(this),
-                    std::move(callback)));
+      blink::BindOnce(&ImageCapture::GotPhotoState, WrapPersistent(this),
+                      std::move(callback)));
 }
 
 void ImageCapture::GotPhotoState(
@@ -1902,20 +1901,27 @@ void ImageCapture::SetMediaTrackConstraints(
 
   service_->SetPhotoOptions(
       SourceId(), std::move(settings),
-      WTF::BindOnce(&ImageCapture::OnMojoSetPhotoOptions, WrapPersistent(this),
-                    WrapPersistent(resolver), /*trigger_take_photo=*/false));
+      BindOnce(&ImageCapture::OnMojoSetPhotoOptions, WrapPersistent(this),
+               WrapPersistent(resolver), /*trigger_take_photo=*/false));
 }
 
 void ImageCapture::SetVideoTrackDeviceSettingsFromTrack(
     base::OnceClosure initialized_callback,
     media::mojom::blink::PhotoStatePtr photo_state) {
-  UpdateMediaTrackSettingsAndCapabilities(base::DoNothing(),
-                                          std::move(photo_state));
-
   auto* video_track = MediaStreamVideoTrack::From(stream_track_->Component());
   DCHECK(video_track);
 
   const auto& device_settings = video_track->image_capture_device_settings();
+
+  if (device_settings &&
+      device_settings->expose_pan_tilt_zoom_support.has_value() &&
+      !*device_settings->expose_pan_tilt_zoom_support) {
+    pan_tilt_zoom_permission_ = mojom::blink::PermissionStatus::ASK;
+    permission_observer_receiver_.reset();
+  }
+
+  UpdateMediaTrackSettingsAndCapabilities(base::DoNothing(),
+                                          std::move(photo_state));
 
   if (device_settings) {
     ExecutionContext* context = GetExecutionContext();
@@ -2075,8 +2081,9 @@ void ImageCapture::SetVideoTrackDeviceSettingsFromTrack(
          settings->background_segmentation_mask_state.has_value())) {
       service_->SetPhotoOptions(
           SourceId(), std::move(settings),
-          WTF::BindOnce(&ImageCapture::OnSetVideoTrackDeviceSettingsFromTrack,
-                        WrapPersistent(this), std::move(initialized_callback)));
+          blink::BindOnce(&ImageCapture::OnSetVideoTrackDeviceSettingsFromTrack,
+                          WrapPersistent(this),
+                          std::move(initialized_callback)));
       return;
     }
   }
@@ -2091,8 +2098,8 @@ void ImageCapture::OnSetVideoTrackDeviceSettingsFromTrack(
                "ImageCapture::OnSetVideoTrackDeviceSettingsFromTrack");
   service_->GetPhotoState(
       SourceId(),
-      WTF::BindOnce(&ImageCapture::UpdateMediaTrackSettingsAndCapabilities,
-                    WrapPersistent(this), std::move(done_callback)));
+      blink::BindOnce(&ImageCapture::UpdateMediaTrackSettingsAndCapabilities,
+                      WrapPersistent(this), std::move(done_callback)));
 }
 
 MediaTrackConstraints* ImageCapture::GetMediaTrackConstraints() const {
@@ -2145,27 +2152,29 @@ ImageCapture::ImageCapture(ExecutionContext* context,
       service_.BindNewPipeAndPassReceiver(
           context->GetTaskRunner(TaskType::kDOMManipulation)));
 
-  service_.set_disconnect_handler(WTF::BindOnce(
+  service_.set_disconnect_handler(BindOnce(
       &ImageCapture::OnServiceConnectionError, WrapWeakPersistent(this)));
 
   // Launch a retrieval of the current photo state, which arrive asynchronously
   // to avoid blocking the main UI thread.
   service_->GetPhotoState(
       SourceId(),
-      WTF::BindOnce(&ImageCapture::SetVideoTrackDeviceSettingsFromTrack,
-                    WrapPersistent(this), std::move(initialized_callback)));
+      blink::BindOnce(&ImageCapture::SetVideoTrackDeviceSettingsFromTrack,
+                      WrapPersistent(this), std::move(initialized_callback)));
 
   ConnectToPermissionService(
       context, permission_service_.BindNewPipeAndPassReceiver(
                    context->GetTaskRunner(TaskType::kMiscPlatformAPI)));
 
-  mojo::PendingRemote<mojom::blink::PermissionObserver> observer;
-  permission_observer_receiver_.Bind(
-      observer.InitWithNewPipeAndPassReceiver(),
-      context->GetTaskRunner(TaskType::kMiscPlatformAPI));
-  permission_service_->AddPermissionObserver(
-      CreateVideoCapturePermissionDescriptor(/*pan_tilt_zoom=*/true),
-      pan_tilt_zoom_permission_, std::move(observer));
+  if (pan_tilt_zoom_allowed) {
+    mojo::PendingRemote<mojom::blink::PermissionObserver> observer;
+    permission_observer_receiver_.Bind(
+        observer.InitWithNewPipeAndPassReceiver(),
+        context->GetTaskRunner(TaskType::kMiscPlatformAPI));
+    permission_service_->AddPermissionObserver(
+        CreateVideoCapturePermissionDescriptor(/*pan_tilt_zoom=*/true),
+        pan_tilt_zoom_permission_, std::move(observer));
+  }
 }
 
 // TODO(crbug.com/708723): Integrate image capture constraints processing with
@@ -2587,9 +2596,9 @@ void ImageCapture::GetMojoPhotoState(ScriptPromiseResolverBase* resolver,
 
   service_->GetPhotoState(
       SourceId(),
-      WTF::BindOnce(&ImageCapture::OnMojoGetPhotoState, WrapPersistent(this),
-                    WrapPersistent(resolver), std::move(resolver_cb),
-                    /*trigger_take_photo=*/false));
+      blink::BindOnce(&ImageCapture::OnMojoGetPhotoState, WrapPersistent(this),
+                      WrapPersistent(resolver), std::move(resolver_cb),
+                      /*trigger_take_photo=*/false));
 }
 
 void ImageCapture::OnMojoGetPhotoState(
@@ -2632,7 +2641,7 @@ void ImageCapture::OnMojoGetPhotoState(
         ToMediaSettingsRange(*photo_state->width));
   }
 
-  WTF::Vector<V8FillLightMode> fill_light_mode;
+  Vector<V8FillLightMode> fill_light_mode;
   for (const auto& mode : photo_state->fill_light_mode) {
     fill_light_mode.push_back(ToV8FillLightMode(mode));
   }
@@ -2645,9 +2654,8 @@ void ImageCapture::OnMojoGetPhotoState(
 
   if (trigger_take_photo) {
     service_->TakePhoto(
-        SourceId(),
-        WTF::BindOnce(&ImageCapture::OnMojoTakePhoto, WrapPersistent(this),
-                      WrapPersistent(resolver)));
+        SourceId(), BindOnce(&ImageCapture::OnMojoTakePhoto,
+                             WrapPersistent(this), WrapPersistent(resolver)));
     return;
   }
 
@@ -2670,13 +2678,14 @@ void ImageCapture::OnMojoSetPhotoOptions(ScriptPromiseResolverBase* resolver,
   }
 
   auto resolver_cb =
-      WTF::BindOnce(&ImageCapture::ResolveWithNothing, WrapPersistent(this));
+      BindOnce(&ImageCapture::ResolveWithNothing, WrapPersistent(this));
 
   // Retrieve the current device status after setting the options.
   service_->GetPhotoState(
-      SourceId(), WTF::BindOnce(&ImageCapture::OnMojoGetPhotoState,
-                                WrapPersistent(this), WrapPersistent(resolver),
-                                std::move(resolver_cb), trigger_take_photo));
+      SourceId(),
+      blink::BindOnce(&ImageCapture::OnMojoGetPhotoState, WrapPersistent(this),
+                      WrapPersistent(resolver), std::move(resolver_cb),
+                      trigger_take_photo));
 }
 
 void ImageCapture::OnMojoTakePhoto(ScriptPromiseResolverBase* resolver,
@@ -2704,7 +2713,7 @@ void ImageCapture::UpdateMediaTrackSettingsAndCapabilities(
     return;
   }
 
-  WTF::Vector<WTF::String> supported_white_balance_modes;
+  Vector<String> supported_white_balance_modes;
   supported_white_balance_modes.ReserveInitialCapacity(
       photo_state->supported_white_balance_modes.size());
   for (const auto& supported_mode : photo_state->supported_white_balance_modes)
@@ -2716,7 +2725,7 @@ void ImageCapture::UpdateMediaTrackSettingsAndCapabilities(
         ToString(photo_state->current_white_balance_mode));
   }
 
-  WTF::Vector<WTF::String> supported_exposure_modes;
+  Vector<String> supported_exposure_modes;
   supported_exposure_modes.ReserveInitialCapacity(
       photo_state->supported_exposure_modes.size());
   for (const auto& supported_mode : photo_state->supported_exposure_modes)
@@ -2726,7 +2735,7 @@ void ImageCapture::UpdateMediaTrackSettingsAndCapabilities(
     settings_->setExposureMode(ToString(photo_state->current_exposure_mode));
   }
 
-  WTF::Vector<WTF::String> supported_focus_modes;
+  Vector<String> supported_focus_modes;
   supported_focus_modes.ReserveInitialCapacity(
       photo_state->supported_focus_modes.size());
   for (const auto& supported_mode : photo_state->supported_focus_modes)

@@ -30,6 +30,7 @@
 #include "components/commerce/core/compare/cluster_server_proxy.h"
 #include "components/commerce/core/compare/product_group.h"
 #include "components/commerce/core/compare/product_specifications_server_proxy.h"
+#include "components/commerce/core/discount_infos_storage.h"
 #include "components/commerce/core/feature_utils.h"
 #include "components/commerce/core/metrics/metrics_utils.h"
 #include "components/commerce/core/metrics/scheduled_metrics_manager.h"
@@ -49,8 +50,8 @@
 #include "components/commerce/core/subscriptions/subscriptions_observer.h"
 #include "components/commerce/core/web_wrapper.h"
 #include "components/grit/components_resources.h"
-#include "components/optimization_guide/core/optimization_guide_decider.h"
-#include "components/optimization_guide/core/optimization_guide_features.h"
+#include "components/optimization_guide/core/hints/hints_fetcher.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decider.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
 #include "components/optimization_guide/proto/hints.pb.h"
 #include "components/power_bookmarks/core/power_bookmark_service.h"
@@ -61,6 +62,7 @@
 #include "components/search/ntp_features.h"
 #include "components/session_proto_db/session_proto_storage.h"
 #include "components/sessions/core/tab_restore_service.h"
+#include "components/signin/public/base/signin_pref_names.h"
 #include "components/sync/base/features.h"
 #include "components/sync/service/sync_service.h"
 #include "components/unified_consent/url_keyed_data_collection_consent_helper.h"
@@ -158,6 +160,23 @@ class ProductSpecificationsUrlObserver
       this};
 };
 
+// Returns the consent level to use for endpoint fetchers.
+// This function can be deleted once the Sync feature is removed.
+signin::ConsentLevel GetConsentLevelForEndpointFetchers(
+    PrefService* pref_service) {
+  if (base::FeatureList::IsEnabled(
+          syncer::kReplaceSyncPromosWithSignInPromos)) {
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+    return pref_service->GetBoolean(prefs::kExplicitBrowserSignin)
+               ? signin::ConsentLevel::kSignin
+               : signin::ConsentLevel::kSync;
+#else
+    return signin::ConsentLevel::kSignin;
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+  }
+  return signin::ConsentLevel::kSync;
+}
+
 }  // namespace
 
 const char kImageAvailabilityHistogramName[] =
@@ -184,6 +203,8 @@ ShoppingService::ShoppingService(
     SessionProtoStorage<discounts_db::DiscountsContentProto>*
         discounts_proto_db,
     SessionProtoStorage<cart_db::ChromeCartContentProto>* cart_proto_db,
+    SessionProtoStorage<discount_infos_db::DiscountInfosContentProto>*
+        discount_infos_db,
     SessionProtoStorage<parcel_tracking_db::ParcelTrackingContent>*
         parcel_tracking_proto_db,
     history::HistoryService* history_service,
@@ -245,7 +266,7 @@ ShoppingService::ShoppingService(
     if (subscription_proto_db) {
       subscriptions_manager_ = std::make_unique<SubscriptionsManager>(
           identity_manager, url_loader_factory, subscription_proto_db,
-          account_checker_.get());
+          account_checker_.get(), GetConsentLevelForEndpointFetchers(pref_service_));
     }
   }
 
@@ -310,6 +331,12 @@ ShoppingService::ShoppingService(
   if (product_specifications_service_) {
     product_specifications_observation_.Observe(
         product_specifications_service_);
+  }
+
+  if (discount_infos_db && history_service &&
+      IsDiscountAutofillEnabled(account_checker_.get())) {
+    discount_infos_storage_ = std::make_unique<DiscountInfosStorage>(
+        discount_infos_db, history_service);
   }
 
   // TODO(crbug.com/403323742): This is added in 03/2025 to deprecate
@@ -619,16 +646,14 @@ void ShoppingService::PDPMetricsCallback(
     optimization_guide::OptimizationGuideDecision decision,
     const optimization_guide::OptimizationMetadata& metadata,
     const GURL& url) {
-  if (!IsRegionLockedFeatureEnabled(kShoppingPDPMetrics,
-                                    kShoppingPDPMetricsRegionLaunched)) {
+  if (!IsRegionLockedFeatureEnabled(kShoppingPDPMetrics)) {
     return;
   }
 
   metrics::RecordPDPMetrics(decision, metadata, pref_service_,
                             is_off_the_record, IsShoppingListEligible(), url);
 
-  bool supported_country =
-      IsRegionLockedFeatureEnabled(kShoppingList, kShoppingListRegionLaunched);
+  bool supported_country = IsRegionLockedFeatureEnabled(kShoppingList);
   metrics::RecordShoppingListIneligibilityReasons(
       pref_service_, account_checker_.get(), is_off_the_record,
       supported_country);
@@ -687,8 +712,9 @@ ShoppingService::HandleAndStoreProductInfoFromOnDemand(
     return std::nullopt;
   }
 
-  std::unique_ptr<ProductInfo> info =
-      OptGuideResultToProductInfo(decision.metadata);
+  std::unique_ptr<ProductInfo> info = OptGuideResultToProductInfo(
+      decision.metadata,
+      CanLoadProductSpecificationsFullPageUi(account_checker_.get()));
 
   if (!info) {
     return std::nullopt;
@@ -859,8 +885,7 @@ void ShoppingService::GetUpdatedProductInfoForBookmarks(
 }
 
 size_t ShoppingService::GetMaxProductBookmarkUpdatesPerBatch() {
-  return optimization_guide::features::
-      MaxUrlsForOptimizationGuideServiceHintsFetch();
+  return optimization_guide::HintsFetcher::kMaxUrls;
 }
 
 void ShoppingService::GetAllPriceTrackedBookmarks(
@@ -908,6 +933,17 @@ void ShoppingService::GetPriceInsightsInfoForUrl(
 void ShoppingService::GetDiscountInfoForUrl(const GURL& url,
                                             DiscountInfoCallback callback) {
   GetDiscountInfoFromOptGuide(url, std::move(callback));
+}
+
+void ShoppingService::GetAvailableDiscountInfoForUrl(
+    const GURL& url,
+    DiscountInfoCallback callback) {
+  if (!discount_infos_storage_) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), url, std::vector<DiscountInfo>()));
+    return;
+  }
+  discount_infos_storage_->LoadDiscountsWithPrefix(url, std::move(callback));
 }
 
 void ShoppingService::GetProductSpecificationsForUrls(
@@ -986,11 +1022,9 @@ void ShoppingService::IsShoppingPage(const GURL& url,
 }
 
 bool ShoppingService::IsRegionLockedFeatureEnabled(
-    const base::Feature& feature,
-    const base::Feature& region_specific_feature) {
-  return commerce::IsRegionLockedFeatureEnabled(
-      feature, region_specific_feature, country_on_startup_,
-      locale_on_startup_);
+    const base::Feature& feature) {
+  return commerce::IsRegionLockedFeatureEnabled(feature, country_on_startup_,
+                                                locale_on_startup_);
 }
 
 const std::vector<UrlInfo> ShoppingService::GetUrlInfosForActiveWebWrappers() {
@@ -1125,7 +1159,8 @@ void ShoppingService::HandleOptGuideProductInfoResponse(
     return;
   }
 
-  std::unique_ptr<ProductInfo> info = OptGuideResultToProductInfo(metadata);
+  std::unique_ptr<ProductInfo> info = OptGuideResultToProductInfo(
+      metadata, CanLoadProductSpecificationsFullPageUi(account_checker_.get()));
 
   std::optional<ProductInfo> optional_info;
   // The product info is considered valid only if it has a country code.
@@ -1144,99 +1179,6 @@ void ShoppingService::HandleOptGuideProductInfoResponse(
   if (web) {
     ScheduleProductInfoLocalExtraction(web);
   }
-}
-
-std::unique_ptr<ProductInfo> ShoppingService::OptGuideResultToProductInfo(
-    const optimization_guide::OptimizationMetadata& metadata) {
-  if (!metadata.any_metadata().has_value()) {
-    return nullptr;
-  }
-
-  std::optional<commerce::PriceTrackingData> parsed_any =
-      optimization_guide::ParsedAnyMetadata<commerce::PriceTrackingData>(
-          metadata.any_metadata().value());
-  commerce::PriceTrackingData price_data = parsed_any.value();
-
-  if (!parsed_any.has_value() || !price_data.IsInitialized()) {
-    return nullptr;
-  }
-
-  const commerce::BuyableProduct buyable_product = price_data.buyable_product();
-
-  std::unique_ptr<ProductInfo> info = std::make_unique<ProductInfo>();
-
-  if (buyable_product.has_title()) {
-    info->title = buyable_product.title();
-  }
-
-  if (buyable_product.has_gpc_title()) {
-    info->product_cluster_title = buyable_product.gpc_title();
-  }
-
-  if (buyable_product.has_image_url()) {
-    info->server_image_available = true;
-    info->image_url = GURL(buyable_product.image_url());
-  } else {
-    info->server_image_available = false;
-  }
-
-  if (buyable_product.has_offer_id()) {
-    info->offer_id = buyable_product.offer_id();
-  }
-
-  if (buyable_product.has_product_cluster_id()) {
-    info->product_cluster_id = buyable_product.product_cluster_id();
-  }
-
-  if (buyable_product.has_current_price()) {
-    info->currency_code = buyable_product.current_price().currency_code();
-    info->amount_micros = buyable_product.current_price().amount_micros();
-  }
-
-  if (buyable_product.has_country_code()) {
-    info->country_code = buyable_product.country_code();
-  }
-
-  // Check to see if there was a price drop associated with this product. Those
-  // prices take priority over what BuyableProduct has.
-  if (price_data.has_product_update()) {
-    const commerce::ProductPriceUpdate price_update =
-        price_data.product_update();
-
-    // Both new and old price should exist and have the same currency code.
-    bool currency_codes_match = price_update.new_price().currency_code() ==
-                                price_update.old_price().currency_code();
-
-    if (price_update.has_new_price() &&
-        info->currency_code == price_update.new_price().currency_code() &&
-        currency_codes_match) {
-      info->amount_micros = price_update.new_price().amount_micros();
-    }
-    if (price_update.has_old_price() &&
-        info->currency_code == price_update.old_price().currency_code() &&
-        currency_codes_match) {
-      info->previous_amount_micros.emplace(
-          price_update.old_price().amount_micros());
-    }
-  }
-
-  if (buyable_product.has_category_data()) {
-    info->category_data = buyable_product.category_data();
-  }
-
-  // TODO(376128060): Remove the feature check after M132.
-  if (CanLoadProductSpecificationsFullPageUi(account_checker_.get())) {
-    for (int i = 0; i < buyable_product.price_summary_size(); ++i) {
-      info->price_summary.push_back(buyable_product.price_summary(i));
-    }
-
-    if (buyable_product.has_price_display_recommendation()) {
-      info->price_display_recommendation =
-          buyable_product.price_display_recommendation();
-    }
-  }
-
-  return info;
 }
 
 void ShoppingService::HandleOnDemandProductInfoResponseForBookmarks(
@@ -1262,8 +1204,9 @@ void ShoppingService::HandleOnDemandProductInfoResponseForBookmarks(
     return;
   }
 
-  std::unique_ptr<ProductInfo> info =
-      OptGuideResultToProductInfo(decision.metadata);
+  std::unique_ptr<ProductInfo> info = OptGuideResultToProductInfo(
+      decision.metadata,
+      CanLoadProductSpecificationsFullPageUi(account_checker_.get()));
 
   if (info) {
     std::optional<ProductInfo> optional_info;
@@ -1616,6 +1559,10 @@ void ShoppingService::HandleOptGuideDiscountInfoResponse(
 
   std::vector<DiscountInfo> discount_infos =
       OptGuideResultToDiscountInfos(metadata);
+
+  if (discount_infos_storage_) {
+    discount_infos_storage_->SaveDiscounts(url, discount_infos);
+  }
 
   std::move(callback).Run(url, std::move(discount_infos));
 }

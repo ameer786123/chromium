@@ -23,7 +23,6 @@ class GPUDeviceDescriptor;
 class GPURequestAdapterOptions;
 class GPUSupportedFeatures;
 class GPUSupportedLimits;
-class GPUMemoryHeapInfo;
 
 class GPUAdapter final : public ScriptWrappable, DawnObject<wgpu::Adapter> {
   DEFINE_WRAPPERTYPEINFO();
@@ -43,7 +42,6 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<wgpu::Adapter> {
   GPUSupportedFeatures* features() const;
   GPUSupportedLimits* limits() const { return limits_.Get(); }
   GPUAdapterInfo* info() const;
-  bool isFallbackAdapter() const;
   wgpu::BackendType backendType() const;
   bool SupportsMultiPlanarFormats() const;
 
@@ -74,10 +72,8 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<wgpu::Adapter> {
   }
 
   Member<GPU> gpu_;
-  bool is_fallback_adapter_;
   wgpu::BackendType backend_type_;
   wgpu::AdapterType adapter_type_;
-  bool is_consumed_ = false;
   bool is_xr_compatible_ = false;
   Member<GPUSupportedLimits> limits_;
   Member<GPUSupportedFeatures> features_;
@@ -90,10 +86,11 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<wgpu::Adapter> {
   uint32_t subgroup_min_size_;
   uint32_t subgroup_max_size_;
   String driver_;
-  HeapVector<Member<GPUMemoryHeapInfo>> memory_heaps_;
   std::optional<uint32_t> d3d_shader_model_;
   std::optional<uint32_t> vk_driver_version_;
   wgpu::PowerPreference power_preference_;
+  wgpu::AdapterPropertiesMemoryHeaps memory_heaps_ = {};
+  wgpu::AdapterPropertiesSubgroupMatrixConfigs subgroup_matrix_configs_ = {};
 
   static constexpr int kMaxAllowedConsoleWarnings = 50;
   int allowed_console_warnings_remaining_ = kMaxAllowedConsoleWarnings;

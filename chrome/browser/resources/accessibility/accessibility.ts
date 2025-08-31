@@ -20,8 +20,9 @@ enum AxMode {
   HTML_METADATA = 1 << 5,
   LABEL_IMAGES = 1 << 6,
   PDF_PRINTING = 1 << 7,
-  PDF_OCR = 1 << 8,
-  ANNOTATE_MAIN_NODE = 1 << 9,
+  ANNOTATE_MAIN_NODE = 1 << 8,
+  FROM_PLATFORM = 1 << 9,
+  SCREEN_READER = 1 << 10,
 }
 
 interface Data {
@@ -70,6 +71,7 @@ interface InitData {
   supportedApiTypes: string[];
   apiType: string;
   locked: boolean;
+  isolate: boolean;
 
   html: boolean;
   native: boolean;
@@ -77,12 +79,31 @@ interface InitData {
   extendedProperties: boolean;
   text: boolean;
   web: boolean;
+  screenReader: boolean;
+
+  lockedPlatformModes: {
+    native: boolean,
+    web: boolean,
+    html: boolean,
+    extendedProperties: boolean,
+    text: boolean,
+    screenReader: boolean,
+  };
+
+  detectedATName: string;
+  isScreenReaderActive: boolean;
+
+  // <if expr="is_win">
+  dormantCount: string;
+  liveCount: string;
+  ghostCount: string;
+  // </if>
 }
 
 type RequestType = 'showOrRefreshTree';
 
-type GlobalStateName =
-    'native'|'web'|'metadata'|'pdfPrinting'|'extendedProperties';
+type GlobalStateName = 'native'|'web'|'html'|'text'|'metadata'|'pdfPrinting'|
+    'extendedProperties'|'screenReader'|'labelImages'|'annotateMainNode';
 
 class BrowserProxy {
   toggleAccessibility(
@@ -242,13 +263,22 @@ function requestEvents(data: PageData, element: HTMLElement) {
 function initialize() {
   const data = requestData();
 
-  bindCheckbox('native', data.native);
-  bindCheckbox('web', data.web);
-  bindCheckbox('text', data.text);
-  bindCheckbox('extendedProperties', data.extendedProperties);
-  bindCheckbox('html', data.html);
+  bindCheckbox('native', data.native, data.lockedPlatformModes.native);
+  bindCheckbox('web', data.web, data.lockedPlatformModes.web);
+  bindCheckbox('text', data.text, data.lockedPlatformModes.text);
+  bindCheckbox(
+      'extendedProperties', data.extendedProperties,
+      data.lockedPlatformModes.extendedProperties);
+  bindCheckbox(
+      'screenReader', data.screenReader, data.lockedPlatformModes.screenReader);
+  bindCheckbox('html', data.html, data.lockedPlatformModes.html);
   bindDropdown('apiType', data.supportedApiTypes, data.apiType);
+  bindCheckbox('isolate', data.isolate);
   bindCheckbox('locked', data.locked);
+
+  getRequiredElement('active_at_name').textContent = data.detectedATName;
+  getRequiredElement('active_at_is_screen_reader').textContent =
+      data.isScreenReaderActive ? 'Yes' : 'No';
 
   getRequiredElement('pages').textContent = '';
 
@@ -280,6 +310,8 @@ function initialize() {
     getRequiredElement('widgets-header').style.display = 'none';
   }
 
+  updateDisplay(data);
+
   // Cache filters so they're easily accessible on page refresh.
   const allow = window.localStorage['chrome-accessibility-filter-allow'];
   const allowEmpty =
@@ -294,11 +326,26 @@ function initialize() {
   addWebUiListener('copyTree', copyTree);
   addWebUiListener('showOrRefreshTree', showOrRefreshTree);
   addWebUiListener('startOrStopEvents', startOrStopEvents);
+  addWebUiListener('updateDisplay', updateDisplay);
 }
 
-function bindCheckbox(name: string, value: boolean) {
+function bindCheckbox(name: string, value: boolean, disable?: boolean) {
   const checkbox = getRequiredElement<HTMLInputElement>(name);
   checkbox.checked = value;
+  if (disable) {
+    checkbox.disabled = true;
+    const label = document.querySelector('label:has(#' + name + ')');
+    if (label) {
+      label.setAttribute(
+          'title',
+          'Forced on because of an interaction with an assistive technology, ' +
+              'application or platform feature.\n' +
+              'To uncheck, use the below checkbox labeled, ' +
+              '"Suppress automatic accessibility enablement..."');
+      label.classList.add('disabled');
+    }
+    return;
+  }
   checkbox.addEventListener('change', function() {
     browserProxy.setGlobalFlag(name, checkbox.checked);
     document.location.reload();
@@ -377,23 +424,29 @@ function formatRow(
     }
     row.appendChild(siteInfo);
 
+    // Create a row of buttons that can be used to read and modify the
+    // AXModes scoped to a specific WebContents.
     row.appendChild(createModeElement(AxMode.NATIVE_APIS, pageData, 'native'));
-    row.appendChild(createModeElement(AxMode.WEB_CONTENTS, pageData, 'native'));
+    row.appendChild(createModeElement(AxMode.WEB_CONTENTS, pageData, 'web'));
     row.appendChild(
-        createModeElement(AxMode.INLINE_TEXT_BOXES, pageData, 'web'));
+        createModeElement(AxMode.INLINE_TEXT_BOXES, pageData, 'text'));
+    row.appendChild(createModeElement(
+        AxMode.EXTENDED_PROPERTIES, pageData, 'extendedProperties'));
     row.appendChild(
-        createModeElement(AxMode.EXTENDED_PROPERTIES, pageData, 'web'));
-    row.appendChild(createModeElement(AxMode.HTML, pageData, 'web'));
+        createModeElement(AxMode.SCREEN_READER, pageData, 'screenReader'));
+    row.appendChild(createModeElement(AxMode.HTML, pageData, 'html'));
     row.appendChild(
         createModeElement(AxMode.HTML_METADATA, pageData, 'metadata'));
     row.appendChild(
         createModeElement(AxMode.PDF_PRINTING, pageData, 'pdfPrinting'));
     row.appendChild(createModeElement(
-        AxMode.LABEL_IMAGES, pageData, 'extendedProperties',
+        AxMode.LABEL_IMAGES, pageData, 'labelImages',
         /*readonly=*/ true));
     row.appendChild(createModeElement(
-        AxMode.ANNOTATE_MAIN_NODE, pageData, 'extendedProperties',
+        AxMode.ANNOTATE_MAIN_NODE, pageData, 'annotateMainNode',
         /* readOnly= */ true));
+    // AxMode.FROM_PLATFORM is unconditionally filtered out and is therefore
+    // never presented to renderers or the user.
   } else {
     const siteInfo = document.createElement('span');
     siteInfo.appendChild(formatValue(data, 'name'));
@@ -495,15 +548,19 @@ function getNameForAccessibilityMode(mode: AxMode): string {
       return 'Label images';
     case AxMode.PDF_PRINTING:
       return 'PDF printing';
-    case AxMode.PDF_OCR:
-      return 'PDF OCR';
     case AxMode.ANNOTATE_MAIN_NODE:
       return 'Annotate main node';
+    case AxMode.SCREEN_READER:
+      return 'Screen reader';
     default:
       assertNotReached();
   }
 }
 
+// Create a button element that can be used to modify the AXMode in the given
+// WebContents/page only. The label consists of the name for the AXMode
+// (via globalStateName) and the value of the AXMode (via PageData).
+// AXModes that do not allow modification this way should pass readOnly == true.
 function createModeElement(
     mode: AxMode, data: PageData, globalStateName: GlobalStateName,
     readOnly = false) {
@@ -686,6 +743,68 @@ function copyTree(data: PageData) {
     showOrRefreshTree(data);
     getRequiredElement(id + '-copyTree').focus();
   }
+}
+
+// State that may be periodically updated. Absent members retain their previous
+// state.
+interface DisplayData {
+  native?: boolean;
+  web?: boolean;
+  text?: boolean;
+  extendedProperties?: boolean;
+  screenReader?: boolean;
+  html?: boolean;
+
+  // <if expr="is_win">
+  dormantCount?: string;
+  liveCount?: string;
+  ghostCount?: string;
+  // </if>
+}
+
+// Updates the page with the state contained in `data`.
+function updateDisplay(data: DisplayData) {
+  if (data.native !== undefined) {
+    getRequiredElement<HTMLInputElement>('native').checked = data.native;
+  }
+  if (data.web !== undefined) {
+    getRequiredElement<HTMLInputElement>('web').checked = data.web;
+  }
+  if (data.text !== undefined) {
+    getRequiredElement<HTMLInputElement>('text').checked = data.text;
+  }
+  if (data.extendedProperties !== undefined) {
+    getRequiredElement<HTMLInputElement>('extendedProperties').checked =
+        data.extendedProperties;
+  }
+  if (data.screenReader !== undefined) {
+    getRequiredElement<HTMLInputElement>('screenReader').checked =
+        data.screenReader;
+  }
+  if (data.html !== undefined) {
+    getRequiredElement<HTMLInputElement>('html').checked = data.html;
+  }
+
+  // <if expr="is_win">
+  if (data.dormantCount !== undefined) {
+    getRequiredElement<HTMLElement>('dormantCount').innerText =
+        data.dormantCount;
+  }
+  if (data.liveCount !== undefined) {
+    getRequiredElement<HTMLElement>('liveCount').innerText = data.liveCount;
+  }
+
+  if (data.ghostCount !== undefined) {
+    // All ghost nodes are leaks, so show it in red if non-zero.
+    const ghostSpan = getRequiredElement<HTMLElement>('ghostCount');
+    ghostSpan.innerText = data.ghostCount;
+    if (data.ghostCount !== '0') {
+      ghostSpan.classList.add('red');
+    } else {
+      ghostSpan.classList.remove('red');
+    }
+  }
+  // </if>
 }
 
 // type is either 'tree' or 'eventLogs'

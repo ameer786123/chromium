@@ -21,7 +21,6 @@
 #include "chrome/browser/task_manager/task_manager_interface.h"
 #include "chrome/browser/task_manager/task_manager_observer.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
@@ -43,7 +42,7 @@
 #include "ui/base/mojom/menu_source_type.mojom-forward.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_type.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
@@ -89,7 +88,7 @@ const auto kTabDefinitions = std::to_array<TaskManagerView::FilterTab>({
     {
         .associated_category = DisplayCategory::kTabsAndExtensions,
         .title_id = IDS_TASK_MANAGER_CATEGORY_TABS_AND_EXTENSIONS_NAME,
-        .icon = &views::kNewTabIcon,
+        .icon = &kNewTabRefreshIcon,
     },
     {
         .associated_category = DisplayCategory::kSystem,
@@ -628,17 +627,17 @@ void TaskManagerView::Init() {
       provider->GetCornerRadiusMetric(views::Emphasis::kHigh);
 
   if (table_config_.header_style) {
-    views::TableHeaderStyle header_style = {
-        .cell_vertical_padding = 14,
-        .cell_horizontal_padding = 12,
-        .resize_bar_vertical_padding = 16,
-        .separator_horizontal_padding = 0,
-        .font_weight = gfx::Font::Weight::MEDIUM,
-        .separator_horizontal_color_id = ui::kColorSysDivider,
-        .separator_vertical_color_id = ui::kColorSysDivider,
-        .background_color_id = kColorTaskManagerTableHeaderBackground,
-        .focus_ring_upper_corner_radius = corner_radius,
-    };
+    views::TableHeaderStyle header_style(
+        /*cell_vertical_padding=*/14, /*cell_horizontal_padding=*/12,
+        /*resize_bar_vertical_padding=*/16,
+        /*separator_horizontal_padding=*/0,
+        /*font_weight=*/gfx::Font::Weight::MEDIUM,
+        /*separator_horizontal_color_id=*/ui::kColorSysDivider,
+        /*separator_vertical_color_id=*/ui::kColorSysDivider,
+        /*background_color_id=*/kColorTaskManagerTableHeaderBackground,
+        /*focus_ring_upper_corner_radius=*/corner_radius,
+        /*header_sort_state=*/
+        base::FeatureList::IsEnabled(features::kTaskManagerDesktopRefresh));
     tab_table->SetHeaderStyle(header_style);
   }
 

@@ -29,6 +29,7 @@ import android.widget.TextView;
 import androidx.annotation.ColorInt;
 import androidx.annotation.ColorRes;
 import androidx.appcompat.content.res.AppCompatResources;
+import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.test.ext.junit.rules.ActivityScenarioRule;
 
 import org.junit.Before;
@@ -40,17 +41,19 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
+import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
 import org.chromium.base.Token;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.compositor.LayerTitleCache;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabUtils;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.chrome.browser.tab_ui.TabThumbnailView;
+import org.chromium.chrome.browser.tab_ui.ThumbnailProvider.MultiThumbnailMetadata;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilterProvider;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
@@ -61,6 +64,9 @@ import org.chromium.components.tab_groups.TabGroupColorId;
 import org.chromium.components.tab_groups.TabGroupColorPickerUtils;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.TestActivity;
+
+import java.util.Collections;
+import java.util.function.Supplier;
 
 /** Unit tests for {@link StripDragShadowView}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -74,6 +80,7 @@ public class StripDragShadowViewUnitTest {
     @Captor private ArgumentCaptor<FaviconImageCallback> mGetFaviconCallbackCaptor;
     @Captor private ArgumentCaptor<Callback<Bitmap>> mGetThumbnailCallbackCaptor;
 
+    @Mock private BrowserControlsStateProvider mMockBrowserControlsStateProvider;
     @Mock private MultiThumbnailCardProvider mMockMultiThumbnailCardProvider;
     @Mock private Supplier<TabContentManager> mMockTabContentManagerSupplier;
     @Mock private Supplier<LayerTitleCache> mMockLayerTitleCacheSupplier;
@@ -126,7 +133,7 @@ public class StripDragShadowViewUnitTest {
                                 .getLayoutInflater()
                                 .inflate(R.layout.strip_drag_shadow_view, null);
         mStripDragShadowView.initialize(
-                /* browserControlsStateProvider= */ null,
+                mMockBrowserControlsStateProvider,
                 mMockMultiThumbnailCardProvider,
                 mMockTabContentManagerSupplier,
                 mMockLayerTitleCacheSupplier,
@@ -165,13 +172,28 @@ public class StripDragShadowViewUnitTest {
     }
 
     @Test
-    public void testUpdate_LayoutSize() {
+    @Config(qualifiers = "w640dp-h360dp")
+    public void testUpdate_LayoutSize_Landscape() {
         mStripDragShadowView.prepareForTabDrag(mMockTab, 0);
 
         int expectedWidth = StripDragShadowView.WIDTH_DP;
         int expectedHeight =
                 TabUtils.deriveGridCardHeight(
-                        expectedWidth, mActivity, /* browserControlsStateProvider= */ null);
+                        expectedWidth, mActivity, mMockBrowserControlsStateProvider);
+        LayoutParams layoutParams = mStripDragShadowView.getLayoutParams();
+        assertEquals("Unexpected view width.", expectedWidth, layoutParams.width);
+        assertEquals("Unexpected view height.", expectedHeight, layoutParams.height);
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h640dp")
+    public void testUpdate_LayoutSize_Portrait() {
+        mStripDragShadowView.prepareForTabDrag(mMockTab, 0);
+
+        int expectedHeight = StripDragShadowView.HEIGHT_DP;
+        int expectedWidth =
+                TabUtils.deriveGridCardWidth(
+                        expectedHeight, mActivity, mMockBrowserControlsStateProvider);
         LayoutParams layoutParams = mStripDragShadowView.getLayoutParams();
         assertEquals("Unexpected view width.", expectedWidth, layoutParams.width);
         assertEquals("Unexpected view height.", expectedHeight, layoutParams.height);
@@ -232,7 +254,10 @@ public class StripDragShadowViewUnitTest {
         verify(mMockTabContentManager, never()).getTabThumbnailWithCallback(anyInt(), any(), any());
         verify(mMockMultiThumbnailCardProvider)
                 .getTabThumbnailWithCallback(
-                        eq(TAB_ID), any(Size.class), eq(false), any(Callback.class));
+                        any(MultiThumbnailMetadata.class),
+                        any(Size.class),
+                        eq(false),
+                        any(Callback.class));
     }
 
     @Test
@@ -336,7 +361,8 @@ public class StripDragShadowViewUnitTest {
     private void testUpdate_GroupTinting(boolean incognito) {
         @TabGroupColorId int colorId = TabGroupColorId.GREY;
         when(mMockTab.isIncognitoBranded()).thenReturn(incognito);
-        when(mMockTabGroupModelFilter.getTabGroupColorWithFallback(anyInt())).thenReturn(colorId);
+        when(mMockTabGroupModelFilter.getTabGroupColorWithFallback(any(Token.class)))
+                .thenReturn(colorId);
         mStripDragShadowView.prepareForGroupDrag(mMockTab, 0);
 
         // Verify card color
@@ -361,5 +387,49 @@ public class StripDragShadowViewUnitTest {
                 TabGroupColorPickerUtils.getTabGroupColorPickerItemTextColor(
                         mActivity, colorId, incognito);
         assertEquals("Unexpected text color.", expectedTextColor, mTitleView.getCurrentTextColor());
+    }
+
+    @Test
+    public void testUpdate_TitleMargin() {
+        // Start with multi-tab drag.
+        // During multi tab drag we reset the title start margin. This test verifies that the
+        // margin is reset when switching between multi-tab and single-tab drag, and is also reset
+        // when switching to group drag.
+        mStripDragShadowView.prepareForMultiTabDrag(
+                mMockTab, Collections.singletonList(mMockTab), 0);
+
+        ConstraintLayout.LayoutParams titleLayoutParams =
+                (ConstraintLayout.LayoutParams) mTitleView.getLayoutParams();
+        int padding =
+                mActivity
+                        .getResources()
+                        .getDimensionPixelSize(R.dimen.tab_grid_card_favicon_padding_start);
+        assertEquals(
+                "Unexpected title margin for multi-tab drag.",
+                (int) (padding * 1.5f),
+                titleLayoutParams.getMarginStart());
+
+        // Switch to single-tab drag.
+        mStripDragShadowView.prepareForTabDrag(mMockTab, 0);
+        titleLayoutParams = (ConstraintLayout.LayoutParams) mTitleView.getLayoutParams();
+        assertEquals(
+                "Title margin not reset for single-tab drag.",
+                0,
+                titleLayoutParams.getMarginStart());
+
+        // Switch back to multi-tab drag.
+        mStripDragShadowView.prepareForMultiTabDrag(
+                mMockTab, Collections.singletonList(mMockTab), 0);
+        titleLayoutParams = (ConstraintLayout.LayoutParams) mTitleView.getLayoutParams();
+        assertEquals(
+                "Unexpected title margin for multi-tab drag.",
+                (int) (padding * 1.5f),
+                titleLayoutParams.getMarginStart());
+
+        // Switch to group drag.
+        mStripDragShadowView.prepareForGroupDrag(mMockTab, 0);
+        titleLayoutParams = (ConstraintLayout.LayoutParams) mTitleView.getLayoutParams();
+        assertEquals(
+                "Title margin not reset for group drag.", 0, titleLayoutParams.getMarginStart());
     }
 }

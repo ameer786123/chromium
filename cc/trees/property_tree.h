@@ -11,7 +11,6 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -262,6 +261,9 @@ class CC_EXPORT TransformTree final : public PropertyTree<TransformNode> {
 
   const std::vector<int>& nodes_affected_by_safe_area_bottom() const {
     return nodes_affected_by_safe_area_inset_bottom_;
+  }
+  void set_nodes_affected_by_safe_area_bottom(std::vector<int> nodes) {
+    nodes_affected_by_safe_area_inset_bottom_ = std::move(nodes);
   }
 
   const std::vector<StickyPositionNodeData>& sticky_position_data() const {
@@ -617,6 +619,10 @@ class CC_EXPORT ScrollTree final : public PropertyTree<ScrollNode> {
       synced_offset->set_clobber_active_value();
   }
 
+  bool SetElasticOverscroll(const ScrollNode& scroll_node,
+                            const gfx::Vector2dF& elastic_overscroll);
+  gfx::Vector2dF GetElasticOverscroll(const ScrollNode& scroll_node) const;
+
   // Sets the painting cull rect of scrolling contents of a scroll. If set, the
   // painting of scrolling contents in this cull rect is guaranteed to be
   // complete. It's in the space of `transform_id` of the corresponding scroll
@@ -670,13 +676,35 @@ class CC_EXPORT ScrollTree final : public PropertyTree<ScrollNode> {
   // Reports reasons for blocking scroll updates on main-thread repaint.
   uint32_t GetMainThreadRepaintReasons(const ScrollNode& node) const;
 
+  using SyncedScrollOffsetMap =
+      base::flat_map<ElementId, scoped_refptr<SyncedScrollOffset>>;
+
+  const SyncedScrollOffsetMap& synced_scroll_offset_map() const {
+    return synced_scroll_offset_map_;
+  }
+  SyncedScrollOffsetMap& synced_scroll_offset_map() {
+    return synced_scroll_offset_map_;
+  }
+
+  const base::flat_map<ElementId, gfx::Rect>& scrolling_contents_cull_rects()
+      const {
+    return scrolling_contents_cull_rects_;
+  }
+  base::flat_map<ElementId, gfx::Rect>& scrolling_contents_cull_rects() {
+    return scrolling_contents_cull_rects_;
+  }
+
+  const base::flat_map<ElementId, gfx::Vector2dF>& elastic_overscroll() const {
+    return elastic_overscroll_;
+  }
+  base::flat_map<ElementId, gfx::Vector2dF>& elastic_overscroll() {
+    return elastic_overscroll_;
+  }
+
  private:
   // ScrollTree doesn't use the needs_update flag.
   using PropertyTree::needs_update;
   using PropertyTree::set_needs_update;
-
-  using SyncedScrollOffsetMap =
-      base::flat_map<ElementId, scoped_refptr<SyncedScrollOffset>>;
 
   int currently_scrolling_node_id_ = kInvalidPropertyNodeId;
 
@@ -687,6 +715,10 @@ class CC_EXPORT ScrollTree final : public PropertyTree<ScrollNode> {
   // and impl threads.
   ScrollOffsetMap scroll_offset_map_;
   SyncedScrollOffsetMap synced_scroll_offset_map_;
+
+  // Maps from scroll element id to the current elastic overscroll on that
+  // element.
+  base::flat_map<ElementId, gfx::Vector2dF> elastic_overscroll_;
 
   // Maps from scroll element id to scrolling contents cull rect.
   base::flat_map<ElementId, gfx::Rect> scrolling_contents_cull_rects_;
@@ -747,7 +779,7 @@ struct DrawTransforms {
 
 struct DrawTransformData {
   int update_number = kInvalidUpdateNumber;
-  int target_id = kInvalidPropertyNodeId;
+  int effect_id = kInvalidPropertyNodeId;
 
   // TODO(sunxd): Move screen space transforms here if it can improve
   // performance.

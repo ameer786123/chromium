@@ -36,10 +36,10 @@ HelpAppSystemAppDelegate::HelpAppSystemAppDelegate(Profile* profile)
                            GURL("chrome://help-app/pwa.html"),
                            profile) {}
 
-gfx::Rect HelpAppSystemAppDelegate::GetDefaultBounds(Browser*) const {
+gfx::Rect HelpAppSystemAppDelegate::GetDefaultBounds(BrowserDelegate*) const {
   // Help app is centered.
   gfx::Rect bounds =
-      display::Screen::GetScreen()->GetDisplayForNewWindows().work_area();
+      display::Screen::Get()->GetDisplayForNewWindows().work_area();
   bounds.ClampToCenteredSize(HELP_DEFAULT_SIZE);
   return bounds;
 }
@@ -56,7 +56,7 @@ std::vector<int> HelpAppSystemAppDelegate::GetAdditionalSearchTerms() const {
   return {IDS_GENIUS_APP_NAME, IDS_HELP_APP_PERKS, IDS_HELP_APP_OFFERS};
 }
 
-Browser* HelpAppSystemAppDelegate::LaunchAndNavigateSystemWebApp(
+BrowserDelegate* HelpAppSystemAppDelegate::LaunchAndNavigateSystemWebApp(
     Profile* profile,
     web_app::WebAppProvider* provider,
     const GURL& url,

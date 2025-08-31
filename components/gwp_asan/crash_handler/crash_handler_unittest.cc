@@ -2,19 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/gwp_asan/crash_handler/crash_handler.h"
 
+#include <array>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/callback_helpers.h"
@@ -53,7 +50,9 @@ namespace {
 
 constexpr size_t kAllocationSize = 902;
 constexpr int kSuccess = 0;
-constexpr size_t kTotalPages = AllocatorState::kMaxRequestedSlots;
+
+static constexpr size_t kMaxMetadata = 2048;
+static constexpr size_t kTotalPages = 8192;
 
 #if !BUILDFLAG(IS_ANDROID)
 int HandlerMainAdaptor(int argc, char* argv[]) {
@@ -117,14 +116,14 @@ MULTIPROCESS_TEST_MAIN(CrashingProcess) {
   }
 
   base::NoDestructor<GuardedPageAllocator> gpa;
-  gpa->Init(
+  CHECK(gpa->Init(
       AllocatorSettings{
-          .max_allocated_pages = AllocatorState::kMaxMetadata,
-          .num_metadata = AllocatorState::kMaxMetadata,
+          .max_allocated_pages = kMaxMetadata,
+          .num_metadata = kMaxMetadata,
           .total_pages = kTotalPages,
           .sampling_frequency = 0u,
       },
-      base::DoNothing(), allocator == "partitionalloc");
+      base::DoNothing(), allocator == "partitionalloc"));
 
   static crashpad::StringAnnotation<24> gpa_annotation(annotation_name);
   gpa_annotation.Set(gpa->GetCrashKey());
@@ -157,9 +156,9 @@ MULTIPROCESS_TEST_MAIN(CrashingProcess) {
         new crashpad::SanitizationAllowedMemoryRanges::Range[memory_ranges
                                                                  .size()];
     for (size_t i = 0; i < memory_ranges.size(); i++) {
-      range_array[i].base =
+      UNSAFE_TODO(range_array[i]).base =
           reinterpret_cast<crashpad::VMAddress>(memory_ranges[i].first);
-      range_array[i].length = memory_ranges[i].second;
+      UNSAFE_TODO(range_array[i]).length = memory_ranges[i].second;
     }
     allowed_memory_ranges.size = memory_ranges.size();
     allowed_memory_ranges.entries =
@@ -243,12 +242,12 @@ MULTIPROCESS_TEST_MAIN(CrashingProcess) {
       // Avoid these issues by underflowing with an actual negative value. This
       // is still UB (thus the crash), but requires knowledge of `ptr` to
       // observe, so a non-ASan compiler does not interfere with it in practice.
-      ((unsigned char*)ptr)[-static_cast<ptrdiff_t>(i)] = 0;
+      UNSAFE_TODO(((unsigned char*)ptr)[-static_cast<ptrdiff_t>(i)]) = 0;
     }
   } else if (test_name == "Overflow") {
     void* ptr = gpa->Allocate(kAllocationSize);
     for (size_t i = 0; i <= base::GetPageSize(); i++) {
-      ((unsigned char*)ptr)[i] = 0;
+      UNSAFE_TODO(((unsigned char*)ptr)[i]) = 0;
     }
   } else if (test_name == "UnrelatedException") {
     __builtin_trap();
@@ -258,9 +257,10 @@ MULTIPROCESS_TEST_MAIN(CrashingProcess) {
     gpa->Deallocate(reinterpret_cast<void*>(bad_address));
   } else if (test_name == "MissingMetadata") {
     // Consume all allocations/metadata
-    void* ptrs[AllocatorState::kMaxMetadata];
-    for (size_t i = 0; i < AllocatorState::kMaxMetadata; i++)
+    std::array<void*, kMaxMetadata> ptrs;
+    for (size_t i = 0; i < kMaxMetadata; i++) {
       ptrs[i] = gpa->Allocate(1);
+    }
 
     gpa->Deallocate(ptrs[0]);
 
@@ -460,20 +460,22 @@ class BaseCrashHandlerTest : public base::MultiProcessTest,
       // depends on the PartitionAlloc metadata layout.
       EXPECT_GE(proto_.region_size(),
                 base::GetPageSize() * (2 * kTotalPages + 1));
-      EXPECT_LE(
-          proto_.region_size(),
-          base::GetPageSize() * (2 * AllocatorState::kMaxReservedSlots + 1));
+      // Upper bound for number of pages reserved when requesting kTotalPages
+      // worth of allocatable slots.
+      constexpr size_t kTotalPagesReserved = 2 * kTotalPages;
+      EXPECT_LE(proto_.region_size(),
+                base::GetPageSize() * (2 * kTotalPagesReserved + 1));
     }
 
     EXPECT_TRUE(proto_.has_missing_metadata());
     EXPECT_FALSE(proto_.missing_metadata());
 
     EXPECT_TRUE(proto_.has_allocator());
-    if (!strcmp(params_.allocator, "malloc"))
+    if (!UNSAFE_TODO(strcmp(params_.allocator, "malloc"))) {
       EXPECT_EQ(proto_.allocator(), Crash_Allocator_MALLOC);
-    else if (!strcmp(params_.allocator, "partitionalloc"))
+    } else if (!UNSAFE_TODO(strcmp(params_.allocator, "partitionalloc"))) {
       EXPECT_EQ(proto_.allocator(), Crash_Allocator_PARTITIONALLOC);
-    else
+    } else
       ASSERT_TRUE(false) << "Unknown allocator name";
   }
 

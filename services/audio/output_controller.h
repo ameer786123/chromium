@@ -27,7 +27,7 @@
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager.h"
 #include "media/base/audio_power_monitor.h"
-#include "services/audio/loopback_group_member.h"
+#include "services/audio/loopback_source.h"
 
 // An OutputController controls an AudioOutputStream and provides data to this
 // output stream. It executes audio operations like play, pause, stop, etc. on
@@ -60,7 +60,7 @@
 
 namespace audio {
 class OutputController : public media::AudioOutputStream::AudioSourceCallback,
-                         public LoopbackGroupMember {
+                         public LoopbackSource {
  public:
   // An event handler that receives events from the OutputController. The
   // following methods are called on the audio manager thread.
@@ -354,6 +354,9 @@ class OutputController : public media::AudioOutputStream::AudioSourceCallback,
   // and destroyed when a stream stops. Also reset every time there is a stream
   // being created due to device changes.
   std::optional<ErrorStatisticsTracker> stats_tracker_;
+
+  // Request and read data in the same OnMoreData call, to reduce latency.
+  const bool request_before_read_;
 };
 
 }  // namespace audio

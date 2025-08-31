@@ -10,21 +10,16 @@ import {TestImportManager} from '/common/testing/test_import_manager.js';
 import type {BrailleDisplayState, BrailleKeyEvent} from '../../common/braille/braille_key_types.js';
 import {BrailleKeyCommand} from '../../common/braille/braille_key_types.js';
 import {NavBraille} from '../../common/braille/nav_braille.js';
+import {OffscreenBridge} from '../../common/offscreen_bridge.js';
+import type {StateWithMaxCellHeight} from '../../common/offscreen_bridge_constants.js';
 import {SettingsManager} from '../../common/settings_manager.js';
+import {CaptionsHandler} from '../captions_handler.js';
 
 import type {BrailleCaptionsListener} from './braille_captions_background.js';
 import {BrailleCaptionsBackground} from './braille_captions_background.js';
 import {BrailleTranslatorManager} from './braille_translator_manager.js';
 import {ExpandingBrailleTranslator} from './expanding_braille_translator.js';
 import {PanStrategy} from './pan_strategy.js';
-
-interface StateWithMaxCellHeight {
-  rows: number;
-  columns: number;
-  cellWidth: number;
-  cellHeight: number;
-  maxCellHeight: number;
-}
 
 type CommandListener = (event: BrailleKeyEvent, content: NavBraille) => void;
 
@@ -112,28 +107,34 @@ export class BrailleDisplayManager implements BrailleCaptionsListener {
     // All known displays don't exceed a cell height of 4.
     const maxCellHeight = 4;
 
-    const rows = displayState.textRowCount;
-    const columns = displayState.textColumnCount;
     const imageDataUrl = imageUrl;
+    const imageState: StateWithMaxCellHeight = {
+      rows: displayState.textRowCount,
+      columns: displayState.textColumnCount,
+      cellWidth,
+      cellHeight,
+      maxCellHeight
+    };
 
-    return new Promise<ArrayBuffer>((resolve: (buf: ArrayBuffer) => void) => {
-      const imgElement = document.createElement('img');
-      imgElement.src = imageDataUrl;
-      imgElement.onload = () => {
-        const canvas = document.createElement('canvas');
-        // TODO(b/314203187): Not null asserted, check that this is correct.
-        const context = canvas.getContext('2d')!;
-        canvas.width = columns * cellWidth;
-        canvas.height = rows * cellHeight;
-        context.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
-        const imageData =
-            context.getImageData(0, 0, canvas.width, canvas.height);
-        const brailleBuf = BrailleDisplayManager.convertImageDataToBraille(
-            imageData.data,
-            {rows, columns, cellWidth, cellHeight, maxCellHeight});
-        resolve(brailleBuf);
-      };
-    });
+    return new Promise<ArrayBuffer>(
+        async (resolve: (buf: ArrayBuffer) => void) => {
+          const imageDataSerialized =
+              await OffscreenBridge.imageDataFromUrl(imageDataUrl, imageState);
+          const clampedArray =
+              BrailleDisplayManager.deserializedImageData(imageDataSerialized);
+          const brailleBuf = BrailleDisplayManager.convertImageDataToBraille(
+              clampedArray, imageState);
+          resolve(brailleBuf);
+        });
+  }
+
+  static deserializedImageData(imageDataString: string): Uint8ClampedArray {
+    const binary = atob(imageDataString);
+    const imageArray = new Uint8ClampedArray(imageDataString.length);
+    for (let i = 0; i < binary.length; i++) {
+      imageArray[i] = binary.charCodeAt(i);
+    }
+    return imageArray;
   }
 
   /**
@@ -448,6 +449,8 @@ export class BrailleDisplayManager implements BrailleCaptionsListener {
   panLeft(): void {
     if (this.panStrategy_.previous()) {
       this.refresh_();
+    } else if (CaptionsHandler.inCaptions()) {
+      CaptionsHandler.instance.previous();
     } else {
       this.commandListener_(
           {command: BrailleKeyCommand.PAN_LEFT}, this.content_);
@@ -462,6 +465,8 @@ export class BrailleDisplayManager implements BrailleCaptionsListener {
   panRight(): void {
     if (this.panStrategy_.next()) {
       this.refresh_();
+    } else if (CaptionsHandler.inCaptions()) {
+      CaptionsHandler.instance.next();
     } else {
       this.commandListener_(
           {command: BrailleKeyCommand.PAN_RIGHT}, this.content_);

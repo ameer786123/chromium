@@ -68,6 +68,7 @@
 #include "ui/aura/test/test_windows.h"
 #include "ui/base/ime/dummy_text_input_client.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/models/dialog_model.h"
 #include "ui/compositor/presentation_time_recorder.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/test/test_utils.h"
@@ -79,6 +80,7 @@
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
+#include "ui/views/bubble/bubble_dialog_model_host.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/shadow_controller.h"
 #include "ui/wm/core/window_util.h"
@@ -552,9 +554,9 @@ TEST_F(SplitViewControllerTest,
   wm::ActivateWindow(window2.get());
   wm::ActivateWindow(window1.get());
 
-  const WindowSnapWMEvent snap_event1(WM_EVENT_SNAP_PRIMARY,
-                                      chromeos::kDefaultSnapRatio,
-                                      WindowSnapActionSource::kTest);
+  const WindowSnapWMEvent snap_event1(
+      WM_EVENT_SNAP_PRIMARY, chromeos::kDefaultSnapRatio,
+      WindowSnapActionSource::kSnapByWindowLayoutMenu);
   WindowState::Get(window1.get())->OnWMEvent(&snap_event1);
   EXPECT_EQ(controller->state(), SplitViewController::State::kPrimarySnapped);
   OverviewController* overview_controller = OverviewController::Get();
@@ -569,15 +571,15 @@ TEST_F(SplitViewControllerTest,
   EXPECT_FALSE(IsDividerAnimating());
 
   // Re-snap `window` to trigger the bounce animation.
-  const WindowSnapWMEvent snap_event2(WM_EVENT_SNAP_PRIMARY,
-                                      chromeos::kTwoThirdSnapRatio,
-                                      WindowSnapActionSource::kTest);
+  const WindowSnapWMEvent snap_event2(
+      WM_EVENT_SNAP_PRIMARY, chromeos::kTwoThirdSnapRatio,
+      WindowSnapActionSource::kSnapByWindowLayoutMenu);
   WindowState::Get(window1.get())->OnWMEvent(&snap_event2);
   EXPECT_TRUE(IsDividerAnimating());
   SkipDividerSnapAnimation();
   EXPECT_EQ(controller->state(), SplitViewController::State::kBothSnapped);
   const auto work_area =
-      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+      display::Screen::Get()->GetPrimaryDisplay().work_area();
   const int divider_delta = kSplitviewDividerShortSideLength / 2;
   EXPECT_EQ(
       static_cast<float>(window1->GetBoundsInScreen().width() + divider_delta) /
@@ -659,9 +661,10 @@ TEST_F(SplitViewControllerTest, NoCrashWhenCreatingNewWindowWhileDragging) {
   wm::ActivateWindow(window1.get());
   EXPECT_FALSE(controller->IsWindowInSplitView(window1.get()));
 
-  controller->SnapWindow(
-      window1.get(), SnapPosition::kPrimary, WindowSnapActionSource::kTest,
-      /*activate_window=*/false, chromeos::kTwoThirdSnapRatio);
+  controller->SnapWindow(window1.get(), SnapPosition::kPrimary,
+                         WindowSnapActionSource::kSnapByWindowLayoutMenu,
+                         /*activate_window=*/false,
+                         chromeos::kTwoThirdSnapRatio);
   EXPECT_EQ(controller->state(), SplitViewController::State::kPrimarySnapped);
   OverviewController* overview_controller = OverviewController::Get();
   EXPECT_TRUE(overview_controller->InOverviewSession());
@@ -1275,7 +1278,7 @@ TEST_F(SplitViewControllerTest, DisplayConfigurationChangeTest) {
 // the internal screen display configuration changes.
 TEST_F(SplitViewControllerTest, InternalDisplayConfigurationChangeTest) {
   UpdateDisplay("407x400");
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -1326,7 +1329,7 @@ TEST_F(SplitViewControllerTest, InternalDisplayConfigurationChangeTest) {
 TEST_F(SplitViewControllerTest,
        InternalDisplayConfigurationChangeDuringDividerSnap) {
   UpdateDisplay("407x400");
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -1397,7 +1400,7 @@ TEST_F(SplitViewControllerTest,
 TEST_F(SplitViewControllerTest,
        InternalDisplayConfigurationChangeDuringDividerSnapToLeft) {
   UpdateDisplay("407x400");
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -1444,7 +1447,7 @@ TEST_F(SplitViewControllerTest,
 TEST_F(SplitViewControllerTest,
        InternalDisplayConfigurationChangeDuringDividerSnapToRight) {
   UpdateDisplay("407x400");
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -1588,6 +1591,10 @@ TEST_F(SplitViewControllerTest, DoubleTapAndClickDivider) {
   EXPECT_EQ(split_view_controller()->secondary_window(), window2.get());
   EXPECT_EQ(left_bounds, window1->GetBoundsInScreen());
   EXPECT_EQ(right_bounds, window2->GetBoundsInScreen());
+
+  // Make sure the dividier is not focused.
+  EXPECT_NE(window_util::GetFocusedWindow(),
+            split_view_divider()->GetDividerWindow());
 }
 
 // Verify the left and right windows do not get swapped when the divider is
@@ -1950,7 +1957,7 @@ TEST_F(SplitViewControllerTest, LongPressWithMinimizedWindow) {
 // Test the rotation functionalities in split view mode.
 TEST_F(SplitViewControllerTest, RotationTest) {
   UpdateDisplay("807x407");
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -2132,7 +2139,7 @@ TEST_F(SplitViewControllerTest, CanSnapWindowWithUnresizableSnapProperty) {
 // Tests that the snapped window can not be moved outside of work area when its
 // minimum size is larger than its current desired resizing bounds.
 TEST_F(SplitViewControllerTest, ResizingSnappedWindowWithMinimumSizeTest) {
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -2488,10 +2495,13 @@ TEST_F(SplitViewControllerTest, ExitTabletModeDuringResizeCompletesDrags) {
       split_view_divider()->GetDividerBoundsInScreen(false /* is_dragging */);
   const int screen_width =
       screen_util::GetDisplayWorkAreaBoundsInParent(window1.get()).width();
-  GetEventGenerator()->set_current_screen_location(
-      divider_bounds.CenterPoint());
+  GetEventGenerator()->MoveMouseTo(divider_bounds.CenterPoint());
   GetEventGenerator()->PressLeftButton();
   GetEventGenerator()->MoveMouseTo(screen_width * 0.67f, 0);
+
+  // Make sure the dividier is not focused.
+  EXPECT_NE(window_util::GetFocusedWindow(),
+            split_view_divider()->GetDividerWindow());
 
   // Drag is started for both windows.
   EXPECT_TRUE(window_state_delegate1->drag_in_progress());
@@ -2532,10 +2542,13 @@ TEST_F(SplitViewControllerTest,
       screen_util::GetDisplayWorkAreaBoundsInParentForActiveDeskContainer(
           window1.get())
           .width();
-  GetEventGenerator()->set_current_screen_location(
-      divider_bounds.CenterPoint());
+  GetEventGenerator()->MoveMouseTo(divider_bounds.CenterPoint());
   GetEventGenerator()->PressLeftButton();
   GetEventGenerator()->MoveMouseTo(screen_width * 0.67f, 0);
+
+  // Make sure the dividier is not focused.
+  EXPECT_NE(window_util::GetFocusedWindow(),
+            split_view_divider()->GetDividerWindow());
 
   // Drag is started.
   EXPECT_TRUE(window_state_delegate1->drag_in_progress());
@@ -2575,10 +2588,13 @@ TEST_F(SplitViewControllerTest,
       split_view_divider()->GetDividerBoundsInScreen(false /* is_dragging */);
   const int screen_width =
       screen_util::GetDisplayWorkAreaBoundsInParent(window1.get()).width();
-  GetEventGenerator()->set_current_screen_location(
-      divider_bounds.CenterPoint());
+  GetEventGenerator()->MoveMouseTo(divider_bounds.CenterPoint());
   GetEventGenerator()->PressLeftButton();
   GetEventGenerator()->MoveMouseTo(screen_width * 0.67f, 0);
+
+  // Make sure the dividier is not focused.
+  EXPECT_NE(window_util::GetFocusedWindow(),
+            split_view_divider()->GetDividerWindow());
 
   // Drag is started for both windows.
   EXPECT_TRUE(window_state_delegate1->drag_in_progress());
@@ -2760,38 +2776,6 @@ TEST_F(SplitViewControllerTest, ActivateNonSnappableWindow) {
   EXPECT_FALSE(OverviewController::Get()->InOverviewSession());
 }
 
-// Tests that if a snapped window has a bubble transient child, the bubble's
-// bounds should always align with the snapped window's bounds.
-TEST_F(SplitViewControllerTest, AdjustTransientChildBounds) {
-  std::unique_ptr<views::Widget> widget(
-      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET));
-  aura::Window* window = widget->GetNativeWindow();
-  window->SetProperty(aura::client::kResizeBehaviorKey,
-                      aura::client::kResizeBehaviorCanResize |
-                          aura::client::kResizeBehaviorCanMaximize);
-  split_view_controller()->SnapWindow(window, SnapPosition::kPrimary);
-  const gfx::Rect window_bounds = window->GetBoundsInScreen();
-
-  // Create a bubble widget without anchor. (anchored bubble's bounds won't be
-  // adjusted)
-  views::Widget* bubble_widget = views::BubbleDialogDelegateView::CreateBubble(
-      new TestBubbleDialogDelegateView(widget->GetNativeWindow()));
-  aura::Window* bubble_window = bubble_widget->GetNativeWindow();
-  EXPECT_TRUE(::wm::HasTransientAncestor(bubble_window, window));
-  // Test that the bubble is created inside its anchor widget.
-  EXPECT_TRUE(window_bounds.Contains(bubble_window->GetBoundsInScreen()));
-
-  // Now try to manually move the bubble out of the snapped window.
-  bubble_window->SetBoundsInScreen(
-      split_view_controller()->GetSnappedWindowBoundsInScreen(
-          SnapPosition::kSecondary, window, chromeos::kDefaultSnapRatio,
-          /*account_for_divider_width=*/true),
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window));
-  // Test that the bubble can't be moved outside of its anchor widget.
-  EXPECT_TRUE(window_bounds.Contains(bubble_window->GetBoundsInScreen()));
-  EndSplitView();
-}
-
 // Tests the divider closest position ratio if work area is not starts from the
 // top of the display.
 TEST_F(SplitViewControllerTest, DividerClosestRatioOnWorkArea) {
@@ -2799,7 +2783,7 @@ TEST_F(SplitViewControllerTest, DividerClosestRatioOnWorkArea) {
   // Docked magnifier will put a view port window on the top of the display.
   Shell::Get()->docked_magnifier_controller()->SetEnabled(true);
 
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -2863,7 +2847,7 @@ TEST_F(SplitViewControllerTest, DividerClosestRatioOnWorkArea) {
 // transition can leave it with a stale value which can cause broken behavior.
 TEST_F(SplitViewControllerTest,
        DividerClosestRatioUpdatedForClamshellTabletTransition) {
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -2908,6 +2892,9 @@ TEST_F(SplitViewControllerTest,
                               display::Display::RotationSource::ACTIVE);
   // Expect that the divider closest position ratio is updated to one third.
   EXPECT_EQ(divider_closest_ratio(), chromeos::kOneThirdSnapRatio);
+
+  EXPECT_NE(window_util::GetFocusedWindow(),
+            split_view_divider()->GetDividerWindow());
 }
 
 // Test that pinning a window ends split view mode.
@@ -2938,7 +2925,7 @@ TEST_F(SplitViewControllerTest, PinnedWindowDisallowsSplitView) {
 // window is sliding off the screen because it has reached minimum size, then
 // the offset is cleared.
 TEST_F(SplitViewControllerTest, EndSplitViewWhileResizingBeyondMinimum) {
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -2987,7 +2974,7 @@ TEST_F(SplitViewControllerTest, EndSplitViewWhileResizingBeyondMinimum) {
 // Test if presentation time is recorded for multi window resizing and resizing
 // with overview.
 TEST_F(SplitViewControllerTest, ResizeTwoWindows) {
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -3052,7 +3039,7 @@ TEST_F(SplitViewControllerTest, ResizeTwoWindows) {
 // snapped window is sliding off the screen because it has reached minimum size,
 // then the animation is ended and the window offset is cleared.
 TEST_F(SplitViewControllerTest, EndSplitViewDuringDividerSnapAnimation) {
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -3376,7 +3363,7 @@ TEST_F(SplitViewControllerTest, SplitViewDividerObserveSnappedWindow) {
   auto* tablet_mode_controller = Shell::Get()->tablet_mode_controller();
   // Exit tablet mode.
   tablet_mode_controller->SetEnabledForTest(false);
-  EXPECT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_FALSE(display::Screen::Get()->InTabletMode());
 
   const gfx::Rect bounds(0, 0, 400, 400);
   std::unique_ptr<aura::Window> left_window(CreateWindow(bounds));
@@ -3391,7 +3378,7 @@ TEST_F(SplitViewControllerTest, SplitViewDividerObserveSnappedWindow) {
   // Entering tablet mode will start tablet mode split view and the split view
   // divider will be created.
   tablet_mode_controller->SetEnabledForTest(true);
-  EXPECT_TRUE(display::Screen::GetScreen()->InTabletMode());
+  EXPECT_TRUE(display::Screen::Get()->InTabletMode());
   EXPECT_TRUE(split_view_controller()->InTabletSplitViewMode());
   EXPECT_TRUE(split_view_divider()->divider_widget());
 
@@ -3419,7 +3406,7 @@ TEST_F(SplitViewControllerTest, SnapBetweenDifferentRatios) {
   // divider is positioned at half of the work area width minus the
   // `divider_delta`.
   const gfx::Rect work_area_bounds =
-      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+      display::Screen::Get()->GetPrimaryDisplay().work_area();
   int divider_origin_x = split_view_divider()
                              ->GetDividerBoundsInScreen(
                                  /*is_dragging=*/false)
@@ -3471,7 +3458,7 @@ TEST_F(SplitViewControllerTest, SwapPartialWindows) {
                                              chromeos::kOneThirdSnapRatio);
   WindowState::Get(window2.get())->OnWMEvent(&snap_secondary_one_third);
   const gfx::Rect work_area_bounds =
-      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+      display::Screen::Get()->GetPrimaryDisplay().work_area();
   int divider_origin_x = split_view_divider()
                              ->GetDividerBoundsInScreen(
                                  /*is_dragging=*/false)
@@ -3834,7 +3821,7 @@ TEST_F(SplitViewControllerTest, PerformantResize) {
       ui::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
   UpdateDisplay("900x600");
   const gfx::Rect work_area =
-      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+      display::Screen::Get()->GetPrimaryDisplay().work_area();
   std::unique_ptr<aura::Window> w1(CreateTestWindow());
   std::unique_ptr<aura::Window> w2(CreateTestWindow());
   SplitViewController* controller = split_view_controller();
@@ -3925,7 +3912,7 @@ TEST_F(SplitViewControllerTest, SnapWindowsWithDifferentParentContainers) {
 
 TEST_F(SplitViewControllerTest, WMSnapEventDeviceOrientationMetricsInTablet) {
   UpdateDisplay("800x600");
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -3992,12 +3979,12 @@ TEST_F(SplitViewControllerTest,
   wm::ActivateWindow(window1.get());
   EXPECT_FALSE(split_view_controller()->InSplitViewMode());
 
-  const WindowSnapWMEvent wm_primary_snap_event(WM_EVENT_SNAP_PRIMARY,
-                                                chromeos::kDefaultSnapRatio,
-                                                WindowSnapActionSource::kTest);
+  const WindowSnapWMEvent wm_primary_snap_event(
+      WM_EVENT_SNAP_PRIMARY, chromeos::kDefaultSnapRatio,
+      WindowSnapActionSource::kSnapByWindowLayoutMenu);
   const WindowSnapWMEvent wm_secondary_snap_event(
       WM_EVENT_SNAP_SECONDARY, chromeos::kDefaultSnapRatio,
-      WindowSnapActionSource::kTest);
+      WindowSnapActionSource::kSnapByWindowLayoutMenu);
   const WMEvent fullscreen_event(WM_EVENT_TOGGLE_FULLSCREEN);
 
   // Check the initial value of the histograms.
@@ -4109,6 +4096,63 @@ TEST_F(SplitViewControllerTest, SplitViewDividerViewAccessibleProperties) {
             l10n_util::GetStringUTF16(IDS_ASH_SNAP_GROUP_DIVIDER_A11Y_NAME));
 }
 
+// Ensure tracked Transient children are translucent during drag.
+TEST_F(SplitViewControllerTest, ResizeChangeOpacityOnTransientChild) {
+  const gfx::Rect bounds(0, 0, 400, 400);
+  std::unique_ptr<aura::Window> left_window(CreateWindow(bounds));
+  std::unique_ptr<aura::Window> right_window(CreateWindow(bounds));
+
+  split_view_controller()->SnapWindow(left_window.get(),
+                                      SnapPosition::kPrimary);
+  split_view_controller()->SnapWindow(right_window.get(),
+                                      SnapPosition::kSecondary);
+  ASSERT_TRUE(split_view_controller()->InSplitViewMode());
+
+  auto host1 = std::make_unique<views::BubbleDialogModelHost>(
+      ui::DialogModel::Builder().Build(), /*anchor=*/nullptr,
+      views::BubbleBorder::Arrow::NONE);
+  host1->set_parent_window(right_window.get());
+  host1->set_close_on_deactivate(false);
+
+  auto* bubble_widget1 =
+      views::BubbleDialogDelegate::CreateBubble(std::move(host1));
+  bubble_widget1->Show();
+
+  SplitViewDivider* divider = split_view_divider();
+
+  // Expected opacity of transient children.
+  constexpr float kExpectedOpacity = 0.5f;
+
+  const auto center_point =
+      divider->GetDividerBoundsInScreen(/*is_dragging=*/false).CenterPoint();
+  divider->StartResizeWithDivider(center_point);
+  EXPECT_EQ(kExpectedOpacity,
+            bubble_widget1->GetNativeWindow()->layer()->GetTargetOpacity());
+  EXPECT_EQ(kExpectedOpacity,
+            bubble_widget1->GetNativeWindow()->layer()->opacity());
+
+  auto host2 = std::make_unique<views::BubbleDialogModelHost>(
+      ui::DialogModel::Builder().Build(), /*anchor=*/nullptr,
+      views::BubbleBorder::Arrow::NONE);
+  host2->set_parent_window(left_window.get());
+  host2->set_close_on_deactivate(false);
+  auto* bubble_widget2 =
+      views::BubbleDialogDelegate::CreateBubble(std::move(host2));
+  bubble_widget2->Show();
+  EXPECT_EQ(kExpectedOpacity,
+            bubble_widget2->GetNativeWindow()->layer()->GetTargetOpacity());
+
+  // Bubble becomes non transient, so the oapcity should set back to 1.0f.
+  wm::RemoveTransientChild(right_window.get(),
+                           bubble_widget1->GetNativeWindow());
+  EXPECT_EQ(1.f,
+            bubble_widget1->GetNativeWindow()->layer()->GetTargetOpacity());
+
+  divider->EndResizeWithDivider(center_point);
+  EXPECT_EQ(1.f,
+            bubble_widget2->GetNativeWindow()->layer()->GetTargetOpacity());
+}
+
 // The test class that enables the feature flag of portrait mode split view
 // virtual keyboard improvement and the virtual keyboard.
 class SplitViewKeyboardTest : public SplitViewControllerTest {
@@ -4136,7 +4180,7 @@ class SplitViewKeyboardTest : public SplitViewControllerTest {
 TEST_F(SplitViewKeyboardTest, PushUpBottomWindow) {
   UpdateDisplay("1200x800");
 
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -4230,7 +4274,7 @@ TEST_F(SplitViewKeyboardTest, PushUpBottomWindow) {
 TEST_F(SplitViewKeyboardTest, PushUpBottomWindowLimitHeight) {
   UpdateDisplay("1200x800");
 
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -4324,7 +4368,7 @@ TEST_F(SplitViewKeyboardTest, PushUpBottomWindowLimitHeight) {
 TEST_F(SplitViewKeyboardTest, RestoreByActivatingTopWindow) {
   UpdateDisplay("1200x800");
 
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -4395,7 +4439,7 @@ TEST_F(SplitViewKeyboardTest, RestoreByActivatingTopWindow) {
 // showing keyboard (on-screen keyboard) will not change the split view layout.
 TEST_F(SplitViewKeyboardTest, NoInputField) {
   UpdateDisplay("1200x800");
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);
@@ -4438,7 +4482,7 @@ TEST_F(SplitViewKeyboardTest, NoInputField) {
 // will be updated when the on-screen keyboard is enabled and disabled.
 TEST_F(SplitViewKeyboardTest, ShowHideOnScreenKeyboardWithOverviewEnabled) {
   UpdateDisplay("1200x800");
-  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t display_id = display::Screen::Get()->GetPrimaryDisplay().id();
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   display::test::ScopedSetInternalDisplayId set_internal(display_manager,
                                                          display_id);

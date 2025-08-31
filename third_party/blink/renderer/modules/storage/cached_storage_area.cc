@@ -15,16 +15,15 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
 #include "base/time/time.h"
 #include "base/trace_event/memory_dump_manager.h"
-#include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/platform/scheduler/public/main_thread.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "third_party/blink/renderer/platform/wtf/text/unicode.h"
@@ -41,7 +40,7 @@ enum class StorageFormat : uint8_t { UTF16 = 0, Latin1 = 1 };
 // These methods are used to pack and unpack the page_url/storage_area_id into
 // source strings to/from the browser.
 String PackSource(const KURL& page_url, const String& storage_area_id) {
-  return page_url.GetString() + "\n" + storage_area_id;
+  return StrCat({page_url.GetString(), "\n", storage_area_id});
 }
 
 void UnpackSource(const String& source,
@@ -63,8 +62,8 @@ base::OnceCallback<void(bool)> MakeSuccessCallback(
           "CachedStorageArea",
           WebScopedVirtualTimePauser::VirtualTaskDuration::kNonInstant);
   virtual_time_pauser.PauseVirtualTime();
-  return WTF::BindOnce([](WebScopedVirtualTimePauser, bool) {},
-                       std::move(virtual_time_pauser));
+  return BindOnce([](WebScopedVirtualTimePauser, bool) {},
+                  std::move(virtual_time_pauser));
 }
 
 }  // namespace
@@ -114,35 +113,12 @@ bool CachedStorageArea::SetItem(const String& key,
                       StringToUint8Vector(value, value_format),
                       optional_old_value, source_string,
                       MakeSuccessCallback(source));
-    EnqueueCheckpointMicrotask(source);
   }
   if (!IsSessionStorage())
     EnqueuePendingMutation(key, value, old_value, source_string);
   else if (old_value != value)
     EnqueueStorageEvent(key, old_value, value, page_url, source_id);
   return true;
-}
-
-void CachedStorageArea::EnqueueCheckpointMicrotask(Source* source) {
-  if (checkpoint_queued_) {
-    return;
-  }
-
-  LocalDOMWindow* window = source->GetDOMWindow();
-  if (!window) {
-    return;
-  }
-
-  checkpoint_queued_ = true;
-  window->GetAgent()->event_loop()->EnqueueMicrotask(WTF::BindOnce(
-      &CachedStorageArea::NotifyCheckpoint, weak_factory_.GetWeakPtr()));
-}
-
-void CachedStorageArea::NotifyCheckpoint() {
-  checkpoint_queued_ = false;
-  if (remote_area_) {
-    remote_area_->Checkpoint();
-  }
 }
 
 void CachedStorageArea::RemoveItem(const String& key, Source* source) {
@@ -163,7 +139,6 @@ void CachedStorageArea::RemoveItem(const String& key, Source* source) {
     remote_area_->Delete(StringToUint8Vector(key, GetKeyFormat()),
                          optional_old_value, source_string,
                          MakeSuccessCallback(source));
-    EnqueueCheckpointMicrotask(source);
   }
   if (!IsSessionStorage())
     EnqueuePendingMutation(key, String(), old_value, source_string);
@@ -202,7 +177,6 @@ void CachedStorageArea::Clear(Source* source) {
   if (!is_session_storage_for_prerendering_) {
     remote_area_->DeleteAll(source_string, std::move(new_observer),
                             MakeSuccessCallback(source));
-    EnqueueCheckpointMicrotask(source);
   }
   if (!IsSessionStorage())
     EnqueuePendingMutation(String(), String(), String(), source_string);
@@ -532,15 +506,14 @@ bool CachedStorageArea::OnMemoryDump(
     base::trace_event::ProcessMemoryDump* pmd) {
   using base::trace_event::MemoryAllocatorDump;
 
-  WTF::String dump_name = WTF::String::Format(
-      "site_storage/%s/0x%" PRIXPTR "/cache_size",
-      IsSessionStorage() ? "session_storage" : "local_storage",
-      reinterpret_cast<uintptr_t>(this));
+  String dump_name =
+      String::Format("site_storage/%s/0x%" PRIXPTR "/cache_size",
+                     IsSessionStorage() ? "session_storage" : "local_storage",
+                     reinterpret_cast<uintptr_t>(this));
   MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(dump_name.Utf8());
   dump->AddScalar(MemoryAllocatorDump::kNameSize,
                   MemoryAllocatorDump::kUnitsBytes, memory_used());
-  pmd->AddSuballocation(dump->guid(),
-                        WTF::Partitions::kAllocatedObjectPoolName);
+  pmd->AddSuballocation(dump->guid(), Partitions::kAllocatedObjectPoolName);
   return true;
 }
 
@@ -589,8 +562,7 @@ CachedStorageArea::PopPendingMutation(const String& source) {
   const String key = mutation->key;
   if (!key.IsNull()) {
     auto key_queue_iter = pending_mutations_by_key_.find(key);
-    CHECK(key_queue_iter != pending_mutations_by_key_.end(),
-          base::NotFatalUntil::M130);
+    CHECK(key_queue_iter != pending_mutations_by_key_.end());
     DCHECK_EQ(key_queue_iter->value.front(), mutation.get());
     key_queue_iter->value.pop_front();
     if (key_queue_iter->value.empty())
@@ -632,9 +604,7 @@ void CachedStorageArea::MaybeApplyNonLocalMutationForKey(
 // There are 2 parameters that influence how long the delay is, `factor` and
 // `offset`. If the actual time taken is `time_to_prime` then the delay will be
 // `time_to_prime * factor + offset`.
-BASE_FEATURE(kDomStorageAblation,
-             "DomStorageAblation",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(DomStorageAblation, base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE_PARAM(double,
                    kDomStorageAblationDelayFactor,
                    &kDomStorageAblation,
@@ -832,27 +802,25 @@ Vector<uint8_t> CachedStorageArea::StringToUint8Vector(
       }
       // Handle 8 bit case where it's not only ascii.
       if (input.Is8Bit()) {
-        // This code is copied from WTF::String::Utf8(), except the vector
+        // This code is copied from String::Utf8(), except the vector
         // doesn't have a stack-allocated capacity.
         // We do this because there isn't a way to transform the std::string we
-        // get from WTF::String::Utf8() to a Vector without an extra copy.
+        // get from String::Utf8() to a Vector without an extra copy.
         if (length > std::numeric_limits<unsigned>::max() / 3)
           return Vector<uint8_t>();
         Vector<uint8_t> buffer_vector(length * 3);
 
-        WTF::unicode::ConversionResult result =
-            WTF::unicode::ConvertLatin1ToUTF8(input.Span8(),
-                                              base::span(buffer_vector));
+        unicode::ConversionResult result = unicode::ConvertLatin1ToUtf8(
+            input.Span8(), base::span(buffer_vector));
         // (length * 3) should be sufficient for any conversion
-        DCHECK_NE(result.status, WTF::unicode::kTargetExhausted);
+        DCHECK_NE(result.status, unicode::kTargetExhausted);
         buffer_vector.Shrink(static_cast<wtf_size_t>(result.converted.size()));
         return buffer_vector;
       }
 
       // TODO(dmurph): Figure out how to avoid a copy here.
       // TODO(dmurph): Handle invalid UTF16 better. https://crbug.com/873280.
-      StringUTF8Adaptor utf8(input,
-                             WTF::Utf8ConversionMode::kStrictReplacingErrors);
+      StringUtf8Adaptor utf8(input, Utf8ConversionMode::kStrictReplacingErrors);
       Vector<uint8_t> result(utf8.size());
       UNSAFE_TODO(std::memcpy(result.data(), utf8.data(), utf8.size()));
       return result;

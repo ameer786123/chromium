@@ -71,7 +71,7 @@ public interface TabModelSelector {
     int getCurrentTabId();
 
     /** Returns a supplier for the current tab in the current model. */
-    ObservableSupplier<Tab> getCurrentTabSupplier();
+    ObservableSupplier<@Nullable Tab> getCurrentTabSupplier();
 
     /**
      * Returns a supplier for the current tab count in the current model. This will update as the
@@ -87,7 +87,7 @@ public interface TabModelSelector {
      * @param id The id of the {@link Tab} to find the {@link TabModel} for.
      * @return   The {@link TabModel} that owns the {@link Tab} specified by {@code id}.
      */
-    TabModel getModelForTabId(int id);
+    @Nullable TabModel getModelForTabId(int id);
 
     /**
      * TODO(crbug.com/350654700): clean up usages and remove isIncognitoSelected.
@@ -124,7 +124,10 @@ public interface TabModelSelector {
      * @return The newly opened tab.
      */
     Tab openNewTab(
-            LoadUrlParams loadUrlParams, @TabLaunchType int type, Tab parent, boolean incognito);
+            LoadUrlParams loadUrlParams,
+            @TabLaunchType int type,
+            @Nullable Tab parent,
+            boolean incognito);
 
     /**
      * Searches through all children models for the specified Tab and closes the tab if it exists.

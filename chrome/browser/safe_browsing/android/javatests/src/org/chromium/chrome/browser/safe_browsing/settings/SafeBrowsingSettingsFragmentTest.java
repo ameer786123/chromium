@@ -17,13 +17,13 @@ import androidx.preference.Preference;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.DoNotBatch;
@@ -57,6 +57,8 @@ public class SafeBrowsingSettingsFragmentTest {
     private static final String ASSERT_SAFE_BROWSING_STATE_NATIVE =
             "Incorrect Safe Browsing state from native.";
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Rule
     public SettingsActivityTestRule<SafeBrowsingSettingsFragment> mTestRule =
             new SettingsActivityTestRule<>(SafeBrowsingSettingsFragment.class);
@@ -68,11 +70,6 @@ public class SafeBrowsingSettingsFragmentTest {
     private SafeBrowsingSettingsFragment mSafeBrowsingSettingsFragment;
     private RadioButtonGroupSafeBrowsingPreference mSafeBrowsingPreference;
     private Preference mManagedDisclaimerText;
-
-    @Before
-    public void setUp() {
-        MockitoAnnotations.initMocks(this);
-    }
 
     private void startSettings() {
         mTestRule.startSettingsActivity();
@@ -496,31 +493,6 @@ public class SafeBrowsingSettingsFragmentTest {
     @Test
     @SmallTest
     @Feature({"SafeBrowsing"})
-    @DisableFeatures({ChromeFeatureList.ESB_AI_STRING_UPDATE})
-    public void testEnhancedProtectionDescriptionWithoutAiUpdate() {
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    ChromeBrowserInitializer.getInstance().handleSynchronousStartup();
-                });
-        startSettings();
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    String enhancedProtectionDescription =
-                            mSafeBrowsingSettingsFragment
-                                    .getContext()
-                                    .getString(R.string.safe_browsing_enhanced_protection_summary);
-                    Assert.assertEquals(
-                            enhancedProtectionDescription,
-                            mSafeBrowsingPreference
-                                    .getEnhancedProtectionButtonForTesting()
-                                    .getDescriptionText());
-                });
-    }
-
-    @Test
-    @SmallTest
-    @Feature({"SafeBrowsing"})
-    @EnableFeatures({ChromeFeatureList.ESB_AI_STRING_UPDATE})
     public void testEnhancedProtectionDescriptionWithAiUpdate() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {

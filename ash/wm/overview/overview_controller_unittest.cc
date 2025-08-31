@@ -2,14 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/wm/overview/overview_controller.h"
 
+#include <array>
 #include <memory>
+#include <vector>
 
 #include "ash/app_list/test/app_list_test_helper.h"
 #include "ash/frame_throttler/frame_throttling_controller.h"
@@ -205,7 +202,7 @@ using OverviewControllerTest = AshTestBase;
 // in clamshell mode should not toggle overview.
 TEST_F(OverviewControllerTest,
        PressOverviewKeyDuringWindowDragInClamshellMode) {
-  ASSERT_FALSE(display::Screen::GetScreen()->InTabletMode());
+  ASSERT_FALSE(display::Screen::Get()->InTabletMode());
   std::unique_ptr<aura::Window> dragged_window = CreateTestWindow();
   std::unique_ptr<WindowResizer> resizer =
       CreateWindowResizer(dragged_window.get(), gfx::PointF(), HTCAPTION,
@@ -223,7 +220,6 @@ TEST_F(OverviewControllerTest, OcclusionTestWithSnapshot) {
   Shell::Get()
       ->overview_controller()
       ->set_occlusion_pause_duration_for_end_for_test(base::Milliseconds(500));
-  Shell::Get()->overview_controller()->set_windows_have_snapshot_for_test(true);
   TestOverviewObserver observer(/*should_monitor_animation_state = */ true);
   ui::ScopedAnimationDurationScaleMode non_zero(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
@@ -281,74 +277,6 @@ TEST_F(OverviewControllerTest, OcclusionTestWithSnapshot) {
   observer.WaitForEndingAnimationComplete();
 
   // Windows are visible because tracker is paused.
-  EXPECT_FALSE(Shell::Get()->overview_controller()->InOverviewSession());
-  EXPECT_EQ(OcclusionState::VISIBLE, window2->GetOcclusionState());
-  EXPECT_EQ(OcclusionState::VISIBLE, window1->GetOcclusionState());
-  WaitForOcclusionStateChange(window2.get(), OcclusionState::OCCLUDED);
-  EXPECT_EQ(OcclusionState::VISIBLE, window1->GetOcclusionState());
-}
-
-TEST_F(OverviewControllerTest, OcclusionTestWithoutSnapshot) {
-  using OcclusionState = aura::Window::OcclusionState;
-
-  Shell::Get()
-      ->overview_controller()
-      ->set_occlusion_pause_duration_for_end_for_test(base::Milliseconds(500));
-  Shell::Get()->overview_controller()->set_windows_have_snapshot_for_test(
-      false);
-  TestOverviewObserver observer(/*should_monitor_animation_state = */ true);
-  ui::ScopedAnimationDurationScaleMode non_zero(
-      ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
-  constexpr gfx::Rect kBounds(0, 0, 100, 100);
-  std::unique_ptr<aura::Window> window1(CreateAppWindow(kBounds));
-  std::unique_ptr<aura::Window> window2(CreateAppWindow(kBounds));
-  // Wait for show/hide animation because occlusion tracker because
-  // the test depends on opacity.
-  WaitForShowAnimation(window1.get());
-  WaitForShowAnimation(window2.get());
-
-  window1->TrackOcclusionState();
-  window2->TrackOcclusionState();
-  EXPECT_EQ(OcclusionState::OCCLUDED, window1->GetOcclusionState());
-  EXPECT_EQ(OcclusionState::VISIBLE, window2->GetOcclusionState());
-
-  // Enter with windows.
-  EnterOverview();
-  // Tracker is not paused for enter, and items are forced visible.
-  EXPECT_EQ(OcclusionState::VISIBLE, window1->GetOcclusionState());
-  EXPECT_EQ(OcclusionState::VISIBLE, window2->GetOcclusionState());
-
-  observer.WaitForStartingAnimationComplete();
-  EXPECT_EQ(OcclusionState::VISIBLE, window1->GetOcclusionState());
-  EXPECT_EQ(OcclusionState::VISIBLE, window2->GetOcclusionState());
-
-  // Exit with windows.
-  ExitOverview();
-  EXPECT_EQ(OcclusionState::VISIBLE, window1->GetOcclusionState());
-  EXPECT_EQ(OcclusionState::VISIBLE, window2->GetOcclusionState());
-  observer.WaitForEndingAnimationComplete();
-  EXPECT_EQ(OcclusionState::VISIBLE, window1->GetOcclusionState());
-  EXPECT_EQ(OcclusionState::VISIBLE, window2->GetOcclusionState());
-  WaitForOcclusionStateChange(window1.get(), OcclusionState::OCCLUDED);
-
-  observer.Reset();
-
-  // Enter again.
-  EnterOverview();
-  EXPECT_EQ(OcclusionState::VISIBLE, window1->GetOcclusionState());
-  EXPECT_EQ(OcclusionState::VISIBLE, window2->GetOcclusionState());
-  auto* active = window_util::GetActiveWindow();
-  EXPECT_EQ(window2.get(), active);
-
-  observer.WaitForStartingAnimationComplete();
-
-  EXPECT_EQ(OcclusionState::VISIBLE, window1->GetOcclusionState());
-  EXPECT_EQ(OcclusionState::VISIBLE, window2->GetOcclusionState());
-
-  wm::ActivateWindow(window1.get());
-  observer.WaitForEndingAnimationComplete();
-
-  // Windows are visible because tracker is paused (tracker is paused for exit).
   EXPECT_FALSE(Shell::Get()->overview_controller()->InOverviewSession());
   EXPECT_EQ(OcclusionState::VISIBLE, window2->GetOcclusionState());
   EXPECT_EQ(OcclusionState::VISIBLE, window1->GetOcclusionState());
@@ -811,12 +739,13 @@ TEST_F(OverviewControllerTest, FrameThrottling) {
   FrameThrottlingController* frame_throttling_controller =
       Shell::Get()->frame_throttling_controller();
   frame_throttling_controller->AddArcObserver(&observer);
-  const int browser_window_count = 3;
-  const int arc_window_count = 2;
+  constexpr int browser_window_count = 3;
+  constexpr int arc_window_count = 2;
 
   const std::vector<viz::FrameSinkId> ids{{1u, 1u}, {2u, 2u}, {3u, 3u}};
-  std::unique_ptr<aura::Window>
-      created_windows[browser_window_count + arc_window_count];
+  std::array<std::unique_ptr<aura::Window>,
+             browser_window_count + arc_window_count>
+      created_windows;
   for (int i = 0; i < browser_window_count; ++i) {
     created_windows[i] =
         CreateAppWindow(gfx::Rect(), chromeos::AppType::BROWSER);

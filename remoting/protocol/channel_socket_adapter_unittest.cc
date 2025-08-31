@@ -93,6 +93,7 @@ TEST_F(TransportChannelSocketAdapterTest, ReadClose) {
 TEST_F(TransportChannelSocketAdapterTest, Send) {
   auto buffer = base::MakeRefCounted<IOBufferWithSize>(kTestDataSize);
 
+  EXPECT_CALL(channel_, writable()).WillOnce(Return(true));
   EXPECT_CALL(channel_, SendPacket(buffer->data(), kTestDataSize, _, 0))
       .WillOnce(Return(kTestDataSize));
 
@@ -105,6 +106,7 @@ TEST_F(TransportChannelSocketAdapterTest, Send) {
 TEST_F(TransportChannelSocketAdapterTest, SendPending) {
   auto buffer = base::MakeRefCounted<IOBufferWithSize>(kTestDataSize);
 
+  EXPECT_CALL(channel_, writable()).WillOnce(Return(true));
   EXPECT_CALL(channel_, SendPacket(buffer->data(), kTestDataSize, _, 0))
       .Times(1)
       .WillOnce(Return(SOCKET_ERROR));

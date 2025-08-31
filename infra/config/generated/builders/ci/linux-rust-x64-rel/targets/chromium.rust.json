@@ -11,6 +11,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//base:base_unittests/",
+        "module_scheme": "gtest",
         "name": "base_unittests",
         "swarming": {
           "dimensions": {
@@ -22,47 +24,11 @@
         "test_id_prefix": "ninja://base:base_unittests/"
       },
       {
-        "args": [
-          "--git-revision=${got_revision}",
-          "--test-launcher-bot-mode",
-          "--gtest_filter=*PNG*"
-        ],
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
-        "name": "blink_platform_unittests",
-        "precommit_args": [
-          "--gerrit-issue=${patch_issue}",
-          "--gerrit-patchset=${patch_set}",
-          "--buildbucket-id=${buildbucket_build_id}"
-        ],
-        "swarming": {
-          "dimensions": {
-            "os": "Ubuntu-22.04"
-          },
-          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
-        },
-        "test": "blink_platform_unittests",
-        "test_id_prefix": "ninja://third_party/blink/renderer/platform:blink_platform_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "name": "gfx_unittests",
-        "swarming": {
-          "dimensions": {
-            "os": "Ubuntu-22.04"
-          },
-          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
-        },
-        "test": "gfx_unittests",
-        "test_id_prefix": "ninja://ui/gfx:gfx_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
+        "module_name": "//mojo/public/rust:mojo_rust_integration_unittests/",
+        "module_scheme": "gtest",
         "name": "mojo_rust_integration_unittests",
         "swarming": {
           "dimensions": {
@@ -77,6 +43,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//mojo/public/rust:mojo_rust_unittests/",
+        "module_scheme": "gtest",
         "name": "mojo_rust_unittests",
         "swarming": {
           "dimensions": {
@@ -91,6 +59,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//testing/rust_gtest_interop:rust_gtest_interop_unittests/",
+        "module_scheme": "gtest",
         "name": "rust_gtest_interop_unittests",
         "swarming": {
           "dimensions": {
@@ -105,6 +75,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//build/rust/tests/test_cpp_including_rust:test_cpp_including_rust_unittests/",
+        "module_scheme": "gtest",
         "name": "test_cpp_including_rust_unittests",
         "swarming": {
           "dimensions": {
@@ -119,6 +91,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//build/rust/tests/test_serde_json_lenient:test_serde_json_lenient/",
+        "module_scheme": "gtest",
         "name": "test_serde_json_lenient",
         "swarming": {
           "dimensions": {
@@ -135,6 +109,7 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//build/rust/tests:build_rust_tests/",
         "name": "build_rust_tests",
         "swarming": {
           "dimensions": {

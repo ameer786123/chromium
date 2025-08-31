@@ -7,6 +7,7 @@
 
 #import "base/files/file_path.h"
 #import "base/memory/weak_ptr.h"
+#import "base/scoped_observation.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
 #import "ios/chrome/browser/download/ui/download_manager_consumer.h"
 #import "ios/chrome/browser/drive/model/upload_task_observer.h"
@@ -14,6 +15,8 @@
 #import "ios/web/public/web_state_observer.h"
 
 @protocol DownloadManagerConsumer;
+
+class DownloadRecordService;
 
 namespace drive {
 class DriveService;
@@ -56,6 +59,9 @@ class DownloadManagerMediator : public web::DownloadTaskObserver,
   // Sets the pref service.
   void SetPrefService(PrefService* pref_service);
 
+  // Sets the download record service.
+  void SetDownloadRecordService(DownloadRecordService* download_record_service);
+
   // Sets download manager consumer. Not retained by mediator.
   void SetConsumer(id<DownloadManagerConsumer> consumer);
 
@@ -89,19 +95,6 @@ class DownloadManagerMediator : public web::DownloadTaskObserver,
   void StopObservingNotifications();
 
  private:
-  // Moves the downloaded file to user's Documents if it exists.
-  void MoveToUserDocumentsIfFileExists(base::FilePath task_path,
-                                       bool file_exists);
-
-  // Removes the downloaded file if it exists.
-  void RemoveIfFileExists(base::FilePath task_path, bool file_exists);
-
-  // Checks if the move has been completed.
-  void MoveComplete(bool move_completed);
-
-  // Checks if the remove has been completed.
-  void RemoveComplete(bool remove_completed);
-
   // Converts DownloadTask progress [0;100] to float progress [0.0f;1.0f].
   float GetDownloadManagerProgress() const;
 
@@ -137,10 +130,13 @@ class DownloadManagerMediator : public web::DownloadTaskObserver,
   void AppWillEnterForeground();
 
   raw_ptr<signin::IdentityManager> identity_manager_ = nullptr;
+  base::ScopedObservation<signin::IdentityManager,
+                          signin::IdentityManager::Observer>
+      identity_manager_observation_{this};
   raw_ptr<drive::DriveService> drive_service_ = nullptr;
   raw_ptr<PrefService> pref_service_ = nullptr;
+  raw_ptr<DownloadRecordService> download_record_service_ = nullptr;
   bool is_incognito_;
-  base::FilePath download_path_;
   raw_ptr<web::DownloadTask> download_task_ = nullptr;
   raw_ptr<UploadTask> upload_task_ = nullptr;
   __weak id<DownloadManagerConsumer> consumer_ = nil;

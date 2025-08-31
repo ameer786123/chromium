@@ -13,6 +13,7 @@ import android.graphics.Insets;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.hardware.display.DeviceProductInfo;
 import android.os.Build;
 import android.os.Build.VERSION_CODES;
@@ -153,11 +154,16 @@ import java.util.function.Consumer;
     }
 
     private final @Nullable Context mWindowContext;
+    private final @Nullable WindowManager mWindowManager;
     private final @Nullable ComponentCallbacks mComponentCallbacks;
     private final Display mDisplay;
+    private @Nullable RectF mDisplayAbsoluteCoordinates;
     private @Nullable Consumer<Display> mHdrSdrRatioCallback;
 
-    /* package */ PhysicalDisplayAndroid(Display display, boolean disableHdrSdkRatioCallback) {
+    /* package */ PhysicalDisplayAndroid(
+            Display display,
+            @Nullable RectF displayAbsoluteCoordinates,
+            boolean disableHdrSdkRatioCallback) {
         super(display.getDisplayId());
         if (USE_CONFIGURATION) {
             Context appContext = ContextUtils.getApplicationContext();
@@ -181,10 +187,13 @@ import java.util.function.Consumer;
                         }
                     };
             mWindowContext.registerComponentCallbacks(mComponentCallbacks);
+            mWindowManager = mWindowContext.getSystemService(WindowManager.class);
             mDisplay = mWindowContext.getDisplay();
+            mDisplayAbsoluteCoordinates = displayAbsoluteCoordinates;
             updateFromConfiguration();
         } else {
             mWindowContext = null;
+            mWindowManager = null;
             mComponentCallbacks = null;
             mDisplay = display;
         }
@@ -209,18 +218,32 @@ import java.util.function.Consumer;
     }
 
     @RequiresApi(VERSION_CODES.R)
+    private Insets getWindowInsets() {
+        return assumeNonNull(mWindowManager)
+                .getCurrentWindowMetrics()
+                .getWindowInsets()
+                .getInsetsIgnoringVisibility(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+    }
+
+    @RequiresApi(VERSION_CODES.R)
+    /* package */ void updateBounds(RectF displayAbsoluteCoordinates) {
+        mDisplayAbsoluteCoordinates = displayAbsoluteCoordinates;
+        updateFromConfiguration();
+    }
+
+    @RequiresApi(VERSION_CODES.R)
     private void updateFromConfiguration() {
         assumeNonNull(mWindowContext);
-        WindowManager windowManager = mWindowContext.getSystemService(WindowManager.class);
-        Rect bounds = windowManager.getMaximumWindowMetrics().getBounds();
-        int windowInsetsType = WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout();
-        Insets insets =
-                windowManager
-                        .getCurrentWindowMetrics()
-                        .getWindowInsets()
-                        .getInsetsIgnoringVisibility(windowInsetsType);
+        assumeNonNull(mWindowManager);
 
         DisplayMetrics displayMetrics = mWindowContext.getResources().getDisplayMetrics();
+        Insets insets = getWindowInsets();
+        Rect bounds =
+                (mDisplayAbsoluteCoordinates != null)
+                        ? DisplayUtil.convertDipToPixelDisplayCoordinates(
+                                mDisplayAbsoluteCoordinates, displayMetrics.density)
+                        : mWindowManager.getMaximumWindowMetrics().getBounds();
 
         if (DeviceInfo.isAutomotive()
                 && CommandLine.getInstance()
@@ -264,6 +287,7 @@ import java.util.function.Consumer;
             updateFromConfiguration();
             return;
         }
+
         Point size = new Point();
         DisplayMetrics displayMetrics = new DisplayMetrics();
         display.getRealSize(size);
@@ -332,7 +356,13 @@ import java.util.function.Consumer;
 
         // Note: getMode() and getSupportedModes() can return null in some situations - see
         // crbug.com/1401322.
-        Display.Mode currentMode = display.getMode();
+        // Can also throw when modeId=-1 (b/441513616).
+        Display.Mode currentMode = null;
+        try {
+            currentMode = display.getMode();
+        } catch (Exception e) {
+            Log.w(TAG, "Invalid display mode", e);
+        }
         Display.Mode[] modes = display.getSupportedModes();
         List<Display.Mode> supportedModes = null;
         if (modes != null && modes.length > 0) {
@@ -352,23 +382,14 @@ import java.util.function.Consumer;
         AdaptiveRefreshRateInfo arrInfo = null;
         if (BuildCompat.isAtLeastB()) {
             boolean hasArrSupport = display.hasArrSupport();
-            float suggestedFrameRateNormal = 0.0f;
             float suggestedFrameRateHigh = 0.0f;
-            float[] supportedFrameRates = null;
             if (hasArrSupport) {
-                suggestedFrameRateNormal =
-                        display.getSuggestedFrameRate(Display.FRAME_RATE_CATEGORY_NORMAL);
                 suggestedFrameRateHigh =
                         display.getSuggestedFrameRate(Display.FRAME_RATE_CATEGORY_HIGH);
-                supportedFrameRates = display.getSupportedRefreshRates();
             }
-            arrInfo =
-                    new AdaptiveRefreshRateInfo(
-                            hasArrSupport,
-                            suggestedFrameRateNormal,
-                            suggestedFrameRateHigh,
-                            supportedFrameRates);
+            arrInfo = new AdaptiveRefreshRateInfo(hasArrSupport, suggestedFrameRateHigh);
         }
+
         super.update(
                 display.getName(),
                 bounds,

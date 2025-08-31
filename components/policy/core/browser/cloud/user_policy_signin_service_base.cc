@@ -10,6 +10,7 @@
 #include "base/dcheck_is_on.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "components/policy/core/common/cloud/cloud_policy_client_registration_helper.h"
@@ -23,24 +24,34 @@
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/account_managed_status_finder.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/device_info.h"
+#endif
+
 namespace em = enterprise_management;
 
 namespace policy {
 
 namespace {
 
+em::DeviceRegisterRequest::Type GetCloudPolicyRegistrationType() {
 #if BUILDFLAG(IS_ANDROID)
-const em::DeviceRegisterRequest::Type kCloudPolicyRegistrationType =
-    em::DeviceRegisterRequest::ANDROID_BROWSER;
+  if (base::android::device_info::is_desktop()) {
+    return em::DeviceRegisterRequest::BROWSER;
+  } else {
+    return em::DeviceRegisterRequest::ANDROID_BROWSER;
+  }
 #elif BUILDFLAG(IS_IOS)
-const em::DeviceRegisterRequest::Type kCloudPolicyRegistrationType =
-    em::DeviceRegisterRequest::IOS_BROWSER;
+  return em::DeviceRegisterRequest::IOS_BROWSER;
 #else
-const em::DeviceRegisterRequest::Type kCloudPolicyRegistrationType =
-    em::DeviceRegisterRequest::BROWSER;
+  return em::DeviceRegisterRequest::BROWSER;
 #endif
+}
 
 }  // namespace
+
+constexpr char kRegisterCloudPolicyServiceHistogramName[] =
+    "Enterprise.RegisterCloudPolicyService";
 
 UserPolicySigninServiceBase::UserPolicySigninServiceBase(
     PrefService* local_state,
@@ -96,6 +107,7 @@ void UserPolicySigninServiceBase::FetchPolicyForSignedInUser(
     // `CloudPolicyManager` will initiate a policy fetch right after
     // initialization. Invoke `callback` after the policy is fetched.
     policy_fetch_callbacks().AddUnsafe(std::move(callback));
+    should_record_re_register_event = false;
     return;
   }
 
@@ -310,7 +322,7 @@ void UserPolicySigninServiceBase::RegisterForPolicyWithAccountId(
   // `RegisterForPolicyWithAccountId()`, if any.
   registration_helper_for_temporary_client_ =
       std::make_unique<CloudPolicyClientRegistrationHelper>(
-          policy_client.get(), kCloudPolicyRegistrationType);
+          policy_client.get(), GetCloudPolicyRegistrationType());
 
   // Using a raw pointer to |this| is okay, because the service owns
   // |registration_helper_for_temporary_client_|.
@@ -320,6 +332,7 @@ void UserPolicySigninServiceBase::RegisterForPolicyWithAccountId(
       base::Unretained(this), std::move(policy_client), std::move(callback));
   registration_helper_for_temporary_client_->StartRegistration(
       identity_manager(), account_id, std::move(registration_callback));
+  should_record_re_register_event = false;
 }
 
 void UserPolicySigninServiceBase::SetDeviceDMTokenCallbackForTesting(
@@ -341,10 +354,19 @@ void UserPolicySigninServiceBase::RegisterCloudPolicyService() {
 
   UpdateLastPolicyCheckTime();
 
+  if (should_record_re_register_event) {
+    base::UmaHistogramEnumeration(
+        kRegisterCloudPolicyServiceHistogramName,
+        user_policy_manager_
+            ? RegisterCloudPolicyServiceEvent::kRegistrationWithGaia
+            : RegisterCloudPolicyServiceEvent::kRegistrationWithoutGaia);
+    should_record_re_register_event = false;
+  }
+
   // Start the process of registering the CloudPolicyClient. Once it completes,
   // policy fetch will automatically happen.
   registration_helper_ = std::make_unique<CloudPolicyClientRegistrationHelper>(
-      policy_manager()->core()->client(), kCloudPolicyRegistrationType);
+      policy_manager()->core()->client(), GetCloudPolicyRegistrationType());
   registration_helper_->StartRegistration(
       identity_manager(),
       identity_manager()->GetPrimaryAccountId(signin::ConsentLevel::kSignin),
@@ -358,7 +380,6 @@ UserPolicySigninServiceBase::GetDeviceDMTokenIfAffiliatedCallback() {
 }
 
 void UserPolicySigninServiceBase::OnRegistrationComplete() {
-  ProhibitSignoutIfNeeded();
   registration_helper_.reset();
 }
 
@@ -376,7 +397,13 @@ void UserPolicySigninServiceBase::
   if (manager->IsClientRegistered()) {
     DVLOG_POLICY(1, POLICY_FETCHING)
         << "Client already registered - not fetching DMToken";
-    ProhibitSignoutIfNeeded();
+    if (should_record_re_register_event) {
+      base::UmaHistogramEnumeration(
+          kRegisterCloudPolicyServiceHistogramName,
+          RegisterCloudPolicyServiceEvent::kNoRegistration);
+      should_record_re_register_event = false;
+    }
+
     return;
   }
 
@@ -401,15 +428,11 @@ void UserPolicySigninServiceBase::
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, registration_callback_.callback(), try_registration_delay);
   }
-
-  ProhibitSignoutIfNeeded();
 }
 
 void UserPolicySigninServiceBase::OnPolicyRefreshed(bool success) {
   policy_fetch_callbacks().Notify(success);
 }
-
-void UserPolicySigninServiceBase::ProhibitSignoutIfNeeded() {}
 
 bool UserPolicySigninServiceBase::CanApplyPolicies(
     bool check_for_refresh_token) {

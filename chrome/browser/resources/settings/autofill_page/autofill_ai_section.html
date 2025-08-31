@@ -18,6 +18,7 @@
     margin-block-start: 0;
   }
 </style>
+<settings-subpage page-title="$i18n{autofillAiPageTitle}">
 <div id="topSection">
   <settings-toggle-button
       id="prefToggle" on-settings-boolean-control-change="onOptInToggleChange_"
@@ -62,6 +63,16 @@
             $i18n{autofillAiToConsiderDataStorage}
           </div>
         </li>
+        <template is="dom-if" if="[[showLoggingInfoBullet_(
+            prefs.optimization_guide.model_execution.autofill_prediction_improvements_enterprise_policy_allowed.value)]]" restamp>
+          <settings-ai-logging-info-bullet
+              id="enterpriseInfoBullet"
+              pref=
+                  "[[prefs.optimization_guide.model_execution.autofill_prediction_improvements_enterprise_policy_allowed]]"
+              logging-managed-disabled-custom-label=
+                  "$i18n{autofillAiSubpageSublabelLoggingManagedDisabled}">
+          </settings-ai-logging-info-bullet>
+        </template>
       </ul>
     </div>
   </div>
@@ -143,3 +154,4 @@
       on-close="onRemoveEntityInstanceDialogClose_">
   </settings-simple-confirmation-dialog>
 </template>
+</settings-subpage>

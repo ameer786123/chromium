@@ -11,6 +11,7 @@
 
 #include "ash/public/cpp/media_controller.h"
 #include "ash/public/cpp/test/test_new_window_delegate.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ash/extensions/media_player_api.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/notifications/notification_display_service.h"
@@ -169,9 +170,7 @@ class MediaClientTest : public BrowserWithTestWindowTest {
   void SetUp() override {
     BrowserWithTestWindowTest::SetUp();
 
-    alt_window_ = CreateBrowserWindow();
-    alt_browser_ = CreateBrowser(alt_profile(), Browser::TYPE_NORMAL, false,
-                                 alt_window_.get());
+    alt_browser_ = CreateBrowser(alt_profile(), Browser::TYPE_NORMAL, false);
 
     extensions::MediaPlayerAPI::Get(profile());
 

@@ -11,10 +11,12 @@
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/flags/android/chrome_session_state.h"
 #include "chrome/browser/ui/android/tab_model/android_live_tab_context.h"
+#include "chrome/browser/ui/tabs/tab_list_interface.h"
 #include "components/omnibox/browser/location_bar_model.h"
 #include "components/omnibox/browser/location_bar_model_delegate.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sync_sessions/synced_window_delegate.h"
+#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
 
 struct NavigateParams;
 
@@ -37,8 +39,9 @@ class TabModelObserver;
 // Abstract representation of a Tab Model for Android.  Since Android does
 // not use Browser/BrowserList, this is required to allow Chrome to interact
 // with Android's Tabs and Tab Model.
-class TabModel {
+class TabModel : public TabListInterface {
  public:
+  DECLARE_USER_DATA(TabModel);
   // LINT.IfChange(TabLaunchType)
   // Various ways tabs can be launched.
   // Values must be numbered from 0 and can't have gaps.
@@ -135,10 +138,49 @@ class TabModel {
     // in the background. Use FROM_REPARENTING above to open the re-parented tab
     // in the foreground.
     FROM_REPARENTING_BACKGROUND,
+    // From history navigation (back / forward) when opening a new tab/window in
+    // the background.
+    FROM_HISTORY_NAVIGATION_BACKGROUND,
+    // From history navigation (back / forward) when opening a new tab/window in
+    // the foreground.
+    FROM_HISTORY_NAVIGATION_FOREGROUND,
+    // Like FROM_LONGPRESS_FOREGROUND, but used when the parent tab is part of a
+    // group.
+    FROM_LONGPRESS_FOREGROUND_IN_GROUP,
+    // Open tab using the TabListInterface API. This tab is created
+    // programmatically from operations such as OpenTab or DuplicateTab.
+    FROM_TAB_LIST_INTERFACE,
+    // Open a link, creating a new window.
+    FROM_LINK_CREATING_NEW_WINDOW,
     // Must be last.
     SIZE
   };
-  // LINT.ThenChange(//tools/metrics/histograms/metadata/new_tab_page/enums.xml:TabLaunchType)
+  // When adding a new TabLaunchType, make sure to update the following files.
+  // Some of the files have multiple switch cases for TabLaunchType, so make
+  // sure to update all of them! Note that there are likely other files that
+  // need to be updated depending on the desired side-effects of the new
+  // TabLaunchType.
+  //
+  // Long term, this would ideally be refactored to a traits system such that
+  // the different types of side-effects are canonically defined, and listed
+  // explicitly for each TabLaunchType in a single location.
+  //
+  // Multiple lines are not supported by IFTTT.
+  // clang-format off
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/new_tab_page/enums.xml:TabLaunchType,//chrome/android/java/src/org/chromium/chrome/browser/tabmodel/ChromeTabCreator.java,//chrome/browser/tabpersistence/android/java/src/org/chromium/chrome/browser/tabpersistence/flatbuffer/tab_state_common.fbs,//chrome/browser/tabpersistence/android/java/src/org/chromium/chrome/browser/tabpersistence/FlatBufferTabStateSerializer.java)
+  // clang-format on
+
+  // Various ways tabs can be closed.
+  // Values must be numbered from 0 and can't have gaps.
+  // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.tab
+  enum class TabClosingSource {
+    // Tab closing from all other sources.
+    UNKNOWN,
+    // Tab closing from tablet tab strip.
+    TABLET_TAB_STRIP,
+    // Must be last.
+    SIZE
+  };
 
   // Various ways tabs can be selected.
   // Values must be numbered from 0 and can't have gaps.
@@ -188,8 +230,6 @@ class TabModel {
   virtual SessionID GetSessionId() const;
   virtual sessions::LiveTabContext* GetLiveTabContext() const;
 
-  virtual int GetTabCount() const = 0;
-  virtual int GetActiveIndex() const = 0;
   virtual content::WebContents* GetActiveWebContents() const;
   virtual content::WebContents* GetWebContentsAt(int index) const = 0;
   // This will return NULL if the tab has not yet been initialized.
@@ -239,12 +279,9 @@ class TabModel {
 
   chrome::android::ActivityType activity_type() const { return activity_type_; }
 
-  // Returns whether the tab is in a tab group.
-  virtual bool IsTabInTabGroup(TabAndroid* tab) = 0;
-
  protected:
   TabModel(Profile* profile, chrome::android::ActivityType activity_type);
-  virtual ~TabModel();
+  ~TabModel() override;
 
   // Instructs the TabModel to broadcast a notification that all tabs are now
   // loaded from storage.

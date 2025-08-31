@@ -52,15 +52,11 @@ class AppInstallEventEncryptedReporterTest : public testing::Test {
 
   void SetUp() override {
     ash::system::StatisticsProvider::SetTestProvider(&statistics_provider_);
-
-    RegisterLocalState(pref_service_.registry());
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&pref_service_);
     chromeos::PowerManagerClient::InitializeFake();
   }
 
   void TearDown() override {
     task_environment_.RunUntilIdle();
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
     chromeos::PowerManagerClient::Shutdown();
   }
 
@@ -72,7 +68,6 @@ class AppInstallEventEncryptedReporterTest : public testing::Test {
   }
 
   content::BrowserTaskEnvironment task_environment_;
-  TestingPrefServiceSimple pref_service_;
   TestingProfile profile_;
   ash::system::FakeStatisticsProvider statistics_provider_;
 };

@@ -102,10 +102,10 @@ constexpr FetcherConfig kDefineChromeTestStateConfig{
     .method = FetcherConfig::Method::kPost,
     .traffic_annotation = TestStateSeedTag,
     .access_token_config =
-        {
+        AccessTokenConfig{
             .mode = signin::PrimaryAccountAccessTokenFetcher::Mode::kImmediate,
-            // TODO(b/284523446): Refer to GaiaConstants rather than literal.
-            .oauth2_scope = "https://www.googleapis.com/auth/kid.permission",
+            .oauth_consumer_id =
+                signin::OAuthConsumerId::kSupervisedUserClassifyUrl,
         },
     .request_priority = net::IDLE,
 };
@@ -116,11 +116,10 @@ constexpr FetcherConfig kResetChromeTestStateConfig{
     .method = FetcherConfig::Method::kPost,
     .traffic_annotation = TestStateSeedTag,
     .access_token_config =
-        {
+        AccessTokenConfig{
             .mode = signin::PrimaryAccountAccessTokenFetcher::Mode::kImmediate,
-            // TODO(b/284523446): Refer to GaiaConstants rather than
-            // literal.
-            .oauth2_scope = "https://www.googleapis.com/auth/kid.permission",
+            .oauth_consumer_id =
+                signin::OAuthConsumerId::kSupervisedUserClassifyUrl,
         },
     .request_priority = net::IDLE,
 };
@@ -140,15 +139,7 @@ inline void AddWebsiteException(
 }
 
 bool AreSafeSitesConfigured(const FamilyLinkSettingsState::Services& services) {
-  if (!IsSafeSitesEnabled(services.pref_service.get())) {
-    return false;
-  }
-
-  SupervisedUserURLFilter* url_filter =
-      services.supervised_user_service->GetURLFilter();
-  CHECK(url_filter);
-
-  return url_filter->GetDefaultFilteringBehavior() == FilteringBehavior::kAllow;
+  return IsSafeSitesEnabled(services.pref_service.get());
 }
 
 bool IsUrlConfigured(SupervisedUserURLFilter& url_filter,
@@ -204,7 +195,10 @@ bool UrlFiltersAreConfigured(const FamilyLinkSettingsState::Services& services,
 }
 
 bool UrlFiltersAreEmpty(const FamilyLinkSettingsState::Services& services) {
-  return services.supervised_user_service->GetURLFilter()->IsManualHostsEmpty();
+  return services.supervised_user_service->GetURLFilter()
+             ->GetFilteringStatistics()
+             .GetManagedSiteList() ==
+         SupervisedUserURLFilter::ManagedSiteList::kEmpty;
 }
 
 bool ToggleHasExpectedValue(const FamilyLinkSettingsState::Services& services,

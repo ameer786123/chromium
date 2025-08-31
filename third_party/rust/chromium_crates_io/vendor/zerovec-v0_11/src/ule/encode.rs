@@ -39,6 +39,12 @@ use core::mem;
 /// implementation will add up the sizes of each field on the [`VarULE`] type and then add in the byte length of the
 /// dynamically-sized part.
 ///
+/// # Reverse-encoding VarULE
+///
+/// This trait maps a struct to its bytes representation ("serialization"), and
+/// [`ZeroFrom`](zerofrom::ZeroFrom) performs the opposite operation, taking those bytes and
+/// creating a struct from them ("deserialization").
+///
 /// # Safety
 ///
 /// The safety invariants of [`Self::encode_var_ule_as_slices()`] are:
@@ -74,7 +80,7 @@ pub unsafe trait EncodeAsVarULE<T: VarULE + ?Sized> {
     fn encode_var_ule_write(&self, mut dst: &mut [u8]) {
         debug_assert_eq!(self.encode_var_ule_len(), dst.len());
         self.encode_var_ule_as_slices(move |slices| {
-            #[allow(clippy::indexing_slicing)] // by debug_assert
+            #[expect(clippy::indexing_slicing)] // by debug_assert
             for slice in slices {
                 dst[..slice.len()].copy_from_slice(slice);
                 dst = &mut dst[slice.len()..];
@@ -247,7 +253,7 @@ where
         unimplemented!()
     }
 
-    #[allow(clippy::unwrap_used)] // TODO(#1410): Rethink length errors in VZV.
+    #[expect(clippy::unwrap_used)] // TODO(#1410): Rethink length errors in VZV.
     fn encode_var_ule_len(&self) -> usize {
         crate::varzerovec::components::compute_serializable_len::<T, E, F>(self).unwrap() as usize
     }

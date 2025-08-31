@@ -13,112 +13,100 @@ from util import server_utils
 
 # Add a check here to cause the suggested fix to be applied while compiling.
 # Use this when trying to enable more checks.
+# BE SURE TO BUILD WITH --offline
 ERRORPRONE_CHECKS_TO_APPLY = []
 
 # Checks to disable in tests.
 TESTONLY_ERRORPRONE_WARNINGS_TO_DISABLE = [
-    # Too much effort to enable.
-    'UnusedVariable',
+    # Can hurt readability to enforce this on test classes.
+    'FieldCanBeStatic',
     # These are allowed in tests.
     'NoStreams',
+    # Too much effort to enable.
+    'UnusedVariable',
 ]
 
 # Full list of checks: https://errorprone.info/bugpatterns
 ERRORPRONE_WARNINGS_TO_DISABLE = [
-    'InlineMeInliner',
-    'InlineMeSuggester',
-    # High priority to enable:
-    'HidingField',
-    'AlreadyChecked',
-    'DirectInvocationOnMock',
-    'MockNotUsedInProduction',
-    'PatternMatchingInstanceof',
-    'AssignmentExpression',
-    'RuleNotRun',
     # High priority to enable in non-tests:
     'JdkObsolete',
     'ReturnValueIgnored',
     'StaticAssignmentInConstructor',
-    # These are all for Javadoc, which we don't really care about.
-    # vvv
-    'InvalidBlockTag',
-    'InvalidParam',
-    'InvalidLink',
-    'InvalidInlineTag',
-    'MalformedInlineTag',
-    'MissingSummary',
-    'UnescapedEntity',
-    'UnrecognisedJavadocTag',
-    # ^^^
-    'MutablePublicArray',
-    'NonCanonicalType',
-    'DoNotClaimAnnotations',
-    'JavaUtilDate',
-    'IdentityHashMapUsage',
-    'StaticMockMember',
-    # Triggers in tests where this is useful to do.
-    'StaticAssignmentOfThrowable',
-    # TODO(crbug.com/41384349): Follow steps in bug.
+
+    # Low priority.
+    'BadImport',
     'CatchAndPrintStackTrace',
-    # TODO(crbug.com/41364806): Follow steps in bug.
+    'EffectivelyPrivate',
+    'EmptyCatch',
+    'EqualsGetClass',
+    'EqualsHashCode',
+    'IdentityHashMapUsage',
+    'JavaUtilDate',
+    'OverrideThrowableToString',
+    'PatternMatchingInstanceof',
+    'RedundantControlFlow',
+    'StatementSwitchToExpressionSwitch',
+    'UndefinedEquals',
+    'UseCorrectAssertInTests',
+    'SameNameButDifferent',
+    'StaticAssignmentOfThrowable',  # Want in non-test
+    'StaticMockMember',
+    'StringCaseLocaleUsage',
+    'StringCharset',
+    'ThreadLocalUsage',
     'TypeParameterUnusedInFormals',
+    'UnsafeReflectiveConstructionCast',
+
+    # Never Enable:
+    #
+    # Just use Android Studio refactors to inline things.
+    'InlineMeInliner',
+    'InlineMeSuggester',
+    # We already have presubmit checks for this. We don't want it to fail
+    # local compiles.
+    'RemoveUnusedImports',
+    # Several instances of using a string right before the String.format(),
+    # which seems better than inlining.
+    'InlineFormatString',
+    # Assigning to fields marked as @Mock or @Spy. Suggested fix is to delete
+    # assignments, which would break tests in many cases.
+    'UnnecessaryAssignment',
     # Android platform default is always UTF-8.
     # https://developer.android.com/reference/java/nio/charset/Charset.html#defaultCharset()
     'DefaultCharset',
-    # There are lots of times when we just want to post a task.
-    'FutureReturnValueIgnored',
-    # Just false positives in our code.
-    'ThreadJoinLoop',
+    # If google-java-format is not going to do this, it's not worth our time.
+    'StringConcatToTextBlock',
+    # We don't use Dagger.
+    'RefersToDaggerCodegen',
+    # Only has false positives (would not want to enable this).
+    'UnicodeEscape',
+    # Does not apply to Android because it assumes no desugaring.
+    'UnnecessaryLambda',
+    # These are best practices that I doubt are worth the churn / overhead.
+    'MixedMutabilityReturnType',
+    'MutablePublicArray',
+    'NonApiType',
+    # Not that useful.
+    'ClassNewInstance',
     # Low priority corner cases with String.split.
     # Linking Guava and using Splitter was rejected
     # in the https://chromium-review.googlesource.com/c/chromium/src/+/871630.
     'StringSplitter',
-    # Preferred to use another method since it propagates exceptions better.
-    'ClassNewInstance',
-    # Results in false positives.
-    'ThreadLocalUsage',
-    # Low priority.
-    'EqualsHashCode',
-    # Not necessary for tests.
-    'OverrideThrowableToString',
-    # Not that useful.
-    'UnsafeReflectiveConstructionCast',
-    # Not that useful.
-    'MixedMutabilityReturnType',
-    # Nice to have.
-    'EqualsGetClass',
-    # A lot of false-positives from CharSequence.equals().
-    'UndefinedEquals',
-    # Dagger generated code triggers this.
-    'SameNameButDifferent',
-    # Does not apply to Android because it assumes no desugaring.
-    'UnnecessaryLambda',
-    # Nice to have.
-    'EmptyCatch',
-    # Nice to have.
-    'BadImport',
-    # Nice to have.
-    'UseCorrectAssertInTests',
-    # Must be off since we are now passing in annotation processor generated
-    # code as a source jar (deduplicating work with turbine).
-    'RefersToDaggerCodegen',
-    # We already have presubmit checks for this. We don't want it to fail
-    # local compiles.
-    'RemoveUnusedImports',
-    # Only has false positives (would not want to enable this).
-    'UnicodeEscape',
-    # A lot of existing violations. e.g. Should return List and not ArrayList
-    'NonApiType',
-    # Nice to have.
-    'StringCharset',
-    # Nice to have.
-    'StringConcatToTextBlock',
-    # Nice to have.
-    'StringCaseLocaleUsage',
-    # Low priority.
-    'RedundantControlFlow',
-    # Low priority.
-    'StatementSwitchToExpressionSwitch',
+    # There are lots of times when we just want to post a task.
+    'FutureReturnValueIgnored',
+    # Just false positives in our code.
+    'ThreadJoinLoop',
+
+    # These are all for Javadoc, which we don't really care about.
+    'InvalidBlockTag',
+    'InvalidInlineTag',
+    'InvalidLink',
+    'InvalidParam',
+    'MalformedInlineTag',
+    'MissingSummary',
+    'NotJavadoc',
+    'UnescapedEntity',
+    'UnrecognisedJavadocTag',
 ]
 
 # Full list of checks: https://errorprone.info/bugpatterns
@@ -128,6 +116,9 @@ ERRORPRONE_WARNINGS_TO_ENABLE = [
     'BinderIdentityRestoredDangerously',
     'EmptyIf',
     'EqualsBrokenForNull',
+    'FieldCanBeFinal',
+    'FieldCanBeLocal',
+    'FieldCanBeStatic',
     'InvalidThrows',
     'LongLiteralLowerCaseSuffix',
     'MultiVariableDeclaration',
@@ -143,9 +134,6 @@ ERRORPRONE_WARNINGS_TO_ENABLE = [
 
 def main():
   parser = argparse.ArgumentParser()
-  parser.add_argument('--skip-build-server',
-                      action='store_true',
-                      help='Avoid using the build server.')
   parser.add_argument('--use-build-server',
                       action='store_true',
                       help='Always use the build server.')
@@ -163,11 +151,11 @@ def main():
   compile_java_argv += ['--jar-path', options.stamp]
 
   # Use the build server for errorprone runs.
-  if not options.skip_build_server and (server_utils.MaybeRunCommand(
+  if server_utils.MaybeRunCommand(
       name=options.stamp,
       argv=sys.argv,
       stamp_file=options.stamp,
-      use_build_server=options.use_build_server)):
+      use_build_server=options.use_build_server):
     compile_java.main(compile_java_argv, write_depfile_only=True)
     return
 
@@ -188,9 +176,11 @@ def main():
     #     https://github.com/uber/NullAway/issues/1104
     # errorprone_flags += ['-XepOpt:NullAway:CheckContracts=true']
 
+    # TODO(agrieve): Re-enable once we sort out nullability of
+    #     ObservableSuppliers. https://crbug.com/430320400
     # Make it a warning to use assumeNonNull() with a @NonNull.
-    errorprone_flags += [('-XepOpt:NullAway:CastToNonNullMethod='
-                          'org.chromium.build.NullUtil.assumeNonNull')]
+    #errorprone_flags += [('-XepOpt:NullAway:CastToNonNullMethod='
+    #                      'org.chromium.build.NullUtil.assumeNonNull')]
     # Detect "assert foo != null" as a null check.
     errorprone_flags += ['-XepOpt:NullAway:AssertsEnabled=true']
     # Do not ignore @Nullable & @NonNull in non-@NullMarked classes.
@@ -214,6 +204,16 @@ def main():
     ]
     errorprone_flags += [
         '-XepOpt:NullAway:KnownInitializers=' + ','.join(init_methods)
+    ]
+    # Exclude fields with these annotations from null-checking.
+    mock_annotations = [
+        'org.mockito.Captor',
+        'org.mockito.Mock',
+        'org.mockito.Spy',
+    ]
+    errorprone_flags += [
+        '-XepOpt:NullAway:ExcludedFieldAnnotations=' +
+        ','.join(mock_annotations)
     ]
 
   # Make everything a warning so that when treat_warnings_as_errors is false,

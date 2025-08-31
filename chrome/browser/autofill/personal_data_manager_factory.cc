@@ -5,7 +5,9 @@
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 
 #include "base/no_destructor.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/autofill/autofill_image_fetcher_factory.h"
+#include "chrome/browser/autofill/autofill_optimization_guide_decider_factory.h"
 #include "chrome/browser/autofill/strike_database_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -68,6 +70,7 @@ PersonalDataManagerFactory::PersonalDataManagerFactory()
   DependsOn(StrikeDatabaseFactory::GetInstance());
   DependsOn(AutofillImageFetcherFactory::GetInstance());
   DependsOn(SyncServiceFactory::GetInstance());
+  DependsOn(AutofillOptimizationGuideDeciderFactory::GetInstance());
 }
 
 PersonalDataManagerFactory::~PersonalDataManagerFactory() = default;
@@ -95,6 +98,9 @@ PersonalDataManagerFactory::BuildServiceInstanceForBrowserContext(
 
   auto* sync_service = SyncServiceFactory::GetForProfile(profile);
 
+  auto* autofill_optimization_guide_decider =
+      AutofillOptimizationGuideDeciderFactory::GetForProfile(profile);
+
   auto* shared_storage_manager =
       profile->GetDefaultStoragePartition()->GetSharedStorageManager();
   auto shared_storage_handler =
@@ -108,8 +114,8 @@ PersonalDataManagerFactory::BuildServiceInstanceForBrowserContext(
       g_browser_process->local_state(), identity_manager, history_service,
       sync_service, strike_database, image_fetcher,
       std::move(shared_storage_handler),
-      g_browser_process->GetApplicationLocale(),
-      GetCountryCodeFromVariations());
+      g_browser_process->GetApplicationLocale(), GetCountryCodeFromVariations(),
+      autofill_optimization_guide_decider);
 }
 
 }  // namespace autofill

@@ -15,7 +15,6 @@
 #import "components/optimization_guide/optimization_guide_internals/webui/url_constants.h"
 #import "components/prefs/pref_service.h"
 #import "components/version_info/channel.h"
-#import "components/webui/chrome_urls/features.h"
 #import "components/webui/chrome_urls/pref_names.h"
 #import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
@@ -84,11 +83,9 @@ std::unique_ptr<WebUIIOSController> NewWebUIIOS<commerce::CommerceInternalsUI>(
 }
 
 bool InternalDebugPagesEnabled() {
-  // Debug pages are enabled if the feature flag guarding placing them behind
-  // a pref is off, or if the pref is enabled.
-  return !base::FeatureList::IsEnabled(chrome_urls::kInternalOnlyUisPref) ||
-         GetApplicationContext()->GetLocalState()->GetBoolean(
-             chrome_urls::kInternalOnlyUisEnabled);
+  // Debug pages are enabled if the InternalOnlyUisEnabled pref is enabled.
+  return GetApplicationContext()->GetLocalState()->GetBoolean(
+      chrome_urls::kInternalOnlyUisEnabled);
 }
 
 // Returns a function that can be used to create the right type of WebUIIOS for
@@ -107,13 +104,10 @@ WebUIIOSFactoryFunction GetWebUIIOSFactoryFunction(const GURL& url) {
   if (url_host == kChromeUIAutofillInternalsHost) {
     return &NewWebUIIOS<AutofillInternalsUIIOS>;
   }
-  if (base::FeatureList::IsEnabled(chrome_urls::kInternalOnlyUisPref) &&
-      url_host == kChromeUIChromeURLsHost) {
-    // New ChromeUrlsUI is behind the kInternalOnlyUisPref feature flag.
+  if (url_host == kChromeUIChromeURLsHost) {
     return &NewWebUIIOS<chrome_urls::ChromeUrlsUI>;
   }
-  if (url_host == kChromeUIChromeURLsHost ||
-      url_host == kChromeUIHistogramHost || url_host == kChromeUICreditsHost) {
+  if (url_host == kChromeUIHistogramHost || url_host == kChromeUICreditsHost) {
     return &NewWebUIIOS<AboutUI>;
   }
   if (url_host == commerce::kChromeUICommerceInternalsHost) {

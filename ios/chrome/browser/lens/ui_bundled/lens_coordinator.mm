@@ -13,6 +13,8 @@
 #import "components/search_engines/template_url_service.h"
 #import "components/segmentation_platform/embedder/home_modules/tips_manager/signal_constants.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
+#import "ios/chrome/browser/first_run/public/best_features_item.h"
+#import "ios/chrome/browser/first_run/public/features.h"
 #import "ios/chrome/browser/intents/model/intents_donation_helper.h"
 #import "ios/chrome/browser/lens/ui_bundled/features.h"
 #import "ios/chrome/browser/lens/ui_bundled/lens_availability.h"
@@ -38,12 +40,12 @@
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
+#import "ios/chrome/browser/tabs/model/tabs_dependency_installer_bridge.h"
 #import "ios/chrome/browser/tips_manager/model/tips_manager_ios.h"
 #import "ios/chrome/browser/tips_manager/model/tips_manager_ios_factory.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_params.h"
 #import "ios/chrome/browser/web/model/web_navigation_util.h"
-#import "ios/chrome/browser/web_state_list/model/web_state_dependency_installer_bridge.h"
 #import "ios/chrome/common/NSString+Chromium.h"
 #import "ios/chrome/common/app_group/app_group_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -193,17 +195,7 @@ const base::TimeDelta kCloseLensViewTimeout = base::Seconds(10);
 #pragma mark - Commands
 
 - (void)searchImageWithLens:(SearchImageWithLensCommand*)command {
-  if (lens_availability::IsLensContextMenuUnifiedExperienceEnabled(
-          self.profile->GetPrefs())) {
-    id<LensOverlayCommands> handler = HandlerForProtocol(
-        self.browser->GetCommandDispatcher(), LensOverlayCommands);
-    [handler searchImageWithLens:command.image
-                      entrypoint:LensOverlayEntrypoint::kSearchImageContextMenu
-                      completion:nil];
-    return;
-  }
-
-  const bool isIncognito = self.profile->IsOffTheRecord();
+  const bool isIncognito = self.isOffTheRecord;
   __weak LensCoordinator* weakSelf = self;
 
   LensQuery* lensQuery = [LensQuery alloc];
@@ -268,9 +260,6 @@ const base::TimeDelta kCloseLensViewTimeout = base::Seconds(10);
     DCHECK(featureTracker);
     featureTracker->NotifyEvent(
         feature_engagement::events::kLensButtonKeyboardUsed);
-  } else if (entrypoint == LensEntrypoint::NewTabPage) {
-    GetApplicationContext()->GetLocalState()->SetInteger(
-        prefs::kNTPLensEntryPointNewBadgeShownCount, INT_MAX);
   }
 
   if (!isIncognito) {
@@ -347,6 +336,11 @@ const base::TimeDelta kCloseLensViewTimeout = base::Seconds(10);
   if (IsSegmentationTipsManagerEnabled()) {
     [self recordLensUsage];
   }
+
+  // Notify Welcome Back to remove Lens from the eligible features.
+  if (IsWelcomeBackInFirstRunEnabled()) {
+    MarkWelcomeBackFeatureUsed(BestFeaturesItemType::kLensSearch);
+  }
 }
 
 #pragma mark - ChromeLensControllerDelegate
@@ -363,7 +357,7 @@ const base::TimeDelta kCloseLensViewTimeout = base::Seconds(10);
     self.loadingWebState = nil;
     if (index != WebStateList::kInvalidIndex) {
       self.browser->GetWebStateList()->CloseWebStateAt(
-          index, WebStateList::CLOSE_USER_ACTION);
+          index, WebStateList::ClosingReason::kUserAction);
     }
   }
 
@@ -520,7 +514,7 @@ const base::TimeDelta kCloseLensViewTimeout = base::Seconds(10);
     loadParams.append_to = OpenPosition::kCurrentTab;
     loadParams.SetInBackground(NO);
   }
-  loadParams.in_incognito = self.profile->IsOffTheRecord();
+  loadParams.in_incognito = self.isOffTheRecord;
   UrlLoadingBrowserAgent::FromBrowser(self.browser)->Load(loadParams);
 }
 

@@ -7,10 +7,12 @@
 #include <utility>
 #include <vector>
 
+#include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
 #include "gpu/command_buffer/service/scheduler.h"
 #include "gpu/command_buffer/service/scheduler_sequence.h"
+#include "gpu/command_buffer/service/shared_context_state.h"
 
 namespace gpu {
 
@@ -75,6 +77,11 @@ GpuInProcessThreadService::GetSharedContextState() {
 
 scoped_refptr<gl::GLShareGroup> GpuInProcessThreadService::GetShareGroup() {
   return delegate_->GetShareGroup();
+}
+
+scoped_refptr<base::SingleThreadTaskRunner>
+GpuInProcessThreadService::GetTaskRunner() {
+  return task_runner_;
 }
 
 }  // namespace gpu

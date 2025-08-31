@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/share_kit/model/share_kit_service_factory.h"
 
+#import "base/check.h"
 #import "ios/chrome/app/tests_hook.h"
 #import "ios/chrome/browser/collaboration/model/collaboration_service_factory.h"
 #import "ios/chrome/browser/collaboration/model/features.h"
@@ -31,9 +32,7 @@ ShareKitServiceFactory* ShareKitServiceFactory::GetInstance() {
 }
 
 ShareKitServiceFactory::ShareKitServiceFactory()
-    : ProfileKeyedServiceFactoryIOS("ShareKitService",
-                                    ProfileSelection::kNoInstanceInIncognito,
-                                    ServiceCreation::kCreateWithProfile) {
+    : ProfileKeyedServiceFactoryIOS("ShareKitService") {
   DependsOn(AuthenticationServiceFactory::GetInstance());
   DependsOn(IdentityManagerFactory::GetInstance());
   DependsOn(data_sharing::DataSharingServiceFactory::GetInstance());
@@ -47,9 +46,12 @@ ShareKitServiceFactory::~ShareKitServiceFactory() = default;
 std::unique_ptr<KeyedService> ShareKitServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ProfileIOS* profile = ProfileIOS::FromBrowserState(context);
+  CHECK(!profile->IsOffTheRecord());
 
-  if (!IsSharedTabGroupsJoinEnabled(profile) &&
-      !IsSharedTabGroupsCreateEnabled(profile)) {
+  collaboration::CollaborationService* collaboration_service =
+      collaboration::CollaborationServiceFactory::GetForProfile(profile);
+  if (!IsSharedTabGroupsJoinEnabled(collaboration_service) &&
+      !IsSharedTabGroupsCreateEnabled(collaboration_service)) {
     return nullptr;
   }
 
@@ -57,8 +59,6 @@ std::unique_ptr<KeyedService> ShareKitServiceFactory::BuildServiceInstanceFor(
       data_sharing::DataSharingServiceFactory::GetForProfile(profile);
   tab_groups::TabGroupSyncService* sync_service =
       tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile);
-  collaboration::CollaborationService* collaboration_service =
-      collaboration::CollaborationServiceFactory::GetForProfile(profile);
   TabGroupService* tab_group_service =
       TabGroupServiceFactory::GetForProfile(profile);
 

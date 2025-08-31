@@ -10,6 +10,7 @@
 #include "base/functional/bind.h"
 #include "base/scoped_observation.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_ostream_operators.h"
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
@@ -889,6 +890,28 @@ TEST_F(BookmarkMergedSurfaceServiceTest,
   model().CreateAccountPermanentFolders();
   EXPECT_EQ(service().GetDefaultParentForNewNodes(folder),
             model().account_bookmark_bar_node());
+}
+
+TEST_F(BookmarkMergedSurfaceServiceTest,
+       GetParentForManagedNodeForPermanentManagedNode) {
+  CreateBookmarkMergedSurfaceServiceWithManaged(/*managed_bookmarks_size=*/3);
+  BookmarkParentFolder managed_folder = BookmarkParentFolder::ManagedFolder();
+  EXPECT_EQ(service().GetParentForManagedNode(managed_folder), managed_node());
+}
+
+TEST_F(BookmarkMergedSurfaceServiceTest,
+       GetParentForManagedNodeForNonPermanentNode) {
+  CreateBookmarkMergedSurfaceServiceWithManaged(/*managed_bookmarks_size=*/1);
+  AddNodesFromModelString(&model(), managed_node(), "f1:[ f11:[ 4 ] 5 ] ");
+  // Fetch second node to get the folder since a node was already added at
+  // creation.
+  const BookmarkNode* managed_folder =
+      managed_node()->children()[1].get()->children()[0].get();
+  ASSERT_TRUE(managed_folder->is_folder());
+  ASSERT_FALSE(managed_folder->parent()->is_permanent_node());
+  BookmarkParentFolder folder =
+      BookmarkParentFolder::FromFolderNode(managed_folder);
+  EXPECT_EQ(service().GetParentForManagedNode(folder), managed_folder);
 }
 
 TEST_F(BookmarkMergedSurfaceServiceTest, BookmarkNodeAdded) {

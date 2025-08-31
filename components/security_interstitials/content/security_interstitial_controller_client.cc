@@ -14,6 +14,7 @@
 #include "components/security_interstitials/content/security_interstitial_tab_helper.h"
 #include "components/security_interstitials/content/settings_page_helper.h"
 #include "components/security_interstitials/core/metrics_helper.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
@@ -94,6 +95,7 @@ void SecurityInterstitialControllerClient::GoBackAfterNavigationCommitted() {
   content::RenderFrameHost* render_frame_host = InterstitialRenderFrameHost();
   auto& controller = render_frame_host->GetController();
 
+  // LINT.IfChange(InterstitialGoBackLogic)
   if (controller.CanGoBack()) {
     controller.GoBack();
   } else {
@@ -107,6 +109,7 @@ void SecurityInterstitialControllerClient::GoBackAfterNavigationCommitted() {
     controller.LoadURL(url_to_load, content::Referrer(),
                        ui::PAGE_TRANSITION_AUTO_TOPLEVEL, std::string());
   }
+  // LINT.ThenChange(chrome/browser/ssl/ask_before_http_dialog_controller.cc:HttpsFirstModeGoBackLogic)
 }
 
 void SecurityInterstitialControllerClient::Proceed() {
@@ -147,13 +150,18 @@ void SecurityInterstitialControllerClient::OpenEnhancedProtectionSettings() {
 #endif
 }
 
-const std::string&
-SecurityInterstitialControllerClient::GetApplicationLocale() const {
+#if BUILDFLAG(IS_ANDROID)
+void SecurityInterstitialControllerClient::OpenAdvancedProtectionSettings() {
+  settings_page_helper_->OpenAdvancedProtectionSettings(*web_contents_);
+}
+#endif
+
+const std::string& SecurityInterstitialControllerClient::GetApplicationLocale()
+    const {
   return app_locale_;
 }
 
-PrefService*
-SecurityInterstitialControllerClient::GetPrefService() {
+PrefService* SecurityInterstitialControllerClient::GetPrefService() {
   return prefs_;
 }
 

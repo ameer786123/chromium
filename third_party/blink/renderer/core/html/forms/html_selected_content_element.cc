@@ -4,24 +4,19 @@
 
 #include "third_party/blink/renderer/core/html/forms/html_selected_content_element.h"
 
-#include "third_party/blink/renderer/core/dom/events/mutation_event_suppression_scope.h"
 #include "third_party/blink/renderer/core/html/forms/html_option_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 
 namespace blink {
 
 HTMLSelectedContentElement::HTMLSelectedContentElement(Document& document)
-    : HTMLElement(html_names::kSelectedcontentTag, document) {
-  CHECK(RuntimeEnabledFeatures::CustomizableSelectEnabled());
-}
+    : HTMLElement(html_names::kSelectedcontentTag, document) {}
 
 void HTMLSelectedContentElement::CloneContentsFromOptionElement(
     const HTMLOptionElement* option) {
   if (disabled_) {
     return;
   }
-
-  MutationEventSuppressionScope dont_fire_mutation_events(GetDocument());
 
   VectorOf<Node> nodes;
   if (option) {

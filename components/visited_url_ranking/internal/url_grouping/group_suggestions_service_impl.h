@@ -10,6 +10,7 @@
 #include "base/containers/flat_map.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
+#include "base/time/clock.h"
 #include "components/visited_url_ranking/internal/url_grouping/group_suggestions_manager.h"
 #include "components/visited_url_ranking/internal/url_grouping/tab_event_tracker_impl.h"
 #include "components/visited_url_ranking/internal/url_grouping/tab_events_visit_transformer.h"
@@ -39,13 +40,19 @@ class GroupSuggestionsServiceImpl : public GroupSuggestionsService,
 
   // GroupSuggestionsService impl:
   TabEventTracker* GetTabEventTracker() override;
+  std::optional<CachedSuggestions> GetCachedSuggestions(
+      const Scope& scope) override;
   void RegisterDelegate(GroupSuggestionsDelegate* delegate,
                         const Scope& scope) override;
   void UnregisterDelegate(GroupSuggestionsDelegate* delegate) override;
+  void SetConfigForTesting(base::TimeDelta computation_delay) override;
 
   GroupSuggestionsManager* group_suggestions_manager_for_testing() {
     return group_suggestions_manager_.get();
   }
+
+  // Invalidates the cached suggestions.
+  void InvalidateCache();
 
  private:
   void OnNewSuggestionTabEvent();

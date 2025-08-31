@@ -219,7 +219,8 @@ class BLINK_MODULES_EXPORT WebMediaPlayerMS
   void UnregisterFrameSinkHierarchy() override;
 
   void RecordAutoPictureInPictureInfo(
-      const WebString& auto_picture_in_picture_info) override {}
+      const media::PictureInPictureEventsInfo::AutoPipInfo&
+          auto_picture_in_picture_info) override {}
 
  private:
   friend class WebMediaPlayerMSTest;
@@ -263,7 +264,7 @@ class BLINK_MODULES_EXPORT WebMediaPlayerMS
   // Callback used to detect and propagate a render error.
   void OnAudioRenderErrorCallback();
 
-  void SendLogMessage(const WTF::String& message) const;
+  void SendLogMessage(const String& message) const;
 
   void StopForceBeginFrames(TimerBase*);
 

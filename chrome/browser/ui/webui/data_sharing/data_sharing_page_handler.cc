@@ -12,9 +12,9 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
-#include "chrome/browser/ui/views/data_sharing/data_sharing_open_group_helper.h"
 #include "chrome/browser/ui/views/data_sharing/data_sharing_utils.h"
 #include "chrome/browser/ui/webui/data_sharing/data_sharing_ui.h"
+#include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "google_apis/gaia/gaia_constants.h"
@@ -101,11 +101,6 @@ void DataSharingPageHandler::GetTabGroupPreview(
 }
 
 void DataSharingPageHandler::OpenTabGroup(const std::string& group_id) {
-  Browser* const browser = chrome::FindLastActiveWithProfile(GetProfile());
-  CHECK(browser);
-  browser->browser_window_features()
-      ->data_sharing_open_group_helper()
-      ->OpenTabGroupWhenAvailable(group_id);
 }
 
 void DataSharingPageHandler::AboutToUnShareTabGroup(
@@ -136,10 +131,7 @@ void DataSharingPageHandler::RequestAccessToken() {
       identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin);
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   access_token_fetcher_ = identity_manager->CreateAccessTokenFetcherForAccount(
-      account_id, /*oauth_consumer_name=*/"data_sharing", /*scopes=*/
-      {GaiaConstants::kPeopleApiReadWriteOAuth2Scope,
-       GaiaConstants::kPeopleApiReadOnlyOAuth2Scope,
-       GaiaConstants::kClearCutOAuth2Scope},
+      account_id, signin::OAuthConsumerId::kDataSharing,
       base::BindOnce(&DataSharingPageHandler::OnAccessTokenFetched,
                      base::Unretained(this)),
       signin::AccessTokenFetcher::Mode::kImmediate);

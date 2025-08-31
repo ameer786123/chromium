@@ -16,6 +16,7 @@
 #include "base/metrics/user_metrics_action.h"
 #include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "base/uuid.h"
 #include "components/saved_tab_groups/internal/saved_tab_group_model_observer.h"
 #include "components/saved_tab_groups/internal/stats.h"
@@ -34,7 +35,7 @@ namespace {
 
 void RecordGroupDeletedMetric(const SavedTabGroup& removed_group) {
   const base::TimeDelta duration_saved =
-      base::Time::Now() - removed_group.creation_time_windows_epoch_micros();
+      base::Time::Now() - removed_group.creation_time();
 
   base::UmaHistogramCounts1M("TabGroups.SavedTabGroupLifespan",
                              duration_saved.InMinutes());
@@ -60,16 +61,14 @@ bool ShouldPlaceBefore(const SavedTabGroup& group1,
     if (position1.value() != position2.value()) {
       return position1.value() < position2.value();
     } else {
-      return group1.update_time_windows_epoch_micros() >=
-             group2.update_time_windows_epoch_micros();
+      return group1.update_time() >= group2.update_time();
     }
   } else if (position1.has_value() && !position2.has_value()) {
     return true;
   } else if (!position1.has_value() && position2.has_value()) {
     return false;
   } else {
-    return group1.update_time_windows_epoch_micros() >=
-           group2.update_time_windows_epoch_micros();
+    return group1.update_time() >= group2.update_time();
   }
 }
 
@@ -220,6 +219,12 @@ void SavedTabGroupModel::MakeTabGroupSharedForTesting(
   group->SetCollaborationId(std::move(collaboration_id));
 }
 
+void SavedTabGroupModel::MakeTabGroupUnsharedForTesting(
+    const LocalTabGroupID& local_group_id) {
+  SavedTabGroup* const group = GetMutableGroup(local_group_id);
+  group->SetCollaborationId(std::nullopt);
+}
+
 void SavedTabGroupModel::SetIsTransitioningToSaved(
     const LocalTabGroupID& local_group_id,
     bool is_transitioning_to_saved) {
@@ -254,10 +259,7 @@ void SavedTabGroupModel::RemovedFromSync(const LocalTabGroupID tab_group_id) {
   }
 
   const std::optional<int> index = GetIndexOf(tab_group_id);
-  SavedTabGroup removed_group = RemoveImpl(index.value());
-  for (auto& observer : observers_) {
-    observer.SavedTabGroupRemovedFromSync(removed_group);
-  }
+  HandleTabGroupRemovedFromSync(index.value());
 }
 
 void SavedTabGroupModel::RemovedFromSync(const base::Uuid& id) {
@@ -266,10 +268,7 @@ void SavedTabGroupModel::RemovedFromSync(const base::Uuid& id) {
   }
 
   const std::optional<int> index = GetIndexOf(id);
-  SavedTabGroup removed_group = RemoveImpl(index.value());
-  for (auto& observer : observers_) {
-    observer.SavedTabGroupRemovedFromSync(removed_group);
-  }
+  HandleTabGroupRemovedFromSync(index.value());
 }
 
 void SavedTabGroupModel::UpdatedVisualDataFromSync(
@@ -390,6 +389,15 @@ void SavedTabGroupModel::UpdateTabInGroup(const base::Uuid& group_id,
 
   // Make a copy before moving the `tab`.
   const base::Uuid tab_guid_copy = tab.saved_tab_guid();
+
+  if (notify_observers) {
+    // This is a locally generated navigation event. Update the navigation
+    // timestamp of the SavedTabGroupTab since we will not get the tab
+    // modification time back from sync in the standard way due to reflection
+    // blocking.
+    tab.SetNavigationTime(base::Time::Now());
+  }
+
   group->UpdateTab(std::move(tab));
 
   if (!notify_observers) {
@@ -414,8 +422,10 @@ void SavedTabGroupModel::UpdateLocalTabId(const base::Uuid& group_id,
   saved_tab_groups_[group_index.value()].UpdateTab(tab);
 }
 
-void SavedTabGroupModel::RemoveTabFromGroupLocally(const base::Uuid& group_id,
-                                                   const base::Uuid& tab_id) {
+void SavedTabGroupModel::RemoveTabFromGroupLocally(
+    const base::Uuid& group_id,
+    const base::Uuid& tab_id,
+    std::optional<GaiaId> local_gaia_id) {
   if (!Contains(group_id)) {
     return;
   }
@@ -439,7 +449,8 @@ void SavedTabGroupModel::RemoveTabFromGroupLocally(const base::Uuid& group_id,
   // TODO(crbug.com/40062298): Convert all methods to pass ids by value to
   // prevent UAFs. Also removes the need for a separate copy variable.
   const base::Uuid copy_tab_id = tab_id;
-  saved_tab_groups_[index.value()].RemoveTabLocally(tab_id);
+  saved_tab_groups_[index.value()].RemoveTabLocally(tab_id,
+                                                    std::move(local_gaia_id));
 
   // TODO(dljames): Update to use SavedTabGroupRemoveLocally and update the API
   // to pass a group_id and an optional tab_id.
@@ -519,29 +530,81 @@ void SavedTabGroupModel::UpdateLastUserInteractionTimeLocally(
   }
 }
 
-void SavedTabGroupModel::UpdateTabLastSeenTime(const base::Uuid& group_id,
-                                               const base::Uuid& tab_id,
-                                               base::Time time,
-                                               TriggerSource source) {
+void SavedTabGroupModel::UpdateTabLastSeenTimeFromSync(
+    const base::Uuid& group_id,
+    const base::Uuid& tab_id,
+    base::Time time) {
   SavedTabGroup* group = GetMutableGroup(group_id);
   CHECK(group);
+
+  if (!group->is_shared_tab_group()) {
+    return;
+  }
 
   SavedTabGroupTab* tab = group->GetTab(tab_id);
   CHECK(tab);
 
-  // If the new time is not more recent than the one in the model,
-  // ignore it. This data is managed by the account data sync bridge,
-  // which always prefers the more recent time.
-  const base::Time& current_model_time =
-      tab->last_seen_time_windows_epoch_micros();
-  if (!current_model_time.is_null() && current_model_time >= time) {
+  // Only accept the incoming last seen time from sync if it is newer than what
+  // we have locally.
+  if (tab->last_seen_time().has_value() &&
+      tab->last_seen_time().value() >= time) {
     return;
   }
 
-  tab->SetLastSeenTimeWindowsEpochMicros(time);
+  tab->SetLastSeenTime(time);
 
   for (SavedTabGroupModelObserver& observer : observers_) {
-    observer.SavedTabGroupTabLastSeenTimeUpdated(tab_id, source);
+    observer.SavedTabGroupTabLastSeenTimeUpdated(tab_id, TriggerSource::REMOTE);
+  }
+}
+
+void SavedTabGroupModel::UpdateTabLastSeenTimeFromLocal(
+    const base::Uuid& group_id,
+    const base::Uuid& tab_id) {
+  SavedTabGroup* group = GetMutableGroup(group_id);
+  CHECK(group);
+
+  if (!group->is_shared_tab_group()) {
+    return;
+  }
+
+  SavedTabGroupTab* tab = group->GetTab(tab_id);
+  CHECK(tab);
+
+  // Only update the last seen time if the navigation time of the tab is newer.
+  if (tab->last_seen_time().has_value() &&
+      tab->last_seen_time() >= tab->navigation_time()) {
+    return;
+  }
+
+  tab->SetLastSeenTime(tab->navigation_time());
+
+  for (SavedTabGroupModelObserver& observer : observers_) {
+    observer.SavedTabGroupTabLastSeenTimeUpdated(tab_id, TriggerSource::LOCAL);
+  }
+}
+
+void SavedTabGroupModel::UpdatePositionForSharedGroupFromSync(
+    const base::Uuid& group_id,
+    std::optional<size_t> position) {
+  const SavedTabGroup* group = Get(group_id);
+  if (!group || !group->is_shared_tab_group() ||
+      group->position() == position) {
+    return;
+  }
+
+  // Remove the tab group, set position and reinsert.
+  const int index = GetIndexOf(group_id).value();
+  SavedTabGroup saved_group = RemoveImpl(index);
+  if (position.has_value()) {
+    saved_group.SetPosition(position.value());
+  } else {
+    saved_group.SetPinned(false);
+  }
+  InsertGroupImpl(std::move(saved_group));
+
+  for (SavedTabGroupModelObserver& observer : observers_) {
+    observer.SavedTabGroupUpdatedFromSync(group_id, /*tab_guid=*/std::nullopt);
   }
 }
 
@@ -1009,4 +1072,32 @@ void SavedTabGroupModel::UpdateArchivalStatus(const base::Uuid& id,
   }
 }
 
+void SavedTabGroupModel::UpdateBookmarkNodeId(
+    const base::Uuid& id,
+    const std::optional<base::Uuid>& bookmark_node_id) {
+  SavedTabGroup* const group = GetMutableGroup(id);
+  CHECK(group);
+  group->SetBookmarkNodeId(bookmark_node_id);
+
+  for (auto& observer : observers_) {
+    observer.SavedTabGroupUpdatedLocally(id, /*tab_guid=*/std::nullopt);
+  }
+}
+
+void SavedTabGroupModel::HandleTabGroupRemovedFromSync(int index) {
+  // If this is a shared group that is transitioning to saved, make the
+  // transition complete and that will delete the shared group during the
+  // process.
+  SavedTabGroup* group = &saved_tab_groups_[index];
+  if (group->is_shared_tab_group() && group->is_transitioning_to_saved()) {
+    for (auto& observer : observers_) {
+      observer.TabGroupTransitioningToSavedRemovedFromSync(group->saved_guid());
+    }
+    return;
+  }
+  SavedTabGroup removed_group = RemoveImpl(index);
+  for (auto& observer : observers_) {
+    observer.SavedTabGroupRemovedFromSync(removed_group);
+  }
+}
 }  // namespace tab_groups

@@ -22,6 +22,7 @@
 #include "components/enterprise/browser/reporting/report_scheduler.h"
 #include "components/policy/core/common/cloud/dm_token.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/storage_partition.h"
 
 namespace em = enterprise_management;
 
@@ -78,12 +79,6 @@ PrefService* ReportSchedulerDesktop::GetPrefService() {
   return prefs_;
 }
 
-void ReportSchedulerDesktop::OnInitializationCompleted() {
-  if (user_security_signals_service_) {
-    user_security_signals_service_->Start();
-  }
-}
-
 void ReportSchedulerDesktop::StartWatchingUpdatesIfNeeded(
     base::Time last_upload,
     base::TimeDelta upload_interval) {
@@ -104,8 +99,7 @@ void ReportSchedulerDesktop::StartWatchingUpdatesIfNeeded(
           chrome::kChromeVersion &&
       last_upload + upload_interval > base::Time::Now() &&
       !trigger_report_callback_.is_null()) {
-    trigger_report_callback_.Run(
-        ReportScheduler::ReportTrigger::kTriggerNewVersion);
+    trigger_report_callback_.Run(ReportTrigger::kTriggerNewVersion);
   }
 }
 
@@ -133,26 +127,16 @@ std::string ReportSchedulerDesktop::GetProfileClientId() {
   return reporting::GetUserClientId(profile_).value_or(std::string());
 }
 
-bool ReportSchedulerDesktop::AreSecurityReportsEnabled() {
-  return user_security_signals_service_ &&
-         user_security_signals_service_->IsSecuritySignalsReportingEnabled();
-}
-
-bool ReportSchedulerDesktop::UseCookiesInUploads() {
-  return user_security_signals_service_ &&
-         user_security_signals_service_->ShouldUseCookies();
-}
-
-void ReportSchedulerDesktop::OnSecuritySignalsUploaded() {
-  if (user_security_signals_service_) {
-    user_security_signals_service_->OnReportUploaded();
+void ReportSchedulerDesktop::OnReportEventTriggered(
+    SecurityReportTrigger trigger) {
+  if (!trigger_report_callback_.is_null()) {
+    trigger_report_callback_.Run(ReportTrigger::kTriggerSecurity);
   }
 }
 
-void ReportSchedulerDesktop::OnReportEventTriggered(
-    SecurityReportTrigger trigger) {
-  // TODO(crbug.com/402486791): Forward the trigger via
-  // `trigger_report_callback_`.
+network::mojom::CookieManager* ReportSchedulerDesktop::GetCookieManager() {
+  return profile_->GetDefaultStoragePartition()
+      ->GetCookieManagerForBrowserProcess();
 }
 
 void ReportSchedulerDesktop::OnUpdate(const BuildState* build_state) {
@@ -161,8 +145,7 @@ void ReportSchedulerDesktop::OnUpdate(const BuildState* build_state) {
   // for it to take effect. Send a basic report (without profile info)
   // immediately.
   if (!trigger_report_callback_.is_null()) {
-    trigger_report_callback_.Run(
-        ReportScheduler::ReportTrigger::kTriggerUpdate);
+    trigger_report_callback_.Run(ReportTrigger::kTriggerUpdate);
   }
 }
 

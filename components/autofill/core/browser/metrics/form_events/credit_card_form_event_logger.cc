@@ -17,7 +17,6 @@
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/form_import/form_data_importer.h"
 #include "components/autofill/core/browser/foundations/browser_autofill_manager.h"
-#include "components/autofill/core/browser/integrators/optimization_guide/autofill_optimization_guide.h"
 #include "components/autofill/core/browser/logging/log_manager.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics_utils.h"
 #include "components/autofill/core/browser/metrics/form_events/form_events.h"
@@ -25,8 +24,10 @@
 #include "components/autofill/core/browser/metrics/payments/bnpl_metrics.h"
 #include "components/autofill/core/browser/metrics/payments/card_info_retrieval_enrolled_metrics.h"
 #include "components/autofill/core/browser/metrics/payments/card_unmask_flow_metrics.h"
+#include "components/autofill/core/browser/metrics/payments/save_and_fill_metrics.h"
 #include "components/autofill/core/browser/metrics/payments/virtual_card_standalone_cvc_suggestion_metrics.h"
 #include "components/autofill/core/browser/payments/autofill_offer_manager.h"
+#include "components/autofill/core/browser/payments/bnpl_manager.h"
 #include "components/autofill/core/browser/payments/constants.h"
 #include "components/autofill/core/browser/payments/credit_card_access_manager.h"
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
@@ -46,6 +47,13 @@ CreditCardFormEventLogger::CreditCardFormEventLogger(
 
 CreditCardFormEventLogger::~CreditCardFormEventLogger() = default;
 
+void CreditCardFormEventLogger::OnBnplSuggestionShown() {
+  if (!has_logged_bnpl_suggestion_shown_) {
+    LogBnplSuggestionShown(driver().GetPageUkmSourceId());
+    has_logged_bnpl_suggestion_shown_ = true;
+  }
+}
+
 void CreditCardFormEventLogger::OnDidFetchSuggestion(
     const std::vector<Suggestion>& suggestions,
     bool with_offer,
@@ -53,7 +61,6 @@ void CreditCardFormEventLogger::OnDidFetchSuggestion(
     bool with_card_info_retrieval_enrolled,
     bool is_virtual_card_standalone_cvc_field,
     CardMetadataLoggingContext metadata_logging_context) {
-  has_eligible_offer_ = with_offer;
   suggestion_contains_card_with_cvc_ = with_cvc;
   suggestion_contains_card_info_retrieval_enrolled_card_ =
       with_card_info_retrieval_enrolled;
@@ -68,13 +75,15 @@ void CreditCardFormEventLogger::OnDidShowSuggestions(
     const FormStructure& form,
     const AutofillField& field,
     base::TimeTicks form_parsed_timestamp,
-    bool off_the_record) {
+    bool off_the_record,
+    base::span<const Suggestion> suggestions) {
   if (DoSuggestionsIncludeVirtualCard())
     Log(FORM_EVENT_SUGGESTIONS_SHOWN_WITH_VIRTUAL_CARD, form);
 
   // Also perform the logging actions from the base class:
-  FormEventLoggerBase::OnDidShowSuggestions(form, field, form_parsed_timestamp,
-                                            off_the_record);
+  FormEventLoggerBase::OnDidShowSuggestions(
+      form, field, field.Type().GetCreditCardType(), form_parsed_timestamp,
+      off_the_record, suggestions);
 
   suggestion_shown_timestamp_ = base::TimeTicks::Now();
 
@@ -122,9 +131,9 @@ void CreditCardFormEventLogger::OnDidShowSuggestions(
     if (metadata_logging_context_.DidShowCardWithBenefitAvailable()) {
       Log(FORM_EVENT_SUGGESTION_FOR_CARD_WITH_BENEFIT_AVAILABLE_SHOWN_ONCE,
           form);
+      LogCardBenefitFormEventMetrics(CardMetadataLoggingEvent::kShown,
+                                     metadata_logging_context_);
     }
-    LogCardWithBenefitFormEventMetric(CardMetadataLoggingEvent::kShown,
-                                      metadata_logging_context_);
     has_logged_suggestion_shown_for_benefits_ = true;
   }
   if (metadata_logging_context_.DidShowCardWithBenefitAvailable()) {
@@ -143,35 +152,19 @@ void CreditCardFormEventLogger::OnDidShowSuggestions(
   }
 
   if (!has_logged_suggestions_shown_on_bnpl_eligible_merchant_ &&
-      IsEligibleForBnpl(
-          owner_->client().GetLastCommittedPrimaryMainFrameURL())) {
-    LogBnplFormEvent(BnplFormEvent::kSuggestionsShownOnce);
+      IsEligibleForBnpl()) {
+    LogBnplFormEvent(BnplFormEvent::kSuggestionsShown);
     has_logged_suggestions_shown_on_bnpl_eligible_merchant_ = true;
   }
 }
 
-bool CreditCardFormEventLogger::IsEligibleForBnpl(GURL url) {
-  AutofillClient& autofill_client = owner_->client();
-  AutofillOptimizationGuide* autofill_optimization_guide =
-      autofill_client.GetAutofillOptimizationGuide();
-  if (!autofill_optimization_guide) {
+bool CreditCardFormEventLogger::IsEligibleForBnpl() {
+  payments::BnplManager* bnpl_manager = owner_->GetPaymentsBnplManager();
+  if (!bnpl_manager) {
     return false;
   }
 
-  payments::PaymentsAutofillClient* payments_autofill_client =
-      autofill_client.GetPaymentsAutofillClient();
-  if (!payments_autofill_client) {
-    return false;
-  }
-
-  const auto& bnpl_issuers =
-      payments_autofill_client->GetPaymentsDataManager().GetBnplIssuers();
-  return std::any_of(bnpl_issuers.begin(), bnpl_issuers.end(),
-                     [&](const auto& issuer) {
-                       return autofill_optimization_guide
-                           ->IsUrlEligibleForCheckoutAmountSearchForIssuerId(
-                               issuer.issuer_id(), url);
-                     });
+  return bnpl_manager->IsEligibleForBnpl();
 }
 
 void CreditCardFormEventLogger::OnDidSelectCardSuggestion(
@@ -180,13 +173,6 @@ void CreditCardFormEventLogger::OnDidSelectCardSuggestion(
     AutofillMetrics::PaymentsSigninState signin_state_for_metrics) {
   signin_state_for_metrics_ = signin_state_for_metrics;
   metadata_logging_context_.SetSelectedCardInfo(credit_card);
-
-  card_selected_has_offer_ = false;
-  if (has_eligible_offer_) {
-    card_selected_has_offer_ = DoesCardHaveOffer(credit_card);
-    base::UmaHistogramBoolean("Autofill.Offer.SelectedCardHasOffer",
-                              card_selected_has_offer_);
-  }
 
   latest_selected_card_was_virtual_card_ = false;
   switch (credit_card.record_type()) {
@@ -220,8 +206,8 @@ void CreditCardFormEventLogger::OnDidSelectCardSuggestion(
         if (metadata_logging_context_.DidShowCardWithBenefitAvailable()) {
           Log(FORM_EVENT_SUGGESTION_FOR_SERVER_CARD_SELECTED_AFTER_CARD_WITH_BENEFIT_AVAILABLE_SHOWN_ONCE,
               form);
-          LogCardWithBenefitFormEventMetric(CardMetadataLoggingEvent::kSelected,
-                                            metadata_logging_context_);
+          LogCardBenefitFormEventMetrics(CardMetadataLoggingEvent::kSelected,
+                                         metadata_logging_context_);
         }
       }
 
@@ -451,13 +437,13 @@ void CreditCardFormEventLogger::OnDidFillFormFillingSuggestion(
       if (metadata_logging_context_.DidShowCardWithBenefitAvailable()) {
         Log(FORM_EVENT_SUGGESTION_FOR_SERVER_CARD_FILLED_AFTER_CARD_WITH_BENEFIT_AVAILABLE_SHOWN_ONCE,
             form);
-        LogCardWithBenefitFormEventMetric(CardMetadataLoggingEvent::kFilled,
-                                          metadata_logging_context_);
+        LogCardBenefitFormEventMetrics(CardMetadataLoggingEvent::kFilled,
+                                       metadata_logging_context_);
       }
     }
   }
 
-  FieldType field_type = field.Type().GetStorableType();
+  const FieldType field_type = field.Type().GetCreditCardType();
   field_types_with_shown_suggestions_.erase(field_type);
   field_types_with_accepted_suggestions_.insert(field_type);
 
@@ -497,7 +483,8 @@ void CreditCardFormEventLogger::OnDidFillFormFillingSuggestion(
         // flows.
         if (credit_card.is_bnpl_card()) {
           if (!has_logged_form_filled_with_bnpl_vcn_) {
-            LogFormFilledWithBnplVcn(credit_card.issuer_id());
+            LogFormFilledWithBnplVcn(
+                autofill::ConvertToBnplIssuerIdEnum(credit_card.issuer_id()));
             has_logged_form_filled_with_bnpl_vcn_ = true;
           }
         } else {
@@ -551,11 +538,7 @@ void CreditCardFormEventLogger::Log(FormEvent event,
     };
     return ".WithBothServerAndLocalData";
   }();
-  for (FormTypeNameForLogging form_type :
-       base::FeatureList::IsEnabled(
-           features::kAutofillEnableLogFormEventsToAllParsedFormTypes)
-           ? parsed_form_types_
-           : GetFormTypesForLogging(form)) {
+  for (FormTypeNameForLogging form_type : GetFormTypesForLogging(form)) {
     std::string name = base::StrCat(
         {"Autofill.FormEvents.", FormTypeNameForLoggingToStringView(form_type),
          data_suffix});
@@ -583,8 +566,22 @@ void CreditCardFormEventLogger::LogCardUnmaskAuthenticationPromptCompleted(
 
 void CreditCardFormEventLogger::OnDidAcceptBnplSuggestion() {
   if (!has_logged_bnpl_suggestion_accepted_) {
-    LogBnplFormEvent(BnplFormEvent::kBnplSuggestionAcceptedOnce);
+    LogBnplSuggestionAccepted(driver().GetPageUkmSourceId());
     has_logged_bnpl_suggestion_accepted_ = true;
+  }
+}
+
+void CreditCardFormEventLogger::OnSaveAndFillSuggestionShown() {
+  if (!has_logged_save_and_fill_suggestion_shown_) {
+    LogSaveAndFillFormEvent(SaveAndFillFormEvent::kSuggestionShown);
+    has_logged_save_and_fill_suggestion_shown_ = true;
+  }
+}
+
+void CreditCardFormEventLogger::OnDidAcceptSaveAndFillSuggestion() {
+  if (!has_logged_save_and_fill_suggestion_accepted_) {
+    LogSaveAndFillFormEvent(SaveAndFillFormEvent::kSuggestionAccepted);
+    has_logged_save_and_fill_suggestion_accepted_ = true;
   }
 }
 
@@ -679,7 +676,8 @@ void CreditCardFormEventLogger::LogFormSubmitted(const FormStructure& form) {
     // influencing other VCN metrics, as these represent distinct user flows.
     if (filled_credit_card_->is_bnpl_card()) {
       if (!has_logged_form_submitted_with_bnpl_vcn_) {
-        LogFormSubmittedWithBnplVcn(filled_credit_card_->issuer_id());
+        LogFormSubmittedWithBnplVcn(autofill::ConvertToBnplIssuerIdEnum(
+            filled_credit_card_->issuer_id()));
         has_logged_form_submitted_with_bnpl_vcn_ = true;
       }
     } else {
@@ -693,11 +691,6 @@ void CreditCardFormEventLogger::LogFormSubmitted(const FormStructure& form) {
     }
   } else {
     Log(FORM_EVENT_LOCAL_SUGGESTION_SUBMITTED_ONCE, form);
-  }
-
-  if (has_logged_form_filling_suggestion_filled_ && has_eligible_offer_) {
-    base::UmaHistogramBoolean("Autofill.Offer.SubmittedCardHasOffer",
-                              card_selected_has_offer_);
   }
 
   // Log if a CVC suggestion for a virtual card was filled before form
@@ -741,8 +734,8 @@ void CreditCardFormEventLogger::LogFormSubmitted(const FormStructure& form) {
     if (metadata_logging_context_.DidShowCardWithBenefitAvailable()) {
       Log(FORM_EVENT_SUGGESTION_FOR_SERVER_CARD_SUBMITTED_AFTER_CARD_WITH_BENEFIT_AVAILABLE_SHOWN_ONCE,
           form);
-      LogCardWithBenefitFormEventMetric(CardMetadataLoggingEvent::kSubmitted,
-                                        metadata_logging_context_);
+      LogCardBenefitFormEventMetrics(CardMetadataLoggingEvent::kSubmitted,
+                                     metadata_logging_context_);
     }
   }
 
@@ -764,11 +757,9 @@ void CreditCardFormEventLogger::LogUkmInteractedWithForm(
 
 void CreditCardFormEventLogger::OnSuggestionsShownOnce(
     const FormStructure& form) {
-  if (DoSuggestionsIncludeVirtualCard())
+  if (DoSuggestionsIncludeVirtualCard()) {
     Log(FORM_EVENT_SUGGESTIONS_SHOWN_WITH_VIRTUAL_CARD_ONCE, form);
-
-  base::UmaHistogramBoolean("Autofill.Offer.SuggestedCardsHaveOffer",
-                            has_eligible_offer_);
+  }
 }
 
 void CreditCardFormEventLogger::OnSuggestionsShownSubmittedOnce(
@@ -777,17 +768,6 @@ void CreditCardFormEventLogger::OnSuggestionsShownSubmittedOnce(
     const CreditCard& credit_card =
         client().GetFormDataImporter()->ExtractCreditCardFromForm(form).card;
     Log(GetCardNumberStatusFormEvent(credit_card), form);
-  }
-}
-
-void CreditCardFormEventLogger::OnLog(const std::string& name,
-                                      FormEvent event,
-                                      const FormStructure& form) const {
-  // Log a different histogram for credit card forms with credit card offers
-  // available so that selection rate with offers and rewards can be compared on
-  // their own.
-  if (has_eligible_offer_) {
-    base::UmaHistogramEnumeration(name + ".WithOffer", event, NUM_FORM_EVENTS);
   }
 }
 

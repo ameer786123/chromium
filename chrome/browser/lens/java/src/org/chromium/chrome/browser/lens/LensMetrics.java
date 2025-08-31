@@ -29,7 +29,6 @@ public class LensMetrics {
         LensSupportStatus.ACTIVITY_NOT_ACCESSIBLE,
         LensSupportStatus.OUT_OF_DATE,
         LensSupportStatus.SEARCH_BY_IMAGE_UNAVAILABLE,
-        LensSupportStatus.LEGACY_OS,
         LensSupportStatus.INVALID_PACKAGE,
         LensSupportStatus.LENS_SHOP_SUPPORTED,
         LensSupportStatus.LENS_SHOP_AND_SEARCH_SUPPORTED,
@@ -41,13 +40,13 @@ public class LensMetrics {
         LensSupportStatus.DISABLED_FOR_ENTERPRISE_USER
     })
     @Retention(RetentionPolicy.SOURCE)
-    public static @interface LensSupportStatus {
+    public @interface LensSupportStatus {
         int LENS_SEARCH_SUPPORTED = 0;
         int NON_GOOGLE_SEARCH_ENGINE = 1;
         int ACTIVITY_NOT_ACCESSIBLE = 2;
         int OUT_OF_DATE = 3;
         int SEARCH_BY_IMAGE_UNAVAILABLE = 4;
-        int LEGACY_OS = 5;
+        // Deprecated: int LEGACY_OS = 5;
         int INVALID_PACKAGE = 6;
         int LENS_SHOP_SUPPORTED = 7;
         int LENS_SHOP_AND_SEARCH_SUPPORTED = 8;
@@ -84,7 +83,7 @@ public class LensMetrics {
         AmbientSearchEntryPoint.NUM_ENTRIES
     })
     @Retention(RetentionPolicy.SOURCE)
-    public static @interface AmbientSearchEntryPoint {
+    public @interface AmbientSearchEntryPoint {
         int CONTEXT_MENU_SEARCH_IMAGE_WITH_GOOGLE_LENS = 0;
         int CONTEXT_MENU_SEARCH_IMAGE_WITH_WEB = 1;
         int CONTEXT_MENU_SEARCH_REGION_WITH_GOOGLE_LENS = 2;
@@ -126,7 +125,7 @@ public class LensMetrics {
         CameraOpenEntryPoint.NUM_ENTRIES
     })
     @Retention(RetentionPolicy.SOURCE)
-    public static @interface CameraOpenEntryPoint {
+    public @interface CameraOpenEntryPoint {
         int OMNIBOX = 0;
         int NEW_TAB_PAGE = 1;
         int QUICK_ACTION_SEARCH_WIDGET = 2;

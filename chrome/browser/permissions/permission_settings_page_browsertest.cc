@@ -4,6 +4,7 @@
 
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -16,6 +17,8 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/pref_names.h"
+#include "components/permissions/features.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/dns/mock_host_resolver.h"
@@ -30,30 +33,50 @@ DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(
     kWebContentsInteractionTestUtilCustomEventId);
 
 const WebContentsInteractionTestUtil::DeepQuery kAskButton{
-    "settings-ui", "settings-main", "settings-basic-page",
-    "settings-privacy-page", "#notification-ask-radio-button"};
+    "settings-ui",
+    "settings-main",
+    "settings-privacy-page-index",
+    "settings-notifications-page",
+    "settings-category-default-radio-group",
+    "#enabledRadioOption"};
 
 const WebContentsInteractionTestUtil::DeepQuery kQuietButton{
-    "settings-ui", "settings-main", "settings-basic-page",
-    "settings-privacy-page", "#notification-ask-quiet"};
+    "settings-ui",
+    "settings-main",
+    "settings-privacy-page-index",
+    "settings-notifications-page",
+    "#notificationAskQuiet"};
 
 const WebContentsInteractionTestUtil::DeepQuery kCpssButton{
-    "settings-ui", "settings-main", "settings-basic-page",
-    "settings-privacy-page", "#notification-ask-cpss"};
+    "settings-ui",
+    "settings-main",
+    "settings-privacy-page-index",
+    "settings-notifications-page",
+    "#notificationAskCpss"};
 
 const WebContentsInteractionTestUtil::DeepQuery kLoudButton{
-    "settings-ui", "settings-main", "settings-basic-page",
-    "settings-privacy-page", "#notification-ask-loud"};
+    "settings-ui",
+    "settings-main",
+    "settings-privacy-page-index",
+    "settings-notifications-page",
+    "#notificationAskLoud"};
 
 const WebContentsInteractionTestUtil::DeepQuery kBlockButton{
-    "settings-ui", "settings-main", "settings-basic-page",
-    "settings-privacy-page", "#notification-block"};
+    "settings-ui",
+    "settings-main",
+    "settings-privacy-page-index",
+    "settings-notifications-page",
+    "settings-category-default-radio-group",
+    "#disabledRadioOption"};
 
 }  // namespace
 
 class PredictionSettingsPageBrowserTest : public InteractiveBrowserTest {
  public:
-  PredictionSettingsPageBrowserTest() = default;
+  PredictionSettingsPageBrowserTest() {
+    feature_list_.InitWithFeatures(
+        {permissions::features::kPermissionSiteSettingsRadioButton}, {});
+  }
 
   ~PredictionSettingsPageBrowserTest() override = default;
 
@@ -71,10 +94,6 @@ class PredictionSettingsPageBrowserTest : public InteractiveBrowserTest {
   void TearDownOnMainThread() override {
     EXPECT_TRUE(embedded_test_server()->ShutdownAndWaitUntilComplete());
     InteractiveBrowserTest::TearDownOnMainThread();
-  }
-
-  ui::ElementContext context() const {
-    return browser()->window()->GetElementContext();
   }
 
   GURL GetNotificationSettingsUrl() {
@@ -187,8 +206,11 @@ class PredictionSettingsPageBrowserTest : public InteractiveBrowserTest {
                   pref_service->GetBoolean(prefs::kEnableNotificationCPSS));
 
               const WebContentsInteractionTestUtil::DeepQuery kAskQuiet{
-                  "settings-ui", "settings-main", "settings-basic-page",
-                  "settings-privacy-page", "#notification-ask-quiet"};
+                  "settings-ui",
+                  "settings-main",
+                  "settings-privacy-page-index",
+                  "settings-notifications-page",
+                  "#notificationAskQuiet"};
               util->EvaluateAt(kAskQuiet, "kAskQuiet => kAskQuiet.click()");
               EXPECT_EQ(CONTENT_SETTING_ASK,
                         settings_map->GetDefaultContentSetting(
@@ -208,8 +230,11 @@ class PredictionSettingsPageBrowserTest : public InteractiveBrowserTest {
                   pref_service->GetBoolean(prefs::kEnableNotificationCPSS));
 
               const WebContentsInteractionTestUtil::DeepQuery kAskCpss{
-                  "settings-ui", "settings-main", "settings-basic-page",
-                  "settings-privacy-page", "#notification-ask-cpss"};
+                  "settings-ui",
+                  "settings-main",
+                  "settings-privacy-page-index",
+                  "settings-notifications-page",
+                  "#notificationAskCpss"};
               util->EvaluateAt(kAskCpss, "kAskCpss => kAskCpss.click()");
               EXPECT_EQ(CONTENT_SETTING_ASK,
                         settings_map->GetDefaultContentSetting(
@@ -279,8 +304,11 @@ class PredictionSettingsPageBrowserTest : public InteractiveBrowserTest {
                   prefs::kEnableQuietNotificationPermissionUi));
 
               const WebContentsInteractionTestUtil::DeepQuery kAskQuiet{
-                  "settings-ui", "settings-main", "settings-basic-page",
-                  "settings-privacy-page", "#notification-ask-quiet"};
+                  "settings-ui",
+                  "settings-main",
+                  "settings-privacy-page-index",
+                  "settings-notifications-page",
+                  "#notificationAskQuiet"};
               util->EvaluateAt(kAskQuiet, "kAskQuiet => kAskQuiet.click()");
               EXPECT_EQ(CONTENT_SETTING_ASK,
                         settings_map->GetDefaultContentSetting(
@@ -316,8 +344,11 @@ class PredictionSettingsPageBrowserTest : public InteractiveBrowserTest {
                   prefs::kEnableQuietNotificationPermissionUi));
 
               const WebContentsInteractionTestUtil::DeepQuery kAskCpss{
-                  "settings-ui", "settings-main", "settings-basic-page",
-                  "settings-privacy-page", "#notification-ask-cpss"};
+                  "settings-ui",
+                  "settings-main",
+                  "settings-privacy-page-index",
+                  "settings-notifications-page",
+                  "#notificationAskCpss"};
               util->EvaluateAt(kAskCpss, "kAskCpss => kAskCpss.click()");
               EXPECT_EQ(CONTENT_SETTING_ASK,
                         settings_map->GetDefaultContentSetting(
@@ -397,37 +428,26 @@ class PredictionSettingsPageBrowserTest : public InteractiveBrowserTest {
             }))
         .Build();
   }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
                        TestNotificationSettingsPrefs) {
-  UNCALLED_MOCK_CALLBACK(ui::InteractionSequence::CompletedCallback, completed);
-  UNCALLED_MOCK_CALLBACK(ui::InteractionSequence::AbortedCallback, aborted);
-
-  auto util = WebContentsInteractionTestUtil::ForExistingTabInBrowser(
-      browser(), kWebContentsElementId);
-
-  util->LoadPage(GURL("chrome://settings/content/notifications"));
-
-  auto sequence =
-      ui::InteractionSequence::Builder()
-          .SetCompletedCallback(completed.Get())
-          .SetAbortedCallback(aborted.Get())
-          .SetContext(browser()->window()->GetElementContext())
-          .AddStep(WaitFor(kBlockButton))
-          .AddStep(TestBlockStatePreferences())
-          .AddStep(
-              WaitFor(kLoudButton, ui::InteractionSequence::StepType::kHidden))
-          .AddStep(TestAskStatePreferences())
-          .Build();
-
-  EXPECT_CALL_IN_SCOPE(completed, Run, sequence->RunSynchronouslyForTesting());
+  RunTestSequence(
+      InstrumentTab(kWebContentsElementId),
+      NavigateWebContents(kWebContentsElementId,
+                          GURL("chrome://settings/content/notifications")),
+      WaitFor(kBlockButton), TestBlockStatePreferences(),
+      WaitFor(kLoudButton, ui::InteractionSequence::StepType::kHidden),
+      TestAskStatePreferences());
 }
 
 IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
                        TestDefaultRadioGroupState) {
-  RunTestSequenceInContext(
-      context(), InstrumentTab(kWebContentsElementId),
+  RunTestSequence(
+      InstrumentTab(kWebContentsElementId),
       NavigateWebContents(kWebContentsElementId, GetNotificationSettingsUrl()),
       WaitFor(kBlockButton),
       TestRadioGroupState(true, true, false, true, false));
@@ -435,9 +455,8 @@ IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
                        TestQuiteRadioGroupState) {
-  RunTestSequenceInContext(
-      context(), InstrumentTab(kWebContentsElementId),
-      SetPrefs(true, true, false),
+  RunTestSequence(
+      InstrumentTab(kWebContentsElementId), SetPrefs(true, true, false),
       NavigateWebContents(kWebContentsElementId, GetNotificationSettingsUrl()),
       WaitFor(kBlockButton),
       TestRadioGroupState(true, true, true, false, false));
@@ -445,9 +464,8 @@ IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
                        TestLoudRadioGroupState) {
-  RunTestSequenceInContext(
-      context(), InstrumentTab(kWebContentsElementId),
-      SetPrefs(true, false, false),
+  RunTestSequence(
+      InstrumentTab(kWebContentsElementId), SetPrefs(true, false, false),
       NavigateWebContents(kWebContentsElementId, GetNotificationSettingsUrl()),
       WaitFor(kBlockButton),
       TestRadioGroupState(true, true, false, false, true));
@@ -455,9 +473,8 @@ IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
                        TestBlockRadioGroupState) {
-  RunTestSequenceInContext(
-      context(), InstrumentTab(kWebContentsElementId),
-      SetPrefs(false, false, false),
+  RunTestSequence(
+      InstrumentTab(kWebContentsElementId), SetPrefs(false, false, false),
       NavigateWebContents(kWebContentsElementId, GetNotificationSettingsUrl()),
       WaitFor(kBlockButton),
       TestRadioGroupState(false, false, false, false, false));
@@ -466,8 +483,8 @@ IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
 IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
                        TestNotificationLoudRadioGroupStateForMetrics) {
   base::HistogramTester histogram_tester;
-  RunTestSequenceInContext(
-      context(), InstrumentTab(kWebContentsElementId),
+  RunTestSequence(
+      InstrumentTab(kWebContentsElementId),
       NavigateWebContents(kWebContentsElementId, GetNotificationSettingsUrl()),
       WaitFor(kLoudButton), TestClickLoud(), Do([&]() {
         histogram_tester.ExpectBucketCount(
@@ -479,8 +496,8 @@ IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
 IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
                        TestNotificationQuietRadioGroupStateForMetrics) {
   base::HistogramTester histogram_tester;
-  RunTestSequenceInContext(
-      context(), InstrumentTab(kWebContentsElementId),
+  RunTestSequence(
+      InstrumentTab(kWebContentsElementId),
       NavigateWebContents(kWebContentsElementId, GetNotificationSettingsUrl()),
       WaitFor(kQuietButton), TestClickQuiet(), Do([&]() {
         histogram_tester.ExpectBucketCount(
@@ -492,9 +509,8 @@ IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
 IN_PROC_BROWSER_TEST_F(PredictionSettingsPageBrowserTest,
                        TestNotificationCPSSRadioGroupStateForMetrics) {
   base::HistogramTester histogram_tester;
-  RunTestSequenceInContext(
-      context(), InstrumentTab(kWebContentsElementId),
-      SetPrefs(true, false, false),
+  RunTestSequence(
+      InstrumentTab(kWebContentsElementId), SetPrefs(true, false, false),
       NavigateWebContents(kWebContentsElementId, GetNotificationSettingsUrl()),
       WaitFor(kCpssButton), TestClickCPSS(), Do([&]() {
         histogram_tester.ExpectBucketCount(

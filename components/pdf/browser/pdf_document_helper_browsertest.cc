@@ -11,6 +11,7 @@
 #include "components/pdf/browser/pdf_document_helper_client.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/touch_selection_controller_client_manager.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -54,6 +55,13 @@ class FakePdfListener : public pdf::mojom::PdfListener {
               GetMostVisiblePageIndex,
               (GetMostVisiblePageIndexCallback callback),
               (override));
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+  MOCK_METHOD(void,
+              GetSaveDataBufferHandlerForDrive,
+              (pdf::mojom::SaveRequestType,
+               GetSaveDataBufferHandlerForDriveCallback callback),
+              (override));
+#endif  // BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
 };
 
 class TestPDFDocumentHelperClient : public PDFDocumentHelperClient {
@@ -79,7 +87,10 @@ class TestPDFDocumentHelperClient : public PDFDocumentHelperClient {
     start_ = start;
     end_ = end;
   }
-  void OnSearchifyStarted(content::WebContents* contents) override {}
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  void OnSearchifyStarted(
+      content::RenderFrameHost* render_frame_host) override {}
+#endif
 
  private:
   // The last bounds reported by PDFDocumentHelper.

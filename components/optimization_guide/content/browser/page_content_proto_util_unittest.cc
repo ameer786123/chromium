@@ -5,14 +5,26 @@
 #include "components/optimization_guide/content/browser/page_content_proto_util.h"
 
 #include "base/test/bind.h"
+#include "base/test/gmock_expected_support.h"
 #include "components/optimization_guide/content/browser/page_content_proto_provider.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/content_extraction/ai_page_content.mojom.h"
-#include "third_party/blink/renderer/platform/graphics/color.h"
+#include "third_party/skia/include/core/SkColor.h"
+#include "ui/gfx/geometry/point.h"
 
 namespace optimization_guide {
 namespace {
+
+using optimization_guide::TargetNodeInfo;
+using optimization_guide::proto::AnnotatedPageContent;
+using optimization_guide::proto::ContentNode;
+using optimization_guide::proto::Coordinate;
+using optimization_guide::proto::DocumentIdentifier;
+
+SkColor MakeRgbColor(uint8_t r, uint8_t g, uint8_t b) {
+  return SkColorSetRGB(r, g, b);
+}
 
 blink::mojom::AIPageContentNodePtr CreateContentNode(
     blink::mojom::AIPageContentAttributeType type) {
@@ -34,6 +46,14 @@ blink::mojom::AIPageContentPtr CreatePageContent() {
   page_content->frame_data->frame_interaction_info =
       blink::mojom::AIPageContentFrameInteractionInfo::New();
   return page_content;
+}
+
+optimization_guide::proto::MediaData CreateMediaData() {
+  optimization_guide::proto::MediaData media_data;
+  media_data.set_media_data_type(
+      optimization_guide::proto::MediaDataType::MEDIA_DATA_TYPE_AUDIO);
+  media_data.set_duration_milliseconds(10000);
+  return media_data;
 }
 
 blink::mojom::AIPageContentNodePtr CreateTextNode(
@@ -63,8 +83,9 @@ content::GlobalRenderFrameHostToken CreateFrameToken() {
   return frame_token;
 }
 
-bool ConvertAIPageContentToProto(blink::mojom::AIPageContentPtr& root_content,
-                                 AIPageContentResult& page_content) {
+base::expected<void, std::string> ConvertAIPageContentToProto(
+    blink::mojom::AIPageContentPtr& root_content,
+    AIPageContentResult& page_content) {
   auto main_frame_token = CreateFrameToken();
   AIPageContentMap page_content_map;
   page_content_map[main_frame_token] = std::move(root_content);
@@ -79,6 +100,7 @@ bool ConvertAIPageContentToProto(blink::mojom::AIPageContentPtr& root_content,
           render_frame_info.url = GURL("https://example.com");
           render_frame_info.serialized_server_token =
               main_frame_token.frame_token.ToString();
+          render_frame_info.media_data = CreateMediaData();
           return render_frame_info;
         }
         return std::nullopt;
@@ -140,10 +162,11 @@ TEST(PageContentProtoUtilTest, IframeNodeWithNoData) {
 
   AIPageContentResult page_content;
   FrameTokenSet frame_token_set;
-
-  EXPECT_FALSE(ConvertAIPageContentToProto(
-      blink::mojom::AIPageContentOptions::New(), main_frame_token,
-      page_content_map, get_render_frame_info, frame_token_set, page_content));
+  EXPECT_THAT(ConvertAIPageContentToProto(
+                  blink::mojom::AIPageContentOptions::New(), main_frame_token,
+                  page_content_map, get_render_frame_info, frame_token_set,
+                  page_content),
+              base::test::ErrorIs("iframe missing iframe_data"));
 }
 
 TEST(PageContentProtoUtilTest, IframeDestroyed) {
@@ -181,9 +204,12 @@ TEST(PageContentProtoUtilTest, IframeDestroyed) {
 
   AIPageContentResult page_content;
   FrameTokenSet frame_token_set;
-  EXPECT_FALSE(ConvertAIPageContentToProto(
-      blink::mojom::AIPageContentOptions::New(), main_frame_token,
-      page_content_map, get_render_frame_info, frame_token_set, page_content));
+  EXPECT_THAT(
+      ConvertAIPageContentToProto(blink::mojom::AIPageContentOptions::New(),
+                                  main_frame_token, page_content_map,
+                                  get_render_frame_info, frame_token_set,
+                                  page_content),
+      base::test::ErrorIs("could not find render_frame_info for iframe"));
   ASSERT_TRUE(query_token.has_value());
   EXPECT_EQ(iframe_token.frame_token, *query_token);
 }
@@ -192,10 +218,11 @@ TEST(PageContentProtoUtilTest, Basic) {
   auto root_content = CreatePageContent();
   root_content->root_node->children_nodes.emplace_back(
       CreateTextNode("text", blink::mojom::AIPageContentTextSize::kXS,
-                     /*has_emphasis=*/false, blink::Color(0, 0, 0).Rgb()));
+                     /*has_emphasis=*/false, MakeRgbColor(0, 0, 0)));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -206,19 +233,19 @@ TEST(PageContentProtoUtilTest, ConvertTextInfo) {
   auto root_content = CreatePageContent();
   auto xs_black_text_node =
       CreateTextNode("XS text", blink::mojom::AIPageContentTextSize::kXS,
-                     /*has_emphasis=*/false, blink::Color(0, 0, 0).Rgb());
+                     /*has_emphasis=*/false, MakeRgbColor(0, 0, 0));
   auto s_red_text_node =
       CreateTextNode("S text", blink::mojom::AIPageContentTextSize::kS,
-                     /*has_emphasis=*/true, blink::Color(255, 0, 0).Rgb());
+                     /*has_emphasis=*/true, MakeRgbColor(255, 0, 0));
   auto m_green_text_node =
       CreateTextNode("M text", blink::mojom::AIPageContentTextSize::kM,
-                     /*has_emphasis=*/false, blink::Color(0, 255, 0).Rgb());
+                     /*has_emphasis=*/false, MakeRgbColor(0, 255, 0));
   auto l_blue_text_node =
       CreateTextNode("L text", blink::mojom::AIPageContentTextSize::kL,
-                     /*has_emphasis=*/true, blink::Color(0, 0, 255).Rgb());
+                     /*has_emphasis=*/true, MakeRgbColor(0, 0, 255));
   auto xl_white_text_node =
       CreateTextNode("XL text", blink::mojom::AIPageContentTextSize::kXL,
-                     /*has_emphasis=*/false, blink::Color(255, 255, 255).Rgb());
+                     /*has_emphasis=*/false, MakeRgbColor(255, 255, 255));
   root_content->root_node->children_nodes.emplace_back(
       std::move(xs_black_text_node));
   root_content->root_node->children_nodes.emplace_back(
@@ -231,7 +258,8 @@ TEST(PageContentProtoUtilTest, ConvertTextInfo) {
       std::move(xl_white_text_node));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -239,19 +267,19 @@ TEST(PageContentProtoUtilTest, ConvertTextInfo) {
 
   CheckTextNodeProto(page_content.proto.root_node().children_nodes(0),
                      "XS text", optimization_guide::proto::TEXT_SIZE_XS,
-                     /*has_emphasis=*/false, blink::Color(0, 0, 0).Rgb());
+                     /*has_emphasis=*/false, MakeRgbColor(0, 0, 0));
   CheckTextNodeProto(page_content.proto.root_node().children_nodes(1), "S text",
                      optimization_guide::proto::TEXT_SIZE_S,
-                     /*has_emphasis=*/true, blink::Color(255, 0, 0).Rgb());
+                     /*has_emphasis=*/true, MakeRgbColor(255, 0, 0));
   CheckTextNodeProto(page_content.proto.root_node().children_nodes(2), "M text",
                      optimization_guide::proto::TEXT_SIZE_M_DEFAULT,
-                     /*has_emphasis=*/false, blink::Color(0, 255, 0).Rgb());
+                     /*has_emphasis=*/false, MakeRgbColor(0, 255, 0));
   CheckTextNodeProto(page_content.proto.root_node().children_nodes(3), "L text",
                      optimization_guide::proto::TEXT_SIZE_L,
-                     /*has_emphasis=*/true, blink::Color(0, 0, 255).Rgb());
+                     /*has_emphasis=*/true, MakeRgbColor(0, 0, 255));
   CheckTextNodeProto(page_content.proto.root_node().children_nodes(4),
                      "XL text", optimization_guide::proto::TEXT_SIZE_XL,
-                     /*has_emphasis=*/false, blink::Color(255, 255, 255).Rgb());
+                     /*has_emphasis=*/false, MakeRgbColor(255, 255, 255));
 }
 
 TEST(PageContentProtoUtilTest, AttributeTypeDoesNotMatchData_Text) {
@@ -263,7 +291,8 @@ TEST(PageContentProtoUtilTest, AttributeTypeDoesNotMatchData_Text) {
   root_content->root_node->children_nodes.emplace_back(std::move(text_node));
 
   AIPageContentResult page_content;
-  EXPECT_FALSE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_THAT(ConvertAIPageContentToProto(root_content, page_content),
+              base::test::ErrorIs("image_info present, but node isn't kImage"));
 }
 
 TEST(PageContentProtoUtilTest, ConvertImageInfo) {
@@ -279,7 +308,8 @@ TEST(PageContentProtoUtilTest, ConvertImageInfo) {
   root_content->root_node->children_nodes.emplace_back(std::move(image_node));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -307,7 +337,54 @@ TEST(PageContentProtoUtilTest, AttributeTypeDoesNotMatchData_Image) {
   root_content->root_node->children_nodes.emplace_back(std::move(image_node));
 
   AIPageContentResult page_content;
-  EXPECT_FALSE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_THAT(ConvertAIPageContentToProto(root_content, page_content),
+              base::test::ErrorIs("text_info present, but node isn't kText"));
+}
+
+TEST(PageContentProtoUtilTest, ConvertVideoData) {
+  auto root_content = CreatePageContent();
+  auto video_node =
+      CreateContentNode(blink::mojom::AIPageContentAttributeType::kVideo);
+  video_node->content_attributes->video_data =
+      blink::mojom::AIPageContentVideoData::New();
+  const auto expected_origin = url::Origin::Create(GURL("https://example.com"));
+  const auto expected_url = GURL("https://example.com/video.mp4");
+  video_node->content_attributes->video_data->source_origin = expected_origin;
+  video_node->content_attributes->video_data->url = expected_url;
+  root_content->root_node->children_nodes.emplace_back(std::move(video_node));
+
+  AIPageContentResult page_content;
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
+
+  EXPECT_EQ(page_content.proto.version(),
+            optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
+  ASSERT_EQ(page_content.proto.root_node().children_nodes_size(), 1);
+
+  EXPECT_EQ(page_content.proto.root_node()
+                .children_nodes(0)
+                .content_attributes()
+                .attribute_type(),
+            optimization_guide::proto::CONTENT_ATTRIBUTE_VIDEO);
+  const auto& video_data = page_content.proto.root_node()
+                               .children_nodes(0)
+                               .content_attributes()
+                               .video_data();
+  EXPECT_EQ(video_data.url(), expected_url.spec());
+  AssertValidOrigin(video_data.security_origin(), expected_origin);
+}
+
+TEST(PageContentProtoUtilTest, AttributeTypeDoesNotMatchData_Video) {
+  auto root_content = CreatePageContent();
+  auto video_node =
+      CreateContentNode(blink::mojom::AIPageContentAttributeType::kVideo);
+  video_node->content_attributes->text_info =
+      blink::mojom::AIPageContentTextInfo::New();
+  root_content->root_node->children_nodes.emplace_back(std::move(video_node));
+
+  AIPageContentResult page_content;
+  EXPECT_THAT(ConvertAIPageContentToProto(root_content, page_content),
+              base::test::ErrorIs("text_info present, but node isn't kText"));
 }
 
 TEST(PageContentProtoUtilTest, ConvertAnchorData) {
@@ -333,7 +410,8 @@ TEST(PageContentProtoUtilTest, ConvertAnchorData) {
   root_content->root_node->children_nodes.emplace_back(std::move(anchor_node));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -370,15 +448,26 @@ TEST(PageContentProtoUtilTest, AttributeTypeDoesNotMatchData_Anchor) {
   root_content->root_node->children_nodes.emplace_back(std::move(anchor_node));
 
   AIPageContentResult page_content;
-  EXPECT_FALSE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_THAT(ConvertAIPageContentToProto(root_content, page_content),
+              base::test::ErrorIs("table_data present, but node isn't kTable"));
 }
 
 TEST(PageContentProtoUtilTest, TitleSet) {
   auto root_content = CreatePageContent();
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
   EXPECT_EQ("Page Title", page_content.proto.main_frame_data().title());
+}
+
+TEST(PageContentProtoUtilTest, MediaDataSet) {
+  auto root_content = CreatePageContent();
+
+  AIPageContentResult page_content;
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
+  EXPECT_TRUE(page_content.proto.main_frame_data().has_media_data());
 }
 
 TEST(PageContentProtoUtilTest, ConvertTableData) {
@@ -391,7 +480,8 @@ TEST(PageContentProtoUtilTest, ConvertTableData) {
   root_content->root_node->children_nodes.emplace_back(std::move(table_node));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -417,7 +507,9 @@ TEST(PageContentProtoUtilTest, AttributeTypeDoesNotMatchData_Table) {
   root_content->root_node->children_nodes.emplace_back(std::move(table_node));
 
   AIPageContentResult page_content;
-  EXPECT_FALSE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_THAT(
+      ConvertAIPageContentToProto(root_content, page_content),
+      base::test::ErrorIs("anchor_data present, but node isn't kAnchor"));
 }
 
 TEST(PageContentProtoUtilTest, ConvertTableRowData) {
@@ -448,7 +540,8 @@ TEST(PageContentProtoUtilTest, ConvertTableRowData) {
       std::move(footer_row_node));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -483,7 +576,8 @@ TEST(PageContentProtoUtilTest, AttributeTypeDoesNotMatchData_TableRow) {
       std::move(table_row_node));
 
   AIPageContentResult page_content;
-  EXPECT_FALSE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_THAT(ConvertAIPageContentToProto(root_content, page_content),
+              base::test::ErrorIs("form_data present, but node isn't kForm"));
 }
 
 TEST(PageContentProtoUtilTest, ConvertIframeData) {
@@ -527,6 +621,7 @@ TEST(PageContentProtoUtilTest, ConvertIframeData) {
           render_frame_info.global_frame_token = main_frame_token;
         } else {
           render_frame_info.global_frame_token = iframe_token;
+          render_frame_info.media_data = CreateMediaData();
         }
         render_frame_info.source_origin =
             url::Origin::Create(GURL("https://example.com"));
@@ -538,9 +633,10 @@ TEST(PageContentProtoUtilTest, ConvertIframeData) {
 
   AIPageContentResult page_content;
   FrameTokenSet frame_token_set;
-  EXPECT_TRUE(ConvertAIPageContentToProto(
+  auto result = ConvertAIPageContentToProto(
       blink::mojom::AIPageContentOptions::New(), main_frame_token,
-      page_content_map, get_render_frame_info, frame_token_set, page_content));
+      page_content_map, get_render_frame_info, frame_token_set, page_content);
+  ASSERT_TRUE(result.has_value());
   ASSERT_TRUE(query_token.has_value());
   EXPECT_EQ(iframe_token.frame_token, *query_token);
 
@@ -565,6 +661,9 @@ TEST(PageContentProtoUtilTest, ConvertIframeData) {
   EXPECT_EQ(selection.end_node_id(), 2);
   EXPECT_EQ(selection.start_offset(), 3);
   EXPECT_EQ(selection.end_offset(), 4);
+
+  EXPECT_FALSE(page_content.proto.main_frame_data().has_media_data());
+  EXPECT_TRUE(proto_iframe_data.frame_data().has_media_data());
 }
 
 TEST(PageContentProtoUtilTest, AttributeTypeDoesNotMatchData_Form) {
@@ -576,7 +675,9 @@ TEST(PageContentProtoUtilTest, AttributeTypeDoesNotMatchData_Form) {
   root_content->root_node->children_nodes.emplace_back(std::move(form_node));
 
   AIPageContentResult page_content;
-  EXPECT_FALSE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_THAT(
+      ConvertAIPageContentToProto(root_content, page_content),
+      base::test::ErrorIs("table_row_data present, but node isn't kTableRow"));
 }
 
 TEST(PageContentProtoUtilTest, ConvertGeometry) {
@@ -593,7 +694,8 @@ TEST(PageContentProtoUtilTest, ConvertGeometry) {
   root_content->root_node->children_nodes.emplace_back(std::move(text_node));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -618,53 +720,6 @@ TEST(PageContentProtoUtilTest, ConvertGeometry) {
   EXPECT_TRUE(geometry.is_fixed_or_sticky_position());
 }
 
-TEST(PageContentProtoUtilTest, ConvertNodeInteractionInfo) {
-  auto root_content = CreatePageContent();
-  auto text_node =
-      CreateContentNode(blink::mojom::AIPageContentAttributeType::kText);
-  text_node->content_attributes->node_interaction_info =
-      blink::mojom::AIPageContentNodeInteractionInfo::New();
-  text_node->content_attributes->node_interaction_info->scrolls_overflow_x =
-      true;
-  text_node->content_attributes->node_interaction_info->scrolls_overflow_y =
-      true;
-  text_node->content_attributes->node_interaction_info->is_selectable = true;
-  text_node->content_attributes->node_interaction_info->is_editable = true;
-  text_node->content_attributes->node_interaction_info->can_resize_horizontal =
-      true;
-  text_node->content_attributes->node_interaction_info->can_resize_vertical =
-      true;
-  text_node->content_attributes->node_interaction_info->is_focusable = true;
-  text_node->content_attributes->node_interaction_info->is_draggable = true;
-  text_node->content_attributes->node_interaction_info->is_clickable = true;
-  root_content->root_node->children_nodes.emplace_back(std::move(text_node));
-
-  AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
-
-  EXPECT_EQ(page_content.proto.version(),
-            optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
-  ASSERT_EQ(page_content.proto.root_node().children_nodes_size(), 1);
-  EXPECT_EQ(page_content.proto.root_node()
-                .children_nodes(0)
-                .content_attributes()
-                .attribute_type(),
-            optimization_guide::proto::CONTENT_ATTRIBUTE_TEXT);
-  const auto& interaction_info = page_content.proto.root_node()
-                                     .children_nodes(0)
-                                     .content_attributes()
-                                     .interaction_info();
-  EXPECT_TRUE(interaction_info.scrolls_overflow_x());
-  EXPECT_TRUE(interaction_info.scrolls_overflow_y());
-  EXPECT_TRUE(interaction_info.is_selectable());
-  EXPECT_TRUE(interaction_info.is_editable());
-  EXPECT_TRUE(interaction_info.can_resize_horizontal());
-  EXPECT_TRUE(interaction_info.can_resize_vertical());
-  EXPECT_TRUE(interaction_info.is_focusable());
-  EXPECT_TRUE(interaction_info.is_draggable());
-  EXPECT_TRUE(interaction_info.is_clickable());
-}
-
 TEST(PageContentProtoUtilTest, ConvertPageInteractionInfo) {
   auto root_content = CreatePageContent();
   root_content->page_interaction_info =
@@ -674,7 +729,8 @@ TEST(PageContentProtoUtilTest, ConvertPageInteractionInfo) {
   root_content->page_interaction_info->mouse_position = gfx::Point(10, 20);
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -706,7 +762,8 @@ TEST(PageContentProtoUtilTest, ConvertMainFrameInteractionInfo) {
   root_content->frame_data = std::move(frame_data);
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -744,7 +801,8 @@ TEST(PageContentProtoUtilTest, ConvertAnnotatedRoles) {
       std::move(container_node));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -782,7 +840,8 @@ TEST(PageContentProtoUtilTest, ConvertFormData) {
   root_content->root_node->children_nodes.emplace_back(std::move(form_node));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -818,11 +877,14 @@ TEST(PageContentProtoUtilTest, ConvertFormControlData) {
       ->text = "option text";
   form_control_node->content_attributes->form_control_data->select_options[0]
       ->is_selected = true;
+  form_control_node->content_attributes->form_control_data->redaction_decision =
+      blink::mojom::AIPageContentRedactionDecision::kNoRedactionNecessary;
   root_content->root_node->children_nodes.emplace_back(
       std::move(form_control_node));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -842,6 +904,79 @@ TEST(PageContentProtoUtilTest, ConvertFormControlData) {
   EXPECT_EQ(form_control_data_proto.select_options(0).value(), "option value");
   EXPECT_EQ(form_control_data_proto.select_options(0).text(), "option text");
   EXPECT_TRUE(form_control_data_proto.select_options(0).is_selected());
+  EXPECT_EQ(
+      form_control_data_proto.redaction_decision(),
+      optimization_guide::proto::REDACTION_DECISION_NO_REDACTION_NECESSARY);
+}
+
+TEST(PageContentProtoUtilTest, ConvertFormControlDataRedactionDecision) {
+  auto root_content = CreatePageContent();
+
+  // Test kUnredacted_EmptyPassword
+  auto empty_password_node =
+      CreateContentNode(blink::mojom::AIPageContentAttributeType::kFormControl);
+  empty_password_node->content_attributes->form_control_data =
+      blink::mojom::AIPageContentFormControlData::New();
+  empty_password_node->content_attributes->form_control_data
+      ->form_control_type = blink::mojom::FormControlType::kInputPassword;
+  empty_password_node->content_attributes->form_control_data->field_name =
+      "empty_password_field";
+  empty_password_node->content_attributes->form_control_data->field_value = "";
+  empty_password_node->content_attributes->form_control_data
+      ->redaction_decision =
+      blink::mojom::AIPageContentRedactionDecision::kUnredacted_EmptyPassword;
+  root_content->root_node->children_nodes.emplace_back(
+      std::move(empty_password_node));
+
+  // Test kRedacted_HasBeenPassword
+  auto redacted_password_node =
+      CreateContentNode(blink::mojom::AIPageContentAttributeType::kFormControl);
+  redacted_password_node->content_attributes->form_control_data =
+      blink::mojom::AIPageContentFormControlData::New();
+  redacted_password_node->content_attributes->form_control_data
+      ->form_control_type = blink::mojom::FormControlType::kInputPassword;
+  redacted_password_node->content_attributes->form_control_data->field_name =
+      "redacted_password_field";
+  // field_value is not set when redacted
+  redacted_password_node->content_attributes->form_control_data
+      ->redaction_decision =
+      blink::mojom::AIPageContentRedactionDecision::kRedacted_HasBeenPassword;
+  root_content->root_node->children_nodes.emplace_back(
+      std::move(redacted_password_node));
+
+  AIPageContentResult page_content;
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
+
+  EXPECT_EQ(page_content.proto.version(),
+            optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
+  ASSERT_EQ(page_content.proto.root_node().children_nodes_size(), 2);
+
+  // Test first node: kUnredacted_EmptyPassword
+  const auto& empty_password_proto = page_content.proto.root_node()
+                                         .children_nodes(0)
+                                         .content_attributes()
+                                         .form_control_data();
+  EXPECT_EQ(empty_password_proto.form_control_type(),
+            optimization_guide::proto::FORM_CONTROL_TYPE_INPUT_PASSWORD);
+  EXPECT_EQ(empty_password_proto.field_name(), "empty_password_field");
+  EXPECT_EQ(empty_password_proto.field_value(), "");  // Empty password
+  EXPECT_EQ(
+      empty_password_proto.redaction_decision(),
+      optimization_guide::proto::REDACTION_DECISION_UNREDACTED_EMPTY_PASSWORD);
+
+  // Test second node: kRedacted_HasBeenPassword
+  const auto& redacted_password_proto = page_content.proto.root_node()
+                                            .children_nodes(1)
+                                            .content_attributes()
+                                            .form_control_data();
+  EXPECT_EQ(redacted_password_proto.form_control_type(),
+            optimization_guide::proto::FORM_CONTROL_TYPE_INPUT_PASSWORD);
+  EXPECT_EQ(redacted_password_proto.field_name(), "redacted_password_field");
+  EXPECT_EQ(redacted_password_proto.field_value(), "");  // Empty when redacted
+  EXPECT_EQ(
+      redacted_password_proto.redaction_decision(),
+      optimization_guide::proto::REDACTION_DECISION_REDACTED_HAS_BEEN_PASSWORD);
 }
 
 TEST(PageContentProtoUtilTest, ConvertLabel) {
@@ -852,7 +987,8 @@ TEST(PageContentProtoUtilTest, ConvertLabel) {
   root_content->root_node->children_nodes.emplace_back(std::move(anchor_node));
 
   AIPageContentResult page_content;
-  EXPECT_TRUE(ConvertAIPageContentToProto(root_content, page_content));
+  EXPECT_TRUE(
+      ConvertAIPageContentToProto(root_content, page_content).has_value());
 
   EXPECT_EQ(page_content.proto.version(),
             optimization_guide::proto::ANNOTATED_PAGE_CONTENT_VERSION_1_0);
@@ -862,6 +998,450 @@ TEST(PageContentProtoUtilTest, ConvertLabel) {
   EXPECT_EQ(anchor_attributes.attribute_type(),
             optimization_guide::proto::CONTENT_ATTRIBUTE_ANCHOR);
   EXPECT_EQ(anchor_attributes.label(), "aria label");
+}
+
+// Test helper to set the geometry of a ContentNode.
+void SetGeometry(ContentNode* node, const gfx::Rect& rect) {
+  auto* geometry = node->mutable_content_attributes()->mutable_geometry();
+  auto* bbox = geometry->mutable_visible_bounding_box();
+  bbox->set_x(rect.x());
+  bbox->set_y(rect.y());
+  bbox->set_width(rect.width());
+  bbox->set_height(rect.height());
+}
+
+// Test helper to set the z-order of a ContentNode.
+void SetZOrder(ContentNode* node, int z_order) {
+  node->mutable_content_attributes()
+      ->mutable_interaction_info()
+      ->set_document_scoped_z_order(z_order);
+}
+
+// Test helper to mark a node as an iframe and set its document identifier.
+void SetIframeData(ContentNode* node, const DocumentIdentifier& iframe_doc_id) {
+  auto* iframe_data = node->mutable_content_attributes()->mutable_iframe_data();
+  *(iframe_data->mutable_frame_data()->mutable_document_identifier()) =
+      iframe_doc_id;
+}
+
+// Test helper to set the node ID of a ContentNode.
+void SetNodeID(ContentNode* node, int node_id) {
+  node->mutable_content_attributes()->set_common_ancestor_dom_node_id(node_id);
+}
+
+TEST(FindNodeAtPointTest, NoTargetFound) {
+  AnnotatedPageContent page_content;
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token("main_doc");
+
+  ContentNode* root_node = page_content.mutable_root_node();
+  SetGeometry(root_node, gfx::Rect(0, 0, 100, 100));
+  SetZOrder(root_node, 0);
+
+  ContentNode* child1 = root_node->add_children_nodes();
+  SetGeometry(child1, gfx::Rect(10, 10, 20, 20));
+  SetZOrder(child1, 1);
+
+  std::optional<TargetNodeInfo> result =
+      FindNodeAtPoint(page_content, gfx::Point(500, 500));
+  EXPECT_EQ(result, std::nullopt);
+}
+
+TEST(FindNodeAtPointTest, TargetInMainDocumentBasic) {
+  AnnotatedPageContent page_content;
+  const std::string main_doc_token = "main_doc";
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token(main_doc_token);
+
+  ContentNode* root = page_content.mutable_root_node();
+  SetGeometry(root, gfx::Rect(0, 0, 500, 500));
+  SetZOrder(root, 0);
+
+  ContentNode* target_child = root->add_children_nodes();
+  SetGeometry(target_child, gfx::Rect(50, 50, 100, 100));
+  SetZOrder(target_child, 1);
+
+  std::optional<TargetNodeInfo> result =
+      FindNodeAtPoint(page_content, gfx::Point(75, 75));
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result->document_identifier.serialized_token(), main_doc_token);
+  EXPECT_EQ(result->node, target_child);
+}
+
+TEST(FindNodeAtPointTest, TargetInMainDocumentZOrder) {
+  AnnotatedPageContent page_content;
+  const std::string main_doc_token = "main_doc";
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token(main_doc_token);
+
+  ContentNode* root = page_content.mutable_root_node();
+  SetGeometry(root, gfx::Rect(0, 0, 500, 500));
+  SetZOrder(root, 0);
+
+  ContentNode* child_low_z = root->add_children_nodes();
+  SetGeometry(child_low_z, gfx::Rect(50, 50, 100, 100));
+  SetZOrder(child_low_z, 1);
+
+  ContentNode* child_high_z = root->add_children_nodes();
+  SetGeometry(child_high_z, gfx::Rect(60, 60, 100, 100));
+  // Higher Z-order
+  SetZOrder(child_high_z, 2);
+
+  // Hits both child_low_z and child_high_z
+  std::optional<TargetNodeInfo> result =
+      FindNodeAtPoint(page_content, gfx::Point(70, 70));
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result->document_identifier.serialized_token(), main_doc_token);
+  EXPECT_EQ(result->node, child_high_z);
+}
+
+TEST(FindNodeAtPointTest, TargetInsideIframe) {
+  AnnotatedPageContent page_content;
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token("main_doc");
+
+  ContentNode* root = page_content.mutable_root_node();
+  SetGeometry(root, gfx::Rect(0, 0, 1000, 1000));
+  SetZOrder(root, 0);
+
+  // Setup the iframe node in the main document.
+  ContentNode* iframe_node_in_main_doc = root->add_children_nodes();
+  SetGeometry(iframe_node_in_main_doc, gfx::Rect(50, 50, 500, 500));
+  SetZOrder(iframe_node_in_main_doc, 1);
+
+  DocumentIdentifier iframe_internal_doc_id;
+  const std::string iframe_internal_token = "iframe_doc";
+  iframe_internal_doc_id.set_serialized_token(iframe_internal_token);
+  SetIframeData(iframe_node_in_main_doc, iframe_internal_doc_id);
+
+  // Setup the content *inside* the iframe. Coordinates are absolute. Z-order is
+  // document scoped.
+  ContentNode* iframe_internal_root =
+      iframe_node_in_main_doc->add_children_nodes();
+  SetGeometry(iframe_internal_root, gfx::Rect(50, 50, 500, 500));
+  SetZOrder(iframe_internal_root, 0);
+
+  ContentNode* target_node_in_iframe =
+      iframe_internal_root->add_children_nodes();
+  SetGeometry(target_node_in_iframe, gfx::Rect(100, 100, 50, 50));
+  SetZOrder(target_node_in_iframe, 1);
+
+  std::optional<TargetNodeInfo> result =
+      FindNodeAtPoint(page_content, gfx::Point(120, 120));
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result->document_identifier.serialized_token(),
+            iframe_internal_token);
+  EXPECT_EQ(result->node, target_node_in_iframe);
+}
+
+TEST(FindNodeAtPointTest, TargetInsideIframeLowerZthanParentOverlap) {
+  AnnotatedPageContent page_content;
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token("main_doc");
+
+  ContentNode* root = page_content.mutable_root_node();
+  SetGeometry(root, gfx::Rect(0, 0, 1000, 1000));
+  SetZOrder(root, 0);
+
+  // Set up main frame node that overlaps the iframe, has a lower z-order than
+  // iframe itself but higher than the target node inside iframe.
+  ContentNode* main_frame_node = root->add_children_nodes();
+  SetGeometry(main_frame_node, gfx::Rect(50, 50, 500, 500));
+  SetZOrder(main_frame_node, 2);
+
+  // Setup the iframe node in the main document.
+  ContentNode* iframe_node_in_main_doc = root->add_children_nodes();
+  SetGeometry(iframe_node_in_main_doc, gfx::Rect(50, 50, 500, 500));
+  SetZOrder(iframe_node_in_main_doc, 3);
+
+  DocumentIdentifier iframe_internal_doc_id;
+  const std::string iframe_internal_token = "iframe_doc";
+  iframe_internal_doc_id.set_serialized_token(iframe_internal_token);
+  SetIframeData(iframe_node_in_main_doc, iframe_internal_doc_id);
+
+  // Setup the content *inside* the iframe. Coordinates are absolute. Z-order is
+  // document scoped.
+  ContentNode* iframe_internal_root =
+      iframe_node_in_main_doc->add_children_nodes();
+  SetGeometry(iframe_internal_root, gfx::Rect(50, 50, 500, 500));
+  SetZOrder(iframe_internal_root, 0);
+
+  ContentNode* target_node_in_iframe =
+      iframe_internal_root->add_children_nodes();
+  SetGeometry(target_node_in_iframe, gfx::Rect(50, 50, 500, 500));
+  SetZOrder(target_node_in_iframe, 1);
+
+  std::optional<TargetNodeInfo> result =
+      FindNodeAtPoint(page_content, gfx::Point(120, 120));
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result->document_identifier.serialized_token(),
+            iframe_internal_token);
+  EXPECT_EQ(result->node, target_node_in_iframe);
+}
+
+TEST(FindNodeAtPointTest, IframeHigherZThanOtherNode) {
+  AnnotatedPageContent page_content;
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token("main_doc");
+
+  ContentNode* root = page_content.mutable_root_node();
+  SetGeometry(root, gfx::Rect(0, 0, 1000, 1000));
+  SetZOrder(root, 0);
+
+  // A regular node in the main document.
+  ContentNode* main_doc_node = root->add_children_nodes();
+  SetGeometry(main_doc_node, gfx::Rect(100, 100, 200, 200));
+  SetZOrder(main_doc_node, 1);
+
+  // An iframe node that also covers the coordinate, but has a higher Z-order.
+  ContentNode* iframe_node_in_main_doc = root->add_children_nodes();
+  SetGeometry(iframe_node_in_main_doc, gfx::Rect(100, 100, 200, 200));
+  SetZOrder(iframe_node_in_main_doc, 2);
+
+  DocumentIdentifier iframe_internal_doc_id;
+  const std::string iframe_internal_token = "iframe_doc";
+  iframe_internal_doc_id.set_serialized_token(iframe_internal_token);
+  SetIframeData(iframe_node_in_main_doc, iframe_internal_doc_id);
+
+  // Content inside the iframe for the recursive call to find a target.
+  ContentNode* iframe_internal_root =
+      iframe_node_in_main_doc->add_children_nodes();
+  SetGeometry(iframe_internal_root, gfx::Rect(100, 100, 200, 200));
+  SetZOrder(iframe_internal_root, 0);
+
+  ContentNode* target_node_in_iframe =
+      iframe_internal_root->add_children_nodes();
+  SetGeometry(target_node_in_iframe, gfx::Rect(150, 150, 50, 50));
+  SetZOrder(target_node_in_iframe, 1);
+
+  std::optional<TargetNodeInfo> result =
+      FindNodeAtPoint(page_content, gfx::Point(160, 160));
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result->document_identifier.serialized_token(),
+            iframe_internal_token);
+  EXPECT_EQ(result->node, target_node_in_iframe);
+}
+
+TEST(FindNodeAtPointTest, TargetMatchesIframeNodeButNotIframeContents) {
+  AnnotatedPageContent page_content;
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token("main_doc");
+
+  ContentNode* root = page_content.mutable_root_node();
+  SetGeometry(root, gfx::Rect(0, 0, 1000, 1000));
+  SetZOrder(root, 0);
+
+  // Setup the iframe node in the main document.
+  ContentNode* iframe_node_in_main_doc = root->add_children_nodes();
+  SetGeometry(iframe_node_in_main_doc, gfx::Rect(50, 50, 500, 500));
+  SetZOrder(iframe_node_in_main_doc, 1);
+
+  DocumentIdentifier iframe_internal_doc_id;
+  const std::string iframe_internal_token = "iframe_doc";
+  iframe_internal_doc_id.set_serialized_token(iframe_internal_token);
+  SetIframeData(iframe_node_in_main_doc, iframe_internal_doc_id);
+
+  // Setup the content *inside* the iframe. Coordinates are absolute. Z-order is
+  // document scoped.
+  ContentNode* iframe_internal_root =
+      iframe_node_in_main_doc->add_children_nodes();
+  // Note here the iframe's document does not span the entire iframe node bounds
+  // in main frame. This is possible when iframe node has border and padding in
+  // main frame.
+  SetGeometry(iframe_internal_root, gfx::Rect(100, 100, 400, 400));
+  SetZOrder(iframe_internal_root, 0);
+
+  ContentNode* child_node_in_iframe =
+      iframe_internal_root->add_children_nodes();
+  SetGeometry(child_node_in_iframe, gfx::Rect(100, 100, 400, 400));
+  SetZOrder(child_node_in_iframe, 1);
+
+  std::optional<TargetNodeInfo> result =
+      FindNodeAtPoint(page_content, gfx::Point(60, 60));
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result->document_identifier.serialized_token(), "main_doc");
+  EXPECT_EQ(result->node, iframe_node_in_main_doc);
+}
+
+TEST(FindNodeWithIDTest, NodeNotFound) {
+  AnnotatedPageContent page_content;
+  std::string main_doc_token = "main_doc";
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token(main_doc_token);
+
+  ContentNode* root_node = page_content.mutable_root_node();
+  SetNodeID(root_node, 1);
+
+  ContentNode* child1 = root_node->add_children_nodes();
+  SetNodeID(child1, 2);
+
+  // Node ID that doesn't exist.
+  const int target_node_id = 999;
+
+  std::optional<TargetNodeInfo> result =
+      FindNodeWithID(page_content, main_doc_token, target_node_id);
+  EXPECT_EQ(result, std::nullopt);
+}
+
+TEST(FindNodeWithIDTest, TargetInMainDocument) {
+  AnnotatedPageContent page_content;
+  const std::string main_doc_token = "main_doc";
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token(main_doc_token);
+
+  ContentNode* root = page_content.mutable_root_node();
+  SetNodeID(root, 1);
+
+  ContentNode* child1 = root->add_children_nodes();
+  SetNodeID(child1, 2);
+
+  ContentNode* target_child = root->add_children_nodes();
+  const int target_node_id = 3;
+  SetNodeID(target_child, target_node_id);
+
+  std::optional<TargetNodeInfo> result =
+      FindNodeWithID(page_content, main_doc_token, target_node_id);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result->document_identifier.serialized_token(), main_doc_token);
+  EXPECT_EQ(result->node, target_child);
+}
+
+TEST(FindNodeWithIDTest, TargetInsideIframe) {
+  AnnotatedPageContent page_content;
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token("main_doc");
+
+  ContentNode* root = page_content.mutable_root_node();
+  SetNodeID(root, 1);
+
+  // Setup the iframe node in the main document.
+  ContentNode* iframe_node_in_main_doc = root->add_children_nodes();
+  SetNodeID(iframe_node_in_main_doc, 2);
+
+  DocumentIdentifier iframe_internal_doc_id;
+  const std::string iframe_internal_token = "iframe_doc";
+  iframe_internal_doc_id.set_serialized_token(iframe_internal_token);
+  SetIframeData(iframe_node_in_main_doc, iframe_internal_doc_id);
+
+  // Setup the content *inside* the iframe.
+  ContentNode* iframe_internal_root =
+      iframe_node_in_main_doc->add_children_nodes();
+  SetNodeID(iframe_internal_root, 3);
+
+  ContentNode* target_node_in_iframe =
+      iframe_internal_root->add_children_nodes();
+  const int target_node_id = 4;
+  SetNodeID(target_node_in_iframe, target_node_id);
+
+  std::optional<TargetNodeInfo> result =
+      FindNodeWithID(page_content, iframe_internal_token, target_node_id);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result->document_identifier.serialized_token(),
+            iframe_internal_token);
+  EXPECT_EQ(result->node, target_node_in_iframe);
+}
+
+TEST(FindNodeWithIDTest, TargetInsideNestedIframe) {
+  AnnotatedPageContent page_content;
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token("main_doc");
+
+  ContentNode* root = page_content.mutable_root_node();
+  SetNodeID(root, 1);
+
+  // Outer iframe
+  ContentNode* outer_iframe_node = root->add_children_nodes();
+  SetNodeID(outer_iframe_node, 2);
+  DocumentIdentifier outer_iframe_doc_id;
+  const std::string outer_iframe_token = "outer_iframe_doc";
+  outer_iframe_doc_id.set_serialized_token(outer_iframe_token);
+  SetIframeData(outer_iframe_node, outer_iframe_doc_id);
+
+  ContentNode* outer_iframe_root = outer_iframe_node->add_children_nodes();
+  SetNodeID(outer_iframe_root, 3);
+
+  // Inner iframe
+  ContentNode* inner_iframe_node = outer_iframe_root->add_children_nodes();
+  SetNodeID(inner_iframe_node, 4);
+  DocumentIdentifier inner_iframe_doc_id;
+  const std::string inner_iframe_token = "inner_iframe_doc";
+  inner_iframe_doc_id.set_serialized_token(inner_iframe_token);
+  SetIframeData(inner_iframe_node, inner_iframe_doc_id);
+
+  ContentNode* inner_iframe_root = inner_iframe_node->add_children_nodes();
+  SetNodeID(inner_iframe_root, 5);
+
+  // Target node
+  ContentNode* target_node = inner_iframe_root->add_children_nodes();
+  const int target_node_id = 6;
+  SetNodeID(target_node, target_node_id);
+
+  std::optional<TargetNodeInfo> result =
+      FindNodeWithID(page_content, inner_iframe_token, target_node_id);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result->document_identifier.serialized_token(), inner_iframe_token);
+  EXPECT_EQ(result->node, target_node);
+}
+
+TEST(FindNodeWithIDTest, SameNodeIDInDifferentDocuments) {
+  AnnotatedPageContent page_content;
+  page_content.mutable_main_frame_data()
+      ->mutable_document_identifier()
+      ->set_serialized_token("main_doc");
+
+  ContentNode* root = page_content.mutable_root_node();
+  SetNodeID(root, 1);
+
+  // Node in the main document with the target ID.
+  ContentNode* main_doc_node = root->add_children_nodes();
+  const int target_node_id = 123;
+  SetNodeID(main_doc_node, target_node_id);
+
+  // Iframe setup
+  ContentNode* iframe_node_in_main_doc = root->add_children_nodes();
+  SetNodeID(iframe_node_in_main_doc, 2);
+  DocumentIdentifier iframe_doc_id;
+  const std::string iframe_token = "iframe_doc";
+  iframe_doc_id.set_serialized_token(iframe_token);
+  SetIframeData(iframe_node_in_main_doc, iframe_doc_id);
+
+  ContentNode* iframe_root = iframe_node_in_main_doc->add_children_nodes();
+  SetNodeID(iframe_root, 3);
+
+  // Node in the iframe with the same target ID.
+  ContentNode* iframe_node = iframe_root->add_children_nodes();
+  SetNodeID(iframe_node, target_node_id);
+
+  // Search in main document.
+  std::optional<TargetNodeInfo> result_main =
+      FindNodeWithID(page_content, "main_doc", target_node_id);
+  EXPECT_TRUE(result_main.has_value());
+  EXPECT_EQ(result_main->document_identifier.serialized_token(), "main_doc");
+  EXPECT_EQ(result_main->node, main_doc_node);
+
+  // Search in iframe document.
+  std::optional<TargetNodeInfo> result_iframe =
+      FindNodeWithID(page_content, iframe_token, target_node_id);
+  EXPECT_TRUE(result_iframe.has_value());
+  EXPECT_EQ(result_iframe->document_identifier.serialized_token(),
+            iframe_token);
+  EXPECT_EQ(result_iframe->node, iframe_node);
+
+  // Search with a non-existent document identifier.
+  std::optional<TargetNodeInfo> result_wrong_doc =
+      FindNodeWithID(page_content, "wrong_doc", target_node_id);
+  EXPECT_EQ(result_wrong_doc, std::nullopt);
 }
 
 }  // namespace

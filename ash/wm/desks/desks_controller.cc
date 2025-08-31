@@ -2,14 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/wm/desks/desks_controller.h"
 
 #include <algorithm>
+#include <array>
 #include <utility>
 
 #include "ash/accessibility/accessibility_controller.h"
@@ -64,6 +60,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -125,7 +122,7 @@ constexpr base::TimeDelta kDeskTraversalsTimeout = base::Seconds(5);
 // its "close" hooks before being forcefully closed.
 base::TimeDelta g_close_all_window_close_timeout = base::Seconds(1);
 
-constexpr int kDeskDefaultNameIds[] = {
+constexpr auto kDeskDefaultNameIds = std::to_array<int>({
     IDS_ASH_DESKS_DESK_1_MINI_VIEW_TITLE,
     IDS_ASH_DESKS_DESK_2_MINI_VIEW_TITLE,
     IDS_ASH_DESKS_DESK_3_MINI_VIEW_TITLE,
@@ -142,7 +139,7 @@ constexpr int kDeskDefaultNameIds[] = {
     IDS_ASH_DESKS_DESK_14_MINI_VIEW_TITLE,
     IDS_ASH_DESKS_DESK_15_MINI_VIEW_TITLE,
     IDS_ASH_DESKS_DESK_16_MINI_VIEW_TITLE,
-};
+});
 
 // Appends the given |windows| to the end of the currently active overview mode
 // session such that the most-recently used window is added first. If
@@ -245,7 +242,7 @@ bool IsParentSwitchableContainer(const aura::Window* window) {
 
 bool IsApplistActiveInTabletMode(const aura::Window* active_window) {
   DCHECK(active_window);
-  if (!display::Screen::GetScreen()->InTabletMode()) {
+  if (!display::Screen::Get()->InTabletMode()) {
     return false;
   }
 
@@ -382,12 +379,6 @@ class DesksController::DeskTraversalsMetricsHelper {
   void OnAnimationFinished(int visible_desk_changes) {
     if (timer_.IsRunning())
       count_ += visible_desk_changes;
-  }
-
-  // Fires |timer_| immediately.
-  void FireTimerForTesting() {
-    if (timer_.IsRunning())
-      timer_.FireNow();
   }
 
  private:
@@ -647,7 +638,6 @@ void DesksController::NewDesk(DesksCreationRemovalSource source,
     SetDeviceUsesDesksPref(prefs, true);
     desks_restore_util::UpdatePrimaryUserDeskGuidsPrefs();
     desks_restore_util::UpdatePrimaryUserDeskNamesPrefs();
-    desks_restore_util::UpdatePrimaryUserDeskLacrosProfileIdPrefs();
     desks_restore_util::UpdatePrimaryUserDeskMetricsPrefs();
     UMA_HISTOGRAM_ENUMERATION(kNewDeskHistogramName, source);
     ReportDesksCountHistogram();
@@ -722,7 +712,6 @@ void DesksController::ReorderDesk(int old_index, int new_index) {
   // right order.
   desks_restore_util::UpdatePrimaryUserDeskNamesPrefs();
   desks_restore_util::UpdatePrimaryUserDeskGuidsPrefs();
-  desks_restore_util::UpdatePrimaryUserDeskLacrosProfileIdPrefs();
   desks_restore_util::UpdatePrimaryUserDeskMetricsPrefs();
 
   // 2. For multi-profile switching, update all affected active desk index in
@@ -1622,10 +1611,6 @@ void DesksController::OnFirstSessionStarted() {
   desks_restore_util::RestorePrimaryUserDesks();
 }
 
-void DesksController::FireMetricsTimerForTesting() {
-  metrics_helper_->FireTimerForTesting();
-}
-
 void DesksController::ResetAnimation() {
   animation_.reset();
 }
@@ -1979,7 +1964,6 @@ void DesksController::RemoveDeskInternal(const Desk* desk,
 
   desks_restore_util::UpdatePrimaryUserDeskNamesPrefs();
   desks_restore_util::UpdatePrimaryUserDeskGuidsPrefs();
-  desks_restore_util::UpdatePrimaryUserDeskLacrosProfileIdPrefs();
   desks_restore_util::UpdatePrimaryUserDeskMetricsPrefs();
 
   DCHECK_LE(available_container_ids_.size(), desks_util::GetMaxNumberOfDesks());

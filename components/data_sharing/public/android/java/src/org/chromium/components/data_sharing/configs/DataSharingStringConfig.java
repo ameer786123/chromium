@@ -18,7 +18,7 @@ import java.util.Map;
 @NullMarked
 public class DataSharingStringConfig {
 
-    private Map<Integer, Integer> mResourceIds;
+    private final Map<Integer, Integer> mResourceIds;
 
     public DataSharingStringConfig() {
         mResourceIds = new HashMap<>();
@@ -38,7 +38,7 @@ public class DataSharingStringConfig {
 
     // Builder class
     public static class Builder {
-        private Map<Integer, Integer> mResourceIds = new HashMap<>();
+        private final Map<Integer, Integer> mResourceIds = new HashMap<>();
 
         /**
          * Sets the resource ID for the given key.
@@ -85,6 +85,7 @@ public class DataSharingStringConfig {
             JOIN_GROUP_IS_FULL_ERROR_BODY,
             ACTIVITY_LOGS_TITLE,
             LET_ANYONE_JOIN_GROUP_WHEN_FULL_DESCRIPTION,
+            SHARING_DISABLED_DESCRIPTION,
         })
         public @interface Key {}
 
@@ -112,5 +113,6 @@ public class DataSharingStringConfig {
         public static final int JOIN_GROUP_IS_FULL_ERROR_BODY = 21;
         public static final int ACTIVITY_LOGS_TITLE = 22;
         public static final int LET_ANYONE_JOIN_GROUP_WHEN_FULL_DESCRIPTION = 23;
+        public static final int SHARING_DISABLED_DESCRIPTION = 24;
     }
 }

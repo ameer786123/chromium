@@ -50,13 +50,13 @@ class HttpStreamPool::Job {
         const = 0;
 
     // True when IP-based pooling is enabled.
-    virtual bool enable_ip_based_pooling() const = 0;
+    virtual bool enable_ip_based_pooling_for_h2() const = 0;
 
     // True when alternative services is enabled.
     virtual bool enable_alternative_services() const = 0;
 
-    // True when HTTP/1.1 is allowed.
-    virtual bool is_http1_allowed() const = 0;
+    // Returns the set of ALPNs that are allowed for this job.
+    virtual NextProtoSet allowed_alpns() const = 0;
 
     // Returns the proxy info.
     virtual const ProxyInfo& proxy_info() const = 0;
@@ -87,6 +87,7 @@ class HttpStreamPool::Job {
   // `delegate` must outlive `this`. For a stream request, `num_streams` must
   // not be specified. For a preconnect, `num_streams` must be specified.
   Job(Delegate* delegate,
+      JobType type,
       Group* group,
       quic::ParsedQuicVersion quic_version,
       NextProto expected_protocol,
@@ -99,10 +100,6 @@ class HttpStreamPool::Job {
 
   // Starts this job.
   void Start();
-
-  // Resumes this job. Must be called only when Group::CanStartJob() returns
-  // false.
-  void Resume();
 
   // Returns the LoadState of this job.
   LoadState GetLoadState() const;
@@ -142,8 +139,8 @@ class HttpStreamPool::Job {
 
   RespectLimits respect_limits() const { return delegate_->respect_limits(); }
 
-  bool enable_ip_based_pooling() const {
-    return delegate_->enable_ip_based_pooling();
+  bool enable_ip_based_pooling_for_h2() const {
+    return delegate_->enable_ip_based_pooling_for_h2();
   }
 
   bool enable_alternative_services() const {
@@ -170,7 +167,7 @@ class HttpStreamPool::Job {
 
   size_t num_streams() const { return num_streams_; }
 
-  bool IsPreconnect() const { return num_streams_ > 0; }
+  JobType type() const { return type_; }
 
   const ConnectionAttempts& connection_attempts() const {
     return connection_attempts_;
@@ -178,22 +175,17 @@ class HttpStreamPool::Job {
 
   base::TimeTicks create_time() const { return create_time_; }
 
-  base::TimeDelta CreateToResumeTime() const;
-
  private:
-  AttemptManager* attempt_manager() const;
-
-  void StartInternal();
-
   const raw_ptr<Delegate> delegate_;
-  raw_ptr<Group> group_;
+  const JobType type_;
+  raw_ptr<AttemptManager> attempt_manager_;
+
   const quic::ParsedQuicVersion quic_version_;
   const NextProtoSet allowed_alpns_;
   const NetLogWithSource request_net_log_;
   const NetLogWithSource job_net_log_;
   const size_t num_streams_;
   const base::TimeTicks create_time_;
-  base::TimeTicks resume_time_;
 
   std::optional<int> result_;
   std::optional<NextProto> negotiated_protocol_;

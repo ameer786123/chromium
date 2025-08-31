@@ -33,6 +33,7 @@
 #include "ui/compositor/layer.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/range/range.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
@@ -301,14 +302,14 @@ std::unique_ptr<views::Widget> DisclaimerView::CreateWidget(
       views::Widget::InitParams::CLIENT_OWNS_WIDGET,
       views::Widget::InitParams::TYPE_POPUP);
   const gfx::Rect work_area(
-      display::Screen::GetScreen()->GetDisplayNearestWindow(root).work_area());
+      display::Screen::Get()->GetDisplayNearestWindow(root).work_area());
   params.delegate = delegate.release();
   params.parent =
       Shell::GetContainer(root, kShellWindowId_CaptureModeSearchResultsPanel);
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
   params.activatable = views::Widget::InitParams::Activatable::kYes;
   params.shadow_elevation = 2;
-  params.corner_radius = kRadius;
+  params.rounded_corners = gfx::RoundedCornersF(kRadius);
   params.shadow_type = views::Widget::InitParams::ShadowType::kDrop;
 
   const int widget_height = disclaimer_view->GetPreferredSize().height();

@@ -10,11 +10,13 @@
 #include <optional>
 #include <utility>
 
+#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
 #include "ash/public/cpp/login/login_utils.h"
 #include "ash/public/cpp/login_screen.h"
 #include "ash/public/cpp/login_screen_model.h"
+#include "ash/public/cpp/token_handle_store.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -26,7 +28,6 @@
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
-#include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/login/helper.h"
 #include "chrome/browser/ash/login/lock/screen_locker.h"
 #include "chrome/browser/ash/login/lock_screen_utils.h"
@@ -35,6 +36,7 @@
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_storage.h"
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_utils.h"
 #include "chrome/browser/ash/login/reauth_stats.h"
+#include "chrome/browser/ash/login/signin/token_handle_store_factory.h"
 #include "chrome/browser/ash/login/smart_lock/smart_lock_service.h"
 #include "chrome/browser/ash/login/users/default_user_image/default_user_images.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
@@ -50,6 +52,7 @@
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "chromeos/ash/components/proximity_auth/screenlock_bridge.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
@@ -59,6 +62,7 @@
 #include "chromeos/dbus/tpm_manager/tpm_manager_client.h"
 #include "components/account_id/account_id.h"
 #include "components/prefs/pref_service.h"
+#include "components/session_manager/core/session_manager.h"
 #include "components/signin/public/identity_manager/account_managed_status_finder.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/multi_user/multi_user_sign_in_policy.h"
@@ -585,12 +589,12 @@ void UserSelectionScreen::CheckUserStatus(const AccountId& account_id) {
     return;
   }
 
-  if (!token_handle_util_.get()) {
-    token_handle_util_ = std::make_unique<TokenHandleUtil>();
+  if (!token_handle_store_.get()) {
+    token_handle_store_ = TokenHandleStoreFactory::Get()->GetTokenHandleStore();
   }
 
-  if (token_handle_util_->HasToken(account_id)) {
-    token_handle_util_->IsReauthRequired(
+  if (token_handle_store_->HasToken(account_id)) {
+    token_handle_store_->IsReauthRequired(
         account_id,
         ProfileHelper::Get()->GetSigninProfile()->GetURLLoaderFactory(),
         base::BindOnce(&UserSelectionScreen::OnUserStatusChecked,
@@ -888,7 +892,7 @@ UserSelectionScreen::UpdateAndReturnUserListForAsh() {
       user_info.public_account_info->show_advanced_view = has_multiple_locales;
       // Do not show expanded view when in demo mode.
       user_info.public_account_info->show_expanded_view =
-          !DemoSession::IsDeviceInDemoMode();
+          !ash::demo_mode::IsDeviceInDemoMode();
     }
 
     user_info.can_remove = CanRemoveUser(user);

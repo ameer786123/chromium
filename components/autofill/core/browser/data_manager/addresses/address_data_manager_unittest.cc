@@ -12,6 +12,7 @@
 #include "base/scoped_observation.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/gmock_callback_support.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/uuid.h"
 #include "build/buildflag.h"
@@ -88,7 +89,9 @@ class AddressDataManagerTest : public testing::Test {
         profile_web_database_,
         base::SingleThreadTaskRunner::GetCurrentDefault());
     profile_database_service_->Init(base::NullCallback());
-    ResetAddressDataManager();
+    MakePrimaryAccountAvailable(/*use_sync_transport_mode=*/false,
+                                identity_test_env_, sync_service_);
+    RecreateAddressDataManager();
   }
 
   void TearDown() override { profile_web_database_->ShutdownDatabase(); }
@@ -106,10 +109,7 @@ class AddressDataManagerTest : public testing::Test {
     run_loop.Run();
   }
 
-  void ResetAddressDataManager(bool use_sync_transport_mode = false) {
-    address_data_manager_.reset();
-    MakePrimaryAccountAvailable(use_sync_transport_mode, identity_test_env_,
-                                sync_service_);
+  void RecreateAddressDataManager() {
     address_data_manager_ = std::make_unique<AddressDataManager>(
         profile_database_service_, prefs_.get(), prefs_.get(), &sync_service_,
         identity_test_env_.identity_manager(), &strike_database_,
@@ -302,40 +302,6 @@ TEST_F(AddressDataManagerTest, GetProfiles_Order) {
                                    Pointee(profile3)));
 }
 
-// Tests that `GetProfiles()` and `GetProfilesByRecordType()` filters incomplete
-// H/W addresses.
-TEST_F(AddressDataManagerTest, GetProfiles_CompletenessFiltering) {
-  AutofillProfile local_profile = test::GetFullProfile();
-  AutofillProfile regular_account_profile = test::GetFullProfile2();
-  test_api(regular_account_profile)
-      .set_record_type(AutofillProfile::RecordType::kAccount);
-  AutofillProfile complete_home_profile = test::GetFullCanadianProfile();
-  test_api(complete_home_profile)
-      .set_record_type(AutofillProfile::RecordType::kAccountHome);
-  // `GetIncompleteProfile1()` is only missing a phone number, but is not
-  // lacking any address information. `GetIncompleteProfile2()` is.
-  AutofillProfile incomplete_work_profile = test::GetIncompleteProfile2();
-  ASSERT_FALSE(incomplete_work_profile.HasInfo(ADDRESS_HOME_STREET_ADDRESS));
-  test_api(incomplete_work_profile)
-      .set_record_type(AutofillProfile::RecordType::kAccountWork);
-
-  AddProfileToAddressDataManager(local_profile);
-  AddProfileToAddressDataManager(regular_account_profile);
-  AddProfileToAddressDataManager(complete_home_profile);
-  AddProfileToAddressDataManager(incomplete_work_profile);
-
-  EXPECT_THAT(address_data_manager().GetProfiles(),
-              testing::UnorderedElementsAre(Pointee(local_profile),
-                                            Pointee(regular_account_profile),
-                                            Pointee(complete_home_profile)));
-  EXPECT_THAT(address_data_manager().GetProfilesByRecordType(
-                  AutofillProfile::RecordType::kAccountHome),
-              testing::UnorderedElementsAre(Pointee(complete_home_profile)));
-  EXPECT_THAT(address_data_manager().GetProfilesByRecordType(
-                  AutofillProfile::RecordType::kAccountWork),
-              testing::IsEmpty());
-}
-
 // Test that profiles are not shown if |kAutofillProfileEnabled| is set to
 // |false|.
 TEST_F(AddressDataManagerTest, GetProfilesToSuggest_ProfileAutofillDisabled) {
@@ -409,9 +375,9 @@ TEST_F(AddressDataManagerTest, GetProfilesForSettings) {
   local_profile.usage_history().set_modification_date(kSomeLaterTime);
   AddProfileToAddressDataManager(local_profile);
 
-  EXPECT_THAT(address_data_manager().GetProfilesForSettings(),
-              testing::ElementsAre(testing::Pointee(local_profile),
-                                   testing::Pointee(account_profile)));
+  EXPECT_THAT(
+      address_data_manager().GetProfilesForSettings(),
+      testing::ElementsAre(Pointee(local_profile), Pointee(account_profile)));
 }
 
 // Adding, updating, removing operations without waiting in between.
@@ -643,10 +609,10 @@ TEST_F(AddressDataManagerTest, AddUpdateRemoveProfiles) {
   EXPECT_THAT(address_data_manager().GetProfiles(),
               UnorderedElementsAre(Pointee(profile0), Pointee(profile2)));
 
-  // Reset the PersonalDataManager.  This tests that the personal data was saved
-  // to the web database, and that we can load the profiles from the web
+  // Recreate the address data manager. This tests that the address data was
+  // saved to the web database, and that we can load the profiles from the web
   // database.
-  ResetAddressDataManager();
+  RecreateAddressDataManager();
 
   // Verify that we've loaded the profiles from the web database.
   EXPECT_THAT(address_data_manager().GetProfiles(),
@@ -782,14 +748,6 @@ TEST_F(AddressDataManagerTest, IsEligibleForAddressAccountStorage) {
   EXPECT_FALSE(address_data_manager().IsEligibleForAddressAccountStorage());
 }
 
-TEST_F(AddressDataManagerTest, IsCountryEligibleForAccountStorage) {
-  base::test::ScopedFeatureList feature;
-  feature.InitAndDisableFeature(
-      features::kAutofillEnableAccountStorageForIneligibleCountries);
-  EXPECT_TRUE(address_data_manager().IsCountryEligibleForAccountStorage("AT"));
-  EXPECT_FALSE(address_data_manager().IsCountryEligibleForAccountStorage("IR"));
-}
-
 TEST_F(AddressDataManagerTest, MigrateProfileToAccount) {
   const AutofillProfile kLocalProfile = test::GetFullProfile();
   ASSERT_EQ(kLocalProfile.record_type(),
@@ -854,10 +812,10 @@ TEST_F(AddressDataManagerTest, SetEmptyProfile) {
   // Add the empty profile to the database.
   AddProfileToAddressDataManager(profile0);
 
-  // Reset the PersonalDataManager.  This tests that the personal data was saved
-  // to the web database, and that we can load the profiles from the web
+  // Recreate the address data manager. This tests that the address data was
+  // saved to the web database, and that we can load the profiles from the web
   // database.
-  ResetAddressDataManager();
+  RecreateAddressDataManager();
 
   // Verify that we've loaded the profiles from the web database.
   ASSERT_EQ(0U, address_data_manager().GetProfiles().size());
@@ -1253,8 +1211,10 @@ TEST_F(AddressDataManagerTest,
 }
 
 TEST_F(AddressDataManagerTest, AutofillSyncToggleAvailableInTransportMode) {
-  ResetAddressDataManager(
-      /*use_sync_transport_mode=*/true);
+  identity_test_env_.ClearPrimaryAccount();
+  MakePrimaryAccountAvailable(/*use_sync_transport_mode=*/true,
+                              identity_test_env_, sync_service_);
+  RecreateAddressDataManager();
   const CoreAccountInfo& account = sync_service_.GetAccountInfo();
   identity_test_env_.SimulateSuccessfulFetchOfAccountInfo(
       account.account_id, account.email, account.gaia,
@@ -1268,6 +1228,26 @@ TEST_F(AddressDataManagerTest, AutofillSyncToggleAvailableInTransportMode) {
   EXPECT_FALSE(address_data_manager().IsAutofillSyncToggleAvailable());
 }
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
+// Tests that any `kAccountNameEmail` is created on construction of
+// `AddressDataManager`.
+TEST_F(AddressDataManagerTest, CreateAccountNameEmailProfileAfterInitalLoad) {
+  base::test::ScopedFeatureList feature_list{
+      features::kAutofillEnableSupportForNameAndEmail};
+
+  const CoreAccountInfo core_info =
+      identity_test_env_.identity_manager()->GetPrimaryAccountInfo(
+          signin::ConsentLevel::kSignin);
+  identity_test_env_.SimulateSuccessfulFetchOfAccountInfo(
+      core_info.account_id, core_info.email, core_info.gaia, "", "Full Name",
+      "Full", "en-US", "");
+  RecreateAddressDataManager();
+
+  EXPECT_THAT(address_data_manager().GetProfiles(),
+              ElementsAre(testing::Property(
+                  &AutofillProfile::record_type,
+                  AutofillProfile::RecordType::kAccountNameEmail)));
+}
 
 }  // namespace
 

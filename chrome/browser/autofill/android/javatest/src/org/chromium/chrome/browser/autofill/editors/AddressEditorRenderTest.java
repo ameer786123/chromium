@@ -44,7 +44,6 @@ import org.chromium.chrome.browser.autofill.PersonalDataManagerFactory;
 import org.chromium.chrome.browser.autofill.PhoneNumberUtil;
 import org.chromium.chrome.browser.autofill.PhoneNumberUtilJni;
 import org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.Delegate;
-import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncher;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.night_mode.ChromeNightModeTestUtils;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -52,16 +51,17 @@ import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.components.autofill.AutofillAddressEditorUiInfo;
 import org.chromium.components.autofill.AutofillAddressUiComponent;
 import org.chromium.components.autofill.AutofillProfile;
 import org.chromium.components.autofill.FieldType;
 import org.chromium.components.autofill.RecordType;
 import org.chromium.components.signin.base.CoreAccountInfo;
-import org.chromium.components.signin.base.GaiaId;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.sync.SyncService;
+import org.chromium.google_apis.gaia.GaiaId;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.test.util.NightModeTestUtils;
 import org.chromium.ui.test.util.RenderTestRule;
@@ -122,10 +122,22 @@ public class AddressEditorRenderTest {
                     .setLanguageCode("en-US")
                     .build();
 
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    private static final AutofillProfile sHomeProfile =
+            AutofillProfile.builder()
+                    .setRecordType(RecordType.ACCOUNT_HOME)
+                    .setStreetAddress("111 First St")
+                    .setRegion("CA")
+                    .setLocality("Los Angeles")
+                    .setPostalCode("90291")
+                    .setCountryCode("US")
+                    .build();
+
+    @Rule
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @ParameterAnnotations.ClassParameter
-    private static List<ParameterSet> sClassParams =
+    private static final List<ParameterSet> sClassParams =
             new NightModeTestUtils.NightModeParams().getParameters();
 
     @Rule
@@ -144,7 +156,6 @@ public class AddressEditorRenderTest {
     @Mock private SyncService mSyncService;
     @Mock private PersonalDataManager mPersonalDataManager;
     @Mock private Profile mProfile;
-    @Mock private HelpAndFeedbackLauncher mLauncher;
     @Mock private Delegate mDelegate;
 
     private AddressEditorCoordinator mAddressEditor;
@@ -160,7 +171,7 @@ public class AddressEditorRenderTest {
 
     @Before
     public void setUp() throws Exception {
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
         mActivityTestRule.waitForActivityCompletelyLoaded();
 
         AutofillProfileBridgeJni.setInstanceForTesting(mAutofillProfileBridgeJni);
@@ -181,8 +192,6 @@ public class AddressEditorRenderTest {
 
                     when(mPersonalDataManager.getDefaultCountryCodeForNewAddress())
                             .thenReturn("US");
-                    when(mPersonalDataManager.isCountryEligibleForAccountStorage(anyString()))
-                            .thenReturn(true);
                     PersonalDataManagerFactory.setInstanceForTesting(mPersonalDataManager);
 
                     ProfileManager.setLastUsedProfileForTesting(mProfile);
@@ -317,6 +326,34 @@ public class AddressEditorRenderTest {
                                     .getContentViewForTest();
                         });
         mRenderTestRule.render(editor, "edit_account_address_profile");
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    public void editHomeAddressProfile() throws Exception {
+        View editor =
+                runOnUiThreadBlocking(
+                        () -> {
+                            when(mPersonalDataManager.isEligibleForAddressAccountStorage())
+                                    .thenReturn(true);
+                            mAddressEditor =
+                                    new AddressEditorCoordinator(
+                                            mActivityTestRule.getActivity(),
+                                            mDelegate,
+                                            mProfile,
+                                            new AutofillAddress(
+                                                    mActivityTestRule.getActivity(),
+                                                    sHomeProfile,
+                                                    mPersonalDataManager),
+                                            UPDATE_EXISTING_ADDRESS_PROFILE,
+                                            /* saveToDisk= */ false);
+                            mAddressEditor.showEditorDialog();
+                            return mAddressEditor
+                                    .getEditorDialogForTesting()
+                                    .getContentViewForTest();
+                        });
+        mRenderTestRule.render(editor, "edit_home_address_profile");
     }
 
     @Test

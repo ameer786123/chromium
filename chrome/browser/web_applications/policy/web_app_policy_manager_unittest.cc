@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "ash/constants/web_app_id_constants.h"
 #include "base/containers/extend.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
@@ -27,12 +28,11 @@
 #include "build/build_config.h"
 #include "chrome/browser/web_applications/external_install_options.h"
 #include "chrome/browser/web_applications/externally_managed_app_manager.h"
+#include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_constants.h"
 #include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
-// #include
-// "chrome/browser/web_applications/test/fake_externally_managed_app_manager.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
 #include "chrome/browser/web_applications/test/fake_web_contents_manager.h"
 #include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
@@ -52,12 +52,13 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
-#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/prefs/pref_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/webapps/browser/install_result_code.h"
 #include "components/webapps/common/web_app_id.h"
+#include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -72,7 +73,9 @@
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/ash/system_web_apps/test_support/test_system_web_app_manager.h"
 #include "chrome/browser/policy/system_features_disable_list_policy_handler.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "components/policy/core/common/policy_pref_names.h"
+#include "components/policy/core/common/system_features_disable_list_constants.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/test_helper.h"
 #include "components/user_manager/user_names.h"
@@ -213,8 +216,7 @@ void SetWebAppInstallForceListPref(Profile* profile, std::string_view pref) {
 
 class WebAppPolicyManagerTestBase : public ChromeRenderViewHostTestHarness {
  public:
-  WebAppPolicyManagerTestBase()
-      : testing_local_state_(TestingBrowserProcess::GetGlobal()) {}
+  WebAppPolicyManagerTestBase() = default;
   WebAppPolicyManagerTestBase(const WebAppPolicyManagerTestBase&) = delete;
   WebAppPolicyManagerTestBase& operator=(const WebAppPolicyManagerTestBase&) =
       delete;
@@ -270,15 +272,16 @@ class WebAppPolicyManagerTestBase : public ChromeRenderViewHostTestHarness {
     auto web_app = test::CreateWebApp(
         url, ConvertExternalInstallSourceToSource(install_source));
     RegisterApp(std::move(web_app));
-    test::AddInstallUrlData(profile()->GetPrefs(), &sync_bridge(),
-                            GenerateAppId(/*manifest_id=*/std::nullopt, url),
-                            url, install_source);
+    test::AddInstallUrlData(
+        profile()->GetPrefs(), &sync_bridge(),
+        GenerateAppId(/*manifest_id_path=*/std::nullopt, url), url,
+        install_source);
   }
 
   void MakeInstalledAppPlaceholder(const GURL& url) {
     test::AddInstallUrlAndPlaceholderData(
         profile()->GetPrefs(), &sync_bridge(),
-        GenerateAppId(/*manifest_id=*/std::nullopt, url), url,
+        GenerateAppId(/*manifest_id_path=*/std::nullopt, url), url,
         ExternalInstallSource::kExternalPolicy, /*is_placeholder=*/true);
   }
 
@@ -300,8 +303,6 @@ class WebAppPolicyManagerTestBase : public ChromeRenderViewHostTestHarness {
   WebAppPolicyManager& policy_manager() { return provider()->policy_manager(); }
 
   WebAppProvider* provider() { return WebAppProvider::GetForTest(profile()); }
-
-  ScopedTestingLocalState testing_local_state_;
 
   void ValidateEmptyWebAppSettingsPolicy() {
     EXPECT_TRUE(policy_manager().settings_by_url_.empty());
@@ -357,6 +358,8 @@ class WebAppPolicyManagerTestBase : public ChromeRenderViewHostTestHarness {
         provider_->web_contents_manager());
   }
 
+  data_decoder::test::InProcessDataDecoder data_decoder_;
+
  private:
   raw_ptr<FakeWebAppProvider, DanglingUntriaged> provider_ = nullptr;
   raw_ptr<WebAppPolicyManager, DanglingUntriaged> web_app_policy_manager_ =
@@ -376,11 +379,62 @@ class WebAppPolicyManagerTestBase : public ChromeRenderViewHostTestHarness {
 class WebAppPolicyManagerTest : public WebAppPolicyManagerTestBase,
                                 public testing::WithParamInterface<bool> {
  public:
+  using InstallResults = std::map<GURL /*install_url*/,
+                                  ExternallyManagedAppManager::InstallResult>;
+  using UninstallResults =
+      std::map<GURL /*install_url*/, webapps::UninstallResultCode>;
+  using SynchronizeFuture =
+      base::test::TestFuture<InstallResults, UninstallResults>;
+
   WebAppPolicyManagerTest() = default;
   WebAppPolicyManagerTest(const WebAppPolicyManagerTest&) = delete;
   WebAppPolicyManagerTest& operator=(const WebAppPolicyManagerTest&) = delete;
   ~WebAppPolicyManagerTest() override = default;
 };
+
+TEST_F(WebAppPolicyManagerTest, GetPolicyIdsForWebApp) {
+  const GURL kWebAppUrl = GURL("https://example.com/path/index.html");
+  const GURL kInstallUrl = GURL("https://www.example.com/install_url.html");
+  const GURL kManifestUrl = GURL("https://www.example.com/manifest.json");
+
+  webapps::AppId app_id =
+      static_cast<FakeWebContentsManager&>(provider()->web_contents_manager())
+          .CreateBasicInstallPageState(kInstallUrl, kManifestUrl, kWebAppUrl);
+
+  ExternalInstallOptions template_options(
+      kInstallUrl, mojom::UserDisplayMode::kStandalone,
+      ExternalInstallSource::kExternalPolicy);
+
+  SynchronizeFuture result;
+  std::vector<ExternalInstallOptions> install_options_list;
+  install_options_list.emplace_back(kInstallUrl,
+                                    /*user_display_mode=*/std::nullopt,
+                                    ExternalInstallSource::kExternalPolicy);
+
+  provider()->externally_managed_app_manager().SynchronizeInstalledApps(
+      std::move(install_options_list), ExternalInstallSource::kExternalPolicy,
+      result.GetCallback());
+  ASSERT_TRUE(result.Wait());
+  const WebApp* app = provider()->registrar_unsafe().GetAppById(app_id);
+
+  EXPECT_EQ(
+      WebAppPolicyManager::GetPolicyIds(profile(), *app),
+      std::vector<std::string>({"https://www.example.com/install_url.html"}));
+}
+
+TEST_F(WebAppPolicyManagerTest, GetPolicyIdsForIsolatedWebApp) {
+  auto bundle = IsolatedWebAppBuilder(ManifestBuilder().SetVersion("1.0.0"))
+                    .BuildBundle();
+  IsolatedWebAppUrlInfo info =
+      bundle
+          ->InstallWithSource(profile(),
+                              &IsolatedWebAppInstallSource::FromExternalPolicy)
+          .value();
+  const WebApp* app = provider()->registrar_unsafe().GetAppById(info.app_id());
+
+  EXPECT_EQ(WebAppPolicyManager::GetPolicyIds(profile(), *app),
+            std::vector<std::string>({info.web_bundle_id().id()}));
+}
 
 TEST_F(WebAppPolicyManagerTest, NoPrefValues) {
   ValidateEmptyWebAppSettingsPolicy();
@@ -904,54 +958,6 @@ TEST_F(WebAppPolicyManagerTest, InvalidUrlParsingSkipped) {
   ASSERT_TRUE(app_registrar().is_empty());
 }
 
-#if BUILDFLAG(IS_CHROMEOS)
-TEST_F(WebAppPolicyManagerTest, DisableSystemWebApps) {
-  auto disabled_apps = policy_manager().GetDisabledSystemWebApps();
-  EXPECT_TRUE(disabled_apps.empty());
-
-  // Add supported system web apps to system features disable list policy.
-  testing_local_state_.Get()->SetUserPref(
-      policy::policy_prefs::kSystemFeaturesDisableList,
-      base::Value::List()
-          .Append(static_cast<int>(policy::SystemFeature::kCamera))
-          .Append(static_cast<int>(policy::SystemFeature::kOsSettings))
-          .Append(static_cast<int>(policy::SystemFeature::kScanning))
-          .Append(static_cast<int>(policy::SystemFeature::kExplore))
-          .Append(static_cast<int>(policy::SystemFeature::kCrosh))
-          .Append(static_cast<int>(policy::SystemFeature::kTerminal))
-          .Append(static_cast<int>(policy::SystemFeature::kGallery))
-          .Append(static_cast<int>(policy::SystemFeature::kPrintJobs))
-          .Append(static_cast<int>(policy::SystemFeature::kKeyShortcuts))
-          .Append(static_cast<int>(policy::SystemFeature::kRecorder)));
-  base::RunLoop().RunUntilIdle();
-
-  const std::set<ash::SystemWebAppType> expected_disabled_apps{
-      ash::SystemWebAppType::CAMERA,
-      ash::SystemWebAppType::SETTINGS,
-      ash::SystemWebAppType::SCANNING,
-      ash::SystemWebAppType::HELP,
-      ash::SystemWebAppType::CROSH,
-      ash::SystemWebAppType::TERMINAL,
-      ash::SystemWebAppType::MEDIA,
-      ash::SystemWebAppType::PRINT_MANAGEMENT,
-      ash::SystemWebAppType::SHORTCUT_CUSTOMIZATION,
-      ash::SystemWebAppType::RECORDER,
-      ash::SystemWebAppType::GRADUATION};
-
-  disabled_apps = policy_manager().GetDisabledSystemWebApps();
-  EXPECT_EQ(disabled_apps, expected_disabled_apps);
-
-  // Default disable mode is blocked.
-  EXPECT_FALSE(policy_manager().IsDisabledAppsModeHidden());
-  // Set disable mode to hidden.
-  testing_local_state_.Get()->SetUserPref(
-      policy::policy_prefs::kSystemFeaturesDisableMode,
-      base::Value(policy::kHiddenDisableMode));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(policy_manager().IsDisabledAppsModeHidden());
-}
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
 TEST_F(WebAppPolicyManagerTest, WebAppSettingsDynamicRefresh) {
   const char kWebAppSettingInitialConfiguration[] = R"([
     {
@@ -1072,6 +1078,88 @@ TEST_F(WebAppPolicyManagerTest, WebAppSettingsForceInstallNewApps) {
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
+
+class WebAppPolicyManagerDisableListTest : public WebAppPolicyManagerTestBase {
+ public:
+  WebAppPolicyManagerDisableListTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        chromeos::features::kSystemFeaturesDisableListHidden);
+  }
+
+  WebAppPolicyManagerDisableListTest(
+      const WebAppPolicyManagerDisableListTest&) = delete;
+  WebAppPolicyManagerDisableListTest& operator=(
+      const WebAppPolicyManagerDisableListTest&) = delete;
+
+  ~WebAppPolicyManagerDisableListTest() override = default;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+TEST_F(WebAppPolicyManagerDisableListTest, DisableSystemWebApps) {
+  auto disabled_apps = policy_manager().GetDisabledSystemWebApps();
+  EXPECT_TRUE(disabled_apps.empty());
+
+  // Add supported system web apps to system features disable list policy.
+  TestingBrowserProcess::GetGlobal()->GetTestingLocalState()->SetUserPref(
+      policy::policy_prefs::kSystemFeaturesDisableList,
+      base::Value::List()
+          .Append(static_cast<int>(policy::SystemFeature::kCamera))
+          .Append(static_cast<int>(policy::SystemFeature::kOsSettings))
+          .Append(static_cast<int>(policy::SystemFeature::kScanning))
+          .Append(static_cast<int>(policy::SystemFeature::kExplore))
+          .Append(static_cast<int>(policy::SystemFeature::kCrosh))
+          .Append(static_cast<int>(policy::SystemFeature::kTerminal))
+          .Append(static_cast<int>(policy::SystemFeature::kGallery))
+          .Append(static_cast<int>(policy::SystemFeature::kPrintJobs))
+          .Append(static_cast<int>(policy::SystemFeature::kKeyShortcuts))
+          .Append(static_cast<int>(policy::SystemFeature::kRecorder)));
+  base::RunLoop().RunUntilIdle();
+
+  disabled_apps = policy_manager().GetDisabledSystemWebApps();
+  EXPECT_THAT(
+      disabled_apps,
+      testing::UnorderedElementsAre(
+          ash::SystemWebAppType::CAMERA, ash::SystemWebAppType::SETTINGS,
+          ash::SystemWebAppType::SCANNING, ash::SystemWebAppType::HELP,
+          ash::SystemWebAppType::CROSH, ash::SystemWebAppType::TERMINAL,
+          ash::SystemWebAppType::MEDIA, ash::SystemWebAppType::PRINT_MANAGEMENT,
+          ash::SystemWebAppType::SHORTCUT_CUSTOMIZATION,
+          ash::SystemWebAppType::RECORDER, ash::SystemWebAppType::GRADUATION,
+          ash::SystemWebAppType::BOCA));
+
+  // If the app is disabled by the SystemFeaturesDisableList policy, default
+  // disable mode for user sessions is hidden.
+  EXPECT_TRUE(
+      policy_manager().IsDisabledAppsModeHidden(ash::SystemWebAppType::CAMERA));
+  EXPECT_TRUE(policy_manager().IsDisabledAppsModeHidden(
+      ash::SystemWebAppType::SETTINGS));
+  EXPECT_TRUE(policy_manager().IsDisabledAppsModeHidden(
+      ash::SystemWebAppType::SCANNING));
+  EXPECT_TRUE(
+      policy_manager().IsDisabledAppsModeHidden(ash::SystemWebAppType::HELP));
+  EXPECT_TRUE(
+      policy_manager().IsDisabledAppsModeHidden(ash::SystemWebAppType::CROSH));
+  EXPECT_TRUE(policy_manager().IsDisabledAppsModeHidden(
+      ash::SystemWebAppType::TERMINAL));
+  EXPECT_TRUE(
+      policy_manager().IsDisabledAppsModeHidden(ash::SystemWebAppType::MEDIA));
+  EXPECT_TRUE(policy_manager().IsDisabledAppsModeHidden(
+      ash::SystemWebAppType::PRINT_MANAGEMENT));
+  EXPECT_TRUE(policy_manager().IsDisabledAppsModeHidden(
+      ash::SystemWebAppType::SHORTCUT_CUSTOMIZATION));
+  EXPECT_TRUE(policy_manager().IsDisabledAppsModeHidden(
+      ash::SystemWebAppType::RECORDER));
+
+  // For apps not hidden by the SystemFeaturesDisableList policy, default
+  // disable mode for user sessions is blocked.
+  EXPECT_FALSE(policy_manager().IsDisabledAppsModeHidden(
+      ash::SystemWebAppType::GRADUATION));
+  EXPECT_FALSE(
+      policy_manager().IsDisabledAppsModeHidden(ash::SystemWebAppType::BOCA));
+}
+
 class WebAppPolicyManagerWithGraduationTest
     : public WebAppPolicyManagerTestBase {
  public:
@@ -1091,7 +1179,7 @@ TEST_F(WebAppPolicyManagerWithGraduationTest,
   auto disabled_apps = policy_manager().GetDisabledSystemWebApps();
   EXPECT_TRUE(disabled_apps.empty());
 
-  testing_local_state_.Get()->SetUserPref(
+  TestingBrowserProcess::GetGlobal()->GetTestingLocalState()->SetUserPref(
       policy::policy_prefs::kSystemFeaturesDisableList,
       base::Value::List()
           .Append(static_cast<int>(policy::SystemFeature::kCamera))
@@ -1111,7 +1199,7 @@ TEST_F(WebAppPolicyManagerWithGraduationTest, GraduationDisabledWhenBlocked) {
   EXPECT_TRUE(disabled_apps.empty());
 
   // Add supported system web apps to system features disable list policy.
-  testing_local_state_.Get()->SetUserPref(
+  TestingBrowserProcess::GetGlobal()->GetTestingLocalState()->SetUserPref(
       policy::policy_prefs::kSystemFeaturesDisableList,
       base::Value::List()
           .Append(static_cast<int>(policy::SystemFeature::kCamera))
@@ -1133,19 +1221,24 @@ class WebAppPolicyManagerWithBocaTest : public WebAppPolicyManagerTestBase {
 };
 
 TEST_F(WebAppPolicyManagerWithBocaTest,
-       BocaAppStatusRefreshedWhenPolicyUpdate) {
-  MockAppRegistrarObserver mock_observer;
-  app_registrar().AddObserver(&mock_observer);
-  EXPECT_CALL(mock_observer, OnWebAppsDisabledModeChanged()).Times(1);
-  // Policy update only serve as a trigger, the real enablement checks user
-  // affiliation status, which is hard to emulate in unit test.
+       BocaNotDisabledWhenNotDisabledFromPolicy) {
+  auto disabled_apps = policy_manager().GetDisabledSystemWebApps();
+  EXPECT_TRUE(disabled_apps.empty());
+
   profile()->GetPrefs()->SetString(
       ash::prefs::kClassManagementToolsAvailabilitySetting, "teacher");
 
-  EXPECT_CALL(mock_observer, OnWebAppsDisabledModeChanged()).Times(1);
+  disabled_apps = policy_manager().GetDisabledSystemWebApps();
+  EXPECT_FALSE(disabled_apps.contains(ash::SystemWebAppType::BOCA));
+}
+
+TEST_F(WebAppPolicyManagerWithBocaTest, BocaDisabledWhenDisabledFromPolicy) {
+  auto disabled_apps = policy_manager().GetDisabledSystemWebApps();
+  EXPECT_TRUE(disabled_apps.empty());
   profile()->GetPrefs()->SetString(
       ash::prefs::kClassManagementToolsAvailabilitySetting, "disabled");
-  app_registrar().RemoveObserver(&mock_observer);
+  disabled_apps = policy_manager().GetDisabledSystemWebApps();
+  EXPECT_TRUE(disabled_apps.contains(ash::SystemWebAppType::BOCA));
 }
 
 #endif  // BUILDFLAG(IS_CHROMEOS)

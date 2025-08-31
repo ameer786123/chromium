@@ -35,7 +35,6 @@ import org.robolectric.annotation.Config;
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.R;
@@ -58,6 +57,8 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.Shee
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.StateChangeReason;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetObserver;
 import org.chromium.ui.modaldialog.ModalDialogManager;
+
+import java.util.function.Supplier;
 
 /** Unit test for {@link PriceTrackingButtonController}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -216,5 +217,28 @@ public class PriceTrackingButtonControllerUnitTest {
         Assert.assertTrue(buttonData.isEnabled());
         // We should have notified of changes twice (when disabled and when enabled again).
         verify(buttonDataObserver, times(2)).buttonDataChanged(true);
+    }
+
+    @Test
+    @EnableFeatures({ChromeFeatureList.CPA_SPEC_UPDATE})
+    public void testPriceTrackingButton_testIsCheckedState() {
+        PriceTrackingButtonController priceTrackingButtonController = createButtonController();
+        // Initialize to false.
+        mPriceTrackingStateSupplier.set(false);
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+
+        ButtonData buttonData = priceTrackingButtonController.get(mMockTab);
+        Assert.assertFalse(buttonData.getButtonSpec().isChecked());
+
+        // Setting this value to true will trigger PriceTrackingButtonController#updateButtonIcon ->
+        // AdaptiveToolbarButtonController#buttonDataChanged  ->
+        // OptionalBrowsingModeButtonController#updateCurrentOptionalButton ->
+        // AdaptiveToolbarButtonController#get.
+
+        mPriceTrackingStateSupplier.set(true);
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+
+        ButtonData buttonDataNew = priceTrackingButtonController.get(mMockTab);
+        Assert.assertTrue(buttonDataNew.getButtonSpec().isChecked());
     }
 }

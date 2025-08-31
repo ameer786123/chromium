@@ -21,10 +21,11 @@ public interface PlaybackListener {
         State.BUFFERING,
         State.PAUSED,
         State.PLAYING,
-        State.STOPPED
+        State.STOPPED,
+        State.PLAYBACK_CREATION,
     })
     @Retention(RetentionPolicy.SOURCE)
-    public @interface State {
+    @interface State {
         /** Unknown. */
         int UNKNOWN = 0;
 
@@ -42,6 +43,9 @@ public interface PlaybackListener {
 
         /** Stopped; represents end of playback. */
         int STOPPED = 6;
+
+        /** Playback is being created. */
+        int PLAYBACK_CREATION = 7;
     }
 
     /** Information about playback. */

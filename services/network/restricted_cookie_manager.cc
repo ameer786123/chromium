@@ -67,7 +67,6 @@ static constexpr int kHoursInOneYear = 24 * 365;
 // adding a user-perceptible delay.
 constexpr base::TimeDelta kCookiesAccessedTimeout = base::Milliseconds(100);
 constexpr size_t kMaxCookieCacheCount = 32u;
-constexpr size_t kIncreasedMaxCookieCacheCount = 100u;
 
 // TODO(https://crbug.com/375352611): add the check for enabling third-party
 // cookies.
@@ -422,13 +421,12 @@ RestrictedCookieManager::RestrictedCookieManager(
           net::SchemefulSite(origin),
           isolation_info_.IsMainFrameRequest())),
       cookie_partition_key_collection_(
-          net::CookiePartitionKeyCollection::FromOptional(
-              cookie_partition_key_)),
+          net::CookiePartitionKeyCollection(cookie_partition_key_)),
       receiver_(this),
       metrics_updater_(metrics_updater),
       max_cookie_cache_count_(
           base::FeatureList::IsEnabled(features::kIncreaseCookieAccessCacheSize)
-              ? kIncreasedMaxCookieCacheCount
+              ? features::kCookieAccessCacheSize.Get()
               : kMaxCookieCacheCount),
       cookies_access_timer_(
           FROM_HERE,
@@ -524,7 +522,7 @@ void RestrictedCookieManager::OnGotFirstPartySetMetadataForTesting(
       isolation_info_.site_for_cookies(), net::SchemefulSite(origin_),
       isolation_info_.IsMainFrameRequest());
   cookie_partition_key_collection_ =
-      net::CookiePartitionKeyCollection::FromOptional(cookie_partition_key_);
+      net::CookiePartitionKeyCollection(cookie_partition_key_);
   std::move(done_closure).Run();
 }
 
@@ -1113,7 +1111,8 @@ void RestrictedCookieManager::CookiesEnabledFor(
           storage_access_api_status,
           /*is_ad_tagged=*/false,
           /*apply_devtools_overrides=*/apply_devtools_overrides,
-          /*force_disable_third_party_cookies=*/false)));
+          /*force_disable_third_party_cookies=*/false),
+      cookie_partition_key_));
 }
 
 void RestrictedCookieManager::InstallReceiver(

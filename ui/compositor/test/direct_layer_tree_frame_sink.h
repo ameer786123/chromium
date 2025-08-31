@@ -36,8 +36,7 @@ class DirectLayerTreeFrameSink : public cc::LayerTreeFrameSink,
       viz::FrameSinkManagerImpl* frame_sink_manager,
       viz::Display* display,
       scoped_refptr<viz::RasterContextProvider> context_provider,
-      scoped_refptr<cc::RasterContextProviderWrapper>
-          worker_context_provider_wrapper,
+      scoped_refptr<viz::RasterContextProvider> worker_context_provider,
       scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
       gfx::AcceleratedWidget widget = gfx::kNullAcceleratedWidget);
 
@@ -54,6 +53,7 @@ class DirectLayerTreeFrameSink : public cc::LayerTreeFrameSink,
                              bool hit_test_data_changed) override;
   void DidNotProduceFrame(const viz::BeginFrameAck& ack,
                           cc::FrameSkippedReason reason) override;
+  void NotifyNewLocalSurfaceIdExpectedWhilePaused() override;
 
   // viz::DisplayClient implementation.
   void DisplayOutputSurfaceLost() override;
@@ -67,10 +67,6 @@ class DirectLayerTreeFrameSink : public cc::LayerTreeFrameSink,
   void DisplayAddChildWindowToBrowser(
       gpu::SurfaceHandle child_window) override {}
   void SetWideColorEnabled(bool enabled) override {}
-  void SetPreferredFrameInterval(base::TimeDelta interval) override {}
-  base::TimeDelta GetPreferredFrameIntervalForFrameSinkId(
-      const viz::FrameSinkId& id,
-      viz::mojom::CompositorFrameSinkType* type) override;
 
  private:
   // viz::mojom::CompositorFrameSinkClient implementation:

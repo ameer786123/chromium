@@ -53,6 +53,7 @@ public class SignOutDialogRenderTest {
     public final ChromeRenderTestRule mRenderTestRule =
             ChromeRenderTestRule.Builder.withPublicCorpus()
                     .setBugComponent(ChromeRenderTestRule.Component.SERVICES_SIGN_IN)
+                    .setRevision(1)
                     .build();
 
     @Rule

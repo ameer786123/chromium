@@ -5,6 +5,7 @@
 #include "third_party/blink/public/common/permissions/permission_utils.h"
 
 #include "base/no_destructor.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
 #include "third_party/blink/public/mojom/permissions/permission.mojom.h"
@@ -158,6 +159,8 @@ PermissionTypeToPermissionsPolicyFeature(PermissionType permission) {
       return network::mojom::PermissionsPolicyFeature::kFullscreen;
     case PermissionType::WEB_APP_INSTALLATION:
       return network::mojom::PermissionsPolicyFeature::kWebAppInstallation;
+    case PermissionType::LOCAL_NETWORK_ACCESS:
+      return network::mojom::PermissionsPolicyFeature::kLocalNetworkAccess;
 
     case PermissionType::PERIODIC_BACKGROUND_SYNC:
     case PermissionType::DURABLE_STORAGE:
@@ -173,8 +176,6 @@ PermissionTypeToPermissionsPolicyFeature(PermissionType permission) {
     case PermissionType::NOTIFICATIONS:
     case PermissionType::KEYBOARD_LOCK:
     case PermissionType::POINTER_LOCK:
-    // TODO(crbug.com/394009026): Add permission policy for LNA.
-    case PermissionType::LOCAL_NETWORK_ACCESS:
       return std::nullopt;
 
     case PermissionType::NUM:
@@ -342,8 +343,8 @@ std::optional<PermissionType> PermissionDescriptorInfoToPermissionType(
       return PermissionType::HAND_TRACKING;
     case PermissionName::WEB_PRINTING:
       return PermissionType::WEB_PRINTING;
-    default:
-      NOTREACHED();
+    case PermissionName::SMART_CARD:
+      return PermissionType::SMART_CARD;
   }
 }
 

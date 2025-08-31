@@ -105,8 +105,6 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
  public:
   void Trace(Visitor*) const override;
 
-  bool IsLayoutNGObject() const override;
-
   LayoutObject* FirstChild() const {
     NOT_DESTROYED();
     DCHECK_EQ(Children(), VirtualChildren());
@@ -136,7 +134,7 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
 
   const char* GetName() const override;
 
- protected:
+ private:
   // Insert a child correctly into the tree when |before_descendant| isn't a
   // direct child of |this|. This happens e.g. when there's an anonymous block
   // child of |this| and |before_descendant| has been reparented into that one.
@@ -161,15 +159,14 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   static LayoutBlock* CreateAnonymousWithParentAndDisplay(
       const LayoutObject*,
       EDisplay = EDisplay::kBlock);
-  LayoutBlock* CreateAnonymousBlock(EDisplay display = EDisplay::kBlock) const {
+  LayoutBlock* CreateAnonymousBlock() const {
     NOT_DESTROYED();
-    return CreateAnonymousWithParentAndDisplay(this, display);
+    return CreateAnonymousWithParentAndDisplay(this, EDisplay::kBlock);
   }
 
   LayoutBox* CreateAnonymousBoxWithSameTypeAs(
       const LayoutObject* parent) const override;
 
- public:
   RecalcScrollableOverflowResult RecalcScrollableOverflow() override;
 
   void RecalcVisualOverflow() override;
@@ -255,7 +252,8 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   void ImageChanged(WrappedImagePtr, CanDeferInvalidation) override;
 
  private:
-  PhysicalRect LocalCaretRect(int caret_offset) const final;
+  PhysicalRect LocalCaretRect(int caret_offset,
+                              CaretShape caret_shape) const final;
   bool IsInlineBoxWrapperActuallyChild() const;
 
   // End helper functions and structs used by layoutBlockChildren.

@@ -25,9 +25,6 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/shell_dialogs/selected_file_info.h"
 
-#if BUILDFLAG(IS_WIN)
-#endif
-
 namespace {
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -112,7 +109,8 @@ void PasswordManagerPorter::Import(
   if (!import_results_callback_.is_null() ||
       (importer_ &&
        (importer_->IsState(password_manager::PasswordImporter::kInProgress) ||
-        importer_->IsState(password_manager::PasswordImporter::kConflicts)))) {
+        importer_->IsState(
+            password_manager::PasswordImporter::kUserInteractionRequired)))) {
     // Early return to prevent crashes due to already active import process in
     // other window.
     password_manager::ImportResults results;
@@ -135,7 +133,8 @@ void PasswordManagerPorter::ContinueImport(
     const std::vector<int>& selected_ids,
     ImportResultsCallback results_callback) {
   if (importer_ &&
-      importer_->IsState(password_manager::PasswordImporter::kConflicts)) {
+      importer_->IsState(
+          password_manager::PasswordImporter::kUserInteractionRequired)) {
     importer_->ContinueImport(selected_ids, std::move(results_callback));
     return;
   }
@@ -161,8 +160,8 @@ void PasswordManagerPorter::ContinueImport(
 }
 
 void PasswordManagerPorter::ResetImporter(bool delete_file) {
-  // Importer can be reset only in kNotStarted, kFinished, kConflicts states,
-  // but not in kInProgress.
+  // Importer can be reset only in kNotStarted, kFinished,
+  // kUserInteractionRequired states, but not in kInProgress.
   if (!importer_ ||
       importer_->IsState(password_manager::PasswordImporter::kInProgress)) {
     return;

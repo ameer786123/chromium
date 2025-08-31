@@ -10,8 +10,8 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_future.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/create_application_shortcut_view_test_support.h"
 #include "chrome/browser/ui/web_applications/web_app_browsertest_base.h"
@@ -192,10 +192,6 @@ class AppHomePageHandlerTest : public InProcessBrowserTest {
                                                     page_.BindAndGetRemote());
   }
 
-  extensions::ExtensionService* extension_service() {
-    return extensions::ExtensionSystem::Get(profile())->extension_service();
-  }
-
   extensions::ExtensionRegistrar* extension_registrar() {
     return extensions::ExtensionRegistrar::Get(profile());
   }
@@ -222,7 +218,8 @@ class AppHomePageHandlerTest : public InProcessBrowserTest {
     manifest.SetByDottedPath(extensions::manifest_keys::kName, kTestAppName);
     manifest.SetByDottedPath(extensions::manifest_keys::kVersion, "0.0.0.0");
     manifest.SetByDottedPath(
-        extensions::manifest_keys::kPlatformAppBackgroundPage, std::string());
+        extensions::manifest_keys::kPlatformAppBackgroundPage,
+        "background.html");
 
     std::string error;
     scoped_refptr<extensions::Extension> extension =
@@ -230,7 +227,7 @@ class AppHomePageHandlerTest : public InProcessBrowserTest {
             base::FilePath(), extensions::mojom::ManifestLocation::kUnpacked,
             manifest, 0, &error);
 
-    extension_service()->AddExtension(extension.get());
+    extension_registrar()->AddExtension(extension);
     return extension;
   }
 
@@ -247,7 +244,7 @@ class AppHomePageHandlerTest : public InProcessBrowserTest {
             base::FilePath(), extensions::mojom::ManifestLocation::kUnpacked,
             manifest, 0, &error);
 
-    extension_service()->AddExtension(extension.get());
+    extension_registrar()->AddExtension(extension);
     return extension;
   }
 

@@ -8,6 +8,7 @@
 
 #include "base/check_op.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_latency.h"
 #include "media/base/channel_layout.h"
 #include "media/base/limits.h"
 
@@ -206,6 +207,9 @@ std::string AudioParameters::EffectsMaskToString(int mask) {
   if (mask & AudioParameters::VOICE_ISOLATION) {
     effects.push_back("VOICE_ISOLATION");
   }
+  if (mask & AudioParameters::DEEP_NOISE_SUPPRESSION) {
+    effects.push_back("WINDOWS_DEEP_NOISE_SUPPRESSION");
+  }
 
   std::string result;
   for (size_t i = 0; i < effects.size(); ++i) {
@@ -287,7 +291,8 @@ std::string AudioParameters::AsHumanReadableString() const {
     << ", sample_rate: " << sample_rate()
     << ", frames_per_buffer: " << frames_per_buffer()
     << ", effects: " << AudioParameters::EffectsMaskToString(effects())
-    << ", mic_positions: " << PointsToString(mic_positions_);
+    << ", mic_positions: " << PointsToString(mic_positions_)
+    << ", latency_tag: " << AudioLatency::ToString(latency_tag());
   if (hardware_capabilities_.has_value()) {
     s << ", hw_capabilities: min_frames_per_buffer: "
       << hardware_capabilities_->min_frames_per_buffer

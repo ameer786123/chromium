@@ -16,12 +16,15 @@
 #include "chrome/browser/ui/tabs/saved_tab_groups/most_recent_shared_tab_update_store.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_web_contents_listener.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
+#include "chrome/common/webui_url_constants.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/saved_tab_groups/public/saved_tab_group_tab.h"
+#include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/saved_tab_groups/public/utils.h"
+#include "components/tabs/public/tab_group.h"
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
@@ -105,13 +108,16 @@ void LocalTabGroupListener::AddTabFromLocal(tabs::TabInterface* local_tab,
   CHECK(service_->GetGroup(saved_guid_).has_value());
   CHECK(tab_strip_model->group_model()->ContainsTabGroup(local_id_));
 
-  const std::optional<int> tabstrip_index_of_first_tab_in_group =
+  tabs::TabInterface* first_tab_in_group =
       tab_strip_model->group_model()->GetTabGroup(local_id_)->GetFirstTab();
-  CHECK(tabstrip_index_of_first_tab_in_group.has_value());
+  CHECK(first_tab_in_group);
+  int tabstrip_index_of_first_tab_in_group =
+      tab_strip_model->GetIndexOfTab(first_tab_in_group);
+  CHECK_NE(tabstrip_index_of_first_tab_in_group, TabStripModel::kNoTab);
 
   const int relative_index_of_tab_in_group =
       tab_strip_model->GetIndexOfTab(local_tab) -
-      tabstrip_index_of_first_tab_in_group.value();
+      tabstrip_index_of_first_tab_in_group;
 
   LocalTabID local_tab_id = local_tab->GetHandle().raw_value();
 
@@ -168,16 +174,19 @@ void LocalTabGroupListener::MoveWebContentsFromLocal(
   // at index 2. For the tab group, C is at index 0.
   // Moving C to index 4 in the tabstrip means it will now have an index of 2 in
   // the tab group and SavedTabGroupModel.
-  const std::optional<int> tabstrip_index_of_first_tab_in_group =
+  tabs::TabInterface* first_tab_in_group =
       tab_strip_model->group_model()->GetTabGroup(local_id_)->GetFirstTab();
-  CHECK(tabstrip_index_of_first_tab_in_group.has_value());
+  CHECK(first_tab_in_group);
+  int tabstrip_index_of_first_tab_in_group =
+      tab_strip_model->GetIndexOfTab(first_tab_in_group);
+  CHECK_NE(tabstrip_index_of_first_tab_in_group, TabStripModel::kNoTab);
 
   // Count the number of tabs that are actually in the group between
   // `tabstrip_index_of_first_tab_in_group` and `tabstrip_index_of_moved_tab`.
   // We must do this because a tab group may not be contiguous in intermediate
   // states such as when dragging a group by its header.
   int index_in_group = 0;
-  for (int i = tabstrip_index_of_first_tab_in_group.value();
+  for (int i = tabstrip_index_of_first_tab_in_group;
        i < tabstrip_index_of_moved_tab; i++) {
     if (tab_strip_model->GetTabGroupForTab(i) == local_id_) {
       index_in_group++;
@@ -213,7 +222,11 @@ LocalTabGroupListener::MaybeRemoveWebContentsFromLocal(
   const LocalTabID local_tab_id = local_tab->GetHandle().raw_value();
   const std::optional<SavedTabGroup> saved_group =
       service_->GetGroup(saved_guid_);
-  CHECK(saved_group);
+  if (!saved_group) {
+    // This can happen if the saved group was removed before the tab.
+    return Liveness::kGroupDeleted;
+  }
+
   const SavedTabGroupTab* saved_tab = saved_group->GetTab(local_tab_id);
   if (!saved_tab) {
     // The tab that was removed didn't belong to this group. This is natural
@@ -264,7 +277,8 @@ LocalTabGroupListener::Liveness LocalTabGroupListener::UpdateFromSync() {
       tab_strip_model->group_model()->GetTabGroup(local_id_);
   CHECK(local_tab_group);
   const bool is_collapsed = local_tab_group->visual_data()->is_collapsed();
-  local_tab_group->SetVisualData(
+  tab_strip_model->ChangeTabGroupVisuals(
+      local_id_,
       tab_groups::TabGroupVisualData(saved_group->title(), saved_group->color(),
                                      is_collapsed),
       /*is_customized=*/true);

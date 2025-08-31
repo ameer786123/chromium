@@ -288,8 +288,10 @@ void ApplyStyleCommand::ApplyBlockStyle(EditingStyle* style,
       visible_end.DeepEquivalent().ParentAnchoredEquivalent());
 
   const TextIteratorBehavior behavior =
-      TextIteratorBehavior::AllVisiblePositionsRangeLengthBehavior();
-
+      RuntimeEnabledFeatures::EnterInOpenShadowRootsEnabled()
+          ? TextIteratorBehavior::
+                AllVisiblePositionsIncludingShadowRootRangeLengthBehavior()
+          : TextIteratorBehavior::AllVisiblePositionsRangeLengthBehavior();
   const int start_index = TextIterator::RangeLength(start_range, behavior);
   const int end_index = TextIterator::RangeLength(end_range, behavior);
 
@@ -1557,11 +1559,30 @@ void ApplyStyleCommand::RemoveInlineStyle(EditingStyle* style,
       }
 
       if (style_to_push_down) {
+        EditingStyle* filtered_style_to_push_down = style_to_push_down;
+
+        if (RuntimeEnabledFeatures::
+                RemoveFormatFilterBackgroundColorEnabled()) {
+          // Filter out styles that should be removed - don't push down styles
+          // that conflict with the styles we're trying to remove
+          filtered_style_to_push_down = style_to_push_down->Copy();
+          if (style && style->Style() && filtered_style_to_push_down->Style()) {
+            // Remove any properties from style_to_push_down that are present in
+            // the style being removed
+            for (const CSSPropertyValue& property :
+                 style->Style()->Properties()) {
+              filtered_style_to_push_down->Style()->RemoveProperty(
+                  property.PropertyID());
+            }
+          }
+        }
+
         for (; child_node; child_node = child_node->nextSibling()) {
-          ApplyInlineStyleToPushDown(child_node, style_to_push_down,
+          ApplyInlineStyleToPushDown(child_node, filtered_style_to_push_down,
                                      editing_state);
-          if (editing_state->IsAborted())
+          if (editing_state->IsAborted()) {
             return;
+          }
         }
       }
     }
@@ -2063,17 +2084,20 @@ float ApplyStyleCommand::ComputedFontSize(Node* node) {
   }
 
   auto* style = MakeGarbageCollected<CSSComputedStyleDeclaration>(element);
-  if (!style)
+  if (!style) {
     return 0;
+  }
 
-  const auto* value = To<CSSPrimitiveValue>(
+  const auto* value = DynamicTo<CSSPrimitiveValue>(
       style->GetPropertyCSSValue(CSSPropertyID::kFontSize));
-  if (!value)
+  if (!value) {
     return 0;
+  }
 
   // TODO(yosin): We should have printer for |CSSPrimitiveValue::UnitType|.
   DCHECK(value->IsPx());
-  return value->GetFloatValue();
+  std::optional<double> font_size = value->GetValueIfKnown();
+  return font_size.value_or(0);
 }
 
 void ApplyStyleCommand::JoinChildTextNodes(ContainerNode* node,

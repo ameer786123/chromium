@@ -48,11 +48,17 @@ BASE_FEATURE(kFluentOverlayScrollbar,
              "FluentOverlayScrollbar",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enables modifying CSS `scrollbar-color` foreground elements colors on hover
-// or press. This feature flag is meant to be used as a killswitch.
-BASE_FEATURE(kModifyScrollbarCssColorOnHoverOrPress,
-             "ModifyScrollbarCssColorOnHoverOrPress",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+// When enabled, scrollbars flash only once when a page is loaded or when they
+// become visible on the viewport instead of flashing after every scroll update.
+BASE_FEATURE(kOverlayScrollbarFlashOnlyOnceVisibleOnViewport,
+             "OverlayScrollbarFlashOnlyOnceVisibleOnViewport",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Enables will flash scrollbar when user move mouse enter a scrollable area.
+BASE_FEATURE(kOverlayScrollbarFlashWhenMouseEnter,
+             "OverlayScrollbarFlashWhenMouseEnter",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 }  // namespace features
 
 namespace ui {
@@ -79,11 +85,6 @@ bool IsFluentScrollbarEnabled() {
 bool IsOverlayScrollbarEnabledByFeatureFlag() {
   return base::FeatureList::IsEnabled(features::kOverlayScrollbar) ||
          IsFluentOverlayScrollbarEnabled();
-}
-
-bool IsModifyScrollbarCssColorOnHoverOrPressEnabled() {
-  return base::FeatureList::IsEnabled(
-      features::kModifyScrollbarCssColorOnHoverOrPress);
 }
 
 }  // namespace ui

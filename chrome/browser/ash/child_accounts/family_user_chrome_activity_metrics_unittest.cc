@@ -29,8 +29,10 @@
 #include "chromeos/dbus/power_manager/idle.pb.h"
 #include "components/app_constants/constants.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
+#include "components/session_manager/core/fake_session_manager_delegate.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/session_manager/session_manager_types.h"
+#include "extensions/browser/extension_registrar.h"
 
 namespace ash {
 
@@ -84,12 +86,13 @@ class FamilyUserChromeActivityMetricsTest
     // Install Chrome.
     scoped_refptr<extensions::Extension> chrome = CreateExtension(
         app_constants::kChromeAppId, kExtensionNameChrome, kExtensionAppUrl);
-    extension_service_->AddComponentExtension(chrome.get());
+    extensions::ExtensionRegistrar::Get(profile())->AddComponentExtension(
+        chrome.get());
 
     BrowserList* active_browser_list = BrowserList::GetInstance();
     // Expect BrowserList is empty at the beginning.
     EXPECT_EQ(0U, active_browser_list->size());
-    test_browser_ = CreateBrowserWithAuraWindow();
+    InitTestBrowserWithAuraWindow();
     EXPECT_EQ(1U, active_browser_list->size());
 
     // Set the app active. If the app is active, it should be started, running,
@@ -129,18 +132,20 @@ class FamilyUserChromeActivityMetricsTest
         .CreateOrUpdateInstance(std::move(params));
   }
 
-  std::unique_ptr<Browser> CreateBrowserWithAuraWindow() {
+  void InitTestBrowserWithAuraWindow() {
+    // This may be called multiple times, we must reset the original test
+    // browser and its associated window.
+    test_browser_.reset();
+
     std::unique_ptr<aura::Window> window = std::make_unique<aura::Window>(
         nullptr, aura::client::WINDOW_TYPE_NORMAL);
     window->SetId(0);
     window->Init(ui::LAYER_TEXTURED);
     Browser::CreateParams params(profile(), true);
-    params.type = Browser::TYPE_NORMAL;
-    browser_window_ =
+    auto browser_window =
         std::make_unique<TestBrowserWindowAura>(std::move(window));
-    params.window = browser_window_.get();
-
-    return std::unique_ptr<Browser>(Browser::Create(params));
+    params.window = browser_window.release();
+    test_browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
   }
 
   void SetSessionState(session_manager::SessionState state) {
@@ -154,8 +159,8 @@ class FamilyUserChromeActivityMetricsTest
  private:
   std::unique_ptr<FamilyUserChromeActivityMetrics>
       family_user_chrome_activity_metrics_;
-  std::unique_ptr<TestBrowserWindowAura> browser_window_;
-  session_manager::SessionManager session_manager_;
+  session_manager::SessionManager session_manager_{
+      std::make_unique<session_manager::FakeSessionManagerDelegate>()};
   raw_ptr<extensions::ExtensionService, DanglingUntriaged> extension_service_ =
       nullptr;
 };
@@ -174,7 +179,16 @@ TEST_F(FamilyUserChromeActivityMetricsTest, Basic) {
                 prefs::kFamilyUserMetricsChromeBrowserEngagementDuration));
 
   // Test multiple browsers.
-  std::unique_ptr<Browser> another_browser = CreateBrowserWithAuraWindow();
+  std::unique_ptr<aura::Window> window =
+      std::make_unique<aura::Window>(nullptr, aura::client::WINDOW_TYPE_NORMAL);
+  window->SetId(0);
+  window->Init(ui::LAYER_TEXTURED);
+  Browser::CreateParams params(profile(), true);
+  auto another_browser_window =
+      std::make_unique<TestBrowserWindowAura>(std::move(window));
+  params.window = another_browser_window.release();
+  auto another_browser = Browser::DeprecatedCreateOwnedForTesting(params);
+
   EXPECT_EQ(2U, BrowserList::GetInstance()->size());
 
   PushChromeAppInstance(another_browser->window()->GetNativeWindow(),
@@ -243,7 +257,7 @@ TEST_F(FamilyUserChromeActivityMetricsTest,
 
   // Test restart.
   InitiateFamilyUserChromeActivityMetrics();
-  test_browser_ = CreateBrowserWithAuraWindow();
+  InitTestBrowserWithAuraWindow();
   PushChromeAppInstance(test_browser_->window()->GetNativeWindow(),
                         kActiveInstanceState);
   task_environment()->FastForwardBy(kHalfHour);

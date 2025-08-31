@@ -6,14 +6,10 @@ import 'chrome://history/history.js';
 
 import type {HistoryAppElement} from 'chrome://history/history.js';
 import {BrowserServiceImpl, CrRouter, HistoryEmbeddingsBrowserProxyImpl, HistoryEmbeddingsPageHandlerRemote} from 'chrome://history/history.js';
-import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {isMac} from 'chrome://resources/js/platform.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
-import {pressAndReleaseKeyOn} from 'chrome://webui-test/keyboard_mock_interactions.js';
-import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 import {TestMock} from 'chrome://webui-test/test_mock.js';
-import {eventToPromise} from 'chrome://webui-test/test_util.js';
+import {eventToPromise, microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {TestBrowserService} from './test_browser_service.js';
 
@@ -24,12 +20,12 @@ suite('HistoryAppTest', function() {
       HistoryEmbeddingsPageHandlerRemote;
 
   // Force cr-history-embeddings to be in the DOM for testing.
-  async function forceHistoryEmbeddingsElement() {
+  function forceHistoryEmbeddingsElement() {
     loadTimeData.overrideValues({historyEmbeddingsSearchMinimumWordCount: 0});
     element.dispatchEvent(new CustomEvent(
         'change-query',
         {bubbles: true, composed: true, detail: {search: 'some fake input'}}));
-    return flushTasks();
+    return microtasksFinished();
   }
 
   setup(() => {
@@ -55,81 +51,54 @@ suite('HistoryAppTest', function() {
     CrRouter.resetForTesting();
     element = document.createElement('history-app');
     document.body.appendChild(element);
-    return flushTasks();
+    return microtasksFinished();
   });
 
   test('SetsScrollTarget', async () => {
-    assertEquals(element.$.tabsScrollContainer, element.scrollTarget);
+    assertEquals(
+        element.$.tabsScrollContainer, element.getScrollTargetForTesting());
 
     // 'By group' view shares the same scroll container as default history view.
     element.$.router.selectedPage = 'grouped';
-    await flushTasks();
-    assertEquals(element.$.tabsScrollContainer, element.scrollTarget);
+    await microtasksFinished();
+    assertEquals(
+        element.$.tabsScrollContainer, element.getScrollTargetForTesting());
 
     // Switching to synced tabs should change scroll target to it.
     element.$.router.selectedPage = 'syncedTabs';
-    await flushTasks();
+    await microtasksFinished();
     assertEquals(
-        element.shadowRoot!.querySelector('history-synced-device-manager'),
-        element.scrollTarget);
-  });
-
-  test('SetsScrollTargetForEmbeddingsDisabled', async () => {
-    // Override loadTimeData and re-create the element to disable history
-    // embeddings.
-    loadTimeData.overrideValues({enableHistoryEmbeddings: false});
-    element.remove();
-    element = document.createElement('history-app');
-    document.body.appendChild(element);
-    await flushTasks();
-
-    // By default, the history-list should be its own scroll container.
-    assertEquals(
-        element.shadowRoot!.querySelector('history-list'),
-        element.scrollTarget);
-
-    // 'By group' view switches the scroll target to it.
-    element.$.router.selectedPage = 'grouped';
-    await flushTasks();
-    assertEquals(
-        element.shadowRoot!.querySelector('history-clusters'),
-        element.scrollTarget);
-
-    // Switching to synced tabs should change scroll target to it.
-    element.$.router.selectedPage = 'syncedTabs';
-    await flushTasks();
-    assertEquals(
-        element.shadowRoot!.querySelector('history-synced-device-manager'),
-        element.scrollTarget);
+        element.shadowRoot.querySelector('#syncedDevicesScroll'),
+        element.getScrollTargetForTesting());
   });
 
   test('ShowsHistoryEmbeddings', async () => {
     // By default, embeddings should not even be in the DOM.
-    assertFalse(!!element.shadowRoot!.querySelector('cr-history-embeddings'));
+    assertFalse(!!element.shadowRoot.querySelector('cr-history-embeddings'));
 
     element.dispatchEvent(new CustomEvent(
         'change-query',
         {bubbles: true, composed: true, detail: {search: 'one'}}));
-    await flushTasks();
-    assertFalse(!!element.shadowRoot!.querySelector('cr-history-embeddings'));
+    await microtasksFinished();
+    assertFalse(!!element.shadowRoot.querySelector('cr-history-embeddings'));
 
     element.dispatchEvent(new CustomEvent(
         'change-query',
         {bubbles: true, composed: true, detail: {search: 'two words'}}));
-    await flushTasks();
-    assertTrue(!!element.shadowRoot!.querySelector('cr-history-embeddings'));
+    await microtasksFinished();
+    assertTrue(!!element.shadowRoot.querySelector('cr-history-embeddings'));
 
     element.dispatchEvent(new CustomEvent(
         'change-query',
         {bubbles: true, composed: true, detail: {search: 'one'}}));
-    await flushTasks();
-    assertFalse(!!element.shadowRoot!.querySelector('cr-history-embeddings'));
+    await microtasksFinished();
+    assertFalse(!!element.shadowRoot.querySelector('cr-history-embeddings'));
   });
 
   test('SetsScrollOffset', async () => {
     function resizeAndWait(height: number) {
       const historyEmbeddingsContainer =
-          element.shadowRoot!.querySelector<HTMLElement>(
+          element.shadowRoot.querySelector<HTMLElement>(
               '#historyEmbeddingsContainer');
       assertTrue(!!historyEmbeddingsContainer);
 
@@ -146,11 +115,11 @@ suite('HistoryAppTest', function() {
     }
 
     await resizeAndWait(700);
-    await flushTasks();
+    await microtasksFinished();
     assertEquals(700, element.$.history.scrollOffset);
 
     await resizeAndWait(400);
-    await flushTasks();
+    await microtasksFinished();
     assertEquals(400, element.$.history.scrollOffset);
   });
 
@@ -158,9 +127,9 @@ suite('HistoryAppTest', function() {
     element.dispatchEvent(new CustomEvent(
         'change-query',
         {bubbles: true, composed: true, detail: {search: 'two words'}}));
-    await flushTasks();
+    await microtasksFinished();
     const historyEmbeddings =
-        element.shadowRoot!.querySelector('cr-history-embeddings');
+        element.shadowRoot.querySelector('cr-history-embeddings');
     assertTrue(!!historyEmbeddings);
 
     const changeQueryEventPromise = eventToPromise('change-query', element);
@@ -182,9 +151,9 @@ suite('HistoryAppTest', function() {
     element.dispatchEvent(new CustomEvent(
         'change-query',
         {bubbles: true, composed: true, detail: {search: 'two words'}}));
-    await flushTasks();
+    await microtasksFinished();
     const historyEmbeddings =
-        element.shadowRoot!.querySelector('cr-history-embeddings');
+        element.shadowRoot.querySelector('cr-history-embeddings');
     assertTrue(!!historyEmbeddings);
 
     historyEmbeddings.dispatchEvent(new CustomEvent('remove-item-click', {
@@ -206,8 +175,8 @@ suite('HistoryAppTest', function() {
   });
 
   test('ChangesQueryStateWithFilterChips', async () => {
-    const filterChips = element.shadowRoot!.querySelector(
-        'cr-history-embeddings-filter-chips')!;
+    const filterChips =
+        element.shadowRoot.querySelector('cr-history-embeddings-filter-chips')!;
     const changeQueryEventPromise = eventToPromise('change-query', element);
     filterChips.dispatchEvent(new CustomEvent('selected-suggestion-changed', {
       detail: {
@@ -233,18 +202,18 @@ suite('HistoryAppTest', function() {
         after: '2022-04-02',
       },
     }));
-    await flushTasks();
+    await microtasksFinished();
 
     const expectedDateObject = new Date('2022-04-02T00:00:00');
 
-    const filterChips = element.shadowRoot!.querySelector(
-        'cr-history-embeddings-filter-chips')!;
+    const filterChips =
+        element.shadowRoot.querySelector('cr-history-embeddings-filter-chips')!;
     assertTrue(!!filterChips);
     assertEquals(
         expectedDateObject.getTime(), filterChips.timeRangeStart?.getTime());
 
     const historyEmbeddings =
-        element.shadowRoot!.querySelector('cr-history-embeddings');
+        element.shadowRoot.querySelector('cr-history-embeddings');
     assertTrue(!!historyEmbeddings);
     const timeRangeStartObj = historyEmbeddings.timeRangeStart;
     assertTrue(!!timeRangeStartObj);
@@ -259,7 +228,7 @@ suite('HistoryAppTest', function() {
         after: '2022-04-02',
       },
     }));
-    await flushTasks();
+    await microtasksFinished();
     assertEquals(timeRangeStartObj, historyEmbeddings.timeRangeStart);
 
     // Clear the after date query.
@@ -270,8 +239,8 @@ suite('HistoryAppTest', function() {
         search: 'two words',
       },
     }));
-    await flushTasks();
-    assertEquals(undefined, historyEmbeddings.timeRangeStart);
+    await microtasksFinished();
+    assertEquals(null, historyEmbeddings.timeRangeStart);
   });
 
   test('UsesMinWordCount', async () => {
@@ -281,10 +250,10 @@ suite('HistoryAppTest', function() {
       composed: true,
       detail: {search: 'two words'},
     }));
-    await flushTasks();
+    await microtasksFinished();
 
     let historyEmbeddings =
-        element.shadowRoot!.querySelector('cr-history-embeddings');
+        element.shadowRoot.querySelector('cr-history-embeddings');
     assertFalse(!!historyEmbeddings);
 
     element.dispatchEvent(new CustomEvent('change-query', {
@@ -292,9 +261,9 @@ suite('HistoryAppTest', function() {
       composed: true,
       detail: {search: 'at least four words'},
     }));
-    await flushTasks();
+    await microtasksFinished();
     historyEmbeddings =
-        element.shadowRoot!.querySelector('cr-history-embeddings');
+        element.shadowRoot.querySelector('cr-history-embeddings');
     assertTrue(!!historyEmbeddings);
   });
 
@@ -311,31 +280,32 @@ suite('HistoryAppTest', function() {
             composed: true,
             bubbles: true,
           }));
+      return microtasksFinished();
     }
 
     function getCount() {
       const historyEmbeddingsElement =
-          element.shadowRoot!.querySelector('cr-history-embeddings')!;
+          element.shadowRoot.querySelector('cr-history-embeddings')!;
       return historyEmbeddingsElement.numCharsForQuery;
     }
 
-    dispatchNativeInput({data: 'a'}, 'a');
+    await dispatchNativeInput({data: 'a'}, 'a');
     assertEquals(1, getCount(), 'counts normal characters');
-    dispatchNativeInput({data: 'b'}, 'ab');
-    dispatchNativeInput({data: 'c'}, 'abc');
+    await dispatchNativeInput({data: 'b'}, 'ab');
+    await dispatchNativeInput({data: 'c'}, 'abc');
     assertEquals(3, getCount(), 'counts additional characters');
 
-    dispatchNativeInput({data: 'pasted text'}, 'pasted text');
+    await dispatchNativeInput({data: 'pasted text'}, 'pasted text');
     assertEquals(1, getCount(), 'insert that replaces all text counts as 1');
 
-    dispatchNativeInput({data: 'more text'}, 'pasted text more text');
+    await dispatchNativeInput({data: 'more text'}, 'pasted text more text');
     assertEquals(
         2, getCount(), 'insert that adds to existing input increments count');
 
-    dispatchNativeInput({data: null}, 'pasted text more tex');
+    await dispatchNativeInput({data: null}, 'pasted text more tex');
     assertEquals(3, getCount(), 'deletion increments');
 
-    dispatchNativeInput({data: null}, '');
+    await dispatchNativeInput({data: null}, '');
     assertEquals(0, getCount(), 'deletion of entire input resets counter');
 
     element.$.toolbar.dispatchEvent(new CustomEvent('search-term-cleared'));
@@ -351,7 +321,7 @@ suite('HistoryAppTest', function() {
     loadTimeData.overrideValues({maybeShowEmbeddingsIph: true});
     element = document.createElement('history-app');
     document.body.appendChild(element);
-    await flushTasks();
+    await microtasksFinished();
     assertDeepEquals(
         element.getSortedAnchorStatusesForTesting(),
         [
@@ -364,100 +334,42 @@ suite('HistoryAppTest', function() {
         'promo is disabled in setup');
   });
 
-  test('ProductSpecsIncrementsToolbar', async () => {
-    // Reset the app with product spec lists feature enabled.
-    document.body.removeChild(element);
-    loadTimeData.overrideValues({compareHistoryEnabled: true});
-    element = document.createElement('history-app');
-    document.body.appendChild(element);
-    element.$.router.selectedPage = 'comparisonTables';
-    await flushTasks();
-    assertEquals(0, element.$.toolbar.count);
-
-    const productSpecificationsList =
-        element.shadowRoot!.querySelector('product-specifications-lists');
-    assert(!!productSpecificationsList);
-
-    // Mock adding a selected item.
-    productSpecificationsList.selectedItems.add('uuid1');
-    productSpecificationsList.dispatchEvent(
-        new CustomEvent('product-spec-item-select', {
-          bubbles: true,
-          composed: true,
-          detail: {
-            checked: true,
-            uuid: 'uuid1',
-          },
-        }));
-    await flushTasks();
-
-    assertEquals(1, element.$.toolbar.count);
-  });
-
-  test('ProductSpecsSelectUnselectAll', async () => {
-    // Reset the app with product spec lists feature enabled.
-    document.body.removeChild(element);
-    loadTimeData.overrideValues({compareHistoryEnabled: true});
-    element = document.createElement('history-app');
-    document.body.appendChild(element);
-    element.$.router.selectedPage = 'comparisonTables';
-    await flushTasks();
-    assertEquals(0, element.$.toolbar.count);
-
-    // Stub the selectOrUnselectAll method in the list element.
-    let selectAllCalled = false;
-    const productSpecificationsList =
-        element.shadowRoot!.querySelector('product-specifications-lists');
-    assert(!!productSpecificationsList);
-    productSpecificationsList.selectOrUnselectAll = function() {
-      selectAllCalled = true;
-    };
-
-    // Mock ctrl+A.
-    productSpecificationsList.selectedItems.add('uuid1');
-    productSpecificationsList.selectedItems.add('uuid2');
-    const modifier = isMac ? 'meta' : 'ctrl';
-    pressAndReleaseKeyOn(document.body, 65, modifier, 'a');
-    await flushTasks();
-
-    assertEquals(true, selectAllCalled);
-    assertEquals(2, element.$.toolbar.count);
-  });
-
   test('PassesDisclaimerLinkClicksToEmbeddings', async () => {
     await forceHistoryEmbeddingsElement();
     const historyEmbeddingsElement =
-        element.shadowRoot!.querySelector('cr-history-embeddings');
+        element.shadowRoot.querySelector('cr-history-embeddings');
     assertTrue(!!historyEmbeddingsElement);
     assertFalse(historyEmbeddingsElement.forceSuppressLogging);
     element.$.historyEmbeddingsDisclaimerLink.click();
+    await microtasksFinished();
     assertTrue(historyEmbeddingsElement.forceSuppressLogging);
   });
 
   test('PassesDisclaimerLinkAuxClicksToEmbeddings', async () => {
     await forceHistoryEmbeddingsElement();
     const historyEmbeddingsElement =
-        element.shadowRoot!.querySelector('cr-history-embeddings');
+        element.shadowRoot.querySelector('cr-history-embeddings');
     assertTrue(!!historyEmbeddingsElement);
     assertFalse(historyEmbeddingsElement.forceSuppressLogging);
     element.$.historyEmbeddingsDisclaimerLink.dispatchEvent(
         new MouseEvent('auxclick'));
+    await microtasksFinished();
     assertTrue(historyEmbeddingsElement.forceSuppressLogging);
   });
 
   test('SetsDateTimeFormatForEmbeddings', async () => {
     await forceHistoryEmbeddingsElement();
     const historyEmbeddingsElement =
-        element.shadowRoot!.querySelector('cr-history-embeddings');
+        element.shadowRoot.querySelector('cr-history-embeddings');
     assertTrue(!!historyEmbeddingsElement);
     assertFalse(historyEmbeddingsElement.showRelativeTimes);
 
     element.$.router.selectedPage = 'grouped';
-    await flushTasks();
+    await microtasksFinished();
     assertTrue(historyEmbeddingsElement.showRelativeTimes);
 
     element.$.router.selectedPage = 'history';
-    await flushTasks();
+    await microtasksFinished();
     assertFalse(historyEmbeddingsElement.showRelativeTimes);
   });
 });

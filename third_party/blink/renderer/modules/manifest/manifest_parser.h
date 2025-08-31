@@ -9,18 +9,21 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 
+#include "base/memory/stack_allocated.h"
 #include "base/types/strong_alias.h"
+#include "services/device/public/mojom/screen_orientation_lock_types.mojom-blink-forward.h"
 #include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
-#include "third_party/blink/public/common/manifest/manifest.h"
 #include "third_party/blink/public/common/safe_url_pattern.h"
-#include "third_party/blink/public/mojom/manifest/manifest.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/manifest/display_mode.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-blink.h"
+#include "third_party/blink/public/mojom/manifest/manifest_launch_handler.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/json/json_values.h"
-#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -275,6 +278,14 @@ class MODULES_EXPORT ManifestParser {
   // icons, if any. An empty vector if the field was not present or empty.
   Vector<mojom::blink::ManifestImageResourcePtr> ParseIcons(
       const JSONObject* object);
+
+  // Parses the 'icons_localized' field of a Manifest, as defined in:
+  // https://w3c.github.io/manifest/#dfn-process-a-_localized-image-resource-member
+  // Returns a map of locale strings to vectors of ManifestImageResourcePtr with
+  // the successfully parsed localized icons, if any. An empty map is returned
+  // if the field was not present or empty.
+  HashMap<String, Vector<mojom::blink::ManifestImageResourcePtr>>
+  ParseIconsLocalized(const JSONObject* object);
 
   // Parses the 'screenshots' field of a Manifest, as defined in:
   // https://www.w3.org/TR/manifest-app-info/#screenshots-member
@@ -551,22 +562,33 @@ class MODULES_EXPORT ManifestParser {
   mojom::blink::TabStripMemberVisibility ParseTabStripMemberVisibility(
       const JSONValue* json_value);
 
-  // Parses the 'scope_patterns' field of the 'tab_strip.home_tab' field
-  // of the manifest.
-  Vector<SafeUrlPattern> ParseScopePatterns(const JSONObject* object);
+  // Helper function to parse the JSON array under `object.field_name` as list
+  // of `SafeUrlPattern`, as defined in https://urlpattern.spec.whatwg.org/.
+  Vector<SafeUrlPattern> ParseUrlPatterns(const JSONObject* object,
+                                          const String& field_name);
 
-  // Helper method to parse individual scope patterns.
-  std::optional<SafeUrlPattern> ParseScopePattern(const PatternInit& init,
-                                                  const KURL& base_url);
+  // Helper function to parse an individual URL pattern. See also
+  // `ParseUrlPatterns`.
+  std::optional<SafeUrlPattern> ParseUrlPattern(const String& property_name,
+                                                const PatternInit& init,
+                                                const KURL& base_url);
+
+  HashMap<String, mojom::blink::ManifestLocalizedTextObjectPtr>
+  ParseLocalizedField(const JSONObject* object, const String& field_name);
+
+  HashMap<String, mojom::blink::ManifestLocalizedTextObjectPtr>
+  ParseNameLocalized(const JSONObject* object);
+
+  HashMap<String, mojom::blink::ManifestLocalizedTextObjectPtr>
+  ParseShortNameLocalized(const JSONObject* object);
+
+  HashMap<String, mojom::blink::ManifestLocalizedTextObjectPtr>
+  ParseDescriptionLocalized(const JSONObject* object);
 
   std::optional<PatternInit> MaybeCreatePatternInit(
       const JSONObject* pattern_object);
 
   String ParseVersion(const JSONObject* object);
-
-  // Parses the `update_token` field in the manifest iff the `id` is defined in
-  // the manifest. Returns `String()` which is null otherwise.
-  String ParseUpdateToken(const JSONObject* object, bool has_custom_id);
 
   void AddErrorInfo(const String& error_msg,
                     bool critical = false,

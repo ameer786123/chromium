@@ -6,9 +6,11 @@ package org.chromium.chrome.browser;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.anyBoolean;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -31,20 +33,30 @@ import org.mockito.junit.MockitoRule;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.base.test.util.Features;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabSelectionType;
+import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.tabmodel.TabRemover;
 import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.components.browser_ui.widget.MenuOrKeyboardActionController;
+import org.chromium.content_public.browser.ContentFeatureList;
+import org.chromium.content_public.browser.WebContents;
+import org.chromium.ui.KeyboardUtils;
 
 import java.util.Set;
 
 /** Unit tests for {@link KeyboardShortcuts}. */
 @RunWith(BaseJUnit4ClassRunner.class)
 @Batch(Batch.UNIT_TESTS)
+@Features.EnableFeatures({
+    ChromeFeatureList.TASK_MANAGER_CLANK,
+    ContentFeatureList.ANDROID_DEV_TOOLS_FRONTEND,
+})
 public class KeyboardShortcutsTest {
 
     // Want this to be less than 8 so we can test that "go to tab" keyboard shortcut is not called.
@@ -55,15 +67,65 @@ public class KeyboardShortcutsTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Mock private MenuOrKeyboardActionController mMenuOrKeyboardActionController;
+    @Mock private Tab mTab;
     @Mock private TabModel mTabModel;
     @Mock private TabModelSelector mTabModelSelector;
+    @Mock private TabRemover mTabRemover;
     @Mock private ToolbarManager mToolbarManager;
+    @Mock private WebContents mWebContents;
 
     @Before
     public void setUp() {
-        when(mTabModelSelector.getCurrentModel()).thenAnswer(invocation -> mTabModel);
+        setUpTabModelSelector();
         when(mMenuOrKeyboardActionController.onMenuOrKeyboardAction(anyInt(), anyBoolean()))
                 .thenReturn(true);
+    }
+
+    /**
+     * Sets up the mock {@link #mTabModelSelector}, which should be passed to {@code
+     * KeyboardShortcuts.onKeyDown()} for testing.
+     */
+    private void setUpTabModelSelector() {
+        when(mTabModelSelector.getCurrentModel()).thenReturn(mTabModel);
+        when(mTabModelSelector.getCurrentTab()).thenReturn(mTab);
+
+        when(mTabModel.getCount()).thenReturn(1);
+        when(mTabModel.index()).thenReturn(0);
+        when(mTabModel.getTabAt(0)).thenReturn(mTab);
+        when(mTabModel.getTabRemover()).thenReturn(mTabRemover);
+
+        when(mTab.getWebContents()).thenReturn(mWebContents);
+        doNothing().when(mTabRemover).closeTabs(any(TabClosureParams.class), anyBoolean());
+    }
+
+    // Close Tab shortcuts
+
+    @Test
+    @SmallTest
+    public void testCloseTab_ctrlW() {
+        testCloseTab(KeyEvent.KEYCODE_W, KeyEvent.META_CTRL_ON);
+    }
+
+    @Test
+    @SmallTest
+    public void testCloseTab_ctrlF4() {
+        testCloseTab(KeyEvent.KEYCODE_F4, KeyEvent.META_CTRL_ON);
+    }
+
+    @Test
+    @SmallTest
+    public void testCloseTab_buttonB() {
+        testCloseTab(KeyEvent.KEYCODE_BUTTON_B, KeyboardUtils.NO_MODIFIER);
+    }
+
+    private void testCloseTab(int keyCode, int metaState) {
+        boolean isKeyEventHandled = keyDown(keyCode, metaState, /* isCurrentTabVisible= */ true);
+
+        assertTrue(isKeyEventHandled);
+        verify(mTabRemover)
+                .closeTabs(
+                        eq(TabClosureParams.closeTab(mTab).allowUndo(false).build()),
+                        /* allowDialog= */ eq(true));
     }
 
     // Bookmarks shortcuts
@@ -254,7 +316,6 @@ public class KeyboardShortcutsTest {
 
     @Test
     @SmallTest
-    @EnableFeatures(ChromeFeatureList.ANDROID_KEYBOARD_A11Y)
     public void testGoToToolbar() {
         assertTrue(
                 keyDown(KeyEvent.KEYCODE_T, KeyEvent.META_ALT_ON | KeyEvent.META_SHIFT_ON, true));
@@ -263,7 +324,6 @@ public class KeyboardShortcutsTest {
 
     @Test
     @SmallTest
-    @EnableFeatures(ChromeFeatureList.ANDROID_KEYBOARD_A11Y)
     public void testGoToBookmarksBar() {
         keyDown(KeyEvent.KEYCODE_B, KeyEvent.META_ALT_ON | KeyEvent.META_SHIFT_ON, true);
         verify(mMenuOrKeyboardActionController, times(1))
@@ -273,12 +333,20 @@ public class KeyboardShortcutsTest {
 
     @Test
     @SmallTest
-    @EnableFeatures(ChromeFeatureList.ANDROID_KEYBOARD_A11Y)
     public void testFocusSwitch() {
         keyDown(KeyEvent.KEYCODE_F6, 0, true);
         verify(mMenuOrKeyboardActionController, times(1))
                 .onMenuOrKeyboardAction(
                         /* id= */ eq(R.id.switch_keyboard_focus_row), /* fromMenu= */ eq(false));
+    }
+
+    @Test
+    @SmallTest
+    public void testOpenStripContextMenu() {
+        keyDown(KeyEvent.KEYCODE_F10, KeyEvent.META_SHIFT_ON, true);
+        verify(mMenuOrKeyboardActionController, times(1))
+                .onMenuOrKeyboardAction(
+                        /* id= */ eq(R.id.open_tab_strip_context_menu), /* fromMenu= */ eq(false));
     }
 
     private void testOpenBookmarks(

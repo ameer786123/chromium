@@ -3,7 +3,7 @@ include_rules = [
 ]
 
 specific_include_rules = {
-  "signin_coordinator\.h": [
-    "+ios/chrome/browser/authentication/ui_bundled/signin/interruptible_chrome_coordinator.h",
+  "reauth_coordinator\.mm": [
+    "+absl/functional/overload.h",
   ],
 }

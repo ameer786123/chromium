@@ -28,6 +28,8 @@ namespace {
 // This is unlikely to reach as the maximum is 20 per spec
 // https://fetch.spec.whatwg.org/#http-redirect-fetch
 constexpr size_t kMaxNonBucketedNumRedirects = 20;
+// See also `kMaxRetryCount` in content/browser/loader/keep_alive_url_loader.cc.
+constexpr size_t kMaxNonBucketedNumRetries = 10;
 
 ChromeKeepAliveRequestTracker::RequestType ComputeRequestType(
     const network::ResourceRequest& request) {
@@ -144,8 +146,8 @@ void ChromeKeepAliveRequestTracker::AddStageMetrics(const RequestStage& stage) {
     case RequestStageType::kRequestFailed:
       ukm_builder_.SetTimeDelta_RequestFailed(
           relative_to_created_time.InMilliseconds());
-      ukm_builder_.SetCompletionStatus_ErrorCode(stage.status->error_code);
-      ukm_builder_.SetCompletionStatus_ExtendedErrorCode(
+      ukm_builder_.SetRequestFailed_ErrorCode(stage.status->error_code);
+      ukm_builder_.SetRequestFailed_ExtendedErrorCode(
           stage.status->extended_error_code);
       break;
 
@@ -172,8 +174,17 @@ void ChromeKeepAliveRequestTracker::AddStageMetrics(const RequestStage& stage) {
     case RequestStageType::kLoaderCompleted:
       ukm_builder_.SetTimeDelta_LoaderCompleted(
           relative_to_created_time.InMilliseconds());
-      ukm_builder_.SetCompletionStatus_ErrorCode(stage.status->error_code);
-      ukm_builder_.SetCompletionStatus_ExtendedErrorCode(
+      ukm_builder_.SetLoaderCompleted_ErrorCode(stage.status->error_code);
+      ukm_builder_.SetLoaderCompleted_ExtendedErrorCode(
+          stage.status->extended_error_code);
+      break;
+
+    case RequestStageType::kRequestRetried:
+      IncreaseNumRetries();
+      ukm_builder_.SetTimeDelta_RequestRetried(
+          relative_to_created_time.InMilliseconds());
+      ukm_builder_.SetRequestRetried_ErrorCode(stage.status->error_code);
+      ukm_builder_.SetRequestRetried_ExtendedErrorCode(
           stage.status->extended_error_code);
       break;
   }
@@ -189,6 +200,11 @@ void ChromeKeepAliveRequestTracker::LogUkmEvent() {
       num_redirects <= kMaxNonBucketedNumRedirects
           ? num_redirects
           : ukm::GetExponentialBucketMinForCounts1000(num_redirects));
+  uint32_t num_retries = GetNumRetries();
+  ukm_builder_.SetNumRetries(
+      num_retries <= kMaxNonBucketedNumRetries
+          ? num_retries
+          : ukm::GetExponentialBucketMinForCounts1000(num_retries));
   ukm_builder_.SetIsContextDetached(is_context_detached_callback_.Run());
   ukm_builder_.SetTimeDelta_EventLogged(
       (base::TimeTicks::Now() - created_time_).InMilliseconds());

@@ -13,7 +13,6 @@
               "project": "chromium"
             },
             "builder_spec": {
-              "build_gs_bucket": "chromium-linux-archive",
               "builder_group": "chromium.linux",
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_chromium_config": {
@@ -37,11 +36,10 @@
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "Linux Tests (Wayland)",
+              "builder": "linux-wayland-mutter-rel-tests",
               "project": "chromium"
             },
             "builder_spec": {
-              "build_gs_bucket": "chromium-linux-archive",
               "builder_group": "chromium.linux",
               "execution_mode": "TEST",
               "legacy_chromium_config": {
@@ -69,11 +67,10 @@
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "linux-wayland-mutter-rel-tests",
+              "builder": "linux-wayland-weston-rel-tests",
               "project": "chromium"
             },
             "builder_spec": {
-              "build_gs_bucket": "chromium-linux-archive",
               "builder_group": "chromium.linux",
               "execution_mode": "TEST",
               "legacy_chromium_config": {
@@ -110,12 +107,12 @@
       "builder_ids_in_scope_for_testing": [
         {
           "bucket": "ci",
-          "builder": "Linux Tests (Wayland)",
+          "builder": "linux-wayland-mutter-rel-tests",
           "project": "chromium"
         },
         {
           "bucket": "ci",
-          "builder": "linux-wayland-mutter-rel-tests",
+          "builder": "linux-wayland-weston-rel-tests",
           "project": "chromium"
         }
       ],
@@ -125,7 +122,7 @@
           "group": "tryserver.chromium.linux"
         },
         {
-          "builder": "linux-wayland-rel",
+          "builder": "linux-wayland-weston-rel",
           "group": "tryserver.chromium.linux"
         }
       ],

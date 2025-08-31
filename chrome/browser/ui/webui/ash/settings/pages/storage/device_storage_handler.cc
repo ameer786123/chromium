@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "ash/public/cpp/new_window_delegate.h"
+#include "base/byte_count.h"
 #include "base/check_op.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/notreached.h"
@@ -163,18 +164,17 @@ void StorageHandler::HandleUpdateStorageInfo(const base::Value::List& args) {
 void StorageHandler::HandleGetStorageEncryption(const base::Value::List& args) {
   AllowJavascript();
   CHECK_EQ(1U, args.size());
-  std::string callback_id = args[0].GetString();
+  const std::string& callback_id = args[0].GetString();
   ::user_data_auth::GetVaultPropertiesRequest request;
   request.set_username(
       user_manager::CanonicalizeUserID(profile_->GetProfileUserName()));
   UserDataAuthClient::Get()->GetVaultProperties(
-      request,
-      base::BindOnce(&StorageHandler::OnGetVaultProperties,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(callback_id)));
+      request, base::BindOnce(&StorageHandler::OnGetVaultProperties,
+                              weak_ptr_factory_.GetWeakPtr(), callback_id));
 }
 
 void StorageHandler::OnGetVaultProperties(
-    const std::string& callback_id,
+    std::string callback_id,
     std::optional<user_data_auth::GetVaultPropertiesReply> reply) {
   // Default is Unknown.
   std::u16string encryption_type =
@@ -197,7 +197,7 @@ void StorageHandler::OnGetVaultProperties(
   }
 
   ResolveJavascriptCallback(base::Value(std::move(callback_id)),
-                            base::Value(encryption_type.c_str()));
+                            base::Value(encryption_type));
 }
 
 void StorageHandler::HandleOpenMyFiles(const base::Value::List& unused_args) {
@@ -209,7 +209,7 @@ void StorageHandler::HandleOpenMyFiles(const base::Value::List& unused_args) {
 
 void StorageHandler::HandleOpenBrowsingDataSettings(
     const base::Value::List& unused_args) {
-  ash::NewWindowDelegate::GetPrimary()->OpenUrl(
+  ash::NewWindowDelegate::GetInstance()->OpenUrl(
       GURL(chrome::kChromeUISettingsURL)
           .Resolve(chrome::kClearBrowserDataSubPage),
       ash::NewWindowDelegate::OpenUrlFrom::kUserInteraction,
@@ -331,7 +331,7 @@ void StorageHandler::UpdateStorageItem(
   if (total_bytes < 0) {
     message = l10n_util::GetStringUTF16(IDS_SETTINGS_STORAGE_SIZE_UNKNOWN);
   } else {
-    message = ui::FormatBytes(total_bytes);
+    message = ui::FormatBytes(base::ByteCount(total_bytes));
   }
 
   if (calculation_type == SizeCalculator::CalculationType::kOtherUsers) {
@@ -380,8 +380,9 @@ void StorageHandler::UpdateOverallStatistics() {
   }
 
   base::Value::Dict size_stat;
-  size_stat.Set("availableSize", ui::FormatBytes(available_bytes));
-  size_stat.Set("usedSize", ui::FormatBytes(in_use_bytes));
+  size_stat.Set("availableSize",
+                ui::FormatBytes(base::ByteCount(available_bytes)));
+  size_stat.Set("usedSize", ui::FormatBytes(base::ByteCount(in_use_bytes)));
   size_stat.Set("usedRatio", static_cast<double>(in_use_bytes) / total_bytes);
   int storage_space_state =
       static_cast<int>(StorageSpaceState::kStorageSpaceNormal);
@@ -434,7 +435,7 @@ void StorageHandler::UpdateSystemSizeItem() {
   if (system_bytes < 0) {
     message = l10n_util::GetStringUTF16(IDS_SETTINGS_STORAGE_SIZE_UNKNOWN);
   } else {
-    message = ui::FormatBytes(system_bytes);
+    message = ui::FormatBytes(base::ByteCount(system_bytes));
   }
   FireWebUIListener(
       CalculationTypeToEventName(SizeCalculator::CalculationType::kSystem),

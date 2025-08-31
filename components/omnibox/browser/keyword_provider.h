@@ -19,6 +19,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
+#include "components/omnibox/browser/autocomplete_enums.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/keyword_extensions_delegate.h"
@@ -73,9 +74,7 @@ class KeywordProvider : public AutocompleteProvider {
   // AutocompleteProvider:
   void DeleteMatch(const AutocompleteMatch& match) override;
   void Start(const AutocompleteInput& input, bool minimal_changes) override;
-  void Stop(bool clear_cached_results, bool due_to_user_inactivity) override;
-
-  bool done() const { return done_; }
+  void Stop(AutocompleteStopReason stop_reason) override;
 
  private:
   friend class KeywordExtensionsDelegateImpl;
@@ -104,10 +103,10 @@ class KeywordProvider : public AutocompleteProvider {
       int relevance,
       bool deletable);
 
-  // Fills in the "destination_url" and "contents" fields of |match| with the
+  // Fills in the `destination_url` and `contents` fields of `match` with the
   // provided user input and keyword data.
-  void FillInURLAndContents(const std::u16string& remaining_input,
-                            const TemplateURL* element,
+  void FillInUrlAndContents(const std::u16string& remaining_input,
+                            const TemplateURL* turl,
                             AutocompleteMatch* match) const;
 
   TemplateURLService* GetTemplateURLService() const;

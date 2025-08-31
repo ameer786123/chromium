@@ -39,6 +39,11 @@ namespace chrome_pdf {
 
 namespace {
 
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+// The maximum image dimension which is processed without downsampling by OCR.
+constexpr uint32_t kMaxImageDimensionForOcr = 2048;
+#endif
+
 TEST(PDFiumPageHelperTest, ToPDFiumRotation) {
   EXPECT_EQ(ToPDFiumRotation(PageOrientation::kOriginal), 0);
   EXPECT_EQ(ToPDFiumRotation(PageOrientation::kClockwise90), 1);
@@ -81,16 +86,6 @@ void CompareTextRuns(const AccessibilityTextRunInfo& expected_text_run,
   EXPECT_EQ(expected_style.is_bold, actual_style.is_bold);
 }
 
-template <typename T>
-void PopulateTextObjects(const std::vector<gfx::Range>& ranges,
-                         std::vector<T>* text_objects) {
-  text_objects->resize(ranges.size());
-  for (size_t i = 0; i < ranges.size(); ++i) {
-    (*text_objects)[i].start_char_index = ranges[i].start();
-    (*text_objects)[i].char_count = ranges[i].end() - ranges[i].start();
-  }
-}
-
 // Returns the page size for a `PDFiumPage`. The caller must make sure that
 // `pdfium_page` is available.
 gfx::SizeF GetPageSizeHelper(PDFiumPage& pdfium_page) {
@@ -98,17 +93,32 @@ gfx::SizeF GetPageSizeHelper(PDFiumPage& pdfium_page) {
   return gfx::SizeF(FPDF_GetPageWidthF(page), FPDF_GetPageHeightF(page));
 }
 
+// Generates relative paths in thumbnail/1.0x when `device_pixel_ratio` = 1.0.
+//
+// The file names use the same format as PDFium pixel / corpus tests.
+// e.g. On Windows with `expectation_file_prefix` = "foo", `page_index` = 0,
+// and all combinations of `use_skia` and `use_platform_suffix`, the file names
+// are:
+//
+// - foo_expected.pdf.0.png
+// - foo_expected_win.pdf.0.png
+// - foo_expected_skia.pdf.0.png
+// - foo_expected_skia_win.pdf.0.png
 base::FilePath GetThumbnailTestData(const std::string& expectation_file_prefix,
                                     size_t page_index,
                                     float device_pixel_ratio,
-                                    bool use_skia) {
-  std::string file_dir = base::StringPrintf("%.1fx", device_pixel_ratio);
-  std::string file_name = base::StringPrintf(
-      "%s_expected%s.pdf.%zu.png", expectation_file_prefix.c_str(),
-      use_skia ? "_skia" : "", page_index);
-  return base::FilePath(FILE_PATH_LITERAL("thumbnail"))
-      .AppendASCII(file_dir)
-      .AppendASCII(file_name);
+                                    bool use_skia,
+                                    bool use_platform_suffix) {
+  base::FilePath thumbnail_dir =
+      base::FilePath(FILE_PATH_LITERAL("thumbnail"))
+          .AppendASCII(base::StringPrintf("%.1fx", device_pixel_ratio));
+  std::string file_name =
+      base::StringPrintf("%s_expected%s.pdf", expectation_file_prefix.c_str(),
+                         use_skia ? "_skia" : "");
+  base::FilePath result = GetReferenceFilePath(thumbnail_dir.value(), file_name,
+                                               use_platform_suffix);
+  return result.AddExtensionASCII(base::StringPrintf(".%zu", page_index))
+      .AddExtensionASCII(".png");
 }
 
 constexpr struct {
@@ -143,6 +153,24 @@ TEST_P(PDFiumPageTest, Constructor) {
   EXPECT_FALSE(page.available());
 }
 
+TEST_P(PDFiumPageTest, NonTextPage) {
+  TestClient client;
+  std::unique_ptr<PDFiumEngine> engine =
+      InitializeEngine(&client, FILE_PATH_LITERAL("rectangles.pdf"));
+  ASSERT_TRUE(engine);
+  ASSERT_EQ(1, engine->GetNumberOfPages());
+
+  PDFiumPage page(engine.get(), 0);
+  EXPECT_FALSE(page.available());
+  EXPECT_FALSE(page.GetTextPage());
+  EXPECT_EQ(page.GetCharCount(), 0);
+
+  page.MarkAvailable();
+  EXPECT_TRUE(page.available());
+  EXPECT_TRUE(page.GetTextPage());
+  EXPECT_EQ(page.GetCharCount(), 0);
+}
+
 TEST_P(PDFiumPageTest, IsCharInPageBounds) {
   TestClient client;
   std::unique_ptr<PDFiumEngine> engine =
@@ -158,7 +186,7 @@ TEST_P(PDFiumPageTest, IsCharInPageBounds) {
   EXPECT_EQ(page.GetCharCount(), 30);
 
   const gfx::RectF page_bounds = page.GetCroppedRect();
-  EXPECT_EQ(page_bounds, gfx::RectF(193.33333f, 129.33333f));
+  EXPECT_EQ(page_bounds, gfx::RectF(180.0f, 120.0f));
 
   EXPECT_EQ(page.GetCharUnicode(0), static_cast<uint32_t>('H'));
   EXPECT_FALSE(page.IsCharInPageBounds(0, page_bounds));
@@ -412,30 +440,26 @@ TEST_P(PDFiumPageLinkTest, AnnotLinkGeneration) {
   const std::vector<PDFiumPage::Link>& links = GetLinks(*engine, 0);
   ASSERT_EQ(kExpectedLinkCount, links.size());
 
-  UNSAFE_TODO({
-    for (size_t i = 0; i < kExpectedLinkCount; ++i) {
-      const PDFiumPage::Link& actual_current_link = links[i];
-      const ExpectedLink& expected_current_link = expected_links[i];
-      EXPECT_EQ(expected_current_link.start_char_index,
-                actual_current_link.start_char_index);
-      EXPECT_EQ(expected_current_link.char_count,
-                actual_current_link.char_count);
-      size_t bounds_size = actual_current_link.bounding_rects.size();
-      ASSERT_EQ(expected_current_link.bounding_rects.size(), bounds_size);
-      for (size_t bounds_index = 0; bounds_index < bounds_size;
-           ++bounds_index) {
-        EXPECT_EQ(expected_current_link.bounding_rects[bounds_index],
-                  actual_current_link.bounding_rects[bounds_index]);
-      }
-      EXPECT_EQ(expected_current_link.url, actual_current_link.target.url);
-      if (actual_current_link.target.url.empty()) {
-        EXPECT_EQ(expected_current_link.page, actual_current_link.target.page);
-        ASSERT_TRUE(actual_current_link.target.y_in_pixels.has_value());
-        EXPECT_FLOAT_EQ(expected_current_link.y_in_pixels,
-                        actual_current_link.target.y_in_pixels.value());
-      }
+  for (size_t i = 0; i < kExpectedLinkCount; ++i) {
+    const PDFiumPage::Link& actual_current_link = links[i];
+    const ExpectedLink& expected_current_link = expected_links[i];
+    EXPECT_EQ(expected_current_link.start_char_index,
+              actual_current_link.start_char_index);
+    EXPECT_EQ(expected_current_link.char_count, actual_current_link.char_count);
+    size_t bounds_size = actual_current_link.bounding_rects.size();
+    ASSERT_EQ(expected_current_link.bounding_rects.size(), bounds_size);
+    for (size_t bounds_index = 0; bounds_index < bounds_size; ++bounds_index) {
+      EXPECT_EQ(expected_current_link.bounding_rects[bounds_index],
+                actual_current_link.bounding_rects[bounds_index]);
     }
-  });
+    EXPECT_EQ(expected_current_link.url, actual_current_link.target.url);
+    if (actual_current_link.target.url.empty()) {
+      EXPECT_EQ(expected_current_link.page, actual_current_link.target.page);
+      ASSERT_TRUE(actual_current_link.target.y_in_pixels.has_value());
+      EXPECT_FLOAT_EQ(expected_current_link.y_in_pixels,
+                      actual_current_link.target.y_in_pixels.value());
+    }
+  }
 }
 
 TEST_P(PDFiumPageLinkTest, GetLinkTarget) {
@@ -549,6 +573,7 @@ TEST_P(PDFiumPageImageTest, ImageAltText) {
 
 INSTANTIATE_TEST_SUITE_P(All, PDFiumPageImageTest, testing::Bool());
 
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 class PDFiumPageImageForOcrTest : public PDFiumPageImageTest {
  public:
   PDFiumPageImageForOcrTest() = default;
@@ -585,15 +610,15 @@ TEST_P(PDFiumPageImageForOcrTest, LowResolutionImage) {
   ASSERT_EQ(3u, page.images_.size());
 
   ASSERT_FALSE(page.images_[0].alt_text.empty());
-  SkBitmap image_bitmap = engine->GetImageForOcr(
-      /*page_index=*/0, page.images_[0].page_object_index);
+  SkBitmap image_bitmap = page.GetImageForOcr(page.images_[0].page_object_index,
+                                              kMaxImageDimensionForOcr);
   EXPECT_FALSE(image_bitmap.drawsNothing());
   EXPECT_EQ(image_bitmap.width(), 50);
   EXPECT_EQ(image_bitmap.height(), 50);
 
   ASSERT_TRUE(page.images_[1].alt_text.empty());
-  image_bitmap = engine->GetImageForOcr(/*page_index=*/0,
-                                        page.images_[1].page_object_index);
+  image_bitmap = page.GetImageForOcr(page.images_[1].page_object_index,
+                                     kMaxImageDimensionForOcr);
   EXPECT_FALSE(image_bitmap.drawsNothing());
   // While the scaled image size is 20x20, `image_data` has the same size as
   // the image in the PDF file, which is 50x50, and is not scaled.
@@ -613,13 +638,15 @@ TEST_P(PDFiumPageImageForOcrTest, HighResolutionImage) {
   page.PopulateTextRunTypeAndImageAltText(text_runs);
   ASSERT_EQ(1u, page.images_.size());
 
-  SkBitmap image_bitmap = engine->GetImageForOcr(
-      /*page_index=*/0, page.images_[0].page_object_index);
+  SkBitmap image_bitmap = page.GetImageForOcr(page.images_[0].page_object_index,
+                                              kMaxImageDimensionForOcr);
   EXPECT_FALSE(image_bitmap.drawsNothing());
-  // While the original image is 5000x5000, the returned image is 267x267 as
-  // OCR needs at most 300 DPI.
-  EXPECT_EQ(image_bitmap.width(), 267);
-  EXPECT_EQ(image_bitmap.height(), 267);
+  // While the original image is 5000x5000, the returned image is
+  // `kMaxImageDimensionForOcr` x `kMaxImageDimensionForOcr` which is the
+  // highest optimal size for OCR.
+  EXPECT_EQ(image_bitmap.width(), static_cast<float>(kMaxImageDimensionForOcr));
+  EXPECT_EQ(image_bitmap.height(),
+            static_cast<float>(kMaxImageDimensionForOcr));
 }
 
 TEST_P(PDFiumPageImageForOcrTest, RotatedPage) {
@@ -634,12 +661,12 @@ TEST_P(PDFiumPageImageForOcrTest, RotatedPage) {
   page.PopulateTextRunTypeAndImageAltText(text_runs);
   ASSERT_EQ(1u, page.images_.size());
 
-  // This page is rotated, therefore the extracted image size is 25x100 while
-  // the stored image is 100x25.
-  SkBitmap image_bitmap = engine->GetImageForOcr(
-      /*page_index=*/0, page.images_[0].page_object_index);
-  EXPECT_EQ(image_bitmap.width(), 25);
-  EXPECT_EQ(image_bitmap.height(), 100);
+  SkBitmap image_bitmap = page.GetImageForOcr(page.images_[0].page_object_index,
+                                              kMaxImageDimensionForOcr);
+
+  // Page rotation does not affect the images that are sent to OCR.
+  EXPECT_EQ(image_bitmap.width(), 100);
+  EXPECT_EQ(image_bitmap.height(), 25);
 }
 
 TEST_P(PDFiumPageImageForOcrTest, NonImage) {
@@ -656,21 +683,22 @@ TEST_P(PDFiumPageImageForOcrTest, NonImage) {
   ASSERT_EQ(1, page.images_[0].page_object_index);
 
   // Existing non-image object.
-  SkBitmap image_bitmap = engine->GetImageForOcr(
-      /*page_index=*/0, /*image_index=*/0);
+  SkBitmap image_bitmap = page.GetImageForOcr(
+      /*image_index=*/0, kMaxImageDimensionForOcr);
   EXPECT_TRUE(image_bitmap.drawsNothing());
   EXPECT_EQ(image_bitmap.width(), 0);
   EXPECT_EQ(image_bitmap.height(), 0);
 
   // Out of range.
-  image_bitmap = engine->GetImageForOcr(
-      /*page_index=*/0, /*image_index=*/1000);
+  image_bitmap =
+      page.GetImageForOcr(/*image_index=*/1000, kMaxImageDimensionForOcr);
   EXPECT_TRUE(image_bitmap.drawsNothing());
   EXPECT_EQ(image_bitmap.width(), 0);
   EXPECT_EQ(image_bitmap.height(), 0);
 }
 
 INSTANTIATE_TEST_SUITE_P(All, PDFiumPageImageForOcrTest, testing::Bool());
+#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
 using PDFiumPageTextTest = PDFiumTestBase;
 
@@ -895,17 +923,15 @@ TEST_P(PDFiumPageHighlightTest, PopulateHighlights) {
   page.PopulateAnnotations();
   ASSERT_EQ(std::size(kExpectedHighlights), page.highlights_.size());
 
-  UNSAFE_TODO({
-    for (size_t i = 0; i < page.highlights_.size(); ++i) {
-      ASSERT_EQ(kExpectedHighlights[i].start_char_index,
-                page.highlights_[i].start_char_index);
-      ASSERT_EQ(kExpectedHighlights[i].char_count,
-                page.highlights_[i].char_count);
-      EXPECT_EQ(kExpectedHighlights[i].bounding_rect,
-                page.highlights_[i].bounding_rect);
-      ASSERT_EQ(kExpectedHighlights[i].color, page.highlights_[i].color);
-    }
-  });
+  for (size_t i = 0; i < page.highlights_.size(); ++i) {
+    ASSERT_EQ(kExpectedHighlights[i].start_char_index,
+              page.highlights_[i].start_char_index);
+    ASSERT_EQ(kExpectedHighlights[i].char_count,
+              page.highlights_[i].char_count);
+    EXPECT_EQ(kExpectedHighlights[i].bounding_rect,
+              page.highlights_[i].bounding_rect);
+    ASSERT_EQ(kExpectedHighlights[i].color, page.highlights_[i].color);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(All, PDFiumPageHighlightTest, testing::Bool());
@@ -938,15 +964,13 @@ TEST_P(PDFiumPageTextFieldTest, PopulateTextFields) {
   size_t text_fields_count = page.text_fields_.size();
   ASSERT_EQ(std::size(kExpectedTextFields), text_fields_count);
 
-  UNSAFE_TODO({
-    for (size_t i = 0; i < text_fields_count; ++i) {
-      EXPECT_EQ(kExpectedTextFields[i].name, page.text_fields_[i].name);
-      EXPECT_EQ(kExpectedTextFields[i].value, page.text_fields_[i].value);
-      EXPECT_EQ(kExpectedTextFields[i].bounding_rect,
-                page.text_fields_[i].bounding_rect);
-      EXPECT_EQ(kExpectedTextFields[i].flags, page.text_fields_[i].flags);
-    }
-  });
+  for (size_t i = 0; i < text_fields_count; ++i) {
+    EXPECT_EQ(kExpectedTextFields[i].name, page.text_fields_[i].name);
+    EXPECT_EQ(kExpectedTextFields[i].value, page.text_fields_[i].value);
+    EXPECT_EQ(kExpectedTextFields[i].bounding_rect,
+              page.text_fields_[i].bounding_rect);
+    EXPECT_EQ(kExpectedTextFields[i].flags, page.text_fields_[i].flags);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(All, PDFiumPageTextFieldTest, testing::Bool());
@@ -1022,23 +1046,21 @@ TEST_P(PDFiumPageChoiceFieldTest, PopulateChoiceFields) {
   size_t choice_fields_count = page.choice_fields_.size();
   ASSERT_EQ(std::size(kExpectedChoiceFields), choice_fields_count);
 
-  UNSAFE_TODO({
-    for (size_t i = 0; i < choice_fields_count; ++i) {
-      EXPECT_EQ(kExpectedChoiceFields[i].name, page.choice_fields_[i].name);
-      size_t choice_field_options_count = page.choice_fields_[i].options.size();
-      ASSERT_EQ(std::size(kExpectedChoiceFields[i].options),
-                choice_field_options_count);
-      for (size_t j = 0; j < choice_field_options_count; ++j) {
-        EXPECT_EQ(kExpectedChoiceFields[i].options[j].name,
-                  page.choice_fields_[i].options[j].name);
-        EXPECT_EQ(kExpectedChoiceFields[i].options[j].is_selected,
-                  page.choice_fields_[i].options[j].is_selected);
-      }
-      EXPECT_EQ(kExpectedChoiceFields[i].bounding_rect,
-                page.choice_fields_[i].bounding_rect);
-      EXPECT_EQ(kExpectedChoiceFields[i].flags, page.choice_fields_[i].flags);
+  for (size_t i = 0; i < choice_fields_count; ++i) {
+    EXPECT_EQ(kExpectedChoiceFields[i].name, page.choice_fields_[i].name);
+    size_t choice_field_options_count = page.choice_fields_[i].options.size();
+    ASSERT_EQ(std::size(kExpectedChoiceFields[i].options),
+              choice_field_options_count);
+    for (size_t j = 0; j < choice_field_options_count; ++j) {
+      EXPECT_EQ(kExpectedChoiceFields[i].options[j].name,
+                page.choice_fields_[i].options[j].name);
+      EXPECT_EQ(kExpectedChoiceFields[i].options[j].is_selected,
+                page.choice_fields_[i].options[j].is_selected);
     }
-  });
+    EXPECT_EQ(kExpectedChoiceFields[i].bounding_rect,
+              page.choice_fields_[i].bounding_rect);
+    EXPECT_EQ(kExpectedChoiceFields[i].flags, page.choice_fields_[i].flags);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(All, PDFiumPageChoiceFieldTest, testing::Bool());
@@ -1111,21 +1133,19 @@ TEST_P(PDFiumPageButtonTest, PopulateButtons) {
   size_t buttons_count = page.buttons_.size();
   ASSERT_EQ(std::size(kExpectedButtons), buttons_count);
 
-  UNSAFE_TODO({
-    for (size_t i = 0; i < buttons_count; ++i) {
-      EXPECT_EQ(kExpectedButtons[i].name, page.buttons_[i].name);
-      EXPECT_EQ(kExpectedButtons[i].value, page.buttons_[i].value);
-      EXPECT_EQ(kExpectedButtons[i].type, page.buttons_[i].type);
-      EXPECT_EQ(kExpectedButtons[i].flags, page.buttons_[i].flags);
-      EXPECT_EQ(kExpectedButtons[i].is_checked, page.buttons_[i].is_checked);
-      EXPECT_EQ(kExpectedButtons[i].control_count,
-                page.buttons_[i].control_count);
-      EXPECT_EQ(kExpectedButtons[i].control_index,
-                page.buttons_[i].control_index);
-      EXPECT_EQ(kExpectedButtons[i].bounding_rect,
-                page.buttons_[i].bounding_rect);
-    }
-  });
+  for (size_t i = 0; i < buttons_count; ++i) {
+    EXPECT_EQ(kExpectedButtons[i].name, page.buttons_[i].name);
+    EXPECT_EQ(kExpectedButtons[i].value, page.buttons_[i].value);
+    EXPECT_EQ(kExpectedButtons[i].type, page.buttons_[i].type);
+    EXPECT_EQ(kExpectedButtons[i].flags, page.buttons_[i].flags);
+    EXPECT_EQ(kExpectedButtons[i].is_checked, page.buttons_[i].is_checked);
+    EXPECT_EQ(kExpectedButtons[i].control_count,
+              page.buttons_[i].control_count);
+    EXPECT_EQ(kExpectedButtons[i].control_index,
+              page.buttons_[i].control_index);
+    EXPECT_EQ(kExpectedButtons[i].bounding_rect,
+              page.buttons_[i].bounding_rect);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(All, PDFiumPageButtonTest, testing::Bool());
@@ -1142,6 +1162,35 @@ class PDFiumPageThumbnailTest : public PDFiumTestBase {
                              float device_pixel_ratio,
                              const gfx::Size& expected_thumbnail_size,
                              const std::string& expectation_file_prefix) {
+    return TestGenerateThumbnailWithPlatformSpecificData(
+        engine, page_index, device_pixel_ratio, expected_thumbnail_size,
+        expectation_file_prefix,
+        /*use_platform_suffix=*/false);
+  }
+
+  void TestGenerateThumbnailWithPlatformSpecificData(
+      PDFiumEngine& engine,
+      size_t page_index,
+      float device_pixel_ratio,
+      const gfx::Size& expected_thumbnail_size,
+      const std::string& expectation_file_prefix,
+      bool use_platform_suffix) {
+    sk_sp<SkImage> image = GenerateThumbnailImage(
+        engine, page_index, device_pixel_ratio, expected_thumbnail_size);
+    ASSERT_TRUE(image);
+
+    base::FilePath expectation_png_file_path = GetThumbnailTestData(
+        expectation_file_prefix, page_index, device_pixel_ratio,
+        /*use_skia=*/GetParam(), use_platform_suffix);
+
+    EXPECT_TRUE(MatchesPngFile(*image, expectation_png_file_path));
+  }
+
+  sk_sp<SkImage> GenerateThumbnailImage(
+      PDFiumEngine& engine,
+      size_t page_index,
+      float device_pixel_ratio,
+      const gfx::Size& expected_thumbnail_size) {
     PDFiumPage& page = GetPDFiumPageForTest(engine, page_index);
     Thumbnail thumbnail = page.GenerateThumbnail(device_pixel_ratio);
     EXPECT_EQ(expected_thumbnail_size, thumbnail.image_size());
@@ -1151,18 +1200,13 @@ class PDFiumPageThumbnailTest : public PDFiumTestBase {
         SkImageInfo::Make(gfx::SizeToSkISize(thumbnail.image_size()),
                           kRGBA_8888_SkColorType, kPremul_SkAlphaType);
     int stride = thumbnail.stride();
-    ASSERT_GT(stride, 0);
-    ASSERT_EQ(image_info.minRowBytes(), static_cast<size_t>(stride));
+    if (stride <= 0 ||
+        static_cast<size_t>(stride) != image_info.minRowBytes()) {
+      return nullptr;
+    }
     std::vector<uint8_t> data = thumbnail.TakeData();
-    sk_sp<SkImage> image = SkImages::RasterFromPixmapCopy(
+    return SkImages::RasterFromPixmapCopy(
         SkPixmap(image_info, data.data(), image_info.minRowBytes()));
-    ASSERT_TRUE(image);
-
-    base::FilePath expectation_png_file_path =
-        GetThumbnailTestData(expectation_file_prefix, page_index,
-                             device_pixel_ratio, /*use_skia=*/GetParam());
-
-    EXPECT_TRUE(MatchesPngFile(image.get(), expectation_png_file_path));
   }
 };
 
@@ -1170,6 +1214,7 @@ TEST_P(PDFiumPageThumbnailTest, GenerateThumbnail) {
   TestClient client;
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("variable_page_sizes.pdf"));
+  ASSERT_TRUE(engine);
   ASSERT_EQ(7, engine->GetNumberOfPages());
 
 #if defined(ARCH_CPU_ARM64)
@@ -1184,11 +1229,12 @@ TEST_P(PDFiumPageThumbnailTest, GenerateThumbnail) {
   }
 }
 
-// For crbug.com/1248455
+// For crbug.com/40197256
 TEST_P(PDFiumPageThumbnailTest, GenerateThumbnailForAnnotation) {
   TestClient client;
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("signature_widget.pdf"));
+  ASSERT_TRUE(engine);
   TestGenerateThumbnail(*engine, /*page_index=*/0, /*device_pixel_ratio=*/1,
                         /*expected_thumbnail_size=*/{140, 140},
                         "signature_widget");
@@ -1201,8 +1247,36 @@ TEST_P(PDFiumPageThumbnailTest, GenerateThumbnailWithTransparency) {
   TestClient client;
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("bug_40216952.pdf"));
+  ASSERT_TRUE(engine);
   TestGenerateThumbnail(*engine, /*page_index=*/0, /*device_pixel_ratio=*/1,
                         /*expected_thumbnail_size=*/{140, 140}, "bug_40216952");
+}
+
+TEST_P(PDFiumPageThumbnailTest, GenerateThumbnailWithOverlapCropBox) {
+  TestClient client;
+  std::unique_ptr<PDFiumEngine> engine =
+      InitializeEngine(&client, FILE_PATH_LITERAL("hello_world_cropped.pdf"));
+  ASSERT_TRUE(engine);
+  TestGenerateThumbnailWithPlatformSpecificData(
+      *engine, /*page_index=*/0, /*device_pixel_ratio=*/1,
+      /*expected_thumbnail_size=*/{162, 108}, "hello_world_cropped",
+      /*use_platform_suffix=*/true);
+}
+
+// For crbug.com/438884266
+TEST_P(PDFiumPageThumbnailTest, GenerateThumbnailWithNoOverlapCropBox) {
+  TestClient client;
+  std::unique_ptr<PDFiumEngine> engine =
+      InitializeEngine(&client, FILE_PATH_LITERAL("cropped_no_overlap.pdf"));
+  ASSERT_TRUE(engine);
+
+  // Since the output is expected to be blank, do not bother checking in a
+  // reference image.
+  sk_sp<SkImage> image = GenerateThumbnailImage(
+      *engine, /*page_index=*/0, /*device_pixel_ratio=*/1,
+      /*expected_thumbnail_size=*/{140, 140});
+  ASSERT_TRUE(image);
+  EXPECT_TRUE(IsImageBlank(*image));
 }
 
 #if BUILDFLAG(ENABLE_PDF_INK2)

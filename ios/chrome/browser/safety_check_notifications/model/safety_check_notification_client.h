@@ -44,6 +44,8 @@ class SafetyCheckNotificationClient
 
   // `PushNotificationClient` overrides.
   bool CanHandleNotification(UNNotification* notification) override;
+  std::optional<NotificationType> GetNotificationType(
+      UNNotification* notification) override;
   bool HandleNotificationInteraction(
       UNNotificationResponse* notification_response) override;
   std::optional<UIBackgroundFetchResult> HandleNotificationReception(
@@ -75,13 +77,6 @@ class SafetyCheckNotificationClient
   // Calls `completion` with all pending requests matching `identifiers`.
   void GetPendingRequests(NSArray<NSString*>* identifiers,
                           GetPendingRequestsCallback completion);
-
-  // Returns the active foreground browser relevant to this client's context.
-  // If multi-Profile handling is enabled, attempts to
-  // return the browser associated specifically with `profile_`. Otherwise,
-  // falls back to finding any active foreground browser. Returns nullptr if
-  // no suitable browser is found.
-  Browser* GetActiveForegroundBrowser();
 
   // Returns true if the user has enabled Safety Check notifications, either in
   // the Notifications Settings UI or through an opt-in prompt (e.g., Magic
@@ -171,9 +166,6 @@ class SafetyCheckNotificationClient
   // foreground scenes, this will store notification metadata so it can
   // be handled when there is a foreground scene.
   NSDictionary* interacted_notification_metadata_;
-
-  // The profile associated with this notification client.
-  raw_ptr<ProfileIOS> profile_ = nullptr;
 
   // Validates asynchronous `PushNotificationClient` events are evaluated on the
   // same sequence that `SafetyCheckNotificationClient` was created on.

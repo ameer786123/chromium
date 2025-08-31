@@ -36,7 +36,7 @@
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/screen.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gfx/linux/client_native_pixmap_factory_dmabuf.h"
 
 namespace arc {
@@ -120,8 +120,7 @@ ArcScreenCaptureSession::Initialize(content::DesktopMediaID desktop_id,
   context_provider->AddObserver(this);
 
   display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(
-          display_root_window_);
+      display::Screen::Get()->GetDisplayNearestWindow(display_root_window_);
   display_id_ = display.id();
 
   display_root_window_->GetHost()->compositor()->AddAnimationObserver(this);
@@ -210,9 +209,8 @@ void ArcScreenCaptureSession::SetOutputBuffer(
     return;
   }
 
-  gfx::GpuMemoryBufferHandle handle;
-  handle.type = gfx::NATIVE_PIXMAP;
-  handle.native_pixmap_handle.modifier = buffer_format_modifier;
+  gfx::NativePixmapHandle native_pixmap_handle;
+  native_pixmap_handle.modifier = buffer_format_modifier;
   base::ScopedPlatformFile platform_file;
   MojoResult mojo_result =
       mojo::UnwrapPlatformFile(std::move(graphics_buffer), &platform_file);
@@ -221,7 +219,7 @@ void ArcScreenCaptureSession::SetOutputBuffer(
     std::move(callback).Run();
     return;
   }
-  handle.native_pixmap_handle.planes.emplace_back(
+  native_pixmap_handle.planes.emplace_back(
       stride * kBytesPerPixel, 0, stride * kBytesPerPixel * size_.height(),
       std::move(platform_file));
 
@@ -235,9 +233,8 @@ void ArcScreenCaptureSession::SetOutputBuffer(
        // RasterImplementation (and not RasterImplementationGLES) as its
        // implementation, GLES2_WRITE usage is not needed.
        gpu::SHARED_IMAGE_USAGE_RASTER_WRITE, "ArcScreenCapture"},
-      std::move(handle));
+      gfx::GpuMemoryBufferHandle(std::move(native_pixmap_handle)));
   CHECK(client_shared_image);
-  ri->WaitSyncTokenCHROMIUM(sii->GenUnverifiedSyncToken().GetConstData());
 
   std::unique_ptr<PendingBuffer> pending_buffer =
       std::make_unique<PendingBuffer>(std::move(callback),
@@ -306,7 +303,7 @@ void ArcScreenCaptureSession::OnDesktopCaptured(
 
   DCHECK_EQ(result->format(), viz::CopyOutputResult::Format::RGBA);
   DCHECK_EQ(result->destination(),
-            viz::CopyOutputResult::Destination::kNativeTextures);
+            viz::CopyOutputResult::Destination::kSharedImage);
 
   auto* ri = GetContextProvider()->RasterInterface();
   if (!ri) {
@@ -315,11 +312,11 @@ void ArcScreenCaptureSession::OnDesktopCaptured(
   }
   // Get the source texture - RGBA format is guaranteed to have 1 valid texture
   // if the CopyOutputRequest succeeded:
-  gpu::Mailbox result_mailbox = result->GetTextureResult()->mailbox;
+  gpu::Mailbox result_mailbox = result->GetSharedImage()->mailbox();
   CHECK(!result_mailbox.IsZero());
 
   viz::CopyOutputResult::ReleaseCallbacks release_callbacks =
-      result->TakeTextureOwnership();
+      result->TakeSharedImageOwnership();
   CHECK_EQ(1u, release_callbacks.size());
 
   std::unique_ptr<DesktopTexture> desktop_texture =
@@ -350,9 +347,13 @@ void ArcScreenCaptureSession::CopyDesktopTextureToGpuBuffer(
   uint32_t query_id;
   ri->GenQueriesEXT(1, &query_id);
   ri->BeginQueryEXT(GL_COMMANDS_COMPLETED_CHROMIUM, query_id);
+  scoped_refptr<gpu::ClientSharedImage> si = pending_buffer->shared_image_;
+  std::unique_ptr<gpu::RasterScopedAccess> ri_access =
+      si->BeginRasterAccess(ri, si->creation_sync_token(), /*readonly=*/false);
   ri->CopySharedImage(desktop_texture->mailbox_,
                       pending_buffer->shared_image_->mailbox(), 0, 0, 0, 0,
                       size_.width(), size_.height());
+  gpu::RasterScopedAccess::EndAccess(std::move(ri_access));
   ri->EndQueryEXT(GL_COMMANDS_COMPLETED_CHROMIUM);
 
   // The query will be signalled after the copy operation has finished on the
@@ -392,7 +393,7 @@ void ArcScreenCaptureSession::OnAnimationStep(base::TimeTicks timestamp) {
   std::unique_ptr<viz::CopyOutputRequest> request =
       std::make_unique<viz::CopyOutputRequest>(
           viz::CopyOutputRequest::ResultFormat::RGBA,
-          viz::CopyOutputRequest::ResultDestination::kNativeTextures,
+          viz::CopyOutputRequest::ResultDestination::kSharedImage,
           base::BindOnce(&ArcScreenCaptureSession::OnDesktopCaptured,
                          weak_ptr_factory_.GetWeakPtr()));
   // Clip the requested area to the desktop area. See b/118675936.

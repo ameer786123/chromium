@@ -20,6 +20,10 @@
 #include "extensions/browser/install/sandboxed_unpacker_failure_reason.h"
 #include "extensions/browser/updater/extension_downloader.h"
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+#include "chrome/browser/extensions/management/management_util.h"
+#endif
+
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -49,14 +53,16 @@ ForceInstalledMetrics::UserType ConvertUserType(
       return ForceInstalledMetrics::UserType::USER_TYPE_GUEST;
     case user_manager::UserType::kPublicAccount:
       return ForceInstalledMetrics::UserType::USER_TYPE_PUBLIC_ACCOUNT;
-    case user_manager::UserType::kKioskApp:
+    case user_manager::UserType::kKioskChromeApp:
       return ForceInstalledMetrics::UserType::USER_TYPE_KIOSK_APP;
     case user_manager::UserType::kChild:
       return ForceInstalledMetrics::UserType::USER_TYPE_CHILD;
-    case user_manager::UserType::kWebKioskApp:
+    case user_manager::UserType::kKioskWebApp:
       return ForceInstalledMetrics::UserType::USER_TYPE_WEB_KIOSK_APP;
     case user_manager::UserType::kKioskIWA:
       return ForceInstalledMetrics::UserType::USER_TYPE_KIOSK_IWA;
+    case user_manager::UserType::kKioskArcvmApp:
+      return ForceInstalledMetrics::UserType::USER_TYPE_KIOSK_ARCVM_APP;
     default:
       NOTREACHED();
   }
@@ -429,6 +435,12 @@ void ForceInstalledMetrics::ReportMetricsOnExtensionsReady() {
   }
   base::UmaHistogramLongTimes("Extensions.ForceInstalledReadyTime",
                               base::Time::Now() - start_time_);
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  base::UmaHistogramEnumeration(
+      "Extensions.ForceInstalledManagementAuthorityTrustworthiness",
+      GetHigherManagementAuthorityTrustworthiness(profile_));
+#endif
 }
 
 void ForceInstalledMetrics::ReportMetrics() {

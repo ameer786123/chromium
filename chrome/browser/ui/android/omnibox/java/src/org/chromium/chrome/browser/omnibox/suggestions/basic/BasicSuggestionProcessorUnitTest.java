@@ -32,19 +32,24 @@ import org.robolectric.annotation.Config;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
 import org.chromium.chrome.browser.omnibox.ShadowUrlBarData;
 import org.chromium.chrome.browser.omnibox.UrlBarEditingTextStateProvider;
 import org.chromium.chrome.browser.omnibox.styles.OmniboxDrawableState;
 import org.chromium.chrome.browser.omnibox.styles.OmniboxImageSupplier;
 import org.chromium.chrome.browser.omnibox.styles.OmniboxResourceProvider;
+import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteUIContext;
 import org.chromium.chrome.browser.omnibox.suggestions.SuggestionHost;
 import org.chromium.chrome.browser.omnibox.suggestions.base.BaseSuggestionViewProperties;
 import org.chromium.chrome.browser.omnibox.test.R;
+import org.chromium.chrome.browser.share.ShareDelegate;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
 import org.chromium.components.omnibox.AutocompleteInput;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatchBuilder;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
+import org.chromium.components.omnibox.SuggestTemplateInfoProto.SuggestTemplateInfo;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
@@ -53,6 +58,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /** Tests for {@link BasicSuggestionProcessor}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -113,6 +119,8 @@ public class BasicSuggestionProcessorUnitTest {
     private @Mock UrlBarEditingTextStateProvider mUrlBarText;
     private @Mock Bitmap mBitmap;
     private @Mock OmniboxImageSupplier mImageSupplier;
+    private @Mock Supplier<Tab> mTabSupplier;
+    private @Mock Supplier<ShareDelegate> mShareDelegateSupplier;
 
     private BasicSuggestionProcessor mProcessor;
     private AutocompleteMatch mSuggestion;
@@ -133,13 +141,17 @@ public class BasicSuggestionProcessorUnitTest {
     @Before
     public void setUp() {
         doReturn("").when(mUrlBarText).getTextWithoutAutocomplete();
-        mProcessor =
-                new BasicSuggestionProcessor(
+        AutocompleteUIContext uiContext =
+                new AutocompleteUIContext(
                         ContextUtils.getApplicationContext(),
                         mSuggestionHost,
                         mUrlBarText,
                         Optional.of(mImageSupplier),
-                        mIsBookmarked);
+                        mIsBookmarked,
+                        mTabSupplier,
+                        mShareDelegateSupplier,
+                        () -> ControlsPosition.TOP);
+        mProcessor = new BasicSuggestionProcessor(uiContext);
         mInput = new AutocompleteInput();
         OmniboxResourceProvider.disableCachesForTesting();
     }
@@ -316,6 +328,19 @@ public class BasicSuggestionProcessorUnitTest {
     }
 
     @Test
+    public void getFallbackIconFromIconType_validIconForEachType() {
+        for (var iconType : SuggestTemplateInfo.IconType.values()) {
+            if (iconType == SuggestTemplateInfo.IconType.ICON_TYPE_UNSPECIFIED) {
+                Assert.assertEquals(
+                        0, mProcessor.getFallbackIconFromIconType(iconType.getNumber()));
+            } else {
+                Assert.assertNotEquals(
+                        0, mProcessor.getFallbackIconFromIconType(iconType.getNumber()));
+            }
+        }
+    }
+
+    @Test
     @SmallTest
     public void refineIconNotShownForWhatYouTypedSuggestions() {
         final String typed = "Typed content";
@@ -350,7 +375,7 @@ public class BasicSuggestionProcessorUnitTest {
         Assert.assertEquals(1, actions.size());
         final OmniboxDrawableState iconState = actions.get(0).icon;
         Assert.assertEquals(
-                R.drawable.btn_suggestion_refine,
+                R.drawable.btn_suggestion_refine_up,
                 shadowOf(iconState.drawable).getCreatedFromResId());
     }
 

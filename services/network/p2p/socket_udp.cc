@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "services/network/p2p/socket_udp.h"
 
 #include <tuple>
@@ -21,6 +16,7 @@
 #include "build/build_config.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "net/base/port_util.h"
 #include "net/log/net_log_source.h"
 #include "services/network/p2p/socket_throttler.h"
 #include "services/network/public/cpp/p2p_socket_type.h"
@@ -28,6 +24,7 @@
 #include "services/network/throttling/throttling_controller.h"
 #include "services/network/throttling/throttling_network_interceptor.h"
 #include "services/network/throttling/throttling_p2p_network_interceptor.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "third_party/webrtc/media/base/rtp_utils.h"
 #include "third_party/webrtc/rtc_base/time_utils.h"
 
@@ -115,12 +112,10 @@ P2PPendingPacket::P2PPendingPacket(
     const webrtc::AsyncSocketPacketOptions& options,
     uint64_t id)
     : to(to),
-      data(base::MakeRefCounted<net::IOBufferWithSize>(content.size())),
+      data(base::MakeRefCounted<net::VectorIOBuffer>(content)),
       size(content.size()),
       packet_options(options),
-      id(id) {
-  memcpy(data->data(), content.data(), content.size());
-}
+      id(id) {}
 
 P2PPendingPacket::P2PPendingPacket(const P2PPendingPacket& other) = default;
 P2PPendingPacket::~P2PPendingPacket() = default;
@@ -298,9 +293,7 @@ void P2PSocketUdp::MaybeDrainReceivedPackets(bool force) {
 
 bool P2PSocketUdp::HandleReadResult(int result) {
   if (result > 0) {
-    auto data =
-        base::span(reinterpret_cast<const uint8_t*>(recv_buffer_->data()),
-                   static_cast<size_t>(result));
+    auto data = recv_buffer_->first(static_cast<size_t>(result));
 
     if (!base::Contains(connected_peers_, recv_address_)) {
       P2PSocket::StunMessageType type;
@@ -316,10 +309,14 @@ bool P2PSocketUdp::HandleReadResult(int result) {
     }
 
     delegate_->DumpPacket(data, true);
+    net::DscpAndEcn last_tos =
+        socket_ == nullptr
+            ? net::DscpAndEcn(net::DSCP_DEFAULT, net::ECN_DEFAULT)
+            : socket_->GetLastTos();
     auto packet = mojom::P2PReceivedPacket::New(
         data, recv_address_,
         base::TimeTicks() + base::Nanoseconds(webrtc::TimeNanos()),
-        GetEcnMarking(socket_->GetLastTos()));
+        GetEcnMarking(last_tos));
 
     if (interceptor_) {
       interceptor_->EnqueueReceive(std::move(packet), std::move(recv_buffer_),
@@ -353,6 +350,11 @@ bool P2PSocketUdp::HandleReadResult(int result) {
 bool P2PSocketUdp::DoSend(const P2PPendingPacket& packet) {
   int64_t send_time_us = webrtc::TimeMicros();
 
+  if (!net::IsPortAllowedForIpEndpoint(packet.to)) {
+    OnError();
+    return false;
+  }
+
   // The peer is considered not connected until the first incoming STUN
   // request/response. In that state the renderer is allowed to send only STUN
   // messages to that peer and they are throttled using the |throttler_|. This
@@ -360,10 +362,7 @@ bool P2PSocketUdp::DoSend(const P2PPendingPacket& packet) {
   // messages are sent in correct order.
   if (!base::Contains(connected_peers_, packet.to)) {
     P2PSocket::StunMessageType type = P2PSocket::StunMessageType();
-    bool stun = GetStunPacketType(
-        base::span(reinterpret_cast<const uint8_t*>(packet.data->data()),
-                   packet.size),
-        &type);
+    bool stun = GetStunPacketType(packet.data->first(packet.size), &type);
     if (!stun || type == STUN_DATA_INDICATION) {
       LOG(ERROR) << "Page tried to send a data packet to "
                  << packet.to.ToString() << " before STUN binding is finished.";
@@ -383,8 +382,8 @@ bool P2PSocketUdp::DoSend(const P2PPendingPacket& packet) {
     }
   }
 
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("p2p", "UdpAsyncSendTo", packet.id, "size",
-                                    packet.size);
+  TRACE_EVENT_BEGIN("p2p", "UdpAsyncSendTo", perfetto::Track(packet.id), "size",
+                    packet.size);
   // Don't try to set DSCP in following conditions,
   // 1. If the outgoing packet is set to DSCP_NO_CHANGE
   // 2. If no change in DSCP value from last packet
@@ -404,9 +403,9 @@ bool P2PSocketUdp::DoSend(const P2PPendingPacket& packet) {
     }
   }
 
-  webrtc::ApplyPacketOptions(packet.data->bytes(), packet.size,
-                             packet.packet_options.packet_time_params,
-                             send_time_us);
+  webrtc::ApplyPacketOptions(
+      webrtc::ArrayView<uint8_t>(packet.data->bytes(), packet.size),
+      packet.packet_options.packet_time_params, send_time_us);
   auto callback_binding = base::BindRepeating(
       &P2PSocketUdp::OnSend, base::Unretained(this), packet.id,
       packet.packet_options.packet_id, send_time_us / 1000);
@@ -433,10 +432,7 @@ bool P2PSocketUdp::DoSend(const P2PPendingPacket& packet) {
     }
   }
 
-  delegate_->DumpPacket(
-      base::span(reinterpret_cast<const uint8_t*>(packet.data->data()),
-                 packet.size),
-      false);
+  delegate_->DumpPacket(packet.data->first(packet.size), false);
 
   return true;
 }
@@ -468,8 +464,7 @@ bool P2PSocketUdp::HandleSendResult(uint64_t packet_id,
                                     int32_t transport_sequence_number,
                                     int64_t send_time_ms,
                                     int result) {
-  TRACE_EVENT_NESTABLE_ASYNC_END0("p2p", "UdpAsyncSendTo", packet_id);
-  TRACE_EVENT_NESTABLE_ASYNC_END1("p2p", "Send", packet_id, "result", result);
+  TRACE_EVENT_END("p2p", perfetto::Track(packet_id), "result", result);
   if (result < 0) {
     if (!IsTransientError(result)) {
       LOG(ERROR) << "Error when sending data in UDP socket: " << result;

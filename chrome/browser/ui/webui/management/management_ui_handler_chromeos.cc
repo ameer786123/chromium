@@ -6,6 +6,7 @@
 
 #include "ash/constants/ash_features.h"
 #include "base/check_is_test.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ash/crostini/crostini_features.h"
 #include "chrome/browser/ash/crostini/crostini_pref_names.h"
@@ -31,7 +32,6 @@
 #include "chrome/browser/chromeos/reporting/metric_reporting_prefs.h"
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/enterprise/reporting/prefs.h"
-#include "chrome/browser/media/webrtc/capture_policy_utils.h"
 #include "chrome/browser/net/stub_resolver_config_reader.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/policy/networking/policy_cert_service.h"
@@ -486,12 +486,9 @@ void ManagementUIHandlerChromeOS::RegisterMessages() {
           &ManagementUIHandlerChromeOS::HandleGetFilesUploadToCloudInfo,
           base::Unretained(this)));
 
-  capture_policy::CheckGetAllScreensMediaAllowedForAnyOrigin(
-      Profile::FromWebUI(web_ui()),
-      base::BindOnce(
-          &ManagementUIHandlerChromeOS::
-              CheckGetAllScreensMediaAllowedForAnyOriginResultReceived,
-          weak_factory_.GetWeakPtr()));
+  if (IsJavascriptAllowed()) {
+    NotifyThreatProtectionInfoUpdated();
+  }
 }
 
 // static
@@ -912,14 +909,6 @@ void ManagementUIHandlerChromeOS::HandleGetPluginVmDataCollectionStatus(
   AllowJavascript();
   ResolveJavascriptCallback(args[0] /* callback_id */,
                             plugin_vm_data_collection_enabled);
-}
-
-void ManagementUIHandlerChromeOS::
-    CheckGetAllScreensMediaAllowedForAnyOriginResultReceived(bool is_allowed) {
-  set_is_get_all_screens_media_allowed_for_any_origin(is_allowed);
-  if (IsJavascriptAllowed()) {
-    NotifyThreatProtectionInfoUpdated();
-  }
 }
 
 std::unique_ptr<ManagementUIHandler> ManagementUIHandler::Create(

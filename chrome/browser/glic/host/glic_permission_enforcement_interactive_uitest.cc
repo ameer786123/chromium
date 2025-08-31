@@ -36,8 +36,10 @@ class GlicPermissionEnforcementUiTest : public test::InteractiveGlicTest {
   std::unique_ptr<device::ScopedGeolocationOverrider> geolocation_overrider_;
 };
 
+// TODO(crbug.com/409118577): Microphone permissions are not actually gated by
+// the microphone permission yet.
 IN_PROC_BROWSER_TEST_F(GlicPermissionEnforcementUiTest,
-                       MicrophonePermissionTestDeny) {
+                       DISABLED_MicrophonePermissionTestDeny) {
   const InteractiveBrowserTest::DeepQuery kAudioCaptureStart = {
       "#audioCapStart"};
   const InteractiveBrowserTest::DeepQuery kAudioCaptureStop = {"#audioCapStop"};
@@ -90,7 +92,7 @@ IN_PROC_BROWSER_TEST_F(GlicPermissionEnforcementUiTest,
           test::kGlicContentsElementId,
           "() => document.querySelector('#getPageContextStatus').innerText",
           "Error getting page context: Error: tabContext failed: permission "
-          "denied"));
+          "denied: context permission not enabled"));
 }
 
 IN_PROC_BROWSER_TEST_F(GlicPermissionEnforcementUiTest,

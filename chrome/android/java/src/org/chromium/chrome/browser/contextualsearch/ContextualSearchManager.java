@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.contextualsearch;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
 import android.net.Uri;
 import android.os.Handler;
@@ -13,8 +15,6 @@ import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.ViewTreeObserver.OnGlobalFocusChangeListener;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
@@ -25,8 +25,10 @@ import org.chromium.base.ObserverList;
 import org.chromium.base.SysUtils;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.blink_public.input.SelectionGranularity;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.cc.input.BrowserControlsState;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
@@ -80,10 +82,12 @@ import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.base.PageTransition;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.touch_selection.SelectionEventType;
+import org.chromium.ui.util.AccessibilityUtil;
 import org.chromium.url.GURL;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Manages the Contextual Search feature. This class keeps track of the status of Contextual Search
@@ -101,11 +105,12 @@ import java.util.List;
  * <p>The lifetime of this class corresponds to the Activity, and this class creates and owns a
  * {@link ContextualSearchPanel} with the same lifetime.
  */
+@NullMarked
 public class ContextualSearchManager
         implements ContextualSearchManagementDelegate,
                 ContextualSearchNetworkCommunicator,
                 ContextualSearchSelectionHandler,
-                ChromeAccessibilityUtil.Observer {
+                AccessibilityUtil.Observer {
     // TODO(donnd): provide an inner class that implements some of these interfaces rather than
     // having the manager itself implement the interface because that exposes all the public methods
     // of that interface at the manager level.
@@ -131,8 +136,7 @@ public class ContextualSearchManager
     // A separator that we expect in the title of a dictionary response.
     private static final String DEFINITION_MID_DOT = "\u00b7";
 
-    private final ObserverList<ContextualSearchObserver> mObservers =
-            new ObserverList<ContextualSearchObserver>();
+    private final ObserverList<ContextualSearchObserver> mObservers = new ObserverList<>();
 
     private final Activity mActivity;
     private final Profile mProfile;
@@ -161,21 +165,21 @@ public class ContextualSearchManager
 
     private ContextualSearchSelectionController mSelectionController;
     private ContextualSearchNetworkCommunicator mNetworkCommunicator;
-    @NonNull private ContextualSearchPolicy mPolicy;
+    private ContextualSearchPolicy mPolicy;
     private ContextualSearchInternalStateController mInternalStateController;
 
     // The panel.
     private ContextualSearchPanel mSearchPanel;
-    private ObservableSupplierImpl<OverlayPanelStateProvider> mOverlayPanelStateProviderSupplier =
-            new ObservableSupplierImpl<>();
+    private final ObservableSupplierImpl<OverlayPanelStateProvider>
+            mOverlayPanelStateProviderSupplier = new ObservableSupplierImpl<>();
 
     // The native manager associated with this object.
     private long mNativeContextualSearchManagerPtr;
 
     private ViewGroup mParentView;
     private RedirectHandler mRedirectHandler;
-    private TabModelSelectorTabModelObserver mTabModelObserver;
-    private TabModelSelectorTabObserver mTabModelSelectorTabObserver;
+    private @Nullable TabModelSelectorTabModelObserver mTabModelObserver;
+    private @Nullable TabModelSelectorTabObserver mTabModelSelectorTabObserver;
 
     private boolean mDidStartLoadingResolvedSearchRequest;
 
@@ -188,7 +192,7 @@ public class ContextualSearchManager
     private boolean mReceivedContextualCardsEntityData;
 
     // The current search context, or null.
-    private ContextualSearchContext mContext;
+    private @Nullable ContextualSearchContext mContext;
 
     /**
      * This boolean is used for loading content after a long-press when content is not immediately
@@ -202,10 +206,10 @@ public class ContextualSearchManager
      */
     private boolean mIsPromotingToTab;
 
-    private ContextualSearchRequest mSearchRequest;
-    private ContextualSearchRequest mLastSearchRequestLoaded;
+    private @Nullable ContextualSearchRequest mSearchRequest;
+    private @Nullable ContextualSearchRequest mLastSearchRequestLoaded;
 
-    private RelatedSearchesList mRelatedSearches;
+    private @Nullable RelatedSearchesList mRelatedSearches;
 
     /** Whether any current Search shown in the SERP is from Related Searches. */
     private boolean mIsRelatedSearchesSerp;
@@ -214,7 +218,7 @@ public class ContextualSearchManager
      * For Related Searches we need to remember the ResolvedSearchTerm for the default query so we
      * can switch back to it.
      */
-    private ResolvedSearchTerm mResolvedSearchTerm;
+    private @Nullable ResolvedSearchTerm mResolvedSearchTerm;
 
     /** Whether the Accessibility Mode is enabled. */
     private boolean mIsAccessibilityModeEnabled;
@@ -227,10 +231,10 @@ public class ContextualSearchManager
     private int mSelectAroundCaretCounter;
 
     /** A means of accessing the currently active tab. */
-    private Supplier<Tab> mTabSupplier;
+    private final Supplier<@Nullable Tab> mTabSupplier;
 
     /** A means of observing scene changes and attaching overlays. */
-    private LayoutManagerImpl mLayoutManager;
+    private @Nullable LayoutManagerImpl mLayoutManager;
 
     /** The pixel density. */
     private final float mDpToPx;
@@ -268,7 +272,7 @@ public class ContextualSearchManager
             Profile profile,
             ContextualSearchTabPromotionDelegate tabPromotionDelegate,
             ScrimManager scrimManager,
-            Supplier<Tab> tabSupplier,
+            Supplier<@Nullable Tab> tabSupplier,
             FullscreenManager fullscreenManager,
             BrowserControlsStateProvider browserControlsStateProvider,
             WindowAndroid windowAndroid,
@@ -338,17 +342,18 @@ public class ContextualSearchManager
      * @param bottomControlsStacker The {@link BottomControlsStacker} for observing and changing
      *     browser controls heights.
      */
+    @Initializer
     public void initialize(
-            @NonNull ViewGroup parentView,
-            @NonNull LayoutManagerImpl layoutManager,
-            @NonNull BottomSheetController bottomSheetController,
-            @NonNull CompositorViewHolder compositorViewHolder,
+            ViewGroup parentView,
+            LayoutManagerImpl layoutManager,
+            BottomSheetController bottomSheetController,
+            CompositorViewHolder compositorViewHolder,
             float toolbarHeightDp,
-            @NonNull ToolbarManager toolbarManager,
+            ToolbarManager toolbarManager,
             boolean canPromoteToNewTab,
-            @NonNull IntentRequestTracker intentRequestTracker,
+            IntentRequestTracker intentRequestTracker,
             DesktopWindowStateManager desktopWindowStateManager,
-            @NonNull BottomControlsStacker bottomControlsStacker) {
+            BottomControlsStacker bottomControlsStacker) {
         mNativeContextualSearchManagerPtr = ContextualSearchManagerJni.get().init(this, mProfile);
 
         mParentView = parentView;
@@ -393,13 +398,14 @@ public class ContextualSearchManager
      * Destroys the native Contextual Search Manager.
      * Call this method before orphaning this object to allow it to be garbage collected.
      */
+    @SuppressWarnings("NullAway")
     public void destroy() {
         if (!mIsInitialized) return;
 
         hideContextualSearch(StateChangeReason.UNKNOWN);
         mFullscreenManager.removeObserver(mFullscreenObserver);
         mParentView.getViewTreeObserver().removeOnGlobalFocusChangeListener(mOnFocusChangeListener);
-        ContextualSearchManagerJni.get().destroy(mNativeContextualSearchManagerPtr, this);
+        ContextualSearchManagerJni.get().destroy(mNativeContextualSearchManagerPtr);
         stopListeningForHideNotifications();
         mRedirectHandler.clear();
         mInternalStateController.enter(InternalState.UNDEFINED);
@@ -411,6 +417,7 @@ public class ContextualSearchManager
     }
 
     @Override
+    @Initializer
     public void setContextualSearchPanel(ContextualSearchPanel panel) {
         assert panel != null;
         mSearchPanel = panel;
@@ -588,7 +595,7 @@ public class ContextualSearchManager
             String selection, boolean isExactResolve, ContextualSearchContext searchContext) {
         ContextualSearchManagerJni.get()
                 .startSearchTermResolutionRequest(
-                        mNativeContextualSearchManagerPtr, this, mContext, getBaseWebContents());
+                        mNativeContextualSearchManagerPtr, mContext, getBaseWebContents());
         ContextualSearchUma.logResolveRequested(mSelectionController.isTapSelection());
     }
 
@@ -600,7 +607,7 @@ public class ContextualSearchManager
     }
 
     /** Accessor for the {@code InfoBarContainer} currently attached to the {@code Tab}. */
-    private InfoBarContainer getInfoBarContainer() {
+    private @Nullable InfoBarContainer getInfoBarContainer() {
         Tab tab = mTabSupplier.get();
         return tab == null ? null : InfoBarContainer.get(tab);
     }
@@ -812,6 +819,9 @@ public class ContextualSearchManager
             doLiteralSearch = true;
         }
 
+        // TODO(crbug.com/437389354): Convert into an assert
+        assumeNonNull(message);
+
         mRelatedSearches = new RelatedSearchesList(resolvedSearchTerm.relatedSearchesJson());
         mResolvedSearchTerm = resolvedSearchTerm;
         displayResolvedSearchTerm(resolvedSearchTerm, message, doLiteralSearch);
@@ -829,7 +839,8 @@ public class ContextualSearchManager
             if (currentSelection != null) currentSelection = currentSelection.trim();
             if (originalSelection != null && originalSelection.trim().equals(currentSelection)) {
                 mSelectionController.adjustSelection(selectionStartAdjust, selectionEndAdjust);
-                mContext.onSelectionAdjusted(selectionStartAdjust, selectionEndAdjust);
+                assumeNonNull(mContext)
+                        .onSelectionAdjusted(selectionStartAdjust, selectionEndAdjust);
             }
         }
 
@@ -862,6 +873,9 @@ public class ContextualSearchManager
             alternateTerm = null;
             doPreventPreload = true;
         }
+
+        // TODO(crbug.com/437389354): Convert into an assert
+        assumeNonNull(searchTerm);
 
         List<String> inBarRelatedSearches = buildRelatedSearches(searchTerm);
 
@@ -945,20 +959,24 @@ public class ContextualSearchManager
         targetLanguage = targetLanguage != null ? targetLanguage : "";
         String fluentLanguages = mTranslateController.getTranslateServiceFluentLanguages();
         fluentLanguages = fluentLanguages != null ? fluentLanguages : "";
-        mContext.setResolveProperties(
-                mPolicy.getHomeCountry(mActivity),
-                mPolicy.doSendBasePageUrl(),
-                targetLanguage,
-                fluentLanguages);
+        assumeNonNull(mContext)
+                .setResolveProperties(
+                        mPolicy.getHomeCountry(mActivity),
+                        mPolicy.doSendBasePageUrl(),
+                        targetLanguage,
+                        fluentLanguages);
     }
 
     /** Issues a resolve request for the current selection. */
     private void issueResolveRequest() {
         boolean isExactSearch = mSelectionController.isAdjustedSelection();
-        mContext.prepareToResolve(
-                isExactSearch, mPolicy.getRelatedSearchesStamp(getBasePageLanguage()));
+        assumeNonNull(mContext)
+                .prepareToResolve(
+                        isExactSearch, mPolicy.getRelatedSearchesStamp(getBasePageLanguage()));
+        String selectedText = mSelectionController.getSelectedText();
+        assumeNonNull(selectedText);
         mNetworkCommunicator.startSearchTermResolutionRequest(
-                mSelectionController.getSelectedText(), isExactSearch, mContext);
+                selectedText, isExactSearch, mContext);
     }
 
     /** Resets internal state that should be reset whenever a Search ends (panel is closed). */
@@ -977,6 +995,7 @@ public class ContextualSearchManager
     private void loadSearchUrl() {
         assert mSearchPanel != null;
         mLoadedSearchUrlTimeMs = System.currentTimeMillis();
+        assumeNonNull(mSearchRequest);
         mLastSearchRequestLoaded = mSearchRequest;
         mSearchPanel.loadUrlInPanel(mSearchRequest.getSearchUrl());
         mDidStartLoadingResolvedSearchRequest = true;
@@ -1175,7 +1194,6 @@ public class ContextualSearchManager
             ExternalNavigationParams params =
                     new ExternalNavigationParams.Builder(
                                     escapedUrl, false, referrerUrl, pageTransition, isRedirect)
-                            .setApplicationMustBeInForeground(true)
                             .setRedirectHandler(mRedirectHandler)
                             .setIsMainFrame(isInPrimaryMainFrame)
                             .build();
@@ -1188,6 +1206,7 @@ public class ContextualSearchManager
 
         @Override
         public void onFirstNonEmptyPaint() {
+            assumeNonNull(mSearchRequest);
             mSearchPanel.getPanelMetrics().onFirstNonEmptyPaint(mSearchRequest.wasPrefetch());
         }
     }
@@ -1203,7 +1222,6 @@ public class ContextualSearchManager
             ContextualSearchManagerJni.get()
                     .removeLastHistoryEntry(
                             mNativeContextualSearchManagerPtr,
-                            this,
                             mLastSearchRequestLoaded.getSearchUrl(),
                             mLoadedSearchUrlTimeMs);
         }
@@ -1377,6 +1395,7 @@ public class ContextualSearchManager
         }
         if (suggestionIndex < RelatedSearchesControl.INDEX_OF_THE_FIRST_RELATED_SEARCHES) {
             // Click on the default query
+            assumeNonNull(mResolvedSearchTerm);
             mSearchRequest =
                     new ContextualSearchRequest(
                             mProfile,
@@ -1468,7 +1487,9 @@ public class ContextualSearchManager
                 if (!TextUtils.isEmpty(adjustedSelection)) {
                     mSelectionController.setSelectedText(adjustedSelection);
                 }
-                showSelectionAsSearchInBar(mSelectionController.getSelectedText());
+                String selectedText = mSelectionController.getSelectedText();
+                assumeNonNull(selectedText);
+                showSelectionAsSearchInBar(selectedText);
                 mInternalStateController.notifyFinishedWorkOn(InternalState.START_SHOWING_TAP_UI);
             } else {
                 hideContextualSearch(StateChangeReason.UNKNOWN);
@@ -1690,10 +1711,7 @@ public class ContextualSearchManager
                             InternalState.GATHERING_SURROUNDINGS);
                     ContextualSearchManagerJni.get()
                             .gatherSurroundingText(
-                                    mNativeContextualSearchManagerPtr,
-                                    ContextualSearchManager.this,
-                                    mContext,
-                                    webContents);
+                                    mNativeContextualSearchManagerPtr, mContext, webContents);
                 } else {
                     mInternalStateController.reset(StateChangeReason.UNKNOWN);
                 }
@@ -1728,6 +1746,7 @@ public class ContextualSearchManager
                     mInternalStateController.notifyStartingWorkOn(
                             InternalState.START_SHOWING_TAP_UI);
                     mSelectAroundCaretCounter++;
+                    assumeNonNull(mContext);
                     baseWebContents.selectAroundCaret(
                             SelectionGranularity.WORD,
                             /* shouldShowHandle= */ false,
@@ -1875,7 +1894,7 @@ public class ContextualSearchManager
 
     /** @return The language of the base page being viewed by the user. */
     private String getBasePageLanguage() {
-        return mContext.getDetectedLanguage();
+        return assumeNonNull(mContext).getDetectedLanguage();
     }
 
     private int getBasePageHeight() {
@@ -1895,12 +1914,12 @@ public class ContextualSearchManager
      *         if the feature for showing chips is not enabled.
      */
     private @Nullable List<String> buildRelatedSearches(String defaultSearch) {
-        List<String> queries = mRelatedSearches.getQueries();
+        List<String> queries = assumeNonNull(mRelatedSearches).getQueries();
         if (queries.size() == 0) {
             return queries;
         }
 
-        List<String> relatedSearches = new ArrayList<String>(queries.size() + 1);
+        List<String> relatedSearches = new ArrayList<>(queries.size() + 1);
         relatedSearches.add(defaultSearch);
         relatedSearches.addAll(queries);
 
@@ -1974,7 +1993,7 @@ public class ContextualSearchManager
 
     /** @return The current search request, or {@code null} if there is none, for testing. */
     @VisibleForTesting
-    ContextualSearchRequest getRequest() {
+    @Nullable ContextualSearchRequest getRequest() {
         return mSearchRequest;
     }
 
@@ -2010,25 +2029,22 @@ public class ContextualSearchManager
 
     @NativeMethods
     interface Natives {
-        long init(ContextualSearchManager caller, @JniType("Profile*") Profile profile);
+        long init(ContextualSearchManager self, @JniType("Profile*") Profile profile);
 
-        void destroy(long nativeContextualSearchManager, ContextualSearchManager caller);
+        void destroy(long nativeContextualSearchManager);
 
         void startSearchTermResolutionRequest(
                 long nativeContextualSearchManager,
-                ContextualSearchManager caller,
-                ContextualSearchContext contextualSearchContext,
-                WebContents baseWebContents);
+                @Nullable ContextualSearchContext contextualSearchContext,
+                @Nullable WebContents baseWebContents);
 
         void gatherSurroundingText(
                 long nativeContextualSearchManager,
-                ContextualSearchManager caller,
                 ContextualSearchContext contextualSearchContext,
                 WebContents baseWebContents);
 
         void removeLastHistoryEntry(
                 long nativeContextualSearchManager,
-                ContextualSearchManager caller,
                 @JniType("std::string") String historyUrl,
                 long urlTimeMs);
     }

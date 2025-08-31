@@ -8,11 +8,11 @@
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
+#include "components/omnibox/browser/searchbox.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "ui/gfx/vector_icon_types.h"
-#include "ui/webui/resources/cr_components/searchbox/searchbox.mojom.h"
 
 class MetricsReporter;
 class OmniboxController;
@@ -29,6 +29,9 @@ class WebUIDataSource;
 class SearchboxHandler : public searchbox::mojom::PageHandler,
                          public AutocompleteController::Observer {
  public:
+  SearchboxHandler(const SearchboxHandler&) = delete;
+  SearchboxHandler& operator=(const SearchboxHandler&) = delete;
+
   static void SetupWebUIDataSource(content::WebUIDataSource* source,
                                    Profile* profile,
                                    bool enable_voice_search = false,
@@ -75,9 +78,8 @@ class SearchboxHandler : public searchbox::mojom::PageHandler,
       mojo::PendingReceiver<searchbox::mojom::PageHandler> pending_page_handler,
       Profile* profile,
       content::WebContents* web_contents,
-      MetricsReporter* metrics_reporter);
-  SearchboxHandler(const SearchboxHandler&) = delete;
-  SearchboxHandler& operator=(const SearchboxHandler&) = delete;
+      MetricsReporter* metrics_reporter,
+      std::unique_ptr<OmniboxController> controller);
   ~SearchboxHandler() override;
 
   OmniboxController* omnibox_controller() const;

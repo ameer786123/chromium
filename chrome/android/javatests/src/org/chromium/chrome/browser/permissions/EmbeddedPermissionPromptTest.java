@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.permissions;
 
+import static org.chromium.components.permissions.PermissionUtil.getGeolocationType;
+
 import android.Manifest;
 import android.text.TextUtils;
 
@@ -89,25 +91,36 @@ public class EmbeddedPermissionPromptTest {
             @ContentSettingValues int value) {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    WebsitePreferenceBridgeJni.get()
-                            .setPermissionSettingForOrigin(
-                                    ProfileManager.getLastUsedRegularProfile(),
-                                    type,
-                                    origin,
-                                    origin,
-                                    value);
+                    if (type == ContentSettingsType.GEOLOCATION_WITH_OPTIONS) {
+                        WebsitePreferenceBridgeJni.get()
+                                .setGeolocationSettingForOrigin(
+                                        ProfileManager.getLastUsedRegularProfile(),
+                                        type,
+                                        origin,
+                                        origin,
+                                        value,
+                                        value);
+                    } else {
+                        WebsitePreferenceBridgeJni.get()
+                                .setPermissionSettingForOrigin(
+                                        ProfileManager.getLastUsedRegularProfile(),
+                                        type,
+                                        origin,
+                                        origin,
+                                        value);
+                    }
                 });
     }
 
     private void checkPermission(
             @ContentSettingsType.EnumType int type, String title, ChromeActivity activity)
             throws Exception {
-        final Tab tab = activity.getActivityTab();
+        final Tab tab = ThreadUtils.runOnUiThreadBlocking(() -> activity.getActivityTab());
         final PermissionUpdateWaiter permissionUpdateWaiter =
                 new PermissionUpdateWaiter(title, activity);
         ThreadUtils.runOnUiThreadBlocking(() -> tab.addObserver(permissionUpdateWaiter));
         switch (type) {
-            case ContentSettingsType.GEOLOCATION -> {
+            case ContentSettingsType.GEOLOCATION, ContentSettingsType.GEOLOCATION_WITH_OPTIONS -> {
                 mActivityTestRule.runJavaScriptCodeInCurrentTab("checkGeolocation();");
             }
             default -> {
@@ -119,7 +132,7 @@ public class EmbeddedPermissionPromptTest {
     }
 
     private void waitForTitleUpdate(String title, ChromeActivity activity) throws Exception {
-        final Tab tab = activity.getActivityTab();
+        final Tab tab = ThreadUtils.runOnUiThreadBlocking(() -> activity.getActivityTab());
         final PermissionUpdateWaiter permissionUpdateWaiter =
                 new PermissionUpdateWaiter(title, activity);
         ThreadUtils.runOnUiThreadBlocking(() -> tab.addObserver(permissionUpdateWaiter));
@@ -376,7 +389,7 @@ public class EmbeddedPermissionPromptTest {
             case "microphone":
                 return ContentSettingsType.MEDIASTREAM_MIC;
             case "geolocation":
-                return ContentSettingsType.GEOLOCATION;
+                return getGeolocationType();
             default:
                 assert false : "Unreached";
         }
@@ -386,35 +399,6 @@ public class EmbeddedPermissionPromptTest {
     @Test
     @MediumTest
     @Features.EnableFeatures({PermissionsAndroidFeatureList.PERMISSION_ELEMENT})
-    @Features.DisableFeatures(PermissionsAndroidFeatureList.ONE_TIME_PERMISSION)
-    @DisabledTest(message = "crbug.com/394097674")
-    public void testAskPromptTextWithoutOneTime() throws Exception {
-        String[] requestablePermission =
-                new String[] {
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                };
-        mTestAndroidPermissionDelegate =
-                new TestAndroidPermissionDelegate(
-                        requestablePermission, RuntimePromptResponse.GRANT);
-        runTest(
-                mTestAndroidPermissionDelegate,
-                TEST_PAGE,
-                "geolocation",
-                stringToContentSettingsType("geolocation"),
-                ContentSettingValues.ASK,
-                LOOPBACK_ADDRESS + " wants to use your device's location",
-                "Allow",
-                "",
-                "Don't allow");
-    }
-
-    @Test
-    @MediumTest
-    @Features.EnableFeatures({
-        PermissionsAndroidFeatureList.ONE_TIME_PERMISSION,
-        PermissionsAndroidFeatureList.PERMISSION_ELEMENT
-    })
     @DisabledTest(message = "crbug.com/394097674")
     public void testAskPromptTextWithOneTime() throws Exception {
         String[] requestablePermission =
@@ -439,38 +423,9 @@ public class EmbeddedPermissionPromptTest {
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        PermissionsAndroidFeatureList.ONE_TIME_PERMISSION,
-        PermissionsAndroidFeatureList.PERMISSION_ELEMENT
-    })
+    @Features.EnableFeatures({PermissionsAndroidFeatureList.PERMISSION_ELEMENT})
     @DisabledTest(message = "crbug.com/394097674")
     public void testPreviouslyDeniedPromptTextWithOneTime() throws Exception {
-        String[] requestablePermission =
-                new String[] {
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                };
-        mTestAndroidPermissionDelegate =
-                new TestAndroidPermissionDelegate(
-                        requestablePermission, RuntimePromptResponse.GRANT);
-        runTest(
-                mTestAndroidPermissionDelegate,
-                TEST_PAGE,
-                "geolocation",
-                stringToContentSettingsType("geolocation"),
-                ContentSettingValues.BLOCK,
-                "You previously didn't allow location for this site",
-                "Continue not allowing",
-                /* expectedPositiveEphemeralButtonText */ "",
-                "Allow this time");
-    }
-
-    @Test
-    @MediumTest
-    @Features.EnableFeatures(PermissionsAndroidFeatureList.PERMISSION_ELEMENT)
-    @Features.DisableFeatures(PermissionsAndroidFeatureList.ONE_TIME_PERMISSION)
-    @DisabledTest(message = "crbug.com/394097674")
-    public void testPreviouslyDeniedPromptTextWithoutOneTime() throws Exception {
         String[] requestablePermission =
                 new String[] {
                     Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -569,60 +524,42 @@ public class EmbeddedPermissionPromptTest {
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        PermissionsAndroidFeatureList.ONE_TIME_PERMISSION,
-        PermissionsAndroidFeatureList.PERMISSION_ELEMENT
-    })
+    @Features.EnableFeatures({PermissionsAndroidFeatureList.PERMISSION_ELEMENT})
     public void testAskPromptInteractionAllow() throws Exception {
         testAskPromptInteraction(EmbeddedPermissiontResponse.POSITIVE);
     }
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        PermissionsAndroidFeatureList.ONE_TIME_PERMISSION,
-        PermissionsAndroidFeatureList.PERMISSION_ELEMENT
-    })
+    @Features.EnableFeatures({PermissionsAndroidFeatureList.PERMISSION_ELEMENT})
     public void testAskPromptInteractionAllowEphemeral() throws Exception {
         testAskPromptInteraction(EmbeddedPermissiontResponse.POSITIVE_EPHEMERAL);
     }
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        PermissionsAndroidFeatureList.ONE_TIME_PERMISSION,
-        PermissionsAndroidFeatureList.PERMISSION_ELEMENT
-    })
+    @Features.EnableFeatures({PermissionsAndroidFeatureList.PERMISSION_ELEMENT})
     public void testAskPromptInteractionDeny() throws Exception {
         testAskPromptInteraction(EmbeddedPermissiontResponse.NEGATIVE);
     }
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        PermissionsAndroidFeatureList.ONE_TIME_PERMISSION,
-        PermissionsAndroidFeatureList.PERMISSION_ELEMENT
-    })
+    @Features.EnableFeatures({PermissionsAndroidFeatureList.PERMISSION_ELEMENT})
     public void testPreviousDeniedInteractionContinue() throws Exception {
         testPreviousDeniedInteraction(EmbeddedPermissiontResponse.POSITIVE);
     }
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        PermissionsAndroidFeatureList.ONE_TIME_PERMISSION,
-        PermissionsAndroidFeatureList.PERMISSION_ELEMENT
-    })
+    @Features.EnableFeatures({PermissionsAndroidFeatureList.PERMISSION_ELEMENT})
     public void testPreviousDeniedInteractionAllow() throws Exception {
         testPreviousDeniedInteraction(EmbeddedPermissiontResponse.NEGATIVE);
     }
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        PermissionsAndroidFeatureList.ONE_TIME_PERMISSION,
-        PermissionsAndroidFeatureList.PERMISSION_ELEMENT
-    })
+    @Features.EnableFeatures({PermissionsAndroidFeatureList.PERMISSION_ELEMENT})
     @DisabledTest(message = "crbug.com/392083174")
     public void testPreviousGrantedInteractionContinue() throws Exception {
         testPreviousGrantedInteraction(EmbeddedPermissiontResponse.POSITIVE);
@@ -630,10 +567,7 @@ public class EmbeddedPermissionPromptTest {
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({
-        PermissionsAndroidFeatureList.ONE_TIME_PERMISSION,
-        PermissionsAndroidFeatureList.PERMISSION_ELEMENT
-    })
+    @Features.EnableFeatures({PermissionsAndroidFeatureList.PERMISSION_ELEMENT})
     @DisabledTest(message = "crbug.com/392083174")
     public void testPreviousGrantedInteractionStop() throws Exception {
         testPreviousGrantedInteraction(EmbeddedPermissiontResponse.NEGATIVE);

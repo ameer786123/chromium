@@ -4,7 +4,6 @@
 
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#import "components/reading_list/features/reading_list_switches.h"
 #import "components/signin/public/base/consent_level.h"
 #import "components/signin/public/base/signin_pref_names.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_constants.h"
@@ -185,8 +184,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
       performAction:grey_tap()];
 
   // Verify that the identity is signed-in and the promo is hidden.
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity.userEmail];
   [SigninEarlGreyUI verifySigninPromoNotVisible];
 }
 
@@ -206,8 +204,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   [ChromeEarlGrey
       waitForUIElementToAppearWithMatcher:SignedInSnackbar(
                                               fakeIdentity.userEmail)];
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity.userEmail];
   // Tap on "Undo".
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(SignedInSnackbarUndoButton(),
@@ -240,8 +237,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
                                           fakeIdentity2.userEmail)]
       performAction:grey_tap()];
   // Verify that the identity2 is signed-in and that the promo is hidden.
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity2.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity2.userEmail];
   [SigninEarlGreyUI verifySigninPromoNotVisible];
 }
 
@@ -270,8 +266,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
                                           grey_sufficientlyVisible(), nil)]
       performAction:grey_tap()];
   // Verify that identity1 is signed-in and the promo is hidden.
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity1.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity1.userEmail];
   [SigninEarlGreyUI verifySigninPromoNotVisible];
 
   // Dismiss the sign-in snackbar.
@@ -323,8 +318,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
       performAction:grey_tap()];
 
   // Verify that the second account is signed-in.
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity2.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity2.userEmail];
 }
 
 // Tests that the signin promo is shown again when last signed-in user removes
@@ -375,8 +369,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
       performAction:grey_tap()];
 
   // Result: the sign-in is successful without any issue.
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity1.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity1.userEmail];
 }
 
 // Tests that if the data is reloaded after the account storage promo is shown,
@@ -548,6 +541,13 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 // and one is removed, then after a sign-out and a new sign-in with the Reading
 // List sign-in promo with the same account, the removed item is not visible.
 - (void)testRemoveItemAfterSignInThenRefreshSignin {
+  // TODO(crbug.com/436165941): Re-enable the test on iOS26.
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (iOS26_OR_ABOVE()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
+#endif
+
   // Sign-in with the Reading List Promo.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];

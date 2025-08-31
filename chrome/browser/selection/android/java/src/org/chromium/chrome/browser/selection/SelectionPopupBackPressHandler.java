@@ -12,6 +12,7 @@ import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
@@ -52,12 +53,20 @@ public class SelectionPopupBackPressHandler extends EmptyTabObserver
     }
 
     @Override
+    public boolean invokeBackActionOnEscape() {
+        // For Escape key presses, we do not want to clear selection, which matches with Desktop. We
+        // do not also implement a custom {@link BackPressHandler#handleEscPress()} since we don't
+        // want anything to happen and for the manager to move to the next priority handler.
+        return false;
+    }
+
+    @Override
     public ObservableSupplier<Boolean> getHandleBackPressChangedSupplier() {
         return mBackPressChangedSupplier;
     }
 
     @Override
-    public void didSelectTab(Tab tab, int type, int lastId) {
+    public void didSelectTab(Tab tab, @TabSelectionType int type, int lastId) {
         mBackPressChangedSupplier.set(false);
         updatePopupControllerObserving(tab);
     }

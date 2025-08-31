@@ -11,7 +11,6 @@ import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.ImageView;
-import android.widget.ImageView.ScaleType;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -65,12 +64,10 @@ class SingleTabView extends LinearLayout {
                         resources.getDimensionPixelSize(
                                 R.dimen.single_tab_module_title_margin_bottom);
                 tabSwitcherTitleDescription.setText(
-                        resources.getQuantityString(
-                                R.plurals.home_modules_tab_resumption_title, 1));
+                        getContext().getString(R.string.home_modules_single_tab_title));
             }
-            mTabThumbnail.setScaleType(ScaleType.MATRIX);
             mTabThumbnail.updateThumbnailPlaceholder(
-                    /* isIncognito= */ false, /* isSelected= */ false);
+                    /* isIncognito= */ false, /* isSelected= */ false, /* colorId */ null);
         }
     }
 

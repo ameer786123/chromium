@@ -7,7 +7,9 @@ package org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog;
 import android.content.Context;
 import android.content.res.Resources;
 import android.text.Editable;
+import android.text.InputFilter;
 import android.util.AttributeSet;
+import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.TextView.BufferType;
 
@@ -17,19 +19,25 @@ import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.suggestions.SuggestionsConfig;
 import org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog.CustomTileEditDelegates.DialogMode;
 import org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog.CustomTileEditDelegates.MediatorToView;
 import org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog.CustomTileEditDelegates.UrlErrorCode;
 import org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog.CustomTileEditDelegates.ViewToMediator;
+import org.chromium.ui.KeyboardUtils;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.text.EmptyTextWatcher;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /** The View of the Custom Tile Edit Dialog. */
 @NullMarked
 class CustomTileEditView extends FrameLayout
         implements ModalDialogProperties.Controller, MediatorToView {
     private final PropertyModel mDialogModel;
+    private final List<Runnable> mOnWindowFocusTasks = new ArrayList<>();
 
     private TextInputEditText mNameField;
     private TextInputEditText mUrlField;
@@ -52,7 +60,15 @@ class CustomTileEditView extends FrameLayout
     public void onFinishInflate() {
         super.onFinishInflate();
         mNameField = findViewById(R.id.name_field);
+        mNameField.setFilters(
+                new InputFilter[] {
+                    new InputFilter.LengthFilter(SuggestionsConfig.MAX_CUSTOM_TILES_NAME_LENGTH)
+                });
         mUrlField = findViewById(R.id.url_field);
+        mUrlField.setFilters(
+                new InputFilter[] {
+                    new InputFilter.LengthFilter(SuggestionsConfig.MAX_CUSTOM_TILES_URL_LENGTH)
+                });
         mUrlField.addTextChangedListener(
                 new EmptyTextWatcher() {
                     @Override
@@ -60,6 +76,17 @@ class CustomTileEditView extends FrameLayout
                         mMediatorDelegate.onUrlTextChanged(s.toString());
                     }
                 });
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasWindowFocus) {
+        super.onWindowFocusChanged(hasWindowFocus);
+        if (hasWindowFocus && getVisibility() == View.VISIBLE) {
+            for (Runnable task : mOnWindowFocusTasks) {
+                task.run();
+            }
+            mOnWindowFocusTasks.clear();
+        }
     }
 
     /**
@@ -77,10 +104,10 @@ class CustomTileEditView extends FrameLayout
     @Override
     public void onClick(PropertyModel modelDialogModel, int buttonType) {
         if (buttonType == ModalDialogProperties.ButtonType.POSITIVE) {
-            @Nullable Editable title = mNameField.getText();
+            @Nullable Editable name = mNameField.getText();
             @Nullable Editable urlText = mUrlField.getText();
             mMediatorDelegate.onSave(
-                    (title == null) ? "" : title.toString(),
+                    (name == null) ? "" : name.toString(),
                     (urlText == null) ? "" : urlText.toString());
         } else {
             mMediatorDelegate.onCancel();
@@ -91,6 +118,11 @@ class CustomTileEditView extends FrameLayout
     public void onDismiss(PropertyModel modelDialogModel, int dismissalCause) {}
 
     // MediatorToView implementation.
+    @Override
+    public void addOnWindowFocusGainedTask(Runnable task) {
+        mOnWindowFocusTasks.add(task);
+    }
+
     @Override
     public void setDialogMode(@DialogMode int mode) {
         mDialogModel.set(ModalDialogProperties.TITLE, getDialogTitleFromMode(mode));
@@ -123,8 +155,20 @@ class CustomTileEditView extends FrameLayout
     }
 
     @Override
-    public void focusOnUrl() {
+    public void focusOnName() {
+        mNameField.requestFocus();
+        @Nullable Editable name = mNameField.getText();
+        mNameField.setSelection((name == null) ? 0 : name.length());
+        KeyboardUtils.showKeyboard(mNameField);
+    }
+
+    @Override
+    public void focusOnUrl(boolean selectAll) {
         mUrlField.requestFocus();
+        if (selectAll) {
+            mUrlField.selectAll();
+        }
+        KeyboardUtils.showKeyboard(mUrlField);
     }
 
     PropertyModel getDialogModel() {

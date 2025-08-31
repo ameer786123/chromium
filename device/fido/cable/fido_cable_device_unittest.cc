@@ -19,6 +19,7 @@
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
@@ -35,7 +36,6 @@ namespace device {
 namespace {
 
 using ::testing::_;
-using ::testing::Invoke;
 using ::testing::Test;
 using TestDeviceFuture =
     base::test::TestFuture<std::optional<std::vector<uint8_t>>>;
@@ -150,12 +150,12 @@ class FidoCableDeviceTest : public Test {
   }
 
   void ConnectWithLength(uint16_t length) {
-    EXPECT_CALL(*connection(), ConnectPtr).WillOnce(Invoke([](auto* callback) {
+    EXPECT_CALL(*connection(), ConnectPtr).WillOnce([](auto* callback) {
       std::move(*callback).Run(true);
-    }));
+    });
 
     EXPECT_CALL(*connection(), ReadControlPointLengthPtr(_))
-        .WillOnce(Invoke([length](auto* cb) { std::move(*cb).Run(length); }));
+        .WillOnce([length](auto* cb) { std::move(*cb).Run(length); });
 
     device()->Connect();
   }
@@ -177,9 +177,9 @@ class FidoCableDeviceTest : public Test {
 };
 
 TEST_F(FidoCableDeviceTest, ConnectionFailureTest) {
-  EXPECT_CALL(*connection(), ConnectPtr).WillOnce(Invoke([](auto* callback) {
+  EXPECT_CALL(*connection(), ConnectPtr).WillOnce([](auto* callback) {
     std::move(*callback).Run(false);
-  }));
+  });
 
   device()->Connect();
 }
@@ -209,7 +209,7 @@ TEST_F(FidoCableDeviceTest, TestCaBleDeviceSendData) {
   ConnectWithLength(kControlPointLength);
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(_, _))
-      .WillRepeatedly(Invoke([this](const auto& data, auto* cb) {
+      .WillRepeatedly([this](const auto& data, auto* cb) {
         base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
@@ -219,7 +219,7 @@ TEST_F(FidoCableDeviceTest, TestCaBleDeviceSendData) {
             FROM_HERE, base::BindOnce(connection()->read_callback(),
                                       ConstructSerializedOutgoingFragment(
                                           authenticator_reply)));
-      }));
+      });
 
   for (size_t i = 0; i < 3; i++) {
     SCOPED_TRACE(i);
@@ -240,8 +240,7 @@ TEST_F(FidoCableDeviceTest, TestCableDeviceFailOnIncorrectSessionKey) {
   ConnectWithLength(kControlPointLength);
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(_, _))
-      .WillOnce(Invoke([this, &kIncorrectSessionKey](const auto& data,
-                                                     auto* cb) {
+      .WillOnce([this, &kIncorrectSessionKey](const auto& data, auto* cb) {
         base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
@@ -253,7 +252,7 @@ TEST_F(FidoCableDeviceTest, TestCableDeviceFailOnIncorrectSessionKey) {
             FROM_HERE, base::BindOnce(connection()->read_callback(),
                                       ConstructSerializedOutgoingFragment(
                                           authenticator_reply)));
-      }));
+      });
 
   TestDeviceFuture future;
   device()->DeviceTransact(fido_parsing_utils::Materialize(kTestData),
@@ -269,7 +268,7 @@ TEST_F(FidoCableDeviceTest, TestCableDeviceFailOnUnexpectedCounter) {
   ConnectWithLength(kControlPointLength);
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(_, _))
-      .WillOnce(Invoke([this](const auto& data, auto* cb) {
+      .WillOnce([this](const auto& data, auto* cb) {
         base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
@@ -282,7 +281,7 @@ TEST_F(FidoCableDeviceTest, TestCableDeviceFailOnUnexpectedCounter) {
             FROM_HERE, base::BindOnce(connection()->read_callback(),
                                       ConstructSerializedOutgoingFragment(
                                           authenticator_reply)));
-      }));
+      });
 
   TestDeviceFuture future;
   device()->DeviceTransact(fido_parsing_utils::Materialize(kTestData),
@@ -302,7 +301,7 @@ TEST_F(FidoCableDeviceTest, TestCableDeviceErrorOnMaxCounter) {
   ConnectWithLength(kControlPointLength);
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(_, _))
-      .WillOnce(Invoke([this](const auto& data, auto* cb) {
+      .WillOnce([this](const auto& data, auto* cb) {
         base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
@@ -314,7 +313,7 @@ TEST_F(FidoCableDeviceTest, TestCableDeviceErrorOnMaxCounter) {
             FROM_HERE, base::BindOnce(connection()->read_callback(),
                                       ConstructSerializedOutgoingFragment(
                                           authenticator_reply)));
-      }));
+      });
 
   TestDeviceFuture future;
   device()->SetSequenceNumbersForTesting(kInvalidCounter, 0);

@@ -209,26 +209,9 @@ public class SignOutDialogTest {
 
     @Test
     @MediumTest
-    public void testFooterWhenAccountIsNotManaged_UPMDisabled() {
+    public void testFooterWhenAccountIsNotManaged() {
         setUpMocks();
         mockAllowDeletingBrowserHistoryPref(true);
-        when(mPasswordManagerUtilBridgeNativeMock.usesSplitStoresAndUPMForLocal(mPrefService))
-                .thenReturn(false);
-
-        showSignOutDialog(SignoutReason.USER_CLICKED_SIGNOUT_SETTINGS);
-
-        onView(withText(R.string.turn_off_sync_and_signout_message))
-                .inRoot(isDialog())
-                .check(matches(isDisplayed()));
-    }
-
-    @Test
-    @MediumTest
-    public void testFooterWhenAccountIsNotManaged_UPMEnabled() {
-        setUpMocks();
-        mockAllowDeletingBrowserHistoryPref(true);
-        when(mPasswordManagerUtilBridgeNativeMock.usesSplitStoresAndUPMForLocal(mPrefService))
-                .thenReturn(true);
 
         showSignOutDialog(SignoutReason.USER_CLICKED_SIGNOUT_SETTINGS);
 

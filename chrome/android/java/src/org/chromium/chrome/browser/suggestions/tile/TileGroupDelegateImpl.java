@@ -4,10 +4,12 @@
 
 package org.chromium.chrome.browser.suggestions.tile;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 
-import org.chromium.base.Callback;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -38,8 +40,9 @@ import java.util.Set;
  * Reusable implementation of {@link TileGroup.Delegate}. Performs work in parts of the system that
  * the {@link TileGroup} should not know about.
  */
+@NullMarked
 public class TileGroupDelegateImpl implements TileGroup.Delegate {
-    private static final Set<Integer> MVTilesClickForUserAction =
+    private static final Set<Integer> sMvtClickForUserAction =
             new HashSet<>(
                     Arrays.asList(
                             WindowOpenDisposition.CURRENT_TAB,
@@ -54,7 +57,8 @@ public class TileGroupDelegateImpl implements TileGroup.Delegate {
     private @Nullable ModalDialogManager mModalDialogManager;
 
     private boolean mIsDestroyed;
-    private SnackbarController mTileRemovedSnackbarController;
+    private @Nullable SnackbarController mTileRemovedSnackbarController;
+    private @Nullable SnackbarController mTileUnpinnedSnackbarController;
 
     public TileGroupDelegateImpl(
             Context context,
@@ -63,28 +67,31 @@ public class TileGroupDelegateImpl implements TileGroup.Delegate {
             SnackbarManager snackbarManager) {
         mContext = context;
         mProfile = profile;
-        mSnackbarManager = snackbarManager;
         mNavigationDelegate = navigationDelegate;
+        mSnackbarManager = snackbarManager;
         mMostVisitedSites =
                 SuggestionsDependencyFactory.getInstance().createMostVisitedSites(profile);
     }
 
     // CustomLinkOperations -> TileGroup.Delegate implementation.
     @Override
-    public boolean addCustomLink(String name, @Nullable GURL url) {
+    public boolean addCustomLink(String name, @Nullable GURL url, @Nullable Integer pos) {
         assert !mIsDestroyed;
-        return mMostVisitedSites.addCustomLink(name, url);
+        dismissAllSnackbars();
+        return mMostVisitedSites.addCustomLink(name, url, pos);
     }
 
     @Override
     public boolean assignCustomLink(GURL keyUrl, String name, @Nullable GURL url) {
         assert !mIsDestroyed;
+        dismissAllSnackbars();
         return mMostVisitedSites.assignCustomLink(keyUrl, name, url);
     }
 
     @Override
     public boolean deleteCustomLink(GURL keyUrl) {
         assert !mIsDestroyed;
+        dismissAllSnackbars();
         return mMostVisitedSites.deleteCustomLink(keyUrl);
     }
 
@@ -94,13 +101,20 @@ public class TileGroupDelegateImpl implements TileGroup.Delegate {
         return mMostVisitedSites.hasCustomLink(keyUrl);
     }
 
-    // TileGroup.Delegate implementation.
     @Override
-    public void removeMostVisitedItem(Tile item, Callback<GURL> removalUndoneCallback) {
+    public boolean reorderCustomLink(GURL keyUrl, int newPos) {
+        assert !mIsDestroyed;
+        dismissAllSnackbars();
+        return mMostVisitedSites.reorderCustomLink(keyUrl, newPos);
+    }
+
+    @Override
+    public void removeMostVisitedItem(Tile item) {
         assert !mIsDestroyed;
 
-        mMostVisitedSites.addBlocklistedUrl(item.getUrl());
-        showTileRemovedSnackbar(item.getUrl(), removalUndoneCallback);
+        GURL url = item.getUrl();
+        mMostVisitedSites.addBlocklistedUrl(url);
+        showTileRemovedSnackbar(url);
     }
 
     @Override
@@ -177,29 +191,69 @@ public class TileGroupDelegateImpl implements TileGroup.Delegate {
     }
 
     @Override
+    public void showTileUnpinSnackbar(Runnable undoHandler) {
+        if (mTileUnpinnedSnackbarController == null) {
+            mTileUnpinnedSnackbarController =
+                    new SnackbarController() {
+                        @Override
+                        public void onDismissNoAction(@Nullable Object actionData) {}
+
+                        /** Undoes the tile removal. */
+                        @Override
+                        public void onAction(@Nullable Object actionData) {
+                            if (mIsDestroyed) return;
+                            Runnable undoHandlerFromData = (Runnable) actionData;
+                            assumeNonNull(undoHandlerFromData).run();
+                            RecordUserAction.record("Suggestions.SnackBar.UndoUnpinItem");
+                        }
+                    };
+        }
+        Snackbar snackbar =
+                Snackbar.make(
+                                mContext.getString(R.string.most_visited_item_removed),
+                                mTileUnpinnedSnackbarController,
+                                Snackbar.TYPE_ACTION,
+                                Snackbar.UMA_NTP_MOST_VISITED_UNPIN_UNDO)
+                        .setAction(mContext.getString(R.string.undo), undoHandler);
+        mSnackbarManager.showSnackbar(snackbar);
+    }
+
+    @Override
+    public double getSuggestionScore(GURL url) {
+        return mMostVisitedSites.getSuggestionScore(url);
+    }
+
+    @Override
     public void destroy() {
         assert !mIsDestroyed;
         mIsDestroyed = true;
 
-        if (mTileRemovedSnackbarController != null) {
-            mSnackbarManager.dismissSnackbars(mTileRemovedSnackbarController);
-        }
+        dismissAllSnackbars();
         mMostVisitedSites.destroy();
     }
 
-    private void showTileRemovedSnackbar(GURL url, final Callback<GURL> removalUndoneCallback) {
+    private void dismissAllSnackbars() {
+        if (mTileUnpinnedSnackbarController != null) {
+            mSnackbarManager.dismissSnackbars(mTileUnpinnedSnackbarController);
+        }
+        if (mTileRemovedSnackbarController != null) {
+            mSnackbarManager.dismissSnackbars(mTileRemovedSnackbarController);
+        }
+    }
+
+    private void showTileRemovedSnackbar(GURL url) {
         if (mTileRemovedSnackbarController == null) {
             mTileRemovedSnackbarController =
                     new SnackbarController() {
                         @Override
-                        public void onDismissNoAction(Object actionData) {}
+                        public void onDismissNoAction(@Nullable Object actionData) {}
 
                         /** Undoes the tile removal. */
                         @Override
-                        public void onAction(Object actionData) {
+                        public void onAction(@Nullable Object actionData) {
                             if (mIsDestroyed) return;
                             GURL url = (GURL) actionData;
-                            removalUndoneCallback.onResult(url);
+                            if (url == null) return;
                             mMostVisitedSites.removeBlocklistedUrl(url);
                         }
                     };
@@ -229,7 +283,7 @@ public class TileGroupDelegateImpl implements TileGroup.Delegate {
         if (windowDisposition != WindowOpenDisposition.NEW_WINDOW) {
             BrowserUiUtils.recordModuleClickHistogram(ModuleTypeOnStartAndNtp.MOST_VISITED_TILES);
         }
-        if (MVTilesClickForUserAction.contains(windowDisposition)) {
+        if (sMvtClickForUserAction.contains(windowDisposition)) {
             RecordUserAction.record("Suggestions.Tile.Tapped.NewTabPage");
         }
     }

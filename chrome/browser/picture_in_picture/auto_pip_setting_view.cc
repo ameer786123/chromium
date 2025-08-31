@@ -4,6 +4,7 @@
 
 #include "chrome/browser/picture_in_picture/auto_pip_setting_view.h"
 
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
@@ -205,11 +206,13 @@ void AutoPipSettingView::InitBubbleTitleView(const GURL& origin) {
 }
 
 void AutoPipSettingView::OnButtonPressed(UiResult result) {
-  CHECK(result_cb_);
+  if (!result_cb_) {
+    CHECK(GetWidget()->IsClosed());
+    return;
+  }
 
+  // Notify of the result and close the widget.
   std::move(result_cb_).Run(result);
-
-  // Close the widget.
   GetWidget()->Close();
 }
 
@@ -249,7 +252,8 @@ AutoPipSettingView::CreateNonClientFrameView(views::Widget* widget) {
   std::unique_ptr<views::BubbleBorder> bubble_border =
       std::make_unique<views::BubbleBorder>(
           arrow(), views::BubbleBorder::STANDARD_SHADOW);
-  bubble_border->SetCornerRadius(kBubbleBorderCornerRadius);
+  bubble_border->set_rounded_corners(
+      gfx::RoundedCornersF(kBubbleBorderCornerRadius));
   bubble_border->set_md_shadow_elevation(kBubbleBorderMdShadowElevation);
   bubble_border->set_draw_border_stroke(true);
 

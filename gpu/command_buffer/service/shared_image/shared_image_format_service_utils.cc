@@ -9,10 +9,10 @@
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "build/buildflag.h"
-#include "components/crash/core/common/crash_key.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/service/feature_info.h"
-#include "gpu/ipc/common/vulkan_ycbcr_info.h"
+#include "gpu/vulkan/vulkan_ycbcr_info.h"
+#include "ui/gfx/buffer_format_util.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_version_info.h"
 
@@ -39,8 +39,6 @@ VkFormat ToVkFormatSinglePlanarInternal(viz::SharedImageFormat format) {
     return VK_FORMAT_B8G8R8A8_UNORM;
   } else if (format == viz::SinglePlaneFormat::kR_8) {
     return VK_FORMAT_R8_UNORM;
-  } else if (format == viz::SinglePlaneFormat::kRGB_565) {
-    return VK_FORMAT_B5G6R5_UNORM_PACK16;
   } else if (format == viz::SinglePlaneFormat::kBGR_565) {
     return VK_FORMAT_R5G6B5_UNORM_PACK16;
   } else if (format == viz::SinglePlaneFormat::kRG_88) {
@@ -60,8 +58,6 @@ VkFormat ToVkFormatSinglePlanarInternal(viz::SharedImageFormat format) {
   } else if (format == viz::SinglePlaneFormat::kBGRA_1010102) {
     return VK_FORMAT_A2R10G10B10_UNORM_PACK32;
   } else if (format == viz::SinglePlaneFormat::kALPHA_8) {
-    return VK_FORMAT_R8_UNORM;
-  } else if (format == viz::SinglePlaneFormat::kLUMINANCE_8) {
     return VK_FORMAT_R8_UNORM;
   } else if (format == viz::SinglePlaneFormat::kETC1) {
     return VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
@@ -87,11 +83,9 @@ GLenum GLDataFormat(viz::SharedImageFormat format, int plane_index) {
       return GL_BGRA_EXT;
     } else if (format == viz::SinglePlaneFormat::kALPHA_8) {
       return GL_ALPHA;
-    } else if (format == viz::SinglePlaneFormat::kLUMINANCE_8 ||
-               format == viz::SinglePlaneFormat::kLUMINANCE_F16) {
+    } else if (format == viz::SinglePlaneFormat::kLUMINANCE_F16) {
       return GL_LUMINANCE;
-    } else if (format == viz::SinglePlaneFormat::kRGB_565 ||
-               format == viz::SinglePlaneFormat::kBGR_565 ||
+    } else if (format == viz::SinglePlaneFormat::kBGR_565 ||
                format == viz::SinglePlaneFormat::kETC1 ||
                format == viz::SinglePlaneFormat::kRGBX_8888 ||
                format == viz::SinglePlaneFormat::kBGRX_8888) {
@@ -122,7 +116,6 @@ GLenum GLDataType(viz::SharedImageFormat format) {
     if (format == viz::SinglePlaneFormat::kRGBA_8888 ||
         format == viz::SinglePlaneFormat::kBGRA_8888 ||
         format == viz::SinglePlaneFormat::kALPHA_8 ||
-        format == viz::SinglePlaneFormat::kLUMINANCE_8 ||
         format == viz::SinglePlaneFormat::kETC1 ||
         format == viz::SinglePlaneFormat::kR_8 ||
         format == viz::SinglePlaneFormat::kRG_88 ||
@@ -131,8 +124,7 @@ GLenum GLDataType(viz::SharedImageFormat format) {
       return GL_UNSIGNED_BYTE;
     } else if (format == viz::SinglePlaneFormat::kRGBA_4444) {
       return GL_UNSIGNED_SHORT_4_4_4_4;
-    } else if (format == viz::SinglePlaneFormat::kBGR_565 ||
-               format == viz::SinglePlaneFormat::kRGB_565) {
+    } else if (format == viz::SinglePlaneFormat::kBGR_565) {
       return GL_UNSIGNED_SHORT_5_6_5;
     } else if (format == viz::SinglePlaneFormat::kLUMINANCE_F16 ||
                format == viz::SinglePlaneFormat::kR_F16 ||
@@ -202,6 +194,31 @@ GLenum GLInternalFormat(viz::SharedImageFormat format, int plane_index) {
 }
 
 }  // namespace
+
+bool IsSizeForBufferHandleValid(const gfx::Size& size,
+                                viz::SharedImageFormat format) {
+  if (format.is_single_plane()) {
+    return true;
+  }
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // Allow odd size for CrOS.
+  // TODO(https://crbug.com/1208788, https://crbug.com/1224781): Merge this
+  // with the path that uses gfx::IsOddHeightMultiPlanarBuffersAllowed.
+  return true;
+#else
+  auto [width_scale, height_scale] = format.GetSubsamplingScale();
+  if (size.width() % width_scale &&
+      !gfx::IsOddWidthMultiPlanarBuffersAllowed()) {
+    return false;
+  }
+  if (size.height() % height_scale &&
+      !gfx::IsOddHeightMultiPlanarBuffersAllowed()) {
+    return false;
+  }
+  return true;
+#endif  // BUILDFLAG(IS_CHROMEOS)
+}
 
 // Wraps functions from shared_image_format_utils.h that are made private with
 // friending to prevent their existing client-side usage (which is an
@@ -490,6 +507,33 @@ VkFormat ToVkFormat(viz::SharedImageFormat format, int plane_index) {
 }
 #endif
 
+#if BUILDFLAG(IS_WIN)
+// Formats supported with no GpuMemoryBufferHandle.
+DXGI_FORMAT ToDXGIFormat(viz::SharedImageFormat format) {
+  if (format == viz::SinglePlaneFormat::kRGBA_F16) {
+    return DXGI_FORMAT_R16G16B16A16_FLOAT;
+  } else if (format == viz::SinglePlaneFormat::kBGRA_8888 ||
+             format == viz::SinglePlaneFormat::kBGRX_8888) {
+    return DXGI_FORMAT_B8G8R8A8_UNORM;
+  } else if (format == viz::SinglePlaneFormat::kRGBA_8888 ||
+             format == viz::SinglePlaneFormat::kRGBX_8888) {
+    return DXGI_FORMAT_R8G8B8A8_UNORM;
+  } else if (format == viz::MultiPlaneFormat::kNV12) {
+    return DXGI_FORMAT_NV12;
+  } else if (format == viz::SinglePlaneFormat::kR_8) {
+    // TOOD(crbug.com/416285370): Remove these single channel format checks.
+    return DXGI_FORMAT_R8_UNORM;
+  } else if (format == viz::SinglePlaneFormat::kRG_88) {
+    return DXGI_FORMAT_R8G8_UNORM;
+  } else if (format == viz::SinglePlaneFormat::kR_16) {
+    return DXGI_FORMAT_R16_UNORM;
+  } else if (format == viz::SinglePlaneFormat::kRG_1616) {
+    return DXGI_FORMAT_R16G16_UNORM;
+  }
+  return DXGI_FORMAT_UNKNOWN;
+}
+#endif  // BUILDFLAG(IS_WIN)
+
 wgpu::TextureFormat ToDawnFormat(viz::SharedImageFormat format) {
   if (format == viz::SinglePlaneFormat::kRGBA_8888 ||
       format == viz::SinglePlaneFormat::kRGBX_8888) {
@@ -498,8 +542,7 @@ wgpu::TextureFormat ToDawnFormat(viz::SharedImageFormat format) {
              format == viz::SinglePlaneFormat::kBGRX_8888) {
     return wgpu::TextureFormat::BGRA8Unorm;
   } else if (format == viz::SinglePlaneFormat::kR_8 ||
-             format == viz::SinglePlaneFormat::kALPHA_8 ||
-             format == viz::SinglePlaneFormat::kLUMINANCE_8) {
+             format == viz::SinglePlaneFormat::kALPHA_8) {
     return wgpu::TextureFormat::R8Unorm;
   } else if (format == viz::SinglePlaneFormat::kRG_88) {
     return wgpu::TextureFormat::RG8Unorm;
@@ -532,11 +575,6 @@ wgpu::TextureFormat ToDawnFormat(viz::SharedImageFormat format) {
     return wgpu::TextureFormat::R10X6BG10X6Biplanar444Unorm;
   }
 
-  // Unknown format: crash, surfacing the format.
-  static crash_reporter::CrashKeyString<256> crash_key(
-      "SIFServiceUtils ToDawnFormat error");
-  crash_reporter::ScopedCrashKeyString crash_key_scope(&crash_key,
-                                                       format.ToString());
   NOTREACHED() << "Unsupported format: " << format.ToString();
 }
 

@@ -7,6 +7,7 @@
 #include "base/files/file.h"
 #include "base/memory/aligned_memory.h"
 #include "base/numerics/byte_conversions.h"
+#include "skia/ext/skia_utils_base.h"
 #include "third_party/android_opengl/etc1/etc1.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkData.h"
@@ -309,7 +310,7 @@ bool Etc1::ReadFromFile(base::File* file,
   // than the max display size of the screen.  We also can't have etc1 texture
   // data larger than the next power of 2 up from that.
   gfx::Size display_size =
-      display::Screen::GetScreen()->GetPrimaryDisplay().GetSizeInPixel();
+      display::Screen::Get()->GetPrimaryDisplay().GetSizeInPixel();
   int max_dimension = std::max(display_size.width(), display_size.height());
 
   if (content_width > max_dimension || content_height > max_dimension ||
@@ -321,9 +322,8 @@ bool Etc1::ReadFromFile(base::File* file,
   int data_size = etc1_get_encoded_data_size(raw_width, raw_height);
   sk_sp<SkData> etc1_pixel_data(SkData::MakeUninitialized(data_size));
 
-  // SAFETY: buffer interacts with external API.
-  int pixel_bytes_read = UNSAFE_BUFFERS(file->ReadAtCurrentPos(
-    reinterpret_cast<char*>(etc1_pixel_data->writable_data()), data_size));
+  std::optional<size_t> pixel_bytes_read =
+      file->ReadAtCurrentPos(skia::as_writable_byte_span(*etc1_pixel_data));
 
   if (pixel_bytes_read != data_size) {
     return false;

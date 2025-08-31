@@ -99,6 +99,11 @@ public class AccessibilityNodeInfoUtils {
             builder.append(" hint:\"").append(node.getHintText()).append("\"");
         }
 
+        // Print tooltip text unless it is null or empty.
+        if (node.getTooltipText() != null && !node.getTooltipText().toString().isEmpty()) {
+            builder.append(" tooltipText:\"").append(node.getTooltipText()).append("\"");
+        }
+
         // Text properties - Only print when non-null.
         if (node.getContentDescription() != null) {
             builder.append(" contentDescription:\"")
@@ -177,6 +182,10 @@ public class AccessibilityNodeInfoUtils {
             // Use "required" rather than "fieldRequired" to match the chromium side naming:
             // ax::mojom::State::kRequired.
             builder.append(" required");
+        }
+
+        if (node.isHeading()) {
+            builder.append(" heading");
         }
 
         // Integer properties - Only print when not default values.
@@ -273,7 +282,14 @@ public class AccessibilityNodeInfoUtils {
         // Only include isHeading and isSelected if true, since both are more often false.
         String prefix = "[";
         if (info.isHeading()) {
-            prefix += "heading, ";
+            // Clank only sets CollectionItemInfo.isHeading to true when the node is a table header.
+            // Name it as "tableHeader" here to differentiate the "heading" string in
+            // AccessibilityNodeInfo level.
+            // Note that in Android, CollectionItemInfo.isHeading API was deprecated and moved to
+            // AccessibilityNodeInfo.isHeading API, but ANI.isHeading will fall back to check
+            // CollectionItemInfo.isHeading. We'll continue logging the CollectionItemInfo.isHeading
+            // information here to differentiate the table header and heading in Clank.
+            prefix += "tableHeader, ";
         }
         if (info.isSelected()) {
             prefix += "selected, ";

@@ -106,6 +106,8 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
   bool IsWindowInteractionAllowed() override;
   void PauseEvaluation() override;
   void ResumeEvaluation() override;
+  void DeferPrepareForEvaluation() override;
+  void RunDeferredPrepareForEvaluation() override;
   mojom::blink::ServiceWorkerFetchHandlerType FetchHandlerType() override;
   bool HasHidEventHandlers() override;
   bool HasUsbEventHandlers() override;
@@ -117,7 +119,7 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
   // WorkerReportingProxy overrides:
   void CountFeature(WebFeature) override;
   void ReportException(const String& error_message,
-                       std::unique_ptr<SourceLocation>,
+                       SourceLocation*,
                        int exception_id) override;
   void ReportConsoleMessage(mojom::ConsoleMessageSource,
                             mojom::ConsoleMessageLevel,
@@ -142,7 +144,7 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
       const KURL& url,
       mojo::PendingReceiver<network::mojom::blink::URLLoaderClient>
           preload_url_loader_client_receiver);
-  void RequestTermination(WTF::CrossThreadOnceFunction<void(bool)> callback);
+  void RequestTermination(CrossThreadOnceFunction<void(bool)> callback);
 
   bool ShouldNotifyServiceWorkerOnWebSocketActivity(
       v8::Local<v8::Context> context);

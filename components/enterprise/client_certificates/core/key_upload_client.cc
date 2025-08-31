@@ -34,9 +34,11 @@ namespace {
 
 BPKUR::KeyTrustLevel SourceToTrustLevel(PrivateKeySource source) {
   switch (source) {
+    case PrivateKeySource::kAndroidKey:
     case PrivateKeySource::kUnexportableKey:
       return BPKUR::CHROME_BROWSER_HW_KEY;
     case PrivateKeySource::kSoftwareKey:
+    case PrivateKeySource::kOsSoftwareKey:
       return BPKUR::CHROME_BROWSER_OS_KEY;
   }
 }

@@ -301,19 +301,19 @@ TEST_F(AutofillStructuredAddressAddressComponent,
   EXPECT_TRUE(compound_name.SetValueForType(NAME_LAST, u"LAST",
                                             VerificationStatus::kObserved));
   EXPECT_TRUE(compound_name.CompleteFullTree());
-  EXPECT_EQ(
-      compound_name.GetValueForComparisonForType(NAME_FULL, compound_name),
-      u"first1 first2 middle last");
-  EXPECT_EQ(
-      compound_name.GetValueForComparisonForType(NAME_FIRST, compound_name),
-      u"first1 first2");
-  EXPECT_EQ(compound_name.GetValueForComparisonForType(NAME_MIDDLE_INITIAL,
-                                                       compound_name),
+  EXPECT_EQ(compound_name.GetValueForComparisonForType(
+                NAME_FULL, compound_name.GetCountryCode()),
+            u"first1 first2 middle last");
+  EXPECT_EQ(compound_name.GetValueForComparisonForType(
+                NAME_FIRST, compound_name.GetCountryCode()),
+            u"first1 first2");
+  EXPECT_EQ(compound_name.GetValueForComparisonForType(
+                NAME_MIDDLE_INITIAL, compound_name.GetCountryCode()),
             u"m");
-  EXPECT_TRUE(
-      compound_name
-          .GetValueForComparisonForType(ADDRESS_HOME_STREET_NAME, compound_name)
-          .empty());
+  EXPECT_TRUE(compound_name
+                  .GetValueForComparisonForType(ADDRESS_HOME_STREET_NAME,
+                                                compound_name.GetCountryCode())
+                  .empty());
 }
 
 // Tests adding all supported types to the set.
@@ -1011,6 +1011,33 @@ TEST_F(AutofillStructuredAddressAddressComponent,
   EXPECT_EQ(compound_component.GetValueForType(NAME_FIRST), first_name);
   EXPECT_EQ(compound_component.GetValueForType(NAME_MIDDLE), middle_name);
   EXPECT_EQ(compound_component.GetValueForType(NAME_LAST), last_name);
+}
+
+// Tests the fallback method to parse a value into its components, if there are
+// less space-separated tokens than components.
+TEST_F(AutofillStructuredAddressAddressComponent,
+       ParseValueAndAssignSubcomponentsByFallbackMethod_DisallowedCountry) {
+  std::u16string full_street_address = u"Block B, ABC STREET";
+
+  AddressComponentsStore store =
+      i18n_model_definition::CreateAddressComponentModel(
+          AddressCountryCode("IN"));
+  AddressComponent* root = store.Root();
+  root->SetValueForType(ADDRESS_HOME_STREET_ADDRESS, full_street_address,
+                        VerificationStatus::kUserVerified);
+  root->SetValueForType(ADDRESS_HOME_COUNTRY, u"IN",
+                        VerificationStatus::kUserVerified);
+
+  // Parse the full name into its components by using the fallback method
+  test_api(*root)
+      .GetNodeForType(ADDRESS_HOME_STREET_ADDRESS)
+      ->ParseValueAndAssignSubcomponents();
+  EXPECT_EQ(root->GetValueForType(ADDRESS_HOME_STREET_ADDRESS),
+            full_street_address);
+
+  EXPECT_TRUE(root->GetValueForType(ADDRESS_HOME_STREET_LOCATION).empty());
+  EXPECT_TRUE(root->GetValueForType(ADDRESS_HOME_DEPENDENT_LOCALITY).empty());
+  EXPECT_TRUE(root->GetValueForType(ADDRESS_HOME_LANDMARK).empty());
 }
 
 // Tests that a tree is regarded completable if and only if there if the

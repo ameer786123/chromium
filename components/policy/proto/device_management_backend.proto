@@ -569,7 +569,8 @@ message BrowserDeviceIdentifier {
 }
 
 message PolicyFetchRequest {
-  reserved 5;
+  reserved 5, 11;
+  reserved "invalidation_topics_only";
 
   // This is the policy type, which maps to D3 policy type internally.
   // By convention, we use "/" as separator to create policy namespace.
@@ -653,11 +654,6 @@ message PolicyFetchRequest {
   // Encoded information from a policy invalidation notification. This is opaque
   // to the client and should be forwarded from the invalidation notification.
   optional string policy_invalidation_info = 10 [deprecated = true];
-
-  // Whether or not the client only supports the new PolicyData invalidation
-  // topics. If true, only the policy_invalidation_topic and
-  // command_invalidation_topic fields will be set in the PolicyData response.
-  optional bool invalidation_topics_only = 11 [deprecated = true];
 
   // If this is an affiliated user, this is the device's DMToken.
   optional string device_dm_token = 12;
@@ -832,11 +828,15 @@ message PolicyData {
 
   // Invalidation topic for devices. Clients register for FCM messages using
   // this topic in order to receive notifications for device policy changes.
+  // TODO(crbug.com/341377023): Deprecate once no clients use topic
+  // invalidations.
   optional string policy_invalidation_topic = 26;
 
   // Invalidation topic for commands. Clients register for FCM messages using
   // this topic in order to receive notifications that one or more commands are
   // available for execution.
+  // TODO(crbug.com/341377023): Deprecate once no clients use topic
+  // invalidations.
   optional string command_invalidation_topic = 27;
 
   // Whether the device needs to upload an enrollment identifier to the cloud.
@@ -929,6 +929,9 @@ message PolicyData {
   // set for User Policy response.
   optional K12AgeClassificationMetricsLogSegment
       k12_age_classification_metrics_log_segment = 39;
+
+  // Indicates whether the domains has CEC enabled.
+  optional bool cec_enabled = 40;
 }
 
 message ClientActionRequired {
@@ -2358,6 +2361,13 @@ message ProfileSignalsReport {
   // A boolean indicating whether the Site Isolation (a.k.a Site Per Process)
   // setting is enabled.
   optional bool site_isolation_enabled = 7;
+
+  // Providers for various analysis connectors.
+  repeated string file_downloaded_providers = 8;
+  repeated string file_attached_providers = 9;
+  repeated string bulk_data_entry_providers = 10;
+  repeated string print_providers = 11;
+  repeated string security_event_providers = 12;
 }
 
 // Anti virus product information.
@@ -2380,6 +2390,12 @@ enum SettingValue {
   ENABLED = 2;
 }
 
+// Agents installed on a device.
+enum Agent {
+  UNKNOWN_AGENT = 0;
+  CROWDSTRIKE_FALCON = 1;
+}
+
 // Report Operating system related information.
 message OSReport {
   // A string contains OS name.
@@ -2389,6 +2405,7 @@ message OSReport {
   optional string arch = 2;
 
   // A string contains OS version.
+  // On Linux, this represents the kernel version.
   optional string version = 3;
 
   enum VersionType {
@@ -2432,7 +2449,7 @@ message OSReport {
   repeated AntiVirusProduct antivirus_info = 13;
 
   // A string contains the ID of installed hotfix system updates. Windows only.
-  optional string hotfixes = 14;
+  repeated string hotfixes = 14;
 
   // The machine GUID of the device, Windows only. This field contains PII.
   optional string machine_guid = 15;
@@ -2448,6 +2465,13 @@ message OSReport {
   // A string contains the Windows domain that the current OS user has joined.
   // Windows only.
   optional string windows_user_domain = 18;
+
+  // List of enums that represents agents installed on a device.
+  repeated Agent detected_agents = 19;
+
+  // A string representing the Linux distribution VERSION_ID contained in
+  // /etc/os-release.
+  optional string distribution_version = 20;
 }
 
 // Report the status of a Chrome installation on non-Chrome OS platform.
@@ -2504,6 +2528,16 @@ message ChromeOsUserReportRequest {
   repeated AndroidAppInfo android_app_infos = 2;
 }
 
+// Payload including fields needed to perform attestation,.
+message AttestationPayload {
+  // Timestamp for when the report is generated, in microseconds since epoch.
+  optional string timestamp = 1;
+  // A nonce for the report to prevent replay.
+  optional string nonce = 2;
+  // Blob generated for attestation.
+  optional string attestation_blob = 3;
+}
+
 // Report user level status on all platforms. It includes the information of the
 // profile that user has signed in plus some basic browser and OS information.
 message ChromeProfileReportRequest {
@@ -2519,12 +2553,15 @@ message ChromeProfileReportRequest {
   enum ReportType {
     UNKNOWN = 0;
     PROFILE_REPORT = 1;
-    PROFILE_SIGNALS = 2;
-    PROFILE_REPORT_WITH_SIGNALS = 3;
+    PROFILE_SECURITY_SIGNALS = 2;
+    PROFILE_REPORT_WITH_SECURITY_SIGNALS = 3;
   }
 
   // The type of report that is being sent.
   optional ReportType report_type = 4;
+
+  // Info related to the attestation process, currently only used on Android.
+  optional AttestationPayload attestation_payload = 5;
 }
 
 // A validation issue from validating a policy value that was contained in
@@ -3576,6 +3613,7 @@ message TpmVersionInfo {
     GSC_VERSION_NOT_GSC = 1;
     GSC_VERSION_CR50 = 2;
     GSC_VERSION_TI50 = 3;
+    GSC_VERSION_NT = 4;
   }
   optional uint32 family = 1;
   optional uint64 spec_level = 2;
@@ -3709,6 +3747,7 @@ message ExtensionInstallReportLogEvent {
   // Type of current user. See user_manager::UserType for more details.
   // user_manager::UserType is the main enum and this is a copy used for
   // reporting purposes.
+  // LINT.IfChange(UserType)
   enum UserType {
     USER_TYPE_UNKNOWN = 0;
     USER_TYPE_REGULAR = 1;
@@ -3720,7 +3759,10 @@ message ExtensionInstallReportLogEvent {
     USER_TYPE_ARC_KIOSK_APP = 7;
     USER_TYPE_ACTIVE_DIRECTORY = 8;
     USER_TYPE_WEB_KIOSK_APP = 9;
+    USER_TYPE_KIOSK_IWA = 10;
+    USER_TYPE_KIOSK_ARCVM_APP = 11;
   }
+  // LINT.ThenChange(//components/user_manager/user_type.h:UserType)
 
   // Current stage of the extension downloading process. See
   // ExtensionDownloaderDelegate::Stage for more details.
@@ -4411,6 +4453,8 @@ message StartCsrRequest {}
 message StartCsrResponse {
   // The client should register for FCM messages using this topic in order to
   // receive notifications for the certificate provisioning process.
+  // TODO(crbug.com/341377023): Deprecate once no clients use topic
+  // invalidations.
   optional string invalidation_topic = 1;
 
   // The verified access challenge.
@@ -4453,6 +4497,8 @@ message CertProvStartRequest {}
 message CertProvStartResponse {
   // The client should register for FCM messages using this topic in order to
   // receive notifications for the certificate provisioning process.
+  // TODO(crbug.com/341377023): Deprecate once no clients use topic
+  // invalidations.
   optional string invalidation_topic = 1;
 }
 
@@ -4908,8 +4954,8 @@ enum DeviceManagementErrorDetail {
 //   * The Authorization header isn't used for enterprise_check,
 //     enterprise_psm_check, device_initial_enrollment_state or
 //     certificate_based_register requests.
-//     It is also not used for register requests and check_android_management
-//     requests - for these requests, the OAuth token is passed in the "oauth"
+//     It is also not used for register requests
+//     - for these requests, the OAuth token is passed in the "oauth"
 //     HTTP query parameter.
 //
 // DeviceManagementRequest should only contain one request which matches the

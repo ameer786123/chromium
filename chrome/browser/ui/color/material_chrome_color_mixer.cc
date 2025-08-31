@@ -4,8 +4,10 @@
 
 #include "chrome/browser/ui/color/material_chrome_color_mixer.h"
 
+#include "base/feature_list.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/color/chrome_color_provider_utils.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/compose/buildflags.h"
 #include "ui/color/color_id.h"
@@ -33,6 +35,18 @@ void ApplyDefaultChromeRefreshToolbarColors(ui::ColorMixer& mixer,
   mixer[kColorAppMenuHighlightSeverityLow] = {kColorAppMenuHighlightDefault};
   mixer[kColorAppMenuHighlightSeverityMedium] = {kColorAppMenuHighlightDefault};
   mixer[kColorAppMenuHighlightSeverityHigh] = {kColorAppMenuHighlightDefault};
+
+  if (base::FeatureList::IsEnabled(
+          features::kEnableAppMenuButtonColorsForDefaultAvatarButtonStates)) {
+    mixer[kColorAvatarButtonHighlightDefaultForeground] = {
+        kColorAppMenuExpandedForegroundDefault};
+    mixer[kColorAvatarButtonHighlightDefault] = {kColorAppMenuHighlightDefault};
+  }
+
+  mixer[kColorAvatarButtonHighlightManagementForeground] = {
+      kColorAvatarButtonHighlightDefaultForeground};
+  mixer[kColorAvatarButtonHighlightManagement] = {
+      kColorAvatarButtonHighlightDefault};
 }
 
 }  // namespace
@@ -84,8 +98,7 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorDownloadToolbarButtonRingBackground] = {
       ui::kColorSysNeutralOutline};
   mixer[kColorDownloadToolbarButtonAnimationForeground] =
-      AdjustHighlightColorForContrast(ui::kColorSysPrimary,
-                                      kColorDownloadShelfBackground);
+      AdjustHighlightColorForContrast(ui::kColorSysPrimary, ui::kColorSysBase);
 
   // Extensions colors.
   mixer[kColorExtensionsMenuText] = {ui::kColorSysOnSurface};
@@ -113,10 +126,11 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
 
   // Profile Menu colors.
   mixer[kColorProfileMenuBackground] = {ui::kColorSysSurface};
-  mixer[kColorProfileMenuHeaderBackground] = {ui::kColorSysTonalContainer};
   mixer[kColorProfileMenuIdentityInfoBackground] = {ui::kColorSysSurface3};
   mixer[kColorProfileMenuIdentityInfoTitle] = {ui::kColorSysOnSurface};
   mixer[kColorProfileMenuIdentityInfoSubtitle] = {ui::kColorSysOnSurfaceSubtle};
+  mixer[kColorProfileMenuPromoButtonsBackground] = {
+      ui::kColorSysTonalContainer};
 
   // Signin bubble colors. Main background color uses the same color as the
   // profle menu background.
@@ -134,6 +148,8 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorBnplIssuerLabelForegroundDisabled] = {
       ui::kColorLabelForegroundDisabled};
   mixer[kColorBnplIssuerLinkedIneligibleBackground] = {ui::kColorSysSurface2};
+  mixer[kColorBnplIssuerLinkedPillBackground] = {ui::kColorBadgeBackground};
+  mixer[kColorBnplIssuerLinkedPillForeground] = {ui::kColorBadgeForeground};
 
   // Tab Search colors.
   mixer[kColorTabSearchButtonBackground] = {ui::kColorSysSurface2};
@@ -158,8 +174,11 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorTabSearchSelected] = {ui::kColorSysPrimary};
   mixer[kColorTabSearchScrollbarThumb] = {ui::kColorSysPrimary};
 
-  // Split View Empty State colors.
+  // Split View colors.
   mixer[kColorSplitViewBackground] = {ui::kColorSysSurface2};
+  mixer[kColorSplitViewScrim] = ui::SetAlpha(ui::kColorRefNeutral99, 0x99);
+  mixer[kColorMulitContentsViewMiniToolbarForeground] = {
+      ui::kColorSysOnSurfaceSubtle};
 
   // Side Panel colors.
   mixer[kColorSidePanelBackground] = {ui::kColorSysBaseContainer};
@@ -262,16 +281,19 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
       ui::kColorSysOnTonalContainer};
   mixer[kColorAppMenuChipInkDropHover] = {ui::kColorSysStateHoverOnSubtle};
   mixer[kColorAppMenuChipInkDropRipple] = {ui::kColorSysStateRipplePrimary};
-  mixer[kColorAvatarButtonHighlightNormal] = {ui::kColorSysTonalContainer};
+  if (!base::FeatureList::IsEnabled(
+          features::kEnableAppMenuButtonColorsForDefaultAvatarButtonStates)) {
+    mixer[kColorAvatarButtonHighlightDefault] = {ui::kColorSysTonalContainer};
+    mixer[kColorAvatarButtonHighlightDefaultForeground] = {
+        ui::kColorSysOnTonalContainer};
+  }
   mixer[kColorAvatarButtonHighlightSyncPaused] = {
-      kColorAvatarButtonHighlightNormal};
+      kColorAvatarButtonHighlightDefault};
   mixer[kColorAvatarButtonHighlightSigninPaused] = {
-      kColorAvatarButtonHighlightNormal};
+      kColorAvatarButtonHighlightDefault};
   mixer[kColorAvatarButtonHighlightSyncError] = {ui::kColorSysErrorContainer};
   mixer[kColorAvatarButtonHighlightIncognito] = {ui::kColorSysBaseContainer};
-  mixer[kColorAvatarButtonHighlightNormalForeground] = {
-      ui::kColorSysOnTonalContainer};
-  mixer[kColorAvatarButtonHighlightDefaultForeground] = {
+  mixer[kColorAvatarButtonHighlightGuestForeground] = {
       ui::kColorSysOnSurfaceSecondary};
   mixer[kColorAvatarButtonHighlightSyncErrorForeground] = {
       ui::kColorSysOnErrorContainer};
@@ -292,24 +314,10 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorBookmarkDragImageBackground] = {ui::kColorSysPrimary};
   mixer[kColorBookmarkFolderIcon] = {kColorBookmarkBarForeground};
   mixer[kColorCapturedTabContentsBorder] = {ui::kColorSysPrimary};
-  mixer[kColorDownloadItemForegroundDisabled] = BlendForMinContrast(
-      ui::GetResultingPaintColor(ui::kColorSysStateDisabled,
-                                 kColorDownloadShelfBackground),
-      kColorDownloadShelfBackground);
   mixer[kColorDownloadItemIconDangerous] = {ui::kColorSysError};
   mixer[kColorDownloadItemIconWarning] = {ui::kColorSysOnSurfaceSubtle};
-  mixer[kColorDownloadItemProgressRingForeground] = {ui::kColorSysPrimary};
   mixer[kColorDownloadItemTextDangerous] = {ui::kColorSysError};
   mixer[kColorDownloadItemTextWarning] = {ui::kColorSysOnSurfaceSubtle};
-  mixer[kColorDownloadShelfBackground] = {ui::kColorSysBase};
-  mixer[kColorDownloadShelfButtonIcon] = {kColorDownloadShelfForeground};
-  mixer[kColorDownloadShelfButtonIconDisabled] = {ui::kColorSysStateDisabled};
-  mixer[kColorDownloadShelfButtonText] =
-      ui::PickGoogleColor(ui::kColorSysPrimary, kColorDownloadShelfBackground,
-                          color_utils::kMinimumReadableContrastRatio);
-  mixer[kColorDownloadShelfContentAreaSeparator] = {
-      kColorToolbarSeparatorDefault};
-  mixer[kColorDownloadShelfForeground] = {ui::kColorSysOnSurfaceSubtle};
   mixer[kColorExtensionIconBadgeBackgroundDefault] = {
       ui::kColorSysNeutralContainer};
   mixer[kColorFindBarBackground] = {ui::kColorSysSurface};

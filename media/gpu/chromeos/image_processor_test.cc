@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "media/gpu/chromeos/image_processor.h"
 
@@ -28,6 +24,7 @@
 #include "base/test/test_suite.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/shared_image_format.h"
+#include "gpu/command_buffer/client/test_shared_image_interface.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
@@ -277,14 +274,16 @@ bool SupportsNecessaryGLExtension() {
   return ret;
 }
 
-scoped_refptr<VideoFrame> CreateNV12Frame(const gfx::Size& size,
-                                          VideoFrame::StorageType type) {
+scoped_refptr<VideoFrame> CreateNV12Frame(
+    const gfx::Size& size,
+    VideoFrame::StorageType type,
+    gpu::TestSharedImageInterface* test_sii) {
   const gfx::Rect visible_rect(size);
   constexpr base::TimeDelta kNullTimestamp;
   if (type == VideoFrame::STORAGE_GPU_MEMORY_BUFFER) {
-    return CreateGpuMemoryBufferVideoFrame(
+    return CreateMappableVideoFrame(
         VideoPixelFormat::PIXEL_FORMAT_NV12, size, visible_rect, size,
-        kNullTimestamp, gfx::BufferUsage::SCANOUT_CPU_READ_WRITE);
+        kNullTimestamp, gfx::BufferUsage::SCANOUT_CPU_READ_WRITE, test_sii);
   } else {
     DCHECK(type == VideoFrame::STORAGE_DMABUFS);
     return CreatePlatformVideoFrame(VideoPixelFormat::PIXEL_FORMAT_NV12, size,
@@ -302,7 +301,8 @@ scoped_refptr<VideoFrame> CreateRandomMM21Frame(const gfx::Size& size,
             base::bits::AlignUp(static_cast<unsigned int>(size.height()),
                                 MM21_TILE_HEIGHT));
 
-  scoped_refptr<VideoFrame> ret = CreateNV12Frame(size, type);
+  scoped_refptr<VideoFrame> ret =
+      CreateNV12Frame(size, type, /*test_sii=*/nullptr);
   if (!ret) {
     LOG(ERROR) << "Failed to create MM21 frame";
     return nullptr;
@@ -323,9 +323,10 @@ scoped_refptr<VideoFrame> CreateRandomMM21Frame(const gfx::Size& size,
     return nullptr;
   }
 
-  uint8_t* y_plane = mapped_ret->GetWritableVisibleData(VideoFrame::Plane::kY);
-  uint8_t* uv_plane =
-      mapped_ret->GetWritableVisibleData(VideoFrame::Plane::kUV);
+  base::span<uint8_t> y_plane =
+      mapped_ret->GetWritableVisiblePlaneData(VideoFrame::Plane::kY);
+  base::span<uint8_t> uv_plane =
+      mapped_ret->GetWritableVisiblePlaneData(VideoFrame::Plane::kUV);
   for (int row = 0; row < size.height(); row++) {
     for (int col = 0; col < size.width(); col++) {
       y_plane[col] = base::RandInt(/*min=*/0, /*max=*/255);
@@ -333,9 +334,9 @@ scoped_refptr<VideoFrame> CreateRandomMM21Frame(const gfx::Size& size,
         uv_plane[col] = base::RandInt(/*min=*/0, /*max=*/255);
       }
     }
-    y_plane += mapped_ret->stride(VideoFrame::Plane::kY);
+    y_plane = y_plane.subspan(mapped_ret->stride(VideoFrame::Plane::kY));
     if (row % 2 == 0) {
-      uv_plane += mapped_ret->stride(VideoFrame::Plane::kUV);
+      uv_plane = uv_plane.subspan(mapped_ret->stride(VideoFrame::Plane::kUV));
     }
   }
 
@@ -378,14 +379,14 @@ bool CompareNV12VideoFrames(scoped_refptr<VideoFrame> test_frame,
     return false;
   }
 
-  const uint8_t* test_y_plane =
-      mapped_test_frame->visible_data(VideoFrame::Plane::kY);
-  const uint8_t* test_uv_plane =
-      mapped_test_frame->visible_data(VideoFrame::Plane::kUV);
-  const uint8_t* golden_y_plane =
-      mapped_golden_frame->visible_data(VideoFrame::Plane::kY);
-  const uint8_t* golden_uv_plane =
-      mapped_golden_frame->visible_data(VideoFrame::Plane::kUV);
+  base::span<const uint8_t> test_y_plane =
+      mapped_test_frame->GetVisiblePlaneData(VideoFrame::Plane::kY);
+  base::span<const uint8_t> test_uv_plane =
+      mapped_test_frame->GetVisiblePlaneData(VideoFrame::Plane::kUV);
+  base::span<const uint8_t> golden_y_plane =
+      mapped_golden_frame->GetVisiblePlaneData(VideoFrame::Plane::kY);
+  base::span<const uint8_t> golden_uv_plane =
+      mapped_golden_frame->GetVisiblePlaneData(VideoFrame::Plane::kUV);
   for (int y = 0; y < test_frame->coded_size().height(); y++) {
     for (int x = 0; x < test_frame->coded_size().width(); x++) {
       if (test_y_plane[x] != golden_y_plane[x]) {
@@ -398,11 +399,15 @@ bool CompareNV12VideoFrames(scoped_refptr<VideoFrame> test_frame,
         }
       }
     }
-    test_y_plane += mapped_test_frame->stride(VideoFrame::Plane::kY);
-    golden_y_plane += mapped_golden_frame->stride(VideoFrame::Plane::kY);
+    test_y_plane =
+        test_y_plane.subspan(mapped_test_frame->stride(VideoFrame::Plane::kY));
+    golden_y_plane = golden_y_plane.subspan(
+        mapped_golden_frame->stride(VideoFrame::Plane::kY));
     if (y % 2 == 0) {
-      test_uv_plane += mapped_test_frame->stride(VideoFrame::Plane::kUV);
-      golden_uv_plane += mapped_golden_frame->stride(VideoFrame::Plane::kUV);
+      test_uv_plane = test_uv_plane.subspan(
+          mapped_test_frame->stride(VideoFrame::Plane::kUV));
+      golden_uv_plane = golden_uv_plane.subspan(
+          mapped_golden_frame->stride(VideoFrame::Plane::kUV));
     }
   }
 
@@ -741,11 +746,13 @@ TEST(ImageProcessorBackendTest, CompareLibYUVAndGLBackendsForMM21Image) {
   scoped_refptr<VideoFrame> input_frame =
       CreateRandomMM21Frame(kTestImageSize, VideoFrame::STORAGE_DMABUFS);
   ASSERT_TRUE(input_frame) << "Error creating input frame";
-  scoped_refptr<VideoFrame> gl_output_frame =
-      CreateNV12Frame(kTestImageSize, VideoFrame::STORAGE_GPU_MEMORY_BUFFER);
+
+  auto test_sii = base::MakeRefCounted<gpu::TestSharedImageInterface>();
+  scoped_refptr<VideoFrame> gl_output_frame = CreateNV12Frame(
+      kTestImageSize, VideoFrame::STORAGE_GPU_MEMORY_BUFFER, test_sii.get());
   ASSERT_TRUE(gl_output_frame) << "Error creating GL output frame";
-  scoped_refptr<VideoFrame> libyuv_output_frame =
-      CreateNV12Frame(kTestImageSize, VideoFrame::STORAGE_GPU_MEMORY_BUFFER);
+  scoped_refptr<VideoFrame> libyuv_output_frame = CreateNV12Frame(
+      kTestImageSize, VideoFrame::STORAGE_GPU_MEMORY_BUFFER, test_sii.get());
   ASSERT_TRUE(libyuv_output_frame) << "Error creating LibYUV output frame";
 
   int outstanding_processors = 2;

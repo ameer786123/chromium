@@ -93,6 +93,10 @@ class LiveCaptionControllerTest : public LiveCaptionBrowserTest {
 
   bool DispatchTranscriptionToProfile(std::string text, Profile* profile) {
     return GetControllerForProfile(profile)->DispatchTranscription(
+        browser()
+            ->tab_strip_model()
+            ->GetActiveWebContents()
+            ->GetPrimaryMainFrame(),
         GetCaptionBubbleContextBrowser(),
         media::SpeechRecognitionResult(text, /* is_final */ false));
   }
@@ -111,6 +115,10 @@ class LiveCaptionControllerTest : public LiveCaptionBrowserTest {
 
   void OnAudioStreamEndOnProfile(Profile* profile) {
     GetControllerForProfile(profile)->OnAudioStreamEnd(
+        browser()
+            ->tab_strip_model()
+            ->GetActiveWebContents()
+            ->GetPrimaryMainFrame(),
         GetCaptionBubbleContextBrowser());
   }
 
@@ -233,9 +241,8 @@ IN_PROC_BROWSER_TEST_F(LiveCaptionControllerTest, OnSodaInstalled) {
   EXPECT_FALSE(HasBubbleController());
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kLiveCaptionEnabled,
                                                true);
-  EXPECT_FALSE(HasBubbleController());
 
-  // The UI is only created after SODA is installed.
+  // The UI must be created once SODA is installed, but possibly earlier.
   speech::SodaInstaller::GetInstance()->NotifySodaInstalledForTesting(en_us());
   speech::SodaInstaller::GetInstance()->NotifySodaInstalledForTesting();
   EXPECT_TRUE(HasBubbleController());

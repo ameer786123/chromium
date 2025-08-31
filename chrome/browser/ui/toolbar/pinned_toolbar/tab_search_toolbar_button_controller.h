@@ -7,13 +7,20 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/ui/views/tab_search_bubble_host.h"
+#include "base/scoped_observation.h"
+#include "chrome/browser/ui/views/tab_search_bubble_host_observer.h"
+
+namespace actions {
+class ActionItem;
+}  // namespace actions
 
 class BrowserView;
+class TabSearchBubbleHost;
 
-class TabSearchToolbarButtonController : public TabSearchBubbleHost::Observer {
+class TabSearchToolbarButtonController : public TabSearchBubbleHostObserver {
  public:
-  explicit TabSearchToolbarButtonController(BrowserView* browser_view);
+  TabSearchToolbarButtonController(BrowserView* browser_view,
+                                   TabSearchBubbleHost* tab_search_bubble_host);
   ~TabSearchToolbarButtonController() override;
 
   TabSearchToolbarButtonController(const TabSearchToolbarButtonController&) =
@@ -21,15 +28,26 @@ class TabSearchToolbarButtonController : public TabSearchBubbleHost::Observer {
   TabSearchToolbarButtonController& operator=(
       const TabSearchToolbarButtonController&) = delete;
 
-  // TabSearchBubbleHost::Observer:
+  // TabSearchBubbleHostObserver:
   void OnBubbleInitializing() override;
   void OnBubbleDestroying() override;
+
+  void UpdateForWebUITabStrip();
 
  private:
   void MaybeHideActionEphemerallyInToolbar();
 
-  raw_ptr<BrowserView> browser_view_;
-  bool bubble_showing_ = false;
+  // Gets the TabSearch ActionItem from the hosting browser.
+  actions::ActionItem* GetTabSearchActionItem();
+
+  // BrowserView hosting the Tab Search toolbar button, outlives this.
+  // TODO(crbug.com/417823694): Pass only the specific BrowserView dependencies
+  // into the controller.
+  const raw_ptr<BrowserView> browser_view_;
+
+  base::ScopedObservation<TabSearchBubbleHost, TabSearchBubbleHostObserver>
+      tab_search_bubble_host_observation_{this};
+
   base::WeakPtrFactory<TabSearchToolbarButtonController> weak_ptr_factory_{
       this};
 };

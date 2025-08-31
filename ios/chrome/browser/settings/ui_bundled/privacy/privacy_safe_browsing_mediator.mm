@@ -14,6 +14,8 @@
 #import "components/safe_browsing/core/common/features.h"
 #import "components/safe_browsing/core/common/hashprefix_realtime/hash_realtime_utils.h"
 #import "components/safe_browsing/core/common/safe_browsing_prefs.h"
+#import "ios/chrome/browser/first_run/public/best_features_item.h"
+#import "ios/chrome/browser/first_run/public/features.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/settings/model/sync/utils/sync_util.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/settings_image_detail_text_item.h"
@@ -118,6 +120,11 @@ typedef NS_ENUM(NSInteger, ItemType) {
   switch (type) {
     case ItemTypeSafeBrowsingEnhancedProtection:
       safeBrowsingState = safe_browsing::SafeBrowsingState::ENHANCED_PROTECTION;
+      // Notify Welcome Back to remove Enhanced Safe Browsing from the eligible
+      // features.
+      if (IsWelcomeBackInFirstRunEnabled()) {
+        MarkWelcomeBackFeatureUsed(BestFeaturesItemType::kEnhancedSafeBrowsing);
+      }
       break;
     case ItemTypeSafeBrowsingStandardProtection:
       safeBrowsingState = safe_browsing::SafeBrowsingState::STANDARD_PROTECTION;
@@ -139,14 +146,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
   if (!_safeBrowsingItems) {
     NSMutableArray* items = [NSMutableArray array];
     NSInteger enhancedProtectionSummary;
-    if (base::FeatureList::IsEnabled(safe_browsing::kEsbAiStringUpdate)) {
-      enhancedProtectionSummary =
-          IDS_IOS_PRIVACY_SAFE_BROWSING_ENHANCED_PROTECTION_SUMMARY_UPDATED;
+    enhancedProtectionSummary =
+        IDS_IOS_PRIVACY_SAFE_BROWSING_ENHANCED_PROTECTION_SUMMARY_UPDATED;
 
-    } else {
-      enhancedProtectionSummary =
-          IDS_IOS_PRIVACY_SAFE_BROWSING_ENHANCED_PROTECTION_FRIENDLIER_SUMMARY;
-    }
     NSInteger standardProtectionSummary;
     standardProtectionSummary =
         IDS_IOS_PRIVACY_SAFE_BROWSING_STANDARD_PROTECTION_FRIENDLIER_SUMMARY;

@@ -47,7 +47,15 @@ ukm::SourceId UkmRecorder::GetSourceIdForPaymentAppFromScope(
 
 // static
 ukm::SourceId UkmRecorder::GetSourceIdForWebIdentityFromScope(
-    base::PassKey<content::FedCmMetrics>,
+    base::PassKey<content::webid::Metrics>,
+    const GURL& provider_url) {
+  return UkmRecorder::GetSourceIdFromScopeImpl(provider_url,
+                                               SourceIdType::WEB_IDENTITY_ID);
+}
+
+// static
+ukm::SourceId UkmRecorder::GetSourceIdForWebIdentityFromScope(
+    base::PassKey<login_detection::IdentityProviderMetrics>,
     const GURL& provider_url) {
   return UkmRecorder::GetSourceIdFromScopeImpl(provider_url,
                                                SourceIdType::WEB_IDENTITY_ID);
@@ -105,16 +113,40 @@ ukm::SourceId UkmRecorder::GetSourceIdForExtensionUrl(
 // static
 ukm::SourceId UkmRecorder::GetSourceIdForNotificationPermission(
     base::PassKey<ChromePermissionsClient>,
-    const GURL& origin) {
-  return UkmRecorder::GetSourceIdFromScopeImpl(origin,
+    const GURL& url) {
+  return UkmRecorder::GetSourceIdFromScopeImpl(url,
                                                SourceIdType::NOTIFICATION_ID);
 }
 
 // static
 ukm::SourceId UkmRecorder::GetSourceIdForNotificationEvent(
     base::PassKey<PlatformNotificationServiceImpl>,
-    const GURL& origin) {
-  return UkmRecorder::GetSourceIdFromScopeImpl(origin,
+    const GURL& url) {
+  return UkmRecorder::GetSourceIdFromScopeImpl(url,
+                                               SourceIdType::NOTIFICATION_ID);
+}
+
+// static
+ukm::SourceId UkmRecorder::GetSourceIdForNotificationEvent(
+    base::PassKey<PersistentNotificationHandler>,
+    const GURL& url) {
+  return UkmRecorder::GetSourceIdFromScopeImpl(url,
+                                               SourceIdType::NOTIFICATION_ID);
+}
+
+// static
+ukm::SourceId UkmRecorder::GetSourceIdForNotificationEvent(
+    base::PassKey<NonPersistentNotificationHandler>,
+    const GURL& url) {
+  return UkmRecorder::GetSourceIdFromScopeImpl(url,
+                                               SourceIdType::NOTIFICATION_ID);
+}
+
+// static
+ukm::SourceId UkmRecorder::GetSourceIdForNotificationEvent(
+    base::PassKey<safe_browsing::NotificationContentDetectionUkmUtil>,
+    const GURL& url) {
+  return UkmRecorder::GetSourceIdFromScopeImpl(url,
                                                SourceIdType::NOTIFICATION_ID);
 }
 

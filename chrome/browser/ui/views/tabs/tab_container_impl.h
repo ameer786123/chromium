@@ -23,6 +23,7 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/animation/bounds_animator.h"
 #include "ui/views/animation/bounds_animator_observer.h"
+#include "ui/views/controls/image_view.h"
 #include "ui/views/mouse_watcher.h"
 #include "ui/views/paint_info.h"
 #include "ui/views/view.h"
@@ -83,6 +84,10 @@ class TabContainerImpl : public TabContainer,
   void NotifyTabstripBubbleOpened() override;
   void NotifyTabstripBubbleClosed() override;
 
+  void OnSplitCreated(const std::vector<int>& indices) override;
+  void OnSplitRemoved(const std::vector<int>& indices) override;
+  void OnSplitContentsChanged(const std::vector<int>& indices) override;
+
   std::optional<int> GetModelIndexOf(
       const TabSlotView* slot_view) const override;
   Tab* GetTabAtModelIndex(int index) const override;
@@ -125,9 +130,8 @@ class TabContainerImpl : public TabContainer,
   TabGroupViews* GetGroupViews(tab_groups::TabGroupId group_id) const override;
   const std::map<tab_groups::TabGroupId, std::unique_ptr<TabGroupViews>>&
   get_group_views_for_testing() const override;
-
-  int GetActiveTabWidth() const override;
-  int GetInactiveTabWidth() const override;
+  std::map<tab_groups::TabGroupId, TabGroupHeader*> GetGroupHeaders()
+      const override;
 
   gfx::Rect GetIdealBounds(int model_index) const override;
   gfx::Rect GetIdealBounds(tab_groups::TabGroupId group) const override;

@@ -20,7 +20,7 @@ import org.chromium.base.ThreadUtils;
 public class SecondBrowserProcess extends Service {
     public static final int CODE_START = IBinder.FIRST_CALL_TRANSACTION;
 
-    private IBinder mBinder =
+    private final IBinder mBinder =
             new Binder() {
                 @Override
                 protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
@@ -54,6 +54,6 @@ public class SecondBrowserProcess extends Service {
         AwResource.setConfigKeySystemUuidMapping(R.array.config_key_system_uuid_mapping);
         AwTestContainerView.installDrawFnFunctionTable(/* useVulkan= */ false);
         AwBrowserProcess.loadLibrary(null);
-        ThreadUtils.runOnUiThreadBlocking(AwBrowserProcess::start);
+        ThreadUtils.runOnUiThreadBlocking(AwBrowserProcess::startForTesting);
     }
 }

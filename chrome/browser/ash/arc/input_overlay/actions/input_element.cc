@@ -8,7 +8,7 @@
 #include <iterator>
 
 #include "base/containers/contains.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "chrome/browser/ash/arc/input_overlay/util.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -192,10 +192,6 @@ bool InputElement::operator==(const InputElement& other) const {
     equal = equal && (this->mouse_action_ == other.mouse_action());
   }
   return equal;
-}
-
-bool InputElement::operator!=(const InputElement& other) const {
-  return !(*this == other);
 }
 
 bool InputElement::IsInputSourceSet(InputSource input_source) const {

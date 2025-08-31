@@ -8,6 +8,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/profile_management/profile_management_features.h"
@@ -15,13 +16,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/signin/reauth_result.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/profiles/profile_picker.h"
 #include "chrome/browser/ui/signin/signin_view_controller.h"
@@ -62,14 +63,16 @@
 #include "chrome/browser/ui/webui/signin/signout_confirmation/signout_confirmation_ui.h"
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#include "chrome/browser/ui/webui/signin/history_sync_optin/history_sync_optin_ui.h"
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+
 namespace {
 
 const int kModalDialogWidth = 448;
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-const int kManagedUserNoticeConfirmationDialogWidth = 512;
-const int kManagedUserNoticeConfirmationDialogHeight = 576;
-const int kManagedUserNoticeConfirmationUpdatedDialogWidth = 780;
-const int kManagedUserNoticeConfirmationUpdatedDialogHeight = 560;
+const int kManagedUserNoticeConfirmationDialogWidth = 780;
+const int kManagedUserNoticeConfirmationDialogHeight = 560;
 #endif
 const int kSyncConfirmationDialogWidth = 512;
 const int kSyncConfirmationDialogHeight = 487;
@@ -93,7 +96,7 @@ void CloseModalSigninInBrowser(
     return;
   }
 
-  browser->signin_view_controller()->CloseModalSignin();
+  browser->GetFeatures().signin_view_controller()->CloseModalSignin();
   if (show_supervised_user_iph) {
     browser->window()->MaybeShowSupervisedUserProfileSignInIPH();
   }
@@ -133,6 +136,34 @@ SigninViewControllerDelegateViews::CreateSyncConfirmationWebView(
       GetSyncConfirmationDialogPreferredHeight(browser->profile()),
       kSyncConfirmationDialogWidth, InitializeSigninWebDialogUI(true));
 }
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+std::unique_ptr<views::WebView>
+SigninViewControllerDelegateViews::CreateHistorySyncOptInWebView(
+    Browser* browser,
+    HistorySyncOptinLaunchContext launch_context) {
+  GURL url = GURL(chrome::kChromeUIHistorySyncOptinURL);
+  // The the actual dialog's height will be set dynamically based on its
+  // contents, so the initial height does not matter.
+  auto web_view =
+      CreateDialogWebView(browser,
+                          HistorySyncOptinUI::AppendHistorySyncOptinQueryParams(
+                              url, launch_context),
+                          /*dialog_height=*/0, kModalDialogWidth,
+                          InitializeSigninWebDialogUI(false));
+  CHECK(web_view);
+  HistorySyncOptinUI* web_ui = web_view->GetWebContents()
+                                   ->GetWebUI()
+                                   ->GetController()
+                                   ->GetAs<HistorySyncOptinUI>();
+  DCHECK(web_ui);
+  web_view->SetProperty(views::kElementIdentifierKey,
+                        SigninViewController::kHistorySyncOptinViewId);
+  web_ui->Initialize(browser,
+                     /*history_optin_completed_closure=*/base::DoNothing());
+  return web_view;
+}
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 
 // static
 std::unique_ptr<views::WebView>
@@ -204,19 +235,9 @@ SigninViewControllerDelegateViews::CreateManagedUserNoticeConfirmationWebView(
     Browser* browser,
     std::unique_ptr<signin::EnterpriseProfileCreationDialogParams>
         create_param) {
-  bool enable_updated_dialog = base::FeatureList::IsEnabled(
-      features::kEnterpriseUpdatedProfileCreationScreen);
   bool is_oidc_account = create_param->is_oidc_account;
-  enable_updated_dialog |=
-      is_oidc_account &&
-      base::FeatureList::IsEnabled(
-          profile_management::features::kOidcAuthProfileManagement);
-  auto width = enable_updated_dialog
-                   ? kManagedUserNoticeConfirmationUpdatedDialogWidth
-                   : kManagedUserNoticeConfirmationDialogWidth;
-  auto height = enable_updated_dialog
-                    ? kManagedUserNoticeConfirmationUpdatedDialogHeight
-                    : kManagedUserNoticeConfirmationDialogHeight;
+  auto width = kManagedUserNoticeConfirmationDialogWidth;
+  auto height = kManagedUserNoticeConfirmationDialogHeight;
   std::unique_ptr<views::WebView> web_view = CreateDialogWebView(
       browser, GURL(chrome::kChromeUIManagedUserProfileNoticeUrl), height,
       width, InitializeSigninWebDialogUI(false));
@@ -311,7 +332,8 @@ content::WebContents* SigninViewControllerDelegateViews::AddNewContents(
 }
 
 web_modal::WebContentsModalDialogHost*
-SigninViewControllerDelegateViews::GetWebContentsModalDialogHost() {
+SigninViewControllerDelegateViews::GetWebContentsModalDialogHost(
+    content::WebContents* web_contents) {
   return browser_->window()->GetWebContentsModalDialogHost();
 }
 
@@ -513,6 +535,22 @@ SigninViewControllerDelegate::CreateSyncConfirmationDelegate(
       browser, ui::mojom::ModalType::kWindow, true, false,
       /*animate_on_resize=*/true);
 }
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+// static
+SigninViewControllerDelegate*
+SigninViewControllerDelegate::CreateSyncHistoryOptInDelegate(
+    Browser* browser,
+    HistorySyncOptinLaunchContext launch_context) {
+  auto content_view =
+      SigninViewControllerDelegateViews::CreateHistorySyncOptInWebView(
+          browser, launch_context);
+  return new SigninViewControllerDelegateViews(
+      std::move(content_view), browser, ui::mojom::ModalType::kWindow,
+      /*wait_for_size=*/true, /*should_show_close_button=*/false,
+      /*animate_on_resize=*/true);
+}
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
 // static
 SigninViewControllerDelegate*

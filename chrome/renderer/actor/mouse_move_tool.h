@@ -8,7 +8,7 @@
 #include <cstdint>
 
 #include "base/memory/raw_ref.h"
-#include "base/memory/weak_ptr.h"
+#include "base/types/expected.h"
 #include "chrome/common/actor.mojom.h"
 #include "chrome/renderer/actor/tool_base.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
@@ -22,22 +22,24 @@ namespace actor {
 // A tool that can be invoked to perform a mouse move over a target.
 class MouseMoveTool : public ToolBase {
  public:
-  MouseMoveTool(mojom::MouseMoveActionPtr action,
-                base::raw_ref<content::RenderFrame> frame);
+  MouseMoveTool(content::RenderFrame& frame,
+                Journal::TaskId task_id,
+                Journal& journal,
+                mojom::MouseMoveActionPtr action,
+                mojom::ToolTargetPtr target,
+                mojom::ObservedToolTargetPtr observed_target);
 
   ~MouseMoveTool() override;
 
-  // Performs a mouse move on the specified node.
-  // Invoke callback with true if success and false otherwise.
+  // actor::ToolBase
   void Execute(ToolFinishedCallback callback) override;
+  std::string DebugString() const override;
 
  private:
-  // Raw ref since this is owned by ToolExecutor whose lifetime is tied to
-  // RenderFrame.
-  base::raw_ref<content::RenderFrame> frame_;
-  mojom::MouseMoveActionPtr action_;
+  using ValidatedResult = base::expected<gfx::PointF, mojom::ActionResultPtr>;
+  ValidatedResult Validate() const;
 
-  base::WeakPtrFactory<MouseMoveTool> weak_factory_{this};
+  mojom::MouseMoveActionPtr action_;
 };
 
 }  // namespace actor

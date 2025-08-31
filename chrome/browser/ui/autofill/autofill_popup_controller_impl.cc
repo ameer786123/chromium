@@ -255,8 +255,6 @@ void AutofillPopupControllerImpl::Show(
   }
 
   if (IsRootPopup()) {
-    shown_time_ = base::TimeTicks::Now();
-
     // We may already be observing from a previous `Show` call.
     // TODO(crbug.com/41486228): Consider not to recycle views or controllers
     // and only permit a single call to `Show`.
@@ -339,12 +337,6 @@ void AutofillPopupControllerImpl::Hide(SuggestionHidingReason reason) {
   AutofillMetrics::LogAutofillSuggestionHidingReason(
       suggestions_filling_product_, reason);
 
-  if (IsRootPopup() && shown_time_) {
-    AutofillMetrics::LogAutofillPopupVisibleDuration(
-        suggestions_filling_product_, base::TimeTicks::Now() - *shown_time_);
-    shown_time_.reset();
-  }
-
   HideViewAndDie();
 }
 
@@ -358,7 +350,9 @@ void AutofillPopupControllerImpl::OnSuggestionsChanged() {
   OnSuggestionsChanged(/*prefer_prev_arrow_side=*/false);
 }
 
-void AutofillPopupControllerImpl::AcceptSuggestion(int index) {
+void AutofillPopupControllerImpl::AcceptSuggestion(
+    int index,
+    AutofillMetrics::SuggestionAcceptedMethod accept_method) {
   CHECK_LT(base::checked_cast<size_t>(index), GetSuggestions().size());
   CHECK(IsAcceptableSuggestionType(GetSuggestions()[index].type));
 
@@ -389,6 +383,8 @@ void AutofillPopupControllerImpl::AcceptSuggestion(int index) {
   AutofillMetrics::LogPopupInteraction(suggestions_filling_product_,
                                        GetPopupLevel(),
                                        PopupInteraction::kSuggestionAccepted);
+  base::UmaHistogramEnumeration("Autofill.SuggestionAccepted.Method",
+                                accept_method);
   delegate_->DidAcceptSuggestion(suggestion,
                                  AutofillSuggestionDelegate::SuggestionMetadata{
                                      .row = index,
@@ -507,10 +503,14 @@ bool AutofillPopupControllerImpl::RemoveSuggestion(
     case FillingProduct::kMerchantPromoCode:
     case FillingProduct::kIban:
     case FillingProduct::kLoyaltyCard:
+    case FillingProduct::kPasskey:
     case FillingProduct::kPassword:
     case FillingProduct::kCompose:
     case FillingProduct::kPlusAddresses:
     case FillingProduct::kAutofillAi:
+    case FillingProduct::kIdentityCredential:
+    case FillingProduct::kDataList:
+    case FillingProduct::kOneTimePassword:
       break;
   }
 
@@ -623,12 +623,6 @@ void AutofillPopupControllerImpl::FireControlsChangedEvent(bool is_show) {
     return;
   }
 
-  // Retrieve the ax tree id associated with the current web contents.
-  ui::AXTreeID tree_id;
-  if (content::RenderFrameHost* rfh = web_contents_->GetFocusedFrame()) {
-    tree_id = rfh->GetAXTreeID();
-  }
-
   // In order to get the AXPlatformNode for the ax node id, we first need
   // the AXPlatformNode for the web contents.
   ui::AXPlatformNode* root_platform_node =
@@ -637,11 +631,11 @@ void AutofillPopupControllerImpl::FireControlsChangedEvent(bool is_show) {
     return;
   }
 
+  // Retrieve the ax tree id associated with the current web contents.
   ui::AXPlatformNodeDelegate* root_platform_node_delegate =
       root_platform_node->GetDelegate();
-  if (!root_platform_node_delegate) {
-    return;
-  }
+  ui::AXTreeID tree_id =
+      root_platform_node_delegate->GetTreeData().focused_tree_id;
 
   // Now get the target node from its tree ID and node ID.
   ui::AXPlatformNode* target_node =

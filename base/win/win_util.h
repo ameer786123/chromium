@@ -61,6 +61,11 @@ BASE_EXPORT bool GetUserSidString(std::wstring* user_sid);
 // if the OS is Vista or later.
 BASE_EXPORT bool UserAccountControlIsEnabled();
 
+// Returns true if the process is running at elevated permissions, but could
+// be at medium IL (eg. UAC is enabled and the account is not a built-in
+// administrator).
+BASE_EXPORT bool UserAccountIsUnnecessarilyElevated();
+
 // Sets the boolean value for a given key in given IPropertyStore.
 BASE_EXPORT bool SetBooleanValueForPropertyStore(
     IPropertyStore* property_store,
@@ -248,6 +253,18 @@ BASE_EXPORT std::wstring WStringFromGUID(const ::GUID& rguid);
 // pinned, |error| is set and the method returns false.
 BASE_EXPORT bool PinUser32(NativeLibraryLoadError* error = nullptr);
 
+// Resolves all delayload imports for `module` rather than doing so when the
+// functions are first called. Returns `bool:true` if the attempt succeeded,
+// `bool:false` if the module is not a delayloaded dep of the current module
+// (this often happens in tests or the component build), or an `HRESULT` error
+// otherwise. See docs for __HrLoadAllImportsForDll() at
+// https://learn.microsoft.com/en-us/cpp/build/reference/linker-support-for-delay-loaded-dlls
+//
+// Note that `dll_name` is case-sensitive including the dll extension and must
+// match the name listed in the current module's delayloaded imports section.
+BASE_EXPORT base::expected<bool, HRESULT> LoadAllImportsForDll(
+    base::cstring_view dll_name);
+
 // Gets a pointer to a function within user32.dll, if available. If user32.dll
 // cannot be loaded or the function cannot be found, this function returns
 // nullptr and sets |error|. Once loaded, user32.dll is pinned, and therefore
@@ -373,6 +390,23 @@ class BASE_EXPORT ScopedDomainStateForTesting {
       delete;
 
   ~ScopedDomainStateForTesting();
+
+ private:
+  bool initial_state_;
+};
+
+// Allows changing the management registration state for the life time of the
+// object.  The original state is restored upon destruction.
+class BASE_EXPORT ScopedDeviceRegisteredWithManagementForTesting {
+ public:
+  explicit ScopedDeviceRegisteredWithManagementForTesting(bool state);
+
+  ScopedDeviceRegisteredWithManagementForTesting(
+      const ScopedDeviceRegisteredWithManagementForTesting&) = delete;
+  ScopedDeviceRegisteredWithManagementForTesting& operator=(
+      const ScopedDeviceRegisteredWithManagementForTesting&) = delete;
+
+  ~ScopedDeviceRegisteredWithManagementForTesting();
 
  private:
   bool initial_state_;

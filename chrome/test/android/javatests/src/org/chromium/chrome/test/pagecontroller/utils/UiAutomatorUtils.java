@@ -12,7 +12,6 @@ import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
 import android.os.RemoteException;
-import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.test.core.app.ApplicationProvider;
@@ -22,6 +21,7 @@ import androidx.test.uiautomator.UiObject2;
 
 import org.hamcrest.Matchers;
 
+import org.chromium.base.Log;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 
@@ -54,8 +54,8 @@ public class UiAutomatorUtils {
     // clicking, steps is one of the parameters to drag.
     public static final int CLICK_STEPS_PER_SECOND = 100;
 
-    private UiDevice mDevice;
-    private UiLocatorHelper mLocatorHelper;
+    private final UiDevice mDevice;
+    private final UiLocatorHelper mLocatorHelper;
 
     private static class LazyHolder {
         static final UiAutomatorUtils sInstance = new UiAutomatorUtils();

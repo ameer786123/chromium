@@ -14,10 +14,28 @@
 #include "components/signin/public/base/consent_level.h"
 #include "components/sync/base/user_selectable_type.h"
 
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
+#endif
+
 namespace web_app::integration_tests {
 
 TwoClientWebAppsIntegrationTestBase::TwoClientWebAppsIntegrationTestBase()
-    : WebAppsSyncTestBase(TWO_CLIENT), helper_(this) {}
+    : WebAppsSyncTestBase(TWO_CLIENT),
+#if BUILDFLAG(IS_CHROMEOS)
+      // TwoClientWebAppsIntegrationTest strategy is using two profiles.
+      // However, that does not work with multi-user-sign-in implementation
+      // in ChromeOS properly. Disable the feature now.
+      // TODO(crbug.com/425160398): Consider to redesign the tests to work
+      // with the feature.
+      multi_user_window_manager_resetter_(
+          MultiUserWindowManagerHelper::DisableForTesting()),
+#endif  // BUILDFLAG(IS_CHROMEOS)
+      helper_(this) {
+}
+
+TwoClientWebAppsIntegrationTestBase::~TwoClientWebAppsIntegrationTestBase() =
+    default;
 
 // WebAppIntegrationTestDriver::TestDelegate
 Browser* TwoClientWebAppsIntegrationTestBase::CreateBrowser(Profile* profile) {
@@ -96,8 +114,7 @@ void TwoClientWebAppsIntegrationTestBase::SyncSignIn(Profile* profile) {
     if (GetProfile(i) != profile) {
       continue;
     }
-    ASSERT_TRUE(
-        GetClient(i)->SignInPrimaryAccount(signin::ConsentLevel::kSync));
+    ASSERT_TRUE(GetClient(i)->SetupSync());
   }
   AwaitWebAppQuiescence();
 #endif
@@ -136,7 +153,7 @@ void TwoClientWebAppsIntegrationTestBase::SetUpOnMainThread() {
       continue;
     }
 
-    ASSERT_TRUE(GetClient(i)->SetupSync(
+    ASSERT_TRUE(GetClient(i)->SetupSyncWithCustomSettings(
         base::BindLambdaForTesting([](syncer::SyncUserSettings* user_settings) {
 #if BUILDFLAG(IS_CHROMEOS)
           user_settings->SetSelectedTypes(/*sync_everything=*/false,
@@ -148,6 +165,8 @@ void TwoClientWebAppsIntegrationTestBase::SetUpOnMainThread() {
           user_settings->SetSelectedTypes(
               /*sync_everything=*/false,
               /*types=*/{syncer::UserSelectableType::kApps});
+          user_settings->SetInitialSyncFeatureSetupComplete(
+              syncer::SyncFirstSetupCompleteSource::ADVANCED_FLOW_CONFIRM);
 #endif  // BUILDFLAG(IS_CHROMEOS)
         })));
   }

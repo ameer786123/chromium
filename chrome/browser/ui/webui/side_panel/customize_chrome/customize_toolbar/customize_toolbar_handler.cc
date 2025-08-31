@@ -190,7 +190,7 @@ void CustomizeToolbarHandler::ListActions(ListActionsCallback callback) {
   const ui::ColorProvider& provider = web_contents_->GetColorProvider();
   const int icon_color_id = ui::kColorSysOnSurface;
   const float scale_factor =
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->GetDisplayNearestWindow(web_contents_->GetTopLevelNativeWindow())
           .device_scale_factor();
 
@@ -311,10 +311,8 @@ void CustomizeToolbarHandler::ListActions(ListActionsCallback callback) {
              side_panel::customize_chrome::mojom::CategoryId::kTools);
   add_action(kActionQrCodeGenerator,
              side_panel::customize_chrome::mojom::CategoryId::kTools);
-  if (base::FeatureList::IsEnabled(features::kPinnedCastButton)) {
-    add_action(kActionRouteMedia,
-               side_panel::customize_chrome::mojom::CategoryId::kTools);
-  }
+  add_action(kActionRouteMedia,
+             side_panel::customize_chrome::mojom::CategoryId::kTools);
   add_action(kActionSidePanelShowReadAnything,
              side_panel::customize_chrome::mojom::CategoryId::kTools);
   add_action(kActionCopyUrl,

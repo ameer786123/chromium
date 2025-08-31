@@ -344,14 +344,9 @@ class TetherServiceTest : public testing::Test {
         base::WrapUnique(new FakeTetherHostFetcherFactory(test_device_));
     TetherHostFetcherImpl::Factory::SetFactoryForTesting(
         fake_tether_host_fetcher_factory_.get());
-
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&local_pref_service_);
-    RegisterLocalState(local_pref_service_.registry());
   }
 
   void TearDown() override {
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
-
     device_sync::DeviceSyncClientImpl::Factory::SetFactoryForTesting(nullptr);
     secure_channel::SecureChannelClientImpl::Factory::SetFactoryForTesting(
         nullptr);
@@ -546,9 +541,6 @@ class TetherServiceTest : public testing::Test {
   bool is_adapter_present_;
   bool is_adapter_powered_;
   bool shutdown_reason_verified_;
-
-  // PrefService which contains the browser process' local storage.
-  TestingPrefServiceSimple local_pref_service_;
 
   std::unique_ptr<TestTetherService> tether_service_;
   std::unique_ptr<TestingProfile> profile_;

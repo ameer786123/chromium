@@ -78,8 +78,8 @@ class CORE_EXPORT WorkerClassicScriptLoader final
   //
   // `fetch_client_settings_object_fetcher` is different from
   // `ExecutionContext::Fetcher()` in off-the-main-thread fetch.
-  // TODO(crbug.com/1064920): Remove `reject_coep_unsafe_none` and
-  // `blob_url_loader_factory` now that PlzDedicatedWorker has shipped.
+  // TODO(crbug.com/40123913): Remove `blob_url_loader_factory` now
+  // that PlzDedicatedWorker has shipped.
   //
   // `worker_main_script_load_params` is valid for dedicated workers and shared
   // workers.
@@ -95,8 +95,6 @@ class CORE_EXPORT WorkerClassicScriptLoader final
       network::mojom::CredentialsMode,
       base::OnceClosure response_callback,
       base::OnceClosure finished_callback,
-      RejectCoepUnsafeNone reject_coep_unsafe_none =
-          RejectCoepUnsafeNone(false),
       mojo::PendingRemote<network::mojom::blink::URLLoaderFactory>
           blob_url_loader_factory = {});
 

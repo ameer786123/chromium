@@ -2,10 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {AnnotationMode, hexToColor, Ink2Manager, TEXT_COLORS, TextAlignment, UserAction} from 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_viewer_wrapper.js';
+import {AnnotationMode, hexToColor, Ink2Manager, TEXT_COLORS, TextAlignment, TextTypeface, UserAction} from 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_viewer_wrapper.js';
 import type {Color} from 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_viewer_wrapper.js';
 import {assert} from 'chrome://resources/js/assert.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {eventToPromise, isVisible, microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {clickDropdownButton, getColorButtons, getRequiredElement, setupMockMetricsPrivate} from './test_util.js';
@@ -25,12 +24,8 @@ chrome.test.runTests([
   async function testOpenBottomToolbar() {
     const mockMetricsPrivate = setupMockMetricsPrivate();
 
-    // Enable text annotations.
-    loadTimeData.overrideValues({'pdfTextAnnotationsEnabled': true});
-    viewer.$.toolbar.strings = Object.assign({}, viewer.$.toolbar.strings);
-    await microtasksFinished();
-
     viewer.$.toolbar.setAnnotationMode(AnnotationMode.TEXT);
+    await Ink2Manager.getInstance().initializeTextAnnotations();
     await microtasksFinished();
 
     chrome.test.assertEq(AnnotationMode.TEXT, viewer.$.toolbar.annotationMode);
@@ -51,7 +46,7 @@ chrome.test.runTests([
     // Font and size selects
     const selects = toolbar.shadowRoot.querySelectorAll('select');
     chrome.test.assertEq(2, selects.length);
-    chrome.test.assertEq('Roboto', selects[0]!.value);
+    chrome.test.assertEq(TextTypeface.SANS_SERIF, selects[0]!.value);
     chrome.test.assertEq('12', selects[1]!.value);
 
     // Style selector
@@ -64,7 +59,7 @@ chrome.test.runTests([
     chrome.test.assertEq(2, toolbarDropdowns.length);
     const alignmentIcon = toolbarDropdowns[0]!.querySelector('cr-icon');
     assert(alignmentIcon);
-    chrome.test.assertEq('pdf:text-align-left', alignmentIcon.icon);
+    chrome.test.assertEq('pdf-ink:text-align-left', alignmentIcon.icon);
     assertColorChipFillColor(toolbar, hexToColor(TEXT_COLORS[0]!.color));
 
     chrome.test.succeed();
@@ -80,17 +75,18 @@ chrome.test.runTests([
     // Font is the first select.
     const fontSelect = toolbar.shadowRoot.querySelector('select');
     assert(fontSelect);
-    const initialFont = Ink2Manager.getInstance().getCurrentText().font;
-    chrome.test.assertEq(initialFont, fontSelect.value);
+    const initialTypeface =
+        Ink2Manager.getInstance().getCurrentTextAttributes().typeface;
+    chrome.test.assertEq(initialTypeface, fontSelect.value);
 
     const whenChanged =
-        eventToPromise('text-changed', Ink2Manager.getInstance());
-    const newValue = 'Serif';
+        eventToPromise('attributes-changed', Ink2Manager.getInstance());
+    const newValue = TextTypeface.SERIF;
     fontSelect.focus();
     fontSelect.value = newValue;
     fontSelect.dispatchEvent(new CustomEvent('change'));
     const changedEvent = await whenChanged;
-    chrome.test.assertEq(newValue, changedEvent.detail.font);
+    chrome.test.assertEq(newValue, changedEvent.detail.typeface);
     await microtasksFinished();
     chrome.test.assertEq(newValue, fontSelect.value);
 
@@ -108,11 +104,12 @@ chrome.test.runTests([
     const selects = toolbar.shadowRoot.querySelectorAll('select');
     chrome.test.assertEq(2, selects.length);
     const sizeSelect = selects[1]!;
-    const initialSize = Ink2Manager.getInstance().getCurrentText().size;
+    const initialSize =
+        Ink2Manager.getInstance().getCurrentTextAttributes().size;
     chrome.test.assertEq(initialSize.toString(), sizeSelect.value);
 
     const whenChanged =
-        eventToPromise('text-changed', Ink2Manager.getInstance());
+        eventToPromise('attributes-changed', Ink2Manager.getInstance());
     sizeSelect.focus();
     sizeSelect.value = '20';
     sizeSelect.dispatchEvent(new CustomEvent('change'));
@@ -136,11 +133,11 @@ chrome.test.runTests([
     assert(selector);
     const buttons =
         selector.shadowRoot.querySelectorAll('selectable-icon-button');
-    chrome.test.assertEq(4, buttons.length);
+    chrome.test.assertEq(3, buttons.length);
     chrome.test.assertTrue(buttons[0]!.checked);
 
     const whenChanged =
-        eventToPromise('text-changed', Ink2Manager.getInstance());
+        eventToPromise('attributes-changed', Ink2Manager.getInstance());
     buttons[1]!.click();
     const changedEvent = await whenChanged;
     chrome.test.assertEq(TextAlignment.CENTER, changedEvent.detail.alignment);
@@ -148,7 +145,7 @@ chrome.test.runTests([
     chrome.test.assertTrue(buttons[1]!.checked);
     const alignmentIcon = toolbar.$.alignment.querySelector('cr-icon');
     assert(alignmentIcon);
-    chrome.test.assertEq('pdf:text-align-center', alignmentIcon.icon);
+    chrome.test.assertEq('pdf-ink:text-align-center', alignmentIcon.icon);
 
     chrome.test.succeed();
   },
@@ -177,7 +174,7 @@ chrome.test.runTests([
     const button = colorButtons[1];
     chrome.test.assertTrue(!!button);
     const whenChanged =
-        eventToPromise('text-changed', Ink2Manager.getInstance());
+        eventToPromise('attributes-changed', Ink2Manager.getInstance());
     button.click();
     const changedEvent = await whenChanged;
     assertColorsEqual(

@@ -15,15 +15,15 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/callback_utils.h"
 #include "chrome/browser/web_applications/isolated_web_apps/commands/isolated_web_app_install_command_helper.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_response_reader_factory.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_source.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
 #include "chrome/browser/web_applications/isolated_web_apps/jobs/prepare_install_info_job.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_contents/web_app_data_retriever.h"
 #include "chrome/browser/web_applications/web_contents/web_contents_manager.h"
 #include "components/webapps/browser/web_contents/web_app_url_loader.h"
+#include "components/webapps/isolated_web_apps/reading/response_reader_factory.h"
+#include "components/webapps/isolated_web_apps/types/source.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
 #include "content/public/browser/web_contents.h"
 
 namespace web_app {
@@ -142,7 +142,7 @@ void SignedWebBundleMetadata::Create(
                 -> SignedWebBundleMetadata {
               return SignedWebBundleMetadata(
                   url_info, source, install_info.title,
-                  install_info.isolated_web_app_version,
+                  install_info.isolated_web_app_version(),
                   install_info.icon_bitmaps);
             }));
       },
@@ -156,7 +156,7 @@ SignedWebBundleMetadata SignedWebBundleMetadata::CreateForTesting(
     const IsolatedWebAppUrlInfo& url_info,
     const IwaSourceBundleWithMode& source,
     const std::u16string& app_name,
-    const base::Version& version,
+    const IwaVersion& version,
     const IconBitmaps& icons) {
   return SignedWebBundleMetadata(url_info, source, app_name, version, icons);
 }
@@ -165,7 +165,7 @@ SignedWebBundleMetadata::SignedWebBundleMetadata(
     const IsolatedWebAppUrlInfo& url_info,
     const IwaSourceBundleWithMode& source,
     const std::u16string& app_name,
-    const base::Version& version,
+    const IwaVersion& version,
     const IconBitmaps& icons)
     : url_info_(url_info),
       app_name_(app_name),

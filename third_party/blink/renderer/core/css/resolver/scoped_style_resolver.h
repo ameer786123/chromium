@@ -31,8 +31,8 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/active_style_sheets.h"
-#include "third_party/blink/renderer/core/css/cascade_layer.h"
 #include "third_party/blink/renderer/core/css/element_rule_collector.h"
+#include "third_party/blink/renderer/core/css/resolver/style_resolver_utils.h"
 #include "third_party/blink/renderer/core/css/rule_set.h"
 #include "third_party/blink/renderer/core/dom/tree_scope.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
@@ -74,7 +74,7 @@ class CORE_EXPORT ScopedStyleResolver final
   const FontFeatureValuesStorage* FontFeatureValuesForFamily(
       AtomicString font_family);
 
-  void RebuildCascadeLayerMap(const ActiveStyleSheetVector& sheets);
+  void RebuildCascadeLayerMap(const ActiveStyleSheetVector&);
   bool HasCascadeLayerMap() const { return cascade_layer_map_.Get(); }
   const CascadeLayerMap* GetCascadeLayerMap() const {
     return cascade_layer_map_.Get();
@@ -102,7 +102,8 @@ class CORE_EXPORT ScopedStyleResolver final
   void QuietlySwapActiveStyleSheets(ActiveStyleSheetVector& other);
 
   void AppendActiveStyleSheets(unsigned index, const ActiveStyleSheetVector&);
-  void CollectMatchingElementScopeRules(ElementRuleCollector&,
+  void CollectMatchingElementScopeRules(const ContainerNode& scope_root,
+                                        ElementRuleCollector&,
                                         PartNames* part_names);
   void CollectMatchingShadowHostRules(ElementRuleCollector&);
   void CollectMatchingSlottedRules(ElementRuleCollector&);
@@ -125,7 +126,9 @@ class CORE_EXPORT ScopedStyleResolver final
 
  private:
   template <class Func>
-  void ForAllStylesheets(ElementRuleCollector&, const Func& func);
+  void ForAllStylesheets(ElementRuleCollector&,
+                         const ContainerNode& scope_root,
+                         const Func& func);
 
   void AddFontFaceRules(const RuleSet&);
   void AddCounterStyleRules(const RuleSet&);
@@ -135,8 +138,6 @@ class CORE_EXPORT ScopedStyleResolver final
   bool KeyframeStyleShouldOverride(
       const StyleRuleKeyframes* new_rule,
       const StyleRuleKeyframes* existing_rule) const;
-  void AddPositionTryRules(const RuleSet&);
-  void AddFunctionRules(const RuleSet&);
 
   CounterStyleMap& EnsureCounterStyleMap();
 
@@ -160,7 +161,6 @@ class CORE_EXPORT ScopedStyleResolver final
       HeapHashMap<AtomicString, Member<StyleRulePositionTry>>;
   PositionTryRuleMap position_try_rule_map_;
 
-  using FunctionRuleMap = HeapHashMap<String, Member<StyleRuleFunction>>;
   FunctionRuleMap function_rule_map_;
 
   // Multiple entries are created pointing to the same

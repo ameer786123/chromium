@@ -5,6 +5,9 @@
 #ifndef MEDIA_GPU_WINDOWS_D3D12_VIDEO_ENCODE_DELEGATE_UNITTEST_H_
 #define MEDIA_GPU_WINDOWS_D3D12_VIDEO_ENCODE_DELEGATE_UNITTEST_H_
 
+#include <optional>
+
+#include "base/test/scoped_feature_list.h"
 #include "media/gpu/windows/d3d12_video_encode_delegate.h"
 #include "media/gpu/windows/d3d12_video_encoder_wrapper.h"
 #include "media/gpu/windows/d3d12_video_processor_wrapper.h"
@@ -36,13 +39,13 @@ class MockD3D12VideoEncoderWrapper : public D3D12VideoEncoderWrapper {
   MockD3D12VideoEncoderWrapper();
   ~MockD3D12VideoEncoderWrapper() override;
 
-  MOCK_METHOD(bool, Initialize, ());
+  MOCK_METHOD(bool, Initialize, (uint32_t));
   MOCK_METHOD2(
       Encode,
       EncoderStatus(const D3D12_VIDEO_ENCODER_ENCODEFRAME_INPUT_ARGUMENTS&,
                     const D3D12_VIDEO_ENCODER_RECONSTRUCTED_PICTURE&));
-  MOCK_METHOD(EncoderStatus::Or<uint64_t>,
-              GetEncodedBitstreamWrittenBytesCount,
+  MOCK_METHOD(EncoderStatus::Or<ScopedD3D12ResourceMap>,
+              GetEncoderOutputMetadata,
               (),
               (const override));
   MOCK_METHOD(EncoderStatus,
@@ -76,11 +79,19 @@ class D3D12VideoEncodeDelegateTestBase : public ::testing::Test {
 
   VideoEncodeAccelerator::Config GetDefaultH264Config() const;
 
+  ScopedD3D12ResourceMap GetEncoderOutputMetadataResourceMap(
+      size_t bitstream_size) const;
+
   Microsoft::WRL::ComPtr<ID3D12Resource> CreateResource(
       const gfx::Size& size,
       VideoPixelFormat format) const;
 
+  void EnableFeature(const base::Feature& feature);
+
+  void DisableFeature(const base::Feature& feature);
+
   std::unique_ptr<D3D12VideoEncodeDelegate> encoder_delegate_;
+  std::optional<base::test::ScopedFeatureList> scoped_feature_list_;
 };
 
 }  // namespace media

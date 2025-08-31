@@ -5,6 +5,7 @@
 #include "ui/webui/examples/browser/ui/aura/aura_context.h"
 
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/test/test_screen.h"
@@ -135,7 +136,7 @@ AuraContext::ContextualizedWindowTreeHost::~ContextualizedWindowTreeHost() {
 
 AuraContext::AuraContext()
     : screen_(aura::TestScreen::Create(gfx::Size(1024, 768))) {
-  DCHECK(!display::Screen::GetScreen());
+  DCHECK(!display::Screen::Get());
   display::Screen::SetScreenInstance(screen_.get());
   focus_controller_ = std::make_unique<wm::FocusController>(new FocusRules());
   auto native_cursor_manager = std::make_unique<NativeCursorManager>();

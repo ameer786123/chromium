@@ -11,10 +11,12 @@
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/proto/strike_data.pb.h"
 #include "components/autofill/core/browser/strike_databases/strike_database_integrator_base.h"
+#include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/leveldb_proto/public/proto_database.h"
 #include "components/leveldb_proto/public/proto_database_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -42,7 +44,7 @@ class StrikeDatabaseIntegratorTestStrikeDatabaseTest : public ::testing::Test {
   }
 
   void TearDown() override {
-    // The destruction of |strike_database_service_|'s components is posted
+    // The destruction of `strike_database_service_`'s components is posted
     // to a task runner, requires running the loop to complete.
     no_expiry_strike_database_.reset();
     strike_database_.reset();
@@ -65,6 +67,20 @@ class StrikeDatabaseIntegratorTestStrikeDatabaseTest : public ::testing::Test {
  private:
   base::HistogramTester histogram_tester_;
 };
+
+class DisableStrikeDatabaseIntegratorTestStrikeDatabaseTest
+    : public StrikeDatabaseIntegratorTestStrikeDatabaseTest {
+  base::test::ScopedFeatureList feature_list_{
+      features::kDisableAutofillStrikeSystem};
+};
+
+TEST_F(DisableStrikeDatabaseIntegratorTestStrikeDatabaseTest,
+       DisablementFlagEnabled) {
+  // Adding max strikes should have no effect if the flag is enabled.
+  strike_database_->AddStrikes(strike_database_->GetMaxStrikesLimit());
+  EXPECT_EQ(StrikeDatabaseIntegratorBase::kDoNotBlock,
+            strike_database_->GetStrikeDatabaseDecision());
+}
 
 TEST_F(StrikeDatabaseIntegratorTestStrikeDatabaseTest,
        MaxStrikesLimitReachedTest) {
@@ -222,11 +238,11 @@ TEST_F(StrikeDatabaseIntegratorTestStrikeDatabaseTest,
   other_strike_database->AddStrike();
   EXPECT_EQ(1, other_strike_database->GetStrikes());
 
-  // Advance clock to past expiry time for |strike_database_|.
+  // Advance clock to past expiry time for `strike_database_`.
   task_environment_.FastForwardBy(
       strike_database_->GetExpiryTimeDelta().value() + base::Microseconds(1));
 
-  // Attempt to expire strikes. Only |strike_database_|'s keys should be
+  // Attempt to expire strikes. Only `strike_database_`'s keys should be
   // affected.
   strike_database_->RemoveExpiredStrikes();
   other_strike_database->RemoveExpiredStrikes();
@@ -263,20 +279,20 @@ TEST_F(StrikeDatabaseIntegratorTestStrikeDatabaseTest,
   strike_database_->SetUniqueIdsRequired(true);
   const std::string unique_id_1 = "1234";
   const std::string unique_id_2 = "9876";
-  // 1st strike added for |unique_id_1|.
+  // 1st strike added for `unique_id_1`.
   strike_database_->AddStrike(unique_id_1);
-  // 2nd strike added for |unique_id_1|.
+  // 2nd strike added for `unique_id_1`.
   strike_database_->AddStrike(unique_id_1);
-  // 1st strike added for |unique_id_2|.
+  // 1st strike added for `unique_id_2`.
   strike_database_->AddStrike(unique_id_2);
   std::vector<base::Bucket> buckets = GetHistogramTester()->GetAllSamples(
       "Autofill.StrikeDatabase.NthStrikeAdded."
       "StrikeDatabaseIntegratorTest");
   // There should be two buckets, one for 1st strike, one for 2nd strike count.
   ASSERT_EQ(2U, buckets.size());
-  // Both |unique_id_1| and |unique_id_2| have 1st strikes recorded.
+  // Both `unique_id_1` and `unique_id_2` have 1st strikes recorded.
   EXPECT_EQ(2, buckets[0].count);
-  // Only |unique_id_1| has 2nd strike recorded.
+  // Only `unique_id_1` has 2nd strike recorded.
   EXPECT_EQ(1, buckets[1].count);
 }
 
@@ -285,9 +301,9 @@ TEST_F(StrikeDatabaseIntegratorTestStrikeDatabaseTest,
   strike_database_->SetUniqueIdsRequired(true);
   const std::string unique_id_1 = "1234";
   const std::string unique_id_2 = "9876";
-  // 1 strike added for |unique_id_1|.
+  // 1 strike added for `unique_id_1`.
   strike_database_->AddStrike(unique_id_1);
-  // 3 strikes added for |unique_id_2|.
+  // 3 strikes added for `unique_id_2`.
   strike_database_->AddStrikes(3, unique_id_2);
   EXPECT_EQ(1, strike_database_->GetStrikes(unique_id_1));
   EXPECT_EQ(3, strike_database_->GetStrikes(unique_id_2));
@@ -332,25 +348,25 @@ TEST_F(StrikeDatabaseIntegratorTestStrikeDatabaseTest,
   const std::string unique_id_2 = "9876";
   strike_database_->AddStrike(unique_id_1);
 
-  // Advance clock to past the entry for |unique_id_1|'s expiry time.
+  // Advance clock to past the entry for `unique_id_1`'s expiry time.
   task_environment_.FastForwardBy(
       strike_database_->GetExpiryTimeDelta().value() + base::Microseconds(1));
 
   strike_database_->AddStrike(unique_id_2);
   strike_database_->RemoveExpiredStrikes();
 
-  // |unique_id_1|'s entry should have its most recent strike expire, but
-  // |unique_id_2|'s should not.
+  // `unique_id_1`'s entry should have its most recent strike expire, but
+  // `unique_id_2`'s should not.
   EXPECT_EQ(0, strike_database_->GetStrikes(unique_id_1));
   EXPECT_EQ(1, strike_database_->GetStrikes(unique_id_2));
 
-  // Advance clock to past |unique_id_2|'s expiry time.
+  // Advance clock to past `unique_id_2`'s expiry time.
   task_environment_.FastForwardBy(
       strike_database_->GetExpiryTimeDelta().value() + base::Microseconds(1));
 
   strike_database_->RemoveExpiredStrikes();
 
-  // |unique_id_1| and |unique_id_2| should have no more unexpired strikes.
+  // `unique_id_1` and `unique_id_2` should have no more unexpired strikes.
   EXPECT_EQ(0, strike_database_->GetStrikes(unique_id_1));
   EXPECT_EQ(0, strike_database_->GetStrikes(unique_id_2));
 }

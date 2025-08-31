@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/tabs/tab_group_header.h"
 
 #include <memory>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -15,6 +16,8 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
@@ -34,6 +37,7 @@
 #include "components/data_sharing/public/features.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tab_groups/tab_group_visual_data.h"
@@ -44,6 +48,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/mojom/menu_source_type.mojom-forward.h"
+#include "ui/base/mojom/menu_source_type.mojom-shared.h"
 #include "ui/color/color_id.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
@@ -72,6 +77,10 @@ namespace {
 
 // The amount of padding between the label and the sync icon.
 constexpr int kSyncIconPaddingFromLabel = 2;
+
+bool SupportsDataSharing() {
+  return data_sharing::features::IsDataSharingFunctionalityEnabled();
+}
 
 class TabGroupHighlightPathGenerator : public views::HighlightPathGenerator {
  public:
@@ -146,6 +155,8 @@ void TabGroupHeader::Init(const tab_groups::TabGroupId& group) {
   SetProperty(views::kDrawFocusRingBackgroundOutline, true);
 
   SetProperty(views::kElementIdentifierKey, kTabGroupHeaderElementId);
+  attention_indicator_->SetProperty(views::kElementIdentifierKey,
+                                    kAttentionIndicatorViewElementId);
 
   SetEventTargeter(std::make_unique<views::ViewTargeter>(this));
 
@@ -226,13 +237,23 @@ bool TabGroupHeader::OnMouseDragged(const ui::MouseEvent& event) {
 
 void TabGroupHeader::OnMouseReleased(const ui::MouseEvent& event) {
   if (!dragging()) {
-    if (event.IsLeftMouseButton()) {
+    bool open_editor_bubble =
+        base::FeatureList::IsEnabled(tab_groups::kLeftClickOpensTabGroupBubble)
+            ? (event.IsLeftMouseButton() && !editor_bubble_tracker_.is_open())
+            : (event.IsRightMouseButton() && !editor_bubble_tracker_.is_open());
+    bool toggle_collapse =
+        base::FeatureList::IsEnabled(tab_groups::kLeftClickOpensTabGroupBubble)
+            ? event.IsRightMouseButton()
+            : event.IsLeftMouseButton();
+
+    if (open_editor_bubble) {
+      editor_bubble_tracker_.Opened(TabGroupEditorBubbleView::Show(
+          tab_slot_controller_->GetBrowser(), group().value(),
+          /*anchor_view=*/this, /*anchor_rect=*/std::nullopt,
+          /*stop_context_menu_propagation=*/false));
+    } else if (toggle_collapse) {
       tab_slot_controller_->ToggleTabGroupCollapsedState(
           group().value(), ToggleTabGroupCollapsedStateOrigin::kMouse);
-    } else if (event.IsRightMouseButton() &&
-               !editor_bubble_tracker_.is_open()) {
-      editor_bubble_tracker_.Opened(TabGroupEditorBubbleView::Show(
-          tab_slot_controller_->GetBrowser(), group().value(), this));
     }
   }
 
@@ -261,7 +282,9 @@ void TabGroupHeader::OnGestureEvent(ui::GestureEvent* event) {
       break;
     case ui::EventType::kGestureLongTap: {
       editor_bubble_tracker_.Opened(TabGroupEditorBubbleView::Show(
-          tab_slot_controller_->GetBrowser(), group().value(), this));
+          tab_slot_controller_->GetBrowser(), group().value(),
+          /*anchor_view=*/this, /*anchor_rect=*/std::nullopt,
+          /*stop_context_menu_propagation=*/false));
       break;
     }
     case ui::EventType::kGestureScrollBegin: {
@@ -337,7 +360,12 @@ void TabGroupHeader::ShowContextMenuForViewImpl(
     views::View* source,
     const gfx::Point& point,
     ui::mojom::MenuSourceType source_type) {
-  if (editor_bubble_tracker_.is_open()) {
+  // Right click toggles ShowContextMenuForViewImpl, which we dont want to occur
+  // if the left click should toggle the context menu.
+  if ((source_type == ui::mojom::MenuSourceType::kMouse &&
+       base::FeatureList::IsEnabled(
+           tab_groups::kLeftClickOpensTabGroupBubble)) ||
+      editor_bubble_tracker_.is_open()) {
     return;
   }
 
@@ -370,7 +398,7 @@ void TabGroupHeader::ShowContextMenuForViewImpl(
 
   editor_bubble_tracker_.Opened(TabGroupEditorBubbleView::Show(
       tab_slot_controller_->GetBrowser(), group().value(), this, std::nullopt,
-      nullptr, kStopContextMenuPropagation));
+      kStopContextMenuPropagation));
 }
 
 bool TabGroupHeader::DoesIntersectRect(const views::View* target,
@@ -447,7 +475,7 @@ void TabGroupHeader::UpdateAccessibleName() {
   std::u16string title(tab_slot_controller_->GetGroupTitle(group().value()));
   std::u16string contents =
       tab_slot_controller_->GetGroupContentString(group().value());
-  std::u16string collapsed_state = std::u16string();
+  std::u16string group_status = std::u16string();
 
 // Windows screen reader properly announces the state set above in `node_data`
 // and will read out the state change when the header's collapsed state is
@@ -456,26 +484,37 @@ void TabGroupHeader::UpdateAccessibleName() {
 // toggled.
 #if !BUILDFLAG(IS_WIN)
   bool is_collapsed = tab_slot_controller_->IsGroupCollapsed(group().value());
-  collapsed_state =
-      is_collapsed ? l10n_util::GetStringUTF16(IDS_GROUP_AX_LABEL_COLLAPSED)
-                   : l10n_util::GetStringUTF16(IDS_GROUP_AX_LABEL_EXPANDED);
+  group_status = is_collapsed
+                     ? l10n_util::GetStringUTF16(IDS_GROUP_AX_LABEL_COLLAPSED)
+                     : l10n_util::GetStringUTF16(IDS_GROUP_AX_LABEL_EXPANDED);
 #endif
-  if (title.empty()) {
-    GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
-        IDS_GROUP_AX_LABEL_UNNAMED_GROUP_FORMAT, contents, collapsed_state));
-  } else {
-    GetViewAccessibility().SetName(
-        l10n_util::GetStringFUTF16(IDS_GROUP_AX_LABEL_NAMED_GROUP_FORMAT, title,
-                                   contents, collapsed_state));
+
+  std::u16string shared_state = u"";
+
+  if (SupportsDataSharing() && should_show_header_icon_) {
+    shared_state = l10n_util::GetStringUTF16(IDS_SAVED_GROUP_AX_LABEL_SHARED);
+
+    if (needs_attention_) {
+      group_status += u", " + l10n_util::GetStringUTF16(
+                                  DATA_SHARING_GROUP_LABEL_NEW_ACTIVITY);
+    }
   }
+
+  std::u16string final_name;
+  if (title.empty()) {
+    final_name =
+        l10n_util::GetStringFUTF16(IDS_GROUP_AX_LABEL_UNNAMED_GROUP_FORMAT,
+                                   shared_state, contents, group_status);
+  } else {
+    final_name =
+        l10n_util::GetStringFUTF16(IDS_GROUP_AX_LABEL_NAMED_GROUP_FORMAT,
+                                   shared_state, title, contents, group_status);
+  }
+  GetViewAccessibility().SetName(final_name);
 }
 
 int TabGroupHeader::GetCollapsedHeaderWidth() const {
   return GetTabSizeInfo().standard_width;
-}
-
-bool SupportsDataSharing() {
-  return data_sharing::features::IsDataSharingFunctionalityEnabled();
 }
 
 bool TabGroupHeader::ShouldShowHeaderIcon() const {
@@ -486,7 +525,7 @@ bool TabGroupHeader::ShouldShowHeaderIcon() const {
 
   tab_groups::TabGroupSyncService* tab_group_service =
       tab_slot_controller_->GetBrowser()
-          ? tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+          ? tab_groups::TabGroupSyncServiceFactory::GetForProfile(
                 tab_slot_controller_->GetBrowser()->profile())
           : nullptr;
   if (!tab_group_service) {
@@ -625,9 +664,10 @@ void TabGroupHeader::CreateHeaderWithTitle() {
 
   // The max width of the content should be half the standard tab width (not
   // counting overlap).
-  const int text_max_width =
-      (tab_style_->GetStandardWidth() - tab_style_->GetTabOverlap()) / 2 -
-      sync_icon_width - padding_between_label_sync_icon;
+  const int text_max_width = (tab_style_->GetStandardWidth(/*is_split*/ false) -
+                              tab_style_->GetTabOverlap()) /
+                                 2 -
+                             sync_icon_width - padding_between_label_sync_icon;
   const int text_width = std::min(
       title_->GetPreferredSize(views::SizeBounds(title_->width(), {})).width(),
       text_max_width);
@@ -732,3 +772,6 @@ void TabGroupHeader::EditorBubbleTracker::OnWidgetDestroying(
   widget_ = nullptr;
   tab_slot_controller_->NotifyTabstripBubbleClosed();
 }
+
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(TabGroupHeader,
+                                      kAttentionIndicatorViewElementId);

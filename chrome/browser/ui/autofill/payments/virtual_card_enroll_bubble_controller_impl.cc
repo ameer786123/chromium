@@ -15,8 +15,7 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/ui/android/autofill/autofill_vcn_enroll_bottom_sheet_bridge.h"
-#include "components/autofill/core/browser/payments/autofill_virtual_card_enrollment_infobar_delegate_mobile.h"
-#include "components/autofill/core/browser/payments/autofill_virtual_card_enrollment_infobar_mobile.h"
+#include "components/autofill/core/browser/payments/autofill_virtual_card_enrollment_bottom_sheet_delegate_mobile.h"
 #include "components/infobars/core/infobar.h"  // nogncheck
 #else
 #include "chrome/browser/ui/browser.h"
@@ -50,21 +49,29 @@ VirtualCardEnrollBubbleController::GetOrCreate(
   return VirtualCardEnrollBubbleControllerImpl::FromWebContents(web_contents);
 }
 
-void VirtualCardEnrollBubbleControllerImpl::ShowBubble(
+void VirtualCardEnrollBubbleControllerImpl::SetupAndShowBubble(
     const VirtualCardEnrollmentFields& virtual_card_enrollment_fields,
     base::OnceClosure accept_virtual_card_callback,
     base::OnceClosure decline_virtual_card_callback) {
-  ui_model_ = std::make_unique<VirtualCardEnrollUiModel>(
-      virtual_card_enrollment_fields);
-  accept_virtual_card_callback_ = std::move(accept_virtual_card_callback);
-  decline_virtual_card_callback_ = std::move(decline_virtual_card_callback);
-
-  is_user_gesture_ = false;
-  Show();
+  SetupBubble(virtual_card_enrollment_fields,
+              std::move(accept_virtual_card_callback),
+              std::move(decline_virtual_card_callback));
+  ShowBubble();
 
   VirtualCardEnrollMetricsLogger::OnCardArtAvailable(
       ui_model_->enrollment_fields().card_art_image,
       ui_model_->enrollment_fields().virtual_card_enrollment_source);
+}
+
+void VirtualCardEnrollBubbleControllerImpl::SetupBubble(
+    VirtualCardEnrollmentFields virtual_card_enrollment_fields,
+    base::OnceClosure accept_virtual_card_callback,
+    base::OnceClosure decline_virtual_card_callback) {
+  ui_model_ = std::make_unique<VirtualCardEnrollUiModel>(
+      std::move(virtual_card_enrollment_fields));
+  accept_virtual_card_callback_ = std::move(accept_virtual_card_callback);
+  decline_virtual_card_callback_ = std::move(decline_virtual_card_callback);
+  is_user_gesture_ = false;
 }
 
 void VirtualCardEnrollBubbleControllerImpl::ReshowBubble() {
@@ -75,7 +82,7 @@ void VirtualCardEnrollBubbleControllerImpl::ReshowBubble() {
   }
 
   is_user_gesture_ = true;
-  Show();
+  ShowBubble();
 }
 
 void VirtualCardEnrollBubbleControllerImpl::ShowConfirmationBubbleView(
@@ -99,7 +106,7 @@ void VirtualCardEnrollBubbleControllerImpl::ShowConfirmationBubbleView(
                     /*card_label=*/ui_model_->enrollment_fields()
                         .credit_card.NetworkAndLastFourDigits());
   // Show enrollment confirmation bubble.
-  Show();
+  ShowBubble();
 #endif
 }
 
@@ -289,7 +296,7 @@ void VirtualCardEnrollBubbleControllerImpl::OnVisibilityChanged(
 #if !BUILDFLAG(IS_ANDROID)
   if (visibility == content::Visibility::VISIBLE && !bubble_view() &&
       bubble_state_ == BubbleState::kShowingIconAndBubble) {
-    Show();
+    ShowBubble();
   } else if (visibility == content::Visibility::HIDDEN) {
     HideBubble();
     if (bubble_state_ != BubbleState::kShowingIcon) {
@@ -307,7 +314,7 @@ VirtualCardEnrollBubbleControllerImpl::GetPageActionIconType() {
 void VirtualCardEnrollBubbleControllerImpl::DoShowBubble() {
 #if BUILDFLAG(IS_ANDROID)
   auto delegate_mobile =
-      std::make_unique<AutofillVirtualCardEnrollmentInfoBarDelegateMobile>(
+      std::make_unique<AutofillVirtualCardEnrollmentBottomSheetDelegateMobile>(
           this);
   autofill_vcn_enroll_bottom_sheet_bridge_ =
       std::make_unique<AutofillVCNEnrollBottomSheetBridge>();
@@ -373,6 +380,15 @@ void VirtualCardEnrollBubbleControllerImpl::DoShowBubble() {
   if (bubble_shown_closure_for_testing_) {
     bubble_shown_closure_for_testing_.Run();
   }
+}
+
+BubbleType VirtualCardEnrollBubbleControllerImpl::GetBubbleType() const {
+  return BubbleType::kVirtualCardEnrollConfirmation;
+}
+
+base::WeakPtr<BubbleControllerBase>
+VirtualCardEnrollBubbleControllerImpl::GetBubbleControllerBaseWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 #if !BUILDFLAG(IS_ANDROID)

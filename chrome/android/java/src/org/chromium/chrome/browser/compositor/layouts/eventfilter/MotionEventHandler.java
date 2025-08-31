@@ -4,7 +4,10 @@
 
 package org.chromium.chrome.browser.compositor.layouts.eventfilter;
 
+import org.chromium.build.annotations.NullMarked;
+
 /** Interface that describes motion event callbacks. */
+@NullMarked
 public interface MotionEventHandler {
     /**
      * Called on down touch event.
@@ -36,8 +39,9 @@ public interface MotionEventHandler {
      * @param x The X position of the event in the host view space in dp.
      * @param y The Y position of the event in the host view space in dp.
      * @param buttons State of all buttons that were pressed when onDown was invoked.
+     * @param modifiers State of all Meta/Modifier keys that are pressed.
      */
-    void click(float x, float y, int buttons);
+    void click(float x, float y, int buttons, int modifiers);
 
     /**
      * Called on fling touch event.
@@ -84,4 +88,12 @@ public interface MotionEventHandler {
 
     /** Called on hover exit event. */
     void onHoverExit();
+
+    /**
+     * Called on mouse scroll event.
+     *
+     * @param horizontalAxisScroll The x/horizontal component of the scroll event.
+     * @param verticalAxisScroll The y/vertical component of the scroll event.
+     */
+    void onScroll(float horizontalAxisScroll, float verticalAxisScroll);
 }

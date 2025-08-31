@@ -10,27 +10,28 @@
 #include <memory>
 
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
-#include "base/json/values_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
-#include "base/time/clock.h"
 #include "base/time/default_clock.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/history/history_service_factory.h"
+#include "chrome/browser/permissions/notifications_engagement_service_factory.h"
 #include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
 #include "chrome/browser/ui/safety_hub/abusive_notification_permissions_manager.h"
+#include "chrome/browser/ui/safety_hub/disruptive_notification_permissions_manager.h"
 #include "chrome/browser/ui/safety_hub/mock_safe_browsing_database_manager.h"
 #include "chrome/browser/ui/safety_hub/revoked_permissions_service_factory.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_constants.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_prefs.h"
-#include "chrome/browser/ui/safety_hub/safety_hub_service.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_result.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_test_util.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_util.h"
+#include "chrome/browser/ui/safety_hub/unused_site_permissions_manager.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -49,8 +50,6 @@
 #include "components/permissions/constants.h"
 #include "components/permissions/permission_uma_util.h"
 #include "components/permissions/permission_util.h"
-#include "components/permissions/pref_names.h"
-#include "components/permissions/test/test_permissions_client.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/ukm/content/source_url_recorder.h"
@@ -59,14 +58,18 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using ::testing::UnorderedElementsAre;
-
 namespace {
+
+using ::testing::Field;
+using ::testing::Optional;
+using ::testing::UnorderedElementsAre;
 
 const char url1[] = "https://example1.com:443";
 const char url2[] = "https://example2.com:443";
 const char url3[] = "https://example3.com:443";
 const char url4[] = "https://example4.com:443";
+const char url5[] = "https://example5.com:443";
+const char url6[] = "https://example6.com:443";
 const ContentSettingsType automatic_downloads_type =
     ContentSettingsType::AUTOMATIC_DOWNLOADS;
 const ContentSettingsType geolocation_type = ContentSettingsType::GEOLOCATION;
@@ -80,8 +83,6 @@ const ContentSettingsType revoked_abusive_notification =
     ContentSettingsType::REVOKED_ABUSIVE_NOTIFICATION_PERMISSIONS;
 const ContentSettingsType revoked_unused_site_type =
     ContentSettingsType::REVOKED_UNUSED_SITE_PERMISSIONS;
-// An arbitrary large number that doesn't match any ContentSettingsType;
-const int32_t unknown_type = 300000;
 
 std::set<ContentSettingsType> abusive_permission_types({notifications_type});
 std::set<ContentSettingsType> unused_permission_types({geolocation_type,
@@ -109,55 +110,14 @@ std::unique_ptr<KeyedService> BuildTestHistoryService(
   return service;
 }
 
-PermissionsData CreatePermissionsData(
-    ContentSettingsPattern& primary_pattern,
-    std::set<ContentSettingsType>& permission_types) {
-  PermissionsData permissions_data;
-  permissions_data.primary_pattern = primary_pattern;
-  permissions_data.permission_types = permission_types;
-  return permissions_data;
-}
-
-void PopulateWebsiteSettingsLists(base::Value::List& integer_keyed,
-                                  base::Value::List& string_keyed) {
-  auto* website_settings_registry =
-      content_settings::WebsiteSettingsRegistry::GetInstance();
-  for (const auto* info : *website_settings_registry) {
-    ContentSettingsType type = info->type();
-    if (content_settings::CanTrackLastVisit(type)) {
-      // TODO(crbug.com/41495119): Find a way to iterate over all chooser based
-      // settings and populate the revoked-chooser dictionary accordingly.
-      if (content_settings::IsChooserPermissionEligibleForAutoRevocation(
-              type)) {
-        // Currently there's only one chooser content settings type.
-        // Ensure all chooser types are covered.
-        EXPECT_EQ(ContentSettingsType::FILE_SYSTEM_ACCESS_CHOOSER_DATA, type);
-      }
-
-      integer_keyed.Append(static_cast<int32_t>(type));
-      string_keyed.Append(
-          RevokedPermissionsService::ConvertContentSettingsTypeToKey(type));
-    }
-  }
-}
-
-void PopulateChooserWebsiteSettingsDicts(base::Value::Dict& integer_keyed,
-                                         base::Value::Dict& string_keyed) {
-  integer_keyed = base::Value::Dict().Set(
-      base::NumberToString(static_cast<int32_t>(chooser_type)),
-      base::Value::Dict().Set("foo", "bar"));
-  string_keyed = base::Value::Dict().Set(
-      RevokedPermissionsService::ConvertContentSettingsTypeToKey(chooser_type),
-      base::Value::Dict().Set("foo", "bar"));
-}
-
 }  // namespace
 
 class RevokedPermissionsServiceTest
     : public ChromeRenderViewHostTestHarness,
       public testing::WithParamInterface<
           std::tuple</*should_setup_abusive_notification_sites*/ bool,
-                     /*should_setup_unused_sites*/ bool>> {
+                     /*should_setup_unused_sites*/ bool,
+                     /*should_setup_disruptive_sites*/ bool>> {
  public:
   RevokedPermissionsServiceTest() {
     std::vector<base::test::FeatureRef> enabled_features;
@@ -166,21 +126,23 @@ class RevokedPermissionsServiceTest
     enabled_features.push_back(
         content_settings::features::
             kSafetyCheckUnusedSitePermissionsForSupportedChooserPermissions);
-    enabled_features.push_back(features::kSafetyHub);
-    if (ShouldSetupAbusiveNotificationSites()) {
+    if (ShouldSetupDisruptiveSites()) {
       enabled_features.push_back(
-          safe_browsing::kSafetyHubAbusiveNotificationRevocation);
+          features::kSafetyHubDisruptiveNotificationRevocation);
     }
     feature_list_.InitWithFeatures(
         /*enabled_features=*/enabled_features,
         /*disabled_features=*/{});
   }
+
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
     base::Time time;
     ASSERT_TRUE(base::Time::FromString("2022-09-07 13:00", &time));
     clock_.SetNow(time);
-    if (ShouldSetupAbusiveNotificationSites()) {
+
+    ResetService();
+    if (ShouldSetupSafeBrowsing()) {
       SetUpSafeBrowsingService();
     }
     prefs()->SetBoolean(
@@ -196,7 +158,7 @@ class RevokedPermissionsServiceTest
   void TearDown() override {
     service()->SetClockForTesting(base::DefaultClock::GetInstance());
     hcsm()->SetClockForTesting(base::DefaultClock::GetInstance());
-    if (ShouldSetupAbusiveNotificationSites()) {
+    if (ShouldSetupSafeBrowsing()) {
       TearDownSafeBrowsingService();
     }
 
@@ -211,14 +173,16 @@ class RevokedPermissionsServiceTest
             // Needed for background UKM reporting.
             TestingProfile::TestingFactory{
                 HistoryServiceFactory::GetInstance(),
-                base::BindRepeating(&BuildTestHistoryService)},
-            TestingProfile::TestingFactory{
-                RevokedPermissionsServiceFactory::GetInstance(),
-                base::BindRepeating(&BuildRevokedPermissionsService)}};
+                base::BindRepeating(&BuildTestHistoryService)}};
   }
 
-  bool ShouldSetupAbusiveNotificationSites() { return get<0>(GetParam()); }
+  // There are two variations of the test: where safe browsing is enabled and
+  // disabled. The former should allow abusive notifications to be revoked and
+  // the latter should not. However, other permission revocations are not gated
+  // by the safe browsing setting.
+  bool ShouldSetupSafeBrowsing() { return get<0>(GetParam()); }
   bool ShouldSetupUnusedSites() { return get<1>(GetParam()); }
+  bool ShouldSetupDisruptiveSites() { return get<2>(GetParam()); }
 
   void ResetService() {
     // Setting the factory has the side effect of resetting the service
@@ -315,6 +279,19 @@ class RevokedPermissionsServiceTest
     EXPECT_EQ(expected_size, revoked_permissions_list.size());
   }
 
+  int GetRevokedDisruptiveNotificationPermissionSize() {
+    int count = 0;
+    for (const auto& [url, revocation_entry] :
+         DisruptiveNotificationPermissionsManager::ContentSettingHelper(*hcsm())
+             .GetAllEntries()) {
+      if (revocation_entry.revocation_state ==
+          DisruptiveNotificationPermissionsManager::RevocationState::kRevoked) {
+        ++count;
+      }
+    }
+    return count;
+  }
+
   void SetupRevokedUnusedPermissionSite(
       std::string url,
       base::TimeDelta lifetime =
@@ -338,14 +315,14 @@ class RevokedPermissionsServiceTest
             .Set(permissions::kRevokedKey,
                  base::Value::List()
                      .Append(
-                         RevokedPermissionsService::
+                         UnusedSitePermissionsManager::
                              ConvertContentSettingsTypeToKey(geolocation_type))
-                     .Append(RevokedPermissionsService::
+                     .Append(UnusedSitePermissionsManager::
                                  ConvertContentSettingsTypeToKey(chooser_type)))
             .Set(permissions::kRevokedChooserPermissionsKey,
                  base::Value::Dict().Set(
-                     RevokedPermissionsService::ConvertContentSettingsTypeToKey(
-                         chooser_type),
+                     UnusedSitePermissionsManager::
+                         ConvertContentSettingsTypeToKey(chooser_type),
                      base::Value(base::Value::Dict().Set("foo", "bar"))));
 
     hcsm()->SetWebsiteSettingDefaultScope(
@@ -368,6 +345,30 @@ class RevokedPermissionsServiceTest
         constraint);
   }
 
+  void SetupRevokedDisruptiveNotificationSite(std::string url) {
+    DisruptiveNotificationPermissionsManager::ContentSettingHelper(*hcsm())
+        .PersistRevocationEntry(
+            GURL(url),
+            DisruptiveNotificationPermissionsManager::RevocationEntry(
+                /*revocation_state=*/DisruptiveNotificationPermissionsManager::
+                    RevocationState::kRevoked,
+                /*site_engagement=*/0.0,
+                /*daily_notification_count=*/3,
+                /*timestamp=*/clock()->Now()));
+  }
+
+  void SetupProposedRevokedDisruptiveNotificationSite(std::string url) {
+    DisruptiveNotificationPermissionsManager::ContentSettingHelper(*hcsm())
+        .PersistRevocationEntry(
+            GURL(url),
+            DisruptiveNotificationPermissionsManager::RevocationEntry(
+                /*revocation_state=*/DisruptiveNotificationPermissionsManager::
+                    RevocationState::kProposed,
+                /*site_engagement=*/0.0,
+                /*daily_notification_count=*/3,
+                /*timestamp=*/clock()->Now()));
+  }
+
   void UndoRegrantPermissionsForUrl(
       std::string url,
       std::set<ContentSettingsType> permission_types,
@@ -378,22 +379,13 @@ class RevokedPermissionsServiceTest
         ContentSettingsPattern::FromURLNoWildcard(GURL(url));
     permissions_data.permission_types = permission_types;
     permissions_data.chooser_permissions_data = base::Value::Dict().Set(
-        RevokedPermissionsService::ConvertContentSettingsTypeToKey(
+        UnusedSitePermissionsManager::ConvertContentSettingsTypeToKey(
             chooser_type),
         base::Value::Dict().Set("foo", "bar"));
     permissions_data.constraints =
         content_settings::ContentSettingConstraints(expiration - lifetime);
     permissions_data.constraints.set_lifetime(lifetime);
     service()->UndoRegrantPermissionsForOrigin(permissions_data);
-  }
-
-  void AddRevokedPermissionToResult(
-      RevokedPermissionsService::RevokedPermissionsResult* result,
-      std::set<ContentSettingsType> permission_types,
-      std::string url) {
-    auto origin = ContentSettingsPattern::FromString(url);
-    result->AddRevokedPermission(
-        CreatePermissionsData(origin, permission_types));
   }
 
   void ExpectRevokedAbusiveNotificationSettingValues(std::string url) {
@@ -420,6 +412,44 @@ class RevokedPermissionsServiceTest
         is_regranted ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_ASK);
   }
 
+  void ExpectRevokedDisruptiveNotificationSettingValues(std::string url) {
+    EXPECT_TRUE(DisruptiveNotificationPermissionsManager::
+                    IsUrlRevokedDisruptiveNotification(hcsm(), GURL(url)));
+    EXPECT_EQ(
+        hcsm()->GetContentSetting(GURL(url), GURL(url), notifications_type),
+        CONTENT_SETTING_ASK);
+  }
+
+  void ExpectProposedRevokedDisruptiveNotificationSettingValues(
+      std::string url) {
+    EXPECT_THAT(
+        DisruptiveNotificationPermissionsManager::ContentSettingHelper(*hcsm())
+            .GetRevocationEntry(GURL(url)),
+        Optional(Field(&DisruptiveNotificationPermissionsManager::
+                           RevocationEntry::revocation_state,
+                       DisruptiveNotificationPermissionsManager::
+                           RevocationState::kProposed)));
+  }
+
+  void ExpectCleanedUpDisruptiveNotificationSettingValues(
+      std::string url,
+      bool is_regranted = false) {
+    base::Value stored_value = hcsm()->GetWebsiteSetting(
+        GURL(url), GURL(url),
+        ContentSettingsType::REVOKED_DISRUPTIVE_NOTIFICATION_PERMISSIONS);
+    EXPECT_FALSE(stored_value.is_none());
+    ASSERT_TRUE(stored_value.is_dict());
+    EXPECT_NE(safety_hub::kRevokeStr,
+              stored_value.GetDict()
+                  .Find(safety_hub::kRevokedStatusDictKeyStr)
+                  ->GetString());
+    EXPECT_FALSE(DisruptiveNotificationPermissionsManager::
+                     IsUrlRevokedDisruptiveNotification(hcsm(), GURL(url)));
+    EXPECT_EQ(
+        hcsm()->GetContentSetting(GURL(url), GURL(url), notifications_type),
+        is_regranted ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_ASK);
+  }
+
   void ExpectSafeNotificationSettingValues(std::string url) {
     EXPECT_FALSE(IsUrlInContentSettings(
         safety_hub_util::GetRevokedAbusiveNotificationPermissions(hcsm()),
@@ -434,7 +464,7 @@ class RevokedPermissionsServiceTest
   bool IsUrlInRevokedSettings(std::list<PermissionsData> permissions_data,
                               std::string url) {
     // TODO(crbug.com/40250875): Replace the below with a lambda method and
-    // base::Contians.
+    // base::Contains.
     std::string url_pattern =
         ContentSettingsPattern::FromURLNoWildcard(GURL(url)).ToString();
     for (const auto& permission : permissions_data) {
@@ -470,24 +500,16 @@ class RevokedPermissionsServiceTest
         fake_database_manager_.get());
     TestingBrowserProcess::GetGlobal()->SetSafeBrowsingService(
         safe_browsing_factory_->CreateSafeBrowsingService());
-#if BUILDFLAG(IS_CHROMEOS)
-    // Local state is needed to construct ProxyConfigService, which is a
-    // dependency of PingManager on ChromeOS.
-    TestingBrowserProcess::GetGlobal()->SetLocalState(profile()->GetPrefs());
-#endif
   }
 
   void TearDownSafeBrowsingService() {
     TestingBrowserProcess::GetGlobal()->SetSafeBrowsingService(nullptr);
-#if BUILDFLAG(IS_CHROMEOS)
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
-#endif
   }
 
   bool IsUrlInContentSettings(ContentSettingsForOneType content_settings,
                               std::string url) {
     // TODO(crbug.com/40250875): Replace the below with a lambda method and
-    // base::Contians.
+    // base::Contains.
     std::string url_pattern =
         ContentSettingsPattern::FromURLNoWildcard(GURL(url)).ToString();
     for (const auto& setting : content_settings) {
@@ -529,7 +551,7 @@ TEST_P(RevokedPermissionsServiceTest, RevokedPermissionsServiceTest) {
     SetTrackedContentSettingForType(url2, mediastream_type);
     SetTrackedChooserType(url2);
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     // Add notifications setting for `url2` and `url3`, abusive notification
     // sites.
     SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ALLOW);
@@ -539,7 +561,7 @@ TEST_P(RevokedPermissionsServiceTest, RevokedPermissionsServiceTest) {
   EXPECT_EQ(service()->GetTrackedUnusedPermissionsForTesting().size(), 0u);
   EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service());
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(2U);
     ExpectRevokedAbusiveNotificationSettingValues(url2);
     ExpectRevokedAbusiveNotificationSettingValues(url3);
@@ -635,7 +657,7 @@ TEST_P(RevokedPermissionsServiceTest, RevokedPermissionsServiceTest) {
         static_cast<int64_t>(
             permissions::PermissionSourceUI::SAFETY_HUB_AUTO_REVOCATION));
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     // Revoked abusive notification permissions should all be cleaned up.
     EXPECT_EQ(safety_hub_util::GetRevokedAbusiveNotificationPermissions(hcsm())
                   .size(),
@@ -643,6 +665,56 @@ TEST_P(RevokedPermissionsServiceTest, RevokedPermissionsServiceTest) {
     ExpectCleanedUpAbusiveNotificationSettingValues(url2);
     ExpectCleanedUpAbusiveNotificationSettingValues(url3);
     ExpectSafeNotificationSettingValues(url4);
+  }
+}
+
+TEST_P(RevokedPermissionsServiceTest,
+       UnusedSitePermissionsRevocationDisabledTest) {
+  base::test::ScopedFeatureList scoped_feature;
+  scoped_feature.InitAndEnableFeature(
+      content_settings::features::kSafetyCheckUnusedSitePermissions);
+
+  // Disable auto-revocation by setting kUnusedSitePermissionsRevocationEnabled
+  // pref to false and turning off safe browsing. This should stop the repeated
+  // timer.
+  prefs()->SetBoolean(safety_hub_prefs::kUnusedSitePermissionsRevocationEnabled,
+                      false);
+
+  auto* history_service = HistoryServiceFactory::GetForProfile(
+      profile(), ServiceAccessType::EXPLICIT_ACCESS);
+  history_service->AddPage(GURL(url1), clock()->Now(),
+                           history::VisitSource::SOURCE_BROWSED);
+  if (ShouldSetupUnusedSites()) {
+    SetTrackedContentSettingForType(url1, geolocation_type);
+  }
+
+  // Travel through time for 70 days so that permissions would be revoked (if
+  // the check was enabled).
+  clock()->Advance(base::Days(70));
+
+  if (ShouldSetupSafeBrowsing()) {
+    SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ALLOW);
+  }
+
+  if (ShouldSetupDisruptiveSites()) {
+    SetupProposedRevokedDisruptiveNotificationSite(url3);
+  }
+
+  safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service());
+
+  // Abusive notification permissions should be revoked (the setting doesn't
+  // change that).
+  if (ShouldSetupSafeBrowsing()) {
+    ExpectRevokedAbusiveNotificationPermissionSize(1U);
+    ExpectRevokedAbusiveNotificationSettingValues(url2);
+  } else {
+    ExpectRevokedAbusiveNotificationPermissionSize(0U);
+  }
+
+  // Permissions should not be revoked.
+  EXPECT_EQ(GetRevokedUnusedPermissions(hcsm()).size(), 0u);
+  if (ShouldSetupDisruptiveSites()) {
+    ExpectProposedRevokedDisruptiveNotificationSettingValues(url3);
   }
 }
 
@@ -770,7 +842,7 @@ TEST_P(RevokedPermissionsServiceTest, MultipleRevocationsForSameOrigin) {
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service());
   EXPECT_EQ(GetRevokedPermissionsForOneOrigin(hcsm(), GURL(url1)).size(), 1u);
   EXPECT_EQ(
-      RevokedPermissionsService::ConvertKeyToContentSettingsType(
+      UnusedSitePermissionsManager::ConvertKeyToContentSettingsType(
           GetRevokedPermissionsForOneOrigin(hcsm(), GURL(url1))[0].GetString()),
       geolocation_type);
   EXPECT_EQ(service()->GetTrackedUnusedPermissionsForTesting().size(), 1u);
@@ -797,15 +869,15 @@ TEST_P(RevokedPermissionsServiceTest,
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service());
   EXPECT_EQ(GetRevokedPermissionsForOneOrigin(hcsm(), GURL(url1)).size(), 3u);
   EXPECT_EQ(
-      RevokedPermissionsService::ConvertKeyToContentSettingsType(
+      UnusedSitePermissionsManager::ConvertKeyToContentSettingsType(
           GetRevokedPermissionsForOneOrigin(hcsm(), GURL(url1))[0].GetString()),
       geolocation_type);
   EXPECT_EQ(
-      RevokedPermissionsService::ConvertKeyToContentSettingsType(
+      UnusedSitePermissionsManager::ConvertKeyToContentSettingsType(
           GetRevokedPermissionsForOneOrigin(hcsm(), GURL(url1))[1].GetString()),
       mediastream_type);
   EXPECT_EQ(
-      RevokedPermissionsService::ConvertKeyToContentSettingsType(
+      UnusedSitePermissionsManager::ConvertKeyToContentSettingsType(
           GetRevokedPermissionsForOneOrigin(hcsm(), GURL(url1))[2].GetString()),
       chooser_type);
 
@@ -819,7 +891,7 @@ TEST_P(RevokedPermissionsServiceTest,
 }
 
 TEST_P(RevokedPermissionsServiceTest, RegrantPermissionsForOrigin) {
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ASK);
     SetupAbusiveNotificationSite(url3, ContentSetting::CONTENT_SETTING_ASK);
     SetupRevokedAbusiveNotificationSite(url2);
@@ -829,13 +901,18 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPermissionsForOrigin) {
   if (ShouldSetupUnusedSites()) {
     SetupRevokedUnusedPermissionSite(url1);
     SetupRevokedUnusedPermissionSite(url2);
-    EXPECT_EQ(2U, GetRevokedUnusedPermissions(hcsm()).size());
+    SetupRevokedUnusedPermissionSite(url5);
+    EXPECT_EQ(3U, GetRevokedUnusedPermissions(hcsm()).size());
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    SetupRevokedDisruptiveNotificationSite(url4);
+    SetupRevokedDisruptiveNotificationSite(url5);
   }
 
   // Allow the permission for `url1` again, which is unused.
   service()->RegrantPermissionsForOrigin(url::Origin::Create(GURL(url1)));
   if (ShouldSetupUnusedSites()) {
-    EXPECT_EQ(1U, GetRevokedUnusedPermissions(hcsm()).size());
+    EXPECT_EQ(2U, GetRevokedUnusedPermissions(hcsm()).size());
     // Check if the permissions of `url1` is regranted.
     EXPECT_EQ(
         ContentSetting::CONTENT_SETTING_ALLOW,
@@ -843,7 +920,7 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPermissionsForOrigin) {
     EXPECT_EQ(base::Value::Dict().Set("foo", "bar"),
               hcsm()->GetWebsiteSetting(GURL(url1), GURL(url1), chooser_type));
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(2U);
     ExpectRevokedAbusiveNotificationSettingValues(url2);
     ExpectRevokedAbusiveNotificationSettingValues(url3);
@@ -852,7 +929,7 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPermissionsForOrigin) {
   // Allow the permission for `url2`, which is both abusive and unused.
   service()->RegrantPermissionsForOrigin(url::Origin::Create(GURL(url2)));
   if (ShouldSetupUnusedSites()) {
-    EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
+    EXPECT_EQ(1U, GetRevokedUnusedPermissions(hcsm()).size());
     // Check if the permissions of `url2` is regranted.
     EXPECT_EQ(
         ContentSetting::CONTENT_SETTING_ALLOW,
@@ -860,7 +937,7 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPermissionsForOrigin) {
     EXPECT_EQ(base::Value::Dict().Set("foo", "bar"),
               hcsm()->GetWebsiteSetting(GURL(url2), GURL(url2), chooser_type));
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(1U);
     ExpectCleanedUpAbusiveNotificationSettingValues(url2,
                                                     /*is_regranted=*/true);
@@ -870,14 +947,37 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPermissionsForOrigin) {
   // Allow the permission for `url3`, which is abusive.
   service()->RegrantPermissionsForOrigin(url::Origin::Create(GURL(url3)));
   if (ShouldSetupUnusedSites()) {
-    EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
+    EXPECT_EQ(1U, GetRevokedUnusedPermissions(hcsm()).size());
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(0U);
     ExpectCleanedUpAbusiveNotificationSettingValues(url2,
                                                     /*is_regranted=*/true);
     ExpectCleanedUpAbusiveNotificationSettingValues(url3,
                                                     /*is_regranted=*/true);
+  }
+
+  // Allow the permission for `url4`, which is disruptive.
+  service()->RegrantPermissionsForOrigin(url::Origin::Create(GURL(url4)));
+  if (ShouldSetupDisruptiveSites()) {
+    ExpectCleanedUpDisruptiveNotificationSettingValues(url4,
+                                                       /*is_regranted=*/true);
+  }
+
+  // Allow the permission for `url5`, which is unused and disruptive.
+  service()->RegrantPermissionsForOrigin(url::Origin::Create(GURL(url5)));
+  if (ShouldSetupUnusedSites()) {
+    EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
+    // Check if the permissions of `url5` is regranted.
+    EXPECT_EQ(
+        ContentSetting::CONTENT_SETTING_ALLOW,
+        hcsm()->GetContentSetting(GURL(url1), GURL(url5), geolocation_type));
+    EXPECT_EQ(base::Value::Dict().Set("foo", "bar"),
+              hcsm()->GetWebsiteSetting(GURL(url1), GURL(url5), chooser_type));
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    ExpectCleanedUpDisruptiveNotificationSettingValues(url5,
+                                                       /*is_regranted=*/true);
   }
 
   // Undoing the changes should add `url1` back to the list of revoked
@@ -891,7 +991,7 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPermissionsForOrigin) {
     EXPECT_EQ(base::Value(),
               hcsm()->GetWebsiteSetting(GURL(url1), GURL(url1), chooser_type));
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(0U);
     ExpectCleanedUpAbusiveNotificationSettingValues(url2,
                                                     /*is_regranted=*/true);
@@ -909,7 +1009,7 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPermissionsForOrigin) {
     EXPECT_EQ(base::Value(),
               hcsm()->GetWebsiteSetting(GURL(url2), GURL(url2), chooser_type));
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(1U);
     ExpectRevokedAbusiveNotificationSettingValues(url2);
     ExpectCleanedUpAbusiveNotificationSettingValues(url3,
@@ -927,10 +1027,32 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPermissionsForOrigin) {
     EXPECT_EQ(base::Value(),
               hcsm()->GetWebsiteSetting(GURL(url3), GURL(url3), chooser_type));
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(2U);
     ExpectRevokedAbusiveNotificationSettingValues(url2);
     ExpectRevokedAbusiveNotificationSettingValues(url3);
+  }
+
+  // Undoing `url4` adds it back to the revoked disruptive notification
+  // permissions list.
+  UndoRegrantPermissionsForUrl(url4, {notifications_type});
+  if (ShouldSetupDisruptiveSites()) {
+    ExpectRevokedDisruptiveNotificationSettingValues(url4);
+  }
+
+  // Undoing `url5` adds it back to the revoked permissions lists.
+  UndoRegrantPermissionsForUrl(
+      url5, {notifications_type, geolocation_type, chooser_type});
+  if (ShouldSetupUnusedSites()) {
+    EXPECT_EQ(3U, GetRevokedUnusedPermissions(hcsm()).size());
+    EXPECT_EQ(
+        ContentSetting::CONTENT_SETTING_ASK,
+        hcsm()->GetContentSetting(GURL(url5), GURL(url5), geolocation_type));
+    EXPECT_EQ(base::Value(),
+              hcsm()->GetWebsiteSetting(GURL(url5), GURL(url5), chooser_type));
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    ExpectRevokedDisruptiveNotificationSettingValues(url5);
   }
 }
 
@@ -947,7 +1069,7 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPreventsAutorevoke) {
 
   // Travel 70 days through time so that the granted permission is revoked.
   clock()->Advance(base::Days(70));
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ALLOW);
     SetupAbusiveNotificationSite(url3, ContentSetting::CONTENT_SETTING_ALLOW);
   }
@@ -957,7 +1079,7 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPreventsAutorevoke) {
   if (ShouldSetupUnusedSites()) {
     EXPECT_EQ(2U, GetRevokedUnusedPermissions(hcsm()).size());
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(2U);
     ExpectRevokedAbusiveNotificationSettingValues(url2);
     ExpectRevokedAbusiveNotificationSettingValues(url3);
@@ -971,7 +1093,7 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPreventsAutorevoke) {
   if (ShouldSetupUnusedSites()) {
     EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(0U);
     ExpectCleanedUpAbusiveNotificationSettingValues(url2,
                                                     /*is_regranted=*/true);
@@ -984,7 +1106,7 @@ TEST_P(RevokedPermissionsServiceTest, RegrantPreventsAutorevoke) {
   if (ShouldSetupUnusedSites()) {
     EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(0U);
   }
 }
@@ -1047,7 +1169,7 @@ TEST_P(RevokedPermissionsServiceTest, NotRevokeNotificationPermission) {
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service());
   EXPECT_EQ(GetRevokedPermissionsForOneOrigin(hcsm(), GURL(url1)).size(), 1u);
   EXPECT_EQ(
-      RevokedPermissionsService::ConvertKeyToContentSettingsType(
+      UnusedSitePermissionsManager::ConvertKeyToContentSettingsType(
           GetRevokedPermissionsForOneOrigin(hcsm(), GURL(url1))[0].GetString()),
       geolocation_type);
 
@@ -1063,7 +1185,7 @@ TEST_P(RevokedPermissionsServiceTest, NotRevokeNotificationPermission) {
 }
 
 TEST_P(RevokedPermissionsServiceTest, ClearRevokedPermissionsList) {
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ASK);
     SetupAbusiveNotificationSite(url3, ContentSetting::CONTENT_SETTING_ASK);
     SetupRevokedAbusiveNotificationSite(url2);
@@ -1075,38 +1197,72 @@ TEST_P(RevokedPermissionsServiceTest, ClearRevokedPermissionsList) {
     SetupRevokedUnusedPermissionSite(url2);
     EXPECT_EQ(2U, GetRevokedUnusedPermissions(hcsm()).size());
   }
+  if (ShouldSetupDisruptiveSites()) {
+    SetupRevokedDisruptiveNotificationSite(url4);
+  }
 
   // Revoked permissions list should be empty after clearing the revoked
   // permissions list.
   service()->ClearRevokedPermissionsList();
   EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
   ExpectRevokedAbusiveNotificationPermissionSize(0U);
+  EXPECT_EQ(GetRevokedDisruptiveNotificationPermissionSize(), 0);
 }
 
-TEST_P(RevokedPermissionsServiceTest, RecordRegrantMetricForAllowAgain) {
-  SetupRevokedUnusedPermissionSite(url1);
-  SetupRevokedUnusedPermissionSite(url2);
-  EXPECT_EQ(2U, GetRevokedUnusedPermissions(hcsm()).size());
+TEST_P(RevokedPermissionsServiceTest, RestoreClearedRevokedPermissionsList) {
+  if (ShouldSetupSafeBrowsing()) {
+    SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ASK);
+    SetupAbusiveNotificationSite(url3, ContentSetting::CONTENT_SETTING_ASK);
+    SetupRevokedAbusiveNotificationSite(url2);
+    SetupRevokedAbusiveNotificationSite(url3);
+    ExpectRevokedAbusiveNotificationPermissionSize(2U);
+  }
+  if (ShouldSetupUnusedSites()) {
+    SetupRevokedUnusedPermissionSite(url1);
+    SetupRevokedUnusedPermissionSite(url2);
+    EXPECT_EQ(2U, GetRevokedUnusedPermissions(hcsm()).size());
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    auto* notifications_engagement_service =
+        NotificationsEngagementServiceFactory::GetForProfile(profile());
+    notifications_engagement_service->RecordNotificationDisplayed(GURL(url4),
+                                                                  21);
+    SetupRevokedDisruptiveNotificationSite(url4);
+  }
 
-  // Advance 14 days; this will be the expected histogram sample.
-  clock()->Advance(base::Days(14));
-  base::HistogramTester histogram_tester;
+  auto new_service = std::make_unique<RevokedPermissionsService>(
+      profile(), profile()->GetPrefs());
+  auto opt_result = new_service->GetCachedResult();
+  EXPECT_TRUE(opt_result.has_value());
+  auto* result =
+      static_cast<RevokedPermissionsResult*>(opt_result.value().get());
+  auto revoked_permissions_list = result->GetRevokedPermissions();
+  std::vector<PermissionsData> revoked_permissions_vector{
+      std::begin(revoked_permissions_list), std::end(revoked_permissions_list)};
 
-  // Allow the permission for `url` again
-  service()->RegrantPermissionsForOrigin(url::Origin::Create(GURL(url1)));
+  // Revoked permissions list should be empty after clearing the revoked
+  // permissions list.
+  service()->ClearRevokedPermissionsList();
+  EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
+  ExpectRevokedAbusiveNotificationPermissionSize(0U);
+  EXPECT_EQ(GetRevokedDisruptiveNotificationPermissionSize(), 0);
 
-  // Only a single entry should be recorded in the histogram.
-  const std::vector<base::Bucket> buckets = histogram_tester.GetAllSamples(
-      "Settings.SafetyCheck.UnusedSitePermissionsAllowAgainDays");
-  EXPECT_EQ(1U, buckets.size());
-  // The recorded metric should be the elapsed days since the revocation.
-  histogram_tester.ExpectUniqueSample(
-      "Settings.SafetyCheck.UnusedSitePermissionsAllowAgainDays", 14, 1);
+  service()->RestoreDeletedRevokedPermissionsList(revoked_permissions_vector);
+
+  if (ShouldSetupUnusedSites()) {
+    EXPECT_EQ(GetRevokedUnusedPermissions(hcsm()).size(), 2u);
+  }
+  if (ShouldSetupSafeBrowsing()) {
+    ExpectRevokedAbusiveNotificationPermissionSize(2U);
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    EXPECT_EQ(GetRevokedDisruptiveNotificationPermissionSize(), 1);
+  }
 }
 
 TEST_P(RevokedPermissionsServiceTest,
        RemoveSiteFromRevokedPermissionsListOnPermissionChange) {
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ASK);
     SetupAbusiveNotificationSite(url3, ContentSetting::CONTENT_SETTING_ASK);
     SetupRevokedAbusiveNotificationSite(url2);
@@ -1128,7 +1284,7 @@ TEST_P(RevokedPermissionsServiceTest,
   if (ShouldSetupUnusedSites()) {
     EXPECT_EQ(2U, GetRevokedUnusedPermissions(hcsm()).size());
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(2U);
   }
 
@@ -1139,24 +1295,23 @@ TEST_P(RevokedPermissionsServiceTest,
   if (ShouldSetupUnusedSites()) {
     EXPECT_EQ(2U, GetRevokedUnusedPermissions(hcsm()).size());
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(1U);
     ExpectCleanedUpAbusiveNotificationSettingValues(url2,
                                                     /*is_regranted=*/true);
     ExpectRevokedAbusiveNotificationSettingValues(url3);
   }
 
-  // If we grant revoked unused permission again for `url3`, it will be removed
-  // the list of revoked abusive and unused sites.
+  // If we grant revoked unused permission (geolocation) again for `url3`, it
+  // will be removed from the list of revoked unused sites but not from the list
+  // of revoked abusive notification sites.
   hcsm()->SetContentSettingDefaultScope(
       GURL(url3), GURL(url3), geolocation_type, CONTENT_SETTING_ALLOW);
   if (ShouldSetupUnusedSites()) {
     EXPECT_EQ(1U, GetRevokedUnusedPermissions(hcsm()).size());
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
-    ExpectRevokedAbusiveNotificationPermissionSize(0U);
-    ExpectCleanedUpAbusiveNotificationSettingValues(url3,
-                                                    /*is_regranted=*/false);
+  if (ShouldSetupSafeBrowsing()) {
+    ExpectRevokedAbusiveNotificationPermissionSize(1U);
   }
 
   // Grant the revoked chooser permissions again from url5, and check that
@@ -1173,9 +1328,10 @@ TEST_P(RevokedPermissionsServiceTest, InitializeLatestResult) {
   const auto default_lifetime =
       content_settings::features::
           kSafetyCheckUnusedSitePermissionsRevocationCleanUpThreshold.Get();
-  const auto shorter_lifetime = base::Days(1);
-  const auto longer_lifetime = base::Days(10);
-  if (ShouldSetupAbusiveNotificationSites()) {
+  const auto shorter_lifetime = default_lifetime - base::Days(1);
+  const auto longer_lifetime = default_lifetime + base::Days(1);
+  const auto disruptive_revocations_lifetime = default_lifetime;
+  if (ShouldSetupSafeBrowsing()) {
     SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ASK);
     SetupAbusiveNotificationSite(url3, ContentSetting::CONTENT_SETTING_ASK);
     SetupAbusiveNotificationSite(url4, ContentSetting::CONTENT_SETTING_ASK);
@@ -1187,154 +1343,157 @@ TEST_P(RevokedPermissionsServiceTest, InitializeLatestResult) {
     SetupRevokedUnusedPermissionSite(url1);
     SetupRevokedUnusedPermissionSite(url2, shorter_lifetime);
     SetupRevokedUnusedPermissionSite(url4, longer_lifetime);
+    SetupRevokedUnusedPermissionSite(url5, longer_lifetime);
+    SetupRevokedUnusedPermissionSite(url6, shorter_lifetime);
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    SetupRevokedDisruptiveNotificationSite(url5);
+    SetupRevokedDisruptiveNotificationSite(url6);
   }
 
   // When we start up a new service instance, the latest result (i.e. the list
   // of revoked permissions) should be immediately available.
   auto new_service = std::make_unique<RevokedPermissionsService>(
       profile(), profile()->GetPrefs());
-  std::optional<std::unique_ptr<SafetyHubService::Result>> opt_result =
+  std::optional<std::unique_ptr<SafetyHubResult>> opt_result =
       new_service->GetCachedResult();
   EXPECT_TRUE(opt_result.has_value());
   auto* result =
-      static_cast<RevokedPermissionsService::RevokedPermissionsResult*>(
-          opt_result.value().get());
+      static_cast<RevokedPermissionsResult*>(opt_result.value().get());
   auto revoked_permissions = result->GetRevokedPermissions();
-  if (ShouldSetupUnusedSites() && ShouldSetupAbusiveNotificationSites()) {
-    EXPECT_EQ(4U, revoked_permissions.size());
-    // Verify the constraints are merged properly when there are multiple
-    // revocation types.
-    auto permission_1 = GetPermissionsDataByUrl(revoked_permissions, url1);
-    EXPECT_EQ(permission_1.constraints.lifetime(), default_lifetime);
+  if (ShouldSetupDisruptiveSites()) {
+    if (ShouldSetupUnusedSites() && ShouldSetupSafeBrowsing()) {
+      EXPECT_EQ(6U, revoked_permissions.size());
+      // Verify the constraints are merged properly when there are multiple
+      // revocation types.
+      auto permission_1 = GetPermissionsDataByUrl(revoked_permissions, url1);
+      EXPECT_EQ(permission_1.constraints.lifetime(), default_lifetime);
 
-    auto permission_2 = GetPermissionsDataByUrl(revoked_permissions, url2);
-    EXPECT_EQ(permission_2.constraints.lifetime(), longer_lifetime);
+      auto permission_2 = GetPermissionsDataByUrl(revoked_permissions, url2);
+      EXPECT_EQ(permission_2.constraints.lifetime(), longer_lifetime);
 
-    auto permission_3 = GetPermissionsDataByUrl(revoked_permissions, url3);
-    EXPECT_EQ(permission_3.constraints.lifetime(), default_lifetime);
+      auto permission_3 = GetPermissionsDataByUrl(revoked_permissions, url3);
+      EXPECT_EQ(permission_3.constraints.lifetime(), default_lifetime);
 
-    auto permission_4 = GetPermissionsDataByUrl(revoked_permissions, url4);
-    EXPECT_EQ(permission_4.constraints.lifetime(), longer_lifetime);
-  } else if (ShouldSetupUnusedSites()) {
-    EXPECT_EQ(3U, revoked_permissions.size());
-    EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url1));
-    EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url2));
-    EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url4));
-  } else if (ShouldSetupAbusiveNotificationSites()) {
-    EXPECT_EQ(3U, revoked_permissions.size());
-    EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url2));
-    EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url3));
-    EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url4));
-  }
-}
+      auto permission_4 = GetPermissionsDataByUrl(revoked_permissions, url4);
+      EXPECT_EQ(permission_4.constraints.lifetime(), longer_lifetime);
 
-TEST_P(RevokedPermissionsServiceTest, ResultToFromDict) {
-  auto result =
-      std::make_unique<RevokedPermissionsService::RevokedPermissionsResult>();
-  // This is necessary for revoked abusive notification permissions, since
-  // checking URLs is asynchronous.
-  base::RunLoop().RunUntilIdle();
-  if (ShouldSetupUnusedSites()) {
-    AddRevokedPermissionToResult(result.get(), unused_permission_types, url1);
-    if (ShouldSetupAbusiveNotificationSites()) {
-      AddRevokedPermissionToResult(result.get(),
-                                   abusive_and_unused_permission_types, url2);
-    } else {
-      AddRevokedPermissionToResult(result.get(), unused_permission_types, url2);
+      auto permission_5 = GetPermissionsDataByUrl(revoked_permissions, url5);
+      EXPECT_EQ(permission_5.constraints.lifetime(), longer_lifetime);
+
+      auto permission_6 = GetPermissionsDataByUrl(revoked_permissions, url6);
+      EXPECT_EQ(permission_6.constraints.lifetime(),
+                disruptive_revocations_lifetime);
+    } else if (ShouldSetupUnusedSites()) {
+      EXPECT_EQ(5U, revoked_permissions.size());
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url1));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url2));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url4));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url5));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url6));
+    } else if (ShouldSetupSafeBrowsing()) {
+      EXPECT_EQ(5U, revoked_permissions.size());
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url2));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url3));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url4));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url5));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url6));
+    }
+  } else {
+    if (ShouldSetupUnusedSites() && ShouldSetupSafeBrowsing()) {
+      EXPECT_EQ(6U, revoked_permissions.size());
+      // Verify the constraints are merged properly when there are multiple
+      // revocation types.
+      auto permission_1 = GetPermissionsDataByUrl(revoked_permissions, url1);
+      EXPECT_EQ(permission_1.constraints.lifetime(), default_lifetime);
+
+      auto permission_2 = GetPermissionsDataByUrl(revoked_permissions, url2);
+      EXPECT_EQ(permission_2.constraints.lifetime(), longer_lifetime);
+
+      auto permission_3 = GetPermissionsDataByUrl(revoked_permissions, url3);
+      EXPECT_EQ(permission_3.constraints.lifetime(), default_lifetime);
+
+      auto permission_4 = GetPermissionsDataByUrl(revoked_permissions, url4);
+      EXPECT_EQ(permission_4.constraints.lifetime(), longer_lifetime);
+
+      auto permission_5 = GetPermissionsDataByUrl(revoked_permissions, url5);
+      EXPECT_EQ(permission_5.constraints.lifetime(), longer_lifetime);
+
+      auto permission_6 = GetPermissionsDataByUrl(revoked_permissions, url6);
+      EXPECT_EQ(permission_6.constraints.lifetime(), shorter_lifetime);
+    } else if (ShouldSetupUnusedSites()) {
+      EXPECT_EQ(5U, revoked_permissions.size());
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url1));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url2));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url4));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url5));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url6));
+    } else if (ShouldSetupSafeBrowsing()) {
+      EXPECT_EQ(3U, revoked_permissions.size());
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url2));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url3));
+      EXPECT_TRUE(IsUrlInRevokedSettings(revoked_permissions, url4));
     }
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
-    if (!ShouldSetupUnusedSites()) {
-      AddRevokedPermissionToResult(result.get(), abusive_permission_types,
-                                   url2);
-    }
-    AddRevokedPermissionToResult(result.get(), abusive_permission_types, url3);
-  }
-
-  if (ShouldSetupUnusedSites() && ShouldSetupAbusiveNotificationSites()) {
-    EXPECT_EQ(3U, result->GetRevokedPermissions().size());
-    EXPECT_EQ(ContentSettingsPattern::FromString(url1),
-              result->GetRevokedPermissions().front().primary_pattern);
-    EXPECT_TRUE(IsUrlInRevokedSettings(result->GetRevokedPermissions(), url1));
-    EXPECT_TRUE(IsUrlInRevokedSettings(result->GetRevokedPermissions(), url2));
-    EXPECT_TRUE(IsUrlInRevokedSettings(result->GetRevokedPermissions(), url3));
-  } else if (ShouldSetupUnusedSites()) {
-    EXPECT_EQ(2U, result->GetRevokedPermissions().size());
-    EXPECT_TRUE(IsUrlInRevokedSettings(result->GetRevokedPermissions(), url1));
-    EXPECT_TRUE(IsUrlInRevokedSettings(result->GetRevokedPermissions(), url2));
-  } else if (ShouldSetupAbusiveNotificationSites()) {
-    EXPECT_EQ(2U, result->GetRevokedPermissions().size());
-    EXPECT_TRUE(IsUrlInRevokedSettings(result->GetRevokedPermissions(), url2));
-    EXPECT_TRUE(IsUrlInRevokedSettings(result->GetRevokedPermissions(), url3));
-  }
-
-  // When converting to dict, the values of the revoked permissions should be
-  // correctly converted to base::Value.
-  base::Value::Dict dict = result->ToDictValue();
-  auto* revoked_origins_list = dict.FindList(kRevokedPermissionsResultKey);
-  if (ShouldSetupUnusedSites() && ShouldSetupAbusiveNotificationSites()) {
-    EXPECT_THAT(*revoked_origins_list, UnorderedElementsAre(url1, url2, url3));
-  } else if (ShouldSetupUnusedSites()) {
-    EXPECT_THAT(*revoked_origins_list, UnorderedElementsAre(url1, url2));
-  } else if (ShouldSetupAbusiveNotificationSites()) {
-    EXPECT_THAT(*revoked_origins_list, UnorderedElementsAre(url2, url3));
-  }
 }
 
-TEST_P(RevokedPermissionsServiceTest, ResultGetRevokedOrigins) {
-  auto result =
-      std::make_unique<RevokedPermissionsService::RevokedPermissionsResult>();
-  EXPECT_EQ(0U, result->GetRevokedOrigins().size());
-  AddRevokedPermissionToResult(result.get(), unused_permission_types, url1);
-  EXPECT_EQ(1U, result->GetRevokedOrigins().size());
-  EXPECT_EQ(ContentSettingsPattern::FromString(url1),
-            *result->GetRevokedOrigins().begin());
-  AddRevokedPermissionToResult(result.get(), unused_permission_types, url2);
-  EXPECT_EQ(2U, result->GetRevokedOrigins().size());
-  EXPECT_TRUE(result->GetRevokedOrigins().contains(
-      ContentSettingsPattern::FromString(url1)));
-  EXPECT_TRUE(result->GetRevokedOrigins().contains(
-      ContentSettingsPattern::FromString(url2)));
+TEST_P(RevokedPermissionsServiceTest, PermissionsRevocationType) {
+  if (!ShouldSetupSafeBrowsing() || !ShouldSetupUnusedSites() ||
+      !ShouldSetupDisruptiveSites()) {
+    return;
+  }
 
-  // Adding another permission type to `url2` does not change the size of the
-  // revoked origin list.
-  std::set<ContentSettingsType> permission_types({mediastream_type});
-  auto origin = ContentSettingsPattern::FromString(url2);
-  result->AddRevokedPermission(CreatePermissionsData(origin, permission_types));
-  EXPECT_EQ(2U, result->GetRevokedOrigins().size());
-}
+  // First site: unused permissions.
+  SetupRevokedUnusedPermissionSite(url1);
 
-TEST_P(RevokedPermissionsServiceTest, ResultIsTriggerForMenuNotification) {
-  auto result =
-      std::make_unique<RevokedPermissionsService::RevokedPermissionsResult>();
-  EXPECT_FALSE(result->IsTriggerForMenuNotification());
-  AddRevokedPermissionToResult(result.get(), unused_permission_types, url1);
-  EXPECT_TRUE(result->IsTriggerForMenuNotification());
-}
+  // Second site: abusive notifications.
+  SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ASK);
+  SetupRevokedAbusiveNotificationSite(url2);
 
-TEST_P(RevokedPermissionsServiceTest, ResultWarrantsNewMenuNotification) {
-  auto old_result =
-      std::make_unique<RevokedPermissionsService::RevokedPermissionsResult>();
-  auto new_result =
-      std::make_unique<RevokedPermissionsService::RevokedPermissionsResult>();
-  EXPECT_FALSE(
-      new_result->WarrantsNewMenuNotification(old_result->ToDictValue()));
-  // origin1 revoked in new, but not in old -> warrants notification
-  AddRevokedPermissionToResult(new_result.get(), unused_permission_types, url1);
-  EXPECT_TRUE(
-      new_result->WarrantsNewMenuNotification(old_result->ToDictValue()));
-  // origin1 in both new and old -> no notification
-  AddRevokedPermissionToResult(old_result.get(), unused_permission_types, url1);
-  EXPECT_FALSE(
-      new_result->WarrantsNewMenuNotification(old_result->ToDictValue()));
-  // origin1 in both, origin2 in new -> warrants notification
-  AddRevokedPermissionToResult(new_result.get(), unused_permission_types, url2);
-  EXPECT_TRUE(
-      new_result->WarrantsNewMenuNotification(old_result->ToDictValue()));
-  // origin1 and origin2 in both new and old -> no notification
-  AddRevokedPermissionToResult(old_result.get(), unused_permission_types, url2);
-  EXPECT_FALSE(
-      new_result->WarrantsNewMenuNotification(old_result->ToDictValue()));
+  // Third site: disruptive permissions.
+  SetupRevokedDisruptiveNotificationSite(url3);
+
+  // Forth site: unused permissions and abusive notifications.
+  SetupAbusiveNotificationSite(url4, ContentSetting::CONTENT_SETTING_ASK);
+  SetupRevokedAbusiveNotificationSite(url4);
+  SetupRevokedUnusedPermissionSite(url4);
+
+  // Fifth site: unused permissions and disruptive notifications.
+  SetupRevokedUnusedPermissionSite(url5);
+  SetupRevokedDisruptiveNotificationSite(url5);
+
+  auto new_service = std::make_unique<RevokedPermissionsService>(
+      profile(), profile()->GetPrefs());
+  std::optional<std::unique_ptr<SafetyHubResult>> opt_result =
+      new_service->GetCachedResult();
+  EXPECT_TRUE(opt_result.has_value());
+  auto* result =
+      static_cast<RevokedPermissionsResult*>(opt_result.value().get());
+  auto revoked_permissions = result->GetRevokedPermissions();
+
+  EXPECT_EQ(5U, revoked_permissions.size());
+  // Verify the revocation types are correct.
+  auto permission_1 = GetPermissionsDataByUrl(revoked_permissions, url1);
+  EXPECT_EQ(permission_1.revocation_type,
+            PermissionsRevocationType::kUnusedPermissions);
+
+  auto permission_2 = GetPermissionsDataByUrl(revoked_permissions, url2);
+  EXPECT_EQ(permission_2.revocation_type,
+            PermissionsRevocationType::kAbusiveNotificationPermissions);
+
+  auto permission_3 = GetPermissionsDataByUrl(revoked_permissions, url3);
+  EXPECT_EQ(permission_3.revocation_type,
+            PermissionsRevocationType::kDisruptiveNotificationPermissions);
+
+  auto permission_4 = GetPermissionsDataByUrl(revoked_permissions, url4);
+  EXPECT_EQ(
+      permission_4.revocation_type,
+      PermissionsRevocationType::kUnusedPermissionsAndAbusiveNotifications);
+
+  auto permission_5 = GetPermissionsDataByUrl(revoked_permissions, url5);
+  EXPECT_EQ(
+      permission_5.revocation_type,
+      PermissionsRevocationType::kUnusedPermissionsAndDisruptiveNotifications);
 }
 
 TEST_P(RevokedPermissionsServiceTest, AutoRevocationSetting) {
@@ -1362,14 +1521,14 @@ TEST_P(RevokedPermissionsServiceTest, AutoRevocationSetting) {
 
   // Enable auto-revocation by setting kUnusedSitePermissionsRevocationEnabled
   // pref to true. This should restart the repeated timer.
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     prefs()->SetBoolean(prefs::kSafeBrowsingEnabled, true);
   }
   if (ShouldSetupUnusedSites()) {
     prefs()->SetBoolean(
         safety_hub_prefs::kUnusedSitePermissionsRevocationEnabled, true);
   }
-  if (ShouldSetupAbusiveNotificationSites() || ShouldSetupUnusedSites()) {
+  if (ShouldSetupSafeBrowsing() || ShouldSetupUnusedSites()) {
     EXPECT_TRUE(service()->IsTimerRunningForTesting());
   } else {
     EXPECT_FALSE(service()->IsTimerRunningForTesting());
@@ -1387,7 +1546,7 @@ TEST_P(RevokedPermissionsServiceTest, AutoCleanupRevokedPermissions) {
 
   // Fast forward 50 days then maybe setup abusive notifications.
   clock()->Advance(base::Days(50));
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     // Add notifications setting for `url2` and `url3`, abusive notification
     // sites.
     SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ALLOW);
@@ -1396,7 +1555,7 @@ TEST_P(RevokedPermissionsServiceTest, AutoCleanupRevokedPermissions) {
 
   // Abusive notifications should be revoked, but not unused sites yet.
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service());
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(2U);
   }
   if (ShouldSetupUnusedSites()) {
@@ -1407,7 +1566,7 @@ TEST_P(RevokedPermissionsServiceTest, AutoCleanupRevokedPermissions) {
   // permissions.
   clock()->Advance(base::Days(20));
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service());
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(2U);
   }
   if (ShouldSetupUnusedSites()) {
@@ -1418,7 +1577,7 @@ TEST_P(RevokedPermissionsServiceTest, AutoCleanupRevokedPermissions) {
   // sites.
   clock()->Advance(base::Days(20));
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service());
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(0U);
   }
   if (ShouldSetupUnusedSites()) {
@@ -1428,7 +1587,7 @@ TEST_P(RevokedPermissionsServiceTest, AutoCleanupRevokedPermissions) {
   // Fast forwarding 20 days should cleanup unused sites.
   clock()->Advance(base::Days(20));
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service());
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(0U);
   }
   if (ShouldSetupUnusedSites()) {
@@ -1455,7 +1614,7 @@ TEST_P(RevokedPermissionsServiceTest, ChangingSettingOnRevokedSettingClearsIt) {
   // Fast forward 20 days. Setting up abusive site permissions will cause
   // auto-revocation and revoked unused sites will still be in the list.
   clock()->Advance(base::Days(20));
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     // Add notifications setting for `url2` and `url3`, abusive notification
     // sites.
     SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ALLOW);
@@ -1463,18 +1622,11 @@ TEST_P(RevokedPermissionsServiceTest, ChangingSettingOnRevokedSettingClearsIt) {
   }
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service());
   if (ShouldSetupUnusedSites()) {
-    // If notifications were set up for `url2`, then remove it from the list of
-    // revoked unused permissions.
-    if (ShouldSetupAbusiveNotificationSites()) {
-      EXPECT_EQ(1U, GetRevokedUnusedPermissions(hcsm()).size());
-
-    } else {
-      EXPECT_EQ(2U, GetRevokedUnusedPermissions(hcsm()).size());
-    }
+    EXPECT_EQ(2U, GetRevokedUnusedPermissions(hcsm()).size());
   }
   // Whether `url2` was removed from revoked unused permissions or not, it
   // should be in the list of revoked abusive notifications.
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(2U);
   }
 
@@ -1485,7 +1637,7 @@ TEST_P(RevokedPermissionsServiceTest, ChangingSettingOnRevokedSettingClearsIt) {
   if (ShouldSetupUnusedSites()) {
     EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(2U);
   }
 
@@ -1495,138 +1647,122 @@ TEST_P(RevokedPermissionsServiceTest, ChangingSettingOnRevokedSettingClearsIt) {
   if (ShouldSetupUnusedSites()) {
     EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
   }
-  if (ShouldSetupAbusiveNotificationSites()) {
+  if (ShouldSetupSafeBrowsing()) {
     ExpectRevokedAbusiveNotificationPermissionSize(0U);
   }
 }
 
-TEST_P(RevokedPermissionsServiceTest,
-       UpdateIntegerValuesToGroupName_AllContentSettings) {
-  base::Value::List permissions_list_int;
-  base::Value::List permissions_list_string;
-  base::Value::Dict chooser_permission_dict_int;
-  base::Value::Dict chooser_permission_dict_string;
-  PopulateWebsiteSettingsLists(permissions_list_int, permissions_list_string);
-  PopulateChooserWebsiteSettingsDicts(chooser_permission_dict_int,
-                                      chooser_permission_dict_string);
+TEST_P(RevokedPermissionsServiceTest, OnContentSettingsChanged_Notifications) {
+  if (ShouldSetupUnusedSites()) {
+    SetupRevokedUnusedPermissionSite(url1);
+    EXPECT_EQ(1U, GetRevokedUnusedPermissions(hcsm()).size());
+  }
+  if (ShouldSetupSafeBrowsing()) {
+    SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ASK);
+    SetupRevokedAbusiveNotificationSite(url2);
+    ExpectRevokedAbusiveNotificationPermissionSize(1U);
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    SetupRevokedDisruptiveNotificationSite(url3);
+    ExpectRevokedDisruptiveNotificationSettingValues(url3);
+    EXPECT_EQ(GetRevokedDisruptiveNotificationPermissionSize(), 1);
+  }
 
-  auto dict = base::Value::Dict()
-                  .Set(permissions::kRevokedKey, permissions_list_int.Clone())
-                  .Set(permissions::kRevokedChooserPermissionsKey,
-                       chooser_permission_dict_int.Clone());
+  hcsm()->SetContentSettingDefaultScope(GURL(url1), GURL(url1),
+                                        ContentSettingsType::NOTIFICATIONS,
+                                        ContentSetting::CONTENT_SETTING_ALLOW);
+  hcsm()->SetContentSettingDefaultScope(GURL(url2), GURL(url2),
+                                        ContentSettingsType::NOTIFICATIONS,
+                                        ContentSetting::CONTENT_SETTING_ALLOW);
+  hcsm()->SetContentSettingDefaultScope(GURL(url3), GURL(url3),
+                                        ContentSettingsType::NOTIFICATIONS,
+                                        ContentSetting::CONTENT_SETTING_ALLOW);
 
-  hcsm()->SetWebsiteSettingDefaultScope(GURL(url1), GURL(url1),
-                                        revoked_unused_site_type,
-                                        base::Value(dict.Clone()));
-
-  ContentSettingsForOneType revoked_permissions_content_settings =
-      hcsm()->GetSettingsForOneType(
-          ContentSettingsType::REVOKED_UNUSED_SITE_PERMISSIONS);
-
-  // Expecting no-op, stored integer values of content settings on disk.
-  EXPECT_EQ(permissions_list_int, GetRevokedUnusedPermissions(hcsm())[0]
-                                      .setting_value.GetDict()
-                                      .Find(permissions::kRevokedKey)
-                                      ->GetList());
-  EXPECT_EQ(chooser_permission_dict_int,
-            GetRevokedUnusedPermissions(hcsm())[0]
-                .setting_value.GetDict()
-                .Find(permissions::kRevokedChooserPermissionsKey)
-                ->GetDict());
-
-  // Update disk stored content settings values from integers to strings.
-  service()->UpdateIntegerValuesToGroupName();
-
-  // Validate content settings are stored in group name strings.
-  revoked_permissions_content_settings =
-      hcsm()->GetSettingsForOneType(revoked_unused_site_type);
-  EXPECT_EQ(permissions_list_string, GetRevokedUnusedPermissions(hcsm())[0]
-                                         .setting_value.GetDict()
-                                         .Find(permissions::kRevokedKey)
-                                         ->GetList());
-  EXPECT_EQ(chooser_permission_dict_string,
-            GetRevokedUnusedPermissions(hcsm())[0]
-                .setting_value.GetDict()
-                .Find(permissions::kRevokedChooserPermissionsKey)
-                ->GetDict());
+  if (ShouldSetupUnusedSites()) {
+    EXPECT_EQ(1U, GetRevokedUnusedPermissions(hcsm()).size());
+  }
+  if (ShouldSetupSafeBrowsing()) {
+    ExpectRevokedAbusiveNotificationPermissionSize(0U);
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    EXPECT_FALSE(DisruptiveNotificationPermissionsManager::
+                     IsUrlRevokedDisruptiveNotification(hcsm(), GURL(url3)));
+  }
 }
 
 TEST_P(RevokedPermissionsServiceTest,
-       UpdateIntegerValuesToGroupName_SubsetOfContentSettings) {
-  base::Value::List permissions_list_int;
-  permissions_list_int.Append(static_cast<int32_t>(geolocation_type));
-  permissions_list_int.Append(static_cast<int32_t>(mediastream_type));
+       OnContentSettingsChanged_NonNotificationsPermission) {
+  if (ShouldSetupUnusedSites()) {
+    SetupRevokedUnusedPermissionSite(url1);
+    EXPECT_EQ(1U, GetRevokedUnusedPermissions(hcsm()).size());
+  }
+  if (ShouldSetupSafeBrowsing()) {
+    SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ASK);
+    SetupRevokedAbusiveNotificationSite(url2);
+    ExpectRevokedAbusiveNotificationPermissionSize(1U);
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    SetupRevokedDisruptiveNotificationSite(url3);
+    ExpectRevokedDisruptiveNotificationSettingValues(url3);
+    EXPECT_EQ(GetRevokedDisruptiveNotificationPermissionSize(), 1);
+  }
 
-  auto dict = base::Value::Dict().Set(permissions::kRevokedKey,
-                                      permissions_list_int.Clone());
-  hcsm()->SetWebsiteSettingDefaultScope(GURL(url1), GURL(url1),
-                                        revoked_unused_site_type,
-                                        base::Value(dict.Clone()));
+  hcsm()->SetContentSettingDefaultScope(GURL(url1), GURL(url1),
+                                        ContentSettingsType::GEOLOCATION,
+                                        ContentSetting::CONTENT_SETTING_ALLOW);
+  hcsm()->SetContentSettingDefaultScope(GURL(url2), GURL(url2),
+                                        ContentSettingsType::GEOLOCATION,
+                                        ContentSetting::CONTENT_SETTING_ALLOW);
+  hcsm()->SetContentSettingDefaultScope(GURL(url3), GURL(url3),
+                                        ContentSettingsType::GEOLOCATION,
+                                        ContentSetting::CONTENT_SETTING_ALLOW);
 
-  ContentSettingsForOneType revoked_permissions_content_settings =
-      hcsm()->GetSettingsForOneType(revoked_unused_site_type);
-
-  // Expecting no-op, stored integer values of content settings on disk.
-  EXPECT_EQ(permissions_list_int, GetRevokedUnusedPermissions(hcsm())[0]
-                                      .setting_value.GetDict()
-                                      .Find(permissions::kRevokedKey)
-                                      ->GetList());
-
-  // Update disk stored content settings values from integers to strings.
-  service()->UpdateIntegerValuesToGroupName();
-
-  // Validate content settings are stored in group name strings.
-  auto permissions_list_string =
-      base::Value::List()
-          .Append(RevokedPermissionsService::ConvertContentSettingsTypeToKey(
-              geolocation_type))
-          .Append(RevokedPermissionsService::ConvertContentSettingsTypeToKey(
-              mediastream_type));
-  revoked_permissions_content_settings =
-      hcsm()->GetSettingsForOneType(revoked_unused_site_type);
-  EXPECT_EQ(permissions_list_string, GetRevokedUnusedPermissions(hcsm())[0]
-                                         .setting_value.GetDict()
-                                         .Find(permissions::kRevokedKey)
-                                         ->GetList());
+  if (ShouldSetupUnusedSites()) {
+    EXPECT_EQ(0U, GetRevokedUnusedPermissions(hcsm()).size());
+  }
+  if (ShouldSetupSafeBrowsing()) {
+    ExpectRevokedAbusiveNotificationPermissionSize(1U);
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    EXPECT_EQ(GetRevokedDisruptiveNotificationPermissionSize(), 1);
+  }
 }
 
-TEST_P(RevokedPermissionsServiceTest,
-       UpdateIntegerValuesToGroupName_UnknownContentSettings) {
-  base::Value::List permissions_list_int;
-  permissions_list_int.Append(static_cast<int32_t>(geolocation_type));
-  // Append a large number that does not match to any content settings type.
-  permissions_list_int.Append(unknown_type);
+TEST_P(RevokedPermissionsServiceTest, OnContentSettingsChanged_WebsiteSetting) {
+  if (ShouldSetupUnusedSites()) {
+    SetupRevokedUnusedPermissionSite(url1);
+    EXPECT_EQ(1U, GetRevokedUnusedPermissions(hcsm()).size());
+  }
+  if (ShouldSetupSafeBrowsing()) {
+    SetupAbusiveNotificationSite(url2, ContentSetting::CONTENT_SETTING_ASK);
+    SetupRevokedAbusiveNotificationSite(url2);
+    ExpectRevokedAbusiveNotificationPermissionSize(1U);
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    SetupRevokedDisruptiveNotificationSite(url3);
+    ExpectRevokedDisruptiveNotificationSettingValues(url3);
+    EXPECT_EQ(GetRevokedDisruptiveNotificationPermissionSize(), 1);
+  }
 
-  auto dict = base::Value::Dict().Set(permissions::kRevokedKey,
-                                      permissions_list_int.Clone());
-  hcsm()->SetWebsiteSettingDefaultScope(GURL(url1), GURL(url1),
-                                        revoked_unused_site_type,
-                                        base::Value(dict.Clone()));
+  hcsm()->SetWebsiteSettingDefaultScope(
+      GURL(url1), GURL(url1), ContentSettingsType::COOKIE_CONTROLS_METADATA,
+      base::Value());
+  hcsm()->SetWebsiteSettingDefaultScope(
+      GURL(url2), GURL(url2), ContentSettingsType::COOKIE_CONTROLS_METADATA,
+      base::Value());
+  hcsm()->SetWebsiteSettingDefaultScope(
+      GURL(url3), GURL(url3), ContentSettingsType::COOKIE_CONTROLS_METADATA,
+      base::Value());
 
-  ContentSettingsForOneType revoked_permissions_content_settings =
-      hcsm()->GetSettingsForOneType(revoked_unused_site_type);
-
-  // Expecting no-op, stored integer values of content settings on disk.
-  EXPECT_EQ(permissions_list_int, GetRevokedUnusedPermissions(hcsm())[0]
-                                      .setting_value.GetDict()
-                                      .Find(permissions::kRevokedKey)
-                                      ->GetList());
-
-  // Update disk stored content settings values from integers to strings.
-  service()->UpdateIntegerValuesToGroupName();
-
-  // Validate content settings are stored in group name strings.
-  auto permissions_list_string =
-      base::Value::List()
-          .Append(RevokedPermissionsService::ConvertContentSettingsTypeToKey(
-              geolocation_type))
-          .Append(unknown_type);
-  revoked_permissions_content_settings =
-      hcsm()->GetSettingsForOneType(revoked_unused_site_type);
-  EXPECT_EQ(permissions_list_string, GetRevokedUnusedPermissions(hcsm())[0]
-                                         .setting_value.GetDict()
-                                         .Find(permissions::kRevokedKey)
-                                         ->GetList());
+  if (ShouldSetupUnusedSites()) {
+    EXPECT_EQ(1U, GetRevokedUnusedPermissions(hcsm()).size());
+  }
+  if (ShouldSetupSafeBrowsing()) {
+    ExpectRevokedAbusiveNotificationPermissionSize(1U);
+  }
+  if (ShouldSetupDisruptiveSites()) {
+    EXPECT_EQ(GetRevokedDisruptiveNotificationPermissionSize(), 1);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1634,192 +1770,5 @@ INSTANTIATE_TEST_SUITE_P(
     RevokedPermissionsServiceTest,
     testing::Combine(
         /*should_setup_abusive_notification_sites=*/testing::Bool(),
-        /*should_setup_unused_sites=*/testing::Bool()));
-
-class RevokedPermissionsServiceStartUpTest
-    : public ChromeRenderViewHostTestHarness {
- public:
-  RevokedPermissionsServiceStartUpTest() {
-    feature_list_.InitWithFeatures(
-        /*enabled_features=*/
-        {content_settings::features::kSafetyCheckUnusedSitePermissions,
-         content_settings::features::
-             kSafetyCheckUnusedSitePermissionsForSupportedChooserPermissions,
-         features::kSafetyHub},
-        /*disabled_features=*/{});
-  }
-
-  ContentSettingsForOneType GetRevokedUnusedPermissions(
-      HostContentSettingsMap* hcsm) {
-    return hcsm->GetSettingsForOneType(
-        ContentSettingsType::REVOKED_UNUSED_SITE_PERMISSIONS);
-  }
-
-  HostContentSettingsMap* hcsm() {
-    return HostContentSettingsMapFactory::GetForProfile(profile());
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-TEST_F(RevokedPermissionsServiceStartUpTest,
-       UpdateIntegerValuesToGroupName_OnlyIntegerKeys) {
-  base::Value::List permissions_list_int;
-  base::Value::List permissions_list_string;
-  base::Value::Dict chooser_permission_dict_int;
-  base::Value::Dict chooser_permission_dict_string;
-  PopulateWebsiteSettingsLists(permissions_list_int, permissions_list_string);
-  PopulateChooserWebsiteSettingsDicts(chooser_permission_dict_int,
-                                      chooser_permission_dict_string);
-  auto dict = base::Value::Dict()
-                  .Set(permissions::kRevokedKey, permissions_list_int.Clone())
-                  .Set(permissions::kRevokedChooserPermissionsKey,
-                       chooser_permission_dict_int.Clone());
-
-  hcsm()->SetWebsiteSettingDefaultScope(GURL(url1), GURL(url1),
-                                        revoked_unused_site_type,
-                                        base::Value(dict.Clone()));
-
-  // Expect migration completion to be false at the beginning of the test before
-  // starting the service.
-  EXPECT_FALSE(profile()->GetPrefs()->GetBoolean(
-      safety_hub_prefs::kUnusedSitePermissionsRevocationMigrationCompleted));
-
-  // When we start up a new service instance, the latest result (i.e. the list
-  // of revoked permissions) should be be updated to strings.
-  auto new_service = std::make_unique<RevokedPermissionsService>(
-      profile(), profile()->GetPrefs());
-
-  // Verify the migration is completed on after the service has started and pref
-  // is set accordingly.
-  EXPECT_TRUE(profile()->GetPrefs()->GetBoolean(
-      safety_hub_prefs::kUnusedSitePermissionsRevocationMigrationCompleted));
-  EXPECT_EQ(permissions_list_string, GetRevokedUnusedPermissions(hcsm())[0]
-                                         .setting_value.GetDict()
-                                         .Find(permissions::kRevokedKey)
-                                         ->GetList());
-  EXPECT_EQ(chooser_permission_dict_string,
-            GetRevokedUnusedPermissions(hcsm())[0]
-                .setting_value.GetDict()
-                .Find(permissions::kRevokedChooserPermissionsKey)
-                ->GetDict());
-}
-
-TEST_F(RevokedPermissionsServiceStartUpTest,
-       UpdateIntegerValuesToGroupName_MixedKeys) {
-  // Setting up two entries one with integers and one with strings to simulate
-  // partial migration in case of a crash.
-  auto dict_int = base::Value::Dict().Set(
-      permissions::kRevokedKey,
-      base::Value::List().Append(static_cast<int32_t>(mediastream_type)));
-  auto dict_string = base::Value::Dict().Set(
-      permissions::kRevokedKey,
-      base::Value::List().Append(
-          RevokedPermissionsService::ConvertContentSettingsTypeToKey(
-              geolocation_type)));
-  hcsm()->SetWebsiteSettingDefaultScope(GURL(url1), GURL(url1),
-                                        revoked_unused_site_type,
-                                        base::Value(dict_int.Clone()));
-  hcsm()->SetWebsiteSettingDefaultScope(GURL(url2), GURL(url2),
-                                        revoked_unused_site_type,
-                                        base::Value(dict_string.Clone()));
-
-  // Expect migration completion to be false at the beginning of the test before
-  // starting the service.
-  EXPECT_FALSE(profile()->GetPrefs()->GetBoolean(
-      safety_hub_prefs::kUnusedSitePermissionsRevocationMigrationCompleted));
-
-  // When we start up a new service instance, the latest result (i.e. the list
-  // of revoked permissions) should be be updated to strings.
-  auto new_service = std::make_unique<RevokedPermissionsService>(
-      profile(), profile()->GetPrefs());
-
-  // Verify the migration is completed on after the service has started and pref
-  // is set accordingly.
-  EXPECT_TRUE(profile()->GetPrefs()->GetBoolean(
-      safety_hub_prefs::kUnusedSitePermissionsRevocationMigrationCompleted));
-  auto expected_permissions_list_url1 = base::Value::List().Append(
-      RevokedPermissionsService::ConvertContentSettingsTypeToKey(
-          mediastream_type));
-  auto expected_permissions_list_url2 = base::Value::List().Append(
-      RevokedPermissionsService::ConvertContentSettingsTypeToKey(
-          geolocation_type));
-  EXPECT_EQ(expected_permissions_list_url1,
-            GetRevokedUnusedPermissions(hcsm())[0]
-                .setting_value.GetDict()
-                .Find(permissions::kRevokedKey)
-                ->GetList());
-  EXPECT_EQ(expected_permissions_list_url2,
-            GetRevokedUnusedPermissions(hcsm())[1]
-                .setting_value.GetDict()
-                .Find(permissions::kRevokedKey)
-                ->GetList());
-}
-
-TEST_F(RevokedPermissionsServiceStartUpTest,
-       UpdateIntegerValuesToGroupName_MixedKeysWithUnknownTypes) {
-  base::HistogramTester histogram_tester;
-  // Setting up two entries one with integers and one with strings to simulate
-  // partial migration in case of a crash.
-  auto dict_int = base::Value::Dict().Set(
-      permissions::kRevokedKey,
-      base::Value::List()
-          .Append(static_cast<int32_t>(mediastream_type))
-          // Append a large number that does not match to any content settings
-          // type.
-          .Append(unknown_type));
-  auto dict_string = base::Value::Dict().Set(
-      permissions::kRevokedKey,
-      base::Value::List().Append(
-          RevokedPermissionsService::ConvertContentSettingsTypeToKey(
-              geolocation_type)));
-  hcsm()->SetWebsiteSettingDefaultScope(GURL(url1), GURL(url1),
-                                        revoked_unused_site_type,
-                                        base::Value(dict_int.Clone()));
-  hcsm()->SetWebsiteSettingDefaultScope(GURL(url2), GURL(url2),
-                                        revoked_unused_site_type,
-                                        base::Value(dict_string.Clone()));
-
-  // Expect migration completion to be false at the beginning of the test before
-  // starting the service.
-  EXPECT_FALSE(profile()->GetPrefs()->GetBoolean(
-      safety_hub_prefs::kUnusedSitePermissionsRevocationMigrationCompleted));
-
-  // No histogram entries should be recorded for failed migration.
-  histogram_tester.ExpectUniqueSample(
-      "Settings.SafetyCheck.UnusedSitePermissionsMigrationFail", unknown_type,
-      0);
-
-  // When we start up a new service instance, the latest result (i.e. the list
-  // of revoked permissions) should be be updated to strings.
-  auto new_service = std::make_unique<RevokedPermissionsService>(
-      profile(), profile()->GetPrefs());
-
-  // Verify the migration is not completed on after the service has started due
-  // to the unknown integer value.
-  EXPECT_FALSE(profile()->GetPrefs()->GetBoolean(
-      safety_hub_prefs::kUnusedSitePermissionsRevocationMigrationCompleted));
-  // Histogram entries should include the unknown type after failed migration.
-  histogram_tester.ExpectUniqueSample(
-      "Settings.SafetyCheck.UnusedSitePermissionsMigrationFail", unknown_type,
-      1);
-  auto expected_permissions_list_url1 =
-      base::Value::List()
-          .Append(RevokedPermissionsService::ConvertContentSettingsTypeToKey(
-              mediastream_type))
-          .Append(unknown_type);
-  auto expected_permissions_list_url2 = base::Value::List().Append(
-      RevokedPermissionsService::ConvertContentSettingsTypeToKey(
-          geolocation_type));
-  EXPECT_EQ(expected_permissions_list_url1,
-            GetRevokedUnusedPermissions(hcsm())[0]
-                .setting_value.GetDict()
-                .Find(permissions::kRevokedKey)
-                ->GetList());
-  EXPECT_EQ(expected_permissions_list_url2,
-            GetRevokedUnusedPermissions(hcsm())[1]
-                .setting_value.GetDict()
-                .Find(permissions::kRevokedKey)
-                ->GetList());
-}
+        /*should_setup_unused_sites=*/testing::Bool(),
+        /*should_setup_disruptive_sites=*/testing::Bool()));

@@ -21,15 +21,19 @@
 #include "base/functional/bind.h"
 #include "base/i18n/time_formatting.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/ash/browser_delegate/browser_delegate.h"
 #include "chrome/browser/ash/crostini/crostini_export_import.h"
 #include "chrome/browser/ash/crostini/crostini_export_import_factory.h"
 #include "chrome/browser/ash/crostini/crostini_features.h"
 #include "chrome/browser/ash/crostini/crostini_package_service.h"
 #include "chrome/browser/ash/crostini/crostini_package_service_factory.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/ash/extensions/file_manager/private_api_util.h"
 #include "chrome/browser/ash/file_manager/file_tasks.h"
@@ -294,7 +298,7 @@ std::optional<std::string> GetSkyVaultMigrationStartTime(Profile* profile) {
 
   const std::optional<base::Time> start_time =
       policy::local_user_files::GetMigrationStartTime(profile);
-  if (start_time->is_null()) {
+  if (!start_time.has_value()) {
     LOG(ERROR) << "Could not retrieve SkyVault Migration Start time";
     return std::nullopt;
   }
@@ -608,10 +612,10 @@ FileManagerPrivateAddProvidedFileSystemFunction::Run() {
       params->provider_id == extension_misc::kODFSExtensionId &&
       first_file_system) {
     // Get Files App window, if it exists.
-    Browser* browser =
-        FindSystemWebAppBrowser(profile, ash::SystemWebAppType::FILE_MANAGER);
+    ash::BrowserDelegate* browser = FindSystemWebAppBrowser(
+        profile, ash::SystemWebAppType::FILE_MANAGER, ash::BrowserType::kApp);
     gfx::NativeWindow modal_parent =
-        browser ? browser->window()->GetNativeWindow() : nullptr;
+        browser ? browser->GetNativeWindow() : nullptr;
 
     // This will call into service->RequestMount() if necessary. This is 'fire
     // and forget' as Files app doesn't do anything if this succeeds or fails.
@@ -1177,8 +1181,7 @@ void FileManagerPrivateInternalGetRecentFilesFunction::
 
 ExtensionFunction::ResponseAction
 FileManagerPrivateIsTabletModeEnabledFunction::Run() {
-  return RespondNow(
-      WithArguments(display::Screen::GetScreen()->InTabletMode()));
+  return RespondNow(WithArguments(display::Screen::Get()->InTabletMode()));
 }
 
 ExtensionFunction::ResponseAction FileManagerPrivateOpenWindowFunction::Run() {

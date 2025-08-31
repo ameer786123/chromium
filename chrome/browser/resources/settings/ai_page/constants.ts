@@ -25,6 +25,7 @@ export enum SettingsAiPageFeaturePrefName {
   HISTORY_SEARCH = 'optimization_guide.history_search_setting_state',
   COMPOSE = 'optimization_guide.compose_setting_state',
   TAB_ORGANIZATION = 'optimization_guide.tab_organization_setting_state',
+  AUTOFILL_AI = 'autofill.autofill_ai.opt_in_status'
 }
 
 // Exporting enterprise pref names so that they can be referenced by tests.
@@ -37,6 +38,8 @@ export enum AiEnterpriseFeaturePrefName {
       'optimization_guide.model_execution.tab_organization_enterprise_policy_allowed',
   COMPARE =
       'optimization_guide.model_execution.tab_compare_settings_enterprise_policy',
+  AUTOFILL_AI =
+      'optimization_guide.model_execution.autofill_prediction_improvements_enterprise_policy_allowed',
 }
 
 export enum AiPageActions {
@@ -55,4 +58,14 @@ export enum AiPageActions {
       'Settings.AiPage.Compose.ProactiveNudgeDisabled',
   TAB_ORGANIZATION_LEARN_MORE_CLICKED =
       'Settings.AiPage.TabOrganization.LearnMoreClicked',
+  GLIC_COLLAPSED_LEARN_MORE_CLICKED =
+      'Settings.AiPage.GlicCollapsed.LearnMoreClicked',
+  GLIC_SHORTCUTS_LEARN_MORE_CLICKED =
+      'Settings.AiPage.GlicShortcuts.LearnMoreClicked',
+  GLIC_SHORTCUTS_LAUNCHER_TOGGLE_LEARN_MORE_CLICKED =
+      'Settings.AiPage.GlicShortcuts.LauncherToggleLearnMoreClicked',
+  GLIC_SHORTCUTS_LOCATION_TOGGLE_LEARN_MORE_CLICKED =
+      'Settings.AiPage.GlicShortcuts.LocationToggleLearnMoreClicked',
+  GLIC_SHORTCUTS_TAB_ACCESS_TOGGLE_LEARN_MORE_CLICKED =
+      'Settings.AiPage.GlicShortcuts.TabAccessToggleLearnMoreClicked',
 }

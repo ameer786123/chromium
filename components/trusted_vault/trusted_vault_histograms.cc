@@ -10,6 +10,7 @@
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "components/trusted_vault/local_recovery_factor.h"
+#include "components/trusted_vault/recovery_key_store_connection.h"
 #include "components/trusted_vault/trusted_vault_server_constants.h"
 
 namespace trusted_vault {
@@ -91,30 +92,30 @@ void RecordTrustedVaultHintDegradedRecoverabilityChangedReason(
 
 void RecordTrustedVaultDeviceRegistrationState(
     TrustedVaultDeviceRegistrationStateForUMA registration_state) {
-  RecordTrustedVaultDeviceRegistrationState(
+  RecordTrustedVaultRecoveryFactorRegistrationState(
       LocalRecoveryFactorType::kPhysicalDevice, SecurityDomainId::kChromeSync,
       registration_state);
 }
 
-void RecordTrustedVaultDeviceRegistrationState(
+void RecordTrustedVaultRecoveryFactorRegistrationState(
     LocalRecoveryFactorType local_recovery_factor_type,
     SecurityDomainId security_domain_id,
-    TrustedVaultDeviceRegistrationStateForUMA registration_state) {
+    TrustedVaultRecoveryFactorRegistrationStateForUMA registration_state) {
   base::UmaHistogramEnumeration(
       base::StrCat(
-          {"TrustedVault.DeviceRegistrationState.",
+          {"TrustedVault.RecoveryFactorRegistrationState.",
            GetLocalRecoveryFactorNameForUma(local_recovery_factor_type), ".",
            GetSecurityDomainNameForUma(security_domain_id)}),
       registration_state);
 }
 
-void RecordTrustedVaultDeviceRegistrationOutcome(
+void RecordTrustedVaultRecoveryFactorRegistrationOutcome(
     LocalRecoveryFactorType local_recovery_factor_type,
     SecurityDomainId security_domain_id,
-    TrustedVaultDeviceRegistrationOutcomeForUMA registration_outcome) {
+    TrustedVaultRecoveryFactorRegistrationOutcomeForUMA registration_outcome) {
   base::UmaHistogramEnumeration(
       base::StrCat(
-          {"TrustedVault.DeviceRegistrationOutcome.",
+          {"TrustedVault.RecoveryFactorRegistrationOutcome.",
            GetLocalRecoveryFactorNameForUma(local_recovery_factor_type), ".",
            GetSecurityDomainNameForUma(security_domain_id)}),
       registration_outcome);
@@ -170,18 +171,37 @@ void RecordRecoveryKeyStoreURLFetchResponse(
       value);
 }
 
+void RecordRecoveryKeyStoreFetchCertificatesStatus(
+    RecoveryKeyStoreCertificatesFetchStatusForUMA status) {
+  base::UmaHistogramEnumeration(
+      "TrustedVault.RecoveryKeyStoreCertificatesFetchStatus", status);
+}
+
 void RecordTrustedVaultDownloadKeysStatus(
+    LocalRecoveryFactorType local_recovery_factor_type,
     SecurityDomainId security_domain_id,
     TrustedVaultDownloadKeysStatusForUMA status) {
   base::UmaHistogramEnumeration(
-      "TrustedVault.DownloadKeysStatus." +
-          GetSecurityDomainNameForUma(security_domain_id),
+      base::StrCat(
+          {"TrustedVault.DownloadKeysStatus.",
+           GetLocalRecoveryFactorNameForUma(local_recovery_factor_type), ".",
+           GetSecurityDomainNameForUma(security_domain_id)}),
       status);
 }
 
 void RecordTrustedVaultDownloadKeysStatus(
     TrustedVaultDownloadKeysStatusForUMA status) {
-  RecordTrustedVaultDownloadKeysStatus(SecurityDomainId::kChromeSync, status);
+  RecordTrustedVaultDownloadKeysStatus(LocalRecoveryFactorType::kPhysicalDevice,
+                                       SecurityDomainId::kChromeSync, status);
+}
+
+void RecordTrustedVaultRecoverKeysOutcome(
+    SecurityDomainId security_domain_id,
+    TrustedVaultRecoverKeysOutcomeForUMA status) {
+  base::UmaHistogramEnumeration(
+      base::StrCat({"TrustedVault.RecoverKeysOutcome.",
+                    GetSecurityDomainNameForUma(security_domain_id)}),
+      status);
 }
 
 void RecordTrustedVaultFileReadStatus(SecurityDomainId security_domain_id,
@@ -233,6 +253,10 @@ std::string GetLocalRecoveryFactorNameForUma(
   switch (local_recovery_factor_type) {
     case LocalRecoveryFactorType::kPhysicalDevice:
       return "PhysicalDevice";
+#if BUILDFLAG(IS_MAC)
+    case LocalRecoveryFactorType::kICloudKeychain:
+      return "ICloudKeychain";
+#endif
       // If adding a new value, also update the variants for
       // LocalRecoveryFactorType in
       // tools/metrics/histograms/metadata/trusted_vault/histograms.xml.

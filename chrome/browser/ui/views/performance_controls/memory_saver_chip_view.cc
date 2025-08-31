@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/byte_count.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
 #include "chrome/app/vector_icons/vector_icons.h"
@@ -23,6 +24,7 @@
 #include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
 #include "chrome/browser/ui/views/performance_controls/memory_saver_bubble_view.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/tabs/public/tab_interface.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/text/bytes_formatting.h"
@@ -73,12 +75,18 @@ void MemorySaverChipView::UpdateImpl() {
     return;
   }
 
+  auto* const tab = tabs::TabInterface::GetFromContents(web_contents);
+  if (!tab) {
+    return;
+  }
   MemorySaverChipTabHelper* const tab_helper =
-      MemorySaverChipTabHelper::FromWebContents(web_contents);
+      tab->GetTabFeatures()->memory_saver_chip_helper();
+  CHECK(tab_helper);
   auto chip_state = tab_helper->chip_state();
 
   if (chip_state != memory_saver::ChipState::HIDDEN) {
     if (!tab_helper->ShouldChipAnimate()) {
+      SetVisible(true);
       return;
     }
 
@@ -91,8 +99,8 @@ void MemorySaverChipView::UpdateImpl() {
       }
       case memory_saver::ChipState::EXPANDED_WITH_SAVINGS: {
         SetVisible(true);
-        int64_t const memory_savings =
-            memory_saver::GetDiscardedMemorySavingsInBytes(web_contents);
+        const base::ByteCount memory_savings =
+            memory_saver::GetDiscardedMemorySavings(web_contents);
         std::u16string memory_savings_string = ui::FormatBytes(memory_savings);
         SetLabel(l10n_util::GetStringFUTF16(IDS_MEMORY_SAVER_CHIP_SAVINGS_LABEL,
                                             {memory_savings_string}),

@@ -15,7 +15,6 @@
 #include "base/format_macros.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/numerics/clamped_math.h"
 #include "base/rand_util.h"
 #include "base/sequence_checker.h"
@@ -54,18 +53,18 @@ class LoopbackServerEntity;
 
 namespace {
 
-static const char kHistogramSuffix[] = "LoopBackServer";
+constexpr char kHistogramSuffix[] = "LoopBackServer";
 
-static const int kCurrentLoopbackServerProtoVersion = 1;
-static const int kKeystoreKeyLength = 16;
+constexpr int kCurrentLoopbackServerProtoVersion = 1;
+constexpr int kKeystoreKeyLength = 16;
 
 // Properties of the bookmark bar permanent folders.
-static const char kBookmarkBarFolderServerTag[] = "bookmark_bar";
-static const char kBookmarkBarFolderName[] = "Bookmark Bar";
-static const char kOtherBookmarksFolderServerTag[] = "other_bookmarks";
-static const char kOtherBookmarksFolderName[] = "Other Bookmarks";
-static const char kSyncedBookmarksFolderServerTag[] = "synced_bookmarks";
-static const char kSyncedBookmarksFolderName[] = "Synced Bookmarks";
+constexpr char kBookmarkBarFolderServerTag[] = "bookmark_bar";
+constexpr char kBookmarkBarFolderName[] = "Bookmark Bar";
+constexpr char kOtherBookmarksFolderServerTag[] = "other_bookmarks";
+constexpr char kOtherBookmarksFolderName[] = "Other Bookmarks";
+constexpr char kSyncedBookmarksFolderServerTag[] = "synced_bookmarks";
+constexpr char kSyncedBookmarksFolderName[] = "Synced Bookmarks";
 
 int GetServerMigrationVersion(
     const std::map<DataType, int>& server_migration_versions,
@@ -546,7 +545,7 @@ string LoopbackServer::CommitEntity(
     // NIGORI is the only permanent item type that should be updated by the
     // client.
     EntityMap::const_iterator iter = entities_.find(client_entity.id_string());
-    CHECK(iter != entities_.end(), base::NotFatalUntil::M130);
+    CHECK(iter != entities_.end());
     entity = PersistentPermanentEntity::CreateUpdatedNigoriEntity(
         client_entity, *iter->second);
   } else if (type == syncer::BOOKMARKS) {
@@ -602,7 +601,7 @@ void LoopbackServer::BuildEntryResponseForSuccessfulCommit(
     const std::string& entity_id,
     sync_pb::CommitResponse_EntryResponse* entry_response) {
   EntityMap::const_iterator iter = entities_.find(entity_id);
-  CHECK(iter != entities_.end(), base::NotFatalUntil::M130);
+  CHECK(iter != entities_.end());
   const LoopbackServerEntity& entity = *iter->second;
   entry_response->set_response_type(response_type_override_
                                         ? response_type_override_.Run(entity)
@@ -684,7 +683,7 @@ bool LoopbackServer::HandleCommitRequest(
     }
 
     EntityMap::const_iterator iter = entities_.find(entity_id);
-    CHECK(iter != entities_.end(), base::NotFatalUntil::M130);
+    CHECK(iter != entities_.end());
     committed_data_types.Put(iter->second->GetDataType());
 
     if (observer_for_tests_) {

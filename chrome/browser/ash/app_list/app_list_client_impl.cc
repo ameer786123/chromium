@@ -20,7 +20,7 @@
 #include "ash/public/cpp/app_list/app_list_types.h"
 #include "ash/public/cpp/new_window_delegate.h"
 #include "ash/shell.h"
-#include "ash/system/federated/federated_service_controller_impl.h"
+#include "base/check_deref.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
@@ -31,6 +31,7 @@
 #include "base/metrics/user_metrics.h"
 #include "base/strings/strcat.h"
 #include "base/trace_event/trace_event.h"
+#include "build/buildflag.h"
 #include "chrome/browser/apps/app_service/metrics/app_service_metrics.h"
 #include "chrome/browser/ash/app_list/app_list_controller_delegate.h"
 #include "chrome/browser/ash/app_list/app_list_model_updater.h"
@@ -43,7 +44,9 @@
 #include "chrome/browser/ash/app_list/search/ranking/launch_data.h"
 #include "chrome/browser/ash/app_list/search/search_controller.h"
 #include "chrome/browser/ash/app_list/search/search_controller_factory.h"
-#include "chrome/browser/browser_process.h"
+#include "chrome/browser/ash/browser_delegate/browser_controller.h"
+#include "chrome/browser/ash/browser_delegate/browser_delegate.h"
+#include "chrome/browser/ash/browser_delegate/browser_type.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -51,12 +54,11 @@
 #include "chrome/browser/ui/ash/shelf/app_shortcut_shelf_item_controller.h"
 #include "chrome/browser/ui/ash/shelf/chrome_shelf_controller.h"
 #include "chrome/browser/ui/ash/shelf/chrome_shelf_controller_util.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/grit/chrome_unscaled_resources.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/scalable_iph/scalable_iph.h"
 #include "chromeos/ash/components/scalable_iph/scalable_iph_factory.h"
@@ -65,10 +67,16 @@
 #include "components/feature_engagement/public/tracker.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/user_manager.h"
+#include "ui/base/models/image_model.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/display/screen.h"
 #include "ui/display/types/display_constants.h"
+#include "ui/gfx/image/image.h"
+
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+#include "chrome/grit/preinstalled_web_apps_resources.h"
+#endif
 
 namespace {
 
@@ -143,23 +151,21 @@ Profile* GetProfile(const AccountId& account_id) {
           account_id));
 }
 
-bool IsPrimaryProfile(Profile* profile) {
-  return user_manager::UserManager::Get()->IsPrimaryUser(
+bool IsPrimaryProfile(user_manager::UserManager& user_manager,
+                      Profile* profile) {
+  return user_manager.IsPrimaryUser(
       ash::BrowserContextHelper::Get()->GetUserByBrowserContext(profile));
 }
 
 }  // namespace
 
-AppListClientImpl::AppListClientImpl()
-    : app_list_controller_(ash::AppListController::Get()) {
-  ProfileManager* profile_manager = g_browser_process->profile_manager();
-  profile_manager_observation_.Observe(profile_manager);
-  for (Profile* profile : profile_manager->GetLoadedProfiles()) {
-    OnProfileAdded(profile);
-  }
+AppListClientImpl::AppListClientImpl(user_manager::UserManager* user_manager)
+    : user_manager_(CHECK_DEREF(user_manager)),
+      app_list_controller_(ash::AppListController::Get()) {
+  user_manager_observation_.Observe(user_manager);
 
   app_list_controller_->SetClient(this);
-  user_manager::UserManager::Get()->AddSessionStateObserver(this);
+  user_manager->AddSessionStateObserver(this);
   session_manager::SessionManager::Get()->AddObserver(this);
 
   DCHECK(!g_app_list_client_instance);
@@ -172,8 +178,7 @@ AppListClientImpl::AppListClientImpl()
 AppListClientImpl::~AppListClientImpl() {
   SetProfile(nullptr);
 
-  auto* user_manager = user_manager::UserManager::Get();
-  user_manager->RemoveSessionStateObserver(this);
+  user_manager_->RemoveSessionStateObserver(this);
 
   session_manager::SessionManager::Get()->RemoveObserver(this);
 
@@ -218,7 +223,7 @@ void AppListClientImpl::StartSearch(const std::u16string& trimmed_query) {
           state_for_new_user_->started_search && trimmed_query.empty()) {
         state_for_new_user_->first_search_result_recorded = true;
         RecordFirstSearchResult(ash::NO_RESULT,
-                                display::Screen::GetScreen()->InTabletMode());
+                                display::Screen::Get()->InTabletMode());
       } else if (!trimmed_query.empty()) {
         state_for_new_user_->started_search = true;
       }
@@ -276,7 +281,7 @@ void AppListClientImpl::OpenSearchResult(int profile_id,
   }
 
   if (launched_from == ash::AppListLaunchedFrom::kLaunchedFromSearchBox) {
-    if (display::Screen::GetScreen()->InTabletMode()) {
+    if (display::Screen::Get()->InTabletMode()) {
       base::UmaHistogramCounts100("Apps.AppListSearchQueryLengthV2.TabletMode",
                                   last_query_length);
     } else {
@@ -293,9 +298,8 @@ void AppListClientImpl::OpenSearchResult(int profile_id,
       ash::AppListNotifier::Result(result_id, result->metrics_type(),
                                    result->continue_file_suggestion_type()));
 
-  RecordSearchResultOpenTypeHistogram(
-      launched_from, result->metrics_type(),
-      display::Screen::GetScreen()->InTabletMode());
+  RecordSearchResultOpenTypeHistogram(launched_from, result->metrics_type(),
+                                      display::Screen::Get()->InTabletMode());
 
   if (launch_as_default) {
     RecordDefaultSearchResultOpenTypeHistogram(result->metrics_type());
@@ -316,7 +320,7 @@ void AppListClientImpl::OpenSearchResult(int profile_id,
       !state_for_new_user_->first_search_result_recorded) {
     state_for_new_user_->first_search_result_recorded = true;
     RecordFirstSearchResult(result->metrics_type(),
-                            display::Screen::GetScreen()->InTabletMode());
+                            display::Screen::Get()->InTabletMode());
   }
 
   // OpenResult may cause |result| to be deleted.
@@ -416,7 +420,8 @@ void AppListClientImpl::OnAppListVisibilityWillChange(bool visible) {
 void AppListClientImpl::MaybeRecalculateAppsGridDefaultOrder() {
   // Do not attempt to calculate the experimental arm if the active
   // profile is not the primary profile.
-  if (!IsPrimaryProfile(ProfileManager::GetActiveUserProfile())) {
+  if (!IsPrimaryProfile(user_manager_.get(),
+                        ProfileManager::GetActiveUserProfile())) {
     return;
   }
 
@@ -448,7 +453,7 @@ void AppListClientImpl::OnAppListVisibilityChanged(bool visible) {
         !state_for_new_user_->first_search_result_recorded) {
       state_for_new_user_->first_search_result_recorded = true;
       RecordFirstSearchResult(ash::NO_RESULT,
-                              display::Screen::GetScreen()->InTabletMode());
+                              display::Screen::Get()->InTabletMode());
     }
   }
 }
@@ -471,7 +476,7 @@ void AppListClientImpl::OnQuickSettingsChanged(
     const std::map<std::string, int>& values) {}
 
 void AppListClientImpl::ActiveUserChanged(user_manager::User* active_user) {
-  if (user_manager::UserManager::Get()->IsCurrentUserNew()) {
+  if (user_manager_->IsCurrentUserNew()) {
     // In tests, the user before switching and the one after switching may
     // be both new. It should not happen in the real world.
     state_for_new_user_ = StateForNewUser();
@@ -551,8 +556,7 @@ void AppListClientImpl::SetProfile(Profile* new_profile) {
 
 void AppListClientImpl::SetUpSearchUI() {
   search_controller_ = app_list::CreateSearchController(
-      profile_, current_model_updater_, this, GetNotifier(),
-      ash::Shell::Get()->federated_service_controller());
+      profile_, current_model_updater_, this, GetNotifier());
 
   // Refresh the results used for the suggestion chips with empty query.
   // This fixes crbug.com/999287.
@@ -581,8 +585,7 @@ void AppListClientImpl::InitializeAsIfNewUserLoginForTest() {
 void AppListClientImpl::OnSessionStateChanged() {
   TRACE_EVENT0("ui", "AppListClientImpl::OnSessionStateChanged");
   // Return early if the current user is not new or the session is not active.
-  if (!user_manager::UserManager::Get()->IsCurrentUserNew() ||
-      !IsSessionActive()) {
+  if (!user_manager_->IsCurrentUserNew() || !IsSessionActive()) {
     return;
   }
 
@@ -602,7 +605,6 @@ void AppListClientImpl::OnTemplateURLServiceChanged() {
           template_url_service->search_terms_data()) == SEARCH_ENGINE_GOOGLE;
 
   current_model_updater_->SetSearchEngineIsGoogle(is_google);
-  search_controller_->OnDefaultSearchIsGoogleSet(is_google);
 }
 
 void AppListClientImpl::ShowAppList(ash::AppListShowSource source) {
@@ -638,9 +640,7 @@ int64_t AppListClientImpl::GetAppListDisplayId() {
   if (!app_list_window) {
     return display::kInvalidDisplayId;
   }
-  return display::Screen::GetScreen()
-      ->GetDisplayNearestWindow(app_list_window)
-      .id();
+  return display::Screen::Get()->GetDisplayNearestWindow(app_list_window).id();
 }
 
 bool AppListClientImpl::IsAppPinned(const std::string& app_id) {
@@ -680,16 +680,19 @@ void AppListClientImpl::OpenURL(Profile* profile,
   Navigate(&params);
 }
 
-void AppListClientImpl::OnProfileAdded(Profile* profile) {
+void AppListClientImpl::OnUserProfileCreated(const user_manager::User& user) {
   // NOTE: Apps Collections in Ash is currently only supported for the primary
   // user profile. This is a self-imposed restriction.
-  if (!IsPrimaryProfile(profile)) {
+  if (!user_manager_->IsPrimaryUser(&user)) {
     return;
   }
 
   // Since we only currently support the primary user profile, we can stop
-  // observing the profile manager once it has been added.
-  profile_manager_observation_.Reset();
+  // observing the user manager once it has been created.
+  user_manager_observation_.Reset();
+
+  Profile* profile = Profile::FromBrowserContext(
+      ash::BrowserContextHelper::Get()->GetBrowserContextByUser(&user));
 
   // Cache whether the user associated with the primary profile is considered
   // new, based on whether the first app list sync in the session was the first
@@ -709,10 +712,6 @@ void AppListClientImpl::OnProfileAdded(Profile* profile) {
         weak_ptr_factory_.GetWeakPtr()));
   }
   survey_handler_ = std::make_unique<app_list::AppListSurveyHandler>(profile);
-}
-
-void AppListClientImpl::OnProfileManagerDestroying() {
-  profile_manager_observation_.Reset();
 }
 
 ash::AppListNotifier* AppListClientImpl::GetNotifier() {
@@ -738,31 +737,13 @@ bool AppListClientImpl::HasReordered() {
   return current_model_updater_->ModelHasBeenReorderedInThisSession();
 }
 
-void AppListClientImpl::GetAssistantNewEntryPointEligibility(
-    GetAssistantNewEntryPointEligibilityCallback callback) {
-  ash::assistant::AssistantBrowserDelegate* delegate =
-      GetAssistantBrowserDelegateForNewEntryPoint();
-  if (!delegate) {
-    std::move(callback).Run(false);
-    return;
-  }
-
-  CHECK(profile_) << "Profile must be set if the delegate is obtained";
-  delegate->is_new_entry_point_eligible_for_primary_profile_ready().Post(
-      FROM_HERE,
-      base::BindOnce(
-          &AppListClientImpl::OnAssistantNewEntryPointEligibilityReady,
-          weak_ptr_factory_.GetWeakPtr(), profile_, std::move(callback)));
-}
-
-std::optional<std::string> AppListClientImpl::GetAssistantNewEntryPointName() {
-  ash::assistant::AssistantBrowserDelegate* delegate =
-      GetAssistantBrowserDelegateForNewEntryPoint();
-  if (!delegate) {
-    return std::nullopt;
-  }
-
-  return delegate->GetNewEntryPointName();
+gfx::Image AppListClientImpl::GetGeminiIcon() {
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  int resource_id = IDR_PREINSTALLED_WEB_APPS_GEMINI_ICON_192_PNG;
+#else
+  int resource_id = IDR_PRODUCT_LOGO_128;
+#endif
+  return ui::ImageModel::FromResourceId(resource_id).GetImage();
 }
 
 std::unique_ptr<ash::ScopedIphSession>
@@ -817,7 +798,7 @@ void AppListClientImpl::RecordViewShown(bool is_app_collections_shown) {
   // new anymore.
   // TODO(crbug.com/40767698): If this bug is fixed, we might need to
   // do some changes here.
-  if (!user_manager::UserManager::Get()->IsCurrentUserNew()) {
+  if (!user_manager_->IsCurrentUserNew()) {
     DCHECK(!state_for_new_user_);
     return;
   }
@@ -846,7 +827,7 @@ void AppListClientImpl::RecordViewShown(bool is_app_collections_shown) {
 
   state_for_new_user_->showing_recorded = true;
   state_for_new_user_->shown_in_tablet_mode =
-      display::Screen::GetScreen()->InTabletMode();
+      display::Screen::Get()->InTabletMode();
 
   CHECK(new_user_session_activation_time_.has_value());
   const base::TimeDelta opening_duration =
@@ -885,16 +866,16 @@ void AppListClientImpl::RecordOpenedResultFromSearchBox(
   // Check whether there is any Chrome non-app browser window open and not
   // minimized.
   bool non_app_browser_open_and_not_minimzed = false;
-  for (Browser* browser : *BrowserList::GetInstance()) {
-    if (browser->type() != Browser::TYPE_NORMAL ||
-        browser->window()->IsMinimized()) {
-      // Skip if `browser` is not a normal browser or `browser` is minimized.
-      continue;
-    }
-
-    non_app_browser_open_and_not_minimzed = true;
-    break;
-  }
+  ash::BrowserController::GetInstance()->ForEachBrowser(
+      ash::BrowserController::BrowserOrder::kAscendingCreationTime,
+      [&](ash::BrowserDelegate& browser) {
+        if (browser.GetType() != ash::BrowserType::kNormal ||
+            browser.IsMinimized()) {
+          return ash::BrowserController::kContinueIteration;
+        }
+        non_app_browser_open_and_not_minimzed = true;
+        return ash::BrowserController::kBreakIteration;
+      });
 
   if (non_app_browser_open_and_not_minimzed) {
     UMA_HISTOGRAM_ENUMERATION(
@@ -918,10 +899,11 @@ void AppListClientImpl::MaybeRecordLauncherAction(
       launched_from == ash::AppListLaunchedFrom::kLaunchedFromContinueTask ||
       launched_from == ash::AppListLaunchedFrom::kLaunchedFromQuickAppAccess ||
       launched_from == ash::AppListLaunchedFrom::kLaunchedFromAppsCollections ||
-      launched_from == ash::AppListLaunchedFrom::kLaunchedFromDiscoveryChip);
+      launched_from == ash::AppListLaunchedFrom::kLaunchedFromDiscoveryChip ||
+      launched_from == ash::AppListLaunchedFrom::kLaunchedFromSearchBoxIcon);
 
   // Return early if the current user is not new.
-  if (!user_manager::UserManager::Get()->IsCurrentUserNew()) {
+  if (!user_manager_->IsCurrentUserNew()) {
     DCHECK(!state_for_new_user_);
     return;
   }
@@ -932,7 +914,7 @@ void AppListClientImpl::MaybeRecordLauncherAction(
   }
 
   state_for_new_user_->action_recorded = true;
-  if (display::Screen::GetScreen()->InTabletMode()) {
+  if (display::Screen::Get()->InTabletMode()) {
     base::UmaHistogramEnumeration("Apps.NewUserFirstLauncherAction.TabletMode",
                                   launched_from);
   } else {
@@ -946,7 +928,7 @@ void AppListClientImpl::MaybeRecordLauncherAction(
   if (launcher_action_duration >= base::TimeDelta()) {
     // `base::Time` may skew. Therefore only record when the time duration is
     // non-negative.
-    if (display::Screen::GetScreen()->InTabletMode()) {
+    if (display::Screen::Get()->InTabletMode()) {
       UMA_HISTOGRAM_CUSTOM_TIMES(
           /*name=*/
           "Apps.TimeBetweenNewUserSessionActivationAndFirstLauncherAction."
@@ -969,7 +951,7 @@ void AppListClientImpl::MaybeRecordActivatedItemVisibility(
     ash::AppListLaunchedFrom launched_from,
     bool is_app_above_the_fold) {
   // Do not record this metric for tablet mode.
-  if (display::Screen::GetScreen()->InTabletMode()) {
+  if (display::Screen::Get()->InTabletMode()) {
     return;
   }
   const std::optional<apps::DefaultAppName> default_app_name =
@@ -993,54 +975,12 @@ void AppListClientImpl::MaybeRecordActivatedItemVisibility(
       default_app_name.value());
 }
 
-void AppListClientImpl::OnAssistantNewEntryPointEligibilityReady(
-    Profile* profile,
-    GetAssistantNewEntryPointEligibilityCallback callback) {
-  // A profile might have been switched during the async call. Fail-safe if it
-  // has changed.
-  if (profile != profile_) {
-    std::move(callback).Run(false);
-    return;
-  }
-
-  ash::assistant::AssistantBrowserDelegate* delegate =
-      GetAssistantBrowserDelegateForNewEntryPoint();
-  if (!delegate) {
-    std::move(callback).Run(false);
-    return;
-  }
-
-  base::expected<bool, ash::assistant::AssistantBrowserDelegate::Error>
-      eligibility = delegate->IsNewEntryPointEligibleForPrimaryProfile();
-  CHECK(eligibility.has_value())
-      << "AppListClientImpl is reading a value after waiting the ready event. "
-         "There should be no error.";
-
-  std::move(callback).Run(eligibility.value());
-}
-
-ash::assistant::AssistantBrowserDelegate*
-AppListClientImpl::GetAssistantBrowserDelegateForNewEntryPoint() {
-  if (profile_ == nullptr) {
-    return nullptr;
-  }
-
-  // Assistant new entry point is supported only for a primary profile.
-  bool is_primary_profile = user_manager::UserManager::Get()->IsPrimaryUser(
-      ash::BrowserContextHelper::Get()->GetUserByBrowserContext(profile_));
-  if (!is_primary_profile) {
-    return nullptr;
-  }
-
-  return ash::assistant::AssistantBrowserDelegate::Get();
-}
-
 std::optional<bool> AppListClientImpl::IsNewUser(
     const AccountId& account_id) const {
   // NOTE: Apps Collections in Ash is currently only supported for the primary
   // user profile. This is a self-imposed restriction but may happen in tests.
   auto* const profile = GetProfile(account_id);
-  if (!IsPrimaryProfile(profile)) {
+  if (!IsPrimaryProfile(user_manager_.get(), profile)) {
     return false;
   }
   return is_primary_profile_new_user_;
@@ -1051,7 +991,7 @@ void AppListClientImpl::RecordAppsDefaultVisibility(
     const std::vector<std::string>& apps_below_the_fold,
     bool is_apps_collections_page) {
   // Do not record this metric for tablet mode.
-  if (display::Screen::GetScreen()->InTabletMode()) {
+  if (display::Screen::Get()->InTabletMode()) {
     return;
   }
 

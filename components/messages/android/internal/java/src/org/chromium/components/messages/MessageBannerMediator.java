@@ -7,6 +7,7 @@ package org.chromium.components.messages;
 import static org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.ScrollDirection.DOWN;
 import static org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.ScrollDirection.UP;
 import static org.chromium.components.messages.MessageBannerProperties.CONTENT_ALPHA;
+import static org.chromium.components.messages.MessageBannerProperties.ENABLE_CLOSE_BUTTON;
 import static org.chromium.components.messages.MessageBannerProperties.IS_WITHIN_TAP_PROTECTION_PERIOD_SUPPLIER;
 import static org.chromium.components.messages.MessageBannerProperties.MARGIN_TOP;
 import static org.chromium.components.messages.MessageBannerProperties.TRANSLATION_X;
@@ -24,7 +25,6 @@ import androidx.annotation.IntDef;
 import org.chromium.base.MathUtils;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.TimeUtils;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.BuildConfig;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -41,6 +41,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 /** Mediator responsible for the business logic in a message banner. */
 @NullMarked
@@ -64,10 +65,9 @@ class MessageBannerMediator implements SwipeHandler {
     private static final int ENTER_DURATION_MS = 550;
     private static final int EXIT_DURATION_MS = 350;
     private static final TimeInterpolator TRANSLATION_ENTER_INTERPOLATOR =
-            Interpolators.EMPHASIZED_DECELERATE;
-    private static final TimeInterpolator ALPHA_ENTER_INTERPOLATOR =
-            Interpolators.EMPHASIZED_DECELERATE;
-    private static final TimeInterpolator EXIT_INTERPOLATOR = Interpolators.EMPHASIZED_DECELERATE;
+            Interpolators.DEFAULT_SPATIAL;
+    private static final TimeInterpolator ALPHA_ENTER_INTERPOLATOR = Interpolators.DEFAULT_SPATIAL;
+    private static final TimeInterpolator EXIT_INTERPOLATOR = Interpolators.DEFAULT_SPATIAL;
 
     private static long sTapProtectionDurationMsForTesting;
 
@@ -107,7 +107,7 @@ class MessageBannerMediator implements SwipeHandler {
         mMaxHorizontalTranslationPx = resources.getDisplayMetrics().widthPixels;
         mMessageDismissed = messageDismissed;
         mSwipeAnimationHandler = swipeAnimationHandler;
-        mDefaultMarginTop = resources.getDimensionPixelSize(R.dimen.message_shadow_top_margin);
+        mDefaultMarginTop = 0;
         mPeekingMarginTop =
                 resources.getDimensionPixelSize(R.dimen.message_peeking_layer_height)
                         + mDefaultMarginTop;
@@ -154,6 +154,9 @@ class MessageBannerMediator implements SwipeHandler {
                                 < ENTER_DURATION_MS / 2 + protectionDuration + startTimestamp;
                     });
         }
+        mModel.set(
+                ENABLE_CLOSE_BUTTON,
+                MessageFeatureList.isCloseButtonEnabled() && toIndex == Position.FRONT);
         cancelAnyAnimations();
         return startAnimation(
                 true,

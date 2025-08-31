@@ -50,9 +50,7 @@ InterestGroupKAnonymityManager::InterestGroupKAnonymityManager(
       k_anonymity_service_callback_(k_anonymity_service_callback),
       weak_ptr_factory_(this) {}
 
-InterestGroupKAnonymityManager::~InterestGroupKAnonymityManager() {
-  DCHECK(queries_in_progress_.empty());
-}
+InterestGroupKAnonymityManager::~InterestGroupKAnonymityManager() = default;
 
 InterestGroupKAnonymityManager::InProgressQueryState::InProgressQueryState(
     base::Time update_time,
@@ -63,6 +61,31 @@ InterestGroupKAnonymityManager::InProgressQueryState::InProgressQueryState(
     const InProgressQueryState&) = default;
 InterestGroupKAnonymityManager::InProgressQueryState::~InProgressQueryState() =
     default;
+
+void InterestGroupKAnonymityManager::QueryKAnonymityOfOwners(
+    base::span<const url::Origin> owners) {
+  if (!base::FeatureList::IsEnabled(features::kFledgeQueryKAnonymity)) {
+    return;
+  }
+  CHECK(caching_storage_);
+  for (const auto& owner : owners) {
+    caching_storage_->GetInterestGroupsForOwner(
+        owner, base::BindOnce(
+                   &InterestGroupKAnonymityManager::OnGotInterestGroupsOfOwner,
+                   weak_ptr_factory_.GetWeakPtr()));
+  }
+}
+
+void InterestGroupKAnonymityManager::OnGotInterestGroupsOfOwner(
+    scoped_refptr<StorageInterestGroups> groups) {
+  for (const SingleStorageInterestGroup& group : groups->GetInterestGroups()) {
+    InterestGroupKanonUpdateParameter kanon_update(group->last_k_anon_updated);
+    kanon_update.hashed_keys = group->interest_group.GetAllKAnonKeys();
+    QueryKAnonymityData(blink::InterestGroupKey(group->interest_group.owner,
+                                                group->interest_group.name),
+                        kanon_update);
+  }
+}
 
 void InterestGroupKAnonymityManager::QueryKAnonymityData(
     const blink::InterestGroupKey& interest_group_key,

@@ -466,11 +466,6 @@ bool DeviceCommandStartCrdSessionJob::ShouldTerminateUponInput() const {
 }
 
 bool DeviceCommandStartCrdSessionJob::ShouldAllowReconnections() const {
-  if (!base::FeatureList::IsEnabled(
-          remoting::features::kEnableCrdAdminRemoteAccessV2)) {
-    return false;
-  }
-
   // Curtained off sessions support reconnections if Chrome restarts.
   return IsRemoteAccessSession();
 }
@@ -486,9 +481,7 @@ bool DeviceCommandStartCrdSessionJob::ShouldAllowTroubleshootingTools() const {
 }
 
 bool DeviceCommandStartCrdSessionJob::ShouldAllowFileTransfer() const {
-  return IsKioskSession(GetCurrentUserSessionType()) &&
-         base::FeatureList::IsEnabled(
-             remoting::features::kEnableCrdFileTransferForKiosk);
+  return IsKioskSession(GetCurrentUserSessionType());
 }
 
 bool DeviceCommandStartCrdSessionJob::ShouldAutoAcceptSession(

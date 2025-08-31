@@ -4,6 +4,7 @@
 
 #import "ios/web_view/internal/signin/ios_web_view_signin_client.h"
 
+#import "base/notimplemented.h"
 #import "components/signin/ios/browser/wait_for_network_callback_helper_ios.h"
 #import "components/signin/public/identity_manager/primary_account_change_event.h"
 #import "components/version_info/channel.h"
@@ -64,8 +65,7 @@ void IOSWebViewSigninClient::RemoveContentSettingsObserver(
 
 void IOSWebViewSigninClient::PreSignOut(
     base::OnceCallback<void(SignoutDecision)> on_signout_decision_reached,
-    signin_metrics::ProfileSignout signout_source_metric,
-    bool has_sync_account) {
+    signin_metrics::ProfileSignout signout_source_metric) {
   std::move(on_signout_decision_reached).Run(SignoutDecision::ALLOW);
 }
 

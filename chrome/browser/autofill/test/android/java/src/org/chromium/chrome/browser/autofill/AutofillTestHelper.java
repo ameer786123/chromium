@@ -31,6 +31,7 @@ import org.chromium.components.autofill.AddressNormalizer;
 import org.chromium.components.autofill.AutofillProfile;
 import org.chromium.components.autofill.AutofillSuggestion;
 import org.chromium.components.autofill.IbanRecordType;
+import org.chromium.components.autofill.PaymentsPayload;
 import org.chromium.components.autofill.SubKeyRequester;
 import org.chromium.components.autofill.SuggestionType;
 import org.chromium.components.autofill.VirtualCardEnrollmentState;
@@ -93,11 +94,9 @@ public class AutofillTestHelper {
                 () -> getPersonalDataManagerForLastUsedProfile().getProfile(guid));
     }
 
-    List<AutofillProfile> getProfilesToSuggest(final boolean includeNameInLabel) {
+    List<AutofillProfile> getProfilesToSuggest() {
         return runOnUiThreadBlocking(
-                () ->
-                        getPersonalDataManagerForLastUsedProfile()
-                                .getProfilesToSuggest(includeNameInLabel));
+                () -> getPersonalDataManagerForLastUsedProfile().getProfilesToSuggest());
     }
 
     List<AutofillProfile> getProfilesForSettings() {
@@ -105,8 +104,15 @@ public class AutofillTestHelper {
                 () -> getPersonalDataManagerForLastUsedProfile().getProfilesForSettings());
     }
 
+    String getProfileDescriptionForEditor(String guid) {
+        return runOnUiThreadBlocking(
+                () ->
+                        getPersonalDataManagerForLastUsedProfile()
+                                .getProfileDescriptionForEditor(guid));
+    }
+
     int getNumberOfProfilesToSuggest() {
-        return getProfilesToSuggest(false).size();
+        return getProfilesToSuggest().size();
     }
 
     int getNumberOfProfilesForSettings() {
@@ -438,6 +444,7 @@ public class AutofillTestHelper {
                 /* obfuscatedLastFourDigits= */ obfuscatedLastFourDigits,
                 /* cvc= */ "",
                 /* issuerId= */ "",
+                /* benefitSource= */ "",
                 /* productTermsUrl= */ null);
     }
 
@@ -475,9 +482,29 @@ public class AutofillTestHelper {
                 /* obfuscatedLastFourDigits= */ obfuscatedLastFourDigits,
                 /* cvc= */ "",
                 /* issuerId= */ "",
+                /* benefitSource= */ "",
                 /* productTermsUrl= */ null);
     }
 
+    /**
+     * Creates a new {@code AutofillSuggestion} object using a builder pattern.
+     *
+     * @param label The main label of the suggestion.
+     * @param secondaryLabel The secondary label of the suggestion.
+     * @param subLabel The sublabel of the suggestion.
+     * @param secondarySubLabel The secondary sublabel of the suggestion.
+     * @param labelContentDescription The message to be announced for the main label of the
+     *     suggestion.
+     * @param suggestionType Type of the suggestion.
+     * @param customIconUrl The {@link GURL} for the custom icon.
+     * @param iconId The resource ID for the icon associated with the suggestion.
+     * @param applyDeactivatedStyle Whether to apply deactivated style to the suggestion.
+     * @param shouldDisplayTermsAvailable Whether to display terms message with the suggestion.
+     * @param guid The payment method identifier associated with the suggestion.
+     * @param isLocalPaymentsMethod Whether the payment method associated with the suggestion is
+     *     local.
+     * @return A newly created, {@code AutofillSuggestion} object.
+     */
     public static AutofillSuggestion createCreditCardSuggestion(
             String label,
             String secondaryLabel,
@@ -488,18 +515,25 @@ public class AutofillTestHelper {
             GURL customIconUrl,
             int iconId,
             boolean applyDeactivatedStyle,
-            boolean shouldDisplayTermsAvailable) {
+            boolean shouldDisplayTermsAvailable,
+            String guid,
+            boolean isLocalPaymentsMethod) {
+        PaymentsPayload payload =
+                new PaymentsPayload(
+                        labelContentDescription,
+                        shouldDisplayTermsAvailable,
+                        guid,
+                        isLocalPaymentsMethod);
         return new AutofillSuggestion.Builder()
                 .setLabel(label)
                 .setSecondaryLabel(secondaryLabel)
                 .setSubLabel(subLabel)
                 .setSecondarySubLabel(secondarySubLabel)
-                .setLabelContentDescription(labelContentDescription)
                 .setSuggestionType(suggestionType)
                 .setCustomIconUrl(customIconUrl)
                 .setIconId(iconId)
                 .setApplyDeactivatedStyle(applyDeactivatedStyle)
-                .setShouldDisplayTermsAvailable(shouldDisplayTermsAvailable)
+                .setPayload(payload)
                 .build();
     }
 

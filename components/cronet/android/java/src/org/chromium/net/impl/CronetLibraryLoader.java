@@ -5,6 +5,7 @@
 package org.chromium.net.impl;
 
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.os.ConditionVariable;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -15,14 +16,15 @@ import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.metrics.ScopedSysTraceEvent;
+import org.chromium.net.NetLogCaptureMode;
 import org.chromium.net.NetworkChangeNotifier;
 import org.chromium.net.RegistrationPolicyAlwaysRegister;
 import org.chromium.net.httpflags.BaseFeature;
@@ -54,12 +56,7 @@ public class CronetLibraryLoader {
     private static final ConditionVariable sHttpFlagsLoaded = new ConditionVariable();
 
     @VisibleForTesting
-    public static final String UPDATE_NETWORK_STATE_ONCE_ON_STARTUP_FLAG_NAME =
-            "Cronet_UpdateNetworkStateOnlyOnceOnStartup";
-
-    @VisibleForTesting
-    public static final String INITIALIZE_BUILD_INFO_ON_STARTUP =
-            "Cronet_InitializeBuildInfoOnStartup";
+    public static final String TRACE_NET_LOG_SYSTEM_PROPERTY_KEY = "debug.cronet.trace_netlog";
 
     /**
      * Ensure that native library is loaded and initialized. Can be called from any thread, the load
@@ -85,6 +82,10 @@ public class CronetLibraryLoader {
     public static void loadLibrary() {
         if (sSwitchToTestLibrary) {
             System.loadLibrary(TESTING_LIBRARY_NAME);
+            // Enable VLOG(2) unconditionally, as we want to get as much logging as possible when
+            // running tests. Also, do this as early as possible so that early logs are not dropped.
+            // See also https://crbug.com/433957945.
+            CronetLibraryLoaderJni.get().setMinLogLevel(-2);
         } else {
             System.loadLibrary(LIBRARY_NAME);
         }
@@ -146,21 +147,6 @@ public class CronetLibraryLoader {
                     CronetLibraryLoaderJni.get()
                             .nativeInit(CronetManifest.shouldUsePerfetto(applicationContext));
                 }
-                var initializeBuildInfoOnStartup =
-                        HttpFlagsForImpl.getHttpFlags()
-                                .flags()
-                                .get(INITIALIZE_BUILD_INFO_ON_STARTUP);
-
-                // The flag is considered active if it is absent unlike the usual case
-                // where the flag is considered active only if it's "true". This is needed
-                // to ensure we don't change the behaviour.
-                if (initializeBuildInfoOnStartup == null
-                        || initializeBuildInfoOnStartup.getBoolValue()) {
-                    // This is added here to maintain the previous behaviour of Cronet where
-                    // it would initialize BuildInfo when it calls `getCronetVersion` in the
-                    // proceeding line. We want to A/B on the impact of removing this.
-                    BuildInfo.getInstance();
-                }
                 String implVersion = ImplVersion.getCronetVersion();
                 if (!implVersion.equals(CronetLibraryLoaderJni.get().getCronetVersion())) {
                     throw new RuntimeException(
@@ -184,6 +170,11 @@ public class CronetLibraryLoader {
     }
 
     private static void setNativeLoggingLevel() {
+        if (sSwitchToTestLibrary) {
+            // We already set the native log level in loadLibrary().
+            return;
+        }
+
         // The constants used here should be kept in sync with logging::LogMessage::~LogMessage().
         final String nativeLogTag = "chromium";
         int loggingLevel;
@@ -208,6 +199,49 @@ public class CronetLibraryLoader {
         return sInitThread.getLooper() == Looper.myLooper();
     }
 
+    private static @NetLogCaptureMode int getTraceNetLogCaptureMode() {
+        @NetLogCaptureMode int traceNetLogCaptureMode = NetLogCaptureMode.HEAVILY_REDACTED;
+        var requestedTraceNetLogCaptureMode =
+                AndroidOsSystemProperties.get(
+                        TRACE_NET_LOG_SYSTEM_PROPERTY_KEY, "heavily_redacted");
+        if (requestedTraceNetLogCaptureMode.equals("heavily_redacted")) {
+            traceNetLogCaptureMode = NetLogCaptureMode.HEAVILY_REDACTED;
+        } else if (requestedTraceNetLogCaptureMode.equals("on")) {
+            // Note DEFAULT is mapped to "on", not "default", to avoid confusion with regard to
+            // the default value of the system property.
+            traceNetLogCaptureMode = NetLogCaptureMode.DEFAULT;
+        } else if (requestedTraceNetLogCaptureMode.equals("include_sensitive")) {
+            traceNetLogCaptureMode = NetLogCaptureMode.INCLUDE_SENSITIVE;
+        } else if (requestedTraceNetLogCaptureMode.equals("everything")) {
+            traceNetLogCaptureMode = NetLogCaptureMode.EVERYTHING;
+        } else {
+            Log.w(
+                    TAG,
+                    "Unknown value for %s system property, ignoring: %s",
+                    TRACE_NET_LOG_SYSTEM_PROPERTY_KEY,
+                    requestedTraceNetLogCaptureMode);
+        }
+
+        if (traceNetLogCaptureMode > NetLogCaptureMode.HEAVILY_REDACTED) {
+            final var buildType = AndroidOsBuild.get().getType();
+            if (!buildType.equals("userdebug")
+                    && !buildType.equals("eng")
+                    && (ContextUtils.getApplicationContext().getApplicationInfo().flags
+                                    & ApplicationInfo.FLAG_DEBUGGABLE)
+                            == 0) {
+                Log.w(
+                        TAG,
+                        "Ignoring requested Cronet trace netlog capture mode (%s=%s) because"
+                                + " neither the device nor app are debuggable",
+                        TRACE_NET_LOG_SYSTEM_PROPERTY_KEY,
+                        requestedTraceNetLogCaptureMode);
+                traceNetLogCaptureMode = NetLogCaptureMode.HEAVILY_REDACTED;
+            }
+        }
+
+        return traceNetLogCaptureMode;
+    }
+
     /**
      * Runs Cronet initialization tasks on the init thread. Ensures that HTTP flags are loaded, the
      * NetworkChangeNotifier is initialzied and the init thread native MessageLoop is initialized.
@@ -221,41 +255,15 @@ public class CronetLibraryLoader {
             // likely wouldn't make any difference.
             // Load and initialize httpflags in parallel with Cronet loading
             // as an attempt to alleviate the critical path blocking.
-            HttpFlagsForImpl.getHttpFlags();
+            HttpFlagsForImpl.getHttpFlags(
+                    ContextUtils.getApplicationContext(),
+                    NativeCronetEngineBuilderImpl.getCronetSource());
             sHttpFlagsLoaded.open();
             NetworkChangeNotifier.init();
-            // Registers to always receive network notifications. Note
-            // that this call is fine for Cronet because Cronet
-            // embedders do not have API access to create network change
-            // observers. Existing observers in the net stack do not
-            // perform expensive work.
-            //
-            // During the setup of connectivity state autodetection, the network state is updated
-            // multiple times:
-            // 1. Within Java NetworkChangeNotifierAutoDetect's constructor
-            // 2. Within Java NetworkChangeNotifier#setAutoDetectConnectivityStateInternal, after
-            // creating a NetworkChangeNotifierAutoDetect (effectively, just after 1)
-            // 3. Within C++ NetworkChangeNotifierDelegateAndroid's constructor
-            //
-            // 2 should never be needed, as 1 always runs before and takes care of updating the
-            // network state. Having said that, it will be kept to keep track of the performance
-            // improvement from this change. Once the experiment terminates, we will delete it, this
-            // should always be safe for Chrome, Cronet and Webview.
-            //
-            // As per 3, Cronet always initializes NetworkChangeNotifier first from Java (going
-            // through 1 and 2), then from C++ (going through 3).
-            // Since we would like to query the network state only once, this experiment
-            // disables 2 and 3.
-            var updateNetworkStateOnceFlagValue =
-                    HttpFlagsForImpl.getHttpFlags()
-                            .flags()
-                            .get(UPDATE_NETWORK_STATE_ONCE_ON_STARTUP_FLAG_NAME);
-            var updateNetworkStateOnce =
-                    updateNetworkStateOnceFlagValue != null
-                            && updateNetworkStateOnceFlagValue.getBoolValue();
             NetworkChangeNotifier.setAutoDetectConnectivityState(
-                    new RegistrationPolicyAlwaysRegister(),
-                    /* forceUpdateNetworkState= */ !updateNetworkStateOnce);
+                    new RegistrationPolicyAlwaysRegister(), /* forceUpdateNetworkState= */ false);
+
+            final var traceNetLogCaptureMode = getTraceNetLogCaptureMode();
 
             try (var libLoadTraceEvent =
                     ScopedSysTraceEvent.scoped(
@@ -272,9 +280,13 @@ public class CronetLibraryLoader {
                 // NetworkChangeNotifierAndroid is created, so as to avoid receiving
                 // the undesired initial network change observer notification, which
                 // will cause active requests to fail with ERR_NETWORK_CHANGED.
-                CronetLibraryLoaderJni.get().cronetInitOnInitThread(!updateNetworkStateOnce);
+                CronetLibraryLoaderJni.get().cronetInitOnInitThread(traceNetLogCaptureMode);
             }
         }
+    }
+
+    public static @NetLogCaptureMode int getTraceNetLogCaptureModeForTesting() {
+        return CronetLibraryLoaderJni.get().getTraceNetLogCaptureModeForTesting(); // IN-TEST
     }
 
     /** Run {@code r} on the initialization thread. */
@@ -299,7 +311,11 @@ public class CronetLibraryLoader {
      */
     @CalledByNative
     private static byte[] getBaseFeatureOverrides() {
-        return BaseFeature.getOverrides(HttpFlagsForImpl.getHttpFlags()).toByteArray();
+        return BaseFeature.getOverrides(
+                        HttpFlagsForImpl.getHttpFlags(
+                                ContextUtils.getApplicationContext(),
+                                NativeCronetEngineBuilderImpl.getCronetSource()))
+                .toByteArray();
     }
 
     /**
@@ -347,7 +363,12 @@ public class CronetLibraryLoader {
         // Native methods are implemented in cronet_library_loader.cc.
         void nativeInit(boolean initializePerfetto);
 
-        void cronetInitOnInitThread(boolean updateNetworkStateFromNative);
+        void cronetInitOnInitThread(
+                @NetLogCaptureMode @JniType("net::NetLogCaptureMode") int traceNetLogCaptureMode);
+
+        @NetLogCaptureMode
+        @JniType("net::NetLogCaptureMode")
+        int getTraceNetLogCaptureModeForTesting(); // IN-TEST
 
         String getCronetVersion();
 

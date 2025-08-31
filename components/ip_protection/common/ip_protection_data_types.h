@@ -11,7 +11,10 @@
 #include <vector>
 
 #include "base/time/time.h"
-#include "components/privacy_sandbox/masked_domain_list/masked_domain_list.pb.h"
+
+namespace masked_domain_list {
+class Resource;
+}
 
 namespace ip_protection {
 
@@ -229,6 +232,14 @@ struct TryGetProbabilisticRevealTokensOutcome {
   std::string epoch_id;
 };
 
+enum class IpProxyStatus {
+  kOk,
+  kFeatureNotEnabled,
+  kMaskedDomainListNotEnabled,
+  kMaskedDomainListNotPopulated,
+  kAuthTokensUnavailable,
+  kUnavailable
+};
 }  // namespace ip_protection
 
 #endif  // COMPONENTS_IP_PROTECTION_COMMON_IP_PROTECTION_DATA_TYPES_H_

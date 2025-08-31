@@ -5,10 +5,19 @@
 #include "extensions/common/extension_resource.h"
 
 #include "base/check.h"
+#include "base/feature_list.h"
 #include "base/files/file_util.h"
-#include "extensions/common/extension_features.h"
 
 namespace extensions {
+
+namespace {
+
+#if BUILDFLAG(IS_WIN)
+BASE_FEATURE(WindowsNormalizeFilePathFallbackOnError,
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+}  // namespace
 
 ExtensionResource::ExtensionResource() : follow_symlinks_anywhere_(false) {}
 
@@ -53,14 +62,38 @@ base::FilePath ExtensionResource::GetFilePath(
     const base::FilePath& extension_root,
     const base::FilePath& relative_path,
     SymlinkPolicy symlink_policy) {
-  // We need to resolve the parent references in the extension_root
-  // path on its own because IsParent doesn't like parent references.
-  base::FilePath clean_extension_root(
-      base::MakeAbsoluteFilePath(extension_root));
-  if (clean_extension_root.empty())
-    return base::FilePath();
+  // We need to normalize `extension_root` on its own because `IsParent` doesn't
+  // normalize file paths. Without normalization parent references, Windows
+  // short paths, or different path capitalization will cause `IsParent` to
+  // return false.
+  bool extension_root_normalization_skipped = false;
+  base::FilePath normalized_extension_root;
+  if (!base::NormalizeFilePath(extension_root, &normalized_extension_root)) {
+#if BUILDFLAG(IS_WIN)
+    // TODO(crbug.com/410059474): Remove this if-check and the Windows-specific
+    // fallback logic in M143.
+    if (!base::FeatureList::IsEnabled(
+            kWindowsNormalizeFilePathFallbackOnError)) {
+      return base::FilePath();
+    }
 
-  base::FilePath full_path = clean_extension_root.Append(relative_path);
+    // On Windows, `NormalizeFilePath` fails if the path doesn't start with a
+    // drive letter (e.g. a network path) or if it exceeds `MAX_PATH` characters
+    // in length. Fall back to `MakeAbsoluteFilePath` and proceed if the path
+    // exists.
+    normalized_extension_root = base::MakeAbsoluteFilePath(extension_root);
+    if (normalized_extension_root.empty() ||
+        !base::PathExists(normalized_extension_root)) {
+      return base::FilePath();
+    }
+
+    extension_root_normalization_skipped = true;
+#else
+    return base::FilePath();
+#endif
+  }
+
+  base::FilePath full_path = normalized_extension_root.Append(relative_path);
 
   // If we are allowing the file to be a symlink outside of the root, then the
   // path before resolving the symlink must still be within it.
@@ -82,6 +115,7 @@ base::FilePath ExtensionResource::GetFilePath(
   // the relative path contains references to a parent folder (i.e., '..').
   // NormalizeFilePath will fail if the path doesn't exist.
   if (base::FilePath full_path_normalized;
+      !extension_root_normalization_skipped &&
       base::NormalizeFilePath(full_path, &full_path_normalized)) {
     full_path = std::move(full_path_normalized);
   } else {
@@ -99,7 +133,7 @@ base::FilePath ExtensionResource::GetFilePath(
   }
 
   if (symlink_policy != FOLLOW_SYMLINKS_ANYWHERE &&
-      !clean_extension_root.IsParent(full_path)) {
+      !normalized_extension_root.IsParent(full_path)) {
     return base::FilePath();
   }
 
@@ -116,9 +150,7 @@ base::FilePath ExtensionResource::GetFilePath(
   // Reject paths ending with '.' or ' '. Such suffix is ignored when accessing
   // files on Windows, which causes inconsistencies. See
   // https://crbug.com/400119351.
-  if (base::FeatureList::IsEnabled(
-          extensions_features::kWinRejectDotSpaceSuffixFilePaths) &&
-      !relative_path.empty()) {
+  if (!relative_path.empty()) {
     const char last_char = relative_path.value().back();
     if (last_char == '.' || last_char == ' ') {
       return base::FilePath();

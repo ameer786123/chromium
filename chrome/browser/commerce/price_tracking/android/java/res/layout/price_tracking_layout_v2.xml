@@ -29,12 +29,13 @@ found in the LICENSE file.
             android:focusable="true"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:accessibilityHeading="true"
             android:textAppearance="@style/TextAppearance.TextMediumThick"
             android:textAlignment="viewStart"
             android:maxLines="1"
             android:ellipsize="end"/>
         <TextView
-            android:id="@+id/price_tracking_description"
+            android:id="@+id/price_tracking_subtitle"
             android:focusable="true"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

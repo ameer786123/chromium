@@ -15,6 +15,9 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.List;
 import java.util.Locale;
 
+import com.google.common.collect.ImmutableList;
+
+
 /** Encapsulates information about the playback being requested. */
 @NullMarked
 public class PlaybackArgs {
@@ -31,7 +34,7 @@ public class PlaybackArgs {
     private final long mDateModifiedMsSinceEpoch;
 
     /* The playback mode. Still unused. */
-    private final PlaybackMode mPlaybackMode;
+    private final List<PlaybackMode> mPlaybackModes;
 
     /** Playback mode. */
     public enum PlaybackMode {
@@ -53,6 +56,46 @@ public class PlaybackArgs {
             for (PlaybackMode mode : values()) {
                 if (mode.getValue() == value) {
                     return mode;
+                }
+            }
+            throw new IllegalArgumentException("Unknown value: " + value);
+        }
+
+        @Override
+        public String toString() {
+            return String.format(Locale.US, "%s (%d)", this.name(), this.getValue());
+        }
+    }
+
+    // The status of the playback mode selection feature.
+    public enum PlaybackModeSelectionEnablementStatus {
+        // Feature is completely disabled. In this case, we never offer audio overviews or consider
+        // it in any way.
+        FEATURE_DISABLED(0),
+        // Feature is enabled and mode selection should be offered to the user. Happens when both
+        // playback modes are available.
+        MODE_SELECTION_ENABLED(1),
+        // Feature is enabled in general but disabled for the specific playback because AO is unavailable.
+        MODE_SELECTION_DISABLED_AO_UNAVAILABLE(2),
+        // Feature is enabled in general but disabled for the specific playback because classic ReadAloud is unavailable.
+        MODE_SELECTION_DISABLED_CLASSIC_UNAVAILABLE(3),
+        // Feature is enabled in general but disabled for unknown reason (e.g. readability info couldn't be checked for some reason).
+        MODE_SELECTION_DISABLED_UNKNOWN_REASON(4);
+
+        private final int mValue;
+
+        PlaybackModeSelectionEnablementStatus(int value) {
+            mValue = value;
+        }
+
+        public int getValue() {
+            return mValue;
+        }
+
+        public static PlaybackModeSelectionEnablementStatus fromValue(int value) {
+            for (PlaybackModeSelectionEnablementStatus status : values()) {
+                if (status.getValue() == value) {
+                    return status;
                 }
             }
             throw new IllegalArgumentException("Unknown value: " + value);
@@ -270,7 +313,7 @@ public class PlaybackArgs {
             @Nullable String language,
             List<PlaybackVoice> voices,
             long dateModifiedMsSinceEpoch) {
-        this(mSource, isUrl, language, voices, dateModifiedMsSinceEpoch, PlaybackMode.UNSPECIFIED);
+        this(mSource, isUrl, language, voices, dateModifiedMsSinceEpoch, ImmutableList.of(PlaybackMode.UNSPECIFIED));
     }
 
     public PlaybackArgs(
@@ -279,14 +322,14 @@ public class PlaybackArgs {
             @Nullable String language,
             List<PlaybackVoice> voices,
             long dateModifiedMsSinceEpoch,
-            PlaybackMode playbackMode) {
+            List<PlaybackMode> playbackModes) {
         this.mUrl = mSource;
         this.mSource = mSource;
         this.mIsSourceUrl = isUrl;
         this.mLanguage = language;
         this.mVoices = voices;
         this.mDateModifiedMsSinceEpoch = dateModifiedMsSinceEpoch;
-        this.mPlaybackMode = playbackMode;
+        this.mPlaybackModes = playbackModes;
     }
 
     /** Returns the URL of the playback page. */
@@ -320,9 +363,14 @@ public class PlaybackArgs {
         return mDateModifiedMsSinceEpoch;
     }
 
-    /** Returns the playback mode. */
+    /** Returns the playback mode. This method is to be deprecated and replaced by the list version. */
     public PlaybackMode getPlaybackMode() {
-        return mPlaybackMode;
+        return mPlaybackModes.size() > 0 ? mPlaybackModes.get(0) : PlaybackMode.UNSPECIFIED;
+    }
+
+    /** Returns the requested playback modes. */
+    public List<PlaybackMode> getPlaybackModes() {
+        return mPlaybackModes;
     }
 
     // Override toString() to help with debug logging.
@@ -347,8 +395,8 @@ public class PlaybackArgs {
                 + "\tdateModifiedMs="
                 + mDateModifiedMsSinceEpoch
                 + "\n"
-                + "\tplaybackMode="
-                + mPlaybackMode
+                + "\tplaybackModes="
+                + mPlaybackModes
                 + "\n"
                 + "}";
     }

@@ -29,6 +29,7 @@
 #include "components/supervised_user/core/browser/supervised_user_url_filter.h"  // nogncheck
 #include "components/supervised_user/core/browser/supervised_user_utils.h"
 #include "components/supervised_user/core/common/buildflags.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -302,6 +303,10 @@ bool IsInstantNTPURL(const GURL& url, Profile* profile) {
 
   GURL new_tab_url(GetNewTabPageURL(profile));
   return new_tab_url.is_valid() && MatchesOriginAndPath(url, new_tab_url);
+}
+
+bool IsSplitViewNewTabPage(const GURL& url) {
+  return url.spec() == chrome::kChromeUISplitViewNewTabPageURL;
 }
 
 GURL GetNewTabPageURL(Profile* profile) {

@@ -7,9 +7,10 @@
 #include <memory>
 
 #include "base/test/metrics/histogram_tester.h"
+#include "chrome/browser/ui/webid/identity_ui_utils.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/views/chrome_views_test_base.h"
-#include "content/public/browser/identity_request_dialog_controller.h"
+#include "content/public/browser/webid/identity_request_dialog_controller.h"
 #include "content/public/test/test_web_contents_factory.h"
 
 namespace webid {
@@ -225,7 +226,7 @@ TEST_F(FedCmModalDialogViewTest, LoadingStatePopupInteractionMetric) {
   auto OpenLoadingStatePopupWindow([&]() {
     popup_window = std::make_unique<FedCmModalDialogView>(web_contents(),
                                                           /*observer=*/nullptr);
-    popup_window->SetActiveModeSheetType(AccountSelectionView::LOADING);
+    popup_window->SetActiveModeSheetType(webid::SheetType::kLoading);
     popup_window->ShowPopupWindow(GURL(u"https://example.com"),
                                   /*user_close_cancels_flow=*/true);
   });
@@ -280,8 +281,7 @@ TEST_F(FedCmModalDialogViewTest, UseOtherAccountPopupInteractionMetric) {
   auto OpenUseOtherAccountPopupWindow([&]() {
     popup_window = std::make_unique<FedCmModalDialogView>(web_contents(),
                                                           /*observer=*/nullptr);
-    popup_window->SetActiveModeSheetType(
-        AccountSelectionView::ACCOUNT_SELECTION);
+    popup_window->SetActiveModeSheetType(webid::SheetType::kAccountSelection);
     popup_window->ShowPopupWindow(GURL(u"https://example.com"),
                                   /*user_close_cancels_flow=*/true);
   });

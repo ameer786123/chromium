@@ -19,7 +19,6 @@
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "base/types/pass_key.h"
-#include "chrome/browser/password_manager/android/access_loss/mock_password_access_loss_warning_bridge.h"
 #include "chrome/browser/password_manager/android/grouped_affiliations/acknowledge_grouped_credential_sheet_bridge.h"
 #include "chrome/browser/password_manager/android/grouped_affiliations/acknowledge_grouped_credential_sheet_controller_test_helper.h"
 #include "chrome/browser/password_manager/android/password_manager_launcher_android.h"
@@ -38,7 +37,6 @@
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
-#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/ukm/test_ukm_recorder.h"
 #include "components/webauthn/android/mock_webauthn_cred_man_delegate.h"
@@ -67,6 +65,7 @@ using ::testing::Return;
 using ::testing::WithArg;
 using webauthn::MockWebAuthnCredManDelegate;
 using webauthn::WebAuthnCredManDelegate;
+using IsBackupCredential = UiCredential::IsBackupCredential;
 using IsOriginSecure = TouchToFillView::IsOriginSecure;
 
 constexpr char kExampleCom[] = "https://example.com/";
@@ -113,13 +112,15 @@ struct MakeUiCredentialParams {
   password_manager_util::GetLoginMatchType match_type =
       password_manager_util::GetLoginMatchType::kExact;
   base::TimeDelta time_since_last_use;
+  IsBackupCredential backup = IsBackupCredential(false);
 };
 
 UiCredential MakeUiCredential(MakeUiCredentialParams params) {
   return UiCredential(
       base::UTF8ToUTF16(params.username), base::UTF8ToUTF16(params.password),
       url::Origin::Create(GURL(params.origin)), std::string(params.origin),
-      params.match_type, base::Time::Now() - params.time_since_last_use);
+      params.match_type, base::Time::Now() - params.time_since_last_use,
+      params.backup);
 }
 
 }  // namespace
@@ -134,15 +135,9 @@ class TouchToFillControllerAutofillTest
   TouchToFillControllerAutofillTest()
       : ChromeRenderViewHostTestHarness(
             base::test::TaskEnvironment::TimeSource::MOCK_TIME) {
-    password_manager_launcher::
-        OverrideManagePasswordWhenPasskeysPresentForTesting(false);
-
     // By default, disable biometric authentication.
     ON_CALL(client(), IsReauthBeforeFillingRequired)
         .WillByDefault(Return(false));
-
-    scoped_feature_list_.InitAndEnableFeature(
-        password_manager::features::kBiometricTouchToFill);
   }
 
   std::unique_ptr<MockPasswordCredentialFiller> CreateMockFiller() {
@@ -197,16 +192,12 @@ class TouchToFillControllerAutofillTest
         .WillByDefault(Return(submission_readiness));
     auto authenticator = std::make_unique<MockDeviceAuthenticator>();
     authenticator_ = authenticator.get();
-    std::unique_ptr<MockPasswordAccessLossWarningBridge> mock_bridge =
-        std::make_unique<MockPasswordAccessLossWarningBridge>();
-    mock_access_loss_warning_bridge_ = mock_bridge.get();
 
     return std::make_unique<TouchToFillControllerAutofillDelegate>(
         base::PassKey<TouchToFillControllerAutofillTest>(), &client_,
         web_contents(), std::move(authenticator),
         webauthn_credentials_delegate_.AsWeakPtr(), std::move(filler),
-        form_to_fill, focused_field_renderer_id, should_show_hybrid_option,
-        std::move(mock_bridge));
+        form_to_fill, focused_field_renderer_id, should_show_hybrid_option);
   }
 
   password_manager::MockWebAuthnCredentialsDelegate&
@@ -219,16 +210,8 @@ class TouchToFillControllerAutofillTest
     return *visibility_controller_;
   }
 
-  base::test::ScopedFeatureList& scoped_feature_list() {
-    return scoped_feature_list_;
-  }
-
   const password_manager::PasswordForm* form_to_fill() {
     return &form_to_fill_;
-  }
-
-  MockPasswordAccessLossWarningBridge* mock_access_loss_warning_bridge() {
-    return mock_access_loss_warning_bridge_;
   }
 
   AcknowledgeGroupedCredentialSheetControllerTestHelper&
@@ -263,8 +246,8 @@ class TouchToFillControllerAutofillTest
       password_manager::MockKeyboardReplacingSurfaceVisibilityController>
       visibility_controller_;
   std::unique_ptr<TouchToFillController> touch_to_fill_controller_;
-  base::test::ScopedFeatureList scoped_feature_list_;
-  raw_ptr<MockPasswordAccessLossWarningBridge> mock_access_loss_warning_bridge_;
+  base::test::ScopedFeatureList scoped_feature_list_{
+      password_manager::features::kBiometricTouchToFill};
   raw_ptr<MockPasswordCredentialFiller> weak_filler_;
   password_manager::PasswordForm form_to_fill_;
   AcknowledgeGroupedCredentialSheetControllerTestHelper
@@ -327,81 +310,6 @@ TEST_F(TouchToFillControllerAutofillTest, Show_Fill_And_Dont_Submit) {
       .WillOnce(RunOnceCallback<2>(/*trigger_submission=*/false));
 
   EXPECT_CALL(client(), StartSubmissionTrackingAfterTouchToFill(_)).Times(0);
-
-  touch_to_fill_controller().OnCredentialSelected(credentials[0]);
-}
-
-TEST_F(TouchToFillControllerAutofillTest,
-       ShowFillAndShowPasswordMigrationWarning) {
-  scoped_feature_list().Reset();
-  scoped_feature_list().InitWithFeatures(
-      {password_manager::features::
-           kUnifiedPasswordManagerLocalPasswordsMigrationWarning},
-      {password_manager::features::
-           kUnifiedPasswordManagerLocalPasswordsAndroidAccessLossWarning});
-  profile()->GetPrefs()->SetInteger(
-      password_manager::prefs::kPasswordsUseUPMLocalAndSeparateStores,
-      static_cast<int>(
-          password_manager::prefs::UseUpmLocalAndSeparateStoresState::kOff));
-  UiCredential credentials[] = {
-      MakeUiCredential({.username = "alice", .password = "p4ssw0rd"})};
-  auto filler_to_pass = CreateMockFiller();
-
-  EXPECT_CALL(view(), Show(Eq(GURL(kExampleCom)), IsOriginSecure(true),
-                           ElementsAreArray(credentials),
-                           ElementsAreArray(std::vector<PasskeyCredential>()),
-                           TouchToFillView::kNone));
-  Show(credentials, {},
-       MakeTouchToFillControllerDelegate(
-           autofill::mojom::SubmissionReadinessState::kTwoFields,
-           std::move(filler_to_pass), form_to_fill(),
-           form_to_fill()->password_element_renderer_id,
-           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
-       /*cred_man_delegate=*/nullptr);
-
-  EXPECT_CALL(*last_mock_filler(),
-              FillUsernameAndPassword(std::u16string(u"alice"),
-                                      std::u16string(u"p4ssw0rd"), _))
-      .WillOnce(RunOnceCallback<2>(/*trigger_submission=*/false));
-  EXPECT_CALL(*last_mock_filler(), UpdateTriggerSubmission(false));
-  EXPECT_CALL(client(), StartSubmissionTrackingAfterTouchToFill(_)).Times(0);
-
-  touch_to_fill_controller().OnCredentialSelected(credentials[0]);
-}
-
-TEST_F(TouchToFillControllerAutofillTest, FillingShowsAccessLossWarning) {
-  UiCredential credentials[] = {
-      MakeUiCredential({.username = "alice", .password = "p4ssw0rd"})};
-  auto filler_to_pass = CreateMockFiller();
-
-  EXPECT_CALL(view(), Show(Eq(GURL(kExampleCom)), IsOriginSecure(true),
-                           ElementsAreArray(credentials),
-                           ElementsAreArray(std::vector<PasskeyCredential>()),
-                           TouchToFillView::kNone));
-  Show(credentials, {},
-       MakeTouchToFillControllerDelegate(
-           autofill::mojom::SubmissionReadinessState::kTwoFields,
-           std::move(filler_to_pass), form_to_fill(),
-           form_to_fill()->password_element_renderer_id,
-           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
-       /*cred_man_delegate=*/nullptr);
-  EXPECT_CALL(*mock_access_loss_warning_bridge(),
-              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
-                                              /*called_at_startup=*/false))
-      .WillRepeatedly(testing::Return(true));
-
-  EXPECT_CALL(*last_mock_filler(),
-              FillUsernameAndPassword(std::u16string(u"alice"),
-                                      std::u16string(u"p4ssw0rd"), _))
-      .WillOnce(RunOnceCallback<2>(/*trigger_submission=*/false));
-  EXPECT_CALL(*last_mock_filler(), UpdateTriggerSubmission(false));
-  EXPECT_CALL(client(), StartSubmissionTrackingAfterTouchToFill(_)).Times(0);
-  EXPECT_CALL(*mock_access_loss_warning_bridge(),
-              MaybeShowAccessLossNoticeSheet(
-                  profile()->GetPrefs(), _, profile(),
-                  /*called_at_startup=*/false,
-                  password_manager_android_util::
-                      PasswordAccessLossWarningTriggers::kTouchToFill));
 
   touch_to_fill_controller().OnCredentialSelected(credentials[0]);
 }
@@ -657,6 +565,11 @@ TEST_F(TouchToFillControllerAutofillTest, Show_Orders_Credentials) {
       .password = "p4ssw0rd",
       .time_since_last_use = base::Minutes(3),
   });
+  auto charlie_backup =
+      MakeUiCredential({.username = "charlie",
+                        .password = "backup",
+                        .time_since_last_use = base::Minutes(2),
+                        .backup = IsBackupCredential(true)});
   auto bob = MakeUiCredential({
       .username = "bob",
       .password = "s3cr3t",
@@ -668,6 +581,12 @@ TEST_F(TouchToFillControllerAutofillTest, Show_Orders_Credentials) {
       .password = "very_s3cr3t",
       .time_since_last_use = base::Minutes(2),
   });
+  auto bob_backup = MakeUiCredential(
+      {.username = "bob",
+       .password = "recovery",
+       .match_type = password_manager_util::GetLoginMatchType::kPSL,
+       .time_since_last_use = base::Minutes(1),
+       .backup = IsBackupCredential(true)});
   auto david = MakeUiCredential({
       .username = "david",
       .password = "even_more_s3cr3t",
@@ -675,9 +594,11 @@ TEST_F(TouchToFillControllerAutofillTest, Show_Orders_Credentials) {
       .time_since_last_use = base::Minutes(4),
   });
 
-  UiCredential credentials[] = {alice, bob, charlie, david};
+  UiCredential credentials[] = {alice,   charlie_backup, bob,
+                                charlie, bob_backup,     david};
   EXPECT_CALL(view(), Show(Eq(GURL(kExampleCom)), IsOriginSecure(true),
-                           testing::ElementsAre(charlie, alice, bob, david),
+                           testing::ElementsAre(charlie, charlie_backup, alice,
+                                                bob, bob_backup, david),
                            ElementsAreArray(std::vector<PasskeyCredential>()),
                            TouchToFillView::kNone));
   Show(credentials, {},
@@ -924,7 +845,7 @@ TEST_F(TouchToFillControllerAutofillTest,
       /*username=*/u"bob", /*password=*/u"s3cr3t",
       url::Origin::Create(GURL("")), display_name,
       password_manager_util::GetLoginMatchType::kGrouped,
-      base::Time::Now() - base::Minutes(3))};
+      base::Time::Now() - base::Minutes(3), IsBackupCredential(false))};
 
   Show(credentials, /*passkey_credentials=*/{},
        MakeTouchToFillControllerDelegate(

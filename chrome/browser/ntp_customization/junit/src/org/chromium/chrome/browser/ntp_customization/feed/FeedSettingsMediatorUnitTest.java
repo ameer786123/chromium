@@ -8,18 +8,22 @@ import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.BACK_PRESS_HANDLER;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.FEED_SWITCH_ON_CHECKED_CHANGE_LISTENER;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.IS_FEED_LIST_ITEMS_TITLE_VISIBLE;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.IS_FEED_SWITCH_CHECKED;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LEARN_MORE_BUTTON_CLICK_LISTENER;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LIST_CONTAINER_VIEW_DELEGATE;
 import static org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsCoordinator.FeedSettingsBottomSheetSection.ACTIVITY;
 import static org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsCoordinator.FeedSettingsBottomSheetSection.FOLLOWING;
 import static org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsCoordinator.FeedSettingsBottomSheetSection.HIDDEN;
 import static org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsCoordinator.FeedSettingsBottomSheetSection.INTERESTS;
+import static org.chromium.chrome.browser.ntp_customization.feed.FeedSettingsMediator.handleLearnMoreClick;
 
 import android.app.Activity;
 import android.content.Context;
@@ -104,16 +108,44 @@ public class FeedSettingsMediatorUnitTest {
         verify(mContainerPropertyModel)
                 .set(eq(LIST_CONTAINER_VIEW_DELEGATE), any(ListContainerViewDelegate.class));
 
-        verify(mBottomSheetPropertyModel)
-                .set(eq(BACK_PRESS_HANDLER), mBackPressHandlerCaptor.capture());
-        mBackPressHandlerCaptor.getValue().onClick(mView);
-        verify(mDelegate).backPressOnCurrentBottomSheet();
-
+        verify(mFeedSettingsPropertyModel).set(eq(IS_FEED_LIST_ITEMS_TITLE_VISIBLE), anyBoolean());
         verify(mFeedSettingsPropertyModel)
                 .set(
                         eq(FEED_SWITCH_ON_CHECKED_CHANGE_LISTENER),
                         any(OnCheckedChangeListener.class));
         verify(mFeedSettingsPropertyModel).set(eq(IS_FEED_SWITCH_CHECKED), anyBoolean());
+        verify(mFeedSettingsPropertyModel)
+                .set(eq(LEARN_MORE_BUTTON_CLICK_LISTENER), any(View.OnClickListener.class));
+    }
+
+    @Test
+    public void testBackPressHandler() {
+        // Verifies that when the feed settings bottom sheet should show alone, the back press
+        // handler should be set to null.
+        when(mDelegate.shouldShowAlone()).thenReturn(true);
+        new FeedSettingsMediator(
+                mContainerPropertyModel,
+                mBottomSheetPropertyModel,
+                mFeedSettingsPropertyModel,
+                mDelegate,
+                mProfile);
+        verify(mBottomSheetPropertyModel).set(BACK_PRESS_HANDLER, null);
+
+        // Verifies that when the feed settings bottom sheet is part of the navigation flow starting
+        // from the main bottom sheet, and the back press handler should be set to
+        // backPressOnCurrentBottomSheet()
+        clearInvocations(mBottomSheetPropertyModel);
+        when(mDelegate.shouldShowAlone()).thenReturn(false);
+        new FeedSettingsMediator(
+                mContainerPropertyModel,
+                mBottomSheetPropertyModel,
+                mFeedSettingsPropertyModel,
+                mDelegate,
+                mProfile);
+        verify(mBottomSheetPropertyModel)
+                .set(eq(BACK_PRESS_HANDLER), mBackPressHandlerCaptor.capture());
+        mBackPressHandlerCaptor.getValue().onClick(mView);
+        verify(mDelegate).backPressOnCurrentBottomSheet();
     }
 
     @Test
@@ -148,6 +180,8 @@ public class FeedSettingsMediatorUnitTest {
     public void testCreateListContainerViewDelegate() {
         // Verifies that there is no sections when user has not signed in.
         when(mFeedServiceBridgeJniMock.isSignedIn()).thenReturn(false);
+        mFeedSettingsMediator.setListItemsContentForTesting(
+                mFeedSettingsMediator.buildFeedListContent());
         ListContainerViewDelegate delegateForNotSignedIn =
                 mFeedSettingsMediator.createListDelegate();
         Assert.assertTrue(delegateForNotSignedIn.getListItems().isEmpty());
@@ -155,6 +189,8 @@ public class FeedSettingsMediatorUnitTest {
         // Verifies the sections when user has signed in and web feed is enabled.
         when(mFeedServiceBridgeJniMock.isSignedIn()).thenReturn(true);
         when(mWebFeedBridgeJniMock.isWebFeedEnabled()).thenReturn(true);
+        mFeedSettingsMediator.setListItemsContentForTesting(
+                mFeedSettingsMediator.buildFeedListContent());
         ListContainerViewDelegate delegateForWebFeedEnabled =
                 mFeedSettingsMediator.createListDelegate();
         List<Integer> content = delegateForWebFeedEnabled.getListItems();
@@ -164,6 +200,8 @@ public class FeedSettingsMediatorUnitTest {
 
         // Verifies the sections when user has signed in and web feed is disabled.
         when(mWebFeedBridgeJniMock.isWebFeedEnabled()).thenReturn(false);
+        mFeedSettingsMediator.setListItemsContentForTesting(
+                mFeedSettingsMediator.buildFeedListContent());
         ListContainerViewDelegate delegateForWebFeedDisabled =
                 mFeedSettingsMediator.createListDelegate();
         content = delegateForWebFeedDisabled.getListItems();
@@ -180,6 +218,14 @@ public class FeedSettingsMediatorUnitTest {
                 delegateForWebFeedEnabled, delegateForWebFeedDisabled);
     }
 
+    @Test
+    public void testHandleLearnMoreClick() {
+        when(mView.getContext()).thenReturn(mActivity);
+        handleLearnMoreClick(mView);
+        Intent intent = mShadowActivity.peekNextStartedActivityForResult().intent;
+        assertEquals(intent.getData(), Uri.parse("https://support.google.com/chrome/?p=new_tab"));
+    }
+
     /** Verifies that the subtitles of sections are correct. */
     private void testCreateListContainerViewDelegateImplForSectionSubtitle(
             ListContainerViewDelegate delegateForWebFeedEnabled,
@@ -194,7 +240,7 @@ public class FeedSettingsMediatorUnitTest {
                 mContext.getString(R.string.feed_manage_hidden_description),
                 delegateForWebFeedEnabled.getListItemSubtitle(HIDDEN, mContext));
         assertEquals(
-                mContext.getString(R.string.feed_manage_following_description),
+                mContext.getString(R.string.feed_manage_interests_description),
                 delegateForWebFeedDisabled.getListItemSubtitle(INTERESTS, mContext));
     }
 

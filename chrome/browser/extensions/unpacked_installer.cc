@@ -17,20 +17,20 @@
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_management.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/extensions/permissions/permissions_updater.h"
 #include "chrome/browser/lifetime/termination_notification.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/chrome_manifest_url_handlers.h"
 #include "chrome/common/extensions/manifest_handlers/settings_overrides_handler.h"
 #include "components/crx_file/id_util.h"
 #include "components/sync/model/string_ordinal.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/api/declarative_net_request/install_index_helper.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
@@ -49,6 +49,7 @@
 #include "extensions/common/file_util.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/manifest_handlers/chrome_url_overrides_handler.h"
 #include "extensions/common/manifest_handlers/shared_module_info.h"
 #include "extensions/common/mojom/manifest.mojom-shared.h"
 #include "extensions/common/permissions/permissions_data.h"
@@ -72,23 +73,14 @@ const char kImportNotSharedModule[] = "'import' is not a shared module.";
 }  // namespace
 
 // static
-scoped_refptr<UnpackedInstaller> UnpackedInstaller::Create(Profile* profile) {
-  CHECK(profile);
-  return scoped_refptr<UnpackedInstaller>(new UnpackedInstaller(
-      ExtensionSystem::Get(profile)->extension_service()));
-}
-
-// static
 scoped_refptr<UnpackedInstaller> UnpackedInstaller::Create(
-    ExtensionService* extension_service) {
-  DCHECK(extension_service);
-  return scoped_refptr<UnpackedInstaller>(
-      new UnpackedInstaller(extension_service));
+    content::BrowserContext* context) {
+  CHECK(context);
+  return scoped_refptr<UnpackedInstaller>(new UnpackedInstaller(context));
 }
 
-UnpackedInstaller::UnpackedInstaller(ExtensionService* extension_service)
-    : service_(extension_service),
-      profile_(extension_service->profile()),
+UnpackedInstaller::UnpackedInstaller(content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)),
       require_modern_manifest_version_(true),
       be_noisy_on_failure_(true) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -101,13 +93,19 @@ UnpackedInstaller::UnpackedInstaller(ExtensionService* extension_service)
           &UnpackedInstaller::OnBrowserTerminating, base::Unretained(this)));
 }
 
-UnpackedInstaller::~UnpackedInstaller() = default;
+UnpackedInstaller::~UnpackedInstaller() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+}
 
 void UnpackedInstaller::Load(const base::FilePath& path_in) {
   DCHECK(extension_path_.empty());
   extension_path_ = path_in;
+  if (!profile_ || browser_terminating_) {
+    return;
+  }
   GetExtensionFileTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(&UnpackedInstaller::GetAbsolutePath, this));
+      FROM_HERE,
+      base::BindOnce(&UnpackedInstaller::GetAbsolutePathOnFileThread, this));
 }
 
 bool UnpackedInstaller::LoadFromCommandLine(const base::FilePath& path_in,
@@ -116,7 +114,7 @@ bool UnpackedInstaller::LoadFromCommandLine(const base::FilePath& path_in,
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(extension_path_.empty());
 
-  if (!profile_) {
+  if (!profile_ || browser_terminating_) {
     return false;
   }
   // Load extensions from the command line synchronously to avoid a race
@@ -163,7 +161,7 @@ bool UnpackedInstaller::LoadFromCommandLine(const base::FilePath& path_in,
 
 void UnpackedInstaller::StartInstallChecks() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (!profile_) {
+  if (!profile_ || browser_terminating_) {
     return;
   }
 
@@ -173,10 +171,6 @@ void UnpackedInstaller::StartInstallChecks() {
   // dependencies between the extensions loaded by the command line.
   if (extension()->manifest()->location() !=
       mojom::ManifestLocation::kCommandLine) {
-    if (browser_terminating_) {
-      return;
-    }
-
     // TODO(crbug.com/40387578): Move this code to a utility class to avoid
     // duplication of SharedModuleService::CheckImports code.
     if (SharedModuleInfo::ImportsModules(extension())) {
@@ -220,6 +214,9 @@ void UnpackedInstaller::StartInstallChecks() {
 void UnpackedInstaller::OnInstallChecksComplete(
     const PreloadCheck::Errors& errors) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!profile_ || browser_terminating_) {
+    return;
+  }
 
   if (errors.empty()) {
     InstallExtension();
@@ -237,6 +234,7 @@ void UnpackedInstaller::OnInstallChecksComplete(
 }
 
 int UnpackedInstaller::GetFlags() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   std::string id = crx_file::id_util::GenerateIdForPath(extension_path_);
   bool allow_file_access =
       Manifest::ShouldAlwaysAllowFileAccess(mojom::ManifestLocation::kUnpacked);
@@ -304,16 +302,17 @@ bool UnpackedInstaller::IndexAndPersistRulesIfNeeded(std::string* error) {
 }
 
 bool UnpackedInstaller::IsLoadingUnpackedAllowed() const {
-  if (!profile_) {
+  if (!profile_ || browser_terminating_) {
     return true;
   }
   // If there is a "*" in the extension blocklist, then no extensions should be
-  // allowed at all (except explicitly allowlisted extensions).
+  // allowed at all except packed extensions that are explicitly listed in the
+  // allowlist.
   return !ExtensionManagementFactory::GetForBrowserContext(profile_)
               ->BlocklistedByDefault();
 }
 
-void UnpackedInstaller::GetAbsolutePath() {
+void UnpackedInstaller::GetAbsolutePathOnFileThread() {
   extension_path_ = base::MakeAbsoluteFilePath(extension_path_);
 
   // Set priority explicitly to avoid unwanted task priority inheritance.
@@ -325,7 +324,7 @@ void UnpackedInstaller::GetAbsolutePath() {
 
 void UnpackedInstaller::CheckExtensionFileAccess() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (!profile_) {
+  if (!profile_ || browser_terminating_) {
     return;
   }
 
@@ -336,10 +335,11 @@ void UnpackedInstaller::CheckExtensionFileAccess() {
 
   GetExtensionFileTaskRunner()->PostTask(
       FROM_HERE,
-      base::BindOnce(&UnpackedInstaller::LoadWithFileAccess, this, GetFlags()));
+      base::BindOnce(&UnpackedInstaller::LoadWithFileAccessOnFileThread, this,
+                     GetFlags()));
 }
 
-void UnpackedInstaller::LoadWithFileAccess(int flags) {
+void UnpackedInstaller::LoadWithFileAccessOnFileThread(int flags) {
   std::string error;
   if (!LoadExtension(mojom::ManifestLocation::kUnpacked, flags, &error)) {
     // Set priority explicitly to avoid unwanted task priority inheritance.
@@ -371,7 +371,7 @@ void UnpackedInstaller::ReportExtensionLoadError(const std::string &error) {
 void UnpackedInstaller::InstallExtension() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (!profile_) {
+  if (!profile_ || browser_terminating_) {
     callback_.Reset();
     return;
   }
@@ -471,12 +471,10 @@ void UnpackedInstaller::RecordCommandLineMetrics() {
 void UnpackedInstaller::OnProfileWillBeDestroyed(Profile* profile) {
   profile_observation_.Reset();
   profile_ = nullptr;
-  service_ = nullptr;
 }
 
 void UnpackedInstaller::OnBrowserTerminating() {
   browser_terminating_ = true;
-  service_ = nullptr;
 }
 
 }  // namespace extensions

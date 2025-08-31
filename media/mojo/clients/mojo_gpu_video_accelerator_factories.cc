@@ -38,9 +38,7 @@ namespace {
 // preferred 4:2:0 pixel format on Windows according to:
 // https://learn.microsoft.com/en-us/windows-hardware/drivers/display/4-2-0-video-pixel-formats
 // https://learn.microsoft.com/en-us/windows/win32/medfound/recommended-8-bit-yuv-formats-for-video-rendering#nv12
-BASE_FEATURE(kUseNV12OutputFormat,
-             "UseNV12OutputFormat",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(UseNV12OutputFormat, base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace
 #endif
@@ -95,6 +93,13 @@ MojoGpuVideoAcceleratorFactories::MojoGpuVideoAcceleratorFactories(
 
 MojoGpuVideoAcceleratorFactories::~MojoGpuVideoAcceleratorFactories() {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
+
+  // If we have a context provider still, ensure that we have removed ourselves
+  // from its observer list.
+  if (context_provider_) {
+    context_provider_->RemoveObserver(this);
+    context_provider_ = nullptr;
+  }
 
   // `context_provider_lost_` is a pointer to a boolean, and should be
   // deleted on the main thread.

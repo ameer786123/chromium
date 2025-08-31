@@ -11,7 +11,6 @@
 #include "base/functional/bind.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/memory/weak_ptr.h"
-#include "base/not_fatal_until.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/task/sequenced_task_runner.h"
@@ -373,7 +372,7 @@ void DiscardsGraphDumpImpl::AddNode(const performance_manager::Node* node) {
 
 void DiscardsGraphDumpImpl::RemoveNode(const performance_manager::Node* node) {
   auto it = node_ids_.find(node);
-  CHECK(it != node_ids_.end(), base::NotFatalUntil::M130);
+  CHECK(it != node_ids_.end());
   NodeId node_id = it->second;
   node_ids_.erase(it);
   size_t erased = nodes_by_id_.erase(node_id);
@@ -392,7 +391,7 @@ int64_t DiscardsGraphDumpImpl::GetNodeId(
   }
 
   auto it = node_ids_.find(node);
-  CHECK(it != node_ids_.end(), base::NotFatalUntil::M130);
+  CHECK(it != node_ids_.end());
   return it->second.GetUnsafeValue();
 }
 
@@ -534,7 +533,7 @@ void DiscardsGraphDumpImpl::SendProcessNotification(
 
   process_info->id = GetNodeId(process);
   process_info->pid = process->GetProcessId();
-  process_info->private_footprint_kb = process->GetPrivateFootprintKb();
+  process_info->private_footprint_kb = process->GetPrivateFootprint().InKiB();
 
   process_info->description_json =
       ToJSON(GetOwningGraph()->GetNodeDataDescriberRegistry()->DescribeNodeData(

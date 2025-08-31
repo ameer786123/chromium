@@ -49,7 +49,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Mock private TabGroupSyncService mTabGroupSyncService;
-    @Mock private SelectionDelegate<Integer> mSelectionDelegate;
+    @Mock private SelectionDelegate<TabListEditorItemSelectionId> mSelectionDelegate;
     @Mock private TabGroupModelFilter mGroupFilter;
     @Mock private ActionDelegate mDelegate;
     @Mock private Profile mProfile;
@@ -97,8 +97,8 @@ public class TabListEditorLegacyGroupActionUnitTest {
 
     @Test
     public void testGroupActionDisabled_NoTabs() {
-        List<Integer> tabIds = new ArrayList<>();
-        mAction.onSelectionStateChange(tabIds);
+        List<TabListEditorItemSelectionId> itemIds = new ArrayList<>();
+        mAction.onSelectionStateChange(itemIds);
         assertEquals(false, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(0, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
     }
@@ -121,7 +121,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
                         tabIdGroups,
                         false);
 
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(false, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(1, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
     }
@@ -156,7 +156,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
                         tabIdGroups,
                         false);
 
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(false, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(3, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
     }
@@ -179,7 +179,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
                         tabIdGroups,
                         false);
 
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(1, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
 
@@ -228,7 +228,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
 
         when(mGroupFilter.willMergingCreateNewGroup(any())).thenReturn(true);
 
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(3, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
 
@@ -272,7 +272,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
                         tabIdGroups,
                         false);
 
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(3, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
 
@@ -304,6 +304,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testGroupActionWithTabGroups_MergeIndividalTabsToExistingGroup() {
         List<TabIdGroup> tabIdGroups = new ArrayList<>();
         tabIdGroups.add(
@@ -349,7 +350,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
         assertEquals(5, holder.getSelectedTabs().get(0).getId());
         assertEquals(3, holder.getSelectedTabs().get(1).getId());
         assertEquals(8, holder.getSelectedTabs().get(2).getId());
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(4, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
 
@@ -362,7 +363,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
         List<Tab> expectedTabs = holder.getSelectedAndRelatedTabs();
         // Remove selected destination tab and all related tabs from the expected tabs list
         List<Tab> destinationAndRelatedTabs =
-                mGroupFilter.getRelatedTabList(holder.getSelectedTabIds().get(2));
+                mGroupFilter.getRelatedTabList(holder.getSelectedItemIds().get(2).getTabId());
         expectedTabs.removeAll(destinationAndRelatedTabs);
         verify(mGroupFilter)
                 .mergeListOfTabsToGroup(expectedTabs, holder.getSelectedTabs().get(2), true);
@@ -370,6 +371,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testGroupActionWithTabGroups_MergeGroupToExistingGroup() {
         List<TabIdGroup> tabIdGroups = new ArrayList<>();
         tabIdGroups.add(
@@ -414,7 +416,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
         assertEquals(2, holder.getSelectedTabs().size());
         assertEquals(5, holder.getSelectedTabs().get(0).getId());
         assertEquals(8, holder.getSelectedTabs().get(1).getId());
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(5, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
 
@@ -428,7 +430,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
         List<Tab> expectedTabs = holder.getSelectedAndRelatedTabs();
         // Remove selected destination tab and all related tabs from the expected tabs list
         List<Tab> destinationAndRelatedTabs =
-                mGroupFilter.getRelatedTabList(holder.getSelectedTabIds().get(0));
+                mGroupFilter.getRelatedTabList(holder.getSelectedItemIds().get(0).getTabId());
         expectedTabs.removeAll(destinationAndRelatedTabs);
         verify(mGroupFilter)
                 .mergeListOfTabsToGroup(expectedTabs, holder.getSelectedTabs().get(0), true);
@@ -436,6 +438,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testGroupActionWithTabGroups_MergeTabsAndGroupsToExistingGroup() {
         List<TabIdGroup> tabIdGroups = new ArrayList<>();
         tabIdGroups.add(
@@ -488,7 +491,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
         assertEquals(8, holder.getSelectedTabs().get(1).getId());
         assertEquals(10, holder.getSelectedTabs().get(2).getId());
         assertEquals(1, holder.getSelectedTabs().get(3).getId());
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(9, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
 
@@ -506,7 +509,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
         List<Tab> expectedTabs = holder.getSelectedAndRelatedTabs();
         // Remove selected destination tab and all related tabs from the expected tabs list
         List<Tab> destinationAndRelatedTabs =
-                mGroupFilter.getRelatedTabList(holder.getSelectedTabIds().get(0));
+                mGroupFilter.getRelatedTabList(holder.getSelectedItemIds().get(0).getTabId());
         expectedTabs.removeAll(destinationAndRelatedTabs);
         verify(mGroupFilter)
                 .mergeListOfTabsToGroup(expectedTabs, holder.getSelectedTabs().get(0), true);
@@ -514,6 +517,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testGroupActionWithTabGroups_MergeTabsAndGroupsToCollaborationGroup() {
         List<TabIdGroup> tabIdGroups = new ArrayList<>();
         tabIdGroups.add(
@@ -567,7 +571,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
         assertEquals(8, selectedTabs.get(1).getId());
         assertEquals(10, selectedTabs.get(2).getId());
         assertEquals(1, selectedTabs.get(3).getId());
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(9, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
 
@@ -588,7 +592,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
         // Remove selected destination tab and all related tabs from the expected tabs list. Note
         // that we are merging to the collaboration group.
         List<Tab> destinationAndRelatedTabs =
-                mGroupFilter.getRelatedTabList(holder.getSelectedTabIds().get(1));
+                mGroupFilter.getRelatedTabList(holder.getSelectedItemIds().get(1).getTabId());
         expectedTabs.removeAll(destinationAndRelatedTabs);
         verify(mGroupFilter)
                 .mergeListOfTabsToGroup(expectedTabs, holder.getSelectedTabs().get(1), true);
@@ -596,6 +600,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testGroupActionWithTabGroups_MergeCollaborationIsFirst() {
         List<TabIdGroup> tabIdGroups = new ArrayList<>();
         tabIdGroups.add(
@@ -619,7 +624,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
                         tabIdGroups,
                         false);
 
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(5, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
 
@@ -629,7 +634,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
         // Remove selected destination tab and all related tabs from the expected tabs list. Note
         // that we are merging to the collaboration group.
         List<Tab> destinationAndRelatedTabs =
-                mGroupFilter.getRelatedTabList(holder.getSelectedTabIds().get(0));
+                mGroupFilter.getRelatedTabList(holder.getSelectedItemIds().get(0).getTabId());
         expectedTabs.removeAll(destinationAndRelatedTabs);
         verify(mGroupFilter)
                 .mergeListOfTabsToGroup(expectedTabs, holder.getSelectedTabs().get(0), true);
@@ -637,6 +642,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
     }
 
     @Test(expected = AssertionError.class)
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testGroupActionWithTabGroups_MergeCollaborationsAsserts() {
         List<TabIdGroup> tabIdGroups = new ArrayList<>();
         tabIdGroups.add(
@@ -660,7 +666,7 @@ public class TabListEditorLegacyGroupActionUnitTest {
                         tabIdGroups,
                         false);
 
-        mAction.onSelectionStateChange(holder.getSelectedTabIds());
+        mAction.onSelectionStateChange(holder.getSelectedItemIds());
         assertEquals(false, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         assertEquals(5, mAction.getPropertyModel().get(TabListEditorActionProperties.ITEM_COUNT));
 

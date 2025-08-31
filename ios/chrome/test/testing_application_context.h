@@ -62,6 +62,9 @@ class TestingApplicationContext : public ApplicationContext {
   // Sets the IOSChromeIOThread.
   void SetIOSChromeIOThread(IOSChromeIOThread* ios_chrome_io_thread);
 
+  void SetSharedURLLoaderFactory(
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
+
   // ApplicationContext implementation.
   void OnAppEnterForeground() override;
   void OnAppEnterBackground() override;
@@ -75,7 +78,7 @@ class TestingApplicationContext : public ApplicationContext {
   scoped_refptr<network::SharedURLLoaderFactory> GetSharedURLLoaderFactory()
       override;
   network::mojom::NetworkContext* GetSystemNetworkContext() override;
-  const std::string& GetApplicationLocale() override;
+  ApplicationLocaleStorage* GetApplicationLocaleStorage() override;
   const std::string& GetApplicationCountry() override;
   ProfileManagerIOS* GetProfileManager() override;
   metrics_services_manager::MetricsServicesManager* GetMetricsServicesManager()
@@ -103,16 +106,11 @@ class TestingApplicationContext : public ApplicationContext {
   os_crypt_async::OSCryptAsync* GetOSCryptAsync() override;
   AdditionalFeaturesController* GetAdditionalFeaturesController() override;
   auto_deletion::AutoDeletionService* GetAutoDeletionService() override;
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-  optimization_guide::OnDeviceModelServiceController*
-  GetOnDeviceModelServiceController(
-      base::WeakPtr<optimization_guide::OnDeviceModelComponentStateManager>
-          on_device_component_manager) override;
-#endif  // BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE
+  optimization_guide::OptimizationGuideGlobalState*
+  GetOptimizationGuideGlobalState() override;
 
  private:
   SEQUENCE_CHECKER(sequence_checker_);
-  std::string application_locale_;
   std::string application_country_;
   raw_ptr<PrefService> local_state_;
 
@@ -127,7 +125,7 @@ class TestingApplicationContext : public ApplicationContext {
   raw_ptr<AccountProfileMapper> custom_account_profile_mapper_;
   std::unique_ptr<network_time::NetworkTimeTracker> network_time_tracker_;
   bool was_last_shutdown_clean_;
-  std::unique_ptr<network::TestURLLoaderFactory> test_url_loader_factory_;
+  scoped_refptr<network::SharedURLLoaderFactory> test_url_loader_factory_;
   scoped_refptr<SafeBrowsingService> fake_safe_browsing_service_;
   std::unique_ptr<network::TestNetworkConnectionTracker>
       test_network_connection_tracker_;
@@ -140,6 +138,9 @@ class TestingApplicationContext : public ApplicationContext {
   std::unique_ptr<AdditionalFeaturesController> additional_features_controller_;
   raw_ptr<IOSChromeIOThread> ios_chrome_io_thread_;
   std::unique_ptr<auto_deletion::AutoDeletionService> auto_deletion_service_;
+  std::unique_ptr<optimization_guide::OptimizationGuideGlobalState>
+      optimization_guide_global_state_;
+  std::unique_ptr<ApplicationLocaleStorage> application_locale_storage_;
 };
 
 #endif  // IOS_CHROME_TEST_TESTING_APPLICATION_CONTEXT_H_

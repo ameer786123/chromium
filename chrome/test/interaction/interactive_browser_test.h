@@ -35,7 +35,6 @@
 #include "ui/base/interaction/interaction_test_util.h"
 #include "ui/base/interaction/interactive_test_definitions.h"
 #include "ui/base/test/ui_controls.h"
-#include "ui/gfx/geometry/point.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/interaction/interactive_views_test.h"
 #include "ui/views/view.h"
@@ -266,6 +265,12 @@ class InteractiveBrowserTestApi : public views::test::InteractiveViewsTestApi {
   // Unlike InteractiveTestApi::EnsurePresent, this verb can be inside an
   // InAnyContext() block.
   [[nodiscard]] static StepBuilder EnsureNotPresent(
+      ui::ElementIdentifier webcontents_id,
+      const DeepQuery& where);
+
+  // Similar to EnsureNotPresent, but succeeds if the element is either not
+  // present, or present and not visible.
+  [[nodiscard]] static StepBuilder EnsureNotVisible(
       ui::ElementIdentifier webcontents_id,
       const DeepQuery& where);
 
@@ -509,6 +514,11 @@ class InteractiveBrowserTestApi : public views::test::InteractiveViewsTestApi {
 
   // Possibly waits for `element_id` to be painted if it is a WebContents.
   [[nodiscard]] MultiStep MaybeWaitForPaint(ElementSpecifier element);
+
+  // Waits for the user to dismiss `element` if in interactive mode
+  // (command-line flag `--test-launcher-interactive`).
+  [[nodiscard]] static StepBuilder MaybeWaitForUserToDismiss(
+      ElementSpecifier element);
 
   Browser* GetBrowserFor(ui::ElementContext current_context,
                          BrowserSpecifier spec);

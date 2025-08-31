@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/enterprise_util.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -483,6 +484,28 @@ void AddEnterpriseDeviceTrustWorkItems(const InstallerState& installer_state,
   cmd.set_is_web_accessible(true);
   cmd.AddCreateAppCommandWorkItems(installer_state.root_key(), install_list);
 }
+
+// Adds work items to add the "PEH Install" command to Chrome's version key.
+// This method is a no-op if this is anything other than system-level Chrome.
+// The command is used on first run of Chrome, and installs the Platform
+// Experience Helper.
+void AddPlatformExperienceHelperWorkItems(const InstallerState& installer_state,
+                                          const base::Version& new_version,
+                                          WorkItemList* install_list) {
+  if (!installer_state.system_install()) {
+    return;
+  }
+
+  base::CommandLine install_peh_cmd(installer_state.target_path()
+                                        .AppendASCII(new_version.GetString())
+                                        .Append(kOsUpdateHandlerExe));
+  InstallUtil::AppendModeAndChannelSwitches(&install_peh_cmd);
+  install_peh_cmd.AppendSwitch(kPEHForceInstall);
+  install_peh_cmd.AppendSwitch(installer::switches::kSystemLevel);
+
+  AppCommand cmd(kCmdInstallPEH, install_peh_cmd.GetCommandLineString());
+  cmd.AddCreateAppCommandWorkItems(installer_state.root_key(), install_list);
+}
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 }  // namespace
@@ -637,7 +660,10 @@ void AddUpdateBrandCodeWorkItem(const InstallerState& installer_state,
   if (!GoogleUpdateSettings::GetBrand(&brand))
     return;
 
-  std::wstring new_brand = GetUpdatedBrandCode(brand);
+  // Only update if this machine is a managed device, including domain join.
+  // Also map in the reverse direction to fix an issue introduced in M136 by
+  // mapping indiscriminately in the forward direction.
+  std::wstring new_brand = GetUpdatedBrandCode(brand, base::IsManagedDevice());
   // Rewrite the old brand so that the next step can potentially apply both
   // changes at once.
   if (!new_brand.empty()) {
@@ -688,7 +714,8 @@ void AddUpdateBrandCodeWorkItem(const InstallerState& installer_state,
       KEY_WOW64_32KEY, google_update::kRegRLZBrandField, new_brand, true);
 }
 
-std::wstring GetUpdatedBrandCode(const std::wstring& brand_code) {
+std::wstring GetUpdatedBrandCode(const std::wstring& brand_code,
+                                 bool to_enterprise) {
   // Brand codes to be remapped on enterprise installs.
   static constexpr struct EnterpriseBrandRemapping {
     const wchar_t* old_brand;
@@ -700,8 +727,12 @@ std::wstring GetUpdatedBrandCode(const std::wstring& brand_code) {
   };
 
   for (auto mapping : kEnterpriseBrandRemapping) {
-    if (brand_code == mapping.old_brand)
+    if (to_enterprise && brand_code == mapping.old_brand) {
       return mapping.new_brand;
+    }
+    if (!to_enterprise && brand_code == mapping.new_brand) {
+      return mapping.old_brand;
+    }
   }
   return std::wstring();
 }
@@ -973,6 +1004,8 @@ void AddInstallWorkItems(const InstallParams& install_params,
                                      install_list);
   AddEnterpriseDeviceTrustWorkItems(installer_state, setup_path, new_version,
                                     install_list);
+  AddPlatformExperienceHelperWorkItems(installer_state, new_version,
+                                       install_list);
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING
   AddFirewallRulesWorkItems(installer_state, !current_version.IsValid(),
                             install_list);

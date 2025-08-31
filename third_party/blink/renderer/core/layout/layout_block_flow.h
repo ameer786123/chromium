@@ -43,8 +43,6 @@
 
 namespace blink {
 
-class LayoutMultiColumnFlowThread;
-
 struct InlineNodeData;
 
 // LayoutBlockFlow is the class that implements a block container in CSS 2.1.
@@ -86,24 +84,11 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   void ChildBecameFloatingOrOutOfFlow(LayoutBox* child);
   void CollapseAnonymousBlockChild(LayoutBlockFlow* child);
 
-  LayoutMultiColumnFlowThread* MultiColumnFlowThread() const {
-    NOT_DESTROYED();
-    return multi_column_flow_thread_.Get();
-  }
-  void ResetMultiColumnFlowThread() {
-    NOT_DESTROYED();
-    multi_column_flow_thread_ = nullptr;
-  }
-
   // Return true if this block establishes a fragmentation context root (e.g. a
   // multicol container).
-  //
-  // Implementation detail: At some point in the future there should be no flow
-  // threads. Callers that only want to know if this is a fragmentation context
-  // root (and don't depend on flow threads) should call this method.
   bool IsFragmentationContextRoot() const override {
     NOT_DESTROYED();
-    return MultiColumnFlowThread();
+    return IsMulticolContainer();
   }
 
   bool IsInitialLetterBox() const override;
@@ -173,8 +158,10 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   void DirtyLinesFromChangedChild(LayoutObject* child) final;
 
  private:
-  void CreateOrDestroyMultiColumnFlowThreadIfNeeded(
-      const ComputedStyle* old_style);
+  void UpdateForMulticol();
+
+  void AddChildBeforeDescendant(LayoutObject* new_child,
+                                LayoutObject* before_descendant);
 
   // Merge children of |sibling_that_may_be_deleted| into this object if
   // possible, and delete |sibling_that_may_be_deleted|. Returns true if we
@@ -197,7 +184,6 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   bool ShouldTruncateOverflowingText() const;
 
  private:
-  Member<LayoutMultiColumnFlowThread> multi_column_flow_thread_;
   Member<InlineNodeData> inline_node_data_;
 
  protected:

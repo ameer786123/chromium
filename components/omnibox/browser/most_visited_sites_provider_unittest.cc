@@ -14,8 +14,11 @@
 #include "components/history/core/browser/features.h"
 #include "components/history/core/browser/top_sites.h"
 #include "components/history/core/browser/top_sites_impl.h"
+#include "components/omnibox/browser/autocomplete_enums.h"
 #include "components/omnibox/browser/autocomplete_provider_listener.h"
 #include "components/omnibox/browser/fake_autocomplete_provider_client.h"
+#include "components/omnibox/browser/suggestion_group_util.h"
+#include "components/omnibox/browser/tab_matcher.h"
 #include "components/omnibox/browser/test_scheme_classifier.h"
 #include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_features.h"
@@ -97,10 +100,7 @@ class FakeTopSites : public history::TopSites {
 
 constexpr const auto* WEB_URL = u"https://example.com/";
 
-enum class ExpectedUiType {
-  kAggregateMatch,
-  kIndividualTiles
-};
+enum class ExpectedUiType { kAggregateMatch, kIndividualTiles };
 
 const std::vector<TestData> DefaultTestData() {
   return {{false, {GURL("http://www.a.art/"), u"A art"}},
@@ -121,7 +121,8 @@ class MockHistoryService : public history::HistoryService {
                history::HistoryService::QueryMostVisitedURLsCallback callback,
                base::CancelableTaskTracker* tracker,
                const std::optional<std::string>& recency_factor_name,
-               std::optional<size_t> recency_window_days),
+               std::optional<size_t> recency_window_days,
+               bool check_visual_deduplication_flag),
               (override));
   MOCK_METHOD(void, DeleteURLs, (const std::vector<GURL>& urls), (override));
 };
@@ -256,7 +257,7 @@ void MostVisitedSitesProviderTest::CheckMatchesEquivalentTo(
   } else if (ui_type == ExpectedUiType::kIndividualTiles) {
     ASSERT_EQ(data.size(), NumMostVisitedMatches())
         << "Unexpected number of TILE matches";
-    int expected_relevance = 1600;  // kMostVisitedTilesIndividualHighRelevance
+    int expected_relevance = omnibox::kMostVisitedTilesZeroSuggestHighRelevance;
     for (const auto& match : result) {
       if (data[match_index].is_search) {
         EXPECT_EQ(match.type, AutocompleteMatchType::TILE_REPEATABLE_QUERY);
@@ -276,12 +277,6 @@ void MostVisitedSitesProviderTest::CheckMatchesEquivalentTo(
       EXPECT_EQ(expected_relevance, match.relevance)
           << "Invalid Match Relevance at position " << match_index;
       ++match_index;
-      // Degrade relevance of partially visible and invisible matches.
-      if (match_index == 4 &&
-          ui::GetDeviceFormFactor() ==
-              ui::DeviceFormFactor::DEVICE_FORM_FACTOR_PHONE) {
-        expected_relevance = 100;  // kMostVisitedTilesIndividualLowRelevance
-      }
       --expected_relevance;
     }
   }
@@ -299,7 +294,7 @@ void MostVisitedSitesProviderTest::CheckDesktopMatchesEquivalentTo(
   size_t match_index = 0;
   ASSERT_EQ(url_limit, NumMostVisitedMatches())
       << "Unexpected number of TILE matches";
-  int expected_relevance = 1600;  // kMostVisitedTilesIndividualHighRelevance
+  int expected_relevance = omnibox::kMostVisitedTilesZeroSuggestHighRelevance;
   for (const auto& match : result) {
     EXPECT_EQ(match.type, AutocompleteMatchType::TILE_MOST_VISITED_SITE);
     EXPECT_TRUE(match.subtypes.contains(
@@ -351,11 +346,11 @@ TEST_F(MostVisitedSitesProviderTest, TestMostVisitedCallback) {
   EXPECT_TRUE(top_sites_->EmitURLs(test_data));
   CheckMatchesEquivalentTo(test_data, ExpectedUiType::kAggregateMatch);
   EXPECT_EQ(1, provider_update_count_);
-  provider_->Stop(false, false);
+  provider_->Stop(AutocompleteStopReason::kClobbered);
 
   // Observe that subsequent request does not return stale data.
   provider_->Start(input, true);
-  provider_->Stop(false, false);
+  provider_->Stop(AutocompleteStopReason::kClobbered);
   // Since this provider's async logic is still in-flight (`EmitURLs()` has not
   // been called yet), we should not be reporting anything from past runs.
   EXPECT_EQ(0ul, NumMostVisitedMatches());
@@ -372,7 +367,7 @@ TEST_F(MostVisitedSitesProviderTest, TestMostVisitedCallback) {
   EXPECT_EQ(1, provider_update_count_);
 
   provider_->Start(input, true);
-  provider_->Stop(false, false);
+  provider_->Stop(AutocompleteStopReason::kClobbered);
   provider_->Start(input, true);
 
   // Stale results (reported for the first of the two Start() requests) should
@@ -385,7 +380,7 @@ TEST_F(MostVisitedSitesProviderTest, TestMostVisitedCallback) {
   EXPECT_TRUE(top_sites_->EmitURLs(test_data));
   CheckMatchesEquivalentTo(test_data, ExpectedUiType::kAggregateMatch);
   EXPECT_EQ(2, provider_update_count_);
-  provider_->Stop(false, false);
+  provider_->Stop(AutocompleteStopReason::kClobbered);
 }
 
 TEST_F(MostVisitedSitesProviderTest, TestMostVisitedNavigateToSearchPage) {
@@ -559,9 +554,13 @@ TEST_F(MostVisitedSitesProviderTest, TestCreateMostVisitedTopSitesMatches) {
       scoped_config;
   scoped_config.Get().enabled = true;
   scoped_config.Get().directly_query_history_service = false;
-  scoped_config.Get().max_suggestions = 8U;
-  scoped_config.Get().max_url_suggestions = 4U;
-  scoped_config.Get().max_search_suggestions = 4U;
+  omnibox_feature_configs::ScopedConfigForTesting<
+      omnibox_feature_configs::OmniboxZpsSuggestionLimit>
+      suggestion_limit_scoped_config;
+  suggestion_limit_scoped_config.Get().enabled = true;
+  suggestion_limit_scoped_config.Get().max_suggestions = 8U;
+  suggestion_limit_scoped_config.Get().max_url_suggestions = 4U;
+  suggestion_limit_scoped_config.Get().max_search_suggestions = 4U;
 
   provider_->Start(BuildAutocompleteInputForWebOnFocus(), true);
 
@@ -569,8 +568,8 @@ TEST_F(MostVisitedSitesProviderTest, TestCreateMostVisitedTopSitesMatches) {
   // Accept only direct TopSites data.
   auto test_data = DefaultTestData();
   EXPECT_TRUE(top_sites_->EmitURLs(test_data));
-  CheckDesktopMatchesEquivalentTo(test_data,
-                                  scoped_config.Get().max_url_suggestions);
+  CheckDesktopMatchesEquivalentTo(
+      test_data, suggestion_limit_scoped_config.Get().max_url_suggestions);
 }
 
 TEST_F(MostVisitedSitesProviderTest, DesktopProviderDoesNotAllowChromeSites) {
@@ -603,18 +602,23 @@ TEST_F(MostVisitedSitesProviderTest, TestDesktopQueryingHistoryService) {
   scoped_config.Get().most_visited_recency_window = 4;
   scoped_config.Get().most_visited_recency_factor =
       history::kMvtScoringParamRecencyFactor_Classic;
-  scoped_config.Get().max_suggestions = 8;
   scoped_config.Get().prefetch_most_visited_sites = false;
+  omnibox_feature_configs::ScopedConfigForTesting<
+      omnibox_feature_configs::OmniboxZpsSuggestionLimit>
+      suggestion_limit_scoped_config;
+  suggestion_limit_scoped_config.Get().enabled = true;
+  suggestion_limit_scoped_config.Get().max_suggestions = 8U;
 
   AutocompleteInput input(BuildAutocompleteInputForWebOnFocus());
 
   history::HistoryService::QueryMostVisitedURLsCallback callback;
-  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _))
+  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _, _))
       .WillOnce([&](int result_count,
                     history::HistoryService::QueryMostVisitedURLsCallback cb,
                     base::CancelableTaskTracker* tracker,
                     std::optional<std::string> recency_factor_name,
-                    std::optional<size_t> recency_window_days)
+                    std::optional<size_t> recency_window_days,
+                    bool check_visual_deduplication_flag)
                     -> base::CancelableTaskTracker::TaskId {
         // Add 1 to simulate 1 site being open.
         EXPECT_EQ(static_cast<int>(provider_->GetRequestedResultSize(input)),
@@ -648,18 +652,23 @@ TEST_F(MostVisitedSitesProviderTest, TestDeleteMatch) {
       omnibox_feature_configs::OmniboxUrlSuggestionsOnFocus>
       scoped_config;
   scoped_config.Get().enabled = true;
-  scoped_config.Get().max_suggestions = 8;
   scoped_config.Get().prefetch_most_visited_sites = false;
+  omnibox_feature_configs::ScopedConfigForTesting<
+      omnibox_feature_configs::OmniboxZpsSuggestionLimit>
+      suggestion_limit_scoped_config;
+  suggestion_limit_scoped_config.Get().enabled = true;
+  suggestion_limit_scoped_config.Get().max_suggestions = 8U;
 
   AutocompleteInput input(BuildAutocompleteInputForWebOnFocus());
 
   history::HistoryService::QueryMostVisitedURLsCallback callback;
-  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _))
+  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _, _))
       .WillOnce([&](int result_count,
                     history::HistoryService::QueryMostVisitedURLsCallback cb,
                     base::CancelableTaskTracker* tracker,
                     std::optional<std::string> recency_factor_name,
-                    std::optional<size_t> recency_window_days)
+                    std::optional<size_t> recency_window_days,
+                    bool check_visual_deduplication_flag)
                     -> base::CancelableTaskTracker::TaskId {
         // Add 1 to simulate 1 site being open.
         EXPECT_EQ(static_cast<int>(provider_->GetRequestedResultSize(input)),
@@ -709,20 +718,25 @@ TEST_F(MostVisitedSitesProviderTest, PrefetchingUpdatesCachedSites) {
       omnibox_feature_configs::OmniboxUrlSuggestionsOnFocus>
       scoped_config;
   scoped_config.Get().enabled = true;
-  scoped_config.Get().max_suggestions = 8;
   scoped_config.Get().prefetch_most_visited_sites = true;
+  omnibox_feature_configs::ScopedConfigForTesting<
+      omnibox_feature_configs::OmniboxZpsSuggestionLimit>
+      suggestion_limit_scoped_config;
+  suggestion_limit_scoped_config.Get().enabled = true;
+  suggestion_limit_scoped_config.Get().max_suggestions = 8U;
 
   AutocompleteInput input(BuildAutocompletePrefetchInputForWeb());
 
   history::HistoryService::QueryMostVisitedURLsCallback callback;
-  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _))
+  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _, _))
       .Times(2)
       .WillRepeatedly(
           [&](int result_count,
               history::HistoryService::QueryMostVisitedURLsCallback cb,
               base::CancelableTaskTracker* tracker,
               std::optional<std::string> recency_factor_name,
-              std::optional<size_t> recency_window_days)
+              std::optional<size_t> recency_window_days,
+              bool check_visual_deduplication_flag)
               -> base::CancelableTaskTracker::TaskId {
             // Add 1 to simulate 1 site being open.
             EXPECT_EQ(
@@ -780,18 +794,23 @@ TEST_F(MostVisitedSitesProviderTest,
       omnibox_feature_configs::OmniboxUrlSuggestionsOnFocus>
       scoped_config;
   scoped_config.Get().enabled = true;
-  scoped_config.Get().max_suggestions = 8;
   scoped_config.Get().prefetch_most_visited_sites = true;
+  omnibox_feature_configs::ScopedConfigForTesting<
+      omnibox_feature_configs::OmniboxZpsSuggestionLimit>
+      suggestion_limit_scoped_config;
+  suggestion_limit_scoped_config.Get().enabled = true;
+  suggestion_limit_scoped_config.Get().max_suggestions = 8U;
 
   AutocompleteInput input(BuildAutocompleteInputForWebOnFocus());
 
   history::HistoryService::QueryMostVisitedURLsCallback callback;
-  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _))
+  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _, _))
       .WillOnce([&](int result_count,
                     history::HistoryService::QueryMostVisitedURLsCallback cb,
                     base::CancelableTaskTracker* tracker,
                     std::optional<std::string> recency_factor_name,
-                    std::optional<size_t> recency_window_days)
+                    std::optional<size_t> recency_window_days,
+                    bool check_visual_deduplication_flag)
                     -> base::CancelableTaskTracker::TaskId {
         // Add 1 to simulate 1 site being open.
         EXPECT_EQ(static_cast<int>(provider_->GetRequestedResultSize(input)),
@@ -808,7 +827,7 @@ TEST_F(MostVisitedSitesProviderTest,
 
   std::move(callback).Run(std::move(result));
 
-  EXPECT_FALSE(provider_->done());
+  EXPECT_TRUE(provider_->done());
   // `Start()` when prefetch is enabled should update the list of cached sites,
   // but not update the actual provider's matches if the cache is empty.
   ASSERT_EQ(5u, provider_->GetCachedSitesForTesting().size());
@@ -843,17 +862,22 @@ TEST_F(MostVisitedSitesProviderTest, TestDeleteWithPrefetching) {
       omnibox_feature_configs::OmniboxUrlSuggestionsOnFocus>
       scoped_config;
   scoped_config.Get().enabled = true;
-  scoped_config.Get().max_suggestions = 8;
   scoped_config.Get().prefetch_most_visited_sites = true;
+  omnibox_feature_configs::ScopedConfigForTesting<
+      omnibox_feature_configs::OmniboxZpsSuggestionLimit>
+      suggestion_limit_scoped_config;
+  suggestion_limit_scoped_config.Get().enabled = true;
+  suggestion_limit_scoped_config.Get().max_suggestions = 8U;
 
   history::HistoryService::QueryMostVisitedURLsCallback callback;
-  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _))
+  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _, _))
       .WillRepeatedly(
           [&](int result_count,
               history::HistoryService::QueryMostVisitedURLsCallback cb,
               base::CancelableTaskTracker* tracker,
               std::optional<std::string> recency_factor_name,
-              std::optional<size_t> recency_window_days)
+              std::optional<size_t> recency_window_days,
+              bool check_visual_deduplication_flag)
               -> base::CancelableTaskTracker::TaskId {
             callback = std::move(cb);
             return {};
@@ -900,8 +924,6 @@ TEST_F(MostVisitedSitesProviderTest, TestDeleteWithPrefetching) {
 }
 
 TEST_F(MostVisitedSitesProviderTest, DuplicateSuggestions) {
-  AutocompleteInput input(BuildAutocompleteInputForWebOnFocus());
-  history::MostVisitedURLList result;
   omnibox_feature_configs::ScopedConfigForTesting<
       omnibox_feature_configs::OmniboxUrlSuggestionsOnFocus>
       scoped_config;
@@ -915,9 +937,11 @@ TEST_F(MostVisitedSitesProviderTest, DuplicateSuggestions) {
       {false,
        {GURL("http://www.samesites.com/differentpath/#ref"),
         u"Different URL"}}};
+  history::MostVisitedURLList result;
   for (auto& data : test_data) {
     result.push_back(data.entry);
   }
+  AutocompleteInput input(BuildAutocompleteInputForWebOnFocus());
   provider_->OnMostVisitedUrlsAvailable(input, result);
   // Filter by same titles and stripped urls when deduping suggestions within
   // the suggestion list.
@@ -928,6 +952,83 @@ TEST_F(MostVisitedSitesProviderTest, DuplicateSuggestions) {
             provider_->matches().at(1).destination_url.spec());
   ASSERT_EQ("http://www.samesites.com/differentpath/#ref",
             provider_->matches().at(2).destination_url.spec());
+}
+
+TEST_F(MostVisitedSitesProviderTest, TestProviderDoneWithEmptyCachedSites) {
+  // Set a MockHistoryService.
+  auto history_service = std::make_unique<MockHistoryService>();
+  auto& history_service_ref = *history_service;
+  client_.set_history_service(std::move(history_service));
+  omnibox_feature_configs::ScopedConfigForTesting<
+      omnibox_feature_configs::OmniboxUrlSuggestionsOnFocus>
+      scoped_config;
+  scoped_config.Get().enabled = true;
+  scoped_config.Get().prefetch_most_visited_sites = true;
+
+  history::HistoryService::QueryMostVisitedURLsCallback callback;
+  EXPECT_CALL(history_service_ref, QueryMostVisitedURLs(_, _, _, _, _, _))
+      .WillRepeatedly(
+          [&](int result_count,
+              history::HistoryService::QueryMostVisitedURLsCallback cb,
+              base::CancelableTaskTracker* tracker,
+              std::optional<std::string> recency_factor_name,
+              std::optional<size_t> recency_window_days,
+              bool check_visual_deduplication_flag)
+              -> base::CancelableTaskTracker::TaskId {
+            callback = std::move(cb);
+            return {};
+          });
+
+  AutocompleteInput input(BuildAutocompleteInputForWebOnFocus());
+  // Simulate a prefetch that returns no results.
+  provider_->StartPrefetch(input);
+  history::MostVisitedURLList result;
+  std::move(callback).Run(std::move(result));
+  ASSERT_EQ(0u, provider_->GetCachedSitesForTesting().size());
+
+  // Provider should still be set to done immediately after calling `Start()`
+  // even if cached sites is empty.
+  provider_->Start(input, false);
+  EXPECT_TRUE(provider_->done());
+}
+
+TEST_F(MostVisitedSitesProviderTest, DedupingOpenTabs) {
+  omnibox_feature_configs::ScopedConfigForTesting<
+      omnibox_feature_configs::OmniboxUrlSuggestionsOnFocus>
+      scoped_config;
+  scoped_config.Get().enabled = true;
+
+  AutocompleteInput input(BuildAutocompleteInputForWebOnFocus());
+  history::MostVisitedURLList result;
+
+  FakeTabMatcher& tab_matcher = static_cast<FakeTabMatcher&>(
+      const_cast<TabMatcher&>(client_.GetTabMatcher()));
+
+  tab_matcher.AddOpenTab(FakeTabMatcher::TabWrapper(
+      u"Test", GURL("http://foo.org/path/#ref"), base::Time::Now()));
+  tab_matcher.AddOpenTab(FakeTabMatcher::TabWrapper(
+      u"Testing", GURL("http://bar.org"), base::Time::Now()));
+
+  std::vector<TestData> test_data = {
+      // Tabs with same title and url should be considered matches.
+      {false, {GURL("http://bar.org"), u"Testing"}},
+      // Tabs with same title should be considered matches even if urls are
+      // different.
+      {false, {GURL("http://different.org"), u"Testing"}},
+      // Sites with same path and different refs should be considered matches.
+      {false, {GURL("http://foo.org/path/#differentref"), u"Different Name"}},
+      // Sites with different path should not be considered matches.
+      {false, {GURL("http://foo.org/differentpath/#ref"), u"Different Name"}},
+      // Sites with same match and different refs and query params should be
+      // considered matches.
+      {false, {GURL("http://foo.org/path/#ref?param=123"), u"Different Name"}}};
+  for (auto& data : test_data) {
+    result.push_back(data.entry);
+  }
+  provider_->OnMostVisitedUrlsAvailable(input, result);
+  ASSERT_EQ(1u, provider_->matches().size());
+  ASSERT_EQ("http://foo.org/differentpath/#ref",
+            provider_->matches().at(0).destination_url.spec());
 }
 
 #endif  // !(BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS))

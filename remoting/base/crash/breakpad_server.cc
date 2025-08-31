@@ -15,7 +15,7 @@
 #include "base/win/security_descriptor.h"
 #include "base/win/sid.h"
 #include "remoting/base/crash/breakpad_utils.h"
-#include "remoting/base/crash/crash_reporting.h"
+#include "remoting/base/crash/crash_reporting_breakpad.h"
 #include "remoting/base/logging.h"
 #include "remoting/base/version.h"
 #include "third_party/breakpad/breakpad/src/client/windows/crash_generation/crash_generation_server.h"
@@ -103,8 +103,7 @@ BreakpadServer::BreakpadServer() {
     return;
   }
 
-  SECURITY_DESCRIPTOR security_descriptor;
-  sd.ToAbsolute(security_descriptor);
+  SECURITY_DESCRIPTOR security_descriptor = sd.ToAbsolute();
 
   SECURITY_ATTRIBUTES security_attributes = {0};
   security_attributes.nLength = sizeof(security_attributes);

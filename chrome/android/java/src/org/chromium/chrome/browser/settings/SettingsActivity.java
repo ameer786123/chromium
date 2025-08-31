@@ -4,14 +4,14 @@
 
 package org.chromium.chrome.browser.settings;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.graphics.Color;
-import android.os.Build;
-import android.os.Build.VERSION;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.Menu;
@@ -19,8 +19,6 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.widget.Toolbar;
 import androidx.fragment.app.Fragment;
@@ -29,13 +27,15 @@ import androidx.fragment.app.FragmentTransaction;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
 import org.chromium.base.CallbackUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.Log;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.OneshotSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeBaseAppCompatActivity;
 import org.chromium.chrome.browser.back_press.BackPressHelper;
@@ -54,9 +54,11 @@ import org.chromium.components.browser_ui.bottomsheet.ManagedBottomSheetControll
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
 import org.chromium.components.browser_ui.settings.EmbeddableSettingsPage;
 import org.chromium.components.browser_ui.settings.SettingsFragment;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.util.TraceEventVectorDrawableCompat;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager.ScrimClient;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.DeviceFormFactor;
@@ -85,8 +87,11 @@ import java.util.Locale;
  * <p>Standalone fragments may modify the activity UI as needed. A standalone fragment is always
  * launched with a fresh settings activity instance that is not shared with other fragments.
  */
+@NullMarked
 public class SettingsActivity extends ChromeBaseAppCompatActivity
         implements PreferenceFragmentCompat.OnPreferenceStartFragmentCallback, SnackbarManageable {
+    private static final String TAG = "SettingsActivity";
+
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     public static final String EXTRA_SHOW_FRAGMENT = "show_fragment";
 
@@ -94,7 +99,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
     static final String EXTRA_SHOW_FRAGMENT_STANDALONE = "show_fragment_standalone";
 
     /** The current instance of SettingsActivity in the resumed state, if any. */
-    private static SettingsActivity sResumedInstance;
+    private static @Nullable SettingsActivity sResumedInstance;
 
     /** Whether this activity has been created for the first time but not yet resumed. */
     private boolean mIsNewlyCreated;
@@ -114,12 +119,12 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
     // An intent that was received in onNewIntent and would cause fragment transactions, but is
     // pending for processing in the next onResume call. See onNewIntent for why we can not directly
     // process those intents in onNewIntent.
-    private Intent mPendingNewIntent;
+    private @Nullable Intent mPendingNewIntent;
 
     // Used to avoid finishing the same fragment multiple times. If the referent is identical to the
     // result of getMainFragment(), it should be considered already finished. Otherwise it should be
     // ignored.
-    private WeakReference<Fragment> mFinishedMainFragment;
+    private @Nullable WeakReference<Fragment> mFinishedMainFragment;
 
     // This is only used on automotive.
     private @Nullable MissingDeviceLockLauncher mMissingDeviceLockLauncher;
@@ -131,7 +136,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
 
     @SuppressLint("InlinedApi")
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
         mStandalone = getIntent().getBooleanExtra(EXTRA_SHOW_FRAGMENT_STANDALONE, false);
 
         setTitle(R.string.settings);
@@ -170,7 +175,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
 
         Toolbar actionBar = findViewById(R.id.action_bar);
         setSupportActionBar(actionBar);
-        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+        assumeNonNull(getSupportActionBar()).setDisplayHomeAsUpEnabled(true);
 
         mIsNewlyCreated = savedInstanceState == null;
 
@@ -191,6 +196,19 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
         mSnackbarManagerSupplier.set(new SnackbarManager(this, getContentView(), null));
 
         mIntentRequestTracker = IntentRequestTracker.createFromActivity(this);
+        if (ChromeFeatureList.sAndroidSettingsContainment.isEnabled()) {
+            int backgroundColor = SemanticColorUtils.getSettingsBackgroundColor(this);
+            findViewById(R.id.content).setBackgroundColor(backgroundColor);
+            findViewById(R.id.app_bar_layout).setBackgroundColor(backgroundColor);
+        }
+    }
+
+    @Override
+    public void applyThemeOverlays() {
+        if (ChromeFeatureList.sAndroidSettingsContainment.isEnabled()) {
+            applySingleThemeOverlay(R.style.ThemeOverlay_Chromium_Settings_Containment);
+        }
+        super.applyThemeOverlays();
     }
 
     @Override
@@ -233,7 +251,11 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
     private void initBottomSheet() {
         ViewGroup sheetContainer = findViewById(R.id.sheet_container);
         // TODO: Observe scrim changes if status bar needs to change color with the scrim.
-        mScrimManager = new ScrimManager(this, (ViewGroup) sheetContainer.getParent());
+        mScrimManager =
+                new ScrimManager(
+                        this,
+                        (ViewGroup) sheetContainer.getParent(),
+                        ScrimClient.SETTINGS_ACTIVITY);
 
         mManagedBottomSheetController =
                 BottomSheetControllerFactory.createBottomSheetController(
@@ -312,22 +334,18 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
         }
     }
 
-    private static @SettingsFragment.AnimationType int getAnimationType(
-            @NonNull Fragment fragment) {
+    private static @SettingsFragment.AnimationType int getAnimationType(Fragment fragment) {
         if (fragment instanceof SettingsFragment settingsFragment) {
             // The fragment is (being) migrated. Respect the animation type that the fragment says.
             return settingsFragment.getAnimationType();
         }
 
         // The fragment is not yet migrated with auditing. Fallback to the legacy animation type.
-        Log.w(
-                "SettingsActivity",
-                "Non-migrated Settings fragment is found: " + fragment.getClass().getName());
+        Log.w(TAG, "Non-migrated Settings fragment is found: " + fragment.getClass().getName());
         return SettingsFragment.AnimationType.TWEEN;
     }
 
-    private static void setFragmentAnimation(
-            @NonNull FragmentTransaction transaction, @NonNull Fragment fragment) {
+    private static void setFragmentAnimation(FragmentTransaction transaction, Fragment fragment) {
         switch (getAnimationType(fragment)) {
             case SettingsFragment.AnimationType.TWEEN -> transaction.setCustomAnimations(
                     R.anim.shared_x_axis_open_enter,
@@ -343,7 +361,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
     }
 
     private void checkForMissingDeviceLockOnAutomotive() {
-        if (BuildInfo.getInstance().isAutomotive) {
+        if (DeviceInfo.isAutomotive()) {
             if (mMissingDeviceLockLauncher == null) {
                 mMissingDeviceLockLauncher =
                         new MissingDeviceLockLauncher(
@@ -377,7 +395,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
      * top of the main content.
      */
     @VisibleForTesting
-    public Fragment getMainFragment() {
+    public @Nullable Fragment getMainFragment() {
         return getSupportFragmentManager().findFragmentById(R.id.content);
     }
 
@@ -423,6 +441,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
         }
 
         if (item.getItemId() == android.R.id.home) {
+            assumeNonNull(mainFragment);
             finishCurrentSettings(mainFragment);
             return true;
         } else if (item.getItemId() == R.id.menu_id_general_help) {
@@ -434,7 +453,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
     }
 
     @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+    public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         mIntentRequestTracker.onActivityResult(requestCode, resultCode, data);
     }
@@ -443,7 +462,9 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         // Finish the current settings when the ESC key is pressed.
         if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
-            finishCurrentSettings(getMainFragment());
+            Fragment mainFragment = getMainFragment();
+            assumeNonNull(mainFragment);
+            finishCurrentSettings(mainFragment);
             return true;
         }
         return super.onKeyDown(keyCode, event);
@@ -499,9 +520,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
 
     /** Set device status bar to match the activity background color, if supported. */
     private void setStatusBarColor() {
-        // On P+, the status bar color is set via the XML theme.
-        if (VERSION.SDK_INT >= Build.VERSION_CODES.P
-                && !BuildInfo.getInstance().isAutomotive
+        if (!DeviceInfo.isAutomotive()
                 && !DeviceFormFactor.isNonMultiDisplayContextOnTablet(this)) {
             return;
         }
@@ -590,11 +609,10 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
                     setTitle(title);
                 };
 
-        private ObservableSupplier<String> mCurrentPageTitle;
+        private @Nullable ObservableSupplier<String> mCurrentPageTitle;
 
         @Override
-        public void onFragmentStarted(
-                @NonNull FragmentManager fragmentManager, @NonNull Fragment fragment) {
+        public void onFragmentStarted(FragmentManager fragmentManager, Fragment fragment) {
             if (!MAIN_FRAGMENT_TAG.equals(fragment.getTag())) {
                 return;
             }
@@ -613,9 +631,9 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
     private class WideDisplayPaddingApplier extends FragmentManager.FragmentLifecycleCallbacks {
         @Override
         public void onFragmentViewCreated(
-                @NonNull FragmentManager fragmentManager,
-                @NonNull Fragment fragment,
-                @NonNull View view,
+                FragmentManager fragmentManager,
+                Fragment fragment,
+                View view,
                 @Nullable Bundle savedInstanceState) {
             if (MAIN_FRAGMENT_TAG.equals(fragment.getTag())) {
                 // Apply the wide display style after the main fragment is committed since its views
@@ -630,9 +648,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
             extends FragmentManager.FragmentLifecycleCallbacks {
         @Override
         public void onFragmentAttached(
-                @NonNull FragmentManager fragmentManager,
-                @NonNull Fragment fragment,
-                @NonNull Context context) {
+                FragmentManager fragmentManager, Fragment fragment, Context context) {
             if (!MAIN_FRAGMENT_TAG.equals(fragment.getTag())) {
                 return;
             }
@@ -642,12 +658,25 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
                     "Settings.FragmentAttached", className.hashCode());
             // Log hashCode to easily add new class names to enums.xml.
             Log.d(
-                    "SettingsActivity",
+                    TAG,
                     String.format(
                             Locale.ENGLISH,
                             "Settings.FragmentAttached: <int value=\"%d\" label=\"%s\"/>",
                             className.hashCode(),
                             className));
+
+            if (!(fragment instanceof SettingsFragment)) {
+                RecordHistogram.recordSparseHistogram(
+                        "Settings.NonSettingsFragmentAttached", className.hashCode());
+                Log.e(
+                        TAG,
+                        String.format(
+                                Locale.ENGLISH,
+                                "%s does not implement SettingsFragment",
+                                className));
+            }
+            assert fragment instanceof SettingsFragment
+                    : className + "does not implement SettingsFragment";
         }
     }
 }

@@ -36,6 +36,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
 #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
@@ -265,7 +266,7 @@ void UpdateFloatingPanelBoundsIfNeeded(aura::Window* root_window) {
 gfx::Size CalculatePreviewInitialSize() {
   int max_shorter_side = 0;
   for (aura::Window* root_window : Shell::GetAllRootWindows()) {
-    const auto work_area = display::Screen::GetScreen()
+    const auto work_area = display::Screen::Get()
                                ->GetDisplayNearestWindow(root_window)
                                .work_area();
     const int shorter_side = std::min(work_area.width(), work_area.height());

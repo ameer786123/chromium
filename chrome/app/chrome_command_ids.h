@@ -81,13 +81,16 @@
 #endif
 
 #define IDC_OPEN_IN_PWA_WINDOW          34053
-#define IDC_MOVE_TAB_TO_NEW_WINDOW          34054
+#define IDC_MOVE_TAB_TO_NEW_WINDOW      34054
+#define IDC_NEW_SPLIT_TAB               34055
+#define IDC_TOGGLE_VERTICAL_TABS        34056
 
 // Web app window commands
 #define IDC_COPY_URL                    34060
 #define IDC_OPEN_IN_CHROME              34061
 #define IDC_WEB_APP_SETTINGS            34062
-#define IDC_WEB_APP_MENU_APP_INFO    34063
+#define IDC_WEB_APP_MENU_APP_INFO       34063
+#define IDC_WEB_APP_UPGRADE_DIALOG      34064
 
 #if BUILDFLAG(IS_CHROMEOS)
 // Move window to other user commands
@@ -178,11 +181,12 @@
 #define IDC_CLOSE_PROFILE               35351
 #define IDC_MANAGE_GOOGLE_ACCOUNT       35352
 #define IDC_SHOW_SYNC_SETTINGS          35353
-#define IDC_TURN_ON_SYNC                35354
+#define IDC_TURN_ON_SYNC                35354  // Deprecated.
 #define IDC_SHOW_SIGNIN_WHEN_PAUSED     35355
 #define IDC_OPEN_GUEST_PROFILE          35356
 #define IDC_ADD_NEW_PROFILE             35357
 #define IDC_MANAGE_CHROME_PROFILES      35358
+#define IDC_SHOW_SIGNIN                 35359
 
 // Zoom
 #define IDC_ZOOM_MENU                   38000
@@ -289,6 +293,8 @@
 #define IDC_SHOW_HISTORY_SIDE_PANEL     40293
 #define IDC_OPEN_GLIC                   40294
 #define IDC_FIND_EXTENSIONS  40295
+#define IDC_SHOW_SEARCH_TOOLS  40296
+#define IDC_SHOW_COMMENTS_SIDE_PANEL  40297
 
 // Spell-check
 // Insert any additional suggestions before _LAST; these have to be consecutive.
@@ -350,6 +356,7 @@
 #define IDC_CONTENT_CONTEXT_OPENLINKINPROFILE 50108
 #define IDC_CONTENT_CONTEXT_OPENLINKBOOKMARKAPP 50109
 #define IDC_CONTENT_CONTEXT_OPENLINKPREVIEW 50110
+#define IDC_CONTENT_CONTEXT_OPENLINKSPLITVIEW 50111
 // Image items.
 #define IDC_CONTENT_CONTEXT_SAVEIMAGEAS 50120
 #define IDC_CONTENT_CONTEXT_COPYIMAGELOCATION 50121
@@ -468,6 +475,7 @@
 #define IDC_BOOKMARK_BAR_REMOVE_FROM_BOOKMARKS_BAR 51020
 #define IDC_BOOKMARK_BAR_TOGGLE_SHOW_TAB_GROUPS 51021
 #define IDC_BOOKMARK_BAR_MOVE 51022
+#define IDC_BOOKMARK_BAR_OPEN_SPLIT_VIEW 51023
 
 // Context menu items for Sharing
 #define IDC_CONTENT_CONTEXT_SHARING_CLICK_TO_CALL_SINGLE_DEVICE 51030
@@ -576,9 +584,6 @@
 
 // Glic button context menu and tabstrip context menu
 #define IDC_GLIC_TOGGLE_PIN 53320
-
-// Glic focus navigation
-#define IDC_GLIC_TOGGLE_FOCUS 53325
 
 // NOTE: The last valid command value is 57343 (0xDFFF)
 // See http://msdn.microsoft.com/en-us/library/t2zechd4(VS.71).aspx

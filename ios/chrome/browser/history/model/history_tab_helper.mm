@@ -15,9 +15,9 @@
 #import "ios/chrome/browser/complex_tasks/model/ios_task_tab_helper.h"
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/lens_overlay/model/lens_overlay_url_utils.h"
-#import "ios/chrome/browser/sessions/model/ios_chrome_session_tab_helper.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
+#import "ios/chrome/browser/tabs/model/ios_chrome_synced_tab_delegate.h"
 #import "ios/chrome/browser/translate/model/chrome_ios_translate_client.h"
 #import "ios/web/public/navigation/navigation_context.h"
 #import "ios/web/public/navigation/navigation_item.h"
@@ -131,11 +131,11 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
   context_annotations.browser_type =
       history::VisitContextAnnotations::BrowserType::kTabbed;
 
-  IOSChromeSessionTabHelper* session_tab_helper =
-      IOSChromeSessionTabHelper::FromWebState(web_state_);
-  if (session_tab_helper) {
-    context_annotations.window_id = session_tab_helper->window_id();
-    context_annotations.tab_id = session_tab_helper->session_id();
+  IOSChromeSyncedTabDelegate* sync_tab_helper =
+      IOSChromeSyncedTabDelegate::FromWebState(web_state_);
+  if (sync_tab_helper) {
+    context_annotations.window_id = sync_tab_helper->GetWindowId();
+    context_annotations.tab_id = sync_tab_helper->GetSessionId();
   }
 
   IOSTaskTabHelper* task_tab_helper =
@@ -154,19 +154,25 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
 
   context_annotations.response_code = http_response_code;
 
+  history::VisitResponseCodeCategory response_code_category =
+      http_response_code == 404 ? history::VisitResponseCodeCategory::k404
+                                : history::VisitResponseCodeCategory::kNot404;
+
   return history::HistoryAddPageArgs(
       url, last_committed_item->GetTimestamp(), GetContextID(),
       last_committed_item->GetUniqueID(), navigation_context->GetNavigationId(),
       referrer_url, redirects, transition, hidden, history::SOURCE_BROWSED,
+      response_code_category,
       /*did_replace_entry=*/false, consider_for_ntp_most_visited,
       /*is_ephemeral=*/false,
       navigation_context->IsSameDocument() ? GetPageTitle(*last_committed_item)
                                            : std::nullopt,
       // TODO(crbug.com/40279742): due to WebKit constraints, iOS does not
       // support triple-key partitioning. Once supported, we need to populate
-      // `top_level_url` with the correct value. Until then, :visited history on
-      // iOS is unpartitioned.
+      // `top_level_url` and `frame_url` with the correct value. Until then,
+      // :visited history on iOS is unpartitioned.
       /*top_level_url=*/std::nullopt,
+      /*frame_url=*/std::nullopt,
       /*opener=*/std::nullopt,
       /*bookmark_id=*/std::nullopt,
       /*app_id=*/std::nullopt,

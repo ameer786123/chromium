@@ -77,16 +77,17 @@ public class ShoppingPersistedTabData extends PersistedTabData {
 
     @VisibleForTesting public static final long NO_PRICE_KNOWN = -1;
 
-    private static Queue<ShoppingDataRequest> sShoppingDataRequests = new ArrayDeque<>();
+    private static final Queue<ShoppingDataRequest> sShoppingDataRequests = new ArrayDeque<>();
     private static boolean sDelayedInitFinished;
 
     public long mLastPriceChangeTimeMs = NO_TRANSITIONS_OCCURRED;
 
     private PriceDropData mPriceDropData = new PriceDropData();
     private PriceDropMetricsLogger mPriceDropMetricsLogger;
-    private Map<String, CurrencyFormatter> mCurrencyFormatterMap = new HashMap<>();
+    private final Map<String, CurrencyFormatter> mCurrencyFormatterMap = new HashMap<>();
 
     @VisibleForTesting
+    @SuppressWarnings("HidingField")
     protected ObservableSupplierImpl<Boolean> mIsTabSaveEnabledSupplier =
             new ObservableSupplierImpl<>();
 
@@ -111,8 +112,8 @@ public class ShoppingPersistedTabData extends PersistedTabData {
      * until DeferredStartup.
      */
     private static class ShoppingDataRequest {
-        public Tab tab;
-        public Callback<@Nullable ShoppingPersistedTabData> callback;
+        public final Tab tab;
+        public final Callback<@Nullable ShoppingPersistedTabData> callback;
 
         /**
          * @param tab {@link Tab} {@link ShoppingPersistedTabData} is being acquired for

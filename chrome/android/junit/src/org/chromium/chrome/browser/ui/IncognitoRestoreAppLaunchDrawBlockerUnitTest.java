@@ -33,7 +33,6 @@ import org.robolectric.annotation.LooperMode;
 import org.robolectric.annotation.LooperMode.Mode;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.IntentHandler;
@@ -46,6 +45,8 @@ import org.chromium.chrome.browser.lifecycle.LifecycleObserver;
 import org.chromium.chrome.browser.lifecycle.NativeInitObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
+
+import java.util.function.Supplier;
 
 /** Robolectric tests for {@link IncognitoRestoreAppLaunchDrawBlocker}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -64,18 +65,18 @@ public class IncognitoRestoreAppLaunchDrawBlockerUnitTest {
     @Captor
     private ArgumentCaptor<TabModelSelectorObserver> mTabModelSelectorObserverArgumentCaptor;
 
-    private ObservableSupplierImpl<TabModelSelector> mTabModelSelectorObservableSupplier =
+    private final ObservableSupplierImpl<TabModelSelector> mTabModelSelectorObservableSupplier =
             new ObservableSupplierImpl<>();
-    private Supplier<Intent> mIntentSupplier =
-            new Supplier<Intent>() {
+    private final Supplier<Intent> mIntentSupplier =
+            new Supplier<>() {
                 @Nullable
                 @Override
                 public Intent get() {
                     return mIntentMock;
                 }
             };
-    private Supplier<Boolean> mShouldIgnoreIntentSupplier =
-            new Supplier<Boolean>() {
+    private final Supplier<Boolean> mShouldIgnoreIntentSupplier =
+            new Supplier<>() {
                 @Nullable
                 @Override
                 public Boolean get() {

@@ -2,24 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "components/update_client/utils.h"
 
 #include <stddef.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "base/check.h"
 #include "base/containers/contains.h"
+#include "base/containers/heap_array.h"
+#include "base/containers/span.h"
+#include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/memory_mapped_file.h"
@@ -38,8 +38,7 @@
 #include "components/update_client/network.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/update_client_errors.h"
-#include "crypto/secure_hash.h"
-#include "crypto/sha2.h"
+#include "crypto/hash.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -53,6 +52,15 @@ namespace update_client {
 const char kArchAmd64[] = "x86_64";
 const char kArchIntel[] = "x86";
 const char kArchArm64[] = "arm64";
+
+#if BUILDFLAG(IS_CHROMEOS)
+// In ChromeOS, /tmp is a ramfs drive that can be too small
+// for large downloads like Gemini Nano2v3. A larger tmpfiles.d
+// mount has been created (see https://crrev.com/c/6810025) as a
+// scratch space with access to the full stateful partition to
+// handle these larger downloads.
+const char kTempDir[] = "/var/lib/odml/chrome_component_updater";
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 bool IsHttpServerError(int status_code) {
   return 500 <= status_code && status_code < 600;
@@ -87,31 +95,24 @@ std::string GetCrxIdFromPublicKeyHash(base::span<const uint8_t> pk_hash) {
 
 bool VerifyFileHash256(const base::FilePath& filepath,
                        const std::string& expected_hash_str) {
-  std::vector<uint8_t> expected_hash;
-  if (!base::HexStringToBytes(expected_hash_str, &expected_hash) ||
-      expected_hash.size() != crypto::kSHA256Length) {
+  std::array<uint8_t, crypto::hash::kSha256Size> expected_hash;
+  if (!base::HexStringToSpan(expected_hash_str, expected_hash)) {
     return false;
   }
 
-  std::unique_ptr<crypto::SecureHash> hasher(
-      crypto::SecureHash::Create(crypto::SecureHash::SHA256));
-
-  std::optional<int64_t> file_size = base::GetFileSize(filepath);
-  if (!file_size.has_value()) {
+  base::File file(filepath, base::File::FLAG_OPEN |
+                                base::File::FLAG_WIN_SEQUENTIAL_SCAN |
+                                base::File::FLAG_READ);
+  if (!file.IsValid()) {
     return false;
   }
-  if (file_size.value() > 0) {
-    base::MemoryMappedFile mmfile;
-    if (!mmfile.Initialize(filepath)) {
-      return false;
-    }
-    hasher->Update(mmfile.data(), mmfile.length());
+
+  std::array<uint8_t, crypto::hash::kSha256Size> hash;
+  if (!crypto::hash::HashFile(crypto::hash::kSha256, &file, hash)) {
+    return false;
   }
 
-  uint8_t actual_hash[crypto::kSHA256Length] = {};
-  hasher->Finish(actual_hash, sizeof(actual_hash));
-
-  return memcmp(actual_hash, &expected_hash[0], sizeof(actual_hash)) == 0;
+  return base::span(hash) == base::span(expected_hash);
 }
 
 bool IsValidBrand(const std::string& brand) {
@@ -193,24 +194,39 @@ std::string GetArchitecture() {
 bool RetryDeletePathRecursively(const base::FilePath& path) {
   return RetryDeletePathRecursivelyCustom(
       path, /*tries=*/5,
-      /*seconds_between_tries=*/base::Seconds(1));
+      /*time_between_tries=*/base::Seconds(1));
 }
 
 bool RetryDeletePathRecursivelyCustom(const base::FilePath& path,
                                       size_t tries,
-                                      base::TimeDelta seconds_between_tries) {
+                                      base::TimeDelta time_between_tries) {
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                 base::BlockingType::WILL_BLOCK);
-  for (size_t i = 0;;) {
-    if (base::DeletePathRecursively(path)) {
-      return true;
-    }
-    if (++i >= tries) {
-      break;
-    }
-    base::PlatformThread::Sleep(seconds_between_tries);
+  while (!base::DeletePathRecursively(path) && --tries) {
+    base::PlatformThread::Sleep(time_between_tries);
   }
-  return false;
+  return tries;
+}
+
+bool CreateTempDirectory(const base::FilePath::StringType& prefix,
+                         base::FilePath* new_temp_path) {
+#if BUILDFLAG(IS_CHROMEOS)
+  const base::FilePath largerTmpDir(kTempDir);
+  if (base::DirectoryExists(largerTmpDir)) {
+    return base::CreateTemporaryDirInDir(largerTmpDir, prefix, new_temp_path);
+  }
+#endif
+  return base::CreateNewTempDirectory(prefix, new_temp_path);
+}
+
+bool CreateScopedTempDirectory(base::ScopedTempDir& dir) {
+#if BUILDFLAG(IS_CHROMEOS)
+  const base::FilePath largerTmpDir(kTempDir);
+  if (base::DirectoryExists(largerTmpDir)) {
+    return dir.CreateUniqueTempDirUnderPath(largerTmpDir);
+  }
+#endif
+  return dir.CreateUniqueTempDir();
 }
 
 }  // namespace update_client

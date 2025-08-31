@@ -10,12 +10,12 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/extensions/api/tab_groups.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/tab_groups/tab_group_visual_data.h"
+#include "components/tabs/public/tab_group.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -40,20 +40,19 @@ IN_PROC_BROWSER_TEST_F(TabGroupsApiTest, TestTabGroupsWorks) {
 // test.
 IN_PROC_BROWSER_TEST_F(TabGroupsApiTest, TestTabGroupEventsAcrossProfiles) {
   Browser* incognito_browser =
-      OpenURLOffTheRecord(browser()->profile(), GURL("about:blank"));
+      OpenURLOffTheRecord(profile(), GURL("about:blank"));
 
   // The EventRouter is shared between on- and off-the-record profiles, so
   // this observer will catch events for each. To verify that the events are
   // restricted to their respective contexts, we check the event metadata.
-  TestEventRouterObserver event_observer(
-      EventRouter::Get(browser()->profile()));
+  TestEventRouterObserver event_observer(EventRouter::Get(profile()));
 
   browser()->tab_strip_model()->AddToNewGroup({0});
   ASSERT_TRUE(base::Contains(event_observer.events(),
                              api::tab_groups::OnCreated::kEventName));
   Event* normal_event =
       event_observer.events().at(api::tab_groups::OnCreated::kEventName).get();
-  EXPECT_EQ(normal_event->restrict_to_browser_context, browser()->profile());
+  EXPECT_EQ(normal_event->restrict_to_browser_context, profile());
 
   event_observer.ClearEvents();
 
@@ -74,10 +73,9 @@ IN_PROC_BROWSER_TEST_F(TabGroupsApiTest, TestGroupDetachedAndReInserted) {
   tab_groups::TabGroupId group =
       browser()->tab_strip_model()->AddToNewGroup({0, 1});
 
-  TestEventRouterObserver event_observer(
-      EventRouter::Get(browser()->profile()));
+  TestEventRouterObserver event_observer(EventRouter::Get(profile()));
 
-  std::unique_ptr<DetachedTabGroup> detached_group =
+  std::unique_ptr<DetachedTabCollection> detached_group =
       browser()->tab_strip_model()->DetachTabGroupForInsertion(group);
 
   event_observer.WaitForEventWithName(api::tab_groups::OnRemoved::kEventName);

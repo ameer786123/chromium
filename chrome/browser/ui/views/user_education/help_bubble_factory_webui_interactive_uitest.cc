@@ -25,6 +25,9 @@
 #include "chrome/browser/ui/views/side_panel/side_panel_entry.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_util.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
+#include "chrome/browser/user_education/user_education_service.h"
+#include "chrome/browser/user_education/user_education_service_factory.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/interaction/interaction_test_util_browser.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
@@ -36,7 +39,7 @@
 #include "components/user_education/common/user_education_events.h"
 #include "components/user_education/views/help_bubble_view.h"
 #include "components/user_education/webui/help_bubble_handler.h"
-#include "components/user_education/webui/tracked_element_webui.h"
+#include "components/user_education/webui/tracked_element_help_bubble_webui_anchor.h"
 #include "components/webui/chrome_urls/pref_names.h"
 #include "content/public/test/browser_test.h"
 #include "ui/base/interaction/element_identifier.h"
@@ -162,7 +165,8 @@ class HelpBubbleFactoryWebUIInteractiveUiTest : public InteractiveBrowserTest {
         CheckElement(
             anchor,
             [](ui::TrackedElement* el) {
-              return el->AsA<user_education::TrackedElementWebUI>()
+              return el
+                  ->AsA<user_education::TrackedElementHelpBubbleWebUIAnchor>()
                   ->handler()
                   ->IsHelpBubbleShowingForTesting(el->identifier());
             },
@@ -197,7 +201,8 @@ class HelpBubbleFactoryWebUIInteractiveUiTest : public InteractiveBrowserTest {
 
   user_education::HelpBubbleFactoryRegistry* GetHelpBubbleFactory() {
     auto* const controller =
-        browser()->window()->GetFeaturePromoControllerForTesting();
+        UserEducationServiceFactory::GetForBrowserContext(browser()->profile())
+            ->GetFeaturePromoControllerForTesting();
     return static_cast<user_education::FeaturePromoControllerCommon*>(
                controller)
         ->bubble_factory_registry();
@@ -242,7 +247,7 @@ IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryWebUIInteractiveUiTest,
                               ->GetBoundsInScreen();
                       return bubble_rect.Intersects(side_panel_rect);
                     },
-                    browser()->window()->GetElementContext())),
+                    GetContext())),
 
       CloseHelpBubble(),
 

@@ -8,7 +8,7 @@
 
 #include "base/apple/foundation_util.h"
 #include "base/memory/raw_ptr_exclusion.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/strings/sys_string_conversions.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/display/display.h"
@@ -111,7 +111,7 @@ void ShellNativeAppWindowMac::SetBounds(const gfx::Rect& bounds) {
 
 gfx::Size ShellNativeAppWindowMac::GetContentMinimumSize() const {
   // Content fills the display and cannot be resized.
-  return display::Screen::GetScreen()->GetPrimaryDisplay().bounds().size();
+  return display::Screen::Get()->GetPrimaryDisplay().bounds().size();
 }
 
 gfx::Size ShellNativeAppWindowMac::GetContentMaximumSize() const {

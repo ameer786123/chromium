@@ -18,13 +18,13 @@ import org.chromium.components.browsing_data.content.BrowsingDataInfo;
 import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.content_settings.SessionModel;
+import org.chromium.components.permissions.PermissionsAndroidFeatureList;
+import org.chromium.components.permissions.PermissionsAndroidFeatureMap;
 import org.chromium.content_public.browser.BrowserContextHandle;
 import org.chromium.content_public.browser.ContentFeatureList;
 import org.chromium.content_public.browser.ContentFeatureMap;
 import org.chromium.content_public.browser.HostZoomMap;
 import org.chromium.content_public.common.ContentSwitches;
-import org.chromium.device.DeviceFeatureList;
-import org.chromium.device.DeviceFeatureMap;
 import org.chromium.url.Origin;
 
 import java.util.ArrayList;
@@ -93,9 +93,9 @@ public class WebsitePermissionsFetcher {
             case ContentSettingsType.SOUND:
                 return WebsitePermissionsType.CONTENT_SETTING_EXCEPTION;
             case ContentSettingsType.AR:
+            case ContentSettingsType.AUTO_PICTURE_IN_PICTURE:
             case ContentSettingsType.CLIPBOARD_READ_WRITE:
             case ContentSettingsType.FILE_SYSTEM_WRITE_GUARD:
-            case ContentSettingsType.GEOLOCATION:
             case ContentSettingsType.HAND_TRACKING:
             case ContentSettingsType.IDLE_DETECTION:
             case ContentSettingsType.MEDIASTREAM_CAMERA:
@@ -107,6 +107,7 @@ public class WebsitePermissionsFetcher {
             case ContentSettingsType.SENSORS:
             case ContentSettingsType.VR:
             case ContentSettingsType.LOCAL_NETWORK_ACCESS:
+            case ContentSettingsType.WINDOW_MANAGEMENT:
                 return WebsitePermissionsType.PERMISSION_INFO;
             case ContentSettingsType.STORAGE_ACCESS:
                 return WebsitePermissionsType.EMBEDDED_PERMISSION;
@@ -114,9 +115,22 @@ public class WebsitePermissionsFetcher {
             case ContentSettingsType.SERIAL_GUARD:
             case ContentSettingsType.USB_GUARD:
                 return WebsitePermissionsType.CHOSEN_OBJECT_INFO;
+            case ContentSettingsType.GEOLOCATION:
+                if (!PermissionsAndroidFeatureMap.isEnabled(
+                        PermissionsAndroidFeatureList.APPROXIMATE_GEOLOCATION_PERMISSION)) {
+                    return WebsitePermissionsType.PERMISSION_INFO;
+                }
+                break;
+            case ContentSettingsType.GEOLOCATION_WITH_OPTIONS:
+                if (PermissionsAndroidFeatureMap.isEnabled(
+                        PermissionsAndroidFeatureList.APPROXIMATE_GEOLOCATION_PERMISSION)) {
+                    return WebsitePermissionsType.PERMISSION_INFO;
+                }
+                break;
             default:
                 return null;
         }
+        return null;
     }
 
     /**
@@ -338,17 +352,6 @@ public class WebsitePermissionsFetcher {
                 return;
             }
 
-            // The serial guard permission controls access to the Web Serial API, which enables
-            // sites to request access to connect specific serial ports. Users are presented with a
-            // chooser prompt in which they must select the serial port they would like to allow the
-            // site to connect to. Therefore, this permission also displays a list of permitted
-            // serial ports that each site can connect to.
-            // Remove this check after the flag is removed.
-            if (contentSettingsType == ContentSettingsType.SERIAL_GUARD
-                    && !DeviceFeatureMap.isEnabled(DeviceFeatureList.BLUETOOTH_RFCOMM_ANDROID)) {
-                return;
-            }
-
             switch (websitePermissionsType) {
                 case CONTENT_SETTING_EXCEPTION:
                     queue.add(new ExceptionInfoFetcher(contentSettingsType));
@@ -447,6 +450,16 @@ public class WebsitePermissionsFetcher {
                         containsPatternWildcards(address)
                                 ? address
                                 : assumeNonNull(WebsiteAddress.create(address)).getOrigin();
+                // To avoid collapsing addresses with and without wildcards into the same row,
+                // convert the embedder to add the scheme or the wildcard to create a
+                // unique key (and thus row) per pattern.
+                if (mSiteSettingsDelegate.isDisplayWildcardInContentSettingsEnabled()
+                        && embedder != null && !embedder.isEmpty()) {
+                    embedder =
+                            containsPatternWildcards(embedder)
+                                    ? embedder
+                                    : assumeNonNull(WebsiteAddress.create(embedder)).getOrigin();
+                }
                 Website site = findOrCreateSite(origin, embedder, contentSetting);
                 if (isEmbeddedPermission) {
                     site.addEmbeddedPermission(exception);
@@ -545,7 +558,7 @@ public class WebsitePermissionsFetcher {
             public void runAsync(final TaskQueue queue) {
                 mWebsitePreferenceBridge.fetchLocalStorageInfo(
                         mBrowserContextHandle,
-                        new Callback<HashMap>() {
+                        new Callback<>() {
                             @Override
                             public void onResult(HashMap result) {
                                 for (Object o : result.entrySet()) {
@@ -599,7 +612,7 @@ public class WebsitePermissionsFetcher {
             public void runAsync(final TaskQueue queue) {
                 mWebsitePreferenceBridge.fetchStorageInfo(
                         mBrowserContextHandle,
-                        new Callback<ArrayList>() {
+                        new Callback<>() {
                             @Override
                             public void onResult(ArrayList result) {
                                 @SuppressWarnings("unchecked")
@@ -628,7 +641,7 @@ public class WebsitePermissionsFetcher {
             public void runAsync(final TaskQueue queue) {
                 mWebsitePreferenceBridge.fetchSharedDictionaryInfo(
                         mBrowserContextHandle,
-                        new Callback<ArrayList>() {
+                        new Callback<>() {
                             @Override
                             public void onResult(ArrayList result) {
                                 @SuppressWarnings("unchecked")
@@ -650,7 +663,7 @@ public class WebsitePermissionsFetcher {
             public void runAsync(final TaskQueue queue) {
                 mWebsitePreferenceBridge.fetchCookiesInfo(
                         mBrowserContextHandle,
-                        new Callback<Map<String, CookiesInfo>>() {
+                        new Callback<>() {
                             @Override
                             public void onResult(Map<String, CookiesInfo> result) {
                                 for (Map.Entry<String, CookiesInfo> entry : result.entrySet()) {
@@ -701,12 +714,7 @@ public class WebsitePermissionsFetcher {
                 Set<String> originToWebsite = new HashSet<>();
                 Map<String, List<Website>> rwsOwnerToMember = new HashMap<>();
                 for (Website site : mSites.values()) {
-                    // Use the origin when RWS UI feature is enabled to include
-                    // subdomain variations in the members
-                    String rwsMemberHostname =
-                            mSiteSettingsDelegate.shouldShowPrivacySandboxRwsUi()
-                                    ? site.getAddress().getOrigin()
-                                    : site.getAddress().getDomainAndRegistry();
+                    String rwsMemberHostname = site.getAddress().getDomainAndRegistry();
                     String rwsOwnerHostname =
                             mSiteSettingsDelegate.getRelatedWebsiteSetOwner(
                                     site.getAddress().getOrigin());

@@ -19,7 +19,7 @@
 
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
@@ -27,13 +27,11 @@
 #include "chrome/common/buildflags.h"
 #include "components/keep_alive_registry/keep_alive_state_observer.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
-#include "components/nacl/common/buildflags.h"
 #include "components/prefs/persistent_pref_store.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/safe_browsing/buildflags.h"
 #include "extensions/buildflags/buildflags.h"
 #include "media/media_buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/network/public/cpp/network_quality_tracker.h"
 #include "services/network/public/mojom/network_service.mojom-forward.h"
@@ -282,8 +280,12 @@ class BrowserProcessImpl : public BrowserProcess,
 
   const raw_ptr<StartupData> startup_data_;
 
+  // Must be destroyed after |browser_policy_connector_|.
+  std::unique_ptr<gcm::GCMDriver> gcm_driver_;
+
   // Must be destroyed after |local_state_|.
   // Must be destroyed after |profile_manager_|.
+  // Must be destroyed before |gcm_driver_|.
   std::unique_ptr<policy::ChromeBrowserPolicyConnector> const
       browser_policy_connector_;
 
@@ -297,13 +299,14 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<signin::ActivePrimaryAccountsMetricsRecorder>
       active_primary_accounts_metrics_recorder_;
 
-  // |metrics_services_manager_| owns this.
-  raw_ptr<ChromeMetricsServicesManagerClient, AcrossTasksDanglingUntriaged>
-      metrics_services_manager_client_ = nullptr;
-
-  // Must be destroyed before |local_state_|.
+  // Must be destroyed before |local_state_| and after
+  // |metrics_services_manager_client_|.
   std::unique_ptr<metrics_services_manager::MetricsServicesManager>
       metrics_services_manager_;
+
+  // |metrics_services_manager_| owns this.
+  raw_ptr<ChromeMetricsServicesManagerClient> metrics_services_manager_client_ =
+      nullptr;
 
 #if BUILDFLAG(IS_ANDROID)
   // Must be destroyed before |local_state_|.
@@ -452,8 +455,6 @@ class BrowserProcessImpl : public BrowserProcess,
 
   std::unique_ptr<network_time::NetworkTimeTracker> network_time_tracker_;
 
-  std::unique_ptr<gcm::GCMDriver> gcm_driver_;
-
   std::unique_ptr<resource_coordinator::ResourceCoordinatorParts>
       resource_coordinator_parts_;
 
@@ -483,8 +484,6 @@ class BrowserProcessImpl : public BrowserProcess,
       application_breadcrumbs_logger_;
 
   std::unique_ptr<os_crypt_async::OSCryptAsync> os_crypt_async_;
-  std::optional<base::CallbackListSubscription>
-      os_crypt_async_init_subscription_;
 
   std::optional<std::pair<size_t, std::unique_ptr<os_crypt_async::KeyProvider>>>
       additional_provider_for_test_;

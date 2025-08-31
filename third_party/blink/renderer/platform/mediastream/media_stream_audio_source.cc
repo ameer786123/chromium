@@ -4,11 +4,14 @@
 
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_source.h"
 
+#include <inttypes.h>
+
 #include <memory>
 #include <utility>
 
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
 #include "base/task/single_thread_task_runner.h"
@@ -103,9 +106,8 @@ bool MediaStreamAudioSource::ConnectToInitializedTrack(
   if (is_stopped_)
     return false;
 
-  track->Start(WTF::BindOnce(&MediaStreamAudioSource::StopAudioDeliveryTo,
-                             weak_factory_.GetWeakPtr(),
-                             WTF::Unretained(track)));
+  track->Start(blink::BindOnce(&MediaStreamAudioSource::StopAudioDeliveryTo,
+                               weak_factory_.GetWeakPtr(), Unretained(track)));
   deliverer_.AddConsumer(track);
   LogMessage(
       base::StringPrintf("%s => (added new MediaStreamAudioTrack as consumer, "
@@ -255,8 +257,8 @@ void MediaStreamAudioSource::SetMutedState(bool muted_state) {
                                 base::ToString(muted_state).c_str()));
   PostCrossThreadTask(
       *GetTaskRunner(), FROM_HERE,
-      WTF::CrossThreadBindOnce(&WebPlatformMediaStreamSource::SetSourceMuted,
-                               GetWeakPtr(), muted_state));
+      CrossThreadBindOnce(&WebPlatformMediaStreamSource::SetSourceMuted,
+                          GetWeakPtr(), muted_state));
 }
 
 int MediaStreamAudioSource::NumPreferredChannels() const {

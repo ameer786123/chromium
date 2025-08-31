@@ -9,6 +9,7 @@
 #include "components/affiliations/core/browser/affiliation_service.h"
 #include "components/autofill/core/common/save_password_progress_logger.h"
 #include "components/password_manager/core/browser/browser_save_password_progress_logger.h"
+#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/form_parsing/form_data_parser.h"
 #include "components/password_manager/core/browser/leak_detection/leak_detection_check.h"
 #include "components/password_manager/core/browser/leak_detection/leak_detection_check_factory_impl.h"
@@ -21,7 +22,6 @@
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/password_sync_util.h"
-#include "components/password_manager/core/browser/split_stores_and_local_upm.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -95,21 +95,10 @@ void LeakDetectionDelegate::OnLeakDetectionDone(bool is_leaked,
     BrowserSavePasswordProgressLogger logger(client_->GetCurrentLogManager());
     logger.LogBoolean(Logger::STRING_LEAK_DETECTION_FINISHED, is_leaked);
   }
-
   if (!is_leaked) {
-    if (base::FeatureList::IsEnabled(features::kMarkAllCredentialsAsLeaked)) {
-      auto leak_details =
-          PrepareLeakDetails(PasswordForm::Store::kNotSet, IsReused(false), url,
-                             std::move(username), std::move(password), {});
-      client_->GetAffiliationService()->PrefetchChangePasswordURL(
-          url, base::BindOnce(
-                   &LeakDetectionDelegate::NotifyUserCredentialsWereLeaked,
-                   weak_ptr_factory_.GetWeakPtr(), std::move(leak_details)));
-    }
     return;
   }
 
-  // Query the helper to asynchronously determine the `CredentialLeakType`.
   auto notify_callback =
       base::BindOnce(&LeakDetectionDelegate::NotifyUserCredentialsWereLeaked,
                      weak_ptr_factory_.GetWeakPtr());
@@ -118,25 +107,40 @@ void LeakDetectionDelegate::OnLeakDetectionDone(bool is_leaked,
           /*num_callbacks=*/2,
           base::BindOnce(&MergeResponses).Then(std::move(notify_callback)));
 
-  if (base::FeatureList::IsEnabled(features::kImprovedPasswordChangeService)) {
-    client_->GetAffiliationService()->PrefetchChangePasswordURL(
+  // Don't prefetch the password change URL for embedders that don't opt into
+  // the affiliation service.
+  affiliations::AffiliationService* affiliation_service =
+      client_->GetAffiliationService();
+  if (affiliation_service &&
+      base::FeatureList::IsEnabled(features::kFetchChangePasswordUrl)) {
+    affiliation_service->PrefetchChangePasswordURL(
         url, base::BindOnce(barrier_callback, std::nullopt));
   } else {
     barrier_callback.Run(std::nullopt);
   }
 
-  helper_ = std::make_unique<LeakDetectionDelegateHelper>(
-      client_->GetProfilePasswordStore(), client_->GetAccountPasswordStore(),
-      base::BindOnce(&LeakDetectionDelegate::PrepareLeakDetails,
-                     base::Unretained(this))
-          .Then(barrier_callback));
-  helper_->ProcessLeakedPassword(std::move(url), std::move(username),
-                                 std::move(password));
+  if (base::FeatureList::IsEnabled(features::kMarkAllCredentialsAsLeaked)) {
+    auto leak_details = PrepareLeakDetails(
+        PasswordForm::Store::kNotSet, IsReused(false), IsSavedAsBackup(false),
+        url, std::move(username), std::move(password),
+        /*all_urls_with_leaked_credentials=*/{url});
+    barrier_callback.Run(std::move(leak_details));
+  } else {
+    // Query the helper to asynchronously determine the `CredentialLeakType`.
+    helper_ = std::make_unique<LeakDetectionDelegateHelper>(
+        client_->GetProfilePasswordStore(), client_->GetAccountPasswordStore(),
+        base::BindOnce(&LeakDetectionDelegate::PrepareLeakDetails,
+                       base::Unretained(this))
+            .Then(barrier_callback));
+    helper_->ProcessLeakedPassword(std::move(url), std::move(username),
+                                   std::move(password));
+  }
 }
 
 LeakedPasswordDetails LeakDetectionDelegate::PrepareLeakDetails(
     PasswordForm::Store in_stores,
     IsReused is_reused,
+    IsSavedAsBackup is_saved_as_backup,
     GURL url,
     std::u16string username,
     std::u16string password,
@@ -162,24 +166,17 @@ LeakedPasswordDetails LeakDetectionDelegate::PrepareLeakDetails(
     is_syncing = IsSyncing{true};
   } else {
     // Credential saved to the local-or-syncable store.
-#if BUILDFLAG(IS_ANDROID)
-    const bool uses_split_stores_for_sync_users =
-        UsesSplitStoresAndUPMForLocal(client_->GetPrefs());
-#else
-    const bool uses_split_stores_for_sync_users = false;
-#endif  // BUILDFLAG(IS_ANDROID)
-
-    if (!uses_split_stores_for_sync_users) {
-      // TODO(crbug.com/40066949): Remove this codepath once
-      // IsSyncFeatureEnabled() is fully deprecated.
-      is_syncing = IsSyncing(sync_util::IsSyncFeatureEnabledIncludingPasswords(
-          client_->GetSyncService()));
-    }
+#if !BUILDFLAG(IS_ANDROID)
+    // TODO(crbug.com/40066949): Remove this codepath once
+    // IsSyncFeatureEnabled() is fully deprecated.
+    is_syncing = IsSyncing(sync_util::IsSyncFeatureEnabledIncludingPasswords(
+        client_->GetSyncService()));
+#endif
   }
 
-  CredentialLeakType leak_type =
-      CreateLeakType(IsSaved(in_stores != PasswordForm::Store::kNotSet),
-                     is_reused, is_syncing, HasChangePasswordUrl(false));
+  CredentialLeakType leak_type = CreateLeakType(
+      IsSaved(in_stores != PasswordForm::Store::kNotSet), is_reused, is_syncing,
+      HasChangePasswordUrl(false), is_saved_as_backup);
   return LeakedPasswordDetails(leak_type, std::move(url), std::move(username),
                                std::move(password), in_account_store);
 }
@@ -193,7 +190,7 @@ void LeakDetectionDelegate::NotifyUserCredentialsWereLeaked(
   HasChangePasswordUrl has_change_url(
       client_->GetPasswordChangeService() &&
       client_->GetPasswordChangeService()->IsPasswordChangeSupported(
-          details.origin));
+          details.origin, client_->GetPageLanguage()));
   if (has_change_url) {
     details.leak_type |= CredentialLeakFlags::kHasChangePasswordUrl;
   }

@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_LENS_LENS_OVERLAY_BLUR_LAYER_DELEGATE_H_
 #define CHROME_BROWSER_UI_LENS_LENS_OVERLAY_BLUR_LAYER_DELEGATE_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/timer/timer.h"
@@ -45,6 +46,14 @@ class LensOverlayBlurLayerDelegate : public ui::LayerOwner,
   // new layer size.
   void StopBackgroundImageCapture();
 
+  bool IsCapturingBackgroundImageForTesting();
+
+  // Fetches a new background screenshot to use for blurring.
+  void FetchBackgroundImage();
+
+  // Returns true if the background image is being captured and blurred.
+  bool IsLiveBlurActive();
+
  private:
   // ui::LayerDelegate:
   void OnPaintLayer(const ui::PaintContext& context) override;
@@ -54,9 +63,6 @@ class LensOverlayBlurLayerDelegate : public ui::LayerOwner,
   // content::RenderWidgetHostObserver:
   void RenderWidgetHostDestroyed(
       content::RenderWidgetHost* widget_host) override;
-
-  // Fetches a new background screenshot to use for blurring.
-  void FetchBackgroundImage();
 
   // Updates background_screenshot_ to the new bitmap and rerenders IFF bitmap
   // is visually different than background_screenshot_.

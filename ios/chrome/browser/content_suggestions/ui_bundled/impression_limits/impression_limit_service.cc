@@ -9,6 +9,8 @@
 #include "base/i18n/time_formatting.h"
 #include "base/json/values_util.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -69,6 +71,16 @@ ImpressionLimitService::ImpressionLimitService(
 
 ImpressionLimitService::~ImpressionLimitService() = default;
 
+void ImpressionLimitService::AddObserver(
+    ImpressionLimitService::Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void ImpressionLimitService::RemoveObserver(
+    ImpressionLimitService::Observer* observer) {
+  observers_.RemoveObserver(observer);
+}
+
 void ImpressionLimitService::Shutdown() {
   if (history_service_) {
     history_service_observation_.Reset();
@@ -103,6 +115,7 @@ void ImpressionLimitService::BookmarkNodeRemoved(
   std::set<std::string> urls_to_remove;
   for (const GURL& url : no_longer_bookmarked) {
     urls_to_remove.insert(GetUrlKey(url));
+    OnUntracked(url);
   }
   RemoveEntriesForURls(urls_to_remove);
 }
@@ -131,6 +144,7 @@ void ImpressionLimitService::OnUnsubscribe(
   for (auto* node :
        commerce::GetBookmarksWithClusterId(bookmark_model_, cluster_id)) {
     urls_to_remove.insert(GetUrlKey(node->url()));
+    OnUntracked(node->url());
   }
   RemoveEntriesForURls(urls_to_remove);
 }
@@ -143,6 +157,32 @@ void ImpressionLimitService::LogImpressionForURL(
                  << " must be registered with ImpressionLimitService";
   }
   LogImpressionForURLAtTime(url, pref_name, base::Time::Now());
+  size_t storage_size_kb =
+      pref_service_->GetDict(pref_name).EstimateMemoryUsage() / 1024;
+  if (pref_name == shop_card_prefs::kShopCardPriceDropUrlImpressions) {
+    base::UmaHistogramMemoryKB(
+        "IOS.MagicStack.ShopCard.PriceDropOnTrackedItem."
+        "ImpressionLimitStorageSize",
+        storage_size_kb);
+  } else if (pref_name ==
+             tab_resumption_prefs::kTabResumptionRegularUrlImpressions) {
+    base::UmaHistogramMemoryKB(
+        "IOS.MagicStack.ShopCard.TabResumptionRegular."
+        "ImpressionLimitStorageSize",
+        storage_size_kb);
+  } else if (pref_name ==
+             tab_resumption_prefs::kTabResumptionWithPriceDropUrlImpressions) {
+    base::UmaHistogramMemoryKB(
+        "IOS.MagicStack.ShopCard.TabResumptionWithPriceDrop."
+        "ImpressionLimitStorageSize",
+        storage_size_kb);
+  } else if (pref_name == tab_resumption_prefs::
+                              kTabResumptionWithPriceTrackableUrlImpressions) {
+    base::UmaHistogramMemoryKB(
+        "IOS.MagicStack.ShopCard.TabResumptionWithPriceTracking."
+        "ImpressionLimitStorageSize",
+        storage_size_kb);
+  }
 }
 
 std::optional<int> ImpressionLimitService::GetImpressionCount(
@@ -300,6 +340,12 @@ void ImpressionLimitService::RemoveOldestEntryIfSizeExceedsMaximum(
   if (smallest.has_value()) {
     impressions.Remove(smallest->first);
     pref_service_->SetDict(pref_name, std::move(impressions));
+  }
+}
+
+void ImpressionLimitService::OnUntracked(const GURL& url) {
+  for (auto& observer : observers_) {
+    observer.OnUntracked(url);
   }
 }
 

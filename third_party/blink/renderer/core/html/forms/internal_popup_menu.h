@@ -70,14 +70,13 @@ class CORE_EXPORT InternalPopupMenu final : public PopupMenu,
   float ZoomFactor() override { return 1.0; }
   Locale& GetLocale() override;
   void DidClosePopup() override;
-  void SetMenuListOptionsBoundsInAXTree(WTF::Vector<gfx::Rect>&,
+  void SetMenuListOptionsBoundsInAXTree(Vector<gfx::Rect>&,
                                         gfx::Point) override;
 
   Member<ChromeClient> chrome_client_;
   Member<HTMLSelectElement> owner_element_;
   PagePopup* popup_;
   bool needs_update_;
-  bool taller_options_ = false;
 };
 
 }  // namespace blink

@@ -8,6 +8,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
@@ -59,7 +60,7 @@ class FullscreenControllerTestWindow : public TestBrowserWindow,
   content::WebContents* GetWebContentsForExclusiveAccess() override;
   void EnterFullscreen(const url::Origin& origin,
                        ExclusiveAccessBubbleType type,
-                       int64_t display_id) override;
+                       FullscreenTabParams fullscreen_tab_params) override;
   void ExitFullscreen() override;
   void UpdateExclusiveAccessBubble(
       const ExclusiveAccessBubbleParams& params,
@@ -89,7 +90,7 @@ FullscreenControllerTestWindow::FullscreenControllerTestWindow()
 void FullscreenControllerTestWindow::EnterFullscreen(
     const url::Origin& origin,
     ExclusiveAccessBubbleType type,
-    int64_t display_id) {
+    FullscreenTabParams fullscreen_tab_params) {
   EnterFullscreen();
 }
 
@@ -426,7 +427,8 @@ TEST_F(FullscreenControllerStateUnitTest,
   ChangeWindowFullscreenState();
   EXPECT_EQ(EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE,
             browser()
-                ->exclusive_access_manager()
+                ->GetFeatures()
+                .exclusive_access_manager()
                 ->GetExclusiveAccessExitBubbleType());
 }
 
@@ -858,15 +860,14 @@ TEST_F(FullscreenControllerStateUnitTest,
   EXPECT_TRUE(tab->IsFullscreen());
   EXPECT_FALSE(GetFullscreenController()->IsWindowFullscreenForTabOrPending());
 
-  // Create the second browser window.
-  const std::unique_ptr<BrowserWindow> second_browser_window(
-      CreateBrowserWindow());
+  // Create the second browser.
   const std::unique_ptr<Browser> second_browser(
-      CreateBrowser(browser()->profile(), browser()->type(), false,
-                    second_browser_window.get()));
+      CreateBrowser(browser()->profile(), browser()->type(), false));
   AddTab(second_browser.get(), GURL(url::kAboutBlankURL));
   FullscreenController* second_fullscreen_controller =
-      second_browser->exclusive_access_manager()->fullscreen_controller();
+      second_browser->GetFeatures()
+          .exclusive_access_manager()
+          ->fullscreen_controller();
 
   // Detach the tab from the first browser window and attach it to the second.
   // The tab should remain in fullscreen mode and neither browser window should

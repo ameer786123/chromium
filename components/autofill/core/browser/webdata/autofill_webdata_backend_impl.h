@@ -152,7 +152,7 @@ class AutofillWebDataBackendImpl
       base::OnceCallback<void(EntityInstanceChange)> on_success,
       WebDatabase* db);
   WebDatabase::State RemoveEntityInstance(
-      base::Uuid guid,
+      EntityInstance::EntityId guid,
       base::OnceCallback<void(EntityInstanceChange)> on_success,
       WebDatabase* db);
   WebDatabase::State RemoveEntityInstancesModifiedBetween(
@@ -229,6 +229,9 @@ class AutofillWebDataBackendImpl
 
   // Method to clear all the local CVCs from the web database.
   WebDatabase::State ClearLocalCvcs(WebDatabase* db);
+
+  // Method to clean up for crbug.com/411681430.
+  WebDatabase::State CleanupForCrbug411681430(WebDatabase* db);
 
   // Returns the PaymentsCustomerData from the database.
   std::unique_ptr<WDTypedResult> GetPaymentsCustomerData(WebDatabase* db);

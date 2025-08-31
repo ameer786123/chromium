@@ -19,7 +19,6 @@
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
-#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
@@ -46,6 +45,7 @@
 #include "components/input/utils.h"
 #include "components/viz/common/features.h"
 #include "components/viz/common/gpu/context_provider.h"
+#include "components/viz/common/gpu/raster_context_provider.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
 #include "components/viz/common/surfaces/surface_range.h"
@@ -98,19 +98,15 @@ NOINLINE void FatalSurfaceFailure() {
 
 gpu::SharedMemoryLimits GetCompositorContextSharedMemoryLimits(
     gfx::NativeWindow window) {
-  const gfx::Size screen_size = display::Screen::GetScreen()
-                                    ->GetDisplayNearestWindow(window)
-                                    .GetSizeInPixel();
+  const gfx::Size screen_size =
+      display::Screen::Get()->GetDisplayNearestWindow(window).GetSizeInPixel();
   return gpu::SharedMemoryLimits::ForDisplayCompositor(screen_size);
 }
 
 gpu::ContextCreationAttribs GetCompositorContextAttributes() {
   gpu::ContextCreationAttribs attributes;
-  attributes.bind_generates_resource = false;
-
   attributes.enable_raster_interface = true;
   attributes.enable_gles2_interface = false;
-  attributes.enable_grcontext = false;
 
   return attributes;
 }
@@ -131,7 +127,6 @@ void CreateContextProviderAfterGpuChannelEstablished(
   constexpr bool support_locking = false;
 
   gpu::ContextCreationAttribs attributes;
-  attributes.bind_generates_resource = false;
   attributes.enable_gles2_interface = true;
 
   auto context_provider =
@@ -363,6 +358,7 @@ void CompositorImpl::SetVisible(bool visible) {
     // Hide the LayerTreeHost and release its frame sink.
     host_->SetVisible(false);
     host_->ReleaseLayerTreeFrameSink();
+    raster_context_provider_.reset();
     pending_frames_ = 0;
 
     // Notify CompositorDependenciesAndroid of visibility changes last, to
@@ -398,7 +394,7 @@ void CompositorImpl::TearDownDisplayAndUnregisterRootFrameSink() {
   // sync IPC. This guards against reentrant code using |display_private_|
   // before it can be reset.
   display_private_.reset();
-  GetHostFrameSinkManager()->InvalidateFrameSinkId(frame_sink_id_, this);
+  GetHostFrameSinkManager()->InvalidateFrameSinkId(frame_sink_id_, this, {});
   if (display_client_) {
     display_client_->SetPreferredRefreshRate(0);
   }
@@ -528,7 +524,7 @@ void CompositorImpl::OnGpuChannelEstablished(
 
   constexpr bool support_locking = false;
   constexpr bool automatic_flushes = false;
-  display_color_spaces_ = display::Screen::GetScreen()
+  display_color_spaces_ = display::Screen::Get()
                               ->GetDisplayNearestWindow(root_window_)
                               .GetColorSpaces();
 
@@ -552,6 +548,7 @@ void CompositorImpl::OnGpuChannelEstablished(
     return;
   }
 
+  raster_context_provider_ = context_provider;
   InitializeVizLayerTreeFrameSink(std::move(context_provider));
 }
 
@@ -611,6 +608,7 @@ void CompositorImpl::DidReceiveCompositorFrameAck() {
 
 void CompositorImpl::DidLoseLayerTreeFrameSink() {
   TRACE_EVENT0("compositor", "CompositorImpl::DidLoseLayerTreeFrameSink");
+  raster_context_provider_.reset();
   client_->DidSwapFrame(0);
 }
 
@@ -675,9 +673,8 @@ void CompositorImpl::RemoveChildFrameSink(
 
 void CompositorImpl::OnDisplayMetricsChanged(const display::Display& display,
                                              uint32_t changed_metrics) {
-  if (display.id() != display::Screen::GetScreen()
-                          ->GetDisplayNearestWindow(root_window_)
-                          .id()) {
+  if (display.id() !=
+      display::Screen::Get()->GetDisplayNearestWindow(root_window_).id()) {
     return;
   }
 
@@ -708,17 +705,6 @@ bool CompositorImpl::IsDrawingFirstVisibleFrame() const {
   return !has_submitted_frame_since_became_visible_;
 }
 
-void CompositorImpl::SetVSyncPaused(bool paused) {
-  if (vsync_paused_ == paused) {
-    return;
-  }
-
-  vsync_paused_ = paused;
-  if (display_private_) {
-    display_private_->SetVSyncPaused(paused);
-  }
-}
-
 void CompositorImpl::OnUpdateRefreshRate(float refresh_rate) {
   if (display_private_) {
     display_private_->UpdateRefreshRate(refresh_rate);
@@ -738,9 +724,8 @@ void CompositorImpl::OnAdaptiveRefreshRateInfoChanged() {
         root_window_->adaptive_refresh_rate_info();
     display_private_->SetAdaptiveRefreshRateInfo(
         arr_info.supports_adaptive_refresh_rate,
-        arr_info.suggested_frame_rate_normal,
-        arr_info.suggested_frame_rate_high, arr_info.supported_frame_rates,
-        display::Screen::GetScreen()
+        arr_info.suggested_frame_rate_high,
+        display::Screen::Get()
             ->GetDisplayNearestWindow(root_window_)
             .device_scale_factor());
   }
@@ -786,23 +771,20 @@ void CompositorImpl::InitializeVizLayerTreeFrameSink(
   root_params->display_client = display_client_->GetBoundRemote(task_runner);
 
   const auto& display_props =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(root_window_);
+      display::Screen::Get()->GetDisplayNearestWindow(root_window_);
 
   viz::RendererSettings renderer_settings;
   renderer_settings.partial_swap_enabled = true;
   renderer_settings.allow_antialiasing = false;
   renderer_settings.highp_threshold_min = 2048;
   renderer_settings.requires_alpha_channel = requires_alpha_channel_;
-  renderer_settings.initial_screen_size = display_props.GetSizeInPixel();
-  renderer_settings.color_space = display_color_spaces_.GetOutputColorSpace(
-      gfx::ContentColorUsage::kHDR, requires_alpha_channel_);
 
   root_params->frame_sink_id = frame_sink_id_;
   root_params->widget = surface_handle_;
   root_params->gpu_compositing = true;
   root_params->renderer_settings = renderer_settings;
   root_params->refresh_rate = root_window_->GetRefreshRate();
-  if (input::IsTransferInputToVizSupported()) {
+  if (input::InputUtils::IsTransferInputToVizSupported()) {
     root_params->create_input_receiver = true;
   }
 
@@ -814,7 +796,6 @@ void CompositorImpl::InitializeVizLayerTreeFrameSink(
   display_private_->SetDisplayVisible(true);
   display_private_->Resize(size_);
   display_private_->SetDisplayColorSpaces(display_color_spaces_);
-  display_private_->SetVSyncPaused(vsync_paused_);
   display_private_->SetSupportedRefreshRates(
       root_window_->GetSupportedRefreshRates());
   MaybeUpdateObserveBeginFrame();
@@ -957,6 +938,11 @@ void CompositorImpl::AddFrameSubmissionObserver(
 void CompositorImpl::RemoveFrameSubmissionObserver(
     FrameSubmissionObserver* observer) {
   frame_submission_observers_.RemoveObserver(observer);
+}
+
+scoped_refptr<viz::RasterContextProvider>
+CompositorImpl::GetRasterContextProvider() {
+  return raster_context_provider_;
 }
 
 }  // namespace content

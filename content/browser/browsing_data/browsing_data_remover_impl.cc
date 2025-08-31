@@ -58,6 +58,7 @@
 #include "services/network/public/mojom/clear_data_filter.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "storage/browser/quota/special_storage_policy.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "url/url_util.h"
@@ -442,9 +443,6 @@ void BrowsingDataRemoverImpl::RemoveImpl(
     storage_partition_remove_mask |=
         StoragePartition::REMOVE_DATA_MASK_INDEXEDDB;
   }
-  if (remove_mask & DATA_TYPE_WEB_SQL) {
-    storage_partition_remove_mask |= StoragePartition::REMOVE_DATA_MASK_WEBSQL;
-  }
   if (remove_mask & DATA_TYPE_SERVICE_WORKERS) {
     storage_partition_remove_mask |=
         StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS;
@@ -508,6 +506,11 @@ void BrowsingDataRemoverImpl::RemoveImpl(
   if (remove_mask & DATA_TYPE_DEVICE_BOUND_SESSIONS) {
     storage_partition_remove_mask |=
         StoragePartition::REMOVE_DATA_MASK_DEVICE_BOUND_SESSIONS;
+  }
+
+  if ((remove_mask & DATA_TYPE_COOKIES) || (remove_mask & DATA_TYPE_CACHE)) {
+    storage_partition_remove_mask |=
+        StoragePartition::REMOVE_KEEPALIVE_LOADS_ATTEMPTING_RETRY;
   }
 
   if (storage_partition_remove_mask) {
@@ -610,23 +613,53 @@ void BrowsingDataRemoverImpl::RemoveImpl(
 
     // Clears the BFCache entries that match the removal filter for the current
     // browser context.
-    // Clears the Prerender and Prefetch Cache for the current browser context.
     auto storage_key_filter = filter_builder->BuildStorageKeyFilter();
     for (WebContentsImpl* web_contents : WebContentsImpl::GetAllWebContents()) {
       if (web_contents->GetBrowserContext() == browser_context_) {
         web_contents->GetController().GetBackForwardCache().Flush(
             storage_key_filter);
-        web_contents->GetPrerenderHostRegistry()->CancelHostsByOriginFilter(
-            storage_key_filter, PrerenderFinalStatus::kBrowsingDataRemoved);
-        if (base::FeatureList::IsEnabled(
-                features::kPrefetchBrowsingDataRemoval)) {
-          PrefetchService* prefetch_service =
-              BrowserContextImpl::From(browser_context_)->GetPrefetchService();
-          prefetch_service->EvictPrefetchesForBrowsingDataRemoval(
-              storage_key_filter,
-              PrefetchStatus::kPrefetchEvictedAfterBrowsingDataRemoved);
+      }
+    }
+  }
+
+  // Clears the Prerender Cache as part of Clear-Site-Data prerenderCache header
+  // and Browsing Data Cache Removal.
+  if (remove_mask & (DATA_TYPE_PRERENDER_CACHE | DATA_TYPE_CACHE)) {
+    auto storage_key_filter = filter_builder->BuildStorageKeyFilter();
+    for (WebContentsImpl* web_contents : WebContentsImpl::GetAllWebContents()) {
+      if (web_contents->GetBrowserContext() == browser_context_) {
+        PrerenderHostRegistry* prerender_host_registry =
+            web_contents->GetPrerenderHostRegistry();
+        if (prerender_host_registry) {
+          prerender_host_registry->CancelHostsByOriginFilter(
+              storage_key_filter, PrerenderFinalStatus::kBrowsingDataRemoved);
         }
       }
+    }
+    // We need task completion closures for prefetch/prerender cache clearing to
+    // prevent premature destruction of the SiteDataClearer object. Without
+    // these closures, the kSynchronous task may complete first and trigger
+    // OnBrowsingDataRemoverDone before these operations finish,
+    // causing state to be reset while operations are still pending.
+    GetUIThreadTaskRunner({})->PostTaskAndReply(
+        FROM_HERE, base::DoNothing(),
+        CreateTaskCompletionClosure(TracingDataType::kPrerenderCache));
+  }
+
+  // Clears the Prefetch Cache as part of Clear-Site-Data prefetchCache header
+  // and Browsing Data Cache Removal.
+  if ((remove_mask & (DATA_TYPE_PREFETCH_CACHE | DATA_TYPE_CACHE)) &&
+      base::FeatureList::IsEnabled(features::kPrefetchBrowsingDataRemoval)) {
+    if (auto* prefetch_service =
+            BrowserContextImpl::From(browser_context_)->GetPrefetchService()) {
+      auto storage_key_filter = filter_builder->BuildStorageKeyFilter();
+      GetUIThreadTaskRunner({})->PostTaskAndReply(
+          FROM_HERE,
+          base::BindOnce(
+              &PrefetchService::EvictPrefetchesForBrowsingDataRemoval,
+              prefetch_service->GetWeakPtr(), storage_key_filter,
+              PrefetchStatus::kPrefetchEvictedAfterBrowsingDataRemoved),
+          CreateTaskCompletionClosure(TracingDataType::kPrefetchCache));
     }
   }
 
@@ -697,23 +730,23 @@ void BrowsingDataRemoverImpl::RemoveImpl(
     }
   }
 
-  // Different types of DIPS events are cleared for DATA_TYPE_HISTORY and
+  // Different types of BTM events are cleared for DATA_TYPE_HISTORY and
   // DATA_TYPE_COOKIES.
-  BtmEventRemovalType dips_mask = BtmEventRemovalType::kNone;
+  BtmEventRemovalType btm_mask = BtmEventRemovalType::kNone;
   if ((remove_mask & DATA_TYPE_COOKIES) &&
       !filter_builder->PartitionedCookiesOnly()) {
-    dips_mask |= BtmEventRemovalType::kStorage;
+    btm_mask |= BtmEventRemovalType::kStorage;
   }
-  if (GetContentClient()->browser()->ShouldDipsDeleteInteractionRecords(
+  if (GetContentClient()->browser()->ShouldBtmDeleteInteractionRecords(
           remove_mask)) {
-    dips_mask |= BtmEventRemovalType::kHistory;
+    btm_mask |= BtmEventRemovalType::kHistory;
   }
 
-  if (dips_mask != BtmEventRemovalType::kNone) {
-    if (BtmServiceImpl* dips_service = BtmServiceImpl::Get(browser_context_)) {
-      dips_service->RemoveEvents(delete_begin_, delete_end_,
-                                 filter_builder->BuildNetworkServiceFilter(),
-                                 dips_mask);
+  if (btm_mask != BtmEventRemovalType::kNone) {
+    if (BtmServiceImpl* btm_service = BtmServiceImpl::Get(browser_context_)) {
+      btm_service->RemoveEvents(delete_begin_, delete_end_,
+                                filter_builder->BuildNetworkServiceFilter(),
+                                btm_mask);
     }
   }
 
@@ -900,11 +933,10 @@ void BrowsingDataRemoverImpl::OnTaskComplete(TracingDataType data_type,
   size_t num_erased = pending_sub_tasks_.erase(data_type);
   DCHECK_EQ(num_erased, 1U);
 
-  TRACE_EVENT_NESTABLE_ASYNC_END1(
-      "browsing_data", "BrowsingDataRemoverImpl",
-      TRACE_ID_WITH_SCOPE("BrowsingDataRemoverImpl",
-                          static_cast<int>(data_type)),
-      "data_type", static_cast<int>(data_type));
+  TRACE_EVENT_END("browsing_data",
+                  perfetto::NamedTrack("BrowsingDataRemoverImpl",
+                                       static_cast<int>(data_type)),
+                  "data_type", static_cast<int>(data_type));
 
   base::UmaHistogramMediumTimes(
       base::StrCat({"History.ClearBrowsingData.Duration.Task.",
@@ -1000,6 +1032,10 @@ const char* BrowsingDataRemoverImpl::GetHistogramSuffix(TracingDataType task) {
       return "PreflightCache";
     case TracingDataType::kSharedDictionary:
       return "SharedDictionary";
+    case TracingDataType::kPrefetchCache:
+      return "PrefetchCache";
+    case TracingDataType::kPrerenderCache:
+      return "PrerenderCache";
   }
 }
 
@@ -1009,11 +1045,10 @@ base::OnceClosure BrowsingDataRemoverImpl::CreateTaskCompletionClosure(
   auto result = pending_sub_tasks_.insert(data_type);
   DCHECK(result.second) << "Task already started: "
                         << static_cast<int>(data_type);
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
-      "browsing_data", "BrowsingDataRemoverImpl",
-      TRACE_ID_WITH_SCOPE("BrowsingDataRemoverImpl",
-                          static_cast<int>(data_type)),
-      "data_type", static_cast<int>(data_type));
+  TRACE_EVENT_BEGIN("browsing_data", "BrowsingDataRemoverImpl",
+                    perfetto::NamedTrack("BrowsingDataRemoverImpl",
+                                         static_cast<int>(data_type)),
+                    "data_type", static_cast<int>(data_type));
   return base::BindOnce(&BrowsingDataRemoverImpl::OnTaskComplete, GetWeakPtr(),
                         data_type, base::TimeTicks::Now());
 }

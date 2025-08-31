@@ -7,6 +7,8 @@
 
 #include "base/types/pass_key.h"
 #include "third_party/blink/public/mojom/annotation/annotation.mojom-blink.h"
+#include "third_party/blink/public/mojom/scroll/scroll_enums.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
 #include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
@@ -22,6 +24,7 @@ class AnnotationAgentContainerImpl;
 class AnnotationAgentImplTest;
 class AnnotationSelector;
 class Document;
+class HitTestResult;
 class RangeInFlatTree;
 
 // This class represents an instantiation of an annotation in a Document. It is
@@ -80,6 +83,8 @@ class CORE_EXPORT AnnotationAgentImpl final
   // request an attachment if the initial one failed).
   void Attach(base::PassKey<AnnotationAgentContainerImpl>);
 
+  AnnotationAgentContainerImpl* OwningContainer() { return owning_container_; }
+
   // Clients can request an attachment (after the automatic first one has
   // failed) to occur using this setter.
   void SetNeedsAttachment() { needs_attachment_ = true; }
@@ -100,9 +105,10 @@ class CORE_EXPORT AnnotationAgentImpl final
   // Returns true if this agent is bound to a host.
   bool IsBoundForTesting() const;
 
-  // Removes the agent from its container, clearing all its state, mojo
-  // bindings, and any visual indications in the document.
-  void Remove();
+  // Prepares the agent to be removed from its container by clearing all its
+  // state, mojo bindings, and any visual indications in the document. Should
+  // only be called by its container.
+  void Reset(base::PassKey<AnnotationAgentContainerImpl>);
 
   // mojom::blink::AnnotationAgent
   void ScrollIntoView(bool applies_focus) override {
@@ -118,6 +124,14 @@ class CORE_EXPORT AnnotationAgentImpl final
   const AnnotationSelector* GetSelector() const { return selector_.Get(); }
 
   mojom::blink::AnnotationType GetType() const { return type_; }
+
+  // Determine if `result` represents a click on an existing annotation, and
+  // returns the type of the annotation if so (or std::nullopt if not).
+  // Note: It is possible for the click to be above multiple annotations, in
+  // which case we only return the type of what we consider to be the "topmost"
+  // (see implementation).
+  static std::optional<mojom::blink::AnnotationType> IsOverAnnotation(
+      const HitTestResult& result);
 
  private:
   friend AnnotationAgentImplTest;
@@ -136,6 +150,10 @@ class CORE_EXPORT AnnotationAgentImpl final
   void ProcessAttachmentFinished();
 
   bool IsRemoved() const;
+
+  mojom::blink::ScrollBehavior ComputeScrollIntoViewBehavior(
+      const PhysicalRect& bounding_box,
+      const mojom::blink::ScrollIntoViewParams& params) const;
 
   // Mojo bindings to the remote host and this' remote. These are always
   // connected as a pair and disconnecting one will cause the other to be

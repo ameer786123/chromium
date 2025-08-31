@@ -6,16 +6,17 @@
 #define CHROME_RENDERER_ACTOR_TYPE_TOOL_H_
 
 #include <cstdint>
+#include <string>
+#include <variant>
 
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
+#include "base/types/expected.h"
 #include "chrome/common/actor.mojom.h"
 #include "chrome/renderer/actor/tool_base.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
-
-namespace blink {
-class WebNode;
-}  // namespace blink
+#include "third_party/blink/public/platform/web_input_event_result.h"
+#include "third_party/blink/public/web/web_element.h"
 
 namespace content {
 class RenderFrame;
@@ -23,14 +24,23 @@ class RenderFrame;
 
 namespace actor {
 
+class Journal;
+
 // A tool that simulates typing text into a target DOM node.
 class TypeTool : public ToolBase {
  public:
-  TypeTool(mojom::TypeActionPtr action,
-           base::raw_ref<content::RenderFrame> frame);
+  TypeTool(content::RenderFrame& frame,
+           Journal::TaskId task_id,
+           Journal& journal,
+           mojom::TypeActionPtr action,
+           mojom::ToolTargetPtr target,
+           mojom::ObservedToolTargetPtr observed_target);
   ~TypeTool() override;
 
+  // actor::ToolBase
   void Execute(ToolFinishedCallback callback) override;
+  std::string DebugString() const override;
+  base::TimeDelta ExecutionObservationDelay() const override;
 
  private:
   // Structure to hold all necessary parameters for generating keyboard events
@@ -52,21 +62,39 @@ class TypeTool : public ToolBase {
     char unmodified_text = '\0';
   };
 
-  KeyParams GetEnterKeyParams();
-  std::optional<KeyParams> GetKeyParamsForChar(char c);
-  bool CreateAndDispatchKeyEvent(blink::WebInputEvent::Type type,
-                                 KeyParams key_params);
-  bool SimulateKeyPress(TypeTool::KeyParams params);
+  struct TargetAndKeys {
+    TargetAndKeys(const gfx::PointF& coordinate,
+                  std::vector<KeyParams> key_sequence);
+    ~TargetAndKeys();
+    TargetAndKeys(const TargetAndKeys&);
+    TargetAndKeys& operator=(const TargetAndKeys&);
+    TargetAndKeys(TargetAndKeys&&);
+    TargetAndKeys& operator=(TargetAndKeys&&);
 
-  // Attempts to prepare the target element based on the TypeMode.
-  // Returns true on success, false on failure.
-  bool PrepareTargetForMode(const blink::WebNode& node,
-                            mojom::TypeAction::Mode mode);
+    gfx::PointF target;
+    std::vector<KeyParams> key_sequence;
+  };
+  using ValidatedResult = base::expected<TargetAndKeys, mojom::ActionResultPtr>;
+  ValidatedResult Validate() const;
 
-  // Raw ref since this is owned by ToolExecutor whose lifetime is tied to
-  // RenderFrame.
-  base::raw_ref<content::RenderFrame> frame_;
+  KeyParams GetEnterKeyParams() const;
+  std::optional<KeyParams> GetKeyParamsForChar(char c) const;
+  blink::WebInputEventResult CreateAndDispatchKeyEvent(
+      blink::WebInputEvent::Type type,
+      KeyParams key_params);
+  mojom::ActionResultPtr SimulateKeyPress(TypeTool::KeyParams params);
+
+  void ContinueIncrementalTyping(ToolFinishedCallback callback);
+
   mojom::TypeActionPtr action_;
+
+  // Used when typing incrementally.
+  std::optional<TargetAndKeys> target_and_keys_;
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
+  bool is_key_down_ = false;
+  size_t current_key_ = 0;
+
+  base::WeakPtrFactory<TypeTool> weak_ptr_factory_{this};
 };
 
 }  // namespace actor

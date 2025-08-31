@@ -60,9 +60,9 @@ public class BluetoothNotificationManager {
         int IS_SCANNING = 2;
     }
 
-    private BluetoothNotificationManagerDelegate mDelegate;
-    private BaseNotificationManagerProxy mNotificationManager;
-    private SharedPreferencesManager mSharedPreferences;
+    private final BluetoothNotificationManagerDelegate mDelegate;
+    private final BaseNotificationManagerProxy mNotificationManager;
+    private final SharedPreferencesManager mSharedPreferences;
     private final SparseIntArray mNotifications = new SparseIntArray();
 
     public BluetoothNotificationManager(BluetoothNotificationManagerDelegate delegate) {
@@ -90,7 +90,7 @@ public class BluetoothNotificationManager {
         return mNotifications.indexOfKey(notificationId) >= 0;
     }
 
-    public void onStartCommand(Intent intent, int flags, int startId) {
+    public void onStartCommand(@Nullable Intent intent, int flags, int startId) {
         if (intent == null || intent.getExtras() == null) {
             cancelPreviousBluetoothNotifications();
             mDelegate.stopSelf();

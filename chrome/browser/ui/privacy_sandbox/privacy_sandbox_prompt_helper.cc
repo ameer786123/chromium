@@ -6,6 +6,7 @@
 
 #include "base/hash/hash.h"
 #include "base/metrics/histogram_functions.h"
+#include "chrome/browser/privacy_sandbox/notice/desktop_entrypoint_handlers_helper.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_queue_manager.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service_factory.h"
@@ -17,9 +18,10 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/privacy_sandbox/privacy_sandbox_prompt.h"
 #include "chrome/browser/ui/profiles/profile_customization_bubble_sync_controller.h"
-#include "chrome/common/extensions/chrome_manifest_url_handlers.h"
+#include "chrome/browser/ui/signin/signin_view_controller.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/sync/service/sync_service.h"
@@ -28,10 +30,11 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/common/manifest_handlers/chrome_url_overrides_handler.h"
 
 namespace {
 constexpr char kPrivacySandboxPromptHelperEventHistogram[] =
-    "Settings.PrivacySandbox.PromptHelperEvent";
+    "Settings.PrivacySandbox.PromptHelperEvent2";
 constexpr int kMinRequiredDialogHeight = 100;
 
 // Gets the type of prompt that should be displayed for |profile|, this includes
@@ -139,8 +142,7 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
   // Check whether the navigation target is a suitable prompt location. The
   // navigation URL, rather than the visible or committed URL, is required to
   // distinguish between different types of NTPs.
-  if (!PrivacySandboxService::IsUrlSuitableForPrompt(
-          navigation_handle->GetURL())) {
+  if (!privacy_sandbox::IsUrlSuitableForPrompt(navigation_handle->GetURL())) {
     base::UmaHistogramEnumeration(
         kPrivacySandboxPromptHelperEventHistogram,
         SettingsPrivacySandboxPromptHelperEvent::kUrlNotSuitable);
@@ -157,30 +159,6 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
     }
   }
 
-  // `SearchEngineChoiceDialogService` may need to suppress this dialog to avoid
-  // dialog conflicts and too frequent promos.
-  // TODO(crbug.com/370804492): When we add DMA notice to queue, put this behind
-  // flag / remove.
-  SearchEngineChoiceDialogService* search_engine_choice_dialog_service =
-      SearchEngineChoiceDialogServiceFactory::GetForProfile(profile());
-  if (search_engine_choice_dialog_service &&
-      search_engine_choice_dialog_service->CanSuppressPrivacySandboxPromo()) {
-    base::UmaHistogramEnumeration(kPrivacySandboxPromptHelperEventHistogram,
-                                  SettingsPrivacySandboxPromptHelperEvent::
-                                      kSearchEngineChoiceDialogShown);
-    if (auto* privacy_sandbox_service =
-            PrivacySandboxServiceFactory::GetForProfile(profile())) {
-      privacy_sandbox::PrivacySandboxQueueManager& queue_manager =
-          privacy_sandbox_service->GetPrivacySandboxNoticeQueueManager();
-
-      queue_manager.MaybeUnqueueNotice();
-      // Set suppress queue to prevent queueing after DMA notice is
-      // shown.
-      queue_manager.SetSuppressQueue(true);
-    }
-    return;
-  }
-
   auto* browser =
       chrome::FindBrowserWithTab(navigation_handle->GetWebContents());
 
@@ -189,7 +167,7 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
   // TODO(crbug.com/370806609): When we add sign in notice to queue, put this
   // behind flag / remove.
   bool signin_dialog_showing =
-      browser->signin_view_controller()->ShowsModalDialog();
+      browser->GetFeatures().signin_view_controller()->ShowsModalDialog();
 #if !BUILDFLAG(IS_CHROMEOS)
   signin_dialog_showing =
       signin_dialog_showing ||
@@ -272,20 +250,24 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
   base::UmaHistogramEnumeration(
       kPrivacySandboxPromptHelperEventHistogram,
       SettingsPrivacySandboxPromptHelperEvent::kPromptShown);
-
-  if (auto* privacy_sandbox_service =
-          PrivacySandboxServiceFactory::GetForProfile(profile())) {
-    privacy_sandbox::PrivacySandboxQueueManager& queue_manager =
-        privacy_sandbox_service->GetPrivacySandboxNoticeQueueManager();
-
-    queue_manager.SetQueueHandleShown();
-  }
 }
 
 // static
 bool PrivacySandboxPromptHelper::ProfileRequiresPrompt(Profile* profile) {
   bool eligible = GetRequiredPromptType(profile) !=
                   PrivacySandboxService::PromptType::kNone;
+
+  // TODO(crbug.com/370804492): When we add DMA notice to queue, put this behind
+  // flag / remove.
+  SearchEngineChoiceDialogService* search_engine_choice_dialog_service =
+      SearchEngineChoiceDialogServiceFactory::GetForProfile(profile);
+  if (search_engine_choice_dialog_service &&
+      search_engine_choice_dialog_service->CanSuppressPrivacySandboxPromo()) {
+    base::UmaHistogramEnumeration(kPrivacySandboxPromptHelperEventHistogram,
+                                  SettingsPrivacySandboxPromptHelperEvent::
+                                      kSearchEngineChoiceDialogShown);
+    eligible = false;
+  }
 
   if (auto* privacy_sandbox_service =
           PrivacySandboxServiceFactory::GetForProfile(profile)) {

@@ -22,6 +22,9 @@ class DesktopBrowserFrameAuraLinux : public DesktopBrowserFrameAura {
   DesktopBrowserFrameAuraLinux& operator=(const DesktopBrowserFrameAuraLinux&) =
       delete;
 
+  // DesktopBrowserFrameAura:
+  void OnHostClosed() override;
+
   bool ShouldDrawRestoredFrameShadow() const;
 
   void set_host(BrowserDesktopWindowTreeHostLinux* host) { host_ = host; }
@@ -30,9 +33,11 @@ class DesktopBrowserFrameAuraLinux : public DesktopBrowserFrameAura {
   ~DesktopBrowserFrameAuraLinux() override;
 
   // NativeBrowserFrame:
-  views::Widget::InitParams GetWidgetParams() override;
+  views::Widget::InitParams GetWidgetParams(
+      views::Widget::InitParams::Ownership ownership) override;
   bool UseCustomFrame() const override;
   void TabDraggingKindChanged(TabDragKind tab_drag_kind) override;
+  void ClientDestroyedWidget() override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(DesktopBrowserFrameAuraLinuxTest, UseCustomFrame);

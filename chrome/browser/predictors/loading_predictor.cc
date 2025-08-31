@@ -151,8 +151,7 @@ bool LoadingPredictor::PrepareForPageLoad(
     HintOrigin origin,
     bool preconnectable,
     std::optional<PreconnectPrediction> preconnect_prediction) {
-  if (shutdown_)
-    return true;
+  CHECK(!shutdown_);
 
   TRACE_EVENT("loading", "LoadingPredictor::PrepareForPageLoad");
 
@@ -232,8 +231,9 @@ bool LoadingPredictor::PrepareForPageLoad(
 
   ++total_hints_activated_;
   active_hints_.emplace(url, base::TimeTicks::Now());
-  if (IsPreconnectAllowed(profile_))
+  if (IsPreconnectEnabled()) {
     MaybeAddPreconnect(url, std::move(prediction));
+  }
   return has_local_preconnect_prediction || preconnect_prediction;
 }
 
@@ -259,11 +259,11 @@ ResourcePrefetchPredictor* LoadingPredictor::resource_prefetch_predictor() {
   return resource_prefetch_predictor_.get();
 }
 
-PreconnectManager* LoadingPredictor::preconnect_manager() {
+content::PreconnectManager* LoadingPredictor::preconnect_manager() {
   CHECK(!shutdown_);
   if (!preconnect_manager_) {
     preconnect_manager_ =
-        std::make_unique<PreconnectManager>(GetWeakPtr(), profile_);
+        content::PreconnectManager::Create(GetWeakPtr(), profile_);
   }
 
   return preconnect_manager_.get();
@@ -290,14 +290,11 @@ void LoadingPredictor::Shutdown() {
   shutdown_ = true;
 }
 
-bool LoadingPredictor::OnNavigationStarted(
-    NavigationId navigation_id,
-    ukm::SourceId ukm_source_id,
-    const std::optional<url::Origin>& initiator_origin,
-    const GURL& main_frame_url,
-    base::TimeTicks creation_time) {
-  if (shutdown_)
-    return true;
+void LoadingPredictor::OnNavigationStarted(NavigationId navigation_id,
+                                           ukm::SourceId ukm_source_id,
+                                           const GURL& main_frame_url,
+                                           base::TimeTicks creation_time) {
+  CHECK(!shutdown_);
 
   TRACE_EVENT("loading", "LoadingPredictor::OnNavigationStarted");
 
@@ -307,8 +304,6 @@ bool LoadingPredictor::OnNavigationStarted(
   active_navigations_.emplace(navigation_id,
                               NavigationInfo{main_frame_url, creation_time});
   active_urls_to_navigations_[main_frame_url].insert(navigation_id);
-  return PrepareForPageLoad(initiator_origin, main_frame_url,
-                            HintOrigin::NAVIGATION);
 }
 
 void LoadingPredictor::OnNavigationFinished(NavigationId navigation_id,
@@ -383,7 +378,8 @@ void LoadingPredictor::MaybeAddPreconnect(const GURL& url,
   }
 
   if (!prediction.requests.empty())
-    preconnect_manager()->Start(url, std::move(prediction.requests));
+    preconnect_manager()->Start(url, std::move(prediction.requests),
+                                kLoadingPredictorPreconnectTrafficAnnotation);
 }
 
 void LoadingPredictor::MaybeRemovePreconnect(const GURL& url) {
@@ -398,7 +394,7 @@ bool LoadingPredictor::HandleHintByOrigin(const GURL& url,
                                           bool preconnectable,
                                           bool only_allow_https,
                                           PreconnectData& preconnect_data) {
-  if (!url.is_valid() || !url.has_host() || !IsPreconnectAllowed(profile_) ||
+  if (!url.is_valid() || !url.has_host() || !IsPreconnectEnabled() ||
       (only_allow_https && url.scheme() != url::kHttpsScheme)) {
     return false;
   }
@@ -428,7 +424,8 @@ bool LoadingPredictor::HandleHintByOrigin(const GURL& url,
       preconnect_manager()->StartPreconnectUrl(
           url, true, network_anonymization_key,
           kLoadingPredictorPreconnectTrafficAnnotation,
-          /*storage_partition_config=*/nullptr);
+          /*storage_partition_config=*/nullptr,
+          /*keepalive_config=*/std::nullopt, mojo::NullRemote());
     }
     return true;
   }
@@ -461,13 +458,17 @@ void LoadingPredictor::PreconnectInitiated(const GURL& url,
 }
 
 void LoadingPredictor::PreconnectFinished(
-    std::unique_ptr<PreconnectStats> stats) {
+    std::unique_ptr<content::PreconnectStats> stats) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (shutdown_)
     return;
 
   DCHECK(stats);
   active_hints_.erase(stats->url);
+}
+
+bool LoadingPredictor::IsPreconnectEnabled() {
+  return IsPreconnectAllowed(profile_);
 }
 
 void LoadingPredictor::PrefetchInitiated(const GURL& url,
@@ -498,12 +499,14 @@ void LoadingPredictor::PreconnectURLIfAllowed(
     const net::NetworkAnonymizationKey& network_anonymization_key,
     const net::NetworkTrafficAnnotationTag& traffic_annotation,
     const content::StoragePartitionConfig* storage_partition_config) {
-  if (!url.is_valid() || !url.has_host() || !IsPreconnectAllowed(profile_))
+  if (!url.is_valid() || !url.has_host() || !IsPreconnectEnabled()) {
     return;
+  }
 
   preconnect_manager()->StartPreconnectUrl(
       url, allow_credentials, network_anonymization_key, traffic_annotation,
-      storage_partition_config);
+      storage_partition_config, /*keepalive_config=*/std::nullopt,
+      mojo::NullRemote());
 }
 
 void LoadingPredictor::MaybePrewarmResources(

@@ -15,10 +15,8 @@ import android.os.RemoteException;
 import org.chromium.IsReadyToPayService;
 import org.chromium.IsReadyToPayServiceCallback;
 import org.chromium.base.Log;
-import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
-import org.chromium.components.payments.PrePurchaseQuery;
 
 /** A helper to query the payment app's IsReadyToPay service. */
 @NullMarked
@@ -39,9 +37,9 @@ public class IsReadyToPayServiceHelper extends IsReadyToPayServiceCallback.Stub
 
     private boolean mIsServiceBindingInitiated;
     private boolean mIsServiceConnected;
-    private Handler mHandler;
-    private Intent mIsReadyToPayIntent;
-    private String mServiceName;
+    private final Handler mHandler;
+    private final Intent mIsReadyToPayIntent;
+    private final String mServiceName;
 
     /** The callback that returns the result (success or error) to the helper's caller. */
     public interface ResultHandler {
@@ -133,14 +131,9 @@ public class IsReadyToPayServiceHelper extends IsReadyToPayServiceCallback.Stub
             return;
         }
 
-        RecordHistogram.recordEnumeratedHistogram(
-                "PaymentRequest.PrePurchaseQuery",
-                PrePurchaseQuery.ANDROID_INTENT,
-                PrePurchaseQuery.MAX_VALUE);
-
         Log.i(TAG, "Querying \"%s\".", mServiceName);
         try {
-            isReadyToPayService.isReadyToPay(/* callback= */ this);
+            isReadyToPayService.isReadyToPay(/* callback= */ this, mIsReadyToPayIntent.getExtras());
         } catch (Throwable e) {
             // Many undocumented exceptions are not caught in the remote Service but passed on
             // to the Service caller, see writeException in Parcel.java.

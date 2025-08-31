@@ -10,7 +10,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/timer/timer.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker.h"
@@ -38,12 +37,10 @@ class DefaultBrowserPromptManager : public BrowserTabStripTrackerDelegate,
 
   static DefaultBrowserPromptManager* GetInstance();
 
-  bool get_show_app_menu_item() const { return show_app_menu_item_; }
+  bool show_app_menu_item() const { return show_app_menu_item_; }
 
-  // This will trigger the showing of the info bar.
-  void InitTabStripTracker();
-
-  void MaybeShowPrompt();
+  // Returns true if the prompt was shown, false if not.
+  bool MaybeShowPrompt();
 
   void CloseAllPrompts(CloseReason close_reason);
 
@@ -52,6 +49,9 @@ class DefaultBrowserPromptManager : public BrowserTabStripTrackerDelegate,
 
   DefaultBrowserPromptManager();
   ~DefaultBrowserPromptManager() override;
+
+  // This will trigger the showing of the info bar.
+  void InitTabStripTracker();
 
   void CreateInfoBarForWebContents(content::WebContents* contents,
                                    Profile* profile);
@@ -63,7 +63,7 @@ class DefaultBrowserPromptManager : public BrowserTabStripTrackerDelegate,
   void SetAppMenuItemVisibility(bool show);
 
   // BrowserTabStripTrackerDelegate
-  bool ShouldTrackBrowser(Browser* browser) override;
+  bool ShouldTrackBrowser(BrowserWindowInterface* browser) override;
 
   // TabStripModelObserver:
   void OnTabStripModelChanged(

@@ -15,6 +15,7 @@ include_rules = [
   "+third_party/skia/include",
   "+third_party/blink/public/mojom/quota",
   "+third_party/blink/public/mojom/badging",
+  "+third_party/blink/public/mojom/persistent_renderer_prefs.mojom.h",
   "+third_party/blink/public/common/bluetooth/web_bluetooth_device_id.h",
   "+third_party/blink/public/common/client_hints/enabled_client_hints.h",
   "+third_party/blink/public/common/renderer_preferences/renderer_preferences.h",
@@ -35,6 +36,8 @@ specific_include_rules = {
     "+components/origin_trials/browser",
   ],
   "headless_browser_main_parts_posix.cc": [
+    "+components/dbus",
+    "+dbus",
     "+device/bluetooth",
   ],
   "headless_browser_impl.*": [

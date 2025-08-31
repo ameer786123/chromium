@@ -51,8 +51,8 @@ import java.util.List;
 @SuppressWarnings("UnusedMethod")
 public class OmahaBaseTest {
     private static class TimestampPair {
-        public long timestampNextRequest;
-        public long timestampNextPost;
+        public final long timestampNextRequest;
+        public final long timestampNextPost;
 
         public TimestampPair(long timestampNextRequest, long timestampNextPost) {
             this.timestampNextRequest = timestampNextRequest;
@@ -61,14 +61,13 @@ public class OmahaBaseTest {
     }
 
     private static class MockOmahaDelegate extends OmahaDelegate {
-        private final List<Integer> mPostResults = new ArrayList<Integer>();
-        private final List<Boolean> mGenerateAndPostRequestResults = new ArrayList<Boolean>();
+        private final List<Integer> mPostResults = new ArrayList<>();
+        private final List<Boolean> mGenerateAndPostRequestResults = new ArrayList<>();
 
         private final boolean mIsOnTablet;
         private final boolean mIsInForeground;
         private final boolean mIsInSystemImage;
         private final ExponentialBackoffScheduler mScheduler;
-        private MockRequestGenerator mMockGenerator;
 
         private int mNumUUIDsGenerated;
         private long mNextScheduledTimestamp = -1;
@@ -91,9 +90,9 @@ public class OmahaBaseTest {
 
         @Override
         protected RequestGenerator createRequestGenerator() {
-            mMockGenerator =
+            MockRequestGenerator mockGenerator =
                     new MockRequestGenerator(mIsOnTablet ? DeviceType.TABLET : DeviceType.HANDSET);
-            return mMockGenerator;
+            return mockGenerator;
         }
 
         @Override
@@ -343,7 +342,6 @@ public class OmahaBaseTest {
     @Test
     @Feature({"Omaha"})
     public void testPipelineFreshInstallUpdatedAvailable_crbug_1095755() {
-        final long now = mDelegate.getScheduler().getCurrentTime();
         final String updateVersion = "10.0.0.0";
 
         // Trigger Omaha.

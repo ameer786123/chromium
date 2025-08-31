@@ -15,7 +15,10 @@
 #import "base/ios/ios_util.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/user_metrics.h"
+#import "base/strings/string_number_conversions.h"
+#import "base/strings/string_util.h"
 #import "base/strings/sys_string_conversions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/google/core/common/google_util.h"
 #import "components/keyed_service/core/service_access_type.h"
 #import "components/password_manager/core/browser/password_manager_constants.h"
@@ -38,6 +41,7 @@
 #import "ios/chrome/browser/settings/ui_bundled/cells/settings_check_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/elements/enterprise_info_popover_view_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/create_password_manager_title_view.h"
+#import "ios/chrome/browser/settings/ui_bundled/password/password_manager_ui_features.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_manager_view_controller+Testing.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_manager_view_controller_delegate.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_manager_view_controller_items.h"
@@ -51,7 +55,6 @@
 #import "ios/chrome/browser/settings/ui_bundled/utils/password_utils.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/elements/home_waiting_view.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_detail_icon_item.h"
@@ -105,6 +108,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
   ItemTypeLinkHeader = kItemTypeEnumZero,
   // Section: SectionIdentifierWidgetPromo
   ItemTypeWidgetPromo,
+  // Section: SectionIdentifierTrustedVaultWidgetPromo
+  ItemTypeTrustedVaultWidgetPromo,
   // Section: SectionIdentifierPasswordCheck
   ItemTypePasswordCheckStatus,
   ItemTypeCheckForProblemsButton,
@@ -252,6 +257,9 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 // The item used to present the Password Manager widget promo.
 @property(nonatomic, readonly) InlinePromoItem* widgetPromoItem;
 
+// The item used to present the Trusted Vault widget promo.
+@property(nonatomic, readonly) InlinePromoItem* trustedVaultWidgetPromoItem;
+
 // Deleting passwords updates the SavedPasswordsPresenter, resulting in an
 // observer callback, which handles general data updates with a `reloadData`.
 // Visually, it is better to handle user-initiated changes with more specific
@@ -291,12 +299,20 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   BOOL _searchPasswordsUserActionWasRecorded;
   // Whether or not the Password Manager widget promo should be shown.
   BOOL _shouldShowPasswordManagerWidgetPromo;
+  // Whether or not the TrustedVault widget promo should be shown.
+  BOOL _shouldShowTrustedVaultWidgetPromo;
+  // Whether the TrustedVault widget promo impression metric was already
+  // recorded.
+  BOOL _trustedVaultWidgetPromoImpressionWasRecorded;
   // Stores the most recently created or updated password form.
   std::optional<password_manager::CredentialUIEntry> _mostRecentlyUpdatedCred;
+  // Stores an email address of a user.
+  std::u16string _userEmail;
 }
 
 @synthesize manageAccountLinkItem = _manageAccountLinkItem;
 @synthesize widgetPromoItem = _widgetPromoItem;
+@synthesize trustedVaultWidgetPromoItem = _trustedVaultWidgetPromoItem;
 @synthesize passwordProblemsItem = _passwordProblemsItem;
 @synthesize checkForProblemsItem = _checkForProblemsItem;
 @synthesize addPasswordItem = _addPasswordItem;
@@ -399,7 +415,6 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 
 - (void)viewWillAppear:(BOOL)animated {
   [super viewWillAppear:animated];
-  self.navigationController.toolbarHidden = NO;
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -453,6 +468,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 
   [self setSearchBarEnabled:self.shouldEnableSearchBar];
   [self setWidgetPromoItemEnabled:!editing];
+  [self setTrustedVaultWidgetPromoItemEnabled:!editing];
   [self updatePasswordCheckButtonWithState:self.passwordCheckState];
   [self updatePasswordCheckStatusLabelWithState:self.passwordCheckState];
   [self setAddPasswordButtonEnabled:!editing];
@@ -470,6 +486,13 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 - (void)viewWillLayoutSubviews {
   [super viewWillLayoutSubviews];
   [self updateWidgetPromoCellLayoutIfNeeded];
+}
+
+- (void)viewDidLayoutSubviews {
+  [super viewDidLayoutSubviews];
+  if ([self.scrimView isDescendantOfView:self.view]) {
+    [self.view bringSubviewToFront:self.scrimView];
+  }
 }
 
 #pragma mark - SettingsRootTableViewController
@@ -498,6 +521,16 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
     [model addSectionWithIdentifier:SectionIdentifierManageAccountHeader];
     [model setHeader:self.manageAccountLinkItem
         forSectionWithIdentifier:SectionIdentifierManageAccountHeader];
+
+    // Trusted Vault widget promo.
+    if (password_manager::features::
+            IsPasswordManagerTrustedVaultWidgetEnabled() &&
+        _shouldShowTrustedVaultWidgetPromo) {
+      [model addSectionWithIdentifier:SectionIdentifierTrustedVaultWidgetPromo];
+      [model addItem:self.trustedVaultWidgetPromoItem
+          toSectionWithIdentifier:SectionIdentifierTrustedVaultWidgetPromo];
+      [self recordTrustedVaultWidgetPromoImpression];
+    }
 
     // Widget promo.
     if (_shouldShowPasswordManagerWidgetPromo) {
@@ -536,9 +569,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
     TableViewTextHeaderFooterItem* headerItem =
         [[TableViewTextHeaderFooterItem alloc] initWithType:ItemTypeHeader];
     headerItem.text = l10n_util::GetNSString(
-        IOSPasskeysM2Enabled()
-            ? IDS_IOS_SETTINGS_PASSWORDS_PASSKEYS_SAVED_HEADING
-            : IDS_IOS_SETTINGS_PASSWORDS_SAVED_HEADING);
+        IDS_IOS_SETTINGS_PASSWORDS_PASSKEYS_SAVED_HEADING);
     [model setHeader:headerItem
         forSectionWithIdentifier:SectionIdentifierSavedPasswords];
   }
@@ -665,24 +696,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 
   _manageAccountLinkItem =
       [[TableViewLinkHeaderFooterItem alloc] initWithType:ItemTypeLinkHeader];
-
-  if (_savingPasswordsToAccount) {
-    _manageAccountLinkItem.text = l10n_util::GetNSString(
-        IOSPasskeysM2Enabled()
-            ? IDS_IOS_SAVE_PASSWORDS_PASSKEYS_MANAGE_ACCOUNT_HEADER
-            : IDS_IOS_SAVE_PASSWORDS_MANAGE_ACCOUNT_HEADER);
-
-    _manageAccountLinkItem.urls = @[ [[CrURL alloc]
-        initWithGURL:
-            google_util::AppendGoogleLocaleParam(
-                GURL(password_manager::kPasswordManagerHelpCenteriOSURL),
-                GetApplicationContext()->GetApplicationLocale())] ];
-  } else {
-    _manageAccountLinkItem.text =
-        l10n_util::GetNSString(IDS_IOS_PASSWORD_MANAGER_HEADER_NOT_SYNCING);
-    _manageAccountLinkItem.urls = @[];
-  }
-
+  [self populateManageAccountLinkItemContent];
   return _manageAccountLinkItem;
 }
 
@@ -701,6 +715,30 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
       [self shouldWidgetPromoCellHaveWideLayout];
   _widgetPromoItem.accessibilityIdentifier = kWidgetPromoID;
   return _widgetPromoItem;
+}
+
+// Creates a promo widget with recommendation to retrieve a Trusted Vault key.
+- (InlinePromoItem*)trustedVaultWidgetPromoItem {
+  if (_trustedVaultWidgetPromoItem) {
+    return _trustedVaultWidgetPromoItem;
+  }
+
+  _trustedVaultWidgetPromoItem =
+      [[InlinePromoItem alloc] initWithType:ItemTypeTrustedVaultWidgetPromo];
+  _trustedVaultWidgetPromoItem.shouldShowCloseButton = NO;
+  _trustedVaultWidgetPromoItem.shouldDisplayBadge = NO;
+  _trustedVaultWidgetPromoItem.promoImage =
+      [UIImage imageNamed:kPasswordManagerTrustedVaultWidgetPromoImage];
+  _trustedVaultWidgetPromoItem.promoText = l10n_util::GetNSStringF(
+      IDS_IOS_IDENTITY_ERROR_INFOBAR_KEEP_USING_PASSWORDS_MESSAGE_WITH_EMAIL,
+      _userEmail);
+  _trustedVaultWidgetPromoItem.moreInfoButtonTitle = l10n_util::GetNSString(
+      IDS_IOS_IDENTITY_ERROR_INFOBAR_VERIFY_ITS_YOU_TITLE);
+  _trustedVaultWidgetPromoItem.shouldHaveWideLayout =
+      [self shouldWidgetPromoCellHaveWideLayout];
+  _trustedVaultWidgetPromoItem.accessibilityIdentifier =
+      kWidgetTrustedVaultPromoID;
+  return _trustedVaultWidgetPromoItem;
 }
 
 - (SettingsCheckItem*)passwordProblemsItem {
@@ -831,6 +869,16 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   [self.presentationDelegate showPasswordManagerWidgetPromoInstructions];
 }
 
+- (void)didTapTrustedVaultWidgetKeyRetrievalButton {
+  // Note: There could be multiple reports of the `kActedUpon` event per a
+  // single `kDisplayed` event.
+  UmaHistogramEnumeration(
+      kPasswordManagerPromoWithTrustedVaultKeyRetrievalActionHistogram,
+      PasswordManagerPromoWithTrustedVaultKeyRetrievalAction::kActedUpon);
+  [self.presentationDelegate
+          performReauthenticationForRetrievingTrustedVaultKey];
+}
+
 #pragma mark - PasswordsConsumer
 
 - (void)setPasswordCheckUIState:(PasswordCheckUIState)state
@@ -857,7 +905,14 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
     return;
   }
   _savingPasswordsToAccount = savingPasswordsToAccount;
-  [self reloadData];
+  // No need to reload before the view is loaded, as loading the view triggers a
+  // data reload.
+  if (self.viewLoaded) {
+    [self populateManageAccountLinkItemContent];
+    // TODO(crbug.com/416468488): Check if it is possible to only update the
+    // items affected by this mutation instead of reloading data.
+    [self reloadData];
+  }
 }
 
 - (void)setAffiliatedGroups:
@@ -976,7 +1031,22 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
     (BOOL)shouldShowPasswordManagerWidgetPromo {
   _shouldShowPasswordManagerWidgetPromo = shouldShowPasswordManagerWidgetPromo;
 
-  // Reload data to display the promo. No to need to reload before the view is
+  // Reload data to display the promo. No need to reload before the view is
+  // loaded, as loading the view triggers a data reload.
+  if (self.viewLoaded) {
+    [self reloadData];
+  }
+}
+
+- (void)setUserEmail:(const std::u16string&)userEmail {
+  _userEmail = userEmail;
+}
+
+- (void)setShouldShowTrustedVaultWidgetPromo:
+    (BOOL)shouldShowTrustedVaultWidgetPromo {
+  _shouldShowTrustedVaultWidgetPromo = shouldShowTrustedVaultWidgetPromo;
+
+  // Reload data to display the promo. No need to reload before the view is
   // loaded, as loading the view triggers a data reload.
   if (self.viewLoaded) {
     [self reloadData];
@@ -1009,11 +1079,12 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
         [self clearSectionWithIdentifier:SectionIdentifierWidgetPromo
                         withRowAnimation:UITableViewRowAnimationTop];
 
+        [self
+            clearSectionWithIdentifier:SectionIdentifierTrustedVaultWidgetPromo
+                      withRowAnimation:UITableViewRowAnimationTop];
+
         [self clearSectionWithIdentifier:SectionIdentifierManageAccountHeader
                         withRowAnimation:UITableViewRowAnimationTop];
-
-        // Hide the toolbar when the search controller is presented.
-        self.navigationController.toolbarHidden = YES;
       }
                         completion:nil];
 }
@@ -1051,6 +1122,22 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
             withRowAnimation:UITableViewRowAnimationTop];
 
         sectionIndex++;
+        // Add the trusted vault promo section.
+        if (password_manager::features::
+                IsPasswordManagerTrustedVaultWidgetEnabled() &&
+            _shouldShowTrustedVaultWidgetPromo) {
+          [model insertSectionWithIdentifier:
+                     SectionIdentifierTrustedVaultWidgetPromo
+                                     atIndex:sectionIndex];
+          [self.tableView
+                insertSections:[NSIndexSet indexSetWithIndex:sectionIndex]
+              withRowAnimation:UITableViewRowAnimationTop];
+          [model addItem:self.trustedVaultWidgetPromoItem
+              toSectionWithIdentifier:SectionIdentifierTrustedVaultWidgetPromo];
+
+          sectionIndex++;
+        }
+
         // Add widget promo section.
         if (_shouldShowPasswordManagerWidgetPromo) {
           [model insertSectionWithIdentifier:SectionIdentifierWidgetPromo
@@ -1111,13 +1198,6 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
         [self.tableView insertRowsAtIndexPaths:rowsIndexPaths
                               withRowAnimation:UITableViewRowAnimationTop];
 
-        //  We want to restart the toolbar (display it) when the search bar is
-        //  dismissed only if the current view is the Password Manager.
-        if ([self.navigationController.topViewController
-                isKindOfClass:[PasswordManagerViewController class]]) {
-          self.navigationController.toolbarHidden = NO;
-        }
-
         _tableIsInSearchMode = NO;
       }
                completion:nil];
@@ -1143,6 +1223,39 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 }
 
 #pragma mark - Private methods
+
+// Records the Trusted Vault Widget Promo impression (if it hasn't been recorded
+// yet).
+- (void)recordTrustedVaultWidgetPromoImpression {
+  if (!_trustedVaultWidgetPromoImpressionWasRecorded) {
+    UmaHistogramEnumeration(
+        kPasswordManagerPromoWithTrustedVaultKeyRetrievalActionHistogram,
+        PasswordManagerPromoWithTrustedVaultKeyRetrievalAction::kDisplayed);
+    _trustedVaultWidgetPromoImpressionWasRecorded = YES;
+  }
+}
+
+// Populates the text and urls content of the ManageAccountLinkItem.
+- (void)populateManageAccountLinkItemContent {
+  if (!_manageAccountLinkItem) {
+    return;
+  }
+  if (_savingPasswordsToAccount) {
+    _manageAccountLinkItem.text = l10n_util::GetNSString(
+        IDS_IOS_SAVE_PASSWORDS_PASSKEYS_MANAGE_ACCOUNT_HEADER);
+    _manageAccountLinkItem.urls = @[ [[CrURL alloc]
+        initWithGURL:
+            google_util::AppendGoogleLocaleParam(
+                GURL(password_manager::kPasswordManagerHelpCenteriOSURL),
+                GetApplicationContext()
+                    ->GetApplicationLocaleStorage()
+                    ->Get())] ];
+  } else {
+    _manageAccountLinkItem.text =
+        l10n_util::GetNSString(IDS_IOS_PASSWORD_MANAGER_HEADER_NOT_SYNCING);
+    _manageAccountLinkItem.urls = @[];
+  }
+}
 
 // Shows loading spinner background view.
 - (void)showLoadingSpinnerBackground {
@@ -1193,18 +1306,28 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 
 // Shows scrim overlay and hide toolbar.
 - (void)showScrim {
-  if (self.scrimView.alpha < 1.0f) {
-    self.scrimView.alpha = 0.0f;
-    [self.tableView addSubview:self.scrimView];
-    // We attach our constraints to the superview because the tableView is
-    // a scrollView and it seems that we get an empty frame when attaching to
-    // it.
-    AddSameConstraints(self.scrimView, self.view.superview);
+  UIView* scrimView = self.scrimView;
+  if (scrimView.alpha < 1.0f) {
+    scrimView.alpha = 0.0f;
+    [self.tableView addSubview:scrimView];
+
+    UIView* superview = self.tableView.superview;
+
+    [NSLayoutConstraint activateConstraints:@[
+      [scrimView.leadingAnchor constraintEqualToAnchor:superview.leadingAnchor],
+      [scrimView.trailingAnchor
+          constraintEqualToAnchor:superview.trailingAnchor],
+      [scrimView.bottomAnchor constraintEqualToAnchor:superview.bottomAnchor],
+      [scrimView.topAnchor
+          constraintEqualToAnchor:self.navigationController.navigationBar
+                                      .bottomAnchor],
+
+    ]];
     self.tableView.accessibilityElementsHidden = YES;
     self.tableView.scrollEnabled = NO;
     [UIView animateWithDuration:kTableViewNavigationScrimFadeDuration
                      animations:^{
-                       self.scrimView.alpha = 1.0f;
+                       scrimView.alpha = 1.0f;
                        [self.view layoutIfNeeded];
                      }];
   }
@@ -1435,6 +1558,20 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
       [UIImage imageNamed:enabled ? WidgetPromoImageName()
                                   : WidgetPromoDisabledImageName()];
   [self reconfigureCellsForItems:@[ self.widgetPromoItem ]];
+}
+
+// Enables or disables the `trustedVaultWidgetPromoItem`.
+- (void)setTrustedVaultWidgetPromoItemEnabled:(BOOL)enabled {
+  if (self.trustedVaultWidgetPromoItem.enabled == enabled) {
+    return;
+  }
+
+  self.trustedVaultWidgetPromoItem.enabled = enabled;
+  self.trustedVaultWidgetPromoItem.promoImage = [UIImage
+      imageNamed:enabled
+                     ? kPasswordManagerTrustedVaultWidgetPromoImage
+                     : kPasswordManagerTrustedVaultWidgetPromoDisabledImage];
+  [self reconfigureCellsForItems:@[ self.trustedVaultWidgetPromoItem ]];
 }
 
 // Enables or disables the `checkForProblemsItem` and sets it up accordingly.
@@ -1755,26 +1892,43 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 // tableView, otherwise hides the empty state view if one is being displayed.
 - (void)showOrHideEmptyView {
   if ([self shouldShowEmptyStateView]) {
-    NSString* title =
-        l10n_util::GetNSString(IDS_IOS_SETTINGS_PASSWORD_EMPTY_TITLE);
+    if (password_manager::features::
+            IsPasswordManagerTrustedVaultWidgetEnabled() &&
+        _shouldShowTrustedVaultWidgetPromo) {
+      // Instead of displaying empty state with image we are currently
+      // displaying the Trusted Vault promo widget.
+      // TODO(crbug.com/407605858): Discuss with UX the UI behvior in case of
+      // the empty state and the trusted vault error (e.g. maybe we could have a
+      // dedicated empty view UI in this case). Based on the UX input we might
+      // consider refactoring this code.
+      [self.tableViewModel
+          addSectionWithIdentifier:SectionIdentifierTrustedVaultWidgetPromo];
+      [self.tableViewModel addItem:self.trustedVaultWidgetPromoItem
+           toSectionWithIdentifier:SectionIdentifierTrustedVaultWidgetPromo];
 
-    NSDictionary* textAttributes =
-        [TableViewIllustratedEmptyView defaultTextAttributesForSubtitle];
-    NSURL* linkURL = net::NSURLWithGURL(google_util::AppendGoogleLocaleParam(
-        GURL(password_manager::kPasswordManagerHelpCenteriOSURL),
-        GetApplicationContext()->GetApplicationLocale()));
-    NSDictionary* linkAttributes = @{
-      NSForegroundColorAttributeName : [UIColor colorNamed:kBlueColor],
-      NSLinkAttributeName : linkURL,
-    };
-    NSAttributedString* subtitle = AttributedStringFromStringWithLink(
-        l10n_util::GetNSString(IDS_IOS_SAVE_PASSWORDS_MANAGE_ACCOUNT_HEADER),
-        textAttributes, linkAttributes);
+    } else {
+      NSString* title =
+          l10n_util::GetNSString(IDS_IOS_SETTINGS_PASSWORD_EMPTY_TITLE);
 
-    [self addEmptyTableViewWithImage:[UIImage imageNamed:@"passwords_empty"]
-                               title:title
-                  attributedSubtitle:subtitle
-                            delegate:self];
+      NSDictionary* textAttributes =
+          [TableViewIllustratedEmptyView defaultTextAttributesForSubtitle];
+      NSURL* linkURL = net::NSURLWithGURL(google_util::AppendGoogleLocaleParam(
+          GURL(password_manager::kPasswordManagerHelpCenteriOSURL),
+          GetApplicationContext()->GetApplicationLocaleStorage()->Get()));
+      NSDictionary* linkAttributes = @{
+        NSForegroundColorAttributeName : [UIColor colorNamed:kBlueColor],
+        NSLinkAttributeName : linkURL,
+      };
+      NSAttributedString* subtitle = AttributedStringFromStringWithLink(
+          l10n_util::GetNSString(IDS_IOS_SAVE_PASSWORDS_MANAGE_ACCOUNT_HEADER),
+          textAttributes, linkAttributes);
+
+      [self addEmptyTableViewWithImage:[UIImage imageNamed:@"passwords_empty"]
+                                 title:title
+                    attributedSubtitle:subtitle
+                              delegate:self];
+    }
+
     self.navigationItem.searchController = nil;
     self.tableView.alwaysBounceVertical = NO;
   } else {
@@ -1969,6 +2123,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
     case ItemTypeLinkHeader:
     case ItemTypeHeader:
     case ItemTypeWidgetPromo:
+    case ItemTypeTrustedVaultWidgetPromo:
       NOTREACHED();
   }
   [tableView deselectRowAtIndexPath:indexPath animated:YES];
@@ -1997,6 +2152,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
     case ItemTypeAddPasswordButton:
       return [self allowsAddPassword];
     case ItemTypeWidgetPromo:
+    case ItemTypeTrustedVaultWidgetPromo:
       return NO;
   }
   return YES;
@@ -2055,9 +2211,20 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
                      cellForRowAtIndexPath:indexPath];
   UIView* selectedBackgroundView = [[UIView alloc] init];
   selectedBackgroundView.backgroundColor =
-      [UIColor colorNamed:kUpdatedTertiaryBackgroundColor];
+      [UIColor colorNamed:kTertiaryBackgroundColor];
   cell.selectedBackgroundView = selectedBackgroundView;
   switch ([self.tableViewModel itemTypeForIndexPath:indexPath]) {
+    case ItemTypeTrustedVaultWidgetPromo: {
+      InlinePromoCell* widgetPromoCell =
+          base::apple::ObjCCastStrict<InlinePromoCell>(cell);
+      [widgetPromoCell.moreInfoButton
+                 addTarget:self
+                    action:@selector(didTapTrustedVaultWidgetKeyRetrievalButton)
+          forControlEvents:UIControlEventTouchUpInside];
+      widgetPromoCell.promoImageView.accessibilityIdentifier =
+          kWidgetTrustedVaultPromoImageID;
+      break;
+    }
     case ItemTypeWidgetPromo: {
       InlinePromoCell* widgetPromoCell =
           base::apple::ObjCCastStrict<InlinePromoCell>(cell);

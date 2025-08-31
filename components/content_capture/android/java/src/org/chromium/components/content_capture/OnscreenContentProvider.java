@@ -34,7 +34,7 @@ public class OnscreenContentProvider {
     private static final String TAG = "ContentCapture";
     private long mNativeOnscreenContentProviderAndroid;
 
-    private ArrayList<ContentCaptureConsumer> mContentCaptureConsumers = new ArrayList<>();
+    private final ArrayList<ContentCaptureConsumer> mContentCaptureConsumers = new ArrayList<>();
 
     private WeakReference<WebContents> mWebContents;
 
@@ -214,7 +214,7 @@ public class OnscreenContentProvider {
     }
 
     private String[] buildUrls(@Nullable FrameSession session, @Nullable ContentCaptureFrame data) {
-        ArrayList<String> urls = new ArrayList<String>();
+        ArrayList<String> urls = new ArrayList<>();
         if (session != null) {
             for (ContentCaptureFrame d : session) {
                 urls.add(d.getUrl());
@@ -244,7 +244,7 @@ public class OnscreenContentProvider {
     @NativeMethods
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     public interface Natives {
-        long init(OnscreenContentProvider caller, @Nullable WebContents webContents);
+        long init(OnscreenContentProvider self, @Nullable WebContents webContents);
 
         void onWebContentsChanged(
                 long nativeOnscreenContentProviderAndroid, @Nullable WebContents webContents);

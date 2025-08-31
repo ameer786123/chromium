@@ -86,15 +86,15 @@ class FakeCameraBufferFactory : public CameraBufferFactory {
 
   scoped_refptr<gpu::ClientSharedImage> CreateSharedImage(
       const gfx::Size& size,
-      gfx::BufferFormat format,
+      viz::SharedImageFormat format,
       gfx::BufferUsage usage,
       const gfx::ColorSpace& color_space) override {
     // Setting some default usage in order to get a mappable shared image.
     constexpr auto si_usage = gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
                               gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
     auto shared_image = test_sii_->CreateSharedImage(
-        {viz::GetSharedImageFormat(format), size, color_space,
-         gpu::SharedImageUsageSet(si_usage), "FakeCameraBufferFactory"},
+        {format, size, color_space, gpu::SharedImageUsageSet(si_usage),
+         "FakeCameraBufferFactory"},
         gpu::kNullSurfaceHandle, usage);
     if (!shared_image) {
       LOG(ERROR) << "Failed to create shared image.";
@@ -105,8 +105,7 @@ class FakeCameraBufferFactory : public CameraBufferFactory {
   ChromiumPixelFormat ResolveStreamBufferFormat(
       cros::mojom::HalPixelFormat hal_format,
       gfx::BufferUsage usage) override {
-    return ChromiumPixelFormat{PIXEL_FORMAT_NV12,
-                               gfx::BufferFormat::YUV_420_BIPLANAR};
+    return ChromiumPixelFormat{PIXEL_FORMAT_NV12, viz::MultiPlaneFormat::kNV12};
   }
 
  private:
@@ -501,13 +500,13 @@ TEST_P(RequestManagerTest, DeviceErrorTest) {
       .WillOnce(InvokeWithoutArgs(this, &RequestManagerTest::QuitCaptureLoop));
   EXPECT_CALL(*GetMockCaptureInterface(), DoProcessCaptureRequest(_, _))
       .Times(1)
-      .WillOnce(Invoke([this](cros::mojom::Camera3CaptureRequestPtr& request,
-                              base::OnceCallback<void(int32_t)>& callback) {
+      .WillOnce([this](cros::mojom::Camera3CaptureRequestPtr& request,
+                       base::OnceCallback<void(int32_t)>& callback) {
         std::move(callback).Run(0);
         mock_callback_ops_->Notify(PrepareErrorNotifyMessage(
             request->frame_number,
             cros::mojom::Camera3ErrorMsgCode::CAMERA3_MSG_ERROR_DEVICE));
-      }));
+      });
 
   request_manager_->SetUpStreamsAndBuffers(
       capture_params_, GetFakeStaticMetadata(/* partial_result_count */ 1),
@@ -534,8 +533,8 @@ TEST_P(RequestManagerTest, RequestErrorTest) {
       base::Unretained(this)));
   EXPECT_CALL(*GetMockCaptureInterface(), DoProcessCaptureRequest(_, _))
       .Times(AtLeast(2))
-      .WillOnce(Invoke([this](cros::mojom::Camera3CaptureRequestPtr& request,
-                              base::OnceCallback<void(int32_t)>& callback) {
+      .WillOnce([this](cros::mojom::Camera3CaptureRequestPtr& request,
+                       base::OnceCallback<void(int32_t)>& callback) {
         std::move(callback).Run(0);
         mock_callback_ops_->Notify(PrepareErrorNotifyMessage(
             request->frame_number,
@@ -545,7 +544,7 @@ TEST_P(RequestManagerTest, RequestErrorTest) {
         mock_callback_ops_->ProcessCaptureResult(PrepareCapturedResult(
             request->frame_number, cros::mojom::CameraMetadata::New(), 1,
             std::move(request->output_buffers)));
-      }))
+      })
       .WillRepeatedly(
           Invoke(this, &RequestManagerTest::ProcessCaptureRequestDefault));
 
@@ -601,8 +600,8 @@ TEST_P(RequestManagerTest, BufferErrorTest) {
       base::Unretained(this)));
   EXPECT_CALL(*GetMockCaptureInterface(), DoProcessCaptureRequest(_, _))
       .Times(AtLeast(2))
-      .WillOnce(Invoke([this](cros::mojom::Camera3CaptureRequestPtr& request,
-                              base::OnceCallback<void(int32_t)>& callback) {
+      .WillOnce([this](cros::mojom::Camera3CaptureRequestPtr& request,
+                       base::OnceCallback<void(int32_t)>& callback) {
         std::move(callback).Run(0);
         mock_callback_ops_->Notify(PrepareShutterNotifyMessage(
             request->frame_number,
@@ -615,7 +614,7 @@ TEST_P(RequestManagerTest, BufferErrorTest) {
         mock_callback_ops_->ProcessCaptureResult(PrepareCapturedResult(
             request->frame_number, cros::mojom::CameraMetadata::New(), 1,
             std::move(request->output_buffers)));
-      }))
+      })
       .WillRepeatedly(
           Invoke(this, &RequestManagerTest::ProcessCaptureRequestDefault));
 

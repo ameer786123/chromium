@@ -17,4 +17,11 @@ bool AreSeparateProfilesForManagedAccountsEnabled();
 // YES if the account particle disc on the NTP should open the account menu.
 bool IsIdentityDiscAccountMenuEnabled();
 
+// YES if Profile-specific push notification handling is enabled.
+bool IsMultiProfilePushNotificationHandlingEnabled();
+
+// Whether the feature to have share entries (URL, image and text) per profile
+// is enabled.
+bool IsShareExtensionForMultiprofileEnabled();
+
 #endif  // IOS_CHROME_BROWSER_SHARED_MODEL_PROFILE_FEATURES_H_

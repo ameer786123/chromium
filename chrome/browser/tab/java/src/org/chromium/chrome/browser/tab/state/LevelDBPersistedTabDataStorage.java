@@ -26,11 +26,11 @@ public class LevelDBPersistedTabDataStorage implements PersistedTabDataStorage, 
     // In a mock environment, the native code will not be running so we should not
     // make assertions about mNativePersistedStateDB
     // LevelDBPersistedTabDataStorage needs to have an empty namespace for backwards compatibility.
-    // LevelDBPersitsedDataStorage is a generalization of the original
+    // LevelDBPersistedDataStorage is a generalization of the original
     // LevelDBPersistedTabDataStorage which introduced namespaces to avoid collisions between
     // clients.
-    private static String sNamespace = "";
-    private LevelDBPersistedDataStorage mPersistedDataStorage;
+    private static final String NAMESPACE = "";
+    private final LevelDBPersistedDataStorage mPersistedDataStorage;
     // Callback is only used for synchronization of save and delete in testing.
     // Otherwise it is a no-op.
     // TODO(crbug.com/40156389) Apply tricks like @CheckDiscard or proguard rules to improve
@@ -40,7 +40,7 @@ public class LevelDBPersistedTabDataStorage implements PersistedTabDataStorage, 
     LevelDBPersistedTabDataStorage(Profile profile) {
         assert !profile.isOffTheRecord()
                 : "LevelDBPersistedTabDataStorage is not supported for incognito profiles";
-        mPersistedDataStorage = new LevelDBPersistedDataStorage(profile, sNamespace);
+        mPersistedDataStorage = new LevelDBPersistedDataStorage(profile, NAMESPACE);
     }
 
     @MainThread
@@ -125,11 +125,6 @@ public class LevelDBPersistedTabDataStorage implements PersistedTabDataStorage, 
     @MainThread
     public void deleteForTesting(int tabId, String dataId, Runnable onComplete) {
         mPersistedDataStorage.deleteForTesting(getKey(tabId, dataId), onComplete); // IN-TEST
-    }
-
-    @Override
-    public String getUmaTag() {
-        return "LevelDB";
     }
 
     @Override

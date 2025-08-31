@@ -15,6 +15,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/timer/elapsed_timer.h"
 #include "components/metrics/metrics_features.h"
 #include "components/metrics/unsent_log_store_metrics.h"
@@ -100,7 +101,7 @@ class LogsPrefWriter {
   void Finish() {
     DCHECK(!finished_);
     finished_ = true;
-    std::reverse(list_value_->begin(), list_value_->end());
+    std::ranges::reverse(*list_value_);
   }
 
   base::HistogramBase::Count32 unsent_samples_count() const {
@@ -155,12 +156,10 @@ void UnsentLogStore::LogInfo::Init(const std::string& log_data,
   }
 
   hash = base::SHA1HashString(log_data);
-
-  CHECK(ComputeHMACForLog(log_data, signing_key, &signature))
-    << "HMAC signing failed";
+  signature = ComputeHMACForLog(log_data, signing_key);
 
   timestamp = log_timestamp;
-  this->log_metadata = optional_log_metadata;
+  log_metadata = optional_log_metadata;
 }
 
 void UnsentLogStore::LogInfo::Init(const std::string& log_data,
@@ -238,15 +237,13 @@ const LogMetadata UnsentLogStore::staged_log_metadata() const {
 }
 
 // static
-bool UnsentLogStore::ComputeHMACForLog(const std::string& log_data,
-                                       const std::string& signing_key,
-                                       std::string* signature) {
-  crypto::HMAC hmac(crypto::HMAC::SHA256);
-  const size_t digest_length = hmac.DigestLength();
-  unsigned char* hmac_data = reinterpret_cast<unsigned char*>(
-      base::WriteInto(signature, digest_length + 1));
-  return hmac.Init(signing_key) &&
-         hmac.Sign(log_data, hmac_data, digest_length);
+std::string UnsentLogStore::ComputeHMACForLog(std::string_view log_data,
+                                              std::string_view signing_key) {
+  auto data = base::as_byte_span(log_data);
+  auto key = base::as_byte_span(signing_key);
+  std::array<uint8_t, crypto::hash::kSha256Size> hmac =
+      crypto::hmac::SignSha256(key, data);
+  return std::string(base::as_string_view(hmac));
 }
 
 void UnsentLogStore::StageNextLog() {
@@ -341,11 +338,12 @@ void UnsentLogStore::TrimAndPersistUnsentLogs(bool overwrite_in_memory_store) {
   if (overwrite_in_memory_store) {
     // We went in reverse order, but appended entries. So reverse list to
     // correct.
-    std::reverse(trimmed_list.begin(), trimmed_list.end());
+    std::ranges::reverse(trimmed_list);
 
     size_t dropped_logs_count = list_.size() - trimmed_list.size();
-    if (dropped_logs_count > 0)
+    if (dropped_logs_count > 0) {
       metrics_->RecordDroppedLogsNum(dropped_logs_count);
+    }
 
     // Put the trimmed list in the correct place.
     list_.swap(trimmed_list);
@@ -512,8 +510,9 @@ void UnsentLogStore::WriteToMetricsPref(
     base::HistogramBase::Count32 unsent_samples_count,
     base::HistogramBase::Count32 sent_samples_count,
     size_t unsent_persisted_size) const {
-  if (metadata_pref_name_ == nullptr)
+  if (metadata_pref_name_ == nullptr) {
     return;
+  }
 
   ScopedDictPrefUpdate update(local_state_, metadata_pref_name_);
   base::Value::Dict& pref_data = update.Get();
@@ -525,8 +524,9 @@ void UnsentLogStore::WriteToMetricsPref(
 }
 
 void UnsentLogStore::RecordMetaDataMetrics() {
-  if (metadata_pref_name_ == nullptr)
+  if (metadata_pref_name_ == nullptr) {
     return;
+  }
 
   const base::Value::Dict& value = local_state_->GetDict(metadata_pref_name_);
 

@@ -7,15 +7,17 @@
 // This test suite does not do any of that at the moment.
 
 #include "build/build_config.h"
+#include "build/config/linux/dbus/buildflags.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/views/webid/account_selection_view_test_base.h"
 #include "chrome/browser/ui/views/webid/fake_delegate.h"
 #include "chrome/browser/ui/views/webid/fedcm_account_selection_view_desktop.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
-#include "content/public/browser/identity_request_dialog_controller.h"
+#include "content/public/browser/webid/identity_request_dialog_controller.h"
 #include "content/public/test/browser_test.h"
 #include "ui/base/interaction/interactive_test.h"
+#include "ui/base/ozone_buildflags.h"
 
 namespace webid {
 namespace {
@@ -41,18 +43,20 @@ class FedCmCUJTest : public InteractiveBrowserTest {
       idps_ = {base::MakeRefCounted<content::IdentityProviderData>(
           "idp-example.com", content::IdentityProviderMetadata(),
           content::ClientMetadata(GURL(), GURL(), GURL(), gfx::Image()),
-          blink::mojom::RpContext::kSignIn, kDefaultDisclosureFields,
+          blink::mojom::RpContext::kSignIn, /*format=*/std::nullopt,
+          kDefaultDisclosureFields,
           /*has_login_status_mismatch=*/false)};
       accounts_ = {base::MakeRefCounted<Account>(
           "id", "display_identifier", "display_name", "email", "name",
-          "given_name", GURL(),
+          "given_name", GURL(), "phone", "username",
           /*login_hints=*/std::vector<std::string>(),
           /*domain_hints=*/std::vector<std::string>(),
           /*labels=*/std::vector<std::string>())};
       accounts_[0]->identity_provider = idps_[0];
       account_selection_view_->Show(
-          content::RelyingPartyData("rp-example.com"), idps_, accounts_,
-          Account::SignInMode::kExplicit, mode,
+          content::RelyingPartyData(u"rp-example.com",
+                                    /*iframe_for_display=*/u""),
+          idps_, accounts_, mode,
           /*new_accounts=*/std::vector<IdentityRequestAccountPtr>());
     });
   }
@@ -91,9 +95,15 @@ IN_PROC_BROWSER_TEST_F(FedCmCUJTest, SelectAccount) {
                   PressButton(kFedCmAccountChooserDialogAccountElementId));
 }
 
+// TODO(https://crbug.com/441413537): Fix this on linux-wayland-mutter-rel
+#if BUILDFLAG(IS_OZONE_WAYLAND) && BUILDFLAG(USE_DBUS)
+#define MAYBE_BubbleHidesWhenModalUIShown DISABLED_BubbleHidesWhenModalUIShown
+#else
+#define MAYBE_BubbleHidesWhenModalUIShown BubbleHidesWhenModalUIShown
+#endif
 // Shows the bubble account picker. It should hide when a modal UI is shown. It
 // should re-show when the modal UI goes away.
-IN_PROC_BROWSER_TEST_F(FedCmCUJTest, BubbleHidesWhenModalUIShown) {
+IN_PROC_BROWSER_TEST_F(FedCmCUJTest, MAYBE_BubbleHidesWhenModalUIShown) {
   RunTestSequence(
       OpenAccountsBubble(),
       WaitForShow(kFedCmAccountChooserDialogAccountElementId), ShowTabModalUI(),
@@ -101,8 +111,8 @@ IN_PROC_BROWSER_TEST_F(FedCmCUJTest, BubbleHidesWhenModalUIShown) {
       WaitForShow(kFedCmAccountChooserDialogAccountElementId));
 }
 
-// TODO(https://crbug.com/387473078): Fix this on windows.
-#if BUILDFLAG(IS_WIN)
+// TODO(https://crbug.com/387473078): Fix this on Windows & MacOS.
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 #define MAYBE_OneClickOutsideBubble DISABLED_OneClickOutsideBubble
 #else
 #define MAYBE_OneClickOutsideBubble OneClickOutsideBubble

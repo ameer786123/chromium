@@ -6,6 +6,7 @@
 #define IOS_CHROME_BROWSER_CONTENT_SUGGESTIONS_UI_BUNDLED_CELLS_CONTENT_SUGGESTIONS_MOST_VISITED_TILE_VIEW_H_
 
 #import "ios/chrome/browser/content_suggestions/ui_bundled/cells/content_suggestions_tile_view.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_color_updating.h"
 
 @protocol ContentSuggestionsMenuElementsProvider;
 @class ContentSuggestionsMostVisitedItem;
@@ -14,13 +15,12 @@
 
 // NTP Tile representing a most visited website. Displays a favicon and a title.
 @interface ContentSuggestionsMostVisitedTileView
-    : ContentSuggestionsTileView <UIContextMenuInteractionDelegate>
+    : ContentSuggestionsTileView <NewTabPageColorUpdating,
+                                  UIContextMenuInteractionDelegate>
 
-// Initializes and configures the view with `config`. If `inMagicStack`, the
-// view will be inside the magic stack, otherwise it will be in content
-// suggestions view.
-- (instancetype)initInMagicStack:(BOOL)inMagicStack
-               withConfiguration:(ContentSuggestionsMostVisitedItem*)config;
+// Initializes and configures the view with `config`.
+- (instancetype)initWithConfiguration:
+    (ContentSuggestionsMostVisitedItem*)config;
 
 // FaviconView displaying the favicon.
 @property(nonatomic, strong, readonly) FaviconView* faviconView;
@@ -35,11 +35,6 @@
 // Configuration for this view.
 @property(nonatomic, strong, readonly)
     ContentSuggestionsMostVisitedItem* config;
-
-// Delegate object to control the magic stack module. Should only be set when
-// the most visited tiles resides in the magic stack.
-@property(nonatomic, weak) id<MagicStackModuleContentViewDelegate>
-    magicStackModuleDelegate;
 
 @end
 

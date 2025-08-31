@@ -9,7 +9,7 @@
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 
 namespace viz {
-struct FrameTimingDetails;
+class FrameTimingDetails;
 }
 
 namespace cc {
@@ -41,6 +41,7 @@ class FakeLayerTreeHostImplClient : public LayerTreeHostImplClient {
   void SetNeedsImplSideInvalidation(
       bool needs_first_draw_on_activation) override;
   void NotifyImageDecodeRequestFinished(int request_id,
+                                        bool speculative,
                                         bool decode_succeeded) override {}
   void NotifyTransitionRequestFinished(
       uint32_t sequence_id,

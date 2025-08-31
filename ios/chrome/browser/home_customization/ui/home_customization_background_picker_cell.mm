@@ -4,7 +4,8 @@
 
 #import "ios/chrome/browser/home_customization/ui/home_customization_background_picker_cell.h"
 
-#import "ios/chrome/browser/home_customization/ui/home_customization_background_cell+subclassing.h"
+#import "ios/chrome/browser/home_customization/ui/home_customization_background_picker_presentation_delegate.h"
+#import "ios/chrome/browser/home_customization/ui/home_customization_mutator.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 
@@ -17,13 +18,9 @@ const CGFloat kSymbolAddBackgroundPointSize = 12;
 
 @implementation HomeCustomizationBackgroundPickerCell
 
-- (void)willMoveToSuperview:(UIView*)newSuperview {
-  [super willMoveToSuperview:newSuperview];
+#pragma mark - HomeCustomizationBackgroundCell
 
-  self.innerContentView.backgroundColor = [UIColor colorNamed:kGrey200Color];
-  self.borderWrapperView.layer.borderColor = nil;
-  self.borderWrapperView.layer.borderWidth = 0;
-
+- (void)setupContentView:(UIView*)contentView {
   UIImage* plusIcon = SymbolWithPalette(
       CustomSymbolWithPointSize(kPlusCircleFillSymbol,
                                 kSymbolAddBackgroundPointSize),
@@ -34,21 +31,35 @@ const CGFloat kSymbolAddBackgroundPointSize = 12;
         [UIColor colorNamed:kBlueColor]
       ]);
 
-  UIButton* addButton = [UIButton buttonWithType:UIButtonTypeSystem];
-  [addButton
-      setImage:[plusIcon
-                   imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]
-      forState:UIControlStateNormal];
-
-  addButton.translatesAutoresizingMaskIntoConstraints = NO;
-  [self.innerContentView addSubview:addButton];
+  UIImageView* plusIconView = [[UIImageView alloc] initWithImage:plusIcon];
+  plusIconView.translatesAutoresizingMaskIntoConstraints = NO;
+  [contentView addSubview:plusIconView];
 
   [NSLayoutConstraint activateConstraints:@[
-    [addButton.centerXAnchor
-        constraintEqualToAnchor:self.innerContentView.centerXAnchor],
-    [addButton.centerYAnchor
-        constraintEqualToAnchor:self.innerContentView.centerYAnchor],
+    [plusIconView.centerXAnchor
+        constraintEqualToAnchor:contentView.centerXAnchor],
+    [plusIconView.centerYAnchor
+        constraintEqualToAnchor:contentView.centerYAnchor],
   ]];
+
+  UITapGestureRecognizer* tapGesture =
+      [[UITapGestureRecognizer alloc] initWithTarget:self
+                                              action:@selector(handleTap)];
+  [self.contentView addGestureRecognizer:tapGesture];
+
+  [self applyTheme];
+}
+
+- (void)applyTheme {
+  self.innerContentView.backgroundColor = [UIColor colorNamed:kGrey200Color];
+}
+
+#pragma mark - Private
+
+// Handles tap gesture by notifying the delegate to display background picker
+// options.
+- (void)handleTap {
+  [self.delegate showBackgroundPickerOptionsFromSourceView:self.contentView];
 }
 
 @end

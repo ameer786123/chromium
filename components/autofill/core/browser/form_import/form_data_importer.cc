@@ -165,7 +165,7 @@ bool IsValidFieldTypeAndValue(
   // Allow the import for duplicate phone number component fields because a form
   // might request several phone numbers.
   // TODO(crbug.com/40735892) Remove feature check when launched.
-  if (GroupTypeOfFieldType(field_type) == FieldTypeGroup::kPhone ||
+  if (GroupTypeOfFieldType(field_type) == FieldTypeGroup::kPhone &&
       base::FeatureList::IsEnabled(
           features::kAutofillEnableImportWhenMultiplePhoneNumbers)) {
     return true;
@@ -179,32 +179,6 @@ bool IsValidFieldTypeAndValue(
       << "Multiple fields of type " << FieldTypeToStringView(field_type) << "."
       << CTag{};
   return false;
-}
-
-// `extracted_credit_card` refers to the credit card that was most recently
-// submitted and |fetched_card_instrument_id| refers to the instrument id of the
-// most recently downstreamed (fetched from the server) credit card.
-// These need to match to offer virtual card enrollment for the
-// `extracted_credit_card`.
-bool ShouldOfferVirtualCardEnrollment(
-    const std::optional<CreditCard>& extracted_credit_card,
-    std::optional<int64_t> fetched_card_instrument_id) {
-  if (!extracted_credit_card) {
-    return false;
-  }
-
-  if (extracted_credit_card->virtual_card_enrollment_state() !=
-      CreditCard::VirtualCardEnrollmentState::kUnenrolledAndEligible) {
-    return false;
-  }
-
-  if (!fetched_card_instrument_id.has_value() ||
-      extracted_credit_card->instrument_id() !=
-          fetched_card_instrument_id.value()) {
-    return false;
-  }
-
-  return true;
 }
 
 bool HasSynthesizedTypes(
@@ -223,7 +197,7 @@ bool ShouldProcessExtractedCreditCard(
   // no credit card save or feature enrollment should happen in this case.
   if (base::FeatureList::IsEnabled(
           features::kAutofillSkipSaveCardForTabModalPopup) &&
-      client->GetPaymentsAutofillClient()->IsTabModalPopup()) {
+      client->GetPaymentsAutofillClient()->IsTabModalPopupDeprecated()) {
     return false;
   }
 
@@ -289,14 +263,12 @@ void FormDataImporter::ImportAndProcessFormData(
   // to the credit card import logic.
   std::vector<AutofillProfile> preliminary_imported_address_profiles;
   for (const auto& candidate : extracted_data.extracted_address_profiles) {
-    if (candidate.all_requirements_fulfilled) {
-      preliminary_imported_address_profiles.push_back(candidate.profile);
-    }
+    preliminary_imported_address_profiles.push_back(candidate.profile);
   }
   credit_card_save_manager_->SetPreliminarilyImportedAutofillProfile(
       preliminary_imported_address_profiles);
 
-  bool cc_prompt_potentially_shown = false;
+  bool payments_prompt_potentially_shown = false;
   if (ShouldProcessExtractedCreditCard(client_, credit_card_import_type_)) {
     // Only check IsCreditCardUploadEnabled() if conditions that enable
     // processing of the extracted credit card are true, in order to prevent
@@ -304,11 +276,10 @@ void FormDataImporter::ImportAndProcessFormData(
     // cards should not be processed or there was no credit card to process.
     bool credit_card_upload_enabled =
         credit_card_save_manager_->IsCreditCardUploadEnabled();
-    cc_prompt_potentially_shown = ProcessExtractedCreditCard(
+    payments_prompt_potentially_shown = ProcessExtractedCreditCard(
         submitted_form, extracted_data.extracted_credit_card,
         credit_card_upload_enabled, ukm_source_id);
   }
-  fetched_card_instrument_id_.reset();
 
   bool iban_prompt_potentially_shown = false;
   if (extracted_data.extracted_iban.has_value() &&
@@ -317,11 +288,45 @@ void FormDataImporter::ImportAndProcessFormData(
         ProcessIbanImportCandidate(*extracted_data.extracted_iban);
   }
 
+  // Reset last fetch payments method metadata after all payments related form
+  // data processing logic is finished.
+  fetched_payments_data_context_ = FetchedPaymentsDataContext();
+
+  // Record the prompt status iff at least one prompt could have been displayed.
+  // Recording that status isn't pertinent otherwise. When there is a full
+  // profile candidate available for import, it is reasonable to think that
+  // either the save or update prompt would have been displayed, which guess is
+  // probably not 100% reliable but that's good enough for this metric.
+  bool has_full_profile_candidate =
+      !preliminary_imported_address_profiles.empty();
+  if (has_full_profile_candidate && payments_prompt_potentially_shown) {
+    AutofillMetrics::LogAutofillPromptStatus(
+        AutofillMetrics::AutofillPromptStatus::kAddressAndCreditCardShown);
+  } else if (has_full_profile_candidate) {
+    AutofillMetrics::LogAutofillPromptStatus(
+        AutofillMetrics::AutofillPromptStatus::kAddressShown);
+  } else if (payments_prompt_potentially_shown) {
+    AutofillMetrics::LogAutofillPromptStatus(
+        AutofillMetrics::AutofillPromptStatus::kCreditCardShown);
+  }
+
+  // TODO(crbug.com/356845298) Clean up when launched.
+  if (base::FeatureList::IsEnabled(
+          features::kAutofillEnableSupportForNameAndEmail)) {
+    base::flat_set<std::string> unedited_autofilled_profile_guids =
+        ExtractGUIDsOfProfilesWithoutManualEdits(submitted_form);
+
+    for (auto& candidate : extracted_data.extracted_address_profiles) {
+      candidate.import_metadata.unedited_autofilled_profile_guids =
+          unedited_autofilled_profile_guids;
+    }
+  }
+
   ProcessExtractedAddressProfiles(
       extracted_data.extracted_address_profiles,
-      // If a prompt for credit cards or IBANs is potentially shown, do not
-      // allow for a second address profile import dialog.
-      /*allow_prompt=*/!cc_prompt_potentially_shown &&
+      // If a payments prompt is potentially shown, do not allow for a second
+      // address profile import dialog.
+      /*allow_prompt=*/!payments_prompt_potentially_shown &&
           !iban_prompt_potentially_shown,
       ukm_source_id);
 }
@@ -371,10 +376,6 @@ void FormDataImporter::RemoveInaccessibleProfileValues(
 void FormDataImporter::CacheFetchedVirtualCard(
     const std::u16string& last_four) {
   fetched_virtual_cards_.insert(last_four);
-}
-
-void FormDataImporter::SetFetchedCardInstrumentId(int64_t instrument_id) {
-  fetched_card_instrument_id_ = instrument_id;
 }
 
 FormDataImporter::ExtractedFormData FormDataImporter::ExtractFormData(
@@ -453,7 +454,7 @@ size_t FormDataImporter::ExtractAddressProfiles(
     // Relevant sections for address fields.
     std::map<Section, std::vector<const AutofillField*>> section_fields;
     for (const auto& field : form) {
-      if (IsAddressType(field->Type().GetStorableType())) {
+      if (field->Type().GetAddressType() != UNKNOWN_TYPE) {
         section_fields[field->section()].push_back(field.get());
       }
     }
@@ -597,10 +598,10 @@ FormDataImporter::GetAddressObservedFieldValues(
       continue;
     }
 
-    FieldType field_type = field->Type().GetStorableType();
+    FieldType field_type = field->Type().GetAddressType();
     // Only address types are relevant in this function, other types are treated
     // in different flows.
-    if (!IsAddressType(field_type)) {
+    if (field_type == UNKNOWN_TYPE) {
       continue;
     }
     has_address_related_fields = true;
@@ -762,17 +763,14 @@ bool FormDataImporter::ExtractAddressProfileFromSection(
       all_fulfilled ? AddressImportRequirement::kOverallRequirementFulfilled
                     : AddressImportRequirement::kOverallRequirementViolated);
 
-  bool candidate_has_structured_data =
-      base::FeatureList::IsEnabled(
-          features::kAutofillSilentProfileUpdateForInsufficientImport) &&
-      candidate_profile.HasStructuredData();
-
-  // If the profile does not fulfill import requirements but contains the
-  // structured address or name information, it is eligible for silently
-  // updating the existing profiles.
-  if (!finalized_import || (!all_fulfilled && !candidate_has_structured_data)) {
+  if (!finalized_import || !all_fulfilled) {
     return false;
   }
+
+  autofill_metrics::LogZipCodeLengthMetric(
+      candidate_profile.GetRawInfo(ADDRESS_HOME_ZIP));
+  autofill_metrics::LogZipCodeSeparatorMetric(
+      candidate_profile.GetRawInfo(ADDRESS_HOME_ZIP));
 
   // At this stage, the saving of the profile can only be omitted by the
   // incognito mode but the import is not triggered if the browser is in the
@@ -782,12 +780,9 @@ bool FormDataImporter::ExtractAddressProfileFromSection(
   ExtractedAddressProfile extracted_address_profile;
   extracted_address_profile.profile = candidate_profile;
   extracted_address_profile.url = source_url;
-  extracted_address_profile.all_requirements_fulfilled = all_fulfilled;
   extracted_address_profile.import_metadata = import_metadata;
   extracted_address_profiles->push_back(std::move(extracted_address_profile));
-
-  // Return true if a complete importable profile was found.
-  return all_fulfilled;
+  return true;
 }
 
 bool FormDataImporter::ProcessExtractedAddressProfiles(
@@ -796,41 +791,21 @@ bool FormDataImporter::ProcessExtractedAddressProfiles(
     bool allow_prompt,
     ukm::SourceId ukm_source_id) {
   int imported_profiles = 0;
-
   // `allow_prompt` is true if no credit card or IBAN prompt was shown. If it is
   // true, we know there is no UI currently displaying, so we can display UI to
   // import addresses. If it is false, we should not display UI to import
   // addresses due to a possible dialog or bubble conflict.
-  if (allow_prompt) {
-    for (const auto& candidate : extracted_address_profiles) {
-      // First try to import a single complete profile.
-      if (!candidate.all_requirements_fulfilled) {
-        continue;
-      }
-      address_profile_save_manager_->ImportProfileFromForm(
-          candidate.profile, client_->GetAppLocale(), candidate.url,
-          ukm_source_id, /*allow_only_silent_updates=*/false,
-          candidate.import_metadata);
-      // Limit the number of importable profiles to 2.
-      if (++imported_profiles >= 2) {
-        return true;
-      }
-    }
-  }
-  // If a profile was already imported, do not try to use partial profiles for
-  // silent updates.
-  if (imported_profiles > 0) {
-    return true;
-  }
-  // Otherwise try again but restrict the import to silent updates.
-  for (const auto& candidate : extracted_address_profiles) {
-    // First try to import a single complete profile.
+  bool allow_only_silent_updates = !allow_prompt;
+  for (const ExtractedAddressProfile& candidate : extracted_address_profiles) {
     address_profile_save_manager_->ImportProfileFromForm(
         candidate.profile, client_->GetAppLocale(), candidate.url,
-        ukm_source_id, /*allow_only_silent_updates=*/true,
-        candidate.import_metadata);
+        ukm_source_id, allow_only_silent_updates, candidate.import_metadata);
+    // Limit the number of importable profiles to 2.
+    if (!allow_only_silent_updates && ++imported_profiles >= 2) {
+      return true;
+    }
   }
-  return false;
+  return imported_profiles > 0;
 }
 
 bool FormDataImporter::ProcessExtractedCreditCard(
@@ -854,6 +829,11 @@ bool FormDataImporter::ProcessExtractedCreditCard(
     return true;
   }
 
+  // All of following processing requires the extracted credit card to exist.
+  if (!extracted_credit_card.has_value()) {
+    return false;
+  }
+
   // If a virtual card was extracted from the form, return as we do not do
   // anything with virtual cards beyond this point.
   if (credit_card_import_type_ == CreditCardImportType::kVirtualCard) {
@@ -866,21 +846,25 @@ bool FormDataImporter::ProcessExtractedCreditCard(
     return false;
   }
 
-  if (client_->GetPaymentsAutofillClient()->GetVirtualCardEnrollmentManager() &&
-      ShouldOfferVirtualCardEnrollment(extracted_credit_card,
-                                       fetched_card_instrument_id_)) {
-    client_->GetPaymentsAutofillClient()
-        ->GetVirtualCardEnrollmentManager()
-        ->InitVirtualCardEnroll(*extracted_credit_card,
-                                VirtualCardEnrollmentSource::kDownstream);
+  auto* virtual_card_enrollment_manager =
+      client_->GetPaymentsAutofillClient()->GetVirtualCardEnrollmentManager();
+  if (virtual_card_enrollment_manager &&
+      virtual_card_enrollment_manager->ShouldOfferVirtualCardEnrollment(
+          *extracted_credit_card,
+          fetched_payments_data_context_.fetched_card_instrument_id,
+          fetched_payments_data_context_.card_was_fetched_from_cache)) {
+    virtual_card_enrollment_manager->InitVirtualCardEnroll(
+        *extracted_credit_card, VirtualCardEnrollmentSource::kDownstream,
+        base::BindOnce(
+            &VirtualCardEnrollmentManager::ShowVirtualCardEnrollBubble,
+            base::Unretained(virtual_card_enrollment_manager)));
     return true;
   }
 
   // Proceed with card or CVC saving if applicable.
-  return extracted_credit_card &&
-         credit_card_save_manager_->ProceedWithSavingIfApplicable(
-             submitted_form, *extracted_credit_card, credit_card_import_type_,
-             is_credit_card_upstream_enabled, ukm_source_id);
+  return credit_card_save_manager_->ProceedWithSavingIfApplicable(
+      submitted_form, *extracted_credit_card, credit_card_import_type_,
+      is_credit_card_upstream_enabled, ukm_source_id);
 }
 
 bool FormDataImporter::ProcessIbanImportCandidate(Iban& extracted_iban) {
@@ -929,6 +913,13 @@ std::optional<CreditCard> FormDataImporter::ExtractCreditCard(
   // the expiration date fix flow. However, cards with invalid card numbers must
   // still be ignored.
   if (!candidate.HasValidCardNumber()) {
+    return std::nullopt;
+  }
+
+  // If Save and Fill suggestion was clicked (regardless of whether the card was
+  // saved or not eventually) before the form extraction, don't offer other
+  // payments post-checkout flows.
+  if (fetched_payments_data_context_.card_submitted_through_save_and_fill) {
     return std::nullopt;
   }
 
@@ -1062,7 +1053,7 @@ FormDataImporter::ExtractCreditCardFromForm(const FormStructure& form) {
   auto extract_if_credit_card_field = [&result,
                                        app_locale](const AutofillField& field) {
     std::u16string value = [&field] {
-      if (field.Type().GetStorableType() == FieldType::CREDIT_CARD_NUMBER) {
+      if (field.Type().GetCreditCardType() == FieldType::CREDIT_CARD_NUMBER) {
         // Credit card numbers are sometimes obfuscated on form submission.
         // Therefore, we give preference to the user input over the field value.
         std::u16string user_input = field.user_input();
@@ -1077,14 +1068,15 @@ FormDataImporter::ExtractCreditCardFromForm(const FormStructure& form) {
 
     // If we don't know the type of the field, or the user hasn't entered any
     // information into the field, then skip it.
-    if (value.empty() || field.Type().group() != FieldTypeGroup::kCreditCard) {
+    if (value.empty() ||
+        !field.Type().GetGroups().contains(FieldTypeGroup::kCreditCard)) {
       return;
     }
     std::u16string old_value = result.card.GetInfo(field.Type(), app_locale);
     if (field.form_control_type() == FormControlType::kInputMonth) {
       // If |field| is an HTML5 month input, handle it as a special case.
       DCHECK_EQ(CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR,
-                field.Type().GetStorableType());
+                field.Type().GetCreditCardType());
       result.card.SetInfoForMonthInputType(value);
     } else {
       // If the credit card number offset is within the range of the old value,
@@ -1117,7 +1109,7 @@ FormDataImporter::ExtractCreditCardFromForm(const FormStructure& form) {
     // Skip duplicate field check if the field is a split credit card
     // number field.
     bool skip_duplication_check =
-        field.Type().GetStorableType() == FieldType::CREDIT_CARD_NUMBER &&
+        field.Type().GetCreditCardType() == FieldType::CREDIT_CARD_NUMBER &&
         field.credit_card_number_offset() > 0 &&
         base::FeatureList::IsEnabled(
             features::kAutofillFixSplitCreditCardImport);
@@ -1172,13 +1164,28 @@ Iban FormDataImporter::ExtractIbanFromForm(const FormStructure& form) {
     if (!field->IsFieldFillable() || value.empty()) {
       continue;
     }
-    FieldType field_type = field->Type().GetStorableType();
-    if (field_type == IBAN_VALUE && Iban::IsValid(value)) {
+    if (field->Type().GetTypes().contains(IBAN_VALUE) && Iban::IsValid(value)) {
       candidate_iban.set_value(value);
       break;
     }
   }
   return candidate_iban;
+}
+
+base::flat_set<std::string>
+FormDataImporter::ExtractGUIDsOfProfilesWithoutManualEdits(
+    const FormStructure& submitted_form) const {
+  base::flat_set<std::string> unedited_source_profile_guids;
+  for (const std::unique_ptr<AutofillField>& field : submitted_form) {
+    if (field->is_user_edited()) {
+      return {};
+    }
+    if (const std::optional<std::string>& guid =
+            field->autofill_source_profile_guid()) {
+      unedited_source_profile_guids.insert(guid.value());
+    }
+  }
+  return unedited_source_profile_guids;
 }
 
 void FormDataImporter::OnAddressDataChanged() {

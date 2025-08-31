@@ -71,10 +71,11 @@ std::string AXTreeData::ToString() const {
     result += " sel_focus_affinity=";
     result += ui::ToString(sel_focus_affinity);
   }
-  if (!metadata.empty()) {
+  if (metadata.has_value() && !metadata->empty()) {
     result += "\n<head>\n";
-    for (const auto& str : metadata)
+    for (const auto& str : *metadata) {
       result += "  " + str + "\n";
+    }
     result += "</head>\n";
   }
 
@@ -95,10 +96,6 @@ bool operator==(const AXTreeData& lhs, const AXTreeData& rhs) {
           lhs.sel_focus_object_id == rhs.sel_focus_object_id &&
           lhs.sel_focus_offset == rhs.sel_focus_offset &&
           lhs.sel_focus_affinity == rhs.sel_focus_affinity);
-}
-
-bool operator!=(const AXTreeData& lhs, const AXTreeData& rhs) {
-  return !(lhs == rhs);
 }
 
 const AXTreeData& AXTreeDataUnknown() {

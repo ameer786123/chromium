@@ -4,8 +4,12 @@
 
 #include "content/browser/btm/btm_page_visit_observer.h"
 
+#include <vector>
+
 #include "base/check.h"
+#include "base/debug/alias.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/metrics/histogram_functions.h"
 #include "content/browser/btm/btm_bounce_detector.h"
 #include "content/browser/btm/btm_utils.h"
 #include "content/browser/btm/cookie_access_filter.h"
@@ -14,6 +18,7 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_handle_user_data.h"
 #include "content/public/browser/render_frame_host.h"
+#include "url/gurl_debug.h"
 
 namespace content {
 
@@ -22,8 +27,8 @@ BtmNavigationInfo::BtmNavigationInfo(NavigationHandle& navigation_handle)
                          navigation_handle.HasUserGesture()),
       was_renderer_initiated(navigation_handle.IsRendererInitiated()),
       page_transition(navigation_handle.GetPageTransition()),
-      destination({navigation_handle.GetURL(),
-                   navigation_handle.GetNextPageUkmSourceId()}) {
+      destination_url(navigation_handle.GetURL()),
+      destination_source_id(navigation_handle.GetNextPageUkmSourceId()) {
   CHECK(navigation_handle.HasCommitted());
 }
 BtmNavigationInfo::BtmNavigationInfo(BtmNavigationInfo&&) = default;
@@ -94,21 +99,16 @@ class NavigationState
     // recorded an access type for.
     urls.push_back(navigation_handle.GetURL());
 
-    // TODO - crbug.com/406841434: `CHECK` the result of `filter_.Filter`.
-    bool were_all_accesses_matched = filter_.Filter(urls, accesses);
-    if (!were_all_accesses_matched) {
-      std::string redirects_debug_string;
-      for (const GURL& url : urls) {
-        redirects_debug_string += url.spec();
-        redirects_debug_string += ", ";
-      }
-      DEBUG_ALIAS_FOR_CSTR(redirects_debug_alias,
-                           redirects_debug_string.c_str(), 256);
-      DEBUG_ALIAS_FOR_CSTR(accesses_debug_alias,
-                           filter_.ToDebugString().c_str(), 256);
-
-      base::debug::DumpWithoutCrashing();
-    }
+    // Cookie accesses can race each other causing order of navigations to not
+    // match the order of cookie accesses. When this happens Filter() will
+    // return false and assume all kUnknown accesses.
+    //
+    // TODO: crbug.com/407710083 - `CHECK` the result of `filter_.Filter` once
+    // the race is fixed.
+    const bool were_all_accesses_matched = filter_.Filter(urls, accesses);
+    base::UmaHistogramBoolean(
+        "Privacy.DIPS.PageVisitObserver.AllAccessesMatched",
+        were_all_accesses_matched);
 
     int i = 0;
     for (const size_t redirect_chain_index : server_redirect_chain_indices_) {

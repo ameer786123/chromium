@@ -75,8 +75,8 @@ void PasswordStore::Init(
   affiliated_match_helper_ = std::move(affiliated_match_helper);
 
   DCHECK(backend_);
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
-      "passwords", "PasswordStore::InitOnBackgroundSequence", this);
+  TRACE_EVENT_BEGIN("passwords", "PasswordStore::InitOnBackgroundSequence",
+                    perfetto::Track::FromPointer(this));
   backend_->InitBackend(
       affiliated_match_helper_.get(),
       base::BindRepeating(&PasswordStore::NotifyLoginsChangedOnMainSequence,
@@ -122,7 +122,6 @@ void PasswordStore::AddLogins(const std::vector<PasswordForm>& forms,
     CHECK(!form.blocked_by_user ||
           (form.username_value.empty() && form.password_value.empty()));
     backend_->AddLoginAsync(form, barrier_callback);
-    backend_->RecordAddLoginAsyncCalledFromTheStore();
   }
 }
 
@@ -158,7 +157,6 @@ void PasswordStore::UpdateLogins(const std::vector<PasswordForm>& forms,
     CHECK(!form.blocked_by_user ||
           (form.username_value.empty() && form.password_value.empty()));
     backend_->UpdateLoginAsync(form, barrier_callback);
-    backend_->RecordUpdateLoginAsyncCalledFromTheStore();
   }
 }
 
@@ -206,7 +204,6 @@ void PasswordStore::UpdateLoginWithPrimaryKey(
   backend_->RemoveLoginAsync(FROM_HERE, old_primary_key, barrier_callback);
   backend_->AddLoginAsync(new_form_with_correct_password_issues,
                           barrier_callback);
-  backend_->RecordAddLoginAsyncCalledFromTheStore();
 }
 
 void PasswordStore::RemoveLogin(const base::Location& location,
@@ -318,9 +315,6 @@ void PasswordStore::GetLogins(const PasswordFormDigest& form,
                                                    this, form, consumer));
     return;
   }
-
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("passwords", "PasswordStore::GetLogins",
-                                    consumer.get());
 
   backend_->GetGroupedMatchingLoginsAsync(
       form, base::BindOnce(
@@ -474,8 +468,9 @@ void PasswordStore::OnInitCompleted(bool success) {
     std::move(post_init_callback_).Run();
   }
 
-  TRACE_EVENT_NESTABLE_ASYNC_END0(
-      "passwords", "PasswordStore::InitOnBackgroundSequence", this);
+  TRACE_EVENT_END("passwords",
+                  /* PasswordStore::InitOnBackgroundSequence */ perfetto::
+                      Track::FromPointer(this));
 }
 
 void PasswordStore::NotifyLoginsChangedOnMainSequence(
@@ -495,8 +490,8 @@ void PasswordStore::NotifyLoginsChangedOnMainSequence(
   base::UmaHistogramEnumeration(
       "PasswordManager.PasswordStore.OnLoginsRetained", logins_changed_trigger);
   if (!changes.has_value()) {
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
-        "passwords", "LoginsRetrievedForOnLoginsRetained", this);
+    TRACE_EVENT_BEGIN("passwords", "LoginsRetrievedForOnLoginsRetained",
+                      perfetto::Track::FromPointer(this));
     // If the changes aren't provided, the store propagates the latest logins.
     backend_->GetAllLoginsAsync(base::BindOnce(
         &PasswordStore::NotifyLoginsRetainedOnMainSequence, this));
@@ -543,8 +538,10 @@ void PasswordStore::NotifyLoginsRetainedOnMainSequence(
   }
 
 #if BUILDFLAG(IS_ANDROID)
-  TRACE_EVENT_NESTABLE_ASYNC_END0("passwords",
-                                  "LoginsRetrievedForOnLoginsRetained", this);
+  TRACE_EVENT_END(
+      "passwords",
+      /* LoginsRetrievedForOnLoginsRetained */ perfetto::Track::FromPointer(
+          this));
 #endif
 }
 

@@ -19,14 +19,11 @@
 #include "base/sequence_checker.h"
 #include "base/types/expected.h"
 #include "base/values.h"
-#include "base/version.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/web_applications/commands/web_app_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/commands/isolated_web_app_install_command_helper.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_install_source.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_integrity_block_data.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_response_reader_factory.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/isolated_web_apps/jobs/prepare_install_info_job.h"
 #include "chrome/browser/web_applications/locks/app_lock.h"
@@ -36,6 +33,9 @@
 #include "components/webapps/browser/install_result_code.h"
 #include "components/webapps/browser/installable/installable_logging.h"
 #include "components/webapps/common/web_app_id.h"
+#include "components/webapps/isolated_web_apps/reading/response_reader_factory.h"
+#include "components/webapps/isolated_web_apps/types/iwa_version.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-forward.h"
 
 class Profile;
@@ -46,22 +46,24 @@ class WebContents;
 
 namespace web_app {
 
+// Represents a successful installation of an Isolated Web App.
 struct InstallIsolatedWebAppCommandSuccess {
   InstallIsolatedWebAppCommandSuccess(IsolatedWebAppUrlInfo url_info,
-                                      base::Version installed_version,
+                                      IwaVersion installed_version,
                                       IsolatedWebAppStorageLocation location);
   InstallIsolatedWebAppCommandSuccess(
       const InstallIsolatedWebAppCommandSuccess& other);
   ~InstallIsolatedWebAppCommandSuccess();
 
   IsolatedWebAppUrlInfo url_info;
-  base::Version installed_version;
+  IwaVersion installed_version;
   IsolatedWebAppStorageLocation location;
 };
 
 std::ostream& operator<<(std::ostream& os,
                          const InstallIsolatedWebAppCommandSuccess& success);
 
+// Represents an error during the installation of an Isolated Web App.
 struct InstallIsolatedWebAppCommandError {
   std::string message;
 };
@@ -69,12 +71,10 @@ struct InstallIsolatedWebAppCommandError {
 std::ostream& operator<<(std::ostream& os,
                          const InstallIsolatedWebAppCommandError& error);
 
-// Isolated Web App requires:
-//  * no cross-origin navigation
-//  * content should never be loaded in normal tab
-//
-// |content::IsolatedWebAppThrottle| enforces that. The requirements prevent
-// re-using web contents.
+// Command to install an Isolated Web App from a given `IsolatedWebAppUrlInfo`
+// and `IsolatedWebAppInstallSource`. This command will perform a full
+// installation, including checking for trust and signatures, creating the
+// storage partition, and finalizing the installation.
 class InstallIsolatedWebAppCommand
     : public WebAppCommand<AppLock,
                            base::expected<InstallIsolatedWebAppCommandSuccess,
@@ -100,7 +100,7 @@ class InstallIsolatedWebAppCommand
   InstallIsolatedWebAppCommand(
       const IsolatedWebAppUrlInfo& url_info,
       const IsolatedWebAppInstallSource& install_source,
-      const std::optional<base::Version>& expected_version,
+      const std::optional<IwaVersion>& expected_version,
       std::unique_ptr<content::WebContents> web_contents,
       std::unique_ptr<ScopedKeepAlive> optional_keep_alive,
       std::unique_ptr<ScopedProfileKeepAlive> optional_profile_keep_alive,
@@ -149,7 +149,7 @@ class InstallIsolatedWebAppCommand
   void ReportFailure(InstallIwaError error,
                      webapps::InstallResultCode web_app_failure_code,
                      std::string_view message);
-  void ReportSuccess(const base::Version& installed_version);
+  void ReportSuccess(const IwaVersion& installed_version);
 
   Profile& profile();
 
@@ -174,7 +174,7 @@ class InstallIsolatedWebAppCommand
 
   void FinalizeInstall(PrepareInstallInfoJob::InstallInfoOrFailure result);
 
-  void OnFinalizeInstall(const base::Version& attempted_version,
+  void OnFinalizeInstall(const IwaVersion& attempted_version,
                          const webapps::AppId& unused_app_id,
                          webapps::InstallResultCode install_result_code);
 
@@ -183,7 +183,7 @@ class InstallIsolatedWebAppCommand
   const std::unique_ptr<IsolatedWebAppInstallCommandHelper> command_helper_;
 
   const IsolatedWebAppUrlInfo url_info_;
-  const std::optional<base::Version> expected_version_;
+  const std::optional<IwaVersion> expected_version_;
   const webapps::WebappInstallSource install_surface_;
 
   std::optional<IsolatedWebAppIntegrityBlockData> integrity_block_data_;

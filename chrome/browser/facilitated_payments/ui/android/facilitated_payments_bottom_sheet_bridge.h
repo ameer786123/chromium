@@ -13,6 +13,7 @@
 #include "base/memory/weak_ptr.h"
 #include "components/autofill/core/browser/data_model/payments/bank_account.h"
 #include "components/autofill/core/browser/data_model/payments/ewallet.h"
+#include "components/facilitated_payments/core/browser/facilitated_payments_app_info_list.h"
 #include "ui/android/window_android.h"
 
 class FacilitatedPaymentsController;
@@ -45,15 +46,21 @@ class FacilitatedPaymentsBottomSheetBridge {
   virtual void RequestShowContent(
       base::span<const autofill::BankAccount> bank_account_suggestions);
 
-  // Show the payment prompt containing user's `ewallet_suggestions`.
-  virtual void RequestShowContentForEwallet(
-      base::span<const autofill::Ewallet> ewallet_suggestions);
+  // Show the payment prompt containing user's `ewallet_suggestions` and
+  // `app_suggestions`.
+  virtual void RequestShowContentForPaymentLink(
+      base::span<const autofill::Ewallet> ewallet_suggestions,
+      std::unique_ptr<FacilitatedPaymentsAppInfoList> app_suggestions);
 
   // Triggers showing the progress screen. Virtual for overriding in tests.
   virtual void ShowProgressScreen();
 
   // Triggers showing the error screen. Virtual for overriding in tests.
   virtual void ShowErrorScreen();
+
+  // Triggers showing the Pix account linking prompt. Virtual for overriding in
+  // tests.
+  virtual void ShowPixAccountLinkingPrompt();
 
   // Closes the bottom sheet. Virtual for overriding in tests.
   virtual void Dismiss();

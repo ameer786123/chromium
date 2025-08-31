@@ -6,32 +6,28 @@ package org.chromium.chrome.test.util.browser.signin;
 
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 
-import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.graphics.drawable.Drawable;
 import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.appcompat.content.res.AppCompatResources;
 
 import org.hamcrest.Matcher;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 
-import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
-import org.chromium.chrome.R;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
-import org.chromium.components.signin.base.AccountCapabilities;
 import org.chromium.components.signin.base.AccountInfo;
-import org.chromium.components.signin.base.CoreAccountId;
 import org.chromium.components.signin.identitymanager.AccountInfoServiceProvider;
 import org.chromium.components.signin.identitymanager.IdentityManager;
+import org.chromium.components.signin.identitymanager.IdentityManagerImpl;
 import org.chromium.components.signin.test.util.FakeAccountInfoService;
 import org.chromium.components.signin.test.util.FakeAccountManagerFacade;
 import org.chromium.components.signin.test.util.TestAccounts;
+import org.chromium.google_apis.gaia.CoreAccountId;
+import org.chromium.google_apis.gaia.GoogleServiceAuthError;
+import org.chromium.google_apis.gaia.GoogleServiceAuthErrorState;
 
 /**
  * This test rule mocks AccountManagerFacade.
@@ -45,9 +41,6 @@ public class AccountManagerTestRule implements TestRule {
     // The matcher for the cancel button in the fake add account activity.
     public static final Matcher<View> CANCEL_ADD_ACCOUNT_BUTTON_MATCHER =
             withId(FakeAccountManagerFacade.AddAccountActivityStub.CANCEL_BUTTON_ID);
-
-    // TODO(crbug.com/40890215): Use TEST_ACCOUNT_1 instead.
-    @Deprecated public static final String TEST_ACCOUNT_EMAIL = "test@gmail.com";
 
     private final @NonNull FakeAccountManagerFacade mFakeAccountManagerFacade;
     // TODO(crbug.com/40234741): Revise this test rule and make this non-nullable.
@@ -107,42 +100,6 @@ public class AccountManagerTestRule implements TestRule {
         identityManager.addObserver(mFakeAccountInfoService);
     }
 
-    // TODO(crbug.com/40890215): Remove deprecated `addAccount` overloads.
-    /**
-     * Adds an account of the given accountName to the fake AccountManagerFacade.
-     *
-     * @return The CoreAccountInfo for the account added.
-     */
-    @Deprecated
-    public AccountInfo addAccount(String accountName) {
-        final String baseName = accountName.split("@", 2)[0];
-        AccountInfo accountInfo =
-                new AccountInfo.Builder(accountName, FakeAccountManagerFacade.toGaiaId(accountName))
-                        .fullName(baseName + ".full")
-                        .givenName(baseName + ".given")
-                        .accountImage(createAvatar())
-                        .build();
-        addAccount(accountInfo);
-        return accountInfo;
-    }
-
-    /**
-     * Adds an account to the fake AccountManagerFacade and {@link AccountInfo} to {@link
-     * FakeAccountInfoService}.
-     */
-    @Deprecated
-    public AccountInfo addAccount(
-            String email, String fullName, String givenName, @Nullable Bitmap avatar) {
-        AccountInfo accountInfo =
-                new AccountInfo.Builder(email, FakeAccountManagerFacade.toGaiaId(email))
-                        .fullName(fullName)
-                        .givenName(givenName)
-                        .accountImage(avatar)
-                        .build();
-        addAccount(accountInfo);
-        return accountInfo;
-    }
-
     /**
      * Adds an account to the fake AccountManagerFacade and {@link AccountInfo} to {@link
      * FakeAccountInfoService}.
@@ -176,31 +133,35 @@ public class AccountManagerTestRule implements TestRule {
         mFakeAccountManagerFacade.setAccountFetchFailed();
     }
 
-    /** See {@link FakeAccountManagerFacade#blockGetCoreAccountInfos(boolean)}. */
-    public FakeAccountManagerFacade.UpdateBlocker blockGetCoreAccountInfosUpdate(
-            boolean populateCache) {
-        return mFakeAccountManagerFacade.blockGetCoreAccountInfos(populateCache);
+    /** See {@link FakeAccountManagerFacade#blockGetAccounts(boolean)}. */
+    public FakeAccountManagerFacade.UpdateBlocker blockGetAccountsUpdate(boolean populateCache) {
+        return mFakeAccountManagerFacade.blockGetAccounts(populateCache);
     }
 
     /**
-     * Returns an avatar image created from test resource.
+     * Sets an error for the given `accountId` when requesting an access token through {@link
+     * AccountManagerFacade}. Future access token requests will return the `authError` provided.
+     * This method will propagate the error to native code as well through {@link
+     * IdentityManagerImpl}.
      *
-     * <p>TODO(crbug.com/40890215): Remove this after deleting the deprecated `addAccount` overload
-     * which calls it.
+     * <p>If the `authError` has the state {@link GoogleServiceAuthErrorState#NONE} then {@link
+     * AccountManagerFacade} will return valid access tokens instead of returning an error. Errors
+     * must be set through a previous call to {@link #addOrUpdateAccessTokenError} before they can
+     * be cleared this way.
+     *
+     * @param identityManager {@link IdentityManagerImpl} object to pass the error to native.
+     * @param accountId The {@link CoreAccountId} to set the authError to.
+     * @param authError A {@link GoogleServiceAuthError} to return on access token requests.
      */
-    private static Bitmap createAvatar() {
-        Drawable drawable =
-                AppCompatResources.getDrawable(
-                        ContextUtils.getApplicationContext(), R.drawable.test_profile_picture);
-        Bitmap bitmap =
-                Bitmap.createBitmap(
-                        drawable.getIntrinsicWidth(),
-                        drawable.getIntrinsicHeight(),
-                        Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(bitmap);
-        drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
-        drawable.draw(canvas);
-        return bitmap;
+    public void addOrUpdateAccessTokenError(
+            IdentityManagerImpl identityManager,
+            CoreAccountId accountId,
+            GoogleServiceAuthError authError) {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mFakeAccountManagerFacade.addOrUpdateAccessTokenError(accountId, authError);
+                    identityManager.updateAuthErrorForTesting(accountId, authError);
+                });
     }
 
     /**
@@ -208,11 +169,7 @@ public class AccountManagerTestRule implements TestRule {
      * show to minors.
      */
     public void resolveMinorModeToRestricted(CoreAccountId accountId) {
-        // TODO(b/343384614): append instead of overriding
-        overrideCapabilities(accountId, TestAccounts.MINOR_MODE_REQUIRED);
-    }
-
-    private void overrideCapabilities(CoreAccountId accountId, AccountCapabilities capabilities) {
-        mFakeAccountManagerFacade.setAccountCapabilities(accountId, capabilities);
+        mFakeAccountManagerFacade.updateAccountCapabilities(
+                accountId, TestAccounts.MINOR_MODE_REQUIRED);
     }
 }

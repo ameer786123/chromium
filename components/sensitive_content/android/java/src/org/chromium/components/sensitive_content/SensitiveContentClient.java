@@ -20,6 +20,7 @@ import org.jni_zero.NativeMethods;
 
 import org.chromium.base.ObserverList;
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.ViewAndroidDelegate;
 
@@ -37,7 +38,7 @@ import java.util.Optional;
 public class SensitiveContentClient implements ViewAndroidDelegate.ContainerViewObserver {
     /** Used to update the content sensitivity of the current container view. */
     @VisibleForTesting
-    static interface ContentSensitivitySetter {
+    interface ContentSensitivitySetter {
         /**
          * Updates the content sensitivity of the given {@code containerView} to {@code
          * contentIsSensitive}.
@@ -167,7 +168,7 @@ public class SensitiveContentClient implements ViewAndroidDelegate.ContainerView
      * @param view The new container view.
      */
     @Override
-    public void onUpdateContainerView(ViewGroup view) {
+    public void onUpdateContainerView(@Nullable ViewGroup view) {
         assert view == assumeNonNull(mViewAndroidDelegate.get()).getContainerView();
         setContentSensitivity(mContentIsSensitive);
     }
@@ -224,7 +225,7 @@ public class SensitiveContentClient implements ViewAndroidDelegate.ContainerView
 
     /** Observes changes made by the {@link SensitiveContentClient}. */
     @FunctionalInterface
-    public static interface Observer {
+    public interface Observer {
         /**
          * Called when the content sensitivity changed.
          *

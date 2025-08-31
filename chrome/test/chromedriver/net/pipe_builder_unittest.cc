@@ -2,16 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <cmath>
 #include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/strings/string_number_conversions.h"
 
 #if BUILDFLAG(IS_WIN)
 #include <windows.h>
@@ -121,7 +117,8 @@ int WriteToPipe(base::PlatformFile file_out, const char* buffer, int size) {
   int offset = 0;
   int rv = 0;
   for (; offset < size; offset += rv) {
-    rv = WriteToPipeNoBestEffort(file_out, buffer + offset, size - offset);
+    rv = WriteToPipeNoBestEffort(file_out, UNSAFE_TODO(buffer + offset),
+                                 size - offset);
     if (rv < 0) {
       return rv;
     }

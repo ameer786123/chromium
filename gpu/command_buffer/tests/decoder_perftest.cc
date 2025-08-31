@@ -2,14 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
+#include <array>
 #include <memory>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/containers/heap_array.h"
 #include "base/memory/raw_ptr.h"
 #include "base/process/process.h"
@@ -175,7 +172,6 @@ class RecordReplayContext : public GpuControl {
     } else {
       gl::GLContextAttribs attribs;
       if (gpu_preferences_.use_passthrough_cmd_decoder) {
-        attribs.bind_generates_resource = bind_generates_resource;
         attribs.allow_client_arrays = false;
       }
       surface_ = gl::init::CreateOffscreenGLSurface(gl::GetDefaultDisplay(),
@@ -221,11 +217,9 @@ class RecordReplayContext : public GpuControl {
 
     // Create the object exposing the OpenGL API.
     const bool lose_context_when_out_of_memory = false;
-    const bool support_client_side_arrays = false;
     gles2_implementation_ = std::make_unique<gles2::GLES2Implementation>(
         gles2_helper_.get(), nullptr, transfer_buffer_.get(),
-        bind_generates_resource, lose_context_when_out_of_memory,
-        support_client_side_arrays, this);
+        bind_generates_resource, lose_context_when_out_of_memory, this);
 
     result = gles2_implementation_->Initialize(limits);
     DCHECK_EQ(result, ContextResult::kSuccess);
@@ -605,7 +599,7 @@ TEST_F(DecoderPerfTest, TextureDraw) {
     float xpos = 2.f * x / N - 1.f;
     for (int y = 0; y < N; ++y) {
       float ypos = 2.f * y / N - 1.f;
-      gl_->BindTexture(GL_TEXTURE_2D, textures[texture]);
+      gl_->BindTexture(GL_TEXTURE_2D, UNSAFE_TODO(textures[texture]));
       gl_->Uniform2f(offset_location, xpos, ypos);
       gl_->DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
       texture = (texture + 1) % kTextures;
@@ -635,7 +629,7 @@ TEST_F(DecoderPerfTest, ProgramDraw) {
       "  gl_FragColor = color;\n"
       "}\n";
 
-  GLuint programs[2];
+  std::array<GLuint, 2> programs;
   programs[0] =
       CreateAndLinkProgram(kVertexShader, kFragmentShader, {{"position", 0}});
 
@@ -673,8 +667,9 @@ TEST_F(DecoderPerfTest, ProgramDraw) {
   gl_->Uniform2f(scale_location2, 2.f / N, 2.f / N);
   gl_->Uniform4f(color_location2, 1.f, 0.f, 0.f, 1.f);
 
-  GLint offset_locations[2] = {gl_->GetUniformLocation(programs[0], "offset"),
-                               gl_->GetUniformLocation(programs[1], "offset")};
+  std::array<GLint, 2> offset_locations = {
+      gl_->GetUniformLocation(programs[0], "offset"),
+      gl_->GetUniformLocation(programs[1], "offset")};
 
   StartRecord();
   size_t program = 0;

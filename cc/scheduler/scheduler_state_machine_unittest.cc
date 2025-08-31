@@ -7,12 +7,10 @@
 #include <stddef.h>
 
 #include <array>
+#include <tuple>
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
+#include "base/feature_list.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/gtest_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
@@ -20,6 +18,8 @@
 #include "cc/base/features.h"
 #include "cc/metrics/begin_main_frame_metrics.h"
 #include "cc/scheduler/scheduler.h"
+#include "cc/tiles/tile_priority.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/test/begin_frame_args_test.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -232,6 +232,12 @@ class StateMachine : public SchedulerStateMachine {
 
   void SetActiveTreeNeedsFirstDraw(bool needs_first_draw) {
     active_tree_needs_first_draw_ = needs_first_draw;
+  }
+
+  void DidReceiveCompositorFrameAck() {
+    if (!base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks)) {
+      SchedulerStateMachine::DidReceiveCompositorFrameAck();
+    }
   }
 
   bool CanDraw() const { return can_draw_; }
@@ -1235,6 +1241,48 @@ TEST(SchedulerStateMachineTest, TestMainFrameThrottling) {
   EXPECT_EQ(begin_main_frame_count, 5);
 }
 
+TEST(SchedulerStateMachineTest,
+     TestMainFrameThrottlingWithMainThreadScrolling) {
+  base::test::ScopedFeatureList scoped_feature_list_{
+      features::kThrottleMainFrameTo60Hz};
+
+  SchedulerSettings default_scheduler_settings;
+  StateMachine state(default_scheduler_settings);
+  SET_UP_STATE(state);
+
+  state.FrameIntervalUpdated(base::Hertz(120));
+  state.AdvanceTimeBy(base::Seconds(1280));  // Start at an arbitrary point.
+  // Main thread scrolling.
+  state.SetTreePrioritiesAndScrollState(
+      SMOOTHNESS_TAKES_PRIORITY,
+      ScrollHandlerState::SCROLL_AFFECTS_SCROLL_HANDLER, true);
+
+  int begin_main_frame_count = 0;
+  for (int i = 0; i < 10; i++) {
+    state.SetNeedsBeginMainFrame();
+    begin_main_frame_count +=
+        RunOneFrameAndReturnWhetherMainFrameIsIssued(state) ? 1 : 0;
+    state.AdvanceTimeBy(base::Hertz(120));
+  }
+
+  // No throttling.
+  EXPECT_EQ(begin_main_frame_count, 10);
+
+  // Non-passive scroll handler, but not blocking.
+  state.SetTreePrioritiesAndScrollState(
+      SMOOTHNESS_TAKES_PRIORITY,
+      ScrollHandlerState::SCROLL_AFFECTS_SCROLL_HANDLER, false);
+  begin_main_frame_count = 0;
+  for (int i = 0; i < 10; i++) {
+    state.SetNeedsBeginMainFrame();
+    begin_main_frame_count +=
+        RunOneFrameAndReturnWhetherMainFrameIsIssued(state) ? 1 : 0;
+    state.AdvanceTimeBy(base::Hertz(120));
+  }
+  // Throttling.
+  EXPECT_EQ(begin_main_frame_count, 5);
+}
+
 TEST(SchedulerStateMachineTest, TestProactiveMainFrameThrottling) {
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndEnableFeatureWithParameters(
@@ -1504,7 +1552,33 @@ TEST(SchedulerStateMachineTest, AbortedMainFrameDoesNotResetPendingTree) {
   EXPECT_TRUE(state.has_pending_tree());
 }
 
-TEST(SchedulerStateMachineTest, TestFullCycleWithCommitToActive) {
+// When we are not using `CompositorFrameAck` as the source of throttling we can
+// continue work on the next frame ahead of the subsequent `OnBeginFrame`. This
+// test allows us to verify the standard behaviour of going idle after frame
+// submission, with that which allows `SendBeginMainFrame` to be sent.
+class BeginMainFrameSchedulerStateMachineTest
+    : public testing::Test,
+      public testing::WithParamInterface<bool> {
+ public:
+  BeginMainFrameSchedulerStateMachineTest();
+  ~BeginMainFrameSchedulerStateMachineTest() override = default;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+BeginMainFrameSchedulerStateMachineTest::
+    BeginMainFrameSchedulerStateMachineTest() {
+  if (GetParam()) {
+    scoped_feature_list_.InitAndEnableFeature(features::kNoCompositorFrameAcks);
+  } else {
+    scoped_feature_list_.InitAndDisableFeature(
+        features::kNoCompositorFrameAcks);
+  }
+}
+
+TEST_P(BeginMainFrameSchedulerStateMachineTest,
+       TestFullCycleWithCommitToActive) {
   SchedulerSettings scheduler_settings;
   scheduler_settings.commit_to_active_tree = true;
   StateMachine state(scheduler_settings);
@@ -1553,15 +1627,19 @@ TEST(SchedulerStateMachineTest, TestFullCycleWithCommitToActive) {
   EXPECT_ACTION_UPDATE_STATE(SchedulerStateMachine::Action::DRAW_IF_POSSIBLE);
   // Submit throttled from this point.
   state.DidSubmitCompositorFrame();
-  EXPECT_ACTION_UPDATE_STATE(SchedulerStateMachine::Action::NONE);
+  if (!base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks)) {
+    EXPECT_ACTION_UPDATE_STATE(SchedulerStateMachine::Action::NONE);
+  }
 
   // Can't BeginMainFrame yet since we're submit-frame throttled.
   sequence_number++;
   state.IssueBeginImplFrame(sequence_number);
-  EXPECT_ACTION_UPDATE_STATE(SchedulerStateMachine::Action::NONE);
 
-  // CompositorFrameAck unblocks BeginMainFrame.
-  state.DidReceiveCompositorFrameAck();
+  if (!base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks)) {
+    EXPECT_ACTION_UPDATE_STATE(SchedulerStateMachine::Action::NONE);
+    // CompositorFrameAck unblocks BeginMainFrame.
+    state.DidReceiveCompositorFrameAck();
+  }
   EXPECT_ACTION_UPDATE_STATE(
       SchedulerStateMachine::Action::SEND_BEGIN_MAIN_FRAME);
   state.NotifyReadyToCommit();
@@ -1584,6 +1662,14 @@ TEST(SchedulerStateMachineTest, TestFullCycleWithCommitToActive) {
   EXPECT_NE(SchedulerStateMachine::BeginImplFrameDeadlineMode::BLOCKED,
             state.CurrentBeginImplFrameDeadlineMode());
 }
+
+INSTANTIATE_TEST_SUITE_P(,
+                         BeginMainFrameSchedulerStateMachineTest,
+                         testing::Bool(),
+                         [](auto& info) {
+                           return info.param ? "NoCompositorFrameAck"
+                                             : "CompositorFrameAck";
+                         });
 
 TEST(SchedulerStateMachineTest, TestFullCycleWithCommitRequestInbetween) {
   SchedulerSettings default_scheduler_settings;
@@ -2488,7 +2574,7 @@ TEST(SchedulerStateMachineTest, TestImplLatencyTakesPriorityImplInvalidations) {
   // Set smoothness priority (used while scrolling).
   state.SetTreePrioritiesAndScrollState(
       SMOOTHNESS_TAKES_PRIORITY,
-      ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER);
+      ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER, false);
 
   // Impl-side invalidation creates a pending tree which is not yet activated.
   bool needs_first_draw_on_activation = true;
@@ -3118,7 +3204,7 @@ TEST(SchedulerStateMachineTest, TestFullPipelineMode) {
   // should wait for main frame.
   state.SetTreePrioritiesAndScrollState(
       SMOOTHNESS_TAKES_PRIORITY,
-      ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER);
+      ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER, false);
   EXPECT_EQ(SchedulerStateMachine::BeginImplFrameDeadlineMode::BLOCKED,
             state.CurrentBeginImplFrameDeadlineMode());
 
@@ -3437,15 +3523,30 @@ TEST(SchedulerStateMachineTest,
 // or not i.e. whether the disable_frame_rate_limit flag is set.
 class DisableFrameRateLimitSchedulerStateMachineTests
     : public testing::Test,
-      public testing::WithParamInterface<bool> {
+      public testing::WithParamInterface<std::tuple<bool, bool>> {
  public:
+  DisableFrameRateLimitSchedulerStateMachineTests();
+  ~DisableFrameRateLimitSchedulerStateMachineTests() override = default;
+
   SchedulerSettings GetSchedulerSettings() {
     SchedulerSettings settings;
-    settings.disable_frame_rate_limit = GetParam();
+    settings.disable_frame_rate_limit = std::get<0>(GetParam());
     return settings;
   }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
+DisableFrameRateLimitSchedulerStateMachineTests::
+    DisableFrameRateLimitSchedulerStateMachineTests() {
+  if (std::get<1>(GetParam())) {
+    scoped_feature_list_.InitAndEnableFeature(features::kNoCompositorFrameAcks);
+  } else {
+    scoped_feature_list_.InitAndDisableFeature(
+        features::kNoCompositorFrameAcks);
+  }
+}
 TEST_P(DisableFrameRateLimitSchedulerStateMachineTests,
        TestImplLatencyTakesPriority) {
   SchedulerSettings default_scheduler_settings = GetSchedulerSettings();
@@ -3466,7 +3567,7 @@ TEST_P(DisableFrameRateLimitSchedulerStateMachineTests,
   EXPECT_FALSE(state.ShouldTriggerBeginImplFrameDeadlineImmediately());
   state.SetTreePrioritiesAndScrollState(
       SMOOTHNESS_TAKES_PRIORITY,
-      ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER);
+      ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER, false);
   EXPECT_TRUE(state.ShouldTriggerBeginImplFrameDeadlineImmediately());
 
   // Trigger the deadline.
@@ -3474,7 +3575,9 @@ TEST_P(DisableFrameRateLimitSchedulerStateMachineTests,
   EXPECT_ACTION_UPDATE_STATE(SchedulerStateMachine::Action::DRAW_IF_POSSIBLE);
   state.DidSubmitCompositorFrame();
   EXPECT_ACTION_UPDATE_STATE(SchedulerStateMachine::Action::NONE);
-  state.DidReceiveCompositorFrameAck();
+  if (!base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks)) {
+    state.DidReceiveCompositorFrameAck();
+  }
 
   // Request a new commit and finish the previous one.
   state.SetNeedsBeginMainFrame();
@@ -3482,8 +3585,10 @@ TEST_P(DisableFrameRateLimitSchedulerStateMachineTests,
   EXPECT_ACTION_UPDATE_STATE(
       SchedulerStateMachine::Action::SEND_BEGIN_MAIN_FRAME);
   EXPECT_ACTION_UPDATE_STATE(SchedulerStateMachine::Action::NONE);
-  state.DidReceiveCompositorFrameAck();
-  EXPECT_ACTION_UPDATE_STATE(SchedulerStateMachine::Action::NONE);
+  if (!base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks)) {
+    state.DidReceiveCompositorFrameAck();
+    EXPECT_ACTION_UPDATE_STATE(SchedulerStateMachine::Action::NONE);
+  }
 
   // Finish the previous commit and draw it.
   FinishPreviousCommitAndDrawWithoutExitingDeadline(&state);
@@ -3496,7 +3601,12 @@ TEST_P(DisableFrameRateLimitSchedulerStateMachineTests,
   state.IssueNextBeginImplFrame();
   // If disable_frame_rate_limit is enabled, then draws aren't throttled in
   // the SchedulerStateMachine. We need to update the expectations accordingly.
-  if (default_scheduler_settings.disable_frame_rate_limit) {
+  // If `NoCompositorFrameAcks` is enabled, then draws aren't throttled either.
+  // Instead the actual frame submission will occur in response to
+  // `OnBeginFrame` while `BeginMainFrame` will be sent to continue to have
+  // content ready.
+  if (default_scheduler_settings.disable_frame_rate_limit ||
+      base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks)) {
     EXPECT_ACTION_UPDATE_STATE(
         SchedulerStateMachine::Action::SEND_BEGIN_MAIN_FRAME);
   } else {
@@ -3509,7 +3619,15 @@ TEST_P(DisableFrameRateLimitSchedulerStateMachineTests,
 
 INSTANTIATE_TEST_SUITE_P(DisableFrameRateLimitSchedulerStateMachineTests,
                          DisableFrameRateLimitSchedulerStateMachineTests,
-                         testing::Bool());
+                         testing::Combine(testing::Bool(), testing::Bool()),
+                         [](auto& info) {
+                           return base::StringPrintf(
+                               "%s_%s",
+                               std::get<0>(info.param) ? "DisableFrameRateLimit"
+                                                       : "FrameRateLimit",
+                               std::get<1>(info.param) ? "NoCompositorFrameAck"
+                                                       : "CompositorFrameAck");
+                         });
 
 // Text fixture class for the ScrollingSchedulerStateMachineTest tests.
 // Parameterized to include a boolean which indicates whether frame rate limits
@@ -3555,7 +3673,7 @@ void ScrollingSchedulerStateMachineTest::SetUp() {
   state.set_is_scrolling(true);
   state.SetTreePrioritiesAndScrollState(
       SMOOTHNESS_TAKES_PRIORITY,
-      ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER);
+      ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER, false);
 }
 
 // Tests that when we should wait for scroll events, that we do not send
@@ -3604,7 +3722,8 @@ TEST_P(ScrollingSchedulerStateMachineTest, ScrollModeBlockedByNoImmediateMode) {
   // The disable_frame_rate_limit switch is not enabled by default. It is
   // likely that some of the assumptions made in the SchedulerStateMachine
   // class are not true and we need further testing.
-  if (scheduler_settings_.disable_frame_rate_limit) {
+  if (scheduler_settings_.disable_frame_rate_limit ||
+      base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks)) {
     EXPECT_TRUE(state.ShouldTriggerBeginImplFrameDeadlineImmediately());
   } else {
     EXPECT_FALSE(state.ShouldTriggerBeginImplFrameDeadlineImmediately());
@@ -3613,7 +3732,8 @@ TEST_P(ScrollingSchedulerStateMachineTest, ScrollModeBlockedByNoImmediateMode) {
   // If disable_frame_rate_limit is set, then draws are not throttled. The
   // ShouldTriggerBeginImplFrameDeadlineImmediately() function returns true
   // in this case. Adjust the expectations accordingly.
-  if (scheduler_settings_.disable_frame_rate_limit) {
+  if (scheduler_settings_.disable_frame_rate_limit ||
+      base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks)) {
     EXPECT_EQ(
         SchedulerStateMachine::BeginImplFrameDeadlineMode::WAIT_FOR_SCROLL,
         state.CurrentBeginImplFrameDeadlineMode());
@@ -3623,9 +3743,11 @@ TEST_P(ScrollingSchedulerStateMachineTest, ScrollModeBlockedByNoImmediateMode) {
         state.CurrentBeginImplFrameDeadlineMode());
   }
 
-  // When we receive the Ack then we should be able select scroll deadline
-  // again.
-  state.DidReceiveCompositorFrameAck();
+  if (!base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks)) {
+    // When we receive the Ack then we should be able select scroll deadline
+    // again.
+    state.DidReceiveCompositorFrameAck();
+  }
   EXPECT_TRUE(state.ShouldTriggerBeginImplFrameDeadlineImmediately());
   EXPECT_TRUE(state.ShouldWaitForScrollEvent());
   EXPECT_EQ(SchedulerStateMachine::BeginImplFrameDeadlineMode::WAIT_FOR_SCROLL,
@@ -3634,22 +3756,20 @@ TEST_P(ScrollingSchedulerStateMachineTest, ScrollModeBlockedByNoImmediateMode) {
 
 INSTANTIATE_TEST_SUITE_P(ScrollingSchedulerStateMachineTest,
                          ScrollingSchedulerStateMachineTest,
-                         testing::Bool());
-
-class WarmUpCompositorSchedulerStateMachineTest : public testing::Test {
- public:
-  WarmUpCompositorSchedulerStateMachineTest() {
-    scoped_feature_list_.InitAndEnableFeature(features::kWarmUpCompositor);
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
+                         testing::Combine(testing::Bool(), testing::Bool()),
+                         [](auto& info) {
+                           return base::StringPrintf(
+                               "%s_%s",
+                               std::get<0>(info.param) ? "DisableFrameRateLimit"
+                                                       : "FrameRateLimit",
+                               std::get<1>(info.param) ? "NoCompositorFrameAck"
+                                                       : "CompositorFrameAck");
+                         });
 
 // Tests that `SetShouldWarmUp()` will start initial `LayerTreeFrameSink`
 // creation even if invisible.
-TEST_F(WarmUpCompositorSchedulerStateMachineTest,
-       SetShouldWarmUpWillStartLayerTreeFrameSinkCreation) {
+TEST(SchedulerStateMachineTest,
+     SetShouldWarmUpWillStartLayerTreeFrameSinkCreation) {
   SchedulerSettings default_scheduler_settings;
   StateMachine state(default_scheduler_settings);
   state.SetVisible(false);

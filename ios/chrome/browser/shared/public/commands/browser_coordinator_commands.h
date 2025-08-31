@@ -13,6 +13,13 @@ class ScopedClosureRunner;
 }
 @protocol BadgeItem;
 class GURL;
+enum class NotificationOptInAccessPoint;
+namespace signin_metrics {
+enum class AccessPoint;
+}  // namespace signin_metrics
+namespace syncer {
+enum class TrustedVaultUserActionTriggerForUMA;
+}
 
 // Protocol for commands that will be handled by the BrowserCoordinator.
 // TODO(crbug.com/41427057) : Rename this protocol to one that is more
@@ -29,20 +36,27 @@ class GURL;
                  title:(NSString*)title
     baseViewController:(UIViewController*)baseViewController;
 
-// Shows the downloads folder.
-- (void)showDownloadsFolder;
-
 // Shows the Reading List UI.
 - (void)showReadingList;
 
 // Shows bookmarks manager.
 - (void)showBookmarksManager;
 
+// Shows the downloads folder.
+- (void)showDownloadsFolder;
+
 // Shows recent tabs.
 - (void)showRecentTabs;
 
 // Shows the translate infobar.
 - (void)showTranslate;
+
+// Shows the online help page in a tab.
+- (void)showHelpPage;
+
+// Shows the activity indicator overlay that appears over the view to prevent
+// interaction with the web page until the returned value is destructed.
+- (base::ScopedClosureRunner)showActivityOverlay;
 
 // Shows the AddCreditCard UI.
 - (void)showAddCreditCard;
@@ -53,13 +67,6 @@ class GURL;
 
 // Hides the dialog shown by -showSendTabToSelfUI:.
 - (void)hideSendTabToSelfUI;
-
-// Shows the online help page in a tab.
-- (void)showHelpPage;
-
-// Shows the activity indicator overlay that appears over the view to prevent
-// interaction with the web page until the returned value is destructed.
-- (base::ScopedClosureRunner)showActivityOverlay;
 
 #if !defined(NDEBUG)
 // Inserts a new tab showing the HTML source of the current page.
@@ -81,11 +88,11 @@ class GURL;
 // Preloads voice search in the current BVC.
 - (void)preloadVoiceSearch;
 
-// Dismiss the payments suggestions.
-- (void)dismissPaymentSuggestions;
-
 // Dismiss the password suggestions.
 - (void)dismissPasswordSuggestions;
+
+// Dismiss the payments suggestions.
+- (void)dismissPaymentSuggestions;
 
 // Dismiss the card unmask authentication prompt.
 - (void)dismissCardUnmaskAuthentication;
@@ -110,8 +117,27 @@ class GURL;
 - (void)showEnhancedSafeBrowsingPromo;
 - (void)dismissEnhancedSafeBrowsingPromo;
 
-// Shows the page action menu.
-- (void)showPageActionMenu;
+// Shows and dismisses the Search What You See promo.
+- (void)showSearchWhatYouSeePromo;
+- (void)dismissSearchWhatYouSeePromo;
+
+// Shows the notifications opt-in view from `accessPoint`.
+- (void)showNotificationsOptInFromAccessPoint:
+            (NotificationOptInAccessPoint)accessPoint
+                           baseViewController:
+                               (UIViewController*)baseViewController;
+
+// Dismisses the notifications opt-in view.
+- (void)dismissNotificationsOptIn;
+
+// Show the add account view
+- (void)showAddAccountWithAccessPoint:(signin_metrics::AccessPoint)accessPoint
+                       prefilledEmail:(NSString*)email;
+
+// Presents the Trusted Vault reauthentication dialog. `trigger` indicates an
+// entry point from which the trusted vault reauth has been triggered.
+- (void)performReauthToRetrieveTrustedVaultKey:
+    (syncer::TrustedVaultUserActionTriggerForUMA)trigger;
 
 @end
 

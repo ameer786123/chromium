@@ -158,6 +158,10 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
   // This method also has the side effect of setting upload_url_.
   bool CanUploadContent(const scoped_refptr<net::HttpResponseHeaders>& headers);
 
+  // Returns true if `kEnableEncryptedFileUpload`
+  // feature is enabled and the `scan_type_` is ASYNC.
+  bool ShouldUploadEncryptedFile();
+
   // Helper used by metrics logging code.
   std::string GetRequestType();
 
@@ -170,7 +174,8 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
   enum {
     PENDING = 0,
     METADATA_ONLY = 1,
-    FULL_CONTENT = 2
+    FULL_CONTENT = 2,
+    ASYNC = 3
   } scan_type_ = PENDING;
 
   ContentUploadedCallback content_uploaded_callback_;

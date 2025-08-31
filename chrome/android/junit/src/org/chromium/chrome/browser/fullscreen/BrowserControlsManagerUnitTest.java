@@ -18,6 +18,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -36,6 +37,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnit;
@@ -49,6 +51,7 @@ import org.chromium.base.MathUtils;
 import org.chromium.base.UserDataHost;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.cc.input.BrowserControlsOffsetTags;
 import org.chromium.cc.input.BrowserControlsState;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
@@ -56,6 +59,7 @@ import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabBrowserControlsOffsetHelper;
 import org.chromium.chrome.browser.tab.TabCreationState;
@@ -66,6 +70,10 @@ import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.toolbar.ControlContainer;
 import org.chromium.components.embedder_support.view.ContentView;
+import org.chromium.content_public.browser.WebContents;
+import org.chromium.ui.BrowserControlsOffsetTagConstraints;
+import org.chromium.ui.BrowserControlsOffsetTagDefinitions;
+import org.chromium.ui.OffsetTagConstraints;
 import org.chromium.ui.util.TokenHolder;
 
 import java.util.Collections;
@@ -79,6 +87,7 @@ public class BrowserControlsManagerUnitTest {
     // Since these tests don't depend on the heights being pixels, we can use these as dpi directly.
     private static final int TOOLBAR_HEIGHT = 56;
     private static final int EXTRA_TOP_CONTROL_HEIGHT = 20;
+    private static final int TOOLBAR_HAIRLINE_HEIGHT = 5;
 
     @Mock private Activity mActivity;
     @Mock private ControlContainer mControlContainer;
@@ -91,14 +100,18 @@ public class BrowserControlsManagerUnitTest {
     @Mock private ContentView mContentView;
     @Mock private TabModel mTabModel;
     @Mock private TabBrowserControlsOffsetHelper mTabBrowserControlsOffsetHelper;
+    @Mock private MultiWindowModeStateDispatcher mMultiWindowModeStateDispatcher;
+    @Mock private WebContents mWebContents;
 
     private @Captor ArgumentCaptor<Callback<Tab>> mCallbackTabCaptor;
     private @Captor ArgumentCaptor<TabModelObserver> mTabModelObserverCaptor;
     private @Captor ArgumentCaptor<TabObserver> mTabObserverCaptor;
 
-    private UserDataHost mUserDataHost = new UserDataHost();
+    private final UserDataHost mUserDataHost = new UserDataHost();
     private BrowserControlsManager mBrowserControlsManager;
     private BrowserStateBrowserControlsVisibilityDelegate mControlsDelegate;
+
+    private InOrder mWebContentsInOrder;
 
     @Before
     public void setUp() {
@@ -109,12 +122,12 @@ public class BrowserControlsManagerUnitTest {
         when(mControlContainer.getView()).thenReturn(mContainerView);
 
         // Only the last/current visibility matters and is verified by tests.
+        when(mContainerView.getVisibility()).thenReturn(View.VISIBLE);
         doCallback(
                         (Integer visibility) ->
                                 when(mContainerView.getVisibility()).thenReturn(visibility))
                 .when(mContainerView)
                 .setVisibility(anyInt());
-        mContainerView.setVisibility(View.VISIBLE);
 
         when(mTab.isUserInteractable()).thenReturn(true);
         when(mTab.isInitialized()).thenReturn(true);
@@ -124,12 +137,15 @@ public class BrowserControlsManagerUnitTest {
         doNothing().when(mContentView).removeOnSystemUiVisibilityChangeListener(any());
         doNothing().when(mContentView).addOnHierarchyChangeListener(any());
         doNothing().when(mContentView).addOnSystemUiVisibilityChangeListener(any());
+        when(mTabModel.iterator()).thenAnswer(inv -> Collections.emptyList().iterator());
         when(mTabModelSelector.getModels()).thenReturn(Collections.singletonList(mTabModel));
         when(mTabModel.getComprehensiveModel()).thenReturn(mTabModel);
 
         BrowserControlsManager browserControlsManager =
                 new BrowserControlsManager(
-                        mActivity, BrowserControlsStateProvider.ControlsPosition.TOP);
+                        mActivity,
+                        BrowserControlsStateProvider.ControlsPosition.TOP,
+                        mMultiWindowModeStateDispatcher);
         mBrowserControlsManager = spy(browserControlsManager);
         mBrowserControlsManager.initialize(
                 mControlContainer,
@@ -139,13 +155,16 @@ public class BrowserControlsManagerUnitTest {
         mControlsDelegate = mBrowserControlsManager.getBrowserVisibilityDelegate();
         mBrowserControlsManager.addObserver(mBrowserControlsStateProviderObserver);
         when(mBrowserControlsManager.getTab()).thenReturn(mTab);
+        mWebContentsInOrder = inOrder(mWebContents);
     }
 
     private void remakeWithoutSpy() {
         mBrowserControlsManager.destroy();
         mBrowserControlsManager =
                 new BrowserControlsManager(
-                        mActivity, BrowserControlsStateProvider.ControlsPosition.TOP);
+                        mActivity,
+                        BrowserControlsStateProvider.ControlsPosition.TOP,
+                        mMultiWindowModeStateDispatcher);
         mBrowserControlsManager.initialize(
                 mControlContainer,
                 mActivityTabProvider,
@@ -306,6 +325,128 @@ public class BrowserControlsManagerUnitTest {
     }
 
     @Test
+    public void testRendererDrivenHeightIncreaseAnimation() {
+        remakeWithoutSpy();
+        notifyAddTab(mTab);
+        notifyCurrentTab(mTab);
+
+        when(mTab.getWebContents()).thenReturn(mWebContents);
+        when(mControlContainer.getToolbarHairlineHeight()).thenReturn(TOOLBAR_HAIRLINE_HEIGHT);
+
+        final int newHeight = TOOLBAR_HEIGHT + EXTRA_TOP_CONTROL_HEIGHT;
+        final int newMinHeight = EXTRA_TOP_CONTROL_HEIGHT;
+        OffsetTagConstraints expectedTopConstraints = null;
+        OffsetTagConstraints expectedContentConstraints = null;
+        OffsetTagConstraints expectedBottomConstraints = null;
+
+        // Start height increase animation for top controls
+        mBrowserControlsManager.setAnimateBrowserControlsHeightChanges(true);
+        mBrowserControlsManager.setTopControlsHeight(newHeight, newMinHeight);
+        expectedTopConstraints =
+                new OffsetTagConstraints(0, 0, -(newHeight + TOOLBAR_HAIRLINE_HEIGHT), 0);
+        expectedContentConstraints = new OffsetTagConstraints(0, 0, -newHeight, 0);
+        verifyUpdateOffsetTagDefinitions(
+                expectedTopConstraints, expectedContentConstraints, expectedBottomConstraints);
+
+        // Simulate offset update from renderer for end of animation.
+        mBrowserControlsManager
+                .getTabControlsObserverForTesting()
+                .onBrowserControlsOffsetChanged(mTab, 0, 0, 0, newMinHeight, 0);
+        float scrollableHeight = newHeight - newMinHeight;
+        expectedTopConstraints =
+                new OffsetTagConstraints(0, 0, -(scrollableHeight + TOOLBAR_HAIRLINE_HEIGHT), 0);
+        expectedContentConstraints = new OffsetTagConstraints(0, 0, -scrollableHeight, 0);
+        verifyUpdateOffsetTagDefinitions(
+                expectedTopConstraints, expectedContentConstraints, expectedBottomConstraints);
+
+        // Start height increase animation for bottom controls
+        mBrowserControlsManager.setBottomControlsAdditionalHeight(TOOLBAR_HAIRLINE_HEIGHT);
+        mBrowserControlsManager.setBottomControlsHeight(newHeight, newMinHeight);
+        expectedBottomConstraints =
+                new OffsetTagConstraints(0, 0, 0, newHeight + TOOLBAR_HAIRLINE_HEIGHT);
+        verifyUpdateOffsetTagDefinitions(
+                expectedTopConstraints, expectedContentConstraints, expectedBottomConstraints);
+
+        // Simulate offset update from renderer for end of animation.
+        mBrowserControlsManager
+                .getTabControlsObserverForTesting()
+                .onBrowserControlsOffsetChanged(mTab, 0, 0, 0, 0, newMinHeight);
+        expectedBottomConstraints =
+                new OffsetTagConstraints(0, 0, 0, scrollableHeight + TOOLBAR_HAIRLINE_HEIGHT);
+        verifyUpdateOffsetTagDefinitions(
+                expectedTopConstraints, expectedContentConstraints, expectedBottomConstraints);
+    }
+
+    @Test
+    public void testRendererDrivenHeightDecreaseAnimation() {
+        remakeWithoutSpy();
+        notifyAddTab(mTab);
+        notifyCurrentTab(mTab);
+
+        when(mTab.getWebContents()).thenReturn(mWebContents);
+        when(mControlContainer.getToolbarHairlineHeight()).thenReturn(TOOLBAR_HAIRLINE_HEIGHT);
+
+        final int fullHeight = TOOLBAR_HEIGHT + EXTRA_TOP_CONTROL_HEIGHT;
+        final int minHeight = EXTRA_TOP_CONTROL_HEIGHT;
+        OffsetTagConstraints expectedTopConstraints = null;
+        OffsetTagConstraints expectedContentConstraints = null;
+        OffsetTagConstraints expectedBottomConstraints = null;
+
+        mBrowserControlsManager.setAnimateBrowserControlsHeightChanges(true);
+        mBrowserControlsManager.setBottomControlsAdditionalHeight(TOOLBAR_HAIRLINE_HEIGHT);
+        mBrowserControlsManager.setTopControlsHeight(fullHeight, minHeight);
+        mBrowserControlsManager.setBottomControlsHeight(fullHeight, minHeight);
+        // Simulate offset update from renderer for end of animation.
+        mBrowserControlsManager
+                .getTabControlsObserverForTesting()
+                .onBrowserControlsOffsetChanged(mTab, 0, 0, 0, minHeight, minHeight);
+        float scrollableHeight = fullHeight - minHeight;
+        expectedTopConstraints =
+                new OffsetTagConstraints(0, 0, -(scrollableHeight + TOOLBAR_HAIRLINE_HEIGHT), 0);
+        expectedContentConstraints = new OffsetTagConstraints(0, 0, -scrollableHeight, 0);
+        expectedBottomConstraints =
+                new OffsetTagConstraints(0, 0, 0, scrollableHeight + TOOLBAR_HAIRLINE_HEIGHT);
+        verifyUpdateOffsetTagDefinitions(
+                expectedTopConstraints, expectedContentConstraints, expectedBottomConstraints);
+
+        int newHeight = fullHeight - minHeight;
+
+        // Start height decrease animation for top controls
+        mBrowserControlsManager.setTopControlsHeight(newHeight, 0);
+        expectedTopConstraints =
+                new OffsetTagConstraints(0, 0, -(newHeight + TOOLBAR_HAIRLINE_HEIGHT), minHeight);
+        expectedContentConstraints = new OffsetTagConstraints(0, 0, -newHeight, minHeight);
+        verifyUpdateOffsetTagDefinitions(
+                expectedTopConstraints, expectedContentConstraints, expectedBottomConstraints);
+
+        // Simulate offset update from renderer for end of animation.
+        mBrowserControlsManager
+                .getTabControlsObserverForTesting()
+                .onBrowserControlsOffsetChanged(mTab, 0, 0, 0, 0, minHeight);
+        expectedTopConstraints =
+                new OffsetTagConstraints(0, 0, -(newHeight + TOOLBAR_HAIRLINE_HEIGHT), 0);
+        expectedContentConstraints = new OffsetTagConstraints(0, 0, -newHeight, 0);
+        verifyUpdateOffsetTagDefinitions(
+                expectedTopConstraints, expectedContentConstraints, expectedBottomConstraints);
+
+        // Start height decrease animation for bottom controls
+        mBrowserControlsManager.setBottomControlsHeight(newHeight, 0);
+        expectedBottomConstraints =
+                new OffsetTagConstraints(0, 0, -minHeight, newHeight + TOOLBAR_HAIRLINE_HEIGHT);
+        verifyUpdateOffsetTagDefinitions(
+                expectedTopConstraints, expectedContentConstraints, expectedBottomConstraints);
+
+        // Simulate offset update from renderer for end of animation.
+        mBrowserControlsManager
+                .getTabControlsObserverForTesting()
+                .onBrowserControlsOffsetChanged(mTab, 0, 0, 0, 0, 0);
+        expectedBottomConstraints =
+                new OffsetTagConstraints(0, 0, 0, newHeight + TOOLBAR_HAIRLINE_HEIGHT);
+        verifyUpdateOffsetTagDefinitions(
+                expectedTopConstraints, expectedContentConstraints, expectedBottomConstraints);
+    }
+
+    @Test
     public void testChangeTopHeightWithoutAnimation_Browser() {
         // Simulate that we can't animate native browser controls.
         when(mBrowserControlsManager.getTab()).thenReturn(null);
@@ -409,6 +550,7 @@ public class BrowserControlsManagerUnitTest {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void testShowAndroidControlsObserver() {
         remakeWithoutSpy();
 
@@ -429,7 +571,9 @@ public class BrowserControlsManagerUnitTest {
     public void testGetAndroidControlsVisibility() {
         BrowserControlsManager browserControlsManager =
                 new BrowserControlsManager(
-                        mActivity, BrowserControlsStateProvider.ControlsPosition.TOP);
+                        mActivity,
+                        BrowserControlsStateProvider.ControlsPosition.TOP,
+                        mMultiWindowModeStateDispatcher);
         assertEquals(View.INVISIBLE, browserControlsManager.getAndroidControlsVisibility());
 
         browserControlsManager.initialize(
@@ -439,7 +583,7 @@ public class BrowserControlsManagerUnitTest {
                 R.dimen.control_container_height);
         assertEquals(View.VISIBLE, browserControlsManager.getAndroidControlsVisibility());
 
-        mContainerView.setVisibility(View.INVISIBLE);
+        when(mContainerView.getVisibility()).thenReturn(View.INVISIBLE);
         assertEquals(View.INVISIBLE, browserControlsManager.getAndroidControlsVisibility());
     }
 
@@ -608,7 +752,9 @@ public class BrowserControlsManagerUnitTest {
     public void testStartWithBottom() {
         BrowserControlsManager browserControlsManager =
                 new BrowserControlsManager(
-                        mActivity, BrowserControlsStateProvider.ControlsPosition.BOTTOM);
+                        mActivity,
+                        BrowserControlsStateProvider.ControlsPosition.BOTTOM,
+                        mMultiWindowModeStateDispatcher);
         browserControlsManager.initialize(
                 mControlContainer,
                 mActivityTabProvider,
@@ -620,7 +766,7 @@ public class BrowserControlsManagerUnitTest {
 
     @Test
     @EnableFeatures(ChromeFeatureList.BCIV_BOTTOM_CONTROLS)
-    public void testSkipOffsetChangedIfAnimatingWithBciv() {
+    public void testSkipOffsetChangedIfAnimatingPositionChange() {
         remakeWithoutSpy();
         notifyAddTab(mTab);
         notifyCurrentTab(mTab);
@@ -648,5 +794,15 @@ public class BrowserControlsManagerUnitTest {
                         anyBoolean(),
                         anyBoolean(),
                         anyBoolean());
+    }
+
+    private void verifyUpdateOffsetTagDefinitions(
+            OffsetTagConstraints top, OffsetTagConstraints content, OffsetTagConstraints bottom) {
+        BrowserControlsOffsetTagConstraints expectedConstraints =
+                new BrowserControlsOffsetTagConstraints(top, content, bottom);
+        BrowserControlsOffsetTagDefinitions expectedDefinitions =
+                new BrowserControlsOffsetTagDefinitions(
+                        new BrowserControlsOffsetTags(null, null, null), expectedConstraints);
+        mWebContentsInOrder.verify(mWebContents).updateOffsetTagDefinitions(expectedDefinitions);
     }
 }

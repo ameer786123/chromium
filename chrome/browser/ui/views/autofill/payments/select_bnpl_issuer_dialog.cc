@@ -24,6 +24,7 @@
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/throbber.h"
 #include "ui/views/layout/box_layout.h"
@@ -62,8 +63,9 @@ SelectBnplIssuerViewDesktop::SelectBnplIssuerViewDesktop(
         std::make_unique<SelectBnplIssuerDialog>(controller_, web_contents);
     dialog_ = tab_interface->GetTabFeatures()
                   ->tab_dialog_manager()
-                  ->CreateShowDialogAndBlockTabInteraction(
-                      select_bnpl_issuer_delegate.release());
+                  ->CreateAndShowDialog(
+                      select_bnpl_issuer_delegate.release(),
+                      std::make_unique<tabs::TabDialogManager::Params>());
   }
 }
 
@@ -112,9 +114,6 @@ SelectBnplIssuerDialog::SelectBnplIssuerDialog(
       std::make_unique<BnplIssuerView>(controller_, this));
   bnpl_issuer_view_->SetProperty(views::kElementIdentifierKey,
                                  SelectBnplIssuerDialog::kBnplIssuerView);
-  if (!bnpl_issuer_view_->children().empty()) {
-    SetInitiallyFocusedView(bnpl_issuer_view_->children()[0]);
-  }
 
   TextWithLink link_text = controller_.get()->GetLinkText();
   TextLinkInfo link_info;
@@ -144,6 +143,8 @@ void SelectBnplIssuerDialog::DisplayThrobber() {
           .Build());
   throbber->Start();
   throbber->SizeToPreferredSize();
+  throbber->GetViewAccessibility().AnnouncePolitely(l10n_util::GetStringUTF16(
+      IDS_AUTOFILL_BNPL_PROGRESS_DIALOG_LOADING_MESSAGE));
 }
 
 bool SelectBnplIssuerDialog::OnCancelled() {
@@ -154,12 +155,16 @@ bool SelectBnplIssuerDialog::OnCancelled() {
 }
 
 void SelectBnplIssuerDialog::AddedToWidget() {
+  std::u16string title = controller_->GetTitle();
   // The BubbleFrameView is only available after this view is added to the
   // Widget.
   GetBubbleFrameView()->SetTitleView(
       std::make_unique<TitleWithIconAfterLabelView>(
-          controller_->GetTitle(),
-          TitleWithIconAfterLabelView::Icon::GOOGLE_PAY));
+          title, TitleWithIconAfterLabelView::Icon::GOOGLE_PAY));
+  SetAccessibleWindowRole(ax::mojom::Role::kDialog);
+  SetAccessibleTitle(l10n_util::GetStringFUTF16(
+      IDS_AUTOFILL_BNPL_SELECT_PROVIDER_TITLE_DESCRIPTION, title,
+      l10n_util::GetStringUTF16(IDS_AUTOFILL_GOOGLE_PAY_LOGO_ACCESSIBLE_NAME)));
 }
 
 void SelectBnplIssuerDialog::OnSettingsLinkClicked() {

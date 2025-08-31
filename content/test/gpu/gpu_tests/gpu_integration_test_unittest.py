@@ -3,25 +3,36 @@
 # found in the LICENSE file.
 
 # It's reasonable for unittests to be messing with protected members.
-# pylint: disable=protected-access
+# Additionally, there is a lot to test, so line count is expected to be large.
+# pylint: disable=protected-access,too-many-lines
 
 
 import copy
+import dataclasses
 import json
 import os
 import tempfile
 import typing
 from typing import Any, Type
 import unittest
-import unittest.mock as mock
+from unittest import mock
 
-import dataclasses  # Built-in, but pylint gives an ordering false positive.
-
-import gpu_project_config
-import run_gpu_integration_test
-
+# Needed in order for the tools/perf and Telemetry imports to work.
+# pylint: disable=unused-import,wrong-import-order
+from gpu_path_util import setup_telemetry_paths
+from gpu_path_util import setup_tools_perf_paths
+# pylint: enable=unused-import,wrong-import-order
 from chrome_telemetry_build import chromium_config
+from py_utils import tempfile_ext
+from telemetry.internal.browser import browser_options as bo
+from telemetry.internal.util import binary_manager
+from telemetry.internal.platform import system_info
+from telemetry.testing import browser_test_runner
+from telemetry.testing import fakes
+from telemetry.testing import run_browser_tests
 
+import gpu_path_util
+import gpu_project_config
 from gpu_tests import common_typing as ct
 from gpu_tests import context_lost_integration_test
 from gpu_tests import gpu_helper
@@ -30,17 +41,7 @@ from gpu_tests import trace_integration_test as trace_it
 from gpu_tests import webgl1_conformance_integration_test as webgl1_cit
 from gpu_tests import webgl2_conformance_integration_test as webgl2_cit
 from gpu_tests import webgpu_compat_cts_integration_test as webgpu_compat_cit
-
-import gpu_path_util
-
-from py_utils import tempfile_ext
-
-from telemetry.internal.browser import browser_options as bo
-from telemetry.internal.util import binary_manager
-from telemetry.internal.platform import system_info
-from telemetry.testing import browser_test_runner
-from telemetry.testing import fakes
-from telemetry.testing import run_browser_tests
+import run_gpu_integration_test
 
 # Unittest test cases are defined as public methods, so ignore complaints about
 # having too many.
@@ -158,12 +159,12 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
       # tempfile_ext.NamedTemporaryFile(), put it in the list of generators
       # starting this with block. Also remove the try finally statement
       # below.
-      temp_file = tempfile.NamedTemporaryFile(delete=False)
-      temp_file.close()
+      with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        temp_file_name = temp_file.name
       try:
         test_argv = [
             test_name,
-            f'--write-full-results-to={temp_file.name}',
+            f'--write-full-results-to={temp_file_name}',
             # We don't want the underlying typ-based tests to report their
             # results to ResultDB.
             '--disable-resultsink',
@@ -177,10 +178,10 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
         telemetry_args = browser_test_runner.ProcessConfig(
             unittest_config, processed_args)
         run_browser_tests.RunTests(telemetry_args)
-        with open(temp_file.name) as f:
+        with open(temp_file_name, encoding='utf-8') as f:
           self._test_result = json.load(f)
       finally:
-        temp_file.close()
+        os.remove(temp_file_name)
 
   def testOverrideDefaultRetryArgumentsinRunGpuIntegrationTests(self) -> None:
     self._RunGpuIntegrationTests('run_tests_with_expectations_files',
@@ -320,7 +321,11 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
     self.assertFalse(test_class._is_asan)
 
   @mock.patch('gpu_tests.util.host_information.IsLinux', return_value=False)
-  def testGenerateNvidiaExampleTags(self, _) -> None:
+  @mock.patch('gpu_tests.util.host_information.GetSystemMemoryBytes',
+              return_value=32_000_000_000)
+  @mock.patch('gpu_tests.util.host_information.IsArmCpu',
+              return_value=False)
+  def testGenerateNvidiaExampleTags(self, _, __, ___) -> None:
     platform = fakes.FakePlatform('win', 'win10')
     browser = fakes.FakeBrowser(platform, 'release')
     browser._returned_system_info = _GetSystemInfo(
@@ -337,13 +342,19 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
             'no-passthrough',
             'renderer-skia-gl',
             'no-asan',
+            'arch-x86_64',
             'target-cpu-64',
             'no-clang-coverage',
             'graphite-disabled',
+            'memory_ge_16gb',
         ]))
 
   @mock.patch('gpu_tests.util.host_information.IsLinux', return_value=False)
-  def testGenerateVendorTagUsingVendorString(self, _) -> None:
+  @mock.patch('gpu_tests.util.host_information.GetSystemMemoryBytes',
+              return_value=32_000_000_000)
+  @mock.patch('gpu_tests.util.host_information.IsArmCpu',
+              return_value=False)
+  def testGenerateVendorTagUsingVendorString(self, _, __, ___) -> None:
     platform = fakes.FakePlatform('mac', 'mojave')
     browser = fakes.FakeBrowser(platform, 'release')
     browser._returned_system_info = _GetSystemInfo(
@@ -359,6 +370,7 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
             'release',
             'imagination',
             'no-asan',
+            'arch-x86_64',
             'target-cpu-64',
             'imagination-PowerVR-SGX-554',
             'angle-opengles',
@@ -366,10 +378,15 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
             'renderer-skia-gl',
             'no-clang-coverage',
             'graphite-disabled',
+            'memory_ge_16gb',
         ]))
 
   @mock.patch('gpu_tests.util.host_information.IsLinux', return_value=False)
-  def testGenerateVendorTagUsingDeviceString(self, _) -> None:
+  @mock.patch('gpu_tests.util.host_information.GetSystemMemoryBytes',
+              return_value=32_000_000_000)
+  @mock.patch('gpu_tests.util.host_information.IsArmCpu',
+              return_value=False)
+  def testGenerateVendorTagUsingDeviceString(self, _, __, ___) -> None:
     platform = fakes.FakePlatform('mac', 'mojave')
     browser = fakes.FakeBrowser(platform, 'release')
     browser._returned_system_info = _GetSystemInfo(
@@ -383,6 +400,7 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
             'release',
             'imagination',
             'no-asan',
+            'arch-x86_64',
             'target-cpu-64',
             'imagination-Triangle-Monster-3000',
             'angle-disabled',
@@ -390,7 +408,64 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
             'renderer-skia-gl',
             'no-clang-coverage',
             'graphite-disabled',
+            'memory_ge_16gb',
         ]))
+
+  @mock.patch('gpu_tests.util.host_information.IsLinux', return_value=False)
+  def testGenerateMemoryTags(self, _):
+    platform = fakes.FakePlatform('win', 'win10')
+    browser = fakes.FakeBrowser(platform, 'release')
+    browser._returned_system_info = _GetSystemInfo(
+        gpu=VENDOR_NVIDIA, device=0x1cb3, gl_renderer='ANGLE Direct3D9')
+
+    with mock.patch('gpu_tests.util.host_information.GetSystemMemoryBytes',
+                    return_value=8_000_000_000):
+      tags = _GetTagsToTest(browser)
+      self.assertIn('memory_lt_16gb', tags)
+      self.assertNotIn('memory_ge_16gb', tags)
+
+    with mock.patch('gpu_tests.util.host_information.GetSystemMemoryBytes',
+                    return_value=16_000_000_000):
+      tags = _GetTagsToTest(browser)
+      self.assertNotIn('memory_lt_16gb', tags)
+      self.assertIn('memory_ge_16gb', tags)
+
+    # Ensure that tags aren't generated on remote platforms.
+    platform = fakes.FakePlatform('android', 'android-15')
+    browser = fakes.FakeBrowser(platform, 'release')
+    browser._returned_system_info = _GetSystemInfo(
+        gpu=VENDOR_NVIDIA, device=0x0000, gl_renderer='ANGLE OpenGL ES')
+    tags = _GetTagsToTest(browser)
+    for t in tags:
+      self.assertFalse(t.startswith('memory_'))
+
+  @mock.patch('gpu_tests.util.host_information.IsLinux', return_value=False)
+  def testGenerateArchitectureTags(self, _):
+    platform = fakes.FakePlatform('win', 'win10')
+    browser = fakes.FakeBrowser(platform, 'release')
+    browser._returned_system_info = _GetSystemInfo(
+        gpu=VENDOR_NVIDIA, device=0x1cb3, gl_renderer='ANGLE Direct3D9')
+
+    with mock.patch('gpu_tests.util.host_information.IsArmCpu',
+                    return_value=True):
+      tags = _GetTagsToTest(browser)
+      self.assertIn('arch-arm64', tags)
+      self.assertNotIn('arch-x86_64', tags)
+
+    with mock.patch('gpu_tests.util.host_information.IsArmCpu',
+                    return_value=False):
+      tags = _GetTagsToTest(browser)
+      self.assertNotIn('arch-arm64', tags)
+      self.assertIn('arch-x86_64', tags)
+
+    # Ensure that tags aren't generated on remote platforms.
+    platform = fakes.FakePlatform('android', 'android-15')
+    browser = fakes.FakeBrowser(platform, 'release')
+    browser._returned_system_info = _GetSystemInfo(
+        gpu=VENDOR_NVIDIA, device=0x0000, gl_renderer='ANGLE OpenGL ES')
+    tags = _GetTagsToTest(browser)
+    for t in tags:
+      self.assertFalse(t.startswith('arch-'))
 
   @mock.patch.dict(os.environ, clear=True)
   def testGenerateDisplayServer(self) -> None:
@@ -572,7 +647,7 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
       pass
 
     def SetBrowserAndRaiseTestException() -> None:
-      gpu_integration_test.GpuIntegrationTest.browser = (mock.MagicMock())
+      gpu_integration_test.GpuIntegrationTest.browser = mock.MagicMock()
       raise TestException
 
     gpu_integration_test.GpuIntegrationTest.browser = None
@@ -626,9 +701,9 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
               '--use-global-pool',
           ] + test_args.additional_args)
       run_browser_tests.RunTests(args)
-      with open(test_results_path) as f:
+      with open(test_results_path, encoding='utf-8') as f:
         self._test_result = json.load(f)
-      with open(test_state_path) as f:
+      with open(test_state_path, encoding='utf-8') as f:
         self._test_state = json.load(f)
       actual_successes, actual_failures, actual_skips = (_ExtractTestResults(
           self._test_result))

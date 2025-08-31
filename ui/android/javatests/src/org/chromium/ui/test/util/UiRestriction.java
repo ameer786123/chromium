@@ -6,6 +6,7 @@ package org.chromium.ui.test.util;
 
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RestrictionSkipCheck;
@@ -23,7 +24,7 @@ public final class UiRestriction {
 
     private static boolean isDesktop() {
       if (sIsDesktop == null) {
-        sIsDesktop = DeviceFormFactor.isDesktop();
+        sIsDesktop = DeviceInfo.isDesktop();
       }
       return sIsDesktop;
     }
@@ -41,8 +42,13 @@ public final class UiRestriction {
     }
 
     public static void registerChecks(RestrictionSkipCheck check) {
-        check.addHandler(DeviceFormFactor.DESKTOP, () -> isDesktop());
+        check.addHandler(DeviceFormFactor.DESKTOP, () -> !isDesktop());
+        // isTablet() returns True if the display is large enough to be considered a tablet, so
+        // it is always True on desktop devices as well.
+        // TODO(crbug.com/415126396): Change PHONE to "isDesktop() || isTablet()"
         check.addHandler(DeviceFormFactor.PHONE, () -> isTablet());
-        check.addHandler(DeviceFormFactor.TABLET, () -> !isTablet());
+        // TODO(crbug.com/415126396): Change TABLET to "isDesktop() || !isTablet()"
+        check.addHandler(DeviceFormFactor.ONLY_TABLET, () -> !isTablet());
+        check.addHandler(DeviceFormFactor.TABLET_OR_DESKTOP, () -> !isTablet());
     }
 }

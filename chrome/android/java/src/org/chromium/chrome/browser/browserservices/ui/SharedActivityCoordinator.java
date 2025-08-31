@@ -4,11 +4,11 @@
 
 package org.chromium.chrome.browser.browserservices.ui;
 
-import androidx.annotation.Nullable;
 import androidx.browser.trusted.TrustedWebActivityDisplayMode;
 import androidx.browser.trusted.TrustedWebActivityDisplayMode.ImmersiveMode;
 
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
 import org.chromium.chrome.browser.browserservices.trustedwebactivityui.controller.TrustedWebActivityBrowserControlsVisibilityManager;
 import org.chromium.chrome.browser.browserservices.ui.controller.CurrentPageVerifier;
@@ -18,42 +18,45 @@ import org.chromium.chrome.browser.customtabs.CustomTabOrientationController;
 import org.chromium.chrome.browser.customtabs.CustomTabStatusBarColorProvider;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityNavigationController;
 import org.chromium.chrome.browser.customtabs.features.ImmersiveModeController;
-import org.chromium.chrome.browser.customtabs.features.toolbar.CustomTabToolbarColorController;
+import org.chromium.chrome.browser.customtabs.features.toolbar.BrowserServicesThemeColorProvider;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.InflationObserver;
 
+import java.util.function.Supplier;
+
 /** Coordinator for shared functionality between Trusted Web Activities and webapps. */
+@NullMarked
 public class SharedActivityCoordinator implements InflationObserver {
     private final CurrentPageVerifier mCurrentPageVerifier;
     private final TrustedWebActivityBrowserControlsVisibilityManager
             mBrowserControlsVisibilityManager;
-    private final CustomTabToolbarColorController mToolbarColorController;
     private final CustomTabStatusBarColorProvider mStatusBarColorProvider;
     private final Supplier<ImmersiveModeController> mImmersiveModeController;
     private final CustomTabOrientationController mCustomTabOrientationController;
+    private final BrowserServicesThemeColorProvider mBrowserServicesThemeColorProvider;
 
-    @Nullable private final ImmersiveMode mImmersiveDisplayMode;
+    private final @Nullable ImmersiveMode mImmersiveDisplayMode;
 
     private boolean mUseAppModeUi = true;
 
     public SharedActivityCoordinator(
             CurrentPageVerifier currentPageVerifier,
             TrustedWebActivityBrowserControlsVisibilityManager browserControlsVisibilityManager,
-            CustomTabToolbarColorController toolbarColorController,
             CustomTabStatusBarColorProvider statusBarColorProvider,
             Supplier<ImmersiveModeController> immersiveModeController,
             BrowserServicesIntentDataProvider intentDataProvider,
             CustomTabOrientationController customTabOrientationController,
             CustomTabActivityNavigationController customTabActivityNavigationController,
             Verifier verifier,
+            BrowserServicesThemeColorProvider browserServicesThemeColorProvider,
             ActivityLifecycleDispatcher lifecycleDispatcher) {
         mCurrentPageVerifier = currentPageVerifier;
         mBrowserControlsVisibilityManager = browserControlsVisibilityManager;
-        mToolbarColorController = toolbarColorController;
         mStatusBarColorProvider = statusBarColorProvider;
         mImmersiveModeController = immersiveModeController;
         mImmersiveDisplayMode = computeImmersiveMode(intentDataProvider);
         mCustomTabOrientationController = customTabOrientationController;
+        mBrowserServicesThemeColorProvider = browserServicesThemeColorProvider;
 
         customTabActivityNavigationController.setLandingPageOnCloseCriterion(
                 verifier::wasPreviouslyVerified);
@@ -94,8 +97,8 @@ public class SharedActivityCoordinator implements InflationObserver {
 
     private void updateUi(boolean useAppModeUi) {
         updateImmersiveMode(useAppModeUi);
+        mBrowserServicesThemeColorProvider.setUseTabTheme(useAppModeUi);
         mBrowserControlsVisibilityManager.updateIsInAppMode(useAppModeUi);
-        mToolbarColorController.setUseTabThemeColor(useAppModeUi);
         mStatusBarColorProvider.setUseTabThemeColor(useAppModeUi);
         mCustomTabOrientationController.setCanControlOrientation(useAppModeUi);
     }
@@ -115,9 +118,9 @@ public class SharedActivityCoordinator implements InflationObserver {
         }
     }
 
-    private ImmersiveMode computeImmersiveMode(
+    private @Nullable ImmersiveMode computeImmersiveMode(
             BrowserServicesIntentDataProvider intentDataProvider) {
-        TrustedWebActivityDisplayMode displayMode = intentDataProvider.getTwaDisplayMode();
+        TrustedWebActivityDisplayMode displayMode = intentDataProvider.getProvidedTwaDisplayMode();
         return (displayMode instanceof ImmersiveMode) ? (ImmersiveMode) displayMode : null;
     }
 }

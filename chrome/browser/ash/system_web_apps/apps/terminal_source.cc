@@ -5,15 +5,15 @@
 #include "chrome/browser/ash/system_web_apps/apps/terminal_source.h"
 
 #include <optional>
+#include <string_view>
 
 #include "ash/constants/ash_features.h"
-#include "base/containers/flat_map.h"
+#include "base/containers/fixed_flat_map.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/no_destructor.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_util.h"
 #include "base/task/task_traits.h"
@@ -28,10 +28,10 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/channel_info.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "chromeos/ash/components/channel/channel_info.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/prefs/pref_service.h"
 #include "components/tabs/public/tab_interface.h"
@@ -96,7 +96,7 @@ void ReadFile(const base::FilePath downloads,
   bool result = false;
 
   // If chrome://flags#terminal-dev set on dev channel, check Downloads.
-  if (chrome::GetChannel() <= version_info::Channel::DEV &&
+  if (ash::GetChannel() <= version_info::Channel::DEV &&
       base::FeatureList::IsEnabled(ash::features::kTerminalDev)) {
     path = downloads.Append("crosh_builtin").Append(relative_path);
     result = ReadUncompressedOrGzip(path, &content);
@@ -109,15 +109,15 @@ void ReadFile(const base::FilePath downloads,
   // Terminal gets files from /usr/share/chromeos-assets/crosh-builtin.
   // In chromium tests, these files don't exist, so we serve dummy values.
   if (!result) {
-    static const base::NoDestructor<base::flat_map<std::string, std::string>>
-        kTestFiles({
+    static constexpr auto kTestFiles =
+        base::MakeFixedFlatMap<std::string_view, std::string_view>({
             {"html/crosh.html", ""},
             {"html/terminal.html", "<script src='/js/terminal.js'></script>"},
             {"js/terminal.js",
              "chrome.terminalPrivate.openVmshellProcess([], () => {})"},
         });
-    auto it = kTestFiles->find(relative_path);
-    if (it != kTestFiles->end()) {
+    auto it = kTestFiles.find(relative_path);
+    if (it != kTestFiles.end()) {
       content = it->second;
       result = true;
     }

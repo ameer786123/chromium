@@ -6,11 +6,14 @@
 
 #include <memory>
 
+#include "base/i18n/rtl.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #include "base/types/pass_key.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/tabs/organization/tab_declutter_controller.h"
 #include "chrome/browser/ui/tabs/organization/tab_organization_service.h"
@@ -21,11 +24,13 @@
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_controller.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_nudge_button.h"
+#include "chrome/browser/ui/webui/tab_search/tab_search.mojom.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/gfx/animation/tween.h"
+#include "ui/gfx/vector_icon_types.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/mouse_watcher.h"
 #include "ui/views/mouse_watcher_view_host.h"
@@ -102,13 +107,21 @@ void TabSearchContainer::TabOrganizationAnimationSession::Start() {
 }
 
 void TabSearchContainer::TabOrganizationAnimationSession::
-    ResetAnimationForTesting(double value) {
+    ResetExpansionAnimationForTesting(double value) {
+  expansion_animation_.Reset(value);
+}
+
+void TabSearchContainer::TabOrganizationAnimationSession::
+    ResetFlatEdgeAnimationForTesting(double value) {
+  flat_edge_animation_.Reset(value);
+}
+
+void TabSearchContainer::TabOrganizationAnimationSession::
+    ResetOpacityAnimationForTesting(double value) {
   if (opacity_animation_delay_timer_.IsRunning()) {
     opacity_animation_delay_timer_.FireNow();
   }
 
-  expansion_animation_.Reset(value);
-  flat_edge_animation_.Reset(value);
   opacity_animation_.Reset(value);
 }
 
@@ -292,8 +305,8 @@ TabSearchContainer::CreateAutoTabGroupButton(
       base::BindRepeating(&TabSearchContainer::OnAutoTabGroupButtonDismissed,
                           base::Unretained(this)),
       l10n_util::GetStringUTF16(IDS_TAB_ORGANIZE), kAutoTabGroupButtonElementId,
-      GetFlatEdge(false, tab_search_before_chips),
-      gfx::VectorIcon::EmptyIcon());
+      GetFlatEdge(false, tab_search_before_chips), gfx::VectorIcon::EmptyIcon(),
+      /*show_close_button=*/true);
   button->SetTooltipText(l10n_util::GetStringUTF16(IDS_TOOLTIP_TAB_ORGANIZE));
   button->GetViewAccessibility().SetName(
       l10n_util::GetStringUTF16(IDS_ACCNAME_TAB_ORGANIZE));
@@ -316,7 +329,7 @@ TabSearchContainer::CreateTabDeclutterButton(
           ? l10n_util::GetStringUTF16(IDS_TAB_DECLUTTER)
           : l10n_util::GetStringUTF16(IDS_TAB_DECLUTTER_NO_DEDUPE),
       kTabDeclutterButtonElementId, GetFlatEdge(false, tab_search_before_chips),
-      gfx::VectorIcon::EmptyIcon());
+      gfx::VectorIcon::EmptyIcon(), /*show_close_button=*/true);
 
   button->SetTooltipText(
       features::IsTabstripDedupeEnabled()

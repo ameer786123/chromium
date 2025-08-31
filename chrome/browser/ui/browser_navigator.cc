@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/ui/browser_navigator.h"
 
 #include <algorithm>
@@ -17,6 +12,7 @@
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
@@ -264,7 +260,7 @@ std::tuple<Browser*, int> GetBrowserAndTabForDisposition(
       const gfx::NativeWindow native_window =
           browser_window ? browser_window->GetNativeWindow()
                          : gfx::NativeWindow();
-      const display::Screen* const screen = display::Screen::GetScreen();
+      const display::Screen* const screen = display::Screen::Get();
       const display::Display display =
           browser_window ? screen->GetDisplayNearestWindow(native_window)
                          : screen->GetDisplayForNewWindows();
@@ -302,8 +298,8 @@ std::tuple<Browser*, int> GetBrowserAndTabForDisposition(
         browser_params.trusted_source = params.trusted_source;
         browser_params.initial_bounds = params.window_features.bounds;
         browser_params.initial_origin_specified = GetOriginSpecified(params);
-        browser_params.can_maximize = !params.is_tab_modal_popup;
-        browser_params.can_fullscreen = !params.is_tab_modal_popup;
+        browser_params.can_maximize = !params.is_tab_modal_popup_deprecated;
+        browser_params.can_fullscreen = !params.is_tab_modal_popup_deprecated;
         return {Browser::Create(browser_params), -1};
       }
       Browser::CreateParams browser_params =
@@ -475,13 +471,13 @@ class ScopedBrowserShower {
     if (params_->window_action == NavigateParams::SHOW_WINDOW_INACTIVE) {
       // TODO(crbug.com/40284685): investigate if SHOW_WINDOW_INACTIVE needs to
       // be supported for tab modal popups.
-      CHECK_EQ(params_->is_tab_modal_popup, false);
+      CHECK_EQ(params_->is_tab_modal_popup_deprecated, false);
       window->ShowInactive();
     } else if (params_->window_action == NavigateParams::SHOW_WINDOW) {
-      if (params_->is_tab_modal_popup) {
+      if (params_->is_tab_modal_popup_deprecated) {
         CHECK_EQ(params_->disposition, WindowOpenDisposition::NEW_POPUP);
         CHECK_NE(source_contents_, nullptr);
-        window->SetIsTabModalPopup(true);
+        window->SetIsTabModalPopupDeprecated(true);
         constrained_window::ShowModalDialog(window->GetNativeWindow(),
                                             source_contents_);
       } else {
@@ -582,7 +578,6 @@ bool IsHostAllowedInIncognito(const GURL& url) {
          host != chrome::kChromeUIHelpHost &&
          host != chrome::kChromeUIHistoryHost &&
          host != chrome::kChromeUIExtensionsHost &&
-         host != chrome::kChromeUIBookmarksHost &&
          host != password_manager::kChromeUIPasswordManagerHost;
 }
 
@@ -600,7 +595,7 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
   // If the created window is a partitioned popin, a valid source exists, and
   // the disposition is NEW_POPUP then the resulting popup should be tab-modal.
   // See: https://explainers-by-googlers.github.io/partitioned-popins/
-  params->is_tab_modal_popup |=
+  params->is_tab_modal_popup_deprecated |=
       params->window_features.is_partitioned_popin && params->source_contents &&
       params->disposition == WindowOpenDisposition::NEW_POPUP;
 
@@ -618,6 +613,10 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
 
   if (params->initiating_profile->ShutdownStarted()) {
     // Don't navigate when the profile is shutting down.
+    return nullptr;
+  }
+
+  if (params->browser && params->browser->IsBrowserClosing()) {
     return nullptr;
   }
 
@@ -664,14 +663,6 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
     // the navigation should appear to be cancelled.
     return nullptr;
   }
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
-#if !BUILDFLAG(IS_ANDROID)
-  // Force isolated PWAs to open in an app window.
-  params->force_open_pwa_window =
-      content::SiteIsolationPolicy::ShouldUrlUseApplicationIsolationLevel(
-          params->initiating_profile, params->url);
-  params->open_pwa_window_if_possible |= params->force_open_pwa_window;
 #endif
 
   if (!AdjustNavigateParamsForURL(params)) {
@@ -733,20 +724,24 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
 
   // TODO(crbug.com/364657540): Revisit integration with web_application system
   // later if needed.
-  int singleton_index;
+  int singleton_index = -1;
 
 #if !BUILDFLAG(IS_ANDROID)
   std::unique_ptr<web_app::NavigationCapturingProcess> app_navigation =
       web_app::NavigationCapturingProcess::MaybeHandleAppNavigation(*params);
-  std::optional<std::tuple<Browser*, int>> app_browser_tab_override;
-  if (app_navigation) {
-    app_browser_tab_override =
-        app_navigation->GetInitialBrowserAndTabOverrideForNavigation(*params);
+
+  std::optional<web_app::NavigationCapturingOverride> override_params =
+      app_navigation
+          ? app_navigation->GetInitialNavigationParamsOverride(*params)
+          : std::nullopt;
+  if (override_params) {
+    params->browser = override_params->browser();
+    singleton_index = override_params->tab_index().value_or(-1);
+  } else {
+    std::tie(params->browser, singleton_index) =
+        GetBrowserAndTabForDisposition(*params);
   }
-  std::tie(params->browser, singleton_index) =
-      app_browser_tab_override.has_value()
-          ? *app_browser_tab_override
-          : GetBrowserAndTabForDisposition(*params);
+
 #else  // !BUILDFLAG(IS_ANDROID)
   std::tie(params->browser, singleton_index) =
       GetBrowserAndTabForDisposition(*params);
@@ -780,7 +775,8 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
     ShowSingletonTabOverwritingNTP(params);
     return nullptr;
   }
-  if (params->force_open_pwa_window) {
+  if (content::SiteIsolationPolicy::ShouldUrlUseApplicationIsolationLevel(
+          params->initiating_profile, params->url)) {
     CHECK(web_app::AppBrowserController::IsWebApp(params->browser));
   }
 #if BUILDFLAG(IS_CHROMEOS)
@@ -820,7 +816,7 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
 
   // Make sure the Browser is shown if params call for it.
   ScopedBrowserShower shower(params, &contents_to_navigate_or_insert);
-  if (params->is_tab_modal_popup) {
+  if (params->is_tab_modal_popup_deprecated) {
     shower.set_source_contents(params->source_contents);
   }
 
@@ -884,7 +880,8 @@ base::WeakPtr<content::NavigationHandle> Navigate(NavigateParams* params) {
 
     // Try to handle non-navigational URLs that popup dialogs and such, these
     // should not actually navigate.
-    if (!HandleNonNavigationAboutURL(params->url)) {
+    if (!HandleNonNavigationAboutURL(
+            params->url, contents_to_navigate_or_insert->GetBrowserContext())) {
       // Perform the actual navigation, tracking whether it came from the
       // renderer.
       navigation_handle = LoadURLInContents(contents_to_navigate_or_insert,

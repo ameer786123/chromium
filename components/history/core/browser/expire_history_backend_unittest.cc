@@ -2,21 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/history/core/browser/expire_history_backend.h"
 
 #include <stddef.h>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -53,7 +49,7 @@ namespace history {
 
 namespace {
 
-const std::string kTestAppId = "org.chromium.dino";
+constexpr char kTestAppId[] = "org.chromium.dino";
 
 base::Time PretendNow() {
   static constexpr base::Time::Exploded kReferenceTime = {.year = 2015,
@@ -89,8 +85,8 @@ class ExpireHistoryTest : public testing::Test, public HistoryBackendNotifier {
 
  protected:
   // Called by individual tests when they want data populated.
-  void AddExampleData(URLID url_ids[3],
-                      base::Time visit_times[4],
+  void AddExampleData(base::span<URLID, 3> url_ids,
+                      base::span<base::Time, 4> visit_times,
                       bool set_app_id = false);
 
   // Returns true if the given favicon has an entry in the DB.
@@ -229,8 +225,8 @@ class ExpireHistoryTest : public testing::Test, public HistoryBackendNotifier {
 // The IDs of the added URLs, and the times of the four added visits will be
 // added to the given arrays. If set_app_id is true, set the app_id to the
 // 2nd/3rd row for testing.
-void ExpireHistoryTest::AddExampleData(URLID url_ids[3],
-                                       base::Time visit_times[4],
+void ExpireHistoryTest::AddExampleData(base::span<URLID, 3> url_ids,
+                                       base::span<base::Time, 4> visit_times,
                                        bool set_app_id) {
   if (!main_db_) {
     return;
@@ -602,13 +598,13 @@ TEST_F(ExpireHistoryTest, DeleteStarredUnvisitedURL) {
 // Deletes multiple URLs at once.  The favicon for the third one but
 // not the first two should be deleted.
 TEST_F(ExpireHistoryTest, DeleteURLs) {
-  URLID url_ids[3];
+  std::array<URLID, 3> url_ids;
   base::Time visit_times[4];
   AddExampleData(url_ids, visit_times);
 
   // Verify things are the way we expect with URL rows, favicons.
-  URLRow rows[3];
-  favicon_base::FaviconID favicon_ids[3];
+  std::array<URLRow, 3> rows;
+  std::array<favicon_base::FaviconID, 3> favicon_ids;
   std::vector<GURL> urls;
   // Push back a bogus URL (which shouldn't change anything).
   urls.push_back(GURL());

@@ -12,11 +12,9 @@ import static org.junit.Assert.assertTrue;
 
 import static org.chromium.ui.test.util.ViewUtils.onViewWaiting;
 
-import android.os.Build;
 import android.os.Environment;
 import android.view.View;
 
-import androidx.test.core.app.ApplicationProvider;
 import androidx.test.filters.LargeTest;
 import androidx.test.platform.app.InstrumentationRegistry;
 
@@ -33,7 +31,7 @@ import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
 import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.DisableIf;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.chrome.browser.customtabs.IncognitoCustomTabActivityTestRule;
 import org.chromium.chrome.browser.download.DownloadItem;
 import org.chromium.chrome.browser.download.DownloadManagerService;
@@ -46,8 +44,9 @@ import org.chromium.chrome.browser.profiles.ProfileKey;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.components.offline_items_collection.ContentId;
 import org.chromium.components.offline_items_collection.OfflineContentProvider;
 import org.chromium.components.offline_items_collection.OfflineItem;
@@ -70,13 +69,10 @@ import java.util.concurrent.TimeoutException;
  */
 @RunWith(ParameterizedRunner.class)
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@CommandLineFlags.Add({
-    ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-    ChromeSwitches.DISABLE_ALL_IPH
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, ChromeSwitches.DISABLE_ALL_IPH})
 public class IncognitoDownloadLeakageTest {
     private String mDownloadTestPage;
-    private final String mDownloadedFileName = "test.gzip";
+    private static final String DOWNLOADED_FILE_NAME = "test.gzip";
 
     private static final File DOWNLOAD_DIRECTORY =
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
@@ -84,21 +80,21 @@ public class IncognitoDownloadLeakageTest {
             "/chrome/test/data/android/download/get.html";
 
     private EmbeddedTestServer mTestServer;
-    private CallbackHelper mHttpDownloadFinishedCallback = new CallbackHelper();
-    private CallbackHelper mRetrieveDownloadsCallback = new CallbackHelper();
+    private final CallbackHelper mHttpDownloadFinishedCallback = new CallbackHelper();
+    private final CallbackHelper mRetrieveDownloadsCallback = new CallbackHelper();
 
     private List<DownloadItem> mOffTheRecordDownloadItems;
     private List<DownloadItem> mRegularDownloadItems;
 
-    private DownloadManagerService.DownloadObserver mTestDownloadManagerServiceObserver =
+    private final DownloadManagerService.DownloadObserver mTestDownloadManagerServiceObserver =
             new DownloadManagerService.DownloadObserver() {
                 @Override
                 public void onAllDownloadsRetrieved(
                         List<DownloadItem> list, ProfileKey profileKey) {
                     if (profileKey.isOffTheRecord()) {
-                        mOffTheRecordDownloadItems = new ArrayList<DownloadItem>(list);
+                        mOffTheRecordDownloadItems = new ArrayList<>(list);
                     } else {
-                        mRegularDownloadItems = new ArrayList<DownloadItem>(list);
+                        mRegularDownloadItems = new ArrayList<>(list);
                     }
                     mRetrieveDownloadsCallback.notifyCalled();
                 }
@@ -116,7 +112,7 @@ public class IncognitoDownloadLeakageTest {
                 public void onAddOrReplaceDownloadSharedPreferenceEntry(ContentId id) {}
             };
 
-    private OfflineContentProvider.Observer mTestDownloadBackendObserver =
+    private final OfflineContentProvider.Observer mTestDownloadBackendObserver =
             new OfflineContentProvider.Observer() {
                 @Override
                 public void onItemsAdded(List<OfflineItem> items) {}
@@ -133,8 +129,8 @@ public class IncognitoDownloadLeakageTest {
             };
 
     @Rule
-    public ChromeTabbedActivityTestRule mChromeActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mChromeActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule
     public IncognitoCustomTabActivityTestRule mCustomTabActivityTestRule =
@@ -142,9 +138,7 @@ public class IncognitoDownloadLeakageTest {
 
     @Before
     public void setUp() throws Exception {
-        mTestServer =
-                EmbeddedTestServer.createAndStartServer(
-                        ApplicationProvider.getApplicationContext());
+        mTestServer = mChromeActivityTestRule.getTestServer();
         mDownloadTestPage = mTestServer.getURL(DOWNLOAD_TEST_PAGE_PATH);
 
         // Ensuring native is initialized, as code below requires it.
@@ -167,12 +161,12 @@ public class IncognitoDownloadLeakageTest {
                                     DownloadPromptStatus.DONT_SHOW);
                 });
 
-        deleteFilesInDownloadDirectory(mDownloadedFileName);
+        deleteFilesInDownloadDirectory(DOWNLOADED_FILE_NAME);
     }
 
     @After
     public void tearDown() {
-        deleteFilesInDownloadDirectory(mDownloadedFileName);
+        deleteFilesInDownloadDirectory(DOWNLOADED_FILE_NAME);
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         DownloadManagerService.getDownloadManagerService()
@@ -217,7 +211,8 @@ public class IncognitoDownloadLeakageTest {
     @Test
     @LargeTest
     @UseMethodParameter(IncognitoDataTestUtils.TestParams.IncognitoToRegular.class)
-    public void testIncognitoDowloadEntriesNotVisibleInRegular(
+    @DisabledTest(message = "crbug.com/422225234")
+    public void testIncognitoDownloadEntriesNotVisibleInRegular(
             String incognitoActivityType, String regularActivityType) throws Exception {
         IncognitoDataTestUtils.ActivityType incognitoActivity =
                 IncognitoDataTestUtils.ActivityType.valueOf(incognitoActivityType);
@@ -232,7 +227,7 @@ public class IncognitoDownloadLeakageTest {
         startDownload(incognitoTab);
 
         // Check the file is downloaded
-        assertTrue(hasFileDownloaded(mDownloadedFileName));
+        assertTrue(hasFileDownloaded(DOWNLOADED_FILE_NAME));
 
         // Retrieve downloads from the incognito DownloadService.
         ThreadUtils.runOnUiThreadBlocking(
@@ -262,10 +257,8 @@ public class IncognitoDownloadLeakageTest {
     @Test
     @LargeTest
     @UseMethodParameter(IncognitoDataTestUtils.TestParams.IncognitoToIncognito.class)
-    @DisableIf.Build(
-            sdk_is_less_than = Build.VERSION_CODES.S,
-            message = "crbug.com/391749002, crbug.com/40935094")
-    public void testIncognitoDowloadEntriesNotVisibleInAnotherIncognito(
+    @DisabledTest(message = "crbug.com/391749002, crbug.com/40935094")
+    public void testIncognitoDownloadEntriesNotVisibleInAnotherIncognito(
             String incognitoActivityType1, String incognitoActivityType2) throws Exception {
         IncognitoDataTestUtils.ActivityType incognitoActivity1 =
                 IncognitoDataTestUtils.ActivityType.valueOf(incognitoActivityType1);
@@ -281,7 +274,7 @@ public class IncognitoDownloadLeakageTest {
         startDownload(incognitoTab1);
 
         // Check the file is downloaded
-        assertTrue(hasFileDownloaded(mDownloadedFileName));
+        assertTrue(hasFileDownloaded(DOWNLOADED_FILE_NAME));
 
         // Retrieve downloads from the incognito DownloadService.
         ThreadUtils.runOnUiThreadBlocking(

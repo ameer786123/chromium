@@ -130,12 +130,14 @@ void SecurityInterstitialTabHelper::BindInterstitialCommands(
         security_interstitials::mojom::InterstitialCommands> receiver,
     content::RenderFrameHost* rfh) {
   auto* web_contents = content::WebContents::FromRenderFrameHost(rfh);
-  if (!web_contents)
+  if (!web_contents) {
     return;
+  }
   auto* tab_helper =
       SecurityInterstitialTabHelper::FromWebContents(web_contents);
-  if (!tab_helper)
+  if (!tab_helper) {
     return;
+  }
   tab_helper->receivers_.Bind(rfh, std::move(receiver));
 }
 
@@ -317,6 +319,38 @@ void SecurityInterstitialTabHelper::ReportPhishingError() {
 void SecurityInterstitialTabHelper::OpenEnhancedProtectionSettings() {
   HandleCommand(security_interstitials::SecurityInterstitialCommand::
                     CMD_OPEN_ENHANCED_PROTECTION_SETTINGS);
+}
+
+#if BUILDFLAG(IS_ANDROID)
+void SecurityInterstitialTabHelper::OpenAndroidAdvancedProtectionSettings() {
+  HandleCommand(security_interstitials::SecurityInterstitialCommand::
+                    CMD_OPEN_ANDROID_ADVANCED_PROTECTION_SETTINGS);
+}
+#endif  // BUILDFLAG(IS_ANDROID)
+
+void SecurityInterstitialTabHelper::OpenHelpCenterInNewTab() {
+  HandleCommand(security_interstitials::SecurityInterstitialCommand::
+                    CMD_OPEN_HELP_CENTER_IN_NEW_TAB);
+}
+
+void SecurityInterstitialTabHelper::OpenDiagnosticInNewTab() {
+  HandleCommand(security_interstitials::SecurityInterstitialCommand::
+                    CMD_OPEN_DIAGNOSTIC_IN_NEW_TAB);
+}
+
+void SecurityInterstitialTabHelper::OpenReportingPrivacyInNewTab() {
+  HandleCommand(security_interstitials::SecurityInterstitialCommand::
+                    CMD_OPEN_REPORTING_PRIVACY_IN_NEW_TAB);
+}
+
+void SecurityInterstitialTabHelper::OpenWhitepaperInNewTab() {
+  HandleCommand(security_interstitials::SecurityInterstitialCommand::
+                    CMD_OPEN_WHITEPAPER_IN_NEW_TAB);
+}
+
+void SecurityInterstitialTabHelper::ReportPhishingErrorInNewTab() {
+  HandleCommand(security_interstitials::SecurityInterstitialCommand::
+                    CMD_REPORT_PHISHING_ERROR_IN_NEW_TAB);
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(SecurityInterstitialTabHelper);

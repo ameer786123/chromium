@@ -20,7 +20,6 @@ import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
-import android.transition.Transition;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.View.OnLongClickListener;
@@ -63,7 +62,6 @@ public class OptionalButtonCoordinatorTest {
     @Mock private BooleanSupplier mMockIsAnimationAllowedDelegate;
     @Mock private OptionalButtonView mMockOptionalButtonView;
     @Mock private UserEducationHelper mMockUserEducationHelper;
-    @Mock private Callback<Transition> mMockBeginDelayedTransition;
     @Mock private Tracker mMockTracker;
 
     @Captor ArgumentCaptor<Callback<Integer>> mCallbackArgumentCaptor;
@@ -183,7 +181,7 @@ public class OptionalButtonCoordinatorTest {
         View mockView = mock(View.class);
         when(mMockOptionalButtonView.getButtonView()).thenReturn(mockView);
 
-        assertEquals(mockView, mOptionalButtonCoordinator.getButtonViewForTesting());
+        assertEquals(mockView, mOptionalButtonCoordinator.getButtonView());
 
         verify(mMockOptionalButtonView).getButtonView();
     }
@@ -210,7 +208,6 @@ public class OptionalButtonCoordinatorTest {
                         AdaptiveToolbarButtonVariant.UNKNOWN,
                         /* actionChipLabelResId= */ 0,
                         /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false,
                         /* hasErrorBadge= */ true);
         ButtonDataImpl buttonData = new ButtonDataImpl();
         buttonData.setButtonSpec(buttonSpec);
@@ -238,8 +235,7 @@ public class OptionalButtonCoordinatorTest {
                         mockIphCommandBuilder,
                         /* isEnabled= */ isEnabled,
                         AdaptiveToolbarButtonVariant.UNKNOWN,
-                        /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false);
+                        /* tooltipTextResId= */ Resources.ID_NULL);
 
         View backgroundView = Mockito.mock(View.class);
         doReturn(View.VISIBLE).when(backgroundView).getVisibility();
@@ -276,8 +272,7 @@ public class OptionalButtonCoordinatorTest {
                         mockIphCommandBuilder,
                         /* isEnabled= */ isEnabled,
                         AdaptiveToolbarButtonVariant.UNKNOWN,
-                        /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false);
+                        /* tooltipTextResId= */ Resources.ID_NULL);
 
         View backgroundView = Mockito.mock(View.class);
         doReturn(View.GONE).when(backgroundView).getVisibility();
@@ -315,8 +310,7 @@ public class OptionalButtonCoordinatorTest {
                         mockIphCommandBuilder,
                         /* isEnabled= */ isEnabled,
                         AdaptiveToolbarButtonVariant.UNKNOWN,
-                        /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false);
+                        /* tooltipTextResId= */ Resources.ID_NULL);
 
         ArgumentCaptor<Runnable> onShowCallbackCaptor = ArgumentCaptor.forClass(Runnable.class);
         ArgumentCaptor<Runnable> onDismissCallbackCaptor = ArgumentCaptor.forClass(Runnable.class);
@@ -361,8 +355,7 @@ public class OptionalButtonCoordinatorTest {
                         mockIphCommandBuilder,
                         /* isEnabled= */ isEnabled,
                         AdaptiveToolbarButtonVariant.TEST_BUTTON,
-                        /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false);
+                        /* tooltipTextResId= */ Resources.ID_NULL);
 
         mOptionalButtonCoordinator.updateButton(buttonData, /* isIncognito= */ false);
 
@@ -402,8 +395,7 @@ public class OptionalButtonCoordinatorTest {
                         mockIphCommandBuilder,
                         /* isEnabled= */ isEnabled,
                         AdaptiveToolbarButtonVariant.TEST_BUTTON,
-                        /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false);
+                        /* tooltipTextResId= */ Resources.ID_NULL);
 
         mOptionalButtonCoordinator.updateButton(buttonData, /* isIncognito= */ false);
 
@@ -443,8 +435,7 @@ public class OptionalButtonCoordinatorTest {
                         mockIphCommandBuilder,
                         /* isEnabled= */ isEnabled,
                         AdaptiveToolbarButtonVariant.TEST_BUTTON,
-                        /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false);
+                        /* tooltipTextResId= */ Resources.ID_NULL);
 
         mOptionalButtonCoordinator.updateButton(buttonData, /* isIncognito= */ false);
 
@@ -471,8 +462,7 @@ public class OptionalButtonCoordinatorTest {
                         /* iphCommandBuilder= */ null,
                         /* isEnabled= */ true,
                         AdaptiveToolbarButtonVariant.UNKNOWN,
-                        /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false);
+                        /* tooltipTextResId= */ Resources.ID_NULL);
 
         // Call update button with an enabled button.
         mOptionalButtonCoordinator.updateButton(buttonData, /* isIncognito= */ false);
@@ -483,7 +473,7 @@ public class OptionalButtonCoordinatorTest {
         mOptionalButtonCoordinator.updateButton(buttonData, /* isIncognito= */ false);
 
         // Button should be disabled.
-        verify(mockButtonView).setEnabled(false);
+        verify(mMockOptionalButtonView).setEnabled(false);
         verify(mMockOptionalButtonView, times(2)).updateButtonWithAnimation(buttonData);
     }
 
@@ -513,7 +503,6 @@ public class OptionalButtonCoordinatorTest {
                         AdaptiveToolbarButtonVariant.UNKNOWN,
                         /* actionChipLabelResId= */ 0,
                         /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showBackgroundHighlight= */ false,
                         /* hasErrorBadge= */ false);
         ButtonDataImpl buttonData = new ButtonDataImpl();
         buttonData.setButtonSpec(buttonSpec);

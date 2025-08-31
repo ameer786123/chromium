@@ -92,6 +92,7 @@ public abstract class TabCreator {
      * Creates a Tab to host the given WebContents.
      *
      * @param parent The parent Tab, if present.
+     * @param shouldPin Whether the newly created tab should be pinned.
      * @param webContents The web contents to create a Tab around.
      * @param type The TabLaunchType describing how this Tab was created.
      * @param url URL to show in the Tab. (Needed only for asynchronous tab creation.)
@@ -101,8 +102,9 @@ public abstract class TabCreator {
      *     the user in a new window).
      * @return The new Tab or null if a Tab was not created successfully.
      */
-    public abstract Tab createTabWithWebContents(
+    public abstract @Nullable Tab createTabWithWebContents(
             @Nullable Tab parent,
+            boolean shouldPin,
             WebContents webContents,
             @TabLaunchType int type,
             GURL url,
@@ -116,9 +118,32 @@ public abstract class TabCreator {
      * @param type The TabLaunchType describing how this Tab was created.
      * @return The new Tab or null if a Tab was not created successfully.
      */
-    public final Tab createTabWithWebContents(
-            Tab parent, WebContents webContents, @TabLaunchType int type) {
+    public final @Nullable Tab createTabWithWebContents(
+            @Nullable Tab parent, WebContents webContents, @TabLaunchType int type) {
         return createTabWithWebContents(parent, webContents, type, webContents.getVisibleUrl());
+    }
+
+    /**
+     * Creates a Tab to host the given WebContents and adds it to the TabModel.
+     *
+     * @param parent The parent Tab, if present.
+     * @param shouldPin Whether the newly created tab should be pinned.
+     * @param webContents The web contents to create a Tab around.
+     * @param type The TabLaunchType describing how this Tab was created.
+     * @return The new Tab or null if a Tab was not created successfully.
+     */
+    public final @Nullable Tab createTabWithWebContents(
+            @Nullable Tab parent,
+            boolean shouldPin,
+            WebContents webContents,
+            @TabLaunchType int type) {
+        return createTabWithWebContents(
+                parent,
+                shouldPin,
+                webContents,
+                type,
+                webContents.getVisibleUrl(),
+                /* addTabToModel= */ true);
     }
 
     /**
@@ -130,10 +155,21 @@ public abstract class TabCreator {
      * @param url URL to show in the Tab. (Needed only for asynchronous tab creation.)
      * @return The new Tab or null if a Tab was not created successfully.
      */
-    public final Tab createTabWithWebContents(
+    public final @Nullable Tab createTabWithWebContents(
             @Nullable Tab parent, WebContents webContents, @TabLaunchType int type, GURL url) {
-        return createTabWithWebContents(parent, webContents, type, url, true);
+        return createTabWithWebContents(
+                parent, /* shouldPin= */ false, webContents, type, url, /* addTabToModel= */ true);
     }
+
+    /**
+     * Creates a {@link Tab} with the same history stack as {@param parent}.
+     *
+     * @param parent The tab to copy.
+     * @param type The {@code TabLaunchType} (should be {@code FROM_HISTORY_NAVIGATION_FOREGROUND}
+     *     or {@code FROM_HISTORY_NAVIGATION_BACKGROUND}.
+     * @return The {@link Tab} which was created.
+     */
+    public @Nullable abstract Tab createTabWithHistory(Tab parent, @TabLaunchType int type);
 
     /** Creates a new tab and loads the NTP. */
     public final void launchNtp() {
@@ -151,7 +187,7 @@ public abstract class TabCreator {
     }
 
     /** Semi-tag interface to denote dependency and provide a setter for {@link TabModel}. */
-    interface NeedsTabModel {
+    public interface NeedsTabModel {
         void setTabModel(TabModel tabModel);
     }
 
@@ -159,7 +195,7 @@ public abstract class TabCreator {
      * Semi-tag interface to denote dependency and provide a setter for {@link
      * TabModelOrderController}.
      */
-    interface NeedsTabModelOrderController {
+    public interface NeedsTabModelOrderController {
         void setTabModelOrderController(TabModelOrderController tabModelOrderController);
     }
 }

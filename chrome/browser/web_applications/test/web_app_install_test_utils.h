@@ -10,14 +10,21 @@
 #include <vector>
 
 #include "build/build_config.h"
+#include "chrome/browser/web_applications/jobs/manifest_to_web_app_install_info_job.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
+#include "chrome/browser/web_applications/web_app_install_params.h"
 #include "chrome/common/buildflags.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
 #include "components/webapps/browser/uninstall_result_code.h"
 #include "components/webapps/common/web_app_id.h"
+#include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
 
 class GURL;
 class Profile;
+
+namespace content {
+class WebContents;
+}  // namespace content
 
 namespace web_app {
 
@@ -77,6 +84,22 @@ void UninstallWebApp(Profile* profile,
 // Synchronously uninstall all web apps for the given profile. May be used in
 // unit tests and browser tests. Returns `false` if there was a failure.
 bool UninstallAllWebApps(Profile* profile);
+
+// Fetches the manifest for the given web contents and installs the app that
+// exists there. Unit tests should use this in combination with the
+// FakeWebContentsManager to set the manifest & page state for the current web
+// contents page.
+webapps::AppId InstallForWebContents(
+    Profile* profile,
+    content::WebContents* web_contents,
+    webapps::WebappInstallSource install_surface);
+
+// Parses the manifest to create a `WebAppInstallInfo` instance out of it.
+std::unique_ptr<WebAppInstallInfo> GetInstallInfoForCurrentManifest(
+    base::WeakPtr<content::WebContents> web_contents,
+    const blink::mojom::Manifest& manifest,
+    WebAppInstallInfoConstructOptions construct_options =
+        WebAppInstallInfoConstructOptions{});
 
 }  // namespace test
 }  // namespace web_app

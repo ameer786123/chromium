@@ -11,9 +11,10 @@ import android.view.View;
 import android.view.ViewGroup.LayoutParams;
 import android.widget.ProgressBar;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.signin.services.DisplayableProfileData;
 import org.chromium.chrome.browser.ui.signin.R;
 import org.chromium.chrome.browser.ui.signin.SigninUtils;
@@ -22,6 +23,7 @@ import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Stateless FullscreenSignin view binder. */
+@NullMarked
 class FullscreenSigninViewBinder {
     static void bind(PropertyModel model, FullscreenSigninView view, PropertyKey propertyKey) {
         if (propertyKey == FullscreenSigninProperties.ON_CONTINUE_AS_CLICKED) {
@@ -66,6 +68,7 @@ class FullscreenSigninViewBinder {
                 initialLoadProgressSpinner.setVisibility(View.GONE);
             }
             updateBottomGroupVisibility(view, model);
+            updateBrowserManagedHeaderView(view, model);
         } else if (propertyKey == FullscreenSigninProperties.SHOW_ENTERPRISE_MANAGEMENT_NOTICE) {
             updateBrowserManagedHeaderView(view, model);
         } else if (propertyKey == FullscreenSigninProperties.IS_SIGNIN_SUPPORTED) {
@@ -124,6 +127,11 @@ class FullscreenSigninViewBinder {
         // entangled nature of IS_SELECTED_ACCOUNT_SUPERVISED and SHOW_ENTERPRISE_MANAGEMENT_NOTICE
         // they are both handled in this function as one of these properties will get updated before
         // the other.
+
+        // Only display the managed header after all other elements have loaded
+        if (model.get(FullscreenSigninProperties.SHOW_INITIAL_LOAD_PROGRESS_SPINNER)) {
+            return;
+        }
         if (model.get(FullscreenSigninProperties.IS_SELECTED_ACCOUNT_SUPERVISED)) {
             view.getBrowserManagedHeaderView().setVisibility(View.VISIBLE);
             view.getPrivacyDisclaimer().setText(R.string.fre_browser_managed_by_parent);

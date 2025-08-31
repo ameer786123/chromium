@@ -14,6 +14,7 @@
 #include "base/i18n/timezone.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
@@ -45,7 +46,7 @@
 #include "ui/chromeos/devicetype_utils.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_window_types.h"
 
 using sync_pb::UserConsentTypes;
 
@@ -714,8 +715,9 @@ void ArcSupportHost::OnMessage(const base::Value::Dict& message) {
     auto* identity_manager = IdentityManagerFactory::GetForProfile(profile_);
     // This class doesn't care about browser sync consent.
     DCHECK(identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
-    CoreAccountId account_id =
-        identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin);
+    GaiaId gaia_id =
+        identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
+            .gaia;
     bool is_child = user_manager::UserManager::Get()->IsLoggedInAsChildUser();
 
     // Record acceptance of ToS if it was shown to the user, otherwise simply
@@ -732,7 +734,7 @@ void ArcSupportHost::OnMessage(const base::Value::Dict& message) {
           base::SHA1HashString(*tos_content));
     }
     ConsentAuditorFactory::GetForProfile(profile_)->RecordArcPlayConsent(
-        account_id, play_consent);
+        gaia_id, play_consent);
 
     // If the user - not policy - controls Backup and Restore setting, record
     // whether consent was given.
@@ -748,7 +750,7 @@ void ArcSupportHost::OnMessage(const base::Value::Dict& message) {
                                                 : UserConsentTypes::NOT_GIVEN);
 
       ConsentAuditorFactory::GetForProfile(profile_)
-          ->RecordArcBackupAndRestoreConsent(account_id,
+          ->RecordArcBackupAndRestoreConsent(gaia_id,
                                              backup_and_restore_consent);
     }
 
@@ -774,7 +776,7 @@ void ArcSupportHost::OnMessage(const base::Value::Dict& message) {
                                               ? UserConsentTypes::GIVEN
                                               : UserConsentTypes::NOT_GIVEN);
       ConsentAuditorFactory::GetForProfile(profile_)
-          ->RecordArcGoogleLocationServiceConsent(account_id,
+          ->RecordArcGoogleLocationServiceConsent(gaia_id,
                                                   location_service_consent);
     }
 
@@ -818,7 +820,7 @@ void ArcSupportHost::OnMessage(const base::Value::Dict& message) {
   } else if (*event == kEventOnOpenPrivacySettingsPageClicked) {
     chrome::ShowSettingsSubPageForProfile(profile_, chrome::kPrivacySubPage);
   } else if (*event == kEventRequestWindowBounds) {
-    SetWindowBound(display::Screen::GetScreen()->GetDisplayForNewWindows());
+    SetWindowBound(display::Screen::Get()->GetDisplayForNewWindows());
   } else {
     NOTREACHED() << "Unknown message: " << *event;
   }

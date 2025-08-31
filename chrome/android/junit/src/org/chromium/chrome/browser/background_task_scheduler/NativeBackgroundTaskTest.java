@@ -81,6 +81,8 @@ public class NativeBackgroundTaskTest {
                 @LibraryProcessType int libraryProcessType,
                 boolean startGpuProcess,
                 boolean startMinimalBrowser,
+                boolean singleProcess,
+                boolean scheduleFlushStartupTasks,
                 final StartupCallback callback) {}
 
         @Override
@@ -117,6 +119,16 @@ public class NativeBackgroundTaskTest {
             return 0 /*ServicificationStartupUma.ServicificationStartup.CHROME_COLD*/;
         }
 
+        @Override
+        public long getContentStartDuration() {
+            return 0L;
+        }
+
+        @Override
+        public long getStartupTasksLongestBlockingDuration() {
+            return 0L;
+        }
+
         public void setIsStartupSuccessfullyCompleted(boolean flag) {
             mStartupSucceeded = flag;
         }
@@ -138,7 +150,7 @@ public class NativeBackgroundTaskTest {
     private static class TaskFinishedCallback implements BackgroundTask.TaskFinishedCallback {
         private boolean mWasCalled;
         private boolean mNeedsReschedule;
-        private CountDownLatch mCallbackLatch;
+        private final CountDownLatch mCallbackLatch;
 
         TaskFinishedCallback() {
             mCallbackLatch = new CountDownLatch(1);
@@ -171,10 +183,10 @@ public class NativeBackgroundTaskTest {
         @StartBeforeNativeResult private int mStartBeforeNativeResult;
         private boolean mWasOnStartTaskWithNativeCalled;
         private boolean mNeedsReschedulingAfterStop;
-        private CountDownLatch mStartWithNativeLatch;
+        private final CountDownLatch mStartWithNativeLatch;
         private boolean mWasOnStopTaskWithNativeCalled;
         private boolean mWasOnStopTaskBeforeNativeLoadedCalled;
-        private BrowserStartupController mBrowserStartupController;
+        private final BrowserStartupController mBrowserStartupController;
 
         public TestNativeBackgroundTask(BrowserStartupController controller) {
             super();
@@ -266,7 +278,7 @@ public class NativeBackgroundTaskTest {
         switch (setup) {
             case SUCCESS:
                 doAnswer(
-                                new Answer<Void>() {
+                                new Answer<>() {
                                     @Override
                                     public Void answer(InvocationOnMock invocation) {
                                         mBrowserParts.getValue().finishNativeInitialization();
@@ -278,7 +290,7 @@ public class NativeBackgroundTaskTest {
                 break;
             case FAILURE:
                 doAnswer(
-                                new Answer<Void>() {
+                                new Answer<>() {
                                     @Override
                                     public Void answer(InvocationOnMock invocation) {
                                         mBrowserParts.getValue().onStartupFailure(null);

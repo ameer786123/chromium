@@ -21,14 +21,14 @@ import androidx.annotation.LayoutRes;
 import androidx.annotation.StyleRes;
 import androidx.appcompat.widget.Toolbar;
 
-import org.chromium.base.BuildInfo;
+import org.chromium.base.DeviceInfo;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
-import org.chromium.components.browser_ui.edge_to_edge.layout.EdgeToEdgeLayoutCoordinator;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.util.AutomotiveUtils;
-import org.chromium.ui.InsetObserver;
 import org.chromium.ui.base.ImmutableWeakReference;
+import org.chromium.ui.edge_to_edge.layout.EdgeToEdgeLayoutCoordinator;
+import org.chromium.ui.insets.InsetObserver;
 
 /**
  * Dialog class in Chrome
@@ -39,11 +39,11 @@ import org.chromium.ui.base.ImmutableWeakReference;
  */
 @NullMarked
 public class ChromeDialog extends ComponentDialog {
-    private boolean mIsFullScreen;
-    private Activity mActivity;
+    private final boolean mIsFullScreen;
+    private final Activity mActivity;
     @Nullable private InsetObserver mInsetObserver;
     @Nullable private EdgeToEdgeLayoutCoordinator mEdgeToEdgeLayoutCoordinator;
-    private boolean mShouldPadForWindowInsets;
+    private final boolean mShouldPadForWindowInsets;
 
     /**
      * Constructs the dialog class in Chrome.
@@ -66,7 +66,10 @@ public class ChromeDialog extends ComponentDialog {
         if (mShouldPadForWindowInsets && getWindow() != null) {
             mInsetObserver =
                     new InsetObserver(
-                            new ImmutableWeakReference<>(getWindow().getDecorView().getRootView()));
+                            new ImmutableWeakReference<>(getWindow().getDecorView().getRootView()),
+                            // Keyboard overlay mode is enabled by default and is currently only
+                            // relevant to the DeferredImeWindowInsetApplicationCallback.
+                            /* enableKeyboardOverlayMode= */ true);
         }
         // Currently, only the EdgeToEdgeLayoutCoordinator is listening to this InsetObserver,
         // and that class can handle cases with a null Window / null InsetObserver. Before
@@ -78,7 +81,7 @@ public class ChromeDialog extends ComponentDialog {
 
     @Override
     public void setContentView(@LayoutRes int layoutResID) {
-        if (BuildInfo.getInstance().isAutomotive && mIsFullScreen) {
+        if (DeviceInfo.isAutomotive() && mIsFullScreen) {
             super.setContentView(
                     AutomotiveUtils.getAutomotiveLayoutWithBackButtonToolbar(mActivity));
             setAutomotiveToolbarBackButtonAction();
@@ -97,7 +100,7 @@ public class ChromeDialog extends ComponentDialog {
 
     @Override
     public void setContentView(View view) {
-        if (BuildInfo.getInstance().isAutomotive && mIsFullScreen) {
+        if (DeviceInfo.isAutomotive() && mIsFullScreen) {
             super.setContentView(
                     AutomotiveUtils.getAutomotiveLayoutWithBackButtonToolbar(mActivity));
             setAutomotiveToolbarBackButtonAction();
@@ -112,7 +115,7 @@ public class ChromeDialog extends ComponentDialog {
 
     @Override
     public void setContentView(View view, ViewGroup.@Nullable LayoutParams params) {
-        if (BuildInfo.getInstance().isAutomotive && mIsFullScreen) {
+        if (DeviceInfo.isAutomotive() && mIsFullScreen) {
             super.setContentView(
                     AutomotiveUtils.getAutomotiveLayoutWithBackButtonToolbar(mActivity));
             setAutomotiveToolbarBackButtonAction();
@@ -127,7 +130,7 @@ public class ChromeDialog extends ComponentDialog {
 
     @Override
     public void addContentView(View view, ViewGroup.@Nullable LayoutParams params) {
-        if (BuildInfo.getInstance().isAutomotive
+        if (DeviceInfo.isAutomotive()
                 && mIsFullScreen
                 && assumeNonNull(params).width == MATCH_PARENT
                 && params.height == MATCH_PARENT) {

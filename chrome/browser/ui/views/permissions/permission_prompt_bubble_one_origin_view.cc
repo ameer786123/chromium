@@ -7,10 +7,11 @@
 #include <memory>
 
 #include "base/containers/contains.h"
+#include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/time/time.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_ui_util.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -66,7 +67,7 @@ namespace {
 
 std::u16string GetAccessibleWindowTitleInternal(
     const std::u16string display_name,
-    std::vector<raw_ptr<permissions::PermissionRequest, VectorExperimental>>
+    std::vector<base::WeakPtr<permissions::PermissionRequest>>
         visible_requests) {
   // Generate one of:
   //   $origin wants to: $permission
@@ -109,13 +110,12 @@ bool ShouldShowRequest(permissions::PermissionPrompt::Delegate& delegate,
   return true;
 }
 
-std::vector<raw_ptr<permissions::PermissionRequest, VectorExperimental>>
-GetVisibleRequests(permissions::PermissionPrompt::Delegate& delegate) {
-  std::vector<raw_ptr<permissions::PermissionRequest, VectorExperimental>>
-      visible_requests;
-  for (permissions::PermissionRequest* request : delegate.Requests()) {
+std::vector<base::WeakPtr<permissions::PermissionRequest>> GetVisibleRequests(
+    permissions::PermissionPrompt::Delegate& delegate) {
+  std::vector<base::WeakPtr<permissions::PermissionRequest>> visible_requests;
+  for (const auto& request : delegate.Requests()) {
     if (ShouldShowRequest(delegate, request->request_type())) {
-      visible_requests.push_back(request);
+      visible_requests.push_back(request->GetWeakPtr());
     }
   }
   return visible_requests;
@@ -144,16 +144,14 @@ std::optional<std::u16string> GetExtraText(
 PermissionPromptBubbleOneOriginView::PermissionPromptBubbleOneOriginView(
     Browser* browser,
     base::WeakPtr<permissions::PermissionPrompt::Delegate> delegate,
-    base::TimeTicks permission_requested_time,
     PermissionPromptStyle prompt_style)
     : PermissionPromptBubbleBaseView(browser,
                                      delegate,
-                                     permission_requested_time,
                                      prompt_style) {
   std::vector<std::string> requested_audio_capture_device_ids;
   std::vector<std::string> requested_video_capture_device_ids;
-  std::vector<raw_ptr<permissions::PermissionRequest, VectorExperimental>>
-      visible_requests = GetVisibleRequests(*delegate.get());
+  std::vector<base::WeakPtr<permissions::PermissionRequest>> visible_requests =
+      GetVisibleRequests(*delegate.get());
 
   SetAccessibleTitle(GetAccessibleWindowTitleInternal(
       GetUrlIdentityObject().name, visible_requests));
@@ -189,6 +187,7 @@ PermissionPromptBubbleOneOriginView::PermissionPromptBubbleOneOriginView(
           visible_requests[i]->GetRequestedAudioCaptureDeviceIds();
     }
   }
+
   MaybeAddMediaPreview(requested_audio_capture_device_ids,
                        requested_video_capture_device_ids,
                        visible_requests.size());
@@ -211,7 +210,7 @@ void PermissionPromptBubbleOneOriginView::RunButtonCallback(int button_id) {
 }
 
 void PermissionPromptBubbleOneOriginView::AddRequestLine(
-    permissions::PermissionRequest* request,
+    const base::WeakPtr<permissions::PermissionRequest>& request,
     std::size_t index) {
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
 
@@ -299,7 +298,7 @@ void PermissionPromptBubbleOneOriginView::MaybeAddMediaPreview(
 
   media_previews_.emplace(browser(), this, index,
                           requested_audio_capture_device_ids,
-                          requested_video_capture_device_ids);
+                          requested_video_capture_device_ids, delegate());
 #endif
 }
 

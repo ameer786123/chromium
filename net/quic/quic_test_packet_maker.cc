@@ -2,13 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "net/quic/quic_test_packet_maker.h"
 
+#include <algorithm>
 #include <list>
 #include <utility>
 
@@ -131,7 +127,7 @@ void QuicTestPacketMaker::ConnectionState::Reset() {
 QuicTestPacketMaker::QuicTestPacketMaker(quic::ParsedQuicVersion version,
                                          quic::QuicConnectionId connection_id,
                                          const quic::QuicClock* clock,
-                                         const std::string& host,
+                                         std::string_view host,
                                          quic::Perspective perspective,
                                          bool client_priority_uses_incremental,
                                          bool use_priority_header)
@@ -396,15 +392,15 @@ QuicTestPacketMaker::MakeStatelessResetPacket() {
 void QuicTestPacketMaker::RemoveSavedStreamFrames(
     quic::QuicStreamId stream_id) {
   for (auto& kv : connection_state_.saved_frames) {
-    auto* it = kv.second.begin();
-    while (it != kv.second.end()) {
-      if (it->type == quic::STREAM_FRAME &&
-          it->stream_frame.stream_id == stream_id) {
-        it = kv.second.erase(it);
-      } else {
-        ++it;
-      }
-    }
+    // Since this is an absl::InlinedVector, it doesn't support erase_if().
+    // Instead, have to use erase() and remove_if().
+    kv.second.erase(std::remove_if(kv.second.begin(), kv.second.end(),
+                                   [stream_id](const quic::QuicFrame& frame) {
+                                     return frame.type == quic::STREAM_FRAME &&
+                                            frame.stream_frame.stream_id ==
+                                                stream_id;
+                                   }),
+                    kv.second.end());
   }
 }
 

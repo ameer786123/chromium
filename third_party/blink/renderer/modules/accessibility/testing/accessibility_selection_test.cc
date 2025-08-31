@@ -10,6 +10,7 @@
 
 #include "base/containers/span.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/string_view_util.h"
 #include "third_party/blink/public/platform/file_path_conversion.h"
 #include "third_party/blink/renderer/core/dom/character_data.h"
 #include "third_party/blink/renderer/core/dom/container_node.h"
@@ -19,6 +20,7 @@
 #include "third_party/blink/renderer/core/editing/selection_template.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/modules/accessibility/ax_object-inl.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object_cache_impl.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_position.h"
@@ -202,12 +204,16 @@ class AXSelectionDeserializer final {
         foci_(MakeGarbageCollected<Holder>()) {}
   ~AXSelectionDeserializer() = default;
 
+  const AXObjectCacheImpl& GetAXObjectCache() const {
+    return *ax_object_cache_;
+  }
+
   // Creates an accessibility tree rooted at the given HTML element from the
   // provided HTML snippet and returns |AXSelection| objects that can select the
   // parts of the tree indicated by the selection markers in the snippet.
   const Vector<AXSelection> Deserialize(const std::string_view& html_snippet,
                                         HTMLElement& element) {
-    element.setInnerHTML(String::FromUTF8(html_snippet));
+    element.SetInnerHTMLWithoutTrustedTypes(String::FromUTF8(html_snippet));
     element.GetDocument().View()->UpdateAllLifecyclePhasesForTest();
     AXObject* root = ax_object_cache_->Get(&element);
     if (!root || root->IsDetached())
@@ -229,8 +235,8 @@ class AXSelectionDeserializer final {
       // position of the caret.
       DCHECK(foci()->at(0).first);
       const Position caret(foci()->at(0).first, foci()->at(0).second);
-      const auto ax_caret = AXPosition::FromPosition(caret);
-      AXSelection::Builder builder;
+      const auto ax_caret = AXPosition::FromPosition(caret, GetAXObjectCache());
+      AXSelection::Builder builder(GetAXObjectCache());
       ax_selections.push_back(
           builder.SetAnchor(ax_caret).SetFocus(ax_caret).Build());
       return ax_selections;
@@ -239,12 +245,13 @@ class AXSelectionDeserializer final {
     for (wtf_size_t i = 0; i < foci()->size(); ++i) {
       DCHECK(anchors()->at(i).first);
       const Position base(*anchors()->at(i).first, anchors()->at(i).second);
-      const auto ax_base = AXPosition::FromPosition(base);
+      const auto ax_base = AXPosition::FromPosition(base, GetAXObjectCache());
 
       DCHECK(foci()->at(i).first);
       const Position extent(*foci()->at(i).first, foci()->at(i).second);
-      const auto ax_extent = AXPosition::FromPosition(extent);
-      AXSelection::Builder builder;
+      const auto ax_extent =
+          AXPosition::FromPosition(extent, GetAXObjectCache());
+      AXSelection::Builder builder(GetAXObjectCache());
       ax_selections.push_back(
           builder.SetAnchor(ax_base).SetFocus(ax_extent).Build());
     }
@@ -364,7 +371,8 @@ void AccessibilitySelectionTest::SetUp() {
 std::string AccessibilitySelectionTest::GetCurrentSelectionText() const {
   const SelectionInDOMTree selection =
       GetFrame().Selection().GetSelectionInDOMTree();
-  const auto ax_selection = AXSelection::FromSelection(selection);
+  const auto ax_selection =
+      AXSelection::FromSelection(selection, GetAXObjectCache());
   return GetSelectionText(ax_selection);
 }
 
@@ -386,12 +394,12 @@ AXSelection AccessibilitySelectionTest::SetSelectionText(
     const std::string& selection_text) const {
   HTMLElement* body = GetDocument().body();
   if (!body)
-    return AXSelection::Builder().Build();
+    return AXSelection::Builder(GetAXObjectCache()).Build();
   const Vector<AXSelection> ax_selections =
       AXSelectionDeserializer(GetAXObjectCache())
           .Deserialize(selection_text, *body);
   if (ax_selections.empty())
-    return AXSelection::Builder().Build();
+    return AXSelection::Builder(GetAXObjectCache()).Build();
   return ax_selections.front();
 }
 
@@ -402,7 +410,7 @@ AXSelection AccessibilitySelectionTest::SetSelectionText(
       AXSelectionDeserializer(GetAXObjectCache())
           .Deserialize(selection_text, element);
   if (ax_selections.empty())
-    return AXSelection::Builder().Build();
+    return AXSelection::Builder(GetAXObjectCache()).Build();
   return ax_selections.front();
 }
 

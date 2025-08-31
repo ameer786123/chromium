@@ -18,6 +18,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/notreached.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
@@ -96,6 +97,8 @@ ErrorCode AuthRejectionReasonToErrorCode(
       return ErrorCode::INVALID_ARGUMENT;
     case Authenticator::RejectionReason::UNEXPECTED_ERROR:
       return ErrorCode::UNEXPECTED_AUTHENTICATOR_ERROR;
+    case Authenticator::RejectionReason::NETWORK_FAILURE:
+      return ErrorCode::NETWORK_FAILURE;
   }
 }
 

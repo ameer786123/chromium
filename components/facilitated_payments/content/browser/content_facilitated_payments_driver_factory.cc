@@ -8,6 +8,7 @@
 #include "components/facilitated_payments/content/browser/security_checker.h"
 #include "components/facilitated_payments/core/browser/facilitated_payments_client.h"
 #include "components/facilitated_payments/core/features/features.h"
+#include "components/facilitated_payments/core/metrics/facilitated_payments_metrics.h"
 #include "content/public/browser/navigation_handle.h"
 
 namespace payments::facilitated {
@@ -81,20 +82,19 @@ void ContentFacilitatedPaymentsDriverFactory::DidFinishNavigation(
 void ContentFacilitatedPaymentsDriverFactory::OnTextCopiedToClipboard(
     content::RenderFrameHost* render_frame_host,
     const std::u16string& copied_text) {
-  // The Facilitated Payments infra is initiated for both Pix and eWallet,
-  // however the Pix payflow should only be initiated if its flag is enabled.
-  if (!base::FeatureList::IsEnabled(kEnablePixPayments)) {
+  if (render_frame_host != render_frame_host->GetOutermostMainFrame()) {
+    LogPixFlowExitedReason(PixFlowExitedReason::kPixCodeInIFrame);
     return;
   }
-
-  if (render_frame_host != render_frame_host->GetOutermostMainFrame() ||
-      !render_frame_host->IsActive()) {
+  if (!render_frame_host->IsActive()) {
+    LogPixFlowExitedReason(PixFlowExitedReason::kFrameNotActive);
     return;
   }
 
   auto& driver = GetOrCreateForFrame(render_frame_host);
 
   driver.OnTextCopiedToClipboard(render_frame_host->GetLastCommittedURL(),
+                                 render_frame_host->GetLastCommittedOrigin(),
                                  copied_text,
                                  render_frame_host->GetPageUkmSourceId());
 }

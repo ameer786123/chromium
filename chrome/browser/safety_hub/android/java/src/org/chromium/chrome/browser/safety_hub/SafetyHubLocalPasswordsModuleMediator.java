@@ -7,11 +7,11 @@ package org.chromium.chrome.browser.safety_hub;
 import android.content.Context;
 import android.view.View;
 
-import androidx.annotation.IntDef;
-
 import org.chromium.base.CallbackController;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.safety_hub.SafetyHubLocalPasswordsDataSource.ModuleType;
 import org.chromium.chrome.browser.safety_hub.SafetyHubModuleMediator.ModuleOption;
@@ -19,55 +19,29 @@ import org.chromium.chrome.browser.safety_hub.SafetyHubModuleMediator.ModuleStat
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-
 /**
  * Mediator for the Safety Hub local password module. Populates the {@link
  * SafetyHubExpandablePreference} with the user's passwords state, including compromised, weak and
  * reused. It gets notified of changes of local passwords and their state by {@link
  * SafetyHubLocalPasswordsDataSource}, and updates the preference to reflect these.
  */
+@NullMarked
 public class SafetyHubLocalPasswordsModuleMediator
         implements SafetyHubModuleMediator, SafetyHubLocalPasswordsDataSource.Observer {
-
-    /**
-     * State machine for the loading indicator.
-     *
-     * <p>On idle, no indicator is being shown. On showing indicator, the loading indicator is being
-     * shown and cannot be removed from the UI, to avoid flashing. On waiting for results, the
-     * loading indicator is being shown but can be removed as soon as a state change occurs.
-     */
-    @IntDef({
-        IndicatorState.IDLE,
-        IndicatorState.SHOWING_INDICATOR,
-        IndicatorState.WAITING_FOR_RESULTS
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface IndicatorState {
-        int IDLE = 0;
-        int SHOWING_INDICATOR = 1;
-        int WAITING_FOR_RESULTS = 2;
-    }
-
-    private static final int LOADING_MIN_TIME_MS = 1000;
-    private static final int DEFAULT_LOADING_MAX_TIME_MS = 10000;
-    private static final String LOADING_MAX_TIME_PARAM_NAME =
-            "safety-hub-local-passwords-module-loading-timeout-ms";
 
     private final SafetyHubExpandablePreference mPreference;
     private final SafetyHubModuleMediatorDelegate mMediatorDelegate;
     private final SafetyHubModuleDelegate mModuleDelegate;
+    private final PropertyModel mModel;
 
-    private SafetyHubLocalPasswordsDataSource mLocalPasswordsDataSource;
-    private SafetyHubModuleHelper mModuleHelper;
-    private PropertyModel mModel;
+    private final SafetyHubLocalPasswordsDataSource mLocalPasswordsDataSource;
+    private @Nullable SafetyHubModuleHelper mModuleHelper;
 
     private @IndicatorState int mIndicatorState = IndicatorState.IDLE;
     // Callback when the minimum time showing the loading indicator has elapsed.
-    private CallbackController mMinLoadingCallbackController;
+    private @Nullable CallbackController mMinLoadingCallbackController;
     // Callback when the maximum time showing the loading indicator has elapsed.
-    private CallbackController mMaxLoadingCallbackController;
+    private @Nullable CallbackController mMaxLoadingCallbackController;
 
     private boolean mStateChangedCalled;
     private boolean mOrderUpdated;
@@ -81,26 +55,27 @@ public class SafetyHubLocalPasswordsModuleMediator
         mLocalPasswordsDataSource = localPasswordsDataSource;
         mMediatorDelegate = mediatorDelegate;
         mModuleDelegate = moduleDelegate;
+        mModel = new PropertyModel.Builder(SafetyHubModuleProperties.ALL_KEYS).build();
     }
 
     @Override
     public void setUpModule() {
         assert ChromeFeatureList.isEnabled(ChromeFeatureList.SAFETY_HUB_LOCAL_PASSWORDS_MODULE);
-        mModel =
-                new PropertyModel.Builder(SafetyHubModuleProperties.ALL_KEYS)
-                        .with(SafetyHubModuleProperties.IS_VISIBLE, true)
-                        .build();
 
+        mModel.set(SafetyHubModuleProperties.IS_VISIBLE, true);
         PropertyModelChangeProcessor.create(
                 mModel, mPreference, SafetyHubModuleViewBinder::bindProperties);
 
         mLocalPasswordsDataSource.addObserver(this);
         mLocalPasswordsDataSource.setUp();
 
+        // TODO(crbug.com/407931779): Remove triggering checkup along with loading UI once this
+        // module is only used on the passwords subpage.
         if (mLocalPasswordsDataSource.maybeTriggerPasswordCheckup()) {
             mIndicatorState = IndicatorState.SHOWING_INDICATOR;
             mModuleHelper =
-                    new SafetyHubLocalPasswordsCheckingModuleHelper(mPreference.getContext());
+                    new SafetyHubPasswordsCheckingModuleHelper(
+                            mPreference.getContext(), /* onlyLoadingLocalPasswords= */ true);
 
             mMinLoadingCallbackController = new CallbackController();
             PostTask.postDelayedTask(
@@ -109,15 +84,10 @@ public class SafetyHubLocalPasswordsModuleMediator
                     LOADING_MIN_TIME_MS);
 
             mMaxLoadingCallbackController = new CallbackController();
-            int loading_max_time_ms =
-                    ChromeFeatureList.getFieldTrialParamByFeatureAsInt(
-                            ChromeFeatureList.SAFETY_HUB_LOCAL_PASSWORDS_MODULE,
-                            LOADING_MAX_TIME_PARAM_NAME,
-                            DEFAULT_LOADING_MAX_TIME_MS);
             PostTask.postDelayedTask(
                     TaskTraits.UI_DEFAULT,
                     mMaxLoadingCallbackController.makeCancelable(this::onMaxLoadingTimeElapsed),
-                    loading_max_time_ms);
+                    getLoadingMaxTime());
         }
     }
 
@@ -131,7 +101,6 @@ public class SafetyHubLocalPasswordsModuleMediator
 
         if (mLocalPasswordsDataSource != null) {
             mLocalPasswordsDataSource.destroy();
-            mLocalPasswordsDataSource = null;
         }
     }
 
@@ -173,10 +142,17 @@ public class SafetyHubLocalPasswordsModuleMediator
 
         switch (moduleType) {
             case ModuleType.UNAVAILABLE_PASSWORDS:
-                return new SafetyHubLocalPasswordsUnavailableAllPasswordsModuleHelper(
-                        context, mModuleDelegate);
+                return new SafetyHubUnavailablePasswordsModuleHelper(
+                        context,
+                        mModuleDelegate,
+                        /* unavailableAccountPasswords= */ false,
+                        /* unavailableLocalPasswords= */ true);
             case ModuleType.NO_SAVED_PASSWORDS:
-                return new SafetyHubLocalPasswordsNoPasswordsModuleHelper(context, mModuleDelegate);
+                return new SafetyHubNoSavedPasswordsModuleHelper(
+                        context,
+                        mModuleDelegate,
+                        /* noAccountPasswords= */ false,
+                        /* noLocalPasswords= */ true);
             case ModuleType.HAS_COMPROMISED_PASSWORDS:
                 return new SafetyHubCompromisedPasswordsModuleHelper(
                         context,
@@ -185,16 +161,22 @@ public class SafetyHubLocalPasswordsModuleMediator
                         mLocalPasswordsDataSource.getCompromisedPasswordCount(),
                         /* unifiedModule= */ false);
             case ModuleType.NO_COMPROMISED_PASSWORDS:
-                return new SafetyHubLocalPasswordsNoCompromisedPasswordsModuleHelper(
-                        context, mModuleDelegate);
+                return new SafetyHubNoCompromisedPasswordsModuleHelper(
+                        context, mModuleDelegate, /* account= */ null, /* unifiedModule= */ false);
             case ModuleType.HAS_WEAK_PASSWORDS:
-                return new SafetyHubLocalPasswordsHasWeakPasswordsModuleHelper(
-                        context, mModuleDelegate, mLocalPasswordsDataSource.getWeakPasswordCount());
-            case ModuleType.HAS_REUSED_PASSWORDS:
-                return new SafetyHubLocalPasswordsHasReusedPasswordsModuleHelper(
+                return new SafetyHubWeakPasswordsModuleHelper(
                         context,
                         mModuleDelegate,
-                        mLocalPasswordsDataSource.getReusedPasswordCount());
+                        /* accountWeakPasswordsCount= */ 0,
+                        mLocalPasswordsDataSource.getWeakPasswordCount(),
+                        /* unifiedModule= */ false);
+            case ModuleType.HAS_REUSED_PASSWORDS:
+                return new SafetyHubReusedPasswordsModuleHelper(
+                        context,
+                        mModuleDelegate,
+                        /* accountReusedPasswordsCount= */ 0,
+                        mLocalPasswordsDataSource.getReusedPasswordCount(),
+                        /* unifiedModule= */ false);
             default:
                 throw new IllegalArgumentException();
         }
@@ -206,6 +188,9 @@ public class SafetyHubLocalPasswordsModuleMediator
     }
 
     private void updatePreference() {
+        if (mModuleHelper == null) {
+            return;
+        }
         mModel.set(SafetyHubModuleProperties.TITLE, mModuleHelper.getTitle());
         mModel.set(SafetyHubModuleProperties.SUMMARY, mModuleHelper.getSummary());
         mModel.set(

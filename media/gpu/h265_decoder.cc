@@ -13,12 +13,12 @@
 #include <array>
 #include <variant>
 
-#include "base/functional/overloaded.h"
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "media/base/limits.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_types.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace media {
 
@@ -151,29 +151,26 @@ H265Decoder::~H265Decoder() = default;
     }                                                        \
   } while (0)
 
-void H265Decoder::SetStream(int32_t id, const DecoderBuffer& decoder_buffer) {
-  auto decoder_buffer_span = base::span(decoder_buffer);
-  const uint8_t* ptr = decoder_buffer_span.data();
-  const size_t size = decoder_buffer_span.size();
-  const DecryptConfig* decrypt_config = decoder_buffer.decrypt_config();
+void H265Decoder::SetStream(int32_t id,
+                            scoped_refptr<DecoderBuffer> decoder_buffer) {
+  CHECK(decoder_buffer);
+  decoder_buffer_ = std::move(decoder_buffer);
+  const DecryptConfig* decrypt_config = decoder_buffer_->decrypt_config();
 
-  DCHECK(ptr);
-  DCHECK(size);
-  DVLOG(4) << "New input stream id: " << id << " at: " << (void*)ptr
-           << " size: " << size;
+  DVLOG(4) << "New input stream id: " << id
+           << ", buffer: " << decoder_buffer_->AsHumanReadableString();
   stream_id_ = id;
-  current_stream_ = ptr;
-  current_stream_size_ = size;
-  current_stream_has_been_changed_ = true;
+  decoder_buffer_has_been_changed_ = true;
   if (decrypt_config) {
-    parser_.SetEncryptedStream(ptr, size, decrypt_config->subsamples());
+    parser_.SetEncryptedStream(*decoder_buffer_, decrypt_config->subsamples());
     current_decrypt_config_ = decrypt_config->Clone();
   } else {
-    parser_.SetStream(ptr, size);
+    parser_.SetStream(*decoder_buffer_);
     current_decrypt_config_ = nullptr;
   }
-  if (decoder_buffer.side_data() && decoder_buffer.side_data()->secure_handle) {
-    secure_handle_ = decoder_buffer.side_data()->secure_handle;
+  if (decoder_buffer_->side_data() &&
+      decoder_buffer_->side_data()->secure_handle) {
+    secure_handle_ = decoder_buffer_->side_data()->secure_handle;
   } else {
     secure_handle_ = 0;
   }
@@ -203,6 +200,7 @@ void H265Decoder::Reset() {
   parser_.Reset();
   accelerator_->Reset();
 
+  decoder_buffer_.reset();
   secure_handle_ = 0;
 
   state_ = kAfterReset;
@@ -214,12 +212,11 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
     return kDecodeError;
   }
 
-  if (current_stream_has_been_changed_) {
+  if (decoder_buffer_has_been_changed_) {
     // Calling H265Accelerator::SetStream() here instead of when the stream is
     // originally set in case the accelerator needs to return kTryAgain.
     H265Accelerator::Status result = accelerator_->SetStream(
-        base::span<const uint8_t>(current_stream_.get(), current_stream_size_),
-        current_decrypt_config_.get());
+        *decoder_buffer_, current_decrypt_config_.get());
     switch (result) {
       case H265Accelerator::Status::kOk:  // fallthrough
       case H265Accelerator::Status::kNotSupported:
@@ -235,7 +232,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
 
     // Reset the flag so that this is only called again next time SetStream()
     // is called.
-    current_stream_has_been_changed_ = false;
+    decoder_buffer_has_been_changed_ = false;
   }
 
   while (true) {
@@ -313,11 +310,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
             if (par_res != H265Parser::kOk) {
               SET_ERROR_AND_RETURN();
             }
-            accelerator_->ProcessSPS(
-                parser_.GetSPS(sps_id),
-                base::span<const uint8_t>(
-                    curr_nalu_->data.get(),
-                    base::checked_cast<size_t>(curr_nalu_->size)));
+            accelerator_->ProcessSPS(parser_.GetSPS(sps_id), curr_nalu_->data);
             break;
           }
           case H265NALU::PPS_NUT: {
@@ -326,11 +319,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
             if (par_res != H265Parser::kOk) {
               SET_ERROR_AND_RETURN();
             }
-            accelerator_->ProcessPPS(
-                parser_.GetPPS(pps_id),
-                base::span<const uint8_t>(
-                    curr_nalu_->data.get(),
-                    base::checked_cast<size_t>(curr_nalu_->size)));
+            accelerator_->ProcessPPS(parser_.GetPPS(pps_id), curr_nalu_->data);
             break;
           }
           default:
@@ -449,11 +438,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
         // vps_id to aux_alpha_layer_id, and look up the aux_alpha_layer_id for
         // each NALU.
         aux_alpha_layer_id_ = parser_.GetVPS(vps_id)->aux_alpha_layer_id;
-        accelerator_->ProcessVPS(
-            parser_.GetVPS(vps_id),
-            base::span<const uint8_t>(
-                curr_nalu_->data.get(),
-                base::checked_cast<size_t>(curr_nalu_->size)));
+        accelerator_->ProcessVPS(parser_.GetVPS(vps_id), curr_nalu_->data);
         break;
       case H265NALU::SPS_NUT:
         CHECK_ACCELERATOR_RESULT(FinishPrevFrameIfPresent());
@@ -461,11 +446,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
         par_res = parser_.ParseSPS(&sps_id);
         if (par_res != H265Parser::kOk)
           SET_ERROR_AND_RETURN();
-        accelerator_->ProcessSPS(
-            parser_.GetSPS(sps_id),
-            base::span<const uint8_t>(
-                curr_nalu_->data.get(),
-                base::checked_cast<size_t>(curr_nalu_->size)));
+        accelerator_->ProcessSPS(parser_.GetSPS(sps_id), curr_nalu_->data);
         break;
       case H265NALU::PPS_NUT:
         CHECK_ACCELERATOR_RESULT(FinishPrevFrameIfPresent());
@@ -473,11 +454,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
         par_res = parser_.ParsePPS(*curr_nalu_, &pps_id);
         if (par_res != H265Parser::kOk)
           SET_ERROR_AND_RETURN();
-        accelerator_->ProcessPPS(
-            parser_.GetPPS(pps_id),
-            base::span<const uint8_t>(
-                curr_nalu_->data.get(),
-                base::checked_cast<size_t>(curr_nalu_->size)));
+        accelerator_->ProcessPPS(parser_.GetPPS(pps_id), curr_nalu_->data);
 
         // For ARC CTS tests they expect us to request the buffers after only
         // processing the SPS/PPS, we can't wait until we get the first IDR. To
@@ -521,7 +498,7 @@ H265Decoder::DecodeResult H265Decoder::Decode() {
         if (parser_.ParseSEI(&sei) != H265Parser::kOk)
           break;
         for (const auto& sei_msg : sei.msgs) {
-          std::visit(base::Overloaded{
+          std::visit(absl::Overload{
                          [](const H265SEIAlphaChannelInfo& info) {},
                          [this](const H265SEIContentLightLevelInfo& info) {
                            // HEVC HDR metadata may appears in the below

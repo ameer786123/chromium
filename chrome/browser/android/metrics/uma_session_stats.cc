@@ -71,8 +71,7 @@ enum class ChromeActivityCounter : int32_t {
 };
 }  // namespace
 
-void UmaSessionStats::UmaResumeSession(JNIEnv* env,
-                                       const JavaParamRef<jobject>& obj) {
+void UmaSessionStats::UmaResumeSession(JNIEnv* env) {
   DCHECK(g_browser_process);
   if (++active_session_count_ == 1) {
     const bool had_background_session =
@@ -103,8 +102,7 @@ void UmaSessionStats::UmaResumeSession(JNIEnv* env,
   }
 }
 
-void UmaSessionStats::UmaEndSession(JNIEnv* env,
-                                    const JavaParamRef<jobject>& obj) {
+void UmaSessionStats::UmaEndSession(JNIEnv* env) {
   --active_session_count_;
   DCHECK_GE(active_session_count_, 0);
 
@@ -300,7 +298,7 @@ static void JNI_UmaSessionStats_UpdateMetricsAndCrashReportingForTesting(
   DCHECK(g_browser_process);
 
   g_metrics_consent_for_testing = consent;
-  g_browser_process->GetMetricsServicesManager()->UpdateUploadPermissions(true);
+  g_browser_process->GetMetricsServicesManager()->UpdateUploadPermissions();
 }
 
 // Starts/stops the MetricsService based on existing consent and upload

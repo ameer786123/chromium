@@ -82,10 +82,6 @@ TEST_F(GeneratedCookiePrefsTest, DefaultContentSettingPrefTypeMismatch) {
             extensions::settings_private::SetPrefResult::PREF_TYPE_MISMATCH);
   EXPECT_EQ(pref->SetPref(std::make_unique<base::Value>("ask").get()),
             extensions::settings_private::SetPrefResult::PREF_TYPE_MISMATCH);
-  EXPECT_EQ(
-      pref->SetPref(
-          std::make_unique<base::Value>("detect_important_content").get()),
-      extensions::settings_private::SetPrefResult::PREF_TYPE_MISMATCH);
   EXPECT_EQ(pref->SetPref(std::make_unique<base::Value>(100).get()),
             extensions::settings_private::SetPrefResult::PREF_TYPE_MISMATCH);
 }
@@ -289,8 +285,6 @@ INSTANTIATE_TEST_SUITE_P(
                           CookieControlsMode::kIncognitoOnly),
         CookieSettingPair(ThirdPartyCookieBlockingSetting::INCOGNITO_ONLY,
                           CookieControlsMode::kOff),
-        CookieSettingPair(ThirdPartyCookieBlockingSetting::INCOGNITO_ONLY,
-                          CookieControlsMode::kLimited),
         CookieSettingPair(ThirdPartyCookieBlockingSetting::BLOCK_THIRD_PARTY,
                           CookieControlsMode::kBlockThirdParty)));
 

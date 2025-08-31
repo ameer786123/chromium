@@ -58,7 +58,7 @@
 #include "chrome/browser/profiles/android/jni_headers/OtrProfileId_jni.h"
 #endif
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
 #include "extensions/browser/extension_pref_store.h"              // nogncheck
 #include "extensions/browser/extension_pref_value_map_factory.h"  // nogncheck
 #include "extensions/browser/pref_names.h"                        // nogncheck
@@ -67,16 +67,23 @@
 #if DCHECK_IS_ON()
 
 #include <set>
+
 #include "base/check_op.h"
-#include "base/lazy_instance.h"
+#include "base/no_destructor.h"
 #include "base/synchronization/lock.h"
 
 namespace {
 
-base::LazyInstance<base::Lock>::Leaky g_profile_instances_lock =
-    LAZY_INSTANCE_INITIALIZER;
-base::LazyInstance<std::set<content::BrowserContext*>>::Leaky
-    g_profile_instances = LAZY_INSTANCE_INITIALIZER;
+base::Lock& GetProfileInstancesLock() {
+  static base::NoDestructor<base::Lock> profile_instances_lock;
+  return *profile_instances_lock;
+}
+
+std::set<content::BrowserContext*>& GetProfileInstances() {
+  static base::NoDestructor<std::set<content::BrowserContext*>>
+      profile_instances;
+  return *profile_instances;
+}
 
 }  // namespace
 
@@ -234,8 +241,8 @@ Profile::Profile(const OTRProfileID* otr_profile_id)
 #endif
 
 #if DCHECK_IS_ON()
-  base::AutoLock lock(g_profile_instances_lock.Get());
-  g_profile_instances.Get().insert(this);
+  base::AutoLock lock(GetProfileInstancesLock());
+  GetProfileInstances().insert(this);
 #endif  // DCHECK_IS_ON()
 
   BrowserContextDependencyManager::GetInstance()->MarkBrowserContextLive(this);
@@ -251,8 +258,8 @@ Profile::~Profile() {
 #endif
 
 #if DCHECK_IS_ON()
-  base::AutoLock lock(g_profile_instances_lock.Get());
-  g_profile_instances.Get().erase(this);
+  base::AutoLock lock(GetProfileInstancesLock());
+  GetProfileInstances().erase(this);
 #endif  // DCHECK_IS_ON()
 }
 
@@ -266,8 +273,8 @@ Profile* Profile::FromBrowserContext(content::BrowserContext* browser_context) {
   // testing, however, there are several BrowserContext subclasses that are not
   // Profile subclasses, and we can catch them. http://crbug.com/725276
 #if DCHECK_IS_ON()
-  base::AutoLock lock(g_profile_instances_lock.Get());
-  if (!g_profile_instances.Get().count(browser_context)) {
+  base::AutoLock lock(GetProfileInstancesLock());
+  if (!GetProfileInstances().count(browser_context)) {
     DCHECK(false)
         << "Non-Profile BrowserContext passed to Profile::FromBrowserContext! "
            "If you have a test linked in chrome/ you need a chrome/ based test "
@@ -332,7 +339,7 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
 #endif  // BUILDFLAG(IS_ANDROID)
   registry->RegisterStringPref(prefs::kSessionExitType, std::string());
   registry->RegisterBooleanPref(prefs::kDisableExtensions, false);
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   registry->RegisterBooleanPref(extensions::pref_names::kAlertsInitialized,
                                 false);
 #endif
@@ -478,7 +485,7 @@ void Profile::MaybeSendDestroyedNotification() {
 // static
 PrefStore* Profile::CreateExtensionPrefStore(Profile* profile,
                                              bool incognito_pref_store) {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   if (ExtensionPrefValueMap* pref_value_map =
           ExtensionPrefValueMapFactory::GetForBrowserContext(profile)) {
     return new ExtensionPrefStore(pref_value_map, incognito_pref_store);

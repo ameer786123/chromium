@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/services/printing/pdf_to_pwg_raster_converter.h"
 
 #include <limits>
@@ -67,7 +62,7 @@ base::ReadOnlySharedMemoryRegion RenderPdfPagesToPwgRaster(
       page_number = total_page_count - 1 - page_number;
 
     if (!chrome_pdf::RenderPDFPageToBitmap(pdf_data, page_number,
-                                           image.pixel_data(), image.size(),
+                                           image.pixels().data(), image.size(),
                                            settings.dpi, options)) {
       return invalid_pwg_region;
     }
@@ -130,7 +125,7 @@ base::ReadOnlySharedMemoryRegion RenderPdfPagesToPwgRaster(
     return invalid_pwg_region;
 
   *page_count = total_page_count;
-  memcpy(region_mapping.mapping.memory(), pwg_data.data(), pwg_data.size());
+  region_mapping.mapping.GetMemoryAsSpan<char>().copy_prefix_from(pwg_data);
   return std::move(region_mapping.region);
 }
 

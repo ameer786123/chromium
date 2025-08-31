@@ -21,12 +21,12 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager.SnackbarController;
@@ -36,13 +36,14 @@ import org.chromium.ui.accessibility.AccessibilityState;
 import org.chromium.ui.test.util.BlankUiTestActivity;
 
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 /** Tests for {@link SnackbarManager}. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @Batch(Batch.UNIT_TESTS)
 public class SnackbarTest {
     private SnackbarManager mManager;
-    private SnackbarController mDefaultController =
+    private final SnackbarController mDefaultController =
             new SnackbarController() {
                 @Override
                 public void onDismissNoAction(Object actionData) {}
@@ -51,7 +52,7 @@ public class SnackbarTest {
                 public void onAction(Object actionData) {}
             };
 
-    private SnackbarController mDismissController =
+    private final SnackbarController mDismissController =
             new SnackbarController() {
                 @Override
                 public void onDismissNoAction(Object actionData) {
@@ -111,6 +112,7 @@ public class SnackbarTest {
 
     @Test
     @MediumTest
+    @DisabledTest(message = "crbug.com/439617848")
     public void testStackQueuePersistentOrder() {
         final Snackbar stackbar =
                 Snackbar.make(

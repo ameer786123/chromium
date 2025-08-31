@@ -24,6 +24,10 @@
 class PrefService;
 class PrefRegistrySimple;
 
+namespace gfx {
+class Image;
+}
+
 namespace ui {
 class ImageModel;
 }
@@ -32,6 +36,10 @@ namespace policy {
 
 class ManagementService;
 
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// LINT.IfChange(ManagementAuthorityTrustworthiness)
 enum class ManagementAuthorityTrustworthiness {
   NONE = 0,           // No management authority found
   LOW = 1,            // Local device management authority
@@ -40,12 +48,13 @@ enum class ManagementAuthorityTrustworthiness {
                       // ChromeOS
   kMaxValue = FULLY_TRUSTED
 };
+// LINT.ThenChange(//tools/metrics/histograms/enums.xml:ManagementAuthorityTrustworthiness)
 
 enum EnterpriseManagementAuthority : int {
   NONE = 0,
   COMPUTER_LOCAL =
       1 << 0,  // local GPO or registry, /etc files, local root profile
-  DOMAIN_LOCAL = 1 << 1,  // AD joined, puppet
+  DOMAIN_LOCAL = 1 << 1,  // AD joined
   CLOUD = 1 << 2,         // MDM, GSuite user
   CLOUD_DOMAIN = 1 << 3   // Azure AD, CBCM, CrosEnrolled
 };
@@ -98,7 +107,8 @@ class POLICY_EXPORT ManagementService {
   // Observers observing updates to the enterprise custom or default work label.
   class POLICY_EXPORT Observer : public base::CheckedObserver {
    public:
-    virtual void OnEnterpriseLabelUpdated() = 0;
+    virtual void OnEnterpriseLabelUpdated() {}
+    virtual void OnEnterpriseLogoUpdatedForBrowser() {}
   };
 
   explicit ManagementService(
@@ -119,6 +129,7 @@ class POLICY_EXPORT ManagementService {
   virtual void RefreshCache(CacheRefreshCallback callback);
 
   virtual ui::ImageModel* GetManagementIconForProfile();
+  virtual gfx::Image* GetManagementIconForBrowser();
 
   // Returns true if `authority` is are actively managed.
   bool HasManagementAuthority(EnterpriseManagementAuthority authority);
@@ -150,6 +161,8 @@ class POLICY_EXPORT ManagementService {
   void SetManagementStatusProviderForTesting(
       std::vector<std::unique_ptr<ManagementStatusProvider>> providers);
   virtual void TriggerPolicyStatusChangedForTesting() {}
+  virtual void SetBrowserManagementIconForTesting(
+      const gfx::Image& management_icon) {}
 
   static void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
 
@@ -162,6 +175,7 @@ class POLICY_EXPORT ManagementService {
       std::unique_ptr<ManagementStatusProvider> provider);
 
   void NotifyEnterpriseLabelUpdated();
+  void NotifyEnterpriseLogoForBrowserUpdated();
 
   const std::vector<std::unique_ptr<ManagementStatusProvider>>&
   management_status_providers() {

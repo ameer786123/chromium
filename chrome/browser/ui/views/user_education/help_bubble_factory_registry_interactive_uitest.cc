@@ -59,8 +59,16 @@ class HelpBubbleFactoryRegistryInteractiveUitest
   }
 };
 
+// TODO(crbug.com/419801487): Fix flaky test and re-enable.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_AnchorHelpBubbleToViewsMenuItem \
+  DISABLED_AnchorHelpBubbleToViewsMenuItem
+#else
+#define MAYBE_AnchorHelpBubbleToViewsMenuItem AnchorHelpBubbleToViewsMenuItem
+#endif
+
 IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryRegistryInteractiveUitest,
-                       AnchorHelpBubbleToViewsMenuItem) {
+                       MAYBE_AnchorHelpBubbleToViewsMenuItem) {
   std::unique_ptr<user_education::HelpBubble> bubble;
 
   RunTestSequence(
@@ -107,7 +115,8 @@ IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryRegistryInteractiveUitest,
         // wait for each element to appear and then do the next step.
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindLambdaForTesting([this]() {
-              auto* tab = GetBrowserView()->tabstrip()->tab_at(0);
+              views::View* tab =
+                  GetBrowserView()->tab_strip_view()->GetTabAnchorViewAt(0);
               tab->ShowContextMenu(tab->bounds().CenterPoint(),
                                    ui::mojom::MenuSourceType::kMouse);
             }));

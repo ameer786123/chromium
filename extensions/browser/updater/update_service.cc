@@ -24,6 +24,7 @@
 #include "components/update_client/update_client_errors.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/browser/delayed_install_manager.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -121,14 +122,13 @@ void UpdateService::OnCrxStateChange(UpdateFoundCallback update_found_callback,
       break;
     case update_client::ComponentState::kNew:
     case update_client::ComponentState::kChecking:
-    case update_client::ComponentState::kDownloadingDiff:
     case update_client::ComponentState::kDownloading:
-    case update_client::ComponentState::kUpdatingDiff:
+    case update_client::ComponentState::kDecompressing:
+    case update_client::ComponentState::kPatching:
     case update_client::ComponentState::kUpdating:
     case update_client::ComponentState::kUpdated:
     case update_client::ComponentState::kUpdateError:
     case update_client::ComponentState::kRun:
-    case update_client::ComponentState::kLastStatus:
       break;
   }
 
@@ -233,11 +233,14 @@ void UpdateService::UpdateCheckComplete(InProgressUpdate update) {
   // check might have queued an update for this extension because it was in
   // use at the time. We should ask for the install of the queued update now
   // if it's ready.
+  DelayedInstallManager* delayed_install_manager =
+      DelayedInstallManager::Get(browser_context_);
   if (update.install_immediately) {
     for (const ExtensionId& extension_id : update.pending_extension_ids) {
-      ExtensionSystem::Get(browser_context_)
-          ->FinishDelayedInstallationIfReady(extension_id,
-                                             true /*install_immediately*/);
+      if (delayed_install_manager->GetPendingExtensionUpdate(extension_id)) {
+        delayed_install_manager->FinishDelayedInstallationIfReady(
+            extension_id, /*install_immediately=*/true);
+      }
     }
   }
 

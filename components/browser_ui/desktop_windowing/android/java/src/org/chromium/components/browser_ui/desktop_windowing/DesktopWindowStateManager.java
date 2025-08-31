@@ -30,21 +30,21 @@ public interface DesktopWindowStateManager {
          *     mode.
          */
         default void onDesktopWindowingModeChanged(boolean isInDesktopWindow) {}
+
+        /**
+         * Called when the activity focus state changes. See {@link
+         * Activity#onTopResumedActivityChanged(boolean)}.
+         *
+         * @param isFocused Whether the activity is in a focused state. {@code true} when the
+         *     activity is focused, {@code false} when the activity is unfocused.
+         */
+        default void onActivityFocusStateChanged(boolean isFocused) {}
     }
 
     /**
      * @return The window's {@link AppHeaderState} information.
      */
     @Nullable AppHeaderState getAppHeaderState();
-
-    /**
-     * @return {@code true} if the activity is in a desktop window irrespective of focus state,
-     *     {@code false} otherwise.
-     * @deprecated Use {@link AppHeaderUtils#isAppInDesktopWindow(DesktopWindowStateManager)}.
-     */
-    // TODO(crbug.com/337086192): Remove this method from the interface.
-    @Deprecated
-    boolean isInDesktopWindow();
 
     /**
      * @return {@code true} if the activity is in an unfocused desktop window, {@code false}

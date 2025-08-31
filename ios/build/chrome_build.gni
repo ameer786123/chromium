@@ -9,6 +9,9 @@ import("//build/config/features.gni")
 import("//build/config/ios/config.gni")
 import("//build/config/ios/ios_sdk.gni")
 
+assert(target_platform == "iphoneos",
+       "This file must be included only on iOS phone builds.")
+
 # LINT.IfChange
 
 # Xcode 16.0 or higher is required to build Chromium on iOS. This file should
@@ -19,15 +22,11 @@ assert(xcode_version_int >= 1600, "Xcode 16.0 or higher is required.")
 # LINT.ThenChange(//docs/ios/build_instructions.md)
 
 declare_args() {
-  # Disable notification center widget extensions.
-  ios_enable_content_widget_extension = false
-  ios_enable_search_widget_extension = false
-
   # Enable share extension.
   ios_enable_share_extension = true
 
-  # Disable the new share extension UI and entry points.
-  ios_enable_extended_share_extension = false
+  # Enable the new share extension UI and entry points.
+  ios_enable_extended_share_extension = true
 
   # Enable open in extension.
   ios_enable_open_extension = true
@@ -64,8 +63,8 @@ declare_args() {
   # Overridden when using the Google-internal repository to build Chrome on iOS.
   ios_push_notification_service_extension_target = "//ios/chrome/push_notification_service_extension:push_notification_service_extension_implementation"
 
-  # Enable passkey capabilities in the Credential Provider Extension (CPE).
-  ios_cpe_enable_passkey_capabilities = true
+  # Enable credential exchange capability in the Credential Provider Extension (CPE).
+  ios_cpe_enable_credential_exchange = false
 
   # The API key to query Google services in the Credential Provider Extension.
   ios_credential_provider_extension_api_key = ""
@@ -77,7 +76,10 @@ declare_args() {
   ios_enable_background_mode = true
 
   # Enable iOS 17 widgets improvements to support multi profile.
-  ios_enable_widgets_for_mim = false
+  ios_enable_widgets_for_mim = true
+
+  # Enable iOS 26 liquid glass.
+  ios_enable_liquid_glass = true
 
   # Value of the encryption export compliance code. See "Cryptography and
   # U.S. Export Compliance" in "Submitting the App to App Review" in the
@@ -122,8 +124,6 @@ declare_args() {
 
 if (target_environment == "catalyst") {
   # Some extensions uses API that are not available in "catalyst" environment.
-  ios_enable_content_widget_extension = false
-  ios_enable_search_widget_extension = false
   ios_enable_credential_provider_extension = false
   ios_enable_widget_kit_extension = false
   ios_enable_prebuilt_widget_kit_extension = false
@@ -142,8 +142,6 @@ if (ios_chrome_generate_order_file) {
 
   # Disable all extensions as the order file is only generated based on running
   # the primary application.
-  ios_enable_content_widget_extension = false
-  ios_enable_search_widget_extension = false
   ios_enable_credential_provider_extension = false
   ios_enable_widget_kit_extension = false
   ios_enable_prebuilt_widget_kit_extension = false

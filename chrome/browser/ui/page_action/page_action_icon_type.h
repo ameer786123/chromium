@@ -30,7 +30,7 @@ enum class PageActionIconType {
   kAutofillAddress = 14,
   kSaveCard = 15,
   // DEPRECATED: kSendTabToSelf = 16,
-  kSharingHub = 17,
+  // DEPRECATED: kSharingHub = 17,
   // DEPRECATED: kSideSearch = 18,
   kSmsRemoteFetcher = 19,
   kTranslate = 20,
@@ -46,8 +46,10 @@ enum class PageActionIconType {
   kDiscounts = 30,
   kOptimizationGuide = 31,
   kCollaborationMessaging = 32,
-  kChangePassword = 33,
-  kMaxValue = kChangePassword,
+  // DEPRECATED: kChangePassword = 33,
+  kLensOverlayHomework = 34,
+  kAiMode = 35,
+  kMaxValue = kAiMode,
 };
 // LINT.ThenChange(//tools/metrics/histograms/metadata/page/enums.xml:PageActionIconType)
 
@@ -65,7 +67,7 @@ static_assert(static_cast<int>(PageActionIconType::kPriceTracking) == 10);
 static_assert(static_cast<int>(PageActionIconType::kPwaInstall) == 11);
 static_assert(static_cast<int>(PageActionIconType::kAutofillAddress) == 14);
 static_assert(static_cast<int>(PageActionIconType::kSaveCard) == 15);
-static_assert(static_cast<int>(PageActionIconType::kSharingHub) == 17);
+
 static_assert(static_cast<int>(PageActionIconType::kSmsRemoteFetcher) == 19);
 static_assert(static_cast<int>(PageActionIconType::kTranslate) == 20);
 static_assert(static_cast<int>(PageActionIconType::kVirtualCardEnroll) == 21);
@@ -82,7 +84,8 @@ static_assert(static_cast<int>(PageActionIconType::kDiscounts) == 30);
 static_assert(static_cast<int>(PageActionIconType::kOptimizationGuide) == 31);
 static_assert(static_cast<int>(PageActionIconType::kCollaborationMessaging) ==
               32);
-static_assert(static_cast<int>(PageActionIconType::kChangePassword) == 33);
+static_assert(static_cast<int>(PageActionIconType::kLensOverlayHomework) == 34);
+static_assert(static_cast<int>(PageActionIconType::kAiMode) == 35);
 
 // Returns a bool indicating whether the given page action type has been
 // migrated to the new framework, which is based on ActionItems instead of

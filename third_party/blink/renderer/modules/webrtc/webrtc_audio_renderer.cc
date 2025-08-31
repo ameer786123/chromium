@@ -40,18 +40,14 @@
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/webrtc/api/media_stream_interface.h"
 
-namespace WTF {
+namespace blink {
 
 template <typename T>
-struct CrossThreadCopier<rtc::scoped_refptr<T>> {
+struct CrossThreadCopier<webrtc::scoped_refptr<T>> {
   STATIC_ONLY(CrossThreadCopier);
-  using Type = rtc::scoped_refptr<T>;
+  using Type = webrtc::scoped_refptr<T>;
   static Type Copy(Type pointer) { return pointer; }
 };
-
-}  // namespace WTF
-
-namespace blink {
 
 namespace {
 
@@ -369,10 +365,11 @@ WebRtcAudioRenderer::CreateSharedAudioRendererProxy(
     MediaStreamDescriptor* media_stream_descriptor) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   SharedAudioRenderer::OnPlayStateChanged on_play_state_changed =
-      WTF::BindRepeating(&WebRtcAudioRenderer::OnPlayStateChanged,
-                         WrapRefCounted(this));
-  SharedAudioRenderer::OnPlayStateRemoved on_play_state_removed = WTF::BindOnce(
-      &WebRtcAudioRenderer::OnPlayStateRemoved, WrapRefCounted(this));
+      blink::BindRepeating(&WebRtcAudioRenderer::OnPlayStateChanged,
+                           WrapRefCounted(this));
+  SharedAudioRenderer::OnPlayStateRemoved on_play_state_removed =
+      blink::BindOnce(&WebRtcAudioRenderer::OnPlayStateRemoved,
+                      WrapRefCounted(this));
   return base::MakeRefCounted<SharedAudioRenderer>(
       this, media_stream_descriptor, std::move(on_play_state_changed),
       std::move(on_play_state_removed));
@@ -708,7 +705,8 @@ void WebRtcAudioRenderer::UpdateSourceVolume(
         *signaling_thread_, FROM_HERE,
         CrossThreadBindOnce(
             &webrtc::AudioSourceInterface::SetVolume,
-            rtc::scoped_refptr<webrtc::AudioSourceInterface>(source), volume));
+            webrtc::scoped_refptr<webrtc::AudioSourceInterface>(source),
+            volume));
   } else {
     source->SetVolume(volume);
   }
@@ -913,7 +911,7 @@ void WebRtcAudioRenderer::PrepareSink() {
   sink_->Initialize(new_sink_params, this);
 }
 
-void WebRtcAudioRenderer::SendLogMessage(const WTF::String& message) {
+void WebRtcAudioRenderer::SendLogMessage(const String& message) {
   WebRtcLogMessage(String::Format("WRAR::%s [label=%s]", message.Utf8().c_str(),
                                   media_stream_descriptor_id_.Utf8().c_str())
                        .Utf8());

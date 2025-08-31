@@ -12,10 +12,10 @@
 #include "base/apple/foundation_util.h"
 #include "base/check.h"
 #include "base/feature_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/fullscreen_util_mac.h"
-#include "chrome/browser/ui/lens/lens_overlay_controller.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view_mac.h"
 #include "chrome/browser/ui/views/frame/browser_view_layout.h"
 #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
@@ -38,14 +38,6 @@
 #endif
 
 namespace {
-
-// The width of the traffic lights. Used to animate the tab strip leaving a hole
-// for the traffic lights.
-// TODO(crbug.com/40892148): Get this dynamically. Unfortunately the
-// values in BrowserNonClientFrameViewMac::GetCaptionButtonInsets don't account
-// for a window with an NSToolbar.
-constexpr int kTrafficLightsWidth = 62;
-constexpr int kTabAlignmentInset = 4;
 
 class ImmersiveModeFocusSearchMac : public views::FocusSearch {
  public:
@@ -91,6 +83,10 @@ ImmersiveModeControllerMac::~ImmersiveModeControllerMac() {
 void ImmersiveModeControllerMac::Init(BrowserView* browser_view) {
   browser_view_ = browser_view;
   focus_search_ = std::make_unique<ImmersiveModeFocusSearchMac>(browser_view);
+  browser_close_subscription_ =
+      browser_view_->browser()->RegisterBrowserDidClose(
+          base::BindRepeating(&ImmersiveModeControllerMac::BrowserDidClose,
+                              base::Unretained(this)));
 }
 
 void ImmersiveModeControllerMac::SetEnabled(bool enabled) {
@@ -123,7 +119,6 @@ void ImmersiveModeControllerMac::SetEnabled(bool enabled) {
       SetTabNativeWidgetID(tab_overlay_host->bridged_native_widget_id());
     }
     top_container_observation_.Observe(browser_view_->top_container());
-    browser_frame_observation_.Observe(browser_view_->GetWidget());
     overlay_widget_observation_.Observe(browser_view_->overlay_widget());
 
     // Capture the overlay content view before enablement. Once enabled the view
@@ -138,7 +133,7 @@ void ImmersiveModeControllerMac::SetEnabled(bool enabled) {
 
     views::NativeWidgetMacNSWindowHost::GetFromNativeWindow(
         browser_view_->GetWidget()->GetNativeWindow())
-        ->set_immersive_mode_reveal_client(this);
+        ->set_immersive_mode_reveal_client(weak_ptr_factory_.GetWeakPtr());
 
     // Move the appropriate children from the browser widget to the overlay
     // widget, unless we are entering content fullscreen. Make sure to call
@@ -198,7 +193,6 @@ void ImmersiveModeControllerMac::SetEnabled(bool enabled) {
           browser_view_->tab_strip_region_view(), 0);
     }
     top_container_observation_.Reset();
-    browser_frame_observation_.Reset();
     overlay_widget_observation_.Reset();
 
     // Notify BrowserView about the fullscreen exit so that the top container
@@ -233,14 +227,29 @@ void ImmersiveModeControllerMac::SetEnabled(bool enabled) {
   }
 }
 
+// LINT.IfChange(MacTabStripInsets)
 gfx::Insets ImmersiveModeControllerMac::GetTabStripRegionViewInsets() {
-  int right_left_inset = kTabAlignmentInset + kTrafficLightsWidth;
+  // TODO(crbug.com/40892148): Get this dynamically. Unfortunately the
+  // values in BrowserNonClientFrameViewMac::GetCaptionButtonInsets don't
+  // account for a window with an NSToolbar.
+  int right_left_inset = 0;
+  if (@available(macOS 26, *)) {
+    right_left_inset = 74;
+  } else {
+    right_left_inset = 66;
+  }
 
   // Without this +1 top inset the tabs sit 1px too high. I assume this is
   // because in fullscreen there is no resize handle.
   return browser_view_->frame()->GetFrameView()->CaptionButtonsOnLeadingEdge()
              ? gfx::Insets::TLBR(1, right_left_inset, 0, 0)
              : gfx::Insets::TLBR(1, 0, 0, right_left_inset);
+}
+// LINT.ThenChange(//chrome/browser/ui/views/frame/browser_non_client_frame_view_mac.mm:MacTabStripInsets)
+
+void ImmersiveModeControllerMac::BrowserDidClose(
+    BrowserWindowInterface* browser) {
+  SetEnabled(false);
 }
 
 bool ImmersiveModeControllerMac::IsEnabled() const {
@@ -287,10 +296,6 @@ void ImmersiveModeControllerMac::OnFindBarVisibleBoundsChanged(
 bool ImmersiveModeControllerMac::ShouldStayImmersiveAfterExitingFullscreen() {
   return false;
 }
-
-void ImmersiveModeControllerMac::OnWidgetActivationChanged(
-    views::Widget* widget,
-    bool active) {}
 
 int ImmersiveModeControllerMac::GetMinimumContentOffset() const {
   if (find_bar_visible_ &&
@@ -364,10 +369,6 @@ void ImmersiveModeControllerMac::OnViewBoundsChanged(
   }
 }
 
-void ImmersiveModeControllerMac::OnWidgetDestroying(views::Widget* widget) {
-  SetEnabled(false);
-}
-
 void ImmersiveModeControllerMac::LockDestroyed() {
   if (auto* window = GetNSWindowMojo()) {
     window->ImmersiveFullscreenRevealUnlock();
@@ -408,9 +409,9 @@ bool ImmersiveModeControllerMac::ShouldMoveChild(views::Widget* child) {
   }
 
   // The find bar should be reparented if it exists.
-  if (browser_view_->browser()->HasFindBarController()) {
+  if (browser_view_->browser()->GetFeatures().HasFindBarController()) {
     FindBarController* find_bar_controller =
-        browser_view_->browser()->GetFindBarController();
+        browser_view_->browser()->GetFeatures().GetFindBarController();
     if (child == find_bar_controller->find_bar()->GetHostWidget()) {
       return true;
     }

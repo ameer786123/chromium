@@ -32,7 +32,6 @@
 #include "gpu/command_buffer/common/sync_token.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -485,7 +484,7 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider {
   // Map from the PoolResource |unique_id| to the PoolResource.
   std::map<size_t, std::unique_ptr<PoolResource>> in_use_resources_;
 
-  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
+  std::unique_ptr<base::AsyncMemoryPressureListener> memory_pressure_listener_;
 
   base::TimeTicks flush_evicted_resources_deadline_;
 

@@ -9,9 +9,9 @@
 #include <vector>
 
 #include "ash/ash_export.h"
+#include "ash/wm/layer_tree_synchronizer.h"
 #include "ash/wm/overview/overview_session.h"
 #include "ash/wm/overview/overview_types.h"
-#include "ash/wm/scoped_layer_tree_synchronizer.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -20,6 +20,7 @@
 #include "ui/aura/window_observer.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/geometry/rrect_f.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/transform.h"
 
@@ -152,6 +153,9 @@ class ASH_EXPORT ScopedOverviewTransformWindow
                              ui::PropertyChangeReason reason) override;
   void OnWindowDestroying(aura::Window* window) override;
 
+  void OnDragStarted();
+  void OnDragEnded();
+
   // If true, makes `CloseWidget()` execute synchronously when used in tests.
   static void SetImmediateCloseForTests(bool immediate);
 
@@ -169,6 +173,8 @@ class ASH_EXPORT ScopedOverviewTransformWindow
   void AddHiddenTransientWindows(
       const std::vector<raw_ptr<aura::Window, VectorExperimental>>&
           transient_windows);
+
+  void RestoreWindowTree();
 
   // A weak pointer to the overview item that owns |this|. Guaranteed to be not
   // null for the lifetime of |this|.
@@ -218,7 +224,7 @@ class ASH_EXPORT ScopedOverviewTransformWindow
   gfx::Rect original_clip_rect_;
 
   // Removes clipping on `window_` during destruction in the case it was not
-  // removed in `RestoreWindw()`. See destructor for more information.
+  // removed in `RestoreWindow()`. See destructor for more information.
   bool reset_clip_on_shutdown_ = true;
 
   std::unique_ptr<ScopedOverviewHideWindows> hidden_transient_children_;
@@ -226,7 +232,10 @@ class ASH_EXPORT ScopedOverviewTransformWindow
   base::ScopedMultiSourceObservation<aura::Window, aura::WindowObserver>
       window_observations_{this};
 
-  std::unique_ptr<ScopedWindowTreeSynchronizer> window_tree_synchronizer_;
+  std::unique_ptr<WindowTreeSynchronizer> window_tree_synchronizer_;
+  std::unique_ptr<WindowTreeSynchronizer> window_tree_synchronizer_during_drag_;
+
+  std::optional<gfx::RRectF> synchronized_bounds_at_origin_;
 
   base::WeakPtrFactory<ScopedOverviewTransformWindow> weak_ptr_factory_{this};
 };

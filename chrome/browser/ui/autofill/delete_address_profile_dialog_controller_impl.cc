@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/memory/weak_ptr.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/autofill/ui/ui_util.h"
 #include "chrome/browser/ui/autofill/delete_address_profile_dialog_view.h"
@@ -14,6 +15,7 @@
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/base/features.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -79,10 +81,13 @@ DeleteAddressProfileDialogControllerImpl::GetDeleteConfirmationText() const {
 
   PersonalDataManager* pdm = PersonalDataManagerFactory::GetForBrowserContext(
       web_contents_->GetBrowserContext());
+  const bool is_syncing =
+      base::FeatureList::IsEnabled(syncer::kReplaceSyncPromosWithSignInPromos)
+          ? pdm->address_data_manager().IsAutofillUserSelectableTypeEnabled()
+          : pdm->address_data_manager().IsSyncFeatureEnabledForAutofill();
   return l10n_util::GetStringUTF16(
-      pdm->address_data_manager().IsSyncFeatureEnabledForAutofill()
-          ? IDS_AUTOFILL_DELETE_SYNC_ADDRESS_RECORD_TYPE_NOTICE
-          : IDS_AUTOFILL_DELETE_LOCAL_ADDRESS_RECORD_TYPE_NOTICE);
+      is_syncing ? IDS_AUTOFILL_DELETE_SYNC_ADDRESS_RECORD_TYPE_NOTICE
+                 : IDS_AUTOFILL_DELETE_LOCAL_ADDRESS_RECORD_TYPE_NOTICE);
 }
 
 void DeleteAddressProfileDialogControllerImpl::OnAccepted() {

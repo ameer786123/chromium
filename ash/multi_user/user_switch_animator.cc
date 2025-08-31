@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "ash/multi_user/multi_user_window_manager_impl.h"
-#include "ash/public/cpp/multi_user_window_manager_delegate.h"
+#include "ash/public/cpp/multi_user_window_manager_observer.h"
 #include "ash/shell.h"
 #include "ash/wallpaper/wallpaper_controller_impl.h"
 #include "ash/wm/desks/desks_controller.h"
@@ -129,7 +129,7 @@ bool UserSwitchAnimator::CoversScreen(aura::Window* window) {
   }
   gfx::Rect bounds = window->GetBoundsInScreen();
   gfx::Rect work_area =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window).work_area();
+      display::Screen::Get()->GetDisplayNearestWindow(window).work_area();
   bounds.Intersect(work_area);
   return work_area == bounds;
 }
@@ -202,7 +202,8 @@ void UserSwitchAnimator::TransitionUserShelf(AnimationStep animation_step) {
   if (animation_step != ANIMATION_STEP_SHOW_NEW_USER)
     return;
 
-  owner_->delegate_->OnTransitionUserShelfToNewAccount();
+  owner_->observers_.Notify(
+      &MultiUserWindowManagerObserver::OnTransitionUserShelfToNewAccount);
 }
 
 void UserSwitchAnimator::TransitionWindows(AnimationStep animation_step) {

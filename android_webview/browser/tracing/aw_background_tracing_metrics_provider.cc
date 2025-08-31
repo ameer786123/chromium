@@ -16,6 +16,7 @@
 #include "components/metrics/metrics_service.h"
 #include "components/metrics/version_utils.h"
 #include "components/tracing/common/background_tracing_utils.h"
+#include "components/tracing/common/tracing_scenarios_config.h"
 #include "components/version_info/android/channel_getter.h"
 #include "services/tracing/public/cpp/trace_startup_config.h"
 #include "third_party/metrics_proto/trace_log.pb.h"
@@ -25,12 +26,13 @@ namespace tracing {
 
 AwBackgroundTracingMetricsProvider::AwBackgroundTracingMetricsProvider() =
     default;
+
 AwBackgroundTracingMetricsProvider::~AwBackgroundTracingMetricsProvider() =
     default;
 
-void AwBackgroundTracingMetricsProvider::DoInit() {
+void AwBackgroundTracingMetricsProvider::Init() {
   tracing::TraceStartupConfig::GetInstance().SetBackgroundStartupTracingEnabled(
-      tracing::ShouldTraceStartup());
+      tracing::kStartupFieldTracing.Get());
   SetupFieldTracingFromFieldTrial();
 
   metrics::MetricsService* metrics =
@@ -61,11 +63,11 @@ AwBackgroundTracingMetricsProvider::GetEmbedderMetricsProvider() {
 }
 
 void AwBackgroundTracingMetricsProvider::RecordCoreSystemProfileMetrics(
-    metrics::SystemProfileProto* system_profile_proto) {
+    metrics::SystemProfileProto& system_profile_proto) {
   metrics::MetricsLog::RecordCoreSystemProfile(
       metrics::GetVersionString(),
       metrics::AsProtobufChannel(version_info::android::GetChannel()), false,
-      base::i18n::GetConfiguredLocale(), std::string(), system_profile_proto);
+      base::i18n::GetConfiguredLocale(), std::string(), &system_profile_proto);
 }
 
 }  // namespace tracing

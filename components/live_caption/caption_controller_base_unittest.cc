@@ -10,6 +10,7 @@
 #include "components/live_caption/caption_bubble_context.h"
 #include "components/live_caption/caption_bubble_controller.h"
 #include "components/live_caption/pref_names.h"
+#include "components/live_caption/views/translation_view_wrapper_base.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
@@ -47,12 +48,18 @@ class MockListener : public CaptionControllerBase::Listener {
 
   MOCK_METHOD(bool,
               OnTranscription,
-              (CaptionBubbleContext*, const media::SpeechRecognitionResult&),
+              (content::RenderFrameHost*,
+               CaptionBubbleContext*,
+               const media::SpeechRecognitionResult&),
               (override));
-  MOCK_METHOD(void, OnAudioStreamEnd, (CaptionBubbleContext*), (override));
+  MOCK_METHOD(void,
+              OnAudioStreamEnd,
+              (content::RenderFrameHost*, CaptionBubbleContext*),
+              (override));
   MOCK_METHOD(void,
               OnLanguageIdentificationEvent,
-              (CaptionBubbleContext*,
+              (content::RenderFrameHost*,
+               CaptionBubbleContext*,
                const media::mojom::LanguageIdentificationEventPtr&),
               (override));
 
@@ -69,6 +76,7 @@ class MockCaptionBubbleContext : public CaptionBubbleContext {
   const std::string GetSessionId() const override { return {}; }
   MOCK_METHOD(void, Activate, (), (override));
   MOCK_METHOD(bool, IsActivatable, (), (const override));
+  MOCK_METHOD(bool, ShouldAvoidOverlap, (), (const override));
   MOCK_METHOD(std::unique_ptr<CaptionBubbleSessionObserver>,
               GetCaptionBubbleSessionObserver,
               (),
@@ -77,11 +85,6 @@ class MockCaptionBubbleContext : public CaptionBubbleContext {
               GetOpenCaptionSettingsCallback,
               (),
               (override));
-  MOCK_METHOD(void,
-              SetContextActivatabilityObserver,
-              (CaptionBubble*),
-              (override));
-  MOCK_METHOD(void, RemoveContextActivatabilityObserver, (), (override));
 };
 
 class MockCaptionBubbleController : public CaptionBubbleController {
@@ -92,12 +95,18 @@ class MockCaptionBubbleController : public CaptionBubbleController {
   // CaptionControllerBase::Listener
   MOCK_METHOD(bool,
               OnTranscription,
-              (CaptionBubbleContext*, const media::SpeechRecognitionResult&),
+              (content::RenderFrameHost*,
+               CaptionBubbleContext*,
+               const media::SpeechRecognitionResult&),
               (override));
-  MOCK_METHOD(void, OnAudioStreamEnd, (CaptionBubbleContext*), (override));
+  MOCK_METHOD(void,
+              OnAudioStreamEnd,
+              (content::RenderFrameHost*, CaptionBubbleContext*),
+              (override));
   MOCK_METHOD(void,
               OnLanguageIdentificationEvent,
-              (CaptionBubbleContext*,
+              (content::RenderFrameHost*,
+               CaptionBubbleContext*,
                const media::mojom::LanguageIdentificationEventPtr&),
               (override));
 
@@ -123,14 +132,16 @@ class MockCaptionControllerDelegate : public CaptionControllerBase::Delegate {
  public:
   explicit MockCaptionControllerDelegate(
       std::unique_ptr<CaptionBubbleController> bubble_controller) {
-    EXPECT_CALL(*this, CreateCaptionBubbleController(_, _))
+    EXPECT_CALL(*this, CreateCaptionBubbleController(_, _, _))
         .WillOnce(Return(std::move(bubble_controller)));
   }
   ~MockCaptionControllerDelegate() override = default;
 
   MOCK_METHOD(std::unique_ptr<CaptionBubbleController>,
               CreateCaptionBubbleController,
-              (CaptionBubbleSettings*, const std::string&),
+              (CaptionBubbleSettings*,
+               const std::string&,
+               std::unique_ptr<TranslationViewWrapperBase>),
               (override));
 
   void AddCaptionStyleObserver(ui::NativeThemeObserver*) override {}
@@ -201,8 +212,8 @@ TEST_F(CaptionControllerBaseTest, CaptionBubbleControllerReceivesCallbacks) {
       CreateController(std::make_unique<MockCaptionControllerDelegate>(
           std::move(mock_bubble_controller)));
   controller_under_test->create_ui_for_testing();
-  EXPECT_CALL(*mock_bubble_controller_raw, OnAudioStreamEnd(nullptr));
-  controller_under_test->OnAudioStreamEnd(nullptr);
+  EXPECT_CALL(*mock_bubble_controller_raw, OnAudioStreamEnd(nullptr, nullptr));
+  controller_under_test->OnAudioStreamEnd(nullptr, nullptr);
 }
 
 TEST_F(CaptionControllerBaseTest, CaptionBubbleAliasIsAddedAndRemoved) {
@@ -227,11 +238,13 @@ TEST_F(CaptionControllerBaseTest, ListenersReceiveTranscription) {
   MockCaptionBubbleContext context;
 
   auto listener = std::make_unique<MockListener>();
-  EXPECT_CALL(*listener, OnAudioStreamEnd(&context));
+  content::RenderFrameHost* rfh =
+      reinterpret_cast<content::RenderFrameHost*>(listener.get());
+  EXPECT_CALL(*listener, OnAudioStreamEnd(rfh, &context));
 
   auto controller_under_test = CreateController();
   controller_under_test->AddListener(std::move(listener));
-  controller_under_test->OnAudioStreamEnd(&context);
+  controller_under_test->OnAudioStreamEnd(rfh, &context);
 }
 
 TEST_F(CaptionControllerBaseTest, TranscriptionStopsIfNoListeners) {
@@ -239,7 +252,8 @@ TEST_F(CaptionControllerBaseTest, TranscriptionStopsIfNoListeners) {
   media::SpeechRecognitionResult result;
 
   auto controller_under_test = CreateController();
-  EXPECT_FALSE(controller_under_test->DispatchTranscription(&context, result));
+  EXPECT_FALSE(controller_under_test->DispatchTranscription(
+      /*rfh=*/nullptr, &context, result));
 }
 
 TEST_F(CaptionControllerBaseTest, ListenersReceiveAudioEnd) {
@@ -247,12 +261,66 @@ TEST_F(CaptionControllerBaseTest, ListenersReceiveAudioEnd) {
   media::SpeechRecognitionResult result;
 
   auto listener = std::make_unique<MockListener>();
-  // TODO: return true and expect true below.
-  EXPECT_CALL(*listener, OnTranscription(&context, result));
+  content::RenderFrameHost* rfh =
+      reinterpret_cast<content::RenderFrameHost*>(listener.get());
+  EXPECT_CALL(*listener, OnTranscription(rfh, &context, result));
 
   auto controller_under_test = CreateController();
   controller_under_test->AddListener(std::move(listener));
-  controller_under_test->DispatchTranscription(&context, result);
+  controller_under_test->DispatchTranscription(rfh, &context, result);
+}
+
+class CaptionControllerBaseListenerTest : public CaptionControllerBaseTest {
+ public:
+  class TestCaptionController : public CaptionControllerBase {
+   public:
+    TestCaptionController(PrefService* profile_prefs,
+                          const std::string& application_locale)
+        : CaptionControllerBase(profile_prefs, application_locale, nullptr) {}
+    ~TestCaptionController() override = default;
+
+    MOCK_METHOD(void, OnFirstListenerAdded, (), (override));
+    MOCK_METHOD(void, OnLastListenerRemoved, (), (override));
+    MOCK_METHOD(CaptionBubbleSettings*,
+                caption_bubble_settings,
+                (),
+                (override));
+  };
+};
+
+TEST_F(CaptionControllerBaseListenerTest, OnFirstListenerAddedCalled) {
+  auto controller = std::make_unique<TestCaptionController>(
+      &testing_pref_service_, speech::kUsEnglishLocale);
+  EXPECT_CALL(*controller, OnFirstListenerAdded).Times(1);
+  EXPECT_CALL(*controller, OnLastListenerRemoved).Times(0);
+
+  auto listener1 = std::make_unique<MockListener>();
+  controller->AddListener(std::move(listener1));
+
+  // Adding a second listener should not trigger the callback.
+  auto listener2 = std::make_unique<MockListener>();
+  controller->AddListener(std::move(listener2));
+}
+
+TEST_F(CaptionControllerBaseListenerTest, OnLastListenerRemovedCalled) {
+  auto controller = std::make_unique<TestCaptionController>(
+      &testing_pref_service_, speech::kUsEnglishLocale);
+  EXPECT_CALL(*controller, OnFirstListenerAdded).Times(1);
+  EXPECT_CALL(*controller, OnLastListenerRemoved).Times(1);
+
+  auto listener1 = std::make_unique<MockListener>();
+  auto* listener1_ptr = listener1.get();
+  controller->AddListener(std::move(listener1));
+
+  auto listener2 = std::make_unique<MockListener>();
+  auto* listener2_ptr = listener2.get();
+  controller->AddListener(std::move(listener2));
+
+  // Removing the first listener should not trigger the callback.
+  controller->remove_listener_for_testing(listener1_ptr);
+
+  // Removing the last listener should trigger the callback.
+  controller->remove_listener_for_testing(listener2_ptr);
 }
 
 }  // namespace

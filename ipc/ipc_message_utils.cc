@@ -320,18 +320,6 @@ bool ReadValue(const base::Pickle* pickle,
 
 // -----------------------------------------------------------------------------
 
-LogData::LogData()
-    : routing_id(0),
-      type(0),
-      sent(0),
-      receive(0),
-      dispatch(0) {
-}
-
-LogData::LogData(const LogData& other) = default;
-
-LogData::~LogData() = default;
-
 void ParamTraits<bool>::Log(const param_type& p, std::string* l) {
   l->append(p ? "true" : "false");
 }
@@ -1344,63 +1332,20 @@ void ParamTraits<base::UnguessableToken>::Log(const param_type& p,
 
 void ParamTraits<IPC::ChannelHandle>::Write(base::Pickle* m,
                                             const param_type& p) {
-#if BUILDFLAG(IS_NACL)
-  WriteParam(m, p.socket);
-#else
   WriteParam(m, p.mojo_handle);
-#endif
 }
 
 bool ParamTraits<IPC::ChannelHandle>::Read(const base::Pickle* m,
                                            base::PickleIterator* iter,
                                            param_type* r) {
-#if BUILDFLAG(IS_NACL)
-  return ReadParam(m, iter, &r->socket);
-#else
   return ReadParam(m, iter, &r->mojo_handle);
-#endif
 }
 
 void ParamTraits<IPC::ChannelHandle>::Log(const param_type& p,
                                           std::string* l) {
   l->append("ChannelHandle(");
-#if BUILDFLAG(IS_NACL)
-  ParamTraits<base::FileDescriptor>::Log(p.socket, l);
-#else
   LogParam(p.mojo_handle, l);
-#endif
   l->append(")");
-}
-
-void ParamTraits<LogData>::Write(base::Pickle* m, const param_type& p) {
-  WriteParam(m, p.channel);
-  WriteParam(m, p.routing_id);
-  WriteParam(m, p.type);
-  WriteParam(m, p.flags);
-  WriteParam(m, p.sent);
-  WriteParam(m, p.receive);
-  WriteParam(m, p.dispatch);
-  WriteParam(m, p.message_name);
-  WriteParam(m, p.params);
-}
-
-bool ParamTraits<LogData>::Read(const base::Pickle* m,
-                                base::PickleIterator* iter,
-                                param_type* r) {
-  return
-      ReadParam(m, iter, &r->channel) &&
-      ReadParam(m, iter, &r->routing_id) &&
-      ReadParam(m, iter, &r->type) &&
-      ReadParam(m, iter, &r->flags) &&
-      ReadParam(m, iter, &r->sent) &&
-      ReadParam(m, iter, &r->receive) &&
-      ReadParam(m, iter, &r->dispatch) &&
-      ReadParam(m, iter, &r->message_name) &&
-      ReadParam(m, iter, &r->params);
-}
-
-void ParamTraits<LogData>::Log(const param_type& p, std::string* l) {
-  // Doesn't make sense to implement this!
 }
 
 void ParamTraits<Message>::Write(base::Pickle* m, const Message& p) {
@@ -1410,7 +1355,7 @@ void ParamTraits<Message>::Write(base::Pickle* m, const Message& p) {
   DCHECK(!p.HasAttachments());
 #endif
 
-  // Don't just write out the message. This is used to send messages between
+  // Don't just write out the message. This used to send messages between
   // NaCl (Posix environment) and the browser (could be on Windows). The message
   // header formats differ between these systems (so does handle sharing, but
   // we already asserted we don't have any handles). So just write out the
@@ -1420,6 +1365,7 @@ void ParamTraits<Message>::Write(base::Pickle* m, const Message& p) {
   // could be 64-bit and the host browser could be 32-bits. The nested message
   // may or may not be safe to send between 32-bit and 64-bit systems, but we
   // leave that up to the code sending the message to ensure.
+  // TODO(crbug.com/40511454): remove this code.
   m->WriteUInt32(static_cast<uint32_t>(p.routing_id()));
   m->WriteUInt32(p.type());
   m->WriteUInt32(p.flags());

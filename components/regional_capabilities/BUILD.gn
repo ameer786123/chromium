@@ -9,32 +9,33 @@ if (is_android) {
 
 static_library("regional_capabilities") {
   sources = [
-    "eea_countries_ids.h",
     "regional_capabilities_metrics.cc",
     "regional_capabilities_metrics.h",
     "regional_capabilities_prefs.cc",
     "regional_capabilities_prefs.h",
     "regional_capabilities_service.cc",
     "regional_capabilities_service.h",
-    "regional_capabilities_switches.cc",
-    "regional_capabilities_switches.h",
     "regional_capabilities_utils.cc",
     "regional_capabilities_utils.h",
   ]
 
   public_deps = [
     ":country_id",
+    ":switches",
     "//base",
     "//components/keyed_service/core",
   ]
 
   deps = [
     ":country_access_reason",
+    ":data",
     "//base/version_info",
     "//components/country_codes",
     "//components/pref_registry",
     "//components/prefs",
     "//components/search_engines:search_engine_pref_names",
+    "//components/strings",
+    "//third_party/abseil-cpp:absl",
     "//third_party/search_engines_data:prepopulated_engines",
     "//third_party/search_engines_data:regional_settings",
   ]
@@ -48,8 +49,8 @@ source_set("country_access_reason") {
   visibility = [
     ":*",
     "//chrome/browser/search_engine_choice:impl",
-    "//chrome/browser/ui:ui",
-    "//components/search_engines:search_engines",
+    "//chrome/browser/ui",
+    "//components/search_engines",
   ]
 
   sources = [ "access/country_access_reason.h" ]
@@ -57,7 +58,7 @@ source_set("country_access_reason") {
   deps = [ "//base" ]
 }
 
-static_library("country_id") {
+source_set("country_id") {
   public = [ "regional_capabilities_country_id.h" ]
 
   sources = [ "regional_capabilities_country_id.cc" ]
@@ -69,7 +70,40 @@ static_library("country_id") {
   ]
 }
 
-static_library("test_support") {
+source_set("switches") {
+  visibility = [ ":*" ]
+
+  sources = [
+    "regional_capabilities_switches.cc",
+    "regional_capabilities_switches.h",
+  ]
+
+  deps = [ "//base" ]
+}
+
+source_set("data") {
+  visibility = [
+    ":*",
+    "//components/search_engines",
+    "//components/search_engines:unit_tests",
+    "//ios/chrome/browser/regional_capabilities/model",
+  ]
+
+  sources = [
+    "eea_countries_ids.h",
+    "program_settings.cc",
+    "program_settings.h",
+  ]
+
+  deps = [
+    ":switches",
+    "//base",
+    "//components/country_codes",
+    "//ui/base",
+  ]
+}
+
+source_set("test_support") {
   testonly = true
   sources = [
     "regional_capabilities_test_utils.cc",
@@ -78,8 +112,11 @@ static_library("test_support") {
 
   deps = [
     ":country_access_reason",
+    ":data",
     ":regional_capabilities",
+    "//base/test:test_support",
     "//components/country_codes",
+    "//testing/gtest",
   ]
 }
 
@@ -93,6 +130,7 @@ source_set("unit_tests") {
 
   deps = [
     ":country_access_reason",
+    ":data",
     ":regional_capabilities",
     ":test_support",
     "//base/test:test_support",
@@ -100,5 +138,10 @@ source_set("unit_tests") {
     "//components/metrics",
     "//components/sync_preferences:test_support",
     "//testing/gtest",
+    "//ui/base",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

@@ -48,8 +48,8 @@ namespace {
 
 // User agents must support representations at least 60 Unicode codepoints long,
 // but they may choose to instead use the fallback style for representations
-// that would be longer than 60 codepoints. Since WTF::String may use UTF-16, we
-// limit string length at 120.
+// that would be longer than 60 codepoints. Since blink::String may use UTF-16,
+// we limit string length at 120.
 const wtf_size_t kCounterLengthLimit = 120;
 
 const CounterStyle& GetDisc() {
@@ -168,7 +168,7 @@ Vector<wtf_size_t> AlphabeticAlgorithm(unsigned value, wtf_size_t num_symbols) {
     // Since length is logarithmic to value, we won't exceed the length limit.
     DCHECK_LE(result.size(), kCounterLengthLimit);
   }
-  std::reverse(result.begin(), result.end());
+  std::ranges::reverse(result);
   return result;
 }
 
@@ -187,7 +187,7 @@ Vector<wtf_size_t> NumericAlgorithm(unsigned value, wtf_size_t num_symbols) {
     // Since length is logarithmic to value, we won't exceed the length limit.
     DCHECK_LE(result.size(), kCounterLengthLimit);
   }
-  std::reverse(result.begin(), result.end());
+  std::ranges::reverse(result);
   return result;
 }
 
@@ -473,9 +473,10 @@ String HebrewAlgorithm(unsigned number) {
     return HebrewAlgorithmUnder1000(number);
   }
 
-  return HebrewAlgorithmUnder1000(number / 1000) +
-         kHebrewPunctuationGereshCharacter +
-         HebrewAlgorithmUnder1000(number % 1000);
+  return StrCat(
+      {HebrewAlgorithmUnder1000(number / 1000),
+       StringView(base::span_from_ref(uchar::kHebrewPunctuationGeresh)),
+       HebrewAlgorithmUnder1000(number % 1000)});
 }
 
 String ArmenianAlgorithmUnder10000(unsigned number,
@@ -529,8 +530,8 @@ String ArmenianAlgorithm(unsigned number, bool upper) {
   if (!number || number > 99999999) {
     return String();
   }
-  return ArmenianAlgorithmUnder10000(number / 10000, upper, true) +
-         ArmenianAlgorithmUnder10000(number % 10000, upper, false);
+  return StrCat({ArmenianAlgorithmUnder10000(number / 10000, upper, true),
+                 ArmenianAlgorithmUnder10000(number % 10000, upper, false)});
 }
 
 // https://drafts.csswg.org/css-counter-styles-3/#ethiopic-numeric-counter-style
@@ -555,10 +556,10 @@ String EthiopicNumericAlgorithm(unsigned value) {
     value /= 100;
     if (!odd_group) {
       // This adds an extra character for group 0. We'll remove it in the end.
-      result.push_back(kEthiopicNumberTenThousandCharacter);
+      result.push_back(uchar::kEthiopicNumberTenThousand);
     } else {
       if (group_value) {
-        result.push_back(kEthiopicNumberHundredCharacter);
+        result.push_back(uchar::kEthiopicNumberHundred);
       }
     }
     bool most_significant_group = !value;
@@ -575,7 +576,7 @@ String EthiopicNumericAlgorithm(unsigned value) {
     }
   }
 
-  std::reverse(result.begin(), result.end());
+  std::ranges::reverse(result);
   // Remove the extra character from group 0
   result.pop_back();
   return String(result);
@@ -1085,10 +1086,10 @@ String CounterStyle::GenerateTextAlternative(int value) const {
   // custom prefix or suffix. Use the suffix of the predefined symbolic
   // styles instead.
   if (EffectiveSpeakAs() == CounterStyleSpeakAs::kBullets) {
-    return text_without_prefix_suffix + " ";
+    return StrCat({text_without_prefix_suffix, " "});
   }
 
-  return prefix_ + text_without_prefix_suffix + suffix_;
+  return StrCat({prefix_, text_without_prefix_suffix, suffix_});
 }
 
 String CounterStyle::GenerateTextAlternativeWithoutPrefixSuffix(

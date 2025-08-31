@@ -15,10 +15,12 @@
 #include <vector>
 
 #include "base/functional/callback_forward.h"
+#include "base/functional/function_ref.h"
 #include "base/memory/ref_counted.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "base/version.h"
 #include "build/build_config.h"
+#include "chrome/updater/registration_data.h"
 #include "chrome/updater/tag.h"
 #include "chrome/updater/updater_scope.h"
 #include "chrome/updater/updater_version.h"
@@ -43,8 +45,6 @@ inline std::ostream& operator<<(std::ostream& os, std::optional<T> opt) {
 }  // namespace base
 
 namespace updater {
-
-struct RegistrationRequest;
 
 // Converts an unsigned integral to a signed one. Returns -1 if the value is
 // out of the range of the target type.
@@ -165,18 +165,11 @@ GURL AppendQueryParameter(const GURL& url,
                           const std::string& value);
 
 #if BUILDFLAG(IS_MAC)
-// Uses the builtin unzip utility within macOS /usr/bin/unzip to unzip instead
-// of using the configurator's UnzipperFactory. The UnzipperFactory utilizes the
-// //third_party/zlib/google, which has a bug that does not preserve the
-// permissions when it extracts the contents. For updates via zip or
-// differentials, use UnzipWithExe.
-bool UnzipWithExe(const base::FilePath& src_path,
-                  const base::FilePath& dest_path);
-
-// Read the file at path to confirm that the file at the path has the same
-// permissions as the given permissions mask.
-bool ConfirmFilePermissions(const base::FilePath& root_path,
-                            int kPermissionsMask);
+// Recursively update the permissions of a path to 0755 or 0644, depending on
+// whether the file is already executable (by any user) or is a directory.
+// Returns false if and only if there is a failure lstating or setting a
+// permission, except for failures to set permissions on symbolic links.
+bool SetFilePermissionsRecursive(const base::FilePath& root_path);
 #endif  // BUILDFLAG(IS_MAC)
 
 #if BUILDFLAG(IS_WIN)
@@ -252,6 +245,11 @@ template <typename T>
 // with the updater.
 [[nodiscard]] std::optional<base::FilePath>
 GetBundledEnterpriseCompanionExecutablePath(UpdaterScope scope);
+
+// Finds files that match `predicate` under `dir`.
+std::vector<base::FilePath> GetFilesWithPredicate(
+    const base::FilePath& dir,
+    base::FunctionRef<bool(const base::FilePath&)> predicate);
 
 }  // namespace updater
 

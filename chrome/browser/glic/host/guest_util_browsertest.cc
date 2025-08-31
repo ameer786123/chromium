@@ -11,6 +11,7 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/webui_url_constants.h"
@@ -60,12 +61,7 @@ guest_view::TestGuestViewManager& GetGuestViewManager(
 
 class GuestUtilBrowserTest : public InProcessBrowserTest {
  public:
-  GuestUtilBrowserTest() {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kGlic, features::kTabstripComboButton},
-        /*disabled_features=*/{features::kGlicWarming,
-                               features::kGlicFreWarming});
-  }
+  GuestUtilBrowserTest() = default;
   GuestUtilBrowserTest(const GuestUtilBrowserTest&) = delete;
   GuestUtilBrowserTest& operator=(const GuestUtilBrowserTest&) = delete;
 
@@ -73,13 +69,10 @@ class GuestUtilBrowserTest : public InProcessBrowserTest {
 
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
-    glic_test_environment_ =
-        std::make_unique<glic::GlicTestEnvironment>(browser()->profile());
   }
 
   void TearDownOnMainThread() override {
     InProcessBrowserTest::TearDownOnMainThread();
-    glic_test_environment_.reset();
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -91,9 +84,8 @@ class GuestUtilBrowserTest : public InProcessBrowserTest {
   guest_view::TestGuestViewManagerFactory& factory() { return factory_; }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  glic::GlicTestEnvironment glic_test_environment_;
   guest_view::TestGuestViewManagerFactory factory_;
-  std::unique_ptr<glic::GlicTestEnvironment> glic_test_environment_;
 };
 
 IN_PROC_BROWSER_TEST_F(GuestUtilBrowserTest, OnGuestAdded_NonGlic) {

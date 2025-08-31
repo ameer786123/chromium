@@ -41,6 +41,8 @@ import org.chromium.content_public.common.ResourceRequestBodyJni;
 import org.chromium.ui.base.PageTransition;
 import org.chromium.url.GURL;
 
+import java.util.Map;
+
 @RunWith(BaseRobolectricTestRunner.class)
 public class SearchActivityClientImplUnitTest {
     // Placeholder Activity class that guarantees the PackageName is valid for IntentUtils.
@@ -54,8 +56,8 @@ public class SearchActivityClientImplUnitTest {
     public @Rule MockitoRule mMockitoRule = MockitoJUnit.rule();
     private @Mock ResourceRequestBodyJni mResourceRequestBodyJni;
 
-    private Activity mActivity = Robolectric.buildActivity(TestActivity.class).setup().get();
-    private SearchActivityClientImpl mClient =
+    private final Activity mActivity = Robolectric.buildActivity(TestActivity.class).setup().get();
+    private final SearchActivityClientImpl mClient =
             new SearchActivityClientImpl(mActivity, IntentOrigin.CUSTOM_TAB);
 
     @Before
@@ -380,7 +382,10 @@ public class SearchActivityClientImplUnitTest {
         activity.setCallingActivity(
                 new ComponentName(ContextUtils.getApplicationContext(), TestActivity.class));
         var params =
-                getLoadUrlParamsBuilder().setpostDataAndType(new byte[] {1, 2}, "data").build();
+                getLoadUrlParamsBuilder()
+                        .setPostData(new byte[] {1, 2})
+                        .setExtraHeaders(Map.of("Content-Type", "data"))
+                        .build();
         SearchActivityUtils.resolveOmniboxRequestForResult(mActivity, params);
 
         // We should see the same URL on the receiving side.

@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #import "base/test/ios/wait_util.h"
+#import "components/signin/public/base/signin_switches.h"
+#import "google_apis/gaia/core_account_id.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
@@ -32,6 +34,16 @@
 
 @implementation ConsistencyPromoSigninCoordinatorTestCase
 
+- (AppLaunchConfiguration)appConfigurationForTestCase {
+  AppLaunchConfiguration config = [super appConfigurationForTestCase];
+
+  if ([self isRunningTest:@selector(testFromSettingsWithAuthError)]) {
+    config.features_enabled.push_back(switches::kEnableIdentityInAuthError);
+  }
+
+  return config;
+}
+
 - (void)setUp {
   [super setUp];
   // Resets the number of dismissals for web sign-in.
@@ -47,8 +59,8 @@
   const GURL url = self.testServer->GetURL("/echo");
   [SigninEarlGrey triggerConsistencyPromoSigninDialogWithURL:url];
   [SigninEarlGreyUI verifyWebSigninIsVisible:YES];
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::WebSigninSkipButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                          ConsistencySigninSkipButtonMatcher()]
       performAction:grey_tap()];
   [ChromeEarlGreyUI waitForAppToIdle];
   [SigninEarlGreyUI verifyWebSigninIsVisible:NO];
@@ -69,8 +81,8 @@
   const GURL url = self.testServer->GetURL("/echo");
   [SigninEarlGrey triggerConsistencyPromoSigninDialogWithURL:url];
   [SigninEarlGreyUI verifyWebSigninIsVisible:YES];
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::WebSigninSkipButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                          ConsistencySigninSkipButtonMatcher()]
       performAction:grey_tap()];
   [SigninEarlGreyUI verifyWebSigninIsVisible:NO];
   GREYAssertEqual(
@@ -90,7 +102,7 @@
 // is removed, the web sign-in dialog needs to update itself to show the version
 // with no identity.
 // TODO(crbug.com/346537324): Test fails on device.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_testRemoveLastIdentityWithSigninErrorDialogNoDismiss \
   testRemoveLastIdentityWithSigninErrorDialogNoDismiss
 #else
@@ -104,8 +116,8 @@
   const GURL url = self.testServer->GetURL("/echo");
   [SigninEarlGrey triggerConsistencyPromoSigninDialogWithURL:url];
   [SigninEarlGreyUI verifyWebSigninIsVisible:YES];
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          WebSigninPrimaryButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ConsistencySigninPrimaryButtonMatcher()]
       performAction:grey_tap()];
   // Wait for the error dialog (sign-in fails since the sign-in is done with a
   // fake identity).
@@ -128,7 +140,7 @@
 
 // Display an error dialog and then dismiss the web sign-in dialog.
 // TODO(crbug.com/346537324): Test fails on device.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_testGetErrorDialogAndSkipWebSigninDialog \
   testGetErrorDialogAndSkipWebSigninDialog
 #else
@@ -142,8 +154,8 @@
   const GURL url = self.testServer->GetURL("/echo");
   [SigninEarlGrey triggerConsistencyPromoSigninDialogWithURL:url];
   [SigninEarlGreyUI verifyWebSigninIsVisible:YES];
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          WebSigninPrimaryButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ConsistencySigninPrimaryButtonMatcher()]
       performAction:grey_tap()];
   // Wait for the error dialog (sign-in fails since the sign-in is done with a
   // fake identity).
@@ -159,8 +171,8 @@
                      IDS_IOS_SIGN_IN_DISMISS)] performAction:grey_tap()];
   [ChromeEarlGreyUI waitForAppToIdle];
   // Skip the web sign-in dialog.
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::WebSigninSkipButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                          ConsistencySigninSkipButtonMatcher()]
       performAction:grey_tap()];
   [SigninEarlGreyUI verifyWebSigninIsVisible:NO];
 }
@@ -173,9 +185,38 @@
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI
       tapSettingsMenuButton:chrome_test_util::SettingsSignInRowMatcher()];
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          WebSigninPrimaryButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ConsistencySigninPrimaryButtonMatcher()]
       performAction:grey_tap()];
+  [SigninEarlGreyUI verifyWebSigninIsVisible:NO];
+  [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
+}
+
+// Tests that the bottom sheet doesn't wait for the cookies when being triggered
+// from the settings.
+- (void)testFromSettingsWithAuthError {
+  FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
+  [SigninEarlGrey addFakeIdentity:fakeIdentity];
+  [SigninEarlGrey
+      setPersistentAuthErrorForAccount:CoreAccountId::FromGaiaId(
+                                           GaiaId(fakeIdentity.gaiaID))];
+
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI
+      tapSettingsMenuButton:chrome_test_util::SettingsSignInRowMatcher()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ConsistencySigninPrimaryButtonMatcher()]
+      performAction:grey_tap()];
+
+  // Confirm the fake reauthentication dialog.
+  [[EarlGrey
+      selectElementWithMatcher:grey_allOf(
+                                   grey_accessibilityID(
+                                       kFakeAuthAddAccountButtonIdentifier),
+                                   grey_sufficientlyVisible(), nil)]
+      performAction:grey_tap()];
+
+  // Confirm the sign-in finished successfully after completing the reauth.
   [SigninEarlGreyUI verifyWebSigninIsVisible:NO];
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
 }
@@ -214,9 +255,9 @@
 
   // Sign-in.
   [ChromeEarlGrey
-      waitForMatcher:chrome_test_util::WebSigninPrimaryButtonMatcher()];
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          WebSigninPrimaryButtonMatcher()]
+      waitForMatcher:chrome_test_util::ConsistencySigninPrimaryButtonMatcher()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ConsistencySigninPrimaryButtonMatcher()]
       performAction:grey_tap()];
   [SigninEarlGreyUI verifyWebSigninIsVisible:NO];
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity2];

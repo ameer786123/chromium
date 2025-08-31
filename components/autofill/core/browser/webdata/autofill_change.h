@@ -16,7 +16,7 @@
 #include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/data_model/payments/iban.h"
 #include "components/autofill/core/browser/webdata/autocomplete/autocomplete_entry.h"
-#include "components/autofill/core/browser/webdata/payments/payments_autofill_table.h"
+#include "components/autofill/core/browser/webdata/payments/server_cvc.h"
 
 namespace autofill {
 
@@ -113,7 +113,8 @@ using AutofillProfileChange =
 // Identified by `EntityInstance::guid()`. The EntityInstance is present for
 // `ADD` and `UPDATE` operations but absent for `REMOVE` operations.
 using EntityInstanceChange =
-    AutofillDataModelChange<std::optional<EntityInstance>, base::Uuid>;
+    AutofillDataModelChange<std::optional<EntityInstance>,
+                            EntityInstance::EntityId>;
 
 // Identified by `CreditCard::guid()` for local cards and
 // `CreditCard::server_id()` for server cards.

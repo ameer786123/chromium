@@ -11,12 +11,14 @@ import android.webkit.WebView;
 
 import androidx.annotation.GuardedBy;
 import androidx.annotation.IntDef;
+import androidx.annotation.Nullable;
 
 import com.android.webview.chromium.CallbackConverter;
 import com.android.webview.chromium.ProfileStore;
 import com.android.webview.chromium.SharedStatics;
 import com.android.webview.chromium.SharedTracingControllerAdapter;
 import com.android.webview.chromium.WebViewChromiumAwInit;
+import com.android.webview.chromium.WebViewChromiumAwInit.CallSite;
 import com.android.webview.chromium.WebkitToSharedGlueConverter;
 
 import org.chromium.android_webview.AwProxyController;
@@ -110,9 +112,16 @@ public class SupportLibWebViewChromiumFactory implements WebViewProviderFactoryB
                 Features.SPECULATIVE_LOADING_CONFIG,
                 Features.SAVE_STATE,
                 Features.WEB_VIEW_NAVIGATION_CLIENT_BASIC_USAGE,
-                Features.ASYNC_SHOULD_INTERCEPT_REQUEST + Features.DEV_SUFFIX,
                 Features.PROVIDER_WEAKLY_REF_WEBVIEW,
                 Features.PAYMENT_REQUEST,
+                Features.WEBVIEW_BUILDER + Features.DEV_SUFFIX,
+                Features.COOKIE_INTERCEPT,
+                Features.WARM_UP_RENDERER_PROCESS,
+                Features.EXTRA_HEADER_FOR_ORIGINS,
+                Features.BACK_FORWARD_CACHE_SETTINGS,
+                Features.PRECONNECT,
+                Features.HYPERLINK_CONTEXT_MENU_ITEMS + Features.DEV_SUFFIX,
+                Features.ASYNC_WEBVIEW_STARTUP_ASYNC_STARTUP_LOCATIONS + Features.DEV_SUFFIX,
                 // Add new features above. New features must include `+ Features.DEV_SUFFIX`
                 // when they're initially added (this can be removed in a future CL). The final
                 // feature should have a trailing comma for cleaner diffs.
@@ -121,6 +130,7 @@ public class SupportLibWebViewChromiumFactory implements WebViewProviderFactoryB
     // These values are persisted to logs. Entries should not be renumbered and
     // numeric values should never be reused.
     // LINT.IfChange(ApiCall)
+
     @IntDef({
         ApiCall.ADD_WEB_MESSAGE_LISTENER,
         ApiCall.CLEAR_PROXY_OVERRIDE,
@@ -266,6 +276,22 @@ public class SupportLibWebViewChromiumFactory implements WebViewProviderFactoryB
         ApiCall.GET_PAYMENT_REQUEST_ENABLED,
         ApiCall.SET_HAS_ENROLLED_INSTRUMENT_ENABLED,
         ApiCall.GET_HAS_ENROLLED_INSTRUMENT_ENABLED,
+        ApiCall.GET_WEBVIEW_BUILDER,
+        ApiCall.SET_INCLUDE_COOKIES_ON_INTERCEPT,
+        ApiCall.GET_INCLUDE_COOKIES_ON_INTERCEPT,
+        ApiCall.SERVICE_WORKER_SET_INCLUDE_COOKIES_ON_INTERCEPT,
+        ApiCall.SERVICE_WORKER_GET_INCLUDE_COOKIES_ON_INTERCEPT,
+        ApiCall.PROFILE_WARM_UP_RENDERER_PROCESS,
+        ApiCall.SET_ORIGIN_MATCHED_HEADER,
+        ApiCall.HAS_ORIGIN_MATCHED_HEADER,
+        ApiCall.CLEAR_ORIGIN_MATCHED_HEADER,
+        ApiCall.CLEAR_ALL_ORIGIN_MATCHED_HEADERS,
+        ApiCall.SET_BACK_FORWARD_CACHE_SETTINGS,
+        ApiCall.GET_BACK_FORWARD_CACHE_SETTINGS,
+        ApiCall.BACK_FORWARD_CACHE_SETTINGS_GET_TIMEOUT_IN_SECONDS,
+        ApiCall.BACK_FORWARD_CACHE_SETTINGS_GET_MAX_PAGES_IN_CACHE,
+        ApiCall.PRECONNECT,
+        ApiCall.SET_HYPERLINK_CONTEXT_MENU_ITEMS,
         // Add new constants above. The final constant should have a trailing comma for cleaner
         // diffs.
         ApiCall.COUNT, // Added to suppress WrongConstant in #recordApiCall
@@ -406,7 +432,9 @@ public class SupportLibWebViewChromiumFactory implements WebViewProviderFactoryB
         int NAVIGATION_DID_COMMIT = 131;
         int NAVIGATION_DID_COMMIT_ERROR_PAGE = 132;
         int NAVIGATION_GET_STATUS_CODE = 133;
+        @Deprecated // Never launched
         int CLEAR_ASYNC_SHOULD_INTERCEPT_REQUEST = 134;
+        @Deprecated // Never launched
         int SET_ASYNC_SHOULD_INTERCEPT_REQUEST = 135;
         int SERVICE_WORKER_CLEAR_ASYNC_SHOULD_INTERCEPT_REQUEST = 136;
         int SERVICE_WORKER_SET_ASYNC_SHOULD_INTERCEPT_REQUEST = 137;
@@ -417,9 +445,25 @@ public class SupportLibWebViewChromiumFactory implements WebViewProviderFactoryB
         int GET_PAYMENT_REQUEST_ENABLED = 142;
         int SET_HAS_ENROLLED_INSTRUMENT_ENABLED = 143;
         int GET_HAS_ENROLLED_INSTRUMENT_ENABLED = 144;
+        int GET_WEBVIEW_BUILDER = 145;
+        int SET_INCLUDE_COOKIES_ON_INTERCEPT = 146;
+        int GET_INCLUDE_COOKIES_ON_INTERCEPT = 147;
+        int SERVICE_WORKER_SET_INCLUDE_COOKIES_ON_INTERCEPT = 148;
+        int SERVICE_WORKER_GET_INCLUDE_COOKIES_ON_INTERCEPT = 149;
+        int PROFILE_WARM_UP_RENDERER_PROCESS = 150;
+        int SET_ORIGIN_MATCHED_HEADER = 151;
+        int HAS_ORIGIN_MATCHED_HEADER = 152;
+        int CLEAR_ORIGIN_MATCHED_HEADER = 153;
+        int CLEAR_ALL_ORIGIN_MATCHED_HEADERS = 154;
+        int SET_BACK_FORWARD_CACHE_SETTINGS = 155;
+        int GET_BACK_FORWARD_CACHE_SETTINGS = 156;
+        int BACK_FORWARD_CACHE_SETTINGS_GET_TIMEOUT_IN_SECONDS = 157;
+        int BACK_FORWARD_CACHE_SETTINGS_GET_MAX_PAGES_IN_CACHE = 158;
+        int PRECONNECT = 159;
+        int SET_HYPERLINK_CONTEXT_MENU_ITEMS = 160;
 
         // Remember to update AndroidXWebkitApiCall in enums.xml when adding new values here
-        int COUNT = 145;
+        int COUNT = 161;
     }
 
     // LINT.ThenChange(/tools/metrics/histograms/metadata/android/enums.xml:AndroidXWebkitApiCall)
@@ -455,6 +499,15 @@ public class SupportLibWebViewChromiumFactory implements WebViewProviderFactoryB
     }
 
     @Override
+    public /* WebViewBuilderBoundaryInterface */ InvocationHandler getWebViewBuilder() {
+        try (TraceEvent event = TraceEvent.scoped("WebView.APICall.AndroidX.GET_WEBVIEW_BUILDER")) {
+            recordApiCall(ApiCall.GET_WEBVIEW_BUILDER);
+            return BoundaryInterfaceReflectionUtil.createInvocationHandlerFor(
+                    new SupportLibWebViewBuilderAdapter());
+        }
+    }
+
+    @Override
     public /* WebViewProvider */ InvocationHandler createWebView(WebView webView) {
         try (TraceEvent event = TraceEvent.scoped("WebView.APICall.AndroidX.CREATE_WEBVIEW")) {
             recordApiCall(ApiCall.CREATE_WEBVIEW);
@@ -469,7 +522,7 @@ public class SupportLibWebViewChromiumFactory implements WebViewProviderFactoryB
     }
 
     private static class StaticsAdapter implements StaticsBoundaryInterface {
-        private SharedStatics mSharedStatics;
+        private final SharedStatics mSharedStatics;
 
         public StaticsAdapter(SharedStatics sharedStatics) {
             mSharedStatics = sharedStatics;
@@ -585,7 +638,9 @@ public class SupportLibWebViewChromiumFactory implements WebViewProviderFactoryB
                 TraceEvent.scoped("WebView.APICall.AndroidX.GET_SERVICE_WORKER_CONTROLLER")) {
             recordApiCall(ApiCall.GET_SERVICE_WORKER_CONTROLLER);
             AwServiceWorkerController serviceWorkerController =
-                    mAwInit.getDefaultServiceWorkerController();
+                    mAwInit.getDefaultProfile(CallSite.GET_DEFAULT_SERVICE_WORKER_CONTROLLER)
+                            .getBrowserContext()
+                            .getServiceWorkerController();
             synchronized (mAwInit.getLazyInitLock()) {
                 if (mServiceWorkerController == null) {
                     mServiceWorkerController =
@@ -683,34 +738,54 @@ public class SupportLibWebViewChromiumFactory implements WebViewProviderFactoryB
                     BoundaryInterfaceReflectionUtil.castToSuppLibClass(
                             WebViewStartUpCallbackBoundaryInterface.class, callbackInvoHandler);
             WebViewChromiumAwInit.WebViewStartUpCallback callback =
-                    new WebViewChromiumAwInit.WebViewStartUpCallback() {
-                        @Override
-                        public void onSuccess(
-                                WebViewChromiumAwInit.WebViewStartUpDiagnostics result) {
-                            SupportLibStartUpResult supportLibResult =
-                                    new SupportLibStartUpResult();
-                            supportLibResult.setTotalTimeInUiThreadMillis(
-                                    result.getTotalTimeUiThreadChromiumInitMillis());
-                            supportLibResult.setMaxTimePerTaskInUiThreadMillis(
-                                    result.getMaxTimePerTaskUiThreadChromiumInitMillis());
-                            Throwable syncChromiumInitLocation =
-                                    result.getSynchronousChromiumInitLocationOrNull();
-                            if (syncChromiumInitLocation != null) {
-                                supportLibResult.addBlockingStartUpLocation(
-                                        syncChromiumInitLocation);
-                            }
-                            Throwable providerInitOnMainLooperLocation =
-                                    result.getProviderInitOnMainLooperLocationOrNull();
-                            if (providerInitOnMainLooperLocation != null) {
-                                supportLibResult.addBlockingStartUpLocation(
-                                        providerInitOnMainLooperLocation);
-                            }
-                            webViewStartUpCallback.onSuccess(
-                                    BoundaryInterfaceReflectionUtil.createInvocationHandlerFor(
-                                            supportLibResult));
+                    result -> {
+                        SupportLibStartUpResult supportLibResult = new SupportLibStartUpResult();
+                        supportLibResult.setTotalTimeInUiThreadMillis(
+                                result.getTotalTimeUiThreadChromiumInitMillis());
+                        supportLibResult.setMaxTimePerTaskInUiThreadMillis(
+                                result.getMaxTimePerTaskUiThreadChromiumInitMillis());
+                        Throwable syncChromiumInitLocation =
+                                result.getSynchronousChromiumInitLocationOrNull();
+                        if (syncChromiumInitLocation != null) {
+                            supportLibResult.addBlockingStartUpLocation(syncChromiumInitLocation);
                         }
+                        Throwable providerInitOnMainLooperLocation =
+                                result.getProviderInitOnMainLooperLocationOrNull();
+                        if (providerInitOnMainLooperLocation != null) {
+                            supportLibResult.addBlockingStartUpLocation(
+                                    providerInitOnMainLooperLocation);
+                        }
+                        Throwable asyncChromiumInitLocation =
+                                result.getAsynchronousChromiumInitLocationOrNull();
+                        if (asyncChromiumInitLocation != null) {
+                            supportLibResult.addAsyncStartUpLocation(asyncChromiumInitLocation);
+                        }
+                        webViewStartUpCallback.onSuccess(
+                                BoundaryInterfaceReflectionUtil.createInvocationHandlerFor(
+                                        supportLibResult));
                     };
-            mAwInit.startUpWebView(callback, webViewStartUpConfig.shouldRunUiThreadStartUpTasks());
+
+            mAwInit.startUpWebView(
+                    callback,
+                    webViewStartUpConfig.shouldRunUiThreadStartUpTasks(),
+                    getProfilesToLoad(webViewStartUpConfig));
         }
+    }
+
+    // TODO(crbug.com/431984603): Remove and use the get method directly when any breaking change is
+    // done to startUpWebView API.
+    @Nullable
+    private static Set<String> getProfilesToLoad(
+            WebViewStartUpConfigBoundaryInterface webViewStartUpConfig) {
+        Set<String> profilesToLoad = null;
+        try {
+            profilesToLoad = webViewStartUpConfig.getProfileNamesToLoad();
+        } catch (RuntimeException e) {
+            // This is an ugly fix to make sure that we don't crash with older BoundaryInterface in
+            // AndroidX older versions. We should ideally fix that by making the
+            // WebViewStartUpCallbackBoundaryInterface implements FeatureFlagHolderBoundaryInterface
+            // or convert the Proxy way to use BiConsumer similar to WebViewBuilder.
+        }
+        return profilesToLoad;
     }
 }

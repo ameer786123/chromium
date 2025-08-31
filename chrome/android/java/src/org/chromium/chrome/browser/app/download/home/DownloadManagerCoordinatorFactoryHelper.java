@@ -8,13 +8,14 @@ import android.app.Activity;
 import android.content.Context;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.download.home.DownloadManagerCoordinator;
 import org.chromium.chrome.browser.download.home.DownloadManagerCoordinatorFactory;
 import org.chromium.chrome.browser.download.home.DownloadManagerUiConfig;
 import org.chromium.chrome.browser.download.items.OfflineContentAggregatorFactory;
 import org.chromium.chrome.browser.download.settings.DownloadSettings;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.profiles.OtrProfileId;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
@@ -24,6 +25,7 @@ import org.chromium.components.browser_ui.util.GlobalDiscardableReferencePool;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
 /** A helper class to build and return an {@link DownloadManagerCoordinator}. */
+@NullMarked
 class DownloadManagerCoordinatorFactoryHelper {
     /**
      * Returns an instance of a {@link DownloadManagerCoordinator} to be used in the UI.
@@ -38,13 +40,14 @@ class DownloadManagerCoordinatorFactoryHelper {
             Activity activity,
             DownloadManagerUiConfig config,
             SnackbarManager snackbarManager,
-            ModalDialogManager modalDialogManager) {
+            @Nullable ModalDialogManager modalDialogManager) {
         Profile profile =
-                OtrProfileId.isOffTheRecord(config.otrProfileId)
+                config.otrProfileId != null
                         ? ProfileManager.getLastUsedRegularProfile()
                                 .getOffTheRecordProfile(
                                         config.otrProfileId, /* createIfNeeded= */ true)
                         : ProfileManager.getLastUsedRegularProfile();
+        assert profile != null;
         Callback<Context> settingsLaunchHelper =
                 DownloadManagerCoordinatorFactoryHelper::settingsLaunchHelper;
         return DownloadManagerCoordinatorFactory.create(
@@ -54,6 +57,7 @@ class DownloadManagerCoordinatorFactoryHelper {
                 settingsLaunchHelper,
                 snackbarManager,
                 modalDialogManager,
+                new DownloadHelpPageLauncherImpl(profile),
                 TrackerFactory.getTrackerForProfile(profile),
                 new FaviconProviderImpl(profile),
                 OfflineContentAggregatorFactory.get(),

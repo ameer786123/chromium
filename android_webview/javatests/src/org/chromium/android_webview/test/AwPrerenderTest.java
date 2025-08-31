@@ -26,12 +26,12 @@ import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 
 import org.chromium.android_webview.AwContents;
-import org.chromium.android_webview.AwFeatureMap;
 import org.chromium.android_webview.AwNoVarySearchData;
 import org.chromium.android_webview.AwPrefetchCallback;
 import org.chromium.android_webview.AwPrefetchParameters;
 import org.chromium.android_webview.AwWebResourceRequest;
 import org.chromium.android_webview.ScriptHandler;
+import org.chromium.android_webview.common.AwFeatureMap;
 import org.chromium.android_webview.common.AwFeatures;
 import org.chromium.android_webview.settings.SpeculativeLoadingAllowedFlags;
 import org.chromium.base.Callback;
@@ -66,7 +66,7 @@ import java.util.function.Supplier;
 @UseParametersRunnerFactory(AwJUnit4ClassRunnerWithParameters.Factory.class)
 @DoNotBatch(reason = "Tests that need browser start are incompatible with @Batch")
 public class AwPrerenderTest extends AwParameterizedTest {
-    private static enum ActivationBy {
+    private enum ActivationBy {
         LOAD_URL,
         JAVASCRIPT,
     };
@@ -81,7 +81,7 @@ public class AwPrerenderTest extends AwParameterizedTest {
         mActivityTestRule = new AwActivityTestRule(param.getMutation());
     }
 
-    private TestAwContentsClient mContentsClient = new TestAwContentsClient();
+    private final TestAwContentsClient mContentsClient = new TestAwContentsClient();
 
     private static final String INITIAL_URL = "/android_webview/test/data/hello_world.html";
     private static final String PRERENDER_URL = "/android_webview/test/data/prerender.html";

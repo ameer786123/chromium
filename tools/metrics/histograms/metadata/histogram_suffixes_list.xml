@@ -22,23 +22,6 @@ chromium-metrics-reviews@google.com.
 
 <histogram_suffixes_list>
 
-<histogram_suffixes name="AdapterDecision" separator="." ordering="prefix,2">
-  <suffix name="BrightnessChange" label=""/>
-  <suffix name="NoBrightnessChange" label=""/>
-  <affected-histogram
-      name="AutoScreenBrightness.AdapterDecisionAtUserChange.Brighten.AlsDelta"/>
-  <affected-histogram
-      name="AutoScreenBrightness.AdapterDecisionAtUserChange.Brighten.AlsStd"/>
-  <affected-histogram
-      name="AutoScreenBrightness.AdapterDecisionAtUserChange.Darken.AlsDelta"/>
-  <affected-histogram
-      name="AutoScreenBrightness.AdapterDecisionAtUserChange.Darken.AlsStd"/>
-  <affected-histogram
-      name="AutoScreenBrightness.AdapterDecisionAtUserChange.ModelIteration"/>
-  <affected-histogram
-      name="AutoScreenBrightness.AdapterDecisionAtUserChange.Unknown.AlsStd"/>
-</histogram_suffixes>
-
 <histogram_suffixes name="AdsPageLoadMetricsBytes" separator=".">
   <suffix base="true" name="AdFrames.Aggregate"
       label="Includes resources loaded across all ad frames on a page."/>
@@ -143,17 +126,6 @@ chromium-metrics-reviews@google.com.
       name="PageLoad.Clients.Ads.Visible.Bytes.FullPage.Total2"/>
 </histogram_suffixes>
 
-<histogram_suffixes name="AnimationLoop" separator=".">
-  <suffix name="FirstAnimationLoop"
-      label="Measurement taken on the first animation loop."/>
-  <suffix name="SecondAnimationLoop"
-      label="Measurement taken on the second animation loop."/>
-  <suffix name="ThirdToFifthAnimationLoop"
-      label="Measurements taken on the third, fourth, and fifth animation
-             loop."/>
-  <affected-histogram name="AnimatedImage.NumOfFramesSkipped"/>
-</histogram_suffixes>
-
 <histogram_suffixes name="AutofillAddressFormType" separator=".">
   <suffix name="AddressOnly" label="Form has address and maybe name fields"/>
   <suffix name="AddressPlusContact"
@@ -215,7 +187,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram_suffixes name="AutofillStoredCardHasNickname" separator=".">
   <owner>sujiezhu@google.com</owner>
-  <owner>jsaul@google.com</owner>
+  <owner>osaul@google.com</owner>
   <suffix name="WithNickname" label="Card with a valid nickname"/>
   <affected-histogram name="Autofill.StoredCreditCardCount.Local"/>
   <affected-histogram name="Autofill.StoredCreditCardCount.Server"/>
@@ -295,7 +267,6 @@ chromium-metrics-reviews@google.com.
   <suffix name="AllowThirdParty" label="All third parties allowed on a domain"/>
   <suffix name="Ask" label="Ask"/>
   <suffix name="Block" label="Block"/>
-  <suffix name="DetectImportantContent" label="Detect important content"/>
   <suffix name="DomainWildcardAllowThirdParty"
       label="Third-party cookies allowed for a site group using a domain
              wildcard"/>
@@ -434,14 +405,6 @@ chromium-metrics-reviews@google.com.
       label="Tab hidden while flushing FCP value."/>
   <affected-histogram
       name="PageLoad.PaintTiming.NavigationToFirstContentfulPaint"/>
-</histogram_suffixes>
-
-<histogram_suffixes name="IMEAutoCorrect" separator=".">
-  <suffix name="AC0" label="The auto-correct level is 0"/>
-  <suffix name="AC1" label="The auto-correct level is 1"/>
-  <suffix name="AC2" label="The auto-correct level is 2"/>
-  <affected-histogram name="InputMethod.Commit.Index.FR"/>
-  <affected-histogram name="InputMethod.Commit.Index.US"/>
 </histogram_suffixes>
 
 <histogram_suffixes name="NavigationFrameType" separator=".">
@@ -1121,7 +1084,6 @@ chromium-metrics-reviews@google.com.
 
 <histogram_suffixes name="SharingChannelType" separator=".">
   <suffix name="FcmSenderId" label="FCM Sender ID"/>
-  <suffix name="FcmVapid" label="FCM VAPID"/>
   <suffix name="Server" label="Server"/>
   <suffix name="Unknown" label="Unknown"/>
   <affected-histogram name="Sharing.SendMessageResult"/>
@@ -1154,20 +1116,6 @@ chromium-metrics-reviews@google.com.
   <affected-histogram name="Sharing.SendMessageResult.Windows"/>
 </histogram_suffixes>
 
-<histogram_suffixes name="SharingPulseInterval" separator=".">
-  <suffix name="PulseIntervalLong" label="Long pulse interval"/>
-  <suffix name="PulseIntervalMedium" label="Medium pulse interval"/>
-  <suffix name="PulseIntervalShort" label="Short pulse interval"/>
-  <affected-histogram name="Sharing.SendMessageResult"/>
-  <affected-histogram name="Sharing.SendMessageResult.Android"/>
-  <affected-histogram name="Sharing.SendMessageResult.ChromeOS"/>
-  <affected-histogram name="Sharing.SendMessageResult.iOS"/>
-  <affected-histogram name="Sharing.SendMessageResult.Linux"/>
-  <affected-histogram name="Sharing.SendMessageResult.Mac"/>
-  <affected-histogram name="Sharing.SendMessageResult.Unknown"/>
-  <affected-histogram name="Sharing.SendMessageResult.Windows"/>
-</histogram_suffixes>
-
 <histogram_suffixes name="StartupTemperature" separator=".">
   <suffix name="ColdStartup"
       label="Startup was cold (mostly hard faults). Threshold updated Jan
@@ -1185,12 +1133,6 @@ chromium-metrics-reviews@google.com.
   <affected-histogram name="Startup.FirstWebContents.NonEmptyPaint3"/>
   <affected-histogram name="Startup.LoadTime.ApplicationStartToChromeMain"/>
   <affected-histogram name="Startup.LoadTime.ProcessCreateToApplicationStart"/>
-</histogram_suffixes>
-
-<histogram_suffixes name="WebSocketErrorCodesVariants" separator="_">
-  <suffix name="Localhost" label=""/>
-  <suffix name="NotLocalhost" label=""/>
-  <affected-histogram name="Net.WebSocket.ErrorCodes"/>
 </histogram_suffixes>
 
 </histogram_suffixes_list>

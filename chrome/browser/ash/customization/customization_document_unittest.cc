@@ -211,15 +211,11 @@ class ServicesCustomizationDocumentTest : public testing::Test {
         default_network ? default_network->guid() : std::string();
     network_portal_detector_.SetDefaultNetworkForTesting(guid);
 
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&local_state_);
-    RegisterLocalState(local_state_.registry());
-
     interceptor_ =
         std::make_unique<TestURLLoaderFactoryInterceptor>(&loader_factory_);
   }
 
   void TearDown() override {
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
     network_portal_detector::InitializeForTesting(nullptr);
     loader_factory_.ClearResponses();
     interceptor_.reset();
@@ -282,7 +278,6 @@ class ServicesCustomizationDocumentTest : public testing::Test {
   NetworkHandlerTestHelper network_handler_test_helper_;
   system::ScopedFakeStatisticsProvider fake_statistics_provider_;
   ScopedCrosSettingsTestHelper scoped_cros_settings_test_helper_;
-  TestingPrefServiceSimple local_state_;
   network::TestURLLoaderFactory loader_factory_;
   std::unique_ptr<TestURLLoaderFactoryInterceptor> interceptor_;
   NetworkPortalDetectorTestImpl network_portal_detector_;

@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/frame/remote_frame.h"
 
+#include "base/timer/elapsed_timer.h"
 #include "base/types/optional_util.h"
 #include "cc/layers/surface_layer.h"
 #include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
@@ -212,7 +213,8 @@ void RemoteFrame::Navigate(FrameLoadRequest& frame_request,
       frame_request.GetResourceRequest(), fetch_client_settings_object, window,
       frame_request.GetFrameType(),
       window->GetFrame() ? window->GetFrame()->GetContentSettingsClient()
-                         : nullptr);
+                         : nullptr,
+      window->GetFrame());
 
   if (NavigationShouldReplaceCurrentHistoryEntry(frame_load_type))
     frame_load_type = WebFrameLoadType::kReplaceCurrentItem;
@@ -287,8 +289,7 @@ void RemoteFrame::Navigate(FrameLoadRequest& frame_request,
       base::OptionalFromPtr(base::OptionalToPtr(initiator_frame_token));
   params->source_location = network::mojom::blink::SourceLocation::New();
 
-  std::unique_ptr<SourceLocation> source_location =
-      frame_request.TakeSourceLocation();
+  SourceLocation* source_location = frame_request.GetSourceLocation();
   if (!source_location->IsUnknown()) {
     params->source_location->url =
         source_location->Url() ? source_location->Url() : "";
@@ -574,8 +575,7 @@ void RemoteFrame::WillEnterFullscreen(
                                 request_type);
 }
 
-void RemoteFrame::EnforceInsecureNavigationsSet(
-    const WTF::Vector<uint32_t>& set) {
+void RemoteFrame::EnforceInsecureNavigationsSet(const Vector<uint32_t>& set) {
   TRACE_EVENT("navigation", "RemoteFrame::EnforceInsecureNavigationsSet");
   security_context_.SetInsecureNavigationsSet(set);
 }
@@ -625,6 +625,14 @@ bool RemoteFrame::IsAdFrame() const {
 void RemoteFrame::SetReplicatedIsAdFrame(bool is_ad_frame) {
   TRACE_EVENT("navigation", "RemoteFrame::SetReplicatedIsAdFrame");
   is_ad_frame_ = is_ad_frame;
+
+  FrameOwner* owner = Owner();
+  HTMLFrameOwnerElement* owner_element =
+      DynamicTo<HTMLFrameOwnerElement>(owner);
+
+  if (owner_element) {
+    owner_element->DidSetAdStatus();
+  }
 }
 
 void RemoteFrame::SetReplicatedName(const String& name,
@@ -741,8 +749,10 @@ void RemoteFrame::IntrinsicSizingInfoOfChildChanged(
   FrameOwner* owner = Owner();
   // Only communication from HTMLPluginElement-owned subframes is allowed
   // at present. This includes <embed> and <object> tags.
-  if (!owner || !owner->IsPlugin())
+  if (!owner || (!owner->IsPlugin() &&
+                 !RuntimeEnabledFeatures::ResponsiveIframesEnabled())) {
     return;
+  }
 
   // TODO(https://crbug.com/1044304): Should either remove the native
   // C++ Blink type and use the Mojo type everywhere or typemap the
@@ -767,12 +777,12 @@ void RemoteFrame::IntrinsicSizingInfoOfChildChanged(
 // this proxy ever parents a local frame.
 void RemoteFrame::DidSetFramePolicyHeaders(
     network::mojom::blink::WebSandboxFlags sandbox_flags,
-    const WTF::Vector<network::ParsedPermissionsPolicyDeclaration>&
+    const Vector<network::ParsedPermissionsPolicyDeclaration>&
         parsed_permissions_policy) {
   TRACE_EVENT("navigation", "RemoteFrame::DidSetFramePolicyHeaders");
 
   SetReplicatedSandboxFlags(sandbox_flags);
-  // Convert from WTF::Vector<network::ParsedPermissionsPolicyDeclaration>
+  // Convert from blink::Vector<network::ParsedPermissionsPolicyDeclaration>
   // to std::vector<network::ParsedPermissionsPolicyDeclaration>, since
   // network::ParsedPermissionsPolicy is an alias for the later.
   //
@@ -1164,12 +1174,16 @@ void RemoteFrame::CreateRemoteChild(
 }
 
 void RemoteFrame::CreateRemoteChildren(
-    Vector<mojom::blink::CreateRemoteChildParamsPtr> params) {
+    Vector<mojom::blink::CreateRemoteChildParamsPtr> params,
+    const std::optional<base::UnguessableToken>& navigation_metrics_token) {
+  base::ElapsedTimer timer;
   Client()->CreateRemoteChildren(params);
+  Platform::Current()->AddCreateRemoteChildrenEvent(
+      navigation_metrics_token, timer.start_time(), timer.Elapsed());
+  // Add any new code above the AddCreateRemoteChildrenEvent call.
 }
 
-void RemoteFrame::ForwardFencedFrameEventToEmbedder(
-    const WTF::String& event_type) {
+void RemoteFrame::ForwardFencedFrameEventToEmbedder(const String& event_type) {
   // This will also CHECK if the conversion to HTMLFrameOwnerElement fails.
   CHECK(To<HTMLFrameOwnerElement>(Owner())->IsHTMLFencedFrameElement());
   static_cast<HTMLFencedFrameElement*>(Owner())->DispatchFencedEvent(

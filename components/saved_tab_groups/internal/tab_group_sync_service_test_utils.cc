@@ -6,7 +6,7 @@
 
 #include "base/version_info/channel.h"
 #include "components/data_sharing/public/features.h"
-#include "components/optimization_guide/core/optimization_guide_decider.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decider.h"
 #include "components/saved_tab_groups/delegate/tab_group_sync_delegate.h"
 #include "components/saved_tab_groups/internal/saved_tab_group_model.h"
 #include "components/saved_tab_groups/internal/sync_data_type_configuration.h"
@@ -114,7 +114,8 @@ std::unique_ptr<TabGroupSyncService> CreateTabGroupSyncService(
       MaybeCreateSharedTabGroupAccountDataTypeConfiguration(
           channel, data_type_store_service),
       pref_service, std::move(metrics_logger), optimization_guide,
-      identity_manager, std::move(collaboration_finder),
+      identity_manager, /*personal_collaboration_data_service=*/nullptr,
+      std::move(collaboration_finder),
       /*logger=*/nullptr);
 }
 

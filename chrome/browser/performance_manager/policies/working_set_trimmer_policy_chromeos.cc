@@ -164,7 +164,7 @@ void WorkingSetTrimmerPolicyChromeOS::TrimNodesOnGraph() {
   const base::TimeTicks now_ticks = base::TimeTicks::Now();
   for (const PageNode* page_node : GetOwningGraph()->GetAllPageNodes()) {
     if (!page_node->IsVisible() &&
-        page_node->GetTimeSinceLastVisibilityChange() >
+        (now_ticks - page_node->GetLastVisibilityChangeTime()) >
             params_.node_invisible_time) {
       // Get the process node and if it has not been
       // trimmed within the backoff period, we will do that
@@ -444,6 +444,7 @@ void WorkingSetTrimmerPolicyChromeOS::OnPassedToGraph(Graph* graph) {
   params_ = features::TrimOnMemoryPressureParams::GetParams();
   memory_pressure_listener_.emplace(
       FROM_HERE,
+      base::MemoryPressureListenerTag::kWorkingSetTrimmerPolicyChromeOS,
       base::BindRepeating(&WorkingSetTrimmerPolicyChromeOS::OnMemoryPressure,
                           base::Unretained(this)));
 

@@ -26,7 +26,7 @@ import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.Acti
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel;
 import org.chromium.components.browser_ui.widget.selectable_list.SelectionDelegate;
 
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /** Unit tests for {@link TabListEditorRestoreArchivedTabsAction}. */
@@ -36,7 +36,7 @@ public class TabListEditorRestoreArchivedTabsActionUnitTest {
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Mock private TabGroupModelFilter mTabGroupModelFilter;
-    @Mock private SelectionDelegate<Integer> mSelectionDelegate;
+    @Mock private SelectionDelegate<TabListEditorItemSelectionId> mSelectionDelegate;
     @Mock private ActionDelegate mDelegate;
     @Mock private Profile mProfile;
 
@@ -66,16 +66,19 @@ public class TabListEditorRestoreArchivedTabsActionUnitTest {
         Assert.assertEquals(
                 true,
                 mAction.getPropertyModel().get(TabListEditorActionProperties.TITLE_IS_PLURAL));
-        Assert.assertNull(
+        Assert.assertEquals(
+                R.plurals.accessibility_archived_tabs_dialog_restore_action,
                 mAction.getPropertyModel()
-                        .get(TabListEditorActionProperties.CONTENT_DESCRIPTION_RESOURCE_ID));
+                        .get(TabListEditorActionProperties.CONTENT_DESCRIPTION_RESOURCE_ID)
+                        .intValue());
         Assert.assertNull(mAction.getPropertyModel().get(TabListEditorActionProperties.ICON));
     }
 
     @Test
     public void testPerformAction() {
-        List<Tab> tabs = new ArrayList<>();
-        mAction.performAction(tabs);
-        verify(mArchiveDelegate).restoreArchivedTabs(tabs);
+        List<Tab> tabs = Collections.emptyList();
+        List<String> tabGroupSyncIds = Collections.emptyList();
+        mAction.performAction(tabs, tabGroupSyncIds);
+        verify(mArchiveDelegate).restoreArchivedTabs(tabs, tabGroupSyncIds);
     }
 }

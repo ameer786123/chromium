@@ -53,21 +53,20 @@ class PLATFORM_EXPORT BackForwardCacheDisablingFeatureTracker {
   // |feature| should be a non-sticky feature.
   void AddNonStickyFeature(
       SchedulingPolicy::Feature feature,
-      std::unique_ptr<SourceLocation> source_location = nullptr,
+      SourceLocation* source_location = nullptr,
       FrameOrWorkerScheduler::SchedulingAffectingFeatureHandle* handle =
           nullptr);
 
   // Called when a usage of |feature| is added.
   // |feature| should be a sticky feature.
-  void AddStickyFeature(
-      SchedulingPolicy::Feature feature,
-      std::unique_ptr<SourceLocation> source_location = nullptr);
+  void AddStickyFeature(SchedulingPolicy::Feature feature,
+                        SourceLocation* source_location = nullptr);
 
   // Called when one usage of feature is removed.
   void Remove(FeatureAndJSLocationBlockingBFCache feature_and_js_location);
 
   // Gets a hash set of feature usages for metrics.
-  WTF::HashSet<SchedulingPolicy::Feature>
+  HashSet<SchedulingPolicy::Feature>
   GetActiveFeaturesTrackedForBackForwardCacheMetrics();
 
   // Gets a list of non sticky features and their JS locations.

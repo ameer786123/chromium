@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.user_education;
 
+import static org.chromium.build.NullUtil.assertNonNull;
 import static org.chromium.build.NullUtil.assumeNonNull;
 
 import android.app.Activity;
@@ -11,7 +12,6 @@ import android.os.Handler;
 import android.view.View;
 
 import org.chromium.base.TraceEvent;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.supplier.SupplierUtils;
 import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
@@ -22,6 +22,7 @@ import org.chromium.chrome.browser.util.ChromeAccessibilityUtil;
 import org.chromium.components.browser_ui.widget.highlight.ViewHighlighter;
 import org.chromium.components.browser_ui.widget.highlight.ViewHighlighter.HighlightParams;
 import org.chromium.components.browser_ui.widget.textbubble.TextBubble;
+import org.chromium.components.feature_engagement.SnoozeAction;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.feature_engagement.TriggerDetails;
 import org.chromium.ui.widget.RectProvider;
@@ -29,6 +30,7 @@ import org.chromium.ui.widget.ViewRectProvider;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Class that manages requests to trigger IPH's. Customizes the IPH with text bubbles, view
@@ -81,7 +83,8 @@ public class UserEducationHelper {
         mActivity = activity;
         mHandler = handler;
 
-        SupplierUtils.waitForAll(() -> setProfile(profileSupplier.get()), profileSupplier);
+        SupplierUtils.waitForAll(
+                () -> setProfile(assertNonNull(profileSupplier.get())), profileSupplier);
     }
 
     @Initializer
@@ -175,17 +178,30 @@ public class UserEducationHelper {
             mTextBubble.setPreferredVerticalOrientation(iphCommand.preferredVerticalOrientation);
             mTextBubble.setDismissOnTouchInteraction(iphCommand.dismissOnTouch);
             mTextBubble.addOnDismissListener(
-                    () ->
-                            mHandler.postDelayed(
-                                    () -> {
-                                        if (featureName != null) tracker.dismissed(featureName);
-                                        iphCommand.onDismissCallback.run();
-                                        if (highlightParams != null) {
-                                            ViewHighlighter.turnOffHighlight(anchorView);
+                    () -> {
+                        mHandler.postDelayed(
+                                () -> {
+                                    if (featureName != null) {
+                                        if (iphCommand.enableSnoozeMode) {
+                                            final int snoozeAction =
+                                                    mTextBubble != null
+                                                                    && mTextBubble
+                                                                            .wasDismissedByInsideTouch()
+                                                            ? SnoozeAction.DISMISSED
+                                                            : SnoozeAction.SNOOZED;
+                                            tracker.dismissedWithSnooze(featureName, snoozeAction);
+                                        } else {
+                                            tracker.dismissed(featureName);
                                         }
-                                        mTextBubble = null;
-                                    },
-                                    ViewHighlighter.IPH_MIN_DELAY_BETWEEN_TWO_HIGHLIGHTS));
+                                    }
+                                    iphCommand.onDismissCallback.run();
+                                    if (highlightParams != null) {
+                                        ViewHighlighter.turnOffHighlight(anchorView);
+                                    }
+                                    mTextBubble = null;
+                                },
+                                ViewHighlighter.IPH_MIN_DELAY_BETWEEN_TWO_HIGHLIGHTS);
+                    });
             mTextBubble.setAutoDismissTimeout(iphCommand.autoDismissTimeout);
             if (iphCommand.dismissOnTouchTimeout != TextBubble.NO_TIMEOUT) {
                 TextBubble textBubbleForLambda = mTextBubble;

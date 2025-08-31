@@ -26,9 +26,6 @@
 class AutoPipSettingView;
 class DesktopMediaPickerDialogView;
 class DigitalIdentityMultiStepDialogDelegate;
-class DownloadBubbleContentsViewTest;
-class DownloadBubbleSecurityViewTest;
-class DownloadToolbarUIController;
 class ExtensionsMenuCoordinator;
 class ExternalProtocolNoHandlersTelSchemeDialog;
 class ForceInstalledDeprecatedAppsDialogView;
@@ -59,6 +56,12 @@ class WebDialogBrowserTest;
 FORWARD_DECLARE_TEST(AcceleratorCommandsFullscreenBrowserTest,
                      ToggleFullscreen);
 FORWARD_DECLARE_TEST(TabStripScrollContainerTest, AnchoredWidgetHidesOnScroll);
+
+#if !BUILDFLAG(IS_CHROMEOS)
+class DownloadBubbleContentsViewTest;
+class DownloadBubbleSecurityViewTest;
+class DownloadToolbarUIController;
+#endif
 
 namespace arc {
 class ArcTaskWindowBuilder;
@@ -165,15 +168,6 @@ namespace crostini {
 class AppRestartDialog;
 }
 
-namespace data_controls {
-class DesktopDataControlsDialog;
-}
-
-namespace enterprise_connectors {
-class ContentAnalysisDialog;
-class ContentAnalysisDialogBehaviorBrowserTest;
-}  // namespace enterprise_connectors
-
 namespace exo {
 class ShellSurfaceBase;
 }
@@ -258,7 +252,6 @@ class SubAppsInstallDialogController;
 }  // namespace web_app
 
 namespace webid {
-class AccountSelectionModalView;
 class TestAccountSelectionView;
 }  // namespace webid
 
@@ -367,6 +360,13 @@ class VIEWS_EXPORT WidgetDelegate {
     // The widget's title, if any.
     // TODO(ellyjones): Should it be illegal to have show_title && !title?
     std::u16string title;
+
+    // If set to true, force using desktop widget (DesktopNativeWidgetAura).
+    // Otherwise, widget type is determined automatically.
+    // This is used for child widgets on Desktop Aura (i.e. Windows and Linux)
+    // when they need to be rendered beyond their parent window's boundary.
+    // This setting has no effect on other platforms (e.g. ChromeOS or macOS).
+    bool use_desktop_widget_override = false;
   };
 
   class OwnedByWidgetPassKey {
@@ -376,9 +376,11 @@ class VIEWS_EXPORT WidgetDelegate {
     // See comments atop `SetOwnedByWidget()`.
     friend class ::AutoPipSettingView;
     friend class ::DigitalIdentityMultiStepDialogDelegate;
+#if !BUILDFLAG(IS_CHROMEOS)
     friend class ::DownloadBubbleContentsViewTest;
     friend class ::DownloadBubbleSecurityViewTest;
     friend class ::DownloadToolbarUIController;
+#endif
     friend class ::ExtensionsMenuCoordinator;
     friend class ::ExternalProtocolNoHandlersTelSchemeDialog;
     friend class ::ForceInstalledDeprecatedAppsDialogView;
@@ -434,10 +436,6 @@ class VIEWS_EXPORT WidgetDelegate {
     friend class ::constrained_window::BrowserModalHelper;
     friend class ::content::ShellPlatformDelegate;
     friend class ::crostini::AppRestartDialog;
-    friend class ::data_controls::DesktopDataControlsDialog;
-    friend class ::enterprise_connectors::ContentAnalysisDialog;
-    friend class ::enterprise_connectors::
-        ContentAnalysisDialogBehaviorBrowserTest;
     friend class ::exo::ShellSurfaceBase;
     friend class ::extensions::WebFileHandlersPermissionHandler;
     friend class ::javascript_dialogs::AppModalDialogViewViews;
@@ -449,8 +447,6 @@ class VIEWS_EXPORT WidgetDelegate {
     friend class borealis::BorealisLaunchErrorDialog;
     friend class ::web_app::IsolatedWebAppInstallerViewController;
     friend class ::web_app::SubAppsInstallDialogController;
-    friend class ::webid::AccountSelectionModalView;
-    friend class ::webid::TestAccountSelectionView;
 
     OwnedByWidgetPassKey() = default;
   };
@@ -507,7 +503,7 @@ class VIEWS_EXPORT WidgetDelegate {
   // Called whenever the widget's position changes.
   virtual void OnWidgetMove();
 
-  // Called with the display changes (color depth or resolution).
+  // Called when the display changes (color depth or resolution).
   virtual void OnDisplayChanged();
 
   // Called when the work area (the desktop area minus task bars,
@@ -819,6 +815,13 @@ class VIEWS_EXPORT WidgetDelegate {
   void set_internal_name(std::string name) { params_.internal_name = name; }
   std::string internal_name() const { return params_.internal_name; }
 
+  void set_use_desktop_widget_override(bool use_desktop_widget_override) {
+    params_.use_desktop_widget_override = use_desktop_widget_override;
+  }
+  bool use_desktop_widget_override() {
+    return params_.use_desktop_widget_override;
+  }
+
   bool has_desired_bounds_delegate() const {
     return static_cast<bool>(params_.desired_bounds_delegate);
   }
@@ -979,6 +982,7 @@ class VIEWS_EXPORT WidgetDelegateView : public WidgetDelegate, public View {
   friend class examples::ExamplesWindowContents;
   friend class test::GetNativeThemeFromDestructorView;
   friend class test::TestingWidgetDelegateView;
+  friend class webid::TestAccountSelectionView;
   FRIEND_TEST_ALL_PREFIXES(test::WidgetOwnsNativeWidgetTest,
                            WidgetDelegateView);
 

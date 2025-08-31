@@ -16,10 +16,12 @@
 #include "base/task/bind_post_task.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_mock_time_task_runner.h"
+#include "base/test/trace_test_utils.h"
 #include "base/trace_event/trace_buffer.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_log.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 
 namespace webnn {
 
@@ -32,8 +34,6 @@ class ScopedTraceTest : public testing::Test {
   void SetUp() override {
     test_task_runner_ = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
   }
-
-  void TearDown() override { base::trace_event::TraceLog::ResetForTesting(); }
 
  protected:
   void StartTracing(const std::string& filter) {
@@ -59,8 +59,8 @@ class ScopedTraceTest : public testing::Test {
 
   // End tracing, return tracing data in a map of event
   // name->(begin_event_counts, end_event_counts)
-  std::map<std::string, std::pair<int, int>> EndTracing() {
-    std::map<std::string, std::pair<int, int>> event_counts;
+  absl::flat_hash_map<std::string, std::pair<int, int>> EndTracing() {
+    absl::flat_hash_map<std::string, std::pair<int, int>> event_counts;
     base::trace_event::TraceResultBuffer::SimpleOutput json_data;
     base::trace_event::TraceLog::GetInstance()->SetDisabled();
     base::RunLoop run_loop;
@@ -97,6 +97,7 @@ class ScopedTraceTest : public testing::Test {
 
   // The task runner we use for posting tasks.
   base::test::TaskEnvironment task_environment_;
+  base::test::TracingEnvironment tracing_environment_;
   scoped_refptr<base::TestMockTimeTaskRunner> test_task_runner_;
 };
 

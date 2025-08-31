@@ -8,7 +8,6 @@
 
 #include "base/json/values_util.h"
 #include "base/logging.h"
-#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
@@ -19,8 +18,13 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/crash/core/common/crash_key.h"
+#include "gpu/config/device_perf_info.h"
 #include "gpu/config/gpu_util.h"
 #include "third_party/re2/src/re2/re2.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "base/win/windows_version.h"
+#endif
 
 namespace gpu {
 namespace {
@@ -415,11 +419,13 @@ bool GpuControlList::IntelConditions::Contains(
   } else {
     DCHECK(intel_gpu_generation.IsSpecified());
     for (auto& candidate : candidates) {
-      std::string candidate_generation =
+      IntelGpuGeneration gen =
           GetIntelGpuGeneration(candidate.vendor_id, candidate.device_id);
-      if (candidate_generation.empty()) {
+      if (gen <= IntelGpuGeneration::kUnknownIntel) {
         continue;
       }
+      std::string candidate_generation =
+          base::NumberToString(static_cast<int>(gen));
       if (intel_gpu_generation.Contains(candidate_generation)) {
         return true;
       }
@@ -665,7 +671,7 @@ base::Value::List GpuControlList::Entry::GetFeatureNames(
   base::Value::List feature_names;
   for (auto feature : features) {
     auto iter = feature_map.find(feature);
-    CHECK(iter != feature_map.end(), base::NotFatalUntil::M130);
+    CHECK(iter != feature_map.end());
     feature_names.Append(iter->second);
   }
   for (auto* const extension : disabled_extensions) {
@@ -707,8 +713,17 @@ std::set<int32_t> GpuControlList::MakeDecision(GpuControlList::OsType os,
   if (os == kOsAny)
     os = GetOsType();
   std::string processed_os_version = os_version;
-  if (processed_os_version.empty())
+  if (processed_os_version.empty()) {
+#if BUILDFLAG(IS_WIN)
+    base::win::OSInfo::VersionNumber version_number =
+        base::win::OSInfo::GetInstance()->version_number();
+    processed_os_version = base::StringPrintf(
+        "%d.%d.%d.%d", version_number.major, version_number.minor,
+        version_number.build, version_number.patch);
+#else
     processed_os_version = base::SysInfo::OperatingSystemVersion();
+#endif
+  }
   // Get rid of the non numbers because later processing expects a valid
   // version string in the format of "a.b.c".
   size_t pos = processed_os_version.find_first_not_of("0123456789.");

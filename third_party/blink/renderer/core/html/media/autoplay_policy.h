@@ -11,10 +11,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-
-namespace WTF {
-class String;
-}  // namespace WTF
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
@@ -114,7 +111,7 @@ class CORE_EXPORT AutoplayPolicy final
 
   // Returns an error string to be used by the HTMLMediaElement when the play()
   // method fails because of autoplay restrictions.
-  WTF::String GetPlayErrorMessage() const;
+  String GetPlayErrorMessage() const;
 
   // Returns whether the media element was initiated via autoplay.
   // In this context, autoplay means that it was initiated before any user

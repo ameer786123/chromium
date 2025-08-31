@@ -61,10 +61,13 @@ class TabGroupService : public KeyedService, public WebStateListGroupsDelegate {
   collaboration::IOSCollaborationControllerDelegate* GetDelegateForGroup(
       tab_groups::LocalTabGroupID tab_group_id);
 
- private:
+  // YES if the group only have 1 tab and the group is shared.
+  bool ShouldDisplayLastTabCloseAlert(const TabGroup* group);
+
   // true if the group is shared.
   bool IsSharedGroup(const TabGroup* group);
 
+ private:
   // Associated profile.
   raw_ptr<ProfileIOS> profile_;
 

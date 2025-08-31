@@ -22,6 +22,7 @@
 #include <sstream>
 
 #include "base/compiler_specific.h"
+#include "base/containers/heap_array.h"
 #include "base/version_info/channel.h"
 #include "build/branding_buildflags.h"
 #include "chrome/chrome_elf/nt_registry/nt_registry.h"
@@ -30,7 +31,6 @@
 #include "chrome/install_static/install_modes.h"
 #include "chrome/install_static/policy_path_parser.h"
 #include "chrome/install_static/user_data_dir.h"
-#include "components/nacl/common/buildflags.h"
 
 namespace install_static {
 
@@ -38,9 +38,6 @@ enum class ProcessType {
   UNINITIALIZED,
   OTHER_PROCESS,
   BROWSER_PROCESS,
-#if BUILDFLAG(ENABLE_NACL)
-  NACL_LOADER_PROCESS,
-#endif
   CRASHPAD_HANDLER_PROCESS,
 };
 
@@ -82,10 +79,6 @@ constexpr wchar_t kChromeChannelStableExplicit[] = L"stable";
 // need to unify them.
 constexpr wchar_t kRegValueUsageStats[] = L"usagestats";
 constexpr wchar_t kMetricsReportingEnabled[] = L"MetricsReportingEnabled";
-
-#if BUILDFLAG(ENABLE_NACL)
-constexpr wchar_t kNaClLoaderProcess[] = L"nacl-loader";
-#endif
 
 void Trace(const wchar_t* format_string, ...) {
   static const int kMaxLogBufferSize = 1024;
@@ -262,10 +255,6 @@ bool GetChromeChannelNameFromString(const wchar_t* channel_test,
 ProcessType GetProcessType(const std::wstring& process_type) {
   if (process_type.empty())
     return ProcessType::BROWSER_PROCESS;
-#if BUILDFLAG(ENABLE_NACL)
-  if (process_type == kNaClLoaderProcess)
-    return ProcessType::NACL_LOADER_PROCESS;
-#endif
   if (process_type == kCrashpadHandler)
     return ProcessType::CRASHPAD_HANDLER_PROCESS;
   return ProcessType::OTHER_PROCESS;
@@ -278,9 +267,6 @@ bool ProcessNeedsProfileDir(ProcessType process_type) {
   // lies on a network share the sandbox will prevent us from accessing it.
   switch (process_type) {
     case ProcessType::BROWSER_PROCESS:
-#if BUILDFLAG(ENABLE_NACL)
-    case ProcessType::NACL_LOADER_PROCESS:
-#endif
       return true;
     case ProcessType::OTHER_PROCESS:
       return false;
@@ -642,18 +628,18 @@ void GetExecutableVersionDetails(const std::wstring& exe_path,
   DWORD dummy = 0;
   DWORD length = ::GetFileVersionInfoSize(exe_path.c_str(), &dummy);
   if (length) {
-    std::unique_ptr<char[]> data(new char[length]);
-    if (::GetFileVersionInfo(exe_path.c_str(), dummy, length, data.get())) {
-      GetValueFromVersionResource(data.get(), L"ProductVersion", version);
+    auto data = base::HeapArray<char>::Uninit(length);
+    if (::GetFileVersionInfo(exe_path.c_str(), dummy, length, data.data())) {
+      GetValueFromVersionResource(data.data(), L"ProductVersion", version);
 
       std::wstring official_build;
-      GetValueFromVersionResource(data.get(), L"Official Build",
+      GetValueFromVersionResource(data.data(), L"Official Build",
                                   &official_build);
       if (official_build != L"1")
         version->append(L"-devel");
-      GetValueFromVersionResource(data.get(), L"ProductShortName",
+      GetValueFromVersionResource(data.data(), L"ProductShortName",
                                   product_name);
-      GetValueFromVersionResource(data.get(), L"SpecialBuild", special_build);
+      GetValueFromVersionResource(data.data(), L"SpecialBuild", special_build);
     }
   }
   *channel_name = GetChromeChannelName(/*with_extended_stable=*/true);

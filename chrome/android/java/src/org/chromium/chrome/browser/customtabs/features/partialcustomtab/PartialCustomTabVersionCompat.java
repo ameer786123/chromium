@@ -316,8 +316,6 @@ abstract class PartialCustomTabVersionCompat {
         }
 
         private static int getDisplayCutoutRightInset(Display display) {
-            // TODO(crbug.com/40898784): Make this work on P.
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0;
             DisplayCutout cutout = display.getCutout();
             return cutout != null ? cutout.getSafeInsetRight() : 0;
         }
@@ -342,7 +340,7 @@ abstract class PartialCustomTabVersionCompat {
                             // to use it again.
                             boolean imeVisible =
                                     KeyboardVisibilityDelegate.getInstance()
-                                            .isKeyboardShowing(mActivity, view);
+                                            .isKeyboardShowing(view);
                             callback.onResult(imeVisible);
                         };
                 contentFrame.addOnLayoutChangeListener(mLayoutListener);

@@ -18,12 +18,6 @@
 
 using device::mojom::SensorType;
 
-namespace features {
-BASE_FEATURE(kAllowSensorsToEnterBfcache,
-             "AllowSensorsToEnterBfcache",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-}
-
 namespace content {
 
 namespace {
@@ -101,31 +95,11 @@ void FrameSensorProviderProxy::GetSensor(device::mojom::SensorType type,
 void FrameSensorProviderProxy::OnPermissionRequestCompleted(
     SensorType type,
     GetSensorCallback callback,
-    blink::mojom::PermissionStatus status) {
-  if (status != blink::mojom::PermissionStatus::GRANTED) {
+    PermissionResult permission_result) {
+  if (permission_result.status != blink::mojom::PermissionStatus::GRANTED) {
     std::move(callback).Run(
         device::mojom::SensorCreationResult::ERROR_NOT_ALLOWED, nullptr);
     return;
-  }
-
-  // Unblock the orientation sensors as these are tested to play well with
-  // back-forward cache. This is conservative.
-  // TODO(crbug.com/40660549): Test and unblock all of the sensors to work with
-  // back-forward cache.
-  switch (type) {
-    case SensorType::ABSOLUTE_ORIENTATION_EULER_ANGLES:
-    case SensorType::ABSOLUTE_ORIENTATION_QUATERNION:
-    case SensorType::RELATIVE_ORIENTATION_EULER_ANGLES:
-    case SensorType::RELATIVE_ORIENTATION_QUATERNION:
-      break;
-    default:
-      if (!base::FeatureList::IsEnabled(
-              features::kAllowSensorsToEnterBfcache)) {
-        static_cast<RenderFrameHostImpl*>(&render_frame_host())
-            ->OnBackForwardCacheDisablingStickyFeatureUsed(
-                blink::scheduler::WebSchedulerTrackedFeature::
-                    kRequestedBackForwardCacheBlockedSensors);
-      }
   }
 
   auto* web_contents_sensor_provider =

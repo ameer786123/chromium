@@ -4,11 +4,11 @@
 
 #include "chrome/browser/ash/lobster/lobster_image_provider_from_snapper.h"
 
+#include "ash/constants/ash_features.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "base/functional/callback.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/protobuf_matchers.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/ash/lobster/lobster_test_utils.h"
@@ -53,8 +53,8 @@ TEST_F(LobsterImageProviderFromSnapperTest,
           base::test::EqualsProto(CreateTestMantaRequest(
               /*query=*/"a lovely cake", /*seed=*/std::nullopt, /*size=*/
               gfx::Size(kPreviewImageDimensionSize, kPreviewImageDimensionSize),
-              /*num_outputs=*/2, /*use_query_rewriter=*/false,
-              /*use_i18n=*/false)),
+              /*num_outputs=*/2, /*use_query_rewriter=*/true,
+              /*use_i18n=*/true)),
           testing::_, testing::_))
       .WillOnce(testing::Invoke(
           [](const manta::proto::Request& request,
@@ -111,8 +111,8 @@ TEST_F(LobsterImageProviderFromSnapperTest,
                /*query=*/"a lovely cake",
                /*seed=*/kFakeBaseGenerationSeed, /*size=*/
                gfx::Size(kFullImageDimensionSize, kFullImageDimensionSize),
-               /*num_outputs=*/1, /*use_query_rewriter=*/false,
-               /*use_i18n=*/false)),
+               /*num_outputs=*/1, /*use_query_rewriter=*/true,
+               /*use_i18n=*/true)),
            testing::_, testing::_))
       .WillOnce(testing::Invoke(
           [](const manta::proto::Request& request,
@@ -159,8 +159,8 @@ TEST_F(
           base::test::EqualsProto(CreateTestMantaRequest(
               /*query=*/"a sweet candy", /*seed=*/std::nullopt, /*size=*/
               gfx::Size(kPreviewImageDimensionSize, kPreviewImageDimensionSize),
-              /*num_outputs=*/2, /*use_query_rewriter=*/false,
-              /*use_i18n=*/false)),
+              /*num_outputs=*/2, /*use_query_rewriter=*/true,
+              /*use_i18n=*/true)),
           testing::_, testing::_))
       .WillOnce(testing::Invoke(
           [](const manta::proto::Request& request,

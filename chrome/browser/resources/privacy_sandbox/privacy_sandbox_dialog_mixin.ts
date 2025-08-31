@@ -9,7 +9,6 @@ import '/strings.m.js';
 import type { PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {dedupingMixin} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 
 import {PrivacySandboxDialogBrowserProxy, PrivacySandboxPromptAction} from './privacy_sandbox_dialog_browser_proxy.js';
 // clang-format on
@@ -29,14 +28,11 @@ export const PrivacySandboxDialogMixin = dedupingMixin(
             },
 
             /**
-             * If true, the Ads API UX Enhancement should be shown.
+             * If true, the privacy policy page should be loaded.
              */
-            shouldShowV2_: {
+            loadPrivacyPolicy_: {
               type: Boolean,
-              value: () => {
-                return loadTimeData.getBoolean(
-                    'isPrivacySandboxAdsApiUxEnhancementsEnabled');
-              },
+              value: false,
             },
           };
         }
@@ -45,7 +41,7 @@ export const PrivacySandboxDialogMixin = dedupingMixin(
         private didStartWithScrollbar_: boolean = false;
         private wasScrolledToBottomResolver_: PromiseResolver<void>;
         private moreButtonInitialized_: PromiseResolver<void>;
-        declare private shouldShowV2_: boolean;
+        declare private loadPrivacyPolicy_: boolean;
 
         /**
          * Contains true if the dialog dismissal buttons should be the same
@@ -53,9 +49,12 @@ export const PrivacySandboxDialogMixin = dedupingMixin(
          */
         private equalizedButtons_: boolean;
 
-
-        shouldShowV2(): boolean {
-          return this.shouldShowV2_;
+        loadPrivacyPolicyOnExpand(newValue: boolean, oldValue: boolean) {
+          // When the expand is triggered, load the privacy policy the first
+          // time the learn more expand section is clicked.
+          if (newValue && !oldValue) {
+            this.loadPrivacyPolicy_ = true;
+          }
         }
 
         onConsentLearnMoreExpandedChanged(
@@ -216,8 +215,7 @@ export const PrivacySandboxDialogMixin = dedupingMixin(
 
             const buttonRowHeight = 64;
             let lastTextElementId = '#lastTextElement';
-            if (this.shouldShowV2() &&
-                scrollable.querySelector('#lastTextElementV2')) {
+            if (scrollable.querySelector('#lastTextElementV2')) {
               lastTextElementId = '#lastTextElementV2';
             }
             const lastTextElement =
@@ -293,9 +291,7 @@ export const PrivacySandboxDialogMixin = dedupingMixin(
 export interface PrivacySandboxDialogMixinInterface {
   wasScrolledToBottom: boolean;
 
-  // Returns true if the Ads API UX Enhancement should be shown.
-  shouldShowV2(): boolean;
-
+  loadPrivacyPolicyOnExpand(newValue: boolean, oldValue: boolean): void;
   onConsentLearnMoreExpandedChanged(newValue: boolean, oldValue: boolean): void;
   onNoticeLearnMoreExpandedChanged(newValue: boolean, oldValue: boolean): void;
   onNoticeSiteSuggestedAdsLearnMoreExpandedChanged(

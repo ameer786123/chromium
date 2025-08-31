@@ -9,6 +9,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/byte_count.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/feature_list.h"
@@ -25,7 +26,6 @@
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/histogram_macros_local.h"
-#include "base/not_fatal_until.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
 #include "base/strings/strcat.h"
@@ -44,6 +44,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/network_isolation_key.h"
+#include "net/base/task/task_runner.h"
 #include "net/base/upload_data_stream.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/http/http_cache_transaction.h"
@@ -54,6 +55,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/http/http_util.h"
+#include "net/http/no_vary_search_cache_storage_file_operations.h"
 #include "net/log/net_log_with_source.h"
 #include "net/quic/quic_server_info.h"
 #include "url/origin.h"
@@ -71,6 +73,24 @@ bool g_init_cache = false;
 // True if split cache is enabled by default. Must be set before any HTTP cache
 // has been initialized.
 bool g_enable_split_cache = false;
+
+// Helper function to find the highest priority in a container of transactions.
+template <typename T>
+RequestPriority GetHighestPriority(const T& transactions) {
+  RequestPriority highest = RequestPriority::IDLE;
+  for (const auto tx : transactions) {
+    highest = std::max(highest, tx->priority());
+  }
+  return highest;
+}
+
+const scoped_refptr<base::SingleThreadTaskRunner>& TaskRunner(
+    net::RequestPriority priority) {
+  if (features::kNetTaskSchedulerHttpCache.Get()) {
+    return net::GetTaskRunner(priority);
+  }
+  return base::SingleThreadTaskRunner::GetCurrentDefault();
+}
 
 }  // namespace
 
@@ -316,6 +336,21 @@ bool HttpCache::ActiveEntry::CanTransactionWriteResponseHeaders(
   return true;
 }
 
+const scoped_refptr<base::SingleThreadTaskRunner>&
+HttpCache::ActiveEntry::GetTaskRunner() const {
+  // Calculate the highest request priority among all transactions in the entry.
+  RequestPriority highest = std::max(
+      {RequestPriority::IDLE, GetHighestPriority(done_headers_queue_),
+       GetHighestPriority(add_to_entry_queue_), GetHighestPriority(readers_)});
+  if (headers_transaction_) {
+    highest = std::max(highest, headers_transaction_->priority());
+  }
+  if (writers_) {
+    highest = std::max(highest, writers_->priority());
+  }
+  return TaskRunner(highest);
+}
+
 //-----------------------------------------------------------------------------
 
 // This structure keeps track of work items that are attempting to create or
@@ -324,7 +359,7 @@ struct HttpCache::PendingOp {
   PendingOp() = default;
   ~PendingOp() = default;
 
-  raw_ptr<disk_cache::Entry, AcrossTasksDanglingUntriaged> entry = nullptr;
+  raw_ptr<disk_cache::Entry> entry = nullptr;
   bool entry_opened = false;  // rather than created.
 
   std::unique_ptr<disk_cache::Backend> backend;
@@ -396,20 +431,23 @@ class HttpCache::WorkItem {
 
 //-----------------------------------------------------------------------------
 
-HttpCache::HttpCache(std::unique_ptr<HttpTransactionFactory> network_layer,
-                     std::unique_ptr<BackendFactory> backend_factory)
+HttpCache::HttpCache(
+    std::unique_ptr<HttpTransactionFactory> network_layer,
+    std::unique_ptr<BackendFactory> backend_factory,
+    std::unique_ptr<NoVarySearchCacheStorageFileOperations> file_operations)
     : net_log_(nullptr),
       backend_factory_(std::move(backend_factory)),
 
       network_layer_(std::move(network_layer)),
       clock_(base::DefaultClock::GetInstance()),
       keys_marked_no_store_(
-          features::kAvoidEntryCreationForNoStoreCacheSize.Get()) {
+          features::kAvoidEntryCreationForNoStoreCacheSize.Get()),
+      file_operations_(std::move(file_operations)) {
   g_init_cache = true;
   if (base::FeatureList::IsEnabled(features::kHttpCacheNoVarySearch)) {
     size_t max_entries = features::kHttpCacheNoVarySearchCacheMaxEntries.Get();
     if (max_entries) {
-      no_vary_search_cache_.emplace(static_cast<size_t>(max_entries));
+      no_vary_search_cache_ = std::make_unique<NoVarySearchCache>(max_entries);
     }
   }
   HttpNetworkSession* session = network_layer_->GetSession();
@@ -531,6 +569,25 @@ void HttpCache::OnExternalCacheHit(
     }
   }
 
+  OnExternalCacheHitForRequest(request_info);
+
+  if (no_vary_search_cache_ &&
+      features::kHttpCacheNoVarySearchApplyToExternalHits.Get()) {
+    auto result = no_vary_search_cache_->Lookup(request_info);
+    if (result) {
+      // Do this in addition to, rather than instead of, the URL passed to the
+      // function. If both exist in the cache, then we may need to fall back to
+      // the supplied URL in some cases so it is useful to keep it fresh. The
+      // version of the URL from the NoVarySearchCache is touched second so that
+      // it is slightly fresher and so less likely to be evicted.
+      request_info.url = result->original_url;
+      OnExternalCacheHitForRequest(request_info);
+    }
+  }
+}
+
+void HttpCache::OnExternalCacheHitForRequest(
+    const HttpRequestInfo& request_info) {
   std::optional<std::string> key = GenerateCacheKeyForRequest(&request_info);
   if (!key) {
     return;
@@ -552,14 +609,13 @@ void HttpCache::ClearNoVarySearchCache(
       filter_type, origins, domains, delete_begin, delete_end);
 
   if (cleared) {
-    // TODO(https://crbug.com/399562754): Re-write the on-disk store to erase
-    // the removed entries.
+    // This will safely do nothing if we are not using on-disk storage.
+    no_vary_search_cache_storage_.TakeSnapshot();
   }
 }
 
-int HttpCache::CreateTransaction(
-    RequestPriority priority,
-    std::unique_ptr<HttpTransaction>* transaction) {
+std::unique_ptr<HttpTransaction> HttpCache::CreateTransaction(
+    RequestPriority priority) {
   // Do lazy initialization of disk cache if needed.
   if (!disk_cache_.get()) {
     // We don't care about the result.
@@ -578,8 +634,7 @@ int HttpCache::CreateTransaction(
     new_transaction->FailConditionalizationForTest();
   }
 
-  *transaction = std::move(new_transaction);
-  return OK;
+  return new_transaction;
 }
 
 HttpCache* HttpCache::GetCache() {
@@ -655,6 +710,7 @@ std::string HttpCache::GenerateCacheKey(
     int64_t upload_data_identifier,
     bool is_subframe_document_resource,
     bool is_mainframe_navigation,
+    bool is_shared_resource,
     std::optional<url::Origin> initiator) {
   // The first character of the key may vary depending on whether or not sending
   // credentials is permitted for this request. This only happens if the
@@ -666,7 +722,7 @@ std::string HttpCache::GenerateCacheKey(
                                   : '1';
 
   std::string isolation_key;
-  if (IsSplitCacheEnabled()) {
+  if (!is_shared_resource && IsSplitCacheEnabled()) {
     // Prepend the key with |kDoubleKeyPrefix| = "_dk_" to mark it as
     // double-keyed (and makes it an invalid url so that it doesn't get
     // confused with a single-keyed entry). Separate the origin and url
@@ -729,7 +785,8 @@ HttpCache::GenerateCacheKeyForRequestWithAlternateURL(
   return GenerateCacheKey(
       url, request->load_flags, request->network_isolation_key,
       upload_data_identifier, request->is_subframe_document_resource,
-      request->is_main_frame_navigation, request->initiator);
+      request->is_main_frame_navigation, request->is_shared_resource,
+      request->initiator);
 }
 
 // static
@@ -967,7 +1024,7 @@ void HttpCache::DeletePendingOp(PendingOp* pending_op) {
 
   if (!key.empty()) {
     auto it = pending_ops_.find(key);
-    CHECK(it != pending_ops_.end(), base::NotFatalUntil::M130);
+    CHECK(it != pending_ops_.end());
     pending_ops_.erase(it);
   } else {
     for (auto it = pending_ops_.begin(); it != pending_ops_.end(); ++it) {
@@ -1159,7 +1216,7 @@ void HttpCache::DoneWithEntry(scoped_refptr<ActiveEntry>& entry,
   // Transaction is reading from the entry.
   DCHECK(!entry->HasWriters());
   auto readers_it = entry->readers().find(transaction);
-  CHECK(readers_it != entry->readers().end(), base::NotFatalUntil::M130);
+  CHECK(readers_it != entry->readers().end());
   entry->readers().erase(readers_it);
   ProcessQueuedTransactions(entry);
 }
@@ -1223,9 +1280,9 @@ void HttpCache::DoomEntryValidationNoMatch(scoped_refptr<ActiveEntry> entry) {
   // for the transaction to not be found in this entry.
   for (HttpCache::Transaction* transaction : entry->add_to_entry_queue()) {
     transaction->ResetCachePendingState();
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE,
-        base::BindOnce(transaction->cache_io_callback(), ERR_CACHE_RACE));
+    TaskRunner(transaction->priority())
+        ->PostTask(FROM_HERE, base::BindOnce(transaction->cache_io_callback(),
+                                             ERR_CACHE_RACE));
   }
   entry->add_to_entry_queue().clear();
 }
@@ -1260,7 +1317,7 @@ void HttpCache::ProcessQueuedTransactions(scoped_refptr<ActiveEntry> entry) {
 
   // Post a task instead of invoking the io callback of another transaction here
   // to avoid re-entrancy.
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+  entry->GetTaskRunner()->PostTask(
       FROM_HERE, base::BindOnce(&HttpCache::OnProcessQueuedTransactions,
                                 GetWeakPtr(), std::move(entry)));
 }
@@ -1271,7 +1328,7 @@ void HttpCache::ProcessAddToEntryQueue(scoped_refptr<ActiveEntry> entry) {
     // Post a task to put the AddTransactionToEntry handling at the back of
     // the task queue. This allows other tasks (like network IO) to jump
     // ahead and simulate different callback ordering for testing.
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+    entry->GetTaskRunner()->PostTask(
         FROM_HERE, base::BindOnce(&HttpCache::ProcessAddToEntryQueueImpl,
                                   GetWeakPtr(), std::move(entry)));
   } else {
@@ -1294,10 +1351,13 @@ HttpCache::ParallelWritingPattern HttpCache::CanTransactionJoinExistingWriters(
   if (transaction->mode() == Transaction::READ) {
     return PARALLEL_WRITING_NOT_JOIN_READ_ONLY;
   }
-  if (transaction->GetResponseInfo()->headers &&
-      transaction->GetResponseInfo()->headers->GetContentLength() >
-          disk_cache_->MaxFileSize()) {
-    return PARALLEL_WRITING_NOT_JOIN_TOO_BIG_FOR_CACHE;
+  if (transaction->GetResponseInfo()->headers) {
+    std::optional<base::ByteCount> content_length =
+        transaction->GetResponseInfo()->headers->GetContentLength();
+    if (content_length &&
+        content_length->InBytes() > disk_cache_->MaxFileSize()) {
+      return PARALLEL_WRITING_NOT_JOIN_TOO_BIG_FOR_CACHE;
+    }
   }
   return PARALLEL_WRITING_JOIN;
 }
@@ -1436,6 +1496,18 @@ bool HttpCache::DidKeyLeadToNoStoreResponse(const std::string& key) {
          keys_marked_no_store_.end();
 }
 
+void HttpCache::MaybeLoadNoVarySearchCacheFromDisk() {
+  if (file_operations_ && no_vary_search_cache_) {
+    // This use of base::Unretained() is safe because destroying this object
+    // destroys the `no_vary_search_cache_storage_` object after which the
+    // callback will not be called.
+    no_vary_search_cache_storage_.Load(
+        std::move(file_operations_), no_vary_search_cache_->max_size(),
+        base::BindOnce(&HttpCache::OnNoVarySearchCacheLoadComplete,
+                       base::Unretained(this)));
+  }
+}
+
 void HttpCache::OnProcessQueuedTransactions(scoped_refptr<ActiveEntry> entry) {
   entry->set_will_process_queued_transactions(false);
 
@@ -1493,7 +1565,7 @@ void HttpCache::OnIOComplete(int result, PendingOp* pending_op) {
         pending_op->entry->Doom();
       }
 
-      pending_op->entry->Close();
+      pending_op->entry.ExtractAsDangling()->Close();
       pending_op->entry = nullptr;
       try_restart_requests = true;
     }
@@ -1637,6 +1709,7 @@ void HttpCache::OnBackendCreated(int result, PendingOp* pending_op) {
       disk_cache_ = std::move(pending_op->backend);
       UMA_HISTOGRAM_MEMORY_KB("HttpCache.MaxFileSizeOnInit",
                               disk_cache_->MaxFileSize() / 1024);
+      MaybeLoadNoVarySearchCacheFromDisk();
     }
   }
 
@@ -1662,6 +1735,20 @@ void HttpCache::OnBackendCreated(int result, PendingOp* pending_op) {
   if (!item->DoCallback(result)) {
     item->NotifyTransaction(result, nullptr);
   }
+}
+
+void HttpCache::OnNoVarySearchCacheLoadComplete(
+    NoVarySearchCacheStorage::LoadResult result) {
+  if (!result.has_value()) {
+    // Failure. Nothing to do here.
+    return;
+  }
+  base::UmaHistogramCounts100(
+      "HttpCache.NoVarySearch.EntriesAddedDuringLoading",
+      no_vary_search_cache_->size());
+  auto provisional_no_vary_search_cache = std::move(no_vary_search_cache_);
+  no_vary_search_cache_ = std::move(result.value());
+  no_vary_search_cache_->MergeFrom(*provisional_no_vary_search_cache);
 }
 
 }  // namespace net

@@ -120,7 +120,8 @@ void WaitForPersonalDataManagerToBeLoaded(Profile* base_profile) {
   driver.renderer_events().AskForValuesToFill(
       form, form.fields().front().renderer_id(),
       /*caret_bounds=*/gfx::Rect(gfx::Point(p.x(), p.y()), gfx::Size(0, 10)),
-      AutofillSuggestionTriggerSource::kFormControlElementClicked);
+      AutofillSuggestionTriggerSource::kFormControlElementClicked,
+      /*password_request=*/std::nullopt);
   if (AssertionResult a = std::move(wait_for_ask_for_values_to_fill).Wait();
       !a) {
     return a << " " << __func__ << "(): "
@@ -139,7 +140,6 @@ void WaitForPersonalDataManagerToBeLoaded(Profile* base_profile) {
              .begin()
              ->second->ToFormData();
 
-  std::vector<Suggestion> suggestions = {Suggestion(u"John Doe")};
   TestAutofillExternalDelegate* delegate =
       static_cast<TestAutofillExternalDelegate*>(
           test_api(

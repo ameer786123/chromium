@@ -7,8 +7,10 @@
 
 #include <stddef.h>
 
+#include <map>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/tabs/existing_base_sub_menu_model.h"
 
 class TabStripModel;

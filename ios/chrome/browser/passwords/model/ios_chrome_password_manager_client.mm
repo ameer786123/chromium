@@ -10,6 +10,7 @@
 #import "base/feature_list.h"
 #import "base/functional/bind.h"
 #import "base/functional/callback.h"
+#import "base/notimplemented.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/types/optional_util.h"
@@ -41,6 +42,7 @@
 #import "ios/chrome/browser/safe_browsing/model/chrome_password_protection_service.h"
 #import "ios/chrome/browser/safe_browsing/model/chrome_password_protection_service_factory.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
+#import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/credential_provider_promo_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
@@ -225,22 +227,20 @@ void IOSChromePasswordManagerClient::NotifySuccessfulLoginWithExistingPassword(
   [bridge_
       showCredentialProviderPromo:CredentialProviderPromoTrigger::
                                       SuccessfulLoginUsingExistingPassword];
+  GetLocalStatePrefs()->SetTime(prefs::kIosSuccessfulLoginWithExistingPassword,
+                                base::Time::Now());
 }
 
 bool IOSChromePasswordManagerClient::IsPasswordChangeOngoing() {
   return false;
 }
 
-// TODO(crbug.com/409047852): Add unit test to confirm the event trigger.
 void IOSChromePasswordManagerClient::MaybeReportEnterpriseLoginEvent(
     const GURL& url,
     bool is_federated,
     const url::SchemeHostPort& federated_origin,
     const std::u16string& login_user_name) const {
-  // Guard the password login reporting event on iOS behind the feature flag.
-  if (!bridge_.profile ||
-      !base::FeatureList::IsEnabled(
-          enterprise_connectors::kEnterpriseRealtimeEventReportingOnIOS)) {
+  if (!bridge_.profile) {
     return;
   }
 
@@ -254,13 +254,9 @@ void IOSChromePasswordManagerClient::MaybeReportEnterpriseLoginEvent(
   router->OnLoginEvent(url, is_federated, federated_origin, login_user_name);
 }
 
-// TODO(crbug.com/409047852): Add unit test to confirm the event trigger.
 void IOSChromePasswordManagerClient::MaybeReportEnterprisePasswordBreachEvent(
     const std::vector<std::pair<GURL, std::u16string>>& identities) const {
-  // Guard the realtime event reporting feature on iOS behind the feature flag.
-  if (!bridge_.profile ||
-      !base::FeatureList::IsEnabled(
-          enterprise_connectors::kEnterpriseRealtimeEventReportingOnIOS)) {
+  if (!bridge_.profile) {
     return;
   }
 

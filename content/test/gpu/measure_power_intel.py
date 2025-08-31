@@ -36,7 +36,6 @@ It is recommended to test with optimized builds of Chromium e.g. these GN args:
   is_component_build = false
   is_official_build = true # optimization similar to official builds
   use_remoteexec = true
-  enable_nacl = false
   proprietary_codecs = true
   ffmpeg_branding = "Chrome"
 
@@ -62,7 +61,7 @@ except ImportError as error:
       'This script needs selenium and appropriate web drivers to be installed.')
   raise
 
-import gpu_tests.ipg_utils as ipg_utils
+from gpu_tests import ipg_utils
 
 CHROME_STABLE_PATH_WIN = (
     r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe')
@@ -294,7 +293,8 @@ def main():
       logging.error("Can't locate file at %s",
                     options.extra_browser_args_filename)
     else:
-      with open(options.extra_browser_args_filename, 'r') as f:
+      with open(options.extra_browser_args_filename, 'r',
+                encoding='utf-8') as f:
         extra_browser_args.extend(f.read().split())
         f.close()
 

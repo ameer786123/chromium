@@ -10,6 +10,7 @@
 #include "base/json/values_util.h"
 #include "base/numerics/checked_math.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/k_anonymity_service/k_anonymity_service_metrics.h"
 #include "chrome/browser/k_anonymity_service/k_anonymity_service_urls.h"
@@ -152,10 +153,6 @@ void KAnonymityTrustTokenGetter::RequestAccessToken() {
   RecordTrustTokenGetterAction(
       KAnonymityTrustTokenGetterAction::kRequestAccessToken);
 
-  // Choose scopes to obtain for the access token.
-  signin::ScopeSet scopes;
-  scopes.insert(GaiaConstants::kKAnonymityServiceOAuth2Scope);
-
   // Choose the mode in which to fetch the access token:
   // see AccessTokenFetcher::Mode below for definitions.
   auto mode =
@@ -164,7 +161,7 @@ void KAnonymityTrustTokenGetter::RequestAccessToken() {
   // Create the fetcher.
   access_token_fetcher_ =
       std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
-          /*consumer_name=*/"KAnonymityService", identity_manager_, scopes,
+          signin::OAuthConsumerId::kKAnonymityService, identity_manager_,
           base::BindOnce(
               &KAnonymityTrustTokenGetter::OnAccessTokenRequestCompleted,
               weak_ptr_factory_.GetWeakPtr()),

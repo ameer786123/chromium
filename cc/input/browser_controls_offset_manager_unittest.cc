@@ -39,8 +39,7 @@ class MockBrowserControlsOffsetManagerClient
         browser_controls_hide_threshold_(browser_controls_hide_threshold) {
     active_tree_ = std::make_unique<LayerTreeImpl>(
         host_impl_, viz::BeginFrameArgs(), new SyncedScale,
-        new SyncedBrowserControls, new SyncedBrowserControls,
-        new SyncedElasticOverscroll);
+        new SyncedBrowserControls, new SyncedBrowserControls);
     root_scroll_layer_ = LayerImpl::Create(active_tree_.get(), 1);
   }
 
@@ -977,6 +976,16 @@ TEST(BrowserControlsOffsetManagerTest,
   // Top controls should stay at the same visible height.
   EXPECT_FLOAT_EQ(0.f, manager->ControlsTopOffset());
   EXPECT_FLOAT_EQ(120.f, manager->ContentTopOffset());
+
+  // Repeat the above for bottom controls.
+  client.SetBrowserControlsParams({0, 0, 20, 20, false, false});
+  client.SetBrowserControlsParams({0, 0, 100, 0, false, false});
+
+  EXPECT_FALSE(manager->HasAnimation());
+  EXPECT_FLOAT_EQ(100.f, manager->BottomControlsHeight());
+  EXPECT_FLOAT_EQ(0.f, manager->TopControlsMinHeight());
+  // Bottom controls should stay at the same visible height.
+  EXPECT_FLOAT_EQ(100.f, manager->ContentBottomOffset());
 }
 
 TEST(BrowserControlsOffsetManagerTest, ControlsAdjustToNewHeight) {

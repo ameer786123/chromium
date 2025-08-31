@@ -27,10 +27,9 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/metrics/content/subprocess_metrics_provider.h"
-#include "components/optimization_guide/core/model_util.h"
+#include "components/optimization_guide/core/delivery/model_util.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "components/optimization_guide/core/optimization_guide_test_util.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "components/translate/core/common/translate_util.h"
 #include "components/translate/core/language_detection/language_detection_model.h"
@@ -61,6 +60,27 @@ int GetTotalHistogramSamples(const base::HistogramTester* histogram_tester,
   }
 
   return total;
+}
+
+// Handles HTTP requests to |path| with |content| as the response body.
+// |content| is expected to be JavaScript; the response mime type is always set
+// to "text/javascript".
+// Invokes |done_callback| after serving the HTTP request.
+std::unique_ptr<net::test_server::HttpResponse> RespondWithJS(
+    const std::string& path,
+    const std::string& content,
+    base::OnceClosure done_callback,
+    const net::test_server::HttpRequest& request) {
+  GURL request_url = request.GetURL();
+  if (request_url.path() != path) {
+    return nullptr;
+  }
+
+  auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+  response->set_content_type("text/javascript");
+  response->set_content(content);
+  std::move(done_callback).Run();
+  return response;
 }
 
 // Retries fetching |histogram_name| until it contains at least |count| samples.
@@ -108,19 +128,25 @@ class LanguageDetectionModelServiceDisabledBrowserTest
                                     "LanguageDetectionAPI");
   }
 
-  void TestLanguageDetectionAvailable(Browser* browser,
-                                      const std::string_view result) {
-    ASSERT_EQ(EvalJs(browser->tab_strip_model()->GetActiveWebContents(),
-                     base::StringPrintf(R"(
+  std::string EvalJsCatchingError(Browser* browser, std::string_view script) {
+    return EvalJs(browser->tab_strip_model()->GetActiveWebContents(),
+                  base::StringPrintf(R"(
         (async () => {
             try {
-            return await LanguageDetector.availability();
+                %s
             } catch (e) {
             return e.toString();
             }
             })();
-        )"))
-                  .ExtractString(),
+        )",
+                                     script))
+        .ExtractString();
+  }
+
+  void TestLanguageDetectionAvailable(Browser* browser,
+                                      const std::string_view result) {
+    ASSERT_EQ(EvalJsCatchingError(
+                  browser, "return await LanguageDetector.availability();"),
               result);
   }
 
@@ -246,8 +272,7 @@ class LanguageDetectionModelServiceBrowserTest
   LanguageDetectionModelServiceBrowserTest() {
     scoped_feature_list_.InitWithFeatures(
         {translate::kTFLiteLanguageDetectionEnabled,
-         optimization_guide::features::kOptimizationHints,
-         optimization_guide::features::kRemoteOptimizationGuideFetching},
+         optimization_guide::features::kOptimizationHints},
         {});
   }
 
@@ -612,6 +637,37 @@ IN_PROC_BROWSER_TEST_F(LanguageDetectionModelServiceBrowserTest,
   ASSERT_TRUE(RequestAndWaitForModelFile()->IsValid());
 }
 
+// TODO(crbug.com/410842873): Add test to check behavior for extension
+// service workers once supported.
+//
+// Test the behavior of the Language Detector API accessed from a service worker
+// outside of an extension.
+IN_PROC_BROWSER_TEST_F(LanguageDetectionModelServiceBrowserTest,
+                       APIAvailability_NonExtensionWorkers) {
+  const std::string kWorkerScript =
+      "try {"
+      "    LanguageDetector;"
+      "    self.postMessage('test');"
+      "} catch (e) {"
+      "    self.postMessage(e.name);"
+      "}";
+
+  base::RunLoop loop;
+  embedded_test_server()->RegisterRequestHandler(base::BindRepeating(
+      &RespondWithJS, "/js-response", kWorkerScript, loop.QuitClosure()));
+  ASSERT_TRUE(embedded_test_server()->Start());
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(),
+      embedded_test_server()->GetURL(
+          "/workers/create_dedicated_worker.html?worker_url=/js-response")));
+  loop.Run();
+
+  EXPECT_EQ(
+      "ReferenceError",
+      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
+                      "waitForMessage();"));
+}
+
 // Tests the behavior of availability().
 IN_PROC_BROWSER_TEST_F(LanguageDetectionModelServiceBrowserTest, Availability) {
   base::ScopedAllowBlockingForTesting allow_io_for_test_setup;
@@ -633,6 +689,58 @@ IN_PROC_BROWSER_TEST_F(LanguageDetectionModelServiceBrowserTest, Availability) {
   auto model_file = getter.WaitForModelFile();
 
   TestLanguageDetectionAvailable(browser(), "available");
+}
+
+// Tests the behavior of availability().
+IN_PROC_BROWSER_TEST_F(LanguageDetectionModelServiceBrowserTest,
+                       HebrewLanguageTags) {
+  base::ScopedAllowBlockingForTesting allow_io_for_test_setup;
+  ASSERT_TRUE(language_detection_model_service());
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), english_url()));
+
+  ModelFileGetter getter(*language_detection_model_service());
+  OptimizationGuideKeyedServiceFactory::GetForProfile(browser()->profile())
+      ->OverrideTargetModelForTesting(
+          optimization_guide::proto::OPTIMIZATION_TARGET_LANGUAGE_DETECTION,
+          optimization_guide::TestModelInfoBuilder()
+              .SetModelFilePath(model_file_path())
+              .Build());
+
+  getter.RequestModelFile();
+  auto model_file = getter.WaitForModelFile();
+
+  // Should accept both the "he" and "iw" tag.
+  ASSERT_EQ(EvalJsCatchingError(browser(),
+                                R"(
+              await LanguageDetector.create({expectedInputLanguages: ['iw']});
+              return 'OK';
+            )"),
+            "OK");
+  ASSERT_EQ(EvalJsCatchingError(browser(),
+                                R"(
+              await LanguageDetector.create({expectedInputLanguages: ['he']});
+              return 'OK';
+            )"),
+            "OK");
+
+  // Should transform both the iw and he tag to just the he tag.
+  ASSERT_EQ(EvalJsCatchingError(browser(),
+                                R"(
+              const detector = await LanguageDetector.create(
+                  {expectedInputLanguages: ['iw', 'he']});
+              return detector.expectedInputLanguages.join(',');
+            )"),
+            "he");
+
+  // The detectedLanguage for hebrew should be he and not iw.
+  ASSERT_EQ(EvalJsCatchingError(browser(),
+                                R"(
+              const detector = await LanguageDetector.create(
+                  {expectedInputLanguages: ['iw', 'he']});
+              const results = await detector.detect('זוהי מחרוזת בעברית');
+              return results[0].detectedLanguage;
+            )"),
+            "he");
 }
 
 }  // namespace

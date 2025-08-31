@@ -27,6 +27,9 @@
 #import "ios/chrome/browser/shared/model/browser/browser_provider_interface.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
+#import "ios/chrome/browser/shared/public/commands/application_commands.h"
+#import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/tab_grid_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/common/ui/reauthentication/reauthentication_protocol.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -67,6 +70,11 @@
   std::unique_ptr<PrefObserverBridge> _prefObserverBridge;
   // Registrar for pref changes notifications.
   PrefChangeRegistrar _prefChangeRegistrar;
+  // Handler for application commands, used to change active surfaces.
+  id<ApplicationCommands> _applicationCommandsHandler;
+  // Tracks whether the lock surface was switched during the current foreground
+  // session.
+  BOOL _switchedToIncognitoGrid;
 }
 
 @synthesize lastBackgroundedTime = _lastBackgroundedTime;
@@ -89,12 +97,14 @@
 
 #pragma mark - public
 
-- (instancetype)initWithReauthModule:
-    (id<ReauthenticationProtocol>)reauthModule {
+- (instancetype)initWithReauthModule:(id<ReauthenticationProtocol>)reauthModule
+          applicationCommandsHandler:
+              (id<ApplicationCommands>)applicationCommandsHandler {
   self = [super init];
   if (self) {
     DCHECK(reauthModule);
     _reauthModule = reauthModule;
+    _applicationCommandsHandler = applicationCommandsHandler;
     _observers = [IncognitoReauthObserverList
         observersWithProtocol:@protocol(IncognitoReauthObserver)];
   }
@@ -106,12 +116,12 @@
 }
 
 - (IncognitoLockState)incognitoLockState {
-  if (self.windowHadIncognitoContentWhenBackgrounded &&
-      !self.authenticatedSinceLastForeground) {
+  if (!self.authenticatedSinceLastForeground) {
     if ([self isReauthFeatureEnabled]) {
       return IncognitoLockState::kReauth;
     } else if ([self isSoftLockFeatureEnabled] &&
-               self.backgroundedForEnoughTime) {
+               self.backgroundedForEnoughTime &&
+               self.windowHadIncognitoContentWhenBackgrounded) {
       return IncognitoLockState::kSoftLock;
     }
   }
@@ -225,12 +235,17 @@
     [self updateWindowHasIncognitoContent:sceneState];
     [self updateBackgroundedForEnoughTimeOnBackground];
     self.authenticatedSinceLastForeground = NO;
+    if (IsIOSSoftLockEnabled()) {
+      _switchedToIncognitoGrid = NO;
+    }
   } else if (level >= SceneActivationLevelForegroundInactive) {
     [self updateWindowHasIncognitoContent:sceneState];
+    [self handleExternalStartupIntents:sceneState];
     [self updateBackgroundedForEnoughTimeOnForeground];
     // Close media presentations when the app is foregrounded rather than
     // backgrounded to avoid freezes.
     [self closeMediaPresentations];
+    [self maybeEnterTabGridWithSceneState:sceneState];
   }
 
   if (IsIOSSoftLockEnabled()) {
@@ -242,6 +257,8 @@
   [self logEnabledHistogramOnce];
   if (IsIOSSoftLockEnabled()) {
     [self setUpPrefObservers];
+    [self notifyObservers];
+    [self maybeEnterTabGridWithSceneState:sceneState];
     [self logIncognitoLockStateHistogramOnce];
     [self recordIncognitoLockImpressionForSceneState:sceneState];
   }
@@ -253,12 +270,6 @@
   }
 }
 
-#pragma mark - PrefObserverDelegate
-
-- (void)onPreferenceChanged:(const std::string&)preferenceName {
-  [self notifyObservers];
-}
-
 - (void)sceneState:(SceneState*)sceneState
     isDisplayingIncognitoContent:(BOOL)level {
   if (IsIOSSoftLockEnabled()) {
@@ -266,7 +277,65 @@
   }
 }
 
+#pragma mark - PrefObserverDelegate
+
+- (void)onPreferenceChanged:(const std::string&)preferenceName {
+  [self notifyObservers];
+}
+
 #pragma mark - private
+
+// Marks the lock screen as authenticated, if reauth is not enabled and Chrome
+// was started via external intents.
+- (void)handleExternalStartupIntents:(SceneState*)sceneState {
+  if (!IsIOSSoftLockEnabled()) {
+    return;
+  }
+
+  if (self.incognitoLockState != IncognitoLockState::kReauth &&
+      sceneState.startupHadExternalIntent) {
+    self.authenticatedSinceLastForeground = YES;
+  }
+}
+
+// Switch from tab to tab switcher, if the current surface is a locked Incognito
+// tab.
+- (void)maybeEnterTabGridWithSceneState:(SceneState*)sceneState {
+  if (!IsIOSSoftLockEnabled()) {
+    return;
+  }
+
+  BOOL isIncognitoTabVisible = sceneState.UIEnabled &&
+                               sceneState.incognitoContentVisible &&
+                               !sceneState.controller.tabGridVisible;
+  if (!_switchedToIncognitoGrid && isIncognitoTabVisible &&
+      self.authenticationRequired) {
+    _switchedToIncognitoGrid = YES;
+    // TODO(crbug.com/417621249): Add callback that allows specifying animation
+    // type.
+    [_applicationCommandsHandler
+        displayTabGridInMode:TabGridOpeningMode::kIncognito];
+  }
+}
+
+// Switch from the tab grid to the currently active tab, if we had previously
+// locked while the tab was visible.
+- (void)maybeExitTabGrid {
+  if (!IsIOSSoftLockEnabled()) {
+    return;
+  }
+
+  BOOL isIncognitoTabGridVisible = self.sceneState.UIEnabled &&
+                                   self.sceneState.incognitoContentVisible &&
+                                   self.sceneState.controller.tabGridVisible;
+  if (isIncognitoTabGridVisible && _switchedToIncognitoGrid) {
+    Browser* browser = self.sceneState.browserProviderInterface
+                           .incognitoBrowserProvider.browser;
+    id<TabGridCommands> tabGridHandler =
+        HandlerForProtocol(browser->GetCommandDispatcher(), TabGridCommands);
+    [tabGridHandler exitTabGrid];
+  }
+}
 
 // Log authentication setting histogram to determine the feature usage.
 // This is done once per app launch.
@@ -364,6 +433,7 @@
 // and call the completion block (passing authentication result).
 - (void)unlockIncognitoContentWithCompletionBlock:
     (void (^)(BOOL success))completion {
+  [self maybeExitTabGrid];
   self.authenticatedSinceLastForeground = YES;
   if (completion) {
     completion(YES);
@@ -391,6 +461,7 @@
         base::UmaHistogramBoolean(
             "IOS.Incognito.BiometricReauthAttemptSuccessful", success);
 
+        [weakSelf maybeExitTabGrid];
         weakSelf.authenticatedSinceLastForeground = success;
         if (completion) {
           completion(success);
@@ -412,7 +483,8 @@
             ->count() > 0;
     // If there is no tabs, act as if the user authenticated since last
     // foreground to avoid issue with multiwindows.
-    if (!hasIncognitoContent) {
+    if (!hasIncognitoContent &&
+        self.incognitoLockState != IncognitoLockState::kReauth) {
       self.authenticatedSinceLastForeground = YES;
     }
   }

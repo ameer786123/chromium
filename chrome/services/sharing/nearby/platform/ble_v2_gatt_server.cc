@@ -13,6 +13,7 @@
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "chrome/services/sharing/nearby/platform/bluetooth_utils.h"
@@ -104,11 +105,6 @@ BleV2GattServer::BleV2GattServer(
 }
 
 BleV2GattServer::~BleV2GattServer() = default;
-
-BluetoothAdapter& BleV2GattServer::GetBlePeripheral() {
-  CHECK(bluetooth_adapter_);
-  return *bluetooth_adapter_;
-}
 
 std::optional<api::ble_v2::GattCharacteristic>
 BleV2GattServer::CreateCharacteristic(

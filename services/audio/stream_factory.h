@@ -21,10 +21,12 @@
 #include "media/mojo/mojom/audio_processing.mojom.h"
 #include "media/mojo/mojom/audio_stream_factory.mojom.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
+#include "mojo/public/cpp/bindings/shared_remote.h"
 #include "services/audio/loopback_coordinator.h"
 #include "services/audio/realtime_audio_thread.h"
 
 #if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
+#include "services/audio/loopback_reference_manager.h"
 #include "services/audio/output_device_mixer_manager.h"
 #endif
 
@@ -71,6 +73,7 @@ class StreamFactory final : public media::mojom::AudioStreamFactory {
       mojo::PendingRemote<media::mojom::AudioLog> log,
       const std::string& device_id,
       const media::AudioParameters& params,
+      const base::UnguessableToken& group_id,
       uint32_t shared_memory_count,
       bool enable_agc,
       media::mojom::AudioProcessingConfigPtr processing_config,
@@ -111,6 +114,11 @@ class StreamFactory final : public media::mojom::AudioStreamFactory {
       uint32_t shared_memory_count,
       const base::UnguessableToken& group_id,
       CreateLoopbackStreamCallback created_callback) final;
+#if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
+  std::unique_ptr<ReferenceSignalProvider> GetNewReferenceSignalProvider(
+      const media::mojom::AudioProcessingConfigPtr& processing_config,
+      const mojo::SharedRemote<media::mojom::AudioLog>& audio_log);
+#endif
 
  private:
   using InputStreamSet =
@@ -146,7 +154,10 @@ class StreamFactory final : public media::mojom::AudioStreamFactory {
 
   // Order of the following members is important for a clean shutdown.
 #if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
+  // output_device_mixer_manager_ must be before input_streams_ to guarantee
+  // correct destruction order.
   const std::unique_ptr<OutputDeviceMixerManager> output_device_mixer_manager_;
+  const std::unique_ptr<LoopbackReferenceManager> loopback_reference_manager_;
 #endif
   LoopbackCoordinator coordinator_;
   std::vector<std::unique_ptr<LocalMuter>> muters_;

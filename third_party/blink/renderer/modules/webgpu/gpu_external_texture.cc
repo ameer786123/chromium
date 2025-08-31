@@ -139,8 +139,8 @@ void ExternalTextureCache::ExpireAtEndOfTask(
   device()
       ->GetExecutionContext()
       ->GetTaskRunner(TaskType::kWebGPU)
-      ->PostTask(FROM_HERE, WTF::BindOnce(&ExternalTextureCache::ExpireTask,
-                                          WrapWeakPersistent(this)));
+      ->PostTask(FROM_HERE, BindOnce(&ExternalTextureCache::ExpireTask,
+                                     WrapWeakPersistent(this)));
   expire_task_scheduled_ = true;
 }
 
@@ -172,7 +172,7 @@ void ExternalTextureCache::ReferenceUntilGPUIsFinished(
   // Keep mailbox texture alive until callback returns.
   auto* callback = BindWGPUOnceCallback(
       [](scoped_refptr<WebGPUMailboxTexture> mailbox_texture,
-         wgpu::QueueWorkDoneStatus) {},
+         wgpu::QueueWorkDoneStatus, wgpu::StringView) {},
       std::move(mailbox_texture));
 
   device()->queue()->GetHandle().OnSubmittedWorkDone(
@@ -446,8 +446,8 @@ void GPUExternalTexture::OnSourceInvalidated() {
   if (status_ == Status::Active && video_) {
     if (!remove_from_cache_task_scheduled_) {
       task_runner_->PostTask(FROM_HERE,
-                             WTF::BindOnce(&GPUExternalTexture::RemoveFromCache,
-                                           WrapWeakPersistent(this)));
+                             BindOnce(&GPUExternalTexture::RemoveFromCache,
+                                      WrapWeakPersistent(this)));
     }
     remove_from_cache_task_scheduled_ = true;
   } else {
@@ -456,6 +456,14 @@ void GPUExternalTexture::OnSourceInvalidated() {
 }
 
 void GPUExternalTexture::RemoveFromCache() {
+  // HTMLVE relies on posted delay task to destroy outdated GPUExternalTexture.
+  // This task might be executed after GPUExternalTexture is destroyed (e.g.
+  // ExternalTextureCache destroyed).
+  // Prevent calling destroy on already destructed GPUExternalTexture.
+  if (IsDestroyed()) {
+    return;
+  }
+
   if (video_) {
     cache_->Remove(video_);
   } else if (frame_) {

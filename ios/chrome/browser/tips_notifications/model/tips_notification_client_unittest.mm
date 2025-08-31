@@ -9,14 +9,16 @@
 #import "base/test/metrics/histogram_tester.h"
 #import "base/test/scoped_feature_list.h"
 #import "base/test/scoped_mock_clock_override.h"
-#import "base/test/task_environment.h"
 #import "base/threading/thread_restrictions.h"
+#import "components/feature_engagement/public/tracker.h"
 #import "components/prefs/scoped_user_pref_update.h"
 #import "components/safe_browsing/core/common/safe_browsing_prefs.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_presenter.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_commands.h"
 #import "ios/chrome/browser/default_browser/model/promo_source.h"
 #import "ios/chrome/browser/default_browser/model/utils.h"
 #import "ios/chrome/browser/default_browser/model/utils_test_support.h"
+#import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
 #import "ios/chrome/browser/first_run/model/first_run.h"
 #import "ios/chrome/browser/push_notification/model/constants.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_util.h"
@@ -31,13 +33,20 @@
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/credential_provider_promo_commands.h"
 #import "ios/chrome/browser/shared/public/commands/docking_promo_commands.h"
 #import "ios/chrome/browser/shared/public/commands/settings_commands.h"
 #import "ios/chrome/browser/shared/public/commands/whats_new_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
+#import "ios/chrome/browser/signin/model/authentication_service.h"
+#import "ios/chrome/browser/signin/model/authentication_service_factory.h"
+#import "ios/chrome/browser/signin/model/fake_authentication_service_delegate.h"
+#import "ios/chrome/browser/signin/model/fake_system_identity.h"
+#import "ios/chrome/browser/signin/model/fake_system_identity_manager.h"
 #import "ios/chrome/browser/tips_notifications/model/utils.h"
 #import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/testing/scoped_block_swizzler.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -52,7 +61,8 @@ using startup_metric_utils::FirstRunSentinelCreationResult;
 @end
 
 @implementation PrepareToPresentModalStub
-- (void)prepareToPresentModal:(ProceduralBlock)completion {
+- (void)prepareToPresentModalWithSnackbarDismissal:(BOOL)dismissSnackbars
+                                        completion:(ProceduralBlock)completion {
   completion();
 }
 @end
@@ -60,9 +70,15 @@ using startup_metric_utils::FirstRunSentinelCreationResult;
 class TipsNotificationClientTest : public PlatformTest {
  protected:
   TipsNotificationClientTest() {
+    [[NSUserDefaults standardUserDefaults]
+        removeObjectForKey:@"TipsNotificationTrigger"];
     SetupMockNotificationCenter();
-    profile_ =
-        profile_manager_.AddProfileWithBuilder(TestProfileIOS::Builder());
+    TestProfileIOS::Builder builder;
+    builder.AddTestingFactory(
+        AuthenticationServiceFactory::GetInstance(),
+        AuthenticationServiceFactory::GetFactoryWithDelegate(
+            std::make_unique<FakeAuthenticationServiceDelegate>()));
+    profile_ = profile_manager_.AddProfileWithBuilder(std::move(builder));
     BrowserList* list = BrowserListFactory::GetForProfile(profile_);
     mock_scene_state_ = OCMClassMock([SceneState class]);
     OCMStub([mock_scene_state_ activationLevel])
@@ -73,6 +89,14 @@ class TipsNotificationClientTest : public PlatformTest {
     ScopedDictPrefUpdate update(GetApplicationContext()->GetLocalState(),
                                 prefs::kAppLevelPushNotificationPermissions);
     update->Set(kTipsNotificationKey, true);
+
+    // Wait for the tracker to initialize.
+    tracker_ =
+        feature_engagement::TrackerFactory::GetForProfile(profile_.get());
+    base::RunLoop run_loop;
+    tracker_->AddOnInitializedCallback(
+        base::IgnoreArgs<bool>(run_loop.QuitClosure()));
+    run_loop.Run();
   }
 
   // Sets up a mock notification center, so notification requests can be
@@ -87,6 +111,10 @@ class TipsNotificationClientTest : public PlatformTest {
     notification_center_swizzler_ = std::make_unique<ScopedBlockSwizzler>(
         [UNUserNotificationCenter class], @selector(currentNotificationCenter),
         swizzle_block);
+  }
+
+  std::string_view GetProfileName() {
+    return browser_->GetProfile()->GetProfileName();
   }
 
   // Writes the first run sentinel file, to allow notifications to be
@@ -119,18 +147,19 @@ class TipsNotificationClientTest : public PlatformTest {
   // Returns a mock UNNotificationResponse for the given notification `type`.
   id MockRequestResponse(TipsNotificationType type,
                          bool for_reactivation = false) {
-    id mock_response = OCMClassMock([UNNotificationResponse class]);
-    OCMStub([mock_response notification])
+    EXPECT_OCMOCK_VERIFY((id)mock_notification_response_);
+    mock_notification_response_ = OCMClassMock([UNNotificationResponse class]);
+    OCMStub([mock_notification_response_ notification])
         .andReturn(MockNotification(type, for_reactivation));
-    return mock_response;
+    return mock_notification_response_;
   }
 
   // Returns a mock UNNotification for the given notification `type`.
   id MockNotification(TipsNotificationType type, bool for_reactivation) {
     UNNotificationRequest* request = [UNNotificationRequest
         requestWithIdentifier:kTipsNotificationId
-                      content:ContentForTipsNotificationType(type,
-                                                             for_reactivation)
+                      content:ContentForTipsNotificationType(
+                                  type, for_reactivation, GetProfileName())
                       trigger:[UNTimeIntervalNotificationTrigger
                                   triggerWithTimeInterval:
                                       TipsNotificationTriggerDelta(
@@ -186,8 +215,8 @@ class TipsNotificationClientTest : public PlatformTest {
         kTipsNotificationsSentPref, bits);
   }
 
-  // Stubs the `prepareToPresentModal:` method from `ApplicationCommands` so
-  // that it immediately calls the completion block.
+  // Stubs the `-prepareToPresentModalWithSnackbarDismissal:` method from
+  // `ApplicationCommands` so that it immediately calls the completion block.
   void StubPrepareToPresentModal() {
     prepare_to_present_modal_stub_ = [[PrepareToPresentModalStub alloc] init];
     [browser_->GetCommandDispatcher()
@@ -199,6 +228,7 @@ class TipsNotificationClientTest : public PlatformTest {
   void ExpectNotificationRequest(TipsNotificationType type) {
     ExpectNotificationRequest(NotificationRequestArg(type));
   }
+
   void ExpectNotificationRequest(id request) {
     auto completionCaller = ^BOOL(void (^completion)(NSError* error)) {
       completion(nil);
@@ -207,6 +237,12 @@ class TipsNotificationClientTest : public PlatformTest {
     OCMExpect([mock_notification_center_
         addNotificationRequest:request
          withCompletionHandler:[OCMArg checkWithBlock:completionCaller]]);
+  }
+
+  // Rejects all notification requests sent to the mock notification center.
+  void RejectAllNotificationRequests() {
+    OCMReject([mock_notification_center_ addNotificationRequest:[OCMArg any]
+                                          withCompletionHandler:[OCMArg any]]);
   }
 
   // Ensures that Chrome is considered as default browser.
@@ -245,17 +281,32 @@ class TipsNotificationClientTest : public PlatformTest {
         local_state->GetInteger(kTipsNotificationsUserType));
   }
 
-  base::test::TaskEnvironment task_environment_;
+  // Signs in with `fakeIdentity1`.
+  void SigninWithFakeIdentity() {
+    FakeSystemIdentityManager* identity_manager =
+        FakeSystemIdentityManager::FromSystemIdentityManager(
+            GetApplicationContext()->GetSystemIdentityManager());
+    AuthenticationService* authentication_service =
+        AuthenticationServiceFactory::GetForProfile(profile_.get());
+    identity_manager->AddIdentity([FakeSystemIdentity fakeIdentity1]);
+    authentication_service->SignIn([FakeSystemIdentity fakeIdentity1],
+                                   signin_metrics::AccessPoint::kUnknown);
+  }
+
+  web::WebTaskEnvironment task_environment_;
   const base::HistogramTester histogram_tester_;
   IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   TestProfileManagerIOS profile_manager_;
+  raw_ptr<feature_engagement::Tracker> tracker_;
   id mock_scene_state_;
+  UNNotificationResponse* mock_notification_response_;
   std::unique_ptr<TestBrowser> browser_;
   std::unique_ptr<TipsNotificationClient> client_;
   id mock_notification_center_;
   std::unique_ptr<ScopedBlockSwizzler> notification_center_swizzler_;
   raw_ptr<ProfileIOS> profile_;
   PrepareToPresentModalStub* prepare_to_present_modal_stub_;
+  UNNotificationResponse* mock_response_;
 };
 
 #pragma mark - Test cases
@@ -263,8 +314,8 @@ class TipsNotificationClientTest : public PlatformTest {
 // Tests that HandleNotificationReception does nothing and returns "NoData".
 TEST_F(TipsNotificationClientTest, HandleNotificationReception) {
   EXPECT_EQ(client_->HandleNotificationReception(nil), std::nullopt);
-  NSDictionary* user_info =
-      UserInfoForTipsNotificationType(TipsNotificationType::kWhatsNew, false);
+  NSDictionary* user_info = UserInfoForTipsNotificationType(
+      TipsNotificationType::kWhatsNew, false, GetProfileName());
   EXPECT_EQ(client_->HandleNotificationReception(user_info),
             UIBackgroundFetchResultNoData);
 }
@@ -272,51 +323,6 @@ TEST_F(TipsNotificationClientTest, HandleNotificationReception) {
 // Tests that RegisterActionalableNotifications returns an empty array.
 TEST_F(TipsNotificationClientTest, RegisterActionableNotifications) {
   EXPECT_EQ(client_->RegisterActionableNotifications().count, 0u);
-}
-
-// Tests that the client can request a Default Browser notification.
-TEST_F(TipsNotificationClientTest, DefaultBrowserRequest) {
-  WriteFirstRunSentinel();
-  SetFalseChromeLikelyDefaultBrowser();
-  ClearDefaultBrowserPromoLastAction();
-  StubGetPendingRequests(nil);
-  SetSentNotifications(
-      {TipsNotificationType::kSetUpListContinuation,
-       TipsNotificationType::kWhatsNew, TipsNotificationType::kLens,
-       TipsNotificationType::kOmniboxPosition,
-       TipsNotificationType::kEnhancedSafeBrowsing,
-       TipsNotificationType::kDocking, TipsNotificationType::kSignin});
-
-  ExpectNotificationRequest(TipsNotificationType::kDefaultBrowser);
-  base::RunLoop run_loop;
-  client_->OnSceneActiveForegroundBrowserReady(run_loop.QuitClosure());
-  run_loop.Run();
-  EXPECT_OCMOCK_VERIFY(mock_notification_center_);
-  histogram_tester_.ExpectUniqueSample(
-      "IOS.Notifications.Tips.Sent", TipsNotificationType::kDefaultBrowser, 1);
-
-  // Run again, but this time simulating a delivered notification.
-  NSMutableArray<UNNotification*>* delivered_notifications = [NSMutableArray
-      arrayWithObject:MockNotification(TipsNotificationType::kDefaultBrowser,
-                                       false)];
-  StubGetDeliveredNotifications(delivered_notifications);
-  base::RunLoop run_loop_2;
-  client_->OnSceneActiveForegroundBrowserReady(run_loop_2.QuitClosure());
-  run_loop_2.Run();
-  EXPECT_OCMOCK_VERIFY(mock_notification_center_);
-  histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Triggered",
-                                       TipsNotificationType::kDefaultBrowser,
-                                       1);
-
-  // Run again, but this time the delivered notification is gone.
-  [delivered_notifications removeAllObjects];
-  base::RunLoop run_loop_3;
-  client_->OnSceneActiveForegroundBrowserReady(run_loop_3.QuitClosure());
-  run_loop_3.Run();
-  EXPECT_OCMOCK_VERIFY(mock_notification_center_);
-  histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Dismissed",
-                                       TipsNotificationType::kDefaultBrowser,
-                                       1);
 }
 
 // Tests that the client handles a Default Browser notification response.
@@ -329,8 +335,8 @@ TEST_F(TipsNotificationClientTest, DefaultBrowserHandle) {
                                           DefaultBrowserSettingsPageSource::
                                               kTipsNotification]);
 
-  id mock_response = MockRequestResponse(TipsNotificationType::kDefaultBrowser);
-  client_->HandleNotificationInteraction(mock_response);
+  mock_response_ = MockRequestResponse(TipsNotificationType::kDefaultBrowser);
+  client_->HandleNotificationInteraction(mock_response_);
 
   EXPECT_OCMOCK_VERIFY(mock_handler);
   histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Interaction",
@@ -338,22 +344,28 @@ TEST_F(TipsNotificationClientTest, DefaultBrowserHandle) {
                                        1);
 }
 
-// Tests that the client can register a Whats New notification.
-TEST_F(TipsNotificationClientTest, WhatsNewRequest) {
-  WriteFirstRunSentinel();
-  SetTrueChromeLikelyDefaultBrowser();
-  SetSentNotifications({TipsNotificationType::kEnhancedSafeBrowsing});
+// Tests that the client handles a SignIn notification response.
+TEST_F(TipsNotificationClientTest, SigninHandle) {
+  StubPrepareToPresentModal();
+  id mock_handler = MockHandler(@protocol(SigninPresenter));
+  OCMExpect([mock_handler showSignin:[OCMArg any]]);
 
-  StubGetPendingRequests(nil);
-  ExpectNotificationRequest(TipsNotificationType::kWhatsNew);
+  mock_response_ = MockRequestResponse(TipsNotificationType::kSignin);
+  client_->HandleNotificationInteraction(mock_response_);
 
-  base::RunLoop run_loop;
-  client_->OnSceneActiveForegroundBrowserReady(run_loop.QuitClosure());
-  run_loop.Run();
+  EXPECT_OCMOCK_VERIFY(mock_handler);
+  histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Interaction",
+                                       TipsNotificationType::kSignin, 1);
 
-  EXPECT_OCMOCK_VERIFY(mock_notification_center_);
-  histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Sent",
-                                       TipsNotificationType::kWhatsNew, 1);
+  SigninWithFakeIdentity();
+  mock_handler = MockHandler(@protocol(SettingsCommands));
+  OCMExpect([mock_handler showAccountsSettingsFromViewController:nil
+                                            skipIfUINotAvailable:NO]);
+  client_->HandleNotificationInteraction(mock_response_);
+
+  EXPECT_OCMOCK_VERIFY(mock_handler);
+  histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Interaction",
+                                       TipsNotificationType::kSignin, 2);
 }
 
 // Tests that the client can request a Proactive Whats New notification.
@@ -426,8 +438,7 @@ TEST_F(TipsNotificationClientTest, ProvisionalDisallowedByPolicy) {
 
   WriteFirstRunSentinel();
   StubGetPendingRequests(nil);
-  OCMReject([mock_notification_center_ addNotificationRequest:[OCMArg any]
-                                        withCompletionHandler:[OCMArg any]]);
+  RejectAllNotificationRequests();
 
   base::RunLoop run_loop;
   client_->OnSceneActiveForegroundBrowserReady(run_loop.QuitClosure());
@@ -444,32 +455,12 @@ TEST_F(TipsNotificationClientTest, WhatsNewHandle) {
   id mock_handler = MockHandler(@protocol(WhatsNewCommands));
   OCMExpect([mock_handler showWhatsNew]);
 
-  id mock_response = MockRequestResponse(TipsNotificationType::kWhatsNew);
-  client_->HandleNotificationInteraction(mock_response);
+  mock_response_ = MockRequestResponse(TipsNotificationType::kWhatsNew);
+  client_->HandleNotificationInteraction(mock_response_);
 
   EXPECT_OCMOCK_VERIFY(mock_handler);
   histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Interaction",
                                        TipsNotificationType::kWhatsNew, 1);
-}
-
-// Tests that the client can register a SetUpList Continuation notification.
-TEST_F(TipsNotificationClientTest, SetUpListContinuationRequest) {
-  WriteFirstRunSentinel();
-  StubGetPendingRequests(nil);
-  SetSentNotifications({TipsNotificationType::kEnhancedSafeBrowsing,
-                        TipsNotificationType::kWhatsNew,
-                        TipsNotificationType::kLens,
-                        TipsNotificationType::kOmniboxPosition});
-  ExpectNotificationRequest(TipsNotificationType::kSetUpListContinuation);
-
-  base::RunLoop run_loop;
-  client_->OnSceneActiveForegroundBrowserReady(run_loop.QuitClosure());
-  run_loop.Run();
-
-  EXPECT_OCMOCK_VERIFY(mock_notification_center_);
-  histogram_tester_.ExpectUniqueSample(
-      "IOS.Notifications.Tips.Sent",
-      TipsNotificationType::kSetUpListContinuation, 1);
 }
 
 // Tests that the client handles a SetUpList Continuation notification response.
@@ -478,9 +469,9 @@ TEST_F(TipsNotificationClientTest, SetUpListContinuationHandle) {
   id mock_handler = MockHandler(@protocol(ContentSuggestionsCommands));
   OCMExpect([mock_handler showSetUpListSeeMoreMenuExpanded:YES]);
 
-  id mock_response =
+  mock_response_ =
       MockRequestResponse(TipsNotificationType::kSetUpListContinuation);
-  client_->HandleNotificationInteraction(mock_response);
+  client_->HandleNotificationInteraction(mock_response_);
 
   EXPECT_OCMOCK_VERIFY(mock_handler);
   histogram_tester_.ExpectUniqueSample(
@@ -488,63 +479,18 @@ TEST_F(TipsNotificationClientTest, SetUpListContinuationHandle) {
       TipsNotificationType::kSetUpListContinuation, 1);
 }
 
-// Tests that the client can register a Docking promo notification.
-TEST_F(TipsNotificationClientTest, DockingRequest) {
-  WriteFirstRunSentinel();
-  SetSentNotifications({TipsNotificationType::kEnhancedSafeBrowsing,
-                        TipsNotificationType::kWhatsNew,
-                        TipsNotificationType::kLens,
-                        TipsNotificationType::kOmniboxPosition,
-                        TipsNotificationType::kSetUpListContinuation,
-                        TipsNotificationType::kDefaultBrowser});
-  StubGetPendingRequests(nil);
-  ExpectNotificationRequest(TipsNotificationType::kDocking);
-
-  base::RunLoop run_loop;
-  client_->OnSceneActiveForegroundBrowserReady(run_loop.QuitClosure());
-  run_loop.Run();
-
-  EXPECT_OCMOCK_VERIFY(mock_notification_center_);
-  histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Sent",
-                                       TipsNotificationType::kDocking, 1);
-}
-
 // Tests that the client handles a Docking promo notification response.
 TEST_F(TipsNotificationClientTest, DockingHandle) {
   StubPrepareToPresentModal();
   id mock_handler = MockHandler(@protocol(DockingPromoCommands));
-  OCMExpect([mock_handler
-      showDockingPromoWithTrigger:DockingPromoTrigger::kTipsModule]);
+  OCMExpect([mock_handler showDockingPromo:YES]);
 
-  id mock_response = MockRequestResponse(TipsNotificationType::kDocking);
-  client_->HandleNotificationInteraction(mock_response);
+  mock_response_ = MockRequestResponse(TipsNotificationType::kDocking);
+  client_->HandleNotificationInteraction(mock_response_);
 
   EXPECT_OCMOCK_VERIFY(mock_handler);
   histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Interaction",
                                        TipsNotificationType::kDocking, 1);
-}
-
-// Tests that the client can register an Omnibox Position promo notification.
-TEST_F(TipsNotificationClientTest, OmniboxPositionRequest) {
-  // OmniboxPositionChoice is only available on phones.
-  if (ui::GetDeviceFormFactor() != ui::DEVICE_FORM_FACTOR_PHONE) {
-    return;
-  }
-
-  WriteFirstRunSentinel();
-  SetSentNotifications({TipsNotificationType::kEnhancedSafeBrowsing,
-                        TipsNotificationType::kWhatsNew,
-                        TipsNotificationType::kLens});
-  StubGetPendingRequests(nil);
-  ExpectNotificationRequest(TipsNotificationType::kOmniboxPosition);
-
-  base::RunLoop run_loop;
-  client_->OnSceneActiveForegroundBrowserReady(run_loop.QuitClosure());
-  run_loop.Run();
-
-  EXPECT_OCMOCK_VERIFY(mock_notification_center_);
-  histogram_tester_.ExpectUniqueSample(
-      "IOS.Notifications.Tips.Sent", TipsNotificationType::kOmniboxPosition, 1);
 }
 
 // Tests that the client handles an Omnibox Position promo notification
@@ -559,9 +505,8 @@ TEST_F(TipsNotificationClientTest, OmniboxPositionHandle) {
   id mock_handler = MockHandler(@protocol(BrowserCoordinatorCommands));
   OCMExpect([mock_handler showOmniboxPositionChoice]);
 
-  id mock_response =
-      MockRequestResponse(TipsNotificationType::kOmniboxPosition);
-  client_->HandleNotificationInteraction(mock_response);
+  mock_response_ = MockRequestResponse(TipsNotificationType::kOmniboxPosition);
+  client_->HandleNotificationInteraction(mock_response_);
 
   EXPECT_OCMOCK_VERIFY(mock_handler);
   histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Interaction",
@@ -614,9 +559,9 @@ TEST_F(TipsNotificationClientTest, EnhancedSafeBrowsingHandle) {
   id mock_handler = MockHandler(@protocol(BrowserCoordinatorCommands));
   OCMExpect([mock_handler showEnhancedSafeBrowsingPromo]);
 
-  id mock_response =
+  mock_response_ =
       MockRequestResponse(TipsNotificationType::kEnhancedSafeBrowsing);
-  client_->HandleNotificationInteraction(mock_response);
+  client_->HandleNotificationInteraction(mock_response_);
 
   EXPECT_OCMOCK_VERIFY(mock_handler);
   histogram_tester_.ExpectUniqueSample(
@@ -630,8 +575,8 @@ TEST_F(TipsNotificationClientTest, LensHandle) {
   id mock_handler = MockHandler(@protocol(BrowserCoordinatorCommands));
   OCMExpect([mock_handler showLensPromo]);
 
-  id mock_response = MockRequestResponse(TipsNotificationType::kLens);
-  client_->HandleNotificationInteraction(mock_response);
+  mock_response_ = MockRequestResponse(TipsNotificationType::kLens);
+  client_->HandleNotificationInteraction(mock_response_);
 
   EXPECT_OCMOCK_VERIFY(mock_handler);
   histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Interaction",
@@ -644,8 +589,8 @@ TEST_F(TipsNotificationClientTest, LensProactiveHandle) {
   id mock_handler = MockHandler(@protocol(BrowserCoordinatorCommands));
   OCMExpect([mock_handler showLensPromo]);
 
-  id mock_response = MockRequestResponse(TipsNotificationType::kLens, true);
-  client_->HandleNotificationInteraction(mock_response);
+  mock_response_ = MockRequestResponse(TipsNotificationType::kLens, true);
+  client_->HandleNotificationInteraction(mock_response_);
 
   EXPECT_OCMOCK_VERIFY(mock_handler);
   histogram_tester_.ExpectUniqueSample(
@@ -697,7 +642,7 @@ TEST_F(TipsNotificationClientTest, ClassifyUserLessEngaged) {
 }
 
 // Tests that the correct trigger time is used, depending on the user's
-// classification.
+// classification and notification type.
 TEST_F(TipsNotificationClientTest, TestTriggerTimeDeltas) {
   EXPECT_EQ(
       TipsNotificationTriggerDelta(false, TipsNotificationUserType::kUnknown),
@@ -708,28 +653,22 @@ TEST_F(TipsNotificationClientTest, TestTriggerTimeDeltas) {
   EXPECT_EQ(TipsNotificationTriggerDelta(
                 false, TipsNotificationUserType::kActiveSeeker),
             base::Days(7));
+  EXPECT_EQ(TipsNotificationTriggerDelta(
+                true, TipsNotificationUserType::kUnknown,
+                TipsNotificationType::kTrustedVaultKeyRetrieval),
+            base::Minutes(5));
 
-  // Verify that the feature params can set the trigger delta.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeatureWithParameters(
-      kIOSTipsNotifications,
-      {
-          {kIOSTipsNotificationsUnknownTriggerTimeParam, "1d"},
-          {kIOSTipsNotificationsLessEngagedTriggerTimeParam, "2d"},
-          {kIOSTipsNotificationsActiveSeekerTriggerTimeParam, "3d"},
-      });
+  // Verify that the experimental settings can override the trigger time.
+  [[NSUserDefaults standardUserDefaults] setInteger:111
+                                             forKey:@"TipsNotificationTrigger"];
   EXPECT_EQ(
       TipsNotificationTriggerDelta(false, TipsNotificationUserType::kUnknown),
-      base::Days(1));
-  EXPECT_EQ(TipsNotificationTriggerDelta(
-                false, TipsNotificationUserType::kLessEngaged),
-            base::Days(2));
-  EXPECT_EQ(TipsNotificationTriggerDelta(
-                false, TipsNotificationUserType::kActiveSeeker),
-            base::Days(3));
+      base::Seconds(111));
+  [[NSUserDefaults standardUserDefaults]
+      removeObjectForKey:@"TipsNotificationTrigger"];
 
   // Verify that the Reactivation feature param can set the trigger delta.
-  feature_list.Reset();
+  base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeatureWithParameters(
       kIOSReactivationNotifications,
       {
@@ -738,51 +677,18 @@ TEST_F(TipsNotificationClientTest, TestTriggerTimeDeltas) {
   EXPECT_EQ(
       TipsNotificationTriggerDelta(true, TipsNotificationUserType::kUnknown),
       base::Seconds(30));
+  EXPECT_EQ(TipsNotificationTriggerDelta(
+                true, TipsNotificationUserType::kUnknown,
+                TipsNotificationType::kTrustedVaultKeyRetrieval),
+            base::Seconds(30));
 }
 
 // Tests that the order of notification types changes correctly when the feature
 // param is set.
 TEST_F(TipsNotificationClientTest, TestOrderParam) {
-  // Test order #1.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeatureWithParameters(
-      kIOSTipsNotifications, {
-                                 {kIOSTipsNotificationsOrderParam, "1"},
-                             });
   std::vector<TipsNotificationType> order = TipsNotificationsTypesOrder(false);
-  EXPECT_EQ(order[0], TipsNotificationType::kSetUpListContinuation);
-  EXPECT_EQ(order[1], TipsNotificationType::kWhatsNew);
-
-  // Test order #2.
-  feature_list.Reset();
-  feature_list.InitAndEnableFeatureWithParameters(
-      kIOSTipsNotifications, {
-                                 {kIOSTipsNotificationsOrderParam, "2"},
-                             });
-  order = TipsNotificationsTypesOrder(false);
-  EXPECT_EQ(order[0], TipsNotificationType::kLens);
-  EXPECT_EQ(order[1], TipsNotificationType::kWhatsNew);
-
-  // Test order #3.
-  feature_list.Reset();
-  feature_list.InitAndEnableFeatureWithParameters(
-      kIOSTipsNotifications, {
-                                 {kIOSTipsNotificationsOrderParam, "3"},
-                             });
-  order = TipsNotificationsTypesOrder(false);
   EXPECT_EQ(order[0], TipsNotificationType::kEnhancedSafeBrowsing);
   EXPECT_EQ(order[1], TipsNotificationType::kWhatsNew);
-
-  // Test order #4.
-  feature_list.Reset();
-  feature_list.InitAndEnableFeatureWithParameters(
-      kIOSTipsNotifications, {
-                                 {kIOSTipsNotificationsOrderParam, "4"},
-                             });
-  order = TipsNotificationsTypesOrder(false);
-  EXPECT_EQ(order[0], TipsNotificationType::kLens);
-  EXPECT_EQ(order[1], TipsNotificationType::kOmniboxPosition);
-  EXPECT_EQ(order[2], TipsNotificationType::kEnhancedSafeBrowsing);
 
   // Test Reactivation notifications order, default order.
   order = TipsNotificationsTypesOrder(true);
@@ -792,7 +698,7 @@ TEST_F(TipsNotificationClientTest, TestOrderParam) {
   EXPECT_EQ(order[2], TipsNotificationType::kWhatsNew);
 
   // Test Reactivation notifications order, alternate order.
-  feature_list.Reset();
+  base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeatureWithParameters(
       kIOSReactivationNotifications,
       {
@@ -804,4 +710,107 @@ TEST_F(TipsNotificationClientTest, TestOrderParam) {
   EXPECT_EQ(order[0], TipsNotificationType::kEnhancedSafeBrowsing);
   EXPECT_EQ(order[1], TipsNotificationType::kLens);
   EXPECT_EQ(order[2], TipsNotificationType::kWhatsNew);
+
+  // Test Expanded Tips order param.
+  feature_list.Reset();
+  feature_list.InitAndEnableFeatureWithParameters(
+      kIOSExpandedTips, {
+                            {kIOSExpandedTipsOrderParam, "4,5,6"},
+                        });
+  order = TipsNotificationsTypesOrder(false);
+  EXPECT_EQ(order.size(), 3u);
+  EXPECT_EQ(order[0], TipsNotificationType::kSetUpListContinuation);
+  EXPECT_EQ(order[1], TipsNotificationType::kDocking);
+  EXPECT_EQ(order[2], TipsNotificationType::kOmniboxPosition);
+}
+
+// Tests the order of reactivation notifications when the trusted vault
+// notification is enabled.
+TEST_F(TipsNotificationClientTest,
+       TestOrderParam_WhenTrustedVaultNotificationIsEnabled) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(kIOSTrustedVaultNotification);
+
+  std::vector<TipsNotificationType> order = TipsNotificationsTypesOrder(true);
+  EXPECT_EQ(order.size(), 4u);
+  EXPECT_EQ(order[0], TipsNotificationType::kTrustedVaultKeyRetrieval);
+  EXPECT_EQ(order[1], TipsNotificationType::kLens);
+  EXPECT_EQ(order[2], TipsNotificationType::kEnhancedSafeBrowsing);
+  EXPECT_EQ(order[3], TipsNotificationType::kWhatsNew);
+}
+
+// Tests that the client handles a CPE Promo notification response.
+TEST_F(TipsNotificationClientTest, CPEHandle) {
+  StubPrepareToPresentModal();
+  id mock_handler = MockHandler(@protocol(CredentialProviderPromoCommands));
+  OCMExpect(
+      [mock_handler showCredentialProviderPromoWithTrigger:
+                        CredentialProviderPromoTrigger::TipsNotification]);
+
+  mock_response_ = MockRequestResponse(TipsNotificationType::kCPE);
+  client_->HandleNotificationInteraction(mock_response_);
+
+  EXPECT_OCMOCK_VERIFY(mock_handler);
+  histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Interaction",
+                                       TipsNotificationType::kCPE, 1);
+}
+
+// Tests that the client handles a LensOverlay promo notification response.
+TEST_F(TipsNotificationClientTest, LensOverlayHandle) {
+  StubPrepareToPresentModal();
+  id mock_handler = MockHandler(@protocol(BrowserCoordinatorCommands));
+  OCMExpect([mock_handler showSearchWhatYouSeePromo]);
+
+  mock_response_ = MockRequestResponse(TipsNotificationType::kLensOverlay);
+  client_->HandleNotificationInteraction(mock_response_);
+
+  EXPECT_OCMOCK_VERIFY(mock_handler);
+  histogram_tester_.ExpectUniqueSample("IOS.Notifications.Tips.Interaction",
+                                       TipsNotificationType::kLensOverlay, 1);
+}
+
+// Tests that the client can request a one-time default browser notification.
+TEST_F(TipsNotificationClientTest, OneTimeDefaultBrowserNotification) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(kIOSOneTimeDefaultBrowserNotification);
+  SetFalseChromeLikelyDefaultBrowser();
+  RecordDefaultBrowserPromoLastAction(IOSDefaultBrowserPromoAction::kCancel);
+
+  StubGetPendingRequests(nil);
+  ExpectNotificationRequest(TipsNotificationType::kDefaultBrowser);
+
+  SimulateForegroundingApp();
+
+  EXPECT_OCMOCK_VERIFY(mock_notification_center_);
+
+  // Verify that it sends the next available notification afterwards.
+  ExpectNotificationRequest(TipsNotificationType::kEnhancedSafeBrowsing);
+  SimulateForegroundingApp();
+  EXPECT_OCMOCK_VERIFY(mock_notification_center_);
+}
+
+// Tests that a pending notification is cleared for the one-time default
+// browser notification.
+TEST_F(TipsNotificationClientTest,
+       OneTimeDefaultBrowserNotificationClearsPending) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(kIOSOneTimeDefaultBrowserNotification);
+  SetFalseChromeLikelyDefaultBrowser();
+
+  UNNotificationRequest* request = [UNNotificationRequest
+      requestWithIdentifier:kTipsNotificationId
+                    content:ContentForTipsNotificationType(
+                                TipsNotificationType::kWhatsNew, false,
+                                GetProfileName())
+                    trigger:nil];
+  StubGetPendingRequests(@[ request ]);
+  ExpectNotificationRequest(TipsNotificationType::kDefaultBrowser);
+  OCMExpect([mock_notification_center_
+      removePendingNotificationRequestsWithIdentifiers:@[
+        kTipsNotificationId
+      ]]);
+
+  SimulateForegroundingApp();
+
+  EXPECT_OCMOCK_VERIFY(mock_notification_center_);
 }
